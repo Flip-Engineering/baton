@@ -283,6 +283,88 @@ export function createDecisionAnswer(fields) {
 }
 
 // ---------------------------------------------------------------------------
+// Board channel (REFLEX-2, issue #17, docs/32 §3.2) — closed shapes for the
+// orchestrator-controlled task board. Items are worker/orchestrator-authored
+// content; these factories validate *shape* only. Identity (itemId, itemVersion,
+// itemDigest, ordinal) is hub-minted (never accepted from a submitter) and is not
+// part of the post/edit shape; the report shape DOES carry the exact observed
+// (itemVersion, itemDigest) the worker binds its evidence to (F8, rule 3).
+// ---------------------------------------------------------------------------
+
+const SAFE_BOARD_ID = /^[A-Za-z0-9_.:-]{1,128}$/;
+const SAFE_ITEM_ID = /^[A-Za-z0-9_.:-]{1,256}$/;
+const ITEM_DIGEST = /^[a-f0-9]{64}$/;
+const MAX_BOARD_TITLE_BYTES = 160;
+const MAX_BOARD_DETAIL_BYTES = 4_096;
+const MAX_BOARD_REPORT_BYTES = 4_096;
+const MAX_BOARD_EVIDENCE = 8;
+
+function validEvidenceRef(ref) {
+  if (!ref || typeof ref !== 'object' || Array.isArray(ref)) return false;
+  const keys = Object.keys(ref).sort().join(',');
+  if (keys === 'coordinationSeq') return Number.isSafeInteger(ref.coordinationSeq) && ref.coordinationSeq > 0;
+  if (keys === 'artifactId') return typeof ref.artifactId === 'string' && ref.artifactId.length > 0;
+  return false;
+}
+
+/** @param {{board,title,detail?,owner?,evidence?}} fields @returns {object} a deeply-frozen BoardItem post shape @throws {ValidationError} */
+export function createBoardItem(fields) {
+  const errors = [];
+  const allowedKeys = new Set(['board', 'title', 'detail', 'owner', 'evidence']);
+  for (const key of Object.keys(fields ?? {})) {
+    if (!allowedKeys.has(key)) errors.push(`board item has an unknown field "${key}"`);
+  }
+  if (typeof fields?.board !== 'string' || !SAFE_BOARD_ID.test(fields.board)) errors.push('board must be a safe id (letters, digits, "_.:-", 1..128 bytes)');
+  if (!boundedNonEmpty(fields?.title, MAX_BOARD_TITLE_BYTES)) errors.push(`title is required (non-empty, <=${MAX_BOARD_TITLE_BYTES} bytes)`);
+  if (fields?.detail !== undefined && fields.detail !== null && !boundedNonEmpty(fields.detail, MAX_BOARD_DETAIL_BYTES)) {
+    errors.push(`detail must be null or non-empty, <=${MAX_BOARD_DETAIL_BYTES} bytes`);
+  }
+  if (fields?.owner !== undefined && fields.owner !== null && (typeof fields.owner !== 'string' || !SAFE_OPTION_ID.test(fields.owner))) {
+    errors.push('owner must be null or a safe worker id');
+  }
+  if (fields?.evidence !== undefined) {
+    if (!Array.isArray(fields.evidence) || fields.evidence.length > MAX_BOARD_EVIDENCE) errors.push(`evidence must be an array of 0..${MAX_BOARD_EVIDENCE} refs`);
+    else fields.evidence.forEach((ref, i) => { if (!validEvidenceRef(ref)) errors.push(`evidence[${i}] must reference a positive coordinationSeq or an artifactId`); });
+  }
+  if (errors.length) throw new ValidationError(errors);
+  return deepFreeze({
+    board: fields.board,
+    title: fields.title,
+    detail: fields.detail ?? null,
+    owner: fields.owner ?? null,
+    evidence: (fields.evidence ?? []).map((ref) => ({ ...ref })),
+  });
+}
+
+/** @param {{itemId,expectedBoardFence}} fields @returns {object} a deeply-frozen board claim request @throws {ValidationError} */
+export function createBoardClaimRequest(fields) {
+  const errors = [];
+  const allowedKeys = new Set(['itemId', 'expectedBoardFence']);
+  for (const key of Object.keys(fields ?? {})) {
+    if (!allowedKeys.has(key)) errors.push(`board claim request has an unknown field "${key}"`);
+  }
+  if (typeof fields?.itemId !== 'string' || !SAFE_ITEM_ID.test(fields.itemId)) errors.push('itemId must be a safe id');
+  if (!Number.isSafeInteger(fields?.expectedBoardFence) || fields.expectedBoardFence < 0) errors.push('expectedBoardFence is required and must be a non-negative safe integer');
+  if (errors.length) throw new ValidationError(errors);
+  return deepFreeze({ itemId: fields.itemId, expectedBoardFence: fields.expectedBoardFence });
+}
+
+/** @param {{itemId,itemVersion,itemDigest,body}} fields @returns {object} a deeply-frozen board report shape @throws {ValidationError} */
+export function createBoardReport(fields) {
+  const errors = [];
+  const allowedKeys = new Set(['itemId', 'itemVersion', 'itemDigest', 'body']);
+  for (const key of Object.keys(fields ?? {})) {
+    if (!allowedKeys.has(key)) errors.push(`board report has an unknown field "${key}"`);
+  }
+  if (typeof fields?.itemId !== 'string' || !SAFE_ITEM_ID.test(fields.itemId)) errors.push('itemId must be a safe id');
+  if (!Number.isSafeInteger(fields?.itemVersion) || fields.itemVersion <= 0) errors.push('itemVersion is required and must be a positive safe integer');
+  if (typeof fields?.itemDigest !== 'string' || !ITEM_DIGEST.test(fields.itemDigest)) errors.push('itemDigest is required and must be a 64-hex content digest');
+  if (!boundedNonEmpty(fields?.body, MAX_BOARD_REPORT_BYTES)) errors.push(`body is required (non-empty, <=${MAX_BOARD_REPORT_BYTES} bytes)`);
+  if (errors.length) throw new ValidationError(errors);
+  return deepFreeze({ itemId: fields.itemId, itemVersion: fields.itemVersion, itemDigest: fields.itemDigest, body: fields.body });
+}
+
+// ---------------------------------------------------------------------------
 // Provenance typing — facts (hub-computed, trusted) vs prose (worker, untrusted)
 // ---------------------------------------------------------------------------
 

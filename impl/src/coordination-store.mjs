@@ -104,6 +104,8 @@ const PROJECTION_CHECKPOINT_FIELDS = Object.freeze([
   '_providerReceipts', '_providerDeliveryIds', '_providerProcessing', '_providerPending',
   '_providerSequences', '_providerSourceHealth', '_contextSessions', '_contextCells',
   '_contextCalls', '_contextPrograms', '_contextArtifacts', '_taskResourceReleases',
+  '_boardItems', '_boardItemHistory', '_boardItemsByBoard', '_boardClaims',
+  '_boardReports', '_boardFences',
 ]);
 
 const TERMINAL = new Set(['completed', 'failed', 'cancelled']);
@@ -275,6 +277,33 @@ function eventTime(events, evidence, fallback) {
   const seqs = (evidence ?? []).map((ref) => ref?.coordinationSeq).filter(Number.isInteger);
   const seq = seqs.length > 0 ? Math.min(...seqs) : fallback.seq;
   return { eventTimeSeq: seq, eventTime: events[seq - 1]?.ts ?? fallback.ts };
+}
+// REFLEX-2 board bounds. A board item's identity (itemId/itemVersion/itemDigest/ordinal)
+// is hub-minted; the content core that the itemDigest content-addresses is exactly these
+// nine fields, in the delete-and-recompute discipline (never accepted from a submitter).
+const SAFE_BOARD_ID = /^[A-Za-z0-9_.:-]{1,128}$/;
+const SAFE_BOARD_OWNER = /^[A-Za-z0-9_.:-]{1,128}$/;
+const BOARD_ITEM_STATES = new Set(['open', 'closed', 'dropped']);
+const MAX_STORE_BOARD_TITLE_BYTES = 160;
+const MAX_STORE_BOARD_DETAIL_BYTES = 4_096;
+const MAX_STORE_BOARD_REPORT_BYTES = 4_096;
+const MAX_STORE_BOARD_EVIDENCE = 8;
+function validBoardEvidenceRef(ref) {
+  if (!ref || typeof ref !== 'object' || Array.isArray(ref)) return false;
+  const keys = Object.keys(ref).sort().join(',');
+  if (keys === 'coordinationSeq') return Number.isSafeInteger(ref.coordinationSeq) && ref.coordinationSeq > 0;
+  if (keys === 'artifactId') return typeof ref.artifactId === 'string' && ref.artifactId.length > 0;
+  return false;
+}
+function boardBounded(value, maxBytes) {
+  return typeof value === 'string' && value.length > 0 && Buffer.byteLength(value) <= maxBytes;
+}
+/** itemDigest = H(the nine content-core fields), recomputed by the hub, never trusted from input. */
+function boardItemContentDigest(core) {
+  return canonicalDigest({
+    itemId: core.itemId, itemVersion: core.itemVersion, board: core.board, title: core.title,
+    detail: core.detail, state: core.state, owner: core.owner, evidence: core.evidence, ordinal: core.ordinal,
+  });
 }
 
 export class CoordinationIntegrityError extends Error {
@@ -761,6 +790,12 @@ export class CoordinationStore {
     this._contextSessions = new Map(); this._contextCells = new Map(); this._contextCalls = new Map();
     this._contextPrograms = new Map(); this._contextArtifacts = new Map();
     this._taskResourceReleases = new Map();
+    // REFLEX-2 boards: immutable versioned items + per-itemId claims + reports, and a
+    // board-scoped, replay-derivable fence counter (the count of orchestrator-authority
+    // events per board — NOT the worker FenceTable). All rebuilt purely by re-applying the
+    // log in _apply, so replay reconstructs each board fence exactly by re-counting.
+    this._boardItems = new Map(); this._boardItemHistory = new Map(); this._boardItemsByBoard = new Map();
+    this._boardClaims = new Map(); this._boardReports = []; this._boardFences = new Map();
   }
 
   _configureAdvisoryFeedCards(cards) {
@@ -7667,6 +7702,35 @@ export class CoordinationStore {
       this._scratchClaims.set(p.id, freeze({ ...clone(old), active: false, expiredEvent: event.seq, version: old.version + 1 }));
     } else if (event.kind === 'scratch.read') {
       this._scratchReads.push(freeze({ ...clone(p), eventSeq: event.seq, ts: event.ts }));
+    } else if (event.kind === 'board.item_posted') {
+      const rec = freeze({ ...clone(p), postedEvent: event.seq, updatedEvent: event.seq });
+      this._boardItems.set(p.itemId, rec);
+      this._boardItemHistory.set(p.itemId, freeze([rec]));
+      const ids = this._boardItemsByBoard.get(p.board);
+      if (ids) { if (!ids.includes(p.itemId)) this._boardItemsByBoard.set(p.board, freeze([...ids, p.itemId])); }
+      else this._boardItemsByBoard.set(p.board, freeze([p.itemId]));
+      this._boardFences.set(p.board, (this._boardFences.get(p.board) ?? 0) + 1);
+    } else if (event.kind === 'board.item_retitled' || event.kind === 'board.item_reordered'
+      || event.kind === 'board.item_closed' || event.kind === 'board.item_dropped') {
+      const prior = this._boardItems.get(p.itemId);
+      const rec = freeze({ ...clone(p), postedEvent: prior?.postedEvent ?? event.seq, updatedEvent: event.seq });
+      this._boardItems.set(p.itemId, rec);
+      this._boardItemHistory.set(p.itemId, freeze([...(this._boardItemHistory.get(p.itemId) ?? []), rec]));
+      // Only the five orchestrator-authority transitions advance the board fence (F9, rule 7).
+      this._boardFences.set(p.board, (this._boardFences.get(p.board) ?? 0) + 1);
+    } else if (event.kind === 'board.claim_requested') {
+      // A worker report — deliberately does NOT bump the board fence (F9, rule 7).
+      this._boardClaims.set(p.itemId, freeze({ ...clone(p), version: 1, createdEvent: event.seq, active: true }));
+    } else if (event.kind === 'board.claim_migrated') {
+      // Hub-applied — carries a granted claim across a benign edit, advancing the stored
+      // fence with the item; never bumps the board fence and never rejects the claim (F8, rule 3).
+      const old = this._boardClaims.get(p.itemId);
+      this._boardClaims.set(p.itemId, freeze({ ...clone(old), itemVersion: p.toVersion, boardFence: p.boardFence, migratedEvent: event.seq }));
+    } else if (event.kind === 'board.claim_expired') {
+      const old = this._boardClaims.get(p.itemId);
+      this._boardClaims.set(p.itemId, freeze({ ...clone(old), active: false, expiredEvent: event.seq, version: old.version + 1 }));
+    } else if (event.kind === 'board.report_submitted') {
+      this._boardReports.push(freeze({ ...clone(p), eventSeq: event.seq, ts: event.ts }));
     } else if (event.kind === 'knowledge.promotion_batch') {
       this._validateKnowledgePromotionPayload(p, event, true);
       for (const node of p.nodes) this._setKnowledgeNode(event, node.id, freeze({ ...clone(node), observedSeq: event.seq, observedAt: event.ts, ...eventTime(this._events, node.evidence, event), validFrom: event.ts, validTo: null, validityVersion: 1, derivedFromEvent: event.seq }));
@@ -11639,6 +11703,169 @@ export class CoordinationStore {
     const result = this.checkScratch(resource, envRef);
     const event = this._append('scratch.read', { ...clone(reader), resource, envRef: clone(envRef), result: clone(result) }, auth);
     return freeze({ event: clone(event), result });
+  }
+
+  // -------------------------------------------------------------------------
+  // REFLEX-2 boards (issue #17, docs/32 §3.2). Immutable versioned items with
+  // successor versions and claim migration keyed to itemId (F8); a board-scoped,
+  // replay-derivable fence — NEVER the worker FenceTable (F9); non-evented reads
+  // (no board.read event kind; a poll never appends to the ledger — F10).
+  // -------------------------------------------------------------------------
+
+  /** The board fence: the count of admitted orchestrator-authority events for the board,
+   * derived purely by re-counting in _apply. Replay reconstructs it exactly. */
+  boardFence(board) {
+    return this._boardFences.get(board) ?? 0;
+  }
+
+  postBoardItem(fields, auth) {
+    const prior = this._byKey.get(auth?.key);
+    if (prior) return { ok: true, result: 'idempotent', event: clone(prior), item: clone(this._boardItems.get(prior.payload.itemId)) };
+    if (!fields || typeof fields !== 'object' || Array.isArray(fields)) throw new CoordinationRefusal('board item requires fields', 'invalid_board_item');
+    if (typeof fields.board !== 'string' || !SAFE_BOARD_ID.test(fields.board)) throw new CoordinationRefusal('board item requires a safe board id', 'invalid_board');
+    if (!boardBounded(fields.title, MAX_STORE_BOARD_TITLE_BYTES)) throw new CoordinationRefusal('board item requires a bounded non-empty title', 'invalid_board_title');
+    const detail = fields.detail ?? null;
+    if (detail !== null && !boardBounded(detail, MAX_STORE_BOARD_DETAIL_BYTES)) throw new CoordinationRefusal('board item detail must be null or bounded', 'invalid_board_detail');
+    const owner = fields.owner ?? null;
+    if (owner !== null && (typeof owner !== 'string' || !SAFE_BOARD_OWNER.test(owner))) throw new CoordinationRefusal('board item owner must be null or a safe id', 'invalid_board_owner');
+    const evidence = fields.evidence ?? [];
+    if (!Array.isArray(evidence) || evidence.length > MAX_STORE_BOARD_EVIDENCE || !evidence.every(validBoardEvidenceRef)) throw new CoordinationRefusal('board item evidence is invalid', 'invalid_board_evidence');
+    if (Object.hasOwn(fields, 'itemId')) throw new CoordinationRefusal('board item identity is hub-derived', 'invalid_board_item_id');
+    const board = fields.board;
+    const ordinal = (this._boardItemsByBoard.get(board)?.length ?? 0) + 1;
+    const itemId = `board-item:${digest({ board, ordinal, mintSeq: this._events.length + 1 })}`;
+    const core = { itemId, itemVersion: 1, board, title: fields.title, detail, state: 'open', owner, evidence: clone(evidence), ordinal };
+    const itemDigest = boardItemContentDigest(core);
+    if (Object.hasOwn(fields, 'itemDigest') && fields.itemDigest !== itemDigest) throw new CoordinationRefusal('board item digest does not match the hub recompute', 'board_item_digest_mismatch');
+    const event = this._append('board.item_posted', { ...core, itemDigest }, auth);
+    return { ok: true, result: 'posted', event: clone(event), item: clone(this._boardItems.get(itemId)) };
+  }
+
+  /** A successor version under the SAME itemId (immutable prior version retained). If a granted
+   * claim exists, a benign edit (retitle/reorder) carries it forward via board.claim_migrated —
+   * the worker is never forced to re-claim (F8, rule 3). */
+  _boardSuccessor(itemId, kind, changes, auth) {
+    const current = this._boardItems.get(itemId);
+    if (!current) throw new CoordinationRefusal(`unknown board item ${itemId}`, 'board_item_not_found');
+    if (current.state !== 'open') throw new CoordinationRefusal(`board item ${itemId} is not open`, 'board_item_not_open');
+    const state = changes.state ?? current.state;
+    if (!BOARD_ITEM_STATES.has(state)) throw new CoordinationRefusal('board item state is invalid', 'invalid_board_state');
+    const core = {
+      itemId, itemVersion: current.itemVersion + 1, board: current.board,
+      title: changes.title ?? current.title,
+      detail: Object.hasOwn(changes, 'detail') && changes.detail !== undefined ? changes.detail : current.detail,
+      state, owner: current.owner, evidence: clone(current.evidence),
+      ordinal: changes.ordinal ?? current.ordinal,
+    };
+    const itemDigest = boardItemContentDigest(core);
+    if (changes.itemDigest !== undefined && changes.itemDigest !== itemDigest) throw new CoordinationRefusal('board item digest does not match the hub recompute', 'board_item_digest_mismatch');
+    const event = this._append(kind, { ...core, itemDigest }, auth);
+    const claim = this._boardClaims.get(itemId);
+    const migrating = !!(claim && claim.active && (kind === 'board.item_retitled' || kind === 'board.item_reordered'));
+    if (migrating) {
+      this._append('board.claim_migrated', {
+        itemId, fromVersion: current.itemVersion, toVersion: core.itemVersion, boardFence: this.boardFence(core.board),
+      }, { actor: auth?.actor ?? 'orchestrator', key: `board.claim_migrated:${itemId}:${current.itemVersion}:${core.itemVersion}` });
+    }
+    return { ok: true, result: 'updated', event: clone(event), item: clone(this._boardItems.get(itemId)), migrated: migrating };
+  }
+
+  retitleBoardItem(itemId, fields, auth) {
+    const prior = this._byKey.get(auth?.key);
+    if (prior) return { ok: true, result: 'idempotent', event: clone(prior), item: clone(this._boardItems.get(itemId)) };
+    if (!boardBounded(fields?.title, MAX_STORE_BOARD_TITLE_BYTES)) throw new CoordinationRefusal('board retitle requires a bounded non-empty title', 'invalid_board_title');
+    if (fields.detail !== undefined && fields.detail !== null && !boardBounded(fields.detail, MAX_STORE_BOARD_DETAIL_BYTES)) throw new CoordinationRefusal('board detail must be null or bounded', 'invalid_board_detail');
+    return this._boardSuccessor(itemId, 'board.item_retitled', { title: fields.title, detail: fields.detail, itemDigest: fields?.itemDigest }, auth);
+  }
+
+  reorderBoardItem(itemId, ordinal, auth) {
+    const prior = this._byKey.get(auth?.key);
+    if (prior) return { ok: true, result: 'idempotent', event: clone(prior), item: clone(this._boardItems.get(itemId)) };
+    if (!Number.isSafeInteger(ordinal) || ordinal <= 0) throw new CoordinationRefusal('board ordinal must be a positive integer', 'invalid_board_ordinal');
+    return this._boardSuccessor(itemId, 'board.item_reordered', { ordinal }, auth);
+  }
+
+  closeBoardItem(itemId, auth) {
+    const prior = this._byKey.get(auth?.key);
+    if (prior) return { ok: true, result: 'idempotent', event: clone(prior), item: clone(this._boardItems.get(itemId)) };
+    return this._boardSuccessor(itemId, 'board.item_closed', { state: 'closed' }, auth);
+  }
+
+  dropBoardItem(itemId, auth) {
+    const prior = this._byKey.get(auth?.key);
+    if (prior) return { ok: true, result: 'idempotent', event: clone(prior), item: clone(this._boardItems.get(itemId)) };
+    return this._boardSuccessor(itemId, 'board.item_dropped', { state: 'dropped' }, auth);
+  }
+
+  /** First claim wins, exactly-once, only if expectedBoardFence === boardFence(board) at apply
+   * time (F9, rule 8); else stale_board_fence (rejected, cheap re-read). Never the worker fence. */
+  requestBoardClaim(fields, auth) {
+    const prior = this._byKey.get(auth?.key);
+    if (prior) return { ok: true, result: 'idempotent', event: clone(prior), claim: clone(this._boardClaims.get(prior.payload.itemId)) };
+    if (typeof fields?.itemId !== 'string' || fields.itemId.length === 0) throw new CoordinationRefusal('board claim requires an itemId', 'invalid_board_item_id');
+    if (!Number.isSafeInteger(fields.expectedBoardFence) || fields.expectedBoardFence < 0) throw new CoordinationRefusal('board claim requires a non-negative expectedBoardFence', 'invalid_board_fence');
+    if (typeof fields.owner !== 'string' || !SAFE_BOARD_OWNER.test(fields.owner)) throw new CoordinationRefusal('board claim requires a safe owner id', 'invalid_board_owner');
+    const item = this._boardItems.get(fields.itemId);
+    if (!item) throw new CoordinationRefusal(`unknown board item ${fields.itemId}`, 'board_item_not_found');
+    if (item.state !== 'open') throw new CoordinationRefusal(`board item ${fields.itemId} is not open`, 'board_item_not_open');
+    const existing = this._boardClaims.get(fields.itemId);
+    if (existing && existing.active) return { ok: false, result: 'conflict', conflict: clone(existing) };
+    const currentFence = this.boardFence(item.board);
+    if (fields.expectedBoardFence !== currentFence) return { ok: false, result: 'stale_board_fence', boardFence: currentFence };
+    const payload = { itemId: fields.itemId, board: item.board, owner: fields.owner, ownerTask: fields.ownerTask ?? null, boardFence: currentFence, itemVersion: item.itemVersion };
+    const event = this._append('board.claim_requested', payload, auth);
+    return { ok: true, result: 'claimed', event: clone(event), claim: clone(this._boardClaims.get(fields.itemId)) };
+  }
+
+  /** A report binds the EXACT (itemVersion, itemDigest) the worker observed; a later retitle can
+   * never silently re-point its evidence (F8, rule 3). */
+  submitBoardReport(fields, auth) {
+    const prior = this._byKey.get(auth?.key);
+    if (prior) return { ok: true, result: 'idempotent', event: clone(prior), report: clone(this._boardReports.find((r) => r.eventSeq === prior.seq) ?? null) };
+    if (typeof fields?.itemId !== 'string' || fields.itemId.length === 0) throw new CoordinationRefusal('board report requires an itemId', 'invalid_board_item_id');
+    if (!Number.isSafeInteger(fields.itemVersion) || fields.itemVersion <= 0) throw new CoordinationRefusal('board report requires a positive itemVersion', 'invalid_board_item_version');
+    if (typeof fields.itemDigest !== 'string' || !/^[a-f0-9]{64}$/.test(fields.itemDigest)) throw new CoordinationRefusal('board report requires an itemDigest', 'invalid_board_item_digest');
+    if (!boardBounded(fields.body, MAX_STORE_BOARD_REPORT_BYTES)) throw new CoordinationRefusal('board report body must be bounded non-empty', 'invalid_board_report');
+    if (typeof fields.owner !== 'string' || !SAFE_BOARD_OWNER.test(fields.owner)) throw new CoordinationRefusal('board report requires a safe owner id', 'invalid_board_owner');
+    const history = this._boardItemHistory.get(fields.itemId);
+    const version = history?.find((rec) => rec.itemVersion === fields.itemVersion);
+    if (!version) throw new CoordinationRefusal(`board item ${fields.itemId} has no version ${fields.itemVersion}`, 'board_item_version_not_found');
+    if (version.itemDigest !== fields.itemDigest) throw new CoordinationRefusal('board report binding does not match the observed item version', 'board_report_binding_mismatch');
+    const payload = { itemId: fields.itemId, itemVersion: fields.itemVersion, itemDigest: fields.itemDigest, board: version.board, owner: fields.owner, body: fields.body };
+    const event = this._append('board.report_submitted', payload, auth);
+    return { ok: true, result: 'submitted', event: clone(event), report: clone(this._boardReports.find((r) => r.eventSeq === event.seq)) };
+  }
+
+  /** Version-CAS expiry mirroring expireScratchClaim; returns the item to claimable (never a
+   * phantom done). Does not bump the board fence (F9, rule 7). */
+  expireBoardClaim(itemId, expectedVersion, auth) {
+    const prior = this._byKey.get(auth?.key);
+    if (prior) return { ok: true, result: 'idempotent', event: clone(prior), claim: clone(this._boardClaims.get(itemId)) };
+    const claim = this._boardClaims.get(itemId);
+    if (!claim || !claim.active) throw new CoordinationRefusal(`inactive board claim ${itemId}`, 'not_active');
+    if (claim.version !== expectedVersion) throw new CoordinationRefusal(`stale board claim ${itemId}`, 'stale_version');
+    const event = this._append('board.claim_expired', { itemId, expectedClaimVersion: expectedVersion }, auth);
+    return { ok: true, event: clone(event), claim: clone(this._boardClaims.get(itemId)) };
+  }
+
+  activeBoardClaims({ workerId = null, taskId = null } = {}) {
+    return [...this._boardClaims.values()].filter((claim) => claim.active
+      && (workerId == null || claim.owner === workerId)
+      && (taskId == null || claim.ownerTask === taskId)).map(clone);
+  }
+
+  boardItem(itemId) { return clone(this._boardItems.get(itemId) ?? null); }
+
+  boardItemVersions(itemId) { return (this._boardItemHistory.get(itemId) ?? []).map(clone); }
+
+  /** Non-evented board read (F10, rule 9): a poll appends nothing to the ledger and drives the
+   * per-board indexed item map, never a full claim/fact scan. */
+  boardSnapshot(board) {
+    const ids = this._boardItemsByBoard.get(board) ?? [];
+    const items = ids.map((id) => clone(this._boardItems.get(id))).filter(Boolean);
+    const claims = ids.map((id) => this._boardClaims.get(id)).filter((claim) => claim && claim.active).map(clone);
+    const reports = this._boardReports.filter((report) => ids.includes(report.itemId)).map(clone);
+    return freeze({ board, boardFence: this.boardFence(board), items, claims, reports });
   }
 
   _knowledgeFailure(message, code, integrity = false) {

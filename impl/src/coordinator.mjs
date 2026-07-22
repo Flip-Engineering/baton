@@ -259,6 +259,8 @@ const COORDINATION_MUTATORS = new Set([
   'admitContextEffectCall',
   'settleContextCall', 'settleContextMapCall', 'settleContextEffectCall',
   'recordTaskResourceRelease',
+  'postBoardItem', 'retitleBoardItem', 'reorderBoardItem', 'closeBoardItem', 'dropBoardItem',
+  'requestBoardClaim', 'submitBoardReport', 'expireBoardClaim',
 ]);
 
 const DEFAULT_DRAIN_POLICY = Object.freeze({ maxWorkers: 1024, maxInteractions: 15_000, timeoutMs: 60_000, pollMs: 10 });
@@ -6790,6 +6792,7 @@ export class Coordinator {
     if (TERMINAL_TASK_STATUSES.has(to)) {
       const handle = this._workers.get(task.assignee);
       this._expireScratchClaims(handle, task, `task_${to}`);
+      this._expireBoardClaims(handle, task, `task_${to}`);
       this._settlePlanNodeBudget(task.id);
     }
     return result.task;
@@ -7010,6 +7013,19 @@ export class Coordinator {
     for (const claim of this._coordination.activeScratchClaims({ workerId, taskId: task.id })) {
       this._coordination.expireScratchClaim(claim.id, claim.version, {
         actor: 'policy', key: `scratch.claim_expired:${claim.id}:${claim.version}:${reason}`,
+      });
+    }
+  }
+
+  /** REFLEX-2: reap a dead worker's board claims verbatim to the scratch death lifecycle so an
+   * item never wedges in `claimed`. Driven from the SAME terminal hooks as _expireScratchClaims;
+   * a version-CAS expiry returns the item to claimable (F8, rule 4). */
+  _expireBoardClaims(handle, task, reason) {
+    if (!this._coordination || typeof this._coordination.activeBoardClaims !== 'function' || !task) return;
+    const workerId = handle?.id ?? task.assignee ?? null;
+    for (const claim of this._coordination.activeBoardClaims({ workerId, taskId: task.id })) {
+      this._coordination.expireBoardClaim(claim.itemId, claim.version, {
+        actor: 'policy', key: `board.claim_expired:${claim.itemId}:${claim.version}:${reason}`,
       });
     }
   }
@@ -9101,6 +9117,69 @@ export class Coordinator {
     }, { actor: opts.actor ?? 'orchestrator', key: opts.idempotencyKey });
   }
 
+  // ---- REFLEX-2 boards: orchestrator authority (post/retitle/reorder/close/drop) ----
+  postBoardItem(fields, opts = {}) {
+    this.tick();
+    if (typeof opts.idempotencyKey !== 'string' || opts.idempotencyKey.length === 0) throw new TypeError('Board item requires idempotencyKey');
+    return this._coordination.postBoardItem(fields, { actor: opts.actor ?? 'orchestrator', key: opts.idempotencyKey });
+  }
+
+  retitleBoardItem(itemId, fields, opts = {}) {
+    this.tick();
+    if (typeof opts.idempotencyKey !== 'string' || opts.idempotencyKey.length === 0) throw new TypeError('Board retitle requires idempotencyKey');
+    return this._coordination.retitleBoardItem(itemId, fields, { actor: opts.actor ?? 'orchestrator', key: opts.idempotencyKey });
+  }
+
+  reorderBoardItem(itemId, ordinal, opts = {}) {
+    this.tick();
+    if (typeof opts.idempotencyKey !== 'string' || opts.idempotencyKey.length === 0) throw new TypeError('Board reorder requires idempotencyKey');
+    return this._coordination.reorderBoardItem(itemId, ordinal, { actor: opts.actor ?? 'orchestrator', key: opts.idempotencyKey });
+  }
+
+  closeBoardItem(itemId, opts = {}) {
+    this.tick();
+    if (typeof opts.idempotencyKey !== 'string' || opts.idempotencyKey.length === 0) throw new TypeError('Board close requires idempotencyKey');
+    return this._coordination.closeBoardItem(itemId, { actor: opts.actor ?? 'orchestrator', key: opts.idempotencyKey });
+  }
+
+  dropBoardItem(itemId, opts = {}) {
+    this.tick();
+    if (typeof opts.idempotencyKey !== 'string' || opts.idempotencyKey.length === 0) throw new TypeError('Board drop requires idempotencyKey');
+    return this._coordination.dropBoardItem(itemId, { actor: opts.actor ?? 'orchestrator', key: opts.idempotencyKey });
+  }
+
+  // ---- REFLEX-2 boards: worker traffic (claim/report). The claim CAS carries a BOARD-scoped
+  // fence (fields.expectedBoardFence), never the worker turn fence — the claimScratch trap (F9). ----
+  requestBoardClaim(workerId, fields, opts = {}) {
+    this.tick();
+    const handle = this._getWorker(workerId);
+    const task = this._tasks.get(handle.taskId);
+    if (!task || !['working', 'input_required'].includes(task.status)) return { ok: false, result: 'task_not_active' };
+    if (typeof opts.idempotencyKey !== 'string' || opts.idempotencyKey.length === 0) throw new TypeError('Board claim requires idempotencyKey');
+    return this._coordination.requestBoardClaim({ ...fields, owner: workerId, ownerTask: task.id },
+      { actor: opts.actor ?? 'worker', key: opts.idempotencyKey });
+  }
+
+  submitBoardReport(workerId, fields, opts = {}) {
+    this.tick();
+    const handle = this._getWorker(workerId);
+    const task = this._tasks.get(handle.taskId);
+    if (!task || !['working', 'input_required'].includes(task.status)) return { ok: false, result: 'task_not_active' };
+    if (typeof opts.idempotencyKey !== 'string' || opts.idempotencyKey.length === 0) throw new TypeError('Board report requires idempotencyKey');
+    return this._coordination.submitBoardReport({ ...fields, owner: workerId },
+      { actor: opts.actor ?? 'worker', key: opts.idempotencyKey });
+  }
+
+  boardFence(board) {
+    this._assertReadable();
+    return this._coordination.boardFence(board);
+  }
+
+  boardSnapshot(board) {
+    this._assertReadable();
+    return this._coordination.boardSnapshot(board);
+  }
+
   list() {
     this._assertReadable();
     return [...this._workers.values()].map((h) => this._publicHandle(h));
@@ -9888,6 +9967,7 @@ export class Coordinator {
       task.result = null;
       task.verdict = null;
       this._expireScratchClaims(handle, task, 'provider_turn_failed');
+      this._expireBoardClaims(handle, task, 'provider_turn_failed');
     }
     this._clearWatchdog(handle);
     if (handle.processRef?.state === 'closed' && !this._stopWaiters.has(handle.id)) {
@@ -10166,6 +10246,7 @@ export class Coordinator {
       this._settlePlanNodeBudget(task.id);
       if (terminal.routeObservation && this._route && typeof this._route.record === 'function') this._route.record(terminal.routeObservation.routeKey, terminal.routeObservation.taskType, terminal.routeObservation.verifiedWin, { family: terminal.routeObservation.modelFamily, taskId: terminal.routeObservation.taskId, now: Date.parse(terminal.routeObservation.observedAt) });
       this._expireScratchClaims(handle, task, `task_${terminalStatus}`);
+      this._expireBoardClaims(handle, task, `task_${terminalStatus}`);
       const artifactEvidence = terminal.artifacts.map((artifact) => ({ artifactId: artifact.id }));
       trustPhase = 'promotion';
       this._coordination.promoteKnowledgeNode({
@@ -10249,6 +10330,7 @@ export class Coordinator {
         handle.terminalCause ??= deepFreeze({ kind: 'policy_failure', code });
         task.result = null;
         this._expireScratchClaims(handle, task, code);
+        this._expireBoardClaims(handle, task, code);
         if (handle.processRef?.state === 'closed' && !this._stopWaiters.has(handle.id)) {
           handle.status = 'exited';
           this._cleanupClosedTransport(handle, task, errorEvent).catch(noop);
@@ -10954,6 +11036,7 @@ export class Coordinator {
           if (seeded) {
             seeded.coordinationVersion = transitioned.task.version;
             this._expireScratchClaims(this._workers.get(workerId), seeded, 'replay_failed');
+            this._expireBoardClaims(this._workers.get(workerId), seeded, 'replay_failed');
           }
         }
       }
@@ -11170,6 +11253,7 @@ export class Coordinator {
       if (task) {
         task.status = 'failed'; task.coordinationVersion = transitioned.task.version;
         this._expireScratchClaims(this._workers.get(workerId), task, 'claimed_without_spawn');
+        this._expireBoardClaims(this._workers.get(workerId), task, 'claimed_without_spawn');
       }
       const handle = workerId ? this._workers.get(workerId) : null;
       if (handle) handle.status = 'exited';

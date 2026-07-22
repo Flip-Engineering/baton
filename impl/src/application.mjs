@@ -47,6 +47,12 @@ const MAX_RUN_LIST_ITEMS = 64;
 const MAX_ATTENTION = 64;
 const MAX_ATTENTION_TEXT_BYTES = 4_096;
 const MAX_BLOCKED_INTERACTION_SUMMARY_BYTES = 160;
+// REFLEX-2 board-view ceilings (F10, rules 10-11). RunView's MAX_RUN_VIEW_* do not cover a
+// board, so a per-worker board projection gets its own bounded ceilings: at most MAX_BOARD_ITEMS
+// items (soft-truncate with an explicit boardViewTruncated story, never silent) and a byte
+// ceiling MAX_BOARD_VIEW_BYTES on the serialized projection.
+const MAX_BOARD_VIEW_BYTES = 256 * 1024;
+const MAX_BOARD_ITEMS = 512;
 // AX-1 rule 3 (issue #10): these operational kinds are real-time provider narration/tool-use
 // telemetry — repeated bursts of them are not distinct forward-progress milestones the way a
 // committed file edit or a lifecycle/control/verification fact is, so an `evidence.mapped`
@@ -274,6 +280,65 @@ function projectDecisionAttention(coordinator, workers) {
     });
   }
   return entries;
+}
+
+// REFLEX-2 (issue #17, docs/32 §3.2): a bounded, sanitized, per-worker board projection.
+// Reads are NON-EVENTED (this helper is pure — it appends nothing) and CACHED by
+// (board, workerId, boardFence): while the board fence is unchanged the exact cached view is
+// served; a fence advance is the only thing that recomputes it (F10, rule 10). Every
+// worker-authored field (title, detail, report bodies) is sanitized through
+// boundedAttentionText/SECRET_SHAPED_TEXT and provenance-marked untrusted prose via wrapProse
+// (F14). Item count and serialized bytes honor MAX_BOARD_ITEMS/MAX_BOARD_VIEW_BYTES with an
+// explicit boardViewTruncated story — never a silent drop.
+export function projectBoardView(snapshot, viewer = {}, cache = null) {
+  const board = snapshot?.board ?? null;
+  const boardFence = Number.isSafeInteger(snapshot?.boardFence) ? snapshot.boardFence : 0;
+  const workerId = viewer.workerId ?? null;
+  const role = viewer.role === 'orchestrator' ? 'orchestrator' : 'worker';
+  const cacheKey = `${board} ${role}:${workerId ?? ''} ${boardFence}`;
+  if (cache && cache.has(cacheKey)) return cache.get(cacheKey);
+
+  const claimByItem = new Map((snapshot?.claims ?? []).map((claim) => [claim.itemId, claim]));
+  const reportsByItem = new Map();
+  for (const report of snapshot?.reports ?? []) {
+    if (!reportsByItem.has(report.itemId)) reportsByItem.set(report.itemId, []);
+    reportsByItem.get(report.itemId).push(report);
+  }
+  // Per-worker filter (§3.2 lines 149-152): orchestrator sees all; a worker sees the shared items
+  // it owns plus everything on its own board (board === workerId).
+  const visible = (snapshot?.items ?? []).filter((item) =>
+    role === 'orchestrator' || item.owner === workerId || board === workerId);
+  let boardViewTruncated = visible.length > MAX_BOARD_ITEMS;
+  const project = (item) => {
+    const claim = claimByItem.get(item.itemId);
+    const active = !!(claim && claim.active);
+    const status = item.state === 'open' ? (active ? 'claimed' : 'open') : item.state;
+    return {
+      itemId: item.itemId, itemVersion: item.itemVersion, board: item.board,
+      title: wrapProse(item.owner ?? board, boundedAttentionText(item.title)),
+      detail: item.detail == null ? null : wrapProse(item.owner ?? board, boundedAttentionText(item.detail)),
+      state: item.state, status, owner: item.owner ?? null, ordinal: item.ordinal, itemDigest: item.itemDigest,
+      claim: active ? { owner: claim.owner, itemVersion: claim.itemVersion, boardFence: claim.boardFence } : null,
+      reports: (reportsByItem.get(item.itemId) ?? []).map((report) => ({
+        itemVersion: report.itemVersion, itemDigest: report.itemDigest, owner: report.owner,
+        body: wrapProse(report.owner, boundedAttentionText(report.body)),
+      })),
+    };
+  };
+  let items = visible.slice(0, MAX_BOARD_ITEMS).map(project);
+  const build = () => Object.freeze({
+    board, boardFence, viewer: Object.freeze({ workerId, role }),
+    items: Object.freeze(items), boardViewTruncated,
+  });
+  let view = build();
+  // Byte ceiling: shed the trailing item and re-flag until under MAX_BOARD_VIEW_BYTES (never silent).
+  while (Buffer.byteLength(JSON.stringify(view)) > MAX_BOARD_VIEW_BYTES && items.length > 0) {
+    items = items.slice(0, items.length - 1);
+    boardViewTruncated = true;
+    view = build();
+  }
+  if (cache) cache.set(cacheKey, view);
+  return view;
 }
 
 function normalizeAnswer(value) {
