@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
+import { wrapProse } from './messages.mjs';
 import {
   normalizeGoalRequest, normalizePlanRequest, planRouteAuthorityState, planRouteMatches,
   planSingleExactRoute,
@@ -223,16 +224,44 @@ function boundedBlockedInteractionSummary(value) {
 
 // AX-1 rule 1/2: the single projection helper for `blockedInteraction`, consumed identically
 // by the single-attempt view, the workflow view, and (through those) `runs.list` and the CLI
-// outline. `kind:'decision'` is reserved (issue #16) but never emitted here.
+// outline. issue #16: `kind:'decision'` (AX-1's blocked_interaction:decision projection).
 function projectBlockedInteraction(phase, attention) {
   if (phase === 'awaiting_plan_approval') return { kind: 'approve_plan' };
   if (phase === 'selection_required') return { kind: 'select_candidate' };
   const pending = (attention ?? []).find((entry) => (
-    entry?.kind === 'answer_question' || entry?.kind === 'answer_approval'
+    entry?.kind === 'answer_question' || entry?.kind === 'answer_approval' || entry?.kind === 'answer_decision'
   ));
   if (!pending) return null;
+  if (pending.kind === 'answer_decision') return { kind: 'decision', summary: boundedBlockedInteractionSummary(pending.question) };
   const text = pending.kind === 'answer_question' ? pending.question : pending.approvalKind;
   return { kind: 'answer_question', summary: boundedBlockedInteractionSummary(text) };
+}
+
+// Part B (issue #16): project every worker's pending decision request (if any) into the
+// same sanitized/bounded/provenance-marked shape the question/approval attention entries
+// use. `recommended` is worker-authored content nudging the human toward an option — it is
+// wrapped as untrusted prose (never hub-styled), per F14.
+function projectDecisionAttention(coordinator, workers) {
+  const entries = [];
+  for (const handle of workers) {
+    if (!handle.pendingDecisionId) continue;
+    const interaction = coordinator.interactionStatus(handle.pendingDecisionId);
+    if (!interaction || interaction.kind !== 'decision' || interaction.state !== 'pending') continue;
+    entries.push({
+      kind: 'answer_decision',
+      workerId: handle.id,
+      requestId: handle.pendingDecisionId,
+      question: boundedAttentionText(interaction.question),
+      options: (interaction.options ?? []).map((opt) => ({
+        id: opt.id,
+        label: boundedAttentionText(opt.label),
+        summary: opt.summary != null ? boundedAttentionText(opt.summary) : null,
+      })),
+      allowFreeResponse: interaction.allowFreeResponse === true,
+      recommended: interaction.recommended ? wrapProse(handle.id, interaction.recommended) : null,
+    });
+  }
+  return entries;
 }
 
 function normalizeAnswer(value) {
@@ -249,7 +278,29 @@ function normalizeAnswer(value) {
   if (Object.keys(value).sort().join(',') === 'decision' && ['allow', 'deny', 'cancel'].includes(value.decision)) {
     return { decision: value.decision };
   }
+  // Part B (issue #16): the typed decision-channel answer shape. `optionId ∈ options` is a
+  // per-record check the coordinator makes (this layer does not know the request's option
+  // set); this is shape-only, mirroring messages.mjs createDecisionAnswer.
+  if (Object.keys(value).sort().join(',') === 'optionId' && validId(value.optionId)) {
+    return { optionId: value.optionId };
+  }
   throw applicationError('Run answer is invalid', 'application_answer_invalid');
+}
+
+// F3: the answer shape must match the pending interaction's own kind, checked at the hub
+// BEFORE any adapter call — a {decision} answer may only settle an approval-kind record, a
+// {text} answer a question-kind (or free-response decision) record, and {optionId} only a
+// decision-kind record. Unrecognized interaction kinds (e.g. publication, answered through a
+// different surface) are left unchecked here rather than silently forbidden.
+function assertAnswerKindMatches(interactionKind, answer) {
+  if (!['approval', 'question', 'decision'].includes(interactionKind)) return;
+  const answerKind = Object.keys(answer)[0];
+  const matches = (interactionKind === 'approval' && answerKind === 'decision')
+    || (interactionKind === 'question' && answerKind === 'text')
+    || (interactionKind === 'decision' && (answerKind === 'optionId' || answerKind === 'text'));
+  if (!matches) {
+    throw applicationError('Run answer does not match the pending interaction kind', 'application_answer_kind_mismatch');
+  }
 }
 
 function normalizeSteer(value) {
@@ -6213,6 +6264,7 @@ export class BatonApplication {
           approvalKind: request.kind,
         })),
       ]);
+    const decisionAttention = projectDecisionAttention(this.driver.coordinator, workers);
     const selectionAttention = phase === 'selection_required' ? [{
       kind: 'candidate_selection', state: 'required',
       summary: 'Parallel Candidates are verified; operator selection is required.',
@@ -6235,8 +6287,8 @@ export class BatonApplication {
       summary: 'Reusable provider-session attachment is unproven; whole-Run stop is the only safe action.',
     }] : [];
     const attention = [
-      ...workerAttention, ...selectionAttention, ...revisionAttention, ...recoveryAttention,
-      ...preservationAttention,
+      ...workerAttention, ...decisionAttention, ...selectionAttention, ...revisionAttention,
+      ...recoveryAttention, ...preservationAttention,
     ].slice(0, MAX_ATTENTION);
     const blockedInteraction = projectBlockedInteraction(phase, attention);
     const terminalCause = attempts.find((attempt) => attempt.terminalCause)?.terminalCause ?? null;
@@ -6537,6 +6589,7 @@ export class BatonApplication {
           approvalKind: request.kind,
         })),
       ]);
+    allAttention.push(...projectDecisionAttention(this.driver.coordinator, workers));
     if (phase === 'interruption_uncertain') {
       allAttention.push({
         kind: 'session_preservation', state: 'quarantined',
@@ -8228,7 +8281,7 @@ export class BatonApplication {
       }
     }
     for (const attention of view.attention ?? []) {
-      if (!['answer_approval', 'answer_question'].includes(attention.kind)
+      if (!['answer_approval', 'answer_question', 'answer_decision'].includes(attention.kind)
         || !validText(attention.requestId, 4_096)) continue;
       const target = {
         kind: attention.kind,
@@ -8236,7 +8289,9 @@ export class BatonApplication {
         requestId: attention.requestId,
         ...(attention.kind === 'answer_approval'
           ? { approvalKind: attention.approvalKind ?? null }
-          : { question: attention.question ?? null }),
+          : attention.kind === 'answer_decision'
+            ? { question: attention.question ?? null, options: attention.options ?? [], allowFreeResponse: attention.allowFreeResponse === true }
+            : { question: attention.question ?? null }),
       };
       candidates.push({ kind: attention.kind, source: attention, target });
     }
@@ -9971,6 +10026,20 @@ export class BatonApplication {
         throw applicationError('Run action inputs are invalid', 'application_action_input_invalid');
       }
       await this.answer(request.runId, action.target.requestId, { text: request.inputs.text }, principal);
+    } else if (action.kind === 'answer_decision') {
+      if (!validText(action.target?.requestId, 4_096)) {
+        throw applicationError('Run action inputs are invalid', 'application_action_input_invalid');
+      }
+      const hasOptionId = request.inputs.optionId !== undefined && request.inputs.optionId !== null;
+      const hasText = request.inputs.text !== undefined && request.inputs.text !== null;
+      if (hasOptionId === hasText
+        || (hasOptionId && !validId(request.inputs.optionId))
+        || (hasText && (!validText(request.inputs.text, MAX_ATTENTION_TEXT_BYTES)
+          || SECRET_SHAPED_TEXT.some((pattern) => pattern.test(request.inputs.text))))) {
+        throw applicationError('Run action inputs are invalid', 'application_action_input_invalid');
+      }
+      await this.answer(request.runId, action.target.requestId,
+        hasOptionId ? { optionId: request.inputs.optionId } : { text: request.inputs.text }, principal);
     } else if (action.kind === 'select_candidate') {
       if (!action.choices.includes(request.inputs.role)
         || !validText(request.inputs.reason, 1_024)) {
@@ -10221,6 +10290,7 @@ export class BatonApplication {
     if (!interaction || interaction.runId !== runId) {
       throw applicationError('Run interaction is unavailable', 'application_interaction_not_found');
     }
+    assertAnswerKindMatches(interaction.kind, answer);
     const outcome = await this.driver.coordinator.respond(requestId, answer, principal.actor);
     const current = this._findRun(runId);
     return this._buildView(current, this.principals.observer, {
