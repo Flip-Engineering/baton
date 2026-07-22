@@ -39,3 +39,13 @@ export function normalizeRunLineagePolicy(value = DEFAULT_RUN_LINEAGE_POLICY) {
   }
   return Object.freeze({ ...value });
 }
+
+// REPL-1 (docs/33 §4, rule 9): the per-run ceiling on admitted ReplManifests. Its home is the
+// run-lineage policy FAMILY — NOT the context-program policy, whose field set feeds `policyDigest`
+// and would perturb every manifest/session digest. It is kept OFF the digested `_runLineagePolicy`
+// body so it never perturbs the lease payload digest; the store derives it separately.
+// Derivation (No-Arbitrary-Numeric-Limits rule): one admitted manifest per REPL layer per run —
+// the single `shared` layer plus one `worker:<id>` layer per worker child (maxChildrenPerRun).
+export function deriveMaxReplManifestsPerRun(policy) {
+  return policy ? policy.maxChildrenPerRun + 1 : null;
+}

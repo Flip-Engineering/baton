@@ -9160,6 +9160,22 @@ export class Coordinator {
       { actor: opts.actor ?? 'worker', key: opts.idempotencyKey });
   }
 
+  // REPL-1 (rule 7): a worker admits a ReplManifest into its OWN layer only. The wrapper resolves
+  // the worker handle's task and derives principalId/repoId/runId from it (widening the board-claim
+  // {actor,key} precedent), threading them into `auth`; `replRole` passes through unaltered
+  // (digest-covered). The STORE then verifies replRole === 'worker:' + auth.principalId.
+  admitReplManifest(workerId, fields, opts = {}) {
+    this.tick();
+    const handle = this._getWorker(workerId);
+    const task = this._tasks.get(handle.taskId);
+    if (!task || !['working', 'input_required'].includes(task.status)) return { ok: false, result: 'task_not_active' };
+    if (typeof opts.idempotencyKey !== 'string' || opts.idempotencyKey.length === 0) throw new TypeError('ReplManifest admission requires idempotencyKey');
+    return this._coordination.admitReplManifest(fields, {
+      actor: opts.actor ?? 'worker', key: opts.idempotencyKey,
+      principalId: workerId, repoId: this._repoId, runId: task.runId,
+    });
+  }
+
   submitBoardReport(workerId, fields, opts = {}) {
     this.tick();
     const handle = this._getWorker(workerId);

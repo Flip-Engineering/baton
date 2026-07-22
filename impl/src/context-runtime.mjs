@@ -9,6 +9,7 @@ import { fileURLToPath } from 'node:url';
 import {
   DEFAULT_CONTEXT_PROGRAM_POLICY, DurableContextSession, StatelessContextBench,
   contextValueDigest, normalizeContextManifest, normalizeContextProgramPolicy,
+  normalizeReplManifest,
 } from './context-program.mjs';
 import { normalizeContextEffectCall } from './context-call.mjs';
 import { normalizeContextMapCall } from './context-map.mjs';
@@ -1197,6 +1198,9 @@ export class RepositoryContextRuntime {
     }
     const existing = (this.coordination.snapshot().context?.sessions ?? []).find((session) => (
       session.state === 'active'
+      // REPL-1 (rule 13a): REPL sessions ride the same _contextSessions map; guard every
+      // unguarded `.workflow.*` deref so one REPL session cannot wedge Workflow openSession.
+      && session.manifest.kind === 'baton.context_manifest'
       && session.repoId === this.repoId
       && session.runId === current.goal.runId
       && session.manifest.tree.sha === this.treeSha
@@ -1279,6 +1283,47 @@ export class RepositoryContextRuntime {
         actor: principal.actor, principalId: principal.principalId,
         repoId: this.repoId, runId: current.goal.runId,
       },
+      execute: (request) => this._executeOwned('execute', {
+        artifactRoot: this.bench.artifactRoot,
+        environmentDigest: this.environmentDigest,
+        policy: this.policy,
+        ...request,
+      }, signal),
+    });
+  }
+
+  // REPL-1 (rule 11): open a DurableContextSession against a settled repl.manifest_admitted
+  // record instead of a Plan-gated Attempt. The constructor's admit-on-construct shape is
+  // preserved; only the injected admitSession routes to admitReplSession.
+  openReplSession({ manifest, principal, signal = null }) {
+    if (!this.coordination) throw runtimeError('Repository Context runtime is not attached');
+    let normalized;
+    try { normalized = normalizeReplManifest(manifest, this.policy); }
+    catch (error) {
+      throw runtimeError(error?.message ?? 'ReplManifest is invalid',
+        error?.code ?? 'repl_manifest_invalid');
+    }
+    const record = typeof this.coordination.replManifestAdmission === 'function'
+      ? this.coordination.replManifestAdmission(normalized.digest) : null;
+    if (!record || record.repoId !== this.repoId) {
+      throw runtimeError('ReplManifest is not durably admitted', 'repl_session_unadmitted');
+    }
+    if (!principal || typeof principal !== 'object'
+      || principal.actor !== record.principal.actor
+      || principal.principalId !== record.principal.principalId
+      || principal.repoId !== this.repoId || principal.runId !== record.runId) {
+      throw runtimeError('ReplManifest principal does not match the admission record',
+        'repl_session_unauthorized');
+    }
+    return new DurableContextSession({
+      coordination: this.coordination,
+      bench: this.bench,
+      manifest: normalized,
+      principal: {
+        actor: record.principal.actor, principalId: record.principal.principalId,
+        repoId: this.repoId, runId: record.runId,
+      },
+      admitSession: (fields, auth) => this.coordination.admitReplSession(fields, auth),
       execute: (request) => this._executeOwned('execute', {
         artifactRoot: this.bench.artifactRoot,
         environmentDigest: this.environmentDigest,
