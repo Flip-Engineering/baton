@@ -1,0 +1,77 @@
+{
+  "schemaVersion": 1,
+  "outcomes": [
+    {
+      "role": "repl1-reviser",
+      "phase": "work_completed",
+      "terminal": false,
+      "narrative": "0 worker(s) active, 1 done.",
+      "resultSha": "2131e688e0f75ccefe040a7c4d843f7d50a20106"
+    },
+    {
+      "role": "repl23-reviser",
+      "phase": "work_completed",
+      "terminal": false,
+      "narrative": "0 worker(s) active, 1 done.",
+      "resultSha": "a076d9f3911b38262f963ff295de2660491b4890"
+    },
+    {
+      "role": "kg12-reviser",
+      "phase": "work_completed",
+      "terminal": false,
+      "narrative": "0 worker(s) active, 1 done.",
+      "resultSha": "290c7f4cf2e34a6cd88502f255525ae1fe3c06c4"
+    },
+    {
+      "role": "kg34-reviser",
+      "phase": "work_completed",
+      "terminal": false,
+      "narrative": "0 worker(s) active, 1 done.",
+      "resultSha": "25d43048b6eebf4fa36973318b913c9c9e714057"
+    }
+  ],
+  "stops": [
+    {
+      "role": "repl1-reviser",
+      "stop": null,
+      "resources": {
+        "state": "stopped",
+        "cleanupState": "stopped",
+        "ownedCount": 0
+      },
+      "ownedCount": 0
+    },
+    {
+      "role": "repl23-reviser",
+      "stop": null,
+      "resources": {
+        "state": "stopped",
+        "cleanupState": "stopped",
+        "ownedCount": 0
+      },
+      "ownedCount": 0
+    },
+    {
+      "role": "kg12-reviser",
+      "stop": null,
+      "resources": {
+        "state": "stopped",
+        "cleanupState": "stopped",
+        "ownedCount": 0
+      },
+      "ownedCount": 0
+    },
+    {
+      "role": "kg34-reviser",
+      "stop": null,
+      "resources": {
+        "state": "stopped",
+        "cleanupState": "stopped",
+        "ownedCount": 0
+      },
+      "ownedCount": 0
+    }
+  ],
+  "remainingCount": 0,
+  "residueUnknown": false
+}
