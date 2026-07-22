@@ -1,5 +1,5 @@
 import {
-  contextValueDigest, normalizeContextManifest, normalizeContextProgram,
+  contextValueDigest, normalizeContextProgram, normalizeManifestAny,
 } from './context-program.mjs';
 import { normalizeContextProgramPolicy } from './context-program-policy.mjs';
 
@@ -58,7 +58,7 @@ export function contextProgramIsPure(program, policy) {
 
 export function contextProgramInputRefs(program, manifest, policy) {
   const normalizedProgram = normalizeContextProgram(program, policy);
-  const normalizedManifest = normalizeContextManifest(manifest, policy);
+  const normalizedManifest = normalizeManifestAny(manifest, policy);
   const branches = new Map(normalizedManifest.branches.map((branch) => [branch.name, branch]));
   const refs = new Map();
   for (const expression of expressions(normalizedProgram.expression)) {
@@ -79,15 +79,21 @@ export function contextProgramInputRefs(program, manifest, policy) {
 
 export function contextSessionIdentity({ manifest, environmentDigest, policy }) {
   const normalizedPolicy = normalizeContextProgramPolicy(policy);
-  const normalizedManifest = normalizeContextManifest(manifest, normalizedPolicy);
+  const normalizedManifest = normalizeManifestAny(manifest, normalizedPolicy);
   if (!DIGEST.test(environmentDigest ?? '')) {
     throw authorityError('Context session environment digest is invalid', 'context_session_invalid');
   }
+  // Rule 4b: `runId` is the only manifest-kind-specific field of the session identity core — a
+  // REPL manifest carries it on `repl.runId`, a Workflow manifest on `workflow.runId`. Everything
+  // else (repoId, tree, manifestDigest, environmentDigest, policyDigest, the sessionId derivation)
+  // is kind-agnostic, so a REPL and a Workflow session never collide on sessionId (their
+  // manifestDigests differ by basis).
   const core = {
     schemaVersion: 1,
     kind: 'baton.context_session',
     repoId: normalizedManifest.repoId,
-    runId: normalizedManifest.workflow.runId,
+    runId: normalizedManifest.kind === 'baton.repl_manifest'
+      ? normalizedManifest.repl.runId : normalizedManifest.workflow.runId,
     manifestDigest: normalizedManifest.digest,
     environmentDigest,
     policyDigest: normalizedPolicy.policyDigest,
