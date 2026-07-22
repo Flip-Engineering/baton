@@ -640,7 +640,14 @@ function builtInAdapters(routes, repoRoot) {
         cmd: kimiCommand, requestTimeoutMs: 45_000, model: route.model, modelCatalog: catalog, ceiling: 1,
       });
     } else if (route.harness === 'claude-code' && (route.provider ?? 'claude') === 'claude') {
-      adapters[key] = new ClaudeSessionCli({ model: route.model, approvals: false, ceiling: 4 });
+      // Wave workloads legitimately produce >1MiB stream-json frames (large ranged reads,
+      // suite outputs). 1MiB (the library default) killed three seats mid-work tonight
+      // (issue #28). The deployment deliberately opts up to 8MiB, env-overridable; the
+      // graceful-degradation half of #28 (refuse/truncate instead of kill) remains open.
+      const envCeiling = Number.parseInt(process.env.BATON_CLAUDE_MAX_WIRE_FRAME_BYTES ?? '', 10);
+      const maxWireFrameBytes = Number.isSafeInteger(envCeiling) && envCeiling > 0
+        ? envCeiling : 8 * 1024 * 1024;
+      adapters[key] = new ClaudeSessionCli({ model: route.model, approvals: false, ceiling: 4, maxWireFrameBytes });
     } else if (route.harness === 'claude-code' && route.provider === 'kimi') {
       const credential = kimiThroughClaudeCredential();
       if (!existingRegular(credential)) throw deploymentError('Kimi-through-Claude requires the private Baton Kimi credential file');

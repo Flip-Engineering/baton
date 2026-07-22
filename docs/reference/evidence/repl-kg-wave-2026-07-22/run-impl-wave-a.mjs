@@ -41,6 +41,7 @@ const MEMBERS = Object.freeze([
     scope: Object.freeze([
       'impl/src/context-authority.mjs', 'impl/src/context-program.mjs', 'impl/src/context-runtime.mjs',
       'impl/src/coordination-store.mjs', 'impl/src/coordinator.mjs', 'impl/src/application.mjs',
+      'impl/src/run-lineage.mjs',
       'impl/test/repl1-manifest-red.test.mjs', 'impl/test/repl1-kind-inventory-red.test.mjs',
     ]),
     report: null,
