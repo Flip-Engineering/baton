@@ -48,11 +48,23 @@ const CAPABILITY = Object.freeze({
   fleet_capability_invoke: 'control', fleet_reuse_decide: 'control', fleet_reuse_recheck: 'control', fleet_kill: 'emergency_stop', fleet_drain: 'emergency_stop',
   ...Object.fromEntries(MCP_APPLICATION_ENTRIES.map(([tool, , definition]) => [tool, definition.capabilities])),
   ...Object.fromEntries(ORDINARY_APPLICATION_ENTRIES.map(([tool, , definition]) => [tool, definition.capabilities])),
+  // Reflex surface contract Part A (docs/reference/evidence/mcp-reflex-live-2026-07-22/
+  // mcp-reflex-surface-decisions.md, table): reflex tools are in NEITHER derivation set above —
+  // every reflex tool MUST be registered explicitly here, or `_authority` computes
+  // `[undefined]` and refuses with `forbidden`.
+  baton_context_eval: ['observe'],
+  baton_decision_list: ['observe'],
+  baton_decision_answer: ['approve', 'observe'],
 });
+// Reflex surface contract Part A: the tool names bound by explicit `_dispatch` branches below
+// (never APPLICATION_COMMAND_DEFINITIONS keys — Part A.2), used to extend the read-only error
+// gate (Part F) so their typed application_* refusal codes reach the caller.
+const REFLEX_TOOL_NAMES = new Set(['baton_context_eval', 'baton_decision_list', 'baton_decision_answer']);
 const STATEFUL = new Set(['fleet_spawn', 'fleet_scratch_oracle', 'fleet_goal_define', 'fleet_plan_propose', 'fleet_plan_approve', 'fleet_send', 'fleet_respond', 'fleet_interrupt', 'fleet_capability_invoke', 'fleet_reuse_decide', 'fleet_reuse_recheck', 'fleet_kill', 'fleet_drain',
+  'baton_context_eval', 'baton_decision_answer',
   ...MCP_APPLICATION_ENTRIES.filter(([, , definition]) => definition.mcpStateful).map(([tool]) => tool)]);
 for (const [tool, , definition] of ORDINARY_APPLICATION_ENTRIES) if (definition.mcpStateful) STATEFUL.add(tool);
-const RECONCILABLE = new Set(['fleet_goal_define', 'fleet_plan_propose', 'fleet_plan_approve',
+const RECONCILABLE = new Set(['fleet_goal_define', 'fleet_plan_propose', 'fleet_plan_approve', 'baton_context_eval', 'baton_decision_answer',
   ...MCP_APPLICATION_ENTRIES.filter(([, , definition]) => definition.mcpStateful && definition.reconcilable).map(([tool]) => tool)]);
 for (const [tool, , definition] of ORDINARY_APPLICATION_ENTRIES) if (definition.mcpStateful && definition.reconcilable) RECONCILABLE.add(tool);
 const GOAL_PLAN_MUTATIONS = new Set(['fleet_goal_define', 'fleet_plan_propose', 'fleet_plan_approve']);
@@ -389,7 +401,39 @@ const ADVANCED_TOOL_DEFINITIONS = Object.freeze([
   { name: 'fleet_kill', description: 'Kill and reap one fenced worker.', inputSchema: schema({ ...repo, ...idem, ...fence, workerId: text }, ['repoId', 'idempotencyKey', 'expectedFence', 'workerId']), annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false } },
   { name: 'fleet_drain', description: 'Drain and reap the coordinator-owned local fleet while retaining transport and writer authority.', inputSchema: schema({ ...repo, ...idem }, ['repoId', 'idempotencyKey']), annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false } },
 ].map((tool) => Object.freeze({ ...tool, execution: Object.freeze({ taskSupport: 'forbidden' }) })));
-const TOOL_DEFINITIONS = Object.freeze([...ORDINARY_APPLICATION_TOOL_DEFINITIONS, ...APPLICATION_TOOL_DEFINITIONS, ...ADVANCED_TOOL_DEFINITIONS]);
+// Reflex surface contract Part A.1: a fourth tool table (all `baton_*`-named), frozen with
+// `execution: { taskSupport: 'forbidden' }` and stamped with `_meta` exactly like the ordinary
+// table above — NOT added to ORDINARY (those map 1:1 onto APPLICATION_COMMAND_DEFINITIONS) nor
+// ADVANCED (fleet_* audience). Slice 1: context_eval (Part B) + decision tools (Part C).
+const REFLEX_TOOL_DEFINITIONS = Object.freeze([
+  {
+    name: 'baton_context_eval',
+    description: 'Evaluate one pure, closed Context program against an existing durably-admitted Context session, addressed by Run (with optional role) or by manifest digest.',
+    inputSchema: schema({
+      ...repo, ...idem, runId, manifestDigest: digest, role: runId, program: { type: 'object' },
+    }, ['repoId', 'idempotencyKey', 'program']),
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  {
+    name: 'baton_decision_list',
+    description: 'List one Run\'s pending decision requests awaiting an answer, sanitized and bounded.',
+    inputSchema: schema({ ...repo, runId }, ['repoId', 'runId']),
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  {
+    name: 'baton_decision_answer',
+    description: 'Answer one pending decision request by typed option or free-response text.',
+    inputSchema: schema({
+      ...repo, ...idem, runId, requestId: { type: 'string', minLength: 1, maxLength: 4_096 }, answer: applicationAnswerSchema,
+    }, ['repoId', 'idempotencyKey', 'runId', 'requestId', 'answer']),
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+].map((tool) => Object.freeze({
+  ...tool,
+  _meta: Object.freeze({ 'baton/registryDigest': APPLICATION_SEMANTIC_REGISTRY.digest }),
+  execution: Object.freeze({ taskSupport: 'forbidden' }),
+})));
+const TOOL_DEFINITIONS = Object.freeze([...ORDINARY_APPLICATION_TOOL_DEFINITIONS, ...APPLICATION_TOOL_DEFINITIONS, ...ADVANCED_TOOL_DEFINITIONS, ...REFLEX_TOOL_DEFINITIONS]);
 const TOOL_BY_NAME = new Map(TOOL_DEFINITIONS.map((tool) => [tool.name, tool]));
 
 function closedRecord(value, fields) {
@@ -553,6 +597,15 @@ function validateArguments(name, args, maxWaitMs = null) {
   if (name === 'fleet_send' && (!nonempty(args.message) || !['turn', 'steer', 'nudge'].includes(args.mode))) return 'invalid_send';
   if (name === 'fleet_respond' && !nonempty(args.requestId)) return 'invalid_request';
   if (name === 'fleet_wait' && Object.hasOwn(args, 'timeoutMs') && (!Number.isSafeInteger(args.timeoutMs) || args.timeoutMs < 0)) return 'invalid_timeout';
+  // Reflex surface contract Part C.7 (R6): the advertised `answer` `oneOf` is never evaluated
+  // server-side (hand-rolled validation stays the discipline, Part I), so this tool's own
+  // answer-shape guard must reject any key other than `optionId`/`text` BEFORE hub dispatch —
+  // `{decision}` would otherwise reach `run.answer` and settle an APPROVAL through this
+  // decision-only tool. Kind-matching against the pending interaction stays hub-side.
+  if (name === 'baton_decision_answer') {
+    const answerKeys = record(args.answer) ? Object.keys(args.answer) : [];
+    if (answerKeys.length !== 1 || !['optionId', 'text'].includes(answerKeys[0])) return 'invalid_arguments';
+  }
   if (name === 'fleet_capability_invoke') {
     if (!/^[A-Za-z0-9._:-]{1,128}$/.test(args.name ?? '') || !nonempty(args.op) || args.op.length > 256
       || !Number.isSafeInteger(args.budgetTokens) || args.budgetTokens <= 0) return 'invalid_capability_invocation';
@@ -848,7 +901,9 @@ export class McpFleetServer {
       } catch (cause) {
         try { this._audit('tool_failed', name, args, 'command_failed'); }
         catch { return toolError('temporarily_unavailable'); }
-        return toolError(name === 'fleet_goal_plan_status' || APPLICATION_TOOL[name] ? stateFailureCode(cause) : 'command_failed');
+        // Part F: read-only reflex tools (not APPLICATION_TOOL-registered — Part A.2) map typed
+        // codes too, never the generic 'command_failed'.
+        return toolError(name === 'fleet_goal_plan_status' || APPLICATION_TOOL[name] || REFLEX_TOOL_NAMES.has(name) ? stateFailureCode(cause) : 'command_failed');
       }
     }
     const callId = randomUUID();
@@ -1010,13 +1065,6 @@ export class McpFleetServer {
   async _dispatch(name, args, actor, callId, principal = this.principal, semanticAuthority = null) {
     let value;
     if (APPLICATION_TOOL[name]) {
-      const lease = typeof this.coordination.activeRunOrchestratorLeaseForSession === 'function'
-        ? this.coordination.activeRunOrchestratorLeaseForSession({
-          repoId: args.repoId,
-          principalId: principal.userId,
-          sessionId: principal.sessionId,
-          expiresAt: principal.expiresAt,
-        }) : null;
       value = await this.application.command(
         APPLICATION_TOOL[name],
         applicationArgs(name, args),
@@ -1026,20 +1074,44 @@ export class McpFleetServer {
           sessionId: principal.sessionId,
         },
         {
-          transport: 'mcp', requestId: String(callId), idempotencyKey: `mcp.call:${callId}`,
-          capabilityAuthority: northboundCapabilityToken('mcp'),
-          capabilities: [...principal.capabilities],
-          ...(APPLICATION_TOOL[name] === 'run.act' ? {
-            semanticAuthority,
-          } : {}),
-          ...(lease ? { sessionAuthority: {
-            schemaVersion: 1,
-            authorityDigest: lease.session.authorityDigest,
-            expiresAt: lease.session.expiresAt,
-            orchestratorLeaseId: lease.leaseId,
-          } } : {}),
+          ...this._applicationDispatchContext(args, callId, principal),
+          ...(APPLICATION_TOOL[name] === 'run.act' ? { semanticAuthority } : {}),
         },
       );
+    }
+    // Reflex surface contract Part B: an explicit branch (never an APPLICATION_COMMAND_DEFINITIONS
+    // key — Part A.2) calling the direct command port `application.contextEval(...)`. The branch
+    // STRIPS repoId/idempotencyKey before the call; `validateContextEvalArgs` refuses unknown
+    // keys, so everything else in `args` (runId/manifestDigest/role/program) passes through
+    // unchanged for the method's own exactly-one-of enforcement.
+    else if (name === 'baton_context_eval') {
+      const { repoId: _repoId, idempotencyKey: _idempotencyKey, ...request } = args;
+      value = await this.application.contextEval(request, {
+        actor: actor ?? `mcp:${principal.userId}:${principal.sessionId}`,
+        principalId: principal.userId,
+        sessionId: principal.sessionId,
+      }, this._applicationDispatchContext(args, callId, principal));
+    }
+    // Reflex surface contract Part C.6: a read-only direct command port reading
+    // `projectDecisionAttention` for the Run's own workers — never a ledger event.
+    else if (name === 'baton_decision_list') {
+      value = await this.application.decisionList({ runId: args.runId }, {
+        actor: actor ?? `mcp:${principal.userId}:${principal.sessionId}`,
+        principalId: principal.userId,
+        sessionId: principal.sessionId,
+      }, { transport: 'mcp', requestId: String(callId), idempotencyKey: `mcp.call:${callId}` });
+    }
+    // Reflex surface contract Part C.7: the generic `run.answer` branch's lease/sessionAuthority
+    // passthrough, reused verbatim via `_applicationDispatchContext` — the answer-shape guard
+    // (R6) already ran in `validateArguments` before dispatch ever reaches here.
+    else if (name === 'baton_decision_answer') {
+      value = await this.application.command('run.answer', {
+        runId: args.runId, requestId: args.requestId, answer: args.answer,
+      }, {
+        actor: actor ?? `mcp:${principal.userId}:${principal.sessionId}`,
+        principalId: principal.userId,
+        sessionId: principal.sessionId,
+      }, this._applicationDispatchContext(args, callId, principal));
     }
     else if (name === 'fleet_spawn') value = await this.coordinator.spawn(args.harness, args.brief, {
       model: args.model, effort: args.effort, modelPolicy: args.modelPolicy, taskId: args.taskId ?? `mcp-${callId}`,
@@ -1095,6 +1167,30 @@ export class McpFleetServer {
       throw Object.assign(new Error('RunView exceeds the MCP response ceiling'), { code: 'application_run_view_oversize' });
     }
     return normalized(GOAL_PLAN_MUTATIONS.has(name) ? sanitizeGoalPlanProjection(value) : value);
+  }
+
+  // Shared by the generic APPLICATION_TOOL branch and the explicit reflex branches (Part B/C.7):
+  // transport/requestId/idempotencyKey/capabilityAuthority/capabilities, plus sessionAuthority
+  // only when a live run-orchestrator lease exists for this session.
+  _applicationDispatchContext(args, callId, principal = this.principal) {
+    const lease = typeof this.coordination.activeRunOrchestratorLeaseForSession === 'function'
+      ? this.coordination.activeRunOrchestratorLeaseForSession({
+        repoId: args.repoId,
+        principalId: principal.userId,
+        sessionId: principal.sessionId,
+        expiresAt: principal.expiresAt,
+      }) : null;
+    return {
+      transport: 'mcp', requestId: String(callId), idempotencyKey: `mcp.call:${callId}`,
+      capabilityAuthority: northboundCapabilityToken('mcp'),
+      capabilities: [...principal.capabilities],
+      ...(lease ? { sessionAuthority: {
+        schemaVersion: 1,
+        authorityDigest: lease.session.authorityDigest,
+        expiresAt: lease.session.expiresAt,
+        orchestratorLeaseId: lease.leaseId,
+      } } : {}),
+    };
   }
 
   _goalPlanContext(name, args, actor, callId, principal = this.principal) {
