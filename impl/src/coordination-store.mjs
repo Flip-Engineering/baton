@@ -107,6 +107,7 @@ const PROJECTION_CHECKPOINT_FIELDS = Object.freeze([
   '_boardItems', '_boardItemHistory', '_boardItemsByBoard', '_boardClaims',
   '_boardReports', '_boardFences',
   '_contextPackages', '_contextPackageAttachments',
+  '_replManifestAdmissions', '_replBindings', '_replBindingHistory', '_replBindingFences',
 ]);
 
 const TERMINAL = new Set(['completed', 'failed', 'cancelled']);
@@ -306,6 +307,31 @@ function boardItemContentDigest(core) {
     detail: core.detail, state: core.state, owner: core.owner, evidence: core.evidence, ordinal: core.ordinal,
   });
 }
+
+// REPL-2/REPL-3 (docs/33 §3.2/§3.3, issues #22/#23; contract: docs/reference/evidence/
+// repl-kg-wave-2026-07-22/repl23-decisions.md). `name`'s charset deliberately excludes `:`
+// (Part A rule 1) — unlike the generic SAFE_ID grammar — because `scope`'s own `worker:<id>`
+// segment legitimately contains `:`; excluding it from `name` alone keeps the citation grammar
+// (Part E) injective regardless of how many colons a worker id carries.
+const REPL_SCOPE = /^(shared|worker:[A-Za-z0-9._:-]{1,256})$/;
+const REPL_NAME = /^[A-Za-z0-9._-]{1,128}$/;
+const REPL_CELL_ID = /^cell:[a-f0-9]{64}$/;
+const REPL_CITATION = /^repl:(shared|worker:[A-Za-z0-9._:-]{1,256}):([A-Za-z0-9._-]{1,128})@([1-9][0-9]*)$/;
+const MAX_REPL_BINDINGS = 4_096;
+
+// REPL1-INTEGRATION: `repl.manifest_admitted` is REPL-1's authority record
+// (repl1-decisions.md Part B); REPL-2/REPL-3 bindings and `cell:` composition are built
+// directly against its shape (a `manifestDigest` resolving to `{runId, replRole, principal}`).
+// REPL-1's own admission surface (`normalizeReplManifest`, lease/wrapper authority per
+// repl1-decisions.md rules 6-9) has not landed in this tree. `SAFE_REPL_RUN_ID`/`REPL_ROLE`
+// and `admitReplManifest` below are a deliberately minimal stand-in — just enough for REPL-2's
+// Part B rule 4 lookup and REPL-3's Part F resolution to have something real to authorize
+// against. A real REPL-1 landing replaces `admitReplManifest`; nothing else in this file
+// should ever read more of `_replManifestAdmissions`' records than the documented
+// `{manifestDigest, runId, replRole, principal}` shape.
+const SAFE_REPL_RUN_ID = /^[A-Za-z0-9._:-]{1,256}$/;
+const REPL_ROLE = /^(shared|worker:[A-Za-z0-9][A-Za-z0-9._-]{0,127})$/;
+const MAX_REPL_MANIFEST_BRANCHES = 64;
 
 export class CoordinationIntegrityError extends Error {
   constructor(message, code = 'coordination_integrity') { super(message); this.name = 'CoordinationIntegrityError'; this.code = code; }
@@ -798,6 +824,13 @@ export class CoordinationStore {
     this._boardItems = new Map(); this._boardItemHistory = new Map(); this._boardItemsByBoard = new Map();
     this._boardClaims = new Map(); this._boardReports = []; this._boardFences = new Map();
     this._contextPackages = new Map(); this._contextPackageAttachments = new Map();
+    // REPL-1/REPL-2/REPL-3 (repl1/repl23-decisions.md): `_replManifestAdmissions` is keyed by
+    // manifestDigest (REPL1-INTEGRATION stand-in, see `admitReplManifest`); `_replBindings`/
+    // `_replBindingHistory`/`_replBindingFences` are keyed by JSON.stringify([runId, scope, name])
+    // / JSON.stringify([runId, scope]) tuples — never bare string concatenation, so two runs'
+    // identically-scoped/named bindings never collide (Part A rule 2, Part C rule 7).
+    this._replManifestAdmissions = new Map();
+    this._replBindings = new Map(); this._replBindingHistory = new Map(); this._replBindingFences = new Map();
   }
 
   _configureAdvisoryFeedCards(cards) {
@@ -7212,6 +7245,11 @@ export class CoordinationStore {
     }
     else if (event.kind === 'context.call_settled') {
       admittedRunId = this._contextCallRunId(this._contextCalls.get(p?.callId));
+    } else if (event.kind === 'repl.manifest_admitted') admittedRunId = p?.runId ?? null;
+    else if (event.kind === 'repl.binding_set' || event.kind === 'repl.binding_dropped') {
+      // Part G rule 25: the exact same manifestDigest lookup admission itself performs
+      // (Part B rule 4(d)), so there is no separate "governing record" concept to define here.
+      admittedRunId = this._replManifestAdmissions.get(p?.manifestDigest)?.runId ?? null;
     }
     if (admittedRunId !== null && (this._runStopByTarget.has(admittedRunId) || this._runStops.has(admittedRunId))) {
       throw new CoordinationIntegrityError(`effect ${event.kind} was admitted after run ${admittedRunId} began stopping`, 'run_stopping');
@@ -8003,6 +8041,31 @@ export class CoordinationStore {
       // Append-only MCP security/audit record; it deliberately owns no tool authority.
     } else if (event.kind === 'web.audit') {
       // Append-only security/audit record; it deliberately owns no command authority.
+    } else if (event.kind === 'repl.manifest_admitted') {
+      // REPL1-INTEGRATION stand-in fold (see `admitReplManifest`): folds the minimal
+      // {runId, replRole, principal, branches} triple REPL-2/REPL-3 read, keyed by manifestDigest
+      // exactly as repl1-decisions.md Part D rule 14 specifies.
+      this._replManifestAdmissions.set(p.manifestDigest, freeze({
+        ...clone(p), admittedEvent: event.seq, admittedAt: event.ts,
+      }));
+    } else if (event.kind === 'repl.binding_set' || event.kind === 'repl.binding_dropped') {
+      // Part G rule 22: hub-derived runId from the cited (already-folded, by replay/seq order)
+      // repl.manifest_admitted record — never a caller-supplied field, never re-derived any other
+      // way, and NOT retained as `manifestDigest` in the persisted record (Part A rule 1).
+      const runId = this._replManifestAdmissions.get(p.manifestDigest).runId;
+      const key = JSON.stringify([runId, p.scope, p.name]);
+      const record = freeze({
+        runId, scope: p.scope, name: p.name, bindingVersion: p.bindingVersion,
+        state: p.state, cellId: p.cellId, bindingDigest: p.bindingDigest,
+        admittedEvent: event.seq, admittedAt: event.ts,
+      });
+      this._replBindings.set(key, record);
+      this._replBindingHistory.set(key, freeze([...(this._replBindingHistory.get(key) ?? []), record]));
+      // Part C rule 7 — the deliberate divergence from `_boardFences`: EVERY binding write
+      // (shared or worker-authored) advances its `(runId, scope)` fence; there is no
+      // worker-traffic carve-out here, unlike board claim/report traffic (:7741/:7744-7748).
+      const fenceKey = JSON.stringify([runId, p.scope]);
+      this._replBindingFences.set(fenceKey, (this._replBindingFences.get(fenceKey) ?? 0) + 1);
     } else {
       throw new CoordinationIntegrityError(`unsupported coordination event kind ${event.kind}`, 'unsupported_event_kind');
     }
@@ -12206,6 +12269,283 @@ export class CoordinationStore {
     const claims = ids.map((id) => this._boardClaims.get(id)).filter((claim) => claim && claim.active).map(clone);
     const reports = this._boardReports.filter((report) => ids.includes(report.itemId)).map(clone);
     return freeze({ board, boardFence: this.boardFence(board), items, claims, reports });
+  }
+
+  // ---------------------------------------------------------------------------
+  // REPL1-INTEGRATION: a minimal `repl.manifest_admitted` admission surface standing in for
+  // REPL-1 (see the const block above `SAFE_REPL_RUN_ID`). `principal` is threaded from `auth`
+  // (never from `fields`) — the same "authority never trusted from the caller payload" stance
+  // every admit* method in this file already takes.
+  // ---------------------------------------------------------------------------
+  admitReplManifest(fields, auth) {
+    if (!fields || typeof fields !== 'object' || Array.isArray(fields)) {
+      throw new CoordinationRefusal('repl manifest requires fields', 'repl_manifest_invalid');
+    }
+    if (!SAFE_REPL_RUN_ID.test(fields.runId ?? '')) {
+      throw new CoordinationRefusal('repl manifest requires a valid runId', 'repl_manifest_invalid');
+    }
+    if (!REPL_ROLE.test(fields.replRole ?? '')) {
+      throw new CoordinationRefusal('repl manifest requires a valid replRole', 'repl_manifest_invalid');
+    }
+    const branchesIn = Array.isArray(fields.branches) ? fields.branches : [];
+    if (branchesIn.length === 0 || branchesIn.length > MAX_REPL_MANIFEST_BRANCHES) {
+      throw new CoordinationRefusal('repl manifest branch count is out of bounds', 'repl_manifest_invalid');
+    }
+    const names = new Set();
+    const branches = branchesIn.map((branch) => {
+      if (!branch || typeof branch !== 'object' || Array.isArray(branch)
+        || typeof branch.name !== 'string' || branch.name.length === 0 || names.has(branch.name)) {
+        throw new CoordinationRefusal('repl manifest branch is invalid', 'repl_manifest_invalid');
+      }
+      names.add(branch.name);
+      // REPL-3 (Part F): a `cell:` branch resolves settled-only, at admission time, into an
+      // ordinary `ctx:sha256:` coordinate — never the symbolic `cell:` ref, never the `art:`
+      // handle verbatim (rule 19).
+      if (Object.hasOwn(branch, 'cell')) return this._resolveReplCellBranch(branch);
+      if (typeof branch.ref !== 'string' || !/^ctx:sha256:[a-f0-9]{64}$/.test(branch.ref)
+        || !Number.isSafeInteger(branch.itemCount) || branch.itemCount < 0
+        || typeof branch.mediaType !== 'string' || branch.mediaType.length === 0) {
+        throw new CoordinationRefusal('repl manifest branch ref is invalid', 'repl_manifest_invalid');
+      }
+      return freeze({
+        name: branch.name, ref: branch.ref, digest: branch.ref.slice('ctx:sha256:'.length),
+        itemCount: branch.itemCount, mediaType: branch.mediaType, summary: branch.summary ?? null,
+      });
+    });
+    const principal = freeze({ actor: auth?.actor, principalId: auth?.principalId });
+    const requestCore = { runId: fields.runId, replRole: fields.replRole, principal, branches };
+    const prior = this._byKey.get(auth?.key);
+    if (prior) {
+      if (prior.kind !== 'repl.manifest_admitted' || prior.actor !== auth.actor
+        || prior.payload?.requestDigest !== canonicalDigest(requestCore)) {
+        throw new CoordinationRefusal('repl manifest idempotency key is bound differently', 'repl_manifest_conflict');
+      }
+      return freeze({
+        ok: true, result: 'idempotent', event: clone(prior),
+        record: clone(this._replManifestAdmissions.get(prior.payload.manifestDigest)),
+      });
+    }
+    const manifestDigest = canonicalDigest(requestCore);
+    const existing = this._replManifestAdmissions.get(manifestDigest);
+    if (existing) {
+      if (existing.runId !== fields.runId || existing.replRole !== fields.replRole
+        || canonicalDigest(existing.principal) !== canonicalDigest(principal)) {
+        throw new CoordinationRefusal('repl manifest digest is already admitted under a different authority', 'repl_manifest_conflict');
+      }
+      return freeze({ ok: true, result: 'idempotent', event: clone(this._events[existing.admittedEvent - 1]), record: clone(existing) });
+    }
+    const payload = {
+      schemaVersion: 1, manifestDigest, runId: fields.runId, replRole: fields.replRole,
+      principal, requestDigest: canonicalDigest(requestCore), branches,
+    };
+    const event = this._append('repl.manifest_admitted', payload, auth);
+    return freeze({ ok: true, result: 'admitted', event: clone(event), record: clone(this._replManifestAdmissions.get(manifestDigest)) });
+  }
+
+  /** REPL-3 (Part F rules 18-19): settled-only resolution of a `cell:` branch ref, at manifest
+   * admission time only — never lazily at read time (rule 20; boundaries, Part I). */
+  _resolveReplCellBranch(branch) {
+    const cellDigest = branch.cell?.digest;
+    if (typeof cellDigest !== 'string' || !/^[a-f0-9]{64}$/.test(cellDigest)) {
+      throw new CoordinationRefusal('repl manifest cell branch digest is invalid', 'repl_manifest_invalid');
+    }
+    const cellId = `cell:${cellDigest}`;
+    const cell = this._contextCells.get(cellId);
+    if (!cell || cell.state !== 'completed') {
+      throw new CoordinationRefusal(`repl manifest cell ${cellId} is not settled`, 'repl_manifest_cell_not_settled');
+    }
+    const outputRef = cell.result.outputRef;
+    try {
+      this._contextReferenceRead(outputRef);
+    } catch (error) {
+      throw new CoordinationRefusal(error?.message ?? 'Context artifact is unavailable', 'context_artifact_unavailable');
+    }
+    // The resolved coordinate: a `ctx:sha256:` ref sharing the identical CAS root as the
+    // cell's `art:sha256:` output handle (rule 19) — the branch is now structurally
+    // indistinguishable from an ordinary caller-submitted branch once baked into the manifest.
+    return freeze({
+      name: branch.name,
+      digest: outputRef.digest,
+      ref: `ctx:sha256:${outputRef.digest}`,
+      itemCount: 1,
+      mediaType: 'application/vnd.baton.context-value+json',
+      summary: `resolved from cell:${cellDigest}`,
+    });
+  }
+
+  // ---------------------------------------------------------------------------
+  // REPL-2 (docs/33 §3.2, issue #22; repl23-decisions.md): named, immutable-versioned bindings
+  // under `(runId, scope, name)`, a per-`(runId, scope)` fence every write advances (Part C —
+  // the deliberate divergence from `_boardFences`), and non-evented cached reads (Part D).
+  // ---------------------------------------------------------------------------
+
+  /** The per-(runId, scope) binding fence: replay-derivable, never a separately durable
+   * counter (Part C rules 7-8). Counts EVERY write, worker-authored included. */
+  bindingFence(runId, scope) {
+    return this._replBindingFences.get(JSON.stringify([runId, scope])) ?? 0;
+  }
+
+  admitReplBinding(fields, auth) {
+    if (!fields || typeof fields !== 'object' || Array.isArray(fields)) {
+      throw new CoordinationRefusal('repl binding requires fields', 'repl_binding_invalid');
+    }
+    if (typeof fields.manifestDigest !== 'string' || !/^[a-f0-9]{64}$/.test(fields.manifestDigest)) {
+      throw new CoordinationRefusal('repl binding requires a manifestDigest', 'repl_binding_invalid');
+    }
+    if (typeof fields.scope !== 'string' || !REPL_SCOPE.test(fields.scope)) {
+      throw new CoordinationRefusal('repl binding requires a valid scope', 'repl_binding_invalid');
+    }
+    if (typeof fields.name !== 'string' || !REPL_NAME.test(fields.name)) {
+      throw new CoordinationRefusal('repl binding requires a valid name', 'repl_binding_invalid');
+    }
+    if (typeof fields.cellId !== 'string' || !REPL_CELL_ID.test(fields.cellId)) {
+      throw new CoordinationRefusal('repl binding requires a valid cellId', 'repl_binding_invalid');
+    }
+    // Part B rule 4: a write is authorized by, and inherits its runId from, the
+    // repl.manifest_admitted record its manifestDigest names — never a singleton "governing"
+    // record, whichever admitted record for the right (runId, replRole) the write cites.
+    const record = this._replManifestAdmissions.get(fields.manifestDigest);
+    if (!record) throw new CoordinationRefusal('repl binding cites an unadmitted manifest', 'repl_binding_manifest_unadmitted');
+    if (record.replRole !== fields.scope) {
+      throw new CoordinationRefusal('repl binding scope disagrees with the cited manifest replRole', 'repl_binding_scope_manifest_mismatch');
+    }
+    if (canonicalDigest({ actor: auth?.actor, principalId: auth?.principalId }) !== canonicalDigest(record.principal)) {
+      throw new CoordinationRefusal('repl binding caller is not the cited manifest principal', 'repl_binding_unauthorized');
+    }
+    const runId = record.runId;
+    const key = JSON.stringify([runId, fields.scope, fields.name]);
+    const prior = this._byKey.get(auth?.key);
+    if (prior) {
+      if (prior.kind !== 'repl.binding_set' || prior.actor !== auth.actor
+        || prior.payload?.manifestDigest !== fields.manifestDigest || prior.payload?.scope !== fields.scope
+        || prior.payload?.name !== fields.name || prior.payload?.cellId !== fields.cellId) {
+        throw new CoordinationRefusal('repl binding idempotency key is bound differently', 'repl_binding_conflict');
+      }
+      return freeze({ ok: true, result: 'idempotent', event: clone(prior), binding: clone(this._replBindings.get(key)) });
+    }
+    const current = this._replBindings.get(key);
+    // Part C rule 9: concurrency control is keyed to the binding's OWN expectedBindingVersion,
+    // never the scope fence — a boardFence-style CAS would make concurrent binds to different
+    // names in the same scope spuriously conflict with each other.
+    if (current) {
+      if (fields.expectedBindingVersion !== current.bindingVersion) {
+        throw new CoordinationRefusal('repl binding version is stale', 'stale_binding_version');
+      }
+    } else if (Object.hasOwn(fields, 'expectedBindingVersion') && fields.expectedBindingVersion !== 0) {
+      throw new CoordinationRefusal('repl binding version is stale', 'stale_binding_version');
+    } else {
+      let count = 0;
+      for (const k of this._replBindings.keys()) {
+        const [rId, s] = JSON.parse(k);
+        if (rId === runId && s === fields.scope) count += 1;
+      }
+      if (count >= MAX_REPL_BINDINGS) throw new CoordinationRefusal('repl bindings exhausted for this scope', 'repl_bindings_exhausted');
+    }
+    const bindingVersion = (current?.bindingVersion ?? 0) + 1;
+    // Part A rule 3: the new cellId must resolve to a COMPLETED cell via the same global
+    // contextCell() projection REPL-3 resolution uses — an admitted-but-unsettled or
+    // non-completed cell is refused, never silently bound.
+    const cell = this.contextCell(fields.cellId);
+    if (!cell || cell.state !== 'completed') {
+      throw new CoordinationRefusal(`repl binding cell ${fields.cellId} is not settled`, 'repl_binding_cell_not_settled');
+    }
+    const bindingDigest = canonicalDigest({
+      scope: fields.scope, name: fields.name, bindingVersion, state: 'bound', cellId: fields.cellId,
+    });
+    if (fields.bindingDigest !== undefined && fields.bindingDigest !== bindingDigest) {
+      throw new CoordinationRefusal('repl binding digest does not match the hub recompute', 'repl_binding_digest_mismatch');
+    }
+    const payload = {
+      schemaVersion: 1, manifestDigest: fields.manifestDigest, scope: fields.scope, name: fields.name,
+      bindingVersion, state: 'bound', cellId: fields.cellId, bindingDigest,
+    };
+    const event = this._append('repl.binding_set', payload, auth);
+    return freeze({ ok: true, result: current ? 'rebound' : 'bound', event: clone(event), binding: clone(this._replBindings.get(key)) });
+  }
+
+  dropReplBinding(fields, auth) {
+    if (!fields || typeof fields !== 'object' || Array.isArray(fields)) {
+      throw new CoordinationRefusal('repl binding drop requires fields', 'repl_binding_invalid');
+    }
+    if (typeof fields.manifestDigest !== 'string' || !/^[a-f0-9]{64}$/.test(fields.manifestDigest)) {
+      throw new CoordinationRefusal('repl binding drop requires a manifestDigest', 'repl_binding_invalid');
+    }
+    if (typeof fields.scope !== 'string' || !REPL_SCOPE.test(fields.scope)) {
+      throw new CoordinationRefusal('repl binding drop requires a valid scope', 'repl_binding_invalid');
+    }
+    if (typeof fields.name !== 'string' || !REPL_NAME.test(fields.name)) {
+      throw new CoordinationRefusal('repl binding drop requires a valid name', 'repl_binding_invalid');
+    }
+    const record = this._replManifestAdmissions.get(fields.manifestDigest);
+    if (!record) throw new CoordinationRefusal('repl binding drop cites an unadmitted manifest', 'repl_binding_manifest_unadmitted');
+    if (record.replRole !== fields.scope) {
+      throw new CoordinationRefusal('repl binding drop scope disagrees with the cited manifest replRole', 'repl_binding_scope_manifest_mismatch');
+    }
+    if (canonicalDigest({ actor: auth?.actor, principalId: auth?.principalId }) !== canonicalDigest(record.principal)) {
+      throw new CoordinationRefusal('repl binding drop caller is not the cited manifest principal', 'repl_binding_unauthorized');
+    }
+    const runId = record.runId;
+    const key = JSON.stringify([runId, fields.scope, fields.name]);
+    const prior = this._byKey.get(auth?.key);
+    if (prior) {
+      if (prior.kind !== 'repl.binding_dropped' || prior.actor !== auth.actor
+        || prior.payload?.manifestDigest !== fields.manifestDigest || prior.payload?.scope !== fields.scope
+        || prior.payload?.name !== fields.name) {
+        throw new CoordinationRefusal('repl binding drop idempotency key is bound differently', 'repl_binding_conflict');
+      }
+      return freeze({ ok: true, result: 'idempotent', event: clone(prior), binding: clone(this._replBindings.get(key)) });
+    }
+    const current = this._replBindings.get(key);
+    // Rule 3: dropping an already-dropped binding is repl_binding_not_bound, not idempotent —
+    // idempotency is the auth.key replay path above, not a permissive no-op.
+    if (!current || current.state !== 'bound') {
+      throw new CoordinationRefusal(`repl binding ${fields.scope}/${fields.name} is not bound`, 'repl_binding_not_bound');
+    }
+    if (fields.expectedBindingVersion !== current.bindingVersion) {
+      throw new CoordinationRefusal('repl binding version is stale', 'stale_binding_version');
+    }
+    const bindingVersion = current.bindingVersion + 1;
+    // cellId carries forward unchanged (rule 2) — the last-bound digest stays part of the
+    // immutable record; a citation to the dropped version must still resolve (rule 10).
+    const bindingDigest = canonicalDigest({
+      scope: fields.scope, name: fields.name, bindingVersion, state: 'dropped', cellId: current.cellId,
+    });
+    const payload = {
+      schemaVersion: 1, manifestDigest: fields.manifestDigest, scope: fields.scope, name: fields.name,
+      bindingVersion, state: 'dropped', cellId: current.cellId, bindingDigest,
+    };
+    const event = this._append('repl.binding_dropped', payload, auth);
+    return freeze({ ok: true, result: 'dropped', event: clone(event), binding: clone(this._replBindings.get(key)) });
+  }
+
+  /** Non-evented binding read (Part D rule 10): a poll appends nothing to the ledger. Active
+   * bindings only (state: 'bound'), one row per name keyed to its latest version. */
+  replBindingSnapshot(runId, scope) {
+    const bindings = [];
+    for (const [key, record] of this._replBindings) {
+      const [rId, s] = JSON.parse(key);
+      if (rId === runId && s === scope && record.state === 'bound') bindings.push(clone(record));
+    }
+    return freeze({ runId, scope, bindingFence: this.bindingFence(runId, scope), bindings });
+  }
+
+  /** Named, non-evented, explicitly run-scoped citation resolution (Part E rule 15) — resolves
+   * the EXACT (runId, scope, name, bindingVersion) row, never "latest" for that name, and
+   * resolves regardless of whether the binding is presently bound or has since been dropped. */
+  resolveReplCitation(runId, citation) {
+    const match = REPL_CITATION.exec(typeof citation === 'string' ? citation : '');
+    if (!match) throw new CoordinationRefusal('repl citation is unparseable', 'repl_binding_citation_not_found');
+    const [, scope, name, versionText] = match;
+    const bindingVersion = Number(versionText);
+    const history = this._replBindingHistory.get(JSON.stringify([runId, scope, name])) ?? [];
+    const row = history.find((entry) => entry.bindingVersion === bindingVersion);
+    if (!row) {
+      throw new CoordinationRefusal(
+        `repl citation repl:${scope}:${name}@${bindingVersion} is unknown for run ${runId}`,
+        'repl_binding_citation_not_found',
+      );
+    }
+    return freeze({ scope, name, bindingVersion, cellId: row.cellId, state: row.state });
   }
 
   _knowledgeFailure(message, code, integrity = false) {
