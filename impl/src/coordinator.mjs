@@ -256,6 +256,7 @@ const COORDINATION_MUTATORS = new Set([
   'recordRepresentationProduction',
   'defineGoal', 'proposePlan', 'approvePlan', 'createPlanGatedTask', 'createPlanRevisionTask',
   'admitContextSession', 'admitContextCell', 'settleContextCell', 'admitContextMapCall',
+  'admitReplManifest', 'admitReplSession',
   'admitContextEffectCall',
   'settleContextCall', 'settleContextMapCall', 'settleContextEffectCall',
   'recordTaskResourceRelease',
@@ -9168,6 +9169,22 @@ export class Coordinator {
     if (typeof opts.idempotencyKey !== 'string' || opts.idempotencyKey.length === 0) throw new TypeError('Board report requires idempotencyKey');
     return this._coordination.submitBoardReport({ ...fields, owner: workerId },
       { actor: opts.actor ?? 'worker', key: opts.idempotencyKey });
+  }
+
+  // REPL-1 rule 7: worker-scope ReplManifest admission. Sibling of requestBoardClaim — the wrapper
+  // derives principalId/repoId/runId from the worker handle's task and threads them alongside
+  // {actor, key}; replRole passes through unaltered (digest-covered) and the store verifies
+  // replRole === 'worker:' + auth.principalId, so a worker can only admit into its own layer.
+  admitReplManifest(workerId, fields, opts = {}) {
+    this.tick();
+    const handle = this._getWorker(workerId);
+    const task = this._tasks.get(handle.taskId);
+    if (!task || !['working', 'input_required'].includes(task.status)) return { ok: false, result: 'task_not_active' };
+    if (typeof opts.idempotencyKey !== 'string' || opts.idempotencyKey.length === 0) throw new TypeError('Repl manifest admission requires idempotencyKey');
+    return this._coordination.admitReplManifest(fields, {
+      actor: opts.actor ?? 'worker', key: opts.idempotencyKey,
+      principalId: workerId, repoId: this._repoId, runId: task.runId,
+    });
   }
 
   boardFence(board) {

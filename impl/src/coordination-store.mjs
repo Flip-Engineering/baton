@@ -23,6 +23,7 @@ import {
   normalizeRecoveryAttemptAdmission, normalizeRecoveryAttemptCompletion,
 } from './recovery-attempt.mjs';
 import {
+  DEFAULT_MAX_REPL_MANIFESTS_PER_RUN,
   normalizeRunLineagePolicy, RUN_ORCHESTRATOR_CAPABILITIES,
   RUN_ORCHESTRATOR_REVOCATION_REASONS,
 } from './run-lineage.mjs';
@@ -36,7 +37,9 @@ import {
   contextCellIdentity, contextProgramIsPure, contextSessionIdentity, normalizeContextArtifactRef,
   normalizeContextAuthority,
 } from './context-authority.mjs';
-import { contextValueDigest, normalizeContextManifest, normalizeContextProgram } from './context-program.mjs';
+import {
+  contextValueDigest, normalizeContextManifest, normalizeContextProgram, normalizeReplManifest,
+} from './context-program.mjs';
 import { validatePureContextOutputLineage } from './context-lineage.mjs';
 import { validateContextMapResultLineage } from './context-result-lineage.mjs';
 import { validateContextEffectResultLineage } from './context-effect-result-lineage.mjs';
@@ -107,6 +110,7 @@ const PROJECTION_CHECKPOINT_FIELDS = Object.freeze([
   '_boardItems', '_boardItemHistory', '_boardItemsByBoard', '_boardClaims',
   '_boardReports', '_boardFences',
   '_contextPackages', '_contextPackageAttachments',
+  '_replManifestAdmissions',
 ]);
 
 const TERMINAL = new Set(['completed', 'failed', 'cancelled']);
@@ -798,6 +802,9 @@ export class CoordinationStore {
     this._boardItems = new Map(); this._boardItemHistory = new Map(); this._boardItemsByBoard = new Map();
     this._boardClaims = new Map(); this._boardReports = []; this._boardFences = new Map();
     this._contextPackages = new Map(); this._contextPackageAttachments = new Map();
+    // REPL-1: admitted ReplManifest authority records, keyed by manifestDigest. REPL sessions
+    // ride the existing _contextSessions map, so no separate session projection is added.
+    this._replManifestAdmissions = new Map();
   }
 
   _configureAdvisoryFeedCards(cards) {
@@ -4774,6 +4781,20 @@ export class CoordinationStore {
       this._contextFailure('Context session tree, environment, or policy is stale',
         integrity ? 'context_session_integrity' : 'context_session_stale', integrity);
     }
+    // REPL-1 rule 12: the cell-admission currency gate for a ReplManifest session keys on the
+    // settled admission record, not a working Plan-gated dispatch. `admitContextCell`'s
+    // caller-principal pin (canonicalDigest(authority) !== session.authority) then remains the
+    // load-bearing authorization: only the admitting principal may compute REPL cells.
+    if (manifest.kind === 'baton.repl_manifest') {
+      const admission = this._replManifestAdmissions.get(session.manifestDigest);
+      if (!admission || admission.runId !== session.runId
+        || admission.replRole !== manifest.repl.replRole) {
+        this._contextFailure('Context REPL session admission is stale',
+          integrity ? 'context_session_integrity' : 'context_session_stale', integrity);
+      }
+      this._assertRunAdmissionOpen(session.runId, integrity);
+      return freeze({ goal: null, plan: null, node: null, task: null });
+    }
     const goal = this._goals.get(this._goalVersionKey(
       manifest.workflow.goal.goalId, manifest.workflow.goal.version,
     ));
@@ -4883,6 +4904,24 @@ export class CoordinationStore {
         !== canonicalDigest(this._currentContextDeployment()))) {
       this._contextFailure('Context session tree, environment, or policy differs from deployment authority',
         integrity ? 'context_session_integrity' : 'context_session_invalid', integrity);
+    }
+    // REPL-1 rule 10a: a ReplManifest session skips the Workflow goal/plan/approval and
+    // node/task/dispatch blocks entirely and is instead grounded by its settled
+    // `repl.manifest_admitted` record (which folds at a lower seq, so this is replay-derivable).
+    if (manifest.kind === 'baton.repl_manifest') {
+      const admission = this._replManifestAdmissions.get(session.manifestDigest);
+      if (!admission || admission.runId !== session.runId
+        || admission.replRole !== manifest.repl.replRole
+        || admission.principal?.actor !== payload.authority.actor
+        || admission.principal?.principalId !== payload.authority.principalId) {
+        this._contextFailure('Context REPL session has no settled manifest admission',
+          integrity ? 'context_session_integrity' : 'context_session_invalid', integrity);
+      }
+      this._assertRunAdmissionOpen(session.runId, integrity);
+      return freeze({
+        session: freeze({ ...session, deployment, sourceAttestations: [] }),
+        requestCore, admissionCore,
+      });
     }
     const goal = this._goals.get(this._goalVersionKey(
       manifest.workflow.goal.goalId, manifest.workflow.goal.version,
@@ -7213,6 +7252,7 @@ export class CoordinationStore {
     else if (event.kind === 'context.call_settled') {
       admittedRunId = this._contextCallRunId(this._contextCalls.get(p?.callId));
     }
+    else if (event.kind === 'repl.manifest_admitted') admittedRunId = p?.runId ?? null;
     if (admittedRunId !== null && (this._runStopByTarget.has(admittedRunId) || this._runStops.has(admittedRunId))) {
       throw new CoordinationIntegrityError(`effect ${event.kind} was admitted after run ${admittedRunId} began stopping`, 'run_stopping');
     }
@@ -8003,6 +8043,11 @@ export class CoordinationStore {
       // Append-only MCP security/audit record; it deliberately owns no tool authority.
     } else if (event.kind === 'web.audit') {
       // Append-only security/audit record; it deliberately owns no command authority.
+    } else if (event.kind === 'repl.manifest_admitted') {
+      const record = this._validateReplManifestAdmissionPayload(p, event, true);
+      this._replManifestAdmissions.set(record.manifestDigest, freeze({
+        ...clone(record), admittedEvent: event.seq, admittedAt: event.ts,
+      }));
     } else {
       throw new CoordinationIntegrityError(`unsupported coordination event kind ${event.kind}`, 'unsupported_event_kind');
     }
@@ -8946,6 +8991,239 @@ export class CoordinationStore {
       schemaVersion: 2, authority, requestDigest: canonicalDigest(requestCore),
       deployment, session, sourceAttestations,
       admissionDigest: canonicalDigest(admissionCore),
+    };
+    const prospective = {
+      schemaVersion: 1, seq: this._events.length + 1, ts: this._clock(),
+      kind: 'context.session_admitted', actor: auth?.actor,
+      idempotencyKey: auth?.key, payload,
+    };
+    this._validateContextSessionPayload(payload, prospective, false);
+    const event = this._append('context.session_admitted', payload, auth, prospective.ts);
+    const projected = this.contextSession(session.sessionId);
+    if (projected?.admittedEvent !== event.seq) {
+      throw new CoordinationIntegrityError('Context session admission did not materialize',
+        'context_session_integrity');
+    }
+    return freeze({ ok: true, result: 'admitted', event: clone(event), session: projected });
+  }
+
+  replManifestAdmission(manifestDigest) {
+    return clone(this._replManifestAdmissions.get(manifestDigest) ?? null);
+  }
+
+  _replManifestFailure(message, code, integrity = false) {
+    if (integrity) throw new CoordinationIntegrityError(message, code);
+    throw new CoordinationRefusal(message, code);
+  }
+
+  // REPL-1 rule 5–9: admit a ReplManifest as a single evented authority record. The principal is
+  // lease-authenticated for `shared` (run-pinned) and wrapper-forced for `worker:<id>` (store
+  // equality) — no caller-supplied `principal`/`replRole` string is ever trusted as authority.
+  _validateReplManifestAdmissionPayload(payload, event, integrity = false) {
+    const fail = (message, code) => this._replManifestFailure(message, code, integrity);
+    const fields = ['manifestDigest', 'principal', 'replRole', 'requestDigest', 'runId', 'schemaVersion'];
+    const workerRole = /^worker:[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u;
+    if (!payload || typeof payload !== 'object' || Array.isArray(payload)
+      || Object.keys(payload).sort().join(',') !== fields.join(',')
+      || payload.schemaVersion !== 1
+      || !/^[a-f0-9]{64}$/u.test(payload.manifestDigest ?? '')
+      || !validRunId(payload.runId)
+      || (payload.replRole !== 'shared' && !workerRole.test(payload.replRole ?? ''))
+      || !payload.principal || typeof payload.principal !== 'object' || Array.isArray(payload.principal)
+      || Object.keys(payload.principal).sort().join(',') !== 'actor,principalId'
+      || typeof payload.principal.actor !== 'string' || payload.principal.actor.length === 0
+      || !validRunId(payload.principal.principalId)
+      || !/^[a-f0-9]{64}$/u.test(payload.requestDigest ?? '')) {
+      fail('Context REPL manifest admission is malformed', 'repl_manifest_integrity');
+    }
+    const requestCore = {
+      manifestDigest: payload.manifestDigest, runId: payload.runId,
+      replRole: payload.replRole, principal: payload.principal,
+    };
+    if (payload.requestDigest !== canonicalDigest(requestCore)
+      || event.actor !== payload.principal.actor
+      || (workerRole.test(payload.replRole)
+        && payload.replRole !== `worker:${payload.principal.principalId}`)) {
+      fail('Context REPL manifest admission authority changed', 'repl_manifest_integrity');
+    }
+    return freeze(clone(payload));
+  }
+
+  admitReplManifest(fields, auth) {
+    if (!this._contextProgramPolicy) {
+      throw new CoordinationRefusal('Context Program authority is unavailable', 'repl_manifest_unavailable');
+    }
+    const deployment = this._currentContextDeployment();
+    // (a) re-normalize the submitted manifest and prove its digest.
+    let manifest;
+    try { manifest = normalizeReplManifest(fields?.manifest, deployment.policy); }
+    catch (error) { throw new CoordinationRefusal(error.message, error.code ?? 'repl_manifest_invalid'); }
+    if (fields?.manifestDigest !== undefined && fields.manifestDigest !== manifest.digest) {
+      throw new CoordinationRefusal('Context REPL manifest digest differs from its bytes',
+        'repl_manifest_digest_mismatch');
+    }
+    const runId = manifest.repl.runId;
+    const replRole = manifest.repl.replRole;
+    // (c) repoId provenance pin (mirrors the Workflow path authority.repoId !== this._repoId).
+    if (auth?.repoId !== this._repoId) {
+      throw new CoordinationRefusal('Context REPL manifest repository differs from deployment authority',
+        'repl_manifest_authority_denied');
+    }
+    // (c) principal authority: lease-authenticated + run-pinned for `shared`; store-verified
+    // equality against the wrapper-derived principalId for `worker:<id>`.
+    let principal;
+    if (replRole === 'shared') {
+      let lease;
+      try { lease = this._activeRunOrchestratorLease(auth); }
+      catch (error) {
+        throw new CoordinationRefusal(error?.message ?? 'Context REPL shared manifest lacks orchestrator authority',
+          'repl_manifest_authority_denied');
+      }
+      if (lease.parent.runId !== runId) {
+        throw new CoordinationRefusal('Context REPL shared manifest run differs from its orchestrator lease',
+          'repl_manifest_authority_denied');
+      }
+      principal = { actor: auth.actor, principalId: lease.session.principalId };
+    } else if (replRole === `worker:${auth?.principalId}`) {
+      principal = { actor: auth?.actor, principalId: auth.principalId };
+    } else {
+      throw new CoordinationRefusal('Context REPL worker manifest names another worker',
+        'repl_manifest_authority_denied');
+    }
+    const requestCore = { manifestDigest: manifest.digest, runId, replRole, principal };
+    const payload = {
+      schemaVersion: 1, manifestDigest: manifest.digest, runId, replRole,
+      principal: { actor: principal.actor, principalId: principal.principalId },
+      requestDigest: canonicalDigest(requestCore),
+    };
+    // (f) two-level idempotency/conflict. First the key level.
+    const prior = this._byKey.get(auth?.key);
+    if (prior) {
+      if (prior.kind !== 'repl.manifest_admitted' || prior.actor !== auth?.actor
+        || prior.payload?.requestDigest !== payload.requestDigest
+        || prior.payload?.manifestDigest !== payload.manifestDigest) {
+        throw new CoordinationRefusal('Context REPL manifest idempotency key is bound differently',
+          'repl_manifest_conflict');
+      }
+      const projected = this.replManifestAdmission(manifest.digest);
+      if (!projected || projected.admittedEvent !== prior.seq) {
+        throw new CoordinationIntegrityError('Context REPL manifest projection is absent',
+          'repl_manifest_integrity');
+      }
+      return freeze({ ok: true, result: 'idempotent', event: clone(prior), record: projected });
+    }
+    // Then the digest level (the map is keyed by manifestDigest, so a divergent principal under a
+    // different key would otherwise be last-wins).
+    const existing = this._replManifestAdmissions.get(manifest.digest);
+    if (existing) {
+      if (existing.requestDigest === payload.requestDigest) {
+        return freeze({
+          ok: true, result: 'idempotent',
+          event: clone(this._events[existing.admittedEvent - 1]), record: clone(existing),
+        });
+      }
+      throw new CoordinationRefusal('Context REPL manifest admission principal diverged',
+        'repl_manifest_conflict');
+    }
+    // (d) the run must not be stopping.
+    this._assertRunAdmissionOpen(runId);
+    // (e) per-run bounds (a named, digest-safe run-lineage ceiling; never a magic store constant).
+    const ceiling = this._runLineagePolicy?.maxReplManifestsPerRun ?? DEFAULT_MAX_REPL_MANIFESTS_PER_RUN;
+    const perRun = [...this._replManifestAdmissions.values()].filter((row) => row.runId === runId).length;
+    if (perRun >= ceiling) {
+      throw new CoordinationRefusal('Context REPL manifest per-run ceiling reached', 'repl_manifest_limit');
+    }
+    const prospective = {
+      schemaVersion: 1, seq: this._events.length + 1, ts: this._clock(),
+      kind: 'repl.manifest_admitted', actor: auth?.actor, idempotencyKey: auth?.key, payload,
+    };
+    this._validateReplManifestAdmissionPayload(payload, prospective, false);
+    const event = this._append('repl.manifest_admitted', payload, auth, prospective.ts);
+    const projected = this.replManifestAdmission(manifest.digest);
+    if (projected?.admittedEvent !== event.seq) {
+      throw new CoordinationIntegrityError('Context REPL manifest admission did not materialize',
+        'repl_manifest_integrity');
+    }
+    return freeze({ ok: true, result: 'admitted', event: clone(event), record: projected });
+  }
+
+  // REPL-1 rule 10: a session admission for a ReplManifest WITHOUT the Plan-node requirement. It
+  // reuses contextSessionIdentity (kind-dispatching) and the per-branch byte-proof loop, but does
+  // NOT call the Plan-node-coupled attestation, so it mints at schemaVersion 1.
+  admitReplSession(fields, auth) {
+    if (!this._contextProgramPolicy) {
+      throw new CoordinationRefusal('Context Program authority is unavailable', 'context_session_unavailable');
+    }
+    const deployment = this._currentContextDeployment();
+    let session;
+    try {
+      session = contextSessionIdentity({
+        manifest: fields?.manifest, environmentDigest: fields?.environmentDigest,
+        policy: deployment.policy,
+      });
+    } catch (error) {
+      throw new CoordinationRefusal(error.message, 'context_session_invalid');
+    }
+    if (session.manifest.kind !== 'baton.repl_manifest') {
+      throw new CoordinationRefusal('Context REPL session requires a repl manifest', 'context_session_invalid');
+    }
+    const admission = this._replManifestAdmissions.get(session.manifestDigest);
+    if (!admission || admission.runId !== session.runId
+      || admission.replRole !== session.manifest.repl.replRole) {
+      throw new CoordinationRefusal('Context REPL manifest is not admitted', 'repl_session_unadmitted');
+    }
+    let authority;
+    try {
+      authority = normalizeContextAuthority({
+        actor: admission.principal.actor, principalId: admission.principal.principalId,
+        repoId: this._repoId, runId: session.runId,
+      });
+    } catch (error) {
+      throw new CoordinationRefusal(error.message, 'context_session_invalid');
+    }
+    const requestCore = {
+      actor: authority.actor, principalId: authority.principalId,
+      repoId: authority.repoId, runId: authority.runId,
+      manifestDigest: session.manifestDigest, environmentDigest: session.environmentDigest,
+    };
+    const prior = this._byKey.get(auth?.key);
+    if (prior) {
+      if (prior.kind !== 'context.session_admitted' || prior.actor !== auth.actor
+        || canonicalDigest(prior.payload?.authority) !== canonicalDigest(authority)
+        || canonicalDigest(prior.payload?.deployment) !== canonicalDigest(deployment)
+        || canonicalDigest(prior.payload?.session) !== canonicalDigest(session)
+        || prior.payload?.requestDigest !== canonicalDigest(requestCore)) {
+        throw new CoordinationRefusal('Context session idempotency key is bound differently',
+          'context_session_conflict');
+      }
+      const projected = this.contextSession(session.sessionId);
+      if (!projected || projected.admittedEvent !== prior.seq) {
+        throw new CoordinationIntegrityError('Context session projection is absent',
+          'context_session_integrity');
+      }
+      return freeze({ ok: true, result: 'idempotent', event: clone(prior), session: projected });
+    }
+    for (const branch of session.manifest.branches) {
+      let source;
+      try {
+        source = this._contextReferenceRead({
+          kind: 'context_source', ref: branch.ref, digest: branch.digest,
+          mediaType: branch.mediaType, itemCount: branch.itemCount,
+        });
+      } catch (error) {
+        throw new CoordinationRefusal(error?.message ?? 'Context source is unavailable',
+          error?.code ?? 'context_source_unavailable');
+      }
+      const items = Array.isArray(source) ? source : [source];
+      if (contextValueDigest(source) !== branch.digest || items.length !== branch.itemCount) {
+        throw new CoordinationRefusal('Context source differs from its manifest',
+          'context_source_integrity');
+      }
+    }
+    const admissionCore = { authority, deployment, session };
+    const payload = {
+      schemaVersion: 1, authority, requestDigest: canonicalDigest(requestCore),
+      deployment, session, admissionDigest: canonicalDigest(admissionCore),
     };
     const prospective = {
       schemaVersion: 1, seq: this._events.length + 1, ts: this._clock(),
@@ -10338,7 +10616,7 @@ export class CoordinationStore {
     });
   }
 
-  snapshot() { return freeze({ tasks: [...this._tasks.values()].map(clone), runs: [...this._runs.values()].map(clone), ...(this._runStops.size > 0 ? { runStops: [...this._runStops.values()].map(clone) } : {}), ...(this._runControls.size > 0 ? { runControls: [...this._runControls.values()].map(clone) } : {}), ...(this._runLineagePolicy ? { runAuthority: this.runAuthoritySnapshot() } : {}), ...(this._runResultAdoptions.size > 0 ? { runResultAdoptions: [...this._runResultAdoptions.values()].map(clone) } : {}), ...(this._runResultExports.size > 0 ? { runResultExports: [...this._runResultExports.values()].map(clone) } : {}), ...(this._contextProgramPolicy ? { context: { policy: clone(this._contextProgramPolicy), sessions: [...this._contextSessions.values()].map(clone), cells: [...this._contextCells.values()].map(clone), calls: this.contextCalls() } } : {}), artifacts: [...this._artifacts.values()].map(clone), ...(this._recoveryAttemptsById.size > 0 ? { recoveryAttempts: [...this._recoveryAttemptsById.values()].map(clone) } : {}), ...(this._representationPolicy || this._representations.size > 0 ? { representations: [...this._representations.values()].map(clone) } : {}), ...(this._goalPlanPolicy || this._goals.size > 0 ? { goalPlan: { goals: [...this._goals.values()].map(clone), plans: [...this._plans.values()].map(clone), approvals: [...this._planApprovals.values()].map(clone), dispatches: [...this._planDispatches.values()].map(clone), budgetSettlements: [...this._planBudgetSettlements.values()].map(clone) } } : {}), ...(this._routePolicy ? { routeLearning: { policy: clone(this._routePolicy), observations: this.routeObservations() } } : {}), reuseDecisions: [...this._reuseDecisions.values()].map(clone), reuseRiskGuards: [...this._reuseRiskGuards.values()].map(clone), ...(this._reuseProviderGuards.size > 0 || this._reuseProviderContributions.size > 0 ? { reuseProviderGuards: [...this._reuseProviderGuards.values()].map(clone), reuseProviderContributions: [...this._reuseProviderContributions.values()].map(clone) } : {}), reusePolicy: { heads: [...this._reusePolicyHeads.values()].map(clone), transitions: this._reusePolicyTransitions.map(clone) }, ...(this._advisoryFeedCards.size > 0 || this._providerReceipts.size > 0 ? { provider: { receiptCount: this._providerReceipts.size, processingCount: this._providerProcessing.size, pendingCoordinateCount: this._providerPending.size } } : {}), evidence: [...this._evidence.values()].map(clone), scratch: { facts: [...this._scratchFacts.values()].map(clone), claims: [...this._scratchClaims.values()].map(clone), reads: this._scratchReads.map(clone) }, knowledge: { nodes: [...this._knowledgeNodes.values()].map(clone), edges: [...this._knowledgeEdges.values()].map(clone), reads: this._knowledgeReads.map(clone), ...(this._knowledgeRecallAssessments.size > 0 ? { assessments: [...this._knowledgeRecallAssessments.values()].map(clone) } : {}), contamination: this._contamination.map(clone) }, lastSeq: this._events.length }); }
+  snapshot() { return freeze({ tasks: [...this._tasks.values()].map(clone), runs: [...this._runs.values()].map(clone), ...(this._runStops.size > 0 ? { runStops: [...this._runStops.values()].map(clone) } : {}), ...(this._runControls.size > 0 ? { runControls: [...this._runControls.values()].map(clone) } : {}), ...(this._runLineagePolicy ? { runAuthority: this.runAuthoritySnapshot() } : {}), ...(this._runResultAdoptions.size > 0 ? { runResultAdoptions: [...this._runResultAdoptions.values()].map(clone) } : {}), ...(this._runResultExports.size > 0 ? { runResultExports: [...this._runResultExports.values()].map(clone) } : {}), ...(this._contextProgramPolicy ? { context: { policy: clone(this._contextProgramPolicy), sessions: [...this._contextSessions.values()].map(clone), cells: [...this._contextCells.values()].map(clone), calls: this.contextCalls() } } : {}), ...(this._replManifestAdmissions.size > 0 ? { repl: { manifests: [...this._replManifestAdmissions.values()].map(clone) } } : {}), artifacts: [...this._artifacts.values()].map(clone), ...(this._recoveryAttemptsById.size > 0 ? { recoveryAttempts: [...this._recoveryAttemptsById.values()].map(clone) } : {}), ...(this._representationPolicy || this._representations.size > 0 ? { representations: [...this._representations.values()].map(clone) } : {}), ...(this._goalPlanPolicy || this._goals.size > 0 ? { goalPlan: { goals: [...this._goals.values()].map(clone), plans: [...this._plans.values()].map(clone), approvals: [...this._planApprovals.values()].map(clone), dispatches: [...this._planDispatches.values()].map(clone), budgetSettlements: [...this._planBudgetSettlements.values()].map(clone) } } : {}), ...(this._routePolicy ? { routeLearning: { policy: clone(this._routePolicy), observations: this.routeObservations() } } : {}), reuseDecisions: [...this._reuseDecisions.values()].map(clone), reuseRiskGuards: [...this._reuseRiskGuards.values()].map(clone), ...(this._reuseProviderGuards.size > 0 || this._reuseProviderContributions.size > 0 ? { reuseProviderGuards: [...this._reuseProviderGuards.values()].map(clone), reuseProviderContributions: [...this._reuseProviderContributions.values()].map(clone) } : {}), reusePolicy: { heads: [...this._reusePolicyHeads.values()].map(clone), transitions: this._reusePolicyTransitions.map(clone) }, ...(this._advisoryFeedCards.size > 0 || this._providerReceipts.size > 0 ? { provider: { receiptCount: this._providerReceipts.size, processingCount: this._providerProcessing.size, pendingCoordinateCount: this._providerPending.size } } : {}), evidence: [...this._evidence.values()].map(clone), scratch: { facts: [...this._scratchFacts.values()].map(clone), claims: [...this._scratchClaims.values()].map(clone), reads: this._scratchReads.map(clone) }, knowledge: { nodes: [...this._knowledgeNodes.values()].map(clone), edges: [...this._knowledgeEdges.values()].map(clone), reads: this._knowledgeReads.map(clone), ...(this._knowledgeRecallAssessments.size > 0 ? { assessments: [...this._knowledgeRecallAssessments.values()].map(clone) } : {}), contamination: this._contamination.map(clone) }, lastSeq: this._events.length }); }
 
   /** Narrow current Goal/Plan index used by resident startup reconciliation. This avoids cloning
    * unrelated tasks, evidence, knowledge, Web/MCP receipts, or historical Goal/Plan versions. */
