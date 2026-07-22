@@ -38,7 +38,10 @@ const repoId = 'repo-kg12';
 const auth = (key, actor = 'orchestrator') => ({ actor, key });
 
 function freshStore(label, opts = {}) {
-  return new CoordinationStore(dir(label), { repoId, ...opts });
+  // Fixed clock (house discipline — the lease fixture at :354 hardcodes
+  // expiresAt 2026-07-22T09:00:00.000Z; a real clock time-bombs the suite the
+  // moment wall time passes it).
+  return new CoordinationStore(dir(label), { repoId, clock: () => '2026-07-22T08:00:00.000Z', ...opts });
 }
 
 function refusalCode(fn) {

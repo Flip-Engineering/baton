@@ -1073,9 +1073,6 @@ export class ClaudeSessionCli {
   }
 
   async answer(worker, requestId, reply = {}) {
-    if (!this._cfg.approvals) {
-      return { ok: false, reason: 'answer() unsupported: constructed with approvals:false' };
-    }
     const session = this._sessions.get(worker);
     if (!session || session.terminal) return { ok: false, reason: `unknown or terminal worker ${worker}` };
 
@@ -1084,12 +1081,20 @@ export class ClaudeSessionCli {
       // decision answer — the CLI's elicitation channel is unrelated to this grammar-parsed
       // request — so delivery is a plain user-turn continuation carrying the closed
       // DECISION_ANSWER grammar, always flagged `emulated` (D1: no silent emulation).
+      // Checked BEFORE the approvals gate: a plain user-turn write needs no approval
+      // authority, and the deployment constructs this adapter with approvals:false
+      // (application-deployment.mjs builtInAdapters) — gating delivery on it refused every
+      // live settlement and parked the gated worker forever (issue #30, w-145).
       session.pendingDecisionRequestId = null;
       if (reply?.expired === true) return { ok: true, emulated: true };
       const answerJson = reply.optionId != null
         ? JSON.stringify({ optionId: reply.optionId }) : JSON.stringify({ text: reply.text });
       this._writeUserFrame(session, `DECISION_ANSWER: ${answerJson}`);
       return { ok: true, emulated: true };
+    }
+
+    if (!this._cfg.approvals) {
+      return { ok: false, reason: 'answer() unsupported: constructed with approvals:false' };
     }
 
     const entry = session.wireToAdapterId.get(requestId);

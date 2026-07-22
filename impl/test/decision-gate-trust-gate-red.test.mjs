@@ -188,3 +188,63 @@ test('DG2: after the settlement the continuation turn DOES face the trust gate (
   assert.ok(['verifying', 'completed'].includes(task.status),
     `the post-settlement completed turn reaches capture/verification (got ${task.status})`);
 });
+
+// ---------------------------------------------------------------------------
+// DG3 (delivery-side half of the live finding, w-145): the deployment constructs
+// ClaudeSessionCli with approvals:false (application-deployment.mjs builtInAdapters) and
+// answer() used to early-return BEFORE the emulated decision branch — the settlement was
+// refused as 'answer() unsupported', the record rolled back to pending, and the gated worker
+// idled 29 minutes without ever receiving its DECISION_ANSWER frame. The emulated decision
+// delivery is a plain user-turn continuation needing no approval authority, so it must
+// succeed under approvals:false while the question/approval channel stays honestly refused.
+// ---------------------------------------------------------------------------
+
+import { fileURLToPath } from 'node:url';
+import { ClaudeSessionCli } from '../src/claude-session.mjs';
+
+const FAKE_CLAUDE = fileURLToPath(new URL('./fixtures/fake-claude.mjs', import.meta.url));
+
+test('DG3: emulated decision delivery succeeds under approvals:false (deployment construction); question answers stay refused', async () => {
+  const cli = new ClaudeSessionCli({ cmd: process.execPath, args: [FAKE_CLAUDE], approvals: false });
+  const events = [];
+  cli.onEvent((e) => events.push(e));
+  const worker = 'dg3-worker';
+  const spawnAck = await cli.spawn(worker, {
+    goal: 'gate on a decision', constraints: [], pathScope: ['src/**'],
+    definitionOfDone: 'done', verification: { command: 'true', expectExit: 0 },
+    budget: { tokens: 1000, usd: 1, wallMin: 5 },
+  }, { worktree: process.cwd() });
+  assert.equal(spawnAck.ok, true, `spawn must succeed with a worktree (got ${JSON.stringify(spawnAck)})`);
+  const session = cli._sessions.get(worker);
+  assert.ok(session, 'the spawn registered a session');
+
+  // Let the fake's first turn COMPLETE (the live w-145 shape: the asking turn ended before the
+  // orchestrator answered) — answering mid-turn is absorbed by the running turn with no new
+  // turn_started, which is correct wire semantics, not the path under test.
+  await new Promise((resolveWait, rejectWait) => {
+    const timer = setTimeout(() => rejectWait(new Error(`first turn never completed; seen: ${events.map((e) => e.kind).join(',')}`)), 8_000);
+    const poll = () => {
+      if (events.some((e) => e.kind === 'lifecycle.turn_completed')) { clearTimeout(timer); resolveWait(); }
+      else setImmediate(poll);
+    };
+    poll();
+  });
+
+  // The emulated decision branch must fire even though approvals are disabled: delivery is a
+  // plain user-turn write (DECISION_ANSWER grammar), not an approval-channel operation.
+  session.pendingDecisionRequestId = `${worker}:decision:1`;
+  const turnsBefore = events.filter((e) => e.kind === 'lifecycle.turn_started').length;
+  const ack = await cli.answer(worker, `${worker}:decision:1`, { optionId: 'detailed' });
+  assert.equal(ack.ok, true, `decision delivery must succeed under approvals:false (got ${JSON.stringify(ack)})`);
+  assert.equal(ack.emulated, true, 'the emulated mapping is always flagged (D1: no silent emulation)');
+  assert.equal(session.pendingDecisionRequestId, null, 'the pending marker is consumed by delivery');
+  const turnsAfter = events.filter((e) => e.kind === 'lifecycle.turn_started').length;
+  assert.ok(turnsAfter > turnsBefore, 'the DECISION_ANSWER frame begins the worker\'s continuation turn');
+
+  // The approvals gate still honestly refuses the approval/question channel.
+  const refused = await cli.answer(worker, `${worker}:question:1`, { text: 'hello' });
+  assert.equal(refused.ok, false);
+  assert.match(refused.reason ?? '', /approvals:false/, 'the question channel keeps its approvals gate');
+
+  await cli.kill(worker).catch(() => {});
+});
