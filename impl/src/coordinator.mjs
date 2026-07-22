@@ -1014,6 +1014,15 @@ export class Coordinator {
     this._pending = new Map();
     /** Active interaction authority only; historical resolved records stay queryable in _pending. */
     this._activeInteractionIds = new Set();
+    /** KG-1 Part A rule 2: Map<taskId, number> — a replay-derived count of admitted interaction
+     * lifecycle events scoped to that task's worker, incremented in the same _handleEvent
+     * switch that rebuilds _pending/_activeInteractionIds on replay (not a new event kind). */
+    this._interactionGeneration = new Map();
+    /** KG-1 Part A rule 3: Map<runId, number> — a replay-derived count of decision.settled events
+     * whose owning task belongs to runId (a strict subset of the interaction-generation kinds). */
+    this._decisionSettleCount = new Map();
+    /** KG-1 rule 6: union-fence horizon projection cache, keyed by `${kind}:${scopeIdentity}`. */
+    this._horizonCache = new Map();
     /** @type {Map<string, object>} workerId -> stop-waiter bookkeeping */
     this._stopWaiters = new Map();
     /** @type {Map<string, object>} workerId -> unaudited emergency-stop waiter after poison */
@@ -9187,6 +9196,111 @@ export class Coordinator {
     });
   }
 
+  // KG-2 Part D rule 16: the settle-time orchestrator-admit gate. This entry point accepts no
+  // opts.actor at all — hardcoded to 'orchestrator' (mirroring the actor: 'policy' precedent at
+  // :5574/:10258, but for the promotionActor-gated orchestrator/operator authority tier instead).
+  // repoId is resolved from the coordinator's own deployment authority (rule 12: neither board
+  // items nor packages carry repoId). The caller supplies the active run-orchestrator lease;
+  // ordering (rule 16b) is the caller's responsibility — this call must complete, or be
+  // explicitly abandoned, before that run's lease is revoked.
+  admitWorkflowFinding(runId, candidateFindingId, policy, lease) {
+    this.tick();
+    return this._coordination.admitWorkflowFinding(
+      this._repoId, runId, candidateFindingId, policy,
+      { actor: 'orchestrator', key: `knowledge.workflow_admitted:${candidateFindingId}` },
+      lease,
+    );
+  }
+
+  // -------------------------------------------------------------------------
+  // KG-1 Part A: three horizon projections over the one Cairn KG plus board/package/binding
+  // state (rule 1) — no new store, no new query engine. interactionGeneration/decisionSettleCount
+  // are plain re-derivations of the same replay path that already rebuilds _pending/
+  // _activeInteractionIds (rule 2), not a new event kind or store field.
+  // -------------------------------------------------------------------------
+
+  _bumpInteractionGeneration(taskId) {
+    if (typeof taskId !== 'string' || taskId.length === 0) return;
+    this._interactionGeneration.set(taskId, (this._interactionGeneration.get(taskId) ?? 0) + 1);
+  }
+
+  _bumpDecisionSettleCount(runId) {
+    if (typeof runId !== 'string' || runId.length === 0) return;
+    this._decisionSettleCount.set(runId, (this._decisionSettleCount.get(runId) ?? 0) + 1);
+  }
+
+  interactionGeneration(taskId) { return this._interactionGeneration.get(taskId) ?? 0; }
+
+  decisionSettleCount(runId) { return this._decisionSettleCount.get(runId) ?? 0; }
+
+  /** Rule 6: cache shape `{ scope, fenceTuple, computedAt, value }` keyed by
+   * `(scope-identity, fenceTuple)` — a cache hit requires exact tuple equality; a miss recomputes
+   * from queryKnowledge/queryKnowledgeEdges/boardSnapshot/binding projections, never a partial
+   * invalidation. The same (scope, fence) discipline as BoardProjection/the REPL binding
+   * projection, generalized to three horizons. */
+  _horizonCacheGet(kind, scopeIdentity, fenceTuple, compute) {
+    const cacheKey = `${kind}:${scopeIdentity}`;
+    const fenceKey = JSON.stringify(fenceTuple);
+    const cached = this._horizonCache.get(cacheKey);
+    if (cached && cached.fenceKey === fenceKey) return cached.value;
+    const value = compute();
+    this._horizonCache.set(cacheKey, { fenceKey, fenceTuple, value, computedAt: this._now() });
+    return value;
+  }
+
+  /** Rule 2: task horizon fence = (boardFence(board), bindingFence(worker:<workerId>),
+   * interactionGeneration(taskId), projectionInputFence()). `board` is caller-supplied since a
+   * task carries no fixed board of its own — the same explicitness requestBoardClaim's
+   * expectedBoardFence already requires. */
+  taskHorizon(taskId, { board = null } = {}) {
+    const task = this._tasks.get(taskId);
+    if (!task) throw Object.assign(new Error(`unknown task ${taskId}`), { name: 'CoordinationRefusal', code: 'not_found' });
+    const workerId = task.assignee ?? null;
+    const boardFence = board != null ? this._coordination.boardFence(board) : 0;
+    const bindingFence = workerId != null ? this._coordination.bindingFence(task.runId ?? null, `worker:${workerId}`) : 0;
+    const interactionGeneration = this.interactionGeneration(taskId);
+    const projectionInputFence = this._coordination.projectionInputFence();
+    const fenceTuple = [boardFence, bindingFence, interactionGeneration, projectionInputFence];
+    return this._horizonCacheGet('task', taskId, fenceTuple, () => ({
+      taskId, fenceTuple,
+      board: board != null ? this._coordination.boardSnapshot(board) : null,
+      nodes: this._coordination.queryKnowledge({}),
+      edges: this._coordination.queryKnowledgeEdges({}),
+    }));
+  }
+
+  /** Rule 3: workflow horizon fence = the tuple of boardFence for every board attached to the
+   * run (via contextPackageAttachments' `board:<name>` scope convention) + bindingFence('shared')
+   * + decisionSettleCount(runId) + projectionInputFence(). */
+  workflowHorizon(runId) {
+    const attachments = this._coordination.contextPackageAttachments(runId);
+    const boards = [...new Set(attachments
+      .filter((attachment) => attachment.scope.startsWith('board:'))
+      .map((attachment) => attachment.scope.slice('board:'.length)))].sort();
+    const boardFences = boards.map((board) => this._coordination.boardFence(board));
+    const bindingFence = this._coordination.bindingFence(runId, 'shared');
+    const decisionSettleCount = this.decisionSettleCount(runId);
+    const projectionInputFence = this._coordination.projectionInputFence();
+    const fenceTuple = [boardFences, bindingFence, decisionSettleCount, projectionInputFence];
+    return this._horizonCacheGet('workflow', runId, fenceTuple, () => ({
+      runId, fenceTuple,
+      boards: boards.map((board) => this._coordination.boardSnapshot(board)),
+      nodes: this._coordination.queryKnowledge({}),
+      edges: this._coordination.queryKnowledgeEdges({}),
+    }));
+  }
+
+  /** Rule 4: project horizon fence = the store's own applied-event position — already a strict
+   * superset of every other fence component, so no new counter is needed here. */
+  projectHorizon(repoId) {
+    const fenceTuple = [this._coordination.eventFence()];
+    return this._horizonCacheGet('project', repoId, fenceTuple, () => ({
+      repoId, fenceTuple,
+      nodes: this._coordination.queryKnowledge({}),
+      edges: this._coordination.queryKnowledgeEdges({}),
+    }));
+  }
+
   boardFence(board) {
     this._assertReadable();
     return this._coordination.boardFence(board);
@@ -9837,6 +9951,7 @@ export class Coordinator {
           const discarded = appendAttributed({ worker: workerId, harness, turnEpoch, kind: 'control.drain_interaction_discarded', actor: 'policy', payload: { requestId, kind: 'question' } });
           const task = this._tasks.get(handle.taskId); const evidence = this._coordMapEvent(discarded);
           this._coordRecord('authority.cancelled', { taskId: task?.id ?? null, workerId, requestId, kind: 'question', reason: 'fleet_drain', evidence }, `driver.authority.cancelled:${workerId}:${requestId}:${discarded.seq}`, 'policy');
+          this._bumpInteractionGeneration(handle.taskId);
           break;
         }
         // F4: a reused requestId (harness bug or malice) must never silently collapse two
@@ -9845,9 +9960,11 @@ export class Coordinator {
           const rejected = appendAttributed({ worker: workerId, harness, turnEpoch, kind: 'control.duplicate_interaction_rejected', actor: 'policy', payload: { requestId, kind: 'question' } });
           const task = this._tasks.get(handle.taskId); const evidence = this._coordMapEvent(rejected);
           this._coordRecord('authority.rejected', { taskId: task?.id ?? null, workerId, requestId, kind: 'question', reason: 'duplicate_request_id', evidence }, `driver.authority.rejected:${workerId}:${requestId}:${rejected.seq}`, 'policy');
+          this._bumpInteractionGeneration(handle.taskId);
           break;
         }
         const askedEvent = appendAttributed({ worker: workerId, harness, turnEpoch, kind, actor, payload });
+        this._bumpInteractionGeneration(handle.taskId);
         const task = this._tasks.get(handle.taskId);
         if (task && TERMINAL_TASK_STATUSES.has(task.status)) break;
         const record = {
@@ -9882,15 +9999,18 @@ export class Coordinator {
           const discarded = appendAttributed({ worker: workerId, harness, turnEpoch, kind: 'control.drain_interaction_discarded', actor: 'policy', payload: { requestId, kind: 'approval' } });
           const task = this._tasks.get(handle.taskId); const evidence = this._coordMapEvent(discarded);
           this._coordRecord('authority.cancelled', { taskId: task?.id ?? null, workerId, requestId, kind: 'approval', reason: 'fleet_drain', evidence }, `driver.authority.cancelled:${workerId}:${requestId}:${discarded.seq}`, 'policy');
+          this._bumpInteractionGeneration(handle.taskId);
           break;
         }
         if (this._pending.has(requestId)) {
           const rejected = appendAttributed({ worker: workerId, harness, turnEpoch, kind: 'control.duplicate_interaction_rejected', actor: 'policy', payload: { requestId, kind: 'approval' } });
           const task = this._tasks.get(handle.taskId); const evidence = this._coordMapEvent(rejected);
           this._coordRecord('authority.rejected', { taskId: task?.id ?? null, workerId, requestId, kind: 'approval', reason: 'duplicate_request_id', evidence }, `driver.authority.rejected:${workerId}:${requestId}:${rejected.seq}`, 'policy');
+          this._bumpInteractionGeneration(handle.taskId);
           break;
         }
         const askedEvent = appendAttributed({ worker: workerId, harness, turnEpoch, kind, actor, payload });
+        this._bumpInteractionGeneration(handle.taskId);
         const task = this._tasks.get(handle.taskId);
         if (task && TERMINAL_TASK_STATUSES.has(task.status)) break;
         const record = {
@@ -9932,6 +10052,7 @@ export class Coordinator {
           const rejected = appendAttributed({ worker: workerId, harness, turnEpoch, kind: 'control.malformed_interaction_rejected', actor: 'policy', payload: { requestId: requestId ?? null, kind: 'decision', errors: err.errors } });
           const task = this._tasks.get(handle.taskId); const evidence = this._coordMapEvent(rejected);
           this._coordRecord('authority.rejected', { taskId: task?.id ?? null, workerId, requestId: requestId ?? null, kind: 'decision', reason: 'malformed_request', evidence }, `driver.authority.rejected:${workerId}:${requestId ?? rejected.seq}:${rejected.seq}`, 'policy');
+          this._bumpInteractionGeneration(handle.taskId);
           break;
         }
         if (typeof requestId !== 'string' || requestId.length === 0) break;
@@ -9939,15 +10060,18 @@ export class Coordinator {
           const discarded = appendAttributed({ worker: workerId, harness, turnEpoch, kind: 'control.drain_interaction_discarded', actor: 'policy', payload: { requestId, kind: 'decision' } });
           const task = this._tasks.get(handle.taskId); const evidence = this._coordMapEvent(discarded);
           this._coordRecord('authority.cancelled', { taskId: task?.id ?? null, workerId, requestId, kind: 'decision', reason: 'fleet_drain', evidence }, `driver.authority.cancelled:${workerId}:${requestId}:${discarded.seq}`, 'policy');
+          this._bumpInteractionGeneration(handle.taskId);
           break;
         }
         if (this._pending.has(requestId)) {
           const rejected = appendAttributed({ worker: workerId, harness, turnEpoch, kind: 'control.duplicate_interaction_rejected', actor: 'policy', payload: { requestId, kind: 'decision' } });
           const task = this._tasks.get(handle.taskId); const evidence = this._coordMapEvent(rejected);
           this._coordRecord('authority.rejected', { taskId: task?.id ?? null, workerId, requestId, kind: 'decision', reason: 'duplicate_request_id', evidence }, `driver.authority.rejected:${workerId}:${requestId}:${rejected.seq}`, 'policy');
+          this._bumpInteractionGeneration(handle.taskId);
           break;
         }
         const askedEvent = appendAttributed({ worker: workerId, harness, turnEpoch, kind, actor, payload: { requestId, request } });
+        this._bumpInteractionGeneration(handle.taskId);
         const task = this._tasks.get(handle.taskId);
         if (task && TERMINAL_TASK_STATUSES.has(task.status)) break;
         // F6: v1 decisions are always blocking (the gating-deadlock break); there is no
@@ -9980,7 +10104,11 @@ export class Coordinator {
       case 'approval.resolved':
       case 'decision.settled': {
         const resolvedEvent = appendAttributed({ worker: workerId, harness, turnEpoch, kind, actor, payload });
+        this._bumpInteractionGeneration(handle.taskId);
         const task = this._tasks.get(handle.taskId);
+        // KG-1 Part A rule 3: decisionSettleCount is a strict subset of interactionGeneration's
+        // kinds — approvals/questions resolving does not feed wave-level learning (docs/34 §4).
+        if (kind === 'decision.settled') this._bumpDecisionSettleCount(task?.runId ?? null);
         if (task && this._coordination?.task(task.id)?.status === 'input_required') {
           const evidence = this._coordMapEvent(resolvedEvent);
           this._coordTransition(task, 'working', `task.working:${task.id}:${resolvedEvent.seq}`, evidence, actor ?? 'worker');
@@ -10997,6 +11125,7 @@ export class Coordinator {
                 } : {}),
               });
             }
+            this._bumpInteractionGeneration(taskId);
             break;
           }
           case 'question.answered':
@@ -11004,6 +11133,8 @@ export class Coordinator {
           case 'decision.settled':
             if (terminalStatus === 'input_required') terminalStatus = 'working';
             if (e.payload?.requestId) reconstructedPending.delete(e.payload.requestId);
+            this._bumpInteractionGeneration(taskId);
+            if (e.kind === 'decision.settled') this._bumpDecisionSettleCount(runId);
             break;
           case 'decision.expired':
             if (terminalStatus === 'input_required') terminalStatus = 'working';
