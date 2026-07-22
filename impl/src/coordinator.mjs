@@ -9197,6 +9197,44 @@ export class Coordinator {
     return this._coordination.boardSnapshot(board);
   }
 
+  // ---- REPL-2 bindings (issue #22, repl23-decisions.md Part B rule 5): NO wrapper-level
+  // scope-forcing — a deliberate divergence from requestBoardClaim's owner-forcing. `scope` is
+  // the write's own routing/identity field; Part B rule 4(b)/(c) already refuse a caller whose
+  // declared scope and cited manifestDigest don't jointly resolve to its own identity, loudly,
+  // by construction — there is nothing left here for a wrapper to force. ----
+  admitReplBinding(fields, opts = {}) {
+    this.tick();
+    if (typeof opts.idempotencyKey !== 'string' || opts.idempotencyKey.length === 0) throw new TypeError('REPL binding requires idempotencyKey');
+    return this._coordination.admitReplBinding(fields, {
+      actor: opts.actor ?? 'worker', principalId: opts.principalId ?? opts.actor ?? 'worker',
+      key: opts.idempotencyKey,
+    });
+  }
+
+  dropReplBinding(fields, opts = {}) {
+    this.tick();
+    if (typeof opts.idempotencyKey !== 'string' || opts.idempotencyKey.length === 0) throw new TypeError('REPL binding drop requires idempotencyKey');
+    return this._coordination.dropReplBinding(fields, {
+      actor: opts.actor ?? 'worker', principalId: opts.principalId ?? opts.actor ?? 'worker',
+      key: opts.idempotencyKey,
+    });
+  }
+
+  bindingFence(runId, scope) {
+    this._assertReadable();
+    return this._coordination.bindingFence(runId, scope);
+  }
+
+  replBindingSnapshot(runId, scope) {
+    this._assertReadable();
+    return this._coordination.replBindingSnapshot(runId, scope);
+  }
+
+  resolveReplCitation(runId, citation) {
+    this._assertReadable();
+    return this._coordination.resolveReplCitation(runId, citation);
+  }
+
   list() {
     this._assertReadable();
     return [...this._workers.values()].map((h) => this._publicHandle(h));

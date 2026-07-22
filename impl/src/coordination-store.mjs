@@ -111,6 +111,8 @@ const PROJECTION_CHECKPOINT_FIELDS = Object.freeze([
   '_boardReports', '_boardFences',
   '_contextPackages', '_contextPackageAttachments',
   '_replManifestAdmissions',
+  // REPL-2 (Part G rule 23): gains _replBindings, _replBindingHistory, _replBindingFences.
+  '_replBindings', '_replBindingHistory', '_replBindingFences',
 ]);
 
 const TERMINAL = new Set(['completed', 'failed', 'cancelled']);
@@ -308,6 +310,26 @@ function boardItemContentDigest(core) {
   return canonicalDigest({
     itemId: core.itemId, itemVersion: core.itemVersion, board: core.board, title: core.title,
     detail: core.detail, state: core.state, owner: core.owner, evidence: core.evidence, ordinal: core.ordinal,
+  });
+}
+
+// REPL-2/REPL-3 (docs/reference/evidence/repl-kg-wave-2026-07-22/repl23-decisions.md, issues
+// #22/#23). Binding identity/fences/history/citations are (runId, scope, name)-tupled via
+// JSON-encoded map keys — never string concatenation (Part A rule 2).
+const SAFE_REPL_SCOPE = /^(shared|worker:[A-Za-z0-9._:-]{1,256})$/u;
+const SAFE_REPL_NAME = /^[A-Za-z0-9._-]{1,128}$/u;
+const REPL_CELL_ID = /^cell:[a-f0-9]{64}$/u;
+const REPL_DIGEST = /^[a-f0-9]{64}$/u;
+const REPL_CITATION = /^repl:(shared|worker:[A-Za-z0-9._:-]{1,256}):([A-Za-z0-9._-]{1,128})@([1-9][0-9]*)$/u;
+const REPL_CELL_MEDIA_TYPE = 'application/vnd.baton.context-value+json';
+const MAX_REPL_BINDINGS = 512;
+function replBindingKey(runId, scope, name) { return JSON.stringify([runId, scope, name]); }
+function replFenceKey(runId, scope) { return JSON.stringify([runId, scope]); }
+/** bindingDigest = H(scope, name, bindingVersion, state, cellId), hub-recomputed (Part A rule 1). */
+function replBindingContentDigest(core) {
+  return canonicalDigest({
+    scope: core.scope, name: core.name, bindingVersion: core.bindingVersion,
+    state: core.state, cellId: core.cellId,
   });
 }
 
@@ -805,6 +827,9 @@ export class CoordinationStore {
     // REPL-1: admitted ReplManifest authority records, keyed by manifestDigest. REPL sessions
     // ride the existing _contextSessions map, so no separate session projection is added.
     this._replManifestAdmissions = new Map();
+    // REPL-2: immutable versioned bindings keyed by JSON.stringify([runId, scope, name])
+    // (Part A rule 2); the fence is a per-(runId, scope) replay-derivable counter (Part C).
+    this._replBindings = new Map(); this._replBindingHistory = new Map(); this._replBindingFences = new Map();
   }
 
   _configureAdvisoryFeedCards(cards) {
@@ -7253,6 +7278,11 @@ export class CoordinationStore {
       admittedRunId = this._contextCallRunId(this._contextCalls.get(p?.callId));
     }
     else if (event.kind === 'repl.manifest_admitted') admittedRunId = p?.runId ?? null;
+    // REPL-2 bindings derive their runId from the repl.manifest_admitted record their write
+    // cited — the same lookup Part B rule 4(d) performs at admission time (Part G rule 25).
+    else if (event.kind === 'repl.binding_set' || event.kind === 'repl.binding_dropped') {
+      admittedRunId = this._replManifestAdmissions.get(p?.manifestDigest)?.runId ?? null;
+    }
     if (admittedRunId !== null && (this._runStopByTarget.has(admittedRunId) || this._runStops.has(admittedRunId))) {
       throw new CoordinationIntegrityError(`effect ${event.kind} was admitted after run ${admittedRunId} began stopping`, 'run_stopping');
     }
@@ -7793,6 +7823,22 @@ export class CoordinationStore {
       this._boardClaims.set(p.itemId, freeze({ ...clone(old), active: false, expiredEvent: event.seq, version: old.version + 1 }));
     } else if (event.kind === 'board.report_submitted') {
       this._boardReports.push(freeze({ ...clone(p), eventSeq: event.seq, ts: event.ts }));
+    } else if (event.kind === 'repl.binding_set' || event.kind === 'repl.binding_dropped') {
+      // Part G rule 22: hub-derived runId from the cited repl.manifest_admitted record,
+      // guaranteed present by admission order; JSON-tuple keys, never string concatenation.
+      const runId = this._replManifestAdmissions.get(p.manifestDigest)?.runId ?? null;
+      const key = replBindingKey(runId, p.scope, p.name);
+      const rec = freeze({
+        scope: p.scope, name: p.name, bindingVersion: p.bindingVersion, state: p.state,
+        cellId: p.cellId, bindingDigest: p.bindingDigest, runId,
+        admittedEvent: event.seq, admittedAt: event.ts,
+      });
+      this._replBindings.set(key, rec);
+      this._replBindingHistory.set(key, freeze([...(this._replBindingHistory.get(key) ?? []), rec]));
+      // Part C rule 7: EVERY write bumps the scope fence — worker writes included, no
+      // orchestrator-authority carve-out the way board claim/report traffic gets (F9).
+      const fenceKey = replFenceKey(runId, p.scope);
+      this._replBindingFences.set(fenceKey, (this._replBindingFences.get(fenceKey) ?? 0) + 1);
     } else if (event.kind === 'knowledge.promotion_batch') {
       this._validateKnowledgePromotionPayload(p, event, true);
       for (const node of p.nodes) this._setKnowledgeNode(event, node.id, freeze({ ...clone(node), observedSeq: event.seq, observedAt: event.ts, ...eventTime(this._events, node.evidence, event), validFrom: event.ts, validTo: null, validityVersion: 1, derivedFromEvent: event.seq }));
@@ -9021,7 +9067,7 @@ export class CoordinationStore {
   // equality) — no caller-supplied `principal`/`replRole` string is ever trusted as authority.
   _validateReplManifestAdmissionPayload(payload, event, integrity = false) {
     const fail = (message, code) => this._replManifestFailure(message, code, integrity);
-    const fields = ['manifestDigest', 'principal', 'replRole', 'requestDigest', 'runId', 'schemaVersion'];
+    const fields = ['branches', 'manifestDigest', 'principal', 'replRole', 'requestDigest', 'runId', 'schemaVersion'];
     const workerRole = /^worker:[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u;
     if (!payload || typeof payload !== 'object' || Array.isArray(payload)
       || Object.keys(payload).sort().join(',') !== fields.join(',')
@@ -9035,6 +9081,23 @@ export class CoordinationStore {
       || !validRunId(payload.principal.principalId)
       || !/^[a-f0-9]{64}$/u.test(payload.requestDigest ?? '')) {
       fail('Context REPL manifest admission is malformed', 'repl_manifest_integrity');
+    }
+    // REPL-3 (docs/33 v2 rule 8): the event carries the RESOLVED branch list, so replay
+    // reconstructs the exact coordinates with zero store lookups. Shapes only — the fold
+    // must stay pure (no cell/CAS reads here).
+    if (!Array.isArray(payload.branches) || payload.branches.length === 0
+      || payload.branches.length > 1_024
+      || payload.branches.some((branch) => !branch || typeof branch !== 'object' || Array.isArray(branch)
+        || Object.keys(branch).sort().join(',') !== 'digest,itemCount,mediaType,name,ref,summary'
+        || typeof branch.name !== 'string' || branch.name.length === 0 || branch.name.length > 1_024
+        || !/^[a-f0-9]{64}$/u.test(branch.digest ?? '')
+        || branch.ref !== `ctx:sha256:${branch.digest}`
+        || !Number.isSafeInteger(branch.itemCount) || branch.itemCount < 0
+        || typeof branch.mediaType !== 'string' || branch.mediaType.length === 0 || branch.mediaType.length > 256
+        || typeof branch.summary !== 'string' || branch.summary.length === 0 || branch.summary.length > 4_096)
+      || new Set(payload.branches.map((branch) => branch.name)).size !== payload.branches.length
+      || new Set(payload.branches.map((branch) => branch.ref)).size !== payload.branches.length) {
+      fail('Context REPL manifest admission branches are malformed', 'repl_manifest_integrity');
     }
     const requestCore = {
       manifestDigest: payload.manifestDigest, runId: payload.runId,
@@ -9054,9 +9117,22 @@ export class CoordinationStore {
       throw new CoordinationRefusal('Context Program authority is unavailable', 'repl_manifest_unavailable');
     }
     const deployment = this._currentContextDeployment();
-    // (a) re-normalize the submitted manifest and prove its digest.
+    // (a) re-normalize the submitted manifest and prove its digest. REPL-3: `cell:`-typed raw
+    // branches are resolved FIRST (settled-only, hub-computed coordinates — Part F rules 17-19),
+    // so normalization and the digest cover the resolved coordinates (docs/33 v2 rule 8).
+    let manifestInput = fields?.manifest;
+    if (manifestInput && Array.isArray(manifestInput.branches)
+      && manifestInput.branches.some((branch) => branch && typeof branch === 'object'
+        && !Array.isArray(branch) && Object.hasOwn(branch, 'cell'))) {
+      manifestInput = {
+        ...clone(manifestInput),
+        branches: manifestInput.branches.map((branch) => (
+          branch && typeof branch === 'object' && !Array.isArray(branch) && Object.hasOwn(branch, 'cell')
+            ? this._resolveReplManifestBranch(branch) : branch)),
+      };
+    }
     let manifest;
-    try { manifest = normalizeReplManifest(fields?.manifest, deployment.policy); }
+    try { manifest = normalizeReplManifest(manifestInput, deployment.policy); }
     catch (error) { throw new CoordinationRefusal(error.message, error.code ?? 'repl_manifest_invalid'); }
     if (fields?.manifestDigest !== undefined && fields.manifestDigest !== manifest.digest) {
       throw new CoordinationRefusal('Context REPL manifest digest differs from its bytes',
@@ -9095,6 +9171,9 @@ export class CoordinationStore {
       schemaVersion: 1, manifestDigest: manifest.digest, runId, replRole,
       principal: { actor: principal.actor, principalId: principal.principalId },
       requestDigest: canonicalDigest(requestCore),
+      // REPL-3 (docs/33 v2 rule 8): the RESOLVED branch list, replay-derivable with zero
+      // store lookups (cell: coordinates were baked by the pre-normalization splice above).
+      branches: clone(manifest.branches),
     };
     // (f) two-level idempotency/conflict. First the key level.
     const prior = this._byKey.get(auth?.key);
@@ -12484,6 +12563,278 @@ export class CoordinationStore {
     const claims = ids.map((id) => this._boardClaims.get(id)).filter((claim) => claim && claim.active).map(clone);
     const reports = this._boardReports.filter((report) => ids.includes(report.itemId)).map(clone);
     return freeze({ board, boardFence: this.boardFence(board), items, claims, reports });
+  }
+
+  // -------------------------------------------------------------------------
+  // REPL-3 branch resolution (repl23-decisions.md Part F rules 17-19). Wired into the real
+  // REPL-1 admission path (admitReplManifest pre-normalization splice): ordinary branches are
+  // caller-submitted and hub-validated; `cell:`-typed branches are resolved here at admission —
+  // settled-only (rule 18) — and their five coordinate fields are entirely hub-computed, never
+  // accepted from the caller for that branch kind.
+  // -------------------------------------------------------------------------
+
+  /** Normalizes one caller-submitted ReplManifest branch. An ordinary
+   * branch is caller-submitted and hub-validated; a `cell:`-typed branch (REPL-3, Part F rule
+   * 17-19) is resolved here at admission — settled-only (rule 18) — and its five coordinate
+   * fields (digest/ref/itemCount/mediaType/summary) are entirely hub-computed, never accepted
+   * from the caller for that branch kind. */
+  _resolveReplManifestBranch(branch) {
+    if (!branch || typeof branch !== 'object' || Array.isArray(branch)
+      || typeof branch.name !== 'string' || !SAFE_REPL_NAME.test(branch.name)) {
+      throw new CoordinationRefusal('ReplManifest branch name is invalid', 'repl_manifest_branch_invalid');
+    }
+    if (Object.hasOwn(branch, 'cell')) {
+      if (!branch.cell || typeof branch.cell !== 'object' || Array.isArray(branch.cell)
+        || Object.keys(branch.cell).sort().join(',') !== 'digest'
+        || !REPL_DIGEST.test(branch.cell.digest ?? '')) {
+        throw new CoordinationRefusal('ReplManifest cell branch ref is invalid', 'repl_manifest_branch_invalid');
+      }
+      const cellId = `cell:${branch.cell.digest}`;
+      const cell = this.contextCell(cellId);
+      if (!cell || cell.state !== 'completed') {
+        throw new CoordinationRefusal(`ReplManifest cell branch ${branch.name} names a cell that is not settled`,
+          'repl_manifest_cell_not_settled');
+      }
+      const outputRef = cell.result.outputRef;
+      // Reverify through the identical discipline settleContextCell's completion path already
+      // uses (coordination-store.mjs settleContextCell) — never poisoned, only never-happened.
+      try { this._contextReferenceRead(outputRef); }
+      catch (error) {
+        throw new CoordinationRefusal(error?.message ?? 'Context artifact is unavailable',
+          error?.code ?? 'context_artifact_unavailable');
+      }
+      return {
+        name: branch.name, digest: outputRef.digest, ref: `ctx:sha256:${outputRef.digest}`,
+        itemCount: 1, mediaType: REPL_CELL_MEDIA_TYPE, summary: `resolved from cell:${branch.cell.digest}`,
+      };
+    }
+    if (typeof branch.digest !== 'string' || !REPL_DIGEST.test(branch.digest)
+      || typeof branch.ref !== 'string' || branch.ref !== `ctx:sha256:${branch.digest}`
+      || !Number.isSafeInteger(branch.itemCount) || branch.itemCount < 0
+      || typeof branch.mediaType !== 'string' || branch.mediaType.length === 0
+      || typeof branch.summary !== 'string' || branch.summary.length === 0) {
+      throw new CoordinationRefusal(`ReplManifest branch ${branch.name} is invalid`, 'repl_manifest_branch_invalid');
+    }
+    return {
+      name: branch.name, digest: branch.digest, ref: branch.ref,
+      itemCount: branch.itemCount, mediaType: branch.mediaType, summary: branch.summary,
+    };
+  }
+
+  // -------------------------------------------------------------------------
+  // REPL-2 (issue #22, repl23-decisions.md): named bindings, immutable versions under
+  // (runId, scope, name); no `repl.read` event kind (F10); cached, non-evented reads own the
+  // per-(runId, scope) fence (Part C/D). Never the board fence or FenceTable (Part I).
+  // -------------------------------------------------------------------------
+
+  /** The binding fence: EVERY write to (runId, scope) — worker writes included, unlike
+   * boardFence's orchestrator-authority-only carve-out (Part C rule 7). Replay-derivable,
+   * never a separately durable counter (rule 8). */
+  bindingFence(runId, scope) {
+    return this._replBindingFences.get(replFenceKey(runId, scope)) ?? 0;
+  }
+
+  admitReplBinding(fields, auth) {
+    if (!fields || typeof fields !== 'object' || Array.isArray(fields)
+      || typeof fields.scope !== 'string' || !SAFE_REPL_SCOPE.test(fields.scope)
+      || typeof fields.name !== 'string' || !SAFE_REPL_NAME.test(fields.name)
+      || typeof fields.cellId !== 'string' || !REPL_CELL_ID.test(fields.cellId)
+      || typeof fields.manifestDigest !== 'string' || !REPL_DIGEST.test(fields.manifestDigest)) {
+      throw new CoordinationRefusal('REPL binding requires a valid scope/name/cellId/manifestDigest',
+        'invalid_repl_binding');
+    }
+    const expectedBindingVersion = Object.hasOwn(fields, 'expectedBindingVersion')
+      ? fields.expectedBindingVersion : null;
+    if (expectedBindingVersion !== null
+      && (!Number.isSafeInteger(expectedBindingVersion) || expectedBindingVersion <= 0)) {
+      throw new CoordinationRefusal('REPL binding expectedBindingVersion must be null or a positive integer',
+        'invalid_repl_binding');
+    }
+    // Idempotency (Part B rule 6, P1-4): an explicit payload-comparison block, never the bare
+    // `_append` blind-key-return discipline board writes fall back to.
+    const prior = this._byKey.get(auth?.key);
+    if (prior) {
+      const runId = this._replManifestAdmissions.get(prior.payload?.manifestDigest)?.runId ?? null;
+      const identity = {
+        scope: fields.scope, name: fields.name, cellId: fields.cellId,
+        manifestDigest: fields.manifestDigest, expectedBindingVersion,
+      };
+      const priorIdentity = {
+        scope: prior.payload?.scope, name: prior.payload?.name, cellId: prior.payload?.cellId,
+        manifestDigest: prior.payload?.manifestDigest,
+        expectedBindingVersion: prior.payload?.expectedBindingVersion ?? null,
+      };
+      if (prior.kind !== 'repl.binding_set' || prior.actor !== auth.actor
+        || canonicalDigest(priorIdentity) !== canonicalDigest(identity)) {
+        throw new CoordinationRefusal('REPL binding idempotency key is bound differently',
+          'repl_binding_conflict');
+      }
+      const projected = runId !== null ? this._replBindings.get(replBindingKey(runId, fields.scope, fields.name)) : null;
+      return freeze({ ok: true, result: 'idempotent', event: clone(prior), binding: clone(projected) });
+    }
+
+    // Part B rule 4: authorized by, and inherits its runId from, the manifest_admitted record
+    // its manifestDigest names — never a caller-supplied runId, never a wrapper-forced scope.
+    const record = this._replManifestAdmissions.get(fields.manifestDigest);
+    if (!record) {
+      throw new CoordinationRefusal('REPL binding cites an unadmitted manifestDigest',
+        'repl_binding_manifest_unadmitted');
+    }
+    if (record.replRole !== fields.scope) {
+      throw new CoordinationRefusal('REPL binding scope disagrees with the cited manifest replRole',
+        'repl_binding_scope_manifest_mismatch');
+    }
+    const callerPrincipal = { actor: auth?.actor ?? null, principalId: auth?.principalId ?? null };
+    if (canonicalDigest(callerPrincipal) !== canonicalDigest(record.principal)) {
+      throw new CoordinationRefusal('REPL binding caller identity disagrees with the cited manifest principal',
+        'repl_binding_unauthorized');
+    }
+    const runId = record.runId;
+    this._assertRunAdmissionOpen(runId, false);
+
+    const key = replBindingKey(runId, fields.scope, fields.name);
+    const current = this._replBindings.get(key);
+    if (current) {
+      // Part C rule 9: a version CAS, not a fence CAS — concurrent binds to different names in
+      // the same scope never spuriously conflict with each other.
+      if (expectedBindingVersion !== current.bindingVersion) {
+        throw new CoordinationRefusal('REPL binding expectedBindingVersion is stale', 'stale_binding_version');
+      }
+    } else {
+      const distinctNames = new Set([...this._replBindings.keys()]
+        .map((rowKey) => JSON.parse(rowKey))
+        .filter(([rId, scope]) => rId === runId && scope === fields.scope)
+        .map(([, , name]) => name));
+      if (distinctNames.size >= MAX_REPL_BINDINGS) {
+        throw new CoordinationRefusal('REPL bindings exhausted for this (runId, scope)',
+          'repl_bindings_exhausted');
+      }
+    }
+    // Part A rule 3: the new cellId must resolve to a completed cell via the same global
+    // projection REPL-3 resolution uses — an admitted-but-unsettled/non-completed cell refuses.
+    const cell = this.contextCell(fields.cellId);
+    if (!cell || cell.state !== 'completed') {
+      throw new CoordinationRefusal('REPL binding names a cell that is not settled',
+        'repl_binding_cell_not_settled');
+    }
+    const bindingVersion = current ? current.bindingVersion + 1 : 1;
+    const bindingDigest = replBindingContentDigest({
+      scope: fields.scope, name: fields.name, bindingVersion, state: 'bound', cellId: fields.cellId,
+    });
+    if (Object.hasOwn(fields, 'bindingDigest') && fields.bindingDigest !== bindingDigest) {
+      throw new CoordinationRefusal('REPL binding digest does not match the hub recompute',
+        'repl_binding_digest_mismatch');
+    }
+    const payload = {
+      schemaVersion: 1, scope: fields.scope, name: fields.name, bindingVersion, state: 'bound',
+      cellId: fields.cellId, bindingDigest, manifestDigest: fields.manifestDigest, expectedBindingVersion,
+    };
+    const event = this._append('repl.binding_set', payload, auth);
+    return freeze({
+      ok: true, result: current ? 'rebound' : 'bound', event: clone(event),
+      binding: clone(this._replBindings.get(key)),
+    });
+  }
+
+  dropReplBinding(fields, auth) {
+    if (!fields || typeof fields !== 'object' || Array.isArray(fields)
+      || typeof fields.scope !== 'string' || !SAFE_REPL_SCOPE.test(fields.scope)
+      || typeof fields.name !== 'string' || !SAFE_REPL_NAME.test(fields.name)
+      || typeof fields.manifestDigest !== 'string' || !REPL_DIGEST.test(fields.manifestDigest)) {
+      throw new CoordinationRefusal('REPL binding drop requires a valid scope/name/manifestDigest',
+        'invalid_repl_binding');
+    }
+    const expectedBindingVersion = Object.hasOwn(fields, 'expectedBindingVersion')
+      ? fields.expectedBindingVersion : null;
+    if (!Number.isSafeInteger(expectedBindingVersion) || expectedBindingVersion <= 0) {
+      throw new CoordinationRefusal('REPL binding drop requires a positive expectedBindingVersion',
+        'invalid_repl_binding');
+    }
+    const prior = this._byKey.get(auth?.key);
+    if (prior) {
+      const runId = this._replManifestAdmissions.get(prior.payload?.manifestDigest)?.runId ?? null;
+      const identity = {
+        scope: fields.scope, name: fields.name, manifestDigest: fields.manifestDigest, expectedBindingVersion,
+      };
+      const priorIdentity = {
+        scope: prior.payload?.scope, name: prior.payload?.name,
+        manifestDigest: prior.payload?.manifestDigest,
+        expectedBindingVersion: prior.payload?.expectedBindingVersion ?? null,
+      };
+      if (prior.kind !== 'repl.binding_dropped' || prior.actor !== auth.actor
+        || canonicalDigest(priorIdentity) !== canonicalDigest(identity)) {
+        throw new CoordinationRefusal('REPL binding idempotency key is bound differently',
+          'repl_binding_conflict');
+      }
+      const projected = runId !== null ? this._replBindings.get(replBindingKey(runId, fields.scope, fields.name)) : null;
+      return freeze({ ok: true, result: 'idempotent', event: clone(prior), binding: clone(projected) });
+    }
+
+    const record = this._replManifestAdmissions.get(fields.manifestDigest);
+    if (!record) {
+      throw new CoordinationRefusal('REPL binding cites an unadmitted manifestDigest',
+        'repl_binding_manifest_unadmitted');
+    }
+    if (record.replRole !== fields.scope) {
+      throw new CoordinationRefusal('REPL binding scope disagrees with the cited manifest replRole',
+        'repl_binding_scope_manifest_mismatch');
+    }
+    const callerPrincipal = { actor: auth?.actor ?? null, principalId: auth?.principalId ?? null };
+    if (canonicalDigest(callerPrincipal) !== canonicalDigest(record.principal)) {
+      throw new CoordinationRefusal('REPL binding caller identity disagrees with the cited manifest principal',
+        'repl_binding_unauthorized');
+    }
+    const runId = record.runId;
+    this._assertRunAdmissionOpen(runId, false);
+    const key = replBindingKey(runId, fields.scope, fields.name);
+    const current = this._replBindings.get(key);
+    // Rule 3: dropping requires state 'bound' — dropping an already-dropped binding is
+    // repl_binding_not_bound, not idempotent (idempotency is the auth.key replay path above).
+    if (!current || current.state !== 'bound') {
+      throw new CoordinationRefusal('REPL binding is not currently bound', 'repl_binding_not_bound');
+    }
+    if (expectedBindingVersion !== current.bindingVersion) {
+      throw new CoordinationRefusal('REPL binding expectedBindingVersion is stale', 'stale_binding_version');
+    }
+    const bindingVersion = current.bindingVersion + 1;
+    const bindingDigest = replBindingContentDigest({
+      scope: fields.scope, name: fields.name, bindingVersion, state: 'dropped', cellId: current.cellId,
+    });
+    if (Object.hasOwn(fields, 'bindingDigest') && fields.bindingDigest !== bindingDigest) {
+      throw new CoordinationRefusal('REPL binding digest does not match the hub recompute',
+        'repl_binding_digest_mismatch');
+    }
+    const payload = {
+      schemaVersion: 1, scope: fields.scope, name: fields.name, bindingVersion, state: 'dropped',
+      cellId: current.cellId, bindingDigest, manifestDigest: fields.manifestDigest, expectedBindingVersion,
+    };
+    const event = this._append('repl.binding_dropped', payload, auth);
+    return freeze({ ok: true, result: 'dropped', event: clone(event), binding: clone(this._replBindings.get(key)) });
+  }
+
+  /** Non-evented read (F10, rule 10): a poll appends nothing to the ledger. Active bindings
+   * only (state: 'bound'), one row per name keyed to its latest version (Part D rule 11). */
+  replBindingSnapshot(runId, scope) {
+    const rows = [...this._replBindings.entries()]
+      .filter(([key]) => { const [rId, s] = JSON.parse(key); return rId === runId && s === scope; })
+      .map(([, rec]) => rec)
+      .filter((rec) => rec.state === 'bound')
+      .map(clone);
+    return freeze({ runId, scope, bindingFence: this.bindingFence(runId, scope), bindings: rows });
+  }
+
+  /** `repl:<scope>:<name>@<version>` resolves the EXACT (runId, scope, name, bindingVersion)
+   * row from history — never "latest" — even if the binding has since been dropped or
+   * superseded (Part A rule 2; Part E rule 15). */
+  resolveReplCitation(runId, citation) {
+    const match = typeof citation === 'string' ? REPL_CITATION.exec(citation) : null;
+    if (!match) throw new CoordinationRefusal('REPL citation is unparseable', 'repl_binding_citation_not_found');
+    const [, scope, name, versionText] = match;
+    const version = Number(versionText);
+    const history = this._replBindingHistory.get(replBindingKey(runId, scope, name)) ?? [];
+    const row = history.find((rec) => rec.bindingVersion === version);
+    if (!row) throw new CoordinationRefusal('REPL citation does not resolve', 'repl_binding_citation_not_found');
+    return clone(row);
   }
 
   _knowledgeFailure(message, code, integrity = false) {

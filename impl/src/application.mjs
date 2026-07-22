@@ -53,6 +53,10 @@ const MAX_BLOCKED_INTERACTION_SUMMARY_BYTES = 160;
 // ceiling MAX_BOARD_VIEW_BYTES on the serialized projection.
 const MAX_BOARD_VIEW_BYTES = 256 * 1024;
 const MAX_BOARD_ITEMS = 512;
+// REPL-2 binding-view ceilings (repl23-decisions.md Part D rule 13), the exact same
+// byte/count-ceiling shape MAX_BOARD_VIEW_BYTES/MAX_BOARD_ITEMS use for boards.
+const MAX_REPL_VIEW_BYTES = 256 * 1024;
+const MAX_REPL_BINDING_ITEMS = 512;
 // AX-1 rule 3 (issue #10): these operational kinds are real-time provider narration/tool-use
 // telemetry — repeated bursts of them are not distinct forward-progress milestones the way a
 // committed file edit or a lifecycle/control/verification fact is, so an `evidence.mapped`
@@ -357,6 +361,49 @@ export function projectBoardView(snapshot, viewer = {}, cache = null) {
   while (Buffer.byteLength(JSON.stringify(view)) > MAX_BOARD_VIEW_BYTES && items.length > 0) {
     items = items.slice(0, items.length - 1);
     boardViewTruncated = true;
+    view = build();
+  }
+  if (cache) cache.set(cacheKey, view);
+  return view;
+}
+
+// REPL-2 (repl23-decisions.md Part D rules 11-13): a bounded, sanitized, per-worker binding
+// projection. Reads are NON-EVENTED (pure — appends nothing) and CACHED by
+// (runId, scope, workerId, bindingFence): while the (runId, scope) fence is unchanged the
+// exact cached view is served; a fence advance is the only thing that recomputes it. `scope`/
+// `name` are attacker-influenced identifiers and route through the same
+// boundedAttentionText/wrapProse untrusted-prose discipline board title/detail/report bodies
+// use (rule 16, P2-6); a resolved cellId is a closed hub-derived token and is never wrapped.
+export function projectReplBindingView(snapshot, viewer = {}, cache = null) {
+  const runId = snapshot?.runId ?? null;
+  const scope = snapshot?.scope ?? null;
+  const bindingFence = Number.isSafeInteger(snapshot?.bindingFence) ? snapshot.bindingFence : 0;
+  const workerId = viewer.workerId ?? null;
+  const role = viewer.role === 'orchestrator' ? 'orchestrator' : 'worker';
+  const cacheKey = `${runId} ${scope} ${role}:${workerId ?? ''} ${bindingFence}`;
+  if (cache && cache.has(cacheKey)) return cache.get(cacheKey);
+
+  // Part D rule 12: a worker sees its own worker:<id> scope plus the shared scope
+  // (read-only), both within its own run; the orchestrator sees every scope in the run.
+  const visibleScope = role === 'orchestrator' || scope === 'shared' || scope === `worker:${workerId}`;
+  const visible = visibleScope ? (snapshot?.bindings ?? []) : [];
+  let replBindingViewTruncated = visible.length > MAX_REPL_BINDING_ITEMS;
+  const project = (binding) => ({
+    scope: wrapProse(binding.scope, boundedAttentionText(binding.scope)),
+    name: wrapProse(binding.scope, boundedAttentionText(binding.name)),
+    bindingVersion: binding.bindingVersion, state: binding.state,
+    cellId: binding.cellId, bindingDigest: binding.bindingDigest,
+  });
+  let items = visible.slice(0, MAX_REPL_BINDING_ITEMS).map(project);
+  const build = () => Object.freeze({
+    runId, scope, bindingFence, viewer: Object.freeze({ workerId, role }),
+    bindings: Object.freeze(items), replBindingViewTruncated,
+  });
+  let view = build();
+  // Byte ceiling: shed the trailing item and re-flag until under MAX_REPL_VIEW_BYTES (never silent).
+  while (Buffer.byteLength(JSON.stringify(view)) > MAX_REPL_VIEW_BYTES && items.length > 0) {
+    items = items.slice(0, items.length - 1);
+    replBindingViewTruncated = true;
     view = build();
   }
   if (cache) cache.set(cacheKey, view);

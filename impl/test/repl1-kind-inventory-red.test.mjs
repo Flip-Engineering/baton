@@ -40,10 +40,13 @@ function foldedProjectionMaps() {
   return maps;
 }
 
-test('KI1: repl.manifest_admitted is in the closed set of folded coordination event kinds', () => {
+test('KI1: repl kinds are in the closed set of folded coordination event kinds', () => {
   const kinds = foldedKinds();
   assert.ok(kinds.has('repl.manifest_admitted'),
     'the new kind must appear in _apply before the terminal unsupported_event_kind throw');
+  // REPL-2 (integrated): the binding kinds introduced by repl23-bindings-red.test.mjs.
+  assert.ok(kinds.has('repl.binding_set') && kinds.has('repl.binding_dropped'),
+    'the REPL-2 binding kinds must appear in _apply too');
   assert.ok(kinds.has('context.session_admitted'), 'the extraction sees existing context kinds too');
 });
 
@@ -64,7 +67,7 @@ test('KI3: driving an undeclared repl.* event still throws unsupported_event_kin
   const store = bareStore(t);
   let thrown = null;
   try {
-    store._apply({ schemaVersion: 1, seq: 1, ts: '2026-07-18T08:00:00.000Z', kind: 'repl.binding_set', actor: 'x', idempotencyKey: 'x', payload: { runId: 'run-x' } });
+    store._apply({ schemaVersion: 1, seq: 1, ts: '2026-07-18T08:00:00.000Z', kind: 'repl.undeclared_kind', actor: 'x', idempotencyKey: 'x', payload: { runId: 'run-x' } });
   } catch (error) { thrown = error; }
   assert.ok(thrown, 'an undeclared repl.* kind must be refused');
   assert.equal(thrown.code, 'unsupported_event_kind');
