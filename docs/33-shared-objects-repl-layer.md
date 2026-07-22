@@ -1,130 +1,155 @@
 # 33 — Shared Objects and the REPL Layer
 
-Status: design groundwork for issues REPL-1..3. Companion to docs/32 (reflexive orchestration);
-grounded in the REPL/KG inventory taken 2026-07-22 and the landed REFLEX-1..4 work.
+Status: design groundwork for issues REPL-1..3, **v2 revised per red-team findings R33-1..10**
+(2026-07-22). v1's REPL-1/REPL-3 cores were unimplementable as written: manifests hard-require
+Workflow coordinates (context-program.mjs:203-248), `contextEval` resolves only live-run
+dispatch targets (application.mjs:8323-8363), and `cell:` resolution at normalization time
+violates evaluator purity (context-program.mjs:330-345). The v2 cores below re-ground all
+three. Companion to docs/32 (reflexive orchestration) and docs/34 (knowledge horizons).
 
 ## 1. What "REPL" means here — and what it never means
 
 Baton already made the hard call: **no arbitrary-code REPL, ever** (permanent constraint
-§93.1(1): "There is no arbitrary language runtime, `eval`, `exec`, callback, import, module
-load, ambient filesystem access, shell, or provider launch in the Program evaluator",
-spec/phase93-closed-program-ir.md:31-35; roadmap guarantee docs/07-roadmap.md:87; capability
-audit docs/28:578 — "a general persistent REPL kernel remains explicitly deferred"). The
-coordination-REPL module doc shipped its Board (Rung 0, the scratch family) and left the Bench
-rungs for later (docs/capabilities/coordination-repl.md:82-87, :160, :226).
+§93.1(1), spec/phase93-closed-program-ir.md:31-35; docs/07-roadmap.md:87; docs/28:578). The
+coordination-REPL module shipped its Board (Rung 0, scratch) and deferred the Bench rungs
+(docs/capabilities/coordination-repl.md:82-87, :160, :226).
 
-What a REPL *is* here, then: a **read-eval-print loop over closed, content-addressed objects** —
-the orchestrator and workers name objects (cells), compute new ones from old ones through the
-closed Bench (14 pure ops + 4 predicates, context-program.mjs:341-418), and pass them around by
-digest. Every object is immutable, replay-exact, and citable from boards, packages, briefs, and
-decision requests. "Scripting" is authoring closed Programs, not writing code.
+A REPL here is a **read-eval-print loop over closed, content-addressed objects**: orchestrator
+and workers name objects (cells), compute new ones from old ones through the closed Bench
+(14 pure ops + 4 predicates, context-program.mjs:341-418), and pass them by digest. Every
+object is immutable, replay-exact, and citable from boards, packages, briefs, and decision
+requests. "Scripting" is authoring closed Programs, never writing code.
 
-The good news from the grounding inventory: **the object substrate is already landed.** Cells are
-content-addressed immutable JSON objects up to 64MB (context-program.mjs:931-940, :652-686),
-durably admitted through `DurableContextSession.evaluate` (:1238-1300) with idempotent identity
+The substrate is landed: cells are content-addressed immutable JSON up to 64MB
+(context-program.mjs:931-940, :652-686), durably admitted with idempotent identity
 (`context.cell:${sessionId}:${programDigest}`, :1244), projected through inspect
-(application.mjs:9417-9426), and computable without a Workflow since REFLEX-4
-(application.contextEval, :8364-8417). What is missing is the *layer* that makes cells usable as
-shared working memory: admission authority outside a Workflow, a named-binding namespace, and
-cell-as-source composition.
+(application.mjs:9417-9426), computable without a Workflow against a *Workflow-reachable*
+manifest since REFLEX-4 (:8364-8417). Missing: manifest authority outside a Workflow, a
+named-binding namespace, and cell-as-source composition.
 
-## 2. Gaps (each is a design constraint, not a wish)
+## 2. Gaps (each is a design constraint)
 
-- **G-A — No manifest-admission authority outside a live Workflow dispatch.** REFLEX-4 probed
-  this boundary and refused honestly: "a genuinely Workflow-free 'plain' Run has no manifest
-  reachable here and this command refuses" (application.mjs:8335-8347). An orchestrator that
-  wants to compute a partition manifest over ad-hoc sources for a wave must hand-assemble one
-  off-ledger today (docs/32:66-67, G3 :96-99). → REPL-1.
-- **G-B — No named shared-object namespace.** Cells are digests; nothing binds a *name*
-  (`partition-map`, `orientation-slice`) to a digest in a scoped, durable, replay-exact way.
-  Workers cannot ask "what is the current `partition-map`" and the orchestrator cannot rev it.
-  Packages carry objects point-to-point but name nothing globally. → REPL-2.
-- **G-C — No cell-as-source composition.** A Program's `source` op reads manifest branches only
-  (context-program.mjs:342); computing *from a prior cell* requires re-admitting its output as a
-  new manifest source by hand. Multi-step REPL work (compute → reshape → join) needs first-class
-  composition that stays closed. → REPL-3.
+- **G-A — No manifest-admission authority outside a live Workflow dispatch** and no manifest
+  *shape* for it: `normalizeContextManifest` hard-requires goal/plan/node/task coordinates with
+  `planId` matching `^plan:[a-f0-9]{64}$` and ordered task event refs
+  (context-program.mjs:203-248). REFLEX-4 refused this boundary honestly
+  (application.mjs:8335-8347). → REPL-1.
+- **G-B — No named shared-object namespace.** Cells are digests; nothing binds a *name* to a
+  digest in a scoped, durable, replay-exact way. → REPL-2.
+- **G-C — No cell-as-source composition.** A Program `source` reads manifest branches only
+  (context-program.mjs:342), and the evaluator is pure — it cannot and must not resolve cell
+  digests itself. → REPL-3.
 
 ## 3. Design
 
-### 3.1 REPL-1 — Run-scoped REPL sessions (manifest-admission authority)
+### 3.1 REPL-1 — ReplManifest: a second manifest shape with its own authority
 
-A **REPL session** is a run-scoped authority that admits ContextManifests and evaluates pure
-Programs against them, without a Workflow. It reuses the REFLEX-4 admission path verbatim —
-same `DurableContextSession`, same cell identity, same projections — and answers the question
-REFLEX-4 parked: *who may admit a manifest when no Workflow dispatch exists?*
+(R33-1, R33-2, R33-10: v1's "normalizeContextManifest unchanged, one session family" is
+deleted. A Workflow-free manifest is a *different object* and says so in its digest basis.)
 
-1. Session identity is `repl:<runId>:<role>` where role is `shared` or `worker:<workerId>`
-   (two layers, see 3.2). Admission is an orchestrator-authority act for `shared`, and a
-   worker-delegated act for its own `worker:` layer (the worker's turn fence guards its writes,
-   exactly as reports do). Sessions are durable ledger state (event `repl.session_admitted`),
-   replay-exact, and bounded (`maxCellsPerSession` already exists, context-program-policy).
-2. Manifest admission inside a session goes through `normalizeContextManifest` unchanged
-   (context-program.mjs:183-275) — the same delete-and-recompute digest discipline, the same
-   tree-authority rules, plus the REPL-3 extension below. No second manifest code path.
-3. Evaluation inside a session *is* `application.contextEval` targeted at the session's
-   manifest. The non-Workflow manifest-admission authority REFLEX-4's comments name
-   (application.mjs:8323-8363) is this session object; its code comments must say so.
+1. **`ReplManifest`** is a closed, content-addressed manifest variant sharing the branch
+   normalization discipline (exact fields, delete-and-recompute digest, branch bounds — the
+   `normalizeContextManifest` mold, context-program.mjs:183-275) but carrying
+   `{ runId, replRole }` in place of the Workflow coordinate section, where
+   `replRole ∈ { shared, worker:<workerId> }`. Its digest basis kind string is
+   `baton.repl_manifest` — disjoint from `baton.context_manifest`, so no existing manifest
+   digest changes basis and no Workflow manifest can be reinterpreted as a REPL one.
+2. **Admission is the authority record.** One new event kind, `repl.manifest_admitted`, carries
+   `{ manifestDigest, runId, replRole, principal: { actor, principalId } }`. For `shared` the
+   principal must be the run's orchestrator (the sessionAuthority/lease path already threaded
+   for run.act, mcp-northbound.mjs:1012-1043); for `worker:<id>` the coordinator wrapper forces
+   `replRole`'s workerId to the caller's own identity — the board-claim wrapper-binding pattern
+   (coordinator.mjs:9153-9171), never a caller-supplied owner string at the store.
+3. **Cell evaluation** opens a `DurableContextSession` against the ReplManifest digest through
+   a NEW openSession path whose session authority is the `repl.manifest_admitted` record (not a
+   dispatch). `admitContextCell`'s caller-principal pinning (coordination-store.mjs:9017-9020)
+   accepts that record's principal. Cell identity, idempotency, settlement, and projections are
+   the REFLEX-4 path genuinely unchanged — the evaluator and `context.*` cell events are
+   untouched. This explicitly **supersedes** reflex4-decisions.md's scope boundaries
+   ("no new event kinds beyond context.*"; "do not modify the evaluator") — the evaluator stays
+   pure; the authority layer grows one event kind.
 
 ### 3.2 REPL-2 — Named bindings: the shared and per-worker object layers
 
-A **binding** maps `(scope, name) → cell:<digest>` where scope is `shared` (whole run) or
-`worker:<workerId>` (one worker's layer).
+(R33-4: "turn fence guards writes" struck — no such mechanism exists; worker identity is
+wrapper-bound like board claims. The binding fence is NOT the board fence: see rule 5.)
 
-4. Bindings are immutable-versioned like board items (REFLEX-2 rule 2): rebinding a name mints
-   `bindingVersion+1` with the new digest; prior versions are retained for replay. Event kinds:
-   `repl.binding_set` (orchestrator-authority for shared scope; worker-authority for its own
-   scope), `repl.binding_dropped`. A worker-visible projection is computed per worker: shared
-   bindings + that worker's own — same slice rule as boards (docs/32:149-152).
-5. Reads are **non-evented and cached**, keyed by `(scope, bindingFence)` where bindingFence is
-   the replay-derivable count of binding events for that scope — the REFLEX-2 board-fence
-   pattern applied verbatim (never the worker FenceTable, never a `repl.read` event).
-6. Workers cite bindings in reports and decision requests as `repl:<scope>:<name>@<version>`;
-   the hub resolves the citation to the exact digest at read time, so a citation is never
-   silently re-pointed (the REFLEX-2 report-binding rule: cite exact versions).
-7. Bounds mirror the house: `MAX_REPL_BINDINGS` per scope, name ≤128 chars SafeId, projection
-   bytes bounded with an explicit truncation story.
+4. A **binding** maps `(scope, name) → cell:<sha256>`, scope ∈ `{ shared, worker:<workerId> }`.
+   Bindings are immutable-versioned (REFLEX-2 rule 2): rebind mints `bindingVersion+1`; prior
+   versions retained for replay. Event kinds `repl.binding_set`, `repl.binding_dropped`. Shared
+   scope is orchestrator-authority (rule 2's lease path); a worker scope accepts only that
+   worker's own writes, wrapper-bound.
+5. **Per-scope binding fence**: `bindingFence(scope)` is the replay-derivable count of
+   `repl.binding_set`/`_dropped` events **for that scope** — every write to a scope advances
+   its own fence, worker writes included. This is a deliberate divergence from the board fence
+   (which counts only orchestrator-authority transitions so worker claim/report traffic cannot
+   livelock claims, reflex2-boards-decisions.md:77-89): a binding fence guards a namespace's
+   *versions*, and the writer of a version must always invalidate its readers' cache.
+   Projections are cached keyed `(scope, workerId, bindingFence(scope))`, reads non-evented,
+   no `repl.read` event kind (the F10 rule).
+6. Workers cite bindings as `repl:<scope>:<name>@<version>` in reports and decision requests.
+   The citation grammar is parsed by a named read path — the same projection that renders
+   board/report detail (application.mjs run-view item rendering) — resolving to the exact
+   digest recorded at that version; citations bind versions, never "latest."
+7. Bounds: `MAX_REPL_BINDINGS` per scope, name ≤128 chars SafeId, projection bytes bounded with
+   an explicit truncation story.
 
-### 3.3 REPL-3 — Cell-as-source composition (closed, digest-bound)
+### 3.3 REPL-3 — Cell-as-source: a ReplManifest branch ref kind (evaluator stays pure)
 
-8. A Program `source` op gains exactly one new ref form: `cell:<sha256>`, resolved at admission
-   to the settled cell's `outputRef` artifact (context-program.mjs:989-1001). Resolution is
-   part of program *normalization*: the normalized program carries the resolved artifact digest,
-   so replay recomputes identically and a missing/changed artifact settles
-   `artifact_unavailable` at resolve time (§93.5 read rule) — never silent recompute.
-9. Only **settled, durably admitted** cells resolve (the REFLEX-4/F12 citable-cells rule:
-   never stateless-computed-only). A `cell:` ref to an admitted-but-unsettled cell is a typed
-   refusal, not a wait.
-10. This is the entire composition story. No new operators, no arithmetic, no string ops —
-    the 14+4 whitelist stands. Anything effectful stays successor-Plan-gated (§93.1(1)).
+(R33-3: resolution moved OUT of program normalization entirely. Programs never see `cell:`.)
 
-## 4. What this unlocks (the user's workflows)
+8. A ReplManifest branch gains exactly one new ref form: `cell: { digest }`. At **manifest
+   admission** (the `repl.manifest_admitted` path, evented), the hub resolves the cell digest
+   to the settled cell's `outputRef` artifact coordinate (context-program.mjs:989-1001) and
+   records the resolved artifact digest **in the admission event payload** — so replay
+   reconstructs the identical branch without any store lookup, and the normalized ReplManifest
+   (whose digest covers the resolved coordinates) is stable.
+9. Only **settled, durably admitted** cells resolve (the F12 rule). An admitted-but-unsettled
+   cell is a typed admission refusal. Post-admission artifact loss is NOT an admission error
+   and NOT a hard refusal at read: §93.5 resolve-time revalidation settles
+   `artifact_unavailable`, and live re-evaluation of a missing-artifact chain settles the
+   cell `attention` (retryable) per context-program.mjs:1259-1271 — accepted semantics, named
+   here so no worker mistakes it for a wedge.
+10. This is the entire composition story. No new operators; the 14+4 whitelist stands;
+    effectful work stays successor-Plan-gated (§93.1(1)).
 
-- Orchestrator computes `partition-map` once (context_eval), binds it shared, and every wave
-  member reads it by name — instead of N packages hand-assembled per member.
-- A worker computes an intermediate (a digest map of its scope), binds it in its own layer,
-  and cites it upward in a report; the orchestrator promotes it shared with one rebind.
-- Multi-step analysis: cell A (partition) → cell B (per-partition summaries joining A) →
-  cell C (collect B) — each step closed, replay-exact, and independently citable on boards.
-- Long-horizon context: a 100KB orientation body lives as a source in the session manifest,
-  sliced per worker by closed Programs — instead of whole-body injection into every brief
-  (the context-window blow-out the grounding inventory flags at briefs, messages.mjs:95-115).
+## 4. The fold surface (R33-5 — enumerated, with a test)
 
-## 5. Non-goals
+Every new event kind — `repl.manifest_admitted`, `repl.binding_set`, `repl.binding_dropped` —
+ships with: an `_apply` branch (coordination-store.mjs:7158; unknown kinds throw
+`unsupported_event_kind`); `PROJECTION_CHECKPOINT_FIELDS` entries (:89-110) — checkpoint load
+validates the field set exactly (:744-751), so the same commit must handle the field-set
+change explicitly (bump or migrate, never silently); `snapshot()` exposure (:9937); and the
+run-stop guard preamble (:7196-7218) so REPL writes refuse after stop begins. A new
+**event-kind inventory test** asserts the closed kind set so an incomplete fold fails at test
+time, not at replay.
 
-No arbitrary-code kernel (permanent). No mutable objects (rebind = new version). No cross-run
-bindings in this epic (project-persistent objects ride the KG, docs/34). No worker-authority
-shared writes (workers propose via reports/bindings in their own layer; the orchestrator admits
-to shared). No git-synced artifact CAS (deployment-local today; replication is a named
-follow-up, not this epic).
+## 5. What this unlocks
 
-## 6. Issue breakdown
+- Orchestrator computes `partition-map` once, binds it shared, every wave member reads it by
+  name — instead of N hand-assembled packages.
+- A worker binds an intermediate (digest map of its scope) in its own layer and cites it upward
+  in a report; the orchestrator promotes it shared with one rebind.
+- Multi-step analysis: cell A (partition) → cell B (per-partition summary joining A via a
+  `cell:` branch) → cell C (collect B) — each step closed, replay-exact, citable on boards.
+- Long-horizon context: a 100KB orientation body lives as a manifest source, sliced per worker
+  by closed Programs — instead of whole-body injection into every brief.
 
-- **REPL-1**: run-scoped REPL sessions — `repl.session_admitted`, manifest admission authority,
-  contextEval targeting, bounds. (G-A)
-- **REPL-2**: named bindings — `repl.binding_set`/`_dropped`, fence-cached projections,
-  citation grammar, bounds. (G-B)
-- **REPL-3**: `cell:<digest>` source refs in Program normalization, settled-only resolution,
-  §93.5 resolve-time semantics. (G-C)
+## 6. Non-goals
 
-Each ships red-first with its own `impl/test/replN-*-red.test.mjs`, full-suite gate, and a
-decisions contract in the style of the REFLEX contracts before any implementation wave.
+No arbitrary-code kernel (permanent). No mutable objects. No cross-run bindings (project-
+persistent objects ride the KG, docs/34). No worker-authority shared writes. No `cell:` refs in
+Workflow ContextManifests (ReplManifest-only this epic; unifying the families is a named
+follow-up). No git-synced artifact CAS (deployment-local today; replication is a follow-up).
+
+## 7. Issue breakdown
+
+- **REPL-1**: ReplManifest shape + `repl.manifest_admitted` authority + openSession path +
+  fold surface + kind-inventory test. (G-A)
+- **REPL-2**: bindings — `repl.binding_set`/`_dropped`, per-scope fence + cached projections,
+  citation grammar + named resolution path, bounds. (G-B)
+- **REPL-3**: `cell:` branch refs resolved at manifest admission with evented coordinates,
+  settled-only rule, §93.5/attention read semantics. (G-C)
+
+Each ships red-first (`impl/test/replN-*-red.test.mjs`) with a decisions contract in the REFLEX
+style, an adversarial red-team pass, and a full-suite gate before any implementation wave.
