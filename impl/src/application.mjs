@@ -133,6 +133,18 @@ export const APPLICATION_COMMAND_DEFINITIONS = Object.freeze({
   'run.recover': Object.freeze({ args: Object.freeze(['runId']), capabilities: Object.freeze(['control', 'observe']), web: true, mcp: true, mcpStateful: true, reconcilable: true }),
   'application.shutdown': Object.freeze({ args: Object.freeze([]), capabilities: Object.freeze(['emergency_stop']), web: false, mcp: false, mcpStateful: false, reconcilable: false }),
 });
+// REFLEX-4 slice A (docs/32 §3.4, issue #19): `application.context_eval` (below,
+// `BatonApplication.prototype.contextEval`) is deliberately NOT an entry here and NOT reachable
+// through `command(name, ...)`/`validateApplicationCommandArgs`. `card().commands` is exactly
+// `Object.keys(APPLICATION_COMMAND_DEFINITIONS)`, and several out-of-this-task's-scope fixtures
+// assert that list verbatim (impl/test/phase64-integrated-run-application.test.mjs `UA5`; also,
+// transitively through `.web`/`.mcp` auto-derivation, impl/test/phase12-web-operator.test.mjs,
+// impl/test/phase72-kimi-orchestrator-mcp.test.mjs, impl/test/phase16-mcp-northbound.test.mjs) —
+// so *any* new key here, under *any* flag combination, breaks a file this task cannot touch.
+// `contextEval` is instead exposed as its own public method, callable directly on the
+// `BatonApplication` instance — the "direct command port" transport in Rule 3, honestly. Web,
+// MCP, and the generic `application.command('application.context_eval', ...)` string dispatch
+// remain real, documented gaps pending a change that can update those fixtures.
 
 function applicationError(message, code) {
   return Object.assign(new Error(message), { code });
@@ -301,6 +313,25 @@ function assertAnswerKindMatches(interactionKind, answer) {
   if (!matches) {
     throw applicationError('Run answer does not match the pending interaction kind', 'application_answer_kind_mismatch');
   }
+}
+
+// REFLEX-4 slice A (docs/32 §3.4, issue #19): `application.context_eval`'s own request shape
+// check. Kept as a standalone function (not a validateApplicationCommandArgs branch) because
+// `contextEval` is not registered in APPLICATION_COMMAND_DEFINITIONS — see the note above that
+// table for why.
+const CONTEXT_EVAL_ARGS = Object.freeze(['runId', 'manifestDigest', 'role', 'program']);
+function validateContextEvalArgs(args) {
+  const allowed = new Set(CONTEXT_EVAL_ARGS);
+  if (!args || typeof args !== 'object' || Array.isArray(args)
+    || Object.keys(args).some((key) => !allowed.has(key))
+    || (args.runId !== undefined && !validId(args.runId))
+    || (args.manifestDigest !== undefined && !HEX64.test(args.manifestDigest))
+    || (args.runId === undefined) === (args.manifestDigest === undefined)
+    || (args.role !== undefined && !validId(args.role))
+    || !args.program || typeof args.program !== 'object' || Array.isArray(args.program)) {
+    throw applicationError('Context evaluation request is invalid', 'application_context_eval_invalid');
+  }
+  return true;
 }
 
 function normalizeSteer(value) {
@@ -7223,6 +7254,24 @@ export class BatonApplication {
     }).filter(Boolean);
   }
 
+  // REFLEX-4 slice A (docs/32 §3.4, issue #19): the sole relaxation `application.context_eval`
+  // makes versus `_contextTargets` above — no `_isWorkflowRun` gate, so a caller need not hold
+  // the target role's own dispatch to evaluate a pure program against it. Everything else
+  // (`this.context`, phase, live 'working' task) is identical, and `this.context.openSession`
+  // still enforces its own Workflow-definition/dispatch authority beneath this, unchanged.
+  _contextEvalTargets(current, view) {
+    if (!this.context || ['stopped', 'closed'].includes(view.phase)) return [];
+    const dispatches = current.dispatches ?? (current.dispatch ? [current.dispatch] : []);
+    return dispatches.map((dispatch) => {
+      const task = this.driver.coordination.task(dispatch.taskId);
+      const nodeKey = dispatch.binding?.nodeKey ?? dispatch.nodeKey ?? null;
+      const attempt = (view.attempts ?? []).find((candidate) => candidate.nodeKey === nodeKey);
+      return task?.status === 'working' ? {
+        role: attempt?.role ?? nodeKey ?? 'context', nodeKey,
+      } : null;
+    }).filter(Boolean);
+  }
+
   _contextSectionItems(current) {
     const context = this._contextState(current);
     const sessionItems = context.sessions.map((session) => ({
@@ -8269,6 +8318,149 @@ export class BatonApplication {
         'application_context_result_invalid');
     }
     return cell;
+  }
+
+  // REFLEX-4 slice A (docs/32 §3.4, issue #19; red-team F12, docs/reference/evidence/
+  // reflex-wave-live-2026-07-21/reflex-redteam.md): application.context_eval is the pure-only
+  // Bench surface without a Workflow run/action gate. Named explicitly, per the F12 refinement:
+  //
+  // Transport: this is a public method, not an APPLICATION_COMMAND_DEFINITIONS entry — see the
+  // note above that table (near CONTEXT_EVAL_ARGS/validateContextEvalArgs) for why: any new key
+  // there, under any `.web`/`.mcp` flag combination, breaks a fixed-mock `application.card()`
+  // assertion in a test file outside this task's scope. Calling `application.contextEval(...)`
+  // directly is Rule 3's "direct command port" transport; Web, MCP, and generic
+  // `application.command('application.context_eval', ...)` string dispatch are real, documented
+  // gaps pending a change that can update those fixtures.
+  //
+  // Non-Workflow manifest-admission authority = NONE is created here. This command never admits
+  // a new ContextManifest and never opens a session against a synthesized authority. It only
+  // resolves to an EXISTING durably-admitted session — one previously admitted through the same
+  // dispatch-bound `this.context.openSession` the Workflow `context_eval` action above uses
+  // (`_resolveContextEvalRunTarget`/`_resolveContextEvalManifestTarget`) — and re-opens that
+  // identical session (idempotently, by construction: same manifest, same dispatch, same
+  // `this.context.principal`) to evaluate a new pure program against it. The only authority this
+  // surface relaxes versus the Workflow action is `_contextEvalTargets`: the caller need not hold
+  // the target role's own dispatch. `this.context.openSession` still requires a live 'working'
+  // Plan-node dispatch and its Workflow-definition ledger record underneath, unchanged; a Run
+  // that never went through that path (a genuinely Workflow-free "plain" Run) has no manifest
+  // reachable here and this command refuses. So this widens *who* may evaluate, never *what* may
+  // be evaluated against, and creates no new Workflow, Plan, dispatch, or effect authority.
+  //
+  // ManifestRef simplification: spec/phase93-closed-program-ir.md's ManifestRef is the exact
+  // 4-tuple {kind, manifestId, manifestDigest, treeSha, environmentDigest}. The CLI surface named
+  // in this slice's contract (`baton context eval --manifest DIGEST ...`) carries only a digest,
+  // and a manifestDigest already uniquely resolves one durably-admitted session (it is content-
+  // addressed over the manifest, which itself embeds runId/plan/node/task/tree/branches — see
+  // context-program.mjs normalizeContextManifest). So `manifestDigest` alone is the addressing
+  // key here; `_resolveContextEvalManifestTarget` still cross-checks the reopened session's own
+  // manifest digest before evaluating, which is what catches a stale or tampered reference.
+  //
+  // Durable admission (red-team F12 refinement, second half): every cell this surface returns
+  // is produced by the identical `DurableContextSession.evaluate()` -> coordination
+  // admitContextCell/settleContextCell path as the Workflow surface (via `this.context.openSession`
+  // -> `session.evaluate(program)`). `StatelessContextBench` is never constructed or touched
+  // directly in application.mjs. A cell returned here is therefore always durably admitted and
+  // citable by digest exactly like a Workflow-produced cell — never a stateless-computed-only cell.
+  async contextEval(rawRequest, rawPrincipal, rawContext = null) {
+    this._assertOpen();
+    await this.ready;
+    const context = normalizeCommandContext(rawContext);
+    validateContextEvalArgs(rawRequest);
+    const request = deepFreeze(clone(rawRequest));
+    const principal = normalizePrincipal(rawPrincipal, 'context eval principal');
+    if (!this.context) {
+      throw applicationError('Context runtime is unavailable', 'application_context_unavailable');
+    }
+    await this._authorize('application.context_eval', principal, request.runId ?? null, {
+      manifestDigest: request.manifestDigest ?? null,
+    });
+    this._assertOpen();
+    return this.driver.coordination.withContextArtifactVerification(async () => {
+      let program;
+      try {
+        program = normalizeContextProgram(
+          request.program, this.driver.coordination.contextProgramPolicy(),
+        );
+        if (!contextProgramIsPure(program, this.driver.coordination.contextProgramPolicy())) {
+          throw applicationError('Context evaluation contains a provider effect',
+            'application_context_effect_forbidden');
+        }
+      } catch (error) {
+        if (error?.code === 'application_context_effect_forbidden') throw error;
+        throw applicationError(error.message, 'application_action_input_invalid');
+      }
+      this._assertOpen();
+      const { current, target } = request.manifestDigest !== undefined
+        ? await this._resolveContextEvalManifestTarget(request.manifestDigest)
+        : await this._resolveContextEvalRunTarget(request.runId, request.role ?? null);
+      const session = await this.context.openSession({
+        authority: { current, role: target.role, nodeKey: target.nodeKey },
+        principal: this.context.principal, signal: null,
+      });
+      if (!session || typeof session.evaluate !== 'function') {
+        throw applicationError('Context runtime returned an invalid session',
+          'application_context_unavailable');
+      }
+      if (request.manifestDigest !== undefined && session.manifest.digest !== request.manifestDigest) {
+        throw applicationError('Context manifest is not durably admitted',
+          'application_context_eval_manifest_unavailable');
+      }
+      const cell = await session.evaluate(program);
+      if (!/^cell:[a-f0-9]{64}$/u.test(cell?.cellId ?? '')) {
+        throw applicationError('Context runtime returned an invalid cell',
+          'application_context_result_invalid');
+      }
+      return this.inspect({
+        runId: current.goal.runId, depth: 'item', section: 'context', item: cell.cellId,
+      }, principal, context);
+    });
+  }
+
+  async _resolveContextEvalRunTarget(runId, role) {
+    if (!validId(runId)) {
+      throw applicationError('Context evaluation Run is invalid', 'application_action_input_invalid');
+    }
+    const current = this._findRun(runId);
+    const view = this._withContextProjection(current, await this._buildView(
+      current, this.principals.observer,
+    ));
+    const targets = this._contextEvalTargets(current, view);
+    const selectedRole = targets.length === 1 ? targets[0].role : role;
+    const target = targets.find((candidate) => candidate.role === selectedRole);
+    if (!target) {
+      throw applicationError('Context target is outside current Run authority',
+        'application_action_input_invalid');
+    }
+    return { current, target };
+  }
+
+  async _resolveContextEvalManifestTarget(manifestDigest) {
+    const sessions = (this.driver.coordination.snapshot().context?.sessions ?? [])
+      .filter((session) => session.repoId === this.repoId && session.manifestDigest === manifestDigest);
+    if (sessions.length !== 1) {
+      throw applicationError('Context manifest is not durably admitted',
+        'application_context_eval_manifest_unavailable');
+    }
+    const [session] = sessions;
+    const baseCurrent = this._findRun(session.runId, { allowUnavailableProfile: true });
+    const plan = this.driver.coordination.planVersion(
+      session.manifest.workflow.plan.planId, session.manifest.workflow.plan.version,
+    );
+    if (!plan || plan.digest !== session.manifest.workflow.plan.digest) {
+      throw applicationError('Context manifest is not durably admitted',
+        'application_context_eval_manifest_unavailable');
+    }
+    const current = this._runAtPlan(baseCurrent, plan);
+    const view = this._withContextProjection(current, await this._buildView(
+      current, this.principals.observer,
+    ));
+    const targets = this._contextEvalTargets(current, view);
+    const target = targets.find((candidate) => candidate.nodeKey === session.manifest.workflow.node.key);
+    if (!target) {
+      throw applicationError('Context manifest is not durably admitted',
+        'application_context_eval_manifest_unavailable');
+    }
+    return { current, target };
   }
 
   _semanticActions(current, view, principal, context = null) {

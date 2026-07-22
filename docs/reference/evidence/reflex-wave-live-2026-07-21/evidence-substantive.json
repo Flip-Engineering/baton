@@ -1,0 +1,60 @@
+{
+  "schemaVersion": 1,
+  "outcomes": [
+    {
+      "role": "reflex1-implementer",
+      "phase": "work_completed",
+      "terminal": false,
+      "narrative": "0 worker(s) active, 1 done.",
+      "resultSha": "5d1eabd47e1f7276a134dfb9be9ce5184c888124"
+    },
+    {
+      "role": "reflex4-implementer",
+      "phase": "work_completed",
+      "terminal": false,
+      "narrative": "0 worker(s) active, 1 done.",
+      "resultSha": "7362bf17c5db4d28ec5465231643ae02a899d27e"
+    },
+    {
+      "role": "reflex23-spec-drafter",
+      "phase": "work_completed",
+      "terminal": false,
+      "narrative": "0 worker(s) active, 1 done.",
+      "resultSha": "de92c7231a23e3577da9952ec2b8c1457b05ef4d"
+    }
+  ],
+  "stops": [
+    {
+      "role": "reflex1-implementer",
+      "stop": null,
+      "resources": {
+        "state": "stopped",
+        "cleanupState": "stopped",
+        "ownedCount": 0
+      },
+      "ownedCount": 0
+    },
+    {
+      "role": "reflex4-implementer",
+      "stop": null,
+      "resources": {
+        "state": "stopped",
+        "cleanupState": "stopped",
+        "ownedCount": 0
+      },
+      "ownedCount": 0
+    },
+    {
+      "role": "reflex23-spec-drafter",
+      "stop": null,
+      "resources": {
+        "state": "stopped",
+        "cleanupState": "stopped",
+        "ownedCount": 0
+      },
+      "ownedCount": 0
+    }
+  ],
+  "remainingCount": 0,
+  "residueUnknown": false
+}
