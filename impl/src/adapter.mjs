@@ -220,6 +220,9 @@ export class MockAdapter {
       // SC8: canonical 8-verb card. steer rides prompt(mode:'steer'), approve/answer ride the
       // respond flow — all genuinely implemented here; pause has no implementation and says so.
       verbs: { spawn: 'native', prompt: 'native', steer: 'native', interrupt: 'native', approve: 'native', answer: 'native', kill: 'native', pause: 'unsupported' },
+      // Part B (issue #16): a structured decision.requested/answer(optionId|text) event pair,
+      // not text-grammar parsing — honestly 'native' for this deterministic test double.
+      decision: 'native',
     };
   }
 
@@ -440,10 +443,17 @@ export class MockAdapter {
   async answer(worker, requestId, answer) {
     const session = this._sessions.get(worker);
     if (!session) return { ok: false, reason: `unknown worker ${worker}` };
-    if (!session.wait || session.wait.kind !== 'question' || session.wait.requestId !== requestId) {
-      return { ok: false, reason: 'answer(): no matching question wait-item (D1: distinct from approve())' };
+    if (!session.wait || !['question', 'decision'].includes(session.wait.kind) || session.wait.requestId !== requestId) {
+      return { ok: false, reason: 'answer(): no matching question/decision wait-item (D1: distinct from approve())' };
     }
-    this._emit(session, 'question.answered', { requestId, ...answer });
+    if (session.wait.kind === 'decision' && answer?.expired === true) {
+      // F5: wire-level expiry cancel — release the worker's turn without emitting a competing
+      // worker-side settlement; the hub's decision.expired ledger event is already authoritative.
+      session.askResolve?.({ denied: true });
+      return { ok: true };
+    }
+    const eventKind = session.wait.kind === 'decision' ? 'decision.settled' : 'question.answered';
+    this._emit(session, eventKind, { requestId, ...answer });
     session.askResolve?.({ denied: false });
     return { ok: true };
   }
@@ -583,15 +593,30 @@ export class MockAdapter {
     for (let i = 0; i <= totalEdits; i += 1) {
       if (ask && askIndex === i && !session.askHandled) {
         session.askHandled = true;
-        const kind = ask.kind === 'approval' ? 'approval' : 'question';
+        const kind = ask.kind === 'approval' ? 'approval' : ask.kind === 'decision' ? 'decision' : 'question';
         const requestId = `req_${session.worker}_${(this._reqSeq += 1)}`;
         session.wait = { kind, requestId };
-        this._emit(
-          session,
-          kind === 'approval' ? 'approval.requested' : 'question.asked',
-          { question: ask.question, requestId, blocking: ask.blocking !== false },
-        );
-        if (ask.blocking !== false) {
+        if (kind === 'decision') {
+          // Part B / F9: MockAdapter's deterministic emulated decision channel.
+          this._emit(session, 'decision.requested', {
+            requestId,
+            request: {
+              question: ask.question,
+              options: ask.options,
+              allowFreeResponse: ask.allowFreeResponse ?? false,
+              recommended: ask.recommended ?? null,
+              deadlineMs: ask.deadlineMs,
+            },
+          });
+        } else {
+          this._emit(
+            session,
+            kind === 'approval' ? 'approval.requested' : 'question.asked',
+            { question: ask.question, requestId, blocking: ask.blocking !== false },
+          );
+        }
+        // F6: v1 decisions are always blocking; question/approval keep their own blocking flag.
+        if (kind === 'decision' || ask.blocking !== false) {
           const outcome = await haltableAskWait(session, haltSignal);
           session.wait = null;
           if (session.terminal) return;
@@ -683,6 +708,7 @@ export class CodexAdapter extends SubprocessAdapterBase {
       // SC8 honesty: SubprocessAdapterBase implements ONLY spawn — prompt/interrupt/approve/
       // answer/kill are not-implemented stubs, and the card may not claim otherwise.
       verbs: { spawn: 'native', prompt: 'unsupported', steer: 'unsupported', interrupt: 'unsupported', approve: 'unsupported', answer: 'unsupported', kill: 'unsupported', pause: 'unsupported' },
+      decision: 'unsupported',
     };
   }
 
@@ -703,6 +729,7 @@ export class ClaudeAdapter extends SubprocessAdapterBase {
       permissions: { mode: 'bypassPermissions', sandbox: 'unverified', boundary: 'Approval autonomy only; host filesystem and network containment are unverified' },
       // SC8 honesty: only spawn is implemented on this legacy subprocess tier (see base stubs).
       verbs: { spawn: 'native', prompt: 'unsupported', steer: 'unsupported', interrupt: 'unsupported', approve: 'unsupported', answer: 'unsupported', kill: 'unsupported', pause: 'unsupported' },
+      decision: 'unsupported',
     };
   }
 

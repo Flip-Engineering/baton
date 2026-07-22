@@ -187,6 +187,102 @@ export function createResult(fields, opts) {
 }
 
 // ---------------------------------------------------------------------------
+// Decision channel (issue #16, docs/32 §3.1) — closed request/answer shapes.
+// A DecisionRequest is worker-authored content admitted as untrusted prose (F7); it is
+// validated here for *shape* only. `optionId ∈ options` is a coordinator-side, per-record
+// check (messages.mjs does not know a specific pending record's option set).
+// ---------------------------------------------------------------------------
+
+const SAFE_OPTION_ID = /^[A-Za-z0-9_.:-]{1,128}$/;
+const MAX_DECISION_QUESTION_BYTES = 2_048;
+const MAX_OPTION_LABEL_BYTES = 160;
+const MAX_OPTION_SUMMARY_BYTES = 512;
+const MAX_DECISION_TEXT_BYTES = 4_096;
+
+function boundedNonEmpty(value, maxBytes) {
+  return typeof value === 'string' && value.length > 0 && Buffer.byteLength(value) <= maxBytes;
+}
+
+/** @param {{question,options,allowFreeResponse?,recommended?,deadlineMs}} fields @returns {object} a deeply-frozen DecisionRequest @throws {ValidationError} */
+export function createDecisionRequest(fields) {
+  const errors = [];
+  const allowedKeys = new Set(['question', 'options', 'allowFreeResponse', 'recommended', 'deadlineMs']);
+  for (const key of Object.keys(fields ?? {})) {
+    if (!allowedKeys.has(key)) errors.push(`decision request has an unknown field "${key}"`);
+  }
+  if (!boundedNonEmpty(fields?.question, MAX_DECISION_QUESTION_BYTES)) {
+    errors.push(`question is required (non-empty, <=${MAX_DECISION_QUESTION_BYTES} bytes)`);
+  }
+  let optionIds = [];
+  if (!Array.isArray(fields?.options) || fields.options.length < 1 || fields.options.length > 8) {
+    errors.push('options must be an array of 1..8 entries');
+  } else {
+    const seen = new Set();
+    fields.options.forEach((opt, i) => {
+      if (!opt || typeof opt !== 'object' || Array.isArray(opt)) { errors.push(`options[${i}] must be an object`); return; }
+      const hasSummary = Object.hasOwn(opt, 'summary');
+      const expectedKeys = hasSummary ? 'id,label,summary' : 'id,label';
+      if (Object.keys(opt).sort().join(',') !== expectedKeys) errors.push(`options[${i}] has unexpected fields`);
+      if (typeof opt.id !== 'string' || !SAFE_OPTION_ID.test(opt.id)) {
+        errors.push(`options[${i}].id must be a safe id (letters, digits, "_.:-", 1..128 bytes)`);
+      } else if (seen.has(opt.id)) {
+        errors.push(`options[${i}].id "${opt.id}" duplicates an earlier option`);
+      } else {
+        seen.add(opt.id);
+        optionIds.push(opt.id);
+      }
+      if (!boundedNonEmpty(opt.label, MAX_OPTION_LABEL_BYTES)) errors.push(`options[${i}].label must be non-empty, <=${MAX_OPTION_LABEL_BYTES} bytes`);
+      if (hasSummary && opt.summary !== null && !boundedNonEmpty(opt.summary, MAX_OPTION_SUMMARY_BYTES)) {
+        errors.push(`options[${i}].summary must be null or <=${MAX_OPTION_SUMMARY_BYTES} bytes`);
+      }
+    });
+  }
+  if (fields?.allowFreeResponse !== undefined && typeof fields.allowFreeResponse !== 'boolean') {
+    errors.push('allowFreeResponse must be a boolean');
+  }
+  if (fields?.recommended !== undefined && fields.recommended !== null) {
+    if (typeof fields.recommended !== 'string' || !optionIds.includes(fields.recommended)) {
+      errors.push('recommended must name an existing option id');
+    }
+  }
+  // F6/F5: v1 decisions are always blocking; an unbounded wait is the documented gating
+  // deadlock. deadlineMs is mandatory, never inferred, never "never".
+  if (!Number.isSafeInteger(fields?.deadlineMs) || fields.deadlineMs <= 0) {
+    errors.push('deadlineMs is required and must be a positive safe integer');
+  }
+  if (errors.length) throw new ValidationError(errors);
+  return deepFreeze({
+    question: fields.question,
+    options: fields.options.map((opt) => ({
+      id: opt.id, label: opt.label, summary: Object.hasOwn(opt, 'summary') ? opt.summary : null,
+    })),
+    allowFreeResponse: fields.allowFreeResponse ?? false,
+    recommended: fields.recommended ?? null,
+    deadlineMs: fields.deadlineMs,
+  });
+}
+
+/** @param {{optionId?,text?}} fields @returns {object} a deeply-frozen DecisionAnswer @throws {ValidationError} */
+export function createDecisionAnswer(fields) {
+  const errors = [];
+  const allowedKeys = new Set(['optionId', 'text']);
+  for (const key of Object.keys(fields ?? {})) {
+    if (!allowedKeys.has(key)) errors.push(`decision answer has an unknown field "${key}"`);
+  }
+  const hasOptionId = fields?.optionId !== undefined && fields.optionId !== null;
+  const hasText = fields?.text !== undefined && fields.text !== null;
+  if (hasOptionId === hasText) errors.push('decision answer must carry exactly one of optionId or text');
+  if (hasOptionId && (typeof fields.optionId !== 'string' || !SAFE_OPTION_ID.test(fields.optionId))) {
+    errors.push('optionId must be a safe id');
+  }
+  if (hasText && !boundedNonEmpty(fields.text, MAX_DECISION_TEXT_BYTES)) {
+    errors.push(`text must be non-empty, <=${MAX_DECISION_TEXT_BYTES} bytes`);
+  }
+  if (errors.length) throw new ValidationError(errors);
+  return deepFreeze(hasOptionId ? { optionId: fields.optionId, text: null } : { optionId: null, text: fields.text });
+}
+
+// ---------------------------------------------------------------------------
 // Provenance typing — facts (hub-computed, trusted) vs prose (worker, untrusted)
 // ---------------------------------------------------------------------------
 

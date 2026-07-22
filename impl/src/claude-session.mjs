@@ -14,9 +14,71 @@ import { renderPrompt } from './cli-adapters.mjs';
 import { normalizeProcessGeneration, ProcessCloseReapLatch, processStartedPayload } from './process-lifecycle.mjs';
 import { usdToNanos } from './usd.mjs';
 import { attestWorkerPolicyObservation } from './worker-policy.mjs';
+import { createDecisionRequest, ValidationError } from './messages.mjs';
 
 const DEFAULT_MAX_WIRE_FRAME_BYTES = 1024 * 1024;
 const CLAUDE_TOKEN_METRIC = 'anthropic_input_plus_output_tokens_excluding_cache';
+
+// Part B / F7 (issue #16): the emulated up-channel grammar. This scans ONLY the model's own
+// generated text (the `assistant` message's text content blocks) — never tool_result/quoted
+// file content, which arrives as a distinct `user`-role wire message and is never routed
+// through this parser. That structural separation is what makes a quoted fixture containing
+// this literal string spoof-safe: it never reaches `_scanForDecisionRequest`.
+const DECISION_REQUEST_GRAMMAR = /DECISION_REQUEST:\s*(\{[\s\S]*)/;
+const MAX_DECISION_GRAMMAR_SCAN_BYTES = 8_192;
+
+/** Bracket-depth walk to the first balanced `{...}` object, bounded, string-aware. Trailing
+ * prose after the JSON object (or a second, contradictory DECISION_REQUEST) never reaches the
+ * parse — only the first well-formed object is a candidate (F7: first-wins, uncheckable races
+ * with a second line are exactly what this bound forbids). */
+function extractFirstBalancedJsonObject(text) {
+  const bounded = text.slice(0, MAX_DECISION_GRAMMAR_SCAN_BYTES);
+  if (bounded[0] !== '{') return null;
+  let depth = 0; let inString = false; let escape = false;
+  for (let i = 0; i < bounded.length; i += 1) {
+    const ch = bounded[i];
+    if (inString) {
+      if (escape) escape = false;
+      else if (ch === '\\') escape = true;
+      else if (ch === '"') inString = false;
+      continue;
+    }
+    if (ch === '"') { inString = true; continue; }
+    if (ch === '{') depth += 1;
+    else if (ch === '}') {
+      depth -= 1;
+      if (depth === 0) return bounded.slice(0, i + 1);
+      if (depth < 0) return null;
+    }
+  }
+  return null;
+}
+
+/** @returns {object|null} a normalized, closed-shape DecisionRequest, or null if the text has
+ * no well-formed `DECISION_REQUEST: <json>` grammar. Malformed JSON or a schema refusal is
+ * treated identically to "no grammar found" — ignored as ordinary prose, never surfaced as an
+ * error and never authority-adjacent (worker text mints no control on its own).
+ * Exported for direct unit testing (F7); only ever called from the `assistant` text-content
+ * path in this module — never on `user`/tool_result content. */
+export function scanForDecisionRequest(text) {
+  if (typeof text !== 'string') return null;
+  const match = DECISION_REQUEST_GRAMMAR.exec(text);
+  if (!match) return null;
+  const json = extractFirstBalancedJsonObject(match[1]);
+  if (!json) return null;
+  let parsed;
+  try {
+    parsed = JSON.parse(json);
+  } catch {
+    return null;
+  }
+  try {
+    return createDecisionRequest(parsed);
+  } catch (err) {
+    if (err instanceof ValidationError) return null;
+    throw err;
+  }
+}
 
 function unavailableUsageSeal() {
   return { tokens: 'unavailable', usd: 'unavailable', counterId: null, tokenMetric: null };
@@ -399,6 +461,10 @@ export class ClaudeSessionCli {
         kill: 'native',
         pause: 'unsupported', // R3: canonical 8-verb card vocabulary; Claude has no pause primitive
       },
+      // Part B (issue #16): no native wire elicitation carries typed options — the request is
+      // parsed from untrusted worker prose and the answer rides a plain user-turn continuation.
+      // Always 'emulated', never 'native' (D1: no silent emulation).
+      decision: this._cfg.approvals ? 'emulated' : 'unsupported',
     };
   }
 
@@ -778,6 +844,18 @@ export class ClaudeSessionCli {
           name: tool.name,
           input: tool.input,
         }));
+        // Part B / F7: admit at most one live emulated decision request per session — a second
+        // (possibly contradictory) DECISION_REQUEST line is ignored as prose while one is
+        // already pending; the worker can always re-ask once it settles.
+        if (text && !session.pendingDecisionRequestId) {
+          const request = scanForDecisionRequest(text);
+          if (request) {
+            session.decisionSeq = (session.decisionSeq ?? 0) + 1;
+            const requestId = `${session.worker}:decision:${session.decisionSeq}`;
+            session.pendingDecisionRequestId = requestId;
+            this._emit(session, 'decision.requested', { requestId, request });
+          }
+        }
         return;
       }
       case 'result':
@@ -1000,6 +1078,20 @@ export class ClaudeSessionCli {
     }
     const session = this._sessions.get(worker);
     if (!session || session.terminal) return { ok: false, reason: `unknown or terminal worker ${worker}` };
+
+    if (session.pendingDecisionRequestId === requestId) {
+      // Part B / F3(c): honest emulated mapping. There is no native wire frame for a typed
+      // decision answer — the CLI's elicitation channel is unrelated to this grammar-parsed
+      // request — so delivery is a plain user-turn continuation carrying the closed
+      // DECISION_ANSWER grammar, always flagged `emulated` (D1: no silent emulation).
+      session.pendingDecisionRequestId = null;
+      if (reply?.expired === true) return { ok: true, emulated: true };
+      const answerJson = reply.optionId != null
+        ? JSON.stringify({ optionId: reply.optionId }) : JSON.stringify({ text: reply.text });
+      this._writeUserFrame(session, `DECISION_ANSWER: ${answerJson}`);
+      return { ok: true, emulated: true };
+    }
+
     const entry = session.wireToAdapterId.get(requestId);
     if (!entry) return { ok: false, reason: `no pending question for requestId ${requestId}` };
     session.wireToAdapterId.delete(requestId);

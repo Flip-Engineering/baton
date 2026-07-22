@@ -1326,9 +1326,13 @@ export function parseBatonCli(rawArgs) {
   if (action === 'answer') {
     const requestId = id(args.shift(), 'request ID');
     const decisions = [['--allow', 'allow'], ['--deny', 'deny'], ['--cancel', 'cancel']].filter(([name]) => flag(args, name));
-    const text = take(args, '--text'); noRemainder(args);
-    if (decisions.length + (text === null ? 0 : 1) !== 1) throw cliError('choose exactly one answer form');
-    const answer = text === null ? { decision: decisions[0][1] } : { text };
+    const text = take(args, '--text');
+    // Part B (issue #16): `baton run answer RUN --option ID` — the typed decision-channel form.
+    const optionId = take(args, '--option');
+    noRemainder(args);
+    const forms = decisions.length + (text === null ? 0 : 1) + (optionId === null ? 0 : 1);
+    if (forms !== 1) throw cliError('choose exactly one answer form: --allow | --deny | --cancel | --text | --option');
+    const answer = optionId !== null ? { optionId } : text === null ? { decision: decisions[0][1] } : { text };
     return { kind: 'command', name: 'run.answer', args: { runId, requestId, answer }, idempotencyKey };
   }
   if (action === 'send') {

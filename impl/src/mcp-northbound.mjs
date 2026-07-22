@@ -224,6 +224,8 @@ const applicationAnswerSchema = {
   oneOf: [
     schema({ text: { type: 'string', minLength: 1, maxLength: 4_096 } }, ['text']),
     schema({ decision: { type: 'string', enum: ['allow', 'deny', 'cancel'] } }, ['decision']),
+    // Part B (issue #16): the typed decision-channel answer form.
+    schema({ optionId: { type: 'string', minLength: 1, maxLength: 256 } }, ['optionId']),
   ],
 };
 const applicationFeedbackFindingSchema = schema({

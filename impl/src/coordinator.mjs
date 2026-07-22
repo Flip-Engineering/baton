@@ -8,7 +8,9 @@ import { existsSync, mkdirSync, realpathSync, writeFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { Cursor } from './log.mjs';
-import { createBrief, createDigest, wrapFact, wrapProse } from './messages.mjs';
+import {
+  createBrief, createDecisionAnswer, createDecisionRequest, createDigest, ValidationError, wrapFact, wrapProse,
+} from './messages.mjs';
 import { parseRouteTupleKey, resolveEffort, routeTupleKey } from './route-tuple.mjs';
 import { hasNorthboundCapabilityAuthority } from './northbound-capability-authority.mjs';
 import {
@@ -1855,9 +1857,12 @@ export class Coordinator {
         taskId: task?.id ?? null, workerId: record.worker, requestId, kind: record.kind, reason: 'fleet_drain', evidence,
       }, `driver.authority.cancelled:${record.worker}:${requestId}:${cancelled.seq}`, 'policy');
       this._resolveInteractionAuthority(requestId, record); record.consumer = 'policy';
-      record.resolution = { decision: record.kind === 'publication' ? 'deny' : 'cancel', reason: 'fleet_drain' };
+      record.resolution = record.kind === 'decision'
+        ? { disposition: 'superseded', answer: null, reason: 'fleet_drain' }
+        : { decision: record.kind === 'publication' ? 'deny' : 'cancel', reason: 'fleet_drain' };
       if (handle?.pendingQuestionId === requestId) handle.pendingQuestionId = null;
       if (handle?.pendingApprovalId === requestId) handle.pendingApprovalId = null;
+      if (handle?.pendingDecisionId === requestId) handle.pendingDecisionId = null;
       if (processed % 32 === 0) await this._sleep(0);
     }
   }
@@ -2027,6 +2032,8 @@ export class Coordinator {
     for (const [requestId, record] of [...this._pending]) {
       if ((record.kind === 'approval' || record.kind === 'publication') && record.state === 'pending' && record.deadlineAt != null && now >= record.deadlineAt) {
         this._trackAuthorityPromise(() => this._resolveRecord(requestId, { decision: 'deny' }, 'policy')).catch(noop);
+      } else if (record.kind === 'decision' && record.state === 'pending' && record.deadlineAt != null && now >= record.deadlineAt) {
+        this._trackAuthorityPromise(() => this._expireDecision(requestId, record)).catch(noop);
       }
     }
     for (const [workerId, waiter] of [...this._stopWaiters]) {
@@ -3545,6 +3552,7 @@ export class Coordinator {
       status: 'pending',
       pendingApprovalId: null,
       pendingQuestionId: null,
+      pendingDecisionId: null,
       budgetUsed: { tokens: 0, usd: 0 },
       budgetThresholdsFired: new Set(),
       budgetHardExceeded: false,
@@ -3629,7 +3637,7 @@ export class Coordinator {
         sessionRequest: task.sessionRequest, sessionContext: null, lineage: null,
         taskId: task.id, worktree: null,
         status: durable.status === 'pending' ? 'pending' : (TERMINAL_TASK_STATUSES.has(durable.status) ? 'idle' : 'orphaned'), pendingApprovalId: null,
-        pendingQuestionId: null, budgetUsed: { tokens: 0, usd: 0 }, budgetThresholdsFired: new Set(),
+        pendingQuestionId: null, pendingDecisionId: null, budgetUsed: { tokens: 0, usd: 0 }, budgetThresholdsFired: new Set(),
         budgetHardExceeded: false,
         terminalCause: null,
         usageCumulative: new Map(), budgetStopTimer: null, turnTerminalObserved: false,
@@ -5763,6 +5771,7 @@ export class Coordinator {
       status: handle.recoveryPending === true && opts.exposeRecovery !== true ? 'orphaned' : handle.status,
       pendingApprovalId: handle.pendingApprovalId,
       pendingQuestionId: handle.pendingQuestionId,
+      pendingDecisionId: handle.pendingDecisionId ?? null,
       budgetUsed: { ...handle.budgetUsed },
       providerGovernance: handle.providerGovernance ?? null,
       providerPolicyDigest: handle.providerPolicyDigest ?? null,
@@ -6291,7 +6300,7 @@ export class Coordinator {
     this.tick();
     const handle = this._getWorker(workerId);
     if (handle.status !== 'blocked') return { ok: true, result: 'not_blocked' };
-    const requestId = handle.pendingApprovalId ?? handle.pendingQuestionId;
+    const requestId = handle.pendingApprovalId ?? handle.pendingQuestionId ?? handle.pendingDecisionId;
     const record = requestId ? this._pending.get(requestId) : null;
     if (!record || record.state !== 'pending' || record.worker !== workerId) {
       return { ok: false, result: 'interaction_resolution_unavailable' };
@@ -6314,9 +6323,14 @@ export class Coordinator {
     }
     this._resolveInteractionAuthority(requestId, record);
     record.consumer = actor;
-    record.resolution = { decision: 'cancel', reason: 'semantic_interrupt' };
+    // F2 (decision-only): a decision settlement is always {disposition, answer}; question/
+    // approval keep their legacy raw-decision resolution shape for backward compatibility.
+    record.resolution = record.kind === 'decision'
+      ? { disposition: 'superseded', answer: null, reason: 'semantic_interrupt' }
+      : { decision: 'cancel', reason: 'semantic_interrupt' };
     if (handle.pendingApprovalId === requestId) handle.pendingApprovalId = null;
     if (handle.pendingQuestionId === requestId) handle.pendingQuestionId = null;
+    if (handle.pendingDecisionId === requestId) handle.pendingDecisionId = null;
     handle.status = 'working';
     return {
       ok: true, result: 'interaction_superseded',
@@ -6631,6 +6645,13 @@ export class Coordinator {
       } else if (handle.pendingQuestionId) {
         interactionResolution = this._trackAuthorityPromise(
           () => this._resolveRecord(handle.pendingQuestionId, { decision: 'cancel' }, actor),
+          this._drainState === 'draining',
+        );
+      } else if (handle.pendingDecisionId) {
+        // F13 correction: stop/kill get their own typed supersession, distinct from a genuine
+        // cancel answer — never silence, never `already_handled`.
+        interactionResolution = this._trackAuthorityPromise(
+          () => this._supersedeDecision(handle.pendingDecisionId, mode, actor),
           this._drainState === 'draining',
         );
       }
@@ -8159,6 +8180,14 @@ export class Coordinator {
       workerId: record.worker,
       taskId: task?.id ?? null,
       runId: task?.runId ?? null,
+      // Part B: decision content is worker-authored (untrusted); the caller (application.mjs
+      // RunView projection) is responsible for sanitizing/bounding it before display.
+      ...(record.kind === 'decision' ? {
+        question: record.question,
+        options: record.options,
+        allowFreeResponse: record.allowFreeResponse,
+        recommended: record.recommended,
+      } : {}),
     });
   }
 
@@ -8290,6 +8319,10 @@ export class Coordinator {
       return { ok: true, result: 'published', publication };
     }
 
+    if (record.kind === 'decision') {
+      return this._resolveDecisionRecord(requestId, record, answer, actor, finishResolving);
+    }
+
     const clearPending = () => {
       if (!handle) return;
       if (record.kind === 'question' && handle.pendingQuestionId === requestId) handle.pendingQuestionId = null;
@@ -8395,6 +8428,200 @@ export class Coordinator {
     clearPending();
     finishResolving();
     return { ok: true, result: 'applied' };
+  }
+
+  // =========================================================================
+  // Decision channel settlement (issue #16 Part B, docs/32 §3.1) — surgical, isolated from
+  // the question/approval/publication branches above (F2: `record.resolution` for a decision
+  // is always `{disposition, answer}`; it never echoes an undelivered answer as the
+  // resolution, unlike the legacy question/approval `resolution = answer` shape those
+  // branches keep for backward compatibility).
+  // =========================================================================
+
+  async _resolveDecisionRecord(requestId, record, answer, actor, finishResolving) {
+    const handle = this._workers.get(record.worker);
+
+    // F3: kind-checked, closed-shape, exactly-one-of validation at the hub, before any
+    // adapter call. `application.answer()` already kind-checks against interactionStatus();
+    // this is the coordinator's own authority for direct callers (fleet_respond, tests).
+    let normalized;
+    try {
+      normalized = createDecisionAnswer(answer);
+    } catch {
+      record.state = 'pending';
+      finishResolving();
+      return { ok: false, result: 'invalid_answer' };
+    }
+    if (normalized.optionId !== null && !record.options.some((opt) => opt.id === normalized.optionId)) {
+      record.state = 'pending';
+      finishResolving();
+      return { ok: false, result: 'invalid_answer', reason: 'optionId is not one of the request options' };
+    }
+    if (normalized.text !== null && record.allowFreeResponse !== true) {
+      record.state = 'pending';
+      finishResolving();
+      return { ok: false, result: 'invalid_answer', reason: 'this decision request does not allow a free-text answer' };
+    }
+
+    const discard = (disposition, resultCode, extra = {}) => {
+      this._resolveInteractionAuthority(requestId, record);
+      record.consumer = actor;
+      record.resolution = { disposition, answer: null };
+      if (handle && handle.pendingDecisionId === requestId) handle.pendingDecisionId = null;
+      finishResolving();
+      return { ok: false, result: resultCode, ...extra };
+    };
+
+    if (!handle) {
+      // No live worker left to consult (its handle was removed entirely). Same shortcut as
+      // question/approval: settle the record directly, nothing to deliver to.
+      this._resolveInteractionAuthority(requestId, record);
+      record.consumer = actor;
+      record.resolution = { disposition: 'delivered', answer: normalized };
+      finishResolving();
+      return { ok: true, result: 'applied' };
+    }
+
+    const harness = this._harnessOf(handle.vendor);
+    const currentTurnEpoch = this._safeTurnEpoch(handle);
+    if (record.turnEpochAtAsk !== currentTurnEpoch) {
+      // F2: the asking turn already ended. Never surface this answer as the resolution, and
+      // never return 'applied' — the discarded shape is honest, not the delivered one.
+      const staleEvent = this._log.append({ worker: handle.id, harness, turnEpoch: currentTurnEpoch, kind: 'control.stale_rejected', actor, payload: { op: 'respond', requestId, disposition: 'stale_discarded' } });
+      const task = this._tasks.get(handle.taskId);
+      if (task && this._coordination?.task(task.id)?.status === 'input_required') {
+        const evidence = this._coordMapEvent(staleEvent);
+        this._coordTransition(task, 'working', `task.working:${task.id}:${staleEvent.seq}`, { ...evidence, interaction: { requestId, disposition: 'stale_discarded' } }, actor);
+      }
+      if (handle.status === 'blocked') handle.status = 'working';
+      return discard('stale_discarded', 'stale_discarded', { note: 'answer arrived after the asking turn ended; discarded per fencing' });
+    }
+
+    let ack;
+    try {
+      ack = await this._adapters[handle.vendor].answer(handle.id, requestId, normalized);
+    } catch (err) {
+      record.state = 'pending';
+      record.consumer = null;
+      record.resolution = null;
+      finishResolving();
+      throw err;
+    }
+    if (!ack || ack.ok !== true) {
+      record.state = 'pending';
+      record.consumer = null;
+      record.resolution = null;
+      finishResolving();
+      return { ok: false, result: 'delivery_refused', reason: ack?.reason ?? 'adapter did not affirm response delivery' };
+    }
+
+    let resolvedEvent;
+    try {
+      const ev = { worker: handle.id, harness, turnEpoch: currentTurnEpoch, kind: 'decision.settled', actor, payload: { requestId, answer: normalized, disposition: 'delivered' } };
+      if (ack.emulated === true) ev.emulated = true;
+      resolvedEvent = this._log.append(ev);
+    } catch (err) {
+      // Delivery already reached the (possibly emulated) native channel and is not safely
+      // retryable — commit the reservation and rely on fail-closed poisoning + replay.
+      this._resolveInteractionAuthority(requestId, record);
+      record.consumer = actor;
+      record.resolution = { disposition: 'delivered', answer: normalized };
+      finishResolving();
+      throw err;
+    }
+    const task = this._tasks.get(handle.taskId);
+    if (task && this._coordination?.task(task.id)?.status === 'input_required') {
+      try {
+        const evidence = this._coordMapEvent(resolvedEvent);
+        this._coordTransition(task, 'working', `task.working:${task.id}:${resolvedEvent.seq}`, { ...evidence, interaction: { requestId, disposition: 'delivered' } }, actor);
+      } catch (err) {
+        this._resolveInteractionAuthority(requestId, record);
+        record.consumer = actor;
+        record.resolution = { disposition: 'delivered', answer: normalized };
+        finishResolving();
+        throw err;
+      }
+    }
+    this._resolveInteractionAuthority(requestId, record);
+    record.consumer = actor;
+    record.resolution = { disposition: 'delivered', answer: normalized };
+    if (handle.pendingDecisionId === requestId) handle.pendingDecisionId = null;
+    if (handle.status === 'blocked') handle.status = 'working';
+    finishResolving();
+    return { ok: true, result: 'applied' };
+  }
+
+  // F5/F6: mandatory-deadline expiry. Never an auto-answer — a typed `decision.expired`
+  // ledger event, a best-effort wire-level cancel so the worker's own turn does not hang, and
+  // an honest task transition. Guarded by the same single-consumer reservation as respond(),
+  // so an in-flight `resolving` settlement always wins the race against the sweep.
+  async _expireDecision(requestId, record) {
+    if (record.state !== 'pending') return { ok: false, result: 'already_resolved' };
+    record.state = 'resolving';
+    let releaseResolving;
+    record.resolvingDone = new Promise((resolve) => { releaseResolving = resolve; });
+    const finishResolving = () => { releaseResolving(); delete record.resolvingDone; };
+
+    const handle = this._workers.get(record.worker);
+    const harness = handle ? this._harnessOf(handle.vendor) : '';
+    const turnEpoch = handle ? this._safeTurnEpoch(handle) : record.turnEpochAtAsk;
+    const expiredEvent = this._log.append({ worker: record.worker, harness, turnEpoch, kind: 'decision.expired', actor: 'policy', payload: { requestId } });
+    const task = handle ? this._tasks.get(handle.taskId) : null;
+    if (task && this._coordination?.task(task.id)?.status === 'input_required') {
+      const evidence = this._coordMapEvent(expiredEvent);
+      this._coordTransition(task, 'working', `task.working:${task.id}:${expiredEvent.seq}`, { ...evidence, interaction: { requestId, disposition: 'expired' } }, 'policy');
+      task.status = 'working';
+    }
+    if (handle) {
+      try { await this._adapters[handle.vendor].answer(handle.id, requestId, { optionId: null, text: null, expired: true }); } catch { /* best-effort wire cancel; the ledger event is authoritative regardless */ }
+    }
+    this._resolveInteractionAuthority(requestId, record);
+    record.consumer = 'policy';
+    record.resolution = { disposition: 'expired', answer: null };
+    if (handle) {
+      if (handle.pendingDecisionId === requestId) handle.pendingDecisionId = null;
+      if (handle.status === 'blocked') handle.status = 'working';
+    }
+    finishResolving();
+    return { ok: true, result: 'expired' };
+  }
+
+  // F13 correction: stop/kill supersede a pending decision with its own typed event
+  // (`control.interaction_superseded`, `disposition: mode`) — never a silent drop, never a
+  // fabricated `already_handled`, and never treated as if the worker had actually answered.
+  async _supersedeDecision(requestId, mode, actor) {
+    const record = this._pending.get(requestId);
+    if (!record || record.state !== 'pending' || record.kind !== 'decision') {
+      return { ok: false, result: 'interaction_resolution_unavailable' };
+    }
+    record.state = 'resolving';
+    let releaseResolving;
+    record.resolvingDone = new Promise((resolve) => { releaseResolving = resolve; });
+    const finishResolving = () => { releaseResolving(); delete record.resolvingDone; };
+
+    const handle = this._workers.get(record.worker);
+    const harness = handle ? this._harnessOf(handle.vendor) : '';
+    const turnEpoch = handle ? this._safeTurnEpoch(handle) : record.turnEpochAtAsk;
+    const task = handle ? this._tasks.get(handle.taskId) : null;
+    const supersededEvent = this._log.append({
+      worker: record.worker, harness, turnEpoch, kind: 'control.interaction_superseded', actor,
+      ...(handle ? this._routeAttribution(handle, task) : {}),
+      payload: { requestId, interactionKind: 'decision', disposition: mode },
+    });
+    if (task && this._coordination?.task(task.id)?.status === 'input_required') {
+      const evidence = this._coordMapEvent(supersededEvent);
+      this._coordTransition(task, 'working', `task.working:${task.id}:${supersededEvent.seq}`, { ...evidence, interaction: { requestId, disposition: 'superseded' } }, actor);
+      task.status = 'working';
+    }
+    this._resolveInteractionAuthority(requestId, record);
+    record.consumer = actor;
+    record.resolution = { disposition: 'superseded', answer: null, reason: mode };
+    if (handle) {
+      if (handle.pendingDecisionId === requestId) handle.pendingDecisionId = null;
+      if (handle.status === 'blocked') handle.status = 'working';
+    }
+    finishResolving();
+    return { ok: true, result: 'interaction_superseded' };
   }
 
   // =========================================================================
@@ -9478,6 +9705,14 @@ export class Coordinator {
           this._coordRecord('authority.cancelled', { taskId: task?.id ?? null, workerId, requestId, kind: 'question', reason: 'fleet_drain', evidence }, `driver.authority.cancelled:${workerId}:${requestId}:${discarded.seq}`, 'policy');
           break;
         }
+        // F4: a reused requestId (harness bug or malice) must never silently collapse two
+        // requests into one record. Reject loudly at admission instead of overwriting.
+        if (this._pending.has(requestId)) {
+          const rejected = appendAttributed({ worker: workerId, harness, turnEpoch, kind: 'control.duplicate_interaction_rejected', actor: 'policy', payload: { requestId, kind: 'question' } });
+          const task = this._tasks.get(handle.taskId); const evidence = this._coordMapEvent(rejected);
+          this._coordRecord('authority.rejected', { taskId: task?.id ?? null, workerId, requestId, kind: 'question', reason: 'duplicate_request_id', evidence }, `driver.authority.rejected:${workerId}:${requestId}:${rejected.seq}`, 'policy');
+          break;
+        }
         const askedEvent = appendAttributed({ worker: workerId, harness, turnEpoch, kind, actor, payload });
         const task = this._tasks.get(handle.taskId);
         if (task && TERMINAL_TASK_STATUSES.has(task.status)) break;
@@ -9515,6 +9750,12 @@ export class Coordinator {
           this._coordRecord('authority.cancelled', { taskId: task?.id ?? null, workerId, requestId, kind: 'approval', reason: 'fleet_drain', evidence }, `driver.authority.cancelled:${workerId}:${requestId}:${discarded.seq}`, 'policy');
           break;
         }
+        if (this._pending.has(requestId)) {
+          const rejected = appendAttributed({ worker: workerId, harness, turnEpoch, kind: 'control.duplicate_interaction_rejected', actor: 'policy', payload: { requestId, kind: 'approval' } });
+          const task = this._tasks.get(handle.taskId); const evidence = this._coordMapEvent(rejected);
+          this._coordRecord('authority.rejected', { taskId: task?.id ?? null, workerId, requestId, kind: 'approval', reason: 'duplicate_request_id', evidence }, `driver.authority.rejected:${workerId}:${requestId}:${rejected.seq}`, 'policy');
+          break;
+        }
         const askedEvent = appendAttributed({ worker: workerId, harness, turnEpoch, kind, actor, payload });
         const task = this._tasks.get(handle.taskId);
         if (task && TERMINAL_TASK_STATUSES.has(task.status)) break;
@@ -9544,8 +9785,66 @@ export class Coordinator {
         }
         break;
       }
+      case 'decision.requested': {
+        // Part B (issue #16): the emulated up-channel admits a decision request from untrusted
+        // worker prose. Malformed payloads never mint a pending record (F7 spoof-safety) — the
+        // closed-shape check happens BEFORE any admission side effect.
+        const requestId = payload?.requestId;
+        let request;
+        try {
+          request = createDecisionRequest(payload?.request);
+        } catch (err) {
+          if (!(err instanceof ValidationError)) throw err;
+          const rejected = appendAttributed({ worker: workerId, harness, turnEpoch, kind: 'control.malformed_interaction_rejected', actor: 'policy', payload: { requestId: requestId ?? null, kind: 'decision', errors: err.errors } });
+          const task = this._tasks.get(handle.taskId); const evidence = this._coordMapEvent(rejected);
+          this._coordRecord('authority.rejected', { taskId: task?.id ?? null, workerId, requestId: requestId ?? null, kind: 'decision', reason: 'malformed_request', evidence }, `driver.authority.rejected:${workerId}:${requestId ?? rejected.seq}:${rejected.seq}`, 'policy');
+          break;
+        }
+        if (typeof requestId !== 'string' || requestId.length === 0) break;
+        if (this._drainState !== 'open') {
+          const discarded = appendAttributed({ worker: workerId, harness, turnEpoch, kind: 'control.drain_interaction_discarded', actor: 'policy', payload: { requestId, kind: 'decision' } });
+          const task = this._tasks.get(handle.taskId); const evidence = this._coordMapEvent(discarded);
+          this._coordRecord('authority.cancelled', { taskId: task?.id ?? null, workerId, requestId, kind: 'decision', reason: 'fleet_drain', evidence }, `driver.authority.cancelled:${workerId}:${requestId}:${discarded.seq}`, 'policy');
+          break;
+        }
+        if (this._pending.has(requestId)) {
+          const rejected = appendAttributed({ worker: workerId, harness, turnEpoch, kind: 'control.duplicate_interaction_rejected', actor: 'policy', payload: { requestId, kind: 'decision' } });
+          const task = this._tasks.get(handle.taskId); const evidence = this._coordMapEvent(rejected);
+          this._coordRecord('authority.rejected', { taskId: task?.id ?? null, workerId, requestId, kind: 'decision', reason: 'duplicate_request_id', evidence }, `driver.authority.rejected:${workerId}:${requestId}:${rejected.seq}`, 'policy');
+          break;
+        }
+        const askedEvent = appendAttributed({ worker: workerId, harness, turnEpoch, kind, actor, payload: { requestId, request } });
+        const task = this._tasks.get(handle.taskId);
+        if (task && TERMINAL_TASK_STATUSES.has(task.status)) break;
+        // F6: v1 decisions are always blocking (the gating-deadlock break); there is no
+        // non-blocking decision admission path.
+        const record = {
+          kind: 'decision',
+          worker: workerId,
+          state: 'pending',
+          resolution: null,
+          consumer: null,
+          turnEpochAtAsk: this._safeTurnEpoch(handle),
+          deadlineAt: this._now() + request.deadlineMs,
+          options: request.options,
+          allowFreeResponse: request.allowFreeResponse,
+          question: request.question,
+          recommended: request.recommended,
+        };
+        const evidence = this._coordMapEvent(askedEvent);
+        if (task) {
+          this._coordTransition(task, 'input_required', `task.input_required:${task.id}:${askedEvent.seq}`, { ...evidence, interaction: { kind: 'decision', requestId, blocking: true } });
+        }
+        this._pending.set(requestId, record);
+        this._activeInteractionIds.add(requestId);
+        handle.status = 'blocked';
+        handle.pendingDecisionId = requestId;
+        if (task) task.status = 'input_required';
+        break;
+      }
       case 'question.answered':
-      case 'approval.resolved': {
+      case 'approval.resolved':
+      case 'decision.settled': {
         const resolvedEvent = appendAttributed({ worker: workerId, harness, turnEpoch, kind, actor, payload });
         const task = this._tasks.get(handle.taskId);
         if (task && this._coordination?.task(task.id)?.status === 'input_required') {
@@ -10007,6 +10306,11 @@ export class Coordinator {
     for (const rows of durableTasksByWorker.values()) {
       rows.sort((left, right) => left.createdEvent - right.createdEvent);
     }
+    // F1: pending interaction records (question/approval/decision) are reconstructed purely
+    // from the durable log, keyed by requestId (globally unique by construction). A blocking
+    // question/approval/decision asked before a restart must remain answerable after it —
+    // `respond()` must never return not_found for a record whose ask event is durable.
+    const reconstructedPending = new Map();
     for (const workerId of workerIds) {
       const events = this._log.read(workerId);
       if (events.length === 0) continue;
@@ -10521,11 +10825,60 @@ export class Coordinator {
             break;
           case 'question.asked':
           case 'approval.requested':
+          case 'decision.requested': {
             if (!TERMINAL_TASK_STATUSES.has(terminalStatus) && e.payload?.blocking !== false) terminalStatus = 'input_required';
+            // F1: track the durable ask as a reconstruction candidate. A later resolve/
+            // supersede/expire/stale event for this requestId (below) clears it back out.
+            const requestId = e.payload?.requestId;
+            if (requestId) {
+              const interactionKind = e.kind === 'question.asked' ? 'question' : e.kind === 'approval.requested' ? 'approval' : 'decision';
+              reconstructedPending.set(requestId, {
+                kind: interactionKind,
+                worker: workerId,
+                state: 'pending',
+                resolution: null,
+                consumer: null,
+                // The live path stamps turnEpochAtAsk from the FENCE's current value
+                // (_safeTurnEpoch), not the observed event's own claimed turnEpoch field — the
+                // fence is authoritative, an adapter's self-reported turnEpoch is not. `maxTurnEpoch`
+                // (already updated above for every event, including this one) is exactly that
+                // fence value reconstructed incrementally: it can only be reached by the same
+                // monotonic bumpTurn sequence the live fence itself followed.
+                turnEpochAtAsk: maxTurnEpoch,
+                // Deadlines are reconstructed relative to REPLAY time (this._now()), not the
+                // durable event's own log timestamp — the log's wall-clock `ts` and the
+                // coordinator's injected clock are two independently configurable sources (a
+                // fake test clock never redefines Log.clock) and must never be mixed to derive
+                // an authoritative wall-time comparison.
+                deadlineAt: interactionKind === 'approval' ? (this._now() + this._approvalTimeoutMs)
+                  : interactionKind === 'decision' ? (this._now() + (e.payload?.request?.deadlineMs ?? 0)) : null,
+                ...(interactionKind === 'decision' ? {
+                  options: e.payload.request.options,
+                  allowFreeResponse: e.payload.request.allowFreeResponse,
+                  question: e.payload.request.question,
+                  recommended: e.payload.request.recommended,
+                } : {}),
+              });
+            }
             break;
+          }
           case 'question.answered':
           case 'approval.resolved':
+          case 'decision.settled':
             if (terminalStatus === 'input_required') terminalStatus = 'working';
+            if (e.payload?.requestId) reconstructedPending.delete(e.payload.requestId);
+            break;
+          case 'decision.expired':
+            if (terminalStatus === 'input_required') terminalStatus = 'working';
+            if (e.payload?.requestId) reconstructedPending.delete(e.payload.requestId);
+            break;
+          case 'control.stale_rejected':
+            // A stale-discarded respond() consumed the record (F2) without a question.answered/
+            // approval.resolved/decision.settled event; it must not be reconstructed as pending.
+            if (e.payload?.op === 'respond' && e.payload?.requestId) reconstructedPending.delete(e.payload.requestId);
+            break;
+          case 'control.drain_interaction_cancelled':
+            if (e.payload?.requestId) reconstructedPending.delete(e.payload.requestId);
             break;
           case 'control.interaction_superseded':
             // Semantic interrupt preparation durably consumes the blocked interaction before
@@ -10535,6 +10888,7 @@ export class Coordinator {
             // receipt was subsequently closed.
             if (e.payload?.disposition === 'semantic_interrupt'
               && terminalStatus === 'input_required') terminalStatus = 'working';
+            if (e.payload?.requestId) reconstructedPending.delete(e.payload.requestId);
             break;
           default:
             break;
@@ -10712,6 +11066,7 @@ export class Coordinator {
           ? 'orphaned' : this._deriveWorkerStatus(terminalStatus),
         pendingApprovalId: null,
         pendingQuestionId: null,
+        pendingDecisionId: null,
         budgetUsed,
         budgetThresholdsFired,
         budgetHardExceeded,
@@ -10764,6 +11119,18 @@ export class Coordinator {
       if (workerMatch) this._workerSeq = Math.max(this._workerSeq, Number(workerMatch[1]));
       const taskMatch = /^task-(\d+)$/.exec(taskId ?? '');
       if (taskMatch) this._taskSeq = Math.max(this._taskSeq, Number(taskMatch[1]));
+    }
+
+    // F1: seed the reconstructed pending interactions now that every worker/task has been
+    // rebuilt. `respond()`/`interactionStatus()` never return not_found for these again.
+    for (const [requestId, record] of reconstructedPending) {
+      this._pending.set(requestId, record);
+      this._activeInteractionIds.add(requestId);
+      const handle = this._workers.get(record.worker);
+      if (!handle) continue;
+      if (record.kind === 'question') handle.pendingQuestionId = requestId;
+      else if (record.kind === 'approval') handle.pendingApprovalId = requestId;
+      else if (record.kind === 'decision') handle.pendingDecisionId = requestId;
     }
   }
 
