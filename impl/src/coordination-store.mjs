@@ -113,6 +113,8 @@ const PROJECTION_CHECKPOINT_FIELDS = Object.freeze([
   '_replManifestAdmissions',
   // REPL-2 (Part G rule 23): gains _replBindings, _replBindingHistory, _replBindingFences.
   '_replBindings', '_replBindingHistory', '_replBindingFences',
+  // KG-1 (Part A rule 5): gains _projectionInputFence, a plain replay-derived counter.
+  '_projectionInputFence',
 ]);
 
 const TERMINAL = new Set(['completed', 'failed', 'cancelled']);
@@ -125,11 +127,22 @@ const KNOWLEDGE_NODE_TYPES = new Set(['Run', 'Task', 'Artifact', 'Phase', 'Exper
 const KNOWLEDGE_EDGE_TYPES = new Set(['Supports', 'Contradicts', 'Supersedes', 'Informed', 'ProducedBy', 'Contains', 'DependsOn', 'Refines', 'ReadBy', 'VerifiedBy', 'DerivedFrom', 'Affects', 'Cites', 'ObservedIn']);
 const KNOWLEDGE_GROUNDINGS = new Set(['verified', 'observed', 'derived', 'asserted']);
 const KNOWLEDGE_PROJECTION_FIELDS = new Set(['contentDigest', 'observedSeq', 'observedAt', 'eventTimeSeq', 'eventTime', 'validityVersion', 'invalidatedBy', 'acceptanceInvalidation', 'derivedFromEvent', 'resolvedBy', 'winnerId', 'loserId', 'resolutionReason']);
+// KG-1 Part A rule 5 (P1-1 fix): every event kind that mutates task/workflow projection input
+// state without already being counted by boardFence's five orchestrator-authority transitions.
+const PROJECTION_INPUT_FENCE_EVENTS = new Set([
+  'knowledge.node_added', 'knowledge.promoted', 'knowledge.edge_added', 'knowledge.promotion_batch',
+  'knowledge.scratch_corrected', 'knowledge.workflow_admitted',
+  'package.admitted', 'package.attached',
+  'board.claim_requested', 'board.claim_expired', 'board.report_submitted',
+]);
 const KNOWLEDGE_RECALL_POLICY_FIELDS = ['repoId', 'maxQueryBytes', 'maxQueryTerms', 'maxCandidates', 'maxCandidateBytes', 'maxResults', 'maxGraphDepth', 'maxGraphRows', 'maxSnippetBytes', 'maxReceiptBytes', 'maxResultBytes'];
 const KNOWLEDGE_RECALL_ASSESSMENT_POLICY_FIELDS = ['repoId', 'maxScanEvents', 'maxReceipts', 'maxNodeRefs', 'maxEvidenceRefs', 'maxBatchBytes', 'maxResultBytes'];
 const KNOWLEDGE_PROMOTION_POLICY_FIELDS = ['repoId', 'minScratchReaders', 'maxScanEvents', 'maxCandidates', 'maxCandidateBytes', 'maxEvidenceRefs', 'maxBatchBytes', 'maxResultBytes'];
 const KNOWLEDGE_SCRATCH_CORRECTION_POLICY_FIELDS = ['repoId', 'minScratchReaders', 'maxScanEvents', 'maxAffectedReads', 'maxEvidenceRefs', 'maxBatchBytes', 'maxResultBytes'];
 const KNOWLEDGE_CONTRADICTION_POLICY_FIELDS = ['repoId', 'maxScanEvents', 'maxScanEdges', 'maxItems', 'maxSnippetBytes', 'maxEvidenceRefs', 'maxAffectedReads', 'maxReasonBytes', 'maxBatchBytes', 'maxResultBytes'];
+// KG-2 Part D (rule 14): knowledge.workflow_admitted, structurally modeled on
+// knowledge.scratch_corrected but with a single-candidate admission surface, not a scan policy.
+const KNOWLEDGE_WORKFLOW_ADMISSION_POLICY_FIELDS = ['repoId', 'maxBatchBytes', 'maxResultBytes'];
 const SCRATCH_CORRECTION_ADMIN_EVENTS = new Set(['evidence.mapped', 'web.command_admitted', 'mcp.call_admitted']);
 const CONTRADICTION_ADMIN_EVENTS = new Set(['evidence.mapped', 'web.command_admitted', 'mcp.call_admitted']);
 const PROMOTION_DECISION_KINDS = new Set(['control.stop_requested', 'follow_up.requested', 'publication.authorized', 'publication.denied']);
@@ -212,6 +225,12 @@ function validKnowledgeScratchCorrectionPolicy(policy) {
   if (numeric.some((name) => !Number.isSafeInteger(policy[name]) || policy[name] <= 0)) return false;
   return policy.minScratchReaders <= 1_000 && policy.maxScanEvents <= 1_000_000 && policy.maxAffectedReads <= 1_000_000
     && policy.maxEvidenceRefs <= 1_000_000 && policy.maxBatchBytes <= 16 * 1024 * 1024 && policy.maxResultBytes <= 16 * 1024 * 1024;
+}
+function validKnowledgeWorkflowAdmissionPolicy(policy) {
+  if (!policy || Object.keys(policy).sort().join(',') !== [...KNOWLEDGE_WORKFLOW_ADMISSION_POLICY_FIELDS].sort().join(',') || typeof policy.repoId !== 'string' || !/^[A-Za-z0-9._:-]{1,256}$/.test(policy.repoId)) return false;
+  const numeric = KNOWLEDGE_WORKFLOW_ADMISSION_POLICY_FIELDS.filter((name) => name !== 'repoId');
+  if (numeric.some((name) => !Number.isSafeInteger(policy[name]) || policy[name] <= 0)) return false;
+  return policy.maxBatchBytes <= 16 * 1024 * 1024 && policy.maxResultBytes <= 16 * 1024 * 1024;
 }
 function validKnowledgeContradictionPolicy(policy) {
   if (!policy || Object.keys(policy).sort().join(',') !== [...KNOWLEDGE_CONTRADICTION_POLICY_FIELDS].sort().join(',') || typeof policy.repoId !== 'string' || !/^[A-Za-z0-9._:-]{1,256}$/.test(policy.repoId)) return false;
@@ -823,6 +842,10 @@ export class CoordinationStore {
     // log in _apply, so replay reconstructs each board fence exactly by re-counting.
     this._boardItems = new Map(); this._boardItemHistory = new Map(); this._boardItemsByBoard = new Map();
     this._boardClaims = new Map(); this._boardReports = []; this._boardFences = new Map();
+    // KG-1 Part A rule 5 (P1-1 fix): a store-level, global, replay-derived counter — the same
+    // mechanism as _boardFences, generalized across every projection-input event kind so no
+    // task/workflow horizon cache entry can stale-hit.
+    this._projectionInputFence = 0;
     this._contextPackages = new Map(); this._contextPackageAttachments = new Map();
     // REPL-1: admitted ReplManifest authority records, keyed by manifestDigest. REPL sessions
     // ride the existing _contextSessions map, so no separate session projection is added.
@@ -7258,6 +7281,10 @@ export class CoordinationStore {
 
   _apply(event) {
     const p = event.payload;
+    // KG-1 Part A rule 5 (P1-1 fix): global, replay-derived — runs regardless of which branch
+    // below handles the event, so every projection-input write is covered without threading
+    // an increment into each individual fold branch by hand.
+    if (PROJECTION_INPUT_FENCE_EVENTS.has(event.kind)) this._projectionInputFence += 1;
     let admittedRunId = null;
     if (event.kind === 'goal.version_defined') admittedRunId = p?.goal?.runId ?? null;
     else if (event.kind === 'plan.version_proposed') admittedRunId = p?.plan?.runId ?? null;
@@ -7852,6 +7879,13 @@ export class CoordinationStore {
         this._setKnowledgeNode(event, target.id, freeze({ ...clone(target), validTo: event.ts, validityVersion: target.validityVersion + 1, invalidatedBy: event.seq }));
         this._contamination.push(freeze({ nodeId: target.id, invalidationEvent: event.seq, affectedReadEvents: clone(p.affectedReadEvents), eventSeq: event.seq, ts: event.ts }));
       }
+    } else if (event.kind === 'knowledge.workflow_admitted') {
+      // KG-2 Part D rule 14: the third instance of the promotion_batch/scratch_corrected
+      // generic nodes/edges fold — payload-digest-only integrity via
+      // _validateWorkflowAdmissionPayload, never a per-node temporal re-validation.
+      this._validateWorkflowAdmissionPayload(p, event, true);
+      for (const node of p.nodes) this._setKnowledgeNode(event, node.id, freeze({ ...clone(node), observedSeq: event.seq, observedAt: event.ts, ...eventTime(this._events, node.evidence, event), validFrom: event.ts, validTo: null, validityVersion: 1, derivedFromEvent: event.seq }));
+      for (const edge of p.edges) this._setKnowledgeEdge(event, edge.id, freeze({ ...clone(edge), observedSeq: event.seq, observedAt: event.ts, ...eventTime(this._events, edge.evidence, event), validFrom: event.ts, validTo: null, validityVersion: 1, derivedFromEvent: event.seq }));
     } else if (event.kind === 'knowledge.node_added' || event.kind === 'knowledge.promoted') {
       this._validateKnowledgeNodePayload(p, event, true);
       this._setKnowledgeNode(event, p.id, freeze({ ...clone(p), observedSeq: event.seq, observedAt: event.ts, ...eventTime(this._events, p.evidence, event), validFrom: p.validFrom ?? event.ts, validTo: p.validTo ?? null, validityVersion: 1 }));
@@ -8902,7 +8936,53 @@ export class CoordinationStore {
     }
     for (const branch of normalized.branches) this._resolveContextPackageBranchContent(branch, false);
     const { packageId: _packageId, ...payload } = normalized;
-    const event = this._append('package.admitted', payload, auth);
+    // KG-2 Part C rules 11-13: one Source node per unique wrapped-cell content digest
+    // (check-before-write against a live queryKnowledge read, so re-wrapping an already-cited
+    // cell mints nothing new), one package Finding unconditionally, and one DerivedFrom edge per
+    // unique wrapped-cell Source (fresh or already present) — all atomic with the admission.
+    const admitSeq = this._events.length + 1;
+    const uniqueDigests = [...new Set(normalized.branches.filter((branch) => branch.valueRef).map((branch) => branch.valueRef.valueDigest))];
+    const sourceIds = uniqueDigests.map((valueDigest) => `source:cell:${valueDigest}`);
+    const existingSourceIds = sourceIds.length === 0
+      ? new Set()
+      : new Set(this.queryKnowledge({ ids: sourceIds }).map((node) => node.id));
+    const findingId = `finding:package:${normalized.packageDigest}`;
+    const entries = [{ kind: 'package.admitted', payload, auth }];
+    for (let index = 0; index < sourceIds.length; index += 1) {
+      const sourceId = sourceIds[index];
+      if (existingSourceIds.has(sourceId)) continue;
+      const sourcePayload = this._prepareKnowledgeNode({
+        id: sourceId, type: 'Source', grounding: 'observed',
+        evidence: [{ coordinationSeq: admitSeq }],
+        promotion: { kind: 'Source', trigger: 'package.wrapped_cell' },
+        cellDigest: uniqueDigests[index], runId: normalized.provenance.runId,
+      }, null, false);
+      entries.push({
+        kind: 'knowledge.node_added', payload: sourcePayload,
+        auth: { actor: 'policy', key: `knowledge.node_added:${sourceId}` },
+      });
+    }
+    const findingPayload = this._prepareKnowledgeNode({
+      id: findingId, type: 'Finding', grounding: 'observed',
+      evidence: [{ coordinationSeq: admitSeq }],
+      promotion: { kind: 'Finding', trigger: 'package.admitted' },
+    }, null, false);
+    entries.push({
+      kind: 'knowledge.node_added', payload: findingPayload,
+      auth: { actor: 'policy', key: `knowledge.node_added:${findingId}` },
+    });
+    for (const sourceId of sourceIds) {
+      const edgeId = `knowledge-edge:derivedfrom:${findingId}:${sourceId}`;
+      const edgePayload = this._knowledgePayload(
+        { from: findingId, to: sourceId, type: 'DerivedFrom', evidence: [{ coordinationSeq: admitSeq }] },
+        { id: edgeId },
+      );
+      entries.push({
+        kind: 'knowledge.edge_added', payload: edgePayload,
+        auth: { actor: 'policy', key: `knowledge.edge_added:${edgeId}` },
+      });
+    }
+    const [event] = this._appendBatch(entries);
     const pkg = this.contextPackage(normalized.packageDigest);
     if (!pkg || pkg.admittedEvent !== event.seq) {
       throw new CoordinationIntegrityError('Context package admission did not materialize',
@@ -12415,6 +12495,19 @@ export class CoordinationStore {
     return this._boardFences.get(board) ?? 0;
   }
 
+  /** KG-1 Part A rule 5 (P1-1 fix): store-level, global, replay-derived counter incremented once
+   * per applied event of a kind that can change a task/workflow projection's output without
+   * already being counted by boardFence's five orchestrator-authority transitions. */
+  projectionInputFence() {
+    return this._projectionInputFence;
+  }
+
+  /** KG-1 Part A rule 4: the project horizon fence — the store's own applied-event position,
+   * already a strict superset of every other fence component. */
+  eventFence() {
+    return this._events.length;
+  }
+
   postBoardItem(fields, auth) {
     const prior = this._byKey.get(auth?.key);
     if (prior) return { ok: true, result: 'idempotent', event: clone(prior), item: clone(this._boardItems.get(prior.payload.itemId)) };
@@ -12456,6 +12549,28 @@ export class CoordinationStore {
     };
     const itemDigest = boardItemContentDigest(core);
     if (changes.itemDigest !== undefined && changes.itemDigest !== itemDigest) throw new CoordinationRefusal('board item digest does not match the hub recompute', 'board_item_digest_mismatch');
+    // KG-2 Part B rule 8: atomic with the close, not a separate step. A board-item close mints
+    // its candidate Finding unconditionally (rule 10 — no gate here; Part D is the later, explicit
+    // settle-time gate). `board.claim_migrated` never applies to a close (state !== open/reorder),
+    // so the batch is exactly two entries.
+    if (kind === 'board.item_closed') {
+      const closeSeq = this._events.length + 1;
+      const findingId = `finding:board-close:${itemId}:${core.itemVersion}`;
+      const findingPayload = this._prepareKnowledgeNode({
+        id: findingId, type: 'Finding', grounding: 'observed',
+        evidence: [{ coordinationSeq: closeSeq }],
+        promotion: { kind: 'Finding', trigger: 'board.item_closed' },
+        boardItemRef: { itemId, itemVersion: core.itemVersion, itemDigest },
+      }, null, false);
+      const [event] = this._appendBatch([
+        { kind, payload: { ...core, itemDigest }, auth },
+        {
+          kind: 'knowledge.node_added', payload: findingPayload,
+          auth: { actor: 'policy', key: `knowledge.node_added:${findingId}` },
+        },
+      ]);
+      return { ok: true, result: 'updated', event: clone(event), item: clone(this._boardItems.get(itemId)), migrated: false };
+    }
     const event = this._append(kind, { ...core, itemDigest }, auth);
     const claim = this._boardClaims.get(itemId);
     const migrating = !!(claim && claim.active && (kind === 'board.item_retitled' || kind === 'board.item_reordered'));
@@ -13185,6 +13300,109 @@ export class CoordinationStore {
     if (!validKnowledgeScratchCorrectionPolicy(policy) || policy.repoId !== repoId || !promotionActor(actor) || !Number.isSafeInteger(eventSeq)) throw new CoordinationRefusal('Scratch correction reverify request is invalid', 'causal_correction_invalid'); const event = this._events[eventSeq - 1];
     const normalized = this._scratchCorrectionRequest(request); const policyDigest = canonicalDigest(policy); const requestDigest = event ? canonicalDigest({ actor, idempotencyKey: event.idempotencyKey, repoId, observedSeq, policyDigest, request: normalized }) : null;
     if (!event || event.kind !== 'knowledge.scratch_corrected' || event.actor !== actor || event.payload?.repoId !== repoId || event.payload?.observedSeq !== observedSeq || event.payload?.policyDigest !== policyDigest || event.payload?.requestDigest !== requestDigest || canonicalDigest(event.payload?.request) !== canonicalDigest(normalized)) throw new CoordinationRefusal('Scratch correction receipt does not match authority', 'causal_correction_conflict'); this._validateScratchCorrectionPayload(event.payload, event, false); return freeze({ event: clone(event), projection: this._scratchCorrectionProjection(event.payload, event), replayed: true });
+  }
+
+  // -------------------------------------------------------------------------
+  // KG-2 Part D (rule 14): the settle-time orchestrator-admit gate. A new event kind,
+  // structurally modeled on knowledge.scratch_corrected (not a reuse of
+  // knowledge.promotion_batch — that event's validator re-derives its candidate set from the
+  // scratch/verified-outcome scan policy and would reject a board/package Finding candidate).
+  // -------------------------------------------------------------------------
+
+  /** Rule 15 eligibility, checked against the state strictly before beforeEventSeq (so a replay
+   * of this exact event reproduces the identical derivation regardless of what happened after
+   * it was first applied — the same discipline _deriveScratchCorrection uses). Rule 17: the
+   * admitted Finding's evidence carries the candidate's own evidence plus
+   * { coordinationSeq: candidate.observedSeq } — the candidate's own, necessarily-prior minting
+   * seq — never this event's own prospective seq (P1-2 fix). */
+  _deriveWorkflowAdmission(repoId, runId, candidateFindingId, policy, beforeEventSeq = this._events.length + 1) {
+    if (!validKnowledgeWorkflowAdmissionPolicy(policy) || policy.repoId !== repoId || !validRunId(runId)
+      || typeof candidateFindingId !== 'string' || candidateFindingId.length === 0) {
+      throw new CoordinationRefusal('workflow admission request is invalid', 'workflow_admit_invalid');
+    }
+    const boundary = beforeEventSeq - 1;
+    const nodesAtBoundary = this.queryKnowledge({ observedSeq: boundary });
+    const edgesAtBoundary = this.queryKnowledgeEdges({ observedSeq: boundary });
+    const nodeMap = new Map(nodesAtBoundary.map((node) => [node.id, node]));
+    const candidate = nodeMap.get(candidateFindingId);
+    const alreadyPromoted = edgesAtBoundary.some((edge) => edge.type === 'DerivedFrom' && edge.to === candidateFindingId
+      && nodeMap.get(edge.from)?.promotion?.trigger === 'workflow.admitted');
+    if (!candidate || candidate.type !== 'Finding' || candidate.grounding !== 'observed'
+      || !['board.item_closed', 'package.admitted'].includes(candidate.promotion?.trigger) || alreadyPromoted) {
+      throw new CoordinationRefusal('workflow admission candidate is ineligible', 'workflow_admit_ineligible');
+    }
+    const admittedId = `finding:workflow-admitted:${candidateFindingId}`;
+    const evidence = [...(candidate.evidence ?? []), { coordinationSeq: candidate.observedSeq }];
+    const finding = this._knowledgePayload({
+      id: admittedId, type: 'Finding', grounding: 'verified', evidence,
+      promotion: { kind: 'Finding', trigger: 'workflow.admitted' }, repoId, runId,
+    });
+    const edgeId = `knowledge-edge:derivedfrom:${admittedId}:${candidateFindingId}`;
+    const edge = this._knowledgePayload({
+      id: edgeId, type: 'DerivedFrom', from: admittedId, to: candidateFindingId,
+      evidence: [{ coordinationSeq: candidate.observedSeq }],
+    });
+    const projectionDigest = canonicalDigest({ candidateFindingId, nodes: [finding], edges: [edge] });
+    return freeze({ candidateFindingId, nodes: [finding], edges: [edge], projectionDigest });
+  }
+
+  _validateWorkflowAdmissionPayload(payload, event, integrity = false) {
+    const fail = (message, code = 'workflow_admit_integrity') => { throw integrity ? new CoordinationIntegrityError(message, code) : new CoordinationRefusal(message, code); };
+    const fields = ['schemaVersion', 'repoId', 'runId', 'policy', 'policyDigest', 'candidateFindingId', 'requestDigest', 'nodes', 'edges', 'projectionDigest', 'receiptDigest'];
+    if (!payload || Object.keys(payload).sort().join(',') !== fields.sort().join(',') || payload.schemaVersion !== 1
+      || !promotionActor(event.actor) || !validKnowledgeWorkflowAdmissionPolicy(payload.policy)
+      || payload.repoId !== payload.policy.repoId || !validRunId(payload.runId)
+      || payload.policyDigest !== canonicalDigest(payload.policy)) fail('workflow admission receipt shape is invalid');
+    const requestDigest = canonicalDigest({ actor: event.actor, idempotencyKey: event.idempotencyKey, repoId: payload.repoId, runId: payload.runId, policyDigest: payload.policyDigest, candidateFindingId: payload.candidateFindingId });
+    if (payload.requestDigest !== requestDigest) fail('workflow admission request binding is invalid');
+    let derived;
+    try { derived = this._deriveWorkflowAdmission(payload.repoId, payload.runId, payload.candidateFindingId, payload.policy, event.seq); }
+    catch (error) { fail(error.message, error.code ?? 'workflow_admit_integrity'); }
+    if (canonicalDigest(payload.nodes) !== canonicalDigest(derived.nodes) || canonicalDigest(payload.edges) !== canonicalDigest(derived.edges)
+      || payload.projectionDigest !== derived.projectionDigest) fail('workflow admission projection diverged');
+    const core = Object.fromEntries(Object.entries(payload).filter(([key]) => key !== 'receiptDigest'));
+    if (payload.receiptDigest !== canonicalDigest(core) || canonicalBytes(payload) > payload.policy.maxBatchBytes) fail('workflow admission receipt is invalid or oversized');
+    return derived;
+  }
+
+  /** Rule 16: two store-enforced checks, neither a free-string actor. (a) promotionActor — only
+   * 'orchestrator'/'operator:<id>', the same guard promoteKnowledgeBatch already enforces. (b) an
+   * active run-orchestrator lease bound into the request, validated exactly as
+   * _validateRunLineageAdmission already does for child-run admission — a consistency/ordering
+   * device layered on the single-writer trust model, not an independent authority proof. */
+  admitWorkflowFinding(repoId, runId, candidateFindingId, policy, auth, lease) {
+    if (!promotionActor(auth?.actor) || typeof auth?.key !== 'string' || auth.key.length === 0
+      || !validKnowledgeWorkflowAdmissionPolicy(policy) || policy.repoId !== repoId) {
+      throw new CoordinationRefusal('workflow admission authority is invalid', 'workflow_admit_invalid');
+    }
+    const leaseRecord = this._runOrchestratorLeases.get(lease?.id);
+    if (!leaseRecord || leaseRecord.status !== 'active' || leaseRecord.leaseDigest !== lease?.digest
+      || leaseRecord.issuedEvent !== lease?.issuedEvent || leaseRecord.parent?.runId !== runId) {
+      throw new CoordinationRefusal('workflow admission lease binding is invalid', 'workflow_admit_lease_invalid');
+    }
+    const policyDigest = canonicalDigest(policy);
+    const requestDigest = canonicalDigest({ actor: auth.actor, idempotencyKey: auth.key, repoId, runId, policyDigest, candidateFindingId });
+    const prior = this._byKey.get(auth.key);
+    if (prior) {
+      if (prior.kind !== 'knowledge.workflow_admitted' || prior.actor !== auth.actor || prior.payload?.requestDigest !== requestDigest) {
+        throw new CoordinationRefusal('workflow admission idempotency conflict', 'workflow_admit_conflict');
+      }
+      this._validateWorkflowAdmissionPayload(prior.payload, prior, false);
+      return freeze({ event: clone(prior), finding: clone(this._knowledgeNodes.get(prior.payload.nodes[0].id)), replayed: true });
+    }
+    const derived = this._deriveWorkflowAdmission(repoId, runId, candidateFindingId, policy);
+    const core = {
+      schemaVersion: 1, repoId, runId, policy: clone(policy), policyDigest,
+      candidateFindingId, requestDigest, nodes: clone(derived.nodes), edges: clone(derived.edges),
+      projectionDigest: derived.projectionDigest,
+    };
+    const payload = { ...core, receiptDigest: canonicalDigest(core) };
+    if (canonicalBytes(payload) > policy.maxBatchBytes) throw new CoordinationRefusal('workflow admission batch exceeded deployment ceiling', 'workflow_admit_oversize');
+    const fixedTs = this._clock();
+    const prospective = { schemaVersion: 1, seq: this._events.length + 1, ts: fixedTs, kind: 'knowledge.workflow_admitted', actor: auth.actor, idempotencyKey: auth.key, payload };
+    this._validateWorkflowAdmissionPayload(payload, prospective, false);
+    const event = this._append('knowledge.workflow_admitted', payload, auth, fixedTs);
+    return freeze({ event: clone(event), finding: clone(this._knowledgeNodes.get(derived.nodes[0].id)), replayed: false });
   }
 
   addKnowledgeNode(fields, auth) {
