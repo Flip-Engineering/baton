@@ -1,0 +1,43 @@
+{
+  "schemaVersion": 1,
+  "outcomes": [
+    {
+      "role": "reflex2-boards-implementer",
+      "phase": "failed",
+      "terminal": true,
+      "narrative": "Run terminated: provider_turn_failed.",
+      "resultSha": null
+    },
+    {
+      "role": "reflex3-packages-implementer",
+      "phase": "failed",
+      "terminal": true,
+      "narrative": "Run terminated: provider_turn_failed.",
+      "resultSha": null
+    }
+  ],
+  "stops": [
+    {
+      "role": "reflex2-boards-implementer",
+      "stop": null,
+      "resources": {
+        "state": "stopped",
+        "cleanupState": "stopped",
+        "ownedCount": 0
+      },
+      "ownedCount": 0
+    },
+    {
+      "role": "reflex3-packages-implementer",
+      "stop": null,
+      "resources": {
+        "state": "stopped",
+        "cleanupState": "stopped",
+        "ownedCount": 0
+      },
+      "ownedCount": 0
+    }
+  ],
+  "remainingCount": 0,
+  "residueUnknown": false
+}
