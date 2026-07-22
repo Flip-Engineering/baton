@@ -275,6 +275,86 @@ export function normalizeContextManifest(value, policyInput = DEFAULT_CONTEXT_PR
   return deepFreeze({ ...body, digest: computed });
 }
 
+// REPL-1 (docs/33 §3.1, issue #21): a ReplManifest is a SECOND manifest shape with its own
+// disjoint digest basis. Its field set replaces the Workflow `workflow` coordinate with a `repl`
+// coordinate ({ replRole, runId }); it shares `tree` and the branch discipline verbatim and
+// carries NO goal/plan/node/task (the `^plan:...$` gate is deliberately absent — the G-A wall).
+const REPL_MANIFEST_FIELDS = Object.freeze([
+  'branches', 'kind', 'policyDigest', 'repl', 'repoId', 'schemaVersion', 'tree',
+]);
+// Deliberately NARROWER than SAFE_ID (which permits `:`): a `:` in the suffix would make the
+// `worker:` tag boundary ambiguous and break the store-side `replRole === 'worker:' + principalId`
+// equality (docs/33 R33 P2-11).
+const REPL_WORKER_ROLE = /^worker:[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u;
+
+function failReplManifest(message) {
+  throw typed(message, 'repl_manifest_invalid');
+}
+
+export function normalizeReplManifest(value, policyInput = DEFAULT_CONTEXT_PROGRAM_POLICY) {
+  let policy;
+  try { policy = normalizeContextProgramPolicy(policyInput); }
+  catch (error) { throw typed(error.message, 'repl_manifest_invalid'); }
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    failReplManifest('ReplManifest must be an object');
+  }
+  const raw = clone(value, 'repl_manifest_invalid');
+  const suppliedDigest = raw.digest;
+  delete raw.digest;
+  exact(raw, REPL_MANIFEST_FIELDS, 'ReplManifest', failReplManifest);
+  if (raw.schemaVersion !== 1 || raw.kind !== 'baton.repl_manifest') {
+    failReplManifest('ReplManifest header is invalid');
+  }
+  const repoId = safeId(raw.repoId, 'ReplManifest repo', failReplManifest);
+  exact(raw.tree, ['sha', 'source'], 'ReplManifest tree', failReplManifest);
+  if (!GIT_SHA.test(raw.tree.sha ?? '')
+    || !['deployment_snapshot', 'revision_parent'].includes(raw.tree.source)) {
+    failReplManifest('ReplManifest tree must have exact deployment or revision-parent authority');
+  }
+  exact(raw.repl, ['replRole', 'runId'], 'ReplManifest repl coordinate', failReplManifest);
+  const replRunId = safeId(raw.repl.runId, 'ReplManifest Run', failReplManifest);
+  const replRole = raw.repl.replRole;
+  if (replRole !== 'shared' && (typeof replRole !== 'string' || !REPL_WORKER_ROLE.test(replRole))) {
+    failReplManifest('ReplManifest repl role is invalid');
+  }
+  if (!Array.isArray(raw.branches) || raw.branches.length === 0
+    || raw.branches.length > policy.maxManifestBranches) {
+    failReplManifest('ReplManifest branches are invalid');
+  }
+  const branches = raw.branches.map((branch) => manifestBranch(branch, policy))
+    .sort((left, right) => compareCanonicalStrings(left.name, right.name));
+  if (new Set(branches.map(({ name }) => name)).size !== branches.length
+    || new Set(branches.map(({ ref }) => ref)).size !== branches.length) {
+    failReplManifest('ReplManifest branches must have unique names and refs');
+  }
+  const body = {
+    schemaVersion: 1,
+    kind: 'baton.repl_manifest',
+    repoId,
+    tree: { sha: raw.tree.sha, source: raw.tree.source },
+    repl: { replRole, runId: replRunId },
+    branches,
+    policyDigest: digest(raw.policyDigest, 'ReplManifest policy digest', failReplManifest),
+  };
+  if (body.policyDigest !== policy.policyDigest) {
+    failReplManifest('ReplManifest policy differs from the normalization authority');
+  }
+  const computed = contextValueDigest(body);
+  if (suppliedDigest !== undefined && suppliedDigest !== computed) {
+    failReplManifest('ReplManifest digest is invalid');
+  }
+  return deepFreeze({ ...body, digest: computed });
+}
+
+// The ONE kind-dispatching entry (docs/33 R33-2). It never widens either normalizer; it is wired
+// at exactly the identity/session-construction sites that must accept either manifest kind.
+export function normalizeManifestAny(value, policy = DEFAULT_CONTEXT_PROGRAM_POLICY) {
+  const kind = value?.kind;
+  if (kind === 'baton.context_manifest') return normalizeContextManifest(value, policy);
+  if (kind === 'baton.repl_manifest') return normalizeReplManifest(value, policy);
+  return failManifest('Context manifest kind is unrecognized');
+}
+
 function fieldName(value, label) {
   const normalized = safeId(value, label, failProgram);
   if (normalized.startsWith('__')) failProgram(`${label} is invalid`);
@@ -1168,7 +1248,7 @@ export class ContextSession {
 }
 
 export class DurableContextSession {
-  constructor({ coordination, bench, manifest, principal, execute = null }) {
+  constructor({ coordination, bench, manifest, principal, execute = null, admitSession = null }) {
     if (!(bench instanceof StatelessContextBench)
       || !coordination || typeof coordination !== 'object'
       || typeof coordination.admitContextSession !== 'function'
@@ -1182,12 +1262,21 @@ export class DurableContextSession {
     if (execute !== null && typeof execute !== 'function') {
       throw new TypeError('Durable ContextSession execution authority is invalid');
     }
+    if (admitSession !== null && typeof admitSession !== 'function') {
+      throw new TypeError('Durable ContextSession admission authority is invalid');
+    }
     this.coordination = coordination;
     this.bench = bench;
-    this.manifest = normalizeContextManifest(manifest, bench.policy);
+    // REPL-1: kind-dispatching so a ReplManifest survives construction instead of throwing at
+    // the Workflow field check; the injected `admitSession` (default admitContextSession, exactly
+    // as `execute` is injected) lets a REPL runtime admit through `admitReplSession` while the
+    // constructor keeps its admit-on-construct + `context.session:<digest>` idempotency unchanged.
+    this.manifest = normalizeManifestAny(manifest, bench.policy);
     this.principal = deepFreeze(clone(principal, 'context_session_invalid'));
     this.execute = execute ?? ((request) => this.bench.execute(request));
-    const admitted = coordination.admitContextSession({
+    this.admitSession = admitSession
+      ?? ((fields, sessionAuth) => coordination.admitContextSession(fields, sessionAuth));
+    const admitted = this.admitSession({
       manifest: this.manifest, environmentDigest: bench.environmentDigest,
     }, this._auth(`context.session:${this.manifest.digest}`));
     this.sessionId = admitted.session.sessionId;

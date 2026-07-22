@@ -7361,7 +7361,11 @@ export class BatonApplication {
 
   _contextSectionItems(current) {
     const context = this._contextState(current);
-    const sessionItems = context.sessions.map((session) => ({
+    // REPL-1 rule 13a: REPL sessions ride the same session list but carry no `workflow`
+    // coordinate; they are not Workflow eval targets, so skip them in this Workflow-shaped view.
+    const sessionItems = context.sessions
+      .filter((session) => session.manifest.kind === 'baton.context_manifest')
+      .map((session) => ({
       id: session.sessionId,
       section: 'context',
       state: session.state,
@@ -8529,6 +8533,12 @@ export class BatonApplication {
         'application_context_eval_manifest_unavailable');
     }
     const [session] = sessions;
+    // REPL-1 rule 13a: a REPL manifestDigest resolves to a REPL session with no `workflow`
+    // coordinate; refuse with the existing typed code rather than dereferencing `.workflow`.
+    if (session.manifest.kind !== 'baton.context_manifest') {
+      throw applicationError('Context manifest is not durably admitted',
+        'application_context_eval_manifest_unavailable');
+    }
     const baseCurrent = this._findRun(session.runId, { allowUnavailableProfile: true });
     const plan = this.driver.coordination.planVersion(
       session.manifest.workflow.plan.planId, session.manifest.workflow.plan.version,

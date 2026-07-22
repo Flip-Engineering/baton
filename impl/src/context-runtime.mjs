@@ -9,6 +9,7 @@ import { fileURLToPath } from 'node:url';
 import {
   DEFAULT_CONTEXT_PROGRAM_POLICY, DurableContextSession, StatelessContextBench,
   contextValueDigest, normalizeContextManifest, normalizeContextProgramPolicy,
+  normalizeManifestAny,
 } from './context-program.mjs';
 import { normalizeContextEffectCall } from './context-call.mjs';
 import { normalizeContextMapCall } from './context-map.mjs';
@@ -1197,6 +1198,9 @@ export class RepositoryContextRuntime {
     }
     const existing = (this.coordination.snapshot().context?.sessions ?? []).find((session) => (
       session.state === 'active'
+      // REPL-1 rule 13a: skip ReplManifest sessions here — they ride the same _contextSessions
+      // map but carry no `workflow` coordinate, so an unguarded deref below would wedge Workflow.
+      && session.manifest.kind === 'baton.context_manifest'
       && session.repoId === this.repoId
       && session.runId === current.goal.runId
       && session.manifest.tree.sha === this.treeSha
@@ -1279,6 +1283,49 @@ export class RepositoryContextRuntime {
         actor: principal.actor, principalId: principal.principalId,
         repoId: this.repoId, runId: current.goal.runId,
       },
+      execute: (request) => this._executeOwned('execute', {
+        artifactRoot: this.bench.artifactRoot,
+        environmentDigest: this.environmentDigest,
+        policy: this.policy,
+        ...request,
+      }, signal),
+    });
+  }
+
+  // REPL-1 rule 11: open a DurableContextSession against a settled `repl.manifest_admitted`
+  // record instead of a Plan-gated Attempt. The constructor is reused as-is via the injected
+  // `admitSession` (admitReplSession) and the kind-dispatching normalizer — no Workflow coupling.
+  async openReplSession({ manifest, principal, signal = null }) {
+    if (!this.coordination) throw runtimeError('Repository Context runtime is not attached');
+    let normalized;
+    try { normalized = normalizeManifestAny(manifest, this.policy); }
+    catch (error) { throw runtimeError(error.message, error.code ?? 'repl_manifest_invalid'); }
+    if (normalized.kind !== 'baton.repl_manifest') {
+      throw runtimeError('Repository Context REPL session requires a repl manifest',
+        'repl_session_unadmitted');
+    }
+    const records = (this.coordination.snapshot().repl?.manifests ?? []).filter((record) => (
+      record.manifestDigest === normalized.digest && record.runId === normalized.repl.runId
+      && record.replRole === normalized.repl.replRole
+    ));
+    if (records.length !== 1) {
+      throw runtimeError('Repository Context REPL manifest is not admitted', 'repl_session_unadmitted');
+    }
+    const [record] = records;
+    if (!principal || record.principal.principalId !== principal.principalId
+      || record.principal.actor !== principal.actor) {
+      throw runtimeError('Repository Context REPL principal does not match the admission',
+        'repl_session_unadmitted');
+    }
+    return new DurableContextSession({
+      coordination: this.coordination,
+      bench: this.bench,
+      manifest: normalized,
+      principal: {
+        actor: record.principal.actor, principalId: record.principal.principalId,
+        repoId: this.repoId, runId: normalized.repl.runId,
+      },
+      admitSession: (fields, sessionAuth) => this.coordination.admitReplSession(fields, sessionAuth),
       execute: (request) => this._executeOwned('execute', {
         artifactRoot: this.bench.artifactRoot,
         environmentDigest: this.environmentDigest,
