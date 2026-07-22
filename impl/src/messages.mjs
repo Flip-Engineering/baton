@@ -376,6 +376,80 @@ export function wrapProse(worker, text) {
   return { worker, text, provenance: 'model-authored', untrusted: true };
 }
 
+// ---------------------------------------------------------------------------
+// Attention-text hygiene (KG-3 rule 7, v2-P1-5). Relocated here from the app layer
+// so the coordinator can import it without an app→coordinator cycle: messages.mjs
+// imports only node:crypto and is already imported by both coordinator and
+// application.mjs. NFKC-normalize, redact credential-shaped prose, cap at a byte
+// ceiling. The KG briefing is *derived* from folded KG state (never free worker
+// prose), so it is provenance-marked hub-derived/untrusted and can never diverge
+// from what the projection contains.
+// ---------------------------------------------------------------------------
+
+export const MAX_ATTENTION_TEXT_BYTES = 4_096;
+
+export const SECRET_SHAPED_TEXT = Object.freeze([
+  /-----BEGIN (?:[A-Z0-9]+ )?PRIVATE KEY-----/gu,
+  /\b(?:api[_-]?key|access[_-]?token|refresh[_-]?token|authorization|credential|password|secret)\s*[:=]\s*["']?[A-Za-z0-9_./+=-]{12,}/giu,
+  /\b(?:sk|sk-proj)-[A-Za-z0-9_-]{16,}\b/gu,
+  /\bgh[pousr]_[A-Za-z0-9]{20,}\b/gu,
+  /\bAKIA[A-Z0-9]{16}\b/gu,
+  /\beyJ[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,}\b/gu,
+]);
+
+/** Cap a string at maxBytes without splitting a UTF-8 scalar. */
+function capBytes(text, maxBytes) {
+  let out = '';
+  let bytes = 0;
+  for (const ch of text) {
+    const size = Buffer.byteLength(ch);
+    if (bytes + size > maxBytes) return { text: out, truncated: true };
+    out += ch;
+    bytes += size;
+  }
+  return { text: out, truncated: false };
+}
+
+/** NFKC-normalize, redact credential-shaped prose, cap at maxBytes. */
+export function boundedAttentionText(value, maxBytes = MAX_ATTENTION_TEXT_BYTES) {
+  const text = typeof value === 'string' ? value : String(value ?? '');
+  const normalized = text.normalize('NFKC');
+  let redacted = normalized;
+  for (const pattern of SECRET_SHAPED_TEXT) { pattern.lastIndex = 0; redacted = redacted.replace(pattern, '[redacted]'); }
+  return capBytes(redacted, maxBytes).text;
+}
+
+/** Render a RecallPreview (coordination-store.mjs) into a provider-visible, sanitized,
+ * byte-bounded briefing block. Contradiction nodes carry a WARNING: prefix; degrade
+ * renders one honest line, never silence (KG-3 rule 7). Provenance is hub-derived/
+ * untrusted — the briefing rides the `{ brief, briefing }` wrapper and never mutates
+ * task.brief. */
+export function renderBriefing(preview, maxBytes = MAX_ATTENTION_TEXT_BYTES) {
+  const lines = [];
+  if (!preview) {
+    lines.push('briefing unavailable (no projection)');
+  } else if (preview.briefingUnavailable) {
+    lines.push(preview.contradictionFlood
+      ? 'contradictions present, surfacing ceiling exceeded'
+      : `briefing unavailable (${preview.reason})`);
+  } else {
+    for (const node of preview.nodes ?? []) {
+      const prefix = node.warning ? 'WARNING: ' : '';
+      const confidence = node.confidence ? ` [confidence ${node.confidence.label}]` : '';
+      const staleness = node.staleness ? ` [stale: ${node.staleness.reasons.join(',')}]` : '';
+      lines.push(boundedAttentionText(`${prefix}${node.id} (${node.type})${confidence}${staleness}: ${node.snippet ?? ''}`));
+    }
+    if (lines.length === 0) lines.push('no related knowledge surfaced');
+  }
+  const capped = capBytes(lines.join('\n'), maxBytes);
+  return {
+    text: capped.truncated ? boundedAttentionText(`${capped.text}\n[briefing truncated]`, maxBytes) : capped.text,
+    truncated: capped.truncated,
+    provenance: 'hub-derived',
+    untrusted: true,
+  };
+}
+
 export function isFact(x) {
   return !!x && x.provenance === 'hub-computed' && x.untrusted === false;
 }
