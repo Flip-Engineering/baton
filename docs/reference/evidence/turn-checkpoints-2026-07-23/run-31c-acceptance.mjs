@@ -23,23 +23,28 @@ const VERIFY = Object.freeze({
 
 const MEMBER = Object.freeze({
   role: 'note-writer',
-  exact: Object.freeze({ harness: 'claude-code', model: 'claude-sonnet-5', effort: 'high' }),
+  exact: Object.freeze({ harness: 'codex', model: 'gpt-5.6-sol', effort: 'high' }),
   scope: Object.freeze([reportPath]),
   report: reportPath,
   objective: [
-    `Write ${reportPath}, a short three-part engineering note about baton's turn-checkpoint`,
-    'design (docs/35-turn-checkpoints.md). Part one headed `## 1. the trap` (what turn-based',
-    'gating did to paused workers). Part two headed `## 2. the checkpoint` (what a pause',
-    'record is and who steers it). Part three headed `## 3. the proof` (this very wave — a',
-    'worker pausing and being nudged onward). One short paragraph per part, plain prose,',
-    'grounded in the doc. Work through the parts in order.',
+    `Write ${reportPath}, a six-part engineering note on baton's reflexive-orchestration work.`,
+    'Write one headed section per source document, in order, each grounded by actually reading',
+    'that document: `## 1. the trap` from docs/35-turn-checkpoints.md (what turn-based gating',
+    'did); `## 2. decisions` from docs/32-reflexive-orchestration.md (the decision channel);',
+    '`## 3. objects` from docs/33-shared-objects-repl-layer.md (the closed REPL layer);',
+    '`## 4. memory` from docs/34-knowledge-horizons.md (the three knowledge horizons);',
+    '`## 5. manifests` from docs/reference/evidence/repl-kg-wave-2026-07-22/repl1-decisions.md',
+    '(the ReplManifest authority); `## 6. steering` from docs/reference/evidence/',
+    'turn-checkpoints-2026-07-23/31b-steering-acts-decisions.md (nudge/wait/claim). One short',
+    'paragraph per section, plain prose, cite one concrete rule or event kind per section.',
+    'Work through the sections in order.',
   ].join(' '),
 });
 
 const baton = await openBaton({
   repo,
   advanced: {
-    routes: [{ harness: 'claude-code', model: 'claude-sonnet-5', effort: 'high' }],
+    routes: [{ harness: 'codex', model: 'gpt-5.6-sol', effort: 'high' }],
     verification: VERIFY,
   },
 });
@@ -79,7 +84,7 @@ try {
     const attention = Array.isArray(view.attention) ? view.attention : [];
     const checkpoint = attention.find((item) => item?.kind === 'turn_checkpoint' && typeof item?.requestId === 'string');
     if (checkpoint && acts.every((act) => act.pauseId !== checkpoint.requestId) && !claimed) {
-      const actKind = acts.length < 2 ? 'nudge_turn' : 'claim_turn';
+      const actKind = acts.length < 3 ? 'nudge_turn' : 'claim_turn';
       try {
         const inputs = actKind === 'nudge_turn'
           ? { message: 'Continue with the next part of the note.' } : {};
