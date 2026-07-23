@@ -1,0 +1,1638 @@
+{
+  "schemaVersion": 1,
+  "answerProof": {
+    "requestId": "w-145:decision:1",
+    "answer": {
+      "optionId": "detailed"
+    },
+    "result": {
+      "schemaVersion": 1,
+      "runId": "run-c9a34771024cd406e97ff93efc78750c",
+      "objective": "Write a one-paragraph recommendation about adopting baton's REPL layer (docs/33) for a sister project — BUT you MUST gate on an orchestrator decision about the framing BEFORE writing anything. Emit exactly one line of the form DECISION_REQUEST: {\"question\":\"Which framing should the recommendation use?\",\"options\":[{\"id\":\"concise\",\"label\":\"Concise\",\"summary\":\"Three sentences, executive tone\"},{\"id\":\"detailed\",\"label\":\"Detailed\",\"summary\":\"A fuller paragraph with mechanism names\"},{\"id\":\"critical\",\"label\":\"Critical\",\"summary\":\"Lead with adoption risks first\"}],\"allowFreeResponse\":false,\"recommended\":null,\"deadlineMs\":1200000} then WAIT for the settlement. Do NOT write the report, and do NOT pick a framing yourself, until the orchestrator answers. When the answer arrives, write docs/reference/evidence/decision-live-2026-07-22/recommendation.md in EXACTLY the settled style, and state the settled option id in the first line as `framing: <id>`. Do not invoke nested Baton. One shell command per call.",
+      "resultIntent": "change",
+      "objectiveResultPolicy": {
+        "mode": "change",
+        "repositoryMutation": "required_when_declared",
+        "acceptance": "verified_effect_result"
+      },
+      "profile": {
+        "name": "default",
+        "digest": "822ec0609f97d2f7fe61449d9e682c3adceb218a2878f78add9a7653fe05cf56"
+      },
+      "phase": "running",
+      "cursor": 38112,
+      "nextActions": [
+        {
+          "kind": "steer"
+        },
+        {
+          "kind": "stop"
+        },
+        {
+          "kind": "wait"
+        },
+        {
+          "kind": "answer_decision",
+          "workerId": "w-145",
+          "requestId": "w-145:decision:1",
+          "question": "Which framing should the recommendation use?",
+          "options": [
+            {
+              "id": "concise",
+              "label": "Concise",
+              "summary": "Three sentences, executive tone"
+            },
+            {
+              "id": "detailed",
+              "label": "Detailed",
+              "summary": "A fuller paragraph with mechanism names"
+            },
+            {
+              "id": "critical",
+              "label": "Critical",
+              "summary": "Lead with adoption risks first"
+            }
+          ],
+          "allowFreeResponse": false,
+          "recommended": null
+        }
+      ],
+      "goal": {
+        "id": "goal:d0705e44ed56afee3ed582b84293975a3a32e0c8d27a1dafe4dcb67227496489",
+        "version": 1,
+        "digest": "41b269b4436967b44e4a4fba7babc0d3ad5e923fbece1f064e488684ce55e5bd"
+      },
+      "plan": {
+        "id": "plan:a8acaa4860b9d593225196d62eb576e4d19d593570b6f51b24b5f90ee35c2e1a",
+        "version": 1,
+        "digest": "d78af5e237bc57655f473e8523382bcb8488a2d53496310ffda5ce2f79a35111",
+        "approval": {
+          "disposition": "approved",
+          "digest": "33d020ea85068b89b60aaa5ffa95877898ef4cdf49adceb4690a9e53223138fc"
+        }
+      },
+      "planPreview": {
+        "objective": "Write a one-paragraph recommendation about adopting baton's REPL layer (docs/33) for a sister project — BUT you MUST gate on an orchestrator decision about the framing BEFORE writing anything. Emit exactly one line of the form DECISION_REQUEST: {\"question\":\"Which framing should the recommendation use?\",\"options\":[{\"id\":\"concise\",\"label\":\"Concise\",\"summary\":\"Three sentences, executive tone\"},{\"id\":\"detailed\",\"label\":\"Detailed\",\"summary\":\"A fuller paragraph with mechanism names\"},{\"id\":\"critical\",\"label\":\"Critical\",\"summary\":\"Lead with adoption risks first\"}],\"allowFreeResponse\":false,\"recommended\":null,\"deadlineMs\":1200000} then WAIT for the settlement. Do NOT write the report, and do NOT pick a framing yourself, until the orchestrator answers. When the answer arrives, write docs/reference/evidence/decision-live-2026-07-22/recommendation.md in EXACTLY the settled style, and state the settled option id in the first line as `framing: <id>`. Do not invoke nested Baton. One shell command per call.",
+        "definitionOfDone": [
+          "Baton preserves exact route, result, and cleanup truth.",
+          "The requested repository improvement is implemented and verified."
+        ],
+        "constraints": [
+          "Baton deployment profile default@822ec0609f97d2f7fe61449d9e682c3adceb218a2878f78add9a7653fe05cf56",
+          "Baton objective/result policy explicit change_v1",
+          "Do not claim completion without the deployment verification command."
+        ],
+        "risk": "high",
+        "goalBudget": {
+          "tokens": 100000000,
+          "usd": 1000,
+          "wallMin": 480,
+          "providerTurns": 2048
+        },
+        "node": {
+          "key": "work",
+          "objective": "Write a one-paragraph recommendation about adopting baton's REPL layer (docs/33) for a sister project — BUT you MUST gate on an orchestrator decision about the framing BEFORE writing anything. Emit exactly one line of the form DECISION_REQUEST: {\"question\":\"Which framing should the recommendation use?\",\"options\":[{\"id\":\"concise\",\"label\":\"Concise\",\"summary\":\"Three sentences, executive tone\"},{\"id\":\"detailed\",\"label\":\"Detailed\",\"summary\":\"A fuller paragraph with mechanism names\"},{\"id\":\"critical\",\"label\":\"Critical\",\"summary\":\"Lead with adoption risks first\"}],\"allowFreeResponse\":false,\"recommended\":null,\"deadlineMs\":1200000} then WAIT for the settlement. Do NOT write the report, and do NOT pick a framing yourself, until the orchestrator answers. When the answer arrives, write docs/reference/evidence/decision-live-2026-07-22/recommendation.md in EXACTLY the settled style, and state the settled option id in the first line as `framing: <id>`. Do not invoke nested Baton. One shell command per call.",
+          "pathScope": [
+            "docs/reference/evidence/decision-live-2026-07-22/recommendation.md"
+          ],
+          "contextScope": [
+            "**"
+          ],
+          "risk": "high",
+          "budget": {
+            "tokens": 100000000,
+            "usd": 1000,
+            "wallMin": 480,
+            "providerTurns": 2048
+          },
+          "verification": {
+            "command": "node",
+            "arguments": [
+              "--test",
+              "impl/test/wave-driver-red.test.mjs"
+            ],
+            "cwd": ".",
+            "envAllowlist": [
+              "PATH"
+            ],
+            "expectExit": 0,
+            "expectResult": "exit_code",
+            "timeoutMs": 28800000,
+            "maxOutputBytes": 1048576,
+            "requiredPredecessorEvidence": []
+          },
+          "route": {
+            "harness": "claude-code",
+            "model": "claude-sonnet-5",
+            "effort": "high"
+          },
+          "capabilities": [
+            "baton_orchestrator",
+            "code",
+            "test"
+          ],
+          "effects": [
+            "provider_call",
+            "repository_edit"
+          ],
+          "requiredEffects": [
+            "repository_edit"
+          ]
+        },
+        "profileDigest": "822ec0609f97d2f7fe61449d9e682c3adceb218a2878f78add9a7653fe05cf56",
+        "planDigest": "d78af5e237bc57655f473e8523382bcb8488a2d53496310ffda5ce2f79a35111",
+        "resultIntent": "change",
+        "objectiveResultPolicy": {
+          "mode": "change",
+          "repositoryMutation": "required_when_declared",
+          "acceptance": "verified_effect_result"
+        },
+        "displayDigest": "d8a6b6d05941910d07d38f4705af1f4eb6c3799f9541a216c877535763cf4df7"
+      },
+      "nodes": [
+        {
+          "key": "work",
+          "deps": [],
+          "state": "dispatched",
+          "dispatchVersion": 1,
+          "taskId": "baton-11b26cb2a04a3573c3d3e210-work",
+          "terminalEvent": null,
+          "terminalOutcome": null,
+          "budget": {
+            "status": "pending",
+            "initial": {
+              "tokens": 100000000,
+              "usd": 1000,
+              "wallMin": 480,
+              "providerTurns": 2048
+            },
+            "reserved": {
+              "tokens": 100000000,
+              "usd": 1000,
+              "wallMin": 480,
+              "providerTurns": 2048
+            },
+            "consumed": {
+              "tokens": null,
+              "usd": null,
+              "wallMin": null,
+              "providerTurns": null
+            },
+            "released": {
+              "tokens": null,
+              "usd": null,
+              "wallMin": null,
+              "providerTurns": null
+            },
+            "held": {
+              "tokens": 100000000,
+              "usd": 1000,
+              "wallMin": 480,
+              "providerTurns": 2048
+            },
+            "overrun": {
+              "tokens": null,
+              "usd": null,
+              "wallMin": null,
+              "providerTurns": null
+            },
+            "availability": {
+              "tokens": "unavailable",
+              "usd": "unavailable",
+              "wallMin": "unavailable",
+              "providerTurns": "unavailable"
+            },
+            "settledEvent": null
+          }
+        }
+      ],
+      "route": {
+        "requested": {
+          "harness": "claude-code",
+          "model": "claude-sonnet-5",
+          "effort": "high"
+        },
+        "resolved": {
+          "harness": "claude-code@2.1.216",
+          "model": "claude-sonnet-5",
+          "effort": "high"
+        },
+        "observed": {
+          "harness": null,
+          "model": "claude-sonnet-5",
+          "effort": null
+        },
+        "launchEnforcement": {
+          "harness": {
+            "requested": "claude-code",
+            "resolved": "claude-code@2.1.216",
+            "state": "matched"
+          },
+          "model": {
+            "requested": "claude-sonnet-5",
+            "resolved": "claude-sonnet-5",
+            "state": "matched"
+          },
+          "effort": {
+            "requested": "high",
+            "resolved": "high",
+            "state": "matched"
+          }
+        },
+        "providerAttestation": {
+          "harness": {
+            "observed": null,
+            "state": "pending"
+          },
+          "model": {
+            "observed": "claude-sonnet-5",
+            "state": "matched"
+          },
+          "effort": {
+            "observed": null,
+            "state": "pending"
+          }
+        },
+        "rationale": {
+          "launchEnforcement": "exact deployment-profile route",
+          "providerAttestation": "provider-native observation only"
+        }
+      },
+      "workerPolicy": {
+        "schemaVersion": 1,
+        "requestDigest": "754c3f5f9ceb530a6cf3e0322ce3cd0684e0911f9f1da174cfedf419d7bcb2e8",
+        "autonomy": {
+          "requested": "unattended",
+          "resolved": "unattended",
+          "observation": "launch",
+          "mechanisms": [
+            "permission-mode-bypassPermissions"
+          ]
+        },
+        "access": {
+          "requested": "full",
+          "resolved": "full",
+          "observation": "launch",
+          "mechanisms": [
+            "claude-unsandboxed-permissions"
+          ]
+        },
+        "containment": {
+          "requested": {
+            "mode": "workspace_preferred",
+            "minimum": "private_runtime"
+          },
+          "resolved": "private_runtime_only",
+          "hostProcess": "same_uid",
+          "guarantees": [
+            "private_runtime"
+          ],
+          "configuredPreferences": [],
+          "observation": "unavailable",
+          "attestation": "preferred_gap"
+        },
+        "adapterCardDigest": "acb108f095a136107afd0a1b44054d01a25b458db06c6e4ca13d78db395d2249",
+        "resolutionDigest": "e184e0d21fd1ae5ee204841b0e9c6eab0af96ae341478deeaf74c790bfe8e12d",
+        "state": "observed",
+        "observation": {
+          "schemaVersion": 1,
+          "resolutionDigest": "e184e0d21fd1ae5ee204841b0e9c6eab0af96ae341478deeaf74c790bfe8e12d",
+          "autonomy": {
+            "source": "launch",
+            "observed": "unattended"
+          },
+          "access": {
+            "source": "launch",
+            "observed": "full"
+          },
+          "containment": {
+            "source": "unavailable",
+            "observed": null
+          },
+          "observationDigest": "860511afa3ef8cd04e15a4151969380c92b2a81a993f808bad4fd4ebf6b7a055"
+        },
+        "mismatch": null
+      },
+      "budget": {
+        "allocated": {
+          "tokens": 100000000,
+          "usd": 1000,
+          "wallMin": 480,
+          "providerTurns": 2048
+        },
+        "node": {
+          "status": "pending",
+          "initial": {
+            "tokens": 100000000,
+            "usd": 1000,
+            "wallMin": 480,
+            "providerTurns": 2048
+          },
+          "reserved": {
+            "tokens": 100000000,
+            "usd": 1000,
+            "wallMin": 480,
+            "providerTurns": 2048
+          },
+          "consumed": {
+            "tokens": null,
+            "usd": null,
+            "wallMin": null,
+            "providerTurns": null
+          },
+          "released": {
+            "tokens": null,
+            "usd": null,
+            "wallMin": null,
+            "providerTurns": null
+          },
+          "held": {
+            "tokens": 100000000,
+            "usd": 1000,
+            "wallMin": 480,
+            "providerTurns": 2048
+          },
+          "overrun": {
+            "tokens": null,
+            "usd": null,
+            "wallMin": null,
+            "providerTurns": null
+          },
+          "availability": {
+            "tokens": "unavailable",
+            "usd": "unavailable",
+            "wallMin": "unavailable",
+            "providerTurns": "unavailable"
+          },
+          "settledEvent": null
+        },
+        "termination": null
+      },
+      "attention": [
+        {
+          "kind": "answer_decision",
+          "workerId": "w-145",
+          "requestId": "w-145:decision:1",
+          "question": "Which framing should the recommendation use?",
+          "options": [
+            {
+              "id": "concise",
+              "label": "Concise",
+              "summary": "Three sentences, executive tone"
+            },
+            {
+              "id": "detailed",
+              "label": "Detailed",
+              "summary": "A fuller paragraph with mechanism names"
+            },
+            {
+              "id": "critical",
+              "label": "Critical",
+              "summary": "Lead with adoption risks first"
+            }
+          ],
+          "allowFreeResponse": false,
+          "recommended": null
+        }
+      ],
+      "attentionTruncated": false,
+      "blockedInteraction": {
+        "kind": "decision",
+        "summary": "Which framing should the recommendation use?"
+      },
+      "verification": {
+        "state": "pending",
+        "stability": null,
+        "verdict": null
+      },
+      "semanticReview": {
+        "state": "semantics_unverified",
+        "findings": []
+      },
+      "progress": {
+        "current": "provider",
+        "summary": "Provider turn: Provider identity observed",
+        "stages": [
+          {
+            "key": "intent",
+            "label": "Intent compiled",
+            "state": "complete",
+            "detail": "Goal authority recorded"
+          },
+          {
+            "key": "plan",
+            "label": "Plan approval",
+            "state": "complete",
+            "detail": "Exact Plan digest approved"
+          },
+          {
+            "key": "dispatch",
+            "label": "Worker dispatch",
+            "state": "complete",
+            "detail": "Plan node claimed exactly once"
+          },
+          {
+            "key": "provider",
+            "label": "Provider turn",
+            "state": "active",
+            "detail": "Provider identity observed"
+          },
+          {
+            "key": "verification",
+            "label": "Fresh verification",
+            "state": "pending",
+            "detail": "No accepted verification yet"
+          },
+          {
+            "key": "semantic_review",
+            "label": "Independent semantic review",
+            "state": "complete",
+            "detail": "Review not required by selected profile"
+          },
+          {
+            "key": "result",
+            "label": "Accepted result",
+            "state": "pending",
+            "detail": "No accepted result"
+          },
+          {
+            "key": "integration",
+            "label": "Repository integration",
+            "state": "pending",
+            "detail": "Integration remains gated"
+          },
+          {
+            "key": "export",
+            "label": "Accepted-result export",
+            "state": "pending",
+            "detail": "No accepted result to export"
+          },
+          {
+            "key": "cleanup",
+            "label": "Owned-resource cleanup",
+            "state": "active",
+            "detail": "Lifecycle ownership remains visible"
+          }
+        ]
+      },
+      "result": null,
+      "integration": null,
+      "export": null,
+      "ownership": {
+        "workers": 1,
+        "workerIds": [
+          "w-145"
+        ],
+        "closed": false
+      },
+      "execution": {
+        "state": "running",
+        "activeProviderTurns": 1,
+        "controllableAttachedMembers": 0,
+        "dispatchClosed": false
+      },
+      "evidence": [],
+      "narrative": "0 worker(s) active.",
+      "lastAction": {
+        "command": "run.answer",
+        "requestId": "w-145:decision:1",
+        "result": "delivery_refused"
+      },
+      "recovery": null,
+      "preservation": {
+        "state": "unavailable",
+        "available": false,
+        "checkpointSha": null
+      },
+      "resume": null,
+      "terminalCause": null,
+      "stop": null,
+      "close": null
+    }
+  },
+  "outcomes": [
+    {
+      "role": "recommender",
+      "phase": "running",
+      "terminal": false,
+      "narrative": "0 worker(s) active.",
+      "resultSha": null
+    }
+  ],
+  "stops": [
+    {
+      "role": "recommender",
+      "stop": null,
+      "resources": {
+        "state": "stopped",
+        "cleanupState": "stopped",
+        "ownedCount": 0
+      },
+      "ownedCount": 0
+    }
+  ],
+  "pumpQuiescent": true,
+  "waveEvidence": {
+    "schemaVersion": 1,
+    "startedAt": "2026-07-22T08:50:36.934Z",
+    "members": [
+      "recommender"
+    ],
+    "outcomes": [
+      {
+        "role": "recommender",
+        "phase": "running",
+        "terminal": false,
+        "narrative": "0 worker(s) active.",
+        "resultSha": null
+      }
+    ],
+    "steering": [],
+    "stops": [
+      {
+        "role": "recommender",
+        "stop": null,
+        "resources": {
+          "state": "stopped",
+          "cleanupState": "stopped",
+          "ownedCount": 0
+        },
+        "ownedCount": 0
+      }
+    ],
+    "progress": [
+      {
+        "at": "2026-07-22T08:50:55.137Z",
+        "members": [
+          {
+            "role": "recommender",
+            "phase": "running"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-22T08:51:10.328Z",
+        "members": [
+          {
+            "role": "recommender",
+            "phase": "running"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-22T08:51:25.514Z",
+        "members": [
+          {
+            "role": "recommender",
+            "phase": "running"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-22T08:51:40.702Z",
+        "members": [
+          {
+            "role": "recommender",
+            "phase": "running"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-22T08:51:55.895Z",
+        "members": [
+          {
+            "role": "recommender",
+            "phase": "running"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-22T08:52:11.168Z",
+        "members": [
+          {
+            "role": "recommender",
+            "phase": "running"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-22T08:52:26.267Z",
+        "members": [
+          {
+            "role": "recommender",
+            "phase": "running"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-22T08:52:41.392Z",
+        "members": [
+          {
+            "role": "recommender",
+            "phase": "running"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-22T08:52:56.512Z",
+        "members": [
+          {
+            "role": "recommender",
+            "phase": "running"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-22T08:53:11.634Z",
+        "members": [
+          {
+            "role": "recommender",
+            "phase": "running"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-22T08:53:26.755Z",
+        "members": [
+          {
+            "role": "recommender",
+            "phase": "running"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-22T08:53:41.869Z",
+        "members": [
+          {
+            "role": "recommender",
+            "phase": "running"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-22T08:53:56.978Z",
+        "members": [
+          {
+            "role": "recommender",
+            "phase": "running"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-22T08:54:12.090Z",
+        "members": [
+          {
+            "role": "recommender",
+            "phase": "running"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-22T08:54:27.202Z",
+        "members": [
+          {
+            "role": "recommender",
+            "phase": "running"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-22T08:54:42.317Z",
+        "members": [
+          {
+            "role": "recommender",
+            "phase": "running"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-22T08:54:57.422Z",
+        "members": [
+          {
+            "role": "recommender",
+            "phase": "running"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-22T08:55:12.532Z",
+        "members": [
+          {
+            "role": "recommender",
+            "phase": "running"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-22T08:55:27.639Z",
+        "members": [
+          {
+            "role": "recommender",
+            "phase": "running"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-22T08:55:42.743Z",
+        "members": [
+          {
+            "role": "recommender",
+            "phase": "running"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-22T08:55:57.858Z",
+        "members": [
+          {
+            "role": "recommender",
+            "phase": "running"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-22T08:56:12.969Z",
+        "members": [
+          {
+            "role": "recommender",
+            "phase": "running"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-22T08:56:28.090Z",
+        "members": [
+          {
+            "role": "recommender",
+            "phase": "running"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-22T08:56:43.192Z",
+        "members": [
+          {
+            "role": "recommender",
+            "phase": "running"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-22T08:56:58.306Z",
+        "members": [
+          {
+            "role": "recommender",
+            "phase": "running"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-22T08:57:13.414Z",
+        "members": [
+          {
+            "role": "recommender",
+            "phase": "running"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-22T08:57:28.523Z",
+        "members": [
+          {
+            "role": "recommender",
+            "phase": "running"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-22T08:57:43.630Z",
+        "members": [
+          {
+            "role": "recommender",
+            "phase": "running"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-22T08:57:58.712Z",
+        "members": [
+          {
+            "role": "recommender",
+            "phase": "running"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-22T08:58:13.823Z",
+        "members": [
+          {
+            "role": "recommender",
+            "phase": "running"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-22T08:58:28.923Z",
+        "members": [
+          {
+            "role": "recommender",
+            "phase": "running"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-22T08:58:44.033Z",
+        "members": [
+          {
+            "role": "recommender",
+            "phase": "running"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-22T08:58:59.149Z",
+        "members": [
+          {
+            "role": "recommender",
+            "phase": "running"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-22T08:59:14.270Z",
+        "members": [
+          {
+            "role": "recommender",
+            "phase": "running"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-22T08:59:29.359Z",
+        "members": [
+          {
+            "role": "recommender",
+            "phase": "running"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-22T08:59:44.469Z",
+        "members": [
+          {
+            "role": "recommender",
+            "phase": "running"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-22T08:59:59.587Z",
+        "members": [
+          {
+            "role": "recommender",
+            "phase": "running"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-22T09:00:14.702Z",
+        "members": [
+          {
+            "role": "recommender",
+            "phase": "running"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-22T09:00:29.821Z",
+        "members": [
+          {
+            "role": "recommender",
+            "phase": "running"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-22T09:00:44.904Z",
+        "members": [
+          {
+            "role": "recommender",
+            "phase": "running"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-22T09:01:00.018Z",
+        "members": [
+          {
+            "role": "recommender",
+            "phase": "running"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-22T09:01:15.124Z",
+        "members": [
+          {
+            "role": "recommender",
+            "phase": "running"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-22T09:01:30.208Z",
+        "members": [
+          {
+            "role": "recommender",
+            "phase": "running"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-22T09:01:45.322Z",
+        "members": [
+          {
+            "role": "recommender",
+            "phase": "running"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-22T09:02:00.422Z",
+        "members": [
+          {
+            "role": "recommender",
+            "phase": "running"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-22T09:02:15.525Z",
+        "members": [
+          {
+            "role": "recommender",
+            "phase": "running"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-22T09:02:30.628Z",
+        "members": [
+          {
+            "role": "recommender",
+            "phase": "running"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-22T09:02:45.725Z",
+        "members": [
+          {
+            "role": "recommender",
+            "phase": "running"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-22T09:03:00.843Z",
+        "members": [
+          {
+            "role": "recommender",
+            "phase": "running"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-22T09:03:15.928Z",
+        "members": [
+          {
+            "role": "recommender",
+            "phase": "running"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-22T09:03:31.035Z",
+        "members": [
+          {
+            "role": "recommender",
+            "phase": "running"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-22T09:03:46.127Z",
+        "members": [
+          {
+            "role": "recommender",
+            "phase": "running"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-22T09:04:01.241Z",
+        "members": [
+          {
+            "role": "recommender",
+            "phase": "running"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-22T09:04:16.366Z",
+        "members": [
+          {
+            "role": "recommender",
+            "phase": "running"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-22T09:04:31.482Z",
+        "members": [
+          {
+            "role": "recommender",
+            "phase": "running"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-22T09:04:46.579Z",
+        "members": [
+          {
+            "role": "recommender",
+            "phase": "running"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-22T09:05:01.677Z",
+        "members": [
+          {
+            "role": "recommender",
+            "phase": "running"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-22T09:05:16.793Z",
+        "members": [
+          {
+            "role": "recommender",
+            "phase": "running"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-22T09:05:31.906Z",
+        "members": [
+          {
+            "role": "recommender",
+            "phase": "running"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-22T09:05:47.022Z",
+        "members": [
+          {
+            "role": "recommender",
+            "phase": "running"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-22T09:06:02.124Z",
+        "members": [
+          {
+            "role": "recommender",
+            "phase": "running"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-22T09:06:17.230Z",
+        "members": [
+          {
+            "role": "recommender",
+            "phase": "running"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-22T09:06:32.318Z",
+        "members": [
+          {
+            "role": "recommender",
+            "phase": "running"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-22T09:06:47.429Z",
+        "members": [
+          {
+            "role": "recommender",
+            "phase": "running"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-22T09:07:02.543Z",
+        "members": [
+          {
+            "role": "recommender",
+            "phase": "running"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-22T09:07:17.662Z",
+        "members": [
+          {
+            "role": "recommender",
+            "phase": "running"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-22T09:07:32.769Z",
+        "members": [
+          {
+            "role": "recommender",
+            "phase": "running"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-22T09:07:47.881Z",
+        "members": [
+          {
+            "role": "recommender",
+            "phase": "running"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-22T09:08:02.988Z",
+        "members": [
+          {
+            "role": "recommender",
+            "phase": "running"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-22T09:08:18.101Z",
+        "members": [
+          {
+            "role": "recommender",
+            "phase": "running"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-22T09:08:33.216Z",
+        "members": [
+          {
+            "role": "recommender",
+            "phase": "running"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-22T09:08:48.318Z",
+        "members": [
+          {
+            "role": "recommender",
+            "phase": "running"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-22T09:09:03.414Z",
+        "members": [
+          {
+            "role": "recommender",
+            "phase": "running"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-22T09:09:18.522Z",
+        "members": [
+          {
+            "role": "recommender",
+            "phase": "running"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-22T09:09:33.633Z",
+        "members": [
+          {
+            "role": "recommender",
+            "phase": "running"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-22T09:09:48.741Z",
+        "members": [
+          {
+            "role": "recommender",
+            "phase": "running"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-22T09:10:03.854Z",
+        "members": [
+          {
+            "role": "recommender",
+            "phase": "running"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-22T09:10:18.977Z",
+        "members": [
+          {
+            "role": "recommender",
+            "phase": "running"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-22T09:10:34.087Z",
+        "members": [
+          {
+            "role": "recommender",
+            "phase": "running"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-22T09:10:49.190Z",
+        "members": [
+          {
+            "role": "recommender",
+            "phase": "running"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-22T09:11:04.300Z",
+        "members": [
+          {
+            "role": "recommender",
+            "phase": "running"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-22T09:11:19.418Z",
+        "members": [
+          {
+            "role": "recommender",
+            "phase": "running"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-22T09:11:34.527Z",
+        "members": [
+          {
+            "role": "recommender",
+            "phase": "running"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-22T09:11:49.634Z",
+        "members": [
+          {
+            "role": "recommender",
+            "phase": "running"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-22T09:12:04.741Z",
+        "members": [
+          {
+            "role": "recommender",
+            "phase": "running"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-22T09:12:19.838Z",
+        "members": [
+          {
+            "role": "recommender",
+            "phase": "running"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-22T09:12:34.919Z",
+        "members": [
+          {
+            "role": "recommender",
+            "phase": "running"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-22T09:12:50.031Z",
+        "members": [
+          {
+            "role": "recommender",
+            "phase": "running"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-22T09:13:05.145Z",
+        "members": [
+          {
+            "role": "recommender",
+            "phase": "running"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-22T09:13:20.242Z",
+        "members": [
+          {
+            "role": "recommender",
+            "phase": "running"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-22T09:13:35.355Z",
+        "members": [
+          {
+            "role": "recommender",
+            "phase": "running"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-22T09:13:50.469Z",
+        "members": [
+          {
+            "role": "recommender",
+            "phase": "running"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-22T09:14:05.572Z",
+        "members": [
+          {
+            "role": "recommender",
+            "phase": "running"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-22T09:14:20.694Z",
+        "members": [
+          {
+            "role": "recommender",
+            "phase": "running"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-22T09:14:35.804Z",
+        "members": [
+          {
+            "role": "recommender",
+            "phase": "running"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-22T09:14:50.911Z",
+        "members": [
+          {
+            "role": "recommender",
+            "phase": "running"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-22T09:15:06.031Z",
+        "members": [
+          {
+            "role": "recommender",
+            "phase": "running"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-22T09:15:21.145Z",
+        "members": [
+          {
+            "role": "recommender",
+            "phase": "running"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-22T09:15:36.255Z",
+        "members": [
+          {
+            "role": "recommender",
+            "phase": "running"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-22T09:15:51.364Z",
+        "members": [
+          {
+            "role": "recommender",
+            "phase": "running"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-22T09:16:06.471Z",
+        "members": [
+          {
+            "role": "recommender",
+            "phase": "running"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-22T09:16:21.581Z",
+        "members": [
+          {
+            "role": "recommender",
+            "phase": "running"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-22T09:16:36.686Z",
+        "members": [
+          {
+            "role": "recommender",
+            "phase": "running"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-22T09:16:51.803Z",
+        "members": [
+          {
+            "role": "recommender",
+            "phase": "running"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-22T09:17:06.916Z",
+        "members": [
+          {
+            "role": "recommender",
+            "phase": "running"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-22T09:17:22.035Z",
+        "members": [
+          {
+            "role": "recommender",
+            "phase": "running"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-22T09:17:37.155Z",
+        "members": [
+          {
+            "role": "recommender",
+            "phase": "running"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-22T09:17:52.259Z",
+        "members": [
+          {
+            "role": "recommender",
+            "phase": "running"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-22T09:18:07.360Z",
+        "members": [
+          {
+            "role": "recommender",
+            "phase": "running"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-22T09:18:22.483Z",
+        "members": [
+          {
+            "role": "recommender",
+            "phase": "running"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-22T09:18:37.584Z",
+        "members": [
+          {
+            "role": "recommender",
+            "phase": "running"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-22T09:18:52.704Z",
+        "members": [
+          {
+            "role": "recommender",
+            "phase": "running"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-22T09:19:07.809Z",
+        "members": [
+          {
+            "role": "recommender",
+            "phase": "running"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-22T09:19:22.922Z",
+        "members": [
+          {
+            "role": "recommender",
+            "phase": "running"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-22T09:19:38.031Z",
+        "members": [
+          {
+            "role": "recommender",
+            "phase": "running"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-22T09:19:53.136Z",
+        "members": [
+          {
+            "role": "recommender",
+            "phase": "running"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-22T09:20:08.238Z",
+        "members": [
+          {
+            "role": "recommender",
+            "phase": "running"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-22T09:20:23.354Z",
+        "members": [
+          {
+            "role": "recommender",
+            "phase": "running"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-22T09:20:38.475Z",
+        "members": [
+          {
+            "role": "recommender",
+            "phase": "running"
+          }
+        ]
+      }
+    ],
+    "pumpDrained": true
+  }
+}
