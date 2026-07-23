@@ -171,7 +171,18 @@ rejects it; a workflow role literally named `work` is a registry-lint error.
 **The attention unification — one shape, not one verb** (R-OP-7, R-KM-4, R-CX-6). Every
 attention item carries `kind`, `prompt`, `options?`, and a bound `do` (§5 L2). `run.answer`
 settles the answerable kinds (`answer_question`, `answer_approval`, `answer_decision`,
-`turn_checkpoint` — the checkpoint via a three-variant response, §7.3). The gate kinds
+`turn_checkpoint` — the checkpoint via a three-variant response, §7.3). **`turn_checkpoint` is
+admitted to `run.answer` as an envelope — not as a claim that it is answer-shaped** (R-KM-4, v2
+acceptance). Of its three variants only `continue` and `wait` behave like answers; `settle`
+dispatches `claim_turn`, a re-run of the preserved trust gate — a side effect **no other answer
+carries**, and one that can resolve the paused task without another provider turn. The ontology
+records that asymmetry rather than hiding it behind a shared verb, and C5 pins the three effects
+separately (consuming / non-consuming / trust-gate re-run) precisely because the envelope does
+not distinguish them. R-KM-4's alternative — scope `run.answer` to `question|approval|decision`
+and leave the three acts as advertised `do`-targets only — remains a legitimate reading of the
+same evidence. It was not taken because the three landed schemas
+(`application-semantics.mjs:355-380`) map onto a three-variant response exactly, and the acts
+remain `run.do` targets under either choice, so nothing is unreachable either way. The gate kinds
 (`approve_plan`, `select_candidate`) are settled by their named verbs (`run.approve`,
 `run.select`), whose invocation is exactly the item's bound `do`. v1's "one verb answers all of
 them" was false and is withdrawn.

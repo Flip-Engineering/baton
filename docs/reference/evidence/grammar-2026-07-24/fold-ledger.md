@@ -296,6 +296,24 @@ substantive repair. One defect found and fixed; two claims verified.
   explicit `retiresIn`. v2's rename-cost bullet quantified only internal pinned test files
   (`phase64…UA5`, `phase67-*`, `phase92-*`, `wave.mjs`, `application-client.mjs:251`). Fixed in
   **§11** with the six named and the published-surface assumption stated rather than inherited.
+- **A-12 — FIXED — the checkpoint P0's ontology half, and a reviewer error of my own.** The issue
+  #43 brief lists among its convergent P0s: *"checkpoint attention semantics (three acts, two
+  options, and a trust-gate re-run that is not an answer) fixed in the ontology."* Across ten
+  turns this seat read that as a directive to adopt R-KM-4's option (b) and repeatedly deferred,
+  asking the operator to choose. **That was a misreading.** The phrase is a near-verbatim quote of
+  R-KM-4's *Failure* statement (`redteam-kimi.md:95-100`) — it states the defect, and the
+  operative words are "fixed in the ontology". R-KM-4 itself offers option (a) and option (b) as
+  equally legitimate, so option (a) never required an operator decision.
+  What the brief *did* require, and what was genuinely missing, is the ontology recording the
+  asymmetry. §3 listed `turn_checkpoint` among "the answerable kinds" with no note that its
+  `settle` variant carries a trust-gate side effect no other answer has — the precise overload
+  R-KM-4 named. §7.3 described `settle`'s effect and C5 (A-4) pins the three effects, but §3 —
+  the section the brief names — did not. Now fixed in **§3**: the checkpoint is admitted to
+  `run.answer` as an *envelope*, explicitly not as a claim that it is answer-shaped, with option
+  (b) recorded as a legitimate alternative reading and the reason (a) was chosen.
+  Recorded as a reviewer error, not silently corrected: a deferral repeated across ten turns on a
+  decision that was never blocked is itself a review defect, and it delayed a P0 the brief listed
+  as mandatory.
 - **Method note — the NUL-byte trap is real and it bit this audit.** §8.4 already warns that
   `impl/src/application.mjs` contains a NUL byte requiring `grep -a`. Plain `grep` against it
   returns *silently empty* — not an error. An early verification pass here read that empty result
