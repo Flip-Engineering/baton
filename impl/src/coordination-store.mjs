@@ -7630,7 +7630,11 @@ export class CoordinationStore {
       this._tasks.set(p.id, freeze({ ...clone(old), ...route, status: 'working', assignee: p.worker, version: p.newVersion, claimedEvent: event.seq }));
     } else if (event.kind === 'task.transitioned') {
       const old = this._tasks.get(p.id);
-      this._tasks.set(p.id, freeze({ ...clone(old), status: p.to, version: p.newVersion, ...(TERMINAL.has(p.to) ? { terminalEvent: event.seq } : {}) }));
+      // Issue #35: a cancellation admitted with a typed cause (dispatch admission refusals)
+      // retains that cause on the folded task, so projections never have to re-scan events.
+      const cancelCause = p.to === 'cancelled' && typeof p.evidence?.cause === 'string' && p.evidence.cause.length > 0
+        ? { cancelCause: p.evidence.cause } : {};
+      this._tasks.set(p.id, freeze({ ...clone(old), status: p.to, version: p.newVersion, ...(TERMINAL.has(p.to) ? { terminalEvent: event.seq } : {}), ...cancelCause }));
     } else if (event.kind === 'task.acceptance_revoked') {
       this._validateAcceptanceRevocationPayload(p, event, true);
       const old = this._tasks.get(p.taskId);

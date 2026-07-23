@@ -3515,7 +3515,11 @@ export class Coordinator {
     } catch (error) {
       if (capacityPrepared) await Promise.resolve(this._worktrees.releaseCapacity?.(taskId));
       if (planState) {
-        try { this._coordination.transitionTask(taskId, 'cancelled', 1, { actor: 'policy', key: `task.cancelled:${taskId}:admission` }); }
+        // Issue #35: the admission refusal is the only fact that explains this cancellation;
+        // carry its typed code on the transition so the Run view and timeline can surface it.
+        const cause = typeof error?.code === 'string' && error.code.length > 0
+          ? { cause: error.code } : null;
+        try { this._coordination.transitionTask(taskId, 'cancelled', 1, { actor: 'policy', key: `task.cancelled:${taskId}:admission` }, cause); }
         catch (transitionError) { throw this._poisonCoordination(transitionError); }
       }
       throw error;

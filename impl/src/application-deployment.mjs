@@ -2,7 +2,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import {
   chmodSync, closeSync, constants as fsConstants, existsSync, fstatSync, lstatSync, mkdirSync,
-  openSync, readFileSync, realpathSync, rmSync,
+  openSync, readFileSync, realpathSync, rmSync, statfsSync,
 } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
@@ -480,6 +480,38 @@ function preflightDeployment(repoRoot, verification) {
     repository: Object.freeze({ state: 'ready' }),
     verification: Object.freeze({ state: 'ready', command }),
     dependencies: Object.freeze({ state: 'ready' }),
+  });
+}
+
+/** Issue #35: dispatch fails closed below the deployment capacity floors, so doctor must say so
+ * up front instead of reading all-ready on a host where every Run is guaranteed to refuse. The
+ * section is a sanitized observation — free bytes/inodes beside the floors, never a path. */
+function workspaceCapacityReadiness(repoRoot, policy, observe) {
+  let observation;
+  try {
+    const raw = observe ? observe({ repoRoot }) : (() => {
+      const stats = statfsSync(repoRoot);
+      return { freeBytes: Number(stats.bavail) * Number(stats.bsize), freeInodes: Number(stats.ffree) };
+    })();
+    if (!raw || !Number.isSafeInteger(raw.freeBytes) || raw.freeBytes < 0
+      || !Number.isSafeInteger(raw.freeInodes) || raw.freeInodes < 0) throw new Error('invalid observation');
+    observation = raw;
+  } catch {
+    return Object.freeze({
+      state: 'unobserved', code: 'worktree_capacity_unavailable',
+      summary: 'Workspace capacity could not be observed; Run dispatch will refuse until the repository volume is readable.',
+      minFreeBytes: policy.minFreeBytes, minFreeInodes: policy.minFreeInodes,
+    });
+  }
+  const blocked = observation.freeBytes < policy.minFreeBytes || observation.freeInodes < policy.minFreeInodes;
+  return Object.freeze({
+    state: blocked ? 'blocked' : 'ready',
+    ...(blocked ? {
+      code: 'worktree_capacity_exceeded',
+      summary: 'The repository volume is below the deployment capacity floors; every Run dispatch will refuse until space is freed.',
+    } : {}),
+    freeBytes: observation.freeBytes, freeInodes: observation.freeInodes,
+    minFreeBytes: policy.minFreeBytes, minFreeInodes: policy.minFreeInodes,
   });
 }
 
@@ -983,11 +1015,11 @@ function assertRouteReady(options, readiness) {
   });
 }
 
-function residentApplicationFacade(application, resident, readiness) {
+function residentApplicationFacade(application, resident, readinessSupplier) {
   return new Proxy(application, {
     get(target, key) {
       if (key === 'card') {
-        return () => Object.freeze({ ...target.card(), resident, readiness });
+        return () => Object.freeze({ ...target.card(), resident, readiness: readinessSupplier() });
       }
       const value = Reflect.get(target, key, target);
       return typeof value === 'function' ? value.bind(target) : value;
@@ -1008,6 +1040,7 @@ class BatonDeployment {
   #repository;
   #deploymentRoot;
   #residentOptions;
+  #workspaceProbe = null;
   #residentAuthority = null;
   #residentSession = null;
   #ordinaryHostPromise = null;
@@ -1021,6 +1054,7 @@ class BatonDeployment {
     this.#repository = deployment.repository;
     this.#deploymentRoot = deployment.deploymentRoot;
     this.#residentOptions = deployment.residentOptions;
+    this.#workspaceProbe = deployment.workspaceProbe ?? null;
     this.#card = Object.freeze({ ...application.card(), readiness });
     const runs = this.#baton.runs;
     this.runs = Object.freeze({
@@ -1046,8 +1080,15 @@ class BatonDeployment {
     Object.freeze(this);
   }
 
-  card() { return this.#card; }
-  async doctor() { return this.#readiness; }
+  /** Issue #35: workspace capacity is observed FRESH at each doctor/card read — disk state
+   * moves, and an open-time snapshot would go stale exactly when the answer matters. */
+  doctorReadiness() {
+    const workspace = this.#workspaceProbe ? this.#workspaceProbe() : null;
+    return workspace ? Object.freeze({ ...this.#readiness, workspace }) : this.#readiness;
+  }
+
+  card() { return Object.freeze({ ...this.#card, readiness: this.doctorReadiness() }); }
+  async doctor() { return this.doctorReadiness(); }
 
   async run(objective, route = {}) {
     assertRouteReady(route, this.#readiness);
@@ -1198,7 +1239,7 @@ class BatonDeployment {
     }, { actor: `deployment:${this.#repository.repoId}:resident` });
     this.#residentSession = Object.freeze({ sessions, sessionId: issued.sessionId });
     const resident = authority.card();
-    const application = residentApplicationFacade(this.#application, resident, this.#readiness);
+    const application = residentApplicationFacade(this.#application, resident, () => this.doctorReadiness());
     const web = new WebNorthbound({
       coordinator: this.#driver.coordinator,
       coordination: this.#driver.coordination,
@@ -1372,6 +1413,12 @@ export async function openBatonDeployment(rawOptions, createDriver) {
     preflight, routes, adapters, nativeKimiAuthentication, nativeGrokAuthentication,
     adapterAuthentication, additionalRouteStates,
   );
+  // Issue #35: doctor observes workspace capacity FRESH at each read (statfs is cheap and disk
+  // state moves), never once at open — an open-time probe would also consume the advanced
+  // observation seam outside its per-reservation contract.
+  const workspaceProbe = () => workspaceCapacityReadiness(
+    repository.root, DEFAULT_WORKTREE_CAPACITY, capacity?.observe ?? null,
+  );
   const policy = goalPlanPolicy(repository.repoId);
   const contextRuntime = new RepositoryContextRuntime({
     artifactRoot: contextRoot,
@@ -1437,7 +1484,7 @@ export async function openBatonDeployment(rawOptions, createDriver) {
     });
     await application.ready;
     return new BatonDeployment(application, principal, readiness, {
-      driver, repository, deploymentRoot, residentOptions,
+      driver, repository, deploymentRoot, residentOptions, workspaceProbe,
     });
   } catch (error) {
     try {

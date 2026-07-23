@@ -1549,6 +1549,7 @@ function terminalCauseNarrative(cause) {
   }
   if (cause?.kind === 'provider_failure') return `Run terminated: ${cause.code}.`;
   if (cause?.kind === 'policy_failure') return `Run terminated: ${cause.code}.`;
+  if (cause?.kind === 'dispatch_refused') return `Run refused at dispatch: ${cause.code}. ${cause.remediation ?? ''}`.trimEnd();
   if (cause?.kind === 'operator_stop') return 'Run terminated: operator_stop.';
   return null;
 }
@@ -6721,7 +6722,14 @@ export class BatonApplication {
         candidatePreserved,
       };
     }
-    const terminalCause = projectTypedTerminalCause({ terminalResult: result, runStop });
+    // Issue #35: an admission-refused dispatch cancels the work task before any provider result
+    // exists; the folded cancelCause is the only durable explanation for that terminal phase.
+    const workTask = node?.taskId ? this.driver.coordination.task(node.taskId) : null;
+    const terminalCause = projectTypedTerminalCause({
+      terminalResult: result, runStop,
+      dispatchRefusal: workTask?.status === 'cancelled' && typeof workTask.cancelCause === 'string'
+        ? { code: workTask.cancelCause } : null,
+    });
 
     const { workers, ownedWorkers } = runWorkerOwnership(this.driver, runId);
     const ownedWorker = workerId ? workers.find((handle) => handle.id === workerId) ?? null : null;

@@ -138,6 +138,11 @@ function safeFacts(payload) {
   if (Number.isSafeInteger(totalTokens) && totalTokens >= 0) {
     facts.tokenCount = totalTokens;
   }
+  // Issue #35: a transition admitted with a typed cause (dispatch admission refusals) surfaces
+  // that cause as a safe scalar fact, so a cancelled Run is never cause-free on the timeline.
+  const evidence = source.evidence && typeof source.evidence === 'object'
+    && !Array.isArray(source.evidence) ? source.evidence : null;
+  if (evidence && safeScalar(evidence.cause)) facts.cause = evidence.cause;
   return facts;
 }
 

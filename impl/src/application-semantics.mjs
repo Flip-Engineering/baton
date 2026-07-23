@@ -844,6 +844,31 @@ const GENERIC_PROVIDER_TERMINAL_GUIDANCE = freeze({
   retryable: true,
 });
 
+// Issue #35: a dispatch admission refusal ends a Run before any provider work exists. Its typed
+// cause is a deployment/workspace condition, never a provider fault, and it is always retryable
+// once the named condition clears.
+const DISPATCH_REFUSAL_GUIDANCE = freeze({
+  worktree_capacity_exceeded: {
+    category: 'workspace_capacity',
+    summary: 'Baton refused to reserve workspace capacity for this dispatch; the repository volume is below the deployment capacity floors or reservations are exhausted.',
+    remediation: 'Free repository volume space or raise the deployment worktree capacity floors, then start a new Run.',
+    retryable: true,
+  },
+  worktree_capacity_unavailable: {
+    category: 'workspace_capacity',
+    summary: 'Baton could not observe workspace capacity for this dispatch.',
+    remediation: 'Check the repository volume health, then start a new Run.',
+    retryable: true,
+  },
+});
+
+const GENERIC_DISPATCH_REFUSAL_GUIDANCE = freeze({
+  category: 'dispatch_refused',
+  summary: 'Baton refused this dispatch before any provider work started.',
+  remediation: 'Inspect the refusal code, correct the deployment or workspace condition, then start a new Run.',
+  retryable: true,
+});
+
 function canonicalTerminalCode(value, fallback) {
   return typeof value === 'string' && value.length > 0 && value.length <= 256
     && /^[a-z0-9][a-z0-9._-]*$/iu.test(value) ? value : fallback;
@@ -857,7 +882,7 @@ function projectProviderTerminalCause(cause) {
 }
 
 export function projectTypedTerminalCause({
-  terminalResult = null, terminalOutcome = null, runStop = null,
+  terminalResult = null, terminalOutcome = null, runStop = null, dispatchRefusal = null,
 } = {}) {
   const cause = terminalResult?.terminalCause;
   if (cause && ['budget_exceeded', 'provider_failure', 'policy_failure'].includes(cause.kind)) {
@@ -872,6 +897,12 @@ export function projectTypedTerminalCause({
   }
   if (terminalOutcome?.accepted === false) {
     return projectProviderTerminalCause({ code: terminalOutcome.code });
+  }
+  if (dispatchRefusal) {
+    const code = canonicalTerminalCode(dispatchRefusal.code, 'dispatch_refusal_unclassified');
+    const guidance = Object.hasOwn(DISPATCH_REFUSAL_GUIDANCE, code)
+      ? DISPATCH_REFUSAL_GUIDANCE[code] : GENERIC_DISPATCH_REFUSAL_GUIDANCE;
+    return freeze({ kind: 'dispatch_refused', code, ...guidance });
   }
   return runStop ? freeze({ kind: 'operator_stop', code: 'operator_stop' }) : null;
 }
