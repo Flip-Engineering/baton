@@ -22,7 +22,10 @@ try {
     process.off('SIGTERM', stopInput);
   }
 } catch (error) {
-  process.stderr.write(`baton-mcp-web startup failed: ${error?.code ?? error?.message ?? 'unknown'}\n`);
+  // Issue #41: the code alone left the operator source-diving; keep the human cause beside it.
+  const code = error?.code ?? 'unknown';
+  const detail = error?.message && error.message !== code ? `: ${error.message}` : '';
+  process.stderr.write(`baton-mcp-web startup failed: ${code}${detail}\n`);
   process.exitCode = 1;
 } finally {
   rmSync(stateRoot, { recursive: true, force: true });

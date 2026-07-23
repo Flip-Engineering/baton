@@ -298,15 +298,27 @@ function setupProfileNames(configRoot) {
     .filter((name) => {
       try { id(name, 'connection profile'); return true; } catch { return false; }
     })
+    // Issue #37: resident-published profiles (schema v2, `baton serve` publications) share this
+    // directory but are a different artifact class — never schema-v1 setup candidates. Content,
+    // not name, decides: an unreadable or malformed file stays a candidate so its selection
+    // fails with the file-naming validation error instead of silently vanishing.
+    .filter((name) => {
+      try {
+        const parsed = JSON.parse(readFileSync(join(directory, `${name}.json`), 'utf8'));
+        return !(record(parsed) && (parsed.schemaVersion === 2
+          || Object.hasOwn(parsed, 'transport') || Object.hasOwn(parsed, 'socketPath')));
+      } catch { return true; }
+    })
     .sort();
 }
 
 function readSetupProfile(configRoot, profileName, ownerUid) {
   const profilePath = join(configRoot, 'baton', 'connections', `${profileName}.json`);
-  const profile = readConnectionJson(profilePath, 'user connection profile', { ownerOnly: true, ownerUid });
-  exactKeys(profile, ['schemaVersion', 'url', 'origin', 'tokenFile'], 'user connection profile');
+  const label = `user connection profile ${profileName}.json`;
+  const profile = readConnectionJson(profilePath, label, { ownerOnly: true, ownerUid });
+  exactKeys(profile, ['schemaVersion', 'url', 'origin', 'tokenFile'], label);
   if (profile.schemaVersion !== 1 || !nonempty(profile.url) || !nonempty(profile.origin) || !nonempty(profile.tokenFile)) {
-    throw cliError('user connection profile is invalid', 'cli_config_invalid');
+    throw cliError(`${label} is invalid`, 'cli_config_invalid');
   }
   let base;
   let origin;
@@ -499,7 +511,12 @@ export function inspectBatonConnection({
     return Object.freeze({
       schemaVersion: 1, state: 'needs_setup', depth,
       outline: Object.freeze({ repository: 'ready', connection: 'missing', profile: 'not_checked', credential: 'not_read', remote: 'not_checked' }),
-      next: Object.freeze([{ action: 'setup', command: 'baton setup' }]),
+      // Issue #36: `baton serve` is the ordinary zero-assembly path; `baton setup` is the
+      // advanced explicit-network flow. Offer both, ordinary first.
+      next: Object.freeze([
+        { action: 'serve', command: 'baton serve' },
+        { action: 'setup', command: 'baton setup' },
+      ]),
       ...(depth === 'evidence' ? { evidence: Object.freeze({ selector: 'absent', gitCommonDirectory: 'resolved' }) } : {}),
     });
   }
@@ -1572,7 +1589,9 @@ export class BatonWebClient {
         const receivedCode = body?.error?.code;
         const code = typeof receivedCode === 'string' && /^[a-z][a-z0-9_]{0,63}$/u.test(receivedCode)
           ? receivedCode : 'cli_command_failed';
-        throw cliError('Baton Web request was refused', code);
+        // Issue #41: say what was refused and how — the path and status are the caller's own
+        // request facts, never a secret.
+        throw cliError(`Baton Web request was refused (${options.method ?? 'GET'} ${path}, HTTP ${response.status})`, code);
       }
       return body;
     } finally {

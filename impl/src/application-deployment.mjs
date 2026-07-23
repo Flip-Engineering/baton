@@ -485,7 +485,14 @@ function preflightDeployment(repoRoot, verification) {
 
 /** Issue #35: dispatch fails closed below the deployment capacity floors, so doctor must say so
  * up front instead of reading all-ready on a host where every Run is guaranteed to refuse. The
- * section is a sanitized observation — free bytes/inodes beside the floors, never a path. */
+ * section is a sanitized observation — free bytes/inodes beside the floors, never a path. The
+ * observation is quantized DOWN to the deployment reserve granularity (64MiB / 10k inodes):
+ * kilobyte-scale drift between two reads is volume jitter, not a state change, so equal-state
+ * projections stay deeply equal across surfaces (card vs doctor) and the verdict is computed
+ * from the quantized value, which only ever errs conservative. */
+const WORKSPACE_OBSERVATION_BYTE_QUANTUM = 64 * 1024 * 1024;
+const WORKSPACE_OBSERVATION_INODE_QUANTUM = 10_000;
+
 function workspaceCapacityReadiness(repoRoot, policy, observe) {
   let observation;
   try {
@@ -495,7 +502,10 @@ function workspaceCapacityReadiness(repoRoot, policy, observe) {
     })();
     if (!raw || !Number.isSafeInteger(raw.freeBytes) || raw.freeBytes < 0
       || !Number.isSafeInteger(raw.freeInodes) || raw.freeInodes < 0) throw new Error('invalid observation');
-    observation = raw;
+    observation = {
+      freeBytes: raw.freeBytes - (raw.freeBytes % WORKSPACE_OBSERVATION_BYTE_QUANTUM),
+      freeInodes: raw.freeInodes - (raw.freeInodes % WORKSPACE_OBSERVATION_INODE_QUANTUM),
+    };
   } catch {
     return Object.freeze({
       state: 'unobserved', code: 'worktree_capacity_unavailable',

@@ -202,6 +202,31 @@ test('CAP-V5: deployment doctor reports the workspace capacity observation hones
   assert.equal(Object.hasOwn(ready.workspace, 'code'), false, 'a ready workspace carries no refusal code');
 });
 
+test('CAP-V6: benign observation jitter between reads never splits the workspace projection — two doctor reads stay deeply equal', async (t) => {
+  const repo = repository(t);
+  let reads = 0;
+  const deployment = await openBaton({
+    repo,
+    advanced: {
+      deploymentRoot: join(repo, '.deployment'), adapters: { mock: adapter() }, routes: [ROUTE],
+      verification: { command: 'node', arguments: ['--version'] },
+      capacity: {
+        estimate: () => ({ bytes: 1024, inodes: 8 }),
+        // A live volume moves by kilobytes between statfs calls; the projection must not.
+        observe: () => { reads += 1; return { freeBytes: (24 * 1024 * 1024 * 1024) + (reads * 4096), freeInodes: 4_000_000 + reads }; },
+      },
+    },
+  });
+  t.after(async () => { try { await deployment.close(); } catch {} });
+  const first = await deployment.doctor();
+  const second = await deployment.doctor();
+  assert.ok(reads >= 2, 'each doctor read takes a fresh observation');
+  assert.deepEqual(second, first, 'kilobyte-scale drift is jitter, not a state change');
+  assert.equal(first.workspace.state, 'ready');
+  assert.equal(first.workspace.freeBytes % (64 * 1024 * 1024), 0,
+    'reported bytes are quantized to the deployment reserve granularity');
+});
+
 test('CAP-V4: a second approve retry after the refusal is refused the same typed way, never a duplicate dispatch', async (t) => {
   const deployment = await exhaustedDeployment(t);
   const run = await deployment.run('Change the README under an exhausted workspace (retry).', { exact: ROUTE });

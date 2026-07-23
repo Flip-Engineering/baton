@@ -698,7 +698,7 @@ const cli = {
       ],
     },
     run: {
-      commandIds: ['run.objective', 'run.show', 'run.progress', 'run.events', 'run.output',
+      commandIds: ['run.objective', 'run.start.exact', 'run.show', 'run.progress', 'run.events', 'run.output',
         'run.do', 'run.stop', 'run.status', 'run.recover',
         'run.approve', 'run.answer', 'run.send', 'run.interrupt', 'run.steer', 'run.evidence', 'run.adopt', 'run.select',
         'run.feedback', 'run.revise', 'run.stop-member', 'run.retry',

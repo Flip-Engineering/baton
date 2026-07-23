@@ -108,7 +108,10 @@ function dispatchFailure(cause) {
   if (goalPlanCode === 'application_unauthorized') return { httpStatus: 403, body: { ok: false, error: { code: goalPlanCode, message: 'application command forbidden' } } };
   if (goalPlanCode === 'application_unavailable') return { httpStatus: 503, body: { ok: false, error: { code: goalPlanCode, message: 'run application unavailable' } } };
   if (['application_run_lookup_oversize', 'application_run_view_oversize'].includes(goalPlanCode)) return { httpStatus: 503, body: { ok: false, error: { code: 'temporarily_unavailable', message: 'run application projection unavailable' } } };
-  if (['application_run_not_found', 'application_interaction_not_found', 'application_profile_not_found', 'application_worker_not_found'].includes(goalPlanCode)) return { httpStatus: 404, body: { ok: false, error: { code: 'not_found', message: 'application resource not found' } } };
+  // A missing profile is deployment configuration the authenticated caller can read and fix;
+  // naming it is not an enumeration surface the way run/worker identifiers are (issue #41).
+  if (goalPlanCode === 'application_profile_not_found') return { httpStatus: 404, body: { ok: false, error: { code: goalPlanCode, message: 'requested Run profile is not defined by this deployment' } } };
+  if (['application_run_not_found', 'application_interaction_not_found', 'application_worker_not_found'].includes(goalPlanCode)) return { httpStatus: 404, body: { ok: false, error: { code: 'not_found', message: 'application resource not found' } } };
   if (typeof goalPlanCode === 'string' && goalPlanCode.startsWith('application_')) {
     const conflict = ['application_plan_stale', 'application_plan_denied', 'application_run_conflict', 'application_run_incomplete', 'application_profile_stale',
       'application_closed', 'application_detached'].includes(goalPlanCode);

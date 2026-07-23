@@ -52,10 +52,11 @@ Then use the same command bus as the browser and MCP:
 ```sh
 baton doctor
 baton doctor --check
+baton explore 'Summarize the failing boundary and report evidence' \
+  --exact codex/gpt-5.6-sol@low
 baton review 'Audit this change for correctness and integration risks' \
   --exact codex/gpt-5.6-sol@high --exact grok/grok-4.5@medium
-baton run start 'Implement the accepted design' \
-  --profile standard --exact codex/gpt-5.6-sol@low
+baton run start 'Implement the accepted design' --exact codex/gpt-5.6-sol@low
 baton run approve RUN_ID --plan PLAN_DIGEST
 baton run status RUN_ID --wait 30s
 baton run send RUN_ID 'Check the failing boundary.' --nudge
@@ -73,7 +74,19 @@ baton run review RUN_ID --exact glm/glm-5.2@xhigh \
 baton run integrate RUN_ID --strategy ff-only \
   --reason 'Integrate the adopted independently reviewed result.'
 baton run stop RUN_ID --reason 'Operator cancelled this Run.'
+baton run export RUN_ID DIR
+baton run do RUN_ID ACTION_ID --inputs '{"key":"value"}'
+baton help run
+baton credentials install kimi
 ```
+
+`baton run OBJECTIVE` and `baton run start OBJECTIVE` are the same start form; both accept
+`--exact HARNESS/MODEL@EFFORT` or the `--model/--effort` (plus disambiguating `--harness`)
+manual pair, with optional `--profile`, `--run-id`, and `--scope`. The ordinary zero-assembly
+deployment defines the single profile `default`, so `--profile` is normally omitted; naming an
+undefined profile is refused `application_profile_not_found`. `baton run do` drives any advertised
+RunView action by its `actionId`. When no connection exists yet, `baton doctor` offers
+`baton serve` (ordinary) before `baton setup` (explicit network deployments).
 
 `baton review` is the ordinary objective-first independent-review preset. Its two exact routes
 become the fixed `reviewer` and `challenger` roles of one isolated, operator-selected Workflow.
