@@ -25,7 +25,7 @@ SA2, SA3 pass). Doc-only change; no `impl/` or test file touched by this seat.
 | R-CX-3 | P0 | FOLDED — §4.1‡ (episode fold carries `--role`/`--generation`/`--section`; four cross-argument admission rules ported verbatim from `application.mjs:1226-1247`; isolation pinned by `phase92-episode-attribution-red.test.mjs:103-104,133-144`) |
 | R-CX-4 | P0 | FOLDED — §7.1 + §5 L4 (`work_completed → result_ready`, **not** `completed`; registry owns `providerSettled`/`applicationTerminal` predicates). Seat conflict resolved **for codex** — see Conflicts below |
 | R-CX-5 | P1 | FOLDED — §7.1 mapping (`approved → queued` restored as a real state; `closed` declared a dead string with named deletion sites; `start_failed` demoted to §7.2 member state) |
-| R-CX-6 | P0 | FOLDED — §3 ontology + §5 L9 + §7.3 (attention is one *shape*, not one verb; three-variant checkpoint response) |
+| R-CX-6 | P0 | FOLDED — §3 ontology + §5 L9 + §7.3 (attention is one *shape*, not one verb; three-variant checkpoint response). **Second half completed by this seat:** the repair also demanded "name the issue-31 tests in C5", which `0c5c970` had not done — now pinned in §10 C5 (`turn-checkpoints-31b5-surface-red.test.mjs:150-224`). See A-4 |
 | R-CX-7 | P0 | FOLDED — §5 L2 (do-block scoped to kind-portable / id-local; `actionId` a freshness token per `application.mjs:7310-7323`) + §10 C2 phased M1→M2→M4 |
 | R-CX-8 | P1 | FOLDED — §3 + §4.2 H4/H9 (structured `{role, generation?}` address; two clocks distinguished; `work` sentinel reserved to run-level send; `role:gN` spelling banned) |
 | R-CX-9 | P1 | FOLDED — §9 M1 (dispatch-layer aliases only; D3 keys/flags frozen until M4) + §10 C9 |
@@ -126,5 +126,16 @@ substantive repair. One defect found and fixed; two claims verified.
   and C3; §9's M-phase ordering is consistent with §10's C2/C8/C9 phasing; §4.1‡'s four
   cross-argument admission rules match the `application.mjs:1226-1247` set they claim to port;
   §8.1's digest split is consistent with L2's freshness binding.
+- **A-4 — FIXED — R-CX-6 (P0) was folded only in half.** The finding's minimal repair had two
+  clauses: *"Replace L9's `continue|settle` wording **and name the issue-31 tests in C5**."*
+  `0c5c970` did the first (L9 rewritten, §7.3 three-variant response) but not the second — no
+  checkpoint test was named anywhere in the doc, as a cross-check of cited `*.test.mjs` names
+  against the reports' demanded contracts showed. This is load-bearing, not bookkeeping:
+  `turn-checkpoints-31b5-surface-red.test.mjs:150-224` is what pins `wait_turn` as
+  **non-consuming** (all three acts still advertised after a wait receipt), `nudge_turn` as
+  consuming + watchdog-arming, and `claim_turn` as a live trust-gate re-run. Without it, C5 could
+  go green while a response union quietly collapsed `wait` into a consuming settle — exactly the
+  durability/turn-accounting break R-CX-6 predicted. Now pinned in §10 C5, with the server-derived
+  coordinates and sorted capabilities named as part of the contract.
 - **Status header** bumped to `v2 (post-red-team) — FINAL`, satisfying the brief's rule (4)
   wording while preserving the prior controller's FINAL designation rather than overwriting it.

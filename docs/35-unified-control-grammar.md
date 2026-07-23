@@ -544,7 +544,15 @@ operational cost, not a rollback hazard (R-OP-11).
 - **C4** (L6): banned-token lint generated from §4.1 with token normalization (R-CX-13).
 - **C5** (L10): the finite phase × attention × next-action matrix — outline alone answers
   what/why/next for **all nine** attention kinds; cause non-null for non-success terminals only
-  (R-CX-10, R-OP-7).
+  (R-CX-10, R-OP-7). **The `turn_checkpoint` three-variant response is effect-pinned against the
+  landed issue-31 surface contract** (`turn-checkpoints-31b5-surface-red.test.mjs:150-224`,
+  R-CX-6 — the repair's second half): `continue`→`nudge_turn` **consumes** the checkpoint and
+  arms the live stall watchdog; `wait`→`wait_turn` receipts it **without consuming** — all three
+  acts must still be advertised afterwards; `settle`→`claim_turn` re-runs the live trust gate
+  against the exact paused task and resolves it. The server-derived coordinates (`pauseId`,
+  `taskId`, `turnEpoch`, `workerId`) and sorted `requiredCapabilities` are part of that contract,
+  not of the response payload. A response union that cannot distinguish consuming from
+  non-consuming settlement fails C5 even if all nine kinds render.
 - **C6** (L7): error-shape law over every provokable refusal; leak test that stage/subject never
   carry paths, tokens, or fence coordinates.
 - **C7** (L5): every preset run's durable log carries an expansion record naming the preset and
