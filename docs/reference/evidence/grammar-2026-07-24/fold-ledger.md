@@ -201,6 +201,23 @@ substantive repair. One defect found and fixed; two claims verified.
   L4 exists to end. Corrected in **§1.2 F5** and **§7.1**, which now require the set to be
   replaced by a `providerSettled()` call at M2 rather than edited. Note this is the same bug class
   as R-CX-4, surfacing at a site R-CX-4 did not name.
+- **A-8 — FIXED — a fourth phase union hides in the file §2 told readers to ignore.** A-7 came
+  from a site no seat named, so this pass swept *uncited* code for the same bug class: every
+  hand-maintained phase union in `impl/src`. Result — the browser desk `web-operator.mjs`, which
+  appears in **none** of the doc's 54 citations, hard-codes run-phase vocabulary in three places:
+  `:163` `terminal=['work_completed','completed','failed','cancelled','denied','stopped']` (a
+  fourth terminal union, omitting `closed`, and conflating `work_completed` as terminal exactly as
+  the CLI does), `:162` a stop-form union `['stopping','stopped','denied','failed','cancelled']`,
+  and `:141` a spine renderer switching on eight inline phase literals.
+  Why v1 *and* v2 both missed it: §2's non-goal asserted the desk "re-renders the registry", which
+  is true of its action surface but false of its phase vocabulary — and that framing is precisely
+  what would exempt the file from M0's phase-literal extraction, leaving C3's totality claim
+  quietly false. Fixed in four places: §2 (characterization corrected), §1.2 F5 (three unions →
+  four, desk named), §9 M2 (desk added to the re-report work items), §8.4 (M0 extraction must
+  cover `web-operator.mjs`; C3 is only as honest as its file list).
+  Sets deliberately **not** counted: `coordinator.mjs:42,245`, `grok-acp.mjs:28` are task/call/tool
+  axes, not run phases — the same out-of-scope reasoning §7.1 already applies to
+  `pre_delivery`/`post_delivery`.
 - **Method note — the NUL-byte trap is real and it bit this audit.** §8.4 already warns that
   `impl/src/application.mjs` contains a NUL byte requiring `grep -a`. Plain `grep` against it
   returns *silently empty* — not an error. An early verification pass here read that empty result

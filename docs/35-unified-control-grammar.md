@@ -61,8 +61,12 @@ is the friction.
 - **F4 — Two MCP dialects** that disagree with each other on path collapsing *and* read model
   (fleet: status+wait; baton: inspect+act).
 - **F5 — Twenty phase strings** across runs, waves, workflow projections, and the CLI terminal
-  set, with three different terminal unions (`application.mjs:117-124`, `wave.mjs:11`,
-  `application-cli.mjs:29` — wave omits `denied`/`closed`; the CLI adds both). The CLI's is worse
+  set, with **four** different terminal unions (`application.mjs:117-124`, `wave.mjs:11`,
+  `application-cli.mjs:29`, and the browser desk's inline
+  `web-operator.mjs:163` = `['work_completed','completed','failed','cancelled','denied','stopped']`
+  — wave omits `denied`/`closed`; the CLI adds both; the desk omits `closed` and, like the CLI,
+  counts `work_completed` as terminal. No red-team seat named the desk; v1 and v2 both described
+  it as a passive re-renderer, §2). The CLI's is worse
   than a third union: it is *named* `TERMINAL_RUN_PHASES` but is *used* only as a wait/follow stop
   condition (`application-cli.mjs:1029,1923,1945`), so it is semantically a **provider-settled**
   set — and as one it is wrong, omitting `selection_required` and `candidate_selected`. A CLI
@@ -111,8 +115,11 @@ the registry as the single generator.
 **Non-goals.** No new authority semantics — **in both directions** (R-OP-4): existing admission
 preconditions are neither added to verbs that lack them nor removed from paths that have them.
 Fencing, durability, verification, capability model, freshness binding, and reconcilability
-classes are untouched. No removal of progressive disclosure. No browser-desk redesign (it
-re-renders the registry; its pinned element ids move only in M3, R-OP-3). Baton is
+classes are untouched. No removal of progressive disclosure. No browser-desk **redesign** — but
+v1's "it re-renders the registry" is true only of the desk's *action* surface (v2 acceptance):
+the desk hard-codes run-phase vocabulary in at least three places (`web-operator.mjs:141` spine,
+`:162` stop-form, `:163` terminal array), so it is a §7 re-report site exactly like the CLI, not
+a passive renderer. Its pinned element ids still move only in M3 (R-OP-3). Baton is
 self-contained — the blast radius of renames is its own tests, drivers, and docs.
 
 ---
@@ -501,7 +508,9 @@ unconditional (R-OP-15e).
 
 `impl/scripts/surface-audit.mjs` extracts current truth — extended at M0 to cover the full Web
 admitted-command set (`COMMAND_CAPABILITY` keys), D8, and complete phase-literal extraction
-(R-OP-2, R-OP-5). M0 turns it into contracts (§10) plus the **allowed-divergence ledger**:
+(R-OP-2, R-OP-5) — **including `web-operator.mjs`**, whose inline phase unions no seat named and
+which §2's former "passive re-renderer" framing would have excluded from extraction entirely
+(v2 acceptance). C3's totality is only as honest as this file list. M0 turns it into contracts (§10) plus the **allowed-divergence ledger**:
 
 - **Bidirectional and append-forbidden** (R-KM-14, R-OP-15d, R-CX-13): at every commit,
   `observed divergences ⊆ ledger` (anything unledgered is red — the novel-divergence guard), and
@@ -540,7 +549,8 @@ quiesce point** (R-OP-11).
   scope keys. L2 lands **per-surface** (each surface's advertised do executes on that surface);
   legacy spellings marked deprecated.
 - **M2 — One vocabulary.** The §7 enums land with their generated mappings; waves/workflow/CLI
-  re-report (`wave.mjs:85-86`, `application-cli.mjs:29`, the `closed` deletions incl.
+  re-report (`wave.mjs:85-86`, `application-cli.mjs:29`, **the browser desk's three inline phase
+  sites `web-operator.mjs:141,162,163`**, the `closed` deletions incl.
   `application-client.mjs:251`); L3 generalized; L10 matrix contract; C2 re-baselined —
   **the vocabulary flip invalidates outstanding advertised actionIds by design; the fail-closed
   scope-mismatch refusal plus re-read is the intended recovery** (R-KM-15). Cross-surface L2
