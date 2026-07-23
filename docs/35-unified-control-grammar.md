@@ -242,7 +242,14 @@ and per-recipient, offset-paged **non-follow** output reads depend on them (R-CX
 - **H4 — Ids positional, options labeled.** A flag's name is the **kebab-case of its JSON schema
   property** (`pageCursor` → `--page-cursor`); an enum-valued property MAY additionally expose
   one flag per value (`delivery: now` → `--now`) declared as `flagAliases` in the registry entry;
-  undeclared value-flags are a lint failure (R-OP-12). Member ops take `ROLE [--generation N]`;
+  undeclared value-flags are a lint failure (R-OP-12). **Property-level aliases are a separate,
+  equally-declared class** (v2 acceptance): the live surface spells two flags off-derivation —
+  `--to` for `recipient` and `--wait` for `waitMs`
+  (`application-cli.mjs:984,1254,1281,1316,1372,1398,1416`) — and *this document prescribes both*
+  (§4.1 read row, §6 `run.watch` and `run.member.send`). Neither is an enum **value** flag, so
+  `flagAliases` cannot express them. Without a registry `propertyAliases` field the H4 lint must
+  either fire on the very spellings §2 promises to preserve, or be quietly exempted for them —
+  the same unenforceability trap as C3 (§8.4). Declare them; do not special-case them. Member ops take `ROLE [--generation N]`;
   candidate ops (`select`, `feedback`) take `ROLE` addressing a candidate — the only two
   role-addressing classes, both registry-declared (R-OP-16).
 - **H5 — Reasons.** Destructive verbs uniformly **accept and durably record** `--reason`, and

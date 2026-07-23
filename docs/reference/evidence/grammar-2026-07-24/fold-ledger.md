@@ -237,6 +237,22 @@ substantive repair. One defect found and fixed; two claims verified.
   rests on. Fixed in **§10 C3** (totality must be over a declared, versioned file list *and*
   extraction rule) and **§8.4** (the narrowness documented site by site; M0 must replace
   regex-per-file with a declared phase-vocabulary site list).
+- **A-10 — C9 VERIFIED (no change); H4 FIXED — the doc's own flags fail its own lint.** Applied
+  A-9's falsification method to the remaining mechanical contracts.
+  **C9 holds.** Derived web names are uniformly prefixed (`run_*`, `runs_*`, `application_*`;
+  25 of them) and the kernel/authoring literals are bare (`spawn`, `send`, `interrupt`, `list`,
+  `result`, `wait`, `goal_define`, …, `web-northbound.mjs:17-31`). Disjointness holds today and
+  survives the M4 canonical flip, since `a.b.verb → a_b_verb` keeps every canonical name
+  prefixed. Recorded as a verified negative, not a gap.
+  **H4 does not hold.** The live CLI spells two flags off-derivation — `--to` for the `recipient`
+  property and `--wait` for `waitMs` (`application-cli.mjs:984,1254,1281,1316,1372,1398,1416`;
+  properties confirmed at `application.mjs:130`) — and the doc *prescribes both* in §4.1's read
+  row and §6's `run.watch`/`run.member.send` rows. H4 derives `--recipient` and `--wait-ms`;
+  neither live spelling is an enum **value** flag, so the `flagAliases` exception cannot express
+  them. R-OP-12's contract ("undeclared value-flags are a lint failure") therefore had no legal
+  way to admit the two commonest flags on the surface: the lint would either fire on spellings §2
+  promises to preserve, or be silently exempted for them — unenforceable in exactly the way C3
+  was (A-9). Fixed in **§4.2 H4** with a declared `propertyAliases` class, seeded with both.
 - **Method note — the NUL-byte trap is real and it bit this audit.** §8.4 already warns that
   `impl/src/application.mjs` contains a NUL byte requiring `grep -a`. Plain `grep` against it
   returns *silently empty* — not an error. An early verification pass here read that empty result
