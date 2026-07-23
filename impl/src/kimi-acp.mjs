@@ -178,6 +178,8 @@ export class KimiAcpCli {
           configuredPreferences: [], observation: 'unavailable',
         },
       },
+      // Issue #31 §2.1(1): a completed turn is a steerable checkpoint, not an implicit claim.
+      turnCompletion: 'pausable',
       verbs: {
         spawn: 'native', prompt: 'native', steer: 'emulated', interrupt: 'native',
         approve: 'native', answer: 'unsupported', kill: 'native', pause: 'unsupported',

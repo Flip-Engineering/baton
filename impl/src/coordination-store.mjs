@@ -120,8 +120,14 @@ const PROJECTION_CHECKPOINT_FIELDS = Object.freeze([
 const TERMINAL = new Set(['completed', 'failed', 'cancelled']);
 const TRANSITIONS = new Map([
   ['pending', new Set(['working', 'cancelled'])],
-  ['working', new Set(['input_required', 'completed', 'failed', 'cancelled'])],
+  ['working', new Set(['input_required', 'paused', 'completed', 'failed', 'cancelled'])],
   ['input_required', new Set(['working', 'failed', 'cancelled'])],
+  // Issue #31 §2.1(3): `paused` is a new NON-terminal state — a turn checkpoint parked pending a
+  // steering decision. Its outbound set is exactly `input_required`'s: `working` (unpark), and
+  // `failed`/`cancelled` (a parked task must stay terminalizable by run stop / fleet drain).
+  // Deliberately NOT `completed`: direct-to-completed must always traverse `working` first,
+  // because the trust gate's claim-time evaluation is what produces `completed`.
+  ['paused', new Set(['working', 'failed', 'cancelled'])],
 ]);
 const KNOWLEDGE_NODE_TYPES = new Set(['Run', 'Task', 'Artifact', 'Phase', 'Experiment', 'Finding', 'Decision', 'Question', 'Hypothesis', 'Principle', 'Constraint', 'Literature', 'Research', 'RouteStat', 'Skill', 'Counterexample', 'Representation', 'ScratchFact', 'Source']);
 const KNOWLEDGE_EDGE_TYPES = new Set(['Supports', 'Contradicts', 'Supersedes', 'Informed', 'ProducedBy', 'Contains', 'DependsOn', 'Refines', 'ReadBy', 'VerifiedBy', 'DerivedFrom', 'Affects', 'Cites', 'ObservedIn']);
@@ -2876,7 +2882,7 @@ export class CoordinationStore {
     if (request.repoId !== this._representationPolicy.repoId) fail('representation repository disagrees with deployment', 'representation_scope_mismatch');
     const task = this._tasks.get(request.taskId); const taskNode = this._knowledgeNodes.get(`task:${request.taskId}`);
     if (!task || !taskNode || task.createdEvent >= (auth.seq ?? this._events.length + 1)
-      || (requireLive && !['working', 'input_required'].includes(task.status))) fail('representation requires an exact live durable task', 'representation_task_unavailable');
+      || (requireLive && !['working', 'input_required', 'paused'].includes(task.status))) fail('representation requires an exact live durable task', 'representation_task_unavailable');
     if ((task.runId ?? null) !== request.runId) fail('representation run membership disagrees with its task', 'representation_scope_mismatch');
     const policyDigest = canonicalDigest(this._representationPolicy);
     const requestDigest = canonicalDigest({ actor: auth.actor, idempotencyKey, request, policyDigest });
@@ -10627,7 +10633,11 @@ export class CoordinationStore {
     const dispatches = new Map(relevant.filter((event) => event.kind === 'plan.node_dispatched' && event.payload.binding.planId === plan.planId && event.payload.binding.planVersion === plan.version).map((event) => [event.payload.binding.nodeKey, { event, task: taskStates.get(event.payload.taskId), settlement: visibleSettlements.get(event.payload.taskId) ?? null }]));
     const nodes = plan.nodes.map((node) => {
       const dispatched = dispatches.get(node.key); let state = 'blocked';
-      if (dispatched) state = dispatched.task?.status === 'completed' && !dispatched.task.acceptanceRevocation ? 'accepted' : (['failed', 'cancelled'].includes(dispatched.task?.status) ? dispatched.task.status : 'dispatched');
+      // Issue #31 §2.1(3): a `paused` node must render as `paused`, never collapse into the
+      // generic `'dispatched'` fallback — that is what feeds application.mjs's run-phase ladder,
+      // and a parked turn disguised as plain `running` is exactly the dishonest projection the
+      // spec forbids. Every other non-terminal status still falls through to `'dispatched'`.
+      if (dispatched) state = dispatched.task?.status === 'completed' && !dispatched.task.acceptanceRevocation ? 'accepted' : (['failed', 'cancelled'].includes(dispatched.task?.status) ? dispatched.task.status : dispatched.task?.status === 'paused' ? 'paused' : 'dispatched');
       else if (!goalCurrent || !planCurrent) state = 'stale';
       else if (node.deps.every((dep) => dispatches.get(dep)?.task?.status === 'completed' && !dispatches.get(dep).task.acceptanceRevocation)) state = 'ready';
       let terminalOutcome = null;
