@@ -36,6 +36,11 @@ const MEMBER = Object.freeze({
     'until the orchestrator answers. When the answer arrives, write',
     `${reportPath} in EXACTLY the settled style, and state the settled option id in the first`,
     'line as `framing: <id>`. Do not invoke nested Baton. One shell command per call.',
+    // run.start is idempotent over the objective digest: a byte-identical objective across
+    // attempts attaches to the PRIOR (stopped) run instead of minting a new one — the member
+    // then reports phase=stopped immediately with no worker spawn and no error surface (the
+    // runs 4-6 drain-only ledgers). Salt each attempt so validation runs stay distinct.
+    `[attempt: ${new Date().toISOString()}]`,
   ].join(' '),
 });
 
