@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 
 import { BatonWebClient, discoverBatonConnection } from './application-cli.mjs';
+import { createLocalSocketFetch } from './local-web-transport.mjs';
 import { McpFleetServer } from './mcp-northbound.mjs';
 import { APPLICATION_SEMANTIC_REGISTRY } from './application-semantics.mjs';
 import { hasNorthboundCapabilityAuthority } from './northbound-capability-authority.mjs';
@@ -218,7 +219,16 @@ export async function connectBatonWebApplication(options = {}) {
   const connection = options.connection ?? discoverBatonConnection({
     cwd: options.cwd, env: options.env, home: options.home, ownerUid: options.ownerUid,
   });
-  const fetchImpl = options.fetchImpl ?? globalThis.fetch;
+  // The ordinary `baton serve` resident publishes `transport: 'local'` over an owner-only Unix
+  // socket; reach it exactly the way the CLI does instead of assuming a TCP-reachable URL.
+  const fetchImpl = options.fetchImpl ?? (connection.transport === 'local'
+    ? createLocalSocketFetch({
+      socketPath: connection.socketPath,
+      baseUrl: connection.baseUrl,
+      ownerUid: options.ownerUid
+        ?? (typeof process.getuid === 'function' ? process.getuid() : null),
+    })
+    : globalThis.fetch);
   if (typeof fetchImpl !== 'function') throw new TypeError('Baton Web MCP requires fetch');
   const client = new BatonWebClient({
     baseUrl: connection.baseUrl,
