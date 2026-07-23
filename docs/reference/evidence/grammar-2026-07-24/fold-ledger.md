@@ -181,6 +181,26 @@ substantive repair. One defect found and fixed; two claims verified.
   claim corrected in §4.1† with an explicit correction note, the class added to §6's
   `deployment.shutdown` row, and the §8.4 seeded `schema` rows widened from steer alone to both
   non-reconcilable commands.
+- **A-7 — FIXED — exhaustive grounding sweep: the CLI's "terminal" set is a mis-named and
+  incorrect provider-settled union.** Completed verification of all 54 code citations (A-6 covered
+  ten). Every remaining claim verified exactly — `:10668` `card().commands`, `:1226-1232` the
+  episode admission block, `:171-174` sorted-key `canonical()`, `:6705-6725`
+  (`node.taskId ? 'running' : 'approved'`, and `accepted → readOnlyResult ? 'completed' :
+  'work_completed'`), `:7310-7316` (actionId binds registryDigest + repoId + runId +
+  principal/session scope), `:8869-8875` conditional filtering, `:8880-8884` per-view minted
+  enums, `:2043` `pre_delivery`, `wave.mjs:11` (omits `denied`/`closed`, `SUCCESS_RESTING =
+  work_completed`), `wave.mjs:85-86,131`, `web-northbound.mjs:24` (`RECONCILABLE` filters on
+  `definition.reconcilable`, so steer is correctly excluded).
+  **One divergence the doc mischaracterized**: `application-cli.mjs:29` is named
+  `TERMINAL_RUN_PHASES` but its only uses are wait/follow stop conditions (`:1029,1923,1945`) —
+  it is semantically a *provider-settled* set. As one it is wrong: it omits `selection_required`
+  and `candidate_selected`, so `baton run wait`/`follow` on a run resting in either selection
+  state blocks past provider settlement today. v2's F5 called it "the CLI adds both
+  [denied/closed]" (true but incomplete) and §7.1 listed it only as a `closed`-deletion site.
+  Deleting `closed` alone would leave a third hand-maintained union standing — the exact failure
+  L4 exists to end. Corrected in **§1.2 F5** and **§7.1**, which now require the set to be
+  replaced by a `providerSettled()` call at M2 rather than edited. Note this is the same bug class
+  as R-CX-4, surfacing at a site R-CX-4 did not name.
 - **Method note — the NUL-byte trap is real and it bit this audit.** §8.4 already warns that
   `impl/src/application.mjs` contains a NUL byte requiring `grep -a`. Plain `grep` against it
   returns *silently empty* — not an error. An early verification pass here read that empty result
