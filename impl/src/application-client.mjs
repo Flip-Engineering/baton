@@ -111,9 +111,9 @@ function conciseProgress(view) {
 function prepareRunStart(objective, options) {
   if (!nonempty(objective)) throw clientError('Run objective is required');
   exactOptions(options, new Set([
-    'runId', 'resultIntent', 'profile', 'scope', 'model', 'harness', 'effort', 'exact',
+    'runId', 'resultIntent', 'profile', 'scope', 'model', 'harness', 'effort', 'exact', 'driverKind',
   ]), 'start');
-  for (const field of ['runId', 'profile', 'model', 'harness', 'effort']) {
+  for (const field of ['runId', 'profile', 'model', 'harness', 'effort', 'driverKind']) {
     if (options[field] !== undefined && !nonempty(options[field])) {
       throw clientError(`Run ${field} is invalid`);
     }
@@ -144,7 +144,7 @@ function prepareRunStart(objective, options) {
     throw clientError('manual routing requires model and effort together');
   }
   const intent = { objective: objective.normalize('NFKC').trim(), resultIntent };
-  for (const key of ['runId', 'profile', 'scope']) {
+  for (const key of ['runId', 'profile', 'scope', 'driverKind']) {
     if (options[key] !== undefined) intent[key] = options[key];
   }
   if (options.exact !== undefined) intent.route = options.exact;

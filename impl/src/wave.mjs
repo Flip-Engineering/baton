@@ -152,7 +152,7 @@ export async function createWave(baton, options = {}) {
       const route = member.exact
         ? { exact: member.exact }
         : { harness: member.harness, model: member.model, effort: member.effort };
-      entry.run = await baton.runs.start(member.objective, { ...route, scope: [...member.scope] });
+      entry.run = await baton.runs.start(member.objective, { ...route, scope: [...member.scope], driverKind: 'wave' });
       if (approve) await entry.run.approve();
     } catch (error) {
       entry.startError = { code: error?.code ?? null, message: String(error?.message ?? error) };
