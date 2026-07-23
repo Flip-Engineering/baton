@@ -1,6 +1,6 @@
 # 35 — One grammar: the unified agent control surface
 
-**Status: v2 FINAL** (issue #43). v1 was adversarially red-teamed by three decorrelated seats
+**Status: v2 (post-red-team) — FINAL** (issue #43). v1 was adversarially red-teamed by three decorrelated seats
 through baton.waves — codex `gpt-5.6-sol@high` (R-CX-1..15, verdict UNSOUND), kimi `k3@high`
 (R-KM-1..17, SOUND-WITH-FOLDS), opus `claude-opus-4-8@high` (R-OP-1..17, SOUND-WITH-FOLDS) —
 reports and drivers in `docs/reference/evidence/grammar-2026-07-24/`. Every finding is folded or
@@ -296,7 +296,11 @@ Registry-owned `--section` values do not count against H7's name depth (R-KM-3).
 
 ## 6. The canonical operation set
 
-Forty-five operations replace ~300 names. Verb-level entries are peers of `do` (§4.1 meta row).
+Forty-four operations replace ~300 names — v1's 41, **plus** `deployment.shutdown` (R-KM-1,
+R-OP-2) and `context.map`/`context.reduce`/`context.retry` (R-CX-1, R-KM-9), **minus** the
+double-mapped `run.result` row folded into `run.view --section episode.result` (R-OP-9). Nothing
+the 41-op set carried is dropped; the table below is the count of record. Verb-level entries are
+peers of `do` (§4.1 meta row).
 Every row carries its authority profile; unmarked rows are `ordinary`.
 
 | Canonical | Replaces / notes |
@@ -583,6 +587,9 @@ density worker×427 / member×219 / workstream×121 / assignee×26. The M0 audit
 the tool, not this file, the table of record for all of the above.
 
 ## Appendix B — red-team fold ledger
+
+Per-finding record with landing sections, severities, and the seat-conflict resolutions:
+`docs/reference/evidence/grammar-2026-07-24/fold-ledger.md`.
 
 All 49 findings dispositioned. **Folded as stated**: R-CX-1 (canonical set closure: +shutdown,
 +context.map/reduce/retry, checkpoint settle path, eval address union, search/chunk/coverage as
