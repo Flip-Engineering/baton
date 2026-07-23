@@ -137,5 +137,37 @@ substantive repair. One defect found and fixed; two claims verified.
   go green while a response union quietly collapsed `wait` into a consuming settle — exactly the
   durability/turn-accounting break R-CX-6 predicted. Now pinned in §10 C5, with the server-derived
   coordinates and sorted capabilities named as part of the contract.
+- **A-5 — FIXED (six residual clauses) — findings were folded at the *finding* level but not at
+  the *clause* level.** A-4 showed that "the ID is cited and the section is substantive" is too
+  shallow a test, because a minimal repair often carries 3–5 atomic demands and `0c5c970` folded
+  the prose demands while skipping several pins. Re-auditing all 49 findings clause-by-clause
+  surfaced six more, each verified against source before folding:
+  - **R-CX-1** — the demanded *generated, bidirectional* crosswalk had no contract. C1 runs
+    canonical→surface and C3 is total over phase literals only; nothing ran source→canonical over
+    D1/D2/D3 rows **or arguments**. §6's closure was an assertion. Now **§10 C10**.
+  - **R-CX-4** — the two lifecycle predicates were *defined* (L4, §7.1) but no contract *tested*
+    them; the finding demanded both. A build folding `result_ready` into `applicationTerminal`
+    passed every C-contract. Now asserted in **C3**.
+  - **R-OP-4** — of its four L2 sub-clauses, "every advertised action has a named verb accepting
+    the same `inputs`" was the one that did not land, leaving F3 (advertised-but-`do`-only)
+    unpinned and §6's coverage of D2's 27 kinds unobligated. Now in **§5 L2**.
+  - **R-CX-3** — the "eleven-topic vocabulary" half was never enumerated; only the phase92
+    attribution half landed. Verified closed at eleven incl. `help`/`cleanup`
+    (`application.mjs:113-116`, gated `:1232`). Now in **§4.1‡**.
+  - **R-CX-2** — `run.view` was pinned to the role/generation/section subset; `item`, `offset`,
+    `recipient` are live args (`application.mjs:130`) and were dropped. `run.watch` lacked
+    `timeoutMs`, the bounded page, and post-wait reauthorization (`run.follow` args at `:137`).
+    Both now in **§4.1** (read row and ‡).
+  - **R-OP-8** — the demanded ledger row (`run.steer reconcilable:false, retiresIn: M5`) was
+    absent, so the doc's own enforcement mechanism never covered the class it protects in prose.
+    Now a seeded `schema` row in **§8.4**, together with R-CX-13's demanded row key
+    (`operation × surface × arguments × effect × capabilities × output × continuation × aliases`),
+    without which the novel-divergence guard sees only names.
+- **Method note — the NUL-byte trap is real and it bit this audit.** §8.4 already warns that
+  `impl/src/application.mjs` contains a NUL byte requiring `grep -a`. Plain `grep` against it
+  returns *silently empty* — not an error. An early verification pass here read that empty result
+  as "citation not found" and nearly dismissed two correct findings. Any M0 extraction or
+  reviewer tooling that greps this file without `-a` will under-report divergences and look
+  green. Worth treating as a harness contract, not a footnote.
 - **Status header** bumped to `v2 (post-red-team) — FINAL`, satisfying the brief's rule (4)
   wording while preserving the prior controller's FINAL designation rather than overwriting it.

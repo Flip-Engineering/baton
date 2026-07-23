@@ -170,7 +170,7 @@ to the *ordinary* surface, where approval is the only plan verb and it lives on 
 
 | Class | Verbs | Semantics |
 |---|---|---|
-| read | `view`, `watch`, `list`, `help` | `view` = one bounded view at a depth, **optionally change-aware** (`--cursor N --wait D` — the registry's own preferred continuation, `application-semantics.mjs:135-140`) **or condition-awaiting** (`--until settled\|terminal`, absorbing `run.wait`'s deployment-bounded settle-block, R-OP-9/R-KM-2); `watch` = the only **event-channel** read (`channel: progress\|events\|output\|changes`, `--to RECIPIENT` for output, inherits `followPolicy` gating and per-channel cursors); `list` = bounded collections; `help` = self-description |
+| read | `view`, `watch`, `list`, `help` | `view` = one bounded view at a depth, **optionally change-aware** (`--cursor N --wait D` — the registry's own preferred continuation, `application-semantics.mjs:135-140`) **or condition-awaiting** (`--until settled\|terminal`, absorbing `run.wait`'s deployment-bounded settle-block, R-OP-9/R-KM-2); `watch` = the only **event-channel** read (`channel: progress\|events\|output\|changes`, `--to RECIPIENT` for output, inherits `followPolicy` gating, per-channel cursors, `afterCursor` + `timeoutMs` (`application.mjs:137`), the bounded categorized change page, and post-wait reauthorization — pinned as **schema**, not merely as a name, R-CX-2); `list` = bounded collections; `help` = self-description |
 | lifecycle | `start`, `approve`, `stop`, `recover`, `resume`, `retry` | exactly today's authority semantics |
 | interaction | `answer`, `send`, `interrupt` | `answer` settles answerable attention (§7.3); `send`/`interrupt` run-level forms resolve the live recipient as today; member forms are `{role, generation?}`-addressed |
 | trust | `review`, `adopt`, `select`, `feedback`, `revise`, `integrate`, `export` | the evidence→integration chain, unchanged semantics; `select`/`feedback` address a **candidate**, not a member (R-OP-16) |
@@ -206,7 +206,15 @@ The four cross-argument admission rules (`pageCursor` only for output×content; 
 for output|help; `generation ⇒ role`; `waitMs ⇒ cursor` — `application.mjs:1226-1247`) port
 verbatim into the `run.view` schema. Cross-role and cross-generation evidence isolation
 (`phase92-episode-attribution-red.test.mjs:103-104,133-144`) is a contract **of the fold**.
-Registry-owned `--section` values do not count against H7's name depth (R-KM-3).
+Registry-owned `--section` values do not count against H7's name depth (R-KM-3). The episode
+**topic vocabulary is closed at eleven** and registry-owned exactly as the §7 enums are —
+`outline`, `output`, `sources`, `derivations`, `contradictions`, `trace`, `route`, `verification`,
+`result`, `cleanup`, `help` (`application.mjs:113-116`, gated at `:1232`). A fold that silently
+drops one — `help` and `cleanup` are the easy casualties — is a red test, not a cosmetic loss
+(R-CX-3). `run.view` must also carry `run.inspect`'s **full** selector set,
+`depth/section/item/offset/pageCursor/recipient/cursor/waitMs` (`application.mjs:130`), not the
+role/generation/section subset alone: `item`, `offset`, and `recipient` are live arguments today,
+and per-recipient, offset-paged **non-follow** output reads depend on them (R-CX-2).
 
 ### 4.2 House rules
 
@@ -262,6 +270,11 @@ Registry-owned `--section` values do not count against H7's name depth (R-KM-3).
   gets `application_action_scope_mismatch` and re-reads; that refusal is the designed recovery
   (R-KM-15). Over MCP-over-Web the bridge mints the authority envelope per session
   (`mcp-web-bridge.mjs:111-135`); the caller-visible block stays `{kind, inputs}` everywhere.
+  **Coverage runs both ways** (R-OP-4): every advertised action kind has **exactly one §6 named
+  verb accepting the same `inputs`**, and `do` accepts every advertised action — neither
+  direction implies the other's admission requirements. Without the first half, F3's
+  advertised-but-reachable-only-through-`do` friction survives the grammar intact, and §6's
+  coverage of D2's 27 action kinds carries no conformance obligation.
 - **L3 — Terminals are explained** (R-CX-10): every **non-success** terminal carries a typed
   cause; `completed` carries a non-null accepted result/outcome authority and MAY have
   `terminalCause: null` (pinned today by `phase92-read-only-result-red.test.mjs:90-103`).
@@ -482,7 +495,13 @@ admitted-command set (`COMMAND_CAPABILITY` keys), D8, and complete phase-literal
   require a spec-version change with red-team approval.
 - **Dimensioned** (R-OP-15e): each entry carries `dimension: name | args | schema | behavior |
   enum` and `retiresIn: M1..M5`; seeded `behavior` rows include the conditional capability
-  filtering and the per-deployment MCP schema mutation (`mcp-northbound.mjs:826`).
+  filtering and the per-deployment MCP schema mutation (`mcp-northbound.mjs:826`). Rows are
+  **keyed by `operation × surface × arguments × effect × capability set × output × continuation ×
+  aliases`** (R-CX-13) — a name-keyed ledger cannot notice a divergence in arguments, effect
+  class, or continuation behavior, so the novel-divergence guard is only as strong as this key.
+  A seeded `schema` row carries **`run.steer` `reconcilable: false`, `retiresIn: M5`** (R-OP-8),
+  so an M1–M4 commit that folds steer's durability class into `run.member.send`'s goes red in the
+  ledger rather than merely contradicting §4.1†.
 - **M0 harness note**: `impl/src/application.mjs` contains a NUL byte — extraction must read it
   binary-safely (`grep -a` semantics; R-OP scope note).
 
@@ -540,7 +559,10 @@ operational cost, not a rollback hazard (R-OP-11).
   fields). Same-surface at M1; cross-surface outcome-identity at M2; four-surface at M4
   (R-OP-1, R-OP-15a).
 - **C3** (L4): no surface serializes a phase/member/attention string outside §7; the mapping
-  is generated and total over extracted literals (R-OP-5).
+  is generated and total over extracted literals (R-OP-5). **The two lifecycle predicates are
+  asserted separately** (R-CX-4): `providerSettled` and `applicationTerminal` are registry-owned,
+  tested distinct, and neither is derived from a single terminal union — a build that admits
+  `result_ready` into `applicationTerminal` is red here, not merely off-spec in prose.
 - **C4** (L6): banned-token lint generated from §4.1 with token normalization (R-CX-13).
 - **C5** (L10): the finite phase × attention × next-action matrix — outline alone answers
   what/why/next for **all nine** attention kinds; cause non-null for non-success terminals only
@@ -560,6 +582,14 @@ operational cost, not a rollback hazard (R-OP-11).
   explore/review gain provenance they lack today (R-OP-17).
 - **C8** (H10): canonical serialization pin over the scoped surface — cut at M4 (R-OP-15c).
 - **C9** (§6.1): derived web transport names disjoint from kernel/authoring literals (R-OP-10).
+- **C10** (§6, L1): the canonical crosswalk is **generated and total in both directions**
+  (R-CX-1). Every D1 operation, D2 action, and D3 command row — **and every argument** — maps to
+  a §6 canonical operation, and every canonical row declares either its source rows or an
+  explicit new-semantics note. An unmapped source row, a dropped argument, or an undeclared
+  canonical row is a red test. This is the operation-level analogue of §7.1's generated phase
+  mapping: without it, §6's closure claim is an assertion rather than a contract, and a fold
+  could silently drop a D2 action or an argument (`run.inspect`'s `offset`/`recipient`,
+  `run.follow`'s `timeoutMs`) while passing C1–C9.
 
 ---
 
