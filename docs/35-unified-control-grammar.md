@@ -191,10 +191,13 @@ normalization** — `stop_member` and `stop-member` are one token, R-CX-13): `sh
 † `run.steer` is a **deprecated compatibility command, not an alias** (R-CX-15, R-KM-5,
 R-OP-8): its exact five-field schema (`{runId, target, mode, message, reason}` — worker-id
 target, all three delivery modes, **required** reason), its worker-ownership/fence resolution,
-and its unique `reconcilable: false` admission class (`application.mjs:142`, the only one;
-consumed by `web-northbound.mjs:24`) are preserved verbatim through M5 and retired to the kernel
+and its `reconcilable: false` admission class (`application.mjs:142`; consumed by
+`web-northbound.mjs:24`) are preserved verbatim through M5 and retired to the kernel
 profile, never rewritten into `member.send`. `reconcilable` becomes a per-operation registry
-field (§8.1) so no alias can flip a durability class silently.
+field (§8.1) so no alias can flip a durability class silently. **Correction (v2 acceptance):** v2
+called steer's class "the only one" — it is not. `reconcilable: false` is carried by **exactly
+two** commands, `run.steer` (`:142`) and `application.shutdown` (`:152`). The class is rare, not
+unique, and both canonical rows must carry it; see §6's `deployment.shutdown` row.
 
 ‡ Episode chapters become sections of `run.view` — **the fold is sound only with the episode's
 axes carried over** (R-OP-3, R-KM-3, R-CX-3): `run.view` gains `--role ROLE` (with the explicit
@@ -320,7 +323,7 @@ Every row carries its authority profile; unmarked rows are `ordinary`.
 |---|---|
 | `deployment.view` | remote readiness/routes/workspace read (`doctor --check`, `routes()`, `route()`). The CLI's credential-free local doctor is a host-side rendering detail, **not** projected to web/MCP (R-KM-16) |
 | `deployment.serve` | `baton serve` — profile `host` |
-| `deployment.shutdown` | `application.shutdown` (`application.mjs:152`) — profile `host`, never web/MCP (R-OP-2, R-KM-1) |
+| `deployment.shutdown` | `application.shutdown` (`application.mjs:152`) — profile `host`, never web/MCP (R-OP-2, R-KM-1); **carries `reconcilable: false`**, the second of the table's exactly two non-reconcilable commands. Folding shutdown in without that class is precisely the silent durability-class flip R-OP-8 forbids |
 | `run.list` | `runs.list`, `baton_runs` |
 | `run.start` | `run.start` + presets `explore`/`review`/`workflow()`/`waves.start` (sugar with recorded expansion, L5) |
 | `run.view` | `run.inspect`, `run.status`, `run show`, **`run.wait`** (`--until settled\|terminal`, R-OP-9), `run.episode` + chapters (with `--role/--generation/--section`, §4.1‡), embedded outline/index/changes-awaiting reads. `run result` = `run.view --section episode.result` (the double-mapped v1 `run.result` row is deleted, R-OP-9) |
@@ -499,9 +502,10 @@ admitted-command set (`COMMAND_CAPABILITY` keys), D8, and complete phase-literal
   **keyed by `operation × surface × arguments × effect × capability set × output × continuation ×
   aliases`** (R-CX-13) — a name-keyed ledger cannot notice a divergence in arguments, effect
   class, or continuation behavior, so the novel-divergence guard is only as strong as this key.
-  A seeded `schema` row carries **`run.steer` `reconcilable: false`, `retiresIn: M5`** (R-OP-8),
-  so an M1–M4 commit that folds steer's durability class into `run.member.send`'s goes red in the
-  ledger rather than merely contradicting §4.1†.
+  Seeded `schema` rows carry **both `reconcilable: false` commands — `run.steer` and
+  `application.shutdown`** (`application.mjs:142,152`), `retiresIn: M5` (R-OP-8), so an M1–M4
+  commit that folds either durability class into a reconcilable one goes red in the ledger rather
+  than merely contradicting §4.1†.
 - **M0 harness note**: `impl/src/application.mjs` contains a NUL byte — extraction must read it
   binary-safely (`grep -a` semantics; R-OP scope note).
 

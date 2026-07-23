@@ -163,6 +163,24 @@ substantive repair. One defect found and fixed; two claims verified.
     Now a seeded `schema` row in **§8.4**, together with R-CX-13's demanded row key
     (`operation × surface × arguments × effect × capabilities × output × continuation × aliases`),
     without which the novel-divergence guard sees only names.
+- **A-6 — FIXED — a fold's *grounding* was factually wrong, and it dropped a durability class.**
+  Third audit level: not "does the citation resolve" (A-1..A-3 checked that) nor "did every clause
+  land" (A-4/A-5), but **does the cited line actually say what the doc claims**. Re-verified the
+  doc's substantive code claims against file contents — possible only with `grep -a`, see the
+  method note below. Nine of ten verified exactly (`:117-124` two lifecycle sets, `:152` shutdown,
+  `:6423-6432` paused-before-interrupted, `:1943` work sentinel, `application-semantics.mjs:581-584`
+  sorted caps, `mcp-web-bridge.mjs:156` raw-order compare via `join('\0')`,
+  `application-client.mjs:251` `['completed','closed'] → completed`, `:113-116` topics, `:130/:137`
+  selectors). **One was false**: §4.1† called `run.steer`'s `reconcilable: false` class
+  "the only one". It is not — the class is carried by **exactly two** commands, `run.steer`
+  (`:142`) and `application.shutdown` (`:152`).
+  The consequence was not cosmetic. §6 folded `application.shutdown` into `deployment.shutdown`
+  (satisfying R-KM-1/R-OP-2) **without carrying its `reconcilable: false` class** — a silent
+  durability-class flip on a canonical row, which is exactly what R-OP-8 was raised to prevent and
+  what §4.1†'s own closing sentence promises cannot happen. Fixed in three places: the uniqueness
+  claim corrected in §4.1† with an explicit correction note, the class added to §6's
+  `deployment.shutdown` row, and the §8.4 seeded `schema` rows widened from steer alone to both
+  non-reconcilable commands.
 - **Method note — the NUL-byte trap is real and it bit this audit.** §8.4 already warns that
   `impl/src/application.mjs` contains a NUL byte requiring `grep -a`. Plain `grep` against it
   returns *silently empty* — not an error. An early verification pass here read that empty result
