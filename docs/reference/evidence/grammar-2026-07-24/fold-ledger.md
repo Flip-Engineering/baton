@@ -253,6 +253,23 @@ substantive repair. One defect found and fixed; two claims verified.
   way to admit the two commonest flags on the surface: the lint would either fire on spellings §2
   promises to preserve, or be silently exempted for them — unenforceable in exactly the way C3
   was (A-9). Fixed in **§4.2 H4** with a declared `propertyAliases` class, seeded with both.
+- **A-11 — FIXED — C1's derivation half falsified statically; rename cost understated.** C1 and
+  C2 need the M0 harness to test fully, but C1's *derivation* claim is checkable now. Compared all
+  21 live `baton_*` names against §6.1's rule. H1's cited drift pair is real and correctly quoted
+  (`baton_workstream_notify` ×3 and `fleet_run_workstream_notify` ×1 both exist in
+  `mcp-northbound.mjs`). But H1 cites **one** of **six** non-derivable names: `baton_help`
+  (`application.help`), `baton_runs` (`runs.list`), `baton_workstream_notify`/`baton_workstream_stop`
+  (`run.workstream.*`, dropping the `run` segment), and `baton_decision_answer`/`baton_decision_list`
+  (`run.answer` and the attention read). Deliberately **excluded** as non-drift after checking:
+  `baton_board_*`, `baton_package_*`, `baton_context_eval` derive correctly from their own registry
+  keys and only look wrong when diffed against D3 — a naive set-difference reports 15, which would
+  have been an overclaim.
+  The consequence §11 missed: these are MCP tool names **already advertised to external clients**.
+  M4 renders names from the registry and M5 sunsets aliases, so each is a driver-visible breaking
+  rename, and C1 reds on all six at M1 unless each is ledgered as a `name` divergence with an
+  explicit `retiresIn`. v2's rename-cost bullet quantified only internal pinned test files
+  (`phase64…UA5`, `phase67-*`, `phase92-*`, `wave.mjs`, `application-client.mjs:251`). Fixed in
+  **§11** with the six named and the published-surface assumption stated rather than inherited.
 - **Method note — the NUL-byte trap is real and it bit this audit.** §8.4 already warns that
   `impl/src/application.mjs` contains a NUL byte requiring `grep -a`. Plain `grep` against it
   returns *silently empty* — not an error. An early verification pass here read that empty result

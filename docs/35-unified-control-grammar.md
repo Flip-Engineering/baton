@@ -643,6 +643,19 @@ operational cost, not a rollback hazard (R-OP-11).
 
 ## 11. Honest edges
 
+- **Rename cost lands on a published surface, not only on tests** (v2 acceptance). The `baton_*`
+  dialect carries **six names §6.1's rule cannot derive from their own source keys**:
+  `baton_help` (`application.help`), `baton_runs` (`runs.list`), `baton_workstream_notify` and
+  `baton_workstream_stop` (`run.workstream.*` — the `run` segment is dropped), and
+  `baton_decision_answer`/`baton_decision_list` (`run.answer` and the attention read). H1 cites
+  one of the six; the other five were never enumerated. (`baton_board_*`, `baton_package_*`, and
+  `baton_context_eval` are **not** drift — they derive correctly from their own registry keys,
+  just not from D3.) These are MCP **tool names already advertised to external clients**: M4
+  renders names from the registry and M5 sunsets aliases, so each is a driver-visible breaking
+  rename, and C1 goes red on all six at M1 unless each is ledgered as a `name` divergence with an
+  explicit `retiresIn`. §2's "blast radius is its own tests, drivers, and docs" holds only if
+  every MCP client counts as "its own drivers" — for a published tool surface that is the
+  assumption to state out loud, not to inherit.
 - **Rename cost is real** and now quantified: the named pinned files
   (`phase64…UA5`, `phase67-run-terminality`, `phase92-episode-*`, `phase12/16/72` inventories,
   `wave.mjs` phase branches, `application-client.mjs:251`) are the M-phase work items, listed in
