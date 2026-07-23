@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, realpathSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -142,8 +142,11 @@ test('GV4/GV5: an absolute edited path outside scope kills once', async () => {
   assert.equal(log.read(h.id).filter((event) => event.kind === 'health.scope_violation').length, 1);
 });
 
-test('GV4/GV5: canonical filesystem aliases do not fabricate an out-of-scope kill', async () => {
+test('GV4/GV5: canonical filesystem aliases do not fabricate an out-of-scope kill', async (t) => {
+  // The literal /tmp prefix is the point of this fixture (macOS aliases it to /private/tmp), so
+  // it escapes the suite tmp root and must reap itself (issue #40).
   const worktree = mkdtempSync('/tmp/baton-gv-path-alias-');
+  t.after(() => rmSync(worktree, { recursive: true, force: true }));
   mkdirSync(join(worktree, 'src')); writeFileSync(join(worktree, 'src', 'ok.mjs'), 'export const ok = true;\n');
   const ad = adapter();
   const { c, log } = system(ad, { watchdog: { stallMs: 0 }, worktreePath: worktree });

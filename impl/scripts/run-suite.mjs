@@ -5,10 +5,29 @@ import { chmodSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
+import { lintDefaultTestDirectory } from './fixture-clock-lint.mjs';
+import { sweepStaleSuiteRoots, writeSuiteOwnerReceipt } from './suite-hygiene.mjs';
+
+// Issue #42: a time-bomb fixture must be red on the author's machine the moment it is written,
+// not hours after merge when wall time crosses its literal.
+const clockFindings = lintDefaultTestDirectory();
+if (clockFindings.length > 0) {
+  for (const finding of clockFindings) {
+    process.stderr.write(`fixture-clock-lint: ${finding.file}:${finding.line}: ${finding.reason}\n`);
+  }
+  process.exit(1);
+}
+
 const parent = resolve(process.env.BATON_TEST_TMP_PARENT || tmpdir());
 mkdirSync(parent, { recursive: true, mode: 0o700 });
+// Issue #40: reclaim sibling roots whose recorded owner process is provably dead — the residue
+// of a SIGKILL-class death of an earlier run-suite, which runs no cleanup handler.
+for (const swept of sweepStaleSuiteRoots(parent)) {
+  process.stderr.write(`baton test runner reclaimed a dead suite root: ${swept}\n`);
+}
 const suiteRoot = mkdtempSync(join(parent, 'baton-suite-'));
 chmodSync(suiteRoot, 0o700);
+writeSuiteOwnerReceipt(suiteRoot);
 
 let cleaned = false;
 let cleanupError = null;
@@ -25,12 +44,17 @@ function cleanup() {
 process.once('exit', cleanup);
 
 const detached = process.platform !== 'win32';
-const child = spawn(process.execPath, ['--test', ...process.argv.slice(2)], {
+// Issue #40: the detached group also watches its own parent — if this process dies without
+// handlers (SIGKILL-class), the test runner terminates itself instead of working headless.
+const watchdogUrl = new URL('./suite-orphan-watchdog.mjs', import.meta.url).href;
+const child = spawn(process.execPath, ['--import', watchdogUrl, '--test', ...process.argv.slice(2)], {
   detached,
   stdio: 'inherit',
   env: {
     ...process.env,
     BATON_TEST_SUITE_ROOT: suiteRoot,
+    BATON_SUITE_WATCHDOG: '1',
+    BATON_SUITE_WATCHDOG_PPID: String(process.pid),
     TMPDIR: suiteRoot,
     TMP: suiteRoot,
     TEMP: suiteRoot,
