@@ -251,3 +251,23 @@ durable receipts, and selective member stop proofs — with findings closed befo
 tracker: issues #2–#12 (routing axes, locale-independent canonical ordering, cross-controller
 process forests, review-report semantics, worker policy, Program v1 composition, the AX spine,
 Claude credential projection, nested orchestration). The canonical suite is **2478/2478 green**.
+
+Phases 93b–93h shipped the agent-orchestration stack itself, every slice built by Baton
+orchestrating its own workers through the spec → adversarial red-team → revise → red-first
+tests → wave-implementation → acceptance loop: the first-class wave surface (`baton.waves`
+with per-member scopes, outcome materialization, live progress and steering); the
+reflexive-orchestration quartet (REFLEX-1 durable worker→orchestrator decision channel with
+multi-choice and free-response gating; REFLEX-2 shared and per-worker boards; REFLEX-3
+context packages; REFLEX-4 `application.context_eval`); the REPL layer (REPL-1..3: shared
+cells, typed bindings, cross-run scripting); knowledge horizons (KG-1..4: task-ephemeral,
+workflow-ephemeral, and project-persistent graphs with orchestrator-gated elevation); the
+MCP reflex surface (11 tools, 58-tool inventory); and the issue-31 turn-checkpoint stack
+(31-a compat spine, 31-b steering acts, 31-b.5 semantic action, 31-c live acceptance — a
+codex worker paused four times organically, was nudged three times and claimed once by its
+driver, and completed with zero prompt-coaching). The canonical suite passed **2769/2769**
+at the 31-b.5 checkpoint. In flight: issue #33 (structured scratchpad as the write surface
+into the task-ephemeral knowledge graph, with per-worker private and workflow-shared
+partitions) and the issue-#43 unified control-surface grammar audit (docs/35; three-seat
+decorrelated red-team harvested, fold to v2 underway). Open tracker: GitHub issues #2–#44;
+the AX spine (#10), wire-frame graceful degradation (#28), and headless Claude credential
+projection (#11) remain the highest-friction operator items.
