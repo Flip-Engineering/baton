@@ -127,11 +127,10 @@ const KNOWLEDGE_NODE_TYPES = new Set(['Run', 'Task', 'Artifact', 'Phase', 'Exper
 const KNOWLEDGE_EDGE_TYPES = new Set(['Supports', 'Contradicts', 'Supersedes', 'Informed', 'ProducedBy', 'Contains', 'DependsOn', 'Refines', 'ReadBy', 'VerifiedBy', 'DerivedFrom', 'Affects', 'Cites', 'ObservedIn']);
 const KNOWLEDGE_GROUNDINGS = new Set(['verified', 'observed', 'derived', 'asserted']);
 const KNOWLEDGE_PROJECTION_FIELDS = new Set(['contentDigest', 'observedSeq', 'observedAt', 'eventTimeSeq', 'eventTime', 'validityVersion', 'invalidatedBy', 'acceptanceInvalidation', 'derivedFromEvent', 'resolvedBy', 'winnerId', 'loserId', 'resolutionReason']);
-// KG-1 Part A rule 5 (P1-1 fix): every event kind that mutates task/workflow projection input
-// state without already being counted by boardFence's five orchestrator-authority transitions.
-const PROJECTION_INPUT_FENCE_EVENTS = new Set([
-  'knowledge.node_added', 'knowledge.promoted', 'knowledge.edge_added', 'knowledge.promotion_batch',
-  'knowledge.scratch_corrected', 'knowledge.workflow_admitted',
+// The non-knowledge half of the projection-input fence (see _apply's closing note): board
+// claim/report traffic (deliberately non-board-fence-bumping) and package admission/attach —
+// the only non-knowledge inputs the horizons read, closed by design.
+const PROJECTION_INPUT_NONKG_EVENTS = new Set([
   'package.admitted', 'package.attached',
   'board.claim_requested', 'board.claim_expired', 'board.report_submitted',
 ]);
@@ -921,6 +920,9 @@ export class CoordinationStore {
     // mechanism as _boardFences, generalized across every projection-input event kind so no
     // task/workflow horizon cache entry can stale-hit.
     this._projectionInputFence = 0;
+    // Per-fold marker for the mechanical derivation (acceptance P1): set by _setKnowledgeNode/
+    // _setKnowledgeEdge, consumed at the end of each _apply pass.
+    this._knowledgeWriteThisEvent = false;
     this._contextPackages = new Map(); this._contextPackageAttachments = new Map();
     // REPL-1: admitted ReplManifest authority records, keyed by manifestDigest. REPL sessions
     // ride the existing _contextSessions map, so no separate session projection is added.
@@ -3736,6 +3738,7 @@ export class CoordinationStore {
 
   _setKnowledgeNode(event, id, value) {
     const node = freeze(clone(value)); this._knowledgeNodes.set(id, node);
+    this._knowledgeWriteThisEvent = true;
     const history = this._knowledgeNodeHistory.get(id) ?? [];
     const version = freeze({ observedSeq: event.seq, observedAt: event.ts, value: node });
     if (history.at(-1)?.observedSeq === event.seq) history[history.length - 1] = version; else history.push(version);
@@ -3744,6 +3747,7 @@ export class CoordinationStore {
 
   _setKnowledgeEdge(event, id, value) {
     const edge = freeze(clone(value)); this._knowledgeEdges.set(id, edge);
+    this._knowledgeWriteThisEvent = true;
     const history = this._knowledgeEdgeHistory.get(id) ?? [];
     const version = freeze({ observedSeq: event.seq, observedAt: event.ts, value: edge });
     if (history.at(-1)?.observedSeq === event.seq) history[history.length - 1] = version; else history.push(version);
@@ -7356,10 +7360,13 @@ export class CoordinationStore {
 
   _apply(event) {
     const p = event.payload;
-    // KG-1 Part A rule 5 (P1-1 fix): global, replay-derived — runs regardless of which branch
-    // below handles the event, so every projection-input write is covered without threading
-    // an increment into each individual fold branch by hand.
-    if (PROJECTION_INPUT_FENCE_EVENTS.has(event.kind)) this._projectionInputFence += 1;
+    // KG-1 (acceptance P1): the projection-input fence is MECHANICALLY derived, never an
+    // enumerated kind allowlist — _setKnowledgeNode/_setKnowledgeEdge mark every fold that
+    // mutates queryKnowledge-visible state (task.created, route.outcome_observed, artifact.*,
+    // knowledge.invalidated, contradiction_resolved, representation/reuse families included),
+    // and the counter advances once per such event after the fold. A new node-writing kind
+    // cannot silently escape it. Replay re-folds identically, so the counter is exact.
+    this._knowledgeWriteThisEvent = false;
     let admittedRunId = null;
     if (event.kind === 'goal.version_defined') admittedRunId = p?.goal?.runId ?? null;
     else if (event.kind === 'plan.version_proposed') admittedRunId = p?.plan?.runId ?? null;
@@ -8205,6 +8212,15 @@ export class CoordinationStore {
       }));
     } else {
       throw new CoordinationIntegrityError(`unsupported coordination event kind ${event.kind}`, 'unsupported_event_kind');
+    }
+    // The fence has two halves, each honest about its coverage: knowledge mutations are
+    // MECHANICALLY derived (the helpers above — no enumeration, nothing can escape it); the
+    // remaining horizon inputs are the five named NON-knowledge kinds (board claim/report —
+    // deliberately non-board-fence-bumping traffic — and package admit/attach). The horizons'
+    // non-knowledge inputs are closed by design, so this set is stable; any future
+    // non-knowledge projection input MUST be added here explicitly (named rule, KG-1f pins it).
+    if (this._knowledgeWriteThisEvent || PROJECTION_INPUT_NONKG_EVENTS.has(event.kind)) {
+      this._projectionInputFence += 1;
     }
   }
 

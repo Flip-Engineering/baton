@@ -157,6 +157,46 @@ test('KG-1e: no horizon read of any kind appends a knowledge read event', () => 
   assert.equal(before, before, 'sanity guard: queryKnowledge itself remains a pure read');
 });
 
+test('KG-1f (P1-1 property, acceptance P1): ANY queryKnowledge-visible mutation misses the task/workflow horizon cache — a Task node minted by task.created, a Finding dropped by knowledge.invalidated', () => {
+  const { coordinator, coordination } = lightweightCoordinator();
+  const taskId = 'task-f';
+  coordinator._tasks.set(taskId, { id: taskId, assignee: 'worker-f', runId: 'run-f' });
+
+  const first = coordinator.taskHorizon(taskId, { board: 'shared-f' });
+  assert.equal(coordinator.taskHorizon(taskId, { board: 'shared-f' }), first, 'no write: cache hit');
+
+  // task.created mints a live Task node through the knowledge fold (coordination-store.mjs
+  // :7616) — visible to queryKnowledge({}) but absent from the old kind-allowlist.
+  coordination.createTask({
+    id: 'task-minted', brief: { objective: 'minted for the fence property', capabilities: [] },
+    deps: [], refines: null, relation: 'root', runId: 'run-f', taskType: 'general',
+    reservedWorkerId: 'worker-minted', vendorRequested: 'kimi-code', modelRequested: 'kimi-code/k3',
+    modelPolicy: null, effortRequested: 'high', sessionRequest: { mode: 'new' },
+  }, { actor: 'orchestrator', key: 'task.created:minted' });
+  const afterTask = coordinator.taskHorizon(taskId, { board: 'shared-f' });
+  assert.notEqual(afterTask, first, 'a Task node minted by task.created must miss the horizon cache');
+
+  // knowledge.invalidated flips a node's validTo — the node drops out of queryKnowledge({}).
+  coordination.addKnowledgeNode({ id: 'finding:doomed', type: 'Finding', grounding: 'observed', evidence: [] }, { actor: 'policy', key: 'kn-f1' });
+  const afterAdd = coordinator.taskHorizon(taskId, { board: 'shared-f' });
+  assert.notEqual(afterAdd, afterTask, 'the node admission itself misses');
+  coordination.invalidateKnowledge('finding:doomed', 1, 'superseded by the fence property test', { actor: 'policy', key: 'kn-doom' });
+  const afterInvalidation = coordinator.taskHorizon(taskId, { board: 'shared-f' });
+  assert.notEqual(afterInvalidation, afterAdd, 'knowledge.invalidated must miss — the node dropped out of the projection');
+  assert.equal(coordinator.taskHorizon(taskId, { board: 'shared-f' }), afterInvalidation, 'nothing further changed: cache hit');
+
+  // Same property on the workflow horizon (run scope).
+  const beforeWorkflow = coordinator.workflowHorizon('run-f');
+  coordination.createTask({
+    id: 'task-minted-2', brief: { objective: 'second mint', capabilities: [] },
+    deps: [], refines: null, relation: 'root', runId: 'run-f', taskType: 'general',
+    reservedWorkerId: 'worker-minted-2', vendorRequested: 'kimi-code', modelRequested: 'kimi-code/k3',
+    modelPolicy: null, effortRequested: 'high', sessionRequest: { mode: 'new' },
+  }, { actor: 'orchestrator', key: 'task.created:minted-2' });
+  assert.notEqual(coordinator.workflowHorizon('run-f'), beforeWorkflow,
+    'a Task node minted by task.created must miss the workflow horizon cache too');
+});
+
 // ============================================================
 // Part B (KG-2 rule 5): board-close mints a candidate Finding
 // ============================================================

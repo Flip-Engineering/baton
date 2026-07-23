@@ -60,10 +60,19 @@ this contract were re-verified against `impl/src/coordination-store.mjs` and
 `impl/src/coordinator.mjs` at revision time; several v1 citations were incomplete (widened here)
 but none pointed at the wrong code.
 
-- **P1-1** (union-fence under-covers projection inputs) — fixed. Added a new store-level,
-  replay-derived counter, `projectionInputFence()` (Part A rule 5), appended as a fourth
-  component to both the task fence (rule 2) and the workflow fence (rule 3). Project horizon
-  (rule 4) needed no change — `this._events.length` was already a superset bound.
+- **P1-1** (union-fence under-covers projection inputs) — fixed, then CORRECTED by the bloc
+  acceptance review (2026-07-23, P1-1 there): the first fix used an enumerated kind allowlist
+  that silently missed task.created / route.outcome_observed / artifact.* /
+  knowledge.invalidated / contradiction_resolved / reuse_* mutations. The landed rule is now
+  two-half: knowledge mutations are MECHANICALLY derived (the `_setKnowledgeNode`/
+  `_setKnowledgeEdge` fold helpers mark every knowledge-mutating event — no enumeration, and a
+  new node-writing kind cannot escape it), and the only non-knowledge horizon inputs are the
+  five named kinds (`package.admitted/attached`, `board.claim_requested/claim_expired/
+  report_submitted`), closed by design. `projectionInputFence()` advances once per qualifying
+  event, replay-exact, appended as a fourth component to both the task fence (rule 2) and the
+  workflow fence (rule 3). The regression test (KG-1f) now asserts the property directly —
+  any `queryKnowledge({})`-visible mutation misses the cache — and the acceptance verdict
+  downgraded to Conditional Accept until this correction landed.
 - **P1-2** (Part D `admitSeq` self-referential) — fixed. The admitted Finding's evidence now
   references `candidate.observedSeq` (the candidate's own, necessarily-prior minting seq),
   never the admission event's own prospective seq (Part D rule 17). Also answers the report's
