@@ -89,7 +89,9 @@ Code this contract is grounded in and will touch:
   `ownedWorker`-conditioned branches at :4991-4995 this contract's `paused` branch must sit
   alongside); wave.mjs's `attentionFrom` (:78-88) and `progress()` (:159-179, `phase:
   outline.phase ?? null` — a pass-through, so the application.mjs fix alone repairs wave progress
-  with no wave.mjs code change for `phase`, only for `attentionFrom`); story.mjs's per-worker fold
+  with no wave.mjs code change for `phase` at all; `attentionFrom` does eventually need a
+  `'paused'` branch, but per the SHARED DECISION (see "v2 revisions") that edit is **31-b's**, not
+  this contract's — 31-a touches no wave.mjs code); story.mjs's per-worker fold
   — the `WorkerStatus` typedef (:37), `LEGAL_TRANSITIONS[KIND.TURN_COMPLETED]` (:224, `{from:
   ['working'], to:'idle'}`) and its `applyEvent` case (:348-355, unconditionally parks the worker
   at `'idle'` on any `working`-status turn-completed — **never disguised as `working`, but
@@ -104,6 +106,54 @@ Code this contract is grounded in and will touch:
 
 The v2 design is settled; this contract fixes the shapes and insertion points so 31-a ships
 red-first and does not re-litigate docs/35.
+
+## v2 revisions
+
+Every numbered finding in docs/reference/evidence/turn-checkpoints-2026-07-23/31a-redteam.md is
+resolved below with file:line evidence re-verified against the current tree; none are dropped.
+SHARED DECISIONS pinned by the orchestrator (the `_pausedTurns` key space, story.mjs's
+`'paused'` status winning with the fold-set fix, `attentionFrom`'s `'paused'` →
+`'turn_checkpoint'` mapping living in 31-b not 31-a, and coordination-store.mjs:10630/:10637
+being 31-a's edit that 31-b does not duplicate) are honored unmodified — this pass only grounds
+them in verified evidence, it does not relitigate them.
+
+- **P1-1 (BLOCKING — normalizeIntent strips driverKind).** Resolved: Part D rule 2 now names the
+  required `normalizeIntent` whitelist edit (application.mjs:919-921, :933-941), mirroring the
+  function's own existing `RESULT_INTENTS` validation shape (:100, :926); `driverKind` is
+  explicitly excluded from `intentDigest`/runId derivation (:3703-3708, :3722-3729); the
+  `existingRun !== null` reconcile case (:3731-3734) is specified — marker admission is gated on
+  `existingRun === null` only.
+- **P1-2 (story.mjs fold order — vacuous test).** Resolved: Part C rule 5's `TURN_PAUSED` rule is
+  now `{from: ['working', 'idle'], to: 'paused'}` (verified against the real fold order:
+  `lifecycle.turn_completed` always precedes `turn.paused` in the per-worker log, coordinator.mjs
+  :9896 vs. the later mint in `_admitPauseRecord`); Part E's red test drives the real two-event
+  sequence, not an isolated `TURN_PAUSED` event.
+- **P1-3 (CI6 replay kills the paused task).** Resolved: new Part C rule 6 names CI6
+  (coordinator.mjs:11251-11276) explicitly, chooses fail-closed parity with `input_required`
+  (verified as `input_required`'s own existing, already-unmodified restart behavior — not a new
+  degradation introduced here), and Part E's replay red test now asserts the post-restart task
+  status and the disposition of the reconstructed `_pausedTurns` entry for the dead task.
+- **P1-4 (31-a must not ship wave.mjs:151).** Resolved: Part D rule 2 no longer edits
+  wave.mjs:151. That edit belongs to 31-b; this contract states the dependency instead of
+  duplicating it, and ships the `runs.start`/`driverKind` plumbing with no caller, so the
+  degenerate (no-driver) path is what the entire current suite continues to exercise.
+- **P1-5 (changedPathsDigest throws when baseSha is absent).** Resolved: Part B rule 3 now guards
+  on both `baseSha` and `headSha` being present before calling `changedPathsAtCommit`
+  (index.mjs:724-728); either absent yields `canonicalDigest([])`, never a thrown
+  `captured_change_invalid`.
+- **P2-1 (single gated dispatch).** Resolved: Part B rule 1's mint-site snippet has
+  `_admitPauseRecord` return a `settled` boolean; `if (!settled) break;` — the one pre-existing
+  gate at coordinator.mjs:9932 runs exactly once either way, and Part D rule 4's "ran
+  unconditionally" phrasing is corrected to name that gate.
+- **P2-2 (name coordination-store.mjs:10630 and :10637).** Resolved: Part C rule 5 now cites
+  `goalPlanStatus` (coordination-store.mjs:10593-10670) directly — :10630 gains the `'paused'`
+  branch (the actual `node.state` fix Part C rule 5 previously flagged as out-of-budget);
+  :10637 is named and verified unreachable for `'paused'` (gated by `TERMINAL.has(status)` at
+  :10636, `TERMINAL` = `{completed,failed,cancelled}` at :120) — no code change there.
+- **P2-3 (handle.status stays 'working' while the task is paused).** Resolved: named explicitly
+  as deliberate for 31-a in Part B rule 2, with a 31-b note — no 31-a-owned projection reads
+  `handle.status` for a paused task differently from `task.status`/`node.state`.
+- **P2-4 (legacy in-flight runs).** Resolved: one sentence added to Part D rule 4.
 
 ## Part A — `card().turnCompletion`: declaration, default, and the completeness lint (§2.1 rule 1)
 
@@ -167,13 +217,24 @@ verbatim, keyed by a new in-memory map — not a new authority model.**
    returns false and before the existing `_runTrustGate` dispatch block (:9932-9939):
    ```
    if (this._turnCompletionOf(handle) === 'pausable') {
-     this._admitPauseRecord(handle, task, terminalEvent, wr);
-     break;  // never falls through to the existing _runTrustGate dispatch this turn
+     const settled = this._admitPauseRecord(handle, task, terminalEvent, wr);
+     if (!settled) break;
    }
-   // existing _runTrustGate dispatch, unchanged
+   // the ONE pre-existing gate, unchanged: coordinator.mjs:9932,
+   // `this._drainState === 'open' && handle.status !== 'stopping' && handle.status !== 'dead'`
+   if (this._drainState === 'open' && handle.status !== 'stopping' && handle.status !== 'dead') {
+     ...
+   }
    ```
    A `'claim'` card (the default) never reaches the new branch — the existing `_runTrustGate`
-   dispatch at :9932-9939 is reached exactly as today, unconditionally, byte-identical code path.
+   dispatch at :9932-9939 is reached exactly as today, gated by exactly the one pre-existing
+   condition (never "unconditional" — that phrasing in an earlier draft of this contract was
+   wrong; :9932's gate always applied and still does). A `'pausable'` card's turn returns from
+   `_admitPauseRecord` either `settled === true` (Part D's degenerate auto-settle ran — fall
+   through to the existing gate, which then dispatches `_runTrustGate` exactly as it always has)
+   or `settled === false` (a live `steering.registered` marker exists — the task stays `paused`,
+   `break` skips the trust gate for this turn; P2-1). This is the only branch point in the
+   handler this contract adds.
 2. **The record shape**, admitted by a new `_admitPauseRecord(handle, task, terminalEvent, wr)`:
    - A durable per-worker log entry, `appendAttributed({worker: workerId, harness, turnEpoch,
      kind: 'turn.paused', actor: 'worker', payload: {taskId: task.id, turnEpoch,
@@ -200,6 +261,23 @@ verbatim, keyed by a new in-memory map — not a new authority model.**
      code). Then the explicit in-memory parity write `task.status = 'paused'` — required because
      `_coordTransition` never touches it (coordinator.mjs:6821-6834), matching the pattern at
      every existing unpark call site (:8384, :8547, :8594, :10040, :10086, :10148).
+   - **P2-3, named and deliberate: `handle.status` does not change here.** The question/approval
+     precedent (coordinator.mjs:10038, `handle.status = 'blocked'` alongside `task.status =
+     'input_required'` at :10040) writes both fields together; `_admitPauseRecord` writes only
+     `task.status`, leaving `handle.status === 'working'` while the task is `paused`. In the
+     `!hasDriver` degenerate case (Part D rule 4) this is a same-tick, unobservable blip — the
+     record settles and `handle.status` is never read in between. In the `hasDriver` case (Part D
+     rule 5) it is a real, persistent inconsistency for as long as the task stays parked, because
+     `WorkerHandle.status` has no `'paused'` value and this contract does not add one (adding a
+     new handle-level status is steering-act-shaped work, out of the card/pause-record/lifecycle
+     scope this contract covers). This is safe for 31-a specifically because no 31-a-owned
+     projection reads `handle.status` to decide whether a task is paused — the run-phase ladder,
+     `node.state`, and story.mjs (Part C) all key off `task.status` or the durable log, never
+     `handle.status`. **31-b note:** nudge/wait/claim are handle-targeted acts; when 31-b
+     implements them it must decide whether `handle.status` gains a value or reuses `'blocked'`
+     for a parked worker — this contract leaves that decision to 31-b, not because it is unaware
+     of the gap but because closing it has no observable effect until a 31-b-owned surface reads
+     `handle.status` for a paused worker.
 3. **`changedPathsDigest`.** `canonicalDigest(this._worktrees.changedPathsAtCommit(baseSha,
    headSha))` where `baseSha = task.sessionContext?.baseSha` (the same field the structured-review
    scope check reads at coordinator.mjs:3827-3828) and `headSha` is the worker's worktree HEAD at
@@ -211,8 +289,20 @@ verbatim, keyed by a new in-memory map — not a new authority model.**
    `localGit` helper already in scope in the index.mjs factory that defines `changedLines`/
    `changedPathsAtCommit`, :700-735), returning `null` if the worktree has no commits yet (a
    pause on a turn that has made no commits — legal; a worker's brief may not have edited
-   anything before its first pause). When `headSha` is `null`, `changedPathsDigest` is
-   `canonicalDigest([])`, not an error.
+   anything before its first pause).
+   **P1-5, fixed.** `baseSha` is independently optional: `request.context.baseSha` is only
+   conditionally spread into `SessionContext` (coordinator.mjs:634,
+   `...(request.context.baseSha ? { baseSha: request.context.baseSha } : {})`), so every
+   MockAdapter/backward-compat task with no `baseSha` in its session context reaches the mint
+   site with `task.sessionContext?.baseSha === undefined`. `changedPathsAtCommit` validates
+   *both* arguments as 40-hex (index.mjs:725-727) and throws `captured_change_invalid` if either
+   fails — calling it with `baseSha === undefined` throws unconditionally, inside the
+   `turn_completed` handler, for every such task. The guard is therefore on **both** operands, not
+   only `headSha`: `changedPathsDigest = (!baseSha || !headSha) ? canonicalDigest([]) :
+   canonicalDigest(this._worktrees.changedPathsAtCommit(baseSha, headSha))`. A no-baseSha task
+   (the common backward-compat case) and a no-commits-yet task (Part B rule 3's original named
+   gap) both resolve to `canonicalDigest([])`; only a task with both a baseSha and a worktree HEAD
+   calls into `changedPathsAtCommit` at all.
 4. **Single-consumer resolution and startup replay.** A new `_resolvePauseAuthority(pauseId,
    record)` mirroring `_resolveInteractionAuthority` exactly (coordinator.mjs:1841-1844):
    `record.state = 'resolved'`. 31-a exercises exactly one resolution path — the degenerate
@@ -302,34 +392,70 @@ projection rule.**
      ternary ladder at :4979-4986, keyed off `node?.state`, at the same priority tier as
      `'running'` (a paused node is neither `work_completed`/`failed`/`cancelled` nor merely
      `'approved'`-and-undispatched): `node?.state === 'paused' ? 'paused' : node?.taskId ?
-     'running' : 'approved'`. This requires `node.state` (the plan-node projection folded from
-     task status inside `_goalPlanStatus`) to gain a `'paused'` value wherever it currently maps
-     `task.status → node.state`; this contract does not re-derive that mapping's exact file:line
-     (out of the read budget for this pass — `_goalPlanStatus` is a large method) but pins the
-     requirement: **`node.state` must distinguish `paused` from `'accepted'`/`'failed'`/
-     `'cancelled'`/plain-dispatched, or the phase ladder cannot key off it.** The
-     `ownedWorker`-conditioned branches immediately after (:4991-4995, `'interrupted'`/
-     `'interruption_uncertain'`) are `!runStop && phase === 'running'`-gated and so do not fire
-     once `phase` is `'paused'` — no interaction between this branch and those two.
+     'running' : 'approved'`.
+     **P2-2, resolved — `node.state`'s exact file:line.** `node?.state` is folded inside
+     `goalPlanStatus` (coordination-store.mjs:10593-10670, called through application.mjs's
+     `_goalPlanStatus` wrapper at :3932, itself invoked at :4970 to build this ladder's `node`).
+     The `state` assignment (:10629-10630) is:
+     `if (dispatched) state = dispatched.task?.status === 'completed' && !dispatched.task
+     .acceptanceRevocation ? 'accepted' : (['failed', 'cancelled'].includes(dispatched.task
+     ?.status) ? dispatched.task.status : 'dispatched');` — every non-terminal status
+     (`working`, `input_required`, and now `paused`) currently falls through to the literal
+     `'dispatched'`, which is exactly the phase-ladder gap this rule names. Fix: extend the
+     ternary chain with one more arm before the `'dispatched'` fallback: `... : dispatched.task
+     ?.status === 'paused' ? 'paused' : 'dispatched'`. **The sibling site, :10637** (`let code =
+     dispatched.task.status === 'completed' ? 'accepted' : dispatched.task.status ===
+     'cancelled' ? 'cancelled' : 'task_failed';`, feeding `terminalOutcome`) is named here too but
+     needs **no edit**: it only executes inside `else if (dispatched?.task &&
+     TERMINAL.has(dispatched.task.status))` (:10636), and `TERMINAL` (:120) is
+     `{completed, failed, cancelled}` — `paused` can never satisfy that guard, so a paused node's
+     `terminalOutcome` stays `null`, exactly as it already does for `working`/`input_required`
+     today. Named for audit completeness (mirroring the eighth-guard-site precedent, rule 2
+     above), not because it currently misfires.
    - **wave.mjs.** `progress()` (:159-179) relays `outline.phase` verbatim
      (`phase: outline.phase ?? null`) — **no wave.mjs code change** once application.mjs's phase
-     ladder is honest; the pass-through was verified by reading the function body. `attentionFrom`
-     (:78-88) is a separate, deliberate non-change in 31-a: it currently maps `'input_required'`
-     → `'blocked_interaction:answer_required'`; this contract does **not** add a `'paused'` →
-     attention-class mapping there, because visible-only escalation classification is named 31-c
-     scope (docs/35 §2.2 rule 8, §4). A plain pause under 31-a surfaces as `phase: 'paused'` with
-     `attention: null` — visible in the phase field, silent in attention, exactly matching
-     "steer, don't gate" until 31-c adds the escalation bound.
+     ladder is honest; the pass-through was verified by reading the function body.
+     **`attentionFrom` (:78-88) — SHARED DECISION, 31-b's edit, not 31-a's.** An earlier draft of
+     this contract pinned `attentionFrom('paused') === null` as a deliberate 31-a/31-c boundary.
+     That pin is **superseded**: the orchestrator's shared decision across 31-a/31-b is that
+     `attentionFrom` gains `if (phase === 'paused') return 'turn_checkpoint';` inside :78-88, and
+     that edit belongs to **31-b**, not 31-a or 31-c. This contract makes no `attentionFrom` code
+     change and does not duplicate 31-b's — it states the dependency: once this contract's
+     run-phase ladder fix lands, `outline.phase` can legitimately be `'paused'`, and 31-b's
+     `attentionFrom` branch is what turns that into a `turn_checkpoint` attention class. Until
+     31-b ships, `attentionFrom('paused')` falls through the existing `if`-chain to `return null`
+     by construction (no code change needed for that interim state to be correct) — visible in
+     `phase`, silent in `attention`, which is the right behavior for 31-a's own scope even though
+     it is not the final state.
    - **story.mjs.** `LEGAL_TRANSITIONS[KIND.TURN_COMPLETED]` (:224) and its `applyEvent` case
      (:348-355) unconditionally park the worker at `'idle'` whenever `w.status === 'working'` —
      which would misrender a paused turn as "finished and free to redispatch," a distinct but
      equally dishonest failure from "disguised as working." Decision: add
      `TURN_PAUSED: 'turn.paused'` to the `KIND` map (mirroring `QUESTION_ASKED:
      'question.asked'`, story.mjs's existing convention — the coordinator now emits this kind on
-     the same per-worker log story.mjs folds, Part B rule 2), with `LEGAL_TRANSITIONS[
-     KIND.TURN_PAUSED] = {from: ['working'], to: 'paused'}` and a symmetric
-     `TURN_SETTLED: 'turn.settled'` (Part D) with `{from: ['paused'], to: 'working'}`. The
-     `WorkerStatus` typedef (:37) gains `'paused'`. `NEVER_STALLED_STATUSES` (:113) gains
+     the same per-worker log story.mjs folds, Part B rule 2), with a symmetric
+     `TURN_SETTLED: 'turn.settled'` (Part D) with `{from: ['paused'], to: 'working'}`.
+     **P1-2, fixed — the fold-order bug.** The per-worker log order is fixed by construction:
+     `lifecycle.turn_completed` is appended at coordinator.mjs:9896, and `turn.paused` (Part B
+     rule 2) is minted strictly afterward, inside `_admitPauseRecord`, which the mint-site branch
+     (Part B rule 1) only reaches once the `parkedUnsettled` check has already passed :9926-9931.
+     So `KIND.TURN_COMPLETED`'s existing `applyEvent` case (:348-355, `if (w.status ===
+     'working') transitionStatus(w, kind, 'idle')`) always runs first and — since the worker is
+     `'working'` at that point — always parks the worker at `'idle'` before `turn.paused` is even
+     folded. A `LEGAL_TRANSITIONS[KIND.TURN_PAUSED] = {from: ['working'], to: 'paused'}` guard
+     (as drafted originally) is therefore vacuous: by the time `TURN_PAUSED` folds,
+     `w.status === 'idle'`, `transitionStatus` (:312-320) finds `'idle'` outside `rule.from`, adds
+     `'illegal_transition'` to `w.warnings`, and leaves the worker rendered `'idle'` — silently
+     wrong, and now also mis-flagged as illegal. Fix: `LEGAL_TRANSITIONS[KIND.TURN_PAUSED] =
+     {from: ['working', 'idle'], to: 'paused'}` — a multi-value `from` set has direct precedent in
+     this same table (`KIND.TURN_STARTED`: `{from: ['idle', 'working', 'interrupted'], ...}`,
+     :223; `KIND.INTERRUPT_REQUESTED`: `{from: ['working', 'blocked', 'idle'], ...}`, :226), so
+     this is not a novel shape. With `'idle'` admitted, the real two-event sequence
+     (`turn_completed` folds `working`→`idle`, then `turn.paused` folds `idle`→`paused`) succeeds
+     cleanly, and the parked worker renders `'paused'`, not `'idle'`. The `TURN_PAUSED`
+     `applyEvent` case must call `transitionStatus(w, KIND.TURN_PAUSED, 'paused')` (not assign
+     `w.status` directly) so this guard is actually consulted.
+     The `WorkerStatus` typedef (:37) gains `'paused'`. `NEVER_STALLED_STATUSES` (:113) gains
      `'paused'` (a paused worker is legitimately waiting, same rationale as `input_required`
      already there). `ACTIVE_STATUSES` (:662) gains `'paused'` (a paused worker is not idle/done
      — SC5d's own rule, "active means actually doing something," and a parked-pending-steering
@@ -338,6 +464,45 @@ projection rule.**
      signal; `TURN_COMPLETED` continues to mean "this turn is fully done, no pause," which after
      Part B rule 1's branch is now only ever emitted for a `'claim'`-carded turn or a
      `'pausable'`-carded turn whose card lied (never observed in the closed adapter registry).
+6. **P1-3, fixed — CI6 must not silently resurrect a paused task; it must fail it, on purpose,
+   the same way it already fails an unresolved `input_required` task.** Named site: CI6
+   (coordinator.mjs:11251-11276, `if (!revisionRecoveryUnknown && !preservedInterrupt &&
+   !TERMINAL_TASK_STATUSES.has(terminalStatus))` durably fails the task via
+   `control.recovery_terminalized` / `session_not_reattached`). The per-event replay switch that
+   computes the local `terminalStatus` variable (coordinator.mjs:10634-11212) has no case for
+   the new `turn.paused`/`turn.settled` kinds; its `lifecycle.turn_completed` case (:11033-11048)
+   unconditionally sets `terminalStatus = 'verifying'` whenever `e.payload?.status ===
+   'completed'` (:11039) — true for a paused turn exactly as for a claimed one, because the
+   pause decision is downstream of the provider's own completed result, not encoded in it. A
+   restarted coordinator therefore computes `terminalStatus = 'verifying'` for a task that was
+   actually `paused`, which is neither in `TERMINAL_TASK_STATUSES` (:245,
+   `{completed, failed, cancelled}`) nor `'interrupted'`, so CI6 fires and durably fails it.
+   **CHOOSE: fail-closed, parity with `input_required` — and this is not a new decision, it is
+   already today's behavior for that sibling status.** Verified: a blocking
+   `question.asked`/`approval.requested`/`decision.requested` sets `terminalStatus =
+   'input_required'` on replay (:11142) whenever it is not already resolved; nothing in the
+   replay switch (:11179-11208) resets it back to `'working'` unless a matching
+   `question.answered`/`approval.resolved`/`decision.settled`/qualifying
+   `control.interaction_superseded` event follows. An outstanding, unresolved `input_required`
+   task therefore ALREADY hits CI6's exact same branch today, before this contract, and is
+   durably failed on restart — a crashed session cannot honor a still-open question any more
+   than it can honor a still-open pause. `paused` is symmetric: no live session exists to
+   nudge/wait/claim it after a restart, so it must also durably fail rather than silently resume
+   as if never parked. **No new code is required in the `terminalStatus` switch or in CI6
+   itself** for this outcome — the existing unconditional `'verifying'` assignment at :11039
+   combined with the existing CI6 branch already produces it.
+   **The one real gap, and its resolution:** the reconstructed `_pausedTurns` entry (Part B rule
+   4) is seeded unconditionally at the end of replay, exactly like `reconstructedPending`
+   (coordinator.mjs:11443-11451, `for (const [requestId, record] of reconstructedPending) {
+   this._pending.set(requestId, record); ... }`) — neither loop checks whether CI6 subsequently
+   failed the owning task. So a dead (`failed`) task can carry a dangling `_pausedTurns` entry
+   with `state: 'pending'` after restart, exactly mirroring the pre-existing, already-tolerated
+   behavior for a dead task's dangling `_pending` interaction record. This is named here as
+   existing precedent this contract inherits, not a new problem it introduces, and it needs no
+   new guard code to match that precedent. The Part E replay red test pins both halves: (a) the
+   post-restart durable task status is `'failed'` (CI6 fired), and (b) `_pausedTurns` still
+   contains the stale `state: 'pending'` entry for it (parity with `_pending`'s identical
+   tolerance), not merely that `_pausedTurns` was reconstructed at all.
 
 ## Part D — `steering.registered` at run creation and degenerate auto-settle (§2.2 rules 4-5)
 
@@ -363,19 +528,79 @@ authenticates.**
    wave path exists in 31-a). `intent.driverKind = options.driverKind` when present
    (mirroring the `for (const key of ['runId','profile','scope'])` copy-through at :147-149).
    `BatonRuns.start`/`#startPrepared` (:1284-1294) thread `intent` unchanged into
-   `application.command('run.start', {intent})` — the run-creation command handler (not read in
-   this pass; out of budget, named as the implementer's insertion point) reads
-   `intent.driverKind` and, when present, calls `_coordRecord('steering.registered', {runId,
-   driverKind: intent.driverKind, actor}, ...)` **once, at the same point the run's own creation
-   record is admitted**, before any task/dispatch exists for it.
+   `application.command('run.start', {intent})`.
+   **P1-1, BLOCKING, fixed — the client-side whitelist alone is not enough.** The command
+   dispatcher validates `run.start` args by calling `normalizeIntent(args.intent)`
+   (application.mjs:1278) before the handler ever runs, and `start()` itself derives its working
+   `intent` by calling the *same* `normalizeIntent` again via `_resolveIntent` (:2413-2414). Both
+   call sites hit one function: `normalizeIntent` (:918-942) enforces a closed key whitelist —
+   `new Set(['runId', 'objective', 'resultIntent', 'profile', 'route', 'scope', 'composition'])`
+   (:919-921) — and throws `application_intent_invalid` (:931) the moment `Object.keys(value)
+   .some((key) => !allowed.has(key))` is true (:924), then rebuilds the frozen intent from only
+   those keys (:933-941). `driverKind` is in neither set. As written, ANY caller that reaches
+   `normalizeIntent` with `driverKind` present — including this contract's own Part E red tests
+   for `runs.start({driverKind: 'wave', ...})` — throws before the handler body runs at all; the
+   client-side whitelist in `prepareRunStart` is necessary but not sufficient. Fix: add
+   `driverKind` to the allowed `Set` at :919-921, validate it the same way `resultIntent` is
+   already validated two lines below (:922, :926 — `hasResultIntent && !RESULT_INTENTS
+   .has(value.resultIntent)`; mirror with a `hasDriverKind` check against a new frozen
+   `DRIVER_KINDS = new Set(['wave'])`, same shape as `RESULT_INTENTS` at :100), and copy it
+   through in the rebuild at :933-941 (`...(hasDriverKind ? { driverKind: value.driverKind } :
+   {})`). This double-validates (client rejects a bad literal early with `clientError`; server
+   rejects it again, defense-in-depth, with `application_intent_invalid` — the same two-tier
+   pattern `resultIntent` already uses across application-client.mjs:127-128 and
+   application.mjs:926) and is what actually lets `driverKind` reach the handler.
+   **`driverKind` does NOT join `intentDigest` or runId derivation.** `_admitRecursiveRun`'s
+   `intentDigest` (:3703-3708) and `start()`'s own runId hash (:3722-3729) both fold `objective`,
+   `resultIntent`(when explicit), `profile`/`profileDigest`, `route`, `composition`, `scope`, and
+   owner/runId identity — `driverKind` is deliberately excluded from both. It describes *who is
+   driving* a run, not *what the run is*; two calls with identical objective/profile/route/scope
+   should resolve to the same run whether or not a wave happens to be the caller, exactly the way
+   two runs with the same shape don't fork identity over unrelated provenance metadata today.
+   Including it would mean a hand-authored MCP call and a wave member with otherwise-identical
+   intent silently mint two different runIds for what is semantically one request — worse
+   idempotency, not better.
+   **The `existingRun !== null` reconcile case, specified.** `start()` computes `existingRun`
+   before authorization (:3732-3734, `this._findRun(intent.runId, {allowUnavailableProfile:
+   true})`) and already treats it as a *resume*, not a fresh admission — e.g. `resultIntent`
+   inherits from `durableResult` when the caller omits it and `existingRun !== null` (:3763-3767).
+   `defineGoal` (:3829-3830) still runs on a resume (a later goal/plan revision can be admitted
+   against an existing run), so it is not by itself "run creation." The `steering.registered`
+   marker admission must NOT fire on every `defineGoal` call — only once, on a genuinely new run.
+   Insertion point: immediately after `defineGoal` succeeds and `goal` is bound (:3829-3831),
+   guarded by `existingRun === null && intent.driverKind !== undefined`:
+   `if (existingRun === null && intent.driverKind !== undefined) { this._coordRecord
+   ('steering.registered', {runId: intent.runId, driverKind: intent.driverKind, actor:
+   authority(...).actorId}, 'run.steering_registered:${intent.runId}', owner); }`. A retry of
+   `runs.start` against an `existingRun !== null` with `driverKind: 'wave'` therefore never
+   re-admits (or duplicates) the marker — the run's driver identity is fixed at genuine creation
+   time and is never retroactively granted or revoked by a later resumed call, matching Part D
+   rule 3's `hasDriver` scan, which finds the original marker (if any) by `runId` regardless of
+   how many `defineGoal` calls followed it.
+   **P1-4, fixed — 31-a does not ship the wave.mjs:151 edit.** An earlier draft of this contract
+   claimed `createWave` (wave.mjs:151) is "the only caller that ever sets `driverKind: 'wave'`,"
+   updated in the same pass to actually pass it. That edit is **deferred to 31-b** (see the
+   boundary note below) — 31-a ships only the `normalizeIntent`/`prepareRunStart`/marker-admission
+   machinery above, with **zero caller** in the shipped tree. `wave.mjs:151` continues to call
+   `baton.runs.start(member.objective, { ...route, scope: [...member.scope] })` exactly as today,
+   unchanged. This is deliberate, not an oversight: with `driverKind: 'wave'` wired end to end but
+   pausable cards live, a wave member's first `turn_completed` would mint a pause, `hasDriver`
+   would resolve `true`, the task would park — and 31-a implements no nudge/wait/claim
+   consumption path (that is 31-b), and the stall watchdog is cleared at `_clearWatchdog`
+   (coordinator.mjs:9900) on every `turn_completed` and never re-arms on its own, so a wave member
+   would park forever with no live code path to unstick it. Deferring the caller means the
+   `!hasDriver` degenerate-auto-settle path (Part D rule 4) is what every run in the current
+   suite exercises, unchanged, and the `hasDriver`-true branch (Part D rule 5) is exercised only
+   by this contract's own hand-admitted-marker red tests, never by production wave traffic, until
+   31-b lands its own wave.mjs edit — which this contract names as a dependency rather than
+   duplicating.
    **Why this is not a client-side hint, despite being an ordinary option field:** the only
-   caller that ever sets `driverKind: 'wave'` is `createWave` itself
-   (wave.mjs:151, updated to `baton.runs.start(member.objective, {...route,
-   scope: [...member.scope], driverKind: 'wave'})`) — server-side code inside the same process,
-   not a value an external MCP/network caller can inject through any other path, because no other
-   call site in this codebase passes `driverKind`. The whitelist makes the field syntactically
-   general, but the codebase's own call graph makes it semantically wave-exclusive until a
-   second, explicit admission channel is built (out of scope here, matching docs/35's "MCP/
+   intended caller of `driverKind: 'wave'` is `createWave` (wave.mjs, 31-b's edit, not this
+   contract's) — server-side code inside the same process, not a value an external MCP/network
+   caller can inject through any other path, because no call site in the tree this contract ships
+   passes `driverKind`. The whitelist makes the field syntactically general, but the codebase's
+   own call graph makes it semantically wave-exclusive until a second, explicit admission channel
+   is built (out of scope here, matching docs/35's "MCP/
    embedded controllers may register explicitly" being named but not specified in v2).
 3. **The degenerate-case liveness check**, run inside `_admitPauseRecord` (Part B rule 2) after
    minting the pause record and before returning: `const hasDriver =
@@ -397,17 +622,32 @@ authenticates.**
    - Unpark: `_coordTransition(task, 'working', 'task.working:${task.id}:${settledEvent.seq}',
      evidence, 'policy')` then the explicit `task.status = 'working'` in-memory write (Part C
      rule 3).
-   - **Fall through to the existing `_runTrustGate` dispatch, unchanged**
-     (coordinator.mjs:9932-9939, `Promise.resolve(handle.worktreeReady).then(() =>
-     this._runTrustGate(handle, wr)).catch(noop).finally(releaseAuthority)`) — this is the
+   - **P2-1, fixed — return `settled = true` and fall through to the existing gated dispatch**
+     (coordinator.mjs:9932-9939, `if (this._drainState === 'open' && handle.status !== 'stopping'
+     && handle.status !== 'dead') { Promise.resolve(handle.worktreeReady).then(() =>
+     this._runTrustGate(handle, wr)).catch(noop).finally(releaseAuthority); }`) — this is the
      entire backward-compat claim: every run with no live steering registration (today, that is
-     every run — nothing admits `steering.registered` before 31-a's wave.mjs edit ships) passes
-     through mint → immediate resolve → unpark → the exact trust-gate call that ran unconditionally
-     before this contract, byte-identical arguments, byte-identical timing relative to
-     `worktreeReady`. Phase10 SC3/SC10, DG2's post-settlement continuation, and every MockAdapter
-     flow in the current suite take this path and observe no new event ordering they don't
-     already tolerate (they don't inspect `turn.paused`/`turn.settled` at all, and gain two new
-     per-worker log lines they don't assert against).
+     every run — Part D rule 2's P1-4 fix means 31-a ships no caller that ever admits
+     `steering.registered` at all, so `hasDriver` is `false` for literally every task in the
+     current tree) passes through mint → immediate resolve → unpark → the exact trust-gate call
+     gated by the one pre-existing condition above, byte-identical arguments, byte-identical
+     timing relative to `worktreeReady`. (An earlier draft of this contract described that gate
+     as running "unconditionally" — it does not, and never did; :9932's condition predates this
+     contract and is unchanged by it. `_admitPauseRecord` returning `settled` and the mint-site
+     branch doing `if (!settled) break;` — Part B rule 1 — is what lets this one pre-existing gate
+     be the single dispatch path either way, instead of a second, redundant unconditional call.)
+     Phase10 SC3/SC10, DG2's post-settlement continuation, and every MockAdapter flow in the
+     current suite take this path and observe no new event ordering they don't already tolerate
+     (they don't inspect `turn.paused`/`turn.settled` at all, and gain two new per-worker log
+     lines they don't assert against).
+   - **P2-4, one sentence on legacy in-flight runs.** Every run that exists today, and every run
+     created after this contract ships that never passes `driverKind` (which, per the P1-4 fix
+     above, is every run until 31-b's wave.mjs edit lands), has no `steering.registered` marker by
+     construction, so its first pausable turn always takes this exact `!hasDriver` branch — mint,
+     settle, unpark, trust-gate, all inside the same `lifecycle.turn_completed` handler tick —
+     making a "legacy" in-flight run behaviorally indistinguishable from today's direct
+     `_runTrustGate` dispatch even though its durable task status now transits through
+     `paused → working` on the way there.
 5. **When `hasDriver` is true**, the record stays `state: 'pending'` and the handler returns
    without dispatching `_runTrustGate` this turn — the task sits `paused`, a steering act
    (31-b: nudge/wait/claim) is required to move it. 31-a does not implement any consumption path
@@ -435,8 +675,10 @@ authenticates.**
   `_pausedTurns` entry keyed `pause:<taskId>:<seq>` with `state:'pending'`, and durably
   transitions the task to `paused` (`this._coordination.task(id).status === 'paused'`,
   survives a coordination-store checkpoint round-trip). `changedPathsDigest` is
-  `canonicalDigest([])` when the worktree has no commits yet; matches
-  `changedPathsAtCommit(baseSha, headSha)` when it does.
+  `canonicalDigest([])` both when the worktree has no commits yet (`headSha === null`) AND when
+  `task.sessionContext?.baseSha` is absent (P1-5 — every MockAdapter/backward-compat task with no
+  `baseSha`, the common case per coordinator.mjs:634); matches `changedPathsAtCommit(baseSha,
+  headSha)` only when both are present.
 - **`paused` lifecycle parity (Part C):** each of the seven guard sites (`claimScratch`,
   `postScratchFact`, `requestBoardClaim`, `submitBoardReport`, `admitReplManifest`,
   representation admission, the startup sweep) accepts a `paused` task exactly as it accepts
@@ -446,37 +688,61 @@ authenticates.**
   `paused → completed` **illegal** (`invalid_transition`, direct-to-completed must always
   traverse `working` first — the trust gate's own claim-time evaluation, unchanged in 31-a, is
   what eventually produces `completed`). application.mjs phase ladder renders `'paused'` for a
-  task in that status, not `'running'`; wave.mjs `progress()` relays it unchanged
-  (`member.phase === 'paused'`); `attentionFrom` returns `null` for a `'paused'` phase (not
-  `'blocked_interaction:...'` — pinning the 31-a/31-c boundary by test, not just by prose).
-  story.mjs: a `TURN_PAUSED` event transitions the worker story to `'paused'` from `'working'`
-  only (a no-op-without-warning from any other status, mirroring `QUESTION_ASKED`'s own
-  `{from:['working']}` shape); `NEVER_STALLED_STATUSES`/`ACTIVE_STATUSES` include it (a stalled
-  signal never fires for a paused worker; the wave header's active-count includes it).
+  task in that status, not `'running'` (asserted via `node.state === 'paused'` after the
+  coordination-store.mjs:10630 fix, P2-2); wave.mjs `progress()` relays it unchanged
+  (`member.phase === 'paused'`). `attentionFrom('paused')` currently returns `null` (falls
+  through :78-88's `if`-chain) — this is the correct interim state for 31-a's own scope, not a
+  permanent pin: the SHARED DECISION is that 31-b adds a `'paused'` → `'turn_checkpoint'` branch
+  there, so this red test asserts today's `null` behavior is unaffected by 31-a's changes, and
+  must NOT be read (by this suite or a future one) as asserting `attentionFrom('paused') === null`
+  forever — that assertion is 31-b's to own and eventually flip.
+  story.mjs: the real two-event sequence — `lifecycle.turn_completed` (folds `working → idle`)
+  immediately followed by `turn.paused` (folds `idle → paused`, per the `{from: ['working',
+  'idle']}` fix, P1-2) — renders the worker `'paused'`, not `'idle'`; a bare `TURN_PAUSED` event
+  fired in isolation from `'working'` also succeeds (the same guard's other admitted `from`
+  value), and firing it from any status outside `{'working', 'idle'}` is a no-op that also sets
+  `warnings.has('illegal_transition')` (verified via `transitionStatus`, story.mjs:312-320 — this
+  is a warning, not silent, unlike the vacuous-test framing in an earlier draft).
+  `NEVER_STALLED_STATUSES`/`ACTIVE_STATUSES` include it (a stalled signal never fires for a
+  paused worker; the wave header's active-count includes it).
 - **Steering registration + degenerate auto-settle (Part D):** `runs.start(objective,
   {driverKind:'wave', ...})` admits `steering.registered {runId, driverKind:'wave', actor}` as a
-  `driver.recorded` event at run-creation time, before any task exists for the run;
-  `runs.start(objective, {...})` with no `driverKind` (every non-wave caller, unchanged) admits
-  nothing. `runs.start(objective, {driverKind: 'orchestrator'})` (or any non-`'wave'` value) is
-  refused `clientError` at the client layer, before any command dispatch — never reaches the
-  store. A pause record minted on a run with **no** `steering.registered` marker auto-settles
-  synchronously within the same `lifecycle.turn_completed` handling: `turn.settled
-  {actor:'policy', basis:'auto_no_driver'}` appended, task unparked to `working`, `_runTrustGate`
-  invoked with the exact `wr` the turn produced — **and the full existing suite (phase10 SC3/
-  SC10, DG2, every MockAdapter-driven test) passes unmodified**, because every one of those runs
-  has no `steering.registered` marker and takes this exact path. A pause record minted on a run
-  **with** a live `steering.registered` marker (a wave member, or a hand-admitted marker in the
-  test) stays `paused`, is not auto-settled, and `_runTrustGate` is **not** invoked that turn —
-  pinned by asserting the mock adapter's verification hook was never called, not merely that the
-  task status is `paused`.
-- **Replay + fold (Part C rule 4):** `_apply('task.transitioned', {to:'paused', ...})` folds
-  `_tasks.get(id).status === 'paused'` with no new branch touched (a coverage assertion over the
-  existing branch, not a new one); a checkpoint saved mid-pause and reloaded reconstructs the
+  `driver.recorded` event at run-creation time (immediately after `defineGoal`, gated on
+  `existingRun === null`), before any task exists for the run; `runs.start(objective, {...})`
+  with no `driverKind` (every non-wave caller, unchanged) admits nothing.
+  `runs.start(objective, {driverKind: 'orchestrator'})` (or any non-`'wave'` value) is refused
+  `clientError` at the client layer (`prepareRunStart`), before any command dispatch; a value that
+  somehow reached `normalizeIntent` directly (bypassing the client whitelist, e.g. a hand-built
+  command payload in a test) is refused `application_intent_invalid` server-side too (P1-1 —
+  defense in depth, the same two-tier shape `resultIntent` already uses) — never admitted as a
+  marker either way. A second `runs.start` call against the same `runId` (`existingRun !== null`)
+  with `driverKind: 'wave'` admits **no second marker** — the reconcile-case fix (Part D rule 2)
+  — asserted by calling `runs.start` twice with the same `runId` and counting
+  `steering.registered` events for that run (must stay 1, not 2). A pause record minted on a run
+  with **no** `steering.registered` marker auto-settles synchronously within the same
+  `lifecycle.turn_completed` handling: `turn.settled {actor:'policy', basis:'auto_no_driver'}`
+  appended, task unparked to `working`, `_runTrustGate` invoked with the exact `wr` the turn
+  produced — **and the full existing suite (phase10 SC3/SC10, DG2, every MockAdapter-driven
+  test) passes unmodified**, because every one of those runs has no `steering.registered` marker
+  (P1-4: 31-a ships no caller that ever sets one) and takes this exact path. A pause record
+  minted on a run **with** a live `steering.registered` marker (necessarily hand-admitted in the
+  test, since 31-a ships no production caller — P1-4) stays `paused`, is not auto-settled, and
+  `_runTrustGate` is **not** invoked that turn — pinned by asserting the mock adapter's
+  verification hook was never called, not merely that the task status is `paused`.
+- **Replay + fold (Part C rule 4 and rule 6):** `_apply('task.transitioned', {to:'paused', ...})`
+  folds `_tasks.get(id).status === 'paused'` with no new branch touched (a coverage assertion over
+  the existing branch, not a new one); a checkpoint saved mid-pause and reloaded reconstructs the
   `paused` task status from `_tasks` alone (no new `PROJECTION_CHECKPOINT_FIELDS` entry
   required — the field-exact load at :743-744 stays unchanged and still passes); a coordinator
-  restarted mid-pause (per-worker log has `turn.paused`, no `turn.settled`, no
-  `lifecycle.turn_started` after it) reconstructs `_pausedTurns` with `state:'pending'` for that
-  entry, mirroring `reconstructedPending`'s own replay test coverage.
+  restarted mid-pause with a **live** `steering.registered` marker for the run (per-worker log
+  has `turn.paused`, no `turn.settled`, no `lifecycle.turn_started` after it) reconstructs
+  `_pausedTurns` with `state:'pending'` for that entry, mirroring `reconstructedPending`'s own
+  replay test coverage — but (P1-3) asserts the durable task status ends up `'failed'` after
+  restart (CI6 fires, fail-closed parity with an unresolved `input_required` task, not a special
+  case for `paused`) AND that the reconstructed `_pausedTurns` entry still exists with
+  `state:'pending'` for that now-dead task (parity with `reconstructedPending`'s identical,
+  pre-existing tolerance for a dead task's dangling `_pending` entry — named, not newly
+  introduced).
 
 Then the full suite `node impl/scripts/run-suite.mjs` green from the worktree root (this is the
 literal backward-compat claim: **zero existing test in the current tree asserts anything about
@@ -492,14 +758,25 @@ verification run).
   invalidation on nudge, and the `_expireScratchClaims` mirror at coordinator.mjs:10200 are
   31-b. 31-a implements exactly one resolution path for a pause record (policy auto-settle) and
   leaves the live-registration case correctly parked, untouched otherwise.
-- **No attention/escalation.** `attentionFrom` (wave.mjs:78-88) gains no `'paused'` branch; no
-  visible-only escalation bound, no typed stop, no policy knob. A live-registered pause is
-  silent until 31-c.
+- **No wave.mjs:151 edit (P1-4).** `createWave` keeps calling `baton.runs.start` without
+  `driverKind` — 31-a ships the `runs.start`/`normalizeIntent`/marker-admission machinery with no
+  caller. Wiring `driverKind: 'wave'` into wave.mjs:151 is 31-b's edit, stated here as a
+  dependency; this contract does not duplicate it.
+- **No attention/escalation branch of its own.** `attentionFrom` (wave.mjs:78-88) gains no code
+  change from this contract. SHARED DECISION: the `'paused'` → `'turn_checkpoint'` mapping there
+  is **31-b's** edit (not 31-c's, correcting an earlier draft of this contract), made possible
+  once this contract's `phase: 'paused'` projection lands. Until 31-b ships,
+  `attentionFrom('paused')` returns `null` by construction (falls through the existing
+  `if`-chain) — visible in `phase`, silent in `attention`, which is the correct interim state,
+  not a permanent one this contract asserts.
 - **No stall-watchdog redesign.** The `task.status !== 'working'` guard at coordinator.mjs:7408
   already protects a `paused` task by construction (verified, Part-intro); this contract adds no
   watchdog code. Mid-turn long work (a worker waiting on its own subagents/suite) produces no
   result frame and therefore never reaches the `lifecycle.turn_completed` handler this contract
-  touches — untouched, per docs/35 §2.2 rule 9.
+  touches — untouched, per docs/35 §2.2 rule 9. (P1-4: because 31-a ships no wave.mjs caller, the
+  watchdog's clear-and-never-rearm at `_clearWatchdog`/:9900 for a task parked by a live driver is
+  exercised only by this contract's own hand-admitted-marker tests, never by production traffic,
+  until 31-b's caller and consumption paths exist together.)
 - **No MCP/embedded explicit registration channel.** Only `driverKind: 'wave'` through
   `runs.start` is implemented; the whitelist is closed to that one literal. A second explicit
   channel is a named future extension, not built here.
