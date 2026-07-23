@@ -510,7 +510,18 @@ unconditional (R-OP-15e).
 admitted-command set (`COMMAND_CAPABILITY` keys), D8, and complete phase-literal extraction
 (R-OP-2, R-OP-5) — **including `web-operator.mjs`**, whose inline phase unions no seat named and
 which §2's former "passive re-renderer" framing would have excluded from extraction entirely
-(v2 acceptance). C3's totality is only as honest as this file list. M0 turns it into contracts (§10) plus the **allowed-divergence ledger**:
+(v2 acceptance). C3's totality is only as honest as this file list.
+
+**The shipped extractor is structurally too narrow to support C3** (v2 acceptance, verified by
+running it): `surface-audit.mjs:48-50` reads phase literals from **three files only**, with a
+different narrow regex for each — `wave.mjs` is scanned solely for
+`/(work_completed|start_failed)/`, so `wave.mjs:11`'s `TERMINAL_PHASES` set and `wave.mjs:85-86`'s
+`selection_required`/`input_required` are invisible to it *even though this document cites both as
+live consumers*; `application.mjs` is scanned only for `phase = '…'` assignments, so set members
+and `phase === '…'` comparisons escape; `web-operator.mjs` is not read at all. The audit's 16
+extracted literals accordingly **omit `selection_required` and `candidate_selected`** — the two
+phases §7.1 maps and R-CX-4 raised to P0. M0 must replace regex-per-file with a **declared
+phase-vocabulary site list**, versioned with the contract. M0 turns it into contracts (§10) plus the **allowed-divergence ledger**:
 
 - **Bidirectional and append-forbidden** (R-KM-14, R-OP-15d, R-CX-13): at every commit,
   `observed divergences ⊆ ledger` (anything unledgered is red — the novel-divergence guard), and
@@ -585,7 +596,11 @@ operational cost, not a rollback hazard (R-OP-11).
   fields). Same-surface at M1; cross-surface outcome-identity at M2; four-surface at M4
   (R-OP-1, R-OP-15a).
 - **C3** (L4): no surface serializes a phase/member/attention string outside §7; the mapping
-  is generated and total over extracted literals (R-OP-5). **The two lifecycle predicates are
+  is generated and total over extracted literals (R-OP-5). **"Total over extracted literals" is
+  circular unless the extractor itself is pinned** (v2 acceptance): totality holds over a
+  *declared file list* and a *declared extraction rule*, both versioned with this contract, and
+  the list must name every module that renders or compares a phase. Today's extractor satisfies
+  the letter of C3 while reading three files with narrow per-file regexes — see §8.4. **The two lifecycle predicates are
   asserted separately** (R-CX-4): `providerSettled` and `applicationTerminal` are registry-owned,
   tested distinct, and neither is derived from a single terminal union — a build that admits
   `result_ready` into `applicationTerminal` is red here, not merely off-spec in prose.

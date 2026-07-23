@@ -218,6 +218,25 @@ substantive repair. One defect found and fixed; two claims verified.
   Sets deliberately **not** counted: `coordinator.mjs:42,245`, `grok-acp.mjs:28` are task/call/tool
   axes, not run phases — the same out-of-scope reasoning §7.1 already applies to
   `pre_delivery`/`post_delivery`.
+- **A-9 — FIXED — C3's totality clause is circular, and the shipped extractor proves it.** Ran
+  the doc's own mechanical evidence (`node impl/scripts/surface-audit.mjs`, confirmed write-free
+  first) and compared every number to §1.1. **All eight dialect counts match exactly** (D1=10,
+  D2=27, D3=26, D4=25 app-derived, D5=37, D6a=38, D6b=21, D7=120); D8 is absent from the tool,
+  which is consistent with R-OP-15b's demand that M0 add it.
+  The phase dimension does not hold up. `surface-audit.mjs:48-50` extracts phase literals from
+  **three files only**, each with its own narrow regex: `wave.mjs` solely for
+  `/(work_completed|start_failed)/` — so `wave.mjs:11`'s `TERMINAL_PHASES` and `wave.mjs:85-86`'s
+  `selection_required`/`input_required` are invisible *though the doc cites both as live
+  consumers*; `application.mjs` solely for `phase = '…'` assignments, missing set members and
+  `phase === '…'` comparisons; `web-operator.mjs` not read at all — mechanically confirming A-8.
+  The observable result: the audit's 16 extracted literals **omit `selection_required` and
+  `candidate_selected`**, the two phases §7.1 maps and R-CX-4 raised to P0.
+  So C3 as written ("the mapping is generated and total over extracted literals") is satisfiable
+  by an extractor that looks almost nowhere — it is total over whatever it happens to find. This
+  is the strongest defect found in this review, because C3 is the contract the whole L4/§7 edifice
+  rests on. Fixed in **§10 C3** (totality must be over a declared, versioned file list *and*
+  extraction rule) and **§8.4** (the narrowness documented site by site; M0 must replace
+  regex-per-file with a declared phase-vocabulary site list).
 - **Method note — the NUL-byte trap is real and it bit this audit.** §8.4 already warns that
   `impl/src/application.mjs` contains a NUL byte requiring `grep -a`. Plain `grep` against it
   returns *silently empty* — not an error. An early verification pass here read that empty result
