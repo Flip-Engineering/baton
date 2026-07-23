@@ -560,7 +560,16 @@ and `phase === '…'` comparisons escape; `web-operator.mjs` is not read at all 
 `TERMINAL_TASK_STATUSES` (`:245`). The audit's 16
 extracted literals accordingly **omit `selection_required` and `candidate_selected`** — the two
 phases §7.1 maps and R-CX-4 raised to P0. M0 must replace regex-per-file with a **declared
-phase-vocabulary site list**, versioned with the contract. M0 turns it into contracts (§10) plus the **allowed-divergence ledger**:
+phase-vocabulary site list**, versioned with the contract.
+
+**The narrowness is specific to the phase dimension — the dialect extractions were checked and
+are sound** (v2 acceptance), which scopes M0's rework rather than inviting a rewrite of what
+works. The embedded-method scan is anchored at two-space indentation, so class-body methods match
+while control flow nested deeper does not; 120 extracted, 120 unique. The MCP scan's 59 names
+(38 `fleet_*` + 21 `baton_*`) reconcile exactly against the source: 58 are declared as `name:`
+literals, and `baton_runs` is declared instead through the transport→command mapping table
+(`mcp-northbound.mjs:13,31`) — a **second declaration mechanism** any M0 replacement must also
+read, or it will silently drop that tool. M0 turns it into contracts (§10) plus the **allowed-divergence ledger**:
 
 - **Bidirectional and append-forbidden** (R-KM-14, R-OP-15d, R-CX-13): at every commit,
   `observed divergences ⊆ ledger` (anything unledgered is red — the novel-divergence guard), and

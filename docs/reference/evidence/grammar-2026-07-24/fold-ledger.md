@@ -335,6 +335,24 @@ substantive repair. One defect found and fixed; two claims verified.
   of axis) and **§8.4** (`coordinator.mjs` added to the extraction file list beside
   `web-operator.mjs`). The two omissions share a cause: a file the doc never cites is a file the
   extractor never reads.
+- **A-14 — VERIFIED, no defect — the other textual extractions are sound; and a near-miss worth
+  recording.** A-9 proved the *phase* extraction structurally broken, and A-9's own verification
+  had only confirmed that the dialect **counts matched** — never that the extraction *method* was
+  sound. Re-audited the three dimensions labelled "textual extraction".
+  **D7 (embedded, 120) is sound.** The regex is anchored at exactly two-space indentation, so
+  class-body methods match while `if (`/`for (`/`catch (` — nested at four-plus — cannot. 120
+  extracted, 120 unique, no duplicates.
+  **D6a/D6b (38 + 21 = 59) are sound.** They reconcile exactly against source.
+  **The near-miss:** the first reconciliation test counted `name: '(fleet|baton)_…'` declarations
+  and found **58**, one short of 59 — which read as the audit over-counting by including a quoted
+  mention that is not a tool. That would have been a false finding. The gap is `baton_runs`, which
+  is a genuine tool declared through the transport→command mapping table
+  (`mcp-northbound.mjs:13,31`) rather than a `name:` literal. **My test was too narrow, not the
+  audit.** Same error species as A-3, A-8 and A-12 — a verdict correct for the question asked and
+  wrong for the question that mattered — caught this time before it reached the document.
+  The one durable output: §8.4 now records that M0's extractor rework is scoped to the phase
+  dimension, and that MCP tools have **two** declaration mechanisms, so a replacement reading only
+  `name:` literals would silently drop `baton_runs`.
 - **Method note — the NUL-byte trap is real and it bit this audit.** §8.4 already warns that
   `impl/src/application.mjs` contains a NUL byte requiring `grep -a`. Plain `grep` against it
   returns *silently empty* — not an error. An early verification pass here read that empty result
