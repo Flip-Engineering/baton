@@ -23,7 +23,7 @@ const VERIFY = Object.freeze({
 
 const MEMBER = Object.freeze({
   role: 'note-writer',
-  exact: Object.freeze({ harness: 'claude-code', model: 'claude-sonnet-5', effort: 'high' }),
+  exact: Object.freeze({ harness: 'codex', model: 'gpt-5.6-sol', effort: 'high' }),
   scope: Object.freeze([reportPath]),
   report: reportPath,
   objective: [
@@ -39,7 +39,7 @@ const MEMBER = Object.freeze({
 const baton = await openBaton({
   repo,
   advanced: {
-    routes: [{ harness: 'claude-code', model: 'claude-sonnet-5', effort: 'high' }],
+    routes: [{ harness: 'codex', model: 'gpt-5.6-sol', effort: 'high' }],
     verification: VERIFY,
   },
 });
