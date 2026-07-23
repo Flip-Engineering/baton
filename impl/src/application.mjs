@@ -47,6 +47,7 @@ const MAX_RUN_LIST_ITEMS = 64;
 const MAX_ATTENTION = 64;
 const MAX_ATTENTION_TEXT_BYTES = 4_096;
 const MAX_BLOCKED_INTERACTION_SUMMARY_BYTES = 160;
+const DEFAULT_TURN_NUDGE_MESSAGE = 'Continue the current turn.';
 // REFLEX-2 board-view ceilings (F10, rules 10-11). RunView's MAX_RUN_VIEW_* do not cover a
 // board, so a per-worker board projection gets its own bounded ceilings: at most MAX_BOARD_ITEMS
 // items (soft-truncate with an explicit boardViewTruncated story, never silent) and a byte
@@ -8782,6 +8783,21 @@ export class BatonApplication {
       };
       candidates.push({ kind: attention.kind, source: attention, target });
     }
+    // Issue #31 §2.2(6), 31-b Part F rule 13: the three steering acts are the ONLY entry points
+    // onto a `turn_checkpoint` attention entry — same guard shape as the interaction loop above,
+    // reusing `attention.requestId` (the pause record's own id) as `target.pauseId`.
+    for (const attention of view.attention ?? []) {
+      if (attention.kind !== 'turn_checkpoint' || !validText(attention.requestId, 4_096)) continue;
+      const target = {
+        workerId: attention.workerId ?? null,
+        taskId: attention.taskId ?? null,
+        turnEpoch: attention.turnEpoch ?? null,
+        pauseId: attention.requestId,
+      };
+      for (const kind of ['nudge_turn', 'wait_turn', 'claim_turn']) {
+        candidates.push({ kind, source: attention, target });
+      }
+    }
     if (!this.driver.coordination.runStop?.(current.goal.runId)) {
       const controls = this._semanticControlTargets(current);
       for (const kind of ['send', 'interrupt']) {
@@ -10527,6 +10543,27 @@ export class BatonApplication {
       }
       await this.answer(request.runId, action.target.requestId,
         hasOptionId ? { optionId: request.inputs.optionId } : { text: request.inputs.text }, principal);
+    } else if (action.kind === 'nudge_turn') {
+      if (!validText(action.target?.pauseId, 4_096)
+        || (request.inputs.message !== undefined
+          && (!validText(request.inputs.message, MAX_ATTENTION_TEXT_BYTES)
+            || SECRET_SHAPED_TEXT.some((pattern) => pattern.test(request.inputs.message))))) {
+        throw applicationError('Run action inputs are invalid', 'application_action_input_invalid');
+      }
+      await this.driver.coordinator.nudgeTurn(
+        action.target.pauseId, request.inputs.message ?? DEFAULT_TURN_NUDGE_MESSAGE,
+        { actor: principal.actor },
+      );
+    } else if (action.kind === 'wait_turn') {
+      if (!validText(action.target?.pauseId, 4_096)) {
+        throw applicationError('Run action inputs are invalid', 'application_action_input_invalid');
+      }
+      this.driver.coordinator.waitTurn(action.target.pauseId, { actor: principal.actor });
+    } else if (action.kind === 'claim_turn') {
+      if (!validText(action.target?.pauseId, 4_096)) {
+        throw applicationError('Run action inputs are invalid', 'application_action_input_invalid');
+      }
+      await this.driver.coordinator.claimTurn(action.target.pauseId, { actor: principal.actor });
     } else if (action.kind === 'select_candidate') {
       if (!action.choices.includes(request.inputs.role)
         || !validText(request.inputs.reason, 1_024)) {
