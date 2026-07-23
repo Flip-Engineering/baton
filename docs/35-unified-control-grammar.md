@@ -469,6 +469,17 @@ seat alive — not `completed`, R-OP-6); `working → working`; `blocked → blo
 recorded outcome (`completed | failed | cancelled | stopped`); wave `start_failed` → `failed`
 (cause `start`).
 
+**The `handle.status` vocabulary is mapped only in part** (v2 acceptance). §7.2 maps `exited` but
+omits its siblings `orphaned` and `dead` (`application.mjs:1688`). `orphaned` is minted by
+`coordinator.mjs:4048` for a rebuilt handle whose durable task is neither pending nor terminal,
+and all three gate `sessionAttachmentUnproven()` (`application.mjs:1685-1689`) — with `orphaned`
+sufficient on its own where `exited`/`dead` additionally require a preserved session. They
+therefore gate session-preservation attention (§7.3) and recovery eligibility exactly as
+`interrupted` gates interrupt eligibility, which is the ground R-OP-6 fought for. The generated
+mapping must cover the **whole** `handle.status` enum or declare the remainder out of axis; today
+it silently covers one of three. Note `coordinator.mjs` is cited nowhere else in this document
+and is absent from the audit extractor's file list (§8.4) — the two facts are the same fact.
+
 ### 7.3 Attention kinds and responses
 
 Canonical kinds are the **nine live kinds, verbatim** (R-OP-7 — renaming them adds a mapping
@@ -544,7 +555,9 @@ different narrow regex for each — `wave.mjs` is scanned solely for
 `/(work_completed|start_failed)/`, so `wave.mjs:11`'s `TERMINAL_PHASES` set and `wave.mjs:85-86`'s
 `selection_required`/`input_required` are invisible to it *even though this document cites both as
 live consumers*; `application.mjs` is scanned only for `phase = '…'` assignments, so set members
-and `phase === '…'` comparisons escape; `web-operator.mjs` is not read at all. The audit's 16
+and `phase === '…'` comparisons escape; `web-operator.mjs` is not read at all — and neither is `coordinator.mjs`, which mints the
+`handle.status` value `orphaned` (`:4048`) and gates ~60 terminality checks on
+`TERMINAL_TASK_STATUSES` (`:245`). The audit's 16
 extracted literals accordingly **omit `selection_required` and `candidate_selected`** — the two
 phases §7.1 maps and R-CX-4 raised to P0. M0 must replace regex-per-file with a **declared
 phase-vocabulary site list**, versioned with the contract. M0 turns it into contracts (§10) plus the **allowed-divergence ledger**:

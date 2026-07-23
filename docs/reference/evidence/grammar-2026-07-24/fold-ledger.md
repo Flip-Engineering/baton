@@ -314,6 +314,27 @@ substantive repair. One defect found and fixed; two claims verified.
   Recorded as a reviewer error, not silently corrected: a deferral repeated across ten turns on a
   decision that was never blocked is itself a review defect, and it delayed a P0 the brief listed
   as mandatory.
+- **A-13 — FIXED — A-8's exclusion was wrong; `coordinator.mjs` is an unmapped member-state
+  source.** A-8 dismissed `coordinator.mjs:42,245` as "task/call axes, not run phases". That test
+  was the wrong one: C3 covers **phase *and member* and attention** strings, so "not a run phase"
+  never settled it. Re-examined against the member axis:
+  `coordinator.mjs` is cited **zero** times in docs/35, yet `TERMINAL_TASK_STATUSES` (`:245`)
+  gates ~60 call sites, and `:4048` mints the `handle.status` value **`orphaned`** — a string
+  that appears nowhere in the doc. `handle.status` is the same vocabulary §7.2 already draws
+  `exited` from (`application.mjs:1688` enumerates `['orphaned','exited','dead']`), so the doc
+  maps **one of three siblings** while calling the mapping generated and total. All three gate
+  `sessionAttachmentUnproven()` (`application.mjs:1685-1689`), with `orphaned` sufficient alone
+  where `exited`/`dead` require a preserved session — i.e. they gate session-preservation
+  attention (§7.3) and recovery eligibility, which is precisely the "drops states that gate live
+  behavior" defect R-OP-6 raised, recurring at a site no seat named.
+  **Checked and *not* claimed:** `TERMINAL_TASK_STATUSES` omits `stopped`, which looked like a
+  second defect — but `status = 'stopped'` never occurs for a task in `coordinator.mjs`, so the
+  omission is correct for that axis. Excluding it kept this finding honest, as the 15-vs-6
+  narrowing did in A-11.
+  Fixed in **§7.2** (the `handle.status` enum must be mapped whole or its remainder declared out
+  of axis) and **§8.4** (`coordinator.mjs` added to the extraction file list beside
+  `web-operator.mjs`). The two omissions share a cause: a file the doc never cites is a file the
+  extractor never reads.
 - **Method note — the NUL-byte trap is real and it bit this audit.** §8.4 already warns that
   `impl/src/application.mjs` contains a NUL byte requiring `grep -a`. Plain `grep` against it
   returns *silently empty* — not an error. An early verification pass here read that empty result
