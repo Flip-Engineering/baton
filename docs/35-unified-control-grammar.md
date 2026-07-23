@@ -1,13 +1,16 @@
 # 35 — One grammar: the unified agent control surface
 
-**Status: v1 draft, pre-red-team** (issue #43; per methodology this document goes through an
-adversarial red-team wave before any implementation contract is cut from it).
+**Status: v2 FINAL** (issue #43). v1 was adversarially red-teamed by three decorrelated seats
+through baton.waves — codex `gpt-5.6-sol@high` (R-CX-1..15, verdict UNSOUND), kimi `k3@high`
+(R-KM-1..17, SOUND-WITH-FOLDS), opus `claude-opus-4-8@high` (R-OP-1..17, SOUND-WITH-FOLDS) —
+reports and drivers in `docs/reference/evidence/grammar-2026-07-24/`. Every finding is folded or
+explicitly declined in Appendix B. Where reviewers disagreed (`work_completed`: R-CX-4 P0 vs
+R-KM "clean"), the disagreement was resolved by direct code verification (R-CX-4 was right:
+`application.mjs:117-124` models provider-settled and application-terminal as deliberately
+separate lifecycles, pinned by `impl/test/phase67-run-terminality.test.mjs`).
 **Seed:** operator directive, 2026-07-23 — *"baton has enormous friction and cumbersome
-interaction methods for agents in all operations and control schemes"* — extended into an explicit
-mandate to design the unified ontology, a functional-descriptive naming grammar in a Jane-Street
-house style, and the engineering framework that makes every surface a projection of one source.
-**Mechanical evidence:** `node impl/scripts/surface-audit.mjs` regenerates Appendix A from source;
-every count below is from that extraction at this commit, not from memory.
+interaction methods for agents in all operations and control schemes."*
+**Mechanical evidence:** `node impl/scripts/surface-audit.mjs` regenerates Appendix A from source.
 
 ---
 
@@ -15,103 +18,97 @@ every count below is from that extraction at this commit, not from memory.
 
 ### 1.1 What an agent must learn today
 
-Baton has one authority path and (at least) six surface dialects over it:
+Baton has one authority path (§1.3) and **eight** surface dialects over it:
 
 | # | Surface | Names | Source of truth |
 |---|---|---|---|
 | D1 | Semantic registry operations | 10 | `APPLICATION_SEMANTIC_REGISTRY.operations` |
 | D2 | Semantic registry actions (`run.act` targets) | 27 | `APPLICATION_SEMANTIC_REGISTRY.actions` |
 | D3 | Application command definitions (older table) | 26 | `APPLICATION_COMMAND_DEFINITIONS` |
-| D4 | Web bus commands (D3 with `web` flag, dots→underscores) | 25 | `WEB_APPLICATION_ENTRIES` |
+| D4 | Web bus commands | 25 app-derived **+ ~19 kernel/goal-plan literals** | `WEB_APPLICATION_ENTRIES` ∪ `COMMAND_CAPABILITY` (`web-northbound.mjs:17-31`) |
 | D5 | CLI verb rows | 37 | `registry.cli.commands` + `parseBatonCli` |
-| D6a | MCP `fleet_*` dialect (kernel + run tools) | 38 | `mcp-northbound.mjs` |
-| D6b | MCP `baton_*` dialect (ordinary + reflex tools) | 21 | `mcp-northbound.mjs` |
+| D6a | MCP `fleet_*` dialect | 38 | `mcp-northbound.mjs` |
+| D6b | MCP `baton_*` dialect | 21 | `mcp-northbound.mjs` |
 | D7 | Embedded client methods | 120 | `application-client.mjs` classes |
+| D8 | MCP-over-Web bridge subset | 5 | `ORDINARY_COMMANDS`, `mcp-web-bridge.mjs:14-16` |
 
-**284 distinct operation names.** On top of that, **16 run-phase strings** circulate
-(`approved, awaiting_plan_approval, cancelled, closed, completed, denied, failed, interrupted,
-interruption_uncertain, paused, reviewing, running, start_failed, stopped, stopping,
-work_completed`), and the delegated-seat concept answers to **four live names** — application-layer
-density: `worker` ×427, `member` ×219, `workstream` ×121, `assignee` ×26 (`seat` survives in docs).
+(R-OP-2, R-OP-15b: v1's D4 counted only the application-derived half — the Web bus also admits
+`spawn`, `send`, `interrupt`, `kill`, `drain`, `respond`, `list`, `result`, `wait`,
+`capabilities`, `provider_status`, `capability_invoke`, `scratch_oracle`, `reuse_decide`,
+`reuse_recheck`, `goal_define`, `plan_propose`, `plan_approve`, `goal_plan_status`; and the
+remote bridge is a ninth hand-list. The M0 audit extraction must cover both.)
 
-None of this is one bug; it is accretion. D3 predates the semantic registry; D1/D2 were added for
-the AX program; D6a predates D6b; the waves/workflow facades grew their own lifecycle words. Each
-layer is internally principled. The composition is the friction.
+**~300 distinct operation names.** Phase strings observed across surfaces: the 16 in Appendix A
+**plus** `selection_required`, `candidate_selected`, `input_required`, `planning_failed`
+(R-OP-5) — v1's "16" was itself an undercount, proving the hand-list failure mode. The
+delegated-seat concept answers to four live names (worker ×427, member ×219, workstream ×121,
+assignee ×26 in the application layer).
+
+None of this is one bug; it is accretion. Each layer is internally principled. The composition
+is the friction.
 
 ### 1.2 Friction ledger (receipts)
 
-- **F1 — Synonym storm for one concept.** worker / member / workstream(+role,generation) / seat /
-  assignee all name the delegated seat. An agent reading a view meets `workstreams`; steering uses
-  `--to RECIPIENT`; stopping uses `stop-member ROLE`; kernel receipts say `worker`.
-- **F2 — Read-model triplication.** `run.inspect` (depth cascade), `run.status` (+`--wait/--follow`),
-  `run.episode` (chapter reads) are three read models over one Run, with `run show` as the CLI
-  spelling of the first. Embedded adds `outline()`, `changes()`, `follow()`, `progress()`,
-  `events()`, `output()`.
-- **F3 — Two execution models.** Dedicated verbs (`run.approve`, `run.adopt`, …) coexist with the
-  action executor (`run.act {actionId}` / CLI `run do`). Live receipt (this session, w-Claude):
-  the outline advertised `nextActions[].kind = approve_plan` + `planDigest`, but `run do RUN_ID
-  approve_plan --inputs {...}` refused `application_action_scope_mismatch` — the advertised thing
-  and the executable thing differ at the default depth. Recovery required knowing that a parallel
-  verb `run approve --plan` existed.
-- **F4 — Two MCP dialects, inconsistent even with themselves.** `fleet_run_*` (17 run tools +
-  kernel tools) vs `baton_*` (10 ordinary + 11 reflex). Path collapsing disagrees:
-  `fleet_run_workstream_notify` keeps the `run_` segment, `baton_workstream_notify` drops it;
-  `runs.list` renders as `baton_runs`. The two dialects even disagree on read model: fleet uses
-  `status`+`wait`, baton uses `inspect`+`act`.
-- **F5 — Sixteen phase strings for one lifecycle.** Runs park at `awaiting_plan_approval`; waves
-  report `work_completed | start_failed | stopped`; the CLI's terminal set adds `closed`; issue-31
-  work just added `paused`. `completed` and `work_completed` are both terminal-success. An agent
-  polling any surface must pattern-match a union nobody documents.
-- **F6 — Cost-per-question.** Before the issue-35 fix, "why is my Run cancelled" cost four
-  progressive-disclosure round-trips (outline→index→section→item) and the answer lived at none of
-  them. The cascade prices ordinary questions in round-trips; for an agent, in tokens and turns.
-- **F7 — Idempotency has four disciplines.** CLI auto-generates a key; embedded handles it
-  internally; MCP requires `idempotencyKey === mcp.call:<requestId>`; the Web bus wants an explicit
-  envelope key. Same guarantee, four incantations.
-- **F8 — Start-verb fan-out.** `run` / `run start` / `explore` / `review` / `workflow(objective,
-  {team})` / `waves.start` — six entries with overlapping semantics and *different* lifecycle
-  behavior (runs park for approval; waves auto-approve; workflow roles differ again). Presets are
-  good; presets with divergent lifecycles are a trap.
-- **F9 — Error opacity family** (issue #41; first slice landed): bare codes with no stage/subject,
-  the generic `temporarily_unavailable` fallback, `not_found` collapsing.
-- **F10 — Intent invisibility** (issue #38): `run` compiles change-intent silently; evidence-shaped
-  objectives die at the trust gate instead of being advised at start.
-- **F11 — JSON walls.** Routine mutations return full views tuned for neither human nor agent; no
-  compact single-line projection; field ordering is stable in practice but pinned nowhere.
-- **F12 — Two registries.** D1/D2 (semantic, schema'd, help-topic'd) and D3 (older, `web`-flagged)
-  both route commands. The CLI posts D3 names; MCP baton-dialect wraps D1/D2; nothing forces them
-  to agree.
-- **F13 — Discovery split-brain** (issues #34/#36/#37; fixed): serve/setup/doctor/bridge each had
-  their own view of "connected". Symptomatic of surface accretion, kept here as a class receipt.
-- **F14 — Reason/argument conventions drift.** `--reason` required on some destructive verbs, not
-  others; `--to RECIPIENT` vs positional `ROLE` vs `--workstream ROLE --generation N` for the same
-  addressing.
+- **F1 — Synonym storm.** worker / member / workstream(+role,generation) / seat / assignee all
+  name the delegated seat, with different addressing per surface.
+- **F2 — Read-model triplication.** `run.inspect` (depth cascade), `run.status` (+wait/follow),
+  `run.episode` (chapter reads) are three read models over one Run; embedded adds six more
+  spellings.
+- **F3 — Two execution models.** Dedicated verbs coexist with the action executor; live receipt:
+  the outline advertised `approve_plan`+`planDigest` but `run do` refused
+  `application_action_scope_mismatch` because the executable coordinate (`actionId`) was not the
+  advertised one.
+- **F4 — Two MCP dialects** that disagree with each other on path collapsing *and* read model
+  (fleet: status+wait; baton: inspect+act).
+- **F5 — Twenty phase strings** across runs, waves, workflow projections, and the CLI terminal
+  set, with three different terminal unions (`application.mjs:117-124`, `wave.mjs:11`,
+  `application-cli.mjs:29` — wave omits `denied`/`closed`; the CLI adds both).
+- **F6 — Cost-per-question.** "Why is my Run cancelled" cost four depth round-trips before the
+  issue-35 fix; the cascade prices ordinary questions in tokens and turns.
+- **F7 — Four idempotency disciplines** (CLI auto-key, embedded internal, MCP `mcp.call:<id>`,
+  Web envelope key).
+- **F8 — Start-verb fan-out with divergent *provenance*.** `run` / `run start` / `explore` /
+  `review` / `workflow()` / `waves.start`. (R-OP-17 corrects v1: waves already start-then-approve
+  explicitly and stamp `driverKind: 'wave'` — `wave.mjs:131,147-156`; `waves.start({approve:
+  false})` parks like any run. The real divergence: `explore`/`review` record **no** expansion
+  provenance at all — `application-semantics.mjs:597-598` is a CLI-row annotation only.)
+- **F9 — Error opacity family** (issue #41; first slice landed).
+- **F10 — Intent invisibility** (issue #38).
+- **F11 — JSON walls**; no compact projection; field-order guarantees pinned nowhere.
+- **F12 — Two registries** (D1/D2 vs D3) both routing commands, agreeing by luck.
+- **F13 — Discovery split-brain** (#34/#36/#37; fixed; kept as class receipt).
+- **F14 — Addressing drift**: `--to RECIPIENT` vs positional `ROLE` vs `--workstream ROLE
+  --generation N`; `--reason` required on some destructive verbs, not others.
 
 ### 1.3 What is already right (and must not be lost)
 
-- **One authority path.** Every surface ends in the same application/coordinator authority with
-  the same fencing, durability, and capability checks. This is why unification is cheap-ish: it is
-  a *naming and projection* problem, not a semantics rebuild.
-- **The semantic registry exists** (D1/D2) with input schemas, idempotent/destructive flags,
-  capability requirements, help topics, and a content digest. It is the seed of the generator this
-  spec builds.
-- **Capability-filtered projections** (views already omit actions outside the principal's
-  capabilities), sanitization discipline, typed refusals, durable admission — all keep working
-  unchanged underneath.
-- **Progressive disclosure is the right idea**; it needs a completeness law (L10), not removal.
+- **One authority path.** Confirmed under adversarial review (R-OP survived-list): CLI, Web,
+  MCP-stdio, and MCP-over-Web all terminate in the same application/coordinator authority with
+  the same fencing and capability checks. Unification is a naming-and-projection problem.
+- **The semantic registry exists** (D1/D2) with schemas, capability requirements, flags, help
+  topics, and a digest — the seed of the generator.
+- **Capability-filtered projections** — with one honest caveat the ledger must carry
+  (R-OP-15e): view-action filtering applies only when the northbound context supplies capability
+  authority (`application.mjs:8869-8875`); without it, candidates are returned unfiltered. This
+  is a ledgered behavior divergence, not a design premise.
+- **Progressive disclosure** is right; it needs the completeness law (L10), not removal.
+- **Sanitization discipline, typed refusals, durable admission** keep working unchanged.
 
 ---
 
 ## 2. Goals and non-goals
 
-**Goals.** One ontology; one closed verb grammar; mechanical name derivation per surface; one
-lifecycle vocabulary; advertised-is-executable; errors that name stage/subject/remedy; constrain by
-construction (#32); steer don't gate (#31); the registry as the single generator.
+**Goals.** One ontology; one closed verb grammar; mechanical name derivation; one lifecycle
+vocabulary per axis (run / member / attention); advertised-is-executable (as L2 defines it);
+errors that name stage/subject/remedy; constrain by construction (#32); steer don't gate (#31);
+the registry as the single generator.
 
-**Non-goals.** No new authority semantics (fencing, durability, verification, capability model are
-untouched); no removal of progressive disclosure; no browser-desk redesign (it re-skins the same
-registry); no external-compatibility burden (baton is self-contained — the blast radius of renames
-is its own tests, drivers, and docs, which is exactly why the alias window can be short).
+**Non-goals.** No new authority semantics — **in both directions** (R-OP-4): existing admission
+preconditions are neither added to verbs that lack them nor removed from paths that have them.
+Fencing, durability, verification, capability model, freshness binding, and reconcilability
+classes are untouched. No removal of progressive disclosure. No browser-desk redesign (it
+re-renders the registry; its pinned element ids move only in M3, R-OP-3). Baton is
+self-contained — the blast radius of renames is its own tests, drivers, and docs.
 
 ---
 
@@ -120,29 +117,50 @@ is its own tests, drivers, and docs, which is exactly why the alias window can b
 A closed noun tree. Nouns are **singular**; collections are `list` reads, never plural nouns.
 
 ```
-deployment                       readiness, routes, workspace, resident lifecycle
+deployment                       readiness/routes/workspace read, serve, host-only shutdown
 run                              the unit of delegated objective work
-  ├─ plan                        the approval gate (value object; verbs live on run)
+  ├─ plan                        the approval gate (approve lives on run; authoring is a
+  │                              separate profile — see below)
   ├─ member(role, generation?)   the delegated seat            ← worker/workstream/seat/assignee
-  ├─ attention(id)               anything awaiting the caller  ← question/approval/decision/checkpoint
-  ├─ evidence / result / review / export     trust-chain reads and gates
-  └─ context                     cells, calls, expression algebra (already clean; unchanged)
-board(name)                      shared task lists (run/workflow scoped)
+  ├─ candidate(role)             a preserved competing result awaiting selection (R-OP-16)
+  ├─ attention(id)               anything awaiting the caller — one SHAPE, several settlers (§7.3)
+  ├─ evidence / review / export  trust-chain reads and gates
+  └─ context                     cells, calls, expression algebra (unchanged; three
+                                 plan-proposal verbs — see §6)
+board(name)                      shared task lists (orchestrator- and worker-profiled ops)
 package(digest)                  typed knowledge/context hand-offs
 knowledge                        horizons (task/workflow/project reads)
 route / profile / intent         value objects — never carry verbs
 ```
 
-**The member unification (naming decision).** Surface name: **`member`**, addressed by `role`
-(+ optional `generation`, defaulting to current). Rationale: `worker` stays correct as the *kernel*
-term (a process with a worktree — kernel receipts keep it); `workstream` describes the durable
-semantic lane, but agents address the seat, not the lane, and `member` is what the waves surface
-already taught drivers (`stopMember`). One term at every surface; `workstream`/`seat` retired from
-surface names; `worker` confined below the application boundary.
+**The member unification.** Surface name: **`member`**, addressed **structurally** as
+`{role, generation?}` — never by encoding generation into the role string (R-CX-8: `reviewer:g2`
+must not collide with `{role:"reviewer", generation:2}`). `worker` remains the kernel term and
+never surfaces; `workstream`/`seat` retire from surface names. Two clocks, stated (R-KM-10,
+R-OP-14): **workflow-scoped** member reads and notify (`run.member.view`, `run.member.send`)
+default `generation` to the run's current durable workflow round; **run-level** send/interrupt
+(`run.send`, `run.interrupt`) resolve the current live recipient exactly as today
+(`application.mjs:1930-1976`) and have **no generation axis**. During a generation transition
+with a predecessor worker still live, a bare-role member send fails with the existing
+`application_control_recipient_ambiguous` and requires `--generation`.
 
-**The attention unification.** Questions, approvals, decisions (REFLEX-1), and checkpoints (#31)
-are one surfaced kind: `attention` items with `kind`, `prompt`, `options?`, and a bound `do`. One
-verb answers all of them (`run.answer`); the checkpoint's `continue|settle` is just its option set.
+**Reserved sentinel `work`** (R-OP-14): `work` is a run-level recipient token meaning *the
+current single seat* (`application.mjs:1943`). `run.send` accepts it; `run.member.send ROLE`
+rejects it; a workflow role literally named `work` is a registry-lint error.
+
+**The attention unification — one shape, not one verb** (R-OP-7, R-KM-4, R-CX-6). Every
+attention item carries `kind`, `prompt`, `options?`, and a bound `do` (§5 L2). `run.answer`
+settles the answerable kinds (`answer_question`, `answer_approval`, `answer_decision`,
+`turn_checkpoint` — the checkpoint via a three-variant response, §7.3). The gate kinds
+(`approve_plan`, `select_candidate`) are settled by their named verbs (`run.approve`,
+`run.select`), whose invocation is exactly the item's bound `do`. v1's "one verb answers all of
+them" was false and is withdrawn.
+
+**Goal/plan authoring** (R-OP-2): the Web-bus authoring commands (`goal_define`,
+`plan_propose`, `plan_approve`, `goal_plan_status` — `web-northbound.mjs:20`, reconcilable,
+colon-namespaced capabilities) are a separately-profiled surface (§5 L8 profile `authoring`),
+outside the ordinary grammar, unchanged — like the kernel tools. §3's `plan` note above refers
+to the *ordinary* surface, where approval is the only plan verb and it lives on `run`.
 
 ---
 
@@ -152,151 +170,260 @@ verb answers all of them (`run.answer`); the checkpoint's `continue|settle` is j
 
 | Class | Verbs | Semantics |
 |---|---|---|
-| read | `view`, `watch`, `list`, `help` | `view` = one bounded view at a depth; `watch` = the only streaming read (channel-parameterized); `list` = bounded collections; `help` = self-description |
+| read | `view`, `watch`, `list`, `help` | `view` = one bounded view at a depth, **optionally change-aware** (`--cursor N --wait D` — the registry's own preferred continuation, `application-semantics.mjs:135-140`) **or condition-awaiting** (`--until settled\|terminal`, absorbing `run.wait`'s deployment-bounded settle-block, R-OP-9/R-KM-2); `watch` = the only **event-channel** read (`channel: progress\|events\|output\|changes`, `--to RECIPIENT` for output, inherits `followPolicy` gating and per-channel cursors); `list` = bounded collections; `help` = self-description |
 | lifecycle | `start`, `approve`, `stop`, `recover`, `resume`, `retry` | exactly today's authority semantics |
-| interaction | `answer`, `send`, `interrupt` | `answer` settles attention; `send`/`interrupt` are member-directed (run-level forms resolve the current recipient exactly as today) |
-| trust | `review`, `adopt`, `select`, `feedback`, `revise`, `integrate`, `export` | the evidence→integration chain, unchanged semantics |
-| object | board: `post`, `claim`, `report`, `retitle`, `reorder`, `close`, `read`; package: `admit`, `attach`, `read`; context: `eval` | the reflex/REPL family, names already verb-clean |
-| meta | `do` | executes an advertised action verbatim; every non-read verb is definitionally sugar for `do` |
+| interaction | `answer`, `send`, `interrupt` | `answer` settles answerable attention (§7.3); `send`/`interrupt` run-level forms resolve the live recipient as today; member forms are `{role, generation?}`-addressed |
+| trust | `review`, `adopt`, `select`, `feedback`, `revise`, `integrate`, `export` | the evidence→integration chain, unchanged semantics; `select`/`feedback` address a **candidate**, not a member (R-OP-16) |
+| object | board: `post`, `claim`†², `report`†², `retitle`, `reorder`, `close`, `read`; package: `admit`, `attach`, `read`; context: `eval`, `map`, `reduce`, `retry` | reflex/REPL/context families; `context.map/reduce/retry` are plan-proposal verbs (R-CX-1, R-KM-9) |
+| meta | `do` | the generic executor for an advertised action; takes the advertised `{kind, actionId, inputs}` and nothing else. **Named verbs are peers, not sugar** (R-OP-4): they carry their own schemas and admission and never inherit `do`'s freshness/semantic-authority machinery; `do` never sheds it. L2 constrains the *advertised* set, not the verb set. |
 
-Banned as surface verbs (synonyms of the above): `show`, `status`, `inspect`, `act`, `notify`,
-`steer`†, `follow`, `wait`, `progress`, `events`, `output`, `episode`‡, `stop-member`.
-† `steer` survives one migration window as a deprecated alias of `member.send --now`.
-‡ episode chapters become sections of `run.view` (`--section episode.output` etc.); the chapter
-taxonomy is unchanged, only its entry point folds in.
+†² `board.claim`/`board.report` are **worker-profile** operations (R-CX-14): they bind a
+worker/owner identity, observed item version/digest, and board fence
+(`coordination-store.mjs:12717-12753`) and are deliberately absent from the ordinary operator
+surface (`mcp-reflex-board-package-red.test.mjs:213-224` pins the absence). They appear here
+because the grammar covers every profile; L1 is profile-scoped.
 
-### 4.2 House rules (the Jane-Street-alike style, adapted)
+Banned as surface verbs (synonyms; the lint set is **generated from this table with token
+normalization** — `stop_member` and `stop-member` are one token, R-CX-13): `show`, `status`,
+`inspect`, `act`, `notify`, `follow`, `wait`, `progress`, `events`, `output`, `episode`‡,
+`stop-member`, `steer`†.
 
-- **H1 — Shape.** Every operation is `noun[.subnoun].verb`, verb last, one verb, imperative.
-  Registry key `run.member.stop`; CLI `baton run member stop`; MCP `baton_run_member_stop`; web
-  `run_member_stop`; embedded `run.member(role).stop()`. Derivation is mechanical (§6.1) — the
-  `baton_workstream_notify` vs `fleet_run_workstream_notify` class of drift becomes impossible.
-- **H2 — One name per concept.** No synonyms, ever. A concept renamed is renamed everywhere in the
-  same phase, with aliases only inside the migration window and marked deprecated in help/tool
-  annotations.
-- **H3 — Reads are nouns or the four read verbs.** No `get_`/`fetch_`/`show_`. `run.evidence` is a
-  noun-read; state queries are `view` at a depth.
-- **H4 — Ids positional, options labeled.** CLI: required ids are positional (`RUN_ID`, `ROLE`);
-  everything else is a labeled flag whose name equals the JSON schema property exactly. One
-  addressing convention: `member` ops take `ROLE [--generation N]` — `--to`, `--workstream` retire.
-- **H5 — Destructive verbs take `--reason`, uniformly** (schema-enforced: `stop`, `member.stop`,
-  `interrupt`, `revise`, `integrate`, `adopt` — exactly the registry's `destructive`/gate class).
+† `run.steer` is a **deprecated compatibility command, not an alias** (R-CX-15, R-KM-5,
+R-OP-8): its exact five-field schema (`{runId, target, mode, message, reason}` — worker-id
+target, all three delivery modes, **required** reason), its worker-ownership/fence resolution,
+and its unique `reconcilable: false` admission class (`application.mjs:142`, the only one;
+consumed by `web-northbound.mjs:24`) are preserved verbatim through M5 and retired to the kernel
+profile, never rewritten into `member.send`. `reconcilable` becomes a per-operation registry
+field (§8.1) so no alias can flip a durability class silently.
+
+‡ Episode chapters become sections of `run.view` — **the fold is sound only with the episode's
+axes carried over** (R-OP-3, R-KM-3, R-CX-3): `run.view` gains `--role ROLE` (with the explicit
+value `--role none` selecting the run-level aggregate, which is a *distinct projection* —
+`phase92-episode-attribution-red.test.mjs:105-106`) and `--generation N` (the durable workflow
+round, never a Plan version — P92-EA4); episode `detail` maps onto the existing `depth` tail
+(`item|content|evidence` ⊂ depth enum, `application-semantics.mjs:44-45` — the clean half).
+The four cross-argument admission rules (`pageCursor` only for output×content; `content` only
+for output|help; `generation ⇒ role`; `waitMs ⇒ cursor` — `application.mjs:1226-1247`) port
+verbatim into the `run.view` schema. Cross-role and cross-generation evidence isolation
+(`phase92-episode-attribution-red.test.mjs:103-104,133-144`) is a contract **of the fold**.
+Registry-owned `--section` values do not count against H7's name depth (R-KM-3).
+
+### 4.2 House rules
+
+- **H1 — Shape.** `noun[.subnoun].verb`, verb last, imperative. Derivation per §6.1 is
+  mechanical; drift like `baton_workstream_notify` vs `fleet_run_workstream_notify` becomes
+  impossible.
+- **H2 — One name per concept.** Aliases exist only inside the migration window, deprecated in
+  help/annotations, resolved in the dispatch layer (§9 M1).
+- **H3 — Reads are nouns or the four read verbs.** No `get_`/`fetch_`/`show_`.
+- **H4 — Ids positional, options labeled.** A flag's name is the **kebab-case of its JSON schema
+  property** (`pageCursor` → `--page-cursor`); an enum-valued property MAY additionally expose
+  one flag per value (`delivery: now` → `--now`) declared as `flagAliases` in the registry entry;
+  undeclared value-flags are a lint failure (R-OP-12). Member ops take `ROLE [--generation N]`;
+  candidate ops (`select`, `feedback`) take `ROLE` addressing a candidate — the only two
+  role-addressing classes, both registry-declared (R-OP-16).
+- **H5 — Reasons.** Destructive verbs uniformly **accept and durably record** `--reason`, and
+  views surface its absence. Schema-*required* only for the non-emergency gate class (`revise`,
+  `integrate`, `adopt`); `stop`, `member.stop`, and `interrupt` keep `reason` optional — adding
+  a required field to the emergency path would be a new admission precondition, violating §2
+  (R-OP-13; `application-semantics.mjs:170,179,612,621`).
 - **H6 — No abbreviations, no vendor words, no plural nouns** in operation names.
-- **H7 — Depth ≤ noun.subnoun.verb.** If a name needs a third noun segment, the ontology is wrong,
-  not the name.
-- **H8 — Every operation ships an example invocation** in its schema description; MCP renders it in
-  the tool listing, CLI in help, docs are generated from the same strings.
-- **H9 — Enum values are lower_snake, closed, and registry-owned** (phases, attention kinds,
-  channels, effect classes). No surface mints a string the registry does not define.
-- **H10 — Canonical field order.** View fields serialize in registry-pinned order; parsers may rely
-  on it; the order is part of the conformance contract, not an accident.
+- **H7 — Depth ≤ noun.subnoun.verb.** Registry-owned enum/section values are data, not names.
+- **H8 — Every operation ships an example invocation** rendered into MCP listings, CLI help, and
+  generated docs from one string.
+- **H9 — Closed enums are registry-owned** (phases, member states, attention kinds, channels,
+  effect classes): lower_snake, closed, no surface mints one. **Instance-valued enums**
+  (`recipient`, `role`, `strategy`) are registry-*shaped*, not registry-*valued*: they are minted
+  per view from live run state (`application.mjs:8880-8906`) and H9 does not bind them (R-OP-14).
+- **H10 — Canonical serialization order**, scoped (R-CX-11, R-KM-13): a serialization-layer
+  normalization over the envelope, outline top-level fields, and registry-owned nested objects —
+  never a builder discipline; arrays whose order is semantic (recipients, prioritized actions)
+  are pinned by their declared sort rule. **Parsers must remain order-insensitive.** All
+  digest/replay identities stay on the existing sorted-key canonical form
+  (`application.mjs:171-187`) — the pin is presentation, versioned and tested separately (C8,
+  cut at M4).
 
 ---
 
 ## 5. The laws
 
-Executable invariants — each becomes a conformance contract in M-phases:
-
-- **L1 — One grammar.** Every registry operation is reachable on every enabled surface under its
-  mechanically derived name, and no surface exposes a name the registry cannot derive.
-- **L2 — Advertised is executable.** Any action a view advertises carries a `do` block
-  (`{action, inputs}`) that executes verbatim via `run.do` on every surface — same authority, same
-  outcome, byte-identical resulting view modulo cursor fields. (Kills F3.)
-- **L3 — Terminal implies cause.** No terminal view without a typed cause (landed for
-  `dispatch_refused`; the law generalizes it: every terminal phase, every surface).
-- **L4 — One vocabulary.** Exactly one run-phase enum and one member-state enum (§7) across runs,
-  waves, workflows, CLI, MCP, web, embedded. A legacy string appearing anywhere is a red test.
-- **L5 — Same authority, same result.** Presets (`explore`, `review`, waves) are pure sugar:
-  expansion to core operations is registry-recorded, and their runs speak the same lifecycle.
-  (Kills F8's divergence — auto-approval becomes an *explicit recorded* `approve` by the preset.)
-- **L6 — One name per concept** (H2 as a law, lintable: banned-synonym list in the suite).
-- **L7 — Errors name stage, subject, remedy.** `{code, stage: discovery|transport|auth|admission|
-  dispatch|provider|verification|policy, subject, remedy: {summary, do?}}` — sanitized exactly as
-  today (no paths, no coordinates), machine-actionable where a remedy exists (#41 generalized).
-- **L8 — Constrain by construction.** A principal's surface inventory *is* the capability
-  projection of the registry (#32): tools absent, not forbidden. The ordinary/advanced MCP split
-  becomes a profile, not two hand-lists.
-- **L9 — Steer, don't gate.** Checkpoints surface as attention with `continue|settle` options
-  (#31's landed semantics, spelled in the one grammar).
-- **L10 — Outline is complete in kind.** Every question of the form *what happened / why / what
-  now* is answerable from `view --depth outline` in one call: phase, typed cause, attention items
-  with `do`, next actions with `do`, route, compact progress. Deeper depths add *bytes* (content,
-  evidence), never new *kinds* of truth. (Kills F6 permanently.)
+- **L1 — One grammar, per profile** (R-CX-14): every registry operation is reachable on every
+  surface **enabled for the same authority profile** under its mechanically derived name, and no
+  surface exposes a name the registry cannot derive. Profiles (§8.3): `ordinary`, `kernel`,
+  `authoring` (R-OP-2), `worker` (board claim/report), `remote_bridge` (D8, R-OP-15b), `host`
+  (serve/shutdown).
+- **L2 — Advertised is executable: kind-portable, id-local** (R-OP-1, R-KM-6, R-CX-7). Every
+  advertised action carries `do: {action: {kind, actionId}, inputs}`. `kind` and `inputs` are
+  portable and byte-identical across surfaces; `actionId` is a **freshness token** bound to the
+  view digest and calling principal/session (`application.mjs:7310-7323`) which each surface
+  re-derives from its own fresh view. Executing the same `{kind, inputs}` on any enabled surface
+  reaches the same authority and the same post-state phase, cause, and attention set (excluding
+  cursor and freshness fields). `actionId` is never a durable literal — a driver that caches one
+  gets `application_action_scope_mismatch` and re-reads; that refusal is the designed recovery
+  (R-KM-15). Over MCP-over-Web the bridge mints the authority envelope per session
+  (`mcp-web-bridge.mjs:111-135`); the caller-visible block stays `{kind, inputs}` everywhere.
+- **L3 — Terminals are explained** (R-CX-10): every **non-success** terminal carries a typed
+  cause; `completed` carries a non-null accepted result/outcome authority and MAY have
+  `terminalCause: null` (pinned today by `phase92-read-only-result-red.test.mjs:90-103`).
+- **L4 — One vocabulary per axis.** Exactly the §7 enums, with **generated** legacy mappings
+  (R-OP-5: hand-maintained mapping lists are the failure mode this document exists to end). The
+  registry owns two predicates — `providerSettled(phase)` and `applicationTerminal(phase)` —
+  and no surface derives either from a single terminal union (R-CX-4).
+- **L5 — Presets are recorded expansions** (R-OP-17, R-KM-17): every preset run's durable log
+  carries an expansion record naming the preset and the core operations it issued. Waves already
+  approve explicitly and stamp `driverKind: 'wave'` (`wave.mjs:131,147-156`); the work is
+  extending that provenance to `explore`/`review` (which today record nothing) and recording the
+  expansion itself. `waves.start({approve: false})` is a distinct recorded expansion. No
+  durability-semantics change.
+- **L6 — One name per concept**, lintable via the generated banned-token set.
+- **L7 — Errors name stage, subject, remedy** (`{code, stage, subject, remedy}`; sanitized
+  exactly as today; #41 generalized).
+- **L8 — Constrain by construction**: a principal's surface inventory *is*
+  `render(filter(registry, capabilities ∪ profile))`. The ordinary/advanced MCP split, the
+  authoring commands, the remote-bridge hand-list, and worker tool registration (#32) all become
+  profile projections of one computation.
+- **L9 — Steer, don't gate**: checkpoints surface as attention with the three-variant response
+  (§7.3) mapping exactly onto the landed `nudge_turn`/`wait_turn`/`claim_turn` acts — semantics
+  untouched (R-CX-6, R-KM-4).
+- **L10 — Outline is complete in kind** (R-CX-12): the registry owns a closed
+  `outlineTruthKinds` enum — `phase`, `stage`, `terminal_cause_or_outcome`, `attention`,
+  `next_action`, `route`, `progress`, `resources`, `preservation`, `section_availability`. The
+  outline advertises every kind (including availability links for every registered section);
+  deeper depths add authoritative coordinates, payloads, and evidence — never a new kind. C5
+  tests the finite phase × attention × next-action matrix, not a prose universal.
 
 ---
 
 ## 6. The canonical operation set
 
-Forty-one operations replace 284 names. Verb-level entries are sugar for `do` (L2) but are real,
-named, schema'd operations — agents should not be forced through a meta-verb for ordinary work.
+Forty-five operations replace ~300 names. Verb-level entries are peers of `do` (§4.1 meta row).
+Every row carries its authority profile; unmarked rows are `ordinary`.
 
-| Canonical | Replaces (today) |
+| Canonical | Replaces / notes |
 |---|---|
-| `deployment.view` | `doctor`, `doctor --check`, `routes()`, `route()`, `baton route` |
-| `deployment.serve` | `baton serve` (host-only, unchanged) |
-| `run.list` | `runs.list`, `baton_runs`, `runs.list` web row |
-| `run.start` | `run.start`, `baton run`, `run start`, `explore`*, `review`*, `workflow()`*, `waves.start`* (*presets — retained as sugar, L5) |
-| `run.view` | `run.inspect`, `run.status`, `run show`, `run.episode` + chapters, embedded `outline/index/…` |
-| `run.watch` | `run.follow`, `run.wait`, `run progress/events/output --follow`, embedded `changes/progress/events/output` (channel: `progress\|events\|output\|changes`) |
+| `deployment.view` | remote readiness/routes/workspace read (`doctor --check`, `routes()`, `route()`). The CLI's credential-free local doctor is a host-side rendering detail, **not** projected to web/MCP (R-KM-16) |
+| `deployment.serve` | `baton serve` — profile `host` |
+| `deployment.shutdown` | `application.shutdown` (`application.mjs:152`) — profile `host`, never web/MCP (R-OP-2, R-KM-1) |
+| `run.list` | `runs.list`, `baton_runs` |
+| `run.start` | `run.start` + presets `explore`/`review`/`workflow()`/`waves.start` (sugar with recorded expansion, L5) |
+| `run.view` | `run.inspect`, `run.status`, `run show`, **`run.wait`** (`--until settled\|terminal`, R-OP-9), `run.episode` + chapters (with `--role/--generation/--section`, §4.1‡), embedded outline/index/changes-awaiting reads. `run result` = `run.view --section episode.result` (the double-mapped v1 `run.result` row is deleted, R-OP-9) |
+| `run.watch` | `run.follow`, `run progress/events/output --follow` (channels; `--to` for output; followPolicy-gated) |
 | `run.do` | `run.act`, `baton run do` |
-| `run.approve` | `run.approve` (+ waves auto-approve, now recorded) |
-| `run.answer` | `run.answer` (+ `--allow/--deny/--cancel/--text/--option` unified payload), `baton_decision_answer` |
-| `run.send` / `run.interrupt` | run-level send/interrupt (recipient-resolving, as today) |
+| `run.approve` | `run.approve` (waves' explicit per-member approve is already this operation) |
+| `run.answer` | `run.answer` + `baton_decision_answer`; response union per kind (§7.3) |
+| `run.send` / `run.interrupt` | run-level, live-recipient-resolving; `work` sentinel accepted here only |
 | `run.stop` | `run.stop`, `fleet_run_stop`, `baton_run_stop` |
-| `run.evidence` / `run.result` | `run.evidence`, `run result` |
-| `run.review` / `run.adopt` / `run.select` / `run.feedback` / `run.revise` / `run.integrate` / `run.export` | same verbs, one spelling each |
-| `run.recover` / `run.resume` / `run.retry` | same |
-| `run.member.view` | `run.workstreams`, `run workstreams ROLE`, episode-by-workstream reads |
-| `run.member.send` | `run.workstream.notify`, `run notify`, `run.steer` (deprecated alias), `--to` addressing |
+| `run.evidence` | `run.evidence` — the one noun-read of the terminal manifest |
+| `run.review` / `run.adopt` / `run.integrate` / `run.export` | same verbs, one spelling |
+| `run.select` / `run.feedback` | candidate-addressed (R-OP-16) |
+| `run.revise` / `run.recover` / `run.resume` / `run.retry` | same |
+| `run.member.view` | `run.workstreams` (roster/generations/state read; per-member episode chapters go through `run.view --role`) |
+| `run.member.send` | `run.workstream.notify`, `run notify` (structured `{role, generation?}`; `--to` stays on run-level send, R-OP-14) |
 | `run.member.interrupt` | member-targeted interrupt |
 | `run.member.stop` | `run.workstream.stop`, `run stop-member`, `stopMember` |
-| `board.post/claim/report/retitle/reorder/close/read` | `baton_board_*` (names already clean; they gain CLI/embedded/web projections per L1) |
-| `package.admit/attach/read` | `baton_package_*` (same) |
-| `context.eval` | `application.context_eval`, `baton context eval`, `baton_context_eval` |
-| `run.attention.list` | folded into `run.view` outline (L10); exists as a filtered read for polling |
-| `application.help` | `help` (unchanged; topics regenerate from the registry) |
+| `run.attention.list` | filtered read for polling; outline carries the same items (L10) |
+| `context.eval` | `application.context_eval`, `baton context eval`, `baton_context_eval`; **keeps the closed `runId` XOR `manifestDigest` address union** (R-CX-1); `context_search/chunk/coverage` remain registry-recorded aliases of eval (already `legacyAliasFor`, `application-semantics.mjs:280-323`) |
+| `context.map` / `context.reduce` / `context.retry` | the plan-proposal context actions (`effect: plan_proposal`, `application-semantics.mjs:226-279`) — first-class verbs, not do-only (R-CX-1, R-KM-9) |
+| `board.post/retitle/reorder/close/read` | orchestrator board ops; registry rows carry the orchestrator-lease + `expectedBoardFence` + idempotency-binding authority fields (R-CX-14) |
+| `board.claim` / `board.report` | profile `worker` (R-CX-14) |
+| `package.admit/attach/read` | `baton_package_*`; same authority fields |
+| `application.help` | `help`; topics regenerate from the registry |
 
-Kernel tools (`fleet_spawn/kill/respond/…`) stay an explicitly advanced, separately-profiled
-surface (L8 profile: `kernel`), outside the ordinary grammar, unchanged.
+**Explicit exclusions** (all L8-profiled, outside the ordinary grammar, unchanged): kernel tools
+(`fleet_spawn/kill/respond/…` — profile `kernel`); goal/plan authoring (`goal_define`,
+`plan_propose`, `plan_approve`, `goal_plan_status` — profile `authoring`, R-OP-2); the
+checkpoint acts remain advertised do-targets whose settle path is `run.answer`'s three-variant
+response (§7.3).
 
 ### 6.1 Derivation rules (mechanical)
 
-For registry key `a.b.verb` with CLI ids `A B`:
-embedded `client.a(A?).b(B?).verb(opts)` (nouns with identity become parameterized accessors);
-CLI `baton a b verb A? B? [--flags]`; MCP `baton_a_b_verb`; web `a_b_verb`. One function computes
-all four; the conformance suite asserts the computation, so a hand-added divergent name cannot
-compile green.
+For registry key `a.b.verb`: embedded `client.a(A?).b(B?).verb(opts)`; CLI `baton a b verb A?
+B? [--flags]`; MCP `baton_a_b_verb`; web `a_b_verb`. One function computes all four; the
+conformance suite asserts the computation. Each operation declares its enabled surfaces and
+profile; aliases cannot bypass derivation. **C9** (R-OP-10): the derived web name set must be
+disjoint from the kernel/authoring literal sets (`web-northbound.mjs:17-31`) — asserted, not
+assumed.
 
 ---
 
-## 7. One lifecycle
+## 7. One vocabulary per axis
 
-### 7.1 Run phases (the only enum)
+### 7.1 Run phases
+
+Canonical enum (non-terminal → terminal):
 
 ```
-planning → awaiting_approval → working ⇄ paused ⇄ interrupted → verifying → reviewing
-        ↘ denied                        ↘ uncertain                     ↘ integrating
-terminal: completed | failed | cancelled | stopped   (transitional: stopping)
+planning → awaiting_approval → queued → working ⇄ paused
+                                        working → interrupted | uncertain
+        → verifying → result_ready → [awaiting_selection → result_selected] → reviewing → integrating
+terminal: completed | failed | cancelled | stopped | denied     transitional: stopping
 ```
 
-Mapping (mechanical, exhaustive — a view emitting a left-column string after M2 is a red test):
-`awaiting_plan_approval→awaiting_approval`, `approved→working` (approval is an event, not a
-phase), `running→working`, `interruption_uncertain→uncertain`, `work_completed→completed`,
-`start_failed→failed` (cause `start`), `planning_failed→failed` (cause `planning`),
-`closed→stopped`, `denied` terminal with cause. Every terminal carries `cause` (L3). `paused`
-(issue-31) is first-class non-terminal.
+`result_ready` is **provider-settled and deliberately non-terminal** (R-CX-4; the two-lifecycle
+comment at `application.mjs:117-118` and `phase67-run-terminality.test.mjs` are the binding
+contracts): adoption, selection, review, integration, and export all act after it. The registry
+predicates: `providerSettled = {result_ready, awaiting_selection, result_selected} ∪ terminals`;
+`applicationTerminal = {completed, failed, cancelled, stopped, denied}`.
+
+Generated mapping (normative rule: **the mapping table is generated by the audit tool; a phase
+literal in `impl/src` with no entry is a red test** — R-OP-5):
+
+| Legacy | Canonical | Notes |
+|---|---|---|
+| `awaiting_plan_approval` | `awaiting_approval` | |
+| `approved` | `queued` | approved-awaiting-dispatch is a real state (`application.mjs:6685-6725`); v1's `working` erased it (R-CX-5, R-KM-7) |
+| `running` | `working` | |
+| `interruption_uncertain` | `uncertain` | |
+| `work_completed` | `result_ready` | **not** `completed` (R-CX-4) |
+| `selection_required` | `awaiting_selection` | attention kind `select_candidate`; live consumer `wave.mjs:85` re-reports at M2 (R-OP-5) |
+| `candidate_selected` | `result_selected` | |
+| `input_required` (outline) | `working` + attention `answer_question` | `wave.mjs:86` re-reports at M2 |
+| `planning_failed` | `failed` (cause `planning`) | |
+| `start_failed` | **member state** `failed` (cause `start`, `runId: null`) — never a Run phase (R-CX-5) | |
+| `closed` | **dead string** | no live emitter; deleted at M2 from `APPLICATION_RUN_TERMINAL_PHASES`, `PROVIDER_EXECUTION_SETTLED_PHASES`, `application-cli.mjs:29`, **and** the embedded completed-bucket at `application-client.mjs:251` (which today buckets it as completed while action-suppression treats it as stopped — the codebase already disagrees with itself; R-KM-7, R-CX-5) |
+| `denied` | `denied` | terminal with cause |
+| `pre_delivery` / `post_delivery` | — | control-delivery states in event payloads (`application.mjs:2043`), not run phases; out of scope of this enum |
+
+Every non-success terminal carries `cause` (L3). `paused` is first-class non-terminal
+(issue 31). **Axes, not a chain** (R-KM-11): run phase moves `working ⇄ paused`;
+`interrupted`/`uncertain` are entered only from `working`; **paused masks interrupted** in the
+projection (`application.mjs:6423-6432` checks paused first) — the diagram is two axes with a
+stated precedence, and a conformance test written from it must encode that precedence.
 
 ### 7.2 Member states
 
-`pending | working | paused | blocked | stopping | stopped | completed | failed` — one enum for
-waves members, workflow roles, and workstream generations; kernel worker states map below the
-application boundary and never surface raw.
+Canonical enum: `pending | idle | working | blocked | paused | interrupted | stopping |
+completed | failed | cancelled | stopped`.
 
-### 7.3 Attention kinds
+Mapping (generated, same discipline; sources: `story.mjs:132-441`,
+`coordination-store.mjs:123-130`, `application.mjs:1930-1990`): `idle → idle` (turn finished,
+seat alive — not `completed`, R-OP-6); `working → working`; `blocked → blocked`;
+`input_required → blocked` + attention `answer_question`; `paused → paused`;
+`interrupted → interrupted` (**kept**: interrupt eligibility and preservation receipts key on it
+— `application.mjs:1949-1952,1988-1990`; R-OP-6); `stopping → stopping`; `exited` → terminal by
+recorded outcome (`completed | failed | cancelled | stopped`); wave `start_failed` → `failed`
+(cause `start`).
 
-`question | approval | decision | checkpoint | preservation | capacity` — all answered via
-`run.answer {attention, response}` where response is exactly one of
-`{text} | {option} | allow | deny | cancel`.
+### 7.3 Attention kinds and responses
+
+Canonical kinds are the **nine live kinds, verbatim** (R-OP-7 — renaming them adds a mapping
+for zero gain; v1's six-kind list renamed some, missed three, and invented `capacity`, which has
+no emitter and is dropped — reserved for issue #39):
+
+`approve_plan | select_candidate | answer_question | answer_approval | answer_decision |
+turn_checkpoint | session_preservation | workflow_revision | workflow_recovery`
+
+Settlement:
+
+| Kind | Settled by | Response |
+|---|---|---|
+| `answer_question` | `run.answer` | `{text}` |
+| `answer_approval` | `run.answer` | `allow \| deny \| cancel` |
+| `answer_decision` | `run.answer` | `{option} \| {text}` |
+| `turn_checkpoint` | `run.answer` | `continue{text?} \| wait \| settle` — dispatching **exactly** `nudge_turn` / `wait_turn` / `claim_turn` (`application-semantics.mjs:355-380`): `continue` admits a fresh turn; `wait` records the non-consuming receipt and leaves every option open; `settle` re-runs the preserved trust gate (R-KM-4, R-CX-6) |
+| `approve_plan` | `run.approve` (bound `do`) | carries `planDigest` |
+| `select_candidate` | `run.select` (bound `do`) | carries the minted `roles` choice set |
+| `session_preservation` / `workflow_revision` / `workflow_recovery` | their advertised bound `do` (stop/recover/revise family) | as advertised |
 
 ---
 
@@ -304,125 +431,181 @@ application boundary and never surface raw.
 
 ### 8.1 Registry v2 — the single generator
 
-Extend `APPLICATION_SEMANTIC_REGISTRY` (which already owns schemas, capability requirements,
-idempotent/destructive flags, help topics, CLI usage, and a content digest) to own:
+Extend `APPLICATION_SEMANTIC_REGISTRY` to own: nouns, verbs, profiles; one entry per §6
+operation with `verb`, `noun`, `effect`, `capabilities`, `profile`, `idempotent`, `destructive`,
+**`reconcilable`** (R-OP-8 — so aliases cannot flip a durability class), `emergency`, `input`
+schema (with `flagAliases`, H4), `output` view kind, per-surface enablement + derived names +
+declared overrides, `aliases` (M-window only), `example` (H8), help topic; the §7 enums with
+their generated legacy mappings and the two lifecycle predicates; the error taxonomy (L7); the
+`outlineTruthKinds` enum (L10).
 
-```
-registry = {
-  nouns, verbs,                          // §3, §4.1 — closed sets with classes
-  operations: {                          // one entry per §6 canonical op
-    'run.member.stop': {
-      verb: 'stop', noun: ['run','member'], effect: 'member_cleanup',
-      capabilities: [...], idempotent: false, destructive: true,
-      input: schema, output: 'run.view',          // every mutation returns the outline view
-      surfaces: { cli: {...derived, overrides?}, mcp: {}, web: {}, embedded: {} },
-      aliases: ['run.workstream.stop', 'stop-member'],     // M-window only, help-marked
-      example: 'baton run member stop run-1a2b reviewer --reason "…"',
-      help: topicRef,
-    }, …
-  },
-  phases, memberStates, attentionKinds, channels,   // §7 enums + legacy mappings
-  errors: { codes, stages, remedies },              // L7 taxonomy
-  digest,
-}
-```
+**Digest split** (R-OP-11): `authorityDigest` covers schemas/capabilities/effects/enums —
+`actionId` freshness (`application.mjs:7313`) and the MCP bridge pin
+(`mcp-web-bridge.mjs:172-175`) bind to it alone; `presentationDigest` covers
+aliases/help/examples/ordering and may change without invalidating live sessions. Any phase that
+changes `authorityDigest` is a **deploy-restart event scheduled at a fleet quiesce point** —
+in-flight sessions and cached actionIds do not survive it, by design.
 
-Renderers consume it: `parseBatonCli` table, MCP tool tables (both profiles), web entries, the
-embedded facade method map, and the help/docs text — replacing today's five hand-maintained
-parallels (D3/D4/D5/D6a+b/D7). `impl/CLI.md` §usage and `impl/MCP.md` inventories become generated
-blocks (the #36 drift class ends structurally).
+**Named invariant** (R-OP-4): `requiredCapabilities` is always sorted
+(`application-semantics.mjs:581-584`); the MCP bridge compares raw order
+(`mcp-web-bridge.mjs:156`). The generator must emit sorted lists; a conformance check asserts
+it.
 
 ### 8.2 Envelope
 
-Every mutation returns the outline view; every read returns the requested depth; every error is L7.
-`{ok: true, view}` / `{ok: false, error: {code, stage, subject, remedy}}` uniformly; idempotency
-handled inside each client (one discipline, F7 ends); cursors opaque and resumable (unchanged);
-canonical field order (H10).
+Every mutation returns the outline view; every read returns the requested depth; every error is
+L7-shaped. Idempotency handled inside each client (one discipline). Cursors opaque and
+resumable. Serialization order per H10's scope.
 
-### 8.3 Capability projection (#32)
+### 8.3 Capability projection
 
-`surfaceInventory(principal) = render(filter(registry, principal.capabilities ∪ profile))`.
-Ordinary MCP = the default profile; kernel/advanced = an explicit profile; a wave member's
-registered tool set (#32) is the same computation with the member's capability profile — one
-mechanism from operator surface to worker containment.
+`surfaceInventory(principal) = render(filter(registry, principal.capabilities ∪ profile))` with
+profiles `ordinary | kernel | authoring | worker | remote_bridge | host`. One computation from
+operator surfaces to worker containment (#32). The known conditional-filtering behavior
+(`application.mjs:8869-8875`) is a seeded `behavior` ledger row until the projection is
+unconditional (R-OP-15e).
 
 ### 8.4 Conformance harness
 
-`impl/scripts/surface-audit.mjs` (landed with this doc) extracts current truth. M0 turns it into
-contracts: derivation identity per op (L1), advertised-executable round-trip property (L2),
-enum-escape scan (L4), synonym lint (L6), envelope/error shape checks (L7), field-order pin (H10)
-— plus an **allowed-divergence ledger** that starts as the full audit and must shrink to empty by
-M5 (no silent regressions, no permanent exceptions).
+`impl/scripts/surface-audit.mjs` extracts current truth — extended at M0 to cover the full Web
+admitted-command set (`COMMAND_CAPABILITY` keys), D8, and complete phase-literal extraction
+(R-OP-2, R-OP-5). M0 turns it into contracts (§10) plus the **allowed-divergence ledger**:
+
+- **Bidirectional and append-forbidden** (R-KM-14, R-OP-15d, R-CX-13): at every commit,
+  `observed divergences ⊆ ledger` (anything unledgered is red — the novel-divergence guard), and
+  the ledger's only legal edit is **removal**; the conformance suite fails on any entry absent
+  from the previous commit's ledger appearing again, and on any new entry. Post-M0 additions
+  require a spec-version change with red-team approval.
+- **Dimensioned** (R-OP-15e): each entry carries `dimension: name | args | schema | behavior |
+  enum` and `retiresIn: M1..M5`; seeded `behavior` rows include the conditional capability
+  filtering and the per-deployment MCP schema mutation (`mcp-northbound.mjs:826`).
+- **M0 harness note**: `impl/src/application.mjs` contains a NUL byte — extraction must read it
+  binary-safely (`grep -a` semantics; R-OP scope note).
 
 ---
 
 ## 9. Migration
 
-Each phase: spec slice → adversarial red-team → red contracts → wave implementation (baton building
-baton) → ledger shrinks. No big-bang rename; the suite stays green at every commit.
+Each phase: spec slice → adversarial red-team → red contracts → wave implementation → ledger
+shrinks. Suite green at every commit. **Any `authorityDigest`-changing phase lands at a fleet
+quiesce point** (R-OP-11).
 
-- **M0 — Harness.** Conformance contracts + allowed-divergence ledger seeded from Appendix A.
-  No behavior change.
-- **M1 — Registry v2 + canonical names as aliases.** Every §6 name resolves everywhere (D1/D2/D3
-  merge behind one table); legacy names keep working; tool annotations/help mark them deprecated.
-  L2 lands (`do` blocks in advertised actions, executable verbatim).
-- **M2 — One vocabulary.** Phase/member/attention enums unified with the §7 mapping; waves/workflow
-  facades re-report; L3 generalized; L10 outline-completeness contract.
-- **M3 — Member unification + watch/view consolidation.** `run.member.*` canonical;
-  `workstream`/`notify`/`steer`/`stop-member` become mapped aliases; `view`/`watch` land; episode
-  folds to sections.
-- **M4 — Generated surfaces.** CLI table, both MCP profiles, web entries, embedded facade, CLI.md/
-  MCP.md inventories all render from registry v2; hand tables deleted; L8 profile projection.
-- **M5 — Alias sunset.** Ledger to empty; banned-synonym lint promoted from warning to red; the
-  16-string phase union is grep-clean; GLOSSARY.md updated (`member` entry; `worker` marked
-  kernel-internal).
+- **M0 — Harness.** Conformance contracts + the bidirectional ledger seeded from the extended
+  audit. No behavior change.
+- **M1 — Registry v2 + dispatch-layer aliases + same-surface L2.** Canonical names resolve
+  **in a dispatch-layer alias map only** (R-OP-10, R-KM-8, R-CX-9): they do NOT become
+  `APPLICATION_COMMAND_DEFINITIONS` keys, do NOT appear in `card().commands`
+  (`application.mjs:10668` — `phase64-integrated-run-application.test.mjs` UA5 pins the list),
+  and do NOT enter `WEB_APPLICATION_ENTRIES` before M4; every legacy D3 key and flag set stays
+  the transport projection verbatim, so parked reconcilable envelopes keep matching their stored
+  scope keys. L2 lands **per-surface** (each surface's advertised do executes on that surface);
+  legacy spellings marked deprecated.
+- **M2 — One vocabulary.** The §7 enums land with their generated mappings; waves/workflow/CLI
+  re-report (`wave.mjs:85-86`, `application-cli.mjs:29`, the `closed` deletions incl.
+  `application-client.mjs:251`); L3 generalized; L10 matrix contract; C2 re-baselined —
+  **the vocabulary flip invalidates outstanding advertised actionIds by design; the fail-closed
+  scope-mismatch refusal plus re-read is the intended recovery** (R-KM-15). Cross-surface L2
+  outcome-identity begins here (same kind+inputs ⇒ same post-state).
+- **M3 — Member + read consolidation.** `run.member.*` canonical; `run.view` gains
+  `--role/--generation/--until` and the episode fold lands **with** the axes, the ported
+  admission matrix, the `continuation.operation` flip (`run.episode` → `run.view`,
+  `phase92-episode-workstream-red.test.mjs:92`), and the browser-desk element-id/bus moves
+  (`:167-175`) in the same commit (R-OP-3); `watch` lands; `steer` retires to kernel profile.
+- **M4 — Generated surfaces.** CLI table, both MCP profiles, web entries (transport-name
+  derivation flips here; parked-envelope reconciliation across the boundary is a named
+  conformance case — R-KM-8), embedded facade, CLI.md/MCP.md inventories all render from
+  registry v2; hand tables deleted; full four-surface L2/C2; C8 cut here (green-then-red phasing
+  resolved by cutting it in its own phase — R-OP-15c); C9 disjointness.
+- **M5 — Alias sunset.** Ledger to empty; banned-token lint promoted to red; legacy phase
+  strings grep-clean; `run.steer` deleted; GLOSSARY.md updated.
 
-Rollback story per phase: aliases are additive until M5, so each phase is independently
-shippable and revertible; M5 is the only compatibility-breaking commit and it breaks only
-already-deprecated spellings inside this repository.
+Rollback: aliases are additive until M5; each phase independently shippable and revertible
+**for durable state**; live-session invalidation at authorityDigest changes is a stated
+operational cost, not a rollback hazard (R-OP-11).
 
 ---
 
-## 10. Acceptance contracts (cut at M0, red until their phase lands)
+## 10. Acceptance contracts
 
-- C1 (L1): for every registry op × enabled surface, the derived name resolves and executes.
-- C2 (L2): property test — for N randomized run states, every advertised `do` executes verbatim on
-  all four surfaces with identical resulting outline.
-- C3 (L4): no surface serializes a phase/member/attention string outside the §7 enums.
-- C4 (L6): banned-synonym lint over surface-name space (`workstream|seat|show|status|inspect|act|
-  notify|steer|stop-member` as operation tokens).
-- C5 (L10): for each terminal and each attention-bearing state, outline alone answers
-  what/why/next (cause non-null, `do` present, no deeper read required).
-- C6 (L7): error-shape law over every refusal path the suite can provoke; leak test that stage/
-  subject never carry paths, tokens, or fence coordinates.
-- C7 (L5): preset-expansion identity — `explore`/`review`/waves record their expansion and their
-  runs emit only §7 vocabulary.
-- C8 (H10): canonical field-order pin over view serializations.
+- **C1** (L1): per profile, every registry op × enabled surface resolves under its derived name
+  and executes; negative inventory (e.g. board claim/report absent from ordinary MCP,
+  `mcp-reflex-board-package-red.test.mjs:213-224`) asserted per profile (R-CX-14).
+- **C2** (L2): property test — for N randomized run states, for every advertised action kind,
+  each enabled surface re-derives an executable id for the same `{kind, inputs}` and executing
+  it yields the same resulting phase, cause, and attention set (excluding cursor and freshness
+  fields). Same-surface at M1; cross-surface outcome-identity at M2; four-surface at M4
+  (R-OP-1, R-OP-15a).
+- **C3** (L4): no surface serializes a phase/member/attention string outside §7; the mapping
+  is generated and total over extracted literals (R-OP-5).
+- **C4** (L6): banned-token lint generated from §4.1 with token normalization (R-CX-13).
+- **C5** (L10): the finite phase × attention × next-action matrix — outline alone answers
+  what/why/next for **all nine** attention kinds; cause non-null for non-success terminals only
+  (R-CX-10, R-OP-7).
+- **C6** (L7): error-shape law over every provokable refusal; leak test that stage/subject never
+  carry paths, tokens, or fence coordinates.
+- **C7** (L5): every preset run's durable log carries an expansion record naming the preset and
+  issued core operations; `waves.start({approve:false})` is a distinct recorded expansion;
+  explore/review gain provenance they lack today (R-OP-17).
+- **C8** (H10): canonical serialization pin over the scoped surface — cut at M4 (R-OP-15c).
+- **C9** (§6.1): derived web transport names disjoint from kernel/authoring literals (R-OP-10).
 
 ---
 
 ## 11. Honest edges
 
-- **Rename cost is real**: ~2,700 tests and the driver docs reference legacy spellings; the alias
-  window plus ledger makes the cost incremental, but M3/M4 are wide diffs and belong to waves, not
-  a solo pass.
-- **`run.view` folding episode chapters** must not regress the chapter taxonomy's evidence
-  guarantees — the red-team should attack this fold hardest.
-- **Two registries merging (D1/D3)** touches the Web bus's command admission; the merge must keep
-  the byte-level envelope compatibility until M4 flips renderers.
-- **Kernel surface stays un-unified by design** — advanced/emergency control keeps its own names
-  and profile; pretending otherwise would violate the ordinary/advanced boundary this repo already
-  enforces.
-- This document is **v1 pre-red-team**; per methodology it is not implementable authority until
-  the adversarial wave has run and findings are folded (the docs 32/33/34 lifecycle).
+- **Rename cost is real** and now quantified: the named pinned files
+  (`phase64…UA5`, `phase67-run-terminality`, `phase92-episode-*`, `phase12/16/72` inventories,
+  `wave.mjs` phase branches, `application-client.mjs:251`) are the M-phase work items, listed in
+  their phases above.
+- **`actionId` is never durable** — drivers cache `{kind, inputs}` and re-derive; the
+  scope-mismatch refusal is the designed recovery, and M2's vocabulary flip exercises it
+  fleet-wide (R-KM-15).
+- **The episode fold** is the highest-risk M3 item even after the axis repair; the phase92
+  attribution/isolation contracts are the acceptance gate, and the fold must land atomically
+  with the continuation and desk flips (R-OP-3).
+- **Registry-digest churn** is an operational cost at every authority-changing phase; quiesce
+  points are scheduling constraints the migration inherits (R-OP-11).
+- **Kernel, authoring, worker, and host profiles stay un-unified by design** — the grammar
+  covers them as profiles precisely so their boundaries stay enforced, not to erase them.
+- This v2 is implementable authority: findings folded, disagreements resolved by code
+  verification, and the remaining risk named above. M0 (issue #44) cuts contracts from this
+  revision.
 
 ---
 
 ## Appendix A — mechanical inventory
 
-Regenerate with `node impl/scripts/surface-audit.mjs`. Snapshot at this commit: 10 registry
-operations; 27 actions; 26 command definitions (25 web-exposed); 37 CLI verb rows; 38 `fleet_*` +
-21 `baton_*` MCP tools; 120 embedded client methods; 16 run-phase strings; seat-concept synonym
-density worker×427 / member×219 / workstream×121 / assignee×26 / seat×1 across the application
-layer. The generator's full output is the audit's table of record and deliberately lives in the
-tool, not in this file, so it can never go stale.
+Regenerate with `node impl/scripts/surface-audit.mjs`. Snapshot at v1: 10 registry operations;
+27 actions; 26 command definitions (25 web-flagged **plus ~19 kernel/goal-plan Web literals the
+v1 extraction missed** — R-OP-2); 37 CLI verb rows; 38 `fleet_*` + 21 `baton_*` MCP tools; 5
+remote-bridge commands (D8); 120 embedded methods; 16+4 phase strings (R-OP-5); seat-synonym
+density worker×427 / member×219 / workstream×121 / assignee×26. The M0 audit extension makes
+the tool, not this file, the table of record for all of the above.
+
+## Appendix B — red-team fold ledger
+
+All 49 findings dispositioned. **Folded as stated**: R-CX-1 (canonical set closure: +shutdown,
++context.map/reduce/retry, checkpoint settle path, eval address union, search/chunk/coverage as
+recorded aliases), R-CX-2/R-KM-2/R-OP-9 (view/watch/wait split: until-condition on view, channels
+on watch, run.result row deleted), R-CX-3/R-KM-3/R-OP-3 (episode fold axes + matrix + atomic
+flips), R-CX-4 (result_ready + selection states + two predicates; resolved against R-KM's
+"clean" by code verification), R-CX-5/R-KM-7 (queued; closed declared dead with named deletions;
+start_failed → member state), R-CX-6/R-KM-4/R-OP-7 (attention: one shape not one verb; nine
+kinds; three-variant checkpoint response; capacity dropped), R-CX-7/R-KM-6/R-OP-1 (L2
+kind-portable/id-local; C2 restated), R-CX-8/R-KM-10/R-OP-14 (structured member address; two
+clocks; work sentinel reserved; role:gN banned), R-CX-9/R-KM-8/R-OP-10 (M1 dispatch-layer
+aliases only; D3 projection frozen; C9), R-CX-10 (L3 success carve-out), R-CX-11/R-KM-13 (H10
+scoped; C8 at M4), R-CX-12 (outlineTruthKinds), R-CX-13/R-KM-14/R-OP-15d (ledger bidirectional,
+append-forbidden, generated ban set), R-CX-14 (L1 profile-scoped; worker-profile board ops;
+authority fields), R-CX-15/R-KM-5/R-OP-8 (steer = compatibility command; reconcilable a registry
+field), R-KM-1/R-OP-2 (deployment.shutdown; authoring profile; D4/D8 audit extension), R-KM-9
+(context verbs first-class), R-KM-11 (two axes, paused masks interrupted), R-KM-12 (nine kinds
+verbatim; capacity reserved for #39), R-KM-15 (M2 invalidation stated as designed recovery),
+R-KM-16 (deployment.view remote scope), R-KM-17/R-OP-17 (L5/C7 re-grounded on driverKind facts;
+F8 corrected), R-OP-4 (do as peer; sorted-caps invariant), R-OP-5 (mapping generated + four
+missing strings), R-OP-6 (member enum + mapping incl. interrupted/idle/cancelled), R-OP-11
+(digest split; quiesce points), R-OP-12 (H4 kebab + flagAliases), R-OP-13 (H5 emergency
+carve-out), R-OP-15a (L2/C2 phasing), R-OP-15b (D8 + remote_bridge profile), R-OP-15c (C8
+phase), R-OP-15e (dimensioned ledger + seeded behavior rows), R-OP-16 (candidate noun).
+**Declined**: none. **Deferred with tracking**: `capacity` attention kind (issue #39's design
+lane will mint it with its emitter).
