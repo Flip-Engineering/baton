@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { openBaton } from '../../../../impl/src/index.mjs';
 
 // Grammar red-team wave (issue #43, docs/35 v1 → v2): TWO decorrelated seats through
-// baton.waves — codex and opus each adversarially attack docs/35-unified-control-grammar.md
+// baton.waves — opus and kimi k3 each adversarially attack docs/35-unified-control-grammar.md
 // and write an independent findings report. Per methodology the doc is not implementable
 // authority until this wave's findings are folded. Driver copies the scratchpad/31-b pattern
 // including the 31-c nudge steering loop (w-169 lesson). Deployment state is isolated under
@@ -83,6 +83,9 @@ const CONSTRAINTS = [
   'checkout.',
 ].join(' ');
 
+// Attempt salt: runs.start is idempotent by objective digest, so every relaunch
+// must change the objective or members attach to stopped prior runs.
+const ATTEMPT = new Date().toISOString();
 const MEMBERS = Object.freeze([
   Object.freeze({
     role: 'grammar-redteam-opus',
@@ -90,8 +93,21 @@ const MEMBERS = Object.freeze([
     scope: Object.freeze([`${relativeRoot}/redteam-opus.md`]),
     report: `${relativeRoot}/redteam-opus.md`,
     objective: [
+      `[attempt: ${ATTEMPT}]`,
       `Write ${relativeRoot}/redteam-opus.md — your independent adversarial red-team report`,
       'on the unified control grammar. Prefix your finding ids R-OP-N.',
+      ATTACK, REPORT_FORMAT, CONSTRAINTS, OVERSIZE,
+    ].join(' '),
+  }),
+  Object.freeze({
+    role: 'grammar-redteam-kimi',
+    exact: Object.freeze({ harness: 'kimi-code', model: 'kimi-code/k3', effort: 'high' }),
+    scope: Object.freeze([`${relativeRoot}/redteam-kimi.md`]),
+    report: `${relativeRoot}/redteam-kimi.md`,
+    objective: [
+      `[attempt: ${ATTEMPT}]`,
+      `Write ${relativeRoot}/redteam-kimi.md — your independent adversarial red-team report`,
+      'on the unified control grammar. Prefix your finding ids R-K3-N.',
       ATTACK, REPORT_FORMAT, CONSTRAINTS, OVERSIZE,
     ].join(' '),
   }),
@@ -101,7 +117,10 @@ const baton = await openBaton({
   repo,
   advanced: {
     deploymentRoot: resolve(repo, '.baton', 'grammar-2026-07-24-c'),
-    routes: [{ harness: 'claude-code', model: 'claude-opus-4-8', effort: 'high' }],
+    routes: [
+      { harness: 'claude-code', model: 'claude-opus-4-8', effort: 'high' },
+      { harness: 'kimi-code', model: 'kimi-code/k3', effort: 'high' },
+    ],
     verification: VERIFY,
   },
 });
@@ -134,7 +153,7 @@ try {
     const line = progress.members.map((entry) => `${entry.role}=${entry.phase}${entry.attention ? `[${entry.attention}]` : ''}`).join(' ');
     log(`progress ${Math.round((Date.now() - startedAt) / 1000)}s ${line}`);
     for (const entry of progress.members) {
-      if (entry.phase !== 'paused' || nudged.has(`${entry.role}:${entry.attention}`)) continue;
+      if (entry.phase !== 'paused') continue;
       const run = wave.runs.get(entry.role);
       if (!run) continue;
       try {
@@ -142,14 +161,13 @@ try {
         const view = status?.view ?? status ?? {};
         const checkpoint = (Array.isArray(view.attention) ? view.attention : [])
           .find((item) => item?.kind === 'turn_checkpoint' && typeof item?.requestId === 'string');
-        if (checkpoint) {
+        if (checkpoint && !nudged.has(checkpoint.requestId)) {
           await run.act('nudge_turn', { message: 'Continue your red-team review and finish your report file.' });
-          nudged.add(`${entry.role}:${entry.attention}`);
+          nudged.add(checkpoint.requestId);
           log(`steered nudge_turn on ${checkpoint.requestId} for ${entry.role}`);
         }
       } catch (error) {
         log(`nudge for ${entry.role} returned ${error?.code ?? 'unknown'} (recorded)`);
-        nudged.add(`${entry.role}:${entry.attention}`);
       }
     }
     for (const entry of progress.members) {
