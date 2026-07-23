@@ -1913,6 +1913,11 @@ export class Coordinator {
     const record = {
       state: 'pending', resolution: null, consumer: null, worker: workerId,
       taskId: task.id, turnEpoch, changedPathsDigest, mintedEvent: terminalEvent.seq,
+      // 31-b Part D rule 8: `claim` RE-RUNS the live trust gate, and `_runTrustGate(handle,
+      // workerResult)` needs the turn's own worker result as its second argument. The record
+      // carries it so a later `claim` reproduces the SAME call an ordinary turn completion makes.
+      // `changedPathsDigest` above is attention-only evidence and is never gate input.
+      workerResult: wr ?? null,
     };
     this._pausedTurns.set(pauseId, record);
     this._coordTransition(task, 'paused', `task.paused:${task.id}:${terminalEvent.seq}`,
@@ -1938,6 +1943,265 @@ export class Coordinator {
       this._coordMapEvent(settledEvent), 'policy');
     task.status = 'working';
     return true;
+  }
+
+  // =========================================================================
+  // Issue #31 §2.2(6), 31-b: the three steering acts on a paused turn
+  // (`31b-steering-acts-decisions.md`). `nudge` and `claim` each reserve the pause record's OWN
+  // single-consumer slot (Part A rule 1) — they never ride `_resolveRecord`, which reserves
+  // against the `_pending` INTERACTION family. `wait` (Part C rule 6) never enters this state
+  // machine at all.
+  // =========================================================================
+
+  /** Bounded read-only projection of one pause record — the accessor RunView attention uses. */
+  pausedTurnStatus(pauseId) {
+    const record = this._pausedTurns.get(pauseId);
+    if (!record) return null;
+    return {
+      pauseId, state: record.state, consumer: record.consumer ?? null,
+      workerId: record.worker, taskId: record.taskId, turnEpoch: record.turnEpoch,
+      changedPathsDigest: record.changedPathsDigest ?? null,
+    };
+  }
+
+  /** Every still-unconsumed pause record, optionally filtered by worker/task. */
+  pausedTurns({ workerId = null, taskId = null } = {}) {
+    const rows = [];
+    for (const pauseId of this._pausedTurns.keys()) {
+      const row = this.pausedTurnStatus(pauseId);
+      if (!row || row.state !== 'pending') continue;
+      if (workerId !== null && row.workerId !== workerId) continue;
+      if (taskId !== null && row.taskId !== taskId) continue;
+      rows.push(row);
+    }
+    return rows;
+  }
+
+  /**
+   * Part A rule 1. Reserve the pause record's single-consumer slot, mirroring `_resolveRecord`'s
+   * `pending → resolving → resolved` shape (:8353-8375) verbatim — including the `resolvingDone`
+   * gate a racing second caller awaits — but over `_pausedTurns`, a different durable family with
+   * a different authority op. COMMIT only after the act's own effect durably lands; a throw or a
+   * refusal anywhere in the bundle rolls the record back to `pending` with nothing consumed.
+   */
+  async _reservePauseRecord(pauseId) {
+    const record = this._pausedTurns.get(pauseId);
+    if (!record) return { ok: false, result: 'not_found' };
+    if (record.state === 'resolving') {
+      await record.resolvingDone;
+      if (record.state === 'resolved') {
+        return { ok: false, result: 'already_resolved', resolution: record.resolution };
+      }
+      return this._reservePauseRecord(pauseId);
+    }
+    if (record.state !== 'pending') {
+      return { ok: false, result: 'already_resolved', resolution: record.resolution };
+    }
+    record.state = 'resolving';
+    let releaseResolving;
+    record.resolvingDone = new Promise((resolve) => { releaseResolving = resolve; });
+    const finishResolving = () => { releaseResolving(); delete record.resolvingDone; };
+    return {
+      ok: true,
+      record,
+      rollback: () => {
+        record.state = 'pending';
+        record.consumer = null;
+        record.resolution = null;
+        finishResolving();
+      },
+      commit: (resolution, consumer) => {
+        this._resolvePauseAuthority(pauseId, record, consumer);
+        record.resolution = resolution;
+        finishResolving();
+      },
+    };
+  }
+
+  /** The live worker/task pair behind a reserved pause record, or a typed refusal. */
+  _pausedActTargets(record) {
+    const handle = this._workers.get(record.worker);
+    const task = this._tasks.get(record.taskId);
+    if (!handle || !task) return { ok: false, result: 'not_found' };
+    if (task.status !== 'paused') return { ok: false, result: 'not_paused', status: task.status };
+    return { ok: true, handle, task };
+  }
+
+  /**
+   * Part B rule 5. Scratch-only, fence-filtered claim invalidation. NOT `_expireScratchClaims`'s
+   * unconditional sweep (that is the provider-FAILURE behavior at `_failProviderResult`) and NOT
+   * `claimScratch` (the worker-authored re-entry point, whose `expectedFence` CAS has no meaning
+   * for policy-driven expiry). Board claims are deliberately absent: their CAS carries a
+   * BOARD-scoped fence (`coordination-store.mjs` `boardFence(item.board)`), never the worker turn
+   * fence `bumpTurn` just advanced — fence-filtering them off the turn fence is a category error.
+   */
+  _expirePreNudgeScratchClaims(handle, task, newFence) {
+    if (!this._coordination) return [];
+    const expired = [];
+    for (const claim of this._coordination.activeScratchClaims({ workerId: handle.id, taskId: task.id })) {
+      if (!(Number(claim.fence) < Number(newFence))) continue;
+      this._coordination.expireScratchClaim(claim.id, claim.version, {
+        actor: 'policy', key: `scratch.claim_expired:${claim.id}:${claim.version}:turn_nudged`,
+      });
+      expired.push(claim.id);
+    }
+    return expired;
+  }
+
+  /**
+   * Part B rules 3-5. `nudge` is a FULL fresh-turn admission on the paused task, not a resend.
+   * Neither existing lane fits: `_deliver`'s bare prompt mode logs `control.nudge` and calls no
+   * `_admitProviderTurn`/`bumpTurn`/`_clearBudgetStop`/`_resetWatchdogTurn` at all, and
+   * `_deliverFollowUp` is unreachable for a paused (non-terminal) task AND mints a brand-new task
+   * id through `_createCoordinationRefinement` — wrong for resuming the SAME task the driver
+   * parked. So this mirrors `_deliverFollowUp`'s post-ack bundle while unparking in place.
+   */
+  async nudgeTurn(pauseId, message, opts = {}) {
+    this.tick();
+    const reservation = await this._reservePauseRecord(pauseId);
+    if (!reservation.ok) return reservation;
+    const { record, commit, rollback } = reservation;
+    const targets = this._pausedActTargets(record);
+    if (!targets.ok) { rollback(); return targets; }
+    const { handle, task } = targets;
+    const workerId = handle.id;
+    const actor = opts.actor ?? 'orchestrator';
+    const harness = this._harnessOf(handle.vendor);
+
+    // (b) the governance/reserve gate — the same one `_deliverFollowUp` calls — plus the queue
+    // that holds adapter events emitted synchronously during delivery.
+    const providerAdmission = this._admitProviderTurn(handle, task, 'turn_nudge');
+    if (!providerAdmission.ok) {
+      rollback();
+      return { ok: false, result: 'provider_turn_refused', reason: providerAdmission.code };
+    }
+    const admission = { events: [] };
+    handle.turnAdmission = admission;
+    let ack;
+    try {
+      ack = await this._adapters[handle.vendor].prompt(workerId, message, 'turn');
+    } catch (error) {
+      if (handle.turnAdmission === admission) handle.turnAdmission = null;
+      if (admission.events.length > 0) this._rejectContradictoryAdmission(handle, admission, error);
+      else this._releaseProviderTurnAdmission(handle, 'turn_nudge_exception');
+      rollback();
+      return { ok: false, result: 'delivery_exception', reason: String(error?.message ?? error) };
+    }
+    if (!ack || ack.ok !== true) {
+      if (handle.turnAdmission === admission) handle.turnAdmission = null;
+      if (admission.events.length > 0) this._rejectContradictoryAdmission(handle, admission, ack?.reason);
+      else this._releaseProviderTurnAdmission(handle, 'turn_nudge_refused');
+      rollback();
+      return { ok: false, result: ack?.reason ?? 'delivery_refused', reason: ack?.reason };
+    }
+
+    // (c) only now does any fence state move.
+    const stamp = this._fences.bumpTurn(workerId);
+    // (d) same-task unpark. `turn.settled` is 31-a's symmetric fold kind (story.mjs
+    // `LEGAL_TRANSITIONS[TURN_SETTLED] = {from:['paused'], to:'working'}`) and supplies the
+    // durable evidence `_coordTransition` requires; the explicit in-memory writes mirror
+    // `clearPending`'s `blocked → working` parity pair. The task id is NOT replaced.
+    const settledEvent = this._log.append({
+      worker: workerId, harness, turnEpoch: stamp.turnEpoch, kind: 'turn.settled', actor,
+      ...this._routeAttribution(handle, task),
+      payload: { actor, basis: 'nudge', pauseId },
+    });
+    this._coordTransition(task, 'working', `task.working:${task.id}:${settledEvent.seq}`,
+      this._coordMapEvent(settledEvent), actor);
+    task.status = 'working';
+    handle.status = 'working';
+    handle.turnTerminalObserved = false;
+    // (e)/(f) nothing else re-arms the watchdog: `lifecycle.turn_completed` CLEARS it and only a
+    // fresh-turn admission re-arms. `_armWatchdog` refuses unless `handle.status === 'working'`,
+    // so the parity write above is load-bearing, not cosmetic.
+    this._clearBudgetStop(handle);
+    handle.turnAdmission = null;
+    this._resetWatchdogTurn(handle);
+    // (g) invalidation runs AFTER the admission commits, inside the same rollback boundary.
+    const expiredScratchClaims = this._expirePreNudgeScratchClaims(handle, task, stamp.fence);
+    // (h) the durable admission event, carrying the pause record's own id.
+    const startedEvent = this._log.append({
+      worker: workerId, harness, turnEpoch: stamp.turnEpoch, kind: 'lifecycle.turn_started',
+      actor, ...this._routeAttribution(handle, task),
+      payload: { nudged: true, pauseId, controlId: opts.controlId ?? null },
+    });
+    // (i) drain the queued adapter events.
+    for (const event of admission.events) this._handleEvent(event, handle.vendor);
+    commit({ act: 'nudge', pauseId, turnEpoch: stamp.turnEpoch }, actor);
+    return {
+      ok: true, result: 'nudged', pauseId, taskId: task.id, workerId,
+      fence: stamp.fence, turnEpoch: stamp.turnEpoch,
+      expiredScratchClaims, seq: startedEvent.seq,
+    };
+  }
+
+  /**
+   * Part C rule 6. `wait` is a no-op with a receipt and NEVER consumes the reservation — it does
+   * not touch `record.state`, so a later `nudge`/`claim`/`wait` against the SAME pause record
+   * proceeds exactly as if no `wait` had happened. Consuming the record here (v1's shape) would
+   * wedge the task permanently: once every legal driver response resolves the record, no act
+   * could ever mint against it again.
+   */
+  waitTurn(pauseId, opts = {}) {
+    this.tick();
+    const record = this._pausedTurns.get(pauseId);
+    if (!record) return { ok: false, result: 'not_found' };
+    const handle = this._workers.get(record.worker);
+    const task = this._tasks.get(record.taskId);
+    const actor = opts.actor ?? 'orchestrator';
+    const event = this._log.append({
+      worker: record.worker, harness: this._harnessOf(handle?.vendor),
+      turnEpoch: record.turnEpoch, kind: 'turn.wait_noted', actor,
+      ...(handle ? this._routeAttribution(handle, task) : {}),
+      payload: { pauseId, actor },
+    });
+    return {
+      ok: true, result: 'wait_noted', pauseId, taskId: record.taskId,
+      workerId: record.worker, state: record.state, seq: event.seq,
+    };
+  }
+
+  /**
+   * Part D rules 7-9. `claim` (never `settle` — that name belongs to `wave.settle`) re-runs the
+   * LIVE trust gate: the same `_runTrustGate` call every ordinary turn completion makes, against a
+   * fresh `_worktrees.capture()`, at claim time instead of turn-completion time. It never reads
+   * the stored `changedPathsDigest` as gate input, never bumps the fence, and never touches the
+   * watchdog — the gate's only two outcomes are `completed` and `failed`.
+   */
+  async claimTurn(pauseId, opts = {}) {
+    this.tick();
+    const reservation = await this._reservePauseRecord(pauseId);
+    if (!reservation.ok) return reservation;
+    const { record, commit, rollback } = reservation;
+    const targets = this._pausedActTargets(record);
+    if (!targets.ok) { rollback(); return targets; }
+    const { handle, task } = targets;
+    const actor = opts.actor ?? 'orchestrator';
+    // `TRANSITIONS` has no `paused → completed` edge (31-a: `paused → {working, failed,
+    // cancelled}`), so the gate's terminal transition is only legal from `working`. Unpark durably
+    // first, exactly as 31-a's degenerate auto-settle does before falling through to the gate.
+    const settledEvent = this._log.append({
+      worker: handle.id, harness: this._harnessOf(handle.vendor), turnEpoch: record.turnEpoch,
+      kind: 'turn.settled', actor, ...this._routeAttribution(handle, task),
+      payload: { actor, basis: 'claim', pauseId },
+    });
+    this._coordTransition(task, 'working', `task.working:${task.id}:${settledEvent.seq}`,
+      this._coordMapEvent(settledEvent), actor);
+    task.status = 'working';
+    try {
+      await Promise.resolve(handle.worktreeReady).then(() => (
+        this._runTrustGate(handle, record.workerResult ?? null)
+      ));
+    } catch (error) {
+      rollback();
+      throw error;
+    }
+    const outcome = task.status;
+    commit({ act: 'claim', pauseId, outcome }, actor);
+    return {
+      ok: true, result: 'claimed', pauseId, taskId: task.id, workerId: handle.id,
+      outcome, verdict: task.verdict ?? null,
+    };
   }
 
   _recordDrainDisposition(drainId, actor, workerId, disposition) {

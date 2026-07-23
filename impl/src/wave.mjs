@@ -84,6 +84,10 @@ function attentionFrom(outline) {
   if (phase === 'awaiting_plan_approval') return 'blocked_interaction:approve_plan';
   if (phase === 'selection_required') return 'blocked_interaction:select_candidate';
   if (phase === 'input_required') return 'blocked_interaction:answer_required';
+  // Issue #31 §2.2(6), 31-b Part F rule 15: a `paused` member with no explicit attention override
+  // still needs SOME signal that a turn checkpoint exists before a driver can nudge/wait/claim it.
+  // `turn_checkpoint` is that classification — a default, not an escalation.
+  if (phase === 'paused') return 'turn_checkpoint';
   return null;
 }
 

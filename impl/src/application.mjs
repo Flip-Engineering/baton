@@ -6416,6 +6416,10 @@ export class BatonApplication {
           : readOnlyResult && allAccepted && candidates.length > 0 ? 'completed'
           : allSettled && candidates.length > 0 ? 'selection_required'
             : allSettled && anyFailed ? 'failed'
+            // Issue #31 §2.1(3), 31-b Part F rule 14: a parked attempt is neither finished nor
+            // merely 'running'. Checked BEFORE the `anyDispatched` fallback it would otherwise
+            // fall through to, and left subordinate to the runStop precedence below.
+            : attempts.some((attempt) => attempt.state === 'paused') ? 'paused'
             : anyDispatched ? 'running' : 'approved';
     if (runStop?.status === 'stopped') phase = 'stopped';
     else if (runStop) phase = 'stopping';
@@ -6709,6 +6713,10 @@ export class BatonApplication {
     else if (node.state === 'accepted') phase = readOnlyResult ? 'completed' : 'work_completed';
     else if (node.state === 'failed') phase = 'failed';
     else if (node.state === 'cancelled') phase = 'cancelled';
+    // Issue #31 §2.1(3), 31-b Part F rule 14: the site a wave member's `entry.run.status()`
+    // resolves through in the common (non-Workflow) case. Without this branch a paused task falls
+    // straight through to `running` — the "disguised as working" projection docs/35 forbids.
+    else if (node.state === 'paused') phase = 'paused';
     else if (node.taskId) phase = 'running';
     else phase = 'approved';
     const runStop = this.driver.coordination.runStop?.(runId) ?? null;
@@ -6800,6 +6808,25 @@ export class BatonApplication {
         })),
       ]);
     allAttention.push(...projectDecisionAttention(this.driver.coordinator, workers));
+    // Issue #31 §2.3, 31-b Part F rules 12-13: a still-unconsumed pause record is a turn
+    // checkpoint a driver can act on. Pushed ALONGSIDE — never instead of — any genuinely pending
+    // answer_question/answer_approval/answer_decision the same worker independently carries.
+    // `requestId: pauseId` is required, not decorative: `_semanticActions` skips any attention
+    // entry failing `validText(attention.requestId, 4_096)` regardless of its kind, and the pause
+    // record's own id (`pause:${taskId}:${seq}`) satisfies that guard verbatim.
+    if (node?.taskId && typeof this.driver.coordinator.pausedTurns === 'function') {
+      for (const paused of this.driver.coordinator.pausedTurns({ taskId: node.taskId })) {
+        if (!runWorkerIds.has(paused.workerId)) continue;
+        allAttention.push({
+          kind: 'turn_checkpoint',
+          workerId: paused.workerId,
+          taskId: paused.taskId,
+          turnEpoch: paused.turnEpoch,
+          changedPathsDigest: paused.changedPathsDigest,
+          requestId: paused.pauseId,
+        });
+      }
+    }
     if (phase === 'interruption_uncertain') {
       allAttention.push({
         kind: 'session_preservation', state: 'quarantined',
