@@ -100,11 +100,32 @@ try {
   log(`scratchpad contract wave started through baton.waves (${MEMBERS.length} members)`);
 
   const terminalRoles = new Set();
+  const nudged = new Set();
   while (terminalRoles.size < MEMBERS.length) {
     await new Promise((resolveWait) => setTimeout(resolveWait, 20000));
     const progress = await wave.progress();
     const line = progress.members.map((entry) => `${entry.role}=${entry.phase}${entry.attention ? `[${entry.attention}]` : ''}`).join(' ');
     log(`progress ${Math.round((Date.now() - startedAt) / 1000)}s ${line}`);
+    // 31-c pattern (w-169 lesson): a paused member gets a nudge, never a 90-minute death.
+    for (const entry of progress.members) {
+      if (entry.phase !== 'paused' || nudged.has(`${entry.role}:${entry.attention}`)) continue;
+      const run = wave.runs.get(entry.role);
+      if (!run) continue;
+      try {
+        const status = await run.status();
+        const view = status?.view ?? status ?? {};
+        const checkpoint = (Array.isArray(view.attention) ? view.attention : [])
+          .find((item) => item?.kind === 'turn_checkpoint' && typeof item?.requestId === 'string');
+        if (checkpoint) {
+          await run.act('nudge_turn', { message: 'Continue your drafting work.' });
+          nudged.add(`${entry.role}:${entry.attention}`);
+          log(`steered nudge_turn on ${checkpoint.requestId} for ${entry.role}`);
+        }
+      } catch (error) {
+        log(`nudge for ${entry.role} returned ${error?.code ?? 'unknown'} (recorded)`);
+        nudged.add(`${entry.role}:${entry.attention}`);
+      }
+    }
     for (const entry of progress.members) {
       if (entry.terminal || entry.phase === 'work_completed') terminalRoles.add(entry.role);
     }
