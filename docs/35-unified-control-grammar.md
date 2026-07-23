@@ -8,6 +8,14 @@ explicitly declined in Appendix B. Where reviewers disagreed (`work_completed`: 
 R-KM "clean"), the disagreement was resolved by direct code verification (R-CX-4 was right:
 `application.mjs:117-124` models provider-settled and application-terminal as deliberately
 separate lifecycles, pinned by `impl/test/phase67-run-terminality.test.mjs`).
+**v2 was then acceptance-reviewed against the code it cites** — attacking the folds rather than
+re-folding: eleven findings (A-1..A-11) recorded in
+`docs/reference/evidence/grammar-2026-07-24/fold-ledger.md`. That pass corrected the §6 operation
+count, folded seven minimal-repair clauses the fold had skipped (including R-CX-6's demand that
+the issue-31 checkpoint contract be named in C5), and found one **false grounding claim** that had
+silently dropped a durability class. It amended §1.2 F5, §2, §4.1†, §4.2 H4, §7.1, §8.4, §10 C3,
+§11, and added **C10**. The nine passages carrying those amendments are marked *(v2 acceptance)*
+inline, so this document's own claims can be told apart from the red-team's.
 **Seed:** operator directive, 2026-07-23 — *"baton has enormous friction and cumbersome
 interaction methods for agents in all operations and control schemes."*
 **Mechanical evidence:** `node impl/scripts/surface-audit.mjs` regenerates Appendix A from source.

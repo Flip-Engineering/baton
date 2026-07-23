@@ -7,11 +7,29 @@ was missing was this file: the brief requires a standalone per-finding ledger, a
 docs/35 carries the dispositions only as prose. This ledger is that record, with every landing
 verified against the committed v2 rather than copied from Appendix B's summary.
 
-**Verification method.** Each finding id was mapped to its landing section mechanically (scan of
-`docs/35-unified-control-grammar.md` associating every `R-*` citation with its enclosing heading),
-then the section was read to confirm the citation is a substantive repair and not a passing
-mention. Coverage: all 49 findings (R-CX-1..15, R-KM-1..17, R-OP-1..17) are cited in the doc body.
-**Declined: none.** One kind (`capacity`) is deferred with tracking to issue #39.
+This seat did not re-fold — but it **did amend** docs/35, through the acceptance review recorded
+below (A-1..A-11). The document therefore no longer matches `0c5c970`; nine passages are marked
+*(v2 acceptance)* inline to keep this seat's claims distinguishable from the red-team's.
+
+**Verification method — and its revisions.** Four levels were used, each because the previous one
+proved insufficient. This sequence matters more than any single verdict below:
+
+1. **Finding level** — map every `R-*` citation to its enclosing heading, then read the section to
+   confirm a substantive repair rather than a passing mention. All 49 findings pass. *This alone
+   was reported as "complete" and that was wrong.*
+2. **Clause level** (A-4, A-5) — a minimal repair typically carries 3–5 atomic demands, and the
+   fold had landed the prose demands while skipping pins. Seven unfolded clauses, including
+   R-CX-6's requirement that the issue-31 checkpoint contract be named in C5.
+3. **Grounding level** (A-6, A-7) — does the cited line *say what the doc claims*? 53 of 54
+   citations verified exactly; one was false and had silently dropped a durability class.
+4. **Uncited-code and contract-falsification level** (A-8..A-11) — sweep code no seat cited, and
+   attack each acceptance contract directly. Found a fourth phase union, a circular C3, an
+   unenforceable H4, and six non-derivable MCP names.
+
+Coverage: all 49 findings (R-CX-1..15, R-KM-1..17, R-OP-1..17) are cited in the doc body.
+**Declined: none.** One kind (`capacity`) is deferred with tracking to issue #39. C2 remains
+**unfalsified** — it is a randomized property test over advertised actions and needs the M0
+harness; no static reading settles it.
 
 **Deployment verification:** `node --test impl/test/surface-audit-smoke.test.mjs` → exit 0 (SA1,
 SA2, SA3 pass). Doc-only change; no `impl/` or test file touched by this seat.
@@ -121,7 +139,15 @@ substantive repair. One defect found and fixed; two claims verified.
   against v1's at `a2e5eca`: no operation the 41-op set carried is dropped. `run.result` is the
   only removed row, and it is explicitly preserved as `run.view --section episode.result` (§6) —
   which is precisely the fold R-OP-9 demanded, not a loss.
-- **A-3 — VERIFIED, no change — no fold contradicts a contract it cites.** §3's "one shape, not
+- **A-3 — SUPERSEDED BY A-6 — read this entry with that correction.** As written below it claims
+  no fold contradicts a contract it cites. That was true only at the granularity this pass
+  checked — *section-level coherence*, i.e. whether §3, §7.1, §9 and §4.1‡ agree with each other.
+  It did **not** verify that cited lines say what the doc claims about them, and A-6 later found
+  one that does not (`application.mjs:142`, the false `reconcilable: false` uniqueness claim,
+  which had silently dropped a durability class). Left in place rather than rewritten, because the
+  sequence is the point: a "verified" entry is only as strong as the question the verifier asked.
+  Original text follows.
+- **A-3 — VERIFIED at section level, no change.** §3's "one shape, not
   one verb" is consistent with §7.3's settler table; §7.1's two predicates are consistent with L4
   and C3; §9's M-phase ordering is consistent with §10's C2/C8/C9 phasing; §4.1‡'s four
   cross-argument admission rules match the `application.mjs:1226-1247` set they claim to port;
