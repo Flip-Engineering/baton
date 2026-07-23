@@ -1022,6 +1022,15 @@ export class Coordinator {
     this._pending = new Map();
     /** Active interaction authority only; historical resolved records stay queryable in _pending. */
     this._activeInteractionIds = new Set();
+    /**
+     * Issue #31 §2.1(2): `pause:${taskId}:${seq}` -> single-consumer pause record, the
+     * interaction family's exact shape. Coordinator-side and replay-reconstructed from the
+     * per-worker log, exactly like `_pending` — deliberately NOT a store projection, so
+     * PROJECTION_CHECKPOINT_FIELDS gains nothing. Task-scoped, not worker-scoped: a task is what
+     * a 31-b nudge/wait/claim act targets.
+     * @type {Map<string, object>}
+     */
+    this._pausedTurns = new Map();
     /** KG-1 Part A rule 2: Map<taskId, number> — a replay-derived count of admitted interaction
      * lifecycle events scoped to that task's worker, incremented in the same _handleEvent
      * switch that rebuilds _pending/_activeInteractionIds on replay (not a new event kind). */
@@ -1843,6 +1852,94 @@ export class Coordinator {
     this._activeInteractionIds.delete(requestId);
   }
 
+  /**
+   * Issue #31 §2.1(2). Single-consumer resolution for a pause record, mirroring
+   * `_resolveInteractionAuthority`. 31-a exercises exactly one resolution path — the degenerate
+   * auto-settle, stamping `consumer: 'policy'` (the same convention `_cancelPendingForDrain`
+   * uses). 31-b's nudge/wait/claim acts reuse this helper unmodified.
+   */
+  _resolvePauseAuthority(pauseId, record, consumer = 'policy') {
+    record.state = 'resolved';
+    record.consumer = consumer;
+  }
+
+  /**
+   * Issue #31, P1-5. The pause record's diff evidence. Guarded on BOTH operands: every
+   * backward-compat task reaches the mint site with no `sessionContext.baseSha` (it is only
+   * conditionally spread into SessionContext), and a turn may legally have made no commits yet.
+   * `changedPathsAtCommit` validates both arguments as 40-hex and throws
+   * `captured_change_invalid` otherwise, so calling it unguarded would throw inside the
+   * turn_completed handler for every such task. Either operand absent ⇒ `canonicalDigest([])`.
+   */
+  _pauseChangedPathsDigest(handle, task) {
+    const baseSha = task?.sessionContext?.baseSha ?? null;
+    const worktreePath = handle?.worktree ?? task?.worktree ?? null;
+    let headSha = null;
+    // Named gap (contract Part B rule 3): no existing `_worktrees` accessor resolves "HEAD of
+    // this worktree right now" without an already-known result SHA. Probe optionally, mirroring
+    // the pre-existing `typeof this._worktrees.changedPathsAtCommit !== 'function'` defensive
+    // shape at the structured-review scope check.
+    if (baseSha && worktreePath && typeof this._worktrees?.currentHeadSha === 'function') {
+      try { headSha = this._worktrees.currentHeadSha(worktreePath) ?? null; } catch { headSha = null; }
+    }
+    if (!baseSha || !headSha) return canonicalDigest([]);
+    try {
+      return canonicalDigest([...this._worktrees.changedPathsAtCommit(baseSha, headSha)]);
+    } catch { return canonicalDigest([]); }
+  }
+
+  /**
+   * Issue #31 §2.1(2) + §2.2(5). Mint a pause record for a `'pausable'`-carded turn, then either
+   * auto-settle it (no live steering registration for the run — today, every run) or leave the
+   * task parked for a 31-b steering act.
+   *
+   * @returns {boolean} `settled` — `true` ⇒ the caller falls through to the ONE pre-existing
+   *   gated `_runTrustGate` dispatch exactly as before; `false` ⇒ the task stays `paused` and the
+   *   caller skips the trust gate for this turn.
+   */
+  _admitPauseRecord(handle, task, terminalEvent, wr, appendAttributed) {
+    const workerId = handle.id;
+    const turnEpoch = terminalEvent?.turnEpoch ?? this._safeTurnEpoch(handle);
+    const changedPathsDigest = this._pauseChangedPathsDigest(handle, task);
+    // Same `appendAttributed` durability tier and per-worker stream as question.asked /
+    // approval.requested / decision.requested. `workerId` rides the envelope's own `worker`
+    // field and is deliberately NOT duplicated into the payload — the interaction-family shape.
+    const pausedEvent = appendAttributed({
+      worker: workerId, harness: terminalEvent?.harness, turnEpoch,
+      kind: 'turn.paused', actor: 'worker',
+      payload: { taskId: task.id, turnEpoch, changedPathsDigest },
+    });
+    const pauseId = `pause:${task.id}:${terminalEvent.seq}`;
+    const record = {
+      state: 'pending', resolution: null, consumer: null, worker: workerId,
+      taskId: task.id, turnEpoch, changedPathsDigest, mintedEvent: terminalEvent.seq,
+    };
+    this._pausedTurns.set(pauseId, record);
+    this._coordTransition(task, 'paused', `task.paused:${task.id}:${terminalEvent.seq}`,
+      this._coordMapEvent(pausedEvent), 'policy');
+    // `_coordTransition` never writes in-memory status; every existing call site carries its own
+    // explicit assignment. P2-3: `handle.status` deliberately stays 'working' — no 31-a-owned
+    // projection reads it to decide whether a task is paused.
+    task.status = 'paused';
+
+    // The degenerate-case liveness check — the same scan-for-a-durable-marker shape the
+    // plan.wave_cleanup_completed tombstone lookup already uses.
+    const hasDriver = (this._coordination?.events?.() ?? []).some((event) => event.kind === 'driver.recorded'
+      && event.payload?.kind === 'steering.registered' && event.payload?.runId === (task.runId ?? null));
+    if (hasDriver) return false;
+
+    this._resolvePauseAuthority(pauseId, record, 'policy');
+    const settledEvent = appendAttributed({
+      worker: workerId, harness: terminalEvent?.harness, turnEpoch,
+      kind: 'turn.settled', actor: 'policy',
+      payload: { actor: 'policy', basis: 'auto_no_driver' },
+    });
+    this._coordTransition(task, 'working', `task.working:${task.id}:${settledEvent.seq}`,
+      this._coordMapEvent(settledEvent), 'policy');
+    task.status = 'working';
+    return true;
+  }
+
   _recordDrainDisposition(drainId, actor, workerId, disposition) {
     const key = `fleet.drain.disposition:${canonicalDigest({ drainId, workerId })}`;
     this._coordination.recordFleetDrainDisposition(drainId, workerId, disposition, { actor, key });
@@ -2160,6 +2257,17 @@ export class Coordinator {
   _harnessOf(vendor) {
     const card = this._adapters[vendor]?.card();
     return card ? `${card.harness}@${card.version}` : '';
+  }
+
+  /**
+   * Issue #31 §2.1(1). The ONE place `card().turnCompletion` is read. Absent ⇒ `'claim'`, which
+   * is byte-identical to the pre-#31 unconditional behavior — MockAdapter, every test-double
+   * card, and the legacy SubprocessAdapterBase family all take that branch. Never a schema
+   * migration: no card is required to declare the field.
+   * @returns {'claim'|'pausable'}
+   */
+  _turnCompletionOf(handle) {
+    return this._adapters[handle?.vendor]?.card()?.turnCompletion ?? 'claim';
   }
 
   _routeAttribution(handle, task = this._tasks.get(handle.taskId)) {
@@ -9119,7 +9227,10 @@ export class Coordinator {
     this.tick();
     const handle = this._getWorker(workerId);
     const task = this._tasks.get(handle.taskId);
-    if (!task || !['working', 'input_required'].includes(task.status)) return { ok: false, result: 'task_not_active' };
+    // Issue #31 §2.1(3): `paused` is live, not terminal. A paused worker sits at a turn boundary,
+    // and its scratch/board traffic from the just-completed turn (a trailing write racing the
+    // turn-completed frame) must not be spuriously refused `task_not_active`.
+    if (!task || !['working', 'input_required', 'paused'].includes(task.status)) return { ok: false, result: 'task_not_active' };
     if (opts.expectedFence === undefined) throw new TypeError('Scratch claim requires expectedFence');
     const check = this._fences.check(workerId, { fence: opts.expectedFence });
     if (!check.ok) return { ok: false, result: 'stale_fence', current: check.current };
@@ -9136,7 +9247,10 @@ export class Coordinator {
     this.tick();
     const handle = this._getWorker(workerId);
     const task = this._tasks.get(handle.taskId);
-    if (!task || !['working', 'input_required'].includes(task.status)) return { ok: false, result: 'task_not_active' };
+    // Issue #31 §2.1(3): `paused` is live, not terminal. A paused worker sits at a turn boundary,
+    // and its scratch/board traffic from the just-completed turn (a trailing write racing the
+    // turn-completed frame) must not be spuriously refused `task_not_active`.
+    if (!task || !['working', 'input_required', 'paused'].includes(task.status)) return { ok: false, result: 'task_not_active' };
     if (opts.expectedFence === undefined) throw new TypeError('Scratch fact requires expectedFence');
     const check = this._fences.check(workerId, { fence: opts.expectedFence });
     if (!check.ok) return { ok: false, result: 'stale_fence', current: check.current };
@@ -9196,7 +9310,10 @@ export class Coordinator {
     this.tick();
     const handle = this._getWorker(workerId);
     const task = this._tasks.get(handle.taskId);
-    if (!task || !['working', 'input_required'].includes(task.status)) return { ok: false, result: 'task_not_active' };
+    // Issue #31 §2.1(3): `paused` is live, not terminal. A paused worker sits at a turn boundary,
+    // and its scratch/board traffic from the just-completed turn (a trailing write racing the
+    // turn-completed frame) must not be spuriously refused `task_not_active`.
+    if (!task || !['working', 'input_required', 'paused'].includes(task.status)) return { ok: false, result: 'task_not_active' };
     if (typeof opts.idempotencyKey !== 'string' || opts.idempotencyKey.length === 0) throw new TypeError('Board claim requires idempotencyKey');
     return this._coordination.requestBoardClaim({ ...fields, owner: workerId, ownerTask: task.id },
       { actor: opts.actor ?? 'worker', key: opts.idempotencyKey });
@@ -9206,7 +9323,10 @@ export class Coordinator {
     this.tick();
     const handle = this._getWorker(workerId);
     const task = this._tasks.get(handle.taskId);
-    if (!task || !['working', 'input_required'].includes(task.status)) return { ok: false, result: 'task_not_active' };
+    // Issue #31 §2.1(3): `paused` is live, not terminal. A paused worker sits at a turn boundary,
+    // and its scratch/board traffic from the just-completed turn (a trailing write racing the
+    // turn-completed frame) must not be spuriously refused `task_not_active`.
+    if (!task || !['working', 'input_required', 'paused'].includes(task.status)) return { ok: false, result: 'task_not_active' };
     if (typeof opts.idempotencyKey !== 'string' || opts.idempotencyKey.length === 0) throw new TypeError('Board report requires idempotencyKey');
     return this._coordination.submitBoardReport({ ...fields, owner: workerId },
       { actor: opts.actor ?? 'worker', key: opts.idempotencyKey });
@@ -9220,7 +9340,10 @@ export class Coordinator {
     this.tick();
     const handle = this._getWorker(workerId);
     const task = this._tasks.get(handle.taskId);
-    if (!task || !['working', 'input_required'].includes(task.status)) return { ok: false, result: 'task_not_active' };
+    // Issue #31 §2.1(3): `paused` is live, not terminal. A paused worker sits at a turn boundary,
+    // and its scratch/board traffic from the just-completed turn (a trailing write racing the
+    // turn-completed frame) must not be spuriously refused `task_not_active`.
+    if (!task || !['working', 'input_required', 'paused'].includes(task.status)) return { ok: false, result: 'task_not_active' };
     if (typeof opts.idempotencyKey !== 'string' || opts.idempotencyKey.length === 0) throw new TypeError('Repl manifest admission requires idempotencyKey');
     return this._coordination.admitReplManifest(fields, {
       actor: opts.actor ?? 'worker', key: opts.idempotencyKey,
@@ -9929,6 +10052,25 @@ export class Coordinator {
             && [...this._pending.values()].some((record) => record.worker === handle.id && record.state === 'pending');
           if (parkedUnsettled) break;
         }
+        // Issue #31 §2.1(1)-(2): a 'pausable' card's completed turn is a checkpoint, not an
+        // implicit claim. A 'claim' card (the default — every card without the field) never
+        // reaches this branch and falls straight through to the pre-existing gate below,
+        // byte-identically to before. `settled === true` means the degenerate auto-settle ran and
+        // the task is back at 'working', so the SAME single gate dispatches the trust gate; only
+        // a live steering registration (`settled === false`) parks the turn and skips it.
+        {
+          const task = this._tasks.get(handle.taskId);
+          // A turn can legally end AFTER its task was already terminalized (run stop, fleet
+          // drain, a provider turn landing post-cancellation). Parking a terminal task is
+          // impossible by TRANSITIONS and would throw `terminal` out of transitionTask — so skip
+          // the pause entirely and fall through, mirroring the interaction family's own
+          // `if (task && TERMINAL_TASK_STATUSES.has(task.status)) break;` precedent.
+          if (task && !TERMINAL_TASK_STATUSES.has(task.status)
+            && this._turnCompletionOf(handle) === 'pausable') {
+            const settled = this._admitPauseRecord(handle, task, terminalEvent, wr, appendAttributed);
+            if (!settled) break;
+          }
+        }
         if (this._drainState === 'open' && handle.status !== 'stopping' && handle.status !== 'dead') {
           const releaseAuthority = this._acquireAuthorityOp();
           // Adapters are required to consume worktreeReady, but terminal authority must remain
@@ -10624,6 +10766,10 @@ export class Coordinator {
     // question/approval/decision asked before a restart must remain answerable after it —
     // `respond()` must never return not_found for a record whose ask event is durable.
     const reconstructedPending = new Map();
+    // Issue #31 Part B rule 4: pause records are reconstructed from the same durable per-worker
+    // log, exactly like `reconstructedPending`. A `turn.paused` with no later `turn.settled` (and
+    // no later `lifecycle.turn_started` proving the turn moved on) is still open.
+    const reconstructedPaused = new Map();
     for (const workerId of workerIds) {
       const events = this._log.read(workerId);
       if (events.length === 0) continue;
@@ -10632,6 +10778,10 @@ export class Coordinator {
       let brief = null;
       let maxTurnEpoch = 1;
       let terminalStatus = 'working';
+      // Issue #31: the live pause id is keyed off the TURN_COMPLETED event's seq (the pause is
+      // minted immediately after it), so replay must key off the same seq to reconstruct the
+      // identical `pause:${taskId}:${seq}` — not off the `turn.paused` entry's own seq.
+      let lastTurnCompletedSeq = null;
       let verdict = null;
       let verificationStability = null;
       let lastResult = null;
@@ -11027,10 +11177,16 @@ export class Coordinator {
               preservedTurnEpoch = null;
               replayPreservation = null;
             }
+            // Issue #31 Part B rule 4: a later turn start proves any pause from the prior turn
+            // moved on, so it is no longer an open record.
+            for (const [pauseId, record] of reconstructedPaused) {
+              if (record.worker === workerId) reconstructedPaused.delete(pauseId);
+            }
             if (!TERMINAL_TASK_STATUSES.has(terminalStatus)) terminalStatus = 'working';
             break;
           }
           case 'lifecycle.turn_completed':
+            lastTurnCompletedSeq = e.seq ?? lastTurnCompletedSeq;
             if (preservedTurnEpoch !== null) break;
             if (!TERMINAL_TASK_STATUSES.has(terminalStatus)) {
               lastResult = e.payload;
@@ -11136,6 +11292,33 @@ export class Coordinator {
               if (!TERMINAL_TASK_STATUSES.has(terminalStatus)) terminalStatus = 'cancelled';
             }
             break;
+          // Issue #31 Part B rule 4. Deliberately does NOT touch `terminalStatus`: per P1-3 the
+          // pause decision is downstream of the provider's own completed result, so replay keeps
+          // computing 'verifying' from the turn_completed case and CI6 durably fails the task —
+          // fail-closed parity with an unresolved `input_required` task, whose restart behavior
+          // is identical today. No live session survives a restart to honor a pause.
+          case 'turn.paused': {
+            const pausedTaskId = e.payload?.taskId ?? taskId;
+            if (pausedTaskId && lastTurnCompletedSeq !== null) {
+              reconstructedPaused.set(`pause:${pausedTaskId}:${lastTurnCompletedSeq}`, {
+                state: 'pending', resolution: null, consumer: null, worker: workerId,
+                taskId: pausedTaskId, turnEpoch: e.payload?.turnEpoch ?? maxTurnEpoch,
+                changedPathsDigest: e.payload?.changedPathsDigest ?? null,
+                mintedEvent: lastTurnCompletedSeq,
+              });
+            }
+            break;
+          }
+          // A settle (or a later turn start — see the turn_started case) proves the pause was
+          // consumed and the turn moved on; the record is no longer open.
+          case 'turn.settled': {
+            for (const [pauseId, record] of reconstructedPaused) {
+              if (record.worker === workerId) reconstructedPaused.delete(pauseId);
+            }
+            break;
+          }
+          // NOTE: this label deliberately falls through to approval/decision below — do not
+          // insert a case between them.
           case 'question.asked':
           case 'approval.requested':
           case 'decision.requested': {
@@ -11440,6 +11623,14 @@ export class Coordinator {
 
     // F1: seed the reconstructed pending interactions now that every worker/task has been
     // rebuilt. `respond()`/`interactionStatus()` never return not_found for these again.
+    // Issue #31 Part B rule 4: seeded unconditionally, exactly like `reconstructedPending` below
+    // — neither loop checks whether CI6 subsequently failed the owning task. A dead task can
+    // therefore carry a dangling `state:'pending'` pause record after restart, which is the
+    // pre-existing, already-tolerated behavior for a dead task's dangling `_pending` record,
+    // inherited here rather than newly introduced.
+    for (const [pauseId, record] of reconstructedPaused) {
+      this._pausedTurns.set(pauseId, record);
+    }
     for (const [requestId, record] of reconstructedPending) {
       this._pending.set(requestId, record);
       this._activeInteractionIds.add(requestId);
@@ -11458,6 +11649,12 @@ export class Coordinator {
       case 'cancelled':
         return 'idle';
       case 'input_required':
+      // Issue #31 §2.1(3), the eighth guard site: without this case `paused` falls through
+      // `default` and renders as 'working' — precisely the "never disguised as working"
+      // violation the spec forbids. From a worker's external-status point of view, "waiting on
+      // something before it can proceed" is `blocked` whether that something is an answer or a
+      // steering decision; WorkerStatus gains no dedicated `paused` value here.
+      case 'paused':
         return 'blocked';
       default:
         return 'working';
@@ -11470,7 +11667,10 @@ export class Coordinator {
       ?? this._coordination.snapshot().tasks;
     for (const original of startupTasks) {
       const durable = this._coordination.task(original.id) ?? original;
-      if (!['working', 'input_required'].includes(durable.status)) continue;
+      // `paused` included for exhaustiveness/audit correctness. Verified a practical no-op: this
+      // sweep only fires for a task with NO `lifecycle.spawned` receipt, and a paused task's
+      // spawn receipt is unconditionally present (spawn strictly precedes any turn completing).
+      if (!['working', 'input_required', 'paused'].includes(durable.status)) continue;
       const workerId = durable.assignee ?? durable.reservedWorkerId;
       const events = workerId ? this._log.read(workerId) : [];
       if (events.some((event) => event.kind === 'lifecycle.spawned')) continue;

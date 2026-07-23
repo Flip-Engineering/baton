@@ -451,6 +451,11 @@ export class ClaudeSessionCli {
           configuredPreferences: [], observation: 'unavailable',
         },
       },
+      // Issue #31 §2.1(1): this harness holds its session open across a completed turn, so a
+      // finished turn is a checkpoint the orchestrator may steer from, not an implicit claim.
+      // Absent on every other card, which reads as 'claim' — the byte-identical legacy path.
+      // Inherited unmodified by GlmSessionCli/KimiSessionCli through their `{...base}` spread.
+      turnCompletion: 'pausable',
       verbs: {
         spawn: 'native',
         prompt: 'native',

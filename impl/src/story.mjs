@@ -34,7 +34,7 @@ import { pathMatchesScope } from './path-scope.mjs';
  */
 
 /**
- * @typedef {"idle"|"working"|"stopping"|"interrupted"|"blocked"|"input_required"|"orphaned"|"exited"} WorkerStatus
+ * @typedef {"idle"|"working"|"stopping"|"interrupted"|"blocked"|"input_required"|"paused"|"orphaned"|"exited"} WorkerStatus
  */
 
 /**
@@ -91,6 +91,10 @@ export const KIND = Object.freeze({
   APPROVAL_REQUESTED: 'approval.requested',
   APPROVAL_RESOLVED: 'approval.resolved',
   QUESTION_ASKED: 'question.asked',
+  // Issue #31 §2.1(2): the coordinator mints these two on the same per-worker log this module
+  // folds, so a parked turn renders honestly instead of as done-and-idle.
+  TURN_PAUSED: 'turn.paused',
+  TURN_SETTLED: 'turn.settled',
   QUESTION_ANSWERED: 'question.answered',
   TOKENS: 'resource.tokens',
   FILE_EDIT: 'content.file_edit',
@@ -110,7 +114,7 @@ export const MAX_ACTION_SIGNATURE_WINDOW = 10;
 
 // States in which "stalled" must never fire — the worker is legitimately
 // waiting on someone else, not silently stuck.
-const NEVER_STALLED_STATUSES = new Set(['blocked', 'input_required', 'stopping', 'interrupted', 'exited', 'orphaned']);
+const NEVER_STALLED_STATUSES = new Set(['blocked', 'input_required', 'paused', 'stopping', 'interrupted', 'exited', 'orphaned']);
 
 // ---------------------------------------------------------------------------
 // State construction helpers
@@ -229,6 +233,13 @@ const LEGAL_TRANSITIONS = {
   [KIND.APPROVAL_RESOLVED]: { from: ['blocked'], to: 'working' },
   [KIND.QUESTION_ASKED]: { from: ['working'], to: 'input_required' },
   [KIND.QUESTION_ANSWERED]: { from: ['input_required'], to: 'working' },
+  // Issue #31, P1-2: `lifecycle.turn_completed` is appended BEFORE `turn.paused` is minted, and
+  // its own rule has already parked the worker at 'idle' by then. A `{from:['working']}` rule
+  // would therefore be vacuous — every real fold would arrive at 'idle', warn
+  // 'illegal_transition', and leave the worker rendered 'idle' (silently wrong). Admitting both
+  // is the multi-value shape TURN_STARTED and INTERRUPT_REQUESTED already use.
+  [KIND.TURN_PAUSED]: { from: ['working', 'idle'], to: 'paused' },
+  [KIND.TURN_SETTLED]: { from: ['paused'], to: 'working' },
   [KIND.EXITED]: { from: null, to: 'exited' },
   [KIND.CRASHED]: { from: null, to: 'exited' },
 };
@@ -351,6 +362,18 @@ function handleKnownKind(w, kind, payload, event) {
       // is skipped WITHOUT a warning — turn-completed-while-stopping is a legal race whose
       // terminal state is owned by the stop confirmation.
       if (w.status === 'working') transitionStatus(w, kind, 'idle');
+      break;
+    }
+    case KIND.TURN_PAUSED: {
+      // The turn finished but is parked at a checkpoint pending a steering decision. Leaving it
+      // at TURN_COMPLETED's 'idle' would read as "done and free to redispatch" — a different
+      // dishonesty from "disguised as working", and just as wrong. Route through
+      // transitionStatus so the LEGAL_TRANSITIONS guard is actually consulted.
+      transitionStatus(w, kind, 'paused');
+      break;
+    }
+    case KIND.TURN_SETTLED: {
+      transitionStatus(w, kind, 'working');
       break;
     }
     case KIND.SESSION_COMPACTED: {
@@ -659,7 +682,7 @@ export function renderNarrative(state, opts = {}) {
 
   // SC5d: "active" means actually doing something — a finished (idle) worker is not active,
   // and verified-accepted work counts as done alongside clean exits.
-  const ACTIVE_STATUSES = ['working', 'stopping', 'blocked', 'input_required'];
+  const ACTIVE_STATUSES = ['working', 'stopping', 'blocked', 'input_required', 'paused'];
   const activeCount = workers.filter((w) => ACTIVE_STATUSES.includes(w.status)).length;
   const doneCount = workers.filter(
     (w) => !w.crashed && (w.status === 'exited' || (w.lastVerdict && w.lastVerdict.accept === true))

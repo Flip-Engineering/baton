@@ -310,6 +310,8 @@ export class CodexAppServerCli {
           configuredPreferences: [], observation: 'unavailable',
         },
       },
+      // Issue #31 §2.1(1): a completed turn is a steerable checkpoint, not an implicit claim.
+      turnCompletion: 'pausable',
       verbs: {
         spawn: 'native',
         prompt: 'native',

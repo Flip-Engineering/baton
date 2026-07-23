@@ -98,6 +98,13 @@ const EXPLICIT_RESULT_CONSTRAINTS = Object.freeze({
   read_only_evidence: `${RESULT_POLICY_CONSTRAINT_PREFIX}explicit read_only_evidence_v1`,
 });
 const RESULT_INTENTS = Object.freeze(new Set(['change', 'read_only_evidence']));
+// Issue #31 §2.2(4): the closed set of run drivers. Only the wave path exists today — an
+// MCP/embedded explicit registration channel is a named future extension, not built here.
+const DRIVER_KINDS = Object.freeze(new Set(['wave']));
+// The durable marker kind proving a run has a live steering driver. Rides the generic
+// `driver.recorded` envelope; no dedicated projection map (docs/35 §2.2 rule 4: "stays an
+// event log"). Its ONLY consumer in 31-a is the degenerate-auto-settle liveness scan.
+const APPLICATION_STEERING_REGISTERED_KIND = 'steering.registered';
 const READ_ONLY_RESULT_DEFINITION = Object.freeze([
   'A bounded evidence-backed textual/result capsule answers the declared read-only objective.',
   'Sources, derivations, contradictions, verification, and cleanup remain inspectable.',
@@ -917,13 +924,22 @@ function normalizeProfileRegistryEvent(event) {
 
 function normalizeIntent(value) {
   const allowed = new Set([
-    'runId', 'objective', 'resultIntent', 'profile', 'route', 'scope', 'composition',
+    // Issue #31 §2.2(4): `driverKind` declares WHO is driving a run. The dispatcher validates
+    // `run.start` args through this same function before the handler runs, and start() derives
+    // its working intent by calling it again — so without the key here, any caller passing
+    // driverKind is refused `application_intent_invalid` before the handler body is reached.
+    'runId', 'objective', 'resultIntent', 'profile', 'route', 'scope', 'composition', 'driverKind',
   ]);
   const hasResultIntent = Object.hasOwn(value ?? {}, 'resultIntent');
+  const hasDriverKind = Object.hasOwn(value ?? {}, 'driverKind');
   if (!value || typeof value !== 'object' || Array.isArray(value)
     || Object.keys(value).some((key) => !allowed.has(key))
     || !Object.hasOwn(value, 'objective')
     || (hasResultIntent && !RESULT_INTENTS.has(value.resultIntent))
+    // Server-side revalidation of the closed literal set, mirroring RESULT_INTENTS exactly —
+    // defense in depth behind the client-layer whitelist, the same two-tier shape resultIntent
+    // already uses.
+    || (hasDriverKind && !DRIVER_KINDS.has(value.driverKind))
     || (value.runId !== undefined && !validId(value.runId))
     || !validText(value.objective) || (value.profile !== undefined && !validId(value.profile))
     || (value.scope !== undefined && (!Array.isArray(value.scope) || value.scope.length === 0 || value.scope.length > 64
@@ -934,6 +950,10 @@ function normalizeIntent(value) {
     runId: value.runId ?? null,
     objective: value.objective.normalize('NFKC').trim(),
     ...(hasResultIntent ? { resultIntent: value.resultIntent } : {}),
+    // Deliberately NOT folded into intentDigest or runId derivation: driverKind describes who is
+    // driving a run, not what the run is. Two calls with identical objective/profile/route/scope
+    // must resolve to the SAME run whether or not a wave happens to be the caller.
+    ...(hasDriverKind ? { driverKind: value.driverKind } : {}),
     profile: value.profile ?? null,
     route: normalizeRouteSelector(value.route),
     scope: value.scope === undefined ? null : [...value.scope].sort(),
@@ -3829,6 +3849,20 @@ export class BatonApplication {
     const defined = await this.driver.coordinator.defineGoal(goalFields,
       authority(owner, this.repoId, intent.runId, 'goal:define', `application:${intent.runId}:goal:v1`));
     const goal = defined.goal;
+    // Issue #31 §2.2(4): register the run's steering driver ONCE, at genuine run creation.
+    // `defineGoal` also runs on a resume (a later goal/plan revision against an existing run), so
+    // gating on `existingRun === null` is what keeps a retry of runs.start from re-admitting or
+    // duplicating the marker — a run's driver identity is fixed at creation and is never
+    // retroactively granted or revoked by a later resumed call.
+    if (existingRun === null && intent.driverKind !== undefined
+      && typeof this.driver.coordination.recordDriver === 'function') {
+      this.driver.coordination.recordDriver(APPLICATION_STEERING_REGISTERED_KIND, {
+        runId: intent.runId, driverKind: intent.driverKind, actor: owner.actor,
+      }, {
+        actor: owner.actor,
+        key: `run.steering_registered:${intent.runId}`,
+      });
+    }
     const normalizedPlan = normalizePlanRequest({
       goal: { goalId: goal.goalId, version: goal.version, digest: goal.digest },
       predecessor: null,
@@ -4982,7 +5016,10 @@ export class BatonApplication {
           : node?.state === 'accepted' ? 'work_completed'
             : node?.state === 'failed' ? 'failed'
               : node?.state === 'cancelled' ? 'cancelled'
-                : node?.taskId ? 'running' : 'approved';
+                // Issue #31 §2.1(3): a parked turn is neither finished nor merely 'running'.
+                // Rendering it 'running' is the dishonest projection the spec forbids.
+                : node?.state === 'paused' ? 'paused'
+                  : node?.taskId ? 'running' : 'approved';
     const runStop = this.driver.coordination.runStop?.(runId) ?? null;
     if (runStop?.status === 'stopped') phase = 'stopped';
     else if (runStop) phase = 'stopping';
