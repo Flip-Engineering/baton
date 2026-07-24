@@ -42,7 +42,7 @@ const salt = `[attempt: ${ATTEMPT}]`;
 const MEMBERS = Object.freeze([
   Object.freeze({
     role: 'researcher',
-    exact: Object.freeze({ harness: 'grok', model: 'grok-4.5', effort: 'low' }),
+    exact: Object.freeze({ harness: 'glm', model: 'glm-5.2', effort: 'high' }),
     scope: Object.freeze([`${relativeRoot}/research-notes.md`]),
     report: `${relativeRoot}/research-notes.md`,
     objective: [
@@ -62,7 +62,7 @@ const MEMBERS = Object.freeze([
   }),
   Object.freeze({
     role: 'drafter',
-    exact: Object.freeze({ harness: 'kimi-code', model: 'kimi-code/k3', effort: 'low' }),
+    exact: Object.freeze({ harness: 'glm', model: 'glm-5.2', effort: 'xhigh' }),
     scope: Object.freeze([`${relativeRoot}/report-draft.md`]),
     report: `${relativeRoot}/report-draft.md`,
     objective: [
