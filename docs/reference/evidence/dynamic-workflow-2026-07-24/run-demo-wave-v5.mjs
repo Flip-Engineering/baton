@@ -55,13 +55,15 @@ const MEMBERS = Object.freeze([
     objective: [
       salt,
       'You are the DRAFTER-POSTER in a 2-agent baton workflow. The AX report draft is DONE',
-      `and committed at ${relativeRoot}/report-draft.md (126 lines — READ IT FIRST). Your job,`,
-      `IN THIS ORDER: (1) WRITE a manifest file to ${relativeRoot}/chunk-index.md listing the`,
-      'six entry ids you will post (this is your required repository effect — the trust gate',
-      'evaluates it), THEN (2) post the draft as scratchpad note entries, one per section, at',
-      'most 1400 bytes each: SCRATCHPAD_WRITE: {"entry":{"kind":"note","text":"<section>"},',
-      '"expectedFence":"current","idempotencyKey":"draft-<N>"} for N=1..6 — exactly 6 entries,',
-      'one grammar line per section, each on its own line. Then END YOUR TURN immediately.',
+      `and committed at ${relativeRoot}/report-draft.md (126 lines — READ IT FIRST and note`,
+      `its markdown headings). Your job, IN THIS ORDER: (1) WRITE ${relativeRoot}/chunk-index.md`,
+      'listing six keys chunk-1..chunk-6 (your required repository effect). (2) Post EXACTLY',
+      'six scratchpad entries, one per draft section (split at the headings), each at most',
+      '1400 bytes, with these EXACT idempotencyKeys (each used ONCE — a reuse with different',
+      'content is a write_conflict): SCRATCHPAD_WRITE: {"entry":{"kind":"note","text":"<section',
+      'text>"},"expectedFence":"current","idempotencyKey":"chunk-<N>"} for N=1..6, one grammar',
+      'line per section, each on its own physical line. If ANY write is refused, do NOT retry',
+      'blindly — move to the next section. When all six are posted (or skipped), END YOUR TURN.',
       FENCE, OVERSIZE,
     ].join(' '),
   }),
@@ -89,7 +91,7 @@ const MEMBERS = Object.freeze([
 const baton = await openBaton({
   repo,
   advanced: {
-    deploymentRoot: resolve(repo, '.baton', 'demo-workflow-v7-2026-07-24'),
+    deploymentRoot: resolve(repo, '.baton', 'demo-workflow-v10-2026-07-24'),
     routes: [...new Map(MEMBERS.map((member) => [JSON.stringify(member.exact), { ...member.exact }])).values()], // dedupe: two sonnet seats share one route (deployment_config_invalid on duplicates)
     verification: VERIFY,
   },
