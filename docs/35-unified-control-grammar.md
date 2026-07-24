@@ -262,10 +262,14 @@ and per-recipient, offset-paged **non-follow** output reads depend on them (R-CX
   property** (`pageCursor` → `--page-cursor`); an enum-valued property MAY additionally expose
   one flag per value (`delivery: now` → `--now`) declared as `flagAliases` in the registry entry;
   undeclared value-flags are a lint failure (R-OP-12). **Property-level aliases are a separate,
-  equally-declared class** (v2 acceptance): the live surface spells two flags off-derivation —
-  `--to` for `recipient` and `--wait` for `waitMs`
-  (`application-cli.mjs:984,1254,1281,1316,1372,1398,1416`) — and *this document prescribes both*
-  (§4.1 read row, §6 `run.watch` and `run.member.send`). Neither is an enum **value** flag, so
+  equally-declared class** (v2 acceptance). The live surface spells **at least five** flags
+  off-derivation: `--to` → `recipient` (`application-cli.mjs:1316,1398`), `--wait` → `waitMs`
+  (`:1254,1281`), `--workstream` → `role` (`:1250`), `--run` → `runId` (`:1200`), and
+  `--manifest` → `manifestDigest` (`:1199`). This document prescribes the first two (§4.1 read
+  row, §6 `run.watch`/`run.member.send`) and names `--workstream` in §1.2 F14. Note `--run`
+  coexists with the derivable `--run-id` (`:1043,1079`): **two live spellings for one property**,
+  which is an L6 "one name per concept" case that must be dispositioned explicitly — the
+  `propertyAliases` field records the alias, it does not license the duplication. Neither is an enum **value** flag, so
   `flagAliases` cannot express them. Without a registry `propertyAliases` field the H4 lint must
   either fire on the very spellings §2 promises to preserve, or be quietly exempted for them —
   the same unenforceability trap as C3 (§8.4). Declare them; do not special-case them. Member ops take `ROLE [--generation N]`;

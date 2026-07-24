@@ -431,6 +431,25 @@ substantive repair. One defect found and fixed; two claims verified.
   Third consecutive finding produced by auditing repairs rather than code — and the second where a
   repair reproduced the very defect it corrected. Repairs written at the end of an investigation
   inherit the blind spot that produced the defect; they need their own pass.
+- **A-18 — FIXED — A-10's repair seeded 2 of at least 5, exactly as predicted.** Fourth repair
+  audit, and the prediction made one turn earlier held: A-10 named `--to` and `--wait` because it
+  *noticed* two off-derivation flags in the doc's own prose, never because it enumerated. So the
+  `propertyAliases` seed inherited the sampling, not the surface.
+  Enumerated properly — all 40 distinct CLI long flags against every command-definition property.
+  Property-level aliases number **at least five**: `--to` → `recipient` (`:1316,1398`),
+  `--wait` → `waitMs` (`:1254,1281`), `--workstream` → `role` (`:1250`), `--run` → `runId`
+  (`:1200`), `--manifest` → `manifestDigest` (`:1199`). **`--workstream` is named in the doc's own
+  §1.2 F14** — the same "the document knew, the mechanism did not" shape as A-16.
+  One further fact neither A-10 nor v2 records: `--run` coexists with the *derivable* `--run-id`
+  (`:1043,1079`), so `runId` carries **two live flag spellings** — an L6 "one name per concept"
+  violation on the live surface that H4 could not express in either direction. Folded into §4.2 H4
+  with all five seeded and the duplication flagged for explicit disposition, since
+  `propertyAliases` records an alias but must not license a duplicate.
+  Verified and *excluded* as legitimately covered by H4's existing enum-value exception rather
+  than being aliases: `--allow`/`--deny`/`--cancel` (`answer`), `--now` (`delivery`),
+  `--content`/`--evidence` (`detail`/`depth`), `--text`/`--option` (answer response variants).
+  Four repair audits, three defects — and every one reproduced the framing of the repair it came
+  from.
 - **Method note — the NUL-byte trap is real and it bit this audit.** §8.4 already warns that
   `impl/src/application.mjs` contains a NUL byte requiring `grep -a`. Plain `grep` against it
   returns *silently empty* — not an error. An early verification pass here read that empty result
