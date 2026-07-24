@@ -1,0 +1,5 @@
+[m3 2026-07-24T05:24:18.619Z] grammar M3 wave started through baton.waves (1 members, objectiveBytes=4028)
+[m3 2026-07-24T05:24:38.624Z] progress 20s grammar-m3-implementer=failed
+[m3 2026-07-24T05:24:38.633Z] outcome grammar-m3-implementer: phase=failed sha=none
+[m3 2026-07-24T05:24:38.654Z] close remaining=0 residueUnknown=false
+[m3 2026-07-24T05:24:38.654Z] evidence written; pumpQuiescent=true
