@@ -1,6 +1,6 @@
 # 35 — One grammar: the unified agent control surface
 
-**Status: v2 FINAL** (issue #43). v1 was adversarially red-teamed by three decorrelated seats
+**Status: v2.1 FINAL** (issue #43). v1 was adversarially red-teamed by three decorrelated seats
 through baton.waves — codex `gpt-5.6-sol@high` (R-CX-1..15, verdict UNSOUND), kimi `k3@high`
 (R-KM-1..17, SOUND-WITH-FOLDS), opus `claude-opus-4-8@high` (R-OP-1..17, SOUND-WITH-FOLDS) —
 reports and drivers in `docs/reference/evidence/grammar-2026-07-24/`. Every finding is folded or
@@ -8,6 +8,12 @@ explicitly declined in Appendix B. Where reviewers disagreed (`work_completed`: 
 R-KM "clean"), the disagreement was resolved by direct code verification (R-CX-4 was right:
 `application.mjs:117-124` models provider-settled and application-terminal as deliberately
 separate lifecycles, pinned by `impl/test/phase67-run-terminality.test.mjs`).
+**v2.1:** an independent orchestrator verification pass (V35 report: ~35 citations spot-checked
+true, all five convergent P0 folds resolved in substance) applied 17 corrections — §7.3 names
+the eight live attention kinds with one honest `candidate_selection → select_candidate` mapping
+row (`approve_plan` has no emitter); H5 scoped to the named-verb path with the do-path
+required-`reason` divergence ledgered (`schema`, retiresIn M1); op count 44; phase count 21;
+`run.watch` reauthorization and the canonical episode selector grammar pinned; citation repairs.
 **Seed:** operator directive, 2026-07-23 — *"baton has enormous friction and cumbersome
 interaction methods for agents in all operations and control schemes."*
 **Mechanical evidence:** `node impl/scripts/surface-audit.mjs` regenerates Appendix A from source.
@@ -40,7 +46,7 @@ remote bridge is a ninth hand-list. The M0 audit extraction must cover both.)
 
 **~300 distinct operation names.** Phase strings observed across surfaces: the 16 in Appendix A
 **plus** `selection_required`, `candidate_selected`, `input_required`, `planning_failed`
-(R-OP-5) — v1's "16" was itself an undercount, proving the hand-list failure mode. The
+(R-OP-5) **and `start_failed`** — 21 live literals in the M0-extended audit — v1's "16" was itself an undercount, proving the hand-list failure mode. The
 delegated-seat concept answers to four live names (worker ×427, member ×219, workstream ×121,
 assignee ×26 in the application layer).
 
@@ -60,7 +66,7 @@ is the friction.
   advertised one.
 - **F4 — Two MCP dialects** that disagree with each other on path collapsing *and* read model
   (fleet: status+wait; baton: inspect+act).
-- **F5 — Twenty phase strings** across runs, waves, workflow projections, and the CLI terminal
+- **F5 — Twenty-one phase strings** across runs, waves, workflow projections, and the CLI terminal
   set, with three different terminal unions (`application.mjs:117-124`, `wave.mjs:11`,
   `application-cli.mjs:29` — wave omits `denied`/`closed`; the CLI adds both).
 - **F6 — Cost-per-question.** "Why is my Run cancelled" cost four depth round-trips before the
@@ -157,8 +163,8 @@ settles the answerable kinds (`answer_question`, `answer_approval`, `answer_deci
 them" was false and is withdrawn.
 
 **Goal/plan authoring** (R-OP-2): the Web-bus authoring commands (`goal_define`,
-`plan_propose`, `plan_approve`, `goal_plan_status` — `web-northbound.mjs:20`, reconcilable,
-colon-namespaced capabilities) are a separately-profiled surface (§5 L8 profile `authoring`),
+`plan_propose`, `plan_approve`, `goal_plan_status` — `web-northbound.mjs:20`; the three
+mutations reconcilable, `goal_plan_status` read-only; colon-namespaced capabilities) are a separately-profiled surface (§5 L8 profile `authoring`),
 outside the ordinary grammar, unchanged — like the kernel tools. §3's `plan` note above refers
 to the *ordinary* surface, where approval is the only plan verb and it lives on `run`.
 
@@ -170,7 +176,7 @@ to the *ordinary* surface, where approval is the only plan verb and it lives on 
 
 | Class | Verbs | Semantics |
 |---|---|---|
-| read | `view`, `watch`, `list`, `help` | `view` = one bounded view at a depth, **optionally change-aware** (`--cursor N --wait D` — the registry's own preferred continuation, `application-semantics.mjs:135-140`) **or condition-awaiting** (`--until settled\|terminal`, absorbing `run.wait`'s deployment-bounded settle-block, R-OP-9/R-KM-2); `watch` = the only **event-channel** read (`channel: progress\|events\|output\|changes`, `--to RECIPIENT` for output, inherits `followPolicy` gating and per-channel cursors); `list` = bounded collections; `help` = self-description |
+| read | `view`, `watch`, `list`, `help` | `view` = one bounded view at a depth, **optionally change-aware** (`--cursor N --wait D` — the registry's own preferred continuation, `application-semantics.mjs:137-141`) **or condition-awaiting** (`--until settled\|terminal`, absorbing `run.wait`'s deployment-bounded settle-block, R-OP-9/R-KM-2); `watch` = the only **event-channel** read (`channel: progress\|events\|output\|changes`, `--to RECIPIENT` for output, inherits `followPolicy` gating and per-channel cursors); `list` = bounded collections; `help` = self-description |
 | lifecycle | `start`, `approve`, `stop`, `recover`, `resume`, `retry` | exactly today's authority semantics |
 | interaction | `answer`, `send`, `interrupt` | `answer` settles answerable attention (§7.3); `send`/`interrupt` run-level forms resolve the live recipient as today; member forms are `{role, generation?}`-addressed |
 | trust | `review`, `adopt`, `select`, `feedback`, `revise`, `integrate`, `export` | the evidence→integration chain, unchanged semantics; `select`/`feedback` address a **candidate**, not a member (R-OP-16) |
@@ -191,9 +197,10 @@ normalization** — `stop_member` and `stop-member` are one token, R-CX-13): `sh
 † `run.steer` is a **deprecated compatibility command, not an alias** (R-CX-15, R-KM-5,
 R-OP-8): its exact five-field schema (`{runId, target, mode, message, reason}` — worker-id
 target, all three delivery modes, **required** reason), its worker-ownership/fence resolution,
-and its unique `reconcilable: false` admission class (`application.mjs:142`, the only one;
-consumed by `web-northbound.mjs:24`) are preserved verbatim through M5 and retired to the kernel
-profile, never rewritten into `member.send`. `reconcilable` becomes a per-operation registry
+and its unique `reconcilable: false` admission class (`application.mjs:142`, the only web-admitted one —
+`application.shutdown` at `:152` shares the class outside the web surface;
+consumed by `web-northbound.mjs:24`) are preserved verbatim through M2, retired to the kernel
+profile at M3, and deleted at M5 — never rewritten into `member.send`. `reconcilable` becomes a per-operation registry
 field (§8.1) so no alias can flip a durability class silently.
 
 ‡ Episode chapters become sections of `run.view` — **the fold is sound only with the episode's
@@ -201,12 +208,14 @@ axes carried over** (R-OP-3, R-KM-3, R-CX-3): `run.view` gains `--role ROLE` (wi
 value `--role none` selecting the run-level aggregate, which is a *distinct projection* —
 `phase92-episode-attribution-red.test.mjs:105-106`) and `--generation N` (the durable workflow
 round, never a Plan version — P92-EA4); episode `detail` maps onto the existing `depth` tail
-(`item|content|evidence` ⊂ depth enum, `application-semantics.mjs:44-45` — the clean half).
+(`item|content|evidence` ⊂ depth enum, `application-semantics.mjs:45-47` — the clean half).
 The four cross-argument admission rules (`pageCursor` only for output×content; `content` only
 for output|help; `generation ⇒ role`; `waitMs ⇒ cursor` — `application.mjs:1226-1247`) port
 verbatim into the `run.view` schema. Cross-role and cross-generation evidence isolation
 (`phase92-episode-attribution-red.test.mjs:103-104,133-144`) is a contract **of the fold**.
-Registry-owned `--section` values do not count against H7's name depth (R-KM-3).
+Registry-owned `--section` values do not count against H7's name depth (R-KM-3). The
+canonical section selector grammar is the dotted spelling `--section episode.CHAPTER`
+(total over the chapter enum; no structured section+item form is carried — R-CX-3).
 
 ### 4.2 House rules
 
@@ -224,9 +233,12 @@ Registry-owned `--section` values do not count against H7's name depth (R-KM-3).
   role-addressing classes, both registry-declared (R-OP-16).
 - **H5 — Reasons.** Destructive verbs uniformly **accept and durably record** `--reason`, and
   views surface its absence. Schema-*required* only for the non-emergency gate class (`revise`,
-  `integrate`, `adopt`); `stop`, `member.stop`, and `interrupt` keep `reason` optional — adding
-  a required field to the emergency path would be a new admission precondition, violating §2
-  (R-OP-13; `application-semantics.mjs:170,179,612,621`).
+  `integrate`, `adopt`); on the named-verb/D3/CLI path `stop`, `member.stop`, and `interrupt`
+  keep `reason` optional (`application-semantics.mjs:170,179,612,621`). The **do-path already
+  diverges today**: the D2 actions `stop`/`stop_member` schema-require `reason`
+  (`application-semantics.mjs:545,493`) — a live F12 instance, recorded in the divergence
+  ledger (dimension `schema`, retiresIn M1), not legislated over (R-OP-13; §2 forbids both
+  adding and removing preconditions).
 - **H6 — No abbreviations, no vendor words, no plural nouns** in operation names.
 - **H7 — Depth ≤ noun.subnoun.verb.** Registry-owned enum/section values are data, not names.
 - **H8 — Every operation ships an example invocation** rendered into MCP listings, CLI help, and
@@ -296,7 +308,7 @@ Registry-owned `--section` values do not count against H7's name depth (R-KM-3).
 
 ## 6. The canonical operation set
 
-Forty-five operations replace ~300 names. Verb-level entries are peers of `do` (§4.1 meta row).
+Forty-four operations replace ~300 names. Verb-level entries are peers of `do` (§4.1 meta row).
 Every row carries its authority profile; unmarked rows are `ordinary`.
 
 | Canonical | Replaces / notes |
@@ -307,7 +319,7 @@ Every row carries its authority profile; unmarked rows are `ordinary`.
 | `run.list` | `runs.list`, `baton_runs` |
 | `run.start` | `run.start` + presets `explore`/`review`/`workflow()`/`waves.start` (sugar with recorded expansion, L5) |
 | `run.view` | `run.inspect`, `run.status`, `run show`, **`run.wait`** (`--until settled\|terminal`, R-OP-9), `run.episode` + chapters (with `--role/--generation/--section`, §4.1‡), embedded outline/index/changes-awaiting reads. `run result` = `run.view --section episode.result` (the double-mapped v1 `run.result` row is deleted, R-OP-9) |
-| `run.watch` | `run.follow`, `run progress/events/output --follow` (channels; `--to` for output; followPolicy-gated) |
+| `run.watch` | `run.follow`, `run progress/events/output --follow` (channels; `--to` for output; followPolicy-gated; `afterCursor`/`timeoutMs` schema with post-wait reauthorization, R-CX-2) |
 | `run.do` | `run.act`, `baton run do` |
 | `run.approve` | `run.approve` (waves' explicit per-member approve is already this operation) |
 | `run.answer` | `run.answer` + `baton_decision_answer`; response union per kind (§7.3) |
@@ -321,7 +333,7 @@ Every row carries its authority profile; unmarked rows are `ordinary`.
 | `run.member.send` | `run.workstream.notify`, `run notify` (structured `{role, generation?}`; `--to` stays on run-level send, R-OP-14) |
 | `run.member.interrupt` | member-targeted interrupt |
 | `run.member.stop` | `run.workstream.stop`, `run stop-member`, `stopMember` |
-| `run.attention.list` | filtered read for polling; outline carries the same items (L10) |
+| `run.attention.list` | filtered read for polling; outline carries the same items (L10) — **new semantics, no source row** (R-CX-1 crosswalk discipline) |
 | `context.eval` | `application.context_eval`, `baton context eval`, `baton_context_eval`; **keeps the closed `runId` XOR `manifestDigest` address union** (R-CX-1); `context_search/chunk/coverage` remain registry-recorded aliases of eval (already `legacyAliasFor`, `application-semantics.mjs:280-323`) |
 | `context.map` / `context.reduce` / `context.retry` | the plan-proposal context actions (`effect: plan_proposal`, `application-semantics.mjs:226-279`) — first-class verbs, not do-only (R-CX-1, R-KM-9) |
 | `board.post/retitle/reorder/close/read` | orchestrator board ops; registry rows carry the orchestrator-lease + `expectedBoardFence` + idempotency-binding authority fields (R-CX-14) |
@@ -375,7 +387,7 @@ literal in `impl/src` with no entry is a red test** — R-OP-5):
 | `running` | `working` | |
 | `interruption_uncertain` | `uncertain` | |
 | `work_completed` | `result_ready` | **not** `completed` (R-CX-4) |
-| `selection_required` | `awaiting_selection` | attention kind `select_candidate`; live consumer `wave.mjs:85` re-reports at M2 (R-OP-5) |
+| `selection_required` | `awaiting_selection` | attention kind `candidate_selection` (canonical `select_candidate` via the §7.3 mapping row); live consumer `wave.mjs:85` re-reports at M2 (R-OP-5) |
 | `candidate_selected` | `result_selected` | |
 | `input_required` (outline) | `working` + attention `answer_question` | `wave.mjs:86` re-reports at M2 |
 | `planning_failed` | `failed` (cause `planning`) | |
@@ -406,12 +418,18 @@ recorded outcome (`completed | failed | cancelled | stopped`); wave `start_faile
 
 ### 7.3 Attention kinds and responses
 
-Canonical kinds are the **nine live kinds, verbatim** (R-OP-7 — renaming them adds a mapping
-for zero gain; v1's six-kind list renamed some, missed three, and invented `capacity`, which has
-no emitter and is dropped — reserved for issue #39):
+Canonical kinds are the **eight live attention-array kinds** (R-OP-7 — v1's six-kind list
+renamed some, missed three, and invented `capacity`, which has no emitter and is dropped —
+reserved for issue #39). The live emitters (`application.mjs:6466-6493, 6803-6833`) produce
+exactly:
 
-`approve_plan | select_candidate | answer_question | answer_approval | answer_decision |
+`candidate_selection | answer_question | answer_approval | answer_decision |
 turn_checkpoint | session_preservation | workflow_revision | workflow_recovery`
+
+One mapping row is honest and required: `candidate_selection` serializes as `select_candidate`
+in the canonical grammar (the blockedInteraction/nextActions/action string, `application.mjs:282`)
+— C3's generated total mapping owns it. `approve_plan` has **no attention emitter**; plan-approval
+attention is synthesized as `answer_approval` items, so no ninth kind exists.
 
 Settlement:
 
@@ -510,7 +528,7 @@ quiesce point** (R-OP-11).
   `--role/--generation/--until` and the episode fold lands **with** the axes, the ported
   admission matrix, the `continuation.operation` flip (`run.episode` → `run.view`,
   `phase92-episode-workstream-red.test.mjs:92`), and the browser-desk element-id/bus moves
-  (`:167-175`) in the same commit (R-OP-3); `watch` lands; `steer` retires to kernel profile.
+  (`phase92-episode-workstream-red.test.mjs:167-175`) in the same commit (R-OP-3); `watch` lands; `steer` retires to kernel profile.
 - **M4 — Generated surfaces.** CLI table, both MCP profiles, web entries (transport-name
   derivation flips here; parked-envelope reconciliation across the boundary is a named
   conformance case — R-KM-8), embedded facade, CLI.md/MCP.md inventories all render from
@@ -539,8 +557,9 @@ operational cost, not a rollback hazard (R-OP-11).
   is generated and total over extracted literals (R-OP-5).
 - **C4** (L6): banned-token lint generated from §4.1 with token normalization (R-CX-13).
 - **C5** (L10): the finite phase × attention × next-action matrix — outline alone answers
-  what/why/next for **all nine** attention kinds; cause non-null for non-success terminals only
-  (R-CX-10, R-OP-7).
+  what/why/next for **all eight** attention kinds; cause non-null for non-success terminals only
+  (R-CX-10, R-OP-7). The three-variant checkpoint response is pinned by
+  `impl/test/turn-checkpoints-31b5-surface-red.test.mjs` (R-CX-6).
 - **C6** (L7): error-shape law over every provokable refusal; leak test that stage/subject never
   carry paths, tokens, or fence coordinates.
 - **C7** (L5): every preset run's durable log carries an expansion record naming the preset and
@@ -578,7 +597,7 @@ operational cost, not a rollback hazard (R-OP-11).
 Regenerate with `node impl/scripts/surface-audit.mjs`. Snapshot at v1: 10 registry operations;
 27 actions; 26 command definitions (25 web-flagged **plus ~19 kernel/goal-plan Web literals the
 v1 extraction missed** — R-OP-2); 37 CLI verb rows; 38 `fleet_*` + 21 `baton_*` MCP tools; 5
-remote-bridge commands (D8); 120 embedded methods; 16+4 phase strings (R-OP-5); seat-synonym
+remote-bridge commands (D8); 120 embedded methods; 21 phase strings (R-OP-5; `start_failed` is the 21st); seat-synonym
 density worker×427 / member×219 / workstream×121 / assignee×26. The M0 audit extension makes
 the tool, not this file, the table of record for all of the above.
 
