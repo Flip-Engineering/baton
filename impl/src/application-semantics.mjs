@@ -1058,18 +1058,480 @@ const aliases = freeze({
       legacy: projection.legacy,
     })),
 });
-const authorityDigest = createHash('sha256')
-  .update(JSON.stringify(canonical(core))).digest('hex');
-const presentationDigest = createHash('sha256').update(JSON.stringify(canonical({
+// ── docs/36 §6/§8.1 — Registry v2: one complete entry per canonical operation ─────────────────
+// The §6 canonical set, each row a *complete* authority record: verb, noun path, effect,
+// capabilities, profile, durability class (idempotent/destructive/reconcilable/emergency), input
+// schema (with H4 flagAliases), output view kind, per-surface enablement + the ONE mechanical name
+// derivation, aliases (legacy spellings), an H8 example, and a help topic. `deriveSurfaceNames` is
+// the single shared derivation — the conformance harness imports THIS function, so the registry,
+// the audit, and every renderer compute surface names one way (R-OP-10, M4A-2).
+export function deriveSurfaceNames(key) {
+  const parts = key.split('.');
+  if (parts.length < 2 || parts.some((part) => !/^[a-z][a-z0-9]*$/u.test(part))) {
+    throw new TypeError(`invalid canonical operation key: ${key}`);
+  }
+  const verb = parts.at(-1);
+  const nouns = parts.slice(0, -1);
+  const embeddedNouns = nouns.map((noun, index) => {
+    if (index === 0) return noun;
+    if (noun === 'member') return 'member(role)';
+    return noun;
+  });
+  return Object.freeze({
+    cli: `baton ${parts.join(' ')}`,
+    mcp: `baton_${parts.join('_')}`,
+    web: parts.join('_'),
+    embedded: `${embeddedNouns.join('.')}.${verb}()`,
+  });
+}
+
+const ALL_SURFACES = Object.freeze(['cli', 'mcp', 'web', 'embedded']);
+const sortedCapabilities = (capabilities) => Object.freeze([...new Set(capabilities)].sort());
+
+// H4: the flag projection of a camelCase schema field is its kebab spelling. The map is derived,
+// never hand-kept, so a schema rename cannot desync a renderer's flag aliases (R-OP-12).
+function kebabCase(name) {
+  return name.replace(/([a-z0-9])([A-Z])/gu, '$1-$2').toLowerCase();
+}
+function flagAliasesFor(schema) {
+  const properties = (schema && schema.properties) || {};
+  return freeze(Object.fromEntries(Object.keys(properties)
+    .map((field) => [field, kebabCase(field)])
+    .filter(([field, alias]) => alias !== field)
+    .map(([field, alias]) => [field, [alias]])));
+}
+
+const runIdSchema = objectSchema({ runId: id }, ['runId']);
+
+// Every §6 canonical operation: an authority `source` (an `operations` name or an `actions` kind
+// the entry inherits schema/effect/capabilities/durability from) plus the fields the source cannot
+// supply. Order and profiles/surfaces match the seeded conformance set exactly (SC3 byte-stable).
+const CANONICAL_OPERATION_SPECS = [
+  ['deployment.view', {
+    profile: 'ordinary', surfaces: ['cli', 'embedded'], effect: 'deployment_read',
+    capabilities: ['observe'], outputView: 'index', helpTopic: 'connection',
+    example: 'baton doctor --check',
+    inputSchema: objectSchema({
+      depth: { type: 'string', enum: ['outline', 'connection', 'profile', 'evidence'] },
+      check: { type: 'boolean' },
+    }, []),
+  }],
+  ['deployment.serve', {
+    profile: 'host', surfaces: ['cli'], effect: 'host_serve', capabilities: ['host'],
+    outputView: 'outline', helpTopic: 'connection', example: 'baton serve', idempotent: false,
+    inputSchema: objectSchema({ configPath: { type: 'string', minLength: 1, maxLength: 4096 } }, []),
+  }],
+  ['deployment.shutdown', {
+    profile: 'host', surfaces: ['cli', 'embedded'], effect: 'host_shutdown',
+    capabilities: ['emergency_stop', 'host'], outputView: 'outline', helpTopic: 'run.stop',
+    destructive: true, emergency: true, reconcilable: false,
+    inputSchema: objectSchema({ reason: { type: 'string', minLength: 1, maxLength: 1024 } }, []),
+  }],
+  ['run.list', {
+    op: 'runs.list', effect: 'run_read', capabilities: ['observe'], outputView: 'index',
+    example: 'baton run list',
+  }],
+  ['run.start', {
+    op: 'run.start', effect: 'provider_call', capabilities: ['control', 'observe'],
+    outputView: 'outline', example: 'baton run "Ship it" --model gpt-5.6-sol --effort low',
+  }],
+  ['run.view', {
+    op: 'run.inspect', effect: 'run_read', capabilities: ['observe'], outputView: 'outline',
+    example: 'baton run view RUN_ID',
+  }],
+  ['run.watch', {
+    effect: 'run_stream', capabilities: ['observe'], outputView: 'content', helpTopic: 'run.inspect',
+    example: 'baton run watch RUN_ID',
+    inputSchema: objectSchema({
+      runId: id, channel: { type: 'string', enum: ['progress', 'events', 'output'] },
+      recipient: id, afterCursor: { type: 'integer', minimum: 0 },
+      timeoutMs: { type: 'integer', minimum: 1 },
+    }, ['runId']),
+  }],
+  ['run.do', {
+    op: 'run.act', effect: 'action_dispatch', capabilities: ['control', 'observe'],
+    outputView: 'outline', example: 'baton run do RUN_ID ACTION_ID',
+  }],
+  ['run.approve', {
+    action: 'approve_plan', outputView: 'outline', example: 'baton run approve RUN_ID --plan DIGEST',
+  }],
+  ['run.answer', {
+    action: 'answer_question', effect: 'provider_control',
+    capabilities: ['approve', 'control', 'observe'], outputView: 'outline',
+    helpTopic: 'run.act.answer_question', example: 'baton run answer RUN_ID REQUEST_ID --text TEXT',
+  }],
+  ['run.send', { action: 'send', outputView: 'outline', example: 'baton run send RUN_ID TEXT' }],
+  ['run.interrupt', { action: 'interrupt', outputView: 'outline', example: 'baton run interrupt RUN_ID' }],
+  ['run.stop', {
+    op: 'run.stop', effect: 'run_cleanup', capabilities: ['emergency_stop', 'observe'],
+    outputView: 'outline', emergency: true, example: 'baton run stop RUN_ID',
+  }],
+  ['run.evidence', {
+    effect: 'run_read', capabilities: ['observe'], outputView: 'evidence', helpTopic: 'run',
+    inputSchema: runIdSchema, example: 'baton run evidence RUN_ID',
+  }],
+  ['run.review', { action: 'semantic_review', outputView: 'outline', example: 'baton run review RUN_ID --exact codex/gpt-5.6-sol@low --reason R' }],
+  ['run.adopt', { action: 'adopt_result', outputView: 'outline', example: 'baton run adopt RUN_ID --reason R' }],
+  ['run.integrate', { action: 'integrate', outputView: 'outline', example: 'baton run integrate RUN_ID --strategy ff-only --reason R' }],
+  ['run.export', { action: 'export_result', outputView: 'outline', example: 'baton run export RUN_ID DIR' }],
+  ['run.select', { action: 'select_candidate', outputView: 'outline', example: 'baton run select RUN_ID ROLE --reason R' }],
+  ['run.feedback', { action: 'send_feedback', outputView: 'outline', example: 'baton run feedback RUN_ID ROLE --text TEXT' }],
+  ['run.revise', { action: 'revise_candidate', outputView: 'outline', example: 'baton run revise RUN_ID --reason R' }],
+  ['run.recover', {
+    effect: 'run_recovery', capabilities: ['observe', 'resume_work'], outputView: 'outline',
+    helpTopic: 'run', inputSchema: runIdSchema, example: 'baton run recover RUN_ID',
+  }],
+  ['run.resume', { action: 'resume_work', outputView: 'outline', example: 'baton run resume RUN_ID --reason R' }],
+  ['run.retry', { action: 'retry_verification', outputView: 'outline', example: 'baton run retry RUN_ID --reason R' }],
+  ['run.member.view', {
+    op: 'run.workstreams', effect: 'member_read', capabilities: ['observe'], outputView: 'section',
+    example: 'baton run member view RUN_ID',
+  }],
+  ['run.member.send', {
+    op: 'run.workstream.notify', effect: 'provider_control', capabilities: ['control', 'observe'],
+    outputView: 'outline', example: 'baton run member send RUN_ID ROLE TEXT',
+  }],
+  ['run.member.interrupt', {
+    action: 'interrupt', effect: 'provider_control', capabilities: ['control', 'observe'],
+    outputView: 'outline', helpTopic: 'run.act.interrupt', example: 'baton run member interrupt RUN_ID ROLE',
+  }],
+  ['run.member.stop', {
+    op: 'run.workstream.stop', effect: 'member_cleanup', capabilities: ['emergency_stop', 'observe'],
+    outputView: 'outline', emergency: true, example: 'baton run member stop RUN_ID ROLE',
+  }],
+  ['run.attention.list', {
+    effect: 'attention_read', capabilities: ['observe'], outputView: 'index', helpTopic: 'run',
+    inputSchema: objectSchema({ runId: id, kind: id }, ['runId']),
+    example: 'baton run attention list RUN_ID',
+  }],
+  ['context.eval', { action: 'context_eval', outputView: 'outline', example: 'baton context eval --run RUN_ID --program FILE' }],
+  ['context.map', { action: 'context_map', outputView: 'outline' }],
+  ['context.reduce', { action: 'context_reduce', outputView: 'outline' }],
+  ['context.retry', { action: 'context_retry', outputView: 'outline' }],
+  ['board.post', {
+    effect: 'board_edit', capabilities: ['control', 'observe'], outputView: 'outline',
+    helpTopic: 'run', inputSchema: objectSchema({
+      runId: id, title: { type: 'string', minLength: 1, maxLength: 4096 },
+      note: { type: 'string', minLength: 1, maxLength: 16384 },
+      expectedBoardFence: { type: 'integer', minimum: 0 },
+    }, ['runId', 'title']),
+  }],
+  ['board.retitle', {
+    effect: 'board_edit', capabilities: ['control', 'observe'], outputView: 'outline',
+    helpTopic: 'run', inputSchema: objectSchema({
+      runId: id, entryId: id, title: { type: 'string', minLength: 1, maxLength: 4096 },
+      expectedBoardFence: { type: 'integer', minimum: 0 },
+    }, ['runId', 'entryId', 'title']),
+  }],
+  ['board.reorder', {
+    effect: 'board_edit', capabilities: ['control', 'observe'], outputView: 'outline',
+    helpTopic: 'run', inputSchema: objectSchema({
+      runId: id, entryId: id, before: id, expectedBoardFence: { type: 'integer', minimum: 0 },
+    }, ['runId', 'entryId']),
+  }],
+  ['board.close', {
+    effect: 'board_edit', capabilities: ['control', 'observe'], outputView: 'outline',
+    helpTopic: 'run', inputSchema: objectSchema({
+      runId: id, entryId: id, expectedBoardFence: { type: 'integer', minimum: 0 },
+    }, ['runId', 'entryId']),
+  }],
+  ['board.read', {
+    effect: 'board_read', capabilities: ['observe'], outputView: 'section', helpTopic: 'run',
+    inputSchema: runIdSchema,
+  }],
+  ['board.claim', {
+    profile: 'worker', effect: 'board_claim', capabilities: ['control', 'observe'],
+    outputView: 'outline', helpTopic: 'run', inputSchema: objectSchema({ runId: id, entryId: id }, ['runId', 'entryId']),
+  }],
+  ['board.report', {
+    profile: 'worker', effect: 'board_report', capabilities: ['control', 'observe'],
+    outputView: 'outline', helpTopic: 'run', inputSchema: objectSchema({
+      runId: id, entryId: id, note: { type: 'string', minLength: 1, maxLength: 16384 },
+    }, ['runId', 'entryId']),
+  }],
+  ['package.admit', {
+    effect: 'package_edit', capabilities: ['control', 'observe'], outputView: 'outline',
+    helpTopic: 'run', inputSchema: objectSchema({
+      runId: id, packageId: id, digest: id,
+    }, ['runId', 'packageId']),
+  }],
+  ['package.attach', {
+    effect: 'package_edit', capabilities: ['control', 'observe'], outputView: 'outline',
+    helpTopic: 'run', inputSchema: objectSchema({ runId: id, packageId: id }, ['runId', 'packageId']),
+  }],
+  ['package.read', {
+    effect: 'package_read', capabilities: ['observe'], outputView: 'section', helpTopic: 'run',
+    inputSchema: runIdSchema,
+  }],
+  ['application.help', {
+    op: 'application.help', effect: 'help_read', capabilities: ['observe'], outputView: 'outline',
+    example: 'baton help',
+  }],
+];
+
+// docs/36 §8.1 — the registry OWNS aliases (legacy spellings). These rows were the M0 ledger's
+// cli / embedded / application.commands name divergences; relocated here they become *derivable*
+// registry data, so the conformance harness resolves them and their ledger rows retire (M4a §5).
+const SURFACE_ALIAS_ROWS = Object.freeze([
+  ['application.help', 'embedded', 'BatonClient.help'],
+  ['context.eval', 'embedded', 'BatonContextCall.complete'],
+  ['context.eval', 'embedded', 'BatonContextCall.content'],
+  ['context.eval', 'embedded', 'BatonContextCall.contentPage'],
+  ['context.eval', 'embedded', 'BatonContextCall.evidence'],
+  ['context.eval', 'embedded', 'BatonContextCall.help'],
+  ['context.eval', 'embedded', 'BatonContextCall.outline'],
+  ['context.eval', 'embedded', 'BatonContextCall.output'],
+  ['context.eval', 'embedded', 'BatonContextCell.evidence'],
+  ['context.eval', 'embedded', 'BatonContextCell.help'],
+  ['context.eval', 'embedded', 'BatonContextCell.outline'],
+  ['context.eval', 'embedded', 'BatonContextCell.output'],
+  ['context.eval', 'embedded', 'BatonContextExpression.chunk'],
+  ['context.eval', 'embedded', 'BatonContextExpression.coverage'],
+  ['context.eval', 'embedded', 'BatonContextExpression.filter'],
+  ['context.eval', 'embedded', 'BatonContextExpression.index'],
+  ['context.eval', 'embedded', 'BatonContextExpression.join'],
+  ['context.eval', 'embedded', 'BatonContextExpression.outline'],
+  ['context.eval', 'embedded', 'BatonContextExpression.project'],
+  ['context.eval', 'embedded', 'BatonContextExpression.search'],
+  ['context.eval', 'embedded', 'BatonContextExpression.slice'],
+  ['context.eval', 'embedded', 'BatonContextExpression.sort'],
+  ['context.eval', 'embedded', 'BatonContextExpression.toJSON'],
+  ['context.eval', 'embedded', 'BatonContextExpression.unique'],
+  ['context.eval', 'embedded', 'BatonRunContext.call'],
+  ['context.eval', 'embedded', 'BatonRunContext.cell'],
+  ['context.eval', 'embedded', 'BatonRunContext.cells'],
+  ['context.eval', 'embedded', 'BatonRunContext.chunk'],
+  ['context.eval', 'embedded', 'BatonRunContext.collect'],
+  ['context.eval', 'embedded', 'BatonRunContext.coverage'],
+  ['context.eval', 'embedded', 'BatonRunContext.evaluate'],
+  ['context.eval', 'embedded', 'BatonRunContext.evidence'],
+  ['context.eval', 'embedded', 'BatonRunContext.finish'],
+  ['context.eval', 'embedded', 'BatonRunContext.help'],
+  ['context.eval', 'embedded', 'BatonRunContext.index'],
+  ['context.eval', 'embedded', 'BatonRunContext.outline'],
+  ['context.eval', 'embedded', 'BatonRunContext.search'],
+  ['context.eval', 'embedded', 'BatonRunContext.source'],
+  ['context.map', 'embedded', 'BatonRunContext.map'],
+  ['context.reduce', 'embedded', 'BatonContextCall.reduce'],
+  ['context.reduce', 'embedded', 'BatonRunContext.reduce'],
+  ['context.retry', 'embedded', 'BatonContextCall.retry'],
+  ['context.retry', 'embedded', 'BatonRunContext.retry'],
+  ['deployment.shutdown', 'application.commands', 'application.shutdown'],
+  ['deployment.view', 'cli', 'baton route exact'],
+  ['deployment.view', 'embedded', 'BatonClient.doctor'],
+  ['deployment.view', 'embedded', 'BatonClient.route'],
+  ['deployment.view', 'embedded', 'BatonClient.routes'],
+  ['run.adopt', 'embedded', 'BatonRun.adopt'],
+  ['run.adopt', 'embedded', 'BatonRun.apply'],
+  ['run.answer', 'cli', 'baton run answer approval'],
+  ['run.answer', 'cli', 'baton run answer decision'],
+  ['run.answer', 'cli', 'baton run answer question'],
+  ['run.answer', 'embedded', 'BatonRun.answer'],
+  ['run.approve', 'embedded', 'BatonRun.approve'],
+  ['run.do', 'application.commands', 'run.act'],
+  ['run.do', 'embedded', 'BatonRun.act'],
+  ['run.evidence', 'embedded', 'BatonRun.evidence'],
+  ['run.export', 'embedded', 'BatonRun.export'],
+  ['run.feedback', 'embedded', 'BatonRun.feedback'],
+  ['run.feedback', 'embedded', 'BatonRun.sendFeedback'],
+  ['run.integrate', 'embedded', 'BatonRun.integrate'],
+  ['run.interrupt', 'embedded', 'BatonRun.interrupt'],
+  ['run.list', 'application.commands', 'runs.list'],
+  ['run.list', 'embedded', 'BatonRuns.list'],
+  ['run.member.send', 'application.commands', 'run.workstream.notify'],
+  ['run.member.send', 'cli', 'baton run notify'],
+  ['run.member.send', 'embedded', 'BatonWorkstream.notify'],
+  ['run.member.stop', 'application.commands', 'run.workstream.stop'],
+  ['run.member.stop', 'cli', 'baton run stop-member'],
+  ['run.member.stop', 'embedded', 'BatonRun.stopMember'],
+  ['run.member.stop', 'embedded', 'BatonRunGroup.stopMembers'],
+  ['run.member.stop', 'embedded', 'BatonWorkstream.stop'],
+  ['run.member.view', 'application.commands', 'run.workstreams'],
+  ['run.member.view', 'cli', 'baton run workstreams'],
+  ['run.member.view', 'embedded', 'BatonRun.members'],
+  ['run.member.view', 'embedded', 'BatonRun.workstreams'],
+  ['run.member.view', 'embedded', 'BatonRunGroup.member'],
+  ['run.member.view', 'embedded', 'BatonWorkstream.help'],
+  ['run.member.view', 'embedded', 'BatonWorkstream.open'],
+  ['run.member.view', 'embedded', 'BatonWorkstreams.help'],
+  ['run.member.view', 'embedded', 'BatonWorkstreams.list'],
+  ['run.member.view', 'embedded', 'BatonWorkstreams.open'],
+  ['run.resume', 'application.commands', 'run.resume_work'],
+  ['run.retry', 'application.commands', 'run.retry_verification'],
+  ['run.review', 'embedded', 'BatonRun.review'],
+  ['run.revise', 'embedded', 'BatonRun.revise'],
+  ['run.select', 'embedded', 'BatonRun.select'],
+  ['run.send', 'application.commands', 'run.steer'],
+  ['run.send', 'cli', 'baton run steer'],
+  ['run.send', 'embedded', 'BatonRun.send'],
+  ['run.send', 'embedded', 'BatonRun.steer'],
+  ['run.start', 'cli', 'baton explore objective'],
+  ['run.start', 'cli', 'baton review objective'],
+  ['run.start', 'cli', 'baton run objective'],
+  ['run.start', 'cli', 'baton run objective manual'],
+  ['run.start', 'cli', 'baton run start exact'],
+  ['run.start', 'embedded', 'BatonClient.explore'],
+  ['run.start', 'embedded', 'BatonClient.review'],
+  ['run.start', 'embedded', 'BatonClient.workflow'],
+  ['run.start', 'embedded', 'BatonRuns.start'],
+  ['run.start', 'embedded', 'BatonRuns.startMany'],
+  ['run.stop', 'embedded', 'BatonRun.stop'],
+  ['run.stop', 'embedded', 'BatonRunGroup.stop'],
+  ['run.view', 'application.commands', 'run.episode'],
+  ['run.view', 'application.commands', 'run.inspect'],
+  ['run.view', 'application.commands', 'run.status'],
+  ['run.view', 'application.commands', 'run.wait'],
+  ['run.view', 'cli', 'baton run episode'],
+  ['run.view', 'cli', 'baton run result'],
+  ['run.view', 'cli', 'baton run show'],
+  ['run.view', 'cli', 'baton run status'],
+  ['run.view', 'embedded', 'BatonEpisode.cleanup'],
+  ['run.view', 'embedded', 'BatonEpisode.contradictions'],
+  ['run.view', 'embedded', 'BatonEpisode.derivations'],
+  ['run.view', 'embedded', 'BatonEpisode.help'],
+  ['run.view', 'embedded', 'BatonEpisode.outline'],
+  ['run.view', 'embedded', 'BatonEpisode.output'],
+  ['run.view', 'embedded', 'BatonEpisode.result'],
+  ['run.view', 'embedded', 'BatonEpisode.route'],
+  ['run.view', 'embedded', 'BatonEpisode.sources'],
+  ['run.view', 'embedded', 'BatonEpisode.trace'],
+  ['run.view', 'embedded', 'BatonEpisode.verification'],
+  ['run.view', 'embedded', 'BatonRun.actions'],
+  ['run.view', 'embedded', 'BatonRun.candidates'],
+  ['run.view', 'embedded', 'BatonRun.changes'],
+  ['run.view', 'embedded', 'BatonRun.complete'],
+  ['run.view', 'embedded', 'BatonRun.context'],
+  ['run.view', 'embedded', 'BatonRun.drive'],
+  ['run.view', 'embedded', 'BatonRun.episode'],
+  ['run.view', 'embedded', 'BatonRun.help'],
+  ['run.view', 'embedded', 'BatonRun.index'],
+  ['run.view', 'embedded', 'BatonRun.inspect'],
+  ['run.view', 'embedded', 'BatonRun.outline'],
+  ['run.view', 'embedded', 'BatonRun.rounds'],
+  ['run.view', 'embedded', 'BatonRun.status'],
+  ['run.view', 'embedded', 'BatonRun.wait'],
+  ['run.view', 'embedded', 'BatonRunGroup.changes'],
+  ['run.view', 'embedded', 'BatonRunGroup.complete'],
+  ['run.view', 'embedded', 'BatonRunGroup.inspect'],
+  ['run.view', 'embedded', 'BatonRunGroup.status'],
+  ['run.view', 'embedded', 'BatonRuns.attach'],
+  ['run.view', 'embedded', 'BatonRuns.help'],
+  ['run.view', 'embedded', 'BatonRuns.open'],
+  ['run.view', 'embedded', 'BatonWorkstream.episode'],
+  ['run.view', 'embedded', 'BatonWorkstream.result'],
+  ['run.watch', 'application.commands', 'run.follow'],
+  ['run.watch', 'cli', 'baton run events'],
+  ['run.watch', 'cli', 'baton run output'],
+  ['run.watch', 'cli', 'baton run progress'],
+  ['run.watch', 'embedded', 'BatonRun.events'],
+  ['run.watch', 'embedded', 'BatonRun.follow'],
+  ['run.watch', 'embedded', 'BatonRun.output'],
+  ['run.watch', 'embedded', 'BatonRun.progress'],
+]);
+
+function buildCanonicalOperation([key, spec]) {
+  const source = spec.op ? operations[spec.op] : spec.action ? authorizedActions[spec.action] : null;
+  const parts = key.split('.');
+  const inputSchema = freeze(spec.inputSchema ?? source?.inputSchema ?? objectSchema({}, []));
+  const capabilities = sortedCapabilities(
+    spec.capabilities ?? source?.requiredCapabilities ?? ['observe'],
+  );
+  const surfaceAliases = SURFACE_ALIAS_ROWS
+    .filter(([canonicalKey]) => canonicalKey === key)
+    .map(([, surface, name]) => Object.freeze({ surface, name }));
+  return Object.freeze({
+    key,
+    verb: parts.at(-1),
+    noun: Object.freeze(parts.slice(0, -1)),
+    effect: spec.effect ?? source?.effect ?? 'application_read',
+    capabilities,
+    profile: spec.profile ?? 'ordinary',
+    idempotent: spec.idempotent ?? source?.idempotent ?? true,
+    destructive: spec.destructive ?? source?.destructive ?? false,
+    reconcilable: spec.reconcilable ?? (spec.profile === 'host' ? false : true),
+    emergency: spec.emergency ?? source?.emergency ?? false,
+    inputSchema,
+    flagAliases: flagAliasesFor(inputSchema),
+    outputView: spec.outputView,
+    surfaces: Object.freeze([...(spec.surfaces ?? ALL_SURFACES)]),
+    names: deriveSurfaceNames(key),
+    aliases: Object.freeze(surfaceAliases),
+    example: spec.example ?? deriveSurfaceNames(key).cli,
+    helpTopic: spec.helpTopic ?? source?.helpTopic ?? key,
+  });
+}
+
+const canonicalOperations = freeze(CANONICAL_OPERATION_SPECS.map(buildCanonicalOperation));
+const surfaceAliases = freeze(SURFACE_ALIAS_ROWS.map(([canonicalKey, surface, name]) => ({
+  canonical: canonicalKey, surface, name,
+})));
+
+// docs/36 §8.1 digest split (R-OP-11). authorityDigest covers schemas / capabilities / effects /
+// enums / profiles / durability — `actionId` freshness and the MCP bridge pin bind it alone.
+// presentationDigest covers aliases / help / examples / ordering and moves without invalidating a
+// live session. The two projections share no field, so an alias, help, or example edit provably
+// cannot move authorityDigest (M4A-3).
+const authorityProjection = {
+  schemaVersion: core.schemaVersion,
+  version: core.version,
+  depths: core.depths,
+  sections: core.sections,
+  enums: {
+    runPhases: CANONICAL_RUN_PHASES,
+    memberStates: CANONICAL_MEMBER_STATES,
+    attentionKinds: CANONICAL_ATTENTION_KINDS,
+    legacyRunPhaseMap: LEGACY_RUN_PHASE_MAP,
+    legacyMemberStateMap: LEGACY_MEMBER_STATE_MAP,
+    attentionKindSerialization: ATTENTION_KIND_SERIALIZATION,
+  },
+  operations: Object.fromEntries(Object.entries(operations).map(([name, definition]) => [name, {
+    inputSchema: definition.inputSchema,
+    idempotent: definition.idempotent,
+    destructive: definition.destructive,
+    emergency: definition.emergency ?? false,
+  }])),
+  actions: Object.fromEntries(Object.entries(authorizedActions).map(([kind, definition]) => [kind, {
+    inputSchema: definition.inputSchema,
+    effect: definition.effect,
+    destructive: definition.destructive,
+    irreversible: definition.irreversible,
+    idempotent: definition.idempotent,
+    requiredCapabilities: definition.requiredCapabilities,
+  }])),
+  canonicalOperations: canonicalOperations.map((entry) => ({
+    key: entry.key, verb: entry.verb, noun: entry.noun, effect: entry.effect,
+    capabilities: entry.capabilities, profile: entry.profile, idempotent: entry.idempotent,
+    destructive: entry.destructive, reconcilable: entry.reconcilable, emergency: entry.emergency,
+    inputSchema: entry.inputSchema, outputView: entry.outputView, surfaces: entry.surfaces,
+    names: entry.names, flagAliases: entry.flagAliases,
+  })),
+};
+const presentationProjection = {
   aliases,
+  surfaceAliases,
   deprecatedOperations: Object.entries(operations)
     .filter(([, definition]) => definition.deprecated)
     .map(([name]) => name),
-}))).digest('hex');
+  operationOrder: CANONICAL_OPERATION_SPECS.map(([key]) => key),
+  help: canonicalOperations.map((entry) => [entry.key, entry.helpTopic]),
+  examples: canonicalOperations.map((entry) => [entry.key, entry.example]),
+  operationAliases: canonicalOperations.map((entry) => [entry.key, entry.aliases]),
+};
+export function hashRegistryProjection(value) {
+  return createHash('sha256').update(JSON.stringify(canonical(value))).digest('hex');
+}
+export const APPLICATION_DIGEST_PROJECTIONS = freeze({
+  authority: authorityProjection,
+  presentation: presentationProjection,
+});
+const authorityDigest = hashRegistryProjection(authorityProjection);
+const presentationDigest = hashRegistryProjection(presentationProjection);
 
 export const APPLICATION_SEMANTIC_REGISTRY = freeze({
   ...core,
   aliases,
+  canonicalOperations,
+  surfaceAliases,
   enums: APPLICATION_LIFECYCLE_ENUMS,
   authorityDigest,
   presentationDigest,

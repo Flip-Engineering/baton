@@ -1577,3 +1577,28 @@ export function bindBatonPort(commandPort) {
   });
   return new BatonClient(port);
 }
+
+// docs/36 §6.1/§9 M4 (embedded renderer) — the embedded facade is DERIVED from the registry v2
+// entries, not a second hand list. For every canonical operation the registry enables on the
+// embedded surface, this yields exactly the mechanically derived `noun.verb()` method name (through
+// the ONE `deriveSurfaceNames`) bound to its authority key, effect, and dispatch resolution. The
+// grammar's canonical method set therefore has a single source of truth (M4A-5); the legacy
+// convenience methods on the client classes remain registry-recorded aliases of these keys.
+export function embeddedCanonicalFacade(registry = APPLICATION_SEMANTIC_REGISTRY) {
+  const dispatch = registry.aliases.operations;
+  const facade = new Map();
+  for (const operation of registry.canonicalOperations) {
+    if (!operation.surfaces.includes('embedded')) continue;
+    facade.set(operation.names.embedded, Object.freeze({
+      key: operation.key,
+      method: operation.names.embedded,
+      verb: operation.verb,
+      noun: operation.noun,
+      effect: operation.effect,
+      profile: operation.profile,
+      capabilities: operation.capabilities,
+      dispatch: dispatch[operation.key] ?? operation.key,
+    }));
+  }
+  return facade;
+}

@@ -828,6 +828,29 @@ export function extractResultExportArchive({ archiveBytes, descriptor, destinati
   }
 }
 
+// docs/36 §6.1 / §9 M4 (CLI renderer) — the canonical CLI verb model is DERIVED from the registry
+// v2 entries, not a hand table: for every cli-enabled canonical operation it carries the one
+// mechanically derived `baton …` spelling, its legacy cli aliases (the spellings parseBatonCli
+// rewrites), the H4 flag aliases, and the H8 example. batonCliHelp and the golden-pair contracts
+// consume exactly these rows, so a §6 change lands in one place (M4A-1/M4A-4).
+export function canonicalCliRenderModel(registry = APPLICATION_SEMANTIC_REGISTRY) {
+  return registry.canonicalOperations
+    .filter((operation) => operation.surfaces.includes('cli'))
+    .map((operation) => Object.freeze({
+      key: operation.key,
+      cli: operation.names.cli,
+      example: operation.example,
+      helpTopic: operation.helpTopic,
+      flagAliases: operation.flagAliases,
+      aliases: Object.freeze(operation.aliases
+        .filter((alias) => alias.surface === 'cli')
+        .map((alias) => alias.name)),
+    }));
+}
+
+const CANONICAL_CLI_RENDER_MODEL = Object.freeze(canonicalCliRenderModel());
+const CANONICAL_CLI_BY_KEY = new Map(CANONICAL_CLI_RENDER_MODEL.map((row) => [row.key, row]));
+
 export function batonCliHelp(topic = 'application') {
   const registry = APPLICATION_SEMANTIC_REGISTRY;
   const commandById = new Map(registry.cli.commands.map((command) => [command.id, command]));
@@ -843,6 +866,15 @@ export function batonCliHelp(topic = 'application') {
       ? commands.map((command) => command.usage)
       : [`baton run do RUN_ID ${actionEntry[0]} [--inputs JSON]`];
     return `usage:\n${usage.map((line) => `  ${line}`).join('\n')}\n\n${action.label}\n${action.summary}`;
+  }
+  if (!definition && CANONICAL_CLI_BY_KEY.has(topic)) {
+    // docs/36 §9 M4 — a canonical operation key renders its help from the registry v2 entry: the
+    // derived spelling, the H8 example, and (when present) the legacy cli spellings it replaced.
+    const row = CANONICAL_CLI_BY_KEY.get(topic);
+    const usage = [...new Set([row.cli, row.example])].map((line) => `  ${line}`).join('\n');
+    const blocks = [`usage:\n${usage}`];
+    if (row.aliases.length > 0) blocks.push(`Replaces: ${row.aliases.join(', ')}.`);
+    return blocks.join('\n\n');
   }
   if (!definition) return `No local help is available for ${topic}.\nUse baton help for the application overview.`;
   const usage = [
