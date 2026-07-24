@@ -133,7 +133,7 @@ try {
     const line = progress.members.map((entry) => `${entry.role}=${entry.phase}${entry.attention ? `[${entry.attention}]` : ''}`).join(' ');
     log(`progress ${Math.round((Date.now() - startedAt) / 1000)}s ${line}`);
     for (const entry of progress.members) {
-      if (entry.phase !== 'paused' || nudged.has(`${entry.role}:${entry.attention}`)) continue;
+      if (entry.phase !== 'paused') continue;
       const run = wave.runs.get(entry.role);
       if (!run) continue;
       try {
@@ -141,6 +141,9 @@ try {
         const view = status?.view ?? status ?? {};
         const checkpoint = (Array.isArray(view.attention) ? view.attention : [])
           .find((item) => item?.kind === 'turn_checkpoint' && typeof item?.requestId === 'string');
+        // Dedup on the checkpoint requestId (de818e3 lesson): the classification string
+        // stringifies as [object Object] and collides across successive pauses.
+        if (checkpoint && nudged.has(checkpoint.requestId)) continue;
         if (checkpoint) {
           await run.act('nudge_turn', { message: 'Continue the M0 implementation; run the focused tests, then the full suite.' });
           nudged.add(`${entry.role}:${entry.attention}`);
@@ -148,7 +151,6 @@ try {
         }
       } catch (error) {
         log(`nudge for ${entry.role} returned ${error?.code ?? 'unknown'} (recorded)`);
-        nudged.add(`${entry.role}:${entry.attention}`);
       }
     }
     for (const entry of progress.members) {
