@@ -3,7 +3,12 @@ import {
   APPLICATION_SEMANTIC_REGISTRY,
   LEGACY_RUN_PHASE_MAP,
   canonicalRunPhase,
+  deriveSurfaceNames,
 } from '../src/application-semantics.mjs';
+
+// docs/36 §6.1 / M4A-2 — `deriveSurfaceNames` is imported, not redefined: the registry, the audit,
+// and this harness compute every surface name through the ONE function, so they cannot drift.
+export { deriveSurfaceNames };
 
 const DIMENSIONS = new Set(['name', 'args', 'schema', 'behavior', 'enum']);
 const RETIREMENT_PHASES = new Set(['M1', 'M2', 'M3', 'M4', 'M5']);
@@ -40,81 +45,17 @@ export const CANONICAL_ENUMS = Object.freeze({
   ]),
 });
 
-export function deriveSurfaceNames(key) {
-  const parts = key.split('.');
-  if (parts.length < 2 || parts.some((part) => !/^[a-z][a-z0-9]*$/u.test(part))) {
-    throw new TypeError(`invalid canonical operation key: ${key}`);
-  }
-  const verb = parts.at(-1);
-  const nouns = parts.slice(0, -1);
-  const embeddedNouns = nouns.map((noun, index) => {
-    if (index === 0) return noun;
-    if (noun === 'member') return 'member(role)';
-    return noun;
-  });
-  return Object.freeze({
-    cli: `baton ${parts.join(' ')}`,
-    mcp: `baton_${parts.join('_')}`,
-    web: parts.join('_'),
-    embedded: `${embeddedNouns.join('.')}.${verb}()`,
-  });
-}
-
-const OPERATION_ROWS = [
-  ['deployment.view', 'ordinary', ['cli', 'embedded']],
-  ['deployment.serve', 'host', ['cli']],
-  ['deployment.shutdown', 'host', ['cli', 'embedded']],
-  ['run.list'],
-  ['run.start'],
-  ['run.view'],
-  ['run.watch'],
-  ['run.do'],
-  ['run.approve'],
-  ['run.answer'],
-  ['run.send'],
-  ['run.interrupt'],
-  ['run.stop'],
-  ['run.evidence'],
-  ['run.review'],
-  ['run.adopt'],
-  ['run.integrate'],
-  ['run.export'],
-  ['run.select'],
-  ['run.feedback'],
-  ['run.revise'],
-  ['run.recover'],
-  ['run.resume'],
-  ['run.retry'],
-  ['run.member.view'],
-  ['run.member.send'],
-  ['run.member.interrupt'],
-  ['run.member.stop'],
-  ['run.attention.list'],
-  ['context.eval'],
-  ['context.map'],
-  ['context.reduce'],
-  ['context.retry'],
-  ['board.post'],
-  ['board.retitle'],
-  ['board.reorder'],
-  ['board.close'],
-  ['board.read'],
-  ['board.claim', 'worker'],
-  ['board.report', 'worker'],
-  ['package.admit'],
-  ['package.attach'],
-  ['package.read'],
-  ['application.help'],
-];
-
-export const CANONICAL_OPERATIONS = Object.freeze(OPERATION_ROWS.map((
-  [key, profile = 'ordinary', surfaces = ['cli', 'mcp', 'web', 'embedded']],
-) => Object.freeze({
-  key,
-  profile,
-  surfaces: Object.freeze([...surfaces]),
-  names: deriveSurfaceNames(key),
-})));
+// docs/36 §6/§8.1 — the canonical operation set is the registry v2's `canonicalOperations`, not a
+// second hand table: this harness projects the same entries the CLI, embedded, and MCP renderers
+// consume, so a §6 addition or a name derivation lands in exactly one place (M4A-1/M4A-2).
+export const CANONICAL_OPERATIONS = Object.freeze(
+  APPLICATION_SEMANTIC_REGISTRY.canonicalOperations.map((operation) => Object.freeze({
+    key: operation.key,
+    profile: operation.profile,
+    surfaces: Object.freeze([...operation.surfaces]),
+    names: deriveSurfaceNames(operation.key),
+  })),
+);
 
 function observation(surface, name, dimension = 'name') {
   return Object.freeze({ surface, name, dimension });
@@ -150,6 +91,12 @@ function canonicalNameIndex() {
     if (definition.canonicalName) {
       index.set(`registry.operations\0${name}`, definition.canonicalName);
     }
+  }
+  // docs/36 §8.1 / M4a §5 — the registry now OWNS the cli / embedded / application.commands legacy
+  // spellings as first-class aliases. Resolving them here is what retires their M0 ledger rows:
+  // the divergence is no longer an unledgered fact, it is derivable registry data.
+  for (const alias of APPLICATION_SEMANTIC_REGISTRY.surfaceAliases) {
+    index.set(`${alias.surface}\0${alias.name}`, alias.canonical);
   }
   for (const [name, definition] of Object.entries(APPLICATION_SEMANTIC_REGISTRY.actions)) {
     if (definition.operation) {
@@ -271,6 +218,28 @@ export function validateLedger(ledger, inventory = collectSurfaceInventory()) {
     if (!observed.has(key)) findings.push(`dead ledger row: ${key}`);
   }
   return findings.sort();
+}
+
+// docs/36 §6.1 / §10 C9 (R-OP-10) — the kernel (fleet/reflex) and authoring (goal/plan) command
+// literals hand-written in web-northbound.mjs:18-21. The derived grammar web-transport names must
+// be disjoint from these; the disjointness is *asserted* from registry data here, never assumed,
+// and this contract does not touch web-northbound (its transport flip is M4b).
+export const KERNEL_AUTHORING_WEB_LITERALS = Object.freeze([
+  'spawn', 'scratch_oracle', 'send', 'interrupt', 'kill', 'drain', 'respond',
+  'list', 'result', 'wait', 'capabilities', 'provider_status',
+  'capability_invoke', 'reuse_decide', 'reuse_recheck',
+  'goal_define', 'plan_propose', 'plan_approve', 'goal_plan_status',
+]);
+
+export function checkWebNameDisjoint(registry = APPLICATION_SEMANTIC_REGISTRY) {
+  const literals = new Set(KERNEL_AUTHORING_WEB_LITERALS);
+  const collisions = [];
+  for (const operation of registry.canonicalOperations) {
+    if (!operation.surfaces.includes('web')) continue;
+    const { web } = deriveSurfaceNames(operation.key);
+    if (literals.has(web)) collisions.push({ key: operation.key, web });
+  }
+  return collisions.sort((left, right) => left.web.localeCompare(right.web));
 }
 
 export function checkLedgerMonotone(previous, current) {
