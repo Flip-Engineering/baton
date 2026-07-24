@@ -329,7 +329,7 @@ function projectHorizonScratchpad(capture, viewer) {
     };
   };
   let rows = slices.flatMap((slice) => slice.entries).sort((left, right) =>
-    right.createdEvent - left.createdEvent || left.entryId.localeCompare(right.entryId));
+    right.createdEvent - left.createdEvent || (left.entryId < right.entryId ? -1 : left.entryId > right.entryId ? 1 : 0));
   let truncated = rows.length > 64;
   rows = rows.slice(0, 64);
   const project = (row) => ({
