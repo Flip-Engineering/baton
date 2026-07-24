@@ -135,6 +135,8 @@ async function repairFences(role) {
   const run = wave.runs.get(role);
   if (!run || typeof run.events !== 'function') return;
   try {
+    // Iterate ALL pages: the timeline's first page is bounded and stale — the write_result we
+    // need is always on a later page. The seen-set dedups across polls.
     for await (const page of run.events({})) {
       const items = page?.items ?? page?.events ?? [];
       for (const item of items) {
@@ -151,7 +153,6 @@ async function repairFences(role) {
           receipt(`scratchpad write ACCEPTED for ${role}: entryId=${String(item?.payload?.entryId ?? '').slice(0, 40)}`);
         }
       }
-      break;
     }
   } catch (error) {
     log(`fence repair read for ${role} returned ${error?.code ?? 'unknown'} (recorded)`);
