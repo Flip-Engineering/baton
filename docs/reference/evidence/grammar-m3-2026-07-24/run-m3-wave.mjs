@@ -28,7 +28,7 @@ const OVERSIZE = [
 const MEMBERS = Object.freeze([
   Object.freeze({
     role: 'grammar-m3-implementer',
-    exact: Object.freeze({ harness: 'kimi-code', model: 'kimi-code/k3', effort: 'high' }),
+    exact: Object.freeze({ harness: 'claude-code', model: 'claude-opus-4-8', effort: 'high' }),
     scope: Object.freeze([
       'impl/src/application-semantics.mjs',
       'impl/src/application.mjs',
@@ -108,7 +108,7 @@ const baton = await openBaton({
   repo,
   advanced: {
     deploymentRoot: resolve(repo, '.baton', 'grammar-m3-2026-07-24'),
-    routes: [{ harness: 'kimi-code', model: 'kimi-code/k3', effort: 'high' }],
+    routes: [{ harness: 'claude-code', model: 'claude-opus-4-8', effort: 'high' }],
     verification: VERIFY,
   },
 });
