@@ -509,3 +509,31 @@ test('D10: consecutive status failures stall; transient failures reset', async (
   }).run({ repoRoot: transient.repo, members: [member('worker', 'write the worker report')] });
   assert.equal(recovered.basis, 'completed');
 });
+
+// D11 — the issue-#48 erratum end-to-end: a Run-bound worker's scratchpad write with
+// expectedFence 'current' resolves to the live fence (numeric fences are unwritable from
+// prose — the 0/24 demo fence chase); a stale integer still refuses.
+test("D11: expectedFence 'current' resolves to the live worker fence for a Run-bound worker", async (t) => {
+  const { baton, driver, repo } = harness(t, { default: [{ edits: [edit('worker', 1)] }] });
+  const run = await baton.runs.start('scratchpad current-fence write (marker:worker)', {
+    exact: { harness: 'mock', model: 'mock-model', effort: 'low' },
+    scope: ['reports/**'], driverKind: 'wave',
+  });
+  await run.approve();
+  const status = await run.status();
+  const view = status?.view ?? status ?? {};
+  const workerId = (Array.isArray(view.attention) ? view.attention : []).find((item) => typeof item?.workerId === 'string')?.workerId
+    ?? view?.outline?.workerId ?? 'w-1';
+
+  const entry = { kind: 'note', text: 'live-fence write from a Run-bound worker' };
+  const first = driver.coordinator.writeScratchpad(workerId, entry, { expectedFence: 'current', idempotencyKey: 'd11:first' });
+  assert.equal(first.ok, true, `first 'current' write must succeed: ${JSON.stringify(first)}`);
+  const second = driver.coordinator.writeScratchpad(workerId, entry, { expectedFence: 'current', idempotencyKey: 'd11:second' });
+  assert.equal(second.ok, true, `second 'current' write must succeed: ${JSON.stringify(second)}`);
+
+  const stale = driver.coordinator.writeScratchpad(workerId, entry, { expectedFence: -1, idempotencyKey: 'd11:stale' });
+  assert.deepEqual(stale, { ok: false, result: 'scratchpad_write_invalid' });
+  const unknown = driver.coordinator.writeScratchpad(workerId, entry, { expectedFence: 'sometimes', idempotencyKey: 'd11:unknown' });
+  assert.deepEqual(unknown, { ok: false, result: 'scratchpad_write_invalid' });
+
+});

@@ -982,3 +982,18 @@ test('SP11: a zero-residue stop retry is a no-event complete receipt', () => {
   });
   assert.equal(store._events.length, before);
 });
+
+// ---------------------------------------------------------------------------
+// SP-issue48 — the emulated up-channel admits expectedFence:'current' (the fence-chase
+// erratum: prose workers cannot observe the turn fence, and every steering event advances
+// it — numeric fences are unwritable for them, 0/24 in the demo). The scanner row pins the
+// grammar here; the admission-level row lives in the wave-driver-policy suite (D11), whose
+// harness builds Run-bound workers through the full application ceremony.
+test("SP-issue48: the prose scanner accepts 'current' and only the closed shape", async () => {
+  const { scanForScratchpadWrite } = await import('../src/claude-session.mjs');
+  const accepted = scanForScratchpadWrite('SCRATCHPAD_WRITE: {"entry":{"kind":"note","text":"hello"},"expectedFence":"current","idempotencyKey":"i48:scan"}');
+  assert.ok(accepted, "the scanner must accept 'current'");
+  assert.equal(accepted.expectedFence, 'current');
+  assert.equal(scanForScratchpadWrite('SCRATCHPAD_WRITE: {"entry":{"kind":"note","text":"hello"},"expectedFence":"sometimes","idempotencyKey":"i48:scan"}'), null);
+  assert.equal(scanForScratchpadWrite('SCRATCHPAD_WRITE: {"entry":{"kind":"note","text":"hello"},"expectedFence":-1,"idempotencyKey":"i48:scan"}'), null);
+});

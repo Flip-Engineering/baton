@@ -96,7 +96,7 @@ export function scanForScratchpadWrite(text) {
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)
     || Object.keys(parsed).sort().join(',') !== 'entry,expectedFence,idempotencyKey'
     || !parsed.entry || typeof parsed.entry !== 'object' || Array.isArray(parsed.entry)
-    || !Number.isSafeInteger(parsed.expectedFence) || parsed.expectedFence < 0
+    || !(parsed.expectedFence === 'current' || (Number.isSafeInteger(parsed.expectedFence) && parsed.expectedFence >= 0))
     || typeof parsed.idempotencyKey !== 'string'
     || !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/u.test(parsed.idempotencyKey)) return null;
   return parsed;
