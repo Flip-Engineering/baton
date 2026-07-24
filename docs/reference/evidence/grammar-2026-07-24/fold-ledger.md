@@ -396,6 +396,23 @@ substantive repair. One defect found and fixed; two claims verified.
   are part of the contract, versioned with it. *A contract whose scope is implicit is not yet a
   contract.* This is a generalization of two verified defects, not a new claim about the code — it
   asserts nothing about `impl/` that A-9 and A-10 did not already establish.
+- **A-16 — FIXED — A-9's own repair was insufficient, by exactly A-15's rule.** Turning A-15's
+  test on this review's own folds: A-9 required C3's totality to hold "over a declared file list."
+  But `surface-audit.mjs` **already has** a declared file list — three files, declared in code. An
+  *inclusion* list can only contain what someone already thought of, which is precisely the
+  mechanism that hid `web-operator.mjs` (A-8) and `coordinator.mjs` (A-13). A-9's repair would
+  have satisfied itself while leaving the defect intact.
+  Measured the real gap: `impl/src` holds **93 modules**; the extractor reads **three**. A sample
+  of eight phase/member literals finds **eight** modules carrying the vocabulary, five unscanned —
+  `application-client.mjs`, `coordination-store.mjs`, `coordinator.mjs`, `story.mjs`,
+  `web-operator.mjs`. **Three of the five are cited by docs/35 itself** as vocabulary sources
+  (§7.2 names `story.mjs:132-441` and `coordination-store.mjs:123-130`; §7.1 names
+  `application-client.mjs:251`). The document knew about them; its extractor did not — so the two
+  previously-folded misses were symptoms, not the disease.
+  §8.4 now requires an **exclusion-listed sweep**: default to every module, each exclusion
+  carrying an explicit out-of-axis declaration and reason, so a newly added module fails closed.
+  Note this finding exists only because A-15 was folded one turn earlier and then applied to the
+  folds themselves — the generalization was load-bearing, not decorative.
 - **Method note — the NUL-byte trap is real and it bit this audit.** §8.4 already warns that
   `impl/src/application.mjs` contains a NUL byte requiring `grep -a`. Plain `grep` against it
   returns *silently empty* — not an error. An early verification pass here read that empty result

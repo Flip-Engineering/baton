@@ -559,8 +559,22 @@ and `phase === '…'` comparisons escape; `web-operator.mjs` is not read at all 
 `handle.status` value `orphaned` (`:4048`) and gates ~60 terminality checks on
 `TERMINAL_TASK_STATUSES` (`:245`). The audit's 16
 extracted literals accordingly **omit `selection_required` and `candidate_selected`** — the two
-phases §7.1 maps and R-CX-4 raised to P0. M0 must replace regex-per-file with a **declared
-phase-vocabulary site list**, versioned with the contract.
+phases §7.1 maps and R-CX-4 raised to P0. M0 must replace regex-per-file with an **exclusion-listed sweep**, versioned with the contract —
+*not* a declared inclusion list. The distinction is the whole finding: `surface-audit.mjs` already
+has a declared inclusion list, and an inclusion list can only contain what someone already thought
+of, which is precisely how the misses below happened.
+
+`impl/src` holds **93 modules**; the extractor reads **three**. Sampling only eight phase/member
+literals (`work_completed`, `selection_required`, `candidate_selected`, `awaiting_plan_approval`,
+`input_required`, `interruption_uncertain`, `start_failed`, `orphaned`) shows **eight** modules
+carrying the vocabulary — five of them unscanned: `application-client.mjs`,
+`coordination-store.mjs`, `coordinator.mjs`, `story.mjs`, `web-operator.mjs`. **Three of those
+five are sites this document already cites as vocabulary sources** — §7.2 names `story.mjs:132-441`
+and `coordination-store.mjs:123-130` as member-state sources, and §7.1 names
+`application-client.mjs:251` as a `closed` bucket. The doc knew; the extractor did not.
+M0's sweep must therefore default to **every** module, with each exclusion carrying an explicit
+out-of-axis declaration and a reason, so a newly added module fails closed rather than passing
+unseen.
 
 **The narrowness is specific to the phase dimension — the dialect extractions were checked and
 are sound** (v2 acceptance), which scopes M0's rework rather than inviting a rewrite of what
