@@ -468,6 +468,25 @@ substantive repair. One defect found and fixed; two claims verified.
   value-flags.
   Five repair audits, four defects. The one clean repair (A-13's finding) was clean because it
   reported what it saw rather than generalising from it.
+- **A-20 — FIXED — the last repair audit: A-5's R-CX-2 fold landed the schema half, not the
+  `until` half.** Sixth and final repair audit, targeting the shape that made R-CX-6 a half-fold
+  originally: *did each clause land whole?*
+  R-CX-2's minimal repair asked for `run.watch` to carry `channel`, `afterCursor`, `timeoutMs`,
+  **and `until: change|provider_settled|application_terminal`**, plus bounded-page and post-wait
+  authorization. A-5 folded the schema list and the authorization semantics. It did not fold the
+  `until` values. The doc carries `--until settled|terminal` — two values, and **bound to nothing**
+  (a grep for any linkage between `until` and `providerSettled` returned zero).
+  Why that is load-bearing rather than pedantic: `--until` is the *caller-facing* expression of
+  the two-lifecycle distinction R-CX-4 raised as a P0, and L4/§7.1/C3 now own it as two registry
+  predicates. Left unbound, `terminal` reads naturally as "any terminal union" — which is
+  precisely the collapse R-CX-4 fought, and precisely the bug A-7 found **already shipped** at
+  `application-cli.mjs:29`. The surface flag was one plausible reading away from reintroducing a
+  defect the document elsewhere spends four sections preventing.
+  Folded in **§4.1**: `settled` ⇔ `providerSettled(phase)`, `terminal` ⇔ `applicationTerminal(phase)`.
+  R-CX-2's third value `change` is recorded as deliberately absent — change-awareness is the
+  `--cursor N --wait D` continuation, and the two mechanisms are kept distinct rather than merged.
+  **Repair audits complete: six run, five defects.** Every failure shared one mechanism — the
+  repair claimed scope its evidence did not cover. The lone clean one reported what it saw.
 - **Method note — the NUL-byte trap is real and it bit this audit.** §8.4 already warns that
   `impl/src/application.mjs` contains a NUL byte requiring `grep -a`. Plain `grep` against it
   returns *silently empty* — not an error. An early verification pass here read that empty result
