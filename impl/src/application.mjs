@@ -10777,10 +10777,15 @@ export class BatonApplication {
             || SECRET_SHAPED_TEXT.some((pattern) => pattern.test(request.inputs.message))))) {
         throw applicationError('Run action inputs are invalid', 'application_action_input_invalid');
       }
-      await this.driver.coordinator.nudgeTurn(
+      const delivered = await this.driver.coordinator.nudgeTurn(
         action.target.pauseId, request.inputs.message ?? DEFAULT_TURN_NUDGE_MESSAGE,
         { actor: principal.actor },
       );
+      // A delivery failure must be visible to the act caller — swallowing the coordinator's
+      // {ok:false} here made every failed nudge indistinguishable from a successful one.
+      if (delivered?.ok === false) {
+        throw applicationError(delivered.reason ?? 'Run turn nudge delivery failed', delivered.result ?? 'application_action_delivery_failed');
+      }
     } else if (action.kind === 'wait_turn') {
       if (!validText(action.target?.pauseId, 4_096)) {
         throw applicationError('Run action inputs are invalid', 'application_action_input_invalid');
@@ -10790,7 +10795,10 @@ export class BatonApplication {
       if (!validText(action.target?.pauseId, 4_096)) {
         throw applicationError('Run action inputs are invalid', 'application_action_input_invalid');
       }
-      await this.driver.coordinator.claimTurn(action.target.pauseId, { actor: principal.actor });
+      const claimed = await this.driver.coordinator.claimTurn(action.target.pauseId, { actor: principal.actor });
+      if (claimed?.ok === false) {
+        throw applicationError(claimed.reason ?? 'Run turn claim delivery failed', claimed.result ?? 'application_action_delivery_failed');
+      }
     } else if (action.kind === 'select_candidate') {
       if (!action.choices.includes(request.inputs.role)
         || !validText(request.inputs.reason, 1_024)) {

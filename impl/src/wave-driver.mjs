@@ -148,7 +148,12 @@ export function createWaveDriver(baton, rawPolicy = null) {
     state.claimAttempted = true;
     const at = new Date().toISOString();
     try {
-      await run.act('claim_turn', {});
+      const result = await run.act('claim_turn', {});
+      if (result && typeof result === 'object' && result.ok === false) {
+        throw Object.assign(new Error(String(result.reason ?? result.result ?? 'claim refused')), {
+          code: result.result ?? 'claim_refused',
+        });
+      }
       state.claimed = true;
       claims.push({ role, requestId: checkpoint.requestId, at, code: 'claimed' });
     } catch (error) {
@@ -316,7 +321,15 @@ export function createWaveDriver(baton, rawPolicy = null) {
             }
             const at = new Date().toISOString();
             try {
-              await runHandle.act('nudge_turn', { message: policy.completionMessage });
+              const result = await runHandle.act('nudge_turn', { message: policy.completionMessage });
+              // D8: an expected refusal arrives as a VALUE ({ok:false, result:'delivery_exception'}),
+              // not a thrown error — inspect the result or a failed delivery is misrecorded as a
+              // successful nudge and the requestId is wrongly consumed.
+              if (result && typeof result === 'object' && result.ok === false) {
+                throw Object.assign(new Error(String(result.reason ?? result.result ?? 'nudge refused')), {
+                  code: result.result ?? 'nudge_refused',
+                });
+              }
               nudges.push({ role, requestId: checkpoint.requestId, at });
               nudgedRequestIds.add(checkpoint.requestId);
               if (unchanged) state.nudges += 1;
@@ -353,9 +366,18 @@ export function createWaveDriver(baton, rawPolicy = null) {
               if (!state.claimAttempted) await claimOnce(role, runHandle, checkpoint, claims, state);
               memberState.set(role, state);
             }
+            // Recovered must be measured AFTER the claims: a member whose claim was tolerated as
+            // concurrently-resolved is settled in reality — re-read each member instead of trusting
+            // the pre-claim status snapshot.
             let recovered = failedToStart;
-            for (const [role, info] of statusInfo) {
-              if (info.terminal || memberState.get(role)?.claimed === true) recovered += 1;
+            for (const [role, runHandle] of runs) {
+              if (memberState.get(role)?.claimed === true) { recovered += 1; continue; }
+              try {
+                const status = await runHandle.status();
+                const view = status?.view ?? status ?? {};
+                const phase = canonicalRunPhase(view.phase) ?? null;
+                if (view.terminal === true || applicationTerminal(phase) || phase === SUCCESS_RESTING) recovered += 1;
+              } catch { /* an unreadable member counts as unrecovered */ }
             }
             basis = recovered === totalMembers ? 'completed' : 'stall';
           } else {

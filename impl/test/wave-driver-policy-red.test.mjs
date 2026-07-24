@@ -119,8 +119,11 @@ class PausableWaveAdapter extends MockAdapter {
         throw Object.assign(new Error('pausable adapter: scripted nudge failure'), { code: 'pausable_nudge_failed' });
       }
       const session = this._sessions.get(worker);
-      if (session && session.terminal) {
-        // Drive the next scripted turn (a fresh re-park). Reset the finalized session and re-run.
+      if (session) {
+        // Drive the next scripted turn (a fresh re-park). The nudge arrives only on a parked
+        // (completed) turn, so resetting the session state and re-running is always safe — a
+        // `terminal` gate here silently swallows the re-run when the coordinator parks instead
+        // of finalizing (the D1/D2/D8 failure before this comment).
         session.terminal = false;
         session.runStarted = false;
         session.stopKind = null;
@@ -239,4 +242,270 @@ const FAST = Object.freeze({
   unproductiveNudgeBudget: 1,
   saltObjectives: true,
   preflight: false,
+});
+
+// ---------------------------------------------------------------------------
+// D1 — requestId dedup (de818e3 + the m1 mis-key anti-pin): each pause is nudged
+// exactly once, keyed on the checkpoint requestId, never the classification string.
+test('D1: two productive pauses are nudged exactly once each, then L6 declares done and claims', async (t) => {
+  const scriptsByMarker = {
+    default: [
+      { edits: [edit('worker', 1)] },
+      { edits: [edit('worker', 2)] },
+      // tail repeats turn 2: path set frozen → unproductive re-parks
+    ],
+  };
+  const { baton, repo } = harness(t, scriptsByMarker);
+  const receipt = await createWaveDriver(baton, {
+    ...FAST, unproductiveNudgeBudget: 0, finalization: 'claim-on-stall',
+  }).run({ repoRoot: repo, members: [member('worker', 'write the worker report')] });
+  assert.equal(receipt.basis, 'completed');
+  assert.equal(receipt.nudges.length, 2, `expected exactly 2 nudges, got ${JSON.stringify(receipt.nudges)}`);
+  assert.notEqual(receipt.nudges[0].requestId, receipt.nudges[1].requestId);
+  assert.ok(receipt.nudges.every((entry) => !entry.error), 'no nudge may fail in this row');
+  assert.equal(receipt.claims.length, 1);
+  assert.equal(receipt.claims[0].code, 'claimed');
+});
+
+// D2 — status-hash liveness (the misfire pin, positive): a member whose cursor-stripped
+// view keeps changing never trips the stall clock; a frozen sibling does not stall the wave
+// while the live one resets the wave-level clock for all.
+test('D2: a live member resets the wave-level stall clock; a frozen sibling still finishes', async (t) => {
+  const scriptsByMarker = {
+    lively: [
+      { edits: [edit('lively', 1)] },
+      { edits: [edit('lively', 2)] },
+      { edits: [edit('lively', 3)] },
+      { edits: [edit('lively', 4)] },
+      { edits: [edit('lively', 5)] },
+    ],
+    frozen: [{ edits: [edit('frozen', 1)] }],
+  };
+  const { baton, repo } = harness(t, scriptsByMarker);
+  const receipt = await createWaveDriver(baton, {
+    ...FAST, stallTimeoutMs: 2_500, unproductiveNudgeBudget: 0, finalization: 'claim-on-stall',
+  }).run({ repoRoot: repo, members: [member('lively', 'write five lively reports'), member('frozen', 'write one frozen report')] });
+  assert.equal(receipt.basis, 'completed');
+  assert.ok(receipt.nudges.filter((entry) => entry.role === 'lively').length >= 5, 'the lively member keeps producing turns without stalling');
+  assert.equal(receipt.claims.filter((entry) => entry.code === 'claimed').length, 2, 'both members settle via claim');
+});
+
+// D3 — true stall: with steering 'none' a parked member's view is genuinely frozen; the loop
+// breaks with basis 'stall', still settles and closes (close drains, so pumpDrained is true).
+test('D3: a frozen member view breaks the loop with basis stall and clean close', async (t) => {
+  const scriptsByMarker = {
+    default: [{ edits: [edit('worker', 1)] }],
+  };
+  const { baton, repo } = harness(t, scriptsByMarker);
+  const receipt = await createWaveDriver(baton, {
+    ...FAST, steering: 'none', stallTimeoutMs: 250, finalization: 'none',
+  }).run({ repoRoot: repo, members: [member('worker', 'one slow report')] });
+  assert.equal(receipt.basis, 'stall');
+  assert.equal(receipt.remainingCount, 0);
+  assert.equal(receipt.pumpDrained, true, 'the guaranteed close drains every pump even on a stall');
+  assert.ok(Array.isArray(receipt.outcomes), 'outcomes survive a stall');
+});
+
+// D4 — hard cap, with stall-before-cap precedence when both cross in one poll.
+test('D4: hardCapMs fires basis hard_cap on a live marker; a frozen marker yields stall first', async (t) => {
+  const lively = harness(t, { default: Array.from({ length: 30 }, (_, index) => ({ edits: [edit('worker', index)] })) });
+  const capped = await createWaveDriver(lively.baton, {
+    ...FAST, pollIntervalMs: 10, stallTimeoutMs: 60_000, hardCapMs: 120, unproductiveNudgeBudget: 99,
+  }).run({ repoRoot: lively.repo, members: [member('worker', 'thirty reports')] });
+  assert.equal(capped.basis, 'hard_cap');
+
+  const frozen = harness(t, { default: [{ edits: [edit('worker', 1)] }] });
+  const stalledFirst = await createWaveDriver(frozen.baton, {
+    ...FAST, steering: 'none', stallTimeoutMs: 200, hardCapMs: 20_000, finalization: 'none',
+  }).run({ repoRoot: frozen.repo, members: [member('worker', 'one slow report')] });
+  assert.equal(stalledFirst.basis, 'stall', 'a frozen view yields stall, never hard_cap (the stall check precedes the cap check)');
+});
+
+// D5 — salt semantics + oversize ergonomics: salted objectives carry attempt-uuid + role,
+// distinct per run() call; salt:false passes verbatim; oversize rejects with the byte count.
+test('D5: objective salting, opt-out, and the admission byte-check', async (t) => {
+  const { baton, repo } = harness(t, { default: [{ edits: [edit('worker', 1)] }] });
+  const seen = [];
+  const spy = {
+    ...baton,
+    waves: {
+      start: async (options) => {
+        seen.push(options.members.map((entry) => entry.objective));
+        return baton.waves.start(options);
+      },
+    },
+    doctor: baton.doctor,
+  };
+  const runOnce = (policy) => createWaveDriver(spy, {
+    ...FAST, unproductiveNudgeBudget: 0, finalization: 'claim-on-stall', ...policy,
+  }).run({ repoRoot: repo, members: [member('worker', 'write the worker report')] });
+  const first = await runOnce();
+  const second = await runOnce();
+  assert.equal(seen.length, 2);
+  const saltOf = (objective) => objective.match(/^\[attempt: ([0-9a-f-]{36}) worker\]/)?.[1] ?? null;
+  assert.ok(saltOf(seen[0][0]), `salted objective carries the attempt uuid + role: ${seen[0][0].slice(0, 60)}`);
+  assert.notEqual(saltOf(seen[0][0]), saltOf(seen[1][0]), 'each run() call mints a fresh attempt id');
+  assert.notEqual(first.salt, second.salt);
+
+  await runOnce({ saltObjectives: false });
+  assert.ok(!seen[2][0].startsWith('[attempt:'), 'salt:false passes the objective verbatim');
+
+  const huge = `${'x'.repeat(4096)}`;
+  await assert.rejects(
+    createWaveDriver(baton, { ...FAST, preflight: false }).run({ repoRoot: repo, members: [member('worker', huge)] }),
+    (error) => error?.code === 'wave_driver_objective_oversize' && error?.bytes > 4096,
+  );
+});
+
+// D6 — the termination law (R46R-1): a re-park with an unchanged changedPathsDigest stops
+// nudges; claim-on-stall resolves work_completed immediately; 'none' parks to a stall.
+test('D6: the unproductive-checkpoint budget ends the treadmill — claim path and none path', async (t) => {
+  const script = { default: [{ edits: [edit('worker', 1)] }] }; // tail repeats: frozen path set
+  const claimed = harness(t, script);
+  const withClaim = await createWaveDriver(claimed.baton, {
+    ...FAST, stallTimeoutMs: 60_000, hardCapMs: 60_000, unproductiveNudgeBudget: 1, finalization: 'claim-on-stall',
+  }).run({ repoRoot: claimed.repo, members: [member('worker', 'write the worker report')] });
+  assert.equal(withClaim.basis, 'completed', 'the claim path completes without waiting for the stall clock');
+  assert.equal(withClaim.nudges.length, 1);
+  assert.equal(withClaim.claims.length, 1);
+  assert.equal(withClaim.claims[0].code, 'claimed');
+
+  const parked = harness(t, script);
+  const withoutClaim = await createWaveDriver(parked.baton, {
+    ...FAST, stallTimeoutMs: 250, unproductiveNudgeBudget: 1, finalization: 'none',
+  }).run({ repoRoot: parked.repo, members: [member('worker', 'write the worker report')] });
+  assert.equal(withoutClaim.basis, 'stall');
+  assert.equal(withoutClaim.nudges.length, 1, 'no further nudges once the member is done');
+  assert.equal(withoutClaim.claims.length, 0);
+});
+
+// D7 — the receipt/envelope: committed envelope fields plus additive driver fields, the
+// evidencePath file matches, and a write failure fails loudly.
+test('D7: receipt envelope shape, evidence file, and loud write failure', async (t) => {
+  const { baton, repo } = harness(t, { default: [{ edits: [edit('worker', 1)] }] });
+  const evidencePath = join(repo, 'evidence-d7.json');
+  const receipt = await createWaveDriver(baton, {
+    ...FAST, unproductiveNudgeBudget: 0, finalization: 'claim-on-stall', evidencePath,
+  }).run({ repoRoot: repo, members: [member('worker', 'write the worker report')] });
+  assert.equal(receipt.basis, 'completed');
+  assert.ok(Array.isArray(receipt.outcomes) && Array.isArray(receipt.stops));
+  assert.equal(typeof receipt.remainingCount, 'number');
+  assert.equal(receipt.residueUnknown, false);
+  assert.equal(receipt.pumpDrained, true, 'a completing wave drains its pumps');
+  assert.ok(typeof receipt.salt === 'string');
+  const written = JSON.parse(readFileSync(evidencePath, 'utf8'));
+  assert.equal(written.basis, receipt.basis);
+  assert.deepEqual(written.nudges, receipt.nudges);
+
+  await assert.rejects(
+    createWaveDriver(baton, {
+      ...FAST, unproductiveNudgeBudget: 0, finalization: 'claim-on-stall',
+      evidencePath: join(repo, 'missing-dir', 'evidence.json'),
+    }).run({ repoRoot: repo, members: [member('worker', 'write the worker report')] }),
+    /ENOENT/,
+  );
+});
+
+// D8 — nudge failure tolerated: a scripted one-shot nudge failure is recorded and recovered
+// on the next poll (the requestId is not consumed by the failure).
+test('D8: a failed nudge is recorded, not consumed, and recovered on the next poll', async (t) => {
+  const scriptsByMarker = {
+    default: [
+      { edits: [edit('worker', 1)] },
+      { edits: [edit('worker', 1)], failNudge: true }, // the FIRST nudge (prompt turn 1) fails
+      { edits: [edit('worker', 2)] },
+    ],
+  };
+  const { baton, repo } = harness(t, scriptsByMarker);
+  const receipt = await createWaveDriver(baton, {
+    ...FAST, unproductiveNudgeBudget: 0, finalization: 'claim-on-stall',
+  }).run({ repoRoot: repo, members: [member('worker', 'write the worker report')] });
+  assert.equal(receipt.basis, 'completed');
+  const failed = receipt.nudges.filter((entry) => entry.error);
+  const succeeded = receipt.nudges.filter((entry) => !entry.error);
+  assert.equal(failed.length, 1, 'exactly one scripted nudge failure');
+  assert.ok(succeeded.some((entry) => entry.requestId === failed[0].requestId),
+    'the failed requestId is retried successfully on a later poll');
+});
+
+// D9 — claim fan-out at wave stall: every pending-paused member receives exactly one claim
+// when the stall clock fires; the 'none' control never claims.
+test('D9: stall fan-out claims every paused member exactly once', async (t) => {
+  const scriptsByMarker = {
+    alpha: [{ edits: [edit('alpha', 1)] }],
+    beta: [{ edits: [edit('beta', 1)] }],
+  };
+  const { baton, repo } = harness(t, scriptsByMarker);
+  const receipt = await createWaveDriver(baton, {
+    ...FAST, stallTimeoutMs: 250, unproductiveNudgeBudget: 99, finalization: 'claim-on-stall',
+  }).run({ repoRoot: repo, members: [member('alpha', 'write alpha'), member('beta', 'write beta')] });
+  assert.equal(receipt.basis, 'completed', 'fan-out recovers every member from the stall');
+  assert.equal(receipt.claims.length, 2);
+  assert.deepEqual(receipt.claims.map((entry) => entry.role).sort(), ['alpha', 'beta']);
+
+  const control = harness(t, scriptsByMarker);
+  const withoutClaim = await createWaveDriver(control.baton, {
+    ...FAST, stallTimeoutMs: 250, unproductiveNudgeBudget: 99, finalization: 'none',
+  }).run({ repoRoot: control.repo, members: [member('alpha', 'write alpha'), member('beta', 'write beta')] });
+  assert.equal(withoutClaim.basis, 'stall');
+  assert.equal(withoutClaim.claims.length, 0);
+});
+
+// D10 — unavailable semantics: consecutive status failures count toward stall; a transient
+// failure resets the clock and the wave completes.
+test('D10: consecutive status failures stall; transient failures reset', async (t) => {
+  const scriptsByMarker = { default: [{ edits: [edit('worker', 1)] }] };
+
+  const persistent = harness(t, scriptsByMarker);
+  // The run handle is frozen — wrap it in a Proxy whose methods bind to the target (private
+  // fields keep working) and only `status` is replaced.
+  const wrapStatus = (run, fake) => new Proxy(run, {
+    get(target, key) {
+      if (key === 'status') return fake;
+      const value = Reflect.get(target, key);
+      return typeof value === 'function' ? value.bind(target) : value;
+    },
+  });
+  const wrappedPersistent = {
+    ...persistent.baton,
+    waves: {
+      start: async (options) => {
+        const wave = await persistent.baton.waves.start(options);
+        const runs = new Map();
+        for (const [role, run] of wave.runs) {
+          runs.set(role, wrapStatus(run, async () => { throw Object.assign(new Error('status path down'), { code: 'test_status_down' }); }));
+        }
+        return { ...wave, runs };
+      },
+    },
+    doctor: persistent.baton.doctor,
+  };
+  const stalled = await createWaveDriver(wrappedPersistent, {
+    ...FAST, stallTimeoutMs: 250, finalization: 'none',
+  }).run({ repoRoot: persistent.repo, members: [member('worker', 'write the worker report')] });
+  assert.equal(stalled.basis, 'stall');
+
+  const transient = harness(t, scriptsByMarker);
+  let failuresLeft = 2;
+  const wrappedTransient = {
+    ...transient.baton,
+    waves: {
+      start: async (options) => {
+        const wave = await transient.baton.waves.start(options);
+        const runs = new Map();
+        for (const [role, run] of wave.runs) {
+          runs.set(role, wrapStatus(run, async () => {
+            if (failuresLeft > 0) { failuresLeft -= 1; throw Object.assign(new Error('transient'), { code: 'test_transient' }); }
+            return run.status();
+          }));
+        }
+        return { ...wave, runs };
+      },
+    },
+    doctor: transient.baton.doctor,
+  };
+  const recovered = await createWaveDriver(wrappedTransient, {
+    ...FAST, stallTimeoutMs: 500, unproductiveNudgeBudget: 0, finalization: 'claim-on-stall',
+  }).run({ repoRoot: transient.repo, members: [member('worker', 'write the worker report')] });
+  assert.equal(recovered.basis, 'completed');
 });
