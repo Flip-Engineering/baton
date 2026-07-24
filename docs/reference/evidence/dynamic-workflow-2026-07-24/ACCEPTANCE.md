@@ -97,3 +97,35 @@ tolerate. Both succeeded: every shared-layer mechanic is live and receipted, and
 produced five filed issues, one consumed-in-flight machinery fix (#48 erratum), and the
 productized driver (#46). The remaining unproven beats (full relay chain, boards, elevation)
 are blocked on issue #48's facade slice — which the demo's evidence now fully specifies.
+
+## 7. The loop CLOSED (v12, 2026-07-24T17:47–18:04Z)
+
+The full inter-agent relay completed with every hop receipted:
+
+1. **orchestrator → critic:** the driver pushed the committed 126-line draft via `run.send`
+   (17:47:53).
+2. **critic → shared layer:** the sonnet critic reviewed it *substantively* — re-read every
+   cited source, diffed claims line-by-line, posted **5 doubt entries** via `SCRATCHPAD_WRITE`
+   (17:50:55) and wrote an 80-line `critique.md` with five grounded findings + an independent
+   verification pass.
+3. **shared layer → orchestrator:** the driver read the doubt entries from `wave.progress()`
+   member scratchpad views and relayed them to the reviser via `run.send` (dynamic
+   reprioritization, 17:50:55).
+4. **reviser → shared layer:** the reviser posted its resolution entry (`written`) and
+   concluded "No change" with reasoning (17:59:14).
+
+Every hop ran through baton machinery — down-channel `run.send`, up-channel prose grammar,
+durable scratchpad entries, wave projections, dynamic stage gates, turn-checkpoint steering.
+No file-system shortcuts between agents.
+
+**The deepest AX finding of the campaign (v10):** a worker that completed its manifest
+correctly DECLINED to post entries because "No SCRATCHPAD_WRITE-capable tool exists in my
+environment" — it pattern-matched the grammar as a harness tool, searched its tool list, found
+none, and skipped the step. The prose up-channel is undiscoverable as *prose* unless the brief
+says so in those words. v11's "SCRATCHPAD_WRITE IS NOT A TOOL — it is TEXT you print"
+instruction fixed it instantly. Filed under #51 (upward-feedback discoverability: the brief
+advertisement must state the prose nature, not just the grammar shape).
+
+**Artifacts harvested:** `critique.md` (80 lines, sonnet, source-diffed), `report-draft.md`
+(126 lines, sonnet drafter v7), `research-notes.md` (glm researcher v3), the v1–v12 driver
+lineage and receipts logs in this directory.
