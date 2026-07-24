@@ -34,6 +34,34 @@ harness; no static reading settles it.
 **Deployment verification:** `node --test impl/test/surface-audit-smoke.test.mjs` → exit 0 (SA1,
 SA2, SA3 pass). Doc-only change; no `impl/` or test file touched by this seat.
 
+---
+
+## ⚠ Findings requiring action OUTSIDE this document — read before launching M0
+
+The acceptance review (A-1..A-14, detailed at the end of this file) produced seven findings that
+are **defects in the codebase or the migration plan**, not fold records. They are listed here
+because they are otherwise buried behind 49 finding rows, and because **issue #44's M0 wave cuts
+its conformance harness from docs/35 — and three of these are defects in the contracts that
+harness would implement.** If M0 launches unaware, it implements C3 and H4 as written and ships
+green. Each is grounded; none requires trusting this ledger's prose.
+
+| # | Finding | Grounding | Why it must move |
+|---|---|---|---|
+| 1 | **Live bug — `run wait`/`follow` blocks past provider settlement.** `application-cli.mjs:29`'s `TERMINAL_RUN_PHASES` is used *only* as a wait/follow stop condition (`:1029,1923,1945`), so it is semantically provider-settled — but omits `selection_required` and `candidate_selected` | A-7 | A run resting in either selection state hangs the CLI today. Not a migration issue; a present defect |
+| 2 | **C3 is unenforceable as written.** `surface-audit.mjs:48-50` extracts phase literals from three files with per-file regexes; `web-operator.mjs` and `coordinator.mjs` are unread. Its 16 literals omit `selection_required`/`candidate_selected` | A-9, A-13 | C3 is the contract the whole L4/§7 edifice rests on. M0 must fix the extractor *before* cutting C3, or the harness passes vacuously |
+| 3 | **H4 cannot express the two commonest live flags.** `--to` (`recipient`) and `--wait` (`waitMs`) are neither derivable nor enum-*value* flags, so `flagAliases` cannot hold them | A-10 | Registry needs a `propertyAliases` field or the H4 lint fires on the surface §2 promises to preserve |
+| 4 | **A fourth phase union in `web-operator.mjs`** — `:163` terminal array, `:162` stop-form, `:141` spine — in the file §2 called a passive re-renderer | A-8 | M2's re-report work item was incomplete; the desk must be in M0's extraction list |
+| 5 | **Six non-derivable `baton_*` names** — `baton_help`, `baton_runs`, `baton_workstream_notify/stop`, `baton_decision_answer/list` | A-11 | Published MCP tool names. M4/M5 make each a driver-visible breaking rename; each needs a ledger row with `retiresIn` or C1 reds at M1 |
+| 6 | **`coordinator.mjs` is an uncited, unextracted member-state source** minting `handle.status` value `orphaned` (`:4048`); §7.2 maps sibling `exited` but not `orphaned`/`dead` | A-13 | All three gate `sessionAttachmentUnproven()` (`application.mjs:1685-1689`) — session-preservation attention and recovery eligibility |
+| 7 | **`application.shutdown` carries `reconcilable: false`** (`application.mjs:152`) — v2 folded it into `deployment.shutdown` without the class | A-6 | Doc is fixed; the *implementation* must carry the class or it is the silent durability-class flip R-OP-8 forbids |
+
+**Also stale and outside this seat's scope:** `FOLD-STATUS.md` still reads *"docs/35 is at v2 FINAL
+as of `0c5c970`"* and *"do not land a second competing v2"*. docs/35 has since advanced 13 commits
+with 14 acceptance findings. A controller reading it will believe the fold is closed. One line
+fixes it; this seat is scoped to two files and did not edit it.
+
+---
+
 ## Codex seat (`gpt-5.6-sol@high`, verdict UNSOUND)
 
 | Finding | Sev | Verdict |
