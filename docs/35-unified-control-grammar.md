@@ -9,13 +9,24 @@ R-KM "clean"), the disagreement was resolved by direct code verification (R-CX-4
 `application.mjs:117-124` models provider-settled and application-terminal as deliberately
 separate lifecycles, pinned by `impl/test/phase67-run-terminality.test.mjs`).
 **v2 was then acceptance-reviewed against the code it cites** — attacking the folds rather than
-re-folding: eleven findings (A-1..A-11) recorded in
-`docs/reference/evidence/grammar-2026-07-24/fold-ledger.md`. That pass corrected the §6 operation
-count, folded seven minimal-repair clauses the fold had skipped (including R-CX-6's demand that
-the issue-31 checkpoint contract be named in C5), and found one **false grounding claim** that had
-silently dropped a durability class. It amended §1.2 F5, §2, §4.1†, §4.2 H4, §7.1, §8.4, §10 C3,
-§11, and added **C10**. The nine passages carrying those amendments are marked *(v2 acceptance)*
-inline, so this document's own claims can be told apart from the red-team's.
+re-folding: **22 findings (A-1..A-22)** recorded in
+`docs/reference/evidence/grammar-2026-07-24/fold-ledger.md`, whose opening table lists the seven
+that are defects in **code or migration plan rather than in this document** — read it before
+cutting M0's harness. The pass corrected the §6 operation count; folded eight minimal-repair
+clauses the fold had skipped (including R-CX-6's demand that the issue-31 checkpoint contract be
+named in C5, and R-CX-2's `--until` predicate binding); found a **false grounding claim** that had
+silently dropped a durability class; and showed that **C3 and H4 were unenforceable as written**.
+It amended §1.2 F5, §2, §4.1 (read row, †, ‡), §4.2 H4, §5 L2, §6, §6.1, §7.1, §7.2, §8.4,
+§10 (C3 and the contract-scope preamble), §11, and added **C10**.
+
+The **17 passages** carrying those amendments are marked *(v2 acceptance)* inline, so this
+document's own claims stay separable from the red-team's. **Reader's note on the tradeoff:** those
+amendments grew this file from 611 to 817 lines, so roughly a quarter of it is now review
+commentary sitting inside what were terse law and contract statements. That is a real cost to
+readability, accepted deliberately: each amendment is grounded at the point of use, and the
+defects they record are ones an implementer would otherwise reproduce. If this document is ever
+consolidated, the *(v2 acceptance)* markers are the extraction key — but the grounding must move
+with the claim, not be dropped for brevity.
 **Seed:** operator directive, 2026-07-23 — *"baton has enormous friction and cumbersome
 interaction methods for agents in all operations and control schemes."*
 **Mechanical evidence:** `node impl/scripts/surface-audit.mjs` regenerates Appendix A from source.
