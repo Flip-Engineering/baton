@@ -35,10 +35,9 @@ const OVERSIZE = [
 ].join(' ');
 
 const FENCE = [
-  'SCRATCHPAD FENCE PROTOCOL: for every SCRATCHPAD_WRITE use "expectedFence":0. The fence is',
-  'an internal counter you CANNOT see, so a write may be refused invisibly. The ORCHESTRATOR',
-  'watches for refusals and will send "FENCE REPAIR: retry with expectedFence: <N>" — re-issue',
-  'the SAME entry with that exact value verbatim when it arrives.',
+  'SCRATCHPAD FENCE PROTOCOL: for every SCRATCHPAD_WRITE use "expectedFence":"current"',
+  '(a string, not a number) — admission resolves it to the live fence, so every well-formed',
+  'write succeeds (the numeric-fence chase is dead; see issue #48).',
 ].join(' ');
 
 const ATTEMPT = new Date().toISOString();
@@ -63,7 +62,7 @@ const MEMBERS = Object.freeze([
       `report to ${relativeRoot}/report-draft.md — STRICT SIZE: at most 200 lines, covering`,
       'only the top 5 frictions by cost (pick from the research notes). (3) Then post at most 6',
       'scratchpad note entries, each a draft section of at most 1400 bytes:',
-      'SCRATCHPAD_WRITE: {"entry":{"kind":"note","text":"<section>"},"expectedFence":0,',
+      'SCRATCHPAD_WRITE: {"entry":{"kind":"note","text":"<section>"},"expectedFence":"current",',
       '"idempotencyKey":"draft-<N>"} for N=1..6, one grammar line per section, each on its own',
       'line. End your turn when the file and the entries are done. Work fast — your envelope',
       'is ~15 minutes; do not re-read files you have already read.',
@@ -82,7 +81,7 @@ const MEMBERS = Object.freeze([
       'arrived yet, end your turn and wait — do NOT re-check anything. When it arrives:',
       'adversarially review it — every concrete inaccuracy, missing friction, or overclaim',
       'becomes a scratchpad doubt entry: SCRATCHPAD_WRITE: {"entry":{"kind":"doubt",',
-      '"question":"<the challenge>","context":"<the grounding>"},"expectedFence":0,',
+      '"question":"<the challenge>","context":"<the grounding>"},"expectedFence":"current",',
       '"idempotencyKey":"doubt-<N>"} for N=1,2,3,... Then write your consolidated critique',
       `(numbered challenges, each grounded, plus a verdict) to ${relativeRoot}/critique.md`,
       '(your only file). End your turn.',
