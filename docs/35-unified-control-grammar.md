@@ -494,8 +494,15 @@ and all three gate `sessionAttachmentUnproven()` (`application.mjs:1685-1689`) �
 sufficient on its own where `exited`/`dead` additionally require a preserved session. They
 therefore gate session-preservation attention (§7.3) and recovery eligibility exactly as
 `interrupted` gates interrupt eligibility, which is the ground R-OP-6 fought for. The generated
-mapping must cover the **whole** `handle.status` enum or declare the remainder out of axis; today
-it silently covers one of three. Note `coordinator.mjs` is cited nowhere else in this document
+mapping must cover the **whole** `handle.status` enum or declare the remainder out of axis. That
+enum is **nine values**, enumerated here because a completeness mandate against an unlisted set is
+unverifiable (the C3 trap, §10): `pending | idle | working | blocked | interrupted | stopping |
+exited | orphaned | dead`. §7.2 maps six of them plus the member states `input_required` and
+`paused`; `orphaned` and `dead` are unmapped, and `pending` maps by identity. Note also that
+`story.mjs:117`'s `NEVER_STALLED_STATUSES` mixes both axes in one set —
+`['blocked','input_required','paused','stopping','interrupted','exited','orphaned']` puts member
+states and handle statuses side by side — so the conflation §7.2 must resolve already exists in a
+source this document cites (`story.mjs:132-441`). Note `coordinator.mjs` is cited nowhere else in this document
 and is absent from the audit extractor's file list (§8.4) — the two facts are the same fact.
 
 ### 7.3 Attention kinds and responses

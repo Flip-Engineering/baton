@@ -450,6 +450,24 @@ substantive repair. One defect found and fixed; two claims verified.
   `--content`/`--evidence` (`detail`/`depth`), `--text`/`--option` (answer response variants).
   Four repair audits, three defects — and every one reproduced the framing of the repair it came
   from.
+- **A-19 — FIXED — A-13's *repair* had the C3 defect, though its *finding* was correct.** Fifth
+  repair audit. A-13 mandated that §7.2 "cover the whole `handle.status` enum" — while knowing
+  three values from a single line and never enumerating the set. That is precisely the C3 trap
+  A-9/A-15 identified: a completeness requirement against an unlisted set cannot be checked, and
+  is satisfied by whoever asserts it.
+  Enumerated it: `handle.status` carries **nine** values (via `handle.status ===/!==/=` across
+  `impl/src`) — `pending | idle | working | blocked | interrupted | stopping | exited | orphaned |
+  dead`. §7.2 maps six, plus member states `input_required` and `paused`; `pending` maps by
+  identity. **Unmapped: `orphaned` and `dead` — exactly the two A-13 named.** So A-13's finding
+  was right and complete; only its repair was uncheckable. Both now stated in §7.2.
+  **Checked and narrowed, not claimed:** `story.mjs:117`'s `NEVER_STALLED_STATUSES` also contains
+  `input_required` and `paused`, which would have made the enum look like eleven. Those are member
+  states, not handle statuses — the set mixes both axes. Rather than inflate the count, this is
+  folded as its own point: the axis conflation §7.2 exists to resolve **already exists in
+  `story.mjs`**, a source §7.2 itself cites. Same discipline as A-11's 15→6 and A-18's excluded
+  value-flags.
+  Five repair audits, four defects. The one clean repair (A-13's finding) was clean because it
+  reported what it saw rather than generalising from it.
 - **Method note — the NUL-byte trap is real and it bit this audit.** §8.4 already warns that
   `impl/src/application.mjs` contains a NUL byte requiring `grep -a`. Plain `grep` against it
   returns *silently empty* — not an error. An early verification pass here read that empty result
