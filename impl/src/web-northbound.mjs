@@ -9,6 +9,7 @@ import { operatorAsset } from './web-operator.mjs';
 import { northboundCapabilityToken } from './northbound-capability-authority.mjs';
 import { sanitizeGoalPlanProjection } from './goal-plan.mjs';
 import { APPLICATION_COMMAND_DEFINITIONS, validateApplicationCommandArgs } from './application.mjs';
+import { applicationOperationAliasMap } from './application-semantics.mjs';
 
 const WEB_APPLICATION_ENTRIES = Object.entries(APPLICATION_COMMAND_DEFINITIONS)
   .filter(([, definition]) => definition.web)
@@ -57,6 +58,15 @@ const ARG_FIELDS = Object.freeze({
 });
 const APPLICATION_COMMAND = Object.freeze(Object.fromEntries(
   WEB_APPLICATION_ENTRIES.map(([transport, name]) => [transport, name]),
+));
+const WEB_APPLICATION_ALIASES = Object.freeze(Object.fromEntries(
+  Object.entries(applicationOperationAliasMap())
+    .filter(([, legacy]) => Object.hasOwn(APPLICATION_COMMAND_DEFINITIONS, legacy)
+      && APPLICATION_COMMAND_DEFINITIONS[legacy].web)
+    .map(([canonical, legacy]) => [
+      canonical.replaceAll('.', '_'),
+      legacy.replaceAll('.', '_'),
+    ]),
 ));
 const FORBIDDEN_KEY = /^(?:access[_-]?token|refresh[_-]?token|token|secret|credential|password|api[_-]?key|authorization)$/i;
 const MODEL_POLICY_FIELDS = new Set(['allow', 'deny', 'prefer', 'allowFamilies', 'denyFamilies', 'reasoningEffort', 'serviceTier']);
@@ -273,7 +283,13 @@ function validProviderClaims(value) {
     && Number.isSafeInteger(value.ttlMs) && value.ttlMs > 0;
 }
 
+function resolveWebCommandEnvelope(envelope) {
+  const legacyCommand = WEB_APPLICATION_ALIASES[envelope?.command];
+  return legacyCommand ? { ...envelope, command: legacyCommand } : envelope;
+}
+
 function validateEnvelope(envelope) {
+  envelope = resolveWebCommandEnvelope(envelope);
   if (!isRecord(envelope)) return 'command envelope must be an object';
   const unknown = Object.keys(envelope).find((key) => !TOP_LEVEL.has(key));
   if (unknown) return 'unknown_top_level_field';
@@ -624,6 +640,7 @@ export class WebNorthbound {
   }
 
   async execute(ctx, envelope) {
+    envelope = resolveWebCommandEnvelope(envelope);
     if (!this._admissionOpen()) return error(503, 'temporarily_unavailable');
     const authFailure = this._authenticate(ctx);
     if (authFailure) {

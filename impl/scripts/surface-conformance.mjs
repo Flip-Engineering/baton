@@ -1,4 +1,5 @@
 import { collectSurfaceInventory } from './surface-audit.mjs';
+import { APPLICATION_SEMANTIC_REGISTRY } from '../src/application-semantics.mjs';
 
 const DIMENSIONS = new Set(['name', 'args', 'schema', 'behavior', 'enum']);
 const RETIREMENT_PHASES = new Set(['M1', 'M2', 'M3', 'M4', 'M5']);
@@ -139,6 +140,16 @@ function canonicalNameIndex() {
     for (const surface of operation.surfaces) {
       index.set(`${surface}\0${operation.names[surface]}`, operation.key);
       if (surface === 'mcp') index.set(`mcp.baton\0${operation.names.mcp}`, operation.key);
+    }
+  }
+  for (const [name, definition] of Object.entries(APPLICATION_SEMANTIC_REGISTRY.operations)) {
+    if (definition.canonicalName) {
+      index.set(`registry.operations\0${name}`, definition.canonicalName);
+    }
+  }
+  for (const [name, definition] of Object.entries(APPLICATION_SEMANTIC_REGISTRY.actions)) {
+    if (definition.operation) {
+      index.set(`registry.actions\0${name}`, definition.operation);
     }
   }
   return index;
