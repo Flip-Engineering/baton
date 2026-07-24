@@ -2,11 +2,21 @@
 
 Status: implementation-grade contract, 2026-07-23.
 
+**v2 (2026-07-24):** adversarial red-team R33R (explore seat, ~44 citations verified exact;
+verdict SOUND-WITH-FOLDS) folded by the orchestrator: R33R-1 acceptance command corrected to
+the scratchpad red suite (Part H); R33R-2 all four store mutators registered in the
+poison-wrapper allowlist and all six store methods in the injected-store completeness check
+(rule 3); R33R-3 the end-of-task elevation trigger named for every durable terminal
+observation, not only the verified-outcome path (rules 19/20 + SP8 row); R33R-4 the
+`scratchpad.write` transport named — the REFLEX-1 emulated up-channel family (rule 3);
+R33R-5 the viewer-parameterized `workflowHorizon` signature made explicit (rule 12); R33R-6
+four pinned test rows added (Part F); R33R-7 four citation anchors repaired.
+
 Ground truth is issue #33 plus its reframe comment. The reframe is controlling: this is **not a
 second Scratch subsystem, not a filesystem convention, and not another knowledge graph**. Baton
 already projects task, workflow, and project horizons over the coordination ledger and the Cairn
 KG (`Coordinator.taskHorizon`/`workflowHorizon`/`projectHorizon`,
-coordinator.mjs:9634-9720), and workers already query the project KG through
+coordinator.mjs:9634-9721), and workers already query the project KG through
 `recallKnowledge` with worker↔task ownership binding (coordinator.mjs:9469-9487; the issue's
 pre-landing anchor was :9039-9052). Issue #33 adds the missing typed **write** authority into the
 task-ephemeral horizon. Those writes remain candidates across worker death, may be elevated by
@@ -19,7 +29,7 @@ exact site:
 
 - the board store/fence/non-evented snapshot slice is now coordination-store.mjs:12590-12785
   (the brief's :12057-12210); its application projection is application.mjs:319-376;
-- REPL binding admission/projection starts at coordination-store.mjs:12845, with the non-evented
+- REPL binding admission/projection starts at coordination-store.mjs:12857, with the non-evented
   snapshot at :13035-13043, and the viewer slice is application.mjs:378-418 (the brief's
   coordination-store.mjs:12600+);
 - `_apply` is now coordination-store.mjs:7367+ (the brief's :7158+);
@@ -53,7 +63,7 @@ the Coordinator/Application ownership checks fixed below.
    projection; its persistent destination is the existing Cairn KG. There is no scratchpad
    directory, Markdown fallback, side database, second event log, query engine, or background
    file watcher. `taskHorizon` and `workflowHorizon` continue to compose board/package/binding/KG
-   state (coordinator.mjs:9634-9720); they gain scratchpad projection data and the corresponding
+   state (coordinator.mjs:9634-9721); they gain scratchpad projection data and the corresponding
    scratchpad fence components, not a delegation to another service.
 
 2. **There are exactly two scope forms: `worker:<workerId>` and `shared`.** Every record is also
@@ -91,9 +101,13 @@ the Coordinator/Application ownership checks fixed below.
    - rejects every caller-supplied identity, scope, ordinal, timestamp, digest, candidacy,
      provenance, or elevation field.
 
-   `writeScratchpad` is added to the coordination mutator allowlist beside the existing Scratch
-   and board mutators (coordinator.mjs:246-265) and to the injected-store completeness check
-   beside `postScratchFact` (coordinator.mjs:669+). The public worker tool is a thin closed-schema
+   All four store mutators — `writeScratchpad`, `elevateTaskScratchpad`,
+   `settleWorkflowScratchpad`, and `reapRunScratchpads` — are added to the coordination mutator
+   allowlist beside the existing Scratch and board mutators (coordinator.mjs:246-265), so their
+   non-refusal failures route through the poison wrapper; all six new store methods (the four
+   mutators plus the `scratchpadSnapshotBatch`/`scratchpadSnapshot` snapshot queries) are added
+   to the injected-store completeness check beside `postScratchFact` (coordinator.mjs:669+), so
+   a mock store missing any of them fails at construction. The public worker tool is a thin closed-schema
    adapter named `scratchpad.write` with exact input
    `{entry,expectedFence,idempotencyKey}`; worker/task/run identity is injected by the hub. Its
    exact success receipt is
@@ -120,6 +134,18 @@ the Coordinator/Application ownership checks fixed below.
    expected `CoordinationRefusal` never leaks through the public worker tool as an unstructured
    exception. It does not expose an operator semantic action and does not turn arbitrary provider
    `content.tool_call` telemetry into a write.
+
+   **Transport (v2, R33R-4):** the worker→hub channel is the REFLEX-1 emulated up-channel
+   family, not a new surface: the harness adapter parses a closed-shape fenced grammar out of
+   the worker's own message stream — the `decision.requested` precedent
+   (coordinator.mjs:10497+) — and the hub admits it with the same spoof-safety discipline
+   (closed-shape validation BEFORE any admission side effect, `idempotencyKey` dedup against
+   live requests, fleet-drain refusal, malformed-payload rejection that never mints a record).
+   `workerId` binds by construction to the authenticated per-worker event stream
+   (`appendAttributed`), never to a caller-supplied payload field. There is no new MCP server,
+   no hub CLI verb, and no provider-telemetry scraping; harnesses whose adapters cannot parse
+   the grammar defer the tool entirely (the Coordinator method remains the only write path
+   there) rather than falling back to a looser channel.
 
 ## Part B — closed entry grammar, bounds, and hub-authored identity
 
@@ -472,10 +498,12 @@ the Coordinator/Application ownership checks fixed below.
     stale worker authority at write admission; the former invalidates cached reads.
 
     The horizon union is explicit: `taskHorizon` appends the requesting worker-scope and shared
-    scratchpad fences to its existing tuple. An orchestrator `workflowHorizon` appends shared
-    plus every Run-owned worker scope in canonical worker-ID order; a worker-view
-    `workflowHorizon` appends only that worker's own scope plus shared and reveals neither sibling
-    fence values nor sibling count. Any scratchpad rows included in a horizon therefore have a
+    scratchpad fences to its existing tuple. `workflowHorizon` gains an explicit viewer
+    parameter, stated with the same explicitness as `taskHorizon`'s existing `board` parameter:
+    `workflowHorizon(runId, {viewer})` where `viewer` is `'orchestrator'` or a Run-owned worker
+    ID. An orchestrator-viewer call appends shared plus every Run-owned worker scope in
+    canonical worker-ID order; a worker-viewer call appends only that worker's own scope plus
+    shared and reveals neither sibling fence values nor sibling count. Any scratchpad rows included in a horizon therefore have a
     corresponding tuple component—no stale cache hit hidden behind `projectionInputFence()`.
     That global fence remains responsible for its existing KG/package/board inputs; scratchpad
     uses its own scoped fences rather than broadening the global counter.
@@ -648,7 +676,7 @@ the Coordinator/Application ownership checks fixed below.
     `scratchpad_cursor_stale`; unknown, cross-Run, or unauthorized member IDs all fail the same
     `scratchpad_not_available` refusal without reporting whether that worker or partition exists.
     None of these reads/refusals appends an event or echoes worker prose.
-    `wave.progress()` (wave.mjs:163-181), whose roster members are individual single-task Runs,
+    `wave.progress()` (wave.mjs:163-183), whose roster members are individual single-task Runs,
     copies the scratchpad already present in each member's one status view into that member row;
     it does not issue a second racy read and never concatenates native-workflow attempt pads
     inside one RunView. Therefore a wave driver can observe a member's notes/plans/doubts/links
@@ -667,7 +695,7 @@ the Coordinator/Application ownership checks fixed below.
     single-task live Run always returns a scratchpad object (possibly `entries:[]`) rather than
     omitting it. Multi-attempt workflow and historical Runs with no uniquely resolvable worker
     return `scratchpad:null` and use the explicit member read. The field participates in
-    `semanticViewDigest` (application.mjs:181-187): if scratchpad state changes between a driver
+    `semanticViewDigest` (application.mjs:184-187): if scratchpad state changes between a driver
     observing an offered steering action and executing it, the old action is stale and the driver
     must refresh rather than act on superseded notes.
 
@@ -807,7 +835,14 @@ the Coordinator/Application ownership checks fixed below.
     visible rows. A replay cannot invent a different selection. The live task horizon then
     loses that worker partition, while selected shared successors remain in the workflow horizon.
     Worker death by itself never invokes this event; a failed/cancelled task still passes through
-    the same orchestrator settle decision before cleanup.
+    the same orchestrator settle decision before cleanup. **Trigger (v2, R33R-3):** on ANY
+    durable terminal task observation — verified outcome, pre-verification failure, or
+    cancellation — and before worker cleanup releases the handle, the Run's registered
+    orchestrator invokes the rule-19 decision exactly once; the store-side task-terminal check
+    is the only gate. The verified-outcome site (coordinator.mjs:10878-10895) is the canonical
+    call site for the verified path; for every other terminal transition the driver's own
+    task-terminal observation that already drives cleanup is the invocation point — no new
+    per-site hooks are introduced.
 
     `elevateTaskScratchpad` returns the exact prose-free receipt:
 
@@ -1401,14 +1436,22 @@ clocks. No test uses `Date.now()`, a live timer, or a wall-clock-derived id.
   `wave.progress()` exposes each member's already-bounded single-Run view. Workflow views never
   inline every maximum-sized worker partition into one envelope.
 
+**v2 fold rows (R33R-6).** SP5 additionally pins: rule 15's cache purge on all three triggers
+(workflow settle, Run close, AND Run stop — not close alone); and fold instrumentation proving
+no rule-11 fold scans the whole ledger (reads were already instrumented; folds now are too).
+SP6 additionally pins the positive historical case: `_historicalProfileView` supplies the
+additive schema-v1 field when ownership remains resolvable, not only the negative/null case.
+SP8 additionally pins the rule-19 `treeBinding:'terminal_capture'|'task_base'` honesty
+fallback, including one row settling a task that terminalized pre-verification (R33R-3's
+trigger).
+
 ## Part H — validation
 
 Implementation must make the focused `impl/test/scratchpad-33-red.test.mjs` suite green, then the
-canonical repository suite green. This decisions artifact itself is accepted by the dispatched
-reviewer contract using exactly:
+canonical repository suite green. The dispatched implementation and its dispatched reviewer are accepted using exactly:
 
 ```text
-node --test impl/test/wave-driver-red.test.mjs
+node --test impl/test/scratchpad-33-red.test.mjs
 ```
 
 No alternate command, shell wrapper, nested Baton invocation, or inferred success is a substitute
