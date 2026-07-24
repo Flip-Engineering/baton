@@ -1,0 +1,31 @@
+# Dynamic workflow demo v5 receipts (2026-07-24T14:44:56.886Z)
+
+- 2026-07-24T14:45:14.014Z stale_fence in w-1.jsonl but worker→role unknown (recorded)
+- 2026-07-24T14:45:14.023Z stale_fence in w-5.jsonl but worker→role unknown (recorded)
+- 2026-07-24T14:45:14.023Z stale_fence in w-5.jsonl but worker→role unknown (recorded)
+- 2026-07-24T14:45:14.023Z stale_fence in w-5.jsonl but worker→role unknown (recorded)
+- 2026-07-24T14:45:14.023Z stale_fence in w-5.jsonl but worker→role unknown (recorded)
+- 2026-07-24T14:45:14.023Z stale_fence in w-5.jsonl but worker→role unknown (recorded)
+- 2026-07-24T14:45:14.023Z stale_fence in w-5.jsonl but worker→role unknown (recorded)
+- 2026-07-24T14:45:14.024Z stale_fence in w-5.jsonl but worker→role unknown (recorded)
+- 2026-07-24T14:45:14.024Z stale_fence in w-5.jsonl but worker→role unknown (recorded)
+- 2026-07-24T14:45:14.024Z stale_fence in w-5.jsonl but worker→role unknown (recorded)
+- 2026-07-24T14:45:14.024Z stale_fence in w-5.jsonl but worker→role unknown (recorded)
+- 2026-07-24T14:45:14.024Z stale_fence in w-5.jsonl but worker→role unknown (recorded)
+- 2026-07-24T14:45:14.024Z stale_fence in w-5.jsonl but worker→role unknown (recorded)
+- 2026-07-24T14:45:14.024Z stale_fence in w-5.jsonl but worker→role unknown (recorded)
+- 2026-07-24T14:45:14.024Z stale_fence in w-5.jsonl but worker→role unknown (recorded)
+- 2026-07-24T14:45:14.024Z stale_fence in w-5.jsonl but worker→role unknown (recorded)
+- 2026-07-24T14:45:14.024Z stale_fence in w-5.jsonl but worker→role unknown (recorded)
+- 2026-07-24T14:45:14.024Z stale_fence in w-5.jsonl but worker→role unknown (recorded)
+- 2026-07-24T14:45:14.024Z stale_fence in w-5.jsonl but worker→role unknown (recorded)
+- 2026-07-24T14:45:14.024Z stale_fence in w-5.jsonl but worker→role unknown (recorded)
+- 2026-07-24T14:45:14.024Z stale_fence in w-5.jsonl but worker→role unknown (recorded)
+- 2026-07-24T14:45:14.024Z stale_fence in w-5.jsonl but worker→role unknown (recorded)
+- 2026-07-24T14:45:14.024Z stale_fence in w-5.jsonl but worker→role unknown (recorded)
+- 2026-07-24T14:45:14.024Z stale_fence in w-5.jsonl but worker→role unknown (recorded)
+- 2026-07-24T14:45:14.025Z stale_fence in w-5.jsonl but worker→role unknown (recorded)
+- 2026-07-24T14:45:14.032Z scratchpad write ACCEPTED (w-7.jsonl): entryId=scratchpad-entry:9f8afa6e01c315f29fc24db
+- 2026-07-24T14:45:14.123Z outcome drafter: phase=failed sha=none
+- 2026-07-24T14:45:14.123Z outcome critic: phase=failed sha=none
+- 2026-07-24T14:45:14.181Z close remaining=0 residueUnknown=false

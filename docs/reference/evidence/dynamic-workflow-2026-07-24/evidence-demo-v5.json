@@ -1,0 +1,43 @@
+{
+  "schemaVersion": 1,
+  "outcomes": [
+    {
+      "role": "drafter",
+      "phase": "failed",
+      "terminal": true,
+      "narrative": "Run terminated: provider_turn_failed.",
+      "resultSha": null
+    },
+    {
+      "role": "critic",
+      "phase": "failed",
+      "terminal": true,
+      "narrative": "Run terminated: provider_turn_failed.",
+      "resultSha": null
+    }
+  ],
+  "stops": [
+    {
+      "role": "drafter",
+      "stop": null,
+      "resources": {
+        "state": "stopped",
+        "cleanupState": "stopped",
+        "ownedCount": 0
+      },
+      "ownedCount": 0
+    },
+    {
+      "role": "critic",
+      "stop": null,
+      "resources": {
+        "state": "stopped",
+        "cleanupState": "stopped",
+        "ownedCount": 0
+      },
+      "ownedCount": 0
+    }
+  ],
+  "remainingCount": 0,
+  "residueUnknown": false
+}
