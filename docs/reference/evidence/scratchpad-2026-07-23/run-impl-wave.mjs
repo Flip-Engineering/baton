@@ -36,17 +36,19 @@ const CLOCK = [
 const TASK = [
   'Implement issue #33 per the v2 contract at',
   `${relativeRoot}/scratchpad-decisions.md — READ IT IN FULL FIRST (it is controlling,`,
-  'including the v2 fold block at the top). Red-first TDD, in this order:',
-  '(1) WRITE impl/test/scratchpad-33-red.test.mjs FIRST: the complete SP1-SP11 block per',
-  'Part F including the v2 fold rows (R33R-6), every test failing for the right reason before',
-  'any implementation exists.',
-  '(2) Implement until the focused suite is green: the four store mutators + two snapshot',
-  'queries (registered per v2 rule 3 — poison-wrapper allowlist AND injected-store completeness',
-  'check), the closed entry grammar + bounds (Part B), event/batch discipline (Part C),',
-  'non-evented cached reads with scoped fences (Part D), settle-time elevation with the v2',
-  'any-terminal trigger (Part E), horizon + wave projections, the REFLEX-1-family worker',
-  'up-channel grammar for scratchpad.write (v2 rule 3 transport), and sanitization via',
-  'boundedAttentionText/SECRET_SHAPED_TEXT with provenance marking.',
+  'including the v2 fold block at the top). State of play: the red-first suite ALREADY EXISTS',
+  'on master at impl/test/scratchpad-33-red.test.mjs (36 tests, SP1-SP5, written by an opus',
+  'worker and pinned before its seat died). Your job, in this order:',
+  '(1) EXTEND that suite with the remaining Part F blocks SP6-SP11 and any v2 fold rows',
+  '(R33R-6) not yet pinned — every new test failing for the right reason before implementation.',
+  '(2) Implement until the whole focused suite is green: the four store mutators + two',
+  'snapshot queries (registered per v2 rule 3 — poison-wrapper allowlist AND injected-store',
+  'completeness check), the closed entry grammar + bounds (Part B), event/batch discipline',
+  '(Part C), non-evented cached reads with scoped fences (Part D), settle-time elevation with',
+  'the v2 any-terminal trigger (Part E), horizon + wave projections, the REFLEX-1-family',
+  'worker up-channel grammar for scratchpad.write (v2 rule 3 transport), and sanitization via',
+  'boundedAttentionText/SECRET_SHAPED_TEXT with provenance marking. Do NOT weaken or delete',
+  'the pinned SP1-SP5 tests — they are the contract; make them pass.',
   '(3) Then run the canonical suite as `node impl/scripts/run-suite.mjs` FROM THE REPO ROOT',
   '(never cd impl first) and keep it fully green.',
   'Work ONLY in your scoped files. One shell command per call. Do not call gh. Do not invoke',
@@ -59,8 +61,8 @@ const TASK = [
 const ATTEMPT = new Date().toISOString();
 const MEMBERS = Object.freeze([
   Object.freeze({
-    role: 'scratchpad-implementer-opus',
-    exact: Object.freeze({ harness: 'claude-code', model: 'claude-opus-4-8', effort: 'high' }),
+    role: 'scratchpad-implementer-codex',
+    exact: Object.freeze({ harness: 'codex', model: 'gpt-5.6-sol', effort: 'high' }),
     scope: Object.freeze([
       'impl/test/scratchpad-33-red.test.mjs',
       'impl/src/coordination-store.mjs',
@@ -86,7 +88,7 @@ const baton = await openBaton({
   repo,
   advanced: {
     deploymentRoot: resolve(repo, '.baton', 'scratchpad-impl-2026-07-24'),
-    routes: [{ harness: 'claude-code', model: 'claude-opus-4-8', effort: 'high' }],
+    routes: [{ harness: 'codex', model: 'gpt-5.6-sol', effort: 'high' }],
     verification: VERIFY,
   },
 });
