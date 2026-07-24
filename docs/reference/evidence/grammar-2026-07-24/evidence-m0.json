@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "outcomes": [
+    {
+      "role": "grammar-m0-implementer",
+      "phase": "start_failed",
+      "terminal": true,
+      "narrative": null,
+      "resultSha": null,
+      "error": {
+        "code": "application_client_invalid",
+        "message": "Run objective is required"
+      }
+    }
+  ],
+  "stops": [],
+  "remainingCount": 0,
+  "residueUnknown": false
+}

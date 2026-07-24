@@ -7,16 +7,14 @@
 //   node impl/scripts/surface-audit.mjs
 //
 // Sources: the semantic registry and application command table are imported (exact); MCP tool
-// names, CLI verb rows, embedded class methods, and phase literals are extracted textually
-// (best-effort, labeled as such). This tool is read-only and asserts nothing — the conformance
-// contracts that will pin surfaces to the registry arrive with the docs/35 migration phases.
+// names, CLI verb rows, embedded class methods, and phase literals are extracted textually.
 
 import { readFileSync } from 'node:fs';
 
 import { APPLICATION_SEMANTIC_REGISTRY } from '../src/application-semantics.mjs';
 import { APPLICATION_COMMAND_DEFINITIONS } from '../src/application.mjs';
 
-const src = (name) => readFileSync(new URL(`../src/${name}`, import.meta.url), 'utf8');
+const src = (name) => readFileSync(new URL(`../src/${name}`, import.meta.url), 'latin1');
 
 function extractAll(text, pattern) {
   const found = new Set();
@@ -24,13 +22,61 @@ function extractAll(text, pattern) {
   return [...found].sort();
 }
 
+function extractDelimited(text, start, end) {
+  const offset = text.indexOf(start);
+  if (offset < 0) return '';
+  const limit = text.indexOf(end, offset + start.length);
+  return limit < 0 ? '' : text.slice(offset, limit + end.length);
+}
+
+function extractRunPhases() {
+  const application = src('application.mjs');
+  const phases = new Set();
+  for (const pattern of [
+    /\bphase\s*=(?!=)\s*'([a-z_]+)'/gu,
+    /\b(?:view\.)?phase\s*===\s*'([a-z_]+)'/gu,
+  ]) {
+    for (const phase of extractAll(application, pattern)) phases.add(phase);
+  }
+  for (const marker of ['PROVIDER_EXECUTION_SETTLED_PHASES', 'APPLICATION_RUN_TERMINAL_PHASES']) {
+    for (const phase of extractAll(extractDelimited(application, marker, ']);'), /'([a-z_]+)'/gu)) {
+      phases.add(phase);
+    }
+  }
+  for (const line of application.split('\n')) {
+    if (!/^\s*(?:(?:const|let)\s+)?phase\s*=(?!=)/u.test(line)) continue;
+    for (const phase of extractAll(line, /'([a-z_]+)'/gu)) phases.add(phase);
+  }
+  const wave = src('wave.mjs');
+  for (const phase of extractAll(wave, /(?:phase\s*===|phase:)\s*'([a-z_]+)'/gu)) phases.add(phase);
+  for (const phase of extractAll(
+    src('application-cli.mjs'),
+    /TERMINAL_RUN_PHASES = new Set\(\[([^\]]+)\]/gu,
+  ).flatMap((body) => extractAll(body, /'([a-z_]+)'/gu))) phases.add(phase);
+  phases.delete('pre_delivery');
+  phases.delete('post_delivery');
+  phases.delete('outcome_error');
+  return [...phases].sort();
+}
+
 export function collectSurfaceInventory() {
   const registry = APPLICATION_SEMANTIC_REGISTRY;
+  const applicationText = src('application.mjs');
+  const mcpText = src('mcp-northbound.mjs');
   const definitions = Object.keys(APPLICATION_COMMAND_DEFINITIONS);
-  const webCommands = definitions
+  const applicationWebCommands = definitions
     .filter((name) => APPLICATION_COMMAND_DEFINITIONS[name].web)
     .map((name) => name.replaceAll('.', '_'));
-  const mcpNames = extractAll(src('mcp-northbound.mjs'), /'((?:fleet|baton)_[a-z0-9_]+)'/gu);
+  const webLiterals = extractAll(
+    extractDelimited(src('web-northbound.mjs'), 'const COMMAND_CAPABILITY', '});'),
+    /(?:[,{])\s*([a-z][a-z0-9_]+):/gu,
+  );
+  const webCommands = [...new Set([...applicationWebCommands, ...webLiterals])].sort();
+  const mcpNames = extractAll(mcpText, /'((?:fleet|baton)_[a-z0-9_]+)'/gu);
+  const mcpWebBridgeCommands = extractAll(
+    extractDelimited(src('mcp-web-bridge.mjs'), 'const ORDINARY_COMMANDS', ']);'),
+    /'([a-z][a-z0-9_.]+)'/gu,
+  );
   const clientText = src('application-client.mjs');
   const embedded = [];
   {
@@ -44,17 +90,24 @@ export function collectSurfaceInventory() {
       }
     }
   }
-  const phaseLiterals = new Set([
-    ...extractAll(src('application.mjs'), /phase = '([a-z_]+)'/gu),
-    ...extractAll(src('wave.mjs'), /'(work_completed|start_failed)'/gu),
-    ...extractAll(src('application-cli.mjs'), /TERMINAL_RUN_PHASES = new Set\(\[([^\]]+)\]/gu)
-      .flatMap((body) => [...body.matchAll(/'([a-z_]+)'/gu)].map((m) => m[1])),
-  ]);
   const synonymDensity = {};
   const applicationLayer = ['application.mjs', 'application-client.mjs', 'application-cli.mjs',
     'application-semantics.mjs', 'application-deployment.mjs'].map(src).join('\n');
   for (const word of ['worker', 'member', 'workstream', 'seat', 'assignee']) {
     synonymDensity[word] = (applicationLayer.match(new RegExp(word, 'giu')) ?? []).length;
+  }
+  const behaviorDivergences = [];
+  if (/context\?\.capabilityAuthority\s*\?\s*candidates\.filter/gu.test(applicationText)) {
+    behaviorDivergences.push(Object.freeze({
+      surface: 'application',
+      name: 'conditional capability filtering (application.mjs:8869-8875)',
+    }));
+  }
+  if (/copy\.inputSchema\.properties\.timeoutMs\.maximum\s*=\s*this\.maxWaitMs/gu.test(mcpText)) {
+    behaviorDivergences.push(Object.freeze({
+      surface: 'mcp',
+      name: 'per-deployment MCP schema mutation (mcp-northbound.mjs:826)',
+    }));
   }
   return Object.freeze({
     registryOperations: Object.keys(registry.operations),
@@ -67,8 +120,10 @@ export function collectSurfaceInventory() {
     })),
     mcpFleetTools: mcpNames.filter((name) => name.startsWith('fleet_')),
     mcpBatonTools: mcpNames.filter((name) => name.startsWith('baton_')),
+    mcpWebBridgeCommands,
     embeddedMethods: [...new Set(embedded)].sort(),
-    phaseLiterals: [...phaseLiterals].sort(),
+    phaseLiterals: extractRunPhases(),
+    behaviorDivergences: Object.freeze(behaviorDivergences),
     synonymDensity,
   });
 }
@@ -80,11 +135,12 @@ export function renderSurfaceAudit(inventory = collectSurfaceInventory()) {
     section('Semantic registry operations', inventory.registryOperations),
     section('Semantic registry actions (run.do targets)', inventory.registryActions),
     section('Application command definitions (older authoritative table)', inventory.commandDefinitions),
-    section('Web bus command names (derived: definitions with web flag, dots to underscores)', inventory.webCommands),
+    section('Web bus admitted command names', inventory.webCommands),
     `### CLI verb rows (${inventory.cliCommands.length})\n\n${inventory.cliCommands
       .map((row) => `- \`${row.usage ?? row.id}\`${row.action ? ` → action \`${row.action}\`` : ''}`).join('\n')}\n`,
     section('MCP fleet_* dialect (textual extraction)', inventory.mcpFleetTools),
     section('MCP baton_* dialect (textual extraction)', inventory.mcpBatonTools),
+    section('MCP-over-Web bridge subset', inventory.mcpWebBridgeCommands),
     section('Embedded client methods (textual extraction)', inventory.embeddedMethods),
     section('Run phase string literals across surfaces', inventory.phaseLiterals),
     `### Synonym density for the delegated-seat concept (application layer)\n\n${Object.entries(inventory.synonymDensity)

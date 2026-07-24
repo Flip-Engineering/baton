@@ -1,11 +1,17 @@
 #!/usr/bin/env node
 
 import { execFileSync, spawn } from 'node:child_process';
-import { chmodSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
 import { lintDefaultTestDirectory } from './fixture-clock-lint.mjs';
+import { collectSurfaceInventory } from './surface-audit.mjs';
+import {
+  checkEnumStrings,
+  checkLedgerMonotone,
+  classifySurfaces,
+} from './surface-conformance.mjs';
 import { sweepStaleSuiteRoots, writeSuiteOwnerReceipt } from './suite-hygiene.mjs';
 
 // Issue #42: a time-bomb fixture must be red on the author's machine the moment it is written,
@@ -16,6 +22,55 @@ if (clockFindings.length > 0) {
     process.stderr.write(`fixture-clock-lint: ${finding.file}:${finding.line}: ${finding.reason}\n`);
   }
   process.exit(1);
+}
+
+const ledgerPath = new URL('./surface-divergence-ledger.json', import.meta.url);
+let currentLedger;
+try {
+  currentLedger = JSON.parse(readFileSync(ledgerPath, 'utf8'));
+} catch (error) {
+  process.stderr.write(`surface-conformance: could not read divergence ledger: ${error.message}\n`);
+  process.exit(1);
+}
+const inventory = collectSurfaceInventory();
+const surfaceFindings = classifySurfaces(inventory, currentLedger).novel;
+const enumFindings = checkEnumStrings(inventory.phaseLiterals, currentLedger).novel;
+for (const finding of [...surfaceFindings, ...enumFindings]) {
+  process.stderr.write(
+    `surface-conformance: novel divergence: ${finding.surface}:${finding.name}:${finding.dimension}\n`,
+  );
+}
+if (surfaceFindings.length > 0 || enumFindings.length > 0) process.exit(1);
+
+const repositoryRoot = new URL('../../', import.meta.url);
+let previousLedger = null;
+try {
+  previousLedger = JSON.parse(execFileSync(
+    'git',
+    ['show', 'HEAD:impl/scripts/surface-divergence-ledger.json'],
+    {
+      cwd: repositoryRoot,
+      encoding: 'utf8',
+      timeout: 2_000,
+      maxBuffer: 8 * 1024 * 1024,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    },
+  ));
+} catch (error) {
+  const missingBaseline = error?.status === 128
+    && String(error?.stderr).includes('exists on disk, but not in');
+  if (!missingBaseline) {
+    process.stderr.write(`surface-conformance: could not read the HEAD ledger: ${error.message}\n`);
+    process.exit(1);
+  }
+}
+if (previousLedger) {
+  try {
+    checkLedgerMonotone(previousLedger, currentLedger);
+  } catch (error) {
+    process.stderr.write(`surface-conformance: ${error.message}\n`);
+    process.exit(1);
+  }
 }
 
 const parent = resolve(process.env.BATON_TEST_TMP_PARENT || tmpdir());
