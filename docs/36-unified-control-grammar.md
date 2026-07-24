@@ -1,4 +1,8 @@
-# 35 — One grammar: the unified agent control surface
+# 36 — One grammar: the unified agent control surface
+
+(Originally numbered doc 35; renumbered 2026-07-24 to resolve the collision with
+docs/35-turn-checkpoints.md. Citations of "docs/35-unified-control-grammar.md" in the
+2026-07-23/24 evidence dirs refer to this document under its original name.)
 
 **Status: v2.1 FINAL** (issue #43). v1 was adversarially red-teamed by three decorrelated seats
 through baton.waves — codex `gpt-5.6-sol@high` (R-CX-1..15, verdict UNSOUND), kimi `k3@high`
