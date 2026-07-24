@@ -36,27 +36,17 @@ const CLOCK = [
 ].join(' ');
 
 const TASK = [
-  'Implement issue #46 per docs/37-wave-driver.md v2 (the controlling contract — READ the',
-  'laws L1-L7 and §2 surface in full). State of play: the red-suite HARNESS ALREADY EXISTS',
-  'on master at impl/test/wave-driver-policy-red.test.mjs (242 lines of fixtures written by',
-  'a prior glm seat — verify it, do not rewrite it). Your job, in this order:',
-  '(1) EXTEND that file with the D1-D10 test blocks per §3 of the doc (requestId dedup;',
-  'cursor-stripped liveness + sibling-cursor immunity; true stall; hard cap with',
-  'stall-before-cap precedence; salt semantics; the L6 termination law; envelope shape;',
-  'nudge-failure tolerance; claim fan-out; unavailable semantics), every test failing for',
-  'the right reason before implementation (the file currently has fixtures and zero tests).',
-  '(2) Implement until the focused suite is green: impl/src/wave-driver.mjs shipping',
-  'createWaveDriver(baton, policy).run(waveStartOptions) per §2 (closed policy field set with',
-  'defaults, the receipt envelope + additive fields, admission-time objective byte-check,',
-  'salt=attempt-uuid+role with internal-retry re-attach, L5 cursor-stripped wave-level stall',
-  'clock, L6 unproductivity budget + claim fan-out), plus the additive re-export beside',
-  'createWave at impl/src/index.mjs:185. Do NOT touch wave.mjs or the client facade (L2/L3).',
-  '(3) Then run the canonical suite as `node impl/scripts/run-suite.mjs` FROM THE REPO ROOT',
-  '(never cd impl first) and keep it fully green — wave-driver-red W1-W10 and',
-  'turn-checkpoints-31b5 must stay green byte-identically.',
-  'Work ONLY in your scoped files. One shell command per call. Do not call gh. Do not invoke',
-  'nested Baton. When the focused suite AND the canonical suite are both green, end your turn',
-  'with work_completed — do not idle waiting for further instruction.',
+  'State of play: impl/src/wave-driver.mjs (405 lines, createWaveDriver per docs/37 v2) and',
+  'its index.mjs:186 export are LANDED on master (recovered from a checkpoint pin before the',
+  'tests were written). The red harness exists at impl/test/wave-driver-policy-red.test.mjs',
+  '(242 lines of fixtures, ZERO test blocks). Your ONLY job: EXTEND that test file with the',
+  'D1-D10 test blocks per docs/37-wave-driver.md §3 (READ §3 and §2 first), validating the',
+  'landed implementation. Run node --test impl/test/wave-driver-policy-red.test.mjs (fast) and',
+  'make every block pass WITHOUT weakening the assertions — if a D-row exposes a real defect',
+  'in the landed module, fix the module minimally and note the fix in a comment. Do NOT run',
+  'the canonical suite (the orchestrator runs it afterward — long commands are out of your',
+  'path). Work ONLY in your two scoped files. One shell command per call. Do not call gh. Do',
+  'not invoke nested Baton. End your turn with work_completed when the focused suite passes.',
 ].join(' ');
 
 // Attempt salt: runs.start is idempotent by objective digest, so every relaunch
@@ -69,7 +59,6 @@ const MEMBERS = Object.freeze([
     scope: Object.freeze([
       'impl/src/wave-driver.mjs',
       'impl/test/wave-driver-policy-red.test.mjs',
-      'impl/src/index.mjs',
     ]),
     report: 'impl/test/wave-driver-policy-red.test.mjs',
     objective: [
