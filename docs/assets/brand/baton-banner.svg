@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 640">
+  <!-- baton GitHub social banner: glyph tile + wordmark + tagline, Flip-family identity -->
+  <rect width="1280" height="640" fill="#0F0F12"/>
+  <!-- faint oversized arc across the field -->
+  <path d="M -40 560 Q 560 -80 1320 470" fill="none" stroke="#1B2340" stroke-width="26" stroke-linecap="round"/>
+  <!-- glyph tile -->
+  <g transform="translate(110 170) scale(0.5859375)">
+    <rect width="512" height="512" rx="115" fill="#15151B"/>
+    <path d="M 96 358 Q 256 108 416 330" fill="none" stroke="#6C8CFF" stroke-width="14" stroke-linecap="round" opacity="0.9"/>
+    <g fill="#AFC4FF">
+      <path d="M150 268 l7 18 18 7 -18 7 -7 18 -7 -18 -18 -7 18 -7 z"/>
+      <path d="M352 200 l6 15 15 6 -15 6 -6 15 -6 -15 -15 -6 15 -6 z"/>
+      <path d="M392 322 l5 12 12 5 -12 5 -5 12 -5 -12 -12 -5 12 -5 z"/>
+    </g>
+    <g fill="#EAEAEA">
+      <path d="M118 372 l5 13 13 5 -13 5 -5 13 -5 -13 -13 -5 13 -5 z"/>
+    </g>
+    <g transform="rotate(-38 256 256)">
+      <rect x="112" y="248" width="70" height="22" rx="11" fill="#D9B38C"/>
+      <path d="M178 247 L 420 253 Q 432 259 420 265 L 178 271 Q 166 259 178 247 Z" fill="#EAEAEA"/>
+    </g>
+  </g>
+  <!-- wordmark + tagline -->
+  <text x="500" y="330" font-family="system-ui, -apple-system, 'Segoe UI', sans-serif" font-size="150" font-weight="800" letter-spacing="4" fill="#EAEAEA">baton</text>
+  <text x="505" y="398" font-family="system-ui, -apple-system, 'Segoe UI', sans-serif" font-size="36" font-weight="500" letter-spacing="1.5" fill="#8B93A8">reflexive multi-agent orchestration</text>
+  <text x="505" y="448" font-family="system-ui, -apple-system, 'Segoe UI', sans-serif" font-size="26" font-weight="500" letter-spacing="1.2" fill="#6C8CFF">waves · turns · knowledge horizons</text>
+</svg>
