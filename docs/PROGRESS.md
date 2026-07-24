@@ -271,3 +271,14 @@ partitions) and the issue-#43 unified control-surface grammar audit (docs/35; th
 decorrelated red-team harvested, fold to v2 underway). Open tracker: GitHub issues #2–#44;
 the AX spine (#10), wire-frame graceful degradation (#28), and headless Claude credential
 projection (#11) remain the highest-friction operator items.
+
+Issue #33 (structured scratchpad) closed the reflexive-orchestration bloc: typed task-horizon
+writes (note/plan/doubt/link) into per-worker private and workflow-shared partitions,
+non-evented fenced reads, settle-time elevation with orchestrator decisions at end-of-task and
+end-of-workflow, horizon/wave projections, and a REFLEX-1-family worker up-channel — specified
+by a codex-drafted contract (red-teamed SOUND-WITH-FOLDS, folded to v2), red-first tested by
+opus and codex seats (SP1–SP11, 49 tests), implemented by a codex wave, and recovered twice
+from turn-checkpoint pins when seats/drivers died mid-flight. The canonical suite passed
+**2828/2828** at the landing. The unified control-surface grammar (issue #43) advanced through
+docs/35 v2.1 (three-seat red-team, 49 findings folded, 17 verification corrections) with the
+M0 conformance harness landed (issue #44) and M1 registry aliasing in flight.
