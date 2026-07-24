@@ -19,7 +19,8 @@ silently dropped a durability class; and showed that **C3 and H4 were unenforcea
 It amended §1.2 F5, §2, §4.1 (read row, †, ‡), §4.2 H4, §5 L2, §6, §6.1, §7.1, §7.2, §8.4,
 §10 (C3 and the contract-scope preamble), §11, and added **C10**.
 
-The **17 passages** carrying those amendments are marked *(v2 acceptance)* inline, so this
+The **16 passages** carrying those amendments are marked *(v2 acceptance)* inline — a grep returns
+18 hits, of which this sentence and the consolidation note below are the two self-references — so this
 document's own claims stay separable from the red-team's. **Reader's note on the tradeoff:** those
 amendments grew this file from 611 to 817 lines, so roughly a quarter of it is now review
 commentary sitting inside what were terse law and contract statements. That is a real cost to
