@@ -722,6 +722,16 @@ function worktreeManager(repoRoot, opts = {}) {
       if (!Buffer.from(text, 'utf8').equals(bytes)) throw Object.assign(new Error('captured file is not valid UTF-8'), { code: 'captured_file_encoding_invalid' });
       return Object.freeze({ path, sha, bytes: size, text });
     },
+    currentHeadSha(worktreePath) {
+      // The pause-digest probe (coordinator.mjs:_pauseChangedPathsDigest) — resolves the live
+      // HEAD of a worker worktree without an already-known result SHA. Returns null (never
+      // throws) so the caller's empty-digest fallback stays its own honest signal.
+      if (typeof worktreePath !== 'string' || worktreePath.length === 0) return null;
+      try {
+        const sha = localGit(['rev-parse', 'HEAD'], worktreePath, { encoding: 'utf8' }).trim();
+        return /^[a-f0-9]{40}$/u.test(sha) ? sha : null;
+      } catch { return null; }
+    },
     changedPathsAtCommit(baseSha, resultSha, maxPaths = 1_024) {
       if (!/^[a-f0-9]{40}$/u.test(baseSha ?? '') || !/^[a-f0-9]{40}$/u.test(resultSha ?? '')
         || !Number.isSafeInteger(maxPaths) || maxPaths <= 0 || maxPaths > 100_000) {

@@ -148,7 +148,12 @@ export function createWaveDriver(baton, rawPolicy = null) {
     state.claimAttempted = true;
     const at = new Date().toISOString();
     try {
-      await run.act('claim_turn', {});
+      const result = await run.act('claim_turn', {});
+      if (result && typeof result === 'object' && result.ok === false) {
+        throw Object.assign(new Error(String(result.reason ?? result.result ?? 'claim refused')), {
+          code: result.result ?? 'claim_refused',
+        });
+      }
       state.claimed = true;
       claims.push({ role, requestId: checkpoint.requestId, at, code: 'claimed' });
     } catch (error) {
@@ -316,7 +321,15 @@ export function createWaveDriver(baton, rawPolicy = null) {
             }
             const at = new Date().toISOString();
             try {
-              await runHandle.act('nudge_turn', { message: policy.completionMessage });
+              const result = await runHandle.act('nudge_turn', { message: policy.completionMessage });
+              // D8: an expected refusal arrives as a VALUE ({ok:false, result:'delivery_exception'}),
+              // not a thrown error — inspect the result or a failed delivery is misrecorded as a
+              // successful nudge and the requestId is wrongly consumed.
+              if (result && typeof result === 'object' && result.ok === false) {
+                throw Object.assign(new Error(String(result.reason ?? result.result ?? 'nudge refused')), {
+                  code: result.result ?? 'nudge_refused',
+                });
+              }
               nudges.push({ role, requestId: checkpoint.requestId, at });
               nudgedRequestIds.add(checkpoint.requestId);
               if (unchanged) state.nudges += 1;
