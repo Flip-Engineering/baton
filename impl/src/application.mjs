@@ -731,6 +731,15 @@ function semanticAuthorityForAction(action) {
   return deepFreeze({ ...payload, authorityDigest: digest(payload) });
 }
 
+function capabilityEligibleSemanticActions(candidates, context) {
+  if (!context?.capabilityAuthority) return candidates;
+  return candidates.filter(({ kind }) => (
+    APPLICATION_SEMANTIC_REGISTRY.actions[kind].requiredCapabilities.every(
+      (capability) => context.capabilities.includes(capability),
+    )
+  ));
+}
+
 function normalizeCommandContext(value) {
   if (value === undefined || value === null) return null;
   const fields = ['idempotencyKey', 'requestId', 'transport'];
@@ -8922,7 +8931,13 @@ export class BatonApplication {
 
   _semanticActions(current, view, principal, context = null) {
     const candidates = [];
-    if (view.phase === 'awaiting_plan_approval') candidates.push({ kind: 'approve_plan', source: null, target: null });
+    if (view.phase === 'awaiting_plan_approval') {
+      candidates.push({
+        kind: 'approve_plan',
+        source: view.nextActions?.find((action) => action.kind === 'approve_plan') ?? null,
+        target: { planDigest: current.plan.digest },
+      });
+    }
     for (const candidate of view.nextActions ?? []) {
       if (['adopt_result', 'select_candidate', 'send_feedback', 'revise_candidate', 'stop_member', 'semantic_review', 'integrate', 'export_result', 'retry_verification', 'resume_work'].includes(candidate.kind)
         && !candidates.some((entry) => entry.kind === candidate.kind)) {
@@ -9027,13 +9042,7 @@ export class BatonApplication {
       && (stopClosesOpenDispatchAuthority || (view.ownership?.workers ?? 0) > 0)) {
       candidates.push({ kind: 'stop', source: null, target: null });
     }
-    const eligible = context?.capabilityAuthority
-      ? candidates.filter(({ kind }) => (
-        APPLICATION_SEMANTIC_REGISTRY.actions[kind].requiredCapabilities.every(
-          (capability) => context.capabilities.includes(capability),
-        )
-      ))
-      : candidates;
+    const eligible = capabilityEligibleSemanticActions(candidates, context);
     return eligible.map(({ kind, source, target, authorityTarget = target }) => {
       const definition = APPLICATION_SEMANTIC_REGISTRY.actions[kind];
       const viewDigest = semanticViewDigest(view);
@@ -9065,9 +9074,22 @@ export class BatonApplication {
           if (!inputSchema.required.includes('recipient')) inputSchema.required.push('recipient');
         }
       }
+      const actionId = this._semanticActionId(current, view, principal, kind, authorityTarget);
+      let doInputs = {};
+      if (kind === 'approve_plan') {
+        doInputs = { planDigest: target.planDigest };
+      } else if (['answer_approval', 'answer_question', 'answer_decision'].includes(kind)) {
+        doInputs = { requestId: target.requestId, response: clone(inputSchema) };
+      } else if (['nudge_turn', 'wait_turn', 'claim_turn'].includes(kind)) {
+        const response = kind === 'nudge_turn'
+          ? { kind: 'continue', text: DEFAULT_TURN_NUDGE_MESSAGE }
+          : { kind: kind === 'wait_turn' ? 'wait' : 'settle' };
+        doInputs = { requestId: target.pauseId, response };
+      }
       return deepFreeze({
-        actionId: this._semanticActionId(current, view, principal, kind, authorityTarget),
+        actionId,
         kind,
+        do: { action: { kind, actionId }, inputs: doInputs },
         label: definition.label,
         summary: definition.summary,
         inputSchema,
@@ -10604,7 +10626,15 @@ export class BatonApplication {
       this._authorizeRecursiveCommand('run.context', request.runId, principal, context);
     }
     const supplied = Object.keys(request.inputs).sort();
-    const allowed = Object.keys(action.inputSchema.properties).sort();
+    const allowed = Object.keys(action.inputSchema.properties);
+    if (action.kind === 'approve_plan') {
+      if (Object.hasOwn(request.inputs, 'planDigest')
+        && request.inputs.planDigest !== action.target?.planDigest) {
+        throw applicationError('Run action inputs are invalid', 'application_action_input_invalid');
+      }
+      allowed.push('planDigest');
+    }
+    allowed.sort();
     const required = [...(action.inputSchema.required ?? [])].sort();
     if (supplied.some((field) => !allowed.includes(field)) || required.some((field) => !supplied.includes(field))) {
       throw applicationError('Run action inputs are invalid', 'application_action_input_invalid');

@@ -832,7 +832,8 @@ export function batonCliHelp(topic = 'application') {
   const registry = APPLICATION_SEMANTIC_REGISTRY;
   const commandById = new Map(registry.cli.commands.map((command) => [command.id, command]));
   let definition = registry.cli.helpTopics[topic];
-  if (definition?.aliasFor) definition = registry.cli.helpTopics[definition.aliasFor];
+  const aliasTopic = definition?.aliasFor ?? null;
+  if (aliasTopic) definition = registry.cli.helpTopics[aliasTopic];
   const actionEntry = Object.entries(registry.actions).find(([, candidate]) => candidate.helpTopic === topic);
   const action = actionEntry?.[1];
   if (!definition && action) {
@@ -856,6 +857,10 @@ export function batonCliHelp(topic = 'application') {
   if (selectorRule) blocks.push(selectorRule.description);
   blocks.push(...(definition.paragraphs ?? []));
   if (action) blocks.push(`${action.label}\n${action.summary}`);
+  const operation = registry.operations[topic];
+  if (!aliasTopic && operation?.deprecated && operation.aliases.length > 0) {
+    blocks.push(`Deprecated: use baton ${operation.aliases[0].replaceAll('.', ' ')}.`);
+  }
   return blocks.join('\n\n');
 }
 
@@ -880,7 +885,7 @@ function compactRunResult(result) {
 function compactNextActions(actions) {
   if (!Array.isArray(actions)) return [];
   const allowed = new Set([
-    'kind', 'actionId', 'planDigest', 'requestId', 'role', 'reason', 'state',
+    'kind', 'actionId', 'planDigest', 'requestId', 'role', 'reason', 'state', 'do',
   ]);
   return actions.map((action) => Object.fromEntries(Object.entries(action ?? {})
     .filter(([key]) => allowed.has(key))));
@@ -894,6 +899,7 @@ function compactSemanticActions(actions) {
     label: action.label,
     summary: action.summary,
     destructive: action.destructive === true,
+    ...(record(action.do) ? { do: action.do } : {}),
     ...(Array.isArray(action.choices) && action.choices.length > 0
       ? { choices: action.choices } : {}),
     ...(action.help?.topic ? { help: `baton help ${action.help.topic}` } : {}),
@@ -1105,8 +1111,20 @@ function parseReviewStart(args, objective, idempotencyKey) {
   return { kind: 'command', name: 'run.start', args: { intent }, idempotencyKey };
 }
 
-export function parseBatonCli(rawArgs) {
+function resolveCanonicalCliArgs(rawArgs) {
   const args = [...rawArgs];
+  const aliases = [...APPLICATION_SEMANTIC_REGISTRY.aliases.cli]
+    .sort((left, right) => right.canonical.length - left.canonical.length);
+  for (const alias of aliases) {
+    if (alias.canonical.length > args.length
+      || !alias.canonical.every((part, index) => args[index] === part)) continue;
+    return [...alias.legacy, ...args.slice(alias.canonical.length)];
+  }
+  return args;
+}
+
+export function parseBatonCli(rawArgs) {
+  const args = resolveCanonicalCliArgs(rawArgs);
   if (args.length === 0 || (args.length === 1 && ['--help', '-h'].includes(args[0]))) {
     return { kind: 'help', topic: 'application' };
   }
@@ -1184,6 +1202,11 @@ export function parseBatonCli(rawArgs) {
     const exact = route(args.shift());
     noRemainder(args);
     return { kind: 'route', exact };
+  }
+  if (args[0] === 'runs' && args[1] === 'list') {
+    args.splice(0, 2);
+    noRemainder(args);
+    return { kind: 'command', name: 'runs.list', args: {}, idempotencyKey };
   }
   if (args[0] === 'review') {
     args.shift();

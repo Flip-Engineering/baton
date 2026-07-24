@@ -593,6 +593,111 @@ const authorizedActions = Object.fromEntries(Object.entries(actions).map(([kind,
   { ...definition, requiredCapabilities: APPLICATION_ACTION_CAPABILITIES[kind] },
 ]));
 
+const OPERATION_ALIASES = {
+  'run.list': {
+    operation: 'runs.list',
+    cli: { canonical: ['run', 'list'], legacy: ['runs', 'list'] },
+  },
+  'run.view': {
+    operation: 'run.inspect',
+    cli: { canonical: ['run', 'view'], legacy: ['run', 'show'] },
+  },
+  'run.watch': {
+    operation: 'run.follow',
+    cli: null,
+  },
+  'run.member.view': {
+    operation: 'run.workstreams',
+    cli: { canonical: ['run', 'member', 'view'], legacy: ['run', 'workstreams'] },
+  },
+  'run.member.send': {
+    operation: 'run.workstream.notify',
+    cli: { canonical: ['run', 'member', 'send'], legacy: ['run', 'notify'] },
+  },
+  'run.member.stop': {
+    operation: 'run.workstream.stop',
+    cli: { canonical: ['run', 'member', 'stop'], legacy: ['run', 'stop-member'] },
+  },
+  'run.do': {
+    operation: 'run.act',
+    cli: { canonical: ['run', 'do'], legacy: ['run', 'do'] },
+  },
+  'run.resume': {
+    operation: 'run.resume_work',
+    cli: { canonical: ['run', 'resume'], legacy: ['run', 'resume'] },
+  },
+  'run.retry': {
+    operation: 'run.retry_verification',
+    cli: { canonical: ['run', 'retry'], legacy: ['run', 'retry'] },
+  },
+};
+
+const OPERATION_CANONICAL_NAMES = {
+  'application.help': 'application.help',
+  'runs.list': 'run.list',
+  'run.start': 'run.start',
+  'run.inspect': 'run.view',
+  'run.episode': 'run.view',
+  'run.workstreams': 'run.member.view',
+  'run.workstream.notify': 'run.member.send',
+  'run.workstream.stop': 'run.member.stop',
+  'run.act': 'run.do',
+  'run.stop': 'run.stop',
+};
+
+const ACTION_OPERATIONS = {
+  context_eval: 'context.eval',
+  context_retry: 'context.retry',
+  context_reduce: 'context.reduce',
+  context_map: 'context.map',
+  context_search: 'context.eval',
+  context_chunk: 'context.eval',
+  context_coverage: 'context.eval',
+  approve_plan: 'run.approve',
+  answer_approval: 'run.answer',
+  answer_question: 'run.answer',
+  answer_decision: 'run.answer',
+  nudge_turn: 'run.answer',
+  wait_turn: 'run.answer',
+  claim_turn: 'run.answer',
+  send: 'run.send',
+  interrupt: 'run.interrupt',
+  adopt_result: 'run.adopt',
+  select_candidate: 'run.select',
+  send_feedback: 'run.feedback',
+  revise_candidate: 'run.revise',
+  stop_member: 'run.member.stop',
+  semantic_review: 'run.review',
+  integrate: 'run.integrate',
+  export_result: 'run.export',
+  retry_verification: 'run.retry',
+  resume_work: 'run.resume',
+  stop: 'run.stop',
+};
+
+function annotateRegistryEntries() {
+  for (const [name, definition] of Object.entries(operations)) {
+    const canonicalName = OPERATION_CANONICAL_NAMES[name];
+    const aliases = Object.entries(OPERATION_ALIASES)
+      .filter(([, alias]) => alias.operation === name)
+      .map(([canonicalAlias]) => canonicalAlias);
+    Object.defineProperties(definition, {
+      aliases: { value: freeze(aliases), enumerable: false },
+      canonicalName: { value: canonicalName, enumerable: false },
+      deprecated: { value: canonicalName !== name, enumerable: false },
+      reconcilable: { value: name !== 'application.shutdown', enumerable: false },
+    });
+  }
+  for (const [kind, definition] of Object.entries(authorizedActions)) {
+    Object.defineProperties(definition, {
+      operation: { value: ACTION_OPERATIONS[kind], enumerable: false },
+      deprecated: { value: false, enumerable: false },
+    });
+  }
+}
+
+annotateRegistryEntries();
+
 const cliCommands = [
   ['explore.objective', 'run.start', null, 'baton explore OBJECTIVE [--exact HARNESS/MODEL@EFFORT] [--profile PROFILE] [--scope PATHS]'],
   ['review.objective', 'run.start', null, 'baton review OBJECTIVE --exact HARNESS/MODEL@EFFORT --exact HARNESS/MODEL@EFFORT [--profile PROFILE] [--scope PATHS]'],
@@ -637,6 +742,22 @@ const cliCommands = [
   helpTopic: action ? actions[action].helpTopic : operation ? operations[operation].helpTopic : 'run',
   usage,
 }));
+
+for (const command of cliCommands) {
+  const alias = Object.values(OPERATION_ALIASES).find(({ operation, cli: projection }) => (
+    projection
+      && operation === command.operation
+      && projection.legacy.join(' ') !== projection.canonical.join(' ')
+      && command.id === projection.legacy.join('.')
+  ));
+  Object.defineProperties(command, {
+    deprecated: { value: Boolean(alias), enumerable: false },
+    replacedBy: {
+      value: alias ? `baton ${alias.cli.canonical.join(' ')}` : null,
+      enumerable: false,
+    },
+  });
+}
 
 const cli = {
   defaultHelpTopic: 'application',
@@ -834,9 +955,32 @@ const core = {
   },
 };
 
+const aliases = freeze({
+  operations: Object.fromEntries(Object.entries(OPERATION_ALIASES)
+    .map(([canonicalName, definition]) => [canonicalName, definition.operation])),
+  cli: Object.values(OPERATION_ALIASES)
+    .filter(({ cli: projection }) => projection)
+    .map(({ operation, cli: projection }) => ({
+      operation,
+      canonical: projection.canonical,
+      legacy: projection.legacy,
+    })),
+});
+const authorityDigest = createHash('sha256')
+  .update(JSON.stringify(canonical(core))).digest('hex');
+const presentationDigest = createHash('sha256').update(JSON.stringify(canonical({
+  aliases,
+  deprecatedOperations: Object.entries(operations)
+    .filter(([, definition]) => definition.deprecated)
+    .map(([name]) => name),
+}))).digest('hex');
+
 export const APPLICATION_SEMANTIC_REGISTRY = freeze({
   ...core,
-  digest: createHash('sha256').update(JSON.stringify(canonical(core))).digest('hex'),
+  aliases,
+  authorityDigest,
+  presentationDigest,
+  digest: authorityDigest,
 });
 
 const PROVIDER_TERMINAL_GUIDANCE = freeze({
@@ -937,3 +1081,9 @@ export function projectTypedTerminalCause({
 }
 
 export function applicationSemanticRegistry() { return APPLICATION_SEMANTIC_REGISTRY; }
+
+export function applicationOperationAliasMap(
+  registry = APPLICATION_SEMANTIC_REGISTRY,
+) {
+  return freeze({ ...registry.aliases.operations });
+}
