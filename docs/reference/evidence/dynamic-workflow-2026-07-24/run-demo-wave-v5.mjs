@@ -284,6 +284,13 @@ try {
     for (const entry of progress.members) {
       if (entry.terminal || entry.phase === 'work_completed') terminalRoles.add(entry.role);
     }
+    // Held-starvation rule: if every NON-held member is terminal, the held members' stage
+    // input can never arrive — settle instead of idling to the watchdog (the v8 zombie:
+    // drafter failed, critic held forever, and a volatile view kept resetting the stall clock).
+    if (terminalRoles.size > 0 && progress.members.every((entry) => terminalRoles.has(entry.role) || holds.has(entry.role))) {
+      log('settle: all non-held members terminal; held members starved of stage input');
+      break;
+    }
     if (Date.now() - lastProgressAt > 25 * 60 * 1000) { log('stalled: no status-view change in 25min'); break; }
     if (Date.now() - startedAt > 3 * 60 * 60 * 1000) { log('watchdog (3h hard cap)'); break; }
   }
