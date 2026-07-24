@@ -376,6 +376,25 @@ export function wrapProse(worker, text) {
   return { worker, text, provenance: 'model-authored', untrusted: true };
 }
 
+// Issue #33: seal the already-sanitized application projection before it crosses a provider or
+// driver message boundary. Grammar/admission belongs to CoordinationStore; this constructor
+// rejects extension bags and prevents downstream mutation of the closed projection union.
+export function createScratchpadEntry(fields) {
+  const keys = [
+    'schemaVersion', 'entryId', 'entryDigest', 'contentDigest', 'runId', 'scope',
+    'authorWorkerId', 'authorTaskId', 'ordinal', 'kind', 'createdEvent', 'createdAt',
+    'candidateState', 'source', 'content',
+  ];
+  if (!fields || typeof fields !== 'object' || Array.isArray(fields)
+    || Object.keys(fields).sort().join(',') !== keys.sort().join(',')
+    || fields.schemaVersion !== 1 || fields.candidateState !== 'candidate'
+    || !['note', 'plan', 'doubt', 'link'].includes(fields.kind)
+    || fields.content?.kind !== fields.kind) {
+    throw new ValidationError(['scratchpad projection entry is invalid']);
+  }
+  return deepFreeze(JSON.parse(JSON.stringify(fields)));
+}
+
 // ---------------------------------------------------------------------------
 // Attention-text hygiene (KG-3 rule 7, v2-P1-5). Relocated here from the app layer
 // so the coordinator can import it without an app→coordinator cycle: messages.mjs

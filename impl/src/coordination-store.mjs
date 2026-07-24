@@ -113,6 +113,10 @@ const PROJECTION_CHECKPOINT_FIELDS = Object.freeze([
   '_replManifestAdmissions',
   // REPL-2 (Part G rule 23): gains _replBindings, _replBindingHistory, _replBindingFences.
   '_replBindings', '_replBindingHistory', '_replBindingFences',
+  // Issue #33: task-ephemeral scratchpad entries, scope indexes/fences, live elevation
+  // commitments, and bounded prose-free reap receipts are one ledger projection.
+  '_scratchpadEntries', '_scratchpadEntriesByScope', '_scratchpadFences',
+  '_scratchpadElevations', '_scratchpadReaps',
   // KG-1 (Part A rule 5): gains _projectionInputFence, a plain replay-derived counter.
   '_projectionInputFence',
 ]);
@@ -427,6 +431,174 @@ function replBindingContentDigest(core) {
   });
 }
 
+// Issue #33 — typed task-horizon scratchpad bounds. These are deployment constants, not
+// caller policy, so live admission and replay use the same ceilings.
+export const MAX_SCRATCHPAD_WRITE_REQUEST_BYTES = 16_384;
+export const MAX_SCRATCHPAD_ENTRY_BYTES = 8_192;
+export const MAX_SCRATCHPAD_WORKER_ENTRIES = 128;
+export const MAX_SCRATCHPAD_SHARED_ENTRIES = 512;
+export const MAX_SCRATCHPAD_BATCH_BYTES = 2 * 1024 * 1024;
+export const MAX_SCRATCHPAD_SNAPSHOT_REAPS = 256;
+export const MAX_SCRATCHPAD_SNAPSHOT_REAP_BYTES = 262_144;
+export const MAX_SCRATCHPAD_STOP_PARTITIONS_PER_PASS = 64;
+
+const SCRATCHPAD_ENTRY_ID = /^scratchpad-entry:[a-f0-9]{64}$/u;
+const SCRATCHPAD_DIGEST = /^[a-f0-9]{64}$/u;
+const SCRATCHPAD_SCOPE = /^(?:shared|worker:[A-Za-z0-9._:-]{1,256})$/u;
+const SCRATCHPAD_IDEMPOTENCY_KEY = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/u;
+const SCRATCHPAD_KINDS = new Set(['note', 'plan', 'doubt', 'link']);
+const SCRATCHPAD_RELATIONS = new Set(['reference', 'supports', 'contradicts', 'depends_on']);
+const SCRATCHPAD_STEP_STATES = new Set(['todo', 'doing', 'done']);
+
+function scratchpadScopeKey(runId, scope) { return JSON.stringify([runId, scope]); }
+
+function scratchpadExact(value, fields) {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    && (Object.getPrototypeOf(value) === Object.prototype || Object.getPrototypeOf(value) === null)
+    && Object.keys(value).sort().join(',') === [...fields].sort().join(',');
+}
+
+// Short-circuiting JSON-compatible own-data-property walker. It deliberately never reads a
+// property before checking its descriptor and never invokes JSON.stringify on untrusted input.
+function scratchpadRawBytes(value, limit = MAX_SCRATCHPAD_WRITE_REQUEST_BYTES) {
+  const seen = new Set();
+  let bytes = 0;
+  const add = (amount) => {
+    bytes += amount;
+    if (bytes > limit) throw new CoordinationRefusal('scratchpad entry exceeds the raw request ceiling', 'scratchpad_entry_invalid');
+  };
+  const walk = (node) => {
+    if (node === null) { add(4); return; }
+    if (typeof node === 'string') { add(Buffer.byteLength(JSON.stringify(node))); return; }
+    if (typeof node === 'boolean') { add(node ? 4 : 5); return; }
+    if (typeof node === 'number') {
+      if (!Number.isFinite(node)) throw new CoordinationRefusal('scratchpad entry is not JSON-compatible', 'scratchpad_entry_invalid');
+      add(Buffer.byteLength(JSON.stringify(node))); return;
+    }
+    if (typeof node !== 'object') throw new CoordinationRefusal('scratchpad entry is not JSON-compatible', 'scratchpad_entry_invalid');
+    if (seen.has(node)) throw new CoordinationRefusal('scratchpad entry is cyclic', 'scratchpad_entry_invalid');
+    seen.add(node);
+    const symbols = Object.getOwnPropertySymbols(node);
+    if (symbols.length > 0) throw new CoordinationRefusal('scratchpad entry has symbol keys', 'scratchpad_entry_invalid');
+    if (Array.isArray(node)) {
+      add(2);
+      for (let index = 0; index < node.length; index += 1) {
+        if (!Object.hasOwn(node, index)) throw new CoordinationRefusal('scratchpad arrays may not be sparse', 'scratchpad_entry_invalid');
+        const descriptor = Object.getOwnPropertyDescriptor(node, String(index));
+        if (!descriptor || !Object.hasOwn(descriptor, 'value')) throw new CoordinationRefusal('scratchpad entry has an accessor', 'scratchpad_entry_invalid');
+        if (index > 0) add(1);
+        walk(descriptor.value);
+      }
+    } else {
+      const prototype = Object.getPrototypeOf(node);
+      if (prototype !== Object.prototype && prototype !== null) throw new CoordinationRefusal('scratchpad entry record prototype is invalid', 'scratchpad_entry_invalid');
+      const keys = Object.keys(node).sort();
+      add(2);
+      for (const [index, key] of keys.entries()) {
+        const descriptor = Object.getOwnPropertyDescriptor(node, key);
+        if (!descriptor || !Object.hasOwn(descriptor, 'value')) throw new CoordinationRefusal('scratchpad entry has an accessor', 'scratchpad_entry_invalid');
+        if (index > 0) add(1);
+        add(Buffer.byteLength(JSON.stringify(key)) + 1);
+        walk(descriptor.value);
+      }
+    }
+    seen.delete(node);
+  };
+  walk(value);
+  return bytes;
+}
+
+function scratchpadString(value, maxBytes) {
+  if (typeof value !== 'string') throw new CoordinationRefusal('scratchpad string is invalid', 'scratchpad_entry_invalid');
+  const normalized = value.normalize('NFKC').trim();
+  if (normalized.length === 0 || normalized.includes('\0') || !validUnicodeScalarString(normalized)
+    || Buffer.byteLength(normalized) > maxBytes) {
+    throw new CoordinationRefusal('scratchpad string is invalid', 'scratchpad_entry_invalid');
+  }
+  return normalized;
+}
+
+function normalizeScratchpadEntry(entry, resolveEntry = null) {
+  scratchpadRawBytes(entry);
+  if (!scratchpadExact(entry, Object.hasOwn(entry ?? {}, 'kind') ? (
+    entry.kind === 'note' ? ['kind', 'text']
+      : entry.kind === 'plan' ? ['kind', 'objective', 'steps', 'supersedes']
+        : entry.kind === 'doubt' ? ['kind', 'question', 'context']
+          : entry.kind === 'link' ? ['kind', 'label', 'relation', 'target'] : []
+  ) : [])) {
+    throw new CoordinationRefusal('scratchpad entry has unknown or missing fields', 'scratchpad_entry_invalid');
+  }
+  let normalized;
+  if (entry.kind === 'note') {
+    normalized = { kind: 'note', text: scratchpadString(entry.text, 2_048) };
+  } else if (entry.kind === 'plan') {
+    if (!Array.isArray(entry.steps) || entry.steps.length < 1 || entry.steps.length > 16
+      || entry.steps.some((step) => !scratchpadExact(step, ['text', 'state'])
+        || !SCRATCHPAD_STEP_STATES.has(step.state))) {
+      throw new CoordinationRefusal('scratchpad plan steps are invalid', 'scratchpad_entry_invalid');
+    }
+    const supersedes = entry.supersedes;
+    if (supersedes !== null && (!scratchpadExact(supersedes, ['entryId', 'entryDigest'])
+      || !SCRATCHPAD_ENTRY_ID.test(supersedes.entryId ?? '')
+      || !SCRATCHPAD_DIGEST.test(supersedes.entryDigest ?? '')
+      || (resolveEntry && !resolveEntry(supersedes.entryId, supersedes.entryDigest, { kind: 'plan', ownOnly: true })))) {
+      throw new CoordinationRefusal('scratchpad plan supersedes binding is invalid', 'scratchpad_entry_invalid');
+    }
+    normalized = {
+      kind: 'plan', objective: scratchpadString(entry.objective, 512),
+      steps: entry.steps.map((step) => ({ text: scratchpadString(step.text, 512), state: step.state })),
+      supersedes: supersedes === null ? null : clone(supersedes),
+    };
+  } else if (entry.kind === 'doubt') {
+    if (entry.context !== null && typeof entry.context !== 'string') {
+      throw new CoordinationRefusal('scratchpad doubt context is invalid', 'scratchpad_entry_invalid');
+    }
+    normalized = {
+      kind: 'doubt', question: scratchpadString(entry.question, 1_024),
+      context: entry.context === null ? null : scratchpadString(entry.context, 2_048),
+    };
+  } else if (entry.kind === 'link') {
+    if (!SCRATCHPAD_RELATIONS.has(entry.relation) || !entry.target || typeof entry.target !== 'object') {
+      throw new CoordinationRefusal('scratchpad link is invalid', 'scratchpad_entry_invalid');
+    }
+    let target;
+    if (entry.target.type === 'url' && scratchpadExact(entry.target, ['type', 'url'])) {
+      let parsed;
+      try { parsed = new URL(scratchpadString(entry.target.url, 2_048)); }
+      catch { throw new CoordinationRefusal('scratchpad URL is invalid', 'scratchpad_entry_invalid'); }
+      if (parsed.protocol !== 'https:' || !parsed.hostname || parsed.username || parsed.password
+        || Buffer.byteLength(parsed.href) > 2_048) {
+        throw new CoordinationRefusal('scratchpad URL is invalid', 'scratchpad_entry_invalid');
+      }
+      target = { type: 'url', url: parsed.href };
+    } else if (entry.target.type === 'repo_path' && scratchpadExact(entry.target, ['type', 'path'])) {
+      const path = scratchpadString(entry.target.path, 512);
+      const segments = path.split('/');
+      if (path.startsWith('/') || path.includes('\\') || /^[A-Za-z]:($|\/)/u.test(path)
+        || segments.some((segment) => segment === '' || segment === '.' || segment === '..')) {
+        throw new CoordinationRefusal('scratchpad repository path is invalid', 'scratchpad_entry_invalid');
+      }
+      target = { type: 'repo_path', path: segments.join('/') };
+    } else if (entry.target.type === 'entry' && scratchpadExact(entry.target, ['type', 'entryId', 'entryDigest'])
+      && SCRATCHPAD_ENTRY_ID.test(entry.target.entryId ?? '') && SCRATCHPAD_DIGEST.test(entry.target.entryDigest ?? '')
+      && (!resolveEntry || resolveEntry(entry.target.entryId, entry.target.entryDigest, { ownOrShared: true }))) {
+      target = clone(entry.target);
+    } else {
+      throw new CoordinationRefusal('scratchpad link target is invalid', 'scratchpad_entry_invalid');
+    }
+    normalized = {
+      kind: 'link', label: scratchpadString(entry.label, 256),
+      relation: entry.relation, target,
+    };
+  } else {
+    throw new CoordinationRefusal('scratchpad kind is invalid', 'scratchpad_entry_invalid');
+  }
+  if (canonicalBytes(normalized) > MAX_SCRATCHPAD_ENTRY_BYTES) {
+    throw new CoordinationRefusal('scratchpad canonical content exceeds its ceiling', 'scratchpad_entry_invalid');
+  }
+  return freeze(normalized);
+}
+
 export class CoordinationIntegrityError extends Error {
   constructor(message, code = 'coordination_integrity') { super(message); this.name = 'CoordinationIntegrityError'; this.code = code; }
 }
@@ -512,7 +684,7 @@ export class CoordinationStore {
         || typeof this._contextSourceAttest !== 'function') {
         throw new TypeError('Context Program authority requires one deployment tree, environment, and artifact resolver identity');
       }
-    } else if (opts.deploymentBaseSha !== undefined || opts.contextEnvironmentDigest !== undefined
+    } else if (opts.contextEnvironmentDigest !== undefined
       || opts.contextReferenceIdentity !== undefined || opts.contextReferenceRead !== undefined
       || opts.contextSourceAttest !== undefined) {
       throw new TypeError('Context Program dependencies require Context Program policy');
@@ -778,8 +950,18 @@ export class CoordinationStore {
     });
   }
 
-  _projectionCheckpointPayload() {
-    return Object.fromEntries(PROJECTION_CHECKPOINT_FIELDS.map((field) => [field, this[field]]));
+  _projectionCheckpointPayload({ durable = false } = {}) {
+    const payload = Object.fromEntries(PROJECTION_CHECKPOINT_FIELDS.map((field) => [field, this[field]]));
+    // Diagnostic projection inspection must not copy reaped scratchpad prose back into the
+    // projection surface through the parsed-event cache. The durable checkpoint writer opts
+    // into its authoritative parsed-prefix cache; the append-only ledger remains the source.
+    if (!durable) {
+      payload._events = this._events.map((event) => event.kind === 'scratchpad.entry_written'
+        && !this._scratchpadEntries.has(event.payload.entryId)
+        ? freeze({ ...clone(event), payload: freeze({ ...clone(event.payload), content: '[reaped]' }) })
+        : event);
+    }
+    return payload;
   }
 
   _writeProjectionCheckpoint() {
@@ -798,7 +980,7 @@ export class CoordinationStore {
         'coordination_checkpoint_ledger_drift',
       );
     }
-    const projectionBytes = serialize(this._projectionCheckpointPayload());
+    const projectionBytes = serialize(this._projectionCheckpointPayload({ durable: true }));
     const envelope = {
       schemaVersion: 1,
       authorityDigest: this._checkpointAuthorityDigest,
@@ -936,6 +1118,11 @@ export class CoordinationStore {
     // REPL-2: immutable versioned bindings keyed by JSON.stringify([runId, scope, name])
     // (Part A rule 2); the fence is a per-(runId, scope) replay-derivable counter (Part C).
     this._replBindings = new Map(); this._replBindingHistory = new Map(); this._replBindingFences = new Map();
+    // Issue #33 scratchpad projection. Entry rows are immutable; only _apply mutates these maps.
+    // Scope indexes contain entry IDs, so pure reads and folds never scan _events/all entries.
+    this._scratchpadEntries = new Map(); this._scratchpadEntriesByScope = new Map();
+    this._scratchpadFences = new Map(); this._scratchpadElevations = new Map();
+    this._scratchpadReaps = [];
   }
 
   _configureAdvisoryFeedCards(cards) {
@@ -1199,6 +1386,8 @@ export class CoordinationStore {
     if (batchKind !== null && ![
       'recovery_refinement_create_claim', 'recovery_dispatch_refusal',
       'goal_plan_node_dispatch', 'goal_plan_wave_dispatch', 'goal_plan_recovery_dispatch',
+      'scratchpad_task_settlement', 'scratchpad_link_citation',
+      'scratchpad_workflow_settlement', 'scratchpad_stop_cleanup',
     ].includes(batchKind)) {
       throw new TypeError('coordination batch kind is invalid');
     }
@@ -1237,6 +1426,9 @@ export class CoordinationStore {
       ...(batchKind === null ? {} : { batch: freeze({ schemaVersion: 1, kind: batchKind, id: batchId, index, count: entries.length }) }),
     }));
     const eventBytes = Buffer.from(`${events.map((event) => JSON.stringify(event)).join('\n')}\n`, 'utf8');
+    if (batchKind?.startsWith('scratchpad_') && eventBytes.byteLength > MAX_SCRATCHPAD_BATCH_BYTES) {
+      throw new CoordinationRefusal('scratchpad batch exceeds its byte ceiling', 'scratchpad_batch_oversize');
+    }
     this._appendFile(this.file, eventBytes, undefined);
     this._loadedLedgerHash.update(eventBytes);
     this._loadedLedgerIdentity = freeze({
@@ -7398,6 +7590,14 @@ export class CoordinationStore {
     else if (event.kind === 'repl.binding_set' || event.kind === 'repl.binding_dropped') {
       admittedRunId = this._replManifestAdmissions.get(p?.manifestDigest)?.runId ?? null;
     }
+    else if (event.kind === 'scratchpad.entry_written') admittedRunId = p?.runId ?? null;
+    else if (event.kind === 'scratchpad.entry_elevated') {
+      const source = this._scratchpadEntries.get(p?.sourceEntryId);
+      admittedRunId = source?.runId ?? p?.runId ?? null;
+      if (source && source.runId !== p?.runId) {
+        throw new CoordinationIntegrityError('scratchpad elevation Run binding is invalid', 'scratchpad_entry_integrity');
+      }
+    }
     if (admittedRunId !== null && (this._runStopByTarget.has(admittedRunId) || this._runStops.has(admittedRunId))) {
       throw new CoordinationIntegrityError(`effect ${event.kind} was admitted after run ${admittedRunId} began stopping`, 'run_stopping');
     }
@@ -7900,6 +8100,126 @@ export class CoordinationStore {
       const decision = this._reuseDecisions.get(p.decisionId);
       if (!decision || Object.keys(p).sort().join(',') !== 'decisionId,requestDigest' || p.requestDigest !== decision.requestDigest) {
         throw new CoordinationIntegrityError('reuse decision request alias is invalid', 'reuse_decision_integrity');
+      }
+    } else if (event.kind === 'scratchpad.entry_written') {
+      const fields = [
+        'schemaVersion', 'runId', 'taskId', 'workerId', 'scope', 'ordinal',
+        'entryId', 'entryDigest', 'contentDigest', 'kind', 'content',
+      ];
+      if (!scratchpadExact(p, fields) || p.schemaVersion !== 1 || !validRunId(p.runId)
+        || !validRunId(p.taskId) || !validRunId(p.workerId)
+        || p.scope !== `worker:${p.workerId}` || !Number.isSafeInteger(p.ordinal) || p.ordinal <= 0
+        || !SCRATCHPAD_ENTRY_ID.test(p.entryId ?? '') || !SCRATCHPAD_DIGEST.test(p.entryDigest ?? '')
+        || !SCRATCHPAD_DIGEST.test(p.contentDigest ?? '') || !SCRATCHPAD_KINDS.has(p.kind)
+        || p.content?.kind !== p.kind
+        || p.contentDigest !== canonicalDigest(p.content)
+        || p.entryId !== `scratchpad-entry:${canonicalDigest({
+          runId: p.runId, taskId: p.taskId, workerId: p.workerId, scope: p.scope,
+          ordinal: p.ordinal, mintSeq: event.seq,
+        })}`
+        || p.entryDigest !== canonicalDigest({
+          schemaVersion: 1, entryId: p.entryId, runId: p.runId, taskId: p.taskId,
+          workerId: p.workerId, scope: p.scope, ordinal: p.ordinal, kind: p.kind,
+          contentDigest: p.contentDigest, content: p.content,
+        })) {
+        throw new CoordinationIntegrityError('scratchpad written entry is invalid', 'scratchpad_entry_integrity');
+      }
+      let normalized;
+      try { normalized = normalizeScratchpadEntry(p.content); }
+      catch { throw new CoordinationIntegrityError('scratchpad written content is invalid', 'scratchpad_entry_integrity'); }
+      if (canonicalDigest(normalized) !== canonicalDigest(p.content) || this._scratchpadEntries.has(p.entryId)) {
+        throw new CoordinationIntegrityError('scratchpad written entry changed during replay', 'scratchpad_entry_integrity');
+      }
+      const scopeKey = scratchpadScopeKey(p.runId, p.scope);
+      const ids = this._scratchpadEntriesByScope.get(scopeKey) ?? [];
+      if (p.ordinal !== ids.length + 1) {
+        throw new CoordinationIntegrityError('scratchpad ordinal is invalid', 'scratchpad_entry_integrity');
+      }
+      const row = freeze({
+        schemaVersion: 1, entryId: p.entryId, entryDigest: p.entryDigest,
+        contentDigest: p.contentDigest, runId: p.runId, taskId: p.taskId,
+        workerId: p.workerId, scope: p.scope, ordinal: p.ordinal, kind: p.kind,
+        content: clone(p.content), createdEvent: event.seq, createdAt: event.ts,
+        source: null, scratchFactId: null,
+      });
+      this._scratchpadEntries.set(p.entryId, row);
+      this._scratchpadEntriesByScope.set(scopeKey, freeze([...ids, p.entryId]));
+      this._scratchpadFences.set(scopeKey, (this._scratchpadFences.get(scopeKey) ?? 0) + 1);
+    } else if (event.kind === 'scratchpad.entry_elevated') {
+      const fields = [
+        'schemaVersion', 'runId', 'scope', 'sourceEntryId', 'sourceEntryDigest',
+        'sourceEvent', 'entryId', 'entryDigest', 'contentDigest', 'kind', 'scratchFactId',
+      ];
+      const source = this._scratchpadEntries.get(p?.sourceEntryId);
+      const expectedEntryId = source ? `scratchpad-entry:${canonicalDigest({
+        runId: source.runId, scope: 'shared', sourceEntryId: source.entryId,
+        sourceEntryDigest: source.entryDigest, elevationSeq: event.seq,
+      })}` : null;
+      const expectedDigest = source ? canonicalDigest({
+        schemaVersion: 1, entryId: expectedEntryId, runId: source.runId, scope: 'shared',
+        sourceEntryId: source.entryId, sourceEntryDigest: source.entryDigest,
+        sourceEvent: source.createdEvent, kind: source.kind,
+        contentDigest: source.contentDigest, content: source.content,
+      }) : null;
+      if (!scratchpadExact(p, fields) || p.schemaVersion !== 1 || p.scope !== 'shared'
+        || !source || source.runId !== p.runId || source.entryDigest !== p.sourceEntryDigest
+        || source.createdEvent !== p.sourceEvent || source.contentDigest !== p.contentDigest
+        || source.kind !== p.kind || p.entryId !== expectedEntryId || p.entryDigest !== expectedDigest
+        || (source.kind === 'note'
+          ? !/^scratch-fact:[a-f0-9]{64}$/u.test(p.scratchFactId ?? '')
+          : p.scratchFactId !== null)) {
+        throw new CoordinationIntegrityError('scratchpad elevation is invalid', 'scratchpad_entry_integrity');
+      }
+      const scopeKey = scratchpadScopeKey(p.runId, 'shared');
+      const ids = this._scratchpadEntriesByScope.get(scopeKey) ?? [];
+      const row = freeze({
+        schemaVersion: 1, entryId: p.entryId, entryDigest: p.entryDigest,
+        contentDigest: p.contentDigest, runId: p.runId, taskId: source.taskId,
+        workerId: source.workerId, scope: 'shared', ordinal: null, kind: p.kind,
+        content: clone(source.content), createdEvent: event.seq, createdAt: event.ts,
+        source: freeze({ entryId: source.entryId, entryDigest: source.entryDigest, eventSeq: source.createdEvent }),
+        scratchFactId: p.scratchFactId,
+      });
+      this._scratchpadEntries.set(p.entryId, row);
+      this._scratchpadEntriesByScope.set(scopeKey, freeze([...ids, p.entryId]));
+      this._scratchpadElevations.set(p.entryId, freeze({
+        runId: p.runId, sourceEntryId: source.entryId, sourceEntryDigest: source.entryDigest,
+        sharedEntryId: p.entryId, sharedEntryDigest: p.entryDigest, eventSeq: event.seq,
+      }));
+      this._scratchpadFences.set(scopeKey, (this._scratchpadFences.get(scopeKey) ?? 0) + 1);
+    } else if (event.kind === 'scratchpad.partition_reaped') {
+      const fields = [
+        'schemaVersion', 'runId', 'scope', 'taskId', 'observedFence',
+        'dispositions', 'dispositionDigest', 'basis',
+      ];
+      const scopeKey = scratchpadScopeKey(p?.runId, p?.scope);
+      const ids = this._scratchpadEntriesByScope.get(scopeKey) ?? [];
+      const rows = ids.map((id) => this._scratchpadEntries.get(id)).filter(Boolean);
+      if (!scratchpadExact(p, fields) || p.schemaVersion !== 1 || !validRunId(p.runId)
+        || !SCRATCHPAD_SCOPE.test(p.scope ?? '') || !['task_settled', 'workflow_settled', 'run_stopped'].includes(p.basis)
+        || !Number.isSafeInteger(p.observedFence) || p.observedFence < 0
+        || p.observedFence !== (this._scratchpadFences.get(scopeKey) ?? 0)
+        || !Array.isArray(p.dispositions) || p.dispositionDigest !== canonicalDigest(p.dispositions)
+        || canonicalDigest(p.dispositions.map((row) => row.entryId).sort())
+          !== canonicalDigest(rows.map((row) => row.entryId).sort())
+        || (p.scope === 'shared' ? p.taskId !== null : !validRunId(p.taskId))) {
+        throw new CoordinationIntegrityError('scratchpad reap is invalid', 'scratchpad_reap_integrity');
+      }
+      for (const row of rows) {
+        this._scratchpadEntries.delete(row.entryId);
+        if (p.scope === 'shared') this._scratchpadElevations.delete(row.entryId);
+      }
+      this._scratchpadEntriesByScope.delete(scopeKey);
+      this._scratchpadFences.set(scopeKey, p.observedFence + 1);
+      const receipt = freeze({
+        eventSeq: event.seq, runId: p.runId, scope: p.scope, taskId: p.taskId,
+        basis: p.basis, observedFence: p.observedFence,
+        dispositions: clone(p.dispositions), dispositionDigest: p.dispositionDigest,
+      });
+      this._scratchpadReaps.push(receipt);
+      while (this._scratchpadReaps.length > MAX_SCRATCHPAD_SNAPSHOT_REAPS
+        || canonicalBytes(this._scratchpadReaps) > MAX_SCRATCHPAD_SNAPSHOT_REAP_BYTES) {
+        this._scratchpadReaps.shift();
       }
     } else if (event.kind === 'scratch.fact_posted') {
       this._scratchFacts.set(p.id, freeze({ ...clone(p), createdEvent: event.seq, active: true }));
@@ -10880,7 +11200,25 @@ export class CoordinationStore {
     });
   }
 
-  snapshot() { return freeze({ tasks: [...this._tasks.values()].map(clone), runs: [...this._runs.values()].map(clone), ...(this._runStops.size > 0 ? { runStops: [...this._runStops.values()].map(clone) } : {}), ...(this._runControls.size > 0 ? { runControls: [...this._runControls.values()].map(clone) } : {}), ...(this._runLineagePolicy ? { runAuthority: this.runAuthoritySnapshot() } : {}), ...(this._runResultAdoptions.size > 0 ? { runResultAdoptions: [...this._runResultAdoptions.values()].map(clone) } : {}), ...(this._runResultExports.size > 0 ? { runResultExports: [...this._runResultExports.values()].map(clone) } : {}), ...(this._contextProgramPolicy ? { context: { policy: clone(this._contextProgramPolicy), sessions: [...this._contextSessions.values()].map(clone), cells: [...this._contextCells.values()].map(clone), calls: this.contextCalls() } } : {}), ...(this._replManifestAdmissions.size > 0 ? { repl: { manifests: [...this._replManifestAdmissions.values()].map(clone) } } : {}), artifacts: [...this._artifacts.values()].map(clone), ...(this._recoveryAttemptsById.size > 0 ? { recoveryAttempts: [...this._recoveryAttemptsById.values()].map(clone) } : {}), ...(this._representationPolicy || this._representations.size > 0 ? { representations: [...this._representations.values()].map(clone) } : {}), ...(this._goalPlanPolicy || this._goals.size > 0 ? { goalPlan: { goals: [...this._goals.values()].map(clone), plans: [...this._plans.values()].map(clone), approvals: [...this._planApprovals.values()].map(clone), dispatches: [...this._planDispatches.values()].map(clone), budgetSettlements: [...this._planBudgetSettlements.values()].map(clone) } } : {}), ...(this._routePolicy ? { routeLearning: { policy: clone(this._routePolicy), observations: this.routeObservations() } } : {}), reuseDecisions: [...this._reuseDecisions.values()].map(clone), reuseRiskGuards: [...this._reuseRiskGuards.values()].map(clone), ...(this._reuseProviderGuards.size > 0 || this._reuseProviderContributions.size > 0 ? { reuseProviderGuards: [...this._reuseProviderGuards.values()].map(clone), reuseProviderContributions: [...this._reuseProviderContributions.values()].map(clone) } : {}), reusePolicy: { heads: [...this._reusePolicyHeads.values()].map(clone), transitions: this._reusePolicyTransitions.map(clone) }, ...(this._advisoryFeedCards.size > 0 || this._providerReceipts.size > 0 ? { provider: { receiptCount: this._providerReceipts.size, processingCount: this._providerProcessing.size, pendingCoordinateCount: this._providerPending.size } } : {}), evidence: [...this._evidence.values()].map(clone), scratch: { facts: [...this._scratchFacts.values()].map(clone), claims: [...this._scratchClaims.values()].map(clone), reads: this._scratchReads.map(clone) }, knowledge: { nodes: [...this._knowledgeNodes.values()].map(clone), edges: [...this._knowledgeEdges.values()].map(clone), reads: this._knowledgeReads.map(clone), ...(this._knowledgeRecallAssessments.size > 0 ? { assessments: [...this._knowledgeRecallAssessments.values()].map(clone) } : {}), contamination: this._contamination.map(clone) }, lastSeq: this._events.length }); }
+  _scratchpadSnapshot() {
+    const reaps = [...this._scratchpadReaps].sort((a, b) => b.eventSeq - a.eventSeq);
+    let retained = reaps.slice(0, MAX_SCRATCHPAD_SNAPSHOT_REAPS);
+    let truncated = retained.length < reaps.length;
+    while (retained.length > 0 && canonicalBytes(retained) > MAX_SCRATCHPAD_SNAPSHOT_REAP_BYTES) {
+      retained.pop(); truncated = true;
+    }
+    return Object.freeze({
+      entries: [...this._scratchpadEntries.values()].map(clone),
+      elevations: [...this._scratchpadElevations.values()].map(clone),
+      reaps: retained.map(clone),
+      fences: [...this._scratchpadFences.entries()].map(([key, fence]) => {
+        const [runId, scope] = JSON.parse(key); return { runId, scope, fence };
+      }),
+      scratchpadReapsTruncated: truncated,
+    });
+  }
+
+  snapshot() { return freeze({ tasks: [...this._tasks.values()].map(clone), runs: [...this._runs.values()].map(clone), ...(this._runStops.size > 0 ? { runStops: [...this._runStops.values()].map(clone) } : {}), ...(this._runControls.size > 0 ? { runControls: [...this._runControls.values()].map(clone) } : {}), ...(this._runLineagePolicy ? { runAuthority: this.runAuthoritySnapshot() } : {}), ...(this._runResultAdoptions.size > 0 ? { runResultAdoptions: [...this._runResultAdoptions.values()].map(clone) } : {}), ...(this._runResultExports.size > 0 ? { runResultExports: [...this._runResultExports.values()].map(clone) } : {}), ...(this._contextProgramPolicy ? { context: { policy: clone(this._contextProgramPolicy), sessions: [...this._contextSessions.values()].map(clone), cells: [...this._contextCells.values()].map(clone), calls: this.contextCalls() } } : {}), ...(this._replManifestAdmissions.size > 0 ? { repl: { manifests: [...this._replManifestAdmissions.values()].map(clone) } } : {}), artifacts: [...this._artifacts.values()].map(clone), ...(this._recoveryAttemptsById.size > 0 ? { recoveryAttempts: [...this._recoveryAttemptsById.values()].map(clone) } : {}), ...(this._representationPolicy || this._representations.size > 0 ? { representations: [...this._representations.values()].map(clone) } : {}), ...(this._goalPlanPolicy || this._goals.size > 0 ? { goalPlan: { goals: [...this._goals.values()].map(clone), plans: [...this._plans.values()].map(clone), approvals: [...this._planApprovals.values()].map(clone), dispatches: [...this._planDispatches.values()].map(clone), budgetSettlements: [...this._planBudgetSettlements.values()].map(clone) } } : {}), ...(this._routePolicy ? { routeLearning: { policy: clone(this._routePolicy), observations: this.routeObservations() } } : {}), reuseDecisions: [...this._reuseDecisions.values()].map(clone), reuseRiskGuards: [...this._reuseRiskGuards.values()].map(clone), ...(this._reuseProviderGuards.size > 0 || this._reuseProviderContributions.size > 0 ? { reuseProviderGuards: [...this._reuseProviderGuards.values()].map(clone), reuseProviderContributions: [...this._reuseProviderContributions.values()].map(clone) } : {}), reusePolicy: { heads: [...this._reusePolicyHeads.values()].map(clone), transitions: this._reusePolicyTransitions.map(clone) }, ...(this._advisoryFeedCards.size > 0 || this._providerReceipts.size > 0 ? { provider: { receiptCount: this._providerReceipts.size, processingCount: this._providerProcessing.size, pendingCoordinateCount: this._providerPending.size } } : {}), evidence: [...this._evidence.values()].map(clone), scratch: { facts: [...this._scratchFacts.values()].map(clone), claims: [...this._scratchClaims.values()].map(clone), reads: this._scratchReads.map(clone) }, scratchpad: this._scratchpadSnapshot(), knowledge: { nodes: [...this._knowledgeNodes.values()].map(clone), edges: [...this._knowledgeEdges.values()].map(clone), reads: this._knowledgeReads.map(clone), ...(this._knowledgeRecallAssessments.size > 0 ? { assessments: [...this._knowledgeRecallAssessments.values()].map(clone) } : {}), contamination: this._contamination.map(clone) }, lastSeq: this._events.length }); }
 
   /** Narrow current Goal/Plan index used by resident startup reconciliation. This avoids cloning
    * unrelated tasks, evidence, knowledge, Web/MCP receipts, or historical Goal/Plan versions. */
@@ -12498,6 +12836,10 @@ export class CoordinationStore {
   postScratchFact(fields, auth) {
     const prior = this._byKey.get(auth?.key);
     if (prior) return { ok: true, result: 'idempotent', event: clone(prior), fact: clone(this._scratchFacts.get(prior.payload.id)) };
+    if (fields?.namespace === 'scratchpad' || fields?.key?.startsWith('scratchpad:')
+      || fields?.resource?.startsWith('scratchpad:')) {
+      throw new CoordinationRefusal('scratchpad Scratch namespace is reserved', 'reserved_scratch_namespace');
+    }
     if (!validEnvRef(fields?.envRef)) throw new CoordinationRefusal('scratch fact requires immutable repoId/treeSha envRef', 'invalid_env_ref');
     if (!['observed', 'derived'].includes(fields.grounding)) throw new CoordinationRefusal('scratch grounding must be observed|derived', 'invalid_grounding');
     if (Object.hasOwn(fields, 'id')) throw new CoordinationRefusal('Scratch fact identity is hub-derived', 'invalid_scratch_id');
@@ -12543,6 +12885,9 @@ export class CoordinationStore {
   claimScratch(fields, auth) {
     const prior = this._byKey.get(auth?.key);
     if (prior) return { ok: true, result: 'idempotent', event: clone(prior), claim: clone(this._scratchClaims.get(prior.payload.id)) };
+    if (fields?.resource?.startsWith('scratchpad:')) {
+      throw new CoordinationRefusal('scratchpad Scratch namespace is reserved', 'reserved_scratch_namespace');
+    }
     if (!validEnvRef(fields?.envRef)) throw new CoordinationRefusal('scratch claim requires immutable repoId/treeSha envRef', 'invalid_env_ref');
     if (typeof fields.resource !== 'string' || fields.resource.length === 0) throw new CoordinationRefusal('scratch resource required', 'invalid_resource');
     const conflict = [...this._scratchClaims.values()].find((claim) => claim.active && claim.envRef.repoId === fields.envRef.repoId && resourceOverlap(claim.resource, fields.resource));
@@ -12582,9 +12927,439 @@ export class CoordinationStore {
   readScratch(resource, envRef, reader, auth) {
     const prior = this._byKey.get(auth?.key);
     if (prior) return freeze({ event: clone(prior), result: clone(prior.payload.result) });
+    if (resource?.startsWith('scratchpad:')) {
+      throw new CoordinationRefusal('scratchpad Scratch namespace is reserved', 'reserved_scratch_namespace');
+    }
     const result = this.checkScratch(resource, envRef);
     const event = this._append('scratch.read', { ...clone(reader), resource, envRef: clone(envRef), result: clone(result) }, auth);
     return freeze({ event: clone(event), result });
+  }
+
+  // -------------------------------------------------------------------------
+  // Issue #33 scratchpad — typed worker writes, pure scoped reads, and the two
+  // settlement boundaries. All projection mutation remains in _apply above.
+  // -------------------------------------------------------------------------
+
+  scratchpadFence(runId, scope) {
+    return this._scratchpadFences.get(scratchpadScopeKey(runId, scope)) ?? 0;
+  }
+
+  scratchpadSnapshotBatch(runId, scopes, options = {}) {
+    if (!validRunId(runId) || !Array.isArray(scopes) || scopes.length === 0
+      || scopes.some((scope) => !SCRATCHPAD_SCOPE.test(scope))
+      || new Set(scopes).size !== scopes.length) {
+      throw new CoordinationRefusal('scratchpad snapshot request is invalid', 'scratchpad_read_invalid');
+    }
+    const fenceTuple = scopes.map((scope) => [scope, this.scratchpadFence(runId, scope)]);
+    if (Object.hasOwn(options, 'expectedFenceTuple')
+      && canonicalDigest(options.expectedFenceTuple) !== canonicalDigest(fenceTuple)) {
+      throw new CoordinationRefusal('scratchpad cursor fence is stale', 'scratchpad_cursor_stale');
+    }
+    const slices = scopes.map((scope) => {
+      const ids = this._scratchpadEntriesByScope.get(scratchpadScopeKey(runId, scope)) ?? [];
+      return freeze({ scope, entries: freeze(ids.map((id) => clone(this._scratchpadEntries.get(id))).filter(Boolean)) });
+    });
+    return freeze({ runId, observedSeq: this._events.length, fenceTuple: freeze(clone(fenceTuple)), slices: freeze(slices) });
+  }
+
+  scratchpadSnapshot(runId, scope, options = {}) {
+    const capture = this.scratchpadSnapshotBatch(runId, [scope], options);
+    return freeze({
+      runId, scope, observedSeq: capture.observedSeq,
+      scratchpadFence: capture.fenceTuple[0][1], fenceTuple: capture.fenceTuple,
+      entries: capture.slices[0].entries,
+    });
+  }
+
+  _scratchpadResolveForWorker(runId, workerId, entryId, entryDigest, requirement = {}) {
+    const row = this._scratchpadEntries.get(entryId);
+    if (!row || row.runId !== runId || row.entryDigest !== entryDigest) return null;
+    if (requirement.kind && row.kind !== requirement.kind) return null;
+    if (requirement.ownOnly && row.scope !== `worker:${workerId}`) return null;
+    if (requirement.ownOrShared && row.scope !== `worker:${workerId}` && row.scope !== 'shared') return null;
+    return row;
+  }
+
+  writeScratchpad(fields, auth) {
+    if (!scratchpadExact(fields, ['runId', 'taskId', 'workerId', 'entry'])
+      || auth?.actor !== 'worker' || auth?.principalId !== fields?.workerId
+      || !validRunId(fields?.runId) || !validRunId(fields?.taskId) || !validRunId(fields?.workerId)) {
+      throw new CoordinationRefusal('scratchpad write envelope is invalid', 'scratchpad_write_invalid');
+    }
+    let content;
+    try {
+      content = normalizeScratchpadEntry(fields.entry,
+        (entryId, entryDigest, requirement) => this._scratchpadResolveForWorker(
+          fields.runId, fields.workerId, entryId, entryDigest, requirement,
+        ));
+    } catch (error) {
+      if (error?.code === 'scratchpad_entry_invalid') throw error;
+      throw new CoordinationRefusal('scratchpad entry is invalid', 'scratchpad_entry_invalid');
+    }
+    if (!SCRATCHPAD_IDEMPOTENCY_KEY.test(auth?.key ?? '')) {
+      throw new CoordinationRefusal('scratchpad write idempotency key is invalid', 'scratchpad_write_invalid');
+    }
+    const contentDigest = canonicalDigest(content);
+    const prior = this._byKey.get(auth.key);
+    if (prior) {
+      if (prior.kind !== 'scratchpad.entry_written' || prior.actor !== 'worker'
+        || prior.payload?.runId !== fields.runId || prior.payload?.taskId !== fields.taskId
+        || prior.payload?.workerId !== fields.workerId || prior.payload?.contentDigest !== contentDigest) {
+        throw new CoordinationRefusal('scratchpad idempotency binding changed', 'scratchpad_write_conflict');
+      }
+      const priorRow = this._scratchpadEntries.get(prior.payload.entryId) ?? {
+        ...clone(prior.payload), createdEvent: prior.seq, createdAt: prior.ts, source: null, scratchFactId: null,
+      };
+      return freeze({
+        ok: true, result: 'idempotent', event: clone(prior), entry: clone(priorRow),
+        entryId: prior.payload.entryId, entryDigest: prior.payload.entryDigest,
+        scope: prior.payload.scope, scratchpadFence: this.scratchpadFence(fields.runId, prior.payload.scope),
+        eventSeq: prior.seq,
+      });
+    }
+    const scope = `worker:${fields.workerId}`;
+    const scopeKey = scratchpadScopeKey(fields.runId, scope);
+    const ids = this._scratchpadEntriesByScope.get(scopeKey) ?? [];
+    if (ids.length >= MAX_SCRATCHPAD_WORKER_ENTRIES) {
+      throw new CoordinationRefusal('scratchpad worker partition is full', 'scratchpad_partition_exhausted');
+    }
+    const ordinal = ids.length + 1;
+    const mintSeq = this._events.length + 1;
+    const entryId = `scratchpad-entry:${canonicalDigest({
+      runId: fields.runId, taskId: fields.taskId, workerId: fields.workerId,
+      scope, ordinal, mintSeq,
+    })}`;
+    const entryDigest = canonicalDigest({
+      schemaVersion: 1, entryId, runId: fields.runId, taskId: fields.taskId,
+      workerId: fields.workerId, scope, ordinal, kind: content.kind,
+      contentDigest, content,
+    });
+    const payload = {
+      schemaVersion: 1, runId: fields.runId, taskId: fields.taskId,
+      workerId: fields.workerId, scope, ordinal, entryId, entryDigest,
+      contentDigest, kind: content.kind, content: clone(content),
+    };
+    let event;
+    if (content.kind === 'link' && content.target.type === 'entry') {
+      const target = this._scratchpadEntries.get(content.target.entryId);
+      if (target?.scope === 'shared' && target.scratchFactId) {
+        const resource = `scratchpad:${target.entryId}`;
+        const envRef = { repoId: this._repoId, treeSha: this._deploymentBaseSha };
+        const result = this.checkScratch(resource, envRef);
+        const readPayload = {
+          readerActor: 'scratchpad.link', readerWorker: fields.workerId,
+          taskId: fields.taskId, runId: fields.runId,
+          citationLinkEntryId: entryId, citationLinkEntryDigest: entryDigest,
+          targetEntryId: target.entryId, targetEntryDigest: target.entryDigest,
+          citationRelation: content.relation, resource, envRef, result: clone(result),
+        };
+        [event] = this._appendBatch([
+          { kind: 'scratchpad.entry_written', payload, auth },
+          {
+            kind: 'scratch.read', payload: readPayload,
+            auth: { actor: 'worker', key: `${auth.key}:citation` },
+          },
+        ], 'scratchpad_link_citation');
+      }
+    }
+    if (!event) event = this._append('scratchpad.entry_written', payload, auth);
+    const entry = this._scratchpadEntries.get(entryId);
+    return freeze({
+      ok: true, result: 'written', event: clone(event), entry: clone(entry),
+      entryId, entryDigest, scope, scratchpadFence: this.scratchpadFence(fields.runId, scope),
+      eventSeq: event.seq,
+    });
+  }
+
+  _scratchpadReapReceipt(prior, result = 'idempotent') {
+    const reap = this._scratchpadReaps.find((row) => row.eventSeq === prior.seq);
+    if (!reap) throw new CoordinationIntegrityError('scratchpad reap receipt is absent', 'scratchpad_reap_integrity');
+    const elevated = reap.dispositions.filter((row) => row.result === 'elevated').map((row) => {
+      const successor = [...this._scratchpadElevations.values()]
+        .find((binding) => binding.sourceEntryId === row.entryId && binding.sharedEntryId === row.targetId);
+      const shared = successor ? this._scratchpadEntries.get(successor.sharedEntryId) : null;
+      return {
+        sourceEntryId: row.entryId, sharedEntryId: row.targetId,
+        sharedEntryDigest: successor?.sharedEntryDigest ?? null,
+        scratchFactId: shared?.scratchFactId ?? null,
+      };
+    }).sort((a, b) => compareCanonicalStrings(a.sourceEntryId, b.sourceEntryId));
+    return { reap, elevated, result };
+  }
+
+  elevateTaskScratchpad(fields, auth) {
+    if (!scratchpadExact(fields, ['runId', 'taskId', 'workerId', 'expectedScratchpadFence', 'entryIds'])
+      || auth?.actor !== 'orchestrator' || !validRunId(fields?.runId) || !validRunId(fields?.taskId)
+      || !validRunId(fields?.workerId) || !Number.isSafeInteger(fields?.expectedScratchpadFence)
+      || fields.expectedScratchpadFence < 0 || !Array.isArray(fields.entryIds)
+      || fields.entryIds.length > MAX_SCRATCHPAD_WORKER_ENTRIES
+      || new Set(fields.entryIds).size !== fields.entryIds.length
+      || fields.entryIds.some((id) => !SCRATCHPAD_ENTRY_ID.test(id))) {
+      throw new CoordinationRefusal('scratchpad task settlement request is invalid', 'scratchpad_settlement_invalid');
+    }
+    const scope = `worker:${fields.workerId}`;
+    const reapKey = `scratchpad.partition_reaped:${fields.runId}:${fields.taskId}:${fields.expectedScratchpadFence}`;
+    const prior = this._byKey.get(reapKey);
+    if (prior) {
+      const reconstructed = this._scratchpadReapReceipt(prior);
+      const priorSelected = reconstructed.reap.dispositions.filter((row) => row.result === 'elevated')
+        .map((row) => row.entryId).sort(compareCanonicalStrings);
+      const requested = [...fields.entryIds].sort(compareCanonicalStrings);
+      if (canonicalDigest(priorSelected) !== canonicalDigest(requested)
+        || reconstructed.reap.observedFence !== fields.expectedScratchpadFence
+        || reconstructed.reap.basis !== 'task_settled') {
+        throw new CoordinationRefusal('scratchpad task settlement changed on retry', 'scratchpad_settlement_conflict');
+      }
+      return freeze({
+        ok: true, result: 'idempotent', runId: fields.runId, taskId: fields.taskId,
+        workerId: fields.workerId, scope, observedFence: reconstructed.reap.observedFence,
+        scratchpadFence: this.scratchpadFence(fields.runId, scope),
+        reapEventSeq: prior.seq, dispositionDigest: reconstructed.reap.dispositionDigest,
+        elevated: reconstructed.elevated,
+      });
+    }
+    const currentFence = this.scratchpadFence(fields.runId, scope);
+    if (currentFence !== fields.expectedScratchpadFence) {
+      throw new CoordinationRefusal('scratchpad task settlement fence is stale', 'stale_scratchpad_fence');
+    }
+    const ids = this._scratchpadEntriesByScope.get(scratchpadScopeKey(fields.runId, scope)) ?? [];
+    if (ids.length === 0) {
+      return freeze({
+        ok: true, result: 'empty', runId: fields.runId, taskId: fields.taskId,
+        workerId: fields.workerId, scope, observedFence: currentFence,
+        scratchpadFence: currentFence, reapEventSeq: null, dispositionDigest: null, elevated: [],
+      });
+    }
+    const rows = ids.map((id) => this._scratchpadEntries.get(id));
+    if (rows.some((row) => row.taskId !== fields.taskId || row.workerId !== fields.workerId)
+      || fields.entryIds.some((id) => !ids.includes(id))) {
+      throw new CoordinationRefusal('scratchpad selection is outside the task partition', 'scratchpad_settlement_invalid');
+    }
+    const task = this._tasks.get(fields.taskId);
+    if (task && !TERMINAL.has(task.status)) {
+      throw new CoordinationRefusal('scratchpad task is not terminal', 'scratchpad_settlement_not_ready');
+    }
+    const steering = this._events.some((event) => event.kind === 'driver.recorded'
+      && event.payload?.kind === 'steering.registered' && event.payload?.runId === fields.runId);
+    const selected = steering ? [...fields.entryIds].sort(compareCanonicalStrings) : [];
+    const sharedIds = this._scratchpadEntriesByScope.get(scratchpadScopeKey(fields.runId, 'shared')) ?? [];
+    if (sharedIds.length + selected.length > MAX_SCRATCHPAD_SHARED_ENTRIES) {
+      throw new CoordinationRefusal('scratchpad shared partition is full', 'scratchpad_partition_exhausted');
+    }
+    const entries = [];
+    const elevations = new Map();
+    for (const sourceEntryId of selected) {
+      const source = this._scratchpadEntries.get(sourceEntryId);
+      const elevationSeq = this._events.length + entries.length + 1;
+      const sharedEntryId = `scratchpad-entry:${canonicalDigest({
+        runId: fields.runId, scope: 'shared', sourceEntryId: source.entryId,
+        sourceEntryDigest: source.entryDigest, elevationSeq,
+      })}`;
+      const sharedEntryDigest = canonicalDigest({
+        schemaVersion: 1, entryId: sharedEntryId, runId: fields.runId, scope: 'shared',
+        sourceEntryId: source.entryId, sourceEntryDigest: source.entryDigest,
+        sourceEvent: source.createdEvent, kind: source.kind,
+        contentDigest: source.contentDigest, content: source.content,
+      });
+      let factPayload = null;
+      if (source.kind === 'note') {
+        const terminalCaptureSha = task?.terminalCaptureSha ?? task?.terminalTreeSha ?? null;
+        const treeSha = terminalCaptureSha ?? task?.worktreeBaseSha ?? this._deploymentBaseSha;
+        const core = {
+          grounding: 'observed', namespace: 'scratchpad',
+          key: `scratchpad:${sharedEntryId}`, resource: `scratchpad:${sharedEntryId}`,
+          envRef: { repoId: this._repoId, treeSha },
+          ownerWorker: source.workerId, ownerTask: source.taskId, runId: source.runId,
+          value: {
+            entryId: sharedEntryId, entryDigest: sharedEntryDigest, kind: source.kind,
+            treeBinding: terminalCaptureSha ? 'terminal_capture' : 'task_base',
+          },
+        };
+        factPayload = { ...core, id: `scratch-fact:${digest(core)}` };
+      }
+      const elevationPayload = {
+        schemaVersion: 1, runId: fields.runId, scope: 'shared',
+        sourceEntryId: source.entryId, sourceEntryDigest: source.entryDigest,
+        sourceEvent: source.createdEvent, entryId: sharedEntryId,
+        entryDigest: sharedEntryDigest, contentDigest: source.contentDigest,
+        kind: source.kind, scratchFactId: factPayload?.id ?? null,
+      };
+      const elevationKey = `scratchpad.entry_elevated:${source.entryId}:${source.entryDigest}`;
+      entries.push({
+        kind: 'scratchpad.entry_elevated', payload: elevationPayload,
+        auth: { actor: 'orchestrator', key: elevationKey },
+      });
+      if (factPayload) {
+        entries.push({
+          kind: 'scratch.fact_posted', payload: factPayload,
+          auth: { actor: 'orchestrator', key: `${elevationKey}:fact` },
+        });
+      }
+      elevations.set(source.entryId, {
+        sourceEntryId: source.entryId, sharedEntryId, sharedEntryDigest,
+        scratchFactId: factPayload?.id ?? null,
+      });
+    }
+    const dispositions = [...rows].sort((a, b) => compareCanonicalStrings(a.entryId, b.entryId))
+      .map((row) => elevations.has(row.entryId)
+        ? {
+          entryId: row.entryId, entryDigest: row.entryDigest, result: 'elevated',
+          targetId: elevations.get(row.entryId).sharedEntryId, reasonCode: 'selected',
+        }
+        : {
+          entryId: row.entryId, entryDigest: row.entryDigest, result: 'not_elevated',
+          targetId: null, reasonCode: steering ? 'orchestrator_skipped' : 'no_driver',
+        });
+    const dispositionDigest = canonicalDigest(dispositions);
+    entries.push({
+      kind: 'scratchpad.partition_reaped',
+      payload: {
+        schemaVersion: 1, runId: fields.runId, scope, taskId: fields.taskId,
+        observedFence: currentFence, dispositions, dispositionDigest, basis: 'task_settled',
+      },
+      auth: { actor: steering ? 'orchestrator' : 'policy', key: reapKey },
+    });
+    const events = this._appendBatch(entries, 'scratchpad_task_settlement');
+    const reapEvent = events.at(-1);
+    return freeze({
+      ok: true, result: 'settled', runId: fields.runId, taskId: fields.taskId,
+      workerId: fields.workerId, scope, observedFence: currentFence,
+      scratchpadFence: this.scratchpadFence(fields.runId, scope),
+      reapEventSeq: reapEvent.seq, dispositionDigest,
+      elevated: [...elevations.values()].sort((a, b) => compareCanonicalStrings(a.sourceEntryId, b.sourceEntryId)),
+    });
+  }
+
+  settleWorkflowScratchpad(fields, auth) {
+    if (!scratchpadExact(fields, ['runId', 'expectedScratchpadFence', 'skips'])
+      || auth?.actor !== 'orchestrator' || !validRunId(fields?.runId)
+      || !Number.isSafeInteger(fields?.expectedScratchpadFence) || fields.expectedScratchpadFence < 0
+      || !Array.isArray(fields.skips) || fields.skips.length > MAX_SCRATCHPAD_SHARED_ENTRIES) {
+      throw new CoordinationRefusal('scratchpad workflow settlement request is invalid', 'scratchpad_settlement_invalid');
+    }
+    const scope = 'shared';
+    const currentFence = this.scratchpadFence(fields.runId, scope);
+    const reapKey = `scratchpad.partition_reaped:${fields.runId}:shared:${fields.expectedScratchpadFence}`;
+    const prior = this._byKey.get(reapKey);
+    if (prior) {
+      const reconstructed = this._scratchpadReapReceipt(prior);
+      return freeze({
+        ok: true, result: 'idempotent', runId: fields.runId, scope,
+        observedFence: reconstructed.reap.observedFence,
+        scratchpadFence: this.scratchpadFence(fields.runId, scope),
+        reapEventSeq: prior.seq, dispositionDigest: reconstructed.reap.dispositionDigest,
+        expiredScratchFactIds: [],
+      });
+    }
+    if (currentFence !== fields.expectedScratchpadFence) {
+      throw new CoordinationRefusal('scratchpad workflow settlement fence is stale', 'stale_scratchpad_fence');
+    }
+    const ids = this._scratchpadEntriesByScope.get(scratchpadScopeKey(fields.runId, scope)) ?? [];
+    if (ids.length === 0) {
+      return freeze({
+        ok: true, result: 'empty', runId: fields.runId, scope,
+        observedFence: currentFence, scratchpadFence: currentFence,
+        reapEventSeq: null, dispositionDigest: null, expiredScratchFactIds: [],
+      });
+    }
+    const rows = ids.map((id) => this._scratchpadEntries.get(id))
+      .sort((a, b) => compareCanonicalStrings(a.entryId, b.entryId));
+    const dispositions = rows.map((row) => ({
+      entryId: row.entryId, entryDigest: row.entryDigest,
+      result: 'not_eligible', targetId: null,
+      reasonCode: row.kind === 'note' ? 'min_readers' : 'type_ineligible',
+    }));
+    const dispositionDigest = canonicalDigest(dispositions);
+    const facts = rows.filter((row) => row.scratchFactId)
+      .map((row) => this._scratchFacts.get(row.scratchFactId)).filter((fact) => fact?.active)
+      .sort((a, b) => compareCanonicalStrings(a.id, b.id));
+    const entries = [{
+      kind: 'scratchpad.partition_reaped',
+      payload: {
+        schemaVersion: 1, runId: fields.runId, scope, taskId: null,
+        observedFence: currentFence, dispositions, dispositionDigest, basis: 'workflow_settled',
+      },
+      auth: { actor: 'orchestrator', key: reapKey },
+    }, ...facts.map((fact) => ({
+      kind: 'scratch.fact_expired', payload: { id: fact.id },
+      auth: { actor: 'orchestrator', key: `${reapKey}:fact:${fact.id}` },
+    }))];
+    const events = this._appendBatch(entries, 'scratchpad_workflow_settlement');
+    return freeze({
+      ok: true, result: 'settled', runId: fields.runId, scope,
+      observedFence: currentFence, scratchpadFence: this.scratchpadFence(fields.runId, scope),
+      reapEventSeq: events[0].seq, dispositionDigest,
+      expiredScratchFactIds: facts.map((fact) => fact.id),
+    });
+  }
+
+  reapRunScratchpads(runId) {
+    if (!validRunId(runId) || (!this._runStopByTarget.has(runId) && !this._runStops.has(runId))) {
+      throw new CoordinationRefusal('scratchpad stop cleanup requires a stopping Run', 'run_stopping');
+    }
+    const partitions = [];
+    for (const [key, ids] of this._scratchpadEntriesByScope) {
+      const [entryRunId, scope] = JSON.parse(key);
+      if (entryRunId !== runId || ids.length === 0) continue;
+      const first = this._scratchpadEntries.get(ids[0]);
+      partitions.push({ scope, taskId: scope === 'shared' ? null : first.taskId, workerId: scope === 'shared' ? null : first.workerId });
+    }
+    partitions.sort((left, right) => {
+      if (left.scope === 'shared') return 1;
+      if (right.scope === 'shared') return -1;
+      return compareCanonicalStrings(left.taskId, right.taskId)
+        || compareCanonicalStrings(left.workerId, right.workerId);
+    });
+    const selected = partitions.slice(0, MAX_SCRATCHPAD_STOP_PARTITIONS_PER_PASS);
+    const reaped = [];
+    for (const partition of selected) {
+      const scopeKey = scratchpadScopeKey(runId, partition.scope);
+      const rows = (this._scratchpadEntriesByScope.get(scopeKey) ?? [])
+        .map((id) => this._scratchpadEntries.get(id))
+        .sort((a, b) => compareCanonicalStrings(a.entryId, b.entryId));
+      const observedFence = this.scratchpadFence(runId, partition.scope);
+      const dispositions = rows.map((row) => ({
+        entryId: row.entryId, entryDigest: row.entryDigest,
+        result: 'stopped', targetId: null, reasonCode: 'run_stopped',
+      }));
+      const dispositionDigest = canonicalDigest(dispositions);
+      const reapKey = partition.scope === 'shared'
+        ? `scratchpad.partition_reaped:${runId}:shared:${observedFence}`
+        : `scratchpad.partition_reaped:${runId}:${partition.taskId}:${observedFence}`;
+      const facts = partition.scope === 'shared'
+        ? rows.filter((row) => row.scratchFactId).map((row) => this._scratchFacts.get(row.scratchFactId))
+          .filter((fact) => fact?.active).sort((a, b) => compareCanonicalStrings(a.id, b.id))
+        : [];
+      const events = this._appendBatch([{
+        kind: 'scratchpad.partition_reaped',
+        payload: {
+          schemaVersion: 1, runId, scope: partition.scope, taskId: partition.taskId,
+          observedFence, dispositions, dispositionDigest, basis: 'run_stopped',
+        },
+        auth: { actor: 'policy', key: reapKey },
+      }, ...facts.map((fact) => ({
+        kind: 'scratch.fact_expired', payload: { id: fact.id },
+        auth: { actor: 'policy', key: `${reapKey}:fact:${fact.id}` },
+      }))], 'scratchpad_stop_cleanup');
+      reaped.push({
+        scope: partition.scope, taskId: partition.taskId, reapEventSeq: events[0].seq,
+        dispositionDigest, expiredScratchFactIds: facts.map((fact) => fact.id),
+      });
+    }
+    const remaining = partitions.slice(selected.length);
+    let remainingEntries = 0; let remainingBridgeFacts = 0;
+    for (const partition of remaining) {
+      const ids = this._scratchpadEntriesByScope.get(scratchpadScopeKey(runId, partition.scope)) ?? [];
+      remainingEntries += ids.length;
+      remainingBridgeFacts += ids.map((id) => this._scratchpadEntries.get(id))
+        .filter((row) => row?.scratchFactId && this._scratchFacts.get(row.scratchFactId)?.active).length;
+    }
+    const next = remaining[0] ?? null;
+    return freeze({
+      ok: true, result: remaining.length > 0 ? 'partial' : 'complete', runId, reaped,
+      nextPartition: next ? { scope: next.scope, taskId: next.taskId, workerId: next.workerId } : null,
+      remainingPartitions: remaining.length, remainingEntries, remainingBridgeFacts,
+    });
   }
 
   // -------------------------------------------------------------------------
