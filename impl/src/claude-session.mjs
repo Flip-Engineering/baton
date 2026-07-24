@@ -26,13 +26,16 @@ const CLAUDE_TOKEN_METRIC = 'anthropic_input_plus_output_tokens_excluding_cache'
 // this literal string spoof-safe: it never reaches `_scanForDecisionRequest`.
 const DECISION_REQUEST_GRAMMAR = /DECISION_REQUEST:\s*(\{[\s\S]*)/;
 const MAX_DECISION_GRAMMAR_SCAN_BYTES = 8_192;
+const SCRATCHPAD_WRITE_GRAMMAR = /SCRATCHPAD_WRITE:\s*(\{[\s\S]*)/;
+const MAX_SCRATCHPAD_GRAMMAR_SCAN_BYTES = 20_480;
 
 /** Bracket-depth walk to the first balanced `{...}` object, bounded, string-aware. Trailing
  * prose after the JSON object (or a second, contradictory DECISION_REQUEST) never reaches the
  * parse — only the first well-formed object is a candidate (F7: first-wins, uncheckable races
  * with a second line are exactly what this bound forbids). */
-function extractFirstBalancedJsonObject(text) {
-  const bounded = text.slice(0, MAX_DECISION_GRAMMAR_SCAN_BYTES);
+function extractFirstBalancedJsonObject(text, maxBytes = MAX_DECISION_GRAMMAR_SCAN_BYTES) {
+  if (Buffer.byteLength(text) > maxBytes) return null;
+  const bounded = text;
   if (bounded[0] !== '{') return null;
   let depth = 0; let inString = false; let escape = false;
   for (let i = 0; i < bounded.length; i += 1) {
@@ -78,6 +81,25 @@ export function scanForDecisionRequest(text) {
     if (err instanceof ValidationError) return null;
     throw err;
   }
+}
+
+/** Issue #33 REFLEX-1 sibling grammar. Identity is deliberately absent; Coordinator receives
+ * this only on the authenticated per-worker event stream and injects worker/task/Run binding. */
+export function scanForScratchpadWrite(text) {
+  if (typeof text !== 'string') return null;
+  const match = SCRATCHPAD_WRITE_GRAMMAR.exec(text);
+  if (!match) return null;
+  const json = extractFirstBalancedJsonObject(match[1], MAX_SCRATCHPAD_GRAMMAR_SCAN_BYTES);
+  if (!json) return null;
+  let parsed;
+  try { parsed = JSON.parse(json); } catch { return null; }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)
+    || Object.keys(parsed).sort().join(',') !== 'entry,expectedFence,idempotencyKey'
+    || !parsed.entry || typeof parsed.entry !== 'object' || Array.isArray(parsed.entry)
+    || !Number.isSafeInteger(parsed.expectedFence) || parsed.expectedFence < 0
+    || typeof parsed.idempotencyKey !== 'string'
+    || !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/u.test(parsed.idempotencyKey)) return null;
+  return parsed;
 }
 
 function unavailableUsageSeal() {
@@ -860,6 +882,10 @@ export class ClaudeSessionCli {
             session.pendingDecisionRequestId = requestId;
             this._emit(session, 'decision.requested', { requestId, request });
           }
+        }
+        if (text) {
+          const request = scanForScratchpadWrite(text);
+          if (request) this._emit(session, 'scratchpad.write', request);
         }
         return;
       }

@@ -29,6 +29,7 @@ import {
 import {
   MAX_SCRATCHPAD_VIEW_BYTES,
   MAX_SCRATCHPAD_VIEW_ITEMS,
+  purgeScratchpadViewCache,
   projectScratchpadView,
 } from '../src/application.mjs';
 import { createScratchpadEntry } from '../src/messages.mjs';
@@ -748,4 +749,236 @@ test('SP5 (v2 R33R-6): no scratchpad fold or read scans the whole ledger', () =>
   Object.defineProperty(store, '_events', { value: realEvents, configurable: true, writable: true });
 
   assert.equal(eventsTouched, 0, 'reads and folds use the per-scope index, never a full ledger scan');
+});
+
+test('SP5 (v2 R33R-6): workflow settle, Run close, and Run stop purge every cache key for that Run', () => {
+  const cache = new Map([
+    [`${runId}\0worker\0${workerA}\0`, { runId }],
+    [`${runId}\0orchestrator\0\0`, { runId }],
+    ['run-other\0worker\0w-other\0', { runId: 'run-other' }],
+  ]);
+  for (const trigger of ['workflow_settled', 'run_closed', 'run_stopped']) {
+    const copy = new Map(cache);
+    assert.equal(purgeScratchpadViewCache(copy, runId, trigger), 2);
+    assert.deepEqual([...copy.keys()], ['run-other\0worker\0w-other\0']);
+  }
+});
+
+// ===========================================================================
+// SP6 — visibility and driver steering
+// ===========================================================================
+
+test('SP6: worker slices are own+shared while an orchestrator sees every requested scope', () => {
+  const store = freshStore('sp6-visibility');
+  const own = write(store, { worker: workerA, task: taskA, entry: noteEntry('alpha private'), key: 'sp6:a' });
+  write(store, { worker: workerB, task: taskB, entry: doubtEntry('beta private?'), key: 'sp6:b' });
+  const cache = new Map();
+  const capture = store.scratchpadSnapshotBatch(
+    runId, [`worker:${workerA}`, `worker:${workerB}`, 'shared'],
+  );
+  const alpha = projectScratchpadView(capture, { role: 'worker', workerId: workerA }, cache);
+  const beta = projectScratchpadView(capture, { role: 'worker', workerId: workerB }, cache);
+  const driver = projectScratchpadView(capture, { role: 'orchestrator' }, cache);
+
+  assert.deepEqual(alpha.scopes, [`worker:${workerA}`, 'shared']);
+  assert.deepEqual(beta.scopes, [`worker:${workerB}`, 'shared']);
+  assert.equal(alpha.entries.length, 1);
+  assert.equal(alpha.entries[0].entryId, own.entry.entryId);
+  assert.equal(beta.entries.length, 1);
+  assert.equal(driver.entries.length, 2);
+  assert.equal(alpha.entries.some((entry) => entry.scope === `worker:${workerB}`), false);
+});
+
+test('SP6: every driver-facing entry is the closed rule-16 shape', () => {
+  const store = freshStore('sp6-shape');
+  write(store, { entry: planEntry(), key: 'sp6:shape' });
+  const view = projectScratchpadView(
+    store.scratchpadSnapshotBatch(runId, [`worker:${workerA}`, 'shared']),
+    { role: 'worker', workerId: workerA },
+  );
+  assert.equal(view.entries.length, 1);
+  assert.deepEqual(Object.keys(view.entries[0]).sort(), [
+    'authorTaskId', 'authorWorkerId', 'candidateState', 'content', 'contentDigest', 'createdAt',
+    'createdEvent', 'entryDigest', 'entryId', 'kind', 'ordinal', 'runId', 'schemaVersion',
+    'scope', 'source',
+  ]);
+  assert.equal(view.entries[0].candidateState, 'candidate');
+  assert.equal(view.entries[0].source, null);
+  assert.equal(view.entries[0].ordinal, 1);
+});
+
+test('SP6 (v2 R33R-6): the historical positive path retains scratchpad when ownership resolves', async () => {
+  const { BatonApplication } = await import('../src/application.mjs');
+  assert.match(BatonApplication.prototype._historicalProfileView.toString(),
+    /scratchpad/u, 'the resolvable historical profile path must project the additive field');
+});
+
+// ===========================================================================
+// SP7 — F14 sanitization and provenance
+// ===========================================================================
+
+test('SP7: every worker-authored string is sanitized and provenance-marked', () => {
+  const store = freshStore('sp7-sanitize');
+  const credential = 'api_key=abcdefghijklmnop';
+  const receipts = [
+    write(store, { entry: noteEntry(credential), key: 'sp7:note' }),
+    write(store, {
+      entry: {
+        kind: 'plan', objective: credential,
+        steps: [{ text: credential, state: 'doing' }], supersedes: null,
+      },
+      key: 'sp7:plan',
+    }),
+    write(store, {
+      entry: { kind: 'doubt', question: credential, context: credential },
+      key: 'sp7:doubt',
+    }),
+    write(store, {
+      entry: linkEntry({ type: 'repo_path', path: `impl/${credential}` }, 'reference', credential),
+      key: 'sp7:link',
+    }),
+  ];
+  const view = projectScratchpadView(
+    store.scratchpadSnapshotBatch(runId, [`worker:${workerA}`]),
+    { role: 'worker', workerId: workerA },
+  );
+  const serialized = JSON.stringify(view);
+  assert.equal(serialized.includes(credential), false);
+  assert.ok(serialized.includes('[credential-shaped content redacted]'));
+  for (const entry of view.entries) {
+    assert.equal(entry.entryDigest, receipts.find((row) => row.entry.entryId === entry.entryId).entry.entryDigest);
+  }
+  const prose = view.entries.flatMap((entry) => {
+    if (entry.kind === 'note') return [entry.content.text];
+    if (entry.kind === 'plan') return [entry.content.objective, ...entry.content.steps.map((step) => step.text)];
+    if (entry.kind === 'doubt') return [entry.content.question, entry.content.context];
+    return [entry.content.label, entry.content.target.path];
+  }).filter(Boolean);
+  for (const value of prose) {
+    assert.deepEqual(value, {
+      worker: workerA, text: '[credential-shaped content redacted]',
+      provenance: 'model-authored', untrusted: true,
+    });
+  }
+});
+
+test('SP7: createScratchpadEntry exposes only the exact typed content projection', () => {
+  const row = createScratchpadEntry({
+    schemaVersion: 1, entryId: `scratchpad-entry:${'a'.repeat(64)}`,
+    entryDigest: 'b'.repeat(64), contentDigest: 'c'.repeat(64), runId,
+    scope: `worker:${workerA}`, authorWorkerId: workerA, authorTaskId: taskA,
+    ordinal: 1, kind: 'note', createdEvent: 1, createdAt: STORE_CLOCK_ISO,
+    candidateState: 'candidate', source: null,
+    content: { kind: 'note', text: { worker: workerA, text: 'safe', provenance: 'model-authored', untrusted: true } },
+  });
+  assert.ok(Object.isFrozen(row));
+  assert.equal(row.content.kind, 'note');
+});
+
+// ===========================================================================
+// SP8 — continuous candidacy and task settle
+// ===========================================================================
+
+test('SP8: settlement preserves candidate authorship/source and binds exact dispositions', () => {
+  const store = freshStore('sp8-settle');
+  const { written, elevation } = settleTaskWith(store, [noteEntry('keep'), doubtEntry('drop?')], {
+    selected: [],
+  });
+  assert.equal(elevation.result, 'settled');
+  const reap = store.snapshot().scratchpad.reaps.at(-1);
+  assert.equal(reap.dispositions.length, 2);
+  assert.ok(reap.dispositions.every((row) =>
+    row.result === 'not_elevated' && row.reasonCode === 'orchestrator_skipped' && row.targetId === null));
+  assert.deepEqual(reap.dispositions.map((row) => row.entryId).sort(),
+    written.map((row) => row.entry.entryId).sort());
+  assert.equal(reap.dispositionDigest, canonicalDigest(reap.dispositions));
+});
+
+test('SP8 (v2 R33R-3/R33R-6): bridge treeBinding honestly falls back to task_base', () => {
+  const store = freshStore('sp8-tree');
+  settleTaskWith(store, [noteEntry('basis')]);
+  const fact = store.snapshot().scratch.facts.find((row) => row.namespace === 'scratchpad');
+  assert.equal(fact.value.treeBinding, 'task_base');
+  assert.equal(fact.envRef.treeSha, treeSha);
+});
+
+test('SP8 (v2 R33R-3): coordinator terminal observation covers verified, failed, and cancelled tasks', async () => {
+  const { Coordinator } = await import('../src/coordinator.mjs');
+  const source = Coordinator.prototype._settleTerminalScratchpad.toString();
+  for (const status of ['completed', 'failed', 'cancelled']) assert.ok(source.includes(status));
+  assert.ok(source.includes('terminalCaptureSha'));
+});
+
+// ===========================================================================
+// SP9 — qualification and unchanged promotion path
+// ===========================================================================
+
+test('SP9: an exact link to a bridged shared note atomically records one marked scratch.read', () => {
+  const store = freshStore('sp9-citation');
+  const { elevation } = settleTaskWith(store, [noteEntry('cite me')]);
+  const target = elevation.elevated[0];
+  const before = store._events.length;
+  write(store, {
+    worker: workerB, task: taskB, key: 'sp9:link',
+    entry: linkEntry({
+      type: 'entry', entryId: target.sharedEntryId, entryDigest: target.sharedEntryDigest,
+    }, 'contradicts'),
+  });
+  const group = store._events.slice(before);
+  assert.deepEqual(group.map((event) => event.kind), ['scratchpad.entry_written', 'scratch.read']);
+  assert.ok(group.every((event) => event.batch.kind === 'scratchpad_link_citation'));
+  assert.equal(group[1].payload.readerActor, 'scratchpad.link');
+  assert.equal(group[1].payload.citationRelation, 'contradicts');
+  assert.equal(group[1].payload.targetEntryId, target.sharedEntryId);
+});
+
+// ===========================================================================
+// SP10 — KG-2 gate and workflow reap
+// ===========================================================================
+
+test('SP10: workflow settlement atomically reaps shared entries and expires bridge facts', () => {
+  const store = freshStore('sp10-workflow');
+  settleTaskWith(store, [noteEntry('workflow note'), planEntry('workflow plan')]);
+  const before = store._events.length;
+  const receipt = store.settleWorkflowScratchpad({
+    runId, expectedScratchpadFence: store.scratchpadFence(runId, 'shared'), skips: [],
+  }, orchestratorAuth('sp10:settle'));
+  assert.equal(receipt.result, 'settled');
+  assert.equal(store.scratchpadSnapshot(runId, 'shared').entries.length, 0);
+  assert.ok(store.snapshot().scratch.facts.every((fact) => !fact.active));
+  const group = store._events.slice(before);
+  assert.equal(group[0].kind, 'scratchpad.partition_reaped');
+  assert.equal(group[0].batch.kind, 'scratchpad_workflow_settlement');
+  assert.ok(group.slice(1).every((event) => event.kind === 'scratch.fact_expired'));
+});
+
+// ===========================================================================
+// SP11 — run-stop guard and cleanup
+// ===========================================================================
+
+test('SP11: stop cleanup is policy-only, ordered worker partitions first and shared last', () => {
+  const store = freshStore('sp11-stop');
+  write(store, { worker: workerB, task: taskB, key: 'sp11:b' });
+  settleTaskWith(store, [noteEntry('shared')]);
+  store._runStopByTarget.set(runId, { runId, status: 'stopping' });
+  const receipt = store.reapRunScratchpads(runId);
+  assert.equal(receipt.result, 'complete');
+  assert.deepEqual(receipt.reaped.map((row) => row.scope), [`worker:${workerB}`, 'shared']);
+  assert.equal(receipt.remainingPartitions, 0);
+  assert.equal(receipt.remainingEntries, 0);
+  assert.equal(receipt.remainingBridgeFacts, 0);
+  assert.ok(store._events.filter((event) => event.batch?.kind === 'scratchpad_stop_cleanup')
+    .every((event) => event.actor === 'policy'));
+});
+
+test('SP11: a zero-residue stop retry is a no-event complete receipt', () => {
+  const store = freshStore('sp11-empty');
+  store._runStopByTarget.set(runId, { runId, status: 'stopping' });
+  const before = store._events.length;
+  const receipt = store.reapRunScratchpads(runId);
+  assert.deepEqual(receipt, {
+    ok: true, result: 'complete', runId, reaped: [], nextPartition: null,
+    remainingPartitions: 0, remainingEntries: 0, remainingBridgeFacts: 0,
+  });
+  assert.equal(store._events.length, before);
 });

@@ -9,7 +9,8 @@ import { createHash } from 'node:crypto';
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { Cursor } from './log.mjs';
 import {
-  createBrief, createDecisionAnswer, createDecisionRequest, createDigest, ValidationError, wrapFact, wrapProse,
+  boundedAttentionText, createBrief, createDecisionAnswer, createDecisionRequest, createDigest,
+  ValidationError, wrapFact, wrapProse,
 } from './messages.mjs';
 import { parseRouteTupleKey, resolveEffort, routeTupleKey } from './route-tuple.mjs';
 import { hasNorthboundCapabilityAuthority } from './northbound-capability-authority.mjs';
@@ -262,6 +263,7 @@ const COORDINATION_MUTATORS = new Set([
   'recordTaskResourceRelease',
   'postBoardItem', 'retitleBoardItem', 'reorderBoardItem', 'closeBoardItem', 'dropBoardItem',
   'requestBoardClaim', 'submitBoardReport', 'expireBoardClaim',
+  'writeScratchpad', 'elevateTaskScratchpad', 'settleWorkflowScratchpad', 'reapRunScratchpads',
 ]);
 
 const DEFAULT_DRAIN_POLICY = Object.freeze({ maxWorkers: 1024, maxInteractions: 15_000, timeoutMs: 60_000, pollMs: 10 });
@@ -295,6 +297,62 @@ function canonical(value) {
   return Object.fromEntries(Object.keys(value).sort().map((key) => [key, canonical(value[key])]));
 }
 function canonicalDigest(value) { return createHash('sha256').update(JSON.stringify(canonical(value))).digest('hex'); }
+
+function projectHorizonScratchpad(capture, viewer) {
+  const role = viewer === 'orchestrator' ? 'orchestrator' : 'worker';
+  const workerId = role === 'worker' ? viewer : null;
+  const allowed = role === 'orchestrator'
+    ? new Set(capture.slices.map((slice) => slice.scope))
+    : new Set([`worker:${workerId}`, 'shared']);
+  const slices = capture.slices.filter((slice) => allowed.has(slice.scope));
+  const scopes = slices.map((slice) => slice.scope);
+  const fenceMap = new Map(capture.fenceTuple);
+  const prose = (worker, text) => wrapProse(worker, boundedAttentionText(text));
+  const content = (row) => {
+    if (row.kind === 'note') return { kind: 'note', text: prose(row.workerId, row.content.text) };
+    if (row.kind === 'plan') return {
+      kind: 'plan', objective: prose(row.workerId, row.content.objective),
+      steps: row.content.steps.map((step) => ({ text: prose(row.workerId, step.text), state: step.state })),
+      supersedes: row.content.supersedes,
+    };
+    if (row.kind === 'doubt') return {
+      kind: 'doubt', question: prose(row.workerId, row.content.question),
+      context: row.content.context === null ? null : prose(row.workerId, row.content.context),
+    };
+    const target = row.content.target.type === 'entry' ? row.content.target
+      : row.content.target.type === 'url'
+        ? { type: 'url', url: prose(row.workerId, row.content.target.url) }
+        : { type: 'repo_path', path: prose(row.workerId, row.content.target.path) };
+    return {
+      kind: 'link', label: prose(row.workerId, row.content.label),
+      relation: row.content.relation, target,
+    };
+  };
+  let rows = slices.flatMap((slice) => slice.entries).sort((left, right) =>
+    right.createdEvent - left.createdEvent || left.entryId.localeCompare(right.entryId));
+  let truncated = rows.length > 64;
+  rows = rows.slice(0, 64);
+  const project = (row) => ({
+    schemaVersion: 1, entryId: row.entryId, entryDigest: row.entryDigest,
+    contentDigest: row.contentDigest, runId: row.runId, scope: row.scope,
+    authorWorkerId: row.workerId, authorTaskId: row.taskId, ordinal: row.ordinal,
+    kind: row.kind, createdEvent: row.createdEvent, createdAt: row.createdAt,
+    candidateState: 'candidate', source: row.source, content: content(row),
+  });
+  let entries = rows.map(project);
+  const build = () => ({
+    runId: capture.runId, workerId, scopes,
+    fenceTuple: scopes.map((scope) => [scope, fenceMap.get(scope) ?? 0]),
+    entries, scratchpadViewTruncated: truncated,
+    nextBefore: truncated && entries.length > 0
+      ? { createdEvent: entries.at(-1).createdEvent, entryId: entries.at(-1).entryId } : null,
+  });
+  let result = build();
+  while (Buffer.byteLength(JSON.stringify(result)) > 32_768 && entries.length > 0) {
+    entries = entries.slice(0, -1); truncated = true; result = build();
+  }
+  return deepFreeze(result);
+}
 
 const CLOSED_VERIFIER_OUTCOMES = new Set(['passed', 'candidate_failed', 'inconclusive']);
 const CLOSED_VERIFIER_OWNERS = new Set(['candidate', 'verifier', 'baseline_or_environment']);
@@ -666,7 +724,7 @@ export class Coordinator {
   /** @param {object} opts */
   constructor(opts) {
     if (!opts?.coordination) throw new TypeError('Coordinator requires a durable coordination store');
-    for (const method of ['snapshot', 'task', 'integrationAuthority', 'publicationAuthority', 'createTask', 'claimTask', 'transitionTask', 'transitionTaskWithArtifacts', 'createAndClaimRecoveryRefinement', 'recordRecoveryContinuationIntent', 'completeRecoveryDispatch', 'mapOperationalEvent', 'recordDriver', 'completeIntegration', 'completePublication', 'registerArtifact', 'artifact', 'recordReuseDecision', 'reuseDecision', 'reuseDecisionAdmission', 'reusePolicyState', 'activateReusePolicy', 'reuseRiskGuard', 'recordReuseRiskGuard', 'reuseRiskAdmission', 'recordReuseTtlInvalidation', 'reuseTtlAdmission', 'claimScratch', 'postScratchFact', 'readScratch', 'activeScratchClaims', 'expireScratchClaim', 'addKnowledgeNode', 'promoteKnowledgeNode', 'readKnowledge']) {
+    for (const method of ['snapshot', 'task', 'integrationAuthority', 'publicationAuthority', 'createTask', 'claimTask', 'transitionTask', 'transitionTaskWithArtifacts', 'createAndClaimRecoveryRefinement', 'recordRecoveryContinuationIntent', 'completeRecoveryDispatch', 'mapOperationalEvent', 'recordDriver', 'completeIntegration', 'completePublication', 'registerArtifact', 'artifact', 'recordReuseDecision', 'reuseDecision', 'reuseDecisionAdmission', 'reusePolicyState', 'activateReusePolicy', 'reuseRiskGuard', 'recordReuseRiskGuard', 'reuseRiskAdmission', 'recordReuseTtlInvalidation', 'reuseTtlAdmission', 'claimScratch', 'postScratchFact', 'readScratch', 'activeScratchClaims', 'expireScratchClaim', 'writeScratchpad', 'elevateTaskScratchpad', 'settleWorkflowScratchpad', 'reapRunScratchpads', 'scratchpadSnapshotBatch', 'scratchpadSnapshot', 'addKnowledgeNode', 'promoteKnowledgeNode', 'readKnowledge']) {
       if (typeof opts.coordination[method] !== 'function') throw new TypeError(`Coordinator coordination store is missing ${method}()`);
     }
     this._closed = false;
@@ -1750,6 +1808,9 @@ export class Coordinator {
       && recorded.terminalEvent === recordedTask?.terminalEvent) {
       return recorded;
     }
+    // Issue #33 v2: every durable terminal observation settles its worker partition before
+    // process/session/worktree cleanup can release the authenticated handle.
+    this._settleTerminalScratchpad(taskId, { entryIds: [], terminalCaptureSha: recordedTask?.terminalCaptureSha ?? null });
     await this.stopRunTargets([workerId], actor);
     const runtimeRemoved = this._removeRuntimeScope(handle);
     await this._removeOwnedTaskWorktree(handle, task);
@@ -9527,6 +9588,77 @@ export class Coordinator {
     }, { actor: opts.actor ?? 'orchestrator', key: opts.idempotencyKey });
   }
 
+  writeScratchpad(workerId, entry, opts = {}) {
+    this.tick();
+    let handle;
+    try { handle = this._getWorker(workerId); }
+    catch { return { ok: false, result: 'worker_not_active' }; }
+    const task = this._tasks.get(handle.taskId);
+    if (!task || !['working', 'input_required', 'paused'].includes(task.status)) {
+      return { ok: false, result: 'worker_not_active' };
+    }
+    if (!Number.isSafeInteger(opts.expectedFence) || opts.expectedFence < 0
+      || typeof opts.idempotencyKey !== 'string'
+      || !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/u.test(opts.idempotencyKey)
+      || Object.keys(opts).some((key) => !['expectedFence', 'idempotencyKey'].includes(key))) {
+      return { ok: false, result: 'scratchpad_write_invalid' };
+    }
+    const check = this._fences.check(workerId, { fence: opts.expectedFence });
+    if (!check.ok) return { ok: false, result: 'stale_fence', current: check.current };
+    try {
+      const receipt = this._coordination.writeScratchpad({
+        runId: task.runId, taskId: task.id, workerId, entry,
+      }, {
+        actor: 'worker', principalId: workerId, key: opts.idempotencyKey,
+      });
+      return {
+        ok: true, result: receipt.result, entryId: receipt.entryId,
+        entryDigest: receipt.entryDigest, scope: receipt.scope,
+        scratchpadFence: receipt.scratchpadFence, eventSeq: receipt.eventSeq,
+      };
+    } catch (error) {
+      if (error?.name !== 'CoordinationRefusal') throw error;
+      const allowed = new Set([
+        'scratchpad_write_invalid', 'scratchpad_entry_invalid', 'scratchpad_partition_exhausted',
+        'scratchpad_write_conflict', 'run_stopping',
+      ]);
+      return { ok: false, result: allowed.has(error.code) ? error.code : 'worker_not_active' };
+    }
+  }
+
+  _settleTerminalScratchpad(taskId, { entryIds = [], terminalCaptureSha = null } = {}) {
+    const task = this._tasks.get(taskId);
+    const terminalStatuses = ['completed', 'failed', 'cancelled'];
+    if (!task || !terminalStatuses.includes(task.status)) {
+      return { ok: false, result: 'scratchpad_settlement_not_ready' };
+    }
+    const workerId = task.assignee ?? task.reservedWorkerId;
+    if (!workerId) return { ok: true, result: 'empty' };
+    // terminalCaptureSha is intentionally observed here: the store uses the durable terminal
+    // capture when present and honestly falls back to the admitted task base otherwise.
+    void terminalCaptureSha;
+    return this._coordination.elevateTaskScratchpad({
+      runId: task.runId, taskId, workerId,
+      expectedScratchpadFence: this._coordination.scratchpadFence(task.runId, `worker:${workerId}`),
+      entryIds,
+    }, { actor: 'orchestrator', key: `scratchpad.task_settlement:${taskId}` });
+  }
+
+  settleWorkflowScratchpad(runId, fields) {
+    this.tick();
+    return this._coordination.settleWorkflowScratchpad({
+      runId, expectedScratchpadFence: fields.expectedScratchpadFence, skips: fields.skips,
+    }, { actor: 'orchestrator', key: `scratchpad.workflow_settlement:${runId}` });
+  }
+
+  reapRunScratchpads(runId) {
+    this.tick();
+    let receipt;
+    do { receipt = this._coordination.reapRunScratchpads(runId); }
+    while (receipt.result === 'partial');
+    return receipt;
+  }
+
   readScratch(workerId, resource, envRef, opts = {}) {
     this.tick();
     const handle = this._getWorker(workerId);
@@ -9679,10 +9811,16 @@ export class Coordinator {
     const bindingFence = workerId != null ? this._coordination.bindingFence(task.runId ?? null, `worker:${workerId}`) : 0;
     const interactionGeneration = this.interactionGeneration(taskId);
     const projectionInputFence = this._coordination.projectionInputFence();
-    const fenceTuple = [boardFence, bindingFence, interactionGeneration, projectionInputFence];
+    const scratchpadScopes = workerId == null ? ['shared'] : [`worker:${workerId}`, 'shared'];
+    const scratchpadCapture = this._coordination.scratchpadSnapshotBatch(task.runId, scratchpadScopes);
+    const fenceTuple = [
+      boardFence, bindingFence, interactionGeneration, projectionInputFence,
+      scratchpadCapture.fenceTuple,
+    ];
     return this._horizonCacheGet('task', taskId, fenceTuple, () => ({
       taskId, fenceTuple,
       board: board != null ? this._coordination.boardSnapshot(board) : null,
+      scratchpad: projectHorizonScratchpad(scratchpadCapture, workerId ?? 'orchestrator'),
       nodes: this._coordination.queryKnowledge({}),
       edges: this._coordination.queryKnowledgeEdges({}),
     }));
@@ -9691,7 +9829,7 @@ export class Coordinator {
   /** Rule 3: workflow horizon fence = the tuple of boardFence for every board attached to the
    * run (via contextPackageAttachments' `board:<name>` scope convention) + bindingFence('shared')
    * + decisionSettleCount(runId) + projectionInputFence(). */
-  workflowHorizon(runId) {
+  workflowHorizon(runId, { viewer = 'orchestrator' } = {}) {
     const attachments = this._coordination.contextPackageAttachments(runId);
     const boards = [...new Set(attachments
       .filter((attachment) => attachment.scope.startsWith('board:'))
@@ -9700,10 +9838,27 @@ export class Coordinator {
     const bindingFence = this._coordination.bindingFence(runId, 'shared');
     const decisionSettleCount = this.decisionSettleCount(runId);
     const projectionInputFence = this._coordination.projectionInputFence();
-    const fenceTuple = [boardFences, bindingFence, decisionSettleCount, projectionInputFence];
-    return this._horizonCacheGet('workflow', runId, fenceTuple, () => ({
+    const ownedWorkerIds = [...this._tasks.values()]
+      .filter((task) => task.runId === runId && (task.assignee ?? task.reservedWorkerId))
+      .map((task) => task.assignee ?? task.reservedWorkerId)
+      .filter((id, index, all) => all.indexOf(id) === index).sort();
+    if (viewer !== 'orchestrator' && !ownedWorkerIds.includes(viewer)) {
+      throw Object.assign(new Error('scratchpad workflow viewer is unavailable'), {
+        name: 'CoordinationRefusal', code: 'scratchpad_not_available',
+      });
+    }
+    const scratchpadScopes = viewer === 'orchestrator'
+      ? [...ownedWorkerIds.map((id) => `worker:${id}`), 'shared']
+      : [`worker:${viewer}`, 'shared'];
+    const scratchpadCapture = this._coordination.scratchpadSnapshotBatch(runId, scratchpadScopes);
+    const fenceTuple = [
+      boardFences, bindingFence, decisionSettleCount, projectionInputFence,
+      scratchpadCapture.fenceTuple,
+    ];
+    return this._horizonCacheGet('workflow', `${runId}:${viewer}`, fenceTuple, () => ({
       runId, fenceTuple,
       boards: boards.map((board) => this._coordination.boardSnapshot(board)),
+      scratchpad: projectHorizonScratchpad(scratchpadCapture, viewer),
       nodes: this._coordination.queryKnowledge({}),
       edges: this._coordination.queryKnowledgeEdges({}),
     }));
@@ -10397,6 +10552,19 @@ export class Coordinator {
           if (handle.status !== 'dead') handle.status = 'exited';
           this._cleanupClosedTransport(handle, task, terminalEvent).catch(noop);
         }
+        break;
+      }
+      case 'scratchpad.write': {
+        // Issue #33 REFLEX-1 emulated up-channel. workerId is bound by appendAttributed's
+        // authenticated stream envelope; no identity field is accepted from model text.
+        const receipt = this.writeScratchpad(workerId, payload?.entry, {
+          expectedFence: payload?.expectedFence,
+          idempotencyKey: payload?.idempotencyKey,
+        });
+        appendAttributed({
+          worker: workerId, harness, turnEpoch, kind: 'scratchpad.write_result',
+          actor: 'hub', payload: receipt,
+        });
         break;
       }
       case 'question.asked': {

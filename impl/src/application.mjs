@@ -58,6 +58,9 @@ const MAX_BOARD_ITEMS = 512;
 // byte/count-ceiling shape MAX_BOARD_VIEW_BYTES/MAX_BOARD_ITEMS use for boards.
 const MAX_REPL_VIEW_BYTES = 256 * 1024;
 const MAX_REPL_BINDING_ITEMS = 512;
+export const MAX_SCRATCHPAD_VIEW_BYTES = 32_768;
+export const MAX_SCRATCHPAD_VIEW_ITEMS = 64;
+export const MAX_SCRATCHPAD_VIEW_CACHE_KEYS = 256;
 // AX-1 rule 3 (issue #10): these operational kinds are real-time provider narration/tool-use
 // telemetry — repeated bursts of them are not distinct forward-progress milestones the way a
 // committed file edit or a lifecycle/control/verification fact is, so an `evidence.mapped`
@@ -416,6 +419,141 @@ export function projectReplBindingView(snapshot, viewer = {}, cache = null) {
   }
   if (cache) cache.set(cacheKey, view);
   return view;
+}
+
+function scratchpadProse(workerId, text) {
+  return wrapProse(workerId, boundedAttentionText(text));
+}
+
+function projectScratchpadContent(row) {
+  const content = row.content;
+  const worker = row.workerId;
+  if (row.kind === 'note' && content?.kind === 'note') {
+    return { kind: 'note', text: scratchpadProse(worker, content.text) };
+  }
+  if (row.kind === 'plan' && content?.kind === 'plan' && Array.isArray(content.steps)) {
+    return {
+      kind: 'plan', objective: scratchpadProse(worker, content.objective),
+      steps: content.steps.map((step) => ({
+        text: scratchpadProse(worker, step.text), state: step.state,
+      })),
+      supersedes: content.supersedes === null ? null : clone(content.supersedes),
+    };
+  }
+  if (row.kind === 'doubt' && content?.kind === 'doubt') {
+    return {
+      kind: 'doubt', question: scratchpadProse(worker, content.question),
+      context: content.context === null ? null : scratchpadProse(worker, content.context),
+    };
+  }
+  if (row.kind === 'link' && content?.kind === 'link') {
+    let target;
+    if (content.target?.type === 'url') {
+      target = { type: 'url', url: scratchpadProse(worker, content.target.url) };
+    } else if (content.target?.type === 'repo_path') {
+      target = { type: 'repo_path', path: scratchpadProse(worker, content.target.path) };
+    } else if (content.target?.type === 'entry') {
+      target = {
+        type: 'entry', entryId: content.target.entryId, entryDigest: content.target.entryDigest,
+      };
+    } else {
+      throw applicationError('stored scratchpad link is invalid', 'scratchpad_entry_integrity');
+    }
+    return {
+      kind: 'link', label: scratchpadProse(worker, content.label),
+      relation: content.relation, target,
+    };
+  }
+  throw applicationError('stored scratchpad entry is invalid', 'scratchpad_entry_integrity');
+}
+
+/**
+ * Pure, bounded driver-facing scratchpad projection. Authorization precedes pagination and
+ * byte accounting, and the cache key binds the exact authorized fence tuple.
+ */
+export function projectScratchpadView(snapshot, viewer = {}, cache = null) {
+  const runId = snapshot?.runId ?? null;
+  const role = viewer.role === 'orchestrator' ? 'orchestrator' : 'worker';
+  const workerId = role === 'worker' ? (viewer.workerId ?? null) : null;
+  const requestedWorkerId = viewer.requestedWorkerId ?? null;
+  const allowed = role === 'orchestrator'
+    ? new Set((snapshot?.slices ?? []).map((slice) => slice.scope))
+    : new Set([`worker:${workerId}`, 'shared']);
+  if (role === 'orchestrator' && requestedWorkerId) {
+    allowed.clear(); allowed.add(`worker:${requestedWorkerId}`); allowed.add('shared');
+  }
+  const slices = (snapshot?.slices ?? []).filter((slice) => allowed.has(slice.scope));
+  const scopes = slices.map((slice) => slice.scope);
+  if (role === 'worker') {
+    scopes.sort((left, right) => {
+      if (left === `worker:${workerId}`) return -1;
+      if (right === `worker:${workerId}`) return 1;
+      return compareCanonicalStrings(left, right);
+    });
+  } else scopes.sort(compareCanonicalStrings);
+  const fenceByScope = new Map(snapshot?.fenceTuple ?? []);
+  const fenceTuple = scopes.map((scope) => [scope, fenceByScope.get(scope) ?? 0]);
+  const before = viewer.before ?? null;
+  const sliceIdentity = `${runId}\0${role}\0${workerId ?? ''}\0${requestedWorkerId ?? ''}`;
+  const cacheKey = `${sliceIdentity}\0${before?.createdEvent ?? ''}\0${before?.entryId ?? ''}\0${JSON.stringify(fenceTuple)}`;
+  if (cache?.has(cacheKey)) {
+    const value = cache.get(cacheKey);
+    cache.delete(cacheKey); cache.set(cacheKey, value);
+    return value;
+  }
+  let rows = slices.flatMap((slice) => slice.entries ?? [])
+    .sort((left, right) => right.createdEvent - left.createdEvent
+      || compareCanonicalStrings(left.entryId, right.entryId));
+  if (before) {
+    rows = rows.filter((row) => row.createdEvent < before.createdEvent
+      || (row.createdEvent === before.createdEvent
+        && compareCanonicalStrings(row.entryId, before.entryId) > 0));
+  }
+  let scratchpadViewTruncated = rows.length > MAX_SCRATCHPAD_VIEW_ITEMS;
+  let projected = rows.slice(0, MAX_SCRATCHPAD_VIEW_ITEMS).map((row) => ({
+    schemaVersion: 1, entryId: row.entryId, entryDigest: row.entryDigest,
+    contentDigest: row.contentDigest, runId: row.runId, scope: row.scope,
+    authorWorkerId: row.workerId, authorTaskId: row.taskId, ordinal: row.ordinal,
+    kind: row.kind, createdEvent: row.createdEvent, createdAt: row.createdAt,
+    candidateState: 'candidate',
+    source: row.source === null ? null : clone(row.source),
+    content: projectScratchpadContent(row),
+  }));
+  const build = () => {
+    const last = projected.at(-1);
+    return deepFreeze({
+      runId, workerId: requestedWorkerId ?? workerId, scopes: clone(scopes),
+      fenceTuple: clone(fenceTuple), entries: projected,
+      scratchpadViewTruncated,
+      nextBefore: scratchpadViewTruncated && last
+        ? { createdEvent: last.createdEvent, entryId: last.entryId } : null,
+    });
+  };
+  let view = build();
+  while (Buffer.byteLength(JSON.stringify(view)) > MAX_SCRATCHPAD_VIEW_BYTES && projected.length > 0) {
+    projected = projected.slice(0, -1); scratchpadViewTruncated = true; view = build();
+  }
+  if (cache) {
+    for (const key of [...cache.keys()]) {
+      if (key.startsWith(`${sliceIdentity}\0`) && !key.endsWith(`\0${JSON.stringify(fenceTuple)}`)) {
+        cache.delete(key);
+      }
+    }
+    cache.set(cacheKey, view);
+    while (cache.size > MAX_SCRATCHPAD_VIEW_CACHE_KEYS) cache.delete(cache.keys().next().value);
+  }
+  return view;
+}
+
+export function purgeScratchpadViewCache(cache, runId, trigger) {
+  if (!['workflow_settled', 'run_closed', 'run_stopped'].includes(trigger)) {
+    throw applicationError('scratchpad cache purge trigger is invalid', 'scratchpad_read_invalid');
+  }
+  let removed = 0;
+  for (const key of [...cache.keys()]) {
+    if (key.startsWith(`${runId}\0`)) { cache.delete(key); removed += 1; }
+  }
+  return removed;
 }
 
 function normalizeAnswer(value) {
@@ -1853,6 +1991,7 @@ export class BatonApplication {
     this._runEffectChains = new Map();
     this._runDeliveryRegistrations = new Map();
     this._semanticReviewPromises = new Map();
+    this._scratchpadViewCache = new Map();
     this._followControllers = new Set();
     this.ready = Promise.resolve().then(() => this._reconcileProfileRegistry())
       .then(() => this._reconcileRunStops())
@@ -5006,6 +5145,11 @@ export class BatonApplication {
     const node = projection?.nodes?.[0] ?? null;
     const task = node?.taskId ? this.driver.coordination.task(node.taskId) : null;
     const workerId = task?.assignee ?? null;
+    const scratchpad = workerId && typeof this.driver.coordination.scratchpadSnapshotBatch === 'function'
+      ? projectScratchpadView(this.driver.coordination.scratchpadSnapshotBatch(
+        runId, [`worker:${workerId}`, 'shared'],
+      ), { role: 'orchestrator', requestedWorkerId: workerId }, this._scratchpadViewCache)
+      : null;
     let terminalResult = null;
     if (workerId) {
       try { terminalResult = await this.driver.coordinator.result(workerId); }
@@ -5095,6 +5239,7 @@ export class BatonApplication {
         resultIntent,
       } : null,
       nodes: clone(projection?.nodes ?? []),
+      scratchpad,
       route: route ? {
         ...clone(route),
         rationale: {
@@ -6348,8 +6493,17 @@ export class BatonApplication {
           : node?.state === 'failed' ? 'failed' : 'pending',
         accepted: node?.state === 'accepted',
       };
+      const scratchpadRef = task?.assignee
+        && typeof this.driver.coordination.scratchpadSnapshotBatch === 'function'
+        ? {
+          workerId: task.assignee, taskId: task.id,
+          fenceTuple: this.driver.coordination.scratchpadSnapshotBatch(
+            runId, [`worker:${task.assignee}`, 'shared'],
+          ).fenceTuple,
+        } : null;
       attempts.push({
         role: binding.role, nodeKey: binding.nodeKey, taskId: node?.taskId ?? null,
+        scratchpadRef,
         state: handle?.status === 'interrupted' && handle.controllableAttached === true
           ? 'interrupted'
           : sessionAttachmentUnproven(handle)
@@ -6583,6 +6737,7 @@ export class BatonApplication {
       },
       planPreview: { ...planPreviewCore, displayDigest: digest(planPreviewCore) },
       nodes: clone(projection.nodes),
+      scratchpad: null,
       attempts: clone(attempts),
       candidates: clone(candidates),
       feedback: clone(feedback),
@@ -6690,6 +6845,11 @@ export class BatonApplication {
     const node = projection.nodes[0];
     const task = node.taskId ? this.driver.coordination.task(node.taskId) : null;
     const workerId = task?.assignee ?? null;
+    const scratchpad = workerId && typeof this.driver.coordination.scratchpadSnapshotBatch === 'function'
+      ? projectScratchpadView(this.driver.coordination.scratchpadSnapshotBatch(
+        runId, [`worker:${workerId}`, 'shared'],
+      ), { role: 'orchestrator', requestedWorkerId: workerId }, this._scratchpadViewCache)
+      : null;
     let result = null;
     if (workerId) {
       try { result = await this.driver.coordinator.result(workerId); }
@@ -6991,6 +7151,7 @@ export class BatonApplication {
       },
       planPreview: { ...planPreviewCore, displayDigest: digest(planPreviewCore) },
       nodes: clone(projection.nodes),
+      scratchpad,
       route: {
         requested, resolved, observed, launchEnforcement, providerAttestation,
         rationale: {

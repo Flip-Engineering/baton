@@ -13,6 +13,30 @@ const SUCCESS_RESTING = 'work_completed';
 const RESULT_SHA = /^[a-f0-9]{40,64}$/u;
 const GLOB_MAGIC = /[*?[\]{}!+@]/u;
 const POLL_MS = 50;
+export const MAX_WAVE_PROGRESS_BYTES = 7 * 1024 * 1024;
+
+function boundedJsonBytes(value, limit = MAX_WAVE_PROGRESS_BYTES) {
+  let bytes = 0;
+  const add = (amount) => {
+    bytes += amount;
+    if (bytes > limit) throw waveError('wave progress exceeds its serialization ceiling', 'wave_progress_oversize');
+  };
+  const visit = (node) => {
+    if (node === null || typeof node !== 'object') { add(Buffer.byteLength(JSON.stringify(node))); return; }
+    if (Array.isArray(node)) {
+      add(2);
+      node.forEach((item, index) => { if (index > 0) add(1); visit(item); });
+      return;
+    }
+    add(2);
+    Object.entries(node).forEach(([key, item], index) => {
+      if (index > 0) add(1);
+      add(Buffer.byteLength(JSON.stringify(key)) + 1); visit(item);
+    });
+  };
+  visit(value);
+  return bytes;
+}
 
 function waveError(message, code = 'wave_invalid') {
   return Object.assign(new TypeError(message), { code });
@@ -174,10 +198,12 @@ export async function createWave(baton, options = {}) {
         phase: outline.phase ?? null,
         terminal: terminalFrom(outline),
         attention: attentionFrom(outline),
+        scratchpad: outline.scratchpad ?? null,
         elapsedMs: Date.now() - state.startedAt,
       });
     }
     const snapshot = { elapsedMs: Date.now() - state.startedAt, members };
+    boundedJsonBytes(snapshot);
     state.progress.push({ at: new Date().toISOString(), members: members.map(({ role, phase }) => ({ role, phase })) });
     return snapshot;
   }
