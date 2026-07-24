@@ -28,7 +28,7 @@ const OVERSIZE = [
 const MEMBERS = Object.freeze([
   Object.freeze({
     role: 'grammar-m2-implementer',
-    exact: Object.freeze({ harness: 'codex', model: 'gpt-5.6-sol', effort: 'high' }),
+    exact: Object.freeze({ harness: 'claude-code', model: 'claude-opus-4-8', effort: 'high' }),
     scope: Object.freeze([
       'impl/src/application-semantics.mjs',
       'impl/src/application.mjs',
