@@ -635,6 +635,17 @@ operational cost, not a rollback hazard (R-OP-11).
 
 ## 10. Acceptance contracts
 
+**Every contract declares its coverage boundary** (v2 acceptance — the generalization of the two
+defects found in this list). A contract that names only what it asserts can pass because of what
+it never examined, and a green result is then uninterpretable. Two instances were load-bearing,
+both found by attacking the contract rather than reading it: **C3** was total "over extracted
+literals" while its extractor read three files and missed two P0 phases (§8.4); **H4** derived
+flag names by a rule that could not express `--to` or `--wait`, so its lint had to either fire on
+the live surface or be silently exempted. Both would have shipped green. Therefore each contract
+below states, alongside what it asserts, **the set it ranges over and what it does not cover** —
+file lists, extraction rules, and exempted spellings are part of the contract, versioned with it,
+and changing one is a contract change. A contract whose scope is implicit is not yet a contract.
+
 - **C1** (L1): per profile, every registry op × enabled surface resolves under its derived name
   and executes; negative inventory (e.g. board claim/report absent from ordinary MCP,
   `mcp-reflex-board-package-red.test.mjs:213-224`) asserted per profile (R-CX-14).

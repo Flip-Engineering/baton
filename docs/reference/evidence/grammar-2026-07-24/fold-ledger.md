@@ -381,6 +381,21 @@ substantive repair. One defect found and fixed; two claims verified.
   The one durable output: §8.4 now records that M0's extractor rework is scoped to the phase
   dimension, and that MCP tools have **two** declaration mechanisms, so a replacement reading only
   `name:` literals would silently drop `baton_runs`.
+- **A-15 — FIXED — the generalization the individual folds kept implying.** A-9 and A-10 were
+  folded as separate defects (C3 circular; H4 inexpressible). They are one shape: **a check that
+  passes because of what it never examined.** The same shape appeared five times in this review's
+  own method, which is what made it worth generalizing rather than patching twice:
+  A-3 asked "do the sections cohere?" not "are the citations true?"; A-8 asked "is this a run
+  phase?" not "is this a §7 string?"; A-12 read a problem statement as a directive; A-14's
+  reconciliation asked "declared via `name:`?" not "declared?"; and the check verifying A-14's own
+  summary table used a three-line window on eight-line entries, returning a clean zero that read
+  as a broken reference. In every case the tell was the same — **a negative result too clean for
+  the question's difficulty.**
+  Folded into **§10** as a requirement on the contract list itself: each contract states the set
+  it ranges over and what it does not cover; file lists, extraction rules, and exempted spellings
+  are part of the contract, versioned with it. *A contract whose scope is implicit is not yet a
+  contract.* This is a generalization of two verified defects, not a new claim about the code — it
+  asserts nothing about `impl/` that A-9 and A-10 did not already establish.
 - **Method note — the NUL-byte trap is real and it bit this audit.** §8.4 already warns that
   `impl/src/application.mjs` contains a NUL byte requiring `grep -a`. Plain `grep` against it
   returns *silently empty* — not an error. An early verification pass here read that empty result
