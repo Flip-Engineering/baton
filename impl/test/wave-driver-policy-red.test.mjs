@@ -257,7 +257,7 @@ test('D1: two productive pauses are nudged exactly once each, then L6 declares d
   };
   const { baton, repo } = harness(t, scriptsByMarker);
   const receipt = await createWaveDriver(baton, {
-    ...FAST, unproductiveNudgeBudget: 0, finalization: 'claim-on-stall',
+    ...FAST, stallTimeoutMs: 10_000, unproductiveNudgeBudget: 0, finalization: 'claim-on-stall',
   }).run({ repoRoot: repo, members: [member('worker', 'write the worker report')] });
   assert.equal(receipt.basis, 'completed');
   assert.equal(receipt.nudges.length, 2, `expected exactly 2 nudges, got ${JSON.stringify(receipt.nudges)}`);
