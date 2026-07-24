@@ -319,7 +319,13 @@ and per-recipient, offset-paged **non-follow** output reads depend on them (R-CX
   verb accepting the same `inputs`**, and `do` accepts every advertised action — neither
   direction implies the other's admission requirements. Without the first half, F3's
   advertised-but-reachable-only-through-`do` friction survives the grammar intact, and §6's
-  coverage of D2's 27 action kinds carries no conformance obligation.
+  coverage of D2's 27 action kinds carries no conformance obligation. **Baseline, verified at v2
+  acceptance: the mapping is complete today — 27/27.** All twenty-seven advertised kinds have a
+  §6 destination, with `context_search`/`chunk`/`coverage` reaching it as recorded
+  `legacyAliasFor` eval rather than as distinct verbs (R-CX-1's permitted resolution), and the
+  three checkpoint acts as `run.answer`'s response variants (§7.3). C10 must therefore hold this
+  at 27/27 and red on any kind added without a named verb — the obligation is to keep a property
+  that exists, not to establish one.
 - **L3 — Terminals are explained** (R-CX-10): every **non-success** terminal carries a typed
   cause; `completed` carries a non-null accepted result/outcome authority and MAY have
   `terminalCause: null` (pinned today by `phase92-read-only-result-red.test.mjs:90-103`).

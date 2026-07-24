@@ -497,6 +497,22 @@ substantive repair. One defect found and fixed; two claims verified.
   citations, so an edit could silently have dropped a finding's only reference. Diffed the unique
   cited-ID set against the `0c5c970` baseline — **53 at baseline, 53 now, none lost.**
   No doc change; recorded so a reviewer need not redo it.
+- **A-22 — VERIFIED, no defect — the L2 coverage mandate is satisfiable, 27/27.** A-5 folded
+  R-OP-4's clause ("every advertised action has a named verb accepting the same `inputs`") into
+  §5 L2 and never checked that D2's 27 action kinds actually map — the same
+  mandate-without-enumeration shape that made A-13's repair uncheckable (A-19). Unlike A-19 and
+  A-18, this one came back clean.
+  Mapped all 27 against the §6 table: `context_eval/retry/reduce/map` → the four context verbs;
+  `context_search/chunk/coverage` → recorded `legacyAliasFor` eval (R-CX-1's permitted
+  resolution, not a distinct verb); `approve_plan` → `run.approve`; the three `answer_*` →
+  `run.answer`; `nudge/wait/claim_turn` → `run.answer`'s three variants (§7.3);
+  `send`/`interrupt`/`stop` → the matching run verbs; `stop_member` → `run.member.stop`;
+  `adopt_result`/`select_candidate`/`send_feedback`/`revise_candidate` →
+  `run.adopt`/`select`/`feedback`/`revise`; `semantic_review`/`integrate`/`export_result`/
+  `retry_verification`/`resume_work` → `run.review`/`integrate`/`export`/`retry`/`resume`.
+  Durable output: §5 L2 now records 27/27 as a **baseline**, so C10's obligation is to *preserve*
+  a property that holds rather than to establish one — a materially different task for M0, and one
+  it would otherwise have had to re-derive.
 - **Method note — the NUL-byte trap is real and it bit this audit.** §8.4 already warns that
   `impl/src/application.mjs` contains a NUL byte requiring `grep -a`. Plain `grep` against it
   returns *silently empty* — not an error. An early verification pass here read that empty result
