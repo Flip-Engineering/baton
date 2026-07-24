@@ -413,6 +413,24 @@ substantive repair. One defect found and fixed; two claims verified.
   carrying an explicit out-of-axis declaration and reason, so a newly added module fails closed.
   Note this finding exists only because A-15 was folded one turn earlier and then applied to the
   folds themselves — the generalization was load-bearing, not decorative.
+- **A-17 — FIXED — A-11's repair had the same inclusion-scope defect it was correcting.** Continued
+  auditing this review's own repairs (the A-16 method). A-11 found six non-derivable `baton_*`
+  names and folded a rename-cost requirement into §11 — but it examined **only the `baton_*`
+  dialect**. §1.1 counts two.
+  The `fleet_*` dialect splits exactly 19/19: 19 kernel/authoring tools, and **19 *ordinary* run
+  operations** (`fleet_run_start`, `fleet_run_approve`, `fleet_run_answer`, `fleet_run_review`, …)
+  that duplicate `baton_*` coverage of the same registry keys. Two consequences v2 did not state:
+  (a) §6's exclusions characterise `fleet_*` as the kernel dialect, which is true of exactly half
+  of it; (b) §6.1's derivation yields **one** MCP spelling per key while §9 M4 promises *both* MCP
+  profiles render from registry v2 — so the 19 `fleet_run_*` tools are names the registry cannot
+  derive, and **L1's second clause and C1 red on all 19 at M1**, not just on A-11's six.
+  Folded into **§6** (characterisation corrected), **§6.1** (the single-valued-rule gap stated,
+  with the only two exits named: a dialect parameter that must then be declared an L6 carve-out,
+  or deprecating the 19 as aliases retiring at M5), and **§11** (exposed surface corrected from
+  six to **25** published MCP tool names).
+  Third consecutive finding produced by auditing repairs rather than code — and the second where a
+  repair reproduced the very defect it corrected. Repairs written at the end of an investigation
+  inherit the blind spot that produced the defect; they need their own pass.
 - **Method note — the NUL-byte trap is real and it bit this audit.** §8.4 already warns that
   `impl/src/application.mjs` contains a NUL byte requiring `grep -a`. Plain `grep` against it
   returns *silently empty* — not an error. An early verification pass here read that empty result

@@ -388,7 +388,10 @@ Every row carries its authority profile; unmarked rows are `ordinary`.
 | `application.help` | `help`; topics regenerate from the registry |
 
 **Explicit exclusions** (all L8-profiled, outside the ordinary grammar, unchanged): kernel tools
-(`fleet_spawn/kill/respond/…` — profile `kernel`); goal/plan authoring (`goal_define`,
+(`fleet_spawn/kill/respond/…` — profile `kernel`; **note the `fleet_*` dialect is not wholly
+kernel** — of its 38 tools exactly 19 are kernel/authoring and 19 are *ordinary* run operations
+`fleet_run_start/approve/answer/review/…`, which duplicate the `baton_*` dialect for the same
+registry keys, v2 acceptance — see §6.1); goal/plan authoring (`goal_define`,
 `plan_propose`, `plan_approve`, `goal_plan_status` — profile `authoring`, R-OP-2); the
 checkpoint acts remain advertised do-targets whose settle path is `run.answer`'s three-variant
 response (§7.3).
@@ -397,7 +400,18 @@ response (§7.3).
 
 For registry key `a.b.verb`: embedded `client.a(A?).b(B?).verb(opts)`; CLI `baton a b verb A?
 B? [--flags]`; MCP `baton_a_b_verb`; web `a_b_verb`. One function computes all four; the
-conformance suite asserts the computation. Each operation declares its enabled surfaces and
+conformance suite asserts the computation.
+
+**The MCP row is single-valued and the MCP surface is not** (v2 acceptance). §1.1 counts two MCP
+dialects (D6a `fleet_*` = 38, D6b `baton_*` = 21) and §9 M4 promises **both** render from registry
+v2 — but this rule yields exactly one MCP spelling per key. The 19 ordinary `fleet_run_*` tools
+are therefore names the registry cannot derive, so **L1's second clause and C1 red on all 19 at
+M1**, not merely on the six non-derivable `baton_*` names (§11). Resolve it explicitly, one way or
+the other: either give the derivation a **dialect parameter** (`{prefix} + a_b_verb`, with both
+dialects declared enabled surfaces of the same operation — which keeps two live names per concept
+and must then be stated as an L6 carve-out), or declare the 19 `fleet_run_*` tools **deprecated
+aliases retiring at M5**, which makes them 19 further driver-visible breaking renames. What is not
+available is leaving M4's "both MCP profiles" promise resting on a rule that derives one name. Each operation declares its enabled surfaces and
 profile; aliases cannot bypass derivation. **C9** (R-OP-10): the derived web name set must be
 disjoint from the kernel/authoring literal sets (`web-northbound.mjs:17-31`) — asserted, not
 assumed.
@@ -719,7 +733,10 @@ and changing one is a contract change. A contract whose scope is implicit is not
   just not from D3.) These are MCP **tool names already advertised to external clients**: M4
   renders names from the registry and M5 sunsets aliases, so each is a driver-visible breaking
   rename, and C1 goes red on all six at M1 unless each is ledgered as a `name` divergence with an
-  explicit `retiresIn`. §2's "blast radius is its own tests, drivers, and docs" holds only if
+  explicit `retiresIn`. **And that count was itself understated** (v2 acceptance): it examined only
+the `baton_*` dialect. The 19 ordinary `fleet_run_*` tools are equally underivable under §6.1, so
+the exposed surface is **25 published MCP tool names**, not six — see §6.1 for the two ways out.
+§2's "blast radius is its own tests, drivers, and docs" holds only if
   every MCP client counts as "its own drivers" — for a published tool surface that is the
   assumption to state out loud, not to inherit.
 - **Rename cost is real** and now quantified: the named pinned files
