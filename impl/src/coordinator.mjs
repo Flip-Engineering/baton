@@ -9622,13 +9622,19 @@ export class Coordinator {
     if (!task || !['working', 'input_required', 'paused'].includes(task.status)) {
       return { ok: false, result: 'worker_not_active' };
     }
-    if (!Number.isSafeInteger(opts.expectedFence) || opts.expectedFence < 0
+    // Issue #48 erratum: the emulated up-channel admits the literal 'current' — prose workers
+    // cannot observe the turn fence, and every steering event advances it, so numeric fences
+    // are unwritable for them (the 0/24 demo fence chase). 'current' resolves to the live
+    // worker fence at admission; liveness is already bound by the authenticated stream, and
+    // the idempotencyKey still carries retry safety.
+    const fenceIsCurrent = opts.expectedFence === 'current';
+    if (!(fenceIsCurrent || (Number.isSafeInteger(opts.expectedFence) && opts.expectedFence >= 0))
       || typeof opts.idempotencyKey !== 'string'
       || !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/u.test(opts.idempotencyKey)
       || Object.keys(opts).some((key) => !['expectedFence', 'idempotencyKey'].includes(key))) {
       return { ok: false, result: 'scratchpad_write_invalid' };
     }
-    const check = this._fences.check(workerId, { fence: opts.expectedFence });
+    const check = this._fences.check(workerId, { fence: fenceIsCurrent ? this._fences.current(workerId).fence : opts.expectedFence });
     if (!check.ok) return { ok: false, result: 'stale_fence', current: check.current };
     try {
       const receipt = this._coordination.writeScratchpad({

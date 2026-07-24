@@ -11,6 +11,14 @@ import { hasNorthboundCapabilityAuthority } from './northbound-capability-author
 // note above that table in application.mjs) — there is no `application.command(...)` string
 // dispatch for this Web bridge to forward. It is reachable only as a direct method call,
 // `application.contextEval(...)`, today.
+// docs/36 §8.3 L8 / D8 (R-OP-15b), M4b — the remote_bridge profile projection of the registry: the
+// same five operations. The bridge forwards the legacy application-command spelling it dispatches
+// (the canonical `baton_*` tools route to these same commands), so there is NO reachability change
+// this phase; the retained legacy names resolve to their canonical operation as registry aliases
+// (`run.act`→`run.do`, `run.inspect`→`run.view`), which is what retires their M0 ledger rows.
+// canonical operation ← legacy application command (both reach one remote operation): run.view ←
+// run.inspect, run.do ← run.act; the others are already one spelling. The registry owns these as
+// aliases (retiring the mcp.web-bridge ledger rows); the bridge forwards the legacy spelling.
 const ORDINARY_COMMANDS = Object.freeze([
   'application.help', 'run.start', 'run.inspect', 'run.act', 'run.stop',
 ]);
@@ -303,7 +311,9 @@ export function kimiBatonMcpEntry({ projectRoot, nodePath, bridgePath }) {
     toolTimeoutMs: 180_000,
     enabledTools: ['baton_help', 'baton_run_start', 'baton_run_inspect', 'baton_run_episode',
       'baton_run_workstreams', 'baton_workstream_notify', 'baton_workstream_stop',
-      'baton_run_act', 'baton_run_stop'],
+      'baton_run_act', 'baton_run_stop',
+      'baton_run_do', 'baton_run_view', 'baton_run_member_view', 'baton_run_member_send',
+      'baton_run_member_stop', 'baton_application_help'],
   });
 }
 

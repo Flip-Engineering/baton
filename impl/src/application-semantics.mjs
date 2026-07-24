@@ -96,6 +96,26 @@ export const APPLICATION_LIFECYCLE_ENUMS = Object.freeze({
   attentionKindSerialization: ATTENTION_KIND_SERIALIZATION,
 });
 
+// docs/36 §4.2 H10 / §10 C8 — the canonical serialization order. A serialization-layer
+// normalization emits the web command envelope, the outline top-level, and the registry-owned
+// nested objects (the L2 `do` block and its `{kind, actionId}` coordinate) with their pinned keys
+// leading, in this exact order. This is PRESENTATION ONLY (R-CX-11/R-KM-13): parsers stay
+// order-insensitive, and every digest/replay identity stays on the sorted-key canonical form
+// (`application.mjs` `canonical()`), so this pin never touches an authority digest. Arrays whose
+// order is semantic keep their own declared sort. Cut as a conformance contract at M4b (C8).
+export const APPLICATION_SERIALIZATION_ORDER = Object.freeze({
+  envelope: Object.freeze([
+    'schemaVersion', 'commandId', 'idempotencyKey', 'command', 'args',
+    'repoId', 'runId', 'expectedFence', 'origin', 'clientObservedCursor',
+  ]),
+  outline: Object.freeze([
+    'schemaVersion', 'runId', 'depth', 'objective', 'phase', 'cursor',
+    'nextActions', 'attention', 'blockedInteraction', 'route', 'verification', 'budget',
+  ]),
+  do: Object.freeze(['action', 'inputs']),
+  action: Object.freeze(['kind', 'actionId']),
+});
+
 const objectSchema = (properties, required = Object.keys(properties)) => ({
   type: 'object', properties, required, additionalProperties: false,
 });
@@ -1427,6 +1447,55 @@ const SURFACE_ALIAS_ROWS = Object.freeze([
   ['run.watch', 'embedded', 'BatonRun.follow'],
   ['run.watch', 'embedded', 'BatonRun.output'],
   ['run.watch', 'embedded', 'BatonRun.progress'],
+  // docs/36 §9 M4 (M4b — the transport flip) — the retained legacy MCP (`baton_*`/`fleet_*`) and
+  // Web (`_`-joined) transport names become first-class registry aliases, exactly as M4a relocated
+  // the cli/embedded rows. The conformance harness resolves them here, which is what retires their
+  // M0 ledger rows (§8.4 removal-only): the divergence is now derivable registry data, not an
+  // unledgered fact. The canonical transports are admitted beside these; both reach one operation.
+  ['run.do', 'mcp.web-bridge', 'run.act'],
+  ['run.view', 'mcp.web-bridge', 'run.inspect'],
+  ['application.help', 'mcp.baton', 'baton_help'],
+  ['run.answer', 'mcp.baton', 'baton_decision_answer'],
+  ['run.attention.list', 'mcp.baton', 'baton_decision_list'],
+  ['run.do', 'mcp.baton', 'baton_run_act'],
+  ['run.list', 'mcp.baton', 'baton_runs'],
+  ['run.member.send', 'mcp.baton', 'baton_workstream_notify'],
+  ['run.member.stop', 'mcp.baton', 'baton_workstream_stop'],
+  ['run.member.view', 'mcp.baton', 'baton_run_workstreams'],
+  ['run.view', 'mcp.baton', 'baton_run_episode'],
+  ['run.view', 'mcp.baton', 'baton_run_inspect'],
+  ['run.adopt', 'mcp.fleet', 'fleet_run_adopt'],
+  ['run.answer', 'mcp.fleet', 'fleet_run_answer'],
+  ['run.approve', 'mcp.fleet', 'fleet_run_approve'],
+  ['run.evidence', 'mcp.fleet', 'fleet_run_evidence'],
+  ['run.export', 'mcp.fleet', 'fleet_run_export'],
+  ['run.feedback', 'mcp.fleet', 'fleet_run_feedback'],
+  ['run.integrate', 'mcp.fleet', 'fleet_run_integrate'],
+  ['run.member.send', 'mcp.fleet', 'fleet_run_workstream_notify'],
+  ['run.member.stop', 'mcp.fleet', 'fleet_run_workstream_stop'],
+  ['run.member.view', 'mcp.fleet', 'fleet_run_workstreams'],
+  ['run.recover', 'mcp.fleet', 'fleet_run_recover'],
+  ['run.review', 'mcp.fleet', 'fleet_run_review'],
+  ['run.send', 'mcp.fleet', 'fleet_run_steer'],
+  ['run.start', 'mcp.fleet', 'fleet_run_start'],
+  ['run.stop', 'mcp.fleet', 'fleet_run_stop'],
+  ['run.view', 'mcp.fleet', 'fleet_run_episode'],
+  ['run.view', 'mcp.fleet', 'fleet_run_status'],
+  ['run.view', 'mcp.fleet', 'fleet_run_wait'],
+  ['run.watch', 'mcp.fleet', 'fleet_run_follow'],
+  ['run.do', 'web', 'run_act'],
+  ['run.list', 'web', 'runs_list'],
+  ['run.member.send', 'web', 'run_workstream_notify'],
+  ['run.member.stop', 'web', 'run_workstream_stop'],
+  ['run.member.view', 'web', 'run_workstreams'],
+  ['run.resume', 'web', 'run_resume_work'],
+  ['run.retry', 'web', 'run_retry_verification'],
+  ['run.send', 'web', 'run_steer'],
+  ['run.view', 'web', 'run_episode'],
+  ['run.view', 'web', 'run_inspect'],
+  ['run.view', 'web', 'run_status'],
+  ['run.view', 'web', 'run_wait'],
+  ['run.watch', 'web', 'run_follow'],
 ]);
 
 function buildCanonicalOperation([key, spec]) {
@@ -1533,6 +1602,7 @@ export const APPLICATION_SEMANTIC_REGISTRY = freeze({
   canonicalOperations,
   surfaceAliases,
   enums: APPLICATION_LIFECYCLE_ENUMS,
+  serializationOrder: APPLICATION_SERIALIZATION_ORDER,
   authorityDigest,
   presentationDigest,
   digest: authorityDigest,

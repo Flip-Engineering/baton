@@ -295,6 +295,8 @@ test('KC6/KC7/KC8: Kimi MCP bridges only the compact application surface over au
     'baton_help', 'baton_run_start', 'baton_run_inspect', 'baton_run_episode',
     'baton_run_workstreams', 'baton_workstream_notify', 'baton_workstream_stop',
     'baton_run_act', 'baton_run_stop',
+    'baton_run_do', 'baton_run_view', 'baton_run_member_view', 'baton_run_member_send',
+    'baton_run_member_stop', 'baton_application_help',
   ]);
   for (const tool of listed.result.tools) {
     assert.equal(Object.hasOwn(tool.inputSchema.properties, 'repoId'), false);
@@ -466,7 +468,9 @@ test('KC8: project Kimi MCP entry contains no credential and allowlists only sem
     startupTimeoutMs: 30_000, toolTimeoutMs: 180_000,
     enabledTools: ['baton_help', 'baton_run_start', 'baton_run_inspect', 'baton_run_episode',
       'baton_run_workstreams', 'baton_workstream_notify', 'baton_workstream_stop',
-      'baton_run_act', 'baton_run_stop'],
+      'baton_run_act', 'baton_run_stop',
+      'baton_run_do', 'baton_run_view', 'baton_run_member_view', 'baton_run_member_send',
+      'baton_run_member_stop', 'baton_application_help'],
   });
   assert.equal(Object.hasOwn(entry, 'env'), false);
   assert.equal(JSON.stringify(entry).includes('token'), false);
@@ -619,6 +623,8 @@ test('KC6/KC7/KC8: packaged Kimi MCP entry crosses a real authenticated Web list
     'baton_help', 'baton_run_start', 'baton_run_inspect', 'baton_run_episode',
     'baton_run_workstreams', 'baton_workstream_notify', 'baton_workstream_stop',
     'baton_run_act', 'baton_run_stop',
+    'baton_run_do', 'baton_run_view', 'baton_run_member_view', 'baton_run_member_send',
+    'baton_run_member_stop', 'baton_application_help',
   ]);
   assert.equal(responses[2].result.isError, false);
   assert.match(responses[2].result.content[0].text, /run-packaged-kimi/u);

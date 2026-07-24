@@ -85,10 +85,13 @@ test('UA5/MN1: an application-backed MCP server exposes the semantic ordinary su
   };
   const { server } = setup({ application, surface: 'application' }); await initialized(server);
   const response = await request(server, 2, 'tools/list', {});
+  // M4b: the canonical grammar tools render beside the retained legacy tools (docs/36 §9 M4).
   assert.deepEqual(response.result.tools.map((tool) => tool.name), [
     'baton_help', 'baton_run_start', 'baton_run_inspect', 'baton_run_episode',
     'baton_run_workstreams', 'baton_workstream_notify', 'baton_workstream_stop',
     'baton_run_act', 'baton_run_stop',
+    'baton_run_do', 'baton_run_view', 'baton_run_member_view', 'baton_run_member_send',
+    'baton_run_member_stop', 'baton_application_help',
   ]);
   const inspectSchema = response.result.tools.find((tool) => tool.name === 'baton_run_inspect').inputSchema;
   for (const field of ['offset', 'pageCursor', 'recipient']) {
@@ -107,8 +110,8 @@ test('UA5/MN1: an application-backed MCP server exposes the semantic ordinary su
     'baton_board_post', 'baton_board_retitle', 'baton_board_reorder', 'baton_board_close', 'baton_board_read',
     'baton_package_admit', 'baton_package_attach', 'baton_package_read',
   ];
-  assert.equal(combined.result.tools.length, 58);
-  assert.deepEqual(combined.result.tools.slice(0, 9).map((tool) => tool.name), response.result.tools.map((tool) => tool.name));
+  assert.equal(combined.result.tools.length, 64);
+  assert.deepEqual(combined.result.tools.slice(0, 15).map((tool) => tool.name), response.result.tools.map((tool) => tool.name));
   assert.deepEqual(combined.result.tools.map((tool) => tool.name).filter((name) => reflexNames.includes(name)), reflexNames);
   assert.equal(combined.result.tools.every((tool) => tool.inputSchema.additionalProperties === false), true);
   assert.equal(combined.result.tools.every((tool) => tool.execution.taskSupport === 'forbidden'), true);

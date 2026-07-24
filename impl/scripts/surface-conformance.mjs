@@ -27,6 +27,22 @@ const SURFACES = new Set([
   'mcp',
 ]);
 
+// docs/36 §6 explicit exclusions / §8.3 profiles (R-OP-2, R-OP-10) — the kernel and authoring
+// command literals are NOT canonical grammar operations: they are profile-scoped surfaces the
+// grammar covers but does not unify (fleet_* kernel tools, goal/plan authoring). They stay literal
+// through M4b ("kernel/goal-plan literal halves unchanged"). The harness recognizes them as
+// legitimate profile literals — conformant under their profile, never a novel divergence — on both
+// the Web bus (bare literal) and the MCP kernel dialect (`fleet_`-prefixed). C9 asserts the derived
+// grammar names stay disjoint from these.
+export const KERNEL_PROFILE_LITERALS = Object.freeze([
+  'spawn', 'scratch_oracle', 'send', 'interrupt', 'kill', 'drain', 'respond',
+  'list', 'result', 'wait', 'capabilities', 'provider_status',
+  'capability_invoke', 'reuse_decide', 'reuse_recheck',
+]);
+export const AUTHORING_PROFILE_LITERALS = Object.freeze([
+  'goal_define', 'plan_propose', 'plan_approve', 'goal_plan_status',
+]);
+
 export const CANONICAL_ENUMS = Object.freeze({
   runPhases: Object.freeze([
     'planning', 'awaiting_approval', 'queued', 'working', 'paused', 'interrupted',
@@ -97,6 +113,16 @@ function canonicalNameIndex() {
   // the divergence is no longer an unledgered fact, it is derivable registry data.
   for (const alias of APPLICATION_SEMANTIC_REGISTRY.surfaceAliases) {
     index.set(`${alias.surface}\0${alias.name}`, alias.canonical);
+  }
+  // docs/36 §6/§8.3 — the profile literals resolve to their profile, not to a canonical grammar
+  // key: they are legitimate kernel/authoring surface names, admitted on the Web bus bare and on
+  // the MCP kernel dialect `fleet_`-prefixed. Recognizing them here is what lets their M0 ledger
+  // rows retire at M4b without inventing a canonical operation the §6 set does not have.
+  for (const [literals, profile] of [[KERNEL_PROFILE_LITERALS, 'kernel'], [AUTHORING_PROFILE_LITERALS, 'authoring']]) {
+    for (const literal of literals) {
+      index.set(`web\0${literal}`, profile);
+      index.set(`mcp.fleet\0fleet_${literal}`, profile);
+    }
   }
   for (const [name, definition] of Object.entries(APPLICATION_SEMANTIC_REGISTRY.actions)) {
     if (definition.operation) {
@@ -225,10 +251,7 @@ export function validateLedger(ledger, inventory = collectSurfaceInventory()) {
 // be disjoint from these; the disjointness is *asserted* from registry data here, never assumed,
 // and this contract does not touch web-northbound (its transport flip is M4b).
 export const KERNEL_AUTHORING_WEB_LITERALS = Object.freeze([
-  'spawn', 'scratch_oracle', 'send', 'interrupt', 'kill', 'drain', 'respond',
-  'list', 'result', 'wait', 'capabilities', 'provider_status',
-  'capability_invoke', 'reuse_decide', 'reuse_recheck',
-  'goal_define', 'plan_propose', 'plan_approve', 'goal_plan_status',
+  ...KERNEL_PROFILE_LITERALS, ...AUTHORING_PROFILE_LITERALS,
 ]);
 
 export function checkWebNameDisjoint(registry = APPLICATION_SEMANTIC_REGISTRY) {
@@ -240,6 +263,30 @@ export function checkWebNameDisjoint(registry = APPLICATION_SEMANTIC_REGISTRY) {
     if (literals.has(web)) collisions.push({ key: operation.key, web });
   }
   return collisions.sort((left, right) => left.web.localeCompare(right.web));
+}
+
+// docs/36 §4.2 H10 / §10 C8 — the canonical serialization pin (cut at M4b). `canonicalizeSerialization`
+// is the serialization-layer normalization: it re-emits an object with the registry-pinned keys
+// leading in their pinned order, every other key following in its original relative order. Parsers
+// stay order-insensitive and digest/replay identities are untouched — this is presentation only.
+// `serializationOrderViolations` is the conformance checker: it returns the mismatch when an
+// emitter presents the pinned keys out of their canonical sequence (a scrambled emitter is caught).
+export function canonicalizeSerialization(order, value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return value;
+  const keys = Object.keys(value);
+  const leading = order.filter((key) => Object.hasOwn(value, key));
+  const trailing = keys.filter((key) => !order.includes(key));
+  return Object.fromEntries([...leading, ...trailing].map((key) => [key, value[key]]));
+}
+
+export function serializationOrderViolations(order, value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return [];
+  const present = Object.keys(value).filter((key) => order.includes(key));
+  const expected = order.filter((key) => Object.hasOwn(value, key));
+  if (present.length === expected.length && present.every((key, index) => key === expected[index])) {
+    return [];
+  }
+  return [Object.freeze({ expected: Object.freeze(expected), actual: Object.freeze(present) })];
 }
 
 export function checkLedgerMonotone(previous, current) {

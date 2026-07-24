@@ -165,16 +165,36 @@ export const APPLICATION_COMMAND_DEFINITIONS = Object.freeze({
 });
 // REFLEX-4 slice A (docs/32 §3.4, issue #19): `application.context_eval` (below,
 // `BatonApplication.prototype.contextEval`) is deliberately NOT an entry here and NOT reachable
-// through `command(name, ...)`/`validateApplicationCommandArgs`. `card().commands` is exactly
-// `Object.keys(APPLICATION_COMMAND_DEFINITIONS)`, and several out-of-this-task's-scope fixtures
-// assert that list verbatim (impl/test/phase64-integrated-run-application.test.mjs `UA5`; also,
-// transitively through `.web`/`.mcp` auto-derivation, impl/test/phase12-web-operator.test.mjs,
-// impl/test/phase72-kimi-orchestrator-mcp.test.mjs, impl/test/phase16-mcp-northbound.test.mjs) —
-// so *any* new key here, under *any* flag combination, breaks a file this task cannot touch.
-// `contextEval` is instead exposed as its own public method, callable directly on the
+// through `command(name, ...)`/`validateApplicationCommandArgs`. The legacy command keys stay
+// byte-stable (grammar-m3-red pins `Object.keys(APPLICATION_COMMAND_DEFINITIONS)`); the canonical
+// grammar names never become keys here — they surface only on `card().commands` (below) as the
+// M4b transport flip's advertised-beside-legacy list, resolved to their legacy handler by the
+// dispatch-layer alias map. `contextEval` is instead exposed as its own public method, callable
+// directly on the
 // `BatonApplication` instance — the "direct command port" transport in Rule 3, honestly. Web,
 // MCP, and the generic `application.command('application.context_eval', ...)` string dispatch
 // remain real, documented gaps pending a change that can update those fixtures.
+
+// docs/36 §9 M4 (M4b) — the canonical grammar names advertised beside the retained legacy commands
+// on `card().commands`. Derived once from registry v2: every ordinary canonical operation whose
+// legacy application-command spelling is a live command definition. These are NOT keys of
+// APPLICATION_COMMAND_DEFINITIONS (the dispatch layer resolves them to their legacy handler); they
+// list on the card so every surface — including the remote-bridge profile (mcp-web-bridge) — sees
+// one operation under both spellings.
+const CANONICAL_CARD_COMMANDS = Object.freeze((() => {
+  const byKey = new Map(APPLICATION_SEMANTIC_REGISTRY.canonicalOperations.map((op) => [op.key, op]));
+  const seen = new Set();
+  const commands = [];
+  for (const alias of APPLICATION_SEMANTIC_REGISTRY.surfaceAliases) {
+    if (alias.surface !== 'application.commands') continue;
+    if (!Object.hasOwn(APPLICATION_COMMAND_DEFINITIONS, alias.name)) continue;
+    const operation = byKey.get(alias.canonical);
+    if (!operation || operation.profile !== 'ordinary' || seen.has(alias.canonical)) continue;
+    seen.add(alias.canonical);
+    commands.push(alias.canonical);
+  }
+  return commands;
+})());
 
 function applicationError(message, code) {
   return Object.assign(new Error(message), { code });
@@ -10900,7 +10920,7 @@ export class BatonApplication {
     return deepFreeze({
       schemaVersion: 1,
       repoId: this.repoId,
-      commands: Object.keys(APPLICATION_COMMAND_DEFINITIONS),
+      commands: [...Object.keys(APPLICATION_COMMAND_DEFINITIONS), ...CANONICAL_CARD_COMMANDS],
       agentExperience: {
         registryVersion: APPLICATION_SEMANTIC_REGISTRY.version,
         registryDigest: APPLICATION_SEMANTIC_REGISTRY.digest,

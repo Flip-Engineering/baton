@@ -2,11 +2,27 @@ import { createHash, randomUUID } from 'node:crypto';
 import { northboundCapabilityToken } from './northbound-capability-authority.mjs';
 import { sanitizeGoalPlanProjection } from './goal-plan.mjs';
 import { APPLICATION_COMMAND_DEFINITIONS, validateApplicationCommandArgs, projectBoardView, projectContextPackageBranch } from './application.mjs';
-import { APPLICATION_SEMANTIC_REGISTRY } from './application-semantics.mjs';
+import { APPLICATION_SEMANTIC_REGISTRY, deriveSurfaceNames } from './application-semantics.mjs';
 
 const MCP_APPLICATION_ENTRIES = Object.entries(APPLICATION_COMMAND_DEFINITIONS)
   .filter(([, definition]) => definition.mcp)
   .map(([name, definition]) => [`fleet_${name.replaceAll('.', '_')}`, name, definition]);
+// docs/36 §9 M4 (M4b — the transport flip) — the canonical grammar tools rendered beside the
+// retained legacy baton_* ordinary tools. Each pairs a §6 operation key with its legacy sibling
+// tool and the application command both dispatch to: the canonical tool's NAME comes from the ONE
+// shared deriveSurfaceNames, and it inherits the sibling's exact wire schema, annotations, and
+// dispatch, so both spellings reach one operation (M4B-3). The fleet_* kernel and reflex tables
+// are untouched.
+const CANONICAL_ORDINARY_SIBLINGS = Object.freeze([
+  ['run.do', 'baton_run_act', 'run.act'],
+  ['run.view', 'baton_run_inspect', 'run.inspect'],
+  ['run.member.view', 'baton_run_workstreams', 'run.workstreams'],
+  ['run.member.send', 'baton_workstream_notify', 'run.workstream.notify'],
+  ['run.member.stop', 'baton_workstream_stop', 'run.workstream.stop'],
+  ['application.help', 'baton_help', 'application.help'],
+].map(([key, legacyTool, command]) => Object.freeze({
+  key, legacyTool, command, tool: deriveSurfaceNames(key).mcp,
+})));
 const APPLICATION_TOOL = Object.freeze(Object.fromEntries(
   [...MCP_APPLICATION_ENTRIES,
     ['baton_help', 'application.help'],
@@ -19,6 +35,7 @@ const APPLICATION_TOOL = Object.freeze(Object.fromEntries(
     ['baton_workstream_stop', 'run.workstream.stop'],
     ['baton_run_act', 'run.act'],
     ['baton_run_stop', 'run.stop'],
+    ...CANONICAL_ORDINARY_SIBLINGS.map((sibling) => [sibling.tool, sibling.command]),
   ].map(([tool, name]) => [tool, name]),
 ));
 // REFLEX-4 slice A (docs/32 §3.4, issue #19): application.context_eval has no MCP tool here (not
@@ -37,6 +54,9 @@ const ORDINARY_APPLICATION_ENTRIES = Object.freeze([
   ['baton_workstream_stop', 'run.workstream.stop', APPLICATION_COMMAND_DEFINITIONS['run.workstream.stop']],
   ['baton_run_act', 'run.act', APPLICATION_COMMAND_DEFINITIONS['run.act']],
   ['baton_run_stop', 'run.stop', APPLICATION_COMMAND_DEFINITIONS['run.stop']],
+  ...CANONICAL_ORDINARY_SIBLINGS.map((sibling) => (
+    [sibling.tool, sibling.command, APPLICATION_COMMAND_DEFINITIONS[sibling.command]]
+  )),
 ]);
 
 const PROTOCOL_VERSION = '2025-11-25';
@@ -302,7 +322,7 @@ const APPLICATION_TOOL_DEFINITIONS = Object.freeze([
   { name: 'fleet_run_integrate', description: 'Integrate the exact adopted and semantically reviewed result under fresh evidence and deployment policy; never pushes.', inputSchema: schema({ ...repo, ...idem, runId, evidenceDigest: digest, strategy: { type: 'string', enum: ['ff-only', 'structured'] }, reason: { type: 'string', minLength: 1, maxLength: 1_024 } }, ['repoId', 'idempotencyKey', 'runId', 'evidenceDigest', 'strategy', 'reason']), annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false } },
   { name: 'fleet_run_export', description: 'Materialize the exact evidence-bound accepted Git tree under deployment-owned authority and return its immutable opaque export receipt.', inputSchema: schema({ ...repo, ...idem, runId, evidenceDigest: digest }, ['repoId', 'idempotencyKey', 'runId', 'evidenceDigest']), annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false } },
 ].map((tool) => Object.freeze({ ...tool, execution: Object.freeze({ taskSupport: 'forbidden' }) })));
-const ORDINARY_APPLICATION_TOOL_DEFINITIONS = Object.freeze([
+const LEGACY_ORDINARY_APPLICATION_TOOL_DEFINITIONS = Object.freeze([
   {
     name: 'baton_help',
     description: "Read bounded contextual help from Baton's semantic application registry.",
@@ -368,6 +388,17 @@ const ORDINARY_APPLICATION_TOOL_DEFINITIONS = Object.freeze([
   _meta: Object.freeze({ 'baton/registryDigest': APPLICATION_SEMANTIC_REGISTRY.digest }),
   execution: Object.freeze({ taskSupport: 'forbidden' }),
 })));
+// The ordinary table = retained legacy tools + the canonical grammar tools rendered from the
+// registry (M4b). A canonical tool is its legacy sibling under the derived canonical name; the wire
+// schema and annotations (from idempotent/destructive) are the sibling's, so a caller reaches one
+// operation under either spelling.
+const ORDINARY_APPLICATION_TOOL_DEFINITIONS = Object.freeze([
+  ...LEGACY_ORDINARY_APPLICATION_TOOL_DEFINITIONS,
+  ...CANONICAL_ORDINARY_SIBLINGS.map((sibling) => {
+    const base = LEGACY_ORDINARY_APPLICATION_TOOL_DEFINITIONS.find((tool) => tool.name === sibling.legacyTool);
+    return Object.freeze({ ...base, name: sibling.tool });
+  }),
+]);
 const ADVANCED_TOOL_DEFINITIONS = Object.freeze([
   { name: 'fleet_spawn', description: 'Spawn one Baton worker with independently selected harness, model, effort, run, and approved Goal/Plan node.', inputSchema: fleetSpawnSchema, annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false } },
   { name: 'fleet_scratch_oracle', description: 'Spawn an explicitly routed independent oracle over one immutable derived Scratch fact.', inputSchema: schema({ ...repo, ...idem, runId, scratchFactId: text, harness: text, model: text, effort: text, modelPolicy: schema({ allow: textArray, deny: textArray, prefer: textArray, allowFamilies: textArray, denyFamilies: textArray, reasoningEffort: text, serviceTier: text }), verification: { type: 'object' }, budget: { type: 'object' }, constraints: textArray, goal: text, definitionOfDone: text, taskId: text }, ['repoId', 'idempotencyKey', 'scratchFactId', 'harness', 'verification']), annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false } },

@@ -138,7 +138,7 @@ function webFixture() {
   return { admitted, calls, web };
 }
 
-test('M1-1: canonical Web admission resolves to the legacy transport identity and outcome', async () => {
+test('M1-1: canonical Web admission reaches the legacy operation and outcome, spelling-true (M4b)', async () => {
   const canonical = webFixture();
   const legacy = webFixture();
   const canonicalResult = await canonical.web.execute(
@@ -152,7 +152,9 @@ test('M1-1: canonical Web admission resolves to the legacy transport identity an
   assert.equal(legacyResult.status, 200);
   assert.deepEqual(canonicalResult.body.result, legacyResult.body.result);
   assert.deepEqual(canonical.calls, legacy.calls);
-  assert.equal(canonical.admitted[0].command, 'run_workstream_notify');
+  // M4b — the transport flip: the canonical name is admitted first-class, its own spelling the
+  // admitted identity (never resolved to the legacy name); both still reach one operation.
+  assert.equal(canonical.admitted[0].command, 'run_member_send');
   assert.equal(legacy.admitted[0].command, 'run_workstream_notify');
 });
 

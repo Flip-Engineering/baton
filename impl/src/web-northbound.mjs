@@ -14,20 +14,34 @@ import { applicationOperationAliasMap } from './application-semantics.mjs';
 const WEB_APPLICATION_ENTRIES = Object.entries(APPLICATION_COMMAND_DEFINITIONS)
   .filter(([, definition]) => definition.web)
   .map(([name, definition]) => [name.replaceAll('.', '_'), name, definition]);
+// docs/36 §9 M4 (M4b — the transport flip) — the canonical grammar transport names admitted beside
+// the retained legacy names. Each canonical transport is a first-class admitted command that maps
+// to the SAME application command as its legacy sibling (the registry alias map), so both spellings
+// reach one operation. Because the durable admission scope key records `envelope.command` verbatim
+// (never resolved away), the caller's chosen spelling is the admitted identity (M4B-1); the legacy
+// transports stay byte-identical, so a reconcilable envelope parked pre-flip under a legacy name
+// keeps matching its stored scope key and reconciles across the boundary (M4B-2, R-KM-8).
+const CANONICAL_WEB_ENTRIES = Object.entries(applicationOperationAliasMap())
+  .filter(([, legacy]) => Object.hasOwn(APPLICATION_COMMAND_DEFINITIONS, legacy)
+    && APPLICATION_COMMAND_DEFINITIONS[legacy].web)
+  .map(([canonical, legacy]) => [canonical.replaceAll('.', '_'), legacy, APPLICATION_COMMAND_DEFINITIONS[legacy]]);
 
 const COMMAND_CAPABILITY = Object.freeze({
   spawn: 'control', scratch_oracle: 'control', send: 'control', interrupt: 'control', kill: 'emergency_stop', drain: 'emergency_stop', respond: 'approve',
   list: 'observe', result: 'observe', wait: 'observe', capabilities: 'observe', provider_status: 'observe', capability_invoke: 'control', reuse_decide: 'control', reuse_recheck: 'control',
   goal_define: 'goal:define', plan_propose: 'plan:propose', plan_approve: 'plan:approve', goal_plan_status: 'goal:observe',
   ...Object.fromEntries(WEB_APPLICATION_ENTRIES.map(([transport, , definition]) => [transport, definition.capabilities])),
+  ...Object.fromEntries(CANONICAL_WEB_ENTRIES.map(([transport, , definition]) => [transport, definition.capabilities])),
 });
 const FENCE_REQUIRED = new Set(['send', 'interrupt', 'kill']);
 const RECONCILABLE = new Set(['goal_define', 'plan_propose', 'plan_approve',
-  ...WEB_APPLICATION_ENTRIES.filter(([, , definition]) => definition.reconcilable).map(([transport]) => transport)]);
+  ...[...WEB_APPLICATION_ENTRIES, ...CANONICAL_WEB_ENTRIES]
+    .filter(([, , definition]) => definition.reconcilable).map(([transport]) => transport)]);
 const GOAL_PLAN_MUTATIONS = new Set(['goal_define', 'plan_propose', 'plan_approve']);
 const READ_ONLY_COMMANDS = new Set([
   'list', 'result', 'wait', 'capabilities', 'provider_status', 'goal_plan_status',
-  ...WEB_APPLICATION_ENTRIES.filter(([, , definition]) => definition.mcpStateful === false)
+  ...[...WEB_APPLICATION_ENTRIES, ...CANONICAL_WEB_ENTRIES]
+    .filter(([, , definition]) => definition.mcpStateful === false)
     .map(([transport]) => transport),
 ]);
 const BOUNDED_OBSERVATION_AUDITS = new Set([
@@ -55,18 +69,10 @@ const ARG_FIELDS = Object.freeze({
   plan_approve: new Set(['goal', 'plan', 'expectedDisposition', 'disposition']),
   goal_plan_status: new Set(['goalId', 'goalVersion', 'goalDigest', 'planId', 'planVersion', 'planDigest', 'throughSeq']),
   ...Object.fromEntries(WEB_APPLICATION_ENTRIES.map(([transport, , definition]) => [transport, new Set(definition.args)])),
+  ...Object.fromEntries(CANONICAL_WEB_ENTRIES.map(([transport, , definition]) => [transport, new Set(definition.args)])),
 });
 const APPLICATION_COMMAND = Object.freeze(Object.fromEntries(
-  WEB_APPLICATION_ENTRIES.map(([transport, name]) => [transport, name]),
-));
-const WEB_APPLICATION_ALIASES = Object.freeze(Object.fromEntries(
-  Object.entries(applicationOperationAliasMap())
-    .filter(([, legacy]) => Object.hasOwn(APPLICATION_COMMAND_DEFINITIONS, legacy)
-      && APPLICATION_COMMAND_DEFINITIONS[legacy].web)
-    .map(([canonical, legacy]) => [
-      canonical.replaceAll('.', '_'),
-      legacy.replaceAll('.', '_'),
-    ]),
+  [...WEB_APPLICATION_ENTRIES, ...CANONICAL_WEB_ENTRIES].map(([transport, name]) => [transport, name]),
 ));
 const FORBIDDEN_KEY = /^(?:access[_-]?token|refresh[_-]?token|token|secret|credential|password|api[_-]?key|authorization)$/i;
 const MODEL_POLICY_FIELDS = new Set(['allow', 'deny', 'prefer', 'allowFamilies', 'denyFamilies', 'reasoningEffort', 'serviceTier']);
@@ -284,15 +290,17 @@ function validProviderClaims(value) {
 }
 
 function resolveWebCommandEnvelope(envelope) {
-  // docs/36 §9 M3 — the Episode fold. A `run_view` envelope carrying a chapter topic resolves to
-  // the legacy Episode transport handler; without a topic it resolves as the ordinary inspect read
-  // through the generic alias map below. run_episode itself stays an admitted transport until M5.
+  // docs/36 §9 M3/M4 — the Episode fold. A `run_view` envelope carrying a chapter topic resolves to
+  // the legacy Episode transport handler; without a topic `run_view` is admitted as a first-class
+  // canonical transport (the ordinary inspect read). Every other canonical transport is likewise
+  // first-class post-M4b (in COMMAND_CAPABILITY/APPLICATION_COMMAND above) and is NOT resolved away,
+  // so the admitted scope key records the caller's spelling verbatim (M4B-1). run_episode itself
+  // stays an admitted legacy transport until M5.
   if (envelope?.command === 'run_view'
     && isRecord(envelope.args) && Object.hasOwn(envelope.args, 'topic')) {
     return { ...envelope, command: 'run_episode' };
   }
-  const legacyCommand = WEB_APPLICATION_ALIASES[envelope?.command];
-  return legacyCommand ? { ...envelope, command: legacyCommand } : envelope;
+  return envelope;
 }
 
 function validateEnvelope(envelope) {
@@ -582,7 +590,9 @@ export class WebNorthbound {
   }
 
   _postWaitAuthorization(ctx, envelope) {
-    if (!['run_follow', 'run_wait'].includes(envelope.command)) return null;
+    // Post-wait reauthorization applies by operation, so the canonical `run_watch` transport gets
+    // it exactly like the legacy `run_follow` it resolves to (both dispatch run.follow).
+    if (!['run.follow', 'run.wait'].includes(APPLICATION_COMMAND[envelope.command])) return null;
     return this._authenticate(ctx) ?? this._authorize(ctx, envelope);
   }
 
@@ -673,7 +683,7 @@ export class WebNorthbound {
     const scopeKey = hash({ userId: ctx.principal.userId, command: envelope.command, repoId: envelope.repoId, idempotencyKey: envelope.idempotencyKey });
     const requestDigest = hash(canonicalRequest(envelope));
     let semanticAuthority = null;
-    if (envelope.command === 'run_act') {
+    if (APPLICATION_COMMAND[envelope.command] === 'run.act') {
       const prior = this.coordination.webCommandByScope?.(scopeKey) ?? null;
       if (prior && prior.requestDigest !== requestDigest) {
         try { this._audit('idempotency_refused', ctx, { command: envelope.command, repoId: envelope.repoId, reason: 'idempotency_conflict' }); }
@@ -737,7 +747,7 @@ export class WebNorthbound {
       try { this._audit('idempotency_refused', ctx, { command: envelope.command, repoId: envelope.repoId, reason: admission.result }); } catch { return error(503, 'temporarily_unavailable'); }
       return error(409, admission.result === 'idempotency_conflict' ? 'idempotency_conflict' : 'invalid_command');
     }
-    if (envelope.command === 'run_act'
+    if (APPLICATION_COMMAND[envelope.command] === 'run.act'
       && admission.command.semanticAuthority?.authorityDigest !== semanticAuthority?.authorityDigest) {
       try { this._audit('authorization_refused', ctx, { command: envelope.command, repoId: envelope.repoId }); }
       catch { return error(503, 'temporarily_unavailable'); }
@@ -768,7 +778,7 @@ export class WebNorthbound {
       }
       if (admission.command.status === 'admitted' && (RECONCILABLE.has(envelope.command)
         || (envelope.command === 'spawn' && envelope.args.goalPlan))) {
-        if (envelope.command === 'run_act'
+        if (APPLICATION_COMMAND[envelope.command] === 'run.act'
           && admission.command.sessionId !== ctx.principal.sessionId) {
           return error(403, 'forbidden');
         }
@@ -827,7 +837,7 @@ export class WebNorthbound {
             idempotencyKey: `web.command:${envelope.commandId}`,
             capabilityAuthority: northboundCapabilityToken('web'),
             capabilities: [...ctx.principal.capabilities],
-            ...(envelope.command === 'run_act' ? {
+            ...(APPLICATION_COMMAND[envelope.command] === 'run.act' ? {
               semanticAuthority: admission.command.semanticAuthority,
             } : {}),
             ...(lease ? { sessionAuthority: {
@@ -939,7 +949,7 @@ export class WebNorthbound {
         idempotencyKey: `web.command:${envelope.commandId}`,
         capabilityAuthority: northboundCapabilityToken('web'),
         capabilities: [...principal.capabilities],
-        ...(envelope.command === 'run_act' ? {
+        ...(APPLICATION_COMMAND[envelope.command] === 'run.act' ? {
           semanticAuthority,
         } : {}),
         ...(lease ? { sessionAuthority: {

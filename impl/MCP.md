@@ -94,6 +94,60 @@ an MCP tool: workers write it through the REFLEX-1-family up-channel inside thei
 streams and receive hub-computed receipts; orchestrators read it through Run and wave
 projections.
 
+Since M4b the ordinary `baton_*` table renders the canonical grammar tools beside these retained
+legacy spellings (both reach one operation). The inventory below is rendered from
+`APPLICATION_SEMANTIC_REGISTRY.canonicalOperations` by `impl/scripts/render-surface-docs.mjs`; the
+conformance suite fails if it drifts.
+
+<!-- BEGIN GENERATED: mcp-tool-inventory (impl/scripts/render-surface-docs.mjs) -->
+
+| Operation | Profile | MCP tool | Annotation |
+|---|---|---|---|
+| `run.list` | `ordinary` | `baton_run_list` | idempotent |
+| `run.start` | `ordinary` | `baton_run_start` | idempotent |
+| `run.view` | `ordinary` | `baton_run_view` | idempotent |
+| `run.watch` | `ordinary` | `baton_run_watch` | idempotent |
+| `run.do` | `ordinary` | `baton_run_do` | destructive |
+| `run.approve` | `ordinary` | `baton_run_approve` | idempotent |
+| `run.answer` | `ordinary` | `baton_run_answer` | idempotent |
+| `run.send` | `ordinary` | `baton_run_send` | idempotent |
+| `run.interrupt` | `ordinary` | `baton_run_interrupt` | destructive |
+| `run.stop` | `ordinary` | `baton_run_stop` | destructive |
+| `run.evidence` | `ordinary` | `baton_run_evidence` | idempotent |
+| `run.review` | `ordinary` | `baton_run_review` | idempotent |
+| `run.adopt` | `ordinary` | `baton_run_adopt` | idempotent |
+| `run.integrate` | `ordinary` | `baton_run_integrate` | destructive |
+| `run.export` | `ordinary` | `baton_run_export` | idempotent |
+| `run.select` | `ordinary` | `baton_run_select` | idempotent |
+| `run.feedback` | `ordinary` | `baton_run_feedback` | idempotent |
+| `run.revise` | `ordinary` | `baton_run_revise` | idempotent |
+| `run.recover` | `ordinary` | `baton_run_recover` | idempotent |
+| `run.resume` | `ordinary` | `baton_run_resume` | idempotent |
+| `run.retry` | `ordinary` | `baton_run_retry` | idempotent |
+| `run.member.view` | `ordinary` | `baton_run_member_view` | idempotent |
+| `run.member.send` | `ordinary` | `baton_run_member_send` | idempotent |
+| `run.member.interrupt` | `ordinary` | `baton_run_member_interrupt` | destructive |
+| `run.member.stop` | `ordinary` | `baton_run_member_stop` | destructive |
+| `run.attention.list` | `ordinary` | `baton_run_attention_list` | idempotent |
+| `context.eval` | `ordinary` | `baton_context_eval` | idempotent |
+| `context.map` | `ordinary` | `baton_context_map` | idempotent |
+| `context.reduce` | `ordinary` | `baton_context_reduce` | idempotent |
+| `context.retry` | `ordinary` | `baton_context_retry` | idempotent |
+| `board.post` | `ordinary` | `baton_board_post` | idempotent |
+| `board.retitle` | `ordinary` | `baton_board_retitle` | idempotent |
+| `board.reorder` | `ordinary` | `baton_board_reorder` | idempotent |
+| `board.close` | `ordinary` | `baton_board_close` | idempotent |
+| `board.read` | `ordinary` | `baton_board_read` | idempotent |
+| `board.claim` | `worker` | `baton_board_claim` | idempotent |
+| `board.report` | `worker` | `baton_board_report` | idempotent |
+| `package.admit` | `ordinary` | `baton_package_admit` | idempotent |
+| `package.attach` | `ordinary` | `baton_package_attach` | idempotent |
+| `package.read` | `ordinary` | `baton_package_read` | idempotent |
+| `application.help` | `ordinary` | `baton_application_help` | idempotent |
+
+<!-- END GENERATED: mcp-tool-inventory -->
+
+
 Among the advanced tools, `fleet_reuse_decide` accepts a bounded `borrow|build`
 judgment, exact `reuse.vet` and `provenance.sbom` claims/arguments, and optional
 validity-version supersession. Baton freshly reverifies both artifacts and requires the configured
