@@ -97,7 +97,7 @@ const baton = await openBaton({
   repo,
   advanced: {
     deploymentRoot: resolve(repo, '.baton', 'demo-workflow-v7-2026-07-24'),
-    routes: MEMBERS.map((member) => ({ ...member.exact })),
+    routes: [...new Map(MEMBERS.map((member) => [JSON.stringify(member.exact), { ...member.exact }])).values()], // dedupe: two sonnet seats share one route (deployment_config_invalid on duplicates)
     verification: VERIFY,
   },
 });
