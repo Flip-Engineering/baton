@@ -282,3 +282,14 @@ from turn-checkpoint pins when seats/drivers died mid-flight. The canonical suit
 **2828/2828** at the landing. The unified control-surface grammar (issue #43) advanced through
 docs/36 v2.1 (three-seat red-team, 49 findings folded, 17 verification corrections) with the
 M0 conformance harness landed (issue #44) and M1 registry aliasing in flight.
+
+Issue #46 shipped the productized wave driver (`createWaveDriver(baton, policy).run(options)`):
+one shipped poll/steer/settle/close loop replacing the bespoke per-wave drivers — requestId
+nudge dedup, cursor-stripped wave-level stall clock, the L6 termination law (unproductive
+checkpoint budget → claim), claim fan-out at stall, salting, admission byte-checks, and a
+receipt envelope. Spec red-teamed UNSOUND (the pre-law default provably could not terminate a
+successful wave — every production envelope ended paused/running), revised to v2, implemented
+by a glm wave, and validated red-first (D1–D10) — catching three machinery defects in the same
+arc: the degenerate pause `changedPathsDigest` (the `currentHeadSha` named gap), silently
+swallowed act delivery failures, and a claim-recovery snapshot race. The canonical suite passed
+**2877/2877** at the landing.
