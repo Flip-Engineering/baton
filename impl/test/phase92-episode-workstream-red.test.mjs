@@ -47,7 +47,7 @@ function port() {
         item: { id: item, section: 'episode', value: args.topic === 'result' ? null : {} },
         ...(args.topic === 'result'
           ? { state: 'pending', settled: false, continuation: {
-            operation: 'run.episode', arguments: { ...args, cursor: 7 },
+            operation: 'run.view', arguments: { ...args, cursor: 7 },
           } }
           : args.topic === 'output'
           ? { content: { kind: 'baton.episode.output', items: [], nextOffset: null } }
@@ -89,7 +89,7 @@ test('P92-EW2: one Run exposes semantic generation handles and the complete Epis
   assert.equal(pending.item.id, 'episode:result:reviewer');
   assert.equal(pending.state, 'pending');
   assert.equal(pending.settled, false);
-  assert.equal(pending.continuation.operation, 'run.episode');
+  assert.equal(pending.continuation.operation, 'run.view');
   assert.equal((await workstream.help()).topic, 'run.workstreams');
 
   const episode = workstream.episode();
@@ -162,15 +162,18 @@ test('P92-EW4: CLI exposes selector-free Episode and workstream commands', () =>
 });
 
 test('P92-EW5: browser controls execute the same progressive Episode/workstream surface', () => {
+  // docs/36 §9 M3 — the desk element ids and bus operations move with the fold: the Episode
+  // chapters serialize under run.view and the member ops under run.member.*; the canonical
+  // transport names resolve in the Web dispatch layer (the legacy transports stay live until M5).
   const html = operatorAsset('/control').body;
   const script = operatorAsset('/control/app.js').body;
-  for (const id of ['episode-workstream', 'episode-topic', 'episode-detail', 'load-episode',
-    'continue-episode', 'load-workstreams', 'workstream-notify', 'stop-workstream']) {
+  for (const id of ['view-member', 'view-section', 'view-detail', 'load-view',
+    'continue-view', 'load-members', 'member-send', 'member-stop']) {
     assert.match(html, new RegExp(`id="${id}"`, 'u'), id);
   }
-  for (const operation of ['run_episode', 'run_workstreams', 'run_workstream_notify',
-    'run_workstream_stop']) assert.equal(script.includes(`command('${operation}'`), true, operation);
+  for (const operation of ['run_view', 'run_member_view', 'run_member_send',
+    'run_member_stop']) assert.equal(script.includes(`command('${operation}'`), true, operation);
   assert.equal(script.includes("continuation.operation.replaceAll('.','_')"), true);
   assert.equal(script.includes('generation:selected.generation'), true);
-  assert.equal(script.includes("detail:byId('episode-detail').value"), true);
+  assert.equal(script.includes("detail:byId('view-detail').value"), true);
 });

@@ -1123,6 +1123,39 @@ function resolveCanonicalCliArgs(rawArgs) {
   return args;
 }
 
+// docs/36 §4.1‡ / §9 M3 — the Episode fold. `run view --section episode.CHAPTER` and the legacy
+// `run episode CHAPTER` both compile through this one builder, so the Episode chapter selector and
+// its {role, generation?} axes are byte-identical across the folded and legacy spellings. The four
+// cross-argument admission rules (application.mjs) are re-enforced downstream; here we mirror the
+// legacy Episode selector arithmetic exactly.
+function buildEpisodeCommand(args, runId, topic, role, idempotencyKey) {
+  const rawGeneration = take(args, '--generation');
+  const pageCursor = take(args, '--page-cursor');
+  const rawCursor = take(args, '--cursor');
+  const rawWait = take(args, '--wait');
+  const evidence = flag(args, '--evidence');
+  const content = flag(args, '--content');
+  noRemainder(args);
+  if (!id(topic, 'Episode topic') || (role !== null && !id(role, 'workstream role'))
+    || evidence && content) throw cliError('Episode selector is invalid');
+  const generation = rawGeneration === null ? null : Number(rawGeneration);
+  const cursor = rawCursor === null ? null : Number(rawCursor);
+  if ((generation !== null && (!Number.isSafeInteger(generation) || generation < 1))
+    || (cursor !== null && (!Number.isSafeInteger(cursor) || cursor < 0))
+    || (rawWait !== null && cursor === null)) throw cliError('Episode continuation is invalid');
+  const detail = evidence ? 'evidence' : content ? 'content'
+    : topic === 'output' ? 'content' : 'item';
+  return {
+    kind: 'command', name: 'run.episode', args: {
+      runId, topic, ...(role === null ? {} : { role }),
+      ...(generation === null ? {} : { generation }), detail,
+      ...(pageCursor === null ? {} : { pageCursor }),
+      ...(cursor === null ? {} : { cursor }),
+      ...(rawWait === null ? {} : { waitMs: duration(rawWait) }),
+    }, idempotencyKey,
+  };
+}
+
 export function parseBatonCli(rawArgs) {
   const args = resolveCanonicalCliArgs(rawArgs);
   if (args.length === 0 || (args.length === 1 && ['--help', '-h'].includes(args[0]))) {
@@ -1271,31 +1304,7 @@ export function parseBatonCli(rawArgs) {
     const topic = action === 'result' ? 'result'
       : args[0] && !args[0].startsWith('--') ? args.shift() : 'outline';
     const role = take(args, '--workstream');
-    const rawGeneration = take(args, '--generation');
-    const pageCursor = take(args, '--page-cursor');
-    const rawCursor = take(args, '--cursor');
-    const rawWait = take(args, '--wait');
-    const evidence = flag(args, '--evidence');
-    const content = flag(args, '--content');
-    noRemainder(args);
-    if (!id(topic, 'Episode topic') || (role !== null && !id(role, 'workstream role'))
-      || evidence && content) throw cliError('Episode selector is invalid');
-    const generation = rawGeneration === null ? null : Number(rawGeneration);
-    const cursor = rawCursor === null ? null : Number(rawCursor);
-    if ((generation !== null && (!Number.isSafeInteger(generation) || generation < 1))
-      || (cursor !== null && (!Number.isSafeInteger(cursor) || cursor < 0))
-      || (rawWait !== null && cursor === null)) throw cliError('Episode continuation is invalid');
-    const detail = evidence ? 'evidence' : content ? 'content'
-      : topic === 'output' ? 'content' : 'item';
-    return {
-      kind: 'command', name: 'run.episode', args: {
-        runId, topic, ...(role === null ? {} : { role }),
-        ...(generation === null ? {} : { generation }), detail,
-        ...(pageCursor === null ? {} : { pageCursor }),
-        ...(cursor === null ? {} : { cursor }),
-        ...(rawWait === null ? {} : { waitMs: duration(rawWait) }),
-      }, idempotencyKey,
-    };
+    return buildEpisodeCommand(args, runId, topic, role, idempotencyKey);
   }
   if (action === 'workstreams') {
     const role = args[0] && !args[0].startsWith('--') ? args.shift() : null;
@@ -1345,8 +1354,33 @@ export function parseBatonCli(rawArgs) {
     };
   }
   if (action === 'show') {
-    const depth = take(args, '--depth') ?? 'outline';
     const section = take(args, '--section');
+    // docs/36 §4.1‡ / §9 M3 — the Episode fold. `run view --section episode.CHAPTER` folds the
+    // Episode read (carrying its --role/--generation axes) into run.view; it compiles through the
+    // one shared Episode builder so it is byte-identical to the legacy `run episode CHAPTER`.
+    if (section !== null && section.startsWith('episode.')) {
+      // docs/36 §4.1‡ — the explicit `--role none` selects the run-level aggregate (a distinct
+      // projection), spelled the same as omitting --role: both address the aggregate, never a
+      // literal role named "none".
+      const roleFlag = take(args, '--role');
+      const role = roleFlag === 'none' ? null : roleFlag;
+      return buildEpisodeCommand(args, runId, section.slice('episode.'.length), role, idempotencyKey);
+    }
+    // docs/36 §4.1 read row / R-OP-9 — `run view --until settled|terminal` absorbs run.wait's
+    // deployment-bounded condition wait; the condition resolves through the registry predicates.
+    const until = take(args, '--until');
+    if (until !== null) {
+      const wait = take(args, '--wait');
+      noRemainder(args);
+      if (!['settled', 'terminal'].includes(until)) throw cliError('run view --until must be settled or terminal');
+      if (section !== null) throw cliError('run view --until takes no --section');
+      return {
+        kind: 'command', name: 'run.wait',
+        args: { runId, until, timeoutMs: wait === null ? DEFAULT_APPLICATION_WAIT_MS : duration(wait) },
+        idempotencyKey,
+      };
+    }
+    const depth = take(args, '--depth') ?? 'outline';
     const item = take(args, '--item');
     const rawOffset = take(args, '--offset');
     noRemainder(args);
@@ -1436,10 +1470,18 @@ export function parseBatonCli(rawArgs) {
     };
   }
   if (action === 'interrupt') {
-    const recipient = take(args, '--to');
+    // docs/36 §3 / §9 M3 — `run member interrupt RUN ROLE [--generation N]` rewrites onto this
+    // verb (a positional member role is its {role, generation?} address); the run-level form keeps
+    // `--to RECIPIENT` and resolves the live recipient with no generation axis.
+    const positional = args[0] && !args[0].startsWith('--') ? args.shift() : null;
+    const recipient = positional ?? take(args, '--to');
+    const rawGeneration = take(args, '--generation');
     const reason = take(args, '--reason');
     noRemainder(args);
+    const generation = rawGeneration === null ? null : Number(rawGeneration);
     if ((recipient !== null && !id(recipient, 'semantic recipient'))
+      || (generation !== null && (!Number.isSafeInteger(generation) || generation < 1))
+      || (generation !== null && recipient === null)
       || (reason !== null && !nonempty(reason))) {
       throw cliError('interrupt recipient or reason is invalid');
     }
@@ -1447,6 +1489,7 @@ export function parseBatonCli(rawArgs) {
       kind: 'semantic-action', actionKind: 'interrupt', runId,
       inputs: {
         ...(recipient === null ? {} : { recipient }),
+        ...(generation === null ? {} : { generation }),
         ...(reason === null ? {} : { reason }),
       },
       idempotencyKey,

@@ -22,7 +22,7 @@ import {
 import {
   identifyResultExportRoot, ResultExportLifecycle,
 } from './result-export.mjs';
-import { APPLICATION_SEMANTIC_REGISTRY, projectTypedTerminalCause } from './application-semantics.mjs';
+import { APPLICATION_SEMANTIC_REGISTRY, applicationOperationAliasMap, projectTypedTerminalCause } from './application-semantics.mjs';
 import { hasNorthboundCapabilityAuthority } from './northbound-capability-authority.mjs';
 import { projectRunTimelinePage } from './run-timeline.mjs';
 import { compareCanonicalStrings } from './canonical-order.mjs';
@@ -130,6 +130,11 @@ export const APPLICATION_RUN_TERMINAL_PHASES = new Set([
   'completed', 'failed', 'cancelled', 'denied', 'stopped',
 ]);
 
+// docs/36 §9 M1/M3 — the dispatch-layer alias map. Canonical operation names (run.view,
+// run.member.*, run.watch, …) resolve to their existing legacy transport handlers here; the
+// legacy command tables (card().commands, WEB_APPLICATION_ENTRIES) stay byte-stable until M4.
+const APPLICATION_DISPATCH_ALIASES = applicationOperationAliasMap();
+
 export const APPLICATION_COMMAND_DEFINITIONS = Object.freeze({
   'application.help': Object.freeze({ args: Object.freeze(['topic', 'depth', 'runId']), capabilities: Object.freeze(['observe']), web: true, mcp: true, mcpStateful: false, reconcilable: true }),
   'runs.list': Object.freeze({ args: Object.freeze([]), capabilities: Object.freeze(['observe']), web: true, mcp: true, mcpStateful: false, reconcilable: true }),
@@ -143,7 +148,7 @@ export const APPLICATION_COMMAND_DEFINITIONS = Object.freeze({
   'run.status': Object.freeze({ args: Object.freeze(['runId']), capabilities: Object.freeze(['observe']), web: true, mcp: true, mcpStateful: false, reconcilable: true }),
   'run.follow': Object.freeze({ args: Object.freeze(['runId', 'afterCursor', 'timeoutMs']), capabilities: Object.freeze(['observe']), web: true, mcp: true, mcpStateful: false, reconcilable: true }),
   'run.approve': Object.freeze({ args: Object.freeze(['runId', 'planDigest']), capabilities: Object.freeze(['approve', 'observe']), web: true, mcp: true, mcpStateful: true, reconcilable: true }),
-  'run.wait': Object.freeze({ args: Object.freeze(['runId', 'timeoutMs']), capabilities: Object.freeze(['observe']), web: true, mcp: true, mcpStateful: false, reconcilable: true }),
+  'run.wait': Object.freeze({ args: Object.freeze(['runId', 'timeoutMs', 'until']), capabilities: Object.freeze(['observe']), web: true, mcp: true, mcpStateful: false, reconcilable: true }),
   'run.answer': Object.freeze({ args: Object.freeze(['runId', 'requestId', 'answer']), capabilities: Object.freeze(['approve', 'observe']), web: true, mcp: true, mcpStateful: true, reconcilable: true }),
   'run.feedback': Object.freeze({ args: Object.freeze(['runId', 'role', 'feedback']), capabilities: Object.freeze(['control', 'observe']), web: true, mcp: true, mcpStateful: true, reconcilable: true }),
   'run.steer': Object.freeze({ args: Object.freeze(['runId', 'target', 'mode', 'message', 'reason']), capabilities: Object.freeze(['control', 'observe']), web: true, mcp: true, mcpStateful: true, reconcilable: false }),
@@ -1417,7 +1422,7 @@ export function validateApplicationCommandArgs(name, args) {
     const allowed = new Set(definition.args);
     if (!args || typeof args !== 'object' || Array.isArray(args)
       || Object.keys(args).some((key) => !allowed.has(key))
-      || !validId(args.runId) || !validId(args.role)
+      || !validId(args.runId) || !validId(args.role) || args.role === 'work'
       || (args.generation !== undefined
         && (!Number.isSafeInteger(args.generation) || args.generation < 1))
       || !validText(args.message, 16_384)
@@ -1430,11 +1435,25 @@ export function validateApplicationCommandArgs(name, args) {
     const allowed = new Set(definition.args);
     if (!args || typeof args !== 'object' || Array.isArray(args)
       || Object.keys(args).some((key) => !allowed.has(key))
-      || !validId(args.runId) || !validId(args.role)
+      || !validId(args.runId) || !validId(args.role) || args.role === 'work'
       || (args.generation !== undefined
         && (!Number.isSafeInteger(args.generation) || args.generation < 1))
       || (args.reason !== undefined && !validText(args.reason, 1_024))) {
       throw applicationError('Workstream stop is invalid', 'application_workstream_stop_invalid');
+    }
+    return true;
+  }
+  if (name === 'run.wait') {
+    // docs/36 §4.1 read row / R-OP-9 — `until` is an optional condition selector, so run.wait
+    // validates as a subset (like run.inspect) rather than an exact-args command; without it the
+    // historical settle-block semantics are preserved.
+    const allowed = new Set(definition.args);
+    if (!args || typeof args !== 'object' || Array.isArray(args)
+      || Object.keys(args).some((key) => !allowed.has(key)) || !validId(args.runId)
+      || !Number.isSafeInteger(args.timeoutMs) || args.timeoutMs <= 0
+      || args.timeoutMs > 24 * 60 * 60 * 1000
+      || (args.until !== undefined && !['settled', 'terminal'].includes(args.until))) {
+      throw applicationError('wait target or timeout is invalid', 'application_wait_invalid');
     }
     return true;
   }
@@ -1458,10 +1477,6 @@ export function validateApplicationCommandArgs(name, args) {
   }
   if (name === 'run.approve' && (!validId(args.runId) || !/^[a-f0-9]{64}$/u.test(args.planDigest ?? ''))) {
     throw applicationError('plan approval target is invalid', 'application_approval_invalid');
-  }
-  if (name === 'run.wait' && (!validId(args.runId) || !Number.isSafeInteger(args.timeoutMs)
-    || args.timeoutMs <= 0 || args.timeoutMs > 24 * 60 * 60 * 1000)) {
-    throw applicationError('wait target or timeout is invalid', 'application_wait_invalid');
   }
   if (name === 'run.answer') {
     if (!validId(args.runId) || !validText(args.requestId, 4_096)) {
@@ -7234,13 +7249,27 @@ export class BatonApplication {
   async wait(runId, rawObserver, options = {}, rawContext = null) {
     this._assertOpen();
     const context = normalizeCommandContext(rawContext);
-    exactObject(options, ['timeoutMs'], 'application_wait_invalid', 'wait options');
-    if (!Number.isSafeInteger(options.timeoutMs) || options.timeoutMs <= 0 || options.timeoutMs > 24 * 60 * 60 * 1000) {
+    // `until` is an optional condition selector (docs/36 §4.1 read row); validate the options as a
+    // subset so historical callers that pass only { timeoutMs } keep the settle-block semantics.
+    if (!options || typeof options !== 'object' || Array.isArray(options)
+      || Object.keys(options).some((key) => !['timeoutMs', 'until'].includes(key))
+      || !Number.isSafeInteger(options.timeoutMs) || options.timeoutMs <= 0
+      || options.timeoutMs > 24 * 60 * 60 * 1000
+      || (options.until !== undefined && !['settled', 'terminal'].includes(options.until))) {
       throw applicationError('wait timeout is invalid', 'application_wait_invalid');
     }
     const observer = normalizePrincipal(rawObserver, 'run observer');
     const deadline = Date.now() + options.timeoutMs;
     let view = await this.status(runId, observer, {}, context);
+    // docs/36 §4.1 read row / R-OP-9 — `--until terminal` blocks until the application Run itself is
+    // terminal; the default (settled) preserves run.wait's historical provider-settlement block.
+    if (options.until === 'terminal') {
+      while (!APPLICATION_RUN_TERMINAL_PHASES.has(view.phase) && Date.now() < deadline) {
+        await this.driver.coordinator.wait(Math.min(100, Math.max(1, deadline - Date.now())));
+        view = await this.status(runId, observer, {}, context);
+      }
+      return view;
+    }
     while (!PROVIDER_EXECUTION_SETTLED_PHASES.has(view.phase) && Date.now() < deadline) {
       await this.driver.coordinator.wait(Math.min(100, Math.max(1, deadline - Date.now())));
       view = await this.status(runId, observer, {}, context);
@@ -10283,8 +10312,11 @@ export class BatonApplication {
   _logicalEpisodeContinuation(request, continuation, runId, cursor = null) {
     if (!continuation && cursor === null) return null;
     const source = continuation?.arguments ?? {};
+    // docs/36 §9 M3 — the Episode fold surfaces its continuation under the canonical read verb
+    // run.view (the arguments stay the Episode chapter shape; the dispatch layer routes run.view
+    // with a topic back to the Episode projection). run.episode stays an admitted alias until M5.
     return {
-      operation: 'run.episode', arguments: {
+      operation: 'run.view', arguments: {
         runId, topic: request.topic, detail: request.detail,
         ...(request.role ? { role: request.role } : {}),
         ...(request.generation ? { generation: request.generation } : {}),
@@ -10902,6 +10934,16 @@ export class BatonApplication {
 
   async command(name, args, rawPrincipal, rawContext = null) {
     if (!validText(name, 64)) throw applicationError('application command is invalid', 'application_command_invalid');
+    // docs/36 §9 M1/M3 — resolve canonical operation names to their legacy transport handlers in
+    // the dispatch layer. The Episode fold routes `run.view` to the Episode projection when the
+    // request carries a chapter topic, and to the ordinary inspect projection otherwise.
+    if (name === 'run.view') {
+      name = args && typeof args === 'object' && !Array.isArray(args) && Object.hasOwn(args, 'topic')
+        ? 'run.episode' : 'run.inspect';
+    } else if (Object.hasOwn(APPLICATION_DISPATCH_ALIASES, name)) {
+      const legacy = APPLICATION_DISPATCH_ALIASES[name];
+      if (APPLICATION_COMMAND_DEFINITIONS[legacy]) name = legacy;
+    }
     const principal = normalizePrincipal(rawPrincipal, 'command principal');
     const context = normalizeCommandContext(rawContext);
     validateApplicationCommandArgs(name, args);
@@ -10951,7 +10993,9 @@ export class BatonApplication {
       return this.approve(args.runId, args.planDigest, principal);
     }
     if (name === 'run.wait') {
-      return this.wait(args.runId, principal, { timeoutMs: args.timeoutMs }, context);
+      return this.wait(args.runId, principal, {
+        timeoutMs: args.timeoutMs, ...(args.until === undefined ? {} : { until: args.until }),
+      }, context);
     }
     if (name === 'run.answer') {
       return this.answer(args.runId, args.requestId, args.answer, principal);

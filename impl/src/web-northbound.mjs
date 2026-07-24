@@ -284,6 +284,13 @@ function validProviderClaims(value) {
 }
 
 function resolveWebCommandEnvelope(envelope) {
+  // docs/36 §9 M3 — the Episode fold. A `run_view` envelope carrying a chapter topic resolves to
+  // the legacy Episode transport handler; without a topic it resolves as the ordinary inspect read
+  // through the generic alias map below. run_episode itself stays an admitted transport until M5.
+  if (envelope?.command === 'run_view'
+    && isRecord(envelope.args) && Object.hasOwn(envelope.args, 'topic')) {
+    return { ...envelope, command: 'run_episode' };
+  }
   const legacyCommand = WEB_APPLICATION_ALIASES[envelope?.command];
   return legacyCommand ? { ...envelope, command: legacyCommand } : envelope;
 }

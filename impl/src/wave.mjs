@@ -52,6 +52,10 @@ function validateMember(member, index, repoRoot = null) {
   }
   const role = member.role;
   if (typeof role !== 'string' || role.trim().length === 0) throw waveError(`wave member[${index}] role is invalid`);
+  // docs/36 §3 M3 — `work` is the reserved run-level recipient sentinel for the current single
+  // seat; a workflow role literally named `work` would collide with it, so it is a wave-admission
+  // (registry) lint error, never a surface member role.
+  if (role.trim() === 'work') throw waveError(`wave member ${role} role "work" is reserved`, 'wave_member_role_reserved');
   if (typeof member.objective !== 'string' || member.objective.trim().length === 0) {
     throw waveError(`wave member ${role} objective is invalid`);
   }

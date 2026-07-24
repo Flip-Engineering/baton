@@ -702,6 +702,14 @@ const OPERATION_ALIASES = {
     operation: 'run.workstream.stop',
     cli: { canonical: ['run', 'member', 'stop'], legacy: ['run', 'stop-member'] },
   },
+  // docs/36 §9 M3: `run.member.interrupt` is the member-addressed peer of the run-level
+  // interrupt. It carries no new legacy transport name (UA5 byte-stability); the canonical CLI
+  // prefix rewrites onto the existing `run interrupt` verb, which accepts a positional member
+  // role plus `--generation` as its {role, generation?} address.
+  'run.member.interrupt': {
+    operation: 'run.interrupt',
+    cli: { canonical: ['run', 'member', 'interrupt'], legacy: ['run', 'interrupt'] },
+  },
   'run.do': {
     operation: 'run.act',
     cli: { canonical: ['run', 'do'], legacy: ['run', 'do'] },
