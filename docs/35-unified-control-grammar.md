@@ -236,9 +236,10 @@ canonical section selector grammar is the dotted spelling `--section episode.CHA
   `integrate`, `adopt`); on the named-verb/D3/CLI path `stop`, `member.stop`, and `interrupt`
   keep `reason` optional (`application-semantics.mjs:170,179,612,621`). The **do-path already
   diverges today**: the D2 actions `stop`/`stop_member` schema-require `reason`
-  (`application-semantics.mjs:545,493`) — a live F12 instance, recorded in the divergence
-  ledger (dimension `schema`, retiresIn M1), not legislated over (R-OP-13; §2 forbids both
-  adding and removing preconditions).
+  (`application-semantics.mjs:545,493`) — a live F12 instance. The M0 ledger has no `schema`
+  dimension and M1's ledger discipline is removal-only, so this divergence is documented here
+  and scheduled for M2's cross-surface identity work rather than ledgered (R-OP-13; §2 forbids
+  both adding and removing preconditions).
 - **H6 — No abbreviations, no vendor words, no plural nouns** in operation names.
 - **H7 — Depth ≤ noun.subnoun.verb.** Registry-owned enum/section values are data, not names.
 - **H8 — Every operation ships an example invocation** rendered into MCP listings, CLI help, and
