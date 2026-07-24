@@ -99,7 +99,7 @@ const MEMBERS = Object.freeze([
 const baton = await openBaton({
   repo,
   advanced: {
-    deploymentRoot: resolve(repo, '.baton', 'grammar-2026-07-24'),
+    deploymentRoot: resolve(repo, '.baton', 'grammar-m1-2026-07-24'),
     routes: [{ harness: 'codex', model: 'gpt-5.6-sol', effort: 'high' }],
     verification: VERIFY,
   },
