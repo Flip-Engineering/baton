@@ -5,7 +5,9 @@ import { fileURLToPath } from 'node:url';
 
 import { openBaton } from '../../../../impl/src/index.mjs';
 
-// Issue #45 implementation wave (contract v2, 94c4a12): ONE codex seat implements startup
+// Issue #45 implementation wave (contract v2, 94c4a12): ONE opus seat implements startup
+// (codex account hit its hard usage cap 2026-07-24T04:16Z, resets Jul 28 — claude is primary
+// after the 8pm PDT session reset).
 // reconciliation self-heal red-first (R45-1..7 suite, then canonical suite green).
 // Deployment state isolated under .baton/issue45-2026-07-24. Driver: 31-c steering loop with
 // requestId-keyed nudge dedup (de818e3) + status-hash stall marker (issue #46 misfire lesson —
@@ -62,8 +64,8 @@ const TASK = [
 const ATTEMPT = new Date().toISOString();
 const MEMBERS = Object.freeze([
   Object.freeze({
-    role: 'issue45-implementer-codex',
-    exact: Object.freeze({ harness: 'codex', model: 'gpt-5.6-sol', effort: 'high' }),
+    role: 'issue45-implementer-opus',
+    exact: Object.freeze({ harness: 'claude-code', model: 'claude-opus-4-8', effort: 'high' }),
     scope: Object.freeze([
       'impl/test/issue45-startup-reconcile-red.test.mjs',
       'impl/src/worktree.mjs',
@@ -82,7 +84,7 @@ const baton = await openBaton({
   repo,
   advanced: {
     deploymentRoot: resolve(repo, '.baton', 'issue45-2026-07-24'),
-    routes: [{ harness: 'codex', model: 'gpt-5.6-sol', effort: 'high' }],
+    routes: [{ harness: 'claude-code', model: 'claude-opus-4-8', effort: 'high' }],
     verification: VERIFY,
   },
 });
