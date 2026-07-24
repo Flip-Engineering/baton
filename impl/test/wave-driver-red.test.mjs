@@ -144,12 +144,12 @@ test('W1: waves.start begins members individually and explicitly approves them â
   });
   const progress = await wave.progress();
   for (const entry of progress.members) {
-    assert.notEqual(entry.phase, 'awaiting_plan_approval', `${entry.role} must not park on a silent authority gate`);
+    assert.notEqual(entry.phase, 'awaiting_approval', `${entry.role} must not park on a silent authority gate`);
   }
   const outcomes = await wave.settle({ timeoutMs: 20_000 });
   assert.equal(outcomes.length, 2);
   for (const outcome of outcomes) {
-    assert.ok(outcome.terminal === true || outcome.phase === 'work_completed', `${outcome.role} settled`);
+    assert.ok(outcome.terminal === true || outcome.phase === 'result_ready', `${outcome.role} settled`);
     assert.match(outcome.resultSha ?? '', /^[a-f0-9]{40}$/u, `${outcome.role} result section preserved result`);
   }
   await wave.close({ reason: 'W1 settled.' });
@@ -159,7 +159,7 @@ test('W1: waves.start begins members individually and explicitly approves them â
     approve: false,
   });
   const parkedProgress = await parked.progress();
-  assert.equal(parkedProgress.members[0].phase, 'awaiting_plan_approval');
+  assert.equal(parkedProgress.members[0].phase, 'awaiting_approval');
   await parked.close({ reason: 'W1 unapproved cleanup.' });
 });
 
@@ -176,7 +176,7 @@ test('W2: one member crashing changes nothing about the sibling lifecycle (no fa
   const alpha = outcomes.find((outcome) => outcome.role === 'alpha');
   const beta = outcomes.find((outcome) => outcome.role === 'beta');
   assert.match(alpha.resultSha ?? '', /^[a-f0-9]{40}$/u, 'sibling completes and preserves its result');
-  assert.notEqual(beta.phase, 'work_completed');
+  assert.notEqual(beta.phase, 'result_ready');
   assert.notEqual(beta.resultSha ?? null, alpha.resultSha);
   const stop = await wave.close({ reason: 'W2 settled.' });
   assert.equal(stop.remainingCount, 0);
@@ -216,7 +216,7 @@ test('W4: a blocked member surfaces attention through progress, never reads as c
   await new Promise((resolve) => setTimeout(resolve, 500));
   const progress = await wave.progress();
   const alpha = progress.members[0];
-  assert.notEqual(alpha.phase, 'work_completed');
+  assert.notEqual(alpha.phase, 'result_ready');
   assert.notEqual(alpha.phase, 'completed');
   assert.ok(alpha.attention !== null && alpha.attention !== undefined && alpha.attention !== 'clear',
     'blocked members surface attention for the orchestrator');
@@ -260,7 +260,7 @@ test('W6: stopMember stops exactly that member and the sibling continues to comp
   const alpha = outcomes.find((outcome) => outcome.role === 'alpha');
   const beta = outcomes.find((outcome) => outcome.role === 'beta');
   assert.match(alpha.resultSha ?? '', /^[a-f0-9]{40}$/u, 'sibling completes after the selective stop');
-  assert.notEqual(beta.phase, 'work_completed');
+  assert.notEqual(beta.phase, 'result_ready');
   const closeStop = await wave.close({ reason: 'W6 settled.' });
   assert.equal(closeStop.remainingCount, 0);
   assert.equal(closeStop.residueUnknown, false);

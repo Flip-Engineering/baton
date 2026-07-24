@@ -8,8 +8,12 @@
 
 import { statSync } from 'node:fs';
 
-const TERMINAL_PHASES = new Set(['stopped', 'failed', 'cancelled', 'completed']);
-const SUCCESS_RESTING = 'work_completed';
+import { applicationTerminal, canonicalRunPhase } from './application-semantics.mjs';
+
+// docs/36 §7.1/L4: terminality is the registry predicate — the wave no longer hand-maintains its
+// own union (the F5 divergence where it omitted `denied`/`closed` is gone). `result_ready` is the
+// canonical provider-settled resting state (legacy `work_completed`).
+const SUCCESS_RESTING = 'result_ready';
 const RESULT_SHA = /^[a-f0-9]{40,64}$/u;
 const GLOB_MAGIC = /[*?[\]{}!+@]/u;
 const POLL_MS = 50;
@@ -96,7 +100,7 @@ function validateMember(member, index, repoRoot = null) {
 }
 
 function terminalFrom(outline) {
-  return outline?.terminal === true || TERMINAL_PHASES.has(outline?.phase);
+  return outline?.terminal === true || applicationTerminal(outline?.phase);
 }
 
 function attentionFrom(outline) {
@@ -104,6 +108,8 @@ function attentionFrom(outline) {
   if (Array.isArray(attention) && attention.length === 0) return null;
   if (attention === 'clear') return null;
   if (attention !== null && attention !== undefined) return attention;
+  // The run still records the legacy blocking phase; the surfaced kind is canonical (§7.3):
+  // `candidate_selection` serializes as `select_candidate`, `input_required` as an answer prompt.
   const phase = outline?.phase;
   if (phase === 'awaiting_plan_approval') return 'blocked_interaction:approve_plan';
   if (phase === 'selection_required') return 'blocked_interaction:select_candidate';
@@ -188,14 +194,16 @@ export async function createWave(baton, options = {}) {
     const members = [];
     for (const [role, entry] of state.members) {
       if (!entry.run) {
-        members.push({ role, phase: 'start_failed', terminal: true, attention: null, error: entry.startError });
+        // §7.2: a wave member that never started surfaces the canonical member state `failed`
+        // with a typed cause (`start`), never the legacy run phase `start_failed`.
+        members.push({ role, phase: 'failed', terminalCause: 'start', terminal: true, attention: null, error: entry.startError });
         continue;
       }
       const view = await entry.run.status();
       const outline = view?.view ?? view ?? {};
       members.push({
         role,
-        phase: outline.phase ?? null,
+        phase: canonicalRunPhase(outline.phase) ?? null,
         terminal: terminalFrom(outline),
         attention: attentionFrom(outline),
         scratchpad: outline.scratchpad ?? null,
@@ -290,7 +298,7 @@ export async function createWave(baton, options = {}) {
         if (settled.has(role) || !entry.run) continue;
         const view = await entry.run.status();
         const outline = view?.view ?? view;
-        if (terminalFrom(outline) || outline?.phase === SUCCESS_RESTING) {
+        if (terminalFrom(outline) || canonicalRunPhase(outline?.phase) === SUCCESS_RESTING) {
           settled.add(role);
         } else {
           armPump(entry);
@@ -304,12 +312,12 @@ export async function createWave(baton, options = {}) {
       if (state.outcomes.some((outcome) => outcome.role === role)) continue;
       const outcome = { role };
       if (!entry.run) {
-        Object.assign(outcome, { phase: 'start_failed', terminal: true, narrative: null, resultSha: null, error: entry.startError });
+        Object.assign(outcome, { phase: 'failed', terminalCause: 'start', terminal: true, narrative: null, resultSha: null, error: entry.startError });
       } else {
         try {
           const view = await entry.run.status();
           const outline = view?.view ?? view ?? {};
-          outcome.phase = outline.phase ?? null;
+          outcome.phase = canonicalRunPhase(outline.phase) ?? null;
           outcome.terminal = terminalFrom(outline);
           outcome.narrative = outline.narrative ?? null;
           outcome.resultSha = await materialize(entry);

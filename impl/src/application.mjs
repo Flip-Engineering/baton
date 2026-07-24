@@ -117,13 +117,17 @@ const EPISODE_TOPICS = Object.freeze([
   'outline', 'output', 'sources', 'derivations', 'contradictions', 'trace', 'route',
   'verification', 'result', 'cleanup', 'help',
 ]);
-// Provider execution can settle while the application Run remains open for
-// result finalization. These closed sets intentionally model separate lifecycles.
+// Provider execution can settle while the application Run remains open for result finalization.
+// These closed sets intentionally model separate lifecycles. They record the still-legacy state
+// machine's phase literals verbatim (so `.has(view.phase)` resolves unchanged, preserving every
+// admission and terminality decision per §2); `closed` is deleted as a dead string (docs/36 §7.1,
+// M2). The registry L4 predicates (providerSettled/applicationTerminal) own the canonical
+// vocabulary; the outward-facing surfaces resolve through them.
 export const PROVIDER_EXECUTION_SETTLED_PHASES = new Set([
-  'work_completed', 'selection_required', 'candidate_selected', 'completed', 'failed', 'cancelled', 'denied', 'stopped', 'closed',
+  'work_completed', 'selection_required', 'candidate_selected', 'completed', 'failed', 'cancelled', 'denied', 'stopped',
 ]);
 export const APPLICATION_RUN_TERMINAL_PHASES = new Set([
-  'completed', 'failed', 'cancelled', 'denied', 'stopped', 'closed',
+  'completed', 'failed', 'cancelled', 'denied', 'stopped',
 ]);
 
 export const APPLICATION_COMMAND_DEFINITIONS = Object.freeze({

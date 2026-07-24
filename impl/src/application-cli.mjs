@@ -26,7 +26,7 @@ const COMMANDS = new Set([
 // APPLICATION_COMMAND_DEFINITIONS in application.mjs). `parseBatonCli`'s `context eval` branch
 // below still does real, tested client-side argv parsing; it is just not wired to remote
 // execution yet.
-const TERMINAL_RUN_PHASES = new Set(['work_completed', 'completed', 'failed', 'cancelled', 'denied', 'stopped', 'closed']);
+const TERMINAL_RUN_PHASES = new Set(['work_completed', 'completed', 'failed', 'cancelled', 'denied', 'stopped']);
 const CONNECTION_ENV = Object.freeze(['BATON_URL', 'BATON_ORIGIN', 'BATON_REPO_ID', 'BATON_TOKEN']);
 const DEFAULT_APPLICATION_WAIT_MS = 30_000;
 const WEB_WAIT_TRANSPORT_SLACK_MS = 15_000;

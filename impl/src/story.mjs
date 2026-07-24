@@ -15,6 +15,22 @@
  */
 
 import { pathMatchesScope } from './path-scope.mjs';
+import { canonicalMemberState } from './application-semantics.mjs';
+
+// docs/36 §7.2: the registry owns the member-state vocabulary. The internal WorkerStatus stream
+// (idle/working/blocked/input_required/paused/interrupted/stopping/exited/orphaned) is projected
+// to the canonical member state a surface re-reports — `input_required` → `blocked`, `exited` →
+// the recorded terminal outcome, an orphaned/lost session → `stopped`. The raw status stays
+// available for internal reads; this is the outward re-report only.
+export function canonicalMemberStatus(worker) {
+  const status = typeof worker === 'string' ? worker : worker?.status;
+  if (status === 'exited') {
+    const outcome = worker?.crashed || worker?.lastVerdict?.accept === false ? 'failed' : 'completed';
+    return canonicalMemberState('exited', { outcome });
+  }
+  if (status === 'orphaned') return 'stopped';
+  return canonicalMemberState(status);
+}
 
 // ---------------------------------------------------------------------------
 // Typedefs (JSDoc only — see spec for full definitions)
@@ -746,6 +762,18 @@ export class StoryCompiler {
   workerState(workerId) {
     const w = this._state.workers.get(workerId);
     return w ? cloneWorkerStory(w) : null;
+  }
+
+  /**
+   * Canonical §7.2 member-state re-report: each seat's outward state in the registry vocabulary.
+   * @returns {{workerId:string, taskId:string|null, state:string}[]}
+   */
+  memberStates() {
+    return [...this._state.workers.values()].map((w) => ({
+      workerId: w.workerId,
+      taskId: w.taskId ?? null,
+      state: canonicalMemberStatus(w),
+    }));
   }
 
   /** @returns {Object} a plain deep-copy snapshot, not the live Map */

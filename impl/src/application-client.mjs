@@ -248,7 +248,7 @@ function runGroupSummary(runs, views) {
         : ['failed', 'denied', 'cancelled'].includes(phase) ? 'failed'
           : phase === 'stopped' ? 'stopped'
             : phase === 'work_completed' ? 'ready'
-              : ['completed', 'closed'].includes(phase) ? 'completed'
+              : phase === 'completed' ? 'completed'
                 : ['planning', 'awaiting_plan_approval'].includes(phase) ? 'waiting'
                   : 'active';
     return Object.freeze({

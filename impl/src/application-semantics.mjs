@@ -12,6 +12,90 @@ function freeze(value) {
   return Object.freeze(value);
 }
 
+// docs/36 §7 — one vocabulary per axis. The registry OWNS these enums, their generated legacy
+// mappings, and the two lifecycle predicates; no surface hand-maintains a terminal union (L4).
+// The core state machine still records legacy phase literals; the mapping is what every surface
+// and the audit tool resolve through, so a legacy string never has to be serialized outward.
+export const CANONICAL_RUN_PHASES = Object.freeze([
+  'planning', 'awaiting_approval', 'queued', 'working', 'paused', 'interrupted',
+  'uncertain', 'verifying', 'result_ready', 'awaiting_selection', 'result_selected',
+  'reviewing', 'integrating', 'completed', 'failed', 'cancelled', 'stopped', 'denied',
+  'stopping',
+]);
+export const CANONICAL_MEMBER_STATES = Object.freeze([
+  'pending', 'idle', 'working', 'blocked', 'paused', 'interrupted', 'stopping',
+  'completed', 'failed', 'cancelled', 'stopped',
+]);
+// The eight live attention-array kinds (§7.3). `approve_plan`/`select_candidate` are gate
+// settlement targets, not emitted kinds; `candidate_selection` serializes as `select_candidate`.
+export const CANONICAL_ATTENTION_KINDS = Object.freeze([
+  'candidate_selection', 'answer_question', 'answer_approval', 'answer_decision',
+  'turn_checkpoint', 'session_preservation', 'workflow_revision', 'workflow_recovery',
+]);
+
+// §7.1 generated mapping. `closed` maps to null: it is a dead string with no live emitter.
+export const LEGACY_RUN_PHASE_MAP = Object.freeze({
+  awaiting_plan_approval: 'awaiting_approval',
+  approved: 'queued',
+  running: 'working',
+  interruption_uncertain: 'uncertain',
+  work_completed: 'result_ready',
+  selection_required: 'awaiting_selection',
+  candidate_selected: 'result_selected',
+  input_required: 'working',
+  planning_failed: 'failed',
+  start_failed: 'failed',
+  closed: null,
+});
+// §7.2 generated member-state mapping. `exited` resolves by recorded outcome at the call site.
+export const LEGACY_MEMBER_STATE_MAP = Object.freeze({
+  input_required: 'blocked',
+  start_failed: 'failed',
+});
+// §7.3 one honest serialization row.
+export const ATTENTION_KIND_SERIALIZATION = Object.freeze({
+  candidate_selection: 'select_candidate',
+});
+
+export function canonicalRunPhase(phase) {
+  return Object.hasOwn(LEGACY_RUN_PHASE_MAP, phase) ? LEGACY_RUN_PHASE_MAP[phase] : phase;
+}
+
+export function canonicalMemberState(state, { outcome = 'completed' } = {}) {
+  if (state === 'exited') return CANONICAL_MEMBER_STATES.includes(outcome) ? outcome : 'completed';
+  return Object.hasOwn(LEGACY_MEMBER_STATE_MAP, state) ? LEGACY_MEMBER_STATE_MAP[state] : state;
+}
+
+export function serializeAttentionKind(kind) {
+  return Object.hasOwn(ATTENTION_KIND_SERIALIZATION, kind)
+    ? ATTENTION_KIND_SERIALIZATION[kind] : kind;
+}
+
+// L4 predicates. Both canonicalize their input, so a legacy or canonical phase resolves alike;
+// `closed` (→ null) is neither settled nor terminal, which is exactly its dead-string status.
+const PROVIDER_SETTLED_CANONICAL = new Set([
+  'result_ready', 'awaiting_selection', 'result_selected',
+  'completed', 'failed', 'cancelled', 'stopped', 'denied',
+]);
+const APPLICATION_TERMINAL_CANONICAL = new Set([
+  'completed', 'failed', 'cancelled', 'stopped', 'denied',
+]);
+export function providerSettled(phase) {
+  return PROVIDER_SETTLED_CANONICAL.has(canonicalRunPhase(phase));
+}
+export function applicationTerminal(phase) {
+  return APPLICATION_TERMINAL_CANONICAL.has(canonicalRunPhase(phase));
+}
+
+export const APPLICATION_LIFECYCLE_ENUMS = Object.freeze({
+  runPhases: CANONICAL_RUN_PHASES,
+  memberStates: CANONICAL_MEMBER_STATES,
+  attentionKinds: CANONICAL_ATTENTION_KINDS,
+  legacyRunPhaseMap: LEGACY_RUN_PHASE_MAP,
+  legacyMemberStateMap: LEGACY_MEMBER_STATE_MAP,
+  attentionKindSerialization: ATTENTION_KIND_SERIALIZATION,
+});
+
 const objectSchema = (properties, required = Object.keys(properties)) => ({
   type: 'object', properties, required, additionalProperties: false,
 });
@@ -978,6 +1062,7 @@ const presentationDigest = createHash('sha256').update(JSON.stringify(canonical(
 export const APPLICATION_SEMANTIC_REGISTRY = freeze({
   ...core,
   aliases,
+  enums: APPLICATION_LIFECYCLE_ENUMS,
   authorityDigest,
   presentationDigest,
   digest: authorityDigest,

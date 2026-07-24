@@ -1,5 +1,9 @@
 import { collectSurfaceInventory } from './surface-audit.mjs';
-import { APPLICATION_SEMANTIC_REGISTRY } from '../src/application-semantics.mjs';
+import {
+  APPLICATION_SEMANTIC_REGISTRY,
+  LEGACY_RUN_PHASE_MAP,
+  canonicalRunPhase,
+} from '../src/application-semantics.mjs';
 
 const DIMENSIONS = new Set(['name', 'args', 'schema', 'behavior', 'enum']);
 const RETIREMENT_PHASES = new Set(['M1', 'M2', 'M3', 'M4', 'M5']);
@@ -199,8 +203,14 @@ export function checkEnumStrings(strings, ledger, { refuseNovel = false } = {}) 
   const allowed = ledgerIndex(ledger);
   const result = { conformant: [], ledgered: [], novel: [] };
   for (const name of [...new Set(strings)].sort()) {
-    if (canonical.has(name)) {
-      result.conformant.push({ surface: 'enum.runPhase', name, dimension: 'enum', canonical: name });
+    // docs/36 §7.1/L4: resolve each extracted literal through the registry's generated legacy
+    // mapping, then enforce canonical over the resolved string. A dead string (`closed` → null)
+    // is dropped — it names no live axis value. A known legacy string resolves to its canonical
+    // phase (conformant). Anything else is measured against the ledger, then flagged novel.
+    const resolved = Object.hasOwn(LEGACY_RUN_PHASE_MAP, name) ? canonicalRunPhase(name) : name;
+    if (resolved === null || resolved === undefined) continue;
+    if (canonical.has(resolved)) {
+      result.conformant.push({ surface: 'enum.runPhase', name, dimension: 'enum', canonical: resolved });
       continue;
     }
     const entry = allowed.get(`enum.runPhase\0${name}\0enum`);

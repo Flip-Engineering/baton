@@ -121,7 +121,7 @@ function webFixture() {
       return {
         schemaVersion: 1,
         runId: args.runId,
-        phase: 'running',
+        phase: 'working',
         authority: 'same-application',
       };
     },
@@ -224,7 +224,7 @@ test('M1-3: an outline approval advertises one verbatim executable bound do bloc
   application.approve = async (_runId, digest) => {
     approvedDigest = digest;
   };
-  application.inspect = async () => ({ phase: 'running' });
+  application.inspect = async () => ({ phase: 'working' });
   const executed = await application.act({
     runId: 'run-grammar',
     actionId: approve.do.action.actionId,
@@ -235,7 +235,7 @@ test('M1-3: an outline approval advertises one verbatim executable bound do bloc
     sessionId: 'grammar-session',
   });
   assert.equal(approvedDigest, planDigest);
-  assert.deepEqual(executed, { phase: 'running' });
+  assert.deepEqual(executed, { phase: 'working' });
 
   const attentionActions = application._semanticActions(current, {
     ...view,
