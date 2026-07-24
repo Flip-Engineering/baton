@@ -54,19 +54,14 @@ const MEMBERS = Object.freeze([
     report: `${relativeRoot}/chunk-index.md`,
     objective: [
       salt,
-      'You are the DRAFTER-POSTER in a 2-agent baton workflow. The AX report draft is DONE',
-      `and committed at ${relativeRoot}/report-draft.md (126 lines — READ IT FIRST and note`,
-      `its markdown headings). Your job, IN THIS ORDER: (1) WRITE ${relativeRoot}/chunk-index.md`,
-      'listing six keys chunk-1..chunk-6 (your required repository effect). (2) Post EXACTLY',
-      'six scratchpad entries, one per draft section (split at the headings), each at most',
-      '1400 bytes, with these EXACT idempotencyKeys (each used ONCE — a reuse with different',
-      'content is a write_conflict): SCRATCHPAD_WRITE: {"entry":{"kind":"note","text":"<section',
-      'text>"},"expectedFence":"current","idempotencyKey":"chunk-<N>"} for N=1..6, one grammar',
-      'line per section, each on its own physical line. If ANY write is refused, do NOT retry',
-      'blindly — move to the next section. When all six are posted (or skipped), END YOUR TURN.',
-      'SCRATCHPAD_WRITE IS NOT A TOOL — do not look for it in your tool list; it is not there.',
-      'It is a line of TEXT you print in your ordinary reply, exactly as shown, and the harness',
-      'parses it out of your message. You post each entry by saying the line, nothing else.',
+      'You are the REVISER in a 2-agent baton workflow. The AX report draft is committed at',
+      `${relativeRoot}/report-draft.md (126 lines). The orchestrator will send you the critic's`,
+      'doubts as a user message. If none has arrived yet, end your turn and wait. When they',
+      'arrive: REVISE report-draft.md to resolve each doubt, then post ONE scratchpad note:',
+      'SCRATCHPAD_WRITE: {"entry":{"kind":"note","text":"revised: <what changed>"},',
+      '"expectedFence":"current","idempotencyKey":"revised-1"}. SCRATCHPAD_WRITE IS NOT A TOOL',
+      '— it is a line of TEXT you print in your ordinary reply; the harness parses it. Then',
+      'END YOUR TURN.',
       FENCE, OVERSIZE,
     ].join(' '),
   }),
@@ -197,6 +192,9 @@ try {
     members: MEMBERS.map(({ role, exact, scope, report, objective }) => ({ role, exact, scope: [...scope], report, objective })),
   });
   log(`demo v5 wave started through baton.waves (${MEMBERS.length} members)`);
+  const draftText = readFileSync(resolve(repo, 'docs/reference/evidence/dynamic-workflow-2026-07-24/report-draft.md'), 'utf8');
+  await sendTo('critic', `The AX report draft for your adversarial review (orchestrator-relayed). Post your doubts as scratchpad entries per your objective, then write critique.md:\n\n${draftText.slice(0, 14000)}`);
+  receipt('PUSH: committed report-draft.md sent to critic (orchestrator-relayed)');
 
   const terminalRoles = new Set();
   const nudged = new Set();
