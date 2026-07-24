@@ -5,7 +5,10 @@ import { fileURLToPath } from 'node:url';
 
 import { openBaton } from '../../../../impl/src/index.mjs';
 
-// DYNAMIC WORKFLOW DEMO v5 — the completion wave. v4 receipts: decision gate LIVE (glm
+// DYNAMIC WORKFLOW DEMO v7 — HOMOGENEOUS variant (2× sonnet) to close the inter-agent loop.
+// (v6 proved the decision gate + the first expectedFence:current accepted write live; the glm
+// drafter then treadmilled in its issue-#50 envelope, so v7 puts proven claude stamina on the
+// drafter seat. The v5/v6 evidence root is reused only for receipts paths.) v4 receipts: decision gate LIVE (glm
 // drafter's DECISION_REQUEST answered html at 06:13), one accepted scratchpad write, 13
 // grammar attempts, and a driver crash on an object-typed entry field (textOf). v5 folds:
 //   (1) textOf hardened (String guard);
@@ -46,7 +49,7 @@ const salt = `[attempt: ${ATTEMPT}]`;
 const MEMBERS = Object.freeze([
   Object.freeze({
     role: 'drafter',
-    exact: Object.freeze({ harness: 'glm', model: 'glm-5.2', effort: 'xhigh' }),
+    exact: Object.freeze({ harness: 'claude-code', model: 'claude-sonnet-5', effort: 'high' }),
     scope: Object.freeze([`${relativeRoot}/report-draft.md`]),
     report: `${relativeRoot}/report-draft.md`,
     objective: [
@@ -93,7 +96,7 @@ const MEMBERS = Object.freeze([
 const baton = await openBaton({
   repo,
   advanced: {
-    deploymentRoot: resolve(repo, '.baton', 'demo-workflow-v5-2026-07-24'),
+    deploymentRoot: resolve(repo, '.baton', 'demo-workflow-v7-2026-07-24'),
     routes: MEMBERS.map((member) => ({ ...member.exact })),
     verification: VERIFY,
   },
