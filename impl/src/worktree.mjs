@@ -365,6 +365,35 @@ function readWorkspaceOwnerReceipt(repoRoot, physicalOwnerId) {
   }
 }
 
+// A receipt that fails this-repoRoot validation may still be a live FOREIGN controller's
+// structurally sound receipt — its `worktree`/`branch` are relative to that controller's root, so
+// they never match here (validateWorkspaceOwnerReceipt line ~332). Such a record is another
+// deployment's business, not this repo's orphan residue, so reconcile must retain-and-proceed
+// rather than refuse. Genuine corruption (bad field set, digest mismatch) returns null → refusal.
+function foreignConsistentReceipt(repoRoot, physicalOwnerId) {
+  let f;
+  try { f = workspaceOwnerReceiptPath(repoRoot, physicalOwnerId); } catch { return null; }
+  if (!existsSync(f)) return null;
+  try {
+    const stat = lstatSync(f);
+    if (!stat.isFile() || stat.isSymbolicLink() || (stat.mode & 0o077) !== 0 || stat.size > 64 * 1024) return null;
+    const value = JSON.parse(readFileSync(f, 'utf8'));
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+    const fields = [
+      'attemptId', 'baseSha', 'branch', 'controller', 'controllerId', 'createdAt',
+      'deploymentId', 'logicalTaskId', 'physicalOwnerId', 'processGeneration', 'receiptDigest',
+      'runId', 'schemaVersion', 'state', 'worktree',
+    ];
+    if (Object.keys(value).sort().join(',') !== fields.sort().join(',')
+      || value.schemaVersion !== 1
+      || value.physicalOwnerId !== physicalOwnerId
+      || !/^ws-[a-f0-9]{32}$/u.test(value.physicalOwnerId ?? '')
+      || value.branch !== `baton/${value.physicalOwnerId}`
+      || value.receiptDigest !== canonicalDigest(receiptCore(value))) return null;
+    return value;
+  } catch { return null; }
+}
+
 function receiptMatchesAllocation(receipt, binding, authority) {
   return receipt.state === 'allocated'
     && receipt.logicalTaskId === binding.logicalTaskId
@@ -1525,6 +1554,10 @@ export function reconcile(repoRoot, expectedActiveTaskIds = [], opts = {}) {
     removedVerifyDirs: [], validatedExpectedOwners: [], retainedExpectedOwners: [],
     validatedExpectedBindings: [], retainedExpectedBindings: [],
     removedPhysicalOwners: [],
+    // Receipt-only-loop records retained as ambiguous residue (rule 2's refusal set): the open
+    // must fail on these. Loop-1 (checkout-present) records with the same diagnostic code proceed,
+    // so the loop origin — known only here — is what the facade keys its refusal on.
+    receiptOnlyRefusals: [],
     diagnostics: [], errors: [],
   };
   let registrationsBeforePrune = [];
@@ -1791,7 +1824,12 @@ export function reconcile(repoRoot, expectedActiveTaskIds = [], opts = {}) {
           code: error?.code ?? 'workspace_owner_receipt_invalid', physicalOwnerId,
           authority: 'ambiguous', retained: true,
         }));
+        // A structurally sound receipt bound to a foreign controller's root is retained-and-proceeds
+        // (rule 4); only genuine corruption or this-repo orphan residue is refusal-set (rule 2).
         if (expected.has(physicalOwnerId)) retainExpected(physicalOwnerId);
+        else if (!foreignConsistentReceipt(repoRoot, physicalOwnerId)) {
+          report.receiptOnlyRefusals.push(physicalOwnerId);
+        }
         continue;
       }
       if (!receipt) continue;
@@ -1820,6 +1858,8 @@ export function reconcile(repoRoot, expectedActiveTaskIds = [], opts = {}) {
           physicalOwnerId, deploymentId: receipt.deploymentId, logicalTaskId: receipt.logicalTaskId,
           authority, retained: true,
         }));
+        // live_foreign proceeds (proceed set); ambiguous_foreign is refusal-set residue.
+        if (authority !== 'live_foreign') report.receiptOnlyRefusals.push(physicalOwnerId);
         continue;
       }
       let branchPresent = false; let branchSha = null;
@@ -1830,6 +1870,7 @@ export function reconcile(repoRoot, expectedActiveTaskIds = [], opts = {}) {
           deploymentId: receipt.deploymentId, logicalTaskId: receipt.logicalTaskId,
           authority, retained: true,
         }));
+        report.receiptOnlyRefusals.push(physicalOwnerId);
         continue;
       }
       try {
@@ -1846,18 +1887,23 @@ export function reconcile(repoRoot, expectedActiveTaskIds = [], opts = {}) {
           physicalOwnerId, deploymentId: receipt.deploymentId,
           logicalTaskId: receipt.logicalTaskId, authority, retained: true,
         }));
+        report.receiptOnlyRefusals.push(physicalOwnerId);
         continue;
       }
       try {
         if (branchPresent) sh('git', ['branch', '-D', receipt.branch], repoRoot);
-        if (!releasePhysicalWorkspaceOwner(repoRoot, physicalOwnerId, { requireAllocated: true })) {
+        // Reconcile has already made the stronger proof (dead controller, absent worktree, branch
+        // handled), so it supersedes requireAllocated — the allocated-state gate is a
+        // publication-path guard only and is dropped exclusively at this reconcile call site.
+        if (!releasePhysicalWorkspaceOwner(repoRoot, physicalOwnerId, {})) {
           throw new WorktreeCleanupError('branch-only physical owner receipt remained');
         }
         report.removedPhysicalOwners.push(physicalOwnerId);
-        if (branchPresent) logEvent(opts, physicalOwnerId, 'worktree.branch_residue_reconciled', {
-          branch: receipt.branch, baseSha: receipt.baseSha, logicalTaskId: receipt.logicalTaskId,
-          processGeneration: receipt.processGeneration,
-        });
+        logEvent(opts, physicalOwnerId,
+          branchPresent ? 'worktree.branch_residue_reconciled' : 'worktree.owner_residue_reconciled', {
+            branch: receipt.branch, baseSha: receipt.baseSha, logicalTaskId: receipt.logicalTaskId,
+            processGeneration: receipt.processGeneration,
+          });
       } catch (error) { report.errors.push(`${physicalOwnerId}: ${error.message || error}`); }
     }
   }

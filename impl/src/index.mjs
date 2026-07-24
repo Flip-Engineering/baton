@@ -962,12 +962,22 @@ function worktreeManager(repoRoot, opts = {}) {
         sparseCheckoutIdentity: opts.workerSparseCheckoutIdentity,
         ownerAuthority: opts.ownerAuthority,
         expectedOwnerBindings: expectedEntries,
+        ...(opts.log ? { log: opts.log } : {}),
         ...(opts.worktreeCapacity ? {
           beforeOwnerCleanup: (physicalOwnerId) => opts.worktreeCapacity
             .settleForCleanup(`worker:${physicalOwnerId}`),
         } : {}),
       });
-      if (report.errors.length > 0) throw Object.assign(new Error('worktree reconciliation was incomplete'), {
+      // Ambiguous residue in the receipt-only loop is a deliberate diagnostics→refusal promotion
+      // (rule 2): reconcile flags exactly the this-repo orphan records it retained as ambiguous
+      // (ambiguous_foreign, branch_mismatch, genuinely-corrupt receipt_invalid, capacity
+      // settlement) so the open fails closed and no double-claim is possible. Expected-active
+      // owners, known replayed handles, and the proceed set (live_foreign, dead_foreign_checkout,
+      // checkout-present, structurally-sound foreign receipts) are never flagged there.
+      const refusedOwners = report.receiptOnlyRefusals.filter((id) => (
+        !expectedActiveTaskIds.includes(id) && !knownPhysicalOwnerIds.includes(id)
+      ));
+      if (report.errors.length > 0 || refusedOwners.length > 0) throw Object.assign(new Error('worktree reconciliation was incomplete'), {
         code: 'worktree_cleanup_failed', report,
       });
       if (opts.worktreeCapacity) {

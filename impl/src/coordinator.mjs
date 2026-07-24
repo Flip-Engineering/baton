@@ -1399,11 +1399,36 @@ export class Coordinator {
     return Promise.resolve(result).finally(release);
   }
 
+  // Compose the swallowed startup error: attach the reconciler's failure as cause (closing the
+  // #10 AX finding) and, when it carries a worktree reconciliation report, name exactly the
+  // refusal-set records — every retained diagnostic plus any physicalOwnerId a mid-removal
+  // failure recorded in report.errors (those have no diagnostic row) — with the remedy.
+  _startupCleanupIncomplete(caught) {
+    let message = 'startup owned-resource reconciliation failed';
+    const report = caught?.report;
+    if (report && (Array.isArray(report.diagnostics) || Array.isArray(report.errors))) {
+      const named = new Set();
+      for (const row of (report.diagnostics ?? [])) {
+        if (row?.retained === true && typeof row.physicalOwnerId === 'string') named.add(row.physicalOwnerId);
+      }
+      for (const entry of (report.errors ?? [])) {
+        const match = /^(ws-[a-f0-9]{32})/u.exec(String(entry));
+        if (match) named.add(match[1]);
+      }
+      if (named.size > 0) {
+        message = `startup owned-resource reconciliation refused: ${[...named].sort().join(', ')}`
+          + ' — delete the named records under .git/baton/workspace-owners/ after proving their'
+          + ' controllers dead, or restore their worktrees';
+      }
+    }
+    return Object.assign(new Error(message), { code: 'coordinator_cleanup_incomplete', cause: caught });
+  }
+
   _trackStartupCleanup(operation) {
     let source;
     try { source = operation(); }
-    catch {
-      if (!this._startupCleanupError) this._startupCleanupError = Object.assign(new Error('startup owned-resource reconciliation failed'), { code: 'coordinator_cleanup_incomplete' });
+    catch (error) {
+      if (!this._startupCleanupError) this._startupCleanupError = this._startupCleanupIncomplete(error);
       return Promise.resolve();
     }
     // The production reconcilers are deliberately synchronous: construction must finish their
@@ -1411,8 +1436,8 @@ export class Coordinator {
     // reconcilers may still be genuinely asynchronous; those remain behind startupReady().
     if (!source || typeof source.then !== 'function') return Promise.resolve(source);
     this._startupCleanupPending += 1;
-    const tracked = Promise.resolve(source).catch(() => {
-      if (!this._startupCleanupError) this._startupCleanupError = Object.assign(new Error('startup owned-resource reconciliation failed'), { code: 'coordinator_cleanup_incomplete' });
+    const tracked = Promise.resolve(source).catch((error) => {
+      if (!this._startupCleanupError) this._startupCleanupError = this._startupCleanupIncomplete(error);
     }).finally(() => { this._startupCleanupPending -= 1; });
     this._startupCleanupPromises.push(tracked);
     return tracked;
