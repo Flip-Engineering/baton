@@ -82,6 +82,18 @@ fleet drain. The original nineteen
 `combined` inventory is opt-in for diagnosis and migration. An application-free factory is
 therefore an advanced-kernel-only deployment, not the ordinary Baton experience.
 
+The application-backed inventory also exposes the reflexive orchestration surface as 21
+`baton_*` tools: the worker decision channel (`baton_decision_list`, `baton_decision_answer`),
+durable boards (`baton_board_post`, `baton_board_read`, `baton_board_retitle`,
+`baton_board_reorder`, `baton_board_close`), context packages (`baton_package_attach`,
+`baton_package_admit`, `baton_package_read`), `baton_context_eval`, and the embedding-grade
+run projections (`baton_run_start`, `baton_runs`, `baton_run_inspect`, `baton_run_act`,
+`baton_run_episode`, `baton_run_workstreams`, `baton_run_stop`, `baton_workstream_notify`,
+`baton_workstream_stop`, `baton_help`). The worker scratchpad (issue #33) is deliberately not
+an MCP tool: workers write it through the REFLEX-1-family up-channel inside their own harness
+streams and receive hub-computed receipts; orchestrators read it through Run and wave
+projections.
+
 Among the advanced tools, `fleet_reuse_decide` accepts a bounded `borrow|build`
 judgment, exact `reuse.vet` and `provenance.sbom` claims/arguments, and optional
 validity-version supersession. Baton freshly reverifies both artifacts and requires the configured

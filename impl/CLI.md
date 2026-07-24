@@ -3,6 +3,30 @@
 `baton` is the normal shell surface for the shared Run application. It does not expose worker
 kernel choreography.
 
+## Verb inventory (`baton help`, `baton help run`)
+
+- **Run lifecycle:** `baton run OBJECTIVE` / `run start OBJECTIVE --exact HARNESS/MODEL@EFFORT`,
+  `run status [--wait|--follow]`, `run approve --plan DIGEST`, `run stop [--reason]`,
+  `run recover`, `run retry --reason`, `run resume --reason`, `run export DIR`.
+- **Reading:** `run show [--depth outline|index|section|item|content|evidence] [--section] [--item]`,
+  `run progress|events|output [--follow]`, `run evidence`, `doctor [--depth ...] [--check]`.
+- **Attention and dialogue:** `run answer RUN REQUEST_ID (--allow|--deny|--cancel|--text|--option ID)`
+  — approvals and the typed decision channel share this form; `run send TEXT [--to R] [--nudge|--now|--turn]`,
+  `run interrupt [--to R] [--reason]`, `run steer TARGET (--nudge|--now|--turn) TEXT --reason R`,
+  `run do RUN ACTION_ID [--inputs JSON]` (the advertised-action executor).
+- **Trust:** `run review --exact H/M@E --reason`, `run adopt --reason`, `run select ROLE --reason`,
+  `run feedback ROLE --text`, `run revise --reason`, `run integrate --strategy ff-only|structured --reason`,
+  `run stop-member ROLE [--generation N] [--reason]`.
+- **Presets and routing:** `explore OBJECTIVE [--exact ...]`, `review OBJECTIVE --exact ... --exact ...`,
+  `route HARNESS/MODEL@EFFORT`, `baton help routing`.
+- **Host:** `serve`, `setup`, `credentials install kimi`, `help`.
+
+Orchestration **waves** are deliberately embedding-only (`openBaton` → `baton.waves`, plus the
+wave-driver policy in docs/37): the CLI is the human thin client, not the agent-orchestration
+surface. The worker scratchpad (issue #33) is read through embedding projections
+(`run.scratchpad({workerId})`, `wave.progress()` member rows, task/workflow horizons); workers
+write it through their own harness up-channel, never through the CLI.
+
 ## Connect to a resident authenticated Web host
 
 For ordinary local use, start Baton from the repository:

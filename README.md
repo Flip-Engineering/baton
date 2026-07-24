@@ -33,76 +33,56 @@ have to assemble manually. `Claude → (Codex + GLM)` and `Codex → (Claude + G
 ## Status
 
 Baton is a runnable dependency-light Node ESM reference implementation, not a prototype skeleton.
-The canonical suite is **2478/2478 green**. The frontier is the closed Baton Program IR (issue
-#9): Phases 93a.1–93a.3a (canonical value kernel, control-grammar normalizer, Context
-result-schema derivation) are merged; the AX/lifecycle spine (Phases 90–92.x) and the fleet
-driver (Phases 1–65) are shipped underneath. Progress ledger: **[docs/PROGRESS.md](docs/PROGRESS.md)**.
-Open work: **[issues #2–#12](https://github.com/wahargis/baton/issues)**.
+The canonical suite is **2834/2834 green**. The fleet driver (Phases 1–65), the AX/lifecycle spine
+(Phases 90–92.x), and the closed Baton Program IR slices (93a.1–93a.3a, issue #9) are shipped
+underneath; the **agent-orchestration stack** is now first-class: waves, the reflexive layer
+(decision channel, boards, packages, `context_eval`), the REPL layer, knowledge horizons
+(task/workflow/project graphs with orchestrator-gated elevation), the worker scratchpad
+(issue #33), and turn-checkpoint steering (issue #31). The unified control-surface grammar
+(issue #43, docs/36) has landed M0 (conformance harness, #44) and M1 (canonical aliases +
+same-surface do-blocks). Progress ledger: **[docs/PROGRESS.md](docs/PROGRESS.md)**.
+Open work: **[issues #2–#46](https://github.com/wahargis/baton/issues)**.
 
 ## Architecture, plainly
 
-The ordinary surface is one Run application: concise intent and
-deployment profile, visible Plan approval, exact route, one bounded RunView, attention, evidence,
-and cleanup. Direct embedding, authenticated Web, the `baton` CLI, MCP, and the browser Run desk
-share that command bus. The CLI is a thin authenticated Web client rather than another fleet
-controller. `baton serve` now starts the ordinary owner-local resident without a configuration
-module: authenticated HTTP runs over an owner-only Unix socket, discovery is published only after
-an authenticated card/session/readiness challenge, and signal close revokes and CAS-removes only
-the current incarnation. `baton serve CONFIG_MODULE` remains an advanced explicit-network seam. Underneath,
+The ordinary surface is one **Run application**: concise intent and deployment profile, visible
+Plan approval, exact route, one bounded RunView, attention, evidence, and cleanup. Underneath,
 the reliable Coordinator kernel makes dispatch, fencing, verification, replay, and reap exact.
-Phase 64 now ships the initial Run bus through direct embedding, authenticated Web, MCP stdio, and
-the authenticated browser desk: start, status, distinct approval, bounded wait, answer, and
-server-fenced steering all return one RunView. Phase 90 adds Pythonic and CLI
-`run.send` / `run.interrupt` through the same semantic `run.act` authority: the caller names
-`work` or a Workflow role while Baton derives the exact worker, task, fence, and role generation.
-Each control moves durably through admitted, effect-started, provider-acknowledged, and settled
-states, so restart either executes a still-safe admission, settles an acknowledgement without
-redelivery, or exposes an explicit unknown outcome. Routine CLI results are compact outlines;
-`run show` expands explicitly through index, section, item, Context content, and evidence instead
-of printing budgets, ceilings, coordinates, and every lifecycle chapter after each action.
-The execution chapter also exposes stable progress, normalized event, and opt-in provider-output
-content. `run.progress()`, `run.events()`, `run.output()` and `baton run
-progress|events|output` consume opaque resume, page, and wait policy internally. Events contain
-safe Run-scoped facts; output is explicitly labeled untrusted; neither default projection exposes
-worker/task/fence/process coordinates or deployment ceilings.
-Durable `run.stop` fences further Run effects,
-reaps that Run's exact workers, survives restart, and leaves other Runs and the Baton host live.
-Accepted verification now pins its exact commit before disposable branch cleanup. `run.evidence`
-returns a bounded stable manifest, while policy-gated `run.adopt` durably selects that result
-without merging, changing the checkout, or publishing; both are first-class in Web, MCP, and the
-browser Run desk. Adoption deliberately leaves semantic state unverified and cannot relabel the
-Run complete. RunView and the desk also expose one progress board spanning Plan, dispatch,
-provider identity, verification, semantic state, result selection, and cleanup, so ordinary
-operation no longer requires correlating receipts or process tables.
-Phase 65 adds the missing trust-to-effect continuation to that same surface. `run.review` launches
-one deployment-pinned exact independent reviewer, validates a closed JSON report against immutable
-Git source ranges and accepted artifact/Representation evidence, preserves disagreement and
-uncertainty, and reaps the reviewer. `run.integrate` separately requires a fresh displayed evidence
-digest, policy-required result adoption and semantic approval, then delegates one local `ff-only`
-or structured transaction to the Coordinator. Web, MCP, CLI, and the browser Run desk expose the
-same commands; none push, publish, or deploy. Restart reconstruction, report forgery/scope
-smuggling, review/stop races, stale evidence, dirty checkout, and non-fast-forward refusal are
-covered by executable contracts. Historical dogfood evidence used older GLM routes, but those are
-not current routing recommendations. Baton now restricts GLM work to `glm-5.2`, with effort chosen
-explicitly by the orchestrator instead of inherited from a blanket low-effort default.
-MCP EOF/signals separately invoke the host-only exact deployment shutdown path. The `baton` CLI
-ships `doctor`, start, status/wait, approve, answer, semantic send/interrupt, advanced steer,
-progressive show, Run progress/events/output, stop, evidence, and evidence-bound
-adopt, semantic review, evidence-bound integration, typed feedback, Candidate selection,
-approval-gated revision, and role-addressed member stop through repository discovery. The
-`BATON_URL`, `BATON_ORIGIN`, `BATON_REPO_ID`, and `BATON_TOKEN` tuple remains a compatibility
-override; credentials are never command arguments. See [impl/CLI.md](impl/CLI.md).
-The first issue-10 P0 product vertical adds `review(objective, {routes})` and `baton review` as a
-two-exact-route reviewer/challenger preset over the existing Workflow authority. Connected clients
-also expose sanitized deployment doctor and exact-route readiness, while authenticated outline
-and list projections omit actions outside the principal's capabilities before display or drive.
-Cursor follow, materialized result export, exact recovery, and the bounded parallel Workflow plus
-one-round revision vertical now ship; deeper multi-round/strategy composition remains active. Southbound, the product tier
-uses persistent Claude stream-json, Codex app-server, and Grok ACP sessions; one-shot subprocess
-adapters remain an explicitly limited fire-and-forget tier. All retained Goal/Plan, causal graph,
-Vantage, Evidence Ladder, Scratch, Skill Forge, Atlas AST/CST/SCIP/CPG/IR, semantic merge,
-behavioral fingerprint, evaluation, and later capability scope remains in [docs/28](docs/28-exhaustive-capability-audit.md).
-Homelab integration is excluded.
+
+- **Surfaces.** Direct embedding (`openBaton`), authenticated Web, the `baton` CLI, MCP stdio,
+  and the browser Run desk share one command bus — the CLI is a thin authenticated Web client,
+  not another fleet controller. `baton serve` starts the owner-local resident with no
+  configuration module: authenticated HTTP over an owner-only Unix socket, discovery published
+  only after an authenticated card/session/readiness challenge, and signal close that revokes
+  only the current incarnation. Credentials are never command arguments.
+- **The orchestration stack.** `baton.waves` runs multi-member orchestration waves with
+  per-member scopes, live progress, outcome materialization, and steering; the reflexive layer
+  gives workers a durable decision channel (multi-choice + free response, orchestrator-gated),
+  shared and per-worker boards, context packages, and `application.context_eval`; the REPL
+  layer shares cells, typed bindings, and cross-run scripting; knowledge horizons project
+  task-ephemeral, workflow-ephemeral, and project-persistent graphs with orchestrator-gated
+  elevation; and the scratchpad (issue #33) is the worker's typed write surface into its
+  task-ephemeral graph.
+- **Turns, not gates.** Pausable harnesses end turns as turn-checkpoints (issue #31): the
+  driver steers with `nudge_turn` / `wait_turn` / `claim_turn` instead of killing workers at
+  turn boundaries, and every pause snapshots a recovery pin. Semantic `run.send` /
+  `run.interrupt` move durably through admitted → effect-started → provider-acknowledged →
+  settled, so restart either executes a still-safe admission or exposes an explicit unknown
+  outcome.
+- **Trust and evidence.** Independent verification re-runs a worker's tests before "done" is
+  believed; `run.review` launches a deployment-pinned independent reviewer over immutable Git
+  ranges; `run.evidence` returns a bounded manifest; policy-gated `run.adopt` selects a result
+  without merging or publishing; `run.integrate` delegates one local `ff-only` or structured
+  transaction. Episode/workstream projections attribute evidence by role and generation.
+- **Fleet tier.** Southbound, persistent Claude stream-json, Codex app-server, Kimi ACP, and
+  Grok ACP sessions are the product tier; one-shot subprocess adapters remain an explicitly
+  limited fire-and-forget tier. Learned routing records which vendor is good at what; GLM work
+  is restricted to `glm-5.2` with effort chosen explicitly by the orchestrator.
+
+The full verb inventory lives in [impl/CLI.md](impl/CLI.md) and [impl/MCP.md](impl/MCP.md);
+the retained capability scope (Goal/Plan, causal graph, Vantage, Evidence Ladder, Scratch,
+Skill Forge, Atlas AST/CST/SCIP/CPG/IR, semantic merge, behavioral fingerprint, evaluation)
+remains in [docs/28](docs/28-exhaustive-capability-audit.md). Homelab integration is excluded.
 
 ## Run it
 
@@ -110,7 +90,7 @@ Requires Node ≥ 20. The only runtime dependency is `@ast-grep/napi`.
 
 ```bash
 cd impl && npm ci        # install
-npm test                 # canonical suite (currently 2478/2478 green)
+npm test                 # canonical suite (currently 2834/2834 green)
 node scripts/baton.mjs serve                              # start the owner-local resident
 node scripts/baton.mjs doctor --check                     # connection + exact-route readiness
 node scripts/baton.mjs review "attack the settlement-domain rule" \
@@ -152,6 +132,11 @@ direct-embedding path used by the evidence drivers under `docs/reference/evidenc
 | [PROGRESS](docs/PROGRESS.md) | Per-phase progress ledger (the status narrative, kept current) |
 | [31-wave-driver-ax](docs/31-wave-driver-ax.md) | The Wave surface: first-class orchestration drivers (failure-mode-baked semantics) |
 | [32-reflexive-orchestration](docs/32-reflexive-orchestration.md) | Reflexive layer: typed decision channels, task boards, knowledge hand-off objects, REPL objects |
+| [33-shared-objects-repl-layer](docs/33-shared-objects-repl-layer.md) | The REPL layer: shared cells, typed bindings, cross-run scripting |
+| [34-knowledge-horizons](docs/34-knowledge-horizons.md) | Task/workflow/project knowledge graphs with orchestrator-gated elevation |
+| [35-turn-checkpoints](docs/35-turn-checkpoints.md) | Pausable turns + nudge/wait/claim steering (steer, don't gate) |
+| [36-unified-control-grammar](docs/36-unified-control-grammar.md) | One grammar: the unified agent control surface (M0/M1 landed) |
+| [37-wave-driver](docs/37-wave-driver.md) | The shipped wave driver: productized poll/steer/settle loop (issue #46) |
 | [28-exhaustive-capability-audit](docs/28-exhaustive-capability-audit.md) | Current shipped/partial/pending/retired map; supersedes the Phase-10 matrix for status without deleting any research row |
 | [19-north-star-corrected](docs/19-north-star-corrected.md) | The fleet driver is the product; verification/routing/memory support it |
 | [22-completeness-audit](docs/22-completeness-audit.md) | The built-not-wired audit that drove phases 8–10 |
