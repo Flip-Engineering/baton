@@ -2,16 +2,16 @@
   "schemaVersion": 1,
   "outcomes": [
     {
-      "role": "grammar-m0-implementer",
-      "phase": "paused",
-      "terminal": false,
-      "narrative": "0 worker(s) active.",
+      "role": "scratchpad-implementer-opus",
+      "phase": "failed",
+      "terminal": true,
+      "narrative": "Run terminated: provider_turn_failed.",
       "resultSha": null
     }
   ],
   "stops": [
     {
-      "role": "grammar-m0-implementer",
+      "role": "scratchpad-implementer-opus",
       "stop": null,
       "resources": {
         "state": "stopped",

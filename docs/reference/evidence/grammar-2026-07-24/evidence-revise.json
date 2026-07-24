@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "outcomes": [
     {
-      "role": "grammar-m0-implementer",
+      "role": "grammar-reviser-opus",
       "phase": "paused",
       "terminal": false,
       "narrative": "0 worker(s) active.",
@@ -11,7 +11,7 @@
   ],
   "stops": [
     {
-      "role": "grammar-m0-implementer",
+      "role": "grammar-reviser-opus",
       "stop": null,
       "resources": {
         "state": "stopped",
