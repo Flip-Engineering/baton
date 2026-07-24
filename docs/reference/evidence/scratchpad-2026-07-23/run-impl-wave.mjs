@@ -1,4 +1,5 @@
 import { writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -122,7 +123,22 @@ try {
     const progress = await wave.progress();
     const line = progress.members.map((entry) => `${entry.role}=${entry.phase}${entry.attention ? `[${JSON.stringify(entry.attention)}]` : ''}`).join(' ');
     log(`progress ${Math.round((Date.now() - startedAt) / 1000)}s ${line}`);
-    const marker = JSON.stringify(progress.members.map((entry) => [entry.role, entry.phase, entry.attention]));
+    // Stall marker (issue #46 lesson): wave-level phase/attention is static during a long
+    // productive turn — a phase-only marker killed a completed worker. Hash each member's
+    // full run.status() view instead: fence/turnEpoch/token fields move during live turns.
+    const markerParts = [];
+    for (const entry of progress.members) {
+      if (entry.terminal) { markerParts.push([entry.role, 'terminal']); continue; }
+      const run = wave.runs.get(entry.role);
+      let digest = 'unavailable';
+      try {
+        const status = run ? await run.status() : null;
+        const view = status?.view ?? status ?? {};
+        digest = createHash('sha256').update(JSON.stringify(view)).digest('hex').slice(0, 16);
+      } catch { /* transient status failure is not a stall signal */ }
+      markerParts.push([entry.role, entry.phase, digest]);
+    }
+    const marker = JSON.stringify(markerParts);
     if (marker !== lastMarker) { lastMarker = marker; lastProgressAt = Date.now(); }
     for (const entry of progress.members) {
       if (entry.phase !== 'paused') continue;

@@ -14,7 +14,9 @@ const requiredCoordinationMethods = [
   'activateReusePolicy', 'reuseRiskGuard', 'recordReuseRiskGuard', 'reuseRiskAdmission',
   'recordReuseTtlInvalidation', 'reuseTtlAdmission', 'claimScratch', 'postScratchFact',
   'readScratch', 'activeScratchClaims', 'expireScratchClaim', 'addKnowledgeNode',
-  'promoteKnowledgeNode', 'readKnowledge',
+  'promoteKnowledgeNode', 'readKnowledge', 'writeScratchpad', 'elevateTaskScratchpad',
+  'settleWorkflowScratchpad', 'reapRunScratchpads', 'scratchpadSnapshotBatch',
+  'scratchpadSnapshot',
 ];
 
 function rehydrate(events) {
