@@ -2,16 +2,16 @@
   "schemaVersion": 1,
   "outcomes": [
     {
-      "role": "grammar-m0-implementer",
-      "phase": "paused",
+      "role": "grammar-m1-implementer",
+      "phase": "running",
       "terminal": false,
-      "narrative": "0 worker(s) active.",
+      "narrative": "1 worker(s) active.",
       "resultSha": null
     }
   ],
   "stops": [
     {
-      "role": "grammar-m0-implementer",
+      "role": "grammar-m1-implementer",
       "stop": null,
       "resources": {
         "state": "stopped",

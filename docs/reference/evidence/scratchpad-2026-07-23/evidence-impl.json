@@ -2,16 +2,16 @@
   "schemaVersion": 1,
   "outcomes": [
     {
-      "role": "grammar-m0-implementer",
-      "phase": "paused",
+      "role": "scratchpad-implementer-codex",
+      "phase": "running",
       "terminal": false,
-      "narrative": "0 worker(s) active.",
+      "narrative": "1 worker(s) active.",
       "resultSha": null
     }
   ],
   "stops": [
     {
-      "role": "grammar-m0-implementer",
+      "role": "scratchpad-implementer-codex",
       "stop": null,
       "resources": {
         "state": "stopped",
