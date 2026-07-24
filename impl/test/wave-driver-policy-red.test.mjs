@@ -257,7 +257,7 @@ test('D1: two productive pauses are nudged exactly once each, then L6 declares d
   };
   const { baton, repo } = harness(t, scriptsByMarker);
   const receipt = await createWaveDriver(baton, {
-    ...FAST, stallTimeoutMs: 10_000, unproductiveNudgeBudget: 0, finalization: 'claim-on-stall',
+    ...FAST, stallTimeoutMs: 10_000, hardCapMs: 30_000, unproductiveNudgeBudget: 0, finalization: 'claim-on-stall',
   }).run({ repoRoot: repo, members: [member('worker', 'write the worker report')] });
   assert.equal(receipt.basis, 'completed');
   assert.equal(receipt.nudges.length, 2, `expected exactly 2 nudges, got ${JSON.stringify(receipt.nudges)}`);
@@ -283,7 +283,7 @@ test('D2: a live member resets the wave-level stall clock; a frozen sibling stil
   };
   const { baton, repo } = harness(t, scriptsByMarker);
   const receipt = await createWaveDriver(baton, {
-    ...FAST, stallTimeoutMs: 10_000, unproductiveNudgeBudget: 0, finalization: 'claim-on-stall',
+    ...FAST, stallTimeoutMs: 10_000, hardCapMs: 30_000, unproductiveNudgeBudget: 0, finalization: 'claim-on-stall',
   }).run({ repoRoot: repo, members: [member('lively', 'write five lively reports'), member('frozen', 'write one frozen report')] });
   assert.equal(receipt.basis, 'completed');
   assert.ok(receipt.nudges.filter((entry) => entry.role === 'lively').length >= 5, 'the lively member keeps producing turns without stalling');
@@ -437,7 +437,7 @@ test('D9: stall fan-out claims every paused member exactly once', async (t) => {
   };
   const { baton, repo } = harness(t, scriptsByMarker);
   const receipt = await createWaveDriver(baton, {
-    ...FAST, stallTimeoutMs: 250, unproductiveNudgeBudget: 99, finalization: 'claim-on-stall',
+    ...FAST, steering: 'none', stallTimeoutMs: 250, unproductiveNudgeBudget: 99, finalization: 'claim-on-stall',
   }).run({ repoRoot: repo, members: [member('alpha', 'write alpha'), member('beta', 'write beta')] });
   assert.equal(receipt.basis, 'completed', 'fan-out recovers every member from the stall');
   assert.equal(receipt.claims.length, 2);
@@ -445,7 +445,7 @@ test('D9: stall fan-out claims every paused member exactly once', async (t) => {
 
   const control = harness(t, scriptsByMarker);
   const withoutClaim = await createWaveDriver(control.baton, {
-    ...FAST, stallTimeoutMs: 250, unproductiveNudgeBudget: 99, finalization: 'none',
+    ...FAST, steering: 'none', stallTimeoutMs: 250, unproductiveNudgeBudget: 99, finalization: 'none',
   }).run({ repoRoot: control.repo, members: [member('alpha', 'write alpha'), member('beta', 'write beta')] });
   assert.equal(withoutClaim.basis, 'stall');
   assert.equal(withoutClaim.claims.length, 0);

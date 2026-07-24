@@ -1,6 +1,6 @@
-import { writeFileSync } from 'node:fs';
+import { readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
-import { dirname, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { openBaton } from '../../../../impl/src/index.mjs';
@@ -131,31 +131,54 @@ async function sendTo(role, text) {
   }
 }
 
-async function repairFences(role) {
-  const run = wave.runs.get(role);
-  if (!run || typeof run.events !== 'function') return;
-  try {
-    // Iterate ALL pages: the timeline's first page is bounded and stale — the write_result we
-    // need is always on a later page. The seen-set dedups across polls.
-    for await (const page of run.events({})) {
-      const items = page?.items ?? page?.events ?? [];
-      for (const item of items) {
-        if (item?.kind !== 'scratchpad.write_result') continue;
-        const key = `${item?.seq ?? ''}:${item?.payload?.result}:${item?.payload?.current}`;
-        if ((seenWriteResults.get(role) ?? new Set()).has(key)) continue;
-        const seen = seenWriteResults.get(role) ?? new Set();
-        seen.add(key);
-        seenWriteResults.set(role, seen);
-        if (item?.payload?.result === 'stale_fence' && Number.isSafeInteger(item?.payload?.current)) {
-          receipt(`FENCE REPAIR for ${role}: stale_fence, sending current=${item.payload.current}`);
-          await sendTo(role, `FENCE REPAIR: your scratchpad write was refused stale_fence. Retry the SAME entry with expectedFence: ${item.payload.current} verbatim.`);
-        } else if (item?.payload?.result === 'written') {
-          receipt(`scratchpad write ACCEPTED for ${role}: entryId=${String(item?.payload?.entryId ?? '').slice(0, 40)}`);
-        }
-      }
+const stateDir = resolve(repo, '.baton', 'demo-workflow-v5-2026-07-24', 'state');
+
+function* workerStreamResults(role) {
+  // Read the worker event streams DIRECTLY from the deployment state dir — the
+  // run.events() async generator FOLLOWS the live timeline and never terminates
+  // (the v5b driver hung inside it for 4 hours). The write_result events we need
+  // are append-only JSONL on disk.
+  let files = [];
+  try { files = readdirSync(stateDir).filter((name) => /^w-\d+\.jsonl$/.test(name)); } catch { return; }
+  for (const file of files) {
+    let lines = [];
+    try { lines = readFileSync(join(stateDir, file), 'utf8').trim().split('\n'); } catch { continue; }
+    for (const line of lines) {
+      let event = null;
+      try { event = JSON.parse(line); } catch { continue; }
+      if (event?.kind === 'scratchpad.write_result') yield { file, event };
     }
-  } catch (error) {
-    log(`fence repair read for ${role} returned ${error?.code ?? 'unknown'} (recorded)`);
+  }
+}
+
+async function repairFences() {
+  // One pass per poll over ALL streams, with refusals attributed to the OWNING role via the
+  // workerId carried in checkpoint attention items (per-role dedup would double-send).
+  const workerToRole = new Map();
+  for (const [role, run] of wave.runs) {
+    try {
+      const status = await run.status();
+      const view = status?.view ?? status ?? {};
+      const attention = Array.isArray(view.attention) ? view.attention : [];
+      const workerId = attention.find((item) => typeof item?.workerId === 'string')?.workerId
+        ?? view?.outline?.workerId ?? null;
+      if (workerId) workerToRole.set(workerId, role);
+    } catch { /* worker mapping is best-effort */ }
+  }
+  const seen = seenWriteResults.get('*') ?? new Set();
+  seenWriteResults.set('*', seen);
+  for (const { file, event } of workerStreamResults()) {
+    const key = `${file}:${event?.seq ?? ''}:${event?.payload?.result}:${event?.payload?.current}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const role = workerToRole.get(event?.worker) ?? null;
+    if (event?.payload?.result === 'stale_fence' && Number.isSafeInteger(event?.payload?.current)) {
+      if (!role) { receipt(`stale_fence in ${file} but worker→role unknown (recorded)`); continue; }
+      receipt(`FENCE REPAIR for ${role}: stale_fence in ${file}, sending current=${event.payload.current}`);
+      await sendTo(role, `FENCE REPAIR: your scratchpad write was refused stale_fence. Retry the SAME entry with expectedFence: ${event.payload.current} verbatim.`);
+    } else if (event?.payload?.result === 'written') {
+      receipt(`scratchpad write ACCEPTED (${file}): entryId=${String(event?.payload?.entryId ?? '').slice(0, 40)}`);
+    }
   }
 }
 
@@ -207,7 +230,7 @@ try {
         seen.add(id);
         receipt(`scratchpad entry [${entry.role}/${item?.kind ?? '?'}]: ${textOf(item).slice(0, 140)}`);
       }
-      await repairFences(entry.role);
+      await repairFences();
     }
 
     const byRole = new Map(progress.members.map((entry) => [entry.role, entry]));

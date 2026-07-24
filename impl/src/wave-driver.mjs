@@ -226,6 +226,7 @@ export function createWaveDriver(baton, rawPolicy = null) {
     const memberState = new Map();
     const freshState = () => ({ digest: null, nudges: 0, done: false, claimAttempted: false, claimed: false });
     const nudgedRequestIds = new Set(); // L4: dedup within a single pause (requestId-stable across polls)
+    const failuresByRequestId = new Map(); // consecutive delivery failures per pause; K=3 = unsteerable
 
     const startedAt = Date.now();
     let lastMarker = '';
@@ -308,6 +309,10 @@ export function createWaveDriver(baton, rawPolicy = null) {
               continue;
             }
             if (nudgedRequestIds.has(checkpoint.requestId)) continue; // L4: one nudge per pause
+            // Persistent delivery failure is unsteerable, not infinite retry: after K consecutive
+            // failures on the same requestId, stop nudging it and let the stall clock judge (the
+            // retry stream itself keeps the marker alive and starves the stall fan-out).
+            if ((failuresByRequestId.get(checkpoint.requestId) ?? 0) >= 3) continue;
             const unchanged = state.digest !== null && state.digest === checkpoint.changedPathsDigest;
             if (unchanged && state.nudges >= policy.unproductiveNudgeBudget) {
               // L6: a re-park with an unchanged changedPathsDigest after the budget is the treadmill
@@ -332,12 +337,15 @@ export function createWaveDriver(baton, rawPolicy = null) {
               }
               nudges.push({ role, requestId: checkpoint.requestId, at });
               nudgedRequestIds.add(checkpoint.requestId);
+              failuresByRequestId.delete(checkpoint.requestId);
               if (unchanged) state.nudges += 1;
               else { state.digest = checkpoint.changedPathsDigest ?? null; state.nudges = 1; }
             } catch (error) {
               // D8: a nudge rejection (delivery_exception / scope mismatch) is recorded and polling
               // continues. The requestId is NOT consumed so a one-shot scripted failure recovers on
-              // the next poll; a persistently failing nudge is bounded by stall/cap.
+              // the next poll; a persistently failing nudge is bounded by the K=3 unsteerable rule
+              // above, then by stall/cap.
+              failuresByRequestId.set(checkpoint.requestId, (failuresByRequestId.get(checkpoint.requestId) ?? 0) + 1);
               nudges.push({
                 role, requestId: checkpoint.requestId, at,
                 error: { code: error?.code ?? null, message: String(error?.message ?? error) },
@@ -368,16 +376,21 @@ export function createWaveDriver(baton, rawPolicy = null) {
             }
             // Recovered must be measured AFTER the claims: a member whose claim was tolerated as
             // concurrently-resolved is settled in reality — re-read each member instead of trusting
-            // the pre-claim status snapshot.
+            // the pre-claim status snapshot, with a bounded retry so a resolution landing during the
+            // re-read itself can't strand the basis at 'stall'.
             let recovered = failedToStart;
-            for (const [role, runHandle] of runs) {
-              if (memberState.get(role)?.claimed === true) { recovered += 1; continue; }
-              try {
-                const status = await runHandle.status();
-                const view = status?.view ?? status ?? {};
-                const phase = canonicalRunPhase(view.phase) ?? null;
-                if (view.terminal === true || applicationTerminal(phase) || phase === SUCCESS_RESTING) recovered += 1;
-              } catch { /* an unreadable member counts as unrecovered */ }
+            for (let attempt = 0; attempt < 3 && recovered < totalMembers; attempt += 1) {
+              if (attempt > 0) await new Promise((resolveWait) => { setTimeout(resolveWait, 100); });
+              recovered = failedToStart;
+              for (const [role, runHandle] of runs) {
+                if (memberState.get(role)?.claimed === true) { recovered += 1; continue; }
+                try {
+                  const status = await runHandle.status();
+                  const view = status?.view ?? status ?? {};
+                  const phase = canonicalRunPhase(view.phase) ?? null;
+                  if (view.terminal === true || applicationTerminal(phase) || phase === SUCCESS_RESTING) recovered += 1;
+                } catch { /* an unreadable member counts as unrecovered */ }
+              }
             }
             basis = recovered === totalMembers ? 'completed' : 'stall';
           } else {
