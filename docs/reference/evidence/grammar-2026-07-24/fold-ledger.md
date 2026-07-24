@@ -487,6 +487,16 @@ substantive repair. One defect found and fixed; two claims verified.
   `--cursor N --wait D` continuation, and the two mechanisms are kept distinct rather than merged.
   **Repair audits complete: six run, five defects.** Every failure shared one mechanism — the
   repair claimed scope its evidence did not cover. The lone clean one reported what it saw.
+- **A-21 — VERIFIED, no defect — this ledger's own integrity.** Two categories that had never been
+  checked, both bearing directly on deliverable correctness rather than on docs/35's claims.
+  **Severity column:** the brief's rule (1) turns on P0/P1 classification, and all 49 severities
+  here were transcribed by hand from three differently-formatted reports. Compared every one
+  against its source heading — **49/49 match**, no mislabel that could have demoted a P1 out of
+  the mandatory-disposition set.
+  **Citation survival:** the 21 amendments in this review replaced doc text that carried finding
+  citations, so an edit could silently have dropped a finding's only reference. Diffed the unique
+  cited-ID set against the `0c5c970` baseline — **53 at baseline, 53 now, none lost.**
+  No doc change; recorded so a reviewer need not redo it.
 - **Method note — the NUL-byte trap is real and it bit this audit.** §8.4 already warns that
   `impl/src/application.mjs` contains a NUL byte requiring `grep -a`. Plain `grep` against it
   returns *silently empty* — not an error. An early verification pass here read that empty result
