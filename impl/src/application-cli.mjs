@@ -1030,7 +1030,10 @@ export function projectBatonCliResult(parsed, result) {
     && nonempty(result.runId)) return compactInspectSection(result);
   if (!RUN_VIEW_OUTPUT_KINDS.has(parsed.kind)
     || !nonempty(result.runId) || !nonempty(result.phase) || result.depth !== undefined
-    || parsed.name === 'run.evidence') return result;
+    // Issue #53: run.debug's result is already the bounded, whitelisted projection rule 4
+    // requires the CLI and the embedded accessor to share byte-for-byte — never the generic
+    // run-view compact form (which would drop members/lastMessages/writeReceipts/failure).
+    || parsed.name === 'run.evidence' || parsed.name === 'run.debug') return result;
   const route = record(result.route) ? {
     ...(record(result.route.requested) ? { requested: result.route.requested } : {}),
     ...(record(result.route.resolved) ? { resolved: result.route.resolved } : {}),
@@ -1329,7 +1332,7 @@ export function parseBatonCli(rawArgs) {
   const lifecycleActions = new Set(['show', 'do', 'recover', 'status', 'approve', 'answer', 'steer',
     'send', 'interrupt', 'progress', 'events', 'output', 'episode', 'workstreams', 'notify', 'result',
     'stop', 'evidence', 'adopt', 'select', 'feedback', 'revise', 'stop-member',
-    'retry', 'review', 'integrate', 'export']);
+    'retry', 'review', 'integrate', 'export', 'debug']);
   if (!lifecycleActions.has(action)) return parseStart(args, action, idempotencyKey);
   const runId = id(args.shift(), 'Run ID');
   if (action === 'episode' || action === 'result') {
@@ -1540,6 +1543,25 @@ export function parseBatonCli(rawArgs) {
     return { kind: 'command', name: 'run.stop', args: { runId, reason }, idempotencyKey };
   }
   if (action === 'evidence') { noRemainder(args); return { kind: 'command', name: 'run.evidence', args: { runId }, idempotencyKey }; }
+  if (action === 'debug') {
+    // Issue #53: `baton run debug RUN [--member ROLE] [--limit N]` — parity with the embedded
+    // run.debug({member,limit}) accessor; both read the same bounded, whitelisted projection.
+    const role = take(args, '--member');
+    const rawLimit = take(args, '--limit');
+    noRemainder(args);
+    const limit = rawLimit === null ? null : Number(rawLimit);
+    if ((role !== null && !id(role, 'debug member role'))
+      || (rawLimit !== null && (!Number.isSafeInteger(limit) || limit < 1 || limit > 10))) {
+      throw cliError('debug selector is invalid');
+    }
+    return {
+      kind: 'command', name: 'run.debug',
+      args: {
+        runId, ...(role === null ? {} : { member: role }), ...(limit === null ? {} : { limit }),
+      },
+      idempotencyKey,
+    };
+  }
   if (action === 'adopt') {
     const reason = take(args, '--reason', { required: true }); noRemainder(args);
     return { kind: 'adopt', runId, reason, idempotencyKey };
