@@ -654,10 +654,42 @@ function codexCommand() {
   throw deploymentError('Codex route requires a compatible app-server executable');
 }
 
-function builtInAdapters(routes, repoRoot) {
+/** Issue #28: deliberate wire ceilings are deployment-owned (64KiB–16MiB governance range). */
+const MIN_ADAPTER_WIRE_FRAME_BYTES = 64 * 1024;
+const MAX_ADAPTER_WIRE_FRAME_BYTES = 16 * 1024 * 1024;
+const DEFAULT_DEPLOYMENT_WIRE_FRAME_BYTES = 8 * 1024 * 1024;
+
+function normalizeAdapterOptions(value) {
+  if (value === undefined) return Object.freeze({});
+  closed(value, ['maxWireFrameBytes'], 'advanced adapterOptions');
+  if (value.maxWireFrameBytes === undefined) return Object.freeze({});
+  const n = value.maxWireFrameBytes;
+  if (!Number.isSafeInteger(n) || n < MIN_ADAPTER_WIRE_FRAME_BYTES || n > MAX_ADAPTER_WIRE_FRAME_BYTES) {
+    throw deploymentError(
+      'advanced.adapterOptions.maxWireFrameBytes must be an integer between 64KiB and 16MiB',
+    );
+  }
+  return Object.freeze({ maxWireFrameBytes: n });
+}
+
+/**
+ * Resolve the claude-session-family wire ceiling: explicit advanced.adapterOptions wins,
+ * then BATON_CLAUDE_MAX_WIRE_FRAME_BYTES, then the deployment default (8MiB).
+ */
+function resolveSessionWireCeiling(adapterOptions = {}) {
+  if (Number.isSafeInteger(adapterOptions.maxWireFrameBytes)) {
+    return adapterOptions.maxWireFrameBytes;
+  }
+  const envCeiling = Number.parseInt(process.env.BATON_CLAUDE_MAX_WIRE_FRAME_BYTES ?? '', 10);
+  if (Number.isSafeInteger(envCeiling) && envCeiling > 0) return envCeiling;
+  return DEFAULT_DEPLOYMENT_WIRE_FRAME_BYTES;
+}
+
+function builtInAdapters(routes, repoRoot, adapterOptions = {}) {
   const adapters = {};
   const kimiCommand = existingRegular(join(homedir(), '.kimi-code', 'bin', 'kimi'))
     ? join(homedir(), '.kimi-code', 'bin', 'kimi') : 'kimi';
+  const maxWireFrameBytes = resolveSessionWireCeiling(adapterOptions);
   const grouped = new Map();
   for (const route of routes) {
     const provider = route.provider ?? (route.harness === 'claude-code' ? 'claude' : route.harness);
@@ -682,18 +714,16 @@ function builtInAdapters(routes, repoRoot) {
         cmd: kimiCommand, requestTimeoutMs: 45_000, model: route.model, modelCatalog: catalog, ceiling: 1,
       });
     } else if (route.harness === 'claude-code' && (route.provider ?? 'claude') === 'claude') {
-      // Wave workloads legitimately produce >1MiB stream-json frames (large ranged reads,
-      // suite outputs). 1MiB (the library default) killed three seats mid-work tonight
-      // (issue #28). The deployment deliberately opts up to 8MiB, env-overridable; the
-      // graceful-degradation half of #28 (refuse/truncate instead of kill) remains open.
-      const envCeiling = Number.parseInt(process.env.BATON_CLAUDE_MAX_WIRE_FRAME_BYTES ?? '', 10);
-      const maxWireFrameBytes = Number.isSafeInteger(envCeiling) && envCeiling > 0
-        ? envCeiling : 8 * 1024 * 1024;
+      // Wave workloads legitimately produce multi-MiB stream-json frames (large ranged reads,
+      // suite outputs). Issue #28: deployment-owned ceiling (default 8MiB) plus graceful
+      // degradation for oversized tool_result frames (discard + wire.frame_degraded receipt).
       adapters[key] = new ClaudeSessionCli({ model: route.model, approvals: false, ceiling: 4, maxWireFrameBytes });
     } else if (route.harness === 'claude-code' && route.provider === 'kimi') {
       const credential = kimiThroughClaudeCredential();
       if (!existingRegular(credential)) throw deploymentError('Kimi-through-Claude requires the private Baton Kimi credential file');
-      adapters[key] = new KimiSessionCli({ authTokenFile: credential, repoRoot, model: route.model, approvals: false, ceiling: 2 });
+      adapters[key] = new KimiSessionCli({
+        authTokenFile: credential, repoRoot, model: route.model, approvals: false, ceiling: 2, maxWireFrameBytes,
+      });
     } else if (route.harness === 'glm') {
       if (rows.some((row) => row.model !== 'glm-5.2')) {
         throw deploymentError('current GLM routes permit only glm-5.2');
@@ -702,7 +732,7 @@ function builtInAdapters(routes, repoRoot) {
       if (!existingRegular(credential)) throw deploymentError('GLM 5.2 requires the project credential file');
       adapters[key] = new GlmSessionCli({
         authTokenFile: credential, authTokenJsonPointer: '/glm_key', harness: 'glm',
-        model: 'glm-5.2', approvals: false, ceiling: 1,
+        model: 'glm-5.2', approvals: false, ceiling: 1, maxWireFrameBytes,
       });
     } else {
       throw deploymentError(`unsupported built-in route ${route.harness}`);
@@ -1348,7 +1378,8 @@ export async function openBatonDeployment(rawOptions, createDriver) {
   closed(rawOptions, ['advanced', 'repo'], 'deployment options');
   const repository = repositoryAuthority(rawOptions.repo ?? process.cwd());
   const advanced = rawOptions.advanced ?? {};
-  closed(advanced, ['adapters', 'capacity', 'deploymentRoot', 'resident', 'routes', 'verification', 'workflowPolicy'], 'advanced');
+  closed(advanced, ['adapterOptions', 'adapters', 'capacity', 'deploymentRoot', 'resident', 'routes', 'verification', 'workflowPolicy'], 'advanced');
+  const adapterOptions = normalizeAdapterOptions(advanced.adapterOptions);
   const rawResident = advanced.resident ?? {};
   closed(rawResident, ['commandTimeoutMs', 'env', 'home', 'now', 'ownerUid', 'pollMs', 'sessionTtlMs', 'webDrainMs'], 'advanced resident');
   const residentOptions = Object.freeze({
@@ -1402,7 +1433,7 @@ export async function openBatonDeployment(rawOptions, createDriver) {
   const evidenceRoot = privateDirectory(join(deploymentRoot, 'evidence'));
   const contextRoot = privateDirectory(join(deploymentRoot, 'context'));
   const snapshot = repositorySnapshot(repository.root, stateRoot);
-  const adapters = advanced.adapters ?? builtInAdapters(routes, repository.root);
+  const adapters = advanced.adapters ?? builtInAdapters(routes, repository.root, adapterOptions);
   if (!record(adapters) || Object.keys(adapters).length === 0) {
     throw deploymentError('advanced adapters must be a non-empty object');
   }
