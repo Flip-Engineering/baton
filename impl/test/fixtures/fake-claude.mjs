@@ -39,6 +39,16 @@
 //   "REPORT_ENV:<VAR>"             -> completes with result text `env:<VAR>=<value-or-<unset>>` — phase10
 //                                     SC6's effect-level proof of env threading (tests use fake values only).
 //   "REPORT_ARGV"                  -> completes with the JSON encoded child argv.
+//   "BIG_TOOL_RESULT"              -> emits one oversized stream-json `user`/`tool_result` frame
+//                                     (default payload ~1.1MiB), then a normal assistant+result
+//                                     completion. Optional suffix: BIG_TOOL_RESULT:<bytes>[:id]
+//                                     [:chunks] — `chunks` writes the frame across multiple
+//                                     stdout writes (partial-buffer / discard-latch path).
+//   "OVERSIZE_ASSISTANT"           -> emits one oversized non-tool_result (assistant) frame then
+//                                     exits without a result (caller must observe wire kill).
+//   "BIG_TOOL_RESULT_SECRET"       -> like BIG_TOOL_RESULT but plants FAKE_CLAUDE_SECRET (or a
+//                                     fixed probe token) in the frame HEAD for secret-precedence
+//                                     tests.
 //   anything else                  -> emits an assistant text event ("Echo: <text>") then a success
 //                                     result.
 //
@@ -108,6 +118,67 @@ if (lifecycleBarrierPath) {
 
 function send(obj) {
   process.stdout.write(`${JSON.stringify(obj)}\n`);
+}
+
+/** Write a raw NDJSON line, optionally fragmented across multiple stdout writes. */
+function sendRawLine(line, { chunks = false, chunkBytes = 16 * 1024 } = {}) {
+  const payload = line.endsWith('\n') ? line : `${line}\n`;
+  if (!chunks) {
+    process.stdout.write(payload);
+    return;
+  }
+  let offset = 0;
+  while (offset < payload.length) {
+    const end = Math.min(offset + chunkBytes, payload.length);
+    process.stdout.write(payload.slice(offset, end));
+    offset = end;
+  }
+}
+
+function buildToolResultLine({
+  toolUseId = 'toolu_big_result',
+  payloadBytes = 1_100_000,
+  secretInHead = null,
+} = {}) {
+  // Keep tool_result + tool_use_id near the head so a 256-byte head window can classify the frame.
+  // When a secret probe is requested it must also sit in that same head window (before content).
+  const content = 'x'.repeat(Math.max(0, payloadBytes));
+  const frame = secretInHead
+    ? {
+      type: 'user',
+      _probe: secretInHead,
+      message: {
+        role: 'user',
+        content: [{ type: 'tool_result', tool_use_id: toolUseId, content }],
+      },
+    }
+    : {
+      type: 'user',
+      message: {
+        role: 'user',
+        content: [{ type: 'tool_result', tool_use_id: toolUseId, content }],
+      },
+    };
+  return JSON.stringify(frame);
+}
+
+function buildOversizeAssistantLine(payloadBytes = 1_100_000) {
+  return JSON.stringify({
+    type: 'assistant',
+    message: { content: [{ type: 'text', text: 'y'.repeat(Math.max(0, payloadBytes)) }] },
+  });
+}
+
+function parseBigToolResultMarker(text) {
+  // BIG_TOOL_RESULT | BIG_TOOL_RESULT:<bytes> | BIG_TOOL_RESULT:<bytes>:<id> | ...:chunks
+  // Do not match BIG_TOOL_RESULT_SECRET (handled separately).
+  const m = text.match(/\bBIG_TOOL_RESULT(?!_SECRET)(?::(\d+))?(?::([A-Za-z0-9_-]+))?(?::(chunks))?/);
+  if (!m) return null;
+  return {
+    payloadBytes: m[1] ? Number.parseInt(m[1], 10) : 1_100_000,
+    toolUseId: (m[2] && m[2] !== 'chunks') ? m[2] : 'toolu_big_result',
+    chunks: m[2] === 'chunks' || m[3] === 'chunks',
+  };
 }
 
 let reqSeq = 0;
@@ -220,6 +291,40 @@ function startNonApprovalTurn(text) {
   if (text.includes('TRIGGER_CRASH')) {
     process.stderr.write('fake-claude: simulated crash\n');
     process.exit(1);
+  }
+
+  if (text.includes('BIG_TOOL_RESULT_SECRET')) {
+    const secret = process.env.FAKE_CLAUDE_SECRET ?? 'SUPER_SECRET_PROBE_TOKEN';
+    const line = buildToolResultLine({
+      toolUseId: 'toolu_secret',
+      payloadBytes: 1_100_000,
+      secretInHead: secret,
+    });
+    sendRawLine(line);
+    // Adapter must secret-kill before any completion; do not emit a competing result.
+    return;
+  }
+
+  const bigTool = parseBigToolResultMarker(text);
+  if (bigTool) {
+    const line = buildToolResultLine({
+      toolUseId: bigTool.toolUseId,
+      payloadBytes: bigTool.payloadBytes,
+    });
+    sendRawLine(line, { chunks: bigTool.chunks });
+    emitAssistantText(`after-big-tool-result:${bigTool.toolUseId}`);
+    emitResult({ text: `completed-after-big-tool-result:${bigTool.toolUseId}` });
+    currentTurn = null;
+    drainQueue();
+    return;
+  }
+
+  const oversizeAssistant = text.match(/OVERSIZE_ASSISTANT(?::(\d+))?/);
+  if (oversizeAssistant) {
+    const payloadBytes = oversizeAssistant[1] ? Number.parseInt(oversizeAssistant[1], 10) : 1_100_000;
+    sendRawLine(buildOversizeAssistantLine(payloadBytes));
+    // No result — the adapter must terminate via wire_frame_oversize.
+    return;
   }
 
   if (text.includes('TRIGGER_AUTH_REFUSAL')) {
