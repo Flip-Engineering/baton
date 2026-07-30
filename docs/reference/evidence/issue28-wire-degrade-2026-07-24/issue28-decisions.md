@@ -1,4 +1,13 @@
-# Issue #28 contract — wire-frame graceful degradation (v1)
+# Issue #28 contract — wire-frame graceful degradation (v2)
+
+(v2 folds the R28R red-team, verdict SOUND-WITH-FOLDS: R28R-1 the synthetic tool_result is
+struck — `user` frames are dropped by the parse path, so degradation is discard + receipt
+ONLY, with the corrective nudge delegated to the driver reacting to the receipt; R28R-2 the
+receipt actor is 'worker' (the adapter boundary refuses 'policy'); R28R-3 both trigger sites
+and the discard latch are named; R28R-4 the configurable range is capped at the 16MiB
+governance cap; R28R-5 the closed-advanced key, builtInAdapters signature, and GLM/Kimi
+parity are named; R28R-6 the card read-back is the existing governance.maxWireFrameBytes;
+R28R-7 the tool_use_id head position gets a live-capture probe.)
 
 Ground truth: issue #28. The wire ceiling exists and is correct as a bound; the defect is that
 crossing it is always terminal. Contract for graceful degradation + deliberate ceilings.
@@ -18,28 +27,48 @@ ACP stays as-is this contract: inbound oversize remains an honest terminal failu
 
 ## Rules
 
-1. **Inbound tool_result frames degrade; everything else still kills honestly.** When the
-   buffered line exceeds the ceiling, inspect the frame HEAD (first ≤256 bytes): if it
-   matches a tool_result wire frame (`"type":"user"` with `"tool_result"` in the head), the
-   adapter MUST NOT kill the run. It discards the buffered bytes through the next newline
-   and injects a bounded synthetic tool_result in its place: same `tool_use_id` when it can
-   be parsed from the head (the id sits inside the first 4KiB of the frame), content exactly
-   `[tool result withheld: the frame was N bytes, over the M-byte ceiling; read the file in
-   ranges or bound the command output]` with N/M filled in. The worker learns the size and
-   the corrective behavior; the turn continues.
+1. **Inbound tool_result frames degrade to discard + receipt; everything else still kills
+   honestly.** The size check fires at BOTH ingestion sites — the completed-line path
+   (`claude-session.mjs:756`) and the partial-buffer path (`:775`) — and at either, when the
+   buffered line exceeds the ceiling, the adapter inspects the frame HEAD (first ≤256 bytes):
+   if it matches a tool_result wire frame (`"type":"user"` with `"tool_result"` in the head),
+   the adapter MUST NOT kill the run. It engages a session-scoped DISCARD LATCH
+   (`session.discardingFrame = {bytesSeen}`) that drops every byte through the terminating
+   newline (counting them, so the receipt's N is exact — and a frame bigger than 2× the
+   ceiling cannot re-trigger on its own tail), then resumes normal parsing mid-chunk. NO
+   synthetic frame is injected anywhere: `user` wire frames are dropped by the parse path
+   (`claude-session.mjs:901-902`), the model already received the real result inside the CLI
+   process (tools execute in-CLI; the echo is protocol noise to Baton), and nothing
+   downstream waits on it (attack 2, verified). Degradation is discard + receipt — nothing
+   more. The corrective nudge is NOT the adapter's: a driver/orchestrator reacting to the
+   receipt may steer (nudge_turn/send), exactly as the wave drivers already do — the adapter
+   emits no steer frames of its own (they have turn-accounting side effects).
 2. **A typed degradation receipt is emitted** on every degradation: `wire.frame_degraded`
-   with `{frameBytes: N, ceilingBytes: M, toolUseId: string|null}` (actor 'policy',
-   turnEpoch of the session). No content bytes, no secrets in the receipt.
+   with `{frameBytes: N, ceilingBytes: M, toolUseId: string|null}` — N counted through the
+   terminating newline, M the effective ceiling. The actor is `'worker'` (the
+   adapter→coordinator boundary refuses every non-worker actor, coordinator.mjs:1128, and
+   rewrites to 'worker' at :1143-1147); the coordinator MAY mint a derived policy event from
+   it (the :1131-1136 pattern). The kind lives in the operational log; whether it also enters
+   the closed RUN_TIMELINE_OPERATIONAL_KINDS set is deferred to #53's debug projection. No
+   content bytes, no secrets in the receipt. `toolUseId` is the head-parsed id when found
+   (see the live-capture probe in Verification), else null; when the head window cannot hold
+   a full tool_result signature (configured ceilings below ~128 bytes), the frame takes the
+   honest-kill path of rule 3.
 3. **Non-tool_result oversize is still terminal** with `wire_frame_oversize` — an oversized
    assistant frame or protocol frame cannot be salvaged honestly.
 4. **The provider-secret check runs before degradation** (secret material in a partial frame
    is never handed to the model, truncated or not).
 5. **Deliberate ceilings are deployment-owned.** `advanced.adapterOptions` gains
-   `maxWireFrameBytes` (integer, 64KiB–64MiB), passed to `ClaudeSessionCli` at
-   `application-deployment.mjs:643` (and the GLM family path, which rides the same class).
-   The adapter card advertises the effective ceiling (`card().wire.maxFrameBytes` or the
-   existing limits block) so a driver can read it back. The `BATON_CLAUDE_MAX_WIRE_FRAME_BYTES`
-   env var remains as a lower-precedence fallback.
+   `maxWireFrameBytes` (integer, **64KiB–16MiB** — the provider-governance cap,
+   provider-governance.mjs:19, which the coordinator validates on every configured card).
+   The key is added to the closed `advanced` shape (application-deployment.mjs:1351) with
+   its own integer/range validation; `builtInAdapters` (:657) receives the advanced options
+   and passes the ceiling to `ClaudeSessionCli` at `:692` AND to the GLM (`:703`) and Kimi
+   (`:696`) family constructors — all three extend ClaudeSessionCli and spread `...opts`
+   into super (claude-session.mjs:1261-1274, :1324-1333), so one plumbing change covers all
+   three. The card read-back is the EXISTING `card().governance.maxWireFrameBytes`
+   (claude-session.mjs:438) — no new wire block. The `BATON_CLAUDE_MAX_WIRE_FRAME_BYTES` env
+   var remains as a lower-precedence fallback.
 
 ## Red-first tests — `impl/test/issue28-wire-degrade-red.test.mjs`
 
@@ -51,13 +80,24 @@ ACP stays as-is this contract: inbound oversize remains an honest terminal failu
    with `wire_frame_oversize`.
 3. **R28-3 plumbing:** `advanced.adapterOptions.maxWireFrameBytes` reaches the adapter (a
    frame under the default 1MiB but over a configured 256KiB degrades at the configured
-   value) and the card advertises the configured ceiling.
+   value) and `card().governance.maxWireFrameBytes` reports the configured ceiling. The
+   256KiB case is delivered in multiple writes (multi-chunk path).
 4. **R28-4 head-idempotent:** two oversized tool_result frames in one session each produce
-   their own degradation and receipt (no state carryover).
+   their own degradation and receipt (no state carryover), INCLUDING one frame larger than
+   2× the ceiling delivered across multiple writes (the discard latch cannot re-trigger on
+   the tail).
 5. **R28-5 secret precedence:** an oversized frame whose head contains protected credential
    material is refused by the secret path, never degraded into the model.
 
-Deterministic; fake CLI/adapter fixtures; no live providers; fixed clocks.
+Deterministic; fake CLI/adapter fixtures (`impl/test/fixtures/fake-claude.mjs` trigger-driven, a
+BIG_TOOL_RESULT trigger emitting the giant `user` frame via send()); no live providers; fixed
+clocks.
+
+**Live-capture probe (Verification, alongside the suite):** one >1MiB Read against the real
+claude CLI, pinning where `tool_use_id` actually sits in the captured frame head (the R28R-7
+uncertainty — no captured tool_result frame exists in the repo today). The probe's output
+settles whether the head-parse path is exact or always-null; the null path is acceptable
+because the receipt is informational, not protocol-bearing.
 
 ## Verification
 
