@@ -643,6 +643,29 @@ function validateContextEvalArgs(args) {
   return true;
 }
 
+// Issue #53: `run.debug`'s own request shape check. Standalone (not a validateApplicationCommandArgs
+// branch / APPLICATION_COMMAND_DEFINITIONS entry) for the same reason as context_eval above
+// (docs/reference/evidence/issue53-run-debug-2026-07-24/issue53-decisions.md v2 rule 5): it is a
+// direct command port, not a legacy transport-name row the M3 ledger pin freezes.
+const RUN_DEBUG_ARGS = Object.freeze(['runId', 'member', 'limit']);
+function validateDebugArgs(args) {
+  if (!args || typeof args !== 'object' || Array.isArray(args)
+    || Object.keys(args).some((key) => !RUN_DEBUG_ARGS.includes(key))
+    || !validId(args.runId)
+    || (args.member !== undefined && !validId(args.member))
+    || (args.limit !== undefined && (!Number.isSafeInteger(args.limit) || args.limit < 1 || args.limit > 10))) {
+    throw applicationError('Run debug request is invalid', 'application_debug_invalid');
+  }
+  return true;
+}
+
+// Mirrors coordinator.mjs's own typedTerminalCode: a durable, payload-recomputed terminal code
+// (never handle.terminalCause, which is in-memory only — issue53-decisions.md v2 rule 2).
+function debugTerminalCode(value, fallback) {
+  return typeof value === 'string' && value.length > 0 && value.length <= 256
+    && /^[a-z0-9][a-z0-9._-]*$/iu.test(value) ? value : fallback;
+}
+
 function normalizeSteer(value) {
   exactObject(value, ['runId', 'target', 'mode', 'message', 'reason'], 'application_steer_invalid', 'Run steer');
   if (!validId(value.runId) || !validId(value.target) || !['nudge', 'now', 'turn'].includes(value.mode)
@@ -10400,6 +10423,74 @@ export class BatonApplication {
       } : {}),
       continuation: logicalContinuation,
     });
+  }
+
+  // Issue #53 (docs/reference/evidence/issue53-run-debug-2026-07-24/issue53-decisions.md v2):
+  // the operator debug surface. Rule 3's read source is a DIRECT per-worker stream read
+  // (driver.log.read(worker)) scoped by the run's own coordination snapshot — never the
+  // forward-only run-timeline mapping and never a caller-supplied workerId (rule 5). Rule 5:
+  // authorized exactly like run.inspect.
+  async debug(rawArgs, rawPrincipal) {
+    this._assertOpen();
+    await this.ready;
+    validateDebugArgs(rawArgs);
+    const principal = normalizePrincipal(rawPrincipal, 'debug principal');
+    await this._authorize('run.inspect', principal, rawArgs.runId, {});
+    const current = this._findRun(rawArgs.runId, { allowUnavailableProfile: true });
+    const view = await this._buildView(current, principal, {});
+    const limit = rawArgs.limit ?? 3;
+    const dispatches = current.dispatches.filter((dispatch) => (
+      rawArgs.member === undefined || dispatch.binding.nodeKey === rawArgs.member
+    ));
+    if (rawArgs.member !== undefined && dispatches.length === 0) {
+      throw applicationError('Run debug member is unavailable', 'application_debug_member_not_found');
+    }
+    const members = dispatches.map((dispatch) => this._debugMember(dispatch, rawArgs.runId, limit));
+    return deepFreeze({
+      schemaVersion: 1, runId: rawArgs.runId, phase: view.phase, members,
+    });
+  }
+
+  _debugMember(dispatch, runId, limit) {
+    const task = this.driver.coordination.task(dispatch.taskId);
+    const workerId = task?.assignee ?? null;
+    const events = workerId
+      ? this.driver.log.read(workerId).filter((event) => (
+        event.runId === runId && event.taskId === dispatch.taskId
+      ))
+      : [];
+    const lastMessages = events
+      .filter((event) => event.kind === 'content.message')
+      .slice(-limit)
+      .map((event) => ({ at: event.ts, text: boundedAttentionText(event.payload?.text) }));
+    const writeReceipts = events
+      .filter((event) => event.kind === 'scratchpad.write_result' || event.kind === 'authority.rejected')
+      .map((event) => this._debugReceipt(event));
+    const crashEvent = events.findLast((event) => event.kind === 'lifecycle.crashed');
+    const failure = crashEvent ? {
+      kind: crashEvent.kind,
+      code: debugTerminalCode(crashEvent.payload?.code, 'provider_crashed'),
+      message: typeof crashEvent.payload?.error === 'string' && crashEvent.payload.error.length > 0
+        ? boundedAttentionText(crashEvent.payload.error) : null,
+    } : null;
+    return {
+      role: dispatch.binding.nodeKey, workerId, phase: task?.status ?? null,
+      lastMessages, writeReceipts, failure,
+    };
+  }
+
+  // Rule 2: `code` = `result` for scratchpad receipts, and the `authority.rejected` reason for
+  // interaction rejections. Raw receipt payloads carry banned internals (scratchpadFence,
+  // eventSeq, current, evidence); this is a field whitelist, never a passthrough.
+  _debugReceipt(event) {
+    if (event.kind === 'scratchpad.write_result') {
+      const result = event.payload?.result ?? null;
+      return { kind: event.kind, result, code: result, at: event.ts };
+    }
+    return {
+      kind: event.kind, result: event.payload?.kind ?? null,
+      code: event.payload?.reason ?? null, at: event.ts,
+    };
   }
 
   async workstreams(rawRequest, rawPrincipal, rawContext = null) {
