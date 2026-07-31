@@ -338,3 +338,34 @@ runtime) + single-flight vendor-executed refresh harvested from any write-back t
 retry-once on the established taxonomy. The canonical suite passed **2900/2900** at the last
 full gate. Fleet truth: claude (opus/sonnet) and grok re-authorized, codex gpt-5.6-sol back,
 GLM 5.2 back, deepseek-v4-flash confirmed the economic workhorse, kimi blocked on #54.
+
+2026-07-31 late arc (the parallel fleet arc): **control-surface v2 landed** (grok@high —
+executable per-profile inventories, generated CLI.md/MCP.md, conformance main, dead CLI
+paths wired, `baton_runs` un-shadowed, `run.debug` registered; 20/20 red rows, suite
+2920/2920 at landing). **#55 stall-clock blindness fixed** (orchestrator machinery): the
+single-run view was a pure event projection and resource events are noise-filtered from
+"meaningful" progress, so any long unpaused turn read as a stall — three waves died in two
+days. The view now projects `activity {providerCalls, tokens, lastActivityAt}` from the
+worker operational log; mid-turn work moves the stall marker (L1/L2 pinned, suite
+2922/2922). **Nine contracts red-teamed and folded in one day** (the adversarial fleet
+working as designed — five came back UNSOUND on first pass and would have shipped
+divergent implementations): issue #11 v3 (credential cache + access-token-only projection
++ per-credential single-flight + revocation latch; opus verification caught the un-deleted
+full-file registration and the fixture-assumed wire shape); bidirectional v2 (durable
+pause-origin claim, onDecision lifecycle, one-pending admission, disposition tombstones,
+followOnce wake laws, ordered reducer); composition v2 (invocation-manifest identity,
+driver sole salt owner, task sets cut to the S-2 track); S-1 v2 (attach-only registration,
+atomic transport attach-and-harvest); S-2 v2 (proof-of-principal envelope — the
+tautological-digest hole named, board→run binding, CAS inside the store append); S-3
+matrix v1 (19-row registry delta); diagnostics v2 (digests-only honesty, pinned DIAG-1
+reducer); ATLAS v2 (worktreeRoot registry change, full opted-in capability set); semantic
+progress v2 (phase-AND-attention blocked predicate, rate_limited cut); KG activation v1
+(ambient serving, candidacy queue, ritual hooks). **REPL/reflex closeout**: #21/#22/#23
+(REPL-1..3) and #17/#18 (REFLEX-2/3) verified landed and closed with suite evidence.
+**Fleet firsts**: deepseek-v4-flash held adversarial depth (two red-teams incl. a
+SOUND-WITH-FOLDS verdict with file:line grounding), glm-5.2 took its first red-team seat
+(ATLAS), and the campaign ran five concurrent heterogeneous waves (opus+sonnet+codex+grok+
+glm+deepseek) under the shipped driver. Hard lessons filed: #55 (stall blindness), the
+coordinate-rich objective law (objectives must carry pre-digested file:line coordinates —
+a coordinate-less sonnet burned ~300 provider calls across three waves with zero files
+written).
