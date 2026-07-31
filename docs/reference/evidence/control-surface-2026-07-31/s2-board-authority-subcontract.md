@@ -1,3 +1,90 @@
+# S-2 board/package authority sub-contract — one shared admission primitive (v2)
+
+(v2 folds the opus SECURITY red-team (`s2-redteam-v1.md`, verdict **UNSOUND**, R-BA-1..9,
+two P0s). The consolidation survives; the v1 primitive as specified was itself the bypass:
+it authenticated by NON-SECRET IDENTIFIERS — the lease lookup
+(`coordination-store.mjs:1811-1842`) filters on `{repoId, principalId, sessionId, expiresAt}`
+and its session-digest check is tautological on that path (it compares the lease's OWN
+digest to itself at `:1837/:1664`); under MCP this is safe only because the connection
+authenticates the principal. And boards carry NO `runId` — any orchestrator lease in the
+repo would have authorized any board (R-BA-2). v2 specifies proof-of-principal and the
+board→run binding. Also folded: CAS moves INSIDE the store append (the worker path already
+CASes atomically there, R-BA-4); `dropBoardItem` joins the guarded set (R-BA-5); the read
+projection gets the same lease posture (R-BA-6); ghost rows are trimmed IN this contract,
+not deferred (R-BA-7); idempotency compares key AND normalized content (R-BA-3); packages
+inherit both fixes (R-BA-8); the refusal order pins to the live code vocabulary + item-
+existence placement (R-BA-9). v1 retained below as the fold trail.)
+
+## Rules (v2 — amended; "one primitive in the serialized command path" stands)
+
+1. **The envelope carries PROOF-OF-PRINCIPAL, never identifiers alone.** The closed envelope
+   is `{sessionAuthority, runId, board, item coordinates, mutation, expectedBoardFence,
+   idempotencyKey}` where `sessionAuthority` is the unforgeable session-authority token the
+   MCP layer already threads (`mcp-northbound.mjs:1408-1428`). Admission compares a
+   CALLER-SUPPLIED authority proof against `lease.session.authorityDigest` — a NEW admission
+   entry (or a repaired `activeRunOrchestratorLeaseForSession`) that NEVER feeds the lease
+   its own digest (R-BA-1). The principal identity derives FROM the validated authority,
+   never from caller-named fields; `actor` is derived from the lease's principal, never
+   defaulted.
+2. **Boards bind to runs.** A board record gains a durable `runId` binding at creation
+   (first post names its Run); admission requires the presented lease to be an orchestrator
+   lease FOR THAT RUN — a lease for another run in the same repo refuses
+   `board_session_mismatch` (R-BA-2). Pre-v2 boards (no binding) are adoptable exactly once
+   by a lease-holding principal of the adopting Run, with the adoption recorded. Package
+   admit/attach inherits both fixes; the attach path's existing `runId`-keyed authority
+   (`coordination-store.mjs:9442`) becomes the binding law uniformly (R-BA-8).
+3. **The fence CAS lives INSIDE the store append.** The orchestrator-mutation CAS moves to
+   the same atomic seam the worker-claim path already uses (`_boardSuccessor` version chain
+   with fence comparison at apply time, `coordination-store.mjs:13465-13509`) — one atomic
+   compare-and-append per mutation, no check-then-write split anywhere (R-BA-4). The
+   guarded mutation set is complete: post, retitle, reorder, close, AND drop (the fifth
+   fence-advancing mutation v1 omitted, R-BA-5).
+4. **Idempotency binds key AND normalized content.** Replay-same (same key + identical
+   normalized request) returns the prior receipt; same key + DIFFERENT normalized request
+   refuses `board_replay_conflict` — the store's key-only dedup is extended to compare the
+   normalized request digest (R-BA-3), pinned by tests that would fail against key-only.
+5. **The read projection carries the same posture.** `board_read`/`boardSnapshot` through any
+   transported surface requires the same lease posture as mutation (a lease-holding
+   principal for the bound Run); the "orchestrator sees all" projection is never served on
+   identifiers alone (R-BA-6). In-process coordinator reads by the run's OWN workers stay
+   per the existing worker-slice projection (`application.mjs:368-412`).
+6. **Refusal order pinned to the live vocabulary + existence placement.** Exact precedence:
+   shape (`board_admission_invalid`) → authority proof (`board_lease_required` /
+   `board_session_mismatch`) → Run state (`board_run_closed`) → ITEM EXISTENCE
+   (`board_item_not_found` — placed here so existence never leaks to a caller failing
+   authority or run-state checks) → fence (`stale_board_fence`) → parent version
+   (`board_parent_stale`) → replay (`board_replay_conflict` / prior receipt). Codes ride the
+   store's existing vocabulary where it exists; new codes are named explicitly (R-BA-9).
+7. **Ghost rows trimmed IN THIS LANDING.** The registry board rows' advertised surfaces are
+   trimmed to exactly what the primitive backs in the same commit (no cli/web/embedded
+   advertisement during the window, R-BA-7); their schemas reconcile to the live executable
+   shape (S-3 consumes the reconciled rows for its profile matrix).
+8. **MCP guards retire to thin adapters (v1 rule 3 stands)** — but the adapter threads the
+   connection's `sessionAuthority` into the envelope; it never constructs authority from
+   principal fields (R-BA-1's MCP-side honesty).
+
+## Red-first tests (v2 amendments to the BA battery)
+
+- **BA-2+ (impersonation):** an envelope naming a live orchestrator session's identifiers but
+  presenting a forged/wrong `sessionAuthority` refuses `board_session_mismatch` — pinned
+  against the tautological-digest path (the test would PASS against v1's cited lookup; it
+  must FAIL closed now).
+- **BA-4+ (binding):** a valid orchestrator lease for Run B mutating a board bound to Run A
+  refuses; pre-v2 board adoption is exactly-once and recorded.
+- **BA-5+ (atomic CAS):** an instrumented interleaving that advances the fence between the
+  caller's read and the store append loses the CAS — no window (the test injects the
+  interleaving INSIDE the append seam).
+- **BA-6+ (drop):** drop advances the fence and requires the same admission; the battery
+  covers all five mutations.
+- **BA-7+ (read):** transported board read without the lease refuses; the worker-slice
+  in-process read still works.
+- **BA-8+ (content idempotency):** same key + mutated detail refuses `board_replay_conflict`.
+- **BA-9+ (existence placement):** a nonexistent item under a valid lease refuses
+  `board_item_not_found`; under an invalid lease it refuses the authority code (existence
+  never leaks across the authority boundary).
+
+---
+
 # S-2 board/package authority sub-contract — one shared admission primitive (v1)
 
 (Successor contract named by the control-surface v2 (R-CS-1, P0): v1 of the CS contract
