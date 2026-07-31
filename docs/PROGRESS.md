@@ -293,3 +293,18 @@ by a glm wave, and validated red-first (D1–D10) — catching three machinery d
 arc: the degenerate pause `changedPathsDigest` (the `currentHeadSha` named gap), silently
 swallowed act delivery failures, and a claim-recovery snapshot race. The canonical suite passed
 **2877/2877** at the landing.
+
+Late July arc: the unified control-surface grammar went M0→M4b (issues #43/#44 — conformance
+harness, canonical aliases, vocabulary flip, episode fold, registry v2, the transport flip);
+the scratchpad landed as the reflexive bloc's last structural gap (issue #33, suite
+2828/2828); startup reconciliation self-heals proof-complete worktree residue (issue #45);
+the wave driver is productized as `createWaveDriver` with the L6 termination law (issue #46,
+D1–D10); the dynamic-workflow demo closed a full inter-agent loop through the shared layer
+(push → 5 scratchpad doubts → relay → revision note, all receipted, with five filed machinery
+findings: #48 facade gap + fence erratum FIXED same-day and consumed live, #49 glm
+concurrency, #50 glm stream death, #51 upward state feedback); wire frames degrade gracefully
+instead of killing runs (issue #28, grok's first substantive seat); the operator debug
+surface (`run.debug()`) answers messages/receipts/failure-causes without JSONL archaeology
+(issue #53). The canonical suite passed **2891/2891** at the last full gate. In flight:
+DeepSeek fleet routes (flash-first), 93B wave durability (attach-and-harvest), issue #11
+refresh-aware credential projection.
