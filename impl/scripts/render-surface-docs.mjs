@@ -1,17 +1,18 @@
 #!/usr/bin/env node
 
-// docs/36 §9 M4 (M4b) — the generated documentation surface. The CLI.md verb-inventory block and
-// the MCP.md tool-inventory block are RENDERED from registry v2, never hand-maintained, so a §6
-// operation, a name derivation, or an annotation lands in exactly one place. The committed blocks
-// live between BEGIN/END GENERATED markers; a conformance check (`--check`, and the exported
-// `checkSurfaceDocs`) fails if the committed blocks drift from this renderer.
+// docs/36 §9 M4 (M4b) + control-surface contract v2 CS-1 — generated documentation surface.
+// CLI.md / MCP.md inventory blocks render from *executable* reference-profile inventories
+// (never grammar intent alone, never hand lists).
 //
-//   node impl/scripts/render-surface-docs.mjs           # rewrite the generated blocks in place
+//   node impl/scripts/render-surface-docs.mjs           # rewrite generated blocks in place
 //   node impl/scripts/render-surface-docs.mjs --check   # fail (exit 1) if a committed block drifted
 
 import { readFileSync, writeFileSync } from 'node:fs';
+import { pathToFileURL } from 'node:url';
 
 import { APPLICATION_SEMANTIC_REGISTRY, deriveSurfaceNames } from '../src/application-semantics.mjs';
+import { CLI_WEB_COMMANDS } from '../src/application-cli.mjs';
+import { mcpApplicationToolNames } from '../src/mcp-northbound.mjs';
 
 const CLI_DOC = new URL('../CLI.md', import.meta.url);
 const MCP_DOC = new URL('../MCP.md', import.meta.url);
@@ -22,17 +23,57 @@ export const MCP_INVENTORY_MARKER = 'mcp-tool-inventory';
 function beginMarker(marker) { return `<!-- BEGIN GENERATED: ${marker} (impl/scripts/render-surface-docs.mjs) -->`; }
 function endMarker(marker) { return `<!-- END GENERATED: ${marker} -->`; }
 
-// The registry is the single generator: the same `deriveSurfaceNames` every renderer and the
-// conformance harness use produces the CLI and MCP spellings here too.
-function surfaceOperations(surface) {
+// Host-local CLI operations (parse + in-process dispatch; no web-client whitelist entry).
+const HOST_LOCAL_CLI_KEYS = new Set(['run.debug']);
+
+/**
+ * Ordinary CLI principal inventory: canonical operation keys that are actually served —
+ * either via the CLI web-client whitelist (dispatch name) or as host-local (run.debug).
+ * Ghost grammar rows that default to ALL_SURFACES but have no CLI wire stay out (S-2).
+ */
+export function servedCliOrdinaryKeys() {
+  const keys = new Set();
+  const byDispatch = new Map();
+  for (const alias of APPLICATION_SEMANTIC_REGISTRY.surfaceAliases) {
+    if (alias.surface === 'application.commands') {
+      byDispatch.set(alias.name, alias.canonical);
+    }
+  }
+  for (const name of CLI_WEB_COMMANDS) {
+    const canonical = byDispatch.get(name)
+      ?? APPLICATION_SEMANTIC_REGISTRY.canonicalOperations
+        .find((operation) => operation.key === name)?.key
+      ?? null;
+    // Prefer a canonical key when the whitelist name is itself canonical or aliased.
+    if (canonical) keys.add(canonical);
+    else if (APPLICATION_SEMANTIC_REGISTRY.canonicalOperations.some((op) => op.key === name)) {
+      keys.add(name);
+    }
+  }
+  // Lifecycle legacy ids on the registry that dispatch to a whitelist command.
+  for (const command of APPLICATION_SEMANTIC_REGISTRY.cli.commands) {
+    if (!command.operation || !CLI_WEB_COMMANDS.has(command.operation)) continue;
+    const canonical = byDispatch.get(command.operation)
+      ?? (APPLICATION_SEMANTIC_REGISTRY.canonicalOperations.some((op) => op.key === command.id)
+        ? command.id
+        : null);
+    if (canonical) keys.add(canonical);
+  }
+  for (const key of HOST_LOCAL_CLI_KEYS) keys.add(key);
+  // Only keep keys that the registry enables on the cli surface.
   return APPLICATION_SEMANTIC_REGISTRY.canonicalOperations
-    .filter((operation) => operation.surfaces.includes(surface));
+    .filter((operation) => operation.surfaces.includes('cli') && keys.has(operation.key))
+    .map((operation) => operation.key)
+    .sort();
 }
 
 export function renderCliVerbInventory() {
-  const rows = surfaceOperations('cli').map((operation) => (
-    `| \`${operation.key}\` | \`${operation.profile}\` | \`${deriveSurfaceNames(operation.key).cli}\` | \`${operation.example}\` |`
-  ));
+  const rows = servedCliOrdinaryKeys().map((key) => {
+    const operation = APPLICATION_SEMANTIC_REGISTRY.canonicalOperations
+      .find((entry) => entry.key === key);
+    const names = deriveSurfaceNames(operation.key);
+    return `| \`${operation.key}\` | \`${operation.profile}\` | \`${names.cli}\` | \`${operation.example}\` |`;
+  });
   return [
     '| Operation | Profile | CLI verb | Example |',
     '|---|---|---|---|',
@@ -40,10 +81,28 @@ export function renderCliVerbInventory() {
   ].join('\n');
 }
 
+/**
+ * MCP application-profile inventory: the real tool table from McpFleetServer surface
+ * construction (ORDINARY_APPLICATION_TOOL_DEFINITIONS), never deriveSurfaceNames alone.
+ */
 export function renderMcpToolInventory() {
-  const rows = surfaceOperations('mcp').map((operation) => {
-    const effect = operation.destructive ? 'destructive' : operation.idempotent ? 'idempotent' : 'effectful';
-    return `| \`${operation.key}\` | \`${operation.profile}\` | \`${deriveSurfaceNames(operation.key).mcp}\` | ${effect} |`;
+  const tools = mcpApplicationToolNames();
+  const rows = tools.map((tool) => {
+    // Resolve a registry operation when the tool is a known alias or derived name.
+    const alias = APPLICATION_SEMANTIC_REGISTRY.surfaceAliases
+      .find((row) => row.surface === 'mcp.baton' && row.name === tool);
+    const byDerived = APPLICATION_SEMANTIC_REGISTRY.canonicalOperations
+      .find((operation) => operation.names.mcp === tool);
+    const operation = alias
+      ? APPLICATION_SEMANTIC_REGISTRY.canonicalOperations
+        .find((entry) => entry.key === alias.canonical)
+      : byDerived;
+    const key = operation?.key ?? tool;
+    const profile = operation?.profile ?? 'ordinary';
+    const effect = operation
+      ? (operation.destructive ? 'destructive' : operation.idempotent ? 'idempotent' : 'effectful')
+      : 'idempotent';
+    return `| \`${key}\` | \`${profile}\` | \`${tool}\` | ${effect} |`;
   });
   return [
     '| Operation | Profile | MCP tool | Annotation |',
@@ -87,7 +146,7 @@ export function checkSurfaceDocs() {
   return findings;
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   const check = process.argv.includes('--check');
   if (check) {
     const findings = checkSurfaceDocs();

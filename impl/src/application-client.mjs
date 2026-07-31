@@ -1125,6 +1125,23 @@ export class BatonRun {
     return this.#last;
   }
 
+  // CS-3: facade accessor for the #53 direct port (application.debug). Host-local;
+  // same payload as baton run debug / application.debug (control-surface v2 rule 3).
+  async debug(options = {}) {
+    exactOptions(options, new Set(['member', 'limit']), 'Run debug');
+    if (options.member !== undefined && !nonempty(options.member)) {
+      throw clientError('Run debug member is invalid');
+    }
+    if (options.limit !== undefined
+      && (!Number.isSafeInteger(options.limit) || options.limit < 1 || options.limit > 10)) {
+      throw clientError('Run debug limit is invalid');
+    }
+    this.#last = await this.#application.command('run.debug', {
+      runId: this.id, ...options,
+    });
+    return this.#last;
+  }
+
   async sendFeedback(role, feedback) {
     if (!nonempty(role) || (typeof feedback !== 'string'
       && (!feedback || typeof feedback !== 'object' || Array.isArray(feedback)))) {
