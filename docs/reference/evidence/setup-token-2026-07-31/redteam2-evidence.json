@@ -1,0 +1,37 @@
+{
+  "schemaVersion": 1,
+  "startedAt": "2026-07-31T22:03:24.063Z",
+  "members": [
+    "setup-token-redteam2-opus"
+  ],
+  "outcomes": [
+    {
+      "role": "setup-token-redteam2-opus",
+      "phase": "failed",
+      "terminal": true,
+      "narrative": "Run terminated: provider_turn_failed.",
+      "resultSha": null
+    }
+  ],
+  "steering": [],
+  "stops": [
+    {
+      "role": "setup-token-redteam2-opus",
+      "stop": null,
+      "resources": {
+        "state": "stopped",
+        "cleanupState": "stopped",
+        "ownedCount": 0
+      },
+      "ownedCount": 0
+    }
+  ],
+  "progress": [],
+  "pumpDrained": true,
+  "remainingCount": 0,
+  "residueUnknown": false,
+  "basis": "completed",
+  "nudges": [],
+  "claims": [],
+  "salt": null
+}
