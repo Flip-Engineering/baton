@@ -1,3 +1,77 @@
+# S-1 v2 amendment — the fold of the deepseek red-team (SOUND-WITH-FOLDS, R-WG-1..6)
+
+(v2 folds `s1-redteam-v1.md` — deepseek-v4-flash@high's first adversarial seat. The
+portability decision SURVIVES; five folds block the one-commit landing. Decisive
+corrections: (1) `waves.start` registration as a "registry-declared preset" forks the
+registry model — CANONICAL_OPERATION_SPECS has no preset row kind and any row IS canonical
+registration (R-WG-2), so v2 REGISTERS ONLY `waves.attach`; `waves.start` stays embedding-
+only preset sugar with the C7 expansion-record mechanism named as the docs/36-L5 follow-on.
+(2) Portable attach's authority semantics are now pinned (R-WG-1). (3) Hidden-by-declaration
+gets its per-transport mechanism (R-WG-3). (4) The binding proof moves server-side into the
+operation — the mint-callback pattern deletes from the portable path (R-WG-4). (5) Landing
+splits into two green commits (R-WG-5). Citations repaired (R-WG-6).)
+
+## Amended decisions
+
+1. **`waves.attach` (only) registers as a canonical operation.** Exact key `waves.attach`,
+   profile `ordinary`, effect `observe` + `emergency_stop`-free (no member mutation — rule 3
+   below), surfaces `{embedded, cli, mcp, web}` with derived names verbatim
+   (`baton waves attach`, `baton_waves_attach`, `waves_attach`, `waves.attach()`), the
+   R-CS-3 registry-delta row shape (closed input/output schema, authority-vs-server-derived
+   fields, one-live-method mapping to `wave.mjs:attachWave`).
+2. **Transport attach is ATOMIC attach-and-harvest, never a live handle.** Over MCP/web/CLI
+   the operation attaches, validates every member binding SERVER-SIDE (each member's
+   `steering.registered` waveId must equal the asserted `waveId` — the proof moves INTO the
+   operation; the embedded mint-callback path routes through the same operation and the
+   callback pattern deletes), settles, and returns `{outcomes, waveDriverDetached: bool}` —
+   the `wave.driver_detached` receipt mints exactly once as today. Long-lived handles
+   (`progress`, `send`, `stopMember`, `close`) stay embedded-only; stopping members is NOT
+   part of the portable operation (no `emergency_stop` authority is transported, R-WG-1).
+   The calling principal must hold `observe` on every member run (per-run authorization
+   rides the existing `runs.attach`/`run.inspect` path — never the deployment's privileged
+   principal).
+3. **Inputs:** `waveId` (required, public, transport-validated), `members` (required:
+   `{role, objective}` pairs — the binding key, documented honestly: objectives are the
+   salted wave objectives; a portable caller learns them from the invocation manifest (P1-D)
+   or operator records, NOT from any roster-reconstruction this contract does not build).
+   Only `mintWaveDetached` + the `run.inspect` side-channel `waveId` carry the
+   declared-hidden flag.
+4. **Hidden-by-declaration gets its mechanism (R-WG-3).** The registry row gains
+   `transportHidden: string[]`; advertised schemas (MCP tool inputSchema, web advertised
+   schema) EXCLUDE those fields while the in-process and web validators continue to accept
+   them; the web ARG_FIELDS derivation (`web-northbound.mjs:51-73`) learns to honor the
+   flag (today it admits every `definition.args` member — R-WG-3's grounding: the fields are
+   web-admitted NOW, so this is a behavior change, pinned by test); the conformance harness
+   pins absence-from-advertised-schema AND acceptance-by-validator for each flagged field.
+5. **Landing: two green commits (R-WG-5).** Commit 1: the registry row + server-side
+   binding proof + validator/schema changes + WG rows. Commit 2: the transport wiring
+   (CLI/MCP/web derivations + facade parity at `application-deployment.mjs:1188-1195`) +
+   conformance rows. Each suite-green with the live conformance main consulted; the
+   authority-digest change is confined to commit 1.
+6. **`waves.start` stays embedding-only preset sugar** (CLI.md's posture remains accurate
+   for start). The C7 expansion-record mechanism (recorded preset expansions for
+   `waves.start`/`explore`/`review`) is the named docs/36-L5 follow-on — it does not exist
+   anywhere today (R-WG-2's grounding) and is NOT built here.
+
+## Amended red rows (wave-grammar-red.test.mjs)
+
+- **WG-1:** the `waves.attach` registry row (exact key/profile/surfaces/schema) + derived
+   names on every enabled surface; singular `wave` spellings refused; NO `waves.start`
+   canonical row exists (source-scan).
+- **WG-2:** atomic transport attach — MCP + web calls bind valid members, settle, return
+   outcomes; a zero-member bind refuses `wave_attach_unknown_wave`; a mismatched member
+   refuses `application_wave_member_mismatch` SERVER-SIDE (no callback involved);
+   `wave.driver_detached` mints exactly once across transports.
+- **WG-3:** hidden-by-declaration — advertised MCP/web schemas exclude `mintWaveDetached`
+   (and `run.inspect`'s `waveId`); the validators accept them; conformance pins both.
+- **WG-4:** authority — a principal lacking per-run observe on any member refuses (typed);
+   no `emergency_stop` capability is required or transported; the deployment-facade attach
+   binds identically (parity).
+- **WG-5:** the two-commit landing discipline holds (each commit suite-green; digest change
+   confined).
+
+---
+
 # S-1 wave grammar amendment — preset sugar, portable attach, facade parity (v1)
 
 (Successor contract named by the control-surface v2 (R-CS-2 fold). Parent: docs/36 v2.1
