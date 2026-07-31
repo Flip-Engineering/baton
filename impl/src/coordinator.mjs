@@ -1987,18 +1987,33 @@ export class Coordinator {
     const workerId = handle.id;
     const turnEpoch = terminalEvent?.turnEpoch ?? this._safeTurnEpoch(handle);
     const changedPathsDigest = this._pauseChangedPathsDigest(handle, task);
+    // Bidirectional v2 rules 1-2: every live pause is already downstream of a completed
+    // WorkerResult (a non-completed result routes to `_failProviderResult` before this call),
+    // so the claim is durable and unconditional here — minted into the `turn.paused` payload
+    // itself so replay reconstructs it byte-for-byte, never recomputed from the in-memory
+    // record. Sanitize AT MINT, pinned order: redact-before-truncate, UTF-8 scalar-safe,
+    // the one shared messages.mjs pipeline. Empty/missing summary projects `null`, never `''`.
+    const rawSummary = wr?.summary;
+    const summary = typeof rawSummary === 'string' && rawSummary.length > 0
+      ? wrapProse(workerId, boundedAttentionText(rawSummary, 240))
+      : null;
+    const origin = { kind: 'turn_completed', resultStatus: 'completed', summary };
     // Same `appendAttributed` durability tier and per-worker stream as question.asked /
     // approval.requested / decision.requested. `workerId` rides the envelope's own `worker`
     // field and is deliberately NOT duplicated into the payload — the interaction-family shape.
     const pausedEvent = appendAttributed({
       worker: workerId, harness: terminalEvent?.harness, turnEpoch,
       kind: 'turn.paused', actor: 'worker',
-      payload: { taskId: task.id, turnEpoch, changedPathsDigest },
+      payload: { taskId: task.id, turnEpoch, changedPathsDigest, origin },
     });
     const pauseId = `pause:${task.id}:${terminalEvent.seq}`;
     const record = {
       state: 'pending', resolution: null, consumer: null, worker: workerId,
       taskId: task.id, turnEpoch, changedPathsDigest, mintedEvent: terminalEvent.seq,
+      // Mirrors the durable payload's own `origin` field exactly — `pausedTurnStatus` reads
+      // this, never recomputes it, so a restart's replay-reconstructed record (which carries
+      // the same durable `origin`) projects an identical claim.
+      origin,
       // 31-b Part D rule 8: `claim` RE-RUNS the live trust gate, and `_runTrustGate(handle,
       // workerResult)` needs the turn's own worker result as its second argument. The record
       // carries it so a later `claim` reproduces the SAME call an ordinary turn completion makes.
@@ -2047,6 +2062,9 @@ export class Coordinator {
       pauseId, state: record.state, consumer: record.consumer ?? null,
       workerId: record.worker, taskId: record.taskId, turnEpoch: record.turnEpoch,
       changedPathsDigest: record.changedPathsDigest ?? null,
+      // Rule 1 (bidirectional v2): the claim rides ONLY the durable origin — absent for a
+      // pre-v2-shaped event (replay-reconstructed with no `origin`), never a `claim: null`.
+      ...(record.origin ? { claim: { status: record.origin.resultStatus, summary: record.origin.summary } } : {}),
     };
   }
 
@@ -2061,6 +2079,25 @@ export class Coordinator {
       rows.push(row);
     }
     return rows;
+  }
+
+  /**
+   * Rule 5 (bidirectional v2). Bounded disposition tombstones (last N<=8) for one worker's own
+   * decisions, derived PURELY from the durable `decision.settled`/`decision.expired` events on
+   * its own operational log — never the in-memory `_pending` record, never a local clock — so an
+   * answered decision and an expired one are never conflated, exactly-once, across a restart.
+   */
+  decisionSettlements({ workerId, limit = 8 } = {}) {
+    if (typeof workerId !== 'string' || workerId.length === 0) return [];
+    const rows = this._log.read(workerId)
+      .filter((event) => event.kind === 'decision.settled' || event.kind === 'decision.expired')
+      .map((event) => ({
+        requestId: event.payload?.requestId ?? null,
+        disposition: event.kind === 'decision.settled' ? 'answered' : 'expired',
+        at: event.ts,
+      }))
+      .filter((row) => row.requestId !== null);
+    return rows.slice(-limit);
   }
 
   /**
@@ -8696,6 +8733,7 @@ export class Coordinator {
         options: record.options,
         allowFreeResponse: record.allowFreeResponse,
         recommended: record.recommended,
+        deadlineAt: record.deadlineAt != null ? new Date(record.deadlineAt).toISOString() : null,
       } : {}),
     });
   }
@@ -10723,6 +10761,17 @@ export class Coordinator {
           this._bumpInteractionGeneration(handle.taskId);
           break;
         }
+        // Rule 4 (bidirectional v2): one pending decision per worker, enforced HERE at
+        // admission — defense-in-depth behind the adapter's own one-live-request discipline
+        // (`claude-session.mjs:952-955`), so `handle.pendingDecisionId`'s singular projection
+        // can never hide a second live record. Durable, typed, never a silent drop.
+        if (handle.pendingDecisionId) {
+          const rejected = appendAttributed({ worker: workerId, harness, turnEpoch, kind: 'control.decision_already_pending_rejected', actor: 'policy', payload: { requestId, kind: 'decision', pendingRequestId: handle.pendingDecisionId } });
+          const task = this._tasks.get(handle.taskId); const evidence = this._coordMapEvent(rejected);
+          this._coordRecord('authority.rejected', { taskId: task?.id ?? null, workerId, requestId, kind: 'decision', reason: 'decision_already_pending', evidence }, `driver.authority.rejected:${workerId}:${requestId}:${rejected.seq}`, 'policy');
+          this._bumpInteractionGeneration(handle.taskId);
+          break;
+        }
         const askedEvent = appendAttributed({ worker: workerId, harness, turnEpoch, kind, actor, payload: { requestId, request } });
         this._bumpInteractionGeneration(handle.taskId);
         const task = this._tasks.get(handle.taskId);
@@ -11768,6 +11817,11 @@ export class Coordinator {
                 taskId: pausedTaskId, turnEpoch: e.payload?.turnEpoch ?? maxTurnEpoch,
                 changedPathsDigest: e.payload?.changedPathsDigest ?? null,
                 mintedEvent: lastTurnCompletedSeq,
+                // Rule 1 (bidirectional v2): the durable `origin` rides the event payload
+                // itself, so replay reconstructs the SAME claim byte-for-byte with no live
+                // `workerResult` needed. A pre-v2-shaped event has no `origin` — honestly
+                // absent, never fabricated.
+                origin: e.payload?.origin ?? null,
               });
             }
             break;

@@ -352,6 +352,7 @@ function projectDecisionAttention(coordinator, workers) {
       })),
       allowFreeResponse: interaction.allowFreeResponse === true,
       recommended: interaction.recommended ? wrapProse(handle.id, interaction.recommended) : null,
+      deadlineAt: interaction.deadlineAt ?? null,
     });
   }
   return entries;
@@ -7106,6 +7107,10 @@ export class BatonApplication {
           turnEpoch: paused.turnEpoch,
           changedPathsDigest: paused.changedPathsDigest,
           requestId: paused.pauseId,
+          // Rule 1 (bidirectional v2): the claim rides the pause record's own durable origin
+          // ONLY — absent entirely (never `claim: null`) for a pre-v2-shaped restart-reconstructed
+          // record.
+          ...(paused.claim ? { claim: paused.claim } : {}),
         });
       }
     }
@@ -7118,6 +7123,12 @@ export class BatonApplication {
     }
     const attention = allAttention.slice(0, MAX_ATTENTION);
     const attentionTruncated = allAttention.length > attention.length;
+    // Rule 5 (bidirectional v2): bounded disposition tombstones for this Run's own worker,
+    // derived purely from the durable decision.settled/decision.expired events — never the
+    // in-memory record's local-clock resolution.
+    const decisionSettled = workerId && typeof this.driver.coordinator.decisionSettlements === 'function'
+      ? this.driver.coordinator.decisionSettlements({ workerId })
+      : [];
     const planNode = current.plan.nodes[0];
     const planPreviewCore = {
       objective: current.goal.objective,
@@ -7284,6 +7295,7 @@ export class BatonApplication {
       budget: { allocated: clone(current.goal.budget), node: clone(node.budget), termination: terminalCause },
       attention,
       attentionTruncated,
+      decisionSettled,
       blockedInteraction,
       verification: {
         state: verificationState,
@@ -9080,7 +9092,7 @@ export class BatonApplication {
         ...(attention.kind === 'answer_approval'
           ? { approvalKind: attention.approvalKind ?? null }
           : attention.kind === 'answer_decision'
-            ? { question: attention.question ?? null, options: attention.options ?? [], allowFreeResponse: attention.allowFreeResponse === true }
+            ? { question: attention.question ?? null, options: attention.options ?? [], allowFreeResponse: attention.allowFreeResponse === true, deadlineAt: attention.deadlineAt ?? null }
             : { question: attention.question ?? null }),
       };
       candidates.push({ kind: attention.kind, source: attention, target });
