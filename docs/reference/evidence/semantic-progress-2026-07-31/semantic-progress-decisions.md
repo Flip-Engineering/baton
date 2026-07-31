@@ -1,3 +1,96 @@
+# P1-C contract — semantic progress classification + "you must act" surfacing (v2)
+
+(v2 folds the deepseek red-team (`redteam-v1.md`, verdict **UNSOUND**, R-SP-1..10, two P0s).
+The decisive corrections: (1) the AX headline case `awaiting_plan_approval` has an EMPTY
+attention array in the live view — the blocked state is PHASE-derived, so
+`blocked_interaction` must predicate on phase AND attention with a pinned priority (R-SP-1).
+(2) `provider_rate_limited` exists NOWHERE and `rate_limit_event` is dropped unsurfaced at
+`claude-session.mjs:980` — `rate_limited` is CUT from v2 and its preconditions are the named
+successor (R-SP-2). (3) `projectBlockedInteraction` returns `{kind}` WITHOUT summary for
+`approve_plan`/`select_candidate` and uses `decision` (not `answer_decision`) — the
+vocabulary pins the LIVE strings (R-SP-4). (4) `requiredAction`'s actionId is a
+view-digest-dependent token (`_semanticActionId`, `application.mjs:7606-7620`) — carried
+with the re-read caveat, present only when advertised (R-SP-3/8). (5) `no_progress` is
+renamed and thresholded (R-SP-5). (6) the DIAG-1 relationship is a named mapping, not a
+contradiction (R-SP-6). (7) wire-schema whitelists are in the verification scope (R-SP-7).
+(8) wave rows are OUT of the vocabulary-identity row (R-SP-10). Citations restricted to
+verified facts (R-SP-9). v1 retained below as the fold trail.)
+
+## Rules (v2 — amended; the two additions stand)
+
+1. **`progressClass` on the run outline and `runs.list` items — closed enum, total
+   reducer, pinned precedence:**
+   `terminal:<cause>` (terminal, cause verbatim) >
+   `blocked_interaction:<detail>` (a blocking condition holds — detail per rule 2) >
+   `silent` (non-terminal, no blocking condition, `silenceMs` ≥ the NAMED constant
+   `PROGRESS_SILENCE_THRESHOLD_MS` (named in the semantics registry beside the enum; the
+   v1 `no_progress` name is retired — it collides with an existing different use, R-SP-5)) >
+   `progressing`. Basis fields `{silenceMs, meaningfulEventAt}` ride along.
+2. **The blocking predicate is phase-AND-attention, pinned.** `blocked_interaction` fires
+   when EITHER (a) the phase is a blocking phase (`awaiting_plan_approval` → detail
+   `approve_plan`; `selection_required` → `select_candidate`) — INCLUDING with an empty
+   attention array (the AX headline case, red-pinned); OR (b) the attention array carries a
+   blocking item (`answer_question`/`answer_approval`/`answer_decision` → detail
+   `answer_required`; `turn_checkpoint` → `turn_checkpoint`; the live
+   `projectBlockedInteraction` `decision` string maps to `answer_required` — the
+   classification strings are pinned to the LIVE output of `projectBlockedInteraction`
+   (`application.mjs:321-331`), and the wave-side legacy strings (`wave.mjs:115-119`) are
+   named legacy-only). Priority when both hold: the phase-derived block wins (it is the
+   run's own state; attention items are per-worker).
+3. **`requiredAction` — the resolving action, honestly sourced.** When (and only when) the
+   rule-2 predicate holds: `{kind, summary, actionId?}` — `kind` = the semantic action kind
+   that resolves the block (`approve_plan`, `select_candidate`, `answer_question`,
+   `answer_approval`, `answer_decision`, `nudge_turn`); `actionId` = the advertised
+   `_semanticActionId` token IF AND ONLY IF that action is advertised in the current view
+   (absent otherwise — never a fabricated token), carried WITH the caveat that actionIds
+   are view-digest-dependent and a consumer must re-read before acting on a stale view
+   (R-SP-3/8); `summary` = the bounded summary from the attention item when present, else
+   the canonical per-kind summary (e.g. "Plan approval is required to proceed") — never
+   sourced from `projectBlockedInteraction`'s summary-less approve_plan/select_candidate
+   shapes (R-SP-4).
+4. **(v1 rule 3 amended) One vocabulary — with the DIAG-1 mapping NAMED.** The
+   `progressClass` enum is the RUN-VIEW vocabulary. DIAG-1's member-leg liveness states
+   (`progressing|parked|parked_done|stalled|claimable|crashed`) are a MEMBER-level
+   vocabulary that consumes `progressClass` plus checkpoint/claim signals — the mapping
+   table is named in the DIAG contract (R-SP-6), not replaced. Wave `progress()` rows are
+   OUT of v2's identity row (their attention shapes are heterogeneous per R-SP-10; DIAG-1
+   is their consumer).
+5. **(v1 rule 4 stands, extended) No authority moves; wire whitelists in scope.** Both
+   additions are read-side projections; the web/MCP view-serialization whitelists and any
+   schema validators that reject unknown view fields are updated IN THE SAME COMMIT and
+   covered by the verification (R-SP-7); `MAX_RUN_VIEW_BYTES` holds.
+
+## Named successor (cut from v2)
+
+**Rate-limit classification (R-SP-2):** `rate_limit_event` is dropped unsurfaced at
+`claude-session.mjs:980` and no `provider_rate_limited` taxonomy row exists. The honest
+precondition — adapters surface rate-limit receipts as classified provider results (a
+taxonomy row + adapter mapping, per harness) — belongs to issue #10's typed-transitions
+track; until then, `progressClass` has no `rate_limited` member and never prose-guesses.
+
+## Red-first tests (v2 amendments)
+
+- **SP-1+:** the headline case — an `awaiting_plan_approval` run with `attention: []`
+  classifies `blocked_interaction:approve_plan`; priority: a phase-blocked run ALSO
+  carrying an attention item keeps the phase-derived detail; the live
+  `projectBlockedInteraction` `decision` string maps to `answer_required`.
+- **SP-2+:** `requiredAction` per block kind — approve_plan with its canonical summary
+  (projectBlockedInteraction's summary-less shape never leaks); answer_decision with the
+  requestId in summary; actionId present iff advertised (a not-advertised fixture yields
+  `{kind, summary}` with NO actionId field, never a fabricated one); executing the
+  advertised actionId resolves the block end-to-end; a stale actionId after a view change
+  refuses with the existing taxonomy (the re-read caveat exercised).
+- **SP-3+:** vocabulary identity across outline + `runs.list` item (wave rows excluded per
+  rule 4); the wire serialization whitelists carry the new fields (a web round-trip and an
+  MCP tool response include `progressClass`/`requiredAction`); `MAX_RUN_VIEW_BYTES` holds.
+- **SP-4+:** `silent` at exactly the named threshold; the registry carries
+  `PROGRESS_SILENCE_THRESHOLD_MS` beside the enum; basis fields present; timing fields and
+  the `blockedInteraction` one-liner unchanged.
+- **SP-5:** NO `rate_limited` member exists in the enum (source-scan + registry dump), and
+  a limit-shaped prose message never classifies as anything but `progressing`/`silent`.
+
+---
+
 # P1-C contract — semantic progress classification + "you must act" surfacing (v1)
 
 (Seed: operator directive 2026-07-31 — "#10 AX spine: blocked_interaction classification +
