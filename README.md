@@ -34,15 +34,20 @@ have to assemble manually. `Claude → (Codex + GLM)` and `Codex → (Claude + G
 ## Status
 
 Baton is a runnable dependency-light Node ESM reference implementation, not a prototype skeleton.
-The canonical suite is **2900/2900 green**. The fleet driver (Phases 1–65), the AX/lifecycle spine
+The canonical suite is **2922/2922 green**. The fleet driver (Phases 1–65), the AX/lifecycle spine
 (Phases 90–92.x), and the closed Baton Program IR slices (93a.1–93a.3a, issue #9) are shipped
-underneath; the **agent-orchestration stack** is now first-class: waves, the reflexive layer
-(decision channel, boards, packages, `context_eval`), the REPL layer, knowledge horizons
-(task/workflow/project graphs with orchestrator-gated elevation), the worker scratchpad
-(issue #33), and turn-checkpoint steering (issue #31). The unified control-surface grammar
-(issue #43, docs/36) has landed M0 (conformance harness, #44) and M1 (canonical aliases +
-same-surface do-blocks). Progress ledger: **[docs/PROGRESS.md](docs/PROGRESS.md)**.
-Open work: **[issues #2–#46](https://github.com/wahargis/baton/issues)**.
+underneath; the **agent-orchestration stack** is now first-class: waves with durable identity
+(attach-and-harvest + re-drive-the-failed, 93B), a productized wave driver (`createWaveDriver`,
+issue #46), the reflexive layer (decision channel, boards, packages, `context_eval`), the REPL
+layer, knowledge horizons (task/workflow/project graphs with orchestrator-gated elevation),
+the worker scratchpad (issue #33), and turn-checkpoint steering (issue #31). The unified
+control-surface grammar (issue #43, docs/36) has landed M0–M4b plus the server-truth
+conformance rung (executable per-profile inventories, generated docs, dead-path resolution,
+`run.debug` registered). Fleet: Claude (opus/sonnet), Codex gpt-5.6-sol, Grok 4.5, GLM 5.2,
+and DeepSeek (`deepseek-v4-flash` primary, `deepseek-v4-pro[1m]` pre-update opt-in) are live
+worker families; Kimi k3 rides the Claude credential path (adapter over-strictness is issue
+#54). Progress ledger: **[docs/PROGRESS.md](docs/PROGRESS.md)**.
+Open work: **[issues #2–#55](https://github.com/wahargis/baton/issues)**.
 
 ## Architecture, plainly
 
