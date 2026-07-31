@@ -109,6 +109,12 @@ const DRIVER_KINDS = Object.freeze(new Set(['wave']));
 // `driver.recorded` envelope; no dedicated projection map (docs/35 §2.2 rule 4: "stays an
 // event log"). Its ONLY consumer in 31-a is the degenerate-auto-settle liveness scan.
 const APPLICATION_STEERING_REGISTERED_KIND = 'steering.registered';
+// 93B (wave durability, attach-and-harvest): `wave.started` mints pre-loop, once per waveId
+// (idempotency-keyed so every member's run.start can carry it and only the first lands);
+// `wave.driver_detached` mints at attach-time, keyed `wave.driver_detached:${waveId}` — both ride
+// the same generic `driver.recorded` envelope as steering.registered, no dedicated projection.
+const APPLICATION_WAVE_STARTED_KIND = 'wave.started';
+const APPLICATION_WAVE_DRIVER_DETACHED_KIND = 'wave.driver_detached';
 const READ_ONLY_RESULT_DEFINITION = Object.freeze([
   'A bounded evidence-backed textual/result capsule answers the declared read-only objective.',
   'Sources, derivations, contradictions, verification, and cleanup remain inspectable.',
@@ -139,7 +145,10 @@ export const APPLICATION_COMMAND_DEFINITIONS = Object.freeze({
   'application.help': Object.freeze({ args: Object.freeze(['topic', 'depth', 'runId']), capabilities: Object.freeze(['observe']), web: true, mcp: true, mcpStateful: false, reconcilable: true }),
   'runs.list': Object.freeze({ args: Object.freeze([]), capabilities: Object.freeze(['observe']), web: true, mcp: true, mcpStateful: false, reconcilable: true }),
   'run.start': Object.freeze({ args: Object.freeze(['intent']), capabilities: Object.freeze(['control', 'observe']), web: true, mcp: true, mcpStateful: true, reconcilable: true }),
-  'run.inspect': Object.freeze({ args: Object.freeze(['runId', 'depth', 'section', 'item', 'offset', 'pageCursor', 'recipient', 'cursor', 'waitMs']), capabilities: Object.freeze(['observe']), web: true, mcp: true, mcpStateful: false, reconcilable: true }),
+  // `mintWaveDetached` (93B): an attach-only side-channel flag consumed solely by the direct
+  // command port (waves.attach) — never advertised through the web/mcp JSON schemas, which stay
+  // byte-stable in application-semantics.mjs.
+  'run.inspect': Object.freeze({ args: Object.freeze(['runId', 'depth', 'section', 'item', 'offset', 'pageCursor', 'recipient', 'cursor', 'waitMs', 'mintWaveDetached']), capabilities: Object.freeze(['observe']), web: true, mcp: true, mcpStateful: false, reconcilable: true }),
   'run.episode': Object.freeze({ args: Object.freeze(['runId', 'topic', 'detail', 'role', 'generation', 'pageCursor', 'cursor', 'waitMs']), capabilities: Object.freeze(['observe']), web: true, mcp: true, mcpStateful: false, reconcilable: true }),
   'run.workstreams': Object.freeze({ args: Object.freeze(['runId', 'role', 'generation', 'cursor', 'waitMs']), capabilities: Object.freeze(['observe']), web: true, mcp: true, mcpStateful: false, reconcilable: true }),
   'run.workstream.notify': Object.freeze({ args: Object.freeze(['runId', 'role', 'generation', 'message', 'delivery']), capabilities: Object.freeze(['control', 'observe']), web: true, mcp: true, mcpStateful: true, reconcilable: true }),
@@ -1129,9 +1138,18 @@ function normalizeIntent(value) {
     // its working intent by calling it again — so without the key here, any caller passing
     // driverKind is refused `application_intent_invalid` before the handler body is reached.
     'runId', 'objective', 'resultIntent', 'profile', 'route', 'scope', 'composition', 'driverKind',
+    // 93B: `waveId`/`waveRole` bind this run to a wave, carried into steering.registered so a
+    // driver dying mid-loop leaves already-started members discoverable; `waveStart` (roster +
+    // idempotencyKey) rides only the first member's run.start and mints the pre-loop wave.started
+    // record. None of these describe what the run IS — same non-identity treatment as driverKind.
+    'waveId', 'waveRole', 'waveStart',
   ]);
   const hasResultIntent = Object.hasOwn(value ?? {}, 'resultIntent');
   const hasDriverKind = Object.hasOwn(value ?? {}, 'driverKind');
+  const hasWaveId = Object.hasOwn(value ?? {}, 'waveId');
+  const hasWaveRole = Object.hasOwn(value ?? {}, 'waveRole');
+  const hasWaveStart = Object.hasOwn(value ?? {}, 'waveStart');
+  const waveStart = value?.waveStart;
   if (!value || typeof value !== 'object' || Array.isArray(value)
     || Object.keys(value).some((key) => !allowed.has(key))
     || !Object.hasOwn(value, 'objective')
@@ -1140,6 +1158,13 @@ function normalizeIntent(value) {
     // defense in depth behind the client-layer whitelist, the same two-tier shape resultIntent
     // already uses.
     || (hasDriverKind && !DRIVER_KINDS.has(value.driverKind))
+    || (hasWaveId && !validId(value.waveId))
+    || (hasWaveRole && !validId(value.waveRole))
+    || (hasWaveStart && (!waveStart || typeof waveStart !== 'object' || Array.isArray(waveStart)
+      || Object.keys(waveStart).sort().join(',') !== 'idempotencyKey,roster'
+      || !validId(waveStart.idempotencyKey)
+      || !Array.isArray(waveStart.roster) || waveStart.roster.length === 0 || waveStart.roster.length > 64
+      || waveStart.roster.some((role) => !validId(role))))
     || (value.runId !== undefined && !validId(value.runId))
     || !validText(value.objective) || (value.profile !== undefined && !validId(value.profile))
     || (value.scope !== undefined && (!Array.isArray(value.scope) || value.scope.length === 0 || value.scope.length > 64
@@ -1152,8 +1177,12 @@ function normalizeIntent(value) {
     ...(hasResultIntent ? { resultIntent: value.resultIntent } : {}),
     // Deliberately NOT folded into intentDigest or runId derivation: driverKind describes who is
     // driving a run, not what the run is. Two calls with identical objective/profile/route/scope
-    // must resolve to the SAME run whether or not a wave happens to be the caller.
+    // must resolve to the SAME run whether or not a wave happens to be the caller. Same rationale
+    // for waveId/waveRole/waveStart below.
     ...(hasDriverKind ? { driverKind: value.driverKind } : {}),
+    ...(hasWaveId ? { waveId: value.waveId } : {}),
+    ...(hasWaveRole ? { waveRole: value.waveRole } : {}),
+    ...(hasWaveStart ? { waveStart: { idempotencyKey: waveStart.idempotencyKey, roster: [...waveStart.roster] } } : {}),
     profile: value.profile ?? null,
     route: normalizeRouteSelector(value.route),
     scope: value.scope === undefined ? null : [...value.scope].sort(),
@@ -1401,7 +1430,8 @@ export function validateApplicationCommandArgs(name, args) {
         || !/^[A-Za-z0-9_-]+$/u.test(args.pageCursor)))
       || (args.recipient !== undefined && !validId(args.recipient))
       || (args.cursor !== undefined && (!Number.isSafeInteger(args.cursor) || args.cursor < 0))
-      || (args.waitMs !== undefined && (!Number.isSafeInteger(args.waitMs) || args.waitMs <= 0))) {
+      || (args.waitMs !== undefined && (!Number.isSafeInteger(args.waitMs) || args.waitMs <= 0))
+      || (args.mintWaveDetached !== undefined && args.mintWaveDetached !== true)) {
       throw applicationError('Run inspection request is invalid', 'application_inspect_invalid');
     }
     if (args.waitMs !== undefined && args.cursor === undefined) {
@@ -4069,10 +4099,26 @@ export class BatonApplication {
       && typeof this.driver.coordination.recordDriver === 'function') {
       this.driver.coordination.recordDriver(APPLICATION_STEERING_REGISTERED_KIND, {
         runId: intent.runId, driverKind: intent.driverKind, actor: owner.actor,
+        ...(intent.waveId !== undefined ? { waveId: intent.waveId } : {}),
+        ...(intent.waveRole !== undefined ? { waveRole: intent.waveRole } : {}),
       }, {
         actor: owner.actor,
         key: `run.steering_registered:${intent.runId}`,
       });
+      // 93B rule 1: `wave.started` mints pre-loop — durable, idempotency-keyed on waveId. Every
+      // member's run.start can carry the SAME `waveStart` payload; `_append`'s duplicate-key
+      // dedup (coordination-store.mjs) means only the first to land actually mints it, so a
+      // driver dying between member 1 and member 2 still leaves the record durable.
+      if (intent.waveId !== undefined && intent.waveStart !== undefined) {
+        this.driver.coordination.recordDriver(APPLICATION_WAVE_STARTED_KIND, {
+          waveId: intent.waveId,
+          roster: intent.waveStart.roster,
+          idempotencyKey: intent.waveStart.idempotencyKey,
+        }, {
+          actor: owner.actor,
+          key: `wave.started:${intent.waveId}`,
+        });
+      }
     }
     const normalizedPlan = normalizePlanRequest({
       goal: { goalId: goal.goalId, version: goal.version, digest: goal.digest },
@@ -10090,6 +10136,20 @@ export class BatonApplication {
     this._authorizeRecursiveCommand('run.status', request.runId, principal, context);
     await this._authorize('run.status', principal, request.runId, authorizationSubject);
     const current = this._findRun(request.runId, { allowUnavailableProfile: true });
+    // 93B rule 4: `waves.attach` mints `wave.driver_detached` at attach-time (never at close) —
+    // this is a pure side effect on the coordination log, never on the returned outline/view, and
+    // only fires when the request explicitly asks for it (ordinary run.inspect/runs.attach never
+    // sets this flag) and the run is actually a wave member.
+    if (request.mintWaveDetached === true
+      && typeof this.driver.coordination.recordDriver === 'function') {
+      const waveId = this._runWaveId(request.runId);
+      if (waveId !== null) {
+        this.driver.coordination.recordDriver(APPLICATION_WAVE_DRIVER_DETACHED_KIND, { waveId }, {
+          actor: principal.actor,
+          key: `wave.driver_detached:${waveId}`,
+        });
+      }
+    }
     if (!current.profile) {
       const view = this._withContextProjection(
         current, await this._buildView(current, this.principals.observer),
@@ -10572,6 +10632,20 @@ export class BatonApplication {
         'application_workflow_member_stop_unavailable');
     }
     return this.stop(rawRequest.runId, reason, principal);
+  }
+
+  // 93B: the durable referent for "this run belongs to waveId" is its own steering.registered
+  // record — no separate per-run projection map, same event-log-only discipline as the liveness
+  // scan this mirrors (coordinator.mjs's `hasDriver` check).
+  _runWaveId(runId) {
+    const events = this.driver.coordination.events();
+    for (const event of events) {
+      if (event.kind === 'driver.recorded' && event.payload?.kind === APPLICATION_STEERING_REGISTERED_KIND
+        && event.payload?.runId === runId && event.payload?.waveId !== undefined) {
+        return event.payload.waveId;
+      }
+    }
+    return null;
   }
 
   async listRuns(rawPrincipal, rawContext = null) {
