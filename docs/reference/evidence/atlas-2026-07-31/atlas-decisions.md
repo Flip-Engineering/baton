@@ -1,3 +1,68 @@
+# ATLAS epic contract — worker-facing orientation + structural trust-gate evidence (v2)
+
+(v2 folds the glm red-team (`redteam-v1.md`, verdict **SOUND-WITH-FOLDS**, R-AT-1..7, no P0 —
+glm-5.2@high's first red-team seat). The thesis and the rung ladder stand; four P1 plumbing
+folds: (1) "inherits the Cartographer binding" is FALSE — Cartographer is a deployment
+singleton forwarding a closed ctx, not a per-worker binding; the overlay binding needs a
+registry authority-shape change (R-AT-1). (2) `atlas-structural` is instantiated only in
+tests — the composed deployment throws `representation_source_unavailable` unless the opted-in
+capability set names it (R-AT-2). (3) `run.evidence` is a read projection — structural facts
+enter via content-addressed artifact + ledger event and are CITED on read, the DG-3 model
+(R-AT-3). (4) The registration locus pins to `createDriver`'s real assembly path (R-AT-4).
+P2s: carded-op count corrected (eight ship, R-AT-5); the opted-in set is named explicitly
+(R-AT-6); the ceiling citation names the enforcing gate (R-AT-7). v1 retained below.)
+
+## Rules (v2 — amended; the push-first thesis, rung ladder, and non-goals stand)
+
+1. **ATLAS-1 — push-first worker orientation, with the registry authority-shape change
+   named.** `orientWorker` gains a symbol-focus shape AND the registry's invocation context
+   (`_ctx`/`_capabilityCtx`) is extended to carry a per-call `worktreeRoot`; `_orientWorker`
+   resolves `handle.worktree` + the worker's `indexEpoch` and passes `worktreeRoot` to both
+   the Cartographer `orientation.slice` and any direct atlas-index
+   `symbol.search`/`symbol.references` — per-worker overlay correctness is a registry change,
+   not an orientWorker-local one (R-AT-1). "Inherits the Cartographer binding" is DELETED:
+   Cartographer forwards a closed ctx and is a deployment singleton. AT-1's overlay-freshness
+   leg is marked as requiring the registry change. Pull mode stays the deferred
+   `ATLAS_QUERY:` successor.
+2. **ATLAS-1b — deployment composition names the FULL opted-in set.** The opt-in Atlas
+   registration (pinned to `createDriver`'s real assembly path — an opt-in default
+   constructing the capability set, R-AT-4) registers EXPLICITLY `{atlas-index,
+   atlas-structural, cartographer}` with artifact roots and policy ceilings (R-AT-6) — never
+   atlas-index alone (the producer's `cards().filter(name===mapping.capability)` must find
+   exactly one card or the gate throws `representation_source_unavailable`,
+   `atlas-representation-producer.mjs:143-145/:289`; R-AT-2). Language-ceiling honesty
+   stands (non-JS/TS repos get the honest empty capability).
+3. **ATLAS-2 — structural evidence enters via artifact + ledger, cited on read.** On
+   verification, the hub computes `diff.structural` (R1) over the worker's committed diff and
+   writes a content-addressed, byte-bounded structural-class artifact
+   (`pure_reformat|logic_changed|signature_changed` + per-file counts) PLUS a ledger event;
+   `run.evidence` PROJECTS/cites its digest on read (the DG-3 model — `run.evidence` is a
+   read-only observe projection, `application.mjs:165/:4428-4456`; R-AT-3). The change-class
+   is coordinator-computed trusted fact in the LOG, distinct from worker prose (the
+   contract's own grounding, `reviews/frontier-features/representation.md:36`). It informs,
+   never adjudicates, in v2. The ceiling citation names the ENFORCING gate
+   (`atlas-representation-ceiling.mjs:56-72`, R-AT-7); CPG-delta triage stays the named
+   follow-on with its lexical-binding ceiling honestly stamped.
+4. **(rule 4 stands — bounded, reverifiable, ceiling-honest; "eight ops carded incl.
+   symbol.search/references" is the corrected count, R-AT-5.)**
+
+## Red-first tests (v2 amendments)
+
+- **AT-1:** the overlay-freshness leg asserts the registry context carries `worktreeRoot`
+  (the registry change ships in the same rung); a worker-side edit to the FOCUSED file
+  changes the slice after the overlay refresh; an unrelated edit does not.
+- **AT-2:** the composed (NOT hand-wired) deployment registers `{atlas-index,
+  atlas-structural, cartographer}` with budgets and ceilings; `cards()` contains
+  `atlas-structural` BEFORE any gate verification runs (the R-AT-2 red-row gap pinned);
+  non-JS/TS fixture repo gets the honest empty card.
+- **AT-3:** a gate verification writes the content-addressed structural-class artifact +
+  ledger event; the digest is observable through `run.evidence` ON READ (never "recorded
+  in" it); the verdict itself is unchanged; artifacts byte-bounded with the ceiling
+  declaration.
+- **AT-4:** unchanged (honest empty ceiling for non-JS/TS workers).
+
+---
+
 # ATLAS epic contract — worker-facing orientation + structural trust-gate evidence (v1)
 
 (Seed: operator directive 2026-07-31 — "advanced diagnostic or engineering features enabled

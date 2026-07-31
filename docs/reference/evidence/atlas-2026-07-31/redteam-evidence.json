@@ -1,0 +1,50 @@
+{
+  "schemaVersion": 1,
+  "startedAt": "2026-07-31T22:23:33.829Z",
+  "members": [
+    "atlas-redteam-glm"
+  ],
+  "outcomes": [
+    {
+      "role": "atlas-redteam-glm",
+      "phase": "result_ready",
+      "terminal": false,
+      "narrative": "1 worker(s) active, 1 done.",
+      "resultSha": "58a29f7d60355848f52658e7046187b88e1227a5"
+    }
+  ],
+  "steering": [],
+  "stops": [
+    {
+      "role": "atlas-redteam-glm",
+      "stop": null,
+      "resources": {
+        "state": "stopped",
+        "cleanupState": "stopped",
+        "ownedCount": 0
+      },
+      "ownedCount": 0
+    }
+  ],
+  "progress": [],
+  "pumpDrained": true,
+  "remainingCount": 0,
+  "residueUnknown": false,
+  "basis": "completed",
+  "nudges": [
+    {
+      "role": "atlas-redteam-glm",
+      "requestId": "pause:baton-76983ce93f8993173ab9b810-work:168",
+      "at": "2026-07-31T22:31:54.654Z"
+    }
+  ],
+  "claims": [
+    {
+      "role": "atlas-redteam-glm",
+      "requestId": "pause:baton-76983ce93f8993173ab9b810-work:198",
+      "at": "2026-07-31T22:33:34.949Z",
+      "code": "claimed"
+    }
+  ],
+  "salt": null
+}
