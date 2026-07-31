@@ -1,0 +1,50 @@
+{
+  "schemaVersion": 1,
+  "startedAt": "2026-07-31T22:23:22.676Z",
+  "members": [
+    "diagnostics-redteam-grok"
+  ],
+  "outcomes": [
+    {
+      "role": "diagnostics-redteam-grok",
+      "phase": "result_ready",
+      "terminal": false,
+      "narrative": "1 worker(s) active, 1 done.",
+      "resultSha": "f3f4748065942743069b78f653f64dd341f8d013"
+    }
+  ],
+  "steering": [],
+  "stops": [
+    {
+      "role": "diagnostics-redteam-grok",
+      "stop": null,
+      "resources": {
+        "state": "stopped",
+        "cleanupState": "stopped",
+        "ownedCount": 0
+      },
+      "ownedCount": 0
+    }
+  ],
+  "progress": [],
+  "pumpDrained": true,
+  "remainingCount": 0,
+  "residueUnknown": false,
+  "basis": "completed",
+  "nudges": [
+    {
+      "role": "diagnostics-redteam-grok",
+      "requestId": "pause:baton-76d809f669cfc3880c3d7313-work:717",
+      "at": "2026-07-31T22:27:43.429Z"
+    }
+  ],
+  "claims": [
+    {
+      "role": "diagnostics-redteam-grok",
+      "requestId": "pause:baton-76d809f669cfc3880c3d7313-work:1022",
+      "at": "2026-07-31T22:28:03.467Z",
+      "code": "claimed"
+    }
+  ],
+  "salt": null
+}

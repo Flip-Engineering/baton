@@ -1,3 +1,94 @@
+# Diagnostics epic contract — run.debug/run.evidence as the diagnostic surface (v2)
+
+(v2 folds the grok red-team (`redteam-v1.md`, verdict **UNSOUND**, R-DG-1..9). The two P0s:
+DIAG-2's centerpiece `offendingPaths` does NOT exist in durable authority — the trust gate
+deliberately mints digests-only `pathScopeEvidence` (`coordinator.mjs:10860-10872`, pinned
+by `phase73-required-effects.test.mjs:316-321`), and rule 1's projection-only discipline
+forbids inventing it; and DIAG-1's state machine pinned no predicates, windows, or
+thresholds, so two implementers would ship incompatible classifiers. Also folded: the gate
+enum is pinned to the live code set (R-DG-3); `run.debug`'s #53 closed shapes are extended
+by whitelist amendment, not reopened (R-DG-4); DIAG-5 rides MCP/embedded `context_eval` only
+(the CLI verb refuses at parse per CS v2 — the contradiction deleted, R-DG-5); the revision
+channel is named exactly (`run.feedback` with the gate-cause payload, R-DG-6); DIAG-5's
+authority is per-run, never cross-run "run sets" (R-DG-7); the red battery gains the
+divergence pins (R-DG-8); the rungs reorder DIAG-1 after its predicates exist (R-DG-9).
+v1 retained below as the fold trail.)
+
+## Rules (v2 — amended; the rule-1 projection discipline and the five-question framing stand)
+
+1. **(rule 1 stands — projection-only over existing authority; whitelist-only; sanitized
+   through `verifier-diagnostics.mjs` only.)**
+2. **DIAG-1 — member progress classification with PINNED predicates.** `run.debug`'s member
+   leg and `wave.progress()` rows gain `{state, basis}` where state is computed by ONE named
+   reducer over the per-member signals (checkpoint presence, durable claim-bit per
+   bidirectional v2 rule 1, `changedPathsDigest` delta across the caller's own two most
+   recent reads, terminal phase): `crashed` (terminal with failure cause) > `claimable`
+   (checkpoint with durable claim AND unchanged digest across the two reads) > `parked_done`
+   (checkpoint with durable claim, digest changed or no second read yet) > `parked`
+   (checkpoint, no claim) > `stalled` (no checkpoint, unchanged digest across two reads
+   spanning ≥ the driver's poll interval) > `progressing` (anything else). `basis` carries
+   the concrete signals (digest-changed bool, checkpoint requestId, claim presence,
+   phase) — never a bare label. The classifier is pure projection; the wave driver's OWN
+   steering predicates stay its own (no shared-machinery coupling claimed).
+3. **DIAG-2 — gate-cause from EXISTING authority, honestly shaped.** On a gate refusal,
+   `run.debug`'s failure leg carries `{gate, detail}` where `gate` is pinned to the LIVE
+   code set observed at the gate (`red_green`, `coverage`, `route_mismatch`,
+   `forbidden_effect`, `worker_path_scope_violation` → serialized `scope`, plus `unknown`
+   as the honest fallback) and `detail` carries what authority actually holds: for
+   `scope`, the DIGESTS (`outOfScopeChangedPathsDigest` + counts) — the deliberate
+   digests-only design (`coordinator.mjs:10860-10872`) is NOT reopened in this contract;
+   naming offending path STRINGS requires a new durable mint, which is the named successor
+   item (below), not a projection. For `red_green`/`coverage`, a sanitized bounded tail via
+   `verifier-diagnostics.mjs`. The worker-facing revision channel is exactly
+   `run.feedback` (the shipped channel) with the same `{gate, detail}` payload in its
+   structured inputs — no new seam (R-DG-6).
+4. **DIAG-3 — the #28 deferral, landed by whitelist amendment.** `wire.frame_degraded` and
+   stream-death/crash causes join `run.debug`'s failure/writeReceipts legs as whitelisted
+   receipt summaries (counts, last-code, bounded) — the #53 closed `failure` object is
+   AMENDED by explicit whitelist addition in its own contract's amendment style (the #53
+   ban-list discipline: named additions, never raw payloads, R-DG-4).
+5. **DIAG-4 — failure-capture artifact (unchanged from v1 rule 5; capture-only, NOT
+   Vantage; content-addressed; citable from `run.evidence` and `run.debug`).**
+6. **DIAG-5 — diagnostic programs over PER-RUN authority.** Deployment-pinned `context_eval`
+   programs compute diagnostic roll-ups over ONE run's authority (stalled-member roll-up,
+   refusal-kind histogram, degradation count for that run) — cross-run fleet views are OUT
+   (`contextEval` authority is per-run, R-DG-7). Invocation via the embedded facade's
+   `run.context().evaluate` and MCP `baton_context_eval`; the CLI verb stays a parse-time
+   refusal per the CS v2 contract (the v1 contradiction deleted, R-DG-5); results citable
+   as `cell:` bindings.
+
+## Rungs (reordered per R-DG-9)
+
+- **DG-1 = DIAG-3 + DIAG-2** (the deferral + the honestly-shaped gate-cause).
+- **DG-2 = DIAG-1** (after the pinned predicates; no dependency on the bidirectional
+  claim-bit for the `parked`/`stalled`/`progressing`/`crashed` subset — the claim states
+  activate when the durable origin lands).
+- **DG-3 = DIAG-4** · **DG-4 = DIAG-5.**
+
+## Named successor (out of scope)
+
+**Offending-path minting:** a new durable trust-gate record carrying bounded offending path
+strings (vs the deliberate digests-only posture) — its own contract with a privacy/size
+analysis, red-teamed like #33.
+
+## Red-first tests (v2 amendments)
+
+- **DG-1a:** degraded-frame/stream-death whitelisted summaries (counts + last code), never
+  raw frames; the #53 closed-shape amendment is pinned by source-scan of the whitelist.
+- **DG-1b:** a scope refusal carries `{gate:'scope', detail:{digests, counts}}` exactly —
+  NO path strings (the deliberate posture pinned); a red_green refusal carries the sanitized
+  tail; an unrecognized gate code serializes `unknown`; a planted secret-shaped line never
+  appears; `run.feedback` carries the same payload to the worker.
+- **DG-2:** the pinned reducer's boundaries: each state transition asserted on scripted
+  fixtures (checkpoint+claim+unchanged → claimable; checkpoint+claim+changed → parked_done;
+  checkpoint no-claim → parked; no-checkpoint unchanged-digest two-reads → stalled; terminal
+  failure → crashed; else progressing); `basis` carries the concrete signals.
+- **DG-3:** capture artifact pinned + cited (as v1).
+- **DG-4:** per-run roll-up programs over `context_eval` (embedded + MCP paths), `cell:`
+  citation; a cross-run attempt refuses honestly.
+
+---
+
 # Diagnostics epic contract — run.debug/run.evidence as the diagnostic surface (v1)
 
 (Seed: operator directive 2026-07-31 — "advanced diagnostic approaches to improved coding
