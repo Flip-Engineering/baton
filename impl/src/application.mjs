@@ -352,6 +352,9 @@ function projectDecisionAttention(coordinator, workers) {
       })),
       allowFreeResponse: interaction.allowFreeResponse === true,
       recommended: interaction.recommended ? wrapProse(handle.id, interaction.recommended) : null,
+      // Bidirectional v2 rule 3/5 surface: deadline is recorded at admission and swept; project it
+      // so an orchestrator can prioritize urgency without consulting a local clock for expiry.
+      deadlineAt: interaction.deadlineAt ?? null,
     });
   }
   return entries;
@@ -6774,6 +6777,9 @@ export class BatonApplication {
       ...recoveryAttention, ...preservationAttention,
     ].slice(0, MAX_ATTENTION);
     const blockedInteraction = projectBlockedInteraction(phase, attention);
+    const decisionSettled = typeof this.driver.coordinator.decisionSettledProjection === 'function'
+      ? this.driver.coordinator.decisionSettledProjection(workers.map((handle) => handle.id))
+      : [];
     const terminalCause = attempts.find((attempt) => attempt.terminalCause)?.terminalCause ?? null;
     const verificationState = allAccepted ? 'mechanically_verified'
       : candidates.length > 0 && allSettled ? 'partially_verified'
@@ -6872,6 +6878,7 @@ export class BatonApplication {
         + revisionAttention.length + recoveryAttention.length + preservationAttention.length
         > attention.length,
       blockedInteraction,
+      decisionSettled,
       verification: {
         state: verificationState,
         verdict: candidates.length > 0 ? {
@@ -7099,14 +7106,17 @@ export class BatonApplication {
     if (node?.taskId && typeof this.driver.coordinator.pausedTurns === 'function') {
       for (const paused of this.driver.coordinator.pausedTurns({ taskId: node.taskId })) {
         if (!runWorkerIds.has(paused.workerId)) continue;
-        allAttention.push({
+        const checkpoint = {
           kind: 'turn_checkpoint',
           workerId: paused.workerId,
           taskId: paused.taskId,
           turnEpoch: paused.turnEpoch,
           changedPathsDigest: paused.changedPathsDigest,
           requestId: paused.pauseId,
-        });
+        };
+        // Bidirectional v2 rule 1: claim rides the durable origin projected by pausedTurnStatus.
+        if (paused.claim) checkpoint.claim = paused.claim;
+        allAttention.push(checkpoint);
       }
     }
     if (phase === 'interruption_uncertain') {
@@ -7203,6 +7213,10 @@ export class BatonApplication {
       else phase = 'work_completed';
     }
     const blockedInteraction = projectBlockedInteraction(phase, attention);
+    // Bidirectional v2 rule 5: bounded durable disposition tombstones (answered|expired|…).
+    const decisionSettled = typeof this.driver.coordinator.decisionSettledProjection === 'function'
+      ? this.driver.coordinator.decisionSettledProjection(workers.map((handle) => handle.id))
+      : [];
     const canAdopt = !readOnlyResult && resultSha && preservation?.state === 'pinned'
       && current.profile.resultPolicy.mode === 'manual' && adoptionState(adoption) !== 'adopted';
     const canReview = !readOnlyResult && current.profile.reviewPolicy.mode === 'required' && semanticReview.state === 'semantics_unverified';
@@ -7285,6 +7299,7 @@ export class BatonApplication {
       attention,
       attentionTruncated,
       blockedInteraction,
+      decisionSettled,
       verification: {
         state: verificationState,
         stability: resultStability,
@@ -7453,6 +7468,7 @@ export class BatonApplication {
     let providerCalls = 0;
     let tokens = 0;
     let lastActivityAt = null;
+    let contentEvents = 0;
     for (const handle of workers) {
       const workerId = typeof handle === 'string' ? handle : handle?.id;
       if (typeof workerId !== 'string' || typeof this.driver.log?.read !== 'function') continue;
@@ -7461,6 +7477,11 @@ export class BatonApplication {
           providerCalls += 1;
         } else if (event?.kind === 'resource.tokens' && Number.isSafeInteger(event.payload?.tokens)) {
           tokens += event.payload.tokens;
+        } else if (event?.kind === 'content.message' || event?.kind === 'content.tool_call') {
+          // The universal liveness signal: every adapter emits content events mid-turn
+          // (grok emits no resource.* events at all — the BD-A3 wave stall-died on exactly
+          // that gap). 'Noise' for progress-meaning, exactly right for liveness.
+          contentEvents += 1;
         } else {
           continue;
         }
@@ -7469,7 +7490,7 @@ export class BatonApplication {
         }
       }
     }
-    return deepFreeze({ providerCalls, tokens, lastActivityAt });
+    return deepFreeze({ providerCalls, tokens, contentEvents, lastActivityAt });
   }
 
   _progressTiming(current, view) {
@@ -9110,7 +9131,12 @@ export class BatonApplication {
         ...(attention.kind === 'answer_approval'
           ? { approvalKind: attention.approvalKind ?? null }
           : attention.kind === 'answer_decision'
-            ? { question: attention.question ?? null, options: attention.options ?? [], allowFreeResponse: attention.allowFreeResponse === true }
+            ? {
+              question: attention.question ?? null,
+              options: attention.options ?? [],
+              allowFreeResponse: attention.allowFreeResponse === true,
+              deadlineAt: attention.deadlineAt ?? null,
+            }
             : { question: attention.question ?? null }),
       };
       candidates.push({ kind: attention.kind, source: attention, target });

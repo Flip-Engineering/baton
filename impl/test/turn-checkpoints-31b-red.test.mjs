@@ -638,8 +638,14 @@ test('F3: the coordinator exposes still-unconsumed pause records for the `turn_c
   const kit = await pausedKit();
   const rows = kit.coordinator.pausedTurns({ taskId: kit.task.id });
   assert.equal(rows.length, 1);
+  // BD v2: a completed park also carries `claim` from the durable pause-origin field
+  // (absent only for pre-v2 events without origin) — status completed, summary wrapped
+  // untrusted or null when the turn carried none.
   assert.deepEqual(Object.keys(rows[0]).sort(),
-    ['changedPathsDigest', 'consumer', 'pauseId', 'state', 'taskId', 'turnEpoch', 'workerId']);
+    ['changedPathsDigest', 'claim', 'consumer', 'pauseId', 'state', 'taskId', 'turnEpoch', 'workerId']);
+  assert.equal(rows[0].claim.status, 'completed');
+  assert.ok(rows[0].claim.summary === null
+    || (typeof rows[0].claim.summary === 'object' && rows[0].claim.summary.untrusted === true));
   assert.equal(rows[0].pauseId, kit.pauseId);
   assert.equal(rows[0].workerId, kit.handle.id);
   // `validText(attention.requestId, 4_096)` — a generic non-empty/no-null-byte/<=4096-byte check.
