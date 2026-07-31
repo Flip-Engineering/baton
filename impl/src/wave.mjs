@@ -7,6 +7,7 @@
 // stopMember ↔ selective stop, evidence() ↔ the wave trace. It holds no durable state of its own.
 
 import { statSync } from 'node:fs';
+import { createHash, randomUUID } from 'node:crypto';
 
 import { applicationTerminal, canonicalRunPhase } from './application-semantics.mjs';
 
@@ -168,6 +169,15 @@ export async function createWave(baton, options = {}) {
   if (new Set(members.map(({ role }) => role)).size !== members.length) {
     throw waveError('wave member roles contain duplicates');
   }
+  // 93B rule 1: durable wave identity minted pre-loop. An explicit options.idempotencyKey
+  // means "this is one logical wave" — a client retry derives the same waveId, and the
+  // pre-loop `wave.started` record (minted inside the first member's run.start) dedups by
+  // its key so only the first attempt actually mints it. A fresh uuid means a fresh wave.
+  const idempotencyKey = options.idempotencyKey !== undefined
+    ? validateWaveIdempotencyKey(options.idempotencyKey)
+    : randomUUID();
+  const waveId = `wave:${createHash('sha256').update(idempotencyKey).digest('hex').slice(0, 32)}`;
+  const roster = members.map((member) => member.role);
 
   const state = {
     startedAt: Date.now(),
@@ -186,7 +196,14 @@ export async function createWave(baton, options = {}) {
       const route = member.exact
         ? { exact: member.exact }
         : { harness: member.harness, model: member.model, effort: member.effort };
-      entry.run = await baton.runs.start(member.objective, { ...route, scope: [...member.scope], driverKind: 'wave' });
+      // 93B: waveId/waveRole bind each run to this wave (into steering.registered, so a
+      // driver dying mid-loop leaves members discoverable); waveStart rides the first
+      // member's start to mint the pre-loop wave.started record.
+      entry.run = await baton.runs.start(member.objective, {
+        ...route, scope: [...member.scope], driverKind: 'wave',
+        waveId, waveRole: member.role,
+        waveStart: { roster, idempotencyKey },
+      });
       if (approve) await entry.run.approve();
     } catch (error) {
       entry.startError = { code: error?.code ?? null, message: String(error?.message ?? error) };
@@ -194,6 +211,92 @@ export async function createWave(baton, options = {}) {
     state.members.set(member.role, entry);
   }
 
+  return createWaveHandle({ repoRoot, members, state });
+}
+
+function validateWaveIdempotencyKey(value) {
+  if (typeof value !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/u.test(value)) {
+    throw waveError('wave idempotencyKey is invalid', 'wave_idempotency_invalid');
+  }
+  return value;
+}
+
+// 93B rule 2: attach-and-harvest. Rediscover a prior wave's member runs from the run list
+// (objective match — driver objectives are salted unique per wave, and identical intent
+// digests resolve to the SAME run, so an objective fingerprints one logical member) and
+// return the SAME live handle shape over the existing runs. Members that were
+// recovery-terminalized in the gap read as their honest terminal phases; their outcomes
+// harvest through the result section (or checkpoint pins when repoRoot is passed). The
+// caller's mintDetached callback fires exactly once on the first successfully attached run
+// (the application-side wave.driver_detached key dedups across repeated attaches).
+// startedAt seeds from the earliest MATCHED member's start — the tight correct lower bound
+// for pin disambiguation (a member result cannot be preserved before that member started).
+export async function attachWave(baton, waveId, membersInput, mintDetached, repoRoot = null) {
+  if (!baton || !baton.runs || typeof baton.runs.attach !== 'function' || typeof baton.runs.list !== 'function') {
+    throw waveError('attachWave requires a Baton client facade with runs.attach and runs.list');
+  }
+  if (typeof waveId !== 'string' || !/^wave:[a-f0-9]{32}$/u.test(waveId)) throw waveError('wave id is invalid');
+  if (!Array.isArray(membersInput) || membersInput.length === 0 || membersInput.length > 64) {
+    throw waveError('wave attach members must be one bounded non-empty array');
+  }
+  const members = membersInput.map((member, index) => validateMember(member, index, repoRoot));
+  if (new Set(members.map(({ role }) => role)).size !== members.length) {
+    throw waveError('wave attach member roles contain duplicates');
+  }
+  const listed = await baton.runs.list();
+  if (!Array.isArray(listed?.items)) throw waveError('wave attach run list is invalid', 'wave_attach_protocol_invalid');
+  const wanted = new Map(members.map((member) => [member.objective, member]));
+  const matched = new Map();
+  for (const item of listed.items) {
+    if (typeof item?.objective === 'string' && wanted.has(item.objective)
+      && typeof item?.id === 'string' && !matched.has(item.objective)) {
+      matched.set(item.objective, item);
+    }
+  }
+  const earliest = [...matched.values()]
+    .map((item) => Date.parse(item?.startedAt ?? ''))
+    .filter((value) => Number.isFinite(value))
+    .reduce((minimum, value) => Math.min(minimum, value), Date.now());
+  const state = {
+    startedAt: earliest,
+    members: new Map(),
+    outcomes: [],
+    progress: [],
+    steering: [],
+    stops: [],
+  };
+  let attachedCount = 0;
+  for (const member of members) {
+    const entry = { member, run: null, startError: null };
+    const record = matched.get(member.objective);
+    if (record) {
+      try {
+        const run = await baton.runs.attach(record.id);
+        // 93B rule 2 fold (W93-4): every matched run must PROVE its binding — the callback
+        // asserts this attach's waveId against the run's steering.registered record and throws
+        // application_wave_member_mismatch on any run bound to another wave (or to none). A
+        // matched-but-mismatched run is excluded, never silently adopted. The application-side
+        // wave.driver_detached key dedups the mint across members and repeated attaches.
+        if (typeof mintDetached === 'function') await mintDetached(record.id);
+        entry.run = run;
+        attachedCount += 1;
+      } catch (error) {
+        entry.startError = { code: error?.code ?? null, message: String(error?.message ?? error) };
+      }
+    } else {
+      entry.startError = { code: 'wave_member_not_found', message: 'no run matches this member objective' };
+    }
+    state.members.set(member.role, entry);
+  }
+  // An attach that binds ZERO members is a mistyped or foreign waveId — refuse with a typed
+  // error rather than return a hollow handle (W93-4: never a silent new wave).
+  if (attachedCount === 0) {
+    throw waveError('wave attach bound no members of the asserted wave', 'wave_attach_unknown_wave');
+  }
+  return createWaveHandle({ repoRoot, members, state });
+}
+
+function createWaveHandle({ repoRoot, members, state }) {
   async function progress() {
     const members = [];
     for (const [role, entry] of state.members) {

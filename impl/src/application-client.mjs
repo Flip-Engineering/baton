@@ -1,7 +1,7 @@
 import { contextProgramIsPure } from './context-authority.mjs';
 import { normalizeContextProgram } from './context-program.mjs';
 import { APPLICATION_SEMANTIC_REGISTRY } from './application-semantics.mjs';
-import { createWave } from './wave.mjs';
+import { attachWave, createWave } from './wave.mjs';
 
 function clientError(message, code = 'application_client_invalid') {
   return Object.assign(new Error(message), { code });
@@ -112,10 +112,21 @@ function prepareRunStart(objective, options) {
   if (!nonempty(objective)) throw clientError('Run objective is required');
   exactOptions(options, new Set([
     'runId', 'resultIntent', 'profile', 'scope', 'model', 'harness', 'effort', 'exact', 'driverKind',
+    // 93B: wave binding (waveId/waveRole) + the pre-loop wave.started payload (waveStart) ride
+    // run.start; like driverKind they describe who is driving, not what the run is.
+    'waveId', 'waveRole', 'waveStart',
   ]), 'start');
-  for (const field of ['runId', 'profile', 'model', 'harness', 'effort', 'driverKind']) {
+  for (const field of ['runId', 'profile', 'model', 'harness', 'effort', 'driverKind', 'waveId', 'waveRole']) {
     if (options[field] !== undefined && !nonempty(options[field])) {
       throw clientError(`Run ${field} is invalid`);
+    }
+  }
+  if (options.waveStart !== undefined) {
+    exactOptions(options.waveStart, new Set(['roster', 'idempotencyKey']), 'wave start');
+    if (!nonempty(options.waveStart.idempotencyKey) || !Array.isArray(options.waveStart.roster)
+      || options.waveStart.roster.length === 0 || options.waveStart.roster.length > 64
+      || options.waveStart.roster.some((role) => !nonempty(role))) {
+      throw clientError('Run waveStart is invalid');
     }
   }
   if (options.scope !== undefined && (!Array.isArray(options.scope) || options.scope.length === 0
@@ -144,7 +155,7 @@ function prepareRunStart(objective, options) {
     throw clientError('manual routing requires model and effort together');
   }
   const intent = { objective: objective.normalize('NFKC').trim(), resultIntent };
-  for (const key of ['runId', 'profile', 'scope', 'driverKind']) {
+  for (const key of ['runId', 'profile', 'scope', 'driverKind', 'waveId', 'waveRole', 'waveStart']) {
     if (options[key] !== undefined) intent[key] = options[key];
   }
   if (options.exact !== undefined) intent.route = options.exact;
@@ -1482,7 +1493,17 @@ export class BatonClient {
   }
 
   get waves() {
-    return Object.freeze({ start: (options = {}) => createWave(this, options) });
+    return Object.freeze({
+      start: (options = {}) => createWave(this, options),
+      // 93B rule 2: attach-and-harvest over a prior wave's member runs. The callback mints
+      // the exactly-once wave.driver_detached receipt through the run.inspect side gate AND
+      // proves each member's binding (application refuses a waveId mismatch with a typed code).
+      attach: (waveId, members, options = {}) => attachWave(
+        this, waveId, members,
+        (runId) => this.#application.command('run.inspect', { runId, mintWaveDetached: true, waveId }),
+        options?.repoRoot ?? null,
+      ),
+    });
   }
 
   help(topic = 'application', depth = 'outline') {

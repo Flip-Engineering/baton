@@ -148,7 +148,7 @@ export const APPLICATION_COMMAND_DEFINITIONS = Object.freeze({
   // `mintWaveDetached` (93B): an attach-only side-channel flag consumed solely by the direct
   // command port (waves.attach) — never advertised through the web/mcp JSON schemas, which stay
   // byte-stable in application-semantics.mjs.
-  'run.inspect': Object.freeze({ args: Object.freeze(['runId', 'depth', 'section', 'item', 'offset', 'pageCursor', 'recipient', 'cursor', 'waitMs', 'mintWaveDetached']), capabilities: Object.freeze(['observe']), web: true, mcp: true, mcpStateful: false, reconcilable: true }),
+  'run.inspect': Object.freeze({ args: Object.freeze(['runId', 'depth', 'section', 'item', 'offset', 'pageCursor', 'recipient', 'cursor', 'waitMs', 'mintWaveDetached', 'waveId']), capabilities: Object.freeze(['observe']), web: true, mcp: true, mcpStateful: false, reconcilable: true }),
   'run.episode': Object.freeze({ args: Object.freeze(['runId', 'topic', 'detail', 'role', 'generation', 'pageCursor', 'cursor', 'waitMs']), capabilities: Object.freeze(['observe']), web: true, mcp: true, mcpStateful: false, reconcilable: true }),
   'run.workstreams': Object.freeze({ args: Object.freeze(['runId', 'role', 'generation', 'cursor', 'waitMs']), capabilities: Object.freeze(['observe']), web: true, mcp: true, mcpStateful: false, reconcilable: true }),
   'run.workstream.notify': Object.freeze({ args: Object.freeze(['runId', 'role', 'generation', 'message', 'delivery']), capabilities: Object.freeze(['control', 'observe']), web: true, mcp: true, mcpStateful: true, reconcilable: true }),
@@ -1431,7 +1431,11 @@ export function validateApplicationCommandArgs(name, args) {
       || (args.recipient !== undefined && !validId(args.recipient))
       || (args.cursor !== undefined && (!Number.isSafeInteger(args.cursor) || args.cursor < 0))
       || (args.waitMs !== undefined && (!Number.isSafeInteger(args.waitMs) || args.waitMs <= 0))
-      || (args.mintWaveDetached !== undefined && args.mintWaveDetached !== true)) {
+      || (args.mintWaveDetached !== undefined && args.mintWaveDetached !== true)
+      // 93B (W93-4): waveId rides ONLY with the attach side-channel — it asserts the wave the
+      // caller is attaching, so the mint site can refuse a binding mismatch with a typed code.
+      || (args.waveId !== undefined && (!validId(args.waveId) || args.mintWaveDetached !== true))
+      || (args.mintWaveDetached === true && args.waveId === undefined)) {
       throw applicationError('Run inspection request is invalid', 'application_inspect_invalid');
     }
     if (args.waitMs !== undefined && args.cursor === undefined) {
@@ -10142,13 +10146,19 @@ export class BatonApplication {
     // sets this flag) and the run is actually a wave member.
     if (request.mintWaveDetached === true
       && typeof this.driver.coordination.recordDriver === 'function') {
-      const waveId = this._runWaveId(request.runId);
-      if (waveId !== null) {
-        this.driver.coordination.recordDriver(APPLICATION_WAVE_DRIVER_DETACHED_KIND, { waveId }, {
-          actor: principal.actor,
-          key: `wave.driver_detached:${waveId}`,
-        });
+      // 93B rule 2 fold (W93-4): attach must BIND, never guess — the caller asserts the waveId
+      // it is attaching, and the run's own steering.registered binding must match exactly. A
+      // mismatch (or an unbound run) refuses with a typed code and NOTHING mints.
+      const boundWaveId = this._runWaveId(request.runId);
+      if (boundWaveId === null || boundWaveId !== request.waveId) {
+        throw applicationError('Run is not a member of the asserted wave',
+          'application_wave_member_mismatch');
       }
+      this.driver.coordination.recordDriver(APPLICATION_WAVE_DRIVER_DETACHED_KIND,
+        { waveId: boundWaveId }, {
+          actor: principal.actor,
+          key: `wave.driver_detached:${boundWaveId}`,
+        });
     }
     if (!current.profile) {
       const view = this._withContextProjection(
