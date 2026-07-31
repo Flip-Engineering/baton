@@ -1,3 +1,98 @@
+# Issue #11 contract — durable headless credential projection (v3)
+
+(v3 folds the opus verification red-team (`redteam-v2.md`, verdict **UNSOUND**, R11V-1..9).
+The two P0s: v2 asserted access-token-only projection but NO rule or test removed the
+full-file registration at `application-deployment.mjs:598` — the refresh token still shipped
+into every worker (R11V-1); and CC-2's fixture encoded the env-token expiry wire shape it
+was meant to verify — green-but-broken at first real mid-turn expiry (R11V-2). Also folded:
+single-flight scoped to the credential, not the deployment (R11V-3); the remedy lands in a
+per-vendor summary function, not a shared string at a wrong line (R11V-4); harvest
+monotonicity + schema gate (R11V-5); the revocation latch (R11V-6); canary role corrected to
+egress (R11V-7); spawn-time TTL gate (R11V-8); citation repoints (R11V-9). Fold-verdict:
+R11R-1..12 stand folded except as amended here. v2/v1 retained below as the fold trail.)
+
+## Rules (v3 — amended; unamended v2 rules stand)
+
+1. **(v2 rule 1 stands — the deployment credential cache is the single read source.)**
+2. **Workers project access-token-only — ENFORCED, not asserted.** The claude `credentialFiles`
+   full-file registration (`application-deployment.mjs:598`) is REMOVED; claude projects via
+   `credentialEnv.claude = { CLAUDE_CODE_OAUTH_TOKEN: <cache.accessToken> }` and nothing else.
+   The ingress guarantee (no refreshToken in any worker runtime) is carried SOLELY by this
+   env-only projection + the deletion; the providerSecrets canary is a defense-in-depth
+   EGRESS check on the access token (`claude-session.mjs:371,854-884` — it scans provider
+   OUTPUT, it cannot keep anything out of a runtime, R11V-7). Setup-token stays the named
+   fallback (v2's adjudication stands).
+3. **Refresh is single-flight PER CREDENTIAL, vendor-executed, harvested with monotonicity
+   and a schema gate.** The single flight serializes refresh triggers within one deployment
+   AND detects cross-deployment/operator-session interference: an advisory lockfile next to
+   the operator credentials store serializes refreshers process-wide, and a Keychain-mtime
+   CAS check (re-read immediately before adopting a harvest; abort + re-read the freshest if
+   it changed under the flight) covers the operator's own interactive CLI refreshing in
+   parallel (R11V-3). Harvest candidates = {runtime projected file, Keychain re-extract,
+   INCUMBENT cache credential}; each candidate is schema-gated (accessToken non-empty;
+   expiresAt a safe positive ms-epoch integer within a sane bound — the kimi refusal
+   discipline, `application-deployment.mjs:363-372`); the harvest is adopted ONLY if strictly
+   fresher than the incumbent (`harvest.expiresAt > cache.expiresAt`, R11V-5). Persist-back
+   to the operator store stays explicit-command-only (the consent ceremony stands). The
+   first live refresh still records the observed write-back target (verification receipt).
+4. **Retry-once with the established taxonomy + the revocation latch + a spawn-time TTL
+   gate.** A worker turn failing `authentication_refresh_required` triggers single-flight
+   refresh → re-projection → ONE retried turn. A refresh flight failing with
+   `invalid_grant`/revocation LATCHES the cache to `expired_needs_login`: every further
+   automatic trigger short-circuits to the blocked taxonomy WITHOUT spawning a runtime, until
+   the explicit `baton credentials refresh claude` command clears the latch (R11V-6 — no 64
+   doomed flights). At spawn, `cache.expiresAt <= now` (a free comparison, no `security`
+   exec) triggers the flight BEFORE projecting — no spawn ever receives a known-dead token
+   (R11V-8). The claude-specific relogin remedy lands in a NEW
+   `claudeAuthenticationSummary(code)` mirroring `kimiAuthenticationSummary`/
+   `grokAuthenticationSummary` (`application-deployment.mjs:316/:390`), wired at the claude
+   terminal-result site (`claude-session.mjs:322`); `PROVIDER_TERMINAL_GUIDANCE`
+   (`application-semantics.mjs:1634`) stays vendor-agnostic — the code is shared with
+   kimi/grok, so the text must not be (R11V-4). **Marked unverified:** the env-token-only
+   expiry wire shape (does the real CLI, holding only `CLAUDE_CODE_OAUTH_TOKEN` and no
+   credentials file, terminate with `authentication_error` / `Not logged in · Please run
+   /login` — the shapes `claudeResultFailureCode` matches, `claude-session.mjs:332-338`?).
+   The first live env-token mid-turn expiry records the actual terminal `result` string in
+   this evidence dir and the matcher is confirmed/extended against it BEFORE the retry-once
+   path is trusted (R11V-2 — CC-2's fixture pins the assumed shapes and names this
+   assumption in its header).
+5. **(v2 rule 5 stands — three-state credential metadata, ms units, typed
+   Keychain-only-vs-absent code, per-read cheap probe per the `workspaceProbe` pattern at
+   `application-deployment.mjs:1204/:1538`; kimi seconds-precedent at `:353/:377`.)**
+6. **(v2 rule 6 stands — Keychain deployment-side only.)**
+7. **(v2 rule 7 stands — no cross-vendor overreach.)**
+
+## Red-first tests (v3 amendments to CC-1..CC-5)
+
+- **CC-2+:** the fixture claude executable suite gains: (a) a partial/short-TTL write-back
+  is NOT adopted (monotonicity + schema gate, R11V-5); (b) a malformed write-back (truncated
+  accessToken, garbage expiresAt) is discarded, never poisons the cache; (c) the fixture
+  header NAMES the env-token wire-shape assumption pending the live receipt (R11V-2).
+- **CC-4+ (the P0 pin):** `credentialFiles.claude` is undefined/empty after the change
+  (positive assertion, not just a name scan), AND a projection-tree scan proves NO projected
+  worker file contains the cache's refreshToken bytes; the env projection carries exactly
+  `CLAUDE_CODE_OAUTH_TOKEN` (R11V-1). The canary's egress role is pinned by citation, never
+  cited as ingress (R11V-7).
+- **CC-5+:** after one revoked-refresh (`invalid_grant`) flight, a second worker failure
+  spawns NO second refresh runtime (the latch) and surfaces the blocked taxonomy with the
+  claude remedy from `claudeAuthenticationSummary`; the explicit command clears the latch;
+  a spawn past `cache.expiresAt` triggers the flight BEFORE projection (R11V-6/R11V-8);
+  `PROVIDER_TERMINAL_GUIDANCE` stays vendor-agnostic (source-scan, R11V-4); cross-deployment
+  exclusion: a second deployment's flight blocks on the advisory lockfile, and a Keychain
+  mtime change mid-flight aborts the adoption (R11V-3).
+
+## Verification
+
+```text
+node --test impl/test/claude-credential-projection-red.test.mjs
+```
+
+then the canonical suite fully green. Post-landing dogfood receipts (this evidence dir):
+the first live single-flight refresh (write-back target) AND the first live env-token
+mid-turn expiry (the actual terminal result string vs the matcher).
+
+---
+
 # Issue #11 contract — durable headless credential projection (v2)
 
 (v2 folds the R11 red-team, verdict SOUND-WITH-FOLDS, R11R-1..12 — report at the tail of this

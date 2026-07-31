@@ -1,16 +1,16 @@
 {
   "schemaVersion": 1,
-  "startedAt": "2026-07-31T22:03:24.063Z",
+  "startedAt": "2026-07-31T22:11:50.010Z",
   "members": [
     "setup-token-redteam2-opus"
   ],
   "outcomes": [
     {
       "role": "setup-token-redteam2-opus",
-      "phase": "failed",
-      "terminal": true,
-      "narrative": "Run terminated: provider_turn_failed.",
-      "resultSha": null
+      "phase": "result_ready",
+      "terminal": false,
+      "narrative": "1 worker(s) active, 1 done.",
+      "resultSha": "ffeacc46fa307914019d417461aa8e6e1251c24f"
     }
   ],
   "steering": [],
@@ -31,7 +31,20 @@
   "remainingCount": 0,
   "residueUnknown": false,
   "basis": "completed",
-  "nudges": [],
-  "claims": [],
+  "nudges": [
+    {
+      "role": "setup-token-redteam2-opus",
+      "requestId": "pause:baton-ea6aa4882c72311ddbaf0fca-work:68",
+      "at": "2026-07-31T22:18:30.685Z"
+    }
+  ],
+  "claims": [
+    {
+      "role": "setup-token-redteam2-opus",
+      "requestId": "pause:baton-ea6aa4882c72311ddbaf0fca-work:76",
+      "at": "2026-07-31T22:18:50.741Z",
+      "code": "claimed"
+    }
+  ],
   "salt": null
 }
