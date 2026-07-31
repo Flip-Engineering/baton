@@ -7301,6 +7301,7 @@ export class BatonApplication {
       },
       semanticReview,
       progress,
+      activity: this._activityProjection(current, workers),
       result: publicResult,
       integration,
       export: exportResult,
@@ -7440,6 +7441,35 @@ export class BatonApplication {
         && planRef.digest === current.plan.digest;
     }
     return false;
+  }
+
+  // Issue #55: mid-turn liveness. resource.provider_call/resource.tokens events land per
+  // provider call in the worker OPERATIONAL log (driver.log) but are noise-filtered OUT of
+  // 'meaningful' progress — so without this projection the single-run view is byte-static
+  // across one long turn and the wave driver's stall clock (sha of the cursor-stripped view)
+  // kills productive workers mid-turn. Counts + last-activity timestamp only, never
+  // payloads: honest activity, zero prose.
+  _activityProjection(current, workers = []) {
+    let providerCalls = 0;
+    let tokens = 0;
+    let lastActivityAt = null;
+    for (const handle of workers) {
+      const workerId = typeof handle === 'string' ? handle : handle?.id;
+      if (typeof workerId !== 'string' || typeof this.driver.log?.read !== 'function') continue;
+      for (const event of this.driver.log.read(workerId)) {
+        if (event?.kind === 'resource.provider_call') {
+          providerCalls += 1;
+        } else if (event?.kind === 'resource.tokens' && Number.isSafeInteger(event.payload?.tokens)) {
+          tokens += event.payload.tokens;
+        } else {
+          continue;
+        }
+        if (typeof event.ts === 'string' && (lastActivityAt === null || event.ts > lastActivityAt)) {
+          lastActivityAt = event.ts;
+        }
+      }
+    }
+    return deepFreeze({ providerCalls, tokens, lastActivityAt });
   }
 
   _progressTiming(current, view) {
