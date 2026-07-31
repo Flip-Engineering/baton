@@ -1,0 +1,37 @@
+{
+  "schemaVersion": 1,
+  "startedAt": "2026-07-31T21:26:07.602Z",
+  "members": [
+    "control-surface-redteam-opus"
+  ],
+  "outcomes": [
+    {
+      "role": "control-surface-redteam-opus",
+      "phase": "failed",
+      "terminal": true,
+      "narrative": "Run terminated: provider_turn_failed.",
+      "resultSha": null
+    }
+  ],
+  "steering": [],
+  "stops": [
+    {
+      "role": "control-surface-redteam-opus",
+      "stop": null,
+      "resources": {
+        "state": "stopped",
+        "cleanupState": "stopped",
+        "ownedCount": 0
+      },
+      "ownedCount": 0
+    }
+  ],
+  "progress": [],
+  "pumpDrained": true,
+  "remainingCount": 0,
+  "residueUnknown": false,
+  "basis": "completed",
+  "nudges": [],
+  "claims": [],
+  "salt": null
+}
