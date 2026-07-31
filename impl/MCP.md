@@ -68,82 +68,40 @@ adapter construction, immutable Run profiles, and application principals. `fleet
 selects the exact `harness`/`model`/`effort` tuple from an allowed profile; the application and
 coordinator remain the only workflow and fleet authorities.
 
-The default application-backed inventory is exactly eleven tools: `fleet_run_start`,
-`fleet_run_status`, `fleet_run_approve`, `fleet_run_wait`, `fleet_run_answer`, and
-`fleet_run_steer`, plus `fleet_run_stop`, `fleet_run_evidence`, and `fleet_run_adopt`. Steering resolves Run ownership and the current worker
-fence inside the application. Stop durably closes only that Run to later effects and returns its
-exact reap receipt. Evidence is a fresh read; adoption selects an exact protected result and
-requires `adopt_result` without merging or publishing. `fleet_run_review` selects a deployment-pinned
-exact independent reviewer route and consumes `review`; `fleet_run_integrate` binds a fresh evidence
-manifest and consumes the separate `integrate_result` authority for one profile-allowed local
-strategy. Neither operation publishes or deploys. The surface does not advertise deployment shutdown, Run close, worker kill, or
-fleet drain. The original nineteen
-`fleet_*` kernel tools remain available only through an explicit `surface: 'advanced'`; a
-`combined` inventory is opt-in for diagnosis and migration. An application-free factory is
-therefore an advanced-kernel-only deployment, not the ordinary Baton experience.
+The ordinary MCP application surface is the generated inventory below — produced by
+instantiating the application-profile tool table (never a hand count or name list). Advanced
+`fleet_*` kernel tools require an explicit `surface: 'advanced'`; `combined` is opt-in for
+diagnosis and migration. An application-free factory is an advanced-kernel-only deployment.
+Steering resolves Run ownership and the current worker fence inside the application. Stop
+durably closes only that Run to later effects. Evidence is a fresh read; adoption selects an
+exact protected result without merging or publishing. The surface does not advertise deployment
+shutdown, Run close, worker kill, or fleet drain. The worker scratchpad is deliberately not an
+MCP tool: workers write it through their harness up-channel; orchestrators read it through Run
+and wave projections.
 
-The application-backed inventory also exposes the reflexive orchestration surface as 21
-`baton_*` tools: the worker decision channel (`baton_decision_list`, `baton_decision_answer`),
-durable boards (`baton_board_post`, `baton_board_read`, `baton_board_retitle`,
-`baton_board_reorder`, `baton_board_close`), context packages (`baton_package_attach`,
-`baton_package_admit`, `baton_package_read`), `baton_context_eval`, and the embedding-grade
-run projections (`baton_run_start`, `baton_runs`, `baton_run_inspect`, `baton_run_act`,
-`baton_run_episode`, `baton_run_workstreams`, `baton_run_stop`, `baton_workstream_notify`,
-`baton_workstream_stop`, `baton_help`). The worker scratchpad (issue #33) is deliberately not
-an MCP tool: workers write it through the REFLEX-1-family up-channel inside their own harness
-streams and receive hub-computed receipts; orchestrators read it through Run and wave
-projections.
-
-Since M4b the ordinary `baton_*` table renders the canonical grammar tools beside these retained
-legacy spellings (both reach one operation). The inventory below is rendered from
-`APPLICATION_SEMANTIC_REGISTRY.canonicalOperations` by `impl/scripts/render-surface-docs.mjs`; the
-conformance suite fails if it drifts.
+The inventory below is rendered by `impl/scripts/render-surface-docs.mjs` from the executable
+MCP application-profile tool table. The conformance suite fails if it drifts from served truth.
 
 <!-- BEGIN GENERATED: mcp-tool-inventory (impl/scripts/render-surface-docs.mjs) -->
 
 | Operation | Profile | MCP tool | Annotation |
 |---|---|---|---|
-| `run.list` | `ordinary` | `baton_run_list` | idempotent |
-| `run.start` | `ordinary` | `baton_run_start` | idempotent |
-| `run.view` | `ordinary` | `baton_run_view` | idempotent |
-| `run.watch` | `ordinary` | `baton_run_watch` | idempotent |
-| `run.do` | `ordinary` | `baton_run_do` | destructive |
-| `run.approve` | `ordinary` | `baton_run_approve` | idempotent |
-| `run.answer` | `ordinary` | `baton_run_answer` | idempotent |
-| `run.send` | `ordinary` | `baton_run_send` | idempotent |
-| `run.interrupt` | `ordinary` | `baton_run_interrupt` | destructive |
-| `run.stop` | `ordinary` | `baton_run_stop` | destructive |
-| `run.evidence` | `ordinary` | `baton_run_evidence` | idempotent |
-| `run.review` | `ordinary` | `baton_run_review` | idempotent |
-| `run.adopt` | `ordinary` | `baton_run_adopt` | idempotent |
-| `run.integrate` | `ordinary` | `baton_run_integrate` | destructive |
-| `run.export` | `ordinary` | `baton_run_export` | idempotent |
-| `run.select` | `ordinary` | `baton_run_select` | idempotent |
-| `run.feedback` | `ordinary` | `baton_run_feedback` | idempotent |
-| `run.revise` | `ordinary` | `baton_run_revise` | idempotent |
-| `run.recover` | `ordinary` | `baton_run_recover` | idempotent |
-| `run.resume` | `ordinary` | `baton_run_resume` | idempotent |
-| `run.retry` | `ordinary` | `baton_run_retry` | idempotent |
-| `run.member.view` | `ordinary` | `baton_run_member_view` | idempotent |
-| `run.member.send` | `ordinary` | `baton_run_member_send` | idempotent |
-| `run.member.interrupt` | `ordinary` | `baton_run_member_interrupt` | destructive |
-| `run.member.stop` | `ordinary` | `baton_run_member_stop` | destructive |
-| `run.attention.list` | `ordinary` | `baton_run_attention_list` | idempotent |
-| `context.eval` | `ordinary` | `baton_context_eval` | idempotent |
-| `context.map` | `ordinary` | `baton_context_map` | idempotent |
-| `context.reduce` | `ordinary` | `baton_context_reduce` | idempotent |
-| `context.retry` | `ordinary` | `baton_context_retry` | idempotent |
-| `board.post` | `ordinary` | `baton_board_post` | idempotent |
-| `board.retitle` | `ordinary` | `baton_board_retitle` | idempotent |
-| `board.reorder` | `ordinary` | `baton_board_reorder` | idempotent |
-| `board.close` | `ordinary` | `baton_board_close` | idempotent |
-| `board.read` | `ordinary` | `baton_board_read` | idempotent |
-| `board.claim` | `worker` | `baton_board_claim` | idempotent |
-| `board.report` | `worker` | `baton_board_report` | idempotent |
-| `package.admit` | `ordinary` | `baton_package_admit` | idempotent |
-| `package.attach` | `ordinary` | `baton_package_attach` | idempotent |
-| `package.read` | `ordinary` | `baton_package_read` | idempotent |
 | `application.help` | `ordinary` | `baton_application_help` | idempotent |
+| `application.help` | `ordinary` | `baton_help` | idempotent |
+| `run.do` | `ordinary` | `baton_run_act` | destructive |
+| `run.do` | `ordinary` | `baton_run_do` | destructive |
+| `run.view` | `ordinary` | `baton_run_episode` | idempotent |
+| `run.view` | `ordinary` | `baton_run_inspect` | idempotent |
+| `run.member.send` | `ordinary` | `baton_run_member_send` | idempotent |
+| `run.member.stop` | `ordinary` | `baton_run_member_stop` | destructive |
+| `run.member.view` | `ordinary` | `baton_run_member_view` | idempotent |
+| `run.start` | `ordinary` | `baton_run_start` | idempotent |
+| `run.stop` | `ordinary` | `baton_run_stop` | destructive |
+| `run.view` | `ordinary` | `baton_run_view` | idempotent |
+| `run.member.view` | `ordinary` | `baton_run_workstreams` | idempotent |
+| `run.list` | `ordinary` | `baton_runs` | idempotent |
+| `run.member.send` | `ordinary` | `baton_workstream_notify` | idempotent |
+| `run.member.stop` | `ordinary` | `baton_workstream_stop` | destructive |
 
 <!-- END GENERATED: mcp-tool-inventory -->
 

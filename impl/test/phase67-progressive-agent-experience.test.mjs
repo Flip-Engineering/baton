@@ -643,7 +643,7 @@ test('AX1/AX6/AX7: cards, CLI, MCP, and browser project one digest; default inve
   const ordinary = new McpFleetServer(common);
   // M4b: the canonical grammar tools render beside the retained legacy tools (docs/36 §9 M4).
   assert.deepEqual(ordinary.toolDefinitions.map((tool) => tool.name), [
-    'baton_help', 'baton_run_start', 'baton_run_inspect', 'baton_run_episode',
+    'baton_help', 'baton_runs', 'baton_run_start', 'baton_run_inspect', 'baton_run_episode',
     'baton_run_workstreams', 'baton_workstream_notify', 'baton_workstream_stop',
     'baton_run_act', 'baton_run_stop',
     'baton_run_do', 'baton_run_view', 'baton_run_member_view', 'baton_run_member_send',

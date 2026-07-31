@@ -292,7 +292,7 @@ test('KC6/KC7/KC8: Kimi MCP bridges only the compact application surface over au
   await initialize(server);
   const listed = await server.handle({ jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} });
   assert.deepEqual(listed.result.tools.map((tool) => tool.name), [
-    'baton_help', 'baton_run_start', 'baton_run_inspect', 'baton_run_episode',
+    'baton_help', 'baton_runs', 'baton_run_start', 'baton_run_inspect', 'baton_run_episode',
     'baton_run_workstreams', 'baton_workstream_notify', 'baton_workstream_stop',
     'baton_run_act', 'baton_run_stop',
     'baton_run_do', 'baton_run_view', 'baton_run_member_view', 'baton_run_member_send',
@@ -466,7 +466,7 @@ test('KC8: project Kimi MCP entry contains no credential and allowlists only sem
   assert.deepEqual(entry, {
     command: '/node', args: ['/repo/impl/scripts/mcp-web.mjs'], cwd: '/repo', enabled: true,
     startupTimeoutMs: 30_000, toolTimeoutMs: 180_000,
-    enabledTools: ['baton_help', 'baton_run_start', 'baton_run_inspect', 'baton_run_episode',
+    enabledTools: ['baton_help', 'baton_runs', 'baton_run_start', 'baton_run_inspect', 'baton_run_episode',
       'baton_run_workstreams', 'baton_workstream_notify', 'baton_workstream_stop',
       'baton_run_act', 'baton_run_stop',
       'baton_run_do', 'baton_run_view', 'baton_run_member_view', 'baton_run_member_send',
@@ -620,7 +620,7 @@ test('KC6/KC7/KC8: packaged Kimi MCP entry crosses a real authenticated Web list
   const responses = stdout.trim().split('\n').map(JSON.parse);
   assert.deepEqual(responses.map((entry) => entry.id), [1, 2, 3]);
   assert.deepEqual(responses[1].result.tools.map((tool) => tool.name), [
-    'baton_help', 'baton_run_start', 'baton_run_inspect', 'baton_run_episode',
+    'baton_help', 'baton_runs', 'baton_run_start', 'baton_run_inspect', 'baton_run_episode',
     'baton_run_workstreams', 'baton_workstream_notify', 'baton_workstream_stop',
     'baton_run_act', 'baton_run_stop',
     'baton_run_do', 'baton_run_view', 'baton_run_member_view', 'baton_run_member_send',

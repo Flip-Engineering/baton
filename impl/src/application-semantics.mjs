@@ -838,6 +838,7 @@ const cliCommands = [
   ['run.interrupt', null, 'interrupt', 'baton run interrupt RUN_ID [--to RECIPIENT] [--reason REASON]'],
   ['run.steer', null, null, 'baton run steer RUN_ID TARGET (--nudge | --now | --turn) TEXT --reason REASON'],
   ['run.evidence', null, null, 'baton run evidence RUN_ID'],
+  ['run.debug', null, null, 'baton run debug RUN_ID [--member ROLE] [--limit N]'],
   ['run.adopt', null, 'adopt_result', 'baton run adopt RUN_ID --reason REASON'],
   ['run.select', null, 'select_candidate', 'baton run select RUN_ID ROLE --reason REASON'],
   ['run.feedback', null, 'send_feedback', 'baton run feedback RUN_ID ROLE --text TEXT'],
@@ -1190,6 +1191,18 @@ const CANONICAL_OPERATION_SPECS = [
     effect: 'run_read', capabilities: ['observe'], outputView: 'evidence', helpTopic: 'run',
     inputSchema: runIdSchema, example: 'baton run evidence RUN_ID',
   }],
+  // CS-3 (control-surface v2 rule 3): run.debug registers the #53 direct port
+  // (application.mjs debug method). Host-local only — surfaces {embedded, cli}, no web/mcp.
+  ['run.debug', {
+    effect: 'observe', capabilities: ['observe'], outputView: 'outline', helpTopic: 'run',
+    surfaces: ['embedded', 'cli'],
+    inputSchema: objectSchema({
+      runId: id,
+      member: id,
+      limit: { type: 'integer', minimum: 1, maximum: 10 },
+    }, ['runId']),
+    example: 'baton run debug RUN_ID',
+  }],
   ['run.review', { action: 'semantic_review', outputView: 'outline', example: 'baton run review RUN_ID --exact codex/gpt-5.6-sol@low --reason R' }],
   ['run.adopt', { action: 'adopt_result', outputView: 'outline', example: 'baton run adopt RUN_ID --reason R' }],
   ['run.integrate', { action: 'integrate', outputView: 'outline', example: 'baton run integrate RUN_ID --strategy ff-only --reason R' }],
@@ -1351,6 +1364,7 @@ const SURFACE_ALIAS_ROWS = Object.freeze([
   ['run.do', 'application.commands', 'run.act'],
   ['run.do', 'embedded', 'BatonRun.act'],
   ['run.evidence', 'embedded', 'BatonRun.evidence'],
+  ['run.debug', 'embedded', 'BatonRun.debug'],
   ['run.export', 'embedded', 'BatonRun.export'],
   ['run.feedback', 'embedded', 'BatonRun.feedback'],
   ['run.feedback', 'embedded', 'BatonRun.sendFeedback'],

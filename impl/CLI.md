@@ -3,84 +3,44 @@
 `baton` is the normal shell surface for the shared Run application. It does not expose worker
 kernel choreography.
 
-## Verb inventory (`baton help`, `baton help run`)
+## Verb inventory
 
-- **Run lifecycle:** `baton run OBJECTIVE` / `run start OBJECTIVE --exact HARNESS/MODEL@EFFORT`,
-  `run status [--wait|--follow]`, `run approve --plan DIGEST`, `run stop [--reason]`,
-  `run recover`, `run retry --reason`, `run resume --reason`, `run export DIR`.
-- **Reading:** `run show [--depth outline|index|section|item|content|evidence] [--section] [--item]`,
-  `run progress|events|output [--follow]`, `run evidence`, `doctor [--depth ...] [--check]`.
-- **Attention and dialogue:** `run answer RUN REQUEST_ID (--allow|--deny|--cancel|--text|--option ID)`
-  — approvals and the typed decision channel share this form; `run send TEXT [--to R] [--nudge|--now|--turn]`,
-  `run interrupt [--to R] [--reason]`, `run steer TARGET (--nudge|--now|--turn) TEXT --reason R`,
-  `run do RUN ACTION_ID [--inputs JSON]` (the advertised-action executor).
-- **Trust:** `run review --exact H/M@E --reason`, `run adopt --reason`, `run select ROLE --reason`,
-  `run feedback ROLE --text`, `run revise --reason`, `run integrate --strategy ff-only|structured --reason`,
-  `run stop-member ROLE [--generation N] [--reason]`.
-- **Presets and routing:** `explore OBJECTIVE [--exact ...]`, `review OBJECTIVE --exact ... --exact ...`,
-  `route HARNESS/MODEL@EFFORT`, `baton help routing`.
-- **Host:** `serve`, `setup`, `credentials install kimi`, `help`.
+The ordinary CLI principal inventory is the generated table below — produced from the executable
+per-profile inventory (parser + web-client whitelist + host-local ops), never a hand list.
+Call `baton help` / `baton help run` for live topic text. Orchestration waves stay embedding-only
+(`openBaton` → `baton.waves`); the worker scratchpad is embedding/projection-only, never a CLI verb.
 
-Orchestration **waves** are deliberately embedding-only (`openBaton` → `baton.waves`, plus the
-wave-driver policy in docs/37): the CLI is the human thin client, not the agent-orchestration
-surface. The worker scratchpad (issue #33) is read through embedding projections
-(`run.scratchpad({workerId})`, `wave.progress()` member rows, task/workflow horizons); workers
-write it through their own harness up-channel, never through the CLI.
+### Canonical operation inventory (generated from the ordinary CLI principal)
 
-### Canonical operation inventory (generated from registry v2)
-
-The rows below are rendered from `APPLICATION_SEMANTIC_REGISTRY.canonicalOperations` by
-`impl/scripts/render-surface-docs.mjs`; the conformance suite fails if they drift. Legacy verb
-spellings above remain admitted as registry aliases through the migration window.
+The rows below are rendered by `impl/scripts/render-surface-docs.mjs` from the executable
+ordinary-CLI inventory. The conformance suite fails if they drift from served truth.
 
 <!-- BEGIN GENERATED: cli-verb-inventory (impl/scripts/render-surface-docs.mjs) -->
 
 | Operation | Profile | CLI verb | Example |
 |---|---|---|---|
-| `deployment.view` | `ordinary` | `baton deployment view` | `baton doctor --check` |
-| `deployment.serve` | `host` | `baton deployment serve` | `baton serve` |
-| `deployment.shutdown` | `host` | `baton deployment shutdown` | `baton deployment shutdown` |
-| `run.list` | `ordinary` | `baton run list` | `baton run list` |
-| `run.start` | `ordinary` | `baton run start` | `baton run "Ship it" --model gpt-5.6-sol --effort low` |
-| `run.view` | `ordinary` | `baton run view` | `baton run view RUN_ID` |
-| `run.watch` | `ordinary` | `baton run watch` | `baton run watch RUN_ID` |
-| `run.do` | `ordinary` | `baton run do` | `baton run do RUN_ID ACTION_ID` |
-| `run.approve` | `ordinary` | `baton run approve` | `baton run approve RUN_ID --plan DIGEST` |
-| `run.answer` | `ordinary` | `baton run answer` | `baton run answer RUN_ID REQUEST_ID --text TEXT` |
-| `run.send` | `ordinary` | `baton run send` | `baton run send RUN_ID TEXT` |
-| `run.interrupt` | `ordinary` | `baton run interrupt` | `baton run interrupt RUN_ID` |
-| `run.stop` | `ordinary` | `baton run stop` | `baton run stop RUN_ID` |
-| `run.evidence` | `ordinary` | `baton run evidence` | `baton run evidence RUN_ID` |
-| `run.review` | `ordinary` | `baton run review` | `baton run review RUN_ID --exact codex/gpt-5.6-sol@low --reason R` |
+| `application.help` | `ordinary` | `baton application help` | `baton help` |
 | `run.adopt` | `ordinary` | `baton run adopt` | `baton run adopt RUN_ID --reason R` |
-| `run.integrate` | `ordinary` | `baton run integrate` | `baton run integrate RUN_ID --strategy ff-only --reason R` |
+| `run.answer` | `ordinary` | `baton run answer` | `baton run answer RUN_ID REQUEST_ID --text TEXT` |
+| `run.approve` | `ordinary` | `baton run approve` | `baton run approve RUN_ID --plan DIGEST` |
+| `run.debug` | `ordinary` | `baton run debug` | `baton run debug RUN_ID` |
+| `run.do` | `ordinary` | `baton run do` | `baton run do RUN_ID ACTION_ID` |
+| `run.evidence` | `ordinary` | `baton run evidence` | `baton run evidence RUN_ID` |
 | `run.export` | `ordinary` | `baton run export` | `baton run export RUN_ID DIR` |
-| `run.select` | `ordinary` | `baton run select` | `baton run select RUN_ID ROLE --reason R` |
-| `run.feedback` | `ordinary` | `baton run feedback` | `baton run feedback RUN_ID ROLE --text TEXT` |
-| `run.revise` | `ordinary` | `baton run revise` | `baton run revise RUN_ID --reason R` |
+| `run.integrate` | `ordinary` | `baton run integrate` | `baton run integrate RUN_ID --strategy ff-only --reason R` |
+| `run.list` | `ordinary` | `baton run list` | `baton run list` |
+| `run.member.send` | `ordinary` | `baton run member send` | `baton run member send RUN_ID ROLE TEXT` |
+| `run.member.stop` | `ordinary` | `baton run member stop` | `baton run member stop RUN_ID ROLE` |
+| `run.member.view` | `ordinary` | `baton run member view` | `baton run member view RUN_ID` |
 | `run.recover` | `ordinary` | `baton run recover` | `baton run recover RUN_ID` |
 | `run.resume` | `ordinary` | `baton run resume` | `baton run resume RUN_ID --reason R` |
 | `run.retry` | `ordinary` | `baton run retry` | `baton run retry RUN_ID --reason R` |
-| `run.member.view` | `ordinary` | `baton run member view` | `baton run member view RUN_ID` |
-| `run.member.send` | `ordinary` | `baton run member send` | `baton run member send RUN_ID ROLE TEXT` |
-| `run.member.interrupt` | `ordinary` | `baton run member interrupt` | `baton run member interrupt RUN_ID ROLE` |
-| `run.member.stop` | `ordinary` | `baton run member stop` | `baton run member stop RUN_ID ROLE` |
-| `run.attention.list` | `ordinary` | `baton run attention list` | `baton run attention list RUN_ID` |
-| `context.eval` | `ordinary` | `baton context eval` | `baton context eval --run RUN_ID --program FILE` |
-| `context.map` | `ordinary` | `baton context map` | `baton context map` |
-| `context.reduce` | `ordinary` | `baton context reduce` | `baton context reduce` |
-| `context.retry` | `ordinary` | `baton context retry` | `baton context retry` |
-| `board.post` | `ordinary` | `baton board post` | `baton board post` |
-| `board.retitle` | `ordinary` | `baton board retitle` | `baton board retitle` |
-| `board.reorder` | `ordinary` | `baton board reorder` | `baton board reorder` |
-| `board.close` | `ordinary` | `baton board close` | `baton board close` |
-| `board.read` | `ordinary` | `baton board read` | `baton board read` |
-| `board.claim` | `worker` | `baton board claim` | `baton board claim` |
-| `board.report` | `worker` | `baton board report` | `baton board report` |
-| `package.admit` | `ordinary` | `baton package admit` | `baton package admit` |
-| `package.attach` | `ordinary` | `baton package attach` | `baton package attach` |
-| `package.read` | `ordinary` | `baton package read` | `baton package read` |
-| `application.help` | `ordinary` | `baton application help` | `baton help` |
+| `run.review` | `ordinary` | `baton run review` | `baton run review RUN_ID --exact codex/gpt-5.6-sol@low --reason R` |
+| `run.send` | `ordinary` | `baton run send` | `baton run send RUN_ID TEXT` |
+| `run.start` | `ordinary` | `baton run start` | `baton run "Ship it" --model gpt-5.6-sol --effort low` |
+| `run.stop` | `ordinary` | `baton run stop` | `baton run stop RUN_ID` |
+| `run.view` | `ordinary` | `baton run view` | `baton run view RUN_ID` |
+| `run.watch` | `ordinary` | `baton run watch` | `baton run watch RUN_ID` |
 
 <!-- END GENERATED: cli-verb-inventory -->
 

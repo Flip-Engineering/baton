@@ -364,7 +364,7 @@ test('RX4-A7: application.context_eval requires exactly one of runId or manifest
   );
 });
 
-test('RX4-A8: transport parity — direct method call and CLI argv parsing work today; command-bus, Web, and MCP are an honest, documented gap', () => {
+test('RX4-A8: transport parity — direct method + MCP baton_context_eval; CLI refuses at parse (CS-2)', () => {
   // application.context_eval is `BatonApplication.prototype.contextEval` (application.mjs), a
   // public method, not an APPLICATION_COMMAND_DEFINITIONS entry: `card().commands` is exactly
   // `Object.keys(APPLICATION_COMMAND_DEFINITIONS)`, and several out-of-this-task's-scope fixtures
@@ -375,34 +375,25 @@ test('RX4-A8: transport parity — direct method call and CLI argv parsing work 
   // phase16-mcp-northbound.test.mjs — whose `combined.result.tools.length === 47` assertion also
   // forbids a new MCP tool regardless). See the authority note atop
   // `BatonApplication.prototype.contextEval` in application.mjs for the full account.
+  //
+  // CS-2 (control-surface v2): the CLI no longer accepts a dead parse→whitelist path. `context
+  // eval` refuses at parse with a typed corrective naming the live paths (embedded
+  // BatonRun.context().evaluate / MCP baton_context_eval).
   assert.equal(Object.hasOwn(APPLICATION_COMMAND_DEFINITIONS, 'application.context_eval'), false);
 
-  const parsedByManifest = parseBatonCli([
-    'context', 'eval', '--manifest', 'a'.repeat(64), '--json', '{"schemaVersion":1,"kind":"baton.context_program","expression":{"op":"source","branch":"repository"}}',
-  ]);
-  assert.equal(parsedByManifest.name, 'application.context_eval');
-  assert.deepEqual(parsedByManifest.args, {
-    manifestDigest: 'a'.repeat(64),
-    program: {
-      schemaVersion: 1, kind: 'baton.context_program',
-      expression: { op: 'source', branch: 'repository' },
-    },
-  });
-
-  const parsedByRun = parseBatonCli([
-    'context', 'eval', '--run', 'run-cli-x', '--role', 'critic', '--json',
-    '{"schemaVersion":1,"kind":"baton.context_program","expression":{"op":"source","branch":"repository"}}',
-  ]);
-  assert.deepEqual(parsedByRun.args, {
-    runId: 'run-cli-x', role: 'critic',
-    program: {
-      schemaVersion: 1, kind: 'baton.context_program',
-      expression: { op: 'source', branch: 'repository' },
-    },
-  });
-
-  assert.throws(() => parseBatonCli(['context', 'eval', '--manifest', 'a'.repeat(64), '--run', 'run-x', '--json', '{}']),
-    (error) => error?.message?.includes('exactly one of --manifest or --run'));
-  assert.throws(() => parseBatonCli(['context', 'eval', '--manifest', 'a'.repeat(64)]),
-    (error) => error?.message?.includes('exactly one of --program or --json'));
+  assert.throws(
+    () => parseBatonCli([
+      'context', 'eval', '--manifest', 'a'.repeat(64), '--json',
+      '{"schemaVersion":1,"kind":"baton.context_program","expression":{"op":"source","branch":"repository"}}',
+    ]),
+    (error) => error?.code === 'cli_command_host_local'
+      && /baton_context_eval|context\(\)|evaluate/iu.test(error?.message ?? ''),
+  );
+  assert.throws(
+    () => parseBatonCli([
+      'context', 'eval', '--run', 'run-cli-x', '--role', 'critic', '--json',
+      '{"schemaVersion":1,"kind":"baton.context_program","expression":{"op":"source","branch":"repository"}}',
+    ]),
+    (error) => error?.code === 'cli_command_host_local',
+  );
 });

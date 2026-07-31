@@ -12,20 +12,19 @@ import { foldCanonicalCase } from './canonical-order.mjs';
 import { createLocalSocketFetch } from './local-web-transport.mjs';
 import { publishResultExportNoReplace } from './result-export.mjs';
 
-const COMMANDS = new Set([
+export const CLI_WEB_COMMANDS = new Set([
   'application.help',
   'runs.list',
-  'run.start', 'run.inspect', 'run.act',
+  'run.start', 'run.inspect', 'run.episode', 'run.workstreams',
+  'run.workstream.notify', 'run.workstream.stop', 'run.act',
   'run.status', 'run.follow', 'run.recover', 'run.approve', 'run.wait', 'run.answer',
   'run.steer', 'run.stop', 'run.evidence', 'run.adopt', 'run.retry_verification',
   'run.resume_work', 'run.review', 'run.integrate', 'run.export',
 ]);
-// REFLEX-4 slice A (docs/32 §3.4, issue #19): `application.context_eval` is deliberately absent
-// from COMMANDS above — it names commands BatonWebClient.command() may POST to a resident server,
-// and application.context_eval is not (yet) registered server-side (see the note above
-// APPLICATION_COMMAND_DEFINITIONS in application.mjs). `parseBatonCli`'s `context eval` branch
-// below still does real, tested client-side argv parsing; it is just not wired to remote
-// execution yet.
+// CS-2 (control-surface v2): the five web-admitted verbs (run.episode, run.workstreams,
+// run.workstream.notify, run.workstream.stop; run.result folds to run.episode) join the
+// CLI web-client whitelist. Host-local-only verbs stay out: run.debug (CS-3) and
+// application.context_eval (parse-time refusal naming embedded/MCP paths).
 const TERMINAL_RUN_PHASES = new Set(['work_completed', 'completed', 'failed', 'cancelled', 'denied', 'stopped']);
 const CONNECTION_ENV = Object.freeze(['BATON_URL', 'BATON_ORIGIN', 'BATON_REPO_ID', 'BATON_TOKEN']);
 const DEFAULT_APPLICATION_WAIT_MS = 30_000;
@@ -1287,37 +1286,12 @@ export function parseBatonCli(rawArgs) {
   if (args[0] === 'context') {
     args.shift();
     if (args.shift() !== 'eval') throw cliError('expected context eval');
-    const manifestDigest = take(args, '--manifest');
-    const runId = take(args, '--run');
-    const role = take(args, '--role');
-    const programPath = take(args, '--program');
-    const programJson = take(args, '--json');
-    noRemainder(args);
-    if ((manifestDigest === null) === (runId === null)) {
-      throw cliError('context eval requires exactly one of --manifest or --run');
-    }
-    if ((programPath === null) === (programJson === null)) {
-      throw cliError('context eval requires exactly one of --program or --json');
-    }
-    let program;
-    try {
-      program = JSON.parse(programPath !== null
-        ? readBoundedFile(programPath, 'context program file') : programJson);
-    } catch (error) {
-      if (error?.code) throw error;
-      throw cliError('context program must be JSON', 'cli_context_program_invalid');
-    }
-    if (!record(program)) throw cliError('context program must be an object', 'cli_context_program_invalid');
-    return {
-      kind: 'command', name: 'application.context_eval',
-      args: {
-        ...(manifestDigest === null ? {} : { manifestDigest: digest(manifestDigest, 'manifest digest') }),
-        ...(runId === null ? {} : { runId: id(runId, 'Run ID') }),
-        ...(role === null ? {} : { role: id(role, 'context role') }),
-        program,
-      },
-      idempotencyKey,
-    };
+    // CS-2: context eval has no CLI web route. Refuse at parse with a typed corrective naming
+    // the live paths (embedded BatonRun.context().evaluate / MCP baton_context_eval).
+    throw cliError(
+      'context eval is host-local: use embedded BatonRun.context().evaluate(...) or MCP baton_context_eval',
+      'cli_command_host_local',
+    );
   }
   if (args.shift() !== 'run') {
     throw cliError('expected credentials, setup, doctor, route, explore, review, context, or run');
@@ -1332,7 +1306,7 @@ export function parseBatonCli(rawArgs) {
   const lifecycleActions = new Set(['show', 'do', 'recover', 'status', 'approve', 'answer', 'steer',
     'send', 'interrupt', 'progress', 'events', 'output', 'episode', 'workstreams', 'notify', 'result',
     'stop', 'evidence', 'adopt', 'select', 'feedback', 'revise', 'stop-member',
-    'retry', 'review', 'integrate', 'export', 'debug']);
+    'retry', 'resume', 'review', 'integrate', 'export', 'debug']);
   if (!lifecycleActions.has(action)) return parseStart(args, action, idempotencyKey);
   const runId = id(args.shift(), 'Run ID');
   if (action === 'episode' || action === 'result') {
@@ -1767,7 +1741,7 @@ export class BatonWebClient {
   }
 
   async command(name, args, idempotencyKey = randomUUID()) {
-    if (!COMMANDS.has(name)) throw cliError(`unsupported Run command ${name}`, 'cli_command_unavailable');
+    if (!CLI_WEB_COMMANDS.has(name)) throw cliError(`unsupported Run command ${name}`, 'cli_command_unavailable');
     id(idempotencyKey, 'idempotency key');
     const command = name.replaceAll('.', '_');
     const runId = name === 'run.start' ? args.intent.runId ?? null : args.runId;

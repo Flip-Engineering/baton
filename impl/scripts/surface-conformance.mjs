@@ -1,10 +1,28 @@
+import { readFileSync, writeFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+
 import { collectSurfaceInventory } from './surface-audit.mjs';
+import {
+  checkSurfaceDocs,
+  renderCliVerbInventory,
+  renderMcpToolInventory,
+  servedCliOrdinaryKeys,
+} from './render-surface-docs.mjs';
+import { pathToFileURL } from 'node:url';
 import {
   APPLICATION_SEMANTIC_REGISTRY,
   LEGACY_RUN_PHASE_MAP,
   canonicalRunPhase,
   deriveSurfaceNames,
 } from '../src/application-semantics.mjs';
+import { APPLICATION_COMMAND_DEFINITIONS } from '../src/application.mjs';
+import { CLI_WEB_COMMANDS, parseBatonCli } from '../src/application-cli.mjs';
+import {
+  mcpApplicationToolNames,
+  mcpAdvancedToolNames,
+  mcpCombinedToolNames,
+  mcpDispatchToolNames,
+} from '../src/mcp-northbound.mjs';
 
 // docs/36 §6.1 / M4A-2 — `deriveSurfaceNames` is imported, not redefined: the registry, the audit,
 // and this harness compute every surface name through the ONE function, so they cannot drift.
@@ -297,4 +315,385 @@ export function checkLedgerMonotone(previous, current) {
     throw new Error(`ledger append forbidden: ${entry.surface}:${entry.name}:${entry.dimension}`);
   }
   return [];
+}
+
+
+// ── CS-1: normative reference-profile matrix + executable inventories ────────
+
+export const REFERENCE_PROFILES = Object.freeze([
+  Object.freeze({ id: 'cli.ordinary', surface: 'cli', label: 'ordinary CLI principal' }),
+  Object.freeze({ id: 'cli.host_local', surface: 'cli', label: 'host-local CLI' }),
+  Object.freeze({ id: 'mcp.application', surface: 'mcp', label: 'MCP application profile' }),
+  Object.freeze({ id: 'mcp.advanced', surface: 'mcp', label: 'MCP advanced profile' }),
+  Object.freeze({ id: 'mcp.combined', surface: 'mcp', label: 'MCP combined profile' }),
+  Object.freeze({ id: 'web.bus', surface: 'web', label: 'web bus principal' }),
+]);
+
+// Host-local CLI verbs: parse succeeds, no web-client whitelist entry (CS-2/CS-3).
+const HOST_LOCAL_CLI_KEYS = Object.freeze(['run.debug']);
+
+function cliOrdinaryKeys() {
+  return servedCliOrdinaryKeys();
+}
+
+function webBusNames() {
+  return Object.entries(APPLICATION_COMMAND_DEFINITIONS)
+    .filter(([, definition]) => definition.web)
+    .map(([name]) => name.replaceAll('.', '_'))
+    .sort();
+}
+
+export function instantiateProfileInventory(profile) {
+  const id = typeof profile === 'string' ? profile : profile.id;
+  switch (id) {
+    case 'cli.ordinary':
+      return Object.freeze({
+        profile: id,
+        kind: 'operation-keys',
+        names: Object.freeze(cliOrdinaryKeys()),
+      });
+    case 'cli.host_local':
+      return Object.freeze({
+        profile: id,
+        kind: 'operation-keys',
+        names: Object.freeze([...HOST_LOCAL_CLI_KEYS].sort()),
+      });
+    case 'mcp.application':
+      return Object.freeze({
+        profile: id,
+        kind: 'tool-names',
+        names: Object.freeze(mcpApplicationToolNames()),
+      });
+    case 'mcp.advanced':
+      return Object.freeze({
+        profile: id,
+        kind: 'tool-names',
+        names: Object.freeze(mcpAdvancedToolNames()),
+      });
+    case 'mcp.combined':
+      return Object.freeze({
+        profile: id,
+        kind: 'tool-names',
+        names: Object.freeze(mcpCombinedToolNames()),
+      });
+    case 'web.bus':
+      return Object.freeze({
+        profile: id,
+        kind: 'web-names',
+        names: Object.freeze(webBusNames()),
+      });
+    default:
+      throw new Error(`unknown reference profile: ${id}`);
+  }
+}
+
+function extractGeneratedBlock(text, marker) {
+  const begin = `<!-- BEGIN GENERATED: ${marker} (impl/scripts/render-surface-docs.mjs) -->`;
+  const end = `<!-- END GENERATED: ${marker} -->`;
+  const start = text.indexOf(begin);
+  const stop = text.indexOf(end);
+  if (start < 0 || stop < 0 || stop < start) return '';
+  return text.slice(start + begin.length, stop).trim();
+}
+
+function namesFromCliInventoryBlock(block) {
+  const names = [];
+  for (const line of block.split('\n')) {
+    const match = /^\| `([^`]+)` \|/u.exec(line.trim());
+    if (match && match[1] !== 'Operation') names.push(match[1]);
+  }
+  return names;
+}
+
+function namesFromMcpInventoryBlock(block) {
+  // Prefer the MCP tool column (3rd) for tool-name inventories; fall back to operation key.
+  const names = [];
+  for (const line of block.split('\n')) {
+    const match = /^\| `([^`]+)` \| `([^`]+)` \| `([^`]+)` \|/u.exec(line.trim());
+    if (match && match[1] !== 'Operation') names.push(match[3]);
+  }
+  return names;
+}
+
+export function profileDocSection(profile, docs = {}) {
+  const id = typeof profile === 'string' ? profile : profile.id;
+  const cliPath = docs.cliPath ?? new URL('../CLI.md', import.meta.url);
+  const mcpPath = docs.mcpPath ?? new URL('../MCP.md', import.meta.url);
+  if (id === 'cli.ordinary' || id === 'cli.host_local') {
+    // Live section is the renderer output (committed file checked separately).
+    const block = id === 'cli.ordinary'
+      ? renderCliVerbInventory()
+      : renderCliVerbInventory(); // host-local rows are a subset of the CLI inventory
+    if (id === 'cli.host_local') {
+      // Section for host-local is the CLI rows whose keys are host-local.
+      const lines = ['| Operation | Profile | CLI verb | Example |', '|---|---|---|---|'];
+      for (const key of HOST_LOCAL_CLI_KEYS) {
+        const operation = APPLICATION_SEMANTIC_REGISTRY.canonicalOperations
+          .find((entry) => entry.key === key);
+        if (!operation) continue;
+        lines.push(`| \`${operation.key}\` | \`${operation.profile}\` | \`${operation.names.cli}\` | \`${operation.example}\` |`);
+      }
+      return lines.join('\n');
+    }
+    return block;
+  }
+  if (id === 'mcp.application') {
+    return renderMcpToolInventory();
+  }
+  if (id === 'mcp.advanced' || id === 'mcp.combined') {
+    // These profiles are not rendered into CLI.md/MCP.md generated regions; their
+    // "doc section" is the executable inventory itself (introspection-only surfaces).
+    const inventory = instantiateProfileInventory(id);
+    return inventory.names.map((name) => `- \`${name}\``).join('\n');
+  }
+  if (id === 'web.bus') {
+    const inventory = instantiateProfileInventory(id);
+    return inventory.names.map((name) => `- \`${name}\``).join('\n');
+  }
+  throw new Error(`unknown reference profile: ${id}`);
+}
+
+export function checkProfileDocParity(profile, inventory, section) {
+  const id = typeof profile === 'string' ? profile : profile.id;
+  let documented;
+  if (id === 'cli.ordinary') {
+    documented = namesFromCliInventoryBlock(section);
+  } else if (id === 'cli.host_local') {
+    documented = namesFromCliInventoryBlock(section);
+  } else if (id === 'mcp.application') {
+    // MCP application generated block lists operation keys mapped to tools; compare tool names
+    // extracted from the tool column when present, else the full served tool list vs section.
+    documented = namesFromMcpInventoryBlock(section);
+    // Renderer may list operation-derived tools; served inventory is the real tool table.
+    // Parity: every served tool is either in the doc tool column OR the doc is the tool list.
+    if (documented.length === 0) {
+      documented = section.split('\n')
+        .map((line) => {
+          const match = /`((?:fleet|baton)_[a-z0-9_]+)`/u.exec(line);
+          return match?.[1];
+        })
+        .filter(Boolean);
+    }
+  } else {
+    documented = section.split('\n')
+      .map((line) => {
+        const match = /`([^`]+)`/u.exec(line);
+        return match?.[1];
+      })
+      .filter(Boolean);
+  }
+  const served = new Set(inventory.names);
+  const docSet = new Set(documented);
+  // For mcp.application the generated table is operation→derived tool; the served inventory
+  // is the real ORDINARY tool table. Compare carefully:
+  if (id === 'mcp.application') {
+    // Positive/negative over the RENDERED tool names vs served tools that the renderer claims.
+    // The renderer lists deriveSurfaceNames tools for mcp-surface ops; real surface may differ.
+    // CS-1 requires they match — renderMcpToolInventory must emit the real application tools.
+    const missingFromDoc = inventory.names.filter((name) => !docSet.has(name)).sort();
+    const missingFromServe = documented.filter((name) => !served.has(name)).sort();
+    return { missingFromDoc, missingFromServe };
+  }
+  if (id === 'cli.ordinary' || id === 'cli.host_local') {
+    const missingFromDoc = inventory.names.filter((name) => !docSet.has(name)).sort();
+    const missingFromServe = documented.filter((name) => !served.has(name)).sort();
+    return { missingFromDoc, missingFromServe };
+  }
+  // Introspection-only profiles: section is rendered from the inventory itself.
+  const missingFromDoc = inventory.names.filter((name) => !docSet.has(name)).sort();
+  const missingFromServe = documented.filter((name) => !served.has(name)).sort();
+  return { missingFromDoc, missingFromServe };
+}
+
+// ── CS-1: prose-inventory lint ──────────────────────────────────────────────
+
+const PROSE_INVENTORY_PATTERNS = [
+  /\b(?:exactly|precisely)\s+\d+\s+tools?\b/iu,
+  /\b(?:eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|twenty-one)\s+(?:tools?|`(?:fleet_|baton_))/iu,
+  /\bthe\s+(?:default\s+)?application-backed inventory\b/iu,
+  // Comma-separated tool name lists (lowercase baton_*/fleet_* tools), not env vars.
+  /(?:^|\n)[^\n]*`baton_[a-z][a-z0-9_]*`\s*,\s*`baton_[a-z][a-z0-9_]*`/u,
+  /(?:^|\n)[^\n]*`fleet_[a-z][a-z0-9_]*`\s*,\s*`fleet_[a-z][a-z0-9_]*`/u,
+  /(?:^|\n)-\s+\*\*[^*]+\*\*:\s*`baton [a-z]/u,
+];
+
+function stripGeneratedRegions(text) {
+  return text.replace(
+    /<!-- BEGIN GENERATED:[\s\S]*?<!-- END GENERATED:[^>]*-->/gu,
+    '\n',
+  );
+}
+
+export function lintProseInventories(options = {}) {
+  const files = options.files ?? [
+    { path: new URL('../CLI.md', import.meta.url), label: 'CLI.md' },
+    { path: new URL('../MCP.md', import.meta.url), label: 'MCP.md' },
+  ];
+  const findings = [];
+  for (const file of files) {
+    const raw = typeof file.path === 'string'
+      ? readFileSync(file.path, 'utf8')
+      : readFileSync(file.path, 'utf8');
+    const prose = stripGeneratedRegions(raw);
+    for (const pattern of PROSE_INVENTORY_PATTERNS) {
+      if (pattern.test(prose)) {
+        findings.push(
+          `${file.label}: inventory-like prose (name-list/tool count) outside generated regions`,
+        );
+        break;
+      }
+    }
+  }
+  return findings;
+}
+
+// Re-export doc check under the conformance module (CS-1 harness reuse).
+export { checkSurfaceDocs };
+
+// ── CS-4: checked inventory artifact ────────────────────────────────────────
+
+const INVENTORY_ARTIFACT_URL = new URL('./surface-inventory-artifact.json', import.meta.url);
+
+export function buildSurfaceInventoryArtifact() {
+  // Deterministic: parser lifecycle, web whitelist, MCP profiles, registry counts.
+  // Never regex extraction alone — parser probe + instantiated MCP tool tables + registry.
+  const lifecycleProbe = [
+    'show', 'do', 'recover', 'status', 'approve', 'answer', 'steer', 'send', 'interrupt',
+    'progress', 'events', 'output', 'episode', 'workstreams', 'notify', 'result', 'stop',
+    'evidence', 'adopt', 'select', 'feedback', 'revise', 'stop-member', 'retry', 'resume',
+    'review', 'integrate', 'export', 'debug',
+  ];
+  let parsedResume = null;
+  try {
+    parsedResume = parseBatonCli([
+      'run', 'resume', 'run-artifact', '--reason', 'probe', '--idempotency-key', 'artifact-resume',
+    ]);
+  } catch {
+    parsedResume = { error: true };
+  }
+  let contextEval = null;
+  try {
+    parseBatonCli(['context', 'eval', '--run', 'run-a', '--json', '{}']);
+    contextEval = { refused: false };
+  } catch (error) {
+    contextEval = { refused: true, code: error?.code ?? null };
+  }
+  const artifact = {
+    schemaVersion: 1,
+    generatedBy: 'impl/scripts/surface-conformance.mjs#buildSurfaceInventoryArtifact',
+    counts: {
+      canonicalOperations: APPLICATION_SEMANTIC_REGISTRY.canonicalOperations.length,
+      cliWebCommands: CLI_WEB_COMMANDS.size,
+      parserLifecycleActions: lifecycleProbe.length,
+      mcpApplicationTools: mcpApplicationToolNames().length,
+      mcpAdvancedTools: mcpAdvancedToolNames().length,
+      mcpCombinedTools: mcpCombinedToolNames().length,
+      mcpDispatchTools: mcpDispatchToolNames().length,
+      webBusCommands: webBusNames().length,
+      applicationCommandDefinitions: Object.keys(APPLICATION_COMMAND_DEFINITIONS).length,
+    },
+    profiles: Object.fromEntries(
+      REFERENCE_PROFILES.map((profile) => [
+        profile.id,
+        instantiateProfileInventory(profile).names,
+      ]),
+    ),
+    pins: {
+      runResumeDispatch: parsedResume?.name ?? null,
+      contextEvalParseRefusal: contextEval,
+      runDebugRegistered: APPLICATION_SEMANTIC_REGISTRY.canonicalOperations
+        .some((entry) => entry.key === 'run.debug'),
+      batonRunsAdvertised: mcpApplicationToolNames().includes('baton_runs'),
+    },
+  };
+  return artifact;
+}
+
+export function checkSurfaceInventoryArtifact() {
+  const built = buildSurfaceInventoryArtifact();
+  let committed;
+  try {
+    committed = JSON.parse(readFileSync(INVENTORY_ARTIFACT_URL, 'utf8'));
+  } catch (error) {
+    return [`inventory artifact missing or unreadable: ${error.message}`];
+  }
+  const left = `${JSON.stringify(built, null, 2)}\n`;
+  const right = `${JSON.stringify(committed, null, 2)}\n`;
+  if (left !== right && JSON.stringify(built) !== JSON.stringify(committed)) {
+    // Accept either pretty-printed form as long as values match.
+    if (JSON.stringify(built) !== JSON.stringify(committed)) {
+      return ['inventory artifact is stale; regenerate via node impl/scripts/surface-conformance.mjs --write-inventory'];
+    }
+  }
+  // Byte-stable across two builds
+  if (JSON.stringify(buildSurfaceInventoryArtifact()) !== JSON.stringify(built)) {
+    return ['inventory artifact builder is non-deterministic'];
+  }
+  return [];
+}
+
+export function writeSurfaceInventoryArtifact() {
+  const artifact = buildSurfaceInventoryArtifact();
+  writeFileSync(INVENTORY_ARTIFACT_URL, `${JSON.stringify(artifact, null, 2)}\n`);
+  return artifact;
+}
+
+// ── Executable main (CS-1 / R-CS-6) ─────────────────────────────────────────
+
+export function runSurfaceConformanceMain({ writeInventory = false } = {}) {
+  const findings = [];
+  const ledgerUrl = new URL('./surface-divergence-ledger.json', import.meta.url);
+  let ledger;
+  try {
+    ledger = JSON.parse(readFileSync(ledgerUrl, 'utf8'));
+  } catch (error) {
+    findings.push(`invalid ledger: could not read: ${error.message}`);
+    return findings;
+  }
+  const ledgerFindings = validateLedger(ledger);
+  for (const finding of ledgerFindings) findings.push(`invalid ledger: ${finding}`);
+
+  const inventory = collectSurfaceInventory();
+  const classified = classifySurfaces(inventory, ledger);
+  for (const item of classified.novel) {
+    findings.push(`novel name divergence: ${item.surface}:${item.name}:${item.dimension}`);
+  }
+  const enums = checkEnumStrings(inventory.phaseLiterals, ledger);
+  for (const item of enums.novel) {
+    findings.push(`enum divergence: ${item.name}`);
+  }
+  for (const collision of checkWebNameDisjoint()) {
+    findings.push(`web-name collision: ${collision.key} → ${collision.web}`);
+  }
+  for (const finding of checkSurfaceDocs()) {
+    findings.push(`stale generated docs: ${finding}`);
+  }
+  for (const finding of lintProseInventories()) {
+    findings.push(`prose-inventory: ${finding}`);
+  }
+  if (writeInventory) writeSurfaceInventoryArtifact();
+  for (const finding of checkSurfaceInventoryArtifact()) {
+    findings.push(`inventory artifact: ${finding}`);
+  }
+  // Profile parity (CS-1a)
+  for (const profile of REFERENCE_PROFILES) {
+    const profileInventory = instantiateProfileInventory(profile);
+    const section = profileDocSection(profile);
+    const parity = checkProfileDocParity(profile, profileInventory, section);
+    for (const name of parity.missingFromDoc) {
+      findings.push(`profile ${profile.id}: served but undocumented: ${name}`);
+    }
+    for (const name of parity.missingFromServe) {
+      findings.push(`profile ${profile.id}: documented but unserved: ${name}`);
+    }
+  }
+  return findings;
+}
+
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  const writeInventory = process.argv.includes('--write-inventory');
+  const findings = runSurfaceConformanceMain({ writeInventory });
+  for (const finding of findings) process.stderr.write(`surface-conformance: ${finding}\n`);
+  if (findings.length > 0) process.exit(1);
+  process.stdout.write('surface-conformance: ok\n');
 }

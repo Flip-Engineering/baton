@@ -330,6 +330,14 @@ const LEGACY_ORDINARY_APPLICATION_TOOL_DEFINITIONS = Object.freeze([
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
   {
+    // CS-2: baton_runs was already in ORDINARY_APPLICATION_ENTRIES dispatch (sibling of the
+    // advertised set) but missing from the tool table — advertise it on the application surface.
+    name: 'baton_runs',
+    description: 'List Runs visible to the authenticated application principal.',
+    inputSchema: schema({ ...repo }, ['repoId']),
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  {
     name: 'baton_run_start',
     description: 'Start one Run from a concise explicit change or read-only evidence intent; Baton returns the progressive outline.',
     inputSchema: schema({ ...repo, ...idem, intent: applicationIntentSchema }, ['repoId', 'idempotencyKey', 'intent']),
@@ -1521,4 +1529,19 @@ export async function serveMcpStdio(server, opts = {}) {
   } finally {
     await server.close();
   }
+}
+
+
+// CS-1/CS-2: executable MCP profile inventories (never regex extraction alone).
+export function mcpApplicationToolNames() {
+  return ORDINARY_APPLICATION_TOOL_DEFINITIONS.map((tool) => tool.name).sort();
+}
+export function mcpAdvancedToolNames() {
+  return ADVANCED_TOOL_DEFINITIONS.map((tool) => tool.name).sort();
+}
+export function mcpCombinedToolNames() {
+  return TOOL_DEFINITIONS.map((tool) => tool.name).sort();
+}
+export function mcpDispatchToolNames() {
+  return [...Object.keys(APPLICATION_TOOL)].sort();
 }

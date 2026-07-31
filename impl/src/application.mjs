@@ -11149,6 +11149,11 @@ export class BatonApplication {
     }
     const principal = normalizePrincipal(rawPrincipal, 'command principal');
     const context = normalizeCommandContext(rawContext);
+    // CS-3: run.debug is a direct port (not in APPLICATION_COMMAND_DEFINITIONS). Validate via
+    // validateDebugArgs inside debug(); skip the legacy command-table validator.
+    if (name === 'run.debug') {
+      return this.debug(args, principal);
+    }
     validateApplicationCommandArgs(name, args);
     const recursiveReadCommands = new Set(['application.help', 'run.inspect', 'run.episode',
       'run.workstreams', 'run.status', 'run.follow', 'run.wait']);
