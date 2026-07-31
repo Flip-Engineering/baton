@@ -73,6 +73,27 @@ const GLM_EFFORTS = Object.freeze(['low', 'medium', 'high', 'xhigh', 'max']);
 const glmRoutes = () => GLM_EFFORTS.map((effort) => Object.freeze({
   harness: 'glm', model: 'glm-5.2', effort,
 }));
+const DEEPSEEK_FLASH_EFFORTS = Object.freeze(['low', 'medium', 'high', 'xhigh', 'max']);
+const DEEPSEEK_PRO_EFFORTS = Object.freeze(['low', 'medium']);
+const deepseekRoutes = () => [
+  ...DEEPSEEK_FLASH_EFFORTS.map((effort) => Object.freeze({
+    harness: 'deepseek', model: 'deepseek-v4-flash', effort,
+  })),
+  // The pro[1m] label precedes its unpublished update: retain it as an explicit pre-update
+  // opt-in only. Flash stays first so it is the adapter-configured default model.
+  ...DEEPSEEK_PRO_EFFORTS.map((effort) => Object.freeze({
+    harness: 'deepseek', model: 'deepseek-v4-pro[1m]', effort,
+  })),
+];
+
+export function deepseekCredentialProjection(repoRoot) {
+  return Object.freeze({
+    authTokenFile: join(repoRoot, 'deepseek_key.json'),
+    authTokenJsonPointer: '/deepseek_key',
+    baseUrl: 'https://api.deepseek.com/anthropic',
+    harness: 'deepseek',
+  });
+}
 
 const DEFAULT_ROUTES = Object.freeze([
   ...['minimal', 'low', 'medium', 'high', 'xhigh'].map((effort) => Object.freeze({
@@ -87,6 +108,7 @@ const DEFAULT_ROUTES = Object.freeze([
   ...['low', 'medium', 'high', 'xhigh', 'max'].map((effort) => Object.freeze({
     harness: 'claude-code', provider: 'claude', model: 'claude-opus-4-6', effort,
   })),
+  ...deepseekRoutes(),
 ]);
 
 function deploymentError(message) {
@@ -152,7 +174,8 @@ function repositoryAuthority(value) {
 }
 
 const SNAPSHOT_CREDENTIAL_PATHS = Object.freeze([
-  'glm_key.json', '.env', '.env.local', '.env.development', '.env.test', '.env.production',
+  'glm_key.json', 'deepseek_key.json',
+  '.env', '.env.local', '.env.development', '.env.test', '.env.production',
 ]);
 
 function repositorySnapshot(repoRoot, stateRoot) {
@@ -594,7 +617,9 @@ function locallyReadyRoutes(repoRoot) {
     route.harness === 'codex' ? codexReady
       : route.harness === 'grok' ? grokReady
         : route.harness === 'kimi-code' ? kimiReady
-          : route.harness === 'claude-code' ? claudeReady : false
+          : route.harness === 'claude-code' ? claudeReady
+            : route.harness === 'deepseek'
+              ? existingRegular(join(repoRoot, 'deepseek_key.json')) : false
   ));
   if (existingRegular(kimiThroughClaudeCredential())) {
     routes.push(Object.freeze({
@@ -618,6 +643,9 @@ function locallyConfiguredRoutes(repoRoot) {
     // configuration rather than an ambient executable/authentication observation. The bounded
     // version and projected `auth status --json` probes below remain the readiness authorities.
     'claude-code': true,
+    // The built-in adapter can report the repo-local credential absence without launching a
+    // provider, so configuration inventory remains honest even before the key is provisioned.
+    deepseek: true,
   };
   const routes = DEFAULT_ROUTES.filter((route) => configured[route.harness] === true);
   if (existingRegular(kimiThroughClaudeCredential())) {
@@ -685,6 +713,47 @@ function resolveSessionWireCeiling(adapterOptions = {}) {
   return DEFAULT_DEPLOYMENT_WIRE_FRAME_BYTES;
 }
 
+class DeepseekSessionCli extends GlmSessionCli {
+  constructor(opts = {}) {
+    const credentialPresent = typeof opts.authTokenFile === 'string'
+      && existingRegular(opts.authTokenFile);
+    const { authTokenFile, ...baseOptions } = opts;
+    super({
+      ...baseOptions,
+      ...(credentialPresent ? { authTokenFile } : {}),
+      harness: 'deepseek',
+      baseUrl: 'https://api.deepseek.com/anthropic',
+    });
+    this._deepseekCredentialPresent = credentialPresent;
+  }
+
+  card() {
+    const base = super.card();
+    return {
+      ...base,
+      harness: 'deepseek',
+      version: typeof base.version === 'string'
+        ? base.version.replace('+zai-anthropic', '+deepseek-anthropic') : base.version,
+      modelSelection: {
+        ...base.modelSelection,
+        family: 'deepseek',
+        acceptedPrefixes: ['deepseek-'],
+        provenance: 'adapter-configuration+deepseek-model-mapping',
+      },
+      providerCompatibility: {
+        ...base.providerCompatibility,
+        provider: 'deepseek',
+      },
+      ...(!this._deepseekCredentialPresent ? {
+        readiness: {
+          state: 'blocked', code: 'authentication_required',
+          summary: 'DeepSeek is not configured; provision deepseek_key.json at the repository root.',
+        },
+      } : {}),
+    };
+  }
+}
+
 function builtInAdapters(routes, repoRoot, adapterOptions = {}) {
   const adapters = {};
   const kimiCommand = existingRegular(join(homedir(), '.kimi-code', 'bin', 'kimi'))
@@ -723,6 +792,15 @@ function builtInAdapters(routes, repoRoot, adapterOptions = {}) {
       if (!existingRegular(credential)) throw deploymentError('Kimi-through-Claude requires the private Baton Kimi credential file');
       adapters[key] = new KimiSessionCli({
         authTokenFile: credential, repoRoot, model: route.model, approvals: false, ceiling: 2, maxWireFrameBytes,
+      });
+    } else if (route.harness === 'deepseek') {
+      const allowedModels = new Set(['deepseek-v4-flash', 'deepseek-v4-pro[1m]']);
+      if (rows.some((row) => !allowedModels.has(row.model))) {
+        throw deploymentError('current DeepSeek routes permit only deepseek-v4-flash and deepseek-v4-pro[1m]');
+      }
+      adapters[key] = new DeepseekSessionCli({
+        ...deepseekCredentialProjection(repoRoot),
+        model: 'deepseek-v4-flash', approvals: false, ceiling: 1, maxWireFrameBytes,
       });
     } else if (route.harness === 'glm') {
       if (rows.some((row) => row.model !== 'glm-5.2')) {
