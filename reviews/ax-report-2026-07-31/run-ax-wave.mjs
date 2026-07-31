@@ -2,7 +2,7 @@
 // inside baton — frictions hit, gaps noticed, ranked proposals. One wave, three members,
 // per-seat receipt pointers. Usage: node run-ax-wave.mjs
 import { resolve } from 'node:path';
-import { createWaveDriver, openBaton } from '../../../../impl/src/index.mjs';
+import { createWaveDriver, openBaton } from '../../impl/src/index.mjs';
 
 const repo = resolve(process.cwd());
 const ATTEMPT = new Date().toISOString();
