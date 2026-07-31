@@ -308,3 +308,33 @@ surface (`run.debug()`) answers messages/receipts/failure-causes without JSONL a
 (issue #53). The canonical suite passed **2891/2891** at the last full gate. In flight:
 DeepSeek fleet routes (flash-first), 93B wave durability (attach-and-harvest), issue #11
 refresh-aware credential projection.
+
+2026-07-31 arc: **DeepSeek is a confirmed worker type** — contract flash-first (the 0731
+variant is the performant model; pro[1m] flagged pre-update opt-in), key provisioned and
+endpoint-verified, implementation by a codex gpt-5.6-sol wave (DS-1..DS-4 red-first, 4/4),
+live probe (doctor ready + real inference, pin aabf9fab content-verified), first live seat
+(deepseek-v4-flash under the shipped wave driver: full nudge→claim→preserve loop in 47s,
+result 58fef567 — it drafted its own fleet docs section). **93B wave durability landed**:
+the resume premise was proven FALSE by red-team (host-open replay terminalizes every
+nonterminal task), so waves got attach-and-harvest + re-drive-the-failed — deterministic
+waveIds from idempotencyKeys, pre-loop wave.started records, per-member steering.registered
+binding, waves.attach proving each member's binding server-side
+(application_wave_member_mismatch / wave_attach_unknown_wave), turn.settled replay dedup
+(not_found/not_paused), exactly-once wave.driver_detached; W93-1..5 red-verified 0/5 then
+5/5 green. **Control-surface epic advanced**: the full mechanical inventory (26-command
+table, 8 dialects, coverage matrix) exposed live drift — dead run.resume branch, seven
+parse-then-blocked CLI verbs, ghost board/package registry rows, doc↔server drift invisible
+by construction, vacuous conformance command; contract v1 red-teamed UNSOUND by codex@high
+(P0: facade board path could bypass the MCP lease posture), v2 narrowed to server-truth
+conformance + dead-path resolution + run.debug registration, with wave grammar (S-1), board
+authority (S-2), and bidirectional surfacing (S-3) named as successor contracts; grok@high
+implementation wave in flight. **Bidirectional ergonomics contracted**: the #51 spine pinned
+precisely (workerResult rides the pause record then dies at the projection boundary,
+coordinator.mjs:2046-2050) — v1 covers the claim-bit projection, driver upward-signal
+classification, first-class decision gating (onDecision callback through run.answer),
+deadlineAt projection, and follow-based wake. **Issue #11 contract v2**: deployment
+credential cache + access-token-only worker projection (the refresh token never enters a
+runtime) + single-flight vendor-executed refresh harvested from any write-back target +
+retry-once on the established taxonomy. The canonical suite passed **2900/2900** at the last
+full gate. Fleet truth: claude (opus/sonnet) and grok re-authorized, codex gpt-5.6-sol back,
+GLM 5.2 back, deepseek-v4-flash confirmed the economic workhorse, kimi blocked on #54.
