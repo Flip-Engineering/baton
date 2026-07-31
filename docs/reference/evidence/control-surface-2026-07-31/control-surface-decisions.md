@@ -1,155 +1,169 @@
-# Control-surface contract — grammar completion + bidirectional surfacing (v1)
+# Control-surface contract — server-truth conformance + dead-path resolution (v2)
 
-(Seed: operator directive 2026-07-31 — "prioritize unified and combined control surfaces and
-all bidirectional features; collaboration, dynamic and steered orchestration, real-time
-messaging, interaction, notification between the models." Parent issues: #43 (control-surface
-audit), #48 (embedded facade shared-layer gaps), docs/36 v2.1 FINAL (the unified control
-grammar, M0–M4b landed). Grounding: full mechanical inventory by explore subagent 2026-07-31,
-file:line-cited; every claim below carries its citation.)
+(v2 folds the codex red-team (`redteam-v1.md`, verdict **UNSOUND**, R-CS-1..8). The decisive
+corrections: (1) the board/lease authority boundary is CUT from this contract — rule 4/5's "use
+the same coordinator wrappers" would have allowed a facade board write that bypasses the MCP
+session-lease posture and board-fence CAS (R-CS-1 P0); (2) wave cross-surface transport is CUT —
+`waves.start` stays registry-declared preset sugar per docs/36, and attach's
+embedding-vs-portable decision is a separate grammar amendment (R-CS-2); (3) the bidirectional
+surfacing rung is CUT — board/package rows ALREADY exist as ghost rows in the 44-op registry,
+and their authority/profile/schema migration needs the security-reviewed sub-contract and the
+registry-delta matrix first (R-CS-3); (4) every rung now carries its own C1/C2 coverage, the
+ledger is removal-only, and quiesce preconditions are named (R-CS-5); (5) "server truth" is
+pinned to a normative profile matrix with reference principals (R-CS-4); (6) the advertised
+conformance command was vacuous — no main block — and gains one (R-CS-6); (7) citations
+repaired (R-CS-7). Scope per R-CS-8: completion only.)
 
-## Ground truth
+## What v2 is
 
-The grammar epic retired the hand-list *concept* but the surfaces still drift in practice:
+Four tightly-scoped repairs that complete the grammar's *conformance* promise without moving
+any authority boundary:
 
-1. **Docs render grammar intent, not server truth.** CLI.md's generated table lists 44 verbs;
-   the parser accepts ~10 (`application-semantics.mjs:700-745`). MCP.md claims "exactly eleven
-   tools" on the default surface; the live `application` inventory is 15 `baton_*` with
-   `fleet_run_*` combined-only (`mcp-northbound.mjs:824-854`). The renderer
-   (`impl/scripts/render-surface-docs.mjs:33-47`) prints `deriveSurfaceNames` output for every
-   grammar operation; the conformance check compares doc↔renderer, so **doc↔server drift is
-   invisible by construction**.
-2. **Dead and blocked paths ship.** `baton run resume` is a dead parser branch (`'resume'`
-   missing from `lifecycleActions`, `application-cli.mjs:1332` vs parser :1612). Seven verbs
-   parse then die at the `COMMANDS` whitelist (`application-cli.mjs:15-22` gate :1770):
-   `run episode`, `run result`, `run workstreams`, `run notify`, `run stop-member`,
-   `run debug`, `context eval`. No comment marks any of them deliberate except
-   `context_eval`/`run.debug` (:23-28).
-3. **New operations land outside the grammar.** `waves.start`/`waves.attach` (93B) exist only
-   on `BatonClient.waves` (`application-client.mjs:1495-1507`); the deployment facade has
-   `start` only (`application-deployment.mjs:1188-1195`); CLI/MCP/web have zero `waves`
-   presence; neither operation is in the registry. `run.debug` (#53) is a direct port
-   (`application.mjs:10503`) absent from the registry, the CLI dispatch, and every doc.
-   `baton_runs` dispatches but is advertised nowhere (`mcp-northbound.mjs:47`).
-4. **The bidirectional layer is surface-fragmented (issue #48, all four claims verified).**
-   Board writes are MCP-only among transported surfaces (`mcp-northbound.mjs:1338-1361`);
-   `baton_decision_list` is MCP-combined-only; scratchpad elevation is kernel-only
-   (`coordination-store.mjs:13090/:13233`); REPL orchestration is kernel-only
-   (`coordinator.mjs:9766-9955`); knowledge promotion is kernel-only
-   (`coordination-store.mjs:14308`). The embedded facade — the orchestrator's primary surface —
-   has none of them, and `run.scratchpad` is documented-but-missing (CLI.md:26-28).
+- **CS-1 — Server-truth docs + conformance main.** CLI.md/MCP.md generated inventories render
+  from the *executable* inventory of named reference principals (never grammar intent, never
+  hand lists); `surface-conformance.mjs` gains an executable main that fails on ledger
+  invalidity, novel name/enum divergence, web-name collision, or stale generated docs.
+- **CS-2 — Dead-path resolution.** `run resume` wired (the `lifecycleActions` omission,
+  `application-cli.mjs:1332` vs parser :1612 — a bug); the seven parsed-but-whitelist-blocked
+  verbs (`run episode`, `run result`, `run workstreams`, `run notify`, `run stop-member`,
+  `run debug`, `context eval`) are wired to their live commands or refused at parse time with
+  a typed corrective; `baton_runs` is advertised on the MCP application surface or removed
+  from dispatch — no shadow operations.
+- **CS-3 — `run.debug` registration.** The #53 direct port (`application.mjs:10503`, rationale
+  :655-668) registers as canonical operation `run.debug`: facade accessor `run.debug()`,
+  CLI dispatch for the already-parsed verb, doc rows. No new machinery — the port exists.
+- **CS-4 — Citation + inventory artifact.** A checked inventory artifact produced from
+  parser/dispatcher execution and instantiated MCP profiles (never regex extraction alone),
+  correcting the two headline mis-citations in v1 (the "~10 parser verbs" claim cited
+  `OPERATION_ALIASES` at `application-semantics.mjs:700-745`, not the parser — parser control
+  begins at `application-cli.mjs:1194`, legacy CLI inventory at `application-semantics.mjs:813-856`;
+  the `run.debug` comment citation belongs to `application.mjs:655-668`, not
+  `application-cli.mjs:23-28`).
 
-## The question
+## Named successor contracts (out of scope here, recorded so nothing is lost)
 
-Does the grammar get *completed* — surfaces generated from registry v2 with server-truth
-conformance, dead paths resolved, new ops registered — and does the bidirectional layer enter
-the canonical operation set so every surface derives it uniformly? Or do new capabilities keep
-landing wherever their author happened to touch, re-accreting the dialects docs/36 retired?
+- **S-1 — Wave grammar amendment:** `waves.start` stays preset expansion sugar of `run.start`
+  (docs/36:289-294,324-326; CLI.md:24-28 "deliberately embedding-only"); `waves.attach`'s
+  embedding-vs-portable decision; if portable: one canonical key with mechanically derived
+  names accepted verbatim (`baton waves start`, never singular `wave start`), `waveId` as a
+  required PUBLIC input to attach, only `mintWaveDetached` hidden. Deployment-facade parity
+  (`waves.attach` missing at `application-deployment.mjs:1188-1195`) rides that decision.
+- **S-2 — Board/package authority sub-contract (security-reviewed):** one shared admission
+  primitive — closed session-authority envelope; active-lease resolution and revalidation at
+  mutation admission (`coordination-store.mjs:1818-1842`); required board-fence CAS inside the
+  same serialized command path (no TOCTOU split across an async authorization step);
+  idempotency bound to the normalized request; untrusted callers NEVER defaulted to
+  `orchestrator`; refusal order/codes pinned; negative tests for no-lease, wrong-session,
+  revoked/expired lease, stale parent, closed run, stale fence, replay-same, replay-conflict
+  BEFORE any facade method. Reconcile or remove the ghost board/package registry rows
+  (`application-semantics.mjs:1231-1289` — ordinary-profile, all-surfaces by default,
+  `runId/entryId/note/before` schema vs the live MCP `board/itemId/detail/ordinal` schema with
+  required `expectedBoardFence`, `mcp-northbound.mjs:485-527`).
+- **S-3 — Bidirectional surfacing matrix:** scratchpad elevate/settle, `decision.list`
+  (canonical keys are dot-separated lowercase alnum — underscores rejected,
+  `application-semantics.mjs:1088-1105`), REPL manifest/binding/citation, knowledge
+  promote/recall — each with the R-CS-3 registry-delta row (exact key, closed profile enum,
+  enabled surfaces, effect/durability, closed schema, authority-vs-server-derived fields,
+  one-live-method mapping). Read-side projection ergonomics (the #51 workerResult claim bit
+  dropped at `coordinator.mjs:2046-2050`, decision `deadlineAt` dropped at
+  `application.mjs:337-357`, wave-driver attention extractors) belong to the separate
+  bidirectional-ergonomics epic and need no authority boundary moved.
+- **S-4 — M5 alias sunset** (docs/36; unchanged).
 
-This contract picks completion, on evidence that the drift is already re-accreting (items 3-4
-above are all post-grammar landings).
+## Rules (v2)
 
-## Rules
-
-1. **Server truth is the only doc source.** CLI.md and MCP.md generated tables render from
-   registry v2 *intersected with the live server inventory* (the MCP tool tables actually
-   advertised per profile; the CLI verbs that actually parse AND dispatch). The conformance
-   harness gains a doc↔server dimension: any operation in the doc but not served (or served
-   but not documented) fails the suite. Hand tables are deleted in the same commit.
-2. **No dead paths.** Every parsed CLI verb either dispatches or is refused at parse time with
-   a corrective naming the live spelling. `run resume` is wired (it has a live command,
-   `run.resume_work`) — the `lifecycleActions` omission is a bug, not a design. The seven
-   whitelist-blocked verbs are wired to their live commands (`run.episode`, `run.workstreams`,
-   `run.workstream.notify`, `run.workstream.stop` are all `web:true`; `run.debug` and
-   `application.context_eval` get explicit web entries or stay host-only with a parse-time
-   refusal that says so). `baton_runs` is advertised on the MCP application surface or deleted
-   from dispatch — no shadow operations.
-3. **Every operation enters through the registry — including the ones already shipped.**
-   `waves.start` and `waves.attach` register as canonical operations with derived names on the
-   enabled profiles: deployment facade gains `waves.attach` (parity with `BatonClient.waves`),
-   CLI gains `wave start`/`wave attach` verbs, MCP application surface gains the pair
-   (stateful, reconcilable), web admits them on the bus. `run.debug` registers as a canonical
-   read operation: facade accessor, CLI dispatch, doc rows. The 93B side-channel args
-   (`mintWaveDetached`, `waveId`) stay unadvertised on web/MCP schemas *by registry flag*,
-   with the flag itself pinned by conformance (hidden-by-declaration, never hidden-by-hand).
-4. **The bidirectional layer enters the canonical operation set (issue #48 fold).** One
-   canonical operation per existing kernel capability, derived per profile — never new
-   machinery: `run.scratchpad` read on the embedded facade (closing the CLI.md:26-28
-   documented-but-missing gap; the view projection already exists at
-   `application.mjs:5269-5271`), scratchpad elevate/settle on the orchestrator (kernel)
-   profile, board read+write operations on the profiles where the authority already exists
-   (MCP combined keeps its lease/fence enforcement; facade gains board ops through the same
-   coordinator wrappers), `decision_list` as a canonical operation, REPL manifest/binding and
-   knowledge promote/recall on the orchestrator profile. Each lands as registry entries +
-   surface derivations, NOT bespoke per-surface plumbing — that is the difference between this
-   and the accretion it retires.
-5. **Idempotency and authority parity per surface.** Board/package/REPL mutations through the
-   facade carry the same lease + fence CAS enforcement the MCP layer performs
-   (`mcp-northbound.mjs:1338-1361`); the enforcement moves INTO the application/coordinator
-   command path so every surface inherits it, and the MCP layer's bespoke guards retire to
-   thin adapters. Exactly-once admission (coordination ledgers) applies uniformly.
-6. **M5 stays honest.** The alias-sunset rung is out of THIS contract's scope except that
-   every name introduced above must be canonical-day-one (zero new aliases, zero new ledger
-   entries). M5 proper (banned-token lint red, legacy grep-clean, `run.steer` deletion,
-   GLOSSARY) is the follow-on contract.
-
-## Rungs
-
-- **CS-1 — Server-truth conformance + dead-path resolution** (rules 1-2). Doc↔server
-  conformance dimension red-first; CLI.md/MCP.md regenerated from live inventory; hand tables
-  deleted; `run resume` wired; seven blocked verbs wired-or-refused; `baton_runs`
-  advertised-or-removed.
-- **CS-2 — Grammar registration of the landed orphans** (rule 3). `waves.start`,
-  `waves.attach`, `run.debug` as canonical operations with derived surfaces (facade parity,
-  CLI verbs, MCP tools, web admission); side-channel args hidden-by-declaration.
-- **CS-3 — Bidirectional surfacing** (rules 4-5). `run.scratchpad` facade read; scratchpad
-  elevate/settle, board read/write, `decision_list`, REPL manifest/binding, knowledge
-  promote/recall as canonical operations on their authority-correct profiles; enforcement
-  folded into the command path; MCP bespoke guards retire to adapters.
-- **CS-4 — Conformance hardening.** C1/C2 extended to every new operation; the divergence
-  ledger gains the pre-CS-1 entries as retired rows; suite green at every rung.
+1. **Docs render executable truth per reference profile.** A normative profile matrix names
+   the reference principals (ordinary CLI principal; MCP `application` profile; MCP
+   `advanced`; MCP `combined`; web bus principal; host-local CLI). Each generated doc section
+   is produced by instantiating that profile's REAL inventory (MCP tool tables by profile
+   construction, `mcp-northbound.mjs:824-864`; CLI parse+dispatch against the web-client
+   whitelist, `application-cli.mjs:15-22,1770`; web bus entries) — never `deriveSurfaceNames`
+   over grammar rows alone (`render-surface-docs.mjs:25-52` renders intent today). Hand
+   inventories are deleted in the same commit; inventory-like prose (tool/verb counts and name
+   lists, e.g. MCP.md:71-100) outside generated regions is linted red. Runtime introspection
+   stays principal-filtered; no static manual depends on a live principal.
+2. **No dead paths.** Every parsed CLI verb either dispatches or refuses at parse with a
+   typed corrective naming the live spelling. `run resume` dispatches to `run.resume_work`.
+   The five web-admitted blocked verbs (`run.episode`, `run.result`→`run.episode`,
+   `run.workstreams`, `run.workstream.notify`, `run.workstream.stop` — all `web:true`) are
+   added to the CLI web-client whitelist. `run debug` and `context eval` name host-local
+   commands with no web route: `run debug` dispatches host-locally via CS-3; `context eval`
+   gets a parse-time refusal naming the embedded/MCP paths — OR a host-local dispatch if the
+   implementation finds one already wired (pinned either way by test). `baton_runs`
+   (`mcp-northbound.mjs:29,48` dispatch, no tool definition in :325-401) is advertised on the
+   MCP application surface — it is the canonical sibling of an already-advertised set — or
+   deleted from dispatch; the choice is pinned by test, never left shadowed.
+3. **Every repaired operation enters through the registry.** `run.debug` registers with exact
+   key `run.debug` (canonical: dot-separated lowercase alnum), profile `ordinary`, surfaces
+   `{embedded, cli}` (host-local; no web route exists — adding one is S-1-class scope),
+   effect `observe`, mapping to the live direct port `application.mjs:10503`. Its facade
+   accessor and CLI dispatch derive from the one registry row. Zero new aliases, zero new
+   ledger rows (removal-only per docs/36:491-501 and R-CS-5).
+4. **Green-at-every-commit rung discipline.** Each rung lands with its red-first tests AND
+   its conformance coverage in the same commit: CS-1's conformance main fails before the docs
+   are regenerated and passes after; CS-2/CS-3 each carry C1 name-resolution rows for their
+   operations. No authority-digest-changing commit lands without a named quiesce precondition
+   (CS-3 changes the registry authority digest — it lands alone, suite green, fleet quiesced:
+   no waves in flight). The ledger shrinks only by removal of a real row in the exact commit
+   that resolves it.
+5. **Nothing in v2 moves an authority boundary.** No new mutation surfacing, no lease/fence
+   relocation, no profile invention ("orchestrator profile" is not a landed name),
+   `waves.*` stays embedding-only, scratchpad/board/REPL/knowledge mutation paths untouched.
 
 ## Red-first tests
 
-- **CS-1 (impl/test/control-surface-truth-red.test.mjs):** (a) doc↔server — parse CLI.md's
-  generated verb table, assert every row parses AND dispatches (mock server), assert every
-  dispatchable verb is in the doc; same for MCP.md's tool table per profile against
-  `McpFleetServer` instantiation. (b) `parseBatonCli('run resume …')` reaches
-  `run.resume_work` dispatch. (c) each of the seven blocked verbs either dispatches or refuses
-  at parse with a typed corrective naming the live spelling. (d) `baton_runs` advertised in
-  the application-surface inventory (or absent from dispatch — pinned either way).
-- **CS-2 (impl/test/grammar-orphans-red.test.mjs):** registry contains `waves.start`,
-  `waves.attach`, `run.debug` with derived names per profile; `deployment.waves.attach`
-  exists and binds (W93-4's mismatch refusal through the deployment facade);
-  `baton wave start|attach` parse and dispatch; MCP application surface advertises both with
-  `mcpStateful:true`; web bus admits both; `mintWaveDetached`/`waveId` rejected by MCP
-  argument validation and omitted from advertised schemas while accepted by the in-process
-  validator (hidden-by-declaration pin); facade `run.debug()` accessor + `baton run debug`
-  dispatch.
-- **CS-3 (impl/test/bidirectional-surface-red.test.mjs):** facade `run.scratchpad({workerId})`
-  returns the projected scratchpad (the CLI.md:26-28 contract); facade board post/read round
-  trip with the same lease+fence refusal taxonomy as MCP (`stale_fence`, writer-lease
-  required); `decision_list` via the canonical operation on facade and MCP with identical
-  payloads; REPL manifest admit + binding via the facade (kernel-profile authority);
-  knowledge promote via the facade (orchestrator gate); MCP bespoke guard deletion pinned by
-  source-scan (the enforcement lives once, in the command path).
-- **CS-4:** conformance harness rows for every operation added in CS-2/CS-3 (C1 name
-  resolution + C2 outcome identity across enabled surfaces); ledger diff shows only
-  retirements.
+- **CS-1 (`impl/test/control-surface-truth-red.test.mjs`):** (a) for each reference profile,
+   instantiate the real inventory and assert the matching generated doc section equals it
+   exactly — positive AND negative (a tool served but undocumented fails; a documented tool
+   unserved fails); (b) `node impl/scripts/surface-conformance.mjs` has an executable main
+   that exits non-zero on: invalid ledger, novel name divergence vs the registry, enum
+   divergence, web-name collision, stale generated docs (pin each failure class with a
+   fixture); (c) prose-inventory lint: a name-list/count outside generated regions in
+   CLI.md/MCP.md fails (fixture doc).
+- **CS-2 (`impl/test/cli-dead-paths-red.test.mjs`):** (a) `parseBatonCli('run resume …')`
+   reaches `run.resume_work` dispatch (mock web client); (b) each of the five web-admitted
+   verbs dispatches through the whitelist to its command; (c) `context eval` either dispatches
+   host-locally or refuses AT PARSE with a typed code naming the live path (pinned whichever
+   lands); (d) `baton_runs` appears in the instantiated MCP application-surface tool table
+   (or is absent from dispatch — pinned); (e) regression: every previously-dispatching verb
+   still dispatches.
+- **CS-3 (`impl/test/run-debug-surface-red.test.mjs`):** registry contains `run.debug` with
+   the rule-3 row; `batonRun.debug()` accessor returns the same payload as the direct port;
+   `baton run debug RUN` dispatches (host-local) and prints the member-leg projection;
+   CLI.md/MCP.md generated rows for `run.debug` match the served truth (CS-1 harness reuse).
+- **CS-4:** the checked inventory artifact regenerates deterministically (byte-stable across
+   two runs) and its counts are the ones cited in the docs (replacing v1's two mis-citations).
 
-Deterministic: MockAdapter fixtures, in-process surfaces, no live providers.
+Deterministic: MockAdapter fixtures, in-process surfaces, mock web client, no live providers.
 
 ## Verification
 
 ```text
-node --test impl/test/control-surface-truth-red.test.mjs impl/test/grammar-orphans-red.test.mjs impl/test/bidirectional-surface-red.test.mjs
+node --test impl/test/control-surface-truth-red.test.mjs impl/test/cli-dead-paths-red.test.mjs impl/test/run-debug-surface-red.test.mjs
 node impl/scripts/surface-conformance.mjs
 node impl/scripts/run-suite.mjs
 ```
 
-## Explicit non-goals (v1)
+## Explicit non-goals (v2)
 
-- M5 alias sunset (rule 6).
-- New bidirectional *machinery* (no new board/REPL/knowledge features — surfacing only;
-  feature work is the REFLEX/REPL/KG epics, #17-#27).
-- Web operator-console changes, MCP profile restructuring, the `combined`-profile split.
-- `run.steer` retirement (M3/M5 scope per docs/36).
+Everything under "Named successor contracts" (S-1..S-4); any authority-boundary move (rule 5);
+operator-console work; MCP profile restructuring; `combined`-profile split; `run.steer`
+retirement; new bidirectional machinery or read-side projection changes (the #51 claim bit,
+`deadlineAt` projection — bidirectional-ergonomics epic).
+
+---
+
+# (v1 — SUPERSEDED, retained for the fold trail)
+
+v1 proposed four rungs (CS-1 server-truth docs + dead paths; CS-2 grammar registration of
+`waves.*`/`run.debug`; CS-3 bidirectional surfacing incl. board writes through the facade with
+lease/fence enforcement moved into the command path; CS-4 conformance hardening). The codex
+red-team found it UNSOUND: the facade board path could bypass the MCP session-lease posture
+(R-CS-1 P0); wave naming contradicted derivation and docs/36's preset-sugar treatment
+(R-CS-2); rule 4 had no registry/profile/schema delta and mis-stated already-registered ghost
+rows as new (R-CS-3); "server truth" was ambiguous for profile-filtered surfaces (R-CS-4);
+the rungs violated green-at-every-commit (R-CS-5); the advertised conformance command was
+vacuous (R-CS-6); two citation errors (R-CS-7); the scope combined completion with a
+security-boundary move (R-CS-8). v2 narrows to the surviving sections: server-truth
+conformance, dead-path resolution, `baton_runs`, `run.debug` registration, and the
+conformance main — with the authority and wave-semantic work named as successor contracts.
