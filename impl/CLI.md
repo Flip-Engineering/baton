@@ -181,6 +181,34 @@ and per-exact-route readiness. The connected JavaScript client exposes the same 
 opening the deployment factory. `baton route HARNESS/MODEL@EFFORT` selects the identical sanitized
 row for CLI orchestration.
 
+### Fleet routes
+
+The zero-assembly deployment registers these route families (`baton doctor` for live readiness):
+
+| Harness | Model(s) | Efforts | Ready when |
+|---|---|---|---|
+| `codex` | `gpt-5.6-sol` | minimal/low/medium/high/xhigh | `~/.codex/auth.json` present |
+| `kimi-code` | `kimi-code/k3` | low/high/max | kimi credential files present |
+| `grok` | `grok-4.5` | low/medium/high | `~/.grok/auth.json` present |
+| `claude-code` | `claude-opus-4-6` | low/medium/high/xhigh/max | bounded version + `auth status` probes |
+| `claude-code` (provider kimi) | `kimi-k3[1m]` | max | kimi-through-claude credential present |
+| `glm` | `glm-5.2` | low/medium/high/xhigh/max | repo `glm_key.json` present |
+| `deepseek` | `deepseek-v4-flash` (primary) | low/medium/high/xhigh/max | repo `deepseek_key.json` present |
+| `deepseek` | `deepseek-v4-pro[1m]` (pre-update opt-in) | low/medium | repo `deepseek_key.json` present |
+
+The deepseek harness routes through the Anthropic-compatible endpoint
+`https://api.deepseek.com/anthropic` — the same session shape as GLM: a claude-family session
+class pointed at a DeepSeek endpoint with a token read from a repo-local key file. The
+deployment projects, for deepseek routes only, `{ authTokenFile, authTokenJsonPointer:
+'/deepseek_key', baseUrl, harness: 'deepseek' }`; the token is read by the deployment, never by
+workers, and the file is mode 600 and gitignored beside `glm_key.json`. `deepseek-v4-flash`
+(the 0731 variant) is the primary, economically efficient model and the adapter default;
+`deepseek-v4-pro[1m]` precedes its unpublished update, so it stays an explicit low/medium
+opt-in and is never a default. When the key is absent, deepseek routes report an honest
+blocked `authentication_required` readiness rather than failing at construction. Pinned by
+`impl/test/deepseek-routes-red.test.mjs` (DS-1..DS-4).
+
+
 `run adopt` first reads `run.evidence` and binds the exact displayed manifest/result coordinates;
 it does not inspect a disposable worktree, merge, checkout, or publish. Use
 `--idempotency-key KEY` when an external caller needs stable retry identity. Provider credentials

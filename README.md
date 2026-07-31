@@ -23,7 +23,8 @@ Every CLI coding agent today can *shell out* to another CLI coding agent. That's
 ## What baton is
 
 A run-centric **fleet application** — one orchestrator agent directs full Claude Code / Codex /
-Kimi Code / GLM 5.2 / Grok workers across vendors while Baton compiles the objective into approved
+Kimi Code / GLM 5.2 / Grok / DeepSeek workers across vendors while Baton compiles the objective
+into approved
 work, routes it, watches it, handles attention, verifies it, and closes its resources. The
 Coordinator is the safety kernel beneath that application, not the interface every agent should
 have to assemble manually. `Claude → (Codex + GLM)` and `Codex → (Claude + GLM)` remain core uses.
@@ -33,7 +34,7 @@ have to assemble manually. `Claude → (Codex + GLM)` and `Codex → (Claude + G
 ## Status
 
 Baton is a runnable dependency-light Node ESM reference implementation, not a prototype skeleton.
-The canonical suite is **2834/2834 green**. The fleet driver (Phases 1–65), the AX/lifecycle spine
+The canonical suite is **2900/2900 green**. The fleet driver (Phases 1–65), the AX/lifecycle spine
 (Phases 90–92.x), and the closed Baton Program IR slices (93a.1–93a.3a, issue #9) are shipped
 underneath; the **agent-orchestration stack** is now first-class: waves, the reflexive layer
 (decision channel, boards, packages, `context_eval`), the REPL layer, knowledge horizons
@@ -76,7 +77,9 @@ the reliable Coordinator kernel makes dispatch, fencing, verification, replay, a
   transaction. Episode/workstream projections attribute evidence by role and generation.
 - **Fleet tier.** Southbound, persistent Claude stream-json, Codex app-server, Kimi ACP, and
   Grok ACP sessions are the product tier; one-shot subprocess adapters remain an explicitly
-  limited fire-and-forget tier. Learned routing records which vendor is good at what; GLM work
+  limited fire-and-forget tier. GLM 5.2 and DeepSeek (`deepseek-v4-flash` primary,
+  `deepseek-v4-pro[1m]` pre-update opt-in) ride Anthropic-compatible session shims against
+  repo-local key files. Learned routing records which vendor is good at what; GLM work
   is restricted to `glm-5.2` with effort chosen explicitly by the orchestrator.
 
 The full verb inventory lives in [impl/CLI.md](impl/CLI.md) and [impl/MCP.md](impl/MCP.md);
