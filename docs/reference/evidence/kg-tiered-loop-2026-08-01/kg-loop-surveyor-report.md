@@ -1,0 +1,12 @@
+# KG Tiered-Loop Surveyor Report
+
+Surveyor pass over `impl/src/run-lineage.mjs` (run-orchestrator lease machinery) for the tiered knowledge-graph loop acceptance.
+
+## Lease issuance
+A run-orchestrator lease binds a parent task that carries one of the four frozen `RUN_ORCHESTRATOR_CAPABILITIES` — `run.context`, `run.start`, `run.status`, `run.stop` (`impl/src/run-lineage.mjs:14-16`). Issuance is bounded by a validated lineage policy: `normalizeRunLineagePolicy` (`:39-62`) accepts only the base 5-field digest or the 6-field REPL-extended digest (`:44-48`), requires `schemaVersion: 1` (`:46`), demands positive safe integers for `maxDepth` / `maxChildrenPerRun` / `maxDescendantsPerRoot` / `leaseTtlMs` (`:49-51`), and caps each against deployment ceilings (`:57-60`). The default policy (`:22-28`) therefore issues leases under `maxDepth` 4, `maxChildrenPerRun` 8, `maxDescendantsPerRoot` 32, and a `leaseTtlMs` of 30 minutes (`:27`) — the time-box every issued lease lives within.
+
+## Revocation
+Revocation is a closed taxonomy: the frozen `RUN_ORCHESTRATOR_REVOCATION_REASONS` enumerates `operator`, `parent_terminal`, `parent_run_stopping`, `session_revoked`, `superseded` (`impl/src/run-lineage.mjs:18-20`). The `leaseTtlMs` (default 30 min, `:27`) is the hard expiry that forces revocation or renewal; `parent_terminal` and `parent_run_stopping` (`:19`) encode that a lease must not outlive its parent run. Because revoking for a stopping parent is an enumerated outcome rather than an ad-hoc one, the settle-time ritual must complete before run stop — otherwise the lease is torn down under `parent_run_stopping` mid-handoff.
+
+## What the orchestrator must guarantee
+The orchestrator must guarantee four things against this module: (1) the parent it leases to carries a `RUN_ORCHESTRATOR_CAPABILITIES` entry (`impl/src/run-lineage.mjs:14-16`) and is neither terminal nor stopping, else `parent_terminal` / `parent_run_stopping` (`:18-20`) revokes it; (2) the lineage policy it accepts is exactly the validated base-5 or REPL-6 digest (`:44-48`), so manifest/session `policyDigest`s stay byte-stable across deployments; (3) each lease is re-confirmed or revoked before `leaseTtlMs` (`:27`) lapses; and (4) the settle-time ritual runs before run stop, so the admission check (`_assertRunAdmissionOpen`'s `run_stopping` refusal, surfaced as the doubt) never rejects an in-flight lease handoff.
