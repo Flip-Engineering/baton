@@ -396,3 +396,25 @@ start-latency-calibrated caps) surfaced 4x, each passing isolated re-runs — D9
 recalibrated honestly (waves.start alone measures ~3.9s under load). Issue #52's mainline
 pollution receipt filed (0f51b91 'mock edit: slow.txt' committed P1-C's work to master
 mid-suite).
+
+2026-08-01 cascade (the S-chain + diagnostics): **S-1 wave grammar landed** (grok via
+baton.recipes — the first recipes-driven implementation; waves.attach registers as a
+canonical operation with atomic transport attach-and-harvest and the transportHidden
+mechanism; WG 5/5, conformance ok). **S-2 board authority landed** (codex —
+proof-of-principal envelope closing the tautological-digest hole, board→run binding, CAS
+inside the store append, MCP guards retired to thin adapters; BA 12/12). **S-3 surfacing
+matrix landed** (codex — the 19-row registry-delta: scratchpad read/elevate/settle,
+decision.list with deadlineAt, board read+writes riding the S-2 primitive, packages, REPL,
+knowledge horizons; MCP reflex table now DERIVES from the rows; SM 5/5; 70-tool combined
+inventory preserving the ordinary surface verbatim). **DIAG DG-1 landed** (grok — the #28
+deferral: wire.frame_degraded + stream-death as whitelisted run.debug summaries; trust-gate
+rejection diagnosis honestly shaped (digests-only scope, sanitized tails, run.feedback to
+the worker); DG 8/8). **Demo v2 complete**: shared-layer scratchpad relay, real SIGKILL
+driver death with 93B attach-and-harvest (honest CI6 terminals, idempotent re-attach), and
+the live decision gate — a glm verifier raised DECISION_REQUEST, the driver's onDecision
+answered with the expiresInMs payload, and the worker completed a second verification pass
+(result c3cd5c70). Every subsequent wave launched through `baton.recipes.implementContract`
+in ~35 lines — the bespoke driver scripts are retired (composition v2.1 acceptance law).
+Grammar M5 (alias sunset) is in flight. The #7 load-flake cluster (drain deadlines,
+calibrated caps, phase assertions) recurred 8x across gates — every row passes isolated
+re-runs; governance work filed for W7.2.
