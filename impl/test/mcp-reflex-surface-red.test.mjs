@@ -28,7 +28,7 @@ const REPO_ID = 'repo-reflex';
 const runApplicationCard = () => ({
   schemaVersion: 1,
   repoId: REPO_ID,
-  commands: ['application.help', 'runs.list', 'run.start', 'run.inspect', 'run.episode', 'run.workstreams', 'run.workstream.notify', 'run.workstream.stop', 'run.act', 'run.status', 'run.follow', 'run.recover', 'run.approve', 'run.wait', 'run.answer', 'run.feedback', 'run.steer', 'run.stop', 'run.evidence', 'run.adopt', 'run.retry_verification', 'run.resume_work', 'run.review', 'run.integrate', 'run.export', 'application.shutdown'],
+  commands: ['application.help', 'runs.list', 'run.start', 'run.inspect', 'run.episode', 'run.workstreams', 'run.workstream.notify', 'run.workstream.stop', 'run.act', 'run.status', 'run.follow', 'run.recover', 'run.approve', 'run.wait', 'run.answer', 'run.feedback', 'run.steer', 'run.stop', 'run.evidence', 'run.adopt', 'run.retry_verification', 'run.resume_work', 'run.review', 'run.integrate', 'run.export', 'waves.attach', 'application.shutdown'],
 });
 
 function principal(overrides = {}) {
@@ -167,7 +167,7 @@ test('Inventory: the combined surface adds exactly the eleven Slice 1+2 reflex t
   await initialized(server);
   const response = await request(server, 2, 'tools/list', {});
   const names = response.result.tools.map((tool) => tool.name);
-  assert.equal(names.length, 65, '48 pre-existing (incl. baton_runs CS-2) + 6 M4b canonical ordinary + 11 Slice 1+2 reflex tools');
+  assert.equal(names.length, 66, '49 pre-existing (incl. baton_runs CS-2 + baton_waves_attach S-1) + 6 M4b canonical ordinary + 11 Slice 1+2 reflex tools');
   const reflexNames = [
     'baton_context_eval', 'baton_decision_list', 'baton_decision_answer',
     'baton_board_post', 'baton_board_retitle', 'baton_board_reorder', 'baton_board_close', 'baton_board_read',
@@ -189,13 +189,13 @@ test('Inventory: the ordinary (Web-bridge) surface is unchanged — no reflex to
   const { server } = setup({ surface: 'application' });
   await initialized(server);
   const response = await request(server, 2, 'tools/list', {});
-  assert.equal(response.result.tools.length, 16);
+  assert.equal(response.result.tools.length, 17);
   // M4b: the canonical grammar tools render beside the retained legacy tools (docs/36 §9 M4).
   // CS-2: baton_runs is advertised on the application surface (no longer a shadow dispatch).
   assert.deepEqual(response.result.tools.map((tool) => tool.name), [
     'baton_help', 'baton_runs', 'baton_run_start', 'baton_run_inspect', 'baton_run_episode',
     'baton_run_workstreams', 'baton_workstream_notify', 'baton_workstream_stop',
-    'baton_run_act', 'baton_run_stop',
+    'baton_run_act', 'baton_run_stop', 'baton_waves_attach',
     'baton_run_do', 'baton_run_view', 'baton_run_member_view', 'baton_run_member_send',
     'baton_run_member_stop', 'baton_application_help',
   ]);

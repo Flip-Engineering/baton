@@ -17,7 +17,7 @@ const principal = (overrides = {}) => ({
 const runApplicationCard = () => ({
   schemaVersion: 1,
   repoId: 'repo-a',
-  commands: ['application.help', 'runs.list', 'run.start', 'run.inspect', 'run.episode', 'run.workstreams', 'run.workstream.notify', 'run.workstream.stop', 'run.act', 'run.status', 'run.follow', 'run.recover', 'run.approve', 'run.wait', 'run.answer', 'run.feedback', 'run.steer', 'run.stop', 'run.evidence', 'run.adopt', 'run.retry_verification', 'run.resume_work', 'run.review', 'run.integrate', 'run.export', 'application.shutdown'],
+  commands: ['application.help', 'runs.list', 'run.start', 'run.inspect', 'run.episode', 'run.workstreams', 'run.workstream.notify', 'run.workstream.stop', 'run.act', 'run.status', 'run.follow', 'run.recover', 'run.approve', 'run.wait', 'run.answer', 'run.feedback', 'run.steer', 'run.stop', 'run.evidence', 'run.adopt', 'run.retry_verification', 'run.resume_work', 'run.review', 'run.integrate', 'run.export', 'waves.attach', 'application.shutdown'],
 });
 function setup(overrides = {}) {
   const calls = [];
@@ -89,7 +89,7 @@ test('UA5/MN1: an application-backed MCP server exposes the semantic ordinary su
   assert.deepEqual(response.result.tools.map((tool) => tool.name), [
     'baton_help', 'baton_runs', 'baton_run_start', 'baton_run_inspect', 'baton_run_episode',
     'baton_run_workstreams', 'baton_workstream_notify', 'baton_workstream_stop',
-    'baton_run_act', 'baton_run_stop',
+    'baton_run_act', 'baton_run_stop', 'baton_waves_attach',
     'baton_run_do', 'baton_run_view', 'baton_run_member_view', 'baton_run_member_send',
     'baton_run_member_stop', 'baton_application_help',
   ]);
@@ -110,8 +110,8 @@ test('UA5/MN1: an application-backed MCP server exposes the semantic ordinary su
     'baton_board_post', 'baton_board_retitle', 'baton_board_reorder', 'baton_board_close', 'baton_board_read',
     'baton_package_admit', 'baton_package_attach', 'baton_package_read',
   ];
-  assert.equal(combined.result.tools.length, 65);
-  assert.deepEqual(combined.result.tools.slice(0, 16).map((tool) => tool.name), response.result.tools.map((tool) => tool.name));
+  assert.equal(combined.result.tools.length, 66);
+  assert.deepEqual(combined.result.tools.slice(0, 17).map((tool) => tool.name), response.result.tools.map((tool) => tool.name));
   assert.deepEqual(combined.result.tools.map((tool) => tool.name).filter((name) => reflexNames.includes(name)), reflexNames);
   assert.equal(combined.result.tools.every((tool) => tool.inputSchema.additionalProperties === false), true);
   assert.equal(combined.result.tools.every((tool) => tool.execution.taskSupport === 'forbidden'), true);

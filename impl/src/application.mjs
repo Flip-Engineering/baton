@@ -151,7 +151,9 @@ export const APPLICATION_COMMAND_DEFINITIONS = Object.freeze({
   // `mintWaveDetached` (93B): an attach-only side-channel flag consumed solely by the direct
   // command port (waves.attach) — never advertised through the web/mcp JSON schemas, which stay
   // byte-stable in application-semantics.mjs.
-  'run.inspect': Object.freeze({ args: Object.freeze(['runId', 'depth', 'section', 'item', 'offset', 'pageCursor', 'recipient', 'cursor', 'waitMs', 'mintWaveDetached', 'waveId']), capabilities: Object.freeze(['observe']), web: true, mcp: true, mcpStateful: false, reconcilable: true }),
+  // mintWaveDetached + waveId are declared-hidden (S-1 v2 transportHidden): present in the
+  // in-process validator, excluded from advertised MCP/web schemas via transportHidden.
+  'run.inspect': Object.freeze({ args: Object.freeze(['runId', 'depth', 'section', 'item', 'offset', 'pageCursor', 'recipient', 'cursor', 'waitMs', 'mintWaveDetached', 'waveId']), capabilities: Object.freeze(['observe']), web: true, mcp: true, mcpStateful: false, reconcilable: true, transportHidden: Object.freeze(['mintWaveDetached', 'waveId']) }),
   'run.episode': Object.freeze({ args: Object.freeze(['runId', 'topic', 'detail', 'role', 'generation', 'pageCursor', 'cursor', 'waitMs']), capabilities: Object.freeze(['observe']), web: true, mcp: true, mcpStateful: false, reconcilable: true }),
   'run.workstreams': Object.freeze({ args: Object.freeze(['runId', 'role', 'generation', 'cursor', 'waitMs']), capabilities: Object.freeze(['observe']), web: true, mcp: true, mcpStateful: false, reconcilable: true }),
   'run.workstream.notify': Object.freeze({ args: Object.freeze(['runId', 'role', 'generation', 'message', 'delivery']), capabilities: Object.freeze(['control', 'observe']), web: true, mcp: true, mcpStateful: true, reconcilable: true }),
@@ -173,6 +175,14 @@ export const APPLICATION_COMMAND_DEFINITIONS = Object.freeze({
   'run.integrate': Object.freeze({ args: Object.freeze(['runId', 'evidenceDigest', 'strategy', 'reason']), capabilities: Object.freeze(['integrate_result', 'observe']), web: true, mcp: true, mcpStateful: true, reconcilable: true }),
   'run.export': Object.freeze({ args: Object.freeze(['runId', 'evidenceDigest']), capabilities: Object.freeze(['export_result', 'observe']), web: true, mcp: true, mcpStateful: true, reconcilable: true }),
   'run.recover': Object.freeze({ args: Object.freeze(['runId']), capabilities: Object.freeze(['control', 'observe']), web: true, mcp: true, mcpStateful: true, reconcilable: true }),
+  // S-1 v2: portable atomic attach-and-harvest. Observe-class; no emergency_stop; returns a
+  // closed {outcomes, waveDriverDetached} payload (no live handle over MCP/web/CLI).
+  'waves.attach': Object.freeze({
+    args: Object.freeze(['waveId', 'members', 'timeoutMs', 'repoRoot', 'mintWaveDetached']),
+    capabilities: Object.freeze(['observe']),
+    web: true, mcp: true, mcpStateful: false, reconcilable: true,
+    transportHidden: Object.freeze(['mintWaveDetached']),
+  }),
   'application.shutdown': Object.freeze({ args: Object.freeze([]), capabilities: Object.freeze(['emergency_stop']), web: false, mcp: false, mcpStateful: false, reconcilable: false }),
 });
 // REFLEX-4 slice A (docs/32 §3.4, issue #19): `application.context_eval` (below,
@@ -1640,6 +1650,36 @@ export function validateApplicationCommandArgs(name, args) {
     if (!validId(args.runId) || !validId(args.actionId) || !args.inputs
       || typeof args.inputs !== 'object' || Array.isArray(args.inputs)) {
       throw applicationError('Run action request is invalid', 'application_action_invalid');
+    }
+    return true;
+  }
+  if (name === 'waves.attach') {
+    const allowed = new Set(definition.args);
+    if (!args || typeof args !== 'object' || Array.isArray(args)
+      || Object.keys(args).some((key) => !allowed.has(key))
+      || typeof args.waveId !== 'string' || !/^wave:[a-f0-9]{32}$/u.test(args.waveId)
+      || !Array.isArray(args.members) || args.members.length === 0 || args.members.length > 64
+      || (args.timeoutMs !== undefined
+        && (!Number.isSafeInteger(args.timeoutMs) || args.timeoutMs <= 0))
+      || (args.repoRoot !== undefined
+        && (typeof args.repoRoot !== 'string' || args.repoRoot.length < 1 || args.repoRoot.length > 4096))
+      || (args.mintWaveDetached !== undefined && args.mintWaveDetached !== true)) {
+      throw applicationError('Wave attach request is invalid', 'application_wave_attach_invalid');
+    }
+    const roles = new Set();
+    for (const member of args.members) {
+      if (!member || typeof member !== 'object' || Array.isArray(member)
+        || typeof member.role !== 'string' || !validId(member.role)
+        || typeof member.objective !== 'string' || member.objective.length < 1
+        || member.objective.length > 4096
+        || Object.keys(member).some((key) => !['role', 'objective'].includes(key))) {
+        throw applicationError('Wave attach member is invalid', 'application_wave_attach_invalid');
+      }
+      if (roles.has(member.role)) {
+        throw applicationError('Wave attach member roles contain duplicates',
+          'application_wave_attach_invalid');
+      }
+      roles.add(member.role);
     }
     return true;
   }
@@ -10910,6 +10950,120 @@ export class BatonApplication {
     return this.stop(rawRequest.runId, reason, principal);
   }
 
+  // S-1 v2: portable atomic attach-and-harvest. Server-side binding proof is unconditional
+  // (no client mint-callback). Returns a closed {outcomes, waveDriverDetached} payload — never
+  // a live handle, never emergency_stop authority.
+  async attachWave(rawRequest, rawPrincipal, rawContext = null) {
+    this._assertOpen();
+    await this.ready;
+    const context = normalizeCommandContext(rawContext);
+    validateApplicationCommandArgs('waves.attach', rawRequest);
+    const request = deepFreeze(clone(rawRequest));
+    const principal = normalizePrincipal(rawPrincipal, 'wave attach principal');
+    const waveId = request.waveId;
+    const timeoutMs = request.timeoutMs ?? 5_000;
+    const hadDetached = this._waveDriverDetached(waveId);
+    // Discover candidate runs under the deployment observer, then authorize the CALLER on each
+    // matched member (per-run observe). Never inherit a privileged deployment principal.
+    const listed = await this.listRuns(this.principals.observer, context);
+    const wanted = new Map(request.members.map((member) => [member.objective, member]));
+    const matched = [];
+    for (const item of listed?.items ?? []) {
+      if (typeof item?.objective === 'string' && wanted.has(item.objective)
+        && typeof item?.id === 'string'
+        && !matched.some((entry) => entry.objective === item.objective)) {
+        matched.push({ member: wanted.get(item.objective), runId: item.id, objective: item.objective });
+      }
+    }
+    if (matched.length === 0) {
+      throw applicationError('wave attach bound no members of the asserted wave',
+        'wave_attach_unknown_wave');
+    }
+    let boundCount = 0;
+    let mismatchCount = 0;
+    const bindings = [];
+    for (const entry of matched) {
+      await this._authorize('run.status', principal, entry.runId, {
+        operation: 'waves.attach', waveId,
+      });
+      const boundWaveId = this._runWaveId(entry.runId);
+      if (boundWaveId === null || boundWaveId !== waveId) {
+        mismatchCount += 1;
+        continue;
+      }
+      boundCount += 1;
+      // Exactly-once driver_detached mint rides the same side-channel as the embedded path.
+      if (typeof this.driver.coordination.recordDriver === 'function') {
+        this.driver.coordination.recordDriver(APPLICATION_WAVE_DRIVER_DETACHED_KIND,
+          { waveId }, {
+            actor: principal.actor,
+            key: `wave.driver_detached:${waveId}`,
+          });
+      }
+      bindings.push(entry);
+    }
+    if (boundCount === 0) {
+      if (mismatchCount > 0) {
+        throw applicationError('Run is not a member of the asserted wave',
+          'application_wave_member_mismatch');
+      }
+      throw applicationError('wave attach bound no members of the asserted wave',
+        'wave_attach_unknown_wave');
+    }
+    const deadline = Date.now() + timeoutMs;
+    const outcomes = [];
+    for (const entry of bindings) {
+      let view = null;
+      while (Date.now() < deadline) {
+        view = await this.inspect({ runId: entry.runId }, principal, context);
+        const phase = view?.phase ?? view?.outline?.phase ?? null;
+        if (APPLICATION_RUN_TERMINAL_PHASES.has(phase)
+          || PROVIDER_EXECUTION_SETTLED_PHASES.has(phase)
+          || phase === 'result_ready' || phase === 'work_completed') {
+          break;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+      if (view === null) {
+        view = await this.inspect({ runId: entry.runId }, principal, context);
+      }
+      const phase = view?.phase ?? view?.outline?.phase ?? null;
+      let resultSha = null;
+      try {
+        const section = await this.inspect({
+          runId: entry.runId, depth: 'section', section: 'result',
+        }, principal, context);
+        const value = section?.section?.items?.[0]?.value;
+        if (typeof value?.sha === 'string' && /^[a-f0-9]{40}$/u.test(value.sha)) {
+          resultSha = value.sha;
+        }
+      } catch { /* result section may be empty for mid-flight deaths */ }
+      outcomes.push(deepFreeze({
+        role: entry.member.role,
+        phase,
+        terminal: APPLICATION_RUN_TERMINAL_PHASES.has(phase) || phase === 'result_ready'
+          || phase === 'work_completed',
+        resultSha,
+      }));
+    }
+    const waveDriverDetached = !hadDetached && this._waveDriverDetached(waveId);
+    return deepFreeze({
+      schemaVersion: 1,
+      waveId,
+      outcomes,
+      waveDriverDetached,
+    });
+  }
+
+  _waveDriverDetached(waveId) {
+    const events = this.driver.coordination.events();
+    return events.some((event) => (
+      event.kind === 'driver.recorded'
+      && event.payload?.kind === APPLICATION_WAVE_DRIVER_DETACHED_KIND
+      && event.payload?.waveId === waveId
+    ));
+  }
+
   // 93B: the durable referent for "this run belongs to waveId" is its own steering.registered
   // record — no separate per-run projection map, same event-log-only discipline as the liveness
   // scan this mirrors (coordinator.mjs's `hasDriver` check).
@@ -11512,6 +11666,9 @@ export class BatonApplication {
     }
     if (name === 'run.recover') {
       return this.recover(args.runId, principal);
+    }
+    if (name === 'waves.attach') {
+      return this.attachWave(args, principal, context);
     }
     if (name === 'application.shutdown') {
       return this.shutdown(principal);

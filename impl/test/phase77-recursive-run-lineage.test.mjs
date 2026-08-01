@@ -527,7 +527,7 @@ test('RL7: lease authorization attenuates commands and scope to the admitted des
   }
   for (const command of [
     'run.approve', 'run.act', 'run.steer', 'run.answer', 'run.review', 'run.integrate',
-    'run.export', 'run.adopt', 'application.shutdown', 'fleet_spawn', 'fleet_kill',
+    'run.export', 'run.adopt', 'waves.attach', 'application.shutdown', 'fleet_spawn', 'fleet_kill',
     'credential.read', 'worker.spawn',
   ]) {
     assert.equal(refusalCode(() => f.store.authorizeRunOrchestratorCommand({

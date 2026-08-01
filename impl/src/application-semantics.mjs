@@ -1184,6 +1184,9 @@ const CANONICAL_OPERATION_SPECS = [
   ['run.view', {
     op: 'run.inspect', effect: 'run_read', capabilities: ['observe'], outputView: 'outline',
     example: 'baton run view RUN_ID',
+    // S-1 v2 R-WG-3: mintWaveDetached + waveId are attach-only side-channels — declared-hidden
+    // so advertised MCP/web schemas exclude them while in-process validators still accept them.
+    transportHidden: ['mintWaveDetached', 'waveId'],
   }],
   ['run.watch', {
     effect: 'run_stream', capabilities: ['observe'], outputView: 'content', helpTopic: 'run.inspect',
@@ -1328,6 +1331,28 @@ const CANONICAL_OPERATION_SPECS = [
   ['package.read', {
     effect: 'package_read', capabilities: ['observe'], outputView: 'section', helpTopic: 'run', surfaces: ['mcp'],
     inputSchema: objectSchema({ packageDigest: id, branchName: id }, ['packageDigest']),
+  }],
+  // S-1 v2: portable attach-and-harvest. Observe-class; no emergency_stop. Transport returns a
+  // closed {outcomes, waveDriverDetached} payload — live handles stay embedded-only.
+  ['waves.attach', {
+    profile: 'ordinary', effect: 'observe', capabilities: ['observe'],
+    surfaces: ['embedded', 'cli', 'mcp', 'web'],
+    outputView: 'outline', helpTopic: 'run',
+    example: 'baton waves attach WAVE_ID --members JSON',
+    transportHidden: ['mintWaveDetached'],
+    inputSchema: objectSchema({
+      waveId: id,
+      members: {
+        type: 'array', minItems: 1, maxItems: 64,
+        items: objectSchema({
+          role: id,
+          objective: { type: 'string', minLength: 1, maxLength: 4096 },
+        }, ['role', 'objective']),
+      },
+      timeoutMs: { type: 'integer', minimum: 1 },
+      repoRoot: { type: 'string', minLength: 1, maxLength: 4096 },
+      mintWaveDetached: { type: 'boolean', const: true },
+    }, ['waveId', 'members']),
   }],
   ['application.help', {
     op: 'application.help', effect: 'help_read', capabilities: ['observe'], outputView: 'outline',
@@ -1557,6 +1582,7 @@ function buildCanonicalOperation([key, spec]) {
   const surfaceAliases = SURFACE_ALIAS_ROWS
     .filter(([canonicalKey]) => canonicalKey === key)
     .map(([, surface, name]) => Object.freeze({ surface, name }));
+  const transportHidden = Object.freeze([...(spec.transportHidden ?? [])]);
   return Object.freeze({
     key,
     verb: parts.at(-1),
@@ -1576,6 +1602,8 @@ function buildCanonicalOperation([key, spec]) {
     aliases: Object.freeze(surfaceAliases),
     example: spec.example ?? deriveSurfaceNames(key).cli,
     helpTopic: spec.helpTopic ?? source?.helpTopic ?? key,
+    // S-1 v2 R-WG-3: fields excluded from advertised MCP/web schemas but accepted by validators.
+    transportHidden,
   });
 }
 
@@ -1623,6 +1651,7 @@ const authorityProjection = {
     destructive: entry.destructive, reconcilable: entry.reconcilable, emergency: entry.emergency,
     inputSchema: entry.inputSchema, outputView: entry.outputView, surfaces: entry.surfaces,
     names: entry.names, flagAliases: entry.flagAliases,
+    transportHidden: entry.transportHidden,
   })),
 };
 const presentationProjection = {

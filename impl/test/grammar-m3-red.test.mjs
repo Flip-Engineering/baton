@@ -37,7 +37,7 @@ const COMMANDS_BEFORE_M3 = Object.freeze([
   'run.status', 'run.follow', 'run.approve', 'run.wait', 'run.answer', 'run.feedback',
   'run.steer', 'run.stop', 'run.evidence', 'run.adopt', 'run.retry_verification',
   'run.resume_work', 'run.review', 'run.integrate', 'run.export', 'run.recover',
-  'application.shutdown',
+  'waves.attach', 'application.shutdown',
 ]);
 
 const PRINCIPAL = Object.freeze({

@@ -100,6 +100,7 @@ MCP application-profile tool table. The conformance suite fails if it drifts fro
 | `run.view` | `ordinary` | `baton_run_view` | idempotent |
 | `run.member.view` | `ordinary` | `baton_run_workstreams` | idempotent |
 | `run.list` | `ordinary` | `baton_runs` | idempotent |
+| `waves.attach` | `ordinary` | `baton_waves_attach` | idempotent |
 | `run.member.send` | `ordinary` | `baton_workstream_notify` | idempotent |
 | `run.member.stop` | `ordinary` | `baton_workstream_stop` | destructive |
 

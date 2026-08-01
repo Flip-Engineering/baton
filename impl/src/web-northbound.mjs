@@ -9,7 +9,7 @@ import { operatorAsset } from './web-operator.mjs';
 import { northboundCapabilityToken } from './northbound-capability-authority.mjs';
 import { sanitizeGoalPlanProjection } from './goal-plan.mjs';
 import { APPLICATION_COMMAND_DEFINITIONS, validateApplicationCommandArgs } from './application.mjs';
-import { applicationOperationAliasMap } from './application-semantics.mjs';
+import { APPLICATION_SEMANTIC_REGISTRY, applicationOperationAliasMap } from './application-semantics.mjs';
 
 const WEB_APPLICATION_ENTRIES = Object.entries(APPLICATION_COMMAND_DEFINITIONS)
   .filter(([, definition]) => definition.web)
@@ -25,6 +25,29 @@ const CANONICAL_WEB_ENTRIES = Object.entries(applicationOperationAliasMap())
   .filter(([, legacy]) => Object.hasOwn(APPLICATION_COMMAND_DEFINITIONS, legacy)
     && APPLICATION_COMMAND_DEFINITIONS[legacy].web)
   .map(([canonical, legacy]) => [canonical.replaceAll('.', '_'), legacy, APPLICATION_COMMAND_DEFINITIONS[legacy]]);
+
+// S-1 v2 R-WG-3: advertised web ARG_FIELDS exclude transportHidden fields; the validator still
+// accepts them (acceptance set = advertised ∪ transportHidden).
+function transportHiddenFor(commandName) {
+  const definition = APPLICATION_COMMAND_DEFINITIONS[commandName];
+  const fromDefinition = definition?.transportHidden ? [...definition.transportHidden] : [];
+  const fromRegistry = APPLICATION_SEMANTIC_REGISTRY.canonicalOperations
+    .filter((operation) => {
+      if (operation.key === commandName) return true;
+      // run.view owns the run.inspect side-channel.
+      if (commandName === 'run.inspect' && operation.key === 'run.view') return true;
+      return false;
+    })
+    .flatMap((operation) => operation.transportHidden ?? []);
+  return new Set([...fromDefinition, ...fromRegistry]);
+}
+function advertisedArgs(definition, commandName) {
+  const hidden = transportHiddenFor(commandName);
+  return new Set((definition.args ?? []).filter((field) => !hidden.has(field)));
+}
+function acceptedArgs(definition, commandName) {
+  return new Set([...(definition.args ?? []), ...transportHiddenFor(commandName)]);
+}
 
 const COMMAND_CAPABILITY = Object.freeze({
   spawn: 'control', scratch_oracle: 'control', send: 'control', interrupt: 'control', kill: 'emergency_stop', drain: 'emergency_stop', respond: 'approve',
@@ -48,6 +71,8 @@ const BOUNDED_OBSERVATION_AUDITS = new Set([
   'command_replayed', 'action_authority_read', 'operator_read_authorized',
 ]);
 const TOP_LEVEL = new Set(['schemaVersion', 'commandId', 'idempotencyKey', 'command', 'args', 'repoId', 'runId', 'expectedFence', 'origin', 'clientObservedCursor']);
+// Advertised schema (ARG_FIELDS) excludes transportHidden. Acceptance during validateEnvelope
+// uses ARG_FIELDS ∪ transportHidden (see acceptedWebArgFields below).
 const ARG_FIELDS = Object.freeze({
   spawn: new Set(['harness', 'model', 'effort', 'modelPolicy', 'brief', 'taskId', 'deps', 'taskType', 'session', 'refines', 'goalPlan']),
   scratch_oracle: new Set(['scratchFactId', 'harness', 'model', 'effort', 'modelPolicy', 'verification', 'budget', 'constraints', 'goal', 'definitionOfDone', 'taskId']),
@@ -68,8 +93,21 @@ const ARG_FIELDS = Object.freeze({
   plan_propose: new Set(['goal', 'predecessor', 'nodes']),
   plan_approve: new Set(['goal', 'plan', 'expectedDisposition', 'disposition']),
   goal_plan_status: new Set(['goalId', 'goalVersion', 'goalDigest', 'planId', 'planVersion', 'planDigest', 'throughSeq']),
-  ...Object.fromEntries(WEB_APPLICATION_ENTRIES.map(([transport, , definition]) => [transport, new Set(definition.args)])),
-  ...Object.fromEntries(CANONICAL_WEB_ENTRIES.map(([transport, , definition]) => [transport, new Set(definition.args)])),
+  ...Object.fromEntries(WEB_APPLICATION_ENTRIES.map(([transport, name, definition]) => [
+    transport, advertisedArgs(definition, name),
+  ])),
+  ...Object.fromEntries(CANONICAL_WEB_ENTRIES.map(([transport, name, definition]) => [
+    transport, advertisedArgs(definition, name),
+  ])),
+});
+const ACCEPTED_ARG_FIELDS = Object.freeze({
+  ...Object.fromEntries(Object.entries(ARG_FIELDS).map(([transport, fields]) => [transport, fields])),
+  ...Object.fromEntries(WEB_APPLICATION_ENTRIES.map(([transport, name, definition]) => [
+    transport, acceptedArgs(definition, name),
+  ])),
+  ...Object.fromEntries(CANONICAL_WEB_ENTRIES.map(([transport, name, definition]) => [
+    transport, acceptedArgs(definition, name),
+  ])),
 });
 const APPLICATION_COMMAND = Object.freeze(Object.fromEntries(
   [...WEB_APPLICATION_ENTRIES, ...CANONICAL_WEB_ENTRIES].map(([transport, name]) => [transport, name]),
@@ -315,7 +353,9 @@ function validateEnvelope(envelope) {
   if (!Object.hasOwn(COMMAND_CAPABILITY, envelope.command)) return 'unsupported command';
   if (Object.hasOwn(envelope, 'runId') && !/^[A-Za-z0-9._:-]{1,256}$/.test(envelope.runId ?? '')) return 'invalid_run_id';
   if (!isRecord(envelope.args)) return 'args must be an object';
-  const allowed = ARG_FIELDS[envelope.command];
+  // S-1 v2: acceptance = advertised ∪ transportHidden; advertised schema (ARG_FIELDS) excludes
+  // declared-hidden fields so they do not appear in web-admitted argument inventories.
+  const allowed = ACCEPTED_ARG_FIELDS[envelope.command] ?? ARG_FIELDS[envelope.command];
   const unknownArg = Object.keys(envelope.args).find((key) => !allowed.has(key));
   if (unknownArg) return 'unknown_argument_field';
   if (containsForbiddenKey(envelope.args)) return 'credential-bearing command fields are forbidden';

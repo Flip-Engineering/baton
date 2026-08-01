@@ -2,15 +2,15 @@
   "schemaVersion": 1,
   "generatedBy": "impl/scripts/surface-conformance.mjs#buildSurfaceInventoryArtifact",
   "counts": {
-    "canonicalOperations": 45,
-    "cliWebCommands": 24,
+    "canonicalOperations": 46,
+    "cliWebCommands": 25,
     "parserLifecycleActions": 29,
-    "mcpApplicationTools": 16,
+    "mcpApplicationTools": 17,
     "mcpAdvancedTools": 19,
-    "mcpCombinedTools": 65,
-    "mcpDispatchTools": 41,
-    "webBusCommands": 25,
-    "applicationCommandDefinitions": 26
+    "mcpCombinedTools": 66,
+    "mcpDispatchTools": 43,
+    "webBusCommands": 26,
+    "applicationCommandDefinitions": 27
   },
   "profiles": {
     "cli.ordinary": [
@@ -35,7 +35,8 @@
       "run.start",
       "run.stop",
       "run.view",
-      "run.watch"
+      "run.watch",
+      "waves.attach"
     ],
     "cli.host_local": [
       "run.debug"
@@ -55,6 +56,7 @@
       "baton_run_view",
       "baton_run_workstreams",
       "baton_runs",
+      "baton_waves_attach",
       "baton_workstream_notify",
       "baton_workstream_stop"
     ],
@@ -105,6 +107,7 @@
       "baton_run_view",
       "baton_run_workstreams",
       "baton_runs",
+      "baton_waves_attach",
       "baton_workstream_notify",
       "baton_workstream_stop",
       "fleet_capabilities",
@@ -171,7 +174,8 @@
       "run_workstream_notify",
       "run_workstream_stop",
       "run_workstreams",
-      "runs_list"
+      "runs_list",
+      "waves_attach"
     ]
   },
   "pins": {

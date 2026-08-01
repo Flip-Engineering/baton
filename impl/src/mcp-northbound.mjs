@@ -35,6 +35,7 @@ const APPLICATION_TOOL = Object.freeze(Object.fromEntries(
     ['baton_workstream_stop', 'run.workstream.stop'],
     ['baton_run_act', 'run.act'],
     ['baton_run_stop', 'run.stop'],
+    ['baton_waves_attach', 'waves.attach'],
     ...CANONICAL_ORDINARY_SIBLINGS.map((sibling) => [sibling.tool, sibling.command]),
   ].map(([tool, name]) => [tool, name]),
 ));
@@ -54,6 +55,8 @@ const ORDINARY_APPLICATION_ENTRIES = Object.freeze([
   ['baton_workstream_stop', 'run.workstream.stop', APPLICATION_COMMAND_DEFINITIONS['run.workstream.stop']],
   ['baton_run_act', 'run.act', APPLICATION_COMMAND_DEFINITIONS['run.act']],
   ['baton_run_stop', 'run.stop', APPLICATION_COMMAND_DEFINITIONS['run.stop']],
+  // S-1 v2: portable atomic attach-and-harvest (canonical baton_waves_attach).
+  ['baton_waves_attach', 'waves.attach', APPLICATION_COMMAND_DEFINITIONS['waves.attach']],
   ...CANONICAL_ORDINARY_SIBLINGS.map((sibling) => (
     [sibling.tool, sibling.command, APPLICATION_COMMAND_DEFINITIONS[sibling.command]]
   )),
@@ -393,6 +396,25 @@ const LEGACY_ORDINARY_APPLICATION_TOOL_DEFINITIONS = Object.freeze([
     inputSchema: schema({ ...repo, ...idem, runId, reason: { type: 'string', minLength: 1, maxLength: 1_024 } }, ['repoId', 'idempotencyKey', 'runId', 'reason']),
     annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
   },
+  // S-1 v2: atomic attach-and-harvest. Advertised schema excludes transportHidden mintWaveDetached.
+  {
+    name: 'baton_waves_attach',
+    description: 'Attach to a prior wave by waveId and member objectives, validate bindings server-side, settle, and return closed outcomes (no live handle).',
+    inputSchema: schema({
+      ...repo,
+      waveId: runId,
+      members: {
+        type: 'array', minItems: 1, maxItems: 64,
+        items: schema({
+          role: runId,
+          objective: { type: 'string', minLength: 1, maxLength: 4096 },
+        }, ['role', 'objective']),
+      },
+      timeoutMs: { type: 'integer', minimum: 1 },
+      repoRoot: { type: 'string', minLength: 1, maxLength: 4096 },
+    }, ['repoId', 'waveId', 'members']),
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
 ].map((tool) => Object.freeze({
   ...tool,
   _meta: Object.freeze({ 'baton/registryDigest': APPLICATION_SEMANTIC_REGISTRY.digest }),
@@ -646,7 +668,11 @@ function applicationArgs(name, args) {
   const command = APPLICATION_TOOL[name];
   if (!command) return null;
   const fields = APPLICATION_COMMAND_DEFINITIONS[command]?.args ?? [];
-  return Object.fromEntries(fields.map((field) => [field, args[field]]));
+  // Only project fields that were actually supplied (plus omit undefined) so hidden
+  // side-channel fields are not force-injected as undefined into the command validator.
+  return Object.fromEntries(fields
+    .filter((field) => Object.hasOwn(args, field))
+    .map((field) => [field, args[field]]));
 }
 
 function applicationRunId(name, args) {
@@ -654,10 +680,28 @@ function applicationRunId(name, args) {
   return ['fleet_run_start', 'baton_run_start'].includes(name) ? args.intent.runId ?? null : args.runId;
 }
 
+function transportHiddenFields(commandName) {
+  const definition = APPLICATION_COMMAND_DEFINITIONS[commandName];
+  const fromDefinition = definition?.transportHidden ? [...definition.transportHidden] : [];
+  const fromRegistry = APPLICATION_SEMANTIC_REGISTRY.canonicalOperations
+    .filter((operation) => (
+      operation.key === commandName
+      || (commandName === 'run.inspect' && operation.key === 'run.view')
+      || (commandName === 'waves.attach' && operation.key === 'waves.attach')
+    ))
+    .flatMap((operation) => operation.transportHidden ?? []);
+  return new Set([...fromDefinition, ...fromRegistry]);
+}
+
 function validateArguments(name, args, maxWaitMs = null) {
   if (!record(args)) return 'invalid_arguments';
   const schemaDefinition = TOOL_BY_NAME.get(name).inputSchema;
-  if (Object.keys(args).some((key) => !Object.hasOwn(schemaDefinition.properties, key))) return 'unknown_argument_field';
+  // S-1 v2 R-WG-3: advertised schema excludes transportHidden fields, but the validator still
+  // accepts them when a caller supplies a declared-hidden side-channel argument.
+  const hidden = APPLICATION_TOOL[name] ? transportHiddenFields(APPLICATION_TOOL[name]) : new Set();
+  if (Object.keys(args).some((key) => (
+    !Object.hasOwn(schemaDefinition.properties, key) && !hidden.has(key)
+  ))) return 'unknown_argument_field';
   if (name === 'fleet_capability_invoke' && !Object.hasOwn(args, 'action')) return 'invalid_capability_invocation';
   if (schemaDefinition.required.some((key) => !Object.hasOwn(args, key))) return 'missing_argument';
   if (containsForbidden(args, [], { planGatedBrief: name === 'fleet_spawn' && record(args.goalPlan) })) return 'credential_fields_forbidden';

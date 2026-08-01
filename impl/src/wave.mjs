@@ -235,6 +235,12 @@ export async function attachWave(baton, waveId, membersInput, mintDetached, repo
   if (!baton || !baton.runs || typeof baton.runs.attach !== 'function' || typeof baton.runs.list !== 'function') {
     throw waveError('attachWave requires a Baton client facade with runs.attach and runs.list');
   }
+  // S-1 v2 R-WG-4: the binding proof is a required step of attach — the mint callback is no
+  // longer optional. Portable transports route through the waves.attach command (server-side
+  // proof) instead of this live-handle path.
+  if (typeof mintDetached !== 'function') {
+    throw waveError('wave attach requires server-side binding proof', 'wave_attach_proof_required');
+  }
   if (typeof waveId !== 'string' || !/^wave:[a-f0-9]{32}$/u.test(waveId)) throw waveError('wave id is invalid');
   if (!Array.isArray(membersInput) || membersInput.length === 0 || membersInput.length > 64) {
     throw waveError('wave attach members must be one bounded non-empty array');
@@ -272,12 +278,12 @@ export async function attachWave(baton, waveId, membersInput, mintDetached, repo
     if (record) {
       try {
         const run = await baton.runs.attach(record.id);
-        // 93B rule 2 fold (W93-4): every matched run must PROVE its binding — the callback
-        // asserts this attach's waveId against the run's steering.registered record and throws
-        // application_wave_member_mismatch on any run bound to another wave (or to none). A
-        // matched-but-mismatched run is excluded, never silently adopted. The application-side
-        // wave.driver_detached key dedups the mint across members and repeated attaches.
-        if (typeof mintDetached === 'function') await mintDetached(record.id);
+        // 93B rule 2 fold (W93-4) / S-1 v2 R-WG-4: every matched run must PROVE its binding —
+        // the required mint callback asserts this attach's waveId against the run's
+        // steering.registered record and throws application_wave_member_mismatch on any run
+        // bound to another wave (or to none). A matched-but-mismatched run is excluded, never
+        // silently adopted. The application-side wave.driver_detached key dedups the mint.
+        await mintDetached(record.id);
         entry.run = run;
         attachedCount += 1;
       } catch (error) {
