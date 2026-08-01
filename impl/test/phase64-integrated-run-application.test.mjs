@@ -657,7 +657,7 @@ test('UA5: the shared command bus exposes the same run flow and a deployment-der
   adapter.spawn = (...args) => { spawnCalls += 1; return spawn(...args); };
   const card = application.card();
   // M4b: the canonical grammar names advertise beside the retained legacy commands (docs/36 §9 M4).
-  assert.deepEqual(card.commands, ['application.help', 'runs.list', 'run.start', 'run.inspect', 'run.episode', 'run.workstreams', 'run.workstream.notify', 'run.workstream.stop', 'run.act', 'run.status', 'run.follow', 'run.approve', 'run.wait', 'run.answer', 'run.feedback', 'run.steer', 'run.stop', 'run.evidence', 'run.adopt', 'run.retry_verification', 'run.resume_work', 'run.review', 'run.integrate', 'run.export', 'run.recover', 'waves.attach', 'application.shutdown', 'run.do', 'run.list', 'run.member.send', 'run.member.stop', 'run.member.view', 'run.resume', 'run.retry', 'run.send', 'run.view', 'run.watch']);
+  assert.deepEqual(card.commands, ['application.help', 'runs.list', 'run.start', 'run.inspect', 'run.episode', 'run.workstreams', 'run.workstream.notify', 'run.workstream.stop', 'run.act', 'run.status', 'run.follow', 'run.approve', 'run.wait', 'run.answer', 'run.feedback', 'run.stop', 'run.evidence', 'run.adopt', 'run.retry_verification', 'run.resume_work', 'run.review', 'run.integrate', 'run.export', 'run.recover', 'waves.attach', 'application.shutdown', 'run.do', 'run.list', 'run.member.send', 'run.member.stop', 'run.member.view', 'run.resume', 'run.retry', 'run.view', 'run.watch']);
   assert.deepEqual(card.profiles[0].routes, [{ harness: 'mock', model: 'model-a', effort: 'low' }]);
 
   const proposed = await application.command('run.start', { intent: intent({ runId: 'run-command-bus' }) }, principal('command-owner'));
@@ -691,7 +691,9 @@ test('UA5/UA6: Run steering resolves ownership and the current fence inside the 
   const before = driver.coordinator.list().find((worker) => worker.id === target);
   assert.equal(Number.isSafeInteger(before.fence), true);
 
-  const steered = await application.command('run.steer', {
+  // M5 alias sunset: the `run.steer` command name is deleted from the surfaces; the authority is
+  // exercised through the steer() method directly (the run-level guidance surface is run.send).
+  const steered = await application.steer({
     runId: 'run-steer', target, mode: 'nudge',
     message: 'Keep the verification boundary explicit.',
     reason: 'The operator wants an auditable completion claim.',
@@ -702,7 +704,7 @@ test('UA5/UA6: Run steering resolves ownership and the current fence inside the 
   });
   assert.equal(driver.log.read(target).some((event) => event.kind === 'control.nudge'
     && event.actor === 'direct:steer-owner'), true);
-  await assert.rejects(application.command('run.steer', {
+  await assert.rejects(application.steer({
     runId: 'run-steer', target: 'worker-from-another-run', mode: 'now',
     message: 'Redirect.', reason: 'Wrong owner must be rejected.',
   }, principal('steer-owner')), (error) => error.code === 'application_worker_not_found');

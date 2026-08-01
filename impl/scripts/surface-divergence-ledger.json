@@ -1,12 +1,4 @@
 {
   "schemaVersion": 1,
-  "entries": [
-    {
-      "surface": "mcp",
-      "name": "per-deployment MCP schema mutation (mcp-northbound.mjs:826)",
-      "canonical": null,
-      "dimension": "behavior",
-      "retiresIn": "M4"
-    }
-  ]
+  "entries": []
 }

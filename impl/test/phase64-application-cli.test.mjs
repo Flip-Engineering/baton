@@ -50,8 +50,11 @@ test('UC1: concise CLI vocabulary compiles only shipped commands into shared Run
   assert.deepEqual(parseBatonCli(['run', 'approve', 'run-a', '--plan', D]).args, { runId: 'run-a', planDigest: D });
   assert.deepEqual(parseBatonCli(['run', 'answer', 'run-a', 'question-a', '--allow']).args.answer, { decision: 'allow' });
   assert.deepEqual(parseBatonCli(['run', 'answer', 'run-a', 'question-a', '--text', 'Proceed.']).args.answer, { text: 'Proceed.' });
-  assert.deepEqual(parseBatonCli(['run', 'steer', 'run-a', 'w-1', '--now', 'Refocus.', '--reason', 'New evidence']).args,
-    { runId: 'run-a', target: 'w-1', mode: 'now', message: 'Refocus.', reason: 'New evidence' });
+  // docs/36 §9 M5 — run.steer is deleted as a surface alias; the parser refuses with run send.
+  assert.throws(
+    () => parseBatonCli(['run', 'steer', 'run-a', 'w-1', '--now', 'Refocus.', '--reason', 'New evidence']),
+    (error) => error.code === 'cli_command_unavailable' && /run send/u.test(error.message),
+  );
   const send = parseBatonCli(['run', 'send', 'run-a', 'Refocus.', '--to', 'review', '--now']);
   assert.deepEqual(send, {
     kind: 'semantic-action', actionKind: 'send', runId: 'run-a',

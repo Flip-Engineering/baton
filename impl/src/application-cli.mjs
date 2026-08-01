@@ -6,7 +6,7 @@ import {
 } from 'node:fs';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { TextDecoder } from 'node:util';
-import { APPLICATION_SEMANTIC_REGISTRY } from './application-semantics.mjs';
+import { APPLICATION_SEMANTIC_REGISTRY, canonicalRunPhase } from './application-semantics.mjs';
 import { bindBatonPort } from './application-client.mjs';
 import { foldCanonicalCase } from './canonical-order.mjs';
 import { createLocalSocketFetch } from './local-web-transport.mjs';
@@ -18,7 +18,7 @@ export const CLI_WEB_COMMANDS = new Set([
   'run.start', 'run.inspect', 'run.episode', 'run.workstreams',
   'run.workstream.notify', 'run.workstream.stop', 'run.act',
   'run.status', 'run.follow', 'run.recover', 'run.approve', 'run.wait', 'run.answer',
-  'run.steer', 'run.stop', 'run.evidence', 'run.adopt', 'run.retry_verification',
+  'run.stop', 'run.evidence', 'run.adopt', 'run.retry_verification',
   'run.resume_work', 'run.review', 'run.integrate', 'run.export',
   // S-1 v2: portable atomic attach-and-harvest.
   'waves.attach',
@@ -27,7 +27,10 @@ export const CLI_WEB_COMMANDS = new Set([
 // run.workstream.notify, run.workstream.stop; run.result folds to run.episode) join the
 // CLI web-client whitelist. Host-local-only verbs stay out: run.debug (CS-3) and
 // application.context_eval (parse-time refusal naming embedded/MCP paths).
-const TERMINAL_RUN_PHASES = new Set(['work_completed', 'completed', 'failed', 'cancelled', 'denied', 'stopped']);
+// docs/36 §7.1 / §9 M5 — the CLI's wait/follow stop set is the canonical settled/terminal
+// vocabulary (legacy `work_completed` resolves to `result_ready`). Every membership check
+// canonicalizes its input, so a still-legacy view phase and its canonical spelling behave alike.
+const TERMINAL_RUN_PHASES = new Set(['result_ready', 'completed', 'failed', 'cancelled', 'denied', 'stopped']);
 const CONNECTION_ENV = Object.freeze(['BATON_URL', 'BATON_ORIGIN', 'BATON_REPO_ID', 'BATON_TOKEN']);
 const DEFAULT_APPLICATION_WAIT_MS = 30_000;
 const WEB_WAIT_TRANSPORT_SLACK_MS = 15_000;
@@ -448,7 +451,7 @@ export async function setupBatonConnection({
   if (profile === null && profiles.length !== 1) {
     return Object.freeze({
       schemaVersion: 1, state: 'needs_user_input',
-      outline: Object.freeze({ repository: 'ready', profiles: profiles.length === 0 ? 'missing' : 'selection_required', connection: 'not_written' }),
+      outline: Object.freeze({ repository: 'ready', profiles: profiles.length === 0 ? 'missing' : 'select_profile', connection: 'not_written' }),
       profiles: Object.freeze(profiles),
       next: Object.freeze(profiles.length === 0
         ? [{ action: 'create_profile', command: 'baton help connection' }]
@@ -1070,7 +1073,7 @@ export function projectBatonCliResult(parsed, result) {
     ...(record(result.ownership) ? { resources: {
       ownedWorkers: result.ownership.workers ?? 0,
       reaped: (result.ownership.workers ?? 0) === 0
-        && TERMINAL_RUN_PHASES.has(result.phase),
+        && TERMINAL_RUN_PHASES.has(canonicalRunPhase(result.phase)),
     } } : {}),
     inspect: { command: `baton run show ${result.runId}` },
   };
@@ -1553,12 +1556,9 @@ export function parseBatonCli(rawArgs) {
     };
   }
   if (action === 'steer') {
-    const target = id(args.shift(), 'worker target');
-    const modes = [['--nudge', 'nudge'], ['--now', 'now'], ['--turn', 'turn']].filter(([name]) => flag(args, name));
-    const message = args.shift();
-    const reason = take(args, '--reason', { required: true }); noRemainder(args);
-    if (modes.length !== 1 || !nonempty(message) || !nonempty(reason)) throw cliError('steer requires one mode, direction text, and reason');
-    return { kind: 'command', name: 'run.steer', args: { runId, target, mode: modes[0][1], message, reason }, idempotencyKey };
+    // docs/36 §9 M5 — the alias sunset: run.steer is deleted as a surface alias. The corrective
+    // naming is the run-level `run send` verb (live-recipient-resolving, no worker-id target).
+    throw cliError('steer was deleted at the M5 alias sunset; use run send', 'cli_command_unavailable');
   }
   if (action === 'stop') {
     const reason = take(args, '--reason') ?? 'Operator requested Run stop.'; noRemainder(args);
@@ -2062,7 +2062,7 @@ export async function runBatonCli(parsed, client, options = {}) {
       throw cliError('CLI follow options are invalid', 'cli_config_invalid');
     }
     let view = await client.command('run.status', { runId: parsed.runId }, `${parsed.idempotencyKey}:status`);
-    if (TERMINAL_RUN_PHASES.has(view?.phase)) return view;
+    if (TERMINAL_RUN_PHASES.has(canonicalRunPhase(view?.phase))) return view;
     let timeoutMs = parsed.timeoutMs;
     if (timeoutMs === null) {
       const doctor = await client.doctor();
@@ -2084,7 +2084,7 @@ export async function runBatonCli(parsed, client, options = {}) {
         throw cliError('Baton Web returned an invalid follow page', 'cli_protocol_failed');
       }
       cursor = view.follow.throughCursor;
-      if (view.follow.terminal || TERMINAL_RUN_PHASES.has(view.phase)) return view;
+      if (view.follow.terminal || TERMINAL_RUN_PHASES.has(canonicalRunPhase(view.phase))) return view;
     }
   }
   if (parsed.kind === 'adopt') {

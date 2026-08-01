@@ -3,14 +3,14 @@
   "generatedBy": "impl/scripts/surface-conformance.mjs#buildSurfaceInventoryArtifact",
   "counts": {
     "canonicalOperations": 57,
-    "cliWebCommands": 25,
-    "parserLifecycleActions": 29,
+    "cliWebCommands": 24,
+    "parserLifecycleActions": 28,
     "mcpApplicationTools": 17,
     "mcpAdvancedTools": 19,
-    "mcpCombinedTools": 70,
-    "mcpDispatchTools": 43,
-    "webBusCommands": 26,
-    "applicationCommandDefinitions": 27
+    "mcpCombinedTools": 69,
+    "mcpDispatchTools": 42,
+    "webBusCommands": 25,
+    "applicationCommandDefinitions": 26
   },
   "profiles": {
     "cli.ordinary": [
@@ -142,7 +142,6 @@
       "fleet_run_review",
       "fleet_run_start",
       "fleet_run_status",
-      "fleet_run_steer",
       "fleet_run_stop",
       "fleet_run_wait",
       "fleet_run_workstream_notify",
@@ -172,7 +171,6 @@
       "run_review",
       "run_start",
       "run_status",
-      "run_steer",
       "run_stop",
       "run_wait",
       "run_workstream_notify",

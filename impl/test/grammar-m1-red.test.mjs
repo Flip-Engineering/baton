@@ -17,7 +17,7 @@ const COMMANDS_BEFORE_M1 = Object.freeze([
   'application.help', 'runs.list', 'run.start', 'run.inspect', 'run.episode',
   'run.workstreams', 'run.workstream.notify', 'run.workstream.stop', 'run.act',
   'run.status', 'run.follow', 'run.approve', 'run.wait', 'run.answer', 'run.feedback',
-  'run.steer', 'run.stop', 'run.evidence', 'run.adopt', 'run.retry_verification',
+  'run.stop', 'run.evidence', 'run.adopt', 'run.retry_verification',
   'run.resume_work', 'run.review', 'run.integrate', 'run.export', 'run.recover',
   'waves.attach', 'application.shutdown',
 ]);

@@ -167,7 +167,7 @@ test('Inventory: the combined surface adds the derived S-3 reflex tools, frozen 
   await initialized(server);
   const response = await request(server, 2, 'tools/list', {});
   const names = response.result.tools.map((tool) => tool.name);
-  assert.equal(names.length, 70, '55 ordinary/advanced tools (incl. baton_waves_attach S-1) + 15 legacy-and-S-3 reflex tools');
+  assert.equal(names.length, 69, '54 ordinary/advanced tools (fleet_run_steer deleted at M5) + 15 legacy-and-S-3 reflex tools');
   const reflexNames = [
     'baton_context_eval', 'baton_decision_list', 'baton_decision_answer',
     'baton_board_post', 'baton_board_retitle', 'baton_board_reorder', 'baton_board_close', 'baton_board_drop', 'baton_board_read',

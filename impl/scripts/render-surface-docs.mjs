@@ -59,6 +59,13 @@ export function servedCliOrdinaryKeys() {
         : null);
     if (canonical) keys.add(canonical);
   }
+  // docs/36 §9 M5 — `run.send` is a semantic-action CLI verb (its registry row carries
+  // `action: 'send'` and no legacy application-command spelling), so the deleted `run.steer`
+  // alias was its only prior path into this inventory. The alias is gone at M5, but the CLI verb
+  // stays served, so the canonical operation stays listed.
+  if (APPLICATION_SEMANTIC_REGISTRY.cli.commands.some((row) => row.id === 'run.send')) {
+    keys.add('run.send');
+  }
   for (const key of HOST_LOCAL_CLI_KEYS) keys.add(key);
   // Only keep keys that the registry enables on the cli surface.
   return APPLICATION_SEMANTIC_REGISTRY.canonicalOperations

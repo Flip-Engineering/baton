@@ -11,9 +11,14 @@ test('SA1: every inventory dimension extracts non-empty', () => {
   const inventory = collectSurfaceInventory();
   for (const key of ['registryOperations', 'registryActions', 'commandDefinitions', 'webCommands',
     'cliCommands', 'mcpFleetTools', 'mcpBatonTools', 'embeddedMethods',
-    'mcpWebBridgeCommands', 'phaseLiterals', 'behaviorDivergences']) {
+    'mcpWebBridgeCommands', 'phaseLiterals']) {
     assert.ok(Array.isArray(inventory[key]) && inventory[key].length > 0, `${key} extracts non-empty`);
   }
+  // docs/36 §9 M5 — the divergence ledger retired to empty; the extractor keeps the behavior
+  // dimension as an array so a re-emerging divergence is still observed (and would be novel),
+  // never silently dropped.
+  assert.ok(Array.isArray(inventory.behaviorDivergences), 'behaviorDivergences stays an array');
+  assert.deepEqual(inventory.behaviorDivergences, [], 'M5 retires the last behavior divergence');
   assert.ok(Object.keys(inventory.synonymDensity).length >= 4, 'synonym density covers the seat-concept names');
 });
 

@@ -6,13 +6,29 @@
 
 | Codeword | Plain meaning |
 |---|---|
-| **Fleet driver** | The product: one orchestrator agent that directs Claude/Codex/GLM coding tools, sends them work, watches them, and interrupts/steers them. Formerly also called the "Conductor." |
+| **Fleet driver** | The product: one orchestrator agent that directs Claude/Codex/GLM coding tools, sends them work, watches them, and interrupts/redirects them. Formerly also called the "Conductor." |
 | **Conductor** | Same as fleet driver. (Being phased out.) |
 | **Referee** | The feature that re-runs a worker's tests itself instead of trusting the worker's "it passed." It's how the driver knows "done" is real. **Not** a separate product — a trust feature of the driver. |
 | **Worker / harness** | A full coding tool (Codex, Claude Code, or GLM) doing a task, running in its own copy of the repo. |
 | **Orchestrator** | The boss that decides what to do — your CLI agent (Claude Code or Codex). |
 | **The hub / coordinator** | The reliable program underneath the orchestrator that carries out its decisions and does bookkeeping. |
 | **Adapter** | The piece of code that translates the driver's commands into a specific tool's real API (one adapter per Codex/Claude/GLM). |
+
+## Control grammar (the unified surface)
+
+The operator-facing vocabulary is one closed grammar (docs/36): a noun tree with the verb last —
+`run.view`, `run.member.send`, … The **member** is the delegated seat; the old worker / workstream /
+seat / assignee synonyms never surface. The run-level interaction verbs are `run.send` (guidance to
+the current live recipient), `run.interrupt`, and `run.answer` (settling attention). Reads are
+`run.view` (one bounded view; `--until settled|terminal` absorbs the old wait), `run.watch` (event
+channels), `run.list`, and `run.help`.
+
+### M5 alias sunset
+
+The legacy synonym spellings were **deleted** at the M5 alias sunset — never rewritten into the
+canonical verbs: `run.show`/`run.status`/`run.inspect`/`run.episode`/`run.result` → `run.view`;
+`run.progress`/`run.events`/`run.output`/`run.follow` → `run.watch`; `run.notify` → `run.member.send`;
+`run.workstreams` → `run.member.view`; `stop-member` → `run.member.stop`. The `run.steer` compatibility command was **deleted** at M5 — run-level guidance goes through `run.send`.
 
 ## Framing terms (mostly retired)
 
