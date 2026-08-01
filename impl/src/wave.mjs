@@ -309,7 +309,7 @@ function createWaveHandle({ repoRoot, members, state }) {
       if (!entry.run) {
         // §7.2: a wave member that never started surfaces the canonical member state `failed`
         // with a typed cause (`start`), never the legacy run phase `start_failed`.
-        members.push({ role, phase: 'failed', terminalCause: 'start', terminal: true, attention: null, error: entry.startError });
+        members.push({ role, phase: 'failed', terminalCause: 'start', terminal: true, attention: null, error: entry.startError, knowledgeDigest: null });
         continue;
       }
       const view = await entry.run.status();
@@ -320,6 +320,9 @@ function createWaveHandle({ repoRoot, members, state }) {
         terminal: terminalFrom(outline),
         attention: attentionFrom(outline),
         scratchpad: outline.scratchpad ?? null,
+        // KG activation rule 4: the workflow horizon's knowledge digest rides the member's run view,
+        // so an orchestrator sees knowledge state change across polls without re-reading the horizon.
+        knowledgeDigest: outline.knowledgeDigest ?? null,
         elapsedMs: Date.now() - state.startedAt,
       });
     }
@@ -448,6 +451,11 @@ function createWaveHandle({ repoRoot, members, state }) {
   async function close({ reason = 'Wave settled.' } = {}) {
     await drainPumps();
     const stops = [];
+    // KG activation rule 3: aggregate the candidacy ritual counts from each member's stop outline.
+    // `candidates` is repo-scoped (shared across members — the max is the honest queue size);
+    // `admittedThisRun` sums each member run's admits. Zero is surfaced as 0, never a missing field.
+    let knowledgeCandidates = 0;
+    let knowledgeAdmitted = 0;
     for (const [role, entry] of state.members) {
       if (!entry.run) continue;
       try {
@@ -457,6 +465,11 @@ function createWaveHandle({ repoRoot, members, state }) {
         // without it is reported as unknown, never coalesced to zero (docs/31 #8).
         const resources = outline.resources ?? null;
         const ownedCount = Number.isSafeInteger(resources?.ownedCount) ? resources.ownedCount : null;
+        const knowledge = outline.knowledge ?? null;
+        if (knowledge) {
+          knowledgeCandidates = Math.max(knowledgeCandidates, knowledge.candidates ?? 0);
+          knowledgeAdmitted += knowledge.admittedThisRun ?? 0;
+        }
         stops.push({
           role,
           stop: stopped?.stop ?? null,
@@ -470,7 +483,7 @@ function createWaveHandle({ repoRoot, members, state }) {
     state.stops.push(...stops);
     const remainingCount = stops.reduce((total, stop) => total + (stop.ownedCount ?? 1), 0);
     const residueUnknown = stops.some((stop) => stop.ownedCount === null);
-    return { reason, stops, remainingCount, residueUnknown };
+    return { reason, stops, remainingCount, residueUnknown, knowledge: { candidates: knowledgeCandidates, admittedThisRun: knowledgeAdmitted } };
   }
 
   function evidence() {

@@ -2,7 +2,7 @@
 // answer/result/digest) and provenance typing (hub-computed facts vs untrusted worker
 // prose). Pure: deterministic given injected now/idGen. No trust is ever implied by shape.
 
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 
 export class ValidationError extends Error {
   /** @param {string[]} errors */
@@ -471,6 +471,70 @@ export function renderBriefing(preview, maxBytes = MAX_ATTENTION_TEXT_BYTES) {
 
 export function isFact(x) {
   return !!x && x.provenance === 'hub-computed' && x.untrusted === false;
+}
+
+// ---------------------------------------------------------------------------
+// buildKnowledgeSlice — KG activation rule 1: the ambient serving slice. Pure, deterministic given
+// the recalled nodes and a fixed `now`. Filters expired-validity nodes at serve time (rule 5), bounds
+// by BOTH a finding-count cap and a byte cap (whichever binds first), wraps every item in the
+// `{provenance:'knowledge', untrusted:true}` prose envelope with its grounding ref + validity dates,
+// and reports an honest empty slice for an empty graph (never fabricated relevance). The slice is the
+// data renderBrief renders at the serving seam; it never enters task.brief (briefDigest is untouched).
+// ---------------------------------------------------------------------------
+
+function canonicalValue(value) {
+  if (Array.isArray(value)) return value.map(canonicalValue);
+  if (!value || typeof value !== 'object') return value;
+  return Object.fromEntries(Object.keys(value).sort().map((k) => [k, canonicalValue(value[k])]));
+}
+
+function stableDigest(value) {
+  return createHash('sha256').update(JSON.stringify(canonicalValue(value))).digest('hex');
+}
+
+/**
+ * @param {Array<object>} nodes recalled knowledge nodes (e.g. queryKnowledge findings)
+ * @param {{maxFindings?:number, maxBytes?:number, now?:number|string}} [opts]
+ * @returns {{provenance:string, untrusted:boolean, items:Array<object>, bytes:number, truncated:boolean, honestEmpty:boolean}}
+ */
+export function buildKnowledgeSlice(nodes, { maxFindings = 8, maxBytes = 2_048, now } = {}) {
+  const at = typeof now === 'number' ? now : (now == null ? Date.now() : Date.parse(now));
+  const eligible = (Array.isArray(nodes) ? nodes : [])
+    .filter((node) => {
+      if (!node || node.validTo == null) return true;
+      const end = Date.parse(node.validTo);
+      return Number.isFinite(end) ? end > at : true;
+    })
+    .slice()
+    .sort((a, b) => (a.observedSeq ?? 0) - (b.observedSeq ?? 0));
+  const items = [];
+  let bytes = 0;
+  for (const node of eligible) {
+    if (items.length >= maxFindings) break;
+    const snippet = typeof node.body === 'string' ? capBytes(node.body, 256).text : '';
+    const item = {
+      provenance: 'knowledge',
+      untrusted: true,
+      id: node.id,
+      ref: node.grounding ?? 'observed',
+      groundingDigest: stableDigest({ grounding: node.grounding ?? null, evidence: node.evidence ?? [] }),
+      validFrom: node.validFrom ?? null,
+      validTo: node.validTo ?? null,
+      snippet,
+    };
+    const itemBytes = Buffer.byteLength(JSON.stringify(item));
+    if (items.length > 0 && bytes + itemBytes > maxBytes) break;
+    items.push(item);
+    bytes += itemBytes;
+  }
+  return deepFreeze({
+    provenance: 'knowledge',
+    untrusted: true,
+    items: deepFreeze(items),
+    bytes,
+    truncated: items.length < eligible.length,
+    honestEmpty: items.length === 0,
+  });
 }
 
 export function isProse(x) {

@@ -141,6 +141,24 @@ export function renderBrief(brief, dialect) {
     lines.push('## Output format');
     lines.push(brief.outputFormat);
   }
+  // KG activation rule 1: the ambient knowledge slice rides the provider-facing brief value (never
+  // task.brief — briefDigest is byte-stable). renderBrief is the serving seam; the slice is built by
+  // the coordinator from recalled knowledge and provenance-wrapped {knowledge, untrusted:true}.
+  if (brief.knowledge) {
+    lines.push('## Ambient knowledge (provenance: knowledge — untrusted, verify before use)');
+    const items = Array.isArray(brief.knowledge.items) ? brief.knowledge.items : [];
+    if (items.length === 0) {
+      lines.push('(none — no recalled knowledge matched this objective)');
+    } else {
+      for (const item of items) {
+        const window = item.validTo ? `${item.validFrom ?? 'origin'}→${item.validTo}` : `${item.validFrom ?? 'origin'}→ongoing`;
+        lines.push(`- [knowledge/untrusted] ${item.ref} (${window}): ${item.snippet ?? ''}`);
+      }
+      if (brief.knowledge.truncated) {
+        lines.push('- (truncated — more knowledge exists beyond the serve ceiling)');
+      }
+    }
+  }
   return lines.join('\n');
 }
 
