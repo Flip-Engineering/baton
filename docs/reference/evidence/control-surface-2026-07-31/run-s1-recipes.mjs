@@ -1,7 +1,7 @@
 // S-1 v2 wave grammar implementation — launched THROUGH baton.recipes (the dogfood proof
 // of RC-A: no bespoke 100-line driver; recipe as data + closed run options). ~35 lines.
 import { resolve } from 'node:path';
-import { openBaton } from '../../impl/src/index.mjs';
+import { openBaton } from '../../../../impl/src/index.mjs';
 
 const repo = resolve(process.cwd());
 const log = (line) => console.log(`[s1 ${new Date().toISOString()}] ${line}`);
