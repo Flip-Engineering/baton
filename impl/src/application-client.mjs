@@ -1,6 +1,6 @@
 import { contextProgramIsPure } from './context-authority.mjs';
 import { normalizeContextProgram } from './context-program.mjs';
-import { APPLICATION_SEMANTIC_REGISTRY } from './application-semantics.mjs';
+import { APPLICATION_SEMANTIC_REGISTRY, canonicalRunPhase } from './application-semantics.mjs';
 import { createRecipes } from './recipes.mjs';
 import { attachWave, createWave } from './wave.mjs';
 
@@ -255,13 +255,14 @@ function runGroupSummary(runs, views) {
     const cleanupIncomplete = ['active', 'blocked'].includes(cleanup)
       && (view?.terminal === true || ['stopped', 'stopping'].includes(view?.outline?.phase));
     const phase = view?.outline?.phase ?? 'unknown';
+    const canonicalPhase = canonicalRunPhase(phase);
     const state = cleanupIncomplete ? 'cleanup_incomplete'
       : attention === 'required' ? 'attention'
-        : ['failed', 'denied', 'cancelled'].includes(phase) ? 'failed'
-          : phase === 'stopped' ? 'stopped'
-            : phase === 'work_completed' ? 'ready'
-              : phase === 'completed' ? 'completed'
-                : ['planning', 'awaiting_plan_approval'].includes(phase) ? 'waiting'
+        : ['failed', 'denied', 'cancelled'].includes(canonicalPhase) ? 'failed'
+          : canonicalPhase === 'stopped' ? 'stopped'
+            : canonicalPhase === 'result_ready' ? 'ready'
+              : canonicalPhase === 'completed' ? 'completed'
+                : ['planning', 'awaiting_approval'].includes(canonicalPhase) ? 'waiting'
                   : 'active';
     return Object.freeze({
       runId: runs[index].id,

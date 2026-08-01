@@ -110,7 +110,7 @@ test('UA5/MN1: an application-backed MCP server exposes the semantic ordinary su
     'baton_package_admit', 'baton_package_attach', 'baton_package_read',
     'baton_repl_cite', 'baton_knowledge_recall', 'baton_knowledge_horizon',
   ];
-  assert.equal(combined.result.tools.length, 70); // 55 ordinary/advanced (incl. baton_waves_attach S-1) + 15 S-3 reflex
+  assert.equal(combined.result.tools.length, 69); // 54 ordinary/advanced (fleet_run_steer deleted at M5) + 15 S-3 reflex
   assert.deepEqual(combined.result.tools.slice(0, response.result.tools.length).map((tool) => tool.name), response.result.tools.map((tool) => tool.name), 'the combined inventory preserves the ordinary application surface verbatim as its prefix');
   assert.deepEqual(combined.result.tools.map((tool) => tool.name).filter((name) => reflexNames.includes(name)), reflexNames);
   assert.equal(combined.result.tools.every((tool) => tool.inputSchema.additionalProperties === false), true);
@@ -193,7 +193,6 @@ test('UA5/MN: Run tools map exactly to the application bus and keep status/wait 
     ['fleet_run_wait', { repoId: 'repo-a', runId: 'run-mcp-a', timeoutMs: 25_000 }, 'run.wait'],
     ['fleet_run_answer', { repoId: 'repo-a', idempotencyKey: 'run-answer', runId: 'run-mcp-a', requestId: 'question-1', answer: { decision: 'allow' } }, 'run.answer'],
     ['fleet_run_feedback', { repoId: 'repo-a', idempotencyKey: 'run-feedback', runId: 'run-mcp-a', role: 'builder', feedback: 'Preserve the exact route evidence.' }, 'run.feedback'],
-    ['fleet_run_steer', { repoId: 'repo-a', idempotencyKey: 'run-steer', runId: 'run-mcp-a', target: 'worker-a', mode: 'nudge', message: 'Keep going.', reason: 'Operator guidance.' }, 'run.steer'],
     ['fleet_run_stop', { repoId: 'repo-a', idempotencyKey: 'run-stop', runId: 'run-mcp-a', reason: 'Operator cancelled this Run.' }, 'run.stop'],
     ['fleet_run_evidence', { repoId: 'repo-a', runId: 'run-mcp-a' }, 'run.evidence'],
     ['fleet_run_adopt', { repoId: 'repo-a', idempotencyKey: 'run-adopt', runId: 'run-mcp-a', nodeKey: 'work', resultSha: 'b'.repeat(40), evidenceDigest: 'c'.repeat(64), reason: 'Select the verified result.' }, 'run.adopt'],
@@ -205,13 +204,13 @@ test('UA5/MN: Run tools map exactly to the application bus and keep status/wait 
     assert.equal(response.result.isError, false);
     assert.equal(applicationCalls.at(-1).name, expected);
   }
-  assert.deepEqual(applicationCalls.map((call) => call.principal), Array(13).fill({
+  assert.deepEqual(applicationCalls.map((call) => call.principal), Array(12).fill({
     actor: 'mcp:operator-a:stdio-a', principalId: 'operator-a', sessionId: 'stdio-a',
   }));
   assert.equal(applicationCalls.some((call) => Object.hasOwn(call.args, 'repoId') || Object.hasOwn(call.args, 'idempotencyKey')), false);
   assert.deepEqual(coordination.events().filter((event) => event.kind === 'mcp.call_admitted')
     .map((event) => [event.payload.tool, event.payload.runId]), [
-      ['fleet_run_start', 'run-mcp-a'], ['fleet_run_approve', 'run-mcp-a'], ['fleet_run_answer', 'run-mcp-a'], ['fleet_run_feedback', 'run-mcp-a'], ['fleet_run_steer', 'run-mcp-a'], ['fleet_run_stop', 'run-mcp-a'], ['fleet_run_adopt', 'run-mcp-a'], ['fleet_run_review', 'run-mcp-a'], ['fleet_run_integrate', 'run-mcp-a'],
+      ['fleet_run_start', 'run-mcp-a'], ['fleet_run_approve', 'run-mcp-a'], ['fleet_run_answer', 'run-mcp-a'], ['fleet_run_feedback', 'run-mcp-a'], ['fleet_run_stop', 'run-mcp-a'], ['fleet_run_adopt', 'run-mcp-a'], ['fleet_run_review', 'run-mcp-a'], ['fleet_run_integrate', 'run-mcp-a'],
     ]);
   await request(server, 20, 'tools/call', { name: 'fleet_run_status', arguments: { repoId: 'repo-a', runId: 'run-mcp-a' } });
   assert.equal(applicationCalls.filter((call) => call.name === 'run.status').length, 2, 'read-only status is fresh rather than a cached call replay');

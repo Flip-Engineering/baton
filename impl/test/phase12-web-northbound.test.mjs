@@ -126,7 +126,6 @@ test('UA5/WN: authenticated Run commands are thin mappings to one application co
     ['run_approve', { runId: 'run-web-a', planDigest: 'a'.repeat(64) }, 'run.approve'],
     ['run_wait', { runId: 'run-web-a', timeoutMs: 30_000 }, 'run.wait'],
     ['run_answer', { runId: 'run-web-a', requestId: 'question-1', answer: { decision: 'allow' } }, 'run.answer'],
-    ['run_steer', { runId: 'run-web-a', target: 'worker-a', mode: 'now', message: 'Recheck the boundary.', reason: 'Operator correction.' }, 'run.steer'],
     ['run_stop', { runId: 'run-web-a', reason: 'Operator cancelled this Run.' }, 'run.stop'],
     ['run_evidence', { runId: 'run-web-a' }, 'run.evidence'],
     ['run_adopt', { runId: 'run-web-a', nodeKey: 'work', resultSha: 'b'.repeat(40), evidenceDigest: 'c'.repeat(64), reason: 'Select the verified result.' }, 'run.adopt'],
@@ -140,13 +139,13 @@ test('UA5/WN: authenticated Run commands are thin mappings to one application co
     assert.equal(response.status, 200);
     assert.equal(applicationCalls.at(-1).name, expectedName);
   }
-  assert.deepEqual(applicationCalls.map((call) => call.principal), Array(12).fill({
+  assert.deepEqual(applicationCalls.map((call) => call.principal), Array(11).fill({
     actor: 'web:user-1:session-1', principalId: 'user-1', sessionId: 'session-1',
   }));
   assert.equal(applicationCalls[2].args.timeoutMs, 30_000, 'Web forwards the exact journaled follow timeout');
   assert.equal(applicationCalls[4].args.timeoutMs, 30_000, 'Web forwards the exact journaled wait timeout');
   const mutations = new Set([
-    'run_start', 'run_approve', 'run_answer', 'run_steer', 'run_stop', 'run_adopt',
+    'run_start', 'run_approve', 'run_answer', 'run_stop', 'run_adopt',
     'run_review', 'run_integrate',
   ]);
   assert.deepEqual(coordination.events().filter((event) => event.kind === 'web.command_admitted')

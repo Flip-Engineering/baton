@@ -189,6 +189,45 @@ export function classifySurfaces(
   });
 }
 
+// docs/36 §4.1 / §10 C4 (R-CX-13) — the banned surface verbs. The lint is generated from the §4.1
+// banned set with token normalization: `stop_member` and `stop-member` are ONE token (separators
+// collapse), so no canonical operation may carry a legacy synonym verb in any surface name it
+// derives. C4 is promoted to red at M5 — the canonical suite fails on any banned token.
+export const BANNED_SURFACE_VERBS = Object.freeze([
+  'show', 'status', 'inspect', 'act', 'notify', 'follow', 'wait', 'progress',
+  'events', 'output', 'episode', 'stop-member', 'steer',
+]);
+const BANNED_TOKEN_SEQUENCES = Object.freeze(
+  BANNED_SURFACE_VERBS.map((verb) => Object.freeze(
+    verb.toLowerCase().split(/[^a-z0-9]+/u).filter(Boolean),
+  )),
+);
+function surfaceNameTokens(name) {
+  return name.toLowerCase().split(/[^a-z0-9]+/u).filter(Boolean);
+}
+
+export function checkBannedTokens(names) {
+  const violations = [];
+  for (const name of names) {
+    const tokens = surfaceNameTokens(name);
+    for (const sequence of BANNED_TOKEN_SEQUENCES) {
+      let hit = false;
+      if (sequence.length === 1) {
+        hit = tokens.includes(sequence[0]);
+      } else {
+        for (let index = 0; index + sequence.length <= tokens.length; index += 1) {
+          if (sequence.every((token, offset) => tokens[index + offset] === token)) { hit = true; break; }
+        }
+      }
+      if (hit) {
+        violations.push(Object.freeze({ name, verb: sequence.join('-') }));
+        break;
+      }
+    }
+  }
+  return violations;
+}
+
 export function checkEnumStrings(strings, ledger, { refuseNovel = false } = {}) {
   const canonical = new Set(CANONICAL_ENUMS.runPhases);
   const allowed = ledgerIndex(ledger);
@@ -558,7 +597,7 @@ export function buildSurfaceInventoryArtifact() {
   // Deterministic: parser lifecycle, web whitelist, MCP profiles, registry counts.
   // Never regex extraction alone — parser probe + instantiated MCP tool tables + registry.
   const lifecycleProbe = [
-    'show', 'do', 'recover', 'status', 'approve', 'answer', 'steer', 'send', 'interrupt',
+    'show', 'do', 'recover', 'status', 'approve', 'answer', 'send', 'interrupt',
     'progress', 'events', 'output', 'episode', 'workstreams', 'notify', 'result', 'stop',
     'evidence', 'adopt', 'select', 'feedback', 'revise', 'stop-member', 'retry', 'resume',
     'review', 'integrate', 'export', 'debug',
@@ -661,6 +700,20 @@ export function runSurfaceConformanceMain({ writeInventory = false } = {}) {
   const enums = checkEnumStrings(inventory.phaseLiterals, ledger);
   for (const item of enums.novel) {
     findings.push(`enum divergence: ${item.name}`);
+  }
+  // docs/36 §10 C4 (R-CX-13) — the banned-token lint promoted to red at M5. The canonical tree's
+  // own names are scanned: a canonical operation that derives a surface name carrying a banned
+  // synonym verb is a red finding.
+  for (const violation of checkBannedTokens(
+    CANONICAL_OPERATIONS.flatMap((operation) => [
+      operation.key,
+      operation.names.cli,
+      operation.names.web,
+      operation.names.mcp,
+      operation.names.embedded,
+    ]),
+  )) {
+    findings.push(`banned surface verb: ${violation.name} (${violation.verb})`);
   }
   for (const collision of checkWebNameDisjoint()) {
     findings.push(`web-name collision: ${collision.key} → ${collision.web}`);
