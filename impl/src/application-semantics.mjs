@@ -1484,6 +1484,8 @@ const SURFACE_ALIAS_ROWS = Object.freeze([
   ['run.watch', 'cli', 'baton run progress'],
   ['run.watch', 'embedded', 'BatonRun.events'],
   ['run.watch', 'embedded', 'BatonRun.follow'],
+  // Bidirectional v2 rule 6: the named one-shot wake facade riding the same `run.follow` command.
+  ['run.watch', 'embedded', 'BatonRun.followOnce'],
   ['run.watch', 'embedded', 'BatonRun.output'],
   ['run.watch', 'embedded', 'BatonRun.progress'],
   // docs/36 §9 M4 (M4b — the transport flip) — the retained legacy MCP (`baton_*`/`fleet_*`) and
