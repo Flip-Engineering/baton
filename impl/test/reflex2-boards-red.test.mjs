@@ -230,7 +230,9 @@ test('F8: a worker death expires its board claims through the terminal hook and 
   const handle = await driver.coordinator.spawn('mock', brief({ pathScope: ['slow.txt'] }), { taskId: 'board-death' });
   await until(() => driver.coordinator.list()[0]?.status === 'working');
 
-  const posted = driver.coordinator.postBoardItem({ board: 'shared', title: 'Do the slow thing', owner: handle.id }, { idempotencyKey: 'post-death' });
+  // S-2 v2 retires ambient orchestrator authority from Coordinator wrappers. This F8 worker
+  // lifecycle test stays at the low-level store seam that the rest of this file exercises.
+  const posted = driver.coordination.postBoardItem({ board: 'shared', title: 'Do the slow thing', owner: handle.id }, { actor: 'fixture', key: 'post-death' });
   const itemId = posted.item.itemId;
   const claim = driver.coordinator.requestBoardClaim(handle.id, { itemId, expectedBoardFence: driver.coordinator.boardFence('shared') }, { idempotencyKey: 'claim-death' });
   assert.equal(claim.result, 'claimed');
@@ -253,7 +255,7 @@ test('F9: a worker turn-fence bump (nudge/steer) does NOT invalidate that worker
   const handle = await coordinator.spawn('mock', brief());
   await until(() => coordinator.list()[0]?.status === 'working');
 
-  const posted = coordinator.postBoardItem({ board: 'shared', title: 'Do X', owner: handle.id }, { idempotencyKey: 'post1' });
+  const posted = coordination.postBoardItem({ board: 'shared', title: 'Do X', owner: handle.id }, { actor: 'fixture', key: 'post1' });
   const claim = coordinator.requestBoardClaim(handle.id, { itemId: posted.item.itemId, expectedBoardFence: 1 }, { idempotencyKey: 'claim1' });
   assert.equal(claim.result, 'claimed');
 
@@ -265,7 +267,7 @@ test('F9: a worker turn-fence bump (nudge/steer) does NOT invalidate that worker
   assert.equal(coordination.activeBoardClaims({ workerId: handle.id }).length, 1, 'the board claim is untouched by a worker turn-fence bump');
   assert.equal(coordinator.boardFence('shared'), 1, 'the board fence is unmoved by any worker fence change');
   // A subsequent claim still CASes against the unchanged BOARD fence.
-  const another = coordinator.postBoardItem({ board: 'shared', title: 'Do Y', owner: handle.id }, { idempotencyKey: 'post2' });
+  const another = coordination.postBoardItem({ board: 'shared', title: 'Do Y', owner: handle.id }, { actor: 'fixture', key: 'post2' });
   const second = coordinator.requestBoardClaim(handle.id, { itemId: another.item.itemId, expectedBoardFence: 2 }, { idempotencyKey: 'claim2' });
   assert.equal(second.result, 'claimed');
 });

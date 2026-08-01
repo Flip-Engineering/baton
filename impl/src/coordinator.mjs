@@ -261,7 +261,7 @@ const COORDINATION_MUTATORS = new Set([
   'admitContextEffectCall',
   'settleContextCall', 'settleContextMapCall', 'settleContextEffectCall',
   'recordTaskResourceRelease',
-  'postBoardItem', 'retitleBoardItem', 'reorderBoardItem', 'closeBoardItem', 'dropBoardItem',
+  'admitBoardCommand',
   'requestBoardClaim', 'submitBoardReport', 'expireBoardClaim',
   'writeScratchpad', 'elevateTaskScratchpad', 'settleWorkflowScratchpad', 'reapRunScratchpads',
 ]);
@@ -9723,35 +9723,29 @@ export class Coordinator {
     }, { actor: opts.actor ?? 'orchestrator', key: opts.idempotencyKey });
   }
 
-  // ---- REFLEX-2 boards: orchestrator authority (post/retitle/reorder/close/drop) ----
-  postBoardItem(fields, opts = {}) {
+  // ---- REFLEX-2 boards: S-2 v2 routes every transported/facade command through one admission. ----
+  acquireBoardLease(fields, opts = {}) {
     this.tick();
-    if (typeof opts.idempotencyKey !== 'string' || opts.idempotencyKey.length === 0) throw new TypeError('Board item requires idempotencyKey');
-    return this._coordination.postBoardItem(fields, { actor: opts.actor ?? 'orchestrator', key: opts.idempotencyKey });
+    if (typeof opts.actor !== 'string' || opts.actor.length === 0
+      || typeof opts.idempotencyKey !== 'string' || opts.idempotencyKey.length === 0) {
+      throw new TypeError('Board lease acquisition requires explicit principal authority and idempotencyKey');
+    }
+    const receipt = this._coordination.issueRunOrchestratorLease(fields, {
+      actor: opts.actor, key: opts.idempotencyKey,
+    });
+    return Object.freeze({
+      ...receipt,
+      sessionAuthority: Object.freeze({
+        schemaVersion: 1, authorityDigest: receipt.lease.session.authorityDigest,
+        expiresAt: receipt.lease.session.expiresAt,
+        orchestratorLeaseId: receipt.lease.leaseId,
+      }),
+    });
   }
 
-  retitleBoardItem(itemId, fields, opts = {}) {
+  admitBoardCommand(envelope) {
     this.tick();
-    if (typeof opts.idempotencyKey !== 'string' || opts.idempotencyKey.length === 0) throw new TypeError('Board retitle requires idempotencyKey');
-    return this._coordination.retitleBoardItem(itemId, fields, { actor: opts.actor ?? 'orchestrator', key: opts.idempotencyKey });
-  }
-
-  reorderBoardItem(itemId, ordinal, opts = {}) {
-    this.tick();
-    if (typeof opts.idempotencyKey !== 'string' || opts.idempotencyKey.length === 0) throw new TypeError('Board reorder requires idempotencyKey');
-    return this._coordination.reorderBoardItem(itemId, ordinal, { actor: opts.actor ?? 'orchestrator', key: opts.idempotencyKey });
-  }
-
-  closeBoardItem(itemId, opts = {}) {
-    this.tick();
-    if (typeof opts.idempotencyKey !== 'string' || opts.idempotencyKey.length === 0) throw new TypeError('Board close requires idempotencyKey');
-    return this._coordination.closeBoardItem(itemId, { actor: opts.actor ?? 'orchestrator', key: opts.idempotencyKey });
-  }
-
-  dropBoardItem(itemId, opts = {}) {
-    this.tick();
-    if (typeof opts.idempotencyKey !== 'string' || opts.idempotencyKey.length === 0) throw new TypeError('Board drop requires idempotencyKey');
-    return this._coordination.dropBoardItem(itemId, { actor: opts.actor ?? 'orchestrator', key: opts.idempotencyKey });
+    return this._coordination.admitBoardCommand(envelope);
   }
 
   // ---- REFLEX-2 boards: worker traffic (claim/report). The claim CAS carries a BOARD-scoped
@@ -9887,12 +9881,14 @@ export class Coordinator {
         }
       }
     }
-    rows.sort((a, b) => (a.seq - b.seq) || String(a.requestId).localeCompare(String(b.requestId)));
+    rows.sort((a, b) => (a.seq - b.seq)
+      || (a.requestId < b.requestId ? -1 : a.requestId > b.requestId ? 1 : 0));
     // One tombstone per requestId: last durable outcome wins (exactly-once projection key).
     const byId = new Map();
     for (const row of rows) byId.set(row.requestId, row);
     const deduped = [...byId.values()].sort(
-      (a, b) => (a.seq - b.seq) || String(a.requestId).localeCompare(String(b.requestId)),
+      (a, b) => (a.seq - b.seq)
+        || (a.requestId < b.requestId ? -1 : a.requestId > b.requestId ? 1 : 0),
     );
     return deduped.slice(-cap).map(({ requestId, disposition, at }) => ({ requestId, disposition, at }));
   }

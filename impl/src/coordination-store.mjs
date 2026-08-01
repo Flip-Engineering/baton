@@ -108,7 +108,7 @@ const PROJECTION_CHECKPOINT_FIELDS = Object.freeze([
   '_providerSequences', '_providerSourceHealth', '_contextSessions', '_contextCells',
   '_contextCalls', '_contextPrograms', '_contextArtifacts', '_taskResourceReleases',
   '_boardItems', '_boardItemHistory', '_boardItemsByBoard', '_boardClaims',
-  '_boardReports', '_boardFences',
+  '_boardReports', '_boardFences', '_boardRunBindings',
   '_contextPackages', '_contextPackageAttachments',
   '_replManifestAdmissions',
   // REPL-2 (Part G rule 23): gains _replBindings, _replBindingHistory, _replBindingFences.
@@ -1104,6 +1104,9 @@ export class CoordinationStore {
     // log in _apply, so replay reconstructs each board fence exactly by re-counting.
     this._boardItems = new Map(); this._boardItemHistory = new Map(); this._boardItemsByBoard = new Map();
     this._boardClaims = new Map(); this._boardReports = []; this._boardFences = new Map();
+    // S-2 v2: durable, replay-derived board -> Run authority bindings. Legacy boards have no
+    // entry until their first admitted v2 mutation records the one-time adoption in that event.
+    this._boardRunBindings = new Map();
     // KG-1 Part A rule 5 (P1-1 fix): a store-level, global, replay-derived counter — the same
     // mechanism as _boardFences, generalized across every projection-input event kind so no
     // task/workflow horizon cache entry can stale-hit.
@@ -1380,7 +1383,7 @@ export class CoordinationStore {
     return event;
   }
 
-  _appendBatch(entries, batchKind = null) {
+  _appendBatch(entries, batchKind = null, beforeWrite = null) {
     this._assertWriterLease();
     if (!Array.isArray(entries) || entries.length === 0) throw new TypeError('coordination batch requires entries');
     if (batchKind !== null && ![
@@ -1425,6 +1428,14 @@ export class CoordinationStore {
       actor: entry.auth.actor, idempotencyKey: entry.auth.key, payload: freeze(clone(entry.payload)),
       ...(batchKind === null ? {} : { batch: freeze({ schemaVersion: 1, kind: batchKind, id: batchId, index, count: entries.length }) }),
     }));
+    if (beforeWrite !== null) {
+      if (typeof beforeWrite !== 'function') throw new TypeError('coordination before-write gate must be a function');
+      const before = this._events.length;
+      beforeWrite();
+      if (this._events.length !== before) throw new CoordinationRefusal(
+        'coordination batch before-write gate changed state', 'causal_correction_integrity',
+      );
+    }
     const eventBytes = Buffer.from(`${events.map((event) => JSON.stringify(event)).join('\n')}\n`, 'utf8');
     if (batchKind?.startsWith('scratchpad_') && eventBytes.byteLength > MAX_SCRATCHPAD_BATCH_BYTES) {
       throw new CoordinationRefusal('scratchpad batch exceeds its byte ceiling', 'scratchpad_batch_oversize');
@@ -8234,21 +8245,31 @@ export class CoordinationStore {
     } else if (event.kind === 'scratch.read') {
       this._scratchReads.push(freeze({ ...clone(p), eventSeq: event.seq, ts: event.ts }));
     } else if (event.kind === 'board.item_posted') {
-      const rec = freeze({ ...clone(p), postedEvent: event.seq, updatedEvent: event.seq });
+      const { boardAdmission, ...itemPayload } = p;
+      const rec = freeze({ ...clone(itemPayload), postedEvent: event.seq, updatedEvent: event.seq });
       this._boardItems.set(p.itemId, rec);
       this._boardItemHistory.set(p.itemId, freeze([rec]));
       const ids = this._boardItemsByBoard.get(p.board);
       if (ids) { if (!ids.includes(p.itemId)) this._boardItemsByBoard.set(p.board, freeze([...ids, p.itemId])); }
       else this._boardItemsByBoard.set(p.board, freeze([p.itemId]));
       this._boardFences.set(p.board, (this._boardFences.get(p.board) ?? 0) + 1);
+      if (boardAdmission && !this._boardRunBindings.has(p.board)) this._boardRunBindings.set(p.board, freeze({
+        runId: boardAdmission.runId, adopted: !!boardAdmission.adopted,
+        boundEvent: event.seq, requestDigest: boardAdmission.requestDigest,
+      }));
     } else if (event.kind === 'board.item_retitled' || event.kind === 'board.item_reordered'
       || event.kind === 'board.item_closed' || event.kind === 'board.item_dropped') {
+      const { boardAdmission, ...itemPayload } = p;
       const prior = this._boardItems.get(p.itemId);
-      const rec = freeze({ ...clone(p), postedEvent: prior?.postedEvent ?? event.seq, updatedEvent: event.seq });
+      const rec = freeze({ ...clone(itemPayload), postedEvent: prior?.postedEvent ?? event.seq, updatedEvent: event.seq });
       this._boardItems.set(p.itemId, rec);
       this._boardItemHistory.set(p.itemId, freeze([...(this._boardItemHistory.get(p.itemId) ?? []), rec]));
       // Only the five orchestrator-authority transitions advance the board fence (F9, rule 7).
       this._boardFences.set(p.board, (this._boardFences.get(p.board) ?? 0) + 1);
+      if (boardAdmission?.adopted) this._boardRunBindings.set(p.board, freeze({
+        runId: boardAdmission.runId, adopted: true,
+        boundEvent: event.seq, requestDigest: boardAdmission.requestDigest,
+      }));
     } else if (event.kind === 'board.claim_requested') {
       // A worker report — deliberately does NOT bump the board fence (F9, rule 7).
       this._boardClaims.set(p.itemId, freeze({ ...clone(p), version: 1, createdEvent: event.seq, active: true }));
@@ -9339,9 +9360,78 @@ export class CoordinationStore {
     });
   }
 
+  /** S-2 v2 package side of the shared session-authority posture. Package provenance/attachment
+   * Run coordinates are required to agree with both the envelope and the proof's lease. */
+  admitPackageCommand(envelope) {
+    const fail = (message, code = 'board_admission_invalid') => {
+      throw new CoordinationRefusal(message, code);
+    };
+    const fields = ['idempotencyKey', 'mutation', 'package', 'runId', 'sessionAuthority'];
+    if (!envelope || typeof envelope !== 'object' || Array.isArray(envelope)
+      || Object.keys(envelope).sort().join(',') !== fields.sort().join(',')
+      || !validRunId(envelope.runId) || !boundedText(envelope.idempotencyKey, 512)
+      || !envelope.mutation || typeof envelope.mutation !== 'object'
+      || Array.isArray(envelope.mutation)) fail('package authority envelope is invalid');
+    const kind = envelope.mutation.kind;
+    const mutationFields = kind === 'admit' ? ['kind'] : ['kind', 'scope'];
+    if (!['admit', 'attach'].includes(kind)
+      || Object.keys(envelope.mutation).sort().join(',') !== mutationFields.sort().join(',')
+      || (kind === 'attach' && !/^(run|worker:[A-Za-z0-9._:-]{1,256}|board:[A-Za-z0-9._:-]{1,256})$/u.test(envelope.mutation.scope ?? ''))
+      || (kind === 'admit' && (!envelope.package || typeof envelope.package !== 'object' || Array.isArray(envelope.package)))
+      || (kind === 'attach' && !/^[a-f0-9]{64}$/.test(envelope.package ?? ''))) {
+      fail('package authority mutation is invalid');
+    }
+    // Package normalization is part of closed-envelope shape. It intentionally precedes proof
+    // lookup, matching the board contract's shape -> authority refusal order.
+    const normalizedPackage = kind === 'admit'
+      ? this._normalizeContextPackage(envelope.package, false) : null;
+    const proof = envelope.sessionAuthority;
+    if (proof == null) fail('an active package lease is required', 'board_lease_required');
+    const proofFields = ['authorityDigest', 'expiresAt', 'orchestratorLeaseId', 'schemaVersion'];
+    if (typeof proof !== 'object' || Array.isArray(proof)
+      || Object.keys(proof).sort().join(',') !== proofFields.sort().join(',')
+      || proof.schemaVersion !== 1 || !/^[a-f0-9]{64}$/.test(proof.authorityDigest ?? '')
+      || !boundedText(proof.orchestratorLeaseId, 512)
+      || !Number.isFinite(Date.parse(proof.expiresAt ?? ''))) fail('package authority proof is invalid');
+    const lease = this._runOrchestratorLeases.get(proof.orchestratorLeaseId);
+    if (!lease || lease.status !== 'active' || Date.parse(this._clock()) >= Date.parse(lease.expiresAt)) {
+      fail('an active package lease is required', 'board_lease_required');
+    }
+    if (proof.authorityDigest !== lease.session.authorityDigest
+      || proof.expiresAt !== lease.session.expiresAt || lease.parent.runId !== envelope.runId) {
+      fail('package session authority does not match its Run', 'board_session_mismatch');
+    }
+    const parent = this._tasks.get(lease.parent.taskId);
+    if (!parent || parent.version !== lease.parent.taskVersion
+      || parent.assignee !== lease.parent.workerId || parent.status !== 'working') {
+      fail('an active package lease is required', 'board_lease_required');
+    }
+    if (kind === 'admit' && normalizedPackage.provenance.runId !== envelope.runId) {
+      fail('package provenance is bound to a different Run', 'board_session_mismatch');
+    }
+    if (this._runStopByTarget.has(envelope.runId) || this._runStops.has(envelope.runId)
+      || this._runs.get(envelope.runId)?.status === 'sealed') fail('package Run is closed', 'board_run_closed');
+
+    const auth = {
+      actor: lease.session.principalId, key: envelope.idempotencyKey,
+      requestDigest: canonicalDigest(envelope),
+    };
+    if (kind === 'admit') {
+      return this.admitContextPackage(envelope.package, auth);
+    }
+    return this.attachContextPackage({
+      packageDigest: envelope.package, runId: envelope.runId, scope: envelope.mutation.scope,
+    }, auth);
+  }
+
   admitContextPackage(fields, auth) {
     const prior = this._byKey.get(auth?.key);
     if (prior) {
+      const normalizedReplay = this._normalizeContextPackage(fields, false);
+      if (prior.kind !== 'package.admitted'
+        || prior.payload?.packageDigest !== normalizedReplay.packageDigest) {
+        throw new CoordinationRefusal('context package idempotency content changed', 'board_replay_conflict');
+      }
       return {
         ok: true, result: 'idempotent', event: clone(prior),
         package: this.contextPackage(prior.payload?.packageDigest),
@@ -9422,6 +9512,11 @@ export class CoordinationStore {
   attachContextPackage(fields, auth) {
     const prior = this._byKey.get(auth?.key);
     if (prior) {
+      if (prior.kind !== 'package.attached'
+        || canonicalDigest(prior.payload) !== canonicalDigest(fields)) {
+        throw new CoordinationRefusal('context package attachment idempotency content changed',
+          'board_replay_conflict');
+      }
       return {
         ok: true, result: 'idempotent', event: clone(prior),
         attachment: this._contextPackageAttachmentView(prior),
@@ -13388,7 +13483,192 @@ export class CoordinationStore {
     return this._events.length;
   }
 
-  postBoardItem(fields, auth) {
+  _boardAdmissionFailure(message, code) {
+    throw new CoordinationRefusal(message, code);
+  }
+
+  /** S-2 v2's single serialized authority entry for transported/facade board commands.
+   * Shape is closed before any state lookup. The caller supplies the session proof; identity is
+   * recovered only from the matching lease. The final fence/parent compare is repeated by the
+   * append's before-write gate, so no adapter-side check-then-write window exists. */
+  admitBoardCommand(envelope) {
+    const fail = (message, code = 'board_admission_invalid') => this._boardAdmissionFailure(message, code);
+    const topFields = [
+      'board', 'expectedBoardFence', 'idempotencyKey', 'item', 'mutation', 'runId',
+      'sessionAuthority',
+    ];
+    if (!envelope || typeof envelope !== 'object' || Array.isArray(envelope)
+      || Object.keys(envelope).sort().join(',') !== topFields.sort().join(',')
+      || !validRunId(envelope.runId) || typeof envelope.board !== 'string'
+      || !SAFE_BOARD_ID.test(envelope.board) || !boundedText(envelope.idempotencyKey, 512)) {
+      fail('board admission envelope is invalid');
+    }
+
+    const mutation = envelope.mutation;
+    const kind = mutation?.kind;
+    const exactMutation = (fields) => mutation && typeof mutation === 'object'
+      && !Array.isArray(mutation)
+      && Object.keys(mutation).sort().join(',') === fields.sort().join(',');
+    if (kind === 'post') {
+      if (!exactMutation(['detail', 'evidence', 'kind', 'owner', 'title'])
+        || envelope.item !== null || !Number.isSafeInteger(envelope.expectedBoardFence)
+        || envelope.expectedBoardFence < 0
+        || !boardBounded(mutation.title, MAX_STORE_BOARD_TITLE_BYTES)
+        || (mutation.detail !== null && !boardBounded(mutation.detail, MAX_STORE_BOARD_DETAIL_BYTES))
+        || (mutation.owner !== null && (typeof mutation.owner !== 'string' || !SAFE_BOARD_OWNER.test(mutation.owner)))
+        || !Array.isArray(mutation.evidence) || mutation.evidence.length > MAX_STORE_BOARD_EVIDENCE
+        || !mutation.evidence.every(validBoardEvidenceRef)) fail('board post admission is invalid');
+    } else if (kind === 'retitle') {
+      if (!exactMutation(['detail', 'kind', 'title'])
+        || !boardBounded(mutation.title, MAX_STORE_BOARD_TITLE_BYTES)
+        || (mutation.detail !== null && !boardBounded(mutation.detail, MAX_STORE_BOARD_DETAIL_BYTES))) {
+        fail('board retitle admission is invalid');
+      }
+    } else if (kind === 'reorder') {
+      if (!exactMutation(['kind', 'ordinal']) || !Number.isSafeInteger(mutation.ordinal)
+        || mutation.ordinal <= 0) fail('board reorder admission is invalid');
+    } else if (kind === 'close' || kind === 'drop') {
+      if (!exactMutation(['kind'])) fail('board successor admission is invalid');
+    } else if (kind === 'read') {
+      if (!exactMutation(['kind']) || envelope.item !== null
+        || envelope.expectedBoardFence !== null) fail('board read admission is invalid');
+    } else fail('board mutation kind is invalid');
+
+    if (!['post', 'read'].includes(kind)) {
+      if (!envelope.item || typeof envelope.item !== 'object' || Array.isArray(envelope.item)
+        || Object.keys(envelope.item).sort().join(',') !== 'itemId,itemVersion'
+        || !boundedText(envelope.item.itemId, 512)
+        || !Number.isSafeInteger(envelope.item.itemVersion) || envelope.item.itemVersion <= 0
+        || !Number.isSafeInteger(envelope.expectedBoardFence) || envelope.expectedBoardFence < 0) {
+        fail('board item coordinates are invalid');
+      }
+    }
+
+    // Proof is an authority concern, not a caller-named principal. Null/absent proof therefore
+    // receives the lease code rather than being allowed to fall through to item existence.
+    const proof = envelope.sessionAuthority;
+    if (proof == null) fail('an active board lease is required', 'board_lease_required');
+    const proofFields = ['authorityDigest', 'expiresAt', 'orchestratorLeaseId', 'schemaVersion'];
+    if (typeof proof !== 'object' || Array.isArray(proof)
+      || Object.keys(proof).sort().join(',') !== proofFields.sort().join(',')
+      || proof.schemaVersion !== 1 || !/^[a-f0-9]{64}$/.test(proof.authorityDigest ?? '')
+      || !boundedText(proof.orchestratorLeaseId, 512)
+      || !Number.isFinite(Date.parse(proof.expiresAt ?? ''))
+      || new Date(Date.parse(proof.expiresAt)).toISOString() !== proof.expiresAt) {
+      fail('board authority proof is invalid');
+    }
+    const lease = this._runOrchestratorLeases.get(proof.orchestratorLeaseId);
+    if (!lease || lease.status !== 'active' || Date.parse(this._clock()) >= Date.parse(lease.expiresAt)) {
+      fail('an active board lease is required', 'board_lease_required');
+    }
+    if (proof.authorityDigest !== lease.session.authorityDigest
+      || proof.expiresAt !== lease.session.expiresAt) {
+      fail('board session authority does not match its lease', 'board_session_mismatch');
+    }
+    const parent = this._tasks.get(lease.parent.taskId);
+    if (!parent || parent.version !== lease.parent.taskVersion
+      || parent.assignee !== lease.parent.workerId || parent.status !== 'working') {
+      fail('an active board lease is required', 'board_lease_required');
+    }
+    if (lease.parent.runId !== envelope.runId) {
+      fail('board command Run does not match its lease', 'board_session_mismatch');
+    }
+    const binding = this._boardRunBindings.get(envelope.board) ?? null;
+    if (binding && binding.runId !== envelope.runId) {
+      fail('board is bound to a different Run', 'board_session_mismatch');
+    }
+    if (this._runStopByTarget.has(envelope.runId) || this._runStops.has(envelope.runId)
+      || this._runs.get(envelope.runId)?.status === 'sealed') {
+      fail('board Run is closed', 'board_run_closed');
+    }
+
+    let item = null;
+    if (!['post', 'read'].includes(kind)) {
+      item = this._boardItems.get(envelope.item.itemId) ?? null;
+      if (!item || item.board !== envelope.board) fail('board item was not found', 'board_item_not_found');
+    }
+
+    const normalized = freeze(clone(envelope));
+    const requestDigest = canonicalDigest(normalized);
+    const prior = this._byKey.get(envelope.idempotencyKey) ?? null;
+    const priorDigest = prior?.payload?.boardAdmission?.requestDigest ?? null;
+
+    const gate = () => {
+      if (this.boardFence(envelope.board) !== envelope.expectedBoardFence) {
+        fail('board fence is stale', 'stale_board_fence');
+      }
+      if (item) {
+        const current = this._boardItems.get(item.itemId);
+        if (current?.itemVersion !== envelope.item.itemVersion) {
+          fail('board item parent is stale', 'board_parent_stale');
+        }
+        if (current?.state !== 'open') fail('board item is not open', 'board_parent_stale');
+      }
+    };
+
+    // Reads are non-evented but pass through the identical proof/run/binding posture.
+    if (kind === 'read') {
+      return freeze({ ok: true, result: 'read', snapshot: this.boardSnapshot(envelope.board) });
+    }
+
+    if (!prior) gate(); // refusal precedence before request construction.
+    if (prior) {
+      const priorAdmission = prior.payload?.boardAdmission;
+      if (priorDigest !== requestDigest) {
+        if (priorAdmission?.expectedBoardFence !== envelope.expectedBoardFence) {
+          fail('board fence differs from the replay parent', 'stale_board_fence');
+        }
+        if (item && priorAdmission?.itemVersion !== envelope.item.itemVersion) {
+          fail('board item replay parent is stale', 'board_parent_stale');
+        }
+        fail('board idempotency content changed', 'board_replay_conflict');
+      }
+      const replayItem = this._boardItems.get(prior.payload.itemId) ?? null;
+      return freeze({
+        ok: true, result: 'idempotent', event: clone(prior), item: clone(replayItem),
+        boardRunBinding: {
+          runId: envelope.runId, result: prior.payload.boardAdmission?.adopted ? 'adopted' : 'bound',
+        },
+      });
+    }
+
+    const adopting = !binding && (this._boardItemsByBoard.get(envelope.board)?.length ?? 0) > 0;
+    const boardAdmission = freeze({
+      schemaVersion: 1, runId: envelope.runId, requestDigest, adopted: adopting,
+      leaseId: lease.leaseId, expectedBoardFence: envelope.expectedBoardFence,
+      itemVersion: envelope.item?.itemVersion ?? null,
+    });
+    const auth = { actor: lease.session.principalId, key: envelope.idempotencyKey };
+    const appendGate = () => {
+      // Test-only instrumentation shares the actual before-write callback. A mutation injected
+      // here changes the replay-derived fence before the compare below and therefore loses CAS.
+      if (typeof this._boardAdmissionInterleave === 'function') this._boardAdmissionInterleave();
+      gate();
+    };
+    let receipt;
+    if (kind === 'post') {
+      receipt = this.postBoardItem({
+        board: envelope.board, title: mutation.title, detail: mutation.detail,
+        owner: mutation.owner, evidence: mutation.evidence,
+      }, auth, appendGate, boardAdmission);
+    } else if (kind === 'retitle') {
+      receipt = this.retitleBoardItem(item.itemId, {
+        title: mutation.title, detail: mutation.detail,
+      }, auth, appendGate, boardAdmission);
+    } else if (kind === 'reorder') {
+      receipt = this.reorderBoardItem(item.itemId, mutation.ordinal, auth, appendGate, boardAdmission);
+    } else if (kind === 'close') {
+      receipt = this.closeBoardItem(item.itemId, auth, appendGate, boardAdmission);
+    } else {
+      receipt = this.dropBoardItem(item.itemId, auth, appendGate, boardAdmission);
+    }
+    return freeze({
+      ...receipt,
+      boardRunBinding: { runId: envelope.runId, result: adopting ? 'adopted' : 'bound' },
+    });
+  }
+
+  postBoardItem(fields, auth, appendGate = null, boardAdmission = null) {
     const prior = this._byKey.get(auth?.key);
     if (prior) return { ok: true, result: 'idempotent', event: clone(prior), item: clone(this._boardItems.get(prior.payload.itemId)) };
     if (!fields || typeof fields !== 'object' || Array.isArray(fields)) throw new CoordinationRefusal('board item requires fields', 'invalid_board_item');
@@ -13407,14 +13687,15 @@ export class CoordinationStore {
     const core = { itemId, itemVersion: 1, board, title: fields.title, detail, state: 'open', owner, evidence: clone(evidence), ordinal };
     const itemDigest = boardItemContentDigest(core);
     if (Object.hasOwn(fields, 'itemDigest') && fields.itemDigest !== itemDigest) throw new CoordinationRefusal('board item digest does not match the hub recompute', 'board_item_digest_mismatch');
-    const event = this._append('board.item_posted', { ...core, itemDigest }, auth);
+    const payload = { ...core, itemDigest, ...(boardAdmission ? { boardAdmission } : {}) };
+    const event = this._append('board.item_posted', payload, auth, null, appendGate);
     return { ok: true, result: 'posted', event: clone(event), item: clone(this._boardItems.get(itemId)) };
   }
 
   /** A successor version under the SAME itemId (immutable prior version retained). If a granted
    * claim exists, a benign edit (retitle/reorder) carries it forward via board.claim_migrated —
    * the worker is never forced to re-claim (F8, rule 3). */
-  _boardSuccessor(itemId, kind, changes, auth) {
+  _boardSuccessor(itemId, kind, changes, auth, appendGate = null, boardAdmission = null) {
     const current = this._boardItems.get(itemId);
     if (!current) throw new CoordinationRefusal(`unknown board item ${itemId}`, 'board_item_not_found');
     if (current.state !== 'open') throw new CoordinationRefusal(`board item ${itemId} is not open`, 'board_item_not_open');
@@ -13443,15 +13724,17 @@ export class CoordinationStore {
         boardItemRef: { itemId, itemVersion: core.itemVersion, itemDigest },
       }, null, false);
       const [event] = this._appendBatch([
-        { kind, payload: { ...core, itemDigest }, auth },
+        { kind, payload: { ...core, itemDigest, ...(boardAdmission ? { boardAdmission } : {}) }, auth },
         {
           kind: 'knowledge.node_added', payload: findingPayload,
           auth: { actor: 'policy', key: `knowledge.node_added:${findingId}` },
         },
-      ]);
+      ], null, appendGate);
       return { ok: true, result: 'updated', event: clone(event), item: clone(this._boardItems.get(itemId)), migrated: false };
     }
-    const event = this._append(kind, { ...core, itemDigest }, auth);
+    const event = this._append(kind, {
+      ...core, itemDigest, ...(boardAdmission ? { boardAdmission } : {}),
+    }, auth, null, appendGate);
     const claim = this._boardClaims.get(itemId);
     const migrating = !!(claim && claim.active && (kind === 'board.item_retitled' || kind === 'board.item_reordered'));
     if (migrating) {
@@ -13462,31 +13745,31 @@ export class CoordinationStore {
     return { ok: true, result: 'updated', event: clone(event), item: clone(this._boardItems.get(itemId)), migrated: migrating };
   }
 
-  retitleBoardItem(itemId, fields, auth) {
+  retitleBoardItem(itemId, fields, auth, appendGate = null, boardAdmission = null) {
     const prior = this._byKey.get(auth?.key);
     if (prior) return { ok: true, result: 'idempotent', event: clone(prior), item: clone(this._boardItems.get(itemId)) };
     if (!boardBounded(fields?.title, MAX_STORE_BOARD_TITLE_BYTES)) throw new CoordinationRefusal('board retitle requires a bounded non-empty title', 'invalid_board_title');
     if (fields.detail !== undefined && fields.detail !== null && !boardBounded(fields.detail, MAX_STORE_BOARD_DETAIL_BYTES)) throw new CoordinationRefusal('board detail must be null or bounded', 'invalid_board_detail');
-    return this._boardSuccessor(itemId, 'board.item_retitled', { title: fields.title, detail: fields.detail, itemDigest: fields?.itemDigest }, auth);
+    return this._boardSuccessor(itemId, 'board.item_retitled', { title: fields.title, detail: fields.detail, itemDigest: fields?.itemDigest }, auth, appendGate, boardAdmission);
   }
 
-  reorderBoardItem(itemId, ordinal, auth) {
+  reorderBoardItem(itemId, ordinal, auth, appendGate = null, boardAdmission = null) {
     const prior = this._byKey.get(auth?.key);
     if (prior) return { ok: true, result: 'idempotent', event: clone(prior), item: clone(this._boardItems.get(itemId)) };
     if (!Number.isSafeInteger(ordinal) || ordinal <= 0) throw new CoordinationRefusal('board ordinal must be a positive integer', 'invalid_board_ordinal');
-    return this._boardSuccessor(itemId, 'board.item_reordered', { ordinal }, auth);
+    return this._boardSuccessor(itemId, 'board.item_reordered', { ordinal }, auth, appendGate, boardAdmission);
   }
 
-  closeBoardItem(itemId, auth) {
+  closeBoardItem(itemId, auth, appendGate = null, boardAdmission = null) {
     const prior = this._byKey.get(auth?.key);
     if (prior) return { ok: true, result: 'idempotent', event: clone(prior), item: clone(this._boardItems.get(itemId)) };
-    return this._boardSuccessor(itemId, 'board.item_closed', { state: 'closed' }, auth);
+    return this._boardSuccessor(itemId, 'board.item_closed', { state: 'closed' }, auth, appendGate, boardAdmission);
   }
 
-  dropBoardItem(itemId, auth) {
+  dropBoardItem(itemId, auth, appendGate = null, boardAdmission = null) {
     const prior = this._byKey.get(auth?.key);
     if (prior) return { ok: true, result: 'idempotent', event: clone(prior), item: clone(this._boardItems.get(itemId)) };
-    return this._boardSuccessor(itemId, 'board.item_dropped', { state: 'dropped' }, auth);
+    return this._boardSuccessor(itemId, 'board.item_dropped', { state: 'dropped' }, auth, appendGate, boardAdmission);
   }
 
   /** First claim wins, exactly-once, only if expectedBoardFence === boardFence(board) at apply
@@ -13557,7 +13840,10 @@ export class CoordinationStore {
     const items = ids.map((id) => clone(this._boardItems.get(id))).filter(Boolean);
     const claims = ids.map((id) => this._boardClaims.get(id)).filter((claim) => claim && claim.active).map(clone);
     const reports = this._boardReports.filter((report) => ids.includes(report.itemId)).map(clone);
-    return freeze({ board, boardFence: this.boardFence(board), items, claims, reports });
+    return freeze({
+      board, runId: this._boardRunBindings.get(board)?.runId ?? null,
+      boardFence: this.boardFence(board), items, claims, reports,
+    });
   }
 
   // -------------------------------------------------------------------------

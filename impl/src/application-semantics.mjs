@@ -1268,58 +1268,66 @@ const CANONICAL_OPERATION_SPECS = [
   ['context.retry', { action: 'context_retry', outputView: 'outline' }],
   ['board.post', {
     effect: 'board_edit', capabilities: ['control', 'observe'], outputView: 'outline',
-    helpTopic: 'run', inputSchema: objectSchema({
-      runId: id, title: { type: 'string', minLength: 1, maxLength: 4096 },
-      note: { type: 'string', minLength: 1, maxLength: 16384 },
+    helpTopic: 'run', surfaces: ['mcp'], inputSchema: objectSchema({
+      runId: id, board: id, title: { type: 'string', minLength: 1, maxLength: 160 },
+      detail: { type: ['string', 'null'], maxLength: 4096 }, owner: { type: ['string', 'null'] },
+      evidence: { type: 'array', maxItems: 8 },
       expectedBoardFence: { type: 'integer', minimum: 0 },
-    }, ['runId', 'title']),
+    }, ['runId', 'board', 'title', 'expectedBoardFence']),
   }],
   ['board.retitle', {
     effect: 'board_edit', capabilities: ['control', 'observe'], outputView: 'outline',
-    helpTopic: 'run', inputSchema: objectSchema({
-      runId: id, entryId: id, title: { type: 'string', minLength: 1, maxLength: 4096 },
+    helpTopic: 'run', surfaces: ['mcp'], inputSchema: objectSchema({
+      runId: id, board: id, itemId: id, itemVersion: { type: 'integer', minimum: 1 },
+      title: { type: 'string', minLength: 1, maxLength: 160 },
+      detail: { type: ['string', 'null'], maxLength: 4096 },
       expectedBoardFence: { type: 'integer', minimum: 0 },
-    }, ['runId', 'entryId', 'title']),
+    }, ['runId', 'board', 'itemId', 'itemVersion', 'title', 'expectedBoardFence']),
   }],
   ['board.reorder', {
     effect: 'board_edit', capabilities: ['control', 'observe'], outputView: 'outline',
-    helpTopic: 'run', inputSchema: objectSchema({
-      runId: id, entryId: id, before: id, expectedBoardFence: { type: 'integer', minimum: 0 },
-    }, ['runId', 'entryId']),
+    helpTopic: 'run', surfaces: ['mcp'], inputSchema: objectSchema({
+      runId: id, board: id, itemId: id, itemVersion: { type: 'integer', minimum: 1 },
+      ordinal: { type: 'integer', minimum: 1 }, expectedBoardFence: { type: 'integer', minimum: 0 },
+    }, ['runId', 'board', 'itemId', 'itemVersion', 'ordinal', 'expectedBoardFence']),
   }],
   ['board.close', {
     effect: 'board_edit', capabilities: ['control', 'observe'], outputView: 'outline',
-    helpTopic: 'run', inputSchema: objectSchema({
-      runId: id, entryId: id, expectedBoardFence: { type: 'integer', minimum: 0 },
-    }, ['runId', 'entryId']),
+    helpTopic: 'run', surfaces: ['mcp'], inputSchema: objectSchema({
+      runId: id, board: id, itemId: id, itemVersion: { type: 'integer', minimum: 1 },
+      expectedBoardFence: { type: 'integer', minimum: 0 },
+    }, ['runId', 'board', 'itemId', 'itemVersion', 'expectedBoardFence']),
   }],
   ['board.read', {
-    effect: 'board_read', capabilities: ['observe'], outputView: 'section', helpTopic: 'run',
-    inputSchema: runIdSchema,
+    effect: 'board_read', capabilities: ['observe'], outputView: 'section', helpTopic: 'run', surfaces: ['mcp'],
+    inputSchema: objectSchema({ runId: id, board: id }, ['runId', 'board']),
   }],
   ['board.claim', {
     profile: 'worker', effect: 'board_claim', capabilities: ['control', 'observe'],
-    outputView: 'outline', helpTopic: 'run', inputSchema: objectSchema({ runId: id, entryId: id }, ['runId', 'entryId']),
+    outputView: 'outline', helpTopic: 'run', surfaces: [], inputSchema: objectSchema({
+      itemId: id, expectedBoardFence: { type: 'integer', minimum: 0 },
+    }, ['itemId', 'expectedBoardFence']),
   }],
   ['board.report', {
     profile: 'worker', effect: 'board_report', capabilities: ['control', 'observe'],
-    outputView: 'outline', helpTopic: 'run', inputSchema: objectSchema({
-      runId: id, entryId: id, note: { type: 'string', minLength: 1, maxLength: 16384 },
-    }, ['runId', 'entryId']),
+    outputView: 'outline', helpTopic: 'run', surfaces: [], inputSchema: objectSchema({
+      itemId: id, itemVersion: { type: 'integer', minimum: 1 }, itemDigest: id,
+      body: { type: 'string', minLength: 1, maxLength: 4096 },
+    }, ['itemId', 'itemVersion', 'itemDigest', 'body']),
   }],
   ['package.admit', {
     effect: 'package_edit', capabilities: ['control', 'observe'], outputView: 'outline',
-    helpTopic: 'run', inputSchema: objectSchema({
-      runId: id, packageId: id, digest: id,
-    }, ['runId', 'packageId']),
+    helpTopic: 'run', surfaces: ['mcp'], inputSchema: objectSchema({ runId: id, package: { type: 'object' } }, ['runId', 'package']),
   }],
   ['package.attach', {
     effect: 'package_edit', capabilities: ['control', 'observe'], outputView: 'outline',
-    helpTopic: 'run', inputSchema: objectSchema({ runId: id, packageId: id }, ['runId', 'packageId']),
+    helpTopic: 'run', surfaces: ['mcp'], inputSchema: objectSchema({
+      runId: id, packageDigest: id, scope: id,
+    }, ['runId', 'packageDigest', 'scope']),
   }],
   ['package.read', {
-    effect: 'package_read', capabilities: ['observe'], outputView: 'section', helpTopic: 'run',
-    inputSchema: runIdSchema,
+    effect: 'package_read', capabilities: ['observe'], outputView: 'section', helpTopic: 'run', surfaces: ['mcp'],
+    inputSchema: objectSchema({ packageDigest: id, branchName: id }, ['packageDigest']),
   }],
   ['application.help', {
     op: 'application.help', effect: 'help_read', capabilities: ['observe'], outputView: 'outline',

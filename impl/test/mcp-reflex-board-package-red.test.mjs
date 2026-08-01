@@ -184,12 +184,24 @@ function principal(overrides = {}) {
 }
 
 function setup({ coordination, coordinator } = {}) {
+  const basePrincipal = principal();
+  const lease = coordination?.activeRunOrchestratorLeaseForSession({
+    repoId, principalId: basePrincipal.userId, sessionId: basePrincipal.sessionId,
+    expiresAt: basePrincipal.expiresAt,
+  }) ?? null;
+  const authenticatedPrincipal = lease ? {
+    ...basePrincipal,
+    sessionAuthority: {
+      schemaVersion: 1, authorityDigest: lease.session.authorityDigest,
+      expiresAt: lease.session.expiresAt, orchestratorLeaseId: lease.leaseId,
+    },
+  } : basePrincipal;
   const server = new McpFleetServer({
     coordinator: coordinator ?? fakeCoordinator(coordination),
     coordination, application: fakeApplication(),
     shutdownPrincipal: { actor: 'mcp-host:test', principalId: 'mcp-host', sessionId: 'mcp-host-session' },
     surface: 'combined',
-    principal: principal(), repoIds: [repoId], now: () => NOW,
+    principal: authenticatedPrincipal, repoIds: [repoId], now: () => NOW,
     maxWaitMs: 25_000, maxMessageBytes: 256 * 1024,
     takeToolQuota: () => ({ ok: true }),
   });
@@ -241,7 +253,7 @@ test('registration: a principal without observe capability is refused forbidden 
     maxWaitMs: 25_000, maxMessageBytes: 256 * 1024, takeToolQuota: () => ({ ok: true }),
   });
   await initialized(server);
-  const response = await request(server, 2, 'tools/call', { name: 'baton_board_read', arguments: { repoId, board: 'shared' } });
+  const response = await request(server, 2, 'tools/call', { name: 'baton_board_read', arguments: { repoId, runId, board: 'shared' } });
   assert.equal(response.result.isError, true);
   assert.equal(response.result.structuredContent.error.code, 'forbidden');
 });
@@ -258,7 +270,7 @@ test('baton_board_post: STATEFUL admitMcpCall path, bumps the board fence, and a
 
   const posted = await request(server, 2, 'tools/call', {
     name: 'baton_board_post',
-    arguments: { repoId, idempotencyKey: 'post-1', board: 'shared', title: 'Do X', expectedBoardFence: 0 },
+    arguments: { repoId, idempotencyKey: 'post-1', runId, board: 'shared', title: 'Do X', expectedBoardFence: 0 },
   });
   assert.equal(posted.result.isError, false);
   assert.equal(posted.result.structuredContent.result, 'posted');
@@ -268,7 +280,7 @@ test('baton_board_post: STATEFUL admitMcpCall path, bumps the board fence, and a
 
   const stale = await request(server, 3, 'tools/call', {
     name: 'baton_board_post',
-    arguments: { repoId, idempotencyKey: 'post-2', board: 'shared', title: 'Do Y', expectedBoardFence: 0 },
+    arguments: { repoId, idempotencyKey: 'post-2', runId, board: 'shared', title: 'Do Y', expectedBoardFence: 0 },
   });
   assert.equal(stale.result.isError, true);
   assert.equal(stale.result.structuredContent.error.code, 'stale_board_fence');
@@ -276,7 +288,7 @@ test('baton_board_post: STATEFUL admitMcpCall path, bumps the board fence, and a
 
   const won = await request(server, 4, 'tools/call', {
     name: 'baton_board_post',
-    arguments: { repoId, idempotencyKey: 'post-3', board: 'shared', title: 'Do Y', expectedBoardFence: 1 },
+    arguments: { repoId, idempotencyKey: 'post-3', runId, board: 'shared', title: 'Do Y', expectedBoardFence: 1 },
   });
   assert.equal(won.result.isError, false);
   assert.equal(coordination.boardFence('shared'), 2);
@@ -287,23 +299,23 @@ test('baton_board_post: replaying the same idempotencyKey returns the admitted o
   issueOrchestratorLease(coordination, { runId, ...leaseSession });
   const server = setup({ coordination });
   await initialized(server);
-  const args = { repoId, idempotencyKey: 'post-replay', board: 'shared', title: 'Do X', expectedBoardFence: 0 };
+  const args = { repoId, idempotencyKey: 'post-replay', runId, board: 'shared', title: 'Do X', expectedBoardFence: 0 };
   const first = await request(server, 2, 'tools/call', { name: 'baton_board_post', arguments: args });
   const second = await request(server, 3, 'tools/call', { name: 'baton_board_post', arguments: args });
   assert.equal(second.result.structuredContent.item.itemId, first.result.structuredContent.item.itemId);
   assert.equal(coordination.boardFence('shared'), 1, 'the replay never re-dispatches to the hub');
 });
 
-test('baton_board_post/admit are refused run_orchestrator_lease_required without an active lease', async () => {
+test('baton_board_post/admit are refused board_lease_required without an active lease', async () => {
   const { coordination } = coordinationFixture();
   const server = setup({ coordination });
   await initialized(server);
   const response = await request(server, 2, 'tools/call', {
     name: 'baton_board_post',
-    arguments: { repoId, idempotencyKey: 'post-nolease', board: 'shared', title: 'Do X', expectedBoardFence: 0 },
+    arguments: { repoId, idempotencyKey: 'post-nolease', runId, board: 'shared', title: 'Do X', expectedBoardFence: 0 },
   });
   assert.equal(response.result.isError, true);
-  assert.equal(response.result.structuredContent.error.code, 'run_orchestrator_lease_required');
+  assert.equal(response.result.structuredContent.error.code, 'board_lease_required');
   assert.equal(coordination.boardFence('shared'), 0);
 });
 
@@ -315,20 +327,20 @@ test('baton_board_retitle / baton_board_reorder / baton_board_close all CAS agai
 
   const posted = await request(server, 2, 'tools/call', {
     name: 'baton_board_post',
-    arguments: { repoId, idempotencyKey: 'post-1', board: 'shared', title: 'Do X', expectedBoardFence: 0 },
+    arguments: { repoId, idempotencyKey: 'post-1', runId, board: 'shared', title: 'Do X', expectedBoardFence: 0 },
   });
   const itemId = posted.result.structuredContent.item.itemId;
   assert.equal(coordination.boardFence('shared'), 1);
 
   const staleRetitle = await request(server, 3, 'tools/call', {
     name: 'baton_board_retitle',
-    arguments: { repoId, idempotencyKey: 'retitle-stale', itemId, title: 'Do X (edited)', expectedBoardFence: 0 },
+    arguments: { repoId, idempotencyKey: 'retitle-stale', runId, board: 'shared', itemId, itemVersion: 1, title: 'Do X (edited)', expectedBoardFence: 0 },
   });
   assert.equal(staleRetitle.result.structuredContent.error.code, 'stale_board_fence');
 
   const retitled = await request(server, 4, 'tools/call', {
     name: 'baton_board_retitle',
-    arguments: { repoId, idempotencyKey: 'retitle-1', itemId, title: 'Do X (edited)', expectedBoardFence: 1 },
+    arguments: { repoId, idempotencyKey: 'retitle-1', runId, board: 'shared', itemId, itemVersion: 1, title: 'Do X (edited)', expectedBoardFence: 1 },
   });
   assert.equal(retitled.result.isError, false);
   assert.equal(retitled.result.structuredContent.item.itemVersion, 2);
@@ -336,14 +348,14 @@ test('baton_board_retitle / baton_board_reorder / baton_board_close all CAS agai
 
   const reordered = await request(server, 5, 'tools/call', {
     name: 'baton_board_reorder',
-    arguments: { repoId, idempotencyKey: 'reorder-1', itemId, ordinal: 1, expectedBoardFence: 2 },
+    arguments: { repoId, idempotencyKey: 'reorder-1', runId, board: 'shared', itemId, itemVersion: 2, ordinal: 1, expectedBoardFence: 2 },
   });
   assert.equal(reordered.result.isError, false);
   assert.equal(coordination.boardFence('shared'), 3);
 
   const closed = await request(server, 6, 'tools/call', {
     name: 'baton_board_close',
-    arguments: { repoId, idempotencyKey: 'close-1', itemId, expectedBoardFence: 3 },
+    arguments: { repoId, idempotencyKey: 'close-1', runId, board: 'shared', itemId, itemVersion: 3, expectedBoardFence: 3 },
   });
   assert.equal(closed.result.isError, false);
   assert.equal(closed.result.structuredContent.item.state, 'closed');
@@ -357,7 +369,7 @@ test('baton_board_retitle against an unknown itemId is refused board_item_not_fo
   await initialized(server);
   const response = await request(server, 2, 'tools/call', {
     name: 'baton_board_retitle',
-    arguments: { repoId, idempotencyKey: 'retitle-missing', itemId: 'board-item:' + 'a'.repeat(64), title: 'x', expectedBoardFence: 0 },
+    arguments: { repoId, idempotencyKey: 'retitle-missing', runId, board: 'shared', itemId: 'board-item:' + 'a'.repeat(64), itemVersion: 1, title: 'x', expectedBoardFence: 0 },
   });
   assert.equal(response.result.isError, true);
   assert.equal(response.result.structuredContent.error.code, 'board_item_not_found');
@@ -370,10 +382,10 @@ test('baton_board_read: read-only observe path, full orchestrator slice, non-eve
   await initialized(server);
   await request(server, 2, 'tools/call', {
     name: 'baton_board_post',
-    arguments: { repoId, idempotencyKey: 'post-1', board: 'shared', title: 'Do X', owner: 'worker-x', expectedBoardFence: 0 },
+    arguments: { repoId, idempotencyKey: 'post-1', runId, board: 'shared', title: 'Do X', owner: 'worker-x', expectedBoardFence: 0 },
   });
   const before = coordination.events().length;
-  const read = await request(server, 3, 'tools/call', { name: 'baton_board_read', arguments: { repoId, board: 'shared' } });
+  const read = await request(server, 3, 'tools/call', { name: 'baton_board_read', arguments: { repoId, runId, board: 'shared' } });
   assert.equal(read.result.isError, false);
   assert.equal(read.result.structuredContent.viewer.role, 'orchestrator');
   assert.equal(read.result.structuredContent.items.length, 1);
@@ -393,10 +405,10 @@ test('baton_board_read serves the process-local cache while the fence is unchang
   await initialized(server);
   await request(server, 2, 'tools/call', {
     name: 'baton_board_post',
-    arguments: { repoId, idempotencyKey: 'post-1', board: 'shared', title: 'Do X', expectedBoardFence: 0 },
+    arguments: { repoId, idempotencyKey: 'post-1', runId, board: 'shared', title: 'Do X', expectedBoardFence: 0 },
   });
-  const first = await request(server, 3, 'tools/call', { name: 'baton_board_read', arguments: { repoId, board: 'shared' } });
-  const second = await request(server, 4, 'tools/call', { name: 'baton_board_read', arguments: { repoId, board: 'shared' } });
+  const first = await request(server, 3, 'tools/call', { name: 'baton_board_read', arguments: { repoId, runId, board: 'shared' } });
+  const second = await request(server, 4, 'tools/call', { name: 'baton_board_read', arguments: { repoId, runId, board: 'shared' } });
   assert.deepEqual(second.result.structuredContent, first.result.structuredContent);
 
   const replayed = new CoordinationStore(join(dir, 'coordination'), {
@@ -404,7 +416,7 @@ test('baton_board_read serves the process-local cache while the fence is unchang
   });
   const restarted = setup({ coordination: replayed });
   await initialized(restarted);
-  const afterRestart = await request(restarted, 5, 'tools/call', { name: 'baton_board_read', arguments: { repoId, board: 'shared' } });
+  const afterRestart = await request(restarted, 5, 'tools/call', { name: 'baton_board_read', arguments: { repoId, runId, board: 'shared' } });
   assert.equal(afterRestart.result.isError, false);
   assert.deepEqual(afterRestart.result.structuredContent.items, first.result.structuredContent.items,
     'replay reconstructs the identical projection input with no ledger event required');
@@ -433,22 +445,22 @@ test('baton_package_admit refuses a submitter-supplied provenance.packageEvent a
   const fields = packageFields([artifactBranch('a', res)]);
   fields.provenance = { ...fields.provenance, packageEvent: { sourceEventSeq: 1, sourceEventDigest: '0'.repeat(64) } };
   const response = await request(server, 2, 'tools/call', {
-    name: 'baton_package_admit', arguments: { repoId, idempotencyKey: 'admit-bad', package: fields },
+    name: 'baton_package_admit', arguments: { repoId, idempotencyKey: 'admit-bad', runId, package: fields },
   });
   assert.equal(response.result.isError, true);
   assert.equal(response.result.structuredContent.error.code, 'reserved_package_field');
 });
 
-test('baton_package_admit is refused run_orchestrator_lease_required without an active lease', async () => {
+test('baton_package_admit is refused board_lease_required without an active lease', async () => {
   const { coordination, res } = coordinationFixture();
   const server = setup({ coordination });
   await initialized(server);
   const fields = packageFields([artifactBranch('a', res)]);
   const response = await request(server, 2, 'tools/call', {
-    name: 'baton_package_admit', arguments: { repoId, idempotencyKey: 'admit-nolease', package: fields },
+    name: 'baton_package_admit', arguments: { repoId, idempotencyKey: 'admit-nolease', runId, package: fields },
   });
   assert.equal(response.result.isError, true);
-  assert.equal(response.result.structuredContent.error.code, 'run_orchestrator_lease_required');
+  assert.equal(response.result.structuredContent.error.code, 'board_lease_required');
 });
 
 test('baton_package_admit -> baton_package_attach -> baton_package_read round-trips, and attach never re-reads branch bytes', async () => {
@@ -459,7 +471,7 @@ test('baton_package_admit -> baton_package_attach -> baton_package_read round-tr
 
   const fields = packageFields([artifactBranch('a', res)], { runId });
   const admitted = await request(server, 2, 'tools/call', {
-    name: 'baton_package_admit', arguments: { repoId, idempotencyKey: 'admit-1', package: fields },
+    name: 'baton_package_admit', arguments: { repoId, idempotencyKey: 'admit-1', runId, package: fields },
   });
   assert.equal(admitted.result.isError, false);
   assert.equal(admitted.result.structuredContent.result, 'admitted');
@@ -496,7 +508,7 @@ test('baton_package_read surfaces missing branch bytes as the typed artifact_una
   const branch = artifactBranch('a', res);
   const fields = packageFields([branch], { runId });
   const admitted = await request(server, 2, 'tools/call', {
-    name: 'baton_package_admit', arguments: { repoId, idempotencyKey: 'admit-1', package: fields },
+    name: 'baton_package_admit', arguments: { repoId, idempotencyKey: 'admit-1', runId, package: fields },
   });
   const packageDigest = admitted.result.structuredContent.package.packageDigest;
   res.artifacts.delete(branch.artifact.handle);
