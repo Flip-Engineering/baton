@@ -1,6 +1,7 @@
 import { contextProgramIsPure } from './context-authority.mjs';
 import { normalizeContextProgram } from './context-program.mjs';
 import { APPLICATION_SEMANTIC_REGISTRY } from './application-semantics.mjs';
+import { createRecipes } from './recipes.mjs';
 import { attachWave, createWave } from './wave.mjs';
 
 function clientError(message, code = 'application_client_invalid') {
@@ -948,6 +949,38 @@ export class BatonRun {
 
   follow(options = {}) { return this.changes(options); }
 
+  // Bidirectional v2 rule 6: ONE-SHOT cursor-following wait riding the run.follow command —
+  // distinct from changes()/follow() (the async iterators, which wake on their initial
+  // inspection and would spin a poll loop). The wave driver's wake laws ride this: one
+  // follow per live member per wait cycle; an abort surfaces as application_follow_cancelled.
+  async followOnce(options = {}) {
+    exactOptions(options, new Set(['afterCursor', 'timeoutMs', 'signal']), 'followOnce');
+    const { afterCursor, timeoutMs, signal } = options;
+    if (!Number.isSafeInteger(afterCursor) || afterCursor < 0) {
+      throw clientError('Run followOnce cursor is invalid');
+    }
+    if (!Number.isSafeInteger(timeoutMs) || timeoutMs <= 0) {
+      throw clientError('Run followOnce timeoutMs is invalid');
+    }
+    const pending = this.#application.command('run.follow', {
+      runId: this.id, afterCursor, timeoutMs,
+    });
+    if (signal === undefined || signal === null) {
+      this.#last = await pending;
+      return this.#last;
+    }
+    const raced = await Promise.race([
+      pending.then((view) => ({ cancelled: false, view })),
+      new Promise((resolve) => {
+        if (signal.aborted) resolve({ cancelled: true });
+        else signal.addEventListener('abort', () => resolve({ cancelled: true }), { once: true });
+      }),
+    ]);
+    if (raced.cancelled) throw clientError('Run followOnce was cancelled', 'application_follow_cancelled');
+    this.#last = raced.view;
+    return raced.view;
+  }
+
   async *_timeline(channel, options = {}) {
     exactOptions(options, new Set(['signal', 'recipient']), channel);
     if (abortSignal(options.signal)
@@ -1521,6 +1554,12 @@ export class BatonClient {
         options?.repoRoot ?? null,
       ),
     });
+  }
+
+  // Composition v2 rule 3: the recipes library is an embedded-facade accessor over the shipped
+  // waves/driver machinery — recipes as data + closed run options, never a new command family.
+  get recipes() {
+    return createRecipes(this);
   }
 
   help(topic = 'application', depth = 'outline') {

@@ -437,7 +437,10 @@ test('D9: stall fan-out claims every paused member exactly once', async (t) => {
   };
   const { baton, repo } = harness(t, scriptsByMarker);
   const receipt = await createWaveDriver(baton, {
-    ...FAST, steering: 'none', stallTimeoutMs: 250, unproductiveNudgeBudget: 99, finalization: 'claim-on-stall',
+    // hardCapMs 12s (FAST's 3s): waves.start alone measures ~3.9s on the loaded machine
+    // (repo-grown git-bound start latency, the #7 family's own warning) — the fan-out
+    // semantics under test never depended on the cap, only that it outlives the start.
+    ...FAST, steering: 'none', stallTimeoutMs: 250, unproductiveNudgeBudget: 99, finalization: 'claim-on-stall', hardCapMs: 12_000,
   }).run({ repoRoot: repo, members: [member('alpha', 'write alpha'), member('beta', 'write beta')] });
   assert.equal(receipt.basis, 'completed', 'fan-out recovers every member from the stall');
   assert.equal(receipt.claims.length, 2);
@@ -445,7 +448,7 @@ test('D9: stall fan-out claims every paused member exactly once', async (t) => {
 
   const control = harness(t, scriptsByMarker);
   const withoutClaim = await createWaveDriver(control.baton, {
-    ...FAST, steering: 'none', stallTimeoutMs: 250, unproductiveNudgeBudget: 99, finalization: 'none',
+    ...FAST, steering: 'none', stallTimeoutMs: 250, unproductiveNudgeBudget: 99, finalization: 'none', hardCapMs: 12_000,
   }).run({ repoRoot: control.repo, members: [member('alpha', 'write alpha'), member('beta', 'write beta')] });
   assert.equal(withoutClaim.basis, 'stall');
   assert.equal(withoutClaim.claims.length, 0);

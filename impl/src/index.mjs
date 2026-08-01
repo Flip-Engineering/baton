@@ -184,6 +184,10 @@ export {
 } from './application-client.mjs';
 export { createWave } from './wave.mjs';
 export { createWaveDriver } from './wave-driver.mjs';
+export {
+  admitRecipe, createRecipes, implementContractRecipe, mergeOverrides, recipeDigest,
+  renderObjective, renderMember,
+} from './recipes.mjs';
 export { BatonWebHost, SignalLifecycleOwner } from './application-host.mjs';
 export { HttpsHmacAdvisoryFeedSource, signHmacAdvisoryPollPageForTest } from './https-hmac-advisory-feed.mjs';
 export { Ed25519AdvisoryWebhookSource, HmacAdvisoryWebhookSource, signEd25519AdvisoryWebhookForTest, signHmacAdvisoryWebhookForTest } from './hmac-advisory-webhook.mjs';
