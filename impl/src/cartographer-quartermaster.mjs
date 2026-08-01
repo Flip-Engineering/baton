@@ -47,7 +47,7 @@ const seedEvidence = (item) => {
 const briefItem = (item) => {
   const evidence = seedEvidence(item);
   return {
-    path: item.path, score: item.score, lexicalLines: evidence.lexicalLines,
+    path: item.path, sourceDigest: item.digest ?? null, score: item.score, lexicalLines: evidence.lexicalLines,
     symbols: item.symbols.slice(0, 64), symbolCount: item.symbols.length,
     imports: item.imports.slice(0, 64), importCount: item.imports.length,
     calls: item.calls.slice(0, 64), callCount: item.calls.length,
@@ -301,6 +301,9 @@ export class CartographerQuartermaster {
     if (typeof opts.atlas.resultRoot !== 'string' || opts.atlas.resultRoot.length === 0) throw new TypeError('Cartographer/Quartermaster requires Atlas resultRoot');
     this.atlasResultRoot = realpathSync(opts.atlas.resultRoot);
     const artifactRoot = resolve(opts.artifactRoot); mkdirSync(artifactRoot, { recursive: true, mode: 0o700 }); this.artifactRoot = realpathSync(artifactRoot);
+    this.maxArtifactBytes = opts.maxArtifactBytes ?? opts.atlas.card().ceilings?.maxArtifactBytes;
+    if (!Number.isSafeInteger(this.maxArtifactBytes) || this.maxArtifactBytes <= 0) throw new TypeError('Cartographer/Quartermaster maxArtifactBytes required');
+    this.availability = opts.availability ?? Object.freeze({ status: 'available', reason: 'language_ceiling_satisfied' });
     this.externalOracle = opts.externalOracle ?? null;
     this.vetPolicy = null;
     if (this.externalOracle !== null) {
@@ -367,6 +370,8 @@ export class CartographerQuartermaster {
       },
       ...(this.externalOracle ? { reusePolicy: { schemaVersion: 1, policyId: 'quartermaster-vet-policy-v1', hash: this.vetPolicyHash, projection: this.vetPolicy } } : {}),
       underlying: ['atlas-index:code.seed', 'atlas-index:repo.map'],
+      ceilings: { maxArtifactBytes: this.maxArtifactBytes }, availability: this.availability,
+      languageCeiling: { family: 'javascript-typescript', extensions: this.atlas.card().languageCeiling?.extensions ?? [], maximumRung: 'R2', enforcingGate: 'atlas-representation-ceiling' },
       limitations: [
         this.externalOracle ? 'External dossier is fail-closed and package-level; import observation is not vulnerable-function reachability' : 'External vet is not deployment-configured',
         this.sbomPolicy ? 'SBOM is exact npm package-lock v3 actual state only' : 'SBOM is not deployment-configured',
@@ -511,6 +516,13 @@ export class CartographerQuartermaster {
     if (op === 'orientation.slice') {
       const focus = normalizedText(args.focus, 'invalid_orientation'); const shape = args.shape ?? 'brief';
       if (!['brief', 'map'].includes(shape)) throw typed('unsupported orientation shape', 'invalid_orientation');
+      const symbolFocus = args.symbolFocus ?? null;
+      if (symbolFocus !== null && (!symbolFocus || typeof symbolFocus !== 'object' || Array.isArray(symbolFocus)
+        || Object.keys(symbolFocus).some((key) => !['paths', 'references', 'symbols'].includes(key))
+        || !Array.isArray(symbolFocus.symbols) || symbolFocus.symbols.length === 0 || symbolFocus.symbols.length > 32
+        || symbolFocus.symbols.some((value) => typeof value !== 'string' || value.length === 0 || Buffer.byteLength(value) > 256)
+        || (symbolFocus.paths !== undefined && (!Array.isArray(symbolFocus.paths) || symbolFocus.paths.length > 64 || symbolFocus.paths.some((value) => typeof value !== 'string' || value.length === 0 || Buffer.byteLength(value) > 4_096)))
+        || (symbolFocus.references !== undefined && typeof symbolFocus.references !== 'boolean'))) throw typed('symbol focus is invalid', 'invalid_orientation');
       const atlasOp = shape === 'brief' ? 'code.seed' : 'repo.map';
       const atlasArgs = shape === 'brief' ? { indexEpoch: args.indexEpoch, terms: terms(focus) } : { indexEpoch: args.indexEpoch };
       if (shape === 'brief' && atlasArgs.terms.length === 0) throw typed('orientation focus has no searchable terms', 'invalid_orientation');
@@ -525,8 +537,24 @@ export class CartographerQuartermaster {
           ? item.path.toLowerCase().includes(pathFocus)
           : item.path.toLowerCase().includes(pathFocus) || needles.some((term) => item.path.toLowerCase().includes(term) || item.imports.some((entry) => entry.toLowerCase().includes(term))));
       }
-      return this._result({ schemaVersion: 1, op, query: { focus, shape, indexEpoch: args.indexEpoch }, summary: `${items.length} ${shape} orientation records for ${JSON.stringify(focus)}`, items,
-        provenance: { index_epoch: innerResult.provenance.index_epoch, overlay_digest: innerResult.provenance.overlay_digest ?? null, staleness: innerResult.provenance.staleness, atlasArtifactDigest: ref.digest } }, ctx, started);
+      if (symbolFocus) {
+        const allowedPaths = new Set(symbolFocus.paths ?? []); const symbolItems = [];
+        for (const query of symbolFocus.symbols) {
+          const searched = await this._invokeAtlas('symbol.search', { indexEpoch: args.indexEpoch, query }, ctx);
+          const definitions = searched.payload.filter((item) => allowedPaths.size === 0 || allowedPaths.has(item.path));
+          for (const definition of definitions) {
+            symbolItems.push({ kind: 'symbol.search', query, ...definition });
+            if (symbolFocus.references === true) {
+              const references = await this._invokeAtlas('symbol.references', { indexEpoch: args.indexEpoch, symbol: definition.symbol }, ctx);
+              symbolItems.push(...references.payload.map((item) => ({ kind: 'symbol.references', query, symbol: definition.symbol, ...item })));
+            }
+          }
+        }
+        items = [...items.filter((item) => allowedPaths.size === 0 || allowedPaths.has(item.path)), ...symbolItems];
+      }
+      const focusedDigest = symbolFocus ? sha(stable(items)) : null;
+      return this._result({ schemaVersion: 1, op, query: { focus, shape, indexEpoch: args.indexEpoch, ...(symbolFocus ? { symbolFocus } : {}) }, summary: this.availability.status === 'empty' ? 'no JavaScript/TypeScript-family sources; honest empty orientation slice' : `${items.length} ${shape} orientation records for ${JSON.stringify(focus)}`, items,
+        provenance: { index_epoch: innerResult.provenance.index_epoch, overlay_digest: focusedDigest ?? innerResult.provenance.overlay_digest ?? null, staleness: innerResult.provenance.staleness, language_ceiling: this.availability.status === 'empty' ? 'honest_empty' : 'javascript_typescript_family', atlasArtifactDigest: focusedDigest ?? ref.digest } }, ctx, started);
     }
     if (op === 'reuse.internal') {
       const need = normalizedText(args.need, 'invalid_reuse'); const queryTerms = terms(need);

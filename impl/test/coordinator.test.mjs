@@ -633,7 +633,7 @@ test('OR9: orientWorker invokes one exact capability slice then delivers a fence
   const result = await coordinator.orientWorker(handle.id, { indexEpoch: 'epoch-1', focus: 'auth', shape: 'brief' }, 'Stay on the auth boundary.', { budgetTokens: 1_000, actor: 'web:user:session', expectedFence });
   assert.equal(result.ok, true); assert.equal(result.sliceDigest, 'a'.repeat(64)); assert.equal(result.status, 'needs_resume');
   assert.equal(calls.length, 1); assert.deepEqual(calls[0].slice(0, 3), ['cartographer-quartermaster', 'orientation.slice', { indexEpoch: 'epoch-1', focus: 'auth', shape: 'brief' }]);
-  assert.deepEqual(calls[0][3], { budgetTokens: 1_000, signal: undefined, actor: 'web:user:session' });
+  assert.deepEqual(calls[0][3], { budgetTokens: 1_000, signal: undefined, actor: 'web:user:session', worktreeRoot: '/tmp/wt/task-1' });
   assert.equal(adapter.calls.prompt.length, 1); assert.equal(adapter.calls.prompt[0].mode, 'nudge');
   assert.equal(adapter.calls.prompt[0].content.kind, 'baton.orientation.slice');
   assert.equal(adapter.calls.prompt[0].content.slice.refs[0].path, undefined);
