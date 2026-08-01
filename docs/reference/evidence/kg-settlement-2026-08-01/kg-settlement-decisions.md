@@ -1,4 +1,141 @@
-# KG settlement epic contract — the settle-window ritual (v0.9, pre-red-team)
+# KG settlement epic contract — the settle-window ritual (v1.0, post-red-team fold)
+
+(Red-teamed by baton wave: `redteam-authority.md` (claude-sonnet-5, 3 CONFIRMED-HOLEs + 3
+NEEDS-AMENDMENTs) and `redteam-lifecycle.md` (glm-5.2 re-drive after a deepseek stream-death,
+6 NEEDS-AMENDMENTs + 3 cross-cutting). Every amendment below cites its verdict. v0.9's seed
+header and ground truth are preserved at the end of this document for traceability.)
+
+## v1.0 decisions (folded)
+
+### D1 — Store: one dedicated atomic settlement-task API (AMENDED: authority §1)
+
+`createAndClaimSettlementTask(fields, attribution, auth)` on the coordination store,
+mirroring `createAndClaimRecoveryRefinement`'s pair shape (one `task.created` +
+`task.claimed` batch, relation `'settlement'`, brief capabilities exactly
+`['baton_orchestrator']`, orchestrator actor only), bypassing plan-mandatory exactly as
+recovery refinements do. **The objective is a hub-fixed constant** — the caller supplies NO
+objective field at all (the constant templates only authority-less identifiers:
+`settlement task for wave <waveId>`). Closed fields: `{id, runId, reservedWorkerId}` — with
+`id` PINNED to `settlement-task:<waveId>` and `runId` to `run-settlement:<waveId>` so the
+derived lease identity is stable across re-drive (lifecycle A5.2). Idempotency by caller
+key, replay-exact.
+
+### D2 — Application: four settlement commands on the S-3 rows (AMENDED: authority §2/§6, lifecycle XB)
+
+Wire the S-3 kernel rows through `application.command` with `actor: 'orchestrator'`
+server-derived:
+
+- `scratchpad.elevate` → `coordinator.elevateTaskScratchpad(taskId, entryIds)`.
+- `scratchpad.settle` → `coordinator.settleWorkflowScratchpad(runId, {expectedScratchpadFence, skips})`.
+- `knowledge.promote` → `coordinator.admitWorkflowFinding(...)`, then independently-
+  idempotent teardown (authority §4): (1) admit (store replay short-circuits a duplicate);
+  (2) if the lease is not already revoked, revoke it (rule 16b); (3) if the settlement
+  task is not already completed, complete it. Each step checks state and no-ops
+  independently, so a crash anywhere is resolved by re-issuing the SAME command with the
+  SAME idempotencyKey. The registry row's `liveMethod` is corrected from
+  `promoteKnowledgeNode` to `admitWorkflowFinding` (authority bonus observation).
+- NEW row `knowledge.settlement_lease` (embedded kernel): materializes the settlement
+  run + parent task (D1) + issues the lease. **The lease session is derived server-side
+  from the CALLING PRINCIPAL** (`principalId`/`sessionId` from the command principal; the
+  `authorityDigest` hub-minted) — never from caller fields. Returns
+  `{runId, taskId, lease: {id, digest, issuedEvent}}`. Idempotent per waveId.
+- **Admission enforces the full lease check (lifecycle XB — the keystone):**
+  `admitWorkflowFinding` is amended to route through `_activeRunOrchestratorLease`
+  semantics — expiry (`run_orchestrator_lease_expired`), parent-task liveness
+  (`run_orchestrator_parent_inactive`), `_assertRunAdmissionOpen`, AND the session binding
+  (`principalId`/`sessionId`/`sessionAuthorityDigest` vs the lease session). This closes
+  the expired-lease admission hole in the ALREADY-SHIPPED primitive AND the bearer-
+  credential hole (authority §2) in one move: the lease is no longer presentable by an
+  actor that did not acquire it.
+- **v1 surface honesty (authority §2/§6):** the four commands are embedded-only, and that
+  gate is STRUCTURAL, not registry metadata: the MCP tool table and CLI command map simply
+  do not contain them (no `surfaces` amendment is made). The ritual is driven top-level
+  only — never from a nested/`sessionAuthority`-bearing context; the four names are
+  deliberately NOT added to `recursiveEffectCommands` or `RUN_ORCHESTRATOR_CAPABILITIES`,
+  and D3's driver hook calls them only from the deployment's own top-level principal.
+
+### D3 — Wave driver: the settle-window hook (AMENDED: lifecycle A1/A3/XC, authority §3/§5)
+
+New driver policy field `settlement: 'kg-ritual' | 'none'`, default `'kg-ritual'`
+(honest-empty DEFENDED: zero ritual ledger writes when no partition has entries —
+lifecycle A3). Between "all members terminal" and `wave.close()`:
+
+0. **Sweep (lifecycle A2, driver-triggered, no timers):** before anything else, revoke any
+   prior settlement leases past TTL with no admission (new revocation reason
+   `review_window_expired` added to `RUN_ORCHESTRATOR_REVOCATION_REASONS`), cancel their
+   settlement tasks, retire their un-admitted candidates (drop the board items), and
+   expire the related scratch facts. Bounded ≤ 16 leases per sweep; each step idempotent.
+1. Per member run: `recordDriver('steering.registered', {runId})` (idempotent).
+2. Per member whose **store** `task.status` is terminal (re-read from the store — NOT the
+   driver's `claimed` flag; lifecycle A1 minor) with a non-empty worker partition:
+   `scratchpad.elevate` selecting exactly the `note` and `plan` entries (D4). A
+   `scratchpad_settlement_not_ready` refusal is recorded, never silently dropped.
+3. If ANY member elevated ≥1 `note`: `knowledge.settlement_lease` once per wave, then for
+   each elevated `note` ONE board item on board `wave-settlement:<waveId>`:
+   - idempotencyKey PINNED to `board.candidacy:<waveId>:<sharedEntryId>` (authority §5);
+   - title = the note's first 120 bytes, control characters stripped (authority §3);
+   - detail = the note's FULL text bounded to the store's detail cap (lifecycle XC — the
+     candidate then grounds to full note content, not a 120-byte stub, surviving the
+     shared partition's stop-cleanup);
+   - candidacy is note-only (doubts/plans never candidate — D4).
+4. The wave receipt + terminal outlines gain `knowledge.candidatesAwaitingAdmission`
+   (zero as 0), `knowledge.settlementRunId` when a lease was materialized, and
+   `settlement.errors` bounded ≤ 8 (`{member, step, code}`). A step's typed refusal never
+   aborts close.
+
+**No shared-partition settle at close (lifecycle XC resolution):** the v0.9 step-3 settle
+is REMOVED — stop-cleanup (`reapRunScratchpads`) reaps the shared partition at close
+anyway, and the scratch facts stay live through the review window so the orchestrator can
+ground against them; the sweep (step 0) expires them after TTL. The candidate's board
+detail (step 3) is what preserves full note content past cleanup.
+
+**Cross-wave growth bound (lifecycle A3):** one item per note (curation granularity wins
+over one-digest-per-member); the sweep's candidate retirement is the cross-wave bound.
+
+**The real pre-stop invariant (lifecycle XA, doc):** the ritual runs in the window because
+stop-cleanup has not yet reaped the partitions; a post-close elevation is an empty no-op,
+and the apply-layer effect gate (`_apply` run-stopping refusal receipted in demo v3)
+forbids the mutation effects themselves. v0.9's "`_assertRunAdmissionOpen` forbids the
+ritual" framing was wrong about the mechanism, right about the outcome.
+
+### D4 — Elevation selection rule v1 (AMENDED: lifecycle A4/A6)
+
+Elevate `note` + `plan`; skip `doubt` + `link` (`orchestrator_skipped` dispositions
+receipted). Notes carry observations (knowledge lane: scratch-fact + candidacy). Plans
+carry the worker's method — elevated into the NON-CANDIDACY method lane (shared entry, no
+scratch-fact per store semantics, no board item, no Finding) so re-drive continuity (#59)
+can recover procedure for non-plan tasks (the `mandatory:false` shape). Doubts are NOT
+elevated in v1: elevation would mint a factless shared entry that settle deletes and
+nothing queries (the silent sink, lifecycle A6) — a doubt review path is a follow-up
+issue, filed at acceptance. Links remain skipped (derived references, elevate
+meaninglessly without targets).
+
+### D5 — Non-goals (unchanged, plus authority §6)
+
+- No auto-admission anywhere; admission is D2's explicit command only.
+- No nested/`sessionAuthority`-context dispatch of the ritual commands (v1 top-level only).
+- No worker-facing read port, no REPL/context-program changes, no MCP/CLI enablement.
+- No change to `promoteKnowledgeBatch`. No trust-gate changes (#64 is its own issue).
+- No doubt review path (follow-up), no settlement-lease session-binding beyond
+  `_activeRunOrchestratorLease` semantics.
+
+## v1.0 acceptance (red-first)
+
+A wave whose members write scratchpad entries completes with: `note`+`plan` entries
+elevated (shared fence moved, dispositions receipted), candidacy materialized for notes
+(candidate Findings queued with FULL note text in board detail, counts in receipt +
+outlines), the settlement lease materialized with session bound to the calling principal,
+stale leases swept (`review_window_expired`), runs stopped after all of it, and re-drive
+of the same wave exactly-once (stable `leaseId`, no duplicate items/elevations — crash
+walks 1+2). Admission via `knowledge.promote` promotes exactly the candidate, enforces
+expiry/parent-liveness/session binding (typed codes), auto-revokes the lease, completes
+the settlement task, and is idempotent-replayed on retry; admission with an expired,
+revoked, or foreign-session lease fails with the typed code. Doubts and links are never
+elevated; plan entries never mint facts, items, or Findings.
+
+---
+
+## v0.9 seed (preserved for traceability)
 
 (Seed: issue #63 + demo v3/v3b receipts, docs/reference/evidence/kg-tiered-loop-2026-08-01/.
 The tiered knowledge loop is implemented, suite-green, and UNREACHABLE: zero live call sites
