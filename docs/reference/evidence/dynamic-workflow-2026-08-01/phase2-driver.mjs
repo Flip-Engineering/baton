@@ -19,7 +19,7 @@ const renderedMembers = [
     scope: ['docs/reference/evidence/dynamic-workflow-2026-08-01/**'],
     objective: [
       `[attempt: ${salt} verifier]`,
-      'Read docs/reference/evidence/dynamic-workflow-2026-08-01/surveyor-map.md (a surveyor\'s map of impl/src/wave.mjs). Verify its SECOND finding against the actual code (grep -an + targeted ranges — never whole-file): is it a real defect or a non-issue? Write docs/reference/evidence/dynamic-workflow-2026-08-01/verifier-verdict.md with your verdict and the evidence.',
+      'Read docs/reference/evidence/dynamic-workflow-2026-08-01/surveyor-map.md (a surveyor\'s map of impl/src/wave.mjs) AND docs/reference/evidence/dynamic-workflow-2026-08-01/phase2-relay.json (the orchestrator\'s relay of the surveyor\'s shared-layer scratchpad — the findings it recorded via SCRATCHPAD_WRITE). Verify the SECOND finding against the actual code (grep -an + targeted ranges — never whole-file): is it a real defect or a non-issue? Write docs/reference/evidence/dynamic-workflow-2026-08-01/verifier-verdict.md with your verdict, the evidence, and a line on whether the scratchpad relay changed your read.',
       'CRITICAL: before finalizing, RAISE A DECISION by printing one line: DECISION_REQUEST: {"question":"Finding #2: ship a fix now, mark not-a-bug, or gather more evidence first?","options":[{"id":"fix-now","label":"Fix now"},{"id":"not-a-bug","label":"Not a bug"},{"id":"more-evidence","label":"Gather more evidence first"}],"recommended":"more-evidence","deadlineMs":600000} — DECISION_REQUEST is TEXT you print, never a tool. Then WAIT for the orchestrator\'s answer and act on it.',
       'Work continuously; write the verdict skeleton first, then deepen.',
     ].join(' '),

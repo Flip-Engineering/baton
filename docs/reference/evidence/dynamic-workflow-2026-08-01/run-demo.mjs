@@ -60,6 +60,29 @@ try {
   receipts.phases.push({ phase: 1, role: 'surveyor', outcome: { phase: p1Outcome.phase, resultSha: p1Outcome.resultSha ?? null }, nudges: p1.nudges?.length ?? 0 });
   log(`phase 1 done: ${p1Outcome.phase}, result ${p1Outcome.resultSha ?? 'none'}`);
 
+  // ---- PHASE 1.5: shared-layer relay — the orchestrator reads the surveyor's scratchpad
+  // (wave.progress carries it per member) and relays it into phase 2's objectives.
+  let relayText = '(no scratchpad findings relayed)';
+  try {
+    const p1Evidence = p1.evidence ?? null;
+    void p1Evidence;
+    const listed = await baton.runs.list();
+    const surveyorItem = listed.items.find((item) => item.objective?.includes('surveyor') || item.objective?.includes('Map impl/src/wave.mjs'));
+    if (surveyorItem) {
+      const run = baton.runs.open(surveyorItem.id);
+      const status = await run.status();
+      const outline = status?.view ?? status ?? {};
+      if (outline.scratchpad) {
+        relayText = `SURVEYOR SCRATCHPAD (shared layer, relayed by the orchestrator): ${JSON.stringify(outline.scratchpad).slice(0, 1200)}`;
+      }
+    }
+  } catch (error) {
+    relayText = `(scratchpad relay failed: ${String(error?.message ?? error).slice(0, 120)})`;
+  }
+  writeFileSync(resolve(EVIDENCE, 'phase2-relay.json'), `${JSON.stringify({ relayText }, null, 2)}\n`);
+  receipts.phases.push({ phase: 1.5, relay: relayText.slice(0, 400) });
+  log(`phase 1.5: relay → ${relayText.slice(0, 140)}`);
+
   // ---- PHASE 2: verifier + skeptic as a killable child driver, decision gated live. ----
   const idempotencyKey = `demo-v2-phase2-${ATTEMPT}`;
   const waveId = waveIdFor(idempotencyKey);
