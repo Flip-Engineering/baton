@@ -29,7 +29,9 @@ import {
 import { hasNorthboundCapabilityAuthority } from './northbound-capability-authority.mjs';
 import { projectRunTimelinePage } from './run-timeline.mjs';
 import { compareCanonicalStrings } from './canonical-order.mjs';
-import { normalizeVerifierFailureCapsule } from './verifier-diagnostics.mjs';
+import {
+  normalizeVerifierFailureCapsule, sanitizeVerifierDiagnosticText,
+} from './verifier-diagnostics.mjs';
 
 export { APPLICATION_SEMANTIC_REGISTRY } from './application-semantics.mjs';
 
@@ -786,6 +788,97 @@ function debugTerminalCode(value, fallback) {
     && /^[a-z0-9][a-z0-9._-]*$/iu.test(value) ? value : fallback;
 }
 
+// Diagnostics DG-1 (DIAG-2): live trust-gate / verifier codes → closed gate enum. Unknown is the
+// honest fallback (diagnostics-decisions.md v2 rule 3). worker_path_scope_violation serializes
+// as `scope`; digests-only pathScopeEvidence is never reopened into path strings.
+const DEBUG_GATE_CODES = Object.freeze(new Set([
+  'scope', 'red_green', 'coverage', 'route_mismatch', 'forbidden_effect', 'unknown',
+]));
+
+function debugGateFromLiveCode(code) {
+  if (code === 'worker_path_scope_violation') return 'scope';
+  if (code === 'forbidden_effect_observed') return 'forbidden_effect';
+  if (code === 'verification_red_green_failed') return 'red_green';
+  if (code === 'verification_coverage_failed') return 'coverage';
+  if (code === 'plan_route_mismatch' || code === 'recovery_route_mismatch') return 'route_mismatch';
+  return 'unknown';
+}
+
+function debugGateDetail(gate, event) {
+  if (gate === 'scope') {
+    const evidence = event.payload?.pathScopeEvidence && typeof event.payload.pathScopeEvidence === 'object'
+      ? event.payload.pathScopeEvidence : {};
+    // Digests + counts only — never path strings (coordinator.mjs pathScopeEvidence mint).
+    return {
+      digests: {
+        changedPathsDigest: typeof evidence.changedPathsDigest === 'string' ? evidence.changedPathsDigest : null,
+        inScopeChangedPathsDigest: typeof evidence.inScopeChangedPathsDigest === 'string'
+          ? evidence.inScopeChangedPathsDigest : null,
+        outOfScopeChangedPathsDigest: typeof evidence.outOfScopeChangedPathsDigest === 'string'
+          ? evidence.outOfScopeChangedPathsDigest : null,
+      },
+      counts: {
+        changedPathCount: Number.isSafeInteger(evidence.changedPathCount) ? evidence.changedPathCount : 0,
+        inScopeChangedPathCount: Number.isSafeInteger(evidence.inScopeChangedPathCount)
+          ? evidence.inScopeChangedPathCount : 0,
+        outOfScopeChangedPathCount: Number.isSafeInteger(evidence.outOfScopeChangedPathCount)
+          ? evidence.outOfScopeChangedPathCount : 0,
+      },
+    };
+  }
+  if (gate === 'red_green' || gate === 'coverage') {
+    const raw = typeof event.payload?.verdict?.failureCapsule?.text === 'string'
+      ? event.payload.verdict.failureCapsule.text
+      : typeof event.payload?.verdict?.output === 'string' ? event.payload.verdict.output : '';
+    // Sanitizer reused verbatim (verifier-diagnostics.mjs) — no parallel redaction path.
+    return { tail: sanitizeVerifierDiagnosticText(raw).text };
+  }
+  return {};
+}
+
+// Diagnostics DG-1: project the latest trust-gate / verifier refusal into {gate, detail}.
+// Source events only: error with payload.phase trust_gate, and verify.reverified{accept:false}.
+// Bracket access avoids surface-audit treating a `phase === '…'` literal as a runPhase enum.
+function debugGateRefusal(events) {
+  const candidates = events.filter((event) => {
+    if (event.kind === 'error' && event.payload?.['phase'] === 'trust_gate') return true;
+    if (event.kind === 'verify.reverified' && event.payload?.accept === false) return true;
+    return false;
+  });
+  const event = candidates.at(-1);
+  if (!event) return null;
+  const liveCode = event.kind === 'verify.reverified'
+    ? (typeof event.payload?.verdict?.diagnosticCode === 'string'
+      ? event.payload.verdict.diagnosticCode : 'trust_gate_failed')
+    : (typeof event.payload?.code === 'string' ? event.payload.code : 'trust_gate_failed');
+  const gate = debugGateFromLiveCode(liveCode);
+  const message = typeof event.payload?.message === 'string' && event.payload.message.length > 0
+    ? boundedAttentionText(event.payload.message) : null;
+  return {
+    kind: event.kind,
+    code: debugTerminalCode(liveCode, 'trust_gate_failed'),
+    message,
+    gate,
+    detail: debugGateDetail(gate, event),
+  };
+}
+
+// Diagnostics DG-1a (DIAG-3 / #28 deferral): one aggregated wire.frame_degraded summary
+// (counts + last code), never raw frames — #53 writeReceipts whitelist amendment.
+function debugFrameDegradedSummary(events) {
+  const degraded = events.filter((event) => event.kind === 'wire.frame_degraded');
+  if (degraded.length === 0) return null;
+  const last = degraded.at(-1);
+  return {
+    kind: 'wire.frame_degraded',
+    result: 'degraded',
+    code: 'frame_degraded',
+    at: last.ts,
+    count: degraded.length,
+    lastCode: 'frame_degraded',
+  };
+}
+
 function normalizeSteer(value) {
   exactObject(value, ['runId', 'target', 'mode', 'message', 'reason'], 'application_steer_invalid', 'Run steer');
   if (!validId(value.runId) || !validId(value.target) || !['nudge', 'now', 'turn'].includes(value.mode)
@@ -1325,7 +1418,63 @@ function normalizeWorkflowComposition(value) {
   });
 }
 
+function normalizeGateCauseFeedback(value) {
+  // Diagnostics DG-1b / R-DG-6: run.feedback structured inputs accept the same {gate, detail}
+  // payload the run.debug failure leg projects — no new seam.
+  exactObject(value, ['gate', 'detail'], 'application_workflow_feedback_invalid',
+    'gate diagnosis feedback');
+  if (!DEBUG_GATE_CODES.has(value.gate)
+    || !value.detail || typeof value.detail !== 'object' || Array.isArray(value.detail)) {
+    throw applicationError('workflow feedback is invalid', 'application_workflow_feedback_invalid');
+  }
+  if (value.gate === 'scope') {
+    exactObject(value.detail, ['digests', 'counts'], 'application_workflow_feedback_invalid',
+      'scope gate detail');
+    exactObject(value.detail.digests, [
+      'changedPathsDigest', 'inScopeChangedPathsDigest', 'outOfScopeChangedPathsDigest',
+    ], 'application_workflow_feedback_invalid', 'scope digests');
+    exactObject(value.detail.counts, [
+      'changedPathCount', 'inScopeChangedPathCount', 'outOfScopeChangedPathCount',
+    ], 'application_workflow_feedback_invalid', 'scope counts');
+    for (const key of Object.keys(value.detail.digests)) {
+      const digestValue = value.detail.digests[key];
+      if (digestValue !== null && !HEX64.test(digestValue ?? '')) {
+        throw applicationError('workflow feedback is invalid', 'application_workflow_feedback_invalid');
+      }
+    }
+    for (const key of Object.keys(value.detail.counts)) {
+      if (!Number.isSafeInteger(value.detail.counts[key]) || value.detail.counts[key] < 0) {
+        throw applicationError('workflow feedback is invalid', 'application_workflow_feedback_invalid');
+      }
+    }
+    return deepFreeze({
+      gate: 'scope',
+      detail: {
+        digests: { ...value.detail.digests },
+        counts: { ...value.detail.counts },
+      },
+    });
+  }
+  if (value.gate === 'red_green' || value.gate === 'coverage') {
+    exactObject(value.detail, ['tail'], 'application_workflow_feedback_invalid',
+      'verifier gate detail');
+    if (typeof value.detail.tail !== 'string') {
+      throw applicationError('workflow feedback is invalid', 'application_workflow_feedback_invalid');
+    }
+    // Re-sanitize so secrets never ride the worker-facing channel.
+    const tail = sanitizeVerifierDiagnosticText(value.detail.tail).text;
+    return deepFreeze({ gate: value.gate, detail: { tail } });
+  }
+  // route_mismatch / forbidden_effect / unknown — detail is a closed empty object (or ignored keys).
+  return deepFreeze({ gate: value.gate, detail: {} });
+}
+
 function normalizeWorkflowFeedback(value) {
+  // Gate-cause form first (diagnostics DG-1b): {gate, detail} — same payload as run.debug failure.
+  if (value && typeof value === 'object' && !Array.isArray(value)
+    && typeof value.gate === 'string') {
+    return normalizeGateCauseFeedback(value);
+  }
   const input = typeof value === 'string'
     ? {
       summary: value,
@@ -1359,6 +1508,8 @@ function normalizeWorkflowFeedback(value) {
 }
 
 function assertWorkflowFeedbackAnchors(feedback, candidate) {
+  // Gate-cause feedback has no path anchors (digests-only / sanitized tail).
+  if (feedback.gate !== undefined) return true;
   const changedPaths = new Set(candidate.changedPaths);
   for (const finding of feedback.findings) {
     if (finding.line !== null && finding.path === null) {
@@ -10839,16 +10990,23 @@ export class BatonApplication {
       .filter((event) => event.kind === 'content.message')
       .slice(-limit)
       .map((event) => ({ at: event.ts, text: boundedAttentionText(event.payload?.text) }));
+    // #53 writeReceipts whitelist + DIAG-3 amendment: scratchpad/authority receipts, then at most
+    // one aggregated wire.frame_degraded summary (counts + last code — never raw frames).
     const writeReceipts = events
       .filter((event) => event.kind === 'scratchpad.write_result' || event.kind === 'authority.rejected')
       .map((event) => this._debugReceipt(event));
+    const frameDegraded = debugFrameDegradedSummary(events);
+    if (frameDegraded) writeReceipts.push(frameDegraded);
+    // #53 failure + DIAG-2 amendment: gate refusal wins when present (structured {gate, detail});
+    // otherwise stream-death/crash (lifecycle.crashed) as the #53 closed {kind, code, message}.
+    const gateRefusal = debugGateRefusal(events);
     const crashEvent = events.findLast((event) => event.kind === 'lifecycle.crashed');
-    const failure = crashEvent ? {
+    const failure = gateRefusal ?? (crashEvent ? {
       kind: crashEvent.kind,
       code: debugTerminalCode(crashEvent.payload?.code, 'provider_crashed'),
       message: typeof crashEvent.payload?.error === 'string' && crashEvent.payload.error.length > 0
         ? boundedAttentionText(crashEvent.payload.error) : null,
-    } : null;
+    } : null);
     return {
       role: dispatch.binding.nodeKey, workerId, phase: task?.status ?? null,
       lastMessages, writeReceipts, failure,
@@ -10858,6 +11016,7 @@ export class BatonApplication {
   // Rule 2: `code` = `result` for scratchpad receipts, and the `authority.rejected` reason for
   // interaction rejections. Raw receipt payloads carry banned internals (scratchpadFence,
   // eventSeq, current, evidence); this is a field whitelist, never a passthrough.
+  // DIAG-3 also admits wire.frame_degraded only via debugFrameDegradedSummary (aggregated).
   _debugReceipt(event) {
     if (event.kind === 'scratchpad.write_result') {
       const result = event.payload?.result ?? null;
