@@ -1,0 +1,25 @@
+{
+  "at": "2026-08-01T04:04:49.237Z",
+  "steps": [
+    {
+      "step": "doctor-before",
+      "credential": {
+        "expiresAt": 1785544522008,
+        "refreshTokenExpiresAt": 1787377425008,
+        "state": "stale",
+        "units": "ms epoch",
+        "label": "refresh-unverified until attempted (#47 tier)",
+        "operatorFile": {
+          "exists": true,
+          "mtimeMs": 1785526663579.3096
+        }
+      },
+      "state": "ready"
+    },
+    {
+      "step": "error",
+      "code": "authentication_refresh_required",
+      "message": "Claude refresh produced no strictly fresher schema-valid credential"
+    }
+  ]
+}
