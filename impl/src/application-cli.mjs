@@ -20,6 +20,8 @@ export const CLI_WEB_COMMANDS = new Set([
   'run.status', 'run.follow', 'run.recover', 'run.approve', 'run.wait', 'run.answer',
   'run.steer', 'run.stop', 'run.evidence', 'run.adopt', 'run.retry_verification',
   'run.resume_work', 'run.review', 'run.integrate', 'run.export',
+  // S-1 v2: portable atomic attach-and-harvest.
+  'waves.attach',
 ]);
 // CS-2 (control-surface v2): the five web-admitted verbs (run.episode, run.workstreams,
 // run.workstream.notify, run.workstream.stop; run.result folds to run.episode) join the
@@ -1295,8 +1297,52 @@ export function parseBatonCli(rawArgs) {
       'cli_command_host_local',
     );
   }
+  // S-1 v2: baton waves attach WAVE_ID --members JSON (plural spelling only).
+  if (args[0] === 'wave') {
+    throw cliError(
+      'wave attach is not a verb; use the plural spelling: baton waves attach WAVE_ID --members JSON',
+      'cli_command_unavailable',
+    );
+  }
+  if (args[0] === 'waves') {
+    args.shift();
+    const action = args.shift();
+    if (action !== 'attach') {
+      throw cliError('expected waves attach', 'cli_command_unavailable');
+    }
+    const waveId = id(args.shift(), 'wave ID');
+    const membersRaw = take(args, '--members');
+    const timeoutRaw = take(args, '--timeout');
+    const repoRoot = take(args, '--repo-root');
+    noRemainder(args);
+    if (!waveId || typeof waveId !== 'string' || !/^wave:[a-f0-9]{32}$/u.test(waveId)) {
+      throw cliError('wave ID is invalid');
+    }
+    if (membersRaw === null) throw cliError('--members is required');
+    let members;
+    try { members = JSON.parse(membersRaw); }
+    catch { throw cliError('--members must be JSON'); }
+    if (!Array.isArray(members)) {
+      throw cliError('--members must be a JSON array');
+    }
+    const timeoutMs = timeoutRaw === null ? null : Number(timeoutRaw);
+    if (timeoutRaw !== null && (!Number.isSafeInteger(timeoutMs) || timeoutMs <= 0)) {
+      throw cliError('--timeout is invalid');
+    }
+    return {
+      kind: 'command',
+      name: 'waves.attach',
+      args: {
+        waveId,
+        members,
+        ...(timeoutMs === null ? {} : { timeoutMs }),
+        ...(repoRoot === null ? {} : { repoRoot }),
+      },
+      idempotencyKey,
+    };
+  }
   if (args.shift() !== 'run') {
-    throw cliError('expected credentials, setup, doctor, route, explore, review, context, or run');
+    throw cliError('expected credentials, setup, doctor, route, explore, review, context, waves, or run');
   }
   const action = args.shift();
   if (action === 'follow') {

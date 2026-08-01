@@ -311,7 +311,7 @@ export function kimiBatonMcpEntry({ projectRoot, nodePath, bridgePath }) {
     toolTimeoutMs: 180_000,
     enabledTools: ['baton_help', 'baton_runs', 'baton_run_start', 'baton_run_inspect', 'baton_run_episode',
       'baton_run_workstreams', 'baton_workstream_notify', 'baton_workstream_stop',
-      'baton_run_act', 'baton_run_stop',
+      'baton_run_act', 'baton_run_stop', 'baton_waves_attach',
       'baton_run_do', 'baton_run_view', 'baton_run_member_view', 'baton_run_member_send',
       'baton_run_member_stop', 'baton_application_help'],
   });

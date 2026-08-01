@@ -19,7 +19,7 @@ const COMMANDS_BEFORE_M1 = Object.freeze([
   'run.status', 'run.follow', 'run.approve', 'run.wait', 'run.answer', 'run.feedback',
   'run.steer', 'run.stop', 'run.evidence', 'run.adopt', 'run.retry_verification',
   'run.resume_work', 'run.review', 'run.integrate', 'run.export', 'run.recover',
-  'application.shutdown',
+  'waves.attach', 'application.shutdown',
 ]);
 const WEB_COMMANDS_BEFORE_M1 = Object.freeze(COMMANDS_BEFORE_M1
   .filter((name) => APPLICATION_COMMAND_DEFINITIONS[name].web)
