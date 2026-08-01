@@ -1,4 +1,5 @@
-// Phase 77 transport RED gate — Web/MCP derive recursive authority from authenticated server state.
+// Phase 77 transport RED gate — Web derives recursive authority from server state while
+// MCP carries the proof installed on its authenticated principal.
 // No credential token, lease coordinate, or session authority field may enter the public schemas.
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
@@ -245,7 +246,7 @@ async function initialize(server) {
   await server.handle({ jsonrpc: '2.0', method: 'notifications/initialized' });
 }
 
-test('RT2 RED: MCP derives the same private authority without adding a tool input field', async (t) => {
+test('RT2 RED: MCP carries authenticated private authority without adding a tool input field', async (t) => {
   const directory = root('mcp');
   t.after(() => rmSync(directory, { recursive: true, force: true }));
   const coordination = new CoordinationStore(directory, {
@@ -260,6 +261,7 @@ test('RT2 RED: MCP derives the same private authority without adding a tool inpu
     principal: {
       userId: 'mcp-recipient', sessionId: 'mcp-session', expiresAt: EXPIRES,
       revoked: false, capabilities: ['control', 'observe'], repoIds: [REPO],
+      sessionAuthority: expectedSessionAuthority(parent.lease),
     },
     repoIds: [REPO], surface: 'application', bindApplicationContext: true,
     now: () => Date.parse(NOW), maxWaitMs: 30_000, maxMessageBytes: 256 * 1024,
@@ -406,7 +408,7 @@ test('RT4 RED: Web recipient history cannot downgrade after lease expiry, revoca
   }
 });
 
-test('RT5 RED: MCP recipient history cannot downgrade after lease expiry, revocation, or parent stop', async (t) => {
+test('RT5 RED: MCP preserves caller-supplied authority after lease expiry, revocation, or parent stop', async (t) => {
   for (const inactiveCase of inactiveRecipientCases) {
     await t.test(inactiveCase.label, async (t) => {
       const directory = root(`mcp-no-downgrade-${inactiveCase.label}`);
@@ -433,6 +435,7 @@ test('RT5 RED: MCP recipient history cannot downgrade after lease expiry, revoca
         principal: {
           userId: principalId, sessionId, expiresAt: EXPIRES, revoked: false,
           capabilities: ['control', 'observe'], repoIds: [REPO],
+          sessionAuthority: expectedSessionAuthority(parent.lease),
         },
         repoIds: [REPO], surface: 'application', bindApplicationContext: true,
         now: () => Date.parse(clock.now()), maxWaitMs: 30_000,
@@ -459,10 +462,10 @@ test('RT5 RED: MCP recipient history cannot downgrade after lease expiry, revoca
       inactiveCase.inactivate({ clock, coordination, parent, label: inactiveCase.label });
 
       const completedReplay = await server.handle(completedCall);
-      assert.equal(completedReplay.result.isError, true);
-      assert.equal(completedReplay.result.structuredContent.error.code, inactiveCase.code);
-      assert.equal(replays.length, 0,
-        'a completed recursive call cannot be replay-authorized as an ordinary call');
+      assert.equal(completedReplay.result.isError, false);
+      assert.equal(replays.length, 1);
+      assert.deepEqual(replays[0].context.sessionAuthority, expectedSessionAuthority(parent.lease),
+        'the thin MCP adapter preserves proof for application replay authorization');
 
       const fresh = await server.handle({
         jsonrpc: '2.0', id: 4, method: 'tools/call',
@@ -471,10 +474,10 @@ test('RT5 RED: MCP recipient history cannot downgrade after lease expiry, revoca
           arguments: { intent: recursiveIntent(`run-mcp-${inactiveCase.label}-fresh-child`) },
         },
       });
-      assert.equal(fresh.result.isError, true);
-      assert.equal(fresh.result.structuredContent.error.code, inactiveCase.code);
-      assert.equal(calls.length, 1,
-        'durable recursive recipient history cannot fall through to ordinary application authority');
+      assert.equal(fresh.result.isError, false);
+      assert.equal(calls.length, 2);
+      assert.deepEqual(calls[1].context.sessionAuthority, expectedSessionAuthority(parent.lease),
+        'lease-state validation belongs to application admission, not the MCP transport');
     });
   }
 });

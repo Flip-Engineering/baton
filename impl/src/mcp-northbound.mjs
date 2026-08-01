@@ -188,7 +188,9 @@ function stateFailureCode(cause) {
   // slice 1 owns the context_eval/decision codes in this same rule. Missing/changed artifact
   // bytes collapse to the one typed `artifact_unavailable` tool error, never a silent recompute.
   if (['context_artifact_unavailable', 'context_package_not_found', 'context_package_branch_not_found'].includes(cause?.code)) return 'artifact_unavailable';
-  if (['stale_board_fence', 'board_item_not_found', 'board_item_not_open', 'board_item_digest_mismatch',
+  if (['board_admission_invalid', 'board_lease_required', 'board_session_mismatch', 'board_run_closed',
+    'board_parent_stale', 'board_replay_conflict',
+    'stale_board_fence', 'board_item_not_found', 'board_item_not_open', 'board_item_digest_mismatch',
     'invalid_board', 'invalid_board_item', 'invalid_board_title', 'invalid_board_detail', 'invalid_board_owner',
     'invalid_board_evidence', 'invalid_board_item_id', 'invalid_board_state', 'invalid_board_ordinal', 'invalid_board_fence',
     'context_package_invalid', 'reserved_package_field', 'package_branch_name_conflict', 'package_branch_empty',
@@ -493,51 +495,54 @@ const REFLEX_TOOL_DEFINITIONS = Object.freeze([
     name: 'baton_board_post',
     description: 'Post a new orchestrator-authority board item; refused if the caller-observed board fence is stale.',
     inputSchema: schema({
-      ...repo, ...idem, board: runId, title: { type: 'string', minLength: 1, maxLength: 160 },
+      ...repo, ...idem, runId, board: runId, title: { type: 'string', minLength: 1, maxLength: 160 },
       detail: { oneOf: [{ type: 'string', minLength: 1, maxLength: 4_096 }, { type: 'null' }] },
       owner: { oneOf: [{ type: 'string', minLength: 1, maxLength: 128 }, { type: 'null' }] },
       evidence: { type: 'array', maxItems: 8, items: { type: 'object' } },
       expectedBoardFence: { type: 'integer', minimum: 0 },
-    }, ['repoId', 'idempotencyKey', 'board', 'title', 'expectedBoardFence']),
+    }, ['repoId', 'idempotencyKey', 'runId', 'board', 'title', 'expectedBoardFence']),
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
   {
     name: 'baton_board_retitle',
     description: 'Mint a retitled successor version of an open board item; refused if the caller-observed board fence is stale.',
     inputSchema: schema({
-      ...repo, ...idem, itemId: runId, title: { type: 'string', minLength: 1, maxLength: 160 },
+      ...repo, ...idem, runId, board: runId, itemId: runId,
+      itemVersion: { type: 'integer', minimum: 1 }, title: { type: 'string', minLength: 1, maxLength: 160 },
       detail: { oneOf: [{ type: 'string', minLength: 1, maxLength: 4_096 }, { type: 'null' }] },
       expectedBoardFence: { type: 'integer', minimum: 0 },
-    }, ['repoId', 'idempotencyKey', 'itemId', 'title', 'expectedBoardFence']),
+    }, ['repoId', 'idempotencyKey', 'runId', 'board', 'itemId', 'itemVersion', 'title', 'expectedBoardFence']),
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
   {
     name: 'baton_board_reorder',
     description: 'Mint a reordered successor version of an open board item; refused if the caller-observed board fence is stale.',
     inputSchema: schema({
-      ...repo, ...idem, itemId: runId, ordinal: { type: 'integer', minimum: 1 },
+      ...repo, ...idem, runId, board: runId, itemId: runId,
+      itemVersion: { type: 'integer', minimum: 1 }, ordinal: { type: 'integer', minimum: 1 },
       expectedBoardFence: { type: 'integer', minimum: 0 },
-    }, ['repoId', 'idempotencyKey', 'itemId', 'ordinal', 'expectedBoardFence']),
+    }, ['repoId', 'idempotencyKey', 'runId', 'board', 'itemId', 'itemVersion', 'ordinal', 'expectedBoardFence']),
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
   {
     name: 'baton_board_close',
     description: 'Close an open board item; refused if the caller-observed board fence is stale.',
     inputSchema: schema({
-      ...repo, ...idem, itemId: runId, expectedBoardFence: { type: 'integer', minimum: 0 },
-    }, ['repoId', 'idempotencyKey', 'itemId', 'expectedBoardFence']),
+      ...repo, ...idem, runId, board: runId, itemId: runId,
+      itemVersion: { type: 'integer', minimum: 1 }, expectedBoardFence: { type: 'integer', minimum: 0 },
+    }, ['repoId', 'idempotencyKey', 'runId', 'board', 'itemId', 'itemVersion', 'expectedBoardFence']),
     annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
   },
   {
     name: 'baton_board_read',
     description: 'Read the full non-evented orchestrator projection of one board.',
-    inputSchema: schema({ ...repo, board: runId }, ['repoId', 'board']),
+    inputSchema: schema({ ...repo, runId, board: runId }, ['repoId', 'runId', 'board']),
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
   {
     name: 'baton_package_admit',
     description: 'Admit one immutable Context Package under the landed admission rules.',
-    inputSchema: schema({ ...repo, ...idem, package: { type: 'object' } }, ['repoId', 'idempotencyKey', 'package']),
+    inputSchema: schema({ ...repo, ...idem, runId, package: { type: 'object' } }, ['repoId', 'idempotencyKey', 'runId', 'package']),
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
   {
@@ -1155,13 +1160,7 @@ export class McpFleetServer {
       }
       if (admission.call.status === 'completed' && APPLICATION_TOOL[name]) {
         try {
-          const lease = typeof this.coordination.activeRunOrchestratorLeaseForSession === 'function'
-            ? this.coordination.activeRunOrchestratorLeaseForSession({
-              repoId: args.repoId,
-              principalId: this.principal.userId,
-              sessionId: this.principal.sessionId,
-              expiresAt: this.principal.expiresAt,
-            }) : null;
+          const sessionAuthority = this.principal.sessionAuthority ?? null;
           await this.application.authorizeReplay(APPLICATION_TOOL[name], applicationArgs(name, args), {
             actor, principalId: this.principal.userId, sessionId: this.principal.sessionId,
           }, {
@@ -1172,12 +1171,7 @@ export class McpFleetServer {
             ...(APPLICATION_TOOL[name] === 'run.act' ? {
               semanticAuthority: admission.call.semanticAuthority,
             } : {}),
-            ...(lease ? { sessionAuthority: {
-              schemaVersion: 1,
-              authorityDigest: lease.session.authorityDigest,
-              expiresAt: lease.session.expiresAt,
-              orchestratorLeaseId: lease.leaseId,
-            } } : {}),
+            ...(sessionAuthority ? { sessionAuthority: clone(sessionAuthority) } : {}),
           });
         } catch (cause) { return toolError(stateFailureCode(cause)); }
       }
@@ -1337,40 +1331,52 @@ export class McpFleetServer {
     else if (name === 'fleet_reuse_recheck') value = await this.coordinator.recheckReuseDecision({ decisionId: args.decisionId, expectedValidityVersion: args.expectedValidityVersion, trigger: args.trigger, budgetTokens: args.budgetTokens }, { actor, repoId: args.repoId, budgetTokens: args.budgetTokens, idempotencyKey: `mcp.call:${callId}` });
     else if (name === 'fleet_kill') value = await this.coordinator.kill(args.workerId, actor, { expectedFence: args.expectedFence });
     else if (name === 'fleet_drain') value = await this.coordinator.drain({ actor, repoId: args.repoId, idempotencyKey: `mcp.call:${callId}` });
-    // Part D — board tools: explicit dispatch branches (never command-table keys, the fleet_*
-    // shape), bound to the Coordinator's own postBoardItem/retitleBoardItem/reorderBoardItem/
-    // closeBoardItem/boardSnapshot wrappers. The four mutations require an active run-orchestrator
-    // lease and a matching expectedBoardFence CAS BEFORE the hub is ever called — the hub methods
-    // themselves take neither (Part D rule 8: "schemas carry expectedBoardFence where the hub
-    // takes it" — here, at the MCP layer, never inside coordination-store.mjs).
+    // S-2 v2 board tools are thin translations into the closed admission envelope. Lease proof,
+    // Run binding, existence, fence/parent CAS, and replay all live in the serialized store path.
     else if (name === 'baton_board_post') {
-      this._requireOrchestratorLease(args, principal);
-      this._requireBoardFence(args.board, args.expectedBoardFence);
-      value = this.coordinator.postBoardItem({
-        board: args.board, title: args.title, detail: args.detail ?? null,
-        owner: args.owner ?? null, evidence: args.evidence ?? [],
-      }, { actor, idempotencyKey: `mcp.call:${callId}` });
+      const { sessionAuthority } = this._boardAuthorityContext(principal);
+      value = this._admitBoardEnvelope({
+        sessionAuthority, runId: args.runId, board: args.board, item: null,
+        mutation: { kind: 'post', title: args.title, detail: args.detail ?? null,
+          owner: args.owner ?? null, evidence: args.evidence ?? [] },
+        expectedBoardFence: args.expectedBoardFence, idempotencyKey: `mcp.call:${callId}`,
+      });
     }
     else if (name === 'baton_board_retitle') {
-      this._requireOrchestratorLease(args, principal);
-      this._requireBoardFence(this._boardOf(args.itemId), args.expectedBoardFence);
-      value = this.coordinator.retitleBoardItem(args.itemId, { title: args.title, detail: args.detail },
-        { actor, idempotencyKey: `mcp.call:${callId}` });
+      const { sessionAuthority } = this._boardAuthorityContext(principal);
+      value = this._admitBoardEnvelope({
+        sessionAuthority, runId: args.runId, board: args.board,
+        item: { itemId: args.itemId, itemVersion: args.itemVersion },
+        mutation: { kind: 'retitle', title: args.title, detail: args.detail ?? null },
+        expectedBoardFence: args.expectedBoardFence, idempotencyKey: `mcp.call:${callId}`,
+      });
     }
     else if (name === 'baton_board_reorder') {
-      this._requireOrchestratorLease(args, principal);
-      this._requireBoardFence(this._boardOf(args.itemId), args.expectedBoardFence);
-      value = this.coordinator.reorderBoardItem(args.itemId, args.ordinal, { actor, idempotencyKey: `mcp.call:${callId}` });
+      const { sessionAuthority } = this._boardAuthorityContext(principal);
+      value = this._admitBoardEnvelope({
+        sessionAuthority, runId: args.runId, board: args.board,
+        item: { itemId: args.itemId, itemVersion: args.itemVersion },
+        mutation: { kind: 'reorder', ordinal: args.ordinal },
+        expectedBoardFence: args.expectedBoardFence, idempotencyKey: `mcp.call:${callId}`,
+      });
     }
     else if (name === 'baton_board_close') {
-      this._requireOrchestratorLease(args, principal);
-      this._requireBoardFence(this._boardOf(args.itemId), args.expectedBoardFence);
-      value = this.coordinator.closeBoardItem(args.itemId, { actor, idempotencyKey: `mcp.call:${callId}` });
+      const { sessionAuthority } = this._boardAuthorityContext(principal);
+      value = this._admitBoardEnvelope({
+        sessionAuthority, runId: args.runId, board: args.board,
+        item: { itemId: args.itemId, itemVersion: args.itemVersion },
+        mutation: { kind: 'close' }, expectedBoardFence: args.expectedBoardFence,
+        idempotencyKey: `mcp.call:${callId}`,
+      });
     }
-    // Part D rule 10: the operator reads with workerId:null — the full "orchestrator sees all"
-    // projection — served from the process-local, non-evented cache (Part D rule 10).
     else if (name === 'baton_board_read') {
-      value = projectBoardView(this.coordinator.boardSnapshot(args.board), { role: 'orchestrator', workerId: null }, this._boardViewCache);
+      const { sessionAuthority } = this._boardAuthorityContext(principal);
+      const admitted = this._admitBoardEnvelope({
+        sessionAuthority, runId: args.runId, board: args.board, item: null,
+        mutation: { kind: 'read' }, expectedBoardFence: null,
+        idempotencyKey: `mcp.observe:${hash({ name, args, callId })}`,
+      });
+      value = projectBoardView(admitted.snapshot, { role: 'orchestrator', workerId: null }, this._boardViewCache);
     }
     // Part E — package tools: bound directly to the landed coordination-store hub methods (no
     // Coordinator wrapper exists for these, matching the contract's coordination-store.mjs line
@@ -1378,15 +1384,19 @@ export class McpFleetServer {
     // exact `package.attach:<digest>:<runId>:<scope>` string the hub itself validates (the fenced
     // O(1) pointer binding — never a re-read of branch bytes).
     else if (name === 'baton_package_admit') {
-      this._requireOrchestratorLease(args, principal);
-      value = this.coordination.admitContextPackage(args.package, { actor, key: `mcp.call:${callId}` });
+      const { sessionAuthority } = this._boardAuthorityContext(principal);
+      value = this.coordination.admitPackageCommand({
+        sessionAuthority, runId: args.runId,
+        package: args.package, mutation: { kind: 'admit' }, idempotencyKey: `mcp.call:${callId}`,
+      });
     }
     else if (name === 'baton_package_attach') {
-      this._requireOrchestratorLease(args, principal);
-      value = this.coordination.attachContextPackage(
-        { packageDigest: args.packageDigest, runId: args.runId, scope: args.scope },
-        { actor, key: `package.attach:${args.packageDigest}:${args.runId}:${args.scope}` },
-      );
+      const { sessionAuthority } = this._boardAuthorityContext(principal);
+      value = this.coordination.admitPackageCommand({
+        sessionAuthority, runId: args.runId, package: args.packageDigest,
+        mutation: { kind: 'attach', scope: args.scope },
+        idempotencyKey: `package.attach:${args.packageDigest}:${args.runId}:${args.scope}`,
+      });
     }
     else if (name === 'baton_package_read') {
       value = args.branchName
@@ -1406,23 +1416,12 @@ export class McpFleetServer {
   // transport/requestId/idempotencyKey/capabilityAuthority/capabilities, plus sessionAuthority
   // only when a live run-orchestrator lease exists for this session.
   _applicationDispatchContext(args, callId, principal = this.principal) {
-    const lease = typeof this.coordination.activeRunOrchestratorLeaseForSession === 'function'
-      ? this.coordination.activeRunOrchestratorLeaseForSession({
-        repoId: args.repoId,
-        principalId: principal.userId,
-        sessionId: principal.sessionId,
-        expiresAt: principal.expiresAt,
-      }) : null;
+    const sessionAuthority = principal.sessionAuthority ?? null;
     return {
       transport: 'mcp', requestId: String(callId), idempotencyKey: `mcp.call:${callId}`,
       capabilityAuthority: northboundCapabilityToken('mcp'),
       capabilities: [...principal.capabilities],
-      ...(lease ? { sessionAuthority: {
-        schemaVersion: 1,
-        authorityDigest: lease.session.authorityDigest,
-        expiresAt: lease.session.expiresAt,
-        orchestratorLeaseId: lease.leaseId,
-      } } : {}),
+      ...(sessionAuthority ? { sessionAuthority: clone(sessionAuthority) } : {}),
     };
   }
 
@@ -1435,31 +1434,16 @@ export class McpFleetServer {
     };
   }
 
-  /** Part A rule 4: the run-orchestrator lease is required for orchestrator-authority reflex
-   * tools; its absence is a typed refusal ('run_orchestrator_lease_required' — passthrough via the
-   * existing 'run_orchestrator_' prefix rule in stateFailureCode), never a silent fallback. */
-  _requireOrchestratorLease(args, principal) {
-    const lease = typeof this.coordination.activeRunOrchestratorLeaseForSession === 'function'
-      ? this.coordination.activeRunOrchestratorLeaseForSession({
-        repoId: args.repoId, principalId: principal.userId, sessionId: principal.sessionId, expiresAt: principal.expiresAt,
-      })
-      : null;
-    if (!lease) throw Object.assign(new Error('an active run-orchestrator lease is required'), { code: 'run_orchestrator_lease_required' });
-    return lease;
+  _admitBoardEnvelope(envelope) {
+    return typeof this.coordinator.admitBoardCommand === 'function'
+      ? this.coordinator.admitBoardCommand(envelope)
+      : this.coordination.admitBoardCommand(envelope);
   }
 
-  /** Part D rule 8: the board-scoped fence CAS the hub methods themselves don't take as a
-   * parameter — checked here, before dispatch, against the hub's own replay-derived boardFence. */
-  _requireBoardFence(board, expectedBoardFence) {
-    if (this.coordination.boardFence(board) !== expectedBoardFence) {
-      throw Object.assign(new Error('board fence is stale'), { code: 'stale_board_fence' });
-    }
-  }
-
-  _boardOf(itemId) {
-    const item = this.coordination.boardItem(itemId);
-    if (!item) throw Object.assign(new Error(`unknown board item ${itemId}`), { code: 'board_item_not_found' });
-    return item.board;
+  // The proof comes from the authenticated connection. This adapter never reconstructs it from
+  // caller-named principal/session identifiers or from the lease's own stored digest.
+  _boardAuthorityContext(principal) {
+    return { sessionAuthority: principal.sessionAuthority ?? null };
   }
 
   _readContextPackage(packageDigest) {
