@@ -369,3 +369,30 @@ glm+deepseek) under the shipped driver. Hard lessons filed: #55 (stall blindness
 coordinate-rich objective law (objectives must carry pre-digested file:line coordinates —
 a coordinate-less sonnet burned ~300 provider calls across three waves with zero files
 written).
+
+2026-08-01 early arc (the landing cascade): **issue #11 v3 landed** (codex — deployment
+credential cache, access-token-ONLY worker projection, per-credential single-flight with
+lockfile + Keychain-mtime CAS, revocation latch, spawn TTL gate, retry-once,
+claudeAuthenticationSummary; CC 10/10, gate 2937/2937). **Bidirectional v2 FULLY landed**
+(BD-A grok + BD-B opus + followOnce on BatonRun): durable pause-origin claim (parked-done
+is visible, #51's spine), pinned sanitize pipeline, one-pending-decision admission,
+decisionSettled tombstones, onDecision lifecycle, followOnce wake laws, ordered reducer
+controlling steering — BD 15/15. **P1-C semantic progress landed** (deepseek's first
+implementation seat, full marks): progressClass + requiredAction — status() surfaces "you
+must act" (the AX headline case `awaiting_plan_approval` with empty attention fires) —
+SP 17/17. **S-2 board authority primitive landed** (codex — proof-of-principal envelope
+closing the tautological-digest hole, board→run binding, CAS inside the store append, MCP
+guards retired to thin adapters) — BA 12/12. **RC-A recipes library landed** (glm's FIRST
+implementation seat): recipes as data, invocation manifests (same-key attach, zero
+re-starts), implementContract preset, `baton.recipes` facade accessor — and the immediate
+dogfood: S-1 launched through `baton.recipes.implementContract` in 35 lines, retiring the
+100-line bespoke drivers (three facade parity gaps surfaced and fixed by the dogfood:
+recipes on the deployment facade, doctor-capable binding, waves.attach). **Composition
+v2.1 acceptance law (operator): no new orchestration wave may require a new script file.**
+Demo v2 staged: dynamic heterogeneous workflow with shared-layer scratchpad relay,
+onDecision gate answered live, and driver-death + waves.attach harvest. Gate discipline
+held through five consecutive landings; the #7 load-flake cluster (drain deadlines,
+start-latency-calibrated caps) surfaced 4x, each passing isolated re-runs — D9's cap
+recalibrated honestly (waves.start alone measures ~3.9s under load). Issue #52's mainline
+pollution receipt filed (0f51b91 'mock edit: slow.txt' committed P1-C's work to master
+mid-suite).
