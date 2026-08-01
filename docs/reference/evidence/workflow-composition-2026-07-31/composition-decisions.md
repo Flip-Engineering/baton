@@ -15,6 +15,16 @@ closed run options. (5) The demo's decision row is gated on the bidirectional v2
 implementation landing (R-DC-7). (6) Rungs: recipe-only first, helpers second, presets
 third, demo last (R-DC-9). v1 retained below as the fold trail.)
 
+(v2.1 amendment, operator directive 2026-07-31: the per-arc `run-*-wave.mjs` driver scripts
+are the bespoke-driver disease in the orchestrator's own hands — fifteen near-identical
+scripts in one week. Acceptance law for the recipes library: **no new orchestration wave
+may require a new script file.** If a wave can't be expressed as
+`baton.recipes.run(recipe, {task, options})` with recipe as data + closed run options, the
+library is INCOMPLETE and the gap is a contract bug, not a new script. The S-1 v2
+registration path (derived names per surface, MCP/web/CLI) is the named successor for
+surfacing recipes past the embedded facade — the MCP question rides the grammar, never a
+parallel hand-list.)
+
 ## The invocation manifest (the identity boundary)
 
 One durable, serializable record per logical invocation:
