@@ -7107,12 +7107,15 @@ export class BatonApplication {
       profileDigest: current.profile.digest, planDigest: current.plan.digest,
       ...(resultIdentity.explicit ? { resultIntent } : {}),
     };
+    const knowledgeProjection = this._knowledgeProjection(runId);
     const view = {
       schemaVersion: 1, runId, objective: current.goal.objective,
       resultIntent,
       objectiveResultPolicy: clone(objectivePolicy),
       profile: { name: current.profileName, digest: current.profile.digest },
       phase, cursor: projection.coordinationUpperBound,
+      knowledge: knowledgeProjection.knowledge,
+      knowledgeDigest: knowledgeProjection.knowledgeDigest,
       nextActions: phase === 'awaiting_plan_approval'
         ? [{ kind: 'approve_plan', planDigest: current.plan.digest }]
         : phase === 'selection_required'
@@ -7564,6 +7567,7 @@ export class BatonApplication {
         state: runStop.status, receipt: runStop.receipt,
       } : null,
     });
+    const knowledgeProjection = this._knowledgeProjection(runId);
     const view = {
       schemaVersion: 1,
       runId,
@@ -7573,6 +7577,8 @@ export class BatonApplication {
       profile: { name: current.profileName, digest: current.profile.digest },
       phase,
       cursor: projection.coordinationUpperBound,
+      knowledge: knowledgeProjection.knowledge,
+      knowledgeDigest: knowledgeProjection.knowledgeDigest,
       nextActions,
       goal: { id: current.goal.goalId, version: current.goal.version, digest: current.goal.digest },
       plan: {
@@ -7766,6 +7772,24 @@ export class BatonApplication {
   // across one long turn and the wave driver's stall clock (sha of the cursor-stripped view)
   // kills productive workers mid-turn. Counts + last-activity timestamp only, never
   // payloads: honest activity, zero prose.
+  /** KG activation rules 3/4: the run view surfaces the candidacy ritual counts (knowledge) and the
+   * workflow horizon's knowledge digest. Additive projection only — reads the store/coordinator, never
+   * mutates; the admit gate stays the only promotion path. Fails open to a zero block so a view is
+   * never blocked on a knowledge read, and the wave close receipt / progress rows inherit the block. */
+  _knowledgeProjection(runId) {
+    try {
+      const ritual = this.driver.coordination.knowledgeRitual(runId, {});
+      let knowledgeDigest = null;
+      try { knowledgeDigest = this.driver.coordinator.workflowHorizon(runId).knowledgeDigest ?? null; } catch { knowledgeDigest = null; }
+      return {
+        knowledge: { candidates: ritual.candidates ?? 0, admittedThisRun: ritual.admittedThisRun ?? 0 },
+        knowledgeDigest,
+      };
+    } catch {
+      return { knowledge: { candidates: 0, admittedThisRun: 0 }, knowledgeDigest: null };
+    }
+  }
+
   _activityProjection(current, workers = []) {
     let providerCalls = 0;
     let tokens = 0;

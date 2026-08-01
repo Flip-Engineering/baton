@@ -9,7 +9,7 @@ import { createHash } from 'node:crypto';
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { Cursor } from './log.mjs';
 import {
-  boundedAttentionText, createBrief, createDecisionAnswer, createDecisionRequest, createDigest,
+  boundedAttentionText, buildKnowledgeSlice, createBrief, createDecisionAnswer, createDecisionRequest, createDigest,
   ValidationError, wrapFact, wrapProse,
 } from './messages.mjs';
 import { parseRouteTupleKey, resolveEffort, routeTupleKey } from './route-tuple.mjs';
@@ -9601,6 +9601,27 @@ export class Coordinator {
     }, { actor, key });
   }
 
+  // KG activation rule 1: the ambient serving slice — recall over the run's scope/objective keywords
+  // (bounded ≤ maxFindings, ≤ maxBytes), provenance-wrapped {knowledge, untrusted:true}, honest-empty
+  // for an empty graph, expired-validity nodes dropped at serve time (rule 5). A pure queryKnowledge
+  // read (no evented read, no assessment) — serving never mutates the graph or feeds assessment. The
+  // returned slice rides the provider-facing brief value at the renderBrief seam; it never enters
+  // task.brief, so briefDigest is byte-stable (the KG-3 briefing discipline).
+  serveKnowledge(objective, { maxFindings = 8, maxBytes = 2_048 } = {}) {
+    if (!this._coordination) throw new Error('coordination store is required for knowledge serving');
+    const text = typeof objective === 'string' ? objective
+      : (objective && typeof objective === 'object' ? (objective.goal ?? objective.objective ?? '') : '');
+    const keywords = [...new Set(text.toLowerCase().split(/[^a-z0-9]+/u).filter((w) => w.length >= 3))].slice(0, 16);
+    const findings = this._coordination.queryKnowledge({ types: ['Finding'] });
+    const matched = keywords.length === 0
+      ? findings
+      : findings.filter((node) => {
+        const body = `${node.id} ${node.body ?? ''}`.toLowerCase();
+        return keywords.some((kw) => body.includes(kw));
+      });
+    return buildKnowledgeSlice(matched, { maxFindings, maxBytes, now: this._now() });
+  }
+
   claimScratch(workerId, fields, opts = {}) {
     this.tick();
     const handle = this._getWorker(workerId);
@@ -9975,6 +9996,11 @@ export class Coordinator {
       scratchpad: projectHorizonScratchpad(scratchpadCapture, viewer),
       nodes: this._coordination.queryKnowledge({}),
       edges: this._coordination.queryKnowledgeEdges({}),
+      // KG activation rule 4: the workflow horizon's content digest, cheap from the fence-tuple cache.
+      // Content-addressed over the live knowledge graph — cache-correct: stable across non-knowledge
+      // state moves (the cache recomputes on a fence miss but the digest is byte-identical), and it
+      // moves the moment a finding is admitted, superseded, or invalidated.
+      knowledgeDigest: this._coordination.knowledgeContentDigest(),
     }));
   }
 

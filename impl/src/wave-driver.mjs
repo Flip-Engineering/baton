@@ -327,6 +327,10 @@ export function createWaveDriver(baton, rawPolicy = null) {
     const followDowngraded = new Set();
     const follows = [];
     const waitCursors = new Map(); // last follow cursor per member (monotonic within/across cycles).
+    // KG activation rule 3: latest per-member candidacy ritual counts, aggregated into the receipt.
+    // Hoisted out of the poll loop so the receipt (built after the loop) reads the final per-member
+    // values, not a per-iteration copy that falls out of scope.
+    const memberKnowledge = new Map();
 
     const startedAt = Date.now();
     let lastMarker = '';
@@ -460,6 +464,7 @@ export function createWaveDriver(baton, rawPolicy = null) {
             // polls leave the marker stable and count toward stall.
             markerDigest = 'unavailable';
           }
+          if (outline.knowledge) memberKnowledge.set(role, outline.knowledge);
           markerParts.push([role, phase, markerDigest]);
           const claimed = memberState.get(role)?.claimed === true;
           statusInfo.set(role, { terminal: terminal || claimed });
@@ -673,6 +678,15 @@ export function createWaveDriver(baton, rawPolicy = null) {
     // §2 receipt: the committed envelope (wave.evidence) merged with close()'s residue truth,
     // plus the additive driver fields.
     const evidence = wave.evidence();
+    // KG activation rule 3: the recipe receipts inherit the candidacy ritual block. `candidates` is
+    // repo-scoped (the max across members is the honest queue size); `admittedThisRun` sums each
+    // member run's admits. Zero surfaces as 0, never a missing field.
+    let knowledgeCandidates = 0;
+    let knowledgeAdmitted = 0;
+    for (const knowledge of memberKnowledge.values()) {
+      knowledgeCandidates = Math.max(knowledgeCandidates, knowledge.candidates ?? 0);
+      knowledgeAdmitted += knowledge.admittedThisRun ?? 0;
+    }
     const receipt = {
       ...evidence,
       remainingCount: stop?.remainingCount ?? evidence.stops.length,
@@ -686,6 +700,7 @@ export function createWaveDriver(baton, rawPolicy = null) {
       follows,
       salt,
       pumpDrained: evidence.pumpDrained === true,
+      knowledge: { candidates: knowledgeCandidates, admittedThisRun: knowledgeAdmitted },
     };
 
     if (policy.evidencePath !== null) {
