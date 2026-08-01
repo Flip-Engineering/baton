@@ -320,8 +320,12 @@ test('B1/D4: a pausable card with NO steering.registered marker mints turn.pause
   const pausedEntry = entries.find((e) => e.kind === 'turn.paused');
   assert.ok(pausedEntry, 'turn.paused must be appended to the per-worker log');
   assert.equal(pausedEntry.actor, 'worker');
-  // Contract Part B rule 2: THREE payload fields; `workerId` rides the envelope, never duplicated.
-  assert.deepEqual(Object.keys(pausedEntry.payload).sort(), ['changedPathsDigest', 'taskId', 'turnEpoch']);
+  // Contract Part B rule 2 + BD v2's durable pause-origin: FOUR payload fields; `workerId`
+  // rides the envelope, never duplicated. `origin` is minted at park time (sanitized at mint)
+  // so replay can reconstruct the claim byte-for-byte (bidirectional v2 rule 1).
+  assert.deepEqual(Object.keys(pausedEntry.payload).sort(), ['changedPathsDigest', 'origin', 'taskId', 'turnEpoch']);
+  assert.equal(pausedEntry.payload.origin.kind, 'turn_completed');
+  assert.equal(pausedEntry.payload.origin.resultStatus, 'completed');
   assert.equal(pausedEntry.payload.taskId, task.id);
   assert.equal(pausedEntry.worker, handle.id);
 

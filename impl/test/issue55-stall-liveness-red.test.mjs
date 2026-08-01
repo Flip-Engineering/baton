@@ -171,7 +171,7 @@ test('L1: mid-turn provider activity is visible in the single-run view — the s
     return outline?.phase && outline.phase !== 'planning' ? status : null;
   }, 'run active');
   const beforeOutline = before?.view ?? before ?? {};
-  assert.deepEqual(beforeOutline.activity, { providerCalls: 0, tokens: 0, lastActivityAt: null },
+  assert.deepEqual(beforeOutline.activity, { providerCalls: 0, tokens: 0, contentEvents: 0, lastActivityAt: null },
     'honest zeros before any provider activity lands');
   const beforeMarker = stallMarker(before);
 
@@ -212,7 +212,7 @@ test('L2: a silent run reads honest zero activity — and finalize-time token re
     return outline?.phase && outline.phase !== 'planning' ? status : null;
   }, 'run active inside the delay');
   const earlyOutline = early?.view ?? early ?? {};
-  assert.deepEqual(earlyOutline.activity, { providerCalls: 0, tokens: 0, lastActivityAt: null });
+  assert.deepEqual(earlyOutline.activity, { providerCalls: 0, tokens: 0, contentEvents: 0, lastActivityAt: null });
   await until(async () => {
     const status = await run.status();
     const outline = status?.view ?? status ?? {};
