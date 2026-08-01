@@ -1,4 +1,5 @@
-// S-1 v2 wave grammar implementation wave: one glm-5.2@high seat implements the S-1 v2 wave grammar amendment red-first. Usage: node run-impl-wave.mjs
+// S-1 v2 wave grammar implementation wave: one grok@high seat implements
+// (re-seated from glm — glm is on RC-A; grok proved on CS-1..CS-4 registry machinery) the S-1 v2 wave grammar amendment red-first. Usage: node run-impl-wave.mjs
 import { resolve } from 'node:path';
 import { createWaveDriver, openBaton } from '../../../../impl/src/index.mjs';
 
@@ -10,7 +11,7 @@ const baton = await openBaton({
   repo,
   advanced: {
     deploymentRoot: resolve(repo, '.baton', 'wave-grammar-impl-2026-07-31'),
-    routes: [{ harness: 'glm', model: 'glm-5.2', effort: 'high' }],
+    routes: [{ harness: 'grok', model: 'grok-4.5', effort: 'high' }],
     verification: Object.freeze({ command: 'node', arguments: ['--test', 'impl/test/wave-grammar-red.test.mjs'] }),
   },
 });
@@ -36,9 +37,9 @@ try {
   });
   const receipt = await driver.run({
     members: [{
-      role: 'wave-grammar-implementer-glm',
+      role: 'wave-grammar-implementer-grok',
       objective: OBJECTIVE,
-      exact: { harness: 'glm', model: 'glm-5.2', effort: 'high' },
+      exact: { harness: 'grok', model: 'grok-4.5', effort: 'high' },
       scope: ['impl/**'],
     }],
   });
