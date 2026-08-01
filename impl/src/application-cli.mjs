@@ -1059,6 +1059,8 @@ export function projectBatonCliResult(parsed, result) {
       ...(attention.length > 0 ? { items: attention } : {}),
     },
     blockedInteraction: record(result.blockedInteraction) ? result.blockedInteraction : null,
+    progressClass: record(result.progressClass) ? result.progressClass : null,
+    requiredAction: record(result.requiredAction) ? result.requiredAction : null,
     nextActions: compactNextActions(result.nextActions),
     ...(record(result.lastAction) ? { lastAction: result.lastAction } : {}),
     ...(compactRunResult(result.result) ? { result: compactRunResult(result.result) } : {}),

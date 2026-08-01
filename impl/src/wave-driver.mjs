@@ -124,10 +124,15 @@ function matchRoute(member, routes) {
 // L5: the stall marker is sha256 of the cursor-stripped status view, sliced to 16 hex chars. The
 // store-global `cursor` is stripped exactly as `semanticViewDigest` strips it
 // (application.mjs:191-194) — otherwise any transport/audit event anywhere in the deployment flaps
-// every member's hash and "stall" silently means "deployment-wide silence".
+// every member's hash and "stall" silently means "deployment-wide silence". progressClass/
+// requiredAction are DERIVED liveness fields (silenceMs grows with wall time) and are stripped
+// exactly as semanticViewDigest strips them, so a silently-waiting member reads byte-static and
+// the stall clock stays honest.
 function stallMarker(outline) {
   const view = { ...(outline ?? {}) };
   delete view.cursor;
+  delete view.progressClass;
+  delete view.requiredAction;
   return createHash('sha256').update(JSON.stringify(view)).digest('hex').slice(0, 16);
 }
 

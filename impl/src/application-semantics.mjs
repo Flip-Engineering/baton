@@ -33,6 +33,25 @@ export const CANONICAL_ATTENTION_KINDS = Object.freeze([
   'turn_checkpoint', 'session_preservation', 'workflow_revision', 'workflow_recovery',
 ]);
 
+// §7.4 P1-C semantic progress (docs/reference/evidence/semantic-progress-2026-07-31/
+// semantic-progress-decisions.md rule 1): the run-view progressClass vocabulary — ONE closed
+// enum, pinned precedence `terminal:<cause>` > `blocked_interaction:<detail>` > `silent` >
+// `progressing`. `rate_limited` was CUT in v2 (R-SP-2): no provider taxonomy row classifies a
+// limit receipt honestly, so the enum never prose-guesses a member that has no classifier.
+// The blocking details are pinned to the LIVE projectBlockedInteraction output
+// (application.mjs:321-331): approve_plan/select_candidate are phase-derived, `decision`
+// (answer_decision's live kind) maps to `answer_required`, and turn_checkpoint is attention-
+// derived. The silence boundary is an order of magnitude under the wave driver's deployment-
+// wide stall clock (wave-driver.mjs stallTimeoutMs = 20 min) so a run-view consumer learns of
+// silence long before any driver stall fan-out, and far above per-poll jitter (follow polls at
+// most profile followPolicy.maxWaitMs).
+export const PROGRESS_CLASS_PREFIXES = Object.freeze(['terminal:', 'blocked_interaction:']);
+export const PROGRESS_CLASS_LEAVES = Object.freeze(['silent', 'progressing']);
+export const PROGRESS_BLOCKED_INTERACTION_DETAILS = Object.freeze([
+  'approve_plan', 'select_candidate', 'answer_required', 'turn_checkpoint',
+]);
+export const PROGRESS_SILENCE_THRESHOLD_MS = 120_000;
+
 // §7.1 generated mapping. `closed` maps to null: it is a dead string with no live emitter.
 export const LEGACY_RUN_PHASE_MAP = Object.freeze({
   awaiting_plan_approval: 'awaiting_approval',
@@ -91,6 +110,11 @@ export const APPLICATION_LIFECYCLE_ENUMS = Object.freeze({
   runPhases: CANONICAL_RUN_PHASES,
   memberStates: CANONICAL_MEMBER_STATES,
   attentionKinds: CANONICAL_ATTENTION_KINDS,
+  progressClass: Object.freeze({
+    prefixes: PROGRESS_CLASS_PREFIXES,
+    leaves: PROGRESS_CLASS_LEAVES,
+    blockedDetails: PROGRESS_BLOCKED_INTERACTION_DETAILS,
+  }),
   legacyRunPhaseMap: LEGACY_RUN_PHASE_MAP,
   legacyMemberStateMap: LEGACY_MEMBER_STATE_MAP,
   attentionKindSerialization: ATTENTION_KIND_SERIALIZATION,
@@ -110,7 +134,8 @@ export const APPLICATION_SERIALIZATION_ORDER = Object.freeze({
   ]),
   outline: Object.freeze([
     'schemaVersion', 'runId', 'depth', 'objective', 'phase', 'cursor',
-    'nextActions', 'attention', 'blockedInteraction', 'route', 'verification', 'budget',
+    'nextActions', 'attention', 'blockedInteraction', 'progressClass', 'requiredAction',
+    'route', 'verification', 'budget',
   ]),
   do: Object.freeze(['action', 'inputs']),
   action: Object.freeze(['kind', 'actionId']),
@@ -1563,6 +1588,7 @@ const authorityProjection = {
     runPhases: CANONICAL_RUN_PHASES,
     memberStates: CANONICAL_MEMBER_STATES,
     attentionKinds: CANONICAL_ATTENTION_KINDS,
+    progressClass: APPLICATION_LIFECYCLE_ENUMS.progressClass,
     legacyRunPhaseMap: LEGACY_RUN_PHASE_MAP,
     legacyMemberStateMap: LEGACY_MEMBER_STATE_MAP,
     attentionKindSerialization: ATTENTION_KIND_SERIALIZATION,
