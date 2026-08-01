@@ -314,13 +314,13 @@ export function buildClaudeSessionArgs({ approvals = false, sessionId, forkSessi
 // (referee/story) consistency (CS5/§4b). Not trusted from the wire — the hub re-runs verification.
 // ---------------------------------------------------------------------------
 
-function makeResult(status, summary, usage, usd, failureCode = null) {
+function makeResult(status, summary, usage, usd, failureCode = null, authenticationSummary = null) {
   const tokens = safeUsageTokenTotal(usage);
   const exactUsd = usdToNanos(usd) === null ? null : usd;
   return {
     status,
     summary: failureCode === 'authentication_refresh_required'
-      ? 'Provider authentication requires refresh.' : (summary ?? '').slice(0, 500),
+      ? (authenticationSummary ?? 'Provider authentication requires refresh.') : (summary ?? '').slice(0, 500),
     artifacts: { commits: [], files: [] },
     verification: { command: null, claimedExit: null },
     openQuestions: [],
@@ -369,6 +369,9 @@ export class ClaudeSessionCli {
       maxWireFrameBytes,
       authenticationProbe: opts.authenticationProbe ?? spawnSync,
       providerSecrets: Object.freeze((opts.providerSecrets ?? []).filter((value) => typeof value === 'string' && value.length > 0)),
+      providerSecretsProbe: opts.providerSecretsProbe,
+      credentialController: opts.credentialController,
+      authenticationSummary: opts.authenticationSummary,
       reapOwnedProcessGroup: opts.reapOwnedProcessGroup,
     };
     /** @type {Map<string, object>} worker -> session */
@@ -576,14 +579,30 @@ export class ClaudeSessionCli {
     if (pending.cancelled || opts.signal?.aborted) return { ok: false, reason: 'spawn cancelled before child creation', cancelled: true };
     if (!cwd) return { ok: false, reason: 'spawn requires a worktree (opts.worktree, or opts.worktreeReady resolving {path})' };
 
+    // Issue #11 v3 spawn-TTL gate: refresh before child creation, then project the cache's
+    // current access token into this spawn. No known-dead token reaches a provider process.
+    let credentialEnv = null;
+    if (this._cfg.credentialController) {
+      try {
+        await this._cfg.credentialController.ensureFresh();
+        credentialEnv = this._cfg.credentialController.projectionEnv();
+      } catch (error) {
+        return {
+          ok: false, code: error?.code ?? 'authentication_refresh_required',
+          reason: this._cfg.authenticationSummary?.(error?.code ?? 'authentication_refresh_required')
+            ?? String(error?.message ?? error),
+        };
+      }
+    }
+
     let route;
     try {
       route = this._prepareProviderRoute({
         model: opts.model ?? this._cfg.model,
         effort: opts.reasoningEffort,
         env: opts.replaceEnv
-          ? { ...(opts.env ?? {}), ...(this._cfg.env ?? {}) }
-          : { ...process.env, ...(this._cfg.env ?? {}), ...(opts.env ?? {}) },
+          ? { ...(opts.env ?? {}), ...(this._cfg.env ?? {}), ...(credentialEnv ?? {}) }
+          : { ...process.env, ...(this._cfg.env ?? {}), ...(opts.env ?? {}), ...(credentialEnv ?? {}) },
       });
     } catch (error) {
       return { ok: false, code: error?.code ?? 'provider_route_invalid', reason: String(error?.message ?? 'provider route invalid') };
@@ -658,6 +677,9 @@ export class ClaudeSessionCli {
       workerPolicyObserved,
       pendingBrief: opts.attachOnly === true ? null : renderPrompt(brief),
       bootstrapTurnPending: false,
+      retryCount: 0,
+      lastTurnText: null,
+      spawnSpec: Object.freeze({ argv: Object.freeze([...argv]), cwd, env: Object.freeze({ ...route.env }) }),
     };
     session.processClose = Number.isSafeInteger(session.pid) && session.pid > 0 ? new ProcessCloseReapLatch({
       generation: session.processGeneration,
@@ -680,12 +702,7 @@ export class ClaudeSessionCli {
       if (typeof session.wallTimer.unref === 'function') session.wallTimer.unref();
     }
 
-    child.stdout.setEncoding('utf8');
-    child.stdout.on('data', (chunk) => this._onData(session, chunk));
-    child.stderr.on('data', (chunk) => this._onStderr(session, chunk));
-
-    child.on('close', (code, signal) => this._onClose(session, code, signal));
-    child.on('error', (err) => this._onSpawnError(session, err));
+    this._attachChild(session, child);
 
     const processStarted = processStartedPayload(session.processGeneration, session.pid);
     if (processStarted) this._emit(session, 'lifecycle.process_started', processStarted);
@@ -709,6 +726,7 @@ export class ClaudeSessionCli {
       session.turnInFlight = true;
       session.turnEpoch = 1;
       session.bootstrapTurnPending = true;
+      session.lastTurnText = pendingBrief;
       this._write(session, {
         type: 'user', message: { role: 'user', content: [{ type: 'text', text: pendingBrief }] },
       });
@@ -739,7 +757,11 @@ export class ClaudeSessionCli {
     if (session.terminal) return;
     const beginsTurn = !session.turnInFlight;
     session.turnInFlight = true;
-    if (beginsTurn) session.turnEpoch = (session.turnEpoch ?? 0) + 1;
+    if (beginsTurn) {
+      session.turnEpoch = (session.turnEpoch ?? 0) + 1;
+      session.lastTurnText = text;
+      session.retryCount = 0;
+    }
     this._write(session, { type: 'user', message: { role: 'user', content: [{ type: 'text', text }] } });
     if (beginsTurn) this._emit(session, 'lifecycle.turn_started', {});
   }
@@ -852,7 +874,13 @@ export class ClaudeSessionCli {
   }
 
   _containsProviderSecret(value) {
-    if (typeof value === 'string') return this._cfg.providerSecrets.some((secret) => value.includes(secret));
+    // Defense in depth on provider EGRESS only. Worker ingress is enforced separately by the
+    // env-only RuntimeIsolation projection and absence of credentialFiles.claude.
+    const dynamic = typeof this._cfg.providerSecretsProbe === 'function'
+      ? this._cfg.providerSecretsProbe() : [];
+    const secrets = [...this._cfg.providerSecrets, ...(Array.isArray(dynamic) ? dynamic : [])]
+      .filter((secret) => typeof secret === 'string' && secret.length > 0);
+    if (typeof value === 'string') return secrets.some((secret) => value.includes(secret));
     if (Array.isArray(value)) return value.some((item) => this._containsProviderSecret(item));
     if (value && typeof value === 'object') return Object.values(value).some((item) => this._containsProviderSecret(item));
     return false;
@@ -872,14 +900,18 @@ export class ClaudeSessionCli {
   }
 
   _onStderr(session, chunk) {
-    if (session.terminal || this._cfg.providerSecrets.length === 0) return;
+    const dynamic = typeof this._cfg.providerSecretsProbe === 'function'
+      ? this._cfg.providerSecretsProbe() : [];
+    const secrets = [...this._cfg.providerSecrets, ...(Array.isArray(dynamic) ? dynamic : [])]
+      .filter((secret) => typeof secret === 'string' && secret.length > 0);
+    if (session.terminal || secrets.length === 0) return;
     const candidate = `${session.stderrCanaryTail}${String(chunk)}`;
     if (this._containsProviderSecret(candidate)) {
       session.stderrCanaryTail = '';
       this._providerSecretFailure(session);
       return;
     }
-    const maxSecretBytes = Math.max(...this._cfg.providerSecrets.map((secret) => Buffer.byteLength(secret, 'utf8')));
+    const maxSecretBytes = Math.max(...secrets.map((secret) => Buffer.byteLength(secret, 'utf8')));
     session.stderrCanaryTail = candidate.slice(-Math.max(0, maxSecretBytes - 1));
   }
 
@@ -899,6 +931,26 @@ export class ClaudeSessionCli {
   _handleWireObject(session, obj) {
     switch (obj.type) {
       case 'system':
+        if (obj.subtype === 'init' && session.retryAwaitingInit) {
+          try {
+            this._validateProviderReady({ modelRequested: session.modelRequested, modelObserved: obj.model ?? null });
+          } catch (error) {
+            session.processFailure = {
+              error: String(error?.message ?? 'provider initialization invalid'),
+              code: error?.code ?? 'provider_init_invalid', phase: 'provider_init',
+              usageSeal: unavailableUsageSeal(),
+            };
+            this._signal(session, 'SIGKILL');
+            return;
+          }
+          session.retryAwaitingInit = false;
+          session.sessionIdWire = obj.session_id;
+          session.modelObserved = obj.model ?? null;
+          this._write(session, {
+            type: 'user', message: { role: 'user', content: [{ type: 'text', text: session.lastTurnText }] },
+          });
+          return;
+        }
         if (obj.subtype === 'init' && !session.spawnedEmitted) {
           try {
             this._validateProviderReady({ modelRequested: session.modelRequested, modelObserved: obj.model ?? null });
@@ -1006,13 +1058,96 @@ export class ClaudeSessionCli {
     }
     const status = obj.is_error ? 'failed' : 'completed';
     const failureCode = claudeResultFailureCode(obj);
+    if (failureCode === 'authentication_refresh_required'
+      && this._cfg.credentialController && session.retryCount === 0 && session.lastTurnText) {
+      session.retryCount = 1;
+      session.turnInFlight = true;
+      void this._retryAfterAuthenticationRefresh(session, obj);
+      return;
+    }
     this._emit(session, 'lifecycle.turn_completed', {
-      result: makeResult(status, obj.result, obj.usage, obj.total_cost_usd, failureCode),
+      result: makeResult(
+        status, obj.result, obj.usage, obj.total_cost_usd, failureCode,
+        failureCode ? this._cfg.authenticationSummary?.(failureCode) : null,
+      ),
       usageSeal: usage.seal,
       pid: session.pid,
       modelRequested: session.modelRequested,
       modelObserved: session.modelObserved,
     });
+  }
+
+  _attachChild(session, child) {
+    child.stdout.setEncoding('utf8');
+    child.stdout.on('data', (chunk) => {
+      if (session.child === child) this._onData(session, chunk);
+    });
+    child.stderr.on('data', (chunk) => {
+      if (session.child === child) this._onStderr(session, chunk);
+    });
+    child.on('close', (code, signal) => {
+      if (session.child === child) void this._onClose(session, code, signal);
+    });
+    child.on('error', (error) => {
+      if (session.child === child) this._onSpawnError(session, error);
+    });
+  }
+
+  _newProcessCloseLatch(session) {
+    return Number.isSafeInteger(session.pid) && session.pid > 0 ? new ProcessCloseReapLatch({
+      generation: session.processGeneration,
+      pid: session.pid,
+      timeoutMs: session.processReapTimeoutMs,
+      reap: this._cfg.reapOwnedProcessGroup,
+      onProcessClosed: (payload) => {
+        session.processClosedEmitted = true;
+        this._emit(session, 'lifecycle.process_closed', payload);
+      },
+      onReapUnconfirmed: (payload) => this._emit(session, 'lifecycle.process_reap_unconfirmed', payload),
+      onStopConfirmed: (kind, payload) => {
+        session.killConfirmed = kind === 'kill.confirmed' || session.killConfirmed;
+        this._emit(session, kind, payload);
+      },
+    }) : null;
+  }
+
+  async _retryAfterAuthenticationRefresh(session, failedResult) {
+    try {
+      await this._cfg.credentialController.refresh();
+      if (session.terminal || session.stopping) return;
+      const oldChild = session.child;
+      const oldPid = session.pid;
+      const env = {
+        ...session.spawnSpec.env,
+        ...this._cfg.credentialController.projectionEnv(),
+      };
+      const child = spawn(this._cfg.cmd, session.spawnSpec.argv, {
+        cwd: session.spawnSpec.cwd, env, detached: true, stdio: ['pipe', 'pipe', 'pipe'],
+      });
+      session.child = child;
+      session.pid = child.pid;
+      session.buf = '';
+      session.stderrCanaryTail = '';
+      session.processClosePending = false;
+      session.processClosedEmitted = false;
+      session.retryAwaitingInit = true;
+      session.spawnSpec = Object.freeze({ ...session.spawnSpec, env: Object.freeze({ ...env }) });
+      session.processClose = this._newProcessCloseLatch(session);
+      this._attachChild(session, child);
+      try { process.kill(-oldPid, 'SIGKILL'); } catch { try { oldChild.kill('SIGKILL'); } catch {} }
+    } catch (error) {
+      session.turnInFlight = false;
+      const failureCode = error?.code === 'authentication_required'
+        ? 'authentication_required' : 'authentication_refresh_required';
+      this._emit(session, 'lifecycle.turn_completed', {
+        result: makeResult(
+          'failed', failedResult.result, failedResult.usage, failedResult.total_cost_usd,
+          failureCode, this._cfg.authenticationSummary?.(failureCode),
+        ),
+        usageSeal: unavailableUsageSeal(), pid: session.pid,
+        modelRequested: session.modelRequested, modelObserved: session.modelObserved,
+      });
+    }
   }
 
   /** A can_use_tool / elicitation control_request FROM the wire, addressed TO us. */
