@@ -1187,6 +1187,38 @@ export class BatonRun {
     return this.#last;
   }
 
+  // Bidirectional v2 rule 6: a named ONE-SHOT wake API riding the existing `run.follow` command —
+  // NOT the `changes()` iterator (which wakes immediately on its initial inspection and would
+  // spin). Returns the follow view (with its `follow` page) after ONE long-poll bounded by
+  // `timeoutMs`; `signal` cancels the client-side wait (the server follow is left to its own
+  // timeout, never leaked as an unhandled rejection).
+  async followOnce(options = {}) {
+    exactOptions(options, new Set(['afterCursor', 'timeoutMs', 'signal']), 'followOnce');
+    if (!Number.isSafeInteger(options.afterCursor) || options.afterCursor < 0) {
+      throw clientError('followOnce afterCursor is invalid');
+    }
+    if (!Number.isSafeInteger(options.timeoutMs) || options.timeoutMs <= 0) {
+      throw clientError('followOnce timeoutMs is invalid');
+    }
+    if (abortSignal(options.signal)) throw clientError('followOnce signal is invalid');
+    const { signal } = options;
+    if (signal?.aborted) throw clientError('followOnce was cancelled', 'application_follow_cancelled');
+    const command = Promise.resolve().then(() => this.#application.command('run.follow', {
+      runId: this.id, afterCursor: options.afterCursor, timeoutMs: options.timeoutMs,
+    }));
+    if (!signal) {
+      this.#last = await command;
+      return this.#last;
+    }
+    const outcome = await observeUntilAbort(command.then((next) => ({ aborted: false, next })), signal);
+    if (outcome.aborted) {
+      command.catch(() => {}); // the server follow runs out its own timeout; never leak it
+      throw clientError('followOnce was cancelled', 'application_follow_cancelled');
+    }
+    this.#last = outcome.next;
+    return this.#last;
+  }
+
   async send(message, options = {}) {
     if (!nonempty(message)) throw clientError('Run guidance is invalid');
     exactOptions(options, new Set(['recipient', 'delivery']), 'send');
