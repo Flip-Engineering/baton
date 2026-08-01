@@ -100,17 +100,17 @@ test('UA5/MN1: an application-backed MCP server exposes the semantic ordinary su
   assert.equal(response.result.tools.some((tool) => /shutdown|close|drain/.test(tool.name)), false);
   const advanced = setup({ application, surface: 'combined' }); await initialized(advanced.server);
   const combined = await request(advanced.server, 3, 'tools/list', {});
-  // MCP reflex surface contract Slices 1+2 (docs/reference/evidence/mcp-reflex-live-2026-07-22/
-  // mcp-reflex-surface-decisions.md, Part H): 47 pre-existing + 11 reflex tools (context_eval,
-  // decision_list/answer, board_post/retitle/reorder/close/read, package_admit/attach/read),
+  // S-3 extends the derived combined reflex projection with board.drop, REPL citation, and
+  // knowledge recall/horizon while leaving the ordinary application surface unchanged.
   // names verbatim, taskSupport forbidden, additionalProperties false, and _meta present on the
   // reflex tools like the ordinary table.
   const reflexNames = [
     'baton_context_eval', 'baton_decision_list', 'baton_decision_answer',
-    'baton_board_post', 'baton_board_retitle', 'baton_board_reorder', 'baton_board_close', 'baton_board_read',
+    'baton_board_post', 'baton_board_retitle', 'baton_board_reorder', 'baton_board_close', 'baton_board_drop', 'baton_board_read',
     'baton_package_admit', 'baton_package_attach', 'baton_package_read',
+    'baton_repl_cite', 'baton_knowledge_recall', 'baton_knowledge_horizon',
   ];
-  assert.equal(combined.result.tools.length, 65);
+  assert.equal(combined.result.tools.length, 69);
   assert.deepEqual(combined.result.tools.slice(0, 16).map((tool) => tool.name), response.result.tools.map((tool) => tool.name));
   assert.deepEqual(combined.result.tools.map((tool) => tool.name).filter((name) => reflexNames.includes(name)), reflexNames);
   assert.equal(combined.result.tools.every((tool) => tool.inputSchema.additionalProperties === false), true);
