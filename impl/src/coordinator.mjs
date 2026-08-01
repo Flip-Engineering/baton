@@ -1987,13 +1987,25 @@ export class Coordinator {
     const workerId = handle.id;
     const turnEpoch = terminalEvent?.turnEpoch ?? this._safeTurnEpoch(handle);
     const changedPathsDigest = this._pauseChangedPathsDigest(handle, task);
+    // Bidirectional v2 rule 1/2: durable pause-origin claim, sanitized AT MINT via the shared
+    // messages.mjs pipeline (redact-before-truncate, 240-byte text bound, wrapProse untrusted).
+    // Replay reconstructs origin byte-for-byte; projection never depends on in-memory workerResult.
+    const rawSummary = wr?.summary;
+    const originSummary = (rawSummary == null || rawSummary === '')
+      ? null
+      : wrapProse(workerId, boundedAttentionText(rawSummary, 240));
+    const origin = Object.freeze({
+      kind: 'turn_completed',
+      resultStatus: 'completed',
+      summary: originSummary,
+    });
     // Same `appendAttributed` durability tier and per-worker stream as question.asked /
     // approval.requested / decision.requested. `workerId` rides the envelope's own `worker`
     // field and is deliberately NOT duplicated into the payload — the interaction-family shape.
     const pausedEvent = appendAttributed({
       worker: workerId, harness: terminalEvent?.harness, turnEpoch,
       kind: 'turn.paused', actor: 'worker',
-      payload: { taskId: task.id, turnEpoch, changedPathsDigest },
+      payload: { taskId: task.id, turnEpoch, changedPathsDigest, origin },
     });
     const pauseId = `pause:${task.id}:${terminalEvent.seq}`;
     const record = {
@@ -2004,6 +2016,9 @@ export class Coordinator {
       // carries it so a later `claim` reproduces the SAME call an ordinary turn completion makes.
       // `changedPathsDigest` above is attention-only evidence and is never gate input.
       workerResult: wr ?? null,
+      // Bidirectional v2: durable origin also mirrored on the in-memory record so live projection
+      // and replay share one shape (replay seeds origin from the event payload).
+      origin,
     };
     this._pausedTurns.set(pauseId, record);
     this._coordTransition(task, 'paused', `task.paused:${task.id}:${terminalEvent.seq}`,
@@ -2043,11 +2058,18 @@ export class Coordinator {
   pausedTurnStatus(pauseId) {
     const record = this._pausedTurns.get(pauseId);
     if (!record) return null;
-    return {
+    const row = {
       pauseId, state: record.state, consumer: record.consumer ?? null,
       workerId: record.worker, taskId: record.taskId, turnEpoch: record.turnEpoch,
       changedPathsDigest: record.changedPathsDigest ?? null,
     };
+    // Bidirectional v2 rule 1: claim ONLY when the durable origin field is present (pre-v2
+    // events lack it and honestly project no claim). Never derived from in-memory workerResult.
+    const origin = record.origin;
+    if (origin && origin.kind === 'turn_completed' && origin.resultStatus === 'completed') {
+      row.claim = { status: 'completed', summary: origin.summary ?? null };
+    }
+    return row;
   }
 
   /** Every still-unconsumed pause record, optionally filtered by worker/task. */
@@ -8696,6 +8718,7 @@ export class Coordinator {
         options: record.options,
         allowFreeResponse: record.allowFreeResponse,
         recommended: record.recommended,
+        deadlineAt: record.deadlineAt ?? null,
       } : {}),
     });
   }
@@ -9815,6 +9838,67 @@ export class Coordinator {
 
   decisionSettleCount(runId) { return this._decisionSettleCount.get(runId) ?? 0; }
 
+  /**
+   * Bidirectional v2 rule 5: bounded disposition tombstones from durable decision.settled /
+   * decision.expired (plus superseded/stale_discarded). Last N per call, N≤8. Local clocks
+   * are never consulted — only durable event timestamps.
+   */
+  decisionSettledProjection(workerIds, { limit = 8 } = {}) {
+    const cap = Math.min(8, Math.max(0, Number.isSafeInteger(limit) ? limit : 8));
+    const rows = [];
+    for (const workerId of workerIds ?? []) {
+      if (typeof workerId !== 'string' || !workerId) continue;
+      let events;
+      try { events = this._log.read(workerId); } catch { continue; }
+      for (const e of events) {
+        if (e.kind === 'decision.settled' && e.payload?.requestId) {
+          rows.push({
+            requestId: e.payload.requestId,
+            disposition: 'answered',
+            at: e.ts,
+            seq: e.seq,
+          });
+        } else if (e.kind === 'decision.expired' && e.payload?.requestId) {
+          rows.push({
+            requestId: e.payload.requestId,
+            disposition: 'expired',
+            at: e.ts,
+            seq: e.seq,
+          });
+        } else if (e.kind === 'control.interaction_superseded'
+          && e.payload?.requestId
+          && (e.payload.interactionKind === 'decision' || e.payload.kind === 'decision')) {
+          rows.push({
+            requestId: e.payload.requestId,
+            disposition: 'superseded',
+            at: e.ts,
+            seq: e.seq,
+          });
+        } else if (e.kind === 'control.stale_rejected'
+          && e.payload?.op === 'respond'
+          && e.payload?.requestId
+          && (e.payload.disposition === 'stale_discarded' || e.payload.disposition == null)) {
+          rows.push({
+            requestId: e.payload.requestId,
+            disposition: 'stale_discarded',
+            at: e.ts,
+            seq: e.seq,
+          });
+        }
+      }
+    }
+    rows.sort((a, b) => (a.seq - b.seq)
+      || (a.requestId < b.requestId ? -1 : a.requestId > b.requestId ? 1 : 0));
+    // One tombstone per requestId: last durable outcome wins (exactly-once projection key).
+    const byId = new Map();
+    for (const row of rows) byId.set(row.requestId, row);
+    const deduped = [...byId.values()].sort(
+      (a, b) => (a.seq - b.seq)
+        || (a.requestId < b.requestId ? -1 : a.requestId > b.requestId ? 1 : 0),
+    );
+    return deduped.slice(-cap).map(({ requestId, disposition, at }) => ({ requestId, disposition, at }));
+  }
+
   /** Rule 6: cache shape `{ scope, fenceTuple, computedAt, value }` keyed by
    * `(scope-identity, fenceTuple)` — a cache hit requires exact tuple equality; a miss recomputes
    * from queryKnowledge/queryKnowledgeEdges/boardSnapshot/binding projections, never a partial
@@ -10722,6 +10806,34 @@ export class Coordinator {
           this._coordRecord('authority.rejected', { taskId: task?.id ?? null, workerId, requestId, kind: 'decision', reason: 'duplicate_request_id', evidence }, `driver.authority.rejected:${workerId}:${requestId}:${rejected.seq}`, 'policy');
           this._bumpInteractionGeneration(handle.taskId);
           break;
+        }
+        // Bidirectional v2 rule 4: one pending decision per worker at admission. Defense-in-depth
+        // behind the adapter's one-live-request discipline so handle.pendingDecisionId can never
+        // hide a second record (R-BD-4). Covers pending AND resolving (answer-in-flight).
+        {
+          const existingDecision = handle.pendingDecisionId
+            ?? [...this._pending.entries()].find(([, rec]) => (
+              rec.kind === 'decision' && rec.worker === workerId
+              && (rec.state === 'pending' || rec.state === 'resolving')
+            ))?.[0]
+            ?? null;
+          if (existingDecision) {
+            const rejected = appendAttributed({
+              worker: workerId, harness, turnEpoch,
+              kind: 'control.decision_already_pending_rejected', actor: 'policy',
+              payload: {
+                requestId, kind: 'decision', reason: 'decision_already_pending',
+                pendingRequestId: existingDecision,
+              },
+            });
+            const task = this._tasks.get(handle.taskId); const evidence = this._coordMapEvent(rejected);
+            this._coordRecord('authority.rejected', {
+              taskId: task?.id ?? null, workerId, requestId, kind: 'decision',
+              reason: 'decision_already_pending', pendingRequestId: existingDecision, evidence,
+            }, `driver.authority.rejected:${workerId}:${requestId}:${rejected.seq}`, 'policy');
+            this._bumpInteractionGeneration(handle.taskId);
+            break;
+          }
         }
         const askedEvent = appendAttributed({ worker: workerId, harness, turnEpoch, kind, actor, payload: { requestId, request } });
         this._bumpInteractionGeneration(handle.taskId);
@@ -11768,6 +11880,8 @@ export class Coordinator {
                 taskId: pausedTaskId, turnEpoch: e.payload?.turnEpoch ?? maxTurnEpoch,
                 changedPathsDigest: e.payload?.changedPathsDigest ?? null,
                 mintedEvent: lastTurnCompletedSeq,
+                // Bidirectional v2: origin is durable on the event payload; pre-v2 events omit it.
+                origin: e.payload?.origin ?? null,
               });
             }
             break;
