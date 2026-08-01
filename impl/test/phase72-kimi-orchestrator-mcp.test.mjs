@@ -18,7 +18,7 @@ const commands = [
   'run.workstream.notify', 'run.workstream.stop', 'run.act', 'run.status', 'run.follow',
   'run.recover', 'run.approve', 'run.wait', 'run.answer', 'run.feedback', 'run.steer', 'run.stop',
   'run.evidence', 'run.adopt', 'run.retry_verification', 'run.resume_work', 'run.review',
-  'run.integrate', 'run.export', 'application.shutdown',
+  'run.integrate', 'run.export', 'waves.attach', 'application.shutdown',
 ];
 const card = (registryDigest = 'a'.repeat(64)) => ({
   schemaVersion: 1, repoId: 'repo-kimi-orchestrator', commands,
@@ -294,7 +294,7 @@ test('KC6/KC7/KC8: Kimi MCP bridges only the compact application surface over au
   assert.deepEqual(listed.result.tools.map((tool) => tool.name), [
     'baton_help', 'baton_runs', 'baton_run_start', 'baton_run_inspect', 'baton_run_episode',
     'baton_run_workstreams', 'baton_workstream_notify', 'baton_workstream_stop',
-    'baton_run_act', 'baton_run_stop',
+    'baton_run_act', 'baton_run_stop', 'baton_waves_attach',
     'baton_run_do', 'baton_run_view', 'baton_run_member_view', 'baton_run_member_send',
     'baton_run_member_stop', 'baton_application_help',
   ]);
@@ -468,7 +468,7 @@ test('KC8: project Kimi MCP entry contains no credential and allowlists only sem
     startupTimeoutMs: 30_000, toolTimeoutMs: 180_000,
     enabledTools: ['baton_help', 'baton_runs', 'baton_run_start', 'baton_run_inspect', 'baton_run_episode',
       'baton_run_workstreams', 'baton_workstream_notify', 'baton_workstream_stop',
-      'baton_run_act', 'baton_run_stop',
+      'baton_run_act', 'baton_run_stop', 'baton_waves_attach',
       'baton_run_do', 'baton_run_view', 'baton_run_member_view', 'baton_run_member_send',
       'baton_run_member_stop', 'baton_application_help'],
   });
@@ -622,7 +622,7 @@ test('KC6/KC7/KC8: packaged Kimi MCP entry crosses a real authenticated Web list
   assert.deepEqual(responses[1].result.tools.map((tool) => tool.name), [
     'baton_help', 'baton_runs', 'baton_run_start', 'baton_run_inspect', 'baton_run_episode',
     'baton_run_workstreams', 'baton_workstream_notify', 'baton_workstream_stop',
-    'baton_run_act', 'baton_run_stop',
+    'baton_run_act', 'baton_run_stop', 'baton_waves_attach',
     'baton_run_do', 'baton_run_view', 'baton_run_member_view', 'baton_run_member_send',
     'baton_run_member_stop', 'baton_application_help',
   ]);
