@@ -52,7 +52,7 @@ log(`relay → ${relayText.slice(0, 140)}`);
 
 // ---- Lease handoff: the parent RELEASES the writer lease so the child can hold it. ----
 log('releasing the parent lease (child must hold the coordination writer)');
-await baton.shutdown?.().catch(() => {});
+await baton.close().catch(() => {});
 baton = null;
 
 // ---- PHASE 2: child driver (holds the lease), SIGKILLed mid-flight. ----
@@ -98,5 +98,5 @@ receipts.phases.push({ phase: 3.1, idempotent: outcomes2.map((o) => ({ role: o.r
 log('demo complete — receipts written');
 
 writeFileSync(resolve(EVIDENCE, 'demo-receipts.json'), `${JSON.stringify(receipts, null, 2)}\n`);
-await baton.shutdown?.().catch(() => {});
+await baton.close().catch(() => {});
 log('DEMO2-OK');

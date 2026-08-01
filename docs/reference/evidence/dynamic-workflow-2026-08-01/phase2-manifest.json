@@ -1,29 +1,5 @@
 {
   "schemaVersion": 1,
-  "waveId": "wave:499d3b4106b8fc61c391fbeab0cfb453",
-  "idempotencyKey": "demo-v2-phase2-2026-08-01T01:35:48.880Z",
-  "members": [
-    {
-      "role": "verifier",
-      "exact": {
-        "harness": "glm",
-        "model": "glm-5.2",
-        "effort": "high"
-      },
-      "scope": [
-        "docs/reference/evidence/dynamic-workflow-2026-08-01/**"
-      ]
-    },
-    {
-      "role": "skeptic",
-      "exact": {
-        "harness": "codex",
-        "model": "gpt-5.6-sol",
-        "effort": "high"
-      },
-      "scope": [
-        "docs/reference/evidence/dynamic-workflow-2026-08-01/**"
-      ]
-    }
-  ]
+  "waveId": "wave:e25535b9065069671598881537681322",
+  "idempotencyKey": "demo-v2-phase2-resume-2026-08-01T01:50:38.186Z"
 }
