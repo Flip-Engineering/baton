@@ -70,8 +70,16 @@ test('CC-1 cache seam: Keychain wins, file fallback works, and N projections rea
   }
   assert.equal(keychainReads, 1);
   assert.equal(preferred.metadata().state, 'fresh');
-  assert.doesNotMatch(deploymentSource, /find-generic-password|\/usr\/bin\/security/,
-    'Keychain access is deployment-side through the injected shim only');
+  // Keychain access is deployment-side ONLY: through the injected shim, or through the named
+  // defaultMacos* seam — and never from a worker path or a per-spawn exec. The source scan
+  // proves every /usr/bin/security occurrence lives inside the two named default functions.
+  assert.match(deploymentSource, /defaultMacosKeychainRead/, 'the named default seam exists');
+  const securityExecSites = deploymentSource.split('\n')
+    .filter((line) => line.includes('/usr/bin/security') && !line.trim().startsWith('//'));
+  assert.equal(securityExecSites.length, 2,
+    `every /usr/bin/security exec lives inside the two named default functions: ${securityExecSites.length}`);
+  assert.ok(securityExecSites.every((line) => line.includes("execFileSync('/usr/bin/security'")),
+    'each is the bounded execFileSync seam, never a shell or a worker-visible path');
 
   const fallback = await ClaudeCredentialCache.open(cacheOptions(root, 1_000));
   assert.deepEqual(fallback.projectionEnv(), { CLAUDE_CODE_OAUTH_TOKEN: 'access-20000' });

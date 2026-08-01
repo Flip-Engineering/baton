@@ -1510,6 +1510,36 @@ class BatonDeployment {
   }
 }
 
+// The macOS host integration for the credential cache's Keychain shim seam: a bounded
+// /usr/bin/security reader with honest failure mapping — a non-zero exit, a denial, or a
+// non-JSON payload maps to null ("unavailable"), never a thrown error. mtime comes from the
+// item's `mdat` attribute (the cache's Keychain-mtime CAS compares it across a refresh flight).
+function defaultMacosKeychainRead() {
+  if (process.platform !== 'darwin') return () => null;
+  return () => {
+    try {
+      return execFileSync('/usr/bin/security', ['find-generic-password', '-s', 'Claude Code-credentials', '-w'], {
+        encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'],
+      });
+    } catch { return null; }
+  };
+}
+
+function defaultMacosKeychainMtime() {
+  if (process.platform !== 'darwin') return () => null;
+  return () => {
+    try {
+      const attrs = execFileSync('/usr/bin/security', ['find-generic-password', '-s', 'Claude Code-credentials', '-g'], {
+        encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      const match = attrs.match(/"mdat"<blob>="(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})Z"/u);
+      if (!match) return null;
+      const ms = Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3]), Number(match[4]), Number(match[5]), Number(match[6]));
+      return Number.isSafeInteger(ms) ? ms : null;
+    } catch { return null; }
+  };
+}
+
 export async function openBatonDeployment(rawOptions, createDriver) {
   closed(rawOptions, ['advanced', 'repo'], 'deployment options');
   const repository = repositoryAuthority(rawOptions.repo ?? process.cwd());
@@ -1606,10 +1636,12 @@ export async function openBatonDeployment(rawOptions, createDriver) {
       credentialPath: rawClaudeCredentials.credentialPath ?? join(homedir(), '.claude', '.credentials.json'),
       refreshRoot: join(runtimeRoot, 'claude-refresh'),
       // Keychain authority is available only through the deployment-owned shim seam. This keeps
-      // tests, embedded deployments, and workers from ever invoking the host Keychain directly;
-      // a macOS host integration injects its bounded `security` reader here at deployment open.
-      keychainRead: rawClaudeCredentials.keychainRead ?? (() => null),
-      keychainMtime: rawClaudeCredentials.keychainMtime ?? (() => null),
+      // tests, embedded deployments, and workers from ever invoking the host Keychain directly.
+      // The default IS the macOS host integration (bounded /usr/bin/security exec with honest
+      // nulls — a non-zero exit or a non-JSON read is "unavailable", never a throw); an explicit
+      // advanced.claudeCredentials.keychainRead/Mtime overrides it (the CC-1 shim seam).
+      keychainRead: rawClaudeCredentials.keychainRead ?? defaultMacosKeychainRead(),
+      keychainMtime: rawClaudeCredentials.keychainMtime ?? defaultMacosKeychainMtime(),
       ...rawClaudeCredentials,
     }) : null;
   const adapters = advanced.adapters

@@ -334,6 +334,11 @@ function claudeResultFailureCode(obj) {
   const message = obj.result.trim();
   return message === 'authentication_error'
     || /^Not logged in\s*[·:.-]?\s*Please run (?:\/login|claude auth login)\.?$/iu.test(message)
+    // The REAL terminal auth shape, receipted live 2026-08-01 (env-token-only runtime, revoked
+    // access token): {"is_error":true, "result":"Failed to authenticate. API Error: 401 OAuth
+    // access token has been revoked.", "api_error_status":401} — the vendor does NOT refresh in
+    // --print mode; it fails the call with this exact result (R11V-2's verification step).
+    || /^Failed to authenticate\. API Error: 401\b/u.test(message)
     ? 'authentication_refresh_required' : null;
 }
 

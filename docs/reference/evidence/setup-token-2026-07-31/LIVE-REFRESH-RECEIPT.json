@@ -1,14 +1,13 @@
 {
-  "at": "2026-08-01T04:04:49.237Z",
+  "at": "2026-08-01T05:28:09.028Z",
   "steps": [
     {
       "step": "doctor-before",
       "credential": {
-        "expiresAt": 1785544522008,
-        "refreshTokenExpiresAt": 1787377425008,
-        "state": "stale",
+        "expiresAt": 1785587075326,
+        "refreshTokenExpiresAt": 1788014525326,
+        "state": "fresh",
         "units": "ms epoch",
-        "label": "refresh-unverified until attempted (#47 tier)",
         "operatorFile": {
           "exists": true,
           "mtimeMs": 1785526663579.3096
