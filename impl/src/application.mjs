@@ -22,7 +22,10 @@ import {
 import {
   identifyResultExportRoot, ResultExportLifecycle,
 } from './result-export.mjs';
-import { APPLICATION_SEMANTIC_REGISTRY, applicationOperationAliasMap, projectTypedTerminalCause } from './application-semantics.mjs';
+import {
+  APPLICATION_SEMANTIC_REGISTRY, applicationOperationAliasMap,
+  PROGRESS_SILENCE_THRESHOLD_MS, projectTypedTerminalCause,
+} from './application-semantics.mjs';
 import { hasNorthboundCapabilityAuthority } from './northbound-capability-authority.mjs';
 import { projectRunTimelinePage } from './run-timeline.mjs';
 import { compareCanonicalStrings } from './canonical-order.mjs';
@@ -223,7 +226,11 @@ function digest(value) {
 // a Run's semantic authority. Keep those events observable through `cursor`, but never let them
 // invalidate an action Baton just offered to an authenticated caller.
 function semanticViewDigest(view) {
-  const { cursor: _transportCursor, ...semanticView } = view;
+  // progressClass/requiredAction are DERIVED from the underlying fields below them (phase,
+  // attention, timing cadence, terminalCause), so they never carry independent authority:
+  // excluding them keeps the actionId token stable across the actionId's own derivation
+  // (P1-C view-digest-dependent token) without weakening freshness.
+  const { cursor: _transportCursor, progressClass: _derivedProgress, requiredAction: _derivedAction, ...semanticView } = view;
   return digest(semanticView);
 }
 
@@ -328,6 +335,97 @@ function projectBlockedInteraction(phase, attention) {
   if (pending.kind === 'answer_decision') return { kind: 'decision', summary: boundedBlockedInteractionSummary(pending.question) };
   const text = pending.kind === 'answer_question' ? pending.question : pending.approvalKind;
   return { kind: 'answer_question', summary: boundedBlockedInteractionSummary(text) };
+}
+
+// v2 P1-C (docs/reference/evidence/semantic-progress-2026-07-31/semantic-progress-decisions.md
+// rules 1-3): the semantic-progress additions are ONE named total reducer over the run view's
+// existing projections, plus the resolving-action projection. `rate_limited` is CUT in v2
+// (R-SP-2) — no provider taxonomy row classifies a limit receipt honestly, so the enum never
+// prose-guesses a member.
+function progressBlockedDetail(phase, attention) {
+  if (phase === 'awaiting_plan_approval') return 'approve_plan';
+  if (phase === 'selection_required') return 'select_candidate';
+  const pending = (attention ?? []).find((entry) => (
+    entry?.kind === 'answer_question' || entry?.kind === 'answer_approval' || entry?.kind === 'answer_decision'
+  ));
+  if (pending) return 'answer_required';
+  if ((attention ?? []).some((entry) => entry?.kind === 'turn_checkpoint')) return 'turn_checkpoint';
+  return null;
+}
+
+// Rule 1: closed enum, total reducer, pinned precedence. Basis fields {silenceMs,
+// meaningfulEventAt} ride along — never a bare label.
+export function projectProgressClass({ phase, attention, timing, terminalCause }) {
+  const silenceMs = Number.isSafeInteger(timing?.silenceMs) ? timing.silenceMs : 0;
+  const meaningfulEventAt = timing?.lastProgress?.at ?? null;
+  if (APPLICATION_RUN_TERMINAL_PHASES.has(phase)) {
+    const cause = terminalCause?.kind ?? terminalCause?.code ?? phase;
+    return deepFreeze({ class: `terminal:${cause}`, silenceMs, meaningfulEventAt });
+  }
+  const detail = progressBlockedDetail(phase, attention);
+  if (detail !== null) {
+    return deepFreeze({ class: `blocked_interaction:${detail}`, silenceMs, meaningfulEventAt });
+  }
+  if (silenceMs >= PROGRESS_SILENCE_THRESHOLD_MS) {
+    return deepFreeze({ class: 'silent', silenceMs, meaningfulEventAt });
+  }
+  return deepFreeze({ class: 'progressing', silenceMs, meaningfulEventAt });
+}
+
+// Rule 3: the canonical per-kind summaries, used when the attention item carries no bounded text
+// (approve_plan/select_candidate/turn_checkpoint are summary-less by design). Never sourced from
+// projectBlockedInteraction's summary-less shapes (R-SP-4).
+const PROGRESS_ACTION_SUMMARIES = Object.freeze({
+  approve_plan: 'Plan approval is required to proceed',
+  select_candidate: 'Candidate selection is required to proceed',
+  answer_question: 'An answer is required to proceed',
+  answer_approval: 'An approval is required to proceed',
+  answer_decision: 'A decision is required to proceed',
+  nudge_turn: 'A turn checkpoint requires a nudge to proceed',
+});
+
+// Rule 3: the resolving action for the rule-2 block, honestly sourced. `actionId` is carried ONLY
+// when the resolving semantic action is advertised in the current view (matched by kind against
+// the caller's semantic actions); otherwise `{kind, summary}` with NO actionId — never a
+// fabricated token (R-SP-3/8). Summary = the attention item's bounded text when present, else the
+// canonical per-kind summary. For answer_decision the bounded identity is the requestId, so a
+// consumer knows WHICH decision to answer.
+export function projectRequiredAction({ phase, attention, actions }) {
+  let kind = null;
+  let summary = null;
+  if (phase === 'awaiting_plan_approval') {
+    kind = 'approve_plan';
+    summary = PROGRESS_ACTION_SUMMARIES.approve_plan;
+  } else if (phase === 'selection_required') {
+    kind = 'select_candidate';
+    summary = PROGRESS_ACTION_SUMMARIES.select_candidate;
+  } else {
+    const pending = (attention ?? []).find((entry) => (
+      entry?.kind === 'answer_question' || entry?.kind === 'answer_approval' || entry?.kind === 'answer_decision'
+    ));
+    if (pending) {
+      kind = pending.kind;
+      if (kind === 'answer_decision') {
+        summary = typeof pending.requestId === 'string' && pending.requestId.length > 0
+          ? boundedBlockedInteractionSummary(pending.requestId) : PROGRESS_ACTION_SUMMARIES[kind];
+      } else {
+        const text = kind === 'answer_question' ? pending.question : pending.approvalKind;
+        summary = typeof text === 'string' && text.length > 0
+          ? boundedBlockedInteractionSummary(text) : PROGRESS_ACTION_SUMMARIES[kind];
+      }
+    } else {
+      const checkpoint = (attention ?? []).find((entry) => entry?.kind === 'turn_checkpoint');
+      if (checkpoint) {
+        kind = 'nudge_turn';
+        summary = PROGRESS_ACTION_SUMMARIES.nudge_turn;
+      }
+    }
+  }
+  if (kind === null) return null;
+  const action = (actions ?? []).find((candidate) => candidate?.kind === kind);
+  return deepFreeze(action
+    ? { kind, summary, actionId: action.actionId }
+    : { kind, summary });
 }
 
 // Part B (issue #16): project every worker's pending decision request (if any) into the
@@ -5198,7 +5296,7 @@ export class BatonApplication {
     return response;
   }
 
-  _planningView(current, cause = null) {
+  _planningView(current, cause = null, principal = this.principals.observer) {
     const resultIdentity = resultIntentConstraint(current.goal.constraints);
     const resultIntent = resultIdentity.resultIntent;
     const runStop = this.driver.coordination.runStop?.(current.goal.runId) ?? null;
@@ -5253,6 +5351,9 @@ export class BatonApplication {
       stop,
       close: null,
     };
+    const semanticProgress = this._semanticProgressProjection(current, view, principal);
+    view.progressClass = semanticProgress.progressClass;
+    if (semanticProgress.requiredAction) view.requiredAction = semanticProgress.requiredAction;
     if (Buffer.byteLength(JSON.stringify(view)) > MAX_RUN_VIEW_BYTES) {
       throw applicationError('Run view exceeds its deployment byte ceiling', 'application_run_view_oversize');
     }
@@ -5392,6 +5493,9 @@ export class BatonApplication {
       recovery: null, preservation: { state: 'unavailable', available: false, checkpointSha: null },
       resume: null, terminalCause, stop, close: null,
     };
+    const semanticProgress = this._semanticProgressProjection(current, view, observer);
+    view.progressClass = semanticProgress.progressClass;
+    if (semanticProgress.requiredAction) view.requiredAction = semanticProgress.requiredAction;
     if (Buffer.byteLength(JSON.stringify(view)) > MAX_RUN_VIEW_BYTES) {
       throw applicationError('historical Run view exceeds its deployment byte ceiling', 'application_run_view_oversize');
     }
@@ -6947,6 +7051,9 @@ export class BatonApplication {
       } : null,
       close: null,
     };
+    const semanticProgress = this._semanticProgressProjection(current, view, observer);
+    view.progressClass = semanticProgress.progressClass;
+    if (semanticProgress.requiredAction) view.requiredAction = semanticProgress.requiredAction;
     if (Buffer.byteLength(JSON.stringify(view)) > MAX_RUN_VIEW_BYTES) {
       throw applicationError('Workflow view exceeds its deployment byte ceiling',
         'application_run_view_oversize');
@@ -7349,6 +7456,9 @@ export class BatonApplication {
       } : null,
       close: null,
     };
+    const semanticProgress = this._semanticProgressProjection(current, view, observer);
+    view.progressClass = semanticProgress.progressClass;
+    if (semanticProgress.requiredAction) view.requiredAction = semanticProgress.requiredAction;
     if (Buffer.byteLength(JSON.stringify(view)) > MAX_RUN_VIEW_BYTES) {
       throw applicationError('Run view exceeds its deployment byte ceiling', 'application_run_view_oversize');
     }
@@ -7415,10 +7525,12 @@ export class BatonApplication {
     const payload = event.payload ?? {};
     const runId = current.goal.runId;
     if (event.kind === 'evidence.mapped') {
-      const operational = typeof this.driver.log.at === 'function'
+      const operational = typeof this.driver.log?.at === 'function'
         ? this.driver.log.at(payload.worker, payload.workerSeq)
-        : this.driver.log.read(payload.worker, payload.workerSeq)
-          .find((candidate) => candidate.seq === payload.workerSeq);
+        : typeof this.driver.log?.read === 'function'
+          ? this.driver.log.read(payload.worker, payload.workerSeq)
+            .find((candidate) => candidate.seq === payload.workerSeq)
+          : null;
       if (!operational) return false;
       if (operational.runId !== null && operational.runId !== undefined) {
         return operational.runId === runId;
@@ -7540,6 +7652,94 @@ export class BatonApplication {
     });
   }
 
+  // v2 P1-C: the run-view semantic-progress projection. progressClass is always present (the
+  // reducer is total over phase/attention/timing/terminalCause); requiredAction rides ONLY when
+  // the rule-2 blocking predicate holds. `principal` scopes the advertised actionId to the view
+  // consumer so the token it carries is the one the same principal can act on. The actionId is
+  // computed against the CONTEXT-PROJECTED view — the exact view shape `_resolveSemanticAction`
+  // and the inspect outline use — so a token offered by `status()` is the token `run.act`
+  // resolves (the view digest is otherwise stable across the projection).
+  _semanticProgressProjection(current, view, principal) {
+    const semanticView = this._withContextProjection(current, view);
+    let timing;
+    try {
+      timing = this._progressTiming(current, semanticView);
+    } catch (error) {
+      // RA9: a malformed application clock fails TYPED at the explicit timing-projection sites
+      // (run.inspect outline / runs.list items); a run VIEW still builds with an honest
+      // unmeasured progressClass rather than making the whole control surface unusable.
+      if (error?.code !== 'application_progress_clock_invalid') throw error;
+      timing = deepFreeze({ silenceMs: 0, lastProgress: { at: null } });
+    }
+    const attention = semanticView.attention ?? [];
+    const progressClass = projectProgressClass({
+      phase: semanticView.phase,
+      attention,
+      timing,
+      terminalCause: semanticView.terminalCause ?? null,
+    });
+    const requiredAction = this._semanticRequiredAction(current, semanticView, principal);
+    return deepFreeze({ progressClass, requiredAction });
+  }
+
+  // v2 rule 3, HOT PATH: the resolving action for the rule-2 block, computed WITHOUT the full
+  // semantic-action enumeration. The wave driver polls status() every few ms per member, so
+  // deriving requiredAction must cost O(blocking attention) not O(all candidates). The candidate
+  // target shapes mirror `_semanticActions` exactly (same digest inputs) so the advertised
+  // actionId is byte-identical to the one `run.act` resolves.
+  _semanticRequiredAction(current, view, principal) {
+    const attention = view.attention ?? [];
+    const phase = view.phase;
+    const nextActions = view.nextActions ?? [];
+    let kind = null;
+    let target = null;
+    let advertised = false;
+    if (phase === 'awaiting_plan_approval') {
+      kind = 'approve_plan';
+      target = { planDigest: current.plan.digest };
+      advertised = nextActions.some((entry) => entry?.kind === 'approve_plan');
+    } else if (phase === 'selection_required') {
+      kind = 'select_candidate';
+      target = null;
+      advertised = nextActions.some((entry) => entry?.kind === 'select_candidate');
+    } else {
+      const pending = attention.find((entry) => (
+        entry?.kind === 'answer_question' || entry?.kind === 'answer_approval' || entry?.kind === 'answer_decision'
+      ));
+      if (pending) {
+        kind = pending.kind;
+        advertised = validText(pending.requestId, 4_096);
+        target = {
+          kind: pending.kind,
+          workerId: pending.workerId ?? null,
+          requestId: pending.requestId,
+          ...(pending.kind === 'answer_approval'
+            ? { approvalKind: pending.approvalKind ?? null }
+            : pending.kind === 'answer_decision'
+              ? { question: pending.question ?? null, options: pending.options ?? [], allowFreeResponse: pending.allowFreeResponse === true }
+              : { question: pending.question ?? null }),
+        };
+      } else {
+        const checkpoint = attention.find((entry) => entry?.kind === 'turn_checkpoint');
+        if (checkpoint) {
+          kind = 'nudge_turn';
+          advertised = validText(checkpoint.requestId, 4_096);
+          target = {
+            workerId: checkpoint.workerId ?? null,
+            taskId: checkpoint.taskId ?? null,
+            turnEpoch: checkpoint.turnEpoch ?? null,
+            pauseId: checkpoint.requestId,
+          };
+        }
+      }
+    }
+    if (kind === null) return null;
+    const action = advertised
+      ? { kind, actionId: this._semanticActionId(current, view, principal, kind, target) }
+      : null;
+    return projectRequiredAction({ phase, attention, actions: action ? [action] : [] });
+  }
+
   _followChange(event, category) {
     const summaries = {
       plan: 'Run Plan authority changed.',
@@ -7654,7 +7854,7 @@ export class BatonApplication {
     }
   }
 
-  _semanticActionId(current, view, principal, kind, target = null) {
+  _semanticActionId(current, view, principal, kind, target = null, viewDigest = semanticViewDigest(view)) {
     return digest({
       schemaVersion: 1,
       registryDigest: APPLICATION_SEMANTIC_REGISTRY.digest,
@@ -7663,7 +7863,7 @@ export class BatonApplication {
       principalScopeDigest: digest({ principalId: principal.principalId, sessionId: principal.sessionId }),
       profileDigest: current.profile.digest,
       planDigest: current.plan?.digest ?? null,
-      viewDigest: semanticViewDigest(view),
+      viewDigest,
       kind,
       target,
     });
@@ -9225,9 +9425,11 @@ export class BatonApplication {
       candidates.push({ kind: 'stop', source: null, target: null });
     }
     const eligible = capabilityEligibleSemanticActions(candidates, context);
+    // The view digest is invariant across every candidate (one view → one freshness token);
+    // hoisting it keeps the hot status/act path from re-hashing the whole view per action.
+    const viewDigest = semanticViewDigest(view);
     return eligible.map(({ kind, source, target, authorityTarget = target }) => {
       const definition = APPLICATION_SEMANTIC_REGISTRY.actions[kind];
-      const viewDigest = semanticViewDigest(view);
       const inputSchema = clone(definition.inputSchema);
       if (kind === 'integrate' && source?.strategies) {
         inputSchema.properties.strategy.enum = clone(source.strategies);
@@ -9256,7 +9458,7 @@ export class BatonApplication {
           if (!inputSchema.required.includes('recipient')) inputSchema.required.push('recipient');
         }
       }
-      const actionId = this._semanticActionId(current, view, principal, kind, authorityTarget);
+      const actionId = this._semanticActionId(current, view, principal, kind, authorityTarget, viewDigest);
       let doInputs = {};
       if (kind === 'approve_plan') {
         doInputs = { planDigest: target.planDigest };
@@ -10040,6 +10242,8 @@ export class BatonApplication {
           stage: view.progress?.current ?? null,
           ...timing,
           progress: clone(view.progress),
+          progressClass: clone(view.progressClass ?? null),
+          ...(view.requiredAction ? { requiredAction: clone(view.requiredAction) } : {}),
           attention: { count: 0, state: 'clear', summary: 'No historical attention is projected.' },
           route: clone(view.route), workerPolicy: clone(view.workerPolicy),
           context: clone(this._contextState(current).projection),
@@ -10300,6 +10504,10 @@ export class BatonApplication {
       const attention = view.attention ?? [];
       const timing = this._progressTiming(current, view);
       const orchestration = this.driver.coordination.runOrchestrationView?.(current.goal.runId) ?? null;
+      // The outline's actions are scoped to THIS caller, so requiredAction is re-derived from the
+      // same caller-scoped semantic actions (never the view's observer-scoped token — R-SP-3/8).
+      const semanticActions = this._semanticActions(current, view, principal, context);
+      const requiredAction = projectRequiredAction({ phase: view.phase, attention, actions: semanticActions });
       const outline = {
         objective: current.goal.objective,
         resultIntent: view.resultIntent,
@@ -10314,6 +10522,8 @@ export class BatonApplication {
           state: attention.length > 0 ? 'required' : 'clear',
           summary: attention.length > 0 ? 'Run attention is required; expand the attention section.' : 'No operator attention is pending.',
         },
+        progressClass: clone(view.progressClass ?? null),
+        ...(requiredAction ? { requiredAction: clone(requiredAction) } : {}),
         route: clone(view.route),
         workerPolicy: clone(view.workerPolicy),
         terminalCause: clone(view.terminalCause ?? null),
@@ -10334,7 +10544,7 @@ export class BatonApplication {
           summary: view.preservation?.state === 'pinned' ? 'Work preserved; resume available after fresh verification.'
             : 'No preserved work is advertised.',
         },
-        actions: this._semanticActions(current, view, principal, context),
+        actions: semanticActions,
       };
       return this._finalizeSemanticInspection({
         ...base,
@@ -10756,11 +10966,15 @@ export class BatonApplication {
       const view = this._withContextProjection(
         current, await this._buildView(current, this.principals.observer),
       );
-      const actions = current.profile
-        ? this._semanticActions(current, view, principal, context).map((action) => action.kind)
+      const semanticActions = current.profile
+        ? this._semanticActions(current, view, principal, context)
         : [];
+      const actions = semanticActions.map((action) => action.kind);
       const attention = view.attention ?? [];
       const timing = this._progressTiming(current, view);
+      // The list advertises kinds only; requiredAction is re-derived from the CALLER-scoped
+      // semantic actions so the carried actionId (when advertised) is the caller's to act on.
+      const requiredAction = projectRequiredAction({ phase: view.phase, attention, actions: semanticActions });
       items.push(deepFreeze({
         id: goal.runId,
         objective: goal.objective,
@@ -10768,6 +10982,8 @@ export class BatonApplication {
         phase: view.phase,
         stage: view.progress?.current ?? null,
         ...timing,
+        progressClass: clone(view.progressClass ?? null),
+        ...(requiredAction ? { requiredAction: clone(requiredAction) } : {}),
         terminal: APPLICATION_RUN_TERMINAL_PHASES.has(view.phase),
         attention: attention.length > 0 ? 'required' : 'clear',
         blockedInteraction: clone(view.blockedInteraction ?? null),
