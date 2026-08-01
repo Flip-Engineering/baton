@@ -12,6 +12,7 @@ import { bindBaton } from './application-client.mjs';
 import { BatonWebClient } from './application-cli.mjs';
 import { BatonWebHost } from './application-host.mjs';
 import { ClaudeSessionCli, GlmSessionCli, KimiSessionCli } from './claude-session.mjs';
+import { ClaudeCredentialCache } from './claude-credential-cache.mjs';
 import { CodexAppServerCli } from './codex-appserver.mjs';
 import {
   defaultRepositoryContextPolicy, RepositoryContextRuntime,
@@ -323,6 +324,16 @@ function kimiAuthenticationSummary(code) {
   return 'Kimi authentication is absent. Run the ordinary `kimi` login flow, then reopen Baton.';
 }
 
+export function claudeAuthenticationSummary(code) {
+  if (code === 'authentication_refresh_required') {
+    return 'Claude authentication could not be refreshed. Run the ordinary `claude auth login` (or `/login`) flow, then retry; setup-token remains the named long-lived fallback.';
+  }
+  if (code === 'authentication_metadata_invalid') {
+    return 'Claude authentication metadata could not be validated. Run the ordinary `claude auth login` flow, then retry.';
+  }
+  return 'Claude authentication is absent. Run the ordinary `claude auth login` flow, then retry.';
+}
+
 function kimiAuthenticationState(kimiRoot, nowMs = Date.now()) {
   if (!KIMI_CREDENTIAL_FILES.every((path) => existingRegular(join(kimiRoot, path)))) {
     const code = 'authentication_required';
@@ -588,18 +599,26 @@ function trackedTreeBounds(repoRoot, treeish) {
   });
 }
 
-function defaultCredentialProjection(repoRoot, { projectNativeKimi = false } = {}) {
+function defaultCredentialProjection(repoRoot, { projectNativeKimi = false, claudeCredentialCache = null } = {}) {
   const credentials = {};
   const codex = join(homedir(), '.codex', 'auth.json');
   const grok = join(homedir(), '.grok', 'auth.json');
-  const claude = join(homedir(), '.claude', '.credentials.json');
   if (existingRegular(codex)) credentials.codex = [codex];
   if (existingRegular(grok)) credentials.grok = [grok];
-  if (existingRegular(claude)) credentials.claude = [claude];
   const kimiRoot = join(homedir(), '.kimi-code');
   const credentialTrees = projectNativeKimi
     ? { 'kimi-code': [{ sourceRoot: kimiRoot, relativeFiles: KIMI_CREDENTIAL_FILES }] } : {};
-  return Object.freeze({ credentialFiles: credentials, credentialTrees, repoRoot });
+  const credentialEnv = {};
+  if (claudeCredentialCache) {
+    Object.defineProperty(credentialEnv, 'claude', {
+      enumerable: true,
+      get: () => claudeCredentialCache.projectionEnv(),
+    });
+  }
+  return Object.freeze({
+    credentialEnv: Object.freeze(credentialEnv), credentialFiles: credentials,
+    credentialTrees, repoRoot,
+  });
 }
 
 function locallyReadyRoutes(repoRoot) {
@@ -754,7 +773,7 @@ class DeepseekSessionCli extends GlmSessionCli {
   }
 }
 
-function builtInAdapters(routes, repoRoot, adapterOptions = {}) {
+function builtInAdapters(routes, repoRoot, adapterOptions = {}, claudeCredentialCache = null) {
   const adapters = {};
   const kimiCommand = existingRegular(join(homedir(), '.kimi-code', 'bin', 'kimi'))
     ? join(homedir(), '.kimi-code', 'bin', 'kimi') : 'kimi';
@@ -786,7 +805,14 @@ function builtInAdapters(routes, repoRoot, adapterOptions = {}) {
       // Wave workloads legitimately produce multi-MiB stream-json frames (large ranged reads,
       // suite outputs). Issue #28: deployment-owned ceiling (default 8MiB) plus graceful
       // degradation for oversized tool_result frames (discard + wire.frame_degraded receipt).
-      adapters[key] = new ClaudeSessionCli({ model: route.model, approvals: false, ceiling: 4, maxWireFrameBytes });
+      adapters[key] = new ClaudeSessionCli({
+        model: route.model, approvals: false, ceiling: 4, maxWireFrameBytes,
+        ...(claudeCredentialCache ? {
+          credentialController: claudeCredentialCache,
+          providerSecretsProbe: () => [claudeCredentialCache.credential?.accessToken].filter(Boolean),
+          authenticationSummary: claudeAuthenticationSummary,
+        } : {}),
+      });
     } else if (route.harness === 'claude-code' && route.provider === 'kimi') {
       const credential = kimiThroughClaudeCredential();
       if (!existingRegular(credential)) throw deploymentError('Kimi-through-Claude requires the private Baton Kimi credential file');
@@ -945,6 +971,7 @@ async function projectedAdapterAuthentication(adapters, repoRoot, runtimeRoot, p
   const isolation = new RuntimeIsolation({
     repoRoot, root: join(runtimeRoot, 'readiness'),
     credentialFiles: projection.credentialFiles,
+    credentialEnv: projection.credentialEnv,
     credentialTrees: projection.credentialTrees,
   });
   const results = new Map();
@@ -1159,6 +1186,7 @@ class BatonDeployment {
   #deploymentRoot;
   #residentOptions;
   #workspaceProbe = null;
+  #claudeCredentialProbe = null;
   #residentAuthority = null;
   #residentSession = null;
   #ordinaryHostPromise = null;
@@ -1173,6 +1201,7 @@ class BatonDeployment {
     this.#deploymentRoot = deployment.deploymentRoot;
     this.#residentOptions = deployment.residentOptions;
     this.#workspaceProbe = deployment.workspaceProbe ?? null;
+    this.#claudeCredentialProbe = deployment.claudeCredentialProbe ?? null;
     this.#card = Object.freeze({ ...application.card(), readiness });
     const runs = this.#baton.runs;
     this.runs = Object.freeze({
@@ -1194,6 +1223,17 @@ class BatonDeployment {
         return this.#baton.waves.start(options);
       },
     });
+    this.credentials = Object.freeze({
+      refresh: async (provider) => {
+        if (provider !== 'claude' || !deployment.claudeCredentialCache) {
+          throw Object.assign(new Error('Claude credential refresh is not configured'), {
+            code: 'credential_refresh_unavailable',
+          });
+        }
+        await deployment.claudeCredentialCache.explicitRefresh();
+        return deployment.claudeCredentialCache.metadata();
+      },
+    });
     this.ready = application.ready;
     Object.freeze(this);
   }
@@ -1202,7 +1242,14 @@ class BatonDeployment {
    * moves, and an open-time snapshot would go stale exactly when the answer matters. */
   doctorReadiness() {
     const workspace = this.#workspaceProbe ? this.#workspaceProbe() : null;
-    return workspace ? Object.freeze({ ...this.#readiness, workspace }) : this.#readiness;
+    const credential = this.#claudeCredentialProbe ? this.#claudeCredentialProbe() : null;
+    const routes = credential ? Object.freeze(this.#readiness.routes.map((route) => (
+      route.harness === 'claude-code' && route.model.startsWith('claude-')
+        ? Object.freeze({ ...route, credential }) : route
+    ))) : this.#readiness.routes;
+    return workspace || credential
+      ? Object.freeze({ ...this.#readiness, routes, ...(workspace ? { workspace } : {}) })
+      : this.#readiness;
   }
 
   card() { return Object.freeze({ ...this.#card, readiness: this.doctorReadiness() }); }
@@ -1456,7 +1503,7 @@ export async function openBatonDeployment(rawOptions, createDriver) {
   closed(rawOptions, ['advanced', 'repo'], 'deployment options');
   const repository = repositoryAuthority(rawOptions.repo ?? process.cwd());
   const advanced = rawOptions.advanced ?? {};
-  closed(advanced, ['adapterOptions', 'adapters', 'capacity', 'deploymentRoot', 'resident', 'routes', 'verification', 'workflowPolicy'], 'advanced');
+  closed(advanced, ['adapterOptions', 'adapters', 'capacity', 'claudeCredentials', 'deploymentRoot', 'resident', 'routes', 'verification', 'workflowPolicy'], 'advanced');
   const adapterOptions = normalizeAdapterOptions(advanced.adapterOptions);
   const rawResident = advanced.resident ?? {};
   closed(rawResident, ['commandTimeoutMs', 'env', 'home', 'now', 'ownerUid', 'pollMs', 'sessionTtlMs', 'webDrainMs'], 'advanced resident');
@@ -1511,12 +1558,57 @@ export async function openBatonDeployment(rawOptions, createDriver) {
   const evidenceRoot = privateDirectory(join(deploymentRoot, 'evidence'));
   const contextRoot = privateDirectory(join(deploymentRoot, 'context'));
   const snapshot = repositorySnapshot(repository.root, stateRoot);
-  const adapters = advanced.adapters ?? builtInAdapters(routes, repository.root, adapterOptions);
+  const rawClaudeCredentials = advanced.claudeCredentials ?? {};
+  closed(rawClaudeCredentials, [
+    'cmd', 'cmdArgs', 'credentialPath', 'fileProbe', 'fileRead', 'keychainMtime', 'keychainRead',
+    'lockPath', 'lockPollMs', 'lockTimeoutMs', 'now', 'onReceipt', 'persist', 'refreshRuntime',
+  ], 'advanced claudeCredentials');
+  for (const field of [
+    'fileProbe', 'fileRead', 'keychainMtime', 'keychainRead', 'now', 'onReceipt',
+    'persist', 'refreshRuntime',
+  ]) {
+    if (rawClaudeCredentials[field] !== undefined && typeof rawClaudeCredentials[field] !== 'function') {
+      throw deploymentError(`advanced claudeCredentials.${field} must be a function`);
+    }
+  }
+  for (const field of ['cmd', 'credentialPath', 'lockPath']) {
+    if (rawClaudeCredentials[field] !== undefined
+      && (typeof rawClaudeCredentials[field] !== 'string' || rawClaudeCredentials[field].length === 0
+        || rawClaudeCredentials[field].includes('\0'))) {
+      throw deploymentError(`advanced claudeCredentials.${field} must be a non-empty string`);
+    }
+  }
+  if (rawClaudeCredentials.cmdArgs !== undefined
+    && (!Array.isArray(rawClaudeCredentials.cmdArgs) || rawClaudeCredentials.cmdArgs.length > 64
+      || rawClaudeCredentials.cmdArgs.some((value) => typeof value !== 'string' || value.includes('\0')))) {
+    throw deploymentError('advanced claudeCredentials.cmdArgs must be a bounded string array');
+  }
+  for (const field of ['lockPollMs', 'lockTimeoutMs']) {
+    if (rawClaudeCredentials[field] !== undefined
+      && (!Number.isSafeInteger(rawClaudeCredentials[field]) || rawClaudeCredentials[field] <= 0)) {
+      throw deploymentError(`advanced claudeCredentials.${field} must be a positive safe integer`);
+    }
+  }
+  const claudeCredentialCache = usesBuiltInAdapters
+    && routes.some((route) => route.harness === 'claude-code' && (route.provider ?? 'claude') === 'claude')
+    ? await ClaudeCredentialCache.open({
+      credentialPath: rawClaudeCredentials.credentialPath ?? join(homedir(), '.claude', '.credentials.json'),
+      refreshRoot: join(runtimeRoot, 'claude-refresh'),
+      // Keychain authority is available only through the deployment-owned shim seam. This keeps
+      // tests, embedded deployments, and workers from ever invoking the host Keychain directly;
+      // a macOS host integration injects its bounded `security` reader here at deployment open.
+      keychainRead: rawClaudeCredentials.keychainRead ?? (() => null),
+      keychainMtime: rawClaudeCredentials.keychainMtime ?? (() => null),
+      ...rawClaudeCredentials,
+    }) : null;
+  const adapters = advanced.adapters
+    ?? builtInAdapters(routes, repository.root, adapterOptions, claudeCredentialCache);
   if (!record(adapters) || Object.keys(adapters).length === 0) {
     throw deploymentError('advanced adapters must be a non-empty object');
   }
   const projection = defaultCredentialProjection(repository.root, {
     projectNativeKimi: nativeKimiAuthentication?.state === 'ready',
+    claudeCredentialCache,
   });
   const adapterAuthentication = await projectedAdapterAuthentication(
     adapters, repository.root, runtimeRoot, projection,
@@ -1560,6 +1652,7 @@ export async function openBatonDeployment(rawOptions, createDriver) {
     ...(toolchainProjection ? { toolchainProjection } : {}),
     runtimeIsolation: {
       root: runtimeRoot,
+      credentialEnv: projection.credentialEnv,
       credentialFiles: projection.credentialFiles,
       credentialTrees: projection.credentialTrees,
     },
@@ -1604,6 +1697,8 @@ export async function openBatonDeployment(rawOptions, createDriver) {
     await application.ready;
     return new BatonDeployment(application, principal, readiness, {
       driver, repository, deploymentRoot, residentOptions, workspaceProbe,
+      claudeCredentialProbe: claudeCredentialCache ? () => claudeCredentialCache.metadata() : null,
+      claudeCredentialCache,
     });
   } catch (error) {
     try {
@@ -1617,3 +1712,4 @@ export async function openBatonDeployment(rawOptions, createDriver) {
 }
 
 export { DEFAULT_ROUTES as DEFAULT_BATON_DEPLOYMENT_ROUTES };
+export { ClaudeCredentialCache } from './claude-credential-cache.mjs';
