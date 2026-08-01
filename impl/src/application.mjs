@@ -7419,6 +7419,27 @@ export class BatonApplication {
         allAttention.push(checkpoint);
       }
     }
+    // Issue #62: a refused scratchpad write is an upward signal, never silent. The hub mints
+    // scratchpad.write_result with the receipt on every worker write attempt; an ok:false
+    // result (an entry outside the four closed kinds, a stale fence, a partition cap) means the
+    // worker needs the corrective — the orchestrator can steer the right shape in, and the
+    // failure lands in status().attention and wave.progress() instead of vanishing in the log.
+    // Bounded: the last two failures per worker.
+    for (const handle of workers) {
+      const workerId = typeof handle === 'string' ? handle : handle?.id;
+      if (typeof workerId !== 'string' || typeof this.driver.log?.read !== 'function') continue;
+      const failures = this.driver.log.read(workerId).filter((event) => (
+        event?.kind === 'scratchpad.write_result' && event.payload?.ok === false
+      )).slice(-2);
+      for (const event of failures) {
+        allAttention.push({
+          kind: 'scratchpad_write_failed',
+          workerId,
+          code: event.payload?.result ?? 'scratchpad_write_invalid',
+          requestId: `swf:${workerId}:${event.seq ?? event.turnEpoch ?? 0}`,
+        });
+      }
+    }
     if (phase === 'interruption_uncertain') {
       allAttention.push({
         kind: 'session_preservation', state: 'quarantined',

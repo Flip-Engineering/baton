@@ -530,6 +530,9 @@ const IMPLEMENT_CONSTRAINTS = Object.freeze([
   'HARD CONSTRAINT (wire_frame_oversize, issue #28): never read a whole file over ~1500 lines; grep -an to locate, then read targeted ranges.',
   'Do NOT git commit — the orchestrator harvests your worktree.',
   'Match existing code style; minimal diffs; no new application commands, registry entries, or MCP/CLI/web surfaces.',
+  // Issue #62: the scratchpad's four closed entry kinds, verbatim — an entry outside these
+  // refuses scratchpad_entry_invalid (a demo surveyor lost three writes to a hand-rolled shape).
+  'SCRATCHPAD_WRITE is printed TEXT, never a tool; entries are EXACTLY note{text} | plan{objective,steps[{text,state}],supersedes} | doubt{question,context} | link{label,relation,target} (+ expectedFence:"current", unique idempotencyKey).',
 ]);
 const IMPLEMENT_DEFAULT_POLICY = Object.freeze({
   steering: 'nudge-on-checkpoint',
