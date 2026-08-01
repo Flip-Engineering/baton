@@ -130,6 +130,7 @@ export class CapabilityRegistry {
     if (ctx.signal?.aborted) throw typed('capability invocation cancelled', 'cancelled');
     const actor = this._actor(ctx);
     if (ctx.repoId !== undefined && (typeof ctx.repoId !== 'string' || ctx.repoId.length === 0 || Buffer.byteLength(ctx.repoId) > 256 || ctx.repoId.includes('\0'))) throw typed('capability repository identity invalid', 'capability_repo_invalid');
+    if (ctx.worktreeRoot !== undefined && (typeof ctx.worktreeRoot !== 'string' || ctx.worktreeRoot.length === 0 || Buffer.byteLength(ctx.worktreeRoot) > 4_096 || ctx.worktreeRoot.includes('\0'))) throw typed('capability worktree root invalid', 'capability_worktree_invalid');
     if (ctx.idempotencyKey !== undefined && (typeof ctx.idempotencyKey !== 'string' || !SAFE_ID.test(ctx.idempotencyKey))) throw typed('capability idempotency identity invalid', 'capability_idempotency_invalid');
     if (ctx.transport !== undefined && !['web', 'mcp'].includes(ctx.transport)) throw typed('capability transport identity invalid', 'capability_transport_invalid');
     return {
@@ -137,6 +138,7 @@ export class CapabilityRegistry {
       ...(ctx.repoId === undefined ? {} : { repoId: ctx.repoId }),
       ...(ctx.idempotencyKey === undefined ? {} : { idempotencyKey: ctx.idempotencyKey }),
       ...(ctx.transport === undefined ? {} : { transport: ctx.transport }),
+      ...(ctx.worktreeRoot === undefined ? {} : { worktreeRoot: ctx.worktreeRoot }),
       ...(this.root === undefined ? {} : { root: this.root }),
     };
   }

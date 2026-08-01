@@ -808,6 +808,8 @@ export class Coordinator {
         }
       }
     }
+    this._atlasStructuralEvidence = opts.atlasStructuralEvidence ?? null;
+    if (this._atlasStructuralEvidence !== null && typeof this._atlasStructuralEvidence.classify !== 'function') throw new TypeError('Coordinator Atlas structural evidence authority is invalid');
     this._advisoryFeeds = opts.advisoryFeeds ?? null;
     const advisoryCards = this._advisoryFeeds?.cards?.() ?? [];
     if (advisoryCards.length > 0) {
@@ -6400,17 +6402,20 @@ export class Coordinator {
     if (handle.status === 'stopping') return { ok: false, result: 'worker_stopping' };
     if (!['working', 'blocked'].includes(handle.status)) return { ok: false, result: 'worker_not_active' };
 
-    const claim = await this._capabilityRegistry().invoke('cartographer-quartermaster', 'orientation.slice', args, {
-      budgetTokens: ctx.budgetTokens, signal: ctx.signal, actor: ctx.actor ?? 'orchestrator',
+    const cartographer = this._capabilityRegistry().cards().some((card) => card.name === 'cartographer') ? 'cartographer' : 'cartographer-quartermaster';
+    const worktreeRoot = handle.worktree;
+    if (typeof worktreeRoot !== 'string' || worktreeRoot.length === 0) throw Object.assign(new Error('orientation worker worktree is unavailable'), { code: 'orientation_worktree_unavailable' });
+    const claim = await this._capabilityRegistry().invoke(cartographer, 'orientation.slice', args, {
+      budgetTokens: ctx.budgetTokens, signal: ctx.signal, actor: ctx.actor ?? 'orchestrator', worktreeRoot,
     });
     if (!['ok', 'partial', 'needs_resume'].includes(claim.status) || !claim.refs?.[0]?.digest) {
       throw Object.assign(new Error('orientation capability did not produce a deliverable slice'), { code: 'orientation_not_deliverable' });
     }
-    const provenanceKeys = ['index_epoch', 'overlay_digest', 'staleness', 'artifactDigest', 'deterministic', 'mergeAuthority', 'verificationAuthority'];
+    const provenanceKeys = ['index_epoch', 'overlay_digest', 'staleness', 'language_ceiling', 'artifactDigest', 'deterministic', 'mergeAuthority', 'verificationAuthority'];
     const message = {
       kind: 'baton.orientation.slice', note,
       slice: {
-        op: claim.op, status: claim.status, summary: claim.summary, payload: claim.payload,
+        op: claim.op, status: claim.status, summary: claim.summary, focus: args.focus, ...(args.symbolFocus ? { symbolFocus: args.symbolFocus } : {}), payload: claim.payload,
         refs: claim.refs.map((ref) => Object.fromEntries(Object.entries(ref).filter(([key]) => ['kind', 'handle', 'digest', 'bytes', 'mediaType'].includes(key)))),
         ...(claim.cursor ? { cursor: claim.cursor } : {}),
         provenance: Object.fromEntries(Object.entries(claim.provenance).filter(([key]) => provenanceKeys.includes(key))),
@@ -10937,6 +10942,8 @@ export class Coordinator {
     let verifierSparseCheckoutIdentity = null;
     let baseVerifierSparseCheckoutIdentity = null;
     let verificationCleanupError = null;
+    let structuralEvidence = null;
+    let structuralEvidenceAuthority = null;
     let trustPhase = 'capture';
     try {
       // C5: thread the dispatching vendor through to captureCommit so the snapshot
@@ -11018,6 +11025,22 @@ export class Coordinator {
         baseVerifierSparseCheckoutIdentity = baseCreated?.sparseCheckoutIdentity ?? null;
         if ((workerToolchainProjection || baseVerifierToolchainProjection)
           && (!workerToolchainProjection || !baseVerifierToolchainProjection || canonicalDigest(workerToolchainProjection) !== canonicalDigest(baseVerifierToolchainProjection))) throw Object.assign(new Error('base verification toolchain projection mismatch'), { code: 'verification_environment_mismatch' });
+      }
+      if (this._atlasStructuralEvidence && baseVerifyPath && verifyPath) {
+        structuralEvidence = await this._atlasStructuralEvidence.classify({
+          beforeRoot: baseVerifyPath, afterRoot: verifyPath, changedPaths,
+          budgetTokens: Math.max(1, Math.min(20_000, Number(task.brief.budget?.tokens ?? 20_000))),
+        });
+        const structuralEvent = this._log.append({
+          worker: 'hub-atlas', harness: 'baton', turnEpoch: 0, actor: 'policy', kind: 'atlas.structural_classified',
+          payload: {
+            worker: handle.id, taskId: task.id, runId: task.runId ?? null, operation: 'diff.structural', rung: 'R1',
+            changeClass: structuralEvidence.changeClass, files: structuralEvidence.files,
+            digest: structuralEvidence.digest, bytes: structuralEvidence.bytes, path: structuralEvidence.path,
+            mediaType: structuralEvidence.mediaType, ceiling: structuralEvidence.ceiling, languageCeiling: structuralEvidence.languageCeiling,
+          },
+        });
+        structuralEvidenceAuthority = this._coordMapEvent(structuralEvent);
       }
       if (this._acceptOpts.requireCoverage && baseSha && sha && typeof this._worktrees.changedLines === 'function') {
         task.changedLines = await this._worktrees.changedLines(baseSha, sha);
@@ -11147,6 +11170,14 @@ export class Coordinator {
         mediaType: 'application/vnd.baton.verdict+json', accepted: accept,
         provenance: [evidence], verdict,
       });
+      if (structuralEvidence && structuralEvidenceAuthority) {
+        manifests.push({
+          taskId: task.id, kind: 'structural-class', digest: structuralEvidence.digest,
+          refs: { handle: structuralEvidence.handle, digest: structuralEvidence.digest, bytes: structuralEvidence.bytes, mediaType: structuralEvidence.mediaType },
+          mediaType: structuralEvidence.mediaType, accepted: false, provenance: [structuralEvidenceAuthority],
+          structural: { changeClass: structuralEvidence.changeClass, files: structuralEvidence.files, ceiling: structuralEvidence.ceiling, languageCeiling: structuralEvidence.languageCeiling },
+        });
+      }
       if ((workerResult?.artifacts?.files?.length ?? 0) > 0 || (workerResult?.artifacts?.commits?.length ?? 0) > 0) {
         const claimEvent = this._log.read(handle.id).filter((event) => event.kind === 'lifecycle.turn_completed').at(-1);
         const claimEvidence = this._coordMapEvent(claimEvent);

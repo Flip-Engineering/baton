@@ -22,6 +22,10 @@ import { CoordinationStore } from './coordination-store.mjs';
 import { routeTupleKey } from './route-tuple.mjs';
 import { CapabilityRegistry } from './capability-registry.mjs';
 import { AtlasRepresentationProducer } from './atlas-representation-producer.mjs';
+import { AtlasCodeIndex } from './atlas-index.mjs';
+import { AtlasStructuralDelta } from './atlas-structural.mjs';
+import { AtlasStructuralEvidence } from './atlas-structural-evidence.mjs';
+import { CartographerQuartermaster } from './cartographer-quartermaster.mjs';
 import { AdvisoryFeedRegistry } from './advisory-feed-registry.mjs';
 import { ProviderPollSupervisor } from './provider-poll-supervisor.mjs';
 import { ProviderProcessingSupervisor } from './provider-processing-supervisor.mjs';
@@ -65,6 +69,33 @@ const normalizeDrainPolicy = (value) => {
     throw new TypeError('drain policy must be a closed bounded deployment policy');
   }
   return Object.freeze({ maxWorkers: policy.maxWorkers, timeoutMs: policy.timeoutMs, pollMs: policy.pollMs });
+};
+const normalizeAtlasDeployment = (value, repoRoot) => {
+  if (value === undefined) return null;
+  const fields = new Set(['artifactRoot', 'maxArtifactBytes', 'maxFiles', 'maxResults', 'maxSourceBytes']);
+  if (!value || typeof value !== 'object' || Array.isArray(value) || Object.keys(value).some((key) => !fields.has(key))
+    || typeof value.artifactRoot !== 'string' || value.artifactRoot.length === 0
+    || !Number.isSafeInteger(value.maxArtifactBytes) || value.maxArtifactBytes <= 0) throw new TypeError('atlas must be one bounded deployment assembly configuration');
+  const config = Object.freeze({
+    artifactRoot: resolve(value.artifactRoot), maxArtifactBytes: value.maxArtifactBytes,
+    maxSourceBytes: value.maxSourceBytes ?? 2 * 1024 * 1024,
+    maxFiles: value.maxFiles ?? 20_000, maxResults: value.maxResults ?? 100_000,
+  });
+  if (['maxArtifactBytes', 'maxFiles', 'maxResults', 'maxSourceBytes'].some((key) => !Number.isSafeInteger(config[key]) || config[key] <= 0)) throw new TypeError('atlas ceilings must be positive safe integers');
+  let paths = [];
+  try { paths = execFileSync('git', ['ls-files', '--cached', '--others', '--exclude-standard'], { cwd: repoRoot, encoding: 'utf8' }).split(/\r?\n/u).filter(Boolean); } catch { /* createDriver reports repository failures through its ordinary worktree checks */ }
+  const available = paths.some((path) => /\.(?:[cm]?[jt]sx?|html?|css)$/iu.test(path));
+  return Object.freeze({ ...config, availability: Object.freeze(available
+    ? { status: 'available', reason: 'language_ceiling_satisfied' }
+    : { status: 'empty', reason: 'language_ceiling' }) });
+};
+const assembledCapability = (name, capability, transformCard = (card) => card) => {
+  const assembled = {
+    card: () => Object.freeze({ ...transformCard(capability.card()), name }),
+    invoke: capability.invoke.bind(capability),
+  };
+  for (const method of ['resume', 'reverify', 'cancel']) if (typeof capability[method] === 'function') assembled[method] = capability[method].bind(capability);
+  return Object.freeze(assembled);
 };
 
 export { Coordinator, ModelSelectionError, SessionSelectionError, IntegrationError, ReviewSelectionError, PublicationError } from './coordinator.mjs';
@@ -1049,6 +1080,7 @@ function refereeFn(runtime, task, result, opts) {
  *          routeLearningPolicy?:{mode:'round-robin'|'adaptive'|'auto',halfLifeMs:number,explorationConstant:number,seedDiscount:number,minSamplesForAdaptive:number,defaultPriorSuccessRate:number},
  *          sessionRecoveryPolicy?:{maxAttempts:number,maxSessions:number,maxStateRows:number,timeoutMs:number},
  *          maxCapabilityBudgetTokens?:number, maxCapabilityEnvelopeBytes?:number,
+ *          atlas?:{artifactRoot:string,maxArtifactBytes:number,maxSourceBytes?:number,maxFiles?:number,maxResults?:number},
  *          representationProduction?:{policy:object,artifactRoot:string,authorize:Function,resolveEnvironment:Function},
  *          goalPlanAuthority?:{policy:object,authorize:Function},
  *          canonicalOrderPolicy?:{maxLedgerBytes:number,maxEventBytes:number,maxEvents:number,maxReceiptBytes:number},
@@ -1071,6 +1103,7 @@ export function createDriver(opts) {
     ? null
     : normalizeProviderGovernancePolicy(opts.providerGovernance, Object.keys(opts.adapters ?? {}));
   const deploymentRepoId = opts.repoId ?? 'local';
+  const atlasDeployment = normalizeAtlasDeployment(opts.atlas, opts.repoRoot);
   if (opts.deploymentBaseSha !== undefined) {
     if (!/^[a-f0-9]{40}$/u.test(opts.deploymentBaseSha)) {
       throw new TypeError('deployment base SHA must be an exact commit ID');
@@ -1258,6 +1291,35 @@ export function createDriver(opts) {
   const driverDrainIdempotencyKey = `driver:drain:${canonicalDigest({ repoId: deploymentRepoId, writerLeaseToken: writerLease.token })}`;
   if (routeLearningPolicy) router.hydrate(coordination.routeObservations());
   const configuredCapabilities = { ...(opts.capabilities ?? {}) };
+  const configuredCapabilityContexts = { ...(opts.capabilityContexts ?? {}) };
+  let atlasStructuralEvidence = null;
+  if (atlasDeployment) {
+    const names = ['atlas-index', 'atlas-structural', 'cartographer'];
+    if (names.some((name) => Object.hasOwn(configuredCapabilities, name) || Object.hasOwn(opts.capabilityFactories ?? {}, name) || Object.hasOwn(configuredCapabilityContexts, name))) throw new TypeError('duplicate opted-in Atlas capability assembly');
+    const index = new AtlasCodeIndex({
+      artifactRoot: join(atlasDeployment.artifactRoot, 'index'), maxArtifactBytes: atlasDeployment.maxArtifactBytes,
+      maxSourceBytes: atlasDeployment.maxSourceBytes, maxFiles: atlasDeployment.maxFiles, maxResults: atlasDeployment.maxResults,
+      availability: atlasDeployment.availability,
+    });
+    const structural = new AtlasStructuralDelta({
+      artifactRoot: join(atlasDeployment.artifactRoot, 'structural'), maxArtifactBytes: atlasDeployment.maxArtifactBytes,
+      maxSourceBytes: atlasDeployment.maxSourceBytes, availability: atlasDeployment.availability,
+    });
+    const cartographer = new CartographerQuartermaster({
+      atlas: index, artifactRoot: join(atlasDeployment.artifactRoot, 'cartographer'), maxArtifactBytes: atlasDeployment.maxArtifactBytes,
+      availability: atlasDeployment.availability,
+    });
+    configuredCapabilities['atlas-index'] = assembledCapability('atlas-index', index, (card) => ({
+      ...card, ops: { ...card.ops, 'index.build': { ...card.ops['index.build'], latency_class: 'bounded_batch' } },
+    }));
+    configuredCapabilities['atlas-structural'] = assembledCapability('atlas-structural', structural);
+    configuredCapabilities.cartographer = assembledCapability('cartographer', cartographer);
+    configuredCapabilityContexts['atlas-index'] = { baseRoot: opts.repoRoot };
+    atlasStructuralEvidence = new AtlasStructuralEvidence({
+      structural, artifactRoot: join(atlasDeployment.artifactRoot, 'structural-class'),
+      maxArtifactBytes: atlasDeployment.maxArtifactBytes, maxSourceBytes: atlasDeployment.maxSourceBytes,
+    });
+  }
   let representationProducer = null;
   if (representationProduction !== undefined) {
     if (Object.hasOwn(configuredCapabilities, 'atlas-representation-producer') || Object.hasOwn(opts.capabilityFactories ?? {}, 'atlas-representation-producer')) throw new TypeError('duplicate capability registration: atlas-representation-producer');
@@ -1285,7 +1347,7 @@ export function createDriver(opts) {
     throw new TypeError('maxCapabilityBudgetTokens and maxCapabilityEnvelopeBytes must be deployment-derived for a non-empty capability registry');
   }
   const capabilities = new CapabilityRegistry({
-    capabilities: configuredCapabilities, contexts: opts.capabilityContexts ?? {}, maxBudgetTokens: opts.maxCapabilityBudgetTokens ?? 1, maxEnvelopeBytes: opts.maxCapabilityEnvelopeBytes ?? 1, root: opts.repoRoot,
+    capabilities: configuredCapabilities, contexts: configuredCapabilityContexts, maxBudgetTokens: opts.maxCapabilityBudgetTokens ?? 1, maxEnvelopeBytes: opts.maxCapabilityEnvelopeBytes ?? 1, root: opts.repoRoot,
     idempotencyRoot: join(opts.logDir, 'capability-idempotency'),
     record: (event) => {
       const logged = log.append({ worker: 'hub-capability', harness: 'baton', turnEpoch: 0, actor: event.actor, kind: event.kind, payload: Object.fromEntries(Object.entries(event).filter(([key]) => !['kind', 'actor'].includes(key))) });
@@ -1382,6 +1444,7 @@ export function createDriver(opts) {
     }),
     runtimeScopes,
     capabilities,
+    atlasStructuralEvidence,
     advisoryFeeds,
     providerReconciliation,
     providerProcessingSchedule: providerProcessingPolicy ? { repoId: opts.repoId, ...providerProcessingPolicy } : undefined,

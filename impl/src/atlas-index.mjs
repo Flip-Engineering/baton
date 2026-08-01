@@ -239,6 +239,7 @@ export class AtlasCodeIndex {
     this.maxResults = opts.maxResults ?? 100000; this.maxArtifactBytes = opts.maxArtifactBytes ?? 64 * 1024 * 1024;
     for (const key of ['maxSourceBytes', 'maxFiles', 'maxResults', 'maxArtifactBytes']) if (!Number.isSafeInteger(this[key]) || this[key] <= 0) throw new TypeError(`Atlas ${key} must be a positive safe integer`);
     this.now = opts.now ?? Date.now; this.record = opts.record ?? null;
+    this.availability = opts.availability ?? Object.freeze({ status: 'available', reason: 'language_ceiling_satisfied' });
     mkdirSync(this.indexRoot, { recursive: true, mode: 0o700 }); mkdirSync(this.resultRoot, { recursive: true, mode: 0o700 });
   }
   card() {
@@ -256,6 +257,8 @@ export class AtlasCodeIndex {
       },
       languages: [...new Set(Object.values(LANGUAGE).map(([name]) => name))], shared_state: { code_index: 'snapshot+overlay' },
       ceilings: { maxSourceBytes: this.maxSourceBytes, maxFiles: this.maxFiles, maxResults: this.maxResults, maxArtifactBytes: this.maxArtifactBytes },
+      availability: this.availability,
+      languageCeiling: { family: 'javascript-typescript', extensions: Object.keys(LANGUAGE).sort(), maximumRung: 'R2', enforcingGate: 'atlas-representation-ceiling' },
       sandbox_required: 'read_only_worktree', cost_model: 'cpu_bound_local',
       limitations: [`overlay recomputed per query`, `hard result ceiling ${this.maxResults}`, 'SCIP JSON interchange only; no live LSP/protobuf', 'no semantic retrieval', 'no CPG/IR/semantic merge'],
     });
@@ -314,11 +317,11 @@ export class AtlasCodeIndex {
     const wallMs = Math.max(0, this.now() - started);
     const status = analysisStatus === 'partial' ? 'partial' : truncated ? 'needs_resume' : 'ok';
     const result = Object.freeze({
-      op, status, summary: full.summary, payload,
+      op, status, summary: this.availability.status === 'empty' ? 'no JavaScript/TypeScript-family sources; honest empty Atlas result' : full.summary, payload,
       refs: [{ handle: `art:sha256:${artifact.digest}`, kind, digest: artifact.digest, bytes: artifact.bytes, mediaType: 'application/vnd.baton.atlas-index+json', path: artifact.path }, ...extraRefs],
       ...(status === 'needs_resume' ? { cursor: `atlas:${artifact.digest}:${payload.length}` } : {}),
       cost: { tokens_out: Math.ceil(Buffer.byteLength(JSON.stringify(payload)) / 4), wall_ms: wallMs, usd: 0, underlying: EXTRACTOR_VERSION },
-      provenance: { tool: EXTRACTOR_VERSION, deterministic: true, artifactDigest: artifact.digest, ...provenance },
+      provenance: { tool: EXTRACTOR_VERSION, deterministic: true, artifactDigest: artifact.digest, language_ceiling: this.availability.status === 'empty' ? 'honest_empty' : 'javascript_typescript_family', ...provenance },
     });
     this.record?.({ kind: 'capability.op.completed', actor: ctx.actor ?? 'orchestrator', op, status: result.status, artifactDigest: artifact.digest, wallMs, indexEpoch: provenance.index_epoch, overlayDigest: provenance.overlay_digest });
     return result;
@@ -369,7 +372,7 @@ export class AtlasCodeIndex {
       items = view.files.map((file) => {
         const symbols = file.definitions.filter((definition) => terms.some((term) => definition.name.toLowerCase().includes(term)));
         const lexical = file.lines.reduce((count, line) => count + (terms.some((term) => line.toLowerCase().includes(term)) ? 1 : 0), 0);
-        return { path: file.path, score: symbols.length * 5 + lexical + file.imports.length * 0.1, symbols, imports: file.imports.map((item) => item.source), calls: file.calls.filter((call) => terms.includes(call.calleeName.toLowerCase())) };
+        return { path: file.path, digest: file.digest, score: symbols.length * 5 + lexical + file.imports.length * 0.1, symbols, imports: file.imports.map((item) => item.source), calls: file.calls.filter((call) => terms.includes(call.calleeName.toLowerCase())) };
       }).filter((item) => item.score > 0).sort((a, b) => b.score - a.score || compareCanonicalStrings(a.path, b.path)); summary = `${items.length} orientation files for ${terms.join(', ')}`;
     } else if (op === 'scip.export') {
       const documents = view.files.map((file) => ({
