@@ -9887,14 +9887,12 @@ export class Coordinator {
         }
       }
     }
-    rows.sort((a, b) => (a.seq - b.seq)
-      || (a.requestId < b.requestId ? -1 : a.requestId > b.requestId ? 1 : 0));
+    rows.sort((a, b) => (a.seq - b.seq) || String(a.requestId).localeCompare(String(b.requestId)));
     // One tombstone per requestId: last durable outcome wins (exactly-once projection key).
     const byId = new Map();
     for (const row of rows) byId.set(row.requestId, row);
     const deduped = [...byId.values()].sort(
-      (a, b) => (a.seq - b.seq)
-        || (a.requestId < b.requestId ? -1 : a.requestId > b.requestId ? 1 : 0),
+      (a, b) => (a.seq - b.seq) || String(a.requestId).localeCompare(String(b.requestId)),
     );
     return deduped.slice(-cap).map(({ requestId, disposition, at }) => ({ requestId, disposition, at }));
   }

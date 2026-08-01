@@ -41,6 +41,12 @@ const DEFAULT_POLICY = Object.freeze({
   preflight: true,
   evidencePath: null,
   onProgress: null,
+  // Bidirectional v2 rule 3: the embedded decision-gating callback. Async, awaited, fired AT MOST
+  // ONCE per (runId, requestId); its return is validated against `{optionId}|{text}|undefined`.
+  onDecision: null,
+  // Bidirectional v2 rule 6: optional per-wait-cycle instrumentation (wall-clock, active-follow
+  // count, advancing cursors) so a caller/test can observe the wake laws without a live provider.
+  onWait: null,
   signal: null,
 });
 
@@ -98,6 +104,12 @@ function freezePolicy(raw) {
   if (policy.onProgress !== null && typeof policy.onProgress !== 'function') {
     throw driverError('wave driver policy onProgress is invalid', 'wave_driver_policy_invalid');
   }
+  if (policy.onDecision !== null && typeof policy.onDecision !== 'function') {
+    throw driverError('wave driver policy onDecision is invalid', 'wave_driver_policy_invalid');
+  }
+  if (policy.onWait !== null && typeof policy.onWait !== 'function') {
+    throw driverError('wave driver policy onWait is invalid', 'wave_driver_policy_invalid');
+  }
   if (policy.signal !== null && (!(policy.signal instanceof AbortSignal))) {
     throw driverError('wave driver policy signal is invalid', 'wave_driver_policy_invalid');
   }
@@ -140,6 +152,81 @@ function checkpointOf(outline) {
   const attention = Array.isArray(outline?.attention) ? outline.attention : [];
   return attention.find((entry) => entry?.kind === 'turn_checkpoint' && typeof entry?.requestId === 'string')
     ?? null;
+}
+
+// Bidirectional v2 rule 7: sibling extractor beside checkpointOf. Blocking upward interactions
+// (decision/question/approval) from the SAME status view the driver already hashes, in stable
+// requestId order (the first is the gated one). This is the reducer's steering input, not decor.
+const BLOCKING_INTERACTION_KINDS = Object.freeze({
+  answer_decision: 'decision', answer_question: 'question', answer_approval: 'approval',
+});
+
+function interactionsOf(outline) {
+  const attention = Array.isArray(outline?.attention) ? outline.attention : [];
+  return attention
+    .filter((entry) => typeof entry?.requestId === 'string'
+      && Object.hasOwn(BLOCKING_INTERACTION_KINDS, entry?.kind))
+    .sort((a, b) => (a.requestId < b.requestId ? -1 : a.requestId > b.requestId ? 1 : 0));
+}
+
+// Bidirectional v2 rule 7: ONE ordered per-member reducer controlling BOTH rendering and steering.
+// Precedence: pending blocking interaction > checkpoint+claim > checkpoint > working. A member with
+// ANY pending blocking interaction is `blocked` — suppressed from nudge AND claim that poll.
+function reduceMember(interactions, checkpoint) {
+  if (interactions.length > 0) {
+    const gated = interactions[0];
+    return {
+      class: BLOCKING_INTERACTION_KINDS[gated.kind],
+      gated,
+      interactions,
+      blocked: true,
+    };
+  }
+  if (checkpoint) {
+    return { class: checkpoint.claim ? 'checkpoint+claim' : 'checkpoint', gated: null, interactions: [], blocked: false };
+  }
+  return { class: 'working', gated: null, interactions: [], blocked: false };
+}
+
+// Bidirectional v2 rule 3: validate the closed callback return union `{optionId}|{text}|undefined`.
+function normalizeDecisionReturn(value) {
+  if (value === undefined) return { kind: 'deferred' };
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return { kind: 'invalid' };
+  const keys = Object.keys(value);
+  if (keys.length === 1 && keys[0] === 'optionId'
+    && typeof value.optionId === 'string' && value.optionId.length > 0) {
+    return { kind: 'answer', answer: { optionId: value.optionId } };
+  }
+  if (keys.length === 1 && keys[0] === 'text'
+    && typeof value.text === 'string' && value.text.length > 0) {
+    return { kind: 'answer', answer: { text: value.text } };
+  }
+  return { kind: 'invalid' };
+}
+
+// Bidirectional v2 rule 6: a follow page ends the sleep early ONLY on a target change
+// (checkpoint/decision park or resolve → the run's own `execution` category; a terminal transition
+// → `page.terminal`). Unrelated backlog (sibling traffic filtered out of this run, non-execution
+// categories) advances the cursor but does NOT wake.
+function isTargetChange(page) {
+  if (!page) return false;
+  if (page.terminal === true) return true;
+  const changes = Array.isArray(page.changes) ? page.changes : [];
+  return changes.some((change) => change?.category === 'execution');
+}
+
+// Bidirectional v2 rule 3: answers ride the member's own `run.answer`. ONE normalized outcome union
+// covering application exceptions (application_interaction_not_found), coordinator refusals
+// (already_resolved/invalid_answer/stale_discarded/delivery_refused), and adapter throws — never a
+// driver crash. Success surfaces the coordinator's own result code (`applied`).
+async function deliverDecisionAnswer(run, requestId, answer) {
+  try {
+    const view = await run.answer(requestId, answer);
+    // `application.answer` reports the coordinator's own result code on `view.lastAction.result`.
+    return { result: view?.lastAction?.result ?? view?.action?.result ?? null };
+  } catch (error) {
+    return { result: error?.code ?? 'answer_exception', message: String(error?.message ?? error) };
+  }
 }
 
 export function createWaveDriver(baton, rawPolicy = null) {
@@ -232,6 +319,14 @@ export function createWaveDriver(baton, rawPolicy = null) {
     const freshState = () => ({ digest: null, nudges: 0, done: false, claimAttempted: false, claimed: false });
     const nudgedRequestIds = new Set(); // L4: dedup within a single pause (requestId-stable across polls)
     const failuresByRequestId = new Map(); // consecutive delivery failures per pause; K=3 = unsteerable
+    // Bidirectional v2 rule 3: at-most-once decision-callback dedup, keyed `${runId}:${requestId}`.
+    const decisionFired = new Set();
+    const decisionEvidence = []; // v2 rule 3: one driver-evidence line per fired decision.
+    // Bidirectional v2 rule 6: per-member follow downgrade (application_follow_unavailable /
+    // cancellation) — one evidence line, never retried in a loop; the member falls back to sleep.
+    const followDowngraded = new Set();
+    const follows = [];
+    const waitCursors = new Map(); // last follow cursor per member (monotonic within/across cycles).
 
     const startedAt = Date.now();
     let lastMarker = '';
@@ -248,6 +343,85 @@ export function createWaveDriver(baton, rawPolicy = null) {
       });
     };
 
+    // Bidirectional v2 rule 6: the poll sleep rides ONE follow per live member. Wait-cycle law —
+    // race the poll timer against one follow per member; advance each cursor through
+    // `follow.throughCursor` even on empty pages; only a target change (checkpoint/decision/
+    // terminal) ends the sleep early; unrelated backlog continues against the remaining interval;
+    // abort and AWAIT all losers so the active-follow count returns to zero every cycle; an
+    // unavailable/cancelled follow downgrades that member to the plain sleep ONCE.
+    const waitForWake = async (members) => {
+      const intervalMs = policy.pollIntervalMs;
+      const startedAt = Date.now();
+      const eligible = members.filter(
+        (member) => !followDowngraded.has(member.role) && Number.isSafeInteger(member.cursor),
+      );
+      const emit = (info) => {
+        if (typeof policy.onWait !== 'function') return;
+        try { policy.onWait({ startedAt, cursors: Object.fromEntries(waitCursors), ...info }); }
+        catch { /* caller renders */ }
+      };
+      if (eligible.length === 0 || aborted()) {
+        await sleep(intervalMs);
+        emit({ elapsedMs: Date.now() - startedAt, wokeEarly: false, activeFollows: 0, peakFollows: 0, followed: [] });
+        return;
+      }
+      const controller = new AbortController();
+      if (policy.signal) policy.signal.addEventListener('abort', () => controller.abort(), { once: true });
+      const deadline = startedAt + intervalMs;
+      let wokeEarly = false;
+      let active = 0;
+      let peak = 0;
+      const followed = [];
+      const track = (delta) => { active += delta; if (active > peak) peak = active; };
+      const followMember = async (member) => {
+        let cursor = member.cursor;
+        waitCursors.set(member.role, cursor);
+        followed.push(member.role);
+        while (!controller.signal.aborted && Date.now() < deadline) {
+          const remaining = deadline - Date.now();
+          if (remaining <= 0) break;
+          const timeoutMs = Math.max(1, Math.min(remaining, intervalMs));
+          track(1);
+          let view;
+          try {
+            view = await member.run.followOnce({ afterCursor: cursor, timeoutMs, signal: controller.signal });
+          } catch (error) {
+            track(-1);
+            if (error?.code === 'application_follow_cancelled') return; // an aborted loser
+            if (!followDowngraded.has(member.role)) {
+              followDowngraded.add(member.role);
+              follows.push({
+                role: member.role, runId: member.run.id,
+                at: new Date().toISOString(), reason: error?.code ?? 'application_follow_unavailable',
+              });
+            }
+            return;
+          }
+          track(-1);
+          const page = view?.follow;
+          if (page && Number.isSafeInteger(page.throughCursor) && page.throughCursor > cursor) {
+            cursor = page.throughCursor; // advance through throughCursor even when changes are empty
+            waitCursors.set(member.role, cursor);
+          }
+          if (isTargetChange(page)) {
+            wokeEarly = true;
+            controller.abort(); // wake: cancel the timer and every sibling follow
+            return;
+          }
+          // Unrelated backlog / a plain timeout — continue against the remaining interval.
+        }
+      };
+      const timer = new Promise((resolve) => {
+        const handle = setTimeout(resolve, intervalMs);
+        controller.signal.addEventListener('abort', () => { clearTimeout(handle); resolve(); }, { once: true });
+      });
+      const followers = eligible.map((member) => followMember(member));
+      await timer;
+      controller.abort();
+      await Promise.allSettled(followers);
+      emit({ elapsedMs: Date.now() - startedAt, wokeEarly, activeFollows: active, peakFollows: peak, followed: [...followed] });
+    };
+
     let wave = null;
     let outcomes = [];
     let stop = null;
@@ -262,6 +436,9 @@ export function createWaveDriver(baton, rawPolicy = null) {
         // marker AND the source of the turn_checkpoint (requestId + changedPathsDigest).
         const markerParts = [];
         const paused = [];
+        const decisions = []; // v2 rule 3: members with a pending decision (onDecision candidates).
+        const liveMembers = []; // v2 rule 6: non-terminal members + their status-read cursor.
+        const classByRole = new Map(); // v2 rule 7: reducer output drives BOTH rendering and steering.
         const statusInfo = new Map();
         const runs = wave.runs;
         for (const [role, runHandle] of runs) {
@@ -269,12 +446,14 @@ export function createWaveDriver(baton, rawPolicy = null) {
           let terminal = false;
           let outline = {};
           let markerDigest = 'unavailable';
+          let cursor = null;
           try {
             const status = await runHandle.status();
             outline = status?.view ?? status ?? {};
             phase = canonicalRunPhase(outline.phase) ?? null;
             terminal = outline.terminal === true || applicationTerminal(phase) || phase === SUCCESS_RESTING;
             markerDigest = stallMarker(outline);
+            if (Number.isSafeInteger(outline.cursor)) cursor = outline.cursor;
           } catch {
             // L5/D10: a transient status failure contributes 'unavailable' (a marker CHANGE from
             // the prior real digest → resets the wave-level clock); only CONSECUTIVE unavailable
@@ -285,8 +464,24 @@ export function createWaveDriver(baton, rawPolicy = null) {
           const claimed = memberState.get(role)?.claimed === true;
           statusInfo.set(role, { terminal: terminal || claimed });
           if (!terminal && !claimed) {
+            // v2 rule 7: reduce this member from the same status view — ordered, precedence-fixed.
+            const interactions = interactionsOf(outline);
             const checkpoint = checkpointOf(outline);
-            if (checkpoint) paused.push({ role, run: runHandle, checkpoint });
+            const reduced = reduceMember(interactions, checkpoint);
+            classByRole.set(role, reduced.class);
+            // v2 rule 7: a blocked member is suppressed from nudge AND claim — the checkpoint (if
+            // any) is NOT admitted to the steerable `paused` set while an interaction is pending.
+            if (checkpoint && !reduced.blocked) paused.push({ role, run: runHandle, checkpoint });
+            // v2 rule 3 × rule 7: fire the decision callback ONLY for the GATED (first-by-requestId)
+            // interaction — a decision behind an earlier question/approval waits its turn. Rule 4
+            // already caps a worker at one pending decision, so this gates, never drops, a decision.
+            if (reduced.blocked && reduced.gated.kind === 'answer_decision') {
+              decisions.push({ role, run: runHandle, runId: runHandle.id, decision: reduced.gated });
+            }
+            // v2 rule 6: exclude terminal members from follows; retain the status-read cursor.
+            if (cursor !== null) liveMembers.push({ role, run: runHandle, cursor });
+          } else {
+            classByRole.set(role, phase === SUCCESS_RESTING || terminal ? 'terminal' : 'settled');
           }
         }
 
@@ -296,8 +491,61 @@ export function createWaveDriver(baton, rawPolicy = null) {
         if (marker !== lastMarker) { lastMarker = marker; lastMarkerAt = Date.now(); }
 
         if (typeof policy.onProgress === 'function') {
-          const line = markerParts.map(([role, phase, digest]) => `${role}=${phase ?? '?'}@${digest}`).join(' ');
-          try { policy.onProgress(line, { members: markerParts }); } catch { /* caller renders */ }
+          // v2 rule 7: the reducer's class is the rendered label (a decision-parked member never
+          // serializes as bare `working` again); the raw phase rides the structured second arg.
+          const line = markerParts
+            .map(([role, phase, digest]) => `${role}=${classByRole.get(role) ?? phase ?? '?'}@${digest}`)
+            .join(' ');
+          try { policy.onProgress(line, { members: markerParts, classes: [...classByRole] }); } catch { /* caller renders */ }
+        }
+
+        // v2 rule 3: fire the decision-gating callback per pending decision, serialized, at most
+        // once per (runId, requestId). An invalid return or a throw is recorded as evidence and
+        // NEVER answered — the interaction stays attention-required and the wave is never closed or
+        // superseded because a callback failed.
+        if (typeof policy.onDecision === 'function') {
+          for (const { role, run: runHandle, runId, decision } of decisions) {
+            const key = `${runId}:${decision.requestId}`;
+            if (decisionFired.has(key)) continue;
+            decisionFired.add(key);
+            const at = new Date().toISOString();
+            const expiresInMs = typeof decision.deadlineAt === 'number'
+              ? Math.max(0, decision.deadlineAt - Date.now())
+              : null;
+            let returned;
+            try {
+              returned = await policy.onDecision({
+                role,
+                runId,
+                requestId: decision.requestId,
+                question: decision.question ?? null,
+                options: Array.isArray(decision.options) ? decision.options : [],
+                allowFreeResponse: decision.allowFreeResponse === true,
+                recommended: decision.recommended ?? null,
+                expiresInMs,
+              });
+            } catch (error) {
+              decisionEvidence.push({
+                role, runId, requestId: decision.requestId, at,
+                evidence: 'callback_threw', message: String(error?.message ?? error),
+              });
+              continue;
+            }
+            const normalized = normalizeDecisionReturn(returned);
+            if (normalized.kind === 'deferred') {
+              decisionEvidence.push({ role, runId, requestId: decision.requestId, at, outcome: 'deferred' });
+              continue;
+            }
+            if (normalized.kind === 'invalid') {
+              decisionEvidence.push({ role, runId, requestId: decision.requestId, at, evidence: 'invalid_return' });
+              continue;
+            }
+            const delivered = await deliverDecisionAnswer(runHandle, decision.requestId, normalized.answer);
+            decisionEvidence.push({
+              role, runId, requestId: decision.requestId, at, outcome: delivered.result,
+              ...(delivered.message ? { message: delivered.message } : {}),
+            });
+          }
         }
 
         // L4/L6 steering.
@@ -319,7 +567,12 @@ export function createWaveDriver(baton, rawPolicy = null) {
             // retry stream itself keeps the marker alive and starves the stall fan-out).
             if ((failuresByRequestId.get(checkpoint.requestId) ?? 0) >= 3) continue;
             const unchanged = state.digest !== null && state.digest === checkpoint.changedPathsDigest;
-            if (unchanged && state.nudges >= policy.unproductiveNudgeBudget) {
+            // v2 rule 7: the treadmill (unproductive budget) is for CLAIM-ABSENT checkpoints. An
+            // unproductive re-park that carries a completed claim is claimed at THIS poll without
+            // burning the remaining budget — the first sighting still nudges (digest unset), so a
+            // productive claim-checkpoint keeps getting work (L6/D1/D6 unchanged).
+            const claimReady = checkpoint.claim != null && policy.finalization === 'claim-on-stall';
+            if (unchanged && (claimReady || state.nudges >= policy.unproductiveNudgeBudget)) {
               // L6: a re-park with an unchanged changedPathsDigest after the budget is the treadmill
               // — the member is done; stop nudging it.
               state.done = true;
@@ -405,7 +658,7 @@ export function createWaveDriver(baton, rawPolicy = null) {
         }
         if (now - startedAt >= policy.hardCapMs) { basis = 'hard_cap'; break; }
 
-        await sleep(policy.pollIntervalMs);
+        await waitForWake(liveMembers);
       }
 
       outcomes = await wave.settle({ timeoutMs: policy.settleTimeoutMs });
@@ -427,6 +680,10 @@ export function createWaveDriver(baton, rawPolicy = null) {
       basis,
       nudges,
       claims,
+      // Bidirectional v2 rule 3: one driver-evidence line per fired decision callback.
+      decisions: decisionEvidence,
+      // Bidirectional v2 rule 6: one downgrade line per member that lost the follow path.
+      follows,
       salt,
       pumpDrained: evidence.pumpDrained === true,
     };
