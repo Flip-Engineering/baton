@@ -228,10 +228,10 @@ test('registration: every board/package reflex tool is in the combined inventory
   await initialized(server);
   const response = await request(server, 2, 'tools/list', {});
   const names = response.result.tools.map((tool) => tool.name);
-  const expected = ['baton_board_post', 'baton_board_retitle', 'baton_board_reorder', 'baton_board_close', 'baton_board_read',
+  const expected = ['baton_board_post', 'baton_board_retitle', 'baton_board_reorder', 'baton_board_close', 'baton_board_drop', 'baton_board_read',
     'baton_package_admit', 'baton_package_attach', 'baton_package_read'];
   for (const name of expected) assert.ok(names.includes(name), `${name} must be registered`);
-  for (const name of ['baton_board_claim', 'baton_board_report', 'baton_board_drop']) {
+  for (const name of ['baton_board_claim', 'baton_board_report']) {
     assert.equal(names.includes(name), false, `${name} must NOT be registered (Part D.9)`);
   }
   const reflexTools = response.result.tools.filter((tool) => expected.includes(tool.name));

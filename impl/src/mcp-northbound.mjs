@@ -2,7 +2,11 @@ import { createHash, randomUUID } from 'node:crypto';
 import { northboundCapabilityToken } from './northbound-capability-authority.mjs';
 import { sanitizeGoalPlanProjection } from './goal-plan.mjs';
 import { APPLICATION_COMMAND_DEFINITIONS, validateApplicationCommandArgs, projectBoardView, projectContextPackageBranch } from './application.mjs';
-import { APPLICATION_SEMANTIC_REGISTRY, deriveSurfaceNames } from './application-semantics.mjs';
+import {
+  APPLICATION_SEMANTIC_REGISTRY,
+  SURFACING_MATRIX_KEYS,
+  deriveSurfaceNames,
+} from './application-semantics.mjs';
 
 const MCP_APPLICATION_ENTRIES = Object.entries(APPLICATION_COMMAND_DEFINITIONS)
   .filter(([, definition]) => definition.mcp)
@@ -62,6 +66,12 @@ const ORDINARY_APPLICATION_ENTRIES = Object.freeze([
   )),
 ]);
 
+export const SURFACING_MATRIX_MCP_ROWS = Object.freeze(
+  APPLICATION_SEMANTIC_REGISTRY.canonicalOperations.filter((operation) => (
+    SURFACING_MATRIX_KEYS.includes(operation.key) && operation.surfaces.includes('mcp')
+  )),
+);
+
 const PROTOCOL_VERSION = '2025-11-25';
 const CAPABILITY = Object.freeze({
   fleet_spawn: 'control', fleet_scratch_oracle: 'control', fleet_send: 'control', fleet_wait: 'observe', fleet_respond: 'approve',
@@ -76,27 +86,27 @@ const CAPABILITY = Object.freeze({
   // every reflex tool MUST be registered explicitly here, or `_authority` computes
   // `[undefined]` and refuses with `forbidden`.
   baton_context_eval: ['observe'],
-  baton_decision_list: ['observe'],
   baton_decision_answer: ['approve', 'observe'],
-  // Board/package slices: capability 'observe' — the real orchestrator-authority gate for the
-  // mutations is the mandatory run-orchestrator lease check inside dispatch (Part D/A.4).
-  baton_board_post: ['observe'], baton_board_retitle: ['observe'], baton_board_reorder: ['observe'],
-  baton_board_close: ['observe'], baton_board_read: ['observe'],
-  baton_package_admit: ['observe'], baton_package_attach: ['observe'], baton_package_read: ['observe'],
+  // Matrix mutations keep the existing transported posture: observe admits the tool call, while
+  // the run-orchestrator lease resolved inside S-2 is the control authority.
+  ...Object.fromEntries(SURFACING_MATRIX_MCP_ROWS.map((operation) => [operation.names.mcp, ['observe']])),
 });
 // Reflex surface contract Part A: the tool names bound by explicit `_dispatch` branches below
 // (never APPLICATION_COMMAND_DEFINITIONS keys — Part A.2). The read-only subset
 // (REFLEX_READ_ONLY_TOOLS, below near the reflex table) extends the observe-path error gate.
-const REFLEX_TOOL_NAMES = new Set(['baton_context_eval', 'baton_decision_list', 'baton_decision_answer']);
+const REFLEX_TOOL_NAMES = new Set([
+  'baton_context_eval', 'baton_decision_answer',
+  ...SURFACING_MATRIX_MCP_ROWS.map((operation) => operation.names.mcp),
+]);
 const STATEFUL = new Set(['fleet_spawn', 'fleet_scratch_oracle', 'fleet_goal_define', 'fleet_plan_propose', 'fleet_plan_approve', 'fleet_send', 'fleet_respond', 'fleet_interrupt', 'fleet_capability_invoke', 'fleet_reuse_decide', 'fleet_reuse_recheck', 'fleet_kill', 'fleet_drain',
   'baton_context_eval', 'baton_decision_answer',
-  'baton_board_post', 'baton_board_retitle', 'baton_board_reorder', 'baton_board_close',
-  'baton_package_admit', 'baton_package_attach',
+  ...SURFACING_MATRIX_MCP_ROWS.filter((operation) => operation.effect === 'control')
+    .map((operation) => operation.names.mcp),
   ...MCP_APPLICATION_ENTRIES.filter(([, , definition]) => definition.mcpStateful).map(([tool]) => tool)]);
 for (const [tool, , definition] of ORDINARY_APPLICATION_ENTRIES) if (definition.mcpStateful) STATEFUL.add(tool);
 const RECONCILABLE = new Set(['fleet_goal_define', 'fleet_plan_propose', 'fleet_plan_approve', 'baton_context_eval', 'baton_decision_answer',
-  'baton_board_post', 'baton_board_retitle', 'baton_board_reorder', 'baton_board_close',
-  'baton_package_admit', 'baton_package_attach',
+  ...SURFACING_MATRIX_MCP_ROWS.filter((operation) => operation.effect === 'control')
+    .map((operation) => operation.names.mcp),
   ...MCP_APPLICATION_ENTRIES.filter(([, , definition]) => definition.mcpStateful && definition.reconcilable).map(([tool]) => tool)]);
 for (const [tool, , definition] of ORDINARY_APPLICATION_ENTRIES) if (definition.mcpStateful && definition.reconcilable) RECONCILABLE.add(tool);
 const GOAL_PLAN_MUTATIONS = new Set(['fleet_goal_define', 'fleet_plan_propose', 'fleet_plan_approve']);
@@ -490,7 +500,7 @@ const ADVANCED_TOOL_DEFINITIONS = Object.freeze([
 // ADVANCED (fleet_* audience). Slice 1: context_eval (Part B) + decision tools (Part C);
 // slice 2: board tools (Part D) + package tools (Part E) — one merged array per the
 // MCP-SLICE1-INTEGRATION seam.
-const REFLEX_TOOL_DEFINITIONS = Object.freeze([
+const LEGACY_REFLEX_TOOL_DEFINITIONS = Object.freeze([
   {
     name: 'baton_context_eval',
     description: 'Evaluate one pure, closed Context program against an existing durably-admitted Context session, addressed by Run (with optional role) or by manifest digest.',
@@ -500,12 +510,6 @@ const REFLEX_TOOL_DEFINITIONS = Object.freeze([
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
   {
-    name: 'baton_decision_list',
-    description: 'List one Run\'s pending decision requests awaiting an answer, sanitized and bounded.',
-    inputSchema: schema({ ...repo, runId }, ['repoId', 'runId']),
-    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-  },
-  {
     name: 'baton_decision_answer',
     description: 'Answer one pending decision request by typed option or free-response text.',
     inputSchema: schema({
@@ -513,84 +517,58 @@ const REFLEX_TOOL_DEFINITIONS = Object.freeze([
     }, ['repoId', 'idempotencyKey', 'runId', 'requestId', 'answer']),
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
-  {
-    name: 'baton_board_post',
-    description: 'Post a new orchestrator-authority board item; refused if the caller-observed board fence is stale.',
-    inputSchema: schema({
-      ...repo, ...idem, runId, board: runId, title: { type: 'string', minLength: 1, maxLength: 160 },
-      detail: { oneOf: [{ type: 'string', minLength: 1, maxLength: 4_096 }, { type: 'null' }] },
-      owner: { oneOf: [{ type: 'string', minLength: 1, maxLength: 128 }, { type: 'null' }] },
-      evidence: { type: 'array', maxItems: 8, items: { type: 'object' } },
-      expectedBoardFence: { type: 'integer', minimum: 0 },
-    }, ['repoId', 'idempotencyKey', 'runId', 'board', 'title', 'expectedBoardFence']),
-    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-  },
-  {
-    name: 'baton_board_retitle',
-    description: 'Mint a retitled successor version of an open board item; refused if the caller-observed board fence is stale.',
-    inputSchema: schema({
-      ...repo, ...idem, runId, board: runId, itemId: runId,
-      itemVersion: { type: 'integer', minimum: 1 }, title: { type: 'string', minLength: 1, maxLength: 160 },
-      detail: { oneOf: [{ type: 'string', minLength: 1, maxLength: 4_096 }, { type: 'null' }] },
-      expectedBoardFence: { type: 'integer', minimum: 0 },
-    }, ['repoId', 'idempotencyKey', 'runId', 'board', 'itemId', 'itemVersion', 'title', 'expectedBoardFence']),
-    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-  },
-  {
-    name: 'baton_board_reorder',
-    description: 'Mint a reordered successor version of an open board item; refused if the caller-observed board fence is stale.',
-    inputSchema: schema({
-      ...repo, ...idem, runId, board: runId, itemId: runId,
-      itemVersion: { type: 'integer', minimum: 1 }, ordinal: { type: 'integer', minimum: 1 },
-      expectedBoardFence: { type: 'integer', minimum: 0 },
-    }, ['repoId', 'idempotencyKey', 'runId', 'board', 'itemId', 'itemVersion', 'ordinal', 'expectedBoardFence']),
-    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-  },
-  {
-    name: 'baton_board_close',
-    description: 'Close an open board item; refused if the caller-observed board fence is stale.',
-    inputSchema: schema({
-      ...repo, ...idem, runId, board: runId, itemId: runId,
-      itemVersion: { type: 'integer', minimum: 1 }, expectedBoardFence: { type: 'integer', minimum: 0 },
-    }, ['repoId', 'idempotencyKey', 'runId', 'board', 'itemId', 'itemVersion', 'expectedBoardFence']),
-    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
-  },
-  {
-    name: 'baton_board_read',
-    description: 'Read the full non-evented orchestrator projection of one board.',
-    inputSchema: schema({ ...repo, runId, board: runId }, ['repoId', 'runId', 'board']),
-    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-  },
-  {
-    name: 'baton_package_admit',
-    description: 'Admit one immutable Context Package under the landed admission rules.',
-    inputSchema: schema({ ...repo, ...idem, runId, package: { type: 'object' } }, ['repoId', 'idempotencyKey', 'runId', 'package']),
-    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-  },
-  {
-    name: 'baton_package_attach',
-    description: 'Attach an admitted Context Package to a run/worker/board scope as a fenced O(1) pointer binding (no branch re-read).',
-    inputSchema: schema({
-      ...repo, ...idem, packageDigest: digest, runId, scope: { type: 'string', minLength: 1, maxLength: 600 },
-    }, ['repoId', 'idempotencyKey', 'packageDigest', 'runId', 'scope']),
-    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-  },
-  {
-    name: 'baton_package_read',
-    description: 'Read Context Package metadata, or resolve and sanitize one named branch (revalidated at resolve time).',
-    inputSchema: schema({
-      ...repo, packageDigest: digest, branchName: { type: 'string', minLength: 1, maxLength: 512 },
-    }, ['repoId', 'packageDigest']),
-    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-  },
 ].map((tool) => Object.freeze({
   ...tool,
   _meta: Object.freeze({ 'baton/registryDigest': APPLICATION_SEMANTIC_REGISTRY.digest }),
   execution: Object.freeze({ taskSupport: 'forbidden' }),
 })));
+const SURFACING_MATRIX_DESCRIPTIONS = Object.freeze({
+  'decision.list': 'List one Run\'s pending decision requests awaiting an answer, sanitized and bounded.',
+  'board.read': 'Read the full non-evented orchestrator projection of one board.',
+  'board.post': 'Post a new orchestrator-authority board item; refused if the caller-observed board fence is stale.',
+  'board.retitle': 'Mint a retitled successor version of an open board item; refused if the caller-observed board fence is stale.',
+  'board.reorder': 'Mint a reordered successor version of an open board item; refused if the caller-observed board fence is stale.',
+  'board.close': 'Close an open board item; refused if the caller-observed board fence is stale.',
+  'board.drop': 'Drop an open board item; refused if the caller-observed board fence is stale.',
+  'package.admit': 'Admit one immutable Context Package under the landed admission rules.',
+  'package.attach': 'Attach an admitted Context Package to a run/worker/board scope as a fenced O(1) pointer binding.',
+  'package.read': 'Read Context Package metadata, or resolve and sanitize one named branch.',
+  'repl.cite': 'Resolve one exact versioned REPL binding citation.',
+  'knowledge.recall': 'Recall bounded, role-scoped knowledge from the shared coordination store.',
+  'knowledge.horizon': 'Read a viewer-scoped task, workflow, or project knowledge horizon.',
+});
+
+// S-3 rule 5: the combined reflex table is a projection of the registry rows. Authority supplied
+// by the authenticated transport (sessionAuthority/viewer) is intentionally absent on the wire;
+// repoId and mutation idempotency are transport envelope fields.
+const MATRIX_REFLEX_TOOL_DEFINITIONS = Object.freeze(SURFACING_MATRIX_MCP_ROWS.map((operation) => {
+  const hidden = new Set(['sessionAuthority', ...operation.serverDerived]);
+  const properties = Object.fromEntries(Object.entries(operation.inputSchema.properties ?? {})
+    .filter(([field]) => !hidden.has(field)));
+  const mutation = operation.effect === 'control';
+  return Object.freeze({
+    name: operation.names.mcp,
+    description: SURFACING_MATRIX_DESCRIPTIONS[operation.key],
+    inputSchema: schema({ ...repo, ...(mutation ? idem : {}), ...properties }, [
+      'repoId', ...(mutation ? ['idempotencyKey'] : []),
+      ...(operation.inputSchema.required ?? []).filter((field) => !hidden.has(field)),
+    ]),
+    annotations: Object.freeze({
+      readOnlyHint: !mutation, destructiveHint: ['board.close', 'board.drop'].includes(operation.key),
+      idempotentHint: true, openWorldHint: false,
+    }),
+    _meta: Object.freeze({ 'baton/registryDigest': APPLICATION_SEMANTIC_REGISTRY.digest }),
+    execution: Object.freeze({ taskSupport: 'forbidden' }),
+  });
+}));
+const REFLEX_TOOL_DEFINITIONS = Object.freeze([
+  LEGACY_REFLEX_TOOL_DEFINITIONS[0], MATRIX_REFLEX_TOOL_DEFINITIONS[0],
+  LEGACY_REFLEX_TOOL_DEFINITIONS[1], ...MATRIX_REFLEX_TOOL_DEFINITIONS.slice(1),
+]);
 // Read-only reflex tool names needing typed-error reach through the observe-path error gate
 // (Part F rule 12) — merged across both slices.
-const REFLEX_READ_ONLY_TOOLS = new Set(['baton_decision_list', 'baton_board_read', 'baton_package_read']);
+const REFLEX_READ_ONLY_TOOLS = new Set(SURFACING_MATRIX_MCP_ROWS
+  .filter((operation) => operation.effect === 'observe').map((operation) => operation.names.mcp));
 const TOOL_DEFINITIONS = Object.freeze([...ORDINARY_APPLICATION_TOOL_DEFINITIONS, ...APPLICATION_TOOL_DEFINITIONS, ...ADVANCED_TOOL_DEFINITIONS, ...REFLEX_TOOL_DEFINITIONS]);
 const TOOL_BY_NAME = new Map(TOOL_DEFINITIONS.map((tool) => [tool.name, tool]));
 
@@ -833,6 +811,10 @@ function validateArguments(name, args, maxWaitMs = null) {
     || !Number.isSafeInteger(args.expectedBoardFence) || args.expectedBoardFence < 0)) {
     return !nonempty(args.itemId) ? 'invalid_board_item_id' : 'invalid_board_fence';
   }
+  if (name === 'baton_board_drop' && (!nonempty(args.itemId)
+    || !Number.isSafeInteger(args.expectedBoardFence) || args.expectedBoardFence < 0)) {
+    return !nonempty(args.itemId) ? 'invalid_board_item_id' : 'invalid_board_fence';
+  }
   if (name === 'baton_board_read' && !nonempty(args.board)) return 'invalid_board';
   // Part E (package tools): the branch payload's deep shape (unique names, source/artifact/
   // valueRef mold, provenance) is exhaustively validated by the hub's own
@@ -847,6 +829,16 @@ function validateArguments(name, args, maxWaitMs = null) {
   if (name === 'baton_package_read') {
     if (!/^[a-f0-9]{64}$/.test(args.packageDigest ?? '')) return 'invalid_context_package_digest';
     if (Object.hasOwn(args, 'branchName') && !nonempty(args.branchName)) return 'invalid_context_package_branch';
+  }
+  if (name === 'baton_repl_cite' && (!nonempty(args.runId) || !nonempty(args.citation))) {
+    return 'invalid_repl_citation';
+  }
+  if (name === 'baton_knowledge_recall' && (!record(args.query)
+    || (Object.hasOwn(args, 'reader') && !record(args.reader))
+    || (Object.hasOwn(args, 'options') && !record(args.options)))) return 'invalid_knowledge_recall';
+  if (name === 'baton_knowledge_horizon' && (!['task', 'workflow', 'project'].includes(args.kind)
+    || !nonempty(args.id) || (Object.hasOwn(args, 'board') && !nonempty(args.board)))) {
+    return 'invalid_knowledge_horizon';
   }
   return null;
 }
@@ -1413,6 +1405,15 @@ export class McpFleetServer {
         idempotencyKey: `mcp.call:${callId}`,
       });
     }
+    else if (name === 'baton_board_drop') {
+      const { sessionAuthority } = this._boardAuthorityContext(principal);
+      value = this._admitBoardEnvelope({
+        sessionAuthority, runId: args.runId, board: args.board,
+        item: { itemId: args.itemId, itemVersion: args.itemVersion },
+        mutation: { kind: 'drop' }, expectedBoardFence: args.expectedBoardFence,
+        idempotencyKey: `mcp.call:${callId}`,
+      });
+    }
     else if (name === 'baton_board_read') {
       const { sessionAuthority } = this._boardAuthorityContext(principal);
       const admitted = this._admitBoardEnvelope({
@@ -1448,6 +1449,20 @@ export class McpFleetServer {
           () => this.coordination.resolveContextPackageBranch(args.packageDigest, args.branchName),
         ))
         : this._readContextPackage(args.packageDigest);
+    }
+    else if (name === 'baton_repl_cite') {
+      value = this.coordinator.resolveReplCitation(args.runId, args.citation);
+    }
+    else if (name === 'baton_knowledge_recall') {
+      value = this.coordinator.recallKnowledge(args.query, args.reader ?? {}, {
+        ...(args.options ?? {}), actor, idempotencyKey: `mcp.call:${callId}`,
+      });
+    }
+    else if (name === 'baton_knowledge_horizon') {
+      if (args.kind === 'task') value = this.coordinator.taskHorizon(args.id, { board: args.board ?? null });
+      else if (args.kind === 'workflow') {
+        value = this.coordinator.workflowHorizon(args.id, { viewer: 'orchestrator' });
+      } else value = this.coordinator.projectHorizon(args.repoId);
     }
     if (value?.result === 'stale_fence') throw Object.assign(new Error('stale fence'), { mcpCode: 'stale_fence' });
     if (APPLICATION_TOOL[name] && Buffer.byteLength(JSON.stringify(toolResult(value))) > this.maxMessageBytes) {

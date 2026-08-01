@@ -162,20 +162,21 @@ test('Registration: read-only baton_decision_list takes the observe path — no 
 // _meta present on reflex tools). phase67 ordinary-surface and phase72 bridge assertions unchanged.
 // ---------------------------------------------------------------------------------------------
 
-test('Inventory: the combined surface adds exactly the eleven Slice 1+2 reflex tools, frozen and _meta-stamped like the ordinary table', async () => {
+test('Inventory: the combined surface adds the derived S-3 reflex tools, frozen and _meta-stamped like the ordinary table', async () => {
   const { server } = setup();
   await initialized(server);
   const response = await request(server, 2, 'tools/list', {});
   const names = response.result.tools.map((tool) => tool.name);
-  assert.equal(names.length, 66, '49 pre-existing (incl. baton_runs CS-2 + baton_waves_attach S-1) + 6 M4b canonical ordinary + 11 Slice 1+2 reflex tools');
+  assert.equal(names.length, 70, '55 ordinary/advanced tools (incl. baton_waves_attach S-1) + 15 legacy-and-S-3 reflex tools');
   const reflexNames = [
     'baton_context_eval', 'baton_decision_list', 'baton_decision_answer',
-    'baton_board_post', 'baton_board_retitle', 'baton_board_reorder', 'baton_board_close', 'baton_board_read',
+    'baton_board_post', 'baton_board_retitle', 'baton_board_reorder', 'baton_board_close', 'baton_board_drop', 'baton_board_read',
     'baton_package_admit', 'baton_package_attach', 'baton_package_read',
+    'baton_repl_cite', 'baton_knowledge_recall', 'baton_knowledge_horizon',
   ];
   for (const name of reflexNames) assert.ok(names.includes(name), `${name} must be listed`);
   const reflexTools = response.result.tools.filter((tool) => reflexNames.includes(tool.name));
-  assert.equal(reflexTools.length, 11);
+  assert.equal(reflexTools.length, 15);
   for (const tool of reflexTools) {
     assert.equal(tool.execution.taskSupport, 'forbidden', `${tool.name} taskSupport`);
     assert.equal(tool.inputSchema.additionalProperties, false, `${tool.name} additionalProperties`);

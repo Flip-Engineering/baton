@@ -145,6 +145,15 @@ const objectSchema = (properties, required = Object.keys(properties)) => ({
   type: 'object', properties, required, additionalProperties: false,
 });
 const id = { type: 'string', minLength: 1, maxLength: 256 };
+const safeBoardId = { type: 'string', minLength: 1, maxLength: 128, pattern: '^[A-Za-z0-9_.:-]+$' };
+const safeBoardItemId = { type: 'string', minLength: 1, maxLength: 256, pattern: '^[A-Za-z0-9_.:-]+$' };
+const digest64 = { type: 'string', pattern: '^[a-f0-9]{64}$' };
+const evidenceRef = {
+  oneOf: [
+    objectSchema({ coordinationSeq: { type: 'integer', minimum: 1 } }),
+    objectSchema({ artifactId: id }),
+  ],
+};
 const resultIntent = {
   type: 'string', enum: ['change', 'read_only_evidence'], default: 'change',
 };
@@ -1132,6 +1141,9 @@ export function deriveSurfaceNames(key) {
 }
 
 const ALL_SURFACES = Object.freeze(['cli', 'mcp', 'web', 'embedded']);
+export const APPLICATION_OPERATION_PROFILES = Object.freeze([
+  'ordinary', 'kernel', 'authoring', 'worker', 'remote_bridge', 'host',
+]);
 const sortedCapabilities = (capabilities) => Object.freeze([...new Set(capabilities)].sort());
 
 // H4: the flag projection of a camelCase schema field is its kebab spelling. The map is derived,
@@ -1148,6 +1160,45 @@ function flagAliasesFor(schema) {
 }
 
 const runIdSchema = objectSchema({ runId: id }, ['runId']);
+const sessionAuthoritySchema = objectSchema({
+  schemaVersion: { type: 'integer', const: 1 },
+  authorityDigest: { type: 'string', pattern: '^[a-f0-9]{64}$' },
+  expiresAt: { type: 'string', minLength: 1, maxLength: 64 },
+  orchestratorLeaseId: id,
+}, ['schemaVersion', 'authorityDigest', 'expiresAt', 'orchestratorLeaseId']);
+const boardItemCoordinates = {
+  itemId: safeBoardItemId, itemVersion: { type: 'integer', minimum: 1 },
+};
+
+// S-3 is a registry delta, not a second inventory. Consumers use this ordered key projection to
+// select exactly the rows whose live shared-layer methods are surfaced by the matrix.
+export const SURFACING_MATRIX_KEYS = Object.freeze([
+  'run.scratchpad', 'decision.list', 'board.read', 'board.post', 'board.retitle',
+  'board.reorder', 'board.close', 'board.drop', 'scratchpad.elevate', 'scratchpad.settle',
+  'package.admit', 'package.attach', 'package.read', 'repl.manifest', 'repl.binding',
+  'repl.cite', 'knowledge.promote', 'knowledge.recall', 'knowledge.horizon',
+]);
+const SURFACING_MATRIX_AUTHORITY = Object.freeze({
+  'run.scratchpad': 'viewer-scoped worker and shared slices',
+  'decision.list': 'Run-scoped observe authorization; deadlineAt is projected',
+  'board.read': 'transported reads require the S-2 run-orchestrator lease',
+  'board.post': 'S-2 session authority, board-to-Run binding, and in-append fence CAS',
+  'board.retitle': 'S-2 session authority, board-to-Run binding, and in-append fence CAS',
+  'board.reorder': 'S-2 session authority, board-to-Run binding, and in-append fence CAS',
+  'board.close': 'S-2 session authority; candidate Finding mint is unchanged',
+  'board.drop': 'S-2 session authority and fifth-mutation fence CAS',
+  'scratchpad.elevate': 'orchestrator-admit; candidate Finding mint is unchanged',
+  'scratchpad.settle': 'orchestrator-admit',
+  'package.admit': 'S-2 session authority and package-to-Run binding',
+  'package.attach': 'S-2 session authority; run/worker/board scope grammar',
+  'package.read': 'resolved content remains provenance-marked untrusted prose',
+  'repl.manifest': 'worker manifests remain restricted to the worker own layer',
+  'repl.binding': 'binding version CAS remains authoritative',
+  'repl.cite': 'role-scoped citation projection',
+  'knowledge.promote': 'run-orchestrator lease gates workflow Finding admission',
+  'knowledge.recall': 'deployment-bounded recall policy',
+  'knowledge.horizon': 'viewer-scoped; non-orchestrators must be owned workers',
+});
 
 // Every §6 canonical operation: an authority `source` (an `operations` name or an `actions` kind
 // the entry inherits schema/effect/capabilities/durability from) plus the fields the source cannot
@@ -1265,45 +1316,85 @@ const CANONICAL_OPERATION_SPECS = [
     inputSchema: objectSchema({ runId: id, kind: id }, ['runId']),
     example: 'baton run attention list RUN_ID',
   }],
+  ['run.scratchpad', {
+    profile: 'ordinary', surfaces: ['embedded', 'cli'], effect: 'observe',
+    capabilities: ['observe'], outputView: 'section', helpTopic: 'run',
+    inputSchema: objectSchema({
+      runId: id, workerId: id,
+      before: objectSchema({ createdEvent: { type: 'integer', minimum: 1 }, entryId: id },
+        ['createdEvent', 'entryId']),
+    }, ['runId']),
+    authorityFields: ['runId', 'workerId'], serverDerived: ['viewer'],
+    liveMethod: 'projectScratchpadView',
+  }],
+  ['decision.list', {
+    profile: 'ordinary', surfaces: ['embedded', 'mcp', 'cli'], effect: 'observe',
+    capabilities: ['observe'], outputView: 'index', helpTopic: 'run',
+    inputSchema: runIdSchema, authorityFields: ['runId'], serverDerived: ['viewer'],
+    liveMethod: 'application.decisionList',
+  }],
   ['context.eval', { action: 'context_eval', outputView: 'outline', example: 'baton context eval --run RUN_ID --program FILE' }],
   ['context.map', { action: 'context_map', outputView: 'outline' }],
   ['context.reduce', { action: 'context_reduce', outputView: 'outline' }],
   ['context.retry', { action: 'context_retry', outputView: 'outline' }],
   ['board.post', {
-    effect: 'board_edit', capabilities: ['control', 'observe'], outputView: 'outline',
-    helpTopic: 'run', surfaces: ['mcp'], inputSchema: objectSchema({
-      runId: id, board: id, title: { type: 'string', minLength: 1, maxLength: 160 },
-      detail: { type: ['string', 'null'], maxLength: 4096 }, owner: { type: ['string', 'null'] },
-      evidence: { type: 'array', maxItems: 8 },
+    effect: 'control', capabilities: ['control', 'observe'], outputView: 'outline',
+    helpTopic: 'run', surfaces: ['embedded', 'mcp'], inputSchema: objectSchema({
+      sessionAuthority: sessionAuthoritySchema, runId: id, board: safeBoardId,
+      title: { type: 'string', minLength: 1, maxLength: 160 },
+      detail: { type: ['string', 'null'], minLength: 1, maxLength: 4096 },
+      owner: { type: ['string', 'null'], minLength: 1, maxLength: 128, pattern: '^[A-Za-z0-9_.:-]+$' },
+      evidence: { type: 'array', maxItems: 8, items: evidenceRef },
       expectedBoardFence: { type: 'integer', minimum: 0 },
-    }, ['runId', 'board', 'title', 'expectedBoardFence']),
+    }, ['sessionAuthority', 'runId', 'board', 'title', 'expectedBoardFence']),
+    authorityFields: ['sessionAuthority', 'runId', 'expectedBoardFence'],
+    serverDerived: ['idempotencyKey'], liveMethod: 'admitBoardCommand → postBoardItem',
   }],
   ['board.retitle', {
-    effect: 'board_edit', capabilities: ['control', 'observe'], outputView: 'outline',
-    helpTopic: 'run', surfaces: ['mcp'], inputSchema: objectSchema({
-      runId: id, board: id, itemId: id, itemVersion: { type: 'integer', minimum: 1 },
+    effect: 'control', capabilities: ['control', 'observe'], outputView: 'outline',
+    helpTopic: 'run', surfaces: ['embedded', 'mcp'], inputSchema: objectSchema({
+      sessionAuthority: sessionAuthoritySchema, runId: id, board: safeBoardId, ...boardItemCoordinates,
       title: { type: 'string', minLength: 1, maxLength: 160 },
-      detail: { type: ['string', 'null'], maxLength: 4096 },
+      detail: { type: ['string', 'null'], minLength: 1, maxLength: 4096 },
       expectedBoardFence: { type: 'integer', minimum: 0 },
-    }, ['runId', 'board', 'itemId', 'itemVersion', 'title', 'expectedBoardFence']),
+    }, ['sessionAuthority', 'runId', 'board', 'itemId', 'itemVersion', 'title', 'expectedBoardFence']),
+    authorityFields: ['sessionAuthority', 'runId', 'expectedBoardFence'],
+    serverDerived: ['idempotencyKey'], liveMethod: 'admitBoardCommand → retitleBoardItem',
   }],
   ['board.reorder', {
-    effect: 'board_edit', capabilities: ['control', 'observe'], outputView: 'outline',
-    helpTopic: 'run', surfaces: ['mcp'], inputSchema: objectSchema({
-      runId: id, board: id, itemId: id, itemVersion: { type: 'integer', minimum: 1 },
+    effect: 'control', capabilities: ['control', 'observe'], outputView: 'outline',
+    helpTopic: 'run', surfaces: ['embedded', 'mcp'], inputSchema: objectSchema({
+      sessionAuthority: sessionAuthoritySchema, runId: id, board: safeBoardId, ...boardItemCoordinates,
       ordinal: { type: 'integer', minimum: 1 }, expectedBoardFence: { type: 'integer', minimum: 0 },
-    }, ['runId', 'board', 'itemId', 'itemVersion', 'ordinal', 'expectedBoardFence']),
+    }, ['sessionAuthority', 'runId', 'board', 'itemId', 'itemVersion', 'ordinal', 'expectedBoardFence']),
+    authorityFields: ['sessionAuthority', 'runId', 'expectedBoardFence'],
+    serverDerived: ['idempotencyKey'], liveMethod: 'admitBoardCommand → reorderBoardItem',
   }],
   ['board.close', {
-    effect: 'board_edit', capabilities: ['control', 'observe'], outputView: 'outline',
-    helpTopic: 'run', surfaces: ['mcp'], inputSchema: objectSchema({
-      runId: id, board: id, itemId: id, itemVersion: { type: 'integer', minimum: 1 },
+    effect: 'control', capabilities: ['control', 'observe'], outputView: 'outline',
+    helpTopic: 'run', surfaces: ['embedded', 'mcp'], inputSchema: objectSchema({
+      sessionAuthority: sessionAuthoritySchema, runId: id, board: safeBoardId, ...boardItemCoordinates,
       expectedBoardFence: { type: 'integer', minimum: 0 },
-    }, ['runId', 'board', 'itemId', 'itemVersion', 'expectedBoardFence']),
+    }, ['sessionAuthority', 'runId', 'board', 'itemId', 'itemVersion', 'expectedBoardFence']),
+    authorityFields: ['sessionAuthority', 'runId', 'expectedBoardFence'],
+    serverDerived: ['idempotencyKey'], liveMethod: 'admitBoardCommand → closeBoardItem',
+  }],
+  ['board.drop', {
+    effect: 'control', capabilities: ['control', 'observe'], outputView: 'outline',
+    helpTopic: 'run', surfaces: ['embedded', 'mcp'], inputSchema: objectSchema({
+      sessionAuthority: sessionAuthoritySchema, runId: id, board: safeBoardId, ...boardItemCoordinates,
+      expectedBoardFence: { type: 'integer', minimum: 0 },
+    }, ['sessionAuthority', 'runId', 'board', 'itemId', 'itemVersion', 'expectedBoardFence']),
+    authorityFields: ['sessionAuthority', 'runId', 'expectedBoardFence'],
+    serverDerived: ['idempotencyKey'], liveMethod: 'admitBoardCommand → dropBoardItem',
   }],
   ['board.read', {
-    effect: 'board_read', capabilities: ['observe'], outputView: 'section', helpTopic: 'run', surfaces: ['mcp'],
-    inputSchema: objectSchema({ runId: id, board: id }, ['runId', 'board']),
+    effect: 'observe', capabilities: ['observe'], outputView: 'section', helpTopic: 'run',
+    surfaces: ['embedded', 'mcp'],
+    inputSchema: objectSchema({ sessionAuthority: sessionAuthoritySchema, runId: id, board: safeBoardId },
+      ['sessionAuthority', 'runId', 'board']),
+    authorityFields: ['sessionAuthority', 'runId'], serverDerived: ['viewer'],
+    liveMethod: 'boardSnapshot + projectBoardView',
   }],
   ['board.claim', {
     profile: 'worker', effect: 'board_claim', capabilities: ['control', 'observe'],
@@ -1319,18 +1410,98 @@ const CANONICAL_OPERATION_SPECS = [
     }, ['itemId', 'itemVersion', 'itemDigest', 'body']),
   }],
   ['package.admit', {
-    effect: 'package_edit', capabilities: ['control', 'observe'], outputView: 'outline',
-    helpTopic: 'run', surfaces: ['mcp'], inputSchema: objectSchema({ runId: id, package: { type: 'object' } }, ['runId', 'package']),
+    effect: 'control', capabilities: ['control', 'observe'], outputView: 'outline',
+    helpTopic: 'run', surfaces: ['embedded', 'mcp'],
+    inputSchema: objectSchema({ sessionAuthority: sessionAuthoritySchema, runId: id, package: { type: 'object' } },
+      ['sessionAuthority', 'runId', 'package']),
+    authorityFields: ['sessionAuthority', 'runId'], serverDerived: ['idempotencyKey'],
+    liveMethod: 'admitContextPackage',
   }],
   ['package.attach', {
-    effect: 'package_edit', capabilities: ['control', 'observe'], outputView: 'outline',
-    helpTopic: 'run', surfaces: ['mcp'], inputSchema: objectSchema({
-      runId: id, packageDigest: id, scope: id,
-    }, ['runId', 'packageDigest', 'scope']),
+    effect: 'control', capabilities: ['control', 'observe'], outputView: 'outline',
+    helpTopic: 'run', surfaces: ['embedded', 'mcp'], inputSchema: objectSchema({
+      sessionAuthority: sessionAuthoritySchema, runId: id, packageDigest: digest64,
+      scope: { type: 'string', minLength: 3, maxLength: 600,
+        pattern: '^(?:run|worker:[A-Za-z0-9_.:-]+|board:[A-Za-z0-9_.:-]+)$' },
+    }, ['sessionAuthority', 'runId', 'packageDigest', 'scope']),
+    authorityFields: ['sessionAuthority', 'runId'], serverDerived: ['idempotencyKey'],
+    liveMethod: 'attachContextPackage',
   }],
   ['package.read', {
-    effect: 'package_read', capabilities: ['observe'], outputView: 'section', helpTopic: 'run', surfaces: ['mcp'],
-    inputSchema: objectSchema({ packageDigest: id, branchName: id }, ['packageDigest']),
+    effect: 'observe', capabilities: ['observe'], outputView: 'section', helpTopic: 'run',
+    surfaces: ['embedded', 'mcp'],
+    inputSchema: objectSchema({ packageDigest: digest64, branchName: id }, ['packageDigest']),
+    authorityFields: ['packageDigest'], serverDerived: ['viewer'],
+    liveMethod: 'contextPackageBranch + projectContextPackageBranch',
+  }],
+  ['scratchpad.elevate', {
+    profile: 'kernel', surfaces: ['embedded'], effect: 'control', capabilities: ['control'],
+    outputView: 'outline', helpTopic: 'run', inputSchema: objectSchema({
+      runId: id, taskId: id, workerId: id,
+      expectedScratchpadFence: { type: 'integer', minimum: 0 },
+      entryIds: { type: 'array', maxItems: 64, uniqueItems: true,
+        items: { type: 'string', pattern: '^scratchpad-entry:[a-f0-9]{64}$' } },
+    }, ['runId', 'taskId', 'workerId', 'expectedScratchpadFence', 'entryIds']),
+    authorityFields: ['runId', 'taskId', 'workerId', 'expectedScratchpadFence'],
+    serverDerived: ['actor'], liveMethod: 'elevateTaskScratchpad',
+  }],
+  ['scratchpad.settle', {
+    profile: 'kernel', surfaces: ['embedded'], effect: 'control', capabilities: ['control'],
+    outputView: 'outline', helpTopic: 'run', inputSchema: objectSchema({
+      runId: id, expectedScratchpadFence: { type: 'integer', minimum: 0 },
+      skips: { type: 'array', maxItems: 256, items: { type: 'object' } },
+    }, ['runId', 'expectedScratchpadFence', 'skips']),
+    authorityFields: ['runId', 'expectedScratchpadFence'], serverDerived: ['actor'],
+    liveMethod: 'settleWorkflowScratchpad',
+  }],
+  ['repl.manifest', {
+    profile: 'kernel', surfaces: ['embedded'], effect: 'control', capabilities: ['control'],
+    outputView: 'outline', helpTopic: 'run', inputSchema: objectSchema({
+      workerId: id, manifest: { type: 'object' }, idempotencyKey: id,
+    }, ['workerId', 'manifest', 'idempotencyKey']),
+    authorityFields: ['workerId'], serverDerived: ['principalId', 'repoId', 'runId'],
+    liveMethod: 'admitReplManifest',
+  }],
+  ['repl.binding', {
+    profile: 'kernel', surfaces: ['embedded'], effect: 'control', capabilities: ['control'],
+    outputView: 'outline', helpTopic: 'run', inputSchema: objectSchema({
+      operation: { type: 'string', enum: ['admit', 'drop'] }, fields: { type: 'object' },
+      idempotencyKey: id,
+    }, ['operation', 'fields', 'idempotencyKey']),
+    authorityFields: ['fields'], serverDerived: ['actor', 'principalId'],
+    liveMethod: 'admitReplBinding + dropReplBinding',
+  }],
+  ['repl.cite', {
+    profile: 'ordinary', surfaces: ['embedded', 'mcp'], effect: 'observe',
+    capabilities: ['observe'], outputView: 'item', helpTopic: 'run',
+    inputSchema: objectSchema({ runId: id, citation: { type: 'string', minLength: 1, maxLength: 1024 } },
+      ['runId', 'citation']),
+    authorityFields: ['runId'], serverDerived: ['viewer'], liveMethod: 'resolveReplCitation',
+  }],
+  ['knowledge.promote', {
+    profile: 'kernel', surfaces: ['embedded'], effect: 'control', capabilities: ['control'],
+    outputView: 'outline', helpTopic: 'run', inputSchema: objectSchema({
+      runId: id, candidateFindingId: id, policy: { type: 'object' }, lease: { type: 'object' },
+    }, ['runId', 'candidateFindingId', 'policy', 'lease']),
+    authorityFields: ['runId', 'lease'], serverDerived: ['repoId', 'actor'],
+    liveMethod: 'promoteKnowledgeNode',
+  }],
+  ['knowledge.recall', {
+    profile: 'ordinary', surfaces: ['embedded', 'mcp'], effect: 'observe',
+    capabilities: ['observe'], outputView: 'section', helpTopic: 'run',
+    inputSchema: objectSchema({ query: { type: 'object' }, reader: { type: 'object' }, options: { type: 'object' } },
+      ['query']),
+    authorityFields: ['reader'], serverDerived: ['policy'], liveMethod: 'recallKnowledge',
+  }],
+  ['knowledge.horizon', {
+    profile: 'ordinary', surfaces: ['embedded', 'mcp'], effect: 'observe',
+    capabilities: ['observe'], outputView: 'section', helpTopic: 'run',
+    inputSchema: objectSchema({
+      kind: { type: 'string', enum: ['task', 'workflow', 'project'] }, id: id,
+      board: id, viewer: id,
+    }, ['kind', 'id']),
+    authorityFields: ['kind', 'id', 'viewer'], serverDerived: ['fenceTuple'],
+    liveMethod: 'taskHorizon + workflowHorizon + projectHorizon',
   }],
   // S-1 v2: portable attach-and-harvest. Observe-class; no emergency_stop. Transport returns a
   // closed {outcomes, waveDriverDetached} payload — live handles stay embedded-only.
@@ -1574,6 +1745,10 @@ const SURFACE_ALIAS_ROWS = Object.freeze([
 
 function buildCanonicalOperation([key, spec]) {
   const source = spec.op ? operations[spec.op] : spec.action ? authorizedActions[spec.action] : null;
+  const profile = spec.profile ?? 'ordinary';
+  if (!APPLICATION_OPERATION_PROFILES.includes(profile)) {
+    throw new TypeError(`invalid canonical operation profile: ${profile}`);
+  }
   const parts = key.split('.');
   const inputSchema = freeze(spec.inputSchema ?? source?.inputSchema ?? objectSchema({}, []));
   const capabilities = sortedCapabilities(
@@ -1589,12 +1764,17 @@ function buildCanonicalOperation([key, spec]) {
     noun: Object.freeze(parts.slice(0, -1)),
     effect: spec.effect ?? source?.effect ?? 'application_read',
     capabilities,
-    profile: spec.profile ?? 'ordinary',
+    profile,
     idempotent: spec.idempotent ?? source?.idempotent ?? true,
     destructive: spec.destructive ?? source?.destructive ?? false,
     reconcilable: spec.reconcilable ?? (spec.profile === 'host' ? false : true),
     emergency: spec.emergency ?? source?.emergency ?? false,
     inputSchema,
+    authorityFields: Object.freeze([...(spec.authorityFields ?? [])]),
+    serverDerived: Object.freeze([...(spec.serverDerived ?? source?.serverDerived ?? [])]),
+    transportHidden: Object.freeze([...(spec.transportHidden ?? [])]),
+    liveMethod: spec.liveMethod ?? spec.op ?? spec.action ?? key,
+    authority: spec.authority ?? SURFACING_MATRIX_AUTHORITY[key] ?? null,
     flagAliases: flagAliasesFor(inputSchema),
     outputView: spec.outputView,
     surfaces: Object.freeze([...(spec.surfaces ?? ALL_SURFACES)]),
@@ -1650,6 +1830,9 @@ const authorityProjection = {
     capabilities: entry.capabilities, profile: entry.profile, idempotent: entry.idempotent,
     destructive: entry.destructive, reconcilable: entry.reconcilable, emergency: entry.emergency,
     inputSchema: entry.inputSchema, outputView: entry.outputView, surfaces: entry.surfaces,
+    authorityFields: entry.authorityFields, serverDerived: entry.serverDerived,
+    transportHidden: entry.transportHidden, liveMethod: entry.liveMethod,
+    authority: entry.authority,
     names: entry.names, flagAliases: entry.flagAliases,
     transportHidden: entry.transportHidden,
   })),
