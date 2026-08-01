@@ -2,6 +2,7 @@ import { contextProgramIsPure } from './context-authority.mjs';
 import { normalizeContextProgram } from './context-program.mjs';
 import { APPLICATION_SEMANTIC_REGISTRY } from './application-semantics.mjs';
 import { attachWave, createWave } from './wave.mjs';
+import { createRecipes } from './recipes.mjs';
 
 function clientError(message, code = 'application_client_invalid') {
   return Object.assign(new Error(message), { code });
@@ -1521,6 +1522,14 @@ export class BatonClient {
         options?.repoRoot ?? null,
       ),
     });
+  }
+
+  // Composition v2 (RC-A): baton.recipes is an embedded-facade library over the shipped
+  // createWaveDriver — `baton.recipes.run(recipe, {task, options})` with recipe as data + closed run
+  // options. No new application commands, no registry entries; MCP/CLI/web untouched (the v2.1
+  // acceptance law: no new orchestration wave may require a new script file).
+  get recipes() {
+    return createRecipes(this);
   }
 
   help(topic = 'application', depth = 'outline') {
