@@ -14,6 +14,7 @@ import { BatonWebHost } from './application-host.mjs';
 import { ClaudeSessionCli, GlmSessionCli, KimiSessionCli } from './claude-session.mjs';
 import { ClaudeCredentialCache } from './claude-credential-cache.mjs';
 import { CodexAppServerCli } from './codex-appserver.mjs';
+import { createRecipes } from './recipes.mjs';
 import {
   defaultRepositoryContextPolicy, RepositoryContextRuntime,
 } from './context-runtime.mjs';
@@ -1222,6 +1223,16 @@ class BatonDeployment {
         }
         return this.#baton.waves.start(options);
       },
+      // S-1 v2 (deployment parity): attach-and-harvest over a prior wave's member runs —
+      // the recipes manifest-attach path rides this.
+      attach: (waveId, members, options = {}) => this.#baton.waves.attach(waveId, members, options),
+    });
+    // Composition v2 rule 3 (deployment parity): the recipes library on the openBaton facade,
+    // bound to the deployment facade ITSELF (doctor-capable — the wave driver's preflight needs
+    // it) rather than the client-only inner binding.
+    this.recipes = Object.freeze({
+      run: (recipe, invocation) => createRecipes(this).run(recipe, invocation),
+      implementContract: (invocation) => createRecipes(this).implementContract(invocation),
     });
     this.credentials = Object.freeze({
       refresh: async (provider) => {
