@@ -1,4 +1,7 @@
-// Grammar M5 (alias sunset) — launched THROUGH baton.recipes.implementContract when fleet clears.
+// Grammar M5 (alias sunset) — launched THROUGH baton.recipes.implementContract.
+// (re-seated from grok — grok's token 401'd at turn time, its short-TTL pattern + #47's gap;
+// deepseek proved implementation depth on P1-C. New deployment root: fresh state.)
+//
 import { resolve } from 'node:path';
 import { openBaton } from '../../../../impl/src/index.mjs';
 
@@ -8,15 +11,15 @@ const log = (line) => console.log(`[m5 ${new Date().toISOString()}] ${line}`);
 const baton = await openBaton({
   repo,
   advanced: {
-    deploymentRoot: resolve(repo, '.baton', 'grammar-m5-impl-2026-08-01'),
-    routes: [{ harness: 'grok', model: 'grok-4.5', effort: 'high' }],
+    deploymentRoot: resolve(repo, '.baton', 'grammar-m5-impl-ds-2026-08-01'),
+    routes: [{ harness: 'deepseek', model: 'deepseek-v4-flash', effort: 'high' }],
     verification: Object.freeze({ command: 'node', arguments: ['--test', 'impl/test/grammar-m5-red.test.mjs'] }),
   },
 });
 
 try {
   const receipt = await baton.recipes.implementContract({
-    route: { harness: 'grok', model: 'grok-4.5', effort: 'high' },
+    route: { harness: 'deepseek', model: 'deepseek-v4-flash', effort: 'high' },
     scope: ['impl/**', 'GLOSSARY.md', 'docs/36-unified-control-grammar.md'],
     task: [
       'Implement grammar M5 (alias sunset): docs/36-unified-control-grammar.md §9 M5 paragraph (line ~542) + acceptance contracts C1-C9 are your authority. Scope: (a) the divergence ledger to empty — retire the one remaining row (per-deployment MCP schema mutation, retiresIn M4, impl/scripts/surface-divergence-ledger.json) by either fixing the underlying mutation or removing the row with the retirement pinned; (b) a banned-token lint generated from docs/36 §4.1 with token normalization, promoted to red in the canonical suite (the M0 conformance harness at impl/scripts/surface-conformance.mjs is its home); (c) legacy phase strings grep-clean (the legacy map application-semantics.mjs:37-49 is the only sanctioned mapping site — all other literal occurrences of the legacy strings deleted or routed through it); (d) run.steer DELETED as a surface alias (canonical run.send stays: the alias rows at application-semantics.mjs:1627-1628 (cli), :1724 (mcp.fleet), :1738 (web) + the registry row at :873 + the cli.commands membership at :1000 — canonical run.send and its derived names at those sites stay); (e) GLOSSARY.md updated to the post-sunset vocabulary.',
