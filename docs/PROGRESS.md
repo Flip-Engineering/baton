@@ -440,3 +440,19 @@ resumable promote, UNTRUSTED_WORKER_TITLE framing. Suite 24/24, gate 3043/3043. 
 bring-up receipts (60s lineage-admission stall on orchestrator-capability keyed waves; spawn-window
 scratchpad race); #66 filed (doubt review path). Opus's final gate kill was worktree_capacity
 (disk at 898Mi) — the implementation was complete; harvested from its checkpoint pin.
+
+2026-08-02 (the steering epic): **#64 TRUST-GATE STEERING LANDED** (ac5bd80, deepseek-v4-flash
+via baton.recipes — 47-minute one-shot, the epic-scale implementer answer to the deepseek-vs-opus
+question: deepseek just redesigned the coordinator's most delicate machinery flawlessly). The
+turn-based gate is dead: pausable turn_completions are checkpoints that defer (non-dispatch),
+finals evaluate byte-identically, and one bounded steering cycle per pause record (provenance-
+marked nudge + 5min window) precedes any progress verdict — a diff, distinct coordination
+receipt, resumed turn, or claim answers it; expiry lands today's full evaluation WITH the
+steering receipt. Coordination work counts as liveness (distinct-digest dedup, resolution-gated
+interactions — the 128-note and pending-question farms are closed); the terminal cause names the
+gate; analysis:true plan nodes skip required_effect with violation phases at full strength.
+Methodology at full strength: two red-teams killed the naive shapes (5+3 confirmed holes — the
+referee is a second progress judgment, no finality marker exists, no third outcome exists, the
+watchdog is inert at 8h, nudge/feedback are forgery lanes), two blue-team rounds drove the suite
+to GATE-READY (21 tests). #67 filed for the inert stall watchdog itself. DeepSeek's implementer
+record is now: P1-C full marks, M5 sunset, and the trust-gate epic — all one-shot, all gate-green.
