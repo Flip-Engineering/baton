@@ -418,3 +418,25 @@ in ~35 lines — the bespoke driver scripts are retired (composition v2.1 accept
 Grammar M5 (alias sunset) is in flight. The #7 load-flake cluster (drain deadlines,
 calibrated caps, phase assertions) recurred 8x across gates — every row passes isolated
 re-runs; governance work filed for W7.2.
+
+2026-08-01/02 cascade (the knowledge tier): **Demo v3 TIERED-LOOP-OK** (7b497e9) — the tiered
+knowledge loop ran live end-to-end for the first time (glm surveyor's three live SCRATCHPAD_WRITEs
+→ claim_turn steering with the run OPEN → orchestrator ritual pre-stop: elevation worker→shared
++ ScratchFact mint, settlement-run lease, board-close candidacy, lease-gated admission of a
+verified Finding (KG nodes 4→7), workflow settle). The demo receipted the two load-bearing gaps
+as issues: #63 (the tiered-KG ritual was unreachable in EVERY shipped workflow path — zero live
+call sites, run_stopping post-close, the driver always stopping first) and #64 (the no-diff trust
+gate kills legitimate read-heavy work). **#63 KG SETTLEMENT LANDED** (e0f9d57, opus via
+baton.recipes — the full methodology at its strongest: contract v1.0 red-teamed by sonnet+glm
+waves (3 authority holes: bearer lease, board-title injection, recursive-allowlist; XB keystone:
+the shipped admission never enforced lease expiry), red-first suite red-teamed by codex+deepseek
+(0-of-18 rows sound at first pass — staged-red contamination + vacuous rows), blue-team
+GATE-NOT-READY then GATE-READY across two folds). Shipped: D1 atomic settlement-task API, XB's
+full _activeRunOrchestratorLease gate at admission (expired-lease hole closed, session-bound
+lease), the wave driver's settle-window ritual (kg-ritual default: cadence-bounded sweep,
+note+plan elevation, pinned candidacy with full-text grounding, per-wave settlement lease,
+receipt/outline knowledge block), the four embedded commands with server-derived sessions,
+resumable promote, UNTRUSTED_WORKER_TITLE framing. Suite 24/24, gate 3043/3043. #65 filed from
+bring-up receipts (60s lineage-admission stall on orchestrator-capability keyed waves; spawn-window
+scratchpad race); #66 filed (doubt review path). Opus's final gate kill was worktree_capacity
+(disk at 898Mi) — the implementation was complete; harvested from its checkpoint pin.
