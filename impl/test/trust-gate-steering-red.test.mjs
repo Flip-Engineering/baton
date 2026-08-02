@@ -233,6 +233,8 @@ test('T7b: with NOTHING answering, the window expires and the full final evaluat
   const handle = await coordinator.spawn('mock', makeBrief());
   emitTurnCompleted(adapter, handle);
   await flush(40);
+  assert.notEqual(coordinator._tasks.get(handle.taskId).status, 'failed',
+    'mid-window the worker is ALIVE — the verdict waits for the window (no instant kill)');
   await sleep(60); // window expiry, nothing answered
   await flush(40);
   const task = coordinator._tasks.get(handle.taskId);
@@ -277,6 +279,8 @@ test('T8b: a question left PENDING past the window does not hold the cycle open 
     payload: { requestId: 't8b:question:1', question: 'stalling question', blocking: false },
   });
   await flush(40);
+  assert.notEqual(coordinator._tasks.get(handle.taskId).status, 'failed',
+    'mid-window the worker is alive (the window actually elapses before any verdict)');
   await sleep(60); // window expiry with the question still pending
   await flush(40);
   const task = coordinator._tasks.get(handle.taskId);
@@ -447,8 +451,23 @@ test('T14b: a NON-analysis node\'s edit-free final fails required_effect (the fl
   assert.equal(coordinator._tasks.get(handle.taskId).status, 'failed');
 });
 
+test('T14c: analysis does NOT exempt the violation phases — an out-of-scope diff still fails path_scope', async () => {
+  const adapter = new ScriptableAdapter({ pausable: false });
+  const { coordinator } = setup({
+    adapter,
+    capture: async () => ({ sha: 'sha-result', baseSha: 'sha-base', changedPaths: ['etc/evil.txt'] }),
+  });
+  const handle = await coordinator.spawn('mock', makeBrief({ analysis: true, pathScope: ['src/**'] }));
+  emitTurnCompleted(adapter, handle);
+  await flush(60);
+  const task = coordinator._tasks.get(handle.taskId);
+  assert.equal(task.status, 'failed',
+    'analysis skips required_effect ONLY — forbidden/path_scope keep full strength (authority attack 4 closed)');
+});
+
 // ===========================================================================
-// TG6 — coaching retirement (source pin; stage: coaching still shipped)
+// TG6 — coaching retirement (pre-acceptance pin; green today, guards the reword at
+// acceptance — no shipped constraint may EVER carry gate-beating coaching)
 // ===========================================================================
 
 test('T15: no shipped constraint or profile text coaches progress-by-diff-timing for the gate', () => {

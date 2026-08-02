@@ -164,8 +164,10 @@ Objective boilerplate from live truth (#61 opus P0-2). Per-profile gate tuning.
   the steering receipt attached; an edit-free final on a required-edit plan still fails
   required_effect_absent exactly as today (anti-gaming preserved); an edit-free final on
   a green-base tree is accepted exactly as today (no regression).
-- A farmer (128 duplicate one-char notes; or a chain of unanswered trivial questions) does
-  NOT answer the cycle: dedup counts them once; unresolved interactions count never.
+- A farmer gains nothing at the window: duplicate one-char notes dedupe to one answer (a
+  liveness tick, never deliverable), unresolved interactions count never, and the FINAL
+  evaluation still demands the real in-scope diff — the farm bound lives at the final,
+  exactly per TG2's no-content-floor rule.
 - A drivered run is byte-identical to today (claim re-runs the full gate; no policy cycle
   when a driver is registered).
 - The verdict reaches the re-driven worker's brief in the sanitized shape; run.feedback
