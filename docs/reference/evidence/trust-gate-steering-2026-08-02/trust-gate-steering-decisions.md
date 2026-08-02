@@ -75,9 +75,12 @@ never by acceptance) gains a coordination-work class: hub-receipted events on th
 own stream — `scratchpad.write_result {ok:true}`, board mutations, and RESOLVED
 interactions — counted with two bounds:
 
-- **Distinct-content dedup:** receipts dedupe by content digest within the window — N
-  identical one-char notes count once (the 128-entry partition cap is not a liveness
-  grant). The window needs ≥1 distinct receipt to re-arm, nothing more.
+- **Distinct-content dedup:** receipts dedupe by content digest within the window. One
+  distinct valid receipt answers the cycle; ten identical one-char notes count once. There
+  is NO content floor — the cycle is a liveness check, and farming buys nothing beyond
+  one answered cycle per pause record (the window is bounded at 5 minutes, the cycle is
+  once-per-record, and the FINAL evaluation still demands the real diff — the farm bound
+  lives at the final, not the window).
 - **Resolution-gated interactions:** `question.asked`/`decision.requested`/
   `approval.requested` earn progress only when resolved (answered/settled) inside the
   window. A pending interaction buys nothing; a blocking interaction older than its
@@ -118,7 +121,14 @@ the worker through the planner-owned revision/next-brief channel when the task i
 re-driven, and is readable by the worker's harness in its next brief. `run.feedback` is
 NOT the lane (caller-authored forgery surface, authority TG4; its hardening is a separate
 issue, out of v1). `required_effect_absent` names itself in the worker-visible verdict —
-today's degradation to `'unknown'` (:797-804) is fixed.
+today's degradation to `'unknown'` is fixed.
+
+Scope clarification (blue-team, v1.0.1): the recovery-refinement brief is byte-identical
+to the prior task's brief by the store's digest pin (coordination-store.mjs:2880) — the
+refinement brief is therefore NOT a verdict channel. v1's testable core: (a) the projected
+terminal cause names the gate (`policy_failure` + the exact code, never 'unknown'), and
+(b) the refusal is projected as sanitized {gate, detail} on the DG-1 run.debug surface.
+The planner-composed next-brief delivery is the v1.1 half (named follow-up).
 
 ### TG5 — `analysis: true` is a plan-node field, the sole omission path
 
