@@ -32,6 +32,17 @@ DERIVES from the rows — S-3's law):
   (`{result: 'already_resolved', resolvedBy}` where the record carries it) and documented
   in the tool description — a late answerer must NOT re-spawn work (glm #3).**
 
+**Surface adjudication (blue-team v1.0.1):** the wave-ergonomics tools (`waves.start/
+progress/send/stop`), `deployment.doctor`, AND the four settlement tools land on the
+ORDINARY application surface — MCP is the primary agent-facing surface, and wave
+orchestration is the primary agent workflow. `decision.answer` (already a reflex tool)
+joins the ordinary surface identically. The standing reflex-suite pin ("no reflex tool
+lists on the application surface", mcp-reflex-surface-red.test.mjs:189) is amended
+deliberately: it now names exactly the admitted ordinary members above — no other reflex
+tool crosses. The settlement tools' `surfaces` fields become `['embedded', 'mcp']`
+(registry rows; the KS9 pin is amended to match, asserting the envelope/capability
+requirements ride with the MCP enablement).
+
 **Resume-steer is explicit (glm #2):** `waves.attach` over MCP returns the members' runIds;
 `waves.send`/`waves.stop`/`waves.progress` are LIVE on those runIds afterward — that IS
 the resume path, and the tool descriptions say so. **The attach response carries
