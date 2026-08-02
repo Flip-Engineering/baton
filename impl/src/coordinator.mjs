@@ -945,6 +945,11 @@ export class Coordinator {
     this._now = opts.now || Date.now;
     this._approvalTimeoutMs = opts.approvalTimeoutMs ?? 60000;
     this._stopDeadlineMs = opts.stopDeadlineMs ?? 15000;
+    // TG3 (trust-gate steering): the bounded continuation window a pausable checkpoint's
+    // steering cycle waits for an answer before the full final evaluation runs unanswered.
+    // A deployment knob, NOT stallTimeoutMs/watchdog — the cycle is once per pause record and
+    // never cites the stall watchdog as a bound (semantics A7, #67).
+    this._progressNudgeWindowMs = opts.progressNudgeWindowMs ?? 300_000;
     this._recoveryTimeoutMs = opts.recoveryTimeoutMs ?? 15000;
     this._recoveryMaxAttempts = opts.recoveryMaxAttempts ?? 3;
     if (!Number.isSafeInteger(this._recoveryMaxAttempts) || this._recoveryMaxAttempts <= 0
@@ -1993,12 +1998,13 @@ export class Coordinator {
 
   /**
    * Issue #31 §2.1(2) + §2.2(5). Mint a pause record for a `'pausable'`-carded turn, then either
-   * auto-settle it (no live steering registration for the run — today, every run) or leave the
-   * task parked for a 31-b steering act.
+   * leave the task parked for a 31-b steering act (live driver) or — with no registered driver —
+   * arm TG3's one bounded steering cycle (the un-driven checkpoint). The degenerate immediate
+   * auto-settle + gate dispatch is retired: the pause now holds pending and the cycle's answer
+   * or expiry decides the task's fate.
    *
-   * @returns {boolean} `settled` — `true` ⇒ the caller falls through to the ONE pre-existing
-   *   gated `_runTrustGate` dispatch exactly as before; `false` ⇒ the task stays `paused` and the
-   *   caller skips the trust gate for this turn.
+   * @returns {boolean} `settled` — always `false` today: the caller skips the trust gate for this
+   *   turn. A drivered pause pends for `claim_turn`; a driverless pause arms the steering cycle.
    */
   _admitPauseRecord(handle, task, terminalEvent, wr, appendAttributed) {
     const workerId = handle.id;
@@ -2051,16 +2057,166 @@ export class Coordinator {
       && event.payload?.kind === 'steering.registered' && event.payload?.runId === (task.runId ?? null));
     if (hasDriver) return false;
 
+    // TG1+TG3: the un-driven final is no longer an immediate auto-settle + gate dispatch. The
+    // pause holds pending and exactly one bounded steering cycle arms for this pause record —
+    // a provenance-marked policy nudge through the worker control lane and a bounded window
+    // (`progressNudgeWindowMs`, a deployment knob — never the stall watchdog). An answer
+    // (distinct TG2-class receipt, resolved interaction, or resumed turn) settles `working`
+    // with no verdict and no gate dispatch; expiry unanswered settles and runs the full final
+    // evaluation with the steering receipt durable on the verdict. `false` parks the turn.
+    this._armSteeringCycle(pauseId, record, handle, task, terminalEvent, appendAttributed);
+    return false;
+  }
+
+  // =========================================================================
+  // TG3 — the one bounded steering cycle at the pause-admission seam.
+  // =========================================================================
+
+  /** Build the policy nudge's control-lane text (fixed provenance prefix, sanitized exactly
+   * the way every attention/control text is — NFKC + the 6-pattern SECRET pipeline + bytes). */
+  _buildProgressNudge(handle) {
+    return boundedAttentionText(
+      'baton-progress-check: report your progress and remaining plan within this window. '
+      + 'A paused checkpoint waits one bounded window for an answer before its final evaluation.',
+    );
+  }
+
+  /** Clear a record's armed window timer, if any. */
+  _clearSteeringTimer(record) {
+    if (record?.steering?.timer != null) {
+      this._clearTimeout(record.steering.timer);
+      record.steering.timer = null;
+    }
+  }
+
+  /**
+   * TG3 step 1-2: arm one steering cycle for a pause record that would otherwise auto-settle.
+   * The pause stays `paused`; the worker receives exactly one provenance-marked policy nudge
+   * through the control lane and one bounded continuation window. Once per record — the
+   * record's own epoch keys it, and both the answer and the expiry consume the record.
+   */
+  _armSteeringCycle(pauseId, record, handle, task, terminalEvent, appendAttributed) {
+    const windowMs = Number.isSafeInteger(this._progressNudgeWindowMs)
+      ? this._progressNudgeWindowMs : 300_000;
+    const nudgeId = `baton-progress-check:${pauseId}`;
+    record.steering = {
+      nudgeId, answered: false, answer: null,
+      digestSet: new Set(), resolvedRequestIds: new Set(),
+      windowMs, timer: null,
+    };
+    // Deliver the nudge through the worker's control lane (send → _deliver → adapter.prompt),
+    // serialized on the worker's send chain, actor 'policy'. Delivery is best-effort: the
+    // window still bounds the cycle whether or not the adapter accepts the prompt, and a
+    // synchronous refusal (e.g. the coordinator is draining) must not abort the arming.
+    try {
+      this.send(handle.id, this._buildProgressNudge(handle), 'nudge', { actor: 'policy' })
+        .catch(noop);
+    } catch { /* delivery refused synchronously — the window still bounds the cycle */ }
+    const workerId = handle.id;
+    const timerHandle = this._setTimeout(() => {
+      try { this._expireSteeringCycle(pauseId); }
+      catch (err) {
+        try {
+          this._log.append({
+            worker: workerId, harness: this._harnessOf(handle.vendor),
+            turnEpoch: this._safeTurnEpoch(handle), kind: 'error', actor: 'policy',
+            payload: { message: String(err?.message ?? err), phase: 'steering_expiry' },
+          });
+        } catch { /* the log is already poisoned; nothing more to say */ }
+      }
+    }, windowMs);
+    // Unref'd like every other coordinator deadline timer (C4): the window still fires while the
+    // process is alive, but a lone armed cycle must never hold process exit hostage.
+    if (timerHandle && typeof timerHandle.unref === 'function') timerHandle.unref();
+    record.steering.timer = timerHandle;
+    return true;
+  }
+
+  /**
+   * TG2/TG3 evidence evaluation. A scratchpad receipt answers only on a DISTINCT content
+   * digest (one-char duplicates count once, no content floor); an interaction answers only
+   * when RESOLVED inside the window (a pending or past-deadline interaction never counts); a
+   * resumed turn always answers. The first qualifying answer settles the cycle.
+   */
+  _steeringEvidenceQualifies(record, evidence) {
+    const steering = record.steering;
+    if (evidence?.kind === 'turn_started') return true;
+    if (evidence?.kind === 'scratchpad') {
+      const digest = evidence.digest;
+      if (typeof digest !== 'string' || digest.length === 0) return false;
+      if (steering.digestSet.has(digest)) return false;
+      steering.digestSet.add(digest);
+      return true;
+    }
+    if (evidence?.kind === 'interaction') {
+      const requestId = evidence.requestId;
+      const interaction = this._pending.get(requestId);
+      if (!interaction || interaction.worker !== record.worker || interaction.state !== 'resolved') return false;
+      if (steering.resolvedRequestIds.has(requestId)) return false;
+      steering.resolvedRequestIds.add(requestId);
+      return true;
+    }
+    return false;
+  }
+
+  /** Find the one armed cycle for a worker and settle it when the evidence qualifies. */
+  _observeSteeringCycle(handle, evidence) {
+    if (!handle) return;
+    for (const [pauseId, record] of this._pausedTurns) {
+      if (record.worker !== handle.id || record.state !== 'pending'
+        || !record.steering || record.steering.answered !== false) continue;
+      const task = this._tasks.get(record.taskId);
+      if (!task || TERMINAL_TASK_STATUSES.has(task.status)) continue;
+      // A paused task is always answerable. A task parked/working under a blocking interaction
+      // is answerable only by the interaction resolution that just unparked it — liveness
+      // evidence from a still-blocked worker must not tear down the block.
+      if (task.status !== 'paused' && evidence?.kind !== 'interaction') continue;
+      if (!this._steeringEvidenceQualifies(record, evidence)) return;
+      this._settleSteeringCycle(pauseId, record, handle, task, evidence);
+      return;
+    }
+  }
+
+  /** TG3 step 2-answer: the worker answered — settle the pause `working`, no verdict, no gate. */
+  _settleSteeringCycle(pauseId, record, handle, task, evidence) {
+    this._clearSteeringTimer(record);
+    record.steering.answered = true;
+    record.steering.answer = evidence;
     this._resolvePauseAuthority(pauseId, record, 'policy');
-    const settledEvent = appendAttributed({
-      worker: workerId, harness: terminalEvent?.harness, turnEpoch,
-      kind: 'turn.settled', actor: 'policy',
-      payload: { actor: 'policy', basis: 'auto_no_driver' },
+    const settledEvent = this._log.append({
+      worker: handle.id, harness: this._harnessOf(handle.vendor), turnEpoch: record.turnEpoch,
+      kind: 'turn.settled', actor: 'policy', ...this._routeAttribution(handle, task),
+      payload: { actor: 'policy', basis: 'steering_answered', pauseId },
     });
     this._coordTransition(task, 'working', `task.working:${task.id}:${settledEvent.seq}`,
       this._coordMapEvent(settledEvent), 'policy');
     task.status = 'working';
-    return true;
+  }
+
+  /** TG3 step 3: the window expired unanswered — settle and run the full final evaluation with
+   * the steering receipt (`steered: {nudgeId, answered:false}`) durable on the verdict. */
+  _expireSteeringCycle(pauseId) {
+    const record = this._pausedTurns.get(pauseId);
+    if (!record || record.state !== 'pending' || !record.steering
+      || record.steering.answered !== false) return;
+    const handle = this._workers.get(record.worker);
+    const task = this._tasks.get(record.taskId);
+    if (!handle || !task || task.status !== 'paused') return;
+    this._clearSteeringTimer(record);
+    this._resolvePauseAuthority(pauseId, record, 'policy');
+    const settledEvent = this._log.append({
+      worker: handle.id, harness: this._harnessOf(handle.vendor), turnEpoch: record.turnEpoch,
+      kind: 'turn.settled', actor: 'policy', ...this._routeAttribution(handle, task),
+      payload: { actor: 'policy', basis: 'steering_expired', pauseId },
+    });
+    this._coordTransition(task, 'working', `task.working:${task.id}:${settledEvent.seq}`,
+      this._coordMapEvent(settledEvent), 'policy');
+    task.status = 'working';
+    // The full final evaluation — the SAME call an ordinary turn completion makes, with the
+    // steering receipt attached so "we asked and it never answered" is durable evidence.
+    Promise.resolve(handle.worktreeReady).then(() => this._runTrustGate(handle, record.workerResult ?? null, {
+      steered: { nudgeId: record.steering.nudgeId, answered: false },
+    })).catch(noop);
   }
 
   // =========================================================================
@@ -2186,6 +2342,9 @@ export class Coordinator {
     const reservation = await this._reservePauseRecord(pauseId);
     if (!reservation.ok) return reservation;
     const { record, commit, rollback } = reservation;
+    // TG3: a driver nudge consumes the steering cycle — a cycle-armed record is answered by
+    // the nudge's own fresh-turn admission, so its bounded window must not fire later.
+    this._clearSteeringTimer(record);
     const targets = this._pausedActTargets(record);
     if (!targets.ok) { rollback(); return targets; }
     const { handle, task } = targets;
@@ -2298,6 +2457,9 @@ export class Coordinator {
     const reservation = await this._reservePauseRecord(pauseId);
     if (!reservation.ok) return reservation;
     const { record, commit, rollback } = reservation;
+    // TG3 6c: a claim on a cycle-armed record is its own answer — the bounded window must not
+    // fire later (the claim runs the full gate, with no steering-expiry receipt).
+    this._clearSteeringTimer(record);
     const targets = this._pausedActTargets(record);
     if (!targets.ok) { rollback(); return targets; }
     const { handle, task } = targets;
@@ -8979,6 +9141,8 @@ export class Coordinator {
     record.resolution = answer;
     clearPending();
     finishResolving();
+    // TG2/TG3: a question/approval RESOLVED inside the window answers the steering cycle.
+    this._observeSteeringCycle(handle, { kind: 'interaction', requestId });
     return { ok: true, result: 'applied' };
   }
 
@@ -9107,6 +9271,8 @@ export class Coordinator {
     if (handle.pendingDecisionId === requestId) handle.pendingDecisionId = null;
     if (handle.status === 'blocked') handle.status = 'working';
     finishResolving();
+    // TG2/TG3: a decision RESOLVED inside the window answers the steering cycle.
+    this._observeSteeringCycle(handle, { kind: 'interaction', requestId });
     return { ok: true, result: 'applied' };
   }
 
@@ -9702,7 +9868,9 @@ export class Coordinator {
     if (!check.ok) return { ok: false, result: 'stale_fence', current: check.current };
     try {
       const receipt = this._coordination.writeScratchpad({
-        runId: task.runId, taskId: task.id, workerId, entry,
+        // A bare (un-Run-bound) task scopes its scratchpad to the task itself — the store
+        // requires a bounded runId and a null runId would refuse every write for such a task.
+        runId: task.runId ?? task.id, taskId: task.id, workerId, entry,
       }, {
         actor: 'worker', principalId: workerId, key: opts.idempotencyKey,
       });
@@ -9710,6 +9878,9 @@ export class Coordinator {
         ok: true, result: receipt.result, entryId: receipt.entryId,
         entryDigest: receipt.entryDigest, scope: receipt.scope,
         scratchpadFence: receipt.scratchpadFence, eventSeq: receipt.eventSeq,
+        // TG2: the content digest is the dedup key for steering-cycle receipts — ten identical
+        // one-char notes share one contentDigest and count once.
+        contentDigest: receipt.contentDigest ?? receipt.entry?.contentDigest ?? null,
       };
     } catch (error) {
       if (error?.name !== 'CoordinationRefusal') throw error;
@@ -10483,6 +10654,8 @@ export class Coordinator {
     if (kind === 'lifecycle.turn_started') {
       handle.turnTerminalObserved = false;
       this._clearBudgetStop(handle);
+      // TG3: a resumed turn answers the pause record's steering cycle.
+      this._observeSteeringCycle(handle, { kind: 'turn_started' });
     } else if (['lifecycle.turn_completed', 'lifecycle.crashed', 'lifecycle.exited'].includes(kind)) {
       handle.turnTerminalObserved = true;
       this._clearBudgetStop(handle);
@@ -10775,12 +10948,12 @@ export class Coordinator {
             && [...this._pending.values()].some((record) => record.worker === handle.id && record.state === 'pending');
           if (parkedUnsettled) break;
         }
-        // Issue #31 §2.1(1)-(2): a 'pausable' card's completed turn is a checkpoint, not an
-        // implicit claim. A 'claim' card (the default — every card without the field) never
-        // reaches this branch and falls straight through to the pre-existing gate below,
-        // byte-identically to before. `settled === true` means the degenerate auto-settle ran and
-        // the task is back at 'working', so the SAME single gate dispatches the trust gate; only
-        // a live steering registration (`settled === false`) parks the turn and skips it.
+        // Issue #31 §2.1(1)-(2) + TG1: a 'pausable' card's completed turn is a CHECKPOINT, not an
+        // implicit claim — the trust gate does not dispatch, no gate event is written. A 'claim'
+        // card (the default — every card without the field) never reaches this branch and falls
+        // straight through to the pre-existing gate below, byte-identically to before. A drivered
+        // pause pends for `claim_turn`; a driverless pause arms TG3's one bounded steering cycle
+        // (the un-driven final is the cycle's expiry, never an immediate verdict).
         {
           const task = this._tasks.get(handle.taskId);
           // A turn can legally end AFTER its task was already terminalized (run stop, fleet
@@ -10869,6 +11042,11 @@ export class Coordinator {
           worker: workerId, harness, turnEpoch, kind: 'scratchpad.write_result',
           actor: 'hub', payload: receipt,
         });
+        // TG2/TG3: a hub-receipted scratchpad write with ok:true is coordination-work liveness
+        // evidence — a distinct content digest answers the armed steering cycle.
+        if (receipt?.ok === true) {
+          this._observeSteeringCycle(handle, { kind: 'scratchpad', digest: receipt.contentDigest ?? null });
+        }
         break;
       }
       case 'question.asked': {
@@ -11116,7 +11294,7 @@ export class Coordinator {
     }
   }
 
-  async _runTrustGate(handle, workerResult) {
+  async _runTrustGate(handle, workerResult, opts = {}) {
     const task = this._tasks.get(handle.taskId);
     if (!task) return;
     // SC13/SC14: a late terminal event from a stopped session cannot reopen a terminal task.
@@ -11175,7 +11353,10 @@ export class Coordinator {
           },
         });
       }
-      if (task.brief?.requiredEffects?.includes('repository_edit')) {
+      // TG5: `analysis: true` documents repository_edit as not-required for this node — the
+      // required_effect progress verdict is skipped; every other phase (capture, forbidden_effect,
+      // path_scope, environment, coverage) still runs.
+      if (!task.brief?.analysis && task.brief?.requiredEffects?.includes('repository_edit')) {
         const baseSha = task.sessionContext?.baseSha ?? captured?.baseSha ?? null;
         if (!sha || !baseSha || sha === baseSha || changedPaths.length === 0 || inScopeChangedPaths.length === 0) {
           trustPhase = 'required_effect';
@@ -11470,6 +11651,7 @@ export class Coordinator {
           message: String((err && err.message) || err), code, phase: 'trust_gate', trustPhase,
           ...(err?.requiredEffectEvidence ? { requiredEffectEvidence: err.requiredEffectEvidence } : {}),
           ...(err?.pathScopeEvidence ? { pathScopeEvidence: err.pathScopeEvidence } : {}),
+          ...(opts.steered ? { steered: opts.steered } : {}),
         },
       });
       let durable = this._coordination.task(task.id);
@@ -11491,6 +11673,9 @@ export class Coordinator {
       if (task.status !== 'completed') task.verdict = null;
       if (['forbidden_effect_observed', 'required_effect_absent', 'worker_path_scope_violation'].includes(code)) {
         handle.terminalCause ??= deepFreeze({ kind: 'policy_failure', code });
+        // TG4: the projected terminal cause names the gate — never 'unknown' — on the task
+        // surface too (the handle's copy already fed result() and replay).
+        task.terminalCause = handle.terminalCause;
         task.result = null;
         this._expireScratchClaims(handle, task, code);
         this._expireBoardClaims(handle, task, code);

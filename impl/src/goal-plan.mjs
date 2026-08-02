@@ -293,7 +293,8 @@ function normalizeNode(value, policy, goal, options) {
   const hasRevision = Object.hasOwn(value ?? {}, 'revision');
   const hasContextScope = Object.hasOwn(value ?? {}, 'contextScope');
   const hasContextCall = Object.hasOwn(value ?? {}, 'contextCall');
-  exactObject(value, ['key', 'objective', 'definitionOfDone', 'deps', 'pathScope', 'risk', 'budget', 'verification', 'routes', 'capabilities', 'effects', ...(hasContextScope ? ['contextScope'] : []), ...(hasRequiredEffects ? ['requiredEffects'] : []), ...(hasWorkerPolicy ? ['workerPolicy'] : []), ...(hasRevision ? ['revision'] : []), ...(hasContextCall ? ['contextCall'] : [])]);
+  const hasAnalysis = Object.hasOwn(value ?? {}, 'analysis');
+  exactObject(value, ['key', 'objective', 'definitionOfDone', 'deps', 'pathScope', 'risk', 'budget', 'verification', 'routes', 'capabilities', 'effects', ...(hasContextScope ? ['contextScope'] : []), ...(hasRequiredEffects ? ['requiredEffects'] : []), ...(hasWorkerPolicy ? ['workerPolicy'] : []), ...(hasRevision ? ['revision'] : []), ...(hasContextCall ? ['contextCall'] : []), ...(hasAnalysis ? ['analysis'] : [])]);
   const key = normalizedText(value.key, 256, 'node.key');
   if (!/^[A-Za-z0-9._:-]+$/.test(key)) fail('plan node key is invalid', 'plan_node_invalid');
   const deps = normalizedSet(value.deps, policy.limits.maxDepsPerNode, 256, 'node.deps');
@@ -334,6 +335,7 @@ function normalizeNode(value, policy, goal, options) {
     ...(hasWorkerPolicy ? { workerPolicy: normalizeWorkerPolicyRequest(value.workerPolicy) } : {}),
     ...(hasRevision ? { revision } : {}),
     ...(hasContextCall ? { contextCall } : {}),
+    ...(hasAnalysis ? { analysis: value.analysis === true } : {}),
   };
   if (riskIndex(policy, result.risk) < riskIndex(policy, goal.risk)) fail('plan node risk weakens the goal execution-control tier', 'plan_risk_mismatch');
   if (result.definitionOfDone.some((item) => !goal.definitionOfDone.includes(item))) fail('plan node assigns an unknown definition-of-done item', 'plan_goal_mismatch');
@@ -341,6 +343,14 @@ function normalizeNode(value, policy, goal, options) {
   if (hasRequiredEffects && (result.requiredEffects.some((item) => !result.effects.includes(item))
     || result.requiredEffects.some((item) => item !== 'repository_edit'))) {
     fail('plan node required effects exceed authorized or supported effects', 'plan_required_effect_invalid');
+  }
+  // TG5: `analysis: true` is the SOLE legitimate path for an effectful node to omit
+  // `repository_edit` from its requiredEffects. Any other omission is a plan-validation error
+  // naming the field — a node cannot silently weaken the effect audit. A purely read-only node
+  // (`effects: []`) keeps the pre-existing legacy shape and needs no declaration.
+  if (hasRequiredEffects && result.effects.length > 0
+    && !result.requiredEffects.includes('repository_edit') && result.analysis !== true) {
+    fail('plan node omits repository_edit from requiredEffects without the analysis:true field', 'plan_required_effect_invalid');
   }
   return result;
 }

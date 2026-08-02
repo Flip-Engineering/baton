@@ -1478,6 +1478,7 @@ export function createDriver(opts) {
     now,
     approvalTimeoutMs: opts.approvalTimeoutMs ?? 60000,
     stopDeadlineMs: opts.stopDeadlineMs ?? 15000,
+    progressNudgeWindowMs: opts.progressNudgeWindowMs ?? 300_000,
     recoveryTimeoutMs: opts.recoveryTimeoutMs ?? 15000,
     recoveryMaxAttempts: sessionRecoveryPolicy?.maxAttempts ?? opts.recoveryMaxAttempts ?? 3,
     startupRecoveryAuthority,
