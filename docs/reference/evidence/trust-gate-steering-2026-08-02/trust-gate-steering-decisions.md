@@ -1,4 +1,172 @@
-# Trust-gate steering epic contract (v0.9, pre-red-team)
+# Trust-gate steering epic contract (v1.0, post-red-team fold)
+
+(Red-teamed by two adversarial reviewers against the codebase: `redteam-semantics.md`
+(5 CONFIRMED-HOLEs, 3 NEEDS-AMENDMENT) and `redteam-authority.md` (3 CONFIRMED-HOLEs, 5
+NEEDS-AMENDMENT, 1 DEFENDED). v0.9's TG1/TG2/TG3 naive shapes did not survive contact with
+the machinery — this v1.0 is a redesign, not an edit. The v0.9 seed is preserved at the end
+for traceability.)
+
+## What the red teams proved (and the redesign each forces)
+
+1. **The gate has TWO progress judgments, not one** (semantics A1): `required_effect`
+   (:11160-11175) and the referee/accept phase (:11234-11247) both judge progress, and
+   skipping `required_effect` alone yields ACCEPTANCE of an edit-free turn on a green base.
+   → The fold splits phases into **violation verdicts** (forbidden_effect, path_scope —
+   immediate terminal failure is always correct) and **progress verdicts** (required_effect
+   + referee/coverage — deferred at checkpoints, full strength at finals), and the deferral
+   is **non-dispatch**, never a gate run with phases skipped.
+2. **No finality marker exists for un-driven runs** (semantics A2; all four production
+   adapters are pausable). → The taxonomy: a `turn_completed` that mints a pending pause
+   record is a CHECKPOINT (defer); one that doesn't is a FINAL (evaluate, today exactly).
+   Drivers' `claim_turn` remains the drivered final. TG3's exhausted steering window is the
+   new un-driven final trigger.
+3. **Every gate path ends terminal — there is no third outcome** (semantics A9). →
+   Deferral is non-dispatch: the task stays `paused`/`working`, no gate event, no verdict.
+   No new task state is minted.
+4. **nudge_turn cannot deliver at the auto_no_driver verdict point** (semantics A6: the
+   pause record is resolved BEFORE the gate runs) and is pause-keyed with no mid-turn lane
+   (authority 6c: claimTurn bypasses any cycle). → The steering cycle moves to the
+   pause-admission seam (`_admitPauseRecord`, the one place the record is guaranteed
+   pending), once per pause record, and claim counts as its answer.
+5. **Progress evidence must be farm-proof** (semantics A4/A10, authority 6a/6b): 128
+   one-char notes buy the full 8h wall budget today; non-blocking `question.asked` is
+   unlimited; a blocking question parks outside the watchdog with `deadlineAt: null`. →
+   TG2's evidence class is distinct-content-digest-bounded and resolution-gated.
+6. **The stall watchdog is not a liveness bound** (semantics A7, authority TG1/6b:
+   production stallMs = wallMin, any-event re-arm, blocked-status escape). → Filed as
+   issue #67; this contract bounds its own steering window and never cites the watchdog
+   as a bound.
+7. **Verdict delivery must not ride run.feedback** (authority TG4: caller-authored
+   {gate, detail} = forged-verdict surface). → TG4 uses the planner-owned revision/next-
+   brief channel only.
+8. **The analysis exemption already exists by omitting requiredEffects** (authority TG5:
+   machinery DEFENDED). → TG5 makes the node field the SOLE legitimate omission path.
+9. **The coaching is actively harmful** (authority TG6: digest churn breaks digest-keyed
+   steering bounds). → Retired at this epic's acceptance, not deferred.
+
+## v1.0 decisions
+
+### TG1 — Checkpoint/final taxonomy; deferral is non-dispatch
+
+In the `turn_completed` dispatch (coordinator.mjs:10791-10806): when `_admitPauseRecord`
+mints (or pends) a pause record for the completion, the turn is a CHECKPOINT — the trust
+gate does not dispatch, no gate event is written, the task stays `paused` pending steering
+(TG3) or a driver claim. A `turn_completed` with no pause record is a FINAL — the gate
+runs exactly as today (all phases, including required_effect and the referee). A gate run
+therefore always evaluates a genuinely final answer: violation verdicts
+(forbidden_effect, path_scope) keep their every-run immediacy at finals, and progress
+verdicts (required_effect, referee/coverage) exist only at finals. `claim_turn`'s re-run
+(:2281-2314) is unchanged — it is the drivered final, and it runs the FULL gate (a driver
+claiming a checkpoint accepts the final-evaluation risk, as today).
+
+The auto_no_driver path changes exactly one behavior: instead of settle-`working` + gate
+dispatch, it holds the pause pending and arms TG3's steering cycle. The un-driven final is:
+(a) a later `turn_completed` with no pause record, (b) the TG3 window expiring unanswered,
+or (c) run termination (today's `lifecycle.exited` semantics unchanged — no gate there).
+
+Red-team residue accepted: mid-workflow violation writes (out-of-scope at a checkpoint)
+are caught at the next gate run (final or claim), not at the checkpoint — the same
+exposure drivered runs already carry by design.
+
+### TG2 — Farm-proof coordination progress evidence
+
+Liveness evidence (used ONLY by TG3's steering cycle and the no_progress determination —
+never by acceptance) gains a coordination-work class: hub-receipted events on the worker's
+own stream — `scratchpad.write_result {ok:true}`, board mutations, and RESOLVED
+interactions — counted with two bounds:
+
+- **Distinct-content dedup:** receipts dedupe by content digest within the window — N
+  identical one-char notes count once (the 128-entry partition cap is not a liveness
+  grant). The window needs ≥1 distinct receipt to re-arm, nothing more.
+- **Resolution-gated interactions:** `question.asked`/`decision.requested`/
+  `approval.requested` earn progress only when resolved (answered/settled) inside the
+  window. A pending interaction buys nothing; a blocking interaction older than its
+  deadline (or a bounded deployment default when `deadlineAt` is null, #67's sibling) does
+  not re-arm.
+
+Acceptance is untouched: at FINAL, `required_effect` still demands a real in-scope diff;
+coordination work is liveness, never deliverable.
+
+### TG3 — One bounded steering cycle at the pause-admission seam
+
+When `_admitPauseRecord` would auto-settle (no registered driver), it instead performs
+exactly one steering cycle for that pause record:
+
+1. Deliver a policy nudge through the worker's control lane: hub-marked provenance text
+   (a fixed `baton-progress-check:` prefix; sanitized through the same 6-pattern
+   SECRET_SHAPED + NFKC + bounded pipeline messages.mjs owns), asking for progress and
+   remaining plan. Policy-actor only — no principal-addressable command in v1.
+2. Arm a bounded continuation window (deployment policy `progressNudgeWindowMs`, default
+   5 minutes — NOT stallTimeoutMs; the layer confusion in v0.9 is corrected). Any of
+   {diff capture, TG2-class receipt, resumed turn} answers the cycle: the pause settles
+   `working`, no verdict, no gate dispatch.
+3. On expiry unanswered: the pause settles and the gate dispatches as today's auto-settle
+   would — the full final evaluation, with the steering receipt
+   (`steered: {nudgeId, answered: false}`) durable on the verdict.
+
+Once per pause record, keyed on the record's own epoch — micro-progress cannot re-arm it
+(the record is consumed by the cycle). `claim_turn` on a cycle-armed record counts as its
+answer (6c closed). Worst-case added latency for a genuinely dead worker: one bounded
+window (5 min default), replacing today's immediate-but-wrong verdict.
+
+### TG4 — Verdict reaches the worker through the revision channel
+
+A gate failure verdict — the sanitized {gate, detail} shape DIAG DG-1 minted (digests+
+counts for scope, sanitized tails for red_green/coverage, NEVER path strings, and
+baseSha/sha digests hub-side — authority TG4's evidence-shape amendment) — is delivered to
+the worker through the planner-owned revision/next-brief channel when the task is
+re-driven, and is readable by the worker's harness in its next brief. `run.feedback` is
+NOT the lane (caller-authored forgery surface, authority TG4; its hardening is a separate
+issue, out of v1). `required_effect_absent` names itself in the worker-visible verdict —
+today's degradation to `'unknown'` (:797-804) is fixed.
+
+### TG5 — `analysis: true` is a plan-node field, the sole omission path
+
+`analysis: true` is a closed boolean field on the plan NODE (planner-set at proposal,
+digest-bound through plan+approval digests — authority confirmed post-approval flips are
+unrepresentable). A node's requiredEffects may omit `repository_edit` ONLY when the field
+is present; any other omission is a plan-validation error. `contextEffectNodeBinding`
+(coordination-store.mjs:6813-6845) binds the field identically for context-program nodes
+(6d closed). Final evaluation of an analysis node skips required_effect and runs every
+other phase.
+
+### TG6 — The coaching retires at THIS epic's acceptance
+
+Shipped constraint/coaching text that trains writing for the gate's benefit is reworded to
+steering-compatible form at acceptance (recipes' analogues at recipes.mjs:529-536 and the
+objective boilerplate family): the guidance becomes "produce your deliverable; progress
+verdicts evaluate finals, and one progress nudge precedes any verdict" — no skeleton-first,
+no write-early-to-survive. Acceptance includes a source-scan: no shipped constraint line
+references beating the gate.
+
+### TG7 — named follow-ups (out of v1)
+
+Issue #67 (the stall watchdog: inert-by-config, any-event re-arm, blocked-status escape).
+run.feedback hardening (forgery surface, authority TG4 — its own issue at acceptance).
+Objective boilerplate from live truth (#61 opus P0-2). Per-profile gate tuning.
+
+## v1.0 acceptance (red-first)
+
+- A worker whose first turn is reads + scratchpad writes with NO diff stays alive: one
+  policy nudge delivered (provenance-marked), the window arms, the admitted writes answer
+  it (distinct receipts), the pause settles working, ZERO gate events dispatched.
+- A worker that never answers inside the window gets today's full final evaluation WITH
+  the steering receipt attached; an edit-free final on a required-edit plan still fails
+  required_effect_absent exactly as today (anti-gaming preserved); an edit-free final on
+  a green-base tree is accepted exactly as today (no regression).
+- A farmer (128 duplicate one-char notes; or a chain of unanswered trivial questions) does
+  NOT answer the cycle: dedup counts them once; unresolved interactions count never.
+- A drivered run is byte-identical to today (claim re-runs the full gate; no policy cycle
+  when a driver is registered).
+- The verdict reaches the re-driven worker's brief in the sanitized shape; run.feedback
+  accepts no new caller shape.
+- An analysis node's edit-free final passes required_effect; a non-analysis node's
+  edit-free final fails it; a plan node cannot self-declare analysis post-approval.
+- Every pre-existing gate phase behaves byte-identically at finals.
+
+---
+
+## v0.9 seed (preserved for traceability)
 
 (Seed: issue #64 + #61 and the operator's standing directive — "use programmatic steering to
 nudge or check on progress, never turn-based gating; turn-based limits make smart systems
