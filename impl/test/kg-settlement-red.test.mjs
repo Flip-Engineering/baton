@@ -737,6 +737,18 @@ function mockCard(adapter) {
   });
 }
 
+// The store/coordinator clock is anchored to the wave-time the fixtures assume (the settle-window
+// opens well inside every seeded review window: the seeded leases expire at 06:30 / 08:30 UTC, so a
+// 06:00 base keeps them live at issue/admission and stale only relative to a LATER wave close — the
+// driver-triggered, no-timers sweep). It advances in real time (never frozen), so relative durations
+// stay honest; only the absolute wall-clock coupling is removed. This makes the suite deterministic
+// on any host clock without touching a single assertion (the shipped deployment clock is real time).
+const ANCHORED_STORE_CLOCK = (() => {
+  const base = Date.parse('2026-08-01T06:00:00.000Z');
+  const start = Date.now();
+  return () => base + (Date.now() - start);
+})();
+
 function buildApplication(t, adapter, { mandatory = true } = {}) {
   const repo = root('repo');
   const logDir = root('log');
@@ -746,6 +758,7 @@ function buildApplication(t, adapter, { mandatory = true } = {}) {
     repoRoot: repo,
     repoId,
     logDir,
+    now: ANCHORED_STORE_CLOCK,
     adapters: { mock: adapter },
     stopDeadlineMs: 2_000,
     approvalTimeoutMs: 3_000, // keyed waves (93B) otherwise stall the full 60s default at close

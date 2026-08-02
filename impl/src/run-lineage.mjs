@@ -16,7 +16,8 @@ export const RUN_ORCHESTRATOR_CAPABILITIES = Object.freeze([
 ]);
 
 export const RUN_ORCHESTRATOR_REVOCATION_REASONS = Object.freeze([
-  'operator', 'parent_terminal', 'parent_run_stopping', 'session_revoked', 'superseded',
+  'operator', 'parent_terminal', 'parent_run_stopping', 'review_window_expired',
+  'session_revoked', 'superseded',
 ]);
 
 export const DEFAULT_RUN_LINEAGE_POLICY = Object.freeze({

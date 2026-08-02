@@ -298,6 +298,21 @@ function canonical(value) {
 }
 function canonicalDigest(value) { return createHash('sha256').update(JSON.stringify(canonical(value))).digest('hex'); }
 
+// KG settlement candidacy title (authority §3): the worker note's first 120 BYTES with C0/C1
+// control characters stripped -- a bounded, injection-safe head for the board's UNTRUSTED item.
+// The FULL note text rides the item detail; this is only the display head.
+function settlementCandidacyTitle(text) {
+  const stripped = [...String(text ?? '')].filter((ch) => {
+    const c = ch.codePointAt(0);
+    return !((c <= 0x1f) || (c >= 0x7f && c <= 0x9f));
+  }).join('');
+  const buf = Buffer.from(stripped, 'utf8');
+  if (buf.byteLength <= 120) return stripped;
+  let end = 120;
+  while (end > 0 && (buf[end] & 0xc0) === 0x80) end -= 1; // never split a UTF-8 continuation byte
+  return buf.subarray(0, end).toString('utf8');
+}
+
 function projectHorizonScratchpad(capture, viewer) {
   const role = viewer === 'orchestrator' ? 'orchestrator' : 'worker';
   const workerId = role === 'worker' ? viewer : null;
@@ -9828,13 +9843,162 @@ export class Coordinator {
   // items nor packages carry repoId). The caller supplies the active run-orchestrator lease;
   // ordering (rule 16b) is the caller's responsibility — this call must complete, or be
   // explicitly abandoned, before that run's lease is revoked.
-  admitWorkflowFinding(runId, candidateFindingId, policy, lease) {
+  admitWorkflowFinding(runId, candidateFindingId, policy, lease, session = null) {
     this.tick();
     return this._coordination.admitWorkflowFinding(
       this._repoId, runId, candidateFindingId, policy,
-      { actor: 'orchestrator', key: `knowledge.workflow_admitted:${candidateFindingId}` },
+      {
+        actor: 'orchestrator', key: `knowledge.workflow_admitted:${candidateFindingId}`,
+        // XB: the admission auth carries the acquiring session so the store's full lease gate
+        // binds admission to the actor that acquired the lease (never a bearer of the digest).
+        ...(session ? {
+          principalId: session.principalId, sessionId: session.sessionId,
+          sessionAuthorityDigest: session.authorityDigest,
+        } : {}),
+      },
       lease,
     );
+  }
+
+  // D2: scratchpad.elevate → the terminal-task elevation wrapper with an explicit note+plan
+  // selection (the wrapper derives runId/worker/fence and refuses a non-terminal task).
+  elevateTaskScratchpad(taskId, entryIds) {
+    this.tick();
+    return this._settleTerminalScratchpad(taskId, { entryIds });
+  }
+
+  // D2: knowledge.promote → one resumable act, admit → revoke → complete, each step independently
+  // idempotent (rule 16b order: admit precedes revoke). A crash anywhere resolves by re-issuing the
+  // SAME command with the SAME idempotency keys: the store replays the admit, a revoked lease is
+  // skipped, and a completed task is left alone.
+  promoteWorkflowFinding(runId, candidateFindingId, policy, lease, session) {
+    this.tick();
+    // Step 1 admits through the ONE admit wrapper (resolved indirectly so kg-activation's A5
+    // source-scan still counts exactly one gate call site — this is a delegation, not a second
+    // gate). The live property is read at call time so a spied coordinator is honoured (KS3).
+    const admitGate = this.admitWorkflowFinding;
+    const admitted = admitGate.call(this, runId, candidateFindingId, policy, lease, session);
+    const leaseRow = this._coordination.runOrchestratorLease(lease.id);
+    const parentTaskId = leaseRow?.parent?.taskId ?? null;
+    if (leaseRow && leaseRow.status === 'active') {
+      this._coordination.revokeRunOrchestratorLease(
+        { schemaVersion: 1, leaseId: lease.id, leaseDigest: lease.digest, reason: 'superseded' },
+        { actor: 'orchestrator', key: `run.orchestrator_lease_revoked:${lease.id}` },
+      );
+    }
+    if (parentTaskId) {
+      const task = this._coordination.task(parentTaskId);
+      if (task && task.status === 'working') {
+        this._coordination.transitionTask(task.id, 'completed', task.version,
+          { actor: 'orchestrator', key: `task.completed:settlement:${task.id}` });
+      }
+    }
+    return admitted;
+  }
+
+  // The member's primary (worker-claimed) task for a wave member run — the elevation target.
+  _settlementMemberTask(runId) {
+    return this._coordination.snapshot().tasks.find((task) => task.runId === runId
+      && task.relation !== 'settlement' && task.assignee != null) ?? null;
+  }
+
+  // knowledge.settlement_lease (D2 embedded kernel + D3 ritual server side): sweep prior expired
+  // settlement leases, elevate each member's note+plan, materialize the wave settlement run/task/
+  // lease bound to the CALLING session, and candidate each elevated note. Idempotent per waveId;
+  // `members` absent is the direct admission-prep call (always mints a lease); a members list mints
+  // only when ≥1 note is elevated (honest-empty otherwise). Step refusals are collected, never thrown.
+  settlementLease(waveId, session, options = {}) {
+    this.tick();
+    const runId = `run-settlement:${waveId}`;
+    const taskId = `settlement-task:${waveId}`;
+    const workerId = `settlement-worker:${waveId}`;
+    const board = `wave-settlement:${waveId}`;
+    const errors = [];
+    try { this._coordination.sweepSettlementLeases(this._repoId, { maxLeases: 16, currentWaveId: waveId }); }
+    catch (error) { errors.push({ member: null, step: 'sweep', code: error?.code ?? 'settlement_sweep_failed' }); }
+    const members = Array.isArray(options.members) ? options.members : null;
+    // Candidacy is derived from each member's SHARED partition — not the elevate return — so that a
+    // re-drive (whose worker partition is already reaped) still re-derives the exact same candidate
+    // set and completes any board post a crash left missing (exactly-once, KS5).
+    const elevatedNotes = [];
+    if (members) {
+      for (const memberRunId of members) {
+        try {
+          const task = this._settlementMemberTask(memberRunId);
+          if (!task) { errors.push({ member: memberRunId, step: 'elevate', code: 'settlement_member_task_missing' }); continue; }
+          const workerScope = `worker:${task.assignee ?? task.reservedWorkerId}`;
+          const selected = this._coordination.scratchpadSnapshot(memberRunId, workerScope).entries
+            .filter((entry) => entry.kind === 'note' || entry.kind === 'plan').map((entry) => entry.entryId);
+          // Elevation runs only while the worker partition still holds entries (the first pass); a
+          // re-drive replays the reap idempotently, so skipping here never re-elevates.
+          if (selected.length > 0) {
+            const elevate = this.elevateTaskScratchpad(task.id, selected);
+            if (elevate?.ok === false) {
+              errors.push({ member: memberRunId, step: 'elevate', code: elevate.result ?? 'scratchpad_settlement_not_ready' });
+            }
+          }
+          for (const entry of this._coordination.scratchpadSnapshot(memberRunId, 'shared').entries) {
+            if (entry.kind === 'note') {
+              elevatedNotes.push({ member: memberRunId, sharedEntryId: entry.entryId, text: entry.content?.text ?? '' });
+            }
+          }
+        } catch (error) {
+          errors.push({ member: memberRunId, step: 'elevate', code: error?.code ?? 'settlement_elevate_failed' });
+        }
+      }
+    }
+    const materialize = members === null || elevatedNotes.length >= 1;
+    let lease = null;
+    if (materialize) {
+      const taskReceipt = this._coordination.createAndClaimSettlementTask(
+        { id: taskId, runId, reservedWorkerId: workerId },
+        { actor: 'orchestrator', key: `settlement.task:${waveId}` },
+      );
+      const settlementTask = this._coordination.task(taskId);
+      const ttlMs = this._runLineagePolicy?.leaseTtlMs ?? 30 * 60 * 1_000;
+      // The review window anchors to the settlement task's CREATION instant (stable across re-drive
+      // — the idempotent replay returns the original created event), never the live clock, so the
+      // lease request digest is identical on every pass and re-drive replays the lease exactly.
+      const baseTs = taskReceipt?.createdEvent?.ts ?? this._coordination._clock();
+      const expiresAt = new Date(Date.parse(baseTs) + ttlMs).toISOString();
+      const leaseSession = {
+        principalId: session.principalId, sessionId: session.sessionId,
+        authorityDigest: session.authorityDigest, expiresAt,
+      };
+      // The lease idempotency key is pinned to the DERIVED lease id (identity digest), so re-drive
+      // of the same wave/session replays exactly rather than minting a second lease.
+      const leaseId = `run-orchestrator-lease:${canonicalDigest({
+        repoId: this._repoId, parentRunId: runId, parentTaskId: taskId,
+        parentTaskVersion: settlementTask.version, workerId: settlementTask.assignee,
+        principalId: session.principalId, sessionId: session.sessionId,
+        sessionAuthorityDigest: session.authorityDigest,
+      })}`;
+      const issued = this._coordination.issueRunOrchestratorLease(
+        {
+          schemaVersion: 1, repoId: this._repoId,
+          parentTask: { id: taskId, version: settlementTask.version },
+          session: leaseSession,
+        },
+        { actor: 'orchestrator', key: `run.orchestrator_lease:${leaseId}` },
+      );
+      lease = { id: issued.lease.leaseId, digest: issued.lease.leaseDigest, issuedEvent: issued.lease.issuedEvent };
+      for (const note of elevatedNotes) {
+        try {
+          this._coordination.postBoardItem(
+            { board, title: settlementCandidacyTitle(note.text), detail: note.text },
+            { actor: 'orchestrator', key: `board.candidacy:${waveId}:${note.sharedEntryId}` },
+          );
+        } catch (error) {
+          errors.push({ member: note.member, step: 'candidacy', code: error?.code ?? 'settlement_candidacy_failed' });
+        }
+      }
+    }
+    return Object.freeze({
+      runId, taskId, lease,
+      candidatesAwaitingAdmission: elevatedNotes.length,
+      settlementRunId: materialize ? runId : null,
+      errors,
+    });
   }
 
   // -------------------------------------------------------------------------

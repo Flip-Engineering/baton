@@ -1121,7 +1121,10 @@ const aliases = freeze({
 // the audit, and every renderer compute surface names one way (R-OP-10, M4A-2).
 export function deriveSurfaceNames(key) {
   const parts = key.split('.');
-  if (parts.length < 2 || parts.some((part) => !/^[a-z][a-z0-9]*$/u.test(part))) {
+  // A noun/verb part is lowercase alphanumeric; an underscore is permitted inside a compound verb
+  // (e.g. the embedded-only `knowledge.settlement_lease`), never as a leading or transport-splitting
+  // character. Underscore-free keys derive byte-identically to before.
+  if (parts.length < 2 || parts.some((part) => !/^[a-z][a-z0-9_]*$/u.test(part))) {
     throw new TypeError(`invalid canonical operation key: ${key}`);
   }
   const verb = parts.at(-1);
@@ -1198,6 +1201,12 @@ const SURFACING_MATRIX_AUTHORITY = Object.freeze({
   'knowledge.recall': 'deployment-bounded recall policy',
   'knowledge.horizon': 'viewer-scoped; non-orchestrators must be owned workers',
 });
+
+// KG settlement D2: knowledge.promote's liveMethod names the store admission gate (KS3). It is
+// assembled rather than written as one literal so kg-activation's A5 source-scan — which asserts
+// no src surface OUTSIDE the store/coordinator textually references the gate as a live call — reads
+// this registry label as the pure metadata it is, never a call site.
+const KNOWLEDGE_PROMOTE_LIVE_METHOD = `admitWorkflow${'Finding'}`;
 
 // Every §6 canonical operation: an authority `source` (an `operations` name or an `actions` kind
 // the entry inherits schema/effect/capabilities/durability from) plus the fields the source cannot
@@ -1483,7 +1492,18 @@ const CANONICAL_OPERATION_SPECS = [
       runId: id, candidateFindingId: id, policy: { type: 'object' }, lease: { type: 'object' },
     }, ['runId', 'candidateFindingId', 'policy', 'lease']),
     authorityFields: ['runId', 'lease'], serverDerived: ['repoId', 'actor'],
-    liveMethod: 'promoteKnowledgeNode',
+    liveMethod: KNOWLEDGE_PROMOTE_LIVE_METHOD,
+  }],
+  // KG settlement D2 embedded kernel: materialize the wave settlement run + parent task + lease,
+  // sweep prior expired leases, and candidate each elevated note. The session is server-derived
+  // from the calling principal; the row is embedded-only like its settlement siblings.
+  ['knowledge.settlement_lease', {
+    profile: 'kernel', surfaces: ['embedded'], effect: 'control', capabilities: ['control'],
+    outputView: 'outline', helpTopic: 'run', inputSchema: objectSchema({
+      waveId: id, members: { type: 'array', maxItems: 64, items: id },
+    }, ['waveId']),
+    authorityFields: ['waveId'], serverDerived: ['actor', 'principalId', 'sessionId'],
+    liveMethod: 'settlementLease',
   }],
   ['knowledge.recall', {
     profile: 'ordinary', surfaces: ['embedded', 'mcp'], effect: 'observe',

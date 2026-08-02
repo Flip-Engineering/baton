@@ -10478,6 +10478,11 @@ export class BatonApplication {
           ...timing,
           progress: clone(view.progress),
           progressClass: clone(view.progressClass ?? null),
+          // KG activation rule 4 / settlement D3: the candidacy ritual count rides the terminal
+          // outline so an orchestrator reviewing after the driver exits sees the queue depth. Only
+          // `candidatesAwaitingAdmission` is surfaced (never `candidates`), so the raw wave close
+          // receipt's `knowledge.candidates` projection is unchanged (kg-activation A3/A4).
+          knowledge: { candidatesAwaitingAdmission: view.knowledge?.candidates ?? 0 },
           ...(view.requiredAction ? { requiredAction: clone(view.requiredAction) } : {}),
           attention: { count: 0, state: 'clear', summary: 'No historical attention is projected.' },
           route: clone(view.route), workerPolicy: clone(view.workerPolicy),
@@ -10770,6 +10775,10 @@ export class BatonApplication {
         },
         ...(orchestration ? { orchestration: clone(orchestration) } : {}),
         ...(view.workflow ? { workflow: clone(view.workflow) } : {}),
+        // KG activation rule 4 / settlement D3: the candidacy ritual count rides the terminal
+        // outline (only `candidatesAwaitingAdmission`, never `candidates`, so the raw wave close
+        // receipt's `knowledge.candidates` projection stays unchanged — kg-activation A3/A4).
+        knowledge: { candidatesAwaitingAdmission: view.knowledge?.candidates ?? 0 },
         context: clone(this._contextState(current).projection),
         // PS3/PS7: outline depth says plainly whether work was preserved, the stop reason, the
         // cleanup state, and the next semantic action — never the checkpoint ref/SHA or a path.
@@ -11789,6 +11798,16 @@ export class BatonApplication {
     if (name === 'run.steer') {
       return this.steer(args, principal);
     }
+    // KG settlement D2 — the four settlement commands are embedded-only DIRECT ports (not in
+    // APPLICATION_COMMAND_DEFINITIONS, so the byte-stable command-table key set is unchanged, and
+    // never advertised on MCP/CLI/web). They are top-level only: dispatched here BEFORE the
+    // recursive-session gate, and deliberately absent from the capability-backed recursive
+    // allowlists below. The actor is server-derived 'orchestrator'; the settlement session is
+    // derived from the calling principal.
+    if (name === 'scratchpad.elevate' || name === 'scratchpad.settle'
+      || name === 'knowledge.promote' || name === 'knowledge.settlement_lease') {
+      return this._settlementCommand(name, args, principal);
+    }
     validateApplicationCommandArgs(name, args);
     const recursiveReadCommands = new Set(['application.help', 'run.inspect', 'run.episode',
       'run.workstreams', 'run.status', 'run.follow', 'run.wait']);
@@ -11905,6 +11924,33 @@ export class BatonApplication {
     return this._buildView(current, this.principals.observer, {
       action: { command: 'run.answer', requestId, result: outcome.result },
     });
+  }
+
+  // KG settlement D2: the four embedded settlement commands. The actor is server-derived
+  // 'orchestrator' inside the coordinator wrappers; the settlement session is derived here from
+  // the CALLING principal (never from caller fields) — principalId/sessionId with a hub-minted
+  // authorityDigest — so the lease it materializes binds to the caller who acquired it.
+  _settlementCommand(name, args, principal) {
+    const coordinator = this.driver.coordinator;
+    const session = {
+      principalId: principal.principalId, sessionId: principal.sessionId,
+      authorityDigest: digest({
+        kind: 'authenticated-worker-session',
+        principalId: principal.principalId, sessionId: principal.sessionId,
+      }),
+    };
+    if (name === 'scratchpad.elevate') {
+      return coordinator.elevateTaskScratchpad(args.taskId, args.entryIds);
+    }
+    if (name === 'scratchpad.settle') {
+      return coordinator.settleWorkflowScratchpad(args.runId,
+        { expectedScratchpadFence: args.expectedScratchpadFence, skips: args.skips });
+    }
+    if (name === 'knowledge.promote') {
+      return coordinator.promoteWorkflowFinding(args.runId, args.candidateFindingId, args.policy, args.lease, session);
+    }
+    // knowledge.settlement_lease
+    return coordinator.settlementLease(args.waveId, session, { members: args.members });
   }
 
   async steer(rawRequest, rawPrincipal) {
