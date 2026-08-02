@@ -1705,6 +1705,9 @@ export async function openBatonDeployment(rawOptions, createDriver) {
     runLineagePolicy: DEFAULT_RUN_LINEAGE_POLICY,
     approvalTimeoutMs: DEFAULT_BUDGET.wallMin * 60_000,
     stopDeadlineMs: 15_000,
+    // TG3: the bounded steering-cycle window — a deployment knob, never stallTimeoutMs (the
+    // layer confusion in v0.9 is corrected; the stall watchdog is issue #67).
+    progressNudgeWindowMs: 300_000,
     drainPolicy: { maxWorkers: 64, timeoutMs: 90_000, pollMs: 10 },
     budgetPolicy: { terminalGraceMs: 2_000 },
     watchdog: { stallMs: DEFAULT_BUDGET.wallMin * 60_000 },

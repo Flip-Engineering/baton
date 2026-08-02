@@ -59,6 +59,9 @@ function makeDriver(adapters) {
     logDir: mkdtempSync(join(tmpdir(), 'p10-e2e-log-')),
     adapters,
     stopDeadlineMs: 3000,
+    // TG1/TG3: these pausable native-session vendors checkpoint every turn_completed; a short
+    // steering window lets the cycle expire and the gate evaluate the turn promptly.
+    progressNudgeWindowMs: 50,
   });
 }
 
@@ -88,12 +91,25 @@ async function waitForLogEvent(log, workerId, pred, label, timeoutMs = 5000) {
 test('SC3: claude session vendor through createDriver — spawn, mid-turn steer, trust gate, completed', async () => {
   const { coordinator, log } = makeDriver({ claude: new ClaudeSessionCli({ cmd: process.execPath, args: [FAKE_CLAUDE] }) });
   const h = await coordinator.spawn('claude', fullBrief('HOLD_UNTIL_INTERRUPT'));
+  const task = coordinator._tasks.get(h.taskId);
+  // TG1/TG3: a pausable native session checkpoints every turn_completed. This test drives the
+  // gate through the epic's drivered path — a live steering registration parks the checkpoint
+  // and the driver's claim re-runs the full trust gate (byte-identical to today's claim cadence).
+  coordinator._coordRecord(
+    'steering.registered', { runId: task.runId ?? null, driverKind: 'wave', actor: 'orchestrator' },
+    `run.steering_registered:${task.runId ?? 'null'}`, 'orchestrator',
+  );
   try {
     // The adapter's own turn_started (actor:worker) proves the child session is live —
     // the coordinator logs its own orchestrator-actor turn_started at dispatch regardless.
     await waitForLogEvent(log, h.id, (e) => e.kind === 'lifecycle.turn_started' && e.actor === 'worker', 'worker-actor turn_started (RED-today: adapter spawn refused {worktreeReady}, session never came up)');
     const steer = await coordinator.send(h.id, 'stop holding and wrap up now', 'steer');
     assert.equal(steer.ok, true, `mid-turn steer must deliver into the running turn (erratum E2 semantics): ${JSON.stringify(steer)}`);
+    // The steered turn completes → the drivered checkpoint pause pends.
+    await waitForLogEvent(log, h.id, (e) => e.kind === 'turn.paused', 'checkpoint pause');
+    const pause = coordinator.pausedTurns({ taskId: h.taskId })[0];
+    assert.ok(pause, 'the checkpoint pause pends for the driver claim');
+    await coordinator.claimTurn(pause.pauseId, { actor: 'orchestrator' });
     const r = await pollTask(coordinator, h.id, ['completed', 'failed']);
     assert.equal(r.status, 'completed', `the steered turn must complete and pass the fresh-worktree trust gate (verdict: ${JSON.stringify(r.verdict)})`);
     assert.equal(r.verdict.reverified, true, 'the gate re-ran the pinned verification — never trusted the worker claim');

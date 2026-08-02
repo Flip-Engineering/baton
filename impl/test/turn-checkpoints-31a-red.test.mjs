@@ -12,8 +12,8 @@
 //            keyed `pause:${task.id}:${seq}`.
 //   Part C — `paused` as `input_required`'s sibling: TRANSITIONS, the named guard sites,
 //            `_deriveWorkerStatus`, story.mjs fold parity.
-//   Part D — degenerate auto-settle (`turn.settled {basis:'auto_no_driver'}`) through the ONE
-//            pre-existing gated `_runTrustGate` dispatch, and the `hasDriver` parked case.
+//   Part D — the un-driven checkpoint arms TG3's one bounded steering cycle (no immediate
+//            auto-settle, no gate dispatch at a checkpoint), and the `hasDriver` parked case.
 //
 // NOT in scope (31-b, per contract Part F): steering acts (nudge/wait/claim), wave.mjs's
 // `driverKind:'wave'` caller, and `attentionFrom('paused') === 'turn_checkpoint'`. This suite
@@ -304,17 +304,18 @@ test('C4b: TURN_PAUSED also folds directly from `working` (the guard\'s other ad
 });
 
 // ============================================================
-// Part B + Part D — the pause record and degenerate auto-settle
+// Part B + Part D — the pause record and the un-driven steering cycle
 // ============================================================
 
-test('B1/D4: a pausable card with NO steering.registered marker mints turn.paused, auto-settles '
-  + 'in the same handler tick, unparks to working, and reaches the ONE pre-existing trust gate', async () => {
+test('B1/D4: a pausable card with NO steering.registered marker mints turn.paused and arms '
+  + 'TG3\'s steering cycle — the pause holds pending, no settle, no gate dispatch (deferral is '
+  + 'non-dispatch: the un-driven final is the cycle\'s expiry, never an immediate verdict)', async () => {
   const kit = lightweightCoordinator({ turnCompletion: 'pausable' });
   const handle = await liveWorker(kit);
   const task = kit.coordinator._tasks.get(handle.taskId);
 
   completeTurn(kit, handle);
-  await until(() => kit.refereeCalls.length > 0);
+  await until(() => kit.coordinator._pausedTurns.size > 0);
 
   const entries = kit.coordinator._log.read(handle.id);
   const pausedEntry = entries.find((e) => e.kind === 'turn.paused');
@@ -329,31 +330,26 @@ test('B1/D4: a pausable card with NO steering.registered marker mints turn.pause
   assert.equal(pausedEntry.payload.taskId, task.id);
   assert.equal(pausedEntry.worker, handle.id);
 
-  const settledEntry = entries.find((e) => e.kind === 'turn.settled');
-  assert.ok(settledEntry, 'the degenerate case settles durably');
-  assert.equal(settledEntry.payload.basis, 'auto_no_driver');
-  assert.equal(settledEntry.payload.actor, 'policy');
+  // TG1+TG3: the un-driven checkpoint does NOT auto-settle in the same tick.
+  assert.ok(!entries.some((e) => e.kind === 'turn.settled'),
+    'the steering cycle holds the pause pending — no settle in the same handler tick');
+  assert.equal(kit.refereeCalls.length, 0,
+    'the trust gate is not dispatched at a checkpoint (deferral is non-dispatch)');
 
-  // The in-memory single-consumer record: keyed `pause:${task.id}:${seq}`, resolved by policy.
+  // The in-memory single-consumer record: keyed `pause:${task.id}:${seq}`, pending under the
+  // armed steering cycle, exactly as `pausedTurns()` projects it.
   const key = [...kit.coordinator._pausedTurns.keys()].find((k) => k.startsWith(`pause:${task.id}:`));
   assert.ok(key, 'a pause record is keyed pause:${taskId}:${seq}');
   const record = kit.coordinator._pausedTurns.get(key);
-  assert.equal(record.state, 'resolved');
-  assert.equal(record.consumer, 'policy');
+  assert.equal(record.state, 'pending');
+  assert.equal(record.consumer, null);
   assert.equal(record.worker, handle.id);
+  assert.ok(record.steering, 'the cycle is armed on the pause record');
+  assert.equal(record.steering.answered, false);
 
-  // The task transited paused -> working durably, and the trust gate ran exactly once.
-  assert.equal(kit.refereeCalls.length, 1);
-  // `task.transitioned` carries the task under `id` (coordination-store.mjs's _append payload).
-  const transitions = kit.coordination.events()
-    .filter((e) => e.kind === 'task.transitioned' && e.payload.id === task.id)
-    .map((e) => e.payload.to);
-  assert.ok(transitions.includes('paused'), 'the durable ledger records the paused detour');
-  assert.ok(transitions.indexOf('paused') < transitions.lastIndexOf('working'),
-    'the task unparks to working after the paused detour');
-  // The detour is fully resolved within the handler tick: the task never lingers `paused`, and
-  // the trust gate then drives it on to its ordinary terminal outcome exactly as it always has.
-  assert.notEqual(kit.coordination.task(task.id).status, 'paused');
+  // Deferral is non-dispatch: the task stays paused — no verdict, no state minted.
+  assert.equal(kit.coordination.task(task.id).status, 'paused');
+  assert.equal(kit.coordinator._tasks.get(handle.taskId).status, 'paused');
 });
 
 test('B3: changedPathsDigest is canonicalDigest([]) when the task has no baseSha — every '
@@ -368,7 +364,7 @@ test('B3: changedPathsDigest is canonicalDigest([]) when the task has no baseSha
   assert.equal(task.sessionContext?.baseSha, undefined, 'precondition: no baseSha on the task');
 
   completeTurn(kit, handle);
-  await until(() => kit.refereeCalls.length > 0);
+  await until(() => kit.coordinator._pausedTurns.size > 0);
 
   const pausedEntry = kit.coordinator._log.read(handle.id).find((e) => e.kind === 'turn.paused');
   assert.equal(pausedEntry.payload.changedPathsDigest, DIGEST_OF_EMPTY);
@@ -683,14 +679,24 @@ test('R1: a coordinator restarted mid-pause reconstructs _pausedTurns with state
 });
 
 test('R2: a pause already settled before the restart is NOT reconstructed as an open record '
-  + '(the degenerate path every run in the current tree takes)', async () => {
+  + '(the drivered claim path settles it durably)', async () => {
   const logDir = join(dir(), 'log');
 
   const first = replayCoordinator(logDir);
   const handle = await first.coordinator.spawn('mock', brief());
   await until(() => first.coordinator.list()[0]?.status === 'working');
-  // No steering.registered marker ⇒ the degenerate auto-settle path.
+  const task = first.coordinator._tasks.get(handle.taskId);
+  // A live steering registration parks the pause, and the driver's claim settles it durably
+  // (`turn.settled {basis:'claim'}`) — the settled-pause replay shape.
+  first.coordinator._coordRecord(
+    'steering.registered', { runId: task.runId ?? null, driverKind: 'wave', actor: 'orchestrator' },
+    `run.steering_registered:${task.runId ?? 'null'}`, 'orchestrator',
+  );
   emitTurnCompleted(first.adapter, handle);
+  await until(() => first.coordination.task(task.id).status === 'paused');
+  const pauseId = [...first.coordinator._pausedTurns.keys()].find((k) => k.startsWith(`pause:${task.id}:`));
+  assert.ok(pauseId);
+  await first.coordinator.claimTurn(pauseId, { actor: 'orchestrator' }).catch(() => {});
   await until(() => first.coordinator._log.read(handle.id).some((e) => e.kind === 'turn.settled'));
 
   first.coordination.releaseWriterLease();

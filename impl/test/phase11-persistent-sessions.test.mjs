@@ -345,21 +345,39 @@ test('PS1-PS5: Claude, Codex, and Grok each run two public turns on one native s
       },
       referee: async () => ({ reverified: true, observedExit: 0 }), route: () => name,
       approvalTimeoutMs: 1000, stopDeadlineMs: 500,
+      // TG3: every pausable turn_completed is a CHECKPOINT that arms a steering cycle; a short
+      // window lets the cycle expire and the gate evaluate each native-session turn promptly.
+      progressNudgeWindowMs: 50,
     });
     let workerId;
     t.after(async () => { if (workerId) await c.kill(workerId, 'policy').catch(() => {}); });
 
     const h = await c.spawn(name, brief(), { taskId: `two-turn-${name}` });
     workerId = h.id;
-    await until(async () => (await c.result(h.id)).ready);
+    // TG1/TG3: a pausable native session checkpoints every turn_completed. This test drives the
+    // gate through the epic's drivered path — a live steering registration parks each checkpoint
+    // and the driver's claim re-runs the full trust gate, keeping the same native session alive.
+    const task = c._tasks.get(h.taskId);
+    c._coordRecord(
+      'steering.registered', { runId: task.runId ?? null, driverKind: 'wave', actor: 'orchestrator' },
+      `run.steering_registered:${task.runId ?? 'null'}`, 'orchestrator',
+    );
+    await until(() => log.read(h.id).some((e) => e.kind === 'turn.paused'));
     const firstSpawn = log.read(h.id).find((e) => e.kind === 'lifecycle.spawned' && e.actor === 'worker');
     const pid = firstSpawn?.payload?.pid;
     const sessionRef = c.list()[0].sessionRef;
     assert.ok(pid && sessionRef, `${name}: first turn must expose native PID/session identity`);
 
+    // Claim the first checkpoint — the gate runs against the live session result.
+    await c.claimTurn(c.pausedTurns()[0].pauseId, { actor: 'orchestrator' });
+    await until(() => log.read(h.id).filter((e) => e.kind === 'verify.reverified').length === 1);
+
     const follow = await c.send(h.id, `follow-up for ${name}`, 'turn');
     assert.equal(follow.ok, true, `${name}: public follow-up accepted`);
-    await until(async () => (await c.result(h.id)).ready && log.read(h.id).filter((e) => e.kind === 'verify.reverified').length === 2);
+    // The follow-up turn completes → its checkpoint pause pends → claim runs the gate a second time.
+    await until(() => log.read(h.id).filter((e) => e.kind === 'turn.paused').length >= 2);
+    await c.claimTurn(c.pausedTurns()[0].pauseId, { actor: 'orchestrator' });
+    await until(() => log.read(h.id).filter((e) => e.kind === 'verify.reverified').length === 2);
     assert.deepEqual(c.list()[0].sessionRef, sessionRef, `${name}: native session identity stays stable`);
     const pids = new Set(log.read(h.id).filter((e) => e.kind === 'lifecycle.spawned' && e.actor === 'worker').map((e) => e.payload?.pid).filter(Boolean));
     assert.deepEqual([...pids], [pid], `${name}: second turn must not respawn`);
