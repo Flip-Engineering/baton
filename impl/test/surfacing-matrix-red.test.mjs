@@ -30,7 +30,7 @@ const MATRIX = Object.freeze([
   ['repl.manifest', 'kernel', ['embedded'], 'control', 'admitReplManifest'],
   ['repl.binding', 'kernel', ['embedded'], 'control', 'admitReplBinding + dropReplBinding'],
   ['repl.cite', 'ordinary', ['embedded', 'mcp'], 'observe', 'resolveReplCitation'],
-  ['knowledge.promote', 'kernel', ['embedded'], 'control', 'promoteKnowledgeNode'],
+  ['knowledge.promote', 'kernel', ['embedded'], 'control', 'admitWorkflowFinding'],
   ['knowledge.recall', 'ordinary', ['embedded', 'mcp'], 'observe', 'recallKnowledge'],
   ['knowledge.horizon', 'ordinary', ['embedded', 'mcp'], 'observe', 'taskHorizon + workflowHorizon + projectHorizon'],
 ]);

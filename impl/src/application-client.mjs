@@ -1578,6 +1578,15 @@ export class BatonClient {
     return this.#application.doctor();
   }
 
+  // KG settlement D3: the wave driver's settle-window ritual entry. INTERNAL deployment plumbing
+  // (underscore-prefixed, never a user-facing surface) — the driver holds only this facade, so it
+  // rides the embedded-only knowledge.settlement_lease command from the deployment's own top-level
+  // principal. Server-side it sweeps prior expired leases, elevates each member's note+plan,
+  // materializes the wave settlement lease, and candidates each elevated note.
+  async _runSettlementRitual(waveId, memberRunIds) {
+    return this.#application.command('knowledge.settlement_lease', { waveId, members: memberRunIds });
+  }
+
   async routes() {
     const doctor = await this.doctor();
     if (!Array.isArray(doctor?.routes)) {

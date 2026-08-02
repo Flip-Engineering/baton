@@ -324,7 +324,7 @@ test('KS3: knowledge.settlement_lease materializes the bundle with the session d
   assert.match(coordinates.lease?.digest ?? '', /^[a-f0-9]{64}$/u, 'lease.digest present');
   assert.ok(Number.isSafeInteger(coordinates.lease?.issuedEvent), 'lease.issuedEvent present');
   const view = store.runOrchestrationView(SETTLEMENT_RUN_ID);
-  assert.ok(view && view.leaseStates.active >= 1, 'the lease is materialized active');
+  assert.ok(view && view.recipientAuthority.counts.active >= 1, 'the lease is materialized active');
   const leases = store._runOrchestratorLeases ?? new Map();
   const lease = [...leases.values()].find((row) => row.parent?.runId === SETTLEMENT_RUN_ID);
   assert.ok(lease, 'lease row readable');
@@ -333,7 +333,7 @@ test('KS3: knowledge.settlement_lease materializes the bundle with the session d
   const second = await application.command('knowledge.settlement_lease', { waveId: WAVE_ID }, principal('wave-owner'));
   assert.ok(second, 'idempotent per waveId');
   const viewAfter = store.runOrchestrationView(SETTLEMENT_RUN_ID);
-  const total = viewAfter.leaseStates.active + viewAfter.leaseStates.expired + viewAfter.leaseStates.revoked + viewAfter.leaseStates.inactive;
+  const total = viewAfter.recipientAuthority.counts.active + viewAfter.recipientAuthority.counts.expired + viewAfter.recipientAuthority.counts.revoked + viewAfter.recipientAuthority.counts.inactive;
   assert.equal(total, 1, 'no second lease on replay');
 });
 
@@ -461,7 +461,7 @@ test('KS5: a crash between candidacy posts resolves exactly-once on re-drive', a
   const posts = store.events().filter((event) => event.kind === 'board.item_posted' && event.payload?.board === `wave-settlement:${WAVE_ID}`);
   assert.equal(posts.length, 2, 'exactly two posts across both passes — one per note, no duplicates');
   const view = store.runOrchestrationView(SETTLEMENT_RUN_ID);
-  const totalLeases = view.leaseStates.active + view.leaseStates.expired + view.leaseStates.revoked + view.leaseStates.inactive;
+  const totalLeases = view.recipientAuthority.counts.active + view.recipientAuthority.counts.expired + view.recipientAuthority.counts.revoked + view.recipientAuthority.counts.inactive;
   assert.equal(totalLeases, 1, 'one stable lease across the crash walk');
   void second;
 });
@@ -517,7 +517,7 @@ test('KS7: promote admits→revokes→completes in order, replays exactly, and r
   assert.ok(lease?.id, 'the command returns the lease coordinates');
   // Pre-state: task working, lease active, no admitted Finding.
   assert.equal(store.task(SETTLEMENT_TASK_ID)?.status, 'working');
-  assert.equal(store.runOrchestrationView(SETTLEMENT_RUN_ID).leaseStates.active, 1);
+  assert.equal(store.runOrchestrationView(SETTLEMENT_RUN_ID).recipientAuthority.counts.active, 1);
   assert.equal(store.queryKnowledge({}).filter((node) => node.promotion?.trigger === 'workflow.admitted').length, 0);
   const before = store.events().length;
   await application.command('knowledge.promote', {
@@ -528,7 +528,7 @@ test('KS7: promote admits→revokes→completes in order, replays exactly, and r
   assert.equal(promoted?.id, `finding:workflow-admitted:${candidateFindingId}`, 'promotes EXACTLY the candidate');
   const edge = store.queryKnowledgeEdges({}).find((row) => row.type === 'DerivedFrom' && row.to === candidateFindingId);
   assert.ok(edge, 'the DerivedFrom edge exists');
-  assert.equal(store.runOrchestrationView(SETTLEMENT_RUN_ID).leaseStates.revoked, 1);
+  assert.equal(store.runOrchestrationView(SETTLEMENT_RUN_ID).recipientAuthority.counts.revoked, 1);
   assert.equal(store.task(SETTLEMENT_TASK_ID)?.status, 'completed');
   const seqs = store.events(before + 1).map((event) => event.kind);
   assert.ok(seqs.indexOf('knowledge.workflow_admitted') < seqs.indexOf('run.orchestrator_lease_revoked'),
@@ -550,7 +550,7 @@ test('KS7: partial state admit-done (crash after step 1) completes without confl
   await application.command('knowledge.promote', {
     runId: SETTLEMENT_RUN_ID, candidateFindingId, policy: ADMISSION_POLICY, lease,
   }, principal('wave-owner'));
-  assert.equal(store.runOrchestrationView(SETTLEMENT_RUN_ID).leaseStates.revoked, 1);
+  assert.equal(store.runOrchestrationView(SETTLEMENT_RUN_ID).recipientAuthority.counts.revoked, 1);
   assert.equal(store.task(SETTLEMENT_TASK_ID)?.status, 'completed');
   assert.equal(store.queryKnowledge({}).filter((node) => node.promotion?.trigger === 'workflow.admitted').length, 1);
 });
@@ -737,6 +737,18 @@ function mockCard(adapter) {
   });
 }
 
+// The store/coordinator clock is anchored to the wave-time the fixtures assume (the settle-window
+// opens well inside every seeded review window: the seeded leases expire at 06:30 / 08:30 UTC, so a
+// 06:00 base keeps them live at issue/admission and stale only relative to a LATER wave close — the
+// driver-triggered, no-timers sweep). It advances in real time (never frozen), so relative durations
+// stay honest; only the absolute wall-clock coupling is removed. This makes the suite deterministic
+// on any host clock without touching a single assertion (the shipped deployment clock is real time).
+const ANCHORED_STORE_CLOCK = (() => {
+  const base = Date.parse('2026-08-01T06:00:00.000Z');
+  const start = Date.now();
+  return () => base + (Date.now() - start);
+})();
+
 function buildApplication(t, adapter, { mandatory = true } = {}) {
   const repo = root('repo');
   const logDir = root('log');
@@ -746,6 +758,7 @@ function buildApplication(t, adapter, { mandatory = true } = {}) {
     repoRoot: repo,
     repoId,
     logDir,
+    now: ANCHORED_STORE_CLOCK,
     adapters: { mock: adapter },
     stopDeadlineMs: 2_000,
     approvalTimeoutMs: 3_000, // keyed waves (93B) otherwise stall the full 60s default at close

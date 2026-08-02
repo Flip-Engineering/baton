@@ -211,7 +211,7 @@ export async function createWave(baton, options = {}) {
     state.members.set(member.role, entry);
   }
 
-  return createWaveHandle({ repoRoot, members, state });
+  return createWaveHandle({ repoRoot, members, state, waveId });
 }
 
 function validateWaveIdempotencyKey(value) {
@@ -299,10 +299,10 @@ export async function attachWave(baton, waveId, membersInput, mintDetached, repo
   if (attachedCount === 0) {
     throw waveError('wave attach bound no members of the asserted wave', 'wave_attach_unknown_wave');
   }
-  return createWaveHandle({ repoRoot, members, state });
+  return createWaveHandle({ repoRoot, members, state, waveId });
 }
 
-function createWaveHandle({ repoRoot, members, state }) {
+function createWaveHandle({ repoRoot, members, state, waveId = null }) {
   async function progress() {
     const members = [];
     for (const [role, entry] of state.members) {
@@ -500,6 +500,7 @@ function createWaveHandle({ repoRoot, members, state }) {
   }
 
   const wave = {
+    waveId,
     get runs() {
       return new Map([...state.members.entries()].filter(([, entry]) => entry.run).map(([role, entry]) => [role, entry.run]));
     },

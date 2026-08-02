@@ -48,11 +48,16 @@ const DEFAULT_POLICY = Object.freeze({
   // count, advancing cursors) so a caller/test can observe the wake laws without a live provider.
   onWait: null,
   signal: null,
+  // KG settlement D3: the settle-window ritual policy. 'kg-ritual' (default) runs the sweep +
+  // note/plan elevation + candidacy + settlement lease between the members resting and wave close;
+  // 'none' opts out entirely (zero ritual ledger writes).
+  settlement: 'kg-ritual',
 });
 
 const POLICY_FIELDS = Object.freeze(new Set(Object.keys(DEFAULT_POLICY)));
 const STEERING_MODES = Object.freeze(new Set(['nudge-on-checkpoint', 'none']));
 const FINALIZATIONS = Object.freeze(new Set(['none', 'claim-on-stall']));
+const SETTLEMENTS = Object.freeze(new Set(['kg-ritual', 'none']));
 
 function driverError(message, code, extra = {}) {
   return Object.assign(new Error(message), { code, ...extra });
@@ -88,6 +93,9 @@ function freezePolicy(raw) {
   assertInteger(policy.settleTimeoutMs, 'settleTimeoutMs');
   if (!FINALIZATIONS.has(policy.finalization)) {
     throw driverError(`wave driver policy finalization is invalid: ${String(policy.finalization)}`, 'wave_driver_policy_invalid');
+  }
+  if (!SETTLEMENTS.has(policy.settlement)) {
+    throw driverError(`wave driver policy settlement is invalid: ${String(policy.settlement)}`, 'wave_driver_policy_invalid');
   }
   if (!Number.isSafeInteger(policy.unproductiveNudgeBudget) || policy.unproductiveNudgeBudget < 0) {
     throw driverError('wave driver policy unproductiveNudgeBudget is invalid', 'wave_driver_policy_invalid');
@@ -429,6 +437,7 @@ export function createWaveDriver(baton, rawPolicy = null) {
     let wave = null;
     let outcomes = [];
     let stop = null;
+    let settlementResult = null;
     try {
       wave = await baton.waves.start(startOptions);
 
@@ -667,6 +676,22 @@ export function createWaveDriver(baton, rawPolicy = null) {
       }
 
       outcomes = await wave.settle({ timeoutMs: policy.settleTimeoutMs });
+      // KG settlement D3: the settle-window ritual runs between the members resting and wave close
+      // (the pre-stop window). It rides the embedded settlement command from this deployment's own
+      // top-level principal; a typed refusal is captured, never allowed to abort the guaranteed
+      // close. 'none' opts out entirely.
+      if (policy.settlement === 'kg-ritual' && wave.waveId
+        && typeof baton._runSettlementRitual === 'function') {
+        const memberRunIds = [...wave.runs.values()].map((handle) => handle.id).filter(Boolean);
+        try {
+          settlementResult = await baton._runSettlementRitual(wave.waveId, memberRunIds);
+        } catch (error) {
+          settlementResult = {
+            candidatesAwaitingAdmission: 0, settlementRunId: null,
+            errors: [{ member: null, step: 'settlement', code: error?.code ?? 'wave_settlement_failed' }],
+          };
+        }
+      }
     } finally {
       // L1: close is guaranteed — even on a thrown settle/loop, the wave's resources are reaped.
       if (wave) {
@@ -700,7 +725,14 @@ export function createWaveDriver(baton, rawPolicy = null) {
       follows,
       salt,
       pumpDrained: evidence.pumpDrained === true,
-      knowledge: { candidates: knowledgeCandidates, admittedThisRun: knowledgeAdmitted },
+      // KG settlement D3: the candidacy/settlement counts fold into the knowledge block (zero as 0,
+      // never missing); the ritual's per-step refusals ride a bounded settlement.errors block.
+      knowledge: {
+        candidates: knowledgeCandidates, admittedThisRun: knowledgeAdmitted,
+        candidatesAwaitingAdmission: settlementResult?.candidatesAwaitingAdmission ?? 0,
+        settlementRunId: settlementResult?.settlementRunId ?? null,
+      },
+      settlement: { errors: (settlementResult?.errors ?? []).slice(0, 8) },
     };
 
     if (policy.evidencePath !== null) {
