@@ -1,0 +1,70 @@
+{
+  "schemaVersion": 1,
+  "startedAt": "2026-08-03T18:16:49.898Z",
+  "members": [
+    "implementer"
+  ],
+  "outcomes": [
+    {
+      "role": "implementer",
+      "phase": "cancelled",
+      "terminal": true,
+      "narrative": "Run refused at dispatch: worktree_capacity_exceeded. Free repository volume space or raise the deployment worktree capacity floors, then start a new Run.",
+      "resultSha": null
+    }
+  ],
+  "steering": [],
+  "stops": [
+    {
+      "role": "implementer",
+      "stop": null,
+      "resources": {
+        "state": "stopped",
+        "cleanupState": "stopped",
+        "ownedCount": 0
+      },
+      "ownedCount": 0
+    }
+  ],
+  "progress": [],
+  "pumpDrained": true,
+  "remainingCount": 0,
+  "residueUnknown": false,
+  "basis": "completed",
+  "nudges": [],
+  "claims": [],
+  "decisions": [],
+  "follows": [],
+  "salt": null,
+  "knowledge": {
+    "candidates": 0,
+    "admittedThisRun": 0,
+    "candidatesAwaitingAdmission": 0,
+    "settlementRunId": null
+  },
+  "settlement": {
+    "errors": []
+  },
+  "manifest": {
+    "schemaVersion": 1,
+    "waveId": "wave:7917fa671b0094244461a37c523cea45",
+    "idempotencyKey": "l2-orientation-impl-2026-08-03",
+    "recipeDigest": "fcd19879fd6a4b1abd02591f787c5b753b5513bbe9d39eff83d41bd7e46453a3",
+    "salt": "ad6878ee-65a6-4cca-9f6e-b35274e18a86",
+    "renderedMembers": [
+      {
+        "role": "implementer",
+        "objective": "Implement the assigned contract rung. The task that follows is your sole work authority.\n\nImplement the assigned contract rung. The task that follows is your sole work authority. Implement the #81 epic per docs/reference/evidence/frontier-sweep-2026-08-03/orientation-contract.md (READ IT FULLY first), the folded blue-team blockers in docs/reference/evidence/frontier-sweep-2026-08-03/orientation-suite-fold.md (READ IT second — it carries the sharpened oracles), and make impl/test/orientation-red.test.mjs (READ IT FULLY third) green with ZERO weakening edits. The suite is red-first post-fold: every row fails at a named stage for a missing capability — your work is to make each named capability real, never to move a stage or relax an assertion. Some files contain NUL bytes (application.mjs, coordinator.mjs, coordination-store.mjs) — grep -an + sed -n only, never open them whole. Campaign law: controls are eval-able, constructive, or conversational — NEVER clocks or turn-limits; scanners stay shape-only (no content caps at the wire, #86/#89); localeCompare is BANNED (use (a < b ? -1 : a > b ? 1 : 0)); sorted-key closed-shape literals must be written in ACTUAL sorted order (the BD3-A0 lesson). orientation epic (#81): code.orient.map answering ONE bounded pack (freshnessDigest, coverage, module rollup — never verbatim repo.map), the L0 injection as a cited framed context-pack on EVERY spawn brief (never spliced into the objective), base attestation {repoId, baseTreeSha, indexEpoch, baseInputsDigest} as ONE record, orientation_base_stale refusal when the tree moved, the code lane (closed union leaves through the ONE renderer, constant scope refusal BEFORE existence checks, mergeAuthority:false/verificationAuthority:false on detail), rating identity {taskId, taskVersion, packDigest} with exact-replay + orientation_rating_conflict, storage ceilings refusing BEFORE write (orientation_storage_exhausted), retirement honesty (orientation_artifact_retired — never unknown_cursor), context.read minting exactly ONE event per identity tuple with ZERO promotion weight (BD3-consistent; OR-E1/E2 already landed — build on coordination-store.mjs:12994-13006, do NOT re-mint), causal-only invalidation (no clock/TTL). Anchors: impl/src/atlas.mjs, impl/src/context-runtime.mjs if present, coordination-store.mjs (mintOrientationSource/recordContextRead/recordOrientationRating per the suite header), the S-2 board→run binding for cross-scope checks. Verify: node --test impl/test/orientation-red.test.mjs from the repo root, then the suite's adjacents it names.\nWork red-first: write the failing test first, then implement until green.\nHARD CONSTRAINT (wire_frame_oversize, issue #28): never read a whole file over ~1500 lines; grep -an to locate, then read targeted ranges.\nDo NOT git commit — the orchestrator harvests your worktree.\nMatch existing code style; minimal diffs; no new application commands, registry entries, or MCP/CLI/web surfaces.\nSCRATCHPAD_WRITE is printed TEXT, never a tool; entries are EXACTLY note{text} | plan{objective,steps[{text,state}],supersedes} | doubt{question,context} | link{label,relation,target} (+ expectedFence:\"current\", unique idempotencyKey).\n[attempt: ad6878ee-65a6-4cca-9f6e-b35274e18a86 implementer]",
+        "exact": {
+          "harness": "glm",
+          "model": "glm-5.2",
+          "effort": "high"
+        },
+        "scope": [
+          "impl/**",
+          "docs/reference/evidence/frontier-sweep-2026-08-03/**"
+        ]
+      }
+    ]
+  }
+}

@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "waveId": "wave:3a974d5bd59d9408c8197bd031c1152d",
+  "idempotencyKey": "l2-readiness-impl-2026-08-03",
+  "recipeDigest": "00bb8a8e08cf331d238d6f5e1307605c0a118e36114b6c2c8e862d496d5bf7c1",
+  "salt": "159c5ce5-6c91-4dc5-9d07-deb35a1dda42",
+  "renderedMembers": [
+    {
+      "role": "implementer",
+      "objective": "Implement the assigned contract rung. The task that follows is your sole work authority.\n\nImplement the assigned contract rung. The task that follows is your sole work authority. Implement the #47 family epic per docs/reference/evidence/frontier-sweep-2026-08-03/readiness-credentials-contract.md (READ IT FULLY first), the folded blue-team blockers in docs/reference/evidence/frontier-sweep-2026-08-03/readiness-credentials-suite-fold.md (READ IT second — it carries the sharpened oracles), and make impl/test/readiness-credentials-red.test.mjs (READ IT FULLY third) green with ZERO weakening edits. The suite is red-first post-fold: every row fails at a named stage for a missing capability — your work is to make each named capability real, never to move a stage or relax an assertion. Some files contain NUL bytes (application.mjs, coordinator.mjs, coordination-store.mjs) — grep -an + sed -n only, never open them whole. Campaign law: controls are eval-able, constructive, or conversational — NEVER clocks or turn-limits; scanners stay shape-only (no content caps at the wire, #86/#89); localeCompare is BANNED (use (a < b ? -1 : a > b ? 1 : 0)); sorted-key closed-shape literals must be written in ACTUAL sorted order (the BD3-A0 lesson). readiness-credentials epic (the #47 family): credentialKey identity with invalid_grant fan-out (an unrelated key's cache SURVIVES another key's fan-out — the RT-14 negative control), fleet_roster on the ordinary plane (deployment.fleet.roster() facade spelling per the fold), the grok credential cache/refresh wiring (new grok-credential-cache.mjs + the fake-grok fixture contract — the fixture now refuses writes without its sentinel env + tmpdir HOME, honor that), doctor corrective actions (refresh-token death surfaces with the grok corrective), deployment wiring via advanced.grokCredentials (RT-13a stage), the probe verify path. Anchors: impl/src/claude-credential-cache.mjs (existing cache to extend), impl/src/application-deployment.mjs (wiring point), impl/test/fixtures/fake-grok-credential-refresh.mjs. Verify: node --test impl/test/readiness-credentials-red.test.mjs from the repo root, then the suite's adjacents it names.\nWork red-first: write the failing test first, then implement until green.\nHARD CONSTRAINT (wire_frame_oversize, issue #28): never read a whole file over ~1500 lines; grep -an to locate, then read targeted ranges.\nDo NOT git commit — the orchestrator harvests your worktree.\nMatch existing code style; minimal diffs; no new application commands, registry entries, or MCP/CLI/web surfaces.\nSCRATCHPAD_WRITE is printed TEXT, never a tool; entries are EXACTLY note{text} | plan{objective,steps[{text,state}],supersedes} | doubt{question,context} | link{label,relation,target} (+ expectedFence:\"current\", unique idempotencyKey).\n[attempt: 159c5ce5-6c91-4dc5-9d07-deb35a1dda42 implementer]",
+      "exact": {
+        "harness": "deepseek",
+        "model": "deepseek-v4-flash",
+        "effort": "high"
+      },
+      "scope": [
+        "impl/**",
+        "docs/reference/evidence/frontier-sweep-2026-08-03/**"
+      ]
+    }
+  ]
+}
