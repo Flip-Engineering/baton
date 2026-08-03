@@ -62,6 +62,19 @@ Small epic: watchdog redesign per the control law — event-vocabulary liveness
 bounds, clock as last-resort only. Seat: deepseek. Depends on: nothing new (TG3/TG2
 machinery exists); pairs with L1's wake semantics.
 
+### Lane F — browser-use (#85: BU-2 research workers + BU-1 web QA)
+Medium epic, two rungs: BU-2 the research worker class (browser-use workers with
+analysis:true producing provenance-receipted findings — every fetch/click a
+hub-admitted receipt event, becoming TG2 progress evidence, audit trail, and KG
+grounding with content-addressed sources; findings flow the candidacy gate: external
+research becoming project knowledge); BU-1 the web-surface QA lane (a browser-use
+reviewer capability driving baton's own web surfaces into Lane E). Capability-adapter
+posture with honest-empty (the ATLAS pattern; opensource engine as optionalDep,
+greenfield-minimal adapter contract on top). Depends on: L1 (the receipt/lane
+conventions), TG5 (analysis legitimacy). Feeds: the KG's provenance depth and Lane E's
+QA coverage. Seat: codex (authority discipline for the injection-boundary rung) for
+BU-2's contract, deepseek for implementation.
+
 ### Lane E — QA/feedback (continuous)
 Per landing: downstream review wave (rotating seats), issue fold, ledger entry,
 tracker/issue hygiene. Also: the #74 demo itself when L1+L2 land.
