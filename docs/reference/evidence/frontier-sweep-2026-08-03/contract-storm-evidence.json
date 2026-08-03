@@ -1,0 +1,148 @@
+{
+  "schemaVersion": 1,
+  "startedAt": "2026-08-03T00:49:31.314Z",
+  "members": [
+    "board-workerhalf-contract",
+    "orientation-contract",
+    "readiness-credentials-contract",
+    "browser-use-contract"
+  ],
+  "outcomes": [
+    {
+      "role": "board-workerhalf-contract",
+      "phase": "result_ready",
+      "terminal": false,
+      "narrative": "1 worker(s) active, 1 done.",
+      "resultSha": "f5f432534b66e8937cb6849f5ea886be51230da4"
+    },
+    {
+      "role": "orientation-contract",
+      "phase": "result_ready",
+      "terminal": false,
+      "narrative": "1 worker(s) active, 1 done.",
+      "resultSha": "2134d205745a1cae4da5efc218e012dda609e3be"
+    },
+    {
+      "role": "readiness-credentials-contract",
+      "phase": "result_ready",
+      "terminal": false,
+      "narrative": "1 worker(s) active, 1 done.",
+      "resultSha": "de690ca7e26554d5247bd0e0d97f13b7b9f9cac4"
+    },
+    {
+      "role": "browser-use-contract",
+      "phase": "result_ready",
+      "terminal": false,
+      "narrative": "1 worker(s) active, 1 done.",
+      "resultSha": "746a886975e190c0a2588dc0911c19e739b78609"
+    }
+  ],
+  "steering": [],
+  "stops": [
+    {
+      "role": "board-workerhalf-contract",
+      "stop": null,
+      "resources": {
+        "state": "stopped",
+        "cleanupState": "stopped",
+        "ownedCount": 0
+      },
+      "ownedCount": 0
+    },
+    {
+      "role": "orientation-contract",
+      "stop": null,
+      "resources": {
+        "state": "stopped",
+        "cleanupState": "stopped",
+        "ownedCount": 0
+      },
+      "ownedCount": 0
+    },
+    {
+      "role": "readiness-credentials-contract",
+      "stop": null,
+      "resources": {
+        "state": "stopped",
+        "cleanupState": "stopped",
+        "ownedCount": 0
+      },
+      "ownedCount": 0
+    },
+    {
+      "role": "browser-use-contract",
+      "stop": null,
+      "resources": {
+        "state": "stopped",
+        "cleanupState": "stopped",
+        "ownedCount": 0
+      },
+      "ownedCount": 0
+    }
+  ],
+  "progress": [],
+  "pumpDrained": true,
+  "remainingCount": 0,
+  "residueUnknown": false,
+  "basis": "completed",
+  "nudges": [
+    {
+      "role": "readiness-credentials-contract",
+      "requestId": "pause:baton-5a82a7158f0b9848812dcdbb-work:180",
+      "at": "2026-08-03T00:56:00.547Z"
+    },
+    {
+      "role": "orientation-contract",
+      "requestId": "pause:baton-cfb5c2cb8bea1b2d8dfaf58c-work:128",
+      "at": "2026-08-03T00:56:55.320Z"
+    },
+    {
+      "role": "browser-use-contract",
+      "requestId": "pause:baton-6923299bc78a865b6655fce1-work:122",
+      "at": "2026-08-03T00:57:57.451Z"
+    },
+    {
+      "role": "board-workerhalf-contract",
+      "requestId": "pause:baton-4f454783529e6b18adde8975-work:92",
+      "at": "2026-08-03T01:01:13.080Z"
+    }
+  ],
+  "claims": [
+    {
+      "role": "orientation-contract",
+      "requestId": "pause:baton-cfb5c2cb8bea1b2d8dfaf58c-work:148",
+      "at": "2026-08-03T00:57:47.787Z",
+      "code": "claimed"
+    },
+    {
+      "role": "readiness-credentials-contract",
+      "requestId": "pause:baton-5a82a7158f0b9848812dcdbb-work:250",
+      "at": "2026-08-03T00:58:13.629Z",
+      "code": "claimed"
+    },
+    {
+      "role": "browser-use-contract",
+      "requestId": "pause:baton-6923299bc78a865b6655fce1-work:140",
+      "at": "2026-08-03T00:58:22.125Z",
+      "code": "claimed"
+    },
+    {
+      "role": "board-workerhalf-contract",
+      "requestId": "pause:baton-4f454783529e6b18adde8975-work:109",
+      "at": "2026-08-03T01:01:54.133Z",
+      "code": "claimed"
+    }
+  ],
+  "decisions": [],
+  "follows": [],
+  "salt": null,
+  "knowledge": {
+    "candidates": 3,
+    "admittedThisRun": 0,
+    "candidatesAwaitingAdmission": 0,
+    "settlementRunId": null
+  },
+  "settlement": {
+    "errors": []
+  }
+}
