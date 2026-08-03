@@ -6613,7 +6613,9 @@ export class Coordinator {
     }
     const deliveries = await Promise.all(workers.map(async (handle) => {
       const generation = this._messageProcessGeneration.get(handle.id) ?? 1;
-      const framed = `[MESSAGE ${kind} — UNTRUSTED] ${body}`;
+      // #92: the frame carries the messageId — without it a live worker can never construct
+      // inReplyTo and the reply lane is dead end-to-end. Id first, banner preserved.
+      const framed = `[MESSAGE ${kind} ${messageId} — UNTRUSTED] ${body}`;
       const slot = (handle.sendChain ?? Promise.resolve()).then(() =>
         Promise.resolve(this._adapters[handle.vendor].prompt(handle.id, framed, 'nudge'))
           .then(() => ({ ok: true }), () => ({ ok: false })));

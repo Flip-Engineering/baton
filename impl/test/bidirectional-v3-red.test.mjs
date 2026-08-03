@@ -629,6 +629,20 @@ test('C3b: a respawned worker does NOT inherit its predecessor\'s read receipts 
     'a NEW process generation does not mark the OLD delivery read (receipts are process-scoped)');
 });
 
+test('C6 (#92): the delivered message frame carries the messageId (the reply lane is constructable live)', async () => {
+  // #92: the delivery frame was `[MESSAGE kind — UNTRUSTED] body` — NO messageId, so a live
+  // worker could never construct inReplyTo; the reply lane was dead end-to-end despite scanner,
+  // admission, and receipts all green. The frame must carry the id, banner preserved.
+  const adapter = new ScriptableAdapter();
+  const { coordinator } = setup({ adapter, capture: noDiff });
+  const handle = await coordinator.spawn('mock', makeBrief());
+  const sent = await coordinator.sendMessage({ kind: 'query', to: { workerId: handle.id }, body: 'status?' }, { actor: 'orchestrator' });
+  const delivered = adapter.calls.prompt.map((call) => String(call.content ?? '')).find((content) => content.includes('[MESSAGE query'));
+  assert.ok(delivered, 'the framed message reaches the provider-bound frame');
+  assert.ok(delivered.includes(sent.messageId), 'the frame carries the messageId — the worker can construct inReplyTo (#92)');
+  assert.match(delivered, /UNTRUSTED/, 'the closed framing banner is preserved');
+});
+
 test('D1: scope authorization precedes targets (constant refusal, no existence leak)', async () => {
   const adapter = new ScriptableAdapter();
   const { coordinator } = setup({ adapter, capture: noDiff });
