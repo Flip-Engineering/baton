@@ -11,15 +11,10 @@ const SWEEP = resolve(repo, 'docs/reference/evidence/frontier-sweep-2026-08-03')
 const log = (line) => console.log(`[storm ${new Date().toISOString()}] ${line}`);
 
 const SHAPE = [
-  'Produce a FULL epic contract in the campaign shape: seed + ground truth (code-verified,',
-  'file:line) + the question + decisions (numbered, each with red-team targets) + non-goals +',
-  'red-first acceptance criteria. Ground every claim in file:line against impl/src/ (some files',
-  'contain NUL — grep -an + sed -n, never whole-file reads over ~1500 lines). Also consult:',
-  'docs/reference/evidence/frontier-sweep-2026-08-03/frontier-sweep.md (the sweep),',
-  'docs/reference/evidence/bidirectional-v3-2026-08-02/ (the spine these lanes ride),',
-  'docs/PROGRESS.md. The campaign control law is binding: controls must be eval-able',
-  '(validated goals), constructive (tool surfaces), or conversational (bidirectional feedback)',
-  '— never clocks or turn-limits; liveness from the event vocabulary.',
+  'Produce a FULL epic contract: seed + code-verified ground truth (file:line) + question +',
+  'numbered decisions with red-team targets + non-goals + red-first acceptance. grep -an +',
+  'sed -n (NUL files). Consult the sweep doc + bidirectional-v3-2026-08-02/ + PROGRESS.md.',
+  'Control law: controls eval-able, constructive, or conversational — never clocks/turn-limits.',
 ].join(' ');
 
 const baton = await openBaton({

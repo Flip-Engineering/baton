@@ -8,6 +8,44 @@ converged verdict of the operator and the orchestrator: it is the best implement
 fleet right now (three one-shot epics, all gate-green, at a fraction of every other
 seat's cost).)
 
+## The operating model (the engineering-manager frame)
+
+The sweep is run like a strong engineering org, not a task queue. A high-up engineering
+manager at enterprise scale does not "do the issues" — they stand up productive teams
+with leads against a roadmap, and keep them producing behind quality gates. Mapping:
+
+- **Teams → standing lanes.** Each lane (spine, orientation, readiness+credentials,
+  browser-use, boards, QA) is a standing team with a lane lead, its own contract, its
+  own swarm members, and its own acceptance bar. Lanes run CONCURRENTLY; dependencies
+  are handled by sequencing implementations where files collide, never by serializing
+  contracts, red-teams, or suites.
+- **Team leads → coordinator-workers (the #74 pattern as STANDING infrastructure).** A
+  lane lead is a coordinator-worker (glm-class) that owns its epic end-to-end: it
+  decomposes the contract into granular rungs as context-packs, seats its swarm members
+  against them, triages their claims/reports on its board, and escalates the genuinely
+  big questions to the orchestrator through the live decision gate. The orchestrator
+  specs, validates, steers, and merges; leads run their teams. (Leads land after the
+  BD3 spine — the pattern needs its substrate; until then the orchestrator leads every
+  lane directly.)
+- **Quarters → days.** Five epics landed in the last 48 hours through this methodology;
+  an enterprise team's quarter is two to four epics of that class. The sweep's "quarter
+  plan" is therefore layered in days: each day, every healthy lane should land or move
+  one methodology stage (contract → red-team → suite → blue-team → implementation →
+  acceptance) per epic it carries.
+- **Quality gates → the campaign methodology, run per lane in parallel.** Every epic in
+  every lane lands through contract → adversarial red-team by wave → fold →
+  orchestrator-written red-first suite → blue-team → implementation by wave worker →
+  acceptance → canonical gate → baton-commit → push. The orchestrator edits only tight
+  machinery follow-ups and test suites, and is the validator of record across all lanes.
+- **The platform systems are permanent lanes, not one-off tasks:** QA/feedback (Lane E),
+  readiness+credentials (Lane C), the knowledge system (KG + settlement), orientation
+  (Lane B), packaging/distribution (L0). These are the org's durable infrastructure —
+  they get maintenance budget forever, not a single epic and a shrug.
+- **Organizational memory is the ledger, the issues, and the KG:** PROGRESS.md is the
+  engineering log; issues are the tracked work; the knowledge graph is where settled
+  decisions and findings accumulate so the next team starts from what the last one
+  proved (and #70 fixes the cross-deployment half of that).
+
 ## The frontier as ONE system
 
 The open frontier is not a list — it is a stack. Every item below either carries the
