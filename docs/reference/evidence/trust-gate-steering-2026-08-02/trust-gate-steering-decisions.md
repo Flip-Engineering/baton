@@ -149,6 +149,18 @@ verdicts evaluate finals, and one progress nudge precedes any verdict" — no sk
 no write-early-to-survive. Acceptance includes a source-scan: no shipped constraint line
 references beating the gate.
 
+**Disposition (v1.0.2, downstream-review-verified 2026-08-03):** VERIFIED-CLOSED with no
+code change. (1) The T15 source-scan pins that recipes carries zero gate-beating coaching
+(skeleton-first/trust-gate/no-diff/progress-gate patterns all absent); the harmful
+skeleton-first pattern lived in operator objectives, which have been coaching-free since
+the #64 acceptance wave. (2) The downstream reviewer's residual concern — that shipped
+red-first/minimal-diff coaching trains digest churn that re-arms the steering cycle —
+misreads the re-arm semantics: the driver's unproductive-nudge budget counts only
+UNCHANGED-digest re-parks (wave-driver.mjs:505, 613-614); productive churn (changed
+digests) RESETS the count, which is protective, not costly. A worker writing early and
+fleshing out later is safe by construction. The contract text above stays as the rule; no
+shipped line violates it.
+
 ### TG7 — named follow-ups (out of v1)
 
 Issue #67 (the stall watchdog: inert-by-config, any-event re-arm, blocked-status escape).
