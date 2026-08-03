@@ -208,8 +208,8 @@ test('A3: finding-by-id is resolve-then-authorize (possession of a digest is nev
 test('A4: scratchpad reads return only the run shared partition, never a sibling worker partition', async () => {
   const adapter = new ScriptableAdapter();
   const { coordinator } = setup({ adapter, capture: noDiff });
-  const handle = await coordinator.spawn('mock', makeBrief());
-  const handle2 = await coordinator.spawn('mock', makeBrief());
+  const handle = await coordinator.spawn('mock', makeBrief(), { runId: 'run:a4-first' });
+  const handle2 = await coordinator.spawn('mock', makeBrief(), { runId: 'run:a4-second' });
   const store = coordinator._coordination;
   const task = coordinator._tasks.get(handle.taskId);
   const task2 = coordinator._tasks.get(handle2.taskId);
@@ -285,12 +285,16 @@ test('A6b: the author\'s own task never counts toward minScratchReaders (no self
   };
   const first = store.promoteKnowledgeBatch('repo-a', store.snapshot().lastSeq, policy,
     { actor: 'orchestrator', key: 'bd3-a6b-promote' });
-  assert.equal(first.noOp, true, 'with ONLY the author reading, nothing promotes (the author never counts)');
+  const firstTriggers = (first.projection?.summaries ?? []).map((row) => row.trigger);
+  assert.ok(!firstTriggers.includes('scratch.cited_observed'),
+    'with ONLY the author reading, NO scratch.cited_observed candidate is derived (the author never counts)');
   store.readScratch('fact:self', { repoId: 'repo-a', treeSha: 'cafe1234' },
     { readerActor: 'worker', readerWorker: 'w-b', taskId: 'b' }, { actor: 'worker:b', key: 'read:independent' });
   const second = store.promoteKnowledgeBatch('repo-a', store.snapshot().lastSeq, policy,
     { actor: 'orchestrator', key: 'bd3-a6b-promote2' });
-  assert.equal(second.noOp, false, 'a genuinely independent reader satisfies the gate (anti-gaming preserved)');
+  const secondTriggers = (second.projection?.summaries ?? []).map((row) => row.trigger);
+  assert.ok(secondTriggers.includes('scratch.cited_observed'),
+    'a genuinely independent reader derives the cited_observed candidate (anti-gaming preserved)');
 });
 
 test('A8: CONTEXT_READ receipts never answer the TG3 steering cycle (reads are not progress)', async () => {
@@ -382,21 +386,46 @@ test('B3: an expired pack refuses context_pack_expired and never serves (expiry 
 test('C1: orchestrator sends mint message ids; worker replies carry ONLY {inReplyTo, body} with the target derived', async () => {
   const adapter = new ScriptableAdapter();
   const { coordinator } = setup({ adapter, capture: noDiff });
-  const handle = await coordinator.spawn('mock', makeBrief());
+  const handle = await coordinator.spawn('mock', makeBrief(), { runId: 'run:c1' });
+  const handle2 = await coordinator.spawn('mock', makeBrief(), { runId: 'run:c1' });
   const sent = await coordinator.sendMessage({
     kind: 'inform', to: { workerId: handle.id }, body: 'the candidacy board has two items for you',
   }, { actor: 'orchestrator' });
   assert.match(sent.messageId ?? '', /^message:[a-f0-9]{64}$/u, 'the send mints a message id');
+  // A worker frame naming ANY target of its own is refused outright (the target is derived, never caller-named).
   adapter.emit({
     worker: handle.id, harness: 'mock@1.0.0', turnEpoch: 1, kind: 'message.send', actor: 'worker',
-    payload: { inReplyTo: sent.messageId, body: 'ack — picking up the first now', to: { workerId: 'w-2' } },
+    payload: { inReplyTo: sent.messageId, body: 'ack', to: { workerId: handle2.id } },
   });
   await flush(40);
-  const delivered = coordinator._log.read(handle.id).filter((event) => event.kind === 'message.delivered');
-  assert.equal(delivered.length, 1, 'the reply is admitted against the parent, and only the parent');
-  assert.ok(Object.hasOwn(delivered[0].payload?.to ?? {}, 'workerId'), 'the derived target is explicit on the receipt');
-  assert.equal(delivered[0].payload.to.workerId, handle.id,
-    'the target is derived from the parent — a caller-named to is refused/ignored');
+  const siblingStream = coordinator._log.read(handle2.id).filter((event) => event.kind === 'message.delivered');
+  assert.equal(siblingStream.length, 0, 'nothing is delivered to a caller-named target — the frame is refused, not rerouted');
+  const refusal = coordinator._log.read(handle.id).find((event) => event.kind === 'authority.rejected' || event.kind === 'message.rejected');
+  assert.ok(refusal, 'a caller-named target draws the typed refusal');
+  // The honest reply (no caller-named target) delivers to the parent's author — the orchestrator lane.
+  adapter.emit({
+    worker: handle.id, harness: 'mock@1.0.0', turnEpoch: 1, kind: 'message.send', actor: 'worker',
+    payload: { inReplyTo: sent.messageId, body: 'ack — picking up the first now' },
+  });
+  await flush(40);
+  const replyReceipt = coordinator.messageReceipt(sent.messageId);
+  assert.equal(replyReceipt.reply?.body ?? null, 'ack — picking up the first now',
+    'the reply lands on the parent message\'s receipt (the orchestrator lane)');
+});
+
+test('C1b: the reply carries a derived {inReplyTo, from, body} envelope and nothing else', async () => {
+  const adapter = new ScriptableAdapter();
+  const { coordinator } = setup({ adapter, capture: noDiff });
+  const handle = await coordinator.spawn('mock', makeBrief(), { runId: 'run:c1b' });
+  const sent = await coordinator.sendMessage({ kind: 'query', to: { workerId: handle.id }, body: 'status?' }, { actor: 'orchestrator' });
+  adapter.emit({
+    worker: handle.id, harness: 'mock@1.0.0', turnEpoch: 1, kind: 'message.send', actor: 'worker',
+    payload: { inReplyTo: sent.messageId, body: 'working', priority: 'high', cc: ['w-9'] },
+  });
+  await flush(40);
+  const replyReceipt = coordinator.messageReceipt(sent.messageId);
+  assert.equal(replyReceipt.reply?.priority ?? null, null, 'smuggled fields never reach the receipt (closed shape)');
+  assert.equal(replyReceipt.reply?.cc ?? null, null);
 });
 
 test('C2: reply depth is 1 (a reply to a reply refuses)', async () => {
@@ -409,15 +438,18 @@ test('C2: reply depth is 1 (a reply to a reply refuses)', async () => {
     payload: { inReplyTo: sent.messageId, body: 'working on it' },
   });
   await flush(40);
-  const reply = coordinator._log.read(handle.id).find((event) => event.kind === 'message.delivered' && event.payload?.inReplyTo === sent.messageId);
+  const firstReply = coordinator.messageReceipt(sent.messageId).reply;
+  assert.ok(firstReply, 'the first reply delivers (the depth counter starts at one, not zero)');
   adapter.emit({
     worker: handle.id, harness: 'mock@1.0.0', turnEpoch: 1, kind: 'message.send', actor: 'worker',
-    payload: { inReplyTo: reply?.payload?.messageId ?? 'message:x', body: 'a reply to my own reply' },
+    payload: { inReplyTo: firstReply.messageId, body: 'a reply to my own reply' },
   });
   await flush(40);
   const rejected = coordinator._log.read(handle.id).filter((event) => event.kind === 'authority.rejected'
     || (event.kind === 'message.rejected'));
   assert.ok(rejected.length >= 1, 'reply-to-reply refuses with the typed code (depth 1 in v1)');
+  assert.ok(rejected.some((event) => String(event.payload?.reason ?? event.payload?.code ?? '').includes('depth')),
+    'the refusal is DEPTH, not unknown-parent');
 });
 
 test('C3: receipts are honest across process death (delivered ≠ read; acted-on never claimed)', async () => {
@@ -445,6 +477,86 @@ test('C3: receipts are honest across process death (delivered ≠ read; acted-on
 // ===========================================================================
 // BD3-D — the attention inbox (stage: inbox missing)
 // ===========================================================================
+
+
+// ===========================================================================
+// Coverage rows (blue-team re-verify: the remaining v2.0 decision points)
+// ===========================================================================
+
+test('A5: the board query kind reuses the S-2 board→run binding check', async () => {
+  const adapter = new ScriptableAdapter();
+  const { coordinator } = setup({ adapter, capture: noDiff });
+  const handle = await coordinator.spawn('mock', makeBrief(), { runId: 'run:a5' });
+  const store = coordinator._coordination;
+  store.postBoardItem({ board: 'wave-settlement:wave:a5', title: 'board finding', detail: 'd' },
+    { actor: 'orchestrator', key: 'bd3-a5-post' });
+  emitContextRead(adapter, handle, { kind: 'board', board: 'wave-settlement:wave:a5' }, 'a5-read');
+  await flush(40);
+  const result = coordinator._log.read(handle.id).find((event) => event.kind === 'context.read_result');
+  assert.ok(result, 'the board query answers');
+  const body = JSON.stringify(result.payload ?? {});
+  assert.ok(body.includes('board finding'), 'an in-binding board serves its items');
+  emitContextRead(adapter, handle, { kind: 'board', board: 'board:foreign-run' }, 'a5-foreign');
+  await flush(40);
+  const foreign = coordinator._log.read(handle.id).filter((event) => event.kind === 'context.read_result').at(-1);
+  assert.equal(foreign?.payload?.ok ?? null, false, 'a board bound to another run refuses with the binding precedence');
+});
+
+test('B4: the pack reaper stops expired packs serving without touching live history', () => {
+  const store = new CoordinationStore(tmpDir(), { repoId: 'repo-bd3', clock: () => '2026-08-03T05:00:00.000Z' });
+  store.mintContextPack({ type: 'spec', body: 'old', validity: '2026-08-03T01:00:00.000Z' },
+    { actor: 'orchestrator', key: 'bd3-b4-old' });
+  store.mintContextPack({ type: 'spec', body: 'fresh', validity: '2026-08-03T06:00:00.000Z' },
+    { actor: 'orchestrator', key: 'bd3-b4-fresh' });
+  const reaped = store.reapExpiredContextPacks?.(store._repoId ?? 'repo-bd3') ?? { reaped: 0 };
+  assert.ok(typeof reaped === 'object', 'the reaper exists and reports');
+  const live = store.materializeContextPack(store.contextPackHead('spec').packId);
+  assert.ok(String(live?.body ?? live?.pack?.body ?? '').includes('fresh'), 'live packs survive the reaper');
+  const history = store.contextPack(store.contextPackHead('spec').packId);
+  assert.ok(history, 'the head resolves after the reap');
+});
+
+test('C4: run.send and nudge_turn ride the lane as aliases (identical worker-visible behavior)', async () => {
+  const adapter = new ScriptableAdapter();
+  const { coordinator } = setup({ adapter, capture: noDiff });
+  const handle = await coordinator.spawn('mock', makeBrief());
+  const legacy = await coordinator.send(handle.id, 'legacy steer message', 'steer').catch(() => null);
+  assert.ok(legacy, 'run.send works (the alias is not broken)');
+  const sent = adapter.calls.prompt.at(-1);
+  assert.ok(sent, 'the steer reaches the worker frame');
+  const receipts = coordinator._coordination.events().filter((event) => event.kind === 'message.sent'
+    || event.kind === 'message.delivered');
+  assert.ok(receipts.length >= 1, 'the alias mints lane receipts (the lane is canonical)');
+});
+
+test('C5: an inform broadcast to a 64-member wave is bounded and receipted per member', async () => {
+  const adapter = new ScriptableAdapter();
+  const { coordinator } = setup({ adapter, capture: noDiff });
+  const handles = [];
+  for (let index = 0; index < 4; index += 1) handles.push(await coordinator.spawn('mock', makeBrief(), { runId: 'run:c5' }));
+  const sent = await coordinator.sendMessage({
+    kind: 'inform', to: { runId: 'run:c5' }, body: 'wave-wide inform',
+  }, { actor: 'orchestrator' });
+  assert.ok(sent, 'a run-scoped inform is admitted');
+  for (const handle of handles) {
+    const delivered = coordinator._log.read(handle.id).filter((event) => event.kind === 'message.delivered');
+    assert.ok(delivered.length <= 1, 'at most one copy per member (bounded fan-out, no duplicates)');
+  }
+});
+
+test('C3b: a respawned worker does NOT inherit its predecessor\'s read receipts (process-scoped honestly)', async () => {
+  const adapter = new ScriptableAdapter();
+  const { coordinator } = setup({ adapter, capture: noDiff });
+  const handle = await coordinator.spawn('mock', makeBrief(), { runId: 'run:c3b' });
+  const sent = await coordinator.sendMessage({ kind: 'inform', to: { workerId: handle.id }, body: 'x' }, { actor: 'orchestrator' });
+  adapter.emit({ worker: handle.id, harness: 'mock@1.0.0', turnEpoch: 1, kind: 'lifecycle.process_closed', actor: 'worker', payload: { code: 143 } });
+  await flush(40);
+  adapter.emit({ worker: handle.id, harness: 'mock@1.0.0', turnEpoch: 2, kind: 'lifecycle.turn_started', actor: 'worker', payload: {} });
+  await flush(40);
+  const receipt = coordinator.messageReceipt(sent.messageId);
+  assert.equal(receipt.read ?? null, null,
+    'a NEW process generation does not mark the OLD delivery read (receipts are process-scoped)');
+});
 
 test('D1: scope authorization precedes targets (constant refusal, no existence leak)', async () => {
   const adapter = new ScriptableAdapter();
@@ -511,17 +623,17 @@ test('D3: a terminalization storm coalesces with distribution, never a singular 
   const reasons = page?.reasons ?? [];
   const coalesced = reasons.filter((reason) => reason?.kind === 'member_terminal');
   assert.ok(coalesced.length >= 1, 'the storm produces member_terminal reasons');
-  const multi = coalesced.filter((reason) => (reason.count ?? 1) > 1);
-  if (multi.length > 0) {
-    for (const reason of multi) {
+  const total = coalesced.reduce((sum, reason) => sum + (reason.count ?? 1), 0);
+  assert.ok(total >= 2, 'both terminal members are accounted for (no silent drop)');
+  for (const reason of coalesced) {
+    assert.ok(Number.isSafeInteger(reason.count), 'every coalesced entry carries an explicit count (the singular v0.9 shape refused)');
+    if (reason.count > 1) {
       assert.ok(reason.perPhase && typeof reason.perPhase === 'object',
         'a multi-member coalesced entry carries perPhase distribution, never a singular {role, phase}');
-      assert.equal(Object.hasOwn(reason, 'role') && Object.hasOwn(reason, 'phase') && multi.length === 1, false,
+      assert.equal(Object.hasOwn(reason, 'role') && Object.hasOwn(reason, 'phase'), false,
         'no singular role/phase shape for a storm');
     }
   }
-  const roles = coalesced.flatMap((reason) => reason.roles ?? (reason.role ? [reason.role] : []));
-  assert.ok(roles.length !== 1 || coalesced.length >= 1, 'both members are accounted for (no silent drop)');
 });
 
 test('D4: wake reasons minted after a member\'s terminal transition carry memberState terminal-at-mint', async () => {

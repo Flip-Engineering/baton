@@ -37,47 +37,66 @@ v0.9/v1.0/v1.1 sections preserved after this fold for traceability.)
 
 ### BD3-B — context packs with a server-owned supersession chain (codex #4, glm #5)
 
-- **Chain, not field:** packs carry `predecessor` + `validityVersion`; the store maintains
-  the head per pack family; supersession mints a new version (old versions are content
-  history, retained).
-- **Spawn/nudge CAS:** a brief or nudge citing a pack digest requires it to be the LIVE
-  HEAD at materialization time — a stale citation fails with `context_pack_stale` at
-  spawn (never silently serves the old version).
+- **Chain, not field:** packs mint via `store.mintContextPack({type, body, validity,
+  predecessor}, auth)` carrying `packId`, `family` (= type), `predecessor`, and
+  `validityVersion`; the store maintains the head per family via `store.contextPackHead
+  (family)`; supersession mints a new version (old versions are content history,
+  retained and resolvable via `store.contextPack(packId)`).
+- **Spawn/nudge CAS:** a brief or nudge citing a pack digest in `brief.contextPacks`
+  requires it to be the LIVE HEAD at materialization time — a stale citation fails with
+  `context_pack_stale` at spawn (never silently serves the old version); the live head
+  spawns and its body materializes INTO the brief, UNTRUSTED-framed.
 - **Expiry is distinct from supersession (glm #5):** a pack past its validity window
-  stops serving (`context_pack_expired`) without being superseded; a sweep reaps
-  expired packs (they stop serving, history retained). No expired-but-current pack ever
-  serves.
+  refuses `context_pack_expired` at `store.materializeContextPack(packId)` without being
+  superseded; `store.reapExpiredContextPacks(repoId)` reaps expired packs (they stop
+  serving, history retained). No expired-but-current pack ever serves.
 
 ### BD3-C — the message lane with provable replies and honest receipts (codex #5, glm #6)
 
-- **Minted message IDs + inReplyTo:** orchestrator sends mint `message:<digest>` ids.
-  Worker frames carry ONLY `{inReplyTo, body}` — the sole target is derived from the
-  parent message, never caller-named. Reply depth 1 in v1 (no reply-to-reply).
-- **Receipt state machine (glm #6):** `delivered` = written to the worker's durable
-  stream (NOT an acknowledgment); `read` = the worker's first `turn_started` after
-  delivery; `acted-on` is never claimed. Receipts are process-scoped honestly: a worker
-  that dies between delivered and read leaves `delivered` with no read — the receipt
-  says exactly that, forever, and never upgrades to a lie.
+- **Minted message IDs + inReplyTo:** orchestrator sends mint `message:<digest>` ids via
+  `coordinator.sendMessage({kind, to, body}, auth)`. Worker frames carry ONLY
+  `{inReplyTo, body}` — the sole target is derived from the parent message, never
+  caller-named (a caller-named `to` draws the typed refusal, no reroute; smuggled fields
+  never reach the receipt — closed shape). Reply depth 1 in v1 (a reply to a reply
+  refuses with the depth code, never unknown-parent).
+- **Receipt state machine (glm #6) via `coordinator.messageReceipt(messageId)`:**
+  `{delivered, read, actedOn, reply}` — `delivered` = written to the worker's durable
+  stream (NOT an acknowledgment); `read` = the worker's first `turn_started` in the SAME
+  process generation (a respawned worker does NOT inherit its predecessor's reads —
+  receipts are process-scoped honestly); `actedOn` is never claimed; `reply` carries the
+  worker's closed `{messageId, inReplyTo, from, body}` when admitted. A worker that dies
+  between delivered and read leaves `delivered` with `read: null` forever — the receipt
+  says exactly that and never upgrades to a lie.
+- **run.send and nudge_turn are ALIASES over the lane** (grammar M5-style): canonical is
+  the lane; the legacy names mint lane receipts with identical worker-visible behavior.
+- **Broadcast bounds:** a run/wave-scoped inform delivers at most one copy per member
+  (bounded fan-out, receipted per member, never duplicated).
 
 ### BD3-D — the attention inbox, scope-first and honest about the driver (codex #6/#7, glm #1/#2/#3)
 
-- **Scope before targets (codex #6):** the caller's parent scope (run/wave/deployment)
-  is authorized FIRST; targets are then normalized and derived server-side; a
-  scope-violating target refuses with the constant scope refusal BEFORE any existence
-  check (no existence leak either direction).
+- **Scope before targets (codex #6):** `coordinator.attentionFollow({scope, targets,
+  afterCursor, timeoutMs}, principal)` authorizes the caller's parent scope (run/wave/
+  deployment) FIRST; targets are then normalized and derived server-side; a
+  scope-violating target refuses with the constant `attention_scope_forbidden` BEFORE
+  any existence check, and unknown and out-of-scope targets refuse IDENTICALLY (no
+  existence leak either direction). The authorized principal model: the deployment's
+  orchestrator principal (e.g. the wave-owner) is the viewer of record; any other
+  principalId is unauthorized.
 - **candidacy_review requires the review authority (codex #7):** the wake reason is
   emitted only to a viewer holding a live settlement/review lease (or the orchestrator
-  principal), with the count derived inside that lease's run/wave.
+  principal), with the count derived inside that lease's run/wave; any other viewer sees
+  nothing (even when a candidacy exists).
 - **The driver's stall machinery is explicitly NOT replaced (glm #1):** the claim-on-
   stall fan-out fires on ABSENCE of wake events, so "the driver becomes one consumer of
   the inbox with no behavior change" was false. v1: the inbox is additive for
   orchestrators (embedded + MCP long-poll); the wave driver keeps its own stall clock
   and MAY consume the inbox for decision/attention wakes as a later rung (named v1.1).
 - **Coalescing carries distribution (glm #3):** storm coalescing emits
-  `{reason, count, perPhase: {phase: count}, windowMs}` — never a singular {role, phase}
-  that a phase-trusting consumer would misread.
+  `{reason, count, perPhase: {phase: count}, windowMs}` — an explicit `count` on every
+  coalesced entry (the count-omitting singular shape is refused), never a singular
+  {role, phase} that a phase-trusting consumer would misread.
 - **Detach honesty (glm #2):** wake reasons carry runId + mint epoch; reasons minted
-  after a member's terminal transition are marked `memberState: terminal-at-mint`;
+  after a member's terminal transition are marked `memberState: 'terminal-at-mint'`;
   transient follow failures downgrade with a durable receipt (BD-B law), never silently.
 - **Doc-honesty (glm meta):** followOnce/throughCursor/downgrade law lives in
   wave-driver.mjs / wave.mjs / application-client.mjs (anchors corrected; throughCursor
