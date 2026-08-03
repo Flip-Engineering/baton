@@ -4,6 +4,8 @@ Fold: post-red-team v1.0 — the verdicts of
 `docs/reference/evidence/frontier-sweep-2026-08-03/board-workerhalf-redteam.md` are folded in
 place on 2026-08-03 (0 confirmed holes, 14 amendments A1-1…A8-2 applied, 0 verdicts rejected).
 File:line citations added by this fold were re-verified against `impl/src/` on 2026-08-03.
+Blue-team fold (2026-08-03, `board-workerhalf-blueteam.md` §5): ground truth 11 updated for
+the landed `waves.send` row; every drifted line citation re-verified and refreshed in place.
 
 Status: implementation contract, red-team-folded. This epic is the
 Lane-A L2 consumer of the Bidirectional-v3 L1 spine. It specifies behavior; it does not amend
@@ -37,54 +39,55 @@ used to judge worker progress.
 ## Code-verified ground truth
 
 The anchors below were checked in this worktree with NUL-safe `grep -an` searches and targeted
-`sed -n` reads. Line numbers refer to the inspected source as of 2026-08-02.
+`sed -n` reads. Line numbers refer to the inspected source as of 2026-08-03 (refreshed at the
+blue-team fold; the packaging/wave lanes moved several anchors after the 2026-08-02 inspection).
 
 1. The S-2 authority proof is a closed v1 shape
    `{authorityDigest, expiresAt, orchestratorLeaseId, schemaVersion}`
    (`impl/src/application-semantics.mjs:1165-1170`). Transported `board.read` presently requires
    the run-orchestrator lease; the five orchestrator mutations require S-2 authority and, where
-   applicable, a board-fence CAS (`application-semantics.mjs:1176-1191`).
+   applicable, a board-fence CAS (`application-semantics.mjs:1188-1196`).
 
 2. The orchestrator board rows are live on embedded and MCP. `board.read` requires
    `sessionAuthority`, `runId`, and `board`; its viewer is server-derived
-   (`application-semantics.mjs:1348-1405`). In contrast, `board.claim` and `board.report` have
+   (`application-semantics.mjs:1402-1409`). In contrast, `board.claim` and `board.report` have
    `profile: 'worker'` and `surfaces: []`; their schemas also carry no authority or
-   idempotency field (`application-semantics.mjs:1407-1419`).
+   idempotency field (`application-semantics.mjs:1410-1422`).
 
 3. S-2's store seam closes the envelope before lookup, proves the active orchestrator lease,
    recovers the principal instead of accepting one, checks board-to-Run binding, rejects a
    closed Run, digest-binds an idempotency key, and repeats the board-fence/item-parent check in
    the append's before-write gate
-   (`impl/src/coordination-store.mjs:13619-13799`). Its refusal order prevents an unproven caller
-   from learning whether a board or item exists (`coordination-store.mjs:13674-13715`).
+   (`impl/src/coordination-store.mjs:13766-13941`). Its refusal order prevents an unproven caller
+   from learning whether a board or item exists (`coordination-store.mjs:13819-13861`).
 
 4. The underlying worker-side store machinery exists. A claim checks an open item, first-active
    claimant, and `expectedBoardFence === boardFence(board)` before appending
-   `board.claim_requested` (`coordination-store.mjs:13903-13920`). A report binds an exact
+   `board.claim_requested` (`coordination-store.mjs:14049-14065`). A report binds an exact
    historical `(itemId, itemVersion, itemDigest)` and a bounded body before appending
-   `board.report_submitted` (`coordination-store.mjs:13924-13938`). Closed message factories
+   `board.report_submitted` (`coordination-store.mjs:14069-14084`). Closed message factories
    already validate those public payload shapes (`impl/src/messages.mjs:339-366`).
 
 5. Those direct store methods are not a worker authority boundary. They return any prior event
    found under the supplied key before comparing request content; `submitBoardReport` does not
    require an active claim, the claim's owner, or a claim-version CAS
-   (`coordination-store.mjs:13905-13918,13925-13938`). The Coordinator wrapper improves identity
+   (`coordination-store.mjs:14050-14065,14070-14084`). The Coordinator wrapper improves identity
    by deriving `owner` and `ownerTask` from a live/paused worker handle, but still accepts only an
-   arbitrary idempotency string as authority (`impl/src/coordinator.mjs:9965-9989`).
+   arbitrary idempotency string as authority (`impl/src/coordinator.mjs:10470-10494`).
 
 6. The fence laws are intentionally different. `boardFence(board)` is replay-derived and counts
    only the five orchestrator-authority item transitions
-   (`coordination-store.mjs:13590-13602,8259-8284`). Claim/report/migration/expiry events do not
-   bump it (`coordination-store.mjs:8285-8298`). Worker death already expires active board claims
+   (`coordination-store.mjs:13741-13743,8270-8295`). Claim/report/migration/expiry events do not
+   bump it (`coordination-store.mjs:8297-8309`). Worker death already expires active board claims
    with a claim-version CAS through the same terminal lifecycle as scratch claims
-   (`coordinator.mjs:7717-7733`; `coordination-store.mjs:13942-13950`).
+   (`coordinator.mjs:8026-8038`; `coordination-store.mjs:14088-14096`).
 
 7. Claim/report nevertheless change what readers must see. The store explicitly counts
    `board.claim_requested`, `board.claim_expired`, and `board.report_submitted` in the
    replay-derived `projectionInputFence`
-   (`coordination-store.mjs:140-146,8579-8589`). `boardSnapshot` returns all items, active claims,
+   (`coordination-store.mjs:144-147,8608-8614`). `boardSnapshot` returns all items, active claims,
    and reports, and appends no board-domain read event
-   (`coordination-store.mjs:13963-13979`).
+   (`coordination-store.mjs:14110-14125`).
 
 8. The current projection is not yet suitable for a shared worker task list. Its cache key is
    only `(board, role/workerId, boardFence)` and therefore can remain stale across claim/report
@@ -95,29 +98,31 @@ The anchors below were checked in this worktree with NUL-safe `grep -an` searche
    as untrusted prose (`application.mjs:57-63,500-525`).
 
 9. Ordinary MCP reads consume the caller's S-2 session authority and project the orchestrator
-   view (`impl/src/mcp-northbound.mjs:1418-1425`). This is the path whose authority must remain
+   view (`impl/src/mcp-northbound.mjs:1721-1727`). This is the path whose authority must remain
    unchanged; the worker relaxation belongs to the authenticated L1 worker-read lane, not to an
    uncredentialed ordinary `board.read` call.
 
 10. The landed worker-up pattern is constructive: `SCRATCHPAD_WRITE` accepts no worker, task, or
     Run identity, because the adapter scans a closed payload on an authenticated per-worker
-    stream (`impl/src/claude-session.mjs:85-105`); Coordinator then attributes the write and
-    emits a typed result (`impl/src/coordinator.mjs:11033-11048`). BD3-A specifies the matching
+    stream (`impl/src/claude-session.mjs:90-107`); Coordinator then attributes the write and
+    emits a typed result (`impl/src/coordinator.mjs:11560-11577`). BD3-A specifies the matching
     `CONTEXT_READ`/`context.read_result` lane and requires server-derived board-to-Run scope,
     closed rendering, zero promotion weight, and no TG2 progress credit
     (`bidirectional-v3-decisions.md:10-35,205-227`).
 
 11. Current wave steering has an embedded `send(role, message, options)` handle which delegates
-    to the member Run (`impl/src/wave.mjs:350-358`). In the inspected registry, the only
-    `waves.*` row is `waves.attach` (`application-semantics.mjs:1527-1541`); `grep -an` finds no
-    `waves.send` row in `application-semantics.mjs`, `application.mjs`, or
-    `mcp-northbound.mjs`. The packaging contract owns landing the detached ordinary
-    `waves.send` surface; #78 owns the optional claim-grant semantics that ride it.
+    to the member Run (`impl/src/wave.mjs:350-358`). The packaging lane has since landed the
+    detached ordinary `waves.send` surface this ground-truth row once anticipated: the row
+    exists at `application-semantics.mjs:1582` (ordinary profile, surfaces embedded/MCP/CLI,
+    closed schema `{runId, message, delivery}` — no `claimGrant` key yet), flanked by
+    `waves.progress` and `waves.stop`; `waves.attach` now sits at
+    `application-semantics.mjs:1530-1549`. #78 owns only the optional claim-grant semantics
+    that ride the landed row — the row itself must not be re-landed.
 
 12. Existing board reports are evidence, not completion. Reporting appends a report record;
     only the orchestrator-authority `board.item_closed`/`board.item_dropped` transitions change
     item state, and a benign retitle/reorder migrates an active claim
-    (`coordination-store.mjs:13823-13871,13890-13900`). #78 must not silently turn a worker report
+    (`coordination-store.mjs:13970-14018,14010-14015`). #78 must not silently turn a worker report
     into an orchestrator close.
 
 ## Contract question
@@ -144,12 +149,12 @@ BOARD_REPORT: {"grantId":"...","itemId":"...","itemVersion":2,"itemDigest":"<64h
 
 The scanner accepts exactly those keys and the existing field bounds. The discipline is the
 `scanForScratchpadWrite` exact-key + first-balanced-JSON rule
-(`impl/src/claude-session.mjs:86-105`): any extra key, any second frame in one scan window, or
+(`impl/src/claude-session.mjs:90-107`): any extra key, any second frame in one scan window, or
 any identity/scope field is rejected before any state lookup. It accepts no `workerId`,
 `owner`, `ownerTask`, `actor`, `taskId`, `runId`, `waveId`, `board`, `boardRunId`, or
 `sessionAuthority`. Coordinator derives worker, task, task version, member Run, provider session,
 and process generation from the authenticated stream; the live task-status gate admits exactly
-`working | input_required | paused` (`impl/src/coordinator.mjs:9972,9985`). The durable
+`working | input_required | paused` (`impl/src/coordinator.mjs:10477,10490`). The durable
 claim/report event's actor is that worker principal. The orchestrator is the grantor, never a
 caller-named substitute actor;
 the hub/system actor remains limited to migration and version-CAS expiry.
@@ -162,13 +167,13 @@ profile, but an ordinary orchestrator MCP connection never impersonates it.
 
 A claim/report result receipt is hub-admission evidence only: it must **not** feed
 `_observeSteeringCycle` or any TG2/TG3 liveness arm. The `scratchpad.write_result` block this
-lane is modeled on does feed TG2 (`impl/src/coordinator.mjs:11045-11048`; today the only call
-sites are `coordinator.mjs:9145,9275,10658,11048`, none for a board op); that wiring is
+lane is modeled on does feed TG2 (`impl/src/coordinator.mjs:11573-11574`; today the only call
+sites are `coordinator.mjs:9455,9585,11173,11574`, none for a board op); that wiring is
 deliberately not copied. Claim/report are not steering-cycle work (Decisions 5 and 8).
 
 **Defended as written (red-team D1):** the no-identity scanner and stream-derived attribution
 resist the caller-named-identity, sibling-handle, and paused-trailing-write targets as specified
-(`impl/src/claude-session.mjs:86-105`; `impl/src/coordinator.mjs:11041-11044`).
+(`impl/src/claude-session.mjs:90-107`; `impl/src/coordinator.mjs:11563-11570`).
 
 **Red-team targets:** caller-named worker/owner/task fields; an orchestrator invoking a worker row;
 a sibling process writing through another worker's handle; a paused-at-boundary trailing write
@@ -224,18 +229,18 @@ TTL and does not expire at a turn boundary. A new generation needs a newly minte
 Termination is durable: every terminator appends one `board.grant_revoked` event naming the
 cause, and replay derives `active`/`revoked` solely from the mint and revoke events — exactly as
 claims derive state from `board.claim_requested`/`board.claim_expired`
-(`impl/src/coordination-store.mjs:8285-8295`; no grant event kinds exist in the store today, so
+(`impl/src/coordination-store.mjs:8297-8307`; no grant event kinds exist in the store today, so
 both are new). Worker (re)attachment likewise appends a durable generation-record event (e.g.
 `worker.generation_bound`) carrying `workerId`, `processGeneration`, and the member coordinates:
 `processGeneration` is currently only an in-memory worker-handle property
-(`impl/src/coordinator.mjs:110,125,144`), so without this event replay cannot derive which
+(`impl/src/coordinator.mjs:3365,4343,4407`), so without this event replay cannot derive which
 grants a replacement generation invalidates.
 `waves.send` appends the grant before making the steer deliverable; there is no state in which a
 worker sees a usable grant that replay cannot reconstruct.
 
 **Defended as written (red-team D2):** the bearer-token defense — S-2 authority as server context,
 never a client-selected field — and the authorize-then-mint, persist-before-deliver ordering
-(`impl/src/mcp-northbound.mjs:1405,1416`; `impl/src/coordination-store.mjs:13674-13689`).
+(`impl/src/mcp-northbound.mjs:1405,1416`; `impl/src/coordination-store.mjs:13819-13844`).
 
 **Red-team targets:** forwarding the orchestrator `sessionAuthority` as a bearer lease; minting
 before wave/member/board scope checks; granting a foreign or merely similarly named Run;
@@ -255,7 +260,7 @@ conventions without pretending the worker holds the S-2 lease:
 4. verify repository, active member lifecycle, board binding, grant permission, and Run/wave
    state before item existence — including that the grant's `boardRunId` equals the board's
    recorded binding (`_boardRunBindings.get(board).runId`,
-   `impl/src/coordination-store.mjs:13703-13706`), so a same-named board on a different Run
+   `impl/src/coordination-store.mjs:13848-13851`), so a same-named board on a different Run
    cannot satisfy a grant for the intended board;
 5. normalize a request digest covering both submitted content and every derived authority
    coordinate;
@@ -273,13 +278,13 @@ machinery and confer no transported authority. The digest-vs-prior adjudication 
 rule 3) is nevertheless enforced *inside* the kernel methods
 `requestBoardClaim`/`submitBoardReport`/`expireBoardClaim` — all three open with a blind
 `_byKey` return today, before any content comparison
-(`impl/src/coordination-store.mjs:13905,13925,13944`) — so no future kernel caller (a settlement
+(`impl/src/coordination-store.mjs:14050,14070,14089`) — so no future kernel caller (a settlement
 hook, a migration tool, a test fixture) can regress to returning old success for changed
 content. The seam additionally performs authority-before-replay (Decision 6, rule 1).
 
 **Defended as written (red-team D3):** the seven-step ordering and the constant pre-existence
 refusal mirror S-2's verified ordering, and the in-append CAS re-check closes the
-validate/append window (`impl/src/coordination-store.mjs:13658-13715,13772`).
+validate/append window (`impl/src/coordination-store.mjs:13766-13861,13914-13918`).
 
 **Red-team targets:** proof after item lookup; idempotency replay before authority; grant-id
 possession treated as authority; a second adapter calling the raw methods; board Run/member Run
@@ -310,7 +315,7 @@ The fence law is normative:
 This adds `expectedClaimVersion` to the canonical report schema and projects `claimVersion` in
 claim results/reads. It does not make worker traffic bump `boardFence`. Note that `claimVersion`
 is monotonic only across the active→expired transition and resets to 1 on re-claim
-(`impl/src/coordination-store.mjs:8287,8295`), so `expectedClaimVersion` alone cannot distinguish
+(`impl/src/coordination-store.mjs:8299,8307`), so `expectedClaimVersion` alone cannot distinguish
 a resurrected or reassigned caller from the current owner. The report CAS is therefore necessary
 but not sufficient: admission rejects primarily on the active-claim owner `(workerId,taskId)`
 match, with `expectedClaimVersion` as the concurrent-close guard.
@@ -318,7 +323,7 @@ match, with `expectedClaimVersion` as the concurrent-close guard.
 **Defended as written (red-team D4 — the strongest decision):** the fence law matches the shipped
 reducers exactly — `boardFence` bumps only on the five orchestrator transitions; claim,
 migration, expiry, and report never bump it; migration preserves the claim's version and
-activity (`impl/src/coordination-store.mjs:8271-8296`).
+activity (`impl/src/coordination-store.mjs:8270-8309`).
 
 **Red-team targets:** using worker turn fence for claim; using board fence for report; report by a
 worker with no active claim; report after claim expiry/reassignment; report against another
@@ -377,7 +382,7 @@ never answers a TG2/TG3 progress judgment.
 **Defended as written (red-team D5):** the one-board scope relaxation, the dual-fence cache and
 cursor binding, and the non-evented zero-weight read resist the smuggling, staleness, and
 cursor-reuse targets (`impl/src/application.mjs:493,504-506`;
-`impl/src/coordination-store.mjs:140-145,8585-8588`).
+`impl/src/coordination-store.mjs:144-147,8612-8614`).
 
 **Red-team targets:** board or viewer smuggling in the query; using the grant as a project-wide
 read token; cross-wave and cross-repository reads; hiding unowned open items; cache staleness
@@ -391,8 +396,8 @@ truth; a read append perturbing claim CAS.
 Claim, report, grant mint, and read-result delivery use server-namespaced idempotency keys. The
 effective replay key is `<opKind>:<grantDigest>:<callerKey>` with opKind ∈ `{board.claim,
 board.report, grant.mint, context.read}`, mirroring the MCP prefix convention
-(`impl/src/mcp-northbound.mjs:1720`), because the replay index is a single global Map keyed by
-the raw caller key (`impl/src/coordination-store.mjs:1081,1307,1375,1453`); cross-worker and
+(`impl/src/mcp-northbound.mjs:1718`), because the replay index is a single global Map keyed by
+the raw caller key (`impl/src/coordination-store.mjs:1089,1319,1370,1465`); cross-worker and
 cross-operation key-string collisions therefore cannot occur, and the request digest (rule 3)
 remains the authoritative content/authority comparison. The
 durable request digest includes the submitted closed payload plus derived repository, wave,
@@ -418,7 +423,7 @@ board/board Run, member Run, worker, task/version, process generation, and grant
 
 **Defended as written (red-team D6):** authority-before-receipt, exact-retry-wins-over-live-state,
 and race-at-the-final-gate mirror S-2's verified ordering and replay branch
-(`impl/src/coordination-store.mjs:13703-13715,13754-13761`).
+(`impl/src/coordination-store.mjs:13845-13855,13886-13904`).
 
 **Red-team targets:** the existing blind `_byKey` return; key collision between workers or
 operation kinds; changed body/item/grant under one key; replay after grant revocation; duplicate
@@ -469,7 +474,7 @@ S-2 mutation authority, or nested-orchestrator status merely by reading the boar
 
 **Defended as written (red-team D7):** server-owned attribution, prose-framed bodies, and
 delivery-≠-consumption match the shipped `UNTRUSTED_WORKER_TITLE` framing in `boardSnapshot`
-(`impl/src/coordination-store.mjs:13965-13980`).
+(`impl/src/coordination-store.mjs:14110-14125`).
 
 **Red-team targets:** forged claim/report attribution in the read model; treating delivery as
 consumption; coordinator-worker escalating itself to wave control; direct free worker-to-worker
@@ -498,14 +503,14 @@ causes no state transition.
 
 Orchestrator close/drop is a claim terminator too. Today `board.close`/`board.drop` write only
 the item successor (and, on close, the Finding) and never touch the claim — the migration branch
-fires only for retitle/reorder (`impl/src/coordination-store.mjs:13844-13866,13890-13896`) — and
+fires only for retitle/reorder (`impl/src/coordination-store.mjs:13989-14007,14010-14015`) — and
 claim expiry is reachable only from the six worker-side `_expireBoardClaims` hooks
-(`impl/src/coordinator.mjs:7492,11285,11593,11681,12433,12667`; body `coordinator.mjs:7720-7728`).
+(`impl/src/coordinator.mjs:7802,11881,12189,12277,13029,13263`; body `coordinator.mjs:8030-8038`).
 This contract closes that gap: an orchestrator `board.close`/`board.drop` expires the item's
 active claim in the same batch — a `board.claim_expired` sibling event with actor `policy` and
 key `board.claim_expired:<itemId>:<version>:item_<closed|dropped>`, mirroring
-`_expireBoardClaims` (`impl/src/coordinator.mjs:7724-7726`;
-`impl/src/coordination-store.mjs:13943-13952`). Symmetrically, report admission requires the
+`_expireBoardClaims` (`impl/src/coordinator.mjs:8033-8035`;
+`impl/src/coordination-store.mjs:14088-14096`). Symmetrically, report admission requires the
 item's current state is `open` (Decision 4), so a terminal item stops accepting evidence.
 
 No acceptance criterion depends on elapsed time, number of turns, polling cadence, or “report by
@@ -516,8 +521,8 @@ or used to expire a healthy claim.
 
 **Defended as written (red-team D8):** the control-law posture — no clock/turn/cadence control
 over agent work, lease `expiresAt` confined to security authority — and the worker-side
-claim-reap machinery are honored and grounded (`impl/src/coordinator.mjs:7720-7728`;
-`impl/src/coordination-store.mjs:13943-13952`).
+claim-reap machinery are honored and grounded (`impl/src/coordinator.mjs:8030-8038`;
+`impl/src/coordination-store.mjs:14088-14096`).
 
 **Red-team targets:** hidden grant/claim TTL; revoke on every turn completion; poll frequency as
 liveness; report deadlines as progress gates; session lease expiry retroactively falsifying a

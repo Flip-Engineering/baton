@@ -1,24 +1,30 @@
 // Board worker-half red suite (epic #78; contract: docs/reference/evidence/
 // frontier-sweep-2026-08-03/board-workerhalf-contract.md v1.0 — red-team-folded).
 //
-// Twenty-one rows over the folded decisions: D1 worker-profile claim/report rows + closed
-// stream frames (BW-01/02), D2 waves.send-minted member-bound grants (BW-03/04/05), D3 the
-// S-2-shaped worker admission seam (BW-04/06), D4 the claim-CAS/report-CAS fence law
+// Twenty-four rows over the folded decisions: D1 worker-profile claim/report rows + closed
+// stream frames (BW-01/02/24), D2 waves.send-minted member-bound grants (BW-03/04/05/22), D3
+// the S-2-shaped worker admission seam (BW-04/06/22), D4 the claim-CAS/report-CAS fence law
 // (BW-07/08/09/10), D5 grant-scoped L1 reads (BW-13/15/16), D6 idempotency/replay
-// (BW-11/12), D7 the triage envelope (BW-14/19/20), D8 event-based lifecycle (BW-17/18).
+// (BW-11/12/23), D7 the triage envelope (BW-14/19/20), D8 event-based lifecycle (BW-17/18).
 //
 // Red-first: written against the v1.0 contract BEFORE implementation. Every red row fails
 // today for its named stage — registry ghosts (surfaces: [], no live dispatch), the missing
 // worker stream dispatch (no board.claim/board.report case on the authenticated event
 // switch), the missing claimGrant transport on waves.send (the closed normalizer refuses the
 // key today), the missing worker admission seam / grant machinery, the blind kernel _byKey
-// replay return, the orchestrator close/drop batch that never expires the item's claim, and
-// the boardFence-only projection cache — and goes green ONLY on a contract-correct
-// implementation. Pin rows (BW-07/09/10) are green today and guard behavior the contract
-// says is unchanged. Harness patterns mirror test/bidirectional-v3-red.test.mjs
-// (ScriptableAdapter + Coordinator + fake worktrees), test/reflex2-boards-red.test.mjs and
-// test/board-authority-red.test.mjs (pure CoordinationStore + S-2 authority fixture), and
-// test/phase49-cairn-promotion.test.mjs (releaseWriterLease + replay reopen).
+// replay return, the orchestrator close/drop batch that never expires the item's claim, the
+// boardFence-only projection cache, the unrecorded/unenforced grant permission subset
+// (BW-22), the missing replay-wins-over-live-state seam adjudication (BW-23), the missing
+// BOARD_CLAIM/BOARD_REPORT wire scanner (BW-24), and the missing durable generation record
+// (BW-12) — and goes green ONLY on a contract-correct implementation. Pin rows (BW-07/09/10)
+// are green today and guard behavior the contract says is unchanged. Harness patterns mirror
+// test/bidirectional-v3-red.test.mjs (ScriptableAdapter + Coordinator + fake worktrees),
+// test/reflex2-boards-red.test.mjs and test/board-authority-red.test.mjs (pure
+// CoordinationStore + S-2 authority fixture), test/phase49-cairn-promotion.test.mjs
+// (releaseWriterLease + replay reopen), and test/scratchpad-33-red.test.mjs (the
+// scanForScratchpadWrite scanner discipline BW-24 mirrors — claude-session.mjs is imported as
+// a namespace so a missing scanner export fails BW-24's own named stage instead of killing
+// the whole file at load).
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -35,6 +41,7 @@ import { Log } from '../src/log.mjs';
 import { createDriver } from '../src/index.mjs';
 import { BatonApplication, projectBoardView } from '../src/application.mjs';
 import { APPLICATION_SEMANTIC_REGISTRY } from '../src/application-semantics.mjs';
+import * as session from '../src/claude-session.mjs';
 
 const REPO = 'repo-bw';
 const NOW_MS = Date.parse('2026-08-03T00:00:00.000Z');
@@ -254,11 +261,13 @@ function bindWaveRun(fx, runId, role) {
 }
 
 // An orchestrator board post through the real S-2 admission seam (also creates/keeps the
-// board→Run binding the grant's boardRunId must equal, Decision 3 step 4).
-function s2Post(fx, { board, title, runId = 'run:coord', detail = null, owner = null }) {
+// board→Run binding the grant's boardRunId must equal, Decision 3 step 4). `evidence` rides
+// the post mutation's bounded ref list (≤8 refs; artifactId strings are length-unbounded,
+// which is how BW-15 builds a legitimately oversize item row).
+function s2Post(fx, { board, title, runId = 'run:coord', detail = null, owner = null, evidence = [] }) {
   return fx.coordination.admitBoardCommand({
     sessionAuthority: fx.orch.sessionAuthority, runId, board, item: null,
-    mutation: { kind: 'post', title, detail, owner, evidence: [] },
+    mutation: { kind: 'post', title, detail, owner, evidence },
     expectedBoardFence: fx.coordination.boardFence(board),
     idempotencyKey: `bw:post:${board}:${title}`,
   });
@@ -871,7 +880,7 @@ test('BW-11 replay[blind-bykey]: kernel claim/report/expire digest-adjudicate �
 // generation record does not exist either).
 // ===========================================================================
 
-test('BW-12 restart[grant-durability-missing]: replay reconstructs grants, claims, reports, and both fences byte-identically', async () => {
+test('BW-12 restart[grant-durability-missing]: replay reconstructs grants, claims, reports, and both fences byte-identically; a pre-restart respawn replays its generation record and the old grant stays unusable', async () => {
   const fx = await waveFixture();
   bindWaveRun(fx, 'run:coord', 'coordination');
   const posted = s2Post(fx, { board: 'wave-board', title: 'replay target' });
@@ -889,6 +898,10 @@ test('BW-12 restart[grant-durability-missing]: replay reconstructs grants, claim
   });
   await flush(60);
   await killMember(fx, member.id);
+  // A2-3: respawn the SAME member Run BEFORE the restart. The replacement generation attaches
+  // here, so its durable generation record must land in the frozen log — without it replay
+  // cannot derive which grants the replacement generation invalidates.
+  const member2 = await fx.driver.coordinator.spawn('mock', makeBrief(), { runId: 'run:member-a' });
   // Freeze the ledger before snapshotting: release the writer lease first so no trailing
   // lifecycle append can land between the live read and the reopen (the comparison below is
   // against the same frozen event set on both sides).
@@ -907,6 +920,24 @@ test('BW-12 restart[grant-durability-missing]: replay reconstructs grants, claim
     'the expired claim stays expired — replay cannot resurrect it (Decision 8)');
   const revoked = replay.events().filter((event) => event.kind === 'board.grant_revoked');
   assert.ok(revoked.length >= 1, 'the durable board.grant_revoked survives restart — replay derives revoked, never active');
+  // The durable generation record (Decision 2; A2-3): the respawn's attachment is an event,
+  // not only an in-memory worker-handle property, so replay derives the invalidation.
+  const generationRecords = replay.events().filter((event) => typeof event.kind === 'string'
+    && event.kind.startsWith('worker.generation_') && event.payload?.workerId === member2.id);
+  assert.ok(generationRecords.length >= 1
+    && generationRecords.every((event) => Number.isSafeInteger(event.payload?.processGeneration)),
+    'stage[generation record missing]: the respawn appends a durable generation-record event carrying workerId and processGeneration (Decision 2; A2-3)');
+  // The old grant is replay-derived unusable: the replacement generation's post-restart claim
+  // attempt with it draws the constant scope refusal (Decisions 2/8).
+  emitBoardClaim(fx.adapter, member2, {
+    grantId: grant.grantId, itemId: posted.item.itemId,
+    expectedBoardFence: replay.boardFence('wave-board'), idempotencyKey: 'bw12:c2',
+  });
+  await flush(60);
+  const staleAttempt = claimResults(fx, member2);
+  assert.equal(staleAttempt.length, 1, 'the replacement generation\u2019s post-restart attempt is receipted');
+  assert.ok(text(staleAttempt[0].payload).includes('board_worker_scope_refused'),
+    'the old grant is replay-derived unusable — a replacement generation cannot resurrect it across restart (Decision 2/8; A2-3)');
 });
 
 // ===========================================================================
@@ -982,7 +1013,7 @@ test('BW-14 freshness[cache-key-gap]: a claim/report moves the view freshness ke
 // trailing items at 512/256KiB and has no per-item report cap).
 // ===========================================================================
 
-test('BW-15 paging[l1-lane-missing]: pages cap at 16 items and 32 KiB with stable cursors, in-item report continuation, and typed stale-cursor refusals', async () => {
+test('BW-15 paging[l1-lane-missing]: pages cap at 16 items and 32 KiB with stable cursors, followed in-item report continuation, oversize-row truncation, and typed stale-cursor refusals', async () => {
   const fx = await waveFixture();
   bindWaveRun(fx, 'run:coord', 'coordination');
   for (let i = 1; i <= 20; i += 1) s2Post(fx, { board: 'wave-board', title: `page item ${String(i).padStart(2, '0')}` });
@@ -1031,6 +1062,43 @@ test('BW-15 paging[l1-lane-missing]: pages cap at 16 items and 32 KiB with stabl
   assert.ok((heavyPayload.items ?? heavyPayload.result?.items ?? []).length >= 1, 'the page is never empty (no starvation)');
   const heavyCursor = heavyPayload.nextCursor ?? heavyPayload.result?.nextCursor ?? null;
   assert.ok(heavyCursor !== null, 'an in-item (itemId, lastReportSeq) report continuation exists — reports are never stranded');
+  // Follow the continuation chain (T7): every one of the 12 heavy reports arrives across the
+  // in-item (itemId, lastReportSeq) continuation — never stranded behind a dummy nextCursor,
+  // never starved into an empty page, never over budget (Decision 5; A5-1).
+  const delivered = new Set();
+  for (const match of text(heavyPayload).matchAll(/evidence (\d+) /g)) delivered.add(Number(match[1]));
+  let contCursor = heavyCursor;
+  for (let hop = 0; hop < 4 && contCursor !== null; hop += 1) {
+    emitContextRead(fx.adapter, member, { kind: 'board', grantId: grant.grantId, cursor: contCursor }, `bw15:read:cont:${hop}`);
+    await flush(60);
+    const contPayload = readResults(fx, member).at(-1)?.payload ?? {};
+    assert.equal(text(contPayload).includes('board_cursor_stale'), false,
+      'the in-item report continuation stays fresh across the chain');
+    assert.ok(Buffer.byteLength(text(contPayload)) <= 32 * 1024, 'every continuation page stays within 32 KiB');
+    for (const match of text(contPayload).matchAll(/evidence (\d+) /g)) delivered.add(Number(match[1]));
+    contCursor = contPayload.nextCursor ?? contPayload.result?.nextCursor ?? null;
+  }
+  assert.equal(delivered.size, 12,
+    'following the (itemId, lastReportSeq) continuation delivers every remaining report — none stranded (Decision 5; A5-1)');
+  // Oversize item row (A5-1): kernel bounds cap title (160 B) and detail (4 KiB), so a >32 KiB
+  // row is built through the one unbounded item field — up to 8 evidence refs with free-form
+  // artifactId strings (coordination-store.mjs:397-406). The row truncates with the typed
+  // marker; the page never starves empty.
+  const bigRef = (n) => ({ artifactId: `artifact:bw15:${n}:${'a'.repeat(5000)}` });
+  s2Post(fx, { board: 'oversize-board', title: 'an item row over thirty-two KiB', evidence: [1, 2, 3, 4, 5, 6, 7, 8].map(bigRef) });
+  await sendGrant(fx, { runId: 'run:member-a', board: 'oversize-board', idem: 'bw15:send:2' });
+  const oversizeGrant = mintedGrant(fx, { board: 'oversize-board', memberRunId: 'run:member-a' });
+  emitContextRead(fx.adapter, member, { kind: 'board', grantId: oversizeGrant.grantId, cursor: null }, 'bw15:read:oversize');
+  await flush(60);
+  const osPayload = readResults(fx, member).at(-1)?.payload ?? {};
+  const osItems = osPayload.items ?? osPayload.result?.items ?? [];
+  assert.ok(osItems.length >= 1,
+    'stage[oversize row unhandled]: the oversize item row is served truncated — never an empty page (Decision 5; A5-1)');
+  assert.ok(Buffer.byteLength(text(osPayload)) <= 32 * 1024, 'the truncated oversize page still fits the 32 KiB budget');
+  assert.ok(text(osPayload).includes('"truncated":true'),
+    'stage[oversize row unhandled]: the oversize row carries truncated: true (Decision 5; A5-1)');
+  assert.ok(text(osPayload).includes('board_oversize_item'),
+    'stage[oversize row unhandled]: the oversize row carries the typed board_oversize_item marker (Decision 5; A5-1)');
 });
 
 // ===========================================================================
@@ -1244,7 +1312,13 @@ test('BW-20 loop[#74-e2e]: orchestrator posts two items, grants two members, mem
   const itemTwo = s2Post(fx, { board: 'wave-board', title: 'triage recommendations' });
   const memberA = await spawnMember(fx, { runId: 'run:member-a', role: 'exec-a' });
   const memberB = await spawnMember(fx, { runId: 'run:member-b', role: 'exec-b' });
-  const triager = await spawnMember(fx, { runId: 'run:member-c', role: 'coordinator-worker' });
+  // The triage member performs the #74 coordinator-worker function through its OWN board item
+  // (claim + report), so the orchestrator-selected grant recorded for it is the executor-class
+  // {read,claim,report} subset (Decision 2: the caller names no permissions; the server records
+  // the selection). A triage-ONLY coordinator-worker receiving exactly {read} — and refused on
+  // claim — is BW-22's row; this member's role stays executor-class so the two rows name one
+  // consistent permission law.
+  const triager = await spawnMember(fx, { runId: 'run:member-c', role: 'exec-c' });
   await sendGrant(fx, { runId: 'run:member-a', board: 'wave-board', idem: 'bw20:send:a' });
   await sendGrant(fx, { runId: 'run:member-b', board: 'wave-board', idem: 'bw20:send:b' });
   await sendGrant(fx, { runId: 'run:member-c', board: 'wave-board', idem: 'bw20:send:c' });
@@ -1319,4 +1393,184 @@ test('BW-20 loop[#74-e2e]: orchestrator posts two items, grants two members, mem
   assert.equal(fx.coordination.boardItem(itemOne.item.itemId).state, 'closed');
   assert.equal(fx.coordination.activeBoardClaims({ workerId: winnerId }).length, 0,
     'the close expires the winner\u2019s claim in the same batch (Decision 8; BW-18a)');
+});
+
+// ===========================================================================
+// BW-22 — grant permission enforcement (stage: no grant machinery; an
+// implementation hardcoding {read,claim,report} for every member greens the
+// pre-fold suite — precisely the A2-2 coordinator-worker over-grant). The mint
+// must RECORD the orchestrator-selected subset and the seam must ENFORCE it
+// before item lookup (Decision 2 permissions; Decision 3 step 4).
+// ===========================================================================
+
+test('BW-22 permissions[grant-permission-missing]: the mint records the orchestrator-selected subset (executor {read,claim,report}, triage-only {read}) and a read-only grant\u2019s claim refuses board_worker_scope_refused before item lookup', async () => {
+  const fx = await waveFixture();
+  bindWaveRun(fx, 'run:coord', 'coordination');
+  const posted = s2Post(fx, { board: 'wave-board', title: 'permission target' });
+  const exec = await spawnMember(fx, { runId: 'run:member-a', role: 'exec-a' });
+  const triage = await spawnMember(fx, { runId: 'run:member-c', role: 'coordinator-worker' });
+  await sendGrant(fx, { runId: 'run:member-a', board: 'wave-board', idem: 'bw22:send:a' });
+  await sendGrant(fx, { runId: 'run:member-c', board: 'wave-board', idem: 'bw22:send:c' });
+  const execGrant = mintedGrant(fx, { board: 'wave-board', memberRunId: 'run:member-a' });
+  const triageGrant = mintedGrant(fx, { board: 'wave-board', memberRunId: 'run:member-c' });
+  // The recorded subset is the orchestrator's per-member selection, never a hardcoded set
+  // (Decision 2; A2-2): the executor works items, the triage-only coordinator-worker only reads.
+  assert.deepEqual([...execGrant.permissions].sort(), ['claim', 'read', 'report'],
+    'stage[grant permission missing]: the executor member\u2019s grant records the full {read,claim,report} subset (Decision 2)');
+  assert.deepEqual([...triageGrant.permissions].sort(), ['read'],
+    'stage[grant permission missing]: the triage-only coordinator-worker\u2019s grant records exactly {read} — the over-grant a hardcoded set would green (A2-2)');
+  // The read-only grant's claim attempts draw the constant refusal BEFORE item lookup.
+  emitBoardClaim(fx.adapter, triage, {
+    grantId: triageGrant.grantId, itemId: posted.item.itemId,
+    expectedBoardFence: fx.coordination.boardFence('wave-board'), idempotencyKey: 'bw22:c1',
+  });
+  emitBoardClaim(fx.adapter, triage, {
+    grantId: triageGrant.grantId, itemId: 'board-item:bw22-absent',
+    expectedBoardFence: fx.coordination.boardFence('wave-board'), idempotencyKey: 'bw22:c2',
+  });
+  await flush(60);
+  const results = claimResults(fx, triage);
+  assert.equal(results.length, 2, 'both read-only claim attempts are receipted');
+  for (const receipt of results) {
+    assert.ok(text(receipt.payload).includes('board_worker_scope_refused'),
+      'a grant recorded without the claim permission receives the constant board_worker_scope_refused (Decision 3 step 4)');
+    assert.equal(text(receipt.payload).includes('board_item_not_found'), false,
+      'the permission refusal precedes item lookup — no existence leak (Decision 3)');
+  }
+  assert.equal(fx.coordination.events().filter((event) => event.kind === 'board.claim_requested').length, 0,
+    'no claim event lands from a permission-denied attempt');
+  // Positive controls: the read-only grant still reads; the claim-capable grant still claims.
+  emitContextRead(fx.adapter, triage, { kind: 'board', grantId: triageGrant.grantId, cursor: null }, 'bw22:read:1');
+  emitBoardClaim(fx.adapter, exec, {
+    grantId: execGrant.grantId, itemId: posted.item.itemId,
+    expectedBoardFence: fx.coordination.boardFence('wave-board'), idempotencyKey: 'bw22:c3',
+  });
+  await flush(60);
+  const read = readResults(fx, triage).at(-1);
+  assert.ok(read && text(read.payload).includes('"ok":true'),
+    'control: the read-only grant still reads the granted board (Decision 5)');
+  assert.equal(fx.coordination.activeBoardClaims({ workerId: exec.id }).length, 1,
+    'control: the executor\u2019s claim-permission grant claims the item (a refuse-everything seam fails here)');
+});
+
+// ===========================================================================
+// BW-23 — Decision 6 rule 4 at the seam (stage: no grant machinery; a
+// live-state-first replay implementation greens the pre-fold suite). After
+// authorization and exact replay matching, the ORIGINAL result wins over later
+// live state; a revoked grant cannot replay.
+// ===========================================================================
+
+test('BW-23 replay[replay-wins-over-live-state]: an exact authorized report retry returns the original receipt after the item closes; a revoked grant cannot replay it', async () => {
+  const fx = await waveFixture();
+  bindWaveRun(fx, 'run:coord', 'coordination');
+  const posted = s2Post(fx, { board: 'wave-board', title: 'replay rule-4 target' });
+  const member = await spawnMember(fx, { runId: 'run:member-a', role: 'exec-a' });
+  await sendGrant(fx, { runId: 'run:member-a', board: 'wave-board', idem: 'bw23:send:1' });
+  const grant = mintedGrant(fx, { board: 'wave-board', memberRunId: 'run:member-a' });
+  emitBoardClaim(fx.adapter, member, {
+    grantId: grant.grantId, itemId: posted.item.itemId,
+    expectedBoardFence: fx.coordination.boardFence('wave-board'), idempotencyKey: 'bw23:c1',
+  });
+  await flush(60);
+  assert.equal(fx.coordination.activeBoardClaims({ workerId: member.id }).length, 1, 'the claim is active');
+  const reportFrame = {
+    grantId: grant.grantId, itemId: posted.item.itemId, itemVersion: 1, itemDigest: posted.item.itemDigest,
+    expectedClaimVersion: 1, body: 'evidence whose receipt was lost', idempotencyKey: 'bw23:r1',
+  };
+  emitBoardReport(fx.adapter, member, reportFrame);
+  await flush(60);
+  const first = reportResults(fx, member).find((event) => text(event.payload).includes('bw23:r1'));
+  assert.ok(first && text(first.payload).includes('"ok":true'),
+    'the original report is admitted and receipted (rule-4 setup)');
+  // Live state moves on: the orchestrator S-2 close terminates the item (and expires the claim).
+  const closed = fx.coordination.admitBoardCommand({
+    sessionAuthority: fx.orch.sessionAuthority, runId: 'run:coord', board: 'wave-board',
+    item: { itemId: posted.item.itemId, itemVersion: 1 }, mutation: { kind: 'close' },
+    expectedBoardFence: fx.coordination.boardFence('wave-board'), idempotencyKey: 'bw23:close:1',
+  });
+  assert.equal(closed.ok, true);
+  assert.equal(fx.coordination.boardItem(posted.item.itemId).state, 'closed');
+  // The lost receipt is recovered: the exact retry returns the ORIGINAL success — the close's
+  // live state (terminal item, expired claim) is never re-judged (Decision 6 rule 4).
+  emitBoardReport(fx.adapter, member, reportFrame);
+  await flush(60);
+  const receipts = reportResults(fx, member).filter((event) => text(event.payload).includes('bw23:r1'));
+  assert.equal(receipts.length, 2, 'the exact retry is receipted on the same stream');
+  assert.ok(text(receipts[1].payload).includes('"ok":true'),
+    'stage[replay-wins-over-live-state missing]: the exact authorized retry returns the original success even after the close (Decision 6 rule 4)');
+  assert.equal(/not_open|stale|conflict/.test(text(receipts[1].payload)), false,
+    'the replay never re-judges the original request against later live state');
+  assert.equal(fx.coordination.events().filter((event) => event.kind === 'board.report_submitted').length, 1,
+    'the replay appends no duplicate report');
+  // A revoked grant cannot replay the same effective key (rules 1/4: authority before replay).
+  await killMember(fx, member.id);
+  const member2 = await fx.driver.coordinator.spawn('mock', makeBrief(), { runId: 'run:member-a' });
+  emitBoardReport(fx.adapter, member2, reportFrame);
+  await flush(60);
+  const revived = reportResults(fx, member2).filter((event) => text(event.payload).includes('bw23:r1'));
+  assert.equal(revived.length, 1, 'the post-revocation attempt is receipted');
+  assert.ok(text(revived[0].payload).includes('board_worker_scope_refused'),
+    'stage[replay-wins-over-live-state missing]: a revoked grant cannot replay the original success — authority precedes replay (Decision 6 rules 1/4)');
+  assert.equal(text(revived[0].payload).includes('"ok":true'), false,
+    'the revoked grant\u2019s replay never returns the old success');
+});
+
+// ===========================================================================
+// BW-24 — wire scanner rows (stage: claude-session.mjs exports no
+// scanForBoardClaim/scanForBoardReport — the BOARD_CLAIM/BOARD_REPORT text
+// frames have no closed scanner; A1-1). Mirrors scratchpad-33's
+// scanForScratchpadWrite discipline. The module is imported as a NAMESPACE so a
+// missing export fails THIS row's named stage instead of killing the file at
+// load (a named import of a missing export would turn every row red for the
+// wrong reason).
+// ===========================================================================
+
+test('BW-24 scanner[frame-scanner-missing]: BOARD_CLAIM/BOARD_REPORT text frames scan with exact-key + first-balanced-JSON discipline; identity fields and second frames reject', () => {
+  assert.equal(typeof session.scanForBoardClaim, 'function',
+    'stage[wire scanner missing]: the adapter session scanner gains scanForBoardClaim (Decision 1; A1-1)');
+  assert.equal(typeof session.scanForBoardReport, 'function',
+    'stage[wire scanner missing]: the adapter session scanner gains scanForBoardReport (Decision 1; A1-1)');
+  // Exact-key acceptance (Decision 1's closed frame shapes).
+  const claim = session.scanForBoardClaim(
+    'BOARD_CLAIM: {"grantId":"grant:bw24","itemId":"board-item:bw24","expectedBoardFence":7,"idempotencyKey":"bw24:c1"}');
+  assert.ok(claim, 'a well-formed BOARD_CLAIM frame scans');
+  assert.deepEqual(Object.keys(claim).sort(), ['expectedBoardFence', 'grantId', 'idempotencyKey', 'itemId'],
+    'the scanned claim frame carries exactly the closed key set');
+  const report = session.scanForBoardReport(
+    'BOARD_REPORT: {"grantId":"grant:bw24","itemId":"board-item:bw24","itemVersion":2,'
+    + `"itemDigest":"${'a'.repeat(64)}","expectedClaimVersion":1,"body":"evidence","idempotencyKey":"bw24:r1"}`);
+  assert.ok(report, 'a well-formed BOARD_REPORT frame scans');
+  assert.deepEqual(Object.keys(report).sort(),
+    ['body', 'expectedClaimVersion', 'grantId', 'idempotencyKey', 'itemDigest', 'itemId', 'itemVersion'],
+    'the scanned report frame carries exactly the closed key set');
+  // First-balanced-JSON extraction: ordinary trailing prose never reaches the parse.
+  const withProse = session.scanForBoardClaim(
+    'BOARD_CLAIM: {"grantId":"grant:bw24","itemId":"board-item:bw24","expectedBoardFence":7,"idempotencyKey":"bw24:c2"} and then some ordinary prose');
+  assert.ok(withProse && withProse.idempotencyKey === 'bw24:c2',
+    'the scanner extracts the first balanced JSON object and ignores trailing prose (A1-1)');
+  // Identity/scope-field rejection (Decision 1: none of these is accepted, before any state lookup).
+  for (const field of ['workerId', 'owner', 'ownerTask', 'actor', 'taskId', 'runId', 'waveId', 'board', 'boardRunId', 'sessionAuthority']) {
+    const smuggled = session.scanForBoardClaim(
+      `BOARD_CLAIM: {"grantId":"grant:bw24","itemId":"board-item:bw24","expectedBoardFence":7,"idempotencyKey":"bw24:c3","${field}":"x"}`);
+    assert.equal(smuggled, null, `a frame carrying caller-named ${field} is rejected by the closed scanner (Decision 1)`);
+  }
+  // Second-frame rejection: two frames in one scan window are rejected, never first-wins.
+  assert.equal(session.scanForBoardClaim(
+    'BOARD_CLAIM: {"grantId":"grant:bw24","itemId":"board-item:bw24","expectedBoardFence":7,"idempotencyKey":"bw24:c4"} '
+    + 'BOARD_CLAIM: {"grantId":"grant:bw24","itemId":"board-item:bw24","expectedBoardFence":8,"idempotencyKey":"bw24:c5"}'), null,
+  'a second frame in the same scan window rejects the whole scan (A1-1)');
+  assert.equal(session.scanForBoardReport(
+    'BOARD_REPORT: {"grantId":"grant:bw24","itemId":"board-item:bw24","itemVersion":2,'
+    + `"itemDigest":"${'a'.repeat(64)}","expectedClaimVersion":1,"body":"one","idempotencyKey":"bw24:r2"} `
+    + 'BOARD_CLAIM: {"grantId":"grant:bw24","itemId":"board-item:bw24","expectedBoardFence":7,"idempotencyKey":"bw24:c6"}'), null,
+  'a trailing sibling frame rejects the report scan too');
+  // Malformed values reject like any non-grammar text.
+  assert.equal(session.scanForBoardClaim(
+    'BOARD_CLAIM: {"grantId":"grant:bw24","itemId":"board-item:bw24","expectedBoardFence":-1,"idempotencyKey":"bw24:c7"}'), null,
+  'a negative fence rejects');
+  assert.equal(session.scanForBoardReport(
+    'BOARD_REPORT: {"grantId":"grant:bw24","itemId":"board-item:bw24","itemVersion":2,'
+    + '"itemDigest":"not-a-digest","expectedClaimVersion":1,"body":"x","idempotencyKey":"bw24:r3"}'), null,
+  'a non-64-hex itemDigest rejects');
+  assert.equal(session.scanForBoardClaim('no frame here at all'), null, 'plain prose scans to null');
 });

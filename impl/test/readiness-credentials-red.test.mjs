@@ -14,16 +14,37 @@
 // SUITE-CHOSEN SEAMS (the contract pins behavior, not these JS spellings; each is the most
 // sibling-consistent reading of the named contract surface):
 //   - the §4.2.2 fleet_roster projection is read as `deployment.fleet.roster()`
-//     (CLI `baton fleet roster` ↔ facade `fleet.roster()`, sibling of `waves.start`);
+//     (CLI `baton fleet roster` ↔ facade `fleet.roster()`, sibling of `waves.start`) —
+//     ADOPTED into the contract's §4.2.2 on the 2026-08-03 blue-team fold (drift item 1);
 //   - the §4.3.1 controller is `GrokCredentialCache` (re-exported from
 //     application-deployment.mjs like ClaudeCredentialCache, or living in
-//     src/grok-credential-cache.mjs — either home satisfies the row);
+//     src/grok-credential-cache.mjs — either home satisfies the row, and the source pins
+//     follow the home the class was actually resolved from);
+//   - the §4.3.1 controller's FILE-projection surface is `projectionFiles()` (sibling of
+//     `projectionEnv()`, claude-credential-cache.mjs:229-234): grok's native worker
+//     projection is file-based (defaultCredentialProjection copies ~/.grok/auth.json
+//     wholesale, application-deployment.mjs:606-608), so the cache must expose the
+//     access-token-only file list the runtime projects into the worker's ~/.grok tree;
+//   - the §4.3.1 refresh runtime merges `cmdEnv` into the vendor child's scoped env (the
+//     claude sibling's env is fully scoped, claude-credential-cache.mjs:129-134) — the
+//     suite uses it to inject the fixture sentinel below;
 //   - the §4.3.3 deployment wiring is `advanced.grokCredentials` (sibling of
 //     advanced.claudeCredentials, application-deployment.mjs:1606);
+//   - the §4.1 tier's deployment wiring is `advanced.liveness` ({now, probeTimeoutMs},
+//     sibling of advanced.claudeCredentials.now and the advanced resident clock,
+//     application-deployment.mjs:1550-1560) — how RT-2b injects the deployment clock and
+//     RT-3b bounds the probe watchdog;
 //   - the probe rides the real adapter's spawn/prompt path carrying the bounded probe prompt
 //     (§4.1.1: "the same code path a real spawn rides"), so the fixture adapter detects probe
 //     turns by the contract's `<route>-probe ok` pin text and answers by parsing the expected
 //     line out of the probe instruction — exactly what a cooperative provider does.
+//
+// FIXTURE SAFETY (blue-team fold 2026-08-03): fixtures/fake-grok-credential-refresh.mjs fails
+// closed unless BATON_FAKE_GROK_FIXTURE=1 is set AND HOME resolves under os.tmpdir() — a wrong
+// implementation that spawns it with an unscoped HOME can never clobber the operator's real
+// ~/.grok/auth.json. RT-10p pins the refusal; RT-10a/RT-11 pass the sentinel via `cmdEnv`
+// (with TMPDIR alongside, so the fixture child's os.tmpdir() is the suite's temp root despite
+// the runtime's scoped env).
 //
 // WIRE-SHAPE ASSUMPTION (UNVERIFIED): a worker turn that surfaces refresh-token death carries
 // the `invalid_grant` wire text in its failed output (the matcher class of
@@ -31,24 +52,24 @@
 // detection grammar; a live receipt must confirm the exact detection wire.
 //
 // Control law: no clocks or turn-limits in assertions. The only wall-clock dependencies are
-// bounded async settling (flush loops, <100ms sleeps) and the credential-lockfile timeout row
-// (a resource bound, not a work control).
+// bounded async settling (flush loops, <100ms sleeps), the credential-lockfile timeout row,
+// and the RT-3b probe-watchdog deadline (both resource bounds, never work controls).
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import {
   existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import {
   claudeAuthenticationSummary, openBatonDeployment,
 } from '../src/application-deployment.mjs';
 import * as deploymentModule from '../src/application-deployment.mjs';
-import { createDriver, createWaveDriver } from '../src/index.mjs';
+import { createDriver, createWaveDriver, routeTupleKey } from '../src/index.mjs';
 import { RuntimeIsolation } from '../src/runtime-isolation.mjs';
 
 const deploymentSource = readFileSync(new URL('../src/application-deployment.mjs', import.meta.url), 'utf8');
@@ -58,6 +79,9 @@ const srcDir = fileURLToPath(new URL('../src', import.meta.url));
 
 const ROUTE_LOW = Object.freeze({ harness: 'grok', model: 'grok-4.5', effort: 'low' });
 const ROUTE_HIGH = Object.freeze({ harness: 'grok', model: 'grok-4.5', effort: 'high' });
+// The RT-14 negative control: a route on a SECOND credential identity (the codex vendor's
+// single global credential, ~/.codex/auth.json) that must SURVIVE a grok invalid_grant fan-out.
+const ROUTE_CODEX = Object.freeze({ harness: 'codex', model: 'gpt-5.6-sol', effort: 'high' });
 const STATIC_SUMMARY = 'The exact route passed static deployment readiness.';
 
 const dirs = [];
@@ -83,13 +107,14 @@ async function settle(ms = 15) {
 // their objective carries the '(auth-refusal)' marker, which completes the turn with the
 // invalid_grant wire text (the §4.3.3 worker-sourced verdict).
 class ProbeAdapter {
-  constructor({ route = ROUTE_LOW, mode = 'complete', cardCanary = null, credentialState = 'available' } = {}) {
+  constructor({ route = ROUTE_LOW, mode = 'complete', cardCanary = null, credentialState = 'available', family = 'grok' } = {}) {
     this._route = route;
     this.mode = mode;
     this.calls = { spawn: [], prompt: [] };
     this._onEvent = null;
     this._cardCanary = cardCanary;
     this._credentialState = credentialState;
+    this._family = family;
   }
 
   card() {
@@ -101,7 +126,7 @@ class ProbeAdapter {
       maxContext: 128000,
       modelSelection: {
         mode: 'exact', configuredDefault: this._route.model, available: [this._route.model],
-        family: 'grok', acceptedPrefixes: [], acceptedAliases: [],
+        family: this._family, acceptedPrefixes: [], acceptedAliases: [],
         reasoningEffort: ['low', 'high'], serviceTier: null,
         provenance: 'readiness-credentials-red', refreshedAt: null,
       },
@@ -158,6 +183,12 @@ class ProbeAdapter {
       this._emitFor(worker, 'lifecycle.spawned', {});
       if (mode === 'die') {
         this._emitFor(worker, 'lifecycle.process_closed', { code: 1 });
+        return;
+      }
+      if (mode === 'hang') {
+        // The provider call starts but the turn NEVER completes — only the probe watchdog
+        // (§4.1.2's enforced ≤120s bound) can end this probe (RT-3b).
+        this._emitFor(worker, 'resource.provider_call', { callId: `probe-${worker}`, phase: 'started' });
         return;
       }
       this._emitFor(worker, 'resource.provider_call', { callId: `probe-${worker}`, phase: 'completed' });
@@ -357,9 +388,34 @@ function scanTree(root) {
   return values;
 }
 
-async function resolveGrokCredentialCache() {
+// The header-sanctioned homes, in definition order: the dedicated module (also what an
+// application-deployment.mjs RE-EXPORT points at, claude-credential-cache.mjs:1761 pattern),
+// else an inline definition in application-deployment.mjs itself. Source pins follow the home
+// the class was actually resolved from — never an unconditional read of one spelling.
+async function resolveGrokCredentialCacheHome() {
+  const dedicatedPath = join(srcDir, 'grok-credential-cache.mjs');
   const dedicated = await import('../src/grok-credential-cache.mjs').catch(() => null);
-  return deploymentModule.GrokCredentialCache ?? dedicated?.GrokCredentialCache ?? null;
+  if (typeof dedicated?.GrokCredentialCache === 'function') {
+    return { klass: dedicated.GrokCredentialCache, source: readFileSync(dedicatedPath, 'utf8') };
+  }
+  if (typeof deploymentModule.GrokCredentialCache === 'function') {
+    return { klass: deploymentModule.GrokCredentialCache, source: deploymentSource };
+  }
+  return { klass: null, source: null };
+}
+
+async function resolveGrokCredentialCache() {
+  return (await resolveGrokCredentialCacheHome()).klass;
+}
+
+// Source-pin hygiene: the F-3 absence scan must not trip on COMMENTS that name the claude
+// convention while explaining the distinction. Strip block comments and whole-line/tail
+// comments (a `//` preceded by whitespace or an opener — string contents like 'https://'
+// stay). String literals are CODE and keep scanning.
+function stripComments(source) {
+  return source
+    .replace(/\/\*[\s\S]*?\*\//gu, '')
+    .replace(/(^|[\s;(=,![\]])\/\/[^\n]*/gmu, '$1');
 }
 
 function grokWire(accessToken, expiresAt) {
@@ -491,6 +547,46 @@ test('RT-2 (stage: #47 cache missing): never probe per call — fresh-window spa
   }
 });
 
+test('RT-2b (stage: #47 cache missing): a STALE liveness window re-probes exactly once on the next consult — cache-forever-after-first-probe is a red-first failure (§4.1.3)', async () => {
+  // The stale-window leg of RT-2's own acceptance text needs a deployment clock: the tier's
+  // consult compares expiresAt against `now`, so the suite injects it (advanced.liveness.now,
+  // header seam) and advances it past the window without any wall-clock movement.
+  let clock = Date.parse('2026-08-03T00:00:00.000Z');
+  const adapter = new ProbeAdapter({ route: ROUTE_LOW, mode: 'complete' });
+  const fixture = await openFixture({
+    routes: [ROUTE_LOW],
+    adapters: { grok: adapter },
+    extraAdvanced: { liveness: { now: () => clock } },
+  });
+  try {
+    if (fixture.wiringError?.code === 'deployment_config_invalid') {
+      assert.fail(`stage #47: the liveness tier has no deployment wiring — advanced.liveness is unsupported (${fixture.wiringError.message})`);
+    }
+    assert.equal(fixture.wiringError, null, 'fixture must open');
+    await spawnWorker(fixture.deployment, ROUTE_LOW, 'rt2b-first');
+    assert.equal(probeInvocations(adapter).length, 1,
+      'stage #47: the first (cache-absent) consult performs exactly one probe (§4.1.3)');
+    const first = routeRow(await fixture.deployment.doctor(), ROUTE_LOW);
+    assert.equal(first?.liveness?.state ?? null, 'verified', 'the cold probe verifies the route');
+    const windowMs = ms(first?.liveness?.expiresAt) - ms(first?.liveness?.verifiedAt);
+    assert.ok(windowMs > 0 && windowMs <= 28 * 60 * 1000,
+      'the grok window is positive and bounded by the observed 28-min vendor TTL (§4.1.3)');
+
+    clock += windowMs + 1; // the verified window lapses; the wall clock never moves.
+    await spawnWorker(fixture.deployment, ROUTE_LOW, 'rt2b-stale');
+    assert.equal(probeInvocations(adapter).length, 2,
+      '§4.1.3: a STALE window probes exactly once on the next consult — a cache-forever implementation never re-probes and fails here (the RT-2 acceptance leg)');
+    await spawnWorker(fixture.deployment, ROUTE_LOW, 'rt2b-refreshed');
+    assert.equal(probeInvocations(adapter).length, 2,
+      'the re-probed window is fresh again — still never probe per call');
+    const second = routeRow(await fixture.deployment.doctor(), ROUTE_LOW);
+    assert.ok(ms(second?.liveness?.verifiedAt) >= ms(first?.liveness?.expiresAt),
+      'the re-probe re-mints the window (verifiedAt advanced past the lapsed expiry)');
+  } finally {
+    await fixture.close();
+  }
+});
+
 test('RT-3 (stage: #47 probe bounds missing): one probe is one bounded provider call — prompt ≤1KiB, capture ≤2KiB, latency ≤120s, no retry loop', async () => {
   const adapter = new ProbeAdapter({ route: ROUTE_LOW, mode: 'complete' });
   const fixture = await openFixture({ routes: [ROUTE_LOW], adapters: { grok: adapter } });
@@ -523,6 +619,43 @@ test('RT-3 (stage: #47 probe bounds missing): one probe is one bounded provider 
       'the probe verdict carries latencyMs within the ≤120s wall bound (§4.1.2)');
   } finally {
     await noisy.close();
+  }
+});
+
+test('RT-3b (stage: #47 probe bounds missing): the ≤120s probe timeout is ENFORCED — a hanging probe is killed and classified provider_unreachable, never awaited forever (§4.1.2)', async () => {
+  // RT-3 checks a REPORTED latencyMs on a fast fixture; this row is the enforcement oracle.
+  // The hanging fixture turn never completes, so only the tier's own kill timer (bounded by
+  // advanced.liveness.probeTimeoutMs, header seam) can produce the verdict. The 5s race
+  // deadline is a resource bound on the row itself, never a work control (header control law).
+  const adapter = new ProbeAdapter({ route: ROUTE_LOW, mode: 'hang' });
+  const fixture = await openFixture({
+    routes: [ROUTE_LOW],
+    adapters: { grok: adapter },
+    extraAdvanced: { liveness: { probeTimeoutMs: 250 } },
+  });
+  try {
+    if (fixture.wiringError?.code === 'deployment_config_invalid') {
+      assert.fail(`stage #47: the liveness tier has no deployment wiring — advanced.liveness is unsupported (${fixture.wiringError.message})`);
+    }
+    assert.equal(fixture.wiringError, null, 'fixture must open');
+    const deadline = new Promise((resolve) => {
+      const timer = setTimeout(() => resolve('probe-watchdog-absent'), 5_000);
+      timer.unref?.();
+    });
+    const outcome = await Promise.race([gateOutcome(fixture.deployment, ROUTE_LOW, 'rt3b'), deadline]);
+    assert.notEqual(outcome, 'probe-watchdog-absent',
+      '§4.1.2: a hanging probe was awaited past 5s with probeTimeoutMs 250 — no kill timer enforces the ≤120s bound (a reported latencyMs is not enforcement)');
+    assert.equal(outcome.refused?.code ?? null, 'provider_unreachable',
+      'a probe killed on timeout classifies network/timeout → provider_unreachable (§4.1.1)');
+    assert.equal(probeInvocations(adapter).length, 1,
+      'a timed-out probe is exactly one provider call — no retry loop (§4.1.2)');
+    const timedOut = probeRecords(fixture.driver, adapter, 'readiness.probe_failed');
+    assert.ok(timedOut.length >= 1, 'a readiness.probe_failed record is minted for the timed-out probe');
+    const latency = Number(timedOut.at(-1).payload?.latencyMs);
+    assert.ok(Number.isFinite(latency) && latency <= 120_000,
+      'the timeout verdict stays within the ≤120s wall bound (§4.1.2)');
+  } finally {
+    await fixture.close();
   }
 });
 
@@ -655,17 +788,31 @@ test('RT-5p (pin): the existing preflight still refuses a static-blocked member 
   }
 });
 
-test('RT-14a (stage: credentialKey join missing): a probe-sourced invalid_grant invalidates every liveness row sharing the credentialKey — including a sibling inside its own fresh window', async () => {
+test('RT-14a (stage: credentialKey join missing): a probe-sourced invalid_grant invalidates every liveness row sharing the credentialKey — and ONLY those rows (a second credential identity is the negative control)', async () => {
   const adapter = new ProbeAdapter({ route: ROUTE_LOW, mode: 'complete' });
-  const fixture = await openFixture({ routes: [ROUTE_LOW, ROUTE_HIGH], adapters: { grok: adapter } });
+  const controlAdapter = new ProbeAdapter({ route: ROUTE_CODEX, mode: 'complete', family: 'codex' });
+  const fixture = await openFixture({
+    routes: [ROUTE_LOW, ROUTE_HIGH, ROUTE_CODEX],
+    adapters: { grok: adapter, codex: controlAdapter },
+  });
   try {
     assert.equal(fixture.wiringError, null, 'fixture must open');
     await spawnWorker(fixture.deployment, ROUTE_HIGH, 'rt14a-warm');
-    const warmRow = routeRow(await fixture.deployment.doctor(), ROUTE_HIGH);
+    await spawnWorker(fixture.deployment, ROUTE_CODEX, 'rt14a-control');
+    const warm = await fixture.deployment.doctor();
+    const warmRow = routeRow(warm, ROUTE_HIGH);
     assert.equal(warmRow?.liveness?.state ?? null, 'verified', 'stage #47: route B must be live-verified inside its own fresh window before the sibling verdict arrives');
+    const controlRow = routeRow(warm, ROUTE_CODEX);
+    assert.equal(controlRow?.liveness?.state ?? null, 'verified',
+      'stage #47: the negative-control route must be live-verified before the verdict (the liveness tier is not landed)');
     const credentialKey = warmRow?.liveness?.credentialKey ?? null;
     assert.ok(typeof credentialKey === 'string' && credentialKey.length > 0,
       'the §4.1.3 liveness tuple carries credentialKey (fold F-1)');
+    const controlKey = controlRow?.liveness?.credentialKey ?? null;
+    assert.ok(typeof controlKey === 'string' && controlKey.length > 0,
+      'the control route carries its own credentialKey');
+    assert.notEqual(controlKey, credentialKey,
+      'the negative control rides a DIFFERENT credential identity (§4.1.3 per-vendor credential keys) — one global key for every route would orphan this row\'s teeth');
 
     adapter.mode = 'invalid_grant';
     const refused = await gateOutcome(fixture.deployment, ROUTE_LOW, 'rt14a-probe');
@@ -675,12 +822,17 @@ test('RT-14a (stage: credentialKey join missing): a probe-sourced invalid_grant 
     const doctor = await fixture.deployment.doctor();
     const rowA = routeRow(doctor, ROUTE_LOW);
     const rowB = routeRow(doctor, ROUTE_HIGH);
+    const controlAfter = routeRow(doctor, ROUTE_CODEX);
     assert.equal(rowA?.liveness?.state ?? null, 'failed', 'route A is failed');
     assert.equal(rowA?.liveness?.credentialKey ?? null, credentialKey,
       'both routes share one credential identity (the static-path model of §1.2)');
     assert.equal(rowB?.liveness?.state ?? null, 'failed',
       'fold F-1: route B reads failed on its very next read — NOT its unexpired verified cache (RT-14)');
     assert.equal(rowB?.liveness?.code ?? null, 'authentication_refresh_required');
+    assert.equal(controlAfter?.liveness?.state ?? null, 'verified',
+      'fold F-1 NEGATIVE CONTROL: the unrelated credentialKey\'s liveness row SURVIVES the grok invalid_grant fan-out — an invalidate-everything implementation fails here (RT-14)');
+    assert.equal(controlAfter?.liveness?.credentialKey ?? null, controlKey,
+      'the control row\'s credential identity is untouched by the fan-out');
 
     const probesBefore = probeInvocations(adapter).length;
     const sibling = await gateOutcome(fixture.deployment, ROUTE_HIGH, 'rt14a-sibling');
@@ -693,18 +845,31 @@ test('RT-14a (stage: credentialKey join missing): a probe-sourced invalid_grant 
   }
 });
 
-test('RT-14b (stage: credentialKey join missing): a worker-turn invalid_grant verdict invalidates the sibling rows the same way (§4.3.3)', async () => {
+test('RT-14b (stage: credentialKey join missing): a worker-turn invalid_grant verdict invalidates the sibling rows the same way — and only those rows (§4.3.3)', async () => {
   const adapter = new ProbeAdapter({ route: ROUTE_LOW, mode: 'complete' });
-  const fixture = await openFixture({ routes: [ROUTE_LOW, ROUTE_HIGH], adapters: { grok: adapter } });
+  const controlAdapter = new ProbeAdapter({ route: ROUTE_CODEX, mode: 'complete', family: 'codex' });
+  const fixture = await openFixture({
+    routes: [ROUTE_LOW, ROUTE_HIGH, ROUTE_CODEX],
+    adapters: { grok: adapter, codex: controlAdapter },
+  });
   try {
     assert.equal(fixture.wiringError, null, 'fixture must open');
     await spawnWorker(fixture.deployment, ROUTE_LOW, 'rt14b-warm-a');
     await spawnWorker(fixture.deployment, ROUTE_HIGH, 'rt14b-warm-b');
+    await spawnWorker(fixture.deployment, ROUTE_CODEX, 'rt14b-control');
     const before = await fixture.deployment.doctor();
     assert.equal(routeRow(before, ROUTE_LOW)?.liveness?.state ?? null, 'verified',
       'stage #47: route A must be live-verified before the worker verdict (the liveness tier is not landed)');
     assert.equal(routeRow(before, ROUTE_HIGH)?.liveness?.state ?? null, 'verified',
       'stage #47: route B must be live-verified before the worker verdict');
+    const controlBefore = routeRow(before, ROUTE_CODEX);
+    assert.equal(controlBefore?.liveness?.state ?? null, 'verified',
+      'stage #47: the negative-control route must be live-verified before the worker verdict');
+    const controlKey = controlBefore?.liveness?.credentialKey ?? null;
+    assert.ok(typeof controlKey === 'string' && controlKey.length > 0,
+      'the control route carries its own credentialKey');
+    assert.notEqual(routeRow(before, ROUTE_LOW)?.liveness?.credentialKey ?? null, controlKey,
+      'the negative control rides a DIFFERENT credential identity than the grok routes (§4.1.3)');
 
     // A real worker turn on route A surfaces refresh-token death (wire-shape assumption, header).
     objectiveSeq += 1;
@@ -717,6 +882,11 @@ test('RT-14b (stage: credentialKey join missing): a worker-turn invalid_grant ve
       'stage #47/#84: the worker-sourced invalid_grant verdict never reached route A\'s liveness row (RT-13/RT-14)');
     assert.equal(routeRow(doctor, ROUTE_HIGH)?.liveness?.state ?? null, 'failed',
       'fold F-1: the verdict propagates to every liveness row sharing the credentialKey');
+    const controlAfter = routeRow(doctor, ROUTE_CODEX);
+    assert.equal(controlAfter?.liveness?.state ?? null, 'verified',
+      'fold F-1 NEGATIVE CONTROL: the unrelated credentialKey\'s liveness row SURVIVES the worker-sourced fan-out — an invalidate-everything implementation fails here (RT-14)');
+    assert.equal(controlAfter?.liveness?.credentialKey ?? null, controlKey,
+      'the control row\'s credential identity is untouched by the fan-out');
   } finally {
     await fixture.close();
   }
@@ -768,6 +938,48 @@ test('RT-6 (stage: fleet_roster surface missing): the roster projects the closed
   }
 });
 
+test('RT-6b (stage: fleet_roster surface missing): a POPULATED router bucket projects its learning row — samples/winRate/weight/mode — while bucket-absent routes keep honest-empty null (§4.2.1)', async () => {
+  const adapter = new ProbeAdapter({ route: ROUTE_LOW, mode: 'complete' });
+  const fixture = await openFixture({ routes: [ROUTE_LOW, ROUTE_HIGH], adapters: { grok: adapter } });
+  try {
+    assert.equal(fixture.wiringError, null, 'fixture must open');
+    await spawnWorker(fixture.deployment, ROUTE_LOW, 'rt6b');
+    // Real learning evidence through the sibling-exact write seam the coordinator itself uses
+    // (route.record → router.record, index.mjs:1428), keyed the way the coordinator keys the
+    // route (routeTupleKey over the adapter card, route-tuple.mjs:1-5, default 'general' task):
+    // 3 verified wins + 1 verified loss, co-timed so decay scales weight and count by the same
+    // factor (router.mjs:45-49) and winRate stays exactly 0.75 at any projection time.
+    const tupleKey = routeTupleKey(adapter.card(), ROUTE_LOW.model, ROUTE_LOW.effort, 'general');
+    const learnedAt = Date.parse('2026-08-03T00:00:00.000Z');
+    for (const [index, win] of [[0, true], [1, true], [2, true], [3, false]]) {
+      fixture.driver.router.record(tupleKey, 'general', win, { family: 'grok', taskId: `rt6b-${index}`, now: learnedAt });
+    }
+    assert.equal(typeof fixture.deployment.fleet?.roster, 'function',
+      'stage #83: the deployment facade has no fleet.roster() projection surface (§4.2.2)');
+    const doc = await fixture.deployment.fleet.roster();
+    const low = doc.routes.find((row) => row.effort === 'low');
+    const high = doc.routes.find((row) => row.effort === 'high');
+    assert.ok(low?.learning && typeof low.learning === 'object',
+      '§4.2.1: a route WITH a router bucket projects its learning row — honest-empty null is only for bucket-absent routes');
+    assert.equal(low.learning.mode, fixture.driver.router.snapshot().mode,
+      'learning.mode is the router policy mode (router.mjs:358-373)');
+    assert.ok(Math.abs((low.learning.samples ?? 0) - 4) < 0.25,
+      `learning.samples reflects the recorded evidence (4 co-timed records; decay over the row's milliseconds is negligible), observed ${low.learning.samples}`);
+    assert.equal(low.learning.winRate, 0.75,
+      'winRate = weight/count — decay scales both identically for co-timed records, so 3 wins + 1 loss is exactly 0.75, never the fabricated default prior');
+    assert.ok((low.learning.weight ?? 0) > 2.9 && low.learning.weight <= 3,
+      'learning.weight is the decayed win weight (3 wins, co-timed)');
+    if (Object.hasOwn(low.learning, 'seededFrom')) {
+      assert.ok(low.learning.seededFrom === null || typeof low.learning.seededFrom === 'string',
+        'seededFrom, when present, is a route key or null (cross-model seed, §4.2.1)');
+    }
+    assert.equal(high?.learning ?? undefined, null,
+      'the sibling route with NO bucket still projects learning: null — a populated bucket must not leak a prior across routes');
+  } finally {
+    await fixture.close();
+  }
+});
+
 test('RT-7 (stage: roster occupancy missing): projected inFlight is the coordinator\'s real seat count, never caller-supplied', async () => {
   const adapter = new ProbeAdapter({ route: ROUTE_LOW, mode: 'complete' });
   const fixture = await openFixture({ routes: [ROUTE_LOW, ROUTE_HIGH], adapters: { grok: adapter } });
@@ -782,7 +994,7 @@ test('RT-7 (stage: roster occupancy missing): projected inFlight is the coordina
     assert.ok(doc && typeof doc === 'object' && !Array.isArray(doc), 'fleet.roster() returns the projection document');
     const low = doc.routes.find((row) => row.effort === 'low');
     assert.equal(low?.occupancy?.inFlight ?? null, observed,
-      'the projected inFlight EQUALS the coordinator\'s real count (coordinator.mjs:2800-2806)');
+      'the projected inFlight EQUALS the coordinator\'s real count (coordinator.mjs:2816-2823)');
     assert.equal(low?.occupancy?.concurrencyCeiling ?? null, 64, 'the ceiling comes from the adapter card');
 
     let overridden = null;
@@ -799,6 +1011,26 @@ test('RT-7 (stage: roster occupancy missing): projected inFlight is the coordina
       rosterSources.some((name) => readFileSync(join(srcDir, name), 'utf8').includes('_inFlightCount')),
       'the roster derives occupancy from the coordinator\'s _inFlightCount (source pin, RT-7)',
     );
+  } finally {
+    await fixture.close();
+  }
+});
+
+test('RT-7b (stage: doctor occupancy missing): doctor route rows carry the same coordinator-seat occupancy the roster projects (§4.2.2)', async () => {
+  const adapter = new ProbeAdapter({ route: ROUTE_LOW, mode: 'complete' });
+  const fixture = await openFixture({ routes: [ROUTE_LOW], adapters: { grok: adapter } });
+  try {
+    assert.equal(fixture.wiringError, null, 'fixture must open');
+    for (let index = 0; index < 3; index += 1) await spawnWorker(fixture.deployment, ROUTE_LOW, `rt7b-${index}`);
+    const observed = fixture.driver.coordinator._inFlightCount('grok');
+    assert.equal(observed, 3, 'fixture: three seats are genuinely in-flight');
+    const row = routeRow(await fixture.deployment.doctor(), ROUTE_LOW);
+    assert.ok(Number.isSafeInteger(row?.occupancy?.inFlight),
+      'stage #83: doctor route rows carry no occupancy projection — §4.2.2 extends doctor rows with liveness AND occupancy (RT-7 pins the roster half)');
+    assert.equal(row.occupancy.inFlight, observed,
+      'doctor occupancy is the coordinator\'s real seat count (coordinator.mjs:2816-2823), never caller-supplied');
+    assert.equal(row.occupancy.concurrencyCeiling, 64, 'the ceiling comes from the adapter card');
+    assert.ok(row?.liveness, '§4.2.2: doctor rows keep liveness alongside occupancy (no drift with RT-4)');
   } finally {
     await fixture.close();
   }
@@ -850,11 +1082,22 @@ test('RT-9 (stage: fleet_roster registration missing): the roster registers in t
       'stage #83: the deployment facade has no fleet.roster() projection surface (§4.2.2)');
     const doc = await fixture.deployment.fleet.roster();
     assert.ok(doc && typeof doc === 'object' && !Array.isArray(doc), 'fleet.roster() returns the projection document');
-    const serialized = JSON.stringify(doc);
-    assert.match(serialized, /"routingMutationAuthority":false/u,
-      'the roster claims routingMutationAuthority: false forever (§5 non-goal, RT-9)');
-    assert.match(serialized, /"workerAuthority":false/u,
-      'the roster claims workerAuthority: false — the ordinary plane\'s own provenance precedent (fold F-2)');
+
+    // Fold F-2 provenance home (post-blue-team reconcile, 2026-08-03): the contract assigns
+    // routingMutationAuthority: false / workerAuthority: false to the fleet_roster OPERATION's
+    // own result/registration envelope (§4.2.2 — the route.advice envelope precedent,
+    // cairn-run-scorecard.mjs:162), NEVER to the §4.2.1 document whose keys RT-6 closes.
+    // Assert the claim where it lives: the operation's implementation source.
+    const rosterSources = readdirSync(srcDir).filter((name) => name.endsWith('.mjs')
+      && /fleet_roster|fleetRoster/u.test(readFileSync(join(srcDir, name), 'utf8')));
+    assert.ok(rosterSources.length >= 1, 'stage #83: no fleet_roster operation exists in impl/src');
+    assert.ok(
+      rosterSources.some((name) => {
+        const text = readFileSync(join(srcDir, name), 'utf8');
+        return /routingMutationAuthority:\s*false/u.test(text) && /workerAuthority:\s*false/u.test(text);
+      }),
+      'fold F-2: the fleet_roster operation claims routingMutationAuthority: false and workerAuthority: false on its own envelope (the ordinary plane\'s new provenance precedent, §4.2.2) — never as roster-document fields',
+    );
 
     const doctorRow = routeRow(await fixture.deployment.doctor(), ROUTE_LOW);
     const rosterRow = doc.routes.find((row) => row.effort === 'low');
@@ -882,8 +1125,56 @@ test('RT-9 (stage: fleet_roster registration missing): the roster registers in t
 // #84 — the credential controllers (stage: GrokCredentialCache missing)
 // ===========================================================================
 
+test('RT-10p (pin): the grok refresh fixture fails closed without the suite sentinel or a tmpdir-confined HOME — a wrong implementation can never clobber the operator credential', () => {
+  // Leg A: the argv gate WITHOUT the sentinel env → non-zero exit, named stderr, zero writes.
+  const rootA = tmpDir('fixture-refusal');
+  const homeA = join(rootA, 'home');
+  mkdirSync(join(homeA, '.grok'), { recursive: true });
+  const marker = '{"xai::oauth":{"key":"OPERATOR-CREDENTIAL-MARKER"}}\n';
+  writeFileSync(join(homeA, '.grok', 'auth.json'), marker, { mode: 0o600 });
+  const refusedA = spawnSync(process.execPath, [fakeGrokRefresh, '--baton-grok-refresh-fixture'], {
+    env: { PATH: process.env.PATH, HOME: homeA, TMPDIR: tmpdir() }, encoding: 'utf8',
+  });
+  assert.notEqual(refusedA.status, 0, 'the fixture must FAIL CLOSED without BATON_FAKE_GROK_FIXTURE=1');
+  assert.match(refusedA.stderr ?? '', /BATON_FAKE_GROK_FIXTURE/u, 'the refusal names the missing sentinel on stderr');
+  assert.equal(readFileSync(join(homeA, '.grok', 'auth.json'), 'utf8'), marker,
+    'the operator-shaped credential is byte-identical after the refusal — no write happened');
+  assert.equal(existsSync(join(rootA, 'fixture-spawns')), false, 'no spawn counter is written on refusal');
+  assert.equal(existsSync(join(rootA, 'fixture-writeback.json')), false, 'no observation file is written on refusal');
+
+  // Leg B: the sentinel is present but HOME does not resolve under os.tmpdir() — the unscoped-
+  // HOME wrong implementation (the F-3 bug class) → refuse the same way. The path's parent
+  // chain does not exist, so even a broken check could not write anywhere.
+  const refusedB = spawnSync(process.execPath, [fakeGrokRefresh, '--baton-grok-refresh-fixture'], {
+    env: { PATH: process.env.PATH, HOME: '/nonexistent-baton-rc-fold/home', BATON_FAKE_GROK_FIXTURE: '1', TMPDIR: tmpdir() },
+    encoding: 'utf8',
+  });
+  assert.notEqual(refusedB.status, 0, 'the fixture must refuse a HOME outside the suite tmpdir');
+  assert.match(refusedB.stderr ?? '', /refus(?:ing|al)|tmpdir/iu, 'the refusal explains the confinement failure');
+  assert.equal(existsSync('/nonexistent-baton-rc-fold'), false, 'nothing was written outside the tmpdir');
+
+  // Leg C (positive control): sentinel + sandbox HOME under the tmpdir → the fixture runs and
+  // leaves its independent observation (the runtime pre-projects the credential, so the suite
+  // mirrors that tree first).
+  const rootC = tmpDir('fixture-admission');
+  const homeC = join(rootC, 'home');
+  mkdirSync(join(homeC, '.grok'), { recursive: true });
+  writeFileSync(join(homeC, '.grok', 'auth.json'), `${JSON.stringify(grokWire('access-1000', '2026-01-01T00:00:00Z'))}\n`, { mode: 0o600 });
+  const admitted = spawnSync(process.execPath, [fakeGrokRefresh, '--baton-grok-refresh-fixture'], {
+    env: { PATH: process.env.PATH, HOME: homeC, BATON_FAKE_GROK_FIXTURE: '1', TMPDIR: tmpdir() },
+    encoding: 'utf8',
+  });
+  assert.equal(admitted.status, 0, `the confined fixture runs (stderr: ${admitted.stderr ?? ''})`);
+  assert.equal(readFileSync(join(rootC, 'fixture-spawns'), 'utf8'), '1', 'the spawn counter is the independent observation');
+  const writeback = JSON.parse(readFileSync(join(rootC, 'fixture-writeback.json'), 'utf8'));
+  assert.equal(writeback.projectedGrokTree, true, 'the fixture observed the runtime-projected grok tree');
+  assert.equal(writeback.target, join(homeC, '.grok', 'auth.json'), 'the write-back target is the grok-native tree');
+  assert.ok(readFileSync(join(homeC, '.grok', 'auth.json'), 'utf8').includes('access-fresher-9000'),
+    'the fresher credential is written inside the sandbox');
+});
+
 test('RT-10a (stage: GrokCredentialCache missing): the grok cache harvests a schema-valid fresher write-back from the vendor-native target', async () => {
-  const GrokCredentialCache = await resolveGrokCredentialCache();
+  const { klass: GrokCredentialCache, source: grokHomeSource } = await resolveGrokCredentialCacheHome();
   assert.equal(typeof GrokCredentialCache, 'function',
     'stage #84: GrokCredentialCache is not landed (§4.3.1 — the grok OIDC refresh_token grant on the #11 pattern)');
 
@@ -892,6 +1183,9 @@ test('RT-10a (stage: GrokCredentialCache missing): the grok cache harvests a sch
   const cache = await GrokCredentialCache.open(grokCacheOptions(root, {
     cmd: process.execPath,
     cmdArgs: [fakeGrokRefresh, '--baton-grok-refresh-fixture'],
+    // The fixture child needs the suite sentinel AND the suite's temp root: the runtime's
+    // scoped env carries no TMPDIR, so the child's os.tmpdir() would otherwise resolve /tmp.
+    cmdEnv: { BATON_FAKE_GROK_FIXTURE: '1', TMPDIR: tmpdir() },
   }));
   const adopted = await cache.refresh();
   assert.equal(JSON.stringify(adopted).includes('access-fresher-9000'), true,
@@ -907,10 +1201,13 @@ test('RT-10a (stage: GrokCredentialCache missing): the grok cache harvests a sch
   assert.match(writeback.target, /\.grok\/auth\.json$/u,
     'fold F-3: the write-back read targets directory/.grok/auth.json');
 
-  const grokModuleSource = readFileSync(new URL('../src/grok-credential-cache.mjs', import.meta.url), 'utf8');
+  // The source pin follows the home the class was actually resolved from (the header-sanctioned
+  // re-export home is legitimate), and the absence scan ignores comments (a comment explaining
+  // the F-3 distinction by naming the claude convention is documentation, not usage).
+  const grokModuleSource = stripComments(grokHomeSource);
   assert.ok(grokModuleSource.includes('.grok'), 'the grok controller source pins the .grok tree');
   assert.equal(grokModuleSource.includes('.credentials.json'), false,
-    'the grok controller never references the claude flat-file convention (fold F-3)');
+    'the grok controller never references the claude flat-file convention in code (fold F-3)');
 });
 
 test('RT-10b (stage: GrokCredentialCache missing): invalid_grant latches without a second flight; the explicit command clears the latch and is the only persist-back path', async () => {
@@ -947,7 +1244,7 @@ test('RT-10b (stage: GrokCredentialCache missing): invalid_grant latches without
 });
 
 test('RT-11 (stage: GrokCredentialCache missing): N concurrent refreshes coalesce single-flight; an auth.json change mid-flight aborts the adoption; the advisory lockfile blocks cross-deployment flights', async () => {
-  const GrokCredentialCache = await resolveGrokCredentialCache();
+  const { klass: GrokCredentialCache, source: grokHomeSource } = await resolveGrokCredentialCacheHome();
   assert.equal(typeof GrokCredentialCache, 'function',
     'stage #84: GrokCredentialCache is not landed (§4.3.1)');
 
@@ -956,6 +1253,9 @@ test('RT-11 (stage: GrokCredentialCache missing): N concurrent refreshes coalesc
   const flightCache = await GrokCredentialCache.open(grokCacheOptions(flightRoot, {
     cmd: process.execPath,
     cmdArgs: [fakeGrokRefresh, '--baton-grok-refresh-fixture'],
+    // The fixture child needs the suite sentinel AND the suite's temp root: the runtime's
+    // scoped env carries no TMPDIR, so the child's os.tmpdir() would otherwise resolve /tmp.
+    cmdEnv: { BATON_FAKE_GROK_FIXTURE: '1', TMPDIR: tmpdir() },
   }));
   const adopted = await Promise.all(Array.from({ length: 32 }, () => flightCache.refresh()));
   assert.equal(readFileSync(join(flightRoot, 'refresh', 'fixture-spawns'), 'utf8'), '1',
@@ -994,11 +1294,12 @@ test('RT-11 (stage: GrokCredentialCache missing): N concurrent refreshes coalesc
   }));
   await assert.rejects(locked.refresh(), { code: 'authentication_refresh_locked' },
     'a cross-deployment flight blocks on the advisory lockfile with the typed code (claude-credential-cache.mjs:98-119 pattern)');
-  const grokModuleSource = readFileSync(new URL('../src/grok-credential-cache.mjs', import.meta.url), 'utf8');
-  assert.equal(grokModuleSource.includes('O_EXCL'), true, 'the grok lockfile is the O_CREAT|O_EXCL advisory seam');
+  // The lockfile source pin follows the home the class was actually resolved from (RT-10a).
+  assert.equal(stripComments(grokHomeSource).includes('O_EXCL'), true,
+    'the grok lockfile is the O_CREAT|O_EXCL advisory seam');
 });
 
-test('RT-12 (stage: GrokCredentialCache missing): access-token-only projection — no grok worker runtime ever receives the refresh token', async () => {
+test('RT-12 (stage: GrokCredentialCache missing): access-token-only projection — no grok worker runtime ever receives the refresh token, on EITHER projection channel', async () => {
   const GrokCredentialCache = await resolveGrokCredentialCache();
   assert.equal(typeof GrokCredentialCache, 'function',
     'stage #84: GrokCredentialCache is not landed (§4.3.1)');
@@ -1012,12 +1313,33 @@ test('RT-12 (stage: GrokCredentialCache missing): access-token-only projection �
   assert.equal(JSON.stringify(projection).includes('access-20000'), true,
     'the access token is projected');
 
+  // The FILE channel — grok's NATIVE worker projection (the row's named scan). Today
+  // defaultCredentialProjection copies ~/.grok/auth.json WHOLESALE into every grok worker tree
+  // (application-deployment.mjs:606-608, refresh_token included): an implementation that lands
+  // the cache but leaves the file channel widened ships the exact token-widening hole §4.3.1
+  // forbids. The cache must expose an access-token-only file list (projectionFiles(), the
+  // header-declared sibling of projectionEnv()) that the deployment wires into RuntimeIsolation.
+  assert.equal(typeof cache.projectionFiles, 'function',
+    'stage #84: the grok cache exposes no file-projection surface — grok workers receive the credential as a projected FILE tree (§4.3.1), so projectionEnv() alone cannot satisfy RT-12');
+  const files = cache.projectionFiles();
+  assert.ok(Array.isArray(files) && files.length >= 1 && files.every((file) => typeof file === 'string' && file.length > 0),
+    'projectionFiles() returns the projected credential file list');
+  assert.ok(files.some((file) => basename(file) === 'auth.json'),
+    'the projected file keeps the vendor-native auth.json name (fold F-3 — the grok CLI reads ~/.grok/auth.json)');
+  for (const file of files) {
+    const content = readFileSync(file, 'utf8');
+    assert.equal(content.includes('refresh-for-access-20000'), false,
+      `the projected file ${basename(file)} carries NO refresh-token bytes (access-token-only, §4.3.1)`);
+  }
+  assert.ok(files.some((file) => readFileSync(file, 'utf8').includes('access-20000')),
+    'the projected files carry the access token — a worker must actually receive the credential');
+
   const credentialEnv = typeof cache.credentialEnv === 'function'
     ? cache.credentialEnv()
     : { grok: projection };
   const isolation = new RuntimeIsolation({
     repoRoot: process.cwd(), root: join(root, 'workers'),
-    credentialFiles: {}, credentialEnv, baseEnv: { PATH: process.env.PATH },
+    credentialFiles: { grok: files }, credentialEnv, baseEnv: { PATH: process.env.PATH },
   });
   const lease = isolation.create('rt12-worker', {
     harness: 'grok', authPosture: 'subscription',
@@ -1026,6 +1348,8 @@ test('RT-12 (stage: GrokCredentialCache missing): access-token-only projection �
   const tree = scanTree(lease.paths.root);
   assert.equal(tree.some((value) => value.includes('refresh-for-access-20000')), false,
     'the #11 CC-4 projection-tree scan: no projected grok worker file contains the cache\'s refresh-token bytes (RT-12)');
+  assert.equal(tree.some((value) => value.includes('access-20000')), true,
+    'the projected worker tree DOES carry the access token — the CC-4 scan is vacuous without this leg');
   assert.equal(JSON.stringify(lease.env).includes('refresh-for-access-20000'), false,
     'no projected grok worker env carries the refresh token');
   isolation.remove('rt12-worker');
@@ -1071,9 +1395,22 @@ test('RT-13b (pin): the kimi revoked-tombstone recognition stays exact — a par
     deploymentSource.indexOf('function grokAuthenticationSummary'),
   );
   assert.ok(kimi.includes('const revokedTombstone'), 'the tombstone recognition exists');
-  assert.ok(kimi.includes("value.access_token === ''") && kimi.includes("value.refresh_token === ''")
-    && kimi.includes('value.expires_at === 0') && kimi.includes('value.expires_in === 0'),
-    'the recognition requires BOTH secrets and BOTH expiry counters cleared (application-deployment.mjs:360-375)');
+  // The four cleared-field conditions must be CONJOINED: re-joining them with || promotes a
+  // partial/corrupt record to revoked — the exact tombstone-misdiagnosis RT-13 names — while
+  // keeping every independent substring. Pin the conjoined literals AND the absence of any
+  // disjunction in the statement. (Source pin: a behavioral oracle is not stageable from this
+  // suite — kimiAuthenticationState is module-private and reads the real ~/.kimi-code root,
+  // application-deployment.mjs:338-398; documented in the fold summary.)
+  const statement = kimi.slice(
+    kimi.indexOf('const revokedTombstone'),
+    kimi.indexOf(';', kimi.indexOf('const revokedTombstone')),
+  );
+  assert.match(statement, /value\.access_token === ''\s*&&\s*value\.refresh_token === ''/u,
+    'BOTH secrets must be cleared together, conjoined (application-deployment.mjs:364)');
+  assert.match(statement, /value\.expires_at === 0\s*&&\s*value\.expires_in === 0/u,
+    'BOTH expiry counters must be zeroed together, conjoined (application-deployment.mjs:365)');
+  assert.equal(statement.includes('||'), false,
+    'the tombstone recognition is a pure conjunction — any || promotes partial records to revoked (RT-13)');
   assert.ok(kimi.indexOf('const revokedTombstone') < kimi.indexOf('const accessTokenPresent'),
     'the tombstone is recognized BEFORE the generic schema gate — ordering is load-bearing');
   assert.ok(kimi.includes("credentialState: 'revoked'") && kimi.includes("'authentication_refresh_required'"),
@@ -1098,5 +1435,5 @@ test('RT-13c (pin): every vendor\'s remedy text is its own and the shared termin
   const guidance = semanticsSource.match(/authentication_refresh_required:\s*\{([\s\S]*?)\n\s*\},/u)?.[1] ?? '';
   assert.ok(guidance.length > 0, 'the shared terminal guidance block exists');
   assert.doesNotMatch(guidance, /Claude|Grok|Kimi|\/login/iu,
-    'PROVIDER_TERMINAL_GUIDANCE (application-semantics.mjs:1888) stays vendor-agnostic (RT-13, #11 R11V-4)');
+    'PROVIDER_TERMINAL_GUIDANCE (application-semantics.mjs:1946) stays vendor-agnostic (RT-13, #11 R11V-4)');
 });

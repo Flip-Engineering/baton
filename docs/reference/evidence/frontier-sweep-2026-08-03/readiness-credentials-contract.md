@@ -493,12 +493,19 @@ fields extend — is named by F-5 above.)*
   bucket exists) — so every existing consumer (CLI `baton doctor`/`route`, the wave-driver
   preflight, web/MCP doctor, docs/30:46-56) gains the honest multi-axis view without a new
   surface.
-- **A `fleet_roster` command + capability** (red-team §4, fold F-2). CLI `baton fleet
-  roster` and a **`fleet_roster` operation registered in the ordinary capability plane's
+- **A `fleet_roster` command + capability + facade** (red-team §4, fold F-2; the facade
+  spelling adopted on the 2026-08-03 blue-team fold). CLI `baton fleet roster`, the
+  **`deployment.fleet.roster()` facade** (sibling of `waves.start`,
+  application-deployment.mjs:1219 — the red-first suite reads this spelling, and adopting a
+  suite-chosen surface follows the bidirectional-v3 C3 `messageReceipt` precedent), and a
+  **`fleet_roster` operation registered in the ordinary capability plane's
   advanced `fleet_*` family** (application-semantics.mjs:1099-1100 — sibling-consistent
-  with `fleet_spawn`…`fleet_drain`) project the document directly. Its
+  with `fleet_spawn`…`fleet_drain`) project the document directly — one projection
+  function, three read surfaces. Its
   `routingMutationAuthority: false`/`workerAuthority: false` provenance fields are a **new
-  precedent in that plane**, not borrowed from Cairn's `route.advice` envelope
+  precedent in that plane**, claimed on the operation's own result/registration envelope
+  (the `route.advice` envelope precedent) — **never as fields of the §4.2.1 document**,
+  whose shape stays closed — not borrowed from Cairn's `route.advice` envelope
   (`op: 'route.advice'`, cairn-run-scorecard.mjs:162 — a separate, dot-namespaced
   knowledge-capability plane this epic does not register in). (Pre-fold, this bullet cited
   both planes at once; the fold picks the ordinary plane. Honest nuance: the plane's
@@ -723,7 +730,9 @@ operator-gated live probe):
 - **RT-9 (advisory + drift):** `fleet_roster` registers in the ordinary capability plane's
   advanced `fleet_*` family (application-semantics.mjs:1099-1100) and claims
   `routingMutationAuthority: false` and `workerAuthority: false` as that plane's own
-  provenance precedent (fold F-2); doctor route rows and `fleet_roster` rows are
+  provenance precedent (fold F-2) — **on the operation's result/registration envelope,
+  never in the §4.2.1 roster document** (the RT-6×RT-9 home reconciliation, 2026-08-03);
+  doctor route rows and `fleet_roster` rows are
   byte-identical on shared fields (one projection function).
 
 **#84 (credential controllers) — RT-10..RT-13**

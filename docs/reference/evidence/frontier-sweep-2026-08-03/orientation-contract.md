@@ -192,8 +192,8 @@ verification evidence), NOT by any agent surface. Critically for the freshness q
   `_deriveKnowledgePromotion` derives candidates only from task creation, selected driver events,
   policy failure events, and `scratch.read` over Scratch facts (coordination-store.mjs:14337-14383 —
   no generic evidence-class hook); workflow admission accepts only `board.item_closed` /
-  `package.admitted` Findings (:14630); the candidacy trigger vocabulary is the closed set
-  `KNOWLEDGE_CANDIDATE_TRIGGERS` (:15477-15482). So "the SAME gate a note does" was false for
+  `package.admitted` Findings (:14781); the candidacy trigger vocabulary is the closed set
+  `KNOWLEDGE_CANDIDATE_TRIGGERS` (:15628-15635). So "the SAME gate a note does" was false for
   orientation: a zero-weight `context.read` would never compound at all. O-2/O-4 add the explicit
   `orientation.leaf_proposed` / `orientation.overlay_proposed` triggers. Separately, `maxScanEvents`
   only refuses the promotion SCAN past ceiling (:14339) — it neither stops nor coalesces event
@@ -302,7 +302,7 @@ v1's next sentence — "high-value answers become candidacy candidates through t
 a note uses" — was a confirmed hole: the shipped gate has no derivation path for the class
 (`_deriveKnowledgePromotion` recognizes task creation, selected driver events, policy failures, and
 `scratch.read` over Scratch facts only, coordination-store.mjs:14337-14383), workflow admission
-rejects candidate triggers outside {`board.item_closed`, `package.admitted`} (:14630), and "high
+rejects candidate triggers outside {`board.item_closed`, `package.admitted`} (:14781), and "high
 value" had no authority owner (a worker-set flag launders prose into candidacy; hub inference from
 free prose is nondeterministic). The folded rules:
 
@@ -318,8 +318,8 @@ free prose is nondeterministic). The folded rules:
   leafDigest})`. The hub resolves the cited immutable leaf, verifies that the proposing attempt
   previously received it, and mints an observed candidate with trigger `orientation.leaf_proposed`;
   callers cannot supply body, grounding, task identity, scope, or evidence. The promotion/admission
-  trigger vocabulary (the closed set at coordination-store.mjs:15477-15482; the workflow-admission
-  gate at :14630) is amended to admit that trigger ONLY through the orchestrator/operator gate.
+  trigger vocabulary (the closed set at coordination-store.mjs:15628-15635; the workflow-admission
+  gate at :14781) is amended to admit that trigger ONLY through the orchestrator/operator gate.
   Duplicate proposals coalesce by `{leafDigest, freshnessDigest}`.
 - **Flood control is constructive — the v1 defense was false.** `maxScanEvents` only refuses the
   promotion scan past ceiling (:14339); it does not stop or coalesce read events — past it, writes
@@ -420,7 +420,7 @@ curated overlay, both freshness-pinned (O-3) and each leaf labeled by source.
 impossible as written: `annotates` is not a KG edge type and every edge endpoint must be an existing
 KG node (coordination-store.mjs:137, :14319-14320), while ATLAS `repo.map` returns plain file
 records, not KG node IDs (atlas-index.mjs:369); and the settle-time admission gate admits only
-`board.item_closed` / `package.admitted` Findings (:14630), so "admitted exactly like any Finding"
+`board.item_closed` / `package.admitted` Findings (:14781), so "admitted exactly like any Finding"
 excluded orientation candidates. The folded design:
 
 - The orientation producer mints a hub-derived KG **`Source`** node for each `{repoId, moduleKey,

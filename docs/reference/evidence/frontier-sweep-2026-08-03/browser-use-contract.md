@@ -6,6 +6,12 @@ below; file:line citations added by this fold are verified against the working t
 `93e5133` — the red team verified snapshot `31102d5`, so a few pre-existing citations have
 drifted by a handful of lines and are refreshed where this fold touches them.)
 
+(Blue-team fold, 2026-08-03: the v1.0 text is amended in place per
+`./browser-use-blueteam.md` (same directory) — D1: the BU-2-2 replay clause now states the
+SHIPPED idempotency binding (`{repoId, actor, idempotencyKey}`); D2: BU-2-4's BD3-A
+self-read dependency is recorded as LANDED (`726e34a`). Companion suite fold:
+`./browser-use-suite-fold.md`.)
+
 (Seed, frontier-sweep.md:65-76 — Lane F: "Medium epic, two rungs: BU-2 the research worker
 class (browser-use workers with analysis:true producing provenance-receipted findings —
 every fetch/click a hub-admitted receipt event, becoming TG2 progress evidence, audit
@@ -332,20 +338,25 @@ costs real wall-clock and (for a real deployment) real egress, and produces cont
 becomes an artifact — the two are a different risk class even though both are,
 mechanically, "just a read." Two boundary cases of that distinction are now pinned:
 - **Replayed receipts never count.** The registry's durable idempotency binding
-  (`impl/src/capability-registry.mjs:257-320`, keyed on action+capability+op+args+actor)
-  replays an identical re-invoke *before the network* and records
-  `capability.op.replayed` (:278-280) — a stronger, earlier dedup than the extract-digest
-  rule. A replayed invoke is never fresh TG2 evidence (same digest rule as
-  `coordinator.mjs:9881`).
+  (`impl/src/capability-registry.mjs:257-320`, identity keyed on
+  `{repoId, actor, idempotencyKey}` at `:156-168` — blue-team-fold correction: the draft's
+  "keyed on action+capability+op+args+actor" misdescribed the shipped binding; args
+  discriminate replay-vs-conflict only WITHIN one identity) replays an identical re-invoke
+  under the *same* idempotency identity *before the network* and records
+  `capability.op.replayed` (:244) — a stronger, earlier dedup than the extract-digest
+  rule. Same identity with DIFFERENT args is not a replay at all: it is a
+  `capability_idempotency_conflict` refusal (:217-233) — so a same-URL re-fetch MUST use a
+  fresh key (BU-2-4's supersession relies on this). A replayed invoke is never fresh TG2
+  evidence (same digest rule as `coordinator.mjs:9881`).
 - **Honest-empty invocations never count.** In an `availability: 'empty'` deployment
   (BU-0), a `browser.fetch` invoke returns a schema-valid empty result with zero egress,
   zero external state, near-zero cost — mechanically the read-excluded class. Crediting it
   would reopen the exact zero-cost farm the read-exclusion exists to close.
 
-So the dedup story is two layers, both stated: (1) registry arg-identity replay
-(pre-network, same op+args+actor), (2) extract-digest dedup at the steering cycle
-(across different args — the same digest that names the content-addressed artifact ref,
-BU-2-3).
+So the dedup story is two layers, both stated: (1) registry idempotency-identity replay
+(pre-network, same `{repoId, actor, idempotencyKey}` identity and same request), (2)
+extract-digest dedup at the steering cycle (across different identities/args — the same
+digest that names the content-addressed artifact ref, BU-2-3).
 
 **The near-identical soft farm is closed by two named controls, not left open** (the red
 team's control-law drift-risk verdict, folded): cache-busting re-parameterization is
@@ -473,12 +484,16 @@ omitted:
    accepting verify pass for it. The candidacy acceptance below is therefore reachable
    only once a qualifying reader exists; the acceptance states this.
 
-**Hard dependency, folded — the self-read exclusion is not shipped.** The promotion loop
-has no author exclusion, and the pinning test — "the author's own task never counts toward
+**Hard dependency — LANDED (blue-team-fold update, 2026-08-03).** The draft declared a
+hard dependency on BD3-A's self-read exclusion landing; that dependency is now SATISFIED.
+BD3-A landed in `726e34a` ("self-read hole closed"): the exclusion ships at
+`coordination-store.mjs:14521-14526` (a fact's author task never satisfies
+`minScratchReaders` ALONE — a candidate requires at least one reader outside the producing
+task), and the pinning test — "the author's own task never counts toward
 `minScratchReaders`" (`impl/test/bidirectional-v3-red.test.mjs:253-290`, BD3-A's rung) —
-is RED in this tree. The draft treated self-citation as a confirm; it is not confirmable.
-This rung declares a **hard dependency on BD3-A's self-read exclusion landing** (or ships
-the exclusion itself) before its candidacy acceptance can pass.
+re-runs GREEN in this tree. Self-citation is not a confirm; the candidacy acceptance below
+is reachable as written, and the browser-use suite pins the landed behavior in composition
+(BU-2-4-pin's author-only-read leg).
 
 The resulting Finding's `grounding` is `'observed'`, never `'verified'` (ground truth #8's
 `:14301` rule — **defended as written**; the promotion mints `grounding:'observed'` at
@@ -496,9 +511,9 @@ schema.
 
 Red-team targets (one folded, one defended): **self-citation** — folded: the research
 worker itself acting as the "reader" that triggers `scratch.cited_observed` for its own
-posted fact is excluded by BD3-A's `minScratchReaders` self-read exclusion, which this
-rung now declares as a hard dependency (see above; pinning test
-`bidirectional-v3-red.test.mjs:253-290`). **Citation trusts the poster, not the page** —
+posted fact is excluded by BD3-A's `minScratchReaders` self-read exclusion — declared as a
+hard dependency by the draft and now LANDED (`726e34a`; see above; pinning test
+`bidirectional-v3-red.test.mjs:253-290` green). **Citation trusts the poster, not the page** —
 defended as written: a reader task citing a scratch fact is trusting the *original
 worker's paraphrase* of what the page said; the receipt digest only proves the extract is
 byte-identical to what was fetched, not that the citing worker's characterization of it is
@@ -635,8 +650,9 @@ ships nothing bigger than that in v1.
 - The same fetch mints a hub-admitted receipt through the capability registry's ordinary
   ACI result shape (`validResult`-conformant: bounded summary, ≤ 256 refs, `cost.underlying`
   naming the engine, non-empty provenance) and feeds the steering cycle through the new
-  `'capability_op'` evidence kind (BU-2-2). Dedup is two-layer: an identical
-  (op, args, actor) re-invoke replays the durable result pre-network
+  `'capability_op'` evidence kind (BU-2-2). Dedup is two-layer: an identical re-invoke
+  under the same idempotency identity (`{repoId, actor, idempotencyKey}`,
+  `capability-registry.mjs:156-168`) replays the durable result pre-network
   (`capability.op.replayed`), and a different-args fetch whose extract digest is
   byte-identical to the first dedups at the steering cycle — neither double-counts as TG2
   progress; a replayed invoke and an honest-empty invoke NEVER count as TG2 progress; a
@@ -653,9 +669,10 @@ ships nothing bigger than that in v1.
   `scratch.cited_observed` with `grounding:'observed'` (never `'verified'`); the finding
   appears in `knowledgeCandidateQueue` and is admittable through the existing admission
   gate — with zero coordination-store schema change shipped to make this work. This
-  criterion is reachable only once such a qualifying reader exists AND BD3-A's self-read
-  exclusion has landed (hard dependency, BU-2-4; the author's own read never counts,
-  pinned red at `bidirectional-v3-red.test.mjs:253-290` until that rung lands).
+  criterion is reachable once such a qualifying reader exists; BD3-A's self-read exclusion
+  has LANDED (`726e34a`, `coordination-store.mjs:14521-14526` — the author's own read never
+  counts, pinned green at `bidirectional-v3-red.test.mjs:253-290` and exercised in
+  composition by BU-2-4-pin's author-only-read leg).
 - A fetched page's extract contains text engineered to read as an instruction ("ignore
   previous instructions and…"); the extract still reaches any context ONLY inside the
   `UNTRUSTED_WEB_CONTENT` frame, control-character-sanitized and
