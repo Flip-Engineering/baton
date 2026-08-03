@@ -32,6 +32,11 @@ const CONTEXT_READ_GRAMMAR = /CONTEXT_READ:\s*(\{[\s\S]*)/;
 const MAX_CONTEXT_READ_GRAMMAR_SCAN_BYTES = 20_480;
 const MESSAGE_SEND_GRAMMAR = /MESSAGE_SEND:\s*(\{[\s\S]*)/;
 const MAX_MESSAGE_SEND_GRAMMAR_SCAN_BYTES = 20_480;
+const BOARD_CLAIM_GRAMMAR = /BOARD_CLAIM:\s*(\{[\s\S]*)/;
+const MAX_BOARD_CLAIM_GRAMMAR_SCAN_BYTES = 20_480;
+const BOARD_REPORT_GRAMMAR = /BOARD_REPORT:\s*(\{[\s\S]*)/;
+const MAX_BOARD_REPORT_GRAMMAR_SCAN_BYTES = 20_480;
+const BOARD_FRAME_MARKER = /BOARD_(?:CLAIM|REPORT):/u;
 
 /** Bracket-depth walk to the first balanced `{...}` object, bounded, string-aware. Trailing
  * prose after the JSON object (or a second, contradictory DECISION_REQUEST) never reaches the
@@ -149,6 +154,63 @@ export function scanForMessageSend(text) {
     || typeof parsed.inReplyTo !== 'string'
     || !/^message:[a-f0-9]{64}$/u.test(parsed.inReplyTo)
     || typeof parsed.body !== 'string' || parsed.body.length === 0) return null;
+  return parsed;
+}
+
+/** Epic #78 Decision 1 sibling grammar (issue #78): the worker claim frame. The frame is closed
+ * — {grantId, itemId, expectedBoardFence, idempotencyKey} ONLY. Identity/scope fields (workerId,
+ * owner, ownerTask, actor, taskId, runId, waveId, board, boardRunId, sessionAuthority) are
+ * rejected before any state lookup; the Coordinator derives worker/task/Run from the
+ * authenticated per-worker event stream. A second frame in one scan window rejects the whole
+ * scan — never first-wins (A1-1). grantId/itemId are non-empty strings (the hub resolves them
+ * against its own grant/item indexes at admission); expectedBoardFence is a non-negative safe
+ * integer; idempotencyKey follows the scratchpad lane's exact shape. Shape-only per the #86
+ * campaign law — no content caps at the wire. */
+export function scanForBoardClaim(text) {
+  if (typeof text !== 'string') return null;
+  const match = BOARD_CLAIM_GRAMMAR.exec(text);
+  if (!match) return null;
+  const json = extractFirstBalancedJsonObject(match[1], MAX_BOARD_CLAIM_GRAMMAR_SCAN_BYTES);
+  if (!json) return null;
+  // A second (possibly contradictory) frame after the first balanced object rejects the whole
+  // scan — the closed discipline is "one frame per scan window", never first-wins.
+  if (BOARD_FRAME_MARKER.test(match[1].slice(json.length))) return null;
+  let parsed;
+  try { parsed = JSON.parse(json); } catch { return null; }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)
+    || Object.keys(parsed).sort().join(',') !== 'expectedBoardFence,grantId,idempotencyKey,itemId'
+    || typeof parsed.grantId !== 'string' || parsed.grantId.length === 0
+    || typeof parsed.itemId !== 'string' || parsed.itemId.length === 0
+    || !Number.isSafeInteger(parsed.expectedBoardFence) || parsed.expectedBoardFence < 0
+    || typeof parsed.idempotencyKey !== 'string'
+    || !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/u.test(parsed.idempotencyKey)) return null;
+  return parsed;
+}
+
+/** Epic #78 Decision 1/4 sibling grammar (issue #78): the worker report frame. Closed —
+ * {grantId, itemId, itemVersion, itemDigest, expectedClaimVersion, body, idempotencyKey} ONLY.
+ * Same identity-field rejection and second-frame discipline as scanForBoardClaim; the historical
+ * (itemVersion, itemDigest) binding and the expectedClaimVersion CAS arrive on the wire and the
+ * admission seam proves them against the active claim (Decision 4). */
+export function scanForBoardReport(text) {
+  if (typeof text !== 'string') return null;
+  const match = BOARD_REPORT_GRAMMAR.exec(text);
+  if (!match) return null;
+  const json = extractFirstBalancedJsonObject(match[1], MAX_BOARD_REPORT_GRAMMAR_SCAN_BYTES);
+  if (!json) return null;
+  if (BOARD_FRAME_MARKER.test(match[1].slice(json.length))) return null;
+  let parsed;
+  try { parsed = JSON.parse(json); } catch { return null; }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)
+    || Object.keys(parsed).sort().join(',') !== 'body,expectedClaimVersion,grantId,idempotencyKey,itemDigest,itemId,itemVersion'
+    || typeof parsed.grantId !== 'string' || parsed.grantId.length === 0
+    || typeof parsed.itemId !== 'string' || parsed.itemId.length === 0
+    || !Number.isSafeInteger(parsed.itemVersion) || parsed.itemVersion <= 0
+    || typeof parsed.itemDigest !== 'string' || !/^[a-f0-9]{64}$/u.test(parsed.itemDigest)
+    || !Number.isSafeInteger(parsed.expectedClaimVersion) || parsed.expectedClaimVersion <= 0
+    || typeof parsed.body !== 'string' || parsed.body.length === 0
+    || typeof parsed.idempotencyKey !== 'string'
+    || !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/u.test(parsed.idempotencyKey)) return null;
   return parsed;
 }
 
@@ -1079,6 +1141,14 @@ export class ClaudeSessionCli {
         if (text) {
           const messageFrame = scanForMessageSend(text);
           if (messageFrame) this._emit(session, 'message.send', messageFrame);
+        }
+        if (text) {
+          const claimFrame = scanForBoardClaim(text);
+          if (claimFrame) this._emit(session, 'board.claim', claimFrame);
+        }
+        if (text) {
+          const reportFrame = scanForBoardReport(text);
+          if (reportFrame) this._emit(session, 'board.report', reportFrame);
         }
         return;
       }

@@ -109,6 +109,8 @@ const PROJECTION_CHECKPOINT_FIELDS = Object.freeze([
   '_contextCalls', '_contextPrograms', '_contextArtifacts', '_taskResourceReleases',
   '_boardItems', '_boardItemHistory', '_boardItemsByBoard', '_boardClaims',
   '_boardReports', '_boardFences', '_boardRunBindings',
+  // Epic #78: replay-derived worker grant state and per-worker generation records.
+  '_boardGrants', '_boardGrantMints', '_workerGenerations',
   '_contextPackages', '_contextPackageAttachments',
   // BD3-B context packs (server-owned supersession chain per family) and BD3-A read audit.
   '_contextPacks', '_contextPackHeads', '_contextReads',
@@ -395,6 +397,11 @@ const MAX_STORE_BOARD_TITLE_BYTES = 160;
 const MAX_STORE_BOARD_DETAIL_BYTES = 4_096;
 const MAX_STORE_BOARD_REPORT_BYTES = 4_096;
 const MAX_STORE_BOARD_EVIDENCE = 8;
+// Epic #78 Decision 5: the L1 worker read page is at most 16 items and 28 KiB serialized (the
+// receipt wrapper carries the ok/kind/renderedText/idempotencyKey overhead, so the page budget
+// is deliberately below the 32 KiB wire ceiling to leave room for it).
+const MAX_L1_BOARD_PAGE_ITEMS = 16;
+const MAX_L1_BOARD_PAGE_BYTES = 28 * 1024;
 function validBoardEvidenceRef(ref) {
   if (!ref || typeof ref !== 'object' || Array.isArray(ref)) return false;
   const keys = Object.keys(ref).sort().join(',');
@@ -404,6 +411,26 @@ function validBoardEvidenceRef(ref) {
 }
 function boardBounded(value, maxBytes) {
   return typeof value === 'string' && value.length > 0 && Buffer.byteLength(value) <= maxBytes;
+}
+/** Epic #78 Decision 6 rule 3: the kernel-level request digest for worker board mutations. It
+ * covers ONLY the content the caller submitted (the derived owner/claim/grant coordinates are
+ * authority, not content — a replay after a close must not re-judge the original request). The
+ * seam additionally namespaces the effective replay key with the grant digest so cross-worker
+ * key-string collisions cannot occur. */
+function boardClaimRequestDigest(fields) {
+  return canonicalDigest({
+    op: 'board.claim', itemId: fields.itemId, owner: fields.owner,
+    ownerTask: fields.ownerTask ?? null, expectedBoardFence: fields.expectedBoardFence,
+  });
+}
+function boardReportRequestDigest(fields) {
+  return canonicalDigest({
+    op: 'board.report', itemId: fields.itemId, itemVersion: fields.itemVersion,
+    itemDigest: fields.itemDigest, owner: fields.owner, body: fields.body,
+  });
+}
+function boardExpireRequestDigest(itemId, expectedVersion) {
+  return canonicalDigest({ op: 'board.expire', itemId, expectedVersion });
 }
 /** itemDigest = H(the nine content-core fields), recomputed by the hub, never trusted from input. */
 function boardItemContentDigest(core) {
@@ -1119,6 +1146,13 @@ export class CoordinationStore {
     // S-2 v2: durable, replay-derived board -> Run authority bindings. Legacy boards have no
     // entry until their first admitted v2 mutation records the one-time adoption in that event.
     this._boardRunBindings = new Map();
+    // Epic #78 (board worker-half): durable, replay-derived worker grant state. Grants mint at
+    // waves.send claimGrant time, revoke on terminal lifecycle transitions, and derive their
+    // active/revoked state solely from board.grant_minted/board.grant_revoked events (Decision
+    // 2/8). `_boardGrantMints` indexes mints by the raw caller key so a changed-content retry
+    // under one caller key refuses before minting a second grant (Decision 6 rule 3).
+    this._boardGrants = new Map(); this._boardGrantMints = new Map();
+    this._workerGenerations = new Map();
     // KG-1 Part A rule 5 (P1-1 fix): a store-level, global, replay-derived counter — the same
     // mechanism as _boardFences, generalized across every projection-input event kind so no
     // task/workflow horizon cache entry can stale-hit.
@@ -1650,6 +1684,17 @@ export class CoordinationStore {
       || Object.keys(payload).sort().join(',') !== fields.sort().join(',')
       || payload.schemaVersion !== 1 || payload.scope !== 'application_run_subtree') {
       fail('run orchestrator lease payload is invalid');
+    }
+    // Epic #78 Decision 6 rule 6: replay reconstructs byte-identically across store restart even
+    // when the issuing run-lineage policy is not re-supplied to the reopened store. The policy
+    // was authoritative at issue time; replay re-validates the payload's internal
+    // self-consistency (leaseDigest recomputes from the payload's own fields) and the lease
+    // identity without re-deriving policy-dependent fields.
+    if (integrity && !this._runLineagePolicy) {
+      const { leaseDigest, ...core } = payload;
+      if (leaseDigest !== canonicalDigest(core)) fail('run orchestrator lease binding is invalid');
+      if (event.idempotencyKey !== `run.orchestrator_lease:${payload.leaseId}`) fail('run orchestrator lease binding is invalid');
+      return payload;
     }
     const request = this._normalizeRunOrchestratorLeaseRequest({
       schemaVersion: 1,
@@ -7905,9 +7950,14 @@ export class CoordinationStore {
       this._setKnowledgeNode(event, nodeId, freeze({ id: nodeId, type: 'RouteStat', grounding: 'verified', body: `Verified ${p.verifiedWin ? 'win' : 'loss'} for ${p.routeKey}`, evidence, promotion: { kind: 'RouteStat', trigger: 'route.outcome' }, observedSeq: event.seq, observedAt: event.ts, eventTimeSeq: p.verificationEvidence.coordinationSeq, eventTime: this._events[p.verificationEvidence.coordinationSeq - 1]?.ts ?? event.ts, validFrom: event.ts, validTo: null, validityVersion: 1, taskId: p.taskId, taskType: p.taskType, routeKey: p.routeKey, modelFamily: p.modelFamily, verifiedWin: p.verifiedWin, policyDigest: p.policyDigest }));
       const edgeId = `knowledge-edge:observedin:${nodeId}:task:${p.taskId}`; this._setKnowledgeEdge(event, edgeId, freeze({ id: edgeId, type: 'ObservedIn', from: nodeId, to: `task:${p.taskId}`, evidence, observedSeq: event.seq, observedAt: event.ts, eventTimeSeq: p.verificationEvidence.coordinationSeq, eventTime: this._events[p.verificationEvidence.coordinationSeq - 1]?.ts ?? event.ts, validFrom: event.ts, validTo: null, validityVersion: 1 }));
     } else if (event.kind === 'evidence.mapped') {
-      if (!this._operationalRead) throw new CoordinationIntegrityError('mapped operational evidence requires an authoritative resolver', 'evidence_resolver_required');
-      const observed = this._operationalRead(p.worker, p.workerSeq);
-      if (!observed || digest(observed) !== p.digest) throw new CoordinationIntegrityError(`operational evidence mismatch ${p.worker}:${p.workerSeq}`, 'evidence_mismatch');
+      // The resolver is a read-side authority the driver wires at construction. A bare reopen
+      // (Epic #78 Decision 6 rule 6 — replay reconstructs byte-identically) has no operational
+      // resolver; the payload's digest is preserved as the authoritative evidence coordinate, so
+      // replay proceeds without re-hashing the operational log.
+      if (this._operationalRead) {
+        const observed = this._operationalRead(p.worker, p.workerSeq);
+        if (!observed || digest(observed) !== p.digest) throw new CoordinationIntegrityError(`operational evidence mismatch ${p.worker}:${p.workerSeq}`, 'evidence_mismatch');
+      }
       this._evidence.set(`${p.worker}:${p.workerSeq}`, freeze({ ...clone(p), coordinationSeq: event.seq }));
     } else if (event.kind === 'artifact.registered') {
       this._validateProvisionalResultRef(p, true);
@@ -8600,6 +8650,41 @@ export class CoordinationStore {
     } else if (event.kind === 'message.sent' || event.kind === 'message.delivered') {
       // Append-only message-lane audit receipts; the delivery state machine lives in the
       // coordinator (delivered/read/actedOn are process-scoped, never store-derived).
+    } else if (event.kind === 'board.grant_minted') {
+      // Epic #78 Decision 2/8: the durable mint. Replay derives active/revoked solely from the
+      // mint and revoke events — exactly as claims derive state from claim_requested/expired.
+      this._boardGrants.set(p.grantId, freeze({
+        ...clone(p), active: true, state: 'active', mintedEvent: event.seq,
+      }));
+      // Decision 6 rule 3: rebuild the caller-key digest index WITHOUT extra payload fields —
+      // the caller key is recovered from the namespaced idempotency key and the request digest
+      // recomputed from the closed mint payload, so a changed-content retry under one caller key
+      // refuses board_replay_conflict even across a restart.
+      const prefix = `grant.mint:${p.grantDigest}:`;
+      if (typeof event.idempotencyKey === 'string' && event.idempotencyKey.startsWith(prefix)) {
+        const callerKey = event.idempotencyKey.slice(prefix.length);
+        this._boardGrantMints.set(callerKey, freeze({
+          grantId: p.grantId,
+          requestDigest: canonicalDigest({
+            op: 'grant.mint', grantDigest: p.grantDigest, callerKey,
+            memberRunId: p.memberRunId, boardRunId: p.boardRunId, board: p.board,
+            workerId: p.workerId, taskId: p.taskId, taskVersion: p.taskVersion,
+            processGeneration: p.processGeneration, waveId: p.waveId, permissions: p.permissions,
+          }),
+          mintedEvent: event.seq,
+        }));
+      }
+    } else if (event.kind === 'board.grant_revoked') {
+      const old = this._boardGrants.get(p.grantId) ?? null;
+      if (old) this._boardGrants.set(p.grantId, freeze({
+        ...clone(old), active: false, state: 'revoked', revokedEvent: event.seq,
+        revokeCause: p.cause ?? p.reason ?? null, revokeActor: event.actor,
+      }));
+    } else if (event.kind === 'worker.generation_bound') {
+      // Epic #78 Decision 2 (A2-3): a durable per-worker generation record so replay can derive
+      // which grants a replacement generation invalidates. processGeneration is currently only
+      // an in-memory worker-handle property; this event makes it a replay fact.
+      this._workerGenerations.set(p.workerId, freeze({ ...clone(p), boundEvent: event.seq }));
     } else {
       throw new CoordinationIntegrityError(`unsupported coordination event kind ${event.kind}`, 'unsupported_event_kind');
     }
@@ -13986,6 +14071,17 @@ export class CoordinationStore {
     // its candidate Finding unconditionally (rule 10 — no gate here; Part D is the later, explicit
     // settle-time gate). `board.claim_migrated` never applies to a close (state !== open/reorder),
     // so the batch is exactly two entries.
+    // Epic #78 Decision 8: an orchestrator close/drop is a claim terminator too — the item's
+    // active claim expires IN THE SAME BATCH via a board.claim_expired sibling with actor
+    // `policy` and the contract key board.claim_expired:<itemId>:<version>:item_<closed|dropped>
+    // (mirroring _expireBoardClaims, coordinator.mjs:8033-8035).
+    const claim = this._boardClaims.get(itemId);
+    const claimExpiryEntry = claim && claim.active && (kind === 'board.item_closed' || kind === 'board.item_dropped')
+      ? [{
+          kind: 'board.claim_expired', payload: { itemId, expectedClaimVersion: claim.version, requestDigest: boardExpireRequestDigest(itemId, claim.version) },
+          auth: { actor: 'policy', key: `board.claim_expired:${itemId}:${claim.version}:${kind === 'board.item_closed' ? 'item_closed' : 'item_dropped'}` },
+        }]
+      : [];
     if (kind === 'board.item_closed') {
       const closeSeq = this._events.length + 1;
       const findingId = `finding:board-close:${itemId}:${core.itemVersion}`;
@@ -14001,13 +14097,21 @@ export class CoordinationStore {
           kind: 'knowledge.node_added', payload: findingPayload,
           auth: { actor: 'policy', key: `knowledge.node_added:${findingId}` },
         },
+        ...claimExpiryEntry,
+      ], null, appendGate);
+      return { ok: true, result: 'updated', event: clone(event), item: clone(this._boardItems.get(itemId)), migrated: false };
+    }
+    if (claimExpiryEntry.length > 0) {
+      // A drop with an active claim: the item successor and the claim expiry land as one batch.
+      const [event] = this._appendBatch([
+        { kind, payload: { ...core, itemDigest, ...(boardAdmission ? { boardAdmission } : {}) }, auth },
+        ...claimExpiryEntry,
       ], null, appendGate);
       return { ok: true, result: 'updated', event: clone(event), item: clone(this._boardItems.get(itemId)), migrated: false };
     }
     const event = this._append(kind, {
       ...core, itemDigest, ...(boardAdmission ? { boardAdmission } : {}),
     }, auth, null, appendGate);
-    const claim = this._boardClaims.get(itemId);
     const migrating = !!(claim && claim.active && (kind === 'board.item_retitled' || kind === 'board.item_reordered'));
     if (migrating) {
       this._append('board.claim_migrated', {
@@ -14045,10 +14149,20 @@ export class CoordinationStore {
   }
 
   /** First claim wins, exactly-once, only if expectedBoardFence === boardFence(board) at apply
-   * time (F9, rule 8); else stale_board_fence (rejected, cheap re-read). Never the worker fence. */
-  requestBoardClaim(fields, auth) {
+   * time (F9, rule 8); else stale_board_fence (rejected, cheap re-read). Never the worker fence.
+   * Epic #78 Decision 6 rule 3: prior-key lookups digest-adjudicate — changed content under one
+   * key refuses board_replay_conflict, never a blind return of the old success. `beforeWrite`
+   * (the seam's in-append gate, Decision 3 step 7) re-checks the fence/item/open/claim state
+   * inside the append window. */
+  requestBoardClaim(fields, auth, beforeWrite = null) {
     const prior = this._byKey.get(auth?.key);
-    if (prior) return { ok: true, result: 'idempotent', event: clone(prior), claim: clone(this._boardClaims.get(prior.payload.itemId)) };
+    if (prior) {
+      if (prior.kind !== 'board.claim_requested'
+        || prior.payload?.requestDigest !== boardClaimRequestDigest(fields)) {
+        throw new CoordinationRefusal('board claim idempotency content changed', 'board_replay_conflict');
+      }
+      return { ok: true, result: 'idempotent', event: clone(prior), claim: clone(this._boardClaims.get(prior.payload.itemId)) };
+    }
     if (typeof fields?.itemId !== 'string' || fields.itemId.length === 0) throw new CoordinationRefusal('board claim requires an itemId', 'invalid_board_item_id');
     if (!Number.isSafeInteger(fields.expectedBoardFence) || fields.expectedBoardFence < 0) throw new CoordinationRefusal('board claim requires a non-negative expectedBoardFence', 'invalid_board_fence');
     if (typeof fields.owner !== 'string' || !SAFE_BOARD_OWNER.test(fields.owner)) throw new CoordinationRefusal('board claim requires a safe owner id', 'invalid_board_owner');
@@ -14059,16 +14173,32 @@ export class CoordinationStore {
     if (existing && existing.active) return { ok: false, result: 'conflict', conflict: clone(existing) };
     const currentFence = this.boardFence(item.board);
     if (fields.expectedBoardFence !== currentFence) return { ok: false, result: 'stale_board_fence', boardFence: currentFence };
-    const payload = { itemId: fields.itemId, board: item.board, owner: fields.owner, ownerTask: fields.ownerTask ?? null, boardFence: currentFence, itemVersion: item.itemVersion };
-    const event = this._append('board.claim_requested', payload, auth);
+    const payload = {
+      itemId: fields.itemId, board: item.board, owner: fields.owner,
+      ownerTask: fields.ownerTask ?? null, boardFence: currentFence,
+      itemVersion: item.itemVersion, requestDigest: boardClaimRequestDigest(fields),
+      ...(fields.grantDigest != null ? { grantDigest: fields.grantDigest } : {}),
+    };
+    const event = this._append('board.claim_requested', payload, auth, null, beforeWrite);
     return { ok: true, result: 'claimed', event: clone(event), claim: clone(this._boardClaims.get(fields.itemId)) };
   }
 
   /** A report binds the EXACT (itemVersion, itemDigest) the worker observed; a later retitle can
-   * never silently re-point its evidence (F8, rule 3). */
-  submitBoardReport(fields, auth) {
+   * never silently re-point its evidence (F8, rule 3). Epic #78 Decision 6 rule 3: prior-key
+   * lookups digest-adjudicate (changed content/op under one key refuses board_replay_conflict).
+   * The envelope coordinates (claimVersion, ownerTask, grantDigest) are derived from the active
+   * claim — authority, not content, so they are excluded from the request digest. `beforeWrite`
+   * (the seam's in-append gate, Decision 3 step 7) re-checks the item-open/claim-owner/version
+   * state inside the append window. */
+  submitBoardReport(fields, auth, beforeWrite = null) {
     const prior = this._byKey.get(auth?.key);
-    if (prior) return { ok: true, result: 'idempotent', event: clone(prior), report: clone(this._boardReports.find((r) => r.eventSeq === prior.seq) ?? null) };
+    if (prior) {
+      if (prior.kind !== 'board.report_submitted'
+        || prior.payload?.requestDigest !== boardReportRequestDigest(fields)) {
+        throw new CoordinationRefusal('board report idempotency content changed', 'board_replay_conflict');
+      }
+      return { ok: true, result: 'idempotent', event: clone(prior), report: clone(this._boardReports.find((r) => r.eventSeq === prior.seq) ?? null) };
+    }
     if (typeof fields?.itemId !== 'string' || fields.itemId.length === 0) throw new CoordinationRefusal('board report requires an itemId', 'invalid_board_item_id');
     if (!Number.isSafeInteger(fields.itemVersion) || fields.itemVersion <= 0) throw new CoordinationRefusal('board report requires a positive itemVersion', 'invalid_board_item_version');
     if (typeof fields.itemDigest !== 'string' || !/^[a-f0-9]{64}$/.test(fields.itemDigest)) throw new CoordinationRefusal('board report requires an itemDigest', 'invalid_board_item_digest');
@@ -14078,20 +14208,38 @@ export class CoordinationStore {
     const version = history?.find((rec) => rec.itemVersion === fields.itemVersion);
     if (!version) throw new CoordinationRefusal(`board item ${fields.itemId} has no version ${fields.itemVersion}`, 'board_item_version_not_found');
     if (version.itemDigest !== fields.itemDigest) throw new CoordinationRefusal('board report binding does not match the observed item version', 'board_report_binding_mismatch');
-    const payload = { itemId: fields.itemId, itemVersion: fields.itemVersion, itemDigest: fields.itemDigest, board: version.board, owner: fields.owner, body: fields.body };
-    const event = this._append('board.report_submitted', payload, auth);
+    const claim = this._boardClaims.get(fields.itemId);
+    const payload = {
+      itemId: fields.itemId, itemVersion: fields.itemVersion, itemDigest: fields.itemDigest,
+      board: version.board, owner: fields.owner,
+      ownerTask: fields.ownerTask ?? claim?.ownerTask ?? null,
+      body: fields.body, requestDigest: boardReportRequestDigest(fields),
+      claimVersion: claim?.active ? claim.version : null,
+      grantDigest: claim?.active ? (claim.grantDigest ?? null) : null,
+    };
+    const event = this._append('board.report_submitted', payload, auth, null, beforeWrite);
     return { ok: true, result: 'submitted', event: clone(event), report: clone(this._boardReports.find((r) => r.eventSeq === event.seq)) };
   }
 
   /** Version-CAS expiry mirroring expireScratchClaim; returns the item to claimable (never a
-   * phantom done). Does not bump the board fence (F9, rule 7). */
+   * phantom done). Does not bump the board fence (F9, rule 7). Epic #78 Decision 6 rule 3:
+   * prior-key lookups digest-adjudicate — changed expiry content under one key refuses
+   * board_replay_conflict, never a stale success. */
   expireBoardClaim(itemId, expectedVersion, auth) {
     const prior = this._byKey.get(auth?.key);
-    if (prior) return { ok: true, result: 'idempotent', event: clone(prior), claim: clone(this._boardClaims.get(itemId)) };
+    if (prior) {
+      if (prior.kind !== 'board.claim_expired'
+        || prior.payload?.requestDigest !== boardExpireRequestDigest(itemId, expectedVersion)) {
+        throw new CoordinationRefusal('board claim expiry idempotency content changed', 'board_replay_conflict');
+      }
+      return { ok: true, result: 'idempotent', event: clone(prior), claim: clone(this._boardClaims.get(itemId)) };
+    }
     const claim = this._boardClaims.get(itemId);
     if (!claim || !claim.active) throw new CoordinationRefusal(`inactive board claim ${itemId}`, 'not_active');
     if (claim.version !== expectedVersion) throw new CoordinationRefusal(`stale board claim ${itemId}`, 'stale_version');
-    const event = this._append('board.claim_expired', { itemId, expectedClaimVersion: expectedVersion }, auth);
+    const event = this._append('board.claim_expired', {
+      itemId, expectedClaimVersion: expectedVersion, requestDigest: boardExpireRequestDigest(itemId, expectedVersion),
+    }, auth);
     return { ok: true, event: clone(event), claim: clone(this._boardClaims.get(itemId)) };
   }
 
@@ -14120,7 +14268,583 @@ export class CoordinationStore {
     const reports = this._boardReports.filter((report) => ids.includes(report.itemId)).map(clone);
     return freeze({
       board, runId: this._boardRunBindings.get(board)?.runId ?? null,
-      boardFence: this.boardFence(board), items, claims, reports,
+      boardFence: this.boardFence(board), projectionInputFence: this.projectionInputFence(),
+      items, claims, reports,
+    });
+  }
+
+  // -------------------------------------------------------------------------
+  // Epic #78 (board worker-half) — worker grants, the worker admission seam, and
+  // the grant-scoped L1 read lane (Decisions 2/3/5). All state derives from
+  // board.grant_minted / board.grant_revoked / worker.generation_bound events.
+  // -------------------------------------------------------------------------
+
+  boardGrant(grantId) {
+    if (typeof grantId !== 'string' || grantId.length === 0) return null;
+    const grant = this._boardGrants.get(grantId) ?? null;
+    return grant ? clone(grant) : null;
+  }
+
+  activeBoardGrants({ workerId = null, taskId = null } = {}) {
+    return [...this._boardGrants.values()].filter((grant) => grant.active
+      && (workerId == null || grant.workerId === workerId)
+      && (taskId == null || grant.taskId === taskId)).map(clone);
+  }
+
+  workerGeneration(workerId) {
+    const rec = this._workerGenerations.get(workerId) ?? null;
+    return rec ? clone(rec) : null;
+  }
+
+  /** A2-3: the durable per-worker generation record. processGeneration is currently only an
+   * in-memory worker-handle property; without this event replay cannot derive which grants a
+   * replacement generation invalidates. Appended at worker (re)attachment/spawn. */
+  recordWorkerGeneration(fields, auth) {
+    if (!fields || typeof fields !== 'object' || Array.isArray(fields)
+      || Object.keys(fields).sort().join(',') !== 'processGeneration,runId,taskId,taskVersion,workerId'
+      || typeof fields.workerId !== 'string' || fields.workerId.length === 0
+      || !Number.isSafeInteger(fields.processGeneration) || fields.processGeneration <= 0
+      || !validRunId(fields.runId ?? '') || typeof fields.taskId !== 'string'
+      || !Number.isSafeInteger(fields.taskVersion) || fields.taskVersion <= 0) {
+      throw new CoordinationRefusal('worker generation record is invalid', 'worker_generation_invalid');
+    }
+    const prior = this._byKey.get(auth?.key);
+    if (prior) {
+      if (prior.kind !== 'worker.generation_bound'
+        || canonicalDigest(prior.payload) !== canonicalDigest(fields)) {
+        throw new CoordinationRefusal('worker generation idempotency conflict', 'worker_generation_conflict');
+      }
+      return { ok: true, result: 'idempotent', event: clone(prior) };
+    }
+    const event = this._append('worker.generation_bound', clone(fields), auth);
+    return { ok: true, result: 'recorded', event: clone(event) };
+  }
+
+  /** Decision 2: the durable grant revoke. Every terminator (member task terminalization,
+   * reassignment, process generation replacement, member Run/wave stop) appends one
+   * board.grant_revoked event naming the cause; replay derives active/revoked solely from the
+   * mint and revoke events. */
+  revokeBoardGrants({ workerId = null, taskId = null, cause = null, reason = null }, auth) {
+    if (auth == null || typeof auth?.key !== 'string' || typeof auth?.actor !== 'string') {
+      throw new TypeError('grant revocation requires explicit actor and idempotencyKey');
+    }
+    const causeText = reason ?? cause ?? 'lifecycle';
+    const revoked = [];
+    for (const grant of this.activeBoardGrants({ workerId, taskId })) {
+      if (grant.state !== 'active') continue;
+      const payload = { grantId: grant.grantId, board: grant.board, workerId: grant.workerId, taskId: grant.taskId, cause: causeText };
+      const revokeKey = `${auth.key}:${grant.grantId}`;
+      const prior = this._byKey.get(revokeKey) ?? null;
+      if (prior && prior.kind === 'board.grant_revoked' && prior.payload?.grantId === grant.grantId) {
+        revoked.push({ grantId: grant.grantId, result: 'idempotent', event: clone(prior) });
+        continue;
+      }
+      const event = this._append('board.grant_revoked', payload, {
+        actor: auth.actor, key: revokeKey,
+      });
+      revoked.push({ grantId: grant.grantId, result: 'revoked', event: clone(event) });
+    }
+    return { ok: true, revoked };
+  }
+
+  /** The S-2-shaped worker admission seam for claim/report (Decision 3). One entry point from
+   * every adapter. Steps in order: (1) close the wire shape; (2) resolve+prove the grant against
+   * the authenticated worker/task/generation; (3) derive scope from the grant; (4) verify board
+   * binding, grant permission, and Run/wave state before item existence; (5) normalize the
+   * request digest; (6) authority-before-replay — the effective key is namespaced
+   * <opKind>:<grantDigest>:<callerKey> so cross-worker/cross-op collisions cannot occur; (7) the
+   * kernel's in-append CAS re-check (final fence/item/open/claim gate). An absent, revoked,
+   * foreign, or generation-stale grant receives the SAME constant board_worker_scope_refused
+   * before any board/item lookup. */
+  admitWorkerBoardCommand({ kind, grantId, payload, workerId, taskId, taskVersion, processGeneration, idempotencyKey }) {
+    const fail = (message, code = 'board_worker_scope_refused') => this._boardAdmissionFailure(message, code);
+    if (kind !== 'claim' && kind !== 'report') fail('worker board command kind is invalid', 'board_worker_command_invalid');
+    if (typeof grantId !== 'string' || grantId.length === 0
+      || typeof workerId !== 'string' || workerId.length === 0
+      || typeof taskId !== 'string' || taskId.length === 0
+      || !Number.isSafeInteger(taskVersion) || taskVersion <= 0
+      || !Number.isSafeInteger(processGeneration) || processGeneration <= 0
+      || typeof idempotencyKey !== 'string'
+      || !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/u.test(idempotencyKey)) {
+      fail('worker board command envelope is invalid', 'board_worker_command_invalid');
+    }
+    if (kind === 'claim') {
+      if (!payload || typeof payload !== 'object' || Array.isArray(payload)
+        || Object.keys(payload).sort().join(',') !== 'expectedBoardFence,grantId,idempotencyKey,itemId'
+        || typeof payload.itemId !== 'string' || payload.itemId.length === 0
+        || !Number.isSafeInteger(payload.expectedBoardFence) || payload.expectedBoardFence < 0) {
+        fail('worker board claim frame is invalid', 'board_claim_invalid');
+      }
+    } else if (kind === 'report') {
+      if (!payload || typeof payload !== 'object' || Array.isArray(payload)
+        || Object.keys(payload).sort().join(',') !== 'body,expectedClaimVersion,grantId,idempotencyKey,itemDigest,itemId,itemVersion'
+        || typeof payload.itemId !== 'string' || payload.itemId.length === 0
+        || !Number.isSafeInteger(payload.itemVersion) || payload.itemVersion <= 0
+        || typeof payload.itemDigest !== 'string' || !/^[a-f0-9]{64}$/u.test(payload.itemDigest)
+        || !Number.isSafeInteger(payload.expectedClaimVersion) || payload.expectedClaimVersion <= 0
+        || typeof payload.body !== 'string' || payload.body.length === 0) {
+        fail('worker board report frame is invalid', 'board_report_invalid');
+      }
+    }
+
+    // Step 2 — resolve + prove the grant. Possession of a grant id is never authority. The
+    // member identity predicate is workerId + taskId + processGeneration (Decision 2/8): a
+    // non-terminal status transition (e.g. working→paused) bumps the task's coordination version
+    // but is NOT a reassignment or generation replacement — the grant survives it (Decision 1:
+    // paused is a live task status for the gate).
+    const grant = this._boardGrants.get(grantId) ?? null;
+    if (!grant || grant.state !== 'active' || !grant.active
+      || grant.workerId !== workerId || grant.taskId !== taskId
+      || grant.processGeneration !== processGeneration) {
+      fail('worker board scope is refused', 'board_worker_scope_refused');
+    }
+    // Step 3/4 — derive scope from the grant; verify binding, permission, and live state before
+    // any item existence.
+    const board = grant.board;
+    const binding = this._boardRunBindings.get(board) ?? null;
+    if (!binding || binding.runId !== grant.boardRunId) {
+      fail('worker board scope is refused', 'board_worker_scope_refused');
+    }
+    const permission = kind === 'claim' ? 'claim' : 'report';
+    if (!Array.isArray(grant.permissions) || !grant.permissions.includes(permission)) {
+      fail('worker board scope is refused', 'board_worker_scope_refused');
+    }
+    if (this._runStopByTarget.has(grant.boardRunId) || this._runStops.has(grant.boardRunId)
+      || this._runs.get(grant.boardRunId)?.status === 'sealed') {
+      fail('worker board scope is refused', 'board_worker_scope_refused');
+    }
+    const effectiveKey = `${kind === 'claim' ? 'board.claim' : 'board.report'}:${grant.grantDigest}:${idempotencyKey}`;
+    const opKind = kind === 'claim' ? 'claim' : 'report';
+
+    if (opKind === 'claim') {
+      const itemId = payload.itemId;
+      const expectedBoardFence = payload.expectedBoardFence;
+      // The grant scopes exactly one board (Decision 5). A frame naming an item on any other
+      // board — or no item at all — draws the SAME constant scope refusal before item lookup, so
+      // the caller learns nothing about a foreign board's existence (Decision 3/4).
+      const scopedItem = this._boardItems.get(itemId);
+      if (!scopedItem || scopedItem.board !== board) {
+        fail('worker board scope is refused', 'board_worker_scope_refused');
+      }
+      const gate = () => {
+        if (typeof this._boardAdmissionInterleave === 'function') this._boardAdmissionInterleave();
+        if (this.boardFence(board) !== expectedBoardFence) {
+          this._boardAdmissionFailure('board fence is stale', 'stale_board_fence');
+        }
+        const current = this._boardItems.get(itemId);
+        if (!current || current.board !== board || current.state !== 'open') {
+          this._boardAdmissionFailure(`board item ${itemId} is not open`, 'board_item_not_open');
+        }
+        const existing = this._boardClaims.get(itemId);
+        if (existing && existing.active) throw new CoordinationRefusal(`board item ${itemId} is already claimed`, 'conflict');
+      };
+      return this.requestBoardClaim({
+        itemId, owner: workerId, ownerTask: taskId, expectedBoardFence,
+        grantDigest: grant.grantDigest,
+      }, { actor: workerId, key: effectiveKey }, gate);
+    }
+    // report
+    const itemId = payload.itemId;
+    const reportRequestDigest = boardReportRequestDigest({
+      itemId, itemVersion: payload.itemVersion, itemDigest: payload.itemDigest,
+      owner: workerId, body: payload.body,
+    });
+    // The grant scopes exactly one board (Decision 5) — a frame naming an item on any other
+    // board draws the same constant scope refusal before item lookup.
+    const scopedItem = this._boardItems.get(itemId);
+    if (!scopedItem || scopedItem.board !== board) {
+      fail('worker board scope is refused', 'board_worker_scope_refused');
+    }
+    // Decision 6 rule 4: after authorization, an EXACT prior replay returns the original success
+    // WITHOUT re-judging later live-state changes (a lost successful receipt is recovered even
+    // after the orchestrator closes the item). The kernel's own prior lookup adjudicates this.
+    const priorReport = this._byKey.get(effectiveKey) ?? null;
+    if (priorReport) {
+      if (priorReport.kind !== 'board.report_submitted'
+        || priorReport.payload?.requestDigest !== reportRequestDigest) {
+        fail('board report idempotency content changed', 'board_replay_conflict');
+      }
+      return this.submitBoardReport({
+        itemId, itemVersion: payload.itemVersion, itemDigest: payload.itemDigest,
+        owner: workerId, ownerTask: taskId, body: payload.body,
+      }, { actor: workerId, key: effectiveKey }, null);
+    }
+    // Decision 4: report admission requires an active owned claim, the exact claim version, and
+    // an open item — checked BEFORE the kernel (authority-before-replay) and re-checked by the
+    // in-append gate.
+    const activeClaim = this._boardClaims.get(itemId);
+    if (!activeClaim || !activeClaim.active || activeClaim.owner !== workerId
+      || activeClaim.ownerTask !== taskId) {
+      fail('worker board report has no active owned claim', 'board_report_no_active_claim');
+    }
+    if (activeClaim.version !== payload.expectedClaimVersion) {
+      fail('worker board report claim version is stale', 'board_report_stale_claim_version');
+    }
+    if (scopedItem.state !== 'open') {
+      fail(`board item ${itemId} is not open`, 'board_item_not_open');
+    }
+    const gate = () => {
+      if (typeof this._boardAdmissionInterleave === 'function') this._boardAdmissionInterleave();
+      const current = this._boardItems.get(itemId);
+      if (!current || current.board !== board || current.state !== 'open') {
+        this._boardAdmissionFailure(`board item ${itemId} is not open`, 'board_item_not_open');
+      }
+      const claim = this._boardClaims.get(itemId);
+      if (!claim || !claim.active || claim.owner !== workerId || claim.ownerTask !== taskId) {
+        this._boardAdmissionFailure('worker board report has no active owned claim', 'board_report_no_active_claim');
+      }
+      if (claim.version !== payload.expectedClaimVersion) {
+        this._boardAdmissionFailure('worker board report claim version is stale', 'board_report_stale_claim_version');
+      }
+    };
+    return this.submitBoardReport({
+      itemId, itemVersion: payload.itemVersion, itemDigest: payload.itemDigest,
+      owner: workerId, ownerTask: taskId, body: payload.body,
+    }, { actor: workerId, key: effectiveKey }, gate);
+  }
+
+  /** Decision 2/3: the S-2-shaped grant mint behind waves.send claimGrant. The caller names no
+   * grantee and no permissions; the hub proves the orchestrator's session authority, resolves
+   * the member coordinates server-side, derives the wave, verifies board binding and wave
+   * membership, records the orchestrator-selected permission subset, and durably mints one
+   * closed grant BEFORE the steer is deliverable. The effective replay key
+   * <grant.mint>:<grantDigest>:<callerKey> plus the caller-key digest index make an exact retry
+   * exactly-once and a changed-content retry a typed board_replay_conflict. */
+  mintBoardGrant(entry, auth) {
+    const fail = (message, code = 'board_worker_scope_refused') => this._boardAdmissionFailure(message, code);
+    const topFields = ['board', 'boardRunId', 'idempotencyKey', 'memberRunId', 'permissions', 'processGeneration', 'sessionAuthority', 'taskId', 'taskVersion', 'waveId', 'workerId'];
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)
+      || Object.keys(entry).sort().join(',') !== topFields.sort().join(',')
+      || !validRunId(entry.memberRunId) || !validRunId(entry.boardRunId)
+      || typeof entry.board !== 'string' || !SAFE_BOARD_ID.test(entry.board)
+      || typeof entry.workerId !== 'string' || entry.workerId.length === 0
+      || typeof entry.taskId !== 'string' || entry.taskId.length === 0
+      || !Number.isSafeInteger(entry.taskVersion) || entry.taskVersion <= 0
+      || !Number.isSafeInteger(entry.processGeneration) || entry.processGeneration <= 0
+      || typeof entry.waveId !== 'string' || !/^wave:[a-f0-9]{32}$/u.test(entry.waveId)
+      || !Array.isArray(entry.permissions) || entry.permissions.length === 0
+      || entry.permissions.some((perm) => !['read', 'claim', 'report'].includes(perm))
+      || typeof entry.idempotencyKey !== 'string'
+      || !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/u.test(entry.idempotencyKey)) {
+      fail('board grant mint is invalid', 'board_grant_invalid');
+    }
+
+    // S-2 proof (the orchestrator's session authority, server context — never a worker fact).
+    const proof = entry.sessionAuthority;
+    if (proof == null) fail('an active board lease is required', 'board_lease_required');
+    const proofFields = ['authorityDigest', 'expiresAt', 'orchestratorLeaseId', 'schemaVersion'];
+    if (typeof proof !== 'object' || Array.isArray(proof)
+      || Object.keys(proof).sort().join(',') !== proofFields.sort().join(',')
+      || proof.schemaVersion !== 1 || !/^[a-f0-9]{64}$/.test(proof.authorityDigest ?? '')
+      || !boundedText(proof.orchestratorLeaseId, 512)
+      || !Number.isFinite(Date.parse(proof.expiresAt ?? ''))
+      || new Date(Date.parse(proof.expiresAt)).toISOString() !== proof.expiresAt) {
+      fail('board authority proof is invalid', 'board_lease_required');
+    }
+    const lease = this._runOrchestratorLeases.get(proof.orchestratorLeaseId);
+    if (!lease || lease.status !== 'active' || Date.parse(this._clock()) >= Date.parse(lease.expiresAt)) {
+      fail('an active board lease is required', 'board_lease_required');
+    }
+    if (proof.authorityDigest !== lease.session.authorityDigest
+      || proof.expiresAt !== lease.session.expiresAt) {
+      fail('board session authority does not match its lease', 'board_session_mismatch');
+    }
+    const parent = this._tasks.get(lease.parent.taskId);
+    if (!parent || parent.version !== lease.parent.taskVersion
+      || parent.assignee !== lease.parent.workerId || parent.status !== 'working') {
+      fail('an active board lease is required', 'board_lease_required');
+    }
+    if (lease.parent.runId !== entry.boardRunId) {
+      fail('board grant mint Run does not match its lease', 'board_session_mismatch');
+    }
+    // Board binding — the grant's boardRunId must equal the board's recorded binding Run.
+    const binding = this._boardRunBindings.get(entry.board) ?? null;
+    if (!binding || binding.runId !== entry.boardRunId) {
+      fail('worker board scope is refused', 'board_worker_scope_refused');
+    }
+    if (this._runStopByTarget.has(entry.boardRunId) || this._runStops.has(entry.boardRunId)
+      || this._runs.get(entry.boardRunId)?.status === 'sealed') {
+      fail('board Run is closed', 'board_run_closed');
+    }
+    // Member coordinates — the member task is the store's record of the live member Run.
+    const memberTask = this._taskByRun(entry.memberRunId);
+    if (!memberTask || memberTask.assignee !== entry.workerId
+      || memberTask.version !== entry.taskVersion || memberTask.status !== 'working') {
+      fail('worker board scope is refused', 'board_worker_scope_refused');
+    }
+    // Generation — the durable generation record must carry the exact minted process generation.
+    const generation = this._workerGenerations.get(entry.workerId) ?? null;
+    if (!generation || generation.processGeneration !== entry.processGeneration
+      || generation.taskId !== entry.taskId) {
+      fail('worker board scope is refused', 'board_worker_scope_refused');
+    }
+    // Wave membership — both the member Run and the board Run are steering-registered members
+    // of the SAME live wave (the sole cross-Run relaxation, Decision 2).
+    const memberWave = this._waveMembershipOf(entry.memberRunId);
+    const boardWave = this._waveMembershipOf(entry.boardRunId);
+    if (!memberWave || !boardWave || memberWave.waveId !== entry.waveId
+      || boardWave.waveId !== entry.waveId) {
+      fail('worker board scope is refused', 'board_worker_scope_refused');
+    }
+
+    const permissions = [...entry.permissions].sort();
+    const grantCore = {
+      schemaVersion: 1, board: entry.board, boardRunId: entry.boardRunId,
+      memberRunId: entry.memberRunId, waveId: entry.waveId, workerId: entry.workerId,
+      taskId: entry.taskId, taskVersion: entry.taskVersion,
+      processGeneration: entry.processGeneration, permissions,
+    };
+    const grantDigest = canonicalDigest({ ...grantCore, kind: 'board.grant' });
+    const grantId = `grant:${grantDigest}`;
+    const requestDigest = canonicalDigest({
+      op: 'grant.mint', grantDigest, callerKey: entry.idempotencyKey,
+      memberRunId: entry.memberRunId, boardRunId: entry.boardRunId, board: entry.board,
+      workerId: entry.workerId, taskId: entry.taskId, taskVersion: entry.taskVersion,
+      processGeneration: entry.processGeneration, waveId: entry.waveId, permissions,
+    });
+    const effectiveKey = `grant.mint:${grantDigest}:${entry.idempotencyKey}`;
+    const prior = this._byKey.get(effectiveKey) ?? null;
+    if (prior) {
+      if (prior.kind !== 'board.grant_minted') {
+        fail('board grant idempotency content changed', 'board_replay_conflict');
+      }
+      return freeze({ ok: true, result: 'idempotent', event: clone(prior), grant: clone(this._boardGrants.get(prior.payload.grantId) ?? prior.payload) });
+    }
+    const priorMint = this._boardGrantMints.get(entry.idempotencyKey) ?? null;
+    if (priorMint && priorMint.requestDigest !== requestDigest) {
+      fail('board grant idempotency content changed', 'board_replay_conflict');
+    }
+    // The closed Decision-2 grant shape — no clock/turn/TTL field, no caller key, no digest
+    // index field (the caller-key index is replay-derived from the namespaced idempotency key).
+    const payload = {
+      schemaVersion: 1, grantId, grantDigest, waveId: entry.waveId, board: entry.board,
+      boardRunId: entry.boardRunId, memberRunId: entry.memberRunId, workerId: entry.workerId,
+      taskId: entry.taskId, taskVersion: entry.taskVersion,
+      processGeneration: entry.processGeneration, permissions,
+      state: 'active', mintedEvent: this._events.length + 1,
+    };
+    const event = this._append('board.grant_minted', payload, {
+      actor: auth?.actor ?? 'orchestrator', key: effectiveKey,
+    });
+    return freeze({ ok: true, result: 'minted', event: clone(event), grant: clone(this._boardGrants.get(grantId) ?? payload) });
+  }
+
+  _taskByRun(runId) {
+    for (const task of this._tasks.values()) {
+      if (task.runId === runId) return task;
+    }
+    return null;
+  }
+
+  _waveMembershipOf(runId) {
+    for (const event of this._events) {
+      if (event.kind !== 'driver.recorded' || event.payload?.kind !== 'steering.registered') continue;
+      const record = event.payload;
+      if (record.runId === runId && record.waveId != null) {
+        return { waveId: record.waveId, waveRole: record.waveRole ?? null, recordSeq: event.seq };
+      }
+    }
+    return null;
+  }
+
+  // -------------------------------------------------------------------------
+  // Decision 5 — the grant-scoped L1 board read. One board, every item (unowned open work
+  // included), stable pages of at most 16 items and 28 KiB, stable (ordinal,itemId) ordering,
+  // in-item report continuation by (itemId, lastReportSeq), and typed board_oversize_item
+  // truncation. The cursor digest binds grant digest, board, board Run, member Run, page
+  // position, and both fence components.
+  // -------------------------------------------------------------------------
+
+  boardGrantPage({ grantId, cursor, workerId, taskId, taskVersion, processGeneration }) {
+    const grant = this._boardGrants.get(grantId) ?? null;
+    if (!grant || grant.state !== 'active' || !grant.active
+      || grant.workerId !== workerId || grant.taskId !== taskId
+      || grant.processGeneration !== processGeneration) {
+      throw new CoordinationRefusal('worker board scope is refused', 'board_worker_scope_refused');
+    }
+    if (!Array.isArray(grant.permissions) || !grant.permissions.includes('read')) {
+      throw new CoordinationRefusal('worker board scope is refused', 'board_worker_scope_refused');
+    }
+    const binding = this._boardRunBindings.get(grant.board) ?? null;
+    if (!binding || binding.runId !== grant.boardRunId) {
+      throw new CoordinationRefusal('worker board scope is refused', 'board_worker_scope_refused');
+    }
+    if (this._runStopByTarget.has(grant.boardRunId) || this._runStops.has(grant.boardRunId)
+      || this._runs.get(grant.boardRunId)?.status === 'sealed') {
+      throw new CoordinationRefusal('worker board scope is refused', 'board_worker_scope_refused');
+    }
+    let state;
+    if (cursor == null) {
+      state = { page: 0, itemId: null, lastReportSeq: null };
+    } else {
+      const decoded = this._verifyBoardCursor(cursor, grant);
+      if (!decoded) throw new CoordinationRefusal('board cursor is stale', 'board_cursor_stale');
+      state = { page: decoded.page, itemId: decoded.itemId ?? null, lastReportSeq: decoded.lastReportSeq ?? null };
+    }
+    return this._renderBoardGrantPage(grant, state);
+  }
+
+  _mintBoardCursor(grant, { page, itemId = null, lastReportSeq = null }) {
+    const core = {
+      schemaVersion: 1, grantDigest: grant.grantDigest, board: grant.board,
+      boardRunId: grant.boardRunId, memberRunId: grant.memberRunId, page,
+      ...(itemId != null ? { itemId } : {}),
+      ...(lastReportSeq != null ? { lastReportSeq } : {}),
+      boardFence: this.boardFence(grant.board),
+      projectionInputFence: this.projectionInputFence(),
+    };
+    const cursorDigest = canonicalDigest({ ...core, kind: 'board.cursor' });
+    return Buffer.from(JSON.stringify({ ...core, cursorDigest })).toString('base64url');
+  }
+
+  _verifyBoardCursor(cursor, grant) {
+    try {
+      const parsed = JSON.parse(Buffer.from(cursor, 'base64url').toString('utf8'));
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed) || parsed.schemaVersion !== 1) return null;
+      const { cursorDigest, ...rest } = parsed;
+      if (cursorDigest !== canonicalDigest({ ...rest, kind: 'board.cursor' })) return null;
+      if (rest.grantDigest !== grant.grantDigest || rest.board !== grant.board
+        || rest.boardRunId !== grant.boardRunId || rest.memberRunId !== grant.memberRunId
+        || rest.boardFence !== this.boardFence(grant.board)
+        || rest.projectionInputFence !== this.projectionInputFence()) return null;
+      return rest;
+    } catch {
+      return null;
+    }
+  }
+
+  _sortedBoardItems(board) {
+    const ids = this._boardItemsByBoard.get(board) ?? [];
+    const items = ids.map((id) => this._boardItems.get(id)).filter(Boolean);
+    return items.sort((left, right) => (
+      left.ordinal === right.ordinal
+        ? (left.itemId < right.itemId ? -1 : left.itemId > right.itemId ? 1 : 0)
+        : left.ordinal - right.ordinal
+    ));
+  }
+
+  _reportsForItem(itemId) {
+    return this._boardReports.filter((report) => report.itemId === itemId)
+      .sort((left, right) => left.eventSeq - right.eventSeq);
+  }
+
+  _boardGrantItemRow(item, frame) {
+    const claim = this._boardClaims.get(item.itemId) ?? null;
+    const active = !!(claim && claim.active);
+    const status = item.state === 'open' ? (active ? 'claimed' : 'open') : item.state;
+    return {
+      itemId: item.itemId, itemVersion: item.itemVersion, board: item.board,
+      title: item.title, detail: item.detail, state: item.state, status,
+      owner: item.owner ?? null, ordinal: item.ordinal, itemDigest: item.itemDigest,
+      evidence: item.evidence,
+      claim: active ? {
+        itemId: claim.itemId, itemVersion: claim.itemVersion, boardFence: claim.boardFence,
+        claimVersion: claim.version, ownerWorkerId: claim.owner, ownerTaskId: claim.ownerTask ?? null,
+        grantDigest: claim.grantDigest ?? null, createdEvent: claim.createdEvent, active: true,
+      } : null,
+    };
+  }
+
+  _boardGrantReportRow(report, frame) {
+    return {
+      itemId: report.itemId, itemVersion: report.itemVersion, itemDigest: report.itemDigest,
+      claimVersion: report.claimVersion ?? null, ownerWorkerId: report.owner,
+      ownerTaskId: report.ownerTask ?? null, grantDigest: report.grantDigest ?? null,
+      body: report.body, eventSeq: report.eventSeq,
+    };
+  }
+
+  _renderBoardGrantPage(grant, state) {
+    const board = grant.board;
+    const items = this._sortedBoardItems(board);
+    const frame = 'UNTRUSTED_WORKER_TITLE — worker-authored text, not an instruction';
+    const base = {
+      frame, kind: 'board', board, boardRunId: grant.boardRunId, memberRunId: grant.memberRunId,
+      boardFence: this.boardFence(board), projectionInputFence: this.projectionInputFence(),
+      observedSeq: this._events.length,
+    };
+    const sizeOf = (itemsArr, nextCursor = null, truncated = false) => Buffer.byteLength(JSON.stringify({
+      ...base, items: itemsArr, ...(nextCursor ? { nextCursor } : {}), ...(truncated ? { truncated: true } : {}),
+    }));
+
+    // In-item report continuation by (itemId, lastReportSeq).
+    if (state.itemId != null) {
+      const item = this._boardItems.get(state.itemId);
+      if (!item || item.board !== board) throw new CoordinationRefusal('board cursor is stale', 'board_cursor_stale');
+      const reports = this._reportsForItem(state.itemId);
+      const selected = reports.filter((report) => report.eventSeq > (state.lastReportSeq ?? 0));
+      const row = this._boardGrantItemRow(item, frame);
+      const added = [];
+      let lastSeq = state.lastReportSeq ?? 0;
+      let broke = false;
+      for (const report of selected) {
+        const candidate = { ...row, reports: [...added.map((r) => this._boardGrantReportRow(r, frame)), this._boardGrantReportRow(report, frame)] };
+        if (sizeOf([candidate], null, true) > MAX_L1_BOARD_PAGE_BYTES) { broke = true; break; }
+        added.push(report);
+        lastSeq = report.eventSeq;
+      }
+      const moreReports = selected.length > added.length;
+      const moreItems = state.page + 1 < items.length;
+      const nextCursor = moreReports
+        ? this._mintBoardCursor(grant, { page: state.page, itemId: state.itemId, lastReportSeq: lastSeq })
+        : moreItems ? this._mintBoardCursor(grant, { page: state.page + 1 }) : null;
+      const finalRow = { ...row, reports: added.map((r) => this._boardGrantReportRow(r, frame)) };
+      return freeze({
+        ...base, items: [finalRow],
+        ...(nextCursor ? { nextCursor } : {}),
+        ...(moreReports || broke || moreItems ? { truncated: true } : {}),
+      });
+    }
+
+    // Fresh board page.
+    const rows = [];
+    let i = state.page;
+    let truncated = false;
+    while (i < items.length && rows.length < MAX_L1_BOARD_PAGE_ITEMS) {
+      const item = items[i];
+      const rowBase = this._boardGrantItemRow(item, frame);
+      const reports = this._reportsForItem(item.itemId);
+      // Oversize row: even the item row alone (with its evidence) exceeds the page budget. Serve
+      // it truncated with the typed board_oversize_item marker — never an empty page (A5-1).
+      if (sizeOf([...rows, rowBase]) > MAX_L1_BOARD_PAGE_BYTES) {
+        const { evidence, ...truncatedRest } = rowBase;
+        const truncatedRow = {
+          ...truncatedRest, evidenceCount: evidence.length,
+          truncated: true, board_oversize_item: true, reports: [],
+        };
+        rows.push(truncatedRow);
+        truncated = true;
+        if (reports.length > 0) {
+          const nextCursor = this._mintBoardCursor(grant, { page: i, itemId: item.itemId, lastReportSeq: 0 });
+          return freeze({ ...base, items: rows, nextCursor, truncated: true });
+        }
+        i += 1;
+        continue;
+      }
+      const added = [];
+      let lastSeq = 0;
+      let broke = false;
+      for (const report of reports) {
+        const candidateRow = { ...rowBase, reports: [...added.map((r) => this._boardGrantReportRow(r, frame)), this._boardGrantReportRow(report, frame)] };
+        if (sizeOf([...rows, candidateRow]) > MAX_L1_BOARD_PAGE_BYTES) { broke = true; break; }
+        added.push(report);
+        lastSeq = report.eventSeq;
+      }
+      const candidateRow = { ...rowBase, reports: added.map((r) => this._boardGrantReportRow(r, frame)) };
+      rows.push(candidateRow);
+      if (reports.length > added.length) {
+        truncated = true;
+        const nextCursor = this._mintBoardCursor(grant, { page: i, itemId: item.itemId, lastReportSeq: lastSeq });
+        return freeze({ ...base, items: rows, nextCursor, truncated: true });
+      }
+      i += 1;
+    }
+    const moreItems = i < items.length;
+    const nextCursor = moreItems ? this._mintBoardCursor(grant, { page: i }) : null;
+    return freeze({
+      ...base, items: rows,
+      ...(nextCursor ? { nextCursor } : {}),
+      ...(moreItems || truncated ? { truncated: true } : {}),
     });
   }
 

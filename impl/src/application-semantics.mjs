@@ -1409,16 +1409,25 @@ const CANONICAL_OPERATION_SPECS = [
   }],
   ['board.claim', {
     profile: 'worker', effect: 'board_claim', capabilities: ['control', 'observe'],
-    outputView: 'outline', helpTopic: 'run', surfaces: [], inputSchema: objectSchema({
+    outputView: 'outline', helpTopic: 'run', surfaces: ['embedded'], inputSchema: objectSchema({
+      grantId: { type: 'string', minLength: 1, maxLength: 256 },
       itemId: id, expectedBoardFence: { type: 'integer', minimum: 0 },
-    }, ['itemId', 'expectedBoardFence']),
+      idempotencyKey: { type: 'string', pattern: '^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$' },
+    }, ['grantId', 'itemId', 'expectedBoardFence', 'idempotencyKey']),
+    authorityFields: ['grantId'], serverDerived: ['workerId', 'taskId', 'taskVersion', 'processGeneration'],
+    liveMethod: 'admitWorkerBoardCommand → requestBoardClaim',
   }],
   ['board.report', {
     profile: 'worker', effect: 'board_report', capabilities: ['control', 'observe'],
-    outputView: 'outline', helpTopic: 'run', surfaces: [], inputSchema: objectSchema({
-      itemId: id, itemVersion: { type: 'integer', minimum: 1 }, itemDigest: id,
+    outputView: 'outline', helpTopic: 'run', surfaces: ['embedded'], inputSchema: objectSchema({
+      grantId: { type: 'string', minLength: 1, maxLength: 256 },
+      itemId: id, itemVersion: { type: 'integer', minimum: 1 }, itemDigest: digest64,
+      expectedClaimVersion: { type: 'integer', minimum: 1 },
       body: { type: 'string', minLength: 1, maxLength: 4096 },
-    }, ['itemId', 'itemVersion', 'itemDigest', 'body']),
+      idempotencyKey: { type: 'string', pattern: '^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$' },
+    }, ['grantId', 'itemId', 'itemVersion', 'itemDigest', 'expectedClaimVersion', 'body', 'idempotencyKey']),
+    authorityFields: ['grantId'], serverDerived: ['workerId', 'taskId', 'taskVersion', 'processGeneration'],
+    liveMethod: 'admitWorkerBoardCommand → submitBoardReport',
   }],
   ['package.admit', {
     effect: 'control', capabilities: ['control', 'observe'], outputView: 'outline',
@@ -1586,6 +1595,12 @@ const CANONICAL_OPERATION_SPECS = [
     inputSchema: objectSchema({
       runId: id, message: { type: 'string', minLength: 1, maxLength: 16384 },
       delivery: { type: 'string', enum: ['nudge', 'now', 'turn'] },
+      // Epic #78 Decision 2: the optional closed claimGrant request. The caller names no grantee
+      // and no permissions — the server resolves the member Run and records the selected subset.
+      claimGrant: objectSchema({
+        boardRunId: { type: 'string', minLength: 1, maxLength: 256, pattern: '^[A-Za-z0-9._:-]+$' },
+        board: safeBoardId,
+      }, ['boardRunId', 'board']),
     }, ['runId', 'message']),
   }],
   ['waves.stop', {
