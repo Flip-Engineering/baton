@@ -21,6 +21,7 @@ import { join } from 'node:path';
 
 import { Coordinator } from '../src/coordinator.mjs';
 import { scanForContextRead } from '../src/claude-session.mjs';
+import * as claudeSession from '../src/claude-session.mjs';
 import { Log } from '../src/log.mjs';
 import { FenceTable } from '../src/fence.mjs';
 import { CoordinationStore, coordinationForLog } from '../src/coordination-store.mjs';
@@ -409,6 +410,49 @@ test('B3: an expired pack refuses context_pack_expired and never serves (expiry 
 // ===========================================================================
 // BD3-C — the message lane (stage: lane missing)
 // ===========================================================================
+
+test('C0 (wire pin, #86): the live scanner admits a well-formed MESSAGE_SEND text frame', async () => {
+  // #86: the reply lane was admitted at the coordinator event level (C1/C1b/C2) but had NO
+  // scanner grammar — a live worker could not emit it from text. This row drives REAL
+  // assistant text through the real scanner (the A0 lesson: mock-only lanes hide dead wires).
+  assert.equal(typeof claudeSession.scanForMessageSend, 'function',
+    'stage: scanner-grammar-missing — the wire reply lane has no scanner grammar (#86)');
+  const text = [
+    'Acknowledging the orchestrator message before I continue the survey.',
+    '',
+    'MESSAGE_SEND: {"inReplyTo":"message:8b0c60ab74192f82f47830e313d34519bbe0229ed58d607fbf0c0cacd25b4146","body":"BLUE — acknowledged, quoting it in the report"}',
+    '',
+    'Now back to the scanner reading.',
+  ].join('\n');
+  const parsed = claudeSession.scanForMessageSend(text);
+  assert.ok(parsed, 'the scanner admits the well-formed live reply frame');
+  assert.deepEqual(Object.keys(parsed).sort(), ['body', 'inReplyTo']);
+  assert.equal(parsed.inReplyTo, 'message:8b0c60ab74192f82f47830e313d34519bbe0229ed58d607fbf0c0cacd25b4146');
+  assert.equal(parsed.body, 'BLUE — acknowledged, quoting it in the report');
+});
+
+test('C0b (wire refusals, #86): caller-named targets, smuggled fields, and malformed frames are never surfaced', async () => {
+  const scan = claudeSession.scanForMessageSend;
+  assert.equal(typeof scan, 'function', 'stage: scanner-grammar-missing (#86)');
+  const parent = '"inReplyTo":"message:8b0c60ab74192f82f47830e313d34519bbe0229ed58d607fbf0c0cacd25b4146"';
+  // A caller-named target returns null at the wire — the coordinator derives the sole target
+  // from the parent (its typed refusal governs the admitted lane, C1).
+  assert.equal(scan(`MESSAGE_SEND: {${parent},"body":"ack","to":{"workerId":"w-2"}}`), null);
+  // Smuggled fields never ride the closed envelope (C1b's wire sibling).
+  assert.equal(scan(`MESSAGE_SEND: {${parent},"body":"ack","priority":"high"}`), null);
+  // A malformed parent reference refuses (the minted shape is message:<64 lowercase hex>).
+  assert.equal(scan('MESSAGE_SEND: {"inReplyTo":"msg-123","body":"ack"}'), null);
+  // An empty body refuses.
+  assert.equal(scan(`MESSAGE_SEND: {${parent},"body":""}`), null);
+  // PIN (campaign law — no silent wire caps): a large-but-parseable body is ADMITTED shape-only.
+  // Any frame-economics bound belongs at ADMISSION as a typed, cap-naming message.rejected on
+  // the worker's stream with a spillover path — never as a silent wire refusal (scanner null
+  // means "prose", so a wire cap is silent data loss of a well-intentioned reply). The 20,480
+  // scan window bounds the input regardless.
+  const large = scan(`MESSAGE_SEND: {${parent},"body":"${'x'.repeat(2049)}"}`);
+  assert.ok(large, 'shape-only admission: size policy lives at admission, never at the wire');
+  assert.equal(large.body.length, 2049);
+});
 
 test('C1: orchestrator sends mint message ids; worker replies carry ONLY {inReplyTo, body} with the target derived', async () => {
   const adapter = new ScriptableAdapter();

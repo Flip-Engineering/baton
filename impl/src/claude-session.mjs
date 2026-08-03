@@ -30,6 +30,8 @@ const SCRATCHPAD_WRITE_GRAMMAR = /SCRATCHPAD_WRITE:\s*(\{[\s\S]*)/;
 const MAX_SCRATCHPAD_GRAMMAR_SCAN_BYTES = 20_480;
 const CONTEXT_READ_GRAMMAR = /CONTEXT_READ:\s*(\{[\s\S]*)/;
 const MAX_CONTEXT_READ_GRAMMAR_SCAN_BYTES = 20_480;
+const MESSAGE_SEND_GRAMMAR = /MESSAGE_SEND:\s*(\{[\s\S]*)/;
+const MAX_MESSAGE_SEND_GRAMMAR_SCAN_BYTES = 20_480;
 
 /** Bracket-depth walk to the first balanced `{...}` object, bounded, string-aware. Trailing
  * prose after the JSON object (or a second, contradictory DECISION_REQUEST) never reaches the
@@ -123,6 +125,30 @@ export function scanForContextRead(text) {
     || parsed.expectedFence !== 'current'
     || typeof parsed.idempotencyKey !== 'string'
     || !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/u.test(parsed.idempotencyKey)) return null;
+  return parsed;
+}
+
+/** Issue #86 BD3-C sibling grammar: the worker reply lane (`MESSAGE_SEND: <json>`), mirroring
+ * CONTEXT_READ's exact wire shape. The frame is closed — {inReplyTo, body} ONLY: a caller-named
+ * target is never surfaced (the Coordinator derives the sole target from the parent message and
+ * its typed refusal governs the admitted lane, C1). Identity is absent — stream-bound, exactly
+ * like the read port. inReplyTo must carry the minted shape message:<64 lowercase hex>. The body
+ * is shape-checked only (non-empty string): the 20,480-byte scan window is the parser's resource
+ * guard; any frame-economics policy belongs at admission with a graceful spillover path, never
+ * as a silent wire cap (campaign law — constructive surfaces, not walls). */
+export function scanForMessageSend(text) {
+  if (typeof text !== 'string') return null;
+  const match = MESSAGE_SEND_GRAMMAR.exec(text);
+  if (!match) return null;
+  const json = extractFirstBalancedJsonObject(match[1], MAX_MESSAGE_SEND_GRAMMAR_SCAN_BYTES);
+  if (!json) return null;
+  let parsed;
+  try { parsed = JSON.parse(json); } catch { return null; }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)
+    || Object.keys(parsed).sort().join(',') !== 'body,inReplyTo'
+    || typeof parsed.inReplyTo !== 'string'
+    || !/^message:[a-f0-9]{64}$/u.test(parsed.inReplyTo)
+    || typeof parsed.body !== 'string' || parsed.body.length === 0) return null;
   return parsed;
 }
 
@@ -1049,6 +1075,10 @@ export class ClaudeSessionCli {
         if (text) {
           const readRequest = scanForContextRead(text);
           if (readRequest) this._emit(session, 'context.read', readRequest);
+        }
+        if (text) {
+          const messageFrame = scanForMessageSend(text);
+          if (messageFrame) this._emit(session, 'message.send', messageFrame);
         }
         return;
       }
