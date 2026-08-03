@@ -25,6 +25,18 @@ Their findings sharpen this epic's scope verbatim; the v0.9 seed follows.)
    orchestrator's attention stream (BD3-D's candidacy_review wake reason) — promotion as
    a step of an existing review, not a ritual to remember.
 
+**The campaign control law (operator, 2026-08-03 — binding on this epic and every later
+one):** controls on agent work must be EVAL-ABLE (validated goals: DoD, verification,
+referee, content gates that verify content, not counts), CONSTRUCTIVE (tool surfaces:
+capability scoping by construction, #32 — never police mid-flight), or CONVERSATIONAL
+(bidirectional feedback: steering, decisions, attention, reads — this epic). Arbitrary
+turn-limits and time windows are the wrong class: they handicap work that has its own
+rhythm. Liveness and progress are judged from the event vocabulary (provider activity,
+receipt classes, process lifecycle) with COUNT-based bounds only on unanswered steering
+cycles; any clock is a deployment-class last resort for total silence, never the primary
+signal. Resource circuit-breakers (token/usd/turn budgets) are a distinct, legitimate
+class — they bound spend, not progress.
+
 ---
 
 # Bidirectional v3 epic contract — the collaboration spine (v0.9, pre-red-team)
