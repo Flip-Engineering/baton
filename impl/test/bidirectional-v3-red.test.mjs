@@ -20,6 +20,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { Coordinator } from '../src/coordinator.mjs';
+import { scanForContextRead } from '../src/claude-session.mjs';
 import { Log } from '../src/log.mjs';
 import { FenceTable } from '../src/fence.mjs';
 import { CoordinationStore, coordinationForLog } from '../src/coordination-store.mjs';
@@ -116,6 +117,32 @@ function emitContextRead(adapter, handle, query, key = 'bd3-read-1') {
 // ===========================================================================
 // BD3-A — the read port (stage: lane missing)
 // ===========================================================================
+
+test('A0 (wire pin): the live scanner admits a well-formed CONTEXT_READ text frame', async () => {
+  // The first live acceptance (glm, 2026-08-03) exposed the suite's blind spot: A1+ drive
+  // adapter.emit directly (the internal lane), so a broken closed-shape literal in the
+  // real scanner was invisible — every live emission returned null. This row drives REAL
+  // assistant text through the real scanner in the exact shape that worker emitted.
+  const text = [
+    "I'm the reader in this BD3 live acceptance. TURN 1 — emitting the CONTEXT_READ read lane.",
+    '',
+    'CONTEXT_READ: {"query":{"kind":"knowledge","text":"acceptance canary"},"expectedFence":"current","idempotencyKey":"bd3-live-read-1"}',
+    '',
+    'Now, while I wait for the hub to answer, inspecting the scanner grammar:',
+  ].join('\n');
+  const parsed = scanForContextRead(text);
+  assert.ok(parsed, 'the scanner admits the well-formed live frame');
+  assert.deepEqual(Object.keys(parsed).sort(), ['expectedFence', 'idempotencyKey', 'query']);
+  assert.equal(parsed.expectedFence, 'current');
+  assert.equal(parsed.idempotencyKey, 'bd3-live-read-1');
+  assert.equal(parsed.query.kind, 'knowledge');
+  assert.equal(parsed.query.text, 'acceptance canary');
+  // Wire-level refusals: caller-named runId/scope inside the query is never surfaced.
+  assert.equal(scanForContextRead('CONTEXT_READ: {"query":{"kind":"knowledge","runId":"run:other"},"expectedFence":"current","idempotencyKey":"x1"}'), null);
+  assert.equal(scanForContextRead('CONTEXT_READ: {"query":{"kind":"scratchpad","scope":"worker:w-2"},"expectedFence":"current","idempotencyKey":"x2"}'), null);
+  // A fence other than "current" refuses at the wire (the live grammar pins current).
+  assert.equal(scanForContextRead('CONTEXT_READ: {"query":{"kind":"knowledge"},"expectedFence":3,"idempotencyKey":"x3"}'), null);
+});
 
 test('A1: a CONTEXT_READ wire emission is hub-admitted and answered through the closed renderer', async () => {
   const adapter = new ScriptableAdapter();

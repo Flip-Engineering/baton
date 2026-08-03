@@ -117,7 +117,7 @@ export function scanForContextRead(text) {
   let parsed;
   try { parsed = JSON.parse(json); } catch { return null; }
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)
-    || Object.keys(parsed).sort().join(',') !== 'query,expectedFence,idempotencyKey'
+    || Object.keys(parsed).sort().join(',') !== 'expectedFence,idempotencyKey,query'
     || !parsed.query || typeof parsed.query !== 'object' || Array.isArray(parsed.query)
     || Object.keys(parsed.query).some((key) => key === 'runId' || key === 'scope')
     || parsed.expectedFence !== 'current'
