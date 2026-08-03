@@ -615,17 +615,20 @@ test('KS8: a not-ready elevation refusal is recorded in settlement.errors and cl
 });
 
 // ===========================================================================
-// KS9 — structural surface gate (regression pin; green before and after)
+// KS9 — structural surface gate (regression pin; amended for the MCP-W2 fold)
 // ===========================================================================
 
-test('KS9: the four rows are embedded-only in the registry, CLI, and recursive gate', async () => {
+test('KS9: the four rows are mcp-enabled in the registry, CLI, and recursive gate', async () => {
   const names = ['scratchpad.elevate', 'scratchpad.settle', 'knowledge.promote', 'knowledge.settlement_lease'];
   const rows = APPLICATION_SEMANTIC_REGISTRY.canonicalOperations;
   for (const name of names) {
     if (name === 'knowledge.settlement_lease') continue; // pinned by KS9b once the row lands
     const row = rows.find((entry) => entry.key === name);
     assert.ok(row, `${name} registry row exists`);
-    assert.deepEqual([...(row.surfaces ?? [])].sort(), ['embedded'], `${name} stays embedded-only`);
+    // Deliberate amendment (mcp-packaging-decisions v1.0 MCP-W2): the four rows gain `mcp` in
+    // `surfaces`; the MCP enablement carries the S-2 sessionAuthority envelope requirement
+    // (knowledge.promote) and the settlement capability class (knowledge.settlement_lease).
+    assert.deepEqual([...(row.surfaces ?? [])].sort(), ['embedded', 'mcp'], `${name} surfaces carry mcp`);
   }
   for (const derived of ['scratchpad_elevate', 'scratchpad_settle', 'knowledge_promote', 'knowledge_settlement_lease']) {
     assert.equal(CLI_WEB_COMMANDS.has(derived), false, `CLI excludes ${derived}`);
@@ -643,10 +646,10 @@ test('KS9: the four names stay out of the recursive-dispatch allowlists (source 
     'the capability allowlist is unchanged — the capability-backed recursive gate does not admit the ritual');
 });
 
-test('KS9b: the knowledge.settlement_lease registry row exists and is embedded-only (stage: row missing)', async () => {
+test('KS9b: the knowledge.settlement_lease registry row exists and is mcp-enabled (stage: row missing)', async () => {
   const row = APPLICATION_SEMANTIC_REGISTRY.canonicalOperations.find((entry) => entry.key === 'knowledge.settlement_lease');
   assert.ok(row, 'the settlement_lease row lands with the implementation');
-  assert.deepEqual([...(row.surfaces ?? [])].sort(), ['embedded'], 'embedded-only like its siblings');
+  assert.deepEqual([...(row.surfaces ?? [])].sort(), ['embedded', 'mcp'], 'mcp-enabled like its siblings (MCP-W2 fold)');
 });
 
 // ===========================================================================

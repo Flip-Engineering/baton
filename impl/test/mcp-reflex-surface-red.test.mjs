@@ -167,16 +167,19 @@ test('Inventory: the combined surface adds the derived S-3 reflex tools, frozen 
   await initialized(server);
   const response = await request(server, 2, 'tools/list', {});
   const names = response.result.tools.map((tool) => tool.name);
-  assert.equal(names.length, 69, '54 ordinary/advanced tools (fleet_run_steer deleted at M5) + 15 legacy-and-S-3 reflex tools');
+  // MCP-W1/W2 (v1.0.1 adjudication): the ordinary surface gains the wave ergonomics, doctor,
+  // decision.answer, and the four settlement tools (10 additions); decision.answer moves OUT of
+  // the reflex inventory, and the three settlement rows leave the S-3 matrix (ordinary tools).
+  assert.equal(names.length, 78, '64 ordinary/advanced tools + 14 legacy-and-S-3 reflex tools');
   const reflexNames = [
-    'baton_context_eval', 'baton_decision_list', 'baton_decision_answer',
+    'baton_context_eval', 'baton_decision_list',
     'baton_board_post', 'baton_board_retitle', 'baton_board_reorder', 'baton_board_close', 'baton_board_drop', 'baton_board_read',
     'baton_package_admit', 'baton_package_attach', 'baton_package_read',
     'baton_repl_cite', 'baton_knowledge_recall', 'baton_knowledge_horizon',
   ];
   for (const name of reflexNames) assert.ok(names.includes(name), `${name} must be listed`);
   const reflexTools = response.result.tools.filter((tool) => reflexNames.includes(tool.name));
-  assert.equal(reflexTools.length, 15);
+  assert.equal(reflexTools.length, 14);
   for (const tool of reflexTools) {
     assert.equal(tool.execution.taskSupport, 'forbidden', `${tool.name} taskSupport`);
     assert.equal(tool.inputSchema.additionalProperties, false, `${tool.name} additionalProperties`);
@@ -186,17 +189,21 @@ test('Inventory: the combined surface adds the derived S-3 reflex tools, frozen 
   assert.equal(response.result.tools.every((tool) => tool.inputSchema.additionalProperties === false), true, 'the combined list stays _meta-consistent across every tool (R11)');
 });
 
-test('Inventory: the ordinary (Web-bridge) surface is unchanged — no reflex tool is listed or _meta leaks in', async () => {
+test('Inventory: the ordinary (Web-bridge) surface admits exactly the MCP-W1/W2 members — no other reflex tool crosses', async () => {
   const { server } = setup({ surface: 'application' });
   await initialized(server);
   const response = await request(server, 2, 'tools/list', {});
-  assert.equal(response.result.tools.length, 17);
-  // M4b: the canonical grammar tools render beside the retained legacy tools (docs/36 §9 M4).
-  // CS-2: baton_runs is advertised on the application surface (no longer a shadow dispatch).
+  // MCP-W1/W2 (v1.0.1 adjudication): waves.start/progress/send/stop, deployment.doctor,
+  // decision.answer, and the four settlement tools join the ordinary surface; no other reflex
+  // tool crosses. M4b: the canonical grammar tools render beside the retained legacy tools.
+  assert.equal(response.result.tools.length, 27);
   assert.deepEqual(response.result.tools.map((tool) => tool.name), [
     'baton_help', 'baton_runs', 'baton_run_start', 'baton_run_inspect', 'baton_run_episode',
     'baton_run_workstreams', 'baton_workstream_notify', 'baton_workstream_stop',
     'baton_run_act', 'baton_run_stop', 'baton_waves_attach',
+    'baton_waves_start', 'baton_waves_progress', 'baton_waves_send', 'baton_waves_stop',
+    'baton_deployment_doctor', 'baton_decision_answer',
+    'baton_scratchpad_elevate', 'baton_scratchpad_settle', 'baton_knowledge_promote', 'baton_knowledge_settlement_lease',
     'baton_run_do', 'baton_run_view', 'baton_run_member_view', 'baton_run_member_send',
     'baton_run_member_stop', 'baton_application_help',
   ]);
@@ -425,10 +432,12 @@ test('decision_answer: the generic run.answer branch\'s lease/sessionAuthority p
 // Part G / Part H "bridge": no reflex tools on the Web bridge; ordinary names still served.
 // ---------------------------------------------------------------------------------------------
 
-test('bridge boundary: an ordinary-surface (Web-bridge shaped) server refuses every reflex tool name at -32602, while ordinary names still resolve', async () => {
+test('bridge boundary: an ordinary-surface (Web-bridge shaped) server refuses every reflex-only tool name at -32602, while ordinary names still resolve', async () => {
   const { server } = setup({ surface: 'application' });
   await initialized(server);
-  for (const name of ['baton_context_eval', 'baton_decision_list', 'baton_decision_answer']) {
+  // baton_decision_answer is now an ADMITTED ordinary member (MCP-W1); the reflex-only names
+  // that must not cross are context_eval + the matrix reflex rows.
+  for (const name of ['baton_context_eval', 'baton_decision_list']) {
     const response = await request(server, 2, 'tools/call', { name, arguments: { repoId: REPO_ID } });
     assert.equal(response.error?.code, -32602, `${name} must be an unknown tool on the ordinary surface`);
   }

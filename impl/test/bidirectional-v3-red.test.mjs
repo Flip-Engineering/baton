@@ -128,6 +128,8 @@ test('A1: a CONTEXT_READ wire emission is hub-admitted and answered through the 
   const payload = results[0].payload ?? {};
   assert.equal(payload.ok ?? null, true, 'the in-horizon query answers');
   assert.match(JSON.stringify(payload), /UNTRUSTED/, 'every model-authored leaf is UNTRUSTED-framed by the renderer');
+  const delivered = adapter.calls.prompt.filter((call) => JSON.stringify(call.content ?? '').includes('UNTRUSTED'));
+  assert.ok(delivered.length >= 1, 'the framed answer reaches the provider-bound frame through the SAME renderer (only-path proof)');
 });
 
 test('A1b: malformed CONTEXT_READ shapes refuse with the typed code (closed grammar)', async () => {
@@ -175,6 +177,19 @@ test('A2: the knowledge query intersects the run horizon (out-of-horizon nodes n
 });
 
 test('A3: finding-by-id is resolve-then-authorize (possession of a digest is never authority)', async () => {
+  const adapterPos = new ScriptableAdapter();
+  const { coordinator: coordPos } = setup({ adapter: adapterPos, capture: noDiff });
+  const handlePos = await coordPos.spawn('mock', makeBrief());
+  const taskPos = coordPos._tasks.get(handlePos.taskId);
+  const storePos = coordPos._coordination;
+  const inHorizon = storePos.addKnowledgeNode({
+    type: 'Finding', grounding: 'observed', body: 'a finding in this run', repoId: storePos._repoId ?? 'local',
+    runId: taskPos.runId, evidence: [],
+  }, { actor: 'orchestrator', key: 'bd3-a3-in' });
+  emitContextRead(adapterPos, handlePos, { kind: 'finding', id: inHorizon.node?.id ?? 'finding:in' }, 'a3-pos');
+  await flush(40);
+  const posResult = coordPos._log.read(handlePos.id).find((event) => event.kind === 'context.read_result');
+  assert.equal(posResult?.payload?.ok ?? null, true, 'an in-horizon finding-by-id answers (the positive control)');
   const adapter = new ScriptableAdapter();
   const { coordinator } = setup({ adapter, capture: noDiff });
   const handle = await coordinator.spawn('mock', makeBrief());
@@ -194,11 +209,31 @@ test('A4: scratchpad reads return only the run shared partition, never a sibling
   const adapter = new ScriptableAdapter();
   const { coordinator } = setup({ adapter, capture: noDiff });
   const handle = await coordinator.spawn('mock', makeBrief());
+  const handle2 = await coordinator.spawn('mock', makeBrief());
+  const store = coordinator._coordination;
+  const task = coordinator._tasks.get(handle.taskId);
+  const task2 = coordinator._tasks.get(handle2.taskId);
+  store.recordDriver('steering.registered', { runId: task.runId }, { actor: 'orchestrator', key: `steering:${task.runId}` });
+  store.writeScratchpad(
+    { runId: task.runId, taskId: task.id, workerId: handle.id, entry: { kind: 'note', text: 'shared-visible finding' } },
+    { actor: 'worker', principalId: handle.id, key: 'a4-shared-note' },
+  );
+  store.writeScratchpad(
+    { runId: task2.runId, taskId: task2.id, workerId: handle2.id, entry: { kind: 'note', text: 'SIBLING-SECRET entry' } },
+    { actor: 'worker', principalId: handle2.id, key: 'a4-sibling-note' },
+  );
+  const fence = store.scratchpadFence(task.runId, `worker:${handle.id}`);
+  store.elevateTaskScratchpad({
+    runId: task.runId, taskId: task.id, workerId: handle.id, expectedScratchpadFence: fence,
+    entryIds: store.scratchpadSnapshot(task.runId, `worker:${handle.id}`).entries.map((row) => row.entryId),
+  }, { actor: 'orchestrator', key: `scratchpad.task_settlement:${task.id}` });
   emitContextRead(adapter, handle, { kind: 'scratchpad' }, 'a4-read');
   await flush(40);
   const result = coordinator._log.read(handle.id).find((event) => event.kind === 'context.read_result');
-  assert.ok(result, 'the shared-partition read answers (empty honestly when unsettled)');
-  assert.ok(!JSON.stringify(result.payload ?? {}).includes('worker:w-'), 'no worker-private partition is ever in the answer');
+  assert.ok(result, 'the shared-partition read answers');
+  const body = JSON.stringify(result.payload ?? {});
+  assert.ok(body.includes('shared-visible finding'), 'the elevated shared content serves');
+  assert.ok(!body.includes('SIBLING-SECRET'), 'a sibling worker\'s private partition NEVER serves');
 });
 
 test('A6: read evidence is the context.read class with ZERO promotion weight, and the author never counts as a reader', async () => {

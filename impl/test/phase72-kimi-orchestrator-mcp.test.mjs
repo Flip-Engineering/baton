@@ -291,10 +291,14 @@ test('KC6/KC7/KC8: Kimi MCP bridges only the compact application surface over au
   });
   await initialize(server);
   const listed = await server.handle({ jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} });
+  // MCP-W1/W2 (v1.0.1): waves.*/doctor/decision.answer/settlement join the ordinary surface.
   assert.deepEqual(listed.result.tools.map((tool) => tool.name), [
     'baton_help', 'baton_runs', 'baton_run_start', 'baton_run_inspect', 'baton_run_episode',
     'baton_run_workstreams', 'baton_workstream_notify', 'baton_workstream_stop',
     'baton_run_act', 'baton_run_stop', 'baton_waves_attach',
+    'baton_waves_start', 'baton_waves_progress', 'baton_waves_send', 'baton_waves_stop',
+    'baton_deployment_doctor', 'baton_decision_answer',
+    'baton_scratchpad_elevate', 'baton_scratchpad_settle', 'baton_knowledge_promote', 'baton_knowledge_settlement_lease',
     'baton_run_do', 'baton_run_view', 'baton_run_member_view', 'baton_run_member_send',
     'baton_run_member_stop', 'baton_application_help',
   ]);
@@ -623,6 +627,9 @@ test('KC6/KC7/KC8: packaged Kimi MCP entry crosses a real authenticated Web list
     'baton_help', 'baton_runs', 'baton_run_start', 'baton_run_inspect', 'baton_run_episode',
     'baton_run_workstreams', 'baton_workstream_notify', 'baton_workstream_stop',
     'baton_run_act', 'baton_run_stop', 'baton_waves_attach',
+    'baton_waves_start', 'baton_waves_progress', 'baton_waves_send', 'baton_waves_stop',
+    'baton_deployment_doctor', 'baton_decision_answer',
+    'baton_scratchpad_elevate', 'baton_scratchpad_settle', 'baton_knowledge_promote', 'baton_knowledge_settlement_lease',
     'baton_run_do', 'baton_run_view', 'baton_run_member_view', 'baton_run_member_send',
     'baton_run_member_stop', 'baton_application_help',
   ]);

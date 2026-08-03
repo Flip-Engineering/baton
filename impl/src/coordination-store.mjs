@@ -14677,41 +14677,58 @@ export class CoordinationStore {
     const policyDigest = canonicalDigest(policy);
     const requestDigest = canonicalDigest({ actor: auth.actor, idempotencyKey: auth.key, repoId, runId, policyDigest, candidateFindingId });
     const prior = this._byKey.get(auth.key);
-    if (prior) {
-      // Replay short-circuits before the lease gate: after a successful admit the lease is
-      // revoked (rule 16b), so re-checking the active-lease semantics here would spuriously
-      // refuse the idempotent retry the resumable promote command depends on (D2/KS7).
-      if (prior.kind !== 'knowledge.workflow_admitted' || prior.actor !== auth.actor || prior.payload?.requestDigest !== requestDigest) {
-        throw new CoordinationRefusal('workflow admission idempotency conflict', 'workflow_admit_conflict');
-      }
-      this._validateWorkflowAdmissionPayload(prior.payload, prior, false);
-      return freeze({ event: clone(prior), finding: clone(this._knowledgeNodes.get(prior.payload.nodes[0].id)), replayed: true });
-    }
     // XB (lifecycle keystone): when the admission auth carries session fields (the settlement
-    // command derives them from the calling principal), admission routes the presented lease
-    // through the full _activeRunOrchestratorLease gate — not_found / revoked / expired /
-    // session_mismatch / parent_inactive / parent_stale / run_stopping — binding the admission to
-    // the actor that ACQUIRED the lease, never a bearer of the digest. Absent session fields, the
-    // original structural binding check applies (the shipped primitive's contract is unchanged for
-    // callers that do not present a session).
+    // command derives them from the calling principal), admission binds to the session that
+    // ACQUIRED the lease — never a bearer of the digest. Codex #2b: the SESSION GATE precedes the
+    // idempotent-replay path, so a replayed admit with a foreign/expired session refuses with the
+    // typed session code, never a replay shortcut. The full _activeRunOrchestratorLease gate
+    // (not_found / revoked / expired / session_mismatch / parent_inactive / parent_stale /
+    // run_stopping) applies to first-time admits; a replay re-validates only the session binding,
+    // so a crash after the admit's own revoke step (rule 16b / KS7) still replays idempotently.
+    // Absent session fields, the original structural binding check applies (the shipped
+    // primitive's contract is unchanged for callers that do not present a session).
     const carriesSession = auth?.principalId !== undefined || auth?.sessionId !== undefined
       || auth?.sessionAuthorityDigest !== undefined;
     if (carriesSession) {
-      const activeLease = this._activeRunOrchestratorLease({
-        orchestratorLeaseId: lease?.id,
-        principalId: auth?.principalId, sessionId: auth?.sessionId,
-        sessionAuthorityDigest: auth?.sessionAuthorityDigest,
-      });
-      if (activeLease.leaseDigest !== lease?.digest || activeLease.issuedEvent !== lease?.issuedEvent
-        || activeLease.parent?.runId !== runId) {
-        throw new CoordinationRefusal('workflow admission lease binding is invalid', 'workflow_admit_lease_invalid');
+      const leaseRecord = this._runOrchestratorLeases.get(lease?.id);
+      if (!leaseRecord) this._runLineageFailure('run orchestrator lease was not found', 'run_orchestrator_lease_not_found');
+      if (auth?.principalId !== leaseRecord.session.principalId
+        || auth?.sessionId !== leaseRecord.session.sessionId
+        || auth?.sessionAuthorityDigest !== leaseRecord.session.authorityDigest) {
+        this._runLineageFailure('run orchestrator session does not match the lease', 'run_orchestrator_session_mismatch');
       }
-    } else {
+      if (prior) {
+        // Replay path: the binding already passed; refuse only a now-expired session. The lease's
+        // own post-admit revocation is the normal KS7 resume state and must not refuse the retry.
+        if (Date.parse(this._clock()) >= Date.parse(leaseRecord.session.expiresAt)) {
+          this._runLineageFailure('run orchestrator session is expired', 'run_orchestrator_session_mismatch');
+        }
+      } else {
+        const activeLease = this._activeRunOrchestratorLease({
+          orchestratorLeaseId: lease?.id,
+          principalId: auth?.principalId, sessionId: auth?.sessionId,
+          sessionAuthorityDigest: auth?.sessionAuthorityDigest,
+        });
+        if (activeLease.leaseDigest !== lease?.digest || activeLease.issuedEvent !== lease?.issuedEvent
+          || activeLease.parent?.runId !== runId) {
+          throw new CoordinationRefusal('workflow admission lease binding is invalid', 'workflow_admit_lease_invalid');
+        }
+      }
+    } else if (!prior) {
       const leaseRecord = this._runOrchestratorLeases.get(lease?.id);
       if (!leaseRecord || leaseRecord.status !== 'active' || leaseRecord.leaseDigest !== lease?.digest
         || leaseRecord.issuedEvent !== lease?.issuedEvent || leaseRecord.parent?.runId !== runId) {
         throw new CoordinationRefusal('workflow admission lease binding is invalid', 'workflow_admit_lease_invalid');
       }
+    }
+    if (prior) {
+      // Replay-exactness is still validated after the session gate (codex #2b): the prior event
+      // must be the exact same admission.
+      if (prior.kind !== 'knowledge.workflow_admitted' || prior.actor !== auth.actor || prior.payload?.requestDigest !== requestDigest) {
+        throw new CoordinationRefusal('workflow admission idempotency conflict', 'workflow_admit_conflict');
+      }
+      this._validateWorkflowAdmissionPayload(prior.payload, prior, false);
+      return freeze({ event: clone(prior), finding: clone(this._knowledgeNodes.get(prior.payload.nodes[0].id)), replayed: true });
     }
     const derived = this._deriveWorkflowAdmission(repoId, runId, candidateFindingId, policy);
     const core = {

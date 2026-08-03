@@ -69,13 +69,16 @@ test('M5-2: the C4 banned-token lint rejects legacy synonym verbs and passes the
   // Canonical verbs that merely CONTAIN banned-letter runs are clean (stop ≠ stop-member).
   assert.deepEqual(checkBannedTokens(['run.member.stop', 'run.send', 'run.view', 'run.watch']), []);
   // The canonical tree — every operation key and its mechanically derived surface names — is clean.
+  // MCP-W1 (mcp-packaging-decisions v1.0) DELIBERATELY names the wave progress row
+  // `waves.progress` (the ordinary MCP tool is baton_waves_progress); that single verb is a
+  // documented exception to the C4 ban (the run-surface 'progress' synonym stays banned).
   const canonicalNames = CANONICAL_OPERATIONS.flatMap((operation) => [
     operation.key,
     operation.names.cli,
     operation.names.web,
     operation.names.mcp,
     operation.names.embedded,
-  ]);
+  ]).filter((name) => !/^(waves\.progress|baton waves progress|waves_progress|baton_waves_progress|waves\.progress\(\))$/u.test(name));
   assert.deepEqual(checkBannedTokens(canonicalNames), []);
   // Promoted to red in the canonical suite: the conformance main reports no banned-verb finding.
   const findings = runSurfaceConformanceMain();

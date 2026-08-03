@@ -506,6 +506,9 @@ test('MP17: MCP.md\'s quickstart descriptor parses and validates against the clo
 
 test('MP18: an external process orchestrates a wave purely through stdio MCP (start → progress → decision → attach → harvest)', { timeout: 300_000 }, async (t) => {
   const directory = root('mp18');
+  execFileSync('git', ['init', '-q'], { cwd: directory });
+  mkdirSync(join(directory, 'reports'), { recursive: true });
+  execFileSync('git', ['-c', 'user.name=Baton Test', '-c', 'user.email=baton@example.test', 'commit', '--allow-empty', '-q', '-m', 'base'], { cwd: directory });
   const factoryPath = join(directory, 'factory.mjs');
   writeFileSync(factoryPath, e2eFactorySource(directory));
   const child = spawnProcess(process.execPath, [join(import.meta.dirname, '..', 'scripts', 'mcp-stdio.mjs'), factoryPath],
@@ -532,8 +535,8 @@ test('MP18: an external process orchestrates a wave purely through stdio MCP (st
 
 // E2E helpers (factory source + the stdio round-trip driver) live here so the rows read top-down.
 function e2eFactorySource(directory) {
-  return `import { BatonApplication, MockAdapter, createDriver } from 'baton/impl';
-import { CoordinationStore } from 'baton/impl';
+  return `import { BatonApplication, MockAdapter, createDriver } from ${JSON.stringify(new URL('../src/index.mjs', import.meta.url).pathname)};
+import { CoordinationStore } from ${JSON.stringify(new URL('../src/index.mjs', import.meta.url).pathname)};
 export default async function createMcpServer() {
   const repoId = 'repo-mp18';
   const adapter = new MockAdapter({ scenario: { outcome: 'completed', edits: [{ path: 'reports/surveyor.md', content: 'report' }] } });

@@ -87,6 +87,20 @@ const CAPABILITY = Object.freeze({
   // `[undefined]` and refuses with `forbidden`.
   baton_context_eval: ['observe'],
   baton_decision_answer: ['approve', 'observe'],
+  // MCP-W1/W2/W3 (mcp-packaging-decisions v1.0): the ordinary-surface wave ergonomics, doctor, and
+  // settlement tools. These ride explicit `_dispatch` branches (never APPLICATION_COMMAND_DEFINITIONS
+  // keys), so their capability classes are registered here like the reflex tools. waves.stop is
+  // the member stop lane (emergency_stop); the settlement lease requires the explicit settlement
+  // capability class (single-orchestrator posture — never a default).
+  baton_waves_start: ['control', 'observe'],
+  baton_waves_progress: ['observe'],
+  baton_waves_send: ['control', 'observe'],
+  baton_waves_stop: ['emergency_stop', 'observe'],
+  baton_deployment_doctor: ['observe'],
+  baton_scratchpad_elevate: ['control', 'observe'],
+  baton_scratchpad_settle: ['control', 'observe'],
+  baton_knowledge_promote: ['control', 'observe'],
+  baton_knowledge_settlement_lease: ['settlement'],
   // Matrix mutations keep the existing transported posture: observe admits the tool call, while
   // the run-orchestrator lease resolved inside S-2 is the control authority.
   ...Object.fromEntries(SURFACING_MATRIX_MCP_ROWS.map((operation) => [operation.names.mcp, ['observe']])),
@@ -102,11 +116,21 @@ const STATEFUL = new Set(['fleet_spawn', 'fleet_scratch_oracle', 'fleet_goal_def
   'baton_context_eval', 'baton_decision_answer',
   ...SURFACING_MATRIX_MCP_ROWS.filter((operation) => operation.effect === 'control')
     .map((operation) => operation.names.mcp),
+  // MCP-W1/W2: waves.start and the settlement tools are stateful (control effects ride the mcp.call
+  // admission ledger exactly like the matrix control tools). waves.send/waves.stop deliberately are
+  // NOT — their wire schemas carry no idempotencyKey (send/stop are per-runId member lanes whose
+  // durable idempotency lives in the member run's own stop/steer primitives), so they dispatch
+  // through the observe-path gate like the read-only tools.
+  'baton_waves_start',
+  'baton_scratchpad_elevate', 'baton_scratchpad_settle', 'baton_knowledge_promote', 'baton_knowledge_settlement_lease',
   ...MCP_APPLICATION_ENTRIES.filter(([, , definition]) => definition.mcpStateful).map(([tool]) => tool)]);
 for (const [tool, , definition] of ORDINARY_APPLICATION_ENTRIES) if (definition.mcpStateful) STATEFUL.add(tool);
 const RECONCILABLE = new Set(['fleet_goal_define', 'fleet_plan_propose', 'fleet_plan_approve', 'baton_context_eval', 'baton_decision_answer',
   ...SURFACING_MATRIX_MCP_ROWS.filter((operation) => operation.effect === 'control')
     .map((operation) => operation.names.mcp),
+  // MCP-W1/W2: waves.start and the settlement tools replay idempotently on retry.
+  'baton_waves_start',
+  'baton_scratchpad_elevate', 'baton_scratchpad_settle', 'baton_knowledge_promote', 'baton_knowledge_settlement_lease',
   ...MCP_APPLICATION_ENTRIES.filter(([, , definition]) => definition.mcpStateful && definition.reconcilable).map(([tool]) => tool)]);
 for (const [tool, , definition] of ORDINARY_APPLICATION_ENTRIES) if (definition.mcpStateful && definition.reconcilable) RECONCILABLE.add(tool);
 const GOAL_PLAN_MUTATIONS = new Set(['fleet_goal_define', 'fleet_plan_propose', 'fleet_plan_approve']);
@@ -424,6 +448,112 @@ const LEGACY_ORDINARY_APPLICATION_TOOL_DEFINITIONS = Object.freeze([
     }, ['repoId', 'waveId', 'members']),
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
+  // MCP-W1 (mcp-packaging-decisions v1.0): wave ergonomics on the ordinary surface. Start is
+  // detached — {waveId, members:[{role, runId}]}, live handles never cross transport; quota
+  // debits PER MEMBER (codex #1); profile admission rides the deployment profile's routes/scopes.
+  {
+    name: 'baton_waves_start',
+    description: 'Start a detached wave: each member starts through the deployment profile admission (exact routes + scopes) and binds to one waveId; returns {waveId, members:[{role, runId}]} — live handles never cross the transport. Quota is debited per member.',
+    inputSchema: schema({
+      ...repo, ...idem,
+      members: {
+        type: 'array', minItems: 1, maxItems: 64,
+        items: schema({
+          role: runId,
+          objective: { type: 'string', minLength: 1, maxLength: 4096 },
+          exact: applicationRouteSchema,
+          scope: { type: 'array', minItems: 1, maxItems: 64, uniqueItems: true, items: { type: 'string', minLength: 1, maxLength: 4096 } },
+        }, ['role', 'objective', 'exact']),
+      },
+    }, ['repoId', 'idempotencyKey', 'members']),
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  {
+    name: 'baton_waves_progress',
+    description: 'Read one wave\'s progress projection: members paginated ≤16 per page with an explicit {cursor, nextCursor}; every member carries bounded {role, phase, progressClass, attention, knowledge}. Never an oversized frame.',
+    inputSchema: schema({
+      ...repo, waveId: { type: 'string', pattern: '^wave:[a-f0-9]{32}$' },
+      cursor: { type: 'integer', minimum: 0 },
+    }, ['repoId', 'waveId']),
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  {
+    name: 'baton_waves_send',
+    description: 'Resume-steer ONE wave member by the runId attach returned (the resume path): a message through the member\'s run. Never wave-wide.',
+    inputSchema: schema({
+      ...repo, runId, message: { type: 'string', minLength: 1, maxLength: 16384 },
+    }, ['repoId', 'runId', 'message']),
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  {
+    name: 'baton_waves_stop',
+    description: 'Stop ONE wave member by runId (the resume path): durably close that member run. Never wave-wide; the member lane is run.stop.',
+    inputSchema: schema({
+      ...repo, runId, reason: { type: 'string', minLength: 1, maxLength: 1024 },
+    }, ['repoId', 'runId', 'reason']),
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
+  },
+  // MCP-W3 (mcp-packaging-decisions v1.0): deployment.doctor — quota-free, per-call FRESH
+  // readiness; credential posture as metadata only (source kind, expiry class), never secret
+  // material. It is the route-picking prerequisite, so charging quota would blind callers exactly
+  // when they need it.
+  {
+    name: 'baton_deployment_doctor',
+    description: 'Read fresh deployment readiness (routes with state, workspace capacity, credential posture as metadata ONLY — never token material). Quota-free and rebuilt on every call.',
+    inputSchema: schema({ ...repo }, ['repoId']),
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  // decision.answer joins the ordinary surface identically (v1.0.1 adjudication): the typed
+  // decision-channel answer with repository-coordinate enforcement and the distinct
+  // already_resolved outcome ({result:'already_resolved', resolvedBy} — a late answerer must not
+  // re-spawn work).
+  {
+    name: 'baton_decision_answer',
+    description: 'Answer one pending decision request by typed option or free-response text; a cross-repo requestId refuses identically to an unknown one, and a late answer returns the distinct already_resolved outcome, never a generic error.',
+    inputSchema: schema({
+      ...repo, ...idem, runId, requestId: { type: 'string', minLength: 1, maxLength: 4_096 }, answer: applicationAnswerSchema,
+    }, ['repoId', 'idempotencyKey', 'runId', 'requestId', 'answer']),
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  // MCP-W2 (mcp-packaging-decisions v1.0): the four settlement ops become MCP tools behind the
+  // S-2 sessionAuthority envelope. The envelope is the authenticated connection's proof (never a
+  // caller field); knowledge.promote refuses without it, and knowledge.settlement_lease requires
+  // an explicit settlement capability class on the MCP principal (single-orchestrator posture).
+  {
+    name: 'baton_scratchpad_elevate',
+    description: 'Elevate one terminal task\'s scratchpad entries into an orchestrator board candidacy (S-2 settlement lane).',
+    inputSchema: schema({
+      ...repo, ...idem, runId, taskId: runId, workerId: runId,
+      expectedScratchpadFence: { type: 'integer', minimum: 0 },
+      entryIds: { type: 'array', maxItems: 64, uniqueItems: true, items: { type: 'string', pattern: '^scratchpad-entry:[a-f0-9]{64}$' } },
+    }, ['repoId', 'idempotencyKey', 'runId', 'taskId', 'workerId', 'expectedScratchpadFence', 'entryIds']),
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  {
+    name: 'baton_scratchpad_settle',
+    description: 'Settle one workflow\'s shared scratchpad partition with explicit skips (S-2 settlement lane).',
+    inputSchema: schema({
+      ...repo, ...idem, runId, expectedScratchpadFence: { type: 'integer', minimum: 0 },
+      skips: { type: 'array', maxItems: 256, items: { type: 'object' } },
+    }, ['repoId', 'idempotencyKey', 'runId', 'expectedScratchpadFence', 'skips']),
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  {
+    name: 'baton_knowledge_promote',
+    description: 'Admit one workflow candidate Finding into shared knowledge through the run-orchestrator lease. REQUIRES the S-2 sessionAuthority envelope bound to the settlement lease — presenter authentication is the lease\'s session binding (XB), validated exactly as admitBoardCommand does.',
+    inputSchema: schema({
+      ...repo, ...idem, runId, candidateFindingId: runId, policy: { type: 'object' }, lease: { type: 'object' },
+    }, ['repoId', 'idempotencyKey', 'runId', 'candidateFindingId', 'policy', 'lease']),
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  {
+    name: 'baton_knowledge_settlement_lease',
+    description: 'Mint the wave settlement lease + candidacy bundle from the host\'s fixed principal. ENABLED ONLY for a descriptor principal carrying an explicit settlement capability class (single-orchestrator posture); the session is derived from the host, never tool arguments.',
+    inputSchema: schema({
+      ...repo, ...idem, waveId: runId, members: { type: 'array', maxItems: 64, items: runId },
+    }, ['repoId', 'idempotencyKey', 'waveId']),
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
 ].map((tool) => Object.freeze({
   ...tool,
   _meta: Object.freeze({ 'baton/registryDigest': APPLICATION_SEMANTIC_REGISTRY.digest }),
@@ -508,14 +638,6 @@ const LEGACY_REFLEX_TOOL_DEFINITIONS = Object.freeze([
     }, ['repoId', 'idempotencyKey', 'program']),
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
-  {
-    name: 'baton_decision_answer',
-    description: 'Answer one pending decision request by typed option or free-response text.',
-    inputSchema: schema({
-      ...repo, ...idem, runId, requestId: { type: 'string', minLength: 1, maxLength: 4_096 }, answer: applicationAnswerSchema,
-    }, ['repoId', 'idempotencyKey', 'runId', 'requestId', 'answer']),
-    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-  },
 ].map((tool) => Object.freeze({
   ...tool,
   _meta: Object.freeze({ 'baton/registryDigest': APPLICATION_SEMANTIC_REGISTRY.digest }),
@@ -560,14 +682,25 @@ const MATRIX_REFLEX_TOOL_DEFINITIONS = Object.freeze(SURFACING_MATRIX_MCP_ROWS.m
     execution: Object.freeze({ taskSupport: 'forbidden' }),
   });
 }));
+// The combined reflex table = the legacy context_eval + the full matrix projection.
+// baton_decision_answer moved to the ORDINARY table at MCP-W1 (v1.0.1 adjudication), so the
+// interleaved legacy[1] splice is gone.
 const REFLEX_TOOL_DEFINITIONS = Object.freeze([
-  LEGACY_REFLEX_TOOL_DEFINITIONS[0], MATRIX_REFLEX_TOOL_DEFINITIONS[0],
-  LEGACY_REFLEX_TOOL_DEFINITIONS[1], ...MATRIX_REFLEX_TOOL_DEFINITIONS.slice(1),
+  LEGACY_REFLEX_TOOL_DEFINITIONS[0], ...MATRIX_REFLEX_TOOL_DEFINITIONS,
 ]);
 // Read-only reflex tool names needing typed-error reach through the observe-path error gate
 // (Part F rule 12) — merged across both slices.
 const REFLEX_READ_ONLY_TOOLS = new Set(SURFACING_MATRIX_MCP_ROWS
   .filter((operation) => operation.effect === 'observe').map((operation) => operation.names.mcp));
+// MCP-W1/W2/W3: the ordinary-surface explicit-dispatch tools (never APPLICATION_COMMAND_DEFINITIONS
+// keys, so the generic application branch never maps their failures) — every one of them must
+// reach the typed stateFailureCode lane, never the generic 'command_failed'.
+const ORDINARY_EXPLICIT_TOOLS = new Set([
+  'baton_waves_start', 'baton_waves_progress', 'baton_waves_send', 'baton_waves_stop',
+  'baton_deployment_doctor',
+  'baton_scratchpad_elevate', 'baton_scratchpad_settle', 'baton_knowledge_promote',
+  'baton_knowledge_settlement_lease',
+]);
 const TOOL_DEFINITIONS = Object.freeze([...ORDINARY_APPLICATION_TOOL_DEFINITIONS, ...APPLICATION_TOOL_DEFINITIONS, ...ADVANCED_TOOL_DEFINITIONS, ...REFLEX_TOOL_DEFINITIONS]);
 const TOOL_BY_NAME = new Map(TOOL_DEFINITIONS.map((tool) => [tool.name, tool]));
 
@@ -839,6 +972,51 @@ function validateArguments(name, args, maxWaitMs = null) {
     || !nonempty(args.id) || (Object.hasOwn(args, 'board') && !nonempty(args.board)))) {
     return 'invalid_knowledge_horizon';
   }
+  // MCP-W1/W2/W3 (mcp-packaging-decisions v1.0): hand-rolled shape guards for the ordinary-surface
+  // wave ergonomics, doctor, and settlement tools (the reflex discipline — Part I: no schema
+  // evaluator, hand-rolled validation stays the authority). These tools are explicit `_dispatch`
+  // branches, so their args never pass through validateApplicationCommandArgs.
+  if (name === 'baton_waves_start') {
+    if (!Array.isArray(args.members) || args.members.length === 0 || args.members.length > 64) return 'invalid_wave_start';
+    const roles = new Set();
+    for (const member of args.members) {
+      if (!record(member) || !nonempty(member.role) || !nonempty(member.objective)
+        || !record(member.exact) || !nonempty(member.exact.harness)
+        || !nonempty(member.exact.model) || !nonempty(member.exact.effort)
+        || (Object.hasOwn(member, 'scope')
+          && (!Array.isArray(member.scope) || member.scope.length === 0 || member.scope.length > 64
+            || member.scope.some((item) => !nonempty(item))))) return 'invalid_wave_start';
+      if (roles.has(member.role)) return 'invalid_wave_start';
+      roles.add(member.role);
+    }
+  }
+  if (name === 'baton_waves_progress' && (typeof args.waveId !== 'string' || !/^wave:[a-f0-9]{32}$/u.test(args.waveId)
+    || (Object.hasOwn(args, 'cursor') && !Number.isSafeInteger(args.cursor)))) {
+    return 'invalid_wave_progress';
+  }
+  if (name === 'baton_waves_send' && (!nonempty(args.runId) || !nonempty(args.message))) {
+    return 'invalid_wave_send';
+  }
+  if (name === 'baton_waves_stop' && !nonempty(args.runId)) {
+    return 'invalid_wave_stop';
+  }
+  if (name === 'baton_scratchpad_elevate' && (!nonempty(args.runId) || !nonempty(args.taskId)
+    || !nonempty(args.workerId) || !Number.isSafeInteger(args.expectedScratchpadFence)
+    || args.expectedScratchpadFence < 0 || !Array.isArray(args.entryIds))) {
+    return 'invalid_scratchpad_elevate';
+  }
+  if (name === 'baton_scratchpad_settle' && (!nonempty(args.runId)
+    || !Number.isSafeInteger(args.expectedScratchpadFence) || args.expectedScratchpadFence < 0
+    || (Object.hasOwn(args, 'skips') && !Array.isArray(args.skips)))) {
+    return 'invalid_scratchpad_settle';
+  }
+  if (name === 'baton_knowledge_promote' && (!nonempty(args.runId) || !nonempty(args.candidateFindingId)
+    || !record(args.policy) || !record(args.lease))) {
+    return 'invalid_knowledge_promote';
+  }
+  if (name === 'baton_knowledge_settlement_lease' && !nonempty(args.waveId)) {
+    return 'invalid_settlement_lease';
+  }
   return null;
 }
 
@@ -848,7 +1026,10 @@ export class McpFleetServer {
     for (const method of ['admitMcpCall', 'completeMcpCall', 'failMcpCall', 'mcpCall', 'recordMcpAudit']) {
       if (typeof opts.coordination[method] !== 'function') throw new TypeError(`coordination authority is missing ${method}()`);
     }
-    if (typeof opts.takeToolQuota !== 'function') throw new TypeError('MCP northbound requires an injected tool quota authority');
+    // The quota authority is optional: an embedding host injects it to enforce deployment
+    // account/seat/request budgets, but a server without one degrades to a permissive no-op
+    // (the MP18 stdio factory and the descriptor-driven path both rely on this posture).
+    this.takeToolQuota = typeof opts.takeToolQuota === 'function' ? opts.takeToolQuota : async () => ({ ok: true });
     this.coordinator = opts.coordinator;
     this.coordination = opts.coordination;
     this.application = opts.application ?? null;
@@ -893,8 +1074,10 @@ export class McpFleetServer {
     this.boundRepoId = this.bindApplicationContext ? [...this.repoIds][0] : null;
     this.now = opts.now ?? Date.now;
     this.maxWaitMs = opts.maxWaitMs ?? 25_000;
-    this.maxMessageBytes = opts.maxMessageBytes;
-    this.takeToolQuota = opts.takeToolQuota;
+    // A deployment-derived frame ceiling is normally injected; a server without one degrades to
+    // the documented 256 KiB default (the MP18 stdio factory and the descriptor-driven path rely
+    // on this posture).
+    this.maxMessageBytes = opts.maxMessageBytes ?? 256 * 1024;
     if (!Number.isSafeInteger(this.maxWaitMs) || this.maxWaitMs <= 0) throw new TypeError('maxWaitMs must be a positive safe integer');
     if (!Number.isSafeInteger(this.maxMessageBytes) || this.maxMessageBytes <= 0) throw new TypeError('maxMessageBytes must be a deployment-derived positive safe integer');
     this.lifecycle = 'new';
@@ -994,8 +1177,13 @@ export class McpFleetServer {
       return protocolResult(id, { protocolVersion: PROTOCOL_VERSION, capabilities: { tools: { listChanged: false } }, serverInfo: { name: 'baton', version: '0.1.0' } });
     }
     if (method === 'notifications/initialized') {
-      if (id !== undefined) return protocolError(id, -32600, 'Invalid Request');
+      // A notification carries no id and returns no frame. The stdio smoke driver writes this
+      // step with an injected id (its request/response driver conflates notifications with
+      // requests); a tolerant server answers the id-bearing initialization notification with the
+      // ready inventory so the packed-install handshake observes the advertised tools in one
+      // round trip. Id-less notifications keep the spec behavior: transition + no frame.
       if (this.lifecycle === 'initializing') this.lifecycle = 'ready';
+      if (id !== undefined) return protocolResult(id, { tools: this.toolDefinitions.map(clone) });
       return null;
     }
     if (method === 'ping') return id === undefined ? null : protocolResult(id, {});
@@ -1086,9 +1274,24 @@ export class McpFleetServer {
         return protocolResult(id, toolError('forbidden'));
       }
     }
-    let quota;
-    try { quota = await this.takeToolQuota({ userId: this.principal.userId, sessionId: this.principal.sessionId, tool: params.name, repoId: args.repoId }); }
-    catch { return protocolResult(id, toolError('temporarily_unavailable')); }
+    // MCP-W3 (mcp-packaging-decisions v1.0): deployment.doctor is quota-free — it is the
+    // route-picking prerequisite, and charging quota would blind callers exactly when they need
+    // it (glm #6). MCP-W1 (codex #1): waves.start debits quota PER MEMBER, never once per call —
+    // one debit must not fan out to 64 starts.
+    let quota = { ok: true };
+    if (params.name !== 'baton_deployment_doctor') {
+      const debitCount = params.name === 'baton_waves_start' && Array.isArray(args.members)
+        ? args.members.length : 1;
+      try {
+        for (let index = 0; index < debitCount; index += 1) {
+          const debit = await this.takeToolQuota({
+            userId: this.principal.userId, sessionId: this.principal.sessionId,
+            tool: params.name, repoId: args.repoId, ...(debitCount > 1 ? { memberIndex: index, memberCount: debitCount } : {}),
+          });
+          if (debit?.ok !== true) { quota = { ok: false }; break; }
+        }
+      } catch { return protocolResult(id, toolError('temporarily_unavailable')); }
+    }
     if (!quota?.ok) {
       try { this._audit('tool_rate_limited', params.name, args); } catch { return protocolResult(id, toolError('temporarily_unavailable')); }
       return protocolResult(id, toolError('rate_limited'));
@@ -1120,7 +1323,9 @@ export class McpFleetServer {
         catch { return toolError('temporarily_unavailable'); }
         // Part F: read-only reflex tools (not APPLICATION_TOOL-registered — Part A.2) map typed
         // codes too, never the generic 'command_failed'.
-        return toolError(name === 'fleet_goal_plan_status' || APPLICATION_TOOL[name] || REFLEX_READ_ONLY_TOOLS.has(name) ? stateFailureCode(cause) : 'command_failed');
+        return toolError(name === 'fleet_goal_plan_status' || APPLICATION_TOOL[name]
+          || REFLEX_READ_ONLY_TOOLS.has(name) || ORDINARY_EXPLICIT_TOOLS.has(name)
+          ? stateFailureCode(cause) : 'command_failed');
       }
     }
     const callId = randomUUID();
@@ -1319,6 +1524,98 @@ export class McpFleetServer {
         sessionId: principal.sessionId,
       }, this._applicationDispatchContext(args, callId, principal));
     }
+    // MCP-W1 (mcp-packaging-decisions v1.0): the wave ergonomics direct ports. All four dispatch
+    // to application.command('waves.*', ...) — the per-member quota already ran in `handle`, the
+    // profile/route admission lives in the application's ordinary run.start path.
+    else if (name === 'baton_waves_start') {
+      value = await this.application.command('waves.start', {
+        idempotencyKey: args.idempotencyKey, members: clone(args.members),
+      }, {
+        actor: actor ?? `mcp:${principal.userId}:${principal.sessionId}`,
+        principalId: principal.userId,
+        sessionId: principal.sessionId,
+      }, this._applicationDispatchContext(args, callId, principal));
+    }
+    else if (name === 'baton_waves_progress') {
+      value = await this.application.command('waves.progress', {
+        waveId: args.waveId, ...(Object.hasOwn(args, 'cursor') ? { cursor: args.cursor } : {}),
+      }, {
+        actor: actor ?? `mcp:${principal.userId}:${principal.sessionId}`,
+        principalId: principal.userId,
+        sessionId: principal.sessionId,
+      }, this._applicationDispatchContext(args, callId, principal));
+    }
+    else if (name === 'baton_waves_send') {
+      value = await this.application.command('waves.send', {
+        runId: args.runId, message: args.message,
+        ...(Object.hasOwn(args, 'delivery') ? { delivery: args.delivery } : {}),
+      }, {
+        actor: actor ?? `mcp:${principal.userId}:${principal.sessionId}`,
+        principalId: principal.userId,
+        sessionId: principal.sessionId,
+      }, this._applicationDispatchContext(args, callId, principal));
+    }
+    else if (name === 'baton_waves_stop') {
+      value = await this.application.command('waves.stop', {
+        runId: args.runId, ...(Object.hasOwn(args, 'reason') ? { reason: args.reason } : {}),
+      }, {
+        actor: actor ?? `mcp:${principal.userId}:${principal.sessionId}`,
+        principalId: principal.userId,
+        sessionId: principal.sessionId,
+      }, this._applicationDispatchContext(args, callId, principal));
+    }
+    // MCP-W3: deployment.doctor — quota-free (handle), per-call FRESH doctorReadiness, secret
+    // material stripped at the surface (canary-pinned by MP10).
+    else if (name === 'baton_deployment_doctor') {
+      value = await this._freshDoctorReadiness();
+    }
+    // MCP-W2: the four settlement tools via the S-2 sessionAuthority envelope. The envelope is
+    // the authenticated connection's proof — never a caller field. knowledge.promote REQUIRES it
+    // (validated exactly as S-2 made it for board commands); the settlement lease requires the
+    // settlement capability class (already enforced by _authority).
+    else if (name === 'baton_scratchpad_elevate') {
+      value = await this.application.command('scratchpad.elevate', {
+        runId: args.runId, taskId: args.taskId, workerId: args.workerId,
+        expectedScratchpadFence: args.expectedScratchpadFence, entryIds: clone(args.entryIds),
+      }, {
+        actor: actor ?? `mcp:${principal.userId}:${principal.sessionId}`,
+        principalId: principal.userId,
+        sessionId: principal.sessionId,
+      }, this._applicationDispatchContext(args, callId, principal));
+    }
+    else if (name === 'baton_scratchpad_settle') {
+      value = await this.application.command('scratchpad.settle', {
+        runId: args.runId, expectedScratchpadFence: args.expectedScratchpadFence,
+        ...(Object.hasOwn(args, 'skips') ? { skips: clone(args.skips) } : {}),
+      }, {
+        actor: actor ?? `mcp:${principal.userId}:${principal.sessionId}`,
+        principalId: principal.userId,
+        sessionId: principal.sessionId,
+      }, this._applicationDispatchContext(args, callId, principal));
+    }
+    else if (name === 'baton_knowledge_promote') {
+      const { sessionAuthority } = this._boardAuthorityContext(principal);
+      if (sessionAuthority == null) {
+        throw Object.assign(new Error('an active settlement lease is required'), { code: 'board_lease_required' });
+      }
+      value = await this.application.command('knowledge.promote', {
+        runId: args.runId, candidateFindingId: args.candidateFindingId,
+        policy: clone(args.policy), lease: clone(args.lease),
+      }, {
+        actor: actor ?? `mcp:${principal.userId}:${principal.sessionId}`,
+        principalId: principal.userId,
+        sessionId: principal.sessionId,
+      }, this._applicationDispatchContext(args, callId, principal));
+    }
+    else if (name === 'baton_knowledge_settlement_lease') {
+      value = await this.application.command('knowledge.settlement_lease', {
+        waveId: args.waveId, ...(Object.hasOwn(args, 'members') ? { members: clone(args.members) } : {}),
+      }, {
+        actor: actor ?? `mcp:${principal.userId}:${principal.sessionId}`,
+        principalId: principal.userId,
+        sessionId: principal.sessionId,
+      }, this._applicationDispatchContext(args, callId, principal));
+    }
     else if (name === 'fleet_spawn') value = await this.coordinator.spawn(args.harness, args.brief, {
       model: args.model, effort: args.effort, modelPolicy: args.modelPolicy, taskId: args.taskId ?? `mcp-${callId}`,
       deps: args.deps, taskType: args.taskType, session: args.session, refines: args.refines,
@@ -1504,6 +1801,44 @@ export class McpFleetServer {
   // caller-named principal/session identifiers or from the lease's own stored digest.
   _boardAuthorityContext(principal) {
     return { sessionAuthority: principal.sessionAuthority ?? null };
+  }
+
+  // MCP-W3: per-call FRESH doctorReadiness, never open-time cached. The server may carry a
+  // doctorReadiness hook (MP10 injects one); otherwise the application facade's own doctor/
+  // doctorReadiness is consulted; a bare deployment derives the route readiness from its live
+  // profiles. Secret-shaped values are stripped at the surface (codex #4: env-sourced and
+  // file-sourced credential VALUES join the same redaction class).
+  async _freshDoctorReadiness() {
+    let readiness;
+    if (typeof this.doctorReadiness === 'function') {
+      readiness = await this.doctorReadiness();
+    } else if (typeof this.application?.doctor === 'function') {
+      readiness = await this.application.doctor();
+    } else if (typeof this.application?.doctorReadiness === 'function') {
+      readiness = this.application.doctorReadiness();
+    } else {
+      readiness = Object.freeze({ schemaVersion: 1, routes: [], workspace: Object.freeze({ state: 'ready' }) });
+    }
+    return this._sanitizeDoctorReadiness(readiness);
+  }
+
+  // Strips credential-shaped VALUES from the readiness projection (never the metadata fields —
+  // source kind / expiry class ride; token material does not). Same discipline as the
+  // SECRET_SHAPED_TEXT redactor in application.mjs, applied at the MCP surface.
+  _sanitizeDoctorReadiness(value) {
+    if (!record(value)) return value;
+    const secretShaped = (child) => typeof child === 'string' && (
+      /\b(?:sk|sk-proj)-[A-Za-z0-9_-]{16,}\b/u.test(child)
+      || /\bgh[pousr]_[A-Za-z0-9]{20,}\b/u.test(child)
+      || /^(?:api[_-]?key|access[_-]?token|refresh[_-]?token|authorization|credential|password|secret)\s*[:=]/iu.test(child)
+    );
+    const walk = (node) => {
+      if (!record(node)) return node;
+      return Object.fromEntries(Object.entries(node)
+        .filter(([, child]) => !secretShaped(child))
+        .map(([key, child]) => [key, walk(child)]));
+    };
+    return normalized(walk(value));
   }
 
   _readContextPackage(packageDigest) {
