@@ -212,6 +212,7 @@ export class MockAdapter {
     const c = { ...config, ...(config.card ?? {}) };
     this._harness = c.harness ?? 'mock';
     this._version = c.version ?? '1.0.0';
+    this._model = c.model ?? 'mock-model';
     this._concurrencyCeiling = c.concurrencyCeiling ?? 4;
     this._maxContext = c.maxContext ?? 128000;
     this._defaultScenario = config.scenario;
@@ -226,6 +227,18 @@ export class MockAdapter {
     return {
       harness: this._harness,
       version: this._version,
+      // The mock adapter declares its exact route capability like every real adapter, so a
+      // profile route {mock, mock-model, low} validates through the application's
+      // selectExactRouteCard gate without a test-side card override. configuredDefault stays
+      // null (an unrequested model resolves to the router's 'default' tuple, exactly as before
+      // the card gained a modelSelection), while `available` names the concrete model so an
+      // explicit route can match. The family stays the router's default (tests record route
+      // wins under `family: 'default'`), never the harness name.
+      modelSelection: {
+        mode: 'exact', configuredDefault: null, available: [this._model],
+        family: 'default', acceptedPrefixes: [], acceptedAliases: [],
+        reasoningEffort: ['low'], serviceTier: null,
+      },
       authPosture: 'api_key',
       concurrencyCeiling: this._concurrencyCeiling,
       maxContext: this._maxContext,

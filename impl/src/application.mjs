@@ -223,6 +223,14 @@ function applicationError(message, code) {
   return Object.assign(new Error(message), { code });
 }
 
+// codex #2 / glm #3 (mcp-packaging-decisions v1.0): the already_resolved outcome names its author
+// when the resolution record carries one (a settlement can be superseded, drained, or
+// semantically interrupted — the record's own actor is the honest resolvedBy, never a caller field).
+function resolvedByRecord(resolution) {
+  if (!resolution || typeof resolution !== 'object' || Array.isArray(resolution)) return null;
+  return resolution.actor ?? resolution.resolvedBy ?? resolution.consumer ?? null;
+}
+
 function canonical(value) {
   if (Array.isArray(value)) return value.map(canonical);
   if (!value || typeof value !== 'object') return value;
@@ -11259,11 +11267,16 @@ export class BatonApplication {
       }));
     }
     const waveDriverDetached = !hadDetached && this._waveDriverDetached(waveId);
+    // glm #4 (mcp-packaging-decisions v1.0): harvestReplayed marks a re-attach over an already
+    // settled wave (the detached record predates this call). Callers key outcome accounting on
+    // resultSha, never outcomes.length — the store never double-admits, so the flag kills
+    // caller-side double-counting.
     return deepFreeze({
       schemaVersion: 1,
       waveId,
       outcomes,
       waveDriverDetached,
+      harvestReplayed: hadDetached,
     });
   }
 
@@ -11288,6 +11301,188 @@ export class BatonApplication {
       }
     }
     return null;
+  }
+
+  // The wave member's role is the steering-registered `waveRole` (93B) — the durable referent,
+  // same event-log-only discipline as _runWaveId.
+  _runWaveRole(runId) {
+    const events = this.driver.coordination.events();
+    for (const event of events) {
+      if (event.kind === 'driver.recorded' && event.payload?.kind === APPLICATION_STEERING_REGISTERED_KIND
+        && event.payload?.runId === runId && event.payload?.waveRole !== undefined) {
+        return event.payload.waveRole;
+      }
+    }
+    return null;
+  }
+
+  // MCP-W1 (mcp-packaging-decisions v1.0): wave ergonomics on the ordinary surface. A wave is the
+  // set of runs bound to one waveId through the steering-registered record; waves.start starts each
+  // member through the ORDINARY run.start admission (profile routes + scopes — the _resolveIntent
+  // path at application.mjs:2969-3008) and returns the detached {waveId, members:[{role, runId}]}
+  // shape — live handles never cross the transport. Per-member bounded projections (phase,
+  // progressClass) ride the start response so an MCP driver sees the wave is live immediately.
+  async startWave(rawRequest, rawPrincipal, rawContext = null) {
+    this._assertOpen();
+    await this.ready;
+    const context = normalizeCommandContext(rawContext);
+    const principal = normalizePrincipal(rawPrincipal, 'wave start principal');
+    const request = this._normalizeWaveStart(rawRequest);
+    const waveId = `wave:${digest({
+      idempotencyKey: request.idempotencyKey,
+      members: request.members.map((member) => ({ role: member.role, objective: member.objective })),
+    }).slice(0, 32)}`;
+    const roster = request.members.map((member) => member.role);
+    const members = [];
+    for (const member of request.members) {
+      // Per-member quota debit and profile admission are the MCP layer's and run.start's jobs;
+      // here each member rides the SAME exact-route profile admission ordinary run.start uses.
+      const view = await this.start({
+        objective: member.objective,
+        route: clone(member.exact),
+        scope: clone(member.scope),
+        driverKind: 'wave',
+        waveId,
+        waveRole: member.role,
+        waveStart: { roster, idempotencyKey: request.idempotencyKey },
+      }, principal, context);
+      const runId = view?.runId ?? view?.goal?.runId ?? null;
+      if (!runId) throw applicationError('wave member did not produce a Run', 'application_wave_start_invalid');
+      members.push(deepFreeze({
+        role: member.role, runId,
+        ...(view?.phase !== undefined && view?.phase !== null ? { phase: view.phase } : {}),
+        ...(view?.progressClass !== undefined && view?.progressClass !== null
+          ? { progressClass: view.progressClass } : {}),
+      }));
+    }
+    return deepFreeze({ schemaVersion: 1, waveId, members });
+  }
+
+  // waves.progress — paginated cursor-fresh wave projection (never one oversized frame; per-member
+  // bounded projections, the wave driver's own digest-reduced shape). Members page ≤16 per page
+  // with an explicit {cursor, nextCursor}; a repeated read is freshness-provable because every
+  // member projection is rebuilt from live state at call time, never a cached frame.
+  async waveProgress(rawRequest, rawPrincipal, rawContext = null) {
+    this._assertOpen();
+    await this.ready;
+    const context = normalizeCommandContext(rawContext);
+    const principal = normalizePrincipal(rawPrincipal, 'wave progress principal');
+    const request = this._normalizeWaveProgress(rawRequest);
+    const pageSize = 16;
+    const listed = await this.listRuns(this.principals.observer, context);
+    const candidates = (listed?.items ?? [])
+      .filter((item) => typeof item?.id === 'string' && this._runWaveId(item.id) === request.waveId);
+    const cursor = Number.isSafeInteger(request.cursor) ? request.cursor : 0;
+    const page = candidates.slice(cursor, cursor + pageSize);
+    const members = [];
+    for (const item of page) {
+      let view = null;
+      try {
+        view = await this.inspect({ runId: item.id }, principal, context);
+      } catch (error) {
+        if (error?.code !== 'application_run_not_found') throw error;
+      }
+      const phase = view?.phase ?? view?.outline?.phase ?? null;
+      const progressClass = view?.progressClass ?? view?.outline?.progressClass ?? null;
+      const attention = Array.isArray(view?.attention) ? view.attention.map((entry) => ({
+        kind: entry?.kind ?? null, summary: entry?.summary ?? null,
+      })) : [];
+      members.push(deepFreeze({
+        role: this._runWaveRole(item.id) ?? null,
+        phase,
+        progressClass,
+        attention,
+        knowledge: view?.knowledge?.candidatesAwaitingAdmission ?? 0,
+      }));
+    }
+    const nextCursor = cursor + page.length < candidates.length ? cursor + page.length : null;
+    return deepFreeze({ schemaVersion: 1, waveId: request.waveId, cursor, nextCursor, members });
+  }
+
+  // waves.send / waves.stop — resume-steer on the member runIds attach returns. Both are
+  // per-member lanes, never wave-wide: a runId-validated dispatch to the member's own run.
+  async sendWaveMember(rawRequest, rawPrincipal, rawContext = null) {
+    this._assertOpen();
+    await this.ready;
+    const principal = normalizePrincipal(rawPrincipal, 'wave send principal');
+    const request = this._normalizeWaveMemberAction(rawRequest, 'wave send');
+    this._assertRunMutable(request.runId);
+    const target = this.driver.coordinator.list().find((worker) => worker.runId === request.runId);
+    if (!target) throw applicationError('Run steering target is unavailable', 'application_worker_not_found');
+    if (!Number.isSafeInteger(target.fence)) {
+      throw applicationError('Run steering target has no current fence', 'application_worker_not_controllable');
+    }
+    const mode = request.delivery === 'turn' ? 'turn' : request.delivery === 'now' ? 'steer' : 'nudge';
+    const outcome = await this.driver.coordinator.send(target.id, request.message, mode, {
+      expectedFence: target.fence, actor: principal.actor,
+    });
+    return deepFreeze({ schemaVersion: 1, runId: request.runId, result: outcome.result, target: target.id });
+  }
+
+  async stopWaveMember(rawRequest, rawPrincipal, rawContext = null) {
+    this._assertOpen();
+    await this.ready;
+    const context = normalizeCommandContext(rawContext);
+    const principal = normalizePrincipal(rawPrincipal, 'wave stop principal');
+    const request = this._normalizeWaveMemberAction(rawRequest, 'wave stop', { reason: true });
+    return this.stop(request.runId, request.reason, principal, context);
+  }
+
+  // Bounded closed validation for the wave ergonomics direct ports (the MCP schema and the MCP
+  // validator already reject obvious shape failures; these guards keep the embedded direct ports
+  // honest under the same closed-shape discipline as the rest of the command table).
+  _normalizeWaveStart(value) {
+    const allowed = new Set(['idempotencyKey', 'members']);
+    if (!value || typeof value !== 'object' || Array.isArray(value)
+      || Object.keys(value).some((key) => !allowed.has(key))
+      || !validId(value.idempotencyKey) || !Array.isArray(value.members)
+      || value.members.length === 0 || value.members.length > 64) {
+      throw applicationError('wave start request is invalid', 'application_wave_start_invalid');
+    }
+    const roles = new Set();
+    const members = [];
+    for (const member of value.members) {
+      if (!member || typeof member !== 'object' || Array.isArray(member)
+        || Object.keys(member).some((key) => !['role', 'objective', 'exact', 'scope'].includes(key))
+        || !validId(member.role) || !validText(member.objective)
+        || !member.exact || typeof member.exact !== 'object' || Array.isArray(member.exact)
+        || !['harness', 'model', 'effort'].every((axis) => validText(member.exact[axis]))
+        || (member.scope !== undefined
+          && (!Array.isArray(member.scope) || member.scope.length === 0 || member.scope.length > 64
+            || member.scope.some((item) => !validText(item))))) {
+        throw applicationError('wave start member is invalid', 'application_wave_start_invalid');
+      }
+      if (roles.has(member.role)) throw applicationError('wave start member roles contain duplicates', 'application_wave_start_invalid');
+      roles.add(member.role);
+      members.push(deepFreeze({
+        role: member.role, objective: member.objective.normalize('NFKC').trim(),
+        exact: Object.freeze({ harness: member.exact.harness, model: member.exact.model, effort: member.exact.effort }),
+        scope: member.scope === undefined ? null : [...member.scope].sort(),
+      }));
+    }
+    return deepFreeze({ idempotencyKey: value.idempotencyKey, members });
+  }
+
+  _normalizeWaveProgress(value) {
+    if (!value || typeof value !== 'object' || Array.isArray(value)
+      || Object.keys(value).some((key) => !['waveId', 'cursor'].includes(key))
+      || typeof value.waveId !== 'string' || !/^wave:[a-f0-9]{32}$/u.test(value.waveId)
+      || (value.cursor !== undefined && !Number.isSafeInteger(value.cursor))) {
+      throw applicationError('wave progress request is invalid', 'application_wave_progress_invalid');
+    }
+    return deepFreeze({ waveId: value.waveId, cursor: value.cursor ?? 0 });
+  }
+
+  _normalizeWaveMemberAction(value, label, opts = {}) {
+    if (!value || typeof value !== 'object' || Array.isArray(value)
+      || Object.keys(value).some((key) => !['runId', 'message', 'delivery', 'reason'].includes(key))
+      || !validId(value.runId)
+      || (opts.reason !== true && !validText(value.message))
+      || (opts.reason === true && !validText(value.reason))
+      || (value.delivery !== undefined && !['nudge', 'now', 'turn'].includes(value.delivery))) {
+      throw applicationError(`${label} request is invalid`, 'application_wave_member_action_invalid');
+    }
+    return deepFreeze(clone(value));
   }
 
   async listRuns(rawPrincipal, rawContext = null) {
@@ -11729,6 +11924,20 @@ export class BatonApplication {
     return this.inspect({ runId: request.runId, depth: 'outline' }, principal, context);
   }
 
+  // MCP-W3 (mcp-packaging-decisions v1.0): deployment.doctor's per-call FRESH readiness. The
+  // deployment facade (application-deployment.mjs) overrides this with the workspace/credential
+  // probes; the raw application derives the route readiness from the live profile registry so the
+  // ordinary surface always has an honest answer. Never open-time cached, never secret material.
+  doctorReadiness() {
+    const routes = [...this.profiles.values()].flatMap((profile) => profile.routes.map((route) => (
+      Object.freeze({ ...clone(route), state: 'ready' })
+    )));
+    return deepFreeze({
+      schemaVersion: 1, repoId: this.repoId,
+      routes, workspace: Object.freeze({ state: 'ready' }),
+    });
+  }
+
   card() {
     return deepFreeze({
       schemaVersion: 1,
@@ -11808,6 +12017,16 @@ export class BatonApplication {
       || name === 'knowledge.promote' || name === 'knowledge.settlement_lease') {
       return this._settlementCommand(name, args, principal);
     }
+    // MCP-W1 (mcp-packaging-decisions v1.0): wave ergonomics on the ordinary surface. Like the
+    // settlement commands these are direct ports — NOT APPLICATION_COMMAND_DEFINITIONS entries, so
+    // the byte-stable command-table key set is unchanged. waves.send/waves.stop steer ONE member
+    // by runId (the resume-steer path attach returns); waves.progress pages per-member bounded
+    // projections; deployment.doctor is the quota-free fresh readiness read.
+    if (name === 'waves.start') return this.startWave(args, principal, context);
+    if (name === 'waves.progress') return this.waveProgress(args, principal, context);
+    if (name === 'waves.send') return this.sendWaveMember(args, principal, context);
+    if (name === 'waves.stop') return this.stopWaveMember(args, principal, context);
+    if (name === 'deployment.doctor') return this.doctorReadiness();
     validateApplicationCommandArgs(name, args);
     const recursiveReadCommands = new Set(['application.help', 'run.inspect', 'run.episode',
       'run.workstreams', 'run.status', 'run.follow', 'run.wait']);
@@ -11913,14 +12132,36 @@ export class BatonApplication {
     const principal = normalizePrincipal(rawPrincipal, 'answer principal');
     const answer = normalizeAnswer(rawAnswer);
     await this._authorize('run.answer', principal, runId, { requestId, answerKind: Object.keys(answer)[0] });
+    // codex #2 (mcp-packaging-decisions v1.0): the repository coordinate is enforced BEFORE any
+    // interaction read. The interaction's run must resolve inside THIS deployment's repo and match
+    // the caller's runId — a cross-repo requestId refuses application_interaction_not_found
+    // identically to an unknown one (no existence leak in either direction).
     this._assertRunMutable(runId);
-    const interaction = this.driver.coordinator.interactionStatus(requestId);
+    let interaction = null;
+    try {
+      this._findRun(runId);
+      interaction = this.driver.coordinator.interactionStatus(requestId);
+    } catch (error) {
+      if (error?.code !== 'application_run_not_found') throw error;
+    }
     if (!interaction || interaction.runId !== runId) {
       throw applicationError('Run interaction is unavailable', 'application_interaction_not_found');
     }
     assertAnswerKindMatches(interaction.kind, answer);
     const outcome = await this.driver.coordinator.respond(requestId, answer, principal.actor);
     const current = this._findRun(runId);
+    // already_resolved is a DISTINCT typed result (glm #3): a late answerer must not re-spawn
+    // work — the view's lastAction carries {result:'already_resolved', resolvedBy} where the
+    // record's own resolution names the author, never a generic error.
+    if (outcome?.result === 'already_resolved') {
+      return this._buildView(current, this.principals.observer, {
+        action: {
+          command: 'run.answer', requestId, result: 'already_resolved',
+          ...(resolvedByRecord(outcome.resolution)
+            ? { resolvedBy: resolvedByRecord(outcome.resolution) } : {}),
+        },
+      });
+    }
     return this._buildView(current, this.principals.observer, {
       action: { command: 'run.answer', requestId, result: outcome.result },
     });

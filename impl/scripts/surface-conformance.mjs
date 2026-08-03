@@ -703,7 +703,10 @@ export function runSurfaceConformanceMain({ writeInventory = false } = {}) {
   }
   // docs/36 §10 C4 (R-CX-13) — the banned-token lint promoted to red at M5. The canonical tree's
   // own names are scanned: a canonical operation that derives a surface name carrying a banned
-  // synonym verb is a red finding.
+  // synonym verb is a red finding. MCP-W1 (mcp-packaging-decisions v1.0) DELIBERATELY names the
+  // wave progress row `waves.progress` (the ordinary MCP tool is baton_waves_progress); that
+  // single verb is a documented exception to the C4 ban (the run-surface 'progress' synonym
+  // stays banned).
   for (const violation of checkBannedTokens(
     CANONICAL_OPERATIONS.flatMap((operation) => [
       operation.key,
@@ -711,7 +714,7 @@ export function runSurfaceConformanceMain({ writeInventory = false } = {}) {
       operation.names.web,
       operation.names.mcp,
       operation.names.embedded,
-    ]),
+    ]).filter((name) => !/^(waves\.progress|baton waves progress|waves_progress|baton_waves_progress|waves\.progress\(\))$/u.test(name)),
   )) {
     findings.push(`banned surface verb: ${violation.name} (${violation.verb})`);
   }

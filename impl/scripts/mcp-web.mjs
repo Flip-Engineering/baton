@@ -7,11 +7,19 @@ import { join } from 'node:path';
 import {
   CoordinationStore, createBatonWebMcpServer, serveMcpStdio,
 } from '../src/index.mjs';
+import { createMcpServerFromDescriptorPath } from '../src/mcp-descriptor.mjs';
 
+// PKG-1: `baton-mcp-web <descriptor.json>` accepts the declarative descriptor like the stdio
+// entry; without an argument it keeps the legacy web-bridge factory (back-compat).
+const descriptorPath = process.argv[2];
 const stateRoot = mkdtempSync(join(tmpdir(), 'baton-kimi-orchestrator-mcp-'));
 try {
-  const coordination = new CoordinationStore(join(stateRoot, 'coordination'));
-  const server = await createBatonWebMcpServer({ coordination, cwd: process.cwd() });
+  const server = descriptorPath
+    ? await createMcpServerFromDescriptorPath(descriptorPath)
+    : await (async () => {
+      const coordination = new CoordinationStore(join(stateRoot, 'coordination'));
+      return createBatonWebMcpServer({ coordination, cwd: process.cwd() });
+    })();
   const stopInput = () => { if (!process.stdin.destroyed) process.stdin.destroy(); };
   process.on('SIGINT', stopInput);
   process.on('SIGTERM', stopInput);

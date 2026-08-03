@@ -12,10 +12,22 @@
     "baton-mcp": "scripts/mcp-stdio.mjs",
     "baton-mcp-web": "scripts/mcp-web.mjs"
   },
+  "exports": {
+    ".": "./src/index.mjs",
+    "./impl": "./src/index.mjs",
+    "./src/*": "./src/*"
+  },
+  "files": [
+    "src",
+    "scripts",
+    "MCP.md",
+    "CLI.md"
+  ],
   "scripts": {
     "test": "node scripts/run-suite.mjs",
     "test:watch": "node scripts/run-suite.mjs --watch",
-    "demo": "node demo.mjs"
+    "demo": "node demo.mjs",
+    "postinstall": "node scripts/postinstall.mjs"
   },
   "dependencies": {
     "@ast-grep/napi": "0.44.1"

@@ -86,10 +86,14 @@ test('UA5/MN1: an application-backed MCP server exposes the semantic ordinary su
   const { server } = setup({ application, surface: 'application' }); await initialized(server);
   const response = await request(server, 2, 'tools/list', {});
   // M4b: the canonical grammar tools render beside the retained legacy tools (docs/36 §9 M4).
+  // MCP-W1/W2 (v1.0.1): waves.*/doctor/decision.answer/settlement join the ordinary surface.
   assert.deepEqual(response.result.tools.map((tool) => tool.name), [
     'baton_help', 'baton_runs', 'baton_run_start', 'baton_run_inspect', 'baton_run_episode',
     'baton_run_workstreams', 'baton_workstream_notify', 'baton_workstream_stop',
     'baton_run_act', 'baton_run_stop', 'baton_waves_attach',
+    'baton_waves_start', 'baton_waves_progress', 'baton_waves_send', 'baton_waves_stop',
+    'baton_deployment_doctor', 'baton_decision_answer',
+    'baton_scratchpad_elevate', 'baton_scratchpad_settle', 'baton_knowledge_promote', 'baton_knowledge_settlement_lease',
     'baton_run_do', 'baton_run_view', 'baton_run_member_view', 'baton_run_member_send',
     'baton_run_member_stop', 'baton_application_help',
   ]);
@@ -105,12 +109,12 @@ test('UA5/MN1: an application-backed MCP server exposes the semantic ordinary su
   // names verbatim, taskSupport forbidden, additionalProperties false, and _meta present on the
   // reflex tools like the ordinary table.
   const reflexNames = [
-    'baton_context_eval', 'baton_decision_list', 'baton_decision_answer',
+    'baton_context_eval', 'baton_decision_list',
     'baton_board_post', 'baton_board_retitle', 'baton_board_reorder', 'baton_board_close', 'baton_board_drop', 'baton_board_read',
     'baton_package_admit', 'baton_package_attach', 'baton_package_read',
     'baton_repl_cite', 'baton_knowledge_recall', 'baton_knowledge_horizon',
   ];
-  assert.equal(combined.result.tools.length, 69); // 54 ordinary/advanced (fleet_run_steer deleted at M5) + 15 S-3 reflex
+  assert.equal(combined.result.tools.length, 78); // 64 ordinary/advanced + 14 S-3 reflex (decision.answer + settlement rows are ordinary at MCP-W1/W2)
   assert.deepEqual(combined.result.tools.slice(0, response.result.tools.length).map((tool) => tool.name), response.result.tools.map((tool) => tool.name), 'the combined inventory preserves the ordinary application surface verbatim as its prefix');
   assert.deepEqual(combined.result.tools.map((tool) => tool.name).filter((name) => reflexNames.includes(name)), reflexNames);
   assert.equal(combined.result.tools.every((tool) => tool.inputSchema.additionalProperties === false), true);

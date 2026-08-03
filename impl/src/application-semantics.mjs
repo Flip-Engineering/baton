@@ -1174,11 +1174,14 @@ const boardItemCoordinates = {
 
 // S-3 is a registry delta, not a second inventory. Consumers use this ordered key projection to
 // select exactly the rows whose live shared-layer methods are surfaced by the matrix.
+// MCP-W2 (mcp-packaging-decisions v1.0): scratchpad.elevate / scratchpad.settle /
+// knowledge.promote leave the REFLEX matrix — they are the ordinary-surface settlement tools
+// (their MCP tools live in the ordinary table), so the matrix projection no longer derives them.
 export const SURFACING_MATRIX_KEYS = Object.freeze([
   'run.scratchpad', 'decision.list', 'board.read', 'board.post', 'board.retitle',
-  'board.reorder', 'board.close', 'board.drop', 'scratchpad.elevate', 'scratchpad.settle',
+  'board.reorder', 'board.close', 'board.drop',
   'package.admit', 'package.attach', 'package.read', 'repl.manifest', 'repl.binding',
-  'repl.cite', 'knowledge.promote', 'knowledge.recall', 'knowledge.horizon',
+  'repl.cite', 'knowledge.recall', 'knowledge.horizon',
 ]);
 const SURFACING_MATRIX_AUTHORITY = Object.freeze({
   'run.scratchpad': 'viewer-scoped worker and shared slices',
@@ -1443,7 +1446,7 @@ const CANONICAL_OPERATION_SPECS = [
     liveMethod: 'contextPackageBranch + projectContextPackageBranch',
   }],
   ['scratchpad.elevate', {
-    profile: 'kernel', surfaces: ['embedded'], effect: 'control', capabilities: ['control'],
+    profile: 'kernel', surfaces: ['embedded', 'mcp'], effect: 'control', capabilities: ['control'],
     outputView: 'outline', helpTopic: 'run', inputSchema: objectSchema({
       runId: id, taskId: id, workerId: id,
       expectedScratchpadFence: { type: 'integer', minimum: 0 },
@@ -1454,7 +1457,7 @@ const CANONICAL_OPERATION_SPECS = [
     serverDerived: ['actor'], liveMethod: 'elevateTaskScratchpad',
   }],
   ['scratchpad.settle', {
-    profile: 'kernel', surfaces: ['embedded'], effect: 'control', capabilities: ['control'],
+    profile: 'kernel', surfaces: ['embedded', 'mcp'], effect: 'control', capabilities: ['control'],
     outputView: 'outline', helpTopic: 'run', inputSchema: objectSchema({
       runId: id, expectedScratchpadFence: { type: 'integer', minimum: 0 },
       skips: { type: 'array', maxItems: 256, items: { type: 'object' } },
@@ -1487,7 +1490,7 @@ const CANONICAL_OPERATION_SPECS = [
     authorityFields: ['runId'], serverDerived: ['viewer'], liveMethod: 'resolveReplCitation',
   }],
   ['knowledge.promote', {
-    profile: 'kernel', surfaces: ['embedded'], effect: 'control', capabilities: ['control'],
+    profile: 'kernel', surfaces: ['embedded', 'mcp'], effect: 'control', capabilities: ['control'],
     outputView: 'outline', helpTopic: 'run', inputSchema: objectSchema({
       runId: id, candidateFindingId: id, policy: { type: 'object' }, lease: { type: 'object' },
     }, ['runId', 'candidateFindingId', 'policy', 'lease']),
@@ -1498,7 +1501,7 @@ const CANONICAL_OPERATION_SPECS = [
   // sweep prior expired leases, and candidate each elevated note. The session is server-derived
   // from the calling principal; the row is embedded-only like its settlement siblings.
   ['knowledge.settlement_lease', {
-    profile: 'kernel', surfaces: ['embedded'], effect: 'control', capabilities: ['control'],
+    profile: 'kernel', surfaces: ['embedded', 'mcp'], effect: 'control', capabilities: ['control'],
     outputView: 'outline', helpTopic: 'run', inputSchema: objectSchema({
       waveId: id, members: { type: 'array', maxItems: 64, items: id },
     }, ['waveId']),
@@ -1543,6 +1546,61 @@ const CANONICAL_OPERATION_SPECS = [
       repoRoot: { type: 'string', minLength: 1, maxLength: 4096 },
       mintWaveDetached: { type: 'boolean', const: true },
     }, ['waveId', 'members']),
+  }],
+  // MCP-W1 (mcp-packaging-decisions v1.0): wave ergonomics on the ordinary surface. Each new row
+  // rides an ordinary application command (waves.start detached {waveId, members:[{role, runId}]}
+  // with per-MEMBER quota + profile-route admission; waves.progress paginated ≤16/page cursor+
+  // nextCursor, per-member bounded — never application_run_view_oversize; waves.send/waves.stop
+  // steer/stop ONE member by runId). MCP-W3: deployment.doctor is the quota-free per-call FRESH
+  // readiness read, credential posture as metadata only (never token material).
+  ['waves.start', {
+    profile: 'ordinary', surfaces: ['embedded', 'mcp', 'cli'], effect: 'control',
+    capabilities: ['control', 'observe'], outputView: 'outline', helpTopic: 'run',
+    example: 'baton waves start --members JSON',
+    inputSchema: objectSchema({
+      idempotencyKey: id,
+      members: {
+        type: 'array', minItems: 1, maxItems: 64,
+        items: objectSchema({
+          role: id,
+          objective: { type: 'string', minLength: 1, maxLength: 4096 },
+          exact: objectSchema({ harness: { type: 'string', minLength: 1 }, model: { type: 'string', minLength: 1 }, effort: { type: 'string', minLength: 1 } }, ['harness', 'model', 'effort']),
+          scope: { type: 'array', minItems: 1, maxItems: 64, uniqueItems: true, items: { type: 'string', minLength: 1, maxLength: 4096 } },
+        }, ['role', 'objective', 'exact']),
+      },
+    }, ['idempotencyKey', 'members']),
+  }],
+  ['waves.progress', {
+    profile: 'ordinary', surfaces: ['embedded', 'mcp', 'cli'], effect: 'observe',
+    capabilities: ['observe'], outputView: 'outline', helpTopic: 'run',
+    example: 'baton waves progress WAVE_ID --cursor 0',
+    inputSchema: objectSchema({
+      waveId: { type: 'string', pattern: '^wave:[a-f0-9]{32}$' },
+      cursor: { type: 'integer', minimum: 0 },
+    }, ['waveId']),
+  }],
+  ['waves.send', {
+    profile: 'ordinary', surfaces: ['embedded', 'mcp', 'cli'], effect: 'control',
+    capabilities: ['control', 'observe'], outputView: 'outline', helpTopic: 'run',
+    example: 'baton waves send RUN_ID --message TEXT',
+    inputSchema: objectSchema({
+      runId: id, message: { type: 'string', minLength: 1, maxLength: 16384 },
+      delivery: { type: 'string', enum: ['nudge', 'now', 'turn'] },
+    }, ['runId', 'message']),
+  }],
+  ['waves.stop', {
+    profile: 'ordinary', surfaces: ['embedded', 'mcp', 'cli'], effect: 'control',
+    capabilities: ['emergency_stop', 'observe'], outputView: 'outline', helpTopic: 'run',
+    example: 'baton waves stop RUN_ID --reason TEXT', destructive: true,
+    inputSchema: objectSchema({
+      runId: id, reason: { type: 'string', minLength: 1, maxLength: 1024 },
+    }, ['runId']),
+  }],
+  ['deployment.doctor', {
+    profile: 'ordinary', surfaces: ['embedded', 'mcp', 'cli'], effect: 'deployment_read',
+    capabilities: ['observe'], outputView: 'index', helpTopic: 'connection',
+    example: 'baton doctor --check',
+    inputSchema: objectSchema({ depth: { type: 'string', enum: ['outline', 'connection', 'profile', 'evidence'] }, check: { type: 'boolean' } }, []),
   }],
   ['application.help', {
     op: 'application.help', effect: 'help_read', capabilities: ['observe'], outputView: 'outline',

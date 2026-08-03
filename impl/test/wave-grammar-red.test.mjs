@@ -223,19 +223,25 @@ test('WG-1: waves.attach registry row (exact key/profile/surfaces/schema) + deri
     (error) => /waves attach|plural/iu.test(String(error?.message ?? error)),
   );
 
-  // Source-scan: no waves.start canonical row.
-  assert.equal(
-    APPLICATION_SEMANTIC_REGISTRY.canonicalOperations
-      .some((entry) => entry.key === 'waves.start'),
-    false,
-    'waves.start must NOT be a canonical operation (embedding-only preset sugar)',
-  );
+  // MCP-W1 fold (mcp-packaging-decisions v1.0): waves.start/progress/send/stop join the ordinary
+  // surface as canonical operations (baton_waves_start etc.). waves.start is the detached
+  // start; waves.progress pages ≤16/member with cursors; waves.send/stop steer ONE member by
+  // runId. The embedding-only preset-sugar posture is retired deliberately.
+  for (const key of ['waves.start', 'waves.progress', 'waves.send', 'waves.stop']) {
+    const row = APPLICATION_SEMANTIC_REGISTRY.canonicalOperations.find((entry) => entry.key === key);
+    assert.ok(row, `${key} must be a canonical operation (MCP-W1)`);
+    assert.equal(row.profile, 'ordinary');
+    assert.ok(row.surfaces.includes('mcp'), `${key} surfaces carry mcp`);
+    assert.deepEqual(row.names, deriveSurfaceNames(key));
+  }
   const semanticsSrc = readFileSync(
     fileURLToPath(new URL('../src/application-semantics.mjs', import.meta.url)),
     'utf8',
   );
-  assert.equal(/\[\s*'waves\.start'\s*,/u.test(semanticsSrc), false,
-    'no waves.start row in CANONICAL_OPERATION_SPECS source');
+  for (const key of ['waves.start', 'waves.progress', 'waves.send', 'waves.stop']) {
+    assert.equal(new RegExp(`\\[\\s*'${key.replaceAll('.', '\\.')}'\\s*,`, 'u').test(semanticsSrc), true,
+      `the ${key} row lands in CANONICAL_OPERATION_SPECS source`);
+  }
 });
 
 // ── WG-2: atomic transport attach-and-harvest ────────────────────────────────
@@ -551,10 +557,11 @@ test('WG-5: two-commit landing discipline holds (digest change confined; suite m
   assert.match(self, /Commit 1 \(registry\)/u);
   assert.match(self, /Commit 2 \(transports\)/u);
 
-  // Authority digest includes waves.attach exactly once; waves.start is absent.
+  // MCP-W1 fold: waves.attach plus the wave ergonomics rows each appear exactly once; waves.start
+  // is now an ordinary canonical operation (detached start), no longer embedding-only sugar.
   const keys = APPLICATION_SEMANTIC_REGISTRY.canonicalOperations.map((entry) => entry.key);
   assert.equal(keys.filter((key) => key === 'waves.attach').length, 1);
-  assert.equal(keys.includes('waves.start'), false);
+  assert.equal(keys.filter((key) => key === 'waves.start').length, 1);
   assert.equal(typeof APPLICATION_SEMANTIC_REGISTRY.authorityDigest, 'string');
   assert.equal(APPLICATION_SEMANTIC_REGISTRY.authorityDigest.length, 64);
 

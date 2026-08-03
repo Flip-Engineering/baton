@@ -21,11 +21,10 @@ import { RuntimeIsolation } from './runtime-isolation.mjs';
 import { CoordinationStore } from './coordination-store.mjs';
 import { routeTupleKey } from './route-tuple.mjs';
 import { CapabilityRegistry } from './capability-registry.mjs';
-import { AtlasRepresentationProducer } from './atlas-representation-producer.mjs';
-import { AtlasCodeIndex } from './atlas-index.mjs';
-import { AtlasStructuralDelta } from './atlas-structural.mjs';
-import { AtlasStructuralEvidence } from './atlas-structural-evidence.mjs';
-import { CartographerQuartermaster } from './cartographer-quartermaster.mjs';
+import {
+  AtlasRepresentationProducer, AtlasCodeIndex, AtlasStructuralDelta,
+  AtlasStructuralEvidence, CartographerQuartermaster,
+} from './native-modules.mjs';
 import { AdvisoryFeedRegistry } from './advisory-feed-registry.mjs';
 import { ProviderPollSupervisor } from './provider-poll-supervisor.mjs';
 import { ProviderProcessingSupervisor } from './provider-processing-supervisor.mjs';
@@ -170,6 +169,9 @@ export { WebSessionStore, WebSessionIntegrityError, WEB_SESSION_COOKIE_NAME } fr
 export { OidcBrowserFlow, OidcFlowError, OIDC_FLOW_COOKIE_NAME, WEB_CSRF_COOKIE_NAME, csrfCookie } from './web-oidc.mjs';
 export { operatorAsset } from './web-operator.mjs';
 export { McpFleetServer, serveMcpStdio } from './mcp-northbound.mjs';
+export {
+  loadMcpDescriptor, createMcpServerFromDescriptor, createMcpServerFromDescriptorPath,
+} from './mcp-descriptor.mjs';
 export {
   BatonWebApplicationFacade, connectBatonWebApplication, createBatonWebMcpServer,
   kimiBatonAcpMcpServer, kimiBatonMcpEntry,
