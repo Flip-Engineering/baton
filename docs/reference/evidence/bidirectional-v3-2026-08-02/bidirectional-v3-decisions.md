@@ -1,3 +1,32 @@
+# Bidirectional v3 epic contract — the collaboration spine (v1.0, worker-validated)
+
+(v1.0 fold: downstream worker feedback (docs/reference/evidence/mcp-packaging-2026-08-02/
+feedback-worker.md, feedback-frontier.md — glm 390 lines, deepseek 145 lines) reviewed the
+post-#62/#63/#64 integrated experience and converged with the orchestrator-side evaluation.
+Their findings sharpen this epic's scope verbatim; the v0.9 seed follows.)
+
+**Worker-validated priorities:**
+1. **BD3-A is the #1 leverage item on the board** ("I re-derive the entire world on every
+   task... If I could read admitted Findings scoped to my pathScope, I would stop
+   re-discovering settled ground and start building on it. Highest value by a wide margin").
+   Ship order within BD3-A: (a) KG Findings read first, (b) shared-partition sibling reads,
+   (c) candidacy board reads (the habit-loop closer: "your note became finding X").
+2. **BD3-C absorbs the delivery push** (their runner-up, #79): attention items addressed
+   to a worker (scratchpad_write_failed, the sanitized gate verdict) must be PUSHED to its
+   own next-turn context — "the signal is recorded; the worker is not pushed it" is the
+   shared root of two gaps. One delivery fix closes both.
+3. **The frontier synthesis:** boards' worker half (board.claim/report, #78) is the
+   shared-task-list + handoff substrate #74 needs; and a driver-minted REPL binding
+   carrying the candidate set for the next downstream run is REPL's load-bearing use
+   (#69 comment) — BD3-B's context-pack mint rides exactly that shape.
+4. **TG3's window refinement** (#80, cycle-latency, noted as a boundary condition for
+   BD3-D's wake semantics): a slow next-turn start must not expire a healthy cycle.
+5. **Candidacy review in-band:** knowledge.candidatesAwaitingAdmission should ride the
+   orchestrator's attention stream (BD3-D's candidacy_review wake reason) — promotion as
+   a step of an existing review, not a ritual to remember.
+
+---
+
 # Bidirectional v3 epic contract — the collaboration spine (v0.9, pre-red-team)
 
 (Seed: operator sequencing 2026-08-02 — "bidirectional layers and flows need to be solidly
