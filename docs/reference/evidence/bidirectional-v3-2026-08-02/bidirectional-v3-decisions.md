@@ -39,6 +39,41 @@ class — they bound spend, not progress.
 
 ---
 
+## The agent-to-agent layers matrix (v1.1, 2026-08-03 — handling / gating / directionality / completeness)
+
+The gating story is uniform and proven: hub admission with identity bound by the
+authenticated stream (never caller-named), closed shapes, typed refusals, content
+digests for idempotency, wrapProse/UNTRUSTED framing for anything crossing INTO an
+agent's context, viewer-scope re-derived for reads (never caller-named), authority
+tiers worker < orchestrator < operator/policy. The directionality law that emerges:
+**up is receipt-heavy** (everything the system learns from agents is evidence), **down
+is framing-heavy** (everything agents consume is wrapped as data, never instruction),
+**lateral is mediated** (orchestrator-visible, never free).
+
+| Layer | Handling | Gating | Direction | Completeness |
+|---|---|---|---|---|
+| Scratchpad writes | wire line → hub admission, worker identity stream-bound | closed kinds, typed refusals, #62 visibility | up only | **A−** (write side complete; reads are BD3-A) |
+| Shared partition | orchestrator-curated elevation + settle reap | steering binding required, dispositions receipted | worker → orchestrator → shared | **B−** (workflow-common workers can't read it — BD3-A) |
+| Decision requests | one-pending admission, deadlineAt, onDecision once-per-record | optionIds/free-text validated, already_resolved typed | up + answer down | **A** (proven live; MCP semantics in flight) |
+| Steering (send/nudge/steer) | run lanes, provenance-marked post-TG3 | policy/driver actors, bounded text | down only | **B+** (steering complete; no typed inform/query, no receipts — BD3-C) |
+| Attention | kinds + progressClass + requiredAction | server-derived, sanitized | system → orchestrator | **B** (orchestration-complete; not pushed to workers #79; no unified wake #71/BD3-D) |
+| Boards (S-2) | sessionAuthority envelope, CAS in the append | proof-of-principal, fence CAS | orchestrator/system | **C+** (orchestrator half real; worker claim/report ghost #78) |
+| KG | ambient serving push, admission via orchestrator gate | promotionActor + session-bound lease | system → workers (push); workers → system (candidacy) | **C** (no worker pull #68/BD3-A; habit loop open #70) |
+| REPL objects | manifest/binding/cite, durable cells | settled-only resolution, worker-scoped | worker holds; cite readers | **D+** (~30%; no orchestrator→worker object passing #69/BD3-B) |
+| Typed message lane | — | — | — | **absent** (BD3-C: steering/decisions are two special cases, no general envelope with receipts) |
+| Context packs | — | — | — | **absent** (BD3-B: context moves as prompt text today) |
+| Orientation (code understanding) | ATLAS/cartographer/context program | gate-private or session-ritual | none to agents | **F for agents** (machinery exists, surface does not — orientation epic seed) |
+| Worker ↔ worker | shared-scratchpad relay (orchestrator-mediated) | orchestrator reads + relays | lateral, mediated, write-only-push | **D** (designed home is board.claim/report, #78) |
+
+**What the matrix says about #74:** the swarm pattern needs (1) BD3-A reads (coordinator
++ swarm-mates read each other's elevated work), (2) BD3-B packs (decomposition as
+citable objects, not prose), (3) BD3-C receipts (coordinator knows what landed), and
+(4) board.claim/report for the claim/report triage loop (#78). Until those exist, a
+coordinator-worker is exactly as connected as the orchestrator remembers to connect it —
+the frontier review's sentence, and the reason this epic precedes the pattern.
+
+---
+
 # Bidirectional v3 epic contract — the collaboration spine (v0.9, pre-red-team)
 
 (Seed: operator sequencing 2026-08-02 — "bidirectional layers and flows need to be solidly
