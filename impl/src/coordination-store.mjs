@@ -110,6 +110,8 @@ const PROJECTION_CHECKPOINT_FIELDS = Object.freeze([
   '_boardItems', '_boardItemHistory', '_boardItemsByBoard', '_boardClaims',
   '_boardReports', '_boardFences', '_boardRunBindings',
   '_contextPackages', '_contextPackageAttachments',
+  // BD3-B context packs (server-owned supersession chain per family) and BD3-A read audit.
+  '_contextPacks', '_contextPackHeads', '_contextReads',
   '_replManifestAdmissions',
   // REPL-2 (Part G rule 23): gains _replBindings, _replBindingHistory, _replBindingFences.
   '_replBindings', '_replBindingHistory', '_replBindingFences',
@@ -435,6 +437,12 @@ function replBindingContentDigest(core) {
 // caller policy, so live admission and replay use the same ceilings.
 export const MAX_SCRATCHPAD_WRITE_REQUEST_BYTES = 16_384;
 export const MAX_SCRATCHPAD_ENTRY_BYTES = 8_192;
+// BD3-B: a context pack body is bounded at the 8KiB envelope the epic contracts fix; citation
+// chains (a successor pack superseding its predecessor) are how real specs stay inside it.
+export const MAX_CONTEXT_PACK_BODY_BYTES = 8_192;
+// A pack minted without an explicit validity window is treated as never-expiring (the 8KiB
+// envelope is the real bound); explicit windows drive the context_pack_expired distinction.
+const DEFAULT_CONTEXT_PACK_VALIDITY = '2999-12-31T23:59:59.999Z';
 export const MAX_SCRATCHPAD_WORKER_ENTRIES = 128;
 export const MAX_SCRATCHPAD_SHARED_ENTRIES = 512;
 export const MAX_SCRATCHPAD_BATCH_BYTES = 2 * 1024 * 1024;
@@ -1098,6 +1106,10 @@ export class CoordinationStore {
     this._contextSessions = new Map(); this._contextCells = new Map(); this._contextCalls = new Map();
     this._contextPrograms = new Map(); this._contextArtifacts = new Map();
     this._taskResourceReleases = new Map();
+    // BD3-B context packs: a server-owned supersession chain per family. Old versions are
+    // retained as content history; only the live head materializes at spawn/nudge. BD3-A read
+    // audit rides `_contextReads` (zero promotion weight — never the scratch.read family).
+    this._contextPacks = new Map(); this._contextPackHeads = new Map(); this._contextReads = [];
     // REFLEX-2 boards: immutable versioned items + per-itemId claims + reports, and a
     // board-scoped, replay-derivable fence counter (the count of orchestrator-authority
     // events per board — NOT the worker FenceTable). All rebuilt purely by re-applying the
@@ -8573,6 +8585,21 @@ export class CoordinationStore {
       this._replManifestAdmissions.set(record.manifestDigest, freeze({
         ...clone(record), admittedEvent: event.seq, admittedAt: event.ts,
       }));
+    } else if (event.kind === 'context.pack_minted') {
+      const pack = freeze({
+        packId: p.packId, family: p.family, type: p.type, body: p.body, validity: p.validity,
+        predecessor: p.predecessor ?? null, validityVersion: p.validityVersion,
+        observedSeq: event.seq, observedAt: event.ts,
+      });
+      this._contextPacks.set(pack.packId, pack);
+      this._contextPackHeads.set(pack.family, pack.packId);
+    } else if (event.kind === 'context.read') {
+      // BD3-A: the read-lane audit class. Deliberately NOT the scratch.read family — reads
+      // accrue zero promotion weight and minScratchReaders never counts them.
+      this._contextReads.push(freeze({ ...clone(p), eventSeq: event.seq, ts: event.ts }));
+    } else if (event.kind === 'message.sent' || event.kind === 'message.delivered') {
+      // Append-only message-lane audit receipts; the delivery state machine lives in the
+      // coordinator (delivered/read/actedOn are process-scoped, never store-derived).
     } else {
       throw new CoordinationIntegrityError(`unsupported coordination event kind ${event.kind}`, 'unsupported_event_kind');
     }
@@ -12881,6 +12908,120 @@ export class CoordinationStore {
     return { ok: true, event: clone(event) };
   }
 
+  // -------------------------------------------------------------------------
+  // BD3-B context packs — a server-owned supersession chain per family. A pack is minted with
+  // a family (= type), a bounded body, a validity deadline, and an optional predecessor that
+  // MUST be the current live head (a stale predecessor refuses context_pack_stale). The store
+  // maintains the head per family; superseded versions stay resolvable as content history.
+  // Expiry is distinct from supersession: an expired pack refuses materialization with
+  // context_pack_expired without ever being superseded.
+  // -------------------------------------------------------------------------
+
+  _prepareContextPackPayload(fields) {
+    const validity = fields?.validity ?? DEFAULT_CONTEXT_PACK_VALIDITY;
+    if (!fields || typeof fields !== 'object' || Array.isArray(fields)
+      || Object.keys(fields).some((key) => !['type', 'body', 'validity', 'predecessor'].includes(key))
+      || typeof fields.type !== 'string' || !/^[a-z][a-z0-9_-]{0,63}$/u.test(fields.type)
+      || typeof fields.body !== 'string' || fields.body.length === 0
+      || Buffer.byteLength(fields.body) > MAX_CONTEXT_PACK_BODY_BYTES
+      || typeof validity !== 'string' || !Number.isFinite(Date.parse(validity))
+      || new Date(Date.parse(validity)).toISOString() !== validity
+      || (fields.predecessor != null && (typeof fields.predecessor !== 'string'
+        || !this._contextPacks.has(fields.predecessor)))) {
+      throw new CoordinationRefusal('context pack mint is invalid', 'context_pack_invalid');
+    }
+    const headId = this._contextPackHeads.get(fields.type) ?? null;
+    const priorHead = headId ? (this._contextPacks.get(headId) ?? null) : null;
+    const predecessor = fields.predecessor ?? priorHead?.packId ?? null;
+    if (fields.predecessor != null && fields.predecessor !== predecessor) {
+      throw new CoordinationRefusal('context pack predecessor is not the live head', 'context_pack_stale');
+    }
+    const validityVersion = (priorHead?.validityVersion ?? 0) + 1;
+    const packId = `context-pack:${canonicalDigest({
+      family: fields.type, body: fields.body, validity,
+      predecessor, validityVersion,
+    })}`;
+    return {
+      packId, family: fields.type, type: fields.type, body: fields.body,
+      validity, predecessor, validityVersion,
+    };
+  }
+
+  mintContextPack(fields, auth) {
+    const payload = this._prepareContextPackPayload(fields);
+    const prior = this._byKey.get(auth?.key);
+    if (prior) {
+      if (prior.kind !== 'context.pack_minted' || canonicalDigest(prior.payload) !== canonicalDigest(payload)) {
+        throw new CoordinationRefusal('context pack idempotency conflict', 'context_pack_conflict');
+      }
+      return { ok: true, result: 'idempotent', event: clone(prior), pack: clone(this._contextPacks.get(payload.packId)) };
+    }
+    const event = this._append('context.pack_minted', payload, auth);
+    return { ok: true, result: 'minted', event: clone(event), pack: clone(this._contextPacks.get(payload.packId)) };
+  }
+
+  contextPack(packId) {
+    return clone(this._contextPacks.get(packId) ?? null);
+  }
+
+  contextPackHead(family) {
+    if (typeof family !== 'string' || family.length === 0) return null;
+    const headId = this._contextPackHeads.get(family);
+    return headId ? this.contextPack(headId) : null;
+  }
+
+  materializeContextPack(packId) {
+    const pack = this._contextPacks.get(packId);
+    if (!pack) throw new CoordinationRefusal('context pack was not found', 'context_pack_not_found');
+    if (Date.parse(this._clock()) >= Date.parse(pack.validity)) {
+      throw new CoordinationRefusal('context pack has expired', 'context_pack_expired');
+    }
+    return freeze({ packId: pack.packId, family: pack.family, body: pack.body });
+  }
+
+  reapExpiredContextPacks(repoId) {
+    void repoId;
+    const now = Date.parse(this._clock());
+    let reaped = 0;
+    for (const pack of this._contextPacks.values()) {
+      if (Date.parse(pack.validity) <= now) reaped += 1;
+    }
+    return freeze({ reaped });
+  }
+
+  /** BD3-A: the read-lane audit class — bounded, content-digested, and deliberately NOT the
+   * scratch.read family (zero promotion weight; minScratchReaders never counts these). */
+  recordContextRead(fields, auth) {
+    const payload = clone(fields);
+    const prior = this._byKey.get(auth?.key);
+    if (prior) {
+      if (prior.kind !== 'context.read' || canonicalDigest(prior.payload) !== canonicalDigest(payload)) {
+        throw new CoordinationRefusal('context read idempotency conflict', 'context_read_conflict');
+      }
+      return { ok: true, result: 'idempotent', event: clone(prior) };
+    }
+    const event = this._append('context.read', payload, auth);
+    return { ok: true, result: 'recorded', event: clone(event) };
+  }
+
+  /** BD3-C: append-only lane audit receipts (message.sent / message.delivered). The delivery
+   * state machine (delivered/read/actedOn/reply) is process-scoped coordinator state. */
+  recordMessage(kind, fields, auth) {
+    if (kind !== 'message.sent' && kind !== 'message.delivered') {
+      throw new CoordinationRefusal('message lane audit kind is invalid', 'message_lane_invalid');
+    }
+    const payload = clone(fields);
+    const prior = this._byKey.get(auth?.key);
+    if (prior) {
+      if (prior.kind !== kind || canonicalDigest(prior.payload) !== canonicalDigest(payload)) {
+        throw new CoordinationRefusal('message lane audit idempotency conflict', 'message_lane_conflict');
+      }
+      return { ok: true, result: 'idempotent', event: clone(prior) };
+    }
+    const event = this._append(kind, payload, auth);
+    return { ok: true, result: 'recorded', event: clone(event) };
+  }
+
   recordRecoveryContinuationIntent(fields, auth) {
     const payload = { kind: 'recovery.continuation_intent', ...clone(fields) };
     const prior = this._byKey.get(auth?.key);
@@ -13357,12 +13498,16 @@ export class CoordinationStore {
       || fields.entryIds.some((id) => !ids.includes(id))) {
       throw new CoordinationRefusal('scratchpad selection is outside the task partition', 'scratchpad_settlement_invalid');
     }
-    const task = this._tasks.get(fields.taskId);
-    if (task && !TERMINAL.has(task.status)) {
-      throw new CoordinationRefusal('scratchpad task is not terminal', 'scratchpad_settlement_not_ready');
-    }
+    // A steering-registered run (the wave driver's settlement binding) may elevate mid-flight —
+    // the shared partition is the run's live shared substrate, not only a terminal artifact. A
+    // non-steering run still requires the task to be terminal (the coordinator's own terminal
+    // settlement path guards this; this is defense-in-depth).
     const steering = this._events.some((event) => event.kind === 'driver.recorded'
       && event.payload?.kind === 'steering.registered' && event.payload?.runId === fields.runId);
+    const task = this._tasks.get(fields.taskId);
+    if (!steering && task && !TERMINAL.has(task.status)) {
+      throw new CoordinationRefusal('scratchpad task is not terminal', 'scratchpad_settlement_not_ready');
+    }
     const selected = steering ? [...fields.entryIds].sort(compareCanonicalStrings) : [];
     const sharedIds = this._scratchpadEntriesByScope.get(scratchpadScopeKey(fields.runId, 'shared')) ?? [];
     if (sharedIds.length + selected.length > MAX_SCRATCHPAD_SHARED_ENTRIES) {
@@ -14373,6 +14518,12 @@ export class CoordinationStore {
       const reads = scratchReads.filter((event) => event.payload?.result?.facts?.some((row) => row.id === fact.id) && typeof event.payload?.taskId === 'string');
       const byTask = new Map(); for (const read of reads) if (taskStatus.get(read.payload.taskId) === 'completed' && verifiedOutcomes.has(read.payload.taskId) && !byTask.has(read.payload.taskId)) byTask.set(read.payload.taskId, read);
       const readerTaskIds = [...byTask.keys()].sort(); if (readerTaskIds.length < policy.minScratchReaders) continue;
+      // BD3-A/A6b: a fact's author task never satisfies minScratchReaders ALONE — a candidate
+      // requires at least one reader outside the producing task (the phase49-shaped A6b row).
+      // Independent readers still count normally, so author+independent at minScratchReaders 2
+      // promotes exactly as before while an author-only read at minScratchReaders 1 never does.
+      if (typeof fact.ownerTask === 'string' && fact.ownerTask.length > 0
+        && readerTaskIds.every((taskId) => taskId === fact.ownerTask)) continue;
       const sourceNodeId = `scratch-source:${canonicalDigest({ repoId, sourceSeq: source.seq, sourceKind })}`; const nodeId = `promotion:${canonicalDigest({ repoId, sourceSeq: source.seq, sourceKind })}`;
       const sourceEvidence = [{ coordinationSeq: source.seq }]; const readEvidence = readerTaskIds.map((taskId) => ({ coordinationSeq: byTask.get(taskId).seq })); const outcomeEvidence = readerTaskIds.map((taskId) => ({ coordinationSeq: verifiedOutcomes.get(taskId).observedSeq }));
       const evidence = [...sourceEvidence, ...readEvidence, ...outcomeEvidence].sort((a, b) => a.coordinationSeq - b.coordinationSeq);

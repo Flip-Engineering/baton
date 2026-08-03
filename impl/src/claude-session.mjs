@@ -28,6 +28,8 @@ const DECISION_REQUEST_GRAMMAR = /DECISION_REQUEST:\s*(\{[\s\S]*)/;
 const MAX_DECISION_GRAMMAR_SCAN_BYTES = 8_192;
 const SCRATCHPAD_WRITE_GRAMMAR = /SCRATCHPAD_WRITE:\s*(\{[\s\S]*)/;
 const MAX_SCRATCHPAD_GRAMMAR_SCAN_BYTES = 20_480;
+const CONTEXT_READ_GRAMMAR = /CONTEXT_READ:\s*(\{[\s\S]*)/;
+const MAX_CONTEXT_READ_GRAMMAR_SCAN_BYTES = 20_480;
 
 /** Bracket-depth walk to the first balanced `{...}` object, bounded, string-aware. Trailing
  * prose after the JSON object (or a second, contradictory DECISION_REQUEST) never reaches the
@@ -97,6 +99,28 @@ export function scanForScratchpadWrite(text) {
     || Object.keys(parsed).sort().join(',') !== 'entry,expectedFence,idempotencyKey'
     || !parsed.entry || typeof parsed.entry !== 'object' || Array.isArray(parsed.entry)
     || !(parsed.expectedFence === 'current' || (Number.isSafeInteger(parsed.expectedFence) && parsed.expectedFence >= 0))
+    || typeof parsed.idempotencyKey !== 'string'
+    || !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/u.test(parsed.idempotencyKey)) return null;
+  return parsed;
+}
+
+/** BD3-A CONTEXT_READ sibling grammar (issue #75): the read port mirroring SCRATCHPAD_WRITE's
+ * exact wire shape. Identity and run/scope are deliberately ABSENT — the Coordinator re-derives
+ * the viewer's run server-side and the wire query carries NO runId/scope fields at all. The
+ * closed-shape check here is the first line of defense; admission in the Coordinator re-checks. */
+export function scanForContextRead(text) {
+  if (typeof text !== 'string') return null;
+  const match = CONTEXT_READ_GRAMMAR.exec(text);
+  if (!match) return null;
+  const json = extractFirstBalancedJsonObject(match[1], MAX_CONTEXT_READ_GRAMMAR_SCAN_BYTES);
+  if (!json) return null;
+  let parsed;
+  try { parsed = JSON.parse(json); } catch { return null; }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)
+    || Object.keys(parsed).sort().join(',') !== 'query,expectedFence,idempotencyKey'
+    || !parsed.query || typeof parsed.query !== 'object' || Array.isArray(parsed.query)
+    || Object.keys(parsed.query).some((key) => key === 'runId' || key === 'scope')
+    || parsed.expectedFence !== 'current'
     || typeof parsed.idempotencyKey !== 'string'
     || !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/u.test(parsed.idempotencyKey)) return null;
   return parsed;
@@ -1021,6 +1045,10 @@ export class ClaudeSessionCli {
         if (text) {
           const request = scanForScratchpadWrite(text);
           if (request) this._emit(session, 'scratchpad.write', request);
+        }
+        if (text) {
+          const readRequest = scanForContextRead(text);
+          if (readRequest) this._emit(session, 'context.read', readRequest);
         }
         return;
       }
