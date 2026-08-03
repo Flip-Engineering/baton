@@ -1,20 +1,59 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
-  <!-- baton pfp mark: Flip-family tile, conductor's baton mid-downbeat, sorcerer-blue motion arc -->
-  <rect width="512" height="512" rx="115" fill="#0F0F12"/>
-  <!-- motion arc: the conducting sweep, Fantasia blue -->
-  <path d="M 96 358 Q 256 108 416 330" fill="none" stroke="#6C8CFF" stroke-width="14" stroke-linecap="round" opacity="0.9"/>
-  <!-- spark stars along the arc -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Baton logo — Flip the mascot conducting, Fantasia style">
+  <defs>
+    <linearGradient id="field" x1="0" y1="0" x2="512" y2="512" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#14141F"/>
+      <stop offset="1" stop-color="#1D1D2E"/>
+    </linearGradient>
+    <linearGradient id="hatBlue" x1="150" y1="70" x2="330" y2="220" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#3B4FA8"/>
+      <stop offset="1" stop-color="#1B2452"/>
+    </linearGradient>
+  </defs>
+
+  <!-- dark field -->
+  <rect width="512" height="512" rx="112" fill="url(#field)"/>
+
+  <!-- sorcerer-blue motion arc: the conducting sweep -->
+  <path d="M 56 400 Q 256 120 456 372" fill="none" stroke="#6C8CFF" stroke-width="15" stroke-linecap="round" opacity="0.85"/>
   <g fill="#AFC4FF">
-    <path d="M150 268 l7 18 18 7 -18 7 -7 18 -7 -18 -18 -7 18 -7 z"/>
-    <path d="M352 200 l6 15 15 6 -15 6 -6 15 -6 -15 -15 -6 15 -6 z"/>
-    <path d="M392 322 l5 12 12 5 -12 5 -5 12 -5 -12 -12 -5 12 -5 z"/>
+    <path d="M120 296 l6 15 15 6 -15 6 -6 15 -6 -15 -15 -6 15 -6 z"/>
+    <path d="M382 240 l5 12 12 5 -12 5 -5 12 -5 -12 -12 -5 12 -5 z"/>
   </g>
-  <g fill="#EAEAEA">
-    <path d="M118 372 l5 13 13 5 -13 5 -5 13 -5 -13 -13 -5 13 -5 z"/>
-  </g>
-  <!-- the baton: cork handle bulb + tapered white stick, downbeat diagonal -->
-  <g transform="rotate(-38 256 256)">
-    <rect x="112" y="248" width="70" height="22" rx="11" fill="#D9B38C"/>
-    <path d="M178 247 L 420 253 Q 432 259 420 265 L 178 271 Q 166 259 178 247 Z" fill="#EAEAEA"/>
+
+  <!-- Flip, conducting (the real mascot — docs/assets/brand/mascot-smile.svg at 3x) -->
+  <g transform="translate(106 118) scale(3)">
+    <ellipse cx="50" cy="52" rx="46" ry="42" fill="#FF8FA3"/>
+    <ellipse cx="50" cy="54" rx="38" ry="34" fill="#FFF0F3"/>
+    <text x="22" y="56" font-size="6" fill="#FFD700" text-anchor="middle">✦</text>
+    <text x="78" y="56" font-size="6" fill="#FFD700" text-anchor="middle">✦</text>
+    <circle cx="32" cy="54" r="1.2" fill="#E94560" fill-opacity="0.3"/>
+    <circle cx="36" cy="56" r="1.2" fill="#E94560" fill-opacity="0.3"/>
+    <circle cx="34" cy="58" r="1.2" fill="#E94560" fill-opacity="0.3"/>
+    <circle cx="64" cy="54" r="1.2" fill="#E94560" fill-opacity="0.3"/>
+    <circle cx="68" cy="56" r="1.2" fill="#E94560" fill-opacity="0.3"/>
+    <circle cx="66" cy="58" r="1.2" fill="#E94560" fill-opacity="0.3"/>
+    <circle cx="36" cy="46" r="7" fill="white"/>
+    <circle cx="39" cy="46" r="4.5" fill="#C93550"/>
+    <circle cx="40.5" cy="44.5" r="1.5" fill="white"/>
+    <circle cx="64" cy="46" r="7" fill="white"/>
+    <circle cx="67" cy="46" r="4.5" fill="#C93550"/>
+    <circle cx="68.5" cy="44.5" r="1.5" fill="white"/>
+    <path d="M38 62 Q50 74 62 62" stroke="#C93550" stroke-width="4" stroke-linecap="round" fill="none"/>
+    <ellipse cx="50" cy="69" rx="4" ry="5" fill="#FF8A80"/>
+    <ellipse cx="24" cy="58" rx="8" ry="5" fill="#FF8FA3" fill-opacity="0.4"/>
+    <ellipse cx="76" cy="58" rx="8" ry="5" fill="#FF8FA3" fill-opacity="0.4"/>
+    <!-- sorcerer hat (Fantasia) -->
+    <path d="M28 16 C30 -2 40 -18 52 -26 C54 -12 66 -2 78 2 C64 10 44 14 28 16 Z" fill="url(#hatBlue)" stroke="#1B2452" stroke-width="2.5" stroke-linejoin="round"/>
+    <path d="M18 18 C34 8 68 8 84 16 C82 22 70 24 50 24 C30 24 20 22 18 18 Z" fill="url(#hatBlue)" stroke="#1B2452" stroke-width="2.5" stroke-linejoin="round"/>
+    <path d="M42 -4 l1.6 3.9 3.9 1.6 -3.9 1.6 -1.6 3.9 -1.6 -3.9 -3.9 -1.6 3.9 -1.6 z" fill="#FFE9A8"/>
+    <path d="M58 -12 l1.3 3.2 3.2 1.3 -3.2 1.3 -1.3 3.2 -1.3 -3.2 -3.2 -1.3 3.2 -1.3 z" fill="#FFE9A8"/>
+    <path d="M33 6 a4.5 4.5 0 1 0 4 7 a3.2 3.2 0 1 1 -4 -7 z" fill="#FFE9A8"/>
+    <!-- raised paw + conductor's baton -->
+    <circle cx="86" cy="60" r="6" fill="#FF8FA3" stroke="#C93550" stroke-width="2"/>
+    <path d="M86 60 L95 32" stroke="#D9B38C" stroke-width="4" stroke-linecap="round"/>
+    <path d="M95 32 L101 16" stroke="#EAEAEA" stroke-width="3.5" stroke-linecap="round"/>
+    <!-- sparkles off the baton tip -->
+    <path d="M101 4 L102.8 8.2 L107 10 L102.8 11.8 L101 16 L99.2 11.8 L95 10 L99.2 8.2 Z" fill="#FFD700"/>
+    <path d="M89 -1 L90.2 2.2 L93.5 3.5 L90.2 4.8 L89 8 L87.8 4.8 L84.5 3.5 L87.8 2.2 Z" fill="#FFD700"/>
   </g>
 </svg>

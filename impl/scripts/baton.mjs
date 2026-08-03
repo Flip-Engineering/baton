@@ -12,6 +12,9 @@ import { createLocalSocketFetch } from '../src/local-web-transport.mjs';
 import {
   formatKimiCredentialInstallResult, KIMI_CREDENTIAL_HELP, promptAndInstallKimiCredential,
 } from '../src/kimi-credential-setup.mjs';
+import { flipLine } from '../src/brand.mjs';
+
+const TTY = process.stderr.isTTY === true;
 
 function integer(value, fallback) {
   if (value === undefined) return fallback;
@@ -48,20 +51,22 @@ async function serveDeployment(deployment) {
   });
   const outcome = await lifecycle.run(async ({ signal }) => {
     const hosted = await deployment.host();
-    process.stderr.write(`baton serve: ${JSON.stringify(hosted)}\n`);
+    process.stderr.write(`${flipLine(`baton serve: ${JSON.stringify(hosted)}`, { pose: 'thinking', color: TTY })}\n`);
     await new Promise((resolveSignal) => {
       if (signal.aborted) resolveSignal();
       else signal.addEventListener('abort', resolveSignal, { once: true });
     });
     return hosted;
   });
-  process.stderr.write(`baton serve: ${JSON.stringify(outcome.closed)}\n`);
+  process.stderr.write(`${flipLine(`baton serve: ${JSON.stringify(outcome.closed)}`, { color: TTY })}\n`);
   if (outcome.closed.state !== 'closed') process.exitCode = 1;
 }
 
 try {
   const parsed = parseBatonCli(process.argv.slice(2));
   if (parsed.kind === 'help' || parsed.name === 'application.help') {
+    const helpTopic = parsed.topic ?? parsed.args?.topic;
+    if (helpTopic === undefined || helpTopic === 'application') process.stderr.write(`${flipLine('baton — reflexive multi-agent orchestration', { color: TTY })}\n`);
     process.stdout.write(`${batonCliHelp(parsed.topic ?? parsed.args.topic)}\n`);
   } else if (parsed.kind === 'credential-help') {
     process.stdout.write(`${KIMI_CREDENTIAL_HELP}\n`);
@@ -121,6 +126,6 @@ try {
     if (followPages === 0) process.stdout.write(`${JSON.stringify(projectBatonCliResult(parsed, result), null, 2)}\n`);
   }
 } catch (error) {
-  process.stderr.write(`baton: ${error?.code ?? 'cli_failed'}: ${error?.message ?? 'command failed'}\n`);
+  process.stderr.write(`${flipLine(`baton: ${error?.code ?? 'cli_failed'}: ${error?.message ?? 'command failed'}`, { pose: 'thinking', color: TTY })}\n`);
   process.exitCode = error?.code === 'cli_invalid' || error?.code === 'cli_config_invalid' || error?.code === 'cli_command_unavailable' ? 2 : 1;
 }

@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
+import { flipFace } from './brand.mjs';
 import { northboundCapabilityToken } from './northbound-capability-authority.mjs';
 import { sanitizeGoalPlanProjection } from './goal-plan.mjs';
 import { APPLICATION_COMMAND_DEFINITIONS, validateApplicationCommandArgs, projectBoardView, projectContextPackageBranch } from './application.mjs';
@@ -1174,7 +1175,12 @@ export class McpFleetServer {
       if (id === undefined || !record(params) || !nonempty(params.protocolVersion) || !record(params.capabilities)
         || !record(params.clientInfo) || !nonempty(params.clientInfo.name) || !nonempty(params.clientInfo.version)) return protocolError(id, -32602, 'Invalid params');
       this.lifecycle = 'initializing';
-      return protocolResult(id, { protocolVersion: PROTOCOL_VERSION, capabilities: { tools: { listChanged: false } }, serverInfo: { name: 'baton', version: '0.1.0' } });
+      return protocolResult(id, {
+        protocolVersion: PROTOCOL_VERSION,
+        capabilities: { tools: { listChanged: false } },
+        serverInfo: { name: 'baton', version: '0.1.0' },
+        instructions: `${flipFace('smile')} baton — reflexive multi-agent orchestration. Waves are the primary surface (start/attach/steer); settlement lanes arrive through the envelope tools. See MCP.md.`,
+      });
     }
     if (method === 'notifications/initialized') {
       // A notification carries no id and returns no frame. The stdio smoke driver writes this
