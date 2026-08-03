@@ -224,27 +224,54 @@ try {
   persist();
 
   // ---------------------------------------------------------------
-  // VERIFICATION — stream truth + receipt truth + report truth.
+  // VERIFICATION — stream truth + receipt truth + result-pin truth.
+  // (v1 measurement bugs fixed: the scanner's context.read event lands on the coordinator's
+  // intake, NOT the worker log — the worker-log receipt is context.read_result; the worker's
+  // report lives in its result pin, not the main checkout; receipt.read stays honestly null
+  // for a single-turn completion — it only flips on a post-delivery turn_started.)
   // ---------------------------------------------------------------
   const taskRow = store.snapshot().tasks.find((row) => row.runId === waveRunId && row.assignee)
     ?? store.snapshot().tasks.find((row) => row.runId === waveRunId);
   const workerId = taskRow?.assignee ?? taskRow?.reservedWorkerId ?? null;
   const stream = workerId ? eventLog.read(workerId) : [];
-  const readEvents = stream.filter((event) => event.kind === 'context.read');
   const readResults = stream.filter((event) => event.kind === 'context.read_result');
   const delivered = stream.filter((event) => event.kind === 'message.delivered');
+  const deliveredIndex = stream.findIndex((event) => event.kind === 'message.delivered');
+  const postDeliveryTurns = deliveredIndex >= 0
+    ? stream.slice(deliveredIndex + 1).filter((event) => event.kind === 'lifecycle.turn_started').length
+    : 0;
   const okResults = readResults.filter((event) => event.payload?.ok === true);
   const canaryServed = okResults.some((event) => JSON.stringify(event.payload ?? {}).includes(CANARY));
   const untrustedFramed = okResults.every((event) => JSON.stringify(event.payload ?? {}).includes('UNTRUSTED'));
   const receipt = messageId ? coordinator.messageReceipt(messageId) : null;
-  const reportPath = resolve(EVIDENCE, 'live-acceptance-worker-report.md');
-  const report = existsSync(reportPath) ? readFileSync(reportPath, 'utf8') : '';
+  // Receipt honesty: read must be true if a post-delivery turn_started exists; with none
+  // (a single-turn completion) null is the honest state — never upgraded to a lie.
+  const receiptReadHonest = receipt?.delivered === true
+    && (postDeliveryTurns > 0 ? receipt.read === true : receipt.read === null)
+    && receipt.actedOn == null;
+  // The report lives in the worker's result pin (Baton-Task trailer binds the worktree id).
+  const worktreeId = stream.find((event) => event.kind === 'worktree.owner_bound')?.payload?.physicalOwnerId ?? null;
+  let report = '';
+  let resultSha = null;
+  if (worktreeId) {
+    try {
+      const pins = execFileSync('git', ['for-each-ref', 'refs/baton/results', '--sort=-creatordate', '--format=%(objectname)'], { cwd: repo, encoding: 'utf8' }).trim().split('\n').filter(Boolean);
+      for (const pin of pins.slice(0, 6)) {
+        const message = execFileSync('git', ['log', '-1', '--format=%B', pin], { cwd: repo, encoding: 'utf8' });
+        if (!message.includes(`Baton-Task: ${worktreeId}`)) continue;
+        resultSha = pin;
+        report = execFileSync('git', ['show', `${pin}:docs/reference/evidence/bidirectional-v3-2026-08-02/live-acceptance-worker-report.md`], { cwd: repo, encoding: 'utf8' });
+        break;
+      }
+    } catch { /* pin read is best-effort; the verdict records what was found */ }
+  }
   const reportCanary = report.includes(CANARY);
   const reportBlue = /\bBLUE\b/u.test(report);
 
   const checks = {
     workerId,
-    readEvents: readEvents.length,
+    worktreeId,
+    resultSha,
     readResults: readResults.length,
     okResults: okResults.length,
     canaryServed,
@@ -252,15 +279,16 @@ try {
     messageId,
     receiptDelivered: receipt?.delivered ?? null,
     receiptRead: receipt?.read ?? null,
-    receiptActedOn: receipt?.actedOn ?? null,
+    postDeliveryTurns,
+    receiptReadHonest,
     deliveredEvents: delivered.length,
-    reportExists: report.length > 0,
+    reportFound: report.length > 0,
     reportCanary,
     reportBlue,
   };
   const verdict = resting
     && okResults.length >= 1 && canaryServed && untrustedFramed
-    && receipt?.delivered === true && receipt.read === true
+    && receiptReadHonest
     && reportCanary && reportBlue
     ? 'BD3-LIVE-OK' : 'BD3-LIVE-INCOMPLETE';
   receipts.phases.push({ phase: 3, checks, verdict });
