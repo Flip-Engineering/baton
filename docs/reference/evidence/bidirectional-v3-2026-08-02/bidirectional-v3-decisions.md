@@ -1,4 +1,91 @@
-# Bidirectional v3 epic contract — the collaboration spine (v1.0, worker-validated)
+# Bidirectional v3 epic contract — the collaboration spine (v2.0, post-red-team fold)
+
+(Red-teamed by baton wave: `redteam-authority.md` (codex — 8 CONFIRMED-HOLEs) and
+`redteam-lifecycle.md` (glm — 5 CONFIRMED-HOLEs, 2 NEEDS-AMENDMENTs, 1 doc-honesty meta).
+The v0.9 shapes did not survive contact; every hole folds to a named amendment below.
+v0.9/v1.0/v1.1 sections preserved after this fold for traceability.)
+
+## v2.0 decisions (folded from both reports)
+
+### BD3-A — the read port, with a REAL horizon predicate (codex #1/#2/#8, glm #4)
+
+- **Horizon membership is server-derived and precise:** `runHorizon(runId)` = the closure
+  of {the run's own KG nodes, nodes promoted under that runId, findings whose evidence
+  cites the run's task/elevation events, and the project-tier nodes the ambient-serving
+  slice already serves for that run's briefs}. Every query kind (knowledge/board/
+  scratchpad/finding) intersects its results with this predicate AFTER lookup, server-side.
+  "The run's horizons" is never a whole-KG projection (codex #1: task/workflow horizons
+  today project the whole graph).
+- **finding-by-id is resolve-then-authorize:** the id resolves first, then the resolved
+  node is authorized against the same horizon predicate; possession of a digest is never
+  authority (codex #2: the existing ID query is global).
+- **Board reads reuse the S-2 board→run binding check** (its refusal precedence normative).
+- **Scratchpad reads: the coordinator constructs `(runId, ['shared'])` server-side; the
+  wire query carries NO runId/scope fields at all.**
+- **Read evidence gets its own class with ZERO promotion weight (codex #8 + glm #4):**
+  `context.read` audit events (bounded, content-digested) — NOT the `scratch.read` family,
+  and `minScratchReaders` never counts them. The existing gate's self-read hole is fixed
+  in the same rung: a fact's author task never counts toward `minScratchReaders`
+  (coordination-store.mjs:14370-14384 — at minScratchReaders===1 a worker can currently
+  self-promote; that is a pre-existing hole this rung closes).
+- **One closed response renderer at the admission seam (codex #3):** every answer
+  serializes through one renderer (bounded per kind, wrapProse UNTRUSTED framing on every
+  model-authored leaf, digest citations for oversize); an unframed leaf is rejected before
+  provider delivery — mandatory at the seam, never documentation.
+- **Reads are not TG2 progress (pinned):** CONTEXT_READ receipts never answer the TG3
+  steering cycle (the farm-guard stays).
+
+### BD3-B — context packs with a server-owned supersession chain (codex #4, glm #5)
+
+- **Chain, not field:** packs carry `predecessor` + `validityVersion`; the store maintains
+  the head per pack family; supersession mints a new version (old versions are content
+  history, retained).
+- **Spawn/nudge CAS:** a brief or nudge citing a pack digest requires it to be the LIVE
+  HEAD at materialization time — a stale citation fails with `context_pack_stale` at
+  spawn (never silently serves the old version).
+- **Expiry is distinct from supersession (glm #5):** a pack past its validity window
+  stops serving (`context_pack_expired`) without being superseded; a sweep reaps
+  expired packs (they stop serving, history retained). No expired-but-current pack ever
+  serves.
+
+### BD3-C — the message lane with provable replies and honest receipts (codex #5, glm #6)
+
+- **Minted message IDs + inReplyTo:** orchestrator sends mint `message:<digest>` ids.
+  Worker frames carry ONLY `{inReplyTo, body}` — the sole target is derived from the
+  parent message, never caller-named. Reply depth 1 in v1 (no reply-to-reply).
+- **Receipt state machine (glm #6):** `delivered` = written to the worker's durable
+  stream (NOT an acknowledgment); `read` = the worker's first `turn_started` after
+  delivery; `acted-on` is never claimed. Receipts are process-scoped honestly: a worker
+  that dies between delivered and read leaves `delivered` with no read — the receipt
+  says exactly that, forever, and never upgrades to a lie.
+
+### BD3-D — the attention inbox, scope-first and honest about the driver (codex #6/#7, glm #1/#2/#3)
+
+- **Scope before targets (codex #6):** the caller's parent scope (run/wave/deployment)
+  is authorized FIRST; targets are then normalized and derived server-side; a
+  scope-violating target refuses with the constant scope refusal BEFORE any existence
+  check (no existence leak either direction).
+- **candidacy_review requires the review authority (codex #7):** the wake reason is
+  emitted only to a viewer holding a live settlement/review lease (or the orchestrator
+  principal), with the count derived inside that lease's run/wave.
+- **The driver's stall machinery is explicitly NOT replaced (glm #1):** the claim-on-
+  stall fan-out fires on ABSENCE of wake events, so "the driver becomes one consumer of
+  the inbox with no behavior change" was false. v1: the inbox is additive for
+  orchestrators (embedded + MCP long-poll); the wave driver keeps its own stall clock
+  and MAY consume the inbox for decision/attention wakes as a later rung (named v1.1).
+- **Coalescing carries distribution (glm #3):** storm coalescing emits
+  `{reason, count, perPhase: {phase: count}, windowMs}` — never a singular {role, phase}
+  that a phase-trusting consumer would misread.
+- **Detach honesty (glm #2):** wake reasons carry runId + mint epoch; reasons minted
+  after a member's terminal transition are marked `memberState: terminal-at-mint`;
+  transient follow failures downgrade with a durable receipt (BD-B law), never silently.
+- **Doc-honesty (glm meta):** followOnce/throughCursor/downgrade law lives in
+  wave-driver.mjs / wave.mjs / application-client.mjs (anchors corrected; throughCursor
+  is minted server-side).
+
+---
+
+## v0.9/v1.0/v1.1 (preserved below for traceability)
 
 (v1.0 fold: downstream worker feedback (docs/reference/evidence/mcp-packaging-2026-08-02/
 feedback-worker.md, feedback-frontier.md — glm 390 lines, deepseek 145 lines) reviewed the
