@@ -1,10 +1,15 @@
-# Readiness + Roster + Credential Controllers epic contract — #47 + #83 + #84 (v1.0, pre-red-team)
+# Readiness + Roster + Credential Controllers epic contract — #47 + #83 + #84 (v1.0, post-red-team fold)
+
+**Fold header:** folded against `readiness-redteam.md` (this directory) on **2026-08-03** —
+3 CONFIRMED-HOLEs rewritten in place, 4 NEEDS-AMENDMENTs applied, 6 DEFENDED verdicts noted;
+numbered fold trail in §8.
 
 (One feature three ways — **the controller keeps seats alive, the tier measures their
 liveness, the roster projects both.** Red-teamed by the adversarial fleet per the campaign
-methodology; v1.0 is the pre-red-team shape. Fold trail appended below as findings land.
+methodology; v1.0 is the post-red-team shape — every verdict from readiness-redteam.md is
+folded into the decisions below and recorded in §8 for traceability.
 Spec-authoring only; the sole write target is this file. All file:line citations verified
-with `grep -an` / `sed -n` at drafting time on the swept tree.)
+with `grep -an` / `sed -n` at drafting time, and again at fold time, on the swept tree.)
 
 ---
 
@@ -77,6 +82,16 @@ is the thing that lets grok become a reliable seat.
   status --json` probe in a private runtime, claude-session.mjs:389-432); native kimi /
   grok credential state; adapter-advertised `readiness` block; credential state not
   absent/expired/invalid/unavailable; harness version `observed`. All **static**.
+- **One credential identity, N routes — the static path's established model.** Every
+  vendor's static readiness treats the credential as a single identity shared across every
+  route it backs: `nativeKimiAuthentication`/`nativeGrokAuthentication` are computed
+  **once** per readiness pass (application-deployment.mjs:1585-1590) and applied to
+  **every** matching route (application-deployment.mjs:1064-1096); `doctorReadiness()`
+  maps one fresh claude credential probe onto every claude route
+  (application-deployment.mjs:1256-1259); `ClaudeCredentialCache` is one object keyed on
+  `credentialPath` (its single-flight key is `this.path`, claude-credential-cache.mjs:270),
+  with a credential-scoped `revocationLatched`. The #47 tier's liveness cache joins this
+  identity model (§4.1.3) rather than inventing a per-route one.
 - `assertRouteReady()` (application-deployment.mjs:1155-1162) blocks spawns/waves on
   `blocked` routes — the enforcement seam the live tier extends.
 - `doctorReadiness()` (application-deployment.mjs:1254-1264) re-probes **workspace capacity
@@ -114,9 +129,9 @@ is the thing that lets grok become a reliable seat.
     flight.
   - **Harvest monotonicity + schema gate**: candidates are adopted only if strictly fresher
     (claude-credential-cache.mjs:332-335).
-  - **Revocation latch**: `invalidGrant` (claude-credential-cache.mjs:315-318) latches to
+  - **Revocation latch**: `invalidGrant` (claude-credential-cache.mjs:315-317) latches to
     `expired_needs_login`; every further automatic trigger short-circuits until the explicit
-    `baton credentials refresh claude` command (claude-credential-cache.mjs:348-351).
+    `baton credentials refresh claude` command (claude-credential-cache.mjs:348-350).
   - **Spawn-TTL gate**: `ensureFresh()` (claude-credential-cache.mjs:256-263) refreshes
     before projection when `expiresAt <= now` — wired at claude-session.mjs:590-601.
   - **Retry-once on the worker path**: claude-session.mjs:1066-1072, 1119-1129.
@@ -125,7 +140,11 @@ is the thing that lets grok become a reliable seat.
   - **Vendor-executed refresh runtime**: `defaultRefreshRuntime()`
     (claude-credential-cache.mjs:121-159) — spawns the CLI in a throwaway HOME/CLAUDE_CONFIG_DIR
     with `--print`/`--output-format json`, captures bounded stdout/stderr, detects
-    `invalid_grant|revok`, kills on timeout, reads the write-back target.
+    `invalid_grant|revok`, kills on timeout, reads the write-back target. Its projected-
+    credential write is a **flat sibling file** (`directory/.credentials.json`,
+    claude-credential-cache.mjs:122-123) under `HOME`/`CLAUDE_CONFIG_DIR: directory`
+    (claude-credential-cache.mjs:131-132) — a claude-specific convention the grok port must
+    NOT copy (§4.3.1).
 - **Honest metadata already names the #47 tier**: `metadata()` (claude-credential-cache.mjs:
   236-254) exposes `{expiresAt, refreshTokenExpiresAt, state: fresh|stale|expired_needs_login}`
   and labels `stale` as **"refresh-unverified until attempted (#47 tier)"**
@@ -155,6 +174,14 @@ is the thing that lets grok become a reliable seat.
     verificationEvidence}` (coordination-store.mjs:12502-12510). Events are
     `route.outcome_observed` with integrity + conflict refusal
     (coordination-store.mjs:7891, 3383-3385).
+  - **Verification evidence is `verify.reverified`-sourced, digest-checked.** A route
+    observation's `verificationEvidence` must trace to an `evidence.mapped` event whose
+    payload is a `verify.reverified` operational event, checked digest-for-digest, with the
+    operational source re-read and matched on task/accept/model/effort
+    (coordination-store.mjs:3378-3381); the row's `observationDigest` binds the event's
+    idempotency key (coordination-store.mjs:3384) and a conflicting prior digest is refused
+    (coordination-store.mjs:3385). This is the evidence path the #47 probe's content
+    verification rides (§4.1.1) — no bespoke probe-only verifier.
   - Wiring: `routeLearningPolicy` flows into the store and the router is hydrated from the
     observations at open (index.mjs:1238, 1258, 1292).
 - **The router already computes adaptive stats** (router.mjs): `advice()` is pure/read-only
@@ -166,7 +193,10 @@ is the thing that lets grok become a reliable seat.
   shape: it requires candidate rows `{routeKey, modelFamily, concurrencyCeiling, inFlight}`
   (cairn-run-scorecard.mjs:139-162), refuses if the observation time predates durable
   evidence or the router state mutates, and claims `routingMutationAuthority: false` — the
-  roster must not change selection authority either.
+  roster must not change selection authority either. Note it lives in **Cairn's
+  dot-namespaced knowledge-capability plane** (`op: 'route.advice'`,
+  cairn-run-scorecard.mjs:162 — the only `route.advice` registration in `impl/src/`), a
+  different plane from the ordinary capability plane the roster registers in (§4.2.2).
 - **Occupancy already exists, twice**: the coordinator counts in-flight seats per adapter
   (`_inFlightCount(vendor)`, coordinator.mjs:2800-2806, feeding `inFlight` at
   coordinator.mjs:2745-2747), and the router advice consumes a caller-provided inFlight.
@@ -203,20 +233,34 @@ with the corrective action, instead of discovering it at turn time?
 
 ## 3. Control-law preamble (binding)
 
-The campaign control law (bidirectional-v3-decisions.md:115-125) is binding on this epic:
+The campaign control law (bidirectional-v3-decisions.md:134-143) is binding on this epic:
 controls on agent work must be **eval-able, constructive, or conversational** — never
 clocks/turn-limits. This epic's probe cadence and liveness windows are **resource
 circuit-breakers** (they bound provider spend and cache freshness, a legitimate distinct
-class), never progress controls. Liveness is judged from the **event vocabulary** (a
-`resource.provider_call` receipt, a turn-completed receipt, a typed probe verdict) — not
-from a stopwatch on a worker. The 28-min TTL is a **vendor-observed physical bound** on the
-credential, not a control on work: it is a cache-freshness derivation and a cost bound, and
-it is deployment-configurable. No decision below may introduce a per-turn limit or a
-"probe if the last activity was more than N minutes ago" liveness clock on real work.
+class, bidirectional-v3-decisions.md:142-143), never progress controls. Liveness is judged
+from the **event vocabulary** (a `resource.provider_call` receipt, a turn-completed receipt,
+a typed probe verdict) — not from a stopwatch on a worker. The 28-min TTL is a
+**vendor-observed physical bound** on the credential, not a control on work: it is a
+cache-freshness derivation and a cost bound, and it is deployment-configurable. No decision
+below may introduce a per-turn limit or a "probe if the last activity was more than N
+minutes ago" liveness clock on real work. **The sticky-failure window (§4.1.3) is not a
+work clock either** (red-team §5, fold F-7): the explicit `baton doctor --check` and
+`baton credentials refresh …` paths unstick a route immediately, independent of the
+window's elapsed time — the window bounds only the automatic re-probe cadence, satisfying
+the control law's "constructive" carve-out the same way the 28-min TTL satisfies its
+"resource circuit-breaker" carve-out.
+
+*(Defended as written, red-team §5: the probe TTL windows gate whether Baton re-probes,
+never whether an agent's in-flight work continues or is judged — the resource
+circuit-breaker carve-out fits cleanly, bidirectional-v3-decisions.md:142-143.)*
 
 ---
 
 ## 4. Decisions
+
+*(Defended as written, red-team §3.1: the D1 → D2 → D3 ordering matches the real dependency
+graph — §4.2.1's roster consumes the §4.1.3 cache tuple and the coordinator's occupancy
+(coordinator.mjs:2800-2806), both prerequisites, never concurrent siblings.)*
 
 ### 4.1 D1 — the bounded actual-inference readiness tier per route (#47)
 
@@ -235,6 +279,14 @@ full-run precedent (probe-flash.mjs) but with the same honesty discipline:
   PROBE-RECEIPT.md:10-11). The verdict is **content-verified**: the probe passes only when
   the turn-completed receipt carries the exact expected output. A bare
   `lifecycle.spawned` (a provider process started) is **not** proof of provider-alive.
+- **Probe content-verification rides the existing evidence path, never a bespoke verifier**
+  (red-team §2.2, fold F-4): the probe's expected-output check consumes the same
+  `verify.reverified`-sourced evidence discipline route observations already require —
+  evidence traced to a `verify.reverified` operational event, checked digest-for-digest
+  (coordination-store.mjs:3378-3381, §1.4). A probe never ships its own parallel verifier;
+  a subtly-different matcher (substring vs exact, adapter self-report vs receipt) silently
+  reopens the probe-as-fake gap and is a red-first failure (RT-1), not an implementation
+  detail.
 - The probe executes through the **real adapter for the exact route** in an isolated
   runtime (the RuntimeIsolation shape, application-deployment.mjs:971-1017), with the
   deployment credential projected (access-token-only for claude;
@@ -252,10 +304,19 @@ full-run precedent (probe-flash.mjs) but with the same honesty discipline:
 
 **Red-team targets:** probe-as-fake (a fixture that "passes" without real provider
 inference — the probe must require the content-verified turn receipt, not an adapter
-self-report); probe-cost escape (a probe that grows its prompt/response/timeout unbounded —
-see §4.1.2); probe-failure ambiguity (one generic failure code that hides whether the
-credential or the provider is dead — the classification above); probe-side-effect (a probe
-that mutates route state or learning stats — the probe is read-only against the store).
+self-report, and the verification path is pinned to the shared `verify.reverified`
+evidence path above — no bespoke probe-only verifier); probe-cost escape (a probe that
+grows its prompt/response/timeout unbounded — see §4.1.2); probe-failure ambiguity (one
+generic failure code that hides whether the credential or the provider is dead — the
+classification above); probe-side-effect (a probe that mutates route state or learning
+stats — the probe is read-only against the store).
+
+*(Defended as written, red-team §2.2: the anti-fake-probe design stands on the W1.4 pin
+precedent (PROBE-RECEIPT.md:6, 10-11) and the isolated-runtime-plus-real-adapter shape
+(projectedAdapterAuthentication, application-deployment.mjs:971-1017); the existing static
+check is confirmed local-only — `claude auth status --json`, 5s timeout, no model call
+(claude-session.mjs:389-398) — so the static-vs-live distinction is coherent. The folded
+gap — which verification path runs the check — is pinned by F-4 above.)*
 
 #### 4.1.2 Cost bounds
 
@@ -274,19 +335,33 @@ that mutates route state or learning stats — the probe is read-only against th
 single-flight + cache-fresh short-circuit must make it 0 or 1); unbounded probe spend (a
 probe that retries or loops — exactly one provider call, then a typed verdict);
 cost-vs-benefit inversion (probing a static-key route like deepseek/glm every wave — the
-TTL for static-key routes is long/derived from the key's non-expiry, §4.1.4).
+TTL for static-key routes is long/derived from the key's non-expiry, §4.1.3).
 
 #### 4.1.3 Cache semantics — never probe per call
 
-- **Per-route probe cache.** The deployment keeps, per route, a frozen
-  `{state: 'verified'|'unverified'|'failed', verifiedAt, expiresAt, probeId, latencyMs,
-  code?}` tuple. Reads are cheap (in-memory / per-read stat class); **never probe per call.**
+- **Per-route probe cache, joined to credential identity** (red-team §2.1, fold F-1). The
+  deployment keeps, per route, a frozen `{state: 'verified'|'unverified'|'failed',
+  verifiedAt, expiresAt, probeId, latencyMs, code?, credentialKey}` tuple, where
+  `credentialKey` names the credential identity the route's liveness actually measures —
+  SHA-256 of the credential path for claude (the same identity the cache's single-flight
+  already keys on, claude-credential-cache.mjs:270), a fixed per-vendor key for the single
+  global grok/kimi credentials. This matches the single-shared-credential-object identity
+  every vendor's static path already uses (§1.2: computed once per pass,
+  application-deployment.mjs:1585-1590; applied to every matching route, :1064-1096,
+  :1256-1259). Reads are cheap (in-memory / per-read stat class); **never probe per call.**
 - **Spawn/preflight path consults the cache, probes only on stale or absent:**
   `state === 'verified' && expiresAt > now` → no probe; `state === 'failed'` (within a
   bounded failure window) → no probe, the blocked taxonomy fires with the typed code
   (§4.1.1) and the corrective action; otherwise (absent/stale) → **one probe, single-flight
   per route** (the `flights`-Map discipline, claude-credential-cache.mjs:265-285, applied
   to probe identity). Concurrent stale triggers coalesce.
+- **Credential-scoped invalidation** (red-team §2.1/§3.4, fold F-1). Any `invalid_grant`
+  verdict — whether surfaced by a probe (§4.1.1) or a worker turn (§4.3.3) — invalidates
+  **every** liveness row sharing that `credentialKey` to `failed` in the same write, not
+  only the row for the route that produced the verdict. Without this join, a sibling route
+  inside its own fresh window would keep reading `verified` on a credential the controller
+  has already revocation-latched — a regression against the three-vendor static-path
+  identity precedent (§1.2), not merely an edge case.
 - **The wave-driver preflight** (wave-driver.mjs:274-282) becomes the first bounded
   consumer: its per-member doctor reads short-circuit on the cache; a stale route probes
   once, not per member.
@@ -300,14 +375,32 @@ TTL for static-key routes is long/derived from the key's non-expiry, §4.1.4).
 - **`failed` is sticky within a bounded failure window** (probe-failure recovery backoff),
   so a dead provider is not re-probed on every spawn; the explicit `baton doctor --check`
   deep path and the credential controllers' explicit refresh remain the operator's
-  forced-retry surfaces.
+  forced-retry surfaces. This window is classified against the control law in §3 (fold
+  F-7): the explicit paths unstick immediately, so the window bounds only the automatic
+  re-probe cadence — constructive, never a bare clock on work.
+- **Why an in-memory cache suffices** (red-team §3.2, fold F-6). The cache survives across
+  separate CLI invocations because ordinary commands are thin `BatonWebClient`s of one
+  resident `baton serve` process — `discoverBatonConnection`'s residency contract
+  (connection.json schemaVersion 2 `deploymentId`/`incarnation`,
+  application-cli.mjs:208-260); only the server opens and holds the facade. A `baton serve`
+  restart resets every route to `absent`; the next wave's preflight probes each once,
+  bounded by RT-5's existing cold-wave case — this is a known, accepted cost, not a gap.
 
 **Red-team targets:** cache-staleness lying (a `verified` cache row served after the
-provider died — the window default is bounded by the vendor TTL, and a probe that surfaces
-an auth failure latches via §4.3 so the next read sees `failed`, not stale-`verified`);
-cache-forever (a failed probe that never re-probes — the bounded failure window + explicit
-check break it); probe-as-call-multiplier (a consumer probing per spawn — the cache short-
-circuit is the invariant, tested).
+provider died — the window default is bounded by the vendor TTL, and any `invalid_grant`
+verdict, probe- or worker-sourced, invalidates every liveness row sharing the
+`credentialKey`, so the next read on ANY route the credential backs sees `failed`, not
+stale-`verified` — RT-14); cache-forever (a failed probe that never re-probes — the
+bounded failure window + explicit check break it); probe-as-call-multiplier (a consumer
+probing per spawn — the cache short-circuit is the invariant, tested); identity-skip
+(a liveness row keyed per route only, orphaning sibling routes on the same credential —
+the `credentialKey` join above, source-pinned to the static paths' shared-identity model).
+
+*(Defended as written, red-team §2.3: replay/idempotency — a replayed or stale receipt
+cannot extend its own window because expiry is enforced structurally at consult time
+(`expiresAt > now`), and the reused precedents hold: single-flight keyed on credential
+path (claude-credential-cache.mjs:265-285), observation digest binding + conflict refusal
+(coordination-store.mjs:3384-3385).)*
 
 #### 4.1.4 What counts as proof of provider-alive vs static-ready
 
@@ -335,7 +428,7 @@ circuit is the invariant, tested).
 alive into one `ready` — the two MUST be separable fields, tested row-by-row);
 auto-heal-overreach (any automatic path that re-runs vendor login or persists a harvested
 credential without the explicit-command consent ceremony, claude-credential-cache.mjs:340,
-348-351); proving-too-little (a probe whose "success" is a provider process start — §4.1.1's
+348-350); proving-too-little (a probe whose "success" is a provider process start — §4.1.1's
 content verification is mandatory, not decorative).
 
 ### 4.2 D2 — fleet.roster (#83)
@@ -357,7 +450,7 @@ advisory surface.
     harness, model, effort, provider,
     static:      { state, code?, summary? },        # from deploymentReadiness (§1.2)
     liveness:    { state: verified|unverified|failed, verifiedAt?, expiresAt?,
-                   probeId?, latencyMs?, code? },   # from the #47 cache (§4.1.3)
+                   probeId?, latencyMs?, code?, credentialKey },  # #47 cache (§4.1.3)
     occupancy:   { inFlight, concurrencyCeiling }, # coordinator seats + adapter card ceiling
     learning:    { samples, winRate, weight, seededFrom?, mode } | null,  # router bucket
   }],
@@ -374,14 +467,24 @@ advisory surface.
   weight/count (decayed), seededFrom for cross-model seed, mode from policy
   (coordination-store.mjs:326-334). A route with no bucket projects `learning: null` —
   honest-empty, never a fabricated prior.
-- **Sanitization inherits the doctor discipline** (application-deployment.mjs:921-969,
-  docs/30:46-50): no executable paths, no credential values, no private runtime paths, no
-  adapter output, no provider tokens. `learning` and `liveness` carry only bounded,
-  vendor-neutral atoms.
+- **Sanitization inherits the doctor discipline — and its function** (red-team §2.4, fold
+  F-5): the roster's `liveness`/`occupancy`/`learning` fields extend `publicRouteRuntime`
+  (application-deployment.mjs:940-969 — the whitelist projector over
+  `publicCardAtom`/`publicHarnessVersion`, application-deployment.mjs:921-938) — or a
+  stated named sibling of it — never a new, parallel, potentially weaker sanitizer. The
+  policy stands (docs/30:46-50): no executable paths, no credential values, no private
+  runtime paths, no adapter output, no provider tokens. `learning` and `liveness` carry
+  only bounded, vendor-neutral atoms.
 - **Bounded.** routes ≤ the deployment's configured route set (normalizeRoutes,
   application-deployment.mjs:228-249 caps at 64); observations truncated to a bounded tail;
   the document byte-capped like other projections (the cairn route-advice ceilings,
   cairn-run-scorecard.mjs:52-53, are the precedent).
+
+*(Defended as written, red-team §2.4: the sanitization policy is grounded —
+`publicHarnessVersion`/`publicRouteRuntime` already whitelist-project only bounded,
+regex-validated atoms, and no raw adapter output crosses that boundary today
+(application-deployment.mjs:921-969). The folded precision gap — which function the new
+fields extend — is named by F-5 above.)*
 
 #### 4.2.2 Surfaces
 
@@ -390,13 +493,20 @@ advisory surface.
   bucket exists) — so every existing consumer (CLI `baton doctor`/`route`, the wave-driver
   preflight, web/MCP doctor, docs/30:46-56) gains the honest multi-axis view without a new
   surface.
-- **A `fleet.roster` command + capability.** CLI `baton fleet roster` and a
-  `fleet.roster` capability (registered in the ordinary capability plane,
-  application-semantics.mjs:1099-1100 already lists the `fleet_*` operation family) project
-  the document directly. It is **read-only advisory** — `routingMutationAuthority: false`
-  and `workerAuthority: false`, mirroring route.advice's provenance (cairn-run-scorecard.
-  mjs:162). It never selects routes, never mutates the router, never claims verification or
-  merge authority.
+- **A `fleet_roster` command + capability** (red-team §4, fold F-2). CLI `baton fleet
+  roster` and a **`fleet_roster` operation registered in the ordinary capability plane's
+  advanced `fleet_*` family** (application-semantics.mjs:1099-1100 — sibling-consistent
+  with `fleet_spawn`…`fleet_drain`) project the document directly. Its
+  `routingMutationAuthority: false`/`workerAuthority: false` provenance fields are a **new
+  precedent in that plane**, not borrowed from Cairn's `route.advice` envelope
+  (`op: 'route.advice'`, cairn-run-scorecard.mjs:162 — a separate, dot-namespaced
+  knowledge-capability plane this epic does not register in). (Pre-fold, this bullet cited
+  both planes at once; the fold picks the ordinary plane. Honest nuance: the plane's
+  *default* family is dot-namespaced — `application.help`, `runs.list`, `run.*`,
+  application-semantics.mjs:1095-1096 — so the deciding rule is sibling consistency within
+  the cited `fleet_*` family, not a plane-wide naming law.) It is **read-only advisory** —
+  it never selects routes, never mutates the router, never claims verification or merge
+  authority.
 - **The MCP/reflex table row.** The roster joins the derived registry-delta surface (S-3's
   reflexive surfacing) as a bounded read tool — the packaging epic owns the wire shape; this
   epic owns the projection and its honesty contract.
@@ -406,12 +516,15 @@ advisory surface.
 
 **Red-team targets:** roster-as-scheduler (any consumer reading the roster as selection
 authority — it is advisory; selection stays with the existing router/advice + exact-route
-authority); occupancy-lie (projecting a fabricated `inFlight` rather than the coordinator's
-real count — the projection is derived from coordinator.mjs:2800-2806 and a source-scan
-pins it); sanitization leak (a roster row carrying a credential value, executable path, or
-provider token — the sanitizer is the doctor's, tested by content scan);
+authority); plane-conflation (a registration that cites both the ordinary `fleet_*` family
+and Cairn's dot-namespaced plane — one plane, `fleet_roster`, sibling-consistent, with its
+own provenance precedent); occupancy-lie (projecting a fabricated `inFlight` rather than
+the coordinator's real count — the projection is derived from coordinator.mjs:2800-2806 and
+a source-scan pins it); sanitization leak (a roster row carrying a credential value,
+executable path, or provider token — the sanitizer is `publicRouteRuntime` or its stated
+named sibling, never a parallel implementation, tested by content scan);
 unbounded-bloat (an unbounded observations tail — the bounded tail is pinned);
-cross-surface drift (doctor rows and `fleet.roster` disagreeing — one projection function,
+cross-surface drift (doctor rows and `fleet_roster` disagreeing — one projection function,
 both surfaces consume it).
 
 ### 4.3 D3 — the credential controllers (#84)
@@ -433,23 +546,35 @@ both surfaces consume it).
   mtime; the "re-read immediately before adopting a harvest, abort if changed under the
   flight" rule is identical), spawn-TTL gate (256-263), access-token-only projection
   (229-232 — the refresh token never enters a grok worker runtime).
-- **Vendor-executed refresh:** the refresh runtime spawns the grok CLI (or the exact
-  vendor refresh path pinned at #84 filing) in a throwaway HOME/CLAUDE_CONFIG_DIR-style
-  scoped runtime with the cached credential projected, lets IT refresh, then harvests the
-  freshest schema-valid credential from the write-back target (the auth.json re-read) —
-  the claude `defaultRefreshRuntime` shape (121-159), vendor-for-vendor.
+- **Vendor-executed refresh, with the vendor-native write-back target** (red-team §7
+  amendment 6, fold F-3): the refresh runtime spawns the grok CLI (or the exact vendor
+  refresh path pinned at #84 filing) in a scoped runtime with the cached credential
+  projected, lets IT refresh, then harvests the freshest schema-valid credential from the
+  write-back target. **Grok's credential path is HOME-relative, so the write-back target
+  is NOT the claude flat-file convention:** grok's native sandbox grants its expected
+  `~/.grok` tree with HOME kept private (runtime-isolation.mjs:64-66; `env.HOME = home`
+  at :74; grok `GROK_HOME` pointed at the nested config at :81), so the grok runtime's
+  projected-credential write AND its write-back read both target
+  **`directory/.grok/auth.json`** with `HOME: directory`. It must not copy
+  `defaultRefreshRuntime`'s flat sibling file (`directory/.credentials.json`,
+  claude-credential-cache.mjs:122-123, under `HOME`/`CLAUDE_CONFIG_DIR: directory`,
+  :131-132): a literal vendor-for-vendor port would write/read `directory/auth.json`, a
+  path grok's CLI never touches. Everything else ports vendor-for-vendor: throwaway
+  scoped HOME, bounded stdout/stderr capture, `invalid_grant|revok` detection, SIGKILL
+  timeout, write-back-target read.
 - **Honesty boundary (rule 7 stands):** Baton orchestrates the vendor refresh; it never
   reimplements x.ai OAuth internals, never invents a refresh where the vendor offers none,
   and never persists a harvested grok credential to the operator store except through the
-  explicit consent command (mirroring claude-credential-cache.mjs:340, 348-351).
+  explicit consent command (mirroring claude-credential-cache.mjs:340, 348-350).
   `grokAuthenticationSummary` (application-deployment.mjs:400-408) stays the corrective text.
 
 **Red-team targets:** vendor-refresh-fabrication (a controller that "refreshes" without the
-vendor executing it — the vendor CLI must run and the harvest must be schema-gated);
-token-widening (a grok worker runtime receiving the refresh token — access-token-only is
-enforced, pinned by the same projection-tree scan as #11's CC-4,
-setup-token-decisions.md:205-209); latch-absence (a revoked grok refresh re-probing
-forever — the `invalid_grant` latch fires, claude-credential-cache.mjs:315-318);
+vendor executing it — the vendor CLI must run and the harvest must be schema-gated, and the
+write-back target is `directory/.grok/auth.json` per runtime-isolation.mjs:64-66, never the
+claude flat sibling path); token-widening (a grok worker runtime receiving the refresh
+token — access-token-only is enforced, pinned by the same projection-tree scan as #11's
+CC-4, setup-token-decisions.md:205-209); latch-absence (a revoked grok refresh re-probing
+forever — the `invalid_grant` latch fires, claude-credential-cache.mjs:315-317);
 consent-violation (an automatic path persisting the harvest to the operator store).
 
 #### 4.3.2 The Claude v3.1 refresh-capable runtime shape
@@ -466,7 +591,10 @@ consent-violation (an automatic path persisting the harvest to the operator stor
   rather than re-deriving them. Concretely: the runtime class takes
   `{cmd, cmdArgs, credential (wire), directory, timeoutMs}` and returns the closed result
   `{ok, invalidGrant, runtimeCredential, writeBackTarget}` — the exact envelope
-  `defaultRefreshRuntime` already returns (claude-credential-cache.mjs:147-152).
+  `defaultRefreshRuntime` already returns (claude-credential-cache.mjs:147-152). The
+  write-back TARGET inside that envelope is vendor-specific (§4.3.1's
+  `directory/.grok/auth.json` vs claude's flat sibling file) — the shared shape is the
+  envelope and the isolation discipline, not the path convention.
 - **The v3.1 refresh-capable runtime is the thing the retry-once worker path rides**
   (claude-session.mjs:1119-1129): one vendor-executed refresh → re-projection → exactly one
   retried turn. The tier's probe (§4.1) and the controller's spawn-TTL gate
@@ -476,7 +604,8 @@ consent-violation (an automatic path persisting the harvest to the operator stor
 the named envelope — one closed result shape, source-pinned); timeout/evidence asymmetry
 (the refresh runtime's timeout producing an unresolvable `dispatch_unknown` instead of a
 typed `authentication_refresh_timeout`); write-back-target ambiguity (the runtime reading a
-target it did not write — the CAS re-read discipline of §4.3.1 applies).
+target it did not write — the CAS re-read discipline of §4.3.1 applies, and each vendor's
+target path is pinned: claude flat sibling, grok `directory/.grok/auth.json`).
 
 #### 4.3.3 Doctor findings on refresh-token death with corrective action
 
@@ -495,17 +624,20 @@ target it did not write — the CAS re-read discipline of §4.3.1 applies).
   blocked taxonomy is shared; the remedy text is vendor-specific (the #11 R11V-4 fold,
   setup-token-decisions.md:46-51).
 - **The #47 tier consumes these findings:** a probe that surfaces `invalid_grant`
-  (§4.1.1's classification) is *itself* a refresh-token-death finding — it must propagate to
-  the controller's latch and to the doctor's credential block, so the "stale" label
-  ("refresh-unverified until attempted (#47 tier)", claude-credential-cache.mjs:250)
-  upgrades to a truthful dead state the instant a probe or a worker turn attempts it.
+  (§4.1.1's classification) is *itself* a refresh-token-death finding — it must propagate
+  to the controller's latch, to the doctor's credential block, **and to every liveness
+  cache row sharing the probe route's `credentialKey`** (§4.1.3's credential-scoped
+  invalidation, fold F-1), so the "stale" label ("refresh-unverified until attempted (#47
+  tier)", claude-credential-cache.mjs:250) upgrades to a truthful dead state — on every
+  route the credential backs — the instant a probe or a worker turn attempts it.
 
 **Red-team targets:** tombstone-misdiagnosis (a partial/corrupt record promoted to
 revoked — the exact-token-wire recognition is mandatory); remedy-bleed (a vendor-specific
 remedy text shared into another vendor's summary — the summaries stay per-vendor, the
 `PROVIDER_TERMINAL_GUIDANCE` constant stays vendor-agnostic,
 application-semantics.mjs:1888); finding-drop (a probe-discovered refresh-token death that
-never reaches the latch or the doctor block — the propagation path is a red-first test).
+never reaches the latch, the doctor block, or the sibling liveness rows sharing the
+`credentialKey` — the propagation path is a red-first test, RT-13/RT-14).
 
 ---
 
@@ -528,8 +660,11 @@ never reaches the latch or the doctor block — the propagation path is a red-fi
 - **No process-tree or host-level view in the roster.** Occupancy is seat counts per route
   (coordinator.mjs:2800-2806), not process forest inspection — that is a different concern.
 - **No new store.** The roster is a projection over existing authorities (§1.4); the
-  liveness cache is a deployment-side in-memory/per-read-stat cache (§4.1.3), not a durable
-  store in v1 (a durable probe ledger is a v1.1 candidate).
+  liveness cache is a deployment-side in-memory cache held by the resident `baton serve`
+  process (§4.1.3, application-cli.mjs:208-260), not a durable store in v1 (a durable probe
+  ledger is a v1.1 candidate).
+  *(Defended as written, red-team §3.3: retention is disclaimed by this non-goal and the
+  acceptance suite promises no cross-restart retention — consistent, no hole.)*
 - **No kimi credential controller in v1** beyond the existing tombstone recognition
   (application-deployment.mjs:338-398): kimi's native login owns its refresh, kimi is
   blocked on #54, and rule 7 forbids fabricating a controller the vendor flow doesn't
@@ -543,11 +678,14 @@ The red-first suite ships BEFORE implementation; every row is deterministic (fix
 adapters/shim executables, fixed clocks, no live providers unless explicitly an
 operator-gated live probe):
 
-**#47 (readiness tier) — RT-1..RT-5**
+**#47 (readiness tier) — RT-1..RT-5, RT-14**
 - **RT-1 (probe shape + content proof):** a fixture route whose adapter reports
   `lifecycle.spawned` but never completes the content-verified turn is `probe_failed`, not
   `verified`; a fixture that completes with exactly the expected output is `verified` with a
-  `readiness.probe_verified` receipt and a `resource.provider_call`-class receipt.
+  `readiness.probe_verified` receipt and a `resource.provider_call`-class receipt. The
+  probe's content check rides the shared `verify.reverified`-sourced evidence path **by
+  construction** (coordination-store.mjs:3378-3384): a fixture that substitutes a bespoke
+  probe-only verifier fails the test (fold F-4).
 - **RT-2 (never probe per call):** N spawns within a fresh liveness window perform zero
   probes; a stale window probes exactly once; N concurrent stale spawns coalesce to one
   probe (single-flight per route).
@@ -560,55 +698,70 @@ operator-gated live probe):
   the blocked code classifies `invalid_grant` → `authentication_refresh_required` vs
   network → `provider_unreachable` vs adapter → the adapter's typed code.
 - **RT-5 (wave preflight):** a 64-member wave whose routes are all cache-fresh performs no
-  probes at preflight; a cold wave performs ≤1 probe per stale route.
+  probes at preflight; a cold wave performs ≤1 probe per stale route. (This cold-wave case
+  is also the post-`baton serve`-restart state — the in-memory cache resets to absent and
+  the bound still holds, fold F-6.)
+- **RT-14 (credential-identity invalidation, fold F-1):** a probe on route A surfaces
+  `invalid_grant`; a concurrently-fresh route B sharing A's `credentialKey` reads `failed`
+  on its very next read, not its own unexpired `verified` cache — and the same holds when
+  the verdict arrives via a worker turn (§4.3.3) instead of a probe.
 
 **#83 (roster) — RT-6..RT-9**
-- **RT-6 (projection shape):** `fleet.roster` returns the closed document (§4.2.1); every
-  route row carries static + liveness + occupancy + learning-or-null; observations are the
-  bounded tail of `routeObservations()` (coordination-store.mjs:11114).
+- **RT-6 (projection shape):** `fleet_roster` returns the closed document (§4.2.1); every
+  route row carries static + liveness (incl. `credentialKey`) + occupancy +
+  learning-or-null; observations are the bounded tail of `routeObservations()`
+  (coordination-store.mjs:11114).
 - **RT-7 (occupancy truth):** the projected `inFlight` equals the coordinator's real count
   (source-scan: derived from `_inFlightCount`, coordinator.mjs:2800-2806); a caller-supplied
   `inFlight` cannot alter the projection.
 - **RT-8 (sanitization):** a content scan over roster output proves no credential value, no
   executable path, no private runtime path, no provider token appears (the #11 CC-4
-  projection-tree scan precedent, setup-token-decisions.md:205-209).
-- **RT-9 (advisory + drift):** `fleet.roster` claims `routingMutationAuthority: false` and
-  `workerAuthority: false`; doctor route rows and `fleet.roster` rows are byte-identical on
-  shared fields (one projection function).
+  projection-tree scan precedent, setup-token-decisions.md:205-209) — and the new
+  `liveness`/`occupancy`/`learning` fields are projected through `publicRouteRuntime`
+  (application-deployment.mjs:940-969) or its stated named sibling; a parallel sanitizer is
+  a test failure (fold F-5).
+- **RT-9 (advisory + drift):** `fleet_roster` registers in the ordinary capability plane's
+  advanced `fleet_*` family (application-semantics.mjs:1099-1100) and claims
+  `routingMutationAuthority: false` and `workerAuthority: false` as that plane's own
+  provenance precedent (fold F-2); doctor route rows and `fleet_roster` rows are
+  byte-identical on shared fields (one projection function).
 
 **#84 (credential controllers) — RT-10..RT-13**
 - **RT-10 (grok cache on the #11 pattern):** a fixture grok executable that (a) rewrites the
-  projected auth.json with a fresher `expires_at` → the harvest adopts it (monotonicity +
-  schema gate); (b) emits the revocation wire shape → `invalid_grant` latches, a second
-  trigger spawns NO second refresh runtime, and doctor surfaces
-  `authentication_refresh_required` with the grok remedy; (c) the explicit command clears
-  the latch and is the only persist-back path (source-scan).
+  projected `directory/.grok/auth.json` — the HOME-relative vendor-native write-back target
+  (runtime-isolation.mjs:64-66, fold F-3), never a flat sibling file — with a fresher
+  `expires_at` → the harvest adopts it (monotonicity + schema gate); (b) emits the
+  revocation wire shape → `invalid_grant` latches, a second trigger spawns NO second
+  refresh runtime, and doctor surfaces `authentication_refresh_required` with the grok
+  remedy; (c) the explicit command clears the latch and is the only persist-back path
+  (source-scan).
 - **RT-11 (single-flight + CAS):** N concurrent grok refresh triggers coalesce to one
   refresh runtime; an auth.json mtime change mid-flight aborts the adoption (the
-  Keychain-mtime CAS discipline, vendor-adjusted); a cross-deployment flight blocks on the
-  advisory lockfile.
+  Keychain-mtime CAS discipline, vendor-adjusted to `directory/.grok/auth.json`); a
+  cross-deployment flight blocks on the advisory lockfile.
 - **RT-12 (access-token-only):** no grok worker runtime receives the refresh token; a
   projection-tree scan proves no projected worker file contains the cache's refresh-token
   bytes (the #11 CC-4 pin).
 - **RT-13 (refresh-token-death findings):** a probe or worker turn surfacing `invalid_grant`
-  propagates to the controller's latch AND the doctor credential block; the kimi tombstone
-  recognition (application-deployment.mjs:360-375) stays exact — a partial/corrupt record is
+  propagates to the controller's latch AND the doctor credential block (and, per RT-14, to
+  every liveness row sharing the `credentialKey`); the kimi tombstone recognition
+  (application-deployment.mjs:360-375) stays exact — a partial/corrupt record is
   `authentication_metadata_invalid`, never promoted to revoked; every vendor's remedy text
   is its own (`PROVIDER_TERMINAL_GUIDANCE` stays vendor-agnostic).
 
 **Live dogfood receipts (post-landing, operator-gated):** the first live grok refresh via
-the #11 pattern records the observed write-back target; the first live probe of a
-28-min-TTL grok route records the verified window vs the credential's expiry; the first live
-refresh-token-death (if reproduced) records the actual terminal result against the matcher —
-each in this evidence directory, mirroring #11's post-landing receipts
-(setup-token-decisions.md:90-92).
+the #11 pattern records the observed write-back target (expected `directory/.grok/auth.json`
+per fold F-3); the first live probe of a 28-min-TTL grok route records the verified window
+vs the credential's expiry; the first live refresh-token-death (if reproduced) records the
+actual terminal result against the matcher — each in this evidence directory, mirroring
+#11's post-landing receipts (setup-token-decisions.md:90-92).
 
 ---
 
 ## 7. Verification
 
 ```text
-node --test impl/test/readiness-credentials-red.test.mjs     # the red-first suite (RT-1..RT-13)
+node --test impl/test/readiness-credentials-red.test.mjs     # the red-first suite (RT-1..RT-14)
 node --test impl/test/claude-credential-projection-red.test.mjs   # #11's suite stays green
 ```
 
@@ -616,9 +769,67 @@ then the canonical suite fully green. Post-landing live receipts per §6.
 
 ---
 
-## 8. Fold trail (post-red-team amendments, appended)
+## 8. Fold trail (post-red-team amendments, folded 2026-08-03)
 
-(v1.0 is pre-red-team. When the adversarial wave returns, every CONFIRMED-HOLE / NEEDS-
-AMENDMENT / doc-honesty finding folds to a numbered amendment here with the v1.0 sections
-preserved for traceability — the bidirectional v3 discipline, bidirectional-v3-decisions.md:
-1-7.)
+Folded against **readiness-redteam.md** (this directory; verdict summary §6, consolidated
+amendment text §7) on 2026-08-03, per the bidirectional v3 discipline
+(bidirectional-v3-decisions.md:1-7). Each entry records the pre-fold claim in one clause
+for traceability; the amended text lives in the decision sections above.
+
+**CONFIRMED-HOLEs (decision rewritten in place):**
+
+- **F-1 (red-team §2.1/§3.4 → §1.2, §4.1.3, §4.2.1, §4.3.3, RT-6, RT-14): credential-
+  identity granularity.** Pre-fold, the liveness cache was keyed per route only, so a
+  sibling route inside its own fresh window would keep reading `verified` on a credential
+  the controller had already revocation-latched — a regression against all three vendors'
+  static paths, which compute one shared credential identity per pass and apply it to every
+  matching route (application-deployment.mjs:1064-1096, 1256-1259, 1585-1590;
+  claude-credential-cache.mjs:270). Fold: the tuple carries `credentialKey`; any
+  `invalid_grant` verdict (probe or worker turn) invalidates every row sharing the key in
+  the same write; RT-14 pins it.
+- **F-2 (red-team §4 → §4.2.2, RT-9): capability-plane conflation.** Pre-fold, D2 justified
+  the roster with the ordinary plane's `fleet_*` family (application-semantics.mjs:1099-1100)
+  while borrowing its name shape and provenance envelope from Cairn's dot-namespaced
+  `route.advice` (cairn-run-scorecard.mjs:162 — the only `route.advice` in `impl/src/`).
+  Fold: the operation registers as `fleet_roster` in the ordinary capability plane's
+  advanced family (sibling-consistent); the `routingMutationAuthority`/`workerAuthority`
+  provenance fields are a new precedent in that plane. Recorded nuance: the ordinary
+  plane's default family is dot-namespaced (application-semantics.mjs:1095-1096), so the
+  rule is sibling consistency within the cited family, not a plane-wide naming law.
+- **F-3 (red-team §7 amendment 6 → §1.3, §4.3.1, §4.3.2, RT-10, RT-11): grok write-back
+  shape.** Pre-fold, the grok refresh runtime was described as a "vendor-for-vendor" port
+  of `defaultRefreshRuntime`, whose flat sibling write-back (`directory/.credentials.json`,
+  claude-credential-cache.mjs:122-123) is wrong for grok's HOME-relative credential path.
+  Fold: both the projected write and the write-back read target `directory/.grok/auth.json`
+  with `HOME: directory`, matching the established grok isolation shape
+  (runtime-isolation.mjs:64-66, 74, 81); the shared runtime contract (§4.3.2) is the
+  envelope + isolation discipline, not the path convention.
+
+**NEEDS-AMENDMENTs (applied):**
+
+- **F-4 (red-team §2.2 → §1.4, §4.1.1, RT-1): probe verification path pinned** — the
+  probe's content check consumes the same `verify.reverified`-sourced,
+  digest-for-digest evidence discipline route observations require
+  (coordination-store.mjs:3378-3384); a bespoke probe-only verifier is forbidden by
+  construction.
+- **F-5 (red-team §2.4 → §4.2.1, RT-8): sanitizer function named** — the new roster fields
+  extend `publicRouteRuntime` (application-deployment.mjs:940-969) or a stated named
+  sibling, never a parallel sanitizer.
+- **F-6 (red-team §3.2 → §4.1.3, §5, RT-5): in-memory cache grounded** — the resident-server
+  model (`discoverBatonConnection`, application-cli.mjs:208-260) is why "never probe per
+  call" holds across CLI invocations; a server restart's cold cache is exactly RT-5's
+  bounded cold-wave case, an accepted cost.
+- **F-7 (red-team §5 → §3, §4.1.3): sticky-failure window classified** against the control
+  law's own forbidden-pattern language — the explicit unstick paths make it
+  constructive-escape-hatch-bounded, not a bare clock.
+
+**DEFENDED verdicts (one-line notes in place):** injection-lane probe design (§4.1.1),
+replay/idempotency (§4.1.3), scope-leak sanitization policy (§4.2.1), D1→D2→D3 ordering
+(§4 head), retention-by-non-goal (§5), probe-TTL control-law compliance (§3).
+
+**Doc-honesty fixes (found while verifying this fold):** the §3 control-law citation moved
+from `bidirectional-v3-decisions.md:115-125` (stale — that range is the BD3 synthesis
+list) to `:134-143`; the red-team report repeats the stale cite in its own §5 and is
+corrected here, not propagated. Runtime-isolation line numbers confirmed exact (:64-66 the
+grok comment + nested config, :74 `env.HOME`, :81 grok `GROK_HOME`). Every file:line claim
+added in this fold was re-verified with `grep -an`/`sed -n` on 2026-08-03.
