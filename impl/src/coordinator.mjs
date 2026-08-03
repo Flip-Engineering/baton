@@ -62,6 +62,15 @@ const RUN_TIMELINE_OPERATIONAL_KINDS = new Set([
   'verify.reverified', 'work.resumed',
 ]);
 
+/** Epic #78 Decision 2: the orchestrator-selected permission subset is recorded on the grant at
+ * mint time (the caller names no permissions). Executor-class members receive the full
+ * {read,claim,report} subset; a triage-only coordinator-worker receives exactly {read} — the
+ * A2-2 over-grant a hardcoded set would commit is pinned by BW-22. */
+function permissionsForWaveRole(role) {
+  if (role === 'coordinator-worker') return ['read'];
+  return ['read', 'claim', 'report'];
+}
+
 function validLogicalCallId(value) {
   return typeof value === 'string' && value.length > 0
     && Buffer.byteLength(value) <= 256 && !value.includes('\0');
@@ -3363,6 +3372,12 @@ export class Coordinator {
     // in one turn), while the worker's actual work is gated on the worktree being ready.
     handle.worktreeCreationPending = true;
     handle.processGeneration = (handle.processGeneration ?? 0) + 1;
+    // Epic #78 Decision 2 (A2-3): the attachment is a durable generation record — replay can
+    // derive which grants the replacement generation invalidates. Best-effort: a store without
+    // the recordWorkerGeneration surface (pre-#78 fixtures) simply skips the event.
+    if (typeof this._coordination?.recordWorkerGeneration === 'function') {
+      this.recordWorkerGeneration(handle);
+    }
     let worktreeSource;
     if (task.sessionRequest?.mode === 'resume') {
       worktreeSource = Promise.resolve({
@@ -7802,6 +7817,9 @@ export class Coordinator {
       const handle = this._workers.get(task.assignee);
       this._expireScratchClaims(handle, task, `task_${to}`);
       this._expireBoardClaims(handle, task, `task_${to}`);
+      // Epic #78 Decision 8: a terminal lifecycle transition revokes every grant the member
+      // holds so a new generation cannot reuse it and replay cannot resurrect it.
+      this._revokeMemberGrants(handle, task, `task_${to}`);
       this._settlePlanNodeBudget(task.id);
     }
     return result.task;
@@ -10277,7 +10295,10 @@ export class Coordinator {
     return {
       ok: true,
       kind: payload.query.kind,
-      result: answered.rendered,
+      // Epic #78 Decision 5: the grant-scoped board read carries its page at the top level
+      // (items/nextCursor/truncated/boardFence/projectionInputFence are read directly off the
+      // receipt); every other read kind keeps the historical {result: rendered} shape.
+      ...(answered.pageTop ? answered.rendered : { result: answered.rendered }),
       renderedText: answered.deliverable,
       idempotencyKey: payload.idempotencyKey,
     };
@@ -10320,6 +10341,25 @@ export class Coordinator {
       return this._renderContextRead({ kind: 'finding', items: [node] });
     }
     if (kind === 'board') {
+      // Epic #78 Decision 5: the grant-scoped L1 read. The query is closed — {kind, grantId,
+      // cursor} ONLY; board/Run/wave/worker/viewer are derived from the active grant. A query
+      // carrying a smuggled scope field (board/workerId/runId/...) refuses before any lookup.
+      if (Object.hasOwn(query, 'grantId')) {
+        if (Object.keys(query).sort().join(',') !== 'cursor,grantId,kind'
+          || (query.cursor !== null && (typeof query.cursor !== 'string' || query.cursor.length === 0))) {
+          throw Object.assign(new Error('context read board query is invalid'), { code: 'context_read_invalid' });
+        }
+        const page = this._coordination.boardGrantPage({
+          grantId: query.grantId, cursor: query.cursor,
+          workerId: handle.id, taskId: task.id,
+          taskVersion: this._coordination.task(task.id)?.version ?? 0,
+          processGeneration: Number.isSafeInteger(handle.processGeneration) ? handle.processGeneration : 0,
+        });
+        const deliverable = `[CONTEXT_READ_RESULT board]\n${page.frame}\n${(page.items ?? []).map((row) => JSON.stringify({
+          itemId: row.itemId, title: row.title, state: row.state,
+        })).join('\n')}`;
+        return { rendered: page, deliverable, pageTop: true };
+      }
       if (typeof query.board !== 'string' || query.board.length === 0) {
         throw Object.assign(new Error('context read board query is invalid'), { code: 'context_read_invalid' });
       }
@@ -10493,6 +10533,148 @@ export class Coordinator {
     if (typeof opts.idempotencyKey !== 'string' || opts.idempotencyKey.length === 0) throw new TypeError('Board report requires idempotencyKey');
     return this._coordination.submitBoardReport({ ...fields, owner: workerId },
       { actor: opts.actor ?? 'worker', key: opts.idempotencyKey });
+  }
+
+  // ---- Epic #78 (board worker-half): the ONE live worker path into the kernel seam. All
+  // adapters reach requestBoardClaim/submitBoardReport through admitWorkerBoardCommand — the
+  // direct store methods confer no transported authority (Decision 3). ----
+
+  admitWorkerBoardCommand(kind, workerId, payload) {
+    this.tick();
+    const key = payload?.idempotencyKey ?? null;
+    const result = (partial) => ({ ...partial, ...(key ? { idempotencyKey: key } : {}) });
+    let handle;
+    try { handle = this._getWorker(workerId); } catch { return result({ ok: false, result: 'worker_not_active' }); }
+    const task = this._tasks.get(handle.taskId);
+    if (!task || !['working', 'input_required', 'paused'].includes(task.status)) {
+      return result({ ok: false, result: 'worker_not_active' });
+    }
+    // Closed frame re-validation (the wire scanner already rejects identity/scope fields; this is
+    // the coordinator-level discipline for a direct adapter event, bd3 A1b). A frame carrying a
+    // caller-named identity field is refused /invalid/ before any state lookup.
+    if (kind === 'claim') {
+      if (!payload || typeof payload !== 'object' || Array.isArray(payload)
+        || Object.keys(payload).sort().join(',') !== 'expectedBoardFence,grantId,idempotencyKey,itemId'
+        || typeof payload.grantId !== 'string' || payload.grantId.length === 0
+        || typeof payload.itemId !== 'string' || payload.itemId.length === 0
+        || !Number.isSafeInteger(payload.expectedBoardFence) || payload.expectedBoardFence < 0
+        || typeof payload.idempotencyKey !== 'string'
+        || !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/u.test(payload.idempotencyKey)) {
+        return result({ ok: false, result: 'board_claim_invalid' });
+      }
+    } else if (kind === 'report') {
+      if (!payload || typeof payload !== 'object' || Array.isArray(payload)
+        || Object.keys(payload).sort().join(',') !== 'body,expectedClaimVersion,grantId,idempotencyKey,itemDigest,itemId,itemVersion'
+        || typeof payload.grantId !== 'string' || payload.grantId.length === 0
+        || typeof payload.itemId !== 'string' || payload.itemId.length === 0
+        || !Number.isSafeInteger(payload.itemVersion) || payload.itemVersion <= 0
+        || typeof payload.itemDigest !== 'string' || !/^[a-f0-9]{64}$/u.test(payload.itemDigest)
+        || !Number.isSafeInteger(payload.expectedClaimVersion) || payload.expectedClaimVersion <= 0
+        || typeof payload.body !== 'string' || payload.body.length === 0
+        || typeof payload.idempotencyKey !== 'string'
+        || !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/u.test(payload.idempotencyKey)) {
+        return result({ ok: false, result: 'board_report_invalid' });
+      }
+    } else {
+      return result({ ok: false, result: 'board_worker_command_invalid' });
+    }
+    const durableTask = this._coordination.task(task.id);
+    if (!durableTask || !Number.isSafeInteger(durableTask.version)) {
+      return result({ ok: false, result: 'worker_not_active' });
+    }
+    const processGeneration = Number.isSafeInteger(handle.processGeneration) ? handle.processGeneration : 0;
+    try {
+      return result(this._coordination.admitWorkerBoardCommand({
+        kind, grantId: payload.grantId, payload, workerId,
+        taskId: task.id, taskVersion: durableTask.version, processGeneration,
+        idempotencyKey: payload.idempotencyKey,
+      }));
+    } catch (error) {
+      return result({ ok: false, result: error?.code ?? 'board_worker_scope_refused' });
+    }
+  }
+
+  /** Decision 2: the waves.send claim-grant mint. The caller names no grantee and no
+   * permissions; the hub resolves the target member Run server-side, derives the member
+   * coordinates from the live handle + durable task + generation record, selects the
+   * orchestrator-recorded permission subset from the member's wave role, and passes the S-2
+   * session authority through the store's mint (which proves the lease and the board binding). */
+  mintMemberBoardGrant(runId, { board, boardRunId, sessionAuthority, idempotencyKey, actor }) {
+    this.tick();
+    const target = this.list().find((worker) => worker.runId === runId);
+    if (!target || !this._workers.has(target.id)) {
+      throw Object.assign(new Error('Run steering target is unavailable'), { code: 'application_worker_not_found' });
+    }
+    const handle = this._workers.get(target.id);
+    const task = this._tasks.get(handle.taskId);
+    const durableTask = this._coordination.task(task?.id);
+    if (!task || !durableTask || !Number.isSafeInteger(durableTask.version)
+      || !['working', 'input_required', 'paused'].includes(task.status)) {
+      throw Object.assign(new Error('Run steering target is not a live member'), { code: 'application_worker_not_controllable' });
+    }
+    const processGeneration = Number.isSafeInteger(handle.processGeneration) ? handle.processGeneration : 0;
+    const waveRole = this._waveRoleOf(runId);
+    const selected = permissionsForWaveRole(waveRole);
+    return this._coordination.mintBoardGrant({
+      sessionAuthority, board, boardRunId, memberRunId: runId,
+      waveId: this._waveIdOf(runId), workerId: handle.id, taskId: task.id,
+      taskVersion: durableTask.version, processGeneration,
+      permissions: selected, idempotencyKey,
+    }, { actor: actor ?? 'orchestrator' });
+  }
+
+  _waveRoleOf(runId) {
+    for (const event of this._coordination.events() ?? []) {
+      if (event.kind === 'driver.recorded' && event.payload?.kind === 'steering.registered'
+        && event.payload?.runId === runId) {
+        return event.payload.waveRole ?? null;
+      }
+    }
+    return null;
+  }
+
+  _waveIdOf(runId) {
+    for (const event of this._coordination.events() ?? []) {
+      if (event.kind === 'driver.recorded' && event.payload?.kind === 'steering.registered'
+        && event.payload?.runId === runId) {
+        return event.payload.waveId ?? null;
+      }
+    }
+    return null;
+  }
+
+  /** Decision 2/8: a worker (re)attachment is a durable generation record so replay can derive
+   * which grants a replacement generation invalidates. Called at spawn. */
+  recordWorkerGeneration(handle) {
+    const task = this._tasks.get(handle.taskId);
+    const durableTask = this._coordination.task(task?.id);
+    if (!task || !durableTask || !Number.isSafeInteger(handle.processGeneration)
+      || handle.processGeneration <= 0) return null;
+    try {
+      return this._coordination.recordWorkerGeneration({
+        workerId: handle.id, processGeneration: handle.processGeneration,
+        runId: task.runId ?? null, taskId: task.id, taskVersion: durableTask.version,
+      }, { actor: 'hub', key: `worker.generation_bound:${handle.id}:${handle.processGeneration}` });
+    } catch {
+      return null;
+    }
+  }
+
+  /** Decision 8: a terminal lifecycle transition revokes every grant the member holds. Runs in
+   * the SAME terminal hook as _expireBoardClaims so a new generation cannot reuse a revoked
+   * grant and replay cannot resurrect it. */
+  _revokeMemberGrants(handle, task, reason) {
+    if (!this._coordination || typeof this._coordination.activeBoardGrants !== 'function' || !task) return;
+    const workerId = handle?.id ?? task.assignee ?? null;
+    if (!workerId) return;
+    const grantIds = this._coordination.activeBoardGrants({ workerId, taskId: task.id })
+      .map((grant) => grant.grantId);
+    if (grantIds.length === 0) return;
+    try {
+      this._coordination.revokeBoardGrants({ workerId, taskId: task.id, cause: reason }, {
+        actor: 'policy', key: `board.grant_revoked:${workerId}:${task.id}:${reason}`,
+      });
+    } catch { /* the durable revoke is best-effort within the terminal transition */ }
   }
 
   // REPL-1 rule 7: worker-scope ReplManifest admission. Sibling of requestBoardClaim — the wrapper
@@ -11590,6 +11772,28 @@ export class Coordinator {
         if (receipt?.ok === true) {
           this._deliverContextRead(handle, receipt);
         }
+        break;
+      }
+      case 'board.claim': {
+        // Epic #78 Decision 1: the worker claim frame. workerId is bound by the authenticated
+        // stream envelope; the wire carries NO identity/scope fields. Every attempt produces a
+        // board.claim_result — including typed refusals. Deliberately NOT TG2/TG3 liveness:
+        // no _observeSteeringCycle is minted (unlike scratchpad.write_result).
+        const receipt = this.admitWorkerBoardCommand('claim', workerId, payload);
+        appendAttributed({
+          worker: workerId, harness, turnEpoch, kind: 'board.claim_result',
+          actor: 'hub', payload: receipt,
+        });
+        break;
+      }
+      case 'board.report': {
+        // Epic #78 Decision 1/4: the worker report frame. Same stream-bound identity discipline
+        // as the claim; every attempt produces a board.report_result, never TG2/TG3 liveness.
+        const receipt = this.admitWorkerBoardCommand('report', workerId, payload);
+        appendAttributed({
+          worker: workerId, harness, turnEpoch, kind: 'board.report_result',
+          actor: 'hub', payload: receipt,
+        });
         break;
       }
       case 'message.send': {
