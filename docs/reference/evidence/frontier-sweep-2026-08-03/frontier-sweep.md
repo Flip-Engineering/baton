@@ -47,10 +47,14 @@ Medium epic: code.orient ladder (map/region/detail) + investigation receipts as
 knowledge. Seat: glm (its cartographer-adjacent reasoning has been strongest).
 Depends on: L1 (BD3-B packs, BD3-A lane). Feeds: #74's decomposition quality.
 
-### Lane C — readiness (#47)
-Small-medium epic: bounded actual-inference readiness tier per route + doctor surface
-(MCP-W3 from L0). Seat: deepseek. Depends on: L0 (the doctor tool). Feeds: every wave
-launch forever.
+### Lane C — readiness + credentials (#47 + #83 + #84)
+Small-medium epic: bounded actual-inference readiness tier per route (seat: deepseek),
+the fleet.roster seat inventory it feeds (#83), and the programmatic credential
+controllers (#84 — grok OIDC refresh grant on the #11 pattern, Claude v3.1 runtime
+shape, doctor findings on refresh-token rotation). One lane because they are one
+feature seen three ways: the controller keeps seats alive, the tier measures their
+liveness, the roster projects both. Depends on: L0 (the doctor tool). Feeds: every
+wave launch forever.
 
 ### Lane D — event-based liveness (#67 + #80)
 Small epic: watchdog redesign per the control law — event-vocabulary liveness
