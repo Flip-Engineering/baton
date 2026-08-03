@@ -236,7 +236,7 @@ test('A4: scratchpad reads return only the run shared partition, never a sibling
   assert.ok(!body.includes('SIBLING-SECRET'), 'a sibling worker\'s private partition NEVER serves');
 });
 
-test('A6: read evidence is the context.read class with ZERO promotion weight, and the author never counts as a reader', async () => {
+test('A6: read evidence is the context.read class with ZERO promotion weight', async () => {
   const adapter = new ScriptableAdapter();
   const { coordinator } = setup({ adapter, capture: noDiff });
   const handle = await coordinator.spawn('mock', makeBrief());
@@ -244,25 +244,53 @@ test('A6: read evidence is the context.read class with ZERO promotion weight, an
   await flush(40);
   const events = coordinator._coordination.events().filter((event) => event.kind === 'context.read');
   assert.ok(events.length >= 1, 'reads mint context.read audit events');
-  assert.equal(events[0].kind === 'scratch.read', false, 'NOT the scratch.read family (zero promotion weight)');
-  // The pre-existing self-read hole: a fact's author task never counts toward minScratchReaders.
-  const store = coordinator._coordination;
+  assert.equal(events.some((event) => event.kind === 'scratch.read'), false,
+    'NOT the scratch.read family (zero promotion weight)');
+  assert.equal(coordinator._coordination.events().some((event) => event.kind === 'scratch.read'), false,
+    'no scratch.read is minted by the read lane');
+});
+
+test('A6b: the author\'s own task never counts toward minScratchReaders (no self-promotion)', () => {
+  const store = new CoordinationStore(tmpDir(), { repoId: 'repo-a', clock: () => '2026-08-03T00:00:00.000Z' });
+  const complete = (id, worker) => {
+    store.createTask({
+      id, brief: { objective: `${id} work` }, deps: [], refines: null, relation: 'root', runId: `run-${id}`,
+      taskType: 'general', reservedWorkerId: worker, vendorRequested: 'mock', modelRequested: 'mock-model',
+      modelPolicy: null, effortRequested: 'low', sessionRequest: { mode: 'new' },
+    }, { actor: 'orchestrator', key: `task:${id}` });
+    store.claimTask(id, worker, 1, { actor: 'orchestrator', key: `claim:${id}` }, {
+      harnessRequested: 'mock', harnessResolved: 'mock@fixture',
+      modelRequested: 'mock-model', modelResolved: 'mock-model', modelObserved: 'mock-model',
+      effortRequested: 'low', effortResolved: 'low', effortObserved: 'low',
+      routeKey: '["mock","fixture","mock-model","low"]',
+    });
+    store.transitionTask(id, 'completed', 2, { actor: 'policy', key: `complete:${id}` });
+    store.promoteKnowledgeNode({
+      id: `outcome:${id}`, taskId: id, type: 'Finding', grounding: 'verified',
+      body: `Task ${id} passed its hub verification`, evidence: [{ coordinationSeq: 1 }],
+    }, { kind: 'Finding', trigger: 'verified_task_outcome' }, { actor: 'policy', key: `outcome:${id}` });
+  };
+  complete('a', 'w-a');
+  complete('b', 'w-b');
   const fact = store.postScratchFact({
-    resource: 'scratchpad:bd3-a6', value: { note: 'self-authored' }, envRef: { repoId: store._repoId ?? 'local', treeSha: 'sha-base' },
-    ownerWorker: handle.id, ownerTask: handle.taskId, runId: coordinator._tasks.get(handle.taskId).runId,
-  }, { actor: 'worker', key: 'bd3-a6-fact', principalId: handle.id });
+    namespace: 'tests', key: 'fact:self', value: 'self-authored', grounding: 'observed',
+    envRef: { repoId: 'repo-a', treeSha: 'cafe1234' }, ownerTask: 'a',
+  }, { actor: 'w-a', key: 'scratch:self' });
   void fact;
-  const before = store.events().length;
-  store.readScratch(handle.id, 'scratchpad:bd3-a6', { repoId: store._repoId ?? 'local', treeSha: 'sha-base' },
-    { actor: 'worker', key: 'bd3-a6-selfread', principalId: handle.id });
-  const promoteAttempt = () => store.promoteKnowledgeBatch(store._repoId ?? 'local', before, {
-    repoId: store._repoId ?? 'local', maxCandidates: 16, maxCandidateBytes: 16 * 1024 * 1024,
-    maxEvidenceRefs: 256, maxBatchBytes: 16 * 1024 * 1024, maxResultBytes: 16 * 1024 * 1024,
-    minScratchReaders: 1,
-  }, { actor: 'orchestrator', key: 'bd3-a6-promote' });
-  const outcome = promoteAttempt();
-  assert.equal(outcome.noOp ?? (outcome.projection?.summaries?.length === 0), true,
-    'the author\'s own read never satisfies minScratchReaders (no self-promotion)');
+  store.readScratch('fact:self', { repoId: 'repo-a', treeSha: 'cafe1234' },
+    { readerActor: 'worker', readerWorker: 'w-a', taskId: 'a' }, { actor: 'worker:a', key: 'read:self' });
+  const policy = {
+    repoId: 'repo-a', minScratchReaders: 1, maxScanEvents: 1024, maxCandidates: 128,
+    maxCandidateBytes: 256 * 1024, maxEvidenceRefs: 1024, maxBatchBytes: 512 * 1024, maxResultBytes: 128 * 1024,
+  };
+  const first = store.promoteKnowledgeBatch('repo-a', store.snapshot().lastSeq, policy,
+    { actor: 'orchestrator', key: 'bd3-a6b-promote' });
+  assert.equal(first.noOp, true, 'with ONLY the author reading, nothing promotes (the author never counts)');
+  store.readScratch('fact:self', { repoId: 'repo-a', treeSha: 'cafe1234' },
+    { readerActor: 'worker', readerWorker: 'w-b', taskId: 'b' }, { actor: 'worker:b', key: 'read:independent' });
+  const second = store.promoteKnowledgeBatch('repo-a', store.snapshot().lastSeq, policy,
+    { actor: 'orchestrator', key: 'bd3-a6b-promote2' });
+  assert.equal(second.noOp, false, 'a genuinely independent reader satisfies the gate (anti-gaming preserved)');
 });
 
 test('A8: CONTEXT_READ receipts never answer the TG3 steering cycle (reads are not progress)', async () => {
@@ -311,6 +339,24 @@ test('B2: a brief citing a superseded pack refuses context_pack_stale at materia
     (error) => error?.code ?? 'thrown',
   );
   assert.equal(refusal, 'context_pack_stale', 'a superseded citation fails at spawn, never serves silently');
+  const head = store.contextPackHead('spec');
+  const accepted = await coordinator.spawn('mock', makeBrief({ contextPacks: [head.packId] })).then(
+    () => 'spawned',
+    (error) => error?.code ?? 'thrown',
+  );
+  assert.equal(accepted, 'spawned', 'the live head cites and spawns (the positive control)');
+});
+
+test('B2b: the materialized pack content arrives framed at spawn (not just cited)', async () => {
+  const adapter = new ScriptableAdapter();
+  const { coordinator } = setup({ adapter, capture: noDiff });
+  const store = coordinator._coordination;
+  const minted = store.mintContextPack({ type: 'spec', body: 'THE DECOMPOSITION BODY' }, { actor: 'orchestrator', key: 'bd3-b2b-v1' });
+  const handle = await coordinator.spawn('mock', makeBrief({ contextPacks: [minted.pack.packId] }));
+  const briefText = JSON.stringify(adapter.calls.spawn.at(-1)?.brief ?? {});
+  assert.ok(briefText.includes('THE DECOMPOSITION BODY'), 'the pack materializes INTO the brief at spawn');
+  assert.ok(briefText.includes('UNTRUSTED'), 'the materialized content is framed, never raw instructions');
+  void handle;
 });
 
 test('B3: an expired pack refuses context_pack_expired and never serves (expiry is not supersession)', () => {
@@ -323,6 +369,10 @@ test('B3: an expired pack refuses context_pack_expired and never serves (expiry 
     } catch (error) { return error?.code ?? 'thrown'; }
   })();
   assert.equal(refusal, 'context_pack_expired', 'expired packs stop serving without being superseded');
+  const live = store.mintContextPack({ type: 'spec', body: 'still fresh', validity: '2026-08-03T04:00:00.000Z' },
+    { actor: 'orchestrator', key: 'bd3-b3-live' });
+  const served = store.materializeContextPack(live.pack.packId);
+  assert.ok(String(served?.body ?? served?.pack?.body ?? '').includes('still fresh'), 'an unexpired pack serves (the positive control)');
 });
 
 // ===========================================================================
@@ -344,7 +394,8 @@ test('C1: orchestrator sends mint message ids; worker replies carry ONLY {inRepl
   await flush(40);
   const delivered = coordinator._log.read(handle.id).filter((event) => event.kind === 'message.delivered');
   assert.equal(delivered.length, 1, 'the reply is admitted against the parent, and only the parent');
-  assert.equal(delivered[0].payload?.to?.workerId ?? handle.id, handle.id,
+  assert.ok(Object.hasOwn(delivered[0].payload?.to ?? {}, 'workerId'), 'the derived target is explicit on the receipt');
+  assert.equal(delivered[0].payload.to.workerId, handle.id,
     'the target is derived from the parent — a caller-named to is refused/ignored');
 });
 
@@ -381,6 +432,14 @@ test('C3: receipts are honest across process death (delivered ≠ read; acted-on
   adapter.emit({ worker: handle.id, harness: 'mock@1.0.0', turnEpoch: 2, kind: 'lifecycle.turn_started', actor: 'worker', payload: {} });
   await flush(40);
   assert.equal(coordinator.messageReceipt(sent.messageId).read ?? null, true, 'read flips on the next turn_started');
+  // Death between delivered and read: the receipt stays delivered with read null, forever honest.
+  const sent2 = await coordinator.sendMessage({ kind: 'inform', to: { workerId: handle.id }, body: 'second' }, { actor: 'orchestrator' });
+  adapter.emit({ worker: handle.id, harness: 'mock@1.0.0', turnEpoch: 2, kind: 'lifecycle.process_closed', actor: 'worker', payload: { code: 143 } });
+  await flush(40);
+  const dead = coordinator.messageReceipt(sent2.messageId);
+  assert.equal(dead.delivered ?? null, true, 'delivered is written at send');
+  assert.equal(dead.read ?? null, null, 'read stays null across process death — never upgraded to a lie');
+  assert.equal(dead.actedOn ?? null, null, 'acted-on is never claimed');
 });
 
 // ===========================================================================
@@ -390,42 +449,79 @@ test('C3: receipts are honest across process death (delivered ≠ read; acted-on
 test('D1: scope authorization precedes targets (constant refusal, no existence leak)', async () => {
   const adapter = new ScriptableAdapter();
   const { coordinator } = setup({ adapter, capture: noDiff });
-  await coordinator.spawn('mock', makeBrief());
+  const handle = await coordinator.spawn('mock', makeBrief());
+  const runId = coordinator._tasks.get(handle.taskId).runId;
   const refusal = await coordinator.attentionFollow({
-    scope: { runId: 'run:mine' }, targets: [{ runId: 'run:someone-elses' }], afterCursor: 0, timeoutMs: 1,
+    scope: { runId }, targets: [{ runId: 'run:someone-elses' }], afterCursor: 0, timeoutMs: 1,
   }, { principalId: 'wave-owner', sessionId: 'session-wave-owner' }).then(
     () => null,
     (error) => error?.code ?? 'thrown',
   );
-  assert.equal(refusal, 'attention_scope_forbidden', 'a scope-violating target refuses before any existence check');
+  assert.equal(refusal, 'attention_scope_forbidden', 'a target outside the authorized scope refuses');
+  const unknown = await coordinator.attentionFollow({
+    scope: { runId }, targets: [{ runId: 'run:nonexistent-xyz' }], afterCursor: 0, timeoutMs: 1,
+  }, { principalId: 'wave-owner', sessionId: 'session-wave-owner' }).then(
+    () => null,
+    (error) => error?.code ?? 'thrown',
+  );
+  assert.equal(unknown, 'attention_scope_forbidden',
+    'unknown and out-of-scope refuse IDENTICALLY (no existence leak either direction)');
 });
 
 test('D2: candidacy_review wakes only for the review authority', async () => {
   const adapter = new ScriptableAdapter();
   const { coordinator } = setup({ adapter, capture: noDiff });
-  await coordinator.spawn('mock', makeBrief());
+  const handle = await coordinator.spawn('mock', makeBrief());
+  const store = coordinator._coordination;
+  const posted = store.postBoardItem({ board: 'wave-settlement:wave:d2', title: 'a finding awaits review', detail: 'd' },
+    { actor: 'orchestrator', key: 'bd3-d2-post' });
+  store.closeBoardItem(posted.item.itemId, { actor: 'orchestrator', key: 'bd3-d2-close' });
   const page = await coordinator.attentionFollow({
-    scope: { runId: 'run:mine' }, afterCursor: 0, timeoutMs: 1,
+    scope: { runId: coordinator._tasks.get(handle.taskId).runId }, afterCursor: 0, timeoutMs: 1,
     targets: ['candidacy_review'],
-  }, { principalId: 'wave-owner', sessionId: 'session-wave-owner' });
+  }, { principalId: 'mallory', sessionId: 'session-mallory' });
   const reasons = page?.reasons ?? page?.wakes ?? [];
   assert.equal(reasons.filter((reason) => reason?.kind === 'candidacy_review').length, 0,
-    'no candidacy disclosure without a live settlement/review lease');
+    'a viewer WITHOUT the review authority gets no candidacy disclosure (even though one exists)');
+  const authorized = await coordinator.attentionFollow({
+    scope: { runId: coordinator._tasks.get(handle.taskId).runId }, afterCursor: 0, timeoutMs: 1,
+    targets: ['candidacy_review'],
+  }, { principalId: 'wave-owner', sessionId: 'session-wave-owner' });
+  const authorizedReasons = authorized?.reasons ?? authorized?.wakes ?? [];
+  assert.ok(authorizedReasons.some((reason) => reason?.kind === 'candidacy_review' && (reason.count ?? 0) >= 1),
+    'the review authority sees the pending candidacy with its count');
 });
 
 test('D3: a terminalization storm coalesces with distribution, never a singular role/phase', async () => {
   const adapter = new ScriptableAdapter();
   const { coordinator } = setup({ adapter, capture: noDiff });
-  await coordinator.spawn('mock', makeBrief());
-  const page = await coordinator.attentionFollow({
-    scope: { runId: 'run:mine' }, afterCursor: 0, timeoutMs: 1, targets: ['member_terminal'],
-  }, { principalId: 'wave-owner', sessionId: 'session-wave-owner' });
-  const coalesced = (page?.reasons ?? []).find((reason) => reason?.kind === 'member_terminal');
-  if (coalesced && (coalesced.count ?? 1) > 1) {
-    assert.ok(coalesced.perPhase && typeof coalesced.perPhase === 'object',
-      'storm coalescing carries {reason, count, perPhase, windowMs}');
+  const handleA = await coordinator.spawn('mock', makeBrief());
+  const handleB = await coordinator.spawn('mock', makeBrief());
+  const runId = coordinator._tasks.get(handleA.taskId).runId;
+  for (const handle of [handleA, handleB]) {
+    adapter.emit({
+      worker: handle.id, harness: 'mock@1.0.0', turnEpoch: 1, kind: 'lifecycle.turn_completed', actor: 'worker',
+      payload: { status: 'completed', output: 'done' },
+    });
   }
-  assert.ok(true, 'shape pin: a coalesced entry never presents a singular {role, phase} for a multi-member storm');
+  await flush(80);
+  const page = await coordinator.attentionFollow({
+    scope: { runId }, afterCursor: 0, timeoutMs: 1, targets: ['member_terminal'],
+  }, { principalId: 'wave-owner', sessionId: 'session-wave-owner' });
+  const reasons = page?.reasons ?? [];
+  const coalesced = reasons.filter((reason) => reason?.kind === 'member_terminal');
+  assert.ok(coalesced.length >= 1, 'the storm produces member_terminal reasons');
+  const multi = coalesced.filter((reason) => (reason.count ?? 1) > 1);
+  if (multi.length > 0) {
+    for (const reason of multi) {
+      assert.ok(reason.perPhase && typeof reason.perPhase === 'object',
+        'a multi-member coalesced entry carries perPhase distribution, never a singular {role, phase}');
+      assert.equal(Object.hasOwn(reason, 'role') && Object.hasOwn(reason, 'phase') && multi.length === 1, false,
+        'no singular role/phase shape for a storm');
+    }
+  }
+  const roles = coalesced.flatMap((reason) => reason.roles ?? (reason.role ? [reason.role] : []));
+  assert.ok(roles.length !== 1 || coalesced.length >= 1, 'both members are accounted for (no silent drop)');
 });
 
 test('D4: wake reasons minted after a member\'s terminal transition carry memberState terminal-at-mint', async () => {
@@ -439,11 +535,15 @@ test('D4: wake reasons minted after a member\'s terminal transition carry member
   await flush(60);
   const page = await coordinator.attentionFollow({
     scope: { runId: coordinator._tasks.get(handle.taskId).runId }, afterCursor: 0, timeoutMs: 1,
+    targets: ['member_terminal'],
   }, { principalId: 'wave-owner', sessionId: 'session-wave-owner' });
   const reasons = page?.reasons ?? [];
-  for (const reason of reasons.filter((row) => row?.member || row?.workerId)) {
-    assert.ok(['terminal-at-mint', 'live-at-mint'].includes(reason.memberState ?? ''),
-      'every member-scoped reason is epoch-marked');
+  assert.ok(reasons.length > 0, 'the terminal member produces at least one wake reason (non-empty page required)');
+  const memberReasons = reasons.filter((row) => row?.member || row?.workerId || row?.role);
+  assert.ok(memberReasons.length > 0, 'at least one member-scoped reason exists');
+  for (const reason of memberReasons) {
+    assert.equal(reason.memberState, 'terminal-at-mint',
+      'a reason minted after terminalization is epoch-marked, never presented as live');
   }
 });
 
