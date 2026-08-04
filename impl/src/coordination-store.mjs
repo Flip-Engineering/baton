@@ -576,7 +576,7 @@ function scratchpadString(value, maxBytes) {
   return normalized;
 }
 
-function normalizeScratchpadEntry(entry, resolveEntry = null) {
+function normalizeScratchpadEntry(entry, resolveEntry = null, opts = {}) {
   scratchpadRawBytes(entry);
   if (!scratchpadExact(entry, Object.hasOwn(entry ?? {}, 'kind') ? (
     entry.kind === 'note' ? ['kind', 'text']
@@ -588,7 +588,14 @@ function normalizeScratchpadEntry(entry, resolveEntry = null) {
   }
   let normalized;
   if (entry.kind === 'note') {
-    normalized = { kind: 'note', text: scratchpadString(entry.text, 2_048) };
+    // deliberate-local: note.text partition inside the capped entry (Decision 2). A
+    // steering-registered run (the wave driver's settlement binding) rides the entry body limit
+    // (FRAME_LIMITS['scratchpad.entry.body']) — the admission override is derived from the run's
+    // durable steering registration in writeScratchpad.
+    const noteCap = opts?.noteMaxBytes ?? null;
+    normalized = { kind: 'note', text: noteCap == null
+      ? scratchpadString(entry.text, 2_048)
+      : scratchpadString(entry.text, noteCap) };
   } else if (entry.kind === 'plan') {
     if (!Array.isArray(entry.steps) || entry.steps.length < 1 || entry.steps.length > 16
       || entry.steps.some((step) => !scratchpadExact(step, ['text', 'state'])
@@ -1163,7 +1170,7 @@ export class CoordinationStore {
 
   _resetProjection() {
     this._projectionPoison = null;
-    this._events = []; this._byKey = new Map(); this._tasks = new Map(); this._runs = new Map(); this._artifacts = new Map();
+    this._events = []; this._byKey = new Map(); this._tasks = new Map(); this._runs = new Map(); this._artifacts = new Map(); this._steeringRuns = new Set();
     this._reuseDecisions = new Map(); this._reuseSubjects = new Map(); this._reuseRiskGuards = new Map(); this._reusePolicyHeads = new Map(); this._reusePolicyTransitions = [];
     this._routeObservations = new Map();
     this._representations = new Map(); this._representationRequests = new Map();
@@ -1947,17 +1954,25 @@ export class CoordinationStore {
   }
 
   activeRunOrchestratorLeaseForSession(fields) {
-    const expected = ['expiresAt', 'principalId', 'repoId', 'sessionId'];
+    // Two lookup postures share one method: the web transport's envelope
+    // ({repoId, principalId, sessionId, expiresAt}) and the coordinator's run-scoped review
+    // authority lookup ({repoId, runId, principalId, sessionId}) — the latter matches the lease
+    // by its parent run so a run-scoped attention follow can admit its live lease holder.
+    const byRun = fields && typeof fields === 'object' && !Array.isArray(fields) && typeof fields?.runId === 'string';
+    const expected = byRun ? ['principalId', 'repoId', 'runId', 'sessionId']
+      : ['expiresAt', 'principalId', 'repoId', 'sessionId'];
     if (!fields || Object.keys(fields).sort().join(',') !== expected.sort().join(',')
       || !validRunId(fields.repoId) || !validRunId(fields.principalId) || !validRunId(fields.sessionId)
-      || !Number.isFinite(Date.parse(fields.expiresAt ?? ''))
-      || new Date(Date.parse(fields.expiresAt)).toISOString() !== fields.expiresAt) {
+      || (!byRun && (!Number.isFinite(Date.parse(fields.expiresAt ?? ''))
+        || new Date(Date.parse(fields.expiresAt)).toISOString() !== fields.expiresAt))) {
       this._runLineageFailure('run orchestrator session lookup is invalid', 'run_orchestrator_lease_invalid');
     }
     const matches = [...this._runOrchestratorLeases.values()].filter((lease) => {
       if (lease.repoId !== fields.repoId
-        || lease.session.principalId !== fields.principalId || lease.session.sessionId !== fields.sessionId
-        || lease.session.expiresAt !== fields.expiresAt) return false;
+        || lease.session.principalId !== fields.principalId || lease.session.sessionId !== fields.sessionId) return false;
+      if (byRun) {
+        if (lease.parent.runId !== fields.runId) return false;
+      } else if (lease.session.expiresAt !== fields.expiresAt) return false;
       return true;
     });
     if (matches.length > 1) {
@@ -8038,6 +8053,7 @@ export class CoordinationStore {
       // Phase 60 recovery records are closed, causally validated state. Malformed or unmatched
       // known records are integrity failures on replay, never durable facts that projection may
       // silently ignore and later redeliver.
+      if (p?.kind === 'steering.registered' && typeof p?.runId === 'string') this._steeringRuns.add(p.runId);
       if (p?.kind === 'recovery.continuation_intent') {
         this._recoveryDispatches.set(p.workerId, this._validateRecoveryContinuationPayload(p, event, true));
       } else if (['recovery.dispatch_accepted', 'recovery.dispatch_refused'].includes(p?.kind)) {
@@ -8279,7 +8295,7 @@ export class CoordinationStore {
         throw new CoordinationIntegrityError('scratchpad written entry is invalid', 'scratchpad_entry_integrity');
       }
       let normalized;
-      try { normalized = normalizeScratchpadEntry(p.content); }
+      try { normalized = normalizeScratchpadEntry(p.content, null, { noteMaxBytes: FRAME_LIMITS['scratchpad.entry.body'].value }); }
       catch { throw new CoordinationIntegrityError('scratchpad written content is invalid', 'scratchpad_entry_integrity'); }
       if (canonicalDigest(normalized) !== canonicalDigest(p.content) || this._scratchpadEntries.has(p.entryId)) {
         throw new CoordinationIntegrityError('scratchpad written entry changed during replay', 'scratchpad_entry_integrity');
@@ -12133,7 +12149,11 @@ export class CoordinationStore {
     }
     const known = this._goalHeads.has(this._goalScopeKey(fields.repoId, fields.runId))
       || lineage?.repoId === fields.repoId
-      || [...this._tasks.values()].some((task) => task.runId === fields.runId);
+      || [...this._tasks.values()].some((task) => task.runId === fields.runId)
+      // A run that owns a board (the facade/epic #87+#48 orchestrator posture records a
+      // boardAdmission binding) is a real run for the stop lane too — a board-bound run must be
+      // closable so the facade's board run-open check can observe the closed state.
+      || [...this._boardRunBindings.values()].some((binding) => binding.runId === fields.runId);
     if (!known) throw new CoordinationRefusal(`unknown run ${fields.runId}`, 'not_found');
     const targets = this._runStopTargets(fields.runId);
     const schemaVersion = targets.targetContextCallIds?.length > 0 ? 3
@@ -13766,12 +13786,14 @@ export class CoordinationStore {
       || !validRunId(fields?.runId) || !validRunId(fields?.taskId) || !validRunId(fields?.workerId)) {
       throw new CoordinationRefusal('scratchpad write envelope is invalid', 'scratchpad_write_invalid');
     }
+    const steeringRegistered = this._steeringRuns.has(fields.runId);
     let content;
     try {
       content = normalizeScratchpadEntry(fields.entry,
         (entryId, entryDigest, requirement) => this._scratchpadResolveForWorker(
           fields.runId, fields.workerId, entryId, entryDigest, requirement,
-        ));
+        ),
+        steeringRegistered ? { noteMaxBytes: FRAME_LIMITS['scratchpad.entry.body'].value } : {});
     } catch (error) {
       if (error?.code === 'scratchpad_entry_invalid' || error?.code === 'scratchpad_entry_exceeded') throw error;
       throw new CoordinationRefusal('scratchpad entry is invalid', 'scratchpad_entry_invalid');
@@ -13904,6 +13926,13 @@ export class CoordinationStore {
     }
     const ids = this._scratchpadEntriesByScope.get(scratchpadScopeKey(fields.runId, scope)) ?? [];
     if (ids.length === 0) {
+      // A selection naming entries that STILL EXIST in another partition is outside this task's
+      // partition (a state-dependent refusal — the facade's shape closure cannot pre-empt it).
+      // A selection naming entries that are gone entirely (already reaped) is the honest empty
+      // successor — the wrapper's never-double-elevate posture.
+      if (fields.entryIds.some((id) => this._scratchpadEntries.has(id))) {
+        throw new CoordinationRefusal('scratchpad selection is outside the task partition', 'scratchpad_settlement_invalid');
+      }
       return freeze({
         ok: true, result: 'empty', runId: fields.runId, taskId: fields.taskId,
         workerId: fields.workerId, scope, observedFence: currentFence,
@@ -13919,8 +13948,7 @@ export class CoordinationStore {
     // the shared partition is the run's live shared substrate, not only a terminal artifact. A
     // non-steering run still requires the task to be terminal (the coordinator's own terminal
     // settlement path guards this; this is defense-in-depth).
-    const steering = this._events.some((event) => event.kind === 'driver.recorded'
-      && event.payload?.kind === 'steering.registered' && event.payload?.runId === fields.runId);
+    const steering = this._steeringRuns.has(fields.runId);
     const task = this._tasks.get(fields.taskId);
     if (!steering && task && !TERMINAL.has(task.status)) {
       throw new CoordinationRefusal('scratchpad task is not terminal', 'scratchpad_settlement_not_ready');

@@ -103,6 +103,14 @@ const CAPABILITY = Object.freeze({
   baton_scratchpad_settle: ['control', 'observe'],
   baton_knowledge_promote: ['control', 'observe'],
   baton_knowledge_settlement_lease: ['settlement'],
+  // Facade-projection epic (#87+#48): the six ordinary workflow-surface tools (Decision 10's
+  // "Who may drive what" — send/elevate/seed require the control class, the reads only observe).
+  baton_run_message_send: ['control', 'observe'],
+  baton_run_message_receipt: ['observe'],
+  baton_run_attention_watch: ['observe'],
+  baton_run_scratchpad_read: ['observe'],
+  baton_run_scratchpad_elevate: ['control', 'observe'],
+  baton_run_knowledge_seed: ['control', 'observe'],
   // Matrix mutations keep the existing transported posture: observe admits the tool call, while
   // the run-orchestrator lease resolved inside S-2 is the control authority.
   ...Object.fromEntries(SURFACING_MATRIX_MCP_ROWS.map((operation) => [operation.names.mcp, ['observe']])),
@@ -184,7 +192,9 @@ function toolResult(value, isError = false) {
   const structuredContent = record(normalizedValue) ? normalizedValue : { result: normalizedValue };
   return Object.freeze({ content: Object.freeze([{ type: 'text', text: JSON.stringify(structuredContent) }]), structuredContent: Object.freeze(structuredContent), isError });
 }
-function toolError(code) { return toolResult({ ok: false, error: { code } }, true); }
+function toolError(code, message = null) {
+  return toolResult({ ok: false, error: { code, ...(message == null ? {} : { message }) } }, true);
+}
 function stateFailureCode(cause) {
   if (cause?.mcpCode === 'stale_fence') return 'stale_fence';
   if (cause?.code === 'application_unauthorized') return 'forbidden';
@@ -226,6 +236,16 @@ function stateFailureCode(cause) {
   // Part F rule 12), added under the MCP-SLICE1-INTEGRATION seam for this seat's Part D/E tools;
   // slice 1 owns the context_eval/decision codes in this same rule. Missing/changed artifact
   // bytes collapse to the one typed `artifact_unavailable` tool error, never a silent recompute.
+  if (['attention_scope_forbidden', 'attention_scope_invalid', 'attention_target_invalid'].includes(cause?.code)) return cause.code;
+  // Facade-projection epic (#87+#48): the scratchpad-settlement family (scratchpad_cursor_stale is
+  // deliberately NOT mapped — the fence CAS is not projected, Decision 6).
+  if (['scratchpad_settlement_invalid', 'scratchpad_settlement_conflict', 'scratchpad_settlement_not_ready',
+    'stale_scratchpad_fence', 'scratchpad_partition_exhausted', 'scratchpad_read_invalid'].includes(cause?.code)) return cause.code;
+  // Facade-projection epic (#87+#48): the knowledge-seed family — the TRUE codes the lane throws
+  // (temporal_incoherence / missing_evidence) plus the defense-in-depth listings (Decision 9), so
+  // none can ever degrade to command_outcome_unknown.
+  if (['temporal_incoherence', 'missing_evidence', 'invalid_evidence', 'causal_orphan',
+    'missing_endpoint', 'duplicate_node', 'knowledge_node_conflict', 'reserved_knowledge_field'].includes(cause?.code)) return cause.code;
   if (['context_artifact_unavailable', 'context_package_not_found', 'context_package_branch_not_found'].includes(cause?.code)) return 'artifact_unavailable';
   if (['board_admission_invalid', 'board_lease_required', 'board_session_mismatch', 'board_run_closed',
     'board_parent_stale', 'board_replay_conflict',
@@ -556,6 +576,66 @@ const LEGACY_ORDINARY_APPLICATION_TOOL_DEFINITIONS = Object.freeze([
     }, ['repoId', 'idempotencyKey', 'waveId']),
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
+  // Facade-projection epic (#87+#48, contract v2.2): the six ordinary workflow-surface tools.
+  // They mirror the facade commands' closed shapes (plus repoId) and dispatch through explicit
+  // _dispatch branches with the CONNECTION-derived principal — never tool arguments. None carries
+  // a wire idempotencyKey (send/elevate retry mint new effects honestly; elevate/seed replay
+  // safety lives server-side in the deterministic keys, Decisions 7/9).
+  {
+    name: 'baton_run_message_send',
+    description: 'Send one orchestrator message to a worker or run target (inform|query|steer). The target is exactly {workerId} or {runId}; the body is capped at 2,048 BYTES (char maxLength here is a shape hint, never the authority). Returns the lane outcome verbatim.',
+    inputSchema: schema({
+      ...repo, runId, workerId: runId, kind: { type: 'string', enum: ['inform', 'query', 'steer'] },
+      body: { type: 'string', minLength: 1, maxLength: FRAME_LIMITS['message.send.body'].value },
+    }, ['repoId', 'kind', 'body']),
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+  },
+  {
+    name: 'baton_run_message_receipt',
+    description: "Read the honest receipt state machine for one message: {delivered, read, actedOn, reply} — the lane's exact shape, resolve-then-authorized (an unknown id refuses identically to a foreign one).",
+    inputSchema: schema({
+      ...repo, messageId: { type: 'string', pattern: '^message:[a-f0-9]{64}$' },
+    }, ['repoId', 'messageId']),
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  {
+    name: 'baton_run_attention_watch',
+    description: "Page the run's attention inbox through the lane's own scope authority: {reasons, throughCursor, afterCursor, runId} with storm coalescing and candidacy gating. Kind is a shape-only target filter; cursor is a safe offset.",
+    inputSchema: schema({
+      ...repo, runId, kind: runId, cursor: { type: 'integer', minimum: 0 },
+    }, ['repoId', 'runId']),
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  {
+    name: 'baton_run_scratchpad_read',
+    description: 'Read a bounded, UNTRUSTED-framed page of one scratchpad scope (shared or worker:<id>): at most 64 entries, at most 4,096-byte leaves, the fence/observedSeq verbatim, and the 256 KiB serialized page budget with digest-citation truncation.',
+    inputSchema: schema({
+      ...repo, runId, scope: { type: 'string', pattern: '^(?:shared|worker:[A-Za-z0-9._:-]{1,256})$' },
+      cursor: { type: 'integer', minimum: 0 },
+    }, ['repoId', 'runId', 'scope']),
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  {
+    name: 'baton_run_scratchpad_elevate',
+    description: "Settle one terminal task's scratchpad partition through the coordinator's fence-bound elevation wrapper (ordinary end-of-task path). Returns the store receipt verbatim; an exact retry returns the empty successor.",
+    inputSchema: schema({
+      ...repo, runId, taskId: runId,
+      entryIds: { type: 'array', maxItems: 128, uniqueItems: true, items: { type: 'string', pattern: '^scratchpad-entry:[a-f0-9]{64}$' } },
+    }, ['repoId', 'runId', 'taskId', 'entryIds']),
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+  },
+  {
+    name: 'baton_run_knowledge_seed',
+    description: "Seed one content-addressed knowledge node inside a run's horizon. An exact retry replays idempotent under the server-derived key; distinct content seeds a distinct node, never a silent overwrite.",
+    inputSchema: schema({
+      ...repo, runId,
+      type: { type: 'string', enum: ['Run', 'Task', 'Artifact', 'Phase', 'Experiment', 'Finding', 'Question', 'Hypothesis', 'Principle', 'Constraint', 'Literature', 'Research', 'RouteStat', 'Skill', 'Counterexample', 'Representation', 'ScratchFact', 'Source'] },
+      grounding: { type: 'string', enum: ['verified', 'observed', 'derived', 'asserted'] },
+      body: { type: 'string', minLength: 1, maxLength: FRAME_LIMITS['run.objective'].value },
+      evidence: { type: 'array', maxItems: 32, items: { type: 'object' } },
+    }, ['repoId', 'runId', 'type', 'grounding', 'body']),
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
 ].map((tool) => Object.freeze({
   ...tool,
   _meta: Object.freeze({ 'baton/registryDigest': APPLICATION_SEMANTIC_REGISTRY.digest }),
@@ -702,6 +782,8 @@ const ORDINARY_EXPLICIT_TOOLS = new Set([
   'baton_deployment_doctor',
   'baton_scratchpad_elevate', 'baton_scratchpad_settle', 'baton_knowledge_promote',
   'baton_knowledge_settlement_lease',
+  'baton_run_message_send', 'baton_run_message_receipt', 'baton_run_attention_watch',
+  'baton_run_scratchpad_read', 'baton_run_scratchpad_elevate', 'baton_run_knowledge_seed',
 ]);
 const TOOL_DEFINITIONS = Object.freeze([...ORDINARY_APPLICATION_TOOL_DEFINITIONS, ...APPLICATION_TOOL_DEFINITIONS, ...ADVANCED_TOOL_DEFINITIONS, ...REFLEX_TOOL_DEFINITIONS]);
 const TOOL_BY_NAME = new Map(TOOL_DEFINITIONS.map((tool) => [tool.name, tool]));
@@ -1019,6 +1101,59 @@ function validateArguments(name, args, maxWaitMs = null) {
   if (name === 'baton_knowledge_settlement_lease' && !nonempty(args.waveId)) {
     return 'invalid_settlement_lease';
   }
+  // Facade-projection epic (#87+#48, Decision 10): the six ordinary workflow-surface tools'
+  // hand-rolled shape guards (the wave-tools idiom — the guards are the authority, never a
+  // schema evaluator). A malformed DECLARED field earns the tool's own invalid_* code; a forged
+  // UNDECLARED field dies earlier at the generic key-closure (unknown_argument_field). The
+  // ordinary baton_run_scratchpad_elevate SHARES the invalid_scratchpad_elevate string the
+  // existing settlement guard returns (lawful same-class reuse, v2.2 blue-team D3).
+  if (name === 'baton_run_message_send') {
+    if (!['inform', 'query', 'steer'].includes(args.kind)
+      || typeof args.body !== 'string' || args.body.length === 0
+      || (Object.hasOwn(args, 'runId') === Object.hasOwn(args, 'workerId'))
+      || (Object.hasOwn(args, 'runId') && !/^[A-Za-z0-9._:-]{1,256}$/.test(args.runId ?? ''))
+      || (Object.hasOwn(args, 'workerId') && !/^[A-Za-z0-9._:-]{1,256}$/.test(args.workerId ?? ''))) {
+      return 'invalid_message_send';
+    }
+  }
+  if (name === 'baton_run_message_receipt'
+    && (typeof args.messageId !== 'string' || !/^message:[a-f0-9]{64}$/.test(args.messageId))) {
+    return 'invalid_message_receipt';
+  }
+  if (name === 'baton_run_attention_watch') {
+    if (!/^[A-Za-z0-9._:-]{1,256}$/.test(args.runId ?? '')
+      || (Object.hasOwn(args, 'kind') && (typeof args.kind !== 'string' || !/^[A-Za-z0-9._:-]{1,256}$/.test(args.kind)))
+      || (Object.hasOwn(args, 'cursor') && (!Number.isSafeInteger(args.cursor) || args.cursor < 0))) {
+      return 'invalid_attention_watch';
+    }
+  }
+  if (name === 'baton_run_scratchpad_read') {
+    if (!/^[A-Za-z0-9._:-]{1,256}$/.test(args.runId ?? '')
+      || typeof args.scope !== 'string' || !/^(?:shared|worker:[A-Za-z0-9._:-]{1,256})$/.test(args.scope)
+      || (Object.hasOwn(args, 'cursor') && (!Number.isSafeInteger(args.cursor) || args.cursor < 0))) {
+      return 'invalid_scratchpad_read';
+    }
+  }
+  if (name === 'baton_run_scratchpad_elevate') {
+    if (!/^[A-Za-z0-9._:-]{1,256}$/.test(args.runId ?? '')
+      || !/^[A-Za-z0-9._:-]{1,256}$/.test(args.taskId ?? '')
+      || !Array.isArray(args.entryIds) || args.entryIds.length > 128
+      || new Set(args.entryIds).size !== args.entryIds.length
+      || args.entryIds.some((id) => typeof id !== 'string' || !/^scratchpad-entry:[a-f0-9]{64}$/.test(id))) {
+      return 'invalid_scratchpad_elevate';
+    }
+  }
+  if (name === 'baton_run_knowledge_seed') {
+    if (!/^[A-Za-z0-9._:-]{1,256}$/.test(args.runId ?? '')
+      || !['Run', 'Task', 'Artifact', 'Phase', 'Experiment', 'Finding', 'Question', 'Hypothesis',
+        'Principle', 'Constraint', 'Literature', 'Research', 'RouteStat', 'Skill', 'Counterexample',
+        'Representation', 'ScratchFact', 'Source'].includes(args.type)
+      || !['verified', 'observed', 'derived', 'asserted'].includes(args.grounding)
+      || typeof args.body !== 'string' || args.body.length === 0
+      || (Object.hasOwn(args, 'evidence') && !Array.isArray(args.evidence))) {
+      return 'invalid_knowledge_seed';
+    }
+  }
   return null;
 }
 
@@ -1330,9 +1465,15 @@ export class McpFleetServer {
         catch { return toolError('temporarily_unavailable'); }
         // Part F: read-only reflex tools (not APPLICATION_TOOL-registered — Part A.2) map typed
         // codes too, never the generic 'command_failed'.
+        const code = (name === 'baton_run_message_receipt' || name === 'baton_run_scratchpad_elevate')
+          && cause?.code === 'application_unauthorized'
+          ? 'application_unauthorized' : stateFailureCode(cause);
+        // The coaching message rides ONLY typed lane refusals (their messages are the lane's own
+        // sanitized compositions — FP-15's cap+actual naming); an untyped internal throw keeps the
+        // MN1/MN8 sanitization law — never a private provider detail in a tool error.
         return toolError(name === 'fleet_goal_plan_status' || APPLICATION_TOOL[name]
           || REFLEX_READ_ONLY_TOOLS.has(name) || ORDINARY_EXPLICIT_TOOLS.has(name)
-          ? stateFailureCode(cause) : 'command_failed');
+          ? code : 'command_failed', typeof cause?.code === 'string' ? (cause?.message ?? null) : null);
       }
     }
     const callId = randomUUID();
@@ -1621,6 +1762,75 @@ export class McpFleetServer {
         actor: actor ?? `mcp:${principal.userId}:${principal.sessionId}`,
         principalId: principal.userId,
         sessionId: principal.sessionId,
+      }, this._applicationDispatchContext(args, callId, principal));
+    }
+    // Facade-projection epic (#87+#48, Decision 10): the six ordinary workflow-surface tools
+    // dispatch their facade commands with the CONNECTION-derived principal (never tool args) and
+    // the application context (transport mcp + capability authority). None carries a wire
+    // idempotencyKey; replay safety lives server-side in the deterministic keys.
+    else if (name === 'baton_run_message_send') {
+      value = await this.application.command('run.message.send', {
+        ...(Object.hasOwn(args, 'runId') ? { runId: args.runId } : {}),
+        ...(Object.hasOwn(args, 'workerId') ? { workerId: args.workerId } : {}),
+        kind: args.kind, body: args.body,
+      }, {
+        actor: actor ?? `mcp:${principal.userId}:${principal.sessionId}`,
+        principalId: principal.userId, sessionId: principal.sessionId,
+      }, this._applicationDispatchContext(args, callId, principal));
+    }
+    else if (name === 'baton_run_message_receipt') {
+      value = await this.application.command('run.message.receipt', { messageId: args.messageId }, {
+        actor: actor ?? `mcp:${principal.userId}:${principal.sessionId}`,
+        principalId: principal.userId, sessionId: principal.sessionId,
+      }, this._applicationDispatchContext(args, callId, principal));
+    }
+    else if (name === 'baton_run_attention_watch') {
+      try {
+        value = await this.application.command('run.attention.watch', {
+          runId: args.runId,
+          ...(Object.hasOwn(args, 'kind') ? { kind: args.kind } : {}),
+          ...(Object.hasOwn(args, 'cursor') ? { cursor: args.cursor } : {}),
+        }, {
+          actor: actor ?? `mcp:${principal.userId}:${principal.sessionId}`,
+          principalId: principal.userId, sessionId: principal.sessionId,
+        }, this._applicationDispatchContext(args, callId, principal));
+      } catch (cause) {
+        // Decision 5's transport authority: a control-capable connection principal is the
+        // deployment orchestrator the lane recognizes — page the run (empty for unknown/unauthorized
+        // scopes) instead of surfacing attention_scope_forbidden. Observe-only principals keep the
+        // lane's refusal byte-identically (FP-15 pins that wire).
+        if (cause?.code === 'attention_scope_forbidden' && Array.isArray(principal.capabilities)
+          && principal.capabilities.includes('control')) {
+          value = { schemaVersion: 1, runId: args.runId, afterCursor: 0, throughCursor: 0, reasons: [] };
+        } else {
+          throw cause;
+        }
+      }
+    }
+    else if (name === 'baton_run_scratchpad_read') {
+      value = await this.application.command('run.scratchpad.read', {
+        runId: args.runId, scope: args.scope,
+        ...(Object.hasOwn(args, 'cursor') ? { cursor: args.cursor } : {}),
+      }, {
+        actor: actor ?? `mcp:${principal.userId}:${principal.sessionId}`,
+        principalId: principal.userId, sessionId: principal.sessionId,
+      }, this._applicationDispatchContext(args, callId, principal));
+    }
+    else if (name === 'baton_run_scratchpad_elevate') {
+      value = await this.application.command('run.scratchpad.elevate', {
+        runId: args.runId, taskId: args.taskId, entryIds: clone(args.entryIds),
+      }, {
+        actor: actor ?? `mcp:${principal.userId}:${principal.sessionId}`,
+        principalId: principal.userId, sessionId: principal.sessionId,
+      }, this._applicationDispatchContext(args, callId, principal));
+    }
+    else if (name === 'baton_run_knowledge_seed') {
+      value = await this.application.command('run.knowledge.seed', {
+        runId: args.runId, type: args.type, grounding: args.grounding, body: args.body,
+        ...(Object.hasOwn(args, 'evidence') ? { evidence: clone(args.evidence) } : {}),
+      }, {
+        actor: actor ?? `mcp:${principal.userId}:${principal.sessionId}`,
+        principalId: principal.userId, sessionId: principal.sessionId,
       }, this._applicationDispatchContext(args, callId, principal));
     }
     else if (name === 'fleet_spawn') value = await this.coordinator.spawn(args.harness, args.brief, {

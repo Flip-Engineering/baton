@@ -12174,6 +12174,21 @@ export class BatonApplication {
       if (APPLICATION_COMMAND_DEFINITIONS[legacy]) name = legacy;
     }
     const principal = normalizePrincipal(rawPrincipal, 'command principal');
+    // Facade-projection epic (#87+#48, contract v2.2): the eight workflow-surface direct ports.
+    // Dispatched here — BEFORE normalizeCommandContext, validateApplicationCommandArgs, and the
+    // recursive-session gate — because the projection law (Decision 1/2) is a refusal-constancy
+    // decision: the gate would refuse a run-orchestrator lease holder before the lanes' own
+    // authorization runs, but BD3-D deliberately admits a live run-orchestrator lease holder as
+    // review authority (FP-18 pins the pre-gate dispatch). Each command validates through its own
+    // closed normalizer, then delegates to its landed kernel lane.
+    if (name === 'run.message.send') return this.messageSend(args, principal);
+    if (name === 'run.message.receipt') return this.messageReceipt(args, principal);
+    if (name === 'run.attention.watch') return this.attentionWatch(args, principal);
+    if (name === 'run.scratchpad.read') return this.scratchpadRead(args, principal);
+    if (name === 'run.scratchpad.elevate') return this.scratchpadElevate(args, principal);
+    if (name === 'run.board.post') return this.boardPost(args, principal);
+    if (name === 'run.board.read') return this.boardRead(args, principal);
+    if (name === 'run.knowledge.seed') return this.knowledgeSeed(args, principal);
     const context = normalizeCommandContext(rawContext);
     // CS-3: run.debug is a direct port (not in APPLICATION_COMMAND_DEFINITIONS). Validate via
     // validateDebugArgs inside debug(); skip the legacy command-table validator.
@@ -12371,6 +12386,451 @@ export class BatonApplication {
     }
     // knowledge.settlement_lease
     return coordinator.settlementLease(args.waveId, session, { members: args.members });
+  }
+
+  // -------------------------------------------------------------------------
+  // Facade-projection epic (#87+#48, contract v2.2) — the workflow-surface direct ports.
+  // These eight commands are DIRECT PORTS (never APPLICATION_COMMAND_DEFINITIONS keys, so the
+  // byte-stable command-table key set is unchanged) dispatched ahead of the recursive-session
+  // gate exactly like the wave ergonomics. Each projects ONE landed kernel lane with the
+  // projection law: reach, never semantics (Decision 1) — lane outcomes pass through verbatim
+  // with only the schemaVersion: 1 envelope marker; lane-thrown coded refusals propagate with
+  // their .code untouched. The facade's closed validators are exactly as permissive as the
+  // lane's — never narrower (a facade refusal the lane would not produce is a semantics change).
+  // -------------------------------------------------------------------------
+
+  _normalizeMessageSend(value) {
+    if (!value || typeof value !== 'object' || Array.isArray(value)
+      || Object.keys(value).some((key) => !['runId', 'workerId', 'kind', 'body'].includes(key))
+      || (Object.hasOwn(value, 'runId') === Object.hasOwn(value, 'workerId'))
+      || (Object.hasOwn(value, 'runId') && !validId(value.runId))
+      || (Object.hasOwn(value, 'workerId') && !validId(value.workerId))
+      || !['inform', 'query', 'steer'].includes(value.kind)
+      || typeof value.body !== 'string' || value.body.length === 0 || value.body.includes('\0')) {
+      throw applicationError('run message send request is invalid', 'application_message_send_invalid');
+    }
+    // Decision 12: the lane's 2,048-byte send cap is projected as the facade's admission bound;
+    // the oversize refusal names cap AND actual (#89's admitted-refusal law).
+    const bodyBytes = Buffer.byteLength(value.body);
+    if (bodyBytes > FRAME_LIMITS['message.send.body'].value) {
+      throw applicationError(
+        `Run message body exceeds the ${FRAME_LIMITS['message.send.body'].value}-byte message cap (actual ${bodyBytes} bytes)`,
+        'application_message_send_invalid',
+      );
+    }
+    return deepFreeze({
+      ...(Object.hasOwn(value, 'runId') ? { runId: value.runId } : {}),
+      ...(Object.hasOwn(value, 'workerId') ? { workerId: value.workerId } : {}),
+      kind: value.kind,
+      body: value.body,
+    });
+  }
+
+  _normalizeMessageReceipt(value) {
+    if (!value || typeof value !== 'object' || Array.isArray(value)
+      || Object.keys(value).sort().join(',') !== 'messageId'
+      || typeof value.messageId !== 'string' || !/^message:[a-f0-9]{64}$/u.test(value.messageId)) {
+      throw applicationError('run message receipt request is invalid', 'application_message_receipt_invalid');
+    }
+    return deepFreeze({ messageId: value.messageId });
+  }
+
+  _normalizeAttentionWatch(value) {
+    if (!value || typeof value !== 'object' || Array.isArray(value)
+      || Object.keys(value).some((key) => !['runId', 'kind', 'cursor'].includes(key))
+      || !validId(value.runId)
+      || (value.kind !== undefined && !validId(value.kind))
+      || (value.cursor !== undefined && (!Number.isSafeInteger(value.cursor) || value.cursor < 0))) {
+      throw applicationError('run attention watch request is invalid', 'application_attention_watch_invalid');
+    }
+    return deepFreeze({
+      runId: value.runId,
+      ...(value.kind !== undefined ? { kind: value.kind } : {}),
+      ...(value.cursor !== undefined ? { cursor: value.cursor } : {}),
+    });
+  }
+
+  _normalizeScratchpadRead(value) {
+    if (!value || typeof value !== 'object' || Array.isArray(value)
+      || Object.keys(value).some((key) => !['runId', 'scope', 'cursor'].includes(key))
+      || !validId(value.runId)
+      || typeof value.scope !== 'string' || !/^(?:shared|worker:[A-Za-z0-9._:-]{1,256})$/u.test(value.scope)
+      || (value.cursor !== undefined && (!Number.isSafeInteger(value.cursor) || value.cursor < 0))) {
+      throw applicationError('run scratchpad read request is invalid', 'application_scratchpad_read_invalid');
+    }
+    return deepFreeze({
+      runId: value.runId, scope: value.scope,
+      ...(value.cursor !== undefined ? { cursor: value.cursor } : {}),
+    });
+  }
+
+  _normalizeScratchpadElevate(value) {
+    // Decision 12: ≤128 unique scratchpad-entry:<64 hex> ids (the store's MAX_SCRATCHPAD_WORKER_ENTRIES).
+    if (!value || typeof value !== 'object' || Array.isArray(value)
+      || Object.keys(value).some((key) => !['runId', 'taskId', 'entryIds'].includes(key))
+      || !validId(value.runId) || !validId(value.taskId)
+      || !Array.isArray(value.entryIds)
+      || new Set(value.entryIds).size !== value.entryIds.length
+      || value.entryIds.some((id) => typeof id !== 'string' || !/^scratchpad-entry:[a-f0-9]{64}$/u.test(id))) {
+      throw applicationError('run scratchpad elevate request is invalid', 'application_scratchpad_elevate_invalid');
+    }
+    if (value.entryIds.length > 128) {
+      throw applicationError(
+        `Run scratchpad elevation entryIds exceeds the 128-entry cap (actual ${value.entryIds.length} entries)`,
+        'application_scratchpad_elevate_invalid',
+      );
+    }
+    return deepFreeze({ runId: value.runId, taskId: value.taskId, entryIds: [...value.entryIds] });
+  }
+
+  _normalizeBoardPost(value) {
+    if (!value || typeof value !== 'object' || Array.isArray(value)
+      || Object.keys(value).some((key) => !['runId', 'board', 'title', 'detail', 'owner', 'evidence'].includes(key))
+      || !validId(value.runId)
+      || typeof value.board !== 'string' || !/^[A-Za-z0-9_.:-]{1,128}$/u.test(value.board)
+      || typeof value.title !== 'string' || value.title.length === 0
+      || (value.detail !== undefined && value.detail !== null
+        && (typeof value.detail !== 'string' || value.detail.length === 0))
+      || (value.owner !== undefined && value.owner !== null
+        && (typeof value.owner !== 'string' || !/^[A-Za-z0-9_.:-]{1,128}$/u.test(value.owner)))
+      || (value.evidence !== undefined && !Array.isArray(value.evidence))) {
+      throw applicationError('run board post request is invalid', 'application_board_post_invalid');
+    }
+    const titleBytes = Buffer.byteLength(value.title);
+    if (titleBytes > FRAME_LIMITS['board.title'].value) {
+      throw applicationError(
+        `Board title exceeds the ${FRAME_LIMITS['board.title'].value}-byte cap (actual ${titleBytes} bytes)`,
+        'application_board_post_invalid',
+      );
+    }
+    if (value.detail != null) {
+      const detailBytes = Buffer.byteLength(value.detail);
+      if (detailBytes > FRAME_LIMITS['board.detail'].value) {
+        throw applicationError(
+          `Board detail exceeds the ${FRAME_LIMITS['board.detail'].value}-byte cap (actual ${detailBytes} bytes)`,
+          'application_board_post_invalid',
+        );
+      }
+    }
+    const evidence = value.evidence ?? [];
+    if (evidence.length > 8) {
+      throw applicationError(
+        `Board evidence exceeds the 8-ref cap (actual ${evidence.length} refs)`,
+        'application_board_post_invalid',
+      );
+    }
+    for (const ref of evidence) {
+      if (!ref || typeof ref !== 'object' || Array.isArray(ref)) {
+        throw applicationError('run board post request is invalid', 'application_board_post_invalid');
+      }
+      const keys = Object.keys(ref).sort().join(',');
+      if (!((keys === 'coordinationSeq' && Number.isSafeInteger(ref.coordinationSeq) && ref.coordinationSeq > 0)
+        || (keys === 'artifactId' && typeof ref.artifactId === 'string' && ref.artifactId.length > 0))) {
+        throw applicationError('run board post request is invalid', 'application_board_post_invalid');
+      }
+    }
+    return deepFreeze({
+      runId: value.runId, board: value.board, title: value.title,
+      ...(value.detail !== undefined ? { detail: value.detail } : {}),
+      ...(value.owner !== undefined ? { owner: value.owner } : {}),
+      evidence: [...evidence],
+    });
+  }
+
+  _normalizeBoardRead(value) {
+    if (!value || typeof value !== 'object' || Array.isArray(value)
+      || Object.keys(value).sort().join(',') !== 'board,runId'
+      || !validId(value.runId)
+      || typeof value.board !== 'string' || !/^[A-Za-z0-9_.:-]{1,128}$/u.test(value.board)) {
+      throw applicationError('run board read request is invalid', 'application_board_read_invalid');
+    }
+    return deepFreeze({ runId: value.runId, board: value.board });
+  }
+
+  // The 19 landed knowledge node types (coordination-store KNOWLEDGE_NODE_TYPES, minus the
+  // recorded subtraction: Decision is unseedable through the closed shape — a Decision requires
+  // informedBy graph sources the shape does not carry, so the facade refuses at validation what
+  // the lane would refuse as causal_orphan).
+  _normalizeKnowledgeSeed(value) {
+    if (!value || typeof value !== 'object' || Array.isArray(value)
+      || Object.keys(value).some((key) => !['runId', 'type', 'grounding', 'body', 'evidence'].includes(key))
+      || !validId(value.runId)
+      || !['Run', 'Task', 'Artifact', 'Phase', 'Experiment', 'Finding', 'Decision', 'Question', 'Hypothesis',
+        'Principle', 'Constraint', 'Literature', 'Research', 'RouteStat', 'Skill', 'Counterexample',
+        'Representation', 'ScratchFact', 'Source'].includes(value.type)
+      || value.type === 'Decision'
+      || !['verified', 'observed', 'derived', 'asserted'].includes(value.grounding)
+      || typeof value.body !== 'string' || value.body.length === 0 || value.body.includes('\0')
+      || (value.evidence !== undefined && !Array.isArray(value.evidence))) {
+      throw applicationError('run knowledge seed request is invalid', 'application_knowledge_seed_invalid');
+    }
+    const bodyBytes = Buffer.byteLength(value.body);
+    if (bodyBytes > FRAME_LIMITS['run.objective'].value) {
+      throw applicationError(
+        `Knowledge seed body exceeds the ${FRAME_LIMITS['run.objective'].value}-byte cap (actual ${bodyBytes} bytes)`,
+        'application_knowledge_seed_invalid',
+      );
+    }
+    const evidence = value.evidence ?? [];
+    for (const ref of evidence) {
+      if (!ref || typeof ref !== 'object' || Array.isArray(ref)) {
+        throw applicationError('run knowledge seed request is invalid', 'application_knowledge_seed_invalid');
+      }
+      const keys = Object.keys(ref).sort().join(',');
+      if (!((keys === 'coordinationSeq' && Number.isSafeInteger(ref.coordinationSeq) && ref.coordinationSeq > 0)
+        || (keys === 'artifactId' && typeof ref.artifactId === 'string' && ref.artifactId.length > 0))) {
+        throw applicationError('run knowledge seed request is invalid', 'application_knowledge_seed_invalid');
+      }
+    }
+    // The Finding-scoped rule (mirrored EXACTLY as the lane scopes it — the store's rule is
+    // Finding-specific, so a verified Constraint without evidence is lane-legal and NOT refused).
+    if (value.type === 'Finding' && value.grounding === 'verified' && evidence.length === 0) {
+      throw applicationError('verified Finding requires evidence', 'application_knowledge_seed_invalid');
+    }
+    return deepFreeze({
+      runId: value.runId, type: value.type, grounding: value.grounding, body: value.body,
+      evidence: [...evidence],
+    });
+  }
+
+  // run.message.send — Decision 3: steer-idiom authorization, verbatim lane outcomes.
+  async messageSend(rawRequest, rawPrincipal) {
+    this._assertOpen();
+    await this.ready;
+    const request = this._normalizeMessageSend(rawRequest);
+    const principal = normalizePrincipal(rawPrincipal, 'message send principal');
+    // Resolve the target run SERVER-SIDE: directly for a runId target, via coordinator.list() for
+    // a workerId target. An unresolvable worker authorizes against the null scope so an UNKNOWN
+    // worker and a FOREIGN worker refuse identically (possession of a worker id is never authority).
+    const resolvedRunId = Object.hasOwn(request, 'workerId')
+      ? (this.driver.coordinator.list().find((worker) => worker.id === request.workerId)?.runId ?? null)
+      : request.runId;
+    await this._authorize('run.message.send', principal, resolvedRunId, {
+      kind: request.kind,
+      targetKind: Object.hasOwn(request, 'workerId') ? 'worker' : 'run',
+      bodyDigest: digest(request.body),
+    });
+    const outcome = await this.driver.coordinator.sendMessage({
+      kind: request.kind,
+      to: Object.hasOwn(request, 'workerId')
+        ? { workerId: request.workerId } : { runId: request.runId },
+      body: request.body,
+    }, { actor: principal.actor });
+    return deepFreeze({ schemaVersion: 1, ...outcome });
+  }
+
+  // run.message.receipt — Decision 4: resolve-then-authorize, then a verbatim receipt.
+  async messageReceipt(rawRequest, rawPrincipal) {
+    this._assertOpen();
+    await this.ready;
+    const request = this._normalizeMessageReceipt(rawRequest);
+    const principal = normalizePrincipal(rawPrincipal, 'message receipt principal');
+    const resolvedRunId = this.driver.coordinator.messageRunId(request.messageId);
+    if (resolvedRunId === null) {
+      // resolve-to-null ≡ unknown ≡ forbidden — the lane's null-for-unknown return is unreachable
+      // through the facade (no existence leak on message ids, never a receipt field before auth).
+      throw applicationError('application command is not authorized', 'application_unauthorized');
+    }
+    await this._authorize('run.message.receipt', principal, resolvedRunId, { messageId: request.messageId });
+    const receipt = this.driver.coordinator.messageReceipt(request.messageId);
+    return deepFreeze({ schemaVersion: 1, messageId: request.messageId, ...receipt });
+  }
+
+  // run.attention.watch — Decision 5: the lane's own scope authority is the sole seam (no facade
+  // _authorize — an unknown scope runId pages EMPTY at the lane for the orchestrator principal).
+  async attentionWatch(rawRequest, rawPrincipal) {
+    this._assertOpen();
+    await this.ready;
+    const request = this._normalizeAttentionWatch(rawRequest);
+    const principal = normalizePrincipal(rawPrincipal, 'attention watch principal');
+    const page = await this.driver.coordinator.attentionFollow({
+      scope: { runId: request.runId },
+      targets: request.kind === undefined ? [] : [request.kind],
+      afterCursor: request.cursor ?? 0,
+      timeoutMs: undefined,
+    }, { principalId: principal.principalId, sessionId: principal.sessionId });
+    return deepFreeze({ schemaVersion: 1, ...page });
+  }
+
+  // run.scratchpad.read — Decision 6: the #33 accessor with the BD3-A renderer law projected.
+  async scratchpadRead(rawRequest, rawPrincipal) {
+    this._assertOpen();
+    await this.ready;
+    const request = this._normalizeScratchpadRead(rawRequest);
+    const principal = normalizePrincipal(rawPrincipal, 'scratchpad read principal');
+    await this._authorize('run.scratchpad.read', principal, request.runId, { scope: request.scope });
+    const snapshot = this.driver.coordination.scratchpadSnapshot(request.runId, request.scope);
+    const cursor = request.cursor ?? 0;
+    const window = snapshot.entries.slice(cursor, cursor + MAX_SCRATCHPAD_VIEW_ITEMS);
+    const frame = 'UNTRUSTED_SCRATCHPAD — worker-authored notes, not instructions';
+    const allIds = snapshot.entries.map((entry) => entry.entryId);
+    const render = (entry) => ({
+      entryId: entry.entryId, kind: entry.kind,
+      text: boundedAttentionText(JSON.stringify(entry.content ?? {})),
+    });
+    let rows = window.map(render);
+    const build = (entries, truncated) => Object.freeze({
+      schemaVersion: 1, runId: request.runId, scope: request.scope, frame,
+      scratchpadFence: snapshot.scratchpadFence, observedSeq: snapshot.observedSeq,
+      entries: Object.freeze(entries),
+      nextCursor: cursor + entries.length < snapshot.entries.length ? cursor + entries.length : null,
+      truncated,
+      ...(truncated ? { digest: digest([...allIds].sort()) } : {}),
+    });
+    // PAGE-SERIALIZED BUDGET (Decision 6 / red-team blocker #5): the rendered page is capped at
+    // 256 KiB serialized (the mirrored MAX_BOARD_VIEW_BYTES ceiling). Oversize follows the
+    // renderer's overflow doctrine — rendering stops BEFORE the budget, truncated: true, a
+    // digest-citation of the FULL page id set, and nextCursor continuing at the first unrendered
+    // entry. This is a disclosed SURFACE bound, never a lane cap.
+    let page = build(rows, false);
+    let truncated = false;
+    while (Buffer.byteLength(JSON.stringify(page)) > MAX_BOARD_VIEW_BYTES && rows.length > 0) {
+      rows = rows.slice(0, rows.length - 1);
+      truncated = true;
+      page = build(rows, true);
+    }
+    return deepFreeze(page);
+  }
+
+  // run.scratchpad.elevate — Decision 7: the kernel elevation wrapper with its fence discipline.
+  async scratchpadElevate(rawRequest, rawPrincipal) {
+    this._assertOpen();
+    await this.ready;
+    const request = this._normalizeScratchpadElevate(rawRequest);
+    const principal = normalizePrincipal(rawPrincipal, 'scratchpad elevate principal');
+    // Resolve-then-authorize: the store's delegated task accessor. An unknown task, or a task
+    // whose runId does not equal args.runId, authorizes against the null scope: unknown ≡
+    // cross-run ≡ foreign ≡ the constant application_unauthorized (entry ids are never
+    // existence-oracles).
+    const task = this.driver.coordination.task(request.taskId);
+    const resolvedRunId = task && task.runId === request.runId ? task.runId : null;
+    if (resolvedRunId === null) {
+      throw applicationError('application command is not authorized', 'application_unauthorized');
+    }
+    await this._authorize('run.scratchpad.elevate', principal, resolvedRunId, {
+      taskId: request.taskId, entryCount: request.entryIds.length,
+    });
+    const outcome = this.driver.coordinator.elevateTaskScratchpad(request.taskId, request.entryIds);
+    return deepFreeze({ schemaVersion: 1, ...outcome });
+  }
+
+  // run.board.post — Decision 8: the binding law verbatim, orchestrator posture, appendGate.
+  async boardPost(rawRequest, rawPrincipal) {
+    this._assertOpen();
+    await this.ready;
+    const request = this._normalizeBoardPost(rawRequest);
+    const principal = normalizePrincipal(rawPrincipal, 'board post principal');
+    await this._authorize('run.board.post', principal, request.runId, {
+      board: request.board,
+      titleDigest: digest(request.title),
+      ...(request.detail != null ? { detailDigest: digest(request.detail) } : {}),
+      ...(request.owner != null ? { ownerDigest: digest(request.owner) } : {}),
+      evidenceDigest: digest(request.evidence),
+    });
+    const store = this.driver.coordination;
+    const snapshot = store.boardSnapshot(request.board);
+    const boundRunId = snapshot?.runId ?? null;
+    const hasItems = (snapshot?.items?.length ?? 0) > 0;
+    // Binding law VERBATIM: a board bound to a DIFFERENT run refuses the one constant for post
+    // AND read, decided BEFORE any item existence or write.
+    if (boundRunId !== null && boundRunId !== request.runId) {
+      throw applicationError('board is bound to another run', 'application_board_scope_forbidden');
+    }
+    // Run-open derives through the store's PUBLIC snapshot() (the coordinator's delegated read) —
+    // the named accessor; the facade never reads private run maps.
+    if ((store.snapshot().runStops ?? []).some((stop) => stop.runId === request.runId)) {
+      throw applicationError('board post to a stopped run is forbidden', 'application_board_run_closed');
+    }
+    const adopting = boundRunId === null && hasItems;
+    const requestDigest = digest({ title: request.title, detail: request.detail, owner: request.owner, evidence: request.evidence });
+    const boardAdmission = {
+      schemaVersion: 1, runId: request.runId, requestDigest, adopted: adopting, leaseId: null,
+    };
+    // Append-time re-validation (the S-2 no-check-then-write-window law): the gate RE-VALIDATES
+    // binding + run-open at append time — a post that loses the race refuses at the gate and
+    // never writes (the store's before-write callback throws on refusal).
+    const appendGate = () => {
+      const liveSnapshot = store.boardSnapshot(request.board);
+      const liveBoundRunId = liveSnapshot?.runId ?? null;
+      if (liveBoundRunId !== null && liveBoundRunId !== request.runId) {
+        throw Object.assign(new Error('board is bound to another run'), { code: 'board_session_mismatch' });
+      }
+      if ((store.snapshot().runStops ?? []).some((stop) => stop.runId === request.runId)) {
+        throw Object.assign(new Error('board post to a stopped run is forbidden'), { code: 'board_run_closed' });
+      }
+      return true;
+    };
+    const outcome = store.postBoardItem({
+      board: request.board, title: request.title,
+      ...(request.detail != null ? { detail: request.detail } : {}),
+      ...(request.owner != null ? { owner: request.owner } : {}),
+      evidence: request.evidence,
+    }, {
+      actor: principal.actor,
+      key: `run.board.post:${request.runId}:${request.board}:${requestDigest}`,
+    }, appendGate, boardAdmission);
+    if (outcome.result === 'idempotent') {
+      // The lane's replay return carries the prior event but NO boardRunBinding — the facade
+      // DERIVES it from the returned prior event's payload.boardAdmission (Decision 1 completion).
+      const admission = outcome.event?.payload?.boardAdmission ?? null;
+      return deepFreeze({
+        schemaVersion: 1, ok: true, result: 'idempotent', item: outcome.item,
+        boardRunBinding: { runId: request.runId, result: admission?.adopted ? 'adopted' : 'bound' },
+      });
+    }
+    return deepFreeze({
+      schemaVersion: 1, ok: true, result: 'posted', item: outcome.item,
+      boardRunBinding: { runId: request.runId, result: adopting ? 'adopted' : 'bound' },
+    });
+  }
+
+  // run.board.read — Decision 8: the binding law verbatim, projectBoardView's exact output.
+  async boardRead(rawRequest, rawPrincipal) {
+    this._assertOpen();
+    await this.ready;
+    const request = this._normalizeBoardRead(rawRequest);
+    const principal = normalizePrincipal(rawPrincipal, 'board read principal');
+    await this._authorize('run.board.read', principal, request.runId, { board: request.board });
+    const store = this.driver.coordination;
+    const snapshot = store.boardSnapshot(request.board);
+    const boundRunId = snapshot?.runId ?? null;
+    const hasItems = (snapshot?.items?.length ?? 0) > 0;
+    if (boundRunId !== null && boundRunId !== request.runId) {
+      throw applicationError('board is bound to another run', 'application_board_scope_forbidden');
+    }
+    // Unbound AND empty: the read is unknown (the BD3-A context_not_found law). Unbound WITH
+    // items serves; bound to this run serves.
+    if (boundRunId === null && !hasItems) {
+      throw applicationError('board is not found', 'application_board_not_found');
+    }
+    const view = projectBoardView(snapshot, { role: 'orchestrator', workerId: null });
+    return deepFreeze({ schemaVersion: 1, board: request.board, boardRunId: boundRunId, view });
+  }
+
+  // run.knowledge.seed — Decision 9: content-addressed seeding inside the run's horizon.
+  async knowledgeSeed(rawRequest, rawPrincipal) {
+    this._assertOpen();
+    await this.ready;
+    const request = this._normalizeKnowledgeSeed(rawRequest);
+    const principal = normalizePrincipal(rawPrincipal, 'knowledge seed principal');
+    await this._authorize('run.knowledge.seed', principal, request.runId, {
+      type: request.type, grounding: request.grounding, bodyDigest: digest(request.body),
+    });
+    // The node carries runId, so it lands INSIDE the run's horizon by construction. The
+    // server-derived key is content-addressed: an exact retry replays idempotent; different
+    // content is honestly a different seed, never a silent overwrite.
+    const outcome = this.driver.coordination.addKnowledgeNode({
+      type: request.type, grounding: request.grounding, body: request.body,
+      runId: request.runId, evidence: request.evidence,
+    }, {
+      actor: principal.actor,
+      key: `run.knowledge.seed:${request.runId}:${digest({ type: request.type, grounding: request.grounding, body: request.body, evidence: request.evidence })}`,
+    });
+    return deepFreeze({
+      schemaVersion: 1, ok: true,
+      result: outcome.result === 'idempotent' ? 'idempotent' : 'added',
+      nodeId: outcome.node?.id ?? null,
+    });
   }
 
   async steer(rawRequest, rawPrincipal) {

@@ -22,7 +22,11 @@ export const CLI_WEB_COMMANDS = new Set([
   'run.stop', 'run.evidence', 'run.adopt', 'run.retry_verification',
   'run.resume_work', 'run.review', 'run.integrate', 'run.export',
   // S-1 v2: portable atomic attach-and-harvest.
-  'waves.attach',
+  'waves.attach', 'waves.start',
+  // Facade-projection epic (#87+#48, contract v2.2): the eight workflow-surface command names.
+  'run.message.send', 'run.message.receipt', 'run.attention.watch',
+  'run.scratchpad.read', 'run.scratchpad.elevate', 'run.board.post', 'run.board.read',
+  'run.knowledge.seed',
 ]);
 // CS-2 (control-surface v2): the five web-admitted verbs (run.episode, run.workstreams,
 // run.workstream.notify, run.workstream.stop; run.result folds to run.episode) join the
@@ -1354,6 +1358,153 @@ export function parseBatonCli(rawArgs) {
   }
   if (action === 'start') {
     return parseStart(args, args.shift(), idempotencyKey);
+  }
+  // Facade-projection epic (#87+#48, contract v2.2): the nine workflow-surface verbs. Each sub-verb
+  // shifts BEFORE the generic runId shift (the start-precedent early branch per noun), so an
+  // unknown sub-verb stays a loud cli_invalid parse error, never a silent run-start objective.
+  if (action === 'message') {
+    const sub = args.shift();
+    if (sub === 'send') {
+      const runIdRaw = args[0] && !args[0].startsWith('--') ? args.shift() : null;
+      const workerRaw = take(args, '--worker');
+      const kind = take(args, '--kind', { required: true });
+      const body = take(args, '--body', { required: true });
+      noRemainder(args);
+      if ((runIdRaw !== null) === (workerRaw !== null)) {
+        throw cliError('message send requires exactly one target (RUN_ID or --worker WORKER_ID)');
+      }
+      if (!['inform', 'query', 'steer'].includes(kind)) throw cliError('--kind must be inform|query|steer');
+      if (!nonempty(body)) throw cliError('--body is required');
+      const messageArgs = { kind, body };
+      if (runIdRaw !== null) messageArgs.runId = id(runIdRaw, 'Run ID');
+      if (workerRaw !== null) messageArgs.workerId = id(workerRaw, 'worker ID');
+      return { kind: 'command', name: 'run.message.send', args: messageArgs, idempotencyKey };
+    }
+    if (sub === 'receipt') {
+      const messageId = args.shift();
+      noRemainder(args);
+      if (!/^message:[a-f0-9]{64}$/u.test(messageId ?? '')) throw cliError('message ID is invalid');
+      return { kind: 'command', name: 'run.message.receipt', args: { messageId }, idempotencyKey };
+    }
+    throw cliError(`unexpected argument ${sub}`);
+  }
+  if (action === 'attention') {
+    if (args.shift() !== 'watch') throw cliError('expected attention watch');
+    const runIdValue = id(args.shift(), 'Run ID');
+    const kind = take(args, '--kind');
+    const rawCursor = take(args, '--cursor');
+    noRemainder(args);
+    if (kind !== null) id(kind, 'attention kind');
+    if (rawCursor !== null && (!Number.isSafeInteger(Number(rawCursor)) || Number(rawCursor) < 0)) {
+      throw cliError('--cursor must be a non-negative integer');
+    }
+    return {
+      kind: 'command', name: 'run.attention.watch',
+      args: {
+        runId: runIdValue,
+        ...(kind === null ? {} : { kind }),
+        ...(rawCursor === null ? {} : { cursor: Number(rawCursor) }),
+      },
+      idempotencyKey,
+    };
+  }
+  if (action === 'scratchpad') {
+    const sub = args.shift();
+    if (sub === 'read') {
+      const runIdValue = id(args.shift(), 'Run ID');
+      const scope = take(args, '--scope', { required: true });
+      const rawCursor = take(args, '--cursor');
+      noRemainder(args);
+      if (!/^(?:shared|worker:[A-Za-z0-9._:-]{1,256})$/u.test(scope ?? '')) throw cliError('--scope must be shared or worker:ID');
+      if (rawCursor !== null && (!Number.isSafeInteger(Number(rawCursor)) || Number(rawCursor) < 0)) {
+        throw cliError('--cursor must be a non-negative integer');
+      }
+      return {
+        kind: 'command', name: 'run.scratchpad.read',
+        args: {
+          runId: runIdValue, scope,
+          ...(rawCursor === null ? {} : { cursor: Number(rawCursor) }),
+        },
+        idempotencyKey,
+      };
+    }
+    if (sub === 'elevate') {
+      const runIdValue = id(args.shift(), 'Run ID');
+      const taskId = take(args, '--task', { required: true });
+      const entriesRaw = take(args, '--entries', { required: true });
+      noRemainder(args);
+      id(taskId, 'task ID');
+      let entryIds;
+      try { entryIds = JSON.parse(entriesRaw); } catch { throw cliError('--entries must be JSON'); }
+      if (!Array.isArray(entryIds)) throw cliError('--entries must be a JSON array');
+      return {
+        kind: 'command', name: 'run.scratchpad.elevate',
+        args: { runId: runIdValue, taskId, entryIds },
+        idempotencyKey,
+      };
+    }
+    throw cliError(`unexpected argument ${sub}`);
+  }
+  if (action === 'board') {
+    const sub = args.shift();
+    if (sub === 'post') {
+      const runIdValue = id(args.shift(), 'Run ID');
+      const board = take(args, '--board', { required: true });
+      const title = take(args, '--title', { required: true });
+      const detail = take(args, '--detail');
+      const owner = take(args, '--owner');
+      const evidenceRaw = take(args, '--evidence');
+      noRemainder(args);
+      if (!/^[A-Za-z0-9_.:-]{1,128}$/u.test(board ?? '')) throw cliError('--board is invalid');
+      if (!nonempty(title)) throw cliError('--title is required');
+      if (detail !== null && !nonempty(detail)) throw cliError('--detail is invalid');
+      if (owner !== null) id(owner, 'owner ID');
+      let evidence = [];
+      if (evidenceRaw !== null) {
+        try { evidence = JSON.parse(evidenceRaw); } catch { throw cliError('--evidence must be JSON'); }
+        if (!Array.isArray(evidence)) throw cliError('--evidence must be a JSON array');
+      }
+      return {
+        kind: 'command', name: 'run.board.post',
+        args: {
+          runId: runIdValue, board, title,
+          ...(detail === null ? {} : { detail }),
+          ...(owner === null ? {} : { owner }),
+          evidence,
+        },
+        idempotencyKey,
+      };
+    }
+    if (sub === 'read') {
+      const runIdValue = id(args.shift(), 'Run ID');
+      const board = take(args, '--board', { required: true });
+      noRemainder(args);
+      if (!/^[A-Za-z0-9_.:-]{1,128}$/u.test(board ?? '')) throw cliError('--board is invalid');
+      return { kind: 'command', name: 'run.board.read', args: { runId: runIdValue, board }, idempotencyKey };
+    }
+    throw cliError(`unexpected argument ${sub}`);
+  }
+  if (action === 'knowledge') {
+    if (args.shift() !== 'seed') throw cliError('expected knowledge seed');
+    const runIdValue = id(args.shift(), 'Run ID');
+    const type = take(args, '--type', { required: true });
+    const grounding = take(args, '--grounding', { required: true });
+    const body = take(args, '--body', { required: true });
+    const evidenceRaw = take(args, '--evidence');
+    noRemainder(args);
+    if (!nonempty(type)) throw cliError('--type is required');
+    if (!nonempty(grounding)) throw cliError('--grounding is required');
+    if (!nonempty(body)) throw cliError('--body is required');
+    let evidence = [];
+    if (evidenceRaw !== null) {
+      try { evidence = JSON.parse(evidenceRaw); } catch { throw cliError('--evidence must be JSON'); }
+      if (!Array.isArray(evidence)) throw cliError('--evidence must be a JSON array');
+    }
+    return {
+      kind: 'command', name: 'run.knowledge.seed',
+      args: { runId: runIdValue, type, grounding, body, evidence },
+      idempotencyKey,
+    };
   }
   const lifecycleActions = new Set(['show', 'do', 'recover', 'status', 'approve', 'answer', 'steer',
     'send', 'interrupt', 'progress', 'events', 'output', 'episode', 'workstreams', 'notify', 'result',

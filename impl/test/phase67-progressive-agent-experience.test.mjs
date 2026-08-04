@@ -643,6 +643,7 @@ test('AX1/AX6/AX7: cards, CLI, MCP, and browser project one digest; default inve
   const ordinary = new McpFleetServer(common);
   // M4b: the canonical grammar tools render beside the retained legacy tools (docs/36 §9 M4).
   // MCP-W1/W2 (v1.0.1): waves.*/doctor/decision.answer/settlement join the ordinary surface.
+  // Facade-projection epic (#87+#48): the six workflow-surface tools join the compact default.
   assert.deepEqual(ordinary.toolDefinitions.map((tool) => tool.name), [
     'baton_help', 'baton_runs', 'baton_run_start', 'baton_run_inspect', 'baton_run_episode',
     'baton_run_workstreams', 'baton_workstream_notify', 'baton_workstream_stop',
@@ -650,6 +651,8 @@ test('AX1/AX6/AX7: cards, CLI, MCP, and browser project one digest; default inve
     'baton_waves_start', 'baton_waves_progress', 'baton_waves_send', 'baton_waves_stop',
     'baton_deployment_doctor', 'baton_decision_answer',
     'baton_scratchpad_elevate', 'baton_scratchpad_settle', 'baton_knowledge_promote', 'baton_knowledge_settlement_lease',
+    'baton_run_message_send', 'baton_run_message_receipt', 'baton_run_attention_watch',
+    'baton_run_scratchpad_read', 'baton_run_scratchpad_elevate', 'baton_run_knowledge_seed',
     'baton_run_do', 'baton_run_view', 'baton_run_member_view', 'baton_run_member_send',
     'baton_run_member_stop', 'baton_application_help',
   ]);

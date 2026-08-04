@@ -1618,6 +1618,74 @@ const CANONICAL_OPERATION_SPECS = [
     example: 'baton doctor --check',
     inputSchema: objectSchema({ depth: { type: 'string', enum: ['outline', 'connection', 'profile', 'evidence'] }, check: { type: 'boolean' } }, []),
   }],
+  // Facade-projection epic (#87+#48, contract v2.2): the eight workflow-surface canonical
+  // operations (Decision 11). Boards are embedded+cli only (no ordinary MCP board tools, Decision
+  // 10); the six MCP-projected lanes surface embedded+mcp+cli. All verbs are C4-clean.
+  ['run.message.send', {
+    profile: 'ordinary', surfaces: ['embedded', 'mcp', 'cli'], effect: 'control',
+    capabilities: ['control', 'observe'], outputView: 'outline', helpTopic: 'run', idempotent: false,
+    example: 'baton run message send RUN_ID --kind inform --body TEXT',
+    inputSchema: objectSchema({
+      runId: id, workerId: id, kind: { type: 'string', enum: ['inform', 'query', 'steer'] },
+      body: { type: 'string', minLength: 1, maxLength: FRAME_LIMITS['message.send.body'].value },
+    }, ['kind', 'body']),
+  }],
+  ['run.message.receipt', {
+    profile: 'ordinary', surfaces: ['embedded', 'mcp', 'cli'], effect: 'observe',
+    capabilities: ['observe'], outputView: 'outline', helpTopic: 'run',
+    example: 'baton run message receipt MESSAGE_ID',
+    inputSchema: objectSchema({ messageId: { type: 'string', pattern: '^message:[a-f0-9]{64}$' } }, ['messageId']),
+  }],
+  ['run.attention.watch', {
+    profile: 'ordinary', surfaces: ['embedded', 'mcp', 'cli'], effect: 'observe',
+    capabilities: ['observe'], outputView: 'outline', helpTopic: 'run',
+    example: 'baton run attention watch RUN_ID --kind member_terminal --cursor 0',
+    inputSchema: objectSchema({ runId: id, kind: id, cursor: { type: 'integer', minimum: 0 } }, ['runId']),
+  }],
+  ['run.scratchpad.read', {
+    profile: 'ordinary', surfaces: ['embedded', 'mcp', 'cli'], effect: 'observe',
+    capabilities: ['observe'], outputView: 'outline', helpTopic: 'run',
+    example: 'baton run scratchpad read RUN_ID --scope shared --cursor 0',
+    inputSchema: objectSchema({
+      runId: id, scope: { type: 'string', pattern: '^(?:shared|worker:[A-Za-z0-9._:-]{1,256})$' },
+      cursor: { type: 'integer', minimum: 0 },
+    }, ['runId', 'scope']),
+  }],
+  ['run.scratchpad.elevate', {
+    profile: 'ordinary', surfaces: ['embedded', 'mcp', 'cli'], effect: 'control',
+    capabilities: ['control', 'observe'], outputView: 'outline', helpTopic: 'run',
+    example: 'baton run scratchpad elevate RUN_ID --task TASK_ID --entries JSON',
+    inputSchema: objectSchema({
+      runId: id, taskId: id,
+      entryIds: { type: 'array', maxItems: 128, uniqueItems: true, items: { type: 'string', pattern: '^scratchpad-entry:[a-f0-9]{64}$' } },
+    }, ['runId', 'taskId', 'entryIds']),
+  }],
+  ['run.board.post', {
+    profile: 'ordinary', surfaces: ['embedded', 'cli'], effect: 'control',
+    capabilities: ['control', 'observe'], outputView: 'outline', helpTopic: 'run',
+    example: 'baton run board post RUN_ID --board BOARD --title TEXT',
+    inputSchema: objectSchema({
+      runId: id, board: safeBoardId, title: { type: 'string', minLength: 1, maxLength: 160 },
+      detail: { type: 'string', minLength: 1, maxLength: FRAME_LIMITS['board.detail'].value }, owner: safeBoardId, evidence: { type: 'array', maxItems: 8, items: evidenceRef },
+    }, ['runId', 'board', 'title']),
+  }],
+  ['run.board.read', {
+    profile: 'ordinary', surfaces: ['embedded', 'cli'], effect: 'observe',
+    capabilities: ['observe'], outputView: 'outline', helpTopic: 'run',
+    example: 'baton run board read RUN_ID --board BOARD',
+    inputSchema: objectSchema({ runId: id, board: safeBoardId }, ['runId', 'board']),
+  }],
+  ['run.knowledge.seed', {
+    profile: 'ordinary', surfaces: ['embedded', 'mcp', 'cli'], effect: 'control',
+    capabilities: ['control', 'observe'], outputView: 'outline', helpTopic: 'run',
+    example: 'baton run knowledge seed RUN_ID --type Finding --grounding observed --body TEXT',
+    inputSchema: objectSchema({
+      runId: id,
+      type: { type: 'string', enum: ['Run', 'Task', 'Artifact', 'Phase', 'Experiment', 'Finding', 'Question', 'Hypothesis', 'Principle', 'Constraint', 'Literature', 'Research', 'RouteStat', 'Skill', 'Counterexample', 'Representation', 'ScratchFact', 'Source'] },
+      grounding: { type: 'string', enum: ['verified', 'observed', 'derived', 'asserted'] },
+      body: { type: 'string', minLength: 1, maxLength: FRAME_LIMITS['run.objective'].value }, evidence: { type: 'array', items: evidenceRef },
+    }, ['runId', 'type', 'grounding', 'body']),
+  }],
   ['application.help', {
     op: 'application.help', effect: 'help_read', capabilities: ['observe'], outputView: 'outline',
     example: 'baton help',
