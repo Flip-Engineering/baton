@@ -1,16 +1,16 @@
 {
   "schemaVersion": 1,
-  "startedAt": "2026-08-03T18:15:19.989Z",
+  "startedAt": "2026-08-04T05:53:16.224Z",
   "members": [
     "implementer"
   ],
   "outcomes": [
     {
       "role": "implementer",
-      "phase": "cancelled",
-      "terminal": true,
-      "narrative": "Run refused at dispatch: worktree_capacity_exceeded. Free repository volume space or raise the deployment worktree capacity floors, then start a new Run.",
-      "resultSha": null
+      "phase": "result_ready",
+      "terminal": false,
+      "narrative": "1 worker(s) active, 1 done.",
+      "resultSha": "af5a941b5ee74a625b778d0882dde141b23a7170"
     }
   ],
   "steering": [],
@@ -31,8 +31,21 @@
   "remainingCount": 0,
   "residueUnknown": false,
   "basis": "completed",
-  "nudges": [],
-  "claims": [],
+  "nudges": [
+    {
+      "role": "implementer",
+      "requestId": "pause:baton-86a94aad5e2e68e8dfce0d44-work:818",
+      "at": "2026-08-04T07:22:10.358Z"
+    }
+  ],
+  "claims": [
+    {
+      "role": "implementer",
+      "requestId": "pause:baton-86a94aad5e2e68e8dfce0d44-work:834",
+      "at": "2026-08-04T07:23:36.663Z",
+      "code": "claimed"
+    }
+  ],
   "decisions": [],
   "follows": [],
   "salt": null,

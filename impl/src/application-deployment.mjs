@@ -13,6 +13,9 @@ import { BatonWebClient } from './application-cli.mjs';
 import { BatonWebHost } from './application-host.mjs';
 import { ClaudeSessionCli, GlmSessionCli, KimiSessionCli } from './claude-session.mjs';
 import { ClaudeCredentialCache } from './claude-credential-cache.mjs';
+import { GrokCredentialCache } from './grok-credential-cache.mjs';
+import { RouteLiveness } from './route-liveness.mjs';
+import { routeTupleKey } from './route-tuple.mjs';
 import { CodexAppServerCli } from './codex-appserver.mjs';
 import { createRecipes } from './recipes.mjs';
 import {
@@ -600,12 +603,20 @@ function trackedTreeBounds(repoRoot, treeish) {
   });
 }
 
-function defaultCredentialProjection(repoRoot, { projectNativeKimi = false, claudeCredentialCache = null } = {}) {
+function defaultCredentialProjection(repoRoot, { projectNativeKimi = false, claudeCredentialCache = null, grokCredentialCache = null } = {}) {
   const credentials = {};
   const codex = join(homedir(), '.codex', 'auth.json');
   const grok = join(homedir(), '.grok', 'auth.json');
   if (existingRegular(codex)) credentials.codex = [codex];
-  if (existingRegular(grok)) credentials.grok = [grok];
+  // The #84 grok controller projects the access-token-ONLY credential file list (RT-12): grok's
+  // native worker projection is file-based, and the wholesale copy would carry the refresh token.
+  // An absent controller/credential falls back to the operator file for the static path only.
+  if (grokCredentialCache) {
+    const projected = grokCredentialCache.projectionFiles();
+    if (projected.length > 0) credentials.grok = projected;
+  } else if (existingRegular(grok)) {
+    credentials.grok = [grok];
+  }
   const kimiRoot = join(homedir(), '.kimi-code');
   const credentialTrees = projectNativeKimi
     ? { 'kimi-code': [{ sourceRoot: kimiRoot, relativeFiles: KIMI_CREDENTIAL_FILES }] } : {};
@@ -968,6 +979,33 @@ function publicRouteRuntime(card) {
   });
 }
 
+// §4.2.1/§4.2.2 fold F-5: the fleet_roster row is the stated named sibling of publicRouteRuntime —
+// the same whitelist-projector discipline (bounded, vendor-neutral atoms; no executable paths, no
+// credential values, no private runtime paths, no provider tokens). The liveness/occupancy/learning
+// fields carry only the bounded atoms the projection functions already produce.
+function publicRosterRow(route, { static: staticFields, liveness, occupancy, learning }) {
+  return Object.freeze({
+    harness: route.harness,
+    model: route.model,
+    effort: route.effort,
+    ...(route.provider ? { provider: route.provider } : {}),
+    static: staticFields,
+    liveness,
+    occupancy,
+    learning,
+  });
+}
+
+// §4.2.2 fold F-2: the fleet_roster OPERATION's provenance envelope — claimed on the operation's
+// own registration/result envelope (the route.advice envelope precedent), never as fields of the
+// §4.2.1 roster document. Read-only advisory: it never selects routes, never mutates the router,
+// never claims verification or merge authority.
+const FLEET_ROSTER_PROVENANCE = Object.freeze({
+  op: 'fleet_roster',
+  routingMutationAuthority: false,
+  workerAuthority: false,
+});
+
 async function projectedAdapterAuthentication(adapters, repoRoot, runtimeRoot, projection) {
   const isolation = new RuntimeIsolation({
     repoRoot, root: join(runtimeRoot, 'readiness'),
@@ -1188,6 +1226,10 @@ class BatonDeployment {
   #residentOptions;
   #workspaceProbe = null;
   #claudeCredentialProbe = null;
+  #grokCredentialProbe = null;
+  #liveness = null;
+  #adapters = {};
+  #routes = [];
   #residentAuthority = null;
   #residentSession = null;
   #ordinaryHostPromise = null;
@@ -1203,6 +1245,10 @@ class BatonDeployment {
     this.#residentOptions = deployment.residentOptions;
     this.#workspaceProbe = deployment.workspaceProbe ?? null;
     this.#claudeCredentialProbe = deployment.claudeCredentialProbe ?? null;
+    this.#grokCredentialProbe = deployment.grokCredentialProbe ?? null;
+    this.#liveness = deployment.liveness ?? null;
+    this.#adapters = deployment.adapters ?? {};
+    this.#routes = deployment.routes ?? [];
     this.#card = Object.freeze({ ...application.card(), readiness });
     const runs = this.#baton.runs;
     this.runs = Object.freeze({
@@ -1236,14 +1282,24 @@ class BatonDeployment {
     });
     this.credentials = Object.freeze({
       refresh: async (provider) => {
-        if (provider !== 'claude' || !deployment.claudeCredentialCache) {
-          throw Object.assign(new Error('Claude credential refresh is not configured'), {
-            code: 'credential_refresh_unavailable',
-          });
+        if (provider === 'claude' && deployment.claudeCredentialCache) {
+          await deployment.claudeCredentialCache.explicitRefresh();
+          return deployment.claudeCredentialCache.metadata();
         }
-        await deployment.claudeCredentialCache.explicitRefresh();
-        return deployment.claudeCredentialCache.metadata();
+        if (provider === 'grok' && deployment.grokCredentialCache) {
+          await deployment.grokCredentialCache.explicitRefresh();
+          return deployment.grokCredentialCache.metadata();
+        }
+        throw Object.assign(new Error(`${provider} credential refresh is not configured`), {
+          code: 'credential_refresh_unavailable',
+        });
       },
+    });
+    // §4.2.2: the fleet_roster projection — one projection function, three read surfaces
+    // (CLI `baton fleet roster`, the deployment.fleet.roster() facade, and the advanced
+    // fleet_roster operation registered in application-semantics.mjs).
+    this.fleet = Object.freeze({
+      roster: () => this.#rosterProjection(),
     });
     this.ready = application.ready;
     Object.freeze(this);
@@ -1254,20 +1310,106 @@ class BatonDeployment {
   doctorReadiness() {
     const workspace = this.#workspaceProbe ? this.#workspaceProbe() : null;
     const credential = this.#claudeCredentialProbe ? this.#claudeCredentialProbe() : null;
-    const routes = credential ? Object.freeze(this.#readiness.routes.map((route) => (
-      route.harness === 'claude-code' && route.model.startsWith('claude-')
-        ? Object.freeze({ ...route, credential }) : route
-    ))) : this.#readiness.routes;
-    return workspace || credential
-      ? Object.freeze({ ...this.#readiness, routes, ...(workspace ? { workspace } : {}) })
-      : this.#readiness;
+    const grokCredential = this.#grokCredentialProbe ? this.#grokCredentialProbe() : null;
+    const routes = Object.freeze(this.#readiness.routes.map((route) => {
+      let row = route;
+      if (route.harness === 'claude-code' && route.model.startsWith('claude-') && credential) {
+        row = Object.freeze({ ...row, credential });
+      }
+      if (route.harness === 'grok' && grokCredential) {
+        row = Object.freeze({ ...row, credential: grokCredential });
+      }
+      // §4.2.2: doctor rows gain the roster fields — liveness + occupancy (RT-7b), so every
+      // existing consumer sees the honest multi-axis view without a new surface. They are
+      // exposed as non-enumerable row fields: accessible via property access (the wave-driver
+      // preflight, the doctor consumers) while leaving the pre-existing enumerable row shape
+      // (DP5's closed pin) and serialized doctor output unchanged.
+      const live = this.#composeLive(row);
+      const composed = { ...row };
+      Object.defineProperty(composed, 'liveness', { value: live.liveness, enumerable: false });
+      Object.defineProperty(composed, 'occupancy', { value: live.occupancy, enumerable: false });
+      return Object.freeze(composed);
+    }));
+    const fresh = Object.freeze({ ...this.#readiness, routes });
+    return workspace ? Object.freeze({ ...fresh, workspace }) : fresh;
   }
 
   card() { return Object.freeze({ ...this.#card, readiness: this.doctorReadiness() }); }
   async doctor() { return this.doctorReadiness(); }
 
+  /** #47 spawn/preflight gate: consult the liveness cache and probe only on stale or absent
+   * (never probe per call). Static readiness stays the substrate (assertRouteReady first). */
+  async #livenessGate(options) {
+    if (!this.#liveness) return;
+    const resolved = requestedReadiness(options, this.#readiness.routes);
+    if (!resolved) return;
+    await this.#liveness.ensure(resolved);
+  }
+
+  #composeLive(route) {
+    const liveness = this.#liveness
+      ? this.#liveness.project(route)
+      : Object.freeze({ state: 'unobserved', credentialKey: null });
+    return { liveness, occupancy: this.#occupancyFor(route) };
+  }
+
+  #occupancyFor(route) {
+    const match = this.#liveness?.adapterFor(route);
+    const vendor = match?.vendor ?? route.harness;
+    const inFlight = typeof this.#driver.coordinator?._inFlightCount === 'function'
+      ? this.#driver.coordinator._inFlightCount(vendor) : 0;
+    const ceiling = Number.isSafeInteger(match?.adapter?.card()?.concurrencyCeiling)
+      ? match.adapter.card().concurrencyCeiling : 1;
+    return Object.freeze({ inFlight, concurrencyCeiling: ceiling });
+  }
+
+  #learningFor(route) {
+    const match = this.#liveness?.adapterFor(route);
+    if (!match) return null;
+    const tupleKey = routeTupleKey(match.adapter.card(), route.model, route.effort, 'general');
+    const bucket = this.#driver.router.getStat(tupleKey, 'general');
+    if (!bucket) return null;
+    const mode = this.#driver.router.snapshot().mode;
+    return Object.freeze({
+      mode,
+      samples: bucket.count,
+      winRate: bucket.count > 0 ? bucket.weight / bucket.count : null,
+      weight: bucket.weight,
+      ...(Object.hasOwn(bucket, 'seededFrom') ? { seededFrom: bucket.seededFrom } : {}),
+    });
+  }
+
+  /** §4.2.1: the fleet_roster projection — a closed, bounded, sanitized document over the four
+   * existing authorities. One projection function; the doctor and the fleet_roster facade consume
+   * the same underlying rows (RT-9's no-drift contract). */
+  #rosterProjection() {
+    const observedAt = new Date().toISOString();
+    const routes = Object.freeze(this.#readiness.routes.map((route) => {
+      const staticFields = Object.freeze({
+        state: route.state,
+        ...(route.code ? { code: route.code } : {}),
+        ...(route.summary ? { summary: route.summary } : {}),
+      });
+      const liveness = this.#liveness
+        ? this.#liveness.project(route, { withProbe: false })
+        : Object.freeze({ state: 'unobserved', credentialKey: null });
+      const occupancy = this.#occupancyFor(route);
+      const learning = this.#learningFor(route);
+      return publicRosterRow(route, { static: staticFields, liveness, occupancy, learning });
+    }));
+    const observations = this.#driver.coordination.routeObservations();
+    return Object.freeze({
+      schemaVersion: 1,
+      observedAt,
+      routes,
+      // Bounded tail (coordination-store.mjs:11114 is the same source the doctor/roster share).
+      observations: Object.freeze(observations.slice(-64)),
+    });
+  }
+
   async run(objective, route = {}) {
     assertRouteReady(route, this.#readiness);
+    await this.#livenessGate(route);
     return this.#baton.runs.start(objective, route);
   }
 
@@ -1544,7 +1686,7 @@ export async function openBatonDeployment(rawOptions, createDriver) {
   closed(rawOptions, ['advanced', 'repo'], 'deployment options');
   const repository = repositoryAuthority(rawOptions.repo ?? process.cwd());
   const advanced = rawOptions.advanced ?? {};
-  closed(advanced, ['adapterOptions', 'adapters', 'capacity', 'claudeCredentials', 'deploymentRoot', 'resident', 'routes', 'verification', 'workflowPolicy'], 'advanced');
+  closed(advanced, ['adapterOptions', 'adapters', 'capacity', 'claudeCredentials', 'deploymentRoot', 'grokCredentials', 'liveness', 'resident', 'routes', 'verification', 'workflowPolicy'], 'advanced');
   const adapterOptions = normalizeAdapterOptions(advanced.adapterOptions);
   const rawResident = advanced.resident ?? {};
   closed(rawResident, ['commandTimeoutMs', 'env', 'home', 'now', 'ownerUid', 'pollMs', 'sessionTtlMs', 'webDrainMs'], 'advanced resident');
@@ -1644,6 +1786,65 @@ export async function openBatonDeployment(rawOptions, createDriver) {
       keychainMtime: rawClaudeCredentials.keychainMtime ?? defaultMacosKeychainMtime(),
       ...rawClaudeCredentials,
     }) : null;
+  // #84 grok credential controller wiring (contract §4.3.1). Unlike the claude cache, the grok
+  // cache is created whenever advanced.grokCredentials is provided — the controller serves the
+  // explicit `baton credentials refresh grok` command and doctor's refresh-token-death finding.
+  const rawGrokCredentials = advanced.grokCredentials ?? {};
+  closed(rawGrokCredentials, [
+    'cmd', 'cmdArgs', 'cmdEnv', 'credentialPath', 'fileProbe', 'fileRead',
+    'lockPath', 'lockPollMs', 'lockTimeoutMs', 'now', 'onReceipt', 'persist', 'refreshRuntime',
+  ], 'advanced grokCredentials');
+  for (const field of ['fileProbe', 'fileRead', 'now', 'onReceipt', 'persist', 'refreshRuntime']) {
+    if (rawGrokCredentials[field] !== undefined && typeof rawGrokCredentials[field] !== 'function') {
+      throw deploymentError(`advanced grokCredentials.${field} must be a function`);
+    }
+  }
+  for (const field of ['cmd', 'credentialPath', 'lockPath']) {
+    if (rawGrokCredentials[field] !== undefined
+      && (typeof rawGrokCredentials[field] !== 'string' || rawGrokCredentials[field].length === 0
+        || rawGrokCredentials[field].includes('\0'))) {
+      throw deploymentError(`advanced grokCredentials.${field} must be a non-empty string`);
+    }
+  }
+  if (rawGrokCredentials.cmdArgs !== undefined
+    && (!Array.isArray(rawGrokCredentials.cmdArgs) || rawGrokCredentials.cmdArgs.length > 64
+      || rawGrokCredentials.cmdArgs.some((value) => typeof value !== 'string' || value.includes('\0')))) {
+    throw deploymentError('advanced grokCredentials.cmdArgs must be a bounded string array');
+  }
+  if (rawGrokCredentials.cmdEnv !== undefined
+    && (!record(rawGrokCredentials.cmdEnv) || Array.isArray(rawGrokCredentials.cmdEnv)
+      || Object.entries(rawGrokCredentials.cmdEnv).some(([key, value]) => key.length === 0
+        || key.length > 256 || /[\0\r\n]/u.test(key)
+        || (value !== undefined && value !== null && typeof value !== 'string')))) {
+    throw deploymentError('advanced grokCredentials.cmdEnv must be a bounded string map');
+  }
+  for (const field of ['lockPollMs', 'lockTimeoutMs']) {
+    if (rawGrokCredentials[field] !== undefined
+      && (!Number.isSafeInteger(rawGrokCredentials[field]) || rawGrokCredentials[field] <= 0)) {
+      throw deploymentError(`advanced grokCredentials.${field} must be a positive safe integer`);
+    }
+  }
+  const grokCredentialCache = Object.keys(rawGrokCredentials).length > 0
+    ? await GrokCredentialCache.open({
+      credentialPath: rawGrokCredentials.credentialPath ?? join(homedir(), '.grok', 'auth.json'),
+      refreshRoot: join(runtimeRoot, 'grok-refresh'),
+      ...rawGrokCredentials,
+    }) : null;
+  // #47 liveness tier wiring (contract §4.1): advanced.liveness.now injects the deployment clock
+  // (RT-2b's stale-window oracle) and advanced.liveness.probeTimeoutMs bounds the probe watchdog
+  // (RT-3b's ≤120s enforcement). Defaults derive from vendor physical bounds.
+  const rawLiveness = advanced.liveness ?? {};
+  closed(rawLiveness, ['failureWindowMs', 'now', 'probeTimeoutMs'], 'advanced liveness');
+  if (rawLiveness.now !== undefined && typeof rawLiveness.now !== 'function') {
+    throw deploymentError('advanced liveness.now must be a function');
+  }
+  for (const field of ['probeTimeoutMs', 'failureWindowMs']) {
+    if (rawLiveness[field] !== undefined
+      && (!Number.isSafeInteger(rawLiveness[field]) || rawLiveness[field] <= 0
+        || rawLiveness[field] > 120_000)) {
+      throw deploymentError(`advanced liveness.${field} must be a positive safe integer ≤ 120000`);
+    }
+  }
   const adapters = advanced.adapters
     ?? builtInAdapters(routes, repository.root, adapterOptions, claudeCredentialCache);
   if (!record(adapters) || Object.keys(adapters).length === 0) {
@@ -1652,6 +1853,7 @@ export async function openBatonDeployment(rawOptions, createDriver) {
   const projection = defaultCredentialProjection(repository.root, {
     projectNativeKimi: nativeKimiAuthentication?.state === 'ready',
     claudeCredentialCache,
+    grokCredentialCache,
   });
   const adapterAuthentication = await projectedAdapterAuthentication(
     adapters, repository.root, runtimeRoot, projection,
@@ -1711,6 +1913,29 @@ export async function openBatonDeployment(rawOptions, createDriver) {
     budgetPolicy: { terminalGraceMs: 2_000 },
     watchdog: { stallMs: DEFAULT_BUDGET.wallMin * 60_000 },
   });
+  // #47 liveness controller: wraps the adapter listeners (the coordinator's single-slot onEvent)
+  // so it observes probe turns and worker-turn refresh-token death without disturbing the
+  // coordinator's own handling.
+  const livenessController = new RouteLiveness({
+    adapters,
+    coordinator: driver.coordinator,
+    coordination: driver.coordination,
+    log: driver.log,
+    now: rawLiveness.now ?? Date.now,
+    probeTimeoutMs: rawLiveness.probeTimeoutMs ?? 120_000,
+    failureWindowMs: rawLiveness.failureWindowMs ?? 10 * 60 * 1000,
+  });
+  const grokCredentialProbe = grokCredentialCache ? () => {
+    const metadata = grokCredentialCache.metadata();
+    if (metadata.state === 'expired_needs_login') {
+      return Object.freeze({
+        state: 'expired_needs_login',
+        code: 'authentication_refresh_required',
+        summary: grokAuthenticationSummary('authentication_refresh_required'),
+      });
+    }
+    return null;
+  } : null;
   const principal = Object.freeze({
     actor: `deployment:${repository.repoId}`, principalId: 'local-owner', sessionId: 'local-owner-session',
   });
@@ -1741,9 +1966,12 @@ export async function openBatonDeployment(rawOptions, createDriver) {
     });
     await application.ready;
     return new BatonDeployment(application, principal, readiness, {
-      driver, repository, deploymentRoot, residentOptions, workspaceProbe,
+      driver, repository, deploymentRoot, residentOptions, workspaceProbe, adapters, routes,
+      liveness: livenessController,
       claudeCredentialProbe: claudeCredentialCache ? () => claudeCredentialCache.metadata() : null,
       claudeCredentialCache,
+      grokCredentialProbe,
+      grokCredentialCache,
     });
   } catch (error) {
     try {
@@ -1777,3 +2005,5 @@ export function deploymentGoalPlanAuthority(repoId) {
     },
   };
 }
+export { GrokCredentialCache } from './grok-credential-cache.mjs';
+export { FLEET_ROSTER_PROVENANCE };

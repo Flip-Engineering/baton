@@ -973,7 +973,7 @@ test('RT-6b (stage: fleet_roster surface missing): a POPULATED router bucket pro
       assert.ok(low.learning.seededFrom === null || typeof low.learning.seededFrom === 'string',
         'seededFrom, when present, is a route key or null (cross-model seed, §4.2.1)');
     }
-    assert.equal(high?.learning ?? undefined, null,
+    assert.equal(high?.learning, null,
       'the sibling route with NO bucket still projects learning: null — a populated bucket must not leak a prior across routes');
   } finally {
     await fixture.close();
