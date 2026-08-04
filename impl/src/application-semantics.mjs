@@ -510,10 +510,10 @@ const actions = {
   },
   claim_turn: {
     label: 'Claim paused turn',
-    summary: 'Re-run the live trust gate against the exact paused task and resolve it to completed or failed.',
+    summary: 'Re-run the live trust gate against the exact paused task and resolve it to completed or failed — a final evaluation that can kill the worker; refuses claim_premature_liveness while the worker shows read-only liveness without an in-scope diff.',
     inputSchema: objectSchema({}, []),
     serverDerived: ['pauseId', 'workerId', 'taskId', 'turnEpoch'], effect: 'provider_control',
-    destructive: false, irreversible: false, idempotent: true, priority: 'recommended',
+    destructive: true, irreversible: false, idempotent: true, priority: 'recommended',
     helpTopic: 'run.act.claim_turn', expectedDepth: 'outline', genericCli: true,
   },
   send: {

@@ -2234,8 +2234,16 @@ export class Coordinator {
    * the steering receipt (`steered: {nudgeId, answered:false}`) durable on the verdict. */
   _expireSteeringCycle(pauseId) {
     const record = this._pausedTurns.get(pauseId);
-    if (!record || record.state !== 'pending' || !record.steering
-      || record.steering.answered !== false) return;
+    if (!record || !record.steering || record.steering.answered !== false) return;
+    if (record.state !== 'pending') {
+      // #88 CP1 swallowed-expiry re-check: the one-shot window fired while a reservation is held
+      // (a claim's preflight is mid-capture) and the guard above has nothing to settle. Remember
+      // the skip so the claim's REFUSE path can re-run the expiry synchronously after rollback —
+      // one flag and one call, no new clock. A proceeded claim (no liveness) consumes the record
+      // itself, so the residue flag is inert there.
+      record.steering.expiryPending = true;
+      return;
+    }
     const handle = this._workers.get(record.worker);
     const task = this._tasks.get(record.taskId);
     if (!handle || !task || task.status !== 'paused') return;
@@ -2494,13 +2502,38 @@ export class Coordinator {
     const reservation = await this._reservePauseRecord(pauseId);
     if (!reservation.ok) return reservation;
     const { record, commit, rollback } = reservation;
-    // TG3 6c: a claim on a cycle-armed record is its own answer — the bounded window must not
-    // fire later (the claim runs the full gate, with no steering-expiry receipt).
-    this._clearSteeringTimer(record);
     const targets = this._pausedActTargets(record);
     if (!targets.ok) { rollback(); return targets; }
     const { handle, task } = targets;
     const actor = opts.actor ?? 'orchestrator';
+
+    // #88 claim-time liveness preflight (CP1-CP7) — BEFORE the steering-timer clear, before any
+    // settle. The reservation is held, so rollback() restores `pending` with nothing consumed: a
+    // refusal leaves zero events, zero transitions, zero gate runs, and the armed cycle stays
+    // ARMED. A THROW here (worktreeReady rejection, capture_failed) rolls back and rethrows with
+    // its own typed code — never a refusal value, and `resolvingDone` is always released.
+    let preflight;
+    try {
+      preflight = await this._claimLivenessPreflight(handle, task, record);
+    } catch (error) {
+      rollback();
+      throw error;
+    }
+    if (preflight.ok === false) {
+      rollback();
+      // CP1 swallowed-expiry re-check: the one-shot steering window may have fired DURING the
+      // preflight's capture await; the reservation guard skipped it and set expiryPending. Only
+      // the refuse path re-runs the expiry — synchronously, after the rollback.
+      if (record.steering?.expiryPending === true) this._expireSteeringCycle(pauseId);
+      return {
+        ok: false, result: 'claim_premature_liveness', pauseId, taskId: task.id, workerId: handle.id,
+        liveness: preflight.liveness, reason: preflight.reason,
+      };
+    }
+
+    // TG3 6c: a claim on a cycle-armed record is its own answer — the bounded window must not
+    // fire later (the claim runs the full gate, with no steering-expiry receipt).
+    this._clearSteeringTimer(record);
     // `TRANSITIONS` has no `paused → completed` edge (31-a: `paused → {working, failed,
     // cancelled}`), so the gate's terminal transition is only legal from `working`. Unpark durably
     // first, exactly as 31-a's degenerate auto-settle does before falling through to the gate.
@@ -2526,6 +2559,97 @@ export class Coordinator {
       ok: true, result: 'claimed', pauseId, taskId: task.id, workerId: handle.id,
       outcome, verdict: task.verdict ?? null,
     };
+  }
+
+  /**
+   * #88 claim-time liveness preflight (contract v1.1, CP1-CP7). Fires ONLY when the gate's own
+   * would-fire test holds (`!brief.analysis && brief.requiredEffects.includes('repository_edit')`,
+   * mirror of :12530) AND a FRESH capture is diffless under the gate's own five-way test (:12532).
+   * When it fires and the CP3 CLOSED counted set finds ≥1 event inside the CP4 pause-epoch window
+   * (`turnEpoch === record.turnEpoch && seq <= record.mintedEvent`), it returns the typed refusal
+   * `{ok:false, ...}` with per-class counts only (TG4 sanitized — no path strings, no worker
+   * prose). Otherwise `{ok:true}` so the claim falls through to the full gate unchanged (CP10: the
+   * silent worker's path is untouched). A throw here is NOT a refusal — the caller rolls back and
+   * rethrows with the error's own typed code (CP1 error path).
+   */
+  async _claimLivenessPreflight(handle, task, record) {
+    // CP2 trigger (brief arm): mirror the gate's would-fire test verbatim (:12530).
+    if (task.brief?.analysis || !task.brief?.requiredEffects?.includes('repository_edit')) {
+      return { ok: true };
+    }
+    // CP2 fidelity law 1: capture with the gate-identical worktree + authority kwargs (:12490-12498).
+    await Promise.resolve(handle.worktreeReady);
+    const captured = await this._captureTrustWorktree(handle, task);
+    const sha = captured && captured.sha;
+    const changedPaths = Array.isArray(captured?.changedPaths) ? captured.changedPaths : [];
+    const inScopeChangedPaths = changedPaths.filter((path) => pathInScope(task.brief.pathScope, path));
+    // CP2 fidelity laws 2-3: baseSha derives sessionContext ?? captured (:12531); the in-scope
+    // filter is the gate's own (:12511). The gate would fire (diffless) when ANY arm of the
+    // five-way test holds (:12532) — only a real in-scope diff lets the claim proceed.
+    const baseSha = task.sessionContext?.baseSha ?? captured?.baseSha ?? null;
+    if (sha && baseSha && sha !== baseSha && changedPaths.length > 0 && inScopeChangedPaths.length > 0) {
+      return { ok: true };
+    }
+    // CP3 + CP4: scan the worker's OWN stream inside the pause epoch for the CLOSED counted set.
+    // Every class is a hub-receipted ok:true, a governance/watchdog-observed worker content event,
+    // or a resolution minted inside the window. Failed receipts, pending interactions, lifecycle
+    // markers, board.claim_result and capability_op (CP7) never count; stale-epoch events never
+    // count (CP4's anti-stale law).
+    //
+    // Epoch spaces: worker-stream events (tool_calls, messages, provider_calls, hub receipts) are
+    // logged at the WIRE epoch, the pause record's `turnEpoch` is the terminal event's wire epoch,
+    // but resolution mints (question.answered/approval.resolved/decision.settled) carry the
+    // COORDINATOR fence epoch (`_safeTurnEpoch`). `wireEpochOffset` is the stable wire→fence
+    // alignment set at the first qualifying wire event, so a resolution's fence epoch equals
+    // `record.turnEpoch + wireEpochOffset` exactly when it was resolved inside the pause's own
+    // asking turn (a stale answer mints `control.stale_rejected`, never a resolution — fencing
+    // keeps the epoch comparison honest on both sides).
+    const epochOffset = handle.wireEpochOffset ?? 0;
+    const inPauseEpoch = (event) => (
+      event.kind === 'question.answered' || event.kind === 'approval.resolved' || event.kind === 'decision.settled'
+        ? event.turnEpoch === record.turnEpoch + epochOffset
+        : event.turnEpoch === record.turnEpoch
+    );
+    const counts = {
+      analysisMessages: 0, approvalsResolved: 0, contextReadOk: 0, decisionsSettled: 0,
+      providerCalls: 0, questionsAnswered: 0, scratchpadWriteOk: 0, toolCalls: 0,
+    };
+    let counted = 0;
+    for (const event of this._log.read(record.worker)) {
+      if (!inPauseEpoch(event) || event.seq > record.mintedEvent) continue;
+      if (event.kind === 'scratchpad.write_result' && event.payload?.ok === true) counts.scratchpadWriteOk += 1;
+      else if (event.kind === 'context.read_result' && event.payload?.ok === true) counts.contextReadOk += 1;
+      else if (event.kind === 'content.tool_call' && event.actor === 'worker') counts.toolCalls += 1;
+      else if (event.kind === 'content.message' && event.actor === 'worker') counts.analysisMessages += 1;
+      else if (event.kind === 'resource.provider_call' && event.actor === 'worker') counts.providerCalls += 1;
+      else if (event.kind === 'question.answered') counts.questionsAnswered += 1;
+      else if (event.kind === 'approval.resolved') counts.approvalsResolved += 1;
+      else if (event.kind === 'decision.settled') counts.decisionsSettled += 1;
+      else continue;
+      counted += 1;
+    }
+    if (counted === 0) return { ok: true };
+    return {
+      ok: false,
+      liveness: counts,
+      reason: 'worker shows read-only liveness inside this pause epoch but no in-scope diff; '
+        + 'nudge the worker to continue and claim the NEXT checkpoint, or wait — '
+        + 'this pause remains claimable',
+    };
+  }
+
+  /** The trust gate's capture call, shared verbatim by the #88 preflight (CP2 fidelity law 1 —
+   * gate-identical worktree + authority kwargs, :12490-12498). */
+  _captureTrustWorktree(handle, task) {
+    return this._worktrees.capture(handle.worktree ?? task.worktree, {
+      vendor: handle.vendor,
+      model: handle.modelObserved ?? handle.modelResolved,
+      ...((handle.effortObserved ?? handle.effortResolved) ? { effort: handle.effortObserved ?? handle.effortResolved } : {}),
+      ownerTaskId: task.sessionContext?.ownerTaskId ?? task.id,
+      ...(task.sessionContext?.baseSha ? { expectedBaseSha: task.sessionContext.baseSha } : {}),
+      ...(task.sessionContext?.branch ? { expectedBranch: task.sessionContext.branch } : {}),
+      ...(task.sessionContext?.sparseCheckoutIdentity ? { workerSparseCheckoutIdentity: task.sessionContext.sparseCheckoutIdentity } : {}),
+    });
   }
 
   _recordDrainDisposition(drainId, actor, workerId, disposition) {
@@ -12487,15 +12611,7 @@ export class Coordinator {
     try {
       // C5: thread the dispatching vendor through to captureCommit so the snapshot
       // commit (when one is made) is genuinely attributed.
-      const captured = await this._worktrees.capture(handle.worktree ?? task.worktree, {
-        vendor: handle.vendor,
-        model: handle.modelObserved ?? handle.modelResolved,
-        ...((handle.effortObserved ?? handle.effortResolved) ? { effort: handle.effortObserved ?? handle.effortResolved } : {}),
-        ownerTaskId: task.sessionContext?.ownerTaskId ?? task.id,
-        ...(task.sessionContext?.baseSha ? { expectedBaseSha: task.sessionContext.baseSha } : {}),
-        ...(task.sessionContext?.branch ? { expectedBranch: task.sessionContext.branch } : {}),
-        ...(task.sessionContext?.sparseCheckoutIdentity ? { workerSparseCheckoutIdentity: task.sessionContext.sparseCheckoutIdentity } : {}),
-      });
+      const captured = await this._captureTrustWorktree(handle, task);
       const sha = captured && captured.sha;
       const changedPaths = Array.isArray(captured?.changedPaths) ? captured.changedPaths : [];
       const derivedSemanticReview = task.taskType === 'review'
