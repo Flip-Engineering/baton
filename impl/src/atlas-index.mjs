@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { execFileSync } from 'node:child_process';
 import { createRequire } from 'node:module';
 import { closeSync, constants, existsSync, fstatSync, lstatSync, mkdirSync, openSync, readSync, readdirSync, realpathSync, writeFileSync } from 'node:fs';
 import { extname, isAbsolute, join, relative, resolve, sep } from 'node:path';
@@ -230,6 +231,19 @@ function validScip(value) {
   return value.externalSymbols.every((symbol) => record(symbol) && typeof symbol.symbol === 'string' && Array.isArray(symbol.documentation) && Array.isArray(symbol.relationships));
 }
 
+// Epic #81 (O-3): the base authority is the deployment's immutable git object tree. The base
+// attestation anchors on HEAD^{tree} (committed bytes), so a dirty worktree never moves it and a
+// moved base is detectable on serve/reverify/resume. Content/git-based — never a clock.
+function gitTreeSha(root) {
+  try {
+    // The base authority is the tree of the repo WHOSE TOPLEVEL IS root — never a parent repo
+    // discovered by walking up (a bare directory inside another worktree must attest no tree).
+    const toplevel = execFileSync('git', ['-C', root, 'rev-parse', '--show-toplevel'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+    if (realpathSync(toplevel) !== realpathSync(root)) return null;
+    return execFileSync('git', ['-C', root, 'rev-parse', '--verify', 'HEAD^{tree}'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+  } catch { return null; }
+}
+
 export class AtlasCodeIndex {
   constructor(opts = {}) {
     if (typeof opts.artifactRoot !== 'string' || !opts.artifactRoot) throw new TypeError('Atlas artifactRoot required');
@@ -238,6 +252,17 @@ export class AtlasCodeIndex {
     this.maxSourceBytes = opts.maxSourceBytes ?? 2 * 1024 * 1024; this.maxFiles = opts.maxFiles ?? 20000;
     this.maxResults = opts.maxResults ?? 100000; this.maxArtifactBytes = opts.maxArtifactBytes ?? 64 * 1024 * 1024;
     for (const key of ['maxSourceBytes', 'maxFiles', 'maxResults', 'maxArtifactBytes']) if (!Number.isSafeInteger(this[key]) || this[key] <= 0) throw new TypeError(`Atlas ${key} must be a positive safe integer`);
+    this.repoId = opts.repoId ?? null;
+    // Epic #81 (O-5): deployment orientation-result storage ceiling (constructive, never a clock).
+    // Applies to result artifacts only (the base index is exempt — it is the authority, not
+    // orientation storage). Refuses BEFORE write past the bound; reclaims by reachability.
+    this.maxOrientationStorageBytes = opts.maxOrientationStorageBytes ?? null;
+    if (this.maxOrientationStorageBytes !== null && (!Number.isSafeInteger(this.maxOrientationStorageBytes) || this.maxOrientationStorageBytes <= 0)) throw new TypeError('Atlas maxOrientationStorageBytes must be a positive safe integer');
+    this._orientationStorageBytes = 0; this._orientationArtifactDigests = new Set();
+    // Epic #81 (O-5): a digest -> worktreeRoot authority binding so resume re-authorizes (a copied
+    // cursor conveys no authority). Process-local: the CAS is content-addressed; this binds the
+    // admission scope to the artifact for the serving process.
+    this._resultScopes = new Map();
     this.now = opts.now ?? Date.now; this.record = opts.record ?? null;
     this.availability = opts.availability ?? Object.freeze({ status: 'available', reason: 'language_ceiling_satisfied' });
     mkdirSync(this.indexRoot, { recursive: true, mode: 0o700 }); mkdirSync(this.resultRoot, { recursive: true, mode: 0o700 });
@@ -277,9 +302,20 @@ export class AtlasCodeIndex {
   _write(root, value) {
     const serialized = `${stable(value)}\n`; const digest = sha(serialized); const path = join(root, `${digest}.json`);
     if (Buffer.byteLength(serialized) > this.maxArtifactBytes) throw typed('Atlas artifact exceeded deployment ceiling', 'artifact_too_large');
+    // Epic #81 (O-5): orientation-result storage ceiling — refuses BEFORE write once cumulative
+    // result bytes cross the deployment bound. The base index (indexRoot) and the index.build
+    // manifest are exempt: they are the authority, not orientation storage. create-if-absent:
+    // only new digests accrue.
+    const countsAsOrientationStorage = root === this.resultRoot && value?.op !== 'index.build';
+    if (countsAsOrientationStorage && this.maxOrientationStorageBytes !== null && !this._orientationArtifactDigests.has(digest)) {
+      if (this._orientationStorageBytes + Buffer.byteLength(serialized) > this.maxOrientationStorageBytes) throw typed('orientation storage ceiling exceeded before write', 'orientation_storage_exhausted');
+    }
     try { writeFileSync(path, serialized, { encoding: 'utf8', mode: 0o600, flag: 'wx' }); }
     catch (error) { if (error?.code !== 'EEXIST') throw error; }
     this._readArtifact(path, digest, Buffer.from(serialized));
+    if (countsAsOrientationStorage && this.maxOrientationStorageBytes !== null && !this._orientationArtifactDigests.has(digest)) {
+      this._orientationArtifactDigests.add(digest); this._orientationStorageBytes += Buffer.byteLength(serialized);
+    }
     return { digest, path, bytes: Buffer.byteLength(serialized) };
   }
   _loadScipArtifact(ref) {
@@ -310,37 +346,127 @@ export class AtlasCodeIndex {
     if (!found) throw typed(`unknown Atlas epoch ${epoch}`, 'unknown_epoch');
     return found;
   }
-  _result(op, full, ctx, started, provenance, kind = 'atlas_results', extraRefs = [], analysisStatus = null) {
+  _result(op, full, ctx, started, provenance, kind = 'atlas_results', extraRefs = [], analysisStatus = null, coverage = null) {
     const complete = { ...full, op, provenance };
-    const artifact = this._write(this.resultRoot, complete); const items = Array.isArray(full.items) ? full.items : [full];
+    const artifact = this._write(this.resultRoot, complete);
+    // Epic #81 (O-5): bind the result scope so resume re-authorizes against the admitting scope.
+    this._resultScopes.set(artifact.digest, ctx.worktreeRoot ?? ctx.baseRoot ?? null);
+    const items = Array.isArray(full.items) ? full.items : [full];
     const payload = budgetPayload(items, ctx.budgetTokens); const truncated = payload.length < items.length;
     const wallMs = Math.max(0, this.now() - started);
-    const status = analysisStatus === 'partial' ? 'partial' : truncated ? 'needs_resume' : 'ok';
+    // Epic #81 (O-8): coverage-derived status — orientation_unavailable when zero supported files,
+    // partial when any in-scope file is unsupported/excluded/parse-failed, else needs_resume/ok.
+    let status;
+    if (coverage) {
+      if (coverage.supportedFiles === 0) status = 'orientation_unavailable';
+      else if (coverage.unsupportedFiles > 0 || coverage.excludedFiles > 0 || coverage.parseErrorFiles > 0) status = 'partial';
+      else status = truncated ? 'needs_resume' : 'ok';
+    } else status = analysisStatus === 'partial' ? 'partial' : truncated ? 'needs_resume' : 'ok';
+    const emptyPosture = coverage ? coverage.supportedFiles === 0 : this.availability.status === 'empty';
     const result = Object.freeze({
-      op, status, summary: this.availability.status === 'empty' ? 'no JavaScript/TypeScript-family sources; honest empty Atlas result' : full.summary, payload,
+      op, status, summary: emptyPosture ? 'no JavaScript/TypeScript-family sources; honest empty Atlas result' : full.summary, payload,
+      ...(coverage ? { coverage } : {}),
       refs: [{ handle: `art:sha256:${artifact.digest}`, kind, digest: artifact.digest, bytes: artifact.bytes, mediaType: 'application/vnd.baton.atlas-index+json', path: artifact.path }, ...extraRefs],
       ...(status === 'needs_resume' ? { cursor: `atlas:${artifact.digest}:${payload.length}` } : {}),
       cost: { tokens_out: Math.ceil(Buffer.byteLength(JSON.stringify(payload)) / 4), wall_ms: wallMs, usd: 0, underlying: EXTRACTOR_VERSION },
-      provenance: { tool: EXTRACTOR_VERSION, deterministic: true, artifactDigest: artifact.digest, language_ceiling: this.availability.status === 'empty' ? 'honest_empty' : 'javascript_typescript_family', ...provenance },
+      provenance: { tool: EXTRACTOR_VERSION, deterministic: true, artifactDigest: artifact.digest, language_ceiling: emptyPosture ? 'honest_empty' : 'javascript_typescript_family', ...provenance },
     });
     this.record?.({ kind: 'capability.op.completed', actor: ctx.actor ?? 'orchestrator', op, status: result.status, artifactDigest: artifact.digest, wallMs, indexEpoch: provenance.index_epoch, overlayDigest: provenance.overlay_digest });
     return result;
   }
-  async invoke(op, args = {}, ctx = {}) {
+
+  /** Epic #81 (O-1): the deepest supported package/workspace roots. package.json is JSON (not a
+   * JS/TS-family file), so it is NOT in the indexed repo.map; the moduleKey derivation scans the
+   * base tree directly for manifests. Returns each manifest's directory ('.' for the root). */
+  _packageRoots(root) {
+    if (typeof root !== 'string' || root.length === 0) return [];
+    const roots = [];
+    const stack = [root];
+    while (stack.length) {
+      const dir = stack.pop();
+      let entries;
+      try { entries = readdirSync(dir, { withFileTypes: true }); } catch { continue; }
+      for (const entry of entries.sort((a, b) => compareCanonicalStrings(a.name, b.name))) {
+        if (entry.isSymbolicLink() || IGNORE_DIRS.has(entry.name) || entry.name === 'atlas-artifacts') continue;
+        const full = join(dir, entry.name);
+        if (entry.isDirectory()) { stack.push(full); continue; }
+        if (entry.isFile() && entry.name === 'package.json') {
+          const rel = relative(root, dir);
+          roots.push(rel === '' ? '.' : slash(rel));
+        }
+      }
+    }
+    return roots;
+  }
+
+  /** Epic #81 (O-3): refuse orientation_base_stale when the deployment base tree moved under the   * pinned epoch. The attested baseTreeSha anchors the immutable git object tree; a moved base
+   * (new commit) is detected by recomputing HEAD^{tree}. Content/git-based — never a clock/TTL. */
+  _assertBaseFresh(base, ctx) {
+    // An empty base index (no indexed supported files) carries no staleable structure — the
+    // per-answer overlay is the authority for it (O-8: a repo gaining its first supported file
+    // never wears the frozen honest-empty label). The gate fires only when the cached base
+    // actually carried indexed structure that a moved base tree would serve stale-as-fresh.
+    if (!(Array.isArray(base?.files) && base.files.length > 0)) return;
+    const attested = base?.baseTreeSha ?? null;
+    if (!attested) return;
+    const root = ctx.baseRoot ?? ctx.worktreeRoot ?? null;
+    const current = root ? gitTreeSha(root) : null;
+    if (current && current !== attested) throw typed('orientation base tree moved under the pinned epoch', 'orientation_base_stale');
+  }
+
+  /** Epic #81 (O-8): per-answer coverage from the scoped effective-source snapshot. Walks the live
+   * worktree to count every in-scope file (supported + unsupported) and excluded entries; parse
+   * errors come from the parsed view. The deployment artifact root is excluded (it is storage, not
+   * source). Derived per-answer — the frozen deployment flag is advisory card metadata only. */
+  _orientationCoverage(root, view) {
+    let supported = view.files.length; let unsupported = 0; let excluded = 0;
+    if (typeof root === 'string' && root.length > 0) {
+      supported = 0;
+      const stack = [root];
+      while (stack.length) {
+        const dir = stack.pop();
+        let entries;
+        try { entries = readdirSync(dir, { withFileTypes: true }); } catch { excluded += 1; continue; }
+        for (const entry of entries.sort((a, b) => compareCanonicalStrings(a.name, b.name))) {
+          if (entry.isSymbolicLink()) { excluded += 1; continue; }
+          const full = join(dir, entry.name);
+          if (entry.isDirectory()) { if (!IGNORE_DIRS.has(entry.name) && entry.name !== 'atlas-artifacts' && relative(this.artifactRoot, full).startsWith('..')) stack.push(full); continue; }
+          if (!entry.isFile()) { excluded += 1; continue; }
+          if (LANGUAGE[extname(entry.name).toLowerCase()]) supported += 1; else unsupported += 1;
+        }
+      }
+    }
+    const parseErrorFiles = view.files.filter((file) => file.parseErrors.length > 0).length;
+    const parseErrorCount = view.files.reduce((sum, file) => sum + file.parseErrors.length, 0);
+    return { excludedFiles: excluded, parseErrorCount, parseErrorFiles, supportedFiles: supported, totalFiles: supported + unsupported + excluded, unsupportedFiles: unsupported };
+  }
+  // Epic #81: the invoke body is fully synchronous (bounded file reads + parse + CAS write); the
+  // sync core is exposed so the coordinator code lane can answer code.orient.* synchronously.
+  _invokeSync(op, args = {}, ctx = {}) {
     if (!this.card().ops[op]) throw typed(`unsupported Atlas op ${op}`, 'unsupported_op');
     if (!Number.isInteger(ctx.budgetTokens) || ctx.budgetTokens <= 0) throw new TypeError('positive budgetTokens required');
     const started = this.now(); checkAbort(ctx);
     this.record?.({ kind: 'capability.op.started', actor: ctx.actor ?? 'orchestrator', op, indexEpoch: args.indexEpoch ?? null });
     if (op === 'index.build') {
       const root = ensureRoot(ctx.baseRoot);
-      const base = baseRecord(scan(root, this, ctx)); const artifact = this._write(this.indexRoot, base);
+      const treeSha = gitTreeSha(root);
+      const base = baseRecord(scan(root, this, ctx));
+      // Epic #81 (O-3): the base attestation — {repoId, baseTreeSha, indexEpoch, baseInputsDigest}
+      // as ONE record. baseTreeSha anchors the immutable git object tree (committed bytes only, so
+      // a dirty worktree never moves it); it rides every answer at the epoch. Not part of the epoch
+      // projection (the self-check stays content-only over extractor+files).
+      base.baseTreeSha = treeSha; base.repoId = this.repoId;
+      const artifact = this._write(this.indexRoot, base);
       const items = base.files.map((file) => ({ path: file.path, digest: file.digest, language: file.language, symbols: file.definitions.length, references: file.occurrences.filter((item) => item.role === 'reference').length }));
       return this._result(op, { schemaVersion: 1, summary: `indexed ${base.files.length} files at ${base.epoch.slice(0, 12)}`, items, index: { epoch: base.epoch, digest: artifact.digest, path: artifact.path } }, ctx, started,
-        { index_epoch: base.epoch, base_inputs_digest: sha(stable(base.inputs)), overlay_applied: false }, 'atlas_build_results',
+        { index_epoch: base.epoch, baseTreeSha: treeSha, repoId: this.repoId, base_inputs_digest: sha(stable(base.inputs)), overlay_applied: false }, 'atlas_build_results',
         [{ handle: `art:sha256:${artifact.digest}`, kind: 'atlas_index', digest: artifact.digest, bytes: artifact.bytes, mediaType: 'application/vnd.baton.atlas-index+json', path: artifact.path }]);
     }
     const base = this._load(args.indexEpoch); const view = overlay(base, ctx.worktreeRoot, this, ctx);
-    const provenance = { index_epoch: base.epoch, overlay_applied: view.applied, overlay_digest: view.digest, overlay_changed: view.changed, overlay_added: view.added, overlay_deleted: view.deleted, staleness: view.applied ? 'base_plus_worktree_overlay' : 'base_snapshot_only', effective_files: view.files.length };
+    // Epic #81 (O-3): serve refuses orientation_base_stale when the deployment base tree moved
+    // under the pinned epoch — stale structure is never served as fresh (content/git, no clock).
+    this._assertBaseFresh(base, ctx);
+    const provenance = { index_epoch: base.epoch, repoId: base.repoId ?? this.repoId, baseTreeSha: base.baseTreeSha ?? null, overlay_applied: view.applied, overlay_digest: view.digest, overlay_changed: view.changed, overlay_added: view.added, overlay_deleted: view.deleted, staleness: view.applied ? 'base_plus_worktree_overlay' : 'base_snapshot_only', effective_files: view.files.length };
     let items = []; let summary = ''; let extraRefs = []; let resultKind = 'atlas_results'; let analysisStatus = null;
     if (op === 'search.lexical') {
       if (typeof args.query !== 'string' || !args.query) throw typed('lexical query required', 'invalid_query');
@@ -390,8 +516,12 @@ export class AtlasCodeIndex {
     }
     checkAbort(ctx);
     if (items.length > this.maxResults) throw typed(`Atlas result ceiling ${this.maxResults} exceeded`, 'result_too_large');
-    return this._result(op, { schemaVersion: 1, summary, items }, ctx, started, provenance, resultKind, extraRefs, analysisStatus);
+    // Epic #81 (O-8): answer-time coverage derives per-answer from the scoped effective-source
+    // snapshot (repo.map tier) — the deployment-time availability flag is advisory metadata only.
+    const coverage = op === 'repo.map' ? this._orientationCoverage(ctx.worktreeRoot ?? ctx.baseRoot, view) : null;
+    return this._result(op, { schemaVersion: 1, summary, items }, ctx, started, provenance, resultKind, extraRefs, analysisStatus, coverage);
   }
+  async invoke(op, args = {}, ctx = {}) { return this._invokeSync(op, args, ctx); }
   async reverify(claim, op, args, ctx) {
     if (op === 'scip.export') {
       const claimedPrimary = scipPrimaryRef(claim?.refs); this._loadScipArtifact(claimedPrimary);
@@ -409,8 +539,18 @@ export class AtlasCodeIndex {
     const match = /^atlas:([a-f0-9]{64}):(\d+)$/.exec(String(cursor ?? ''));
     const requested = typeof handle === 'string' ? handle : handle?.handle;
     if (!match || requested !== `art:sha256:${match[1]}`) throw typed('cursor and artifact handle do not match', 'invalid_cursor');
+    // Epic #81 (O-5): resume re-authorizes — a copied cursor conveys no authority. Scope refusal
+    // precedes artifact existence lookup, so a cross-scope cursor and an unknown artifact refuse
+    // IDENTICALLY (no existence leak either direction). The check is scoped to worktree-rooted
+    // resume (the worker-facing path); bare CAS resume without a worktree root is content-addressed
+    // and has no scope to enforce.
+    const scopeRoot = ctx.worktreeRoot ?? ctx.baseRoot ?? null;
+    if (scopeRoot !== null) {
+      const bound = this._resultScopes.get(match[1]) ?? null;
+      if (bound === null || bound !== scopeRoot) throw typed('orientation resume cursor is out of scope', 'context_scope_forbidden');
+    }
     const path = join(this.resultRoot, `${match[1]}.json`);
-    if (!existsSync(path)) throw typed('Atlas result artifact is unavailable', 'unknown_cursor');
+    if (!existsSync(path)) throw typed('Atlas result artifact was lawfully reclaimed', 'orientation_artifact_retired');
     const bytesBuffer = readSourceBounded(path, this.maxArtifactBytes); if (bytesBuffer === null) throw typed('Atlas result artifact exceeded deployment ceiling', 'result_too_large'); const raw = bytesBuffer.toString('utf8');
     if (sha(raw) !== match[1]) throw typed('Atlas result artifact digest mismatch', 'result_integrity');
     const full = JSON.parse(raw); const offset = Number(match[2]);

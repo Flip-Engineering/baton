@@ -300,7 +300,11 @@ test('E2E happy path: a real task runs the whole spawn->trust-gate->completed pi
   // content but never a caller-owned object whose nested verification could change mid-run.
   assert.equal(sys.adapterCalls.spawn.length, 1);
   assert.notEqual(sys.adapterCalls.spawn[0][1], brief, 'CI1: adapter receives an admission-owned snapshot');
-  assert.deepEqual(sys.adapterCalls.spawn[0][1], brief, 'CI1: snapshot preserves the delegation contract');
+  // Epic #81 (O-6): every spawn brief also carries the pathScope-scoped L0 orientation grant —
+  // a cited, framed context-pack ADDED at admission, never a mutation of the delegation fields.
+  const { orientation, ...delegationSnapshot } = sys.adapterCalls.spawn[0][1];
+  assert.deepEqual(delegationSnapshot, brief, 'CI1: snapshot preserves the delegation contract');
+  assert.ok(orientation && orientation.packId, 'O-6: the L0 orientation grant is cited into the brief');
   assert.ok(Object.isFrozen(sys.adapterCalls.spawn[0][1]), 'CI1: admitted snapshot is immutable');
 
   await waitUntil(async () => (await sys.coordinator.result(handle.id)).ready);

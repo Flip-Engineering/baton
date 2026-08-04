@@ -1301,7 +1301,7 @@ export function createDriver(opts) {
     const index = new AtlasCodeIndex({
       artifactRoot: join(atlasDeployment.artifactRoot, 'index'), maxArtifactBytes: atlasDeployment.maxArtifactBytes,
       maxSourceBytes: atlasDeployment.maxSourceBytes, maxFiles: atlasDeployment.maxFiles, maxResults: atlasDeployment.maxResults,
-      availability: atlasDeployment.availability,
+      availability: atlasDeployment.availability, repoId: deploymentRepoId,
     });
     const structural = new AtlasStructuralDelta({
       artifactRoot: join(atlasDeployment.artifactRoot, 'structural'), maxArtifactBytes: atlasDeployment.maxArtifactBytes,
