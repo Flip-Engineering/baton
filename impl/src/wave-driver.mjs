@@ -289,6 +289,22 @@ export function createWaveDriver(baton, rawPolicy = null) {
             { role: member.role },
           );
         }
+        // §4.2.2: the preflight is a fleet_roster consumer — it reads the composed row (static +
+        // liveness) and probes ONLY per §4.1.3's cache discipline (a stale/absent window probes
+        // once per route, never per member). A failed liveness refuses the member like a static
+        // block: the typed wave_driver_route_unready. The probe handle is the non-enumerable
+        // surface the deployment attaches to doctor rows' liveness field.
+        if (route.liveness && route.liveness.state !== 'verified'
+          && typeof route.liveness.probe === 'function') {
+          const refreshed = await route.liveness.probe();
+          if (refreshed?.state === 'failed') {
+            throw driverError(
+              `wave driver member ${member.role} route is not ready: ${route?.summary ?? 'no unique matching ready route'}`,
+              'wave_driver_route_unready',
+              { role: member.role },
+            );
+          }
+        }
       }
     }
 

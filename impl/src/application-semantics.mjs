@@ -1097,7 +1097,7 @@ const core = {
   advanced: {
     defaultVisible: false,
     operations: ['fleet_spawn', 'fleet_send', 'fleet_wait', 'fleet_respond', 'fleet_interrupt',
-      'fleet_result', 'fleet_list', 'fleet_kill', 'fleet_drain'],
+      'fleet_result', 'fleet_list', 'fleet_kill', 'fleet_drain', 'fleet_roster'],
   },
 };
 
