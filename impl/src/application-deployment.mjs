@@ -1673,7 +1673,6 @@ export async function openBatonDeployment(rawOptions, createDriver) {
   const workspaceProbe = () => workspaceCapacityReadiness(
     repository.root, DEFAULT_WORKTREE_CAPACITY, capacity?.observe ?? null,
   );
-  const policy = goalPlanPolicy(repository.repoId);
   const contextRuntime = new RepositoryContextRuntime({
     artifactRoot: contextRoot,
     policy: defaultRepositoryContextPolicy(),
@@ -1699,7 +1698,7 @@ export async function openBatonDeployment(rawOptions, createDriver) {
       credentialFiles: projection.credentialFiles,
       credentialTrees: projection.credentialTrees,
     },
-    goalPlanAuthority: { policy, authorize: async () => true },
+    goalPlanAuthority: deploymentGoalPlanAuthority(repository.repoId),
     contextProgram: contextRuntime.driverConfiguration(),
     workflowPolicy,
     runLineagePolicy: DEFAULT_RUN_LINEAGE_POLICY,
@@ -1759,3 +1758,22 @@ export async function openBatonDeployment(rawOptions, createDriver) {
 
 export { DEFAULT_ROUTES as DEFAULT_BATON_DEPLOYMENT_ROUTES };
 export { ClaudeCredentialCache } from './claude-credential-cache.mjs';
+
+/**
+ * BU-2-1 amendment (c) — the deployment's goal-plan authority. Worker principals never hold
+ * goal/plan authority: plan:propose / plan:approve are denied outright so a worker can never
+ * mint (or approve) an `analysis: true` node for itself — a deployment-authority pin, stated
+ * as policy rather than a by-construction claim. The deployment owner principal (local-owner)
+ * and service principals keep plan authority. Before this export, the wiring was the permit-all
+ * literal `authorize: async () => true` at the driver construction site.
+ */
+export function deploymentGoalPlanAuthority(repoId) {
+  return {
+    policy: goalPlanPolicy(repoId),
+    async authorize(request = {}) {
+      const principalId = typeof request?.principalId === 'string' ? request.principalId : '';
+      if (principalId.startsWith('worker:')) return false;
+      return true;
+    },
+  };
+}

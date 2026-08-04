@@ -667,7 +667,7 @@ test('BU-2-2-1: a completed fetch mints the registry\'s hub-admitted receipt (ca
   assert.ok(completed, 'the registry lane records the fetch on its own sink — no parallel admission path (BU-0)');
   assert.ok(sink.some((event) => event.kind === 'capability.op.started' && event.op === 'browser.fetch'), 'the receipt pair is complete');
   assert.ok(completed.digests.includes(result.refs[0]?.digest), 'the receipt binds the extract content digest');
-  assert.equal(typeof completed.cost?.underlying, 'string' && completed.cost.underlying.length > 0, true,
+  assert.equal(typeof completed.cost?.underlying === 'string' && completed.cost.underlying.length > 0, true,
     'cost.underlying names the engine (acceptance)');
   assert.ok(completed.refs.some((ref) => ref.kind === 'web_fetch'), 'the receipt carries the web_fetch artifact ref');
 });
@@ -857,7 +857,7 @@ test('BU-2-3-1: the fetch receipt is a content-addressed web_fetch artifact ref 
   assert.ok(ref, 'the receipt carries a web_fetch artifact ref (atlas-cpg shape, ground truth #6)');
   assert.match(ref.digest ?? '', /^[a-f0-9]{64}$/u, 'the ref is content-addressed');
   assert.equal(ref.handle, `art:sha256:${ref.digest}`, 'the handle convention is verbatim');
-  assert.equal(typeof ref.mediaType, 'string' && ref.mediaType.length > 0, true);
+  assert.equal(typeof ref.mediaType === 'string' && ref.mediaType.length > 0, true);
   assert.equal(typeof ref.path, 'string');
   const onDisk = readFileSync(ref.path);
   assert.equal(sha256(onDisk), ref.digest, 'the artifact is durably written and digest-verified before the receipt mints (crash atomicity fold)');

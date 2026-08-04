@@ -434,7 +434,7 @@ test('T14: an analysis node\'s final evaluation SKIPS required_effect and runs e
   const { coordinator } = setup({ adapter, capture: noDiff });
   // The analysis field documents repository_edit as not-required for this node — an edit-free
   // final does NOT fail required_effect (every other phase still runs).
-  const handle = await coordinator.spawn('mock', makeBrief({ analysis: true }));
+  const handle = await coordinator.spawn('mock', makeBrief({ analysis: true, requiredEffects: [] }));
   emitTurnCompleted(adapter, handle);
   await flush(60);
   const task = coordinator._tasks.get(handle.taskId);
@@ -457,7 +457,7 @@ test('T14c: analysis does NOT exempt the violation phases — an out-of-scope di
     adapter,
     capture: async () => ({ sha: 'sha-result', baseSha: 'sha-base', changedPaths: ['etc/evil.txt'] }),
   });
-  const handle = await coordinator.spawn('mock', makeBrief({ analysis: true, pathScope: ['src/**'] }));
+  const handle = await coordinator.spawn('mock', makeBrief({ analysis: true, requiredEffects: [], pathScope: ['src/**'] }));
   emitTurnCompleted(adapter, handle);
   await flush(60);
   const task = coordinator._tasks.get(handle.taskId);
