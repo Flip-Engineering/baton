@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { flipFace } from './brand.mjs';
+import { FRAME_LIMITS } from './limits.mjs';
 import { northboundCapabilityToken } from './northbound-capability-authority.mjs';
 import { sanitizeGoalPlanProjection } from './goal-plan.mjs';
 import { APPLICATION_COMMAND_DEFINITIONS, validateApplicationCommandArgs, projectBoardView, projectContextPackageBranch } from './application.mjs';
@@ -311,7 +312,7 @@ const fleetSpawnSchema = {
 const applicationRouteSchema = schema({ harness: text, model: text, effort: text }, ['harness', 'model', 'effort']);
 const applicationIntentSchema = schema({
   runId,
-  objective: { type: 'string', minLength: 1, maxLength: 4_096 },
+  objective: { type: 'string', minLength: 1, maxLength: FRAME_LIMITS['run.objective'].value },
   resultIntent: { type: 'string', enum: ['change', 'read_only_evidence'], default: 'change' },
   profile: runId,
   route: applicationRouteSchema,
@@ -319,7 +320,7 @@ const applicationIntentSchema = schema({
 }, ['objective']);
 const applicationAnswerSchema = {
   oneOf: [
-    schema({ text: { type: 'string', minLength: 1, maxLength: 4_096 } }, ['text']),
+    schema({ text: { type: 'string', minLength: 1, maxLength: FRAME_LIMITS['decision.text'].value } }, ['text']),
     schema({ decision: { type: 'string', enum: ['allow', 'deny', 'cancel'] } }, ['decision']),
     // Part B (issue #16): the typed decision-channel answer form.
     schema({ optionId: { type: 'string', minLength: 1, maxLength: 256 } }, ['optionId']),
@@ -354,7 +355,7 @@ const APPLICATION_TOOL_DEFINITIONS = Object.freeze([
   { name: 'fleet_run_evidence', description: 'Return one bounded content-addressed terminal evidence manifest for a Run.', inputSchema: schema({ ...repo, runId }, ['repoId', 'runId']), annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false } },
   { name: 'fleet_run_episode', description: 'Read one progressively addressed Episode chapter without inspect selectors.', inputSchema: schema({ ...repo, runId, topic: runId, detail: { type: 'string', enum: ['item', 'content', 'evidence'] }, role: runId, generation: { type: 'integer', minimum: 1 }, pageCursor: { type: 'string', minLength: 1, maxLength: 4096 }, cursor: { type: 'integer', minimum: 0 }, waitMs: { type: 'integer', minimum: 1 } }, ['repoId', 'runId']), annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false } },
   { name: 'fleet_run_workstreams', description: 'List or open durable semantic workstream generations.', inputSchema: schema({ ...repo, runId, role: runId, generation: { type: 'integer', minimum: 1 }, cursor: { type: 'integer', minimum: 0 }, waitMs: { type: 'integer', minimum: 1 } }, ['repoId', 'runId']), annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false } },
-  { name: 'fleet_run_workstream_notify', description: 'Notify one exact current semantic workstream generation.', inputSchema: schema({ ...repo, ...idem, runId, role: runId, generation: { type: 'integer', minimum: 1 }, message: { type: 'string', minLength: 1, maxLength: 16384 }, delivery: { type: 'string', enum: ['nudge', 'now', 'turn'] } }, ['repoId', 'idempotencyKey', 'runId', 'role', 'message']), annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false } },
+  { name: 'fleet_run_workstream_notify', description: 'Notify one exact current semantic workstream generation.', inputSchema: schema({ ...repo, ...idem, runId, role: runId, generation: { type: 'integer', minimum: 1 }, message: { type: 'string', minLength: 1, maxLength: FRAME_LIMITS['run.legacy_send.body'].value }, delivery: { type: 'string', enum: ['nudge', 'now', 'turn'] } }, ['repoId', 'idempotencyKey', 'runId', 'role', 'message']), annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false } },
   { name: 'fleet_run_workstream_stop', description: 'Stop and reap one exact current semantic workstream generation.', inputSchema: schema({ ...repo, ...idem, runId, role: runId, generation: { type: 'integer', minimum: 1 }, reason: { type: 'string', minLength: 1, maxLength: 1024 } }, ['repoId', 'idempotencyKey', 'runId', 'role']), annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false } },
   { name: 'fleet_run_adopt', description: 'Designate one exact preserved and verified Run result without merging, checking out, or publishing it.', inputSchema: schema({ ...repo, ...idem, runId, nodeKey: runId, resultSha: commitSha, evidenceDigest: digest, reason: { type: 'string', minLength: 1, maxLength: 1_024 } }, ['repoId', 'idempotencyKey', 'runId', 'nodeKey', 'resultSha', 'evidenceDigest', 'reason']), annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false } },
   { name: 'fleet_run_review', description: 'Start one exact independently-routed structured semantic review over the immutable accepted Run result.', inputSchema: schema({ ...repo, ...idem, runId, route: applicationRouteSchema, reason: { type: 'string', minLength: 1, maxLength: 1_024 } }, ['repoId', 'idempotencyKey', 'runId', 'route', 'reason']), annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false } },
@@ -409,7 +410,7 @@ const LEGACY_ORDINARY_APPLICATION_TOOL_DEFINITIONS = Object.freeze([
   {
     name: 'baton_workstream_notify',
     description: 'Notify one exact current workstream generation while Baton resolves worker and fence authority.',
-    inputSchema: schema({ ...repo, ...idem, runId, role: runId, generation: { type: 'integer', minimum: 1 }, message: { type: 'string', minLength: 1, maxLength: 16384 }, delivery: { type: 'string', enum: ['nudge', 'now', 'turn'] } }, ['repoId', 'idempotencyKey', 'runId', 'role', 'message']),
+    inputSchema: schema({ ...repo, ...idem, runId, role: runId, generation: { type: 'integer', minimum: 1 }, message: { type: 'string', minLength: 1, maxLength: FRAME_LIMITS['run.legacy_send.body'].value }, delivery: { type: 'string', enum: ['nudge', 'now', 'turn'] } }, ['repoId', 'idempotencyKey', 'runId', 'role', 'message']),
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
   {
@@ -441,7 +442,7 @@ const LEGACY_ORDINARY_APPLICATION_TOOL_DEFINITIONS = Object.freeze([
         type: 'array', minItems: 1, maxItems: 64,
         items: schema({
           role: runId,
-          objective: { type: 'string', minLength: 1, maxLength: 4096 },
+          objective: { type: 'string', minLength: 1, maxLength: FRAME_LIMITS['wave.member.objective'].value },
         }, ['role', 'objective']),
       },
       timeoutMs: { type: 'integer', minimum: 1 },
@@ -461,7 +462,7 @@ const LEGACY_ORDINARY_APPLICATION_TOOL_DEFINITIONS = Object.freeze([
         type: 'array', minItems: 1, maxItems: 64,
         items: schema({
           role: runId,
-          objective: { type: 'string', minLength: 1, maxLength: 4096 },
+          objective: { type: 'string', minLength: 1, maxLength: FRAME_LIMITS['wave.member.objective'].value },
           exact: applicationRouteSchema,
           scope: { type: 'array', minItems: 1, maxItems: 64, uniqueItems: true, items: { type: 'string', minLength: 1, maxLength: 4096 } },
         }, ['role', 'objective', 'exact']),
@@ -482,7 +483,7 @@ const LEGACY_ORDINARY_APPLICATION_TOOL_DEFINITIONS = Object.freeze([
     name: 'baton_waves_send',
     description: 'Resume-steer ONE wave member by the runId attach returned (the resume path): a message through the member\'s run. Never wave-wide.',
     inputSchema: schema({
-      ...repo, runId, message: { type: 'string', minLength: 1, maxLength: 16384 },
+      ...repo, runId, message: { type: 'string', minLength: 1, maxLength: FRAME_LIMITS['run.legacy_send.body'].value },
     }, ['repoId', 'runId', 'message']),
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
@@ -604,7 +605,7 @@ const ADVANCED_TOOL_DEFINITIONS = Object.freeze([
     ...schema({
     ...repo, ...idem, name: text, op: text, action: { type: 'string', enum: ['invoke', 'resume', 'reverify', 'push'] },
     args: { type: 'object' }, budgetTokens: { type: 'integer', minimum: 1 }, ref: { type: 'object' }, cursor: text, claim: { type: 'object' },
-    workerId: text, note: { type: 'string', minLength: 1, maxLength: 2_048 }, expectedFence: { type: 'integer' },
+    workerId: text, note: { type: 'string', minLength: 1, maxLength: FRAME_LIMITS['orientation.note'].value }, expectedFence: { type: 'integer' },
     }, ['repoId', 'idempotencyKey', 'name', 'op', 'action', 'budgetTokens']),
     oneOf: [
       actionShape('invoke', ['args'], ['ref', 'cursor', 'claim', 'workerId', 'note', 'expectedFence']),
@@ -907,7 +908,7 @@ function validateArguments(name, args, maxWaitMs = null) {
     if (action === 'resume' && (!record(args.ref) || !nonempty(args.cursor) || args.cursor.length > 4_096 || ['args', 'claim', 'workerId', 'note', 'expectedFence'].some((key) => Object.hasOwn(args, key)))) return 'invalid_capability_invocation';
     if (action === 'reverify' && (!record(args.claim) || !record(args.args) || ['ref', 'cursor', 'workerId', 'note', 'expectedFence'].some((key) => Object.hasOwn(args, key)))) return 'invalid_capability_invocation';
     if (action === 'push' && (args.name !== 'cartographer-quartermaster' || args.op !== 'orientation.slice'
-      || !record(args.args) || !nonempty(args.workerId) || !nonempty(args.note) || Buffer.byteLength(args.note) > 2_048
+      || !record(args.args) || !nonempty(args.workerId) || !nonempty(args.note) || Buffer.byteLength(args.note) > FRAME_LIMITS['orientation.note'].value
       || !Number.isSafeInteger(args.expectedFence) || Object.hasOwn(args, 'ref') || Object.hasOwn(args, 'cursor') || Object.hasOwn(args, 'claim'))) return 'invalid_capability_invocation';
   }
   if (name === 'fleet_reuse_decide' && (!nonempty(args.need) || !['borrow', 'build'].includes(args.choice) || !nonempty(args.rationale)
@@ -924,7 +925,7 @@ function validateArguments(name, args, maxWaitMs = null) {
   if (name === 'baton_board_post') {
     if (!nonempty(args.board) || !/^[A-Za-z0-9_.:-]{1,128}$/.test(args.board)) return 'invalid_board';
     if (!nonempty(args.title) || Buffer.byteLength(args.title) > 160) return 'invalid_board_title';
-    if (Object.hasOwn(args, 'detail') && args.detail !== null && (!nonempty(args.detail) || Buffer.byteLength(args.detail) > 4_096)) return 'invalid_board_detail';
+    if (Object.hasOwn(args, 'detail') && args.detail !== null && (!nonempty(args.detail) || Buffer.byteLength(args.detail) > FRAME_LIMITS['board.detail'].value)) return 'invalid_board_detail';
     if (Object.hasOwn(args, 'owner') && args.owner !== null && !/^[A-Za-z0-9_.:-]{1,128}$/.test(args.owner ?? '')) return 'invalid_board_owner';
     if (Object.hasOwn(args, 'evidence') && (!Array.isArray(args.evidence) || args.evidence.length > 8)) return 'invalid_board_evidence';
     if (!Number.isSafeInteger(args.expectedBoardFence) || args.expectedBoardFence < 0) return 'invalid_board_fence';
@@ -932,7 +933,7 @@ function validateArguments(name, args, maxWaitMs = null) {
   if (name === 'baton_board_retitle') {
     if (!nonempty(args.itemId)) return 'invalid_board_item_id';
     if (!nonempty(args.title) || Buffer.byteLength(args.title) > 160) return 'invalid_board_title';
-    if (Object.hasOwn(args, 'detail') && args.detail !== null && (!nonempty(args.detail) || Buffer.byteLength(args.detail) > 4_096)) return 'invalid_board_detail';
+    if (Object.hasOwn(args, 'detail') && args.detail !== null && (!nonempty(args.detail) || Buffer.byteLength(args.detail) > FRAME_LIMITS['board.detail'].value)) return 'invalid_board_detail';
     if (!Number.isSafeInteger(args.expectedBoardFence) || args.expectedBoardFence < 0) return 'invalid_board_fence';
   }
   if (name === 'baton_board_reorder') {

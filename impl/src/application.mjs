@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { wrapProse } from './messages.mjs';
+import { FRAME_LIMITS, FRAME_LIMITS_VERSION, FRAME_LIMITS_DIGEST, composeFrameLimitRefusal, frameLimitRefusalPath } from './limits.mjs';
 import {
   normalizeGoalRequest, normalizePlanRequest, planRouteAuthorityState, planRouteMatches,
   planSingleExactRoute,
@@ -36,7 +37,9 @@ import {
 export { APPLICATION_SEMANTIC_REGISTRY } from './application-semantics.mjs';
 
 const MAX_PROFILES = 256;
-const MAX_PROFILE_BYTES = 256 * 1024;
+// View ceilings imported from the registry (Decision 8: the registry is the only source; no
+// module re-declares a cataloged lane's byte literal).
+const MAX_PROFILE_BYTES = FRAME_LIMITS['view.profile.bytes'].value;
 const APPLICATION_PROFILE_RECORD_KIND = 'application.profile_registered';
 const APPLICATION_PROFILE_RECORD_ACTOR = 'application:profile-registry';
 const APPLICATION_WORKFLOW_RECORD_KIND = 'application.workflow_definition_bound';
@@ -46,32 +49,32 @@ const APPLICATION_WORKFLOW_FEEDBACK_RECORD_KIND = 'application.workflow_feedback
 const APPLICATION_WORKFLOW_MEMBER_STOP_ADMITTED_KIND = 'application.workflow_member_stop_admitted';
 const APPLICATION_WORKFLOW_MEMBER_STOP_COMPLETED_KIND = 'application.workflow_member_stop_completed';
 const MAX_RUN_RECORDS = 100_000;
-const MAX_RUN_VIEW_BYTES = 512 * 1024;
+const MAX_RUN_VIEW_BYTES = FRAME_LIMITS['view.run.bytes'].value;
 const MAX_RUN_VIEW_WORKERS = 1_024;
 const MAX_RUN_LIST_ITEMS = 64;
 const MAX_ATTENTION = 64;
-const MAX_ATTENTION_TEXT_BYTES = 4_096;
-const MAX_BLOCKED_INTERACTION_SUMMARY_BYTES = 160;
+const MAX_ATTENTION_TEXT_BYTES = FRAME_LIMITS['view.attention_text.bytes'].value;
+const MAX_BLOCKED_INTERACTION_SUMMARY_BYTES = FRAME_LIMITS['view.blocked_interaction_summary.bytes'].value;
 const DEFAULT_TURN_NUDGE_MESSAGE = 'Continue the current turn.';
 // REFLEX-2 board-view ceilings (F10, rules 10-11). RunView's MAX_RUN_VIEW_* do not cover a
 // board, so a per-worker board projection gets its own bounded ceilings: at most MAX_BOARD_ITEMS
 // items (soft-truncate with an explicit boardViewTruncated story, never silent) and a byte
 // ceiling MAX_BOARD_VIEW_BYTES on the serialized projection.
-const MAX_BOARD_VIEW_BYTES = 256 * 1024;
-const MAX_BOARD_ITEMS = 512;
+const MAX_BOARD_VIEW_BYTES = FRAME_LIMITS['view.board.bytes'].value;
+const MAX_BOARD_ITEMS = FRAME_LIMITS['view.board.items'].value;
 // REPL-2 binding-view ceilings (repl23-decisions.md Part D rule 13), the exact same
 // byte/count-ceiling shape MAX_BOARD_VIEW_BYTES/MAX_BOARD_ITEMS use for boards.
-const MAX_REPL_VIEW_BYTES = 256 * 1024;
+const MAX_REPL_VIEW_BYTES = FRAME_LIMITS['view.repl.bytes'].value;
 const MAX_REPL_BINDING_ITEMS = 512;
-export const MAX_SCRATCHPAD_VIEW_BYTES = 32_768;
-export const MAX_SCRATCHPAD_VIEW_ITEMS = 64;
-export const MAX_SCRATCHPAD_VIEW_CACHE_KEYS = 256;
+export const MAX_SCRATCHPAD_VIEW_BYTES = FRAME_LIMITS['view.scratchpad.bytes'].value;
+export const MAX_SCRATCHPAD_VIEW_ITEMS = FRAME_LIMITS['view.scratchpad.items'].value;
+export const MAX_SCRATCHPAD_VIEW_CACHE_KEYS = FRAME_LIMITS['view.scratchpad.cache_keys'].value;
 // AX-1 rule 3 (issue #10): these operational kinds are real-time provider narration/tool-use
 // telemetry — repeated bursts of them are not distinct forward-progress milestones the way a
 // committed file edit or a lifecycle/control/verification fact is, so an `evidence.mapped`
 // ledger coordinate wrapping one of them must not count as meaningful Run progress.
 const NOISE_TELEMETRY_OPERATIONAL_KINDS = new Set(['content.tool_call', 'content.message']);
-const MAX_REVIEW_SOURCE_BYTES = 4 * 1024 * 1024;
+const MAX_REVIEW_SOURCE_BYTES = FRAME_LIMITS['view.review_source.bytes'].value;
 const MAX_WORKFLOW_PLAN_HISTORY = 16;
 // VR9/RV closed verifier projection bounds. Durable verdicts carry exact captured-byte metadata,
 // closed enums, and at most one sanitized bounded failure tail. A malformed duration or capsule is
@@ -223,6 +226,15 @@ function applicationError(message, code) {
   return Object.assign(new Error(message), { code });
 }
 
+/** Decision 3: a size refusal on a cataloged admission lane carries {cap, actual, unit,
+ * gracefulPath} on the thrown error AND a human message composed by the ONE helper. */
+function coachingApplicationError(row, actual, cap = row?.value) {
+  return Object.assign(new Error(composeFrameLimitRefusal(row, actual, cap)), {
+    code: row?.refusalCode ?? 'size_exceeded',
+    cap, actual, unit: 'bytes', gracefulPath: frameLimitRefusalPath(row, cap),
+  });
+}
+
 // codex #2 / glm #3 (mcp-packaging-decisions v1.0): the already_resolved outcome names its author
 // when the resolution record carries one (a settlement can be superseded, drained, or
 // semantically interrupted — the record's own actor is the honest resolvedBy, never a caller field).
@@ -286,8 +298,21 @@ function exactObject(value, fields, code, label) {
 }
 
 function validId(value) { return typeof value === 'string' && /^[A-Za-z0-9._:-]{1,256}$/u.test(value); }
-function validText(value, maxBytes = 4096) {
+function validText(value, maxBytes = FRAME_LIMITS['run.objective'].value) {
   return typeof value === 'string' && value.length > 0 && !value.includes('\0') && Buffer.byteLength(value) <= maxBytes;
+}
+
+/** Cap a string at maxBytes on a UTF-8 scalar boundary (the capBytes helper, messages.mjs). */
+function capBytesToScalar(text, maxBytes) {
+  let out = '';
+  let bytes = 0;
+  for (const ch of String(text)) {
+    const size = Buffer.byteLength(ch);
+    if (bytes + size > maxBytes) return out;
+    out += ch;
+    bytes += size;
+  }
+  return out;
 }
 
 const SECRET_SHAPED_TEXT = Object.freeze([
@@ -328,7 +353,7 @@ export function projectContextPackageBranch(resolved) {
   });
 }
 
-// issue #10 / docs/32 §5 (AX-1): a bounded (<=160 bytes, ellipsis included), NFC-normalized,
+// issue #10 / docs/32 §5 (AX-1): a bounded (160 bytes with the ellipsis included), NFC-normalized,
 // credential-sanitized projection of a pending worker request's own text — never worker prose
 // beyond the request text itself.
 function boundedBlockedInteractionSummary(value) {
@@ -1400,7 +1425,11 @@ function normalizeIntent(value) {
       || !Array.isArray(waveStart.roster) || waveStart.roster.length === 0 || waveStart.roster.length > 64
       || waveStart.roster.some((role) => !validId(role))))
     || (value.runId !== undefined && !validId(value.runId))
-    || !validText(value.objective) || (value.profile !== undefined && !validId(value.profile))
+    // Decision 2: the objective is SHAPE-checked here (non-empty string, no NUL) — the byte law
+    // and the spill economy live at the run.start ADMISSION seam (oversize admits with spill up
+    // to the spill.body ceiling, then the typed coaching refusal), never a shape-factory wall.
+    || typeof value.objective !== 'string' || value.objective.length === 0 || value.objective.includes('\0')
+    || (value.profile !== undefined && !validId(value.profile))
     || (value.scope !== undefined && (!Array.isArray(value.scope) || value.scope.length === 0 || value.scope.length > 64
       || value.scope.some((item) => !validText(item)) || new Set(value.scope).size !== value.scope.length))) {
     throw applicationError('run intent is invalid', 'application_intent_invalid');
@@ -1794,9 +1823,18 @@ export function validateApplicationCommandArgs(name, args) {
       || !validId(args.runId) || !validId(args.role) || args.role === 'work'
       || (args.generation !== undefined
         && (!Number.isSafeInteger(args.generation) || args.generation < 1))
-      || !validText(args.message, 16_384)
       || (args.delivery !== undefined && !['nudge', 'now', 'turn'].includes(args.delivery))) {
       throw applicationError('Workstream notification is invalid', 'application_workstream_notify_invalid');
+    }
+    if (typeof args.message !== 'string' || args.message.length === 0 || args.message.includes('\0')) {
+      throw applicationError('Workstream notification is invalid', 'application_workstream_notify_invalid');
+    }
+    // v1.2 blue-team blocker 2: the legacy-alias send door is the cataloged admission lane
+    // run.legacy_send.body at its LIVE 16,384 — oversize draws the coaching refusal, never a
+    // numberless application_workstream_notify_invalid.
+    if (Buffer.byteLength(args.message) > FRAME_LIMITS['run.legacy_send.body'].value) {
+      throw coachingApplicationError(FRAME_LIMITS['run.legacy_send.body'],
+        Buffer.byteLength(args.message), FRAME_LIMITS['run.legacy_send.body'].value);
     }
     return true;
   }
@@ -1849,10 +1887,12 @@ export function validateApplicationCommandArgs(name, args) {
     }
     const roles = new Set();
     for (const member of args.members) {
+      // The member objective is SHAPE-checked only (non-empty string): the wave.member.objective
+      // byte law admits oversize with spill at the wave-start admission (Decision 2 / OQ5) — the
+      // char wall must never survive behind the driver advisory (v1.2 blue-team blocker 4).
       if (!member || typeof member !== 'object' || Array.isArray(member)
         || typeof member.role !== 'string' || !validId(member.role)
         || typeof member.objective !== 'string' || member.objective.length < 1
-        || member.objective.length > 4096
         || Object.keys(member).some((key) => !['role', 'objective'].includes(key))) {
         throw applicationError('Wave attach member is invalid', 'application_wave_attach_invalid');
       }
@@ -2927,7 +2967,7 @@ export class BatonApplication {
     const reason = operation === 'interrupt'
       ? (inputs.reason ?? action.inputSchema.properties.reason.default) : 'Send Run guidance.';
     if (!action.choices.includes(recipient)
-      || (operation === 'send' && (!validText(message, 16_384)
+      || (operation === 'send' && (!validText(message, FRAME_LIMITS['run.legacy_send.body'].value)
         || SECRET_SHAPED_TEXT.some((pattern) => pattern.test(message))
         || !['nudge', 'now', 'turn'].includes(delivery)))
       || !validText(reason, 1_024)) {
@@ -3252,6 +3292,27 @@ export class BatonApplication {
     return true;
   }
 
+  /** Decision 4 item 4: resolve a spilled objective's citation to the full body at the reader
+   * projection seam — a routine reader never sees the citation. The goal record stores a bounded
+   * head + `[SPILLED {...}]` citation; this resolves it via the durable spill artifact. */
+  _resolveSpillObjective(objective) {
+    if (typeof objective !== 'string') return objective;
+    const marker = '\n[SPILLED ';
+    const start = objective.lastIndexOf(marker);
+    if (start === -1) return objective;
+    const end = objective.indexOf(']', start + marker.length);
+    if (end === -1) return objective;
+    try {
+      const citation = JSON.parse(objective.slice(start + marker.length, end));
+      if (citation && typeof citation.spill === 'string' && citation.spill.startsWith('spill:sha256:')
+        && typeof this.driver.coordination.materializeSpill === 'function') {
+        const served = this.driver.coordination.materializeSpill(citation.spill);
+        if (served && typeof served.body === 'string') return served.body;
+      }
+    } catch { /* malformed citation — leave the objective as stored */ }
+    return objective;
+  }
+
   _findRun(runId, { allowUnavailableProfile = false } = {}) {
     const indexed = typeof this.driver.coordination.goalPlanRun === 'function'
       ? this.driver.coordination.goalPlanRun(this.repoId, runId) : null;
@@ -3338,8 +3399,13 @@ export class BatonApplication {
     if (!profileRef || (!profile && !allowUnavailableProfile)) {
       throw applicationError(`run ${runId} deployment profile is unavailable`, 'application_profile_stale');
     }
+    // Decision 4 item 4: readers resolve a spilled objective's citation transparently — the goal
+    // record's stored head+citation becomes the full body at every projection seam (a routine
+    // reader never sees the citation). Non-spilled goals pass through unchanged.
+    const resolved = this._resolveSpillObjective(goal.objective);
+    const resolvedGoal = resolved === goal.objective ? goal : { ...goal, objective: resolved };
     return {
-      goal, plan, approval, dispatch, dispatches, profile, profileName: profileRef.name,
+      goal: resolvedGoal, plan, approval, dispatch, dispatches, profile, profileName: profileRef.name,
       profileDigest: profileRef.digest,
       profileState: profile ? 'available' : 'historical_definition_unavailable',
     };
@@ -4304,6 +4370,29 @@ export class BatonApplication {
     const context = normalizeCommandContext(rawContext);
     const requestedIntent = this._resolveIntent(rawIntent);
     const owner = normalizePrincipal(rawOwner, 'goal owner');
+    // Decision 4: run.objective is graceful — oversize up to the spill.body ceiling is ADMITTED
+    // with a durable spill artifact; beyond the ceiling draws the typed coaching refusal (never
+    // the numberless application_intent_invalid of the worker-AX error-quality receipt). The goal
+    // record stores a bounded head + citation; readers resolve the citation to the full body.
+    const objectiveBytes = Buffer.byteLength(requestedIntent.objective);
+    const objectiveCap = FRAME_LIMITS['run.objective'].value;
+    const spillCeiling = FRAME_LIMITS['spill.body'].value;
+    if (objectiveBytes > spillCeiling) {
+      throw coachingApplicationError(FRAME_LIMITS['run.objective'], objectiveBytes, spillCeiling);
+    }
+    let storedObjective = requestedIntent.objective;
+    if (objectiveBytes > objectiveCap && typeof this.driver.coordination.mintSpill === 'function') {
+      const minted = this.driver.coordination.mintSpill({ body: requestedIntent.objective, lane: 'run.objective' },
+        { actor: owner.actor, key: `run.objective.spill:${digest(requestedIntent.objective)}` });
+      const spill = minted?.spill ?? null;
+      if (spill) {
+        const citation = JSON.stringify({
+          spilled: true, bytes: objectiveBytes, digest: spill.digest, spill: spill.spillId,
+        });
+        const suffix = `\n[SPILLED ${citation}]`;
+        storedObjective = `${capBytesToScalar(requestedIntent.objective, objectiveCap - Buffer.byteLength(suffix))}${suffix}`;
+      }
+    }
     const profile = this._profile(requestedIntent.profile);
     const scope = requestedIntent.scope ?? clone(profile.pathScope);
     const runId = requestedIntent.runId ?? `run-${digest({
@@ -4359,7 +4448,7 @@ export class BatonApplication {
     const definitionOfDone = readOnlyResult
       ? clone(READ_ONLY_RESULT_DEFINITION) : clone(profile.definitionOfDone);
     const goalFields = {
-      objective: intent.objective,
+      objective: storedObjective,
       definitionOfDone,
       constraints: [...profile.constraints, constraint, ...(workflowConstraint ? [workflowConstraint] : []),
         ...(resultConstraint !== null && !profile.constraints.includes(resultConstraint)
@@ -4370,7 +4459,7 @@ export class BatonApplication {
     };
     const singleNode = {
       key: 'work',
-      objective: intent.objective,
+      objective: storedObjective,
       definitionOfDone,
       deps: [],
       pathScope: clone(intent.scope),
@@ -4392,7 +4481,7 @@ export class BatonApplication {
     const nodeFields = intent.composition ? intent.composition.team.map((member) => ({
       ...clone(singleNode),
       key: `attempt:${member.role}`,
-      objective: `${member.role} parallel attempt: ${intent.objective}`,
+      objective: `${member.role} parallel attempt: ${storedObjective}`,
       // Divide one deployment-owned Goal envelope across the bounded recursive Plan chain.
       // Ordinary callers never manage this headroom or any numeric execution ceiling.
       budget: clone(workflowNodeBudget(
@@ -11502,9 +11591,13 @@ export class BatonApplication {
     const roles = new Set();
     const members = [];
     for (const member of value.members) {
+      // The member objective is SHAPE-checked only (non-empty string): the wave.member.objective
+      // byte law admits oversize with spill at run.start (Decision 2 / OQ5) — never a wall in
+      // front of a spill lane (v1.2 blue-team blocker 4).
       if (!member || typeof member !== 'object' || Array.isArray(member)
         || Object.keys(member).some((key) => !['role', 'objective', 'exact', 'scope'].includes(key))
-        || !validId(member.role) || !validText(member.objective)
+        || !validId(member.role)
+        || typeof member.objective !== 'string' || member.objective.length === 0 || member.objective.includes('\0')
         || !member.exact || typeof member.exact !== 'object' || Array.isArray(member.exact)
         || !['harness', 'model', 'effort'].every((axis) => validText(member.exact[axis]))
         || (member.scope !== undefined
@@ -11608,7 +11701,7 @@ export class BatonApplication {
       const requiredAction = projectRequiredAction({ phase: view.phase, attention, actions: semanticActions });
       items.push(deepFreeze({
         id: goal.runId,
-        objective: goal.objective,
+        objective: this._resolveSpillObjective(goal.objective),
         resultIntent: view.resultIntent,
         phase: view.phase,
         stage: view.progress?.current ?? null,
@@ -12002,9 +12095,24 @@ export class BatonApplication {
     const routes = [...this.profiles.values()].flatMap((profile) => profile.routes.map((route) => (
       Object.freeze({ ...clone(route), state: 'ready' })
     )));
+    // Decision 7: the frozen limits projection tabulates EVERY registry lane; `effective` is
+    // present ONLY where a deployment override exists (decision.need / decision.rationale) — the
+    // digest covers DECLARED rows only, so an override never changes the handshake.
+    const reuse = this.driver?.coordinator?._reuseDecisionPolicy ?? null;
+    const lanes = Object.keys(FRAME_LIMITS).map((lane) => {
+      const row = FRAME_LIMITS[lane];
+      const projected = { lane, class: row.class, value: row.value, unit: row.unit, graceful: row.graceful ?? null };
+      if (reuse && lane === 'decision.need' && reuse.maxNeedBytes !== row.value) projected.effective = reuse.maxNeedBytes;
+      if (reuse && lane === 'decision.rationale' && reuse.maxRationaleBytes !== row.value) projected.effective = reuse.maxRationaleBytes;
+      return projected;
+    });
     return deepFreeze({
       schemaVersion: 1, repoId: this.repoId,
       routes, workspace: Object.freeze({ state: 'ready' }),
+      limits: Object.freeze({
+        version: FRAME_LIMITS_VERSION, digest: FRAME_LIMITS_DIGEST,
+        lanes: deepFreeze(lanes),
+      }),
     });
   }
 
@@ -12016,6 +12124,7 @@ export class BatonApplication {
       agentExperience: {
         registryVersion: APPLICATION_SEMANTIC_REGISTRY.version,
         registryDigest: APPLICATION_SEMANTIC_REGISTRY.digest,
+        limitsRegistryDigest: FRAME_LIMITS_DIGEST,
         defaultOperations: clone(APPLICATION_SEMANTIC_REGISTRY.defaultOperations),
         projections: Object.fromEntries(['direct', 'cli', 'web', 'mcp', 'browser'].map((surface) => [surface, {
           operations: clone(APPLICATION_SEMANTIC_REGISTRY.defaultOperations),

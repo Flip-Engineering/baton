@@ -70,6 +70,8 @@ function extractFirstBalancedJsonObject(text, maxBytes = MAX_DECISION_GRAMMAR_SC
  * no well-formed `DECISION_REQUEST: <json>` grammar. Malformed JSON or a schema refusal is
  * treated identically to "no grammar found" — ignored as ordinary prose, never surfaced as an
  * error and never authority-adjacent (worker text mints no control on its own).
+ * Shape-only forever: the 8,192-byte scan window is the parser's resource guard; size policy
+ * lives at admission with a coaching refusal, never a silent wire cap (Decision 5).
  * Exported for direct unit testing (F7); only ever called from the `assistant` text-content
  * path in this module — never on `user`/tool_result content. */
 export function scanForDecisionRequest(text) {
@@ -85,7 +87,9 @@ export function scanForDecisionRequest(text) {
     return null;
   }
   try {
-    return createDecisionRequest(parsed);
+    // Decision 5 (the split): the scanner validates SHAPE only — an oversize question PARSES and
+    // travels to the admission seam, where the registry bound issues the typed coaching refusal.
+    return createDecisionRequest(parsed, { shapeOnly: true });
   } catch (err) {
     if (err instanceof ValidationError) return null;
     throw err;
@@ -93,7 +97,9 @@ export function scanForDecisionRequest(text) {
 }
 
 /** Issue #33 REFLEX-1 sibling grammar. Identity is deliberately absent; Coordinator receives
- * this only on the authenticated per-worker event stream and injects worker/task/Run binding. */
+ * this only on the authenticated per-worker event stream and injects worker/task/Run binding.
+ * Shape-only forever: the 20,480-byte scan window is the parser's resource guard; size policy
+ * lives at admission with a coaching refusal, never a silent wire cap (Decision 5). */
 export function scanForScratchpadWrite(text) {
   if (typeof text !== 'string') return null;
   const match = SCRATCHPAD_WRITE_GRAMMAR.exec(text);
@@ -114,7 +120,9 @@ export function scanForScratchpadWrite(text) {
 /** BD3-A CONTEXT_READ sibling grammar (issue #75): the read port mirroring SCRATCHPAD_WRITE's
  * exact wire shape. Identity and run/scope are deliberately ABSENT — the Coordinator re-derives
  * the viewer's run server-side and the wire query carries NO runId/scope fields at all. The
- * closed-shape check here is the first line of defense; admission in the Coordinator re-checks. */
+ * closed-shape check here is the first line of defense; admission in the Coordinator re-checks.
+ * Shape-only forever: the 20,480-byte scan window is the parser's resource guard; size policy
+ * lives at admission, never a silent wire cap (Decision 5). */
 export function scanForContextRead(text) {
   if (typeof text !== 'string') return null;
   const match = CONTEXT_READ_GRAMMAR.exec(text);
@@ -165,7 +173,8 @@ export function scanForMessageSend(text) {
  * scan — never first-wins (A1-1). grantId/itemId are non-empty strings (the hub resolves them
  * against its own grant/item indexes at admission); expectedBoardFence is a non-negative safe
  * integer; idempotencyKey follows the scratchpad lane's exact shape. Shape-only per the #86
- * campaign law — no content caps at the wire. */
+ * campaign law — no content caps at the wire: the 20,480-byte scan window is the parser's
+ * resource guard; any size policy belongs at admission, never a silent wire cap. */
 export function scanForBoardClaim(text) {
   if (typeof text !== 'string') return null;
   const match = BOARD_CLAIM_GRAMMAR.exec(text);
@@ -191,7 +200,9 @@ export function scanForBoardClaim(text) {
  * {grantId, itemId, itemVersion, itemDigest, expectedClaimVersion, body, idempotencyKey} ONLY.
  * Same identity-field rejection and second-frame discipline as scanForBoardClaim; the historical
  * (itemVersion, itemDigest) binding and the expectedClaimVersion CAS arrive on the wire and the
- * admission seam proves them against the active claim (Decision 4). */
+ * admission seam proves them against the active claim (Decision 4). Shape-only forever: the
+ * 20,480-byte scan window is the parser's resource guard; size policy lives at admission with a
+ * coaching refusal, never a silent wire cap (Decision 5's named rung edit). */
 export function scanForBoardReport(text) {
   if (typeof text !== 'string') return null;
   const match = BOARD_REPORT_GRAMMAR.exec(text);

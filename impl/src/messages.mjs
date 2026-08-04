@@ -3,6 +3,7 @@
 // prose). Pure: deterministic given injected now/idGen. No trust is ever implied by shape.
 
 import { createHash, randomUUID } from 'node:crypto';
+import { FRAME_LIMITS, composeFrameLimitRefusal, frameLimitRefusalPath } from './limits.mjs';
 
 export class ValidationError extends Error {
   /** @param {string[]} errors */
@@ -210,24 +211,59 @@ export function createResult(fields, opts) {
 // ---------------------------------------------------------------------------
 
 const SAFE_OPTION_ID = /^[A-Za-z0-9_.:-]{1,128}$/;
-const MAX_DECISION_QUESTION_BYTES = 2_048;
-const MAX_OPTION_LABEL_BYTES = 160;
-const MAX_OPTION_SUMMARY_BYTES = 512;
-const MAX_DECISION_TEXT_BYTES = 4_096;
+// The registry is the single source (Decision 8): these lane bounds are imported, never
+// re-declared. The decision-question lane is declared hard in v1 (Open question 3).
+const MAX_DECISION_QUESTION_BYTES = FRAME_LIMITS['decision.question'].value;
+const MAX_OPTION_LABEL_BYTES = FRAME_LIMITS['decision.option.label'].value;
+const MAX_OPTION_SUMMARY_BYTES = FRAME_LIMITS['decision.option.summary'].value;
+const MAX_DECISION_TEXT_BYTES = FRAME_LIMITS['decision.text'].value;
 
 function boundedNonEmpty(value, maxBytes) {
   return typeof value === 'string' && value.length > 0 && Buffer.byteLength(value) <= maxBytes;
 }
 
-/** @param {{question,options,allowFreeResponse?,recommended?,deadlineMs}} fields @returns {object} a deeply-frozen DecisionRequest @throws {ValidationError} */
-export function createDecisionRequest(fields) {
+/** Build a coaching ValidationError (Decision 3): the payload {cap, actual, unit, gracefulPath}
+ * rides the thrown error (plus the lane's typed refusal code), and the errors list carries the
+ * ONE helper's composed text. */
+function coachingValidationError(errors, row, actual, cap = row.value) {
+  const error = new ValidationError(errors);
+  error.code = row.refusalCode ?? 'size_exceeded';
+  error.cap = cap;
+  error.actual = actual;
+  error.unit = 'bytes';
+  error.gracefulPath = frameLimitRefusalPath(row, cap);
+  return error;
+}
+
+/** @param {{question,options,allowFreeResponse?,recommended?,deadlineMs}} fields @param {{shapeOnly?:boolean}} [opts]
+ * @returns {object} a deeply-frozen DecisionRequest @throws {ValidationError}
+ * The scanner path (Decision 5 split) validates SHAPE only (`shapeOnly: true`) — the size bounds
+ * apply at the admission seam, so an oversize question PARSES and travels instead of being
+ * scanner-null (the ground-truth-5 silent wire cap). */
+export function createDecisionRequest(fields, { shapeOnly = false } = {}) {
   const errors = [];
+  const questionCap = shapeOnly ? Infinity : MAX_DECISION_QUESTION_BYTES;
+  const labelCap = shapeOnly ? Infinity : MAX_OPTION_LABEL_BYTES;
+  const summaryCap = shapeOnly ? Infinity : MAX_OPTION_SUMMARY_BYTES;
+  // The split (Decision 5): shape failures keep plain shape errors; SIZE failures compose the
+  // coaching refusal and stamp the payload. The first size failure's row/actual rides the thrown
+  // ValidationError as {cap, actual, unit, gracefulPath}.
+  let sizeRow = null;
+  let sizeActual = 0;
   const allowedKeys = new Set(['question', 'options', 'allowFreeResponse', 'recommended', 'deadlineMs']);
   for (const key of Object.keys(fields ?? {})) {
     if (!allowedKeys.has(key)) errors.push(`decision request has an unknown field "${key}"`);
   }
-  if (!boundedNonEmpty(fields?.question, MAX_DECISION_QUESTION_BYTES)) {
-    errors.push(`question is required (non-empty, <=${MAX_DECISION_QUESTION_BYTES} bytes)`);
+  if (!boundedNonEmpty(fields?.question, questionCap)) {
+    const actual = typeof fields?.question === 'string' ? Buffer.byteLength(fields.question) : 0;
+    if (actual > questionCap) {
+      sizeRow ??= { row: FRAME_LIMITS['decision.question'], actual };
+      // The hard-class golden is the boundary text (cap + 1): the refusal names the cap and the
+      // smallest over-cap size; the payload carries the caller's real byte count.
+      errors.push(composeFrameLimitRefusal(FRAME_LIMITS['decision.question'], MAX_DECISION_QUESTION_BYTES + 1, MAX_DECISION_QUESTION_BYTES));
+    } else {
+      errors.push('question is required (non-empty string)');
+    }
   }
   let optionIds = [];
   if (!Array.isArray(fields?.options) || fields.options.length < 1 || fields.options.length > 8) {
@@ -247,9 +283,23 @@ export function createDecisionRequest(fields) {
         seen.add(opt.id);
         optionIds.push(opt.id);
       }
-      if (!boundedNonEmpty(opt.label, MAX_OPTION_LABEL_BYTES)) errors.push(`options[${i}].label must be non-empty, <=${MAX_OPTION_LABEL_BYTES} bytes`);
-      if (hasSummary && opt.summary !== null && !boundedNonEmpty(opt.summary, MAX_OPTION_SUMMARY_BYTES)) {
-        errors.push(`options[${i}].summary must be null or <=${MAX_OPTION_SUMMARY_BYTES} bytes`);
+      if (!boundedNonEmpty(opt.label, labelCap)) {
+        const labelActual = typeof opt.label === 'string' ? Buffer.byteLength(opt.label) : 0;
+        if (labelActual > labelCap) {
+          sizeRow ??= { row: FRAME_LIMITS['decision.option.label'], actual: labelActual };
+          errors.push(composeFrameLimitRefusal(FRAME_LIMITS['decision.option.label'], labelActual, MAX_OPTION_LABEL_BYTES));
+        } else {
+          errors.push(`options[${i}].label must be non-empty, <=${MAX_OPTION_LABEL_BYTES} bytes`);
+        }
+      }
+      if (hasSummary && opt.summary !== null && !boundedNonEmpty(opt.summary, summaryCap)) {
+        const summaryActual = typeof opt.summary === 'string' ? Buffer.byteLength(opt.summary) : 0;
+        if (summaryActual > summaryCap) {
+          sizeRow ??= { row: FRAME_LIMITS['decision.option.summary'], actual: summaryActual };
+          errors.push(composeFrameLimitRefusal(FRAME_LIMITS['decision.option.summary'], summaryActual, MAX_OPTION_SUMMARY_BYTES));
+        } else {
+          errors.push(`options[${i}].summary must be null or <=${MAX_OPTION_SUMMARY_BYTES} bytes`);
+        }
       }
     });
   }
@@ -266,7 +316,10 @@ export function createDecisionRequest(fields) {
   if (!Number.isSafeInteger(fields?.deadlineMs) || fields.deadlineMs <= 0) {
     errors.push('deadlineMs is required and must be a positive safe integer');
   }
-  if (errors.length) throw new ValidationError(errors);
+  if (errors.length) {
+    if (sizeRow) throw coachingValidationError(errors, sizeRow.row, sizeRow.actual, sizeRow.row.value);
+    throw new ValidationError(errors);
+  }
   return deepFreeze({
     question: fields.question,
     options: fields.options.map((opt) => ({
@@ -281,6 +334,8 @@ export function createDecisionRequest(fields) {
 /** @param {{optionId?,text?}} fields @returns {object} a deeply-frozen DecisionAnswer @throws {ValidationError} */
 export function createDecisionAnswer(fields) {
   const errors = [];
+  let sizeRow = null;
+  let sizeActual = 0;
   const allowedKeys = new Set(['optionId', 'text']);
   for (const key of Object.keys(fields ?? {})) {
     if (!allowedKeys.has(key)) errors.push(`decision answer has an unknown field "${key}"`);
@@ -292,9 +347,18 @@ export function createDecisionAnswer(fields) {
     errors.push('optionId must be a safe id');
   }
   if (hasText && !boundedNonEmpty(fields.text, MAX_DECISION_TEXT_BYTES)) {
-    errors.push(`text must be non-empty, <=${MAX_DECISION_TEXT_BYTES} bytes`);
+    const textActual = typeof fields.text === 'string' ? Buffer.byteLength(fields.text) : 0;
+    if (textActual > MAX_DECISION_TEXT_BYTES) {
+      sizeRow = { row: FRAME_LIMITS['decision.text'], actual: textActual };
+      errors.push(composeFrameLimitRefusal(FRAME_LIMITS['decision.text'], textActual, MAX_DECISION_TEXT_BYTES));
+    } else {
+      errors.push(`text must be non-empty, <=${MAX_DECISION_TEXT_BYTES} bytes`);
+    }
   }
-  if (errors.length) throw new ValidationError(errors);
+  if (errors.length) {
+    if (sizeRow) throw coachingValidationError(errors, sizeRow.row, sizeRow.actual, sizeRow.row.value);
+    throw new ValidationError(errors);
+  }
   return deepFreeze(hasOptionId ? { optionId: fields.optionId, text: null } : { optionId: null, text: fields.text });
 }
 
@@ -310,9 +374,12 @@ export function createDecisionAnswer(fields) {
 const SAFE_BOARD_ID = /^[A-Za-z0-9_.:-]{1,128}$/;
 const SAFE_ITEM_ID = /^[A-Za-z0-9_.:-]{1,256}$/;
 const ITEM_DIGEST = /^[a-f0-9]{64}$/;
-const MAX_BOARD_TITLE_BYTES = 160;
-const MAX_BOARD_DETAIL_BYTES = 4_096;
-const MAX_BOARD_REPORT_BYTES = 4_096;
+// Board bounds imported from the registry (Decision 8). These factories are DEAD (no impl/src
+// importer — blocker 8); the LIVE board.title/board.detail/board.report.body bounds are the
+// store's, which import the same registry rows.
+const MAX_BOARD_TITLE_BYTES = FRAME_LIMITS['board.title'].value;
+const MAX_BOARD_DETAIL_BYTES = FRAME_LIMITS['board.detail'].value;
+const MAX_BOARD_REPORT_BYTES = FRAME_LIMITS['board.report.body'].value;
 const MAX_BOARD_EVIDENCE = 8;
 
 function validEvidenceRef(ref) {
@@ -421,7 +488,10 @@ export function createScratchpadEntry(fields) {
 // from what the projection contains.
 // ---------------------------------------------------------------------------
 
-export const MAX_ATTENTION_TEXT_BYTES = 4_096;
+export const MAX_ATTENTION_TEXT_BYTES = FRAME_LIMITS['view.attention_text.bytes'].value;
+
+/** OQ2 marker: a capped attention snippet carries this literal marker instead of being silent. */
+export const ATTENTION_TRUNCATION_MARKER = '[truncated]';
 
 export const SECRET_SHAPED_TEXT = Object.freeze([
   /-----BEGIN (?:[A-Z0-9]+ )?PRIVATE KEY-----/gu,
@@ -445,13 +515,19 @@ function capBytes(text, maxBytes) {
   return { text: out, truncated: false };
 }
 
-/** NFKC-normalize, redact credential-shaped prose, cap at maxBytes. */
+/** NFKC-normalize, redact credential-shaped prose, cap at maxBytes. OQ2 (folded): a capped
+ * snippet carries the literal '[truncated]' marker (reserved INSIDE the byte ceiling so the
+ * returned text never exceeds maxBytes) — never silent data loss in the read-port renderer. */
 export function boundedAttentionText(value, maxBytes = MAX_ATTENTION_TEXT_BYTES) {
   const text = typeof value === 'string' ? value : String(value ?? '');
   const normalized = text.normalize('NFKC');
   let redacted = normalized;
   for (const pattern of SECRET_SHAPED_TEXT) { pattern.lastIndex = 0; redacted = redacted.replace(pattern, '[redacted]'); }
-  return capBytes(redacted, maxBytes).text;
+  const capped = capBytes(redacted, maxBytes);
+  if (!capped.truncated) return capped.text;
+  const markerBytes = Buffer.byteLength(ATTENTION_TRUNCATION_MARKER);
+  if (maxBytes <= markerBytes) return capped.text;
+  return `${capBytes(redacted, maxBytes - markerBytes).text}${ATTENTION_TRUNCATION_MARKER}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -497,8 +573,8 @@ export function sanitizeWebContent(text, maxBytes = MAX_ATTENTION_TEXT_BYTES) {
  */
 export function frameWebContent(body) {
   if (typeof body !== 'string' || body.length === 0) return body;
-  // Check the RAW body — the 4096 cap can cut a trailing handle. Non-web bodies pass through
-  // byte-identical: the frame is scoped to web-sourced content, never a global message
+  // Check the RAW body — the attention ceiling can cut a trailing handle. Non-web bodies pass
+  // through byte-identical: the frame is scoped to web-sourced content, never a global message
   // rewrite (the family's existing read-side-projection posture).
   if (!referencesWebFetchHandle(body)) return body;
   const sanitized = sanitizeWebContent(body);
@@ -565,7 +641,11 @@ function stableDigest(value) {
  * @param {{maxFindings?:number, maxBytes?:number, now?:number|string}} [opts]
  * @returns {{provenance:string, untrusted:boolean, items:Array<object>, bytes:number, truncated:boolean, honestEmpty:boolean}}
  */
-export function buildKnowledgeSlice(nodes, { maxFindings = 8, maxBytes = 2_048, now } = {}) {
+export function buildKnowledgeSlice(nodes, {
+  maxFindings = FRAME_LIMITS['view.knowledge_slice.items'].value,
+  maxBytes = FRAME_LIMITS['view.knowledge_slice.bytes'].value,
+  now,
+} = {}) {
   const at = typeof now === 'number' ? now : (now == null ? Date.now() : Date.parse(now));
   const eligible = (Array.isArray(nodes) ? nodes : [])
     .filter((node) => {

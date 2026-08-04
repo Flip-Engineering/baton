@@ -58,6 +58,7 @@ import {
   validRecoveryProcessReapedPayload,
 } from './process-lifecycle.mjs';
 import { frameWebContent, referencesWebFetchHandle } from './messages.mjs';
+import { FRAME_LIMITS, composeFrameLimitRefusal, frameLimitRefusalPath } from './limits.mjs';
 
 function writerProcessStartIdentity(pid) {
   try {
@@ -115,6 +116,8 @@ const PROJECTION_CHECKPOINT_FIELDS = Object.freeze([
   '_contextPackages', '_contextPackageAttachments',
   // BD3-B context packs (server-owned supersession chain per family) and BD3-A read audit.
   '_contextPacks', '_contextPackHeads', '_contextReads',
+  // Decision 4: digest-addressed spill artifacts (mint/materialize; durable, replay-derived).
+  '_spills',
   '_replManifestAdmissions',
   // REPL-2 (Part G rule 23): gains _replBindings, _replBindingHistory, _replBindingFences.
   '_replBindings', '_replBindingHistory', '_replBindingFences',
@@ -411,9 +414,11 @@ function eventTime(events, evidence, fallback) {
 const SAFE_BOARD_ID = /^[A-Za-z0-9_.:-]{1,128}$/;
 const SAFE_BOARD_OWNER = /^[A-Za-z0-9_.:-]{1,128}$/;
 const BOARD_ITEM_STATES = new Set(['open', 'closed', 'dropped']);
-const MAX_STORE_BOARD_TITLE_BYTES = 160;
-const MAX_STORE_BOARD_DETAIL_BYTES = 4_096;
-const MAX_STORE_BOARD_REPORT_BYTES = 4_096;
+// Live board bounds imported from the registry (Decision 8 / v1.2 blue-team blocker 1) — the
+// store is a first-class registry consumer, never a second door for a cataloged lane.
+const MAX_STORE_BOARD_TITLE_BYTES = FRAME_LIMITS['board.title'].value;
+const MAX_STORE_BOARD_DETAIL_BYTES = FRAME_LIMITS['board.detail'].value;
+const MAX_STORE_BOARD_REPORT_BYTES = FRAME_LIMITS['board.report.body'].value;
 const MAX_STORE_BOARD_EVIDENCE = 8;
 // Epic #78 Decision 5: the L1 worker read page is at most 16 items and 28 KiB serialized (the
 // receipt wrapper carries the ok/kind/renderedText/idempotencyKey overhead, so the page budget
@@ -481,10 +486,10 @@ function replBindingContentDigest(core) {
 // Issue #33 — typed task-horizon scratchpad bounds. These are deployment constants, not
 // caller policy, so live admission and replay use the same ceilings.
 export const MAX_SCRATCHPAD_WRITE_REQUEST_BYTES = 16_384;
-export const MAX_SCRATCHPAD_ENTRY_BYTES = 8_192;
+export const MAX_SCRATCHPAD_ENTRY_BYTES = FRAME_LIMITS['scratchpad.entry.body'].value;
 // BD3-B: a context pack body is bounded at the 8KiB envelope the epic contracts fix; citation
 // chains (a successor pack superseding its predecessor) are how real specs stay inside it.
-export const MAX_CONTEXT_PACK_BODY_BYTES = 8_192;
+export const MAX_CONTEXT_PACK_BODY_BYTES = FRAME_LIMITS['context_pack.body'].value;
 // A pack minted without an explicit validity window is treated as never-expiring (the 8KiB
 // envelope is the real bound); explicit windows drive the context_pack_expired distinction.
 const DEFAULT_CONTEXT_PACK_VALIDITY = '2999-12-31T23:59:59.999Z';
@@ -646,8 +651,11 @@ function normalizeScratchpadEntry(entry, resolveEntry = null) {
   } else {
     throw new CoordinationRefusal('scratchpad kind is invalid', 'scratchpad_entry_invalid');
   }
-  if (canonicalBytes(normalized) > MAX_SCRATCHPAD_ENTRY_BYTES) {
-    throw new CoordinationRefusal('scratchpad canonical content exceeds its ceiling', 'scratchpad_entry_invalid');
+  const canonicalEntryBytes = canonicalBytes(normalized);
+  if (canonicalEntryBytes > MAX_SCRATCHPAD_ENTRY_BYTES) {
+    // Decision 3 (blocker 7): the canonical entry ceiling gains the coaching shape — the registry
+    // row names cap and actual; the field-level partitions inside the entry stay deliberate locals.
+    throw coachingRefusal(FRAME_LIMITS['scratchpad.entry.body'], canonicalEntryBytes, MAX_SCRATCHPAD_ENTRY_BYTES);
   }
   return freeze(normalized);
 }
@@ -657,6 +665,16 @@ export class CoordinationIntegrityError extends Error {
 }
 export class CoordinationRefusal extends Error {
   constructor(message, code) { super(message); this.name = 'CoordinationRefusal'; this.code = code; }
+}
+
+/** Decision 3: a size refusal on a cataloged admission lane carries {cap, actual, unit,
+ * gracefulPath} on the thrown error AND a human message composed by the ONE helper — numbers
+ * only, never body content (AS-4). */
+function coachingRefusal(row, actual, cap = row?.value) {
+  return Object.assign(
+    new CoordinationRefusal(composeFrameLimitRefusal(row, actual, cap), row?.refusalCode ?? 'size_exceeded'),
+    { cap, actual, unit: 'bytes', gracefulPath: frameLimitRefusalPath(row, cap) },
+  );
 }
 
 export class CoordinationStore {
@@ -1169,6 +1187,7 @@ export class CoordinationStore {
     // retained as content history; only the live head materializes at spawn/nudge. BD3-A read
     // audit rides `_contextReads` (zero promotion weight — never the scratch.read family).
     this._contextPacks = new Map(); this._contextPackHeads = new Map(); this._contextReads = [];
+    this._spills = new Map();
     // REFLEX-2 boards: immutable versioned items + per-itemId claims + reports, and a
     // board-scoped, replay-derivable fence counter (the count of orchestrator-authority
     // events per board — NOT the worker FenceTable). All rebuilt purely by re-applying the
@@ -3482,7 +3501,22 @@ export class CoordinationStore {
     const topFields = new Set(['schemaVersion', 'id', 'requestDigest', 'decisionDigest', 'decisionArtifactDigest', 'subjectDigest', 'envRef', 'indexEpoch', 'need', 'choice', 'rationale', 'coordinate', 'actor', 'dossierDigest', 'sbomDigest', 'evidenceProjectionDigest', 'supersedes', 'dossierRef', 'sbomRef', 'dossierSnapshot', 'sbomSnapshot', 'reverifyEvidence', 'artifacts', 'affectedReadEvents']);
     if (!p || Object.keys(p).some((key) => !topFields.has(key)) || p.schemaVersion !== 1 || !validEnvRef(p.envRef)
       || Object.keys(p.envRef).sort().join(',') !== ['indexEpoch', 'lockfileDigest', 'overlayDigest', 'repoId', 'treeSha'].sort().join(',')) fail('reuse decision environment is invalid', 'invalid_reuse_decision');
-    if (!['borrow', 'build'].includes(p.choice) || !boundedText(p.need, 2_048) || !boundedText(p.rationale, 8_192)) fail('reuse decision choice/need/rationale is invalid', 'invalid_reuse_decision');
+    // Decision 2 (blocker 6): the registry's decision.need / decision.rationale rows are the
+    // declared defaults AND the ceiling-of-ceilings. Oversize draws the coaching refusal on the
+    // LIVE admission path; replay (integrity=true) never re-validates sizes (Decision 5).
+    if (!['borrow', 'build'].includes(p.choice)) fail('reuse decision choice/need/rationale is invalid', 'invalid_reuse_decision');
+    const needCap = FRAME_LIMITS['decision.need'].value;
+    const rationaleCap = FRAME_LIMITS['decision.rationale'].value;
+    if (typeof p.need !== 'string' || p.need.trim().length === 0 || p.need.includes('\0')) fail('reuse decision choice/need/rationale is invalid', 'invalid_reuse_decision');
+    if (Buffer.byteLength(p.need) > needCap) {
+      if (!integrity) throw coachingRefusal(FRAME_LIMITS['decision.need'], Buffer.byteLength(p.need), needCap);
+      fail('reuse decision choice/need/rationale is invalid', 'invalid_reuse_decision');
+    }
+    if (typeof p.rationale !== 'string' || p.rationale.trim().length === 0 || p.rationale.includes('\0')) fail('reuse decision choice/need/rationale is invalid', 'invalid_reuse_decision');
+    if (Buffer.byteLength(p.rationale) > rationaleCap) {
+      if (!integrity) throw coachingRefusal(FRAME_LIMITS['decision.rationale'], Buffer.byteLength(p.rationale), rationaleCap);
+      fail('reuse decision choice/need/rationale is invalid', 'invalid_reuse_decision');
+    }
     if (!Array.isArray(p.affectedReadEvents) || new Set(p.affectedReadEvents).size !== p.affectedReadEvents.length
       || p.affectedReadEvents.some((seq) => !Number.isSafeInteger(seq) || seq < 1 || seq >= event.seq)) fail('reuse affected-reader projection is invalid', 'reuse_decision_integrity');
     const coordinate = p.coordinate;
@@ -4289,7 +4323,7 @@ export class CoordinationStore {
       || !/^control:[a-f0-9]{64}$/u.test(p.controlId ?? '')
       || !/^[a-f0-9]{64}$/u.test(p.actionId ?? '')
       || !['send', 'interrupt'].includes(p.operation) || !boundedText(p.recipient, 256)
-      || (p.operation === 'send' && (!boundedText(p.message, 16_384)
+      || (p.operation === 'send' && (!boundedText(p.message, FRAME_LIMITS['run.legacy_send.body'].value)
         || !['nudge', 'now', 'turn'].includes(p.delivery)))
       || (p.operation === 'interrupt' && (p.message !== null || p.delivery !== null))
       || (version >= 2 && p.turnDisposition !== (p.operation === 'interrupt' ? 'preserve_turn' : null))
@@ -8009,6 +8043,9 @@ export class CoordinationStore {
       } else if (['recovery.dispatch_accepted', 'recovery.dispatch_refused'].includes(p?.kind)) {
         this._recoveryDispatches.set(p.workerId, this._validateRecoveryDispositionPayload(p, event, true));
       }
+    } else if (event.kind === 'authority.rejected') {
+      // Decision 5: authority refusals are their own append-only event kind — the typed reason
+      // (and any coaching payload) ride the event payload directly; no projection is derived.
     } else if (event.kind === 'knowledge.representation_produced') {
       const derived = this._validateRepresentationPayload(p, event, true);
       for (const manifest of [p.sourceArtifact, p.receiptArtifact]) {
@@ -8675,6 +8712,14 @@ export class CoordinationStore {
       });
       this._contextPacks.set(pack.packId, pack);
       this._contextPackHeads.set(pack.family, pack.packId);
+    } else if (event.kind === 'spill.minted') {
+      // Decision 4: a digest-addressed durable spill artifact. Content-addressed (spillId =
+      // spill:sha256:<digest of the body's UTF-8 bytes>), idempotent by auth key, replay-derived.
+      const spill = freeze({
+        spillId: p.spillId, digest: p.digest, bytes: p.bytes, lane: p.lane ?? null,
+        body: p.body, observedSeq: event.seq, observedAt: event.ts,
+      });
+      this._spills.set(spill.spillId, spill);
     } else if (event.kind === 'context.read') {
       // BD3-A: the read-lane audit class. Deliberately NOT the scratch.read family — reads
       // accrue zero promotion weight and minScratchReaders never counts them.
@@ -13042,6 +13087,14 @@ export class CoordinationStore {
     return { ok: true, event: clone(event) };
   }
 
+  /** Authority refusals are their own durable event kind (never a driver.recorded wrapper), so
+   * the coordinator's typed refusal surfaces on the store ledger as `authority.rejected` — the
+   * seam's coaching payload rides the event payload directly (Decision 5). */
+  recordAuthorityRejected(payload, auth) {
+    const event = this._append('authority.rejected', clone(payload), auth);
+    return { ok: true, event: clone(event) };
+  }
+
   // -------------------------------------------------------------------------
   // BD3-B context packs — a server-owned supersession chain per family. A pack is minted with
   // a family (= type), a bounded body, a validity deadline, and an optional predecessor that
@@ -13111,6 +13164,48 @@ export class CoordinationStore {
       throw new CoordinationRefusal('context pack has expired', 'context_pack_expired');
     }
     return freeze({ packId: pack.packId, family: pack.family, body: pack.body });
+  }
+
+  // -------------------------------------------------------------------------
+  // Decision 4 — the spill lane. Digest-addressed durable artifacts (spill:sha256:<digest>),
+  // content-addressed and idempotent by auth key, with a 1 MiB ceiling (spill.body, blocker 3).
+  // Spill lives exactly as long as its referencing receipt; reaping is Open question 1 (deferred,
+  // safe under the ceiling).
+  // -------------------------------------------------------------------------
+
+  mintSpill(fields, auth) {
+    const body = fields?.body;
+    const lane = fields?.lane ?? null;
+    if (typeof body !== 'string' || body.length === 0) {
+      throw new CoordinationRefusal('spill body is required (non-empty string)', 'spill_invalid');
+    }
+    const bytes = Buffer.byteLength(body);
+    const spillCeiling = FRAME_LIMITS['spill.body'].value;
+    if (bytes > spillCeiling) {
+      throw coachingRefusal(FRAME_LIMITS['spill.body'], bytes, spillCeiling);
+    }
+    const digest = createHash('sha256').update(body, 'utf8').digest('hex');
+    const spillId = `spill:sha256:${digest}`;
+    const payload = { spillId, digest, bytes, lane, body };
+    const prior = this._byKey.get(auth?.key);
+    if (prior) {
+      if (prior.kind !== 'spill.minted' || canonicalDigest(prior.payload) !== canonicalDigest(payload)) {
+        throw new CoordinationRefusal('spill idempotency conflict', 'spill_conflict');
+      }
+      return { ok: true, result: 'idempotent', event: clone(prior), spill: clone(this._spills.get(spillId)) };
+    }
+    if (this._spills.has(spillId)) {
+      // Content-addressed: the same body is already durable under this digest — no new event.
+      return { ok: true, result: 'idempotent', event: null, spill: clone(this._spills.get(spillId)) };
+    }
+    const event = this._append('spill.minted', payload, auth);
+    return { ok: true, result: 'minted', event: clone(event), spill: clone(this._spills.get(spillId)) };
+  }
+
+  materializeSpill(spillId) {
+    const spill = this._spills.get(spillId);
+    if (!spill) return null;
+    return { spillId: spill.spillId, digest: spill.digest, bytes: spill.bytes, body: spill.body };
   }
 
   /** Epic #81 (O-6): append an attempt-scoped context.pack_granted receipt, atomically with the
@@ -13678,7 +13773,7 @@ export class CoordinationStore {
           fields.runId, fields.workerId, entryId, entryDigest, requirement,
         ));
     } catch (error) {
-      if (error?.code === 'scratchpad_entry_invalid') throw error;
+      if (error?.code === 'scratchpad_entry_invalid' || error?.code === 'scratchpad_entry_exceeded') throw error;
       throw new CoordinationRefusal('scratchpad entry is invalid', 'scratchpad_entry_invalid');
     }
     if (!SCRATCHPAD_IDEMPOTENCY_KEY.test(auth?.key ?? '')) {
@@ -14267,9 +14362,17 @@ export class CoordinationStore {
     if (prior) return { ok: true, result: 'idempotent', event: clone(prior), item: clone(this._boardItems.get(prior.payload.itemId)) };
     if (!fields || typeof fields !== 'object' || Array.isArray(fields)) throw new CoordinationRefusal('board item requires fields', 'invalid_board_item');
     if (typeof fields.board !== 'string' || !SAFE_BOARD_ID.test(fields.board)) throw new CoordinationRefusal('board item requires a safe board id', 'invalid_board');
-    if (!boardBounded(fields.title, MAX_STORE_BOARD_TITLE_BYTES)) throw new CoordinationRefusal('board item requires a bounded non-empty title', 'invalid_board_title');
+    if (!boardBounded(fields.title, MAX_STORE_BOARD_TITLE_BYTES)) {
+      const titleBytes = typeof fields.title === 'string' ? Buffer.byteLength(fields.title) : 0;
+      if (titleBytes > MAX_STORE_BOARD_TITLE_BYTES) throw coachingRefusal(FRAME_LIMITS['board.title'], titleBytes, MAX_STORE_BOARD_TITLE_BYTES);
+      throw new CoordinationRefusal('board item requires a bounded non-empty title', 'invalid_board_title');
+    }
     const detail = fields.detail ?? null;
-    if (detail !== null && !boardBounded(detail, MAX_STORE_BOARD_DETAIL_BYTES)) throw new CoordinationRefusal('board item detail must be null or bounded', 'invalid_board_detail');
+    if (detail !== null && !boardBounded(detail, MAX_STORE_BOARD_DETAIL_BYTES)) {
+      const detailBytes = Buffer.byteLength(detail);
+      if (detailBytes > MAX_STORE_BOARD_DETAIL_BYTES) throw coachingRefusal(FRAME_LIMITS['board.detail'], detailBytes, MAX_STORE_BOARD_DETAIL_BYTES);
+      throw new CoordinationRefusal('board item detail must be null or bounded', 'invalid_board_detail');
+    }
     const owner = fields.owner ?? null;
     if (owner !== null && (typeof owner !== 'string' || !SAFE_BOARD_OWNER.test(owner))) throw new CoordinationRefusal('board item owner must be null or a safe id', 'invalid_board_owner');
     const evidence = fields.evidence ?? [];
@@ -14439,7 +14542,11 @@ export class CoordinationStore {
     if (typeof fields?.itemId !== 'string' || fields.itemId.length === 0) throw new CoordinationRefusal('board report requires an itemId', 'invalid_board_item_id');
     if (!Number.isSafeInteger(fields.itemVersion) || fields.itemVersion <= 0) throw new CoordinationRefusal('board report requires a positive itemVersion', 'invalid_board_item_version');
     if (typeof fields.itemDigest !== 'string' || !/^[a-f0-9]{64}$/.test(fields.itemDigest)) throw new CoordinationRefusal('board report requires an itemDigest', 'invalid_board_item_digest');
-    if (!boardBounded(fields.body, MAX_STORE_BOARD_REPORT_BYTES)) throw new CoordinationRefusal('board report body must be bounded non-empty', 'invalid_board_report');
+    if (!boardBounded(fields.body, MAX_STORE_BOARD_REPORT_BYTES)) {
+      const reportBytes = typeof fields.body === 'string' ? Buffer.byteLength(fields.body) : 0;
+      if (reportBytes > MAX_STORE_BOARD_REPORT_BYTES) throw coachingRefusal(FRAME_LIMITS['board.report.body'], reportBytes, MAX_STORE_BOARD_REPORT_BYTES);
+      throw new CoordinationRefusal('board report body must be bounded non-empty', 'invalid_board_report');
+    }
     if (typeof fields.owner !== 'string' || !SAFE_BOARD_OWNER.test(fields.owner)) throw new CoordinationRefusal('board report requires a safe owner id', 'invalid_board_owner');
     const history = this._boardItemHistory.get(fields.itemId);
     const version = history?.find((rec) => rec.itemVersion === fields.itemVersion);
@@ -16286,7 +16393,7 @@ export class CoordinationStore {
       return true;
     }).sort((a, b) => compareCanonicalStrings(a.id, b.id)).map((node) => {
       // BU-2-3: a Finding body referencing a web_fetch artifact handle is framed + redacted +
-      // capped (4_096 per-finding-quote) at the KG read path — the no-second-door scan's
+      // capped (the attention ceiling per-finding-quote) at the KG read path — the no-second-door scan's
       // Finding-body surface. Bodies without the handle pass through unchanged.
       if (typeof node.body === 'string' && referencesWebFetchHandle(node.body)) {
         return { ...clone(node), body: frameWebContent(node.body) };

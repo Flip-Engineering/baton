@@ -1,4 +1,5 @@
 import { createHash, randomUUID, timingSafeEqual } from 'node:crypto';
+import { FRAME_LIMITS } from './limits.mjs';
 import { createServer as createHttpsServer } from 'node:https';
 import { createServer as createHttpServer } from 'node:http';
 import { WebEventStream } from './web-stream.mjs';
@@ -455,7 +456,7 @@ function validateEnvelope(envelope) {
     if (action === 'push') {
       if (envelope.args.name !== 'cartographer-quartermaster' || envelope.args.op !== 'orientation.slice'
         || !isRecord(envelope.args.args) || !string(envelope.args.workerId) || !string(envelope.args.note)
-        || Buffer.byteLength(envelope.args.note) > 2_048 || !Number.isSafeInteger(envelope.expectedFence)) return 'capability push requires exact orientation target, worker, note, args, and expectedFence';
+        || Buffer.byteLength(envelope.args.note) > FRAME_LIMITS['orientation.note'].value || !Number.isSafeInteger(envelope.expectedFence)) return 'capability push requires exact orientation target, worker, note, args, and expectedFence';
       if (Object.hasOwn(envelope.args, 'ref') || Object.hasOwn(envelope.args, 'cursor') || Object.hasOwn(envelope.args, 'claim')) return 'capability push received action-inapplicable fields';
     }
   }

@@ -351,10 +351,18 @@ test('D5: objective salting, opt-out, and the admission byte-check', async (t) =
   assert.ok(!seen[2][0].startsWith('[attempt:'), 'salt:false passes the objective verbatim');
 
   const huge = `${'x'.repeat(4096)}`;
-  await assert.rejects(
-    createWaveDriver(baton, { ...FAST, preflight: false }).run({ repoRoot: repo, members: [member('worker', huge)] }),
-    (error) => error?.code === 'wave_driver_objective_oversize' && error?.bytes > 4096,
-  );
+  // Issue #89 OQ5 (folded): the precheck is a spill-aware ADVISORY — it names the byte count and
+  // the coming spill, then PASSES the objective through (the machinery admits and spills it like
+  // run.objective). A wave_driver_objective_oversize wall in front of a spill lane would recreate
+  // the exact asymmetry the epic deletes elsewhere (pinned by the frame-economics suite's C8).
+  const advisories = [];
+  await createWaveDriver(baton, {
+    ...FAST, preflight: false, onAdvisory: (advisory) => advisories.push(advisory),
+  }).run({ repoRoot: repo, members: [member('worker', huge)] });
+  const advisory = advisories.find((entry) => entry?.role === 'worker');
+  assert.ok(advisory, 'the oversize member emits the early-ergonomics advisory');
+  assert.ok(advisory.bytes > 4096, 'the advisory names the byte count');
+  assert.equal(advisory.spill, true, 'the advisory names the coming spill');
 });
 
 // D6 — the termination law (R46R-1): a re-park with an unchanged changedPathsDigest stops

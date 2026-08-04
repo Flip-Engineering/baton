@@ -97,6 +97,10 @@ test('P92-LR3: approved-Run reconciliation uses a narrow Run index without cloni
     _dispatchCurrent: async () => { throw new Error('unplanned Run must not dispatch'); },
   };
   application._findRun = BatonApplication.prototype._findRun.bind(application);
+  // Issue #89 Decision 4 item 4: _findRun resolves spilled objectives at the projection seam —
+  // a passthrough for non-spilled goals (this stub's records carry none), orthogonal to the pin's
+  // law (narrow index, zero full snapshots) which remains what this row measures.
+  application._resolveSpillObjective = BatonApplication.prototype._resolveSpillObjective.bind(application);
 
   const result = await BatonApplication.prototype._reconcileApprovedRuns.call(application);
   assert.equal(result.examinedRuns, 1_000);
