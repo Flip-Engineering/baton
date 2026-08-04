@@ -1,8 +1,10 @@
 // Claim-time liveness preflight red suite (contract: docs/reference/evidence/
 // claim-preflight-2026-08-03/claim-preflight-contract.md v1.1 — issue #88; red-team fold:
-// contract-redteam.md + contract-fold.md, same directory).
+// contract-redteam.md + contract-fold.md, same directory; blue-team fold: suite-blueteam.md
+// + suite-fold.md, same directory — the two set-closure blockers folded as T18m/T18n and
+// T18a/T18v below).
 //
-// Twenty-six rows over the folded decisions: CP1's insertion ordering (preflight BEFORE the
+// Thirty rows over the folded decisions: CP1's insertion ordering (preflight BEFORE the
 // steering-timer clear; rollback-on-throw with `resolving` always released; the swallowed-
 // expiry `expiryPending` re-check); CP2's exact gate mirror (fresh capture with gate-identical
 // kwargs, sessionContext baseSha derivation, in-scope filter); CP3's CLOSED counted-liveness
@@ -42,10 +44,23 @@
 //   T18w  scratchpad.write_result {ok:true} counts (hub receipt) (RED)
 //   T18r  context.read_result {ok:true} counts (hub receipt) (RED)
 //   T18p  resource.provider_call actor worker counts (governance accounting) (RED)
+//   T18m  worker analysis content.message counts as the pause's SOLE liveness — the
+//         messages-only pause refuses (blue-team BLOCKER 1: T18 plants the class beside 5
+//         tool_calls, so an implementation omitting CP3.4 greened all rows; now the class
+//         is load-bearing in both directions — this row plus the T18n removal control) (RED)
 //   T18q  a question RESOLVED inside the window counts (resolution-gated) (RED)
+//   T18a  an approval RESOLVED inside the window counts (approval.resolved as the pause's
+//         SOLE liveness — blue-team BLOCKER 2 sibling row, the T18q idiom extended) (RED)
+//   T18v  a decision SETTLED inside the window counts (decision.settled as the pause's
+//         SOLE liveness — BLOCKER 2 sibling row; v1 decisions are always blocking and
+//         deadline-bound, respond() settles in-window before the turn ends) (RED)
 //   T18b  PIN — #64 control: silent diffless drivered claim dies required_effect_absent
 //         (kills the "lifecycle markers count" shallow: the fixture emits turn_completed
 //         and nothing else, so counting it greens a refusal here)
+//   T18n  PIN — the T18m removal control: the SAME pause with the content.message events
+//         REMOVED dies by the full gate (staging byte-identical to T18b's silent fixture,
+//         kept as the named other half of the content.message pair; kills an
+//         implementation that refuses a diffless pause regardless of liveness content)
 //   T18d  PIN — stale-epoch exclusion: epoch-1 liveness never counts toward an epoch-2
 //         pause (kills the whole-stream reader with no epoch restriction — the anti-stale
 //         law's only pin; green today because NO preflight exists)
@@ -336,6 +351,28 @@ function emitQuestion(adapter, handle, requestId, turnEpoch = 1) {
     payload: { requestId, question: 'which probe should run next?', blocking: false },
   });
 }
+function emitApprovalRequest(adapter, handle, requestId, turnEpoch = 1) {
+  adapter.emit({
+    worker: handle.id, harness: 'mock@1.0.0', turnEpoch, kind: 'approval.requested', actor: 'worker',
+    payload: { requestId, toolName: 'Bash', input: { command: 'git push --force origin main' }, blocking: false },
+  });
+}
+function emitDecisionRequest(adapter, handle, requestId, turnEpoch = 1) {
+  // v1 decisions are always blocking and deadline-bound (F5/F6; the closed-shape check at
+  // admission is createDecisionRequest's) — the request parks the task input_required until
+  // respond() settles it back to working, all inside the asking epoch.
+  adapter.emit({
+    worker: handle.id, harness: 'mock@1.0.0', turnEpoch, kind: 'decision.requested', actor: 'worker',
+    payload: {
+      requestId,
+      request: {
+        question: 'which probe should run next?',
+        options: [{ id: 'opt-a', label: 'continue the recon probes' }, { id: 'opt-b', label: 'stop and produce the diff' }],
+        allowFreeResponse: false, recommended: null, deadlineMs: 60000,
+      },
+    },
+  });
+}
 
 function registerDriver(coordinator, task) {
   coordinator._coordination.recordDriver('steering.registered', { runId: task.runId },
@@ -427,6 +464,24 @@ function assertGateKill(coordinator, adapter, handle, task, outcome, label) {
   const cause = coordinator._tasks.get(handle.taskId).terminalCause ?? null;
   assert.equal(cause?.kind, 'policy_failure', `${label}: the terminal cause names the failure kind`);
   assert.equal(cause?.code, 'required_effect_absent', `${label}: the terminal cause names its gate (T11)`);
+}
+
+// The per-class rows' sole-liveness fixture check: the row's named class must be the ONLY
+// CP3-counted liveness on the worker stream (otherwise the row's refusal could rest on
+// another class and the named class would not be load-bearing — the BLOCKER 1 hole).
+function assertNoOtherCountedLiveness(coordinator, handle, keepKinds, label) {
+  const others = coordinator._log.read(handle.id).filter((event) => !keepKinds.includes(event.kind) && (
+    event.kind === 'content.tool_call'
+    || (event.kind === 'content.message' && event.actor === 'worker')
+    || (event.kind === 'scratchpad.write_result' && event.payload?.ok === true)
+    || (event.kind === 'context.read_result' && event.payload?.ok === true)
+    || event.kind === 'resource.provider_call'
+    || event.kind === 'question.answered'
+    || event.kind === 'approval.resolved'
+    || event.kind === 'decision.settled'
+  ));
+  assert.equal(others.length, 0,
+    `${label}: the named class is the ONLY counted liveness in the window (found ${others.map((event) => event.kind).join(', ')})`);
 }
 
 // ===========================================================================
@@ -549,6 +604,27 @@ test('T18p: a worker resource.provider_call counts as liveness (logical provider
   assertRefusalBasics(coordinator, adapter, handle, task, pauseId, outcome, preClaimSeq);
 });
 
+test('T18m: worker analysis content.message counts as liveness — the messages-only pause refuses (blue-team BLOCKER 1)', async () => {
+  const adapter = new ScriptableAdapter();
+  // The class teeth T18 lacks: T18 plants 3 analysis messages beside 5 tool_calls, so an
+  // implementation whose closed set omits CP3.4 still refuses T18 on the tool_calls and
+  // greened all 26 rows. Here the diffless pause's ONLY counted liveness is 3 analysis
+  // content.message events (actor worker — no tool_calls, no hub receipts, no provider
+  // calls, no resolutions): omit the class and this row gate-kills → red. The removal
+  // control (the SAME pause minus the messages) is T18n; T18b independently pins the
+  // silent fixture. The planted PROSE_CANARY also re-pins TG4's no-worker-prose law.
+  const { coordinator, handle, task, pauseId } = await driveredPause({
+    adapter, stage: (a, h) => { for (let n = 1; n <= 3; n += 1) emitAnalysis(a, h, n); },
+  });
+  const stream = coordinator._log.read(handle.id);
+  assert.equal(stream.filter((event) => event.kind === 'content.message' && event.actor === 'worker').length, 3,
+    'fixture check: three worker analysis messages planted inside the window');
+  assertNoOtherCountedLiveness(coordinator, handle, ['content.message'], 'fixture check (T18m)');
+  const preClaimSeq = maxSeq(coordinator, handle);
+  const outcome = await claimOutcome(coordinator, pauseId);
+  assertRefusalBasics(coordinator, adapter, handle, task, pauseId, outcome, preClaimSeq);
+});
+
 test('T18q: an interaction RESOLVED inside the window counts as liveness (resolution-gated)', async () => {
   const adapter = new ScriptableAdapter();
   const { coordinator, handle, task, pauseId } = await driveredPause({
@@ -562,6 +638,54 @@ test('T18q: an interaction RESOLVED inside the window counts as liveness (resolu
   });
   const answered = coordinator._log.read(handle.id).find((event) => event.kind === 'question.answered');
   assert.ok(answered, 'fixture check: the resolution minted question.answered inside the window');
+  const preClaimSeq = maxSeq(coordinator, handle);
+  const outcome = await claimOutcome(coordinator, pauseId);
+  assertRefusalBasics(coordinator, adapter, handle, task, pauseId, outcome, preClaimSeq);
+});
+
+test('T18a: an approval RESOLVED inside the window counts as liveness (approval.resolved — blue-team BLOCKER 2 sibling row)', async () => {
+  const adapter = new ScriptableAdapter();
+  // The T18q idiom extended to CP3.6's second mint: approval.requested (non-blocking) →
+  // respond() approves → the hub mints approval.resolved (actor orchestrator — resolution
+  // counting is actor-blind, exactly as T18q/T18z pin it) as the pause's ONLY counted
+  // liveness. An implementation counting question.answered but not approval.resolved
+  // gate-kills here → red.
+  const { coordinator, handle, task, pauseId } = await driveredPause({
+    adapter,
+    stage: async (a, h, c) => {
+      emitApprovalRequest(a, h, 't18a:approval:1');
+      await flush(40);
+      await c.respond('t18a:approval:1', { decision: 'allow' }).catch(() => {});
+      await flush(40);
+    },
+  });
+  const resolved = coordinator._log.read(handle.id).find((event) => event.kind === 'approval.resolved');
+  assert.equal(resolved?.payload?.decision ?? null, 'allow', 'fixture check: the approval resolved inside the window');
+  assertNoOtherCountedLiveness(coordinator, handle, ['approval.resolved'], 'fixture check (T18a)');
+  const preClaimSeq = maxSeq(coordinator, handle);
+  const outcome = await claimOutcome(coordinator, pauseId);
+  assertRefusalBasics(coordinator, adapter, handle, task, pauseId, outcome, preClaimSeq);
+});
+
+test('T18v: a decision SETTLED inside the window counts as liveness (decision.settled — blue-team BLOCKER 2 sibling row)', async () => {
+  const adapter = new ScriptableAdapter();
+  // CP3.6's third mint: decision.requested (v1 decisions are always blocking — the request
+  // parks the task input_required) → respond() settles it with a valid optionId → the hub
+  // mints decision.settled {disposition:'delivered'} and the task returns to working, all
+  // inside the asking epoch, as the pause's ONLY counted liveness. An implementation
+  // omitting decision.settled from the closed set gate-kills here → red.
+  const { coordinator, handle, task, pauseId } = await driveredPause({
+    adapter,
+    stage: async (a, h, c) => {
+      emitDecisionRequest(a, h, 't18v:decision:1');
+      await flush(40);
+      await c.respond('t18v:decision:1', { optionId: 'opt-a' }).catch(() => {});
+      await flush(40);
+    },
+  });
+  const settled = coordinator._log.read(handle.id).find((event) => event.kind === 'decision.settled');
+  assert.equal(settled?.payload?.disposition ?? null, 'delivered', 'fixture check: the decision settled inside the window');
+  assertNoOtherCountedLiveness(coordinator, handle, ['decision.settled'], 'fixture check (T18v)');
   const preClaimSeq = maxSeq(coordinator, handle);
   const outcome = await claimOutcome(coordinator, pauseId);
   assertRefusalBasics(coordinator, adapter, handle, task, pauseId, outcome, preClaimSeq);
@@ -654,6 +778,19 @@ test('T18z (PIN): a PENDING interaction buys nothing — resolution-gating is lo
   assert.equal(answered ?? null, null, 'fixture check: the question stayed pending');
   const outcome = await claimOutcome(coordinator, pauseId);
   assertGateKill(coordinator, adapter, handle, task, outcome, 'resolution-gating');
+});
+
+test('T18n (PIN, the T18m removal control): the SAME pause with the content.message events REMOVED dies by the full gate', async () => {
+  const adapter = new ScriptableAdapter();
+  // The other half of the content.message pair: T18m's fixture minus the 3 analysis
+  // messages — zero staged liveness, staging byte-identical to T18b's silent fixture,
+  // kept as the pair's named removal control. An implementation that refuses a diffless
+  // pause WITHOUT reading its liveness (or that counts non-worker/lifecycle content)
+  // greens T18m and dies here.
+  const { coordinator, adapter: ad, handle, task, pauseId } = await driveredPause({ adapter });
+  void ad;
+  const outcome = await claimOutcome(coordinator, pauseId);
+  assertGateKill(coordinator, adapter, handle, task, outcome, 'the content.message removal control');
 });
 
 // ===========================================================================
@@ -1076,10 +1213,12 @@ test('X3 (PIN, the already_resolved class): a nudge-resolved record refuses alre
 
 // ===========================================================================
 // Verification (recorded against the PRE-implementation tree, 2026-08-04, node v25.8.0;
-// impl/src/coordinator.mjs md5 8e42ead5d5dc565bcbf84398a6ceceaa):
+// impl/src/coordinator.mjs md5 8e42ead5d5dc565bcbf84398a6ceceaa — unchanged by this fold):
 //   command (repo root): node --test impl/test/claim-preflight-red.test.mjs
-//   measured split (three consecutive runs, identical): 16 fail / 10 pass of 26.
-//   RED (fail on the named stage): T18, T18e, T18w, T18r, T18p, T18q
+//   measured split (post-blue-team fold): 19 fail / 11 pass of 30. (Pre-fold split, recorded
+//   against the identical tree: 16 fail / 10 pass of 26 — the fold added 3 red rows + 1 pin;
+//   see docs/reference/evidence/claim-preflight-2026-08-03/suite-fold.md.)
+//   RED (fail on the named stage): T18, T18e, T18w, T18r, T18p, T18m, T18q, T18a, T18v
 //     (stage[claim-preflight-missing] — today the claim RETURNS {ok:true, result:'claimed',
 //     outcome:'failed'} after the gate kills); T18h (stage[cycle-ordering], got 'claimed');
 //     T18g (stage[expiryPending-re-check], got 'claimed'); T18c (the typed-throw lane —
@@ -1087,6 +1226,11 @@ test('X3 (PIN, the already_resolved class): a nudge-resolved record refuses alre
 //     (stage[claim-preflight-missing]); CP9a, CP9b (stage[registry-flag-lie]); WD2, WD3
 //     (wave_driver_policy_invalid: policy field "refusalNudgeBudget" is unknown); WD4
 //     (per-pauseId claim attempts: 1 !== 4).
-//   GREEN pins (byte-identical before and after): T18b, T18d, T18s, T18x, T18y, T18z,
+//   GREEN pins (byte-identical before and after): T18b, T18n, T18d, T18s, T18x, T18y, T18z,
 //     WD1, X1, X2, X3.
+//   Blue-team fold (suite-blueteam.md, 2026-08-04): BLOCKER 1 (content.message planted but
+//   never load-bearing) → T18m (messages-only sole liveness, RED) + T18n (removal control,
+//   PIN); BLOCKER 2 (approval.resolved/decision.settled uncovered) → T18a + T18v (the
+//   report's two-sibling-rows idiom over the T18q staging). No new invented surfaces — the
+//   four rows consume the existing CP3 closed set and the CP6 refusal shape only.
 // ===========================================================================
