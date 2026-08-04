@@ -6,7 +6,10 @@
 //   board      — coordination-store + application-semantics + coordinator board lane (collides #81, #85)
 //   browser    — goal-plan + coordinator + messages + new browser-use.mjs (collides #78 on coordinator)
 // Safe parallel sets: {readiness, orientation, board} then {browser} AFTER board lands.
-// Usage: node run-l2-impl-wave.mjs <readiness|orientation|board|browser>
+// Usage: node run-l2-impl-wave.mjs <readiness|orientation|board|browser> [keySuffix]
+// keySuffix (e.g. -r2) rotates the idempotency key + deployment root — REQUIRED after a
+// failed attempt, because the repo-scoped wave registry binds the original key to the
+// dead wave and the recipe's attach path then fails wave_attach_unknown_wave.
 import { writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { openBaton } from '../../../../impl/src/index.mjs';
@@ -99,6 +102,7 @@ const LANES = Object.freeze({
 });
 
 const laneName = process.argv[2];
+const keySuffix = typeof process.argv[3] === 'string' && /^-[a-z0-9]+$/u.test(process.argv[3]) ? process.argv[3] : '';
 const lane = LANES[laneName];
 if (!lane) {
   console.error(`usage: node run-l2-impl-wave.mjs <${Object.keys(LANES).join('|')}>`);
@@ -127,7 +131,7 @@ const TASK = [
 const baton = await openBaton({
   repo,
   advanced: {
-    deploymentRoot: resolve(repo, '.baton', `l2-${laneName}-impl-2026-08-03`),
+    deploymentRoot: resolve(repo, '.baton', `l2-${laneName}-impl-2026-08-03${keySuffix}`),
     routes: [{ ...lane.seat }],
     verification: Object.freeze({ command: 'node', arguments: ['--test', lane.suite] }),
   },
@@ -138,7 +142,7 @@ try {
     route: { ...lane.seat },
     scope: ['impl/**', 'docs/reference/evidence/frontier-sweep-2026-08-03/**'],
     task: TASK,
-    idempotencyKey: `l2-${laneName}-impl-2026-08-03`,
+    idempotencyKey: `l2-${laneName}-impl-2026-08-03${keySuffix}`,
     manifestPath: resolve(EVIDENCE, `${laneName}-impl-manifest.json`),
     evidencePath: resolve(EVIDENCE, `${laneName}-impl-evidence.json`),
   });
