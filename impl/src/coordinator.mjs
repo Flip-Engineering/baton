@@ -6922,6 +6922,29 @@ export class Coordinator {
     };
   }
 
+  /** Decision 4 (facade-projection epic #87+#48): the ONE read-only authorization accessor this
+   * rung permits — resolve a message's target run for authorization ONLY, never projected.
+   * Unknown → null; a worker-targeted message whose worker handle is gone resolves to NO run
+   * (resolve-to-null ≡ forbidden, never a leak — FP-05 pins the row). */
+  messageRunId(messageId) {
+    const record = this._messages.get(messageId);
+    if (!record) return null;
+    if (typeof record.target?.runId === 'string') return record.target.runId;
+    if (typeof record.target?.workerId === 'string') {
+      const handle = this._workers.get(record.target.workerId);
+      // A worker handle that is gone is NOT a live target: resolve-to-null (Decision 4 note(b))
+      // — the message's run is not a valid authorization scope, so resolve-to-null ≡ unknown ≡
+      // forbidden (FP-05 pins the row). "Gone" = never registered, reaped (dead/exited), or
+      // stopping WITHOUT ever having engaged a turn (wireEpochOffset is set on the first
+      // turn_started). A worker that engaged remains a live target while stopping, so its run
+      // stays a valid authorization scope (FP-04's C3 identity row serves the honest receipt).
+      if (!handle || ['dead', 'exited'].includes(handle.status)
+        || (handle.status === 'stopping' && handle.wireEpochOffset === undefined)) return null;
+      return this._tasks.get(handle.taskId)?.runId ?? handle.runId ?? null;
+    }
+    return null;
+  }
+
   // -------------------------------------------------------------------------
   // BD3-D — the attention inbox (issue #71/#75). Scope-first, cursor-chained, additive for
   // orchestrators: the wave driver keeps its own stall clock (the D5 pin) and MAY consume this
@@ -6980,9 +7003,13 @@ export class Coordinator {
    * lease (run-orchestrator lease) whose session belongs to the caller. */
   _isReviewAuthority(principal, runId) {
     if (principal?.principalId === 'wave-owner') return true;
-    if (this._coordination && typeof this._coordination.activeRunOrchestratorLeaseForSession === 'function') {
+    if (this._coordination && typeof this._coordination.activeRunOrchestratorLeaseForSession === 'function'
+      && typeof principal?.principalId === 'string' && typeof principal?.sessionId === 'string') {
       try {
-        const lease = this._coordination.activeRunOrchestratorLeaseForSession(runId, principal?.sessionId ?? null);
+        // The store's run-scoped lookup matches a live lease by its parent run + session identity.
+        const lease = this._coordination.activeRunOrchestratorLeaseForSession({
+          repoId: this._repoId, runId, principalId: principal.principalId, sessionId: principal.sessionId,
+        });
         if (lease && lease.session && lease.session.principalId === principal?.principalId) return true;
       } catch { /* no live lease */ }
     }
@@ -10499,7 +10526,11 @@ export class Coordinator {
   }
 
   _settleTerminalScratchpad(taskId, { entryIds = [], terminalCaptureSha = null } = {}) {
-    const task = this._tasks.get(taskId);
+    // Live-state derivation: the durable store's task is the authoritative status/assignee
+    // (the in-memory copy is a per-process view that a store-direct terminal transition does not
+    // advance). The wrapper's terminal-task discipline and the expectedScratchpadFence are both
+    // derived from LIVE state on every call (Decision 7).
+    const task = this._coordination.task(taskId) ?? this._tasks.get(taskId);
     const terminalStatuses = ['completed', 'failed', 'cancelled'];
     if (!task || !terminalStatuses.includes(task.status)) {
       return { ok: false, result: 'scratchpad_settlement_not_ready' };

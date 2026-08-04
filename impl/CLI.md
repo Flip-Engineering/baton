@@ -23,25 +23,34 @@ ordinary-CLI inventory. The conformance suite fails if they drift from served tr
 | `run.adopt` | `ordinary` | `baton run adopt` | `baton run adopt RUN_ID --reason R` |
 | `run.answer` | `ordinary` | `baton run answer` | `baton run answer RUN_ID REQUEST_ID --text TEXT` |
 | `run.approve` | `ordinary` | `baton run approve` | `baton run approve RUN_ID --plan DIGEST` |
+| `run.attention.watch` | `ordinary` | `baton run attention watch` | `baton run attention watch RUN_ID --kind member_terminal --cursor 0` |
+| `run.board.post` | `ordinary` | `baton run board post` | `baton run board post RUN_ID --board BOARD --title TEXT` |
+| `run.board.read` | `ordinary` | `baton run board read` | `baton run board read RUN_ID --board BOARD` |
 | `run.debug` | `ordinary` | `baton run debug` | `baton run debug RUN_ID` |
 | `run.do` | `ordinary` | `baton run do` | `baton run do RUN_ID ACTION_ID` |
 | `run.evidence` | `ordinary` | `baton run evidence` | `baton run evidence RUN_ID` |
 | `run.export` | `ordinary` | `baton run export` | `baton run export RUN_ID DIR` |
 | `run.integrate` | `ordinary` | `baton run integrate` | `baton run integrate RUN_ID --strategy ff-only --reason R` |
+| `run.knowledge.seed` | `ordinary` | `baton run knowledge seed` | `baton run knowledge seed RUN_ID --type Finding --grounding observed --body TEXT` |
 | `run.list` | `ordinary` | `baton run list` | `baton run list` |
 | `run.member.send` | `ordinary` | `baton run member send` | `baton run member send RUN_ID ROLE TEXT` |
 | `run.member.stop` | `ordinary` | `baton run member stop` | `baton run member stop RUN_ID ROLE` |
 | `run.member.view` | `ordinary` | `baton run member view` | `baton run member view RUN_ID` |
+| `run.message.receipt` | `ordinary` | `baton run message receipt` | `baton run message receipt MESSAGE_ID` |
+| `run.message.send` | `ordinary` | `baton run message send` | `baton run message send RUN_ID --kind inform --body TEXT` |
 | `run.recover` | `ordinary` | `baton run recover` | `baton run recover RUN_ID` |
 | `run.resume` | `ordinary` | `baton run resume` | `baton run resume RUN_ID --reason R` |
 | `run.retry` | `ordinary` | `baton run retry` | `baton run retry RUN_ID --reason R` |
 | `run.review` | `ordinary` | `baton run review` | `baton run review RUN_ID --exact codex/gpt-5.6-sol@low --reason R` |
+| `run.scratchpad.elevate` | `ordinary` | `baton run scratchpad elevate` | `baton run scratchpad elevate RUN_ID --task TASK_ID --entries JSON` |
+| `run.scratchpad.read` | `ordinary` | `baton run scratchpad read` | `baton run scratchpad read RUN_ID --scope shared --cursor 0` |
 | `run.send` | `ordinary` | `baton run send` | `baton run send RUN_ID TEXT` |
 | `run.start` | `ordinary` | `baton run start` | `baton run "Ship it" --model gpt-5.6-sol --effort low` |
 | `run.stop` | `ordinary` | `baton run stop` | `baton run stop RUN_ID` |
 | `run.view` | `ordinary` | `baton run view` | `baton run view RUN_ID` |
 | `run.watch` | `ordinary` | `baton run watch` | `baton run watch RUN_ID` |
 | `waves.attach` | `ordinary` | `baton waves attach` | `baton waves attach WAVE_ID --members JSON` |
+| `waves.start` | `ordinary` | `baton waves start` | `baton waves start --members JSON` |
 
 <!-- END GENERATED: cli-verb-inventory -->
 
