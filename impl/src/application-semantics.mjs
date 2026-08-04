@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { FRAME_LIMITS } from './limits.mjs';
 
 function canonical(value) {
   if (Array.isArray(value)) return value.map(canonical);
@@ -160,7 +161,7 @@ const resultIntent = {
 const applicationRoute = objectSchema({ harness: id, model: id, effort: id }, []);
 const applicationIntent = objectSchema({
   runId: id,
-  objective: { type: 'string', minLength: 1, maxLength: 4096 },
+  objective: { type: 'string', minLength: 1, maxLength: FRAME_LIMITS['run.objective'].value },
   resultIntent,
   profile: id,
   route: applicationRoute,
@@ -296,7 +297,7 @@ const operations = {
   'run.workstream.notify': {
     inputSchema: objectSchema({
       runId: id, role: id, generation: { type: 'integer', minimum: 1 },
-      message: { type: 'string', minLength: 1, maxLength: 16384 },
+      message: { type: 'string', minLength: 1, maxLength: FRAME_LIMITS['run.legacy_send.body'].value },
       delivery: { type: 'string', enum: ['nudge', 'now', 'turn'] },
     }, ['runId', 'role', 'message']),
     helpTopic: 'run.workstreams', idempotent: true, destructive: false,
@@ -484,7 +485,7 @@ const actions = {
     summary: 'Choose an option (or send bounded free-form text, when the request allows it) for the exact pending typed decision request advertised by this Run.',
     inputSchema: objectSchema({
       optionId: { type: 'string', minLength: 1, maxLength: 128 },
-      text: { type: 'string', minLength: 1, maxLength: 4096 },
+      text: { type: 'string', minLength: 1, maxLength: FRAME_LIMITS['decision.text'].value },
     }, []),
     serverDerived: ['requestId', 'workerId'], effect: 'provider_control',
     destructive: false, irreversible: false, idempotent: true, priority: 'required',
@@ -520,7 +521,7 @@ const actions = {
     label: 'Guide active work',
     summary: 'Send guidance to the current semantic work recipient without exposing worker or fence coordinates.',
     inputSchema: objectSchema({
-      message: { type: 'string', minLength: 1, maxLength: 16384 },
+      message: { type: 'string', minLength: 1, maxLength: FRAME_LIMITS['run.legacy_send.body'].value },
       recipient: { type: 'string', minLength: 1, maxLength: 256, default: 'work' },
       delivery: { type: 'string', enum: ['nudge', 'now', 'turn'], default: 'nudge' },
     }, ['message']),
@@ -1352,8 +1353,8 @@ const CANONICAL_OPERATION_SPECS = [
     effect: 'control', capabilities: ['control', 'observe'], outputView: 'outline',
     helpTopic: 'run', surfaces: ['embedded', 'mcp'], inputSchema: objectSchema({
       sessionAuthority: sessionAuthoritySchema, runId: id, board: safeBoardId,
-      title: { type: 'string', minLength: 1, maxLength: 160 },
-      detail: { type: ['string', 'null'], minLength: 1, maxLength: 4096 },
+      title: { type: 'string', minLength: 1, maxLength: FRAME_LIMITS['board.title'].value },
+      detail: { type: ['string', 'null'], minLength: 1, maxLength: FRAME_LIMITS['board.detail'].value },
       owner: { type: ['string', 'null'], minLength: 1, maxLength: 128, pattern: '^[A-Za-z0-9_.:-]+$' },
       evidence: { type: 'array', maxItems: 8, items: evidenceRef },
       expectedBoardFence: { type: 'integer', minimum: 0 },
@@ -1365,8 +1366,8 @@ const CANONICAL_OPERATION_SPECS = [
     effect: 'control', capabilities: ['control', 'observe'], outputView: 'outline',
     helpTopic: 'run', surfaces: ['embedded', 'mcp'], inputSchema: objectSchema({
       sessionAuthority: sessionAuthoritySchema, runId: id, board: safeBoardId, ...boardItemCoordinates,
-      title: { type: 'string', minLength: 1, maxLength: 160 },
-      detail: { type: ['string', 'null'], minLength: 1, maxLength: 4096 },
+      title: { type: 'string', minLength: 1, maxLength: FRAME_LIMITS['board.title'].value },
+      detail: { type: ['string', 'null'], minLength: 1, maxLength: FRAME_LIMITS['board.detail'].value },
       expectedBoardFence: { type: 'integer', minimum: 0 },
     }, ['sessionAuthority', 'runId', 'board', 'itemId', 'itemVersion', 'title', 'expectedBoardFence']),
     authorityFields: ['sessionAuthority', 'runId', 'expectedBoardFence'],
@@ -1423,7 +1424,7 @@ const CANONICAL_OPERATION_SPECS = [
       grantId: { type: 'string', minLength: 1, maxLength: 256 },
       itemId: id, itemVersion: { type: 'integer', minimum: 1 }, itemDigest: digest64,
       expectedClaimVersion: { type: 'integer', minimum: 1 },
-      body: { type: 'string', minLength: 1, maxLength: 4096 },
+      body: { type: 'string', minLength: 1, maxLength: FRAME_LIMITS['board.report.body'].value },
       idempotencyKey: { type: 'string', pattern: '^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$' },
     }, ['grantId', 'itemId', 'itemVersion', 'itemDigest', 'expectedClaimVersion', 'body', 'idempotencyKey']),
     authorityFields: ['grantId'], serverDerived: ['workerId', 'taskId', 'taskVersion', 'processGeneration'],
@@ -1548,7 +1549,7 @@ const CANONICAL_OPERATION_SPECS = [
         type: 'array', minItems: 1, maxItems: 64,
         items: objectSchema({
           role: id,
-          objective: { type: 'string', minLength: 1, maxLength: 4096 },
+          objective: { type: 'string', minLength: 1, maxLength: FRAME_LIMITS['wave.member.objective'].value },
         }, ['role', 'objective']),
       },
       timeoutMs: { type: 'integer', minimum: 1 },
@@ -1572,7 +1573,7 @@ const CANONICAL_OPERATION_SPECS = [
         type: 'array', minItems: 1, maxItems: 64,
         items: objectSchema({
           role: id,
-          objective: { type: 'string', minLength: 1, maxLength: 4096 },
+          objective: { type: 'string', minLength: 1, maxLength: FRAME_LIMITS['wave.member.objective'].value },
           exact: objectSchema({ harness: { type: 'string', minLength: 1 }, model: { type: 'string', minLength: 1 }, effort: { type: 'string', minLength: 1 } }, ['harness', 'model', 'effort']),
           scope: { type: 'array', minItems: 1, maxItems: 64, uniqueItems: true, items: { type: 'string', minLength: 1, maxLength: 4096 } },
         }, ['role', 'objective', 'exact']),
@@ -1593,7 +1594,7 @@ const CANONICAL_OPERATION_SPECS = [
     capabilities: ['control', 'observe'], outputView: 'outline', helpTopic: 'run',
     example: 'baton waves send RUN_ID --message TEXT',
     inputSchema: objectSchema({
-      runId: id, message: { type: 'string', minLength: 1, maxLength: 16384 },
+      runId: id, message: { type: 'string', minLength: 1, maxLength: FRAME_LIMITS['run.legacy_send.body'].value },
       delivery: { type: 'string', enum: ['nudge', 'now', 'turn'] },
       // Epic #78 Decision 2: the optional closed claimGrant request. The caller names no grantee
       // and no permissions — the server resolves the member Run and records the selected subset.

@@ -22,9 +22,13 @@ import { createHash, randomUUID } from 'node:crypto';
 import { writeFileSync } from 'node:fs';
 
 import { applicationTerminal, canonicalRunPhase } from './application-semantics.mjs';
+import { FRAME_LIMITS } from './limits.mjs';
 
 const SUCCESS_RESTING = 'result_ready';
-const OBJECTIVE_MAX_BYTES = 4096;
+// OQ5 (folded): the precheck's constant moves to the registry (wave.member.objective) and the
+// precheck downgrades to a spill-aware advisory — it names the bytes and the coming spill, then
+// PASSES the objective through (the machinery admits and spills exactly like run.objective).
+const OBJECTIVE_MAX_BYTES = FRAME_LIMITS['wave.member.objective'].value;
 
 // §2: closed field set, all optional, frozen. Every default mirrors the documented production
 // cadence (a multi-hour wave); the red suite overrides these with short relative timeouts.
@@ -53,6 +57,10 @@ const DEFAULT_POLICY = Object.freeze({
   // Bidirectional v2 rule 6: optional per-wait-cycle instrumentation (wall-clock, active-follow
   // count, advancing cursors) so a caller/test can observe the wake laws without a live provider.
   onWait: null,
+  // OQ5 (folded): the spill-aware early-ergonomics advisory. On an oversize member objective the
+  // driver emits `{role, bytes, limit, spill: true, lane: 'wave.member.objective'}` and PASSES the
+  // objective through — never the wave_driver_objective_oversize wall in front of a spill lane.
+  onAdvisory: null,
   signal: null,
   // KG settlement D3: the settle-window ritual policy. 'kg-ritual' (default) runs the sweep +
   // note/plan elevation + candidacy + settlement lease between the members resting and wave close;
@@ -308,14 +316,13 @@ export function createWaveDriver(baton, rawPolicy = null) {
         : `[attempt: ${salt} ${member.role}] ${member.objective}`;
       const bytes = Buffer.byteLength(objective);
       if (bytes > OBJECTIVE_MAX_BYTES) {
-        // The machinery's own oversize error (application_intent_invalid, application.mjs:1094-1096)
-        // and the empty-objective client error (application-client.mjs:112) never name the cap — this
-        // precheck does, carrying the byte count.
-        throw driverError(
-          `wave driver member ${member.role} objective is ${bytes} bytes after salting (limit ${OBJECTIVE_MAX_BYTES})`,
-          'wave_driver_objective_oversize',
-          { role: member.role, bytes, limit: OBJECTIVE_MAX_BYTES },
-        );
+        // OQ5 (folded): the precheck downgrades to a spill-aware ADVISORY. It keeps the
+        // error-quality value (naming the byte count and the lane limit) but PASSES the objective
+        // through — the machinery admits and spills it exactly like run.objective; a wall in front
+        // of a spill lane would recreate the exact asymmetry this epic deletes elsewhere.
+        if (typeof policy.onAdvisory === 'function') {
+          policy.onAdvisory({ role: member.role, bytes, limit: OBJECTIVE_MAX_BYTES, spill: true, lane: 'wave.member.objective' });
+        }
       }
       return { ...member, objective };
     });

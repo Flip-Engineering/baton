@@ -249,8 +249,11 @@ test('SP2: total canonical content over MAX_SCRATCHPAD_ENTRY_BYTES is refused be
   const oversize = { kind: 'plan', objective: 'o'.repeat(512), steps, supersedes: null };
   assert.ok(canonicalBytes(oversize) > MAX_SCRATCHPAD_ENTRY_BYTES, 'the fixture really is over the ceiling');
   const before = store.snapshot().lastSeq;
+  // Issue #89 Decision 2/3: the canonical entry ceiling gained the Decision-3 coaching shape —
+  // the refusal code is now the registry lane's scratchpad_entry_exceeded (B14 of the
+  // frame-economics suite), with {cap, actual, unit, gracefulPath} on the thrown error.
   assert.throws(() => write(store, { entry: oversize, key: 'sp2:entry-bytes' }),
-    (error) => error?.code === 'scratchpad_entry_invalid');
+    (error) => error?.code === 'scratchpad_entry_exceeded');
   assert.equal(store.snapshot().lastSeq, before, 'no event was appended');
 });
 

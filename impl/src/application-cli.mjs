@@ -7,6 +7,7 @@ import {
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { TextDecoder } from 'node:util';
 import { APPLICATION_SEMANTIC_REGISTRY, canonicalRunPhase } from './application-semantics.mjs';
+import { FRAME_LIMITS_DIGEST } from './limits.mjs';
 import { bindBatonPort } from './application-client.mjs';
 import { foldCanonicalCase } from './canonical-order.mjs';
 import { createLocalSocketFetch } from './local-web-transport.mjs';
@@ -1968,6 +1969,11 @@ export async function connectBaton({
     || !Array.isArray(doctor.application?.commands)
     || requiredCommands.some((command) => !doctor.application.commands.includes(command))
     || doctor.application?.agentExperience?.registryDigest !== APPLICATION_SEMANTIC_REGISTRY.digest
+    // Decision 7: the limits registry digest verifies exactly like the semantic registry's — a
+    // server that publishes limitsRegistryDigest must match; an older server that omits it is
+    // not rejected (the frame-economics handshake is additive).
+    || (doctor.application?.agentExperience?.limitsRegistryDigest !== undefined
+      && doctor.application?.agentExperience?.limitsRegistryDigest !== FRAME_LIMITS_DIGEST)
     || !session.identity.repoIds.includes(connection.repoId)
     || (connection.transport === 'local'
       && (doctor.application?.resident?.schemaVersion !== 1
