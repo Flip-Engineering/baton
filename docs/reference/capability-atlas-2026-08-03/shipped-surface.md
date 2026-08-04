@@ -5,16 +5,17 @@ Truth sources: `impl/src/*.mjs`, `impl/test/*.mjs`, `impl/package.json`, `impl/s
 Method note: `application.mjs`, `coordinator.mjs`, `coordination-store.mjs` contain literal NUL
 bytes (key separators, e.g. `coordination-store.mjs:2045-2049` `${repoId}\0${runId}`), so they
 were mapped with `grep -an` + `sed -n` only; every other file was read normally.
-Snapshot: branch `master` @ `238c5bf`, 8 dirty files (the four L2 contracts + their red suites
-mid-blue-team-fold, plus `impl/baton-0.1.0.tgz`). Scale: 104 src modules, 87,726 lines
-(`wc -l impl/src/*.mjs`); 268 test files, ~3,018 tests (grep count of `test(`/`it(`).
+Snapshot: branch `master` @ `0ae98b0`, tree clean except `impl/baton-0.1.0.tgz`.
+Scale: 104 src modules, ~89k lines; 268 test files, ~3,018 tests (grep count of
+`test(`/`it(`). Amended in place after two 2026-08-03 landings: **#78 board worker-half**
+(`9ec8e97` — board grants + the BOARD_CLAIM/BOARD_REPORT wire scanners, §1.10/§3) and **#92**
+(`a9f6598` — the delivered message frame now carries the minted messageId, §3).
 
-Suite state verified live on 2026-08-03 (not just from commit messages):
-`readiness-credentials-red` 5 pass / 21 fail (26), `board-workerhalf-red` 3 / 21 (24),
-`orientation-red` 6 / 32 (38), `browser-use-red` 5 / 32 (37) — **106 red-by-design rows**
-across the four L2 lanes (up from 85 at commit `5c2d729` because the uncommitted folds grew
-the suites). Everything else is expected green; the last committed gate figure is
-3129/3214 (`91149d2`).
+Suite state verified live on 2026-08-03 (not just from commit messages): `board-workerhalf-red`
+**24/24 GREEN** (21 rows were red before #78 landed); `orientation-red` 6 pass / 32 fail (38),
+`readiness-credentials-red` 5 / 21 (26), `browser-use-red` 5 / 32 (37) — **85 red-by-design
+rows across the three remaining L2 lanes**. Gate per `9ec8e97`: 3151/3238 (the 85 + 2 #7
+load-flakes, isolated-clean).
 
 ---
 
@@ -53,14 +54,15 @@ the better clock).
 Two tiers (README.md:83-88): **persistent sessions** are the product tier; one-shot subprocess
 adapters are an explicitly limited fire-and-forget tier.
 
-- **`claude-session.mjs`** — 1,668 lines. The claude-family persistent stream-json session.
-  `ClaudeSessionCli` (`:399`), `GlmSessionCli extends ClaudeSessionCli` (`:1530`),
-  `KimiSessionCli extends ClaudeSessionCli` (`:1588`); helpers `loadProviderCredentialFile`
-  (`:230`), `loadGlmAuthTokenFile` (`:308`), `buildClaudeSessionArgs` (`:341`); and the four
+- **`claude-session.mjs`** — 1,738 lines. The claude-family persistent stream-json session.
+  `ClaudeSessionCli` (`:461`), `GlmSessionCli extends ClaudeSessionCli` (`:1600`),
+  `KimiSessionCli extends ClaudeSessionCli` (`:1658`); helpers `loadProviderCredentialFile`
+  (`:292`), `loadGlmAuthTokenFile` (`:370`), `buildClaudeSessionArgs` (`:403`); and the SIX
   wire-grammar scanners (§3 below). GLM and DeepSeek ride Anthropic-compatible endpoint shims.
   Pinned by `claude-session.test.mjs` (31), `glm-session.test.mjs`, `phase71-kimi-session`,
-  `phase11-persistent-sessions`, `deepseek-routes-red`, grammar suites `grammar-m1..m5-red`.
-  Landed 2026-07-10; latest change `30457e5` (MESSAGE_SEND).
+  `phase11-persistent-sessions`, `deepseek-routes-red`, grammar suites `grammar-m1..m5-red`,
+  `board-workerhalf-red` (the BW-24 scanner rows). Landed 2026-07-10; latest change `9ec8e97`
+  (#78 BOARD_CLAIM/BOARD_REPORT scanners).
 - **`application-deployment.mjs`** — 1,761 lines. Holds the **private** `DeepseekSessionCli
   extends GlmSessionCli` (`:736-770`, NOT exported from `index.mjs`) pointed at
   `https://api.deepseek.com/anthropic`, plus `DEFAULT_ROUTES` (`:100`), the deepseek credential
@@ -260,21 +262,29 @@ All store-resident (regions in §2), with these module-level helpers:
   (verified live). The suite header documents the landed substrate it builds on
   (context.read lane, `recordContextRead`, context packs) and the invented surfaces.
 
-### 1.10 Board / attention / messaging (BD3 spine — landed `726e34a`, `30457e5`)
+### 1.10 Board / attention / messaging (BD3 spine `726e34a` + `30457e5`; worker-half `9ec8e97`)
 
-- Store regions: board (`admitBoardCommand` `coordination-store.mjs:13766`,
-  `postBoardItem:13943`, retitle/reorder/close/drop `:14020-14041`,
-  `requestBoardClaim:14049`, `submitBoardReport:14069`, `boardSnapshot:14110`),
+- Store regions: board (`admitBoardCommand` `coordination-store.mjs:13851`,
+  `postBoardItem:14028`, retitle/reorder/close/drop `:14124-14145`,
+  `requestBoardClaim:14157`, `submitBoardReport:14193`, `boardSnapshot:14258`),
   context packs (`mintContextPack:12950`, `contextPackHead:12967`,
   `materializeContextPack:12973`, `reapExpiredContextPacks:12982`),
   `recordContextRead:12994`, `recordMessage:13009`.
-- Coordinator regions: `sendMessage:6577`, `messageReceipt:6652`, `attentionFollow:6677`,
-  `contextRead:10237` + UNTRUSTED renderers `:10349-10360`, event-switch cases
-  `scratchpad.write:11560`, `context.read:11578`, `message.send:11593`.
-- Pinned by `bidirectional-v3-red` (29), `reflex2-boards-red` (19), `board-authority-red`.
-- **Board worker-half (#78) NOT shipped**: `board.claim`/`board.report` are registry ghosts
-  (`surfaces: []`, per suite header) — 21 red rows in `board-workerhalf-red` (verified live).
-  The BOARD_CLAIM/BOARD_REPORT wire scanner (BW-24) does not exist yet.
+- Coordinator regions: `sendMessage:6577` (frame carries the minted messageId since #92,
+  `:6633`), `messageReceipt:6652`, `attentionFollow:6677`, `contextRead:10257` + UNTRUSTED
+  renderers, event-switch cases `scratchpad.write`, `context.read`, `message.send`,
+  `board.claim:11777`, `board.report:11789`.
+- **Board worker-half (#78) LANDED** (`9ec8e97`, deepseek one-shot): waves.send-minted
+  member-bound grants (`claimGrant` at `application.mjs:11439-11478` — closed `{boardRunId,
+  board}` request, server-resolved grantee+permissions, minted BEFORE the steer, exact retry
+  returns the original receipt BW-05), grant mint/revoke with durable generation records
+  (`mintBoardGrant` store `:14513`, `revokeBoardGrants:14327`, `worker.generation_bound`
+  records `:14299-14319` projected at `:8683`), the `{read,claim,report}` permission law with
+  the constant `board_worker_scope_refused` admission seam (store `:14357-14512` — a read-only
+  grant's claim refuses BEFORE item lookup), claimVersion reset, in-kernel digest adjudication,
+  in-item report pagination + `board_oversize_item` truncation marker (`:14653+`),
+  replay-wins-over-live-state + revoked-grant replay refusal, and the BW-24 wire scanner
+  siblings (§3). Suite 24/24 green (verified live).
 
 ### 1.11 Context / REPL layer
 
@@ -323,7 +333,7 @@ The three NUL-byte megabytes + the session/facade satellites. Every recent epic 
 settlement, trust-gate, MCP-packaging) touched coordinator + store + application in the SAME
 commit — they are one collision domain; partition waves by *region*, not by file.
 
-### `coordinator.mjs` (13,269 lines)
+### `coordinator.mjs` (13,475 lines)
 
 | Lines | Region |
 |---|---|
@@ -336,18 +346,19 @@ commit — they are one collision domain; partition waves by *region*, not by fi
 | 3978-4698 | `spawn`/`_spawn`; pack materialization at spawn 4139-4140 |
 | 4699-5658 | `recover`/`_recover` |
 | 5659-6807 | `integrate`/`_integrate`; VR6 pinned trust-gate replay 6102 |
-| 6576-6700 | **BD3-C**: `sendMessage` 6577, `messageReceipt` 6652, `attentionFollow` 6677 |
+| 6576-6700 | **BD3-C**: `sendMessage` 6577 (frame carries minted messageId — #92, `:6633`), `messageReceipt` 6652, `attentionFollow` 6677 |
 | 6808-7349 | `send`/`_send`/`_deliver`; lane kinds 7049-7060 |
 | 7350-9181 | `interrupt` 7350, `kill` 7418 + reap machinery; watchdog arm/fire 8368-8420 |
 | 9182-9665 | `respond`/`_respond` (decision answers) |
 | 9666-10905 | `result()` 9666 |
-| 10156-10462 | **BD3-A + scratchpad**: `writeScratchpad` 10156, `contextRead` 10237, UNTRUSTED renderers 10349-10360, `_deliverContextRead`, `admitBoardCommand` passthrough 10463 |
+| 8047-8055 | board claim-expiry reap into the scratch death lifecycle (`board.claim_expired`) |
+| 10156-10562 | **BD3-A + scratchpad**: `writeScratchpad` 10176, `contextRead` 10257, UNTRUSTED renderers, `_deliverContextRead`, `admitBoardCommand` passthrough 10505; **#78 worker admission** `board.claim`/`board.report` typed-refusal seams 10563-10576 (`board_claim_invalid`/`board_report_invalid`) |
 | 10906-10951 | `list()`/`wait()` |
-| ~11000-11866 | provider-event switch: `scratchpad.write` 11560, `context.read` 11578, `message.send` 11593, `decision.requested` 11742 |
+| ~11000-11866 | provider-event switch: `scratchpad.write`, `context.read`, `message.send`, `decision.requested`, **`board.claim` 11777, `board.report` 11789** (results receipted incl. refusals; deliberately NOT TG2/TG3 liveness) |
 | 11867-12100 | **TRUST GATE**: `_runTrustGate` 11893 (required_effect, environment match, referee.accept sole done-gate) |
 | 12321-13269 | `_replay` 12321 |
 
-### `coordination-store.mjs` (15,857 lines)
+### `coordination-store.mjs` (16,581 lines)
 
 | Lines | Region |
 |---|---|
@@ -367,11 +378,12 @@ commit — they are one collision domain; partition waves by *region*, not by fi
 | 11141-12346 | snapshots/authority views 11272-11413, run stops/retries/exports 11421-12115, `createTask` 12142, **`createAndClaimSettlementTask` 12220**, `sweepSettlementLeases` 12281, `sealRunScorecard` 12328 |
 | 12347-13198 | task transitions/artifacts/reuse/provider 12347-12919, **BD3**: context packs 12920-12993, `recordContextRead` 12994, `recordMessage` 13009 |
 | 13199-13740 | scratch facts 13199, **`writeScratchpad` 13346**, elevate 13453, settle 13600, reap 13663 |
-| 13741-14139 | **BOARD**: fences 13741-13758, `admitBoardCommand` 13766, item CRUD 13943-14047, claim/report 14049-14087, `boardSnapshot` 14110 |
-| 14140-14398 | REPL manifests + bindings |
-| 14399-15857 | **KNOWLEDGE GRAPH**: nodes/edges 14399-14953, promotion 14482-14599, scratch correction 14601-14767, `admitWorkflowFinding` 14823, contradictions 14954-15086, invalidation/contamination 15095-end |
+| 13826-14278 | **BOARD**: fences 13826-13858, `admitBoardCommand` 13851, item CRUD 14028-14156, worker claim/report admission 14157-14245, claims/views 14246-14278 (`boardSnapshot` 14258) |
+| 14279-14863 | **#78 GRANTS**: `boardGrant` 14282, `activeBoardGrants` 14288, `worker.generation_bound` durable records 14299-14319 (projected 8683), `revokeBoardGrants` 14327, the constant-`board_worker_scope_refused` admission seam 14357-14512, `mintBoardGrant` 14513, in-item report pagination + `board_oversize_item` marker 14653+ |
+| 14864-15122 | REPL manifests + bindings (`admitReplBinding` 14920) |
+| 15123-16581 | **KNOWLEDGE GRAPH**: nodes/edges/promotion/scratch-correction/`admitWorkflowFinding`/contradictions/invalidation (region shifted +~720 lines by #78) |
 
-### `application.mjs` (12,312 lines)
+### `application.mjs` (12,382 lines)
 
 | Lines | Region |
 |---|---|
@@ -386,15 +398,15 @@ commit — they are one collision domain; partition waves by *region*, not by fi
 | 7693-8135 | `wait`/`follow`, projections, semantic progress/actions 7808-8135 |
 | 8136-9479 | **context layer** incl. `contextEval` 9365, map/reduce/retry proposals 8725-9364 |
 | 9480-11175 | `decisionList` 9480, packages 9503, episodes/sections/`inspect` 10638, `debug` 11021, workstreams 11092 |
-| 11176-11487 | **waves**: `attachWave` 11176, `startWave` 11325, `waveProgress` 11365, send/stop member 11404/11422 |
+| 11176-11547 | **waves**: `attachWave` 11176, `startWave` 11325, `waveProgress` 11365, send/stop member 11404/11422; **#78 D2 claimGrant** minted on waves.send 11439-11478, closed normalizer 11538-11548 |
 | 11488-11984 | `listRuns` 11488, `help` 11572, `act` 11654, `doctorReadiness` 11931, `card` 11941 |
 | 11985-12312 | **`command()` dispatch** 11985, `answer` 12126, settlement commands 12174, `steer` 12197, `stop`/`detach`/`shutdown` 12228-12312 |
 
 ### Satellites
 
-- **`claude-session.mjs`** (1,668): grammars 20-153 (§3), credential/args 155-398,
-  `ClaudeSessionCli` 399-1529 (frame handler + emit sites 1044-1085, result/interrupt
-  1097-1200, credential-refresh retry ~1123), `GlmSessionCli` 1530, `KimiSessionCli` 1588.
+- **`claude-session.mjs`** (1,738): grammars 20-218 (§3), credential/args 220-460,
+  `ClaudeSessionCli` 461-1599 (frame handler + emit sites ~1100-1155, result/interrupt,
+  credential-refresh retry), `GlmSessionCli` 1600, `KimiSessionCli` 1658.
 - **`application-semantics.mjs`** (2,049): enums 19-148, action capabilities ~150-1121,
   `deriveSurfaceNames` 1122, **operation specs 1217-1613**, alias rows 1614-1862, registry
   1863-2049. Adding an operation = touch specs + aliases + conformance ledger.
@@ -409,7 +421,7 @@ commit — they are one collision domain; partition waves by *region*, not by fi
 
 ## 3. WIRE GRAMMARS (claude-session.mjs)
 
-Four sibling scanners over the model's OWN assistant text (never tool_result/user content —
+SIX sibling scanners over the model's OWN assistant text (never tool_result/user content —
 that structural separation is the spoof defense, comment at `:22-26`). All are
 **shape-only by design decision (#86)**: malformed JSON or schema refusal returns `null` =
 "treated as prose, never an error, never authority-adjacent" (`:65-69`). Byte caps are parser
@@ -421,14 +433,24 @@ resource guards; size POLICY belongs at admission with typed coaching refusals +
 | `DECISION_REQUEST` | `:27`, 8,192 B (`:28`) | via `createDecisionRequest` (messages.mjs:207); `ValidationError` → null | `decision.requested` at `:1063-1069`; at most ONE live per session (`:1060-1062`); coordinator case `coordinator.mjs:11742` |
 | `SCRATCHPAD_WRITE` | `:29`, 20,480 B (`:30`) | exactly `{entry, expectedFence, idempotencyKey}`; `expectedFence` `'current'`\|int≥0; key regex `^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$` (`:97-107`) | `scratchpad.write` at `:1072-1074` → `coordinator.mjs:11560` → `writeScratchpad:10156` → store `:13346` |
 | `CONTEXT_READ` (BD3-A, #75) | `:31`, 20,480 B | exactly `{expectedFence, idempotencyKey, query}`; `expectedFence` MUST be `'current'`; query forbids `runId`/`scope` keys (`:119-129`) | `context.read` at `:1076-1078` → `coordinator.mjs:11578` → `contextRead:10237` → `recordContextRead` store `:12994`; result served UNTRUSTED-framed (`coordinator.mjs:10349-10360`) |
-| `MESSAGE_SEND` (BD3-C, #86) | `:33`, 20,480 B | exactly `{inReplyTo, body}`; `inReplyTo` MUST match `^message:[a-f0-9]{64}$`; body non-empty string (`:139-153`) | `message.send` at `:1080-1082` → `coordinator.mjs:11593` (caller-named `to` → typed refusal; reply depth 1) |
+| `MESSAGE_SEND` (BD3-C, #86) | `:33`, 20,480 B | exactly `{inReplyTo, body}`; `inReplyTo` MUST match `^message:[a-f0-9]{64}$`; body non-empty string (`:139-153`) | `message.send` at `:1142-1144` → `coordinator.mjs` `message.send` case (caller-named `to` → typed refusal; reply depth 1) |
+| `BOARD_CLAIM` (#78 D1) | `:35`, 20,480 B (`:36`) | exactly `{grantId, itemId, expectedBoardFence, idempotencyKey}`; fence non-negative safe int; identity/scope fields rejected pre-lookup (`:169-190`) | `board.claim` at `:1146-1148` → `coordinator.mjs:11777` → store `requestBoardClaim:14157` under the grant's `{read,claim,report}` permission law |
+| `BOARD_REPORT` (#78 D1/4) | `:37`, 20,480 B (`:38`) | exactly `{grantId, itemId, itemVersion, itemDigest, expectedClaimVersion, body, idempotencyKey}`; `itemDigest` 64-hex, claim-version CAS (`:195-216`) | `board.report` at `:1150-1152` → `coordinator.mjs:11789` → store `submitBoardReport:14193` with in-kernel digest adjudication |
 
-Shared machinery: `extractFirstBalancedJsonObject` (`:40-67`) — bounded, string-aware,
-first-wins; trailing prose / second contradictory line never parsed.
+Shared machinery: `extractFirstBalancedJsonObject` (`:40-67`) — bounded, string-aware.
+The four ORIGINAL scanners are first-wins (trailing prose never parsed); the two #78 board
+scanners are STRICTER — a second `BOARD_CLAIM`/`BOARD_REPORT` marker in the same scan window
+rejects the whole scan (`BOARD_FRAME_MARKER`, one-frame-per-window, decision A1-1).
+Frame DELIVERY (hub→worker) is the other half of the lane: since #92 (`a9f6598`) the delivered
+provider frame is `[MESSAGE kind messageId — UNTRUSTED] body` (`coordinator.mjs:6633`) — before
+that fix the frame carried no id, a live worker could never construct `inReplyTo`, and the
+reply lane was dead end-to-end despite scanner+admission+receipts green (caught while building
+the dynamic-workflow demo; pinned by suite row C6).
 
 Pinning suites: `claude-session.test.mjs` (31), `reflex1-decision-requests-red` (34),
 `scratchpad-33-red` (50), `bidirectional-v3-red` (29, incl. the A0 live-wire pin added after
-the `91149d2` dead-lane bug), `grammar-m1..m5-red`. The `91149d2` lesson is load-bearing:
+the `91149d2` dead-lane bug), `board-workerhalf-red` (24, the BW-24 scanner rows + BW-01/02
+frame shapes), `grammar-m1..m5-red`. The `91149d2` lesson is load-bearing:
 an unsorted key-order literal in the closed-shape check made EVERY live CONTEXT_READ return
 null while all mocks passed — caught only by the first live acceptance wave.
 
@@ -527,10 +549,10 @@ Groups (file counts):
   implementation; rows fail at named stages until the epic lands, then flip green. Most are
   now green pins of landed epics (`grammar-m1..m5`, `turn-checkpoints-31a/b`, `reflex1-4`,
   `kg-settlement`, `trust-gate-steering`, `bidirectional-v3`, `mcp-packaging`, `wave-*`,
-  `scratchpad-33`, `repl*`). **Still red-by-design (verified live 2026-08-03):**
+  `scratchpad-33`, `repl*`, **`board-workerhalf-red` 24/24 — flipped green by `9ec8e97`,
+  verified live**). **Still red-by-design (verified live 2026-08-03):**
   - `orientation-red.test.mjs` — 6/38 pass (epic #81; contracts in
     `docs/reference/evidence/frontier-sweep-2026-08-03/orientation-contract.md`)
-  - `board-workerhalf-red.test.mjs` — 3/24 pass (epic #78)
   - `readiness-credentials-red.test.mjs` — 5/26 pass (epics #47/#83/#84)
   - `browser-use-red.test.mjs` — 5/37 pass (epic #85; invents `impl/src/browser-use.mjs`,
     does not exist yet)
@@ -541,19 +563,19 @@ Groups (file counts):
 - **`fixtures/`**: incl. `fake-grok-credential-refresh.mjs` (fail-closed unless
   `BATON_FAKE_GROK_FIXTURE=1` AND HOME under tmpdir — blue-team fold, dirty in tree).
 
-Gate arithmetic: last committed canonical gate 3129 pass / 3214 total (`91149d2`, 85 L2 red).
-The uncommitted folds grew the four L2 suites from 104 to 125 tests (reds 85 → 106), so the
-current expected gate is ≈ 3150 / 3256. README's "2922/2922" (README.md:38) and "2834/2834"
-(README.md:101) are both stale.
+Gate arithmetic: 3151 pass / 3238 total per `9ec8e97` (85 red-by-design in the three remaining
+L2 lanes + 2 #7 load-flakes, isolated-clean 16/16 + 38/38). The L2 suite folds committed at
+`62aea8e` (125 tests across the four lanes). README's "2922/2922" (README.md:38) and
+"2834/2834" (README.md:101) are both stale by ~300 tests.
 
 ---
 
 ## 6. OBSERVATIONS (candid, for re-grounding)
 
-1. **One collision domain, three files.** `coordination-store.mjs` (1.16 MB),
-   `coordinator.mjs` (733 KB), `application.mjs` (641 KB) = 39,450 lines, 45% of all source.
+1. **One collision domain, three files.** `coordination-store.mjs` (16,581 lines),
+   `coordinator.mjs` (13,475), `application.mjs` (12,382) = 42,438 lines, ~47% of all source.
    Every recent epic touched all three in one commit (`726e34a`, `e0f9d57`, `ac5bd80`,
-   `5bda319` appear identically in all three logs). Partition future waves by the region
+   `5bda319`, `9ec8e97` appear identically in all three logs). Partition future waves by the region
    tables in §2 (e.g. board 13741-14139 store / 10463+ coordinator; KG 14399+ store;
    waves 11176-11487 application) — never by file.
 2. **The NUL-byte hazard is real tooling friction.** The three hot files embed literal `\0`
@@ -588,15 +610,23 @@ current expected gate is ≈ 3150 / 3256. README's "2922/2922" (README.md:38) an
    comment): method-only direct port + `baton_context_eval` on combined MCP + embedded
    client. The gap (web + generic `command('application.context_eval')`) is documented
    in-code as real and deferred.
-9. **Uncommitted L2 fold state.** The four L2 contracts + suites (+1,460 lines) and a new
-   `browser-use-suite-fold.md` are dirty in the tree; the L2 implementation-wave driver
-   (`docs/reference/evidence/frontier-sweep-2026-08-03/run-l2-impl-wave.mjs`, commit
-   `238c5bf`) sequences {readiness, orientation, board} parallel then browser-after-board.
-   The 106 reds are the wave's backlog, not regressions.
-10. **Live-wire vs mock drift has bitten once already** (`91149d2`: the CONTEXT_READ lane
-    was dead on live traffic, green in mocks). The fix pattern — A0-style wire pins driving
-    REAL assistant text through the scanner — is now the suite discipline; keep it for the
-    BW-24 BOARD_CLAIM/BOARD_REPORT scanner when #78 lands.
+9. **L2 wave state.** The suite folds committed at `62aea8e`; the board lane then LANDED
+   (`9ec8e97`, #78 — suite 24/24). Remaining reds (85: orientation 32, readiness 21, browser
+   32) are the wave's backlog, not regressions; the orientation/readiness implementation waves
+   were last receipted BLOCKED on disk (`worktree_capacity_exceeded` refusals, commit
+   `0ae98b0` — relaunch post-cleanup), browser sequenced after board per the driver
+   (`run-l2-impl-wave.mjs`). In-flight contracts parked at the same commit: **#89**
+   frame-economics v1 (`limits.mjs` registry, 9 decisions — the admission-side size policy the
+   §3 scanners defer to; red-team pending), **#87** facade-projection contract PARTIAL
+   (resumes with the #48 workflow-surface expansion), **#88** claim-path grounding memo
+   (Option A spec-able).
+10. **Live-wire vs mock drift has bitten TWICE, both times caught only by live traffic**:
+    `91149d2` (an unsorted key-order literal made every live CONTEXT_READ return null, mocks
+    green) and `a9f6598` #92 (the delivered message frame carried no messageId, so the reply
+    lane was dead end-to-end with scanner+admission+receipts green). The fix pattern —
+    A0/C6-style wire pins driving REAL assistant text and REAL delivered frames through the
+    lane — is now the suite discipline; the #78 board scanners landed under it (namespace-safe
+    imports, named-stage reds).
 11. **Three kimi paths coexist**: `KimiAcpCli` (ACP), `KimiSessionCli` (claude-family,
     `claude-session.mjs:1588`), and the `claude-code` provider-kimi route (CLI.md:155).
     DeepSeek is a private `DeepseekSessionCli extends GlmSessionCli` inside
