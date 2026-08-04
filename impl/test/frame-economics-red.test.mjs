@@ -1,6 +1,7 @@
 // Frame-economics red suite (contract: docs/reference/evidence/
-// frame-economics-2026-08-03/frame-economics-contract.md v1.1 — issue #89; fold map
-// contract-fold.md beside it; red-team contract-redteam.md, 11/11 blockers folded).
+// frame-economics-2026-08-03/frame-economics-contract.md v1.2 — issue #89; fold maps
+// contract-fold.md (v1.1 red-team, 11/11) and suite-fold.md (v1.2 blue-team, 4/4) beside it;
+// blue-team suite-blueteam.md, NOT-READY → 4 blockers folded).
 //
 // Rows over the folded decisions: A the declared registry (impl/src/limits.mjs — one frozen
 // FRAME_LIMITS + VERSION + DIGEST over DECLARED rows only); B the coaching refusal shape
@@ -16,6 +17,13 @@
 // deployment override, refuse-at-injection above the ceiling-of-ceilings); F the single-source
 // ratchet (value-set scan across spellings + hand-typed byte prose, named deliberate locals
 // exempted) and the store-consumer dispositions that stay; G the folded OQ2 truncation marker.
+//
+// INVENTORY + SPLIT (v1.2, re-measured 2026-08-04 from the repo root): 50 rows — A ×6,
+// B ×16 (B15 board.report.body, B16 run.legacy_send.body added at the blue-team fold),
+// C ×10 (C10 the wave-member byte-law oracle added), D ×8 (incl. 5 pins), E ×6, F ×3
+// (incl. 2 pins), G ×1. Split: 43 red / 7 green pins (D2-D6, F2, F3) — the same seven pins
+// as v1.1; every red row fails at its named stage. F1's scan counts 55 unconsolidated hits
+// (46 at v1.1 + the nine de-exempted legacy-alias door literals, retiring on import).
 //
 // Red-first: written against the v1.1 contract BEFORE implementation; every contract-mandated-
 // but-missing capability fails at a NAMED stage. Harness pattern mirrors
@@ -45,6 +53,12 @@
 //   handshake-digest-missing    connectBaton never verifies limitsRegistryDigest
 //   single-source-not-landed    cataloged lane literals live outside limits.mjs today
 //   truncation-marker-missing   boundedAttentionText drops capBytes's truncated flag (OQ2)
+//   wave-member-spill-missing   the wave-start/wave-attach member doors wall oversize
+//                               objectives today (application.mjs:11506 validText 4,096-byte
+//                               default → application_wave_start_invalid; the char check
+//                               :1854-1855 → application_wave_attach_invalid) instead of
+//                               admitting with byte-measured spill (wave.member.objective,
+//                               OQ5; v1.2 blue-team blocker 4)
 //
 // SUITE-PINNED API SURFACE (the contract names behavior, not module names; the epic's
 // implementation is expected to ship this surface — adjust here if the epic renames it):
@@ -77,6 +91,11 @@
 //       decision.need / decision.rationale       -> 'decision_need_exceeded' / 'decision_rationale_exceeded'
 //       orientation.note / steering.focus        -> 'orientation_note_exceeded' / 'steering_focus_exceeded'
 //       board.title / board.detail               -> 'board_title_exceeded' / 'board_detail_exceeded'
+//       board.report.body                        -> 'board_report_exceeded' (v1.2: the LIVE 4,096
+//                                                   store bound, coordination-store.mjs:416/:14442)
+//       run.legacy_send.body                     -> 'run_legacy_send_exceeded' (v1.2: the legacy
+//                                                   run.send / run.act send / run.workstream.notify /
+//                                                   waves.send message door at its LIVE 16,384)
 //       decision.option.label / .summary         -> 'decision_option_label_exceeded' / 'decision_option_summary_exceeded'
 //       decision.text                            -> 'decision_text_exceeded'
 //       scratchpad.entry.body                    -> 'scratchpad_entry_exceeded'
@@ -125,13 +144,14 @@
 //   F3     context_pack.body 8,192 keeps its exact refusal (substrate value unchanged — the
 //          store only imports it from the registry)
 //
-// KNOWN SUITE-ORACLE NOTES (for the blue team):
+// KNOWN SUITE-ORACLE NOTES:
 //   * F1 reads Decision 8's "no module re-declares a byte literal for a cataloged lane" as
 //     UNCONDITIONAL: the mcp-northbound.mjs:910 / web-northbound.mjs:458 byte checks and the
 //     mcp-northbound.mjs:607 char maxLength on the cataloged orientation.note lane are NOT
-//     exempted and must retire/import. Decision 1's consumer list does not name the northbound
-//     modules — if the blue team reads the consumer list as exhaustive, move those three to
-//     the exemption table.
+//     exempted and must retire/import. RESOLVED (contract v1.2, blue-team blocker 3): Decision
+//     1's consumer list now names the application-semantics / mcp-northbound / web-northbound
+//     layers as registry consumers and Decision 8's law is explicitly layer-unconditional —
+//     the unconditional reading is ratified; nothing moves to the exemption table.
 //   * F1 scans byte values >= 1024 only; sub-KiB cataloged values (160/512/256/64/8) collide
 //     with innocent literals tree-wide and are pinned BEHAVIORALLY instead (B9-B12).
 //   * The `baton doctor --check` outline/evidence PRINT cascade has no exported seam (the CLI
@@ -139,23 +159,29 @@
 //     suite-oracle gap, same class as browser-use's assembly-site note.
 //   * The run-intent record's head+citation storage is internal; C7 pins the observable
 //     contract (admitted, byte-identical spill artifact, transparent reader resolution).
-//   * CONTRACT/TREE CONTRADICTION (blue team must resolve): the v1.1 fold (blocker 8) says the
-//     store's board-report body check is shape-only (coordination-store.mjs:14423-14425) and
-//     declares board.report.body substrate-bounded with NO admission row. In THIS tree
-//     submitBoardReport ENFORCES a live 4,096 bound (MAX_STORE_BOARD_REPORT_BYTES,
-//     coordination-store.mjs:416, enforced :14442; the application-semantics board.report body
-//     schema caps at 4096 too). F1 deliberately refuses to exempt :416 — the contradiction
-//     needs a contract decision (catalog it as a live admission row, or drop it as an
-//     operator-visible behavior change). D5 pins the scanner posture only and stays green
-//     either way; A6 pins only the registry side.
+//   * RESOLVED (contract v1.2, blue-team blocker 1 — the headline): the v1.1 fold believed the
+//     store's board-report body check was shape-only (its :14423-14425 anchor lands in the doc
+//     comment, ~17 lines short of enforcement) and declared the lane substrate-bounded with NO
+//     admission row. In THIS tree submitBoardReport ENFORCES a live 4,096 bound
+//     (MAX_STORE_BOARD_REPORT_BYTES, coordination-store.mjs:416, enforced :14442 via
+//     boardBounded :430-432, refusal invalid_board_report; second live door
+//     application-semantics.mjs:1426). The contract now catalogs board.report.body 4,096 as a
+//     live ADMISSION row (hard, coaching, board_report_exceeded) at the LIVE value: A6 asserts
+//     the row EXISTS, B15 pins its coaching refusal over submitBoardReport, D5's message names
+//     the store bound (the pin's behavior was always layer-correct), and F1's :416/:14442/:1426
+//     hits retire on import like every other cataloged literal.
 //   * E1/E2/E3/E5/E6 import limits.mjs FIRST, so today they report registry-missing; their
 //     named stages (doctor-projection-missing, handshake-digest-missing) are the stages they
 //     fail at once the registry exists. The E5 fixture's positive arm is smoke-verified to
 //     connect today (the mismatch arm is the red one).
-//   * The legacy-alias door (run.send / run.act send / workstream-notify message args at
-//     16,384) rides the message lane with a DIFFERENT bound than the cataloged 2,048; the
-//     contract never scopes the alias. F1 exempts it as alias-door and the blue team should
-//     say whether the alias inherits message.send.body or keeps its own row.
+//   * RESOLVED (contract v1.2, blue-team blocker 2): the legacy-alias door (run.send /
+//     run.act send / run.workstream.notify / waves.send message args at 16,384:
+//     application.mjs:1797/:2930, coordination-store.mjs:4292, schemas
+//     application-semantics.mjs:299/:523/:1596 + mcp-northbound.mjs:357/:412/:485) is cataloged
+//     as the named admission lane run.legacy_send.body at its LIVE 16,384 value, hard with
+//     coaching. F1's alias-door exemptions are REMOVED — a cataloged lane's literals must not
+//     hide behind an exemption; the nine door hits retire on import like every other cataloged
+//     literal. B16 pins the coaching shape on the run.workstream.notify door.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -446,6 +472,8 @@ const ADMISSION_LANES = Object.freeze([
   ['steering.focus', 2048, 'bytes', null, 'steering_focus_exceeded'],
   ['board.title', 160, 'bytes', null, 'board_title_exceeded'],
   ['board.detail', 4096, 'bytes', null, 'board_detail_exceeded'],
+  ['board.report.body', 4096, 'bytes', null, 'board_report_exceeded'],
+  ['run.legacy_send.body', 16384, 'bytes', null, 'run_legacy_send_exceeded'],
   ['decision.option.label', 160, 'bytes', null, 'decision_option_label_exceeded'],
   ['decision.option.summary', 512, 'bytes', null, 'decision_option_summary_exceeded'],
   ['decision.text', 4096, 'bytes', null, 'decision_text_exceeded'],
@@ -563,13 +591,24 @@ test('A5: FRAME_LIMITS_DIGEST is canonical-derivation stable and byte-stable acr
     'the digest is byte-stable across processes (the CLI handshake compares it, Acceptance A)');
 });
 
-test('A6: board.report.body carries NO admission row in v1 (substrate-bounded, blocker 8)', async () => {
+test('A6: board.report.body is cataloged as a live admission row at the LIVE 4,096 store value (v1.2, blue-team blocker 1)', async () => {
   const limits = assertLimitsModule(await limitsOrError());
-  assert.equal(limits.FRAME_LIMITS?.['board.report.body'] ?? null, null,
-    'no admission row smuggles the dead createBoardReport 4,096 in as "consolidation" — '
-    + 'the lane is substrate-bounded in v1 (Decision 2)');
+  const row = limits.FRAME_LIMITS?.['board.report.body'];
+  assert.ok(row,
+    'the registry catalogs board.report.body — submitBoardReport enforces a LIVE 4,096 bound '
+    + '(MAX_STORE_BOARD_REPORT_BYTES, coordination-store.mjs:416, enforced :14442 via boardBounded '
+    + ':430-432, refusal invalid_board_report; second door application-semantics.mjs:1426). '
+    + 'Cataloging the LIVE value is the board.title/board.detail disposition; deleting the bound '
+    + 'would smuggle a behavior REMOVAL in as "consolidation" (the inverse of blocker 8)');
+  assert.equal(row.class, 'admission', 'board.report.body is admission class (not substrate)');
+  assert.equal(row.value, 4096, 'the row declares the LIVE store value 4,096 (Decision 8: no value change)');
+  assert.equal(row.unit, 'bytes', 'measured in UTF-8 bytes (the byte law; boardBounded is Buffer.byteLength)');
+  assert.equal(row.graceful ?? null, null, 'hard in v1 — board bodies keep hard bounds with coaching (Non-goals)');
+  assert.equal(row.refusalCode ?? null, 'board_report_exceeded', 'the row names its typed refusal code');
+  assert.equal(typeof row.enforcedAt, 'string' , 'the row names its enforcement seam (submitBoardReport)');
   assert.equal(limits.FRAME_LIMITS?.['scanner.window.board_report']?.value, 20480,
-    'doctor shows the REAL de-facto input bound: the 20,480 scanner window');
+    'the substrate row STAYS: the 20,480 scanner window remains the wire-layer resource guard '
+    + 'beside the admission row, so doctor shows both bounds');
 });
 
 // ===========================================================================
@@ -862,6 +901,46 @@ test('B14: the scratchpad entry canonical ceiling gains the coaching shape (numb
   await assertComposedRefusalText(error?.message, 'scratchpad.entry.body', error.actual, 8192, 'B14');
 });
 
+test('B15: the live board-report body store bound carries the coaching shape at 4,096 (v1.2, blue-team blocker 1)', async () => {
+  const store = new CoordinationStore(tmpDir(), { repoId: 'repo-fe', clock: () => '2026-08-04T00:00:00.000Z' });
+  const body = `REPORT-SECRET-${'r'.repeat(4096)}`;
+  let error = null;
+  try {
+    // Every other field is well-formed, so the BODY check is the only failing condition
+    // (it fires before the item-history/claim lookups, coordination-store.mjs:14442).
+    store.submitBoardReport(
+      { itemId: 'item-fe-b15', itemVersion: 1, itemDigest: 'a'.repeat(64), body, owner: 'worker:fe-b15' },
+      { actor: 'worker', principalId: 'worker:fe-b15', key: 'fe-b15-report' },
+    );
+  } catch (caught) { error = caught; }
+  assert.ok(error, 'the LIVE store bound still enforces (coordination-store.mjs:416, enforced :14442)');
+  assert.equal(error?.code ?? null, 'board_report_exceeded',
+    'stage: refusal-coaching-missing — today numberless invalid_board_report '
+    + '(\'board report body must be bounded non-empty\', the exact sin class the epic eliminates)');
+  assertCoachingPayload(error, { cap: 4096, actual: Buffer.byteLength(body) }, 'B15');
+  assertNamesBothNumbers(error?.message, { cap: 4096, actual: Buffer.byteLength(body) }, 'B15');
+  assertNoBodyContent(error?.message, body, 'B15');
+  await assertComposedRefusalText(error?.message, 'board.report.body', Buffer.byteLength(body), 4096, 'B15');
+});
+
+test('B16: the legacy-alias send door carries the coaching shape at its LIVE 16,384 (v1.2, blue-team blocker 2)', async () => {
+  const { application } = appFixture('b16');
+  const message = `GUIDANCE-SECRET-${'g'.repeat(16384)}`;
+  const { error } = await captureError(application.notifyWorkstream(
+    { runId: 'run-fe-b16', role: 'alpha', generation: 1, message, delivery: 'nudge' },
+    principal('owner'),
+  ));
+  assert.ok(error, 'the legacy alias keeps its own LIVE bound (application.mjs:1797 validText 16_384)');
+  assert.equal(error?.code ?? null, 'run_legacy_send_exceeded',
+    'stage: refusal-coaching-missing — today application_workstream_notify_invalid names NO number; '
+    + 'the run.legacy_send.body row coaches the alias at its own value, never silently at 2,048');
+  assertCoachingPayload(error, { cap: 16384, actual: Buffer.byteLength(message) }, 'B16');
+  assertNamesBothNumbers(error?.message, { cap: 16384, actual: Buffer.byteLength(message) }, 'B16');
+  assertNoBodyContent(error?.message, message, 'B16');
+  await assertComposedRefusalText(error?.message, 'run.legacy_send.body', Buffer.byteLength(message), 16384, 'B16');
+  await shutdownQuietly(application);
+});
+
 // ===========================================================================
 // C — the spill lane (stage: spill-lane-missing / spill-query-kind-missing /
 //     wave-driver-advisory-missing)
@@ -1096,6 +1175,50 @@ test('C9 (blocker 3): a body beyond the 1 MiB spill ceiling is NOT admitted and 
     'a beyond-ceiling body delivers nothing');
 });
 
+test('C10 (v1.2, blue-team blocker 4): an oversize MULTIBYTE wave member is admitted with byte-measured spill through the REAL wave-start admission — never walled', async () => {
+  const { application, driver } = appFixture('c10');
+  // 4,100 chars / 8,200 bytes — over 4,096 in BOTH measures, so TODAY both member doors wall it
+  // (wave-start walls bytes via validText's 4,096 default at application.mjs:11506; attach walls
+  // CHARS at :1854-1855) — and it discriminates byte from char accounting under the correct
+  // implementation (a char-measured "spill" records 4,100, never 8,200).
+  const objective = 'é'.repeat(4100);
+  const started = await application.startWave({
+    idempotencyKey: 'fe-c10-wave',
+    members: [{ role: 'alpha', objective, exact: { harness: 'mock', model: 'mock-model', effort: 'low' }, scope: ['**'] }],
+  }, principal('owner')).then((value) => value, (error) => ({ admissionError: error }));
+  assert.ok(!started?.admissionError,
+    `stage: wave-member-spill-missing — the wave-start member door WALLS the oversize objective today `
+    + `(application_wave_start_invalid via validText's 4,096-byte default, application.mjs:11506; `
+    + `the attach door walls chars at :1854-1855) instead of admitting with spill like run.objective — `
+    + `OQ5 passes the member THROUGH, so no wall may survive behind the advisory: `
+    + `${started?.admissionError?.code ?? started?.admissionError}`);
+  assert.match(started?.waveId ?? '', /^wave:[a-f0-9]{32}$/, 'the wave starts');
+  assert.ok(started.members?.some((entry) => entry?.role === 'alpha' && typeof entry?.runId === 'string'),
+    'the oversize member is ADMITTED and produces a Run — never refused (no wave_driver_objective_oversize, no application_wave_start_invalid)');
+  const minted = driver.coordination.events().find((event) => event.kind === 'spill.minted');
+  assert.ok(minted, 'the member admission mints a durable spill artifact exactly like run.objective (Decision 4)');
+  assert.equal(minted?.payload?.body ?? null, objective, 'the spill carries the byte-identical objective');
+  const served = driver.coordination.materializeSpill(minted.payload?.spillId ?? minted.payload?.spill);
+  assert.equal(served?.body, objective, 'materializeSpill serves the full objective');
+  assert.equal(served?.bytes ?? null, Buffer.byteLength(objective),
+    'the accounting is BYTE-measured (8,200), never chars (4,100) — the byte law fixes the '
+    + 'wave-member character check (application.mjs:1854-1855, Decision 2)');
+  // Second door: the waves.attach member validation must not wall the same oversize member on
+  // SIZE either. Transparent run-view resolution (Decision 4 item 4) keeps objective-matching
+  // intact; any outcome except the size refusal is honest here — the pin is the absent wall.
+  const attached = await application.attachWave({
+    waveId: started.waveId,
+    members: [{ role: 'alpha', objective }],
+    timeoutMs: 5_000,
+  }, principal('owner')).then((value) => value, (error) => ({ admissionError: error }));
+  assert.notEqual(attached?.admissionError?.code ?? null, 'application_wave_attach_invalid',
+    'the waves.attach member door never draws a SIZE refusal — the char wall at '
+    + 'application.mjs:1854-1855 must not survive behind the driver advisory (the named wrong '
+    + 'implementation of blue-team blocker 4)');
+  void attached;
+  await shutdownQuietly(application);
+});
+
 // ===========================================================================
 // D — scanner posture: shape-only forever, all SIX grammars (blocker 2).
 // C0b of bidirectional-v3-red.test.mjs:434-455 pins MESSAGE_SEND and is NOT
@@ -1141,12 +1264,15 @@ test('D4 (pin): a large-but-parseable BOARD_CLAIM frame is admitted shape-only',
   assert.equal(parsed.grantId.length, 3000);
 });
 
-test('D5 (pin, blocker 8): a BOARD_REPORT body over the DEAD factory\'s 4,096 is admitted shape-only', () => {
-  const body = 'r'.repeat(5000); // over createBoardReport's dead 4,096 — the lane is substrate-bounded in v1
+test('D5 (pin): a BOARD_REPORT body over the LIVE 4,096 admission bound is still admitted shape-only at the wire', () => {
+  const body = 'r'.repeat(5000); // over the live 4,096 store bound — the SCANNER layer never caps
   const text = `BOARD_REPORT: {"grantId":"g1","itemId":"i1","itemVersion":1,"itemDigest":"${'a'.repeat(64)}","expectedClaimVersion":1,"body":"${body}","idempotencyKey":"d5-report"}`;
   const parsed = claudeSession.scanForBoardReport(text);
-  assert.ok(parsed, 'board.report.body has NO admission row in v1: the only live bound is the 20,480 '
-    + 'scanner window — a wire cap at the dead factory\'s value would smuggle a NEW restriction (Decision 2)');
+  assert.ok(parsed, 'the board-report scanner is inline shape-only (claude-session.mjs:195-216): the wire '
+    + 'admits what admission refuses with coaching — the LIVE 4,096 bound sits at the STORE '
+    + '(MAX_STORE_BOARD_REPORT_BYTES, coordination-store.mjs:416, enforced in submitBoardReport at :14442 '
+    + 'via boardBounded :430-432) with a second door at the arg schema (application-semantics.mjs:1426); '
+    + 'B15 pins that refusal. A wire cap at ANY value below the 20,480 window fails this pin (Decision 5)');
   assert.equal(parsed.body.length, 5000);
 });
 
@@ -1455,12 +1581,17 @@ const BYTE_PROSE_REGEXES = Object.freeze([
 //   uncataloged         coincidental value collisions on lanes the catalog does not cover
 //                        (identity lanes / id-class regexes / counts per AS-6, policy ceilings,
 //                        sibling transports, exec buffers, schema bounds on uncataloged lanes)
-//   alias-door          the legacy run.send / run.act send / workstream-notify message args
-//                        (16,384) — the BD3-C typed lane's cap is cataloged; the legacy alias's
-//                        own bound predates it and is NOT scoped by the contract (flagged)
 // Any NEW hit outside this table fails the row.
 //
-// DELIBERATELY NOT EXEMPTED (flagged in the header):
+// RETIRED CLASS (contract v1.2, blue-team blocker 2): the alias-door exemption class is gone.
+// The legacy run.send / run.act send / run.workstream.notify / waves.send message door is now
+// the CATALOGED admission lane run.legacy_send.body (16,384, its LIVE value), and a cataloged
+// lane's literals must not hide behind an exemption: the nine door literals
+// (application-semantics.mjs:299/:523/:1596, mcp-northbound.mjs:357/:412/:485,
+// application.mjs:1797/:2930, coordination-store.mjs:4292) count as ordinary hits and retire
+// on import like every other cataloged literal.
+//
+// DELIBERATELY NOT EXEMPTED (ratified by contract v1.2):
 //   * the schema second-door class — CHAR maxLength bounds on CATALOGED lanes at the
 //     application-semantics / mcp-northbound arg-schema layer (the wave-member char-check sin
 //     class): application-semantics.mjs objective 4096 (:163, :1551, :1575), answer_decision
@@ -1468,14 +1599,15 @@ const BYTE_PROSE_REGEXES = Object.freeze([
 //     mcp-northbound.mjs objective (:314, :444, :464), answer text (:322), board detail
 //     (:927, :935), orientation.note (:607 schema, :910 byte check); web-northbound.mjs:458.
 //     Decision 8's "no module re-declares a byte literal for a cataloged lane" is read as
-//     unconditional and the byte law covers every cataloged text lane.
+//     unconditional and the byte law covers every cataloged text lane — v1.2 names these
+//     layers as registry consumers (Decision 1's consumer list) and the law as
+//     layer-unconditional (Decision 8).
 //   * comments citing cataloged values (hand-typed byte prose that goes stale on retune):
 //     application.mjs:331, messages.mjs:500, coordination-store.mjs:16289.
-//   * coordination-store.mjs:416 (MAX_STORE_BOARD_REPORT_BYTES = 4_096, ENFORCED at :14442):
-//     the v1.1 fold (blocker 8) believes the store's board-report body check is shape-only at
-//     :14423-14425. In THIS tree the check is a live 4,096 bound — a contract/tree
-//     contradiction the blue team must resolve (catalog it as a live admission row, or drop it
-//     as an operator-visible behavior change); F1 refuses to look away.
+//   * coordination-store.mjs:416 (MAX_STORE_BOARD_REPORT_BYTES = 4_096, ENFORCED at :14442 via
+//     boardBounded :430-432) — RESOLVED (contract v1.2, blue-team blocker 1): the lane is
+//     cataloged as the live admission row board.report.body 4,096, so :416/:14442 and the
+//     schema door :1426 stay ordinary cataloged-lane hits and retire on import.
 const F_EXEMPTIONS = Object.freeze([
   ['acp-json-rpc-process.mjs', /maxFrameBytes = options\.maxFrameBytes \?\? 1024 \* 1024/u, 'uncataloged: sibling-transport frame bound'],
   ['adapter.mjs', /maxWireFrameBytes: 1024 \* 1024/u, 'uncataloged: sibling-transport frame bound'],
@@ -1495,14 +1627,12 @@ const F_EXEMPTIONS = Object.freeze([
   ['application-semantics.mjs', /\{ type: 'string', maxLength: 16384 \}/u, 'uncataloged: contextPrimitive schema'],
   ['application-semantics.mjs', /query: \{ type: 'string', minLength: 1, maxLength: 4096 \}/u, 'uncataloged: help/inspect query schemas'],
   ['application-semantics.mjs', /pageCursor: \{ type: 'string', minLength: 1, maxLength: 4096/u, 'uncataloged: cursor id-class schema'],
-  ['application-semantics.mjs', /message: \{ type: 'string', minLength: 1, maxLength: 16384 \}/u, 'alias-door: run.act/workstream message schemas'],
   ['application-semantics.mjs', /instruction: \{ type: 'string', minLength: 1, maxLength: 16384 \}/u, 'uncataloged: workflow instruction schema'],
   ['application-semantics.mjs', /inputSchema: objectSchema\(\{ text: \{ type: 'string', minLength: 1, maxLength: 4096 \} \}, \['text'\]\)/u, 'uncataloged: answer_question text schema (NOT the decision lane)'],
   ['application-semantics.mjs', /message: \{ type: 'string', minLength: 1, maxLength: 4096, default: 'Continue the current turn\.' \}/u, 'uncataloged: nudge_turn message schema'],
   ['application-semantics.mjs', /role: \{ type: 'string', minLength: 1, maxLength: 256 \}/u, 'uncataloged: feedback role schema'],
   ['application-semantics.mjs', /^\s+\{ type: 'string', minLength: 1, maxLength: 4096 \},$/u, 'uncataloged: workflow feedback free-form string schema'],
   ['application-semantics.mjs', /(summary|message|path|configPath|repoRoot): (\{ oneOf: \[)?\{ type: 'string'(, 'null')?, minLength: 1, maxLength: 4096/u, 'uncataloged: workflow feedback / config / repoRoot schemas'],
-  ['application-semantics.mjs', /runId: id, message: \{ type: 'string', minLength: 1, maxLength: 16384 \}/u, 'alias-door: run.act send message schema'],
   ['application.mjs', /export const MAX_SCRATCHPAD_VIEW_BYTES/u, 're-export source: GT8 export-precedent view constant'],
   ['application.mjs', /validText\((report\.summary|finding\.claim|finding\.requiredCorrection), 8_192\)/u, 'uncataloged: review report per-field caps'],
   ['application.mjs', /bounds\.maxBytes - 8_192/u, 'uncataloged: semantic-bounds arithmetic'],
@@ -1510,10 +1640,8 @@ const F_EXEMPTIONS = Object.freeze([
   ['application.mjs', /Buffer\.byteLength\(item\) > 4096/u, 'uncataloged: command arguments bound'],
   ['application.mjs', /validText\((input\.summary|finding\.message), 4_096\)/u, 'uncataloged: review intake fields'],
   ['application.mjs', /args\.pageCursor\.length > 4_096/u, 'uncataloged: cursor id-class'],
-  ['application.mjs', /validText\(args\.message, 16_384\)/u, 'alias-door: run.act send message'],
   ['application.mjs', /args\.repoRoot\.length > 4096/u, 'uncataloged: repoRoot identity'],
   ['application.mjs', /validText\(args\.requestId, 4_096\)/u, 'uncataloged: requestId id-class'],
-  ['application.mjs', /validText\(message, 16_384\)/u, 'alias-door: run.act send message'],
   ['application.mjs', /validText\((ref\.id|node\.taskId|taskId|integrationTaskId|worker|rawRequest\.actionId|pending\.requestId|checkpoint\.requestId|attention\.requestId|requestId|request\.inputs\.query|action\.target\?\.requestId|action\.target\?\.pauseId|handle\.sessionRef\?\.id), 4_096\)/u, 'uncataloged: identity-lane shape bounds (AS-6)'],
   ['application.mjs', /validText\(request\.inputs\.instruction, 16_384\)/u, 'uncataloged: workflow instruction'],
   ['application.mjs', /comment.*validText\(attention\.requestId, 4_096\)|\/\/ entry failing `validText\(attention\.requestId, 4_096\)`/u, 'uncataloged: comment citing an id-class check'],
@@ -1568,7 +1696,6 @@ const F_EXEMPTIONS = Object.freeze([
   ['coordination-store.mjs', /context\.sparsePaths\.length > 4_096/u, 'uncataloged: sparse-path COUNT'],
   ['coordination-store.mjs', /Buffer\.byteLength\((fields\.taskId|p\.taskId|id|fields\.id|request\[name\])\) > 4_096/u, 'uncataloged: identity-lane shape bounds (AS-6)'],
   ['coordination-store.mjs', /branch\.summary\.length > 4_096/u, 'uncataloged: branch summary bound'],
-  ['coordination-store.mjs', /boundedText\(p\.message, 16_384\)/u, 'alias-door: run.act send message'],
   ['coordinator.mjs', /Buffer\.byteLength\(JSON\.stringify\(result\)\) > 32_768/u, 'uncataloged: route-observation result cap'],
   ['coordinator.mjs', /policy\.maxTargetBytes > 1024 \* 1024/u, 'uncataloged: scratch-oracle policy ceiling'],
   ['coordinator.mjs', /_orientationBound\(\{ modules \}, 2048\)/u, 'uncataloged: orientation-ladder render bound'],
@@ -1595,7 +1722,7 @@ const F_EXEMPTIONS = Object.freeze([
   ['kimi-credential-setup.mjs', /FILE_MAX_BYTES = 16 \* 1024/u, 'uncataloged: setup-file bound (NOT the credential.file lane)'],
   ['mcp-descriptor.mjs', /maxMessageBytes: 256 \* 1024/u, 'uncataloged: descriptor message bound'],
   ['mcp-northbound.mjs', /scope: \{ type: 'array', minItems: 1, maxItems: 64, uniqueItems: true, items: \{ type: 'string', minLength: 1, maxLength: (4_096|4096) \} \}/u, 'uncataloged: scope item schemas'],
-  ['mcp-northbound.mjs', /message: \{ type: 'string', minLength: 1, maxLength: (4_096|16384) \}/u, 'alias-door: run.act/workstream message schemas'],
+  ['mcp-northbound.mjs', /message: \{ type: 'string', minLength: 1, maxLength: 4_096 \}/u, 'uncataloged: feedback finding message schema'],
   ['mcp-northbound.mjs', /^\s+\{ type: 'string', minLength: 1, maxLength: 4_096 \},$/u, 'uncataloged: workflow feedback free-form string schema'],
   ['mcp-northbound.mjs', /(summary|repoRoot): \{ type: 'string', minLength: 1, maxLength: (4_096|4096) \}/u, 'uncataloged: workflow feedback / repoRoot schemas'],
   ['mcp-northbound.mjs', /path: \{ oneOf: \[\{ type: 'string', minLength: 1, maxLength: 4_096 \}/u, 'uncataloged: workflow feedback path schema'],
