@@ -37,6 +37,12 @@ const DEFAULT_POLICY = Object.freeze({
   settleTimeoutMs: 5_000,
   finalization: 'none',
   unproductiveNudgeBudget: 1,
+  // CP8 (#88): the per-member corrective-nudge COUNT budget drawn on a claim_premature_liveness
+  // refusal (the claim-time liveness preflight). Parallel to unproductiveNudgeBudget; consumed on
+  // DELIVERED acknowledgment only (D8). 2 = the largest legitimate per-member claim cadence
+  // observed in the acceptance suite (phase11-persistent-sessions:372/:379 claims two successive
+  // checkpoints) with one to spare — a third corrective cycle is a permanently diffless worker.
+  refusalNudgeBudget: 2,
   saltObjectives: true,
   preflight: true,
   evidencePath: null,
@@ -99,6 +105,9 @@ function freezePolicy(raw) {
   }
   if (!Number.isSafeInteger(policy.unproductiveNudgeBudget) || policy.unproductiveNudgeBudget < 0) {
     throw driverError('wave driver policy unproductiveNudgeBudget is invalid', 'wave_driver_policy_invalid');
+  }
+  if (!Number.isSafeInteger(policy.refusalNudgeBudget) || policy.refusalNudgeBudget < 0) {
+    throw driverError('wave driver policy refusalNudgeBudget is invalid', 'wave_driver_policy_invalid');
   }
   if (typeof policy.saltObjectives !== 'boolean') {
     throw driverError('wave driver policy saltObjectives is invalid', 'wave_driver_policy_invalid');
@@ -243,26 +252,6 @@ export function createWaveDriver(baton, rawPolicy = null) {
   }
   const policy = freezePolicy(rawPolicy);
 
-  async function claimOnce(role, run, checkpoint, claims, state) {
-    if (state.claimAttempted) return;
-    state.claimAttempted = true;
-    const at = new Date().toISOString();
-    try {
-      const result = await run.act('claim_turn', {});
-      if (result && typeof result === 'object' && result.ok === false) {
-        throw Object.assign(new Error(String(result.reason ?? result.result ?? 'claim refused')), {
-          code: result.result ?? 'claim_refused',
-        });
-      }
-      state.claimed = true;
-      claims.push({ role, requestId: checkpoint.requestId, at, code: 'claimed' });
-    } catch (error) {
-      // 31b5 :263-295 — claim re-runs the live trust gate and is terminal on a stale checkpoint;
-      // a scope mismatch (the pause resolved concurrently) is tolerated and recorded, never fatal.
-      claims.push({ role, requestId: checkpoint.requestId, at, code: error?.code ?? null });
-    }
-  }
-
   async function run(options = {}) {
     if (!options || typeof options !== 'object' || Array.isArray(options)) {
       throw driverError('wave driver run options are invalid', 'wave_driver_options_invalid');
@@ -338,11 +327,67 @@ export function createWaveDriver(baton, rawPolicy = null) {
     const claims = [];
     // L6 per-member state across polls: digest = changedPathsDigest at the last nudge; nudges =
     // unchanged-digest nudge cycles in the current streak (resets when the digest changes); done =
-    // budget exhausted, stop nudging; claimAttempted/claimed separate "one claim" from "settled".
+    // budget exhausted, stop nudging; refusalsNudged = corrective nudges delivered against the
+    // refusalNudgeBudget (CP8); claimed stays per-member ("one claim" vs "settled").
     const memberState = new Map();
-    const freshState = () => ({ digest: null, nudges: 0, done: false, claimAttempted: false, claimed: false });
+    const freshState = () => ({ digest: null, nudges: 0, done: false, refusalsNudged: 0, claimed: false });
     const nudgedRequestIds = new Set(); // L4: dedup within a single pause (requestId-stable across polls)
     const failuresByRequestId = new Map(); // consecutive delivery failures per pause; K=3 = unsteerable
+    // CP8: claim attempts key per pauseId — a refused claim must not consume the driver's one
+    // claim for the NEXT pause record (the CP6 "claimable later" contract at the driver layer).
+    const claimedPauseIds = new Set();
+    // CP8: one corrective nudge per claim_premature_liveness refusal, exempt from the L4
+    // one-nudge-per-pause dedup exactly once, drawn from the per-member refusalNudgeBudget and
+    // consumed on DELIVERED acknowledgment (D8 — a {ok:false} delivery VALUE consumes nothing).
+    // Exhaustion is record-only: the refusal is on the claims evidence, no nudge, and the pause
+    // pends to the driver's PRE-EXISTING stall clock.
+    const correctiveNudge = async (role, runHandle, checkpoint, state) => {
+      const at = new Date().toISOString();
+      try {
+        const result = await runHandle.act('nudge_turn', { message: policy.completionMessage });
+        if (result && typeof result === 'object' && result.ok === false) {
+          throw Object.assign(new Error(String(result.reason ?? result.result ?? 'nudge refused')), {
+            code: result.result ?? 'nudge_refused',
+          });
+        }
+        state.refusalsNudged += 1;
+        nudges.push({ role, requestId: checkpoint.requestId, at });
+        nudgedRequestIds.add(checkpoint.requestId);
+        failuresByRequestId.delete(checkpoint.requestId);
+      } catch (error) {
+        // D8: a refused corrective delivery arrives as a VALUE and consumes no budget.
+        failuresByRequestId.set(checkpoint.requestId, (failuresByRequestId.get(checkpoint.requestId) ?? 0) + 1);
+        nudges.push({
+          role, requestId: checkpoint.requestId, at,
+          error: { code: error?.code ?? null, message: String(error?.message ?? error) },
+        });
+      }
+    };
+    async function claimOnce(role, runHandle, checkpoint, claims, state) {
+      if (claimedPauseIds.has(checkpoint.requestId)) return;
+      claimedPauseIds.add(checkpoint.requestId);
+      const at = new Date().toISOString();
+      let code;
+      try {
+        const result = await runHandle.act('claim_turn', {});
+        if (result && typeof result === 'object' && result.ok === false) {
+          throw Object.assign(new Error(String(result.reason ?? result.result ?? 'claim refused')), {
+            code: result.result ?? 'claim_refused',
+          });
+        }
+        state.claimed = true;
+        claims.push({ role, requestId: checkpoint.requestId, at, code: 'claimed' });
+        code = 'claimed';
+      } catch (error) {
+        // 31b5 :263-295 — claim re-runs the live trust gate and is terminal on a stale checkpoint;
+        // a scope mismatch (the pause resolved concurrently) is tolerated and recorded, never fatal.
+        code = error?.code ?? null;
+        claims.push({ role, requestId: checkpoint.requestId, at, code });
+      }
+      if (code === 'claim_premature_liveness' && state.refusalsNudged < policy.refusalNudgeBudget) {
+        await correctiveNudge(role, runHandle, checkpoint, state);
+      }
+    }
     // Bidirectional v2 rule 3: at-most-once decision-callback dedup, keyed `${runId}:${requestId}`.
     const decisionFired = new Set();
     const decisionEvidence = []; // v2 rule 3: one driver-evidence line per fired decision.
@@ -585,7 +630,7 @@ export function createWaveDriver(baton, rawPolicy = null) {
             if (state.done) {
               // L6 done + claim-on-stall: the member's live-rechecked admission (claim) resolves the
               // parked workerResult into work_completed NOW — no waiting for the stall clock (D6).
-              if (policy.finalization === 'claim-on-stall' && !state.claimAttempted) {
+              if (policy.finalization === 'claim-on-stall' && !claimedPauseIds.has(checkpoint.requestId)) {
                 await claimOnce(role, runHandle, checkpoint, claims, state);
               }
               memberState.set(role, state);
@@ -606,7 +651,7 @@ export function createWaveDriver(baton, rawPolicy = null) {
               // L6: a re-park with an unchanged changedPathsDigest after the budget is the treadmill
               // — the member is done; stop nudging it.
               state.done = true;
-              if (policy.finalization === 'claim-on-stall' && !state.claimAttempted) {
+              if (policy.finalization === 'claim-on-stall' && !claimedPauseIds.has(checkpoint.requestId)) {
                 await claimOnce(role, runHandle, checkpoint, claims, state);
               }
               memberState.set(role, state);
@@ -659,7 +704,7 @@ export function createWaveDriver(baton, rawPolicy = null) {
             // mismatch tolerated and recorded.
             for (const { role, run: runHandle, checkpoint } of paused) {
               const state = memberState.get(role) ?? freshState();
-              if (!state.claimAttempted) await claimOnce(role, runHandle, checkpoint, claims, state);
+              if (!claimedPauseIds.has(checkpoint.requestId)) await claimOnce(role, runHandle, checkpoint, claims, state);
               memberState.set(role, state);
             }
             // Recovered must be measured AFTER the claims: a member whose claim was tolerated as
