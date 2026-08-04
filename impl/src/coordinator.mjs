@@ -10,7 +10,7 @@ import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:pat
 import { Cursor } from './log.mjs';
 import {
   boundedAttentionText, buildKnowledgeSlice, createBrief, createDecisionAnswer, createDecisionRequest, createDigest,
-  ValidationError, wrapFact, wrapProse,
+  frameWebContent, ValidationError, wrapFact, wrapProse,
 } from './messages.mjs';
 import { parseRouteTupleKey, resolveEffort, routeTupleKey } from './route-tuple.mjs';
 import { hasNorthboundCapabilityAuthority } from './northbound-capability-authority.mjs';
@@ -24,6 +24,7 @@ import {
 import { normalizeProviderGovernancePolicy, providerGovernanceRoute, validateProviderGovernanceCard } from './provider-governance.mjs';
 import { normalizePhysicalOwnerId, normalizeSparseCheckoutIdentity, normalizeSparsePaths, sparseCheckoutIdentity } from './worktree.mjs';
 import { GoalPlanValidationError, goalPlanDigest, normalizeGoalPlanContext, planBriefMatches } from './goal-plan.mjs';
+import { normalizeBrowserUseUrl } from './browser-use.mjs';
 import { addUsd, subtractUsdFloor, usdFromNanos, usdToNanos } from './usd.mjs';
 import { materializeResultTree } from './result-export.mjs';
 import {
@@ -2179,6 +2180,17 @@ export class Coordinator {
       if (!interaction || interaction.worker !== record.worker || interaction.state !== 'resolved') return false;
       if (steering.resolvedRequestIds.has(requestId)) return false;
       steering.resolvedRequestIds.add(requestId);
+      return true;
+    }
+    if (evidence?.kind === 'capability_op') {
+      // BU-2-2 amendment: a completed capability fetch feeds the steering cycle as TG2
+      // progress evidence, deduplicated by the extract content digest exactly as
+      // coordinator.mjs:9881 pins for scratchpad writes. A digest-less capability_op never
+      // qualifies, and replayed/honest-empty invocations never reach this call at all.
+      const digest = evidence.digest;
+      if (typeof digest !== 'string' || digest.length === 0) return false;
+      if (steering.digestSet.has(digest)) return false;
+      steering.digestSet.add(digest);
       return true;
     }
     return false;
@@ -6630,7 +6642,10 @@ export class Coordinator {
       const generation = this._messageProcessGeneration.get(handle.id) ?? 1;
       // #92: the frame carries the messageId — without it a live worker can never construct
       // inReplyTo and the reply lane is dead end-to-end. Id first, banner preserved.
-      const framed = `[MESSAGE ${kind} ${messageId} — UNTRUSTED] ${body}`;
+      // BU-2-3: a message body quoting web extract (referencing a web_fetch artifact handle)
+      // is sanitized + redacted + wrapped UNTRUSTED_WEB_CONTENT at this one delivery seam —
+      // exactly once, never stripped, never doubled by a parallel route.
+      const framed = `[MESSAGE ${kind} ${messageId} — UNTRUSTED] ${frameWebContent(body)}`;
       const slot = (handle.sendChain ?? Promise.resolve()).then(() =>
         Promise.resolve(this._adapters[handle.vendor].prompt(handle.id, framed, 'nudge'))
           .then(() => ({ ok: true }), () => ({ ok: false })));
@@ -9919,7 +9934,18 @@ export class Coordinator {
   async invokeCapability(name, op, args, ctx = {}) {
     await this._assertOperational();
     if (ctx.transport !== undefined) throw Object.assign(new Error('direct capability callers cannot assert northbound transport'), { code: 'capability_transport_forbidden' });
-    const releaseAuthority = this._acquireAuthorityOp(); try { return await this._capabilityRegistry().invoke(name, op, args, ctx); } finally { releaseAuthority(); }
+    const releaseAuthority = this._acquireAuthorityOp();
+    try {
+      // BU-2-2-6 (blue-team blocker 1): browser-use URLs normalize at the capability
+      // boundary BEFORE the registry's {repoId, actor, idempotencyKey} binding, so the
+      // cache-busting/empty-param pair becomes ONE invocation under one key (a replay, not a
+      // capability_idempotency_conflict). The capability itself normalizes too; this seam is
+      // the wiring that reaches the args ahead of the binding.
+      const normalized = name === 'browser-use' && typeof args?.url === 'string'
+        ? { ...args, url: normalizeBrowserUseUrl(args.url) }
+        : args;
+      return await this._capabilityRegistry().invoke(name, op, normalized, ctx);
+    } finally { releaseAuthority(); }
   }
 
   /** Resume a bounded ACI operation through the same coordinator-owned registry. */

@@ -344,6 +344,13 @@ function normalizeNode(value, policy, goal, options) {
     || result.requiredEffects.some((item) => item !== 'repository_edit'))) {
     fail('plan node required effects exceed authorized or supported effects', 'plan_required_effect_invalid');
   }
+  // BU-2-1 amendment (b): `analysis: true` declares the node diff-free, so requiring
+  // `repository_edit` is a self-contradiction (it would silently skip the very check it
+  // demands). Refused here at construction, symmetric with validateBrief's refusal.
+  if (hasAnalysis && result.analysis === true && Array.isArray(result.requiredEffects)
+    && result.requiredEffects.includes('repository_edit')) {
+    fail('plan node analysis:true contradicts requiredEffects [repository_edit]', 'plan_required_effect_invalid');
+  }
   // TG5: `analysis: true` is the SOLE legitimate path for an effectful node to omit
   // `repository_edit` from its requiredEffects. Any other omission is a plan-validation error
   // naming the field — a node cannot silently weaken the effect audit. A purely read-only node
@@ -407,7 +414,7 @@ export function normalizePlanRequest(value, policy, goal, options = {}) {
 }
 
 export function buildAuthoritativeBrief(goal, plan, node, binding) {
-  return {
+  const brief = {
     goal: node.objective,
     constraints: clone(goal.constraints),
     pathScope: clone(node.pathScope),
@@ -425,6 +432,18 @@ export function buildAuthoritativeBrief(goal, plan, node, binding) {
     ...(Object.hasOwn(node, 'contextCall') ? { contextCall: clone(node.contextCall) } : {}),
     goalPlan: clone(binding),
   };
+  // BU-2-1 amendment (a): the plan node's analysis declaration reaches the Brief the TG5
+  // gate reads. Non-enumerable so a plain spread/destructure of the authoritative brief
+  // (which callers use to hand a caller brief back to spawn) does NOT silently carry the
+  // gate-affecting flag — the flag is bound into the plan/Brief match by semanticBriefCore
+  // /planBriefMatches instead, and re-materialized enumerably at the dispatch preview seam
+  // (coordination-store _planDispatchState) where it must ride the dispatched task brief.
+  if (Object.hasOwn(node, 'analysis')) {
+    Object.defineProperty(brief, 'analysis', {
+      value: node.analysis === true, enumerable: false, writable: false, configurable: true,
+    });
+  }
+  return brief;
 }
 
 export const PLAN_BRIEF_FIELDS = Object.freeze([
@@ -440,6 +459,7 @@ export function semanticBriefCore(value) {
     ...(Object.hasOwn(value, 'workerPolicy') ? ['workerPolicy'] : []),
     ...(Object.hasOwn(value, 'revisionContext') ? ['revisionContext'] : []),
     ...(Object.hasOwn(value, 'contextCall') ? ['contextCall'] : []),
+    ...(Object.hasOwn(value, 'analysis') ? ['analysis'] : []),
   ];
   return Object.fromEntries(fields
     .filter((key) => Object.hasOwn(value, key)).map((key) => [key, clone(value[key])]));
@@ -454,10 +474,11 @@ export function planBriefMatches(value, authoritative, { goalPlanCoordinates = f
     ...(Object.hasOwn(authoritative ?? {}, 'workerPolicy') ? ['workerPolicy'] : []),
     ...(Object.hasOwn(authoritative ?? {}, 'revisionContext') ? ['revisionContext'] : []),
     ...(Object.hasOwn(authoritative ?? {}, 'contextCall') ? ['contextCall'] : []),
+    ...(Object.hasOwn(authoritative ?? {}, 'analysis') ? ['analysis'] : []),
     ...(goalPlanCoordinates ? ['goalPlan'] : []),
   ];
   return value !== null && typeof value === 'object' && !Array.isArray(value)
-    && Object.keys(value).sort().join('\0') === [...fields].sort().join('\0')
+    && Object.getOwnPropertyNames(value).sort().join('\0') === [...fields].sort().join('\0')
     && goalPlanDigest(supplied) === goalPlanDigest(expected);
 }
 
