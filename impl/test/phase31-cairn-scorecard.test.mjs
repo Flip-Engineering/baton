@@ -82,7 +82,10 @@ test('CR2/CR7: unknown/nonterminal/post-close admission and tamper fail closed',
   await until(async () => (await d.coordinator.result(handle.id)).ready, 'slow terminal task');
   const result = await d.coordinator.invokeCapability('cairn', 'run.scorecard', { runId: 'run-slow' }, ctx);
   await assert.rejects(d.coordinator.spawn('mock', brief('later.txt'), { taskId: 'late-task', runId: 'run-slow' }), (error) => error.code === 'run_sealed');
-  writeFileSync(result.refs[0].path, 'tampered\n');
+  // Epic #81 (O-5): the coordinator boundary strips ref.path (worker-visible refs carry
+  // {kind, handle, digest, bytes, mediaType} only) — the internal tamper derives the artifact
+  // path from the fixture root + digest (cairn layout: <artifactRoot>/<digest>.json).
+  writeFileSync(join(d.artifactRoot, `${result.refs[0].digest}.json`), 'tampered\n');
   const reverified = await d.coordinator.reverifyCapability('cairn', 'run.scorecard', result, { runId: 'run-slow' }, ctx);
   assert.equal(reverified.status, 'diverged'); assert.equal(reverified.payload[0].ok, false);
   await d.coordinator.kill(handle.id, 'policy');

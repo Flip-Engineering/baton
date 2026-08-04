@@ -1,10 +1,20 @@
 import { createHash } from 'node:crypto';
+import { execFileSync } from 'node:child_process';
 import { closeSync, constants, existsSync, fstatSync, mkdirSync, openSync, readFileSync, readSync, realpathSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { compareCanonicalStrings } from './canonical-order.mjs';
 
 const typed = (message, code) => Object.assign(new Error(message), { code });
 const sha = (value) => createHash('sha256').update(value).digest('hex');
+// Epic #81 (O-3): the base authority is the immutable git object tree. Resume re-derives it and
+// refuses on divergence — content/git-based, never a clock/TTL.
+const gitTreeSha = (root) => {
+  try {
+    const toplevel = execFileSync('git', ['-C', root, 'rev-parse', '--show-toplevel'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+    if (realpathSync(toplevel) !== realpathSync(root)) return null;
+    return execFileSync('git', ['-C', root, 'rev-parse', '--verify', 'HEAD^{tree}'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+  } catch { return null; }
+};
 const boundedRead = (path, expectedBytes, ceiling, code = 'artifact_integrity') => {
   if (!Number.isSafeInteger(expectedBytes) || expectedBytes < 0 || !Number.isSafeInteger(ceiling) || ceiling <= 0 || expectedBytes > ceiling) throw typed('artifact exceeded deployment ceiling', code);
   let fd;
@@ -554,7 +564,7 @@ export class CartographerQuartermaster {
       }
       const focusedDigest = symbolFocus ? sha(stable(items)) : null;
       return this._result({ schemaVersion: 1, op, query: { focus, shape, indexEpoch: args.indexEpoch, ...(symbolFocus ? { symbolFocus } : {}) }, summary: this.availability.status === 'empty' ? 'no JavaScript/TypeScript-family sources; honest empty orientation slice' : `${items.length} ${shape} orientation records for ${JSON.stringify(focus)}`, items,
-        provenance: { index_epoch: innerResult.provenance.index_epoch, overlay_digest: focusedDigest ?? innerResult.provenance.overlay_digest ?? null, staleness: innerResult.provenance.staleness, language_ceiling: this.availability.status === 'empty' ? 'honest_empty' : 'javascript_typescript_family', atlasArtifactDigest: focusedDigest ?? ref.digest } }, ctx, started);
+        provenance: { index_epoch: innerResult.provenance.index_epoch, baseTreeSha: innerResult.provenance.baseTreeSha ?? null, overlay_digest: focusedDigest ?? innerResult.provenance.overlay_digest ?? null, staleness: innerResult.provenance.staleness, language_ceiling: this.availability.status === 'empty' ? 'honest_empty' : 'javascript_typescript_family', atlasArtifactDigest: focusedDigest ?? ref.digest } }, ctx, started);
     }
     if (op === 'reuse.internal') {
       const need = normalizedText(args.need, 'invalid_reuse'); const queryTerms = terms(need);
@@ -772,6 +782,14 @@ export class CartographerQuartermaster {
     if (!match || match[1] !== ref?.digest || ref?.handle !== `art:sha256:${match[1]}`) throw typed('orientation cursor mismatch', 'invalid_cursor');
     const document = this._loadArtifact(ref);
     if (['reuse.vet', 'provenance.sbom', 'provenance.plan', 'provenance.advisories'].includes(document.op)) throw typed('artifact is ref-addressed, not cursor-resumable', 'capability_resume_unavailable');
+    // Epic #81 (O-3): resume is a serve path — it re-checks the freshness authority and refuses
+    // effective_tree_changed when the base tree moved, never serving the cached slice as fresh.
+    // Content/git-based (HEAD^{tree}), never a clock/TTL.
+    const attestedTree = document.provenance?.baseTreeSha ?? null;
+    if (attestedTree && typeof ctx.worktreeRoot === 'string' && ctx.worktreeRoot.length > 0) {
+      const currentTree = gitTreeSha(ctx.worktreeRoot);
+      if (currentTree && currentTree !== attestedTree) throw typed('orientation resume detected a moved base tree', 'effective_tree_changed');
+    }
     const offset = Number(match[2]); if (!Number.isSafeInteger(offset) || offset < 0 || offset > document.items.length) throw typed('orientation cursor offset invalid', 'invalid_cursor');
     const payload = bounded(document.items.slice(offset), ctx.budgetTokens); const next = offset + payload.length; const truncated = next < document.items.length;
     return Object.freeze({ op: document.op, status: truncated ? 'needs_resume' : 'ok', summary: document.summary, payload, refs: [ref], ...(truncated ? { cursor: `orientation:${match[1]}:${next}` } : {}),

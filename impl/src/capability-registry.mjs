@@ -5,7 +5,7 @@ import { compareCanonicalStrings } from './canonical-order.mjs';
 const typed = (message, code) => Object.assign(new Error(message), { code });
 const record = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
 const json = (value) => JSON.parse(JSON.stringify(value));
-const ACI_STATUSES = new Set(['ok', 'partial', 'error', 'needs_resume', 'diverged']);
+const ACI_STATUSES = new Set(['ok', 'partial', 'error', 'needs_resume', 'diverged', 'orientation_unavailable']);
 const SAFE_ID = /^[A-Za-z0-9._:-]{1,256}$/;
 const stable = (value) => {
   if (Array.isArray(value)) return `[${value.map(stable).join(',')}]`;

@@ -558,8 +558,12 @@ test('NR1/NR3: recovery attaches without provider work, commits its refinement a
   assert.equal(spawnOpts.session.mode, 'resume');
   assert.deepEqual(spawnEmissions, ['lifecycle.spawned'], 'attach emits identity, not an implicit turn');
   const admittedBrief = f.replay._tasks.get(f.replay._workers.get(f.handle.id).taskId).brief;
-  assert.deepEqual(f.resumed.calls.promptBrief[0], [f.handle.id, admittedBrief], 'coordinator uses the immutable admitted Brief through the adapter dialect hook');
-  assert.deepEqual(f.resumed.calls.prompt[0].slice(1), [admittedBrief, 'turn']);
+  // Epic #81 (OR-S1): the admission injects the L0 orientation grant into every spawn/recovery
+  // prompt brief — compare the delegation fields, then assert the grant positively.
+  const { orientation, ...promptDelegation } = f.resumed.calls.promptBrief[0][1];
+  assert.deepEqual([f.handle.id, promptDelegation], [f.handle.id, admittedBrief], 'coordinator uses the immutable admitted Brief through the adapter dialect hook');
+  assert.ok(orientation && typeof orientation.frame === 'string' && orientation.frame.startsWith('UNTRUSTED_ORIENTATION'), 'OR-S1: the L0 orientation grant is cited into the recovery prompt brief');
+  assert.deepEqual(f.resumed.calls.prompt[0].slice(1), [{ ...admittedBrief, orientation }, 'turn']);
 
   const created = coordinationAtPrompt.find((event) => event.kind === 'task.created'
     && event.payload.id.startsWith('recovery:'));
@@ -601,7 +605,10 @@ test('NR3/NR5: refused recovery continuation fails the refinement and kills/reap
   assert.equal(spawnOpts.attachOnly, true);
   assert.equal(f.resumed.calls.prompt.length, 1);
   const admittedBrief = f.replay._tasks.get(f.replay._workers.get(f.handle.id).taskId).brief;
-  assert.deepEqual(f.resumed.calls.prompt[0].slice(1), [admittedBrief, 'turn'], 'custom adapters fall back to prompt(worker, admitted brief, turn)');
+  // Epic #81 (OR-S1): same L0 grant injection — compare delegation, then assert the grant.
+  const { orientation, ...promptDelegation } = f.resumed.calls.prompt[0][1];
+  assert.deepEqual([promptDelegation, 'turn'], [admittedBrief, 'turn'], 'custom adapters fall back to prompt(worker, admitted brief, turn)');
+  assert.ok(orientation && typeof orientation.frame === 'string' && orientation.frame.startsWith('UNTRUSTED_ORIENTATION'), 'OR-S1: the L0 orientation grant is cited into the refused-recovery prompt brief');
   assert.equal(recovered.ok, false);
   assert.equal(recovered.result, 'dispatch_refused');
   await until(() => f.resumed.calls.kill.length === 1);

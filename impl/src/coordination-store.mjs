@@ -749,6 +749,20 @@ export class CoordinationStore {
     if (this._goalPlanPolicy && this._repoId !== this._goalPlanPolicy.repoId) {
       throw new TypeError('coordination repository identity differs from goal/plan authority');
     }
+    // Epic #81 (O-2): per-attempt constructive ceilings on orientation receipts/proposals — the
+    // flood control that replaces the v1 maxScanEvents scan ceiling (a scan bound, not a write
+    // bound). Checked BEFORE append; no clock participates (campaign law).
+    this._orientationReceiptCeilings = null;
+    if (opts.orientationReceiptCeilings !== undefined) {
+      const c = opts.orientationReceiptCeilings;
+      if (!c || typeof c !== 'object' || Array.isArray(c)
+        || !Number.isSafeInteger(c.maxReceiptsPerAttempt) || c.maxReceiptsPerAttempt <= 0
+        || !Number.isSafeInteger(c.maxReceiptBytesPerAttempt) || c.maxReceiptBytesPerAttempt <= 0
+        || !Number.isSafeInteger(c.maxProposalsPerAttempt) || c.maxProposalsPerAttempt <= 0) {
+        throw new TypeError('orientation receipt ceilings are invalid');
+      }
+      this._orientationReceiptCeilings = freeze(clone(c));
+    }
     this._taskTopologyPolicy = opts.taskTopologyPolicy === undefined
       ? null : normalizeTaskTopologyPolicy(opts.taskTopologyPolicy);
     this._runLineagePolicy = opts.runLineagePolicy === undefined
@@ -8703,6 +8717,10 @@ export class CoordinationStore {
       // which grants a replacement generation invalidates. processGeneration is currently only
       // an in-memory worker-handle property; this event makes it a replay fact.
       this._workerGenerations.set(p.workerId, freeze({ ...clone(p), boundEvent: event.seq }));
+    } else if (event.kind === 'context.pack_granted' || event.kind === 'orientation.rating_recorded') {
+      // Epic #81 (O-6/O-7): append-only orientation audit receipts — attempt-scoped pack grants
+      // (authority never collapses across attempts) and closed rating records (advisory). No
+      // projection state; replay re-derives the audit by re-reading the log. Zero promotion weight.
     } else {
       throw new CoordinationIntegrityError(`unsupported coordination event kind ${event.kind}`, 'unsupported_event_kind');
     }
@@ -13095,6 +13113,15 @@ export class CoordinationStore {
     return freeze({ packId: pack.packId, family: pack.family, body: pack.body });
   }
 
+  /** Epic #81 (O-6): append an attempt-scoped context.pack_granted receipt, atomically with the
+   * spawn binding and BEFORE provider dispatch. Idempotent by the caller key (the coordinator
+   * derives task+pack-scoped keys so a retried spawn of the same attempt never mints a second
+   * grant, while two attempts citing the same head hold two grants — authority never collapses). */
+  grantContextPack(fields, auth) {
+    const event = this._append('context.pack_granted', clone(fields), auth);
+    return { ok: true, result: 'granted', event: clone(event) };
+  }
+
   reapExpiredContextPacks(repoId) {
     void repoId;
     const now = Date.parse(this._clock());
@@ -13116,8 +13143,187 @@ export class CoordinationStore {
       }
       return { ok: true, result: 'idempotent', event: clone(prior) };
     }
+    this._assertOrientationReceiptCeiling(payload);
     const event = this._append('context.read', payload, auth);
     return { ok: true, result: 'recorded', event: clone(event) };
+  }
+
+  /** Epic #81 (O-2): per-attempt constructive receipt ceilings — count AND byte bounds checked
+   * BEFORE append. No clock (campaign law); the bound is the constructive flood control. */
+  _assertOrientationReceiptCeiling(payload) {
+    if (!this._orientationReceiptCeilings) return;
+    const ceilings = this._orientationReceiptCeilings;
+    const attemptKey = (p) => `${p?.repoId ?? ''}\0${p?.runId ?? ''}\0${p?.taskId ?? ''}\0${p?.taskVersion ?? ''}`;
+    const key = attemptKey(payload);
+    const matching = this._events.filter((event) => event.kind === 'context.read' && attemptKey(event.payload) === key);
+    if (matching.length >= ceilings.maxReceiptsPerAttempt) {
+      throw new CoordinationRefusal('orientation receipt count ceiling exceeded', 'orientation_receipt_ceiling');
+    }
+    const cumulativeBytes = matching.reduce((sum, event) => sum + canonicalBytes(event.payload), 0) + canonicalBytes(payload);
+    if (cumulativeBytes > ceilings.maxReceiptBytesPerAttempt) {
+      throw new CoordinationRefusal('orientation receipt byte ceiling exceeded', 'orientation_receipt_ceiling');
+    }
+  }
+
+  /** Epic #81 (O-4): a hub-derived KG Source node per orientation module coordinate — the anchor
+   * curated-overlay leaves Cite. Source is a closed KG node type; the coordinate is the overlay's
+   * citation identity (match/omit decisions ride moduleDigest + freshnessDigest). */
+  mintOrientationSource(fields, auth) {
+    if (!fields || typeof fields !== 'object' || Array.isArray(fields)
+      || !fields.moduleKey || typeof fields.moduleKey !== 'object' || Array.isArray(fields.moduleKey)
+      || typeof fields.moduleKey.rootPath !== 'string'
+      || !/^[a-f0-9]{64}$/.test(fields.moduleDigest ?? '') || !/^[a-f0-9]{64}$/.test(fields.freshnessDigest ?? '')) {
+      throw new CoordinationRefusal('orientation source coordinate is invalid', 'orientation_source_invalid');
+    }
+    const repoId = fields.repoId ?? this._repoId;
+    if (typeof repoId !== 'string' || repoId.length === 0) throw new CoordinationRefusal('orientation source coordinate is invalid', 'orientation_source_invalid');
+    const rootPath = fields.moduleKey.rootPath;
+    const id = `orientation:source:${canonicalDigest({ freshnessDigest: fields.freshnessDigest, moduleDigest: fields.moduleDigest, repoId, rootPath })}`;
+    const existing = this.queryKnowledge({ ids: [id] })[0] ?? null;
+    if (existing) return { ok: true, result: 'idempotent', node: clone(existing) };
+    const result = this.addKnowledgeNode({
+      evidence: [], freshnessDigest: fields.freshnessDigest, grounding: 'observed', id,
+      moduleDigest: fields.moduleDigest, moduleKey: { repoId, rootPath }, repoId, type: 'Source',
+    }, auth);
+    return { ok: true, result: result.result ?? 'minted', node: clone(result.node) };
+  }
+
+  /** Epic #81 (O-2/O-4): orientation.candidate.propose. The candidate is hub-minted observed
+   * (callers supply only {packDigest, leafDigest}); it verifies the proposing attempt previously
+   * received the orientation surface (a context.read receipt or an operator Source), coalesces
+   * duplicates by {leafDigest, freshnessDigest}, and is bounded by the per-attempt proposal
+   * ceiling. Never caller-authored body/grounding/scope. */
+  proposeOrientationCandidate({ leafDigest, packDigest }, auth) {
+    if (!/^[a-f0-9]{64}$/.test(leafDigest ?? '') || !/^[a-f0-9]{64}$/.test(packDigest ?? '')) {
+      throw new CoordinationRefusal('orientation candidate leaf is invalid', 'orientation_propose_refused');
+    }
+    const workerId = typeof auth?.actor === 'string' && auth.actor.startsWith('worker:') ? auth.actor.slice('worker:'.length) : null;
+    const source = this._orientationLatestSource();
+    const hasReceipt = workerId !== null && this._events.some((event) => event.kind === 'context.read' && event.payload?.workerId === workerId);
+    if (!source && !hasReceipt) throw new CoordinationRefusal('orientation candidate was not received by the attempt', 'orientation_propose_refused');
+    const freshnessDigest = source?.freshnessDigest ?? this._orientationWorkerFreshness(workerId) ?? '0'.repeat(64);
+    const existing = this._orientationCandidate(leafDigest, freshnessDigest);
+    if (existing) return { ok: true, result: 'idempotent', node: clone(existing) };
+    this._assertOrientationProposalCeiling(workerId);
+    const candidateId = `orientation:candidate:${canonicalDigest({ freshnessDigest, leafDigest })}`;
+    const result = this.addKnowledgeNode({
+      body: `orientation overlay candidate leaf ${leafDigest.slice(0, 12)}`, evidence: [],
+      freshnessDigest, grounding: 'observed', id: candidateId, leafDigest, packDigest,
+      promotion: { kind: 'Finding', trigger: 'orientation.overlay_proposed' }, type: 'Finding', workerId,
+    }, auth);
+    if (source) {
+      try { this.addKnowledgeEdge({ evidence: [], from: candidateId, id: `knowledge-edge:cites:${candidateId}`, to: source.id, type: 'Cites' }, { actor: auth.actor, key: `${auth.key}:cites` }); }
+      catch { /* the Cites edge is best-effort over the observed candidate */ }
+    }
+    return { ok: true, result: 'minted', node: clone(result.node) };
+  }
+
+  /** Epic #81 (O-4): merge generated module structure with the curated overlay. A curated leaf
+   * applies only on EXACT moduleDigest + freshnessDigest match; a stale leaf is omitted WITH
+   * structured trace (overlay_dangling) and the generated map serves partial; conflicting live
+   * leaves without a Supersedes winner all omit with overlay_conflict (never event-time/insertion
+   * order). Generated structure always answers for the requested coordinate. */
+  mergeOrientationMap({ moduleDigest, moduleKey, freshnessDigest, repoId: repoIdArg } = {}) {
+    if (typeof moduleDigest !== 'string' || !/^[a-f0-9]{64}$/.test(moduleDigest)
+      || typeof freshnessDigest !== 'string' || !/^[a-f0-9]{64}$/.test(freshnessDigest)
+      || !moduleKey || typeof moduleKey !== 'object' || typeof moduleKey.rootPath !== 'string') {
+      throw new CoordinationRefusal('orientation merge coordinate is invalid', 'orientation_merge_invalid');
+    }
+    const repoId = repoIdArg ?? this._repoId ?? null;
+    const rootPath = moduleKey.rootPath;
+    const sources = this.queryKnowledge({ types: ['Source'] }).filter((node) => node.moduleKey?.rootPath === rootPath && (repoId === null || node.repoId === repoId));
+    const citesEdges = this.queryKnowledgeEdges({ types: ['Cites'] });
+    const supersedesEdges = this.queryKnowledgeEdges({ types: ['Supersedes'] });
+    const overlayOmissions = [];
+    const applied = [];
+    for (const sourceNode of sources) {
+      const findings = citesEdges.filter((edge) => edge.to === sourceNode.id)
+        .map((edge) => this.queryKnowledge({ ids: [edge.from] })[0])
+        .filter((node) => node && node.type === 'Finding' && node.promotion?.trigger === 'orientation.overlay_proposed');
+      const exact = sourceNode.moduleDigest === moduleDigest && sourceNode.freshnessDigest === freshnessDigest;
+      if (!exact) {
+        for (const finding of findings) overlayOmissions.push({ findingId: finding.id, freshnessDigest: sourceNode.freshnessDigest, moduleDigest: sourceNode.moduleDigest, reason: 'overlay_dangling' });
+        continue;
+      }
+      for (const finding of findings) applied.push(finding);
+    }
+    const isSuperseded = (leafId) => applied.some((other) => other.id !== leafId && supersedesEdges.some((edge) => edge.from === other.id && edge.to === leafId));
+    const live = applied.filter((leaf) => !isSuperseded(leaf.id));
+    const curatedLeaves = [];
+    if (live.length > 1) {
+      for (const leaf of applied) overlayOmissions.push({ findingId: leaf.id, reason: 'overlay_conflict' });
+    } else if (live.length === 1) {
+      const winner = live[0];
+      curatedLeaves.push({ leafDigest: winner.leafDigest, provenance: 'model-authored', source: 'curated', sourceRef: winner.id, text: winner.body, untrusted: true });
+    }
+    const module = {
+      leaves: [{ moduleDigest, source: 'generated' }, ...curatedLeaves], moduleDigest,
+      moduleKey: { repoId, rootPath },
+    };
+    const status = overlayOmissions.length > 0 ? 'partial' : 'ok';
+    return { map: { modules: [module] }, overlayOmissions, status };
+  }
+
+  /** Epic #81 (O-7): the closed rating event. The hub mints orientation.rating_recorded with the
+   * attempt identity (hub-derived — the worker is verified against the task record, never trusted
+   * from transport) and a prior grant/read proof. One rating per task attempt: exact replay
+   * returns the prior event, an opposite same-pack rating refuses orientation_rating_conflict,
+   * and a second pack under the same attempt refuses the constant orientation_rating_refused. */
+  recordOrientationRating({ packDigest, rating }, auth) {
+    if (!['useful', 'missed'].includes(rating) || !/^[a-f0-9]{64}$/.test(packDigest ?? '')) {
+      throw new CoordinationRefusal('orientation rating request is invalid', 'orientation_rating_refused');
+    }
+    const attempt = auth?.attempt ?? null;
+    if (!attempt || typeof attempt !== 'object' || Array.isArray(attempt)
+      || typeof attempt.taskId !== 'string' || !Number.isSafeInteger(attempt.taskVersion)
+      || typeof attempt.workerId !== 'string' || !Number.isSafeInteger(attempt.grantOrReadEventSeq)) {
+      throw new CoordinationRefusal('orientation rating attempt is invalid', 'orientation_rating_refused');
+    }
+    const task = this._tasks.get(attempt.taskId) ?? null;
+    if (!task || task.assignee !== attempt.workerId) {
+      throw new CoordinationRefusal('orientation rating attempt does not match the hub task record', 'orientation_rating_refused');
+    }
+    const priorForAttempt = this._events.find((event) => event.kind === 'orientation.rating_recorded'
+      && event.payload?.taskId === attempt.taskId && event.payload?.taskVersion === attempt.taskVersion) ?? null;
+    if (priorForAttempt) {
+      if (priorForAttempt.payload.packDigest === packDigest) {
+        if (priorForAttempt.payload.rating === rating) return { ok: true, result: 'idempotent', event: clone(priorForAttempt) };
+        throw new CoordinationRefusal('orientation rating conflicts with a prior rating for this attempt', 'orientation_rating_conflict');
+      }
+      throw new CoordinationRefusal('orientation rating target was not received by this attempt', 'orientation_rating_refused');
+    }
+    const payload = {
+      grantOrReadEventSeq: attempt.grantOrReadEventSeq, packDigest, rating,
+      repoId: attempt.repoId ?? this._repoId, runId: attempt.runId ?? task.runId ?? null,
+      taskId: attempt.taskId, taskVersion: attempt.taskVersion, workerId: attempt.workerId,
+    };
+    const event = this._append('orientation.rating_recorded', payload, auth);
+    return { ok: true, result: 'recorded', event: clone(event) };
+  }
+
+  _orientationLatestSource() {
+    const sources = this.queryKnowledge({ types: ['Source'] }).sort((a, b) => (b.observedSeq ?? 0) - (a.observedSeq ?? 0));
+    return sources[0] ?? null;
+  }
+
+  _orientationWorkerFreshness(workerId) {
+    if (workerId === null) return null;
+    const reads = this._events.filter((event) => event.kind === 'context.read' && event.payload?.workerId === workerId);
+    return reads.length > 0 ? (reads[reads.length - 1].payload?.freshnessDigest ?? null) : null;
+  }
+
+  _orientationCandidate(leafDigest, freshnessDigest) {
+    return this.queryKnowledge({ types: ['Finding'] }).find((node) => node.promotion?.trigger === 'orientation.overlay_proposed'
+      && node.leafDigest === leafDigest && node.freshnessDigest === freshnessDigest) ?? null;
+  }
+
+  _assertOrientationProposalCeiling(workerId) {
+    if (!this._orientationReceiptCeilings) return;
+    const proposals = this.queryKnowledge({ types: ['Finding'] }).filter((node) => node.promotion?.trigger === 'orientation.overlay_proposed'
+      && (workerId === null || node.workerId === workerId));
+    if (proposals.length >= this._orientationReceiptCeilings.maxProposalsPerAttempt) {
+      throw new CoordinationRefusal('orientation proposal ceiling exceeded', 'orientation_receipt_ceiling');
+    }
   }
 
   /** BD3-C: append-only lane audit receipts (message.sent / message.delivered). The delivery
@@ -15540,7 +15746,7 @@ export class CoordinationStore {
     const alreadyPromoted = edgesAtBoundary.some((edge) => edge.type === 'DerivedFrom' && edge.to === candidateFindingId
       && nodeMap.get(edge.from)?.promotion?.trigger === 'workflow.admitted');
     if (!candidate || candidate.type !== 'Finding' || candidate.grounding !== 'observed'
-      || !['board.item_closed', 'package.admitted'].includes(candidate.promotion?.trigger) || alreadyPromoted) {
+      || !['board.item_closed', 'package.admitted', 'orientation.leaf_proposed'].includes(candidate.promotion?.trigger) || alreadyPromoted) {
       throw new CoordinationRefusal('workflow admission candidate is ineligible', 'workflow_admit_ineligible');
     }
     const admittedId = `finding:workflow-admitted:${candidateFindingId}`;
