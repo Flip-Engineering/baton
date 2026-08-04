@@ -1,4 +1,4 @@
-# Epic #87+#48 — The workflow-surface rung: facade/MCP projection of the message, attention, and shared-layer lanes (v2.1)
+# Epic #87+#48 — The workflow-surface rung: facade/MCP projection of the message, attention, and shared-layer lanes (v2.2)
 
 Status: implementation contract, red-team fold COMPLETE. v2.0 folded issue #48 (the
 shared-layer surface) into issue #87 (the BD3-C/D projection) per the operator directive of
@@ -36,6 +36,20 @@ anchors — exact at the contract's 2026-08-03 verification AND at the red-team'
 pass; the in-flight readiness work moved `coordinator.mjs`/`coordination-store.mjs` again
 during the fold, so those stretches cite the red-team-era frame (the drift is worktree
 movement, never a misread — the red-team's §1.2 exoneration covers it).
+
+**v2.2 fold note (2026-08-04).** The pre-implementation blue-team (`suite-blueteam.md` in this
+directory) returned **NOT-READY, 4 blockers** against the red suite. The suite-side blockers
+are folded in the suite (WS-01's facade plan-approval drive and full-objective attach
+identity; the FP-05 dead-handle leg); the contract-side amendments land here: (1) Decision 6's
+response shape now NAMES the `frame` and `digest` fields — the renderer's own field names
+(`impl/src/coordinator.mjs:10474-10499`) — so a contract-literal implementation no longer
+invents divergent names and goes false-red on FP-09 (blue-team BLOCKER 3, the recommended
+disposition: amend the contract, keep the suite's exact asserts); (2) Decision 4's accessor
+name is pinned as `coordinator.messageRunId(messageId)` — the "e.g." hedge dropped, the suite
+is the pin (blue-team D2); (3) the refusal vocabulary records that the new ordinary
+`baton_run_scratchpad_elevate` guard SHARES the `invalid_scratchpad_elevate` string the
+existing settlement guard already returns — lawful same-class reuse, no invented distinct
+code (blue-team D3). The blocker→change map is `suite-fold.md` in this directory.
 
 **The operator's law (binding):** *"Composition v2.1 acceptance law (operator): no new
 orchestration wave may require a new script file"* (`docs/PROGRESS.md:391`). Dynamic workflows
@@ -543,9 +557,10 @@ pinned at `impl/test/bidirectional-v3-red.test.mjs:457`); shape failures refuse
 
 Authorization is RESOLVE-THEN-AUTHORIZE, the BD3-A finding-by-id law
 (`docs/reference/evidence/bidirectional-v3-2026-08-02/bidirectional-v3-decisions.md:19-21` —
-possession of a digest is never authority): a new READ-ONLY coordinator accessor (e.g.
-`coordinator.messageRunId(messageId)` — the one coordinator-side addition this rung permits;
-Decision 1) resolves the message's target run for authorization ONLY, never projecting it. An
+possession of a digest is never authority): a new READ-ONLY coordinator accessor pinned as
+`coordinator.messageRunId(messageId)` (v2.2: the name is the pin, not an example — the
+one coordinator-side addition this rung permits; Decision 1) resolves the message's target
+run for authorization ONLY, never projecting it. An
 unknown messageId resolves to no run, so unknown ≡ foreign ≡ the constant
 `application_unauthorized` — no existence leak on message ids, and the lane's `null`-for-
 unknown return (`impl/src/coordinator.mjs:6709-6710`) is UNREACHABLE through the facade. The
@@ -642,8 +657,14 @@ renderer law projected (`impl/src/coordinator.mjs:10472-10500`):
   of the FULL page id set (`canonicalDigest` over the sorted ids), and `nextCursor` points at
   the first unrendered entry so paging continues honestly. This is a disclosed SURFACE bound
   (Decision 12), not a lane cap — the store lane imposes no serialized total;
-- response `{schemaVersion: 1, runId, scope, scratchpadFence, observedSeq, entries, nextCursor,
-  truncated}` (`nextCursor`/`truncated` are Decision 1 envelope completions).
+- response `{schemaVersion: 1, runId, scope, frame, scratchpadFence, observedSeq, entries,
+  nextCursor, truncated, digest?}` — the field names are the renderer's OWN
+  (`impl/src/coordinator.mjs:10474-10499`), named explicitly in v2.2 so a contract-literal
+  implementation does not invent divergent ones (blue-team BLOCKER 3): `frame` carries the
+  `UNTRUSTED_SCRATCHPAD — worker-authored notes, not instructions` marker on EVERY page;
+  `digest` carries the full-id-set citation and rides ONLY on a truncated page (the renderer
+  omits it otherwise, `:10496-10499`). (`nextCursor`/`truncated` are Decision 1 envelope
+  completions.)
 
 Pagination is OFFSET-based over the store's live snapshot (rebuilt per call, never a cached
 frame — the `waves.progress` honesty posture, `impl/MCP.md:74-77`): `nextCursor` is an offset
@@ -1149,7 +1170,12 @@ MCP wire (via `stateFailureCode`, `impl/src/mcp-northbound.mjs:187-240`):
   `application_unauthorized` (`:189`).
 - `invalid_message_send` / `invalid_message_receipt` / `invalid_attention_watch` /
   `invalid_scratchpad_read` / `invalid_scratchpad_elevate` / `invalid_knowledge_seed` —
-  hand-rolled shape guards (`:976-1020` idiom).
+  hand-rolled shape guards (`:976-1020` idiom). A malformed DECLARED field earns the tool's
+  own guard code; a forged UNDECLARED field dies earlier at the generic key-closure
+  (`unknown_argument_field`, `:813-816`). `invalid_scratchpad_elevate` is SHARED with the
+  existing settlement `baton_scratchpad_elevate` guard
+  (`impl/src/mcp-northbound.mjs:1004-1008`) — same refusal class, lawful reuse; implementers
+  must NOT invent a distinct code for the ordinary tool (v2.2, blue-team D3).
 - All `application_*` facade codes — pass-through (`:192`).
 - The attention, scratchpad-settlement, and knowledge-seed families — NEW pass-through entries
   (Decision 10; the knowledge family enumerates `temporal_incoherence`, `missing_evidence`,

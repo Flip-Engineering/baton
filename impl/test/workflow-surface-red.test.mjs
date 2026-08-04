@@ -1,8 +1,10 @@
 // Workflow-surface rung red suite (contract: docs/reference/evidence/
-// facade-projection-2026-08-03/facade-projection-contract.md v2.1 — epic #87+#48,
-// red-team fold contract-redteam.md / contract-fold.md, 7 blockers folded).
+// facade-projection-2026-08-03/facade-projection-contract.md v2.2 — epic #87+#48,
+// red-team fold contract-redteam.md / contract-fold.md, 7 blockers folded;
+// blue-team fold suite-blueteam.md / suite-fold.md, 4 blockers folded).
 //
-// Thirty rows over the folded decisions: the eight facade direct ports
+// Thirty-seven rows (34 red + 3 guards) over the folded decisions: the eight
+// facade direct ports
 // (run.message.send/receipt, run.attention.watch, run.scratchpad.read/elevate,
 // run.board.post/read, run.knowledge.seed), their six ordinary MCP projections,
 // the CLI verbs + registry rows + conformance regeneration, the #89 cap+actual
@@ -656,6 +658,29 @@ test('FP-05 (stage: facade receipt absent): resolve-then-authorize — unknown �
   const permissive = await facadeError(() => fx2.application.command('run.message.receipt', { messageId: MSG_ID }, wave, null));
   assert.equal(permissive?.code, 'application_unauthorized',
     'resolve-to-null ≡ forbidden even under a permissive policy — the facade never returns the lane\'s null');
+  // The dead-handle leg (Decision 4 note(b); blue-team BLOCKER 4 — the row now stages what
+  // its comment always claimed). Staged per the C3 honesty idiom: a message delivered to a
+  // worker whose process generation then died. The LANE still serves the honest receipt —
+  // delivered:true, read:null, actedOn:null, reply:null — while the ACCESSOR resolves the
+  // dead handle to NO run, so the facade refuses resolve-to-null IDENTICALLY to the
+  // unknown-id case. An accessor resolving through durable task records (returning the run,
+  // serving the receipt here) greens every OTHER leg and fails exactly here.
+  const deadHandle = await fx2.driver.coordinator.spawn('mock', makeBrief(), { runId: 'run:b4-dead' });
+  const toDead = await fx2.driver.coordinator.sendMessage({
+    kind: 'inform', to: { workerId: deadHandle.id }, body: 'delivered, then the process died',
+  }, { actor: 'orchestrator' });
+  fx2.adapter.emit({
+    worker: deadHandle.id, harness: 'mock@1.0.0', turnEpoch: 2, kind: 'lifecycle.process_closed', actor: 'worker', payload: { code: 143 },
+  });
+  await flush();
+  assert.deepEqual(fx2.driver.coordinator.messageReceipt(toDead.messageId),
+    { delivered: true, read: null, actedOn: null, reply: null },
+    'the lane stays honest across the death (C3) — delivered is written at send, read is never upgraded to a lie');
+  const dead = await facadeError(() => fx2.application.command('run.message.receipt', { messageId: toDead.messageId }, wave, null));
+  assert.equal(dead?.code, 'application_unauthorized',
+    'a dead handle resolves to NO run — resolve-to-null ≡ unknown ≡ forbidden (Decision 4 note(b))');
+  assert.equal(dead?.message, permissive?.message,
+    'the dead-handle refusal is the same constant as the unknown-id refusal — no existence leak either direction');
 });
 
 // ===========================================================================
@@ -747,6 +772,8 @@ test('FP-08 (stage: facade watch absent): storm coalescing, terminal-at-mint, an
     return reasons.length >= 1 && total >= 2 ? page : null;
   }, { label: 'coalesced member_terminal page' });
   const coalesced = page1.reasons.filter((reason) => reason?.kind === 'member_terminal');
+  assert.ok(coalesced.some((reason) => (reason.count ?? 1) > 1),
+    'the storm mints at least one COALESCED reason (count > 1) — an implementation emitting two separate count-1 reasons never greens the storm shape (blue-team T2)');
   for (const reason of coalesced) {
     assert.ok(Number.isSafeInteger(reason.count), 'every coalesced entry carries an explicit count (the singular v0.9 shape refused)');
     assert.equal(reason.memberState, 'terminal-at-mint',
@@ -1015,6 +1042,19 @@ test('FP-10-store-direct (GUARD, green today): the idempotent/conflict pair is a
     runId: 'run:e4', taskId: task.id, workerId: handle.id,
     expectedScratchpadFence: fence, entryIds: [first.entry.entryId],
   };
+  // The fence CAS honesty (blue-team fold): a caller pinning a fence that is NOT the live
+  // fence — with no prior reap under it — is refused stale_scratchpad_fence, STORE-DIRECT
+  // ONLY (the facade wrapper derives the fence live on every call; the RACE half — the
+  // wrapper's live read vs a concurrent reap — stays a documented note, not a row).
+  assert.throws(
+    () => fx.coordination.elevateTaskScratchpad({ ...request, expectedScratchpadFence: fence + 1 }, { actor: 'orchestrator', key: 'ws-e4-stale' }),
+    (error) => error?.code === 'stale_scratchpad_fence',
+    'a non-live fence without a prior reap refuses stale_scratchpad_fence — STORE-DIRECT ONLY',
+  );
+  // DEFERRED (documented, blue-team note): scratchpad_partition_exhausted has no
+  // behavioral row — staging it means filling the shared partition to its 512-entry
+  // ceiling (MAX_SCRATCHPAD_SHARED_ENTRIES) before an elevate, which is not a cheap
+  // fixture; the static wire mapping (FP-15) stands as its only pin today.
   const settled = fx.coordination.elevateTaskScratchpad(request, { actor: 'orchestrator', key: 'ws-e4-settle' });
   assert.equal(settled.result, 'settled');
   const replayed = fx.coordination.elevateTaskScratchpad(request, { actor: 'orchestrator', key: 'ws-e4-settle' });
@@ -1181,6 +1221,12 @@ test('FP-11-race (stage: facade board absent): the facade passes an appendGate r
   let gateOutcome;
   try { gateOutcome = captured[0].appendGate(); } catch { gateOutcome = false; }
   assert.equal(gateOutcome, false, 'the gate re-reads run-open LIVE — it refuses once the run is closed');
+  // RESIDUAL (blue-team T3, documented, accepted): the gate's BINDING-change revalidation
+  // half is unobserved — a binding moves only unbound→bound, and the facade's own first
+  // post already bound ws-f4 at capture time, so no honest binding flip can be staged
+  // between capture and invocation through the projected path. A gate re-checking
+  // run-open ONLY greens this row; the check-then-write wrong implementation stays
+  // caught (no gate at all → the typeof assert above fails).
   // And the pre-check half stays honest on every fresh call (no cached liveness):
   // a post after the stop refuses at the seam and never writes.
   const afterStop = await facadeError(() => fx.application.command('run.board.post', {
@@ -1380,6 +1426,8 @@ test('FP-14-tools (stage: tools absent): the six ordinary tools register with cl
   for (const [tool] of SIX_TOOLS) {
     assert.ok(names.includes(tool), `${tool} joins the ordinary application surface (27 → 33)`);
   }
+  assert.equal(names.length, 33,
+    'the ordinary surface is exactly the landed 27 + the six — a seventh stowaway tool greens nothing (blue-team D5)');
   assert.equal(names.some((name) => /^baton_(run_)?board_/u.test(name)), false,
     'no ordinary MCP board tools — boards stay the combined-surface S-2 family (Decision 10)');
   const { server } = mockAppServer();
@@ -1435,6 +1483,25 @@ test('FP-14-dispatch (stage: tools absent): each tool dispatches its facade comm
     });
     callId += 1;
     assert.equal(response.result?.isError, true, `self-named ${JSON.stringify(forged)} is refused`);
+    assert.match(resultText(response), /unknown_argument_field/u,
+      'a forged UNDECLARED field dies at the generic key-closure with its NAMED code — never a generic invalid_command (blue-team T7)');
+  }
+  // The per-tool guard codes BY NAME (blue-team T7): a malformed DECLARED field is
+  // refused by the tool's own hand-rolled guard with its invalid_* code (the wave-tools
+  // idiom — no schema evaluator; the guards are the authority). A generic
+  // invalid_command refusal greens nothing here.
+  for (const [tool, args, code] of [
+    ['baton_run_message_send', { repoId: REPO, runId: 'run:h2', kind: 'bogus', body: 'x' }, /invalid_message_send/u],
+    ['baton_run_message_receipt', { repoId: REPO, messageId: 'msg-1' }, /invalid_message_receipt/u],
+    ['baton_run_attention_watch', { repoId: REPO, runId: 'run:h2', kind: 7 }, /invalid_attention_watch/u],
+    ['baton_run_scratchpad_read', { repoId: REPO, runId: 'run:h2', scope: 'bogus' }, /invalid_scratchpad_read/u],
+    ['baton_run_scratchpad_elevate', { repoId: REPO, runId: 'run:h2', taskId: 'task-1', entryIds: 'not-an-array' }, /invalid_scratchpad_elevate/u],
+    ['baton_run_knowledge_seed', { repoId: REPO, runId: 'run:h2', type: 'Bogus', grounding: 'observed', body: 'x' }, /invalid_knowledge_seed/u],
+  ]) {
+    const response = await wireCall(server, callId, tool, args);
+    callId += 1;
+    assert.equal(response.result?.isError, true, `${tool} refuses the malformed declared field`);
+    assert.match(resultText(response), code, `${tool} names its own guard code (${code})`);
   }
   // The capability classes are deployment preconditions (Decision 10): the DEFAULT
   // observe-only principal reaches the reads; send/elevate/seed require control.
@@ -1586,10 +1653,13 @@ test('FP-19 (GUARD, green today): the settlement plane is byte-identical — the
 
 // ===========================================================================
 // Section I — CLI verbs + registry rows + conformance (stage: verbs absent —
-// today `baton run message …` falls through to parseStart and is silently parsed
-// as a run-start objective). FP-16: the nine spellings parse to command
-// dispatches; unknown sub-verbs are parse errors; the registry rows carry the
-// pinned shapes; the regeneration mains stay green (guard rows).
+// today every new spelling THROWS cli_invalid: unexpected argument <verb>, loud;
+// blue-team F7 corrected this banner's stale claim that the spellings fall
+// through to parseStart as a silent run-start objective). FP-16: the nine
+// spellings parse to command dispatches; unknown sub-verbs are parse errors
+// (those negative pins ALREADY PASS today — green regression guards; the row is
+// red via its positive legs); the registry rows carry the pinned shapes; the
+// regeneration mains stay green (guard rows).
 // ===========================================================================
 
 test('FP-16-parse (stage: verbs absent): the nine spellings parse to their command dispatches; bad sub-verbs are parse errors', () => {
@@ -1618,8 +1688,10 @@ test('FP-16-parse (stage: verbs absent): the nine spellings parse to their comma
     (error) => error?.code === 'cli_invalid',
     'the send target is XOR at the CLI too',
   );
-  // Unknown sub-verbs are PARSE ERRORS, never silently a run-start objective (the
-  // load-bearing pin — today they fall through to parseStart).
+  // Unknown sub-verbs are PARSE ERRORS (cli_invalid), never a run-start objective.
+  // These negative pins ALREADY PASS today (the parser throws unexpected-argument on
+  // every new noun — blue-team F7): they are regression guards; the row's red rides
+  // on the positive dispatches above.
   for (const argv of [
     ['run', 'message', 'teleport', 'run:i1'],
     ['run', 'attention', 'follow', 'run:i1'], // the renamed verb: 'follow' is never a spelling (Decision 2)
@@ -1768,22 +1840,40 @@ async function scriptPartA(port) {
     runId: 'run:ws01-orch', board: 'ws01-tasks', title: 'survey task board', detail: 'the swarm\'s task board',
   });
   // Step 2 — waves.start (4 members); each brief cites the seeded board and node.
+  // The FULL objective text is kept verbatim: waves.attach matches members by EXACT
+  // objective equality (blue-team BLOCKER 2 — a truncated objective throws
+  // wave_attach_unknown_wave against a correct implementation).
   const roles = ['surveyor', 'mapper', 'sampler', 'scribe'];
+  const members = roles.map((role) => ({
+    role,
+    objective: `survey slice ${role} — cite board ws01-tasks and node ${seed.nodeId}`,
+    exact: { harness: 'mock', model: 'mock-model', effort: 'low' }, scope: ['reports/**'],
+  }));
   const wave = await port.command('waves.start', {
     idempotencyKey: 'ws01-wave',
-    members: roles.map((role) => ({
-      role,
-      objective: `survey slice ${role} — cite board ws01-tasks and node ${seed.nodeId}`,
-      exact: { harness: 'mock', model: 'mock-model', effort: 'low' }, scope: ['reports/**'],
-    })),
+    members,
   });
+  // Step 2b — the plan-approval drive (blue-team BLOCKER 1): the mandatory
+  // GOAL_PLAN_POLICY stalls every member at awaiting_plan_approval, so no worker is
+  // ever dispatched and step 3's sends would return run_not_active. An orchestrating
+  // agent approves THROUGH THE FACADE — run.status until the approve action is
+  // advertised, then run.approve with the advertised planDigest (both EXISTING
+  // commands, so the static assertion stays clean).
+  for (const member of wave.members) {
+    const advertised = await until(async () => {
+      const status = await port.command('run.status', { runId: member.runId });
+      return (status.nextActions ?? []).find((row) => row?.kind === 'approve_plan') ?? null;
+    }, { label: `approve action ${member.role}` });
+    await port.command('run.approve', { runId: member.runId, planDigest: advertised.planDigest });
+  }
   // Step 3 — message status queries to each member (run-target sends).
   const queries = [];
   for (const member of wave.members) {
     const sent = await port.command('run.message.send', {
       runId: member.runId, kind: 'query', body: `status? (${member.role})`,
     });
-    queries.push({ role: member.role, runId: member.runId, messageId: sent.messageId });
+    const objective = members.find((spec) => spec.role === member.role)?.objective;
+    queries.push({ role: member.role, runId: member.runId, messageId: sent.messageId, objective });
   }
   return {
     orchRunId: 'run:ws01-orch', seedNodeId: seed.nodeId, boardItemId: posted.item.itemId,
@@ -1856,10 +1946,12 @@ async function scriptPartC(port, stateA) {
     sharedReads.push({ role: query.role, entries: shared.entries?.length ?? 0 });
   }
   const board = await port.command('run.board.read', { runId: stateA.orchRunId, board: 'ws01-tasks' });
-  // Step 8 — harvest through the existing waves.attach resume path.
+  // Step 8 — harvest through the existing waves.attach resume path. The members
+  // carry the FULL started objectives verbatim (attachWave matches by EXACT
+  // objective equality — blue-team BLOCKER 2).
   const attached = await port.command('waves.attach', {
     waveId: stateA.waveId,
-    members: stateA.queries.map((query) => ({ role: query.role, objective: `survey slice ${query.role}` })),
+    members: stateA.queries.map((query) => ({ role: query.role, objective: query.objective })),
     timeoutMs: 30000,
   });
   return {
@@ -1905,6 +1997,9 @@ test('WS-01 (stage: the workflow needs kernel reaches today) THE SCRIPTED-WORKFL
   assert.equal(stateA.queries.length, 4, 'four members queried');
   for (const query of stateA.queries) {
     assert.match(query.messageId, /^message:[a-f0-9]{64}$/u, 'each query is receipted on its durable message id');
+    assert.match(query.objective ?? '', /^survey slice \w+ — cite board ws01-tasks and node knowledge:Finding:[a-f0-9]{64}$/u,
+      'the attach identity rides the FULL started objective — attachWave matches by exact equality, so a truncated objective throws wave_attach_unknown_wave (BLOCKER 2)');
+    assert.equal(query.objective.includes(stateA.seedNodeId), true, 'the objective cites the seeded node verbatim');
   }
   // Harness interlude (worker wire behavior, environmental — bd3's adapter.emit
   // idiom): each member replies to its query (#86 grammar) and notes its findings.
