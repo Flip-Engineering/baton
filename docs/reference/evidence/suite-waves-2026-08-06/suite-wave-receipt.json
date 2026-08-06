@@ -12,6 +12,38 @@
           "run-55a9b71b351523e9798a49bbbed0f21a"
         ]
       }
+    },
+    {
+      "step": "terminal:nested-suite",
+      "receipt": {
+        "phase": "work_completed"
+      }
+    },
+    {
+      "step": "terminal:cell-suite",
+      "receipt": {
+        "phase": "work_completed"
+      }
+    },
+    {
+      "step": "terminal:waiting-suite",
+      "receipt": {
+        "phase": "work_completed"
+      }
+    },
+    {
+      "step": "terminal:harvest-suite",
+      "receipt": {
+        "phase": "work_completed"
+      }
+    },
+    {
+      "step": "loop-drained",
+      "receipt": {
+        "pending": []
+      }
     }
-  ]
+  ],
+  "harvest": {},
+  "verdict": "SUITE-WAVE-INCOMPLETE"
 }
