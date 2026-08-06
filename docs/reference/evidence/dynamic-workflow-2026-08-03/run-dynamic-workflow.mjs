@@ -167,7 +167,7 @@ try {
   }
 
   // STEPS 4-7 — the orchestration loop (all facade verbs through the member handles).
-  const deadline = Date.now() + 40 * 60_000;
+  const deadline = Date.now() + 60 * 60_000;
   const pending = new Set([...memberHandles.keys()]);
   const approved = new Set();
   const messaged = new Map();
@@ -230,10 +230,12 @@ try {
           step(`message.send-deferred:${role}`, { reason: sent?.result ?? sent?.error ?? 'not-ready' });
         }
       }
-      // Mid-flight elevation (facade verbs: scratchpad.read → elevate).
+      // Mid-flight elevation (facade verbs: scratchpad.read → elevate). The status view carries
+      // the binding at top level: view.taskId / view.workerId (verified live against the retry-3 run).
       if (!elevated.has(role) && role !== 'lead') {
-        const taskId = taskRow?.id ?? taskRow?.taskId ?? null;
-        const workerScope = taskRow?.assignee ? `worker:${taskRow.assignee}` : null;
+        const taskId = view?.taskId ?? outline?.taskId ?? null;
+        const workerId = view?.workerId ?? outline?.workerId ?? null;
+        const workerScope = workerId ? `worker:${workerId}` : null;
         const slice = (taskId && workerScope)
           ? await handle._command('run.scratchpad.read', { runId: handle.id, scope: workerScope, cursor: 0 }).catch(() => null)
           : null;
@@ -246,12 +248,13 @@ try {
           step(`elevate:${role}`, { result: elevatedResult?.result ?? elevatedResult?.error ?? null, elevated: elevatedResult?.elevated?.length ?? null });
         }
       }
-      if (['work_completed', 'completed', 'result_ready'].includes(phase)) {
+      const terminalStatus = view?.terminalOutcome?.status ?? outline?.terminalOutcome?.status ?? null;
+      if (['work_completed', 'completed', 'result_ready'].includes(phase) || terminalStatus === 'completed') {
         pending.delete(role);
-        step(`terminal:${role}`, { phase });
-      } else if (['cancelled', 'failed'].includes(phase)) {
+        step(`terminal:${role}`, { phase: phase ?? terminalStatus });
+      } else if (['cancelled', 'failed'].includes(phase) || ['cancelled', 'failed'].includes(terminalStatus)) {
         pending.delete(role);
-        step(`dead:${role}`, { phase });
+        step(`dead:${role}`, { phase: phase ?? terminalStatus });
       }
     }
     // When all three surveyors are done, signal the lead to gate (facade verbs: knowledge.seed
@@ -272,17 +275,22 @@ try {
   }
   step('loop-drained', { pending: [...pending], answered: leadDecisionAnswered, messaged: [...messaged.keys()] });
 
-  // STEP 8 — harvest + verdict (result pins via local git; facade receipts recorded above).
+  // STEP 8 — harvest + verdict. Pins carry Baton-Task trailers, never the salt — match by
+  // CONTENT: a member's report quotes the canary (and its salted idempotency keys), so probe
+  // result pins then checkpoint pins for the four report files and accept content naming the
+  // canary. (The #99 run.result() accessor would make this a surface call; today it's git tooling.)
   await sleep(10_000);
-  const pins = execFileSync('git', ['for-each-ref', 'refs/baton/results', '--sort=-creatordate', '--format=%(objectname)'], { cwd: repo, encoding: 'utf8' })
-    .trim().split('\n').filter(Boolean);
+  const pinRefs = [
+    ...execFileSync('git', ['for-each-ref', 'refs/baton/results', '--sort=-creatordate', '--format=%(objectname)'], { cwd: repo, encoding: 'utf8' }).trim().split('\n').filter(Boolean),
+    ...execFileSync('git', ['for-each-ref', 'refs/baton/checkpoints', '--sort=-creatordate', '--format=%(objectname)'], { cwd: repo, encoding: 'utf8' }).trim().split('\n').filter(Boolean),
+  ];
   const memberReports = {};
-  for (const pin of pins.slice(0, 12)) {
-    const message = execFileSync('git', ['log', '-1', '--format=%B', pin], { cwd: repo, encoding: 'utf8' });
-    if (!message.includes(SALT) && !message.includes(`dw-${ATTEMPT}`)) continue;
+  for (const pin of pinRefs.slice(0, 16)) {
     for (const name of ['cli-surface-audit.md', 'mcp-surface-audit.md', 'grammar-surface-audit.md', 'control-surface-audit.md']) {
+      if (memberReports[name]) continue;
       try {
-        const content = execFileSync('git', ['show', `${pin}:docs/reference/evidence/dynamic-workflow-2026-08-03/${name}`], { cwd: repo, encoding: 'utf8' });
+        const content = execFileSync('git', ['show', `${pin}:docs/reference/evidence/dynamic-workflow-2026-08-03/${name}`], { cwd: repo, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] });
+        if (!content.includes(CANARY) && !content.includes(SALT)) continue;
         memberReports[name] = { pin, bytes: content.length, canary: content.includes(CANARY), blue: /\bBLUE\b/u.test(content) };
         writeFileSync(resolve(EVIDENCE, name), content);
       } catch { /* not in this pin */ }
