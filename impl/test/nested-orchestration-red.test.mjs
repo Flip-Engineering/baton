@@ -11,46 +11,70 @@
 // resolve-then-authorize constancy rows). The reds fail at NAMED STAGES and go green on
 // the contract's implementation ONLY:
 //
-//   R1 stage: connection-mint-missing       — baton.connectionAuthority.mintChildAuthority
+//   R1 stage: connection-mint-missing       — baton.connectionAuthority.mintChildAuthority mints
+//                                              a FRESH child session + lease + projected
+//                                              profile/token (workerId-bound, never a copy of
+//                                              the parent's bearer — the FILE content is pinned)
 //   R2 stage: connection-projection-missing — RuntimeIsolation.create posture.connectionProjection
+//                                              (the contract's digest/ids envelope — Decision 3)
 //   R3 stage: xdg-delete-missing            — the child runtime env deletes XDG_CONFIG_HOME
 //   R4 stage: runstop-carveout-missing      — transport run_stop admits a lease-bound child on
-//                                              its OWN subtree without emergency_stop
+//                                              its OWN subtree without emergency_stop, while a
+//                                              FOREIGN/UNKNOWN target keeps the byte-identical
+//                                              403 (unknown ≡ foreign, no existence leak)
 //   R5 stage: legacy-refusal-missing        — worker:-prefixed principals refuse the legacy
 //                                              operator command set (per family)
 //   R6 stage: lane-scope-binding-missing    — the six subtree-less workflow lanes refuse
-//                                              foreign/unknown runs with the one constant
-//   R7 stage: terminal-revoke-missing       — baton.revokeChildAuthority on a terminal parent
-//   R8 stage: orphan-sweep-missing          — baton.sweepChildOrphans on startup
+//                                              foreign/unknown runs with the one constant for
+//                                              the contract's worker:-prefixed child
+//   R7 stage: terminal-revoke-missing       — baton.revokeChildAuthority (leaseDigest-bound) on
+//                                              a terminal parent
+//   R8 stage: orphan-sweep-missing          — baton.sweepChildOrphans on startup revokes a
+//                                              LIVE orphan session (not merely an expired one)
 //
 // Invented surfaces (namespace-imported from ../src/index.mjs so a missing export never
 // kills the file at load; absent today → each RED row fails at its named stage):
 //
 //   baton.connectionAuthority.mintChildAuthority({
-//     schemaVersion, repoId, coordination, sessions, parentTask, parentConnection, runtimeRoot,
+//     schemaVersion, repoId, coordination, sessions, workerId, parentTask, parentConnection,
+//     runtimeRoot,
 //   }) → { session: {sessionId, credentialId, token, expiresAt},
 //          lease:   {leaseId, expiresAt},
 //          projection: {schemaVersion, profile, tokenFile, url, origin} }
-//     parentConnection is the RESOLVED discovery-contract parent connection
-//     ({schemaVersion, url, origin, tokenFile, token}). The mint returns a FRESH child
-//     session + run-orchestrator lease + a connection projection whose profile/token land
-//     INSIDE the worker-private runtimeRoot (token file mode 0600). The child credential is
-//     never a copy of the parent's: digest inequality + content independence.
+//     The child session is minted with userId 'worker:<workerId>' (contract Decision 1). The
+//     lease is minted bound to that child session. parentConnection is the RESOLVED
+//     discovery-contract parent connection ({schemaVersion, url, origin, tokenFile, token}).
+//     The mint returns a FRESH child session + run-orchestrator lease + a connection
+//     projection whose profile/token land INSIDE the worker-private runtimeRoot (token file
+//     mode 0600). The child credential is never a copy of the parent's: digest inequality +
+//     content independence, and the PROJECTED FILE's bytes are the child bearer (R1 teeth).
 //
 //   baton.connectionAuthority.revokeChildAuthority({
-//     schemaVersion, coordination, sessions, sessionId, leaseId, reason,
+//     schemaVersion, coordination, sessions, sessionId, leaseId, leaseDigest, reason,
 //   }) → { ok: true, result: 'revoked' }
 //     Revoke the child session (sessions.revoke) AND the child lease
-//     (revokeRunOrchestratorLease) when the parent task reaches a terminal path.
+//     (revokeRunOrchestratorLease — whose exact key set demands leaseDigest, contract
+//     Decision 4a) when the parent task reaches a terminal path.
 //
 //   baton.connectionAuthority.sweepChildOrphans({
 //     schemaVersion, coordination, sessions, deadlineMs, runtime,
 //   }) → { ok: true, swept: <non-negative integer> }
 //     Startup sweep: revoke child sessions/leases whose parent task is terminal or whose
-//     lease epoch has expired, so a crashed parent leaves no live child authority.
+//     lease epoch has expired, so a crashed parent leaves no live child authority. The
+//     session-revocation half is pinned against a LIVE orphan session (R8).
+//
+// Driveable-surface lock (blue-team fold): the contract's Decision 4a names the deployment
+// closure signatures `mintChildAuthority({workerId, parentTask})` /
+// `revokeChildAuthority({sessionId, leaseId, leaseDigest, reason})`. The suite drives the
+// EXPORTED index.mjs surfaces with the coordination/session stores passed explicitly so the
+// rows can verify durably — `workerId`/`leaseDigest` are named exactly as the contract does,
+// and the stores/runtimeRoot are the driveable environment (a closure-based deployment wrap
+// honors them or is a thin wrapper over the exported functions).
 //
 // RuntimeIsolation.create gains a third options argument ({connectionProjection}) whose
-// value is projected onto the returned posture as `posture.connectionProjection`.
+// value is projected onto the returned posture as `posture.connectionProjection` — the
+// contract's digest/ids envelope, NEVER file paths or the token (Decision 3's
+// no-paths/no-inventory law).
 //
 // Pin list (must stay green today AND after the rung — a wrong implementation has nowhere
 // to hide):
@@ -64,14 +88,20 @@
 //   P4  Transport run_stop constancy: owner (emergency_stop) → 200; non-lease child without
 //       emergency_stop → 403 forbidden. Both stay constant; the carve-out (R4) is narrow.
 //   P5  Legacy operator set constancy for the NON-worker owner: every family still 200.
-//   P6  v1 lane reach on the child's OWN subtree: message.send/receipt, attention.watch (the
-//       lane's own lease-parent law), scratchpad.read/elevate, board.post/read, knowledge.seed.
+//   P6  v1 lane reach on the contract's worker:-prefixed child ('worker:child', the actual
+//       security predicate the binding keys on) driving its OWN admitted subtree: message.send/
+//       receipt, attention.watch (the lane's own lease-parent law), scratchpad.read/elevate,
+//       board.post/read (incl. a sibling-in-subtree row), knowledge.seed.
 //   P7  Resolve-then-authorize constancy: unknown message.receipt and unknown/cross-run
 //       scratchpad.elevate → application_unauthorized; foreign/unknown attention.watch →
 //       attention_scope_forbidden (the lane's own landed law).
 //
-// Verified split (baseline, two consecutive runs): 7 pins green, 8 reds failing at their
-// named stages. NUL-byte discipline: this suite never reads application.mjs /
+// Verified split (blue-team fold, suite-blueteam.md → suite-fold.md): 7 pins green, 8 reds
+// failing at their named stages — every blocker folded (R6/P6 re-keyed to the contract's
+// worker:-prefixed child so the binding actually fires; R2 reconciled to Decision 3's
+// digest/ids envelope; R1 pins the projected token FILE's bytes; R4 adds the foreign/unknown
+// run.stop rows; R7/R8 strengthened; mint/revoke surfaces locked with workerId/leaseDigest).
+// NUL-byte discipline: this suite never reads application.mjs /
 // coordination-store.mjs / coordinator.mjs wholesale (behavioral rows only); the fixture
 // stack is the board-workerhalf waveFixture idiom (real createDriver + ScriptableAdapter)
 // plus the phase77 standalone-store transport idiom.
@@ -85,7 +115,7 @@ import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import test from 'node:test';
 
 import { BatonApplication, APPLICATION_COMMAND_DEFINITIONS } from '../src/application.mjs';
@@ -605,10 +635,15 @@ test('P5 PIN: the legacy operator set stays 200 for the NON-worker owner', async
 
 // P6 PIN: v1 lane reach on the child's OWN subtree — the child (lease holder) drives every
 // workflow lane against runs the lease subtree owns, and the lanes serve.
-test('P6 PIN: v1 lane reach on the child\'s own subtree', async (t) => {
+test('P6 PIN: v1 lane reach on the worker:-prefixed child\'s own subtree', async (t) => {
   const fx = await facadeFixture(t);
-  const child = authorityOn(fx, { runId: 'run:child-parent', principalId: 'child', sessionId: 'session-child' });
+  // Blocker 3: the fixture IS the contract's child — a worker:-prefixed principal (the actual
+  // security predicate the lane-scope binding keys on). With `child`, P6 passed for the WRONG
+  // reason (the binding never fires for a non-prefixed principal); with `worker:child` it is
+  // the admit arm that catches an over-restrictive binding after the rung.
+  const child = authorityOn(fx, { runId: 'run:child-parent', principalId: 'worker:child', sessionId: 'session-child' });
   admitChildLineage(fx, child.receipt.lease, 'run:own');
+  admitChildLineage(fx, child.receipt.lease, 'run:own-sibling', 'nested sibling workstream');
   const childPrincipal = principalOfChild(child);
   // message.send/receipt on the own subtree run (a live worker makes the run active).
   const handle = await spawnMember(fx, { runId: 'run:own' });
@@ -647,6 +682,18 @@ test('P6 PIN: v1 lane reach on the child\'s own subtree', async (t) => {
     runId: 'run:own', type: 'Finding', grounding: 'observed', body: 'child finding',
   }, childPrincipal, null);
   assert.equal(seeded?.ok, true);
+  // Sibling-in-subtree admit arm (NP-03): a SECOND run admitted under the SAME lease (its
+  // first-hop lineage carries THIS lease's id) is also servable — an over-restrictive binding
+  // that only admits the first-admitted child dies here.
+  const siblingPost = await fx.application.command('run.board.post', {
+    runId: 'run:own-sibling', board: 'board-sibling', title: 'sibling board',
+  }, childPrincipal, null);
+  assert.equal(siblingPost?.result, 'posted');
+  const siblingRead = await fx.application.command('run.board.read', {
+    runId: 'run:own-sibling', board: 'board-sibling',
+  }, childPrincipal, null);
+  assert.equal(siblingRead?.schemaVersion, 1);
+  assert.equal(siblingRead?.board, 'board-sibling');
 });
 
 test('P7 PIN: resolve-then-authorize constancy — unknown message/scratchpad refuse with the one constant', async (t) => {
@@ -708,6 +755,7 @@ test('R1 RED (stage: connection-mint-missing): mintChildAuthority mints a FRESH 
   };
   const minted = await connectionAuthority.mintChildAuthority({
     schemaVersion: 1, repoId: REPO, coordination, sessions,
+    workerId: 'child-r1',
     parentTask: { id: parent.task.id, version: parent.task.version },
     parentConnection,
     runtimeRoot,
@@ -728,41 +776,72 @@ test('R1 RED (stage: connection-mint-missing): mintChildAuthority mints a FRESH 
     'the child credential is never a digest copy of the parent\'s');
   // The minted token file is mode-0600 in the worker private home.
   assert.equal(statSync(tokenPath).mode & 0o777, 0o600, 'the child token file is mode 0600');
-  // The minted session authenticates against the durable session store.
+  // The minted session authenticates against the durable session store — userId is the
+  // contract's worker-prefix predicate (Decision 1), derived from the passed workerId.
   const principal = sessions.authenticate({ headers: { authorization: `Bearer ${minted.session.token}` } });
-  assert.equal(principal.userId, 'child-r1');
+  assert.equal(principal.userId, 'worker:child-r1',
+    'the minted child session carries the contract userId worker:<workerId>');
   // The minted lease is live and bound to the child session.
   const lease = coordination.activeRunOrchestratorLeaseForSession({
-    repoId: REPO, principalId: 'child-r1', sessionId: minted.session.sessionId,
+    repoId: REPO, principalId: 'worker:child-r1', sessionId: minted.session.sessionId,
     expiresAt: minted.session.expiresAt,
   });
   assert.equal(lease.leaseId, minted.lease.leaseId);
+  // Blocker 4: the projected token FILE's bytes are the child bearer — a wrong mint that
+  // registers a fresh session in the store while writing the PARENT's token (or garbage) to
+  // the file the child will actually authenticate with fails here. The file is the child's
+  // real authentication surface.
+  assert.equal(readFileSync(tokenPath, 'utf8'), `${minted.session.token}\n`,
+    'the projected token file holds the CHILD bearer + newline (the tokenBytes shape)');
+  assert.notEqual(readFileSync(tokenPath, 'utf8'), `${parentConnection.token}\n`,
+    'the projected token file is never the parent bearer');
+  // The projected profile is a valid closed-shape profile carrying the parent's coordinates
+  // and naming its token sibling by basename (discovery resolves beside the profile).
+  const profile = JSON.parse(readFileSync(profilePath, 'utf8'));
+  assert.equal(profile.url, parentConnection.url, 'the projected profile carries the parent connection url');
+  assert.equal(profile.origin, parentConnection.origin, 'the projected profile carries the parent connection origin');
+  assert.equal(profile.tokenFile, basename(minted.projection.tokenFile),
+    'the profile names its token sibling by basename (the closed discovery shape)');
   coordination.releaseWriterLease();
 });
 
-test('R2 RED (stage: connection-projection-missing): RuntimeIsolation.create projects the child connection onto the posture', (t) => {
+test('R2 RED (stage: connection-projection-missing): RuntimeIsolation.create projects the child connection envelope onto the posture', (t) => {
   const repoRoot = tmpDir('baton-nested-r2-repo-');
   const root = tmpDir('baton-nested-r2-runtime-');
   t.after(() => rmSync(repoRoot, { recursive: true, force: true }));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const isolation = new RuntimeIsolation({ repoRoot, root, baseEnv: { HOME: '/home/orchestrator' } });
+  // Decision 3's pinned posture shape: digests and ids ONLY — never file paths, never the
+  // url/origin, never the token (the posture's no-paths/no-inventory law).
   const projection = {
-    schemaVersion: 1, profile: 'connections/child', tokenFile: 'connections/child.token',
-    url: 'https://control.example.test', origin: 'https://control.example.test',
+    state: 'materialized',
+    profileDigest: digest({ kind: 'connection-profile', name: 'connections/child' }),
+    tokenDigest: digest({ kind: 'connection-token', name: 'connections/child.token' }),
+    sessionId: 'session-child-r2',
+    orchestratorLeaseId: 'lease-child-r2',
+    expiresAt: '2026-08-06T00:01:00.000Z',
   };
   const created = isolation.create('worker-r2', {
     card: { harness: 'claude', authPosture: 'api_key', modelSelection: { family: 'claude' } },
   }, { connectionProjection: projection });
-  // The posture is a PUBLIC surface: the child connection coordinates are disclosed there so
-  // status/debug surfaces can attest which profile a worker was minted under.
+  // The posture is a PUBLIC surface: the projection attests WHICH profile/token/lease a worker
+  // was minted under without disclosing any credential inventory — a contract-faithful
+  // implementation greening R2 must project the digest envelope, nothing more.
   assert.ok(created.posture.connectionProjection,
     'stage: connection-projection-missing — the posture must project the child connection');
-  assert.equal(created.posture.connectionProjection.profile, 'connections/child');
-  assert.equal(created.posture.connectionProjection.tokenFile, 'connections/child.token');
-  assert.equal(created.posture.connectionProjection.url, projection.url);
-  // The projection never carries the token itself (a digest-free pointer, 0600 at its file).
+  assert.equal(created.posture.connectionProjection.state, 'materialized');
+  assert.equal(created.posture.connectionProjection.profileDigest, projection.profileDigest);
+  assert.equal(created.posture.connectionProjection.tokenDigest, projection.tokenDigest);
+  assert.equal(created.posture.connectionProjection.sessionId, projection.sessionId);
+  assert.equal(created.posture.connectionProjection.orchestratorLeaseId, projection.orchestratorLeaseId);
+  assert.equal(created.posture.connectionProjection.expiresAt, projection.expiresAt);
+  // The no-paths/no-inventory law cuts both ways: material names and the token are ABSENT
+  // (a wrong rung that embeds the profile/tokenFile/url/origin — or the token itself — on the
+  // public posture fails here).
+  assert.equal(created.posture.connectionProjection.profile, undefined);
+  assert.equal(created.posture.connectionProjection.tokenFile, undefined);
   assert.equal(created.posture.connectionProjection.token, undefined,
-    'the projection names the credential file; it never embeds the token');
+    'the projection names digests/ids; it never embeds the token');
 });
 
 test('R3 RED (stage: xdg-delete-missing): the child runtime env scrubs XDG_CONFIG_HOME', (t) => {
@@ -803,6 +882,29 @@ test('R4 RED (stage: runstop-carveout-missing): transport run_stop admits a leas
   // transport's unconditional capability gate refuses — the carve-out is missing.
   assert.equal(response.status, 200,
     'stage: runstop-carveout-missing — the transport must admit the lease-bound child on its own subtree');
+  // Blocker 5: the carve-out is SCOPED, not blanket. A lease-bound child stopping a FOREIGN
+  // run — a sibling subtree whose first-hop lineage carries a DIFFERENT lease id — refuses
+  // the byte-identical 403 forbidden (NP-02's no-existence-leak law; an over-broad carve-out
+  // that admits ANY target from any lease holder passes R4's admit arm but dies here).
+  const foreignParent = workingParent(store, 'r4b', 'child-r4b', 'session-r4b');
+  const foreignRunId = admitRecipientHistory(store, foreignParent, 'r4b');
+  const foreignResponse = await web.execute({
+    principal: child, origin: 'https://control.example.test', csrfToken: null,
+    remoteAddress: '127.0.0.1', transport: 'https',
+  }, webEnvelope('run_stop', { runId: foreignRunId, reason: 'child stops a foreign run' }, foreignRunId));
+  assert.equal(foreignResponse.status, 403, 'a lease-bound child cannot stop a FOREIGN run');
+  assert.equal(foreignResponse.body?.error?.code, 'forbidden');
+  // An UNKNOWN runId draws the same 403 bytes — unknown ≡ foreign, no existence leak. The
+  // store's own scope law (authorizeRunOrchestratorCommand second layer) is what both rows
+  // exercise after the transport carve-out admits.
+  const unknownResponse = await web.execute({
+    principal: child, origin: 'https://control.example.test', csrfToken: null,
+    remoteAddress: '127.0.0.1', transport: 'https',
+  }, webEnvelope('run_stop', { runId: 'run-r4-unknown', reason: 'child stops an unknown run' }, 'run-r4-unknown'));
+  assert.equal(unknownResponse.status, 403, 'a lease-bound child cannot stop an UNKNOWN run');
+  assert.equal(unknownResponse.body?.error?.code, 'forbidden');
+  assert.deepEqual(unknownResponse.body, foreignResponse.body,
+    'unknown ≡ foreign at the carve-out — the refusal is byte-identical');
   store.releaseWriterLease();
 });
 
@@ -828,7 +930,12 @@ test('R5 RED (stage: legacy-refusal-missing): worker:-prefixed principals refuse
 
 test('R6 RED (stage: lane-scope-binding-missing): the six workflow lanes refuse foreign runs with the one constant', async (t) => {
   const fx = await facadeFixture(t);
-  const child = authorityOn(fx, { runId: 'run:child-parent', principalId: 'child', sessionId: 'session-child' });
+  // Blocker 1: the fixture principal is the contract's worker:-prefixed child — the prefix the
+  // binding keys on. With `child` the binding never fired, so a correct rung could not green
+  // R6 (and an over-restrictive one stayed invisible); with `worker:child` the foreign rows
+  // become greenable by the contract's law and still fail today (the vacuous injected authorize
+  // serves every lane).
+  const child = authorityOn(fx, { runId: 'run:child-parent', principalId: 'worker:child', sessionId: 'session-child' });
   admitChildLineage(fx, child.receipt.lease, 'run:own');
   const childPrincipal = principalOfChild(child);
   // Stage foreign-run state per lane so each lane would SERVE today (authorize admits): the
@@ -884,23 +991,31 @@ test('R7 RED (stage: terminal-revoke-missing): revokeChildAuthority revokes the 
     userId: 'child-r7', authMethod: 'bearer', capabilities: ['observe', 'control'],
     repoIds: [REPO], ttlMs: 3_600_000,
   }, { actor: 'test:r7' });
+  // The child session is LIVE before the revoke (a static clock and a fresh token: the only
+  // way it can die is the revoke below).
+  const prePrincipal = sessions.authenticate({ headers: { authorization: `Bearer ${childSession.token}` } });
+  assert.ok(prePrincipal, 'the child session is live before the terminal revoke');
   // The parent reaches a terminal path (the working task is completed): the child authority
   // MUST be revoked with it — a dead parent leaves no live child credential.
   coordination.transitionTask(parent.task.id, 'completed', parent.task.version, {
     actor: 'policy', key: `r7.terminal:${parent.task.id}`,
   });
+  // leaseDigest is the store's revokeRunOrchestratorLease requirement (its exact key set) —
+  // the contract's Decision 4a named surface.
   const revoked = await connectionAuthority.revokeChildAuthority({
     schemaVersion: 1, coordination, sessions,
     sessionId: childSession.sessionId, leaseId: parent.lease.leaseId,
+    leaseDigest: parent.lease.leaseDigest,
     reason: 'parent_terminal',
   });
   assert.equal(revoked.ok, true);
   assert.equal(revoked.result, 'revoked');
   // The revocation lands durably in BOTH stores: the lease is revoked and the session no
-  // longer authenticates.
+  // longer authenticates — asserted DIRECTLY (authenticate → null), the stronger proof.
   assert.equal(coordination.runOrchestratorLease(parent.lease.leaseId)?.status, 'revoked');
-  const principal = sessions.authenticate({ headers: { authorization: `Bearer ${childSession.token}` } });
-  assert.equal(sessions.isPrincipalActive(principal, { repoId: REPO }), false,
+  assert.equal(sessions.authenticate({ headers: { authorization: `Bearer ${childSession.token}` } }), null,
+    'the revoked child session no longer authenticates');
+  assert.equal(sessions.isPrincipalActive(prePrincipal, { repoId: REPO }), false,
     'the revoked child session is inactive');
   coordination.releaseWriterLease();
 });
@@ -917,26 +1032,34 @@ test('R8 RED (stage: orphan-sweep-missing): sweepChildOrphans revokes orphaned c
   const clock = mutableClock(NOW);
   const coordination = new CoordinationStore(coordinationDir, { repoId: REPO, clock: () => clock.now(), runLineagePolicy });
   const sessions = new WebSessionStore(sessionRoot, { now: () => Date.parse(clock.now()) });
-  // A crashed-parent orphan: the child lease exists but its parent task is terminal AND the
-  // child session has expired past its epoch — exactly the state a startup sweep must clear.
-  const parent = workingParent(coordination, 'r8', 'child-r8', 'session-r8');
+  // A crashed-parent orphan: the child lease exists but its parent task is terminal. The child
+  // session is minted FIRST (long TTL) and the lease is bound to THAT session's id, so the
+  // durable lease record re-derives the exact session the sweep must revoke (Decision 5's
+  // durable-records rule). The session is LIVE at sweep time — the row pins the sweep's
+  // session-revocation HALF, not the session's own TTL.
   const childSession = sessions.issue({
     userId: 'child-r8', authMethod: 'bearer', capabilities: ['observe', 'control'],
-    repoIds: [REPO], ttlMs: 1_000,
+    repoIds: [REPO], ttlMs: 3_600_000,
   }, { actor: 'test:r8' });
+  const parent = workingParent(coordination, 'r8', 'child-r8', childSession.sessionId);
+  const live = sessions.authenticate({ headers: { authorization: `Bearer ${childSession.token}` } });
+  assert.ok(live, 'the orphan child session is LIVE at sweep time (a non-expired orphan)');
   coordination.transitionTask(parent.task.id, 'completed', parent.task.version, {
     actor: 'policy', key: `r8.terminal:${parent.task.id}`,
   });
-  clock.set(new Date(Date.parse(childSession.expiresAt) + 1).toISOString());
   const swept = await connectionAuthority.sweepChildOrphans({
     schemaVersion: 1, coordination, sessions, deadlineMs: 30_000, runtime,
   });
   assert.equal(swept.ok, true);
   assert.ok(Number.isSafeInteger(swept.swept) && swept.swept >= 1,
     'the sweep reports at least the orphaned child authority');
-  // The orphaned lease is revoked and the expired child session is no longer active.
+  // The orphaned lease is revoked AND the LIVE orphan session is revoked with it — a sweep
+  // that only revokes leases (or only counts orphans) fails here.
   assert.equal(coordination.runOrchestratorLease(parent.lease.leaseId)?.status, 'revoked');
-  assert.equal(sessions.authenticate({ headers: { authorization: `Bearer ${childSession.token}` } }), null);
+  assert.equal(sessions.isPrincipalActive(live, { repoId: REPO }), false,
+    'the sweep revokes the LIVE orphan session — not merely an expired one');
+  assert.equal(sessions.authenticate({ headers: { authorization: `Bearer ${childSession.token}` } }), null,
+    'the orphaned session no longer authenticates after the sweep');
   coordination.releaseWriterLease();
 });
 

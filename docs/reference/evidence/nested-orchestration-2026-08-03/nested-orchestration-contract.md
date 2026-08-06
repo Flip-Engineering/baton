@@ -1,9 +1,24 @@
-# Issue #12 — The nested-orchestration rung: a minted, lease-bound child connection profile projected at spawn (v1.1)
+# Issue #12 — The nested-orchestration rung: a minted, lease-bound child connection profile projected at spawn (v1.2)
 
 Status: implementation contract. This rung unblocks issue #74 (the worker-orchestrated swarm) by
 projecting a FRESH, lease-bound child connection profile into the private worker runtime at spawn —
 never a copy of the owner's store. This epic specifies behavior; it does not amend implementation
 in this artifact.
+
+**v1.2 fold (2026-08-06).** This revision folds the blue-team acceptance review (`suite-blueteam.md`,
+this directory — verdict NOT-READY, five blockers) into the contract. One amendment plus the
+suite reconciliation, both made to keep the contract satisfiable UNDER the folded suite
+(`nested-orchestration-red.test.mjs`, run from the repo root): (1) the lane-scope binding's
+enforcement point is pinned to the facade `_authorize` seam (`application.mjs:3088`) — the suite's
+fixture replaces the deployment-injected `authorize` with `async () => true`, so the v1.1
+"deployment `authorize`" wording was unsatisfiable under the suite (Decision 6, drift finding 6);
+(2) the suite drives the mint/revoke/sweep surfaces as EXPORTED seams with the coordination/session
+stores explicit — `workerId`/`leaseDigest` named exactly as Decision 4a — so the driveable surface
+is the binding contract for the row implementations (drift findings 3-5). The suite's R2 posture
+rows now assert Decision 3's digest/ids envelope; R6/P6 drive the `worker:`-prefixed child (the
+security predicate the binding keys on); R1 pins the projected token FILE's bytes; R4 adds the
+foreign/unknown `run.stop` rows; R7/R8 strengthen the session-revocation proofs. Blocker → change
+map and before/after splits: `suite-fold.md` in this directory.
 
 **v1.1 fold (2026-08-06).** This revision folds the adversarial red-team review
 (`contract-redteam.md`, this directory — verdict NOT FOLD-READY, five blockers) into the
@@ -329,7 +344,15 @@ outline, exposing EXACTLY two operations — `mintChildAuthority({workerId, pare
 `revokeChildAuthority({sessionId, leaseId, leaseDigest, reason})` (session revoke + lease
 revoke). It cannot mint owner-class capabilities (the capability list is fixed in the closure),
 cannot read the owner store (it holds the in-memory outline, never the paths), and cannot touch
-the owner session (it tracks only its own minted {sessionId ↔ leaseId} ledger).
+the owner session (it tracks only its own minted {sessionId ↔ leaseId} ledger). **v1.2 fold — the
+driveable acceptance surface.** The suite drives these operations — plus the Decision 5 startup
+sweep — as EXPORTED `index.mjs` seams that take the coordination/session stores and the runtime
+root explicitly: `mintChildAuthority({schemaVersion, repoId, coordination, sessions, workerId,
+parentTask, parentConnection, runtimeRoot})`, `revokeChildAuthority({schemaVersion, coordination,
+sessions, sessionId, leaseId, leaseDigest, reason})`, `sweepChildOrphans({schemaVersion,
+coordination, sessions, deadlineMs, runtime})`. `workerId`/`leaseDigest` are named exactly as the
+closure signatures above; the extra fields are the driveable environment (a closure-based
+deployment wrap honors them or is a thin wrapper over the exported functions).
 
 (b) **Spawn seam** (`coordinator._ensureRuntimeScope`, `impl/src/coordinator.mjs:8498-8511`):
 when the handle's task brief carries `baton_orchestrator`, call `mintChildAuthority`, mint the
@@ -495,14 +518,17 @@ today `async () => true` (`impl/src/application-deployment.mjs:1969`), and the p
 The rung adds the binding at that one seam — each of the seven calls `_authorize` with its target
 runId (`messageSend :12608`, `messageReceipt :12634`, `scratchpadRead :12661`,
 `scratchpadElevate :12710`, `boardPost :12723`, `boardRead :12793`, `knowledgeSeed :12816`):
-for a `worker:`-prefixed principal the deployment `authorize` admits the call only when the
-caller holds a live lease and the target run lies INSIDE that lease's subtree — the store's
-first-hop law (`coordination-store.mjs:2046-2054`) applied to the lane's run, the lease
-re-derived exactly as `_isReviewAuthority` re-derives it (`activeRunOrchestratorLeaseForSession`,
-two postures, `coordination-store.mjs:1956-1989`; `coordinator.mjs:7010-7013`), or the pre-gate
-dispatch passes the transport-derived `sessionAuthority` through — the LAW is pinned either way,
-the plumbing is the implementer's call. A FOREIGN target and an UNKNOWN target refuse the SAME
-constant `application_unauthorized` (the lanes' own unknown ≡ foreign code,
+for a `worker:`-prefixed principal the facade `_authorize` (`application.mjs:3088`) admits the
+call only when the caller holds a live lease and the target run lies INSIDE that lease's subtree —
+the store's first-hop law (`coordination-store.mjs:2046-2054`) applied to the lane's run, the
+lease re-derived exactly as `_isReviewAuthority` re-derives it (`activeRunOrchestratorLeaseForSession`,
+two postures, `coordination-store.mjs:1956-1989`; `coordinator.mjs:7010-7013`). **v1.2 fold: the
+enforcement lives INSIDE `_authorize` itself — before/independent of its delegation to the
+deployment-injected `authorize` (`:2368`). The acceptance suite's fixture replaces that injected
+function with `async () => true` (`nested-orchestration-red.test.mjs` facadeFixture), so a binding
+that lives only in the deployment-injected function is untestable and unsatisfiable under the
+suite (NP-03; suite-blueteam.md drift finding 6).** A FOREIGN target and an UNKNOWN target refuse
+the SAME constant `application_unauthorized` (the lanes' own unknown ≡ foreign code,
 `application.mjs:12630-12632`) — no existence leak; a sibling run INSIDE the subtree (its
 first-hop lineage carries THIS lease's id) is admitted. `run.start` is deliberately NOT bound at
 this seam: its target does not exist yet by construction (its `_authorize` names `intent.runId`,
