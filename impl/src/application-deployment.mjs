@@ -754,6 +754,10 @@ class DeepseekSessionCli extends GlmSessionCli {
       ...(credentialPresent ? { authTokenFile } : {}),
       harness: 'deepseek',
       baseUrl: 'https://api.deepseek.com/anthropic',
+      // Operator policy (2026-08-04): deepseek-v4-flash runs WIDE — the inherited glm default
+      // ceiling:1 is GLM Pro's provider constraint, not deepseek's. Default 4 (the claude-family
+      // default); explicit opts.ceiling always wins.
+      ceiling: opts.ceiling ?? 4,
     });
     this._deepseekCredentialPresent = credentialPresent;
   }
