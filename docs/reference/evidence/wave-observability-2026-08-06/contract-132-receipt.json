@@ -9,6 +9,27 @@
           "run-a1b3cf419cd987043b2269784c89a94c"
         ]
       }
+    },
+    {
+      "step": "terminal:contract-132",
+      "receipt": {
+        "phase": "work_completed"
+      }
+    },
+    {
+      "step": "loop-drained",
+      "receipt": {
+        "pending": []
+      }
     }
-  ]
+  ],
+  "harvest": {
+    "contract-132": {
+      "pin": "b0ae0faa0c618bc3e783cf9e40cc4e713003f492",
+      "paths": [
+        "docs/reference/evidence/wave-observability-2026-08-06/wave-observability-contract.md"
+      ]
+    }
+  },
+  "verdict": "CONTRACT-132-OK"
 }
