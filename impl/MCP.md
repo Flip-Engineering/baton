@@ -52,6 +52,40 @@ The legacy config FACTORY MODULE path stays for advanced deployments (a `.mjs` p
 as a module exporting `default`/`createMcpServer()`), but the descriptor is the documented
 default and the distribution story is npx-from-git (`private: true`, no registry publication).
 
+## Wire it into your harness
+
+Any MCP-capable harness spawns the server as a stdio subprocess pointed at the descriptor:
+
+**Claude Code** (`.mcp.json` in your project, or `~/.claude.json` for user scope):
+
+```json
+{
+  "mcpServers": {
+    "baton": {
+      "command": "node",
+      "args": ["/absolute/path/to/baton/impl/scripts/mcp-stdio.mjs", "/absolute/path/to/baton-mcp.json"]
+    }
+  }
+}
+```
+
+**Kimi Code** (`~/.kimi-code/config.toml`):
+
+```toml
+[mcp_servers.baton]
+command = "node"
+args = ["/absolute/path/to/baton/impl/scripts/mcp-stdio.mjs", "/absolute/path/to/baton-mcp.json"]
+```
+
+**Codex / generic MCP clients**: the same stdio pair (`node <mcp-stdio.mjs> <descriptor.json>`)
+under the client's server configuration idiom.
+
+On `initialize` the server answers with the Flip greeting and the surface-orientation
+instructions line; `baton_deployment_doctor` is the quota-free route-picking prerequisite —
+call it before starting work. The descriptor's `surface: "application"` (the documented
+default) serves the ordinary inventory below; `combined` adds the board/package/REPL/knowledge
+families for kernel-control deployments.
+
 ## Read readiness
 
 `baton_deployment_doctor` is quota-free, rebuilt per call (never open-time cached), and carries
