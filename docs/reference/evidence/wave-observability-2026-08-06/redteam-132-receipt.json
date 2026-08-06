@@ -1,0 +1,15 @@
+{
+  "attempt": "2026-08-06T23:26:54.716Z",
+  "salt": "r220260806232654",
+  "role": "redteam-132",
+  "steps": [
+    {
+      "step": "waves.start",
+      "receipt": {
+        "runs": [
+          "run-ec27d197a83ba391d815a2694452823d"
+        ]
+      }
+    }
+  ]
+}
