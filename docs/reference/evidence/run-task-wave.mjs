@@ -75,6 +75,10 @@ const baton = await openBaton({
 
 let wave = null;
 try {
+  // #134 interim harvest honesty: only pins created AFTER this driver's launch are eligible —
+  // a wave that produced nothing can never be "harvested" from an earlier wave's stale pin
+  // (the fold-114 v1 false-OK). Structural fix remains #114's authoritative-sha accessor (#99).
+  const startedAtEpochSec = Math.floor(Date.now() / 1000);
   wave = await baton.waves.start({
     members: [{
       role: ROLE,
@@ -88,7 +92,7 @@ try {
     step('start-refused', { reason: 'no run returned at admission — see issue #129 class' });
     receipts.verdict = `${VERDICT}-START-REFUSED`;
     persist();
-    log(`verdict: ${receipts.verdict}`);
+    log(`verdict: ${receipts.verdict} — harvest skipped (start refused; #134)`);
     process.exitCode = 1;
   } else {
     const deadline = Date.now() + DEADLINE_MIN * 60_000;
@@ -135,11 +139,17 @@ try {
     step('loop-drained', { pending: [...pending] });
     await sleep(10_000);
     const pins = [
-      ...execFileSync('git', ['for-each-ref', 'refs/baton/results', '--sort=-creatordate', '--format=%(objectname)'], { cwd: repo, encoding: 'utf8' }).trim().split('\n').filter(Boolean),
-      ...execFileSync('git', ['for-each-ref', 'refs/baton/checkpoints', '--sort=-creatordate', '--format=%(objectname)'], { cwd: repo, encoding: 'utf8' }).trim().split('\n').filter(Boolean),
+      ...execFileSync('git', ['for-each-ref', 'refs/baton/results', '--sort=-creatordate', '--format=%(objectname) %(creatordate:unix)'], { cwd: repo, encoding: 'utf8' }).trim().split('\n').filter(Boolean),
+      ...execFileSync('git', ['for-each-ref', 'refs/baton/checkpoints', '--sort=-creatordate', '--format=%(objectname) %(creatordate:unix)'], { cwd: repo, encoding: 'utf8' }).trim().split('\n').filter(Boolean),
     ];
+    // #134: drop any pin created before this driver's launch — it cannot belong to this wave.
+    const freshPins = pins.map((line) => {
+      const [sha, created] = line.split(' ');
+      return { sha, created: Number(created) };
+    }).filter((pin) => pin.created >= startedAtEpochSec - 5);
+    const skippedStale = pins.length - freshPins.length;
     const harvested = {};
-    for (const pin of pins.slice(0, 20)) {
+    for (const { sha: pin } of freshPins.slice(0, 20)) {
       if (harvested[ROLE]) continue;
       try {
         const contents = TARGETS.map((path) => {
@@ -151,9 +161,10 @@ try {
       } catch { /* not in this pin */ }
     }
     receipts.harvest = harvested;
+    receipts.harvestStalePinsSkipped = skippedStale;
     receipts.verdict = Object.keys(harvested).length === 1 ? `${VERDICT}-OK` : `${VERDICT}-INCOMPLETE`;
     persist();
-    log(`verdict: ${receipts.verdict} — harvested: ${Object.keys(harvested).join(', ') || 'none'}`);
+    log(`verdict: ${receipts.verdict} — harvested: ${Object.keys(harvested).join(', ') || 'none'}${skippedStale > 0 ? ` (${skippedStale} pre-launch pins skipped, #134)` : ''}`);
   }
 } finally {
   persist();
