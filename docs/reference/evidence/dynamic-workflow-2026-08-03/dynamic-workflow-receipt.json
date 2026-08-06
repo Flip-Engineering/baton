@@ -1,16 +1,16 @@
 {
-  "attempt": "2026-08-05T23:44:04.013Z",
-  "salt": "dw20260805234404",
-  "canary": "COPPER-FOXNIFE-44013",
+  "attempt": "2026-08-06T00:35:49.006Z",
+  "salt": "dw20260806003549",
+  "canary": "COPPER-FOXNIFE-89007",
   "steps": [
     {
       "step": "waves.start",
       "receipt": {
         "runs": {
-          "lead": "run-3161c97a09fcf79678026efab3e61a28",
-          "cli-surveyor": "run-c66e562a5e3329d15ecef73649b05b48",
-          "mcp-surveyor": "run-1eb00ad2c3462501a2a3a60acb701487",
-          "grammar-surveyor": "run-ff766a3527ba46a14dd22e2211e7f124"
+          "lead": "run-88490d86a8762ec7d7784931f04b9541",
+          "cli-surveyor": "run-70a7a389459953c5bf9684c4853b9fb9",
+          "mcp-surveyor": "run-a756a7ed223a4cc65c3b413178093496",
+          "grammar-surveyor": "run-90523bc6bac94cd212ebcd0f9f0aa23a"
         }
       }
     },
@@ -65,29 +65,29 @@
     {
       "step": "message.send:lead",
       "receipt": {
-        "messageId": "message:c8336a73590c4d9c488b67f8149467e5f888d08ce36d47287eee5d0a74ccec7c"
+        "messageId": "message:5ffc8cb8ff9bb34013c1232bdac4e914816581d0dd40d7fd500da8df65e28f28"
       }
     },
     {
       "step": "message.send:cli-surveyor",
       "receipt": {
-        "messageId": "message:4b65cf1594443bcd3cd411e9b69fe5cbd12da6c4de601c8fe121008e55810fe1"
+        "messageId": "message:bdf9de2444a664925b5cd9de930eab8c4b9e961e42eb5fdc02b3d33430ed30a4"
       }
     },
     {
       "step": "message.send:mcp-surveyor",
       "receipt": {
-        "messageId": "message:a81b9e120141f532b26724832e8c75e969a2946a13e6dd920b43c441d0879ac5"
+        "messageId": "message:1138ddd89334914df8d00f1ca2918abd6f7871f869b22f6ece14fac5a46b43f6"
       }
     },
     {
       "step": "message.send:grammar-surveyor",
       "receipt": {
-        "messageId": "message:4c8ca5406aa327dfb24d8f764bea6753f337aa5905130db570b478d20d5b0df2"
+        "messageId": "message:4cb6b56ae7dad35218bae432c7e11ef0edc06139ee06fa62a889c4bbfa604461"
       }
     },
     {
-      "step": "terminal:grammar-surveyor",
+      "step": "terminal:cli-surveyor",
       "receipt": {
         "phase": "work_completed"
       }
@@ -107,16 +107,11 @@
       }
     },
     {
-      "step": "terminal:lead",
-      "receipt": {
-        "phase": "work_completed"
-      }
-    },
-    {
       "step": "loop-drained",
       "receipt": {
         "pending": [
-          "cli-surveyor"
+          "lead",
+          "grammar-surveyor"
         ],
         "answered": true,
         "messaged": [
@@ -133,35 +128,48 @@
         "lead": {
           "delivered": true,
           "read": true,
-          "reply": "BLUE — acknowledged. Progress so far: (1) turn-1 liveness artifact minted via SC"
+          "reply": "Progress: liveness artifact minted (scratchpad note, key dw20260806003549-lead-n"
         },
         "cli-surveyor": {
           "delivered": true,
-          "read": true,
-          "reply": "cli-surveyor online. Turn 1 emitted: SCRATCHPAD_WRITE liveness note and board CO"
+          "read": null,
+          "reply": "cli-surveyor status: liveness note posted (idempotencyKey dw20260806003549-cli-n"
         },
         "mcp-surveyor": {
           "delivered": true,
-          "read": null,
-          "reply": "Progress: worktree confirmed, target files located (impl/MCP.md, impl/src/mcp-de"
+          "read": true,
+          "reply": "mcp-surveyor progress: located impl/MCP.md, impl/src/mcp-descriptor.mjs, and imp"
         },
         "grammar-surveyor": {
           "delivered": true,
-          "read": null,
-          "reply": "Grammar surveyor status: worktree confirmed (docs/reference/evidence/dynamic-wor"
+          "read": true,
+          "reply": "Acknowledged. Progress: scratchpad liveness note written, board read returned bo"
         }
       }
     }
   ],
   "verdict": {
     "verdict": "DYNAMIC-WORKFLOW-INCOMPLETE",
-    "reports": {},
+    "reports": {
+      "mcp-surface-audit.md": {
+        "pin": "5c0e0eb02a2508a916d58fbef3e1a2d3d22235dc",
+        "bytes": 13487,
+        "canary": true,
+        "blue": false
+      },
+      "cli-surface-audit.md": {
+        "pin": "2e4d44eaad7e3ecf09c9409e0d4a76d4a11213a4",
+        "bytes": 20400,
+        "canary": true,
+        "blue": false
+      }
+    },
     "leadDecisionAnswered": true,
     "elevated": [],
     "checks": {
       "allMembersDrained": false,
       "synthesisReport": false,
-      "canaryQuoted": false,
+      "canaryQuoted": true,
       "blueAcknowledged": false,
       "decisionGateAnswered": true
     }
