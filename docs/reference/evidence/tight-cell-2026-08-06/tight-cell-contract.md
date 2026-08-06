@@ -793,3 +793,55 @@ assertions key on durable ids/digests/events and content/state predicates, never
    (`application.mjs:53`). If the red suite shows a smaller bound is needed to hold
    `MAX_RUN_VIEW_BYTES` (`application.mjs:52`) with a full run view, the number must be
    re-derived from the byte math and named.
+
+---
+
+## v1.2 DRAFT — the context-depth amendment (operator direction, 2026-08-06)
+
+**Direction:** a tightly-coupled cell's context handling is DEEPER than the loose wave's
+fully-distinct per-worker contexts — not merely a shared run horizon. The loose form gives
+every member its own run, its own horizon, its own scratchpad tier, its own worktree, and
+orchestrator-mediated sharing between them. The cell's members share context by construction,
+at four depths, each named and pinned:
+
+**D-depth-1 — cell-mate task tiers are mutually readable.** Today's read port constructs
+`(runId, ['shared'])` server-side; a worker's task-ephemeral tier is invisible to every other
+worker. Inside a cell, the horizon extends: a cell member's CONTEXT_READ of kind scratchpad
+resolves the cell's task tiers (every member's task-ephemeral entries within the cell's run),
+bounded and UNTRUSTED-framed like any model-authored leaf. A cell-mate's note is evidence to
+verify, never instruction — the framing law is unchanged. (Suite row: member 2 reads member 1's
+task-tier note without any elevation.)
+
+**D-depth-2 — direct shared-tier writes with the cell's nonce.** Cell members may write the
+shared tier directly (today: orchestrator elevation only). The write carries the cell's minted
+nonce; the fence CAS is unchanged (a stale fence refuses `stale_scratchpad_fence` exactly as
+today); idempotency keys are per-member. The orchestrator's elevation remains the law for
+PROMOTION to the knowledge graph — direct shared writes are the workflow-ephemeral tier, never
+a candidacy shortcut. (Suite rows: two members write the shared tier concurrently — both land
+with per-member receipts; a stale-fence write refuses; a direct write never mints a KG
+candidate.)
+
+**D-depth-3 — message visibility.** A broadcast to the cell's run is visible in every member's
+frame (the C5 bounded broadcast), AND a member's reply to it is visible to its cell-mates (the
+reply receipt cites the cell + the member index; cell-mates' next frames carry the reply's
+framed excerpt). Depth stays 1 per member (v1.1's law); the visibility is per-member receipts,
+never a free-form channel.
+
+**D-depth-4 — the shared-worktree option (`group.worktree: 'shared'`).** One worktree, one
+capture, the collective diff — the deepest coupling: members' edits are literally one tree.
+Conflicts surface as `cell.conflict` attention items (never silent overwrites — the write
+serialization is the existing worktree-ownership machinery). Default remains per-worker
+worktrees (v1.1's designated-collector law); `shared` changes the capture to a single
+collective capture and the result derivation follows.
+
+**Honesty invariants (all four depths):** UNTRUSTED framing on every model-authored leaf,
+unchanged; zero promotion weight on reads, unchanged; the BD3-A runHorizon intersect applies
+AFTER lookup, unchanged (the cell's extension is inside the horizon predicate, not beside it);
+a cell-mate's content is never treated as orchestrator-authored.
+
+**Non-goal (v1.2):** cross-CELL context depth (the #96 workflow-ephemeral tier is its own
+rung); heterogeneous cells; depth negotiation per member (the depths are uniform within a cell).
+
+**Verification (when folded into the suite):** each depth gets a red row per the above plus a
+pin proving the loose form is unchanged (a non-cell member's task tier remains unreadable to
+siblings — the loose default is byte-identical).
