@@ -1,12 +1,12 @@
 {
-  "attempt": "2026-08-06T22:49:51.923Z",
-  "salt": "s320260806224951",
+  "attempt": "2026-08-06T22:49:15.816Z",
+  "salt": "s320260806224915",
   "steps": [
     {
       "step": "waves.start",
       "receipt": {
         "runs": [
-          "run-ed55914c31dcf4a37f469dfc83bd0999"
+          "run-22ad0cffc803d6fca23703fce6abe1e2"
         ]
       }
     },
@@ -25,7 +25,7 @@
   ],
   "harvest": {
     "suite-103": {
-      "pin": "18a39841186b5f7d1d06efea793b99e1c49bb509",
+      "pin": "244d98cfb6df25c90950ed88db89f70e24984574",
       "paths": [
         "impl/test/briefing-pack-red.test.mjs",
         "docs/reference/evidence/briefing-pack-2026-08-06/suite-draft-notes.md"
