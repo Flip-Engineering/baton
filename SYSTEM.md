@@ -58,7 +58,7 @@ second in-process controller or gains deployment-shutdown authority:
 | `run.review(run, exactRoute, reason)` | run one independently routed structured semantic review over the immutable accepted result and return its grounded findings in the RunView |
 | `run.integrate(run, evidenceDigest, strategy, reason)` | apply one policy-allowed local integration only after fresh evidence, result-selection, and semantic gates pass; never push or deploy |
 
-`run.recover` is planned but not yet shipped. The Coordinator's
+`run.recover` is shipped (the CLI inventory's `baton run recover RUN_ID`). The Coordinator's
 `spawn`, `send`, `interrupt`, `respond`, `result`, `list`, `kill`, and `drain` are kernel primitives,
 advanced compatibility, and emergency control. An ordinary agent does not compose a workflow from
 them. Accepted commits are provisionally pinned before task cleanup; adoption is a durable human

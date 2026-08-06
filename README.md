@@ -34,7 +34,8 @@ have to assemble manually. `Claude → (Codex + GLM)` and `Codex → (Claude + G
 ## Status
 
 Baton is a runnable dependency-light Node ESM reference implementation, not a prototype skeleton.
-The canonical suite is **2922/2922 green**. The fleet driver (Phases 1–65), the AX/lifecycle spine
+The canonical suite is **3355/3355 green** (as of 2026-08-04, the Ring 2 closeout — re-derive with
+`node impl/scripts/run-suite.mjs`). The fleet driver (Phases 1–65), the AX/lifecycle spine
 (Phases 90–92.x), and the closed Baton Program IR slices (93a.1–93a.3a, issue #9) are shipped
 underneath; the **agent-orchestration stack** is now first-class: waves with durable identity
 (attach-and-harvest + re-drive-the-failed, 93B), a productized wave driver (`createWaveDriver`,
