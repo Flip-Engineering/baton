@@ -170,6 +170,10 @@ function stallMarker(outline) {
   delete view.cursor;
   delete view.progressClass;
   delete view.requiredAction;
+  // Issue #10 D10: waitingOn is a DERIVED wait field, byte-static BY DESIGN for a legitimately
+  // waiting member (the wait kind, not the stall basis, is its honest state). Stripped exactly
+  // like the other derived liveness fields so a waitingOn transition never resets the clock.
+  delete view.waitingOn;
   return createHash('sha256').update(JSON.stringify(view)).digest('hex').slice(0, 16);
 }
 
@@ -194,10 +198,14 @@ function interactionsOf(outline) {
     .sort((a, b) => (a.requestId < b.requestId ? -1 : a.requestId > b.requestId ? 1 : 0));
 }
 
-// Bidirectional v2 rule 7: ONE ordered per-member reducer controlling BOTH rendering and steering.
-// Precedence: pending blocking interaction > checkpoint+claim > checkpoint > working. A member with
-// ANY pending blocking interaction is `blocked` — suppressed from nudge AND claim that poll.
-function reduceMember(interactions, checkpoint) {
+// Bidirectional v2 rule 7 × issue #10 D9: ONE ordered per-member reducer controlling BOTH
+// rendering and steering. Precedence: pending blocking interaction > waitingOn > checkpoint+claim >
+// checkpoint > working. A member with ANY pending blocking interaction is `blocked` — suppressed
+// from nudge AND claim that poll. A member with a non-null waitingOn is `waiting` — suppressed the
+// same way (`!reduced.waiting` at the :556 admission) and NEVER serialized as bare `working` to a
+// driver (the #49 rendering lie). Every return shape carries BOTH flags explicitly so no consumer
+// reads an undefined `blocked`/`waiting`.
+export function reduceMember(interactions, checkpoint, waitingOn) {
   if (interactions.length > 0) {
     const gated = interactions[0];
     return {
@@ -205,12 +213,22 @@ function reduceMember(interactions, checkpoint) {
       gated,
       interactions,
       blocked: true,
+      waiting: false,
+    };
+  }
+  if (waitingOn && typeof waitingOn.kind === 'string') {
+    return {
+      class: waitingOn.kind,
+      blocked: false,
+      waiting: true,
+      gated: null,
+      interactions: [],
     };
   }
   if (checkpoint) {
-    return { class: checkpoint.claim ? 'checkpoint+claim' : 'checkpoint', gated: null, interactions: [], blocked: false };
+    return { class: checkpoint.claim ? 'checkpoint+claim' : 'checkpoint', gated: null, interactions: [], blocked: false, waiting: false };
   }
-  return { class: 'working', gated: null, interactions: [], blocked: false };
+  return { class: 'working', gated: null, interactions: [], blocked: false, waiting: false };
 }
 
 // Bidirectional v2 rule 3: validate the closed callback return union `{optionId}|{text}|undefined`.
@@ -549,11 +567,14 @@ export function createWaveDriver(baton, rawPolicy = null) {
             // v2 rule 7: reduce this member from the same status view — ordered, precedence-fixed.
             const interactions = interactionsOf(outline);
             const checkpoint = checkpointOf(outline);
-            const reduced = reduceMember(interactions, checkpoint);
+            const reduced = reduceMember(interactions, checkpoint, outline.waitingOn ?? null);
             classByRole.set(role, reduced.class);
-            // v2 rule 7: a blocked member is suppressed from nudge AND claim — the checkpoint (if
-            // any) is NOT admitted to the steerable `paused` set while an interaction is pending.
-            if (checkpoint && !reduced.blocked) paused.push({ role, run: runHandle, checkpoint });
+            // v2 rule 7 × D9: a blocked member is suppressed from nudge AND claim — the checkpoint
+            // (if any) is NOT admitted to the steerable `paused` set while an interaction is
+            // pending. A WAITING member is suppressed the same way: the `!reduced.waiting` clause
+            // keeps a named wait (capacity_ceiling/dispatch_pending/spawning/plan_approval/
+            // provider_stalled) out of the claim cadence and the claim-on-stall fan-out.
+            if (checkpoint && !reduced.blocked && !reduced.waiting) paused.push({ role, run: runHandle, checkpoint });
             // v2 rule 3 × rule 7: fire the decision callback ONLY for the GATED (first-by-requestId)
             // interaction — a decision behind an earlier question/approval waits its turn. Rule 4
             // already caps a worker at one pending decision, so this gates, never drops, a decision.
