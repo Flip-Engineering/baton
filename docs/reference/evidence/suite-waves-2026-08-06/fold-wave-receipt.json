@@ -1,0 +1,70 @@
+{
+  "attempt": "2026-08-06T20:32:55.113Z",
+  "salt": "fd20260806203255",
+  "steps": [
+    {
+      "step": "waves.start",
+      "receipt": {
+        "runs": [
+          "run-e876c0b24f22aa72eaea9db0fc233d2b",
+          "run-4b59aa6eb76237251d7a3dd2b4d26ea7",
+          "run-ca21ce8e518490e15e6b3ccb23d157d2",
+          "run-fda5edbfd47ca8849d13b2ac90b884d4"
+        ]
+      }
+    },
+    {
+      "step": "terminal:nested-fold",
+      "receipt": {
+        "phase": "work_completed"
+      }
+    },
+    {
+      "step": "terminal:harvest-fold",
+      "receipt": {
+        "phase": "work_completed"
+      }
+    },
+    {
+      "step": "terminal:waiting-fold",
+      "receipt": {
+        "phase": "work_completed"
+      }
+    },
+    {
+      "step": "terminal:cell-fold",
+      "receipt": {
+        "phase": "work_completed"
+      }
+    },
+    {
+      "step": "loop-drained",
+      "receipt": {
+        "pending": []
+      }
+    }
+  ],
+  "harvest": {
+    "waiting-fold": {
+      "pin": "60436c0b8fa43c63b580c4fc3e18b9c22fddef6c",
+      "suiteBytes": 75788,
+      "summaryBytes": 0
+    },
+    "cell-fold": {
+      "pin": "60436c0b8fa43c63b580c4fc3e18b9c22fddef6c",
+      "suiteBytes": 97528,
+      "summaryBytes": 13062
+    },
+    "nested-fold": {
+      "pin": "60436c0b8fa43c63b580c4fc3e18b9c22fddef6c",
+      "suiteBytes": 54299,
+      "summaryBytes": 0
+    },
+    "harvest-fold": {
+      "pin": "60436c0b8fa43c63b580c4fc3e18b9c22fddef6c",
+      "suiteBytes": 69591,
+      "summaryBytes": 0
+    }
+  },
+  "verdict": "FOLD-WAVE-OK"
+}

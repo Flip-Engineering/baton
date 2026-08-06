@@ -11,8 +11,9 @@
 //     group-admission row is currently blocked at application_wave_start_invalid.
 //   * createWave/validateMember (wave.mjs:50-105,193-212) pass unknown keys through, but the
 //     member loop builds route = member.exact ? {exact} : {harness,model,effort}; a group-only
-//     member never starts a run (startError recorded) — the N-spawns-one-run row is blocked at
-//     the missing cell branch.
+//     member DOES start a ONE-worker run today (wave.mjs:204-207 falls back to the driver's
+//     default route) — the red failure is at the SIZE worker count, which is the honest stage
+//     (blue-team drift D1).
 //   * sendWaveMember resolves the FIRST worker (application.mjs:11523-11524) and receipts
 //     {result, target} — no delivered/targetCount; the C5 runId fan-out exists at the
 //     COORDINATOR seam only (coordinator.mjs:6835,6893-6897).
@@ -31,13 +32,15 @@
 //     task-tier partition never serves (bd3-v3 A4).
 //   * The cell vocabulary (wave_group_*, wave_cell_delivery_unsupported, cell_spawn_refused,
 //     cell_member_lost, cell_below_quorum, cell_exact_breach, cell.captures, cell.degraded,
-//     targetCount, survived) is ABSENT from every impl/src/*.mjs file today (verified by grep).
+//     targetCount) is ABSENT from every impl/src/*.mjs file today (verified by grep); `survived`
+//     exists ONLY as coordinator.mjs's mutation-survival token (survivedMutants, :449) — never as a
+//     cell aggregate field (blue-team drift D4).
 //     MAX_CELL_SIZE is not an exported constant; MAX_RUN_VIEW_WORKERS/MAX_RUN_VIEW_BYTES named
 //     constants do not exist yet (the 64-member wave-array bound and MAX_WAVE_PROGRESS_BYTES
 //     do — those are the derivation anchors TC-17 pins).
 //
 // ===========================================================================
-// Row inventory (24 red / 9 pins)
+// Row inventory (30 red / 9 pins)
 // ===========================================================================
 //   RED (each fails today at its named stage):
 //     TC-01  group-field-admission-missing    waves.start accepts the closed group field
@@ -50,17 +53,28 @@
 //     TC-06  cell-spawn-refusal-missing       per-worker cell_spawn_refused (source: app.mjs)
 //     TC-08  per-worker-grant-mint-missing    claimGrant to a cell runId mints size grants
 //     TC-09  cell-broadcast-receipt-missing   cell send routes the C5 fan-out, receipts delivered/targetCount
+//     TC-10  partial-delivery-honesty-missing cell send with a dead member receipts delivered < size,
+//                                             targetCount=size, no throw
 //     TC-11  cell-quorum-aggregate-missing    cell aggregate {size,quorum,survived,lost} (source)
 //     TC-12  cell-below-quorum-terminal-missing  lost > size-quorum -> cell_below_quorum (source)
 //     TC-13  cell-exact-breach-missing        strict + any loss -> cell_exact_breach (source)
 //     TC-14  cell-member-lost-missing         never-started worker receipted cell_member_lost (source)
 //     TC-15  collector-result-law-missing     cell.captures per-member digests; collector resultSha (source)
+//     TC-15b collector-result-law-behavioral-missing  outcome resultSha is the COLLECTOR capture, not the
+//                                             first completer's (runs the TC-15 oracle through the loop)
+//     TC-16  cell-no-clock-law-missing        cell aggregate is CLOSED {size,quorum,survived,lost,degraded}
+//                                             — no time/TTL/turn field
 //     TC-17  cell-size-bound-missing          MAX_CELL_SIZE is a named documented bound of 64
+//     TC-19  cell-end-to-end-loop-missing     the WHOLE #74 loop is executable — mint, size grants,
+//                                             broadcast, worker-attributed claim/report, one result
 //     TC-20  first-node-truth-missing         cell outcome names cell.degraded; never nodes[0] (source)
+//     TC-20b cell-quorum-behavioral-missing   rest/kill/degrade probes the aggregate, never nodes[0]
 //     TC-21  per-member-reply-slot-missing    each delivered member's FIRST reply admitted
 //     TC-22  per-member-mint-key-missing      size mints under one send key never collide
 //     TC-23a cell-editing-division-missing    group.editing -> analysis:true on non-listed briefs
 //     TC-24  cell-delivery-mode-gate-missing  now|turn to a cell refuses wave_cell_delivery_unsupported (source)
+//     TC-25  quiescence-ordering-missing      quorum terminal mints with a LIVE member — grant revoked,
+//                                             worktree captured checkpoint-only, whole-run stop reaps the rest
 //     TC-26  survivor-set-missing             survived = {completed,result_ready}; cell.lost receipt (source)
 //     D1     cell-mate-task-tier-read-missing scratchpad CONTEXT_READ resolves the cell's task tiers
 //     D2     direct-shared-write-missing      cell member writes the shared tier with the cell nonce
@@ -73,7 +87,9 @@
 //     TC-18  loose form byte-identical       one run/one worker; 3 delivery modes; single-worker target
 //     TC-18a single-reply slot               non-cell second reply / reply-to-reply refuse depth
 //     TC-22b first-worker resolution          waves.send to a runId targets worker[0] only, no targetCount
-//     TC-23b analysis hatch                  edit-free analysis:true worker is not policy-killed
+//     TC-23b analysis hatch                  analysis:true skips required_effect even when requiredEffects
+//                                             also lists repository_edit (the pair is BU-2-1-refused, so the
+//                                             pin injects it post-spawn; not policy-killed)
 //     TC-23c safe direction                  edit-free editing member still policy-killed
 //     D-loose task-tier invisibility         a sibling's task-tier note never serves
 //
@@ -93,17 +109,19 @@
 // law: controls are eval-able (no clocks, no turn counts); the only timers are test I/O flushes.
 // localeCompare is banned; sorted literals below are in actual sorted order.
 //
-// Verified split: 24 red / 9 green — 33 tests (node --test impl/test/tight-cell-red.test.mjs),
-// stable across three consecutive runs (pass 9 / fail 24 each). Every red row fails today at its
-// own named stage (24 distinct stages — none of the reds shares a stage name); every pin is green.
+// Verified split: 30 red / 9 green — 39 tests (node --test impl/test/tight-cell-red.test.mjs),
+// stable across two consecutive runs (pass 9 / fail 30 each). Every red row fails today at its
+// own named stage (30 distinct stages — none of the reds shares a stage name); every pin is green.
 
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 
+import { canonicalRunPhase } from '../src/application-semantics.mjs';
 import { BatonApplication } from '../src/application.mjs';
 import { Coordinator } from '../src/coordinator.mjs';
 import { FenceTable } from '../src/fence.mjs';
@@ -241,8 +259,108 @@ function emitTurnCompleted(adapter, handle, turnEpoch = 1, output = 'final turn'
   });
 }
 
+// Worker-stream board frames (board-workerhalf pattern): the adapter injects the parsed frame kind
+// on the authenticated per-worker stream; the hub owes the closed re-validation and the typed result.
+function emitBoardClaim(adapter, handle, payload) {
+  adapter.emit({
+    worker: handle.id, harness: 'mock@1.0.0', turnEpoch: 1, kind: 'board.claim', actor: 'worker', payload,
+  });
+}
+function emitBoardReport(adapter, handle, payload) {
+  adapter.emit({
+    worker: handle.id, harness: 'mock@1.0.0', turnEpoch: 1, kind: 'board.report', actor: 'worker', payload,
+  });
+}
+
 function streamEvents(coordinator, handle, kind) {
   return coordinator._log.read(handle.id).filter((event) => event.kind === kind);
+}
+
+// ---------------------------------------------------------------------------
+// S-2 board-authority helpers (ported from board-workerhalf — used only by the
+// TC-08/TC-22 post-mint bindings so the per-worker grant mint can be driven
+// through a REAL waves.send claimGrant once the cell mint + claimGrant land).
+// ---------------------------------------------------------------------------
+function canonical(value) {
+  if (Array.isArray(value)) return value.map(canonical);
+  if (!value || typeof value !== 'object') return value;
+  return Object.fromEntries(Object.keys(value).sort().map((key) => [key, canonical(value[key])]));
+}
+function digest(value) {
+  return createHash('sha256').update(JSON.stringify(canonical(value))).digest('hex');
+}
+
+// An orchestrator task on `runId`, a claimed worker, and an issued run-orchestrator lease;
+// returns the closed sessionAuthority proof the S-2 envelope consumes. `expiresAt` rides the
+// REAL wall clock so a post-mint run is never expired by lease-clock drift.
+function authorityOn(coordination, { runId, principalId, sessionId }) {
+  const authorityDigest = digest({ proof: `${runId}:${principalId}:${sessionId}` });
+  const expiresAt = new Date(Date.now() + 3_600_000).toISOString();
+  const taskId = `task-${runId}-${principalId}`.replaceAll(':', '-');
+  const workerId = `worker-${runId}-${principalId}`.replaceAll(':', '-');
+  coordination.createTask({
+    id: taskId, brief: { objective: `orchestrate ${runId}`, capabilities: ['baton_orchestrator'] },
+    deps: [], refines: null, relation: 'root', runId, taskType: 'general',
+    reservedWorkerId: workerId, vendorRequested: 'kimi-code', modelRequested: 'kimi-code/k3',
+    modelPolicy: null, effortRequested: 'max', sessionRequest: { mode: 'new' },
+  }, { actor: 'orchestrator', key: `task.created:${taskId}` });
+  const task = coordination.claimTask(taskId, workerId, 1,
+    { actor: 'orchestrator', key: `task.claimed:${taskId}` }, {
+      harnessRequested: 'kimi-code', harnessResolved: 'kimi-code@fixture',
+      modelRequested: 'kimi-code/k3', modelResolved: 'kimi-code/k3', modelObserved: 'kimi-code/k3',
+      effortRequested: 'max', effortResolved: 'max', effortObserved: 'max',
+      routeKey: '["kimi-code","fixture","kimi-code/k3","max"]',
+    }).task;
+  const identity = {
+    repoId: coordination._repoId ?? REPO, parentRunId: runId, parentTaskId: taskId,
+    parentTaskVersion: task.version, workerId, principalId, sessionId,
+    sessionAuthorityDigest: authorityDigest,
+  };
+  const leaseId = `run-orchestrator-lease:${digest(identity)}`;
+  const receipt = coordination.issueRunOrchestratorLease({
+    schemaVersion: 1, repoId: coordination._repoId ?? REPO, parentTask: { id: taskId, version: task.version },
+    session: { principalId, sessionId, authorityDigest, expiresAt },
+  }, { actor: 'orchestrator', key: `run.orchestrator_lease:${leaseId}` });
+  const sessionAuthority = Object.freeze({
+    schemaVersion: 1, authorityDigest, expiresAt, orchestratorLeaseId: receipt.lease.leaseId,
+  });
+  return { receipt, runId, principalId, sessionId, sessionAuthority, taskId, workerId };
+}
+
+// Steering-register a run as a wave member of the SAME wave as the cell — the cross-Run
+// relaxation the grant mint's wave-membership check requires (Decision 2).
+function bindWaveRun(fx, runId, role, waveId, principalId) {
+  fx.coordination.recordDriver('steering.registered', {
+    runId, driverKind: 'wave', actor: principalId, waveId, waveRole: role,
+  }, { actor: principalId, key: `run.steering_registered:${runId}` });
+}
+
+// An orchestrator board post through the real S-2 admission seam (also creates/keeps the
+// board→Run binding the grant's boardRunId must equal, Decision 3 step 4).
+function s2Post(fx, { board, title, runId, orch, detail = null, owner = null, evidence = [] }) {
+  return fx.coordination.admitBoardCommand({
+    sessionAuthority: orch.sessionAuthority, runId, board, item: null,
+    mutation: { kind: 'post', title, detail, owner, evidence },
+    expectedBoardFence: fx.coordination.boardFence(board),
+    idempotencyKey: `tc:post:${board}:${title}`,
+  });
+}
+
+// The waves.send claimGrant call (Decision 4) — kept UNasserted so the tight-cell rows own
+// their named stages (a shared sendGrant helper's own stage would muddy the split).
+async function sendCellGrant(fx, { runId, board, boardRunId, idem, orch, message = 'work the shared cell board' }) {
+  return fx.application.command('waves.send',
+    { runId, message, claimGrant: { boardRunId, board } },
+    { actor: `direct:${orch.principalId}`, principalId: orch.principalId, sessionId: orch.sessionId },
+    { transport: 'direct', requestId: `${idem}:req`, idempotencyKey: idem, sessionAuthority: orch.sessionAuthority })
+    .then((receipt) => ({ ok: true, receipt }), (error) => ({ ok: false, code: error?.code ?? 'thrown', error }));
+}
+
+// The durable cell grant mints (Decision 4: a cell send mints size grants under one runId).
+function mintedCellGrants(fx, { board, memberRunId }) {
+  return fx.coordination.events().filter((event) => typeof event.kind === 'string'
+    && event.kind.startsWith('board.grant_') && !event.kind.endsWith('_revoked')
+    && event.payload?.board === board && event.payload?.memberRunId === memberRunId);
 }
 
 // ---------------------------------------------------------------------------
@@ -250,13 +368,17 @@ function streamEvents(coordinator, handle, kind) {
 // mandatory:false so snapshot().goalPlan exists and direct run.start works;
 // baton bound to a principal DISTINCT from the application planner).
 // ---------------------------------------------------------------------------
-async function waveFixture() {
+// `pausable:false` is required by the behavioral quorum/collector rows (TC-20b/TC-15b): with the default
+// pausable card a completed turn is a turn_CHECKPOINT (coordinator.mjs:12302), so a worker can never
+// REST (reach result_ready) — the aggregate laws are unreachable. The non-pausable card makes
+// `lifecycle.turn_completed` a real completion, the same card the TC-23b/TC-23c pins use.
+async function waveFixture({ pausable = true } = {}) {
   const repo = tmpDir('baton-tc-repo-');
   execFileSync('git', ['init', '-q'], { cwd: repo });
   execFileSync('git', ['config', 'user.email', 'baton-test@example.com'], { cwd: repo });
   execFileSync('git', ['config', 'user.name', 'Baton Test'], { cwd: repo });
   execFileSync('git', ['commit', '--allow-empty', '-q', '-m', 'base'], { cwd: repo });
-  const adapter = new ScriptableAdapter();
+  const adapter = new ScriptableAdapter({ pausable });
   const baseCard = adapter.card.bind(adapter);
   adapter.card = () => ({
     ...baseCard(),
@@ -331,9 +453,15 @@ async function waveFixture() {
 // The contract surface for a cell wave. Every group-admission row asserts the call SUCCEEDS
 // (or draws the exact typed refusal); today the `group` key is refused at _normalizeWaveStart
 // (application.mjs:11598) with application_wave_start_invalid.
-async function startCellRun(fx, { role = 'cell', size = 2, group = {}, objective = 'coordinate the cell through the board', idem }) {
+// Fold (blue-team B2/D5): the seat default is applied ONLY when the caller did not omit it —
+// `omitSeat: true` sends a genuinely seatless group so TC-02's wave_group_seat_missing refusal
+// is reachable. The caller may also name an explicit `seat` in `group`, which wins over the
+// default (no spread-order surprise).
+async function startCellRun(fx, { role = 'cell', size = 2, group = {}, objective = 'coordinate the cell through the board', idem, omitSeat = false }) {
+  const groupFields = { ...group, size };
+  if (!omitSeat && !Object.hasOwn(groupFields, 'seat')) groupFields.seat = SEAT;
   return fx.application.command('waves.start',
-    { idempotencyKey: idem, members: [{ role, objective, scope: ['.'], group: { seat: SEAT, size, ...group } }] },
+    { idempotencyKey: idem, members: [{ role, objective, scope: ['.'], group: groupFields }] },
     fx.principalOf('cell-owner'),
     { transport: 'direct', requestId: `${idem}:req`, idempotencyKey: idem })
     .then((receipt) => ({ ok: true, receipt }), (error) => ({ ok: false, code: error?.code ?? 'thrown', error }));
@@ -358,7 +486,7 @@ test('TC-01 group[group-field-admission-missing]: waves.start accepts the closed
 
 test('TC-02 group[group-seat-missing-refusal]: group without seat refuses wave_group_seat_missing before any spawn', async () => {
   const fx = await waveFixture();
-  const sent = await startCellRun(fx, { idem: 'tc02', role: 'cell', group: { size: 2 } }); // no seat
+  const sent = await startCellRun(fx, { idem: 'tc02', role: 'cell', group: { size: 2 }, omitSeat: true }); // no seat
   assert.equal(sent.ok, false,
     'stage[group-seat-missing-refusal]: a group without its closed route seat is ambiguous and must be '
     + 'refused, never silently defaulted (Decision 1, TC-02)');
@@ -393,7 +521,8 @@ test('TC-03 group[group-route-conflict-refusal]: member-level route alongside gr
 });
 
 // ===========================================================================
-// B — N-spawns-one-run (library seam; today the group-only member never starts a run)
+// B — N-spawns-one-run (library seam; today the group-only member starts a ONE-worker run — the
+// missing capability is the SIZE spawn, which is the honest red stage)
 // ===========================================================================
 
 test('TC-04 cell-mint[cell-mint-missing]: a cell member starts ONE run whose plan carries size homogeneous nodes', async () => {
@@ -403,7 +532,8 @@ test('TC-04 cell-mint[cell-mint-missing]: a cell member starts ONE run whose pla
   assert.ok(run,
     'stage[cell-mint-missing]: a cell member starts ONE run via the cell branch of the run-start plan mint, '
     + 'with size homogeneous nodes keyed cell:<waveRole>:<index> and identical routes/objective (Decision 2, '
-    + 'TC-04); today the group-only member never starts a run (no member-level route, wave.mjs:204-207)');
+    + 'TC-04); today the group-only member starts a ONE-worker run — the red failure is at the SIZE worker '
+    + 'count, the honest stage (blue-team drift D1, wave.mjs:204-207)');
   const view = await run.status();
   assert.equal(view.ownership?.workerIds?.length ?? 0, 2,
     'stage[cell-mint-missing]: run.status().ownership.workerIds.length === size — today one member maps to one '
@@ -418,7 +548,8 @@ test('TC-05 cell-identity[cell-identity-missing]: size distinct worker identitie
   const run = wave.runs.get('cell');
   assert.ok(run,
     'stage[cell-identity-missing]: the cell is ONE wave member with size distinct worker identities '
-    + '(Decision 2, TC-05); today the group-only member never starts a run');
+    + '(Decision 2, TC-05); today the group-only member starts a ONE-worker run — the red failure is at the '
+    + 'size identity count (blue-team drift D1, wave.mjs:204-207)');
   const view = await run.status();
   const ids = view.ownership?.workerIds ?? [];
   assert.equal(ids.length, 3, 'stage[cell-identity-missing]: size distinct workerIds');
@@ -429,7 +560,11 @@ test('TC-05 cell-identity[cell-identity-missing]: size distinct worker identitie
   const tasks = workers.map((w) => fx.coordination.task(w.taskId));
   assert.ok(tasks.every((task) => task?.runId === view.runId),
     'stage[cell-identity-missing]: every task\'s task.runId === cellRunId');
-  const steering = fx.coordination.events().filter((e) => e.kind === 'steering.registered' && e.payload?.runId === view.runId);
+  // Fold (blue-team B1/D6): recordDriver wraps every event as {kind:'driver.recorded',
+  // payload:{kind:'steering.registered', runId, ...}} (coordination-store.mjs:13102-13108), so the
+  // surface predicate must be the two-level form. `e.kind === 'steering.registered'` never matched and
+  // let the count be vacuously 1 (assert on 0 before the run — that is the false-green B1 hunted).
+  const steering = fx.coordination.events().filter((e) => e.kind === 'driver.recorded' && e.payload?.kind === 'steering.registered' && e.payload?.runId === view.runId);
   assert.equal(steering.length, 1,
     'stage[cell-identity-missing]: steering.registered records the cell run ONCE — the cell is one wave member');
 });
@@ -489,12 +624,155 @@ test('TC-20 quorum[first-node-truth-missing]: worker #1\'s terminal neither sett
     + '(Decision 6, TC-20); today application.mjs derives terminal truth from nodes[0] and knows no degraded phase');
 });
 
+test('TC-20b quorum[cell-quorum-behavioral-missing]: rest/kill/degrade probes the aggregate, never nodes[0]', async () => {
+  // Fold (blue-team B4 / special-attention Q1): the six source rows TC-11/12/13/14/20/26 NAME the aggregate
+  // vocabulary, but a wrong implementation that keeps projection.nodes[0] terminal truth and merely names the
+  // block passes them. This behavioral row runs TC-20's oracle through the run-status aggregate (never
+  // nodes[0]): worker #1 (index 0) resting does NOT settle the cell; a live worker dying while quorum is
+  // reachable does NOT fail it; quorum <= survived < size mints degraded with cell.lost receipted.
+  const fx = await waveFixture({ pausable: false });
+  const wave = await fx.baton.waves.start({ members: [{ role: 'cell', objective: 'coordinate the cell through the board', scope: ['.'], group: { seat: SEAT, size: 3, quorum: 2 } }] });
+  const run = wave.runs.get('cell');
+  assert.ok(run,
+    'stage[cell-quorum-behavioral-missing]: the cell member starts ONE run (the missing capability is the size '
+    + 'spawn — today the group-only member starts a one-worker run, ground truth 2)');
+  const view = await run.status();
+  const outline = view?.view ?? view;
+  const workers = fx.driver.coordinator.list().filter((w) => w.runId === outline.runId);
+  assert.equal(workers.length, 3,
+    'stage[cell-quorum-behavioral-missing]: the cell mint spawns size=3 workers under ONE runId (Decision 6); '
+    + 'today the group-only member starts one worker');
+  const [w0, w1, w2] = workers;
+  // Probe 1 — worker #1 (index 0, the node a nodes[0] implementation keys on) rests while #2/#3 still run:
+  // the aggregate must NOT settle.
+  emitTurnCompleted(fx.adapter, w0, 1);
+  await flush(60);
+  const restView = await run.status();
+  const restOutline = restView?.view ?? restView;
+  assert.ok(!['result_ready', 'completed', 'failed', 'cancelled', 'stopped', 'denied'].includes(canonicalRunPhase(restOutline.phase)),
+    'stage[cell-quorum-behavioral-missing]: worker #1 resting does NOT settle the cell — the aggregate waits on '
+    + '#2/#3 (Decision 6, TC-20); a nodes[0] implementation settles on worker #1\'s rest (application.mjs:7393-7404)');
+  // Probe 2 — a live worker dies while quorum is reachable (lost=1 is NOT > size-quorum=1): the cell must NOT fail.
+  const killed = await fx.driver.coordinator.kill(w1.id, 'human');
+  assert.ok(killed,
+    'stage[cell-quorum-behavioral-missing]: the live worker is killed through the coordinator seam');
+  await flush(60);
+  const killView = await run.status();
+  const killOutline = killView?.view ?? killView;
+  assert.ok(!['failed', 'cancelled', 'stopped', 'denied'].includes(canonicalRunPhase(killOutline.phase)),
+    'stage[cell-quorum-behavioral-missing]: a worker dying while quorum is reachable does NOT fail the cell — '
+    + 'single deaths count only when they tip lost > size - quorum (Decision 6, TC-20)');
+  // Probe 3 — rest w2 -> survived=2=quorum, lost={w1}, size=3 -> degraded with cell.lost receipted.
+  emitTurnCompleted(fx.adapter, w2, 1);
+  await flush(60);
+  const degradeView = await run.status();
+  const degradeOutline = degradeView?.view ?? degradeView;
+  assert.equal(canonicalRunPhase(degradeOutline.phase), 'degraded',
+    'stage[cell-quorum-behavioral-missing]: quorum <= survived < size mints the degraded terminal at the '
+    + 'count-reached event (Decision 6, TC-20); today the run-status builder knows no degraded phase '
+    + `(phase is ${canonicalRunPhase(degradeOutline.phase)})`);
+  assert.equal(degradeOutline.cell?.degraded, true,
+    'stage[cell-quorum-behavioral-missing]: the aggregate names degraded:true in the cell receipt');
+  assert.ok((degradeOutline.cell?.lost ?? []).some((loss) => loss.workerId === w1.id),
+    'stage[cell-quorum-behavioral-missing]: cell.lost receipts the killed member with its per-member cause '
+    + '(Decision 6, TC-26)');
+});
+
+test('TC-16 no-clock[cell-no-clock-law-missing]: the cell aggregate is the CLOSED {size,quorum,survived,lost,degraded} — no time/TTL/turn field', async () => {
+  // Fold (blue-team B6): TC-16's oracle (contract line 756) is unique among the cell rows — the aggregate
+  // vocabulary must stay a closed count-based set and add no time/TTL/turn/elapsed field and no
+  // cadence-dependent truth. A wrong implementation that mints the block but leaks ANY extra field (a
+  // clock, a TTL, a turn counter) passes every other source row (TC-11/12/13/14/20/26 name the closed
+  // vocabulary but never pin its closure) and fails here.
+  const fx = await waveFixture();
+  const wave = await fx.baton.waves.start({ members: [{ role: 'cell', objective: 'no-clock probe', scope: ['.'], group: { seat: SEAT, size: 2 } }] });
+  const run = wave.runs.get('cell');
+  assert.ok(run,
+    'stage[cell-no-clock-law-missing]: the cell member starts ONE run (the missing capability is the size '
+    + 'spawn — today the group-only member starts a one-worker run, ground truth 2)');
+  const view = await run.status();
+  const outline = view?.view ?? view;
+  const cell = outline.cell ?? null;
+  assert.ok(cell,
+    'stage[cell-no-clock-law-missing]: the run-status aggregate carries the cell block cell:{size,quorum,'
+    + 'survived,lost,degraded} (Decision 6); today the run-status builder knows no cell block at all '
+    + '(application.mjs:7393-7404 reads nodes[0] only)');
+  assert.deepEqual(Object.keys(cell).sort(), ['degraded', 'lost', 'quorum', 'size', 'survived'],
+    'stage[cell-no-clock-law-missing]: the aggregate block is CLOSED at {size,quorum,survived,lost,degraded} — '
+    + 'the cell vocabulary adds no time/TTL/turn/elapsed field and no cadence-dependent truth (Decision 6, TC-16)');
+});
+
 test('TC-26 quorum[survivor-set-missing]: survived is the closed work-rest set, losses receipted in cell.lost', () => {
   assertTokenInApplication('cell.lost',
     'survivor-set-missing',
     'every terminal non-survivor (failed, cancelled, stopped, denied, never-started) is receipted in cell.lost '
     + 'with its per-member cause — stopped/denied count as LOSSES, never survivals (Decision 6, TC-26); today '
     + 'application.mjs has no cell.lost receipt');
+});
+
+test('TC-25 quiescence[quiescence-ordering-missing]: a quorum terminal mints with a LIVE member — its grant is revoked, its worktree captured checkpoint-only, the whole-run stop reaps the remainder', async () => {
+  // Fold (blue-team B6): TC-25's oracle (contract line 765) is the quiescence ORDERING. When the cell
+  // outcome mints with a live member still writing, the live member's grant is revoked (board.grant_revoked)
+  // and its worktree captured checkpoint-only and receipted BEFORE the outcome mints; the whole-run stop then
+  // reaps the remainder with strict accounting. The behavioral condition: rest TWO members (survived = 2 =
+  // quorum < size = 3) while member #2 (index 1) stays LIVE — degraded mints with a live member.
+  const fx = await waveFixture({ pausable: false });
+  const wave = await fx.baton.waves.start({ members: [{ role: 'cell', objective: 'coordinate the cell through the board', scope: ['.'], group: { seat: SEAT, size: 3, quorum: 2 } }] });
+  const run = wave.runs.get('cell');
+  assert.ok(run,
+    'stage[quiescence-ordering-missing]: the cell member starts ONE run (the missing capability is the size '
+    + 'spawn — today the group-only member starts a one-worker run, ground truth 2)');
+  const view = await run.status();
+  const outline = view?.view ?? view;
+  const workers = fx.driver.coordinator.list().filter((w) => w.runId === outline.runId);
+  assert.equal(workers.length, 3,
+    'stage[quiescence-ordering-missing]: the cell mint spawns size=3 workers under ONE runId (Decision 6); '
+    + 'today the group-only member starts one worker');
+  const [w0, w1, w2] = workers;
+  // A shared board with SIZE grants, so the quiescence receipt has live grants to revoke.
+  const orch = authorityOn(fx.coordination, { runId: 'run:tc25-board', principalId: 'tc25-orch', sessionId: 'tc25-sess' });
+  bindWaveRun(fx, 'run:tc25-board', 'coordination', wave.waveId, orch.principalId);
+  s2Post(fx, { board: 'tc25-board', title: 'tc25 item', runId: 'run:tc25-board', orch });
+  const grant = await sendCellGrant(fx, { runId: outline.runId, board: 'tc25-board', boardRunId: 'run:tc25-board', idem: 'tc25:grant', orch });
+  assert.ok(grant.ok,
+    'stage[quiescence-ordering-missing]: the claimGrant send to the cell runId mints the size grants '
+    + '(Decision 4)');
+  const grants = mintedCellGrants(fx, { board: 'tc25-board', memberRunId: outline.runId });
+  assert.equal(grants.length, 3,
+    'stage[quiescence-ordering-missing]: size=3 grants mint — one per member, sharing memberRunId = cellRunId');
+  assert.ok(grants.some((event) => event.payload?.workerId === w1.id),
+    'stage[quiescence-ordering-missing]: the LIVE member holds one of the minted grants');
+  // Rest TWO members while w1 stays LIVE: survived = 2 = quorum < size = 3 -> degraded mints with a live
+  // member still writing. This is the quiescence condition — never nodes[0], never a full settle.
+  emitTurnCompleted(fx.adapter, w0, 1);
+  await flush(40);
+  emitTurnCompleted(fx.adapter, w2, 1);
+  await flush(80);
+  const degradeView = await run.status();
+  const degradeOutline = degradeView?.view ?? degradeView;
+  assert.equal(canonicalRunPhase(degradeOutline.phase), 'degraded',
+    'stage[quiescence-ordering-missing]: quorum <= survived < size mints the degraded terminal while a member '
+    + 'is STILL LIVE (Decision 6, TC-20/TC-25); today the run-status builder knows no degraded phase');
+  assert.equal(degradeOutline.cell?.degraded, true,
+    'stage[quiescence-ordering-missing]: the aggregate names degraded:true in the cell receipt');
+  // Quiescence receipt 1 — the LIVE member's grant is revoked (board.grant_revoked, Decision 8).
+  const revoked = fx.coordination.events()
+    .filter((event) => event.kind === 'board.grant_revoked' && event.payload?.workerId === w1.id);
+  assert.ok(revoked.length >= 1,
+    'stage[quiescence-ordering-missing]: the live member\'s grant is revoked (board.grant_revoked) when the '
+    + 'degraded terminal mints (Decision 8, TC-25)');
+  // Quiescence receipt 2 — the LIVE member's worktree is captured checkpoint-only and receipted BEFORE the
+  // outcome mints (worktree.captured on the member's task stream, logged under the taskId, not the workerId).
+  const captures = (fx.driver.coordinator._log.read(w1.taskId) ?? [])
+    .filter((event) => event.kind === 'worktree.captured');
+  assert.ok(captures.length >= 1,
+    'stage[quiescence-ordering-missing]: the live member\'s worktree is captured checkpoint-only and receipted '
+    + 'BEFORE the outcome mints (TC-25)');
+  // Quiescence receipt 3 — the whole-run stop reaps the remainder with strict accounting: every member's
+  // worktree is reaped and the run reaches a terminal stop.
+  const stop = await wave.stopMember('cell', { reason: 'quiescence probe', timeoutMs: 4000 });
+  assert.ok(stop?.stopped === true || stop?.admitted === true,
+    'stage[quiescence-ordering-missing]: the whole-run stop is admitted and stops the cell (TC-25)');
 });
 
 // ===========================================================================
@@ -507,6 +785,143 @@ test('TC-15 collector[collector-result-law-missing]: the collective result is th
     'the cell receipt carries cell.captures [{workerId, taskId, captureDigest}] for every member, sorted by '
     + 'member index — member index 0 is the collector, its pin is resultSha (Decision 7, TC-15); today the run '
     + 'result is the FIRST worker\'s capture and no per-member digest list exists (ground truth 11)');
+});
+
+test('TC-15b collector[collector-result-law-behavioral-missing]: the outcome resultSha is the COLLECTOR capture, not the first completer\'s', async () => {
+  // Fold (blue-team B5 / special-attention Q2): TC-15 is a source-token check for `cell.captures`; a wrong
+  // implementation that keeps the FIRST worker's result as resultSha and merely receipts a per-member digest
+  // list passes it. This behavioral row runs the distinguishing law (Decision 7, TC-15): the non-collector
+  // (index 1) completes AND commits BEFORE the collector (index 0), each writing DISTINCT content so the
+  // digests differ; the outcome's resultSha must still equal the COLLECTOR's capture digest, and cell.captures
+  // carries every member's digest sorted by member index.
+  const fx = await waveFixture({ pausable: false });
+  const wave = await fx.baton.waves.start({ members: [{ role: 'cell', objective: 'divide the cell work', scope: ['.'], group: { seat: SEAT, size: 2 } }] });
+  const run = wave.runs.get('cell');
+  assert.ok(run,
+    'stage[collector-result-law-behavioral-missing]: the cell member starts ONE run (the missing capability is '
+    + 'the size spawn — today the group-only member starts a one-worker run, ground truth 2)');
+  const view = await run.status();
+  const outline = view?.view ?? view;
+  const workers = fx.driver.coordinator.list().filter((w) => w.runId === outline.runId);
+  assert.equal(workers.length, 2,
+    'stage[collector-result-law-behavioral-missing]: the cell mint spawns size=2 workers under ONE runId '
+    + '(Decision 7); today the group-only member starts one worker');
+  const [w0, w1] = workers;
+  assert.ok(w0.worktree && w1.worktree,
+    'stage[collector-result-law-behavioral-missing]: every cell member holds its own worktree (Decision 7; '
+    + 'per-worker trees are the v1.1 default)');
+  // The non-collector (index 1) completes AND commits FIRST; the collector (index 0) completes second.
+  writeFileSync(join(w1.worktree, 'member-1.txt'), 'non-collector commits first');
+  emitTurnCompleted(fx.adapter, w1, 1);
+  await flush(60);
+  writeFileSync(join(w0.worktree, 'member-0.txt'), 'collector commits second');
+  emitTurnCompleted(fx.adapter, w0, 1);
+  await flush(60);
+  const outcomes = await wave.settle({ timeoutMs: 4000 });
+  assert.equal(outcomes.length, 1,
+    'stage[collector-result-law-behavioral-missing]: the cell is ONE wave member — the outcome has exactly one '
+    + 'entry for the cell role (Decision 7)');
+  const cellOutcome = outcomes[0];
+  const captures = cellOutcome?.cell?.captures ?? [];
+  assert.equal(captures.length, 2,
+    'stage[collector-result-law-behavioral-missing]: the cell receipt carries every member\'s capture digest — '
+    + '[{workerId, taskId, captureDigest}], sorted by member index (Decision 7, TC-15)');
+  assert.deepEqual(captures.map((capture) => capture.workerId), [w0.id, w1.id],
+    'stage[collector-result-law-behavioral-missing]: cell.captures is sorted by member index — index 0 is the '
+    + 'collector (Decision 7, TC-15)');
+  assert.equal(cellOutcome.resultSha, captures[0]?.captureDigest,
+    'stage[collector-result-law-behavioral-missing]: resultSha equals the COLLECTOR (index 0) capture digest '
+    + 'EVEN THOUGH the non-collector completed and committed first — a first-completer implementation (ground '
+    + 'truth 11) fails here (Decision 7, TC-15)');
+});
+
+test('TC-19 loop[cell-end-to-end-loop-missing]: the WHOLE #74 loop is executable — mint, size grants, broadcast, worker-attributed claim/report, one collective result', async () => {
+  // Fold (blue-team B6): TC-19's oracle (contract lines 759-772) is the only row that proves the whole
+  // cell loop is EXECUTABLE. The receipt must record: wave/member binding proof, the one runId + size worker
+  // identities, the size grants with member coordinates, worker-attributed claim and report events, the
+  // broadcast receipt (delivered/targetCount), the collective terminal, and the single collective resultSha.
+  // Assertions key on durable ids/digests/events and content/state predicates, never clocks.
+  const fx = await waveFixture({ pausable: false });
+  const wave = await fx.baton.waves.start({ members: [{ role: 'cell', objective: 'work the shared cell board', scope: ['.'], group: { seat: SEAT, size: 2 } }] });
+  const run = wave.runs.get('cell');
+  assert.ok(run,
+    'stage[cell-end-to-end-loop-missing]: the cell member starts ONE run (the missing capability is the size '
+    + 'spawn — today the group-only member starts a one-worker run, ground truth 2)');
+  const view = await run.status();
+  const outline = view?.view ?? view;
+  const workers = fx.driver.coordinator.list().filter((w) => w.runId === outline.runId);
+  assert.equal(workers.length, 2,
+    'stage[cell-end-to-end-loop-missing]: the cell mint spawns size=2 workers under ONE runId (Decision 6)');
+  const [w0, w1] = workers;
+  // S-2 board: an orchestrator lease, a board bound to the SAME wave, a posted item, size grants with
+  // distinct member coordinates (Decision 4).
+  const orch = authorityOn(fx.coordination, { runId: 'run:tc19-board', principalId: 'tc19-orch', sessionId: 'tc19-sess' });
+  bindWaveRun(fx, 'run:tc19-board', 'coordination', wave.waveId, orch.principalId);
+  const posted = s2Post(fx, { board: 'tc19-board', title: 'tc19 item', runId: 'run:tc19-board', orch });
+  const grant = await sendCellGrant(fx, { runId: outline.runId, board: 'tc19-board', boardRunId: 'run:tc19-board', idem: 'tc19:grant', orch });
+  assert.ok(grant.ok,
+    'stage[cell-end-to-end-loop-missing]: the claimGrant send to the cell runId is admitted (Decision 4)');
+  const grants = mintedCellGrants(fx, { board: 'tc19-board', memberRunId: outline.runId });
+  assert.equal(grants.length, 2,
+    'stage[cell-end-to-end-loop-missing]: size grants mint — one per member, sharing memberRunId = cellRunId '
+    + '(Decision 4, TC-08)');
+  const coords = grants.map((event) => [event.payload?.workerId, event.payload?.taskId, event.payload?.taskVersion].join(':'));
+  assert.equal(new Set(coords).size, 2,
+    'stage[cell-end-to-end-loop-missing]: the size grants carry DISTINCT (workerId, taskId, taskVersion) '
+    + 'member coordinates (Decision 4, TC-08)');
+  // The broadcast: a cell send routes the C5 runId fan-out and receipts delivered/targetCount (Decision 5).
+  const fanned = await fx.application.command('waves.send',
+    { runId: outline.runId, message: 'go through the board' },
+    { actor: `direct:${fx.principalOf('tc-planner').principalId}`, principalId: 'tc-planner', sessionId: 'tc-planner-session' },
+    { transport: 'direct', requestId: 'tc19:broadcast:req', idempotencyKey: 'tc19:broadcast' })
+    .then((receipt) => ({ ok: true, receipt }), (error) => ({ ok: false, code: error?.code ?? 'thrown' }));
+  assert.equal(fanned.receipt?.delivered, 2,
+    'stage[cell-end-to-end-loop-missing]: the broadcast receipt carries delivered=size (Decision 5, TC-09)');
+  assert.equal(fanned.receipt?.targetCount, 2,
+    'stage[cell-end-to-end-loop-missing]: the broadcast receipt carries targetCount=size (Decision 5, TC-09)');
+  // Worker-attributed claim + report: member 0 claims the granted item and reports through the board —
+  // typed receipts ride the SAME worker stream (Decision 1, board-workerhalf).
+  const grant0 = grants.find((event) => event.payload?.workerId === w0.id);
+  const fence = fx.coordination.boardFence('tc19-board');
+  emitBoardClaim(fx.adapter, w0, {
+    grantId: grant0?.payload?.grantId, itemId: posted.item.itemId, expectedBoardFence: fence, idempotencyKey: 'tc19:claim:0',
+  });
+  await flush(60);
+  const claimReceipts = streamEvents(fx.driver.coordinator, w0, 'board.claim_result')
+    .filter((event) => event.payload?.idempotencyKey === 'tc19:claim:0');
+  assert.equal(claimReceipts.length, 1,
+    'stage[cell-end-to-end-loop-missing]: member 0\'s claim produces ONE worker-attributed board.claim_result '
+    + 'on the SAME worker stream (Decision 1, board-workerhalf)');
+  assert.equal(claimReceipts[0].payload?.ok, true,
+    'stage[cell-end-to-end-loop-missing]: the claim is admitted — the grant-scoped claim of the granted item '
+    + 'succeeds (Decision 1, board-workerhalf)');
+  emitBoardReport(fx.adapter, w0, {
+    grantId: grant0?.payload?.grantId, itemId: posted.item.itemId, itemVersion: posted.item.itemVersion,
+    itemDigest: posted.item.itemDigest, expectedClaimVersion: 1, body: 'member 0 did the work',
+    idempotencyKey: 'tc19:report:0',
+  });
+  await flush(60);
+  const reportReceipts = streamEvents(fx.driver.coordinator, w0, 'board.report_result')
+    .filter((event) => event.payload?.idempotencyKey === 'tc19:report:0');
+  assert.equal(reportReceipts.length, 1,
+    'stage[cell-end-to-end-loop-missing]: member 0\'s report produces ONE worker-attributed board.report_result '
+    + 'on the SAME worker stream (Decision 1, board-workerhalf)');
+  assert.equal(reportReceipts[0].payload?.ok, true,
+    'stage[cell-end-to-end-loop-missing]: the report is admitted (Decision 1, board-workerhalf)');
+  // Both members complete -> the cell reaches the collective terminal -> ONE outcome with ONE resultSha.
+  writeFileSync(join(w0.worktree, 'member-0.txt'), 'collector work through the board');
+  emitTurnCompleted(fx.adapter, w0, 1);
+  await flush(60);
+  writeFileSync(join(w1.worktree, 'member-1.txt'), 'member one work through the board');
+  emitTurnCompleted(fx.adapter, w1, 1);
+  await flush(60);
+  const outcomes = await wave.settle({ timeoutMs: 4000 });
+  assert.equal(outcomes.length, 1,
+    'stage[cell-end-to-end-loop-missing]: the cell is ONE wave member — the outcome has exactly one entry for '
+    + 'the cell role (Decision 7)');
+  assert.ok(/^[a-f0-9]{40,64}$/u.test(outcomes[0]?.resultSha ?? ''),
+    'stage[cell-end-to-end-loop-missing]: the outcome carries the single collective resultSha keyed on the '
+    + 'collector\'s durable capture digest (Decision 7, TC-19)');
 });
 
 // ===========================================================================
@@ -607,6 +1022,48 @@ test('TC-09 waves.send[cell-broadcast-receipt-missing]: a cell send routes the C
     'stage[cell-broadcast-receipt-missing]: the receipt carries targetCount=size');
 });
 
+test('TC-10 delivery[partial-delivery-honesty-missing]: a cell send with a dead member receipts delivered < size, targetCount=size, no throw', async () => {
+  // Fold (blue-team B6): TC-10's oracle is the HONEST partial receipt. The C5 fan-out at the coordinator
+  // seam already counts active workers (TC-09b pins delivered=targetCount=2); the cell seam must keep
+  // targetCount = DECLARED size and receipt the honest delivered count when a member is dead — no throw,
+  // per-worker delivery truth in the message record (Decision 5, TC-10).
+  const fx = await waveFixture();
+  const sent = await startCellRun(fx, { idem: 'tc10', role: 'cell', size: 2 });
+  assert.ok(sent.ok,
+    'stage[partial-delivery-honesty-missing]: a send to a cell runId with delivered < size returns the honest '
+    + 'receipt ({delivered, targetCount:size}) and never throws (Decision 5, TC-10); today the cell run cannot '
+    + `even be minted (blocked at the cell mint, ${sent.code}) and sendWaveMember resolves worker[0] only, `
+    + 'returning {result, target} (application.mjs:11523-11524)');
+  const runId = sent.receipt.members[0].runId;
+  const workers = fx.driver.coordinator.list().filter((w) => w.runId === runId);
+  assert.equal(workers.length, 2,
+    'stage[partial-delivery-honesty-missing]: the cell mint produced size workers under the one runId');
+  // Kill worker[1] so the fan-out is necessarily partial (delivered=1 < size=2).
+  const killed = await fx.driver.coordinator.kill(workers[1].id, 'human');
+  assert.ok(killed,
+    'stage[partial-delivery-honesty-missing]: a cell member is killed before the send');
+  await flush(40);
+  const fanned = await fx.application.command('waves.send',
+    { runId, message: 'partial fan' },
+    { actor: `direct:${fx.principalOf('tc-planner').principalId}`, principalId: 'tc-planner', sessionId: 'tc-planner-session' },
+    { transport: 'direct', requestId: 'tc10:send:req', idempotencyKey: 'tc10:send' })
+    .then((receipt) => ({ ok: true, receipt }), (error) => ({ ok: false, code: error?.code ?? 'thrown', error }));
+  assert.ok(fanned.ok,
+    'stage[partial-delivery-honesty-missing]: a partial cell delivery NEVER throws — the honest receipt is the '
+    + 'contract, not an exception (Decision 5, TC-10)');
+  assert.equal(fanned.receipt?.delivered, 1,
+    'stage[partial-delivery-honesty-missing]: the receipt carries delivered = the live-member count (1 of 2), '
+    + 'never a silent collapse to the shrunken active set');
+  assert.equal(fanned.receipt?.targetCount, 2,
+    'stage[partial-delivery-honesty-missing]: the receipt carries targetCount = DECLARED size (2), never the '
+    + 'active worker count after the kill (Decision 5, TC-10)');
+  const deliveredEvents = fx.coordination.events()
+    .filter((e) => e.kind === 'message.delivered' && e.payload?.messageId === fanned.receipt?.messageId);
+  assert.deepEqual([...new Set(deliveredEvents.map((e) => e.payload?.workerId))], [workers[0].id],
+    'stage[partial-delivery-honesty-missing]: per-worker delivery truth rides the message record — only the '
+    + 'live member is receipted message.delivered');
+});
+
 test('TC-24 delivery[cell-delivery-mode-gate-missing]: a cell target admits nudge ONLY — now|turn refuse wave_cell_delivery_unsupported', () => {
   assertTokenInApplication('wave_cell_delivery_unsupported',
     'cell-delivery-mode-gate-missing',
@@ -678,6 +1135,24 @@ test('D1 depth1[cell-mate-task-tier-read-missing]: a cell member\'s CONTEXT_READ
     + 'within the cell run), bounded and UNTRUSTED-framed, with zero promotion weight (v1.2 D-depth-1). '
     + 'A wrong implementation that mints the cell but leaves the read port on (runId, [\'shared\']) fails the '
     + 'member-read assertion that follows the mint.');
+  // POST-MINT BINDING (blue-team B3): member 2's CONTEXT_READ of kind scratchpad must SERVE member 1's
+  // task-tier note — the read port extends to the cell's task tiers, never stays on (runId, ['shared']).
+  const runId = sent.receipt.members[0].runId;
+  const workers = fx.driver.coordinator.list().filter((w) => w.runId === runId);
+  assert.equal(workers.length, 2,
+    'stage[cell-mate-task-tier-read-missing]: the cell mint produced size workers under the one runId');
+  fx.coordination.writeScratchpad(
+    { runId, taskId: workers[0].taskId, workerId: workers[0].id, entry: { kind: 'note', text: 'D1 MATE TASK NOTE' } },
+    { actor: 'worker', principalId: workers[0].id, key: 'd1-mate-note' },
+  );
+  emitContextRead(fx.adapter, workers[1], { kind: 'scratchpad' }, 'd1-mate-read');
+  await flush(40);
+  const read = fx.driver.coordinator._log.read(workers[1].id)
+    .filter((e) => e.kind === 'context.read_result').at(-1);
+  assert.ok(JSON.stringify(read?.payload ?? {}).includes('D1 MATE TASK NOTE'),
+    'stage[cell-mate-task-tier-read-missing]: a cell-mate\'s CONTEXT_READ resolves the cell\'s task tiers — '
+    + 'member 2 serves member 1\'s task-ephemeral note without elevation (v1.2 D-depth-1); a read port left '
+    + 'on (runId, [\'shared\']) fails here');
 });
 
 test('D2 depth2[direct-shared-write-missing]: a cell member may write the shared tier directly with the cell\'s nonce', async () => {
@@ -689,6 +1164,35 @@ test('D2 depth2[direct-shared-write-missing]: a cell member may write the shared
     + 'scopes worker:<workerId>, coordination-store.mjs:13844; the fence CAS stays, idempotency keys stay '
     + 'per-member, and a direct write never mints a KG candidate — v1.2 D-depth-2). A wrong implementation '
     + `that never admits the shared-tier write fails here; today blocked at the cell mint (${sent.code}).`);
+  // POST-MINT BINDING (blue-team B3): two members write the shared tier with per-member receipts; a
+  // stale-fence write refuses exactly as today; the direct write never mints a KG candidate.
+  const runId = sent.receipt.members[0].runId;
+  const workers = fx.driver.coordinator.list().filter((w) => w.runId === runId);
+  assert.equal(workers.length, 2,
+    'stage[direct-shared-write-missing]: the cell mint produced size workers under the one runId');
+  const kgBefore = fx.coordination.events().filter((e) => typeof e.kind === 'string' && e.kind.startsWith('kg.')).length;
+  const a = fx.driver.coordinator.writeScratchpad(workers[0].id, { kind: 'note', text: 'D2 SHARED A' },
+    { expectedFence: 'current', idempotencyKey: 'd2-shared-a' });
+  const b = fx.driver.coordinator.writeScratchpad(workers[1].id, { kind: 'note', text: 'D2 SHARED B' },
+    { expectedFence: 'current', idempotencyKey: 'd2-shared-b' });
+  assert.equal(a.scope, 'shared',
+    'stage[direct-shared-write-missing]: member 1\'s direct write lands in the SHARED tier with the cell nonce '
+    + '(v1.2 D-depth-2); today every worker write scopes worker:<workerId> (coordination-store.mjs:13844)');
+  assert.equal(b.scope, 'shared',
+    'stage[direct-shared-write-missing]: member 2\'s direct write lands in the SHARED tier — per-member '
+    + 'receipts, per-member idempotency keys');
+  assert.notEqual(a.entryId, b.entryId,
+    'stage[direct-shared-write-missing]: the two members\' shared writes are distinct entries');
+  const staleFence = fx.driver.coordinator._fences.current(workers[0].id)?.fence ?? 0;
+  const stale = fx.driver.coordinator.writeScratchpad(workers[0].id, { kind: 'note', text: 'D2 STALE' },
+    { expectedFence: staleFence + 1, idempotencyKey: 'd2-stale' });
+  assert.equal(stale.ok, false,
+    'stage[direct-shared-write-missing]: a stale-fence write refuses exactly as today — the depth keeps the '
+    + 'fence CAS (v1.2 D-depth-2)');
+  const kgAfter = fx.coordination.events().filter((e) => typeof e.kind === 'string' && e.kind.startsWith('kg.')).length;
+  assert.equal(kgAfter, kgBefore,
+    'stage[direct-shared-write-missing]: a direct shared write never mints a KG candidate — promotion stays '
+    + 'the orchestrator\'s elevation law (v1.2 D-depth-2)');
 });
 
 test('D3 depth3[cell-reply-visibility-missing]: a member\'s reply is visible to its cell-mates', async () => {
@@ -700,6 +1204,27 @@ test('D3 depth3[cell-reply-visibility-missing]: a member\'s reply is visible to 
     + 'next frames carry the reply\'s framed excerpt; depth stays 1 per member — v1.2 D-depth-3). A wrong '
     + 'implementation that admits the reply but never mirrors it to siblings fails here; today blocked at the '
     + `cell mint (${sent.code}).`);
+  // POST-MINT BINDING (blue-team B3): member 0's reply to the cell broadcast appears framed in member 1's
+  // NEXT frame — the reply is mirrored to cell-mates, depth stays 1 per member.
+  const runId = sent.receipt.members[0].runId;
+  const workers = fx.driver.coordinator.list().filter((w) => w.runId === runId);
+  assert.equal(workers.length, 2,
+    'stage[cell-reply-visibility-missing]: the cell mint produced size workers under the one runId');
+  const parent = await fx.driver.coordinator.sendMessage(
+    { kind: 'inform', to: { runId }, body: 'D3 cell steer' }, { actor: 'orchestrator' });
+  assert.equal(parent.delivered, 2,
+    'stage[cell-reply-visibility-missing]: the C5 fan-out reaches every cell member (targetCount=size)');
+  const mateId = workers[1].id;
+  emitWorkerReply(fx.adapter, workers[0], parent.messageId, 'D3 MEMBER-0 REPLY');
+  await flush(40);
+  await fx.driver.coordinator.sendMessage(
+    { kind: 'inform', to: { runId }, body: 'D3 second steer' }, { actor: 'orchestrator' });
+  await flush(40);
+  const mateFrame = fx.adapter.calls.prompt.filter((call) => call.worker === mateId).at(-1)?.content ?? '';
+  assert.ok(mateFrame.includes('D3 MEMBER-0 REPLY'),
+    'stage[cell-reply-visibility-missing]: member 0\'s reply to the cell broadcast appears framed in member 1\'s '
+    + 'next frame — the reply is mirrored to cell-mates with depth 1 (v1.2 D-depth-3); a reply lane that only '
+    + 'attaches to the parent message fails here');
 });
 
 test('D4 depth4[shared-worktree-option-missing]: group.worktree:\'shared\' is admitted and one tree is captured', async () => {
@@ -710,6 +1235,20 @@ test('D4 depth4[shared-worktree-option-missing]: group.worktree:\'shared\' is ad
     + 'one worktree, one capture, the collective diff, conflicts surfacing as cell.conflict attention items '
     + '(v1.2 D-depth-4); today the group key is refused wholesale at admission, so the option cannot even be '
     + `declared (${sent.code}).`);
+  // POST-MINT BINDING (blue-team B3): group.worktree:'shared' produces ONE worktree shared by every cell
+  // member — one capture, the collective diff (v1.2 D-depth-4).
+  const runId = sent.receipt.members[0].runId;
+  const workers = fx.driver.coordinator.list().filter((w) => w.runId === runId);
+  assert.equal(workers.length, 2,
+    'stage[shared-worktree-option-missing]: the cell mint produced size workers under the one runId');
+  await flush(40);
+  const trees = workers.map((w) => w.worktree).filter(Boolean);
+  assert.equal(trees.length, 2,
+    'stage[shared-worktree-option-missing]: every cell member holds a worktree under group.worktree:\'shared\' '
+    + '(v1.2 D-depth-4); per-worker trees are the v1.1 default, shared is the opted-in depth');
+  assert.equal(new Set(trees).size, 1,
+    'stage[shared-worktree-option-missing]: the worktrees are ONE shared tree — a wrong mint that gives each '
+    + 'member its own tree (or none) fails here');
 });
 
 // ===========================================================================
@@ -725,15 +1264,40 @@ test('TC-23a trust[cell-editing-division-missing]: group.editing divides the gat
     + 'per-worker gate and the #88 preflight compose UNCHANGED (Decision 2, TC-23); an idle EDITING member is '
     + 'still policy-killed. A wrong implementation that admits editing but never writes analysis:true to the '
     + `briefs fails the brief assertion that follows; today blocked at the cell mint (${sent.code}).`);
+  // POST-MINT BINDING (blue-team B3): the non-listed member's task brief carries analysis:true while a
+  // listed (editing) member's does not — the per-worker gate and the #88 preflight compose UNCHANGED.
+  const runId = sent.receipt.members[0].runId;
+  const workers = fx.driver.coordinator.list().filter((w) => w.runId === runId);
+  assert.equal(workers.length, 2,
+    'stage[cell-editing-division-missing]: the cell mint produced size workers under the one runId');
+  const listedBrief = fx.coordination.task(workers[0].taskId)?.brief ?? {};
+  const nonListedBrief = fx.coordination.task(workers[1].taskId)?.brief ?? {};
+  assert.equal(nonListedBrief.analysis, true,
+    'stage[cell-editing-division-missing]: a non-listed (non-editing) member\'s task brief carries analysis:true '
+    + '(Decision 2, TC-23); an editing-division that never writes analysis:true fails here');
+  assert.notEqual(listedBrief.analysis, true,
+    'stage[cell-editing-division-missing]: a listed (editing) member\'s brief does NOT carry analysis:true — the '
+    + 'division is per-member, not all-or-nothing');
 });
 
-test('TC-23b trust pin: analysis:true documents repository_edit as not-required — the existing TG5 hatch', async () => {
+test('TC-23b trust pin: analysis:true skips required_effect even when repository_edit is required — the TG5 hatch', async () => {
+  // Fold (blue-team B7): the old pin's brief {analysis:true, requiredEffects:[]} left the required-effect
+  // gate INERT regardless of analysis (coordinator.mjs:12839-12849), so it stayed green even if the analysis
+  // hatch were removed entirely. The literal B7 fix ({analysis:true, requiredEffects:['repository_edit']})
+  // is refused at construction by the BU-2-1 brief validator (messages.mjs:92-98: analysis:true WITH
+  // repository_edit required is a self-contradiction) — so the gate's `!analysis` guard is a runtime
+  // backstop against exactly that contradictory brief. This pin injects that state (replacing the validated
+  // brief on the coordinator task) and proves the guard: diffless + analysis:true + repository_edit REQUIRED
+  // => NOT policy-killed. TC-23c stays the negative control (same requiredEffects, NO analysis => killed).
   const { adapter, coordinator } = coordinatorSetup({ adapter: new ScriptableAdapter({ pausable: false }), capture: noDiff });
   const handle = await coordinator.spawn('mock', makeBrief({ analysis: true, requiredEffects: [] }));
+  const task = coordinator._tasks.get(handle.taskId);
+  task.brief = Object.freeze({ ...task.brief, analysis: true, requiredEffects: ['repository_edit'] });
   emitTurnCompleted(adapter, handle);
   await flush(60);
   assert.notEqual(coordinator._tasks.get(handle.taskId).status, 'failed',
-    'PIN: analysis:true skips required_effect — the gate stays per-worker (TG5, T14)');
+    'PIN: analysis:true skips required_effect on a diffless capture EVEN with repository_edit required — the '
+    + 'TG5 hatch guard (coordinator.mjs:12842), not an inert gate; removing the `!analysis` guard fails this pin');
 });
 
 test('TC-23c trust pin: an idle EDITING member is still policy-killed — the safe direction', async () => {
@@ -757,6 +1321,29 @@ test('TC-08 grant[per-worker-grant-mint-missing]: a waves.send claimGrant to a c
     + 'worker — size grants, each bound to its own (workerId, taskId, taskVersion, processGeneration) and all '
     + 'sharing memberRunId = cellRunId (Decision 4, TC-08); today the mint resolves _taskByRun(runId) — the '
     + `FIRST task (coordination-store.mjs:15011-15016). Blocked at the cell mint (${sent.code}).`);
+  // POST-MINT BINDING (blue-team B3): a waves.send claimGrant to the cell runId mints exactly SIZE grants
+  // with distinct (workerId, taskId, taskVersion) — the mint must fan out over the cell's workers, never
+  // resolve _taskByRun's FIRST task.
+  const runId = sent.receipt.members[0].runId;
+  const workers = fx.driver.coordinator.list().filter((w) => w.runId === runId);
+  assert.equal(workers.length, 2,
+    'stage[per-worker-grant-mint-missing]: the cell mint produced size workers under the one cell runId');
+  const orch = authorityOn(fx.coordination, { runId: 'run:tc08-board', principalId: 'tc08-orch', sessionId: 'tc08-sess' });
+  bindWaveRun(fx, 'run:tc08-board', 'coordination', sent.receipt.waveId, orch.principalId);
+  s2Post(fx, { board: 'cell-board', title: 'tc08 item', runId: 'run:tc08-board', orch });
+  const grant = await sendCellGrant(fx, { runId, board: 'cell-board', boardRunId: 'run:tc08-board', idem: 'tc08:grant:1', orch });
+  assert.ok(grant.ok,
+    'stage[per-worker-grant-mint-missing]: the claimGrant send to the cell runId is admitted (the closed '
+    + `claimGrant request, Decision 4); today it refuses with ${grant.code ?? 'ok'}`);
+  const mints = mintedCellGrants(fx, { board: 'cell-board', memberRunId: runId });
+  assert.equal(mints.length, 2,
+    'stage[per-worker-grant-mint-missing]: a waves.send claimGrant to the cell runId mints SIZE grants — one '
+    + 'per cell worker, all sharing memberRunId = cellRunId (Decision 4, TC-08); today the mint resolves '
+    + '_taskByRun(runId) — the FIRST task — so exactly one grant mints');
+  const coords = mints.map((e) => [e.payload?.workerId, e.payload?.taskId, e.payload?.taskVersion].join(':'));
+  assert.equal(new Set(coords).size, 2,
+    'stage[per-worker-grant-mint-missing]: the size grants carry distinct (workerId, taskId, taskVersion) '
+    + 'coordinates');
 });
 
 test('TC-22 grant[per-member-mint-key-missing]: size mints under one send key derive per-member caller keys', async () => {
@@ -767,6 +1354,31 @@ test('TC-22 grant[per-member-mint-key-missing]: size mints under one send key de
     + 'per-member caller keys <sendKey>:<workerId> — mint #2..N never collide (Decision 4, TC-22); today the '
     + 'mint lane is raw-caller-key indexed (coordination-store.mjs:14992-14995, ground truth 15). Blocked at '
     + `the cell mint (${sent.code}).`);
+  // POST-MINT BINDING (blue-team B3): size mints under ONE send idempotencyKey all succeed (per-member
+  // caller keys — no board_replay_conflict); an exact retry replays; a changed-content retry for the same
+  // send refuses board_replay_conflict.
+  const runId = sent.receipt.members[0].runId;
+  const workers = fx.driver.coordinator.list().filter((w) => w.runId === runId);
+  assert.equal(workers.length, 2,
+    'stage[per-member-mint-key-missing]: the cell mint produced size workers under the one cell runId');
+  const orch = authorityOn(fx.coordination, { runId: 'run:tc22-board', principalId: 'tc22-orch', sessionId: 'tc22-sess' });
+  bindWaveRun(fx, 'run:tc22-board', 'coordination', sent.receipt.waveId, orch.principalId);
+  s2Post(fx, { board: 'cell-board', title: 'tc22 item', runId: 'run:tc22-board', orch });
+  const first = await sendCellGrant(fx, { runId, board: 'cell-board', boardRunId: 'run:tc22-board', idem: 'tc22:send', orch, message: 'first content' });
+  assert.ok(first.ok,
+    'stage[per-member-mint-key-missing]: the first claimGrant send to the cell runId is admitted');
+  assert.equal(mintedCellGrants(fx, { board: 'cell-board', memberRunId: runId }).length, 2,
+    'stage[per-member-mint-key-missing]: size mints under one send idempotencyKey ALL succeed — per-member '
+    + 'caller keys, mint #2..N never collide (Decision 4, TC-22)');
+  const exact = await sendCellGrant(fx, { runId, board: 'cell-board', boardRunId: 'run:tc22-board', idem: 'tc22:send', orch, message: 'first content' });
+  assert.ok(exact.ok,
+    'stage[per-member-mint-key-missing]: an EXACT retry of the same send replays idempotently');
+  assert.equal(mintedCellGrants(fx, { board: 'cell-board', memberRunId: runId }).length, 2,
+    'stage[per-member-mint-key-missing]: the exact retry mints nothing new — the per-member keys replay');
+  const changed = await sendCellGrant(fx, { runId, board: 'cell-board', boardRunId: 'run:tc22-board', idem: 'tc22:send', orch, message: 'CHANGED CONTENT' });
+  assert.equal(changed.ok, false,
+    'stage[per-member-mint-key-missing]: a changed-content retry for the SAME send refuses board_replay_conflict '
+    + '(Decision 4, TC-22); today the raw-caller-key lane would collide (ground truth 15)');
 });
 
 test('TC-22b grant pin: waves.send resolves worker[0] of the runId — the seam the per-member mint must replace', async () => {
