@@ -81,3 +81,16 @@ at orchestration speed.
 | glm synthesis member suspected of the 20-min stream death mid-synthesis | demo retry-4 (lead never completed post-gate) | #50 suspected live; the waiting-on vocabulary (#10 contract) is the honest surfacing |
 
 The pattern continues: every entry is a surface not saying what it knows. The R0a tabulation added a quantitative note: median 2 nudges per outcome across 33 receipted outcomes — the steering machinery is doing quiet routine work on nearly every wave; none of it was visible until receipts were read by hand.
+
+## Appendix B — frictions accrued during the Ring 4 pipeline (2026-08-06)
+
+| Friction | Receipt | Disposition |
+|---|---|---|
+| The ceiling was TWO-layered: the class default AND an explicit construction-site literal — fixing one left the other masking it (the suite wave's members 2-4 never spawned, caught only by event-counting) | ef84435 (class) → the construction-site fix (application-deployment.mjs:843) | a policy value must exist ONCE — the limits-registry class (#89's doctrine): the construction site should derive, never repeat a literal. Fold into the registry's remaining consolidation |
+| The harvest content-matcher missed a THIRD time (spec wave, AX wave, suite wave — all recovered by pin-path probing) | suite-wave verdict 'harvested: none' despite all four members complete | #99's whole point; the fleet drivers adopt the harvest lane the moment it lands |
+| The kimi-quota 403 cascade killed five subagents mid-tool-call (twice) — my own harness has no graceful degradation; agents need manual resume | agents 85-90 403'd | OPERATIONAL LESSON: baton waves handle provider death with re-drive/attach (93B); my kimi subagents don't. The fleet-wave model is strictly more durable — the pivot (kimi orchestrates, fleet authors) is the answer and it held |
+| Landed epics carried live-surface bugs their suites didn't pin: attention.watch silently dead for the documented MCP principal; the coaching shape dropped by both northbound transports | AX-review wave (#108-112) | DISCIPLINE FOLD: surface suites must pin every documented principal's path (not just wave-owner) and both transport levels (in-process + MCP/web), or the lane is suite-green and surface-dead |
+| The ceiling serialization is invisible at the wave level — again | suite wave retry-1 (only w-1 spawned) | #10's capacity_ceiling kind covers it; the wave got no signal until I counted events |
+| A driver string-literal typo failed node --check before launch | the waiting-vocabulary lane's first launch | the pre-launch check worked as designed — a friction that caught itself |
+
+The pattern from the meta-lesson continues to hold: the newest frictions are all *visibility* frictions (the two-layer ceiling, the invisible spawn serialization, the unharvested pins, the silently-dead lanes) — the machinery knows and nobody's told.
