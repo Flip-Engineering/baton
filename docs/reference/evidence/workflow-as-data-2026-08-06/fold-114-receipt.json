@@ -1,0 +1,29 @@
+{
+  "attempt": "2026-08-06T22:37:08.618Z",
+  "salt": "f420260806223708",
+  "steps": [
+    {
+      "step": "waves.start",
+      "receipt": {
+        "runs": [
+          null
+        ]
+      }
+    },
+    {
+      "step": "loop-drained",
+      "receipt": {
+        "pending": []
+      }
+    }
+  ],
+  "harvest": {
+    "fold-114": {
+      "pin": "177cd24bbdaf05a1c13a6c190bdd2d49faa7b98f",
+      "paths": [
+        "docs/reference/evidence/workflow-as-data-2026-08-06/workflow-as-data-contract.md"
+      ]
+    }
+  },
+  "verdict": "FOLD-114-OK"
+}

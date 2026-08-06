@@ -1,0 +1,14 @@
+{
+  "attempt": "2026-08-06T22:35:29.818Z",
+  "salt": "f320260806223529",
+  "steps": [
+    {
+      "step": "waves.start",
+      "receipt": {
+        "runs": [
+          "run-5ba8b6169ba1122332001a23cf14e195"
+        ]
+      }
+    }
+  ]
+}
