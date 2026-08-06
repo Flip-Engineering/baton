@@ -63,3 +63,21 @@ The next ring's weighting should follow that: blocked-state vocabulary, briefing
 citations, declarative steering, and the harvest/result accessors are worth more to the fleet's
 throughput than any single new capability — they're what make the existing capabilities *usable*
 at orchestration speed.
+
+## Appendix A — frictions accrued after the ledger's first writing (2026-08-06)
+
+| Friction | Receipt | Disposition |
+|---|---|---|
+| Sanitization leak: an indiscriminate `cause.message` into MCP tool errors leaked private provider detail | #87 harvest, MN1/MN8 failing | fixed in the harvest (typed-refusals-only coaching, FP-15 preserved) |
+| Spawn-race TypeError in the new message lane | demo retry-1, mcp/grammar members | **#97** + folded into the #10 contract (worker_spawning typed refusal) |
+| Ceiling-1 per-harness serialization invisible at wave level | demo retry-2, 90s silent deferrals | #49 commented + #10's capacity_ceiling kind |
+| Harvest matcher: pins carry Baton-Task trailers, never the salt — content-addressed matching required | demo retry-3/4 | fixed in-driver; the surface answer is #99 |
+| Elevation step's status-view shape assumption (taskId/workerId absent at poll phases) | demo retry-4 diagnosis (the scratchpad.read lane itself verified working) | fold into #99/#91's investigation surface (member binding projection) |
+| Spec-wave salt-matcher miss (a contract that doesn't quote the salt) | spec-wave harvest | same class as the demo's — the #99 accessor ends matcher-by-convention |
+| Recipe-render 4096 wall refused a wave at launch | frame-economics launch, 4116>4096 | **#101** |
+| phase92 narrow-index pin's stub broke on the spill-resolution seam (a sanctioned contract seam) | #89 harvest | restaged with the seam bound; lesson: partial-object stubs enumerate what the pinned path may touch — new seams must update the stub |
+| MCP surface-truth pins moved by the six new tools (phase16/mcp-reflex/phase72/phase67) | #87 harvest | restaged — the conformance regeneration worked as designed |
+| Demo loop deadline beat by a slow member (cli-surveyor's work survived via checkpoint pin) | demo retry-3 | the durability machinery proven; driver deadlines are my own walls, not product behavior |
+| glm synthesis member suspected of the 20-min stream death mid-synthesis | demo retry-4 (lead never completed post-gate) | #50 suspected live; the waiting-on vocabulary (#10 contract) is the honest surfacing |
+
+The pattern continues: every entry is a surface not saying what it knows. The R0a tabulation added a quantitative note: median 2 nudges per outcome across 33 receipted outcomes — the steering machinery is doing quiet routine work on nearly every wave; none of it was visible until receipts were read by hand.
