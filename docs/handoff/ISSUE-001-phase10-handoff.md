@@ -347,6 +347,13 @@ can never fire its intended crash-vs-refusal dedup, and it regresses `dead`→`e
 
 The operator's live question — *"a huge gap between what we researched/engineered vs what actually
 ships?"* — was answered by a completed 11-agent workflow (`capability-coverage-sweep`). Full matrix:
+> **CLOSED-BY BANNER (2026-08-06):** the UNSHIPPED-DEBT list below is largely **landed under later
+> names** — session resume/fork, budget enforcement, red→green+coverage+mutation, integrate +
+> semantic review, plan-gate, brief-with-done-command all shipped in later phases. Do NOT rebuild
+> from this table. The verified row-by-row dispositions live in
+> `docs/reference/evidence/dropped-features-2026-08-06/docs-deep-finds.md` §5 ("Verified NOT
+> dropped"), with the synthesis at `SYNTHESIS.md` and follow-up issues #116–#131.
+
 **`docs/handoff/evidence/capability-matrix.json`** (107 classified rows). Headline:
 
 | Status | Count | Meaning |
