@@ -842,7 +842,9 @@ function builtInAdapters(routes, repoRoot, adapterOptions = {}, claudeCredential
       }
       adapters[key] = new DeepseekSessionCli({
         ...deepseekCredentialProjection(repoRoot),
-        model: 'deepseek-v4-flash', approvals: false, ceiling: 1, maxWireFrameBytes,
+        // Operator policy (2026-08-04): deepseek runs WIDE — the explicit ceiling:1 here was the
+        // same scaffolding fossil as the class default (masked by it until now); 4 per the policy.
+        model: 'deepseek-v4-flash', approvals: false, ceiling: 4, maxWireFrameBytes,
       });
     } else if (route.harness === 'glm') {
       if (rows.some((row) => row.model !== 'glm-5.2')) {
