@@ -4,12 +4,22 @@
 // BEFORE implementation. Every red row fails today at a NAMED stage; every green row
 // is a guard that must STAY green.
 //
+// FOLD (blue-team report, 2026-08-06 — suite-blueteam.md, verdict NOT-READY):
+//   blocker B1 (HA-08 facade-injection rows absent) → +C3 (result_delta_oversize
+//   facade translation) and +E3 (harvest_onto_dirty facade translation); H4 retitled
+//   to the stateFailureCode wire-mapping row with the facade-translation burden noted.
+//   Recommendations → C2 digest pinned to the full-set canonical-JSON oracle; F2 pins
+//   no probe worktree via before/after worktree-list equality; E1 pins the realpath
+//   admit via a symlink alias. 41t (36r/5p). Full map: suite-fold.md (same directory).
+//
 // Row inventory (contract HA-01..HA-14):
 //   A  HA-01 dispatch + closed shapes          (stage: ports absent)
 //   B  HA-02 stale-base law                    (stage: projection absent)
 //   C  HA-03 projection shape + truncation     (stage: projection absent)
+//   C3 HA-08 result_delta_oversize translation (stage: projection absent)
 //   D  HA-04 readiness trichotomy              (stage: projection absent)
 //   E  HA-05 applied-clean receipt             (stage: harvest absent)
+//   E3 HA-08 harvest_onto_dirty translation    (stage: harvest absent)
 //   F  HA-06 three-way survival + conflict     (stage: harvest absent)
 //   G  HA-07 already_integrated + empty_delta  (stage: harvest absent)
 //   H  HA-08 MCP wire constancy                (stage: tools absent / wire vocabulary absent)
@@ -29,7 +39,7 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -453,8 +463,9 @@ test('B1-stale-base (stage: projection absent): the projection owns the RECORDED
 // ===========================================================================
 // Section C — HA-03: the projection shape. changedFiles rows {blob, digest, mode,
 // path, size} EXACTLY covering changedPaths with byte-wise path sort; at-cap page
-// admitted, cap+1 truncated with truncated/changedFilesDigest/cursor.
-// (stage: projection absent)
+// admitted, cap+1 truncated with truncated/changedFilesDigest/cursor. C3 pins the
+// HA-08 result_delta_oversize translation (kernel captured_change_oversize → the
+// facade code naming the cap). (stage: projection absent)
 // ===========================================================================
 
 test('C1-projection (stage: projection absent): ready/resultSha/baseSha/changedPaths/changedFiles oracles', async (t) => {
@@ -526,7 +537,25 @@ test('C2-truncation (stage: projection absent): an oversize changedFiles page tr
   assert.equal(projected?.ready, true);
   assert.equal(projected?.changedPaths?.length, N, 'changedPaths carries the full set (below the 1_024 maxPaths)');
   assert.equal(projected?.truncated, true, 'the serialized page exceeded 256 KiB and truncated');
-  assert.match(projected?.changedFilesDigest, /^[a-f0-9]{64}$/u, 'changedFilesDigest is over the FULL entry set');
+  // The digest oracle (HA-03): sha256(canonicalJSON) of the FULL entry set — a digest
+  // of the truncated page (or any subset) is a false-green. Rows are reconstructed
+  // from the known edit contents: blob = sha1("blob <size>\\0<content>") (verified
+  // against `git rev-parse ${resultSha}:${path}` this session), digest = sha256 of
+  // the file content, mode 100644 (the MockAdapter writes plain files).
+  const contentByPath = new Map(edits.map((entry) => [entry.path, entry.content]));
+  const expectedRows = oracle.map((path) => {
+    const content = contentByPath.get(path);
+    return {
+      blob: createHash('sha1').update(`blob ${Buffer.byteLength(content)}\0${content}`).digest('hex'),
+      digest: createHash('sha256').update(content).digest('hex'),
+      mode: '100644',
+      path,
+      size: Buffer.byteLength(content),
+    };
+  });
+  const fullSetDigest = digest(expectedRows);
+  assert.equal(projected?.changedFilesDigest, fullSetDigest,
+    'changedFilesDigest is the sha256(canonicalJSON) of the FULL entry set — a truncated-page digest is a false-green');
   assert.ok(projected?.cursor !== undefined && projected?.cursor !== null, 'a continuing cursor is present');
   assert.ok(Array.isArray(projected?.changedFiles), 'changedFiles is an array');
   assert.ok(projected.changedFiles.length < N, 'the admitted page holds fewer than the full set');
@@ -534,6 +563,28 @@ test('C2-truncation (stage: projection absent): an oversize changedFiles page tr
   for (const row of projected.changedFiles) {
     assert.ok(oracle.includes(row.path), 'every admitted row is a changed path');
   }
+});
+
+test('C3-oversize (stage: projection absent): a captured_change_oversize kernel throw translates to result_delta_oversize at the facade', async (t) => {
+  const fx = await facadeFixture(t, { adapter: new MockAdapter({ scenario: { outcome: 'completed', edits: TWO_EDITS } }) });
+  const rec = await ceremonyRun(fx, { runId: 'run:c3' });
+  assert.equal(rec.view?.phase, 'work_completed', 'fixture reaches work_completed');
+  assert.equal(rec.view?.result?.preservation?.state, 'pinned', 'fixture: the pin is preserved');
+  const owner = rec.owner;
+  // The REAL >1_024-path ceremony is unconstructible here: run.status's view build
+  // calls inspectCapturedChanges at the default maxPaths (application.mjs:3737) and
+  // throws captured_change_oversize before the row's assert can run — verified this
+  // session. Inject the kernel code at the facade's own diff seam instead, exactly
+  // as D5 injects resolveResult=null for the pin_unverifiable lane. A wrong
+  // implementation that lets the kernel code escape (or maps it elsewhere) turns red.
+  fx.driver.coordinator._worktrees.changedPathsAtCommit = () => {
+    throw Object.assign(new Error('captured change set is invalid or oversized'), { code: 'captured_change_oversize' });
+  };
+  const refusal = await facadeError(() => fx.application.command('run.resultpin', { runId: 'run:c3' }, owner, null));
+  assert.equal(refusal?.code, 'result_delta_oversize',
+    'the facade translates captured_change_oversize → result_delta_oversize, naming the cap (RED: projection absent)');
+  assert.match(refusal?.message ?? '', /1_?024/u,
+    'the refusal names the maxPaths cap (1_024) — the #89 cap+actual doctrine');
 });
 
 // ===========================================================================
@@ -605,8 +656,10 @@ test('D6-foreign-run (stage: ports absent): the host policy refuses an unauthori
 
 // ===========================================================================
 // Section E — HA-05: the applied-clean harvest receipt. One fixture drives three
-// ordered rows: onto-invalid refuses; onto-equals-main applies clean; the retry of
-// the SAME pin is already_integrated (Section G's row lives here — same fixture).
+// ordered rows: onto-invalid refuses; onto-equals-main applies clean (the onto is a
+// SYMLINK alias, pinning the realpath-equality admit); the retry of the SAME pin is
+// already_integrated (Section G's row lives here — same fixture). E3 pins the HA-08
+// harvest_onto_dirty translation (a dirty main checkout → the facade code).
 // (stage: harvest absent)
 // ===========================================================================
 
@@ -623,8 +676,15 @@ test('E1-harvest-receipt (stage: harvest absent): onto rules, applied-clean, the
   assert.equal(ontoInvalid?.code, 'harvest_onto_invalid',
     'an onto that is not the main checkout refuses harvest_onto_invalid (RED: harvest absent)');
 
-  // onto-equals-main: the realpath-equality variant applies clean.
-  const receipt = await fx.application.command('waves.harvest', { resultSha: rec.resultSha, onto: fx.repo }, owner, null);
+  // onto-equals-main: the realpath-equality variant applies clean. The onto is a
+  // SYMLINK ALIAS of the main checkout — a naive string-equality implementation
+  // refuses it (alias path ≠ repo path); only a realpath-aware one admits it. This
+  // pins the ADMIT half of the realpath law (the refuse half is the onto-invalid
+  // row above).
+  const alias = join(tmpDir('baton-harvest-alias-'), 'repo-alias');
+  symlinkSync(fx.repo, alias);
+  assert.equal(realpathSync(alias), realpathSync(fx.repo), 'fixture: the alias realpath-equals the main checkout');
+  const receipt = await fx.application.command('waves.harvest', { resultSha: rec.resultSha, onto: alias }, owner, null);
   assert.equal(receipt?.ok, true, 'the receipt succeeds');
   assert.equal(receipt?.result, 'applied-clean', 'the merge applied cleanly');
   assert.equal(receipt?.reason, null, 'reason is null on applied-clean');
@@ -662,6 +722,26 @@ test('E2-harvest-runid (stage: harvest absent): the runId source resolves the sa
   assert.equal(receipt?.resultSha, rec.resultSha, 'the runId source resolves the same pin');
   assert.equal(git(['rev-parse', 'HEAD'], fx.repo), receipt?.afterSha, 'main lands at afterSha');
   assert.equal(git(['status', '--porcelain'], fx.repo), '', 'main is clean');
+});
+
+test('E3-onto-dirty (stage: harvest absent): a dirty main checkout translates the engine\'s structured_main_dirty at the facade', async (t) => {
+  const fx = await facadeFixture(t, { adapter: new MockAdapter({ scenario: { outcome: 'completed', edits: TWO_EDITS } }) });
+  const rec = await ceremonyRun(fx, { runId: 'run:e3' });
+  assert.equal(rec.view?.phase, 'work_completed', 'fixture reaches work_completed');
+  assert.equal(rec.view?.result?.preservation?.state, 'pinned', 'fixture: the pin is preserved');
+  const owner = rec.owner;
+  // Dirty the main checkout with an uncommitted edit to a TRACKED file (x.md is the
+  // base file — untouched by the pin). The engine refuses the stage with
+  // structured_main_dirty (worktree.mjs:1265); the facade must translate it to
+  // harvest_onto_dirty. This is the HA-08 injection row for the constructible code —
+  // an implementation that lets the raw kernel code escape (or maps it elsewhere)
+  // turns red.
+  writeFileSync(join(fx.repo, 'x.md'), 'dirty\n');
+  assert.notEqual(git(['status', '--porcelain'], fx.repo), '', 'fixture: the main checkout is dirty');
+  const refusal = await facadeError(() => fx.application.command('waves.harvest', { resultSha: rec.resultSha }, owner, null));
+  assert.equal(refusal?.code, 'harvest_onto_dirty',
+    'a dirty onto translates structured_main_dirty → harvest_onto_dirty at the facade (RED: harvest absent)');
+  assert.equal(typeof refusal?.message, 'string', 'the refusal carries a message');
 });
 
 // ===========================================================================
@@ -711,6 +791,11 @@ test('F2-three-way-conflict (stage: harvest absent): a touched-file divergent ed
   git(['commit', '-q', '-m', 'main conflicting a'], fx.repo);
   const ontoHead = git(['rev-parse', 'HEAD'], fx.repo);
 
+  // HA-06's "no probe worktree … left behind": snapshot the worktree registry before
+  // the harvest; the refused probe must ADD nothing (the ceremony legitimately leaves
+  // the owned worker worktree registered — verified this session — so the assert is
+  // before/after equality, not "exactly one").
+  const worktreesBefore = git(['worktree', 'list', '--porcelain'], fx.repo);
   const refusal = await facadeError(() => fx.application.command('waves.harvest', { resultSha: rec.resultSha }, owner, null));
   assert.equal(refusal?.code, 'harvest_conflict', 'a conflicting harvest refuses harvest_conflict (RED: harvest absent)');
   assert.ok(Array.isArray(refusal?.conflicts), 'the refusal carries a conflict list');
@@ -722,6 +807,8 @@ test('F2-three-way-conflict (stage: harvest absent): a touched-file divergent ed
   assert.equal(git(['rev-parse', 'HEAD'], fx.repo), ontoHead, 'onto is UNTOUCHED by the refused harvest');
   assert.equal(git(['status', '--porcelain'], fx.repo), '', 'onto is clean after the probe (no stage, no merge)');
   assert.equal(readFileSync(join(fx.repo, 'reports/a.md'), 'utf8'), 'main conflicting alpha\n', 'the divergent main content is untouched');
+  assert.equal(git(['worktree', 'list', '--porcelain'], fx.repo), worktreesBefore,
+    'the refused harvest leaves no probe worktree behind (HA-06 — a leaked throwaway worktree is a false-green)');
 });
 
 // ===========================================================================
@@ -756,8 +843,10 @@ test('G2-empty-delta (stage: harvest absent): a net-zero self-committed pin is s
 // ===========================================================================
 // Section H — HA-08: MCP projections. New tools register (33→35 / 84→86), dispatch
 // with the connection-derived principal, and the COMPLETE refusal vocabulary reaches
-// the wire as itself (never command_outcome_unknown). Kernel→harvest translations
-// are pinned row-by-row. (stage: tools absent / wire vocabulary absent)
+// the wire as itself (never command_outcome_unknown). H4 pins the kernel→harvest
+// WIRE mapping row-by-row (it is the wire-mapping row; the facade-translation burden
+// for the constructible codes is carried by C3/E3 — see H4's comment). (stage: tools
+// absent / wire vocabulary absent)
 // ===========================================================================
 
 const NEW_TOOLS = [
@@ -838,7 +927,17 @@ test('H3-vocabulary (stage: wire vocabulary absent): all 12 new refusal codes re
   }
 });
 
-test('H4-translations (stage: wire vocabulary absent): the kernel codes map to the harvest vocabulary', async () => {
+// H4 is the WIRE-mapping row: which kernel code string reaches which harvest code
+// at the wire (a translation the harvest-absent suite can pin today). The
+// FACADE-translation burden for the constructible codes is carried elsewhere:
+// C3 pins captured_change_oversize → result_delta_oversize at run.resultpin, E3 pins
+// structured_main_dirty → harvest_onto_dirty at waves.harvest. The other two rows —
+// structured_main_advanced → harvest_onto_advanced and structured_merge_failed →
+// harvest_apply_failed — are not facade-constructible through the ceremony (verified:
+// a real >1_024-path ceremony chokes in the view build, so the oversize row cannot be
+// built that way; a between-probe-and-apply race or a main-advanced-beyond-recorded-base
+// state has no deterministic ceremony path) — they stay wire-mapping-only here.
+test('H4-stateFailureCode-mapping (stage: wire vocabulary absent): the kernel state-failure codes map to the harvest vocabulary at the wire', async () => {
   const { server } = mockAppServer({
     command: async (name, args) => {
       if (name === 'run.message.send') throw Object.assign(new Error(`stub: ${args.body}`), { code: args.body });
