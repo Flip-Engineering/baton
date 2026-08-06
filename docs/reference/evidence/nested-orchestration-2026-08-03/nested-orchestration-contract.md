@@ -1,9 +1,29 @@
-# Issue #12 — The nested-orchestration rung: a minted, lease-bound child connection profile projected at spawn (v1.0)
+# Issue #12 — The nested-orchestration rung: a minted, lease-bound child connection profile projected at spawn (v1.1)
 
 Status: implementation contract. This rung unblocks issue #74 (the worker-orchestrated swarm) by
 projecting a FRESH, lease-bound child connection profile into the private worker runtime at spawn —
 never a copy of the owner's store. This epic specifies behavior; it does not amend implementation
 in this artifact.
+
+**v1.1 fold (2026-08-06).** This revision folds the adversarial red-team review
+(`contract-redteam.md`, this directory — verdict NOT FOLD-READY, five blockers) into the
+contract. Four amendments: (1) a lease-scoped transport carve-out admits `run.stop` to the
+lease-holding child — v1.0 minted `['observe','control']` while the transport enforces
+`emergency_stop` before the gate (`impl/src/web-northbound.mjs:625-629`), leaving NP-02
+ungreenable (Decision 6); (2) a `worker:`-prefix refusal closes the legacy transport operator
+command set with the rung's ONE new refusal code, `worker_legacy_command_forbidden` (Decision 6);
+(3) the workflow lanes gain principal↔run lease-subtree scope binding at the facade `_authorize`
+seam (Decision 6); (4) orphan cadence is disclosed honestly — the ≤30-minute TTL is the true
+orphan bound (a resource lease, not a control clock), the sweep gains a startup pass, and the
+in-flight window is pinned (Decision 5). The acceptance suite re-aligns: NP-02 rides the real
+socket transport and gains the carve-out rows, NP-03 the foreign-run rows, NP-04 the in-flight
+rows, NP-05 the cadence/TTL pins, NP-07 the legacy-refusal families. Every new citation was
+verified this session at HEAD `a421062` (`git diff cfa4f3b..HEAD -- impl/` is empty — the v1.0
+frame holds byte-identical). Of the review's six ±1-line drift notes, three verified and are
+fixed (`session.revoked` `web-auth.mjs:154`; the vendor deletes `runtime-isolation.mjs:76-79`;
+the `create` return `:150-172`); three did not verify at this frame and stand as cited
+(`run-lineage.mjs:28`, `run-lineage.mjs:26-27`, `coordinator.mjs:1764` — re-derived exact; see
+`contract-fold.md`). The blocker→change map is `contract-fold.md` in this directory.
 
 **Verification frame.** Every citation below was verified this session (2026-08-06) against the
 live worktree at HEAD `cfa4f3b` (2026-08-05), which is POST-#87/#48 (`f4a64da`, the workflow-surface
@@ -53,8 +73,8 @@ Verified 2026-08-06 against HEAD `cfa4f3b`. Memo anchors that drifted carry thei
 3. **The worker's private HOME is why discovery fails.** `RuntimeIsolation.create`
    (`impl/src/runtime-isolation.mjs:59`) builds the private root/home/tmp/config tree (`:61-67`),
    strips secret/provider-shaped env (`:69-72`), points `env.HOME` at the private home (`:74`),
-   deletes the vendor config-home overrides (`:76-80` — `XDG_CONFIG_HOME` is NOT among them
-   today), and returns `{env, replaceEnv: true, paths, posture}` (`:149-172`). The worker reads
+   deletes the vendor config-home overrides (`:76-79` — `XDG_CONFIG_HOME` is NOT among them
+   today), and returns `{env, replaceEnv: true, paths, posture}` (`:150-172`). The worker reads
    the selector (shared common dir) but its private home carries no `baton/connections/` tree, so
    discovery throws at the profile read. The blocker is exactly profile projection.
 4. **The credential-projection mechanics are the write model — the copy semantics are not.**
@@ -68,7 +88,7 @@ Verified 2026-08-06 against HEAD `cfa4f3b`. Memo anchors that drifted carry thei
    `WebSessionStore` (`impl/src/web-auth.mjs:29`): `issue` (`:128`) mints random bearer tokens,
    digest-at-rest (`tokenDigest` `:137`), `expiresAt = issuedAt + ttlMs` under the store's
    injected `now` (`:132-140`), and appends durable `session.issued` (`:142`); `revoke` (`:151`)
-   appends durable `session.revoked` (`:153`); `isPrincipalActive` (`:205-215`) re-validates
+   appends durable `session.revoked` (`:154`); `isPrincipalActive` (`:205-215`) re-validates
    revocation, expiry, capabilities, and repoIds PER CALL — one revocation kills every in-flight
    command at the next transport check (`impl/src/web-northbound.mjs:624`). The deployment retains
    the store: `this.#residentSession = Object.freeze({sessions, sessionId})`
@@ -209,10 +229,16 @@ resident mints a CHILD session through the existing `WebSessionStore.issue`
 - `userId: 'worker:<workerId>'` — passes the lease's `validRunId` grammar
   (`impl/src/coordination-store.mjs:354`) and inherits the deployment's stated worker-denial
   policies by construction (`principalId.startsWith('worker:')`,
-  `impl/src/application-deployment.mjs:2007`);
+  `impl/src/application-deployment.mjs:2007`). The prefix is a SECURITY PREDICATE, not a naming
+  posture: three seams consume it — the goal/plan denial (`:2007`), the legacy-command refusal,
+  and the lane scope binding (both Decision 6);
 - `authMethod: 'bearer'`; `repoIds: [repoId]`;
-- capabilities EXACTLY `['observe','control']` — `observe` covers the receipt/watch/read lanes,
-  `control` covers send/elevate/seed and recursive run.start/stop (ground truths 11-12).
+- capabilities EXACTLY `['observe','control']` — `observe` covers the receipt/watch/read lanes
+  and the seven recursive reads, `control` covers the `run.message.send`/`run.scratchpad.elevate`/
+  `run.knowledge.seed` lanes and recursive `run.start` (ground truths 11-12). Recursive
+  `run.stop` is `emergency_stop`-class at the transport (`impl/src/application.mjs:173`) — a
+  class the child deliberately never holds — so the child reaches it ONLY through the
+  lease-scoped transport carve-out (Decision 6), the lease as the authority.
   Deliberately excluded: `approve`, `emergency_stop`, `export_result`, `retry_verification`,
   `goal:*`, `plan:*` — the human orchestrator keeps those; the coordinator-lead escalates via the
   landed DECISION_REQUEST grammar (ground truth 19);
@@ -255,7 +281,7 @@ injected clocks; the settlement plane pins lease epochs to durable instants for 
 ### 3. The projection writes two FRESH files through the credential-projection mechanics
 
 `RuntimeIsolation.create` (`impl/src/runtime-isolation.mjs:59`) gains a projection step AFTER the
-credential block (`:104-140`), BEFORE the return (`:149`), consuming a new OPTIONAL
+credential block (`:104-140`), BEFORE the return (`:150`), consuming a new OPTIONAL
 `connection` material handed through the spawn wiring (Decision 4). When present:
 
 - write `<paths.home>/.config/baton/connections/<selector.profile>.json` and the token sibling
@@ -273,7 +299,7 @@ credential block (`:104-140`), BEFORE the return (`:149`), consuming a new OPTIO
 - `<paths.home>/.config` and intermediates are mode 0700, matching the private-tree permission
   posture (`runtime-isolation.mjs:168`);
 - `env.XDG_CONFIG_HOME` is deleted beside the vendor override deletes
-  (`runtime-isolation.mjs:76-80`) so discovery resolves `$HOME/.config` deterministically
+  (`runtime-isolation.mjs:76-79`) so discovery resolves `$HOME/.config` deterministically
   (`application-cli.mjs:251-252`) — a leaked owner `XDG_CONFIG_HOME` would otherwise route the
   worker's discovery at the OWNER's store, the exact anti-goal #12 names;
 - the projection digests into `posture` as `connectionProjection: {state: 'materialized',
@@ -319,7 +345,10 @@ profile, and absence is the refusal).
 **Rationale:** the grounding memo's three insertion points, re-verified at their drifted anchors;
 the store retention landing (ground truth 5) turns insertion point (c) of the memo ("hand a
 bounded issuing capability down") into a concrete closure over `#residentSession`. No new
-authority classes, no new refusal planes.
+authority classes. v1.1 adds exactly ONE refusal code (`worker_legacy_command_forbidden`) and two
+rules at the EXISTING transport `_authorize` seam (`web-northbound.mjs:625-629` region) — the
+`run.stop` carve-out and the legacy-set refusal, both byte-stable for the owner (Decision 6); no
+new seam, no new refusal plane.
 
 ### 5. The fail-closed generation binding: terminal-path revocation BEFORE reap, plus the orphan sweep
 
@@ -334,22 +363,59 @@ Parent dies → child authority dies. Three existing hooks, one wire:
   (`cleanupPending`/`runtime_cleanup_failed`, `coordinator_run_stop_incomplete` `:1764`) and the
   sweep is the backstop — the home reap never gates on best-effort revocation, and live authority
   never outlives the reap by design (session liveness is re-checked per call, ground truth 5).
-- **Orphan sweep.** A sibling sweep on the `sweepSettlementLeases` pattern
-  (`impl/src/coordination-store.mjs:12480-12502`): active run-orchestrator leases whose parent
-  task is terminal-or-gone (and whose parent relation is not the settlement plane's own) are
-  revoked with reason `parent_terminal`; the connection authority then revokes every minted
-  session whose lease is no longer active, from its own ledger (Decision 4a). Cadence: driven
-  where the settlement sweep is driven (`coordinator.settlementLease` `:11404`) and on resident
-  stop, before the owner session's own revoke (`application-deployment.mjs:1617,:1641`).
-  `RuntimeIsolation.reconcile` (`runtime-isolation.mjs:186-192`) already sweeps orphaned runtime
-  roots — the projected token file dies with the home regardless; the sweep kills the AUTHORITY,
-  which is the load-bearing half (a leaked token file without a live session authenticates
-  nothing — `isPrincipalActive` fails closed).
+- **Orphan sweep — with the cadence disclosed (v1.1).** A sibling sweep on the
+  `sweepSettlementLeases` pattern (`impl/src/coordination-store.mjs:12480-12502`): active
+  run-orchestrator leases whose parent task is terminal-or-gone (and whose parent relation is
+  not the settlement plane's own) are revoked with reason `parent_terminal`; the connection
+  authority then revokes every minted session whose lease is no longer active. The sweep is
+  DRIVER-TRIGGERED, NO TIMERS — the pattern's own law (`:12472-12479`) — so cadence is pinned at
+  every seam it can honestly fire: at wave close (`coordinator.settlementLease` `:11404`), on
+  resident stop before the owner session's own revoke
+  (`application-deployment.mjs:1617,:1641`), AND on resident START, riding the coordinator's
+  startup recovery pass that already reconciles runtime scopes (`_trackStartupCleanup`,
+  `impl/src/coordinator.mjs:1367-1370`, defined `:1516`). The startup pass re-derives orphans
+  from the DURABLE lease records (the lease payload binds the session, `:1717-1732`) — never
+  from the volatile ledger (Decision 4a), which a crash destroys. `RuntimeIsolation.reconcile`
+  (`runtime-isolation.mjs:186-192`) already sweeps orphaned runtime roots — the projected token
+  file dies with the home regardless; the sweep kills the AUTHORITY, which is the load-bearing
+  half (a leaked token file without a live session authenticates nothing — `isPrincipalActive`
+  fails closed).
+- **The TTL is the true orphan bound — a resource lease, not a control clock (v1.1).** In a
+  wave-free deployment the wave-close cadence never fires, and sessions are DURABLE across a
+  resident crash/restart (`sessions.jsonl`, reload `_load` `impl/src/web-auth.mjs:48-63`), so an
+  un-revoked child session — and an exfiltrated token copy — outlives even the home reap until
+  expiry. The honest bound on orphaned authority is therefore the TTL (≤30 min,
+  `leaseTtlMs: 30 * 60 * 1_000`, `impl/src/run-lineage.mjs:28`), not the sweep. Classification,
+  as campaign law: the TTL is a RESOURCE LEASE — it bounds how long minted authority can linger
+  as residue; it does not schedule, pace, or steer behavior, so it is never a control clock.
+  Revocation stays event-driven (the terminal path, the sweep, the per-call parent re-check
+  below); the TTL is the accepted, disclosed worst-case residue window, and there is no
+  self-renewal (`rotate` `web-auth.mjs:158` has no transport route — dispatch enumeration
+  `web-northbound.mjs:1003-1052`). NP-05 pins the bound, not a cadence that never fires.
+- **The lease is self-defending on parent death (v1.1 disclosure).** Independent of revocation
+  ordering, `_activeRunOrchestratorLease` re-checks the parent task PER CALL
+  (`impl/src/coordination-store.mjs:1806-1811`): a terminal parent fails every subsequent
+  lease-bound command `run_orchestrator_parent_inactive` (`:1807`) even if the revocation wire
+  never runs. The terminal-path revocation above is the EVIDENCE path; this per-call check is
+  the SAFETY path.
+- **The in-flight window (v1.1 disclosure).** An already-dispatched mutating command COMPLETES —
+  liveness is checked at dispatch (`impl/src/web-northbound.mjs:624`) — while an open long-poll
+  is re-authenticated AND re-authorized when it resolves (`_postWaitAuthorization`,
+  `web-northbound.mjs:633-638`, on both the replay `:844-851` and live `:920-927` paths), so a
+  revoked child's open `run.follow`/`run.wait` dies 401 at wait end: maximum overstay one
+  read-only wait window. A `run.start` racing the parent's death has exactly two arms: admitted
+  before the parent's stop admission computes its target set, the grandchild is INSIDE it —
+  `run.stop_admitted` enumerates the descendant subtree when the lineage policy is active
+  (`_runStopTargets`, `impl/src/coordination-store.mjs:4234-4237`, consumed at `:12158`) and is
+  stopped with the parent; admitted after, it escapes the cascade as an ordinary orphan run —
+  its authority dead at next use (the per-call check above), its runtime residue reaped by
+  `reconcile`, its lease and session collected by the sweep. NP-04 pins both arms; no stop path
+  beyond the admission-time cascade walks the subtree, and none is invented here.
 - **Receipts (every kind named).** Durable evidence: `session.issued`
   (`web-auth.mjs:142`), `run.orchestrator_lease_issued` (`coordination-store.mjs:1922`),
   `runtime.scope_created` carrying the projection posture (`coordinator.mjs:8506-8510`),
   `lifecycle.spawned` (`coordinator.mjs:3667`); on the death path: `run.orchestrator_lease_revoked`
-  (`coordination-store.mjs:1948`) and `session.revoked` (`web-auth.mjs:153`) — these two events
+  (`coordination-store.mjs:1948`) and `session.revoked` (`web-auth.mjs:154`) — these two events
   ARE the stop/reap evidence the issue demands, and acceptance pins their ordering (revocations
   precede the home reap) and their presence in stop evidence.
 
@@ -370,15 +436,86 @@ drives, through the socket transport with server-derived `sessionAuthority` (gro
 - **The eight workflow lanes (landed, pre-gate):** `run.board.post`/`run.board.read`,
   `run.knowledge.seed`, `run.scratchpad.read`/`run.scratchpad.elevate`, `run.message.send`/
   `run.message.receipt`, `run.attention.watch` — each under its own landed authorization
-  (ground truth 12): capability classes satisfied by `observe`+`control`; `attention.watch`'s
-  viewer authority admits the child for exactly its parent run's scope (ground truth 13);
-  `message.receipt` resolves-then-authorizes with unknown ≡ foreign; the board lanes carry their
-  binding law verbatim.
+  (ground truth 12) PLUS the v1.1 scope binding below: capability classes satisfied by
+  `observe`+`control`; `attention.watch`'s viewer authority admits the child for exactly its
+  parent run's scope (ground truth 13); `message.receipt` resolves-then-authorizes with unknown ≡
+  foreign; the board lanes carry their binding law verbatim.
+
+**The v1.1 transport carve-out: `run.stop` under `control`, the lease as the authority.**
+`run.stop` declares `capabilities: ['emergency_stop','observe']` (`impl/src/application.mjs:173`),
+and the transport enforces the class unconditionally at `_authorize`
+(`impl/src/web-northbound.mjs:625-629`) — before dispatch, before the gate, before the lease is
+consulted — so the v1.0 child could start bounded child runs but never stop one. The rung
+therefore owns ONE transport rule change explicitly: when `run.stop` arrives from a principal
+lacking `emergency_stop`, the transport admits it under `control` IFF (i) the server-derived
+`sessionAuthority` resolves a LIVE lease — the same derivation the live path already performs
+(`web-northbound.mjs:977-983`) — and (ii) the store's own scope law accepts the target
+(`authorizeRunOrchestratorCommand`, `impl/src/coordination-store.mjs:2035-2058`: the first-hop
+lineage must carry THIS lease's id, `:2046-2054`; a foreign OR unknown target refuses
+identically). Any carve-out failure falls through to the standard capability enforcement — the
+refusal is the byte-identical 403 `forbidden` body (`web-northbound.mjs:625-629`, the
+`error(status, code)` shape `:148`), so a foreign run, an unknown run, and a missing class are
+indistinguishable (no existence leak). The admitted command is scope-checked AGAIN by the store
+on the command path (`_authorizeRecursiveCommand('run.stop', …)`,
+`impl/src/application.mjs:12877`) — the carve-out admits at the transport; the lease remains the
+authority. A non-lease `control` principal's `run.stop` draws the same 403 as today,
+byte-identical. `kill`/`drain` are untouched: they ride `emergency_stop`
+(`web-northbound.mjs:54`), a class the child never holds, and the worker refusal below bars them
+by prefix regardless. Granting `emergency_stop` instead was considered and rejected — it admits
+`kill`/`drain` on every worker in the deployment.
+
+**The v1.1 legacy-command refusal: the operator set is owner-only.** The non-application
+transport command table (`web-northbound.mjs:53-60`, dispatch `:1003-1052`) was calibrated for
+the omnipotent owner and has never had to distinguish worker principals — this rung mints the
+first worker-held credential, so it closes the set: a `worker:`-prefixed principal is REFUSED
+every legacy operator command with the typed 403 `worker_legacy_command_forbidden`, enforced by
+one rule at the `_authorize` seam (`web-northbound.mjs:625-629` region) and reusing the
+deployment's stated `principalId.startsWith('worker:')` posture
+(`impl/src/application-deployment.mjs:2007`). The refused set, by family: SPAWN — `spawn`
+(class `control` `:54`, dispatch `:1003-1015`; `coordinator.spawn` `coordinator.mjs:4178` carries
+NO run-membership, lease, or principal-scope guard — its guards are plan-gating/task-id/route
+checks, `:4183-4220` — so raw spawn is unbounded fan-out that bypasses every lineage bound) and
+`scratch_oracle` (`:54`, dispatch `:1024-1030`); MESSAGE — `send` and `interrupt` (`:54`,
+dispatch `:1031-1032`/`:1033-1034`; `FENCE_REQUIRED` `:60` is no barrier — the current fence is
+readable through `list` = `observe` `:55`, dispatch `:1041-1042`, the same projection `steer()`
+reads `target.fence` from, `application.mjs:12849-12851` — so list-then-send would be cross-run
+injection); EMERGENCY — `kill`, `drain` (`:54`); RESPOND — `respond` (`:54`, `approve`-class);
+CAPABILITY — `capability_invoke`, `reuse_decide`, `reuse_recheck` (`:55`). The observe-class
+legacy reads (`list`, `result`, `wait`, `capabilities`, `provider_status`, `:55`) remain
+admitted — `observe` is a class the child legitimately holds. The refusal is fail-closed and
+byte-stable for the owner: the owner principal is never `worker:`-prefixed, so the rule never
+fires for it (NP-07). If #74 later needs a worker-reachable spawn, it rides `run.start` through
+the lease, never the legacy lane.
+
+**The v1.1 lane scope binding: principal↔run, the lease subtree as scope.** Seven of the eight
+lanes bind board↔run or task↔run but, pre-rung, never principal↔run — the facade `_authorize`
+(`impl/src/application.mjs:3088`) delegates to the deployment-injected `authorize` (`:2368`),
+today `async () => true` (`impl/src/application-deployment.mjs:1969`), and the pre-gate dispatch
+(`:12184-12191`) hands each lane `(args, principal)` with the derived `sessionAuthority` dropped.
+The rung adds the binding at that one seam — each of the seven calls `_authorize` with its target
+runId (`messageSend :12608`, `messageReceipt :12634`, `scratchpadRead :12661`,
+`scratchpadElevate :12710`, `boardPost :12723`, `boardRead :12793`, `knowledgeSeed :12816`):
+for a `worker:`-prefixed principal the deployment `authorize` admits the call only when the
+caller holds a live lease and the target run lies INSIDE that lease's subtree — the store's
+first-hop law (`coordination-store.mjs:2046-2054`) applied to the lane's run, the lease
+re-derived exactly as `_isReviewAuthority` re-derives it (`activeRunOrchestratorLeaseForSession`,
+two postures, `coordination-store.mjs:1956-1989`; `coordinator.mjs:7010-7013`), or the pre-gate
+dispatch passes the transport-derived `sessionAuthority` through — the LAW is pinned either way,
+the plumbing is the implementer's call. A FOREIGN target and an UNKNOWN target refuse the SAME
+constant `application_unauthorized` (the lanes' own unknown ≡ foreign code,
+`application.mjs:12630-12632`) — no existence leak; a sibling run INSIDE the subtree (its
+first-hop lineage carries THIS lease's id) is admitted. `run.start` is deliberately NOT bound at
+this seam: its target does not exist yet by construction (its `_authorize` names `intent.runId`,
+`application.mjs:4420`) and its lease enforcement is the store's own (`_admitRecursiveRun`,
+ground truth 11). `run.attention.watch` needs none: its own seam already matches the lease
+run-scoped (ground truth 13). Scoping ONLY `worker:`-prefixed principals keeps the owner's
+omnipotent posture byte-identical — refusal constancy (NP-07) is preserved.
 
 **The recursive-session gate is NOT widened.** Its refusal
 (`run_orchestrator_command_forbidden`, `application.mjs:12228-12233`) stays byte-identical for
-everything outside the allowlist. waves.* for a lease-holding worker (ground truth 18) is #74's
-own rung, deliberately not exercised here.
+everything outside the allowlist. The rung's transport changes are exactly the two rules above,
+both at the existing `_authorize` seam and byte-stable for the owner. waves.* for a lease-holding
+worker (ground truth 18) is #74's own rung, deliberately not exercised here.
 
 **A non-lease worker's runtime carries NO profile — its absence is the refusal.** Discovery fails
 exactly as today: `cli_config_invalid: user connection profile is unavailable`
@@ -389,7 +526,10 @@ expired-token decoy: a runtime either holds a minted, lease-bound profile or hol
 principal with the capability class and lane authorization BEFORE the memo's planned gate
 widening was needed — FP-18's pre-gate dispatch deliberately preserves lease-holder lane
 authority (`application.mjs:12177-12183`). The honest v1 is therefore the allowlist + the eight
-lanes, with the gate's refusal constancy pinned as acceptance (NP-07).
+lanes, with the gate's refusal constancy pinned as acceptance (NP-07). The v1.1 fold keeps that
+shape and closes what the landing left open: the `run.stop` carve-out and the legacy-set refusal
+at the transport (pinned NP-02/NP-07), and the principal↔run binding at the facade `_authorize`
+seam (pinned NP-03) — two transport rules and one facade rule, all byte-stable for the owner.
 
 ### 7. The honest-posture story: digested, minted-not-copied, provable
 
@@ -405,6 +545,16 @@ profile is constructed from the in-memory publication outline, ground truths 1-2
 JSON itself is byte-compatible with the owner's publication by CONSTRUCTION (same socket, same
 incarnation — ground truth 2's closed shape forbids distinguishing fields); the never-copied law
 governs the SECRET and the PATH, and both are pinned (NP-08).
+
+One boundary is stated explicitly (v1.1): these proofs are MECHANISM honesty, not an OS boundary.
+Worker and resident share a uid, and runtime-isolation disclaims kernel sandboxing
+(`impl/src/runtime-isolation.mjs:1-2`), so a hostile worker can read the owner's token file
+directly — or fabricate a profile naming it by absolute path, which discovery accepts
+(`isAbsolute(profile.tokenFile)`, `impl/src/application-cli.mjs:270`). That exposure is
+PRE-EXISTING (the same-uid worker could already read the file; the rung neither introduces nor
+worsens it), so the issue's acceptance (c) is pinned as the zero-read CONSTRUCTION proof
+(NP-08(b)) — a mechanism pin, never a claim of filesystem isolation. A one-line discovery
+hardening (`tokenFile` must be a basename) is worth filing separately; it is not this rung.
 
 **Rationale:** "the posture digest proves minted-not-copied" — the proof is the digest inequality
 of the secret plus the zero-read construction path, not an invented marker byte the discovery
@@ -429,7 +579,8 @@ contract would refuse.
 
 ## Refusal vocabulary
 
-Every code below already exists; this rung adds NONE. Byte-constancy pre/post-rung is NP-07.
+Every code below already exists except the ONE the v1.1 fold adds — `worker_legacy_command_forbidden`
+(Decision 6). Byte-constancy pre/post-rung is NP-07.
 
 | Code / signal | Seam | When the child (or non-child) sees it |
 | --- | --- | --- |
@@ -437,7 +588,8 @@ Every code below already exists; this rung adds NONE. Byte-constancy pre/post-ru
 | `cli_config_invalid: user connection profile is invalid` | `application-cli.mjs:268` | A malformed projected profile (implementation bug surfacing honestly; closed-shape validation) |
 | `cli_config_invalid: private Baton token file content is invalid` | `application-cli.mjs:272-274` | A malformed projected token |
 | 401 `unauthenticated` | `web-northbound.mjs:624` via `isPrincipalActive` (`web-auth.mjs:205-215`) | Expired/revoked child session — one revoke kills every in-flight command at the next call |
-| 403 `forbidden` | `web-northbound.mjs:625-629` | Capability shortfall — e.g. `run.answer` (`approve`), `run.workstream.stop` (`emergency_stop`), goal/plan classes |
+| 403 `forbidden` | `web-northbound.mjs:625-629` | Capability shortfall — e.g. `run.answer` (`approve`), `run.workstream.stop` (`emergency_stop`), goal/plan classes; v1.1 — also every `run.stop` the carve-out does not admit (a non-lease `control` principal, or a lease holder targeting a foreign/unknown run: unknown ≡ foreign ≡ these same bytes, `error(status, code)` shape `:148`) |
+| 403 `worker_legacy_command_forbidden` | `web-northbound.mjs:625-629` region (the `_authorize` seam) — v1.1, the rung's ONE new code | A `worker:`-prefixed principal reaches for the legacy transport operator set — `spawn`, `scratch_oracle`, `send`, `interrupt`, `kill`, `drain`, `respond`, `capability_invoke`, `reuse_decide`, `reuse_recheck` (Decision 6, per-family pins) — fail-closed; never emitted for the owner |
 | `run_orchestrator_command_forbidden` | `application.mjs:12232`; also `coordination-store.mjs:2040,:2044` | Lease holder reaches outside the recursive allowlist (gate) or outside `RUN_ORCHESTRATOR_CAPABILITIES` (store) |
 | `run_orchestrator_scope_forbidden` | `coordination-store.mjs:2054` | Lease-bound command targets outside the lease subtree |
 | `run_orchestrator_session_mismatch` | `application.mjs:4317` | Presented/derived envelope disagrees with the live lease |
@@ -446,7 +598,7 @@ Every code below already exists; this rung adds NONE. Byte-constancy pre/post-ru
 | `run_orchestrator_lease_invalid` / `run_orchestrator_lease_conflict` | `coordination-store.mjs:1897-1921` region | Malformed or conflicting mint/revoke requests (replay-safe) |
 | `run_orchestrator_capability_required` | `coordination-store.mjs:1692-1694` | Lease mint against a brief lacking `baton_orchestrator` — also the spawn-time posture: no brief capability → no mint → no profile |
 | `run_orchestrator_parent_inactive` / `run_orchestrator_parent_stale` | `coordination-store.mjs:1688-1691` | Parent task terminal or version-mismatched at mint |
-| Lane-level typed codes | facade contract v2.2 Decisions 3-9 | `application_unauthorized` (message receipt unknown ≡ foreign, `application.mjs:12630-12632`), `attention_scope_forbidden`, `scratchpad_settlement_*`, `stale_scratchpad_fence`, `temporal_incoherence`/`missing_evidence` (seed), board family — all propagate byte-identically |
+| Lane-level typed codes | facade contract v2.2 Decisions 3-9 | `application_unauthorized` (message receipt unknown ≡ foreign, `application.mjs:12630-12632`; v1.1 — also every workflow-lane call by a `worker:`-prefixed principal whose target run lies outside its lease subtree, unknown ≡ foreign, the same bytes, Decision 6), `attention_scope_forbidden`, `scratchpad_settlement_*`, `stale_scratchpad_fence`, `temporal_incoherence`/`missing_evidence` (seed), board family — all propagate byte-identically |
 | `runtime_scope_unavailable` + `lifecycle.crashed` phase `runtime_scope` | `coordinator.mjs:3530-3543` | Mint/lease/projection failure at spawn — the worker never starts; no partial authority |
 | `runtime_cleanup_failed` / `coordinator_run_stop_incomplete` | `runtime-isolation.mjs:178-183`; `coordinator.mjs:1764` | Reap/terminal-path failure — the orphan sweep is the backstop |
 
@@ -463,29 +615,59 @@ acceptance (d)). "Child" = a spawned worker whose brief carries `baton_orchestra
   `run.orchestrator_lease_issued` (parent = the worker's task, session = the child binding),
   `runtime.scope_created` (posture payload), and `lifecycle.spawned` all present and
   cross-consistent (sessionId/leaseId/digests match across receipts).
-- **NP-02 (discovery + bounded child runs).** Inside the child runtime, discovery resolves the
-  projected profile (selector read from the shared common dir, profile+token from the private
-  home); `run.start` of a child run inside the lease subtree is admitted with
+- **NP-02 (discovery + bounded child runs — over the REAL socket transport).** Inside the child
+  runtime, discovery resolves the projected profile (selector read from the shared common dir,
+  profile+token from the private home); the child drives the SOCKET TRANSPORT — the server-derived
+  `sessionAuthority` path (`web-northbound.mjs:977-983`), never `application.command` with a
+  hand-built context. `run.start` of a child run inside the lease subtree is admitted with
   requested/resolved/observed authority; depth 5 (beyond `maxDepth 4`), a 9th child (beyond
   `maxChildrenPerRun 8`), and an out-of-subtree target refuse `run_orchestrator_scope_forbidden`
-  / the lineage bounds; `run.stop` of a lease child succeeds; the seven recursive reads succeed.
-- **NP-03 (the v1 lanes — one mock-session row per lane family).** With the minted session bound
-  to a live lease: `run.board.post` + `run.board.read` (binding law verbatim), `run.knowledge.seed`
-  (content-addressed receipt; a stale `coordinationSeq` refuses `temporal_incoherence`),
-  `run.scratchpad.read` (framed page, ≤256 KiB) + `run.scratchpad.elevate` (fence-bound receipt),
-  `run.message.send` + `run.message.receipt` (resolve-then-authorize; an unknown messageId
-  refuses `application_unauthorized`), `run.attention.watch` on the parent run's scope (lease
-  holder admitted) and on a FOREIGN run's scope (refused/paged per the lane's own law). Each row
-  asserts the lane's landed receipt shape (facade contract v2.2 Decisions 3-9), never a new one.
+  / the lineage bounds. The carve-out rows (v1.1): `run.stop` of a lease child SUCCEEDS;
+  `run.stop` of a FOREIGN run refuses the byte-identical 403 `forbidden`; `run.stop` of an
+  UNKNOWN runId draws the same bytes (unknown ≡ foreign, no existence leak); `run.stop` from a
+  non-lease `['observe','control']` principal refuses the same 403 as pre-rung. The seven
+  recursive reads succeed.
+- **NP-03 (the v1 lanes — one mock-session row per lane family, plus the v1.1 foreign rows).**
+  With the minted session bound to a live lease: `run.board.post` + `run.board.read` (binding law
+  verbatim), `run.knowledge.seed` (content-addressed receipt; a stale `coordinationSeq` refuses
+  `temporal_incoherence`), `run.scratchpad.read` (framed page, ≤256 KiB) + `run.scratchpad.elevate`
+  (fence-bound receipt), `run.message.send` + `run.message.receipt` (resolve-then-authorize; an
+  unknown messageId refuses `application_unauthorized`), `run.attention.watch` on the parent
+  run's scope (lease holder admitted) and on a FOREIGN run's scope (refused/paged per the lane's
+  own law). Each row asserts the lane's landed receipt shape (facade contract v2.2 Decisions 3-9),
+  never a new one. The v1.1 scope-binding rows, per lane family and identical in shape to the
+  attention.watch row: a sibling run INSIDE the child's lease subtree (its first-hop lineage
+  carries THIS lease's id) is admitted — board read/post, knowledge seed, scratchpad
+  read/elevate, message send; a FOREIGN run — including a sibling coordinator-lead's subtree on
+  the same parent run, whose first-hop lineage carries a DIFFERENT lease id — refuses the
+  constant `application_unauthorized`; an UNKNOWN runId draws the same bytes (unknown ≡ foreign,
+  no existence leak).
 - **NP-04 (terminal-path revocation, ordered).** Child stop/kill: durable
   `run.orchestrator_lease_revoked` (reason `parent_terminal`) and `session.revoked` events are
   appended BEFORE the home reap completes; post-stop `isPrincipalActive` is false; an in-flight
   command retried after revocation fails 401; the private home is absent
-  (`runtime_cleanup_failed` on any residue); stop evidence carries both revocations.
-- **NP-05 (orphan sweep).** A child authority minted whose worker never reaches the terminal
-  path (simulated crash): the sweep revokes the lease (closed reason set) and the session;
-  `reconcile` removes the runtime root; zero residue — no live session, no active lease, no
-  files.
+  (`runtime_cleanup_failed` on any residue); stop evidence carries both revocations. The
+  in-flight rows (v1.1): a command dispatched before revocation COMPLETES (liveness is checked at
+  dispatch, `web-northbound.mjs:624`); an open `run.follow`/`run.wait` is re-authenticated and
+  re-authorized at resolution (`_postWaitAuthorization`, `web-northbound.mjs:633-638`) and dies
+  401 — maximum overstay one read-only wait window; a `run.start` racing the parent's terminal
+  transition either refuses post-revocation (`run_orchestrator_lease_revoked`
+  `coordination-store.mjs:1800` / `run_orchestrator_parent_inactive` `:1807`) or admits — and in
+  the admit arm the grandchild is enumerated (inside the stop admission's descendant target set,
+  `_runStopTargets` `coordination-store.mjs:4234-4237` consumed at `:12158`, or named by the
+  sweep's revocation events for the race that escapes it) and its authority is swept. No silent
+  residue.
+- **NP-05 (orphan sweep — behavior, cadence, and the TTL bound).** A child authority minted
+  whose worker never reaches the terminal path (simulated crash): the sweep revokes the lease
+  (closed reason set) and the session; `reconcile` removes the runtime root; zero residue — no
+  live session, no active lease, no files. The cadence pins (v1.1): the sweep fires at wave close
+  (`coordinator.mjs:11404`), on resident stop, AND on resident START riding the startup recovery
+  pass (`_trackStartupCleanup`, `coordinator.mjs:1367-1370`) — a crash-restarted resident
+  collects the orphan from the durable lease records, not from the volatile ledger. The bound pin
+  (v1.1): in a wave-free deployment with no restart, the orphan session lives at most its TTL
+  (≤30 min, `run-lineage.mjs:28`) — advancing the INJECTED clocks past the epoch fails the
+  orphan's next call 401. The TTL is pinned as a resource lease (the accepted residue bound,
+  Decision 5), never as a control clock.
 - **NP-06 (replay/idempotency).** Lease mint replay under the derived key returns the original
   receipt (no second lease); revocation replay returns `replay`; a re-driven spawn mints a FRESH
   session+lease pair (sessions are not replayable) and the sweep collects any orphan from the
@@ -496,7 +678,13 @@ acceptance (d)). "Child" = a spawned worker whose brief carries `baton_orchestra
   out-of-allowlist command (e.g. `runs.list`, `run.workstream.stop`) through the gate fails
   `run_orchestrator_command_forbidden` — byte-identical. (c) An `approve`-class command from the
   child fails 403 at the transport. (d) The gate's allowlist set is unchanged
-  (`application.mjs:12225-12227`).
+  (`application.mjs:12225-12227`). (e) v1.1 — each legacy-operator family from a
+  `worker:`-prefixed principal refuses `worker_legacy_command_forbidden`: `spawn` +
+  `scratch_oracle` (spawn), `send` + `interrupt` (message), `kill` + `drain` (emergency),
+  `respond` (respond), `capability_invoke` + `reuse_decide` + `reuse_recheck` (capability) —
+  while the OWNER's byte stream for every one of those commands is unchanged. (f) v1.1 — a
+  non-lease `['observe','control']` principal's `run.stop` refuses the same 403 `forbidden` as
+  pre-rung, and the owner's `run.stop` is unchanged.
 - **NP-08 (never copies the owner store).** (a) Child `tokenDigest` ≠ the owner session's
   `tokenDigest` (and ≠ every digest in the owner store). (b) Zero-read proof: with the owner's
   profile+token files made UNREADABLE after resident start, child spawn + discovery still succeed
@@ -537,4 +725,6 @@ acceptance (d)). "Child" = a spawned worker whose brief carries `baton_orchestra
 5. **The worker-principal convention.** `userId: 'worker:<workerId>'` follows the deployment's
    stated worker-prefix posture (`application-deployment.mjs:2007`); if a later rung formalizes
    worker principal identity (ids, cards), this binding should migrate to it rather than entrench
-   the string.
+   the string. v1.1 makes the prefix LOAD-BEARING: it is the security predicate three seams key
+   on — the goal/plan denial (`:2007`), the legacy-command refusal, and the lane scope binding
+   (both Decision 6) — so any migration moves all three consumers together.
