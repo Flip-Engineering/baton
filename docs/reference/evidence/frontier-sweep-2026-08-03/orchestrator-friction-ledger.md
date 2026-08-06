@@ -94,3 +94,18 @@ The pattern continues: every entry is a surface not saying what it knows. The R0
 | A driver string-literal typo failed node --check before launch | the waiting-vocabulary lane's first launch | the pre-launch check worked as designed — a friction that caught itself |
 
 The pattern from the meta-lesson continues to hold: the newest frictions are all *visibility* frictions (the two-layer ceiling, the invisible spawn serialization, the unharvested pins, the silently-dead lanes) — the machinery knows and nobody's told.
+
+## Appendix C — reflective frictions from the resident-integration session (2026-08-06, filed #134-#139)
+
+The session where the orchestrator (kimi) moved into a standing resident deployment — the frictions are all from *becoming a participant*, which is why earlier lanes never hit them.
+
+| Friction (witnessed) | Cost | Filed |
+|---|---|---|
+| fold-114 v1 harvester declared FOLD-114-OK from a STALE pin (the wave had zero runs — #129 — and the harvester attributed the earlier WAD wave's pin by path-presence). Only a manual `grep -c v1.1` caught it. Every interim driver carries the wrong-wave attribution bug; the generic `run-task-wave.mjs` inherits it. | a silently-fake "successful" fold, minutes from being committed | #134 (interim waveId-binding + attempt marker; structural fix stays #114/#99) |
+| `baton serve` produced ZERO output for ~4 min on first start while burning CPU — no binding/listening/self-check/publish staging. Diagnosed via `lsof` + `sample`. | resident startup reads as a hang; setup polled mid-window got `profiles: missing` | #135 (staged stderr readiness lines) |
+| `baton runs list` bare refuses `application_run_list_continuation_required` — and the CLI parser accepts NO cursor argument, so the verb is unreachable-by-design on the CLI; the refusal names no next action. | the catalog read is dead on the human surface | #136 (promotes #131's spec-F5 — sharper: the CLI parse gap) |
+| `baton setup` during resident startup reported `profiles: missing` + directed to `create_profile` — which would have raced the resident's own self-publication seconds later. | onboarding misdirection at the exact first-run moment | #137 (resident-starting detection) |
+| Both MCP entries are stdio-only; `baton-mcp-web`'s legacy factory builds a THROWAWAY mkdtemp CoordinationStore per process. A process-per-call orchestrator (kimi's Bash) can never hold the wave lane — the only northbound with waves (#132) requires a persistent parent. | the wave lane is unreachable for the orchestrator class baton is built for | #138 (stateless HTTP MCP endpoint on the resident) |
+| The `/v1/commands` envelope cost a source dive: `{"name":...}` refused `unknown_top_level_field` without naming the field; the required-field branch withholds which field is missing; the dots→underscores transport spelling is undocumented at the edge. The validator KNOWS the field (`web-northbound.mjs:349`). | every new bus caller re-dives the source | #139 (#41-pattern: name the field, never the value) |
+
+The Appendix-B meta-lesson holds a third time: **every one of these is a visibility/naming friction, not a capability absence.** The machinery knew (the validator had the field, the resident had the stage, the harvester had the waveId available) — the surface didn't say.
