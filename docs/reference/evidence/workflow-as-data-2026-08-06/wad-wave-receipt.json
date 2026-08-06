@@ -1,0 +1,21 @@
+{
+  "attempt": "2026-08-06T22:05:16.537Z",
+  "salt": "wd20260806220516",
+  "steps": [
+    {
+      "step": "waves.start",
+      "receipt": {
+        "runs": [
+          "run-3a3635fe4f08f6e9863630500429c7dc",
+          "run-eb272c33b4c560bc679678d1d0d720cb"
+        ]
+      }
+    },
+    {
+      "step": "terminal:wad-redteam",
+      "receipt": {
+        "phase": "work_completed"
+      }
+    }
+  ]
+}
