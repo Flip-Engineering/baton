@@ -1,6 +1,9 @@
 // Issue #10 red suite: the waiting-on vocabulary (contract: docs/reference/evidence/
 // waiting-vocabulary-2026-08-06/waiting-vocabulary-contract.md v1.1; fold: contract-fold.md;
-// red-team: contract-redteam.md — D1..D13). The five waitingOn kinds are closed, the field is
+// red-team: contract-redteam.md — D1..D13). Blue-team fold: suite-blueteam.md (2026-08-06,
+// verdict NOT-READY, 3 blockers) — CC-SHOW since.eventSeq, SP-SHOW detail.window, and the
+// plan_approval_expired stale edge are now rows; see suite-fold.md. The five waitingOn kinds are
+// closed, the field is
 // ADDITIVE on the run view / outline / runs.list item (never a new run phase), `since` is an
 // event-epoch stamp from each kind's OWN stream, and the honest-null law + precedence
 // interaction > waitingOn > checkpoint > working ride the SAME reduceMember the wave driver
@@ -25,8 +28,8 @@
 //              the dispatch pass 3× re-skips idempotent (still exactly 1). #88: the queued
 //              task is pending, never paused. (RED: stage[dispatch-deferred-receipt-missing])
 //   CC-SHOW    run view + outline + runs.list carry waitingOn.capacity_ceiling with
-//              since.turnEpoch null + detail {vendor,ceiling,inFlight}. (RED:
-//              stage[waiting-on-projection-missing])
+//              since.turnEpoch null + since.eventSeq = the deferral receipt seq + detail
+//              {vendor,ceiling,inFlight}. (RED: stage[waiting-on-projection-missing])
 //   CC-EXIT    once A completes and B claims, waitingOn reads honest null. (RED:
 //              stage[waiting-on-exit-missing])
 //   CC-HONEST  reduceMember([], null, waitingOn.capacity_ceiling) → {class:'capacity_ceiling',
@@ -59,7 +62,8 @@
 //   SP-START-RECOVERY a recovery re-spawn projects spawnWindow 'recovery'. (RED:
 //                     stage[spawn-window-fields-missing])
 //   SP-SHOW           a mid-native-spawn run projects waitingOn.spawning on view + outline +
-//                     runs.list, since = the task.claimed seq, turnEpoch null. (RED:
+//                     runs.list, since = the task.claimed seq, turnEpoch null, detail.window
+//                     'spawn' + detail {workerId,taskId,vendor}. (RED:
 //                     stage[waiting-on-projection-missing])
 //   SP-EXIT-WT        resolve the worktree while the native ack is still pending → the window
 //                     SLIDES worktree→spawn without passing through null; settle the ack →
@@ -80,6 +84,10 @@
 //   PA-SHOW    view + outline + runs.list parity. (RED: stage[plan-approval-projection-missing])
 //   PA-EXIT    approve → dispatched → waitingOn null, phase moved (PIN). (RED:
 //              stage[waiting-on-exit-missing])
+//   PA-EXIT-EXPIRY  an approval recorded WITHOUT dispatch reads phase 'approved' + waitingOn
+//              null, and a dispatch attempt after the TTL lapses REFUSES plan_approval_expired
+//              — the D7 stale edge, pinned not silently absent. (RED:
+//              stage[plan-approval-expiry-missing])
 //   PA-HONEST  reduceMember classes plan_approval, never working. (RED: stage[reduceMember-missing])
 //   PA-STRIP   waitingOn.plan_approval churn never moves the marker. (RED: stage[stallMarker-missing])
 //
@@ -103,8 +111,9 @@
 //   D9-COMPOUND   a member carrying BOTH a claim-ready checkpoint AND waitingOn is NEVER claimed
 //                 — waiting beats checkpoint (the suppression gains `!reduced.waiting`). (RED:
 //                 stage[waiting-not-suppressed] — today the checkpoint wins and claims)
-//   D9-SHAPE      reduceMember exposes BOTH flags — blocked and waiting — and a checkpoint
-//                 without waitingOn keeps its class with waiting:false. (RED:
+//   D9-SHAPE      reduceMember exposes BOTH flags — blocked and waiting — on the waiting,
+//                 checkpoint, interaction, AND pure working shapes; a checkpoint without
+//                 waitingOn keeps its class with waiting:false. (RED:
 //                 stage[reduceMember-missing])
 //
 // §G Digest + enum
@@ -165,12 +174,17 @@
 // VERIFIED SPLIT — recorded against the PRE-implementation tree on 2026-08-06
 // (node --test impl/test/issue10-waiting-vocabulary-red.test.mjs, repo root):
 //
-//   38 tests — 35 RED rows FAIL, 3 PINs PASS.
-//   RED rows: each fails at its NAMED stage (14 distinct stages, listed in the row
-//   inventory above); none fails at a PIN assertion or a fixture error.
+//   39 tests — 36 RED rows FAIL, 3 PINs PASS.
+//   RED rows: every row fails at a stage-tagged feature assertion — 14 distinct stages fire
+//   (listed in the row inventory above); none fails at a PIN assertion or a fixture error.
+//   As in the Ring-3 split, five rows fail one stage EARLIER than their named inventory stage
+//   (CC-EXIT, DP-EXIT-a/b/c, PS-EXIT — an earlier projection pre-condition holds the row open
+//   until the field lands; PS-HONEST's `waiting-on-honest-null-missing` is never reached, it
+//   fails at `reduceMember-missing` first). PA-EXIT-EXPIRY is the blue-team fold's new row and
+//   fails at its OWN named stage (plan-approval-expiry-missing).
 //   PINs PASS: D9-INVARIANT, EXO-1, EXO-2.
-//   Stable across two consecutive runs: run 1 = 35 fail / 3 pass (15.8s);
-//   run 2 = 35 fail / 3 pass (15.8s).
+//   Stable across three consecutive runs: run 1 = 36 fail / 3 pass; run 2 = 36 / 3;
+//   run 3 = 36 / 3.
 // ===========================================================================
 //
 // ===========================================================================
@@ -629,6 +643,10 @@ test('CC-SHOW (RED): a ceiling-queued run projects waitingOn.capacity_ceiling on
   assert.equal(view.waitingOn.since.turnEpoch, null, 'stage[waiting-on-projection-missing]: fence-less since');
   assert.deepEqual(view.waitingOn.detail, { vendor: 'mock', ceiling: 1, inFlight: 1 },
     'stage[waiting-on-projection-missing]: the receipt detail');
+  const receipt = driver.coordination.events(1).find((e) => e.kind === 'task.dispatch_deferred');
+  assert.ok(receipt, 'PIN: the ceiling skip minted the deferral receipt for the queued run');
+  assert.equal(view.waitingOn.since.eventSeq, receipt.seq,
+    'stage[waiting-on-projection-missing]: since = the deferral receipt seq — the D5 Arm-1 event identity');
 
   const listed = (await application.listRuns(owner)).items.find((item) => item.id === b.runId);
   assert.ok(listed.waitingOn, 'stage[waiting-on-projection-missing]: the runs.list item carries waitingOn');
@@ -701,6 +719,8 @@ test('DP-START (RED): a claimed-but-undispatched task projects waitingOn.dispatc
   assert.equal(task.status, 'pending', 'PIN: the task is pending with no vendor resolved');
   assert.equal(driver.coordination.events(1).filter((e) => e.kind === 'task.dispatch_deferred').length, 0,
     'PIN: NO receipt exists — this is the Arm-2 condition');
+  assert.equal(driver.coordinator.pausedTurns({ taskId: task.id }).length, 0,
+    'PIN: no pause record for a claimed-but-undispatched task — the #88 preflight is vacuously safe');
 
   const view = await application.status(runId, owner);
   assert.ok(view.waitingOn, 'stage[dispatch-pending-projection-missing]: a pre-dispatch pending task must project waitingOn');
@@ -875,6 +895,14 @@ test('SP-SHOW (RED): a mid-native-spawn run projects waitingOn.spawning on view,
     const claimed = driver.coordination.events(1).find((e) => e.idempotencyKey?.startsWith(`task.claimed:${raw.taskId}:`));
     assert.ok(claimed, 'PIN: the task has a claimed event');
     assert.equal(view.waitingOn.since.eventSeq, claimed.seq, 'stage[waiting-on-projection-missing]: since = the claimed seq');
+    assert.equal(view.waitingOn.detail.window, 'spawn',
+      'stage[waiting-on-projection-missing]: the §3 shape law — the native spawn window is named in the detail');
+    assert.equal(view.waitingOn.detail.workerId, raw.id,
+      'stage[waiting-on-projection-missing]: the spawning detail names the worker');
+    assert.equal(view.waitingOn.detail.taskId, raw.taskId,
+      'stage[waiting-on-projection-missing]: the spawning detail names the task');
+    assert.equal(view.waitingOn.detail.vendor, 'mock',
+      'stage[waiting-on-projection-missing]: the spawning detail names the vendor');
 
     const listed = (await application.listRuns(owner)).items.find((item) => item.id === runId);
     assert.ok(listed.waitingOn, 'stage[waiting-on-projection-missing]: the runs.list item carries waitingOn');
@@ -1030,6 +1058,50 @@ test('PA-EXIT (RED): approve dispatches the run and waitingOn clears to null', a
   assert.equal(approved.waitingOn, null, 'stage[waiting-on-exit-missing]: an approved-and-dispatched run reads honest null');
 });
 
+test('PA-EXIT-EXPIRY (RED): an expired approval reads phase approved + waitingOn null while dispatch refuses plan_approval_expired', async (t) => {
+  // The D7 stale edge, pinned: the TTL exit is a dispatch-time REFUSAL, not a state transition.
+  // An approval that has gone stale still EXISTS (disposition approved), so the ladder reads
+  // 'approved' / waitingOn: null while a dispatch attempt refuses without re-approval.
+  const shortTtlPolicy = { ...goalPlanPolicy, approvalTtlMs: 250 };
+  const { application, driver } = harnessApp(t, markerAdapter({
+    default: { outcome: 'completed', edits: [{ path: 'out.txt', content: 'done\n', delayMs: 300 }] },
+  }), { goalPlanAuthority: { policy: shortTtlPolicy, authorize: async () => true } });
+  const owner = principal('owner');
+  const started = await application.start({ objective: 'PA-EXIT-EXPIRY (marker:default): stale approval', profile: 'standard', route: ROUTE, scope: ['**'] }, owner);
+  assert.equal(started.phase, 'awaiting_plan_approval', 'PIN: the fold phase is untouched before approval');
+
+  // Record the approval WITHOUT dispatching: the app-level approve() dispatches synchronously, so
+  // the coordinator-level approvePlan leaves the run at phase 'approved' with no task binding —
+  // the exact stale-edge window the contract names (D7 §3 exit honesty).
+  const current = application._findRun(started.runId);
+  await driver.coordinator.approvePlan({
+    goal: { goalId: current.goal.goalId, version: current.goal.version, digest: current.goal.digest },
+    plan: { planId: current.plan.planId, version: current.plan.version, digest: current.plan.digest },
+    expectedDisposition: null,
+    disposition: 'approved',
+  }, {
+    actor: principal('approver').actor,
+    principalId: principal('approver').principalId,
+    sessionId: principal('approver').sessionId,
+    powers: ['plan:approve'],
+    repoId: REPO_ID,
+    runId: started.runId,
+    idempotencyKey: `application:${started.runId}:approval:${started.plan.digest}`,
+  });
+
+  const approvedView = await application.status(started.runId, owner);
+  assert.equal(approvedView.phase, 'approved', 'PIN: an approved-but-undispatched run reads phase approved');
+  assert.equal(approvedView.waitingOn, null,
+    'stage[plan-approval-expiry-missing]: an approved run reads honest null — never a stale plan_approval');
+
+  // Let the approval TTL lapse, then re-dispatch: the run must REFUSE plan_approval_expired
+  // (the pre-existing :10707 refusal; the view truth stays 'approved'/null).
+  await sleep(shortTtlPolicy.approvalTtlMs + 350);
+  await assert.rejects(application.approve(started.runId, started.plan.digest, principal('approver')),
+    (error) => error?.code === 'plan_approval_expired',
+    'stage[plan-approval-expiry-missing]: a stale approval refuses dispatch with plan_approval_expired');
+});
+
 test('PA-HONEST (RED): reduceMember classes plan_approval, never working', () => {
   assert.equal(typeof waveDriverNs.reduceMember, 'function', 'stage[reduceMember-missing]: reduceMember must be exported');
   const r = waveDriverNs.reduceMember([], null, WAIT('plan_approval'));
@@ -1180,6 +1252,14 @@ test('D9-SHAPE (RED): reduceMember exposes BOTH flags — blocked and waiting �
   assert.equal(c.class, 'checkpoint', 'a checkpoint without waitingOn keeps its class');
   assert.equal(c.waiting, false, 'stage[reduceMember-missing]: the checkpoint shape exposes waiting:false');
   assert.equal(c.blocked, false, 'the checkpoint shape stays non-blocked');
+  const b = waveDriverNs.reduceMember([qAtt('q-1')], null, null);
+  assert.equal(b.class, 'question', 'a blocking interaction keeps its class');
+  assert.equal(b.blocked, true, 'the interaction shape stays blocked');
+  assert.equal(b.waiting, false, 'stage[reduceMember-missing]: the interaction shape exposes waiting:false explicitly');
+  const w = waveDriverNs.reduceMember([], null, null);
+  assert.equal(w.class, 'working', 'a pure working member keeps its class');
+  assert.equal(w.blocked, false, 'the working shape stays non-blocked');
+  assert.equal(w.waiting, false, 'stage[reduceMember-missing]: the working shape exposes waiting:false explicitly');
 });
 
 // ===========================================================================
