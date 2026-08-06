@@ -132,10 +132,23 @@ plan-gate, brief-with-done-command). Anyone reading only the handoff would rebui
 handoff doc should carry a "closed by" banner pointing at this report — one-line doc fix, folded
 into the doc-drift lane.
 
-## 5. Issues filed from this synthesis
+## 5. Issues filed from this synthesis (2026-08-06)
 
-*(numbers appended as filed — see the issue bodies for the full evidence citations)*
-
-- Tier 1 items 1–13 → individual issues.
-- Tier 2 cluster → one issue; backlog → one tracking issue.
-- `waves.start` silent oversize refusal → one issue (witnessed 2026-08-06, fold-114 v1).
+| Issue | Find | Tier |
+|---|---|---|
+| #116 | grammar-m4a registry-v2 invariant test restore (git-F1) | 1 |
+| #117 | effect tripwire on the integrate gate (docs-#2) | 1 |
+| #118 | failed-verification postmortem digest (cap-B) | 1 |
+| #119 | command-recipe registry (cap-A) | 1 |
+| #120 | `rate_limited` progress class (git-F2) | 1 |
+| #121 | `run.debug` board leg (git-F3) | 1 |
+| #122 | compaction firewall / recite-from-outside (docs-#1) | 1 |
+| #123 | atlas fleet discovery verbs (cap-C) | 1 |
+| #124 | side-channel board surfacing (cap-D) | 1 |
+| #125 | replay harness (docs-#3) | 1 |
+| #126 | `fleet_bakeoff` (docs-#4) | 1 |
+| #127 | phase-79 strategy + join expansion (spec-F1) | 1 |
+| #128 | production HTTPS provider-webhook route (spec-F2) | 1 |
+| #129 | `waves.start` silent oversize refusal (witnessed 2026-08-06, fold-114 v1) | 1 |
+| #130 | positive-clearance + provenance composition cluster (cap-E + spec-F4/F7/F8/F9) | 2 |
+| #131 | TRACKING: docs-dive backlog (17 items with per-item detail + do-not-resurrect list) | 2 |
