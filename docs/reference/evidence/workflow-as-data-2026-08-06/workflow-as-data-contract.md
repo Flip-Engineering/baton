@@ -1,9 +1,14 @@
-# Issue #114 — the workflow-as-data driver (v1.1 FOLDED)
+# Issue #114 — the workflow-as-data driver (v1.2 SUITE-FOLDED)
 
 - **Issue:** #114 — one closed spec + one verb ends the bespoke-driver era
 - **Date:** 2026-08-06
-- **Status:** DRAFT v1.1 — implementation contract (red-team #114 folded)
-- **Fold note:** v1.1 folds `contract-redteam.md` (the issue #114 red-team report, same dir —
+- **Status:** DRAFT v1.2 — implementation contract (red-team #114 + blue-team suite-fold-2 folded)
+- **Fold note:** v1.2 is the suite-fold-2 revision (`suite-blueteam.md`, verdict NEEDS-FOLD; the
+  finding → resolution map is `suite-fold-2.md`, same dir): the D1 member shape declares `report`
+  (F2), member admission is the wave.mjs member laws PLUS the path-scope class (F12), and D3's
+  messageOnSpawn delivered-keying is tightened — a delivery counts ONLY on `delivered > 0 &&
+  typeof messageId === 'string'` (F1). v1.1 folds `contract-redteam.md` (the issue #114 red-team
+  report, same dir —
   verdict NOT FOLD-READY) into the v1.0 contract. All six blockers **B1–B6 are folded** (no
   deferrals); open question 2 is folded NOW (the verb is `waves run` / `baton_waves_run`, the
   family plural); open questions 1 and 3 are deferred with the red-team's pins absorbed into
@@ -53,7 +58,8 @@
   "schemaVersion": 1,
   "idempotencyKey": "string",
   "members": [{ "role": "string", "exact": {"harness": "…", "model": "…", "effort": "…"},
-               "scope": ["paths/**"], "objectiveRef": "path/relative/to/repo" }],
+               "scope": ["paths/**"], "objectiveRef": "path/relative/to/repo",
+               "report": "path/relative/to/repo" }],
   "steering": {
     "approveOnAdvertisedPlan": true,
     "nudgeOnCheckpoint": { "message": "…" },
@@ -66,6 +72,13 @@
   "harvest": { "paths": ["docs/…/file.md", "impl/test/x.test.mjs"] }
 }
 ```
+
+**`report` is a declared member field (F2).** The bespoke drivers carry each member's report path
+in the member object (`wave-driver.mjs` members carry it), and the D6 `outcomes[].resultSha`
+materializes exactly as the bespoke waves' outcomes did — so the closed schema declares `report` as
+an allowed member field (a member-relative path, same containment class as `objectiveRef`) rather
+than refusing it as unknown. A spec that carries `report` is valid; `report` is never executed
+(pure data, same as `scope`).
 
 **`verification` is REMOVED from the schema (B4 — the recipes-lane precedent R-DC-6).** The
 recipe lane already removed `verification` for exactly this reason — a schema field whose consumer
@@ -82,11 +95,14 @@ Closedness is **recursive**, at EVERY nesting level — `members[].exact`, `memb
 `assertNoFunctions` refuses a function smuggled into any known slot (e.g. a closure at
 `steering.messageOnSpawn.body`), `deepFreeze` freezes the admitted spec — all three at every level.
 `schemaVersion` is an enum (`1` only): a spec with `schemaVersion: 999` (or absent) refuses
-`workflow_spec_invalid` naming `schemaVersion`. Member scope admission does NOT reuse `wave.mjs`'s
-`validateMember` verbatim (it never rejects `..` — only the runtime matcher does); it mirrors
-`path-scope.mjs` instead: a scope entry containing a `..` segment, an absolute path, a backslash,
-or a NUL refuses `workflow_member_invalid` naming the entry AT ADMISSION (no late
-`path_scope_invalid` crash). The steering sub-schema enums are closed against the producers' own
+`workflow_spec_invalid` naming `schemaVersion`. Member admission is the UNION of `wave.mjs`'s
+member laws and `path-scope.mjs`'s path class (F12): `wave.mjs`'s `validateMember` laws (non-empty
+role, reserved-role refusal, scope-array shape, `exact` shape, `objectiveRef` presence) PLUS the
+path-scope class — `path-scope.mjs` alone ACCEPTS `['reports']` and rejects only NUL / absolute /
+backslash / `..`-segment, so the scope admission is the union of both: a scope entry containing a
+`..` segment, an absolute path, a backslash, or a NUL refuses `workflow_member_invalid` naming the
+entry AT ADMISSION (no late `path_scope_invalid` crash). Every one of these violations refuses
+`workflow_member_invalid`. The steering sub-schema enums are closed against the producers' own
 vocabularies: message kinds `inform|query|steer` (`coordinator.mjs:6795`) and scratchpad kinds
 `doubt|link|note|plan` (`coordination-store.mjs:507` SCRATCHPAD_KINDS) — a bad value refuses
 `workflow_steering_unknown` naming the field and value.
@@ -116,9 +132,13 @@ policy on the driver loop (all events surfaced to `receipt.steering[]` with the 
 - `nudgeOnCheckpoint` / `claimOnStall` — the shipped wave-driver behaviors, verbatim.
 - `messageOnSpawn` — run.message.send on first-live; bounded retries **≤3 total**, keyed to a
   DELIVERED `messageId` (the driver's `refusalNudgeBudget` precedent — consumed on delivered
-  acknowledgment only); after the budget, a named `steering_message_undelivered` evidence line and
-  STOP. Never fatal, never forever. The `worker_spawning` retry vocabulary is a depending-on-#97
-  row (GT6).
+  acknowledgment only). A delivery counts as DELIVERED ONLY when the receipt carries
+  `delivered > 0 && typeof messageId === 'string'` — messageId-presence alone is insufficient,
+  because `sendMessage` mints `message:<sha256>` unconditionally and the coordinator's delivery
+  chain counts a resolve-with-`{ok:false}` as delivered (F1); a delivery that throws, resolves
+  `{ok:false}`, or is refused does NOT consume the budget. After the budget, a named
+  `steering_message_undelivered` evidence line and STOP. Never fatal, never forever. The
+  `worker_spawning` retry vocabulary is a depending-on-#97 row (GT6).
 - `elevateWhenNotes` — run.scratchpad.read (task tier) → run.scratchpad.elevate with entryIds
   filtered by kinds, maxEntries-bounded, **exactly once per member per wave**, keyed durably by
   `(runId, role)` across a driver restart/attach; a typed refusal
