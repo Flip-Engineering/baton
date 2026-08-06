@@ -9,6 +9,30 @@
           "run-8ce193fce73ee6ccc610e345d3a18cb8"
         ]
       }
+    },
+    {
+      "step": "terminal:fold-114",
+      "receipt": {
+        "phase": "work_completed"
+      }
+    },
+    {
+      "step": "loop-drained",
+      "receipt": {
+        "pending": []
+      }
     }
-  ]
+  ],
+  "harvest": {
+    "fold-114": {
+      "pin": "d9120f9284c68dbe2a2fe49f0b2b49044e545982",
+      "paths": [
+        "docs/reference/evidence/workflow-as-data-2026-08-06/workflow-as-data-contract.md",
+        "docs/reference/evidence/workflow-as-data-2026-08-06/contract-fold.md",
+        "impl/test/workflow-as-data-red.test.mjs",
+        "docs/reference/evidence/workflow-as-data-2026-08-06/suite-draft-notes.md"
+      ]
+    }
+  },
+  "verdict": "FOLD-114-OK"
 }
