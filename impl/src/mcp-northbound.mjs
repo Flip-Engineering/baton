@@ -98,6 +98,7 @@ const CAPABILITY = Object.freeze({
   baton_waves_progress: ['observe'],
   baton_waves_send: ['control', 'observe'],
   baton_waves_stop: ['emergency_stop', 'observe'],
+  baton_waves_run: ['control', 'observe'],
   baton_deployment_doctor: ['observe'],
   baton_scratchpad_elevate: ['control', 'observe'],
   baton_scratchpad_settle: ['control', 'observe'],
@@ -203,6 +204,11 @@ function stateFailureCode(cause) {
   if (typeof cause?.code === 'string' && cause.code.startsWith('application_')) return cause.code;
   if (typeof cause?.code === 'string' && cause.code.startsWith('worker_policy_')) return cause.code;
   if (typeof cause?.code === 'string' && cause.code.startsWith('run_orchestrator_')) return cause.code;
+  // Issue #114 (B3): the workflow-as-data lane's five refusal codes (workflow_spec_invalid,
+  // workflow_member_invalid, workflow_steering_unknown, workflow_harvest_invalid,
+  // workflow_objective_ref_invalid) surface typed on the wire — checked BEFORE the TypeError-name
+  // fallthrough so a workflow_* throw never degrades to invalid_command / command_outcome_unknown.
+  if (typeof cause?.code === 'string' && cause.code.startsWith('workflow_')) return cause.code;
   if (cause?.code === 'run_stopping') return cause.code;
   if (['capability_not_found', 'capability_op_unavailable', 'capability_budget_invalid', 'cancelled',
     'capability_result_invalid', 'capability_result_oversize', 'capability_authority_forbidden', 'capability_args_invalid',
@@ -515,6 +521,17 @@ const LEGACY_ORDINARY_APPLICATION_TOOL_DEFINITIONS = Object.freeze([
     }, ['repoId', 'runId', 'reason']),
     annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
   },
+  {
+    // Issue #114 (D2, OQ2 folded — the family plural): the workflow-as-data interpreter lane. ONE
+    // closed spec drives a whole wave; malformed specs refuse with the field/role-named workflow_*
+    // codes the stateFailureCode allowlist preserves.
+    name: 'baton_waves_run',
+    description: 'Run a workflow-as-data spec: one closed JSON document (members + steering + harvest) drives a whole wave through the shared interpreter. No per-wave driver script.',
+    inputSchema: schema({
+      ...repo, spec: { type: 'object' },
+    }, ['repoId', 'spec']),
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
   // MCP-W3 (mcp-packaging-decisions v1.0): deployment.doctor — quota-free, per-call FRESH
   // readiness; credential posture as metadata only (source kind, expiry class), never secret
   // material. It is the route-picking prerequisite, so charging quota would blind callers exactly
@@ -778,7 +795,7 @@ const REFLEX_READ_ONLY_TOOLS = new Set(SURFACING_MATRIX_MCP_ROWS
 // keys, so the generic application branch never maps their failures) — every one of them must
 // reach the typed stateFailureCode lane, never the generic 'command_failed'.
 const ORDINARY_EXPLICIT_TOOLS = new Set([
-  'baton_waves_start', 'baton_waves_progress', 'baton_waves_send', 'baton_waves_stop',
+  'baton_waves_start', 'baton_waves_progress', 'baton_waves_send', 'baton_waves_stop', 'baton_waves_run',
   'baton_deployment_doctor',
   'baton_scratchpad_elevate', 'baton_scratchpad_settle', 'baton_knowledge_promote',
   'baton_knowledge_settlement_lease',
@@ -1080,6 +1097,9 @@ function validateArguments(name, args, maxWaitMs = null) {
   }
   if (name === 'baton_waves_send' && (!nonempty(args.runId) || !nonempty(args.message))) {
     return 'invalid_wave_send';
+  }
+  if (name === 'baton_waves_run' && (!args.spec || typeof args.spec !== 'object' || Array.isArray(args.spec))) {
+    return 'invalid_workflow_run';
   }
   if (name === 'baton_waves_stop' && !nonempty(args.runId)) {
     return 'invalid_wave_stop';
@@ -1706,6 +1726,16 @@ export class McpFleetServer {
     else if (name === 'baton_waves_stop') {
       value = await this.application.command('waves.stop', {
         runId: args.runId, ...(Object.hasOwn(args, 'reason') ? { reason: args.reason } : {}),
+      }, {
+        actor: actor ?? `mcp:${principal.userId}:${principal.sessionId}`,
+        principalId: principal.userId,
+        sessionId: principal.sessionId,
+      }, this._applicationDispatchContext(args, callId, principal));
+    }
+    // Issue #114 (D2): the workflow-as-data lane — the spec object drives a whole wave via waves.run.
+    else if (name === 'baton_waves_run') {
+      value = await this.application.command('waves.run', {
+        spec: clone(args.spec),
       }, {
         actor: actor ?? `mcp:${principal.userId}:${principal.sessionId}`,
         principalId: principal.userId,

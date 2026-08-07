@@ -11543,6 +11543,23 @@ export class BatonApplication {
   // path at application.mjs:2969-3008) and returns the detached {waveId, members:[{role, runId}]}
   // shape — live handles never cross the transport. Per-member bounded projections (phase,
   // progressClass) ride the start response so an MCP driver sees the wave is live immediately.
+  // Issue #114 (D2): the workflow-as-data interpreter lane. Validates the closed spec and drives the
+  // wave over the embedded facade bound to this principal. The interpreter throws the field/role-named
+  // workflow_* refusals (the MCP stateFailureCode allowlist preserves them). Dynamic imports keep the
+  // client/interpreter modules off this file's static graph (no cycle through the facade binder).
+  async runWorkflow(rawRequest, rawPrincipal) {
+    this._assertOpen();
+    await this.ready;
+    const principal = normalizePrincipal(rawPrincipal, 'workflow run principal');
+    const request = rawRequest && typeof rawRequest === 'object' && !Array.isArray(rawRequest) ? rawRequest : {};
+    const specOrPath = request.spec ?? request.specPath;
+    const { bindBaton } = await import('./application-client.mjs');
+    const { runWorkflow } = await import('./workflow-interpreter.mjs');
+    const baton = bindBaton(this, principal);
+    const repoRoot = this.driver?.coordinator?._repoRoot ?? null;
+    return runWorkflow(baton, specOrPath, { repoRoot, ...(request.driver ? { driver: request.driver } : {}) });
+  }
+
   async startWave(rawRequest, rawPrincipal, rawContext = null) {
     this._assertOpen();
     await this.ready;
@@ -12330,6 +12347,10 @@ export class BatonApplication {
     if (name === 'waves.progress') return this.waveProgress(args, principal, context);
     if (name === 'waves.send') return this.sendWaveMember(args, principal, context);
     if (name === 'waves.stop') return this.stopWaveMember(args, principal, context);
+    // Issue #114 (D2): the workflow-as-data interpreter lane. A direct port (not in the
+    // command-definitions table) — it validates the closed spec and drives the wave over the
+    // embedded facade, throwing the field/role-named workflow_* refusals the MCP allowlist preserves.
+    if (name === 'waves.run') return this.runWorkflow(args, principal, context);
     if (name === 'deployment.doctor') return this.doctorReadiness();
     validateApplicationCommandArgs(name, args);
     const recursiveReadCommands = new Set(['application.help', 'run.inspect', 'run.episode',

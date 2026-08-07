@@ -1316,8 +1316,16 @@ export function parseBatonCli(rawArgs) {
   if (args[0] === 'waves') {
     args.shift();
     const action = args.shift();
+    // Issue #114 (D2, OQ2 folded): the workflow-as-data lane verb is the family plural
+    // `baton waves run <spec.json>` → command waves.run. The spec path rides the parsed args.
+    if (action === 'run') {
+      const specPath = args.shift();
+      noRemainder(args);
+      if (typeof specPath !== 'string' || specPath.length === 0) throw cliError('waves run requires a spec path');
+      return { kind: 'command', command: 'waves.run', name: 'waves.run', args: { specPath }, idempotencyKey };
+    }
     if (action !== 'attach') {
-      throw cliError('expected waves attach', 'cli_command_unavailable');
+      throw cliError('expected waves attach or waves run', 'cli_command_unavailable');
     }
     const waveId = id(args.shift(), 'wave ID');
     const membersRaw = take(args, '--members');

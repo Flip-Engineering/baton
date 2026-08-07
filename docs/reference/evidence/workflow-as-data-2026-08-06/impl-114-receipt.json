@@ -1,36 +1,37 @@
 {
-  "attempt": "2026-08-07T00:12:41.672Z",
-  "salt": "i120260807001241",
+  "attempt": "2026-08-07T02:54:21.443Z",
+  "salt": "i220260807025421",
   "role": "impl-114",
   "steps": [
     {
       "step": "waves.start",
       "receipt": {
         "runs": [
-          "run-8b402a9ca80d0c99f92123b8c358237d"
+          "run-c27774292ec0bd7523eb4680ddb7b658"
         ]
+      }
+    },
+    {
+      "step": "dead:impl-114",
+      "receipt": {
+        "phase": "failed"
       }
     },
     {
       "step": "loop-drained",
       "receipt": {
-        "pending": [
-          "impl-114"
-        ]
+        "pending": []
       }
     }
   ],
   "harvest": {
     "impl-114": {
-      "pin": "eacd86e9d4b8f626e4d17506e779ef2b9f4cd491",
+      "pin": "a8667fbaac3a1e4adac96db03959ae3459411a57",
       "paths": [
-        "impl/src/recipes.mjs",
-        "impl/src/mcp-northbound.mjs",
-        "impl/src/application-cli.mjs",
-        "impl/src/application.mjs"
+        "impl/src/workflow-interpreter.mjs"
       ]
     }
   },
-  "harvestStalePinsSkipped": 341,
+  "harvestStalePinsSkipped": 351,
   "verdict": "IMPL-114-OK"
 }

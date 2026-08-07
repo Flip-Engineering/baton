@@ -1619,6 +1619,21 @@ const CANONICAL_OPERATION_SPECS = [
       runId: id, reason: { type: 'string', minLength: 1, maxLength: 1024 },
     }, ['runId']),
   }],
+  // Issue #114 (D2): the workflow-as-data lane — ONE closed spec drives a whole wave (the
+  // driver-killer: no per-wave bespoke script). The spec object rides the request; a specPath is
+  // containment-checked at the interpreter (the D5 lexical + realpath law). The lane stays a
+  // direct port at application.mjs — the byte-stable command table is untouched.
+  ['waves.run', {
+    profile: 'ordinary', surfaces: ['embedded', 'mcp', 'cli'], effect: 'control',
+    capabilities: ['control', 'observe'], outputView: 'outline', helpTopic: 'run',
+    example: 'baton waves run path/to/spec.json',
+    inputSchema: objectSchema({
+      idempotencyKey: id,
+      spec: { type: 'object' },
+      specPath: { type: 'string', minLength: 1, maxLength: FRAME_LIMITS['wave.run.spec_path'].value },
+      driver: { type: 'object' },
+    }, ['idempotencyKey']),
+  }],
   ['deployment.doctor', {
     profile: 'ordinary', surfaces: ['embedded', 'mcp', 'cli'], effect: 'deployment_read',
     capabilities: ['observe'], outputView: 'index', helpTopic: 'connection',
