@@ -1141,6 +1141,13 @@ export function createDriver(opts) {
   }
   const canonicalOrderPolicy = opts.canonicalOrderPolicy === undefined
     ? null : normalizeCanonicalOrderPolicy(opts.canonicalOrderPolicy);
+  // Epic #103 (D8/OQ2): the pinned repoId-scoped standing-law deployment config the campaign
+  // briefing composes from. It is a config seam, not a ledger input — the ONE named non-ledger
+  // source D1/D8 allow. Optional; absent → no standing laws (the honest-empty composition).
+  const standingLaws = opts.standingLaws === undefined
+    ? [] : Array.isArray(opts.standingLaws) ? opts.standingLaws : (() => {
+      throw new TypeError('standingLaws must be an array');
+    })();
   const worktreeCapacityPolicy = opts.worktreeCapacity === undefined ? null : normalizeWorktreeCapacityPolicy(opts.worktreeCapacity);
   if (opts.worktreeCapacityObserve !== undefined && typeof opts.worktreeCapacityObserve !== 'function') throw new TypeError('worktreeCapacityObserve must be a function');
   if (opts.worktreeCapacityEstimate !== undefined && typeof opts.worktreeCapacityEstimate !== 'function') throw new TypeError('worktreeCapacityEstimate must be a function');
@@ -1643,6 +1650,6 @@ export function createDriver(opts) {
     });
     return operation;
   };
-  return { coordinator, story, router, log, coordination, advisoryFeeds, providerPoller, providerProcessor, sessionRecovery, worktreeCapacity, ready, close, closeAsync, drainAndClose };
+  return { coordinator, story, router, log, coordination, advisoryFeeds, providerPoller, providerProcessor, sessionRecovery, worktreeCapacity, ready, close, closeAsync, drainAndClose, standingLaws };
   } catch (error) { if (writerLease) coordination.releaseWriterLease(); throw error; }
 }

@@ -9,6 +9,7 @@ import { dirname, isAbsolute, join, resolve } from 'node:path';
 
 import { BatonApplication } from './application.mjs';
 import { bindBaton } from './application-client.mjs';
+import { BRIEFING_FAMILY } from './coordination-store.mjs';
 import { BatonWebClient } from './application-cli.mjs';
 import { BatonWebHost } from './application-host.mjs';
 import { ClaudeSessionCli, GlmSessionCli, KimiSessionCli } from './claude-session.mjs';
@@ -1336,8 +1337,23 @@ class BatonDeployment {
       Object.defineProperty(composed, 'occupancy', { value: live.occupancy, enumerable: false });
       return Object.freeze(composed);
     }));
-    const fresh = Object.freeze({ ...this.#readiness, routes });
-    return workspace ? Object.freeze({ ...fresh, workspace }) : fresh;
+    // Epic #103 (D6b): the non-enumerable `briefing` sibling — { packId, composedAtEventSeq,
+    // ledgerHeadSeq, epochLag } | null — attached by the same Object.defineProperty pattern as
+    // liveness/occupancy. Consumers that READ the sibling (the CLI, D6c) see it; serialized
+    // doctor output stays byte-stable for non-reading consumers (Object.keys/JSON.stringify
+    // exclude it — D6b, A8-2). The lag feeds from the tiny additive ledgerHeadSeq accessor
+    // (G10) so it always tracks the live ledger, never a frozen or fabricated value.
+    const coordination = this.#driver?.coordination ?? null;
+    const briefingHead = coordination?.contextPackHead?.(BRIEFING_FAMILY) ?? null;
+    const briefing = briefingHead ? {
+      packId: briefingHead.packId,
+      composedAtEventSeq: briefingHead.observedSeq,
+      ledgerHeadSeq: coordination.ledgerHeadSeq(),
+      epochLag: coordination.ledgerHeadSeq() - briefingHead.observedSeq,
+    } : null;
+    const base = workspace ? { ...this.#readiness, routes, workspace } : { ...this.#readiness, routes };
+    Object.defineProperty(base, 'briefing', { value: briefing, enumerable: false });
+    return Object.freeze(base);
   }
 
   card() { return Object.freeze({ ...this.#card, readiness: this.doctorReadiness() }); }

@@ -1913,6 +1913,10 @@ export class BatonWebClient {
       ready: readiness.ready === true,
       deployment,
       routes,
+      // Epic #103 (D6c): the CLI is a READING consumer of the non-enumerable doctor sibling — it
+      // adds the ONE named additive briefing field (never a text render). Property access reads
+      // the sibling; an absent pack is an honest null (D5b/B5).
+      briefing: deployment?.briefing ?? null,
       application: card.application,
     };
   }

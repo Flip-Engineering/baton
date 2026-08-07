@@ -1453,9 +1453,16 @@ export class WebNorthbound {
     if (pathname === '/v1/application-card') {
       if (!this.application) return this._write(res, error(503, 'application_unavailable', 'run application unavailable'));
       const card = this.application.card();
+      // Epic #103 (D6c): the web card is the reading consumer's TRANSPORT — the CLI is a child
+      // process that reads the doctor sibling by property access AFTER an HTTP JSON round-trip,
+      // and non-enumerable properties do not survive JSON.stringify. So the route reads the
+      // non-enumerable sibling itself and adds the ONE named additive field to the served shape.
+      const readiness = card?.readiness && typeof card.readiness === 'object' && !Array.isArray(card.readiness)
+        ? { ...card.readiness, briefing: card.readiness.briefing ?? null }
+        : (card?.readiness ?? null);
       return this._write(res, result(200, {
         ok: true,
-        application: { ...card, commands: WEB_APPLICATION_ENTRIES.map(([, name]) => name) },
+        application: { ...card, readiness, commands: WEB_APPLICATION_ENTRIES.map(([, name]) => name) },
       }));
     }
     const asset = operatorAsset(pathname);
