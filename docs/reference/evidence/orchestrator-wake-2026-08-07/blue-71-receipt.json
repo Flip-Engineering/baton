@@ -1,0 +1,15 @@
+{
+  "attempt": "2026-08-07T08:46:39.883Z",
+  "salt": "bd20260807084639",
+  "role": "blue-71",
+  "steps": [
+    {
+      "step": "waves.start",
+      "receipt": {
+        "runs": [
+          "run-3dcc88f744988bfe92f8737457b42b21"
+        ]
+      }
+    }
+  ]
+}
