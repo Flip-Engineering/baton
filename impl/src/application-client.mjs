@@ -1594,6 +1594,20 @@ export class BatonClient {
     return this.#application.command('knowledge.settlement_lease', { waveId, members: memberRunIds });
   }
 
+  // D9 (epic #103): the wave driver's post-close wave.closed append. INTERNAL deployment plumbing
+  // (underscore-prefixed, never a user-facing surface) — same embedded command path as the
+  // settlement ritual, so the durable campaign-state record mints in the guaranteed close window.
+  async _appendWaveClosed(record) {
+    return this.#application.command('_wave.closed', { record });
+  }
+
+  // D2 (epic #103): the wave driver's post-close campaign-briefing mint. INTERNAL deployment
+  // plumbing (underscore-prefixed, never a user-facing surface) — composes from the post-close
+  // ledger and the pinned standing-law config, then mints via the store's D3/D4 rules.
+  async _mintCampaignBriefing() {
+    return this.#application.command('_briefing.mint', {});
+  }
+
   async routes() {
     const doctor = await this.doctor();
     if (!Array.isArray(doctor?.routes)) {

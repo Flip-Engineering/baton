@@ -66,6 +66,10 @@ const DEFAULT_POLICY = Object.freeze({
   // note/plan elevation + candidacy + settlement lease between the members resting and wave close;
   // 'none' opts out entirely (zero ritual ledger writes).
   settlement: 'kg-ritual',
+  // D9 (epic #103): the F12/A9-2 seam — makes the driver attempt a SECOND `wave.closed` append for
+  // the same waveId (refused wave_already_closed, captured with step 'wave-closed') so the record's
+  // non-gating is exercised. Off by default.
+  injectDuplicateWaveClosed: false,
 });
 
 const POLICY_FIELDS = Object.freeze(new Set(Object.keys(DEFAULT_POLICY)));
@@ -76,6 +80,15 @@ const SETTLEMENTS = Object.freeze(new Set(['kg-ritual', 'none']));
 function driverError(message, code, extra = {}) {
   return Object.assign(new Error(message), { code, ...extra });
 }
+
+// D9 (epic #103): the canonical digest discipline (the store's own canonicalDigest shape) for the
+// record's receiptDigest — a ledger fact, never a working-tree read.
+function canonical(value) {
+  if (Array.isArray(value)) return value.map(canonical);
+  if (!value || typeof value !== 'object') return value;
+  return Object.fromEntries(Object.keys(value).sort().map((key) => [key, canonical(value[key])]));
+}
+function canonicalDigest(value) { return createHash('sha256').update(JSON.stringify(canonical(value))).digest('hex'); }
 
 function assertInteger(value, field) {
   if (!Number.isSafeInteger(value) || value <= 0) {
@@ -823,6 +836,50 @@ export function createWaveDriver(baton, rawPolicy = null) {
       },
       settlement: { errors: (settlementResult?.errors ?? []).slice(0, 8) },
     };
+
+    // D9 (epic #103): the campaign-state record + post-close briefing mint. Both run in the
+    // driver's guaranteed post-close window — AFTER wave.close() (the finally above) and the
+    // receipt build, BEFORE the receipt file write (D9 §mint-site). They are advisory, never
+    // gating: a typed refusal is captured into the bounded settlement.errors (≤ 8) and the wave
+    // stays closed (D5b). The record's own event seq is the landing's epoch anchor — no clocks.
+    const campaignErrors = [...(receipt.settlement.errors ?? [])];
+    const closedWaveId = typeof wave?.waveId === 'string' ? wave.waveId : null;
+    if (closedWaveId && typeof baton._appendWaveClosed === 'function') {
+      const record = {
+        waveId: closedWaveId,
+        receiptDigest: canonicalDigest(receipt),
+        rings: [], lanes: [], parked: [], blockedOn: [],
+        knowledge: {
+          candidates: receipt.knowledge?.candidates ?? 0,
+          admittedThisRun: receipt.knowledge?.admittedThisRun ?? 0,
+          candidatesAwaitingAdmission: receipt.knowledge?.candidatesAwaitingAdmission ?? 0,
+          settlementRunId: receipt.knowledge?.settlementRunId ?? null,
+        },
+        settlementErrors: (receipt.settlement?.errors ?? []).slice(0, 8),
+      };
+      try {
+        await baton._appendWaveClosed(record);
+      } catch (error) {
+        campaignErrors.push({ member: null, step: 'wave-closed', code: error?.code ?? 'wave_closed_failed' });
+      }
+      if (policy.injectDuplicateWaveClosed === true) {
+        // F12/A9-2 seam: force a SECOND append for the same waveId — refused wave_already_closed,
+        // captured, non-gating (D9 honesty rule 3).
+        try {
+          await baton._appendWaveClosed(record);
+        } catch (error) {
+          campaignErrors.push({ member: null, step: 'wave-closed', code: error?.code ?? 'wave_closed_failed' });
+        }
+      }
+    }
+    if (typeof baton._mintCampaignBriefing === 'function') {
+      try {
+        await baton._mintCampaignBriefing();
+      } catch (error) {
+        campaignErrors.push({ member: null, step: 'briefing', code: error?.code ?? 'briefing_mint_failed' });
+      }
+    }
+    receipt.settlement = { errors: campaignErrors.slice(0, 8) };
 
     if (policy.evidencePath !== null) {
       // §2: write failure fails the run loudly (the wave is already closed by the guaranteed close).
