@@ -1,0 +1,38 @@
+{
+  "attempt": "2026-08-07T02:56:20.427Z",
+  "salt": "fa20260807025620",
+  "role": "fold-67",
+  "steps": [
+    {
+      "step": "waves.start",
+      "receipt": {
+        "runs": [
+          "run-a8d9ed90e61ad0d66e952875dcf30fde"
+        ]
+      }
+    },
+    {
+      "step": "terminal:fold-67",
+      "receipt": {
+        "phase": "work_completed"
+      }
+    },
+    {
+      "step": "loop-drained",
+      "receipt": {
+        "pending": []
+      }
+    }
+  ],
+  "harvest": {
+    "fold-67": {
+      "pin": "e97c52c59da178afb331484d02518cd18304accc",
+      "paths": [
+        "docs/reference/evidence/stall-watchdog-2026-08-07/stall-watchdog-contract.md",
+        "docs/reference/evidence/stall-watchdog-2026-08-07/contract-fold.md"
+      ]
+    }
+  },
+  "harvestStalePinsSkipped": 351,
+  "verdict": "FOLD-67-OK"
+}
