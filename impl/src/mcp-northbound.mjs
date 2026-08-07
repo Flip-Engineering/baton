@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { flipFace } from './brand.mjs';
+import { BRIEFING_FAMILY } from './coordination-store.mjs';
 import { FRAME_LIMITS } from './limits.mjs';
 import { northboundCapabilityToken } from './northbound-capability-authority.mjs';
 import { sanitizeGoalPlanProjection } from './goal-plan.mjs';
@@ -1331,11 +1332,18 @@ export class McpFleetServer {
       if (id === undefined || !record(params) || !nonempty(params.protocolVersion) || !record(params.capabilities)
         || !record(params.clientInfo) || !nonempty(params.clientInfo.name) || !nonempty(params.clientInfo.version)) return protocolError(id, -32602, 'Invalid params');
       this.lifecycle = 'initializing';
+      // Epic #103 (D6a): one bounded trailing sentence composed per initialize from the family
+      // head — the pack is data, not a gate (initialize succeeds identically with or without it),
+      // and an absent pack degrades to the honest-empty line, never a fabricated digest (D5b).
+      const briefingHead = this.coordination?.contextPackHead?.(BRIEFING_FAMILY) ?? null;
+      const briefingSentence = briefingHead
+        ? `Briefing pack ${briefingHead.packId} minted at event ${briefingHead.observedSeq} (ledger at ${this.coordination.ledgerHeadSeq()}, Δ=${this.coordination.ledgerHeadSeq() - briefingHead.observedSeq}); resolve via the orchestrator's embedded context.briefing command.`
+        : 'No orchestrator briefing pack minted yet.';
       return protocolResult(id, {
         protocolVersion: PROTOCOL_VERSION,
         capabilities: { tools: { listChanged: false } },
         serverInfo: { name: 'baton', version: '0.1.0' },
-        instructions: `${flipFace('smile')} baton — reflexive multi-agent orchestration. Waves are the primary surface (start/attach/steer); settlement lanes arrive through the envelope tools. See MCP.md.`,
+        instructions: `${flipFace('smile')} baton — reflexive multi-agent orchestration. Waves are the primary surface (start/attach/steer); settlement lanes arrive through the envelope tools. See MCP.md. ${briefingSentence}`,
       });
     }
     if (method === 'notifications/initialized') {
