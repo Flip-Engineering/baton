@@ -1,0 +1,15 @@
+{
+  "attempt": "2026-08-07T05:47:27.853Z",
+  "salt": "i320260807054727",
+  "role": "impl-103",
+  "steps": [
+    {
+      "step": "waves.start",
+      "receipt": {
+        "runs": [
+          "run-7e94503de8fdabb5e5684f85abf1e119"
+        ]
+      }
+    }
+  ]
+}
