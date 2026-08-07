@@ -88,6 +88,9 @@ try {
         depth: parsed.depth, outline: { ...local.outline, credential: 'accepted', remote: remote.ready === true ? 'ready' : 'not_ready' },
         deployment: remote.deployment,
         routes: remote.routes,
+        // Epic #103 (D6c): the ONE named additive briefing field (D6c/B5) — a JSON field, never
+        // a separate text render. Reads the doctor sibling by property access; absent pack → null.
+        briefing: remote.briefing ?? null,
         application: remote.application,
       };
       process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
