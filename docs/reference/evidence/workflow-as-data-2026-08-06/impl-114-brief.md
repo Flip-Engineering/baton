@@ -42,6 +42,14 @@ fast-poll config threaded via `driveLane`, the exact seven-key receipt).
 Campaign law: controls eval-able/constructive/conversational, NEVER clocks or turn-limits;
 scanners shape-only; `localeCompare` banned; sorted-key literals in ACTUAL sorted order; NUL
 discipline (`grep -an`/`sed -n` on `application.mjs` + `coordination-store.mjs` only).
+**Workstyle law (issue #141):** commit your worktree at NATURAL SUBSYSTEM BOUNDARIES (schema
+validator lands → commit; steering policies land → commit; …) — a checkpoint pin per boundary, so
+a drained wave never loses the work. This is NOT skeleton-first (the TG6 ruling stands: no
+digest-churn coaching); it is boundary-committing, the healthy norm.
+**Re-drive note:** this is the second attempt — a deepseek seat worked 2.5h and was drained
+mid-flight with zero commits (lost). You are claude-opus-4-8 because the epic is the campaign's
+flagship and the first seat missed the window. Work the suite in pin-group order (W1 schema →
+W6 refusals → W2 lane → W3 steering → W4 harvest → W5 import law is a guard throughout).
 Verify from the repo root, ALL green, record the splits in your completion summary:
 `node --test impl/test/workflow-as-data-red.test.mjs` (29/29) ·
 `node --test impl/test/workflow-surface-red.test.mjs` ·

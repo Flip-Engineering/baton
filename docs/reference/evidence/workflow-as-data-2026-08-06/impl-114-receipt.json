@@ -1,0 +1,36 @@
+{
+  "attempt": "2026-08-07T00:12:41.672Z",
+  "salt": "i120260807001241",
+  "role": "impl-114",
+  "steps": [
+    {
+      "step": "waves.start",
+      "receipt": {
+        "runs": [
+          "run-8b402a9ca80d0c99f92123b8c358237d"
+        ]
+      }
+    },
+    {
+      "step": "loop-drained",
+      "receipt": {
+        "pending": [
+          "impl-114"
+        ]
+      }
+    }
+  ],
+  "harvest": {
+    "impl-114": {
+      "pin": "eacd86e9d4b8f626e4d17506e779ef2b9f4cd491",
+      "paths": [
+        "impl/src/recipes.mjs",
+        "impl/src/mcp-northbound.mjs",
+        "impl/src/application-cli.mjs",
+        "impl/src/application.mjs"
+      ]
+    }
+  },
+  "harvestStalePinsSkipped": 341,
+  "verdict": "IMPL-114-OK"
+}
