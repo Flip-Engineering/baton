@@ -1,9 +1,11 @@
 // Epic #105 red-first suite — folded reply-chains contract v1.1.
 // Authority: docs/reference/evidence/reply-chains-2026-08-06/
 //   reply-chains-contract.md (v1.1 — source of truth), contract-fold.md (B-1..B-7),
-//   contract-redteam.md (the attack surface), suite-105-brief.md (this suite's brief).
+//   contract-redteam.md (the attack surface), suite-105-brief.md (this suite's brief),
+//   suite-blueteam.md (the blue-team verification report — the fold-2 findings T1-T6/N1-N4),
+//   suite-fold-2-brief.md (the fold-2 brief that dispatched these edits).
 //
-// Twenty-five rows (20 red + 5 pins) over the v1.1 acceptance pins RC-01..RC-13: the budget model
+// Twenty-six rows (20 red + 6 pins) over the v1.1 acceptance pins RC-01..RC-13: the budget model
 // (D1 — default-1 byte-identity, declared budget rides, the depth-exhaustion payload, the
 // out-of-bound refusal AT SEND, count-never-clock), the walk (B-1 — every hop resolves to the
 // root's run through messageRunId under resolve-then-authorize), membership (B-2 —
@@ -57,14 +59,20 @@
 //   B1  RC-06 — per-hop receipts carry {depth, budget, remaining}; the reply envelope carries the
 //         depth fields; the chain root→r1→r2→r3 walks the lane. (RED — stage: per-hop-depth-missing)
 //   B2  RC-06 + B-1 — messageRunId resolves EVERY hop to the root's run (parent-target-run
-//         inheritance); the orchestrator reads her own chain's receipts through the facade. (RED —
-//         stage: target-inheritance-missing, reply records mint target: {workerId: null})
+//         inheritance — the reply record's target deep-equals the parent's target verbatim, T6);
+//         the orchestrator reads her own chain's receipts through the facade. (RED — stage:
+//         target-inheritance-missing, reply records mint target: {workerId: null})
 //
 // §C Membership (B-2)
 //   C1  RC-12 — a foreign worker's reply into another run's chain refuses message_target_not_member
 //         BEFORE the depth/slot checks (ordering pinned); the slot is never consumed by a
-//         non-member; a member of the parent's run is admitted. (RED — stage:
-//         membership-check-missing, the foreign reply lands at HEAD)
+//         non-member; a member of the parent's run — a SIBLING worker, not the target — is
+//         admitted (T1: the positive control is a run-member, killing a target-only membership
+//         impl). (RED — stage: membership-check-missing, the foreign reply lands at HEAD)
+//   C2  PIN — B-2 admission order (parent-exists BEFORE run-membership): a reply to an UNKNOWN
+//         message id draws message_parent_not_found for BOTH a run-member and a foreign worker —
+//         never message_target_not_member. Kills an impl that checks membership before
+//         parent-exists (a foreign worker would then see the run's membership code).
 //
 // §D Per-branch cap (B-3)
 //   D1  D1/B-3 — two sibling branches each get the full depth; the budget is a per-branch constant
@@ -81,9 +89,12 @@
 //         (replay seeds); root message.sent rows carry {depth: 0, budget, remaining}; a fresh
 //         coordinator can rebuild the chain topology from the rows. (RED — stage:
 //         reply-row-absent / root-row-depth-missing, replies are worker-log appendAttributed only)
-//   E2  RC-07/B-4 — legacy alias message.sent rows are distinguishable by alias: true and the
-//         message.sent:<workerId>:<tail> key shape and carry the replay-skip fields; parent.reply
-//         re-link seed rows exist. (RED — stage: alias-row-undifferentiated)
+//   E2  RC-07/B-4 — legacy alias message.sent rows are distinguishable by alias: true, the
+//         message.sent:<workerId>:<tail> key shape, NO inReplyTo, and the ABSENT depth fields
+//         (B1: the earlier depth/budget/remaining assertions on the alias row contradicted B-4
+//         and were deleted); a fresh coordinator REBUILDS the chain topology from the durable
+//         rows and never mints the alias as a phantom root. (RED — stage:
+//         replay-topology-not-rebuilt, _replay never seeds _messages at HEAD)
 //
 // §F Refusal observability (B-5)
 //   F1  RC-13 — after a depth-exhaustion refusal, the refusing parent's receipt carries
@@ -94,13 +105,16 @@
 //         facade-double-gate, the closed key set rejects budget)
 //   F3  D3 — message_budget_invalid is the ONE new allowlisted code in stateFailureCode; the
 //         worker-stream codes (message_depth_exceeded, message_target_not_member,
-//         message_parent_not_found) stay absent. (RED source pin — stage: allowlist-missing)
+//         message_parent_not_found) stay absent. (RED source pin — stage: allowlist-missing; T5 —
+//         the checks are scoped to the FUNCTION BODY via /function stateFailureCode\(cause\) \{/,
+//         so a wrong impl that adds the codes elsewhere in the file stays red)
 //
 // §G Escalation (B-6)
 //   G1  PIN — D8: a blocking follow-up rides the existing interaction lane (question.asked
 //         blocking:true → task input_required, handle blocked); a conversational reply never
-//         transitions a task phase and never mints an interaction. Kills an impl that routes
-//         blocking follow-ups into the reply lane.
+//         transitions a task phase and never mints an interaction — even a reply frame carrying a
+//         machine-readable blocking marker stays prose (T4). Kills an impl that routes blocking
+//         follow-ups into the reply lane OR lets a marker on the reply frame transition a phase.
 //   G2  D8/B-6 — the deadlock-recovery path is exercised: a stalled chain's exhaustion is
 //         orchestrator-readable via lastRefusal, and a fresh root send re-roots the conversation
 //         with a new budget. (RED — stage: lastRefusal-absent, the observation surface is missing)
@@ -115,17 +129,21 @@
 //   H3  RC-09 — baton_run_message_send accepts budget {integer, minimum: 1, maximum: 8, optional}.
 //         (RED — stage: mcp-message-budget-missing)
 //   H4  RC-09/RC-04 — an out-of-range budget on baton_run_message_send surfaces as
-//         message_budget_invalid, never command_outcome_unknown / unknown_argument_field. (RED —
-//         stage: mcp-message-budget-missing, the schema has no budget at HEAD)
+//         message_budget_invalid, never command_outcome_unknown / unknown_argument_field; an
+//         in-range budget is ACCEPTED (N1 — the _dispatch branch at mcp-northbound.mjs:1771-1778
+//         builds the closed {runId?, workerId, kind, body} shape, stripping budget, so at HEAD
+//         even an in-range budget dies as unknown_argument_field). (RED — stage:
+//         mcp-message-budget-missing, the schema has no budget at HEAD)
 //   H5  RC-09/D3 — the web mapper (dispatchFailure) gains a message_budget_invalid branch →
 //         httpStatus: 400. (RED source pin — stage: web-mapper-branch-missing, zero references)
 //   H6  PIN — RC-10/D9: a chain-replying worker is mid-turn working (no pending interaction, task
 //         phase unmoved — waitingOn stays null); WAITING_ON_KINDS (closed five) and
 //         BLOCKING_INTERACTION_KINDS (closed three) are byte-unchanged. Kills an impl that adds a
 //         waiting kind for chains or routes replies into the interaction lane.
-//   H7  PIN — RC-11: a reply frame naming budget (or any extra field) drops to prose — the scanner
-//         stays closed on the sorted-key literal 'body,inReplyTo'. Kills an impl that lets a worker
-//         set a budget.
+//   H7  PIN — RC-11: a reply frame naming budget, blocking, or priority (any extra field) drops to
+//         prose — the scanner stays closed on the sorted-key literal 'body,inReplyTo' (T4 — the
+//         blocking/priority probes pin the wire asymmetry both ways). Kills an impl that lets a
+//         worker set a budget or attach a machine-readable blocking marker to a reply frame.
 
 // ===========================================================================
 // INVENTED SURFACES (all probed through REAL surface entry points — no invented
@@ -158,6 +176,9 @@
 //
 //   A1  default-1 byte-identity      — kills: a default other than 1 (0 admits nothing, 2+ admits
 //                                      a reply to a reply) changing today's admission decision
+//   C2  parent-exists BEFORE membership — kills: an impl that checks run-membership before the
+//                                      parent-exists check (a foreign worker replying to an
+//                                      unknown message id would then see message_target_not_member)
 //   G1  blocking → interaction lane  — kills: a machine-readable blocking marker on the reply
 //                                      frame (violates RC-11 wire asymmetry) or a reply
 //                                      transitioning a task phase
@@ -171,8 +192,8 @@
 // ===========================================================================
 // VERIFIED SPLIT (measured against the PRE-implementation tree; run twice)
 // ===========================================================================
-//   PASS 5 · FAIL 20 — stable across two runs from the repo root
-//   (split recorded in suite-draft-notes.md)
+//   PASS 6 · FAIL 20 — stable across two runs from the repo root
+//   (split recorded in suite-draft-notes.md and suite-fold-2.md)
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -255,15 +276,13 @@ function passingReferee() {
   });
 }
 
-// Lane-level fixture (bidirectional-v3 idiom): a real Coordinator over a coordinationForLog store,
-// a ScriptableAdapter for emit-driven frames, a no-diff capture, and a fixed now (the budget is a
-// count, never a clock — no assertion depends on wall time).
-function laneFixture({ adapter = new ScriptableAdapter() } = {}) {
-  const dir = tmpDir('baton-rc105-lane-');
-  const log = new Log(join(dir, 'log'));
-  const coordinator = new Coordinator({
+// The lane-level Coordinator dependency set (bidirectional-v3 idiom): a real Coordinator over a
+// coordinationForLog store, a ScriptableAdapter for emit-driven frames, a no-diff capture, and a
+// fixed now (the budget is a count, never a clock — no assertion depends on wall time).
+function coordinatorDeps({ adapter, log, coordination }) {
+  return {
     log,
-    coordination: coordinationForLog(log),
+    coordination: coordination ?? coordinationForLog(log),
     fences: new FenceTable(),
     adapters: { mock: adapter },
     worktrees: {
@@ -280,8 +299,27 @@ function laneFixture({ adapter = new ScriptableAdapter() } = {}) {
     approvalTimeoutMs: 60000,
     stopDeadlineMs: 15000,
     progressNudgeWindowMs: 25,
-  });
+  };
+}
+
+function laneFixture({ adapter = new ScriptableAdapter() } = {}) {
+  const dir = tmpDir('baton-rc105-lane-');
+  const log = new Log(join(dir, 'log'));
+  const coordinator = new Coordinator(coordinatorDeps({ adapter, log }));
   return { dir, log, coordinator, adapter };
+}
+
+// T2 (blue-team fold): a SECOND coordinator over a FRESH CoordinationStore on the same logDir —
+// the real replay entry point is the Coordinator constructor's _replay(). The live store's writer
+// lease is released first (the ledger is already authoritative; the first coordinator is read-only
+// once the chain is built), so the fresh store replays the durable rows from disk and claims the
+// lease on its own first write. Nothing here reads the live coordinator's _messages map.
+function replayCoordinator(fx) {
+  fx.coordinator._coordination.releaseWriterLease();
+  const store = new CoordinationStore(join(fx.dir, 'log', 'coordination'), {
+    operationalRead: (worker, seq) => fx.log.read(worker, seq).find((event) => event.seq === seq) ?? null,
+  });
+  return new Coordinator(coordinatorDeps({ adapter: fx.adapter, log: fx.log, coordination: store }));
 }
 
 const PROFILE = Object.freeze({
@@ -549,6 +587,12 @@ test('B2 (RC-06 + B-1): messageRunId resolves EVERY hop to the root\'s run; the 
   assert.equal(coordinator.messageRunId(root.messageId), 'run:b2', 'the root resolves to the run');
   assert.equal(coordinator.messageRunId(r1.messageId), 'run:b2',
     'stage: target-inheritance-missing — the first reply hop inherits the parent\'s target verbatim (B-1) so messageRunId resolves to the ROOT\'s run; at HEAD the reply record mints target: {workerId: null} (coordinator.mjs:12580) → null');
+  // T6 (blue-team fold): the B-1 target-verbatim law at the record level — the reply record's
+  // target deep-equals the parent's target, not a fresh {workerId: null} mint. At HEAD the reply
+  // record mints target: {workerId: null} (coordinator.mjs:12580), so the deep-equal fails on the
+  // null workerId even where the walk itself has no other defect.
+  assert.deepEqual(coordinator._messages.get(r1.messageId)?.target, coordinator._messages.get(root.messageId)?.target,
+    'the reply record\'s target deep-equals the parent\'s target verbatim (B-1; at HEAD the reply record mints target: {workerId: null} at coordinator.mjs:12580)');
   // the orchestrator reads her own chain's receipts through the facade (resolve-then-authorize)
   const viaFacade = await facadeError(() => fx.application.command('run.message.receipt', { messageId: r1.messageId }, wave, null));
   assert.ok(viaFacade && viaFacade.code === undefined && viaFacade.depth === 1 && viaFacade.budget === 1,
@@ -563,6 +607,7 @@ test('C1 (RC-12): a foreign worker\'s reply refuses message_target_not_member BE
   const fx = laneFixture();
   const coordinator = fx.coordinator;
   const memberA = await coordinator.spawn('mock', makeBrief(), { runId: 'run:c1-r' });
+  const memberC = await coordinator.spawn('mock', makeBrief(), { runId: 'run:c1-r' });
   const foreignB = await coordinator.spawn('mock', makeBrief(), { runId: 'run:c1-s' });
   const root = await coordinator.sendMessage({ kind: 'inform', to: { workerId: memberA.id }, body: 'chain in run R' }, { actor: 'orchestrator' });
   // (a) the foreign worker's reply into the run-R chain refuses with the membership code
@@ -571,9 +616,12 @@ test('C1 (RC-12): a foreign worker\'s reply refuses message_target_not_member BE
   const foreignRejected = coordinator._log.read(foreignB.id).filter((event) => event.kind === 'message.rejected').at(-1);
   assert.equal(foreignRejected?.payload?.reason, 'message_target_not_member',
     'stage: membership-check-missing — a foreign worker\'s reply must refuse message_target_not_member (B-2); at HEAD no membership check exists and the foreign reply lands (it even fills the slot)');
-  // (b) positive control: a member of the parent's run is admitted
-  const memberReply = await replyStep(fx, memberA, root.messageId, 'legit');
-  assert.ok(memberReply && memberReply.from === memberA.id, 'a member of the parent\'s run is admitted');
+  // (b) positive control (T1): a SIBLING worker of the parent's RUN — not the target — is admitted
+  // by clause 2 (run-membership). At HEAD the target-only slot fills, so this hop is refused; the
+  // sibling control is what kills a target-only membership impl.
+  const memberReply = await replyStep(fx, memberC, root.messageId, 'sibling in the same run');
+  assert.ok(memberReply && memberReply.from === memberC.id,
+    'a member of the parent\'s run is admitted (T1) — the slot is a RUN resource, never a target-exclusive one');
   // (c) ordering: the membership refusal fires BEFORE the depth/slot check — a foreign reply to a
   // slot-filled parent still draws message_target_not_member, never message_depth_exceeded
   emitReply(fx.adapter, foreignB, root.messageId, 'sneak again');
@@ -581,9 +629,28 @@ test('C1 (RC-12): a foreign worker\'s reply refuses message_target_not_member BE
   const orderingRejected = coordinator._log.read(foreignB.id).filter((event) => event.kind === 'message.rejected').at(-1);
   assert.equal(orderingRejected?.payload?.reason, 'message_target_not_member',
     'the membership refusal precedes the depth/slot check (admission order, D2) — never a slot consumed, never a budget hop spent by a non-member');
-  // (d) the slot is never consumed by a non-member
-  assert.equal(coordinator.messageReceipt(root.messageId).reply?.from, memberA.id,
-    'the foreign reply never fills the slot — only the member\'s reply sits on the parent');
+  // (d) the slot is never consumed by a non-member — the sibling's reply sits on the parent
+  assert.equal(coordinator.messageReceipt(root.messageId).reply?.from, memberC.id,
+    'the foreign reply never fills the slot — only a run-member\'s reply sits on the parent');
+});
+
+test('C2 PIN (B-2 admission order): a reply to an UNKNOWN message id draws message_parent_not_found for BOTH a run-member and a foreign worker — never message_target_not_member', async () => {
+  const fx = laneFixture();
+  const coordinator = fx.coordinator;
+  const memberA = await coordinator.spawn('mock', makeBrief(), { runId: 'run:c2-r' });
+  const foreignB = await coordinator.spawn('mock', makeBrief(), { runId: 'run:c2-s' });
+  const ghost = `message:${'0'.repeat(64)}`;
+  // the parent-exists check (message_parent_not_found) precedes the run-membership check (B-2
+  // admission order) — BOTH a run-member and a foreign worker must see the parent code, never the
+  // membership code (the membership check cannot see a run it was never admitted to).
+  for (const worker of [memberA, foreignB]) {
+    emitReply(fx.adapter, worker, ghost, 'reply to nowhere');
+    await flush();
+    const rejected = coordinator._log.read(worker.id).filter((event) => event.kind === 'message.rejected').at(-1);
+    assert.equal(rejected?.payload?.reason, 'message_parent_not_found',
+      'a reply to an unknown message id draws message_parent_not_found for every worker — the parent-exists check comes FIRST (B-2); never message_target_not_member');
+  }
+  assert.equal(coordinator.messageReceipt(ghost), null, 'no ghost message was ever minted');
 });
 
 // ===========================================================================
@@ -658,7 +725,7 @@ test('E1 (RC-07): reply hops are durable store-audited rows keyed by inReplyTo; 
   assert.ok(String(replyRow.idempotencyKey).startsWith('message.delivered:'), 'the reply row rides the closed message.delivered audit kind');
 });
 
-test('E2 (RC-07/B-4): legacy alias rows are distinguishable (alias: true + key shape) and carry the replay-skip fields', async () => {
+test('E2 (RC-07/B-4): legacy alias rows are distinguishable by alias: true + the <workerId>:<tail> key shape; a fresh coordinator rebuilds the chain topology and never mints the alias', async () => {
   const fx = laneFixture();
   const coordinator = fx.coordinator;
   const handle = await coordinator.spawn('mock', makeBrief(), { runId: 'run:e2' });
@@ -669,16 +736,39 @@ test('E2 (RC-07/B-4): legacy alias rows are distinguishable (alias: true + key s
   assert.equal(alias.payload.alias, true, 'the alias: true marker distinguishes the legacy shape (B-4)');
   assert.ok(String(alias.idempotencyKey).startsWith('message.sent:') && String(alias.idempotencyKey).includes(`:${handle.id}:`),
     'the alias row is keyed message.sent:<workerId>:<tail>, never a minted message id — the replay skips it by key shape');
-  assert.equal(alias.payload.depth, 0,
-    'stage: alias-row-undifferentiated — replay must distinguish legacy alias rows by the alias marker AND the absent depth fields; at HEAD the alias row carries no depth/budget/remaining to skip on, and reply hops are not store-audited');
-  assert.equal(alias.payload.budget, 1);
-  assert.equal(alias.payload.remaining, 1);
-  // the reply row that feeds parent.reply re-linking is store-audited beside the alias
+  // B1 (blue-team fold): the CONTRACT-CORRECT discriminators are the alias marker and the KEY
+  // SHAPE plus the ABSENT depth fields — the legacy alias row never carried depth/budget/remaining
+  // (nor inReplyTo). The suite's earlier depth===0/budget===1/remaining===1 assertions on the alias
+  // row contradicted B-4 and are deleted here; the alias is replay-SKIPPED, not budgeted.
+  assert.equal(Object.hasOwn(alias.payload, 'inReplyTo'), false,
+    'the legacy alias row carries no inReplyTo — it is not a reply hop and must never re-link as one (B-4)');
+  for (const field of ['depth', 'budget', 'remaining']) {
+    assert.equal(Object.hasOwn(alias.payload, field), false,
+      `the legacy alias row carries no ${field} — replay skips it by the alias marker AND the absent depth fields (B-4)`);
+  }
+  // a real chain next to the alias: root (budget 2) + one reply, both durable
   const root = await coordinator.sendMessage({ kind: 'query', to: { workerId: handle.id }, body: 'status?', budget: 2 }, { actor: 'orchestrator' });
   emitReply(fx.adapter, handle, root.messageId, 'ack');
   await flush();
-  const replyRow = coordinator._coordination.events().find((event) => event.kind === 'message.delivered' && event.payload?.inReplyTo === root.messageId);
-  assert.ok(replyRow, 'stage: reply-row-absent — a parent.reply re-link seed row is store-audited (B-4)');
+  const r1 = coordinator.messageReceipt(root.messageId).reply;
+  assert.ok(r1, 'the first hop lands');
+  // T2 (blue-team fold): the REAL replay entry point is the Coordinator constructor's _replay() —
+  // a SECOND coordinator over a FRESH store on the same ledger must rebuild root → r1 from the
+  // durable rows (B-4), and must NOT mint the alias as a phantom root. At HEAD _replay() never
+  // seeds _messages (coordinator.mjs:13274) so messageReceipt returns null.
+  const replay = replayCoordinator(fx);
+  const rootReceipt = replay.messageReceipt(root.messageId);
+  assert.ok(rootReceipt,
+    'stage: replay-topology-not-rebuilt — a fresh coordinator must rebuild root → r1 from the durable rows (T2/B-4); at HEAD _replay() never seeds _messages (coordinator.mjs:13274) and messageReceipt returns null');
+  assert.equal(rootReceipt.depth, 0, 'the rebuilt root sits at depth 0');
+  assert.equal(rootReceipt.budget, 2, 'the rebuilt root carries the declared budget');
+  assert.equal(rootReceipt.remaining, 2, 'the rebuilt root starts with remaining === budget');
+  assert.equal(rootReceipt.reply?.inReplyTo, root.messageId, 'the rebuilt r1 re-links to its parent (parent.reply re-link)');
+  const r1Replay = replay.messageReceipt(r1.messageId);
+  assert.deepEqual({ depth: r1Replay.depth, budget: r1Replay.budget, remaining: r1Replay.remaining }, { depth: 1, budget: 2, remaining: 1 },
+    'the rebuilt r1 hop carries {depth: 1, budget: 2, remaining: 1}');
+  assert.equal(replay._messages.has(alias.payload.messageId), false,
+    'the legacy alias row is never minted as a phantom root — replay skips the <workerId>:<tail> key shape (B-4)');
 });
 
 // ===========================================================================
@@ -720,14 +810,19 @@ test('F2 (RC-05): the lane is the single budget authority — the facade passes 
   assert.equal(str?.code, 'message_budget_invalid', 'a string budget also draws message_budget_invalid from the lane, never the facade shape code');
 });
 
-test('F3 (D3): message_budget_invalid is the ONE new allowlisted MCP code; worker-stream codes are absent', () => {
+test('F3 (D3): message_budget_invalid is the ONE new allowlisted code inside stateFailureCode; worker-stream codes are absent', () => {
+  // T5 (blue-team fold): the checks are scoped to the stateFailureCode FUNCTION BODY, not the whole
+  // file — a wrong impl that adds message_budget_invalid somewhere else (or leaks the worker-stream
+  // codes anywhere in the file) must stay red. The body is the allowlist seam (D3) — the single
+  // place where a lane refusal code becomes an MCP tool error.
   const src = readFileSync(fileURLToPath(new URL('../src/mcp-northbound.mjs', import.meta.url)), 'utf8');
-  assert.ok(src.includes("'message_budget_invalid'"),
-    'stage: allowlist-missing — at HEAD stateFailureCode (mcp-northbound.mjs:198-261) knows no message_* codes; D3 adds message_budget_invalid so the send-side refusal never collapses to command_outcome_unknown');
-  // the worker-stream codes never cross the MCP surface (D3) — they stay absent from stateFailureCode
-  assert.equal(src.includes("'message_depth_exceeded'"), false, 'message_depth_exceeded is a worker-stream event, never an MCP tool error');
-  assert.equal(src.includes("'message_target_not_member'"), false, 'message_target_not_member is a worker-stream event, never an MCP tool error');
-  assert.equal(src.includes("'message_parent_not_found'"), false, 'message_parent_not_found is a worker-stream event, never an MCP tool error');
+  const body = src.match(/function stateFailureCode\(cause\) \{([\s\S]*?)\n\}/)?.[1] ?? '';
+  assert.ok(body.includes("'message_budget_invalid'"),
+    'stage: allowlist-missing — at HEAD the stateFailureCode body (mcp-northbound.mjs:198-261) knows no message_* codes; D3 adds message_budget_invalid inside that body so the send-side refusal never collapses to command_outcome_unknown');
+  // the worker-stream codes never cross the MCP surface (D3) — they stay absent from the body
+  assert.equal(body.includes("'message_depth_exceeded'"), false, 'message_depth_exceeded is a worker-stream event, never an MCP tool error');
+  assert.equal(body.includes("'message_target_not_member'"), false, 'message_target_not_member is a worker-stream event, never an MCP tool error');
+  assert.equal(body.includes("'message_parent_not_found'"), false, 'message_parent_not_found is a worker-stream event, never an MCP tool error');
 });
 
 // ===========================================================================
@@ -745,6 +840,16 @@ test('G1 PIN (D8): a blocking follow-up rides the interaction lane; a reply chai
   assert.equal(coordinator._tasks.get(handle.taskId).status, before,
     'a conversational reply never transitions the task phase (G11)');
   assert.equal(coordinator._pending.size, 0, 'a reply never mints a pending interaction');
+  // T4 (blue-team fold): even a reply frame carrying a machine-readable blocking marker is STILL
+  // prose — the marker on the REPLY frame never routes it into the interaction lane (RC-11 wire
+  // asymmetry). At HEAD the extra field is ignored by the structured emit admission; a wrong impl
+  // that phase-transitions on a blocking-marker reply dies here.
+  const root2 = await coordinator.sendMessage({ kind: 'query', to: { workerId: handle.id }, body: 'status2?', budget: 2 }, { actor: 'orchestrator' });
+  emitReply(fx.adapter, handle, root2.messageId, 'still prose', { blocking: true });
+  await flush();
+  assert.equal(coordinator._tasks.get(handle.taskId).status, before,
+    'a blocking-marker reply never transitions the task phase (T4) — the marker is a scanForMessageSend-rejected shape, never an interaction');
+  assert.equal(coordinator._pending.size, 0, 'a blocking-marker reply never mints a pending interaction (T4)');
   // the SAME follow-up, raised as a blocking question, rides the existing interaction lane
   fx.adapter.emit({
     worker: handle.id, harness: 'mock@1.0.0', turnEpoch: 1, kind: 'question.asked', actor: 'worker',
@@ -839,6 +944,17 @@ test('H4 (RC-09/RC-04): an out-of-range budget on baton_run_message_send surface
   const parsed = JSON.parse(call.result.content[0].text);
   assert.equal(parsed.error?.code, 'message_budget_invalid',
     'stage: mcp-message-budget-missing — at HEAD budget is an undeclared field (unknown_argument_field at the key-closure, mcp-northbound.mjs:898) and the code does not exist; D7/D3 surface the lane\'s refusal verbatim, never command_outcome_unknown');
+  // N1 (blue-team fold): an IN-RANGE budget must be accepted — the _dispatch branch for
+  // baton_run_message_send (mcp-northbound.mjs:1771-1778) builds the CLOSED shape
+  // {runId?, workerId, kind, body}, so at HEAD even budget: 3 is stripped and the argument dies
+  // at the key-closure as unknown_argument_field (isError true). D7 must let budget ride the
+  // dispatch so the in-range call succeeds.
+  const inRange = await server.handle({
+    jsonrpc: '2.0', id: 4, method: 'tools/call',
+    params: { name: 'baton_run_message_send', arguments: { repoId: REPO, workerId: handle.id, kind: 'inform', body: 'x', budget: 3 } },
+  });
+  assert.equal(inRange.result?.isError, false,
+    'an in-range budget is accepted through the MCP surface (N1) — the _dispatch branch must carry budget, never strip it (mcp-northbound.mjs:1771-1778)');
 });
 
 test('H5 (RC-09/D3): the web mapper maps message_budget_invalid to 400', () => {
@@ -868,12 +984,20 @@ test('H6 PIN (RC-10/D9): a chain-replying worker is mid-turn working — no wait
   assert.equal(coordinator._pending.size, 0, 'no blocking interaction is pending — the chain\'s state lives in the orchestrator\'s receipts');
 });
 
-test('H7 PIN (RC-11): a reply frame naming budget (or any extra field) drops to prose — the scanner stays closed on {inReplyTo, body}', () => {
+test('H7 PIN (RC-11): a reply frame naming budget, blocking, or priority drops to prose — the scanner stays closed on {inReplyTo, body}', () => {
   const inReplyTo = `message:${'0'.repeat(64)}`;
-  // the sorted-key literal stays 'body,inReplyTo' — a budget-bearing frame is rejected
+  // the sorted-key literal stays 'body,inReplyTo' — any extra field is rejected
   assert.equal(scanForMessageSend(`MESSAGE_SEND: {"inReplyTo":"${inReplyTo}","body":"ack","budget":3}`), null,
-    'the scanner rejects the frame — the closed sorted-key literal "body,inReplyTo" (claude-session.mjs:161); a worker can never set a budget (RC-11 wire asymmetry)');
+    'the scanner rejects the budget-bearing frame — the closed sorted-key literal "body,inReplyTo" (claude-session.mjs:161); a worker can never set a budget (RC-11 wire asymmetry)');
+  // T4 (blue-team fold): a machine-readable blocking marker on the reply frame is equally wire
+  // asymmetry — the scanner must never let a reply carry blocking into the interaction lane
+  assert.equal(scanForMessageSend(`MESSAGE_SEND: {"inReplyTo":"${inReplyTo}","body":"ack","blocking":true}`), null,
+    'the scanner rejects the blocking-marker frame — the wire asymmetry holds for blocking too (T4/RC-11)');
+  assert.equal(scanForMessageSend(`MESSAGE_SEND: {"inReplyTo":"${inReplyTo}","body":"ack","priority":1}`), null,
+    'the scanner rejects the priority frame — any extra field is prose, never a reply');
   // the closed frame {inReplyTo, body} still parses
   const clean = scanForMessageSend(`MESSAGE_SEND: {"inReplyTo":"${inReplyTo}","body":"ack"}`);
-  assert.ok(clean && clean.body === 'ack' && clean.budget === undefined, 'the closed frame still parses and carries nothing else');
+  assert.ok(clean && clean.body === 'ack'
+    && clean.budget === undefined && clean.blocking === undefined && clean.priority === undefined,
+    'the closed frame still parses and carries nothing else');
 });
