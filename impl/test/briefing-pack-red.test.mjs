@@ -1,14 +1,17 @@
 // Briefing-pack red suite (contract: docs/reference/evidence/briefing-pack-2026-08-06/
 // briefing-pack-contract.md v1.1 — issue #103; the folded contract; sibling maps:
 // contract-fold.md (B1-B5 + N1-N5), contract-redteam.md (the attack surface), suite-103-brief.md
-// (this suite's brief)).
+// (this suite's brief), suite-blueteam.md + suite-fold-2-brief.md (the 17-finding fold — F1-F17)).
 //
-// Twenty-six rows (22 red + 4 pins) over the folded decisions: D9's `wave.closed` campaign-state
+// Thirty-one rows (25 red + 6 pins) over the folded decisions: D9's `wave.closed` campaign-state
 // record (store rows + the driver's real post-close mint), D1's closed canonical-JSON schema and
-// field→store-source table, D2's mint-on-close content-backed pin, D3's family-scoped actor gate,
-// D4's content short-circuit ordered before the auth-key check (N2) and after the stale-predecessor
-// check, D5c's epoch staleness + idle disclosure, D6a's bounded MCP initialize line, D6b/c + B5's
-// doctor sibling + named CLI field, and A7's injected overflow capture (N5).
+// field→store-source table, D2's mint-on-close content-backed pin + the one-time migration backfill
+// (D2-1), D3's family-scoped actor gate (worker AND operator), D4's content short-circuit ordered
+// before the auth-key check (N2) and after the stale-predecessor check (+ the validity-leg twin
+// D4-4), D5c's epoch staleness + idle disclosure, D6a's bounded MCP initialize line, D6b/c + B5's
+// doctor sibling + named CLI field (the behavioral positive path A8-4), A7's injected overflow
+// capture (N5), the close-window base pin (P-CloseBase), and the record's non-gating append-failure
+// path (A9-2).
 //
 // Red-first: written against the v1.1 contract BEFORE implementation; every red row fails for its
 // named stage today (a `typeof` guard on the invented surface is the first assertion, so a missing
@@ -39,29 +42,40 @@
 //   D9c   a second append for the same waveId refuses `wave_already_closed`; no event appended. (RED)
 //
 // §B The driver's real post-close window (realWaveKit — stage: driver-close-window-missing /
-//    briefing-mint-missing / schema-compose-missing)
+//    briefing-mint-missing / schema-compose-missing / record-append-non-gating-missing)
 //   A9-1  exactly one `wave.closed`; its receiptDigest equals the digest of the receipt written to
-//         policy.evidencePath; the record's own seq is the landing's closedAtEventSeq. (RED)
+//         policy.evidencePath; the record's own seq is the landing's closedAtEventSeq; the record
+//         is the PENULTIMATE ledger event (the pack mint is the final one) — the post-close mint
+//         site, so a pre-close ritual append cannot pass (F2). (RED)
 //   A1-1  exactly one `context.pack_minted` for family `orchestrator-briefing`; the head resolves;
 //         the body parses to the D1 closed schema; packId recomputes from the payload fields; the
 //         body is content-backed (the closing wave's landing is present; sources.snapshotDigest
 //         equals the digest of the composition-time snapshot — the live snapshot with lastSeq
-//         decremented by the one post-composition mint event). (RED)
+//         decremented by the one post-composition mint event); the mint immediately follows the
+//         `wave.closed` append (seq +1, F2). (RED)
 //   D1-1  every body field composes from its named source: rings/lanes/parked/blockedOn equal the
 //         `wave.closed` record's blocks; landings.* derive from the record (closedAtEventSeq = the
 //         record's event seq, receiptDigest, gates.* = the record's knowledge/settlementErrors).
-//         (RED)
+//         (RED) [F3 — already folded here: the landings.* values are cross-checked against the
+//         record]
+//   A9-2  a failed `wave.closed` append (injectDuplicateWaveClosed → `wave_already_closed`) is
+//         captured into the bounded settlement.errors (≤ 8) and NEVER blocks close; exactly one
+//         record persists (D9 honesty rule 3, F12). (RED)
 //
 // §C The D1 field→source table + composition seams (store-level — stage: schema-refusal-missing /
-//    degradation-order-missing / overflow-refusal-missing)
+//    degradation-order-missing / overflow-refusal-missing / backfill-missing)
 //   D1-2  BRIEFING_SCHEMA_FIELD_SOURCES exists with exactly the D1 top-level key set, every value
-//         naming a store source; composeBriefingPack with an unknown field refuses
-//         `briefing_pack_invalid` naming the field. (RED)
+//         naming a store source; composeBriefingPack with any of SEVERAL unknown fields refuses
+//         `briefing_pack_invalid` naming the exact field (F15). (RED)
 //   A3-1  an input that only fits after the full degradation order degrades exactly
 //         landings-oldest-first (min 1) → parked reason detail → rings lane summaries — never
-//         standingLaws/composedAtEventSeq, never mid-field truncation. (RED)
+//         standingLaws/composedAtEventSeq, never mid-field truncation. (RED) [F13 — already folded
+//         here: the drop order is pinned on the minted BODY, never a self-reported detail]
 //   A3-2  an input still over 8192 bytes after full degradation refuses `briefing_pack_overflow`
 //         with the drop ledger in the refusal detail. (RED)
+//   D2-1  the D2 one-time migration backfill (store.backfillBriefingPack) mints exactly one
+//         honest-empty pack from a non-empty ledger with no head, anchors sources.snapshotDigest to
+//         the real ledger, and fires once (no second mint) (F9). (RED)
 //
 // §D D4 no-change replay + ordering (store-level — stage: no-change-replay-missing /
 //    short-circuit-order-missing / stale-predecessor-missing)
@@ -77,28 +91,33 @@
 //   D4-3  PIN — same auth-key + DIFFERENT content still refuses `context_pack_conflict` (the
 //         auth-key replay check is preserved under the short-circuit; kills an impl that makes the
 //         idempotency check content-only and drops the auth-key replay check)
+//   D4-4  PIN — SAME body + DIFFERENT validity (fresh key) still mints: the short-circuit compares
+//         `{body, validity}`, never body alone; a body-only/validity-blind short-circuit fails (F6)
 //
 // §E D3 family-scoped actor gate (store-level — stage: actor-gate-missing)
-//   A6-1  a `worker:*` actor minting family `orchestrator-briefing` refuses `context_pack_forbidden`;
-//         no event appended. (RED — today any actor may mint the family)
-//   A6-2  PIN — a `worker:*` actor minting family `spec` still mints (the gate is family-scoped;
-//         kills a gate that locks every family)
+//   A6-1  `worker:*` AND `operator:*` actors minting family `orchestrator-briefing` refuse
+//         `context_pack_forbidden`; no event appended. (RED — today any actor may mint the family)
+//         [F11 — the operator surface is pinned, not just worker]
+//   A6-2  PIN — `worker:*` and `operator:*` actors minting family `spec` still mint (the gate is
+//         family-scoped; kills a gate that locks every family)
 //
 // §F B3 staleness honesty (facadeFixture — stage: resolve-lane-missing / staleness-missing /
 //    idle-disclosure-missing / resolve-lane-unavailable-missing)
 //   B3-1  `context.briefing` resolves the family head with { pack, ledgerHeadSeq, epochLag } and the
-//         D5(a) UNTRUSTED frame. (RED — today the embedded command is absent)
+//         D5(a) UNTRUSTED frame. (RED — today the embedded command is absent) [F7 — already folded
+//         here: the resolved packId/body are asserted equal to the actual head, never fabricated]
 //   B3-2  after K unrelated ledger events, resolve reports epochLag === K (Δ = ledger head seq −
 //         composition seq). (RED)
 //   B3-3  an idle resolve (no events since the mint) reports Δ = 0 and carries the `no events since
 //         event N` disclosure. (RED)
-//   B3-4  with no head, resolve refuses the typed `briefing_pack_unavailable`, never a bare null.
-//         (RED)
+//   B3-4  with no head, resolve refuses the typed `briefing_pack_unavailable`, never a bare null —
+//         via assert.rejects so BOTH wrong-mode failures land on the stage message (F16). (RED)
 //
 // §G D6a the MCP initialize line (McpFleetServer — stage: initialize-line-missing /
 //    no-pack-line-missing)
 //   D6a-1 after a mint, initialize instructions carry the head packId + `minted at event N` and
-//         name `context.briefing`; the trailing sentence is ≤ 240 bytes. (RED)
+//         name `context.briefing`; the trailing sentence is ≤ 240 bytes. (RED) [F17 — already
+//         folded here: the byte bound is pinned]
 //   D6a-2 with no pack, initialize carries `No orchestrator briefing pack minted yet.` and still
 //         succeeds. (RED)
 //   D6a-3 PIN — initialize succeeds identically with and without a pack (D5b: data, not a gate;
@@ -107,14 +126,23 @@
 // §H A8 the doctor sibling + CLI render (openBatonDeployment — stage: doctor-field-missing /
 //    cli-field-missing)
 //   A8-1  after a mint, doctor exposes the non-enumerable `briefing` sibling
-//         { packId, composedAtEventSeq, ledgerHeadSeq, epochLag }. (RED)
+//         { packId, composedAtEventSeq, ledgerHeadSeq, epochLag } with REAL values — packId equals
+//         the staged head, and after K unrelated ledger events the sibling's epochLag === K (F4).
+//         (RED)
 //   A8-2  PIN — Object.keys(doctor) and JSON.stringify(doctor) exclude the sibling (D6b
 //         byte-stability for non-reading consumers; kills an enumerable sibling)
 //   A8-3  the CLI doctor render (impl/scripts/baton.mjs doctor branch) adds ONE named `briefing`
 //         field (D6c/B5: never a text render). (RED source pin)
+//   A8-4  the CLI REMOTE doctor render is driven behaviorally: stage a head, host the deployment
+//         resident, run `baton doctor --check` as a child process, and assert the render's
+//         `briefing.packId` equals the staged head — a dead `briefing: null` cannot pass (F5).
+//         (RED)
 //
 // §I A7 failure-forcing (realWaveKit + the standing-laws config seam — stage:
 //    overflow-captured-missing)
+//   P-CloseBase PIN — a real close with NO briefing seam is unconditional: basis `completed` and a
+//         bounded settlement.errors block. Green today AND under the implementation; never asserts
+//         a wave.closed count, so it cannot contradict D9 (F1). (PIN)
 //   A7-1  an injected oversized standing-laws config (D8/OQ2's pinned config, threaded through
 //         createDriver) forces `briefing_pack_overflow` into the guaranteed-close window's bounded
 //         settlement.errors (≤ 8); the wave is still closed and no head is minted. (RED — today
@@ -131,6 +159,10 @@
 //   waveClosure(waveId) → record | null                           // replay-derived by waveId;
 //       record = { ...payload, closedAtEventSeq: event.seq }
 //   ledgerHeadSeq() → int                                         // this._events.length (G10)
+//   backfillBriefingPack({ family }, auth)                        // D2; the one-time migration
+//       backfill, gated on no head for the family AND ledger non-empty; composes honest-empty
+//       campaign state from the historical ledger (snapshot()); → { ok, result: 'minted' |
+//       'idempotent', event, pack } — a head present is a no-op
 //   composeBriefingPack(rawInput) → { ok, body }                  // D1; rawInput = D1-shaped raw
 //       (pre-degradation) fields; refuses briefing_pack_overflow (error.dropLedger =
 //       { droppedLandings, droppedParkedReasonDetail, droppedRingsLaneSummaries }) and
@@ -160,6 +192,10 @@
 //   baton._mintCampaignBriefing()    — the D2 post-close mint; composes from the post-close ledger
 //       + the pinned standing-laws config and mints via D3/D4; a typed refusal is captured into
 //       receipt.settlement.errors (≤ 8), never aborting close
+//   createWaveDriver policy seam: injectDuplicateWaveClosed: true — the F12/A9-2 seam; makes the
+//       driver attempt a SECOND `wave.closed` append for the same waveId (refused
+//       `wave_already_closed`, captured with step name 'wave-closed') so the record's non-gating
+//       is exercised
 //   createDriver({ standingLaws })   — the pinned deployment config seam (D8/OQ2), the A7
 //       injected-overflow input
 //
@@ -183,17 +219,18 @@
 //
 // PIN LIST (green today, green under the correct implementation, red under a plausible wrong one):
 //   D4-3 conflict-preserved (same key, different content) · A6-2 family-scoped-authority ·
-//   D6a-3 initialize-not-gated · A8-2 non-reading-byte-stability
+//   D6a-3 initialize-not-gated · A8-2 non-reading-byte-stability · P-CloseBase close-window-base ·
+//   D4-4 validity-leg (same body, different validity still mints)
 //
 // VERIFIED SPLIT (run from the repo root, twice — identical on both runs):
 //   node --test impl/test/briefing-pack-red.test.mjs
-//   26 rows → 4 pass (all pins) / 22 fail (all red)
-//   Passing: D4-3, A6-2, D6a-3, A8-2 (the four PIN rows)
-//   Failing: the 22 RED rows, each at its named stage (the split is stable across the two runs)
+//   31 rows → 6 pass (all pins) / 25 fail (all red)
+//   Passing: D4-3, A6-2, D6a-3, A8-2, P-CloseBase, D4-4 (the six PIN rows)
+//   Failing: the 25 RED rows, each at its named stage (the split is stable across the two runs)
 // ===========================================================================
 
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -376,7 +413,7 @@ const GOAL_PLAN_POLICY = Object.freeze({
 
 const DRIVER_POLICY = Object.freeze({
   preflight: false, steering: 'nudge-on-checkpoint',
-  pollIntervalMs: 30, stallTimeoutMs: 800, hardCapMs: 20000, settleTimeoutMs: 1500,
+  pollIntervalMs: 30, stallTimeoutMs: 5000, hardCapMs: 30000, settleTimeoutMs: 1500,
   finalization: 'none', unproductiveNudgeBudget: 1, saltObjectives: false,
 });
 
@@ -515,6 +552,21 @@ const mcpInitialize = (server) => mcpRequest(server, 1, 'initialize', {
   protocolVersion: '2025-11-25', capabilities: {}, clientInfo: { name: 'test', version: '1' },
 });
 
+// Run the real CLI as a CHILD PROCESS over a live resident host. This MUST use async spawn, never
+// execFileSync: the resident web server lives in THIS process's event loop, and a synchronous block
+// would deadlock the socket the CLI connects to.
+function runCli(args, { cwd, env, script }) {
+  return new Promise((resolve) => {
+    const child = spawn(process.execPath, [script, ...args], { cwd, env });
+    let stdout = '';
+    let stderr = '';
+    child.stdout.on('data', (chunk) => { stdout += chunk; });
+    child.stderr.on('data', (chunk) => { stderr += chunk; });
+    child.on('error', (error) => resolve({ code: null, signal: null, stdout, stderr, error }));
+    child.on('close', (code, signal) => resolve({ code, signal, stdout, stderr }));
+  });
+}
+
 // ── openFixture (readiness-credentials pattern — the doctor rows) ───────────────────────────────
 const ROUTE_MOCK = Object.freeze({ harness: 'mock', model: 'mock-model', effort: 'low' });
 
@@ -610,16 +662,22 @@ test('D9b: the record derives with the closed 8-key shape + epoch anchor; a boun
   );
 });
 
-test('D9c: a second append for the same waveId refuses wave_already_closed with no event appended', () => {
+test('D9c: a second append for the same waveId refuses wave_already_closed even for DIFFERENT content (the exactly-once key is the waveId, never the content digest)', () => {
   const store = storeFixture();
   assert.equal(typeof store.appendWaveClosed, 'function', 'stage: wave-already-closed-missing');
   const result = store.appendWaveClosed(closureRecord(), { actor: 'orchestrator', key: 'd9-c1' });
   assert.equal(result.ok, true);
   const before = store.events().length;
   assert.throws(
-    () => store.appendWaveClosed(closureRecord(), { actor: 'orchestrator', key: 'd9-c2' }),
+    () => store.appendWaveClosed(
+      closureRecord({
+        receiptDigest: 'b'.repeat(64),
+        knowledge: { candidates: 3, admittedThisRun: 2, candidatesAwaitingAdmission: 1, settlementRunId: null },
+      }),
+      { actor: 'orchestrator', key: 'd9-c2' },
+    ),
     (error) => error.code === 'wave_already_closed',
-    'a second record for the same waveId refuses wave_already_closed',
+    'a DIFFERENT record for the SAME waveId still refuses wave_already_closed — a content-keyed dedupe would wrongly pass (F10)',
   );
   assert.equal(store.events().length, before, 'no event appended for the refused second record');
   assert.equal(store.events().filter((event) => event.kind === 'wave.closed').length, 1, 'one wave, one record, one landing');
@@ -647,6 +705,15 @@ test('A9-1: a driven wave close mints exactly one wave.closed whose receiptDiges
   assert.ok(derived, 'the record derives');
   assert.equal(derived.receiptDigest, record.receiptDigest);
   assert.equal(derived.closedAtEventSeq, closures[0].seq, 'the record’s own seq is the landing’s closedAtEventSeq');
+
+  // F2 (site pin): the record appends in the guaranteed POST-close window. The wave.closed event is
+  // the penultimate ledger event and the briefing mint is the final one — a record minted as a
+  // PRE-close ritual step (before wave.close()) could not sit in that terminal pair.
+  assert.equal(closures[0].seq, store.events().length - 1,
+    'the wave.closed record is the penultimate ledger event (the closing run sealed before it, the pack mint after — the post-close mint site, D2/F2)');
+  assert.equal(store.events().at(-1).kind, 'context.pack_minted',
+    'the final ledger event is the briefing mint — the wave.closed append is never the terminal event when the mint succeeds');
+
   assert.ok(receipt && typeof receipt.basis === 'string', 'the run completed (close is guaranteed in the driver window)');
 });
 
@@ -677,6 +744,8 @@ test('A1-1: the close mints exactly one content-backed briefing pack (head resol
   // Content-backed (B4): the closing wave's landing is present.
   const closureEvent = store.events().find((event) => event.kind === 'wave.closed');
   assert.ok(closureEvent, 'the wave.closed record exists (D9)');
+  assert.equal(mints[0].seq, closureEvent.seq + 1,
+    'the briefing mint immediately follows the wave.closed append (the post-close mint site, D2/F2)');
   assert.ok(body.landings.some((landing) => landing.waveId === closureEvent.payload.waveId),
     'landings contains the closing wave’s landing — the body is not hollow');
 
@@ -722,6 +791,23 @@ test('D1-1: every body field composes from its named ledger source (the wave.clo
   assert.equal(landing.gates.candidatesAwaitingAdmission, record.knowledge.candidatesAwaitingAdmission, 'gates.candidatesAwaitingAdmission rides the record’s knowledge block');
 });
 
+test('A9-2: a failed wave.closed append is captured into the bounded errors and NEVER blocks close (D9 honesty rule 3)', async (t) => {
+  const kit = realWaveKit(t);
+  assert.equal(typeof kit.baton._appendWaveClosed, 'function', 'stage: record-append-non-gating-missing');
+  const receipt = await createWaveDriver(kit.baton, { ...WAVE_POLICY, injectDuplicateWaveClosed: true })
+    .run({ repoRoot: kit.repo, members: [waveMember('w')] });
+
+  assert.equal(receipt.basis, 'completed', 'the wave is still closed — a failed record append never aborts close (F12/D9 rule 3)');
+  const errors = receipt.settlement?.errors ?? [];
+  assert.ok(Array.isArray(errors) && errors.length <= 8, 'the run’s bounded errors are ≤ 8');
+  const failed = errors.find((entry) => entry.step === 'wave-closed' && entry.code === 'wave_already_closed');
+  assert.ok(failed, 'the injected duplicate-append refusal was captured into the bounded errors');
+
+  const store = kit.driver.coordination;
+  assert.equal(store.events().filter((event) => event.kind === 'wave.closed').length, 1,
+    'exactly one wave.closed record persisted — the failed duplicate never appended');
+});
+
 // ===========================================================================
 // §C The D1 field→source table + composition seams
 // ===========================================================================
@@ -737,11 +823,15 @@ test('D1-2: BRIEFING_SCHEMA_FIELD_SOURCES names every D1 field’s store source;
 
   const store = storeFixture();
   assert.equal(typeof store.composeBriefingPack, 'function', 'stage: schema-refusal-missing — composeBriefingPack is the named composition seam');
-  assert.throws(
-    () => store.composeBriefingPack({ ...rawCompositionInput(), mysteryField: 1 }),
-    (error) => error.code === 'briefing_pack_invalid' && String(error.message).includes('mysteryField'),
-    'a field with no source refuses by name, never mints',
-  );
+  // F15: drive SEVERAL unknown names — a hardcoded single-name refusal (or a blanket
+  // "refuse if any unknown key is present" that never names the field) would not survive all three.
+  for (const unknown of ['mysteryField', 'ghostField', 'novelField']) {
+    assert.throws(
+      () => store.composeBriefingPack({ ...rawCompositionInput(), [unknown]: 1 }),
+      (error) => error.code === 'briefing_pack_invalid' && String(error.message).includes(unknown),
+      `an unknown field (${unknown}) with no store source refuses by name, never mints`,
+    );
+  }
 });
 
 test('A3-1: degradation runs the pinned order — landings oldest-first (min 1) → parked reason detail → rings lane summaries', () => {
@@ -787,6 +877,50 @@ test('A3-2: an input still over 8192 bytes after full degradation refuses briefi
       return true;
     },
     'a composition that still overflows after the full degradation order refuses, never silently truncates',
+  );
+});
+
+test('D2-1: the D2 migration backfill mints exactly one honest-empty pack from a non-empty ledger, gated on no head, and fires once', () => {
+  const store = storeFixture();
+  assert.equal(typeof store.backfillBriefingPack, 'function',
+    'stage: backfill-missing — the D2 one-time migration backfill is the named invented surface');
+  // The upgrade-first-session case (D2): a ledger with history, but NO head for the family.
+  store.mintContextPack({ type: 'spec', body: 'one' }, { actor: 'orchestrator', key: 'd2-ledger-1' });
+  store.mintContextPack({ type: 'spec', body: 'two' }, { actor: 'orchestrator', key: 'd2-ledger-2' });
+  assert.equal(store.contextPackHead(BRIEFING_FAMILY), null, 'no head before the backfill');
+
+  const result = store.backfillBriefingPack({ family: BRIEFING_FAMILY }, { actor: 'orchestrator', key: 'd2-bf' });
+  assert.equal(result.result, 'minted', 'the backfill mints exactly once');
+  const head = store.contextPackHead(BRIEFING_FAMILY);
+  assert.ok(head, 'a head exists after the backfill');
+  const body = JSON.parse(head.body);
+  assert.deepEqual(Object.keys(body).sort(), D1_TOP_LEVEL_FIELDS, 'the backfill body is the closed D1 schema');
+  assert.equal(body.family, BRIEFING_FAMILY);
+  assert.deepEqual(body.rings, [], 'honest-empty rings (no wave.closed record yet — D2/OQ1)');
+  assert.deepEqual(body.lanes, [], 'honest-empty lanes');
+  assert.deepEqual(body.landings, [], 'honest-empty landings');
+  assert.deepEqual(body.parked, [], 'honest-empty parked');
+  assert.deepEqual(body.blockedOn, [], 'honest-empty blockedOn');
+  assert.ok(Array.isArray(body.standingLaws), 'standingLaws is a well-formed array');
+
+  // A1 anchors the backfill to the real ledger — never a hollow body.
+  const snapshot = store.snapshot();
+  assert.equal(
+    body.sources.snapshotDigest,
+    digest({ ...snapshot, lastSeq: snapshot.lastSeq - 1 }),
+    'sources.snapshotDigest anchors the backfill to the real ledger (the live snapshot with lastSeq decremented by the one backfill mint)',
+  );
+
+  // One-time gating: with a head present, a second backfill is a no-op (D4 keeps the head stable).
+  const before = store.events().length;
+  const again = store.backfillBriefingPack({ family: BRIEFING_FAMILY }, { actor: 'orchestrator', key: 'd2-bf' });
+  assert.equal(again.result, 'idempotent', 'the backfill fires once — a second call is a no-op');
+  assert.equal(again.event, null, 'no second backfill event');
+  assert.equal(store.events().length, before, 'ledger unchanged after the second call');
+  assert.equal(
+    store.events().filter((event) => event.kind === 'context.pack_minted' && event.payload?.family === BRIEFING_FAMILY).length,
+    1,
+    'exactly one briefing pack mints in total',
   );
 });
 
@@ -878,31 +1012,59 @@ test('D4-3 PIN: same auth-key + DIFFERENT content still refuses context_pack_con
   assert.equal(store.events().length, before, 'no event appended for the conflicted mint');
 });
 
+test('D4-4 PIN: SAME body + DIFFERENT validity still mints on a fresh key — the short-circuit compares {body, validity}, never body alone', () => {
+  const store = storeFixture();
+  const body = briefingBody();
+  const first = store.mintContextPack(
+    { type: BRIEFING_FAMILY, body, validity: '2999-12-31T23:59:59.999Z' },
+    { actor: 'orchestrator', key: 'd44-a' },
+  );
+  assert.equal(first.result, 'minted');
+
+  const second = store.mintContextPack(
+    { type: BRIEFING_FAMILY, body, validity: '2999-12-31T23:59:59.998Z' },
+    { actor: 'orchestrator', key: 'd44-b' },
+  );
+  assert.equal(second.result, 'minted',
+    'a different validity is a different state — the short-circuit must NOT fire (kills a body-only/validity-blind short-circuit, F6)');
+  assert.ok(second.event, 'a new event appended');
+  assert.equal(store.events().filter((event) => event.kind === 'context.pack_minted').length, 2);
+  const head = store.contextPackHead(BRIEFING_FAMILY);
+  assert.equal(head.packId, second.pack.packId, 'the head moved to the new validity');
+  assert.notEqual(head.packId, first.pack.packId, 'a distinct validity mints a distinct packId (validity is in the digest)');
+});
+
 // ===========================================================================
 // §E D3 family-scoped actor gate
 // ===========================================================================
 
-test('A6-1: a worker actor minting family orchestrator-briefing refuses context_pack_forbidden with no event', () => {
+test('A6-1: worker AND operator actors minting family orchestrator-briefing refuse context_pack_forbidden with no event', () => {
   const store = storeFixture();
   assert.equal(typeof store.mintContextPack, 'function');
   const before = store.events().length;
-  assert.throws(
-    () => store.mintContextPack(
-      { type: BRIEFING_FAMILY, body: briefingBody() },
-      { actor: 'worker:alpha', key: 'a6-k1' },
-    ),
-    (error) => error.code === 'context_pack_forbidden',
-    'stage: actor-gate-missing — today any actor may mint the family; D3 locks it to the orchestrator lane',
-  );
-  assert.equal(store.events().length, before, 'no event appended for the refused worker mint');
+  // F11: D3 locks the family to the orchestrator lane — a gate that pins only `worker:*` (or
+  // forgets `operator:*`) must fail too.
+  for (const actor of ['worker:alpha', 'operator:alice']) {
+    assert.throws(
+      () => store.mintContextPack(
+        { type: BRIEFING_FAMILY, body: briefingBody() },
+        { actor, key: `a6-${actor.replace(':', '-')}` },
+      ),
+      (error) => error.code === 'context_pack_forbidden',
+      `stage: actor-gate-missing — ${actor} may not mint the family; D3 locks it to the orchestrator lane`,
+    );
+    assert.equal(store.events().length, before, `no event appended for the refused ${actor} mint`);
+  }
   assert.equal(store.contextPackHead(BRIEFING_FAMILY), null, 'no head minted');
 });
 
-test('A6-2 PIN: a worker actor minting an existing family (spec) still mints — the gate is family-scoped', () => {
+test('A6-2 PIN: worker and operator actors minting an existing family (spec) still mint — the gate is family-scoped', () => {
   const store = storeFixture();
-  const result = store.mintContextPack({ type: 'spec', body: 'v1' }, { actor: 'worker:alpha', key: 'a6-k2' });
-  assert.equal(result.result, 'minted', 'existing families’ mint authority is unchanged (kills a gate that locks every family)');
-  assert.equal(store.contextPackHead('spec').body, 'v1');
+  const worker = store.mintContextPack({ type: 'spec', body: 'v1' }, { actor: 'worker:alpha', key: 'a6-k2-worker' });
+  assert.equal(worker.result, 'minted', 'a worker mints existing families (kills a gate that locks every family)');
+  const operator = store.mintContextPack({ type: 'spec', body: 'v2' }, { actor: 'operator:alice', key: 'a6-k2-operator' });
+  assert.equal(operator.result, 'minted', 'an operator mints existing families (kills a gate that locks every family)');
+  assert.equal(store.contextPackHead('spec').body, 'v2');
 });
 
 // ===========================================================================
@@ -964,12 +1126,13 @@ test('B3-3: an idle resolve reports Δ = 0 and carries the "no events since even
 
 test('B3-4: with no head, context.briefing refuses the typed briefing_pack_unavailable, never a bare null', async (t) => {
   const fx = await facadeFixture(t);
-  const outcome = await fx.application.command('context.briefing', {}, principalOf('orchestrator')).then(
-    () => ({ ok: true, value: null }),
-    (error) => ({ ok: false, code: error?.code }),
+  // F16: assert.rejects makes BOTH wrong-implementation failure modes — resolving (a bare null) or
+  // rejecting with the wrong code — land on the stage-named message, never a confusing code mismatch.
+  await assert.rejects(
+    fx.application.command('context.briefing', {}, principalOf('orchestrator')),
+    (error) => error?.code === 'briefing_pack_unavailable',
+    'stage: resolve-lane-unavailable-missing — the resolve lane refuses with no head, typed, never a bare null',
   );
-  assert.equal(outcome.ok, false, 'stage: resolve-lane-unavailable-missing — the resolve lane refuses with no head');
-  assert.equal(outcome.code, 'briefing_pack_unavailable', 'the refusal is typed, never a bare null');
 });
 
 // ===========================================================================
@@ -1024,7 +1187,7 @@ test('D6a-3 PIN: initialize succeeds identically with and without a pack (the pa
 // §H A8 the doctor sibling + CLI render
 // ===========================================================================
 
-test('A8-1: doctor exposes the non-enumerable briefing sibling { packId, composedAtEventSeq, ledgerHeadSeq, epochLag }', async () => {
+test('A8-1: doctor exposes the non-enumerable briefing sibling with REAL values, and the lag tracks the ledger after it moves', async () => {
   const fixture = await openFixture({ adapters: { mock: new MockAdapter({ harness: 'mock', scenario: { outcome: 'completed' } }) } });
   try {
     assert.equal(fixture.wiringError, null, `deployment wired: ${fixture.wiringError?.message ?? ''}`);
@@ -1034,16 +1197,28 @@ test('A8-1: doctor exposes the non-enumerable briefing sibling { packId, compose
       { actor: 'orchestrator', key: 'a8-k1' },
     );
     assert.equal(minted.result, 'minted');
+    const head = store.contextPackHead(BRIEFING_FAMILY);
 
     const doctor = await fixture.deployment.doctor();
     assert.ok(doctor.briefing, 'stage: doctor-field-missing — the briefing sibling is present');
-    assert.equal(doctor.briefing.packId, store.contextPackHead(BRIEFING_FAMILY).packId, 'packId matches the live head');
-    assert.equal(doctor.briefing.composedAtEventSeq, store.contextPackHead(BRIEFING_FAMILY).observedSeq, 'composedAtEventSeq is the pack’s observedSeq');
+    assert.equal(doctor.briefing.packId, head.packId, 'packId matches the live head');
+    assert.equal(doctor.briefing.composedAtEventSeq, head.observedSeq, 'composedAtEventSeq is the pack’s observedSeq');
     assert.equal(typeof store.ledgerHeadSeq, 'function', 'ledgerHeadSeq is the tiny additive store accessor (G10)');
     assert.equal(doctor.briefing.ledgerHeadSeq, store.ledgerHeadSeq(), 'ledgerHeadSeq feeds the lag');
     assert.equal(doctor.briefing.epochLag, doctor.briefing.ledgerHeadSeq - doctor.briefing.composedAtEventSeq, 'epochLag is computable');
     const descriptor = Object.getOwnPropertyDescriptor(doctor, 'briefing');
     assert.ok(descriptor && descriptor.enumerable === false, 'the sibling is non-enumerable (the liveness/occupancy pattern)');
+
+    // F4: the sibling’s VALUES must track the ledger after it moves — never a fabricated zero.
+    const K = 2;
+    for (let i = 0; i < K; i += 1) {
+      store.mintContextPack({ type: 'spec', body: `a8-unrelated-${i}` }, { actor: 'orchestrator', key: `a8-spec-${i}` });
+    }
+    const moved = await fixture.deployment.doctor();
+    assert.ok(moved.briefing, 'the sibling is present after the ledger moves');
+    assert.equal(moved.briefing.ledgerHeadSeq, store.ledgerHeadSeq(), 'the sibling’s ledgerHeadSeq follows the ledger');
+    assert.equal(moved.briefing.epochLag, K, 'epochLag counts the K unrelated ledger events (never wall time, never a frozen zero)');
+    assert.equal(moved.briefing.packId, head.packId, 'the pack itself is unchanged — only the lag moved');
   } finally {
     await fixture.close();
   }
@@ -1075,6 +1250,44 @@ test('A8-3: the CLI doctor render adds ONE named briefing field (never a text re
     'stage: cli-field-missing — the CLI doctor JSON carries the named additive briefing field (D6c/B5)');
 });
 
+test('A8-4: the CLI remote doctor render carries the REAL briefing.packId (behavioral positive path — kills a dead briefing:null)', async () => {
+  const home = tmpDir('baton-brief-cli-home-');
+  const configRoot = tmpDir('baton-brief-cli-config-');
+  const env = { ...process.env, HOME: home, XDG_CONFIG_HOME: configRoot };
+  // Hermetic: never let ambient BATON_* overrides shadow the resident connection the test hosts.
+  for (const name of ['BATON_URL', 'BATON_ORIGIN', 'BATON_REPO_ID', 'BATON_TOKEN']) delete env[name];
+  const fixture = await openFixture({
+    adapters: { mock: new MockAdapter({ harness: 'mock', scenario: { outcome: 'completed' } }) },
+    extraAdvanced: { resident: { env, home, now: () => Date.parse(FIXED_TS) } },
+  });
+  try {
+    assert.equal(fixture.wiringError, null, `deployment wired: ${fixture.wiringError?.message ?? ''}`);
+    const store = fixture.driver.coordination;
+    const minted = store.mintContextPack(
+      { type: BRIEFING_FAMILY, body: briefingBody() },
+      { actor: 'orchestrator', key: 'a8-4-k1' },
+    );
+    assert.equal(minted.result, 'minted');
+    const head = store.contextPackHead(BRIEFING_FAMILY);
+    await fixture.deployment.host();
+
+    const script = fileURLToPath(new URL('../scripts/baton.mjs', import.meta.url));
+    const { code, stdout, stderr } = await runCli(
+      ['doctor', '--check', '--depth', 'outline'],
+      { cwd: fixture.repo, env, script },
+    );
+    assert.equal(code, 0, `the CLI doctor exits 0 (got ${code}; stderr=${stderr.slice(0, 500)})`);
+    assert.ok(stdout, 'stage: cli-field-missing — the CLI remote doctor render returns JSON');
+    const render = JSON.parse(stdout);
+    assert.equal(render.state, 'ready', 'the remote doctor render reports ready');
+    assert.ok(render.briefing, 'stage: cli-field-missing — the render carries the named briefing field (D6c/B5)');
+    assert.equal(render.briefing.packId, head.packId,
+      'the CLI renders the REAL head packId by property access, never a dead null (F5)');
+  } finally {
+    await fixture.close();
+  }
+});
+
 // ===========================================================================
 // §I A7 failure-forcing (N5)
 // ===========================================================================
@@ -1096,4 +1309,18 @@ test('A7-1: an injected oversized standing-laws config forces briefing_pack_over
     'the failed mint left no head (the honest-empty state, D5b)');
   assert.equal(store.events().filter((event) => event.kind === 'wave.closed').length, 1,
     'the D9 record minted independently of the failed briefing mint (non-gating)');
+});
+
+test('P-CloseBase PIN: a real wave close is unconditional with a bounded errors block (no briefing seam required)', async (t) => {
+  // F1: the old P-A7base pin asserted a wave.closed-count of ZERO after a real close — a time-bomb
+  // that flips red the moment D9 lands. This rewrite pins TODAY’s behavior (close is unconditional
+  // with a bounded errors block) WITHOUT contradicting the target: it never asserts a wave.closed
+  // count. Green today, green under the correct implementation, red under a close that becomes
+  // gated on the briefing lane (D5b).
+  const kit = realWaveKit(t);
+  const receipt = await createWaveDriver(kit.baton, WAVE_POLICY).run({ repoRoot: kit.repo, members: [waveMember('w')] });
+  assert.equal(receipt.basis, 'completed',
+    'the guaranteed-close window closes the wave unconditionally (kills a close that gates on the briefing lane)');
+  assert.ok(Array.isArray(receipt.settlement?.errors), 'the receipt carries the settlement.errors block');
+  assert.ok(receipt.settlement.errors.length <= 8, 'the errors block stays bounded');
 });
