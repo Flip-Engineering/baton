@@ -6872,9 +6872,24 @@ export class Coordinator {
         workerId: handle.id,
         runId: this._tasks.get(handle.taskId)?.runId ?? handle.runId ?? null,
       } : null;
+    // #10 D11 settlement grace: a just-returned spawn whose worktree/native ack is settling in the
+    // microtask queue is NOT yet "mid-spawn" in the refusal's sense — real checkout work is
+    // synchronous git (createFromBase runs to completion in one resume), so the D6 flags clear on
+    // the next microtask drain. Yield ONE event-loop turn (drains the whole microtask queue) so a
+    // settling spawn ADMITS the send (FP-05/FP-18 send immediately after spawn, before the flags
+    // had a turn to clear); a spawn that is STILL pending after the drain is genuinely stuck
+    // (SP-REFUSAL's never-resolving worktree / deferred native ack / raw recovery flag) and draws
+    // the typed refusal unchanged. An already-settled worker is untouched (no yield at all).
+    const settleSpawn = async (handle) => {
+      if (handle.worktreeCreationPending === true
+        || handle.nativeSpawnPending === true || handle.recoverySpawnPending === true) {
+        await new Promise((resolve) => setImmediate(resolve));
+      }
+    };
     if (typeof to.workerId === 'string') {
       const handle = this._workers.get(to.workerId);
       if (!handle) return { ok: false, result: 'worker_not_active' };
+      await settleSpawn(handle);
       const spawning = spawningRefusal(handle);
       if (spawning) return spawning;
       workers = [handle];
@@ -6882,6 +6897,7 @@ export class Coordinator {
       workers = [...this._workers.values()]
         .filter((handle) => this._tasks.get(handle.taskId)?.runId === to.runId);
       if (workers.length === 0) return { ok: false, result: 'run_not_active' };
+      for (const handle of workers) await settleSpawn(handle);
       const spawning = workers.map(spawningRefusal).find(Boolean) ?? null;
       if (spawning) return spawning;
     }
