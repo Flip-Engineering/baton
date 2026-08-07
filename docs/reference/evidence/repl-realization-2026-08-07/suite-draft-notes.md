@@ -1,28 +1,30 @@
 # #69 Suite Draft Notes — `repl-realization-red.test.mjs`
 
-Date: 2026-08-07 · Contract: **REPL-realization v1.1** (folded) · Suite: 32 rows (22 RED / 10 PIN)
+Date: 2026-08-07 · Contract: **REPL-realization v1.1** (folded) · Suite: 34 rows (24 RED / 10 PIN)
 Deliverable: `impl/test/repl-realization-red.test.mjs` (this draft's only other deliverable).
 Authority: `repl-realization-contract.md` (v1.1 source of truth), `contract-fold.md` (all 8
 blockers — B3 the per-member fan-out + R11, B4 the server-derived runId + R10/#143, B5 the
 single-line-leaf sanitize + R9, B6 the run-close reap + honest run-scoped wording, B7 the
 re-anchors, B8 the #79-pinned surface), `contract-redteam.md` (the attack surface — every pin
-confirmed RED at HEAD), `suite-69-brief.md` (this suite's brief).
+confirmed RED at HEAD), `suite-69-brief.md` (this suite's brief), `suite-blueteam.md` (the
+blue-team verdict — F1–F8 folded in this draft), `suite-fold-2-brief.md` (this fold's brief).
 
 ## Verified split (stable across consecutive runs from the repo root)
 
 ```
 $ node --test impl/test/repl-realization-red.test.mjs   # run from repo root
-ℹ tests 32
+ℹ tests 34
 ℹ pass 10
-ℹ fail 22
+ℹ fail 24
 ℹ cancelled 0  skipped 0  todo 0
 ```
 
-Two consecutive runs of the finished suite both produced **pass 10 · fail 22** (run 1 ≈ 484 ms,
-run 2 ≈ 472 ms) — the split is deterministic. The 10 passes are exactly the ten PIN rows (A4, B2,
-B4, C3, E3, F3, F4, G3, H3, I1); the 22 failures are the red rows, each confirmed to fail at its
+Two consecutive runs of the finished suite both produced **pass 10 · fail 24** (run 1 ≈ 2760 ms,
+run 2 ≈ 2390 ms) — the split is deterministic. The 10 passes are exactly the ten PIN rows (A4, B2,
+B4, C3, E3, F3, F4, G3, H3, I1); the 24 failures are the red rows, each confirmed to fail at its
 NAMED stage (the per-row stage is in the header and in each row's first-failing assertion
-message).
+message). The fold added E4 and G4 (both RED) and re-wired D3/E1/G2/H1/H2/I1 per F1–F8; the PIN
+set is unchanged.
 
 ## Row map
 
@@ -48,45 +50,48 @@ row fails at the stage — never on a vacuous shape assertion.
 | C5 | D2/D7 | | **cited-repl-objects-seam-missing** | 8 long-text heads cross 4096 rendered bytes; the shed must emit `(truncated)` with the full text by citation (the D2 byte shed) |
 | D1 | D3 | | **repl-object-refusal-missing** | a citation naming another worker's `worker:<id>` binding placed into a worker's citation set refuses `repl_object_not_addressed` — the typed family has no constructor |
 | D2 | D3/R3 | | **cited-repl-objects-seam-missing** | `_citedReplObjects(runId, workerId, citations)` does not exist — tier visibility (worker:<id> to its owner, shared to every member) is unenforceable |
-| D3 | R11 | | **multi-run-fanout-missing** | no per-member fan-out exists — a single `shared` binding admitted in one runId renders only into that run's members (blocker 3, the #94-shaped wave) |
+| D3 | R11 | | **multi-run-fanout-missing** | no per-member fan-out exists — the row CALLS `coordinator._admitSharedFanout({members, name, cellId, manifestDigest})` and asserts `resolveReplCitation` resolves in EVERY member's own run and refuses an unbound run, with NO manual per-run admits (F5; blocker 3, the #94-shaped wave) |
 | D4 | D4 | | **run-close-reap-missing** | no store/coordinator path drops `_replBindings`/`_replBindingFences` at run close — `dropReplBinding` is a manual per-binding act (:15422-15496) (blocker 6) |
-| E1 | D5 | | **repl-promotion-provenance-missing** | a rebind-to-shared records NO `promotedFrom: {scope, name, bindingVersion}` — the D5 provenance gap has no constructor |
+| E1 | D5 | | **repl-promotion-provenance-missing** | a rebind-to-shared records NO `promotedFrom: {scope, name, bindingVersion}` — the row drives the D5 facade `coordinator._promoteReplObject(workerBinding, orchestratorCaller)` and asserts the promoted shared binding records the coordinates (F3) |
 | E2 | D5 | | **repl-promotion-refusal-missing** | `_promoteReplObject` does not exist — a non-orchestrator promotion cannot refuse `repl_object_unauthorized` |
 | E3 | D5/#63 | PIN | settlement-gate | green today — `knowledge.promote` (kernel/control) is the ONLY project-persistence path; `repl.cite` is an ordinary/observe; no `repl.promote` kind exists (GT11) |
+| E4 | D5/F8 | | **repl-promotion-positive-missing** | an orchestrator promotion through `_promoteReplObject` does not SUCCEED — an always-refuse facade passes E2, so the D5 positive path + replay-safety (idempotent, same event seq) is pinned as its own row (F8) |
 | F1 | D6 | | **repl-review-projection-missing** | `projectReplBindingView` (application.mjs:681-712) has NO call site — no run-view REPL review section exists (GT10) |
 | F2 | D6 | | **repl-shadow-field-refusal-missing** | the review projection has no closed-shape guard — a shadow field a reviewer can't see refuses nothing (D6 review-by-projection) |
 | F3 | D6/GT10 | PIN | projection-shape | green today — `projectReplBindingView` wraps scope/name as untrusted prose, leaves a resolved `cellId` unwrapped (:688-705); stays live |
 | F4 | D6 | PIN | replay-safe | green today — a replayed `admitReplBinding` key returns `{result:'idempotent'}` with the SAME event seq — no double-write (the repl23 B10 idiom) |
 | G1 | R10 | | **repl-cite-run-boundary-missing** | `baton_repl_cite` (mcp-northbound.mjs:1999 → coordinator.mjs:11781-11784) takes a caller-supplied runId with NO membership check — a live cross-run read escape (issue #143) |
-| G2 | R10 | | **repl-cite-run-boundary-missing** | `_replCiteInOwnRun` does not exist — the server-derived-runId cite projection (the `contextRead` pattern, coordinator.mjs:10642-10653) has no surface |
+| G2 | R10 | | **repl-cite-run-boundary-missing** | `_replCiteInOwnRun` does not exist — the server-derived-runId cite projection (the `contextRead` pattern, coordinator.mjs:10642-10653) has no surface; the positive path uses the fixture's REAL task (`f.task.id` → run-repl23) and the negative is a citation that RESOLVES in a foreign run (F1) |
 | G3 | R10 | PIN | own-run-resolution | green today — `resolveReplCitation(runId, citation)` resolves the exact version row in the caller's own run (coordination-store.mjs:15512-15522); stays live |
-| H1 | D7 | | **renderBrief-repl-objects-missing** | `## Ambient knowledge` → `## Cited REPL objects` → `## Pending attention` — no composition exists to order (D7, the #79 dependency) |
-| H2 | refusals | | **repl-object-refusal-codes-missing** | the coordinator namespace exports NO `REPL_OBJECT_REFUSAL_CODES` — the frozen family is not a typed surface constant |
+| G4 | R10/F6 | | **repl-cite-run-boundary-missing** | the REAL `baton_repl_cite` PORT (McpFleetServer._dispatch) honors a caller-supplied foreign runId whose citation RESOLVES there — the #143 escape at the port (mcp-northbound.mjs:2006-2008), not just the facade (F6) |
+| H1 | D7 | | **renderBrief-repl-objects-missing** | `## Verification` ahead of `## Ambient knowledge` → `## Cited REPL objects` — no composition exists to order; the `## Pending attention` tail is #79-owned and SPLIT out (F2) |
+| H2 | refusals | | **repl-object-refusal-codes-missing** | the coordinator namespace exports NO `REPL_OBJECT_REFUSAL_CODES` — the frozen family is not a typed surface constant; the key check is order-independent (`.sort()`, F4) |
 | H3 | refusals | PIN | refusal-precedents | green today — `repl_binding_citation_not_found` (coordination-store.mjs:15514,:15519) as a typed `CoordinationRefusal`; `spill_body_exceeded` (limits.mjs:85) verbatim |
 | H4 | refusals | | **repl-object-refusal-firing-missing** | `_assertReplObjectsServed` does not exist — unresolved/not-addressed/oversized never FIRE as typed refusals |
-| I1 | R8′/GT2 | PIN | no-arbitrary-code | green today — the lane's module graph has no `eval(`/`new Function(`/dynamic `import(`; no `repl.eval`/`repl.exec` kind (the F10 idiom) |
+| I1 | R8′/GT2 | PIN | no-arbitrary-code | green today — the lane's TRANSITIVE module graph (walked from adapter/cli-adapters/coordinator/messages/mcp-northbound through static + string-literal-dynamic import edges, 47 modules at HEAD) has no evaluator path; every dynamic import is a literal or module-const literal; no `repl.eval`/`repl.exec` kind (F7) |
 
 ## Invented surfaces
 
-Nine invented coordinator members are probed through the instance (plus the namespace export and
-the wrapper); every invented member is absent at HEAD (the seam the red row holds). The first
-assertion on every invented export is an `assert.ok(...)` / `assert.equal(typeof …,'function',…)`,
-so the row fails at the named stage — never on a shape assertion that
-`Object.isFrozen(undefined) === true` could spuriously satisfy.
+Nine invented coordinator members are probed through the instance (plus the namespace export, the
+wrapper, and the MCP principal `taskId` field); every invented member is absent at HEAD (the seam
+the red row holds). The first assertion on every invented export is an `assert.ok(...)` /
+`assert.equal(typeof …,'function',…)`, so the row fails at the named stage — never on a shape
+assertion that `Object.isFrozen(undefined) === true` could spuriously satisfy.
 
 | Invented surface member | Probed through | HEAD behavior |
 |-------------------------|-----------------|---------------|
 | `coordinator._citedReplObjects(runId, workerId, citations)` — the citation-resolution projection (D1/D2/D3: per-worker tier visibility, the 8-in-block + spill round trip) | the coordinator instance | undefined (A3/C4/D2) |
 | `coordinator._assertReplObjectsServed(workerId, records, opts)` — the serving-path refusal guard (unresolved/not-addressed/oversized; the byte shed) | the coordinator instance | undefined (C5/H4) |
 | `coordinator._providerBrief(brief, {workerId})` — the composition seam attaching `inner.replObjects` (the D1 read of the R1 seam) | the coordinator instance | `composed.replObjects` undefined (A3) |
-| `coordinator._promoteReplObject(workerBinding, caller)` — the orchestrator promotion facade (D5, `repl_object_unauthorized`) | the coordinator instance | undefined (E2) |
+| `coordinator._promoteReplObject(workerBinding, caller)` — the orchestrator promotion facade (D5, `repl_object_unauthorized`; the positive path + replay-safety is E4) | the coordinator instance | undefined (E2/E4) |
 | `coordinator._replManifestReview(runId)` — the run-view REPL review projection (D6) | the coordinator instance | undefined (F1) |
 | `coordinator._assertReplReviewProjection(record)` — the closed review-shape guard (D6 shadow field) | the coordinator instance | undefined (F2) |
-| `coordinator._replCiteInOwnRun(taskId, citation)` — the in-caller-run cite projection (R10, the `contextRead` pattern) | the coordinator instance | undefined (G2) |
-| `coordinator._admitSharedFanout(runId, fields)` — the spawn-time per-member fan-out admission (R11) | the coordinator instance | undefined (D3) |
+| `coordinator._replCiteInOwnRun(taskId, citation)` — the in-caller-run cite projection (R10, the `contextRead` pattern; `taskId` = the caller's REAL task — `f.task.id`, F1) | the coordinator instance | undefined (G2) |
+| `coordinator._admitSharedFanout({members, name, cellId, manifestDigest})` — the spawn-time per-member fan-out admission (R11, F5 — the row CALLS it, no manual per-run admits) | the coordinator instance | undefined (D3) |
 | `coordinator._resolveReplSpill(...)` — the closed `CONTEXT_READ {kind:'spill'}` resolver (D2) | the coordinator instance | undefined (C4) |
-| `coordinatorNs.REPL_OBJECT_REFUSAL_CODES` — frozen ACTUAL-sorted `{repl_citation_out_of_run, repl_object_manifest_unadmitted, repl_object_not_addressed, repl_object_oversized, repl_object_unauthorized, repl_object_unresolved}` | namespace import `* as coordinatorNs` | no such export (H2) |
+| `coordinatorNs.REPL_OBJECT_REFUSAL_CODES` — frozen `{repl_citation_out_of_run, repl_object_manifest_unadmitted, repl_object_not_addressed, repl_object_oversized, repl_object_unauthorized, repl_object_unresolved}`; the key check is `.sort()` order-independent (F4) | namespace import `* as coordinatorNs` | no such export (H2) |
 | `messages.wrapHubDerived(worker, text)` — `{provenance: 'hub-derived', untrusted: true}` | namespace import `* as messages` | no such export (B1) |
+| the MCP principal `taskId` field — the caller's task the `baton_repl_cite` port derives its run from (R10/F6, the `contextRead` pattern) | a `McpFleetServer` principal built on the fixture's real task | no port derives the run from the caller's task — `resolveReplCitation(args.runId, …)` at mcp-northbound.mjs:2006 honors the caller-supplied runId (G4) |
 | `FRAME_LIMITS['view.repl_object.items']` — `{lane, class:'view', value: 8, unit:'items', graceful:'spill-digest-citation'}` | real `FRAME_LIMITS` | row absent (C1) |
 | `FRAME_LIMITS['view.repl_object.bytes']` — `{lane, class:'view', value: 4096, unit:'bytes', graceful:'shed-flagged'}` | real `FRAME_LIMITS` | row absent (C2) |
 | `store.reapRunReplBindings(runId)` — the run-close reap of the active-binding map (D4) | real store instance | no such method (D4) |
@@ -115,7 +120,7 @@ facades directly — no spawn, no network, no wall clock.
 | **F4** replay-safe | an impl that double-writes on a replayed approval key — an `admitReplBinding` replay must return `idempotent` with the SAME event seq |
 | **G3** own-run-resolution | an impl that renames or breaks `resolveReplCitation`'s exact-version, per-runId resolution — the run-scoped store machinery the R10 boundary must preserve |
 | **H3** refusal-precedents | an impl that renames `repl_binding_citation_not_found` / `spill_body_exceeded`, or types the citation refusal as a bare throw instead of a `CoordinationRefusal` |
-| **I1** no-arbitrary-code | an impl that lets an eval/`new Function`/dynamic-import path onto the cite-into-brief lane, or mints a `repl.eval`/`repl.exec` registry kind (the house law, docs/33:11) |
+| **I1** no-arbitrary-code | an impl that lets an eval/`(0, eval)`/`new Function`/`Function`/`setTimeout("code")`/`vm.*` path onto the cite-into-brief lane, adds a variable/expression dynamic import anywhere in the lane's TRANSITIVE graph (the F7 closure), or mints a `repl.eval`/`repl.exec` registry kind (the house law, docs/33:11) |
 
 ## What makes each stage go green (implementer's checklist)
 
@@ -148,10 +153,11 @@ facades directly — no spawn, no network, no wall clock.
   `view.knowledge_slice.items`=8 precedent) and bytes 4096 / `shed-flagged` (a RENDER-side shed
   flag, never a wire cap). The rows are defined independently of the #79 `view.attention_push.*`
   rows (blocker 8) — a #79 fold-order change cannot renumber them.
-- **multi-run-fanout-missing** → R11/D4: at spawn admission the orchestrator admits the shared
-  ReplManifest + the `shared:<name>` binding into EACH member's runId (same `name` everywhere,
-  uniform citation grammar) — each member's D2 seam resolves `repl:shared:<name>@<version>` in its
-  OWN run, never across runs (blocker 3).
+- **multi-run-fanout-missing** → R11/D4: `_admitSharedFanout({members, name, cellId,
+  manifestDigest})` admits the shared ReplManifest + the `shared:<name>` binding into EACH member's
+  own runId (same `name` everywhere, uniform citation grammar) — each member's D2 seam resolves
+  `repl:shared:<name>@<version>` in its OWN run, never across runs. The row CALLS the facade and
+  asserts per-member resolution with no manual per-run admits (F5; blocker 3).
 - **run-close-reap-missing** → D4: when a run closes, the active-binding map (`_replBindings`) and
   the per-scope fences (`_replBindingFences`) for that run are dropped; the append-only
   `_replBindingHistory` is RETAINED — `resolveReplCitation`'s replay-exact resolution reads
@@ -165,14 +171,16 @@ facades directly — no spawn, no network, no wall clock.
   a citation that does not resolve at composition time (never "latest"), `repl_object_not_addressed`
   for a cross-worker citation, `repl_object_oversized` with the `composeFrameLimitRefusal` coaching
   shape when the set exceeds 8 and the spill lane is unavailable.
-- **repl-promotion-provenance-missing** → D5: the promotion rebind records
-  `promotedFrom: {scope, name, bindingVersion}` as a first-class property of the new shared
-  binding's record; the originating author is also recoverable from the settled cell's
-  `authority.principalId`. If the shipped record shape is left untouched, the fallback is explicit:
-  provenance is cell-authority-derived.
-- **repl-promotion-refusal-missing** → D5: `_promoteReplObject` is the orchestrator promotion
-  facade — a non-orchestrator attempt refuses `repl_object_unauthorized`; the promotion acts ARE
-  the approval (no new approval command).
+- **repl-promotion-provenance-missing / repl-promotion-positive-missing** → D5: `_promoteReplObject`
+  is the orchestrator promotion facade — the row drives it with `(workerBinding, orchestratorCaller)`
+  and asserts the promoted shared binding records `promotedFrom: {scope, name, bindingVersion}` as
+  a first-class property (no bare-store auto-inference, F3); a non-orchestrator attempt refuses
+  `repl_object_unauthorized`; an orchestrator promotion SUCCEEDS and is replay-safe (idempotent,
+  same event seq — E4, F8); the promotion acts ARE the approval (no new approval command). The
+  originating author is also recoverable from the settled cell's `authority.principalId`.
+- **repl-promotion-refusal-missing** → D5: `_promoteReplObject`'s non-orchestrator branch refuses
+  `repl_object_unauthorized`; the positive branch must NOT refuse (E4 distinguishes an
+  always-refuse facade).
 - **repl-review-projection-missing / repl-shadow-field-refusal-missing** → D6: the run-view REPL
   section projects, per admitted manifest, `{manifestDigest, replRole, principal, branchCount}`
   (from `replManifestAdmission`) and each worker's `worker:<id>` bindings via the existing
@@ -180,10 +188,12 @@ facades directly — no spawn, no network, no wall clock.
   CLOSED — a record carrying a shadow field the projection cannot display refuses (review by
   projection).
 - **repl-cite-run-boundary-missing** → R10/D3: `baton_repl_cite` server-derives `runId` from the
-  caller's task (the `contextRead` pattern — the wire query carries NO runId field; a caller-named
-  runId/scope is a typed refusal, coordinator.mjs:10642-10652, `const runId = task.runId ?? null`
-  at :10653), and a citation that does not resolve in the caller's own run refuses
-  `repl_citation_out_of_run`. The shipped-code fix is issue #143 (blocker 4).
+  caller's task — the MCP principal's `taskId` (the `contextRead` pattern: the wire query carries
+  NO runId field; a caller-named runId/scope is a typed refusal, coordinator.mjs:10642-10652,
+  `const runId = task.runId ?? null` at :10653). G2's positive path uses the fixture's REAL task
+  (F1) and its negative is a citation that RESOLVES in a foreign run; G4 dispatches the REAL port
+  (McpFleetServer._dispatch) with a caller-supplied foreign runId whose citation resolves THERE
+  and asserts `repl_citation_out_of_run` (F6). The shipped-code fix is issue #143 (blocker 4).
 
 ## Suite-law hygiene (verified)
 
@@ -192,22 +202,24 @@ facades directly — no spawn, no network, no wall clock.
 - **Red-first at named stages**: every RED row's first assertion is the named-stage failure (an
   `assert.ok`/`typeof` for invented surfaces, a behavior assertion for the renderer/registry/seam
   rows); the stage names live in the header row inventory AND in each row's assertion message.
-  22 RED rows / 10 PINs, stable across consecutive runs (run 1 ≈ 484 ms, run 2 ≈ 472 ms).
+  24 RED rows / 10 PINs, stable across consecutive runs (run 1 ≈ 2760 ms, run 2 ≈ 2390 ms).
 - **The fixture is the shipped REPL suite's** (repl23-bindings-red.test.mjs), ported verbatim —
   full goal/plan/task chain, `contextSourceAttest` coverage including `excludedBinaryOrInvalidText:
   0`, fixed store clock — with ONE addition: `operationalRead` in storeOptions wired to a `Log`
   created BEFORE the store (mirroring `coordinationForLog(log)`), which a Coordinator built over
   the store needs. This is the fixture's only behavioral divergence from the repl23 source and it
   makes no row green — the red rows still fail at their stages.
-- **NUL discipline**: `application.mjs` and `coordination-store.mjs` (3 NUL bytes each) are never
-  read whole — only their exports are imported (`projectReplBindingView`,
-  `CoordinationStore`/`coordinationForLog`/`CoordinationRefusal`). `adapter.mjs`,
-  `cli-adapters.mjs`, `coordinator.mjs`, `messages.mjs`, `mcp-northbound.mjs`, `limits.mjs`,
-  `context-program.mjs`, and `application-semantics.mjs` are NUL-free (verified with
-  `tr -cd '\000' | wc -c` = 0) and safe to read for the static scans (G1, I1). The suite file
-  itself is NUL-free.
+- **NUL discipline**: the ONLY whole-file string reads are the I1 graph walker's — it reads every
+  module reachable from the lane roots (adapter, cli-adapters, coordinator, messages,
+  mcp-northbound) through static-relative AND string-literal-dynamic import edges as UTF-8 strings
+  (the `walkImportGraph` idiom), which tolerates the 3 NUL bytes in `application.mjs` /
+  `coordination-store.mjs` and never treats NUL as content. Nothing else whole-file-reads the
+  NUL-bearing sources; their exports are imported (`projectReplBindingView`,
+  `CoordinationStore`/`coordinationForLog`/`CoordinationRefusal`). The G1 static scan reads only
+  `mcp-northbound.mjs` (0 NUL). The suite file itself is NUL-free.
 - **No clocks as controls / no wall-clock assertion**: the store's `clock` is a fixed string
   (`'2026-07-22T20:00:00.000Z'`, the repl23 fixture idiom); no row asserts a wall-clock behavior;
   `Date.now()` never appears. The run-close row (D4) drives the real `admitRunStop`, not a timer.
 - **No `localeCompare`**; the `REPL_OBJECT_REFUSAL_CODES` literal and the closed entry-shape key
-  set (`REPL_OBJECT_ENTRY_KEYS`) are asserted in ACTUAL sorted order against frozen constants.
+  set (`REPL_OBJECT_ENTRY_KEYS`) are asserted order-independently (`.sort()` both sides) against
+  frozen constants (F4).
