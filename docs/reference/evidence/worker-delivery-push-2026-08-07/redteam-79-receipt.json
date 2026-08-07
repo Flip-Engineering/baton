@@ -1,0 +1,37 @@
+{
+  "attempt": "2026-08-07T03:26:40.281Z",
+  "salt": "r520260807032640",
+  "role": "redteam-79",
+  "steps": [
+    {
+      "step": "waves.start",
+      "receipt": {
+        "runs": [
+          "run-4b34fcdb6c3a97fe74960516fd437175"
+        ]
+      }
+    },
+    {
+      "step": "terminal:redteam-79",
+      "receipt": {
+        "phase": "work_completed"
+      }
+    },
+    {
+      "step": "loop-drained",
+      "receipt": {
+        "pending": []
+      }
+    }
+  ],
+  "harvest": {
+    "redteam-79": {
+      "pin": "f966650cea32a452957448275524e114f88bc574",
+      "paths": [
+        "docs/reference/evidence/worker-delivery-push-2026-08-07/contract-redteam.md"
+      ]
+    }
+  },
+  "harvestStalePinsSkipped": 355,
+  "verdict": "RT-79-OK"
+}
