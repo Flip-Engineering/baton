@@ -12,7 +12,7 @@
 // tree) and fails at a NAMED stage; the PIN rows are green today by construction and must STAY
 // green on the implementation (the fold's "must NOT change").
 //
-// Row inventory (32 rows — 22 RED / 10 PIN):
+// Row inventory (34 rows — 24 RED / 10 PIN — suite-fold-2 F1-F8 folded):
 //   A1-A3  RED    D1 seam + renderers   (renderBrief-repl-objects-missing, renderPrompt-repl-objects-missing, cited-repl-objects-seam-missing)
 //   A4     PIN    D2 absence-on-empty   (neither renderer emits the section for an empty/absent set)
 //   B1     RED    R8'                    (wrapHubDerived-missing)
@@ -27,20 +27,22 @@
 //   D2     RED    D3/R3 tier visibility  (cited-repl-objects-seam-missing — worker:<id> to its owner, shared to every member)
 //   D3     RED    R11 multi-run fan-out  (multi-run-fanout-missing — a shared object admits into EACH member's own runId)
 //   D4     RED    D4 run-close reap      (run-close-reap-missing — task-ephemeral active map dropped, history retained)
-//   E1     RED    D5 promotion provenance (repl-promotion-provenance-missing — promotedFrom carries the worker coordinates)
+//   E1     RED    D5 promotion provenance (repl-promotion-provenance-missing — the FACADE's promotedFrom carries the worker coordinates, F3)
 //   E2     RED    D5 promotion refusal   (repl-promotion-refusal-missing — a non-orchestrator refuses repl_object_unauthorized)
 //   E3     PIN    D5/#63 settlement gate (knowledge.promote stays the ONLY project-persistence path; no repl.promote)
+//   E4     RED    D5/F8 promotion positive (repl-promotion-positive-missing — an orchestrator promotion SUCCEEDS and is replay-safe; an always-refuse facade fails)
 //   F1     RED    D6 review projection   (repl-review-projection-missing — no run-view REPL review exists)
 //   F2     RED    D6 shadow field        (repl-shadow-field-refusal-missing — a reviewer-invisible field refuses)
 //   F3     PIN    D6/GT10 projection     (scope/name wrapped untrusted prose, a resolved cellId never wrapped)
 //   F4     PIN    D6 replay-safe         (a replayed approval key returns idempotent, no double-write)
-//   G1-G2  RED    R10 run boundary       (repl-cite-run-boundary-missing ×2 — MCP static scan + in-caller-run projection)
+//   G1-G2  RED    R10 run boundary       (repl-cite-run-boundary-missing ×2 — MCP static scan + in-caller-run projection with a REAL task, F1)
 //   G3     PIN    R10 own-run resolution (the store machinery that must STAY)
-//   H1     RED    D7 section order       (renderBrief-repl-objects-missing — Ambient → Cited → Pending, Verification ahead)
-//   H2     RED    refusal vocabulary     (repl-object-refusal-codes-missing)
+//   G4     RED    R10/F6 real port       (repl-cite-run-boundary-missing — baton_repl_cite refuses a caller-supplied foreign runId whose citation resolves there)
+//   H1     RED    D7 section order       (renderBrief-repl-objects-missing — Verification ahead, Ambient → Cited; the #79 Pending tail is #79-owned, F2)
+//   H2     RED    refusal vocabulary     (repl-object-refusal-codes-missing — order-independent key check, F4)
 //   H3     PIN    refusal precedents     (repl_binding_citation_not_found / spill_body_exceeded reused verbatim)
 //   H4     RED    refusal firing         (repl-object-refusal-firing-missing — unresolved/not-addressed/oversized fire)
-//   I1     PIN    R8'/GT2                (no-arbitrary-code — static scan: the lane has no evaluator path)
+//   I1     PIN    R8'/GT2                (no-arbitrary-code — the lane's TRANSITIVE module graph has no evaluator path, F7)
 //
 // Invented surfaces (every one absent at HEAD — the first assertion on each is an `assert.ok` so
 // the row fails at the NAMED stage, never on a vacuous shape assertion):
@@ -50,8 +52,9 @@
 //   coordinator._promoteReplObject(workerBinding, caller)          — the orchestrator promotion facade (D5)
 //   coordinator._replManifestReview(runId)                        — the run-view review projection (D6)
 //   coordinator._assertReplReviewProjection(record)               — the closed review-shape guard (D6)
-//   coordinator._replCiteInOwnRun(taskId, citation)               — the in-caller-run cite projection (R10)
-//   coordinator._admitSharedFanout(runId, fields)                 — the spawn-time per-member fan-out admission (R11)
+//   coordinator._replCiteInOwnRun(taskId, citation)               — the in-caller-run cite projection (R10; taskId = the caller's REAL task)
+//   coordinator._admitSharedFanout({members, name, cellId, manifestDigest}) — the spawn-time per-member fan-out admission (R11, F5)
+//   the MCP principal `taskId` field                             — the caller's task the baton_repl_cite port derives its run from (R10/F6)
 //   coordinator._resolveReplSpill(...)                            — the closed CONTEXT_READ spill resolver (D2)
 //   coordinatorNs.REPL_OBJECT_REFUSAL_CODES                       — the frozen repl_object_* refusal family (refusals)
 //   messages.wrapHubDerived(worker, text)                         — {provenance:'hub-derived', untrusted:true} wrapper (R8')
@@ -64,21 +67,23 @@
 // Suite-law hygiene: hermetic (ScriptableAdapter — no harness, no network; mkdtemp logs; global
 // test.after cleanup); the deployment-verification stub is the brief's `true` command; sorted-key
 // literals in ACTUAL order; `localeCompare` banned; no clocks as controls (a fixed clock string in
-// the store, no wall-clock assertion); NUL discipline — application.mjs and coordination-store.mjs
-// (3 NUL bytes each) are never read whole, only their exports are imported; the two static scans
-// read the NON-NUL lane sources (adapter.mjs, cli-adapters.mjs, coordinator.mjs, messages.mjs,
-// mcp-northbound.mjs — 0 NUL bytes each, verified). Verified split is recorded below after two
-// consecutive runs from the repo root.
+// the store, no wall-clock assertion); NUL discipline — the graph-walker string scan reads every
+// reachable module as a UTF-8 string (the walkImportGraph idiom, which tolerates the 3 NUL bytes in
+// application.mjs / coordination-store.mjs) and never treats NUL bytes as content; nothing else
+// whole-file-reads the NUL-bearing sources. Verified split is recorded below after two consecutive
+// runs from the repo root.
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { mkdtempSync, rmSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import { Coordinator } from '../src/coordinator.mjs';
 import * as coordinatorNs from '../src/coordinator.mjs';
+import { McpFleetServer } from '../src/mcp-northbound.mjs';
 import { Log } from '../src/log.mjs';
 import { FenceTable } from '../src/fence.mjs';
 import { coordinationForLog, CoordinationRefusal, CoordinationStore } from '../src/coordination-store.mjs';
@@ -93,11 +98,11 @@ import {
 } from '../src/context-program.mjs';
 import { applicationSemanticRegistry } from '../src/application-semantics.mjs';
 
-// Verified split (two consecutive runs from the repo root, at HEAD):
-//   run 1: tests 32 · pass 10 · fail 22 · cancelled 0 · skipped 0 · todo 0 (≈484 ms)
-//   run 2: tests 32 · pass 10 · fail 22 · cancelled 0 · skipped 0 · todo 0 (≈472 ms)
+// Verified split (two consecutive runs from the repo root, at the suite-fold-2 HEAD):
+//   run 1: tests 34 · pass 10 · fail 24 · cancelled 0 · skipped 0 · todo 0 (≈2760 ms)
+//   run 2: tests 34 · pass 10 · fail 24 · cancelled 0 · skipped 0 · todo 0 (≈2390 ms)
 //   deterministic — the 10 passes are exactly the PIN rows (A4, B2, B4, C3, E3, F3, F4, G3, H3,
-//   I1); the 22 failures are the RED rows, each confirmed to fail at its NAMED stage.
+//   I1); the 24 failures are the RED rows, each confirmed to fail at its NAMED stage.
 
 const dirs = [];
 function tmpDir() {
@@ -616,7 +621,11 @@ test('A3 (RED): _providerBrief does not attach inner.replObjects for a brief cit
     Array.isArray(composed?.replObjects),
     'the seam attaches the resolved cited objects to the provider-facing brief (stage: cited-repl-objects-seam-missing)',
   );
-  assert.deepEqual(Object.keys(composed.replObjects[0]), REPL_OBJECT_ENTRY_KEYS, 'the closed entry shape (D2)');
+  assert.deepEqual(
+    Object.keys(composed.replObjects[0]).sort(),
+    [...REPL_OBJECT_ENTRY_KEYS].sort(),
+    'the closed entry shape, order-independent (D2/F4)',
+  );
 });
 
 test('A4 (PIN): an absent or empty replObjects block renders NO `## Cited REPL objects` section in either renderer (D2 absence-on-empty)', () => {
@@ -813,18 +822,18 @@ test('D3 (RED): the shared tier across a multi-run wave — a shared object admi
   const cellA = completedCell(f, session, 'authority-d3');
   const runA = 'run-d3-a';
   const runB = 'run-d3-b';
+  const sharedMan = admitManifest(f, { replRole: 'shared', principalId: 'orchestrator', cellId: cellA.cellId });
   const { coordinator } = setupCoord({ dir: f.root, store: f.store, log: f.log, adapter: new ScriptableAdapter() });
   assert.equal(typeof coordinator._admitSharedFanout, 'function', 'the per-member fan-out admission helper exists (stage: multi-run-fanout-missing)');
-  // The acceptance contract (what the fan-out must achieve at spawn): the same repl:shared:obj@1
-  // admits into EACH member's OWN run — never a single run-wide binding.
-  const manA = admitManifest(f, { replRole: 'shared', principalId: 'orchestrator', cellId: cellA.cellId, replRunId: runA });
-  const manB = admitManifest(f, { replRole: 'shared', principalId: 'orchestrator', cellId: cellA.cellId, replRunId: runB });
-  f.store.admitReplBinding({
-    scope: 'shared', name: 'obj', cellId: cellA.cellId, manifestDigest: manA.manifestDigest,
-  }, replAuth('orchestrator', 'd3:a'));
-  f.store.admitReplBinding({
-    scope: 'shared', name: 'obj', cellId: cellA.cellId, manifestDigest: manB.manifestDigest,
-  }, replAuth('orchestrator', 'd3:b'));
+  // F5: the row CALLS the invented fan-out facade — the per-member admits happen INSIDE the facade
+  // at spawn. A no-op facade, or one admitting into only the FIRST member's run, fails the per-run
+  // resolution asserts below. No manual per-run admitReplBinding anywhere: the facade mints the
+  // shared manifest + binding into EACH member run from the orchestrator's source manifest.
+  const fanout = coordinator._admitSharedFanout({
+    members: [runA, runB], name: 'obj', cellId: cellA.cellId, manifestDigest: sharedMan.manifestDigest,
+  });
+  assert.ok(Array.isArray(fanout?.runIds) && fanout.runIds.length === 2,
+    'the facade reports every member run admitted (R11/F5)');
   assert.equal(f.store.resolveReplCitation(runA, 'repl:shared:obj@1').cellId, cellA.cellId, 'member A resolves in ITS OWN run (R11)');
   assert.equal(f.store.resolveReplCitation(runB, 'repl:shared:obj@1').cellId, cellA.cellId, 'member B resolves in ITS OWN run (R11)');
   assert.throws(
@@ -857,7 +866,7 @@ test('D4 (RED): the run-close reap does not exist — task-ephemeral active bind
 // Section E — D5 promotion + provenance
 // ===========================================================================
 
-test('E1 (RED): a promotion rebind to shared records NO promotedFrom provenance (stage: repl-promotion-provenance-missing)', (t) => {
+test('E1 (RED): a promotion through the orchestrator facade records NO promotedFrom provenance (stage: repl-promotion-provenance-missing)', (t) => {
   const f = fixture(t, 'e1');
   const session = admitSession(f);
   const workerCell = completedCell(f, session, 'authority-e1-worker');
@@ -866,9 +875,15 @@ test('E1 (RED): a promotion rebind to shared records NO promotedFrom provenance 
     scope: 'worker:w1', name: 'result', cellId: workerCell.cellId, manifestDigest: w1Man.manifestDigest,
   }, replAuth('w1', 'e1:w1'));
   const sharedMan = admitManifest(f, { replRole: 'shared', principalId: 'orchestrator', cellId: workerCell.cellId });
-  const promoted = f.store.admitReplBinding({
-    scope: 'shared', name: 'result', cellId: workerCell.cellId, manifestDigest: sharedMan.manifestDigest,
-  }, replAuth('orchestrator', 'e1:promote'));
+  const { coordinator } = setupCoord({ dir: f.root, store: f.store, log: f.log, adapter: new ScriptableAdapter() });
+  // F3: the row drives the promotion through the invented orchestrator FACADE, never the bare
+  // shipped admitReplBinding — an un-pinned auto-inference mechanism is not the contract.
+  assert.equal(typeof coordinator._promoteReplObject, 'function',
+    'the orchestrator promotion facade exists (stage: repl-promotion-provenance-missing)');
+  const promoted = coordinator._promoteReplObject({
+    scope: 'worker:w1', name: 'result', bindingVersion: 1, runId,
+    cellId: workerCell.cellId, manifestDigest: sharedMan.manifestDigest,
+  }, { actor: 'direct:orchestrator', principalId: 'orchestrator', key: 'e1:promote' });
   assert.ok(
     promoted.binding && typeof promoted.binding.promotedFrom === 'object',
     'the promotion rebind records promotedFrom provenance (stage: repl-promotion-provenance-missing)',
@@ -918,6 +933,38 @@ test('E3 (PIN): the #63 settlement ritual is the ONLY project-persistence path �
   assert.ok(!('repl.promote' in byKey), 'no repl.promote auto-promotion surface exists — nothing project-persists except via the #63 ritual');
 });
 
+test('E4 (RED): an orchestrator promotion SUCCEEDS through the facade and is replay-safe — an always-refuse facade is caught (stage: repl-promotion-positive-missing)', (t) => {
+  const f = fixture(t, 'e4');
+  const session = admitSession(f);
+  const cellA = completedCell(f, session, 'authority-e4');
+  const w1Man = admitManifest(f, { replRole: 'worker:w1', principalId: 'w1', cellId: cellA.cellId });
+  f.store.admitReplBinding({
+    scope: 'worker:w1', name: 'result', cellId: cellA.cellId, manifestDigest: w1Man.manifestDigest,
+  }, replAuth('w1', 'e4:w1'));
+  const sharedMan = admitManifest(f, { replRole: 'shared', principalId: 'orchestrator', cellId: cellA.cellId });
+  const { coordinator } = setupCoord({ dir: f.root, store: f.store, log: f.log, adapter: new ScriptableAdapter() });
+  // F8: a valid orchestrator promotion must SUCCEED through the facade — a permanently-refusing
+  // facade passes only the E2 refusal row; this positive row kills it.
+  assert.equal(typeof coordinator._promoteReplObject, 'function',
+    'the orchestrator promotion facade exists (stage: repl-promotion-positive-missing)');
+  const caller = { actor: 'direct:orchestrator', principalId: 'orchestrator', key: 'e4:promote' };
+  const fields = {
+    scope: 'worker:w1', name: 'result', bindingVersion: 1, runId,
+    cellId: cellA.cellId, manifestDigest: sharedMan.manifestDigest,
+  };
+  const first = coordinator._promoteReplObject(fields, caller);
+  assert.ok(first.binding && first.binding.scope === 'shared',
+    'the orchestrator promotion succeeds — the shared rebind exists (stage: repl-promotion-positive-missing)');
+  assert.deepEqual(
+    first.binding.promotedFrom,
+    { scope: 'worker:w1', name: 'result', bindingVersion: 1 },
+    'promotedFrom records the promoted worker coordinates (D5)',
+  );
+  const replay = coordinator._promoteReplObject(fields, caller);
+  assert.equal(replay.result, 'idempotent', 'the promotion is replay-safe — no double-write (D6/F8)');
+  assert.equal(replay.event.seq, first.event.seq, 'the replayed promotion returns the SAME event (D6/F8)');
+});
+
 // ===========================================================================
 // Section F — D6 worker manifests (review-by-projection)
 // ===========================================================================
@@ -935,7 +982,11 @@ test('F1 (RED): no run-view REPL review projection exists — worker manifests a
   const review = coordinator._replManifestReview(runId);
   assert.ok(Array.isArray(review.manifests) && review.manifests.length >= 1, 'the review projects every admitted manifest (D6)');
   const [entry] = review.manifests;
-  assert.deepEqual(Object.keys(entry), ['branchCount', 'manifestDigest', 'principal', 'replRole'], 'the closed review entry shape (D6)');
+  assert.deepEqual(
+    Object.keys(entry).sort(),
+    ['branchCount', 'manifestDigest', 'principal', 'replRole'].sort(),
+    'the closed review entry shape, order-independent (D6/F4)',
+  );
   assert.equal(entry.replRole, 'worker:w1', 'the manifest replRole projects (D6)');
   assert.ok(review.workers && typeof review.workers.w1 === 'object', 'per-worker bindings project via the existing projection (GT10)');
 });
@@ -1022,13 +1073,28 @@ test('G2 (RED): the repl.cite read server-derives the runId from the caller\'s t
   }, replAuth('orchestrator', 'g2:bind'));
   const { coordinator } = setupCoord({ dir: f.root, store: f.store, log: f.log, adapter: new ScriptableAdapter() });
   assert.equal(typeof coordinator._replCiteInOwnRun, 'function', 'the in-caller-run cite projection exists (stage: repl-cite-run-boundary-missing)');
-  const own = coordinator._replCiteInOwnRun('task-x', 'repl:shared:result@1');
+  // F1: the positive path binds to the fixture's REAL task (task-g2 → run-repl23), so a correct
+  // task-derived implementation can go green — a phantom taskId forced runId=null and was green
+  // only via the single-run fallback the row exists to kill.
+  const own = coordinator._replCiteInOwnRun(f.task.id, 'repl:shared:result@1');
   assert.equal(own.cellId, cellA.cellId, 'a citation in the caller\'s own run resolves (R10)');
+  // F1: a TRUE foreign-run negative — a citation that RESOLVES in a different run (preconditioned
+  // below) must refuse from the caller's own run: the cross-run read escape (issue #143).
+  const runForeign = 'run-g2-foreign';
+  const foreignCell = completedCell(f, session, 'authority-g2-foreign');
+  const foreignMan = admitManifest(f, {
+    replRole: 'shared', principalId: 'orchestrator', cellId: foreignCell.cellId, replRunId: runForeign,
+  });
+  f.store.admitReplBinding({
+    scope: 'shared', name: 'foreign', cellId: foreignCell.cellId, manifestDigest: foreignMan.manifestDigest,
+  }, replAuth('orchestrator', 'g2:foreign'));
+  assert.equal(f.store.resolveReplCitation(runForeign, 'repl:shared:foreign@1').cellId, foreignCell.cellId,
+    'precondition: the citation RESOLVES in the foreign run — the only reason to refuse is the run boundary');
   const foreign = (() => {
-    try { coordinator._replCiteInOwnRun('task-x', 'repl:shared:other@1'); return null; }
+    try { coordinator._replCiteInOwnRun(f.task.id, 'repl:shared:foreign@1'); return null; }
     catch (e) { return e; }
   })();
-  assert.ok(foreign, 'a citation that does not resolve in the caller\'s own run refuses (R10)');
+  assert.ok(foreign, 'a citation that resolves in a foreign run refuses in the caller\'s own run (R10)');
   assert.equal(foreign.code, 'repl_citation_out_of_run', 'the typed out-of-run refusal (D3)');
 });
 
@@ -1046,29 +1112,69 @@ test('G3 (PIN): a citation in the caller\'s own run resolves through the store m
   assert.equal(resolved.bindingVersion, 1);
 });
 
+test('G4 (RED): the baton_repl_cite PORT refuses a caller-supplied foreign runId whose citation resolves there (stage: repl-cite-run-boundary-missing)', async (t) => {
+  const f = fixture(t, 'g4');
+  const session = admitSession(f);
+  const cellA = completedCell(f, session, 'authority-g4');
+  const manifest = admitManifest(f, { replRole: 'shared', principalId: 'orchestrator', cellId: cellA.cellId });
+  f.store.admitReplBinding({
+    scope: 'shared', name: 'result', cellId: cellA.cellId, manifestDigest: manifest.manifestDigest,
+  }, replAuth('orchestrator', 'g4:bind'));
+  const runForeign = 'run-g4-foreign';
+  const foreignCell = completedCell(f, session, 'authority-g4-foreign');
+  const foreignMan = admitManifest(f, {
+    replRole: 'shared', principalId: 'orchestrator', cellId: foreignCell.cellId, replRunId: runForeign,
+  });
+  f.store.admitReplBinding({
+    scope: 'shared', name: 'foreign', cellId: foreignCell.cellId, manifestDigest: foreignMan.manifestDigest,
+  }, replAuth('orchestrator', 'g4:foreign'));
+  const { coordinator } = setupCoord({ dir: f.root, store: f.store, log: f.log, adapter: new ScriptableAdapter() });
+  // F6: the row dispatches the REAL MCP port. The principal carries the caller's task (task-g2 →
+  // run-repl23); the wire request names a FOREIGN runId whose citation resolves THERE. A correct
+  // port server-derives the run from the caller's task and refuses repl_citation_out_of_run —
+  // the shipped port (mcp-northbound.mjs:2006) honors the caller-supplied runId and RESOLVES it.
+  const server = new McpFleetServer({
+    coordinator, coordination: f.store,
+    principal: {
+      userId: 'mcp-g4', sessionId: 'sess-g4', repoIds: [repoId], capabilities: ['observe'],
+      expiresAt: '2099-01-01T00:00:00.000Z', revoked: false, taskId: f.task.id,
+    },
+    repoIds: [repoId], now: () => 0, maxWaitMs: 25_000, maxMessageBytes: 64 * 1024,
+    takeToolQuota: async () => ({ ok: true }),
+  });
+  assert.equal(f.store.resolveReplCitation(runForeign, 'repl:shared:foreign@1').cellId, foreignCell.cellId,
+    'precondition: the citation RESOLVES in the caller-supplied foreign run — only the run boundary can refuse it');
+  let refusal = null;
+  try {
+    await server._dispatch('baton_repl_cite', {
+      repoId, runId: runForeign, citation: 'repl:shared:foreign@1',
+    }, null, 'repl-cite-x', server.principal);
+  } catch (error) { refusal = error; }
+  assert.ok(refusal, 'the port refuses a caller-supplied foreign runId whose citation resolves there (stage: repl-cite-run-boundary-missing)');
+  assert.equal(refusal.code, 'repl_citation_out_of_run', 'the typed out-of-run refusal (D3)');
+});
+
 // ===========================================================================
 // Section H — D7 composition order + the refusal family
 // ===========================================================================
 
-test('H1 (RED): the section order is `## Ambient knowledge` → `## Cited REPL objects` → `## Pending attention` with the Verification contract ahead (stage: renderBrief-repl-objects-missing)', () => {
+test('H1 (RED): the section order is `## Verification` ahead of `## Ambient knowledge` → `## Cited REPL objects` (stage: renderBrief-repl-objects-missing)', () => {
+  // F2 split: H1 pins ONLY the REPL-owned order — the Verification contract stays ahead, and
+  // Ambient renders before Cited. The `## Pending attention` tail is #79-owned and is dropped
+  // from this suite (a #79 row, not a REPL row).
   const brief = makeBrief({
     outputFormat: 'plain text',
     knowledge: { items: [{ ref: 'k1', validFrom: 'a', validTo: 'z', snippet: 'a recalled snippet' }], truncated: false },
     replObjects: [replObjectEntry('repl:shared:result@1', 'shared', 'result', 1)],
-    attention: [
-      { kind: 'scratchpad_write_failed', requestId: 'swf:w-1:5', workerId: 'w-1', code: 'scratchpad_entry_invalid', text: 'scratchpad.entry.body is 42 bytes (cap 8192)' },
-    ],
   });
   const rendered = renderBrief(brief, 'mock');
   const verificationAt = rendered.indexOf('## Verification');
   const ambientAt = rendered.indexOf('## Ambient knowledge');
   const citedAt = rendered.indexOf(CITED_SECTION);
-  const pendingAt = rendered.indexOf('## Pending attention');
   assert.ok(verificationAt >= 0 && ambientAt >= 0, 'precondition: the Verification contract and Ambient knowledge sections render');
   assert.ok(citedAt >= 0, 'the cited section renders (stage: renderBrief-repl-objects-missing)');
-  assert.ok(pendingAt >= 0, 'the pending section renders (the #79-pinned dependency)');
   assert.ok(verificationAt < ambientAt, 'the Verification contract keeps its position ahead of the data sections (D7)');
-  assert.ok(ambientAt < citedAt && citedAt < pendingAt, 'Ambient → Cited → Pending (D7)');
+  assert.ok(ambientAt < citedAt, 'Ambient → Cited (D7) — the `## Pending attention` tail is #79-owned and not pinned here (F2)');
 });
 
 test('H2 (RED): the repl_object_* refusal family is not a typed frozen surface constant (stage: repl-object-refusal-codes-missing)', () => {
@@ -1078,9 +1184,9 @@ test('H2 (RED): the repl_object_* refusal family is not a typed frozen surface c
   );
   assert.ok(Object.isFrozen(coordinatorNs.REPL_OBJECT_REFUSAL_CODES), 'the family is frozen');
   assert.deepEqual(
-    Object.keys(coordinatorNs.REPL_OBJECT_REFUSAL_CODES),
-    Object.keys(REPL_OBJECT_REFUSAL_CODES_EXPECTED),
-    'ACTUAL sorted order — no localeCompare anywhere',
+    Object.keys(coordinatorNs.REPL_OBJECT_REFUSAL_CODES).sort(),
+    Object.keys(REPL_OBJECT_REFUSAL_CODES_EXPECTED).sort(),
+    'the refusal vocabulary matches order-independently (F4) — no localeCompare anywhere',
   );
 });
 
@@ -1151,15 +1257,77 @@ test('H4 (RED): the serving-path refusals FIRE — unresolved / not-addressed / 
 // Section I — the no-arbitrary-code law (static, PIN)
 // ===========================================================================
 
-test('I1 (PIN): a REPL object is never eval\'d/imported/Function\'d — the cite-into-brief lane\'s module graph has no evaluator path (R8′/GT2, the F10 idiom)', () => {
-  const srcDir = new URL('../src/', import.meta.url);
-  const lane = ['adapter.mjs', 'cli-adapters.mjs', 'coordinator.mjs', 'messages.mjs'];
-  for (const file of lane) {
-    const source = readFileSync(new URL(file, srcDir), 'utf8');
-    assert.ok(!/\beval\s*\(/u.test(source), `${file}: no eval( anywhere on the lane (R8′)`);
-    assert.ok(!/\bnew\s+Function\s*\(/u.test(source), `${file}: no new Function( anywhere on the lane (R8′)`);
-    assert.ok(!/\bimport\s*\(\s*[`'"]/u.test(source), `${file}: no dynamic import( of any module on the lane (R8′)`);
+// F7: the no-arbitrary-code scan walks the lane's TRANSITIVE module graph (static relative
+// imports AND string-literal dynamic imports), so no new module can hide behind a variable
+// import. Every dynamic import must be a string literal or a module-scope const string literal
+// (resolvable via moduleConstString); a variable/expression dynamic import is a violation. The
+// walk tolerates the 3 NUL bytes in application.mjs / coordination-store.mjs (read as UTF-8
+// strings — the established NUL discipline above).
+function* importSpecifiers(source, fromUrl) {
+  // Matches both `import X from '…'` and `import('…')` (string-literal dynamic imports) so the
+  // walk follows the lazy-load edges too.
+  const specifierPattern = /import\s*(?:\(|(?:(?:[^'"]+\s+from\s+)?))['"]([^'"]+)['"]/g;
+  let match;
+  while ((match = specifierPattern.exec(source)) !== null) {
+    const specifier = match[1];
+    if (specifier.startsWith('.')) yield new URL(specifier, fromUrl).href;
   }
+}
+
+function moduleConstString(source, name) {
+  const constPattern = new RegExp(`const\\s+${name}\\s*=\\s*(['"\`])([^'"\`]*)\\1`, 'u');
+  const match = constPattern.exec(source);
+  return match ? match[2] : null;
+}
+
+const EVALUATOR_PATTERNS = Object.freeze([
+  [/\beval\s*\(/u, 'eval('],
+  [/(?:^|[^\w.])eval\s*\)\s*\(/u, '(0, eval)('],
+  [/\bnew\s+Function\s*\(/u, 'new Function('],
+  [/\bFunction\s*\(/u, 'Function('],
+  [/\bsetTimeout\s*\(\s*['"`]/u, 'setTimeout("code")'],
+  [/\bvm\.[A-Za-z_$][A-Za-z0-9_$]*\s*\(/u, 'vm.*('],
+]);
+
+const DYNAMIC_IMPORT_PATTERN = /\bimport\s*\(\s*([\s\S]*?)\s*\)/gu;
+
+test('I1 (PIN): a REPL object is never eval\'d/imported/Function\'d — the cite-into-brief lane\'s TRANSITIVE module graph has no evaluator path (R8′/GT2, the F7 closure)', () => {
+  const srcDir = new URL('../src/', import.meta.url);
+  const roots = [
+    'adapter.mjs', 'cli-adapters.mjs', 'coordinator.mjs', 'messages.mjs', 'mcp-northbound.mjs',
+  ].map((file) => new URL(file, srcDir));
+  const seen = new Set();
+  const offenders = [];
+  const violations = [];
+  const pending = roots.map((root) => root.href);
+  while (pending.length > 0) {
+    const url = pending.pop();
+    if (seen.has(url)) continue;
+    seen.add(url);
+    const source = readFileSync(fileURLToPath(url), 'utf8');
+    for (const [pattern, label] of EVALUATOR_PATTERNS) {
+      if (pattern.test(source)) offenders.push(`${basename(fileURLToPath(url))}: ${label}`);
+    }
+    let match;
+    while ((match = DYNAMIC_IMPORT_PATTERN.exec(source)) !== null) {
+      const expression = match[1].trim();
+      if (!expression) continue; // a bare import() comment artifact (workflow-interpreter.mjs:478) is not a call
+      if (/^['"`]/u.test(expression)) continue; // string-literal — followed into the graph below
+      if (/^[A-Za-z_$][A-Za-z0-9_$]*$/u.test(expression) && moduleConstString(source, expression) !== null) continue;
+      violations.push(`${basename(fileURLToPath(url))}: import(${expression})`);
+    }
+    for (const specifierUrl of importSpecifiers(source, url)) {
+      if (!seen.has(specifierUrl)) pending.push(specifierUrl);
+    }
+  }
+  assert.ok(offenders.length === 0,
+    `no evaluator path anywhere on the lane's transitive module graph (R8′/GT2): ${offenders.join('; ')}`);
+  assert.ok(violations.length === 0,
+    `every dynamic import on the lane is a literal or module-const literal (F7 closure): ${violations.join('; ')}`);
+  assert.ok(seen.has(new URL('application-client.mjs', srcDir).href)
+    && seen.has(new URL('workflow-interpreter.mjs', srcDir).href),
+    'the walk FOLLOWS string-literal dynamic imports — application-client.mjs and workflow-interpreter.mjs are reached only via application.mjs lazy import() edges (F7 closure)');
+  assert.ok(seen.size > roots.length, `the walk is TRANSITIVE, not a closed list (F7) — ${seen.size} modules reached`);
   const registry = applicationSemanticRegistry();
   const byKey = Object.fromEntries(registry.canonicalOperations.map((o) => [o.key, o]));
   assert.ok(!('repl.eval' in byKey), 'no repl.eval kind in the canonical registry');
