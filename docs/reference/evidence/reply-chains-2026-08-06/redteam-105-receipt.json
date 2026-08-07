@@ -1,0 +1,37 @@
+{
+  "attempt": "2026-08-07T00:15:42.326Z",
+  "salt": "r320260807001542",
+  "role": "redteam-105",
+  "steps": [
+    {
+      "step": "waves.start",
+      "receipt": {
+        "runs": [
+          "run-5d2955884fd28e2e93e376381c291f0d"
+        ]
+      }
+    },
+    {
+      "step": "terminal:redteam-105",
+      "receipt": {
+        "phase": "work_completed"
+      }
+    },
+    {
+      "step": "loop-drained",
+      "receipt": {
+        "pending": []
+      }
+    }
+  ],
+  "harvest": {
+    "redteam-105": {
+      "pin": "5b2c7caba53dea52c2fb30a1b30ce45c2f36da4a",
+      "paths": [
+        "docs/reference/evidence/reply-chains-2026-08-06/contract-redteam.md"
+      ]
+    }
+  },
+  "harvestStalePinsSkipped": 342,
+  "verdict": "RT-105-OK"
+}
