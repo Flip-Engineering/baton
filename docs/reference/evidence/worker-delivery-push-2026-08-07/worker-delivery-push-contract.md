@@ -1,4 +1,4 @@
-# Issue #79 — Worker-delivery push contract (v1.1)
+# Issue #79 — Worker-delivery push contract (v1.2)
 
 The implementation contract for issue #79: push attention + verdicts to the WORKER's own
 down-channel. It specifies behavior; it does not amend implementation in this artifact. It is a
@@ -16,6 +16,16 @@ concrete fix, and open questions OQ1–OQ4 are adjudicated: **OQ1 is RESOLVED as
 (the byte-shed semantics are pinned in D2 — no longer deferrable); OQ2, OQ3, OQ4 are **SOUND**
 as written. The citation blockers (§1.2) were re-anchored at THIS fold HEAD — the red-team pass
 ran against a different tree (`c34e1f36…`), so every corrected anchor was re-grepped here.
+
+**v1.2 fold note.** This revision folds the #79 blue-team verdict (`suite-blueteam.md`,
+NEEDS-FOLD — eight findings F1–F8, each with its concrete fix). One contract movement is
+required: F2's blocker. The blue team found the push projection's per-source bounds unpinned —
+the run-view `scratchpad_write_failed` source is `.slice(-2)`-bounded (GT1,
+application.mjs:7659), and nothing stated whether `_pendingAttentionPush` inherits that DISPLAY
+bound or re-bounds per D2. v1.2 pins it (D2, per-source bounds): the push derives the
+genuinely-pending set per D5's still-pending predicates and does NOT inherit the run-view
+display bounds; D2's item-count bound applies to the union. No other decision moved — the byte
+shed, the refusal vocabulary, and the per-worker verdict projection are unchanged from v1.1.
 
 Every `file:line` citation below was verified in this worktree with NUL-safe `grep -an` searches
 and targeted `sed -n` reads. `impl/src/coordinator.mjs` and `impl/src/coordination-store.mjs` are
@@ -211,6 +221,17 @@ the shed, and nothing is unrecoverable. (The alternative — retiring the byte r
 item-count bound be the sole render bound — was considered and rejected in this fold: it would
 leave 8 items × up to 4096-byte mint-bound text rendering without any render-side shed, the exact
 frame waste #89 forbids.)
+
+**Per-source bounds, pinned (v1.2 — the F2 blocker).** `_pendingAttentionPush(workerId)`
+derives the genuinely-pending items per D5's still-pending predicates (all event-derived), for
+EVERY push-qualified source — `scratchpad_write_failed`, `answer_question`/`answer_approval`,
+and the `gate_verdict`. It does NOT inherit the run-view's DISPLAY bounds: the
+`scratchpad_write_failed` last-two-per-worker `.slice(-2)` (GT1, application.mjs:7659) and
+`MAX_ATTENTION = 64` (application.mjs:7672) bound the `status().view.attention` DISPLAY, not
+the push projection. D2's item-count bound (8) applies to the union of genuinely-pending items
+— a pending set of 9 refused writes or 9 pending interactions serves 8 in-block and spills the
+excess through the digest-cited lane. The run-view bound and the push bound are independent;
+a correct implementation never collapses the two.
 
 ### D3 — What qualifies for push: worker-addressed by worker identity, never content
 
