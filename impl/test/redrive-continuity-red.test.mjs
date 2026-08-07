@@ -10,22 +10,26 @@
 // implementation (the fold's "must NOT change": the D4 evidence law, the opt-in/refusal posture,
 // the byte-stability seam, and the #89 ONE-composer).
 //
-// Row inventory (24 rows — 19 RED / 5 PIN):
-//   A1-A2  RED    D1/D2 renderers        (renderBrief-continuity-missing, renderPrompt-continuity-missing)
+// Row inventory (28 rows — 23 RED / 5 PIN):
+//   A1-A2  RED    D1/D2 renderers        (renderBrief-continuity-missing, renderPrompt-continuity-missing — provenance-first + entryId|digest)
 //   A3     PIN    D2 absence-on-empty    (no continuity → no section, either renderer)
 //   A4     RED    D3/GT5 admission       (admission-surface-missing — redriveMembers absent, carryForward absent, REDRIVE_SCOPES absent)
-//   A5     RED    D1 per-item framing    (carried-per-item-frame-missing — [carried/untrusted] + within-block order)
-//   A6     RED    D1.2 pin list          (pin-digest-list-missing — {report, startedAtMs, excludeShas}-derived, attacker pin refuses)
+//   A5     RED    D1 per-item framing    (carried-per-item-frame-missing — [carried/untrusted] + within-block order, shuffled input)
+//   A6     RED    D1.2 pin list          (pin-digest-list-missing — {report, startedAtMs, excludeShas}-derived, foreign pin refused)
 //   B1-B2  RED    R3 neutralization      (carried-body-neutralize-missing, fake-frame-neutralize-missing)
 //   B3     PIN    R3 substrate           (wrapProse + sanitizeWebContent/stripControlCharacters)
 //   C1-C2  RED    R9 total order         (renderBrief-total-order-missing, renderPrompt-total-order-missing)
-//   D1     RED    D3 default-off         (redrive-carry-missing — _redriveContinuity absent, plain re-drive byte-identical)
+//   D1     RED    D3 default-off         (redrive-carry-missing — _redriveContinuity absent; byte-identity holds even with a same-role dead source)
 //   D2-D4  RED    D3 typed refusals      (redrive-carry-refusal-missing — role / wave-chain / option-shape)
 //   D5     RED    D3 refusal family      (redrive-refusal-codes-missing — REDRIVE_REFUSAL_CODES frozen, 10 codes)
+//   D6     RED    D1 no-evidence         (redrive-carry-no-evidence-missing — empty named scope refuses)
+//   D7     RED    D1 unframable          (redrive-carry-unframable-missing — un-neutralizable body refuses at the render seam)
+//   D8     RED    D1 oversized           (redrive-carry-oversized-missing — over-bound block + spill lane unavailable refuses)
+//   D9     RED    D1 spill-unavailable   (redrive-carry-spill-unavailable-missing — overflow + spill lane refuses)
 //   E1     PIN    D4/TG2 evidence law    (_steeringEvidenceQualifies shipped — only THIS attempt's digests answer)
-//   E2     RED    D4/R6 no-store-write   (no-store-write-missing — fresh run's store has no dead-attempt rows)
+//   E2     RED    D4/R6 no-store-write   (no-store-write-missing — fresh run's store has no dead-attempt rows; carry-path digestSet live)
 //   F1-F2  RED    D1/R7 registry rows    (continuity-registry-rows-missing, continuity-bytes-row-missing)
-//   F3     RED    D1/R7 overflow spill   (continuity-overflow-spill-missing — 9 serve 8, excess spills digest-cited)
+//   F3     RED    D1/R7 overflow spill   (continuity-overflow-spill-missing — 9 serve 8, both overflow notes resolve through the spill)
 //   F4     PIN    GT7 coaching shape     (composeFrameLimitRefusal names lane/cap/actual/unit + spill path)
 //   G1     RED    R8 byte stability      (brief-purity-violation — carry changes the served brief, NOT task.brief)
 //   G2     PIN    R8 seam purity         (_providerBrief is a pure function — no task.brief mutation, no adapter call)
@@ -33,7 +37,8 @@
 // Invented surfaces (every one absent at HEAD — the first assertion on each is an `assert.ok`/`assert.equal`
 // so the row fails at the NAMED stage, never on a vacuous shape assertion):
 //   coordinator._redriveContinuity(memberId, carryForward)   — the D3 admission + D2 composition seam ({sourceRunId, scopes})
-//   coordinator._composeContinuity(memberId)                 — the D2 projection the briefing augmentation consumes
+//   coordinator._composeContinuity(memberId, continuity)     — the D2 projection the briefing augmentation consumes
+//                                                              (2-arg: the block IS the admission result — folded signature, blue-team finding 5)
 //   recipes.redriveMembers(manifest, roles, {newIdempotencyKey, carryForward}) — the RC-B manifest-based surface (GT5)
 //   coordinatorNs.REDRIVE_REFUSAL_CODES                       — the frozen redrive_carry_* refusal family (refusals)
 //   coordinatorNs.REDRIVE_SCOPES                              — the closed four-member scope set ['scratchpad','pins','terminal','refusals']
@@ -69,10 +74,10 @@ import { FRAME_LIMITS, composeFrameLimitRefusal } from '../src/limits.mjs';
 import * as recipes from '../src/recipes.mjs';
 
 // Verified split (recorded after two consecutive runs from the repo root):
-//   run 1: tests 24 · pass 5 · fail 19 · cancelled 0 · skipped 0 · todo 0 (≈178 ms)
-//   run 2: tests 24 · pass 5 · fail 19 · cancelled 0 · skipped 0 · todo 0 (≈178 ms)
-//   deterministic — the 5 passes are exactly the PIN rows (A3, B3, E1, F4, G2); the 19 failures are
-//   the RED rows, each confirmed to fail at its NAMED stage.
+//   run 1: tests 28 · pass 5 · fail 23 · cancelled 0 · skipped 0 · todo 0 (≈233 ms)
+//   run 2: tests 28 · pass 5 · fail 23 · cancelled 0 · skipped 0 · todo 0 (≈208 ms)
+//   deterministic — the 5 passes are exactly the PIN rows (A3, B3, E1, F4, G2); the 23 failures are
+//   the RED rows, each confirmed to fail at its NAMED stage (invented-surface probe first).
 
 const dirs = [];
 function tmpDir() {
@@ -238,6 +243,15 @@ function continuityBlock(overrides = {}) {
   };
 }
 
+// A deterministic shuffle (left-rotation) — the within-block order rows MUST NOT feed pre-sorted
+// items (blue-team finding 4): an input-order-preserving composition/render must fail. No
+// Math.random — the suite stays deterministic and hermetic.
+function rotateItems(items, by = 1) {
+  if (items.length === 0) return items;
+  const k = ((by % items.length) + items.length) % items.length;
+  return [...items.slice(k), ...items.slice(0, k)];
+}
+
 // A #69-shaped cited REPL object (the total-order rows need the section to exist on the fold).
 function replObjectEntry(citation, scope, name, bindingVersion, overrides = {}) {
   return {
@@ -268,6 +282,13 @@ function terminalizeTask(store, taskId) {
   store.transitionTask(taskId, 'failed', 2, { actor: 'policy', key: `terminal:${taskId}` });
 }
 
+// Simulate an unavailable spill lane (D8/D9 — the frame-economics refusals). The fold's closed
+// serializer must catch the lane's refusal and map it to redrive_carry_oversized /
+// redrive_carry_spill_unavailable instead of silently truncating the block (D1, blue-team finding 7).
+function spillLaneUnavailable() {
+  return () => { throw Object.assign(new Error('spill lane unavailable'), { code: 'spill_unavailable' }); };
+}
+
 // ===========================================================================
 // Section A — D1 the closed content set + framing (R1/R3)
 // ===========================================================================
@@ -291,8 +312,18 @@ test('A1 (RED): renderBrief does not emit `## Re-drive continuity` for a brief c
     rendered.includes(UNTRUSTED_RE_DRIVE_FRAME),
     'the section opens with the closed UNTRUSTED_RE_DRIVE frame — provenance first (D2)',
   );
-  assert.match(rendered, /- \[carried\/untrusted\] terminal terminal:run:dead:1:/u, 'each item renders `- [carried/untrusted] ${scope} ${entryId|digest}: …` (D1)');
-  assert.match(rendered, /- \[carried\/untrusted\] scratchpad note:run:dead:3:/u, 'the load-bearing scratchpad member renders per-item framed (D1)');
+  // Provenance FIRST (blue-team finding 8): the frame opens the section BEFORE the first carried
+  // item and sits immediately after the `## Re-drive continuity` header — a fold that renders
+  // items before the frame must fail.
+  const frameAt = rendered.indexOf(UNTRUSTED_RE_DRIVE_FRAME);
+  const firstCarriedAt = rendered.indexOf(`- ${CARRIED_ITEM_PREFIX}`);
+  assert.ok(frameAt >= 0 && firstCarriedAt >= 0 && frameAt < firstCarriedAt,
+    'the provenance frame renders BEFORE the first `[carried/untrusted]` item (D2 — provenance first, finding 8)');
+  assert.ok(frameAt > continuityAt, 'the frame sits immediately after the `## Re-drive continuity` header (D2 — provenance first, finding 8)');
+  // The per-item frame accepts EITHER the entryId form or the digest form (the contract's
+  // `${entryId|digest}` — blue-team finding 9).
+  assert.match(rendered, /- \[carried\/untrusted\] terminal (terminal:run:dead:1|[a-f0-9]{64}):/u, 'each item renders `- [carried/untrusted] ${scope} ${entryId|digest}: …` (D1)');
+  assert.match(rendered, /- \[carried\/untrusted\] scratchpad (note:run:dead:3|[a-f0-9]{64}):/u, 'the load-bearing scratchpad member renders per-item framed (D1)');
   assert.ok(!rendered.includes('hub-computed'), 'no unframed trusted hub content crosses the provider seam (R3)');
 });
 
@@ -308,7 +339,13 @@ test('A2 (RED): renderPrompt does not emit `## Re-drive continuity` (stage: rend
   const continuityAt = rendered.indexOf(CONTINUITY_SECTION);
   assert.ok(continuityAt > contractAt, 'the section lands AFTER the verification execution contract — the last lines of the prompt (D2)');
   assert.ok(rendered.includes(UNTRUSTED_RE_DRIVE_FRAME), 'the section opens with the closed UNTRUSTED_RE_DRIVE frame (D2)');
-  assert.match(rendered, /- \[carried\/untrusted\] terminal terminal:run:dead:1:/u, 'each item renders `- [carried/untrusted] ${scope} ${entryId|digest}: …` (D1)');
+  // Provenance FIRST (blue-team finding 8), the same pin A1 carries for renderBrief.
+  const frameAt = rendered.indexOf(UNTRUSTED_RE_DRIVE_FRAME);
+  const firstCarriedAt = rendered.indexOf(`- ${CARRIED_ITEM_PREFIX}`);
+  assert.ok(frameAt >= 0 && firstCarriedAt >= 0 && frameAt < firstCarriedAt,
+    'the provenance frame renders BEFORE the first `[carried/untrusted]` item (D2 — provenance first, finding 8)');
+  assert.ok(frameAt > continuityAt, 'the frame sits immediately after the `## Re-drive continuity` header (D2 — provenance first, finding 8)');
+  assert.match(rendered, /- \[carried\/untrusted\] terminal (terminal:run:dead:1|[a-f0-9]{64}):/u, 'each item renders `- [carried/untrusted] ${scope} ${entryId|digest}: …` (D1, finding 9)');
 });
 
 test('A3 (PIN): an absent continuity block emits NO `## Re-drive continuity` section from either renderer (D2 absence-on-empty)', () => {
@@ -347,7 +384,12 @@ test('A4 (RED): the closed four-member set has no admission surface — redriveM
 test('A5 (RED): no per-item `[carried/untrusted]` frame and no within-block order exist (stage: carried-per-item-frame-missing)', () => {
   const brief = makeBrief({
     outputFormat: 'plain text',
-    continuity: continuityBlock(),
+    // NOT pre-sorted — the carried members are admitted in a rotated order, so the within-block
+    // order pin holds only if the renderer re-orders to terminal → refusals → scratchpad → pins
+    // (blue-team finding 4 — an input-order-preserving render must fail).
+    continuity: continuityBlock({
+      items: rotateItems(continuityBlock().items, 1),
+    }),
   });
   const rendered = renderBrief(brief, 'mock');
   assert.ok(
@@ -377,6 +419,13 @@ test('A6 (RED): the pin digest list is not bound to the dead member\'s checkpoin
   coordinator._coordination.recordDriver('wave.member.checkpoint', {
     runId: deadTask.runId, report: 'results/spec.md', startedAtMs: 1000, excludeShas: [], shas: [realSha],
   }, { actor: 'orchestrator', key: 'a6-checkpoint' });
+  // A FOREIGN member's/attempt's pin lives in the SAME window (same report, overlapping
+  // startedAtMs) but is attributed to a DIFFERENT run — a raw `refs/baton/results/*` window scan
+  // would carry it; the resolveResultPin disambiguation excludes it (blue-team finding 3).
+  const foreignSha = 'e'.repeat(40);
+  coordinator._coordination.recordDriver('wave.member.checkpoint', {
+    runId: 'run:foreign-a6', report: 'results/spec.md', startedAtMs: 2000, excludeShas: [], shas: [foreignSha],
+  }, { actor: 'orchestrator', key: 'a6-foreign-checkpoint' });
   terminalizeTask(coordinator._coordination, deadTask.id);
   const { handle: freshHandle } = await spawn(coordinator, { runId: 'run:fresh-a6' });
   recordMemberDescriptor(coordinator, coordinator._tasks.get(freshHandle.taskId).runId, { role: 'architect', waveId: 'wave:a' });
@@ -396,6 +445,8 @@ test('A6 (RED): the pin digest list is not bound to the dead member\'s checkpoin
   assert.ok(serialized.includes('startedAtMs'), 'startedAtMs rides the carried list (D1.2)');
   assert.ok(serialized.includes('excludeShas'), 'excludeShas rides the carried list — shas attributed to other members are excluded (D1.2)');
   assert.ok(serialized.includes(realSha), 'the dead member\'s own checkpoint shas are directly citable (D1.2)');
+  assert.ok(!serialized.includes(foreignSha),
+    'a foreign member\'s pin in the same window is NEVER carried — the list is the dead member\'s resolveResultPin-disambiguated history, never a raw ref scan (D1.2, finding 3)');
   // An attacker pin NEVER in that history is never carried — the closed option shape refuses a
   // caller-asserted pin list outright (D1.2, "never a raw ref scan").
   const smuggled = (() => {
@@ -452,9 +503,16 @@ test('B2 (RED): a fake `UNTRUSTED_...` frame header in carried text renders iner
   const bullet = rendered.split('\n').find((line) => line.startsWith(`- ${CARRIED_ITEM_PREFIX}`));
   assert.ok(bullet, 'the carried item renders as a bullet (D1)');
   const leaf = bullet.slice(`- ${CARRIED_ITEM_PREFIX} `.length);
+  assert.ok(!leaf.includes('\n'), 'the leaf is a single line — the injected newline cannot mint a section (R3, mirroring B1, finding 10)');
   assert.ok(leaf.includes('UNTRUSTED_ORCHESTRATOR'), 'the fake header text is preserved INSIDE the leaf, never filtered (D2/R3)');
-  const frameLines = rendered.split('\n').filter((line) => line.startsWith('UNTRUSTED_'));
-  assert.equal(frameLines.length, 1, 'exactly ONE frame line — the legitimate section-opening frame; the fake header never re-frames its own body (D2/R3)');
+  // SECTION-scoped frame count (finding 10): exactly ONE UNTRUSTED_ frame line in the rendered
+  // section — a whole-output count could miss a free-floating fake frame below the section.
+  const sectionLines = rendered.split('\n');
+  const sectionStart = sectionLines.findIndex((line) => line.startsWith(CONTINUITY_SECTION));
+  assert.ok(sectionStart >= 0, 'the section renders (D2)');
+  const frameLinesInSection = sectionLines.slice(sectionStart).filter((line) => line.startsWith('UNTRUSTED_'));
+  assert.equal(frameLinesInSection.length, 1,
+    'exactly ONE frame line in the rendered section — the legitimate section-opening frame; the fake header never re-frames its own body (D2/R3, finding 10)');
 });
 
 test('B3 (PIN): wrapProse is the model-authored/untrusted wrapper and sanitizeWebContent/stripControlCharacters are the neutralization substrate the fold must use (R3)', () => {
@@ -525,17 +583,29 @@ test('C2 (RED): the ONE total render order does not hold in renderPrompt (stage:
 // Section D — D3 opt-in + typed refusals (R4/R5)
 // ===========================================================================
 
-test('D1 (RED): default-off — no carryForward declared means a byte-identical re-drive (stage: redrive-carry-missing)', async () => {
+test('D1 (RED): default-off — no carryForward declared means a byte-identical re-drive EVEN with a same-role dead source (stage: redrive-carry-missing)', async () => {
   const adapter = new ScriptableAdapter();
   const { coordinator } = setup({ adapter, capture: noDiff });
-  const { handle, task } = await spawn(coordinator);
+  // A same-role same-wave dead source EXISTS with carried content — a default-on-for-same-role
+  // fold would carry it without the opt-in, so the byte-identity claim holds only if the carry
+  // really is opt-in (blue-team finding 2).
+  const { handle: deadHandle, task: deadTask } = await spawn(coordinator, { runId: 'run:dead-d1' });
+  recordMemberDescriptor(coordinator, deadTask.runId, { role: 'architect', waveId: 'wave:a' });
+  coordinator._coordination.writeScratchpad(
+    { runId: deadTask.runId, taskId: deadTask.id, workerId: deadHandle.id, entry: { kind: 'note', text: 'would be carried if default-on' } },
+    { actor: 'worker', principalId: deadHandle.id, key: 'd1-dead-note' },
+  );
+  terminalizeTask(coordinator._coordination, deadTask.id);
+  const { handle, task } = await spawn(coordinator, { runId: 'run:fresh-d1' });
+  recordMemberDescriptor(coordinator, task.runId, { role: 'architect', waveId: 'wave:a' });
   assert.equal(
     typeof coordinator._redriveContinuity,
     'function',
     'the carry-forward admission surface `_redriveContinuity(memberId, carryForward)` exists (stage: redrive-carry-missing)',
   );
   // A re-drive that declares NO carryForward carries NOTHING — opt-in, never default-on (D3).
-  assert.equal(coordinator._redriveContinuity(handle.id, null), null, 'null carryForward carries nothing (D3)');
+  // The fixture stages a same-role dead source so a default-on fold has something to carry.
+  assert.equal(coordinator._redriveContinuity(handle.id, null), null, 'null carryForward carries nothing even with a same-role dead source (D3)');
   assert.equal(coordinator._redriveContinuity(handle.id, undefined), null, 'an absent carryForward carries nothing (D3)');
   const composed = coordinator._providerBrief(task.brief, handle.id);
   assert.equal(composed?.continuity ?? null, null, 'the composed brief has no continuity block without an explicit carry (D3)');
@@ -653,6 +723,119 @@ test('D5 (RED): the redrive_carry_* refusal family is not a typed surface consta
   );
 });
 
+test('D6 (RED): an empty named scope on the source refuses redrive_carry_no_evidence (stage: redrive-carry-no-evidence-missing)', async () => {
+  const adapter = new ScriptableAdapter();
+  const { coordinator } = setup({ adapter, capture: noDiff });
+  // A terminalized source with NO scratchpad entries — the `scratchpad` scope is empty on it.
+  const { handle: deadHandle, task: deadTask } = await spawn(coordinator, { runId: 'run:dead-d6' });
+  recordMemberDescriptor(coordinator, deadTask.runId, { role: 'architect', waveId: 'wave:a' });
+  terminalizeTask(coordinator._coordination, deadTask.id);
+  const { handle: freshHandle, task: freshTask } = await spawn(coordinator, { runId: 'run:fresh-d6' });
+  recordMemberDescriptor(coordinator, freshTask.runId, { role: 'architect', waveId: 'wave:a' });
+  assert.equal(
+    typeof coordinator._redriveContinuity,
+    'function',
+    'the carry admission surface exists (stage: redrive-carry-no-evidence-missing)',
+  );
+  const refusal = (() => {
+    try {
+      coordinator._redriveContinuity(freshHandle.id, { sourceRunId: deadTask.runId, scopes: ['scratchpad'] });
+      return null;
+    } catch (error) { return error; }
+  })();
+  assert.ok(refusal, 'a named scope that is EMPTY on the source refuses — never silently accepted, never a silent empty section (D1)');
+  assert.equal(refusal.code, 'redrive_carry_no_evidence', 'the typed no-evidence refusal fires (D1, blue-team finding 7)');
+  void deadHandle; void freshTask;
+});
+
+test('D7 (RED): a carried body that cannot be framed/neutralized refuses redrive_carry_unframable at the render seam (stage: redrive-carry-unframable-missing)', async () => {
+  const adapter = new ScriptableAdapter();
+  const { coordinator } = setup({ adapter, capture: noDiff });
+  const { handle } = await spawn(coordinator);
+  assert.equal(
+    typeof coordinator._composeContinuity,
+    'function',
+    'the closed serializer `_composeContinuity(memberId, continuity)` exists (stage: redrive-carry-unframable-missing)',
+  );
+  // A body that IS the section-opening frame literal — indistinguishable from the real frame, so it
+  // cannot be framed or neutralized without minting a second frame line. The one closed serializer
+  // must REFUSE it (never render a duplicate frame) — B2's exactly-one-frame pin forces this
+  // reading (D1, blue-team finding 7).
+  const unframable = continuityBlock({
+    items: [{
+      scope: 'scratchpad', entryId: 'note:unframable', digest: 'e'.repeat(64), text: UNTRUSTED_RE_DRIVE_FRAME,
+    }],
+  });
+  const refusal = (() => {
+    try {
+      coordinator._composeContinuity(handle.id, unframable);
+      return null;
+    } catch (error) { return error; }
+  })();
+  assert.ok(refusal, 'an unframable carried body refuses at the render seam — never appended unframed (D1)');
+  assert.equal(refusal.code, 'redrive_carry_unframable', 'the typed unframable refusal fires (D1, blue-team finding 7)');
+});
+
+test('D8 (RED): an over-bound block with the spill lane unavailable refuses redrive_carry_oversized (stage: redrive-carry-oversized-missing)', async () => {
+  const adapter = new ScriptableAdapter();
+  const { coordinator } = setup({ adapter, capture: noDiff });
+  const { handle } = await spawn(coordinator);
+  assert.equal(
+    typeof coordinator._composeContinuity,
+    'function',
+    'the closed serializer `_composeContinuity(memberId, continuity)` exists (stage: redrive-carry-oversized-missing)',
+  );
+  // A block far over the 8-item bound (also over the 4096-byte bound) — composition must REFUSE,
+  // never silently truncate (D1, blue-team finding 7).
+  const huge = Array.from({ length: 50 }, (unused, index) => ({
+    scope: 'scratchpad', entryId: `note:${index}`,
+    digest: createHash('sha256').update(String(index)).digest('hex'),
+    text: `scratchpad note ${index} ${'x'.repeat(120)}`,
+  }));
+  const originalMint = coordinator._coordination.mintSpill;
+  coordinator._coordination.mintSpill = spillLaneUnavailable();
+  const refusal = (() => {
+    try {
+      coordinator._composeContinuity(handle.id, continuityBlock({ items: huge }));
+      return null;
+    } catch (error) { return error; }
+  })();
+  coordinator._coordination.mintSpill = originalMint;
+  assert.ok(refusal, 'an over-bound block refuses when the spill lane is unavailable — never a silent truncation (D1)');
+  assert.equal(refusal.code, 'redrive_carry_oversized', 'the typed oversized refusal fires (D1, blue-team finding 7)');
+});
+
+test('D9 (RED): an overflow whose spill lane refuses carries redrive_carry_spill_unavailable (stage: redrive-carry-spill-unavailable-missing)', async () => {
+  const adapter = new ScriptableAdapter();
+  const { coordinator } = setup({ adapter, capture: noDiff });
+  const { handle } = await spawn(coordinator);
+  assert.equal(
+    typeof coordinator._composeContinuity,
+    'function',
+    'the closed serializer `_composeContinuity(memberId, continuity)` exists (stage: redrive-carry-spill-unavailable-missing)',
+  );
+  // 9 items serving 8 — the overflow NEEDS the spill lane; the lane refuses (blue-team finding 7).
+  const nineItems = [
+    { scope: 'terminal', entryId: 'terminal:1', digest: 'a'.repeat(64), text: 'budget_exceeded budget_tokens' },
+    { scope: 'refusals', entryId: 'refusal:1', digest: 'b'.repeat(64), text: 'gate scope counts only' },
+    ...Array.from({ length: 7 }, (unused, index) => ({
+      scope: 'scratchpad', entryId: `note:${index + 1}`, digest: createHash('sha256').update(String(index)).digest('hex'),
+      text: `scratchpad note ${index + 1}`,
+    })),
+  ];
+  const originalMint = coordinator._coordination.mintSpill;
+  coordinator._coordination.mintSpill = spillLaneUnavailable();
+  const refusal = (() => {
+    try {
+      coordinator._composeContinuity(handle.id, continuityBlock({ items: nineItems }));
+      return null;
+    } catch (error) { return error; }
+  })();
+  coordinator._coordination.mintSpill = originalMint;
+  assert.ok(refusal, 'the overflow refuses when the spill lane refuses — never a silent drop (D1)');
+  assert.equal(refusal.code, 'redrive_carry_spill_unavailable', 'the typed spill-unavailable refusal fires (D1, blue-team finding 7)');
+});
+
 // ===========================================================================
 // Section E — D4 the trust posture (R6)
 // ===========================================================================
@@ -722,21 +905,37 @@ test('E2 (RED): a carry writes NOTHING to the fresh run\'s store — no dead-att
   assert.ok(carried, 'the carry composes');
   await flush();
   // The capture is a projection into the brief, NEVER a store write into the fresh run (D4/blocker 6).
+  // The store's snapshot surface is {runId, observedSeq, fenceTuple, slices} — the entries ride
+  // slices[i].entries (coordination-store.mjs:13985-14003); there is NO top-level `entries` field.
+  // Asserting against `?.entries ?? []` would be vacuously true (blue-team finding 1 — the exact
+  // "restore"-implementation blocker 6 was written to kill passes that row).
   const freshScratch = coordinator._coordination.scratchpadSnapshotBatch(freshTask.runId, [`worker:${freshHandle.id}`, 'shared']);
-  const freshEntries = freshScratch?.entries ?? [];
+  const freshEntries = (freshScratch?.slices ?? []).flatMap((slice) => slice.entries ?? []);
   assert.equal(
     freshEntries.some((entry) => String(entry.content?.text ?? '').includes('dead attempt finding') || (entry.contentDigest === deadDigest)),
     false,
     'the fresh run\'s store has NO dead-attempt rows after the carry (R6 no-store-write)',
   );
-  // The carried digest never enters the fresh attempt's steering digestSet — it would qualify IF
-  // counted, and it is not (TG2/D4).
-  for (const [, record] of coordinator._pausedTurns) {
-    if (record.steering?.digestSet) {
-      assert.equal(record.steering.digestSet.has(deadDigest), false,
-        'a carried dead-attempt digest is never in the fresh attempt\'s steering.digestSet (D4/GT8)');
-    }
-  }
+  // Arm a steering cycle on the fresh attempt (mirror E1's pause-admission + scratchpad.write
+  // flow) so the carry-path digestSet negative is LIVE — a fold that mints a fresh steering record
+  // carrying the dead digest WITHOUT writing store rows is caught here (blue-team finding 1).
+  adapter.emit({
+    worker: freshHandle.id, harness: 'mock@1.0.0', turnEpoch: 1, kind: 'lifecycle.turn_completed', actor: 'worker',
+    payload: { status: 'completed', output: 'checkpoint' },
+  });
+  await flush();
+  assert.equal(coordinator.pausedTurns({ taskId: freshTask.id }).length, 1, 'the fresh cycle is armed');
+  adapter.emit({
+    worker: freshHandle.id, harness: 'mock@1.0.0', turnEpoch: 1, kind: 'scratchpad.write', actor: 'worker',
+    payload: { entry: { kind: 'note', text: 'the fresh attempt\'s own note' }, expectedFence: 'current', idempotencyKey: 'e2-fresh-note' },
+  });
+  await flush();
+  assert.equal(coordinator.pausedTurns({ taskId: freshTask.id }).length, 0, 'THIS attempt\'s distinct digest answered the cycle (TG2)');
+  const answered = [...coordinator._pausedTurns.values()]
+    .find((record) => record.taskId === freshTask.id && record.state === 'resolved' && record.steering?.answered === true);
+  assert.ok(answered, 'the answered pause record is durable');
+  assert.equal(answered.steering.digestSet.has(deadDigest), false,
+    'a carried dead-attempt digest is never in the fresh attempt\'s steering.digestSet (D4/GT8)');
 });
 
 // ===========================================================================
@@ -770,10 +969,11 @@ test('F3 (RED): the D1 overflow round trip — 9 carried items serve 8 in-block,
   assert.equal(
     typeof coordinator._composeContinuity,
     'function',
-    'the D2 projection `_composeContinuity(memberId)` exists (stage: continuity-overflow-spill-missing)',
+    'the D2 projection `_composeContinuity(memberId, continuity)` exists (stage: continuity-overflow-spill-missing)',
   );
-  // Nine carried scratchpad items — terminal + refusals render in-block first (the fixed order),
-  // then the scratchpad projection shares the remaining budget with the pin list (D1/blocker 7).
+  // Nine carried items — terminal + refusals render in-block first (the fixed order), then the
+  // scratchpad projection shares the remaining budget with the pin list (D1/blocker 7). The input
+  // is ROTATED so an input-order-preserving composition fails (blue-team finding 4).
   const nineItems = [
     { scope: 'terminal', entryId: 'terminal:1', digest: 'a'.repeat(64), text: 'budget_exceeded budget_tokens' },
     { scope: 'refusals', entryId: 'refusal:1', digest: 'b'.repeat(64), text: 'gate scope counts only' },
@@ -782,15 +982,24 @@ test('F3 (RED): the D1 overflow round trip — 9 carried items serve 8 in-block,
       text: `scratchpad note ${index + 1}`,
     })),
   ];
-  const composed = coordinator._composeContinuity(handle.id, continuityBlock({ items: nineItems }));
+  const composed = coordinator._composeContinuity(handle.id, continuityBlock({ items: rotateItems(nineItems, 3) }));
   assert.ok(composed && Array.isArray(composed.items), 'the projection returns the composed block');
   const inBlock = composed.items;
   assert.equal(inBlock.length, 8, 'the head 8 items are served in full — the item-count bound (D1)');
   assert.ok(inBlock[0].scope === 'terminal' && inBlock[1].scope === 'refusals',
-    'terminal + refusals always render in-block first (D1/blocker 7)');
+    'terminal + refusals always render in-block first, re-ordered from the shuffled input (D1/blocker 7, finding 4)');
   const spillEntry = inBlock.find((item) => /^spill:sha256:[a-f0-9]{64}$/u.test(item.entryId ?? ''));
   assert.ok(spillEntry, 'the block closes with a spill:sha256:<digest> citation — never a truncation (D1)');
-  assert.ok(JSON.stringify(spillEntry).includes('scratchpad note 7'), 'the overflow item id rides the spill citation (D1)');
+  // The spill RESOLVES — mint the artifact and resolve the citation to the full text. BOTH
+  // overflow ids (notes 6 AND 7) must ride the spill; asserting note 7 only lets note 6 be
+  // silently dropped (blue-team finding 6).
+  const spillId = spillEntry.entryId;
+  const materialized = coordinator._coordination.materializeSpill(spillId);
+  assert.ok(materialized, 'the spill citation RESOLVES through the closed spill lane — the worker can fetch the full body (D1/R7, finding 6)');
+  assert.ok(materialized.body.includes('scratchpad note 6'), 'overflow note 6 rides the spill (D1/R7, finding 6)');
+  assert.ok(materialized.body.includes('scratchpad note 7'), 'overflow note 7 rides the spill (D1/R7, finding 6)');
+  const rendered = coordinator._renderContextRead({ kind: 'spill', spill: materialized });
+  assert.equal(rendered.frame, 'UNTRUSTED_READ_CONTENT', 'the resolved spill renders UNTRUSTED-framed (GT7/#89)');
   const served = coordinator._providerBrief(task.brief, handle.id);
   assert.ok(served?.continuity, 'the composed block rides the provider-facing brief (D2)');
 });
