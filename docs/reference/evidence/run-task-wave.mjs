@@ -102,6 +102,10 @@ try {
     // need presence. And a deadline-drained wave with members still pending is never -OK.
     const launchHead = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repo, encoding: 'utf8' }).trim();
     const pending = new Set([ROLE]);
+    // A member that dies (failed/cancelled) must never yield -OK either (the impl-114 opus wave:
+    // the trust gate killed the task AFTER the work committed; the harvest found the boundary
+    // checkpoint and declared -OK over a dead member). Dead ⇒ the harvest is partial recovery.
+    const dead = new Set();
     let approved = false;
     const nudged = new Set();
     const claimed = new Set();
@@ -137,6 +141,7 @@ try {
           step(`terminal:${role}`, { phase: phase ?? terminalStatus });
         } else if (['cancelled', 'failed'].includes(phase) || ['cancelled', 'failed'].includes(terminalStatus)) {
           pending.delete(role);
+          dead.add(role);
           step(`dead:${role}`, { phase: phase ?? terminalStatus });
         }
       }
@@ -185,6 +190,9 @@ try {
       // A deadline-drained wave with members still pending is NEVER -OK — the harvest (if any) is
       // partial work for recovery, reported as such.
       receipts.verdict = `${VERDICT}-DRAINED`;
+    } else if (dead.size > 0) {
+      // A dead member's harvest is partial recovery at best — never -OK.
+      receipts.verdict = `${VERDICT}-FAILED`;
     } else {
       receipts.verdict = Object.keys(harvested).length === 1 ? `${VERDICT}-OK` : `${VERDICT}-INCOMPLETE`;
     }
