@@ -1,0 +1,40 @@
+{
+  "attempt": "2026-08-06T23:22:22.609Z",
+  "salt": "f520260806232222",
+  "role": "fold-114b",
+  "steps": [
+    {
+      "step": "waves.start",
+      "receipt": {
+        "runs": [
+          "run-739f3c75d4bc25895823db4a23339179"
+        ]
+      }
+    },
+    {
+      "step": "terminal:fold-114b",
+      "receipt": {
+        "phase": "work_completed"
+      }
+    },
+    {
+      "step": "loop-drained",
+      "receipt": {
+        "pending": []
+      }
+    }
+  ],
+  "harvest": {
+    "fold-114b": {
+      "pin": "72dc55abafd86dfdf5db64da524d028fa8b077fb",
+      "paths": [
+        "impl/test/workflow-as-data-red.test.mjs",
+        "docs/reference/evidence/workflow-as-data-2026-08-06/suite-fold-2.md",
+        "docs/reference/evidence/workflow-as-data-2026-08-06/suite-draft-notes.md",
+        "docs/reference/evidence/workflow-as-data-2026-08-06/workflow-as-data-contract.md"
+      ]
+    }
+  },
+  "harvestStalePinsSkipped": 333,
+  "verdict": "FOLD-114B-OK"
+}
