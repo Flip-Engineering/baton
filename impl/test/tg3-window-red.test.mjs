@@ -1,17 +1,23 @@
-// Issue #80 red suite: the folded TG3-window contract v1.1
+// Issue #80 red suite: the folded TG3-window contract v1.2 (blue-team fold 2)
 // (contract: docs/reference/evidence/tg3-window-2026-08-07/tg3-window-contract.md;
-// fold: contract-fold.md — B1/B2/B3 blockers; red-team: contract-redteam.md).
+// fold: contract-fold.md — B1/B2/B3 blockers; red-team: contract-redteam.md;
+// suite-fold-2.md — the F1-F7 finding → resolution map).
 //
 // D1 the window is evidence-gated, never longer (candidate (a) — a bigger window — is rejected
 // by construction). D2 the turn-start dispatch receipt (`resource.provider_call
 // {phase: 'requested', callId}`, emitted AT the dispatch point) answers the steering cycle —
 // requested OR completed phase, validity-gated, per-seat, honest naming, anti-gaming (once per
-// record, the FINAL still demands the diff). D3 the honest-stall discriminator is "no start-class
-// evidence": `_expireSteeringCycle` re-checks the evidence fold at fire time (B1) and only a fold
-// EMPTY of start-class identity runs the full final; the expiry is receipted for #55-class
-// debuggability (`{windowMs, startEvidenceObserved, answerClasses}` on the `steered` receipt and
-// the `turn.settled {basis:'steering_expired'}` payload). D4 the paused-only guard is preserved;
-// the #67 REARM_KINDS fold (which excludes `resource.provider_call`) is a depending-on-#67 row.
+// record, the FINAL still demands the diff). V1.2 sealed-gate clarification: the D2/B1 "validity
+// gate" is the id/phase/transition validity of `_observeLogicalProviderCall` EXCLUDING the
+// `provider_call_after_terminal` sealed gate for in-window receipts — the D2 path answers AND
+// stays governance-clean (the provider-call rows pin that side: zero governance violations,
+// providerPolicyHardExceeded false, no budget-stop armed, never killed).
+// D3 the honest-stall discriminator is "no start-class evidence": `_expireSteeringCycle` re-checks
+// the evidence fold at fire time (B1) and only a fold EMPTY of start-class identity runs the full
+// final; the expiry is receipted for #55-class debuggability (`{windowMs, startEvidenceObserved,
+// answerClasses}` on the `steered` receipt and the `turn.settled {basis:'steering_expired'}`
+// payload). D4 the paused-only guard is preserved; the #67 REARM_KINDS fold (which excludes
+// `resource.provider_call`) is a depending-on-#67 row.
 //
 // Red-first: every RED row fails at a NAMED stage against the PRE-implementation tree and goes
 // green on the v1.1 implementation ONLY; every PIN row is green today AND green under the correct
@@ -34,17 +40,22 @@
 // §A Evidence-answer classes (TW-01, TW-02)
 //   TW-01  a valid `requested`- and a valid `completed`-phase provider call for the seat inside
 //          the armed window each settle the cycle (`turn.settled {basis:'steering_answered'}`,
-//          task → working, ZERO gate events). (RED: stage[provider-call-answer-missing])
-//   TW-02  the turn-start dispatch receipt is emitted at the dispatch point — codex and cli emit
-//          `resource.provider_call {phase:'requested'}` at turn/start dispatch; the atomic claude
-//          pipe emits none (turn_started is synchronous with dispatch); a staged slow-start adapter
-//          shows the receipt arriving before `turn_started`. (RED:
+//          task → working, ZERO gate events) AND stay governance-clean (F1 — the D2 receipt never
+//          fires the sealed gate: zero governance violations, providerPolicyHardExceeded false,
+//          no budget-stop armed, never killed). (RED: stage[provider-call-answer-missing])
+//   TW-02  the turn-start dispatch receipt is emitted at the dispatch point — a REAL codex adapter
+//          wired to the fake app-server emits `resource.provider_call {phase:'requested'}` before
+//          the second `turn_started` on the wire (F6 behavioral, no source shape pinned); cli
+//          carries the requested phase semantically; the atomic claude pipe emits none; a staged
+//          slow-start adapter shows the receipt arriving before `turn_started`. (RED:
 //          stage[dispatch-receipt-emission-missing])
 //
 // §B Expiry disposition (TW-03, TW-04, TW-04b, TW-05)
-//   TW-03  a queued start never expires the window — a `requested` provider call at minute 4 of
-//          the window (no turn_started, no content) settles CONSTRUCTIVELY at expiry: task
-//          working, ZERO gate events, ZERO `steered` receipts. (RED: stage[queued-start-expires])
+//   TW-03  a queued start never expires the window — a `requested` provider call emitted from the
+//          same synchronous turn that armed the window (t≈0, F2 — no real sub-window sleep; the
+//          old "minute 4" staging was the #7 flake class) settles CONSTRUCTIVELY at expiry: task
+//          working, ZERO gate events, ZERO `steered` receipts, governance-clean (F1). (RED:
+//          stage[queued-start-expires])
 //   TW-04  the honest stall still evaluates — an EMPTY fold expiry runs the full final exactly as
 //          today with `steered: {nudgeId, answered:false}` durable on the gate error event.
 //          (PIN — today's T7b behavior)
@@ -55,8 +66,9 @@
 //   TW-05  a D2-gate defect never kills a healthy worker (B1) — the expiry re-checks the fold,
 //          finds a start-class identity, settles CONSTRUCTIVELY (task → working, zero gate events)
 //          and receipts `steering.evidence_gate_defect` carrying the fold
-//          (`startEvidenceObserved:true`, `answerClasses:['provider_call']`). (RED:
-//          stage[evidence-gate-defect-missing])
+//          (`startEvidenceObserved:true`, `answerClasses:['provider_call']`), AND leaves the worker
+//          governance-clean (F7 — the re-check's validity test excludes the sealed gate for
+//          in-window receipts, contract v1.2). (RED: stage[evidence-gate-defect-missing])
 //
 // §C Shipped pins + once-per-record (TW-06, TW-07, TW-08a, TW-08b)
 //   TW-06  `turn_started` remains a first-class answer — a resumed turn inside the window settles
@@ -67,8 +79,9 @@
 //   TW-08a once-per-record bound (existing classes) — the first qualifying answer settles; later
 //          evidence (provider calls, content) never re-arms; a NEW pause record gets its OWN
 //          single cycle; and the FINAL still demands the real diff. (PIN)
-//   TW-08b multiple provider calls answer exactly once (the first) — no re-answer, no re-arm.
-//          (RED: stage[provider-call-answers-once])
+//   TW-08b multiple provider calls answer exactly once — the FIRST, WHICH is pinned (F4: the
+//          settle's recorded answer carries callId 'tw8b-1' with phase 'requested'), governance-
+//          clean (F1), no re-answer, no re-arm. (RED: stage[provider-call-answers-once])
 //
 // §D The watchdog surface is untouched (TW-09a, TW-09b)
 //   TW-09a the shipped half — `_armWatchdog`'s working-only refusal (a blocked worker is never
@@ -79,7 +92,7 @@
 //          contract text; verified when #67 folds. (RED: stage[depending-on-#67: rearm-kinds-missing])
 //
 // §E No-clock control-law row + discrimination pins (TW-10, TW-disc-invalid, TW-disc-digest,
-// TW-disc-scope)
+// TW-disc-fold, TW-disc-scope)
 //   TW-10  the queued-start answer is EVIDENCE, never a window extension — the steering answer
 //          set carries the provider_call class, the window default stays byte-unchanged, and no
 //          per-route latency knob or expiry re-arm loop appears. (RED:
@@ -87,8 +100,13 @@
 //   TW-disc-invalid an invalid provider call (empty callId, phase outside the closed set) is
 //          telemetry noise, never an answer — the honest stall fires. (PIN)
 //   TW-disc-digest  the TG6 distinct-digest class holds — a distinct content digest answers and
-//          credits content-IDENTITY; a replay never re-answers or re-arms; the FINAL still
-//          demands the diff. (PIN)
+//          credits content-IDENTITY; a replay never re-answers or re-arms; the TG6 content-free-
+//          write class is staged (F5: a store-refused content-less write and a direct digest-less
+//          evidence never answer — the honest stall fires); the FINAL still demands the diff. (PIN)
+//   TW-disc-fold   the answer-class evidence fold is APPENDED at each evidence evaluation (F3) —
+//          a qualifying in-window provider_call leaves `record.steering.observedEvidence` carrying
+//          its kind and the provider_call PHASE identity on the pause record. (RED:
+//          stage[observed-evidence-append-missing])
 //   TW-disc-scope   a provider call from ANOTHER worker never reaches the seat's cycle — the seat
 //          still honest-stalls, the other worker is untouched. (PIN)
 //
@@ -102,8 +120,9 @@
 //    existing :12053/:12454 sites; absent at HEAD).
 // 3. `record.steering.observedEvidence` — the answer-class evidence fold on the in-memory pause
 //    record, appended at each evidence evaluation; the provider_call class records its PHASE
-//    identity (`requested` vs `completed`). (Absent at HEAD; TW-05 injects it to stage the B1
-//    defect.)
+//    identity (`requested` vs `completed`). (Absent at HEAD; TW-disc-fold pins the APPEND path —
+//    TW-05 injects the fold only to stage the B1 defect, and a fold-less impl that answers without
+//    recording the fold is caught by TW-disc-fold.)
 // 4. `steered` receipt gain `{windowMs, startEvidenceObserved, answerClasses}` on the gate
 //    error-event payload (:13206) AND the `turn.settled {basis:'steering_expired'}` payload.
 //    (Absent at HEAD — the receipt is `{nudgeId, answered:false}` only.)
@@ -113,7 +132,9 @@
 // 6. Adapter dispatch emission — codex (`codex-appserver.mjs`, at the turn/start dispatch ~:997,
 //    before the await) and cli (`cli-adapters.mjs`, at its exec/turn dispatch) emit
 //    `resource.provider_call {phase:'requested', callId}`; the atomic claude pipe
-//    (`claude-session.mjs`) emits NO requested phase. (All three emit `completed` only at HEAD.)
+//    (`claude-session.mjs`) emits NO requested phase. (All three emit `completed` only at HEAD;
+//    F6: asserted SEMANTICALLY — the real codex adapter's wire order in TW-02, the cli kind+phase
+//    identity within a dispatch emission, NOT a pinned call shape.)
 // 7. `coordinator.mjs` REARM_KINDS — the #67 closed set, frozen, ACTUAL-sorted, excluding
 //    `resource.provider_call`. (Absent at HEAD; depending-on-#67.)
 //
@@ -122,18 +143,20 @@
 // ===========================================================================
 //
 // `node --test impl/test/tg3-window-red.test.mjs` from the repo root, twice (stable):
-//   run 1 → tests 16 · pass 8 · fail 8
-//   run 2 → tests 16 · pass 8 · fail 8
+//   run 1 → tests 17 · pass 8 · fail 9
+//   run 2 → tests 17 · pass 8 · fail 9
 // The 8 passes are exactly the PIN rows (TW-04, TW-06, TW-07, TW-08a, TW-09a, TW-disc-invalid,
-// TW-disc-digest, TW-disc-scope); the 8 failures are the red rows, each failing at its named stage.
+// TW-disc-digest, TW-disc-scope); the 9 failures are the red rows, each failing at its named stage.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import { Coordinator } from '../src/coordinator.mjs';
+import { CodexAppServerCli } from '../src/codex-appserver.mjs';
 import { Log } from '../src/log.mjs';
 import { FenceTable } from '../src/fence.mjs';
 import { coordinationForLog } from '../src/coordination-store.mjs';
@@ -269,6 +292,23 @@ async function flush(times = 40) {
 }
 const sleep = (ms) => new Promise((resolve) => { setTimeout(resolve, ms); });
 
+// The protocol-level fake codex app-server (see codex-appserver.test.mjs) — a real child process
+// that speaks the real wire vocabulary with zero model quota and no network. `--serve` is the
+// fixture's discovery-guard sentinel: without it the fixture exits inert so bare `node --test`
+// never hangs on it.
+const FIXTURE = join(dirname(fileURLToPath(import.meta.url)), 'fixtures', 'fake-codex-appserver.mjs');
+
+// Bounded poll for the behavioral TW-02 codex stage — the fake app-server emits its wire events
+// asynchronously (~10ms after each turn/start). A retry-count bound, never a wall-clock verdict.
+async function until(events, predicate, { attempts = 400, intervalMs = 15 } = {}) {
+  for (let i = 0; i < attempts; i += 1) {
+    const found = events.find(predicate);
+    if (found) return found;
+    await sleep(intervalMs);
+  }
+  throw new Error(`until(): predicate not satisfied within ${attempts} polls; saw kinds: [${events.map((e) => e.kind).join(', ')}]`);
+}
+
 const noDiff = async () => ({ sha: 'sha-base', baseSha: 'sha-base', changedPaths: [] });
 
 function emitTurnCompleted(adapter, handle, turnEpoch = 1, output = 'mid-workflow checkpoint') {
@@ -321,6 +361,28 @@ const nudgeCount = (adapter) =>
 const settledWith = (coordinator, workerId, basis) =>
   coordinator._log.read(workerId).find((event) => event.kind === 'turn.settled' && event.payload?.basis === basis);
 
+// F1/F7 — the provider-call answer rows must pin the governance-clean side of the sealed gate.
+// The D2 receipt answers the cycle AND stays governance-clean: it never fires
+// `provider_call_after_terminal` / the telemetry-invalid codes (`_observeLogicalProviderCall`'s
+// violation paths), the worker's `providerPolicyHardExceeded` stays false, no budget-stop is armed
+// (the no-clock proof the 250ms kill never fires), and the worker is never killed. The false-green
+// wiring — an answer added through the steering path while the watchdog observation still fires
+// the sealed gate — is caught here, as is the B1 re-check that routes through the sealed gate.
+function assertGovernanceClean(coordinator, handle, adapter, stage) {
+  const worker = coordinator._workers.get(handle.id);
+  const violations = coordinator._log.read(handle.id).filter((event) =>
+    event.kind === 'resource.provider_governance_exceeded'
+    || event.kind === 'resource.provider_telemetry_invalid');
+  assert.equal(violations.length, 0,
+    `stage[${stage}]: the in-window provider_call receipt is governance-clean — zero provider_governance_exceeded / provider_telemetry_invalid events (the D2 path answers WITHOUT firing the sealed gate)`);
+  assert.equal(worker?.providerPolicyHardExceeded ?? false, false,
+    `stage[${stage}]: providerPolicyHardExceeded stays false — the receipt is NOT a post-terminal governance violation`);
+  assert.equal(worker?.budgetStopTimer ?? null, null,
+    `stage[${stage}]: no budget stop is armed — the 250ms kill never fires (no-clock proof)`);
+  assert.equal(adapter.calls.kill.length, 0,
+    `stage[${stage}]: the healthy worker is never killed`);
+}
+
 // ===========================================================================
 // §A — Evidence-answer classes
 // ===========================================================================
@@ -348,25 +410,59 @@ test('TW-01 (RED, stage[provider-call-answer-missing]): a valid requested-phase 
       `stage[provider-call-answer-missing]: the pause record is consumed by the answer`);
     assert.equal(adapter.calls.kill.length, 0,
       `stage[provider-call-answer-missing]: the healthy worker is never killed`);
+    // F1: the receipt answers AND stays governance-clean — the D2 path never fires the sealed gate
+    // (`provider_call_after_terminal`) for an in-window receipt. This discriminates the false-green
+    // wiring (an answer that still fires the governance violation in _observeWatchdogEvent).
+    assertGovernanceClean(coordinator, handle, adapter, 'provider-call-answer-missing');
   }
 });
 
 test('TW-02 (RED, stage[dispatch-receipt-emission-missing]): the turn-start dispatch receipt is emitted at the dispatch point — before turn_started', async () => {
-  // (a) Static: the native/emulated adapters emit a requested-phase provider_call at the turn-start
-  // dispatch; the atomic claude pipe emits none (turn_started is synchronous with dispatch).
-  const codex = readFileSync(new URL('../src/codex-appserver.mjs', import.meta.url), 'utf8');
+  // (a) Behavioral (F6): the REAL codex adapter, wired to a live fake codex app-server (a real
+  // child process, zero model quota, no network), emits `resource.provider_call {phase:'requested'}`
+  // AT the turn-start dispatch — before the turn/start await resolves and before the second
+  // `turn_started` arrives on the wire. No source call-shape is asserted — the wire order is.
+  const codexAdapter = new CodexAppServerCli({
+    cmd: process.execPath,
+    args: [FIXTURE, '--serve'],
+    requestTimeoutMs: 2000,
+    stopDeadlineMs: 15000,
+    versionProbe: () => 'fake-codex/0.144.0-test',
+  });
+  const codexEvents = [];
+  codexAdapter.onEvent((e) => codexEvents.push(e));
+  const codexWorker = 'tw2-codex';
+  try {
+    await codexAdapter.spawn(codexWorker, makeBrief('first task'), { worktree: tmpDir() });
+    await until(codexEvents, (e) => e.kind === 'lifecycle.turn_completed');
+    const firstStartedIdx = codexEvents.findIndex((e) => e.kind === 'lifecycle.turn_started');
+    const promptAck = await codexAdapter.prompt(codexWorker, 'second task', 'turn');
+    assert.equal(promptAck.ok, true, 'the second turn dispatch is accepted');
+    const requested = codexEvents.find((e) => e.kind === 'resource.provider_call'
+      && e.payload?.phase === 'requested');
+    assert.ok(requested,
+      'stage[dispatch-receipt-emission-missing]: codex emits resource.provider_call {phase: requested} at the turn-start dispatch — the durable dispatch receipt');
+    const requestedIdx = codexEvents.indexOf(requested);
+    const secondStarted = await until(codexEvents, (e) => codexEvents.indexOf(e) > firstStartedIdx
+      && e.kind === 'lifecycle.turn_started');
+    assert.ok(requestedIdx < codexEvents.indexOf(secondStarted),
+      'stage[dispatch-receipt-emission-missing]: the dispatch receipt precedes the second turn_started in the wire order — emitted at the dispatch point, before the turn/start await resolves');
+  } finally {
+    try { await codexAdapter.kill(codexWorker); } catch { /* already dead */ }
+  }
+  // (b) Static semantic (F6): cli emits the requested-phase receipt at its exec/turn dispatch; the
+  // atomic claude pipe emits none (turn_started is synchronous with dispatch). Semantic = the kind
+  // and the phase identity co-located within a dispatch emission — NOT a pinned call shape.
   const cli = readFileSync(new URL('../src/cli-adapters.mjs', import.meta.url), 'utf8');
   const claude = readFileSync(new URL('../src/claude-session.mjs', import.meta.url), 'utf8');
-  // codex emits via `_emit(session, 'resource.provider_call', { … })` — the third-arg object.
-  assert.match(codex, /resource\.provider_call\s*,\s*\{[^{}]*phase\s*:\s*['"]requested['"]/u,
-    'stage[dispatch-receipt-emission-missing]: codex must emit resource.provider_call {phase: requested} at the turn/start dispatch (before the await resolves)');
-  // cli emits via `{ … kind: 'resource.provider_call', payload: { … } }` — the payload field.
-  assert.match(cli, /resource\.provider_call[\s\S]{0,250}?(?:payload\s*:\s*\{[^{}]*phase\s*:\s*['"]requested['"]|,\s*\{[^{}]*phase\s*:\s*['"]requested['"])/u,
+  assert.match(cli, /resource\.provider_call[\s\S]{0,250}?phase\s*:\s*['"]requested['"]/u,
     'stage[dispatch-receipt-emission-missing]: cli must emit resource.provider_call {phase: requested} at its exec/turn dispatch');
-  // The atomic claude pipe needs NO requested-phase emission — turn_started answers at frame write.
-  assert.doesNotMatch(claude, /resource\.provider_call\s*,\s*\{[^{}]*phase\s*:\s*['"]requested['"]/u,
+  // The claude negative uses a 120-char window: the tool_call at :1128 carries a `phase:'requested'`
+  // beyond the 250-char window from the provider_call kind, so a wide window would false-match the
+  // atomic pipe on its own (legitimate) tool_call stream.
+  assert.doesNotMatch(claude, /resource\.provider_call[\s\S]{0,120}?phase\s*:\s*['"]requested['"]/u,
     'the atomic claude pipe emits no requested-phase provider_call (turn_started is synchronous with dispatch)');
-  // (b) Dynamic: a staged slow-start adapter shows the receipt arriving BEFORE turn_started.
+  // (c) Dynamic: a staged slow-start adapter shows the receipt arriving BEFORE turn_started.
   const adapter = new ScriptableAdapter();
   const { coordinator } = setup({ adapter, capture: noDiff });
   const handle = await coordinator.spawn('mock', makeBrief());
@@ -393,13 +489,16 @@ test('TW-02 (RED, stage[dispatch-receipt-emission-missing]): the turn-start disp
 // §B — Expiry disposition
 // ===========================================================================
 
-test('TW-03 (RED, stage[queued-start-expires]): a queued start never expires the window — a requested provider call at minute 4 settles constructively at expiry', async () => {
+test('TW-03 (RED, stage[queued-start-expires]): a queued start never expires the window — a requested provider call in-window settles constructively at expiry', async () => {
   const adapter = new ScriptableAdapter();
   const { coordinator } = setup({ adapter, capture: noDiff });
   const handle = await coordinator.spawn('mock', makeBrief());
   emitTurnCompleted(adapter, handle);
   await flush(40);
-  await sleep(15); // minute 4 of the 25ms window — the provider accepted the call, turn still queued
+  // F2: the receipt is emitted from the same synchronous turn that armed the window (t≈0) — the
+  // semantic the row pins is "a requested-phase receipt in-window, no turn_started, no content
+  // settles the cycle", NOT a real sub-window sleep. The old `sleep(15)` (minute 4 of the 25ms
+  // window) was the #7 real-wall-time flake class.
   emitProviderCall(adapter, handle, 'tw3-queued', 'requested');
   await flush(40);
   await sleep(60); // the window elapses
@@ -414,6 +513,9 @@ test('TW-03 (RED, stage[queued-start-expires]): a queued start never expires the
     'stage[queued-start-expires]: ZERO steered receipts — the cycle was answered, never expired-unanswered');
   assert.equal(adapter.calls.kill.length, 0,
     'stage[queued-start-expires]: the queued-start worker is never killed');
+  // F1: the in-window receipt answers AND stays governance-clean — the sealed gate never fires for
+  // an in-window dispatch receipt (the false-green wiring is caught here).
+  assertGovernanceClean(coordinator, handle, adapter, 'queued-start-expires');
 });
 
 test('TW-04 (PIN): the honest stall still evaluates — an empty-fold expiry runs the full final exactly as today with the steering receipt durable', async () => {
@@ -503,6 +605,11 @@ test('TW-05 (RED, stage[evidence-gate-defect-missing]): a D2-gate defect never k
     'stage[evidence-gate-defect-missing]: the constructive settle is turn.settled {basis: steering_answered, via: evidence_gate_defect}');
   assert.equal(coordinator.pausedTurns({ taskId: task.id }).length, 0,
     'stage[evidence-gate-defect-missing]: the pause record is consumed by the constructive settle');
+  // F7: the B1 fire-time re-check consumed the injected fold AND left the worker governance-clean —
+  // the re-check's validity test is the id/phase/transition validity of _observeLogicalProviderCall
+  // EXCLUDING the sealed gate for in-window receipts (contract v1.2). A re-check that routes through
+  // the sealed gate fires provider_call_after_terminal and is caught here.
+  assertGovernanceClean(coordinator, handle, adapter, 'evidence-gate-defect-missing');
 });
 
 // ===========================================================================
@@ -600,12 +707,15 @@ test('TW-08a (PIN): once-per-record bound — the first qualifying answer settle
     'the second record expired unanswered with the steering receipt — one unanswered cycle precedes the final');
 });
 
-test('TW-08b (RED, stage[provider-call-answers-once]): a worker emitting multiple provider calls answers exactly once — the first; no re-answer, no re-arm', async () => {
+test('TW-08b (RED, stage[provider-call-answers-once]): a worker emitting multiple provider calls answers exactly once — the FIRST; no re-answer, no re-arm', async () => {
   const adapter = new ScriptableAdapter();
   const { coordinator } = setup({ adapter, capture: noDiff });
   const handle = await coordinator.spawn('mock', makeBrief());
   emitTurnCompleted(adapter, handle);
   await flush(40);
+  const task = coordinator._tasks.get(handle.taskId);
+  const pauseId = coordinator.pausedTurns({ taskId: task.id })[0]?.pauseId;
+  assert.ok(pauseId, 'the record pends with an armed cycle');
   assert.equal(nudgeCount(adapter), 1, 'the record arms exactly one cycle');
   emitProviderCall(adapter, handle, 'tw8b-1', 'requested');
   emitProviderCall(adapter, handle, 'tw8b-1', 'completed');
@@ -613,9 +723,8 @@ test('TW-08b (RED, stage[provider-call-answers-once]): a worker emitting multipl
   await flush(40);
   await sleep(60);
   await flush(40);
-  const task = coordinator._tasks.get(handle.taskId);
-  assert.equal(task.status, 'working',
-    `stage[provider-call-answers-once]: the first provider call answers the cycle — task → working (got ${task.status})`);
+  assert.equal(coordinator._tasks.get(handle.taskId).status, 'working',
+    `stage[provider-call-answers-once]: the first provider call answers the cycle — task → working (got ${coordinator._tasks.get(handle.taskId).status})`);
   const settles = coordinator._log.read(handle.id).filter((event) => event.kind === 'turn.settled'
     && event.payload?.basis === 'steering_answered');
   assert.equal(settles.length, 1,
@@ -626,6 +735,22 @@ test('TW-08b (RED, stage[provider-call-answers-once]): a worker emitting multipl
     'stage[provider-call-answers-once]: the record is consumed by the single answer');
   assert.equal(gateEvents(coordinator, handle.id).length, 0,
     'stage[provider-call-answers-once]: the answered record produces no gate verdict');
+  // F1: the in-window receipts answer AND stay governance-clean — the sealed gate never fires for
+  // the dispatch receipt (the false-green wiring is caught here).
+  assertGovernanceClean(coordinator, handle, adapter, 'provider-call-answers-once');
+  // F4: WHICH call answered — the settle's recorded answer names the FIRST call (tw8b-1), in the
+  // requested phase (the D2 requested-only answer class). An impl answering on the second call
+  // (tw8b-1 completed) or the third (tw8b-2 requested) is caught here.
+  const record = coordinator._pausedTurns.get(pauseId);
+  const answer = record?.steering?.answer ?? null;
+  assert.ok(answer,
+    'the settled record retains the answering evidence on steering.answer');
+  const answerCallId = answer.callId ?? answer.payload?.callId ?? null;
+  const answerPhase = answer.phase ?? answer.payload?.phase ?? null;
+  assert.equal(answerCallId, 'tw8b-1',
+    'stage[provider-call-answers-once]: the FIRST provider call (tw8b-1) answered the cycle — not the second (tw8b-1 completed) nor the third (tw8b-2 requested)');
+  assert.equal(answerPhase, 'requested',
+    'stage[provider-call-answers-once]: the answering evidence is the requested-phase dispatch receipt — the D2 requested-only answer class');
 });
 
 // ===========================================================================
@@ -748,6 +873,19 @@ test('TW-disc-digest (PIN, TG6 compatibility): the distinct-digest class holds �
   emitTurnCompleted(adapter, handle, 2, 'second checkpoint');
   await flush(40);
   assert.equal(nudgeCount(adapter), 2, 'the second RECORD gets its own single cycle');
+  // F5 — the TG6 content-free-write class: a scratchpad.write that yields NO content digest is
+  // NEVER an answer. Two shapes: a content-less entry (store-refused — `scratchpad_entry_invalid`,
+  // no digest at all, ok:false → no `_observeSteeringCycle` at :12451-12455) and a directly
+  // evaluated digest-less evidence (the digest guard rejects `digest: null` at :2211-2213). Both
+  // leave the record pending; the honest stall still fires.
+  emitScratchWrite(adapter, handle, 'tw-digest-empty', ''); // content-less entry → no content digest
+  await flush(40);
+  assert.equal(coordinator._tasks.get(handle.taskId).status, 'paused',
+    'a content-free write never answers the cycle — the second record still pends (the honest stall is preserved)');
+  coordinator._observeSteeringCycle(handle, { kind: 'scratchpad', digest: null });
+  await flush(40);
+  assert.equal(coordinator.pausedTurns({ taskId: task.id }).length, 1,
+    'a digest-less scratchpad evidence never answers the cycle — the content-free-write class is pinned');
   await sleep(60);
   await flush(40);
   assert.equal(coordinator._tasks.get(handle.taskId).status, 'failed',
@@ -782,12 +920,44 @@ test('TW-disc-scope (PIN): a provider call from another worker never reaches the
     'the other worker is untouched by the seat\'s pause');
 });
 
+test('TW-disc-fold (RED, stage[observed-evidence-append-missing]): qualifying in-window evidence is APPENDED to record.steering.observedEvidence with its kind and the provider_call phase identity', async () => {
+  const adapter = new ScriptableAdapter();
+  const { coordinator } = setup({ adapter, capture: noDiff });
+  const handle = await coordinator.spawn('mock', makeBrief());
+  emitTurnCompleted(adapter, handle);
+  await flush(40);
+  const task = coordinator._tasks.get(handle.taskId);
+  const pauseId = coordinator.pausedTurns({ taskId: task.id })[0]?.pauseId;
+  assert.ok(pauseId, 'the pause record pends with an armed cycle');
+  // F3 — the append surface: a qualifying in-window provider_call for the seat is APPENDED to
+  // record.steering.observedEvidence (invented surface #3) with its kind and the provider_call
+  // PHASE identity, as the evidence evaluation settles the cycle. At HEAD there is no fold and no
+  // append — RED. A fold-less implementation that answers the cycle without recording the fold is
+  // caught here (TW-05 injects the fold, so it can never test the append path).
+  emitProviderCall(adapter, handle, 'tw-fold', 'requested');
+  await flush(40);
+  const record = coordinator._pausedTurns.get(pauseId);
+  const fold = record?.steering?.observedEvidence ?? null;
+  assert.ok(Array.isArray(fold),
+    'stage[observed-evidence-append-missing]: record.steering.observedEvidence is an array on the pause record — the evidence evaluation APPENDS the observed kind');
+  const call = fold.find((entry) => entry?.kind === 'provider_call');
+  assert.ok(call,
+    'stage[observed-evidence-append-missing]: the fold carries the observed provider_call kind');
+  assert.equal(call.phase, 'requested',
+    'stage[observed-evidence-append-missing]: the provider_call fold entry keeps its PHASE identity (requested vs completed) — the #55-class debug trace');
+  assert.equal(coordinator._tasks.get(handle.taskId).status, 'working',
+    'the appended evidence settled the cycle');
+  assert.equal(coordinator.pausedTurns({ taskId: task.id }).length, 0,
+    'the record was consumed by the answer');
+});
+
 // ===========================================================================
 // VERIFIED SPLIT (measured from the repo root — `node --test impl/test/tg3-window-red.test.mjs`)
 // ===========================================================================
-// Run 1: tests 16 · pass 8 · fail 8
-// Run 2: tests 16 · pass 8 · fail 8
-// The 8 red rows fail at their named stages: TW-01 (provider-call-answer-missing), TW-02
+// Run 1: tests 17 · pass 8 · fail 9
+// Run 2: tests 17 · pass 8 · fail 9
+// The 9 red rows fail at their named stages: TW-01 (provider-call-answer-missing), TW-02
 // (dispatch-receipt-emission-missing), TW-03 (queued-start-expires), TW-04b (steered-fold-missing),
 // TW-05 (evidence-gate-defect-missing), TW-08b (provider-call-answers-once), TW-09b
-// (depending-on-#67: rearm-kinds-missing), TW-10 (answer-not-evidence).
+// (depending-on-#67: rearm-kinds-missing), TW-10 (answer-not-evidence),
+// TW-disc-fold (observed-evidence-append-missing).

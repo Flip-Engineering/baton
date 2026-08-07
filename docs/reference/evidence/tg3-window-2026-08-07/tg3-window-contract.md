@@ -1,9 +1,10 @@
 # Issue #80 — The TG3 steering window vs provider turn-start latency — implementation contract
 
-**Status:** v1.1 FOLD (3/3 red-team blockers folded, per `contract-redteam.md` §9)
+**Status:** v1.2 FOLD (3/3 red-team blockers folded per `contract-redteam.md` §9; 7/7 blue-team findings folded per `suite-fold-2.md`)
 **Date:** 2026-08-07
 **Verification HEAD:** `2d9de15390bdfe8fc650a4199e45dd74629acfba` (current worktree HEAD)
 **Fold:** `contract-fold.md` (this directory — the blocker → change map, all 3 + the OQ verdicts)
+**Fold 2 (v1.2):** `suite-fold-2.md` (this directory — the blue-team F1-F7 finding → resolution map). **V1.2 makes ONE contract movement** (the F1/F7 one-line clarification): the D2/B1 "validity gate" is the **id/phase/transition validity** of `_observeLogicalProviderCall` **EXCLUDING** the `provider_call_after_terminal` sealed gate (`:9069-9072`) for **in-window receipts** — the only reading that makes the real dispatch flow work (the steering-nudge path performs no `_admitProviderTurn`, so a real turn-start dispatch receipt also arrives while `handle.providerTurn` is the sealed checkpoint object). The provider-call answer rows pin the governance-clean side of that reading: zero `resource.provider_governance_exceeded`/`provider_telemetry_invalid`, `providerPolicyHardExceeded === false`, no budget-stop armed, never killed.
 **Red-team:** `contract-redteam.md` (this directory — **NOT FOLD-READY** as written; every numbered blocker is folded below)
 **Brief:** `contract-80-brief.md` (this directory)
 
@@ -143,7 +144,12 @@ not evidence the provider engaged).
   added beside the existing `_observeSteeringCycle` sites `:12053`/`:12454`). Phase/callId
   validity is a prerequisite — an invalid or duplicate call (`_observeLogicalProviderCall`'s
   `provider_call_id_invalid` / `provider_call_phase_invalid`, `:9067-9097`) is telemetry noise,
-  never an answer. Scoping is **per-handle**, matching `turn_started`: the observation routes by
+  never an answer. **V1.2 (F1 — the one-line clarification):** for an in-window receipt this
+  validity is the **id/phase/transition** validity of `_observeLogicalProviderCall` **EXCLUDING**
+  the `provider_call_after_terminal` sealed gate (`:9069-9072`) — the D2 path answers AND stays
+  governance-clean. A literal sealed-gate read would reject exactly the event D2 says must answer
+  (false-red); an answer that leaves the sealed gate firing would make every real dispatch receipt
+  a governance violation (false-green). The suite pins the governance-clean side on TW-01/TW-03/TW-08b. Scoping is **per-handle**, matching `turn_started`: the observation routes by
   the event's worker, so a call answers only when its worker IS the cycle's handle (the seat).
   Calls from any other worker — including the #47 readiness tier's probe receipts
   (`liveness-probe-*`, `route-liveness.mjs:346-350`, which mint
@@ -225,12 +231,19 @@ harness defect killing a healthy worker, the exact #55-class incident this issue
 prevent. **Therefore: at expiry, BEFORE running the final, `_expireSteeringCycle` re-checks
 `record.steering.observedEvidence`. If the fold contains a start-class identity — `turn_started`,
 or a valid-phase `provider_call` (`requested`/`completed`, callId valid per
-`_observeLogicalProviderCall` :9067-9097) — the expiry settles CONSTRUCTIVELY: task → `working`,
+`_observeLogicalProviderCall` :9067-9097; **v1.2 (F7): for an in-window receipt the validity test
+is the id/phase/transition validity EXCLUDING the `provider_call_after_terminal` sealed gate —
+the same one-line clarification as D2**) — the expiry settles CONSTRUCTIVELY: task → `working`,
 `turn.settled {basis: 'steering_answered', via: 'evidence_gate_defect'}` (zero gate events), and
 receipts a named `steering.evidence_gate_defect` error event carrying the fold. Only when the
 fold is empty of start-class evidence (the genuine honest stall) does the full final run.** The
 re-check is cheap, self-healing, and cannot be gamed (the evidence is adapter-minted wire truth,
-validity-gated by `_observeLogicalProviderCall` before it ever reaches `_observeSteeringCycle`).
+validity-gated by `_observeLogicalProviderCall` — id/phase/transition validity only, sealed gate
+excluded for in-window receipts, v1.2 — before it ever reaches `_observeSteeringCycle`).
+**V1.2 (F7):** TW-05 asserts the re-check consumed the injected fold, receipts
+`steering.evidence_gate_defect` with `answerClasses:['provider_call']`, AND leaves the worker
+governance-clean — no `provider_call_after_terminal`, `providerPolicyHardExceeded === false`,
+`budgetStopTimer === null`.
 Deliberate scope: the defensive settle applies only to the **identity-sufficient** start classes
 (`turn_started`, valid `provider_call`) — the digest/resolution classes (scratchpad,
 capability_op, interaction) cannot be re-qualified from an identity-only fold; if one of *those*
@@ -294,11 +307,14 @@ RED = fails at HEAD; GREEN = passes at HEAD and is pinned.
 
 | Pin | Assertion | Today |
 |-----|-----------|-------|
-| TW-01 | **`resource.provider_call` answers the steering cycle.** A valid `requested`-phase provider call for the seat inside the armed window settles the cycle (`turn.settled {basis: 'steering_answered'}`, task → `working`, zero gate events); a `completed`-phase call answers likewise. | **RED** (`_observeSteeringCycle` is never called for `resource.provider_call`, G5) |
-| TW-02 | **The turn-start dispatch receipt is emitted at the dispatch point.** Native/emulated adapters emit `resource.provider_call {phase: 'requested', callId}` when the turn-start request is handed to the provider — codex at `:997` before the `turn/start` await resolves (`:1005`), cli at its exec/turn dispatch; a staged slow-start adapter shows the receipt arriving before `turn_started`; no `requested`-phase emission exists for the atomic adapters (claude pipe) where `turn_started` is synchronous with dispatch. | **RED** (all adapters emit `completed` only, G6) |
-| TW-03 | **A queued start never expires the window.** Stage: a checkpoint pause arms the cycle; the next turn's provider call is `requested` at minute 4 of the window (no `turn_started`, no content); at expiry the cycle settles constructively — task `working`, ZERO gate events, ZERO `steered` receipts. Holds across a D2 consume-path defect too (B1's fire-time re-check settles the same way). | **RED** (no provider_call answer; `_expireSteeringCycle` runs the full final gate at `:2303-2305`) |
+| TW-01 | **`resource.provider_call` answers the steering cycle.** A valid `requested`-phase provider call for the seat inside the armed window settles the cycle (`turn.settled {basis: 'steering_answered'}`, task → `working`, zero gate events); a `completed`-phase call answers likewise. **V1.2 (F1):** each settle stays governance-clean — zero `provider_governance_exceeded`/`provider_telemetry_invalid`, `providerPolicyHardExceeded === false`, `budgetStopTimer === null`, never killed (the D2 path answers WITHOUT firing the sealed gate). | **RED** (`_observeSteeringCycle` is never called for `resource.provider_call`, G5) |
+| TW-02 | **The turn-start dispatch receipt is emitted at the dispatch point.** Native/emulated adapters emit `resource.provider_call {phase: 'requested', callId}` when the turn-start request is handed to the provider — codex at `:997` before the `turn/start` await resolves (`:1005`), cli at its exec/turn dispatch; a staged slow-start adapter shows the receipt arriving before `turn_started`; no `requested`-phase emission exists for the atomic adapters (claude pipe) where `turn_started` is synchronous with dispatch. **V1.2 (F6):** asserted SEMANTICALLY (the real codex adapter's wire order + cli kind/phase identity), not as a pinned call shape. | **RED** (all adapters emit `completed` only, G6) |
+| TW-03 | **A queued start never expires the window.** Stage: a checkpoint pause arms the cycle; the next turn's provider call is `requested` in-window (no `turn_started`, no content; **V1.2 (F2):** emitted from the same synchronous turn that armed the window — no real sub-window sleep, the #7 flake class removed); at expiry the cycle settles constructively — task `working`, ZERO gate events, ZERO `steered` receipts, **governance-clean (F1)**. Holds across a D2 consume-path defect too (B1's fire-time re-check settles the same way). | **RED** (no provider_call answer; `_expireSteeringCycle` runs the full final gate at `:2303-2305`) |
 | TW-04 | **The honest stall still evaluates.** Stage: a checkpoint pause arms the cycle; NOTHING arrives (no `turn_started`, no provider call, no TG2 receipt, no resolved interaction); the window expires with an empty fold of start-class evidence and the full final evaluation runs exactly as today with `steered: {nudgeId, answered: false}` durable on the gate error event. | **GREEN** (pin — today's T7b behavior, `trust-gate-steering-red.test.mjs:230-248`) |
-| TW-05 | **A D2-gate defect never kills a healthy worker (B1).** Stage: a staged defect in the D2 gate — a valid `provider_call {phase:'requested'}` for the seat IS observed in-window and appended to `record.steering.observedEvidence`, yet the cycle is not settled — at expiry the fire-time re-check finds the start-class identity and settles CONSTRUCTIVELY: task → `working`, zero gate events, and a named `steering.evidence_gate_defect` error event carrying the fold (`startEvidenceObserved: true`, `answerClasses: ['provider_call']`). The worker survives; the defect is exposed by the receipt. | **RED** (no fold, no re-check; the expiry runs the full final and kills the worker, G3) |
+| TW-05 | **A D2-gate defect never kills a healthy worker (B1).** Stage: a staged defect in the D2 gate — a valid `provider_call {phase:'requested'}` for the seat IS observed in-window and appended to `record.steering.observedEvidence`, yet the cycle is not settled — at expiry the fire-time re-check finds the start-class identity and settles CONSTRUCTIVELY: task → `working`, zero gate events, and a named `steering.evidence_gate_defect` error event carrying the fold (`startEvidenceObserved: true`, `answerClasses: ['provider_call']`). The worker survives; the defect is exposed by the receipt. **V1.2 (F7):** the re-check's validity test excludes the sealed gate for in-window receipts AND the constructive settle leaves the worker governance-clean. | **RED** (no fold, no re-check; the expiry runs the full final and kills the worker, G3) |
+| TW-06 | **`turn_started` remains a first-class answer (pin).** A resumed turn inside the window settles the cycle — zero gate events. | **GREEN** (pin, `:12053`/`:2210`, `trust-gate-steering-red.test.mjs:181-198`) |
+| TW-07 | **The nudge never self-answers.** The policy nudge's own delivery (`control.nudge`, actor `'policy'`) does NOT settle the cycle; a staged **buffering-kind** adapter (codex-like: nudge → `nudgeQueue`, no turn start, `codex-appserver.mjs:971-975`) that accepts the nudge but never starts a turn still expires with `steered: {answered: false}`. The staging must be a buffering adapter, not an atomic one — for the claude pipe the nudge IS a turn start when idle (`claude-session.mjs:884-894`), so an "accepts but never starts" stage is impossible there. | **GREEN** (pin — `control.nudge` is not in the answer set; the fold's TW-03 staging proves the discriminator) |
+| TW-08 | **Once-per-record bound — split into TW-08a/TW-08b.** (a) **TW-08a (PIN):** the cycle is answered at most once per pause record; later evidence (provider calls, content) never re-arms; a NEW record gets its OWN single cycle; and the FINAL still demands the real diff. (b) **TW-08b (RED):** a worker emitting multiple provider calls answers exactly ONCE — the FIRST, WHICH is pinned (F4: the recorded answer carries callId `tw8b-1` with phase `requested`), governance-clean (F1), no re-answer, no re-arm. | **GREEN** for (a) (one-shot arm at `:2134`, consume at `_settleSteeringCycle`); **(b) RED** (`provider-call-answers-once`, same seam as TW-01) |
 | TW-06 | **`turn_started` remains a first-class answer (pin).** A resumed turn inside the window settles the cycle — zero gate events. | **GREEN** (pin, `:12053`/`:2210`, `trust-gate-steering-red.test.mjs:181-198`) |
 | TW-07 | **The nudge never self-answers.** The policy nudge's own delivery (`control.nudge`, actor `'policy'`) does NOT settle the cycle; a staged **buffering-kind** adapter (codex-like: nudge → `nudgeQueue`, no turn start, `codex-appserver.mjs:971-975`) that accepts the nudge but never starts a turn still expires with `steered: {answered: false}`. The staging must be a buffering adapter, not an atomic one — for the claude pipe the nudge IS a turn start when idle (`claude-session.mjs:884-894`), so an "accepts but never starts" stage is impossible there. | **GREEN** (pin — `control.nudge` is not in the answer set; the fold's TW-03 staging proves the discriminator) |
 | TW-08 | **Once-per-record bound (pin).** The cycle is answered at most once per pause record; a worker emitting multiple provider calls answers exactly once (the first), and no second cycle arms for the same record. | **GREEN** (pin — one-shot arm at `:2134`, consume at `_settleSteeringCycle`) |
