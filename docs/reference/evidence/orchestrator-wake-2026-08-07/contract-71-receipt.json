@@ -1,0 +1,30 @@
+{
+  "attempt": "2026-08-07T06:29:11.826Z",
+  "salt": "c820260807062911",
+  "role": "contract-71",
+  "steps": [
+    {
+      "step": "waves.start",
+      "receipt": {
+        "runs": [
+          "run-982ab4fb4cae68c32dd9fdeaccd6d945"
+        ]
+      }
+    },
+    {
+      "step": "dead:contract-71",
+      "receipt": {
+        "phase": "failed"
+      }
+    },
+    {
+      "step": "loop-drained",
+      "receipt": {
+        "pending": []
+      }
+    }
+  ],
+  "harvest": {},
+  "harvestStalePinsSkipped": 370,
+  "verdict": "CONTRACT-71-FAILED"
+}
