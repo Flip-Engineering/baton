@@ -1,0 +1,15 @@
+{
+  "attempt": "2026-08-06T23:39:37.245Z",
+  "salt": "fx20260806233937",
+  "role": "fix-10-regression",
+  "steps": [
+    {
+      "step": "waves.start",
+      "receipt": {
+        "runs": [
+          "run-802ce92003e3b92be4b0ab520b5d321a"
+        ]
+      }
+    }
+  ]
+}
