@@ -25,7 +25,7 @@ import {
 import { GrokAcpCli } from './grok-acp.mjs';
 import { KimiAcpCli } from './kimi-acp.mjs';
 import { RuntimeIsolation } from './runtime-isolation.mjs';
-import { ResidentAuthority } from './resident-authority.mjs';
+import { ResidentAuthority, stableDeploymentId } from './resident-authority.mjs';
 import { DEFAULT_RUN_LINEAGE_POLICY } from './run-lineage.mjs';
 import { inspectToolchainProjection } from './toolchain-projection.mjs';
 import { DEFAULT_WORKER_POLICY_REQUEST } from './worker-policy.mjs';
@@ -1964,12 +1964,23 @@ export async function openBatonDeployment(rawOptions, createDriver) {
   const service = (name) => Object.freeze({
     actor: `deployment:${name}`, principalId: `service-${name}`, sessionId: `service-${name}-session`,
   });
+  // #132 D2.2/F3 (wave-observability-2026-08-06/contract.md §D2.2): the resident deployment id is
+  // the SAME stable identity the ResidentAuthority reads from deploymentRoot/resident/deployment.json
+  // (resident-authority.mjs:263-264) — threaded here so the wave.started mint carries THIS
+  // deployment's id, never a null local-only row. privateDirectory (this module's single-arg
+  // variant) mirrors the ResidentAuthority constructor's directory setup (create + chmod +
+  // realpath), so the id file lands in the exact directory the later resident host reads.
+  const deploymentId = stableDeploymentId(
+    privateDirectory(join(deploymentRoot, 'resident')),
+    repository.repoId, residentOptions.ownerUid,
+  );
   let application;
   try {
     contextRuntime.attachCoordination(driver.coordination);
     application = new BatonApplication({
       driver,
       repoId: repository.repoId,
+      deploymentId,
       profiles: {
         default: applicationProfile(
           repository.repoId, routes, verification,

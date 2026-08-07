@@ -791,18 +791,19 @@ test('A3-1: waves.list rows carry the exact registry shape and page ≤16 with {
   assert.equal(pageTwo.nextCursor, null, 'the last page closes the cursor');
 });
 
-test('A3-2 §4: baton_waves_list lands in the pinned MCP enumeration — 33 → 34, position 15 after baton_waves_stop', async (t) => {
+test('A3-2 §4: baton_waves_list lands in the pinned MCP enumeration — 34 → 35, position 16 after baton_waves_run (#114 shifted the base)', async (t) => {
   const host = await hostFixture(t);
   const { server } = await mcpFixture(t, host);
   const listed = await server.handle({ jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} });
   const names = listed.result.tools.map((tool) => tool.name);
-  assert.equal(names.length, 34,
-    'stage: mcp-waves-list-row-missing — the pinned MCP enumeration is 33 at HEAD (mcp-reflex-surface-red.test.mjs:201); §4 inserts baton_waves_list (33 → 34)');
+  assert.equal(names.length, 35,
+    'stage: mcp-waves-list-row-missing — the pinned MCP enumeration is 34 post-#114 (baton_waves_run); §4 inserts baton_waves_list (34 → 35)');
   assert.equal(names[14], 'baton_waves_stop', 'baton_waves_stop stays at 0-based position 14');
   assert.equal(names[15], 'baton_waves_list',
     'baton_waves_list sits at 0-based position 15, immediately after baton_waves_stop — the §4 pinned insertion point');
+  assert.equal(names[16], 'baton_waves_run', 'baton_waves_run (#114) follows at 0-based position 16 — the waves family stays contiguous');
   const sorted = mcpApplicationToolNames();
-  assert.equal(sorted.length, 34, 'the sorted ordinary surface grows to 34 tools');
+  assert.equal(sorted.length, 35, 'the sorted ordinary surface grows to 35 tools');
   assert.ok(sorted.includes('baton_waves_list'), 'the sorted ordinary surface carries baton_waves_list');
 });
 

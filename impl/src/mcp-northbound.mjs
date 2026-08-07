@@ -99,6 +99,7 @@ const CAPABILITY = Object.freeze({
   baton_waves_progress: ['observe'],
   baton_waves_send: ['control', 'observe'],
   baton_waves_stop: ['emergency_stop', 'observe'],
+  baton_waves_list: ['observe'],
   baton_waves_run: ['control', 'observe'],
   baton_deployment_doctor: ['observe'],
   baton_scratchpad_elevate: ['control', 'observe'],
@@ -194,8 +195,8 @@ function toolResult(value, isError = false) {
   const structuredContent = record(normalizedValue) ? normalizedValue : { result: normalizedValue };
   return Object.freeze({ content: Object.freeze([{ type: 'text', text: JSON.stringify(structuredContent) }]), structuredContent: Object.freeze(structuredContent), isError });
 }
-function toolError(code, message = null) {
-  return toolResult({ ok: false, error: { code, ...(message == null ? {} : { message }) } }, true);
+function toolError(code, message = null, detail = null) {
+  return toolResult({ ok: false, error: { code, ...(message == null ? {} : { message }), ...(detail == null ? {} : { detail }) } }, true);
 }
 function stateFailureCode(cause) {
   if (cause?.mcpCode === 'stale_fence') return 'stale_fence';
@@ -210,6 +211,11 @@ function stateFailureCode(cause) {
   // workflow_objective_ref_invalid) surface typed on the wire — checked BEFORE the TypeError-name
   // fallthrough so a workflow_* throw never degrades to invalid_command / command_outcome_unknown.
   if (typeof cause?.code === 'string' && cause.code.startsWith('workflow_')) return cause.code;
+  // #132 D5 (wave-observability-2026-08-06/contract.md §D5.1/§D5.2): the wave lane's typed
+  // admission refusal (wave_member_invalid) and the missing-member seam (wave_not_found) surface
+  // typed on the wire, carrying the lane's OWN message plus the {actual, cap, cause, role} detail.
+  // The store-integrity roster code deliberately stays a projection throw — never a per-command row.
+  if (cause?.code === 'wave_member_invalid' || cause?.code === 'wave_not_found') return cause.code;
   if (cause?.code === 'run_stopping') return cause.code;
   if (['capability_not_found', 'capability_op_unavailable', 'capability_budget_invalid', 'cancelled',
     'capability_result_invalid', 'capability_result_oversize', 'capability_authority_forbidden', 'capability_args_invalid',
@@ -523,6 +529,18 @@ const LEGACY_ORDINARY_APPLICATION_TOOL_DEFINITIONS = Object.freeze([
     annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
   },
   {
+    // #132 D2.4 (wave-observability-2026-08-06/contract.md §D2.4): the registry read. baton_waves_list
+    // answers the OPEN rows of the wave registry projection (this deployment's in-flight waves),
+    // paged ≤16 with {cursor, nextCursor}. A member run that WAS registered and then disappeared
+    // refuses wave_not_found (D5.2) — never a silent success shape.
+    name: 'baton_waves_list',
+    description: 'Read the in-flight wave registry: open rows for THIS deployment, paged ≤16 per page with {cursor, nextCursor}. Every member reads liveness \'local\'; a member run that no longer resolves refuses wave_not_found.',
+    inputSchema: schema({
+      ...repo, cursor: { type: 'integer', minimum: 0 },
+    }, ['repoId']),
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  {
     // Issue #114 (D2, OQ2 folded — the family plural): the workflow-as-data interpreter lane. ONE
     // closed spec drives a whole wave; malformed specs refuse with the field/role-named workflow_*
     // codes the stateFailureCode allowlist preserves.
@@ -796,7 +814,7 @@ const REFLEX_READ_ONLY_TOOLS = new Set(SURFACING_MATRIX_MCP_ROWS
 // keys, so the generic application branch never maps their failures) — every one of them must
 // reach the typed stateFailureCode lane, never the generic 'command_failed'.
 const ORDINARY_EXPLICIT_TOOLS = new Set([
-  'baton_waves_start', 'baton_waves_progress', 'baton_waves_send', 'baton_waves_stop', 'baton_waves_run',
+  'baton_waves_start', 'baton_waves_progress', 'baton_waves_send', 'baton_waves_stop', 'baton_waves_list', 'baton_waves_run',
   'baton_deployment_doctor',
   'baton_scratchpad_elevate', 'baton_scratchpad_settle', 'baton_knowledge_promote',
   'baton_knowledge_settlement_lease',
@@ -1104,6 +1122,9 @@ function validateArguments(name, args, maxWaitMs = null) {
   }
   if (name === 'baton_waves_stop' && !nonempty(args.runId)) {
     return 'invalid_wave_stop';
+  }
+  if (name === 'baton_waves_list' && (Object.hasOwn(args, 'cursor') && !Number.isSafeInteger(args.cursor))) {
+    return 'invalid_wave_list';
   }
   if (name === 'baton_scratchpad_elevate' && (!nonempty(args.runId) || !nonempty(args.taskId)
     || !nonempty(args.workerId) || !Number.isSafeInteger(args.expectedScratchpadFence)
@@ -1612,7 +1633,20 @@ export class McpFleetServer {
           : this._dispatch(name, args, actor, callId)));
     }
     catch (cause) {
-      outcome = toolError(stateFailureCode(cause));
+      // #132 D5.2 (wave-observability-2026-08-06/contract.md §D5.1/§D5.2): a TYPED lane refusal
+      // (wave_member_invalid / wave_not_found) carries the lane's OWN message byte-identically plus
+      // the {actual, cap, cause, role} detail (W6/F4). An untyped internal throw keeps the MN1/MN8
+      // sanitization law — code-only, never a private provider detail in a tool error.
+      const stateCode = stateFailureCode(cause);
+      // The message/detail payload rides ONLY for the lane-crafted codes (wave_member_invalid /
+      // wave_not_found / workflow_*) whose messages are authored by the lane itself (W6/F4).
+      // Any other typed error keeps the MN1/MN8 sanitization law: code-only, never a private
+      // provider/detail leak (the GP7/GP8 pin — an arbitrary typed throw's message is NOT safe).
+      const LANE_CRAFTED = typeof cause?.code === 'string'
+        && (cause.code === 'wave_member_invalid' || cause.code === 'wave_not_found' || cause.code.startsWith('workflow_'));
+      outcome = LANE_CRAFTED
+        ? toolError(stateCode, cause?.message ?? null, cause?.detail ?? null)
+        : toolError(stateCode);
       try { this.coordination.failMcpCall(callId, outcome, { actor, key: `mcp.fail:${callId}` }); }
       catch { return toolError('temporarily_unavailable'); }
       if (APPLICATION_TOOL[name]) this._applicationDispatches.delete(callId);
@@ -1734,6 +1768,17 @@ export class McpFleetServer {
     else if (name === 'baton_waves_stop') {
       value = await this.application.command('waves.stop', {
         runId: args.runId, ...(Object.hasOwn(args, 'reason') ? { reason: args.reason } : {}),
+      }, {
+        actor: actor ?? `mcp:${principal.userId}:${principal.sessionId}`,
+        principalId: principal.userId,
+        sessionId: principal.sessionId,
+      }, this._applicationDispatchContext(args, callId, principal));
+    }
+    // #132 D2.4: the registry read — cursor only, never repoId (the application scopes the registry
+    // to THIS deployment by construction).
+    else if (name === 'baton_waves_list') {
+      value = await this.application.command('waves.list', {
+        ...(Object.hasOwn(args, 'cursor') ? { cursor: args.cursor } : {}),
       }, {
         actor: actor ?? `mcp:${principal.userId}:${principal.sessionId}`,
         principalId: principal.userId,

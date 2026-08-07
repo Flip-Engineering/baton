@@ -231,8 +231,8 @@ const CANONICAL_CARD_COMMANDS = Object.freeze((() => {
   return commands;
 })());
 
-function applicationError(message, code) {
-  return Object.assign(new Error(message), { code });
+function applicationError(message, code, detail = null) {
+  return Object.assign(new Error(message), { code, ...(detail == null ? {} : { detail }) });
 }
 
 /** Decision 3: a size refusal on a cataloged admission lane carries {cap, actual, unit,
@@ -1516,10 +1516,24 @@ function normalizeIntent(value) {
     || (hasWaveId && !validId(value.waveId))
     || (hasWaveRole && !validId(value.waveRole))
     || (hasWaveStart && (!waveStart || typeof waveStart !== 'object' || Array.isArray(waveStart)
-      || Object.keys(waveStart).sort().join(',') !== 'idempotencyKey,roster'
+      // D2.2 (epic #132): the closed key set is deploymentId,idempotencyKey,roster for the
+      // direct-port wave.start; the facade runs.start (wave.mjs:205) still carries the legacy
+      // idempotencyKey,roster pair — both are accepted so the pre-loop mint dedups either way.
+      || !['deploymentId,idempotencyKey,roster', 'idempotencyKey,roster'].includes(Object.keys(waveStart).sort().join(','))
       || !validId(waveStart.idempotencyKey)
       || !Array.isArray(waveStart.roster) || waveStart.roster.length === 0 || waveStart.roster.length > 64
-      || waveStart.roster.some((role) => !validId(role))))
+      || !waveStart.roster.every((member) => (
+        // B2 legacy shape: a string-array roster stays a raw role string in the projection.
+        (typeof member === 'string' && validId(member))
+        // D2.2 NEW shape: each member carries {role, route: {effort, harness, model}, scope}.
+        || (member !== null && typeof member === 'object' && !Array.isArray(member)
+          && validId(member.role)
+          && member.route !== null && typeof member.route === 'object' && !Array.isArray(member.route)
+          && (member.scope === undefined
+            || (Array.isArray(member.scope) && member.scope.length > 0 && member.scope.length <= 64
+              && member.scope.every((item) => validText(item))
+              && new Set(member.scope).size === member.scope.length)))
+      ))))
     || (value.runId !== undefined && !validId(value.runId))
     // Decision 2: the objective is SHAPE-checked here (non-empty string, no NUL) — the byte law
     // and the spill economy live at the run.start ADMISSION seam (oversize admits with spill up
@@ -1541,7 +1555,11 @@ function normalizeIntent(value) {
     ...(hasDriverKind ? { driverKind: value.driverKind } : {}),
     ...(hasWaveId ? { waveId: value.waveId } : {}),
     ...(hasWaveRole ? { waveRole: value.waveRole } : {}),
-    ...(hasWaveStart ? { waveStart: { idempotencyKey: waveStart.idempotencyKey, roster: [...waveStart.roster] } } : {}),
+    ...(hasWaveStart ? { waveStart: {
+      deploymentId: waveStart.deploymentId,
+      idempotencyKey: waveStart.idempotencyKey,
+      roster: [...waveStart.roster],
+    } } : {}),
     profile: value.profile ?? null,
     route: normalizeRouteSelector(value.route),
     scope: value.scope === undefined ? null : [...value.scope].sort(),
@@ -2445,7 +2463,7 @@ function semanticSourceSlice(text, source) {
  */
 export class BatonApplication {
   constructor(options) {
-    const optionalConfiguration = ['context', 'exportRoot', 'exportDeliveryChunkBytes', 'defaults', 'clock']
+    const optionalConfiguration = ['context', 'exportRoot', 'exportDeliveryChunkBytes', 'defaults', 'clock', 'deploymentId']
       .filter((field) => Object.hasOwn(options ?? {}, field));
     exactObject(options, ['driver', 'repoId', 'profiles', 'principals', 'authorize', ...optionalConfiguration],
     'application_config_invalid', 'application configuration');
@@ -2461,6 +2479,11 @@ export class BatonApplication {
     }
     this.driver = options.driver;
     this.repoId = options.repoId;
+    // D2.2/F3 (wave-observability-2026-08-06/contract.md §D2.2): the resident authority's stable
+    // deployment id, threaded from the deployment host (openBatonDeployment). Null when the
+    // application is constructed bare (the embedded test host) — the wave.started mint then omits
+    // the column rather than minting a foreign row.
+    this.deploymentId = options.deploymentId ?? null;
     this.authorize = options.authorize;
     this._clock = options.clock ?? (() => new Date().toISOString());
     if (typeof this._clock !== 'function') {
@@ -4621,8 +4644,13 @@ export class BatonApplication {
       // dedup (coordination-store.mjs) means only the first to land actually mints it, so a
       // driver dying between member 1 and member 2 still leaves the record durable.
       if (intent.waveId !== undefined && intent.waveStart !== undefined) {
+        // D2.2/F3 (wave-observability-2026-08-06/contract.md §D2.2): the wave.started payload
+        // carries the deployment's stable id beside {waveId, roster, idempotencyKey}; the roster
+        // is the object shape [{role, route, scope}] the fold renders. A bare host (no
+        // deploymentId) mints null — the fold renders it as the local-only row.
         this.driver.coordination.recordDriver(APPLICATION_WAVE_STARTED_KIND, {
           waveId: intent.waveId,
+          deploymentId: intent.waveStart.deploymentId ?? null,
           roster: intent.waveStart.roster,
           idempotencyKey: intent.waveStart.idempotencyKey,
         }, {
@@ -11579,22 +11607,50 @@ export class BatonApplication {
       idempotencyKey: request.idempotencyKey,
       members: request.members.map((member) => ({ role: member.role, objective: member.objective })),
     }).slice(0, 32)}`;
-    const roster = request.members.map((member) => member.role);
+    // D2.2 (wave-observability-2026-08-06/contract.md §D2.2): the wave.started roster is the
+    // member-object shape [{role, route: {effort, harness, model}, scope}] — `exact` is the
+    // normalized route and `scope` the member's closed path scope, both passed through unread.
+    const roster = request.members.map((member) => ({
+      role: member.role,
+      route: clone(member.exact),
+      scope: clone(member.scope),
+    }));
     const members = [];
     for (const member of request.members) {
       // Per-member quota debit and profile admission are the MCP layer's and run.start's jobs;
       // here each member rides the SAME exact-route profile admission ordinary run.start uses.
-      const view = await this.start({
-        objective: member.objective,
-        route: clone(member.exact),
-        scope: clone(member.scope),
-        driverKind: 'wave',
-        waveId,
-        waveRole: member.role,
-        waveStart: { roster, idempotencyKey: request.idempotencyKey },
-      }, principal, context);
+      let view = null;
+      try {
+        view = await this.start({
+          objective: member.objective,
+          route: clone(member.exact),
+          scope: clone(member.scope),
+          driverKind: 'wave',
+          waveId,
+          waveRole: member.role,
+          waveStart: { deploymentId: this.deploymentId, roster, idempotencyKey: request.idempotencyKey },
+        }, principal, context);
+      } catch (cause) {
+        // D5.1 (contract.md §D5.1): ANY member run.start refusal that THROWS — profile/quota
+        // admission, spill_body_exceeded past the spill.body ceiling, or an application_* admission
+        // code — converts to the typed wave_member_invalid carrying {actual, cap, cause, role} with
+        // the inner code preserved in cause. A partial start also refuses: the response is never a
+        // success shape, so a driver can never observe a runs:[null] drain.
+        throw applicationError(`wave member ${member.role} did not start`, 'wave_member_invalid', {
+          ...(cause?.actual !== undefined ? { actual: cause.actual } : {}),
+          ...(cause?.cap !== undefined ? { cap: cause.cap } : {}),
+          cause,
+          role: member.role,
+        });
+      }
       const runId = view?.runId ?? view?.goal?.runId ?? null;
-      if (!runId) throw applicationError('wave member did not produce a Run', 'application_wave_start_invalid');
+      if (!runId) {
+        // D5.1: the resolve-without-runId throw is re-coded to the same typed shape.
+        throw applicationError(`wave member ${member.role} did not start`, 'wave_member_invalid', {
+          cause: applicationError('member run produced no runId', 'application_wave_start_invalid'),
+          role: member.role,
+        });
+      }
       members.push(deepFreeze({
         role: member.role, runId,
         ...(view?.phase !== undefined && view?.phase !== null ? { phase: view.phase } : {}),
@@ -11644,6 +11700,87 @@ export class BatonApplication {
     }
     const nextCursor = cursor + page.length < candidates.length ? cursor + page.length : null;
     return deepFreeze({ schemaVersion: 1, waveId: request.waveId, cursor, nextCursor, members });
+  }
+
+  // D2.4 (wave-observability-2026-08-06/contract.md §D2.4): waves.list — the observe verb
+  // answering the OPEN rows of the wave registry projection (never live run inspection for the
+  // membership; per-member phase/attention are the SAME bounded live reads waveProgress uses, so
+  // the frame law holds). Paged ≤16 rows per page with an explicit {cursor, nextCursor}. Every
+  // v1.0 row is this deployment's (the registry lives in the per-deployment private coordination
+  // store) so liveness reads 'local' by construction (D3/B3).
+  async waveList(rawRequest, rawPrincipal, rawContext = null) {
+    this._assertOpen();
+    await this.ready;
+    const context = normalizeCommandContext(rawContext);
+    const principal = normalizePrincipal(rawPrincipal, 'wave list principal');
+    const request = this._normalizeWaveList(rawRequest);
+    const rows = typeof this.driver.coordination.waveRegistry === 'function'
+      ? this.driver.coordination.waveRegistry()
+      : [];
+    const open = rows.filter((row) => row?.state === 'open');
+    const pageSize = 16;
+    const cursor = Number.isSafeInteger(request.cursor) ? request.cursor : 0;
+    const page = open.slice(cursor, cursor + pageSize);
+    const waves = [];
+    for (const row of page) {
+      const members = [];
+      for (const member of row.roster ?? []) {
+        if (typeof member === 'string') {
+          // B2/F13: a legacy string-array member is a bare role with NO registered runId — the
+          // pinned no-run render (liveness local, nulls, route/scope null), never wave_not_found.
+          members.push(deepFreeze({
+            role: member, route: null, scope: null,
+            liveness: 'local', phase: null, progressClass: null, attentionCount: null,
+          }));
+          continue;
+        }
+        const role = member?.role ?? null;
+        const runId = this._runIdForWaveMember(row.waveId, role);
+        let view = null;
+        if (runId !== null) {
+          try {
+            view = await this.inspect({ runId }, principal, context);
+          } catch (error) {
+            // D5.2 seam: a member whose run WAS registered and then disappeared refuses the whole
+            // read typed wave_not_found — the registry row is never a silent success shape.
+            if (error?.code !== 'application_run_not_found') throw error;
+            throw applicationError(`wave member ${role} run is no longer available`, 'wave_not_found', { runId, role });
+          }
+        }
+        const attention = Array.isArray(view?.attention) ? view.attention.length : 0;
+        members.push(deepFreeze({
+          role,
+          liveness: 'local',
+          phase: view?.phase ?? view?.outline?.phase ?? null,
+          progressClass: view?.progressClass ?? view?.outline?.progressClass ?? null,
+          attentionCount: runId === null ? null : attention,
+        }));
+      }
+      waves.push(deepFreeze({
+        closedAtEventSeq: row.closedAtEventSeq ?? null,
+        deploymentId: row.deploymentId ?? null,
+        roster: members,
+        startedAtEventSeq: row.startedAtEventSeq,
+        state: row.state,
+        waveId: row.waveId,
+      }));
+    }
+    const nextCursor = cursor + page.length < open.length ? cursor + page.length : null;
+    return deepFreeze({ schemaVersion: 1, cursor, nextCursor, waves });
+  }
+
+  // The member's run is the steering-registered runId for (waveId, waveRole) — the durable
+  // referent, same event-log-only discipline as _runWaveId/_runWaveRole.
+  _runIdForWaveMember(waveId, waveRole) {
+    if (waveId == null || waveRole == null) return null;
+    const events = this.driver.coordination.events();
+    for (const event of events) {
+      if (event.kind === 'driver.recorded' && event.payload?.kind === APPLICATION_STEERING_REGISTERED_KIND
+        && event.payload?.waveId === waveId && event.payload?.waveRole === waveRole) {
+        return event.payload.runId;
+      }
+    }
+    return null;
   }
 
   // waves.send / waves.stop — resume-steer on the member runIds attach returns. Both are
@@ -11759,6 +11896,16 @@ export class BatonApplication {
       throw applicationError('wave progress request is invalid', 'application_wave_progress_invalid');
     }
     return deepFreeze({ waveId: value.waveId, cursor: value.cursor ?? 0 });
+  }
+
+  // D2.4: waves.list — the registry read accepts only the optional cursor.
+  _normalizeWaveList(value) {
+    if (!value || typeof value !== 'object' || Array.isArray(value)
+      || Object.keys(value).some((key) => !['cursor'].includes(key))
+      || (value.cursor !== undefined && !Number.isSafeInteger(value.cursor))) {
+      throw applicationError('wave list request is invalid', 'application_wave_list_invalid');
+    }
+    return deepFreeze({ cursor: value.cursor ?? 0 });
   }
 
   _normalizeWaveMemberAction(value, label, opts = {}) {
@@ -12356,6 +12503,9 @@ export class BatonApplication {
     if (name === 'waves.progress') return this.waveProgress(args, principal, context);
     if (name === 'waves.send') return this.sendWaveMember(args, principal, context);
     if (name === 'waves.stop') return this.stopWaveMember(args, principal, context);
+    // D2.4 (wave-observability-2026-08-06/contract.md §D2.4): waves.list — the observe verb
+    // answering the OPEN rows of the wave registry projection, paged ≤16 with {cursor, nextCursor}.
+    if (name === 'waves.list') return this.waveList(args, principal, context);
     // Issue #114 (D2): the workflow-as-data interpreter lane. A direct port (not in the
     // command-definitions table) — it validates the closed spec and drives the wave over the
     // embedded facade, throwing the field/role-named workflow_* refusals the MCP allowlist preserves.

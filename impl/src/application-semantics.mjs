@@ -1571,7 +1571,7 @@ const CANONICAL_OPERATION_SPECS = [
   // steer/stop ONE member by runId). MCP-W3: deployment.doctor is the quota-free per-call FRESH
   // readiness read, credential posture as metadata only (never token material).
   ['waves.start', {
-    profile: 'ordinary', surfaces: ['embedded', 'mcp', 'cli'], effect: 'control',
+    profile: 'ordinary', surfaces: ['embedded', 'mcp', 'cli', 'web'], effect: 'control',
     capabilities: ['control', 'observe'], outputView: 'outline', helpTopic: 'run',
     example: 'baton waves start --members JSON',
     inputSchema: objectSchema({
@@ -1588,7 +1588,7 @@ const CANONICAL_OPERATION_SPECS = [
     }, ['idempotencyKey', 'members']),
   }],
   ['waves.progress', {
-    profile: 'ordinary', surfaces: ['embedded', 'mcp', 'cli'], effect: 'observe',
+    profile: 'ordinary', surfaces: ['embedded', 'mcp', 'cli', 'web'], effect: 'observe',
     capabilities: ['observe'], outputView: 'outline', helpTopic: 'run',
     example: 'baton waves progress WAVE_ID --cursor 0',
     inputSchema: objectSchema({
@@ -1597,7 +1597,7 @@ const CANONICAL_OPERATION_SPECS = [
     }, ['waveId']),
   }],
   ['waves.send', {
-    profile: 'ordinary', surfaces: ['embedded', 'mcp', 'cli'], effect: 'control',
+    profile: 'ordinary', surfaces: ['embedded', 'mcp', 'cli', 'web'], effect: 'control',
     capabilities: ['control', 'observe'], outputView: 'outline', helpTopic: 'run',
     example: 'baton waves send RUN_ID --message TEXT',
     inputSchema: objectSchema({
@@ -1612,12 +1612,23 @@ const CANONICAL_OPERATION_SPECS = [
     }, ['runId', 'message']),
   }],
   ['waves.stop', {
-    profile: 'ordinary', surfaces: ['embedded', 'mcp', 'cli'], effect: 'control',
+    profile: 'ordinary', surfaces: ['embedded', 'mcp', 'cli', 'web'], effect: 'control',
     capabilities: ['emergency_stop', 'observe'], outputView: 'outline', helpTopic: 'run',
     example: 'baton waves stop RUN_ID --reason TEXT', destructive: true,
     inputSchema: objectSchema({
       runId: id, reason: { type: 'string', minLength: 1, maxLength: 1024 },
     }, ['runId']),
+  }],
+  // D2.5 (wave-observability-2026-08-06/contract.md §D2): waves.list — the observe verb answering
+  // the in-flight wave set for THIS deployment, sourced from the wave registry projection in the
+  // coordination store (never live run inspection). Embedded + cli + mcp + web, observe-only.
+  ['waves.list', {
+    profile: 'ordinary', surfaces: ['embedded', 'cli', 'mcp', 'web'], effect: 'observe',
+    capabilities: ['observe'], outputView: 'outline', helpTopic: 'run',
+    example: 'baton waves list',
+    inputSchema: objectSchema({
+      cursor: { type: 'integer', minimum: 0 },
+    }, []),
   }],
   // Issue #114 (D2): the workflow-as-data lane — ONE closed spec drives a whole wave (the
   // driver-killer: no per-wave bespoke script). The spec object rides the request; a specPath is

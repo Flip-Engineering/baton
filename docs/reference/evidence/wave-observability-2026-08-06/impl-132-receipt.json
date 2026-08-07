@@ -1,0 +1,37 @@
+{
+  "attempt": "2026-08-07T06:52:21.606Z",
+  "salt": "i420260807065221",
+  "role": "impl-132",
+  "steps": [
+    {
+      "step": "waves.start",
+      "receipt": {
+        "runs": [
+          "run-406820520b0a40701b5c30c4f7d50c9c"
+        ]
+      }
+    },
+    {
+      "step": "dead:impl-132",
+      "receipt": {
+        "phase": "failed"
+      }
+    },
+    {
+      "step": "loop-drained",
+      "receipt": {
+        "pending": []
+      }
+    }
+  ],
+  "harvest": {
+    "impl-132": {
+      "pin": "9adfe3fad0ddb26af5e48c2d387c1fa60cae6c65",
+      "paths": [
+        "impl/src/application.mjs"
+      ]
+    }
+  },
+  "harvestStalePinsSkipped": 374,
+  "verdict": "IMPL-132-FAILED"
+}
