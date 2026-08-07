@@ -17,7 +17,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
-import { dirname, isAbsolute, relative, resolve, sep } from 'node:path';
+import { basename, dirname, isAbsolute, relative, resolve, sep } from 'node:path';
 
 // ---------------------------------------------------------------------------
 // Refusal vocabulary (D — field/role-named, recursive).
@@ -91,15 +91,35 @@ function assertObject(value, refuse, name) {
 // Containment (mcp-descriptor.mjs:46-72 precedent — lexical resolve + realpath symlink escape).
 // ---------------------------------------------------------------------------
 
+// Realpath a path that may not exist yet (a harvest target is admitted BEFORE it is written, so
+// realpathSync throws on the missing path). realpath the deepest EXISTING ancestor and append the
+// unresolved tail. Both the root and the candidate go through this SAME discipline — a one-sided
+// realpath (realpath'd root vs lexical candidate, or vice versa) would read every in-root pending
+// path as outside on macOS, where the tmpdir `/var/folders` realpaths to `/private/var/folders`.
+function realpathMaybe(path) {
+  const resolved = resolve(path);
+  let current = resolved;
+  const tail = [];
+  for (;;) {
+    try {
+      const base = realpathSync(current);
+      return tail.length === 0 ? base : `${base}${sep}${tail.reverse().join(sep)}`;
+    } catch {
+      const parent = dirname(current);
+      if (parent === current) return resolved; // walked to the root without a hit — keep lexical
+      tail.push(basename(current));
+      current = parent;
+    }
+  }
+}
+
 function escapesRepo(repoRoot, relPath) {
   const repoResolved = resolve(repoRoot);
   const target = resolve(repoRoot, relPath);
   const fromRepo = relative(repoResolved, target);
   if (fromRepo === '' || fromRepo === '..' || fromRepo.startsWith(`..${sep}`) || isAbsolute(fromRepo)) return true;
-  let realTarget = target;
-  try { realTarget = realpathSync(target); } catch { /* absent path fails at read; containment is lexical here */ }
-  let realRoot = repoResolved;
-  try { realRoot = realpathSync(repoResolved); } catch { /* keep the lexical root */ }
+  const realTarget = realpathMaybe(target);
+  const realRoot = realpathMaybe(repoResolved);
   const fromReal = relative(realRoot, realTarget);
   return fromReal === '..' || fromReal.startsWith(`..${sep}`) || isAbsolute(fromReal);
 }
