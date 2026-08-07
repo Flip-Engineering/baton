@@ -1,0 +1,15 @@
+{
+  "attempt": "2026-08-07T06:05:31.246Z",
+  "salt": "f020260807060531",
+  "role": "fold-79b",
+  "steps": [
+    {
+      "step": "waves.start",
+      "receipt": {
+        "runs": [
+          "run-e29028e29360d703450ee4cf86b04724"
+        ]
+      }
+    }
+  ]
+}
