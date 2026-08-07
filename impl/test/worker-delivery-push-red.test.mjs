@@ -8,30 +8,40 @@
 // HEAD (the behavior is absent from this tree) and fails at a NAMED stage; the PIN rows are green
 // today by construction and must STAY green on the implementation (the fold's "must NOT change").
 //
-// Row inventory (24 rows — 13 RED / 11 PIN):
+// Row inventory (32 rows — 21 RED / 11 PIN):
 //   A1-A3  RED    D1 seam + renderers   (renderBrief-attention-missing, renderPrompt-attention-missing, pending-attention-seam-missing)
 //   A4-A5  PIN    D1 empty-pending-set + R5 digest pin (absence-on-empty, provider-brief-purity)
 //   B1     RED    R8'                    (wrapHubDerived-missing)
 //   B2-B3  PIN    R8'/GT8                (wrap shapes, #10-era inbox vocabulary)
 //   C1-C2  RED    D2 registry rows       (attention-push-registry-rows-missing, attention-push-bytes-row-missing)
 //   C3-C5  PIN    D2/GT7                 (spill.body row, spill-lane reachable, coaching refusal shape)
+//   C6     RED    D2 overflow round trip (pending-attention-push-missing — 9 pending serve 8, the excess spills, the worker resolves it)
+//   C7     RED    D2 byte shed           (pending-attention-push-missing — (truncated) marker, full text by citation)
 //   D1-D3  RED    D3 addressing + R3     (pending-attention-push-missing ×3 — the invented seam)
+//   D4     RED    D3/R7 never-pushed     (pending-attention-push-missing — orchestrator-only + inbox kinds + a lane message)
+//   D5     RED    D5 replay oracle       (pending-attention-push-missing — a driver RESTART re-derives the same pending set)
+//   D6     RED    D3 interaction push    (pending-attention-push-missing — answer_question/answer_approval push + dedup)
 //   E1     RED    D4 delivered receipt   (attention-pushed-event-missing)
-//   E2     RED    D4 read receipt        (attention-receipt-projection-missing)
+//   E2     RED    D4 read receipt        (attention-receipt-projection-missing — delivered-then-read BOTH cases)
 //   F1     RED    D6 verdict push        (gate-verdict-push-missing)
 //   F2-F4  PIN    D6 sanitized shape     (pathScopeEvidence digests+counts, sanitizer, static message)
+//   F5     RED    D6 per-worker verdict  (gate-verdict-push-missing — run-wide scoping fails)
+//   F6     RED    D6 never-raw tail      (gate-verdict-push-missing — adversarial red_green capsule)
 //   G1     RED    refusal vocabulary     (push-refusal-codes-missing)
 //   G2     PIN    refusal precedents     (spill_body_exceeded / scratchpad_entry_exceeded / recovery_refinement_*)
+//   G3     RED    refusal firing         (attention-push-refusal-missing — stale/unknown/not-addressed/oversized fire)
 //
 // Invented surfaces (every one absent at HEAD — the first assertion on each is an `assert.ok` so
 // the row fails at the NAMED stage, never on a vacuous shape assertion):
 //   coordinator._pendingAttentionPush(workerId)  — the per-worker push projection (D1/D3)
 //   coordinator._attentionReceipt(workerId)      — the replay-derived read receipt projection (D4)
+//   coordinator._assertAttentionPushServed(workerId, items, opts) — the serving-path refusal guard (refusals)
 //   coordinatorNs.PUSH_REFUSAL_CODES             — the frozen attention_push_* refusal family (refusals)
 //   messages.wrapHubDerived(worker, text)        — {provenance:'hub-derived', untrusted:true} wrapper (R8')
 //   FRAME_LIMITS['view.attention_push.items']    — 8 items, graceful spill-digest-citation (D2)
 //   FRAME_LIMITS['view.attention_push.bytes']    — 4096 bytes, graceful shed-flagged (D2)
 //   the brief `attention` field / `## Pending attention` / `UNTRUSTED_ATTENTION` / `[attention/untrusted]`
+//   the projection's closing `spill:sha256:<digest>` entry + the `(truncated)` render-side shed marker (D2)
 //
 // Suite-law hygiene: hermetic (ScriptableAdapter — no harness, no network; mkdtemp logs; global
 // test.after cleanup); the deployment-verification stub is the brief's `true` command; sorted-key
@@ -58,11 +68,11 @@ import * as messages from '../src/messages.mjs';
 import { FRAME_LIMITS, composeFrameLimitRefusal } from '../src/limits.mjs';
 import { sanitizeVerifierDiagnosticText } from '../src/verifier-diagnostics.mjs';
 
-// Verified split (recorded after the suite was finalized — two consecutive runs from the repo root):
-//   run 1: tests 24 · pass 11 · fail 13 · cancelled 0 · skipped 0 · todo 0 (≈366 ms)
-//   run 2: tests 24 · pass 11 · fail 13 · cancelled 0 · skipped 0 · todo 0 (≈365 ms)
+// Verified split (recorded after the fold — two consecutive runs from the repo root):
+//   run 1: tests 32 · pass 11 · fail 21 · cancelled 0 · skipped 0 · todo 0 (≈259 ms)
+//   run 2: tests 32 · pass 11 · fail 21 · cancelled 0 · skipped 0 · todo 0 (≈299 ms)
 //   deterministic — the 11 passes are exactly the PIN rows (A4, A5, B2, B3, C3, C4, C5, F2, F3, F4,
-//   G2); the 13 failures are the RED rows, each confirmed to fail at its NAMED stage.
+//   G2); the 21 failures are the RED rows, each confirmed to fail at its NAMED stage.
 
 const dirs = [];
 function tmpDir() {
@@ -130,6 +140,21 @@ function makeBrief(overrides = {}) {
   };
 }
 
+// The DG row's decision request shape (decision-gate-trust-gate-red.test.mjs) — a real pending
+// decision request is the run-view's `answer_decision` source (GT1).
+function decisionRequestFields() {
+  return {
+    question: 'Which framing?',
+    options: [
+      { id: 'opt-a', label: 'Concise', summary: 'Three sentences' },
+      { id: 'opt-b', label: 'Detailed', summary: null },
+    ],
+    allowFreeResponse: false,
+    recommended: null,
+    deadlineMs: 60_000,
+  };
+}
+
 // A 'claim' card (no `turnCompletion`) — the completed-turn branch falls STRAIGHT through to the
 // real trust gate (TG1), which is what the verdict rows need. The pausable card would park the
 // turn instead and never mint a gate event.
@@ -161,9 +186,9 @@ function passingReferee() {
   });
 }
 
-function setup({ adapter, capture = noDiff, coordinatorOpts = {} }) {
-  const dir = tmpDir();
-  const log = new Log(join(dir, 'log'));
+function setup({ adapter, capture = noDiff, dir = null, coordinatorOpts = {} }) {
+  const dirPath = dir ?? tmpDir();
+  const log = new Log(join(dirPath, 'log'));
   const worktrees = {
     create: async (taskId) => ({ path: `/tmp/wt/${taskId}`, branch: `baton/${taskId}`, baseSha: 'sha-base' }),
     capture,
@@ -186,7 +211,7 @@ function setup({ adapter, capture = noDiff, coordinatorOpts = {} }) {
     progressNudgeWindowMs: 25,
     ...coordinatorOpts,
   });
-  return { dir, log, coordinator, worktrees };
+  return { dir: dirPath, log, coordinator, worktrees };
 }
 
 // A fixed microtask drain — the real coordinator event path is synchronous until it awaits; this
@@ -227,6 +252,20 @@ function stageSpillRead(adapter, handle, spill, key) {
   adapter.emit({
     worker: handle.id, harness: 'mock@1.0.0', turnEpoch: 1, kind: 'context.read', actor: 'worker',
     payload: { query: { kind: 'spill', spill }, expectedFence: 'current', idempotencyKey: key },
+  });
+}
+
+function stageQuestionAsked(adapter, handle, requestId, question) {
+  adapter.emit({
+    worker: handle.id, harness: 'mock@1.0.0', turnEpoch: 1, kind: 'question.asked', actor: 'worker',
+    payload: { requestId, msgId: requestId, question, blocking: false },
+  });
+}
+
+function stageApprovalRequested(adapter, handle, requestId) {
+  adapter.emit({
+    worker: handle.id, harness: 'mock@1.0.0', turnEpoch: 1, kind: 'approval.requested', actor: 'worker',
+    payload: { requestId, id: requestId, kind: 'command', blocking: false },
   });
 }
 
@@ -274,9 +313,14 @@ test('A2 (RED): renderPrompt does not emit `## Pending attention` for a brief ca
     rendered.includes('## Pending attention'),
     'the CLI prompt emits the `## Pending attention` section for a non-empty attention block (stage: renderPrompt-attention-missing)',
   );
-  const doneAt = rendered.indexOf('Done when:');
+  // The verification execution contract renders AFTER `Done when:` (cli-adapters.mjs:102-107) and
+  // opens with `A reviewer independently enforces the following exact execution contract` (:106).
+  // D1 pins the section AFTER that contract — the LAST block of the prompt. Pinning against
+  // `Done when:` alone would let a section slip between the phrase and the contract.
+  const contractAt = rendered.indexOf('A reviewer');
   const pendingAt = rendered.indexOf('## Pending attention');
-  assert.ok(pendingAt > doneAt, 'the section lands AFTER the verification execution contract — the last lines of the prompt (D1)');
+  assert.ok(contractAt >= 0, 'precondition: the verification execution contract marker renders');
+  assert.ok(pendingAt > contractAt, 'the section lands AFTER the verification execution contract — the last lines of the prompt (D1)');
   assert.ok(rendered.includes(UNTRUSTED_ATTENTION_FRAME), 'the section opens with the closed UNTRUSTED_ATTENTION frame (R8)');
   assert.match(rendered, /- \[attention\/untrusted\] scratchpad_write_failed swf:w-2:9:/u, 'each item renders `- [attention/untrusted] ${kind} ${requestId}: …` (R8)');
 });
@@ -436,6 +480,89 @@ test('C5 (PIN): the coaching refusal shape names cap/actual/unit and the spill g
   assert.ok(refusal.includes(SPILL_GRACEFUL_PHRASE), 'the spill path phrase — a digest-citable head (D2)');
 });
 
+test('C6 (RED): the D2 overflow round trip — 9 pending items serve 8 in-block, the excess spills, and the worker resolves the digest (stage: pending-attention-push-missing)', async () => {
+  const adapter = new ScriptableAdapter();
+  const { coordinator } = setup({ adapter });
+  const { handle, task } = await spawn(coordinator);
+  // Nine GENUINELY-pending approvals via the interaction seam. The run-view scratchpad source is
+  // `.slice(-2)`-bounded (application.mjs:7659) — the contract v1.2 pins that the PUSH projection
+  // derives the genuinely-pending set per D5 and does NOT inherit the run-view display bounds.
+  for (let i = 1; i <= 9; i += 1) stageApprovalRequested(adapter, handle, `ap:${i}`);
+  await flush();
+  const pendingCount = [...coordinator._pending.entries()]
+    .filter(([, record]) => record.kind === 'approval' && record.state === 'pending').length;
+  assert.equal(pendingCount, 9, 'precondition: 9 genuinely-pending approvals (never the run-view bound)');
+  assert.equal(
+    typeof coordinator._pendingAttentionPush,
+    'function',
+    'the per-worker push projection exists (stage: pending-attention-push-missing)',
+  );
+  const items = await coordinator._pendingAttentionPush(handle.id);
+  const inBlock = items.filter((item) => item.kind === 'answer_approval');
+  assert.equal(inBlock.length, 8, 'the head 8 items are served in full — the item-count bound (D2)');
+  assert.ok(
+    inBlock.every((item) => item.workerId === handle.id && typeof item.requestId === 'string'),
+    'the in-block items are worker-addressed and keyed',
+  );
+  assert.ok(
+    inBlock.every((item) => item.requestId !== 'ap:9'),
+    'the overflow item is NOT served in-block — only the excess spills (D2)',
+  );
+  const spillEntry = items.find((item) => /^spill:sha256:[a-f0-9]{64}$/u.test(item.requestId ?? ''));
+  assert.ok(spillEntry, 'the block closes with a spill:sha256:<digest> citation — never a truncation (D2)');
+  assert.ok(JSON.stringify(spillEntry).includes('ap:9'), 'the overflow item id rides the spill citation');
+  const composed = coordinator._providerBrief(task.brief, handle.id);
+  assert.ok(Array.isArray(composed?.attention), 'the composed block carries the attention (stage: pending-attention-push-missing)');
+  // The ROUND TRIP: the worker resolves the digest-cited spill through the closed CONTEXT_READ lane
+  // and recovers the full framed overflow item.
+  stageSpillRead(adapter, handle, spillEntry.requestId, 'c6-spill-read');
+  await flush();
+  const read = coordinator._log.read(handle.id)
+    .filter((event) => event.kind === 'context.read_result').at(-1);
+  assert.ok(read && read.payload?.ok === true, 'the digest-cited spill resolves through the closed lane');
+  const resolved = read.payload?.result;
+  assert.ok(resolved && typeof resolved === 'object' && typeof resolved.body === 'string', 'the resolved spill body is the full framed overflow item');
+  assert.ok(resolved.body.includes('[attention/untrusted]'), 'the spill preserves the per-item frame (D2 spill serialization)');
+  assert.ok(resolved.body.includes('ap:9'), 'the overflow item\'s FULL text rides the spill — recoverable, never lost (D2)');
+});
+
+test('C7 (RED): the D2 byte shed — long-text items crossing 4096 rendered bytes carry the (truncated) marker and full text by citation (stage: pending-attention-push-missing)', async () => {
+  const adapter = new ScriptableAdapter();
+  const { coordinator } = setup({ adapter });
+  const { handle, task } = await spawn(coordinator);
+  // Eight long-text questions: ~8 × (frame + 520-byte leaf) > the 4096 render bound.
+  const longText = (index) => `long ${index}: ${'x'.repeat(500)} tail about the world ${index}`;
+  for (let i = 1; i <= 8; i += 1) stageQuestionAsked(adapter, handle, `q:${i}`, longText(i));
+  await flush();
+  const pendingCount = [...coordinator._pending.entries()]
+    .filter(([, record]) => record.kind === 'question' && record.state === 'pending').length;
+  assert.equal(pendingCount, 8, 'precondition: 8 genuinely-pending long-text questions');
+  assert.equal(
+    typeof coordinator._pendingAttentionPush,
+    'function',
+    'the per-worker push projection exists (stage: pending-attention-push-missing)',
+  );
+  const items = await coordinator._pendingAttentionPush(handle.id);
+  const questions = items.filter((item) => item.kind === 'answer_question');
+  assert.equal(questions.length, 8, 'every qualifying item is present — the byte shed NEVER drops an item (D2)');
+  const spillEntry = items.find((item) => /^spill:sha256:[a-f0-9]{64}$/u.test(item.requestId ?? ''));
+  assert.ok(spillEntry, 'the byte shed rides the spill — full text is recoverable by citation (D2)');
+  const composed = coordinator._providerBrief(task.brief, handle.id);
+  assert.ok(Array.isArray(composed?.attention), 'the composed block carries the attention (stage: pending-attention-push-missing)');
+  const rendered = renderPrompt({ ...makeBrief(), attention: composed.attention });
+  assert.ok(rendered.includes('(truncated)'), 'the renderer shortens the over-budget leaves with the (truncated) marker (D2 byte-shed)');
+  assert.match(rendered, /- \[attention\/untrusted\] answer_question q:1:/u, 'the in-block items still render their head framing');
+  stageSpillRead(adapter, handle, spillEntry.requestId, 'c7-spill-read');
+  await flush();
+  const read = coordinator._log.read(handle.id)
+    .filter((event) => event.kind === 'context.read_result').at(-1);
+  assert.ok(read && read.payload?.ok === true, 'the digest-cited spill resolves through the closed lane');
+  assert.ok(
+    read.payload?.result?.body?.includes(longText(1)),
+    'the FULL untruncated text is recoverable by citation — nothing is unrecoverable (D2/OQ1)',
+  );
+});
+
 // ===========================================================================
 // Section D — D3 worker-identity addressing + R3 dedup
 // ===========================================================================
@@ -504,6 +631,114 @@ test('D3 (RED): a still-pending item is re-pushed and a resolved item is not —
   );
 });
 
+test('D4 (RED): an orchestrator-only kind and a lane-delivered message never render in a worker\'s block — the never-pushed-kinds law (stage: pending-attention-push-missing)', async () => {
+  const adapter = new ScriptableAdapter();
+  const { coordinator } = setup({ adapter });
+  const { handle, task } = await spawn(coordinator);
+  // A genuinely-pending DECISION REQUEST: the run-view would project `answer_decision` (GT1,
+  // projectDecisionAttention) — an orchestrator-only kind the push must NEVER serve (R7/D3).
+  adapter.emit({
+    worker: handle.id, harness: 'mock@1.0.0', turnEpoch: 1, kind: 'decision.requested', actor: 'worker',
+    payload: { requestId: 'd4:decision:1', request: decisionRequestFields() },
+  });
+  await flush();
+  assert.equal(coordinator.interactionStatus('d4:decision:1')?.state, 'pending', 'precondition: the decision request is genuinely pending');
+  assert.equal(
+    typeof coordinator._pendingAttentionPush,
+    'function',
+    'the per-worker push projection exists (stage: pending-attention-push-missing)',
+  );
+  const items = await coordinator._pendingAttentionPush(handle.id);
+  assert.equal(
+    items.some((item) => ORCHESTRATOR_ONLY_KINDS.includes(item.kind)),
+    false,
+    'an orchestrator-only kind (`answer_decision` for a pending decision request) never renders in the block (R7/D3)',
+  );
+  assert.equal(
+    items.some((item) => INBOX_KINDS.includes(item.kind)),
+    false,
+    'the #10-era inbox kinds (`approval`/`question`/`blocked`/`stalled`/`budget_alarm`) never render in the block (GT8/D3)',
+  );
+  // BD3-C arm: an orchestrator lane-delivered message is the delivery mechanism — the attention
+  // block NEVER re-serves it (D5, R7 double-push).
+  const sent = await coordinator.sendMessage(
+    { kind: 'inform', to: { workerId: handle.id }, body: 'the board carries two items' },
+    { actor: 'orchestrator' },
+  );
+  await flush();
+  assert.ok(sent?.messageId, 'precondition: the BD3-C lane delivery mints a message id');
+  const composed = coordinator._providerBrief(task.brief, handle.id);
+  assert.ok(Array.isArray(composed?.attention), 'the next-turn brief carries the attention block (stage: pending-attention-push-missing)');
+  assert.equal(
+    composed.attention.some((item) => item.requestId === sent.messageId),
+    false,
+    'the lane-delivered message is never double-pushed (R7)',
+  );
+});
+
+test('D5 (RED): the dedup oracle survives a driver RESTART — a second instance over the same log re-derives the identical pending set (stage: pending-attention-push-missing)', async () => {
+  const adapter = new ScriptableAdapter();
+  const first = setup({ adapter });
+  const { handle, task } = await spawn(first.coordinator);
+  stageRefusedWrite(adapter, handle, 'd5-write');
+  await flush();
+  assert.equal(
+    typeof first.coordinator._pendingAttentionPush,
+    'function',
+    'the per-worker push projection exists (stage: pending-attention-push-missing)',
+  );
+  const aIds = (await first.coordinator._pendingAttentionPush(handle.id)).map((item) => item.requestId);
+  assert.ok(aIds.length > 0, 'coordinator A derives a pending set');
+  first.coordinator._providerBrief(task.brief, handle.id); // compose once (the delivery seam)
+  await flush();
+  // "Restart": release the coordination writer lease and construct a SECOND coordinator over the
+  // SAME durable log — a fresh-process equivalent. An in-memory "already pushed" Set is empty here.
+  first.coordinator._coordination.releaseWriterLease();
+  const second = setup({ adapter, dir: first.dir });
+  const bIds = (await second.coordinator._pendingAttentionPush(handle.id)).map((item) => item.requestId);
+  assert.deepEqual(bIds, aIds, 'coordinator B re-derives the IDENTICAL pending set purely from durable events (D5 replay-safety)');
+  const bItems = await second.coordinator._pendingAttentionPush(handle.id);
+  assert.ok(
+    bItems.some((item) => item.kind === 'scratchpad_write_failed'),
+    'the still-pending item IS re-pushed after the restart — an in-memory Set would be empty and silently skip it (D5)',
+  );
+});
+
+test('D6 (RED): a pending answer_question/answer_approval pushes, re-pushes while unanswered, and drops once answered (stage: pending-attention-push-missing)', async () => {
+  const adapter = new ScriptableAdapter();
+  const { coordinator } = setup({ adapter });
+  const { handle } = await spawn(coordinator);
+  stageQuestionAsked(adapter, handle, 'q:d6', 'which framing?');
+  stageApprovalRequested(adapter, handle, 'ap:d6');
+  await flush();
+  assert.equal(coordinator._pending.get('q:d6')?.state, 'pending', 'precondition: the question is genuinely pending');
+  assert.equal(coordinator._pending.get('ap:d6')?.state, 'pending', 'precondition: the approval is genuinely pending');
+  assert.equal(
+    typeof coordinator._pendingAttentionPush,
+    'function',
+    'the per-worker push projection exists (stage: pending-attention-push-missing)',
+  );
+  const atTurnN = await coordinator._pendingAttentionPush(handle.id);
+  assert.ok(
+    atTurnN.some((item) => item.kind === 'answer_question' && item.requestId === 'q:d6'),
+    'the pending question pushes with the interaction requestId (D3/D5)',
+  );
+  assert.ok(
+    atTurnN.some((item) => item.kind === 'answer_approval' && item.requestId === 'ap:d6'),
+    'the pending approval pushes with the interaction requestId (D3/D5)',
+  );
+  const rePushed = await coordinator._pendingAttentionPush(handle.id);
+  assert.ok(rePushed.some((item) => item.requestId === 'q:d6'), 'a still-unanswered question re-pushes at turn N+1 (R3)');
+  await coordinator.respond('q:d6', { text: 'the frame' }, 'orchestrator');
+  await coordinator.respond('ap:d6', { decision: 'approved' }, 'orchestrator');
+  await flush();
+  assert.equal(coordinator._pending.get('q:d6')?.state, 'resolved', 'precondition: the question answer is applied');
+  assert.equal(coordinator._pending.get('ap:d6')?.state, 'resolved', 'precondition: the approval answer is applied');
+  const atTurnN1 = await coordinator._pendingAttentionPush(handle.id);
+  assert.equal(atTurnN1.some((item) => item.requestId === 'q:d6'), false, 'a resolved question is NOT re-pushed (R3/D5)');
+  assert.equal(atTurnN1.some((item) => item.requestId === 'ap:d6'), false, 'a resolved approval is NOT re-pushed (R3/D5)');
+});
+
 // ===========================================================================
 // Section E — D4 delivery receipts
 // ===========================================================================
@@ -527,23 +762,51 @@ test('E1 (RED): composing the block mints no attention.pushed delivered-receipt 
   assert.match(pushes[0].payload.blockDigest ?? '', HEX64, 'the block digest is content-addressed');
 });
 
-test('E2 (RED): the replay-derived read receipt projection does not exist (stage: attention-receipt-projection-missing)', async () => {
+test('E2 (RED): the replay-derived read receipt projection does not exist — delivered-then-read pinned in BOTH cases (stage: attention-receipt-projection-missing)', async () => {
   const adapter = new ScriptableAdapter();
   const { coordinator } = setup({ adapter });
   const { handle, task } = await spawn(coordinator);
   stageRefusedWrite(adapter, handle, 'e2-write');
   await flush();
-  coordinator._providerBrief(task.brief, handle.id); // the delivery seam (best-effort context at HEAD)
+  coordinator._providerBrief(task.brief, handle.id); // delivery #1 (best-effort context at HEAD)
   await flush();
   assert.equal(
     typeof coordinator._attentionReceipt,
     'function',
     'the replay-derived receipt projection `_attentionReceipt(workerId)` exists (stage: attention-receipt-projection-missing)',
   );
-  const receipt = await coordinator._attentionReceipt(handle.id);
-  assert.ok(receipt && typeof receipt === 'object', 'the projection returns the worker’s replay-derived receipt');
-  assert.equal(receipt.delivered, true, 'delivered = composed, honestly — never a wire ack (D4)');
-  assert.equal(receipt.read, null, 'no turn_started yet — read stays null (D4)');
+  const receiptBefore = await coordinator._attentionReceipt(handle.id);
+  assert.ok(receiptBefore && typeof receiptBefore === 'object', 'the projection returns the worker’s replay-derived receipt');
+  assert.equal(receiptBefore.delivered, true, 'delivered = composed, honestly — never a wire ack (D4)');
+  assert.equal(receiptBefore.read, null, 'no turn_started after the push yet — read stays null (D4)');
+
+  // (a) delivered-then-read: the next turn_started (seq ≥ push.seq) marks read with THAT seq.
+  adapter.emit({
+    worker: handle.id, harness: 'mock@1.0.0', turnEpoch: 2, kind: 'lifecycle.turn_started', actor: 'worker',
+    payload: {},
+  });
+  await flush();
+  const afterTurn = await coordinator._attentionReceipt(handle.id);
+  const turnSeq = coordinator._log.read(handle.id)
+    .filter((event) => event.kind === 'lifecycle.turn_started').at(-1)?.seq;
+  assert.equal(afterTurn.read, turnSeq, 'read is the first turn_started with seq ≥ push.seq (D4)');
+  assert.equal(typeof afterTurn.read, 'number', 'read is an event seq — never a wall clock (D4)');
+
+  // (b) delivered-but-not-read across a respawn: a process_closed between the latest push and the
+  // next turn_started leaves read null — a respawned worker does not inherit the read (D4/R6).
+  coordinator._providerBrief(task.brief, handle.id); // delivery #2 — the still-pending item re-pushes
+  await flush();
+  coordinator._log.append({
+    worker: handle.id, harness: 'mock@1.0.0', turnEpoch: 3, kind: 'lifecycle.process_closed',
+    actor: 'policy', payload: { generation: 1, pid: 123, processGroupId: 'p-1', ready: false },
+  });
+  adapter.emit({
+    worker: handle.id, harness: 'mock@1.0.0', turnEpoch: 4, kind: 'lifecycle.turn_started', actor: 'worker',
+    payload: {},
+  });
+  await flush();
+  const afterRespawn = await coordinator._attentionReceipt(handle.id);
+  assert.equal(afterRespawn.read, null, 'a respawned worker honestly shows read null — process_closed sits in (push.seq, turn.seq) (D4/R6)');
 });
 
 // ===========================================================================
@@ -626,6 +889,77 @@ test('F4 (PIN): the trust-gate error message is the static string — message so
   );
 });
 
+test('F5 (RED): the verdict is pinned per-WORKER — worker B never receives worker A\'s judged verdict (stage: gate-verdict-push-missing)', async () => {
+  const adapter = new ScriptableAdapter();
+  const outOfScope = async () => ({ sha: 'sha-x', baseSha: 'sha-base', changedPaths: ['outside.txt'] });
+  const { coordinator } = setup({ adapter, capture: outOfScope });
+  const { handle: handleA, task: taskA } = await spawn(coordinator, { pathScope: ['reports/**'] });
+  const { handle: handleB, task: taskB } = await spawn(coordinator, { pathScope: ['reports/**'] });
+  stageCompletedTurn(adapter, handleA, ['outside.txt']);
+  await flush();
+  const gate = coordinator._log.read(handleA.id)
+    .find((event) => event.kind === 'error' && event.payload?.phase === 'trust_gate');
+  assert.ok(gate, 'precondition: worker A\'s scope violation minted the real trust-gate error');
+  assert.equal(gate.worker, handleA.id, 'precondition: the gate error is worker-attributed — the D6 filter source');
+
+  const composedA = coordinator._providerBrief(taskA.brief, handleA.id);
+  const composedB = coordinator._providerBrief(taskB.brief, handleB.id);
+  assert.ok(
+    Array.isArray(composedA?.attention),
+    'the judged worker\'s next-turn brief carries the attention block (stage: gate-verdict-push-missing)',
+  );
+  const aVerdict = composedA.attention.find((entry) => entry.kind === 'gate_verdict');
+  assert.ok(aVerdict, 'worker A receives ITS OWN judged verdict (R2/D6)');
+  assert.equal(aVerdict.workerId, handleA.id, 'the verdict addressee is the judged worker');
+  assert.equal(aVerdict.requestId, `gate:${gate.seq}`, 'keyed gate:${event.seq} from the worker-scoped latest event (D5)');
+  assert.ok(
+    Array.isArray(composedB?.attention),
+    'the second worker\'s next-turn brief carries the attention block (stage: gate-verdict-push-missing)',
+  );
+  assert.equal(
+    composedB.attention.some((entry) => entry.kind === 'gate_verdict'),
+    false,
+    'worker B never receives worker A\'s verdict — run-wide `debugGateRefusal(events)` scoping fails (D6)',
+  );
+});
+
+test('F6 (RED): the red_green/coverage verdict tail is sanitizer output — an adversarial raw capsule never crosses (stage: gate-verdict-push-missing)', async () => {
+  const adapter = new ScriptableAdapter();
+  const { coordinator } = setup({ adapter });
+  const { handle, task } = await spawn(coordinator);
+  const secret = 'trace at /Users/alice/projects/secret/lib.rs:12 Authorization: Bearer eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.signaturevalue';
+  coordinator._log.append({
+    worker: handle.id, harness: 'mock@1.0.0', turnEpoch: 1, kind: 'verify.reverified', actor: 'policy',
+    payload: {
+      accept: false,
+      verdict: { diagnosticCode: 'verification_red_green_failed', failureCapsule: { text: secret } },
+    },
+  });
+  await flush();
+  const source = coordinator._log.read(handle.id)
+    .find((event) => event.kind === 'verify.reverified' && event.payload?.accept === false);
+  assert.ok(source, 'precondition: the red_green refusal is durably recorded (D6 source)');
+  assert.equal(source.payload.verdict.diagnosticCode, 'verification_red_green_failed', 'precondition: the diagnostic code is the red_green family');
+
+  const composed = coordinator._providerBrief(task.brief, handle.id);
+  assert.ok(
+    Array.isArray(composed?.attention),
+    'the judged worker\'s next-turn brief carries the attention block (stage: gate-verdict-push-missing)',
+  );
+  const verdict = composed.attention.find((entry) => entry.kind === 'gate_verdict');
+  assert.ok(verdict, 'the red_green verdict item is pushed (R2/D6)');
+  assert.equal(verdict.gate, 'red_green', 'the gate is derived from the diagnostic code (D6)');
+  assert.ok(typeof verdict.detail?.tail === 'string', 'detail.tail is a string — the sanitizer output (D6)');
+  assert.ok(!verdict.detail.tail.includes('/Users/alice'), 'the adversarial home path never crosses — the tail is sanitized (D6 never-raw)');
+  assert.ok(!JSON.stringify(verdict.detail.tail).includes('eyJhbGciOiJIUzI1NiJ9'), 'the adversarial JWT never crosses — the tail is sanitized (D6 never-raw)');
+  assert.ok(!JSON.stringify(verdict).includes('lib.rs'), 'the raw failure capsule never crosses in ANY field');
+  const message = verdict.message ?? '';
+  assert.ok(
+    typeof message === 'string' && !message.includes('/Users/alice'),
+    'the message field is static-or-sanitized, never raw (D6)',
+  );
+});
+
 // ===========================================================================
 // Section G — refusal vocabulary
 // ===========================================================================
@@ -667,4 +1001,77 @@ test('G2 (PIN): the verbatim-reused refusal precedents stay alive in the registr
   assert.ok(refusal instanceof CoordinationRefusal, 'the recovery-refinement refusal is a typed CoordinationRefusal');
   assert.match(refusal.code ?? '', /^recovery_refinement_/u,
     'the family code is snake_case recovery_refinement_* — `recovery_refinement_conflict` is the lineage-change code');
+});
+
+test('G3 (RED): the serving-path refusals FIRE — stale/unknown/not-addressed/oversized are typed, never silent (stage: attention-push-refusal-missing)', async () => {
+  const adapter = new ScriptableAdapter();
+  const { coordinator } = setup({ adapter });
+  const { handle } = await spawn(coordinator);
+  // A refused write then its corrective write: the failure is now RESOLVED (D5 predicate).
+  stageRefusedWrite(adapter, handle, 'g3-write');
+  await flush();
+  const failure = coordinator._log.read(handle.id)
+    .find((event) => event.kind === 'scratchpad.write_result' && event.payload?.result === 'scratchpad_entry_invalid');
+  assert.ok(failure, 'precondition: the refused-write receipt is durable');
+  stageValidWrite(adapter, handle, 'g3-correct');
+  await flush();
+  assert.equal(
+    typeof coordinator._assertAttentionPushServed,
+    'function',
+    'the coordinator exposes the serving-path guard `_assertAttentionPushServed(workerId, items, opts)` (stage: attention-push-refusal-missing)',
+  );
+
+  // (a) a re-push of a RESOLVED item refuses attention_push_stale (D5 dedup violation).
+  const stale = (() => {
+    try {
+      coordinator._assertAttentionPushServed(handle.id, [
+        { kind: 'scratchpad_write_failed', requestId: `swf:${handle.id}:${failure.seq}`, workerId: handle.id },
+      ]);
+      return null;
+    } catch (error) { return error; }
+  })();
+  assert.ok(stale, 'a re-push of a resolved item refuses — it is never silently dropped');
+  assert.equal(stale.code, 'attention_push_stale', 'the typed stale refusal fires (D5)');
+
+  // (b) a referenced id that is not a push-qualified pending item refuses attention_push_unknown_item.
+  const unknown = (() => {
+    try {
+      coordinator._assertAttentionPushServed(handle.id, [
+        { kind: 'scratchpad_write_failed', requestId: `swf:${handle.id}:999`, workerId: handle.id },
+      ]);
+      return null;
+    } catch (error) { return error; }
+  })();
+  assert.ok(unknown, 'a referenced unknown item id refuses — it is never silently dropped');
+  assert.equal(unknown.code, 'attention_push_unknown_item', 'the typed unknown-item refusal fires (D3/D5)');
+
+  // (c) an orchestrator-only kind presented for push refuses attention_push_not_addressed (R7/D3).
+  const notAddressed = (() => {
+    try {
+      coordinator._assertAttentionPushServed(handle.id, [
+        { kind: 'answer_decision', requestId: 'dec:g3', workerId: handle.id },
+      ]);
+      return null;
+    } catch (error) { return error; }
+  })();
+  assert.ok(notAddressed, 'an orchestrator-only kind presented for push refuses — it is never served');
+  assert.equal(notAddressed.code, 'attention_push_not_addressed', 'the typed not-addressed refusal fires (R7/D3)');
+
+  // (d) an over-bound set with the spill lane unavailable refuses attention_push_oversized with
+  // the {cap, actual, unit, gracefulPath} coaching shape (D2).
+  const nine = Array.from({ length: 9 }, (_, i) => ({
+    kind: 'scratchpad_write_failed', requestId: `swf:${handle.id}:${i}`, workerId: handle.id,
+  }));
+  const oversized = (() => {
+    try {
+      coordinator._assertAttentionPushServed(handle.id, nine, { spillLane: false });
+      return null;
+    } catch (error) { return error; }
+  })();
+  assert.ok(oversized, 'an over-bound set with the spill lane unavailable refuses — it is never truncated silently');
+  assert.equal(oversized.code, 'attention_push_oversized', 'the typed oversized refusal fires (D2)');
+  const coaching = String(oversized.message ?? oversized.coaching ?? '');
+  assert.match(coaching, /view\.attention_push\.items/u, 'the coaching shape names the bound lane (GT7)');
+  assert.match(coaching, /\b8\b/u, 'the coaching shape names the cap (GT7)');
+  assert.match(coaching, /actual|spill/u, 'the coaching shape names the actual count or the spill graceful path (GT7)');
 });
