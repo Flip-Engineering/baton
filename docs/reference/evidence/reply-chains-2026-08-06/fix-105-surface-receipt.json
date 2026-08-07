@@ -1,0 +1,15 @@
+{
+  "attempt": "2026-08-07T09:04:56.847Z",
+  "salt": "f720260807090456",
+  "role": "fix-105-surface",
+  "steps": [
+    {
+      "step": "waves.start",
+      "receipt": {
+        "runs": [
+          "run-0a491a54161e16f2802e4a3114b0e2b0"
+        ]
+      }
+    }
+  ]
+}

@@ -111,6 +111,13 @@ export const FRAME_LIMITS = deepFreeze({ ...ADMISSION, ...SUBSTRATE, ...VIEW });
 
 export const FRAME_LIMITS_VERSION = '1.2.0';
 
+/** Issue #105 (D1/B-3): the closed conversational depth ceiling for reply chains — a per-branch
+ * depth cap (never per-subtree), declared per send, default 1. The derivation: the scanner's
+ * MAX_MESSAGE_SEND_GRAMMAR_SCAN_BYTES window bounds one frame scan, and 8 is the smallest power
+ * of two whose per-branch hop ceiling composes with the per-frame invariant; it is a COUNT,
+ * never a clock (the campaign control law). */
+export const MAX_MESSAGE_DEPTH_BUDGET = 8;
+
 /** Named-export `code` (a string) so the suite's `assertLimitsModule` helper — which reads
  * `module?.code ?? module` when stringifying its red-stage message — is safe once the module
  * actually loads: an ESM namespace object has a null prototype and would otherwise throw
