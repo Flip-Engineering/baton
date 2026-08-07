@@ -7,18 +7,25 @@ ledger (historical through Phase 65, resumed at 93a.2); live proofs are under
 `docs/reference/evidence/` and `docs/handoff/evidence/`; the open work tracker is the GitHub
 issue list.
 
-## Current checkpoint (2026-07-21)
+## Current checkpoint (2026-08-07)
 
-- Canonical `npm test` in `impl/`: **2488/2488 green**.
-- Frontier: the Wave driver surface (doc 31) merged as PR #15 — first-class orchestration
-  waves with failure-mode-baked semantics; Phase 93a.3a (closed Context result-schema
-  derivation) merged as PR #14; Phase 93a.2 (closed Program source grammar + canonical
-  normalizer) merged as PR #13.
-- Open tracker: issues #2–#19 (routing axes, locale-independent canonical ordering,
-  cross-controller process forests, review-report semantics, worker policy, Program v1
-  composition, the AX spine, Claude credential projection, nested orchestration, and the
-  REFLEX-1..4 reflexive-orchestration verticals — decision channels, task boards, knowledge
-  hand-off objects, REPL objects, docs/32).
+- Canonical suite: **3,541 tests** (3,418 green; the delta is the five red-by-design Ring-4
+  suites — #99/#102/#114/#103/#12 — plus the documented #7 load-flake cluster, green twice
+  isolated each). The gate is the acceptance authority: `node impl/scripts/run-suite.mjs`.
+- Frontier campaign (#82): Rings 1–3 complete (gate 3238 → 3355 full green); Ring 4 specs all
+  fleet-driven and folded; Ring 4 implementations landing: **#10 waiting-on vocabulary SHIPPED**
+  (baecb18 — additive `waitingOn` on run view/outline/runs.list; the gate caught and a fix wave
+  repaired an authority regression pre-commit). #114 workflow-as-data (the driver-killer) in
+  impl; #103 briefing-pack, #132 wave-observability, #105 reply-chains all through
+  contract → red-team → fold → suite → blue-team chains.
+- The methodology era: every spec and most implementation now rides baton waves (the KIMI
+  PIVOT — kimi orchestrates, the fleet authors); the generic task-wave driver
+  (docs/reference/evidence/run-task-wave.mjs) declares single-member waves by args;
+  brief-by-reference after the 4KiB objective cap incident (#129).
+- The orchestrator is a baton participant: resident `baton serve` standing; #132 (wave
+  observability) + #138 (stateless MCP) filed from the lived gap.
+- Issues filed through #140; the open tracker is the GitHub issue list (docs-dive tier-1
+  restorations #116–#128, tracking backlog #131).
 
 ## Phase history
 
@@ -473,3 +480,44 @@ delivery push, BD3-D attention inbox — worker-validated as the #1 leverage ite
 explicit foundation the #74 worker-orchestrated swarm pattern rides (operator sequencing:
 bidirectional layers first, dynamic workflows second). MCP+packaging implementation in flight
 (deepseek). Issues filed through the sweep: #68-#80 complete.
+
+2026-08-03 → 2026-08-07 — the frontier campaign (#82), the fleet-authors era. (Bridge: the
+2026-07-21 checkpoint recorded the Wave driver surface merged as PR #15, Phase 93a.3a as PR #14,
+Phase 93a.2 as PR #13; the open tracker was issues #2–#19.) What followed was the largest
+sustained orchestration run of the project: the **frontier sweep (#82)** operating as rings of
+spec→red-team→fold→red-first-suite→blue-team→fold→implementation chains, driven after the
+**KIMI PIVOT** (2026-08-06) entirely by baton waves — kimi orchestrates, the fleet authors
+(contracts, suites, reviews, folds, and implementations all ride `waves.start`; the orchestrator
+verifies every landing from the repo root and commits as `baton 0.1.0`). **Ring 1** (gate
+3238/3238, first full green): #78 board worker-half (9ec8e97), #85 browser-use (0eae749),
+#47-family+#83+#84 readiness honesty (5fb3425), #81 worker orientation (0bb6938). **Ring 2**
+(gate 3355/3355): #88 claim-preflight (07d9ddd), #89 frame economics (f33c24e), #87+#48 the
+workflow surface (f4a64da) — nine consecutive one-shot epics (deepseek ×8, glm ×1). **Ring 3:**
+the #94 dynamic-workflow demo accepted and closed (scripted workflow through the surface: 4/4
+live MESSAGE_SEND replies with receipts, decision-gated synthesis), #43 closed, the deepseek
+ceiling 1→4, the Flip brand landed (758b4ae — real mascot + TUI faces + MCP greeting).
+**Ring 4 specs** all fleet-driven and folded (058334a; gate 3379/3486 with exactly 107
+red-by-design). **Ring 4 implementations:** **#10 waiting-on vocabulary SHIPPED** (baecb18 —
+additive `waitingOn {kind, since:{eventSeq, turnEpoch}, detail}` on run view/outline/runs.list,
+five kinds, the honest-null law, the #97 worker_spawning refusal; the canonical gate CAUGHT an
+authority regression in the first cut — FP-05 resolve-then-authorize leak, FP-18 messageRunId —
+and a dedicated fix wave restored both pins with zero suite weakening before commit).
+#114 workflow-as-data (the driver-killer: one closed spec + one verb ends bespoke drivers)
+through red-team (B1-B6) and a 16-finding suite-fold to v1.2, in implementation; #103
+briefing-pack (the orchestrator's L0 pack; D9 `wave.closed` campaign-state record) and #132
+wave-observability (the wave lane's web admission + `waves.list` + registry projection) and
+#105 reply-chains (depth-budgeted conversational follow-ups) all through full adversarial
+chains. **The docs-dive** (four deepseek find-reports + orchestrator synthesis, b1f690a/9b1830f)
+mapped every dropped feature across 830 commits → issues #116–#131 (13 tier-1 restorations, the
+positive-clearance cluster, the do-not-resurrect list answering the language-rewrite question:
+NO — the Node ESM reference impl IS the executable spec). **The resident-integration session:**
+the orchestrator moved into a standing `baton serve` deployment; the lived frictions filed as
+#129 (silent oversize refusal), #132 (wave observability — the wave verbs are direct ports never
+web-admitted), #134–#139 (stale-pin harvest false-OK — interim-patched in the generic driver;
+silent serve startup; the runs.list CLI cursor gap; setup misdirection; stdio-only MCP; envelope
+error quality), #140 (a self-review perf finding on the #10 projection). The **generic task-wave
+driver** (docs/reference/evidence/run-task-wave.mjs) declares single-member waves by args —
+the interim answer to bespoke-driver sprawl until #114 lands. **EVAL-R0 pre-registered**
+(f50a977 — the pivot criterion sealed before any arm runs; two suite modes discovered and named).
+Friction ledger through Appendix C: the meta-lesson holds — the newest frictions are all
+visibility/naming frictions, never capability absences.
