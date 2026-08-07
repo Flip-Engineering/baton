@@ -1,0 +1,37 @@
+{
+  "attempt": "2026-08-07T00:58:24.415Z",
+  "salt": "c420260807005824",
+  "role": "contract-67",
+  "steps": [
+    {
+      "step": "waves.start",
+      "receipt": {
+        "runs": [
+          "run-42dba89d1422b919cee5ff60be8bc588"
+        ]
+      }
+    },
+    {
+      "step": "terminal:contract-67",
+      "receipt": {
+        "phase": "work_completed"
+      }
+    },
+    {
+      "step": "loop-drained",
+      "receipt": {
+        "pending": []
+      }
+    }
+  ],
+  "harvest": {
+    "contract-67": {
+      "pin": "2b99074f69fcadbb8490e5effee7c8285ee8cd6c",
+      "paths": [
+        "docs/reference/evidence/stall-watchdog-2026-08-07/stall-watchdog-contract.md"
+      ]
+    }
+  },
+  "harvestStalePinsSkipped": 346,
+  "verdict": "CONTRACT-67-OK"
+}
