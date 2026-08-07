@@ -21,6 +21,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 
 import { createWaveDriver } from './wave-driver.mjs';
+import { runWorkflow } from './workflow-interpreter.mjs';
 
 // Rule 1 caps. The descriptor/task/constraint caps are derived so a fully-maxed card (2KiB task +
 // 8×240B constraints) stays under the machinery's objective ceiling — the rendered objective can
@@ -570,13 +571,17 @@ async function implementContract(baton, invocation) {
 
 // Rule 3: baton.recipes is an embedded-facade library over the shipped driver. The facade is
 // derived from the BatonClient (the bindBaton surface), not a new command family.
-export function createRecipes(baton) {
+export function createRecipes(baton, repoRoot = null) {
   if (!baton || typeof baton !== 'object' || typeof baton?.waves?.start !== 'function') {
     throw recipeError('createRecipes requires a Baton client facade with waves.start', 'recipe_facade_invalid');
   }
+  const boundRepoRoot = repoRoot ?? (typeof baton.repoRoot === 'string' && baton.repoRoot.length > 0 ? baton.repoRoot : null);
   return Object.freeze({
     run: (recipe, invocation) => runRecipe(baton, recipe, invocation),
     implementContract: (invocation) => implementContract(baton, invocation),
+    // Issue #114 — the workflow-as-data interpreter lane (D2). The spec is data + closed run options
+    // over the same wave machinery; repoRoot rides in so the D4 harvest can read the authoritative sha.
+    runWorkflow: (spec, invocation = {}) => runWorkflow(baton, spec, { repoRoot: boundRepoRoot, ...invocation }),
   });
 }
 

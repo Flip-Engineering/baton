@@ -297,7 +297,7 @@ test('KC6/KC7/KC8: Kimi MCP bridges only the compact application surface over au
     'baton_help', 'baton_runs', 'baton_run_start', 'baton_run_inspect', 'baton_run_episode',
     'baton_run_workstreams', 'baton_workstream_notify', 'baton_workstream_stop',
     'baton_run_act', 'baton_run_stop', 'baton_waves_attach',
-    'baton_waves_start', 'baton_waves_progress', 'baton_waves_send', 'baton_waves_stop',
+    'baton_waves_start', 'baton_waves_progress', 'baton_waves_send', 'baton_waves_stop', 'baton_waves_run',
     'baton_deployment_doctor', 'baton_decision_answer',
     'baton_scratchpad_elevate', 'baton_scratchpad_settle', 'baton_knowledge_promote', 'baton_knowledge_settlement_lease',
     'baton_run_message_send', 'baton_run_message_receipt', 'baton_run_attention_watch',
@@ -630,7 +630,7 @@ test('KC6/KC7/KC8: packaged Kimi MCP entry crosses a real authenticated Web list
     'baton_help', 'baton_runs', 'baton_run_start', 'baton_run_inspect', 'baton_run_episode',
     'baton_run_workstreams', 'baton_workstream_notify', 'baton_workstream_stop',
     'baton_run_act', 'baton_run_stop', 'baton_waves_attach',
-    'baton_waves_start', 'baton_waves_progress', 'baton_waves_send', 'baton_waves_stop',
+    'baton_waves_start', 'baton_waves_progress', 'baton_waves_send', 'baton_waves_stop', 'baton_waves_run',
     'baton_deployment_doctor', 'baton_decision_answer',
     'baton_scratchpad_elevate', 'baton_scratchpad_settle', 'baton_knowledge_promote', 'baton_knowledge_settlement_lease',
     // Facade-projection epic (#87+#48): the six workflow-surface tools join the packaged bridge.
