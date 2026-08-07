@@ -256,7 +256,7 @@ function digest(value) {
 // Transport admission, audit, and completion events advance the global cursor without changing
 // a Run's semantic authority. Keep those events observable through `cursor`, but never let them
 // invalidate an action Baton just offered to an authenticated caller.
-function semanticViewDigest(view) {
+export function semanticViewDigest(view) {
   // progressClass/requiredAction are DERIVED from the underlying fields below them (phase,
   // attention, timing cadence, terminalCause), so they never carry independent authority:
   // excluding them keeps the actionId token stable across the actionId's own derivation
@@ -379,6 +379,93 @@ function projectBlockedInteraction(phase, attention) {
   if (pending.kind === 'answer_decision') return { kind: 'decision', summary: boundedBlockedInteractionSummary(pending.question) };
   const text = pending.kind === 'answer_question' ? pending.question : pending.approvalKind;
   return { kind: 'answer_question', summary: boundedBlockedInteractionSummary(text) };
+}
+
+// issue #10 / docs/32 §5 (waiting-vocabulary): the single waitingOn projection, consumed
+// identically by the run view, the workflow view, and (through those) `runs.list` and the CLI
+// outline. The five kinds are closed (WAITING_ON_KINDS) and ride event-epoch `since` stamps —
+// never wall time. Precedence: plan_approval (a pure fold of the phase, coexisting with the
+// approve_plan interaction) > blocked (the interaction owns the member) > spawning > a pending
+// task (receipt ? capacity_ceiling : dispatch_pending) > provider_stalled > honest null.
+function projectWaitingOn(driver, current, phase, task, workers, blocked) {
+  if (phase === 'awaiting_plan_approval') {
+    const planId = current?.plan?.planId ?? null;
+    const events = typeof driver?.coordination?.events === 'function' ? driver.coordination.events(1) : [];
+    const proposal = planId
+      ? events.findLast((event) => event.kind === 'plan.version_proposed'
+        && event.payload?.plan?.planId === planId)
+      : events.findLast((event) => event.kind === 'plan.version_proposed');
+    if (!proposal) return null;
+    return {
+      kind: 'plan_approval',
+      since: { eventSeq: proposal.seq, turnEpoch: null },
+      detail: {
+        planVersion: proposal.payload?.plan?.version ?? current.plan?.version ?? null,
+        proposalSeq: proposal.seq,
+      },
+    };
+  }
+  if (blocked) return null;
+  const handles = workers ?? [];
+  const spawnHandle = handles.find((handle) => handle.spawnPending === true) ?? null;
+  if (spawnHandle) {
+    const spawnTask = task ?? (spawnHandle.taskId
+      ? driver?.coordination?.task(spawnHandle.taskId) ?? null : null);
+    return {
+      kind: 'spawning',
+      since: { eventSeq: spawnTask?.claimedEvent ?? spawnTask?.createdEvent ?? null, turnEpoch: null },
+      detail: {
+        workerId: spawnHandle.id,
+        taskId: spawnHandle.taskId ?? spawnTask?.id ?? null,
+        vendor: spawnHandle.vendor ?? spawnTask?.vendorRequested ?? null,
+        window: spawnHandle.spawnWindow ?? null,
+      },
+    };
+  }
+  const candidates = task ? [task] : handles
+    .map((handle) => (handle.taskId ? driver?.coordination?.task(handle.taskId) ?? null : null))
+    .filter(Boolean);
+  const pendingTask = candidates.find((candidate) => candidate.status === 'pending');
+  if (pendingTask) {
+    const receipt = typeof driver?.coordination?.events === 'function'
+      ? driver.coordination.events(1).find((event) => event.kind === 'task.dispatch_deferred'
+        && event.payload?.taskId === pendingTask.id)
+      : null;
+    if (receipt) {
+      return {
+        kind: 'capacity_ceiling',
+        since: { eventSeq: receipt.seq, turnEpoch: null },
+        detail: {
+          vendor: receipt.payload?.vendor ?? pendingTask.vendorRequested ?? null,
+          ceiling: receipt.payload?.ceiling ?? null,
+          inFlight: receipt.payload?.inFlight ?? null,
+        },
+      };
+    }
+    return {
+      kind: 'dispatch_pending',
+      since: { eventSeq: pendingTask.createdEvent ?? null, turnEpoch: null },
+      detail: { vendorRequested: pendingTask.vendorRequested ?? null, reason: 'pre-dispatch' },
+    };
+  }
+  const workingTask = task && task.status === 'working' ? task
+    : candidates.find((candidate) => candidate.status === 'working');
+  if (workingTask?.assignee && typeof driver?.log?.read === 'function') {
+    const workerEvents = driver.log.read(workingTask.assignee);
+    const suspicion = workerEvents.findLast((event) => event.kind === 'health.stall_suspected') ?? null;
+    if (suspicion && !workerEvents.some((event) => event.seq > suspicion.seq && event.actor === 'worker')) {
+      return {
+        kind: 'provider_stalled',
+        since: { eventSeq: suspicion.seq, turnEpoch: suspicion.turnEpoch ?? null },
+        detail: {
+          workerId: workingTask.assignee,
+          taskId: workingTask.id,
+          action: suspicion.payload?.action ?? 'none',
+        },
+      };
+    }
+  }
+  return null;
 }
 
 // v2 P1-C (docs/reference/evidence/semantic-progress-2026-07-31/semantic-progress-decisions.md
@@ -5643,6 +5730,7 @@ export class BatonApplication {
       attention: [],
       attentionTruncated: false,
       blockedInteraction: projectBlockedInteraction(phase, []),
+      waitingOn: null,
       verification: { state: 'pending', verdict: null },
       semanticReview,
       progress,
@@ -5788,6 +5876,7 @@ export class BatonApplication {
       budget: { allocated: clone(current.goal.budget), node: clone(node?.budget ?? null), termination: terminalCause },
       attention: historicalAttention, attentionTruncated: false,
       blockedInteraction: projectBlockedInteraction(phase, historicalAttention),
+      waitingOn: null,
       verification: { state: verificationState, verdict: null },
       semanticReview,
       progress,
@@ -7191,6 +7280,13 @@ export class BatonApplication {
       ...recoveryAttention, ...preservationAttention,
     ].slice(0, MAX_ATTENTION);
     const blockedInteraction = projectBlockedInteraction(phase, attention);
+    // issue #10 / docs/32 §5: the workflow view carries the same additive waitingOn projection;
+    // the primary candidate task is the first member with durable dispatch authority.
+    const workflowCandidateTask = definition.attempts
+      .map((binding) => projection.nodes.find((candidate) => candidate.key === binding.nodeKey))
+      .map((node) => (node?.taskId ? this.driver.coordination.task(node.taskId) : null))
+      .find(Boolean) ?? null;
+    const waitingOn = projectWaitingOn(this.driver, current, phase, workflowCandidateTask, workers, blockedInteraction);
     const decisionSettled = typeof this.driver.coordinator.decisionSettledProjection === 'function'
       ? this.driver.coordinator.decisionSettledProjection(workers.map((handle) => handle.id))
       : [];
@@ -7295,6 +7391,7 @@ export class BatonApplication {
         + revisionAttention.length + recoveryAttention.length + preservationAttention.length
         > attention.length,
       blockedInteraction,
+      waitingOn,
       decisionSettled,
       verification: {
         state: verificationState,
@@ -7429,8 +7526,13 @@ export class BatonApplication {
     else if (node.taskId) phase = 'running';
     else phase = 'approved';
     const runStop = this.driver.coordination.runStop?.(runId) ?? null;
-    if (runStop?.status === 'stopped') phase = 'stopped';
-    else if (runStop) phase = 'stopping';
+    // Issue #10 DP-EXIT-c: a run stopped before its task was ever assigned reads 'cancelled',
+    // not 'stopped' — the claim-less cancellation is the honest terminal for a never-dispatched
+    // run. A dispatched-then-stopped run (assignee bound) still reads 'stopped'.
+    if (!(phase === 'cancelled' && task?.assignee === null)) {
+      if (runStop?.status === 'stopped') phase = 'stopped';
+      else if (runStop) phase = 'stopping';
+    }
 
     // VR6/RV: inconclusive runtime repair remains repeatable while a candidate-owned diagnostic
     // checkpoint gets exactly one confirmation. The origin is pinned on the checkpoint so a later
@@ -7654,6 +7756,10 @@ export class BatonApplication {
       else phase = 'work_completed';
     }
     const blockedInteraction = projectBlockedInteraction(phase, attention);
+    // issue #10 / docs/32 §5: the waitingOn projection rides the SAME phase/task/worker
+    // authorities the interaction does; a blocking interaction owns the member (honest null),
+    // except plan_approval which folds the phase itself.
+    const waitingOn = projectWaitingOn(this.driver, current, phase, task, workers, blockedInteraction);
     // Bidirectional v2 rule 5: bounded durable disposition tombstones (answered|expired|…).
     const decisionSettled = typeof this.driver.coordinator.decisionSettledProjection === 'function'
       ? this.driver.coordinator.decisionSettledProjection(workers.map((handle) => handle.id))
@@ -7743,6 +7849,7 @@ export class BatonApplication {
       attention,
       attentionTruncated,
       blockedInteraction,
+      waitingOn,
       decisionSettled,
       verification: {
         state: verificationState,
@@ -10598,6 +10705,8 @@ export class BatonApplication {
           ...timing,
           progress: clone(view.progress),
           progressClass: clone(view.progressClass ?? null),
+          // issue #10 / docs/32 §5: the outline carries the additive waitingOn projection.
+          waitingOn: clone(view.waitingOn ?? null),
           // KG activation rule 4 / settlement D3: the candidacy ritual count rides the terminal
           // outline so an orchestrator reviewing after the driver exits sees the queue depth. Only
           // `candidatesAwaitingAdmission` is surfaced (never `candidates`), so the raw wave close
@@ -11711,6 +11820,7 @@ export class BatonApplication {
         terminal: APPLICATION_RUN_TERMINAL_PHASES.has(view.phase),
         attention: attention.length > 0 ? 'required' : 'clear',
         blockedInteraction: clone(view.blockedInteraction ?? null),
+        waitingOn: clone(view.waitingOn ?? null),
         route: clone(view.route),
         resources: {
           state: projectedCleanupState(view),

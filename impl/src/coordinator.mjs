@@ -2888,7 +2888,24 @@ export class Coordinator {
       const vendor = selection?.vendor;
       if (!vendor || !this._adapters[vendor]) continue;
       const card = this._adapters[vendor].card();
-      if (this._inFlightCount(vendor) >= card.concurrencyCeiling) continue;
+      if (this._inFlightCount(vendor) >= card.concurrencyCeiling) {
+        // Issue #10 D5 Arm 1: the ceiling skip mints ONE durable deferral receipt per task
+        // dispatch, idempotency-keyed on (taskId, taskCreatedSeq) so re-driven passes never
+        // re-mint. The payload is MINT-TIME data — inFlight is the skip-time count, frozen.
+        if (this._coordination?.deferTaskDispatch && typeof this._coordination.task === 'function') {
+          const taskCreatedSeq = this._coordination.task(task.id)?.createdEvent;
+          if (Number.isSafeInteger(taskCreatedSeq) && taskCreatedSeq > 0) {
+            this._coordination.deferTaskDispatch({
+              taskId: task.id,
+              vendor,
+              ceiling: card.concurrencyCeiling,
+              inFlight: this._inFlightCount(vendor),
+              taskCreatedSeq,
+            }, { actor: 'orchestrator', key: `task.dispatch_deferred:${task.id}:${taskCreatedSeq}` });
+          }
+        }
+        continue;
+      }
       this._dispatch(task, vendor, selection.model, selection.effort, selection.workerPolicyResolution);
     }
   }
@@ -3579,6 +3596,10 @@ export class Coordinator {
     }
     let worktreeReady = worktreeSource
       .then(async (res) => {
+        // Issue #10 D6: the worktree window closes the moment the checkout is confirmed — never
+        // lagging behind in the readiness `.finally` (a microtask that can land after the next
+        // public read, misreporting a settled checkout as still in the worktree window).
+        handle.worktreeCreationPending = false;
         if (res && res.path) {
           task.worktree = res.path;
           handle.worktree = res.path;
@@ -3714,9 +3735,13 @@ export class Coordinator {
     } catch (error) { nativeSpawnSource = Promise.reject(error); }
     const nativeSpawnPromise = Promise.resolve(nativeSpawnSource).then((ack) => {
       if (handle.spawnAbort === spawnAbort) handle.spawnAbort = null;
+      // Issue #10 D6: the spawn window closes the moment the ack lands — never lagging behind
+      // in the `.finally` microtask, which can report a settled spawn as still pending.
+      handle.nativeSpawnPending = false;
       if (ack && ack.ok === false) this._onSpawnRefused(handle, task, harness, ack);
     }).catch((err) => {
       if (handle.spawnAbort === spawnAbort) handle.spawnAbort = null;
+      handle.nativeSpawnPending = false;
       // SC15: rejection and resolved refusal are the same durable failure channel.
       this._onSpawnRefused(handle, task, harness, { ok: false, reason: String(err?.message ?? err) });
     }).finally(() => {
@@ -6742,6 +6767,17 @@ export class Coordinator {
       fence,
       turnEpoch,
       status: handle.recoveryPending === true && opts.exposeRecovery !== true ? 'orphaned' : handle.status,
+      // Issue #10 D6: the spawn-pending UNION (worktreeCreationPending || nativeSpawnPending ||
+      // recoverySpawnPending) the local-authority check (_ownsLocalResources :2014-2015) trusts.
+      // spawnWindow is the window the union is in, precedence worktree > spawn > recovery — the
+      // windows are sequential in practice (a slide never passes through null). LIVE-STATE only:
+      // a restart reconstructs all three false, and the member reads `orphaned` via the
+      // recoveryPending mask above.
+      spawnPending: handle.worktreeCreationPending === true || handle.nativeSpawnPending === true
+        || handle.recoverySpawnPending === true,
+      spawnWindow: handle.worktreeCreationPending === true ? 'worktree'
+        : handle.nativeSpawnPending === true ? 'spawn'
+          : handle.recoverySpawnPending === true ? 'recovery' : null,
       pendingApprovalId: handle.pendingApprovalId,
       pendingQuestionId: handle.pendingQuestionId,
       pendingDecisionId: handle.pendingDecisionId ?? null,
@@ -6826,14 +6862,44 @@ export class Coordinator {
       };
     }
     let workers;
+    // Issue #10 D11: the typed mid-spawn refusal (#97's demand). The SAME flag union the
+    // waitingOn.spawning projection keys on (:2014-2015) governs the lane, so the refusal and the
+    // projection never disagree. Mid-spawn is retryable in seconds and distinct from never-existed.
+    const spawningRefusal = (handle) => (handle.worktreeCreationPending === true
+      || handle.nativeSpawnPending === true || handle.recoverySpawnPending === true)
+      ? {
+        ok: false, result: 'worker_spawning',
+        workerId: handle.id,
+        runId: this._tasks.get(handle.taskId)?.runId ?? handle.runId ?? null,
+      } : null;
+    // #10 D11 settlement grace: a just-returned spawn whose worktree/native ack is settling in the
+    // microtask queue is NOT yet "mid-spawn" in the refusal's sense — real checkout work is
+    // synchronous git (createFromBase runs to completion in one resume), so the D6 flags clear on
+    // the next microtask drain. Yield ONE event-loop turn (drains the whole microtask queue) so a
+    // settling spawn ADMITS the send (FP-05/FP-18 send immediately after spawn, before the flags
+    // had a turn to clear); a spawn that is STILL pending after the drain is genuinely stuck
+    // (SP-REFUSAL's never-resolving worktree / deferred native ack / raw recovery flag) and draws
+    // the typed refusal unchanged. An already-settled worker is untouched (no yield at all).
+    const settleSpawn = async (handle) => {
+      if (handle.worktreeCreationPending === true
+        || handle.nativeSpawnPending === true || handle.recoverySpawnPending === true) {
+        await new Promise((resolve) => setImmediate(resolve));
+      }
+    };
     if (typeof to.workerId === 'string') {
       const handle = this._workers.get(to.workerId);
       if (!handle) return { ok: false, result: 'worker_not_active' };
+      await settleSpawn(handle);
+      const spawning = spawningRefusal(handle);
+      if (spawning) return spawning;
       workers = [handle];
     } else {
       workers = [...this._workers.values()]
         .filter((handle) => this._tasks.get(handle.taskId)?.runId === to.runId);
       if (workers.length === 0) return { ok: false, result: 'run_not_active' };
+      for (const handle of workers) await settleSpawn(handle);
+      const spawning = workers.map(spawningRefusal).find(Boolean) ?? null;
+      if (spawning) return spawning;
     }
     const messageId = `message:${canonicalDigest({ kind, to, body, seq: this._messages.size + 1 })}`;
     const record = {

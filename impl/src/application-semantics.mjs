@@ -53,6 +53,13 @@ export const PROGRESS_BLOCKED_INTERACTION_DETAILS = Object.freeze([
 ]);
 export const PROGRESS_SILENCE_THRESHOLD_MS = 120_000;
 
+// Issue #10 (D2): the closed waiting-on vocabulary. Additive on the run view/outline/runs.list
+// item, never a new run phase (D1). The array is frozen AND written in ACTUAL sorted order so the
+// suite's `[...WAITING_ON_KINDS].sort()` deepEqual pins the closed set exactly.
+export const WAITING_ON_KINDS = Object.freeze([
+  'capacity_ceiling', 'dispatch_pending', 'plan_approval', 'provider_stalled', 'spawning',
+]);
+
 // §7.1 generated mapping. `closed` maps to null: it is a dead string with no live emitter.
 export const LEGACY_RUN_PHASE_MAP = Object.freeze({
   awaiting_plan_approval: 'awaiting_approval',

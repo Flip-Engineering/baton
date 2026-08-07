@@ -8002,6 +8002,10 @@ export class CoordinationStore {
       const cancelCause = p.to === 'cancelled' && typeof p.evidence?.cause === 'string' && p.evidence.cause.length > 0
         ? { cancelCause: p.evidence.cause } : {};
       this._tasks.set(p.id, freeze({ ...clone(old), status: p.to, version: p.newVersion, ...(TERMINAL.has(p.to) ? { terminalEvent: event.seq } : {}), ...cancelCause }));
+    } else if (event.kind === 'task.dispatch_deferred') {
+      // Issue #10 D5 Arm 1: the durable ceiling-deferral receipt. No projection state — the
+      // waitingOn projection reads the ledger by task id; replay re-derives it by re-reading the
+      // log (zero promotion weight, never a knowledge/non-knowledge projection input).
     } else if (event.kind === 'task.acceptance_revoked') {
       this._validateAcceptanceRevocationPayload(p, event, true);
       const old = this._tasks.get(p.taskId);
@@ -13104,6 +13108,23 @@ export class CoordinationStore {
       throw new CoordinationRefusal('recovery dispatch state requires its dedicated atomic API', 'recovery_dispatch_api_required');
     }
     const event = this._append('driver.recorded', { kind, ...clone(payload) }, auth);
+    return { ok: true, event: clone(event) };
+  }
+
+  /** Issue #10 D5 Arm 1: the durable ceiling-deferral receipt. Minted at the coordinator's
+   * `_dispatchPass` concurrencyCeiling skip, once per task dispatch — idempotency-keyed
+   * (`task.dispatch_deferred:<taskId>:<taskCreatedSeq>`), so re-skips never re-mint. The payload
+   * is MINT-TIME data (inFlight is frozen, never live queue depth). */
+  deferTaskDispatch(fields, auth) {
+    if (!fields || typeof fields !== 'object' || Array.isArray(fields)
+      || typeof fields.taskId !== 'string' || fields.taskId.length === 0
+      || typeof fields.vendor !== 'string' || fields.vendor.length === 0
+      || !Number.isSafeInteger(fields.ceiling) || fields.ceiling < 0
+      || !Number.isSafeInteger(fields.inFlight) || fields.inFlight < 0
+      || !Number.isSafeInteger(fields.taskCreatedSeq) || fields.taskCreatedSeq <= 0) {
+      throw new CoordinationRefusal('task dispatch deferral receipt is invalid', 'dispatch_deferral_invalid');
+    }
+    const event = this._append('task.dispatch_deferred', clone(fields), auth);
     return { ok: true, event: clone(event) };
   }
 
