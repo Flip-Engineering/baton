@@ -1,0 +1,15 @@
+{
+  "attempt": "2026-08-07T08:48:00.104Z",
+  "salt": "cb20260807084800",
+  "role": "contract-73",
+  "steps": [
+    {
+      "step": "waves.start",
+      "receipt": {
+        "runs": [
+          "run-7e8b0ad850c56711b3b2b35b5a994fad"
+        ]
+      }
+    }
+  ]
+}
