@@ -12752,7 +12752,7 @@ export class BatonApplication {
 
   _normalizeMessageSend(value) {
     if (!value || typeof value !== 'object' || Array.isArray(value)
-      || Object.keys(value).some((key) => !['runId', 'workerId', 'kind', 'body'].includes(key))
+      || Object.keys(value).some((key) => !['runId', 'workerId', 'kind', 'body', 'budget'].includes(key))
       || (Object.hasOwn(value, 'runId') === Object.hasOwn(value, 'workerId'))
       || (Object.hasOwn(value, 'runId') && !validId(value.runId))
       || (Object.hasOwn(value, 'workerId') && !validId(value.workerId))
@@ -12774,6 +12774,7 @@ export class BatonApplication {
       ...(Object.hasOwn(value, 'workerId') ? { workerId: value.workerId } : {}),
       kind: value.kind,
       body: value.body,
+      budget: value.budget ?? 1,
     });
   }
 
@@ -12966,6 +12967,7 @@ export class BatonApplication {
       to: Object.hasOwn(request, 'workerId')
         ? { workerId: request.workerId } : { runId: request.runId },
       body: request.body,
+      budget: request.budget,
     }, { actor: principal.actor });
     return deepFreeze({ schemaVersion: 1, ...outcome });
   }

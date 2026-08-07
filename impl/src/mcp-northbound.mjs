@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { flipFace } from './brand.mjs';
 import { BRIEFING_FAMILY } from './coordination-store.mjs';
-import { FRAME_LIMITS } from './limits.mjs';
+import { FRAME_LIMITS, MAX_MESSAGE_DEPTH_BUDGET } from './limits.mjs';
 import { northboundCapabilityToken } from './northbound-capability-authority.mjs';
 import { sanitizeGoalPlanProjection } from './goal-plan.mjs';
 import { APPLICATION_COMMAND_DEFINITIONS, validateApplicationCommandArgs, projectBoardView, projectContextPackageBranch } from './application.mjs';
@@ -217,6 +217,10 @@ function stateFailureCode(cause) {
   // The store-integrity roster code deliberately stays a projection throw — never a per-command row.
   if (cause?.code === 'wave_member_invalid' || cause?.code === 'wave_not_found') return cause.code;
   if (cause?.code === 'run_stopping') return cause.code;
+  // #105 D3: the ONE new allowlisted message-lane code. The lane throws message_budget_invalid at
+  // send (shape AND range); worker-stream reply refusals (message_depth_exceeded,
+  // message_target_not_member, message_parent_not_found) deliberately never cross this surface.
+  if (cause?.code === 'message_budget_invalid') return cause.code;
   if (['capability_not_found', 'capability_op_unavailable', 'capability_budget_invalid', 'cancelled',
     'capability_result_invalid', 'capability_result_oversize', 'capability_authority_forbidden', 'capability_args_invalid',
     'capability_resume_invalid', 'capability_reverify_invalid', 'capability_actor_invalid', 'capability_repo_invalid', 'capability_idempotency_invalid',
@@ -623,6 +627,7 @@ const LEGACY_ORDINARY_APPLICATION_TOOL_DEFINITIONS = Object.freeze([
     inputSchema: schema({
       ...repo, runId, workerId: runId, kind: { type: 'string', enum: ['inform', 'query', 'steer'] },
       body: { type: 'string', minLength: 1, maxLength: FRAME_LIMITS['message.send.body'].value },
+      budget: { type: 'integer', minimum: 1, maximum: MAX_MESSAGE_DEPTH_BUDGET },
     }, ['repoId', 'kind', 'body']),
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
   },
@@ -1856,6 +1861,7 @@ export class McpFleetServer {
         ...(Object.hasOwn(args, 'runId') ? { runId: args.runId } : {}),
         ...(Object.hasOwn(args, 'workerId') ? { workerId: args.workerId } : {}),
         kind: args.kind, body: args.body,
+        ...(Object.hasOwn(args, 'budget') ? { budget: args.budget } : {}),
       }, {
         actor: actor ?? `mcp:${principal.userId}:${principal.sessionId}`,
         principalId: principal.userId, sessionId: principal.sessionId,

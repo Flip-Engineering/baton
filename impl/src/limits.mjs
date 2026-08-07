@@ -111,6 +111,12 @@ export const FRAME_LIMITS = deepFreeze({ ...ADMISSION, ...SUBSTRATE, ...VIEW });
 
 export const FRAME_LIMITS_VERSION = '1.2.0';
 
+/** #105 D1: the closed conversational ceiling on a reply-chain's per-branch depth budget. The
+ * budget is declared per send in [1, MAX_MESSAGE_DEPTH_BUDGET]; 8 is the smallest power of two
+ * strictly above the 3-deep acceptance exchange (RC-01) with headroom for the #94 four-surveyor
+ * broadcast pattern. A design constant (count, never clock), not a per-run throttle. */
+export const MAX_MESSAGE_DEPTH_BUDGET = 8;
+
 /** Named-export `code` (a string) so the suite's `assertLimitsModule` helper — which reads
  * `module?.code ?? module` when stringifying its red-stage message — is safe once the module
  * actually loads: an ESM namespace object has a null prototype and would otherwise throw

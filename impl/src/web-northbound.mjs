@@ -224,6 +224,11 @@ function dispatchFailure(cause) {
     return { httpStatus: 400, body: { ok: false, error: { code: 'invalid_command', message: 'command precondition failed' } } };
   }
   if (cause?.code === 'capability_not_found') return { httpStatus: 404, body: { ok: false, error: { code: 'not_found', message: 'resource not found' } } };
+  // #105 D3: the message-lane budget refusal is the same "command precondition failed" class as
+  // the capability_*_invalid family — code preserved, httpStatus 400.
+  if (cause?.code === 'message_budget_invalid') {
+    return { httpStatus: 400, body: { ok: false, error: { code: cause.code, message: 'command precondition failed' } } };
+  }
   if (['capability_op_unavailable', 'capability_resume_unavailable', 'capability_reverify_unavailable', 'capability_task_requires_task_plane', 'capability_args_invalid',
     'capability_resume_invalid', 'capability_reverify_invalid', 'capability_budget_invalid', 'capability_actor_invalid', 'capability_repo_invalid', 'capability_idempotency_invalid'].includes(cause?.code)) {
     return { httpStatus: 400, body: { ok: false, error: { code: 'invalid_command', message: 'command precondition failed' } } };
