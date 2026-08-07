@@ -118,6 +118,8 @@ const PROJECTION_CHECKPOINT_FIELDS = Object.freeze([
   '_contextPacks', '_contextPackHeads', '_contextReads',
   // Decision 4: digest-addressed spill artifacts (mint/materialize; durable, replay-derived).
   '_spills',
+  // D9 (epic #103): replay-derived wave.closed campaign-state records by waveId.
+  '_waveClosures',
   '_replManifestAdmissions',
   // REPL-2 (Part G rule 23): gains _replBindings, _replBindingHistory, _replBindingFences.
   '_replBindings', '_replBindingHistory', '_replBindingFences',
@@ -490,6 +492,30 @@ export const MAX_SCRATCHPAD_ENTRY_BYTES = FRAME_LIMITS['scratchpad.entry.body'].
 // BD3-B: a context pack body is bounded at the 8KiB envelope the epic contracts fix; citation
 // chains (a successor pack superseding its predecessor) are how real specs stay inside it.
 export const MAX_CONTEXT_PACK_BODY_BYTES = FRAME_LIMITS['context_pack.body'].value;
+// Epic #103 — the orchestrator-briefing D1 field→store-source table. Every top-level field of the
+// closed canonical-JSON briefing body names the store projection it composes from (D8: the ledger,
+// never the working tree); `standingLaws` is the ONE named non-ledger input (D8/OQ2, pinned
+// deployment config). Keys are the D1 top-level set, in sorted order.
+export const BRIEFING_SCHEMA_FIELD_SOURCES = Object.freeze({
+  blockedOn: 'the latest wave.closed record blockedOn block (D9)',
+  composedAtEventSeq: "the mint event's own seq (the pack record's observedSeq, G2)",
+  family: 'the orchestrator-briefing family constant (D1)',
+  landings: 'the wave.closed records derived landings (D9)',
+  lanes: 'the latest wave.closed record lanes block (D9)',
+  parked: 'the latest wave.closed record parked block (D9)',
+  rings: 'the latest wave.closed record rings block (D9)',
+  schemaVersion: 'the briefing schema revision (closed constant 1)',
+  sources: 'snapshot() digest + the standing-law list digest (D1)',
+  standingLaws: 'the pinned repoId-scoped standing-law deployment config (D8/OQ2)',
+});
+// The closed top-level field set (D1); the same sorted set the schema table keys.
+const BRIEFING_TOP_LEVEL_FIELDS = Object.freeze([
+  'blockedOn', 'composedAtEventSeq', 'family', 'landings', 'lanes',
+  'parked', 'rings', 'schemaVersion', 'sources', 'standingLaws',
+]);
+// The orchestrator-briefing family constant (D3's family-scoped authority rule). Exported so the
+// application and northbound surfaces share ONE family name with the store that mints it (D7).
+export const BRIEFING_FAMILY = 'orchestrator-briefing';
 // A pack minted without an explicit validity window is treated as never-expiring (the 8KiB
 // envelope is the real bound); explicit windows drive the context_pack_expired distinction.
 const DEFAULT_CONTEXT_PACK_VALIDITY = '2999-12-31T23:59:59.999Z';
@@ -1195,6 +1221,9 @@ export class CoordinationStore {
     // audit rides `_contextReads` (zero promotion weight — never the scratch.read family).
     this._contextPacks = new Map(); this._contextPackHeads = new Map(); this._contextReads = [];
     this._spills = new Map();
+    // D9 (epic #103): replay-derived wave.closed campaign-state records by waveId. Rebuilt by
+    // re-applying the log in _apply; the record's own event seq is the epoch anchor.
+    this._waveClosures = new Map();
     // REFLEX-2 boards: immutable versioned items + per-itemId claims + reports, and a
     // board-scoped, replay-derivable fence counter (the count of orchestrator-authority
     // events per board — NOT the worker FenceTable). All rebuilt purely by re-applying the
@@ -8732,6 +8761,12 @@ export class CoordinationStore {
       });
       this._contextPacks.set(pack.packId, pack);
       this._contextPackHeads.set(pack.family, pack.packId);
+    } else if (event.kind === 'wave.closed') {
+      // D9 (epic #103): the durable campaign-state record at wave close. Replay-derived by
+      // waveId exactly like the context.pack_minted fold; the record's own event seq is the
+      // epoch anchor (closedAtEventSeq) — no clocks (G10).
+      const closure = this._validateWaveClosedPayload(p);
+      this._waveClosures.set(closure.waveId, freeze({ ...clone(closure), closedAtEventSeq: event.seq }));
     } else if (event.kind === 'spill.minted') {
       // Decision 4: a digest-addressed durable spill artifact. Content-addressed (spillId =
       // spill:sha256:<digest of the body's UTF-8 bytes>), idempotent by auth key, replay-derived.
@@ -13160,10 +13195,15 @@ export class CoordinationStore {
     }
     const headId = this._contextPackHeads.get(fields.type) ?? null;
     const priorHead = headId ? (this._contextPacks.get(headId) ?? null) : null;
-    const predecessor = fields.predecessor ?? priorHead?.packId ?? null;
-    if (fields.predecessor != null && fields.predecessor !== predecessor) {
+    // The live head is the only legal predecessor. An explicit predecessor must BE the live head
+    // (D4, epic #103: the stale guard compares the explicit field against the live head, never
+    // against itself — a superseded packId refuses context_pack_stale even when the content
+    // matches).
+    const livePredecessor = priorHead?.packId ?? null;
+    if (fields.predecessor != null && fields.predecessor !== livePredecessor) {
       throw new CoordinationRefusal('context pack predecessor is not the live head', 'context_pack_stale');
     }
+    const predecessor = fields.predecessor ?? livePredecessor;
     const validityVersion = (priorHead?.validityVersion ?? 0) + 1;
     const packId = `context-pack:${canonicalDigest({
       family: fields.type, body: fields.body, validity,
@@ -13177,6 +13217,20 @@ export class CoordinationStore {
 
   mintContextPack(fields, auth) {
     const payload = this._prepareContextPackPayload(fields);
+    // D3 (epic #103): the orchestrator-briefing family is the orchestrator lane's voice — a
+    // non-orchestrator actor refuses before any append (the store is the authority of record).
+    if (payload.family === BRIEFING_FAMILY && auth?.actor !== 'orchestrator') {
+      throw new CoordinationRefusal('orchestrator-briefing mints are restricted to the orchestrator lane', 'context_pack_forbidden');
+    }
+    // D4 (epic #103): no-change replay short-circuit — AFTER the stale-predecessor check (already
+    // in _prepareContextPackPayload) and BEFORE the auth-key replay check. The live head has the
+    // same {body, validity}: no event, head unmoved, validityVersion NOT bumped (the spill-dedupe
+    // rule ported to packs, G4).
+    const headId = this._contextPackHeads.get(payload.family) ?? null;
+    const liveHead = headId ? (this._contextPacks.get(headId) ?? null) : null;
+    if (liveHead && liveHead.body === payload.body && liveHead.validity === payload.validity) {
+      return { ok: true, result: 'idempotent', event: null, pack: clone(liveHead) };
+    }
     const prior = this._byKey.get(auth?.key);
     if (prior) {
       if (prior.kind !== 'context.pack_minted' || canonicalDigest(prior.payload) !== canonicalDigest(payload)) {
@@ -13205,6 +13259,169 @@ export class CoordinationStore {
       throw new CoordinationRefusal('context pack has expired', 'context_pack_expired');
     }
     return freeze({ packId: pack.packId, family: pack.family, body: pack.body });
+  }
+
+  // -------------------------------------------------------------------------
+  // D9 (epic #103) — the wave.closed campaign-state record. A wave driver appends exactly one
+  // closed-shape record per wave in the guaranteed post-close window; the replay fold derives a
+  // _waveClosures map by waveId. The record is advisory (non-gating) and clock-free: its own event
+  // seq is the epoch anchor for closedAtEventSeq (G10).
+  // -------------------------------------------------------------------------
+
+  _validateWaveClosedPayload(fields) {
+    if (!fields || typeof fields !== 'object' || Array.isArray(fields)) {
+      throw new CoordinationRefusal('wave.closed payload is invalid', 'wave_closed_invalid');
+    }
+    const closedShape = ['blockedOn', 'knowledge', 'lanes', 'parked', 'receiptDigest', 'rings', 'settlementErrors', 'waveId'];
+    const keys = Object.keys(fields);
+    if (keys.length !== 8 || keys.slice().sort().join(',') !== closedShape.join(',')) {
+      throw new CoordinationRefusal('wave.closed payload must be the closed 8-key shape', 'wave_closed_invalid');
+    }
+    if (typeof fields.waveId !== 'string' || fields.waveId.length === 0
+      || typeof fields.receiptDigest !== 'string' || !/^[a-f0-9]{64}$/u.test(fields.receiptDigest)) {
+      throw new CoordinationRefusal('wave.closed identity is invalid', 'wave_closed_invalid');
+    }
+    if (!Array.isArray(fields.rings) || fields.rings.length > 8
+      || fields.rings.some((entry) => !entry || typeof entry !== 'object' || Array.isArray(entry) || typeof entry.id !== 'string')) {
+      throw new CoordinationRefusal('wave.closed rings block is invalid', 'wave_closed_invalid');
+    }
+    if (!Array.isArray(fields.lanes) || fields.lanes.length > 16
+      || fields.lanes.some((entry) => !entry || typeof entry !== 'object' || Array.isArray(entry) || typeof entry.lane !== 'string')) {
+      throw new CoordinationRefusal('wave.closed lanes block is invalid', 'wave_closed_invalid');
+    }
+    if (!Array.isArray(fields.parked) || fields.parked.length > 8
+      || fields.parked.some((entry) => !entry || typeof entry !== 'object' || Array.isArray(entry) || typeof entry.id !== 'string')) {
+      throw new CoordinationRefusal('wave.closed parked block is invalid', 'wave_closed_invalid');
+    }
+    if (!Array.isArray(fields.blockedOn) || fields.blockedOn.length > 8
+      || fields.blockedOn.some((entry) => !entry || typeof entry !== 'object' || Array.isArray(entry) || typeof entry.item !== 'string')) {
+      throw new CoordinationRefusal('wave.closed blockedOn block is invalid', 'wave_closed_invalid');
+    }
+    if (!fields.knowledge || typeof fields.knowledge !== 'object' || Array.isArray(fields.knowledge)
+      || !['candidates', 'admittedThisRun', 'candidatesAwaitingAdmission', 'settlementRunId']
+        .every((key) => Object.hasOwn(fields.knowledge, key))) {
+      throw new CoordinationRefusal('wave.closed knowledge block is invalid', 'wave_closed_invalid');
+    }
+    if (!Array.isArray(fields.settlementErrors) || fields.settlementErrors.length > 8
+      || fields.settlementErrors.some((entry) => !entry || typeof entry !== 'object' || Array.isArray(entry) || typeof entry.code !== 'string')) {
+      throw new CoordinationRefusal('wave.closed settlementErrors block is invalid', 'wave_closed_invalid');
+    }
+    return clone(fields);
+  }
+
+  appendWaveClosed(fields, auth) {
+    const payload = this._validateWaveClosedPayload(fields);
+    if (this._waveClosures.has(payload.waveId)) {
+      throw new CoordinationRefusal('wave is already closed', 'wave_already_closed');
+    }
+    const event = this._append('wave.closed', payload, auth);
+    const record = this._waveClosures.get(payload.waveId) ?? null;
+    return { ok: true, event: clone(event), record: record ? clone(record) : null };
+  }
+
+  waveClosure(waveId) {
+    if (typeof waveId !== 'string' || waveId.length === 0) return null;
+    return clone(this._waveClosures.get(waveId) ?? null);
+  }
+
+  waveClosures() {
+    return [...this._waveClosures.values()].map(clone);
+  }
+
+  ledgerHeadSeq() {
+    return this._events.length;
+  }
+
+  // -------------------------------------------------------------------------
+  // Epic #103 — the orchestrator-briefing composition (D1/D8). Composition reads ONLY store
+  // projections the orchestrator lane owns: the wave.closed campaign-state records (D9) and the
+  // live snapshot(); the standing-law list is the ONE named non-ledger input (D8/OQ2, pinned
+  // deployment config). Unknown fields refuse by name (F15); degradation runs the pinned order
+  // until the body fits or briefing_pack_overflow with the drop ledger.
+  // -------------------------------------------------------------------------
+
+  composeBriefingPack(rawInput) {
+    if (!rawInput || typeof rawInput !== 'object' || Array.isArray(rawInput)) {
+      throw new CoordinationRefusal('briefing composition input must be an object', 'briefing_pack_invalid');
+    }
+    for (const key of Object.keys(rawInput)) {
+      if (!Object.hasOwn(BRIEFING_SCHEMA_FIELD_SOURCES, key)) {
+        throw new CoordinationRefusal(`briefing composition field "${key}" has no store source`, 'briefing_pack_invalid');
+      }
+    }
+    const landings = Array.isArray(rawInput.landings) ? [...rawInput.landings] : [];
+    let parked = Array.isArray(rawInput.parked) ? rawInput.parked.map((entry) => ({ ...entry })) : [];
+    let rings = Array.isArray(rawInput.rings) ? rawInput.rings.map((entry) => ({ ...entry })) : [];
+    const dropLedger = { droppedLandings: 0, droppedParkedReasonDetail: false, droppedRingsLaneSummaries: false };
+    const compose = () => JSON.stringify(canonical({
+      schemaVersion: rawInput.schemaVersion, family: rawInput.family,
+      composedAtEventSeq: rawInput.composedAtEventSeq,
+      rings, lanes: rawInput.lanes ?? [], landings, parked, blockedOn: rawInput.blockedOn ?? [],
+      standingLaws: rawInput.standingLaws ?? [], sources: rawInput.sources,
+    }));
+    let body = compose();
+    if (Buffer.byteLength(body, 'utf8') > MAX_CONTEXT_PACK_BODY_BYTES) {
+      // Step 1: drop oldest landings first (minimum 1) — the newest landing survives.
+      while (landings.length > 1 && Buffer.byteLength(compose(), 'utf8') > MAX_CONTEXT_PACK_BODY_BYTES) {
+        landings.shift(); dropLedger.droppedLandings += 1;
+      }
+    }
+    if (Buffer.byteLength(compose(), 'utf8') > MAX_CONTEXT_PACK_BODY_BYTES) {
+      // Step 2: drop parked reason detail (kind + id remain).
+      parked = parked.map((entry) => { const { reasonDigest, ...rest } = entry; return rest; });
+      dropLedger.droppedParkedReasonDetail = true;
+    }
+    if (Buffer.byteLength(compose(), 'utf8') > MAX_CONTEXT_PACK_BODY_BYTES) {
+      // Step 3: drop rings lane summaries (id + state remain).
+      rings = rings.map((entry) => { const { laneSummaryDigest, ...rest } = entry; return rest; });
+      dropLedger.droppedRingsLaneSummaries = true;
+    }
+    body = compose();
+    if (Buffer.byteLength(body, 'utf8') > MAX_CONTEXT_PACK_BODY_BYTES) {
+      throw Object.assign(
+        new CoordinationRefusal('briefing composition overflows the body ceiling after the full degradation order', 'briefing_pack_overflow'),
+        { dropLedger },
+      );
+    }
+    return { ok: true, body };
+  }
+
+  composeCampaignBriefing(standingLaws = []) {
+    const closures = this.waveClosures();
+    const latest = closures.length > 0 ? closures[closures.length - 1] : null;
+    const lawListDigest = canonicalDigest(standingLaws);
+    return this.composeBriefingPack({
+      schemaVersion: 1, family: BRIEFING_FAMILY,
+      composedAtEventSeq: this._events.length + 1,
+      rings: latest?.rings ?? [], lanes: latest?.lanes ?? [],
+      landings: closures.map((record) => ({
+        waveId: record.waveId, closedAtEventSeq: record.closedAtEventSeq,
+        gates: {
+          admitted: record.knowledge?.admittedThisRun ?? 0,
+          refused: record.settlementErrors?.length ?? 0,
+          candidatesAwaitingAdmission: record.knowledge?.candidatesAwaitingAdmission ?? 0,
+        },
+        receiptDigest: record.receiptDigest,
+      })),
+      parked: latest?.parked ?? [], blockedOn: latest?.blockedOn ?? [],
+      standingLaws, sources: { snapshotDigest: canonicalDigest(this.snapshot()), lawListDigest },
+    });
+  }
+
+  backfillBriefingPack({ family }, auth) {
+    if (family !== BRIEFING_FAMILY) {
+      throw new CoordinationRefusal('backfill family is invalid', 'briefing_pack_invalid');
+    }
+    if (this.contextPackHead(family)) {
+      // A head exists — no backfill (D4 keeps it stable; a second call is a no-op).
+      return { ok: true, result: 'idempotent', event: null, pack: clone(this.contextPackHead(family)) };
+    }
+    if (this._events.length === 0) {
+      throw new CoordinationRefusal('backfill requires a non-empty ledger', 'briefing_pack_unavailable');
+    }
+    const composed = this.composeCampaignBriefing([]);
+    const minted = this.mintContextPack({ type: family, body: composed.body }, auth);
+    return { ok: true, result: minted.result, event: minted.event, pack: minted.pack };
   }
 
   // -------------------------------------------------------------------------
