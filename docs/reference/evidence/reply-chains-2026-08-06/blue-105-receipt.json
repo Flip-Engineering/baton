@@ -1,0 +1,37 @@
+{
+  "attempt": "2026-08-07T01:13:27.692Z",
+  "salt": "b720260807011327",
+  "role": "blue-105",
+  "steps": [
+    {
+      "step": "waves.start",
+      "receipt": {
+        "runs": [
+          "run-91271db5d4b84d9a6d9e49832b5f23b8"
+        ]
+      }
+    },
+    {
+      "step": "terminal:blue-105",
+      "receipt": {
+        "phase": "work_completed"
+      }
+    },
+    {
+      "step": "loop-drained",
+      "receipt": {
+        "pending": []
+      }
+    }
+  ],
+  "harvest": {
+    "blue-105": {
+      "pin": "1569fd7c899cfebb79982e05ecbac5f1e46e04f1",
+      "paths": [
+        "docs/reference/evidence/reply-chains-2026-08-06/suite-blueteam.md"
+      ]
+    }
+  },
+  "harvestStalePinsSkipped": 347,
+  "verdict": "BLUE-105-OK"
+}
