@@ -266,8 +266,13 @@ export function createDecisionRequest(fields, { shapeOnly = false } = {}) {
     }
   }
   let optionIds = [];
-  if (!Array.isArray(fields?.options) || fields.options.length < 1 || fields.options.length > 8) {
-    errors.push('options must be an array of 1..8 entries');
+  // A free-response decision (allowFreeResponse) may carry ZERO preset options — the answer is the
+  // caller's own text (issue #114 D3, the answerDecisions free-text path). Every other decision
+  // still requires 1..8 options; a decision with neither options nor free response is malformed.
+  const freeResponse = fields?.allowFreeResponse === true;
+  if (!Array.isArray(fields?.options) || fields.options.length > 8
+    || (fields.options.length < 1 && !freeResponse)) {
+    errors.push(freeResponse ? 'options must be an array of 0..8 entries' : 'options must be an array of 1..8 entries');
   } else {
     const seen = new Set();
     fields.options.forEach((opt, i) => {
