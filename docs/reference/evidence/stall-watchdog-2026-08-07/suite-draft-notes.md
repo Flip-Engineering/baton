@@ -1,24 +1,25 @@
 # #67 Suite Draft Notes — `stall-watchdog-red.test.mjs`
 
-Date: 2026-08-07 · Contract: **stall-watchdog v1.1** (folded) · Suite: 23 rows
+Date: 2026-08-07 · Contract: **stall-watchdog v1.1** (folded) · Suite: 27 rows
 Deliverable: `impl/test/stall-watchdog-red.test.mjs` (this draft's only other deliverable).
 Authority: `stall-watchdog-contract.md` (v1.1 source of truth), `contract-fold.md` (9 blockers
-blk-1..blk-9), `contract-redteam.md` (attack surface), `suite-67-brief.md` (this suite's brief).
+blk-1..blk-9), `contract-redteam.md` (attack surface), `suite-67-brief.md` (this suite's brief),
+`suite-blueteam.md` + `suite-fold-2.md` (the blue-team fold — F1..F7, 23 → 27 rows).
 
 ## Verified split (stable across consecutive runs from the repo root)
 
 ```
-$ node --test impl/test/stall-watchdog-red.test.mjs   # run from repo root
-ℹ tests 23
-ℹ pass 6
-ℹ fail 17
-ℹ cancelled 0  skipped 0  todo 0
+$ node --test --test-reporter=spec impl/test/stall-watchdog-red.test.mjs   # run from repo root
+ℹ tests 27
+ℹ pass 7
+ℹ fail 20
 ```
 
-Recorded after the suite was finalized. Two consecutive runs of the finished suite both produced
-**pass 6 · fail 17** (run 1 ≈ 5.5 s, run 2 ≈ 5.1 s) — the split is deterministic. The 6 passes are
-exactly the six PIN rows (B4, B5, C3, D3, D4, D5); the 17 failures are the red rows, each confirmed
-to fail at its NAMED stage (the per-row stage is in the header and in each row's assertion message).
+Recorded after the blue-team fold (`suite-fold-2.md`) was applied. Two consecutive runs of the finished
+suite both produced **pass 7 · fail 20** (run 1 ≈ 19.8 s, run 2 ≈ 18.1 s) — the split is deterministic.
+The 7 passes are exactly the seven PIN rows (B4, B5, C3, D3, D4, D5, E8); the 20 failures are the red
+rows, each confirmed to fail at its NAMED stage (the per-row stage is in the header and in each row's
+assertion message).
 
 ## Row map
 
@@ -34,22 +35,26 @@ in **bold** are the current HEAD failure seam.
 | A5 | D1 | | **watchdog-config-disclosure-missing** | facade has zero `stallMs`/`watchdog` references (`grep -rn stallMs impl/src/application.mjs` empty) — disclosure is source-comment-only |
 | B1 | D2 | | **rearm-kinds-missing** | coordinator exports no `REARM_KINDS` — the closed set does not exist |
 | B2 | D2 | | **chatty-idler-rearms** | each `scratchpad.write` note re-arms (`_observeWatchdogEvent` re-arms on every worker-actor event, coordinator.mjs:9144-9146) |
-| B3 | D2 | | **any-event-rearm-killed** | heartbeats/provider-calls/tokens re-arm (same any-event re-arm, :9144-9146) |
-| B4 | D2 | PIN | resolution-liveness | green today — `question.answered` (worker actor) re-arms at HEAD and stays live under the contract (it is in the closed set) |
+| B3 | D2 | | **any-event-rearm-killed** | heartbeats/provider-calls/tokens re-arm (same any-event re-arm, :9144-9146) — [F3] the stream now also carries `content.tool_call` (exitCode 0) and in-scope `content.file_edit`, the real work-evidence events the D2 fold removes |
+| B4 | D2 | PIN | resolution-liveness | green today — `question.answered` (worker actor) re-arms at HEAD and stays live under the contract (it is in the closed set) — [F7] margin re-based to 10× (stallMs 300 / 30 ms interval / ~900 ms hold), the #7 class |
 | B5 | D2 | PIN | orchestrator-silence | green today — `control.steer`/`control.nudge` are filtered by the actor gate (:9145), the stall fires; stays live under the contract (not in the set) |
 | C1 | D2/blk-5 | | **in-flight-turn-gate-missing** | `handle.turnInFlight` does not exist (`grep turnInFlight coordinator.mjs` empty) |
 | C2 | D2/blk-5 | | **in-flight-liveness-missing** | `turn_started` re-arms, then silence → the stall fires at `stallMs`; no in-flight gate re-arms without declaring |
-| C3 | D2/blk-5 | PIN | slow-but-productive | green today — provider activity re-arms; stays live under the contract (the in-flight gate holds a mid-turn worker) |
-| D1 | D3 | | **null-deadline-sweep-missing** | the `question` record mints `deadlineAt: null` (coordinator.mjs:12620) and `_sweepDeadlines` has no question branch (:2913-2931) — the worker stays blocked forever |
-| D2 | D3 | | **interaction-ack-extension-missing** | no `claimInteraction` surface exists; no ack/claim concept on the pending interaction |
+| C3 | D2/blk-5 | PIN | slow-but-productive | green today — provider activity re-arms; stays live under the contract (the in-flight gate holds a mid-turn worker) — [F7] margin re-based to 10× (stallMs 300 / ~900 ms hold) |
+| C4 | D2/blk-5 | | **in-flight-turn-clear-missing** | [F2] a turn that SETTLES clears `turnInFlight` — `lifecycle.turn_completed {status:'completed'}` and the crash terminal both clear the flag; a zombie flag (set on turn_started, never cleared) would hold liveness forever and blind the watchdog + rung-3 reap. `turnInFlight` does not exist at HEAD |
+| D1 | D3 | | **null-deadline-sweep-missing** | the `question` record mints `deadlineAt: null` (coordinator.mjs:12620) and `_sweepDeadlines` has no question branch (:2913-2931) — the worker stays blocked forever — [F1] fixture re-threaded to `stallMs: 100` + `stallAction: 'escalate'` (never 0, never the invented 'none' action); the worker is blocked the whole window so the G3 non-working refusal keeps the watchdog silent |
+| D2 | D3 | | **interaction-ack-extension-missing** | no `claimInteraction` surface exists; no ack/claim concept on the pending interaction — [F1] fixture re-threaded (see D1) |
 | D3 | D3 | PIN | blocked-honest | green today — the landed #10 vocabulary (`projectBlockedInteraction` application.mjs:372-388, `waitingOn` null :408) |
 | D4 | D3 | PIN | blocked-never-killed | green today — `_armWatchdog` refuses non-`working` (coordinator.mjs:8731-8733) |
-| D5 | D3 | PIN | escalation-not-a-close | green today — `respond` resolves a pending record (:9540-9547); nothing closes it at HEAD |
-| E1 | D4 | | **stall-basis-missing** | `health.stall_suspected` payload is `{elapsedMs, action, mechanical}` only (:8739-8745) |
+| D5 | D3 | PIN | escalation-not-a-close | green today — `respond` resolves a pending record (:9540-9547); nothing closes it at HEAD — [F1] fixture re-threaded (see D1) |
+| E1 | D4 | | **stall-basis-missing** | `health.stall_suspected` payload is `{elapsedMs, action, mechanical}` only (:8739-8745) — [F1] fixture re-threaded to `stallAction: 'escalate'` |
 | E2 | D4 | | **stall-declared-reason-missing** | `_applyWatchdogAction` maps `'escalate'` to a NO-OP (:8761-8765); no `stall_declared` attention reason; the G8 inbox is empty |
 | E3 | D4 | | **stall-seam-cycle-missing** | `_armStallCycle` does not exist; `_armSteeringCycle` is pause-scoped (:2165-2200, `_expireSteeringCycle` no-ops off `paused`, :2290) |
 | E4 | D4 | | **stall-seam-answer-set-missing** | no cycle; `_steeringEvidenceQualifies` answers on TG2 evidence (scratchpad/capability digests, :2208-2238) — the claim-then-idle loophole |
-| E5 | D4 | | **stall-lifetime-dedup-missing** | `handle.stallSeamDigestSet` does not exist (the per-cycle `steering.digestSet` is the only dedup, :2192) |
+| E5 | D4 | | **stall-lifetime-dedup-missing** | `handle.stallSeamDigestSet` does not exist (the per-cycle `steering.digestSet` is the only dedup, :2192) — [F5] the row now also asserts the set is EMPTY at declaration (size 0) and that `_clearStall` exists (the only clearer) — an unused-but-present Set can no longer pass |
+| E6 | D4 | | **stall-seam-cycle-missing** (first) / **stall-reap-receipt-missing** | [F4-1] the full ladder to a RECEIPTED reap: stall declared → steer claims (arms the stall-seam cycle) → the claimed window expires unanswered with `turnInFlight === false` → preserve-first receipts (`worktree.progress_unchanged`/`worktree.progress_checkpointed`), THEN the stop receipt (`kill.requested`/`control.interrupt_requested`), THEN `adapter.kill`. `_armStallCycle` does not exist at HEAD |
+| E7 | D4 | | **stall-clear-missing** | [F4-2] the positive escape hatch: a qualifying D2 re-arm (`question.answered`) inside the claimed window calls `_clearStall` — the `stall` flag goes away, `stallSeamDigestSet` empties, the watchdog re-arms fresh; a clear is never a reap. `_clearStall` does not exist at HEAD |
+| E8 | D4/G9 | PIN | whose-stall | [F6] green today — a working-but-turnless worker silences into `waitingOn: {kind:'provider_stalled'}` (projection exists at application.mjs:458) and a later worker-actor REARM clears it; kills an impl that severs event→projection |
 
 ## Invented surfaces
 
@@ -65,9 +70,10 @@ could spuriously satisfy.
 | `REARM_KINDS` (coordinator.mjs) — frozen ACTUAL-sorted `['approval.resolved','decision.settled','lifecycle.turn_started','question.answered']` | namespace import `* as coordinatorNs` | no such export (B1) |
 | `createDriver` watchdog admission — `stallMs` positive integer strictly < the wall `timeoutMs`, else typed `watchdog_stall_exceeds_wall` | real `createDriver` (`admissionRefusal`) | constructs for any `stallMs` (A2/A3/A4) |
 | RunView `status().watchdog` — `{stallMs, basis: 'no_progress_evidence', rearmKinds: [ACTUAL-sorted]}` byte-stable | `BatonApplication.status` | absent from the view (A5) |
-| `handle.turnInFlight` — per-handle liveness marker | `Coordinator._workers.get(handle.id)` after `lifecycle.turn_started` | undefined (C1) |
-| `coordinator._armStallCycle(handle, task, {nudgeId, controlId})` — the stall-seam seam | the coordinator instance (E3/E4) | undefined (E3/E4) |
-| `handle.stallSeamDigestSet` — per-stall-LIFETIME digest Set | `Coordinator._workers.get(handle.id)` | undefined (E5) |
+| `handle.turnInFlight` — per-handle liveness marker, set true on `lifecycle.turn_started`, cleared at the turn-terminal seam (turn_completed AND crash) | `Coordinator._workers.get(handle.id)` after `lifecycle.turn_started` / `turn_completed` / `lifecycle.crashed` | undefined (C1); the clear path is the C4 [F2] seam |
+| `coordinator._armStallCycle(handle, task, {nudgeId, controlId})` — the stall-seam seam armed on steer/nudge | the coordinator instance (E3/E4/E6) | undefined (E3/E4/E6) |
+| `handle.stallSeamDigestSet` — per-stall-LIFETIME digest Set, EMPTY at declaration | `Coordinator._workers.get(handle.id)` | undefined (E5) |
+| `coordinator._clearStall(handle)` — the stall-flag + digest-set escape, called ONLY by a qualifying D2 re-arm inside the claimed window | the coordinator instance (E7) | undefined (E7) |
 | `coordinator.claimInteraction(requestId, {actor})` — the claim/ack surface | the coordinator instance | undefined (D2) |
 | `_sweepDeadlines` question branch — `effectiveDeadlineAt = deadlineAt ?? mintedAt + blockingInteractionTimeoutMs`; expiry escalates (releases to working, receipts `question.expired {disposition:'escalated'}`, never closes) | mutable clock + `coordinator.tick()` | the worker stays blocked forever (D1) |
 
@@ -84,6 +90,7 @@ double and the public `tick()` — the real sweep seam, no fake timers.
 | **D3** blocked-honest | an impl that re-invents a 6th waiting kind or moves the honest state off `blockedInteraction` (blk-3) |
 | **D4** blocked-never-killed | an impl that drops `_armWatchdog`'s non-`working` refusal (G3) — a blocked worker reaped for the orchestrator's un-answered question |
 | **D5** escalation-not-a-close | an impl that closes the escalated record like `_expireDecision` (a late operator answer rejected `already_resolved`) |
+| **E8** whose-stall | [F6] an impl that mints `health.stall_suspected` but severs event→projection (minting outside the ledger surface `projectWaitingOn` reads) — the orchestrator reads a silently quiet worker instead of `provider_stalled` |
 
 ## What makes each stage go green (implementer's checklist)
 
@@ -107,11 +114,13 @@ double and the public `tick()` — the real sweep seam, no fake timers.
   checks, `lifecycle.turn_started` sets `turnInFlight` and resets the turn, and the REARM_KINDS
   silence-return comes LAST (`!REARM_KINDS.includes(event.kind) → return`); only the four kinds touch
   `_touchWatchdog`. The scratchpad/observation machinery still runs for its own purposes.
-- **in-flight-turn-gate-missing / in-flight-liveness-missing** → blk-5: `handle.turnInFlight` set
-  true on observed `lifecycle.turn_started`, cleared at the turn-terminal seam
-  (`lifecycle.turn_completed` :12307-12323 and the crash/exit paths :12844); the `_armWatchdog` timer
-  callback re-arms WITHOUT declaring while `handle.turnInFlight === true`. A 20-minute compile is not
-  a stall; the wall budget is the operator-pinned hung-turn backstop.
+- **in-flight-turn-gate-missing / in-flight-liveness-missing / in-flight-turn-clear-missing** →
+  blk-5: `handle.turnInFlight` set true on observed `lifecycle.turn_started`, cleared at the
+  turn-terminal seam (`lifecycle.turn_completed` :12307-12323 and the crash/exit paths :12844 — the
+  C4 [F2] seam); the `_armWatchdog` timer callback re-arms WITHOUT declaring while
+  `handle.turnInFlight === true`. A 20-minute compile is not a stall; the wall budget is the
+  operator-pinned hung-turn backstop. A settled turn MUST clear the flag — the zombie flag would hold
+  liveness forever and make rung-3 reap impossible.
 - **null-deadline-sweep-missing** → blk-7: the `question` record gains `mintedAt: this._now()` at
   mint; `_sweepDeadlines` gains a `question` branch beside the decision branch:
   `effectiveDeadlineAt = record.deadlineAt ?? record.mintedAt + blockingInteractionTimeoutMs`; on
@@ -143,9 +152,18 @@ double and the public `tick()` — the real sweep seam, no fake timers.
   lifetime digest set, re-arms the watchdog fresh). Rung 3 reap requires the cycle expired
   unanswered AND `turnInFlight === false` AND the stall persists, with `_preserveProgressBeforeReap`
   first and the stop receipted.
+- **stall-reap-receipt-missing** → [F4-1, E6] the reap receipt trail: the expiry mints the
+  preserve-first receipts (`worktree.progress_unchanged {state:'no_progress'}` or the pinned
+  `progress_checkpointed`) BEFORE the stop receipt (`kill.requested` / `control.interrupt_requested`),
+  and `adapter.kill` is called — a stop-first or never-stop wrong impl fails.
+- **stall-clear-missing** → [F4-2, E7] the positive escape: `_clearStall(handle)` is called ONLY by a
+  qualifying D2 re-arm inside the claimed window — the `stall` flag is removed, the digest set emptied,
+  the watchdog re-armed fresh, and no kill happens. A deadlocked ladder (neither clear on progress nor
+  reap on silence) fails.
 - **stall-lifetime-dedup-missing** → blk-4: the cycle's digest set lives on the stall lifetime
   (`handle.stallSeamDigestSet`, cleared only by `_clearStall`), not per-cycle — one reused digest
-  cannot answer successive cycles.
+  cannot answer successive cycles. [F5] The set is also EMPTY at declaration — a fresh lifetime starts
+  with no answered identities.
 
 ## Suite-law hygiene (verified)
 
@@ -153,8 +171,8 @@ double and the public `tick()` — the real sweep seam, no fake timers.
   global `test.after` cleanup; the deployment-verification stub is the brief's `true` command.
 - **Red-first at named stages**: every RED row's first assertion is the named-stage failure (a
   namespace `assert.ok(...)` for invented exports, a behavior assertion for the sweep/ladder seams);
-  the PIN-before-stage rows (D1/E1/E2) verified to fail at the stage, not the PIN. 17 RED rows /
-  6 PINs, stable across consecutive runs.
+  the PIN-before-stage rows (D1/E1/E2) verified to fail at the stage, not the PIN. 20 RED rows /
+  7 PINs, stable across consecutive runs (re-verified after the blue-team fold).
 - **NUL discipline**: the two NUL-bearing files (`application.mjs`, `coordination-store.mjs`, 3 NUL
   bytes each) are never read whole — only their exports are imported (`BatonApplication`,
   `MockAdapter`, `coordinationForLog`). `application-deployment.mjs` and `coordinator.mjs` are
@@ -164,7 +182,8 @@ double and the public `tick()` — the real sweep seam, no fake timers.
   `_sweepDeadlines` through the injected `now()` test double and the public `tick()`. No row asserts
   a wall-clock behavior of the fleet: `Date.now()` appears only as a harness timeout inside
   `findStall`. The control-law line is asserted directly (C2: no bound fires on elapsed time without
-  an evidence check).
+  an evidence check). [F7] The must-not-stall PIN rows (B4/C3) carry a 10× event-ordering margin
+  (stallMs 300 / ~900 ms hold) — the #7 load-flake class is closed.
 - **No `localeCompare`**; the `REARM_KINDS` literal is asserted in ACTUAL sorted order (the
   contract-verified `[...set].sort()` identity) and the disclosure row deep-compares it to the
   sorted constant.
