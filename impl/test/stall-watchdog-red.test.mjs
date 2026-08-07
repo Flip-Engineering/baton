@@ -1,6 +1,7 @@
 // Issue #67 red suite: the folded stall-watchdog contract v1.1
 // (contract: docs/reference/evidence/stall-watchdog-2026-08-07/stall-watchdog-contract.md;
-// fold: contract-fold.md — 9 blockers; red-team: contract-redteam.md).
+// fold: contract-fold.md — 9 blockers; red-team: contract-redteam.md;
+// fold-2: suite-fold-2-brief.md + suite-fold-2.md — the 7 blue-team findings F1-F7).
 //
 // D1 decouples the stall budget from the wall budget (a separately-frozen DEFAULT_WATCHDOG
 // strictly smaller than DEFAULT_BUDGET.wallMin * 60_000, admission refusal
@@ -47,11 +48,16 @@
 //   B2  chatty-idler  a stream of scratchpad notes (the MAX_SCRATCHPAD_WORKER_ENTRIES farm
 //       class) buys zero re-arms — the stall fires despite the notes. (RED:
 //       stage[chatty-idler-rearms])
-//   B3  any-event-killed  a stream of heartbeats/tokens/provider-calls never re-arms — the
-//       stall fires. (RED: stage[any-event-rearm-killed])
+//   B3  any-event-killed  a stream of the REAL provider-activity events — resource.provider_call,
+//       content.message, resource.tokens, content.tool_call (exitCode 0 — never the loop-fired
+//       exitCode≠0 shape) and content.file_edit — never re-arms; the stall fires. (RED:
+//       stage[any-event-rearm-killed]) [F3: the pre-fold costume events were shallow-greenable —
+//       an impl that special-cased the exact costume kinds could pass; the real event classes
+//       must all be inert]
 //   B4  resolutions-re-arm  a worker-stream resolution stream (question.answered) never stalls —
-//       the closed set keeps the resolution kinds live. (PIN: kills an impl that drops the
-//       resolutions from the set)
+//       the closed set keeps the resolution kinds live. 10× event-margin on the stall window
+//       (stallMs 300 / 30ms interval / ~900ms hold) so the row cannot pass on the #7 wall-clock
+//       class. (PIN: kills an impl that drops the resolutions from the set) [F7]
 //   B5  orchestrator-silence  a steer/nudge stream never re-arms a worker liveness — the stall
 //       fires on schedule. (PIN: kills an impl that re-adds orchestrator kinds to the set — the
 //       self-dealing loop stays closed)
@@ -62,7 +68,13 @@
 //   C2  in-flight-silence  a turn in flight with ZERO events for >stallMs is never declared
 //       stalled — the 25-minute-compile-reap class dies. (RED: stage[in-flight-liveness-missing])
 //   C3  slow-but-productive  a long in-flight turn with provider activity is never declared
-//       stalled. (PIN: kills an impl that removes the in-flight gate — the #55 regression)
+//       stalled. 10× event-margin on the stall window (stallMs 300 / ~900ms hold) so the row
+//       cannot pass on the #7 wall-clock class. (PIN: kills an impl that removes the in-flight
+//       gate — the #55 regression) [F7]
+//   C4  turn-settles  a turn that COMPLETES clears handle.turnInFlight — the zombie mirror-image
+//       of the in-flight bug (a completed turn leaving the flag set would freeze liveness and
+//       blind the watchdog forever). Both terminals asserted: the completed-turn path and the
+//       crash-path. (RED: stage[in-flight-turn-clear-missing]) [F2]
 //
 // §D D3 — blocked-status escape (SW-06, SW-07, SW-08)
 //   D1  null-deadline-sweep  a blocking question with deadlineAt null gets the bounded
@@ -93,8 +105,27 @@
 //       the stall-seam cycle answers only on a D2 REARM kind. (RED:
 //       stage[stall-seam-answer-set-missing])
 //   E5  lifetime-dedup  the stall-seam cycle's digest set lives on the stall LIFETIME
-//       (handle.stallSeamDigestSet), not per-cycle. (RED: stage[stall-lifetime-dedup-missing])
-//
+//       (handle.stallSeamDigestSet), not per-cycle — and it is EMPTY at declaration (a fresh
+//       lifetime starts with no answered identities) and is cleared ONLY by _clearStall.
+//       (RED: stage[stall-lifetime-dedup-missing]) [F5: the pre-fold row asserted shape only —
+//       an empty-but-wrong-shaped set could pass; the content assertions (Set type, size 0,
+//       _clearStall exists) close it]
+//   E6  reap-receipts  a claimed stall whose window expires with turnInFlight === false reaps:
+//       preserve-first (worktree.progress_unchanged / progress_checkpointed receipt), THEN the
+//       stop receipt, THEN adapter.kill — never the reverse. (RED:
+//       stage[stall-seam-cycle-missing] + stage[stall-reap-receipt-missing]) [F4-1: the pre-fold
+//       rows asserted the seam EXISTS but none drove the ladder to reap; the preserve-first
+//       ordering was unasserted anywhere. The never-mid-turn-reap half is unreachable by
+//       construction (a mid-turn worker's cycle is answered by the turn_started REARM) — see
+//       suite-fold-2.md §F4]
+//   E7  stall-clear  the ONLY escape that clears the stall flag is _clearStall, called by a
+//       qualifying D2 re-arm inside the claimed window — the deadlocked ladder (never clear on
+//       progress) dies here. (RED: stage[stall-clear-missing]) [F4-2]
+//   E8  whose-stall  a working-but-turnless worker silences into provider_stalled on the status
+//       view (waitingOn.kind === 'provider_stalled', detail {workerId, action}), and a later
+//       worker-actor REARM event clears it (the G9 projection). (PIN: kills an impl that severs
+//       event→projection — the orchestrator would read a silently quiet worker instead of the
+//       whose-stall surface) [F6]
 // ===========================================================================
 // INVENTED SURFACES (names + exact observable signatures the implementation must land)
 // ===========================================================================
@@ -113,13 +144,15 @@
 // 4. RunView.status watchdog field — {stallMs, basis: 'no_progress_evidence',
 //    rearmKinds: [ACTUAL-sorted]}, byte-stable, readable on the deployment/run status surface.
 // 5. handle.turnInFlight — per-handle liveness marker, set true on lifecycle.turn_started,
-//    cleared at the turn-terminal seam; gates the D1 timer and rung-3 reap.
+//    cleared at the turn-terminal seam (turn_completed AND the crash terminal), never at a
+//    non-terminal event; gates the D1 timer and rung-3 reap. [F2: the mirror-image is that a
+//    settled turn MUST clear it — the zombie flag would hold liveness forever]
 // 6. coordinator._armStallCycle(handle, task, {nudgeId, controlId}) — the stall-seam seam armed
 //    on control.steer / control.nudge; record {kind:'stall_seam', ..., answered:false,
 //    basis:'no_progress_evidence', lifetime}; working-compatible expiry on
 //    _progressNudgeWindowMs ?? 300_000.
-// 7. handle.stallSeamDigestSet — the per-stall-LIFETIME digest Set, cleared ONLY by _clearStall
-//    on a qualifying D2 re-arm inside the window.
+// 7. handle.stallSeamDigestSet — the per-stall-LIFETIME digest Set, EMPTY at declaration,
+//    cleared ONLY by _clearStall on a qualifying D2 re-arm inside the window.
 // 8. coordinator.claimInteraction(requestId, {actor}) — the claim_turn-shape ack on the pending
 //    interaction / attention reason; an acknowledged interaction extends its effective deadline
 //    by blockingInteractionTimeoutMs and is skipped by the sweep.
@@ -127,6 +160,9 @@
 //    effectiveDeadlineAt = record.deadlineAt ?? record.mintedAt + blockingInteractionTimeoutMs
 //    (record gains mintedAt at mint); on expiry mint interaction_expired, release to working,
 //    receipt question.expired {resolution:{disposition:'escalated'}}; record stays pending.
+// 10. coordinator._clearStall(handle) — the stall flag + digest-set escape hatch, called ONLY by
+//    a qualifying D2 re-arm inside the claimed window; NOT called by any other event. [F4-2,
+//    F5]
 //
 // ===========================================================================
 // PIN LIST (green today, green under the correct impl; the wrong impl each kills)
@@ -140,16 +176,19 @@
 // - D3 blocked-honest — the landed #10 vocabulary: waitingOn null + blockedInteraction.
 // - D4 blocked-never-killed — the G3 non-'working' refusal is retained.
 // - D5 escalation-not-a-close — a late answer lands, never already_resolved.
+// - E8 whose-stall — kills an impl that severs health.stall_suspected → the status view's
+//   provider_stalled projection (the orchestrator would read a silently quiet worker instead of
+//   the whose-stall surface). [F6]
 //
 // ===========================================================================
 // VERIFIED SPLIT — recorded against the PRE-implementation tree on 2026-08-07
 // (node --test impl/test/stall-watchdog-red.test.mjs, repo root):
 //
-//   23 tests — 17 RED rows FAIL, 6 PINs PASS.
+//   27 tests — 20 RED rows FAIL, 7 PINs PASS.
 //   RED rows: each fails at its NAMED stage (the inventory above); none fails at a PIN
-//   assertion or a fixture error. PINs PASS: B4, B5, C3, D3, D4, D5.
-//   Stable across two consecutive runs: run 1 = 17 fail / 6 pass (5.5s);
-//   run 2 = 17 fail / 6 pass (5.1s).
+//   assertion or a fixture error. PINs PASS: B4, B5, C3, D3, D4, D5, E8.
+//   Stable across two consecutive runs: run 1 = 20 fail / 7 pass (19.8s);
+//   run 2 = 20 fail / 7 pass (18.1s).
 // ===========================================================================
 
 import { test } from 'node:test';
@@ -323,6 +362,13 @@ function emitTurnStarted(adapter, handle, turnEpoch = 1) {
   });
 }
 
+function emitTurnCompleted(adapter, handle, workerResult, turnEpoch = 1) {
+  adapter.emit({
+    worker: handle.id, harness: 'mock@1.0.0', turnEpoch, kind: 'lifecycle.turn_completed', actor: 'worker',
+    payload: workerResult,
+  });
+}
+
 function emitScratchWrite(adapter, handle, key, text) {
   adapter.emit({
     worker: handle.id, harness: 'mock@1.0.0', turnEpoch: 1, kind: 'scratchpad.write', actor: 'worker',
@@ -394,6 +440,30 @@ function markerAdapter(scenariosByMarker, { concurrencyCeiling } = {}) {
     return nativeSpawn(worker, brief, { ...options, scenario });
   };
   return value;
+}
+
+// The F6 whose-stall subject: a worker that NEVER auto-enters a turn. The spawn ack lands (and
+// the driver's worktree ownership handshake completes through `worktreeReady`), but no
+// `lifecycle.turn_started` is ever emitted — so the watchdog fires on silence at HEAD AND under
+// the correct impl (the in-flight-turn gate protects only a worker whose flag is SET; a turnless
+// working worker is the honest provider_stalled subject).
+function silentWorkerAdapter() {
+  const adapter = new ScriptableAdapter();
+  const baseCard = adapter.card.bind(adapter);
+  adapter.card = () => ({
+    ...baseCard(),
+    modelSelection: {
+      mode: 'exact', configuredDefault: ROUTE.model, available: [ROUTE.model], family: 'mock',
+      acceptedPrefixes: [], acceptedAliases: [], reasoningEffort: [ROUTE.effort], serviceTier: null,
+      provenance: 'stall-watchdog-test', refreshedAt: null,
+    },
+  });
+  const nativeSpawn = adapter.spawn.bind(adapter);
+  adapter.spawn = async (worker, brief, options) => {
+    if (options?.worktreeReady) await options.worktreeReady;
+    return nativeSpawn(worker, brief, options);
+  };
+  return adapter;
 }
 
 function harnessApp(t, adapter, createOpts = {}) {
@@ -492,7 +562,7 @@ test('A2 SW-11 (RED): a stallMs at/above the node wall refuses at admission with
 });
 
 test('A3 SW-11 (RED): a non-positive stallMs refuses at admission with watchdog_stall_exceeds_wall', () => {
-  const error = admissionRefusal({ watchdog: { stallMs: 0 } });
+  const error = admissionRefusal({ watchdog: { stallMs: 0 } }); // A3 pins this value as a typed refusal
   assert.ok(error,
     'stage[stall-nonpositive-admission-missing]: a watchdog.stallMs of 0 (never-armed watchdog) must refuse at the deployment seam');
   assert.equal(error?.code, 'watchdog_stall_exceeds_wall',
@@ -511,7 +581,7 @@ test('A5 SW-12 (RED): the resolved watchdog config is disclosed byte-stable on t
   const adapter = markerAdapter({
     default: { outcome: 'completed', edits: [{ path: 'out.txt', content: 'done\n', delayMs: 2500 }] },
   });
-  const { application } = harnessApp(t, adapter, { watchdog: { stallMs: 60, stallAction: 'none' } });
+  const { application } = harnessApp(t, adapter, { watchdog: { stallMs: 60, stallAction: 'escalate' } });
   const owner = principal('owner');
   const started = await application.start({ objective: 'SW-12 (marker:slow): disclosure', profile: 'standard', route: ROUTE, scope: ['**'] }, owner);
   await application.approve(started.runId, started.plan.digest, principal('approver'));
@@ -544,7 +614,7 @@ test('B1 SW-04 (RED): REARM_KINDS is the frozen closed four-kind set in ACTUAL s
 
 test('B2 SW-05 (RED): a scratchpad-note stream (the chatty-idler farm class) buys zero re-arms — the stall fires despite the notes', async () => {
   const adapter = new ScriptableAdapter();
-  const { coordinator } = setup({ adapter, coordinatorOpts: { watchdog: { stallMs: 60, stallAction: 'none' } } });
+  const { coordinator } = setup({ adapter, coordinatorOpts: { watchdog: { stallMs: 60, stallAction: 'escalate' } } });
   const handle = await coordinator.spawn('mock', makeBrief());
   // 128 one-char notes is the MAX_SCRATCHPAD_WORKER_ENTRIES farm cap (coordination-store.mjs:496);
   // this test exercises the class continuously — notes every 30ms for 400ms ≫ the 60ms window.
@@ -562,16 +632,30 @@ test('B2 SW-05 (RED): a scratchpad-note stream (the chatty-idler farm class) buy
 
 test('B3 SW-03 (RED): a heartbeat/tokens/provider-call stream never re-arms — the any-event re-arm is killed', async () => {
   const adapter = new ScriptableAdapter();
-  const { coordinator } = setup({ adapter, coordinatorOpts: { watchdog: { stallMs: 60, stallAction: 'none' } } });
+  const { coordinator } = setup({ adapter, coordinatorOpts: { watchdog: { stallMs: 60, stallAction: 'escalate' } } });
   const handle = await coordinator.spawn('mock', makeBrief());
+  // F3: the any-event stream carries the REAL work-evidence events the D2 fold removes —
+  // content.tool_call (a tool call proves the worker is doing something) and an in-scope
+  // content.file_edit (an edit proves progress). The evidence costume must fail: an impl that
+  // keeps the any-event re-arm but restricts it to "real work" events passes the old stream.
+  // The tool_call carries exitCode: 0 (the loopThreshold detector stays quiet) and the file_edit
+  // is in-scope (pathScope ['.'] → the scope-orientation branch continues, no scope_violation).
   let n = 0;
   const stop = setInterval(() => {
     n += 1;
-    if (n % 3 === 1) emitProviderCall(adapter, handle, `call-${n}`);
-    else if (n % 3 === 2) emitContentMessage(adapter, handle, `heartbeat-${n}`);
-    else adapter.emit({
+    if (n % 5 === 1) emitProviderCall(adapter, handle, `call-${n}`);
+    else if (n % 5 === 2) emitContentMessage(adapter, handle, `heartbeat-${n}`);
+    else if (n % 5 === 3) adapter.emit({
       worker: handle.id, harness: 'mock@1.0.0', turnEpoch: 1, kind: 'resource.tokens', actor: 'worker',
       payload: { usage: { inputTokens: 1, outputTokens: 1 } },
+    });
+    else if (n % 5 === 4) adapter.emit({
+      worker: handle.id, harness: 'mock@1.0.0', turnEpoch: 1, kind: 'content.tool_call', actor: 'worker',
+      payload: { command: 'git status', status: 'completed', exitCode: 0, callId: `b3:tc-${n}`, threadId: `thread-${handle.id}`, turnId: `turn-${handle.id}-1` },
+    });
+    else adapter.emit({
+      worker: handle.id, harness: 'mock@1.0.0', turnEpoch: 1, kind: 'content.file_edit', actor: 'worker',
+      payload: { path: 'out.txt' },
     });
   }, 30);
   let suspicion;
@@ -586,7 +670,11 @@ test('B3 SW-03 (RED): a heartbeat/tokens/provider-call stream never re-arms — 
 
 test('B4 (PIN): a worker-stream resolution stream never stalls — the closed set keeps the resolution kinds live', async () => {
   const adapter = new ScriptableAdapter();
-  const { coordinator } = setup({ adapter, coordinatorOpts: { watchdog: { stallMs: 60, stallAction: 'none' } } });
+  // F7: the must-not-stall margin is re-based off event ordering, never a 2× wall margin (the
+  // #7 load-flake class). stallMs 300 with a 30ms interval is a 10× margin; the ~900ms hold
+  // spans three full windows. Under load a busy CI can gap the interval — a 10× margin makes
+  // the watchdog staying behind the stream the overwhelming outcome while keeping real timers.
+  const { coordinator } = setup({ adapter, coordinatorOpts: { watchdog: { stallMs: 300, stallAction: 'escalate' } } });
   const handle = await coordinator.spawn('mock', makeBrief());
   let n = 0;
   const stop = setInterval(() => {
@@ -598,7 +686,7 @@ test('B4 (PIN): a worker-stream resolution stream never stalls — the closed se
   }, 30);
   let suspicion;
   try {
-    suspicion = await findStall(coordinator, handle.id, 400);
+    suspicion = await findStall(coordinator, handle.id, 900);
   } finally {
     clearInterval(stop);
   }
@@ -608,7 +696,7 @@ test('B4 (PIN): a worker-stream resolution stream never stalls — the closed se
 
 test('B5 (PIN): an orchestrator steer/nudge stream never re-arms a worker liveness — the stall fires on schedule', async () => {
   const adapter = new ScriptableAdapter();
-  const { coordinator } = setup({ adapter, coordinatorOpts: { watchdog: { stallMs: 60, stallAction: 'none' } } });
+  const { coordinator } = setup({ adapter, coordinatorOpts: { watchdog: { stallMs: 60, stallAction: 'escalate' } } });
   const handle = await coordinator.spawn('mock', makeBrief());
   let n = 0;
   const stop = setInterval(() => {
@@ -635,7 +723,7 @@ test('B5 (PIN): an orchestrator steer/nudge stream never re-arms a worker livene
 
 test('C1 (RED): a lifecycle.turn_started sets handle.turnInFlight — the per-handle liveness marker', async () => {
   const adapter = new ScriptableAdapter();
-  const { coordinator } = setup({ adapter, coordinatorOpts: { watchdog: { stallMs: 60, stallAction: 'none' } } });
+  const { coordinator } = setup({ adapter, coordinatorOpts: { watchdog: { stallMs: 60, stallAction: 'escalate' } } });
   const handle = await coordinator.spawn('mock', makeBrief());
   emitTurnStarted(adapter, handle);
   await flush(60);
@@ -646,7 +734,7 @@ test('C1 (RED): a lifecycle.turn_started sets handle.turnInFlight — the per-ha
 
 test('C2 (RED): a turn in flight with ZERO events for >stallMs is never declared stalled', async () => {
   const adapter = new ScriptableAdapter();
-  const { coordinator } = setup({ adapter, coordinatorOpts: { watchdog: { stallMs: 60, stallAction: 'none' } } });
+  const { coordinator } = setup({ adapter, coordinatorOpts: { watchdog: { stallMs: 60, stallAction: 'escalate' } } });
   const handle = await coordinator.spawn('mock', makeBrief());
   emitTurnStarted(adapter, handle);
   // Silence for 400ms ≫ 60ms: the timer fires but the in-flight gate re-arms WITHOUT declaring.
@@ -657,19 +745,60 @@ test('C2 (RED): a turn in flight with ZERO events for >stallMs is never declared
 
 test('C3 (PIN): a slow-but-productive worker — a long in-flight turn with provider activity — is never declared stalled', async () => {
   const adapter = new ScriptableAdapter();
-  const { coordinator } = setup({ adapter, coordinatorOpts: { watchdog: { stallMs: 60, stallAction: 'none' } } });
+  // F7: same 10× margin re-base as B4 — stallMs 300 / 30ms interval / ~900ms hold.
+  const { coordinator } = setup({ adapter, coordinatorOpts: { watchdog: { stallMs: 300, stallAction: 'escalate' } } });
   const handle = await coordinator.spawn('mock', makeBrief());
   emitTurnStarted(adapter, handle);
   let n = 0;
   const stop = setInterval(() => { n += 1; emitProviderCall(adapter, handle, `call-${n}`); }, 30);
   let suspicion;
   try {
-    suspicion = await findStall(coordinator, handle.id, 400);
+    suspicion = await findStall(coordinator, handle.id, 900);
   } finally {
     clearInterval(stop);
   }
   assert.equal(suspicion, null,
     'a slow-but-productive worker is never declared stalled (the in-flight gate + activity hold)');
+});
+
+test('C4 (RED): a turn that settles clears turnInFlight — the zombie mirror of the stall bug dies here', async () => {
+  // F2: the suite only ever observed turn_started (C1/C2/C3) — never the turn-terminal clear
+  // path. A wrong impl that sets turnInFlight = true on turn_started and NEVER clears it passes
+  // C1/C2/C3 (a zombie turn holding liveness forever) and makes rung-3 reap impossible. This row
+  // pins the clear at the turn-terminal seam. progressNudgeWindowMs is widened so the pausable
+  // card's pause-hold steering cycle never expires mid-row (it would otherwise run the trust
+  // gate and terminalize the task — orthogonal to the flag-clear being pinned).
+  const adapter = new ScriptableAdapter();
+  const { coordinator } = setup({
+    adapter,
+    coordinatorOpts: { watchdog: { stallMs: 60, stallAction: 'escalate' }, progressNudgeWindowMs: 60_000 },
+  });
+  const handle = await coordinator.spawn('mock', makeBrief());
+  emitTurnStarted(adapter, handle);
+  await flush(40);
+  emitTurnCompleted(adapter, handle, { status: 'completed', summary: 'done', changes: [] });
+  await flush(60);
+  const raw = coordinator._workers.get(handle.id);
+  assert.equal(raw.turnInFlight, false,
+    'stage[in-flight-turn-clear-missing]: lifecycle.turn_completed clears turnInFlight — a zombie flag would hold liveness forever');
+
+  // The crash terminal clears it too (D2/blk-5 pins the crash/exit paths).
+  const crashAdapter = new ScriptableAdapter();
+  const { coordinator: crashCoordinator } = setup({
+    adapter: crashAdapter,
+    coordinatorOpts: { watchdog: { stallMs: 60, stallAction: 'escalate' }, progressNudgeWindowMs: 60_000 },
+  });
+  const crashHandle = await crashCoordinator.spawn('mock', makeBrief());
+  emitTurnStarted(crashAdapter, crashHandle);
+  await flush(40);
+  crashAdapter.emit({
+    worker: crashHandle.id, harness: 'mock@1.0.0', turnEpoch: 1, kind: 'lifecycle.crashed', actor: 'worker',
+    payload: { code: 'provider_crashed' },
+  });
+  await flush(60);
+  const crashed = crashCoordinator._workers.get(crashHandle.id);
+  assert.equal(crashed.turnInFlight, false,
+    'stage[in-flight-turn-clear-missing]: the lifecycle.crashed terminal clears turnInFlight too');
 });
 
 // ===========================================================================
@@ -679,9 +808,14 @@ test('C3 (PIN): a slow-but-productive worker — a long in-flight turn with prov
 test('D1 SW-08 (RED): a null-deadline blocking question gets a bounded default; expiry escalates, releases, never closes', async () => {
   const clock = { now: 0 };
   const adapter = new ScriptableAdapter();
+  // F1 fixture contract: a VALID positive stallMs — never 0 (A3 brands stallMs:0 a typed
+  // refusal at the deployment seam). The sweep is driven through the injected now()/tick() seam;
+  // the worker is blocked the whole window, so _armWatchdog's non-'working' refusal keeps the
+  // watchdog silent regardless of the value. stallAction 'escalate' is the contract's D1 action —
+  // never 'none' (an invented value outside the action vocabulary, removed per F1).
   const { coordinator } = setup({
     adapter,
-    coordinatorOpts: { now: () => clock.now, watchdog: { stallMs: 0, blockingInteractionTimeoutMs: 60 } },
+    coordinatorOpts: { now: () => clock.now, watchdog: { stallMs: 100, blockingInteractionTimeoutMs: 60, stallAction: 'escalate' } },
   });
   const handle = await coordinator.spawn('mock', makeBrief());
   const requestId = 'd1:blocking-question';
@@ -713,9 +847,14 @@ test('D1 SW-08 (RED): a null-deadline blocking question gets a bounded default; 
 test('D2 SW-08 (RED): an operator-acked interaction extends its effective deadline and is skipped by the sweep', async () => {
   const clock = { now: 0 };
   const adapter = new ScriptableAdapter();
+  // F1 fixture contract: a VALID positive stallMs — never 0 (A3 brands stallMs:0 a typed
+  // refusal at the deployment seam). The sweep is driven through the injected now()/tick() seam;
+  // the worker is blocked the whole window, so _armWatchdog's non-'working' refusal keeps the
+  // watchdog silent regardless of the value. stallAction 'escalate' is the contract's D1 action —
+  // never 'none' (an invented value outside the action vocabulary, removed per F1).
   const { coordinator } = setup({
     adapter,
-    coordinatorOpts: { now: () => clock.now, watchdog: { stallMs: 0, blockingInteractionTimeoutMs: 60 } },
+    coordinatorOpts: { now: () => clock.now, watchdog: { stallMs: 100, blockingInteractionTimeoutMs: 60, stallAction: 'escalate' } },
   });
   const handle = await coordinator.spawn('mock', makeBrief());
   const requestId = 'd2:ack-question';
@@ -760,7 +899,7 @@ test('D3 SW-06 (PIN): a blocked worker reads honest null + blockedInteraction �
 
 test('D4 SW-07 (PIN): a blocked worker is never stall-declared — the G3 non-working refusal is retained', async () => {
   const adapter = new ScriptableAdapter();
-  const { coordinator } = setup({ adapter, coordinatorOpts: { watchdog: { stallMs: 60, stallAction: 'none' } } });
+  const { coordinator } = setup({ adapter, coordinatorOpts: { watchdog: { stallMs: 60, stallAction: 'escalate' } } });
   const handle = await coordinator.spawn('mock', makeBrief());
   emitQuestionAsked(adapter, handle, 'd4:blocking', 'approve this?', true);
   await flush(60);
@@ -774,9 +913,14 @@ test('D4 SW-07 (PIN): a blocked worker is never stall-declared — the G3 non-wo
 test('D5 SW-08 (PIN): an escalated blocking question stays answerable — a late operator answer lands, never already_resolved', async () => {
   const clock = { now: 0 };
   const adapter = new ScriptableAdapter();
+  // F1 fixture contract: a VALID positive stallMs — never 0 (A3 brands stallMs:0 a typed
+  // refusal at the deployment seam). The sweep is driven through the injected now()/tick() seam;
+  // the worker is blocked the whole window, so _armWatchdog's non-'working' refusal keeps the
+  // watchdog silent regardless of the value. stallAction 'escalate' is the contract's D1 action —
+  // never 'none' (an invented value outside the action vocabulary, removed per F1).
   const { coordinator } = setup({
     adapter,
-    coordinatorOpts: { now: () => clock.now, watchdog: { stallMs: 0, blockingInteractionTimeoutMs: 60 } },
+    coordinatorOpts: { now: () => clock.now, watchdog: { stallMs: 100, blockingInteractionTimeoutMs: 60, stallAction: 'escalate' } },
   });
   const handle = await coordinator.spawn('mock', makeBrief());
   const requestId = 'd5:late-answer';
@@ -797,7 +941,7 @@ test('D5 SW-08 (PIN): an escalated blocking question stays answerable — a late
 
 test('E1 SW-02 (RED): the stall declaration names its basis — no_progress_evidence, never "too slow"', async () => {
   const adapter = new ScriptableAdapter();
-  const { coordinator } = setup({ adapter, coordinatorOpts: { watchdog: { stallMs: 60, stallAction: 'none' } } });
+  const { coordinator } = setup({ adapter, coordinatorOpts: { watchdog: { stallMs: 60, stallAction: 'escalate' } } });
   const handle = await coordinator.spawn('mock', makeBrief());
   const suspicion = await stallSuspicion(coordinator, handle);
   assert.ok(suspicion, 'PIN: the stall window fires on silence');
@@ -859,6 +1003,125 @@ test('E5 SW-10 (RED): the stall-seam cycle dedups per-stall LIFETIME — handle.
   const handle = await coordinator.spawn('mock', makeBrief());
   await stallSuspicion(coordinator, handle);
   const raw = coordinator._workers.get(handle.id);
+  // F5: E5 was existence-only — any impl could add an unused `stallSeamDigestSet = new Set()`.
+  // The per-stall-LIFETIME dedup *semantics* (blk-4: one reused digest cannot answer successive
+  // cycles) are pinned by (a) the empty-at-declaration content and (b) the ONLY clear path being
+  // `_clearStall` on a qualifying D2 re-arm (the E7 row drives that path live). The two-cycle
+  // discriminator itself is NOT implementable per the contract: _clearStall clears the digest
+  // set, so a fresh stall lifetime legitimately accepts the same digest again (v1.2 note).
   assert.ok(raw.stallSeamDigestSet instanceof Set,
     'stage[stall-lifetime-dedup-missing]: the per-stall-LIFETIME digest set must live on the handle (cleared only by _clearStall on a qualifying D2 re-arm)');
+  assert.equal(raw.stallSeamDigestSet.size, 0,
+    'stage[stall-lifetime-dedup-missing]: the digest set is EMPTY at declaration — a fresh stall lifetime starts with no answered identities');
+  assert.equal(typeof coordinator._clearStall, 'function',
+    'stage[stall-lifetime-dedup-missing]: the only path that clears the digest set is _clearStall on a qualifying D2 re-arm inside the claimed window');
+});
+
+test('E6 SW-10 (RED): the claimed stall-seam cycle expires to a RECEIPTED reap — preserve-first, never mid-turn', async () => {
+  const clock = { now: 0 };
+  const adapter = new ScriptableAdapter();
+  const HEX = 'a'.repeat(40);
+  const { coordinator } = setup({
+    adapter,
+    worktreesOverrides: {
+      create: async (taskId) => ({ path: `/tmp/wt/${taskId}`, branch: `baton/${taskId}`, baseSha: HEX }),
+      capture: async () => ({ sha: HEX, baseSha: HEX, changedPaths: [] }),
+      retainCheckpoint: async (sha) => ({ sha }),
+      resolveCheckpoint: async (ref) => ref.sha,
+    },
+    coordinatorOpts: { now: () => clock.now, watchdog: { stallMs: 60, stallAction: 'escalate' } },
+  });
+  const handle = await coordinator.spawn('mock', makeBrief());
+  await stallSuspicion(coordinator, handle);
+  // F4: E3/E4/E5 only assert the seam EXISTS — none drives the ladder to reap. The rung-3
+  // receipt trail (worktree.progress_unchanged / progress_checkpointed, then the stop receipt,
+  // then adapter.kill) is asserted nowhere. This row drives: stall declared → steer claims
+  // (arms the stall-seam cycle) → the claimed window expires unanswered with turnInFlight ===
+  // false → preserve-first receipts, then the stop, then adapter.kill. The never-mid-turn-reap
+  // half is unreachable by construction (a mid-turn worker's cycle is answered by the turn_started
+  // REARM) — documented in suite-fold-2.md §F4.
+  assert.equal(typeof coordinator._armStallCycle, 'function',
+    'stage[stall-seam-cycle-missing]: a claim (control.steer / control.nudge) must arm the stall-seam cycle');
+  try {
+    await coordinator.send(handle.id, 'resume after review', 'steer',
+      { actor: 'orchestrator', controlId: `control:${'a'.repeat(64)}` });
+  } catch { /* the steer may be refused — the seam is what this row pins */ }
+  clock.now = 100; // well past the claimed window (progressNudgeWindowMs 25)
+  await sleep(80);
+  coordinator.tick();
+  const ledger = coordinator._log.read(handle.id);
+  const progressIdx = ledger.findIndex((e) => e.kind === 'worktree.progress_unchanged' || e.kind === 'worktree.progress_checkpointed');
+  const stopIdx = ledger.findIndex((e) => e.kind === 'kill.requested' || e.kind === 'control.interrupt_requested');
+  assert.ok(progressIdx >= 0,
+    'stage[stall-reap-receipt-missing]: rung-3 reap first preserves progress — a worktree.progress_unchanged / progress_checkpointed receipt must land before any stop');
+  assert.ok(stopIdx > progressIdx,
+    'stage[stall-reap-receipt-missing]: preserve-first ordering — the stop receipt lands AFTER the preservation receipt');
+  assert.ok(adapter.calls.kill.length > 0,
+    'stage[stall-reap-receipt-missing]: the reap actually stops the worker (adapter.kill)');
+});
+
+test('E7 SW-10 (RED): a qualifying D2 re-arm inside the claimed window calls _clearStall — the ladder has a reachable escape hatch', async () => {
+  const adapter = new ScriptableAdapter();
+  const { coordinator } = setup({ adapter, coordinatorOpts: { watchdog: { stallMs: 60, stallAction: 'escalate' } } });
+  const handle = await coordinator.spawn('mock', makeBrief());
+  await stallSuspicion(coordinator, handle);
+  try {
+    await coordinator.send(handle.id, 'resume after review', 'steer',
+      { actor: 'orchestrator', controlId: `control:${'b'.repeat(64)}` });
+  } catch { /* the steer may be refused — the seam is what this row pins */ }
+  assert.equal(typeof coordinator._clearStall, 'function',
+    'stage[stall-clear-missing]: the ONLY escape that clears the stall flag is _clearStall, called by a qualifying D2 re-arm inside the claimed window');
+  const raw = coordinator._workers.get(handle.id);
+  adapter.emit({
+    worker: handle.id, harness: 'mock@1.0.0', turnEpoch: 1, kind: 'question.answered', actor: 'worker',
+    payload: { requestId: 'e7:answer', answer: 'x' },
+  });
+  await flush(40);
+  assert.equal(raw.watchdogActions?.has('stall'), false,
+    'stage[stall-clear-missing]: a qualifying D2 re-arm clears the stall flag — the deadlocked ladder (never clear on progress) dies here');
+  assert.ok(raw.stallSeamDigestSet instanceof Set && raw.stallSeamDigestSet.size === 0,
+    'stage[stall-clear-missing]: _clearStall clears the digest set with the flag');
+  assert.equal(adapter.calls.kill.length, 0,
+    'stage[stall-clear-missing]: a clear is not a reap — the worker is never stopped');
+});
+
+test('E8 SW-02 (PIN): the stalled worker reads waitingOn.provider_stalled — and a later worker-actor REARM clears it', async (t) => {
+  // F6: E1 asserts the stall basis on the ledger event, but no row asserts the who's-stall
+  // surface — the status view's `waitingOn: {kind: 'provider_stalled'}` projection (G9). The
+  // projection exists at HEAD, so the correct impl gets it for free; this PIN kills a wrong impl
+  // that severs event→projection (minting the stall outside the ledger surface the projection
+  // reads) — the orchestrator would see a silently quiet worker instead of provider_stalled.
+  const adapter = silentWorkerAdapter();
+  const { application, driver } = harnessApp(t, adapter, { watchdog: { stallMs: 1000, stallAction: 'escalate' } });
+  const owner = principal('owner');
+  const started = await application.start({ objective: 'SW-02 (silent): whose-stall provider_stalled', profile: 'standard', route: ROUTE, scope: ['**'] }, owner);
+  await application.approve(started.runId, started.plan.digest, principal('approver'));
+  const wid = await until(async () => {
+    const list = driver.coordinator.list().filter((h) => h.taskId != null);
+    return list.length > 0 ? list[0].id : null;
+  }, 'E8: the run never dispatched a worker');
+  const suspicion = await findStall(driver.coordinator, wid, 4000);
+  assert.ok(suspicion,
+    'PIN: a turnless working worker silences into the stall — the whose-stall subject (the silent worker never enters a turn, so the in-flight gate does not protect it)');
+  const view = await application.status(started.runId, owner);
+  assert.equal(view.waitingOn?.kind, 'provider_stalled',
+    'the whose-stall honest surface reads provider_stalled on the status view — a wrong impl that severs event→projection leaves it null');
+  assert.equal(view.waitingOn.detail.workerId, wid,
+    'the stalled member is exactly the working-but-turnless worker');
+  assert.equal(view.waitingOn.detail.action, 'escalate',
+    'the whose-stall detail names the honest action');
+  // G9: after a later worker-actor REARM event the projection clears (no later worker-actor
+  // event). The REARM stream (every 100ms ≪ stallMs 1000) keeps the watchdog re-armed at HEAD,
+  // so the clear holds without a wall-clock race (the #7 class).
+  const stop = setInterval(() => adapter.emit({
+    worker: wid, harness: 'mock@1.0.0', turnEpoch: 2, kind: 'lifecycle.turn_started', actor: 'worker', payload: {},
+  }), 100);
+  try {
+    await until(async () => {
+      const v = await application.status(started.runId, owner);
+      return v.waitingOn == null ? v : null;
+    }, 'E8: the projection never cleared after a worker-actor REARM event', 3000);
+  } finally {
+    clearInterval(stop);
+  }
 });
