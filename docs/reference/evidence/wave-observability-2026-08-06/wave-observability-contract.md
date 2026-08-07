@@ -2,7 +2,7 @@
 
 - **Issue:** #132 — wave observability + admission (the orchestrator's wave lane)
 - **Date:** 2026-08-06
-- **Status:** DRAFT v1.1 — implementation contract (fold of the #132 red-team report)
+- **Status:** DRAFT v1.2 — implementation contract (fold of the #132 red-team + blue-team reports)
 - **Verification HEAD:** `b8d0a6e465b728c3f1d03a8689666e8baa695933` (this fold's worktree
   effective-tree snapshot). v1.0 was verified at `19d0fdd5227a16c0494be1fd7308e316e65aeb84`, the
   red-team at `23798fde010c23f01abb739a14efe2295384e289` (a strict ancestor of the fold HEAD with
@@ -25,6 +25,14 @@
   **F8** (`wave_not_found` MCP-allowlisted — D5.2). The §4 pinned-tool-list drift is owned by A3,
   and the five open-question verdicts are applied (open questions section). Change map:
   `contract-fold.md` (same dir).
+- **Fold-2 note (v1.2):** folds `suite-blueteam.md` (NEEDS-FOLD, 13 findings F1–F13) into the
+  acceptance pins. Three green-side blockers (F1 fixture deploymentId, F2 real-run dispatch,
+  F3 direct-port refusal site), four shallow-greenability/oracle closures (F4 full `{code,message}`
+  surface-constancy + a NEW CLI leg D4.6, F7 card derivation, F8 full key-set pin, F12
+  region-restricted negatives), five missing rows (F5 behavioral `wave_not_found`, F6 store
+  close/reopen replay, F9 exactly-once-on-attach, F10 per-member envelope refusal, F11 CLI
+  render/exit), and one under-determined pin (F13 legacy no-run member render — D2.4). Resolution
+  map: `suite-fold-2.md` (same dir).
 - **Brief:** `contract-132-brief.md` + `fold-132-brief.md` (same dir) — read fully; every
   `file:line` citation below was re-verified with `grep -an`/`sed -n` at the verification HEAD,
   unless explicitly marked spec-referenced (a cross-contract pin, not a working-tree read).
@@ -267,6 +275,13 @@ projection is the D9 discipline applied to both wave lifecycle records.
    `application_run_view_oversize`) holds. Row shape per member: `{attentionCount, liveness, phase,
    progressClass, role}` (D3). A legacy-string row renders `{role: <string>, route: null,
    scope: null}` and the same live reads.
+   **D2.4 — the legacy no-run member render is pinned (F13):** a legacy member is a bare role
+   string with NO registered `runId`. The D5.2 `wave_not_found` seam only fires for a member whose
+   run WAS registered and then disappeared — a run-less legacy member can never hit it. It reads
+   the pinned no-run render: `liveness: 'local'`, `phase`/`progressClass`/`attentionCount`/`route`/
+   `scope` all `null`, and NEVER refuses `wave_not_found`. A2's legacy-store-replay row asserts
+   exactly this render (no `error` key on the member), removing the ambiguity a faithful impl would
+   otherwise face between "render raw" and "refuse the whole legacy row".
 5. **Surfaces.** `waves.list` is embedded + cli + mcp + web (observe-only, no control effect). New
    `CANONICAL_OPERATION_SPECS` row (`application-semantics.mjs:1225`) with
    `surfaces: ['embedded', 'cli', 'mcp', 'web']`, `effect: 'observe'`, `capabilities: ['observe']`;
@@ -339,6 +354,17 @@ future mechanism's requirements named so the honesty rule stays testable.
 5. **`baton waves send RUN_ID ...` / `baton waves stop RUN_ID ...`** keep their current parse
    (member lanes by runId, `_normalizeWaveMemberAction`, `application.mjs:11738-11774`); D4 changes
    no member-lane grammar.
+6. **`baton waves start --members JSON` parses (D4.6, the F4 CLI leg).** The plural block
+   (`application-cli.mjs:1316`) gains `action === 'start'` with a `--members JSON` option carrying
+   the direct-port member array (`[{role, objective, exact, scope}]`); the parse returns
+   `{ kind: 'command', name: 'waves.start', args: { idempotencyKey, members }, idempotencyKey }`,
+   threading the global `--idempotency-key` INTO `args` because the direct-port `waves.start`
+   normalizer reads the key from the intent payload and the CLI dispatch port stays the
+   two-argument `(name, args)` shape (`application-client.mjs:1652`; `runBatonCli`'s third
+   positional is the parse's own `idempotencyKey`, which a two-argument port ignores). An
+   admission-exceeding objective refuses `wave_member_invalid` on the typed `body.error` with a
+   NON-ZERO exit (D5.2 — the `baton.mjs:128-131` mapping: `cli_*` usage errors exit 2, outcome
+   refusals exit 1); the refusal is never a per-member-swallowed success shape.
 
 ### D5 — Interaction with #129 (silent oversize): a run-less wave is never a success shape
 
@@ -367,6 +393,16 @@ future mechanism's requirements named so the honesty rule stays testable.
    needs NO MCP surface row — pinned. On the web surface both ride the typed body (the `_dispatch`
    failure path already projects coded refusals); on the CLI they ride the typed `body.error` +
    non-zero exit (the #114 W6 pinned-accessor shape, `workflow-as-data-contract.md:203-207`).
+   **Surface-constancy is asserted on the FULL `{code, message}` payload, not the code alone
+   (F4):** every admitted surface carries the refusal's EMBEDDED message byte-identically — the web
+   body `error.message`, the MCP `structuredContent.error.message`, and the CLI `body.error` message
+   all equal the embedded `'wave member <role> did not start'` string (W6), never a fixed mapping
+   string; and the `{actual, cap, cause, role}` detail (D5.1) rides the web body and MCP
+   `structuredContent.error` beside the code. **PIN — the `stateFailureCode` allowlist region
+   (`mcp-northbound.mjs:198-260`) must NOT contain the quoted literal `'wave_registry_invalid'`
+   (A6-5):** the store-integrity code needs no MCP row, and an explanatory comment quoting it INSIDE
+   the function would false-trip the region-restricted negative pin (F12) — keep such prose out of
+   the function body.
 3. **No new numeric limit is introduced.** The 4096 cap is the pinned registry row
    (`limits.mjs:57`); the spill path stays (spill-digest-citation, `wave-driver.mjs:28-70`). D5
    only makes the ADMISSION result observable — it does not move the cap or the spill ceiling.
@@ -392,9 +428,11 @@ New, introduced by this contract:
 | `wave_registry_invalid` | `_apply` replay fold (D2.3) | A MALFORMED NEW-SHAPE `wave.started`/`wave.closed` registry record is a replay integrity failure (the recovery-record posture, `coordination-store.mjs:8057-8060`) — typed, never a silently dropped row; a well-formed legacy string-array roster is NOT this code (B2). Store-integrity only, no per-command MCP surface row |
 | `wave_not_found` | `waves.progress`/`waves.list` member read (D2.4) | A registry row exists but a member run no longer resolves — the per-member read refuses typed instead of fabricating a phase (never `application_run_view_oversize`). Added to the MCP `stateFailureCode` allowlist (F8) |
 
-Every new/amended refusal is typed, named, and surface-constant: the same code on embedded throw,
-web body, MCP `structuredContent.error`, and CLI `body.error` + exit (the #114 W6 pinned-accessor
-law, `workflow-as-data-contract.md:203-207`).
+Every new/amended refusal is typed, named, and surface-constant: the same code — and, for the
+admission refusal, the SAME embedded message and `{actual, cap, cause, role}` detail — on embedded
+throw, web body, MCP `structuredContent.error`, and CLI `body.error` + exit (the #114 W6
+pinned-accessor law, `workflow-as-data-contract.md:203-207`; the full-`{code,message}` constancy is
+the F4 fold).
 
 ## Red-first acceptance pins
 
@@ -418,10 +456,17 @@ law, `workflow-as-data-contract.md:203-207`).
   derives the row with `roster` = the raw strings and `waves.list` renders `{role: <string>,
   route: null, scope: null}` per member; the replay does NOT throw `wave_registry_invalid`. A
   genuinely malformed new-shape roster (neither shape) throws `wave_registry_invalid` (the
-  recovery-record posture). **OQ1 row:** the close-side pin (`wave.closed` append → `state:
-  'closed'`) is a depending-on-#103 row in the #114 B3 posture
-  (`workflow-as-data-contract.md:120`) — it is meaningful only once D2.3's top-level close branch
-  consumes #103's actual `wave.closed` event (B1).
+  recovery-record posture). **F6 row — replay-exactness is proven by a store CLOSE/REOPEN, not a
+  live append:** append the legacy record, close the store (shutdown + `releaseWriterLease`),
+  reopen a fresh host over the SAME logDir, and assert the fold rebuilt the identical registry from
+  the persisted ledger (recordDriver appends synchronously — `coordination-store.mjs:1472`). **F13
+  row — the no-run member render (D2.4):** a legacy-string member reads `liveness: 'local'`,
+  `phase`/`progressClass`/`attentionCount`/`route`/`scope` `null`, and NEVER `wave_not_found`. **F9
+  row — exactly-once-on-attach:** a started wave attached to (same member objective) keeps exactly
+  one `wave.started` record and exactly one registry row; attach never re-mints. **OQ1 row:** the
+  close-side pin (`wave.closed` append → `state: 'closed'`) is a depending-on-#103 row in the #114
+  B3 posture (`workflow-as-data-contract.md:120`) — it is meaningful only once D2.3's top-level
+  close branch consumes #103's actual `wave.closed` event (B1).
 - **A3 — `waves list` shape (D2).** Red: no `waves.list` surface exists. Green: `waves.list` returns
   only OPEN rows for THIS deployment, each `{closedAtEventSeq, deploymentId, roster,
   startedAtEventSeq, state, waveId}`, paged ≤16 with `{cursor, nextCursor}`; per-member
@@ -451,16 +496,23 @@ law, `workflow-as-data-contract.md:203-207`).
   with the plural corrective (the `application-cli.mjs:1310-1314` pattern); a bare
   `baton waves attach` issues `waves.list` (this deployment's open rows), renders the attachable set
   (waveId + member roles, pages ≤16), and exits 0 — the F5 pinned shape, never the `wave ID is
-  invalid` refusal (`application-cli.mjs:1328`).
-- **A6 — the #129 typed refusal through web + MCP + CLI (D5, F7).** Red: an admission refusal
-  that FIRES at HEAD — an oversize-objective `waves.start` beyond the 1 MiB `spill.body` ceiling
-  (`limits.mjs:85`), or a profile/quota `run.start` refusal — returns a run-less wave as a success
-  shape (the #129 witness). Green: the same admission refuses `wave_member_invalid` naming
-  `{actual, cap, cause, role}` on every admitted surface — MCP `structuredContent.error`
-  (allowlisted, `mcp-northbound.mjs:198+`), web body, CLI `body.error` + non-zero exit — and no
-  partial start is ever a success shape. The A6 red is NOT driven from a merely-oversize (≤1 MiB)
-  objective: that is spill-ADMITTED at HEAD (`application.mjs:4460-4466`, GT9) and would not
-  reproduce the run-less success shape (F7).
+  invalid` refusal (`application-cli.mjs:1328`). **F11 row — the issued command runs the FULL
+  parse→dispatch→render pipeline** (`parseBatonCli` + `runBatonCli` over a host with open rows),
+  asserting the rendered attachable set AND exit-0 semantics for a resolved command — a CLI whose
+  run-loop still errors after the parse change, or never renders, stays red. `baton waves start
+  --members JSON` parses to `waves.start` (D4.6, the F4 CLI leg).
+- **A6 — the #129 typed refusal through web + MCP + CLI (D5, F3, F4, F7).** Red: an admission
+  refusal that FIRES at HEAD — an oversize-objective `waves.start` beyond the 1 MiB `spill.body`
+  ceiling (`limits.mjs:85`) rejecting RAW at the DIRECT-PORT start (the D5.1 wrap site), or a
+  profile/quota `run.start` refusal — returns a run-less wave as a success shape (the #129 witness).
+  Green: the same admission refuses `wave_member_invalid` naming `{actual, cap, cause, role}` with
+  the EMBEDDED message byte-identical on every admitted surface — MCP `structuredContent.error`
+  (allowlisted, `mcp-northbound.mjs:198+`), web body, CLI `body.error` + non-zero exit (F4; the
+  CLI leg is D4.6 `baton waves start --members JSON`) — and no partial start is ever a success
+  shape. The A6 red is driven from the DIRECT-PORT `waves.start` (F3: the facade's per-member
+  swallow is not the fold's site) and NOT from a merely-oversize (≤1 MiB) objective: that is
+  spill-ADMITTED at HEAD (`application.mjs:4460-4466`, GT9) and would not reproduce the run-less
+  success shape (F7).
 
 ## Open questions
 
