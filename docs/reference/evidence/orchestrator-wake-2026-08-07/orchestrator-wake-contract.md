@@ -2,8 +2,16 @@
 
 - **Issue:** #71 — orchestrator attention inbox (wake-with-decisions instead of poll)
 - **Date:** 2026-08-07
-- **Status:** v1.1 DRAFT — implementation contract (Ring-2 form, acceptance pins red-first);
-  FOLD of the red-team report `contract-redteam.md` (this directory)
+- **Status:** v1.1 DRAFT + v1.2 AMENDMENT — implementation contract (Ring-2 form, acceptance
+  pins red-first); FOLD of the red-team report `contract-redteam.md` (this directory) plus the
+  v1.2 amendment from the blue-team suite fold `suite-fold-2.md` (this directory)
+- **Fold note (v1.1 → v1.2):** amends three points from the suite blue-team fold — the wake's
+  cancellation receipt (`application_attention_wait_cancelled`, the H7 disconnect→abort mapping's
+  named code), the run-scoped authority's never-any-live-lease / never-caller-claimed-class
+  reading (F5), and the W-9 decision-park reconciliation (the park is wake-visible ONLY via the
+  reason lane — it does NOT advance the store seq at HEAD; the store-visibility principle covers
+  the appending transitions). The suite's red-first rows for these are AUTHORITY-RUN-SCOPED /
+  WORKER-REFUSED / WAKE-ABORT / MCP-CEILING / REVALIDATED.
 - **Fold note (v1.0 → v1.1):** folds the red-team report's five numbered blockers — B1 (the
   composed cursor mixes store seq and `_attentionCursor` into one token), B2 (`candidacy_review`
   re-minted per page with fresh seqs), B3 (`budget_alarm` has no producer in the composed
@@ -133,18 +141,21 @@ bound; the loop wakes on an event-seq advance and re-pages.
    `WAITING_ON_KINDS` kind (G7 stays closed; #10 OQ3's `member_waiting` rung is folded into
    the wake surface, not the vocabulary).
 5. **Every wake-worthy STORE change is store-seq-visible (a guarantee pin, not a clock; B4
-   re-scope).** The loop wakes on a store advance, so the coordinator must append a store event
-   coincident with every wake-worthy STORE-visible state change. This already holds: a decision
-   park is a `task.transitioned` (`application.mjs`-visible via
-   `_coordTransition(task, 'input_required')`, G6); a candidacy admission is a store queue
-   event; a wave close is the `wave.closed` append (G9); a plan proposal is
-   `plan.version_proposed`. The pin is re-scoped to store-visible changes because a REASON-ONLY
-   mint can be store-invisible (B4): `_mintMemberTerminal` fires on every
-   `lifecycle.turn_completed` with `status: 'completed'` (`coordinator.mjs:12318`) — including
-   when the task is already terminal, in which case `_coordTransition` no-ops
-   (`coordinator.mjs:8148`) and no store event lands; the storm-coalesced count update
-   (`coordinator.mjs:7141-7149`) is therefore observable only on the next store advance unless
-   the reasons notifier carries it (D1.6).
+   re-scope; v1.2 reconciliation).** The loop wakes on a store advance, so the coordinator must
+   append a store event coincident with every wake-worthy STORE-visible state change. The
+   appending transitions are: a candidacy admission (a store queue event), a wave close (the
+   `wave.closed` append, G9), and a plan proposal (`plan.version_proposed`). **A decision park
+   is the v1.2 reconciliation:** it transitions the member via
+   `_coordTransition(task, 'input_required')` (G6) but does NOT append to `coordination.events()`
+   at HEAD (probe-confirmed delta 0) — it is wake-visible ONLY through the reason lane
+   (`answer_decision`), so it is not covered by this store-visibility pin (wake-visible does not
+   require store-appended; the DECISION-PARK-WAKES row rides the reason lane). The pin is
+   re-scoped to store-visible changes because a REASON-ONLY mint can be store-invisible (B4):
+   `_mintMemberTerminal` fires on every `lifecycle.turn_completed` with `status: 'completed'`
+   (`coordinator.mjs:12318`) — including when the task is already terminal, in which case
+   `_coordTransition` no-ops (`coordinator.mjs:8148`) and no store event lands; the
+   storm-coalesced count update (`coordinator.mjs:7141-7149`) is therefore observable only on
+   the next store advance unless the reasons notifier carries it (D1.6).
 
 6. **The reasons notifier (reason-only liveness, B1 + B4).** The attention reasons are
    process-scoped (G4, non-goal), so a reason-only mint has no store event to wake
@@ -273,8 +284,10 @@ so the orchestrator answers from the wake without a second read.** The payload s
    MCP stdio channel is the wake's primary-surface blast radius; the MCP surface issues bounded
    ONE-SHOT waits (the #138 posture, D4.4), while the CLI and the web command envelope may hold
    up to `maxWaitMs`. The disconnect→abort mapping is pinned: a connection close aborts the
-   in-flight `waitAfter` via its `AbortSignal` (G1) — the honest `timedOut: true` receipt is
-   what the client sees on a close. Capability `['observe']` — the wake is a read; the
+   in-flight `waitAfter` via its `AbortSignal` (G1) — the wake settles the CANCELLED receipt
+   `application_attention_wait_cancelled` (v1.2 D6), never a generic error and never the raw
+   `coordination_wait_aborted`; the honest `timedOut: true` receipt is reserved for the transport
+   bound elapsing (D1.3). Capability `['observe']` — the wake is a read; the
    answering capability already rides `baton_decision_answer` (`['approve','observe']`,
    `mcp-northbound.mjs:92`). The `stateFailureCode` allowlist gains the new refusals (D6).
 2. **Web — the command envelope, not SSE.** `attention_wait` rides `/v1/commands` as a
@@ -345,17 +358,20 @@ New, introduced by this contract:
 | `attention_wait_invalid` | `application.mjs` (the new `_normalizeAttentionWait`) | Malformed `attention.wait` request — bad `runId`/`storeCursor`/`reasonsCursor`/`timeoutMs`/`kind`; refused at the application layer, preserved on every surface |
 | `application_attention_wait_oversize` | the composed-surface builder (D2.4) | The serialized wake payload exceeds `followPolicy.maxResponseBytes` — the `application_follow_oversize` precedent (G11) |
 | `application_attention_wait_timeout_exceeds_web_ceiling` | web-northbound.mjs | The web transport ceiling, named for the wake transport (D4.2) |
+| `application_attention_wait_cancelled` (v1.2) | the wake's abort mapping — `coordination_wait_aborted` → wake-cancelled, the `run.follow` precedent `coordination_wait_aborted` → `application_follow_cancelled` (`application.mjs:8344-8347`) | An in-flight wake aborted by its transport `AbortSignal`/connection close settles the wake-cancelled receipt — never a generic error, never the raw `coordination_wait_aborted` (H7/F3; the WAKE-ABORT row) |
 
 The `stateFailureCode` allowlist (`mcp-northbound.mjs:200-268` — C-3 re-point) gains
 `attention_wait_invalid` — it would otherwise degrade to `command_outcome_unknown` (H8).
 `application_attention_wait_oversize` ALREADY survives the MCP surface via the `application_`
 prefix pass-through (`mcp-northbound.mjs:205`), so without a row it does NOT degrade — adding
-its row is harmless, but survival does not depend on it. `already_resolved` already survives
-via the same `application_` pass-through. `attention_scope_forbidden` already has a row
-(`mcp-northbound.mjs:246`, alongside `attention_scope_invalid`/`attention_target_invalid`) —
-it is a lane throw and needs no NEW row. The web mapper (`web-northbound.mjs:170-173`) already
-maps unknown `application_*` codes to 400, so `application_attention_wait_oversize` gets a 400
-for free; `attention_wait_invalid` would fall through to 503 `temporarily_unavailable`
+its row is harmless, but survival does not depend on it. `application_attention_wait_cancelled`
+(v1.2) survives the same `application_` pass-through — no allowlist row is needed for it.
+`already_resolved` already survives via the same `application_` pass-through.
+`attention_scope_forbidden` already has a row (`mcp-northbound.mjs:246`, alongside
+`attention_scope_invalid`/`attention_target_invalid`) — it is a lane throw and needs no NEW row.
+The web mapper (`web-northbound.mjs:170-173`) already maps unknown `application_*` codes to 400,
+so `application_attention_wait_oversize` and `application_attention_wait_cancelled` each get a
+400 for free; `attention_wait_invalid` would fall through to 503 `temporarily_unavailable`
 (`web-northbound.mjs:232`) and genuinely needs the new 400-class row (the `capability_*_invalid`
 family precedent).
 
@@ -379,7 +395,7 @@ RED = fails at HEAD; GREEN = passes at HEAD and is pinned.
 | W-6 | **The closed set.** `WAKE_REASONS` is exactly `['answer_approval','answer_decision','answer_question','budget_alarm','candidacy_review','member_terminal','plan_approval','wave_terminal']` — a `sort()`-deepEqual pin in ACTUAL sorted order; `WAITING_ON_KINDS` and `ATTENTION_TYPES` are byte-unchanged (G7, G8). | **RED** (no `WAKE_REASONS` literal) |
 | W-7 | **Surfaces.** MCP `baton_attention_wait` (observe) long-polls with `timeoutMs` bounded by the TIGHT MCP ceiling (the web 30s precedent — H7 fold) and maps a connection close to an abort of the in-flight `waitAfter` (G1); the web envelope `attention_wait` respects the 30s ceiling; the CLI `baton run attention wait RUN --timeout` blocks and exits 0 on an honest empty (D4). | **RED** (no wake surface) |
 | W-8 | **Frame economics.** The wake payload is bounded — `actions` sliced to `MAX_ATTENTION = 64` with the remainder spilled as a head+digest, `waitingOn` capped, `boundedAttentionText` on every worker-authored field, `maxResponseBytes` oversize refusal with the page-in-batches recovery posture, and NO decision-question spill (decision questions are admission-bound and never reach the wake oversize path) — and the decision limits (`decision.question` 2048, `decision.option.label` 160, `decision.option.summary` 512, `decision.text` 4096, `view.attention_text.bytes` 4096) are unchanged (G11). (H5 + H6 folds.) | **GREEN** for the limits (pinned); the wake's own bounded builder is **RED** |
-| W-9 | **Guarantee-pin: no wake-worthy STORE change is store-invisible (B4 re-scope).** A decision park, a candidacy admission, a plan proposal, and a wave close each advance the store seq (D1.5) — a green test can append each wake-worthy store change and assert the store cursor advanced before the wait returned. Reason-only mints (the coalesced member-terminal count update on an already-terminal task, a candidacy refresh) are delivered by the reasons notifier (D1.6), not by a store append — they wake without advancing the store cursor. | **GREEN** for the individual store transitions (they already append); the reasons notifier is the new pin |
+| W-9 | **Guarantee-pin: no wake-worthy STORE change is store-invisible (B4 re-scope; v1.2 reconciliation).** The appending transitions — a candidacy admission, a plan proposal, and a wave close — each advance the store seq (D1.5); a green test can append each wake-worthy store change and assert the store cursor advanced before the wait returned. **v1.2 reconciliation — the decision park:** a decision park is wake-visible ONLY via the reason lane (`answer_decision`) and does NOT advance the store seq at HEAD (probe-confirmed delta 0); W-9's store-visibility principle therefore covers the appending transitions, and the park's store-invisibility is an accepted boundary — wake-visible does not require store-appended (the DECISION-PARK-WAKES row rides the reason lane). Reason-only mints (the coalesced member-terminal count update on an already-terminal task, a candidacy refresh) are delivered by the reasons notifier (D1.6), not by a store append — they wake without advancing the store cursor. | **GREEN** for the individual store transitions (they already append); the reasons notifier is the new pin |
 
 ---
 
@@ -460,5 +476,12 @@ RED = fails at HEAD; GREEN = passes at HEAD and is pinned.
   Sorted-key literals appear only as verified (G7, G8, D1.2); `WAKE_REASONS` is byte-unchanged
   from v1.0. Cross-referenced contracts (#10, #79, #105, #132, #138 via the ledger, #91 via
   the ledger) are cited, never re-specified.
+- **Fold discipline (v1.2):** the v1.2 amendment anchors were re-verified at the suite-fold HEAD
+  `0792e5e`: `coordination_wait_aborted` → cancelled precedent at `application.mjs:8344-8347`
+  (`application_follow_cancelled`), the `invalid_run_wait` ceiling guard at `mcp-northbound.mjs:949`,
+  the W-9 decision-park store-invisibility (probe-confirmed delta 0 on `coordination.events()`),
+  and the run-scoped authority at `coordinator.mjs:7080-7103`. The suite rows that pin this
+  amendment — AUTHORITY-RUN-SCOPED, WORKER-REFUSED, MCP-CEILING, WAKE-ABORT, REVALIDATED — are
+  recorded in `suite-fold-2.md` and `suite-draft-notes.md`.
 - **Deployment verification command** (Baton): executable `true`, arguments `[]`, expected
   exit 0.

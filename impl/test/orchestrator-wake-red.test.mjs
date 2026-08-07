@@ -1,12 +1,13 @@
 // Orchestrator-wake red-first acceptance suite (issue #71, contract:
-// docs/reference/evidence/orchestrator-wake-2026-08-07/orchestrator-wake-contract.md v1.1 —
-// the folded orchestrator-wake contract; brief: docs/reference/evidence/
+// docs/reference/evidence/orchestrator-wake-2026-08-07/orchestrator-wake-contract.md v1.1 +
+// the fold-2 v1.2 amendment; brief: docs/reference/evidence/
 // orchestrator-wake-2026-08-07/suite-71-brief.md). The wake primitive is
 // attention.wait(runId, {afterCursor: {storeCursor, reasonsCursor}, timeoutMs}, principal):
-// a long-poll on coordination-store.mjs waitAfter(:8843) composed through the coordinator's
-// _attentionPage (:7088) with a split cursor (B1: storeCursor + reasonsCursor, never folded
-// into one token) and a stable-identity candidacy_review (B2: minted once into
-// _attentionReasons, refreshed in place, never re-minted per page read).
+// a long-poll on coordination-store.mjs waitAfter(:8880) composed through the coordinator's
+// _attentionScopeAuthorized (:7080) / _attentionPage (:7106) with a split cursor (B1:
+// storeCursor + reasonsCursor, never folded into one token) and a stable-identity
+// candidacy_review (B2: minted once into _attentionReasons, refreshed in place, never
+// re-minted per page read).
 //
 // Red-first: every capability row fails for a NAMED stage at HEAD and goes green on the
 // v1.1 implementation ONLY. Pin rows (marked PIN) are green at HEAD and MUST stay green —
@@ -15,27 +16,30 @@
 // Suite law (brief): namespace imports for invented surfaces; hermetic (mock adapters,
 // mkdtemp, test.after, no network); run TWICE from the repo root and record the stable
 // split in the header; sorted-key literals in ACTUAL order; localeCompare banned; no clocks
-// as workflow controls (timeoutMs is only the transport bound); NUL discipline —
+// as workflow controls (timeoutMs is only the transport bound) — the fold-2 injectable
+// fixture clock (RETURN-TRIP/F1) is advanced EXPLICITLY past the coalescing window, never
+// wall-time-derived, so it is deterministic by construction; NUL discipline —
 // application.mjs/coordination-store.mjs carry NUL bytes, so the two source-grep rows read
 // them with readFileSync (not a shell pipeline) and never scan the NUL-bearing files whole.
 //
-// ROW INVENTORY (§A-§K, 33 rows: 27 RED / 6 PIN):
+// ROW INVENTORY (§A-§K, 36 rows: 30 RED / 6 PIN):
 //   §A  WAIT-DISPATCH · WAIT-HONEST-EMPTY · WAIT-PLAN-APPROVAL
 //   §B  DECISION-PARK-WAKES · DECISION-FIRST-SHAPE · ANSWER-FROM-WAKE · ALREADY-RESOLVED(PIN)
 //       · REVALIDATED
 //   §C  CURSOR-SHAPE · RETURN-TRIP · REASONS-ALONE
 //   §D  CANDIDACY-WAKE · CANDIDACY-HONEST-EMPTY · CANDIDACY-REFRESH
-//   §E  WORKER-REFUSED · TWO-WAITERS
+//   §E  WORKER-REFUSED · AUTHORITY-RUN-SCOPED · TWO-WAITERS
 //   §F  REPLY-NO-WAKE · BLOCKING-ESCALATES
 //   §G  WAKE-REASONS-SET(stage[WAKE_REASONS-missing]) · WAITING-ON-KINDS-PIN · ATTENTION-TYPES-PIN
-//   §H  MCP-TOOL · MCP-SCHEMA-CAPABILITY · WEB-ENVELOPE · WEB-CEILING · CLI-GRAMMAR
+//   §H  MCP-TOOL · MCP-SCHEMA-CAPABILITY · WEB-ENVELOPE · WEB-CEILING · MCP-CEILING ·
+//       CLI-GRAMMAR · WAKE-ABORT
 //   §I  LIMITS-PIN · OVERSIZE-REFUSAL · ACTIONS-SLICE
 //   §J  STORE-VISIBLE(PIN)
 //   §K  WAIT-INVALID · MCP-ALLOWLIST · EXISTING-PINS(PIN)
 //
 // NAMED RED STAGES (every failing row names exactly one):
 //   stage[attention-wait-command-missing] — the command is absent (HEAD throws
-//       application_command_unavailable at application.mjs:12467); the default stage for
+//       application_command_unavailable at application.mjs:12616); the default stage for
 //       every dispatch row.
 //   stage[WAKE_REASONS-missing]            — application-semantics.mjs has no WAKE_REASONS.
 //   stage[baton-attention-wait-tool-missing] — no MCP ordinary tool row nor capability map.
@@ -46,9 +50,10 @@
 // INVENTED SURFACES (namespace imports, per suite law):
 //   WAKE_REASONS            -> application-semantics.mjs (absent at HEAD — the RED row's
 //                              stage[WAKE_REASONS-missing]).
-//   validateWebCommandEnvelope -> web-northbound.mjs:1838 (the exported validateEnvelope).
-//   parseBatonCli           -> index.mjs (existing).
-//   mcpApplicationToolNames -> mcp-northbound.mjs:2170 (existing).
+//   validateWebCommandEnvelope -> web-northbound.mjs:1885 (the exported validateEnvelope,
+//                              defined at web-northbound.mjs:387).
+//   parseBatonCli           -> application-cli.mjs (existing).
+//   mcpApplicationToolNames -> mcp-northbound.mjs:2215 (existing).
 //   FRAME_LIMITS            -> limits.mjs:110 (existing; the W-8 limits are byte-unchanged).
 //   ATTENTION_TYPES         -> messages.mjs:18 (existing; the #10-era inbox vocabulary).
 //
@@ -61,9 +66,10 @@
 //   P6 EXISTING-PINS — attention_scope_forbidden and application_attention_watch_invalid
 //      survive untouched.
 //
-// VERIFIED SPLIT: 27 RED / 6 PIN — run twice from the repo root on 2026-08-07 at
-// HEAD e9cdd0c; both passes identical (33 tests, 6 pass, 27 fail, all 27 at a named
-// stage; pins P1-P6 green).
+// VERIFIED SPLIT: 30 RED / 6 PIN — run twice from the repo root on 2026-08-07 at
+// HEAD 0792e5e; both passes identical (36 tests, 6 pass, 30 fail, all 30 at a named
+// stage; pins P1-P6 green). The fold (suite-fold-2.md) resolves F1-F10; F6's behavioral
+// 65+ spill row is DEFERRED there with an explicit reason (heavy multi-member staging).
 
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
@@ -265,7 +271,7 @@ const ATTENTION_TYPES_ACTUAL = Object.freeze(['approval', 'question', 'blocked',
 // Full application fixture (workflow-surface-red idiom): one real createDriver stack so the
 // facade, the kernel lanes, and the durable store share state. goalPlanAuthority is always
 // on (every wake run is a wave run). adapter defaults to the quiet ScriptableAdapter.
-async function wakeFixture(t, { adapter = new ScriptableAdapter(), profile = PROFILE } = {}) {
+async function wakeFixture(t, { adapter = new ScriptableAdapter(), profile = PROFILE, now } = {}) {
   const repo = gitRepo('baton-wp-repo-');
   const logDir = tmpDir('baton-wp-log-');
   const driver = createDriver({
@@ -275,6 +281,7 @@ async function wakeFixture(t, { adapter = new ScriptableAdapter(), profile = PRO
     stopDeadlineMs: 1000,
     watchdog: { stallMs: 0 },
     goalPlanAuthority: { policy: GOAL_PLAN_POLICY, authorize: async () => true },
+    ...(now ? { now: now.now.bind(now) } : {}),
   });
   drivers.push(driver);
   const application = new BatonApplication({
@@ -311,12 +318,16 @@ async function startWaveRun(fx, { approve = true, profile = 'default' } = {}) {
 }
 
 // The wake call (the invented command surface). Cursors default to (0,0); timeoutMs is only
-// the transport bound — never a workflow control.
-function wake(fx, runId, { storeCursor = 0, reasonsCursor = 0, timeoutMs = 5000 } = {}, principal = fx.owner) {
+// the transport bound — never a workflow control. `signal` is the H7 transport-bound cancellation
+// token: the MCP/web transports supply it on connection close, and the WAKE-ABORT row injects it
+// directly to pin the coordination_wait_aborted -> wake-cancelled mapping. It is a non-wire
+// field (never serialized), exactly like the transportHidden args the MCP schema carries.
+function wake(fx, runId, { storeCursor = 0, reasonsCursor = 0, timeoutMs = 5000, signal } = {}, principal = fx.owner) {
   return fx.application.command('attention.wait', {
     runId,
     afterCursor: { storeCursor, reasonsCursor },
     timeoutMs,
+    ...(signal ? { signal } : {}),
   }, principal, null);
 }
 
@@ -337,6 +348,24 @@ async function flush(times = 80) {
   for (let i = 0; i < times; i += 1) await Promise.resolve();
 }
 const sleep = (ms) => new Promise((resolve) => { setTimeout(resolve, ms); });
+
+// The F1 fold: the fixture clock is INJECTABLE so RETURN-TRIP drives the member-terminal
+// storm-coalescing window (ATTENTION_COALESCE_WINDOW_MS = 500) deterministically — advance()
+// past the window between the two emits, never a real `sleep(600)` (the #7 class the brief bans).
+// `createDriver` already forwards `opts.now` into the Coordinator (`this._now = opts.now ||
+// Date.now`, coordinator.mjs:996), so the controllable clock is purely a fixture seam.
+function controllableClock(base = Date.now()) {
+  let t = base;
+  return {
+    now: () => t,
+    advance: (ms) => { t += ms; },
+  };
+}
+
+// Yield to the macrotask queue once — a settled-boundary seam (F9's CANDIDACY-REFRESH), never a
+// clock or a workflow gate. A B2 refresh delivered on a macrotask notifier must land before the
+// re-wake pages the stable-identity candidacy_review.
+const yieldMacrotask = () => new Promise((resolve) => { setTimeout(resolve, 0); });
 
 async function until(probe, { tries = 400, delayMs = 20, label = 'predicate' } = {}) {
   let last;
@@ -454,6 +483,15 @@ test('WAIT-DISPATCH (§A): attention.wait dispatches; malformed closures refuse 
     ['negative storeCursor', () => wake(fx, runId, { storeCursor: -1, timeoutMs: 1000 }, owner)],
     ['negative reasonsCursor', () => wake(fx, runId, { reasonsCursor: -1, timeoutMs: 1000 }, owner)],
     ['negative timeoutMs', () => wake(fx, runId, { timeoutMs: -5 }, owner)],
+    // F8 fold: waitAfter requires timeoutMs > 0; a zero bound is malformed, never a degenerate wait.
+    ['zero timeoutMs', () => wake(fx, runId, { timeoutMs: 0 }, owner)],
+    // F8 fold: the B1 split cursors are integer tokens — a non-integer cursor is malformed.
+    ['non-integer storeCursor', () => wake(fx, runId, { storeCursor: '3', timeoutMs: 1000 }, owner)],
+    ['non-integer reasonsCursor', () => wake(fx, runId, { reasonsCursor: '7', timeoutMs: 1000 }, owner)],
+    // F8 fold: the afterCursor block is required — a missing continuation is malformed.
+    ['missing afterCursor', () => fx.application.command('attention.wait', { runId, timeoutMs: 1000 }, owner, null)],
+    // F8 fold: the kind discriminator is a closed class — an unknown kind is malformed.
+    ['unknown kind', () => wake(fx, runId, { kind: 'not_a_wake_kind', timeoutMs: 1000 }, owner)],
   ];
   for (const [label, fn] of malformed) {
     const err = await laneError(fn);
@@ -462,9 +500,18 @@ test('WAIT-DISPATCH (§A): attention.wait dispatches; malformed closures refuse 
   }
 });
 
-test('WAIT-HONEST-EMPTY (§A D1.3): a quiet run honest-empties with both cursors unchanged', async (t) => {
+test('WAIT-HONEST-EMPTY (§A D1.3): a quiet run honest-empties with both cursors unchanged, and the wake HELD a waitAfter', async (t) => {
   const fx = await wakeFixture(t);
   const { owner, runId } = await startWaveRun(fx);
+  // F2 fold: spy the store's waitAfter so the row pins W-1's transport guarantee — the wake
+  // anchors a waitAfter on the store cursor (never a _waitPollMs-style poll loop). The spy wraps
+  // and calls through, so the honest empty still resolves through the real waitAfter.
+  const waitCalls = [];
+  const realWaitAfter = fx.coordination.waitAfter.bind(fx.coordination);
+  fx.coordination.waitAfter = (afterSeq, timeoutMs, options) => {
+    waitCalls.push({ afterSeq, timeoutMs });
+    return realWaitAfter(afterSeq, timeoutMs, options);
+  };
   const settled = await tracked(wake(fx, runId, { storeCursor: 0, reasonsCursor: 0, timeoutMs: 300 }, owner));
   assert.ok(settled.ok,
     `stage[attention-wait-command-missing]: attention.wait must dispatch (threw ${settled.error?.code ?? ''})`);
@@ -476,6 +523,12 @@ test('WAIT-HONEST-EMPTY (§A D1.3): a quiet run honest-empties with both cursors
   assert.deepEqual(result.reasons, [], 'no reasons');
   assert.equal(result.storeCursor, 0, 'the store cursor is unchanged');
   assert.equal(result.reasonsCursor, 0, 'the reasons cursor is unchanged');
+  assert.ok(waitCalls.length >= 1, 'the wake held a waitAfter on the quiet hot path — no poll loop (W-1)');
+  assert.equal(waitCalls[0].afterSeq, 0, 'the held waitAfter anchored the storeCursor the wake pages');
+  assert.ok(Number.isSafeInteger(waitCalls[0].timeoutMs) && waitCalls[0].timeoutMs > 0,
+    'the held waitAfter carries a positive transport bound');
+  assert.equal(result.storeCursor, waitCalls[0].afterSeq,
+    'the honest empty echoes the store cursor the waiter held');
 });
 
 test('WAIT-PLAN-APPROVAL (§A D2.1): a plan awaiting approval wakes the waiter with plan_approval', async (t) => {
@@ -501,6 +554,11 @@ test('WAIT-PLAN-APPROVAL (§A D2.1): a plan awaiting approval wakes the waiter w
 // Section B — the decision lane (D2): a decision park wakes, mirrors
 // projectDecisionAttention verbatim plus the answer address, receipts applied /
 // already_resolved, and a resolved decision is never delivered actionable.
+// F7 reconciliation: DECISION-PARK-WAKES requires the park to wake, which it does via the
+// REASON lane (answer_decision) — the park itself is store-invisible at HEAD (fold-2 F7,
+// probe-confirmed), so the wake-worthy signal rides the reason mint, and W-9's
+// store-visibility principle (§J) covers only the appending transitions. The two claims
+// are consistent: wake-visible does not require store-appended.
 // ===========================================================================
 
 test('DECISION-PARK-WAKES (§B D2/W-1): a decision park wakes a waiter registered before the park', async (t) => {
@@ -586,18 +644,29 @@ test('ALREADY-RESOLVED (§B D2.2 PIN): the run.answer receipt path is byte-ident
     'a late answerer receipts already_resolved — a DISTINCT typed result, never a generic error (pinned)');
 });
 
-test('REVALIDATED (§B D2.3): a decision answered between event and delivery is never delivered actionable', async (t) => {
+test('REVALIDATED (§B D2.3/F4): a decision answered between delivery trips is never re-delivered (stale-payload revalidation)', async (t) => {
   const fx = await wakeFixture(t, { adapter: new WorkflowAdapter(DECISION_SCENARIO) });
   const { owner, runId } = await startWaveRun(fx);
   const decision = await parkedDecision(fx, runId, owner);
-  await fx.application.command('run.answer', {
+  // Trip 1: the wake delivers the parked decision as an actionable item — the payload is held.
+  const t1 = await tracked(wake(fx, runId, { storeCursor: 0, reasonsCursor: 0, timeoutMs: 5000 }, owner));
+  assert.ok(t1.ok,
+    `stage[attention-wait-command-missing]: attention.wait must dispatch (threw ${t1.error?.code ?? ''})`);
+  const item = (t1.value.actions ?? []).find((a) => a.kind === 'answer_decision' && a.requestId === decision.requestId);
+  assert.ok(item, 'the first trip delivers the parked decision');
+  // The answer lands between the two delivery trips — the item is now resolved in the store.
+  const answered = await fx.application.command('run.answer', {
     runId, requestId: decision.requestId, answer: { optionId: 'opt-a' },
   }, owner, null);
-  const settled = await tracked(wake(fx, runId, { timeoutMs: 5000 }, owner));
-  assert.ok(settled.ok,
-    `stage[attention-wait-command-missing]: attention.wait must dispatch (threw ${settled.error?.code ?? ''})`);
-  const delivered = (settled.value.actions ?? []).filter((a) => a.kind === 'answer_decision' && a.requestId === decision.requestId);
-  assert.equal(delivered.length, 0, 'a resolved decision is never delivered as an actionable item (revalidated)');
+  assert.equal(answered.lastAction?.result, 'applied', 'the decision is answered before the re-trip');
+  // Trip 2: re-wake with the SAME storeCursor (0) — the item is inside the page window, so a
+  // revalidating impl must re-check its live state at delivery and filter the resolved item
+  // (F4). A stale-cache impl that builds from a registration-time page re-delivers it.
+  const t2 = await tracked(wake(fx, runId, { storeCursor: 0, reasonsCursor: 0, timeoutMs: 5000 }, owner));
+  assert.ok(t2.ok, 'the re-trip wake must dispatch');
+  const redelivered = (t2.value.actions ?? []).filter((a) => a.kind === 'answer_decision' && a.requestId === decision.requestId);
+  assert.equal(redelivered.length, 0,
+    'a decision answered between delivery trips is never re-delivered — the payload is revalidated, never a stale registration page (F4)');
 });
 
 // ===========================================================================
@@ -621,7 +690,12 @@ test('CURSOR-SHAPE (§C B1): storeCursor and reasonsCursor are distinct continua
 });
 
 test('RETURN-TRIP (§C B1/D1.6): a return-trip orchestrator still sees member_terminal with the prior cursors', async (t) => {
-  const fx = await wakeFixture(t); // quiet ScriptableAdapter; every epoch is harness-driven
+  // F1 fold: the fixture clock is injected and ADVANCED past the 500ms storm-coalescing window
+  // (ATTENTION_COALESCE_WINDOW_MS, coordinator.mjs:46) between the two emits — never a real
+  // sleep(600) (the #7 class the brief bans). createDriver forwards `now` into the Coordinator
+  // (index.mjs:1488), so the member-terminal mint timestamps are driven deterministically.
+  const clock = controllableClock();
+  const fx = await wakeFixture(t, { now: clock }); // quiet ScriptableAdapter; every epoch is harness-driven
   const { owner, runId } = await startWaveRun(fx);
   const worker = await dispatchedWorker(fx, runId);
   fx.adapter.emit({
@@ -637,7 +711,7 @@ test('RETURN-TRIP (§C B1/D1.6): a return-trip orchestrator still sees member_te
   assert.ok(r1, 'the first wake delivers the member_terminal reason');
   // Past ATTENTION_COALESCE_WINDOW_MS (500): the same worker is already terminal, so the
   // second turn_completed is a REASON-ONLY mint (D1.6) — no store append, a fresh reason seq.
-  await sleep(600);
+  clock.advance(600);
   fx.adapter.emit({
     worker: worker.id, harness: 'mock@1.0.0', turnEpoch: 2, kind: 'lifecycle.turn_completed',
     actor: 'worker', payload: { status: 'completed', output: 'done' },
@@ -736,6 +810,10 @@ test('CANDIDACY-REFRESH (§D B2): a queue-count change refreshes the SAME candid
   assert.equal(r1.count, 1, 'the reason reports one candidate');
   admitCandidacy(fx, 2);
   assert.equal(fx.coordination.knowledgeCandidateQueue({}).count, 2, 'the second admission lands');
+  // F9 fold: yield a macrotask so a B2 count-refresh delivered on a macrotask notifier lands
+  // before the re-wake pages the stable-identity candidacy_review — a settled boundary, never a
+  // clock or a workflow gate. The queue-count assert above already pins the admission.
+  await yieldMacrotask();
   const s2 = await tracked(wake(fx, runId, { timeoutMs: 5000 }, owner));
   assert.ok(s2.ok, 'the re-wake must dispatch');
   const r2 = (s2.value.reasons ?? []).find((r) => r.kind === 'candidacy_review');
@@ -749,7 +827,7 @@ test('CANDIDACY-REFRESH (§D B2): a queue-count change refreshes the SAME candid
 // no claim-on-read (two waiters page the same item; the first answer wins).
 // ===========================================================================
 
-test('WORKER-REFUSED (§E D3): a worker principal cannot call the wake', async (t) => {
+test('WORKER-REFUSED (§E D3/F5): a worker principal cannot call the wake — even claiming an orchestrator class', async (t) => {
   const fx = await wakeFixture(t);
   const { runId } = await startWaveRun(fx);
   const err = await laneError(() => wake(fx, runId, { timeoutMs: 2500 }, principalOf('worker-1')));
@@ -757,6 +835,34 @@ test('WORKER-REFUSED (§E D3): a worker principal cannot call the wake', async (
     `stage[attention-wait-command-missing]: the wake must exist to authorize (got ${err?.code ?? 'resolved'})`);
   assert.equal(err.code, 'attention_scope_forbidden',
     'a worker principal is refused by name — never a generic error');
+  // F5 fold: the claimed orchestrator class rides the ACTOR field. normalizePrincipal
+  // (application.mjs:1107) admits {actor, principalId, sessionId} and REJECTS unknown fields —
+  // a `role` field would draw application_authority_invalid before the dispatch tail and break
+  // the red-first property. The authority is the principal identity (wave-owner or the live
+  // run-scoped lease), never a caller-claimed class.
+  const claimed = { ...principalOf('worker-1'), actor: 'orchestrator:worker-1' };
+  const err2 = await laneError(() => wake(fx, runId, { timeoutMs: 2500 }, claimed));
+  assert.ok(err2 && err2.code !== 'application_command_unavailable',
+    'the claimed-class worker wake must dispatch to authorize');
+  assert.equal(err2.code, 'attention_scope_forbidden',
+    'a worker claiming an orchestrator class in its actor is still refused by name (F5)');
+});
+
+test('AUTHORITY-RUN-SCOPED (§E D3/F5): a live lease on run A never authorizes run B\'s wake', async (t) => {
+  const fx = await wakeFixture(t);
+  const { runId: runA } = await startWaveRun(fx);
+  const { runId: runB } = await startWaveRun(fx);
+  authorityOn(fx, { runId: runA, principalId: 'lease-holder', sessionId: 'session-lease-holder' });
+  const leasePrincipal = principalOf('lease-holder');
+  // The live lease holder is admitted on its OWN run (lease.parent.runId === runId).
+  const onA = await tracked(wake(fx, runA, { timeoutMs: 5000 }, leasePrincipal));
+  assert.ok(onA.ok,
+    `stage[attention-wait-command-missing]: attention.wait must dispatch for the lease holder (threw ${onA.error?.code ?? ''})`);
+  // F5 fold: the authority is RUN-SCOPED — a lease on run A never admits run B's wake, even
+  // though the holder holds *a* live lease (the any-live-lease attack dies here).
+  const err = await laneError(() => wake(fx, runB, { timeoutMs: 2500 }, leasePrincipal));
+  assert.equal(err.code, 'attention_scope_forbidden',
+    'a run A lease never authorizes run B\'s wake — never any-live-lease (F5)');
 });
 
 test('TWO-WAITERS (§E D3): the wave-owner and a lease holder both wake; no claim-on-read', async (t) => {
@@ -892,6 +998,29 @@ test('WEB-CEILING (§H D4): a web wake past the 30s ceiling refuses by the pinne
     'timeoutMs above the 30s web ceiling refuses by the wake-named code (D4.2)');
 });
 
+test('MCP-CEILING (§H D4/F3): the wake tool joins the TIGHT ceiling guard beside invalid_run_wait', () => {
+  const mcpSrc = readFileSync(new URL('../src/mcp-northbound.mjs', import.meta.url), 'utf8');
+  assert.ok(/invalid_run_wait[\s\S]{0,600}'baton_attention_wait'/.test(mcpSrc)
+    || /'baton_attention_wait'[\s\S]{0,600}invalid_run_wait/.test(mcpSrc),
+    'stage[baton-attention-wait-tool-missing]: baton_attention_wait must sit beside the invalid_run_wait ceiling guard (F3) — a timeoutMs past the 30s ceiling refuses by name through the MCP dispatch, never a generic error');
+});
+
+test('WAKE-ABORT (§H H7/F3): an in-flight wake aborted by the transport settles the wake-cancelled receipt', async (t) => {
+  const fx = await wakeFixture(t); // quiet run — the wake genuinely parks on the store, then the transport aborts
+  const { owner, runId } = await startWaveRun(fx);
+  const ac = new AbortController();
+  const pending = tracked(wake(fx, runId, {
+    storeCursor: 0, reasonsCursor: 0, timeoutMs: 5000, signal: ac.signal,
+  }, owner));
+  await flush(80); // a settled boundary so the wake anchors its waitAfter on the store
+  ac.abort();
+  const settled = await pending;
+  assert.ok(settled.error?.code !== 'application_command_unavailable',
+    `stage[attention-wait-command-missing]: attention.wait must dispatch (got ${settled.error?.code ?? 'resolved'})`);
+  assert.equal(settled.error?.code, 'application_attention_wait_cancelled',
+    'an aborted in-flight wake settles the wake-cancelled receipt — never a generic error, never the raw coordination_wait_aborted (H7/F3)');
+});
+
 test('CLI-GRAMMAR (§H D4): baton run attention wait parses the wake verb with both cursors', () => {
   let parsed;
   try {
@@ -934,21 +1063,28 @@ test('OVERSIZE-REFUSAL (§I D6): a wake whose serialized payload exceeds the fra
     'a payload past the frame cap refuses by the D6 oversize code');
 });
 
-test('ACTIONS-SLICE (§I H6): the wake actions builder slices to MAX_ATTENTION at the dispatch', () => {
+test('ACTIONS-SLICE (§I H6/F6): the wake actions builder slices the ACTIONS operand to MAX_ATTENTION and spills the head+digest', () => {
   const appSrc = readFileSync(new URL('../src/application.mjs', import.meta.url), 'utf8');
   const dispatchIndex = appSrc.indexOf("'attention.wait'");
   assert.ok(dispatchIndex >= 0,
     'stage[attention-wait-command-missing]: the application dispatch must carry an attention.wait branch (RED — absent at HEAD)');
   const wakeRegion = appSrc.slice(dispatchIndex, dispatchIndex + 30000);
-  assert.ok(/slice\(0,\s*MAX_ATTENTION\)/.test(wakeRegion),
-    'the wake actions builder must slice to MAX_ATTENTION (H6) — the remainder spills as a head+digest');
+  // F6 fold: anchor the slice on the ACTIONS operand — slicing `reasons` (or `waitingOn`) to
+  // MAX_ATTENTION inside the wake region must NOT pass the row.
+  assert.ok(/actions:\s*[^.\n]*\.slice\(0,\s*MAX_ATTENTION\)/.test(wakeRegion),
+    'the wake actions builder must slice the ACTIONS operand to MAX_ATTENTION (H6/F6) — never reasons, never waitingOn');
+  assert.ok(/(spilled|digest)/.test(wakeRegion),
+    'the bounded-actions head spills with a digest (H6/F6) — the remainder is disclosed, never silently dropped');
 });
 
 // ===========================================================================
 // Section J — W-9 guarantee-pin (P5): no wake-worthy STORE change is store-invisible.
 // Plan proposal + candidacy admission are verifiable at HEAD; a decision park is
-// store-invisible at HEAD (see draft notes W-9 correction), so the pin covers only the
-// two transitions that genuinely append.
+// store-invisible at HEAD (probe-confirmed delta 0 — see fold-2 F7), so the pin covers
+// only the two transitions that genuinely append. The F7 reconciliation: the park is
+// wake-visible ONLY via the reason lane (answer_decision), and W-9's store-visibility
+// principle applies to the two appending transitions; the park's store-invisibility is
+// an accepted v1.1 boundary recorded in the draft notes, not a pin gap.
 // ===========================================================================
 
 test('STORE-VISIBLE (§J W-9 PIN): plan proposal and candidacy admission each advance the store seq', async (t) => {
