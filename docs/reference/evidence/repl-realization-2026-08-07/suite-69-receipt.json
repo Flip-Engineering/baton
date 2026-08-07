@@ -1,0 +1,15 @@
+{
+  "attempt": "2026-08-07T06:44:58.343Z",
+  "salt": "s920260807064458",
+  "role": "suite-69",
+  "steps": [
+    {
+      "step": "waves.start",
+      "receipt": {
+        "runs": [
+          "run-e5f191095187f078b95e27dd0b3c80b7"
+        ]
+      }
+    }
+  ]
+}
