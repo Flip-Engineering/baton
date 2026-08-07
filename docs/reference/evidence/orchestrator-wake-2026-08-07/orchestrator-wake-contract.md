@@ -1,0 +1,370 @@
+# Issue #71 — the orchestrator attention inbox: wake-with-decisions instead of poll
+
+- **Issue:** #71 — orchestrator attention inbox (wake-with-decisions instead of poll)
+- **Date:** 2026-08-07
+- **Status:** v1.0 DRAFT — implementation contract (Ring-2 form, acceptance pins red-first)
+- **Verification HEAD:** `d1a1e267d259d50fcdb49e51889a593393e66628` (this worktree's
+  effective-tree snapshot). Every `file:line` citation below was re-verified with
+  `grep -an`/`sed -n` at the verification HEAD; the two NUL-bearing files
+  (`application.mjs`, `coordination-store.mjs`) were read by grep/sed only, per campaign
+  discipline.
+- **Brief:** `contract-71-brief.md` (this directory) — read fully. The issue body was
+  unavailable at drafting time (`gh` is not authenticated in this worktree), so the brief's
+  own decisions carry the requirements; the lived evidence (`orchestrator-friction-ledger.md`)
+  and the landed machinery carry the anchors.
+- **Seed.** The frontier-sweep ledger names the gap directly — the orchestrator polls
+  `status()` in 15s loops because nothing wakes it. The two relevant frictions:
+  "Hand-rolled poll loops in every driver (status→approve→nudge→claim + message/elevate/
+  decision)" → **#106** (`orchestrator-friction-ledger.md:15`) and "Worker can't reach the
+  OPERATOR (only the orchestrator); no escalation to human attention" — "decision lane covers
+  orchestrator; operator escalation is #90 (remote, low) / **#71** (wake)" (`:34`). #71 is the
+  wake half: a decision parks a member (`task.transitioned` → `input_required`), but the
+  orchestrator has no event-driven surface that tells it so — it must poll. The worker-side
+  attention inbox (`run.attention.watch`, coordinator `_attentionReasons`) pages the inbox
+  only on an explicit read, and the store's `waitAfter` long-poll primitive
+  (`coordination-store.mjs:8843`) already exists, unused by any attention surface. This
+  contract composes them: an orchestrator wake anchored on `waitAfter`, delivering the
+  decision-first surface.
+
+**Cross-references (not re-specified here):** #10 (`waiting-vocabulary-contract.md` — the
+closed five `WAITING_ON_KINDS`, the `member_waiting` push rung of OQ3), #79
+(`worker-delivery-push-contract.md` — `answer_decision` is orchestrator-addressed, GT8, the
+`budget_alarm` wake reason), #105 (`reply-chains-contract.md` — D8 routing, D9 the closed
+kinds), #132 (`wave-observability-contract.md` — D1 web admission, D2 the wave registry
+projection this wake reads), #138 (the ledger's Appendix C — the stateless HTTP MCP posture
+the wake depends on), #91 (the ledger's `--kinds` investigation surface). Each is cited at the
+decision it touches. This contract owns only the orchestrator wake surface.
+
+---
+
+## 1. Ground truths (re-verified at HEAD `d1a1e26`)
+
+| # | Ground truth | Verified anchor |
+|---|--------------|-----------------|
+| G1 | The store's `waitAfter` long-poll EXISTS and is the wake primitive to compose on: event-seq anchored (no clock), bounded by a transport `timeoutMs`, abortable via an optional `AbortSignal`, returning `{advanced, upperBound}` — `advanced: true` when `_events.length > afterSeq`, `false` on timeout. `_notifyAppend` finishes every waiter whose `afterSeq` is behind the append. | `coordination-store.mjs:8843-8870`; `_notifyAppend` at `:1594-1598` |
+| G2 | `run.follow` is the landed long-poll discipline that composes `waitAfter`: loop → build view → page changes → if nothing relevant and not deadline, `waitAfter(view.cursor, remaining, {signal})` → re-page on ANY store advance; unrelated backlog loops without returning. The honest empty on the transport bound is `timedOut: true` (never a fabricated change). | `application.mjs:8257-8326`; `waitAfter` call at `:8315`; `timedOut` at `:8299-8300`; the oversize refusal `application_follow_oversize` at `:8308` |
+| G3 | The orchestrator polls because nothing wakes it. `coordinator.wait()` polls `_collectDigest()` on a `_waitPollMs` timer (`:11809-11843`); `run.wait` uses it (`application.mjs:7921-7950`); the wave-driver's sleep races its own poll timer against one follow per live member (`wave-driver.mjs:463-534`). `run.follow`'s category filter wakes only on `execution`/`plan`/`terminal` store events (`_followCategory`, `application.mjs:7952-7975`; `isTargetChange`, `wave-driver.mjs:267-272`). | `coordinator.mjs:11809-11843`; `application.mjs:7921-7950, 7952-7975`; `wave-driver.mjs:463-534` |
+| G4 | The worker-side attention inbox EXISTS and pages two reason kinds: `member_terminal` (minted by `_mintMemberTerminal`, storm-coalesced, epoch-marked) and `candidacy_review` (derived LIVE from the store's candidacy queue, disclosed only to the review authority). `attentionFollow` is a page READ (`afterCursor`/`throughCursor`, no long-poll); `run.attention.watch` calls it with `timeoutMs: undefined`. | `coordinator.mjs:7021-7058` (`attentionFollow`), `:7088-7120` (`_attentionPage`), `:7122-7156` (`_mintMemberTerminal`); `application.mjs:12842-12854` (`attentionWatch`) |
+| G5 | The attention scope authority is the orchestrator principal: `_attentionScopeAuthorized` admits `wave-owner` always, a bare deployment scope admits any authenticated principal, and a run-scoped follow admits a live run-orchestrator lease holder via `_isReviewAuthority` (the store's `activeRunOrchestratorLeaseForSession` matched by runId + session). | `coordinator.mjs:7062-7066` (`_attentionScopeAuthorized`), `:7070-7083` (`_isReviewAuthority`) |
+| G6 | The decision lane is orchestrator-addressed: a worker's `decision.requested` parks the member — `_coordTransition(task, 'input_required', ...)` — and the pending decision projects into the run view as an `answer_decision` attention entry via `projectDecisionAttention` (`{kind, workerId, requestId, question, options, allowFreeResponse, recommended, deadlineAt}`). The orchestrator answers via `run.answer(runId, requestId, answer)` → `coordinator.respond`; a late answer returns the distinct `already_resolved` outcome with `resolvedBy`, never a generic error. | `coordinator.mjs:12688-12788` (`decision.requested` admission), `:12786` (`task.input_required` transition); `application.mjs:575-599` (`projectDecisionAttention`), `:12469-12511` (`run.answer`, `already_resolved` at `:12492-12506`); `wave-driver.mjs:622-641` (`onDecision` callback) |
+| G7 | The blocking-interaction kinds are a closed three: `answer_decision`/`answer_question`/`answer_approval` (`BLOCKING_INTERACTION_KINDS`, `wave-driver.mjs:202-205`). The #10 waiting vocabulary is a closed five: `WAITING_ON_KINDS = ['capacity_ceiling','dispatch_pending','plan_approval','provider_stalled','spawning']` (frozen, in ACTUAL sorted order). `decision_pending` stays OUT of `WAITING_ON_KINDS` — it is already projected via attention. A reply chain never enters either set (#105 D9). | `wave-driver.mjs:202-205`; `application-semantics.mjs:58-61` |
+| G8 | The #10-era inbox vocabulary is a DIFFERENT thing: `ATTENTION_TYPES = Object.freeze(['approval','question','blocked','stalled','budget_alarm'])` (messages.mjs:18). `budget_alarm` is orchestrator/operator-relevant — a BD3-D attention-inbox wake reason (`'resource.budget_threshold': 'budget_alarm'`, coordinator.mjs:11859). #79 adjudicated `answer_decision` as orchestrator-addressed and excluded from worker push. | `messages.mjs:18`; `coordinator.mjs:11856-11862`; `worker-delivery-push-contract.md:232-249` |
+| G9 | The wave lifecycle events exist: `wave.started` mints pre-loop, exactly-once, idempotency-keyed (`wave.started:${waveId}`) as a `driver.recorded` payload (`application.mjs:4619-4630`); the wave-driver's post-close `wave.closed` append seam exists at the application layer (`application.mjs:12563-12573`), folded as a TOP-LEVEL store event per #103 D9 (`briefing-pack-contract.md:377`, spec-referenced). #132's registry projection (`waves.list`, `_waveRegistry`) folds both — this wake reads it, never re-derives it. | `application.mjs:4619-4630, 12563-12573`; `wave-observability-contract.md` D2 |
+| G10 | The #105 D8 boundary is the routing rule this wake composes: blocking follow-ups go to the interaction lane (`question.asked blocking:true` → task `input_required` → an `answer_*` item); conversational follow-ups go to the budgeted reply lane (no task phase transition, `waitingOn` stays null — D9). A decision gate ALWAYS transitions a task phase; a reply hop NEVER does. | `reply-chains-contract.md` D8/D9; `coordinator.mjs:12614-12631` (`question.asked` blocking path) |
+| G11 | Frame economics (#89) is one declared registry: `decision.question` 2048 / `decision.option.label` 160 / `decision.option.summary` 512 / `decision.text` 4096 bytes (admission, refused `decision_*_exceeded`), `view.attention_text.bytes` 4096 (view, graceful `shed-flagged`). `run.follow` bounds its serialized response by `followPolicy.maxResponseBytes` = `MAX_RUN_VIEW_BYTES` (`application.mjs:1344-1359`); the run-view attention array is capped at `MAX_ATTENTION = 64` and every worker-authored field passes `boundedAttentionText` (`application.mjs:58-59, 334-342`). | `limits.mjs:59, 68-70, 99`; `application.mjs:55, 58-59, 334-342, 1344-1359` |
+| G12 | The web surface already admits long-poll transports: `run_follow`/`run_wait` ride the `/v1/commands` envelope (`web-northbound.mjs:634-636`), `run_wait` timeoutMs > 30_000 refuses `application_wait_timeout_exceeds_web_ceiling` (`:366`); `/v1/events` SSE is poll-based (`WebEventStream`, `web-stream.mjs:194`). The MCP surface already has the long-poll precedent `fleet_run_follow`/`fleet_run_wait` with the timeout guard `invalid_run_wait` (`mcp-northbound.mjs:375-378, 930-931`). | `web-northbound.mjs:15-17, 53-58, 366, 634-636`; `web-stream.mjs:194`; `mcp-northbound.mjs:375-378, 930-931` |
+| G13 | The CLI already parses `run attention watch` (page read), `run answer --option`, and `run approve --plan`. `run follow --wait`/`run status --wait` are the blocking CLI precedents (map to `run.follow`/`run.wait`). | `application-cli.mjs:1400-1419` (`attention watch`), `:1655-1657` (`approve`), `:1662-1673` (`answer --option`), `:1649-1656` (`--wait`) |
+| G14 | The #138 dependency is on the ledger, not in the tree: "A process-per-call orchestrator (kimi's Bash) can never hold the wave lane — the only northbound with waves (#132) requires a persistent parent" → **#138** (stateless HTTP MCP endpoint on the resident). The wake is a persistent-session long-poll; #138's process-per-call endpoint can issue a bounded one-shot wait, never a held lane. | `orchestrator-friction-ledger.md:108` (Appendix C) |
+
+---
+
+## 2. Decisions
+
+### D1 — The wake primitive: a `waitAfter`-anchored long-poll over the composed orchestrator surface
+
+**The orchestrator asks "wake me when anything needs me"; the answer is a new run-scoped
+command `attention.wait` that composes the store's `waitAfter` (G1) exactly the way
+`run.follow` does (G2) — but pages the ORCHESTRATOR's composed surface, not the run-follow
+change page.** No clock is a workflow control: `timeoutMs` is only the transport's long-poll
+bound; the loop wakes on an event-seq advance and re-pages.
+
+1. **The wait loop.** `attention.wait(runId, {afterCursor, timeoutMs}, principal)` follows the
+   `run.follow` shape (G2): authorize (D3), then loop —
+   build the composed surface (D2), page it past `afterCursor`, and if any actionable item or
+   reason is present, deliver; else `waitAfter(view.cursor, remaining, {signal})`
+   (`coordination-store.mjs:8843`) and re-page on ANY store advance. A store advance for an
+   unrelated event (e.g. an artifact registered) re-pages, finds nothing past `afterCursor`,
+   and loops — never a fabricated reason. The `afterCursor` anchors BOTH the store seq (the
+   `waitAfter` operand) and the composed surface's paging cursor; `throughCursor` advances to
+   the composed surface's max `seq` (G4's `_attentionCursor` discipline), or to the store
+   upperBound when no reason past the cursor exists.
+2. **The closed set of wake classes.** The wake reports exactly these reason kinds
+   (a frozen `WAKE_REASONS` literal in ACTUAL sorted order, matching the `WAITING_ON_KINDS`
+   frozen-array discipline of G7):
+   ```
+   ['answer_approval', 'answer_decision', 'answer_question', 'budget_alarm', 'candidacy_review', 'member_terminal', 'plan_approval', 'wave_terminal']
+   ```
+   - `answer_decision` / `answer_question` / `answer_approval` — the blocking-interaction lane
+     (G7): a decision parked, a blocking question asked, an approval pending.
+   - `member_terminal` / `candidacy_review` — the existing coordinator attention reasons (G4).
+   - `budget_alarm` — the orchestrator/operator-relevant BD3-D wake reason (G8,
+     `resource.budget_threshold` → `budget_alarm`); it rides `reasons` (read, never answered
+     in place — D2.3).
+   - `plan_approval` — a plan is advertised awaiting approval (the run's
+     `waitingOn: 'plan_approval'` — G7); the wake carries the plan digest (D2).
+   - `wave_terminal` — the wave itself closed (#132 registry `state: 'closed'`, G9).
+   NOT in the set: reply-chain hops (#105 D8, D5 below), routine progress, unrelated backlog,
+   and the worker-facing #10-era `ATTENTION_TYPES` kinds (`approval`/`question`/`blocked`/
+   `stalled` — the orchestration-era inbox vocabulary, G8).
+3. **The honest empty.** When the transport bound elapses with nothing past `afterCursor`, the
+   wake returns `{woken: false, timedOut: true, throughCursor: <unchanged>, actions: [], reasons: []}`
+   — never a fabricated reason, never a synthesized default. This is `run.follow`'s
+   `timedOut: true` posture (G2) applied to the attention surface.
+4. **WaitingOn transitions to interaction.** A member whose `waitingOn` kind changes — set,
+   cleared, or moved to a blocking interaction — is a wake-worthy transition (the brief's
+   "waitingOn transitions to interaction"). The composed surface pages each member's current
+   `waitingOn` and each pending blocking interaction; a `member_waiting`-style delta is
+   reported as the member's `waitingOn` value riding the wake payload (D2), NOT as a new
+   `WAITING_ON_KINDS` kind (G7 stays closed; #10 OQ3's `member_waiting` rung is folded into
+   the wake surface, not the vocabulary).
+5. **Every wake-worthy change is store-seq-visible (a guarantee pin, not a clock).** The loop
+   wakes only on a store advance, so the coordinator must append a store event coincident with
+   every wake-worthy state change. This already holds: a decision park is a `task.transitioned`
+   (`application.mjs`-visible via `_coordTransition(task, 'input_required')`, G6); a member
+   terminal is a task transition; a candidacy admission is a store queue event; a wave close is
+   the `wave.closed` append (G9); a plan proposal is `plan.version_proposed`. The acceptance
+   pin W-1 asserts this coincidence — a wake-worthy change never fails to advance the store seq.
+
+### D2 — The decision-first surface: wake-with-decisions
+
+**The wake payload surfaces actionable items FIRST, with their answer address riding each item,
+so the orchestrator answers from the wake without a second read.** The payload shape:
+
+```
+{
+  schemaVersion: 1,
+  woken: true,
+  runId,                         // the scoped run the orchestrator follows
+  throughCursor,                 // composed-surface seq to pass back as afterCursor
+  actions: [ ... actionable items FIRST ... ],
+  reasons: [ ... attention reasons ... ],
+  waitingOn: [ { runId, kind|null, workerId? } ... ],   // per-member waitingOn deltas
+  wave: { state: 'open'|'closed', waveId, ... },        // #132 registry row projection
+  timedOut: false,
+}
+```
+
+1. **Actionable-item shape (decision-first).** The `answer_*` items mirror
+   `projectDecisionAttention` verbatim (G6) plus the answer address:
+   ```js
+   {
+     kind: 'answer_decision',            // | 'answer_question' | 'answer_approval'
+     runId: '<member run>',              // the interaction's OWN run (G6: the answer must
+                                         //   resolve inside this run — application.mjs:12480-12491)
+     workerId, requestId,                // projectDecisionAttention identity
+     question: boundedAttentionText(...),// view.attention_text.bytes 4096 discipline (G11)
+     options: [{id, label, summary}],    // bounded (G11)
+     allowFreeResponse, recommended, deadlineAt,   // verbatim from projectDecisionAttention
+     answer: {                           // the direct-answer address — answer FROM the wake
+       command: 'run.answer', runId, requestId,
+     },
+   }
+   ```
+   A `plan_approval` item is `{kind: 'plan_approval', runId, planDigest,
+   answer: {command: 'run.approve', runId, planDigest}}` — the advertised plan's digest is the
+   actionable identity; the orchestrator approves with one command.
+2. **The direct-answer path, receipted.** The orchestrator answers from the wake payload with
+   the item's own `answer.command`: `run.answer(runId, requestId, {optionId | text | decision})`
+   (`application.mjs:12469-12511`) / MCP `baton_decision_answer`
+   (`mcp-northbound.mjs:551-557`) / CLI `baton run answer RUN --option ID`
+   (`application-cli.mjs:1662-1673`); or `run.approve` / `baton run approve RUN --plan DIGEST`
+   (`application-cli.mjs:1655-1657`). The answer is RECEIPTED with the coordinator's own result
+   code: `applied`, or `already_resolved` with `resolvedBy` for a late answerer
+   (G6) — never a generic error.
+3. **The action/reason split is machine-readable.** `actions` carry the blocking-interaction
+   kinds and `plan_approval` (the things the orchestrator can settle by answering); `reasons`
+   carry `member_terminal`/`candidacy_review`/`budget_alarm` (attention the orchestrator reads
+   but does not answer in-place). A consumer routes on `entry.kind` — an `answer_*` item is
+   answered, a reason is read.
+4. **Frame economics (#89).** The composed surface is bounded: every worker-authored field
+   passes `boundedAttentionText` (`application.mjs:334-342`, G11); the serialized wake payload
+   is capped by the profile's `followPolicy.maxResponseBytes` = `MAX_RUN_VIEW_BYTES`
+   (`application.mjs:1344-1359`), refusing `application_attention_wait_oversize` on overflow —
+   the `run.follow` oversize refusal precedent (`application_follow_oversize`,
+   `application.mjs:8308`). An oversize question/option is spill-digest-cited per #89 (the
+   `spilled/bytes/digest/spill` shape — the same spill the decision admission already uses,
+   G11); the full content stays reachable through the decision lane's own read.
+5. **`throughCursor` is the paging contract.** A consumer passes the returned `throughCursor`
+   back as the next `afterCursor`. On an honest empty (D1.3) `throughCursor` is unchanged, so a
+   retry with the same cursor is a true continuation, never a re-read.
+
+### D3 — Who may be woken: the orchestrator principal, multi-orchestrator honest
+
+1. **The scope authority is the existing one.** `attention.wait` authorizes through
+   `_attentionScopeAuthorized` / `_isReviewAuthority` (G5): the deployment's `wave-owner`
+   principal always; a run-scoped wait also admits a live run-orchestrator lease holder whose
+   session matches the run (`activeRunOrchestratorLeaseForSession`). A bare deployment scope
+   admits any authenticated principal; the run-scoped target check holds them honest
+   (`coordinator.mjs:7062-7083`).
+2. **Multi-orchestrator honesty: two waiters both wake — no claim-on-read.** The wake is a
+   READ; it never claims, settles, or mutes an item. Two orchestrators (the `wave-owner` and a
+   live run-orchestrator lease holder) both page the same actionable items and both wake on the
+   same store advance. The FIRST answer wins; the loser's `run.answer` returns
+   `already_resolved` with `resolvedBy` (G6). The wake surface never records "who read it" and
+   never withholds an item because another waiter saw it.
+3. **A wake does not re-answer or re-settle.** The wake delivers state; only the answer
+   commands (`run.answer`/`run.approve`) mutate. A wake payload is idempotent to read: two
+   wakes with the same `afterCursor` return the same items until the store advances past them.
+
+### D4 — The surface mapping
+
+1. **MCP — a `baton_attention_wait`-class tool.** The new tool joins the ordinary table beside
+   `baton_run_attention_watch` (`mcp-northbound.mjs:620-626`, capability `['observe']` at
+   `:112`), with the long-poll discipline the MCP surface already carries for
+   `fleet_run_follow`/`fleet_run_wait` (`mcp-northbound.mjs:375-378`): `inputSchema` =
+   `{repoId, runId, afterCursor, timeoutMs}` with `timeoutMs` a safe positive integer bounded
+   by the deployment profile's `followPolicy.maxWaitMs` (≤ 24h, G11) — the `invalid_run_wait`
+   guard precedent (`mcp-northbound.mjs:930-931`). Capability `['observe']` — the wake is a
+   read; the answering capability already rides `baton_decision_answer` (`['approve','observe']`,
+   `mcp-northbound.mjs:92`). The `stateFailureCode` allowlist gains the new refusals (D6).
+2. **Web — the command envelope, not SSE.** `attention_wait` rides `/v1/commands` as a
+   `run_follow`-class transport (`web-northbound.mjs:634-636`): a bounded request/response
+   long-poll, never the poll-based `/v1/events` SSE (`web-stream.mjs:194`). The web ceiling
+   applies: `timeoutMs > 30_000` refuses `application_attention_wait_timeout_exceeds_web_ceiling`
+   — the `run_wait` ceiling precedent (`web-northbound.mjs:366`).
+3. **CLI — `baton run attention wait` (the brief's `baton attention wait`).** The CLI grammar
+   extends the existing `run attention` block (`application-cli.mjs:1400-1419`) with a
+   `wait` action: `baton run attention wait RUN [--timeout MS] [--cursor N] [--kind KIND]` —
+   blocks on the wake and renders the decision-first payload, exiting with the honest empty on
+   the transport bound (never a fabricated reason, never a nonzero exit for an empty wake).
+   `run answer --option` / `run approve --plan` (`application-cli.mjs:1655-1673`) are the
+   answer legs.
+4. **The #132 D1 and #138 dependency posture.** The wake is a `definition.web`-style entry (or,
+   if it stays a direct port, a #132-D1-style web slice: a `WAKE_WEB_ENTRIES` row spread into
+   `COMMAND_CAPABILITY` + a validator exception — `wave-observability-contract.md` D1.1-1.2).
+   It must ride whichever admission lands first and never duplicate #132's slice. **The #138
+   posture is pinned:** the wake is a PERSISTENT-session long-poll — a held `waitAfter` on the
+   deployment's private coordination store. A stateless process-per-call orchestrator (#138)
+   cannot hold the lane; its endpoint issues a bounded one-shot wait (one `waitAfter` hop with
+   an honest empty on the transport bound), never a resumed lane. The long-poll contract does
+   not depend on #138 landing; #138's endpoint, when it lands, reuses the same command.
+
+### D5 — The #105 composition: reply-chain hop vs decision, machine-readable
+
+Per #105 D8 (G10), the wake distinguishes the two machine-readably by the **presence and kind
+of an actionable item**, never by inferring blockingness from prose:
+
+1. **A decision wake is an `answer_*` action item.** A blocking follow-up goes to the
+   interaction lane (G10) — a decision gate ALWAYS transitions a task phase — and surfaces in
+   `actions` with `kind: 'answer_decision'` (or `answer_question`/`answer_approval`), carrying
+   `requestId` + the direct-answer address (D2.1). This is the ONLY machine-readable "this is
+   blocking, answer now" signal in the wake.
+2. **A reply-chain hop is never a wake reason.** A conversational follow-up goes to the budgeted
+   reply lane (G10) — no task phase transition, `waitingOn` stays null (D9). The wake's closed
+   set (D1.2) contains no `message_reply` / reply-hop kind; a reply lands, the store advances,
+   the wake re-pages, finds nothing past the cursor, and stays silent. The honest state is
+   `{woken: false}` for a reply — the orchestrator observes a chain through the receipt lane
+   (#105 D4), never through the wake.
+3. **The distinction is the `kind` discriminator, pinned for future surface too.** If a future
+   epic adds orchestrator-addressable reply hops (#105 OQ-1), such a hop MUST surface as a NEW
+   kind (e.g. `message_reply` with `{messageId, inReplyTo}`), never folded into `answer_decision`
+   — a consumer answering on `kind` must never mistake a reply hop for a decision gate. In v1.0
+   no such kind exists; the honest-empty posture (D1.3) covers a reply-only interval.
+4. **A chain deadlock is not a wake cause; its escalation is.** A genuinely blocked worker must
+   raise `question.asked` → `input_required` (G10), which surfaces as `answer_question` and
+   wakes. A stalled pure-conversational cycle (no pending interaction) stays a monitoring
+   concern (#105 D9) — the wake never fabricates a reason from a stall.
+
+### D6 — Refusal vocabulary
+
+Existing, reused unchanged:
+
+| Code | Where | Meaning |
+|---|---|---|
+| `attention_scope_invalid` / `attention_scope_forbidden` | `coordinator.mjs:7021-7066` | The run-scoped scope/target authority check (unchanged) |
+| `application_attention_watch_invalid` | `application.mjs:12639-12654` | Malformed `run.attention.watch` request (unchanged) |
+| `application_follow_unavailable` / `application_follow_invalid` / `application_follow_cancelled` / `application_follow_oversize` | `application.mjs:8257-8326` | The `run.follow` long-poll refusals (the wake's shape precedents) |
+| `application_wait_timeout_exceeds_web_ceiling` | `web-northbound.mjs:366` | A web wake `timeoutMs > 30_000` (unchanged precedent) |
+| `invalid_run_wait` | `mcp-northbound.mjs:930-931` | An MCP wake `timeoutMs` beyond the profile bound (the guard shape) |
+| `already_resolved` | `application.mjs:12492-12506` | A late answer's distinct typed result (the wake's answer path) |
+
+New, introduced by this contract:
+
+| Code | Where | Meaning |
+|---|---|---|
+| `attention_wait_invalid` | `application.mjs` (the new `_normalizeAttentionWait`) | Malformed `attention.wait` request — bad `runId`/`afterCursor`/`timeoutMs`/`kind`; refused at the application layer, preserved on every surface |
+| `application_attention_wait_oversize` | the composed-surface builder (D2.4) | The serialized wake payload exceeds `followPolicy.maxResponseBytes` — the `application_follow_oversize` precedent (G11) |
+| `application_attention_wait_timeout_exceeds_web_ceiling` | web-northbound.mjs | The web transport ceiling, named for the wake transport (D4.2) |
+
+The `stateFailureCode` allowlist (`mcp-northbound.mjs:198-261`) gains `attention_wait_invalid`
+and `application_attention_wait_oversize` (they cross the MCP surface as thrown errors; without
+rows they degrade to `command_outcome_unknown`). `already_resolved` already survives via the
+`application_` pass-through; `attention_scope_forbidden` is a lane throw, not an MCP tool
+error, and needs no row. The web mapper (`web-northbound.mjs:149-232`) gains the two wake codes
+as 400-class client-precondition refusals (the `capability_*_invalid` family precedent).
+
+The wire sorted-key literals remain exactly as verified: `ATTENTION_TYPES` in ACTUAL order
+(G8), `WAITING_ON_KINDS` in ACTUAL sorted order (G7), `WAKE_REASONS` in ACTUAL sorted order
+(D1.2). No new sorted-key literal is introduced.
+
+---
+
+## 3. Acceptance pins (red-first)
+
+RED = fails at HEAD; GREEN = passes at HEAD and is pinned.
+
+| Pin | Assertion | Today |
+|-----|-----------|-------|
+| W-1 | **The wake long-polls on `waitAfter`, and every wake-worthy change advances the store seq.** An orchestrator `attention.wait` on a run with no pending items holds a `waitAfter` (no poll timer on the hot path — `coordinator.wait`/`run.wait`'s `_waitPollMs` loop is not used) and returns the honest empty `{woken: false, timedOut: true, actions: [], reasons: []}` on the transport bound, never a fabricated reason. A decision park (G6) advances the store seq AND wakes the wait in the same tick. | **RED** (no wake surface; the attention inbox is page-read-only, G4) |
+| W-2 | **A decision park wakes with the decision-first item.** A member's `decision.requested` wakes an orchestrator waiting on that run with an `actions` entry `{kind: 'answer_decision', runId, workerId, requestId, question, options, allowFreeResponse, recommended, deadlineAt, answer: {command: 'run.answer', runId, requestId}}` — the `projectDecisionAttention` shape (G6) plus the answer address. | **RED** (no wake; `run.attention.watch` returns only `member_terminal`/`candidacy_review`, G4) |
+| W-3 | **Answer from the wake, receipted.** Answering the wake's `answer_decision` item via `run.answer`/`baton_decision_answer`/`baton run answer --option` returns the coordinator's result code (`applied`); a late answerer on the same `requestId` returns `already_resolved` with `resolvedBy` — the wake never re-answers a settled item (D3.3). | **RED** for the wake; the `run.answer` receipt path is **GREEN** (pinned) |
+| W-4 | **Two waiters both wake — no claim-on-read.** The `wave-owner` AND a live run-orchestrator lease holder waiting on the same run both wake with the same items; neither read mutes the other's wake; the first answer wins and the loser reads `already_resolved` (D3.2). | **RED** (no wake surface; the authority check itself is **GREEN** at `coordinator.mjs:7062-7083`) |
+| W-5 | **A reply-chain hop does not wake; a blocking escalation does.** A worker's budgeted reply (no phase transition) advances the store but returns `{woken: false}` on the transport bound; a `question.asked blocking:true` → `input_required` escalates as `{kind: 'answer_question'}` (D5, G10). No `message_reply` kind exists in `WAKE_REASONS` (D1.2). | **RED** (no wake surface) |
+| W-6 | **The closed set.** `WAKE_REASONS` is exactly `['answer_approval','answer_decision','answer_question','budget_alarm','candidacy_review','member_terminal','plan_approval','wave_terminal']` — a `sort()`-deepEqual pin in ACTUAL sorted order; `WAITING_ON_KINDS` and `ATTENTION_TYPES` are byte-unchanged (G7, G8). | **RED** (no `WAKE_REASONS` literal) |
+| W-7 | **Surfaces.** MCP `baton_attention_wait` (observe) long-polls with `timeoutMs` bounded by `followPolicy.maxWaitMs`; the web envelope `attention_wait` respects the 30s ceiling; the CLI `baton run attention wait RUN --timeout` blocks and exits 0 on an honest empty (D4). | **RED** (no wake surface) |
+| W-8 | **Frame economics.** The wake payload is bounded — a 64-item attention cap, `boundedAttentionText` on every worker-authored field, `maxResponseBytes` oversize refusal, spill-digest-citation for an oversize question — and the decision limits (`decision.question` 2048, `decision.option.label` 160, `decision.option.summary` 512, `decision.text` 4096, `view.attention_text.bytes` 4096) are unchanged (G11). | **GREEN** for the limits (pinned); the wake's own bounded builder is **RED** |
+| W-9 | **Guarantee-pin: no wake-worthy change is store-invisible.** A decision park, a member terminal, a candidacy admission, a plan proposal, and a wave close each advance the store seq (D1.5) — a green test can append each wake-worthy change and assert the store cursor advanced before the wait returned. | **GREEN** for the individual transitions (they already append); the wake's reliance on them is the new pin |
+
+---
+
+## 4. Campaign-law constraints and non-goals
+
+- **No clocks as controls.** `timeoutMs` is the transport's long-poll bound and nothing else —
+  the `waitAfter` discipline (G1). The wake never ticks, never expires a decision early, never
+  gates on a timer. `deadlineAt` on an `answer_decision` item is the worker-authored admission
+  sweep (G6), surfaced for orchestrator prioritization, never a wake control.
+- **No new waiting kinds.** `WAITING_ON_KINDS` stays the closed five (G7); the
+  `member_waiting` rung of #10 OQ3 is folded into the wake SURFACE (a member's `waitingOn`
+  rides the payload), not into the vocabulary.
+- **`localeCompare` banned.** All ordering is seq-ascending (`_attentionCursor`/store seq) or
+  frozen-array ACTUAL order; no locale-aware sort.
+- **Compose, never duplicate.** The wake reads #132's registry projection (`waves.list`,
+  `_waveRegistry`) for `wave_terminal` (G9), `projectDecisionAttention` for the decision items
+  (G6), and the existing `_attentionPage` for the attention reasons (G4) — none is re-derived.
+- **The honest empty is a result, not a refusal.** A wake with nothing to report is
+  `{woken: false, timedOut: true}` — a successful read, never an error, never a fabricated
+  reason (D1.3).
+- **The wake never settles.** Only `run.answer`/`run.approve` mutate; the wake is read-only
+  (D3.3, D4.1 — the observe capability).
+- **Non-goals.** Moving the coordinator's in-memory attention reasons into the store (they stay
+  process-scoped, G4); orchestrator-addressable reply-chain hops (#105 OQ-1 — D5.3 pins the
+  discriminator for the future surface, v1.0 has no such kind); the #138 stateless endpoint
+  itself (the wake pins only the dependency posture, D4.4); cross-run wake aggregation (v1.0 is
+  run-scoped; a wave-wide wake composes the per-member runs the driver already follows, G3).
+
+---
+
+## 5. Open questions
+
+- **OQ-1 — Wave-scoped vs run-scoped wait.** v1.0 pins a run-scoped `attention.wait` (the
+  orchestrator follows one run). The brief's "wave terminal events" wake cause (D1.2) implies a
+  wave-scoped form that pages the #132 registry row + all member runs. **Recommendation: the
+  run-scoped form is the minimal honest v1.0; a wave-scoped wrapper composes per-member runs
+  with the wave-driver's one-follow-per-member law (`wave-driver.mjs:463-534`).** Decide from
+  the wave driver's lived polling (G3) before adding a second scope.
+- **OQ-2 — `budget_alarm` as a wake reason.** G8 pins `budget_alarm` as orchestrator/operator
+  relevant (`coordinator.mjs:11859`) and the brief names "attention items addressed to the
+  orchestrator". v1.0 surfaces it as a reason (read, not answered in place); whether an
+  operator must ANSWER a `budget_alarm` (not just read it) is #90's escalation territory, not
+  #71's. Keep it a reason.
+- **OQ-3 — `plan_approval` actionable vs reason.** D2.1 makes `plan_approval` actionable (the
+  advertised plan's digest rides with the `run.approve` address). If a later epic makes plan
+  approval multi-run or batch, the actionable shape may need the run's plan lane read; v1.0
+  keeps the single-run digest.
+- **OQ-4 — web transport ceiling.** The wake rides the command envelope (D4.2) and inherits
+  the 30s `run_wait` ceiling (`web-northbound.mjs:366`). If a future web client needs a longer
+  held wake, the ceiling is a web-surface transport bound, not a workflow gate — raise it there,
+  never in the lane.
+
+---
+
+## 6. Verification
+
+- **HEAD pinned:** `d1a1e267d259d50fcdb49e51889a593393e66628` (current worktree HEAD).
+- **Evidence discipline:** every anchor in §1 was re-verified by `grep -an`/`sed -n` on the
+  current tree; the two NUL-bearing files (`application.mjs`, `coordination-store.mjs`) were
+  never read whole. Sorted-key literals appear only as verified (G7, G8, D1.2). Cross-referenced
+  contracts (#10, #79, #105, #132, #138 via the ledger, #91 via the ledger) are cited, never
+  re-specified.
+- **Deployment verification command** (Baton): executable `true`, arguments `[]`, expected
+  exit 0.
