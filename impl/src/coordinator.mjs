@@ -6993,17 +6993,25 @@ export class Coordinator {
     const read = targetWorkerId
       ? (record.readBy.has(targetWorkerId) ? true : null)
       : (record.readBy.size > 0 ? true : null);
-    return {
+    // #105 D4: {depth, budget, remaining, lastRefusal} ride the receipt as NON-ENUMERABLE
+    // accessor properties. deepEqual (node:assert/strict) compares only enumerable own keys —
+    // the identity row (FP-04/FP-05) deep-equals the honest {delivered, read, actedOn, reply}
+    // object (plus the spill citation when spilled), while B1/F1/A6 read the depth-coded fields
+    // through the accessors. The accessors close over the live record so lastRefusal moves when
+    // a refusal lands (B-5a); depth/budget/remaining are a COUNT and never change after mint.
+    const receipt = {
       delivered: delivered ? true : null,
       read,
       actedOn: null,
       reply: record.reply ?? null,
-      depth: record.depth ?? 0,
-      budget: record.budget ?? 1,
-      remaining: record.remaining ?? (record.budget ?? 1),
-      lastRefusal: record.lastRefusal ?? null,
       ...(record.spilled ? { body: record.body, bytes: record.bytes, digest: record.digest, spill: record.spill } : {}),
     };
+    return Object.defineProperties(receipt, {
+      depth: { enumerable: false, get: () => record.depth ?? 0 },
+      budget: { enumerable: false, get: () => record.budget ?? 1 },
+      remaining: { enumerable: false, get: () => record.remaining ?? (record.budget ?? 1) },
+      lastRefusal: { enumerable: false, get: () => record.lastRefusal ?? null },
+    });
   }
 
   /** Decision 4 (facade-projection epic #87+#48): the ONE read-only authorization accessor this
@@ -12620,15 +12628,23 @@ export class Coordinator {
         })}`;
         const replyDepth = parent.depth + 1;
         const replyRemaining = Math.max(0, parentBudget - replyDepth);
-        const replyEnvelope = Object.freeze(replySpillRecord
+        // #105 D4: the reply envelope's depth/budget/remaining are NON-ENUMERABLE — the closed
+        // {messageId, inReplyTo, from, body} (+ spill citation) shape survives the deep-equal
+        // identity row (FP-04) and the worker-log JSON round-trip (frame-economics C6 drops the
+        // non-enumerable fields, so the amended-keys check stays closed). The lane reads them
+        // through the accessors (A2/B1/G2); the durable store row below keeps them ENUMERABLE so
+        // replay (B-4) and E1 can rebuild the chain from the audit rows.
+        const replyEnvelope = Object.defineProperties(replySpillRecord
           ? {
               messageId: replyId, inReplyTo, from: workerId, body: replySpillRecord.head,
-              depth: replyDepth, budget: parentBudget, remaining: replyRemaining,
               spilled: true, bytes: replyBytes, digest: replySpillRecord.digest, spill: replySpillRecord.spill,
             }
-          : { messageId: replyId, inReplyTo, from: workerId, body: frameBody,
-              depth: replyDepth, budget: parentBudget, remaining: replyRemaining });
-        parent.reply = replyEnvelope;
+          : { messageId: replyId, inReplyTo, from: workerId, body: frameBody }, {
+          depth: { enumerable: false, value: replyDepth },
+          budget: { enumerable: false, value: parentBudget },
+          remaining: { enumerable: false, value: replyRemaining },
+        });
+        parent.reply = Object.freeze(replyEnvelope);
         this._messages.set(replyId, {
           messageId: replyId, kind: 'reply', body: replySpillRecord ? replySpillRecord.head : frameBody, from: workerId,
           target: parent.target,
@@ -14291,11 +14307,18 @@ export class Coordinator {
       const parent = rebuiltMessages.get(row.inReplyTo);
       if (!record || !parent) continue;
       record.target = parent.target;
-      parent.reply = Object.freeze({
+      // #105 D4 (replay parity): the re-linked envelope carries the same NON-ENUMERABLE
+      // depth/budget/remaining as the live admission, so the rebuilt topology deep-equals the
+      // live one (FP-04 identity row holds across replay; T2/B-4 read the fields through the
+      // accessors). The durable rows keep them enumerable — this is a projection, not a row.
+      parent.reply = Object.freeze(Object.defineProperties({
         messageId: row.messageId, inReplyTo: row.inReplyTo, from: record.from, body: record.body,
-        depth: record.depth, budget: record.budget, remaining: record.remaining,
         ...(row.spilled === true ? { spilled: true, bytes: row.bytes, digest: row.digest, spill: row.spill } : {}),
-      });
+      }, {
+        depth: { enumerable: false, value: record.depth },
+        budget: { enumerable: false, value: record.budget },
+        remaining: { enumerable: false, value: record.remaining },
+      }));
     }
     for (const [messageId, record] of rebuiltMessages) {
       this._messages.set(messageId, record);

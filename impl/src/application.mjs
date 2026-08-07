@@ -12752,7 +12752,7 @@ export class BatonApplication {
 
   _normalizeMessageSend(value) {
     if (!value || typeof value !== 'object' || Array.isArray(value)
-      || Object.keys(value).some((key) => !['runId', 'workerId', 'kind', 'body'].includes(key))
+      || Object.keys(value).some((key) => !['runId', 'workerId', 'kind', 'body', 'budget'].includes(key))
       || (Object.hasOwn(value, 'runId') === Object.hasOwn(value, 'workerId'))
       || (Object.hasOwn(value, 'runId') && !validId(value.runId))
       || (Object.hasOwn(value, 'workerId') && !validId(value.workerId))
@@ -12769,11 +12769,16 @@ export class BatonApplication {
         'application_message_send_invalid',
       );
     }
+    // #105 D6/B-5b: budget is passed RAW (value.budget ?? 1) — the lane is the single budget
+    // authority for shape AND range (1.5 and "3" both reach the lane's message_budget_invalid,
+    // never the facade's shape code). No range check here; the facade stays exactly as
+    // permissive as the lane.
     return deepFreeze({
       ...(Object.hasOwn(value, 'runId') ? { runId: value.runId } : {}),
       ...(Object.hasOwn(value, 'workerId') ? { workerId: value.workerId } : {}),
       kind: value.kind,
       body: value.body,
+      budget: value.budget ?? 1,
     });
   }
 
@@ -12966,6 +12971,7 @@ export class BatonApplication {
       to: Object.hasOwn(request, 'workerId')
         ? { workerId: request.workerId } : { runId: request.runId },
       body: request.body,
+      budget: request.budget,
     }, { actor: principal.actor });
     return deepFreeze({ schemaVersion: 1, ...outcome });
   }
@@ -12984,7 +12990,25 @@ export class BatonApplication {
     }
     await this._authorize('run.message.receipt', principal, resolvedRunId, { messageId: request.messageId });
     const receipt = this.driver.coordinator.messageReceipt(request.messageId);
-    return deepFreeze({ schemaVersion: 1, messageId: request.messageId, ...receipt });
+    // #105 D4/H1: the facade receipt must carry {depth, budget, remaining, lastRefusal} EXPLICITLY
+    // — the lane serves them as non-enumerable accessor properties (the FP-04 identity row), so a
+    // plain ...receipt spread would drop them. The projection reads the accessors and re-emits
+    // them as enumerable data fields, preserving the exact lane shape plus the spill citation.
+    return deepFreeze({
+      schemaVersion: 1,
+      messageId: request.messageId,
+      delivered: receipt.delivered,
+      read: receipt.read,
+      actedOn: receipt.actedOn,
+      reply: receipt.reply,
+      depth: receipt.depth,
+      budget: receipt.budget,
+      remaining: receipt.remaining,
+      lastRefusal: receipt.lastRefusal,
+      ...(Object.hasOwn(receipt, 'spill')
+        ? { body: receipt.body, bytes: receipt.bytes, digest: receipt.digest, spill: receipt.spill }
+        : {}),
+    });
   }
 
   // run.attention.watch — Decision 5: the lane's own scope authority is the sole seam (no facade
