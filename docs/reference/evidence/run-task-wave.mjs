@@ -96,6 +96,11 @@ try {
     process.exitCode = 1;
   } else {
     const deadline = Date.now() + DEADLINE_MIN * 60_000;
+    // #134-successor: harvest honesty requires a content-DIFFERENCE check against the launch-time
+    // HEAD for pre-existing target paths (the impl-114 false-OK: a foreign wave's fresh pin
+    // carried the UNCHANGED pre-existing targets and path-presence alone passed). New paths only
+    // need presence. And a deadline-drained wave with members still pending is never -OK.
+    const launchHead = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repo, encoding: 'utf8' }).trim();
     const pending = new Set([ROLE]);
     let approved = false;
     const nudged = new Set();
@@ -137,6 +142,7 @@ try {
       }
     }
     step('loop-drained', { pending: [...pending] });
+    const drainedWithPending = pending.size > 0;
     await sleep(10_000);
     const pins = [
       ...execFileSync('git', ['for-each-ref', 'refs/baton/results', '--sort=-creatordate', '--format=%(objectname) %(creatordate:unix)'], { cwd: repo, encoding: 'utf8' }).trim().split('\n').filter(Boolean),
@@ -148,12 +154,25 @@ try {
       return { sha, created: Number(created) };
     }).filter((pin) => pin.created >= startedAtEpochSec - 5);
     const skippedStale = pins.length - freshPins.length;
+    // #134-successor: a pre-existing target path must DIFFER from the launch-time HEAD to count —
+    // path-presence alone passed a foreign wave's pin carrying the unchanged files (the impl-114
+    // false-OK). New paths (absent at launch HEAD) only need presence.
+    const launchContent = new Map();
+    for (const path of TARGETS) {
+      try { launchContent.set(path, execFileSync('git', ['show', `${launchHead}:${path}`], { cwd: repo, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] })); }
+      catch { launchContent.set(path, null); }
+    }
     const harvested = {};
     for (const { sha: pin } of freshPins.slice(0, 20)) {
       if (harvested[ROLE]) continue;
       try {
         const contents = TARGETS.map((path) => {
-          try { return { path, content: execFileSync('git', ['show', `${pin}:${path}`], { cwd: repo, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] }) }; } catch { return null; }
+          try {
+            const content = execFileSync('git', ['show', `${pin}:${path}`], { cwd: repo, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] });
+            const atLaunch = launchContent.get(path);
+            if (atLaunch !== null && atLaunch !== undefined && content === atLaunch) return null;
+            return { path, content };
+          } catch { return null; }
         }).filter(Boolean);
         if (contents.length === 0 || contents.some((entry) => entry.content.length < 200)) continue;
         harvested[ROLE] = { pin, paths: contents.map((entry) => entry.path) };
@@ -162,7 +181,13 @@ try {
     }
     receipts.harvest = harvested;
     receipts.harvestStalePinsSkipped = skippedStale;
-    receipts.verdict = Object.keys(harvested).length === 1 ? `${VERDICT}-OK` : `${VERDICT}-INCOMPLETE`;
+    if (drainedWithPending) {
+      // A deadline-drained wave with members still pending is NEVER -OK — the harvest (if any) is
+      // partial work for recovery, reported as such.
+      receipts.verdict = `${VERDICT}-DRAINED`;
+    } else {
+      receipts.verdict = Object.keys(harvested).length === 1 ? `${VERDICT}-OK` : `${VERDICT}-INCOMPLETE`;
+    }
     persist();
     log(`verdict: ${receipts.verdict} — harvested: ${Object.keys(harvested).join(', ') || 'none'}${skippedStale > 0 ? ` (${skippedStale} pre-launch pins skipped, #134)` : ''}`);
   }
