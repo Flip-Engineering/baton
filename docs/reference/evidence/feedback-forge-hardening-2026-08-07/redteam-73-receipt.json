@@ -1,0 +1,30 @@
+{
+  "attempt": "2026-08-07T09:09:45.212Z",
+  "salt": "ra20260807090945",
+  "role": "redteam-73",
+  "steps": [
+    {
+      "step": "waves.start",
+      "receipt": {
+        "runs": [
+          "run-65f138a07d342041b890f18a1e6331ec"
+        ]
+      }
+    },
+    {
+      "step": "dead:redteam-73",
+      "receipt": {
+        "phase": "failed"
+      }
+    },
+    {
+      "step": "loop-drained",
+      "receipt": {
+        "pending": []
+      }
+    }
+  ],
+  "harvest": {},
+  "harvestStalePinsSkipped": 392,
+  "verdict": "RT-73-FAILED"
+}
