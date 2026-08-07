@@ -21,8 +21,10 @@ export const CLI_WEB_COMMANDS = new Set([
   'run.status', 'run.follow', 'run.recover', 'run.approve', 'run.wait', 'run.answer',
   'run.stop', 'run.evidence', 'run.adopt', 'run.retry_verification',
   'run.resume_work', 'run.review', 'run.integrate', 'run.export',
-  // S-1 v2: portable atomic attach-and-harvest.
-  'waves.attach', 'waves.start',
+  // S-1 v2: portable atomic attach-and-harvest; #132 D4 adds the two CLI read verbs the client
+  // dispatches over the web envelope (waves.list/waves.progress, admitted at the port as direct
+  // commands — web-northbound.mjs WEB_DIRECT_PORT_COMMANDS).
+  'waves.attach', 'waves.start', 'waves.list', 'waves.progress',
   // Facade-projection epic (#87+#48, contract v2.2): the eight workflow-surface command names.
   'run.message.send', 'run.message.receipt', 'run.attention.watch',
   'run.scratchpad.read', 'run.scratchpad.elevate', 'run.board.post', 'run.board.read',
@@ -1306,10 +1308,15 @@ export function parseBatonCli(rawArgs) {
       'cli_command_host_local',
     );
   }
-  // S-1 v2: baton waves attach WAVE_ID --members JSON (plural spelling only).
+  // S-1 v2: baton waves attach WAVE_ID --members JSON (plural spelling only). The singular `wave`
+  // always refuses cli_command_unavailable with the corrective naming the RIGHT plural verb for the
+  // requested action (#132 D4.3/A5-3) — never the hardcoded attach spelling.
   if (args[0] === 'wave') {
+    const singularAction = args[1] ?? 'attach';
+    const pluralCorrective = ['list', 'progress', 'start', 'send', 'stop', 'attach'].includes(singularAction)
+      ? singularAction : 'attach';
     throw cliError(
-      'wave attach is not a verb; use the plural spelling: baton waves attach WAVE_ID --members JSON',
+      `wave ${singularAction} is not a verb; use the plural spelling: baton waves ${pluralCorrective}`,
       'cli_command_unavailable',
     );
   }
@@ -1324,8 +1331,57 @@ export function parseBatonCli(rawArgs) {
       if (typeof specPath !== 'string' || specPath.length === 0) throw cliError('waves run requires a spec path');
       return { kind: 'command', command: 'waves.run', name: 'waves.run', args: { specPath }, idempotencyKey };
     }
+    // #132 D4.1/D4.2 (wave-observability-2026-08-06/contract.md §D4): the read/steer verbs.
+    // `baton waves list` → waves.list — the registry read, no args (A5-1).
+    if (action === 'list') {
+      noRemainder(args);
+      return { kind: 'command', command: 'waves.list', name: 'waves.list', args: {}, idempotencyKey };
+    }
+    // `baton waves progress WAVE_ID [--cursor N]` → waves.progress — the paged per-member read;
+    // args stay exactly {waveId} until an explicit cursor is requested (A5-2).
+    if (action === 'progress') {
+      const progressWaveId = args.shift();
+      const cursorRaw = take(args, '--cursor');
+      noRemainder(args);
+      if (!progressWaveId || typeof progressWaveId !== 'string' || !/^wave:[a-f0-9]{32}$/u.test(progressWaveId)) {
+        throw cliError('wave ID is invalid');
+      }
+      const cursor = cursorRaw === null ? null : Number(cursorRaw);
+      if (cursorRaw !== null && (!Number.isSafeInteger(cursor) || cursor < 0)) {
+        throw cliError('--cursor is invalid');
+      }
+      return {
+        kind: 'command', command: 'waves.progress', name: 'waves.progress',
+        args: { waveId: progressWaveId, ...(cursor === null ? {} : { cursor }) },
+        idempotencyKey,
+      };
+    }
+    // `baton waves start --members JSON [--idempotency-key KEY]` → waves.start (D4.6/A6-6): the
+    // idempotency key rides parsed.args (already consumed by the top-level take at line 1211) so
+    // the two-argument client port dispatches it into _normalizeWaveStart.
+    if (action === 'start') {
+      const membersRaw = take(args, '--members');
+      noRemainder(args);
+      if (membersRaw === null) throw cliError('--members is required');
+      let members;
+      try { members = JSON.parse(membersRaw); }
+      catch { throw cliError('--members must be JSON'); }
+      if (!Array.isArray(members)) {
+        throw cliError('--members must be a JSON array');
+      }
+      return {
+        kind: 'command', command: 'waves.start', name: 'waves.start',
+        args: { members, idempotencyKey },
+        idempotencyKey,
+      };
+    }
+    // F5/D4.5 (A5-4): a BARE `baton waves attach` issues the registry read waves.list — the
+    // attachable set — never the wave-ID-invalid refusal.
+    if (action === 'attach' && args.length === 0) {
+      return { kind: 'command', command: 'waves.list', name: 'waves.list', args: {}, idempotencyKey };
+    }
     if (action !== 'attach') {
-      throw cliError('expected waves attach or waves run', 'cli_command_unavailable');
+      throw cliError('expected waves list, progress, start, attach, or run', 'cli_command_unavailable');
     }
     const waveId = id(args.shift(), 'wave ID');
     const membersRaw = take(args, '--members');

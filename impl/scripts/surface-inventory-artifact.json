@@ -2,12 +2,12 @@
   "schemaVersion": 1,
   "generatedBy": "impl/scripts/surface-conformance.mjs#buildSurfaceInventoryArtifact",
   "counts": {
-    "canonicalOperations": 72,
-    "cliWebCommands": 33,
+    "canonicalOperations": 73,
+    "cliWebCommands": 35,
     "parserLifecycleActions": 28,
-    "mcpApplicationTools": 34,
+    "mcpApplicationTools": 35,
     "mcpAdvancedTools": 19,
-    "mcpCombinedTools": 85,
+    "mcpCombinedTools": 86,
     "mcpDispatchTools": 42,
     "webBusCommands": 25,
     "applicationCommandDefinitions": 26
@@ -45,6 +45,8 @@
       "run.view",
       "run.watch",
       "waves.attach",
+      "waves.list",
+      "waves.progress",
       "waves.start"
     ],
     "cli.host_local": [
@@ -78,6 +80,7 @@
       "baton_scratchpad_elevate",
       "baton_scratchpad_settle",
       "baton_waves_attach",
+      "baton_waves_list",
       "baton_waves_progress",
       "baton_waves_run",
       "baton_waves_send",
@@ -149,6 +152,7 @@
       "baton_scratchpad_elevate",
       "baton_scratchpad_settle",
       "baton_waves_attach",
+      "baton_waves_list",
       "baton_waves_progress",
       "baton_waves_run",
       "baton_waves_send",

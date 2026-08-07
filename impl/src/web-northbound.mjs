@@ -27,6 +27,35 @@ const CANONICAL_WEB_ENTRIES = Object.entries(applicationOperationAliasMap())
     && APPLICATION_COMMAND_DEFINITIONS[legacy].web)
   .map(([canonical, legacy]) => [canonical.replaceAll('.', '_'), legacy, APPLICATION_COMMAND_DEFINITIONS[legacy]]);
 
+// D1 (wave-observability-2026-08-06/contract.md §D1): the wave lane's web reflex slice — the
+// web-surface analogue of the MCP reflex table (mcp-northbound.mjs:97-100). The five wave verbs
+// stay direct ports (the byte-stable command-table key set pinned by grammar-m3-red must not
+// change), so they are admitted WITHOUT touching APPLICATION_COMMAND_DEFINITIONS. Each entry is
+// [transport, dot-spelled name, capability classes]; the third element is the capability array
+// directly (not a definition object), so COMMAND_CAPABILITY/APPLICATION_COMMAND spreads read it
+// like the entry-set spreads below. Per-verb capability classes are pinned in the contract.
+const WAVE_WEB_ENTRIES = Object.freeze([
+  ['waves_start', 'waves.start', Object.freeze(['control', 'observe'])],
+  ['waves_progress', 'waves.progress', Object.freeze(['observe'])],
+  ['waves_send', 'waves.send', Object.freeze(['control', 'observe'])],
+  ['waves_stop', 'waves.stop', Object.freeze(['emergency_stop', 'observe'])],
+  ['waves_list', 'waves.list', Object.freeze(['observe'])],
+]);
+// D1.2/D1.3 — the wave transports are DIRECT PORTS: validateEnvelope skips
+// validateApplicationCommandArgs for them (WEB_DIRECT_PORT_COMMANDS below) and their argument
+// authority is the port's own closed normalizer (_normalizeWaveStart/_normalizeWaveProgress/
+// _normalizeWaveMemberAction, application.mjs:11692-11774) which the dispatch already runs.
+// ARG_FIELDS per transport is that closed accepted-field set; waves_stop → {reason, runId} is the
+// pinned narrowing (F2) — the web surface never admits the send-lane fields on the stop lane.
+const WAVE_ARG_FIELDS = Object.freeze({
+  waves_start: new Set(['idempotencyKey', 'members']),
+  waves_progress: new Set(['cursor', 'waveId']),
+  waves_send: new Set(['claimGrant', 'delivery', 'message', 'runId']),
+  waves_stop: new Set(['reason', 'runId']),
+  waves_list: new Set(['cursor', 'waveId']),
+});
+const WEB_DIRECT_PORT_COMMANDS = new Set(WAVE_WEB_ENTRIES.map(([transport]) => transport));
+
 // S-1 v2 R-WG-3: advertised web ARG_FIELDS exclude transportHidden fields; the validator still
 // accepts them (acceptance set = advertised ∪ transportHidden).
 function transportHiddenFor(commandName) {
@@ -56,6 +85,7 @@ const COMMAND_CAPABILITY = Object.freeze({
   goal_define: 'goal:define', plan_propose: 'plan:propose', plan_approve: 'plan:approve', goal_plan_status: 'goal:observe',
   ...Object.fromEntries(WEB_APPLICATION_ENTRIES.map(([transport, , definition]) => [transport, definition.capabilities])),
   ...Object.fromEntries(CANONICAL_WEB_ENTRIES.map(([transport, , definition]) => [transport, definition.capabilities])),
+  ...Object.fromEntries(WAVE_WEB_ENTRIES.map(([transport, , capabilities]) => [transport, capabilities])),
 });
 const FENCE_REQUIRED = new Set(['send', 'interrupt', 'kill']);
 const RECONCILABLE = new Set(['goal_define', 'plan_propose', 'plan_approve',
@@ -100,6 +130,7 @@ const ARG_FIELDS = Object.freeze({
   ...Object.fromEntries(CANONICAL_WEB_ENTRIES.map(([transport, name, definition]) => [
     transport, advertisedArgs(definition, name),
   ])),
+  ...Object.fromEntries(Object.entries(WAVE_ARG_FIELDS)),
 });
 const ACCEPTED_ARG_FIELDS = Object.freeze({
   ...Object.fromEntries(Object.entries(ARG_FIELDS).map(([transport, fields]) => [transport, fields])),
@@ -111,7 +142,7 @@ const ACCEPTED_ARG_FIELDS = Object.freeze({
   ])),
 });
 const APPLICATION_COMMAND = Object.freeze(Object.fromEntries(
-  [...WEB_APPLICATION_ENTRIES, ...CANONICAL_WEB_ENTRIES].map(([transport, name]) => [transport, name]),
+  [...WEB_APPLICATION_ENTRIES, ...CANONICAL_WEB_ENTRIES, ...WAVE_WEB_ENTRIES].map(([transport, name]) => [transport, name]),
 ));
 const FORBIDDEN_KEY = /^(?:access[_-]?token|refresh[_-]?token|token|secret|credential|password|api[_-]?key|authorization)$/i;
 const MODEL_POLICY_FIELDS = new Set(['allow', 'deny', 'prefer', 'allowFamilies', 'denyFamilies', 'reasoningEffort', 'serviceTier']);
@@ -229,6 +260,17 @@ function dispatchFailure(cause) {
   if (cause?.name === 'WorkerNotFoundError') return { httpStatus: 404, body: { ok: false, error: { code: 'not_found', message: 'resource not found' } } };
   if (['coordinator_drain_capacity', 'coordinator_drain_incomplete', 'coordinator_draining', 'coordinator_closed'].includes(cause?.code)) return { httpStatus: 409, body: { ok: false, error: { code: cause.code, message: 'coordinator lifecycle conflict' } } };
   if (['worktree_capacity_exceeded', 'worktree_capacity_unavailable'].includes(cause?.code)) return { httpStatus: 503, body: { ok: false, error: { code: cause.code, message: 'workspace capacity refused this dispatch; free repository volume space or raise the deployment capacity floors, then retry' } } };
+  // D5 (wave-observability-2026-08-06/contract.md §D5.1/§D5.2): the wave lane's typed refusals
+  // carry the lane's OWN message byte-identically (W6/F4) plus the {actual, cap, cause, role}
+  // payload — never the fixed mapping strings below, so the web surface mirrors the direct port.
+  if (goalPlanCode === 'wave_member_invalid') return { httpStatus: 409, body: { ok: false, error: {
+    code: goalPlanCode, message: typeof cause?.message === 'string' ? cause.message : 'wave member admission refused',
+    ...(cause?.detail != null ? { detail: cause.detail } : {}),
+  } } };
+  if (goalPlanCode === 'wave_not_found') return { httpStatus: 404, body: { ok: false, error: {
+    code: goalPlanCode, message: typeof cause?.message === 'string' ? cause.message : 'wave not found',
+    ...(cause?.detail != null ? { detail: cause.detail } : {}),
+  } } };
   return { httpStatus: 503, body: { ok: false, error: { code: 'temporarily_unavailable', message: 'command dispatch failed' } } };
 }
 function isRecord(value) { return value !== null && typeof value === 'object' && !Array.isArray(value); }
@@ -360,7 +402,7 @@ function validateEnvelope(envelope) {
   const unknownArg = Object.keys(envelope.args).find((key) => !allowed.has(key));
   if (unknownArg) return 'unknown_argument_field';
   if (containsForbiddenKey(envelope.args)) return 'credential-bearing command fields are forbidden';
-  if (APPLICATION_COMMAND[envelope.command]) {
+  if (APPLICATION_COMMAND[envelope.command] && !WEB_DIRECT_PORT_COMMANDS.has(envelope.command)) {
     try { validateApplicationCommandArgs(APPLICATION_COMMAND[envelope.command], envelope.args); }
     catch { return 'application_command_arguments_invalid'; }
     if (envelope.command === 'run_wait' && envelope.args.timeoutMs > 30_000) return 'application_wait_timeout_exceeds_web_ceiling';
@@ -1462,7 +1504,12 @@ export class WebNorthbound {
         : (card?.readiness ?? null);
       return this._write(res, result(200, {
         ok: true,
-        application: { ...card, readiness, commands: WEB_APPLICATION_ENTRIES.map(([, name]) => name) },
+        // D1.4/F1 — the card advertises the admitted lane BY DERIVATION from the same transport
+        // tables that admit the web verbs (the `([, name]) => name` map over the entry sets), so a
+        // dishonest impl cannot special-case the card. The card lists the DOT-spelled names
+        // (waves.start, ...) beside the existing WEB_APPLICATION_ENTRIES names — never the
+        // underscore transports.
+        application: { ...card, readiness, commands: [...WEB_APPLICATION_ENTRIES, ...WAVE_WEB_ENTRIES].map(([, name]) => name) },
       }));
     }
     const asset = operatorAsset(pathname);

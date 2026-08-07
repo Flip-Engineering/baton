@@ -120,6 +120,8 @@ const PROJECTION_CHECKPOINT_FIELDS = Object.freeze([
   '_spills',
   // D9 (epic #103): replay-derived wave.closed campaign-state records by waveId.
   '_waveClosures',
+  // D2.3 (epic #132): replay-derived wave.started registry rows by waveId.
+  '_waveRegistry',
   '_replManifestAdmissions',
   // REPL-2 (Part G rule 23): gains _replBindings, _replBindingHistory, _replBindingFences.
   '_replBindings', '_replBindingHistory', '_replBindingFences',
@@ -1224,6 +1226,9 @@ export class CoordinationStore {
     // D9 (epic #103): replay-derived wave.closed campaign-state records by waveId. Rebuilt by
     // re-applying the log in _apply; the record's own event seq is the epoch anchor.
     this._waveClosures = new Map();
+    // D2.3 (epic #132): replay-derived wave.started registry rows by waveId — the in-flight wave
+    // set for THIS deployment. Rebuilt by re-applying the log in _apply; wave.closed closes rows.
+    this._waveRegistry = new Map();
     // REFLEX-2 boards: immutable versioned items + per-itemId claims + reports, and a
     // board-scoped, replay-derivable fence counter (the count of orchestrator-authority
     // events per board — NOT the worker FenceTable). All rebuilt purely by re-applying the
@@ -8091,6 +8096,30 @@ export class CoordinationStore {
         this._recoveryDispatches.set(p.workerId, this._validateRecoveryContinuationPayload(p, event, true));
       } else if (['recovery.dispatch_accepted', 'recovery.dispatch_refused'].includes(p?.kind)) {
         this._recoveryDispatches.set(p.workerId, this._validateRecoveryDispositionPayload(p, event, true));
+      } else if (p?.kind === 'wave.started') {
+        // D2.3 (epic #132): the wave registry projection fold. The roster is consumed as a
+        // member-object array only when well-formed; a legacy string-array roster (the shape the
+        // pre-#132 mint produced) keeps its raw strings and waves.list renders each string with
+        // route/scope null (B2/F13). wave_registry_invalid is reserved for genuinely malformed
+        // NEW-shape records only — a roster that is neither a well-formed object-array nor a
+        // well-formed string-array. The per-deployment private store only ever receives THIS
+        // deployment's records, so no row can carry a foreign deploymentId (D3/B3).
+        const roster = p?.roster;
+        const objectRoster = Array.isArray(roster) && roster.length > 0
+          && roster.every((member) => member !== null && typeof member === 'object' && !Array.isArray(member));
+        const stringRoster = Array.isArray(roster) && roster.length > 0
+          && roster.every((member) => typeof member === 'string');
+        if (!objectRoster && !stringRoster) {
+          throw new CoordinationIntegrityError(`wave.started roster is malformed`, 'wave_registry_invalid');
+        }
+        this._waveRegistry.set(p.waveId, freeze({
+          closedAtEventSeq: null,
+          deploymentId: p.deploymentId ?? null,
+          roster: [...roster],
+          startedAtEventSeq: event.seq,
+          state: 'open',
+          waveId: p.waveId,
+        }));
       }
     } else if (event.kind === 'authority.rejected') {
       // Decision 5: authority refusals are their own append-only event kind — the typed reason
@@ -8767,6 +8796,14 @@ export class CoordinationStore {
       // epoch anchor (closedAtEventSeq) — no clocks (G10).
       const closure = this._validateWaveClosedPayload(p);
       this._waveClosures.set(closure.waveId, freeze({ ...clone(closure), closedAtEventSeq: event.seq }));
+      // D2.3/B1 (epic #132): the same top-level record closes the registry row — state flips to
+      // 'closed' with the record's OWN event seq, so waves.list reads only open rows.
+      const registryRow = this._waveRegistry.get(closure.waveId);
+      if (registryRow) {
+        this._waveRegistry.set(closure.waveId, freeze({
+          ...clone(registryRow), closedAtEventSeq: event.seq, state: 'closed',
+        }));
+      }
     } else if (event.kind === 'spill.minted') {
       // Decision 4: a digest-addressed durable spill artifact. Content-addressed (spillId =
       // spill:sha256:<digest of the body's UTF-8 bytes>), idempotent by auth key, replay-derived.
@@ -13326,6 +13363,12 @@ export class CoordinationStore {
 
   waveClosures() {
     return [...this._waveClosures.values()].map(clone);
+  }
+
+  // D2.3 (epic #132): the wave registry projection read — the open+closed rows of the
+  // replay-derived _waveRegistry map, cloned so a reader never mutates the projection.
+  waveRegistry() {
+    return [...this._waveRegistry.values()].map(clone);
   }
 
   ledgerHeadSeq() {

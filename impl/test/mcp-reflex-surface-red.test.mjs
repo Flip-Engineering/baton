@@ -170,7 +170,7 @@ test('Inventory: the combined surface adds the derived S-3 reflex tools, frozen 
   // MCP-W1/W2 (v1.0.1 adjudication): the ordinary surface gains the wave ergonomics, doctor,
   // decision.answer, and the four settlement tools (10 additions); decision.answer moves OUT of
   // the reflex inventory, and the three settlement rows leave the S-3 matrix (ordinary tools).
-  assert.equal(names.length, 85, '64 ordinary/advanced tools + 6 workflow-surface (#87+#48) + 1 waves.run (#114) + 14 legacy-and-S-3 reflex tools');
+  assert.equal(names.length, 86, '64 ordinary/advanced tools + 6 workflow-surface (#87+#48) + 1 waves.run (#114) + 1 waves.list (#132) + 14 legacy-and-S-3 reflex tools');
   const reflexNames = [
     'baton_context_eval', 'baton_decision_list',
     'baton_board_post', 'baton_board_retitle', 'baton_board_reorder', 'baton_board_close', 'baton_board_drop', 'baton_board_read',
@@ -198,12 +198,12 @@ test('Inventory: the ordinary (Web-bridge) surface admits exactly the MCP-W1/W2 
   // tool crosses. M4b: the canonical grammar tools render beside the retained legacy tools.
   // Facade-projection epic (#87+#48): the six workflow-surface tools join between the settlement
   // family and the view verbs.
-  assert.equal(response.result.tools.length, 34);
+  assert.equal(response.result.tools.length, 35);
   assert.deepEqual(response.result.tools.map((tool) => tool.name), [
     'baton_help', 'baton_runs', 'baton_run_start', 'baton_run_inspect', 'baton_run_episode',
     'baton_run_workstreams', 'baton_workstream_notify', 'baton_workstream_stop',
     'baton_run_act', 'baton_run_stop', 'baton_waves_attach',
-    'baton_waves_start', 'baton_waves_progress', 'baton_waves_send', 'baton_waves_stop', 'baton_waves_run',
+    'baton_waves_start', 'baton_waves_progress', 'baton_waves_send', 'baton_waves_stop', 'baton_waves_list', 'baton_waves_run',
     'baton_deployment_doctor', 'baton_decision_answer',
     'baton_scratchpad_elevate', 'baton_scratchpad_settle', 'baton_knowledge_promote', 'baton_knowledge_settlement_lease',
     'baton_run_message_send', 'baton_run_message_receipt', 'baton_run_attention_watch',

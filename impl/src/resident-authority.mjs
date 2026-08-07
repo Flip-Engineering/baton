@@ -109,7 +109,10 @@ function readJson(path, ownerUid) {
   return parsed;
 }
 
-function stableDeploymentId(root, repoId, ownerUid) {
+// #132 D2.2/F3 (wave-observability-2026-08-06/contract.md §D2.2): exported so the deployment host
+// (`openBatonDeployment`) threads the SAME resident deployment id into the BatonApplication options
+// that the ResidentAuthority would later read — one durable identity, no second file.
+export function stableDeploymentId(root, repoId, ownerUid) {
   const path = join(root, 'deployment.json');
   if (!existsSync(path)) {
     try {
