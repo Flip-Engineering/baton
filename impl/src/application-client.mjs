@@ -1533,6 +1533,7 @@ export class BatonRunGroup {
 
 export class BatonClient {
   #application;
+  #repoRoot;
 
   constructor(application) {
     if (!application || typeof application.command !== 'function') {
@@ -1540,8 +1541,14 @@ export class BatonClient {
     }
     this.runs = new BatonRuns(application);
     this.#application = application;
+    // Issue #114: the repository root rides the command port (when the binder knows it) so the
+    // workflow-as-data interpreter's D4 harvest can read the authoritative result sha via git.
+    this.#repoRoot = typeof application.repoRoot === 'string' && application.repoRoot.length > 0
+      ? application.repoRoot : null;
     Object.freeze(this);
   }
+
+  get repoRoot() { return this.#repoRoot; }
 
   get waves() {
     return Object.freeze({
@@ -1560,7 +1567,7 @@ export class BatonClient {
   // Composition v2 rule 3: the recipes library is an embedded-facade accessor over the shipped
   // waves/driver machinery — recipes as data + closed run options, never a new command family.
   get recipes() {
-    return createRecipes(this);
+    return createRecipes(this, this.#repoRoot);
   }
 
   help(topic = 'application', depth = 'outline') {
@@ -1650,6 +1657,9 @@ export function bindBaton(application, principal) {
   }
   return new BatonClient(Object.freeze({
     command: (name, args) => application.command(name, args, principal),
+    // Issue #114: surface the repository root to the client so baton.recipes.runWorkflow's D4
+    // harvest can read the authoritative result sha (the driver knows the repo; the facade did not).
+    repoRoot: application?.driver?.repoRoot ?? application?.driver?.coordinator?._repoRoot ?? null,
   }));
 }
 

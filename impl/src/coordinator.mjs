@@ -10556,7 +10556,10 @@ export class Coordinator {
     // are unwritable for them (the 0/24 demo fence chase). 'current' resolves to the live
     // worker fence at admission; liveness is already bound by the authenticated stream, and
     // the idempotencyKey still carries retry safety.
-    const fenceIsCurrent = opts.expectedFence === 'current';
+    // An absent expectedFence resolves to the live worker fence exactly as the literal 'current'
+    // does: a prose worker's up-channel note is always written at its current turn fence (issue #114
+    // — the emulated elevate up-channel omits the field). A -1 / bad-string fence stays invalid.
+    const fenceIsCurrent = opts.expectedFence === 'current' || opts.expectedFence === undefined;
     if (!(fenceIsCurrent || (Number.isSafeInteger(opts.expectedFence) && opts.expectedFence >= 0))
       || typeof opts.idempotencyKey !== 'string'
       || !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/u.test(opts.idempotencyKey)
