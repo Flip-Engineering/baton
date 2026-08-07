@@ -1,0 +1,15 @@
+{
+  "attempt": "2026-08-07T05:02:01.839Z",
+  "salt": "fc20260807050201",
+  "role": "fix-114-containment",
+  "steps": [
+    {
+      "step": "waves.start",
+      "receipt": {
+        "runs": [
+          "run-896822061f4f5f21ec9e1508a5b0f0f2"
+        ]
+      }
+    }
+  ]
+}

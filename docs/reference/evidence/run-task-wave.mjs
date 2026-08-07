@@ -102,6 +102,10 @@ try {
     // need presence. And a deadline-drained wave with members still pending is never -OK.
     const launchHead = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repo, encoding: 'utf8' }).trim();
     const pending = new Set([ROLE]);
+    // A member that dies (failed/cancelled) must never yield -OK either (the impl-114 opus wave:
+    // the trust gate killed the task AFTER the work committed; the harvest found the boundary
+    // checkpoint and declared -OK over a dead member). Dead ⇒ the harvest is partial recovery.
+    const dead = new Set();
     let approved = false;
     const nudged = new Set();
     const claimed = new Set();
