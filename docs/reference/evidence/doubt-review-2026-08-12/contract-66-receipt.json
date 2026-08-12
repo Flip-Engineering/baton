@@ -1,0 +1,30 @@
+{
+  "attempt": "2026-08-12T04:18:16.742Z",
+  "salt": "cg20260812041816",
+  "role": "contract-66",
+  "steps": [
+    {
+      "step": "waves.start",
+      "receipt": {
+        "runs": [
+          "run-a06d3b7867b6265992a8c77918491f48"
+        ]
+      }
+    },
+    {
+      "step": "dead:contract-66",
+      "receipt": {
+        "phase": "cancelled"
+      }
+    },
+    {
+      "step": "loop-drained",
+      "receipt": {
+        "pending": []
+      }
+    }
+  ],
+  "harvest": {},
+  "harvestStalePinsSkipped": 403,
+  "verdict": "CONTRACT-66-FAILED"
+}
