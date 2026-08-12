@@ -1,4 +1,4 @@
-# Issue #66 — the doubt review path contract (v1.1)
+# Issue #66 — the doubt review path contract (v1.2)
 
 The implementation contract for issue #66: **doubts die with the task partition — the KG
 settlement v1 deliberately doesn't elevate them.** It specifies behavior; it does not amend
@@ -21,8 +21,21 @@ the resolution-prose `wrapHubDerived` framing — plus the open-question re-adju
 qualified) and every citation fix (M1/M2/M3/M5/M7/M8). The blocker → change map is
 `contract-fold.md` (same dir).
 
+**Fold note (v1.2).** This draft folds the #66 blue-team report (`suite-blueteam.md`, same dir —
+verdict NEEDS-FOLD, 12 findings) into v1.1. The fold is in four seams: (1) the `doubt_resolved`
+payload literal gains the doubting `workerId` (Finding 1 — the answer-push coordinates were
+un-addressable without it); (2) the D4 authority umbrella — a resolve with no ACTIVE settlement
+lease (including a revoked/absent lease) refuses `doubt_promote_not_authorized`, while expired and
+foreign-session conditions keep firing the lease codes verbatim (Finding 8; M3 preserved); (3) the
+`doubt_promote_conflict` surface is specified as the command-seam check on the committed resolve key
+with a changed request binding — it fires before the coordinator's state guard, which stays reserved
+for `doubt_promote_stale` (Findings 8/9); (4) the resolve receipt carries the armed push id
+`pushId = \`doubt_answer:${doubtId}\`` so the #79 durable id is observable before that lane lands
+(Finding 12). The finding → change map is `suite-fold-2.md` (same dir).
+
 - **Date:** 2026-08-12
-- **Status:** DRAFT v1.1 — implementation contract (folded from the #66 red-team report).
+- **Status:** DRAFT v1.2 — implementation contract (folded from the #66 red-team report at v1.1,
+  then the #66 blue-team report at v1.2).
 - **Verification HEAD:** `faf4e06d35bba2d1ea53d9d32e3c6d48ff97ee23` ("Baton private effective-tree
   snapshot"), the tree v1.0 was verified against. The red-team re-verified every `file:line`
   citation at the current HEAD (`ac92335d9d85de777edbb8cfe67af00c5f10915f`, the Baton private
@@ -230,6 +243,8 @@ literal order:
 {
   schemaVersion: 1,
   doubtId,
+  workerId,            // the DOUBTING worker — the answer-push address (D6; the v1.2 fold makes it
+                       //   a payload field, Finding 1 — the record was un-addressable without it)
   disposition: 'answered' | 'dismissed',
   resolution: null | <orchestrator hub prose, ≤ 4,096 B — the doubt.resolution.bytes row,
     wrapHubDerived-framed at projection: {worker, text, provenance: 'hub-derived', untrusted: true}
@@ -241,7 +256,8 @@ literal order:
 ```
 
 Idempotency key pinned to `` `knowledge.doubt_resolved:${doubtId}` `` — the same request replays
-exactly; a changed request conflicts.
+exactly; a changed request binding conflicts (`doubt_promote_conflict`, the command-seam check,
+D4 step 0).
 
 **`knowledge.doubt_carried`** — minted by the sweep (D5) when a wave's review window expires with
 an open doubt. Payload fields, literal order:
@@ -351,14 +367,27 @@ validated against it, mirroring `knowledge.promote`'s `serverDerived`/`authority
 
 `coordinator.resolveDoubt(runId, doubtId, disposition, session, {resolution, dismissalReason})`:
 
+0. **The command-seam conflict check (v1.2).** `knowledge.promote_doubt` first consults the
+   committed resolve key (`knowledge.doubt_resolved:${doubtId}`): the SAME request binding replays
+   exactly; a resolve key already committed with a DIFFERENT request binding refuses
+   `doubt_promote_conflict` here, before the coordinator's state guard — the state guard stays
+   reserved for `doubt_promote_stale` (M3; the blue-team Finding 8/9 surface). This is a command-seam
+   property of `knowledge.promote_doubt`, not of the coordinator method: the direct
+   `coordinator.resolveDoubt` seam does not see the request-binding digest and cannot fire it.
 1. **The review-window gate.** Re-derives the active run-orchestrator lease for the `runId`'s
    settlement task server-side (the `settlementLease` leaseId derivation,
    `coordinator.mjs:11552-11559`) and enforces the same #63 D2 XB semantics `admitWorkflowFinding`
    pins (expiry, parent-task liveness, and the `principalId`/`sessionId`/`sessionAuthorityDigest`
    session binding; the store gate at `coordination-store.mjs:16207`, the session binding at
-   `:16228-16251`, the coordinator wrapper at `coordinator.mjs:11428-11430`). A
-   revoked/expired/foreign-session lease fails with the typed lease code before any effect. The
-   review window is the settlement lease's active lifetime — no new clock.
+   `:16228-16251`, the coordinator wrapper at `coordinator.mjs:11428-11430`). **The v1.2 authority
+   umbrella:** NO ACTIVE settlement lease for the caller — including a revoked or swept lease, whose
+   cancellation bumped the settlement task's version so the re-derived leaseId no longer exists —
+   refuses `doubt_promote_not_authorized`. The lease family is otherwise preserved (M3, one code per
+   condition): an EXPIRED lease and a FOREIGN-session binding still fire the typed lease codes
+   verbatim (`run_orchestrator_lease_expired`, `run_orchestrator_lease_not_found`,
+   `run_orchestrator_session_mismatch`) — only the no-active-lease condition composes into the
+   doubt-specific authority code, so the resolve caller's failure mode names the doubt seam, not the
+   store gate. The review window is the settlement lease's active lifetime — no new clock.
 2. **Closed-input validation.** `disposition: 'answered'` requires a non-empty bounded
    `resolution`; `'dismissed'` requires a `dismissalReason` from the closed enum
    `['deferred','duplicate','out_of_scope','unfounded']`. Malformed or missing fields fail typed.
@@ -372,6 +401,10 @@ validated against it, mirroring `knowledge.promote`'s `serverDerived`/`authority
 4. **The receipted transition.** Mints `knowledge.doubt_resolved` (D2). If `answered`, sets
    `pushRequested: true` — the #79 push seam (D6). **No Finding, no KG node, no board item, no
    `knowledge.workflow_admitted`, no scratch-fact** — the taxonomy boundary is structural.
+5. **The resolve receipt (v1.2).** The command returns the receipt; for an `answered` doubt the
+   receipt carries the armed push id `pushId = \`doubt_answer:${doubtId}\`` — the #79 durable id made
+   observable before that lane lands (GT6), so the D6 coordinate is RED-to-green pinning without a
+   delivery receipt. The push item itself stays #79's own surface until that lane lands.
 
 ### D5 — The settle composition: elevate → raise → sweep, never silently dropped
 
@@ -408,9 +441,12 @@ including the elevated-but-unraised path, which the sweep closes by minting `dou
 An `answered` doubt arms the #79 push back to the worker. The doubt side composes with the #79
 delivery push contract — it does not re-specify the push machinery:
 
-- `knowledge.doubt_resolved` carries `pushRequested: true`, the doubt's `workerId`, `doubtId`, and
-  the bounded `resolution` — exactly the coordinates the #79 lane needs to compose a push item
-  (worker-addressed by identity, never by content — #79 D3).
+- `knowledge.doubt_resolved` carries `pushRequested: true`, the doubt's `workerId` (the doubting
+  worker — the push address, Finding 1), `doubtId`, and the bounded `resolution` — exactly the
+  coordinates the #79 lane needs to compose a push item (worker-addressed by identity, never by
+  content — #79 D3).
+- The resolve receipt carries the armed push id `pushId = \`doubt_answer:${doubtId}\`` (D4 step 5,
+  Finding 12) — the durable id is observable before the lane lands (GT6).
 - The push item is a new push-qualified kind **`doubt_answer`** added to the #79 push set: framed
   `[attention/untrusted]`, durable id `` `doubt_answer:${doubtId}` ``, still-pending predicate =
   the doubt is `answered` and the item is not yet read (the #79 D4 delivered-then-read derivation;
@@ -455,18 +491,25 @@ The hub composes the doubt surface and the resolve act (the worker never request
 fire on the serving/resolve path when the act cannot proceed lawfully. Codes follow the registry's
 snake_case family (`scratchpad_settlement_not_authorized`, `board_title_exceeded`):
 
-- **`doubt_promote_not_authorized`** — no active run-orchestrator settlement lease for the `runId`
-  (D4 gate; the #63 XB lease-code family, never a new clock). The revoked/expired/foreign-session
-  conditions fire the lease codes verbatim (`run_orchestrator_lease_not_found`,
-  `run_orchestrator_session_mismatch`, expired) — one code per condition, no overlap (M3).
+- **`doubt_promote_not_authorized`** — the resolve caller holds no ACTIVE run-orchestrator
+  settlement lease for the `runId` (D4 step 1, the v1.2 authority umbrella). The no-active-lease
+  condition — including a revoked/swept lease whose settlement-task cancellation bumped the
+  re-derived leaseId out of existence — composes into this doubt-specific code, never a bare store
+  code, so the failure names the doubt seam. The lease family is otherwise preserved (M3, one code
+  per condition): an EXPIRED lease and a FOREIGN-session binding still fire the typed lease codes
+  verbatim (`run_orchestrator_lease_expired`, `run_orchestrator_lease_not_found`,
+  `run_orchestrator_session_mismatch`). No new clock.
 - **`doubt_promote_invalid`** — malformed `doubtId`/`disposition`/input; `answered` without a
   bounded `resolution`, `dismissed` without a closed `dismissalReason`.
 - **`doubt_promote_unknown`** — the `doubtId` is not a raised doubt record.
 - **`doubt_promote_stale`** — the doubt is not in state `reviewed` (already resolved/carried) —
   reserved for the state guard only (D4 step 3); the expired review window is the step-1 lease
   code, never this code (M3).
-- **`doubt_promote_conflict`** — same idempotency key, different request binding
-  (`knowledge.doubt_resolved:${doubtId}`).
+- **`doubt_promote_conflict`** — the resolve key `knowledge.doubt_resolved:${doubtId}` was already
+  committed with a DIFFERENT request binding (D4 step 0, the v1.2 command-seam check). It fires on
+  the `knowledge.promote_doubt` command seam before the coordinator's state guard — a same-key
+  re-promote is never `doubt_promote_stale` (the state guard preempts only when no resolve was
+  committed for the key, e.g. a second resolve through the direct coordinator seam).
 - **`doubt_resolution_exceeded`** — the resolution exceeds the `doubt.resolution.bytes` row
   (D7); the coaching shape is `composeFrameLimitRefusal` output (`limits.mjs:40-42`).
 - **`doubt_dismissal_invalid`** — a `dismissalReason` outside
@@ -520,10 +563,12 @@ fixed-clock discipline (as #33 Part F does); no test uses `Date.now()` or a live
   never silently dropped. RED: same as R4.
 - **R6 — the answer push (v1 honesty, HOLE-6).** An answered doubt's `doubt_resolved` event carries
   `{workerId, doubtId, resolution, pushRequested: true}` — the #79 `doubt_answer` push coordinates
-  (worker-addressed by identity, durable id `doubt_answer:${doubtId}`). The v1 delivery claim is
-  delivered-when-recovered — the coordinates are the RED-to-green, never a wire-acked delivery.
-  RED (this tree): the resolved-event coordinates are absent; the `## Pending attention` render is
-  #79's own surface and stays RED under #79's pins until that lane lands.
+  (worker-addressed by identity, durable id `doubt_answer:${doubtId}`), and the resolve receipt
+  carries `pushId = \`doubt_answer:${doubtId}\`` (D4 step 5) so the durable id is observable before
+  the lane lands. The v1 delivery claim is delivered-when-recovered — the coordinates are the
+  RED-to-green, never a wire-acked delivery. RED (this tree): the resolved-event coordinates are
+  absent; the `## Pending attention` render is #79's own surface and stays RED under #79's pins
+  until that lane lands.
 - **R7 — carry at the review boundary (HOLE-2).** A doubt still `reviewed` when its wave's
   settlement lease is revoked is carried by the sweep (`knowledge.doubt_carried`, `carriedBy:
   'review_window_expired'`), project-persistent and queryable across waves; it is never silently
