@@ -1,0 +1,30 @@
+{
+  "attempt": "2026-08-12T04:19:42.275Z",
+  "salt": "ay20260812041942",
+  "role": "research-ax-triage",
+  "steps": [
+    {
+      "step": "waves.start",
+      "receipt": {
+        "runs": [
+          "run-5377833bddb799bf52ed4209ce1efa27"
+        ]
+      }
+    },
+    {
+      "step": "dead:research-ax-triage",
+      "receipt": {
+        "phase": "cancelled"
+      }
+    },
+    {
+      "step": "loop-drained",
+      "receipt": {
+        "pending": []
+      }
+    }
+  ],
+  "harvest": {},
+  "harvestStalePinsSkipped": 403,
+  "verdict": "AX-TRIAGE-FAILED"
+}
