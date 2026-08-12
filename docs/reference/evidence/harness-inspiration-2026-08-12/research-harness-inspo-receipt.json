@@ -1,0 +1,15 @@
+{
+  "attempt": "2026-08-12T19:45:51.617Z",
+  "salt": "hk20260812194551",
+  "role": "research-harness-inspo",
+  "steps": [
+    {
+      "step": "waves.start",
+      "receipt": {
+        "runs": [
+          "run-b8f572b95c63b380bf0ff2dce82a166d"
+        ]
+      }
+    }
+  ]
+}
