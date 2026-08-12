@@ -1,0 +1,30 @@
+{
+  "attempt": "2026-08-12T04:20:01.129Z",
+  "salt": "hj20260812042001",
+  "role": "research-harness-inspo",
+  "steps": [
+    {
+      "step": "waves.start",
+      "receipt": {
+        "runs": [
+          "run-9fd348d0021cb1fb1bdfd7644b167f94"
+        ]
+      }
+    },
+    {
+      "step": "dead:research-harness-inspo",
+      "receipt": {
+        "phase": "cancelled"
+      }
+    },
+    {
+      "step": "loop-drained",
+      "receipt": {
+        "pending": []
+      }
+    }
+  ],
+  "harvest": {},
+  "harvestStalePinsSkipped": 403,
+  "verdict": "HARNESS-INSPO-FAILED"
+}
