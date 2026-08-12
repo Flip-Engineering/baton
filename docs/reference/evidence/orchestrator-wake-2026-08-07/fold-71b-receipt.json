@@ -1,0 +1,39 @@
+{
+  "attempt": "2026-08-07T09:08:05.605Z",
+  "salt": "f820260807090805",
+  "role": "fold-71b",
+  "steps": [
+    {
+      "step": "waves.start",
+      "receipt": {
+        "runs": [
+          "run-f081cc81530681004f83a5f036f205e0"
+        ]
+      }
+    },
+    {
+      "step": "terminal:fold-71b",
+      "receipt": {
+        "phase": "work_completed"
+      }
+    },
+    {
+      "step": "loop-drained",
+      "receipt": {
+        "pending": []
+      }
+    }
+  ],
+  "harvest": {
+    "fold-71b": {
+      "pin": "7e77bd203937c77f38d648d8ba7be69ffcb4ab9c",
+      "paths": [
+        "impl/test/orchestrator-wake-red.test.mjs",
+        "docs/reference/evidence/orchestrator-wake-2026-08-07/suite-fold-2.md",
+        "docs/reference/evidence/orchestrator-wake-2026-08-07/suite-draft-notes.md"
+      ]
+    }
+  },
+  "harvestStalePinsSkipped": 392,
+  "verdict": "FOLD-71B-OK"
+}
