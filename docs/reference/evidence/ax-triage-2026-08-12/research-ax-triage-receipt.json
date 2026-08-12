@@ -1,0 +1,15 @@
+{
+  "attempt": "2026-08-12T19:45:38.383Z",
+  "salt": "az20260812194538",
+  "role": "research-ax-triage",
+  "steps": [
+    {
+      "step": "waves.start",
+      "receipt": {
+        "runs": [
+          "run-e5706314df143efcc9be62a809b39f26"
+        ]
+      }
+    }
+  ]
+}
