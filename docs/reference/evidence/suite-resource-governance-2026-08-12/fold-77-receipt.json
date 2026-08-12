@@ -1,0 +1,30 @@
+{
+  "attempt": "2026-08-12T20:30:33.113Z",
+  "salt": "f220260812203033",
+  "role": "fold-77",
+  "steps": [
+    {
+      "step": "waves.start",
+      "receipt": {
+        "runs": [
+          "run-a02d492c0e3bebabecf19acbfdd92c41"
+        ]
+      }
+    },
+    {
+      "step": "dead:fold-77",
+      "receipt": {
+        "phase": "failed"
+      }
+    },
+    {
+      "step": "loop-drained",
+      "receipt": {
+        "pending": []
+      }
+    }
+  ],
+  "harvest": {},
+  "harvestStalePinsSkipped": 413,
+  "verdict": "FOLD-77-FAILED"
+}
