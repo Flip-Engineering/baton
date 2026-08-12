@@ -1,4 +1,4 @@
-# Issue #66 — the doubt review path contract (v1.0 DRAFT)
+# Issue #66 — the doubt review path contract (v1.1)
 
 The implementation contract for issue #66: **doubts die with the task partition — the KG
 settlement v1 deliberately doesn't elevate them.** It specifies behavior; it does not amend
@@ -11,14 +11,26 @@ taxonomy (docs/34; `kg-activation-decisions.md`; phases 49/53 handoffs), and the
 ruling (`docs/reference/evidence/kg-settlement-2026-08-01/redteam-lifecycle.md` Attack 6,
 `:354-400`).
 
+**Fold note (v1.1).** This draft folds the #66 red-team report (`contract-redteam.md`, same dir —
+NOT FOLD-READY, 7 numbered blockers in §E) into v1.0. The shape decision — composition of (b)
+`knowledge.promote_doubt` + the durable doubt record, on the D4 selection change — survives; the
+fold is in the seams: the settle-ritual ordering (raise before sweep, widened carry predicate), the
+`promote_doubt` lease re-derivation (the #73 forge class), the `view.open_doubts.bytes` bound, the
+queryable surface's orchestrator gate, the shared-ceiling sub-cap, the answer-push v1 honesty, and
+the resolution-prose `wrapHubDerived` framing — plus the open-question re-adjudication (OQ4
+qualified) and every citation fix (M1/M2/M3/M5/M7/M8). The blocker → change map is
+`contract-fold.md` (same dir).
+
 - **Date:** 2026-08-12
-- **Status:** DRAFT v1.0 — implementation contract.
+- **Status:** DRAFT v1.1 — implementation contract (folded from the #66 red-team report).
 - **Verification HEAD:** `faf4e06d35bba2d1ea53d9d32e3c6d48ff97ee23` ("Baton private effective-tree
-  snapshot"), the tree this v1.0 draft was verified against. Every `file:line` citation below was
-  re-verified with `grep -an`/`sed -n` at this HEAD. The brief's "two NUL files" —
-  `impl/src/coordination-store.mjs` and `impl/src/coordinator.mjs` — are cited only at
+  snapshot"), the tree v1.0 was verified against. The red-team re-verified every `file:line`
+  citation at the current HEAD (`ac92335d9d85de777edbb8cfe67af00c5f10915f`, the Baton private
+  effective-tree snapshot) with `grep -an`/`sed -n`; `git diff` over `impl/src` between the two
+  HEADs is **empty**, so every line number survives the snapshot bump. The brief's "two NUL files" —
+  `impl/src/application.mjs` and `impl/src/coordination-store.mjs` — are cited only at
   grep/sed-verified points, never whole-file reads; every anchor in `impl/src/wave-driver.mjs`,
-  `impl/src/application.mjs`, `impl/src/application-semantics.mjs`, `impl/src/messages.mjs`, and
+  `impl/src/coordinator.mjs`, `impl/src/application-semantics.mjs`, `impl/src/messages.mjs`, and
   `impl/src/limits.mjs` was likewise grep/sed-verified (with `limits.mjs` also whole-file read — it
   is 131 lines and reads clean).
 - **Brief:** `contract-66-brief.md` (same dir) — read in full; the issue body (`gh issue view 66`)
@@ -42,8 +54,9 @@ D8 frames); (7) the shipped machinery at the verification HEAD (`coordinator.mjs
 Scope of the rung, in one sentence: **an elevated doubt becomes a durable, queryable, reviewed,
 answerable record — a doubt raised into the review surface at the settle ritual, resolved by an
 explicit orchestrator command distinct from Finding admission, carried into the project's doubt
-surface if unanswered at the review boundary, and pushed back to its worker when answered — never
-a silent sink and never an auto-candidate into the Finding graph.**
+surface if unanswered at the review boundary, and armed for push back to its worker when answered
+(delivered-when-recovered) — never a silent sink and never an auto-candidate into the Finding
+graph.**
 
 ---
 
@@ -157,22 +170,36 @@ source into a shared successor with `scratchFactId: null` for non-notes
 Consequences, pinned:
 
 - A doubt's task-settle disposition is `result:'elevated', reasonCode:'selected'` with the shared
-  successor as `targetId` — never `orchestrator_skipped` (`coordination-store.mjs:14296-14305`).
+  successor as `targetId` under a driven selection — never `orchestrator_skipped`
+  (`coordination-store.mjs:14296-14305`); a no-driver run dispositions it `not_elevated/no_driver`
+  like every other unselected row (the rule-20 fallback, `coordination-store.mjs:14304`) — the
+  same honest degenerate receipt notes/plans get, not a new sink (M8).
 - The shared successor carries `scratchFactId: null` (GT2) — no bridge fact, so the taxonomy
   boundary holds structurally (GT5). A doubt is visible to the orchestrator's scratchpad
   projection as a `{kind:'doubt', question, context}` shared entry (GT7).
 - The shared-partition ceiling `MAX_SCRATCHPAD_SHARED_ENTRIES` (512, scratchpad rule 8) is the
-  per-wave doubt-count resource bound — the natural throttle, not a new numeric cap.
+  per-wave shared resource bound. Because doubts now share the pool, the elevation batch is
+  prevalidated as a whole against the ceiling (rules 19/20 — `scratchpad_partition_exhausted`
+  before any successor/fact/reap), so a doubt-heavy member would starve its own notes through the
+  shared ceiling. Pin a derived sub-cap that keeps the non-doubt path byte-identical to v1.0:
+  within the 512, doubts ≤ **384** and notes+plans ≥ **128** (a 3:1 reservation derived from the
+  existing ceiling — never a new arbitrary cap; HOLE-5).
 - The direct `scratchpad.elevate` command may also select doubts; whether a doubt is *raised into
   the review surface* is a ritual act (D2), not an elevation side effect — a doubt elevated by a
-  direct command is visible in shared and is raised by the next ritual scan.
+  direct command is visible in shared and is raised by the ritual's raise scan (D2), which runs
+  before the sweep and only for its own wave; a post-ritual direct elevation is not raised by any
+  later ritual (OQ4).
 
 ### D2 — The durable doubt record + lifecycle
 
 A doubt record is a durable, replay-derived row in the coordination store, minted by the settle
 ritual (`coordinator.settlementLease`), not by generic elevation. Three new event kinds, each
 folded, checkpointed, and inventory-listed exactly as #33's scratchpad kinds are
-(`scratchpad-decisions.md` rules 10-11):
+(`scratchpad-decisions.md` rules 10-11): each `knowledge.doubt_*` kind joins the folded
+`knowledge` map the store exposes through `snapshot()` — the folded map + the
+`PROJECTION_CHECKPOINT_FIELDS` extension + the `snapshot()` exposure + the event-kind inventory
+addition, the same four seams #33 rule 11 pins for its scratchpad kinds (M5). The projection is
+the folded map, never a ledger scan — rule 11 forbids a fold that scans the whole ledger.
 
 **`knowledge.doubt_raised`** — minted for every `kind:'doubt'` entry the ritual finds in a
 member's shared partition (`coordinator.mjs:11522-11526` is the scan site; it currently reads
@@ -204,8 +231,10 @@ literal order:
   schemaVersion: 1,
   doubtId,
   disposition: 'answered' | 'dismissed',
-  resolution: null | <orchestrator answer prose, ≤ 4,096 B — the doubt.resolution.bytes row>,
-  dismissalReason: null | 'out_of_scope' | 'duplicate' | 'unfounded' | 'deferred',
+  resolution: null | <orchestrator hub prose, ≤ 4,096 B — the doubt.resolution.bytes row,
+    wrapHubDerived-framed at projection: {worker, text, provenance: 'hub-derived', untrusted: true}
+    (HOLE-7); never 'model-authored', never 'hub-computed'>,
+  dismissalReason: null | 'deferred' | 'duplicate' | 'out_of_scope' | 'unfounded',
   answeredBy: 'orchestrator',
   pushRequested: boolean   // true iff answered — the #79 push seam (D6)
 }
@@ -242,12 +271,25 @@ The state is the latest event for the `doubtId` (raised → resolved → carried
 field. The `knowledge.doubts` projection (D3) renders `reviewed`/`answered`/`dismissed`/`carried`
 records; `open` worker-partition doubts stay on the scratchpad projection.
 
+**No stateless gap (HOLE-2).** There is no undefined state between `open` and `reviewed`: a
+`kind:'doubt'` shared successor with no `doubt_raised` is a *receipted contradiction*, not a
+state. The ritual ordering (D5 — elevate → raise → sweep) guarantees every elevated doubt is raised
+before the sweep runs, so the only elevated-but-unraised doubts the sweep can meet are the
+raise-refused/errored cases and post-ritual direct elevations — each closed by the sweep's widened
+carry step, which mints `doubt_raised` (if absent) + `doubt_carried` together when the wave's
+settlement lease is revoked (D5). No path leaves a doubt with only an unqueried
+`scratchpad.entry_elevated` event.
+
 ### D3 — The queryable review surface: `knowledge.doubts` + `knowledge.openDoubts`
 
 **The read.** New embedded-only, orchestrator-addressed observe row `knowledge.doubts` on the
-application-semantics registry (kernel profile, observe effect, embedded surface only — the same
-embedded-only posture as the settlement rows, `application-semantics.mjs:1520-1527`). Input
-`{waveId?, state?, before?, limit?}`, output the bounded doubt records with their frames:
+application-semantics registry (kernel profile, observe effect, embedded surface only — the genuine
+embedded-only precedent is `board.claim`/`board.report` at `application-semantics.mjs:1418-1439`;
+the settlement rows are `surfaces: ['embedded', 'mcp']` and `baton_knowledge_settlement_lease` is a
+live MCP tool gated by a settlement capability class, `mcp-northbound.mjs:108/:138/:613`, so they
+are NOT the embedded-only precedent — the v1.0 justification is corrected here (M1); the
+embedded-only design of the doubt rows is unchanged). Input `{waveId?, state?, before?, limit?}`,
+output the bounded doubt records with their frames:
 
 ```js
 {
@@ -255,24 +297,38 @@ embedded-only posture as the settlement rows, `application-semantics.mjs:1520-15
   doubts: [{
     doubtId, state,           // reviewed | answered | dismissed | carried
     runId, waveId, taskId, workerId,
-    question: Prose,          // {worker, text, provenance: 'model-authored', untrusted: true}
+    question: Prose,          // wrapProse — {worker, text, provenance: 'model-authored', untrusted: true}
     context: null | Prose,
-    resolution: null | Prose,
-    dismissalReason: null | 'out_of_scope' | 'duplicate' | 'unfounded' | 'deferred',
+    resolution: null | Prose, // wrapHubDerived — {worker, text, provenance: 'hub-derived', untrusted: true}
+    dismissalReason: null | 'deferred' | 'duplicate' | 'out_of_scope' | 'unfounded',
     raisedSeq, resolvedSeq, carriedSeq   // null until the transition exists
   }],
-  nextBefore,               // keyset continuation, exact #33 rule-15 predicate discipline
+  nextBefore,               // keyset continuation; the exact doubt-surface predicate is spelled out below
   openDoubtsTruncated
 }
 ```
 
 - Sorted by `(raisedSeq DESC, doubtId ASC)` using the existing `compareCanonicalStrings` comparator
-  (the `coordination-store.mjs:17` import family) — no `localeCompare` anywhere.
-- Bounded by two new `FRAME_LIMITS` rows (D7), shed-flagged, never silent truncation of a row.
-- `waveId` absent = the project surface across waves; `state` filters the derived state; `before`/
-  `limit` page exactly as the #33 keyset predicate (scratchpad rule 15).
-- **A record's prose renders UNTRUSTED-framed (GT7):** `question`, `context`, and `resolution`
-  are wrapped `{worker, text, provenance: 'model-authored', untrusted: true}` — never a raw string.
+  (the `coordination-store.mjs:17` import family) — no `localeCompare` anywhere. The keyset
+  predicate for `before`/`limit` is spelled out, not deferred: `raisedSeq < c || (raisedSeq === c
+  && doubtId > d)` for a cursor `{c, d}` — the doubt surface's own predicate, adapted from (not
+  identical to) #33 rule 15's `(createdEvent, entryId)` keyset (M7).
+- Bounded by two new `FRAME_LIMITS` rows (D7), shed-flagged, never silent truncation of a row; one
+  answered record renders inside the `view.open_doubts.bytes` = 8192 bound (D7, HOLE-1).
+- `waveId` absent = the project surface across waves; `state` filters the derived state.
+- **Authorization (pinned, HOLE-4).** The orchestrator gate is a mechanism, not a declaration. A
+  `waveId`-named read requires the caller to hold the active run-orchestrator lease for that run
+  (the D4 server-side lease re-derivation, `coordinator.mjs:11552-11559`); the project surface
+  (`waveId` absent) requires the deployment's top-level orchestrator principal — the same
+  server-derived authority the settlement rows use. The row is dispatched through a direct-port
+  branch in `application.command`'s hardcoded if-chain (the settlement-branch shape at
+  `application.mjs:12493-12495` — the dispatch does not auto-route registry rows), and
+  `doubt_surface_unavailable` fires exactly when neither authority holds or the wave is unknown.
+- **A record's prose renders UNTRUSTED-framed (GT7, HOLE-7):** the doubting worker's `question`/
+  `context` wrap via `wrapProse` — `{worker, text, provenance: 'model-authored', untrusted: true}` —
+  and the orchestrator's `resolution` wraps via `wrapHubDerived` — `{worker, text, provenance:
+  'hub-derived', untrusted: true}` (the #79 hub-prose constructor; a resolution is never
+  `model-authored` and never `hub-computed`). Never a raw string.
 
 **The count.** The ritual's receipt and the wave receipt/outline gain `knowledge.openDoubts` — the
 count of `reviewed` doubts for the wave — zero as `0`, never missing, mirroring
@@ -286,42 +342,54 @@ New embedded-only kernel command row `knowledge.promote_doubt` on the applicatio
 registry, distinct from `knowledge.promote` (Finding admission). Input
 `{runId, doubtId, disposition, resolution?, dismissalReason?}`; `serverDerived:
 ['actor', 'principalId', 'sessionId']`; `authorityFields: ['runId', 'doubtId', 'disposition']`;
-`liveMethod: 'resolveDoubt'`.
+`liveMethod: 'resolveDoubt'`. **The lease is never a caller field (HOLE-3):** the active
+run-orchestrator lease for the `runId`'s settlement task is re-derived server-side from the calling
+session — the same leaseId derivation `settlementLease` already pins
+(`coordinator.mjs:11552-11559`) — and `principalId`/`sessionId`/`sessionAuthorityDigest` are
+validated against it, mirroring `knowledge.promote`'s `serverDerived`/`authorityFields` discipline
+(`application-semantics.mjs:1512-1514`).
 
 `coordinator.resolveDoubt(runId, doubtId, disposition, session, {resolution, dismissalReason})`:
 
-1. **The review-window gate.** Enforces the same active run-orchestrator lease semantics #63 D2 XB
-   pins for `admitWorkflowFinding` (expiry, parent-task liveness, and the
-   `principalId`/`sessionId`/`sessionAuthorityDigest` session binding; the store gate at
-   `coordination-store.mjs:16207`, the coordinator wrapper at `coordinator.mjs:11428-11430`). A
-   revoked/expired/foreign-session lease fails with the typed code before any effect. The review
-   window is the settlement lease's active lifetime — no new clock.
+1. **The review-window gate.** Re-derives the active run-orchestrator lease for the `runId`'s
+   settlement task server-side (the `settlementLease` leaseId derivation,
+   `coordinator.mjs:11552-11559`) and enforces the same #63 D2 XB semantics `admitWorkflowFinding`
+   pins (expiry, parent-task liveness, and the `principalId`/`sessionId`/`sessionAuthorityDigest`
+   session binding; the store gate at `coordination-store.mjs:16207`, the session binding at
+   `:16228-16251`, the coordinator wrapper at `coordinator.mjs:11428-11430`). A
+   revoked/expired/foreign-session lease fails with the typed lease code before any effect. The
+   review window is the settlement lease's active lifetime — no new clock.
 2. **Closed-input validation.** `disposition: 'answered'` requires a non-empty bounded
-   `resolution`; `'dismissed'` requires a `dismissalReason` from the closed enum. Malformed or
-   missing fields fail typed. `resolution` is orchestrator-authored prose, bounded by the
-   `doubt.resolution.bytes` row (D7), framed UNTRUSTED at projection.
+   `resolution`; `'dismissed'` requires a `dismissalReason` from the closed enum
+   `['deferred','duplicate','out_of_scope','unfounded']`. Malformed or missing fields fail typed.
+   `resolution` is orchestrator-authored hub prose, bounded by the `doubt.resolution.bytes` row
+   (D7), framed with `wrapHubDerived` at projection — `{worker, text, provenance: 'hub-derived',
+   untrusted: true}` per #79; it is never `model-authored` and never `hub-computed` (HOLE-7).
 3. **State guard.** The `doubtId` must resolve to a raised doubt in state `reviewed`. An
-   already-resolved/carried doubt, an unknown `doubtId`, or a doubt whose lease has expired all
-   fail typed — never a silent no-op.
+   already-resolved/carried doubt or an unknown `doubtId` fails typed (`doubt_promote_unknown` /
+   `doubt_promote_stale`) — never a silent no-op. An expired review window is the step-1 lease
+   gate's typed code, never `doubt_promote_stale` (M3).
 4. **The receipted transition.** Mints `knowledge.doubt_resolved` (D2). If `answered`, sets
    `pushRequested: true` — the #79 push seam (D6). **No Finding, no KG node, no board item, no
    `knowledge.workflow_admitted`, no scratch-fact** — the taxonomy boundary is structural.
 
-### D5 — The settle composition: surface → resolve → carry, never silently dropped
+### D5 — The settle composition: elevate → raise → sweep, never silently dropped
 
-At the settle ritual (`coordinator.settlementLease`), in order:
+At the settle ritual (`coordinator.settlementLease`), in order — **raise runs BEFORE the sweep**,
+so an elevate-without-raise cannot escape receipt (HOLE-2):
 
-1. **Sweep** (existing, `coordinator.mjs:11499` → `coordination-store.mjs:12556`). The sweep's
-   per-revoked-lease step now also **carries** the wave's open doubts: for every doubt of a revoked
-   settlement lease's wave still in state `reviewed`, mint `knowledge.doubt_carried` with the
-   pinned key. This is the review boundary: the lease's active lifetime is the review window; after
-   the sweep revokes it, an unresolved doubt is carried — project-persistent, queryable via
-   `knowledge.doubts`, never silently dropped. The sweep's retirement of open board items stays
-   note-candidacy-only (GT5).
-2. **Elevate** (D1): note+plan+doubt.
-3. **Raise** (D2): scan each member's shared partition; mint `knowledge.doubt_raised` for every
+1. **Elevate** (D1): note+plan+doubt, within the derived sub-cap (D1).
+2. **Raise** (D2): scan each member's shared partition; mint `knowledge.doubt_raised` for every
    doubt shared entry (idempotent by `waveId:sharedEntryId` — re-drive-safe and
-   complete-with-respect-to-elevated-doubts).
+   complete-with-respect-to-elevated-doubts). Every elevated doubt is `reviewed` before any carry
+   step runs.
+3. **Sweep** (existing, `coordinator.mjs:11499` → `coordination-store.mjs:12556`), with the
+   **widened carry predicate**: for every doubt shared entry of a revoked settlement lease's wave
+   not in `answered`/`dismissed`, mint `doubt_raised` (if absent) + `doubt_carried` together in the
+   one sweep (the elevated-but-unraised contradiction, D2). This is the review boundary: the
+   lease's active lifetime is the review window; after the sweep revokes it, an unresolved doubt is
+   carried — project-persistent, queryable via `knowledge.doubts`, never silently dropped. The
+   sweep's retirement of open board items stays note-candidacy-only (GT5).
 4. **Materialize** the review surface when `members === null || elevatedNotes.length >= 1 ||
    elevatedDoubts.length >= 1` (`coordinator.mjs:11532` currently gates on notes only — a
    doubts-only wave must still mint a review surface). Board candidacy stays note-only.
@@ -330,12 +398,14 @@ At the settle ritual (`coordinator.settlementLease`), in order:
    (D4) while the lease is active.
 
 The doubt's honest fate at the review boundary is therefore one of three receipted outcomes:
-**answered** (resolution pushed to the worker, D6), **dismissed** (named closed disposition), or
-**carried** (project-persistent). There is no path where a doubt is dropped without a receipt.
+**answered** (resolution armed for push, D6), **dismissed** (named closed disposition), or
+**carried** (project-persistent). There is no path where a doubt is dropped without a receipt —
+including the elevated-but-unraised path, which the sweep closes by minting `doubt_raised` +
+`doubt_carried` together.
 
-### D6 — The answer push: composing #79's delivery lane (the closed loop)
+### D6 — The answer push: arming #79's `doubt_answer` lane (v1 honesty)
 
-An `answered` doubt closes the loop back to the worker. The doubt side composes with the #79
+An `answered` doubt arms the #79 push back to the worker. The doubt side composes with the #79
 delivery push contract — it does not re-specify the push machinery:
 
 - `knowledge.doubt_resolved` carries `pushRequested: true`, the doubt's `workerId`, `doubtId`, and
@@ -350,9 +420,14 @@ delivery push contract — it does not re-specify the push machinery:
   of `task.brief` (`briefDigest = canonicalDigest(activeTask.brief)` at `coordinator.mjs:5502`,
   byte-stable under the KG-3 briefing discipline, `coordinator.mjs:10512`).
 
-Because the #79 lane is not yet landed (GT6), the doubt rung's RED-to-green is the
-`doubt_resolved` event carrying the push coordinates; the `## Pending attention` render of
-`doubt_answer` is #79's own implementation surface (RED under #79's pins until it lands).
+**v1 honesty (HOLE-6).** The v1.0 "closes the loop back to the worker" overstates the rung: the
+doubting worker's run is settled and may never respawn, and #79 composes the `## Pending attention`
+block only at spawn/recovery — so the answer can sit pending indefinitely. The v1 delivery claim is
+**delivered-when-recovered**: the answer is rendered only when that worker is recovered/respawned by
+a later run; there is never a wire-acked delivery. The RED-to-green for this rung is the
+`doubt_resolved` event carrying the push coordinates — not a delivery receipt. Because the #79 lane
+is not yet landed (GT6), the `## Pending attention` render of `doubt_answer` is #79's own
+implementation surface (RED under #79's pins until it lands).
 
 ### D7 — Frame bounds (frame economics #89 — one registry, no re-declare)
 
@@ -361,10 +436,13 @@ Three rows added to the ONE `FRAME_LIMITS` registry (`limits.mjs:53-110`; the no
 
 - `view.open_doubts.items` = **8** (items), class `view`, graceful `'shed-flagged'` — derived from
   `view.knowledge_slice.items` (8, `limits.mjs:101`), the closest review-surface item bound.
-- `view.open_doubts.bytes` = **4096** (bytes), class `view`, graceful `'shed-flagged'` — derived
-  from `view.attention_text.bytes` (4096, `limits.mjs:99`); a single doubt's full frame (question
-  ≤ 1,024 B + context ≤ 2,048 B + prose wrapper) renders inside it, and the item bound then governs
-  how many render.
+- `view.open_doubts.bytes` = **8192** (bytes), class `view`, graceful `'shed-flagged'` — the honest
+  sum of one answered record's prose bounds + wrapper overhead: question ≤ 1,024 B + context ≤
+  2,048 B + resolution ≤ 4,096 B = 7,168 B raw, rounded up to 8,192 B for the three prose wrappers.
+  The v1.0 4096 row could not render one answered record — the resolution alone consumed the whole
+  bound, so the shed would drop the only row (violating never-silent-truncation-of-a-row) or
+  over-run the bound: the #79 OQ1 dead-row contradiction re-encountered (HOLE-1). Derived from the
+  three prose bounds it must hold, never a new arbitrary cap.
 - `doubt.resolution.bytes` = **4096** (bytes), class `admission`, enforced at
   `coordinator.resolveDoubt`, refusalCode `doubt_resolution_exceeded` — derived from `board.detail`
   (4096, `limits.mjs:65`), the orchestrator-authored review-prose cap.
@@ -377,22 +455,26 @@ The hub composes the doubt surface and the resolve act (the worker never request
 fire on the serving/resolve path when the act cannot proceed lawfully. Codes follow the registry's
 snake_case family (`scratchpad_settlement_not_authorized`, `board_title_exceeded`):
 
-- **`doubt_promote_not_authorized`** — no active run-orchestrator settlement lease, or a
-  revoked/expired/foreign-session lease (D4 gate; the #63 XB typed codes — reuse the lease codes,
-  never a new clock).
+- **`doubt_promote_not_authorized`** — no active run-orchestrator settlement lease for the `runId`
+  (D4 gate; the #63 XB lease-code family, never a new clock). The revoked/expired/foreign-session
+  conditions fire the lease codes verbatim (`run_orchestrator_lease_not_found`,
+  `run_orchestrator_session_mismatch`, expired) — one code per condition, no overlap (M3).
 - **`doubt_promote_invalid`** — malformed `doubtId`/`disposition`/input; `answered` without a
   bounded `resolution`, `dismissed` without a closed `dismissalReason`.
 - **`doubt_promote_unknown`** — the `doubtId` is not a raised doubt record.
-- **`doubt_promote_stale`** — the doubt is not in state `reviewed` (already resolved/carried), or
-  its review window has expired.
+- **`doubt_promote_stale`** — the doubt is not in state `reviewed` (already resolved/carried) —
+  reserved for the state guard only (D4 step 3); the expired review window is the step-1 lease
+  code, never this code (M3).
 - **`doubt_promote_conflict`** — same idempotency key, different request binding
   (`knowledge.doubt_resolved:${doubtId}`).
 - **`doubt_resolution_exceeded`** — the resolution exceeds the `doubt.resolution.bytes` row
   (D7); the coaching shape is `composeFrameLimitRefusal` output (`limits.mjs:40-42`).
 - **`doubt_dismissal_invalid`** — a `dismissalReason` outside
-  `['out_of_scope','duplicate','unfounded','deferred']`.
-- **`doubt_surface_unavailable`** — the `knowledge.doubts` read is unauthorized (non-orchestrator)
-  or names an unknown wave.
+  `['deferred','duplicate','out_of_scope','unfounded']`.
+- **`doubt_surface_unavailable`** — the `knowledge.doubts` read is unauthorized — the caller holds
+  neither the run's active run-orchestrator lease (for a `waveId`-named read) nor the deployment's
+  top-level orchestrator principal (for the project surface) — or names an unknown wave (D3,
+  HOLE-4).
 - **`doubt_carry_conflict`** — a sweep carry for a doubt no longer in state `reviewed` (raced with a
   resolve); the resolve wins, the carry no-ops.
 
@@ -405,41 +487,57 @@ GREEN. The red suite is a new `impl/test/issue66-doubt-review-red.test.mjs`, mir
 `issue62-write-failure-red.test.mjs`/`issue79-*` harness shapes. Every fixture uses the store's
 fixed-clock discipline (as #33 Part F does); no test uses `Date.now()` or a live timer.
 
-- **R1 — elevation includes doubts.** A wave whose member writes a `kind:'doubt'` completes with
-  the doubt ELEVATED to the shared partition (a shared successor, `scratchFactId: null`),
-  disposition `elevated/selected`, never `orchestrator_skipped`. RED: `coordinator.mjs:11513`
-  filters note+plan only; doubts disposition `orchestrator_skipped`
-  (`coordination-store.mjs:14304`).
+- **R1 — elevation includes doubts, with no collateral (HOLE-5).** A wave whose member writes a
+  `kind:'doubt'` completes with the doubt ELEVATED to the shared partition (a shared successor,
+  `scratchFactId: null`), disposition `elevated/selected` under a driven selection, never
+  `orchestrator_skipped`. The non-doubt path is byte-identical to v1.0: within the 512 shared
+  ceiling, doubts ≤ 384 and notes+plans ≥ 128 (D1), so a doubt-heavy member's notes still elevate
+  where the old note-only selection would have. RED: `coordinator.mjs:11513` filters note+plan only;
+  doubts disposition `orchestrator_skipped` (`coordination-store.mjs:14304`).
 - **R2 — the doubt record + lifecycle.** A raised doubt is durable and replay-derived:
   `knowledge.doubt_raised` → `reviewed`; `knowledge.doubt_resolved {disposition:'answered'}` →
   `answered`; `{disposition:'dismissed'}` → `dismissed`; `knowledge.doubt_carried` → `carried`;
-  every transition receipted, replay-of-the-same-wave deriving identical records. RED: no
-  `knowledge.doubt_*` event kind exists in the event-kind inventory.
-- **R3 — the queryable surface.** The ritual receipt/outline carries `knowledge.openDoubts`
-  (zero as 0, never missing) and `knowledge.doubts` returns the bounded, UNTRUSTED-framed,
-  sorted doubt records (by `raisedSeq DESC, doubtId ASC`, no `localeCompare`). RED:
+  every transition receipted — including the elevated-but-unraised contradiction, which the sweep
+  closes by minting `doubt_raised` + `doubt_carried` together (D2/D5, HOLE-2) — and
+  replay-of-the-same-wave deriving identical records. The record projection is the folded
+  `knowledge` map via `snapshot()` (M5), never a ledger scan. RED: no `knowledge.doubt_*` event
+  kind exists in the event-kind inventory.
+- **R3 — the queryable surface, bounded and gated (HOLE-1/HOLE-4).** The ritual receipt/outline
+  carries `knowledge.openDoubts` (zero as 0, never missing) and `knowledge.doubts` returns the
+  bounded, UNTRUSTED-framed, sorted doubt records (by `raisedSeq DESC, doubtId ASC`, no
+  `localeCompare`), one answered record rendering inside `view.open_doubts.bytes` = 8192 (D7). The
+  read refuses `doubt_surface_unavailable` for a caller holding neither the run's active lease nor
+  the top-level orchestrator principal, and is dispatched via a direct-port branch (D3). RED:
   `wave-driver.mjs:830-837` has no `openDoubts` field; no `knowledge.doubts` row exists.
 - **R4 — answer.** `knowledge.promote_doubt {disposition:'answered', resolution}` closes the doubt
-  as `answered` with the resolution receipted and `pushRequested: true`; NO Finding/KG node/board
+  as `answered` with the resolution receipted and `pushRequested: true`; the authority is the
+  server-re-derived active run-orchestrator lease for the `runId` (D4) — a caller-supplied lease is
+  never accepted (the #73 forge class is closed, HOLE-3); NO Finding/KG node/board
   item/`knowledge.workflow_admitted`/scratch-fact is minted (the taxonomy boundary is structural).
   RED: no `knowledge.promote_doubt` command exists.
 - **R5 — dismiss.** `knowledge.promote_doubt {disposition:'dismissed',
   dismissalReason: <closed enum>}` closes the doubt as `dismissed` with the named disposition —
   never silently dropped. RED: same as R4.
-- **R6 — the answer push (closed loop).** An answered doubt's `doubt_resolved` event carries
+- **R6 — the answer push (v1 honesty, HOLE-6).** An answered doubt's `doubt_resolved` event carries
   `{workerId, doubtId, resolution, pushRequested: true}` — the #79 `doubt_answer` push coordinates
-  (worker-addressed by identity, durable id `doubt_answer:${doubtId}`). RED (this tree): the
-  resolved-event coordinates are absent; the `## Pending attention` render is #79's own surface and
-  stays RED under #79's pins until that lane lands.
-- **R7 — carry at the review boundary.** A doubt still `reviewed` when its wave's settlement lease
-  is revoked is carried by the sweep (`knowledge.doubt_carried`, `carriedBy:
+  (worker-addressed by identity, durable id `doubt_answer:${doubtId}`). The v1 delivery claim is
+  delivered-when-recovered — the coordinates are the RED-to-green, never a wire-acked delivery.
+  RED (this tree): the resolved-event coordinates are absent; the `## Pending attention` render is
+  #79's own surface and stays RED under #79's pins until that lane lands.
+- **R7 — carry at the review boundary (HOLE-2).** A doubt still `reviewed` when its wave's
+  settlement lease is revoked is carried by the sweep (`knowledge.doubt_carried`, `carriedBy:
   'review_window_expired'`), project-persistent and queryable across waves; it is never silently
-  dropped. RED: `sweepSettlementLeases` (`coordination-store.mjs:12556`) retires candidates but
-  has no doubt handling.
-- **R8 — UNTRUSTED framing.** Every doubt surface render wraps `question`/`context`/`resolution`
-  in `{worker, text, provenance: 'model-authored', untrusted: true}`; no doubt prose crosses a
-  surface unframed; the projection is shed-flagged at the D7 bounds, never a silent row drop. RED:
-  no doubt surface exists to frame.
+  dropped. The carry predicate is any doubt shared entry of the revoked lease's wave not in
+  `answered`/`dismissed` — the sweep mints `doubt_raised` (if absent) + `doubt_carried` together,
+  so an elevated-but-unraised doubt is receipted, never a silent sink. RED:
+  `sweepSettlementLeases` (`coordination-store.mjs:12556`) retires candidates but has no doubt
+  handling.
+- **R8 — UNTRUSTED framing (HOLE-7).** Every doubt surface render wraps the doubting worker's
+  `question`/`context` in `{worker, text, provenance: 'model-authored', untrusted: true}`
+  (`wrapProse`) and the orchestrator's `resolution` in `{worker, text, provenance: 'hub-derived',
+  untrusted: true}` (`wrapHubDerived`, #79) — a resolution is never `model-authored` and never
+  `hub-computed`; no doubt prose crosses a surface unframed; the projection is shed-flagged at the
+  D7 bounds, never a silent row drop. RED: no doubt surface exists to frame.
 - **R9 — no auto-candidacy (structural pin).** A doubt never posts a board item, never mints a
   `finding:board-close:*`, and never enters `_deriveKnowledgePromotion`. The candidacy loop stays
   note-only (`coordinator.mjs:11522-11525`, `:11567-11576`); the `grounding !== 'observed'` filter
@@ -453,20 +551,27 @@ fixed-clock discipline (as #33 Part F does); no test uses `Date.now()` or a live
 
 ## Open questions (adjudicated at this draft)
 
-- **OQ1 — Is `carried` terminal?** **Adjudicated: terminal in v1.** The closed loop requires a
-  live worker; a carried doubt belongs to a closed wave whose worker cannot receive an answer. A
-  future orchestrator re-opening a carried doubt is a named follow-up, not v1.
+- **OQ1 — Is `carried` terminal?** **Adjudicated (folded): terminal in v1 — SOUND.** A carried
+  doubt belongs to a closed wave whose worker cannot receive an answer — the same settled-run
+  geometry D6 pins as delivered-when-recovered. A future orchestrator re-opening a carried doubt is
+  a named follow-up, not v1.
 - **OQ2 — Worker self-resolution.** #33 rule 6 says a doubt's resolution is represented by a later
   `note` or `link`; a worker who self-resolves writes a note that may separately elevate and
-  candidate. **Adjudicated: no auto-reconcile.** The doubt record stays `reviewed` until the
-  orchestrator answers/dismisses it or it carries — the review authority is never bypassed, and a
-  self-resolution note is a separate candidacy (never auto-closing the doubt).
+  candidate. **Adjudicated (folded): no auto-reconcile — SOUND.** The doubt record stays `reviewed`
+  until the orchestrator answers/dismisses it or it carries — the review authority is never
+  bypassed, and a self-resolution note is a separate candidacy (never auto-closing the doubt).
 - **OQ3 — Surface scope.** `knowledge.doubts` covers raised records (`reviewed`/`answered`/
   `dismissed`/`carried`); pre-raise `open` worker-partition doubts stay on the scratchpad
-  projection (#33 rule 16). **Adjudicated: this split is the honest one** — the wave driver already
-  sees open worker doubts in `wave.progress().members[i].scratchpad`, and the doubt surface is the
-  review ledger.
+  projection (#33 rule 16). **Adjudicated (folded): this split is the honest one — SOUND.** The
+  wave driver already sees open worker doubts in `wave.progress().members[i].scratchpad`, and the
+  doubt surface is the review ledger.
 - **OQ4 — Do elevated doubts also ride `scratchpad.elevate`?** The selection change is
   `settlementLease`-only (D1); the direct `scratchpad.elevate` command may select doubts, and the
-  ritual's raise scan (D2) is over the full shared partition, so such doubts are raised by the next
-  ritual. **Adjudicated: complete and re-drive-exact by construction.**
+  ritual's raise scan (D2) is over the full shared partition. **Adjudicated (folded): qualified —
+  the v1.0 "complete and re-drive-exact by construction" was overstated (M4).** A direct elevation
+  is raised only when it precedes the ritual — each ritual scans only its own wave's members, so a
+  post-ritual direct elevation is never raised by a later ritual. A post-ritual elevated-but-unraised
+  doubt is closed by the sweep's widened carry predicate (D5) as a receipted contradiction when its
+  lease is revoked; a doubt elevated after its wave's lease is gone is reaped at workflow settle and
+  is not a review-surface record. Direct elevation of a doubt must precede the wave's settle ritual
+  to enter the review surface — that boundary is pinned, not claimed.
