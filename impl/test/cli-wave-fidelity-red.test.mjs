@@ -30,27 +30,39 @@
 //
 // §A Red capability rows (D1/D2/D3 acceptance pins A7-1..A7-8)
 //   A7-1  parse — `baton waves send run:foo --message hi` parses to { command: 'waves.send',
-//         args: { runId, message: 'hi' } }. (RED — cli_command_unavailable at HEAD)
-//   A7-2  parse — `--now` → args.delivery 'now'; two delivery flags refuse
+//         args: { runId, message: 'hi' } } + the fold's id-refusal negative leg (a space-bearing
+//         runId refuses cli_invalid — an impl admitting ANY string escapes the id() gate).
+//         (RED — cli_command_unavailable at HEAD)
+//   A7-2  parse — `--now` → args.delivery 'now' + the fold's `--nudge` delivery positive leg and
+//         non-JSON `--claim-grant` refusal cli_action_inputs_invalid; two delivery flags refuse
 //         cli_action_inputs_invalid (mirror run send, application-cli.mjs:1733-1738). (RED)
 //   A7-3  parse — `baton waves stop run:foo --reason done` parses to { command: 'waves.stop',
-//         args: { runId, reason } }; a missing --reason refuses cli_action_inputs_invalid. (RED)
+//         args: { runId, reason } }; a missing --reason refuses cli_action_inputs_invalid + the
+//         fold's id-refusal negative leg (cli_invalid). (RED)
 //   A7-4  admit — CLI_WEB_COMMANDS contains waves.send AND waves.stop (else BatonWebClient.command
 //         refuses at application-cli.mjs:2013). (RED — neither is admitted at HEAD)
-//   A7-5  doc — render-surface-docs.mjs --check passes AND the committed CLI.md cli-verb-inventory
-//         region contains both rows. (RED — ghost rows absent at HEAD; N7 sequencing: green only
-//         after D1.2(2)+(4) land together)
+//   A7-5  doc — the fold's byte-equality leg: the freshly-rendered cli-verb inventory must
+//         BYTE-EQUAL the committed CLI.md cli-verb-inventory generated region (D3.2 — a renderer
+//         that hand-inflates its own block from CLI_WEB_COMMANDS escapes the ghost check). (RED —
+//         ghost rows absent at HEAD; N7 sequencing: green only after D1.2(2)+(4) land together)
 //   A7-6  D3 closed-set — every waves.* canonical op claiming the cli surface is admitted
 //         (CLI_WEB_COMMANDS), parses to { name: <key> } under its per-verb minimal invocation
-//         (D3.3/N6), and is documented in the CLI.md generated block. (RED — send/stop fail all three)
+//         derived MECHANICALLY from the registry schema required set (N6 — no hand-arg table;
+//         minimalWaveCliInvocation derives { runId, waveId, specPath } positionals + flags from
+//         the wave.* schemas, waves.stop's CLI-required `reason` rides the OQ1 seam). (RED —
+//         send/stop fail all three at HEAD)
 //   A7-7  dispatch leg — the parsed send/stop names map through name.replaceAll('.', '_') to
 //         waves_send/waves_stop ∈ WAVE_WEB_ENTRIES (web-northbound.mjs:40-41) and the full
-//         parse → dispatch → transport round-trip reaches sendWaveMember/stopWaveMember. (RED at
-//         the parse leg at HEAD)
+//         parse → dispatch → transport round-trip reaches sendWaveMember/stopWaveMember THROUGH
+//         the fold's webGatedClient — the CLI_WEB_COMMANDS whitelist gate (application-cli.mjs:2013)
+//         is crossed before the handlers, so a parse-only admit never passes the dispatch leg. (RED
+//         at the parse leg at HEAD)
 //   A7-8  D2 — an interpreter-wave member (createWave string roster, wave.mjs:180) renders
 //         phase/progressClass/attentionCount in waves list identical to a driver-wave member driven
-//         to the same state (N4 — drive both to a phase-bearing state, never assert non-nullness).
-//         (RED — the string branch hardcodes nulls, application.mjs:11785)
+//         to the same state (N4 — drive both to a phase-bearing state, never assert non-nullness) +
+//         the fold's CHANGE leg: approving the interpreter member's run must re-render a DIFFERENT
+//         phase/progressClass while the never-approved driver member stays put. (RED — the string
+//         branch hardcodes nulls, application.mjs:11785, so both legs fail at the same seam)
 //
 // §B PIN rows (green at HEAD, must stay green — the D2 boundary and the parity rows)
 //   B-1  A2-4 F6/F13 — a legacy string-array roster with NO steering record survives a store
@@ -77,6 +89,11 @@
 // ===========================================================================
 //   PASS 8 · FAIL 8 — stable across two runs from the repo root
 //   (split recorded in suite-draft-notes.md)
+//   POST-FOLD RE-VERIFICATION (row-sf157, the 5 blue-team blockers folded in): the split stays
+//   PASS 8 · FAIL 8 across two runs from the repo root — every fold leg fails at the same HEAD
+//   seam as its parent row (A7-1/-3 id refusals, A7-2 nudge/claim-grant, A7-5 byte-equality,
+//   A7-6 N6 derivation, A7-7 web-gated dispatch, A7-8 CHANGE leg). No RED row was handed a green;
+//   no PIN row moved. Measured splits recorded in fold-suite-157.md.
 
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
@@ -257,16 +274,36 @@ function cliRoutingClient(host) {
   return { command: async (name, args) => host.application.command(name, args, principal('wave-owner')) };
 }
 
+// The WEB-SHAPED dispatch client — the A7-7 round-trip must cross the CLI_WEB_COMMANDS whitelist
+// gate (BatonWebClient.command, application-cli.mjs:2013) BEFORE reaching the handlers. Binding the
+// exported Set into the client makes "parse only" (no admit) fail the dispatch leg: the gate refuses
+// waves.send/waves.stop when they are not admitted, exactly as the real web client would. Fold
+// blocker 5 — the admit seam is pinned here AND by A7-4's direct Set check.
+function webGatedClient(host) {
+  return {
+    command: async (name, args) => {
+      if (!CLI_WEB_COMMANDS.has(name)) {
+        throw Object.assign(new Error(`unsupported Run command ${name}`), { code: 'cli_command_unavailable' });
+      }
+      return host.application.command(name, args, principal('wave-owner'));
+    },
+  };
+}
+
 // ── doc/source helpers ──────────────────────────────────────────────────────
 
 // The committed CLI.md cli-verb-inventory generated region (the INDEPENDENT documented side of the
-// D3.2 invariant — it must never derive from CLI_WEB_COMMANDS on both sides).
+// D3.2 invariant — it must never derive from CLI_WEB_COMMANDS on both sides). Returns the INNER
+// committed block (between the markers, blank-line-trimmed) — the exact bytes the renderer must
+// reproduce. Fold blocker 3: the renderer↔doc agreement is pinned byte-for-byte, so a divergent
+// hand-edit (or a stale renderer) is caught independently of the whitelist (A7-4 does the admit duty).
 function cliVerbInventoryBlock() {
   const cliMd = readFileSync(fileURLToPath(new URL('../CLI.md', import.meta.url)), 'utf8');
   const begin = cliMd.indexOf('<!-- BEGIN GENERATED: cli-verb-inventory');
   const end = cliMd.indexOf('<!-- END GENERATED: cli-verb-inventory -->');
   assert.ok(begin !== -1 && end !== -1 && begin < end, 'the generated region is present in CLI.md');
-  return cliMd.slice(begin, end);
+  const raw = cliMd.slice(begin, end);
+  return raw.slice(raw.indexOf('\n'), raw.lastIndexOf('\n')).trim();
 }
 
 // The closed-set waves.* ordinary verbs, derived MECHANICALLY from the registry — never a hand
@@ -277,21 +314,47 @@ function wavesCliOrdinaryKeys() {
     .map((op) => op.key);
 }
 
-// Per-verb MINIMAL valid invocation, built per the D3.3/N6 construction rule: a required positional
-// id rides argv positionally (runId for send/stop, waveId for attach/progress, specPath for run);
-// each remaining schema-required field rides a flag (--message TEXT, --reason TEXT, --members []
-// empty-minimum); a verb whose schema requires nothing (waves.list) is bare.
+// Per-verb MINIMAL valid invocation, DERIVED mechanically from the registry schema's required set
+// (D3.3/N6 — never a hand-arg table; folded per blue-team blocker 4). A required field that is a
+// positional id (runId/waveId/specPath — the fields the parse branches take from argv positionally)
+// rides argv positionally; each remaining schema-required field rides its kebab-case flag with a
+// type-minimal value; idempotencyKey is auto-minted by the top-level parse take; a verb whose
+// schema requires nothing (waves.list) is bare. A NEW cli-claiming waves.* op derives its argv from
+// its own schema instead of throwing "no CLI minimal invocation pinned".
+const WAVE_CLI_POSITIONAL_ID_FIELDS = ['runId', 'waveId', 'specPath'];
+function waveCliFlag(field) {
+  return `--${field.replace(/[A-Z]/gu, (ch) => `-${ch.toLowerCase()}`)}`;
+}
+function waveCliMinimalValue(field, schema) {
+  if (schema?.type === 'array') return '[]';
+  if (schema?.type === 'object') return '{}';
+  if (schema?.type === 'boolean') return 'true';
+  if (schema?.type === 'integer' || schema?.type === 'number') return '1';
+  return 'x'; // a one-char string satisfies minLength: 1
+}
 function minimalWaveCliInvocation(key) {
-  switch (key) {
-    case 'waves.attach': return ['waves', 'attach', WAVE_ID, '--members', '[]'];
-    case 'waves.start': return ['waves', 'start', '--members', '[]'];
-    case 'waves.progress': return ['waves', 'progress', WAVE_ID];
-    case 'waves.send': return ['waves', 'send', RUN_ID, '--message', 'hi'];
-    case 'waves.stop': return ['waves', 'stop', RUN_ID, '--reason', 'done'];
-    case 'waves.list': return ['waves', 'list'];
-    case 'waves.run': return ['waves', 'run', 'spec.json'];
-    default: throw new Error(`no CLI minimal invocation pinned for ${key}`);
+  const operation = APPLICATION_SEMANTIC_REGISTRY.canonicalOperations
+    .find((entry) => entry.key === key);
+  if (!operation) throw new Error(`no registry row for cli-claiming waves op ${key}`);
+  const required = [...(operation.inputSchema?.required ?? [])];
+  // waves.run: specPath is the CLI's positional id even though the schema required set is
+  // ['idempotencyKey'] only (issue #114 lane); it rides argv positionally per N6.
+  const positional = required.find((field) => WAVE_CLI_POSITIONAL_ID_FIELDS.includes(field))
+    ?? (key === 'waves.run' ? 'specPath' : null);
+  // waves.stop: the schema required set omits reason (contract OQ1 — the schema row requires
+  // ['runId'] only), but the CLI branch requires --reason to match the dispatcher
+  // (application.mjs:11900/11967-11968).
+  const cliExtra = key === 'waves.stop' ? ['reason'] : [];
+  const argv = ['waves', key.slice('waves.'.length)];
+  if (positional === 'runId') argv.push(RUN_ID);
+  else if (positional === 'waveId') argv.push(WAVE_ID);
+  else if (positional === 'specPath') argv.push('spec.json');
+  for (const field of [...required, ...cliExtra]) {
+    if (field === positional || field === 'idempotencyKey') continue;
+    argv.push(waveCliFlag(field));
+    argv.push(waveCliMinimalValue(field, operation.inputSchema?.properties?.[field]));
   }
+  return argv;
 }
 
 // ===========================================================================
@@ -310,6 +373,19 @@ test('A7-1 (parse): `baton waves send run:foo --message hi` parses to { command:
   assert.equal(parsed.name, 'waves.send', 'the dispatch name is the canonical key');
   assert.equal(parsed.args.runId, 'run:foo', 'runId rides positionally (id() helper, application-cli.mjs:100-103)');
   assert.equal(parsed.args.message, 'hi', '--message TEXT rides the flag (mirror --members, application-cli.mjs:1363-1365)');
+  // Fold (blue-team blocker 2): the id() refusal — a MALFORMED runId refuses cli_invalid (the
+  // helper's default code, application-cli.mjs:100-103). A shape-special-cased branch that never
+  // validates runId cannot satisfy this. (Judgment call: the blue-team's literal `nope` passes the
+  // id() regex, so the leg uses a space-bearing runId that actually fails the helper — a BROKEN row
+  // would be worse than the named-example correction.)
+  assert.throws(
+    () => parseBatonCli(['waves', 'send', 'bad id', '--message', 'hi']),
+    (error) => {
+      assert.equal(error.code, 'cli_invalid',
+        'a malformed runId refuses cli_invalid via the id() helper (application-cli.mjs:100-103) — the parse is schema-shaped, not shape-special-cased');
+      return true;
+    },
+  );
 });
 
 test('A7-2 (parse): `baton waves send ... --now` carries args.delivery \'now\'; two delivery flags refuse cli_action_inputs_invalid', () => {
@@ -320,12 +396,27 @@ test('A7-2 (parse): `baton waves send ... --now` carries args.delivery \'now\'; 
   assert.ok(parsed !== null,
     'stage: cli-wave-verbs-missing — at HEAD parseBatonCli throws cli_command_unavailable; D1.2(1) copies the run send delivery-mode take (application-cli.mjs:1733-1738)');
   assert.equal(parsed.args.delivery, 'now', '--now maps to delivery \'now\'');
+  // Fold (blue-team blocker 2): the FULL delivery enum — --nudge is the schema's third member
+  // (application-semantics.mjs:1599-1613); a mode-subset parser handling only --now/--turn must not pass.
+  const nudgeParsed = parseBatonCli(['waves', 'send', 'run:foo', '--message', 'hi', '--nudge']);
+  assert.equal(nudgeParsed.args.delivery, 'nudge', '--nudge maps to delivery \'nudge\' (the schema enum member)');
   // The negative leg — at most one delivery mode (bounded modes, refuse when modes.length > 1).
   assert.throws(
     () => parseBatonCli(['waves', 'send', 'run:foo', '--message', 'hi', '--now', '--turn']),
     (error) => {
       assert.equal(error.code, 'cli_action_inputs_invalid',
         'two delivery flags refuse cli_action_inputs_invalid (the refusal-vocabulary row for the new send branch, contract §Refusal vocabulary)');
+      return true;
+    },
+  );
+  // Fold (blue-team blocker 2): the refusal vocabulary — a non-JSON --claim-grant refuses
+  // cli_action_inputs_invalid at the CLI layer (mirror the --members JSON take,
+  // application-cli.mjs:1363-1371); a branch that never parses claimGrant cannot satisfy this.
+  assert.throws(
+    () => parseBatonCli(['waves', 'send', 'run:foo', '--message', 'hi', '--claim-grant', 'not-json']),
+    (error) => {
+      assert.equal(error.code, 'cli_action_inputs_invalid',
+        'a non-JSON --claim-grant refuses cli_action_inputs_invalid (contract §Refusal vocabulary)');
       return true;
     },
   );
@@ -347,6 +438,17 @@ test('A7-3 (parse): `baton waves stop run:foo --reason done` parses to { command
     (error) => {
       assert.equal(error.code, 'cli_action_inputs_invalid',
         'OQ1 — the CLI requires --reason (matching the dispatcher at application.mjs:11900/11967-11968), refusing early cli_action_inputs_invalid, never a server refusal');
+      return true;
+    },
+  );
+  // Fold (blue-team blocker 2): the id() refusal on the stop runId — a MALFORMED runId refuses
+  // cli_invalid via the id() helper (application-cli.mjs:100-103); the shape-special-case passes
+  // without it. (Same judgment call as A7-1: the blue-team's literal `nope` passes the id() regex.)
+  assert.throws(
+    () => parseBatonCli(['waves', 'stop', 'bad id', '--reason', 'done']),
+    (error) => {
+      assert.equal(error.code, 'cli_invalid',
+        'a malformed stop runId refuses cli_invalid via the id() helper (application-cli.mjs:100-103)');
       return true;
     },
   );
@@ -376,8 +478,13 @@ test('A7-5 (doc): render-surface-docs.mjs --check passes AND the committed CLI.m
     'stage: cli-wave-doc-row-missing — at HEAD the generated block lists attach/list/progress/run/start only (CLI.md:52-56); D1.2(4) regenerates the waves.send row, and the --check gate stays green only when the whitelist admission lands in the same change set (N7)');
   assert.ok(block.includes('| `waves.stop` |'),
     'stage: cli-wave-doc-row-missing — the waves.stop row is likewise absent at HEAD; D1.2(4) regenerates it');
-  assert.match(renderCliVerbInventory(), /`waves\.send`/u, 'the renderer emits the waves.send row once admitted');
-  assert.match(renderCliVerbInventory(), /`waves\.stop`/u, 'the renderer emits the waves.stop row once admitted');
+  // Fold (blue-team blocker 3): the renderer↔doc agreement pinned BYTE-FOR-BYTE on the committed
+  // region — the freshly-rendered inventory must equal the committed block slice exactly, so the
+  // renderer and the committed doc must BOTH move together. The admit itself is A7-4's duty (the
+  // cluster catches the renderer-hardcode + matching-hand-edit fake); this row pins the documented
+  // leg (D3.2) that the --check gate alone (both-sides-stale) cannot distinguish.
+  assert.equal(renderCliVerbInventory(), block,
+    'the freshly-rendered cli-verb inventory byte-equals the committed generated region (D3.2 documented leg)');
 });
 
 test('A7-6 (D3 closed-set): every waves.* cli-claiming op is admitted, parses to { name: <key> }, and is documented — the ghost-prevention pin', () => {
@@ -433,20 +540,22 @@ test('A7-7 (dispatch leg): parsed send/stop map to waves_send/waves_stop ∈ WAV
   assert.match(waveEntries, /\[\s*'waves_send'/u, 'WAVE_WEB_ENTRIES carries the waves_send transport (web-northbound.mjs:40)');
   assert.match(waveEntries, /\[\s*'waves_stop'/u, 'WAVE_WEB_ENTRIES carries the waves_stop transport (web-northbound.mjs:41)');
 
-  // (4) The full parse → dispatch → transport round-trip: send reaches sendWaveMember (the
-  // undispatched member resolves the POST-dispatch application_worker_not_found, never a
-  // pre-admission cli_command_unavailable), and stop reaches stopWaveMember and resolves ok.
+  // (4) The full parse → dispatch → transport round-trip — through the WEB-SHAPED client, so the
+  // CLI_WEB_COMMANDS whitelist gate (application-cli.mjs:2013) is crossed BEFORE the handlers
+  // (fold blocker 5: "parse only" without the admit must fail the dispatch leg). Send reaches
+  // sendWaveMember — the undispatched member resolves the POST-dispatch application_worker_not_found,
+  // never a pre-admission cli_command_unavailable — and stop reaches stopWaveMember and resolves ok.
   await assert.rejects(
-    runBatonCli(sendParsed, cliRoutingClient(host)),
+    runBatonCli(sendParsed, webGatedClient(host)),
     (error) => {
       assert.equal(error.code, 'application_worker_not_found',
-        'the round-trip reached sendWaveMember (application.mjs:11840-11893) — the fixture member run is undispatched, so the dispatch surfaces the post-dispatch typed code');
+        'the round-trip crossed the whitelist gate and reached sendWaveMember (application.mjs:11840-11893) — the fixture member run is undispatched, so the dispatch surfaces the post-dispatch typed code');
       return true;
     },
   );
-  const stopped = await runBatonCli(stopParsed, cliRoutingClient(host));
+  const stopped = await runBatonCli(stopParsed, webGatedClient(host));
   assert.ok(stopped !== null && typeof stopped === 'object' && stopped.runId === runId,
-    'the stop round-trip reached stopWaveMember (application.mjs:11895-11902) and resolved the member run');
+    'the stop round-trip crossed the whitelist gate and reached stopWaveMember (application.mjs:11895-11902) and resolved the member run');
 });
 
 test('A7-8 (D2): an interpreter-wave member renders phase/progressClass/attentionCount identical to a driver-wave member driven to the same state', async (t) => {
@@ -484,6 +593,28 @@ test('A7-8 (D2): an interpreter-wave member renders phase/progressClass/attentio
     'the progress class reads identically — the law renders view?.progressClass ?? view?.outline?.progressClass ?? null (application.mjs:11807)');
   assert.equal(interpMember.attentionCount, driverMember.attentionCount,
     'the attention count reads identically — the law renders Array.isArray(view?.attention) ? view.attention.length : 0 (application.mjs:11802)');
+
+  // Fold blocker 1 (SHALLOW → SOUND): the three parity assertions above compare ONE phase state —
+  // an impl that hardcodes the same projection for BOTH lanes passes them vacuously. Approve the
+  // interpreter member's run and re-list: D2.3 hydrates from inspect (application.mjs:11806-11808),
+  // so the rendered phase/progressClass must CHANGE to track the new run state, while the
+  // never-approved driver member stays put. At HEAD the string branch hardcodes phase:null
+  // (application.mjs:11785), so this leg fails exactly where the parity leg does — the fold does
+  // not hand the row a green it never earned.
+  await interp.runs.get('alpha').approve();
+  const reListed = await host.application.command('waves.list', {}, principal('wave-owner'));
+  const interpRowAfter = reListed.waves.find((w) => w.waveId === interp.waveId);
+  const driverRowAfter = reListed.waves.find((w) => w.waveId === driver.waveId);
+  assert.ok(interpRowAfter && driverRowAfter, 'both waves still list as open rows');
+  const interpMemberAfter = interpRowAfter.roster.find((m) => m.role === 'alpha');
+  const driverMemberAfter = driverRowAfter.roster.find((m) => m.role === 'alpha');
+  assert.ok(interpMemberAfter && driverMemberAfter, 'both alpha members still render');
+  assert.notEqual(interpMemberAfter.phase, interpMember.phase,
+    'approving the interpreter member run CHANGES its rendered phase — the D2.3 hydration reads the live run view, never a hardcoded null (application.mjs:11785 → 11806-11808)');
+  assert.notEqual(interpMemberAfter.progressClass?.class ?? null, interpMember.progressClass?.class ?? null,
+    'the rendered progress class tracks the approved run state (blocked_interaction:approve_plan → the post-approve class)');
+  assert.equal(driverMemberAfter.phase, driverMember.phase,
+    'the never-approved driver member stays at awaiting_plan_approval — the comparison control is stable');
 });
 
 // ===========================================================================

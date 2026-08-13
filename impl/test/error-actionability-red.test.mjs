@@ -63,6 +63,18 @@
 //   Run 2: 22 tests — pass 5 / fail 17 (suite exit 1)
 //   RED rows (behavioral): W1 W2 W3 W4 W5 W6 W7 W8 M1 M2 M3 M4 M5 C1 C2 C3 S2
 //   GREEN rows (apparatus / static-now): X1 X2 X3 S1 S3
+//
+// FOLDED per blue-team-2026-08-13-a/blueteam-160.md (§6/§7; QA UPHOLD) — the fold hardens
+// rows against gaming, never makes a row pass at HEAD (the impls don't exist):
+//   W3  fixture corrected to reach the exactObject seam (a missing required arg key, not an
+//       extra key the envelope closure rejects first) + `field: 'inputs'` pin (kills the
+//       run_act-only remap).
+//   M3  `field` now names the offending member identity (index 1 / role designer), not any
+//       non-empty string.
+//   M5  stage marker relaxed to accept the post-R2 first-call code; the replay-sink pin is
+//       the row's true discriminator (line 494-496).
+//   Re-run split at HEAD after fold: Run 1 22/5/17, Run 2 22/5/17 (unchanged — RED honesty
+//   preserved; every folded row still fails at HEAD at a named stage).
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
@@ -276,11 +288,19 @@ test('W2 (F1 × web): unknown_argument_field body names the offending arg key (R
 
 test('W3 (F1 × web): a run.act exactObject refusal surfaces the named validator refusal, not application_command_arguments_invalid (R4)', async (t) => {
   const { web } = webFixture(t);
+  // Fold (blueteam-160 §7.3): the original fixture (`extraField: 1`) never reached the
+  // application-command validator — validateEnvelope's own unknown-arg closure rejects the extra
+  // key first (verified at HEAD: the row reddened as `invalid_command`/`unknown_argument_field`,
+  // the WRONG seam). A MISSING required arg key (`inputs`) passes the envelope arg closure and
+  // reaches the run.act exactObject validator, which throws `application_action_invalid`
+  // (application.mjs run.act arm). The offending key is `inputs`.
   const response = await web.execute(webContext(), webEnvelope({
-    command: 'run_act', args: { runId: 'run-web-a', actionId: 'act-1', inputs: {}, extraField: 1 },
+    command: 'run_act', args: { runId: 'run-web-a', actionId: 'act-1' },
   }));
   assert.equal(response.status, 400, 'a malformed run.act envelope refuses 400');
-  assertActionableTriple(response.body.error, { code: 'application_action_invalid', label: 'W3' });
+  // The field pin (fold B1 hardening) defeats a run_act-only remap: a canned
+  // `error(400, 'application_action_invalid', validation)` never names the offending arg key.
+  assertActionableTriple(response.body.error, { code: 'application_action_invalid', field: 'inputs', label: 'W3' });
   assert.notEqual(response.body.error.code, 'application_command_arguments_invalid',
     'W3: the validator\'s own named code must survive, not the anonymous collapse');
 });
@@ -444,8 +464,14 @@ test('M3 (F7 × MCP): invalid_wave_start carries the offending member (index/rol
   });
   const error = mcpError(response);
   assertActionableTriple(error, { code: 'invalid_wave_start', label: 'M3' });
-  assert.ok(error.field != null && String(error.field).length > 0,
-    `M3: the offending member is named (got ${JSON.stringify(error.field)})`);
+  // Fold (blueteam-160 §7.2): the row was SHALLOW — any non-empty field passed. The offending
+  // member is the SECOND in the list (index 1, role 'designer' — the one missing `exact`); the
+  // FIRST member (index 0, role 'coder') is valid. A constant field / canned-message remap must
+  // fail: the field names THIS member's identity (index 1 and/or role designer), never a generic
+  // pointer and never the valid first member.
+  const field = String(error.field ?? '');
+  assert.ok(field.includes('1') || field.includes('designer'),
+    `M3: the offending member (index 1 / role designer) is named in field — got ${JSON.stringify(error.field)}`);
 });
 
 test('M4 (F7/E4 × MCP): observe-path waves.progress refusal carries the same detail as the stateful path (R7)', async (t) => {
@@ -485,7 +511,13 @@ test('M5 (F6 × MCP replay, B3/B5): over-cap decision.text replayed on a same-id
     answer: { optionId: 'opt-1' },
   };
   const first = await request(server, 2, 'tools/call', { name: 'baton_decision_answer', arguments: args });
-  assert.equal(mcpError(first).code, 'command_outcome_unknown', 'stage: stateful-sink-fallthrough — the first call fails at HEAD via command_outcome_unknown');
+  // Fold (blueteam-160 §7.1): the row was BROKEN — this stage marker hard-coded the HEAD-red
+  // stateful-sink fallthrough, but M1/M2 force the SAME sink to allowlist the coaching code, so
+  // after the R2 repair the first call carries `decision_text_exceeded` and the old equality
+  // failed. Relaxed to accept both: the row's TRUE pin is the replay-sink assertions below,
+  // which must never lose the coaching code on a same-idempotencyKey retry.
+  assert.ok(['command_outcome_unknown', 'decision_text_exceeded'].includes(mcpError(first).code),
+    'stage: the first call fails at HEAD via command_outcome_unknown and carries decision_text_exceeded after the R2 repair');
   // Same idempotencyKey retry — RECONCILABLE (mcp-northbound.mjs:141): the replayed call MUST
   // carry the coaching code + triple on the replay sink (mcp-northbound.mjs:1587-1591), never
   // command_outcome_unknown.

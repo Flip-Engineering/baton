@@ -29,6 +29,21 @@
  * SPLIT RECORD (`node --test impl/test/cli-silent-start-red.test.mjs` from the repo root):
  *   Run 1 — 12 tests, 7 pass / 5 fail  (7 PIN rows green; PT-2a, PT-2b, PT-2c, PT-4, PT-5 red)
  *   Run 2 — 12 tests, 7 pass / 5 fail  (stable)
+ *
+ * FOLD RECORD (blue-team wave-a → suite v1.2; the contract stays v1.1 FOLDED; fold-suite-155.md):
+ * the blue-team named PT-4 BROKEN
+ * (unsatisfiable) and PT-2a/PT-2b SHALLOW. Every finding is FOLDED or RECORDED — none STRUCK, none
+ * ESCALATED: (1) PT-4(e) prefix mismatch FOLDED (bare-vs-prefixed cli_ code comparison → the
+ * prefix-corrected guard; PT-4 stays RED at HEAD for the right reasons a–d and is now green-capable);
+ * (2) ALIAS_FIRST_TOKENS drift FOLDED (derivation narrowed to the contract D1 set {view, list,
+ * member} — do/resume/retry excluded as lifecycle verbs); (3) member-guard placement constraint
+ * RECORDED as a comment on extractRunBranchFacadeLabels (the rule-2 member refusal must live at the
+ * :1578 site after lifecycleActions) and hardened by excluding alias first-tokens from the facade
+ * derivation; (4) composition-form requirement RECORDED as a comment on extractLifecycleVerbs
+ * (RUN_RECOGNIZED_FIRST_TOKENS must be spread-composed, never enumerated); (5) PT-2a/PT-2b SHALLOW
+ * ACCEPTED — they name the audit's headline examples and are backstopped by PT-2c's generated sweep.
+ *   Run A — 12 tests, 7 pass / 5 fail  (same split; PT-4 now RED for the RIGHT reason)
+ *   Run B — 12 tests, 7 pass / 5 fail  (stable)
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -87,6 +102,10 @@ function generateDistance1Variants(word) {
  * all-lowercase verb tokens and takes the maximal one (29 at HEAD; the run dispatch's closed
  * set is the only literal that rivals it). The fold's RUN_RECOGNIZED_FIRST_TOKENS composes this
  * set (D1), so the same membership must survive under a renamed constant.
+ * COMPOSITION-FORM REQUIREMENT (blue-team finding 6): RUN_RECOGNIZED_FIRST_TOKENS must be
+ * spread-composed (`[...lifecycleActions, ...FACADE_NOUNS, 'start', 'follow'] ∪ ALIAS_FIRST_TOKENS`),
+ * never a hand-enumerated 39-string literal — an enumerated literal would be mistaken for the
+ * lifecycle set by this maximal-set extraction and inflate the detection set past 39.
  */
 function extractLifecycleVerbs(cli) {
   const sets = [...cli.matchAll(/const [A-Za-z_$][A-Za-z0-9_$]* = new Set\(\[([\s\S]*?)\]\)/gu)];
@@ -98,20 +117,36 @@ function extractLifecycleVerbs(cli) {
   return best;
 }
 
-/** The five facade nouns, derived from the run-branch `action === '<noun>'` dispatch labels (PT-4(a)). */
-function extractRunBranchFacadeLabels(cli, lifecycle) {
+/**
+ * The five facade nouns, derived from the run-branch `action === '<noun>'` dispatch labels (PT-4(a)).
+ * MEMBER-GUARD PLACEMENT CONSTRAINT (blue-team finding 5): the rule-2 `action === 'member'` refusal
+ * must live at the `:1578` guard site AFTER `const lifecycleActions = new Set(...)` — if it were
+ * placed inside the facade window it would be scanned here; the alias-token filter below (member is
+ * an ALIAS_FIRST_TOKENS member, never a facade noun) keeps the derived set at the contract's five
+ * facade nouns regardless, so a correctly-placed guard can never inflate the detection set.
+ */
+function extractRunBranchFacadeLabels(cli, lifecycle, aliases) {
   const s0 = cli.indexOf("if (args.shift() !== 'run')");
   let e0 = cli.indexOf('const lifecycleActions = new Set(', s0);
   if (e0 === -1) e0 = cli.indexOf('unknown run action', s0);
   if (e0 === -1) e0 = cli.length;
   const labels = [...cli.slice(s0, e0).matchAll(/if \(action === '([^']+)'/gu)].map((x) => x[1]);
-  return labels.filter((l) => !lifecycle.includes(l) && l !== 'start' && l !== 'follow');
+  return labels.filter((l) => !lifecycle.includes(l) && l !== 'start' && l !== 'follow' && !aliases.has(l));
 }
 
-/** The first tokens of the OPERATION_ALIASES cli-canonical rows (view / list / member / do / resume / retry). */
-function extractAliasFirstTokens(sem) {
+/**
+ * ALIAS_FIRST_TOKENS = the canonical alias first-tokens that are NOT otherwise recognized (contract
+ * D1 names `view`, `list`, `member`). The OPERATION_ALIASES table's `do`/`resume`/`retry` rows are
+ * also `['run', …]` canonical spellings but are already lifecycle verbs, so they are excluded here —
+ * otherwise a contract-faithful `ALIAS_FIRST_TOKENS = {view, list, member}` would drift from the
+ * derived set (blue-team finding 2).
+ */
+function extractAliasFirstTokens(sem, lifecycle) {
   const out = new Set();
-  for (const mm of sem.matchAll(/cli: \{ canonical: \['run', '([^']+)'/gu)) out.add(mm[1]);
+  for (const mm of sem.matchAll(/cli: \{ canonical: \['run', '([^']+)'/gu)) {
+    const tok = mm[1];
+    if (!lifecycle.includes(tok)) out.add(tok);
+  }
   return out;
 }
 
@@ -122,8 +157,8 @@ function extractAliasFirstTokens(sem) {
  */
 function deriveDetectionSet(cli, sem) {
   const lifecycle = extractLifecycleVerbs(cli);
-  const facades = extractRunBranchFacadeLabels(cli, lifecycle);
-  const aliases = extractAliasFirstTokens(sem);
+  const aliases = extractAliasFirstTokens(sem, lifecycle);
+  const facades = extractRunBranchFacadeLabels(cli, lifecycle, aliases);
   return new Set([...lifecycle, ...facades, 'start', 'follow', ...aliases]);
 }
 
@@ -294,8 +329,9 @@ test('PT-4 capability [derivation-symbol-source-scan] — the recognition set is
   const sem = readFileSync(SEM_PATH, 'latin1');
   const failures = [];
   const lifecycle = extractLifecycleVerbs(cli);
-  const facades = extractRunBranchFacadeLabels(cli, lifecycle);
-  const aliasFirst = [...extractAliasFirstTokens(sem)];
+  const aliases = extractAliasFirstTokens(sem, lifecycle);
+  const facades = extractRunBranchFacadeLabels(cli, lifecycle, aliases);
+  const aliasFirst = [...aliases];
   const detection = deriveDetectionSet(cli, sem);
 
   // (a) FACADE_NOUNS is ONE named constant and equals the run-branch facade dispatch labels.
@@ -309,7 +345,9 @@ test('PT-4 capability [derivation-symbol-source-scan] — the recognition set is
     }
   }
 
-  // (b) ALIAS_FIRST_TOKENS is cross-checked against the OPERATION_ALIASES cli canonical rows.
+  // (b) ALIAS_FIRST_TOKENS is cross-checked against the OPERATION_ALIASES cli canonical rows' first
+  // tokens that are NOT otherwise recognized (contract D1 names view / list / member — the suite's
+  // derivation excludes do/resume/retry, which are lifecycle verbs; blue-team finding 2).
   const aliasDecl = /const ALIAS_FIRST_TOKENS\s*=\s*(?:new Set\(\[|\[)([\s\S]*?)(?:\]\)|\])/u.exec(cli);
   if (!aliasDecl) {
     failures.push('stage[alias-first-tokens-symbol-absent]: const ALIAS_FIRST_TOKENS is not declared');
@@ -345,7 +383,10 @@ test('PT-4 capability [derivation-symbol-source-scan] — the recognition set is
     'cli_setup_failed', 'cli_setup_remote_invalid', 'cli_setup_remote_refused',
     'cli_setup_remote_unavailable', 'cli_transport_failed'];
   const actualCodes = [...new Set([...cli.matchAll(/'cli_([a-z_]+)'/gu)].map((m) => m[1]))];
-  const minted = actualCodes.filter((c) => !headCliCodes.includes(c)).sort();
+  // prefix-corrected (blue-team finding 1): actualCodes holds BARE codes, headCliCodes holds the
+  // `cli_`-prefixed forms — the old bare-vs-prefixed `includes` comparison was red at HEAD for the
+  // wrong reason and could never go green under any correct implementation.
+  const minted = actualCodes.filter((c) => !headCliCodes.some((hc) => hc === `cli_${c}`)).sort();
   if (minted.length > 0) {
     failures.push(`stage[new-cli-code-minted]: ${minted.join(',')} — the refusal must reuse cli_command_unavailable, no new code`);
   }
