@@ -1,0 +1,204 @@
+{
+  "schemaVersion": 1,
+  "idempotencyKey": "fold-foundry-2026-08-13-wave-c",
+  "members": [
+    {
+      "role": "row-sf155",
+      "exact": {
+        "harness": "deepseek",
+        "model": "deepseek-v4-flash",
+        "effort": "high"
+      },
+      "scope": [
+        "impl/test/cli-silent-start-red.test.mjs",
+        "docs/reference/evidence/cli-silent-start-2026-08-13/**"
+      ],
+      "objectiveRef": "docs/reference/evidence/fold-2026-08-13-c/row-sf155.md",
+      "report": "docs/reference/evidence/cli-silent-start-2026-08-13/fold-suite-155.md"
+    },
+    {
+      "role": "row-sf156",
+      "exact": {
+        "harness": "deepseek",
+        "model": "deepseek-v4-flash",
+        "effort": "high"
+      },
+      "scope": [
+        "impl/test/mcp-profile-parity-red.test.mjs",
+        "docs/reference/evidence/mcp-profile-parity-2026-08-13/**"
+      ],
+      "objectiveRef": "docs/reference/evidence/fold-2026-08-13-c/row-sf156.md",
+      "report": "docs/reference/evidence/mcp-profile-parity-2026-08-13/fold-suite-156.md"
+    },
+    {
+      "role": "row-sf157",
+      "exact": {
+        "harness": "deepseek",
+        "model": "deepseek-v4-flash",
+        "effort": "high"
+      },
+      "scope": [
+        "impl/test/cli-wave-fidelity-red.test.mjs",
+        "docs/reference/evidence/cli-wave-fidelity-2026-08-13/**"
+      ],
+      "objectiveRef": "docs/reference/evidence/fold-2026-08-13-c/row-sf157.md",
+      "report": "docs/reference/evidence/cli-wave-fidelity-2026-08-13/fold-suite-157.md"
+    },
+    {
+      "role": "row-sf158",
+      "exact": {
+        "harness": "deepseek",
+        "model": "deepseek-v4-flash",
+        "effort": "high"
+      },
+      "scope": [
+        "impl/test/scratchpad-write-red.test.mjs",
+        "docs/reference/evidence/scratchpad-write-2026-08-13/**"
+      ],
+      "objectiveRef": "docs/reference/evidence/fold-2026-08-13-c/row-sf158.md",
+      "report": "docs/reference/evidence/scratchpad-write-2026-08-13/fold-suite-158.md"
+    },
+    {
+      "role": "row-sf159",
+      "exact": {
+        "harness": "deepseek",
+        "model": "deepseek-v4-flash",
+        "effort": "high"
+      },
+      "scope": [
+        "impl/test/doc-truth-conformance-red.test.mjs",
+        "docs/reference/evidence/doc-truth-conformance-2026-08-13/**"
+      ],
+      "objectiveRef": "docs/reference/evidence/fold-2026-08-13-c/row-sf159.md",
+      "report": "docs/reference/evidence/doc-truth-conformance-2026-08-13/fold-suite-159.md"
+    },
+    {
+      "role": "row-sf160",
+      "exact": {
+        "harness": "deepseek",
+        "model": "deepseek-v4-flash",
+        "effort": "high"
+      },
+      "scope": [
+        "impl/test/error-actionability-red.test.mjs",
+        "docs/reference/evidence/error-actionability-2026-08-13/**"
+      ],
+      "objectiveRef": "docs/reference/evidence/fold-2026-08-13-c/row-sf160.md",
+      "report": "docs/reference/evidence/error-actionability-2026-08-13/fold-suite-160.md"
+    },
+    {
+      "role": "row-sf161",
+      "exact": {
+        "harness": "deepseek",
+        "model": "deepseek-v4-flash",
+        "effort": "high"
+      },
+      "scope": [
+        "impl/test/orchestrator-plan-object-red.test.mjs",
+        "docs/reference/evidence/orchestrator-plan-object-2026-08-13/**"
+      ],
+      "objectiveRef": "docs/reference/evidence/fold-2026-08-13-c/row-sf161.md",
+      "report": "docs/reference/evidence/orchestrator-plan-object-2026-08-13/fold-suite-161.md"
+    },
+    {
+      "role": "row-sf164",
+      "exact": {
+        "harness": "deepseek",
+        "model": "deepseek-v4-flash",
+        "effort": "high"
+      },
+      "scope": [
+        "impl/test/blind-waits-red.test.mjs",
+        "docs/reference/evidence/blind-waits-2026-08-13/**"
+      ],
+      "objectiveRef": "docs/reference/evidence/fold-2026-08-13-c/row-sf164.md",
+      "report": "docs/reference/evidence/blind-waits-2026-08-13/fold-suite-164.md"
+    }
+  ],
+  "steering": {
+    "approveOnAdvertisedPlan": true,
+    "nudgeOnCheckpoint": {
+      "message": "Continue the suite fold \u2014 every blue-team finding FOLDED/STRUCK/ESCALATED, rows still RED at named stages, split run twice, notes incremental."
+    },
+    "claimOnStall": true,
+    "messageOnSpawn": {
+      "kind": "brief",
+      "body": "Read your objectiveRef brief IN FULL first, then foundry-brief.md in the same directory (the fold laws bind you \u2014 RED honesty, the sacred existing attempt header, split-twice, scope discipline: verify pwd shows your ws-* worktree before any write). Judgment calls recorded; authority-class ambiguity \u2192 DECISION_REQUEST with options."
+    },
+    "elevateWhenNotes": {
+      "kinds": [
+        "doubt",
+        "plan"
+      ],
+      "maxEntries": 20
+    }
+  },
+  "harvest": {
+    "paths": [
+      {
+        "path": "docs/reference/evidence/cli-silent-start-2026-08-13/fold-suite-155.md",
+        "mustContain": "#155"
+      },
+      {
+        "path": "docs/reference/evidence/mcp-profile-parity-2026-08-13/fold-suite-156.md",
+        "mustContain": "#156"
+      },
+      {
+        "path": "docs/reference/evidence/cli-wave-fidelity-2026-08-13/fold-suite-157.md",
+        "mustContain": "#157"
+      },
+      {
+        "path": "docs/reference/evidence/scratchpad-write-2026-08-13/fold-suite-158.md",
+        "mustContain": "#158"
+      },
+      {
+        "path": "docs/reference/evidence/doc-truth-conformance-2026-08-13/fold-suite-159.md",
+        "mustContain": "#159"
+      },
+      {
+        "path": "docs/reference/evidence/error-actionability-2026-08-13/fold-suite-160.md",
+        "mustContain": "#160"
+      },
+      {
+        "path": "docs/reference/evidence/orchestrator-plan-object-2026-08-13/fold-suite-161.md",
+        "mustContain": "#161"
+      },
+      {
+        "path": "docs/reference/evidence/blind-waits-2026-08-13/fold-suite-164.md",
+        "mustContain": "#164"
+      },
+      {
+        "path": "impl/test/cli-silent-start-red.test.mjs",
+        "mustContain": "cli-silent-start"
+      },
+      {
+        "path": "impl/test/mcp-profile-parity-red.test.mjs",
+        "mustContain": "mcp-profile-parity"
+      },
+      {
+        "path": "impl/test/cli-wave-fidelity-red.test.mjs",
+        "mustContain": "cli-wave-fidelity"
+      },
+      {
+        "path": "impl/test/scratchpad-write-red.test.mjs",
+        "mustContain": "scratchpad-write"
+      },
+      {
+        "path": "impl/test/doc-truth-conformance-red.test.mjs",
+        "mustContain": "doc-truth-conformance"
+      },
+      {
+        "path": "impl/test/error-actionability-red.test.mjs",
+        "mustContain": "error-actionability"
+      },
+      {
+        "path": "impl/test/orchestrator-plan-object-red.test.mjs",
+        "mustContain": "orchestrator-plan-object"
+      },
+      {
+        "path": "impl/test/blind-waits-red.test.mjs",
+        "mustContain": "blind-waits"
+      }
+    ]
+  }
+}
