@@ -9,22 +9,30 @@ ritual), #68 (the BD3-A read port), #69 (the REPL realization tiers), #132 (the 
 observability liveness honesty), and the PKG-1 descriptor (the declarative deployment
 descriptor seam).
 
-- **Date:** 2026-08-07 (folded to v1.1 2026-08-12)
-- **Status:** DRAFT v1.1 — implementation contract (v1.0 folded per the #70 red-team report;
+- **Date:** 2026-08-07 (folded to v1.1 2026-08-12; folded to v1.2 2026-08-13)
+- **Status:** DRAFT v1.2 — implementation contract (v1.0 folded per the #70 red-team report;
   see `contract-fold.md` in this directory for the blocker → change map, all 8 blockers + the
-  two fold-blocking OQ verdicts)
-- **Verification HEAD:** `79a782630c2f31bdd575e536c00cdadb0314fb07` ("Baton private
-  effective-tree snapshot"), the tree this v1.1 draft was verified against. Every `file:line`
+  two fold-blocking OQ verdicts; v1.2 folded per the #70 suite blue-team report — F2.4's
+  seam note, see `suite-fold-2.md` in this directory for the finding → resolution map)
+- **Verification HEAD:** `fb9f5c59184118f725b67ef13462f41e8ba5cfca` ("Baton private
+  effective-tree snapshot"), the tree this v1.2 draft was verified against. Every `file:line`
   citation below was re-verified with `grep -an`/`sed -n` at this HEAD, unless explicitly
   marked spec-referenced (a cross-contract pin, not a working-tree read). The six NUL-bearing
   files whose anchors are grep/sed-verified, never whole-file reads:
   `coordination-store.mjs`, `coordinator.mjs`, `application-semantics.mjs`,
   `application-deployment.mjs`, `index.mjs`, `resident-authority.mjs` — `application.mjs`
   measures 0 NUL bytes and is read with plain `grep`/`sed`. The v1.0 verification HEAD
-  `1637ae58dbcf5ac9a188366ec484c629baff4171` and the red-team's HEAD
-  `90d997c6372a2ef16113555dcb46a7ba2cff40a9` are each **not an ancestor** of this fold target
+  `1637ae58dbcf5ac9a188366ec484c629baff4171`, the red-team's HEAD
+  `90d997c6372a2ef16113555dcb46a7ba2cff40a9`, and the v1.1 verification HEAD
+  `79a782630c2f31bdd575e536c00cdadb0314fb07` are each **not an ancestor** of this fold target
   (the fold worktree carries #105 D4-accessor content); all six `coordinator.mjs` anchors were
-  re-derived at `79a7826` (deltas in `contract-fold.md`).
+  re-derived at `fb9f5c5` (deltas in `contract-fold.md`; the v1.1 set at `79a7826` shifted
+  again — `recallKnowledge` :10486→:10705, `serveKnowledge` :10513→:10732,
+  `admitWorkflowFinding` wrapper :11428→:11647, `projectHorizon` :11755→:11974,
+  `taskHorizon` :11687→:11906, `workflowHorizon` :11713→:11932, `COORDINATION_MUTATORS`
+  :261-281→:272 both verbs :266→:277, the `promoteKnowledgeNode` callsites :13229/:6556→
+  :13458/:6580, `application.mjs` :13197→:13201, `index.mjs` :1238→:1253,
+  `application-deployment.mjs` :175→:185-187/:1761→:1773).
 - **Brief:** `contract-70-brief.md` (same dir) — read fully; the issue body (`gh issue view 70`)
   could not be fetched (`gh` is not authenticated in this worktree — the same constraint the
   #105 and #69 contracts record). The requirements are carried by the brief and the read-order
@@ -33,15 +41,15 @@ descriptor seam).
   HEAD holds **72** `taskwave-*` roots (a runtime snapshot that grows per wave attempt),
   one per wave attempt (`deploymentRoot: resolve(repo, '.baton',
   \`taskwave-${ROLE}-${SALT}\`)`, `run-task-wave.mjs:70`), each with its own
-  `state/coordination/events.jsonl` ledger (`index.mjs:1238`, `application-deployment.mjs:1761`),
-  all sharing ONE `repoId` (`repo-` + sha256 of the git common dir, `application-deployment.mjs:175`)
+  `state/coordination/events.jsonl` ledger (`index.mjs:1253`, `application-deployment.mjs:1773`),
+  all sharing ONE `repoId` (`repo-` + sha256 of the git common dir, `application-deployment.mjs:187`)
   and each carrying a distinct `deploymentId` (`resident-authority.mjs:115-130`); (3) the KG
   machinery — the Cairn graph + promotion taxonomy (`coordination-store.mjs` knowledge folds),
   the #63 settlement ritual (`kg-settlement-decisions.md`), `knowledge.recall`/`knowledge.horizon`
   (`application-semantics.mjs` rows), the promotion event shape (content-addressed + replayable);
   (4) the #132 wave-observability contract v1.2 (LANDED — the wave registry fold at
-  `coordination-store.mjs:8099-8127`, `wave.closed` at :8793-8810, `waves.list` at
-  `application.mjs:11711`) and the #69 REPL-realization contract v1.1 (the tier law, D4); (5) the
+  `coordination-store.mjs:8099-8117`, `wave.closed` at :8793-8810, `waves.list` at
+  `application.mjs:11737`) and the #69 REPL-realization contract v1.1 (the tier law, D4); (5) the
   PKG-1 descriptor seam (`mcp-packaging-decisions.md:88-117`).
 
 Scope of the rung, in one sentence: **the project-persistent tier stops being per-root-local
@@ -57,10 +65,10 @@ names its source root + epoch lag, UNTRUSTED-framed, never an authority input.**
 
 **GT1 — The KG is per-deployment private, and every deployment of one repo shares a single
 `repoId`.** The coordination store is created at `join(opts.logDir, 'coordination')`
-(`index.mjs:1238`), where `logDir = stateRoot = privateDirectory(join(deploymentRoot, 'state'))`
-(`application-deployment.mjs:1761`); the default deployment root is
-`join(repository.common, 'baton', 'application-v3')` (`application-deployment.mjs:1759-1760`).
-The repository identity is `repoId = 'repo-' + sha256(git-common-dir)` (`application-deployment.mjs:175`);
+(`index.mjs:1253`), where `logDir = stateRoot = privateDirectory(join(deploymentRoot, 'state'))`
+(`application-deployment.mjs:1773`); the default deployment root is
+`join(repository.common, 'baton', 'application-v3')` (`application-deployment.mjs:1771-1772`).
+The repository identity is `repoId = 'repo-' + sha256(git-common-dir)` (`application-deployment.mjs:187`);
 the resident identity is a stable `deploymentId = 'deployment-' + uuid` written once to
 `deploymentRoot/resident/deployment.json` (`resident-authority.mjs:115-130`; the constructor
 reads it back at `:264`). Verified in `.baton/` at fold HEAD: 4 sampled `taskwave-*` resident
@@ -75,9 +83,9 @@ the quote is at `:53` — blocker 7.)
 (`coordination-store.mjs:16997`) reads `this.queryKnowledge(...)` — THIS store's
 `_knowledgeNodeHistory` — and appends a `knowledge.read` event to THIS store's ledger (the
 `UNTRUSTED_RECALLED_MEMORY` frame, `coordination-store.mjs:17005,17011`). `recallKnowledge`
-(`coordinator.mjs:10486`) is a thin wrapper calling `this._coordination.readKnowledge(...)`.
-`projectHorizon(repoId)` (`coordinator.mjs:11755`) reads `this._coordination.queryKnowledge({})`
-— the same store. `serveKnowledge` (the KG-3 ambient slice, `coordinator.mjs:10513`) reads
+(`coordinator.mjs:10705`) is a thin wrapper calling `this._coordination.readKnowledge(...)`.
+`projectHorizon(repoId)` (`coordinator.mjs:11974`) reads `this._coordination.queryKnowledge({})`
+— the same store. `serveKnowledge` (the KG-3 ambient slice, `coordinator.mjs:10732`) reads
 `this._coordination.queryKnowledge({ types: ['Finding'] })`. None of these can see a node
 promoted in a different deployment root. The campaign witness is direct: the
 `knowledge.promoted` event in `taskwave-contract-69-*`'s `events.jsonl` is invisible to
@@ -108,12 +116,12 @@ writer and read-only projection consumers.
 
 **GT5 — #132's cross-deployment liveness honesty LANDED and is the composition precedent.** The
 wave registry fold consumes `wave.started` and stores the member rows with
-`deploymentId: p.deploymentId ?? null` read straight off the payload (`coordination-store.mjs:8122`)
+`deploymentId: p.deploymentId ?? null` read straight off the payload (`coordination-store.mjs:8117`)
 — there is NO ingestion-time "drop a foreign deploymentId" (v1.0's claim; corrected — blocker
 fold in GT6/D5's contrast). The defense is topological: the registry fold lives in the
 per-deployment PRIVATE store, so a foreign deployment's rows never arrive in the first place.
 `wave.closed` folds at top level (:8793-8810); `waves.list` reads `liveness: 'local'` for every
-row by construction and renders legacy members honestly (`application.mjs:11711`); `remote`/`stale`
+row by construction and renders legacy members honestly (`application.mjs:11737`); `remote`/`stale`
 are explicitly deferred with the honesty rule pinned (`wave-observability-contract.md` D3). The
 knowledge-side equivalent of that posture — a projected answer names its source + epoch, never
 fabricates liveness from a git-ref or a digest — is what this contract composes with. The wave
@@ -124,15 +132,15 @@ pin must NOT follow (blocker fold in D5): identity is read from the primary's
 **GT6 — The #63 settlement ritual is ONE of THREE promotion/materialization paths.** The full
 set (each verified at HEAD):
 `admitWorkflowFinding` (`coordination-store.mjs:16207`; coordinator wrapper
-`coordinator.mjs:11428`) is the #63 orchestrator-admit gate, session-bound to the settlement
+`coordinator.mjs:11647`) is the #63 orchestrator-admit gate, session-bound to the settlement
 lease (`kg-settlement-decisions.md` D2), emitting `knowledge.workflow_admitted`; the
 verified-task-outcome auto-promotion is `promoteKnowledgeNode` (`coordination-store.mjs:16303`),
-called at `coordinator.mjs:13229` (the verify flow) and `coordinator.mjs:6556`, emitting
+called at `coordinator.mjs:13458` (the verify flow) and `coordinator.mjs:6580`, emitting
 `knowledge.promoted`; the run-scoped knowledge seed is `addKnowledgeNode`
-(`coordination-store.mjs:16283`), called at `application.mjs:13197` (`run.knowledge.seed`),
+(`coordination-store.mjs:16283`), called at `application.mjs:13201` (`run.knowledge.seed`),
 emitting `knowledge.node_added`. `promoteKnowledgeNode` and `addKnowledgeNode` are in the
-coordinator's mutator allowlist (`COORDINATION_MUTATORS`, `coordinator.mjs:261-281`, both at
-`:266`); each constructs the payload, runs `_validateKnowledgeNodePayload`, and appends to the
+coordinator's mutator allowlist (`COORDINATION_MUTATORS`, `coordinator.mjs:272`, both at
+`:277`); each constructs the payload, runs `_validateKnowledgeNodePayload`, and appends to the
 store's own ledger **unconditionally — no primary check exists at HEAD**, and the field that
 would trigger one does not. (v1.0's "There is no second promotion path" is false — blocker 1.)
 Candidacy is materialized as local board items; the #63 admission reviews LOCAL store evidence
@@ -253,10 +261,10 @@ projected `VerifiedBy`/`Informed` edges never dangle. Task-ephemeral and workflo
 NEVER cross roots (the #69 tier law, GT7):
 
 - **task-ephemeral stays local:** scratchpad partitions, `worker:<workerId>` REPL bindings, task
-  horizons (`taskHorizon`, `coordinator.mjs:11687`).
+  horizons (`taskHorizon`, `coordinator.mjs:11906`).
 - **workflow-ephemeral stays local:** board items, admitted-but-unsettled workflow findings,
   `shared` REPL bindings, context packs, the wave registry — everything reachable only through
-  the workflow horizon (`workflowHorizon`, `coordinator.mjs:11713`).
+  the workflow horizon (`workflowHorizon`, `coordinator.mjs:11932`).
 - **Candidacy queues stay local — the candidate trigger set is named EXCLUDED.** The #63
   settlement ritual reviews LOCAL evidence only (GT6). A candidate board item in root A is never
   admissible into root B's store, and a settlement never consumes a foreign candidate. The
@@ -288,22 +296,28 @@ settlement may consume a projected answer as evidence:
   `coordination-store.mjs:8582`) reads only evented `knowledge.read`/`knowledge.recall` records
   in THIS store; a projected answer appends nothing and feeds no assessment — the BD3-A zero-
   promotion-weight precedent (GT9).
-- **Promotion is primary-only, wired to EVERY promotion path.** A `knowledge.promote` act
-  (`application-semantics.mjs:1509`, `liveMethod` `admitWorkflowFinding` :1515), a
-  verified-task-outcome auto-promotion (`promoteKnowledgeNode`, `coordination-store.mjs:16303`;
-  called at `coordinator.mjs:13229` and :6556), and a run-scoped seed (`addKnowledgeNode`,
-  `coordination-store.mjs:16283`; `application.mjs:13197` `run.knowledge.seed`) ALL refuse
-  `knowledge_primary_conflict` when the deployment's own `deploymentRoot` is not the declared
-  `knowledge.primaryRoot` — the refusal fires at the **coordinator mutator seam**
-  (`COORDINATION_MUTATORS`, `coordinator.mjs:261-281`; both verbs at `:266`), so every promotion
-  path is covered (blocker 1). Absent the descriptor field, today's per-root-local promotion is
-  preserved (D4 default), so no existing wave breaks until it opts in. A non-primary root can
-  therefore never grow an unframed local project KG — the authority-laundering vector is closed,
-  and the D3b read composition question resolves: with the field present and naming a different
-  primary, a non-primary root's `knowledge.recall` / `knowledge.horizon {kind:'project'}` serve
-  the projection only (framed); its own promoted nodes are refused at promote, so there is no
-  unframed local set to compose. When the field names its own root, the deployment IS the
-  primary and its project reads are its own store — but still framed (D5, OQ5).
+- **Promotion is primary-only, wired to EVERY promotion path, at the STORE seam (F2.4 fold).**
+  The store methods themselves are the enforcement points: a store constructed with federation
+  opts where `resolve(primaryRoot) ≠ resolve(deploymentRoot)` refuses `knowledge_primary_conflict`
+  inside `addKnowledgeNode` (`coordination-store.mjs:16283`) and `promoteKnowledgeNode`
+  (`coordination-store.mjs:16303`) on the declared-path-vs-this-root comparison (blocker 2) —
+  the coordinator's calls pass through the same store methods, so a direct store call and a
+  coordinator-mediated call both refuse. A `knowledge.promote` act
+  (`application-semantics.mjs:1509`, `liveMethod` `admitWorkflowFinding` :1515) and a
+  run-scoped seed (`addKnowledgeNode`, `coordination-store.mjs:16283`;
+  `application.mjs:13201` `run.knowledge.seed`) additionally pass the **coordinator mutator seam**
+  (`COORDINATION_MUTATORS`, `coordinator.mjs:272`; both verbs at `:277`), which guards the
+  `admitWorkflowFinding` path (A2-R3): the #63 orchestrator-admit gate (`coordinator.mjs:11647`)
+  refuses at the seam while the store's `admitWorkflowFinding` (`coordination-store.mjs:16207`)
+  stays open (A2-P2) — so every promotion path is covered (blocker 1) at both seams. Absent the
+  descriptor field, today's per-root-local promotion is preserved (D4 default), so no existing
+  wave breaks until it opts in. A non-primary root can therefore never grow an unframed local
+  project KG — the authority-laundering vector is closed, and the D3b read composition question
+  resolves: with the field present and naming a different primary, a non-primary root's
+  `knowledge.recall` / `knowledge.horizon {kind:'project'}` serve the projection only (framed);
+  its own promoted nodes are refused at promote, so there is no unframed local set to compose.
+  When the field names its own root, the deployment IS the primary and its project reads are its
+  own store — but still framed (D5, OQ5).
 - **Every projected answer is UNTRUSTED-framed** with the existing frame family
   (`UNTRUSTED_RECALLED_MEMORY`, `coordination-store.mjs:17011`) and names its `sourceRoot` +
   `epochLag` (D5).
@@ -329,7 +343,7 @@ knowledge: { primaryRoot: <repo-relative path> }
   directory, or a sibling root's store reached through an unpinned derivation, passes neither.
   The `primaryRoot → state/coordination` derivation is pinned:
   `join(resolve(repo, primaryRoot), 'state', 'coordination')` — the store root,
-  mirroring `index.mjs:1238` / `application-deployment.mjs:1761`; the ledger is
+  mirroring `index.mjs:1253` / `application-deployment.mjs:1773`; the ledger is
   `join(that, 'events.jsonl')`.
 - **Default: absent = per-root local — today's exact behavior.** When the field is absent, every
   knowledge read and every promotion act is served by the deployment's own store exactly as at
@@ -355,7 +369,7 @@ projection, INCLUDING a self-declared primary's own (OQ5 resolution) — carries
   pinned:** `sourceRoot` is the `deploymentId` read from the primary's `resident/deployment.json`
   at projection build — never from a replayed event payload. The codebase precedent is the
   wrong way around and is explicitly NOT mirrored: the wave registry fold stores
-  `deploymentId: p.deploymentId ?? null` straight from the payload (`coordination-store.mjs:8122`),
+  `deploymentId: p.deploymentId ?? null` straight from the payload (`coordination-store.mjs:8117`),
   and a projection build that followed that habit would let a root whose ledger is being
   projected claim a forged `sourceRoot`. A primary's OWN answers read `sourceRoot` = its own
   resident `deploymentId` (the self-primary framing).
@@ -394,7 +408,7 @@ New (this contract):
 
 | Code | Where | Meaning |
 |---|---|---|
-| `knowledge_primary_conflict` | every promotion path (D3): `knowledge.promote` / `promoteKnowledgeNode` / `addKnowledgeNode` at the coordinator mutator seam | A promotion act by a deployment whose own `deploymentRoot` is not the declared `knowledge.primaryRoot` — fires on the declared-path-vs-this-root comparison, never the vacuous `repoId` equality (blocker 2) |
+| `knowledge_primary_conflict` | every promotion path (D3): `knowledge.promote` / `promoteKnowledgeNode` / `addKnowledgeNode` — inside the store verbs when constructed with federation opts where `resolve(primaryRoot) ≠ resolve(deploymentRoot)`, and at the coordinator mutator seam (`COORDINATION_MUTATORS`, `coordinator.mjs:272`) | A promotion act by a deployment whose own `deploymentRoot` is not the declared `knowledge.primaryRoot` — fires on the declared-path-vs-this-root comparison, never the vacuous `repoId` equality (blocker 2) |
 | `knowledge_cross_root_denied` | projection build — edge-severing (D2); #63 admission (D2/D3) | A projected slice would leak a task- or workflow-ephemeral object (the `workflow_admitted` `DerivedFrom` edge citing a candidate is severed and this code fires); or a settlement's candidate/evidence is not in the settlement store |
 | `knowledge_projection_stale` | `knowledge.recall` / `knowledge.horizon` read (D5) | A `strict` projected read whose `epochLag` exceeds the deployment-owned ceiling |
 | `knowledge_primary_unreachable` | projection build (D5) | The declared primary's ledger is unreadable/absent, or a gap/out-of-order arrival breaks the strict-prefix replay law; a strict project read refuses rather than serving an empty or local-only slice as the project KG |
@@ -418,14 +432,19 @@ MCP, the existing `knowledge.recall`/`knowledge.horizon` rows, `application-sema
   store exactly as at HEAD.
 - **A2 — promotion is primary-only, on every path (D3).** Red: any root can promote into its
   own store today, through `knowledge.promote`, the verified-task-outcome auto-promotion
-  (`promoteKnowledgeNode`, `coordinator.mjs:13229`/`:6556`), and `run.knowledge.seed`
-  (`addKnowledgeNode`, `application.mjs:13197`) — the sprawl witness. Green: a deployment whose
+  (`promoteKnowledgeNode`, `coordinator.mjs:13458`/`:6580`), and `run.knowledge.seed`
+  (`addKnowledgeNode`, `application.mjs:13201`) — the sprawl witness. Green: a deployment whose
   descriptor names a `knowledge.primaryRoot` different from its own `deploymentRoot` refuses
   `knowledge.promote` **and** the verified_task_outcome auto-promotion **and** `run.knowledge.seed`
-  with `knowledge_primary_conflict` (the refusal fires at the coordinator mutator seam, so every
-  path is covered); a deployment whose descriptor names ITS OWN root (or has the field absent)
-  promotes normally. The #63 gate itself is unchanged — the refusal fires at the seam, never
-  inside `admitWorkflowFinding`.
+  with `knowledge_primary_conflict`. The refusal fires **inside the store methods themselves**
+  (`addKnowledgeNode` / `promoteKnowledgeNode` when constructed with federation opts where
+  `resolve(primaryRoot) ≠ resolve(deploymentRoot)` — the F2.4 fold) AND at the coordinator
+  mutator seam (`COORDINATION_MUTATORS`, `coordinator.mjs:272`), so a direct store call and a
+  coordinator-mediated call both refuse; every path is covered. A deployment whose descriptor
+  names ITS OWN root (or has the field absent) promotes normally. The #63 gate itself is
+  unchanged — the store's `admitWorkflowFinding` (`coordination-store.mjs:16207`) stays open
+  (A2-P2); the refusal for the `knowledge.promote` act fires at the coordinator seam, never
+  inside the raw store admission.
 - **A3 — the projection build (D1).** Red: no projection exists — `readKnowledge` /
   `queryKnowledge` read only this deployment's store (GT2); a replica applying a primary
   promotion event whose source seq is not in the replica's ledger refuses `temporal_incoherence`
@@ -479,7 +498,7 @@ MCP, the existing `knowledge.recall`/`knowledge.horizon` rows, `application-sema
   the docs/34 rule-4 union-fence discipline) — either satisfies the event-seq anchoring law
   (D1.2); the cache is an implementation-fold decision.
 - **OQ3 — ambient serving: deferred (OK).** Whether the projected slice feeds the KG-3 ambient
-  serving (`serveKnowledge`, `coordinator.mjs:10513`) and the briefing injection, or only
+  serving (`serveKnowledge`, `coordinator.mjs:10732`) and the briefing injection, or only
   explicit `knowledge.recall` / `knowledge.horizon`. v1.1 pins the explicit read; ambient serving
   of a projected slice is a follow-up (it must keep the honest source/epoch framing).
 - **OQ4 — the knowledge-side `remote`/`stale`: deferred (OK).** #132 deferred a liveness
