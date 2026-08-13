@@ -17,6 +17,7 @@ import { normalizeProcessGeneration, ProcessCloseReapLatch, processStartedPayloa
 import { usdToNanos } from './usd.mjs';
 import { attestWorkerPolicyObservation } from './worker-policy.mjs';
 import { renderVerificationExecution } from './verification-presentation.mjs';
+import { renderAttentionSection } from './messages.mjs';
 
 const DEFAULT_MAX_WIRE_FRAME_BYTES = 1024 * 1024;
 const CODEX_TOKEN_METRIC = 'codex_turn_input_plus_output_tokens';
@@ -105,6 +106,10 @@ export function renderPrompt(brief) {
       ? `A reviewer independently enforces the following exact execution contract. Run it only when the requested work needs code verification; do not substitute it for analyzing the attached Context.\n${renderVerificationExecution(brief.verification)}`
       : `A reviewer will independently enforce the following exact execution contract. Make it pass without changing its executable, argv, working directory, or expected exit.\n${renderVerificationExecution(brief.verification)}`) : '',
   ];
+  // Issue #79 (D1): the worker-delivery push block lands AFTER the verification execution contract
+  // (the prompt's final lines, past the `A reviewer` marker). Absent when there is nothing to serve.
+  const attention = renderAttentionSection(brief.attention);
+  if (attention) lines.push(attention);
   return lines.filter(Boolean).join('\n');
 }
 
