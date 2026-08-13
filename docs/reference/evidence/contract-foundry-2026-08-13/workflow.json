@@ -1,58 +1,122 @@
 {
   "schemaVersion": 1,
-  "idempotencyKey": "contract-foundry-2026-08-13-wave-a",
+  "idempotencyKey": "contract-foundry-2026-08-13-wave-b",
   "members": [
     {
       "role": "coordinator",
-      "exact": { "harness": "deepseek", "model": "deepseek-v4-pro[1m]", "effort": "high" },
-      "scope": ["docs/reference/evidence/contract-foundry-2026-08-13/**"],
+      "exact": {
+        "harness": "deepseek",
+        "model": "deepseek-v4-pro[1m]",
+        "effort": "high"
+      },
+      "scope": [
+        "docs/reference/evidence/contract-foundry-2026-08-13/**"
+      ],
       "objectiveRef": "docs/reference/evidence/contract-foundry-2026-08-13/coordinator-brief.md",
       "report": "docs/reference/evidence/contract-foundry-2026-08-13/foundry-qa.md"
     },
     {
       "role": "row-quiescence",
-      "exact": { "harness": "deepseek", "model": "deepseek-v4-flash", "effort": "high" },
-      "scope": ["docs/reference/evidence/contract-foundry-2026-08-13/**"],
+      "exact": {
+        "harness": "deepseek",
+        "model": "deepseek-v4-flash",
+        "effort": "high"
+      },
+      "scope": [
+        "docs/reference/evidence/contract-foundry-2026-08-13/**"
+      ],
       "objectiveRef": "docs/reference/evidence/contract-foundry-2026-08-13/row-quiescence.md",
       "report": "docs/reference/evidence/contract-foundry-2026-08-13/contract-163.md"
     },
     {
       "role": "row-launchval",
-      "exact": { "harness": "deepseek", "model": "deepseek-v4-flash", "effort": "high" },
-      "scope": ["docs/reference/evidence/contract-foundry-2026-08-13/**"],
+      "exact": {
+        "harness": "deepseek",
+        "model": "deepseek-v4-flash",
+        "effort": "high"
+      },
+      "scope": [
+        "docs/reference/evidence/contract-foundry-2026-08-13/**"
+      ],
       "objectiveRef": "docs/reference/evidence/contract-foundry-2026-08-13/row-launchval.md",
       "report": "docs/reference/evidence/contract-foundry-2026-08-13/contract-165.md"
     },
     {
       "role": "row-readiness",
-      "exact": { "harness": "deepseek", "model": "deepseek-v4-flash", "effort": "high" },
-      "scope": ["docs/reference/evidence/contract-foundry-2026-08-13/**"],
+      "exact": {
+        "harness": "deepseek",
+        "model": "deepseek-v4-flash",
+        "effort": "high"
+      },
+      "scope": [
+        "docs/reference/evidence/contract-foundry-2026-08-13/**"
+      ],
       "objectiveRef": "docs/reference/evidence/contract-foundry-2026-08-13/row-readiness.md",
       "report": "docs/reference/evidence/contract-foundry-2026-08-13/contract-167.md"
     },
     {
       "role": "row-telemetry",
-      "exact": { "harness": "deepseek", "model": "deepseek-v4-flash", "effort": "high" },
-      "scope": ["docs/reference/evidence/contract-foundry-2026-08-13/**"],
+      "exact": {
+        "harness": "deepseek",
+        "model": "deepseek-v4-flash",
+        "effort": "high"
+      },
+      "scope": [
+        "docs/reference/evidence/contract-foundry-2026-08-13/**"
+      ],
       "objectiveRef": "docs/reference/evidence/contract-foundry-2026-08-13/row-telemetry.md",
       "report": "docs/reference/evidence/contract-foundry-2026-08-13/contract-146.md"
     }
   ],
   "steering": {
     "approveOnAdvertisedPlan": true,
-    "nudgeOnCheckpoint": { "message": "Continue your draft drive — read evidence, write your contract incrementally, publish to the shared scratchpad when complete." },
+    "nudgeOnCheckpoint": {
+      "message": "Continue your draft drive \u2014 read evidence, write your contract incrementally, publish to the shared scratchpad when complete."
+    },
     "claimOnStall": true,
-    "messageOnSpawn": { "kind": "brief", "body": "Read your objectiveRef brief IN FULL first, then foundry-brief.md in the same directory (the shared frame binds you). Publish your final draft to the `shared` scratchpad partition as well as your file. Authority-class ambiguity → DECISION_REQUEST with options; judgment calls are yours — record them in open questions." },
-    "elevateWhenNotes": { "kinds": ["doubt", "plan"], "maxEntries": 20 },
-    "signalOnMembersDone": { "roles": ["coordinator"], "message": { "kind": "result", "body": "All rows settled — read their drafts from the `shared` scratchpad partition and write foundry-qa.md per your brief." } }
+    "messageOnSpawn": {
+      "kind": "brief",
+      "body": "Read your objectiveRef brief IN FULL first, then foundry-brief.md in the same directory (the shared frame binds you). Publish your final draft to the `shared` scratchpad partition as well as your file. Authority-class ambiguity \u2192 DECISION_REQUEST with options; judgment calls are yours \u2014 record them in open questions."
+    },
+    "elevateWhenNotes": {
+      "kinds": [
+        "doubt",
+        "plan"
+      ],
+      "maxEntries": 20
+    },
+    "signalOnMembersDone": {
+      "roles": [
+        "coordinator"
+      ],
+      "message": {
+        "kind": "result",
+        "body": "All rows settled \u2014 read their drafts from the `shared` scratchpad partition and write foundry-qa.md per your brief."
+      }
+    }
   },
   "harvest": {
     "paths": [
-      { "path": "docs/reference/evidence/contract-foundry-2026-08-13/foundry-qa.md", "mustContain": "FOUNDRY-QA v1" },
-      { "path": "docs/reference/evidence/contract-foundry-2026-08-13/contract-163.md", "mustContain": "#163" },
-      { "path": "docs/reference/evidence/contract-foundry-2026-08-13/contract-165.md", "mustContain": "#165" },
-      { "path": "docs/reference/evidence/contract-foundry-2026-08-13/contract-167.md", "mustContain": "#167" },
-      { "path": "docs/reference/evidence/contract-foundry-2026-08-13/contract-146.md", "mustContain": "#146" }
+      {
+        "path": "docs/reference/evidence/contract-foundry-2026-08-13/foundry-qa.md",
+        "mustContain": "FOUNDRY-QA v1"
+      },
+      {
+        "path": "docs/reference/evidence/contract-foundry-2026-08-13/contract-163.md",
+        "mustContain": "#163"
+      },
+      {
+        "path": "docs/reference/evidence/contract-foundry-2026-08-13/contract-165.md",
+        "mustContain": "#165"
+      },
+      {
+        "path": "docs/reference/evidence/contract-foundry-2026-08-13/contract-167.md",
+        "mustContain": "#167"
+      },
+      {
+        "path": "docs/reference/evidence/contract-foundry-2026-08-13/contract-146.md",
+        "mustContain": "#146"
+      }
     ]
   }
 }
