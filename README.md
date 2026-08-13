@@ -6,157 +6,163 @@
 
 # baton
 
-**Cross-harness agent orchestration.** Can an orchestrator agent running in one full coding harness (Claude Code CLI, Codex CLI, Kimi Code) direct *other* full-session harnesses (Codex CLI, Claude Code CLI, Z.ai GLM harness, Grok Build) as subordinate workers — with real messaging, telemetry, and mid-flight interruption/steering — rather than the flat "spawn a process, wait for stdout" pattern?
+**Cross-harness agent orchestration.** An orchestrator agent running in one full coding harness directs *other* full-session harnesses as subordinate workers — with real messaging, telemetry, mid-flight steering, and durable evidence — rather than the flat "spawn a process, wait for stdout" pattern.
 
 The name: a conductor's baton directs an orchestra; a relay baton gets passed between runners. Both are the point.
 
-## The core question
+> **Reading the status tiers.** Every capability below is labeled **[shipped]** (landed in
+> `master`, pinned green by the canonical suite), **[in flight]** (mid-pipeline: contract →
+> adversarial red-team → fold → red-first suite → blue-team → fold → implementation, with the
+> current stage named), or **[planned]** (filed as a tracked issue, not started). In-flight work
+> lands as *red-first* suites — tests that fail at a named stage until the capability ships — so
+> `node impl/scripts/run-suite.mjs` exits nonzero **by construction** while pinned future
+> behavior exists. That is the methodology working, not a regression: every shipped row is
+> green, and the red set is exactly the declared in-flight roster.
 
-Every CLI coding agent today can *shell out* to another CLI coding agent. That's not orchestration — it's a blocking subprocess with a string result. Orchestration means:
-
-- **Full-harness workers** — the subordinate keeps its own tools, sandbox, permissions, session state, and context management. You're delegating to *Codex-the-product*, not GPT-the-model.
-- **Bidirectional messaging** — workers report progress and ask questions; the orchestrator answers without killing the run.
-- **Telemetry** — normalized event stream (turns, tool calls, file edits, tokens, cost) across vendors, observable live.
-- **Interruption & steering** — pause, redirect, or cancel a worker mid-turn from the orchestrator or from a human seat.
-- **Symmetry** — the same machinery works Claude→(GPT+GLM) and GPT→(Claude+GLM). No privileged vendor.
+---
 
 ## What baton is
 
-A run-centric **fleet application** — one orchestrator agent directs full Claude Code / Codex /
-Kimi Code / GLM 5.2 / Grok / DeepSeek workers across vendors while Baton compiles the objective
-into approved
-work, routes it, watches it, handles attention, verifies it, and closes its resources. The
-Coordinator is the safety kernel beneath that application, not the interface every agent should
-have to assemble manually. `Claude → (Codex + GLM)` and `Codex → (Claude + GLM)` remain core uses.
+A run-centric **fleet application**: you (or your orchestrator agent) state an outcome; baton compiles it into an approved Plan, routes it onto live worker seats across vendors, watches liveness, fields questions, verifies results against evidence it re-derives itself, and closes every resource it opened. One orchestrator can run **many workers in parallel as waves**, and can declare a whole multi-member workflow — heavyweight coordinator over cheap swarm rows, steering policies, harvest contract — as **one data file** run through the surface (`waves run`), no bespoke driver code.
 
-**Everything else supports the driver, and none of it is dropped:** independent verification (re-running a worker's tests so "done" can be trusted), learned routing (which vendor is good at what), a reliable coordination core (so "interrupt worker 3" always lands), telemetry/replay, and worker tools (search, debug, semantic diff). Earlier docs over-billed the *verification* as the product and demoted the *driving* to optional — doc 19 turns that right-side-up.
+The fleet today: **Claude** (opus/sonnet), **Codex** (gpt-5.6-sol), **Grok** (grok-build, 4.5), **GLM** 5.2, **DeepSeek** (`deepseek-v4-flash` wide seats, `deepseek-v4-pro[1m]` heavyweight), and **Kimi** k3 — each worker a full harness session with its own tools, sandbox, and context management, in its own git worktree.
 
-## Status
+Underneath the application sits the **Coordinator**: a plain-code reliability kernel (version fencing, confirm-it-stopped, at-least-once cursors, answer-exactly-once, log-is-truth) that makes "interrupt worker 3" actually land, every time. The orchestrator is an AI; the coordinator is not — that asymmetry is the design.
 
-Baton is a runnable dependency-light Node ESM reference implementation, not a prototype skeleton.
-The canonical suite is **3355/3355 green** (as of 2026-08-04, the Ring 2 closeout — re-derive with
-`node impl/scripts/run-suite.mjs`). The fleet driver (Phases 1–65), the AX/lifecycle spine
-(Phases 90–92.x), and the closed Baton Program IR slices (93a.1–93a.3a, issue #9) are shipped
-underneath; the **agent-orchestration stack** is now first-class: waves with durable identity
-(attach-and-harvest + re-drive-the-failed, 93B), a productized wave driver (`createWaveDriver`,
-issue #46), the reflexive layer (decision channel, boards, packages, `context_eval`), the REPL
-layer, knowledge horizons (task/workflow/project graphs with orchestrator-gated elevation),
-the worker scratchpad (issue #33), and turn-checkpoint steering (issue #31). The unified
-control-surface grammar (issue #43, docs/36) has landed M0–M4b plus the server-truth
-conformance rung (executable per-profile inventories, generated docs, dead-path resolution,
-`run.debug` registered). Fleet: Claude (opus/sonnet), Codex gpt-5.6-sol, Grok 4.5, GLM 5.2,
-and DeepSeek (`deepseek-v4-flash` primary, `deepseek-v4-pro[1m]` pre-update opt-in) are live
-worker families; Kimi k3 rides the Claude credential path (adapter over-strictness is issue
-#54). Progress ledger: **[docs/PROGRESS.md](docs/PROGRESS.md)**.
-Open work: **[issues #2–#55](https://github.com/wahargis/baton/issues)**.
+---
 
-## Architecture, plainly
+## Architecture
 
-The ordinary surface is one **Run application**: concise intent and deployment profile, visible
-Plan approval, exact route, one bounded RunView, attention, evidence, and cleanup. Underneath,
-the reliable Coordinator kernel makes dispatch, fencing, verification, replay, and reap exact.
+```mermaid
+flowchart TB
+    subgraph YOU["Orchestrator (an AI harness — or a human seat)"]
+        O[decides · approves · answers · steers]
+    end
+    subgraph SURFACES["Control surfaces — one command bus"]
+        MCP["MCP stdio<br/>(primary agent surface)"]
+        CLI["baton CLI<br/>(thin authenticated client)"]
+        WEB["resident bus — baton serve<br/>(auth HTTP over owner-only socket)"]
+        FAC["embedded facade — openBaton()"]
+    end
+    subgraph APP["Run application"]
+        RUN["runs: start · approve · status · act · answer · stop<br/>evidence · review · adopt · integrate · recover"]
+        WAVES["waves: start · attach · progress · send · stop · list"]
+        WF["workflow interpreter (#114): spec → members, steering policies,<br/>decision deferral, harvest, D6 receipt"]
+    end
+    subgraph COLLAB["Collaboration & memory layer"]
+        KG["knowledge horizons:<br/>task → workflow → project graphs,<br/>orchestrator-gated elevation"]
+        SCR["worker scratchpad · boards ·<br/>context packs · briefing packs"]
+        MSG["interaction lane (blocking questions)<br/>+ reply lane (conversational, depth-budgeted)"]
+        REPL["REPL layer: shared cells,<br/>typed bindings, cross-run scripting"]
+    end
+    subgraph KERNEL["Coordinator kernel (plain code)"]
+        COORD["dispatch · fences · event log · replay<br/>trust gate · stall watchdog · capacity · reap"]
+    end
+    subgraph FLEET["Workers (full harnesses, own worktrees)"]
+        W["Claude · Codex · GLM · Grok · DeepSeek · Kimi"]
+    end
+    YOU --> SURFACES --> APP --> KERNEL --> FLEET
+    APP <--> COLLAB
+    COLLAB <--> KERNEL
+```
 
-- **Surfaces.** Direct embedding (`openBaton`), authenticated Web, the `baton` CLI, MCP stdio,
-  and the browser Run desk share one command bus — the CLI is a thin authenticated Web client,
-  not another fleet controller. `baton serve` starts the owner-local resident with no
-  configuration module: authenticated HTTP over an owner-only Unix socket, discovery published
-  only after an authenticated card/session/readiness challenge, and signal close that revokes
-  only the current incarnation. Credentials are never command arguments.
-- **The orchestration stack.** `baton.waves` runs multi-member orchestration waves with
-  per-member scopes, live progress, outcome materialization, and steering; the reflexive layer
-  gives workers a durable decision channel (multi-choice + free response, orchestrator-gated),
-  shared and per-worker boards, context packages, and `application.context_eval`; the REPL
-  layer shares cells, typed bindings, and cross-run scripting; knowledge horizons project
-  task-ephemeral, workflow-ephemeral, and project-persistent graphs with orchestrator-gated
-  elevation; and the scratchpad (issue #33) is the worker's typed write surface into its
-  task-ephemeral graph.
-- **Turns, not gates.** Pausable harnesses end turns as turn-checkpoints (issue #31): the
-  driver steers with `nudge_turn` / `wait_turn` / `claim_turn` instead of killing workers at
-  turn boundaries, and every pause snapshots a recovery pin. Semantic `run.send` /
-  `run.interrupt` move durably through admitted → effect-started → provider-acknowledged →
-  settled, so restart either executes a still-safe admission or exposes an explicit unknown
-  outcome.
-- **Trust and evidence.** Independent verification re-runs a worker's tests before "done" is
-  believed; `run.review` launches a deployment-pinned independent reviewer over immutable Git
-  ranges; `run.evidence` returns a bounded manifest; policy-gated `run.adopt` selects a result
-  without merging or publishing; `run.integrate` delegates one local `ff-only` or structured
-  transaction. Episode/workstream projections attribute evidence by role and generation.
-- **Fleet tier.** Southbound, persistent Claude stream-json, Codex app-server, Kimi ACP, and
-  Grok ACP sessions are the product tier; one-shot subprocess adapters remain an explicitly
-  limited fire-and-forget tier. GLM 5.2 and DeepSeek (`deepseek-v4-flash` primary,
-  `deepseek-v4-pro[1m]` pre-update opt-in) ride Anthropic-compatible session shims against
-  repo-local key files. Learned routing records which vendor is good at what; GLM work
-  is restricted to `glm-5.2` with effort chosen explicitly by the orchestrator.
+**The surfaces share one authority.** The CLI is a bearer-authenticated client of the resident bus, not a second controller; MCP is the primary agent-facing northbound; `openBaton({repo, advanced})` is the direct-embedding path the evidence drivers use. `baton serve` publishes discovery to `.git/baton/connection.json` only after an authenticated card/session/readiness challenge; credentials are never command arguments.
 
-The full verb inventory lives in [impl/CLI.md](impl/CLI.md) and [impl/MCP.md](impl/MCP.md);
-the retained capability scope (Goal/Plan, causal graph, Vantage, Evidence Ladder, Scratch,
-Skill Forge, Atlas AST/CST/SCIP/CPG/IR, semantic merge, behavioral fingerprint, evaluation)
-remains in [docs/28](docs/28-exhaustive-capability-audit.md). Homelab integration is excluded.
+**Waves are the unit of parallel work.** A wave starts N members with per-member scopes and exact routes; the registry (`waves list`) projects roster, phase, and progress class live; outcome materialization pins each member's result as a content-addressed git object; re-drive restarts only the failed members. The **workflow interpreter** composes entire patterns declaratively: a spec names members, steering policies (`approveOnAdvertisedPlan`, `nudgeOnCheckpoint`, `claimOnStall`, `messageOnSpawn`, `elevateWhenNotes`, `answerDecisions`, `signalOnMembersDone`), and a harvest contract; the interpreter drives it to a verdict and a seven-key receipt.
+
+**Turns, not gates.** Pausable harnesses end turns as checkpoints — the driver steers with `nudge_turn` / `wait_turn` / `claim_turn` instead of killing workers at turn boundaries, and every pause snapshots a recovery pin. The **stall watchdog** (#67) declares stalls only on liveness *evidence* (a closed re-arm set; an in-flight turn is never reaped — the slow-but-productive worker is structurally protected), with an escalate → claim/nudge → preserve-first-reap ladder, every step receipted.
+
+**Trust is re-derived, never reported.** When a worker says "done," the coordinator re-runs the verification in a *fresh* worktree at the worker's commit — the worker's own directory is never trusted. Red→green enforcement, coverage-of-change, and mutation probes harden the gate; `run.review` sends the immutable result to an independently-routed reviewer; `run.adopt` / `run.integrate` are separate, policy-gated effects.
+
+---
+
+## Capabilities
+
+### Shipped (landed, suite-green)
+
+**Orchestration core**
+- **Runs** — the ordinary API: concise intent → readable Plan → visible approval → one bounded RunView → attention → evidence → cleanup. `run.start / status / approve / act / answer / wait / stop / evidence / review / adopt / integrate / recover / resume_work`.
+- **Waves** — multi-member orchestration with durable wave identity, per-member scopes/routes, attach-and-harvest, re-drive-the-failed, and the live registry projection (**#132**: `waves list` on CLI/bus/MCP, roster + phase + progress class).
+- **Workflow-as-data** (**#114**) — whole multi-member workflows as one declarative spec through `baton.recipes.runWorkflow` / `baton waves run` / `baton_waves_run`: closed member fields, steering policy map, decision deferral to the human, harvest with `mustContain`, the closed seven-key D6 receipt.
+- **The resident** — `baton serve`: a standing owner-local deployment publishing an authenticated bus over an owner-only Unix socket; CLI and MCP clients discover it through `.git/baton/connection.json`; signal close revokes only the current incarnation.
+- **Turn-checkpoint steering** (**#31**) — nudge/wait/claim instead of turn-boundary kills; every pause snapshots a recovery pin.
+
+**Communication & attention**
+- **waitingOn vocabulary** (**#10**) — one honest projection of what a run is waiting on (the closed five kinds), surfacing *blocked_interaction* so an orchestrator never has to guess that it must act.
+- **Reply lanes** (**#105**) — blocking asks ride the interaction lane; conversational follow-ups ride depth-budgeted reply chains (`MAX_MESSAGE_DEPTH_BUDGET`); membership-authorized, replay-exact.
+- **Briefing packs** (**#103**) — the orchestrator-readable wave.closed record: what the wave did, per member, with result pins.
+- **Decision channel** — workers ask multi-choice (+ free-response) questions that park the task at `input_required` until the orchestrator or a steering policy answers — the escalation lane the worker-orchestrated swarm rides.
+
+**Memory & collaboration**
+- **Knowledge horizons** — task-ephemeral → workflow-ephemeral → project-persistent knowledge graphs with orchestrator-gated elevation; the worker's typed scratchpad (**#33**) writes into its task-ephemeral graph; shared boards and context packs carry cross-member state.
+- **REPL layer** — shared cells, typed bindings, cross-run scripting (**docs/33**).
+- **Cairn memory** (Phases 44–53) — verified route statistics, causal integrity audit, bounded recall, selective promotion, scratch correction with independent-oracle release, recall-outcome attribution, authenticated contradiction workspace.
+
+**Trust & evidence**
+- **The trust gate** — fresh-worktree re-verification, red→green, coverage-of-change, mutation probes; independent semantic review over immutable git ranges; bounded evidence manifests; policy-gated adopt/integrate.
+- **Atlas representations** (Phases 54, 61) — lexical-binding-aware CPG, graph-backed R1 structural delta / R2 SCIP snapshot / R3 bounded CPG delta, content-addressed and replay-exact.
+- **Dependency & supply-chain chain** (Phases 36–43) — exact dependency dossiers + actual-lockfile SBOM, immutable reuse decisions, advisory TTL invalidation, isolated install graphs, transitive advisory projection, policy-epoch reconciliation, adverse provider ingress.
+- **Fleet governance** — exact provider process lifecycle + reap (51), route-bound provider governance (57), canonical sparse worker/verifier authority (58), repo-scoped worktree capacity authority (59), attach-only native recovery (60), public drain/close (56).
+- **Stall watchdog** (**#67**) — evidence-based liveness: closed re-arm kinds, the in-flight-turn gate, null-deadline interaction sweep, the preserve-first kill ladder.
+
+**Surface engineering**
+- **Unified control grammar** (**#43**, docs/36) — one grammar across embedded/Web/CLI/MCP; executable per-profile inventories; generated `CLI.md`/`MCP.md`; the surface-conformance gate (novel divergence fails the suite).
+- **Adapter cards** — every harness publishes native/emulated/unsupported per control; the driver never pretends an emulated steer is a real one.
+
+### In flight (mid-pipeline; stage named)
+
+- **#74 — worker-orchestrated swarms** *(contract v1.2 + suite folded; implementation running on the heavyweight seat)* — a heavyweight coordinator member over cheap flash rows as ONE workflow spec: the truthful steering trail (denied answers record `denied`, never falsified `answered`), the scratchpad read-authorization law, escalation bounds. The two-level dogfood (**#147**, the control-surface audit) already ran this pattern end-to-end — its issues feed #154–#159.
+- **#79 — worker delivery push** *(red-first suite landed)* — gate verdicts and attention pushed into the judged worker's next-turn brief; carries the **#111-F3** corrective-nudge coaching fold-in.
+- **#61 — worker verdict surface** *(contract v1.1 + suite landed + blue-team folded; impl queued)* — the worker-facing four-field `{gate, check, detail, corrective}` verdict + objectives generated from live truth (never boilerplate).
+- **#70 — cross-deployment knowledge** *(suite landed + blue-team folded; impl queued)* — one primary KG root per project; promotion primary-only on every path.
+- **#72 — prescriptive doctor** *(suite landed + folded)* — the doctor warns on footguns before they bite; carries the **#111-F4** projection-fields amendment.
+- **#73 — feedback-forge hardening** *(suite landed + blue-team folded; impl queued)* — `run.feedback` gate-shaped submissions are hub-minted or refused, never caller-authored.
+- **#77 — suite resource governance** *(contract v1.2 + suite landed)* — load-calibrated gates: the end of the under-load flake cluster (#7) by construction.
+- **#144 — LSP support** *(contract v1.1 + suite landed; suite-fold running)* — a bounded, honest LSP pool for diagnostic scoping and environmental understanding; clock-free wedged-server trigger; effective-view absence caching.
+- **#69 tight cells · #59 harvest accessor · #66 doubt review · #71 orchestrator wake · #80 redrive continuity/TG3 · #99 harvest lane · #12 nested orchestration · #102** — red-first suites landed; implementations queued on the serialized impl lane.
+
+### Planned (filed, not started)
+
+- **#146 — fleet seat telemetry** — per-route inFlight/ceiling/deferred as a first-class read (the counts exist; no surface exposes them yet).
+- **#148 — resident credential lifecycle** — the resident token's ~24h fence, programmatic renewal, and the refusal naming the renewal action.
+- **#149 — gate failure digest** — the canonical gate emits a machine-readable closing digest (failing-file set + counts + hash) so acceptance diffs mechanically.
+- **#150 / #151 / #152** *(contract seeds)* — coaching-payload passthrough on both northbounds; spill-kind run-horizon authorization; workflow-surface docs disclosure + `evidenceRef` schema.
+- **#153 follow-ons** — surface-parity pins (verb-set parity across web/CLI/MCP), workflow_* error preservation on the web bus, the CLI bus-transport failure against republished profiles, `recipes.runWorkflow` on the deployment facade.
+- **#154 — harvest verdict bug** — the interpreter's `mustContain` harvest records success as `harvest_miss` (found by the #147 dogfood; small, queued behind the #74 impl which shares the file).
+- **#155–#159** *(from the #147 audit)* — CLI silent-typo→run.start reinterpretation; the MCP default profile made a bus superset; CLI `waves.send`/`waves.stop` ghosts + interpreter-wave registry fidelity; a scratchpad write verb; doc-truth↔admission conformance.
+- **#9 — the Program IR trunk** — closed, replayable, content-addressed workflow programs: the driver-killer's final form.
+- **Remote orchestrator control** *(filed, low)* — driving the resident over Tailscale.
+- **#115/#133 — TUI/Flip brand** — the Flip mascot animated in TUI feedback (low).
+- **#145 — OhMyPi harness evaluation** (low) — a candidate harness for the DeepSeek/GLM seats.
+- **Computer-use worker tier** *(bet, flagged flaky)* — GUI-driving workers behind the same wave machinery.
+- **Programmatic provider reauth** — resolving seat login/reauth failures without human intervention, where providers permit.
+
+---
 
 ## Run it
 
 Requires Node ≥ 20. The only runtime dependency is `@ast-grep/napi`.
 
 ```bash
-cd impl && npm ci        # install
-npm test                 # canonical suite (currently 2834/2834 green)
-node scripts/baton.mjs serve                              # start the owner-local resident
-node scripts/baton.mjs doctor --check                     # connection + exact-route readiness
-node scripts/baton.mjs review "attack the settlement-domain rule" \
-  --exact glm/glm-5.2@xhigh --exact kimi-code/kimi-code/k3@high
+cd impl && npm ci                     # install
+node scripts/run-suite.mjs            # the canonical gate (see the red-first note above)
+node scripts/baton.mjs serve          # start the owner-local resident
+node scripts/baton.mjs doctor --check # connection + exact-route readiness
+node scripts/baton.mjs waves list     # live wave registry (roster, phase, progress class)
+node scripts/baton.mjs waves run path/to/workflow.json   # a whole workflow, as data
 ```
 
-The resident publishes discovery to `.git/baton/connection.json`; the CLI and MCP clients find it
-through repository discovery. `openBaton({ repo, advanced })` from `impl/src/index.mjs` is the
-direct-embedding path used by the evidence drivers under `docs/reference/evidence/`.
+The full verb inventory is generated from the executable registry: [impl/CLI.md](impl/CLI.md) · [impl/MCP.md](impl/MCP.md). The resident's fleet routes are declared in [impl/scripts/resident.deployment.mjs](impl/scripts/resident.deployment.mjs).
 
-## → Read [SYSTEM.md](SYSTEM.md) first
+---
 
-**[SYSTEM.md](SYSTEM.md) is the concise architecture overview.**
-[docs/PROGRESS.md](docs/PROGRESS.md) is the per-phase progress ledger;
-[docs/26](docs/26-full-system-goal.md) is the retained full-system goal and scope ledger;
-[docs/28](docs/28-exhaustive-capability-audit.md) is the shipped/partial/pending status audit.
-[GLOSSARY.md](GLOSSARY.md) decodes any leftover jargon.
+## Documentation map
 
-## Design docs (`docs/`)
-
-| Doc | Contents |
-|-----|----------|
-| [00-brief](docs/00-brief.md) | Problem statement, expanded research agenda, framing |
-| [01-landscape](docs/01-landscape.md) | Cited deep-research report: protocols, control surfaces, prior art, ToS |
-| [02-harness-control-surfaces](docs/02-harness-control-surfaces.md) | Per-harness capability matrix (verified against installed binaries) |
-| [03-protocol-analysis](docs/03-protocol-analysis.md) | ACP vs A2A vs MCP vs bespoke — the layer model |
-| [04-architecture-options](docs/04-architecture-options.md) | Candidate designs, tradeoffs, recommendation |
-| [05-telemetry-steering](docs/05-telemetry-steering.md) | Event schema, monitoring, corrected interruption/steering semantics |
-| [06-critiques-and-quibbles](docs/06-critiques-and-quibbles.md) | Failure modes, security, the hard problems |
-| [07-roadmap](docs/07-roadmap.md) | Build sequence (revised: eval + differentiating demo front-loaded) |
-| [08-shared-memory-and-pm](docs/08-shared-memory-and-pm.md) | Three-tempo memory model; project-manager as foil |
-| [09-revision-log](docs/09-revision-log.md) | Round-1 review: every finding → disposition → the doc change it forced |
-| [10-interaction-model](docs/10-interaction-model.md) | Two channels (comms/steering) + three topologies; *paradigm framing deflated in round 2* |
-| [11-capability-plane](docs/11-capability-plane.md) | The seven agent-shaped capability modules (search/debug/evidence/REPL/skills/orient/BoK) |
-| [12-context-harness-engineering](docs/12-context-harness-engineering.md) | Context composition, agentic-first tools, interop; *emergence/ensemble claims revised in round 2* |
-| [13-revision-log-r2](docs/13-revision-log-r2.md) | Round-2 red/blue/explore: the Referee-not-Conductor reframe + all six REVISE verdicts |
-| [14-practitioner-addenda](docs/14-practitioner-addenda.md) | 30 net-new directions/critiques/features in my own voice: agent experience, context/harness craft, operator DX, the subtractive thesis |
-| [15-representation-and-computation](docs/15-representation-and-computation.md) | Re-anchor (Conductor is the ask; Referee is its trust spine) + the representation ladder (AST→CPG→IR→e-graph) and beyond-frontier self-ideated ideas (semantic diff/merge, behavioral fingerprint, attestation-overlay) |
-| [PROGRESS](docs/PROGRESS.md) | Per-phase progress ledger (the status narrative, kept current) |
-| [31-wave-driver-ax](docs/31-wave-driver-ax.md) | The Wave surface: first-class orchestration drivers (failure-mode-baked semantics) |
-| [32-reflexive-orchestration](docs/32-reflexive-orchestration.md) | Reflexive layer: typed decision channels, task boards, knowledge hand-off objects, REPL objects |
-| [33-shared-objects-repl-layer](docs/33-shared-objects-repl-layer.md) | The REPL layer: shared cells, typed bindings, cross-run scripting |
-| [34-knowledge-horizons](docs/34-knowledge-horizons.md) | Task/workflow/project knowledge graphs with orchestrator-gated elevation |
-| [35-turn-checkpoints](docs/35-turn-checkpoints.md) | Pausable turns + nudge/wait/claim steering (steer, don't gate) |
-| [36-unified-control-grammar](docs/36-unified-control-grammar.md) | One grammar: the unified agent control surface (M0/M1 landed) |
-| [37-wave-driver](docs/37-wave-driver.md) | The shipped wave driver: productized poll/steer/settle loop (issue #46) |
-| [28-exhaustive-capability-audit](docs/28-exhaustive-capability-audit.md) | Current shipped/partial/pending/retired map; supersedes the Phase-10 matrix for status without deleting any research row |
-| [19-north-star-corrected](docs/19-north-star-corrected.md) | The fleet driver is the product; verification/routing/memory support it |
-| [22-completeness-audit](docs/22-completeness-audit.md) | The built-not-wired audit that drove phases 8–10 |
-| [24-goal-system-completion](docs/24-goal-system-completion.md) | Phase-10 whole-system goal and completion record |
-| [25-capability-gap](docs/25-capability-gap.md) | Current researched-versus-shipped inventory and phase-11 boundary |
-| [30-objective-review-and-route-readiness](docs/30-objective-review-and-route-readiness.md) | Issue-10 P0 objective review preset, capability-aware actions, connected doctor, and exact-route readiness |
-
-Capability module designs: [docs/capabilities/](docs/capabilities/). Context/harness angle designs: [docs/reference/context-harness/](docs/reference/context-harness/).
-
-**Specs** (`spec/`): [adapter-contract](spec/adapter-contract.md) (verb→real-API mapping per harness), [supervisor-state-machine](spec/supervisor-state-machine.md) (the durable control plane), [phase-93 closed Program IR](spec/phase93-closed-program-ir.md) (the Program v1 contract, built in slices), and [phase-10.1 reconciliation](spec/phase10.1/spawn-stop-reconciliation.md) (async spawn/stop ownership and the recursive-live safety gate).
-
-**Reviews** (`reviews/`): [codex-external-review](reviews/codex-external-review.md) (cross-vendor red-team), [steering-interruption-redteam](reviews/steering-interruption-redteam.md) (the subordination-reliability red-team).
-
-**Reference** (`docs/reference/`): implementation-grade dossiers plus committed live ledgers. The completed recursive fleet and four-Grok reap runs are under `docs/reference/evidence/`.
+- **[SYSTEM.md](SYSTEM.md)** — the authoritative system design (read it second).
+- **[docs/PROGRESS.md](docs/PROGRESS.md)** — the per-phase progress ledger (the status narrative).
+- **[docs/26](docs/26-full-system-goal.md)** — the retained full-system goal; **[docs/28](docs/28-exhaustive-capability-audit.md)** — the lossless capability audit.
+- **[GLOSSARY.md](GLOSSARY.md)** — any leftover jargon.
+- **Design docs (`docs/`)** — the full table of the exploration corpus (problem framing through representation ladder) is preserved in the [superseded README](docs/reference/README-superseded-2026-08-13.md); nothing was discarded.
+- **Specs (`spec/`)** — per-phase implementation contracts; the campaign-era contracts/red-teams/folds live in **`docs/reference/evidence/<epic>-<date>/`** (the spec-driven pipeline's working papers).
+- **Issues** — [github.com/wahargis/baton/issues](https://github.com/wahargis/baton/issues): the tracked in-flight + planned roster (this README names the headline ones).
+- **The orchestrator friction ledger** — [docs/reference/evidence/frontier-sweep-2026-08-03/orchestrator-friction-ledger.md](docs/reference/evidence/frontier-sweep-2026-08-03/orchestrator-friction-ledger.md): every AX friction the orchestrator hit while building baton with baton, with dispositions.

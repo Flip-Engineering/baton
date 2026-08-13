@@ -110,6 +110,13 @@ function closedEnum(value, allowed) {
 }
 const SEMANTIC_ACTION_DISPATCH = Object.freeze({});
 const RESULT_POLICY_CONSTRAINT_PREFIX = 'Baton objective/result policy ';
+// #153 follow-on (2026-08-13): the production cadence for the shipped waves.run path when the
+// caller omits driver options — mirrors the wave driver's documented production policy
+// (wave-driver.mjs DEFAULT_POLICY: a multi-hour wave). The interpreter's own DEFAULT_DRIVER
+// stays the suite-pinned fast policy.
+const PRODUCTION_WORKFLOW_DRIVER = Object.freeze({
+  pollIntervalMs: 20_000, stallTimeoutMs: 20 * 60_000, hardCapMs: 3 * 3_600_000,
+});
 // The unqualified marker predates explicit resultIntent and must remain replayable as
 // compatibility evidence. New explicit requests use a distinct reserved namespace so
 // recomputed historical manifests retain their schema-v1 identity.
@@ -11598,7 +11605,11 @@ export class BatonApplication {
     const { runWorkflow } = await import('./workflow-interpreter.mjs');
     const baton = bindBaton(this, principal);
     const repoRoot = this.driver?.coordinator?._repoRoot ?? null;
-    return runWorkflow(baton, specOrPath, { repoRoot, ...(request.driver ? { driver: request.driver } : {}) });
+    // #153 follow-on (2026-08-13): the shipped path supplies the production cadence when the
+    // caller omits it. The interpreter's own DEFAULT_DRIVER is the suite-pinned FAST policy
+    // (workflow-as-data-red LANE_DRIVER); unoverridden it tore a real wave down at the 3 s
+    // hard cap (first dogfood wave, WAVE-INCOMPLETE with cancelled rows).
+    return runWorkflow(baton, specOrPath, { repoRoot, driver: request.driver ?? PRODUCTION_WORKFLOW_DRIVER });
   }
 
   async startWave(rawRequest, rawPrincipal, rawContext = null) {
