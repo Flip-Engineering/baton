@@ -89,6 +89,35 @@ MCP-side moments:
 - **Notification cadence**: progress/attention notifications (when the notification lane
   lands) carry a pose field the client MAY render — declared, optional, never load-bearing.
 
+### 5a. The decision-loop chrome (the persona closes the bidirectional loop)
+
+The single highest-value crossover between the brand and the collaboration layer: the
+worker's upward **DECISION_REQUEST** lane (#10's `blocked_interaction`, the multi-choice +
+free-response question primitive) rendered *as Flip moments on both ends*:
+
+- **Upward (worker → orchestrator):** the orchestrator's surface — MCP elicitation where
+  the client supports it, the attention pose ✦(◕o◕)❗ on the CLI/TUI — presents the question
+  with its 2–4 options as a first-class visual event, not a log line. The pose derives from
+  the same `waitingOn`/`blocked_interaction` projection the machine surface exposes (the
+  §2 honesty law: Flip only ever reads). In a sub-orchestrated wave (#74), the pose chains:
+  the tight cell's coordinator sees its member's attentive frame; if it escalates, the top
+  orchestrator sees the cell's frame — the visual nesting mirrors the authority nesting.
+- **Downward (orchestrator → worker):** the answer lands on the worker's own down-channel
+  (#79's delivery push) with a settling frame — a nod/cheer on answer, the thinking pose on
+  "wait." The worker's stderr is the human-visible tail of the decision loop; closing it
+  visually is what makes the loop feel *answered*, not just delivered.
+- **Progress as mood, not spinners:** long tool calls (a wave round-trip, a harvest) stream
+  MCP `progress` notifications whose optional pose field walks the grammar (thinking →
+  attentive on a parked decision → cheering on green harvest). The animation is data-driven
+  off `meaningfulEventAt` exactly as §4's orchestra view — quiet roster, still conductor.
+- **Client capability honesty:** elicitation-capable clients get the rich prompt;
+  others get the plain typed decision payload. The pose field is always optional chrome;
+  the decision itself is always the machine channel. A client that renders nothing loses
+  no function.
+
+This subsection is the design answer to "the MCP should feel alive": the character appears
+precisely at the moments the *system needs a human*, and nowhere else.
+
 ## 6. CLI + resident moments
 
 - `baton help` — the smile + one-line persona intro; `help <topic>` topic glyphs.
@@ -130,6 +159,9 @@ MCP-side moments:
 4. **Rung D:** MCP identity/description chrome + the notification pose field (with the
    notification lane).
 5. **Rung E:** HTML report chrome + the avatar crop.
+6. **Rung F:** the §5a decision-loop chrome (rides #79's delivery lane + #10's
+   `blocked_interaction` + the notification lane; MCP elicitation binding where clients
+   support it).
 
 Each rung is independently landable, suite-pinned (a pose's derivation is a pure function of
 the projection — trivially red-first), and removable without touching truth.
