@@ -1,45 +1,50 @@
 # #77 Suite Draft Notes — `suite-resource-governance-red.test.mjs`
 
-Date: 2026-08-12 · Contract: **suite-resource-governance v1.1** (folded) · Suite: 26 rows (24 RED / 2 PIN)
+Date: 2026-08-12 (fold-2 2026-08-13) · Contract: **suite-resource-governance v1.2** (folded) · Suite: 32 rows (30 RED / 2 PIN)
 Deliverables: `impl/test/suite-resource-governance-red.test.mjs` (this draft's only other deliverable).
-Authority: `suite-resource-governance-contract.md` (v1.1 source of truth), `contract-fold.md` (the 6
+Authority: `suite-resource-governance-contract.md` (v1.2 source of truth — the fold-2 note adds the two
+contract-surface seams: the gate's `BATON_RG_CALIBRATION` injection override at D1.1 and the
+`baselineReceiptPath` override at D1.4/D1.5), `contract-fold.md` (the 6
 calibration-seam resolutions — B1 the outcome-correctness gate, B2 the G4 split, B3 the honest-null
 baseline, B4 the idle-concurrency preservation, B5 the sub-saturation factor, B6 the re-arm-on-progress
-liveness bound), `contract-redteam.md` (attack surface), `suite-77-brief.md` (this suite's brief), and
+liveness bound), `suite-blueteam.md` (fold source — F1–F10, NEEDS-FOLD), `suite-fold-2.md` (the finding
+→ resolution map), `contract-redteam.md` (attack surface), `suite-77-brief.md` (this suite's brief), and
 the idiom suites `frame-economics-red.test.mjs` (the dynamic-import module-missing stage,
 `limitsOrError`/`assertLimitsModule` at 222-241) + `browser-use-red.test.mjs` (the same pattern at
 96-99) + `phase56-drain-and-close.test.mjs` (the deadline-sensitive family the folded bounds govern).
 
-## Verified split (stable across consecutive runs from the repo root)
+## Verified split (fold-2, stable across consecutive runs from the repo root)
 
 ```
 $ node --test impl/test/suite-resource-governance-red.test.mjs   # run 1, repo root
-ℹ tests 26
+ℹ tests 32
 ℹ pass 2
-ℹ fail 24
+ℹ fail 30
 $ node --test impl/test/suite-resource-governance-red.test.mjs   # run 2, repo root
-ℹ tests 26
+ℹ tests 32
 ℹ pass 2
-ℹ fail 24
+ℹ fail 30
 $ node impl/scripts/run-suite.mjs impl/test/suite-resource-governance-red.test.mjs   # through the gate
-ℹ tests 26
+ℹ tests 32
 ℹ pass 2
-ℹ fail 24
+ℹ fail 30
 ```
 
-Two consecutive runs of the finished suite both produced **pass 2 · fail 24**; the pass/fail row set
-is byte-identical across the two runs (the header records `tests 26 · pass 2 · fail 24` and the
-stability). The 2 passes are exactly the two PIN rows (P1, P2); the 24 failures are the red rows,
+Two consecutive runs of the finished suite both produced **pass 2 · fail 30**; the pass/fail row set
+is byte-identical across the two runs (the header records `tests 32 · pass 2 · fail 30` and the
+stability). The 2 passes are exactly the two PIN rows (P1, P2); the 30 failures are the red rows,
 each confirmed to fail at its NAMED stage (the per-row stage lives in the header row inventory AND in
-each row's first-failing assertion message). The gate run (run-suite.mjs) yields the identical split —
-the gate harness neither trips nor masks any row.
+each row's first-failing assertion message; the fold adds 8 red rows — A7, A8, B3, C4, E3, F3 (full
+G4 sweep), F4 (unmarked default), and the reworked behavioral C2). The gate run (run-suite.mjs)
+yields the identical split — the gate harness neither trips nor masks any row.
 
-The gate exits 1 on the suite (correct: 24 red rows), with no `baton test runner` / `fixture-clock-lint`
+The gate exits 1 on the suite (correct: 30 red rows), with no `baton test runner` / `fixture-clock-lint`
 / `surface-conformance` harness errors in its output.
 
 ## Row map
 
-Every red row fails at the named stage today and goes green on the v1.1 implementation ONLY. The
+Every red row fails at the named stage today and goes green on the v1.2 implementation ONLY (the
+fold-2 seams — `BATON_RG_CALIBRATION` and `baselineReceiptPath` — are v1.2 contract surface). The
 stage is the suite's honest HEAD failure seam: for the invented calibration module it is
 `calibration-module-missing` (the dynamic import of the absent `impl/scripts/suite-calibration.mjs`
 resolves to `ERR_MODULE_NOT_FOUND`, and `assertCalibrationModule` reports the named stage — the
@@ -51,24 +56,30 @@ the row is green today.
 | A1 | RG-03 | | **calibration-module-missing** | `readCalibration()`/`scaledTimeout()` do not exist — the honest idle default (absent env → `null`; `scaledTimeout(2000) === 2000` byte-identical) has no surface to hold (the #10 honest-null analog) |
 | A2 | RG-03/04 | | **calibration-module-missing** | `scaledTimeout(base, record)` has no surface — the injected factor-4 record's `8000` (vs the factor-1 record's `2000`) is unobservable (RG-04's measured-load derivation) |
 | A3 | RG-04/06 | | **calibration-module-missing** | `measureCalibration`'s factor derivation has no surface — the synthetic high probe (284/71 → factor exactly 4, no ceil) and the quiet host (factor exactly 1) are unobservable; the real host is NEVER measured (test-double overrides only) |
-| A4 | RG-05/D1.5 | | **calibration-module-missing** | the closed record shape has no surface — `Object.keys(rec)` ACTUAL order, the `recorded`/`unrecorded` baseline branch, and the honest-null `baselineProbeMs` on an unrecorded baseline (B3) are unobservable |
+| A4 | RG-05/D1.5 | | **calibration-module-missing** | the closed record shape has no surface — `Object.keys(rec)` ACTUAL order, the `recorded`/`unrecorded` baseline branch, and the honest-null `baselineProbeMs` on an unrecorded baseline (B3) are unobservable; fold-2 makes the unrecorded branch deterministic through the injected `baselineReceiptPath` (an absent path is forced — no longer "the suite cannot force the receipt's absence") |
 | A5 | D1.2 | | **calibration-module-missing** | the continuous sub-saturation factor has no surface — a 60%-busy synthetic load with a 1.6x probe ratio must yield `factor === 114/71` (~1.6056), never flattened to 1 and never ceiled (blocker B5) |
 | A6 | D1 | | **calibration-module-missing** | the never-under-cut floor has no surface — factor ≥ 1 ⇒ a calibrated deadline is NEVER shorter than the honest static default (the floor law) |
+| A7 | D1.1/B5(ii) | | **calibration-module-missing** | the counting-probe cadence has no surface — an injected probe (the D1.1 per-sample seam) must be called exactly K = 5 times, sequentially, with `maxInFlight === 1` (non-overlapping cadence windows); a hardcoded-constant measurement costume now fails here |
+| A8 | D1.4/D1.5/B3 | | **calibration-module-missing** | the baseline-receipt read has no surface — a present receipt JSON yields `baselineBasis: "recorded"` with the recorded `baselineProbeMs`; an absent receipt path yields `baselineBasis: "unrecorded"` with the honest-null `baselineProbeMs` (fold-2's `baselineReceiptPath` override) |
 | B1 | RG-01 | | **gate-calibration-line-missing** | the nested gate (real run-suite.mjs on a fixture) emits no `baton suite calibration:` stderr line today — the observable receipt a flake report would cite is absent (RG-01 red state) |
 | B2 | RG-02 | | **gate-calibration-env-missing** | the gate's spawned test child sees no `BATON_SUITE_CALIBRATION` today (G1's env seam is absent — RG-02 red state); the fixture's observation (`{calibration: null}`) holds |
+| B3 | RG-07 | | **gate-calibration-line-missing** | the failing-run receipt is unpinned — a fixture that throws still gets the calibration line once in stderr and the identical env (no status-0 precondition); a receipt written only for passing children (or forked after the child exits) now fails here |
 | C1 | RG-09 | | **calibration-module-missing** | `deriveTestConcurrency(cores, factor)` has no surface — factor 1 must preserve node's idle `os.availableParallelism() - 1` (blocker B4), a loaded host sheds, and the floor is 1 (no fork-bomb-by-calibration, D3.1) |
-| C2 | RG-09 | | **gate-concurrency-missing** | run-suite.mjs passes no derived `--test-concurrency` flag today — the parallelism posture is not host-adapted (RG-09 red state) |
+| C2 | RG-09/D3.1 | | **gate-concurrency-missing** | run-suite.mjs passes no derived `--test-concurrency` flag today — the parallelism posture is not host-adapted (RG-09 red state). Fold-2 makes the row behavioral: the argv-observing fixture reads its parent test runner's command line (`/bin/ps`, the gate's own dependency) and asserts the derived value at factor 4, the host bound `<= availableParallelism() - 1` at factor 1, and caller-first/derived-last precedence (`--test-concurrency 999` → last occurrence is the derived value) |
 | C3 | D3.2 | | **calibration-module-missing** | `deriveStopGrace(baseGraceMs, factor)` has no surface — the wrapper's STOP path (grace × factor before SIGKILL) is not load-aware (D3.2) |
+| C4 | D3.2 | | **calibration-module-missing** | the per-file/whole-run budget separation is unpinned — the gate must derive NO whole-run `--test-timeout` from the calibration (the per-file deadlines carry the load-aware calibration); the only whole-run backstop is the signal path (`requestStop`/`signalGroup` + `SIGTERM`/`SIGINT`, the double-signal-immediate-SIGKILL escape), never a product clock |
 | D1 | RG-08 | | **calibration-module-missing** | `CAUSE_CLASSES` has no surface — the closed 5 (`timer_coalescing` merged into `event_loop_gap`, v1.1) in ACTUAL sorted order is unpinned |
 | D2 | RG-08/D2.2 | | **calibration-module-missing** | `classifyCause(receipt, row)` has no surface — a confirmed load-flake receipt names exactly one closed class (`drain_deadline`; `start_latency` counter-example) |
 | D3 | RG-08/D2.2 | | **calibration-module-missing** | the refusal of an unknown class has no surface — including the merged `timer_coalescing`, both must throw the typed `suite_calibration_invalid` |
-| D4 | RG-13/B1 | | **calibration-module-missing** | the outcome-correctness gate has no surface — a load-flake whose outcome never lands is a REAL BUG (`null`, cap untouched); an isolated failure and a both-legs blip are also `null` (D2.1) |
+| D4 | RG-13/B1 | | **calibration-module-missing** | the outcome-correctness gate has no surface — a load-flake whose outcome never lands is a REAL BUG (`null`, cap untouched); an isolated failure and a both-legs blip are also `null` (D2.1). Fold-2 adds the isolated-true / load-false receipt (`{ isolated: { failed: true }, load: { failed: false } }` → `null`) — a quiet load leg does not mask a REAL BUG (F9) |
 | D5 | D2.4 | | **calibration-module-missing** | the missing-context refusal has no surface — a flake report never names a cause class without its calibration receipt (the honest-null analog) |
 | E1 | RG-10 | | **calibration-module-missing** | `readCalibration()`'s malformed-env refusal has no surface — `'{not json'` must throw the typed `suite_calibration_invalid` naming the parse error, never a silent factor 1 (open question 3) |
 | E2 | RG-10/D1.1 | | **calibration-module-missing** | the probe's fail-closed refusal has no surface — an injected sampler that throws must reject `suite_calibration_unavailable` naming the measurement (D4) |
+| E3 | RG-10/D4 | | **calibration-module-missing** | the loadavg branch of the same refusal is unpinned — an injected `load.one` getter that throws must reject `suite_calibration_unavailable` naming `loadavg`; an implementation that refuses only on probe failure no longer passes (F6) |
 | F1 | RG-12/D4 | | **calibration-module-missing** | `MARKERS` has no surface — the closed 3 (`absolute-timing`, `floor-raw`, `load-aware`) in ACTUAL order is unpinned |
 | F2 | RG-12/D1.4/B2 | | **calibration-module-missing** | the closed G4 membership table has no surface — the SIGKILL window is split upper=scale / lower=floor-raw (blocker B2), every value a closed classification literal |
-| F3 | RG-12 | | **calibration-module-missing** | `deriveRowBound` has no surface — `absolute-timing`/`floor-raw` rows are excluded from derivation (raw), a `scale` row derives (500 × factor 4) |
+| F3 | RG-12 | | **calibration-module-missing** | `deriveRowBound` has no surface — `absolute-timing`/`floor-raw` rows are excluded from derivation (raw), a `scale` row derives (500 × factor 4). Fold-2 iterates all six G4 members from the closed membership table — raw for `request-timeout-wait`/`poll-interval-wake`/`sigkill-window-lower`/`kill-grace-floor`, `base * factor` for `deployment-settle-deadline`/`sigkill-window-upper` (F7) |
+| F4 | D4 | | **calibration-module-missing** | the unmarked default is unpinned — an unmarked rowId must derive `base * factor` (e.g. `drain-close-wait` 1000 → 4000 at factor 4), because the flake cluster is the load-aware default; an implementation returning `base` for any non-table rowId silently flips the default to raw and now fails (F8) |
 | G1 | D1.4/B6 | | **calibration-module-missing** | the re-arm-on-progress liveness bound has no surface — `createProgressDeadline({timeoutMs, now})` must re-arm on any `observe()` and fire only on `timeoutMs` of silence ("no new event since the last tick", blocker B6; the injected `now` is the fake-clock seam) |
 | H1 | RG-07/§3 | | **calibration-module-missing** | the load-context receipt's name law has no surface — the record names `factor`/`load`/`probeMs` inside the closed key set and excludes `host`/`date`/`method`/`sampleN` (the baseline context lives in the separate baseline receipt, B3) |
 | H2 | §3 | | **calibration-module-missing** | the ACTUAL-order law has no surface — every closed literal must be its own `.sort()` result; `localeCompare` is banned (the comparator family is canonical byte order) |
@@ -84,8 +95,8 @@ shape assertion that a missing module's `undefined` exports could spuriously sat
 
 | Invented surface member | Probed through | HEAD behavior |
 |-------------------------|-----------------|---------------|
-| `impl/scripts/suite-calibration.mjs` — the shared calibration module, dynamically imported (the `limitsOrError` precedent) | dynamic `import(URL)` → `assertCalibrationModule` | `ERR_MODULE_NOT_FOUND` (A1–A6, C1, C3, D1–D5, E1, E2, F1–F3, G1, H1, H2) |
-| `measureCalibration({ load, probeMs, baselineProbeMs, probe })` → the D1.3 closed-key record — the overrides are the test-double seam (RG-04/RG-06); absent overrides measure the real host, but NO row exercises them | the module | undefined (A3–A6, E2) |
+| `impl/scripts/suite-calibration.mjs` — the shared calibration module, dynamically imported (the `limitsOrError` precedent) | dynamic `import(URL)` → `assertCalibrationModule` | `ERR_MODULE_NOT_FOUND` (A1–A8, C1, C3, C4, D1–D5, E1–E3, F1–F4, G1, H1, H2) |
+| `measureCalibration({ load, probeMs, baselineProbeMs, probe, baselineReceiptPath })` → the D1.3 closed-key record — the overrides are the test-double seam (RG-04/RG-06); fold-2 adds `probe` (the injected per-sample counter, A7) and `baselineReceiptPath` (the injected baseline-receipt reader, A8); absent overrides measure the real host, but NO row exercises them | the module | undefined (A3–A8, E2, E3) |
 | `readCalibration()` → parsed `BATON_SUITE_CALIBRATION` \| `null`; throws `CalibrationRefusal` (`suite_calibration_invalid`) naming the parse error | the module + real env | undefined (A1, E1) |
 | `scaledTimeout(base, record = readCalibration())` → `base * factor`, floored at the static default (factor ≥ 1) | the module | undefined (A1, A2, A6) |
 | `deriveTestConcurrency(cores, factor)` → `max(1, ceil((cores - 1) / factor))` — factor 1 preserves `os.availableParallelism() - 1` (blocker B4) | the module | undefined (C1) |
@@ -99,7 +110,9 @@ shape assertion that a missing module's `undefined` exports could spuriously sat
 | `MARKERS` = frozen `['absolute-timing','floor-raw','load-aware']` (ACTUAL order) | the module | undefined (F1, H2) |
 | `BASELINE_BASIS` = frozen `['recorded','unrecorded']` (ACTUAL order) | the module | undefined (H2) |
 | `CalibrationRefusal` — typed error class; `.code` is a `REFUSAL_CODES` member | the module | undefined (D3, D5, E1, E2) |
-| the gate surface — the `baton suite calibration:` stderr line + the `BATON_SUITE_CALIBRATION` child env + the derived `--test-concurrency` flag | the real `run-suite.mjs` (B1, B2, C2) | absent today (each its own named stage) |
+| the gate surface — the `baton suite calibration:` stderr line + the `BATON_SUITE_CALIBRATION` child env + the derived `--test-concurrency` flag | the real `run-suite.mjs` (B1, B2, B3, C2) | absent today (each its own named stage) |
+| the gate's calibration injection seam — `BATON_RG_CALIBRATION` (a full record JSON) short-circuits the gate's start-of-run measurement and feeds the D1.3 line + child env verbatim (contract v1.2, D1.1 — the fold-2 hermeticity seam, F1) | the nested gate via `spawnNestedGate({ fixture, args, calibration })` (B1, B2, B3, C2) | absent today (the gate always measures) |
+| the baseline-receipt injection seam — `baselineReceiptPath` overrides the module's default baseline-receipt read (contract v1.2, D1.4/D1.5) | the module (A4, A8) | undefined (A8) |
 
 ## PIN list (the wrong implementation each pin kills)
 
@@ -117,56 +130,80 @@ shape assertion that a missing module's `undefined` exports could spuriously sat
   `CAUSE_CLASSES`, `REFUSAL_CODES`, `MARKERS`, `BASELINE_BASIS`), and the `CalibrationRefusal` class.
   The record's key set is the closed D1.3 shape in ACTUAL order: `baselineBasis`, `baselineProbeMs`,
   `cores`, `factor`, `load` (`{fifteen, five, one}`), `measuredAt`, `probeMs`, `schemaVersion`.
+  `measureCalibration` must honor the `probe` override (call it exactly K = 5 times, sequentially —
+  A7) and the `baselineReceiptPath` override (present receipt → `recorded` + its `baselineProbeMs`;
+  absent path → `unrecorded` + honest `null` — A8/A4).
 - **gate-calibration-line-missing** → D1.3/RG-01: the gate writes exactly one `baton suite
-  calibration: <record>` stderr line per run (the record the suite's B1 parses back to the closed key
-  set), so a flake report carries the load context verbatim.
+  calibration: <record>` stderr line per run **before the test child spawns** (the record the suite's
+  B1 parses back to the closed key set), so a flake report carries the load context verbatim — and so
+  B3's failing child still sees the receipt (the line is outcome-independent).
 - **gate-calibration-env-missing** → D1.3/RG-02/G1: the gate passes the identical record to the test
   child via `BATON_SUITE_CALIBRATION` (the spawn-env seam at run-suite.mjs:108-116), so the child-side
-  `readCalibration()` and the gate-side line always agree.
+  `readCalibration()` and the gate-side line always agree — a failing child included.
 - **gate-concurrency-missing** → D3.1/RG-09: the gate appends `--test-concurrency
   <deriveTestConcurrency(availableParallelism(), factor)>` to the child argv (precedence: caller file
-  args first, the derived flag last — P1 holds).
+  args first, the derived flag last — P1 holds). C2 observes the runner's own argv via the parent
+  process (`/bin/ps`), so the flag must be on the REAL runner command line — a wrapper-layer mock
+  cannot satisfy it.
+- The fold-2 hermeticity seam: the gate honors `BATON_RG_CALIBRATION` (a full record JSON) as an
+  override — when present it short-circuits the start-of-run measurement and uses the record verbatim
+  for the D1.3 line + child env (contract v1.2, D1.1; F1). The suite's nested-gate probes inject it,
+  so B1/B2/B3/C2 never run a real probe. The override is deliberately `BATON_RG_*`-named — a
+  `BATON_SUITE_*` name would be stripped by the nested-gate sanitizer.
 - The module's derivation notes: `factor = max(1, load.one/cores, probeMs/BASELINE_PROBE_MS)` —
   continuous, never ceiled, floored at 1 (D1.2/B5); a calibrated deadline is never shorter than the
   honest static default (A6); the baseline is `recorded` when a real baseline receipt exists and
   `unrecorded` with an honest `null` `baselineProbeMs` otherwise (D1.5/B3); `classifyCause` follows
   the D2.1 discipline and refuses rather than guess (`suite_calibration_invalid`), and the
-  outcome-correctness gate (B1/RG-13) returns `null` for a load-flake whose outcome never lands.
+  outcome-correctness gate (B1/RG-13) returns `null` for a load-flake whose outcome never lands — and
+  for the isolated-true/load-false receipt (D4, F9).
 - The G4 membership table and its anchor rows are enumerated in the suite header — an implementer who
   reclassifies a row must update the header and the F2 literal together, never one without the other.
 
-## Suite-law hygiene (verified)
+## Suite-law hygiene (verified, fold-2)
 
 - **Hermetic**: `mkdtempSync` fixture worlds for the gate probes only; a global `test.after` reaps
   every world; no network; no repo mutation. The nested gate is given a private `BATON_TEST_TMP_PARENT`
-  (its allocated suite root is a descendant, cleaned with the world).
+  (its allocated suite root is a descendant, cleaned with the world). Fold-2 removes the 30 s
+  `spawnSync` timeout from the nested-gate probe — a wall bound on the nested gate is itself a #7-class
+  real race the suite should not carry.
 - **No REAL host load**: every load/factor/probe row injects the test-double overrides (`load`,
-  `probeMs`, `baselineProbeMs`, `probe`); the real host is never measured. The only real-host read is
-  `os.availableParallelism()` (a core count, not a load measurement) and it is used as the BASE for a
-  synthetic load value (`load.one = cores * 0.6`) so the asserted factor is deterministic regardless of
-  the host. B1/B2 assert the emitted record's closed key set only — never load values.
+  `probeMs`, `baselineProbeMs`, `probe`, `baselineReceiptPath`); the real host is never measured. The
+  only real-host read is `os.availableParallelism()` (a core count, not a load measurement) and it is
+  used as the BASE for a synthetic load value (`load.one = cores * 0.6`) so the asserted factor is
+  deterministic regardless of the host. Fold-2 closes the green-side #7-class hole (F1): the gate-side
+  probes B1/B2/B3/C2 inject the synthetic record via `BATON_RG_CALIBRATION`, so the nested gate never
+  runs a real probe or `os.loadavg()` read either. B1/B2/B3 assert the emitted record's closed key
+  set only — never load values.
 - **Red-first at named stages**: every RED row's first failing assertion carries the named stage (the
   `assertCalibrationModule` guard for module rows, the explicit `stage:` message for the gate rows);
-  the stage names live in the header inventory AND in each row's assertion message. 24 RED / 2 PIN,
-  byte-stable across consecutive runs.
+  the stage names live in the header inventory AND in each row's assertion message. 30 RED / 2 PIN,
+  byte-stable across consecutive runs (26 `calibration-module-missing`, 2 `gate-calibration-line-missing`,
+  1 `gate-calibration-env-missing`, 1 `gate-concurrency-missing`).
 - **No clocks as controls**: the suite never reads the wall clock. G1 is the only timing row and it
   drives the injected `now` clock seam (`createProgressDeadline({timeoutMs: 100, now: () => now})`) —
   fake timers are allowed by design (D1.4/B6). A4's `measuredAt` check asserts ISO shape only, never
-  an instant.
+  an instant. A7's sequential-cadence assertion uses the probe's in-flight counter (`maxInFlight === 1`),
+  not timestamps.
 - **No `localeCompare`**: the suite never calls it; H2 asserts every closed literal (the suite's own
   `RECORD_KEYS`/`LOAD_KEYS` and the module's four literals) is its own `.sort()` result — ACTUAL byte
   order, `localeCompare` banned.
 - **NUL discipline**: `suite-resource-governance-red.test.mjs` and `run-suite.mjs` (the only source
-  file the suite reads whole, for P1/P2/C2) are NUL-free; the NUL-bearing implementation files are
+  file the suite reads whole, for P1/P2/C2/C4) are NUL-free; the NUL-bearing implementation files are
   never read — only the invented module's exports are probed via dynamic import.
 - **Nested-gate isolation**: the gate probe sanitizes `BATON_SUITE_*`/`BATON_TEST_SUITE_ROOT` from the
   nested gate's env so the calibration seam stays isolated, and clears `NODE_TEST_CONTEXT` — a nested
   `node --test` otherwise refuses to run files when it inherits the parent test-runner's marker env
   ("node:test run() is being called recursively"), which silently skips the fixture. The observation
-  channel is named `BATON_RG_OBSERVED` (never a `BATON_SUITE_*` name, which the sanitizer strips).
+  channel is named `BATON_RG_OBSERVED` and the injection override `BATON_RG_CALIBRATION` (never a
+  `BATON_SUITE_*` name, which the sanitizer strips). C2's fixture observes the test runner's command
+  line via `/bin/ps` — the same process-observation command the gate itself already depends on.
 
 ## Deployment verification
 
 The brief's deployment-verification command — executable `true`, args `[]`, cwd `.`, expected exit 0 —
 passes as specified (a no-op command is the Baton result-policy stub; the suite itself is red-first by
-design, so the gate exits 1 until the implementation lands).
+design, so the gate exits 1 until the implementation lands). The fold adds no deployment surface — the
+authored change is the folded suite (30 RED / 2 PIN), the fold map, and these draft notes; the
+calibration line and child env are pinned future-gate properties (RG-01/RG-02), not properties the
+current gate must yet emit.
