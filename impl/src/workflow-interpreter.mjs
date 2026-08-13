@@ -41,7 +41,7 @@ const MAX_MEMBERS = 64;                     // the wave-machinery member ceiling
 const MAX_SCOPE = 64;
 const GLOB_MAGIC = /[*?[\]{}!+@]/u;
 const RESULT_SHA = /^[a-f0-9]{40,64}$/u;
-const MESSAGE_KINDS = new Set(['inform', 'query', 'steer']);          // coordinator.mjs:6795.
+const MESSAGE_KINDS = new Set(['inform', 'query', 'steer', 'brief', 'result']); // coordinator.mjs:6795 + #74 D4 (brief/result).
 const SCRATCHPAD_KINDS = new Set(['doubt', 'link', 'note', 'plan']);  // coordination-store.mjs:507.
 const IDEMPOTENCY_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/u;
 
@@ -355,6 +355,20 @@ function gitShow(repoRoot, sha, path) {
   return execFileSync('git', ['show', `${sha}:${path}`], { cwd: repoRoot, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] });
 }
 
+// D4 (v1.2 — file-not-directory law): `git show <sha>:<dir>` does NOT fail — it returns the tree
+// listing — so a directory harvest only refuses today via a `mustContain` mismatch on the listing.
+// The law is enforced STRUCTURALLY here: a harvest path must name a regular file (a `blob`); a
+// `tree` (directory) refuses `harvest_miss` REGARDLESS of `mustContain`. Absent path → null.
+function gitObjectType(repoRoot, sha, path) {
+  try {
+    return execFileSync('git', ['cat-file', '-t', `${sha}:${path}`], {
+      cwd: repoRoot, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'],
+    }).trim();
+  } catch {
+    return null;
+  }
+}
+
 // resolveResultPin, inlined from wave.mjs:134-155 so the lane's transitive import graph stays
 // node-builtins-only (W5 — no reachable module runs a top-level wave start).
 function resolveResultPin(repoRoot, report, startedAtMs, excludeShas) {
@@ -534,7 +548,7 @@ export async function runWorkflow(baton, specOrPath, options = {}) {
   const steeringState = {
     approved: new Set(), messaged: new Map(), msgAttempts: new Map(), msgDone: new Set(),
     elevated: new Set(), nudgedReqs: new Set(), nudgedRoles: new Set(), claimedRoles: new Set(),
-    answeredKeys: new Set(), handledDecisionKeys: new Set(), signaled: false,
+    answeredKeys: new Set(), handledDecisionKeys: new Set(), deniedDecisionKeys: new Set(), signaled: false,
   };
 
   const startedAt = Date.now(); // the drive-to-settle budget starts once the roster is live.
@@ -612,6 +626,10 @@ function harvestOne(entry, repoRoot, salt, waveId, outcomes) {
   if (repoRoot && !pathEscapes(repoRoot, path)) {
     for (const outcome of outcomes) {
       if (!outcome.resultSha) continue;
+      // D4 (v1.2): a harvest path must name a REGULAR FILE (a blob). A directory (`tree`) is
+      // skipped here, so `recovered` stays null and the miss path refuses `harvest_miss` — the
+      // tree listing `git show` would otherwise return must never be mistaken for content.
+      if (gitObjectType(repoRoot, outcome.resultSha, path) !== 'blob') continue;
       try { const bytes = gitShow(repoRoot, outcome.resultSha, path); recovered = { resultSha: outcome.resultSha, bytes }; break; }
       catch { /* this sha does not carry the path */ }
     }
@@ -694,8 +712,12 @@ async function driveLane(wave, spec, driver, startedAt, steering, s, reportByRol
     const decision = Array.isArray(v.attention) ? v.attention.find((a) => a?.kind === 'answer_decision' && typeof a?.requestId === 'string') : null;
     if (st.answerDecisions && decision) {
       const key = `${handle.id}:${decision.requestId}`;
-      if (!s.answeredKeys.has(key)) {
-        s.answeredKeys.add(key);
+      // D1.3 permanence (v1.2): the decision key is NEVER marked handled before the answer
+      // attempt — the pre-answer add is gone (a key marked handled before the attempt masks a
+      // denied/raced throw as permanently handled). Each outcome marks its own key only AFTER the
+      // fact (answered/deferred/refused/denied), so a denied ask is re-guarded by
+      // `deniedDecisionKeys` and never re-auto-answered (the no-re-attempt policy).
+      if (!s.answeredKeys.has(key) && !s.handledDecisionKeys.has(key) && !s.deniedDecisionKeys.has(key)) {
         await answerDecision(handle, role, decision, st.answerDecisions.policy, steering, s, key);
       }
     }
@@ -785,27 +807,50 @@ async function answerDecision(handle, role, decision, policy, steering, s, key) 
   const options = Array.isArray(decision.options) ? decision.options
     : (Array.isArray(decision.request?.options) ? decision.request.options : []);
   const allowFreeResponse = decision.allowFreeResponse === true || decision.request?.allowFreeResponse === true;
+  const requestId = decision.requestId;
   const match = matchDecision(policy, question);
   if (!match || match.value === 'defer') {
     s.handledDecisionKeys.add(key);
-    steering.push({ trigger: 'answerDecisions', role, requestId: decision.requestId, deferred: true, outcome: 'deferred' });
+    steering.push({ trigger: 'answerDecisions', role, requestId, deferred: true, outcome: 'deferred' });
     return;
   }
+  // D1.3 no-re-attempt (v1.2): a decision this policy already DENIED is recorded ONCE and never
+  // re-auto-answered — the ask stays pending for the human (the later human answer via run.answer
+  // settles it). Skipping before any attempt keeps the drive loop from accumulating one `denied`
+  // record per poll until hardCapMs and spamming the steering trail.
+  if (s.deniedDecisionKeys.has(key)) return;
   if (allowFreeResponse) {
-    try { await handle.answer(decision.requestId, { text: match.value }); }
-    catch { /* recorded below only on success */ }
-    steering.push({ trigger: 'answerDecisions', role, requestId: decision.requestId, text: match.value, outcome: 'answered' });
+    try {
+      await handle.answer(requestId, { text: match.value });
+    } catch (error) {
+      // D1.3 — the truthful steering trail: a denied/raced throw records the truth (the thrown
+      // refusal's own typed code + the attempted text), does NOT mark the key handled, and leaves
+      // the ask pending. `outcome: 'answered'` is recorded only below, AFTER a successful return.
+      s.deniedDecisionKeys.add(key);
+      steering.push({ trigger: 'answerDecisions', role, requestId, text: match.value, outcome: 'denied', refusal: error?.code ?? null });
+      return;
+    }
+    s.answeredKeys.add(key);
+    steering.push({ trigger: 'answerDecisions', role, requestId, text: match.value, outcome: 'answered' });
     return;
   }
   const valid = options.some((option) => option?.id === match.value);
   if (!valid) {
     s.handledDecisionKeys.add(key);
-    steering.push({ trigger: 'answerDecisions', role, requestId: decision.requestId, optionId: match.value, refused: true, outcome: 'refused' });
+    steering.push({ trigger: 'answerDecisions', role, requestId, optionId: match.value, refused: true, outcome: 'refused' });
     return;
   }
-  try { await handle.answer(decision.requestId, { optionId: match.value }); }
-  catch { /* delivery raced a terminal member */ }
-  steering.push({ trigger: 'answerDecisions', role, requestId: decision.requestId, optionId: match.value, outcome: 'answered' });
+  try {
+    await handle.answer(requestId, { optionId: match.value });
+  } catch (error) {
+    // D1.3 — the truthful steering trail for a raced/denied optionId answer (the thrown refusal's
+    // own code + the attempted option, recorded once, never re-auto-answered).
+    s.deniedDecisionKeys.add(key);
+    steering.push({ trigger: 'answerDecisions', role, requestId, optionId: match.value, outcome: 'denied', refusal: error?.code ?? null });
+    return;
+  }
+  s.answeredKeys.add(key);
+  steering.push({ trigger: 'answerDecisions', role, requestId, optionId: match.value, outcome: 'answered' });
 }
 
 async function handleCheckpoint(handle, role, checkpoint, st, steering, s) {
