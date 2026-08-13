@@ -1059,7 +1059,7 @@ async function stallSuspicion(driver, worker) {
 
 test('PS-START (RED): a watchdog stall suspicion projects waitingOn.provider_stalled with the suspicion epoch', async (t) => {
   const adapter = markerAdapter({ default: { outcome: 'completed', edits: [{ path: 'out.txt', content: 'done\n', delayMs: 2500 }] } });
-  const { application, driver } = harnessApp(t, adapter, { watchdog: { stallMs: 60, stallAction: 'none' } });
+  const { application, driver } = harnessApp(t, adapter, { watchdog: { stallMs: 60, stallAction: 'escalate' } });
   const owner = principal('owner');
   const started = await application.start({ objective: 'PS-START (marker:default): slow worker', profile: 'standard', route: ROUTE, scope: ['**'] }, owner);
   await application.approve(started.runId, started.plan.digest, principal('approver'));
@@ -1081,7 +1081,7 @@ test('PS-START (RED): a watchdog stall suspicion projects waitingOn.provider_sta
 
 test('PS-SHOW (RED): provider_stalled projects identically on view, outline, and runs.list', async (t) => {
   const adapter = markerAdapter({ default: { outcome: 'completed', edits: [{ path: 'out.txt', content: 'done\n', delayMs: 2500 }] } });
-  const { application, driver } = harnessApp(t, adapter, { watchdog: { stallMs: 60, stallAction: 'none' } });
+  const { application, driver } = harnessApp(t, adapter, { watchdog: { stallMs: 60, stallAction: 'escalate' } });
   const owner = principal('owner');
   const started = await application.start({ objective: 'PS-SHOW (marker:default): parity', profile: 'standard', route: ROUTE, scope: ['**'] }, owner);
   await application.approve(started.runId, started.plan.digest, principal('approver'));
@@ -1100,7 +1100,7 @@ test('PS-SHOW (RED): provider_stalled projects identically on view, outline, and
 
 test('PS-EXIT (RED): first worker content after the suspicion clears the stall projection to null', async (t) => {
   const adapter = markerAdapter({ default: { outcome: 'completed', edits: [{ path: 'out.txt', content: 'done\n', delayMs: 2500 }] } });
-  const { application, driver } = harnessApp(t, adapter, { watchdog: { stallMs: 60, stallAction: 'none' } });
+  const { application, driver } = harnessApp(t, adapter, { watchdog: { stallMs: 60, stallAction: 'escalate' } });
   const owner = principal('owner');
   const started = await application.start({ objective: 'PS-EXIT (marker:default): recovers', profile: 'standard', route: ROUTE, scope: ['**'] }, owner);
   await application.approve(started.runId, started.plan.digest, principal('approver'));
