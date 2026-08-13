@@ -1,4 +1,4 @@
-# Issue #144 — LSP support for diagnostic scoping + environmental understanding (contract v1.1 — folded)
+# Issue #144 — LSP support for diagnostic scoping + environmental understanding (contract v1.2 — folded + suite-fold-2 citations)
 
 The folded implementation contract for issue #144. v1.1 folds the #144 red-team
 (`contract-redteam.md`, same dir — **NOT FOLD-READY**, §6) into the v1.0 DRAFT
@@ -9,6 +9,18 @@ still verifies at the current HEAD, and each blocker was a pin-level fix, not a 
 **self-contained**: it carries the full folded contract text, not a patch. It specifies behavior;
 it does not amend implementation in this artifact.
 
+**v1.2 (suite-fold-2).** The blue-team suite review (`suite-blueteam.md`, same dir) found two of
+this document's citations wrong at the review HEAD, and the fold requires them corrected. **F5**:
+the §6/GT5 "gate enum declaration order" claim (`scope`→`forbidden_effect`→`red_green`→`coverage`
+→`route_mismatch`→`unknown`) describes `debugGateFromLiveCode`'s if-chain order (`application.mjs:956-963`),
+**never** the `DEBUG_GATE_CODES` set literal (`application.mjs:952-954`), whose actual declaration
+order is `scope, red_green, coverage, route_mismatch, forbidden_effect, unknown` — `forbidden_effect`
+is FIFTH in the set. The v1.1 "✅ exact" label verified the function region, not the set; corrected
+below (GT5, §6). **F6**: `boundedAttentionText` is `application.mjs:341-348` at HEAD (function
+signature at `:341`, credential-shaped redaction at `:344`), not `:334-341` — the v1.1 window
+covered `SECRET_SHAPED_TEXT` + the signature only. Corrected below (GT8, D4.3, §6). The pinned
+laws are unchanged — these are citation corrections, not contract movement.
+
 **Verification HEAD.** `74da30639c02374313918b4376a3d86cae3342f3` ("Baton private effective-tree
 snapshot"), the tree this v1.1 was verified against (2026-08-13). `git diff --name-only
 1f71199728663a78363427119cd5818fe272e40f 74da30639c02374313918b4376a3d86cae3342f3 -- impl/src/`
@@ -17,6 +29,13 @@ tree, so every v1.0 anchor holds. The red-team's own verification HEAD
 (`6a4dce4415a8f1444208f779b1f477938a2e2c09`) is likewise an ancestor with a byte-identical
 `impl/src/`. §6 carries the v1.1 re-verification ledger and the ±1–2 line corrections found on the
 way. The v1.0 `verification HEAD` line is updated to the current tree.
+
+**v1.2 verification HEAD.** `919a412bffd43cac1c041b7e6163ecdb262594f2` ("Baton private effective-tree
+snapshot"; the worktree review HEAD). The #153 follow-on (`PRODUCTION_WORKFLOW_DRIVER`) drifted
+`impl/src/application.mjs` +7 lines between the v1.1 verification tree (`74da3063`) and this HEAD,
+moving `DEBUG_GATE_CODES` `945→952` and `boundedAttentionText` `334→341`; the v1.2 corrections
+below were re-verified at this HEAD with NUL-safe `grep -an`/`sed -n`. `git merge-base --is-ancestor
+74da3063 HEAD` exits 1 — the trees diverged, so the v1.1 citations for those two regions are stale.
 
 **Fold status: FOLD-READY.** All five blockers are pinned below (§2). Every acceptance pin
 (R1–R13) is RED in this tree — the behavior it names is absent — and the implementation makes it
@@ -54,6 +73,7 @@ sorted claims); no `localeCompare` ordering is used anywhere in this contract.
 | **OQ4** — read-port byte bound | The LSP tier shares the existing `view.context_read.*` rows (`limits.mjs:103-104` — re-verified correct at HEAD); no new row is declared because the bound does not differ. | GT4, D3.1 |
 | Citation corrections | `application.mjs:963-968/970-975/980-985` → `:964-968`/`:969-973`/`:976-982`; `phase51…:57-60` → `:55-60`; `coordinator.mjs:10879` → frame at `:10880`; `context_read_invalid` throws at `coordinator.mjs:10721`/`:10909`. `limits.mjs:103-104` is CONFIRMED correct at HEAD (the red-team's proposed `:102-103` does not hold — line 102 is `view.knowledge_slice.bytes`). | §6 |
 | Verification HEAD | Updated from `1f711997…` to `74da3063…` (current tree; `impl/src/` byte-identical). | header, §6 |
+| **v1.2** citation corrections (suite-fold-2) | The §6/GT5 "gate enum declaration order" claim is corrected to the `DEBUG_GATE_CODES` SET literal (`application.mjs:952-954`) with its true order `scope, red_green, coverage, route_mismatch, forbidden_effect, unknown` — the v1.1 claim described the `debugGateFromLiveCode` if-chain order (F5). `boundedAttentionText` cited at `application.mjs:341-348` (signature `:341`, redaction `:344`) instead of `:334-341` (F6). Pinned laws unchanged; citation corrections only. | GT5, GT8, D4.3, §6, header |
 
 ---
 
@@ -151,9 +171,14 @@ Worker-facing trust-gate refusals carry digests+counts, never path strings:
 (`application.mjs:962`) with the digests (`application.mjs:964-968`) and counts
 (`application.mjs:969-973`) projected from the `pathScopeEvidence` mint
 (`coordinator.mjs:12979-12985`); red_green/coverage carry only the sanitized bounded tail
-(`application.mjs:976-982`, `tail:` at `:981`). The gate enum is the live code set: `scope`,
-`forbidden_effect`, `red_green`, `coverage`, `route_mismatch`, `unknown` in declaration order
-(`application.mjs:949-956`); `debugGateRefusal` projects the latest refusal
+(`application.mjs:976-982`, `tail:` at `:981`). The gate enum is the live code set —
+`DEBUG_GATE_CODES`, the closed set literal at `application.mjs:952-954`, in its ACTUAL declaration
+order `scope, red_green, coverage, route_mismatch, forbidden_effect, unknown`. (v1.2 correction:
+`debugGateFromLiveCode`'s if-chain at `application.mjs:956-963` maps live refusals to that set in a
+DIFFERENT order — `forbidden_effect` is SECOND there; v1.1 described the if-chain order as the set
+order, which the set literal has never held — commit `6d0ca11` introduced
+`scope, red_green, coverage, route_mismatch, forbidden_effect, unknown` unchanged. The SET is the
+closed enum; the chain is the mapping.) `debugGateRefusal` projects the latest refusal
 (`application.mjs:993-1006`). The epic contract pins DIAG-2's shape
 (`docs/reference/evidence/diagnostics-2026-07-31/diagnostics-decisions.md:37-43`), and the #79
 delivery contract reuses it verbatim on the worker-facing push
@@ -197,7 +222,9 @@ sandbox-root substitution, secret patterns, 8 KiB bounded tail —
 `sanitizeVerifierDiagnosticText` strips sandbox roots / home / temp paths and secret patterns — it
 does NOT strip arbitrary repo-relative paths; the containment mapping in D4.3 (M6) says which
 sanitizer runs for which output class. `boundedAttentionText` is the whole-text attention bound
-with credential-shaped redaction (`application.mjs:334-341`), capped by the #89 registry row
+with credential-shaped redaction (`application.mjs:341-348` at HEAD — function signature at `:341`,
+the `'[credential-shaped content redacted]'` return at `:344`; v1.2 corrects the v1.1 `:334-341`
+window, which covered `SECRET_SHAPED_TEXT` + the signature only), capped by the #89 registry row
 `view.attention_text.bytes` (`application.mjs:59`). The LSP tier rides these verbatim — no
 parallel redaction path.
 
@@ -482,7 +509,8 @@ posture is honest and the deployment opts in per language.
 
 LSP-derived evidence feeds the evidence capsule (D2) and the environmental-understanding answers
 (D3) — it never becomes a trust-gate verdict input. The gate enum stays the live code set
-(`application.mjs:949-956`); no gate gains an LSP-derived code. The verdict inputs remain the pinned
+(`application.mjs:952-954` — the `DEBUG_GATE_CODES` set literal; v1.2); no gate gains an
+LSP-derived code. The verdict inputs remain the pinned
 verification/coverage/mutation authority plus the digests-only scope evidence (cross-ref DG-1;
 `worker-delivery-push-contract.md` D6). Compiler-class evidence may REORDER a worker's attention; it
 never decides a verdict. **The blast-radius projection annotates the verdict only and never feeds
@@ -507,7 +535,7 @@ class (M6 closes the mapping):
 | Output class | Sanitizer | Frame |
 |---|---|---|
 | Repository-prose leaves (hover text, docstrings) | `sanitizeVerifierDiagnosticText` (`verifier-diagnostics.mjs:26-63`) | `UNTRUSTED_ORIENTATION` |
-| Attention-class text (whole-text attention-bound strings) | `boundedAttentionText` (`application.mjs:334-341`) | the closed frame |
+| Attention-class text (whole-text attention-bound strings) | `boundedAttentionText` (`application.mjs:341-348` at HEAD; v1.2) | the closed frame |
 | Scope-class gate detail | digests+counts, never paths (DG-1/DIAG-2, GT5) | `{gate, detail}` |
 | red_green/coverage-class detail | sanitized bounded tail (`application.mjs:976-982`) | `{gate, detail}` |
 
@@ -650,7 +678,8 @@ Each pin is RED in this tree and the implementation makes it GREEN. The new red 
   prose is a repository-prose leaf (`untrusted:true`, closed provenance); a violation refuses
   `lsp_evidence_unsanitized`. RED: no LSP content exists.
 - **R12** — LSP-derived evidence is never a verdict input: the gate enum stays the live code set
-  (`application.mjs:949-956`), no gate gains an LSP-derived code; verdict inputs remain the pinned
+  (`application.mjs:952-954` — the `DEBUG_GATE_CODES` set literal; v1.2), no gate gains an
+  LSP-derived code; verdict inputs remain the pinned
   verification/coverage/mutation + digests-only authority; the blast-radius projection annotates the
   verdict only and never feeds `coverageOfChange` (B5b). RED preemptively: no LSP evidence exists to
   gate with.
@@ -676,9 +705,9 @@ re-verification. `limits.mjs` and `phase51…` are outside `impl/src/` and were 
 | `application.mjs:963-968` (digests) | ⚠️ ±1 | `:964-968` (digests object `{`, three entries, `}`) |
 | `application.mjs:970-975` (counts) | ⚠️ ±1 | `:969-973` (counts object) |
 | `application.mjs:980-985` (red_green/coverage tail) | ⚠️ ±2 | `:976-982`, `tail:` at `:981` |
-| `application.mjs:949-956` — gate enum declaration order | ✅ exact (`scope`→`forbidden_effect`→`red_green`→`coverage`→`route_mismatch`→`unknown`) | — |
+| `application.mjs:949-956` — gate enum declaration order | ⚠️ **content-wrong (F5)**: the claimed order is `debugGateFromLiveCode`'s if-chain (`:956-963`), NOT the set literal | v1.2: the `DEBUG_GATE_CODES` set literal is `:952-954` and its declaration order is `scope, red_green, coverage, route_mismatch, forbidden_effect, unknown` (`forbidden_effect` FIFTH, not second) — the set has held that order since `6d0ca11` |
 | `application.mjs:59` — `MAX_ATTENTION_TEXT_BYTES` | ✅ exact | — |
-| `application.mjs:334-341` — `boundedAttentionText` | ✅ exact | — |
+| `application.mjs:334-341` — `boundedAttentionText` | ⚠️ ±7 (F6): at HEAD the function is `:341-348` — signature `:341`, credential-shaped redaction `:344`; the v1.1 window covered `SECRET_SHAPED_TEXT` + the signature only | v1.2: cite `:341-348` |
 | `application.mjs:993-1006` — `debugGateRefusal` | ✅ exact | — |
 | `coordinator.mjs:10724` — `_answerCodeOrient` dispatch | ✅ exact | — |
 | `coordinator.mjs:10901-10913` — ops + refusal | ✅ exact; refusing throw at `:10909` | cite `:10909` for the `context_read_invalid` throw |
