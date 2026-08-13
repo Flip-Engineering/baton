@@ -1,0 +1,71 @@
+{
+  "schemaVersion": 1,
+  "idempotencyKey": "suite-foundry-2026-08-13-wave-c",
+  "members": [
+    {
+      "role": "coordinator",
+      "exact": { "harness": "deepseek", "model": "deepseek-v4-pro[1m]", "effort": "high" },
+      "scope": ["docs/reference/evidence/suite-foundry-2026-08-13-c/**"],
+      "objectiveRef": "docs/reference/evidence/suite-foundry-2026-08-13-c/coordinator-brief.md",
+      "report": "docs/reference/evidence/suite-foundry-2026-08-13-c/suite-qa.md"
+    },
+    {
+      "role": "row-suite-170",
+      "exact": { "harness": "deepseek", "model": "deepseek-v4-pro[1m]", "effort": "high" },
+      "scope": ["impl/test/workflow-dsl-red.test.mjs", "docs/reference/evidence/workflow-dsl-2026-08-13/**"],
+      "objectiveRef": "docs/reference/evidence/suite-foundry-2026-08-13-c/row-suite-170.md",
+      "report": "impl/test/workflow-dsl-red.test.mjs"
+    },
+    {
+      "role": "row-suite-163",
+      "exact": { "harness": "deepseek", "model": "deepseek-v4-flash", "effort": "high" },
+      "scope": ["impl/test/quiescence-completion-red.test.mjs", "docs/reference/evidence/contract-foundry-2026-08-13/**"],
+      "objectiveRef": "docs/reference/evidence/suite-foundry-2026-08-13-c/row-suite-163.md",
+      "report": "impl/test/quiescence-completion-red.test.mjs"
+    },
+    {
+      "role": "row-suite-165",
+      "exact": { "harness": "deepseek", "model": "deepseek-v4-flash", "effort": "high" },
+      "scope": ["impl/test/launch-validation-red.test.mjs", "docs/reference/evidence/contract-foundry-2026-08-13/**"],
+      "objectiveRef": "docs/reference/evidence/suite-foundry-2026-08-13-c/row-suite-165.md",
+      "report": "impl/test/launch-validation-red.test.mjs"
+    },
+    {
+      "role": "row-suite-167",
+      "exact": { "harness": "deepseek", "model": "deepseek-v4-flash", "effort": "high" },
+      "scope": ["impl/test/readiness-honesty-red.test.mjs", "docs/reference/evidence/contract-foundry-2026-08-13/**"],
+      "objectiveRef": "docs/reference/evidence/suite-foundry-2026-08-13-c/row-suite-167.md",
+      "report": "impl/test/readiness-honesty-red.test.mjs"
+    },
+    {
+      "role": "row-suite-146",
+      "exact": { "harness": "deepseek", "model": "deepseek-v4-flash", "effort": "high" },
+      "scope": ["impl/test/seat-telemetry-red.test.mjs", "docs/reference/evidence/contract-foundry-2026-08-13/**"],
+      "objectiveRef": "docs/reference/evidence/suite-foundry-2026-08-13-c/row-suite-146.md",
+      "report": "impl/test/seat-telemetry-red.test.mjs"
+    }
+  ],
+  "steering": {
+    "approveOnAdvertisedPlan": true,
+    "nudgeOnCheckpoint": { "message": "Continue the suite — every pin becomes a row at its named stage; write the suite AND the notes incrementally; run it twice and record both splits." },
+    "claimOnStall": true,
+    "messageOnSpawn": { "kind": "brief", "body": "Read your objectiveRef brief IN FULL first, then foundry-brief.md in the same directory (the suite law binds you, including the attempt-echo law in the FIRST FIVE lines of both deliverables). Publish notes to the `shared` scratchpad as you go; a failed publish is evidence — record the refusal. Authority-class ambiguity → DECISION_REQUEST with options; judgment calls are yours — record them." },
+    "elevateWhenNotes": { "kinds": ["doubt", "plan"], "maxEntries": 20 },
+    "signalOnMembersDone": { "roles": ["row-suite-170", "row-suite-163", "row-suite-165", "row-suite-167", "row-suite-146"], "message": { "kind": "result", "body": "All rows settled (you are the remaining member — the pinned signalOnMembersDone semantics: roles = the watched set, recipients = everyone else). VERIFY ON DISK FIRST (sibling worktrees at ../../wt/ws-*/ or the main repo post-harvest; silence is not death). Then verify per your brief and write suite-qa.md." } }
+  },
+  "harvest": {
+    "paths": [
+      { "path": "docs/reference/evidence/suite-foundry-2026-08-13-c/suite-qa.md", "mustContain": "SUITE-QA v1" },
+      { "path": "impl/test/workflow-dsl-red.test.mjs", "mustContain": "workflow-dsl" },
+      { "path": "docs/reference/evidence/workflow-dsl-2026-08-13/suite-draft-notes.md", "mustContain": "#170" },
+      { "path": "impl/test/quiescence-completion-red.test.mjs", "mustContain": "quiescence" },
+      { "path": "docs/reference/evidence/contract-foundry-2026-08-13/suite-notes-163.md", "mustContain": "#163" },
+      { "path": "impl/test/launch-validation-red.test.mjs", "mustContain": "launch-validation" },
+      { "path": "docs/reference/evidence/contract-foundry-2026-08-13/suite-notes-165.md", "mustContain": "#165" },
+      { "path": "impl/test/readiness-honesty-red.test.mjs", "mustContain": "readiness" },
+      { "path": "docs/reference/evidence/contract-foundry-2026-08-13/suite-notes-167.md", "mustContain": "#167" },
+      { "path": "impl/test/seat-telemetry-red.test.mjs", "mustContain": "seat-telemetry" },
+      { "path": "docs/reference/evidence/contract-foundry-2026-08-13/suite-notes-146.md", "mustContain": "#146" }
+    ]
+  }
+}
