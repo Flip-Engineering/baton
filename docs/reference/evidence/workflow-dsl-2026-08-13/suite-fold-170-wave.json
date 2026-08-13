@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 1,
+  "idempotencyKey": "suite-fold-170-2026-08-13-wave-a",
+  "members": [
+    {
+      "role": "suite-fold-170",
+      "exact": { "harness": "deepseek", "model": "deepseek-v4-pro[1m]", "effort": "high" },
+      "scope": ["impl/test/workflow-dsl-red.test.mjs", "docs/reference/evidence/workflow-dsl-2026-08-13/**"],
+      "objectiveRef": "docs/reference/evidence/workflow-dsl-2026-08-13/suite-fold-170-brief.md",
+      "report": "docs/reference/evidence/workflow-dsl-2026-08-13/suite-fold-170.md"
+    }
+  ],
+  "steering": {
+    "approveOnAdvertisedPlan": true,
+    "nudgeOnCheckpoint": { "message": "Continue the suite fold — all seven instructions applied, every row still RED at its named stage, split run twice, notes incremental." },
+    "claimOnStall": true,
+    "messageOnSpawn": { "kind": "brief", "body": "Read your objectiveRef brief IN FULL first. The suite's existing [attempt:] header line is SACRED — do not touch it; your own objective's attempt line goes in your fold notes. Authority-class ambiguity → DECISION_REQUEST with options; judgment calls are yours — record them." },
+    "elevateWhenNotes": { "kinds": ["doubt", "plan"], "maxEntries": 20 }
+  },
+  "harvest": {
+    "paths": [
+      { "path": "docs/reference/evidence/workflow-dsl-2026-08-13/suite-fold-170.md", "mustContain": "#170" },
+      { "path": "impl/test/workflow-dsl-red.test.mjs", "mustContain": "workflow-dsl" }
+    ]
+  }
+}
