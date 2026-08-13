@@ -50,6 +50,10 @@
 //   pool.card(language)                       → capabilityCard                                  // R13
 //   pool.isOptedIn(language)                  → boolean                                         // R13
 //   pool.lastLifecycleEvents()                → ['lifecycle.process_started', ...]              // R3
+//   pool.ready(language)                      → Promise (bounded readiness seam: resolves when the  // R3
+//                                               current generation reaches process_ready; rejects  //   (F1)
+//                                               lsp_startup_failed on handshake failure; bounded,
+//                                               count/event-derived, never a wall-clock hard cap)
 //   pool.outstanding(language)                → number                                          // R3
 //   pool.stop(language)                       → { reaped, generation }                          // R3
 //
@@ -57,10 +61,15 @@
 // Hermetic: every root is mkdtempSync'd under os.tmpdir() and removed in test.after; no network.
 // The LSP server is a STUBBED typescript-language-server fixture — a Node script answering the
 // minimal initialize/initialized + textDocument/* JSON-RPC envelope (Content-Length framed), with
-// NO live providers. GP-L proves the stub is a real LSP responder by a hermetic handshake. The
-// fixture has three modes: 'answer' (the default responder), 'hung' (reads stdin, never responds —
-// drives the outstanding-request ceiling), and 'crash' (exits before the handshake — drives
-// lsp_startup_failed). Fixed injected epochs/digests only; never the real clock.
+// NO live providers. GP-L proves the stub is a real LSP responder by a hermetic handshake (an
+// arrival-driven settle — see handshakeStub below — never a wall-clock hard deadline, F11). The
+// fixture has five modes: 'answer' (the default responder), 'hung' (reads stdin, never responds —
+// drives a not-ready server), 'crash' (exits before the handshake — drives lsp_startup_failed),
+// 'ready-then-hung' (answers initialize/initialized, then drains stdin silently on textDocument/*
+// — a WEDGED-but-alive server, B2, the outstanding-request-ceiling driver, F2), and
+// 'crash-once-then-answer' (the first spawned process exits 72; a fresh generation answers the
+// envelope — the start slot-clear is observable, F3). Fixed injected epochs/digests only; never
+// the real clock.
 //
 // ── NUL DISCIPLINE ─────────────────────────────────────────────────────────────────────────
 // Every impl/src machinery file is NUL-bearing (application.mjs/coordination-store.mjs/coordinator
@@ -77,6 +86,10 @@
 //   Run 2: 23 tests — 10 pass / 13 fail. STABLE. The 13 red rows fail at the stage guard
 //   (resolveLspPoolHome() → {surface:null}); they go green only on a contract-correct
 //   implementation. The 10 guard pins pass today on unchanged surfaces and must stay green.
+//   (suite-fold-2: at the review HEAD the split was 8 pass / 15 fail — GP-A pinned an order the
+//   live DEBUG_GATE_CODES set never had (F5) and GP-F's fixed 334-341 window lost the
+//   credential-shaped line to the #153 +7 drift (F6). Both are re-anchored green by this fold;
+//   the split re-verified as 10/13 above. See suite-fold-2.md for the finding → resolution map.)
 //
 // ── FIX RECORD (suite-fix-144) ───────────────────────────────────────────────────────────────
 // The quarantined partial suite shipped with GP-B/GP-C red: their sedSrc anchors cited the
@@ -88,6 +101,32 @@
 // (the prose-leaf rule — untrusted !== true refused, closed provenance ['model-authored',
 // 'repository-prose']). The pinned SUBSTANCE is unchanged; only the anchors drifted (see
 // suite-draft-notes.md for the contract-line-citation delta — a v1.2-note candidate).
+//
+// ── FIX RECORD (suite-fold-2) ───────────────────────────────────────────────────────────────
+// Fold of the blue-team report (suite-blueteam.md, NEEDS-FOLD) into this suite — the F1–F12
+// work-list. See suite-fold-2.md for the finding → resolution map.
+//   F1/F2/F3  R3 rewritten over a readiness seam + two new stub modes: 'ready-then-hung' drives
+//             the wedged ceiling (a ready-but-silent server, B2) and 'crash-once-then-answer'
+//             makes the start slot-clear observable (first gen exits 72, the retry's fresh
+//             generation answers). pool.ready(language) is a bounded, event-derived readiness
+//             wait (never a synchronous-handshake assumption, never a wall-clock hard cap).
+//   F4/F5/F6  GP-A re-anchored to the DEBUG_GATE_CODES set literal (grepFirstLineNum) with the
+//             ACTUAL declaration order scope→red_green→coverage→route_mismatch→forbidden_effect
+//             →unknown (the old pin asserted the debugGateFromLiveCode if-chain order — never the
+//             set); GP-F re-anchored to boundedAttentionText via grepFirstLineNum (credential
+//             redaction asserted by grep, drift-proof). Contract §6 corrected in v1.2.
+//   F7        GP-E re-scoped: pins the coverage gate stays textually derived and never coupled to
+//             a blast-radius projection (no coverageOfChange/blastRadius coupling), instead of
+//             banning the projection's name from referee.mjs (which the correct landing breaks).
+//   F8        R6 gains a verdict-path consultation leg: pool.answer with changedLines must ride
+//             the blast advisory/annotation, so the projection is CONSULTED, not merely present.
+//   F9        R5 asserts the symbol NAME is the resolved symbol ('missingFn'), not just a string.
+//   F10       R13 asserts the OPTED path is reachable (acquire typescript admits), not only that
+//             the un-opted path refuses.
+//   F11       handshakeStub settles on ARRIVAL of both responses (id 1 initialize, id 2 hover),
+//             with the 4000 ms timer as the outer bound that rejects — no wall-clock race.
+//   F12       R1 asserts the typed-empty SHAPE (status empty, honest_empty ceiling, no
+//             symbols/diagnostics keys) instead of banning the English substring 'definition'.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -210,24 +249,21 @@ function treeSha(root) {
 
 // ── The stubbed typescript-language-server fixture (hermetic; no live providers, no network) ──
 // Writes the stub to a tmp .mjs and returns its path. Modes:
-//   'answer' — the responder (initialize + textDocument/*).
-//   'hung'   — reads stdin, NEVER responds (drives the outstanding-request ceiling, B2).
-//   'crash'  — exits before the handshake (drives lsp_startup_failed, B2).
-function writeStubServer(label, mode = 'answer') {
-  const dir = tmpDir(`stub-${label}`);
-  const path = join(dir, 'stub-tsl.mjs');
-  if (mode === 'hung') {
-    // Drain stdin forever; never write a response. Outstanding requests accumulate past the ceiling.
-    writeFileSync(path, "import { stdin } from 'node:process'; stdin.on('data', () => {});\n");
-    return path;
-  }
-  if (mode === 'crash') {
-    // Exit before the initialize handshake.
-    writeFileSync(path, "process.exit(72);\n");
-    return path;
-  }
-  writeFileSync(path, `// stubbed typescript-language-server — answers the minimal LSP envelope.
+//   'answer'               — the responder (initialize + textDocument/*).
+//   'hung'                 — reads stdin, NEVER responds (a not-ready server).
+//   'crash'                — exits before the handshake (drives lsp_startup_failed).
+//   'ready-then-hung'      — answers initialize/initialized (becomes ready), then drains stdin
+//                            silently on textDocument/* — a WEDGED-but-alive server (B2, F2) that
+//                            drives the outstanding-request ceiling.
+//   'crash-once-then-answer' — the first spawned process exits 72; a FRESH generation (the retry)
+//                            answers the envelope — the start slot-clear is observable (F3).
+// responderModule() builds the shared responder; extraImports/prelude let a mode inject module
+// setup (e.g. the crash-once marker check) BEFORE the responder wires stdin.
+function responderModule(extraImports = '', prelude = '') {
+  return `// stubbed typescript-language-server — answers the minimal LSP envelope.
 import { stdin, stdout } from 'node:process';
+${extraImports}
+${prelude}
 let buf = Buffer.alloc(0);
 function send(msg) {
   const body = Buffer.from(JSON.stringify(msg), 'utf8');
@@ -267,7 +303,77 @@ stdin.on('data', (chunk) => {
     try { onMessage(JSON.parse(body)); } catch { /* ignore malformed */ }
   }
 });
-`);
+`;
+}
+function readyThenHungModule() {
+  return `// ready-then-hung: answers initialize (becomes ready), then silent on textDocument/*.
+import { stdin, stdout } from 'node:process';
+let buf = Buffer.alloc(0);
+function send(msg) {
+  const body = Buffer.from(JSON.stringify(msg), 'utf8');
+  stdout.write('Content-Length: ' + body.length + '\\r\\n\\r\\n');
+  stdout.write(body);
+}
+function onMessage(msg) {
+  if (msg.method === 'initialize') {
+    send({ jsonrpc: '2.0', id: msg.id, result: { capabilities: {
+      textDocumentSync: 1, hoverProvider: true, definitionProvider: true,
+      referencesProvider: true, workspaceSymbolProvider: true, documentSymbolProvider: true,
+    }, serverInfo: { name: 'stub-tsl', version: '0.0.0-red' } } });
+  }
+  /* initialized + textDocument/*: drained silently — never answer again (B2 wedged-but-alive). */
+}
+stdin.on('data', (chunk) => {
+  buf = Buffer.concat([buf, chunk]);
+  for (;;) {
+    const headerEnd = buf.indexOf('\\r\\n\\r\\n');
+    if (headerEnd < 0) break;
+    const header = buf.subarray(0, headerEnd).toString('utf8');
+    const m = /Content-Length:\\s*(\\d+)/i.exec(header);
+    if (!m) break;
+    const len = Number(m[1]); const start = headerEnd + 4;
+    if (buf.length < start + len) break;
+    const body = buf.subarray(start, start + len).toString('utf8');
+    buf = buf.subarray(start + len);
+    try { onMessage(JSON.parse(body)); } catch { /* ignore malformed */ }
+  }
+});
+`;
+}
+function writeStubServer(label, mode = 'answer') {
+  const dir = tmpDir(`stub-${label}`);
+  const path = join(dir, 'stub-tsl.mjs');
+  if (mode === 'hung') {
+    // Drain stdin forever; never write a response.
+    writeFileSync(path, "import { stdin } from 'node:process'; stdin.on('data', () => {});\n");
+    return path;
+  }
+  if (mode === 'crash') {
+    // Exit before the initialize handshake.
+    writeFileSync(path, "process.exit(72);\n");
+    return path;
+  }
+  if (mode === 'ready-then-hung') {
+    writeFileSync(path, readyThenHungModule());
+    return path;
+  }
+  if (mode === 'crash-once-then-answer') {
+    // First spawn: write a marker next to the stub, then exit 72. A fresh generation (the retry)
+    // sees the marker and answers — the start slot-clear is observable, never a vacuous doesNotThrow.
+    writeFileSync(path, responderModule(
+      `import { existsSync, writeFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { dirname, join } from 'node:path';`,
+      `const here = dirname(fileURLToPath(import.meta.url));
+const marker = join(here, 'crashed-once.marker');
+if (!existsSync(marker)) {
+  writeFileSync(marker, '1');
+  process.exit(72);
+}`,
+    ));
+    return path;
+  }
+  writeFileSync(path, responderModule());
   return path;
 }
 
@@ -282,6 +388,20 @@ function handshakeStub(scriptPath) {
     };
     let buf = Buffer.alloc(0);
     const responses = new Map();
+    // F11: the settle is ARRIVAL-driven — both responses (id 1 initialize, id 2 hover) must arrive
+    // before the promise resolves. The 4000 ms timer is the outer bound that REJECTS; there is no
+    // fixed-ms hard resolve deadline racing the child's real responses (a #7-class flake surface).
+    const settle = () => {
+      clearTimeout(timer);
+      try { child.kill(); } catch { /* best effort */ }
+      resolve({
+        initialize: responses.get(1) ?? null,
+        hover: responses.get(2) ?? null,
+      });
+    };
+    const maybeSettle = () => {
+      if (responses.has(1) && responses.has(2)) settle();
+    };
     const pump = () => {
       for (;;) {
         const he = buf.indexOf('\r\n\r\n');
@@ -296,18 +416,28 @@ function handshakeStub(scriptPath) {
         buf = buf.subarray(start + len);
         try {
           const msg = JSON.parse(body);
-          if (msg.id !== undefined) responses.set(msg.id, msg);
+          if (msg.id !== undefined) {
+            responses.set(msg.id, msg);
+            maybeSettle();
+          }
         } catch { /* ignore */ }
       }
     };
     const timer = setTimeout(() => { child.kill(); reject(new Error('handshake timeout')); }, 4000);
     child.stdout.on('data', (c) => { buf = Buffer.concat([buf, c]); pump(); });
     child.stderr.on('data', () => {});
-    child.on('exit', () => { clearTimeout(timer); });
+    child.on('exit', (code) => {
+      clearTimeout(timer);
+      if (!(responses.has(1) && responses.has(2))) {
+        reject(new Error(`stub exited before the handshake settled (code ${code ?? 'null'})`));
+      }
+    });
     child.stdin.write(framed({
       jsonrpc: '2.0', id: 1, method: 'initialize',
       params: { capabilities: {}, rootUri: 'file:///base', processId: process.pid },
     }));
+    // Pacing write only — buffered by the stdin pipe; the settle waits for response ARRIVAL, never
+    // a fixed deadline (the 150 ms delay never races the child's answer).
     setTimeout(() => {
       child.stdin.write(framed({ jsonrpc: '2.0', method: 'initialized', params: {} }));
       child.stdin.write(framed({
@@ -315,14 +445,6 @@ function handshakeStub(scriptPath) {
         params: { textDocument: { uri: 'file:///base/src/x.ts' }, position: { line: 0, character: 0 } },
       }));
     }, 150);
-    setTimeout(() => {
-      clearTimeout(timer);
-      try { child.kill(); } catch { /* best effort */ }
-      resolve({
-        initialize: responses.get(1) ?? null,
-        hover: responses.get(2) ?? null,
-      });
-    }, 600);
   });
 }
 
@@ -374,6 +496,10 @@ function poolConfig({ repo, baseEpoch, stubMode = 'answer', worktreeRoots = [], 
       perServerOutstandingRequests: 2,
       perServerMemoryBytes: 512 * 1024 * 1024,
     },
+    // The #67 law: every fixture config carries a VALID-POSITIVE watchdog.stallMs (never 0/negative);
+    // the pool's supervision bound is the inherited process-lifecycle kill-wait (GP-G), and this
+    // stallMs is set so the watchdog never fires in any row — it is fixture hygiene, not a control.
+    watchdog: { stallMs: 5 * 60_000, loopThreshold: 0, scopeAction: 'kill' },
     indexRung: { available: true }, // the static atlas fallback (degradation rung)
   };
 }
@@ -384,16 +510,21 @@ function poolConfig({ repo, baseEpoch, stubMode = 'answer', worktreeRoots = [], 
 // ════════════════════════════════════════════════════════════════════════════════════════════
 
 test('GP-A (pin): the trust-gate enum is the closed live set, "never path strings", and gains no LSP-derived code (§4, GT5, R7/R12)', () => {
-  // Gate mapping in declaration order: scope → forbidden_effect → red_green → coverage → route_mismatch → unknown.
-  const gateBlock = sedSrc('application.mjs', 949, 956);
-  const order = ['scope', 'forbidden_effect', 'red_green', 'coverage', 'route_mismatch', 'unknown']
+  // F5: pin the DEBUG_GATE_CODES SET literal (grepFirstLineNum-anchored, drift-proof) in its ACTUAL
+  // declaration order — scope → red_green → coverage → route_mismatch → forbidden_effect → unknown.
+  // The debugGateFromLiveCode if-chain order differs (forbidden_effect is SECOND there); this pin
+  // guards the SET, which is what R12/D4.1 says must stay closed and LSP-free.
+  const setStart = grepFirstLineNum('application.mjs', 'const DEBUG_GATE_CODES = Object.freeze');
+  assert.ok(setStart > 0, 'the DEBUG_GATE_CODES set literal is found in application.mjs');
+  const gateBlock = sedSrc('application.mjs', setStart, setStart + 2);
+  const order = ['scope', 'red_green', 'coverage', 'route_mismatch', 'forbidden_effect', 'unknown']
     .map((g) => gateBlock.indexOf(`'${g}'`));
   assert.deepEqual(order, [...order].sort((a, b) => a - b),
-    'the gate enum appears in the declared live-code order');
-  for (const g of ['scope', 'forbidden_effect', 'red_green', 'coverage', 'route_mismatch', 'unknown']) {
+    'the gate enum appears in the declared live-code order (the DEBUG_GATE_CODES set literal)');
+  for (const g of ['scope', 'red_green', 'coverage', 'route_mismatch', 'forbidden_effect', 'unknown']) {
     assert.ok(gateBlock.includes(`'${g}'`), `gate ${g} is in the live set`);
   }
-  // The digests-only scope branch is categorical — "never path strings" (application.mjs:962).
+  // The digests-only scope branch is categorical — "never path strings" (grep-anchored; ~:969 at HEAD).
   assert.ok(grepCount('application.mjs', 'Digests \\+ counts only') >= 1,
     'the "never path strings" clause is pinned in source');
   // R12: no gate gains an LSP-derived code — the gate mapping returns none of the LSP family.
@@ -455,9 +586,11 @@ test('GP-E (pin): the referee coverage pass is TEXTUAL and byte-unchanged — co
   const codes = sedSrc('referee.mjs', 341, 356);
   assert.ok(codes.includes('verification_coverage_failed'),
     'verification_coverage_failed stays in the closed diagnostic set');
-  // No reference-based / symbol-based blast-radius feeds the coverage gate today.
-  assert.equal(grepCount('referee.mjs', 'blastRadius|symbolEvidence|projectSymbolEvidence'), 0,
-    'no reference-based blast-radius projection feeds coverageOfChange (B5b)');
+  // F7: no blast-radius projection FEEDS the coverage gate. The pin is the derivation it guards —
+  // coverageOfChange must never be coupled to a blastRadius projection (a correct #144 may add the
+  // projection to the referee PATH to annotate the verdict; it must never feed the gate).
+  assert.equal(grepCount('referee.mjs', 'coverageOfChange.*blastRadius|blastRadius.*coverageOfChange'), 0,
+    'no blast-radius projection feeds the coverage gate — the textual scan stays the sole input (B5b)');
 });
 
 test('GP-F (pin): the sanctioned sanitizers are reused verbatim — no parallel redaction path (GT8, D4.3, R11)', () => {
@@ -468,10 +601,16 @@ test('GP-F (pin): the sanctioned sanitizers are reused verbatim — no parallel 
   const honest = sedSrc('verifier-diagnostics.mjs', 71, 71);
   assert.ok(honest.includes('[verifier produced no diagnostic output]'),
     'the honest-empty capsule is pinned');
-  const bounded = sedSrc('application.mjs', 334, 341);
+  // F6: boundedAttentionText is grep-anchored (drift-proof) — the function signature via
+  // grepFirstLineNum, the credential-shaped redaction via a direct grep (the old fixed 334-341
+  // window lost the redaction line on the #153 +7 line drift).
+  const attentionStart = grepFirstLineNum('application.mjs', 'function boundedAttentionText');
+  assert.ok(attentionStart > 0, 'boundedAttentionText is found in application.mjs');
+  const bounded = sedSrc('application.mjs', attentionStart, attentionStart + 7);
   assert.ok(/function boundedAttentionText/u.test(bounded),
     'boundedAttentionText is the attention-class sanitizer');
-  assert.ok(bounded.includes('credential-shaped'), 'it redacts credential-shaped content');
+  assert.ok(grepCount('application.mjs', 'credential-shaped content redacted') >= 1,
+    'boundedAttentionText redacts credential-shaped content');
   assert.ok(grepCount('application.mjs', "FRAME_LIMITS\\['view.attention_text.bytes'\\]") >= 1,
     'MAX_ATTENTION_TEXT_BYTES is bounded by the #89 registry row (application.mjs:59)');
   // The live sanitizer is importable and behaves — proves the path the LSP tier must reuse.
@@ -554,10 +693,12 @@ test('R1 (stage: no pool / no LSP card): code.index_status on a no-server langua
   assert.ok(status && status.availability, 'index_status projects an availability object');
   assert.equal(status.availability.status, 'empty', 'a no-server language is availability empty');
   assert.equal(status.language_ceiling, 'honest_empty', 'the ceiling is honest_empty, never fabricated');
-  // Never a fabricated answer: no diagnostics, no symbols, no definition ships for an empty language.
+  // F12: assert the typed-empty SHAPE (never a fabricated answer), not the English substring
+  // 'definition' — a correct honest-empty answer may legitimately name a "no definition provider"
+  // reason. The typed-empty surface carries NO symbols/diagnostics KEYS.
   const serialized = JSON.stringify(status);
-  assert.equal(serialized.includes('definition'), false, 'no fabricated definition for an empty language');
   assert.equal(serialized.includes('"symbols"'), false, 'no fabricated symbols for an empty language');
+  assert.equal(serialized.includes('"diagnostics"'), false, 'no fabricated diagnostics for an empty language');
 });
 
 test('R2 (stage: no pool): exactly one server per (repo, language), lazily started, single-flight on concurrent demand, never per-worker; a worker-worktree path refuses lsp_workspace_scope_violation (§5 R2, D1.1/D1.2/M3)', async () => {
@@ -599,21 +740,30 @@ test('R3 (stage: no LSP server lifecycle): the server rides the exact lifecycle;
   stageGuard(surface, 'R3: the LSP server lifecycle + clock-free wedged trigger is not landed (D1.3)');
 
   // Lifecycle order: process_started before provider I/O, process_ready after the handshake.
+  // F1: the lifecycle leg awaits the readiness SEAM (a bounded, event/count-derived wait) before
+  // reading lastLifecycleEvents() — a real async handshake cannot place process_ready in the array
+  // in the same tick as a synchronous acquire. acquire stays non-blocking (returns a starting
+  // handle); ready(language) is what the leg awaits.
   const repo = gitRepo('r3');
   const pool = surface.createLspPool(poolConfig({ repo, baseEpoch: BASE_EPOCH_A }));
   pool.acquire({ language: 'typescript' });
+  await pool.ready('typescript');
   const events = pool.lastLifecycleEvents();
   const startedAt = events.indexOf('lifecycle.process_started');
   const readyAt = events.indexOf('lifecycle.process_ready');
   assert.ok(startedAt >= 0 && readyAt > startedAt,
     'process_started precedes provider I/O and process_ready follows the initialize handshake');
 
-  // B2 clock-free wedged trigger: a hung server accumulates outstanding requests past the ceiling.
+  // B2 clock-free wedged trigger: a READY-THEN-HUNG server accumulates outstanding requests past the
+  // ceiling. F2: 'ready-then-hung' answers initialize (becomes ready) then drains textDocument/*
+  // silently — a WEDGED-but-alive server, so the outstanding count genuinely climbs past readiness
+  // (a never-ready 'hung' stub could only drive the 'starting' state, never the 'wedged' one).
   const hungRepo = gitRepo('r3-hung');
-  const hungPool = surface.createLspPool(poolConfig({ repo: hungRepo, baseEpoch: BASE_EPOCH_A, stubMode: 'hung' }));
+  const hungPool = surface.createLspPool(poolConfig({ repo: hungRepo, baseEpoch: BASE_EPOCH_A, stubMode: 'ready-then-hung' }));
   hungPool.acquire({ language: 'typescript' });
+  await hungPool.ready('typescript'); // the server is READY, then silent on textDocument/* (B2)
   const ceiling = hungPool.bounds.perServerOutstandingRequests;
-  // Fire `ceiling` concurrent requests against the hung server (none resolve → outstanding climbs).
+  // Fire `ceiling` concurrent requests against the ready-then-hung server (none resolve → outstanding climbs).
   const hung = [];
   for (let i = 0; i < ceiling; i += 1) {
     hung.push(hungPool.answer({
@@ -634,19 +784,28 @@ test('R3 (stage: no LSP server lifecycle): the server rides the exact lifecycle;
   assert.ok(regenerated, 'a wedged server is reaped + restarted as a new generation (retry reachable)');
 
   // B2 start-slot-clear: a server that fails the handshake publishes lsp_startup_failed AFTER clearing
-  // its single-flight slot, so a subsequent demand starts a fresh attempt.
+  // its single-flight slot, so a subsequent demand starts a fresh attempt. F3: the
+  // 'crash-once-then-answer' stub makes the slot-clear OBSERVABLE — the first generation exits 72,
+  // the retry's fresh generation answers the envelope (an always-crash stub could not distinguish
+  // "slot cleared + fresh attempt also failed" from "slot parked on the failed start").
   const crashRepo = gitRepo('r3-crash');
-  const crashPool = surface.createLspPool(poolConfig({ repo: crashRepo, baseEpoch: BASE_EPOCH_A, stubMode: 'crash' }));
-  assert.throws(
-    () => crashPool.acquire({ language: 'typescript' }),
+  const crashPool = surface.createLspPool(poolConfig({ repo: crashRepo, baseEpoch: BASE_EPOCH_A, stubMode: 'crash-once-then-answer' }));
+  crashPool.acquire({ language: 'typescript' });
+  await assert.rejects(
+    crashPool.ready('typescript'),
     (error) => refusalCode(error) === 'lsp_startup_failed',
     'a handshake failure publishes lsp_startup_failed',
   );
+  const startedBeforeRetry = crashPool.lastLifecycleEvents()
+    .filter((e) => e === 'lifecycle.process_started').length;
   // Retry is reachable (the slot cleared before the refusal): a fresh attempt starts, not a parked failure.
-  assert.doesNotThrow(
-    () => { try { crashPool.acquire({ language: 'typescript' }); } catch (error) { if (refusalCode(error) === 'lsp_startup_failed') throw error; } },
-    'the start single-flight slot cleared before lsp_startup_failed — retry is reachable',
-  );
+  const retryHandle = crashPool.acquire({ language: 'typescript' });
+  assert.ok(retryHandle, 'the start single-flight slot cleared before lsp_startup_failed — the retry starts a fresh attempt');
+  await crashPool.ready('typescript'); // the fresh generation answers the handshake (crash-once-then-answer)
+  const startedAfterRetry = crashPool.lastLifecycleEvents()
+    .filter((e) => e === 'lifecycle.process_started').length;
+  assert.ok(startedAfterRetry > startedBeforeRetry,
+    'the retry produced a NEW process_started event — a fresh attempt began (the slot cleared)');
 
   // lsp_reap_unconfirmed is in the family and inherits the closed reap reason set (GP-G pins the set).
   assert.ok(LSP_REFUSAL_FAMILY.includes('lsp_reap_unconfirmed'),
@@ -706,8 +865,11 @@ test('R5 (stage: no symbol projection): a verification failure resolves its diag
     'failing diagnostics resolve to symbols');
   // B5a CHOICE b: symbol NAMES + file digests on the worker-facing surface.
   const symbol = evidence.symbols[0];
-  assert.equal(typeof symbol.name, 'string', 'the projection carries the symbol NAME');
+  // F9: the name must be the RESOLVED symbol, not just any string — a digests-only implementation
+  // that drops the NAMES to '' (typeof '' === 'string') must not pass the projection row.
+  assert.equal(symbol.name, 'missingFn', 'the projection carries the resolved symbol NAME (not an empty string)');
   assert.equal(typeof symbol.fileDigest, 'string', 'the projection carries the file DIGEST, not a path');
+  assert.equal(symbol.fileDigest, FILE_DIGEST_X, 'the digest is the resolved file digest (not a path)');
   // No raw repo-relative path crosses the worker-facing projection.
   const serialized = JSON.stringify(evidence);
   assert.equal(serialized.includes('src/caller.ts'), false,
@@ -731,6 +893,22 @@ test('R6 (stage: no reference-based scoping): the blast-radius projection is ADD
     assert.equal('coverageOfChange' in blast, false,
       'the blast-radius projection never mints coverageOfChange (B5b)');
   }
+
+  // F8: the projection must be CONSULTED by a verdict-producing path, not merely exported — an
+  // implementation that computes blast radius but never wires it into verdict production fails.
+  const repo = gitRepo('r6');
+  const pool = surface.createLspPool(poolConfig({ repo, baseEpoch: BASE_EPOCH_A }));
+  const verdictAnswer = pool.answer({
+    language: 'typescript', op: 'code.symbol',
+    query: { name: 'stubSymbol' },
+    overlayDigest: OVERLAY_DIGEST_BASE_ONLY,
+    changedLines: { 'src/widget.ts': [10, 11] },
+  });
+  const advisory = verdictAnswer?.blastRadius ?? verdictAnswer?.orientation?.blastRadius ?? null;
+  assert.ok(advisory && typeof advisory === 'object',
+    'a verdict-producing answer path CONSULTS the blast-radius projection (F8: annotates, not merely exists)');
+  assert.equal('coverageOfChange' in advisory, false,
+    'the consulted blast annotation never feeds coverageOfChange (B5b)');
 });
 
 test('R7 (stage: no LSP evidence to leak): the worker-facing reject receipt stays digests+counts + symbol names + file digests; the "never path strings" clause is categorical (§5 R7, D2.3/B5a)', async () => {
@@ -899,7 +1077,10 @@ test('R12 (stage: no LSP evidence exists to gate with): LSP-derived evidence is 
   stageGuard(surface, 'R12: the evidence-not-gates LSP posture is not landed (D4.1)');
 
   // The gate enum stays the live code set (GP-A pins it); none of the LSP family is a gate code.
-  const gateBlock = sedSrc('application.mjs', 949, 956);
+  // F4-class: grep-anchored to the DEBUG_GATE_CODES set literal (drift-proof, same as the GP-A fix).
+  const setStart = grepFirstLineNum('application.mjs', 'const DEBUG_GATE_CODES = Object.freeze');
+  assert.ok(setStart > 0, 'the DEBUG_GATE_CODES set literal is found in application.mjs');
+  const gateBlock = sedSrc('application.mjs', setStart, setStart + 2);
   for (const code of LSP_REFUSAL_FAMILY) {
     assert.equal(gateBlock.includes(code), false,
       `${code} is an LSP evidence/refusal code, never a trust-gate verdict code`);
@@ -936,6 +1117,12 @@ test('R13 (stage: no pool / no opt-in gate): the pool never starts a server for 
     query: { name: 'anything' }, overlayDigest: OVERLAY_DIGEST_BASE_ONLY,
   });
   assert.ok(indexSupported, 'an un-opted but index-supported language degrades to the static index (opt-in governs the live tier only)');
+
+  // F10: the OPTED path must be asserted reachable — an implementation whose acquire refuses EVERY
+  // language (including typescript) with lsp_language_not_opted_in would pass the refusal leg above
+  // while silently refusing the opted language too. The opt-in gate must ADMIT the opted language.
+  assert.ok(pool.acquire({ language: 'typescript' }),
+    'the opted path is reachable — acquire admits the opted language (F10)');
 
   // B1 honest trust posture: the card names what the server process actually does.
   const card = pool.card('typescript');

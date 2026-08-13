@@ -6,6 +6,16 @@ suite quarantined to `issue144-lsp-pool-red.PARTIAL.test.mjs` with two red PINs 
 no draft notes. This record homes the fixed suite to `impl/test/issue144-lsp-pool-red.test.mjs`,
 documents the two diagnoses + resolutions, and records the verified-stable-twice split.
 
+**suite-fold-2 fold** (2026-08-13): the blue-team suite review (`suite-blueteam.md`, NEEDS-FOLD)
+found the split STALE at the review HEAD — 8 pass / 15 fail, not 10/13 (F4) — because the #153
+follow-on drifted `impl/src/application.mjs` +7 lines and GP-A/GP-F (both fixed line-window pins)
+turned red. The fold (F1–F12, the finding → resolution map in `suite-fold-2.md`) re-anchored
+GP-A/GP-F on grep-based anchors, re-scoped GP-E, re-drove R3 on three greenable legs (the
+`pool.ready` seam + two new stub modes), tightened R5/R6/R13/R1, re-settled the stub handshake on
+arrival, and re-verified the split at the fold HEAD as **10 pass / 13 fail**. Contract
+`contract-fold.md` v1.2 carries the two citation corrections the fold required (F5/F6 — gate-enum
+set order, `boundedAttentionText` line). The fold record is §"Verified-stable-twice record" below.
+
 ## Declared split — 23 rows: 13 RED / 10 PIN
 
 The suite is 23 rows. 10 PIN rows guard unchanged surfaces the LSP tier must reuse (they pass
@@ -117,7 +127,8 @@ for a contract `:line` re-anchor pass; the contract itself was not edited.
 
 ## Verified-stable-twice record
 
-From the repo root, on the final homed file:
+From the repo root, on the final homed file (as of the suite-fix-144 verification tree,
+`74da3063`):
 
 ```
 node --test impl/test/issue144-lsp-pool-red.test.mjs
@@ -134,3 +145,29 @@ implementation.
 NUL discipline was respected throughout: source scans used `grep -an` / `sed -n` over the
 NUL-bearing machinery (`coordinator.mjs` most heavily), never whole-file reads; the resolver reads
 only the not-yet-existing `src/lsp-pool.mjs` inside a try/catch.
+
+## suite-fold-2 record — re-verified split at the fold HEAD
+
+The blue-team review (`suite-blueteam.md`) found the split above STALE at the review HEAD
+(`5bc67de`): **8 pass / 15 fail**, with GP-A and GP-F — both declared PIN rows — red. Root cause
+(F4): `74da3063` (the draft-notes verification tree) is **not an ancestor of the review HEAD**;
+the #153 follow-on (`PRODUCTION_WORKFLOW_DRIVER`) drifted `impl/src/application.mjs` +7 lines,
+moving `boundedAttentionText` `334→341` and `DEBUG_GATE_CODES` `945→952` out of GP-A/GP-F's fixed
+`sedSrc` windows. F5 found GP-A additionally content-wrong (it asserted the `debugGateFromLiveCode`
+if-chain order, never the set literal); F6 was pure window drift. The fold (F1–F12, map in
+`suite-fold-2.md`) re-anchored both pins on `grepFirstLineNum` anchors, and re-verified:
+
+From the repo root, on the folded suite:
+
+```
+node --test impl/test/issue144-lsp-pool-red.test.mjs
+```
+
+- **Run 1**: 23 tests — 10 pass (GP-A..GP-L guard pins) / 13 fail (R1..R13 red rows).
+- **Run 2**: 23 tests — 10 pass / 13 fail. **STABLE.**
+
+**STABLE.** Every RED row still fails at its NAMED first stage (`stage #144: <named stage>` via
+`resolveLspPoolHome() → {surface:null}` → `stageGuard`); every PIN row is green at HEAD. The fold
+re-drives the R3/R1/R5/R6/R13 legs (see the seam notes in `suite-fold-2.md`) and adds no rows —
+the inventory stays 10 PIN / 13 RED / 23 total. Contract `contract-fold.md` v1.2 records the two
+citation corrections (F5 gate-enum set order; F6 `boundedAttentionText` `:341-348`).
