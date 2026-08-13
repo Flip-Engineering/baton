@@ -22,6 +22,9 @@ reads there.
   free response (defers to the top orchestrator). Judgment calls are yours — record them.
 - **Publish-as-you-go:** your final report goes to your file AND the full text to the
   `shared` scratchpad partition (kind `note`, title = your issue number).
+- **THE ATTEMPT-ECHO LAW (#171):** your objective opens with an `[attempt: <salt> <role>]`
+  line. Your report file MUST carry that line VERBATIM in its header — the wave's harvest
+  refuses to attribute content without it, however complete the work.
 
 ## Row assignments
 

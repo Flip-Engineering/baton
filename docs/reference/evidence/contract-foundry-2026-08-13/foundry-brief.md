@@ -23,6 +23,9 @@ partition as they go; the coordinator reads them there.
 - **Publish-as-you-go:** when your contract draft is complete, write your file AND post the
   full text to the `shared` scratchpad partition (worker-facing scratchpad write; scope
   `shared`, kind `note`, title = your issue number).
+- **THE ATTEMPT-ECHO LAW (#171):** your objective opens with an `[attempt: <salt> <role>]`
+  line. Your deliverable file MUST carry that line VERBATIM in its header (copy it exactly) —
+  the wave's harvest refuses to attribute content without it, however complete the work.
 
 ## Row assignments (your objectiveRef names yours)
 
