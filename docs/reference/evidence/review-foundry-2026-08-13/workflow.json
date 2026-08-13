@@ -1,0 +1,58 @@
+{
+  "schemaVersion": 1,
+  "idempotencyKey": "review-foundry-2026-08-13-wave-a",
+  "members": [
+    {
+      "role": "coordinator",
+      "exact": { "harness": "deepseek", "model": "deepseek-v4-pro[1m]", "effort": "high" },
+      "scope": ["docs/reference/evidence/review-foundry-2026-08-13/**"],
+      "objectiveRef": "docs/reference/evidence/review-foundry-2026-08-13/coordinator-brief.md",
+      "report": "docs/reference/evidence/review-foundry-2026-08-13/review-qa.md"
+    },
+    {
+      "role": "row-rt155",
+      "exact": { "harness": "deepseek", "model": "deepseek-v4-flash", "effort": "high" },
+      "scope": ["docs/reference/evidence/review-foundry-2026-08-13/**"],
+      "objectiveRef": "docs/reference/evidence/review-foundry-2026-08-13/row-rt155.md",
+      "report": "docs/reference/evidence/review-foundry-2026-08-13/redteam-155.md"
+    },
+    {
+      "role": "row-rt156",
+      "exact": { "harness": "deepseek", "model": "deepseek-v4-flash", "effort": "high" },
+      "scope": ["docs/reference/evidence/review-foundry-2026-08-13/**"],
+      "objectiveRef": "docs/reference/evidence/review-foundry-2026-08-13/row-rt156.md",
+      "report": "docs/reference/evidence/review-foundry-2026-08-13/redteam-156.md"
+    },
+    {
+      "role": "row-rt161",
+      "exact": { "harness": "deepseek", "model": "deepseek-v4-flash", "effort": "high" },
+      "scope": ["docs/reference/evidence/review-foundry-2026-08-13/**"],
+      "objectiveRef": "docs/reference/evidence/review-foundry-2026-08-13/row-rt161.md",
+      "report": "docs/reference/evidence/review-foundry-2026-08-13/redteam-161.md"
+    },
+    {
+      "role": "row-rt164",
+      "exact": { "harness": "deepseek", "model": "deepseek-v4-flash", "effort": "high" },
+      "scope": ["docs/reference/evidence/review-foundry-2026-08-13/**"],
+      "objectiveRef": "docs/reference/evidence/review-foundry-2026-08-13/row-rt164.md",
+      "report": "docs/reference/evidence/review-foundry-2026-08-13/redteam-164.md"
+    }
+  ],
+  "steering": {
+    "approveOnAdvertisedPlan": true,
+    "nudgeOnCheckpoint": { "message": "Continue your attack drive — verify every anchor against the real code, write your report incrementally, publish to the shared scratchpad when complete." },
+    "claimOnStall": true,
+    "messageOnSpawn": { "kind": "brief", "body": "Read your objectiveRef brief IN FULL first, then foundry-brief.md in the same directory (the shared frame binds you). Publish your final report to the `shared` scratchpad partition as well as your file. Authority-class ambiguity → DECISION_REQUEST with options; judgment calls are yours — record them." },
+    "elevateWhenNotes": { "kinds": ["doubt", "plan"], "maxEntries": 20 },
+    "signalOnMembersDone": { "roles": ["coordinator"], "message": { "kind": "result", "body": "All rows settled — read their reports from the `shared` scratchpad partition and write review-qa.md per your brief." } }
+  },
+  "harvest": {
+    "paths": [
+      { "path": "docs/reference/evidence/review-foundry-2026-08-13/review-qa.md", "mustContain": "REVIEW-QA v1" },
+      { "path": "docs/reference/evidence/review-foundry-2026-08-13/redteam-155.md", "mustContain": "#155" },
+      { "path": "docs/reference/evidence/review-foundry-2026-08-13/redteam-156.md", "mustContain": "#156" },
+      { "path": "docs/reference/evidence/review-foundry-2026-08-13/redteam-161.md", "mustContain": "#161" },
+      { "path": "docs/reference/evidence/review-foundry-2026-08-13/redteam-164.md", "mustContain": "#164" }
+    ]
+  }
+}
