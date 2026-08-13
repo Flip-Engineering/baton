@@ -1,0 +1,37 @@
+{
+  "attempt": "2026-08-13T02:07:38.903Z",
+  "salt": "a520260813020738",
+  "role": "research-ax-triage",
+  "steps": [
+    {
+      "step": "waves.start",
+      "receipt": {
+        "runs": [
+          "run-2a45f8e9c26d501d46bf147325481aa3"
+        ]
+      }
+    },
+    {
+      "step": "terminal:research-ax-triage",
+      "receipt": {
+        "phase": "work_completed"
+      }
+    },
+    {
+      "step": "loop-drained",
+      "receipt": {
+        "pending": []
+      }
+    }
+  ],
+  "harvest": {
+    "research-ax-triage": {
+      "pin": "485ddac23bd352e66c3d1560cf93836d3126a4a1",
+      "paths": [
+        "docs/reference/evidence/ax-triage-2026-08-12/ax-108-112-triage.md"
+      ]
+    }
+  },
+  "harvestStalePinsSkipped": 430,
+  "verdict": "AX-TRIAGE-OK"
+}
