@@ -1,0 +1,37 @@
+{
+  "attempt": "2026-08-13T01:52:46.496Z",
+  "salt": "f720260813015246",
+  "role": "fold-74",
+  "steps": [
+    {
+      "step": "waves.start",
+      "receipt": {
+        "runs": [
+          "run-257c60bd2cb924031f83d35eca4bc1a1"
+        ]
+      }
+    },
+    {
+      "step": "terminal:fold-74",
+      "receipt": {
+        "phase": "work_completed"
+      }
+    },
+    {
+      "step": "loop-drained",
+      "receipt": {
+        "pending": []
+      }
+    }
+  ],
+  "harvest": {
+    "fold-74": {
+      "pin": "6f69b30ff0fe9daa670fcd926464ce061a6c751a",
+      "paths": [
+        "docs/reference/evidence/worker-orchestrated-swarm-2026-08-13/contract-fold.md"
+      ]
+    }
+  },
+  "harvestStalePinsSkipped": 427,
+  "verdict": "FOLD-74-OK"
+}
