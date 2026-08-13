@@ -1,0 +1,37 @@
+{
+  "attempt": "2026-08-13T01:21:57.715Z",
+  "salt": "t120260813012157",
+  "role": "comm-topology-audit-74",
+  "steps": [
+    {
+      "step": "waves.start",
+      "receipt": {
+        "runs": [
+          "run-2692b435ffc775ff07341e30101531ab"
+        ]
+      }
+    },
+    {
+      "step": "terminal:comm-topology-audit-74",
+      "receipt": {
+        "phase": "work_completed"
+      }
+    },
+    {
+      "step": "loop-drained",
+      "receipt": {
+        "pending": []
+      }
+    }
+  ],
+  "harvest": {
+    "comm-topology-audit-74": {
+      "pin": "a5bb7ff5bfbe4b68bf0462fca1d48f0a18cc7aa3",
+      "paths": [
+        "docs/reference/evidence/worker-orchestrated-swarm-2026-08-13/comm-topology-audit.md"
+      ]
+    }
+  },
+  "harvestStalePinsSkipped": 420,
+  "verdict": "TOPOLOGY-74-OK"
+}
