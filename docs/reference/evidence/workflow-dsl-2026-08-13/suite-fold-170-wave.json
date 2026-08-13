@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "idempotencyKey": "suite-fold-170-2026-08-13-wave-a",
+  "idempotencyKey": "suite-fold-170-2026-08-13-wave-b",
   "members": [
     {
       "role": "suite-fold-170",
