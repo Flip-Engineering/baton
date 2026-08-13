@@ -407,6 +407,30 @@ function markerAdapter(scenariosByMarker, { concurrencyCeiling } = {}) {
   return value;
 }
 
+// A worker whose spawn ack lands (the worktreeReady handshake honored) but which NEVER enters
+// a turn — the honest provider_stalled subject under the #67 in-flight-turn gate. The pre-#67
+// fixture (a slow-but-completing edit) pinned exactly the class the #67 law protects: a
+// slow-but-in-flight worker must NEVER be declared stalled, so the stall only mints for a
+// turnless working worker. Mirrors the stall suite's silentWorkerAdapter (E8).
+function silentStallAdapter() {
+  const adapter = new ScriptableAdapter();
+  const baseCard = adapter.card.bind(adapter);
+  adapter.card = () => ({
+    ...baseCard(),
+    modelSelection: {
+      mode: 'exact', configuredDefault: ROUTE.model, available: [ROUTE.model], family: 'mock',
+      acceptedPrefixes: [], acceptedAliases: [], reasoningEffort: [ROUTE.effort], serviceTier: null,
+      provenance: 'waiting-vocabulary-test', refreshedAt: null,
+    },
+  });
+  const nativeSpawn = adapter.spawn.bind(adapter);
+  adapter.spawn = async (worker, brief, options) => {
+    if (options?.worktreeReady) await options.worktreeReady;
+    return nativeSpawn(worker, brief, options);
+  };
+  return adapter;
+}
+
 // A MockAdapter whose native spawn ack stays pending until settleSpawns() — keeps the D6 'spawn'
 // window open at the application level.
 class DeferredAckAppAdapter extends MockAdapter {
@@ -1058,8 +1082,8 @@ async function stallSuspicion(driver, worker) {
 }
 
 test('PS-START (RED): a watchdog stall suspicion projects waitingOn.provider_stalled with the suspicion epoch', async (t) => {
-  const adapter = markerAdapter({ default: { outcome: 'completed', edits: [{ path: 'out.txt', content: 'done\n', delayMs: 2500 }] } });
-  const { application, driver } = harnessApp(t, adapter, { watchdog: { stallMs: 60, stallAction: 'none' } });
+  const adapter = silentStallAdapter();
+  const { application, driver } = harnessApp(t, adapter, { watchdog: { stallMs: 60, stallAction: 'escalate' } });
   const owner = principal('owner');
   const started = await application.start({ objective: 'PS-START (marker:default): slow worker', profile: 'standard', route: ROUTE, scope: ['**'] }, owner);
   await application.approve(started.runId, started.plan.digest, principal('approver'));
@@ -1071,7 +1095,7 @@ test('PS-START (RED): a watchdog stall suspicion projects waitingOn.provider_sta
   assert.equal(view.waitingOn.kind, 'provider_stalled', 'stage[provider-stalled-projection-missing]: the kind');
   assert.equal(view.waitingOn.since.eventSeq, suspicion.seq, 'stage[provider-stalled-projection-missing]: since = the suspicion seq');
   assert.equal(view.waitingOn.since.turnEpoch, suspicion.turnEpoch, 'stage[provider-stalled-projection-missing]: the suspicion epoch rides');
-  assert.deepEqual(view.waitingOn.detail, { workerId: worker.id, taskId: worker.taskId, action: 'none' },
+  assert.deepEqual(view.waitingOn.detail, { workerId: worker.id, taskId: worker.taskId, action: 'escalate' },
     'stage[provider-stalled-projection-missing]: the suspicion detail');
 
   const task = driver.coordinator._tasks.get(worker.taskId);
@@ -1080,8 +1104,8 @@ test('PS-START (RED): a watchdog stall suspicion projects waitingOn.provider_sta
 });
 
 test('PS-SHOW (RED): provider_stalled projects identically on view, outline, and runs.list', async (t) => {
-  const adapter = markerAdapter({ default: { outcome: 'completed', edits: [{ path: 'out.txt', content: 'done\n', delayMs: 2500 }] } });
-  const { application, driver } = harnessApp(t, adapter, { watchdog: { stallMs: 60, stallAction: 'none' } });
+  const adapter = silentStallAdapter();
+  const { application, driver } = harnessApp(t, adapter, { watchdog: { stallMs: 60, stallAction: 'escalate' } });
   const owner = principal('owner');
   const started = await application.start({ objective: 'PS-SHOW (marker:default): parity', profile: 'standard', route: ROUTE, scope: ['**'] }, owner);
   await application.approve(started.runId, started.plan.digest, principal('approver'));
@@ -1099,8 +1123,8 @@ test('PS-SHOW (RED): provider_stalled projects identically on view, outline, and
 });
 
 test('PS-EXIT (RED): first worker content after the suspicion clears the stall projection to null', async (t) => {
-  const adapter = markerAdapter({ default: { outcome: 'completed', edits: [{ path: 'out.txt', content: 'done\n', delayMs: 2500 }] } });
-  const { application, driver } = harnessApp(t, adapter, { watchdog: { stallMs: 60, stallAction: 'none' } });
+  const adapter = silentStallAdapter();
+  const { application, driver } = harnessApp(t, adapter, { watchdog: { stallMs: 60, stallAction: 'escalate' } });
   const owner = principal('owner');
   const started = await application.start({ objective: 'PS-EXIT (marker:default): recovers', profile: 'standard', route: ROUTE, scope: ['**'] }, owner);
   await application.approve(started.runId, started.plan.digest, principal('approver'));
