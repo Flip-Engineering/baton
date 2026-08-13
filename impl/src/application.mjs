@@ -7430,6 +7430,8 @@ export class BatonApplication {
       blockedInteraction,
       waitingOn,
       decisionSettled,
+      watchdog: typeof this.driver.coordinator?.watchdogConfig === 'function'
+        ? this.driver.coordinator.watchdogConfig() : null,
       verification: {
         state: verificationState,
         verdict: candidates.length > 0 ? {
@@ -7888,6 +7890,8 @@ export class BatonApplication {
       blockedInteraction,
       waitingOn,
       decisionSettled,
+      watchdog: typeof this.driver.coordinator?.watchdogConfig === 'function'
+        ? this.driver.coordinator.watchdogConfig() : null,
       verification: {
         state: verificationState,
         stability: resultStability,

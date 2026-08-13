@@ -42,6 +42,18 @@ const DEFAULT_BUDGET = Object.freeze({
   tokens: 100_000_000, usd: 1_000, wallMin: 480, providerTurns: 2_048,
 });
 
+// Issue #67 D1: the stall watchdog budget is frozen SEPARATELY from DEFAULT_BUDGET — it is a
+// liveness bound on no-progress EVIDENCE, never the wall budget. 20 min matches the wave-driver's
+// provider-stall outer backstop, so the two surfaces share one coherent stall vocabulary. Nothing
+// in DEFAULT_BUDGET feeds this; a future wall-budget change can never silently change the stall.
+const DEFAULT_WATCHDOG = Object.freeze({
+  stallMs: 20 * 60_000,                       // strictly < DEFAULT_BUDGET.wallMin * 60_000 (480 min)
+  blockingInteractionTimeoutMs: 20 * 60_000,  // the null-deadline default for blocking interactions (D3)
+  loopThreshold: 3,
+  loopAction: 'interrupt',
+  stallAction: 'escalate',                    // was 'interrupt' — D4 rung 1, never a direct stop
+});
+
 // Capacity ceilings are deployment authority, not Run arguments. The advanced seam may replace
 // observation/estimation for deterministic tests or a host integration, but never these limits.
 const DEFAULT_WORKTREE_CAPACITY = Object.freeze({
@@ -1933,7 +1945,9 @@ export async function openBatonDeployment(rawOptions, createDriver) {
     progressNudgeWindowMs: 300_000,
     drainPolicy: { maxWorkers: 64, timeoutMs: 90_000, pollMs: 10 },
     budgetPolicy: { terminalGraceMs: 2_000 },
-    watchdog: { stallMs: DEFAULT_BUDGET.wallMin * 60_000 },
+    // D1: the stall budget no longer derives from DEFAULT_BUDGET.wallMin — it is the separately
+    // frozen DEFAULT_WATCHDOG (20 min < 480 min wall), admission-checked at createDriver.
+    watchdog: { ...DEFAULT_WATCHDOG },
   });
   // #47 liveness controller: wraps the adapter listeners (the coordinator's single-slot onEvent)
   // so it observes probe turns and worker-turn refresh-token death without disturbing the
@@ -2018,6 +2032,7 @@ export async function openBatonDeployment(rawOptions, createDriver) {
 }
 
 export { DEFAULT_ROUTES as DEFAULT_BATON_DEPLOYMENT_ROUTES };
+export { DEFAULT_BUDGET, DEFAULT_WATCHDOG };
 export { ClaudeCredentialCache } from './claude-credential-cache.mjs';
 
 /**
