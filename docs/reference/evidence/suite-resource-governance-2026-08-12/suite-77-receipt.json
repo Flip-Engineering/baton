@@ -1,0 +1,38 @@
+{
+  "attempt": "2026-08-13T01:05:15.590Z",
+  "salt": "si20260813010515",
+  "role": "suite-77",
+  "steps": [
+    {
+      "step": "waves.start",
+      "receipt": {
+        "runs": [
+          "run-b8f27f537d848bea9c555bca678aa39b"
+        ]
+      }
+    },
+    {
+      "step": "terminal:suite-77",
+      "receipt": {
+        "phase": "work_completed"
+      }
+    },
+    {
+      "step": "loop-drained",
+      "receipt": {
+        "pending": []
+      }
+    }
+  ],
+  "harvest": {
+    "suite-77": {
+      "pin": "4104127e6de2b3d18b9d91a4a089b70e21e0edb9",
+      "paths": [
+        "impl/test/suite-resource-governance-red.test.mjs",
+        "docs/reference/evidence/suite-resource-governance-2026-08-12/suite-draft-notes.md"
+      ]
+    }
+  },
+  "harvestStalePinsSkipped": 418,
+  "verdict": "SUITE-77-OK"
+}
