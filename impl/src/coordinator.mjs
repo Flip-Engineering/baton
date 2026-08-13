@@ -9,8 +9,8 @@ import { createHash } from 'node:crypto';
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { Cursor } from './log.mjs';
 import {
-  boundedAttentionText, buildKnowledgeSlice, createBrief, createDecisionAnswer, createDecisionRequest, createDigest,
-  frameWebContent, ValidationError, wrapFact, wrapProse,
+  attentionItemLine, boundedAttentionText, buildKnowledgeSlice, createBrief, createDecisionAnswer, createDecisionRequest, createDigest,
+  frameWebContent, isAttentionSpillItem, ValidationError, wrapFact, wrapHubDerived, wrapProse,
 } from './messages.mjs';
 import { FRAME_LIMITS, MAX_MESSAGE_DEPTH_BUDGET, composeFrameLimitRefusal, frameLimitRefusalPath } from './limits.mjs';
 import { parseRouteTupleKey, resolveEffort, routeTupleKey } from './route-tuple.mjs';
@@ -37,7 +37,7 @@ import { normalizeRunLineagePolicy } from './run-lineage.mjs';
 import {
   createRecoveryAttemptAdmission, createRecoveryAttemptCompletion, recoveryAttemptSeriesId,
 } from './recovery-attempt.mjs';
-import { normalizeVerifierFailureCapsule } from './verifier-diagnostics.mjs';
+import { normalizeVerifierFailureCapsule, sanitizeVerifierDiagnosticText } from './verifier-diagnostics.mjs';
 
 const ORIENTATION_DELIVERY = Symbol('orientation-delivery');
 const WORKTREE_FAILURE = Symbol('worktree-failure');
@@ -74,6 +74,24 @@ export const REARM_KINDS = Object.freeze([
   'lifecycle.turn_started',
   'question.answered',
 ]);
+
+// Issue #79 (refusals): the frozen attention_push_* refusal family, in ACTUAL sorted order
+// (not < ove < sta < unk). Each code is a typed serving-path refusal — never a silent drop.
+export const PUSH_REFUSAL_CODES = Object.freeze({
+  attention_push_not_addressed: 'an item’s workerId does not match the receiving worker',
+  attention_push_oversized: 'the pending set exceeds the item-count bound and the spill lane is unavailable',
+  attention_push_stale: 'a re-push attempted for an item that is no longer pending',
+  attention_push_unknown_item: 'a referenced item id is not a push-qualified pending item',
+});
+
+// Issue #79 (D3/R7): the kinds that are NEVER worker-addressed. The orchestration/operator kinds
+// (run/wave-view decisions) and the #10-era inbox vocabulary are out of the push's source set —
+// the push serves ONLY the refused-write / gate-verdict / pending-interaction projection.
+const ATTENTION_PUSH_ORCHESTRATOR_ONLY_KINDS = new Set([
+  'answer_decision', 'candidate_selection', 'workflow_revision', 'workflow_recovery',
+  'session_preservation', 'turn_checkpoint',
+]);
+const ATTENTION_PUSH_INBOX_KINDS = new Set(['approval', 'question', 'blocked', 'stalled', 'budget_alarm']);
 
 /** Epic #78 Decision 2: the orchestrator-selected permission subset is recorded on the grant at
  * mint time (the caller names no permissions). Executor-class members receive the full
@@ -3533,7 +3551,7 @@ export class Coordinator {
     handle.currentIncarnation = true;
     handle.localAuthority = true;
     let providerBrief;
-    try { providerBrief = this._providerBrief(task.brief); }
+    try { providerBrief = this._providerBrief(task.brief, workerId); }
     catch (error) {
       if (task.sessionRequest?.mode === 'new'
         && typeof this._worktrees?.releaseCapacity === 'function') {
@@ -3807,7 +3825,7 @@ export class Coordinator {
     }
   }
 
-  _providerBrief(brief) {
+  _providerBrief(brief, workerId = null) {
     let inner;
     if (!brief?.contextCall) {
       inner = brief;
@@ -3846,6 +3864,35 @@ export class Coordinator {
     if (typeof this._orientationL0Grant === 'function') {
       inner = Object.freeze({ ...inner, orientation: this._orientationL0Grant(inner) });
     }
+    // Issue #79 (D1/D3): the worker-delivery push. A per-worker projection attaches `attention`
+    // to a NEW provider-facing value — never a mutation of the admitted task.brief (the
+    // recovery-refinement digest pin stays byte-stable, GT4/R5). The EMPTY set attaches `[]` and
+    // mints no receipt — the renderer omits the section (the #89 frame-waste law).
+    if (typeof workerId === 'string' && workerId.length > 0) {
+      const attention = this._pendingAttentionPush(workerId);
+      // The block is attached as an array whenever a worker is addressed — the projection returns
+      // `[]` for an empty pending set, and the RENDERER omits the section for an empty array (the
+      // #89 frame-waste law lives at the renderer, never the seam). D4/F5 read `composed.attention`
+      // directly on the negative arms, so the field is always present once a worker is addressed.
+      inner = Object.freeze({ ...inner, attention });
+      if (attention.length > 0) {
+        // D4 delivered receipt: `attention.pushed` at the delivery seam — delivered means COMPOSED,
+        // honestly never a wire ack (the seam is a pure function; it cannot await the adapter send).
+        const handle = this._workers.get(workerId);
+        this._log.append({
+          worker: workerId,
+          harness: handle ? this._harnessOf(handle.vendor) : '',
+          turnEpoch: handle ? this._safeTurnEpoch(handle) : 1,
+          kind: 'attention.pushed',
+          actor: 'hub',
+          payload: {
+            workerId,
+            itemIds: attention.filter((item) => !isAttentionSpillItem(item)).map((item) => item.requestId),
+            blockDigest: canonicalDigest(attention),
+          },
+        });
+      }
+    }
     // KG-3 rule 6/6a: augment the provider-facing value with a separate `briefing` block.
     // `briefDigest = canonicalDigest(activeTask.brief)` (:4506) hashes only the inner brief,
     // matched store-side at :2599; a briefing that changes between spawn and recovery cannot
@@ -3856,6 +3903,272 @@ export class Coordinator {
     try { briefing = this._knowledgeBriefingProvider(inner); } catch { briefing = null; }
     if (!briefing) return inner;
     return { ...inner, briefing };
+  }
+
+  // =========================================================================
+  // Issue #79 — the worker-delivery push (D1-D6). A per-worker projection of the
+  // still-pending, worker-addressed attention items plus the sanitized gate verdict,
+  // bounded by the item/byte rows, with a digest-cited spill for overflow. Replay-safe:
+  // the pending set is a pure function of the durable event log + _pending (itself rebuilt
+  // on replay); in-memory "already pushed" bookkeeping is never authoritative (D5).
+  // =========================================================================
+
+  /** The worker-scoped gate verdict (D6/TG4) — the SAME sanitized {gate, code, message, detail}
+   * shape as application.mjs's debugGateRefusal, re-derived from the worker's OWN durable source
+   * events (never the run-wide log: a judged worker receives ITS verdict and nobody else's). The
+   * sanitizer is reused verbatim (verifier-diagnostics.mjs), never a parallel redaction path. */
+  _gateVerdictItemForWorker(workerId, events) {
+    const candidates = events.filter((event) => {
+      if (event.kind === 'error' && event.payload?.['phase'] === 'trust_gate') return true;
+      if (event.kind === 'verify.reverified' && event.payload?.accept === false) return true;
+      return false;
+    });
+    const event = candidates.at(-1);
+    if (!event) return null;
+    const liveCode = event.kind === 'verify.reverified'
+      ? (typeof event.payload?.verdict?.diagnosticCode === 'string'
+        ? event.payload.verdict.diagnosticCode : 'trust_gate_failed')
+      : (typeof event.payload?.code === 'string' ? event.payload.code : 'trust_gate_failed');
+    let gate;
+    if (liveCode === 'worker_path_scope_violation') gate = 'scope';
+    else if (liveCode === 'forbidden_effect_observed') gate = 'forbidden_effect';
+    else if (liveCode === 'verification_red_green_failed') gate = 'red_green';
+    else if (liveCode === 'verification_coverage_failed') gate = 'coverage';
+    else if (liveCode === 'plan_route_mismatch' || liveCode === 'recovery_route_mismatch') gate = 'route_mismatch';
+    else gate = 'unknown';
+    let detail = {};
+    if (gate === 'scope') {
+      const evidence = event.payload?.pathScopeEvidence && typeof event.payload.pathScopeEvidence === 'object'
+        ? event.payload.pathScopeEvidence : {};
+      detail = {
+        digests: {
+          changedPathsDigest: typeof evidence.changedPathsDigest === 'string' ? evidence.changedPathsDigest : null,
+          inScopeChangedPathsDigest: typeof evidence.inScopeChangedPathsDigest === 'string'
+            ? evidence.inScopeChangedPathsDigest : null,
+          outOfScopeChangedPathsDigest: typeof evidence.outOfScopeChangedPathsDigest === 'string'
+            ? evidence.outOfScopeChangedPathsDigest : null,
+        },
+        counts: {
+          changedPathCount: Number.isSafeInteger(evidence.changedPathCount) ? evidence.changedPathCount : 0,
+          inScopeChangedPathCount: Number.isSafeInteger(evidence.inScopeChangedPathCount)
+            ? evidence.inScopeChangedPathCount : 0,
+          outOfScopeChangedPathCount: Number.isSafeInteger(evidence.outOfScopeChangedPathCount)
+            ? evidence.outOfScopeChangedPathCount : 0,
+        },
+      };
+    } else if (gate === 'red_green' || gate === 'coverage') {
+      const raw = typeof event.payload?.verdict?.failureCapsule?.text === 'string'
+        ? event.payload.verdict.failureCapsule.text
+        : typeof event.payload?.verdict?.output === 'string' ? event.payload.verdict.output : '';
+      detail = { tail: sanitizeVerifierDiagnosticText(raw).text };
+    }
+    const message = typeof event.payload?.message === 'string' && event.payload.message.length > 0
+      ? sanitizeVerifierDiagnosticText(event.payload.message).text : null;
+    return {
+      kind: 'gate_verdict',
+      requestId: `gate:${event.seq}`,
+      workerId: typeof event.worker === 'string' ? event.worker : workerId,
+      gate,
+      code: liveCode,
+      message,
+      detail,
+    };
+  }
+
+  /** The genuinely-pending, push-qualified items addressed to THIS worker (D3/D5). Derived from
+   * the durable log (+ _pending for the interaction still-pending predicate) — never the run-view
+   * `.slice(-2)`/MAX_ATTENTION display bounds (the D2 v1.2 per-source pin). */
+  _derivePendingAttentionItems(workerId) {
+    const events = this._log.read(workerId);
+    const items = [];
+
+    // (1) scratchpad_write_failed — a refused write with no later ok:true corrective (D5).
+    const writeResults = events.filter((event) => event.kind === 'scratchpad.write_result');
+    let lastOkSeq = 0;
+    for (let i = writeResults.length - 1; i >= 0; i -= 1) {
+      if (writeResults[i].payload?.ok === true) { lastOkSeq = writeResults[i].seq; break; }
+    }
+    for (const event of writeResults) {
+      if (event.payload?.ok !== false || event.seq <= lastOkSeq) continue;
+      const code = typeof event.payload?.result === 'string' ? event.payload.result : null;
+      items.push({
+        kind: 'scratchpad_write_failed',
+        requestId: `swf:${workerId}:${event.seq}`,
+        workerId,
+        code,
+        text: code ? boundedAttentionText(code) : '',
+      });
+    }
+
+    // (2) answer_question / answer_approval — still-pending interactions (D3/D5/D7). The text
+    // rides the durable ask event (never _pending, which stores no prose); the still-pending
+    // predicate leans on _pending (rebuilt on replay from the same log).
+    for (const event of events) {
+      if (event.kind === 'question.asked') {
+        const requestId = event.payload?.requestId;
+        const record = typeof requestId === 'string' ? this._pending.get(requestId) : null;
+        if (record && record.worker === workerId && record.state === 'pending') {
+          items.push({
+            kind: 'answer_question',
+            requestId,
+            workerId,
+            text: boundedAttentionText(typeof event.payload?.question === 'string' ? event.payload.question : ''),
+          });
+        }
+      } else if (event.kind === 'approval.requested') {
+        const requestId = event.payload?.requestId;
+        const record = typeof requestId === 'string' ? this._pending.get(requestId) : null;
+        if (record && record.worker === workerId && record.state === 'pending') {
+          items.push({
+            kind: 'answer_approval',
+            requestId,
+            workerId,
+            text: boundedAttentionText(typeof event.payload?.kind === 'string' ? event.payload.kind : ''),
+          });
+        }
+      }
+    }
+
+    // (3) gate_verdict — the worker's latest sanitized gate refusal (D6).
+    const verdict = this._gateVerdictItemForWorker(workerId, events);
+    if (verdict) items.push(verdict);
+
+    return items;
+  }
+
+  /** Mint the digest-cited spill for the overflow/shed items, preserving each item's per-item
+   * `[attention/untrusted]` framing verbatim (D2). Returns the spill record, or null when the
+   * lane is unavailable (the serving path then refuses attention_push_oversized). */
+  _mintAttentionSpill(items) {
+    if (!this._coordination || typeof this._coordination.mintSpill !== 'function') return null;
+    const body = items.map((item) => attentionItemLine(item)).join('\n');
+    try {
+      const minted = this._coordination.mintSpill(
+        { body, lane: 'view.attention_push.items' },
+        { actor: 'hub', key: `attention.push.spill:${canonicalDigest(body)}` },
+      );
+      return minted?.spill ?? null;
+    } catch {
+      return null;
+    }
+  }
+
+  /** The per-worker push projection (D1/D3/D5). Bounded by the item-count row (overflow spills,
+   * never truncates) and the byte row (render-side shed; the full text rides the spill — OQ1). */
+  _pendingAttentionPush(workerId) {
+    const items = this._derivePendingAttentionItems(workerId);
+    if (items.length === 0) return [];
+    const itemCap = FRAME_LIMITS['view.attention_push.items'].value;
+    const byteCap = FRAME_LIMITS['view.attention_push.bytes'].value;
+
+    let inBlock = items;
+    const spillItems = [];
+    if (items.length > itemCap) {
+      inBlock = items.slice(0, itemCap);
+      spillItems.push(...items.slice(itemCap));
+    }
+
+    // OQ1 byte shed: when the in-block items' rendered bytes cross the render bound, the FULL
+    // text of every in-block item rides the spill — nothing is dropped, nothing is unrecoverable.
+    const inBlockBytes = inBlock.reduce((sum, item) => sum + Buffer.byteLength(attentionItemLine(item)) + 1, 0);
+    if (inBlockBytes > byteCap) {
+      for (const item of inBlock) spillItems.push(item);
+    }
+
+    const result = [...inBlock];
+    if (spillItems.length > 0) {
+      const spill = this._mintAttentionSpill(spillItems);
+      if (spill) {
+        result.push({
+          kind: 'spill',
+          requestId: spill.spillId,
+          workerId,
+          overflowIds: spillItems.map((item) => item.requestId),
+        });
+      }
+    }
+    return result;
+  }
+
+  /** Every durable id that could name a push-qualified item for this worker — pending OR resolved
+   * (the dedup oracle needs both: unknown = never existed, stale = existed but resolved). */
+  _knownAttentionIds(workerId) {
+    const ids = new Set();
+    for (const event of this._log.read(workerId)) {
+      if (event.kind === 'scratchpad.write_result' && event.payload?.ok === false) {
+        ids.add(`swf:${workerId}:${event.seq}`);
+      } else if (event.kind === 'question.asked' && typeof event.payload?.requestId === 'string') {
+        ids.add(event.payload.requestId);
+      } else if (event.kind === 'approval.requested' && typeof event.payload?.requestId === 'string') {
+        ids.add(event.payload.requestId);
+      } else if (event.kind === 'error' && event.payload?.['phase'] === 'trust_gate') {
+        ids.add(`gate:${event.seq}`);
+      } else if (event.kind === 'verify.reverified' && event.payload?.accept === false) {
+        ids.add(`gate:${event.seq}`);
+      }
+    }
+    return ids;
+  }
+
+  /** D4 — the replay-derived read receipt. `delivered` means an `attention.pushed` event exists
+   * (composed into the provider-facing brief, never a wire ack); `read` is the first
+   * `lifecycle.turn_started` with `seq ≥ push.seq` and NO `lifecycle.process_closed` in
+   * `(push.seq, turn.seq)` between them — a respawned worker honestly shows `read: null`. */
+  _attentionReceipt(workerId) {
+    const events = this._log.read(workerId);
+    const pushes = events.filter((event) => event.kind === 'attention.pushed');
+    if (pushes.length === 0) return { delivered: false, read: null };
+    const pushSeq = pushes.at(-1).seq;
+    const turn = events.find((event) => event.kind === 'lifecycle.turn_started' && event.seq >= pushSeq);
+    if (!turn) return { delivered: true, read: null };
+    const closedBetween = events.some((event) => (
+      event.kind === 'lifecycle.process_closed' && event.seq > pushSeq && event.seq < turn.seq
+    ));
+    return { delivered: true, read: closedBetween ? null : turn.seq };
+  }
+
+  /** The serving-path refusal guard (D2/D3/D5). Validates a candidate item set and refuses with
+   * the typed codes — never a silent drop. Order: the structural bound first (oversized with no
+   * spill lane), then the addressing law (orchestrator-only/inbox kinds), then dedup (unknown id,
+   * then a resolved id). */
+  _assertAttentionPushServed(workerId, items, opts = {}) {
+    const candidate = Array.isArray(items) ? items : [];
+    const inBlockCount = candidate.filter((item) => !isAttentionSpillItem(item)).length;
+    const itemCap = FRAME_LIMITS['view.attention_push.items'].value;
+    if (inBlockCount > itemCap && opts.spillLane === false) {
+      throw Object.assign(
+        new Error(composeFrameLimitRefusal(FRAME_LIMITS['view.attention_push.items'], inBlockCount, itemCap)),
+        {
+          name: 'CoordinationRefusal', code: 'attention_push_oversized',
+          cap: itemCap, actual: inBlockCount, unit: 'items',
+          gracefulPath: frameLimitRefusalPath(FRAME_LIMITS['view.attention_push.items'], itemCap),
+        },
+      );
+    }
+    for (const item of candidate) {
+      if (ATTENTION_PUSH_ORCHESTRATOR_ONLY_KINDS.has(item?.kind) || ATTENTION_PUSH_INBOX_KINDS.has(item?.kind)) {
+        throw Object.assign(new Error(PUSH_REFUSAL_CODES.attention_push_not_addressed), {
+          name: 'CoordinationRefusal', code: 'attention_push_not_addressed',
+        });
+      }
+    }
+    const knownIds = this._knownAttentionIds(workerId);
+    const pendingIds = new Set(
+      this._pendingAttentionPush(workerId).filter((item) => !isAttentionSpillItem(item)).map((item) => item.requestId),
+    );
+    for (const item of candidate) {
+      if (isAttentionSpillItem(item)) continue;
+      if (!knownIds.has(item.requestId)) {
+        throw Object.assign(new Error(PUSH_REFUSAL_CODES.attention_push_unknown_item), {
+          name: 'CoordinationRefusal', code: 'attention_push_unknown_item',
+        });
+      }
+      if (!pendingIds.has(item.requestId)) {
+        throw Object.assign(new Error(PUSH_REFUSAL_CODES.attention_push_stale), {
+          name: 'CoordinationRefusal', code: 'attention_push_stale',
+        });
+      }
+    }
   }
 
   /** SC1d: a refused spawn Ack may never strand its task in 'working'. `lifecycle.crashed` is
@@ -5529,7 +5842,7 @@ export class Coordinator {
       adapterCardDigest,
     };
     let providerBrief;
-    try { providerBrief = this._providerBrief(activeTask.brief); }
+    try { providerBrief = this._providerBrief(activeTask.brief, workerId); }
     catch (error) {
       this._log.append({
         worker: workerId, harness: this._harnessOf(handle.vendor),
