@@ -1,26 +1,50 @@
 {
   "schemaVersion": 1,
-  "idempotencyKey": "suite-addendum-170-2026-08-13-wave-a",
+  "idempotencyKey": "suite-addendum-170-2026-08-13-wave-b",
   "members": [
     {
       "role": "suite-addendum-170",
-      "exact": { "harness": "deepseek", "model": "deepseek-v4-pro[1m]", "effort": "high" },
-      "scope": ["impl/test/workflow-dsl-package-red.test.mjs", "docs/reference/evidence/workflow-dsl-2026-08-13/**"],
+      "exact": {
+        "harness": "deepseek",
+        "model": "deepseek-v4-flash",
+        "effort": "high"
+      },
+      "scope": [
+        "impl/test/workflow-dsl-package-red.test.mjs",
+        "docs/reference/evidence/workflow-dsl-2026-08-13/**"
+      ],
       "objectiveRef": "docs/reference/evidence/workflow-dsl-2026-08-13/suite-addendum-170-brief.md",
       "report": "docs/reference/evidence/workflow-dsl-2026-08-13/suite-addendum-notes.md"
     }
   ],
   "steering": {
     "approveOnAdvertisedPlan": true,
-    "nudgeOnCheckpoint": { "message": "Continue the addendum — the five fix specs each become RED rows at named stages + PIN rows; write the suite AND the notes incrementally; run the split twice." },
+    "nudgeOnCheckpoint": {
+      "message": "Continue the addendum \u2014 the five fix specs each become RED rows at named stages + PIN rows; write the suite AND the notes incrementally; run the split twice."
+    },
     "claimOnStall": true,
-    "messageOnSpawn": { "kind": "brief", "body": "Read your objectiveRef brief IN FULL first. The suite law binds you (red-first named stages, hermetic, no clocks, sorted-key ACTUAL order, localeCompare banned, stallMs 60_000 + comment, no line-window anchors, your attempt line verbatim in the FIRST FIVE lines of both deliverables). Do NOT touch workflow-dsl-red.test.mjs. Verify pwd shows your ws-* worktree before any write. Judgment calls recorded; authority-class ambiguity → DECISION_REQUEST with options." },
-    "elevateWhenNotes": { "kinds": ["doubt", "plan"], "maxEntries": 20 }
+    "messageOnSpawn": {
+      "kind": "brief",
+      "body": "Read your objectiveRef brief IN FULL first. The suite law binds you (red-first named stages, hermetic, no clocks, sorted-key ACTUAL order, localeCompare banned, stallMs 60_000 + comment, no line-window anchors, your attempt line verbatim in the FIRST FIVE lines of both deliverables). Do NOT touch workflow-dsl-red.test.mjs. Verify pwd shows your ws-* worktree before any write. Judgment calls recorded; authority-class ambiguity \u2192 DECISION_REQUEST with options."
+    },
+    "elevateWhenNotes": {
+      "kinds": [
+        "doubt",
+        "plan"
+      ],
+      "maxEntries": 20
+    }
   },
   "harvest": {
     "paths": [
-      { "path": "impl/test/workflow-dsl-package-red.test.mjs", "mustContain": "workflow-dsl-package" },
-      { "path": "docs/reference/evidence/workflow-dsl-2026-08-13/suite-addendum-notes.md", "mustContain": "#170" }
+      {
+        "path": "impl/test/workflow-dsl-package-red.test.mjs",
+        "mustContain": "workflow-dsl-package"
+      },
+      {
+        "path": "docs/reference/evidence/workflow-dsl-2026-08-13/suite-addendum-notes.md",
+        "mustContain": "#170"
+      }
     ]
   }
 }
