@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "idempotencyKey": "csa-147-2026-08-13-wave-c",
+  "idempotencyKey": "csa-147-2026-08-13-wave-e",
   "members": [
     {
       "role": "coordinator",
