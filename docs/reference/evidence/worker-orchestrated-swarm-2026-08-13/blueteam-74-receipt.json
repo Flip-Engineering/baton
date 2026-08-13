@@ -1,0 +1,37 @@
+{
+  "attempt": "2026-08-13T03:18:11.497Z",
+  "salt": "u320260813031811",
+  "role": "blueteam-74",
+  "steps": [
+    {
+      "step": "waves.start",
+      "receipt": {
+        "runs": [
+          "run-dba2d5bf80b3e069649896a54adb9fcd"
+        ]
+      }
+    },
+    {
+      "step": "terminal:blueteam-74",
+      "receipt": {
+        "phase": "work_completed"
+      }
+    },
+    {
+      "step": "loop-drained",
+      "receipt": {
+        "pending": []
+      }
+    }
+  ],
+  "harvest": {
+    "blueteam-74": {
+      "pin": "a9a90ff07194413747c5f592950731c02c111ce9",
+      "paths": [
+        "docs/reference/evidence/worker-orchestrated-swarm-2026-08-13/suite-blueteam.md"
+      ]
+    }
+  },
+  "harvestStalePinsSkipped": 442,
+  "verdict": "BLUE-74-OK"
+}
