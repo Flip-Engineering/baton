@@ -1,0 +1,37 @@
+{
+  "attempt": "2026-08-13T07:13:24.734Z",
+  "salt": "y120260813071324",
+  "role": "redteam-160",
+  "steps": [
+    {
+      "step": "waves.start",
+      "receipt": {
+        "runs": [
+          "run-fa975bb18e07a82925d1e057948b6ba5"
+        ]
+      }
+    },
+    {
+      "step": "terminal:redteam-160",
+      "receipt": {
+        "phase": "work_completed"
+      }
+    },
+    {
+      "step": "loop-drained",
+      "receipt": {
+        "pending": []
+      }
+    }
+  ],
+  "harvest": {
+    "redteam-160": {
+      "pin": "9e257a29458db196c85659d574530d2cc9a05a30",
+      "paths": [
+        "docs/reference/evidence/error-actionability-2026-08-13/contract-redteam.md"
+      ]
+    }
+  },
+  "harvestStalePinsSkipped": 464,
+  "verdict": "REDTEAM-160-OK"
+}
