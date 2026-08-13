@@ -1,0 +1,15 @@
+{
+  "attempt": "2026-08-13T07:11:42.547Z",
+  "salt": "x920260813071142",
+  "role": "fix-154b",
+  "steps": [
+    {
+      "step": "waves.start",
+      "receipt": {
+        "runs": [
+          "run-c79eca6df4204d397f9c4d3c6476833c"
+        ]
+      }
+    }
+  ]
+}
