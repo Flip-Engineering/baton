@@ -652,10 +652,10 @@ function harvestOne(entry, repoRoot, salt, waveId, outcomes) {
       return { ...base, ok: false, missed: true, matched: false, code: 'harvest_miss', resultSha, bytes, expected: entry.mustContain, actual: bytes };
     }
     materializeToDisk(repoRoot, path, bytes);
-    return { ...base, ok: true, missed: false, matched: true, resultSha, bytes, expected: entry.mustContain, actual: bytes };
+    return { ...base, ok: true, missed: false, matched: true, code: 'harvest_ok', resultSha, bytes, expected: entry.mustContain, actual: bytes };
   }
   materializeToDisk(repoRoot, path, bytes);
-  return { ...base, ok: true, missed: false, matched: true, resultSha, bytes, actual: bytes };
+  return { ...base, ok: true, missed: false, matched: true, code: 'harvest_ok', resultSha, bytes, actual: bytes };
 }
 
 // The recovered authoritative content is materialized into the repo working tree (the bespoke

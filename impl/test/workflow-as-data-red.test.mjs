@@ -1380,6 +1380,36 @@ test('W4-04 (stage[harvest-missing]): a mustContain that MATCHES receipts ok wit
     'the PASS path still carries the wave\'s attempt marker (D4)');
 });
 
+test('W4-05 (stage[harvest-match-evaluation-missing]): a mustContain matching the file\'s FIRST LINE receipts matched:true + code:harvest_ok and keeps the wave WAVE-OK — the success path is a NAMED harvest_ok, never a silent harvest_miss (#154)', async (t) => {
+  const fx = await wadFixture(t, {
+    adapter: new TrackingMarkerAdapter({
+      harness: 'mock',
+      scenariosByMarker: {
+        'w4-e': {
+          outcome: 'completed',
+          carryAttemptMarker: true,
+          edits: [{ path: 'reports/w4-e.md', content: 'W4-E-FIRST-LINE\nw4-e body\n' }],
+        },
+      },
+    }),
+  });
+  writeObjective(fx.repo, 'w4-e', 'write the w4-e report, then finish');
+  const spec = validSpec({
+    idempotencyKey: 'w4-first-line',
+    members: [wadMember('w4-e')],
+    harvest: { paths: [{ path: 'reports/w4-e.md', mustContain: 'W4-E-FIRST-LINE' }] },
+  });
+  const receipt = await driveLane(fx.baton, 'harvest-match-evaluation-missing', spec);
+  const entry = (receipt.harvest ?? []).find((e) => e.path === 'reports/w4-e.md');
+  assert.ok(entry, `stage[harvest-match-evaluation-missing]: the harvest spec yields a per-path receipt for reports/w4-e.md`);
+  assert.equal(entry.matched, true,
+    'a mustContain matching the file\'s first line receipts matched:true — the post-check PASS path (never matched:false)');
+  assert.equal(entry.code, 'harvest_ok',
+    'the success path receipts the NAMED harvest_ok — never a silent harvest_miss on a match');
+  assert.equal(receipt.verdict, 'WAVE-OK',
+    'a matched mustContain keeps the wave WAVE-OK — the harvest never drops a matched wave to WAVE-INCOMPLETE');
+});
+
 // ---------------------------------------------------------------------------
 // W5 — the import law: importing the lane module starts nothing.
 // ---------------------------------------------------------------------------
