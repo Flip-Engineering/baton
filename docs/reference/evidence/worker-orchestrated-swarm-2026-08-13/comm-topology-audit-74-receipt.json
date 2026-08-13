@@ -1,0 +1,15 @@
+{
+  "attempt": "2026-08-13T01:21:57.715Z",
+  "salt": "t120260813012157",
+  "role": "comm-topology-audit-74",
+  "steps": [
+    {
+      "step": "waves.start",
+      "receipt": {
+        "runs": [
+          "run-2692b435ffc775ff07341e30101531ab"
+        ]
+      }
+    }
+  ]
+}
