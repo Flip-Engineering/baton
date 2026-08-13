@@ -1,6 +1,6 @@
 # Issue #77 — Suite resource governance: end the under-load flake cluster — implementation contract
 
-**Status:** v1.1 DRAFT (folded)
+**Status:** v1.2 DRAFT (folded)
 **Date:** 2026-08-12
 **Verification HEAD:** `8bd27e9bd67a65b7f295e36d7500f8d0c7522d1b` (current worktree HEAD at fold)
 **Fold note:** v1.0 was NOT FOLD-READY — `contract-redteam.md` returns six numbered blockers (§D)
@@ -9,6 +9,18 @@ blocker → change map is `contract-fold.md` (this directory). The v1.0 verifica
 (`5ac5e65f595e472710b576a16a699a6d6fc3dfbc`) was stale — that snapshot predates this directory; every
 cited target is byte-identical across the compared snapshots (`git diff 5ac5e65..HEAD -- <file>`
 empty for all cited files), so all anchors resolve identically at the fold HEAD.
+**Fold-2 note (v1.2):** the suite blue-team's fold (`suite-blueteam.md` → `suite-fold-2.md`, this
+directory) resolved two contract-surface seams that the suite's own gate probes depend on. (1) **The
+gate's calibration injection seam** (blue-team F1): `run-suite.mjs` honors a `BATON_RG_CALIBRATION`
+env override carrying a full calibration record — when present, the start-of-run measurement is
+short-circuited and the injected record is used verbatim (D1.1). The red suite's B1/B2/B3/C2 gate
+probes inject it so no real host measurement runs in a nested gate (a real event-loop probe under
+load could refuse a CORRECT implementation — the #7-class flake the suite exists to govern). The
+override deliberately uses the suite's `BATON_RG_*` observation naming — a `BATON_SUITE_*` name is
+stripped by the suite's own nested-gate sanitizer. (2) **The baseline-receipt injection seam** (F3):
+`measureCalibration` gains a `baselineReceiptPath` override (D1.5) so the `recorded`/`unrecorded`
+basis and the honest-null `baselineProbeMs` are deterministically exercisable (D1.4). v1.2 changes
+no decision, no G4 classification, and no closed literal.
 **Brief:** `contract-77-brief.md` (this directory, 42 lines) + `contract-redteam.md` (this directory)
 **Issue:** #77 — `gh` is not authenticated in this worktree, so the issue body was unavailable at
 drafting time; the brief's decisions, the named receipts (PROGRESS.md, the frontier-sweep friction
@@ -119,6 +131,15 @@ readings:
   `load.one / cores` is the honest host-oversubscription measure that captures spawn degradation
   under load.
 
+**The hermeticity seam (v1.2, fold-2 F1).** The gate honors a `BATON_RG_CALIBRATION` env override
+carrying a **full calibration record**: when present, the start-of-run measurement above (the
+`os.loadavg()` reads and the K event-loop-gap samples) is short-circuited and the injected record is
+used verbatim for the D1.3 line and the child env. The override uses the suite's `BATON_RG_*`
+observation naming — a `BATON_SUITE_*` name is stripped by the suite's own nested-gate sanitizer and
+the gate would never see it. The red suite's gate probes (B1/B2/B3/C2) inject it, so no row depends
+on real host timing: under load the nested gate cannot refuse (`suite_calibration_unavailable`) and
+false-fail a correct implementation — the #7-class race the suite exists to govern.
+
 **D1.2 The derivation (blocker B5(iii)).**
 
 ```
@@ -187,8 +208,13 @@ context by construction: the calibration line (wrapper stderr) + the failing row
   (`measureCalibration()`), the child-side read (`readCalibration()`, returns the record or `null`
   when absent), and the scaling (`scaledTimeout(base) = base * factor`, factor 1 when no record).
   Suggested home `impl/scripts/suite-calibration.mjs`, imported by the wrapper and by the per-file
-  helpers. `measureCalibration({ load, probeMs, baselineProbeMs } = {})` accepts explicit overrides
-  — the injection seam RG-04/RG-06 need to produce a synthetic high probe/load.
+  helpers. `measureCalibration({ load, probeMs, baselineProbeMs, probe, baselineReceiptPath } = {})`
+  accepts explicit overrides — the injection seam RG-04/RG-06 need to produce a synthetic high
+  probe/load. `probe` is an injected async sampler, called exactly K = 5 times, sequentially with
+  non-overlapping cadence windows (D1.1/B5(ii)). `baselineReceiptPath` points at the baseline
+  receipt (D1.5): a present receipt yields `baselineBasis: "recorded"` with the recorded
+  `baselineProbeMs`; an absent receipt yields `baselineBasis: "unrecorded"` with the honest-null
+  `baselineProbeMs` (v1.2, fold-2 F3).
 
 **The one-shot consequence, acknowledged (v1.1, B.1).** The reading is taken once at suite start
 before the child spawns; a suite that starts loaded and finishes idle keeps lax deadlines for the
