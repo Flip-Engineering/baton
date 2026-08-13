@@ -10,6 +10,31 @@
           "run-b7998f09834e92b8b1f4d4a3058f131a"
         ]
       }
+    },
+    {
+      "step": "terminal:fold-70b",
+      "receipt": {
+        "phase": "work_completed"
+      }
+    },
+    {
+      "step": "loop-drained",
+      "receipt": {
+        "pending": []
+      }
     }
-  ]
+  ],
+  "harvest": {
+    "fold-70b": {
+      "pin": "328ed1a1225771e378f0045068892a02148eea0e",
+      "paths": [
+        "impl/test/cross-deployment-knowledge-red.test.mjs",
+        "docs/reference/evidence/cross-deployment-knowledge-2026-08-07/suite-fold-2.md",
+        "docs/reference/evidence/cross-deployment-knowledge-2026-08-07/suite-draft-notes.md",
+        "docs/reference/evidence/cross-deployment-knowledge-2026-08-07/cross-deployment-knowledge-contract.md"
+      ]
+    }
+  },
+  "harvestStalePinsSkipped": 446,
+  "verdict": "FOLD-70B-OK"
 }
