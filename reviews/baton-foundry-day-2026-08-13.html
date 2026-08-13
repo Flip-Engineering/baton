@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Baton — The Foundry Day (2026-08-13)</title>
+<style>
+  :root {
+    --bg: #0b1020; --bg2: #101730; --panel: #141c3a; --panel2: #182147;
+    --ink: #e8ecf8; --dim: #9aa5c8; --faint: #5d6890;
+    --amber: #f5b942; --cyan: #4fd6e0; --green: #5fd68a; --red: #f2708a; --violet: #a98ef5;
+    --mono: "SF Mono", ui-monospace, Menlo, Consolas, monospace;
+    --sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", Arial, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body { margin: 0; background: radial-gradient(1200px 600px at 80% -10%, #1a2450 0%, var(--bg) 55%), var(--bg); color: var(--ink); font-family: var(--sans); line-height: 1.55; }
+  .layout { display: grid; grid-template-columns: 240px 1fr; max-width: 1300px; margin: 0 auto; }
+  nav { position: sticky; top: 0; height: 100vh; padding: 2rem 1.2rem; border-right: 1px solid #1e2850; overflow-y: auto; }
+  nav .brand { font-family: var(--mono); font-size: 1.05rem; color: var(--amber); letter-spacing: .06em; margin-bottom: .2rem; }
+  nav .flip { font-size: 1.3rem; margin: .3rem 0; }
+  nav .sub { font-size: .72rem; color: var(--faint); margin-bottom: 1.6rem; }
+  nav a { display: block; color: var(--dim); text-decoration: none; font-size: .8rem; padding: .34rem .5rem; border-radius: 6px; margin-bottom: 2px; }
+  nav a:hover { background: var(--panel); color: var(--cyan); }
+  nav a .n { font-family: var(--mono); color: var(--faint); margin-right: .45rem; font-size: .72rem; }
+  main { padding: 2.5rem 3rem 5rem; min-width: 0; }
+  h1 { font-size: 1.9rem; line-height: 1.2; margin: 0 0 .4rem; letter-spacing: -.01em; }
+  h2 { font-size: 1.25rem; margin: 3rem 0 1rem; padding-top: 1.2rem; border-top: 1px solid #1e2850; letter-spacing: -.01em; }
+  h2 .n { font-family: var(--mono); color: var(--amber); font-size: .95rem; margin-right: .5rem; }
+  h3 { font-size: 1rem; margin: 1.6rem 0 .5rem; color: var(--cyan); }
+  p { color: var(--dim); max-width: 74ch; }
+  p b, li b { color: var(--ink); font-weight: 600; }
+  .lede { font-size: 1.06rem; color: #c3cce8; max-width: 80ch; }
+  code { font-family: var(--mono); font-size: .82em; background: #0d1430; border: 1px solid #223; padding: .08em .35em; border-radius: 5px; color: var(--amber); }
+  .grid { display: grid; gap: .9rem; }
+  .g2 { grid-template-columns: repeat(2, 1fr); }
+  .g3 { grid-template-columns: repeat(3, 1fr); }
+  .g4 { grid-template-columns: repeat(4, 1fr); }
+  .card { background: linear-gradient(160deg, var(--panel) 0%, var(--panel2) 100%); border: 1px solid #22305e; border-radius: 12px; padding: 1rem 1.1rem; transition: transform .12s ease, border-color .12s ease; }
+  .card:hover { transform: translateY(-2px); border-color: #3550a0; }
+  .card .k { font-size: .72rem; text-transform: uppercase; letter-spacing: .1em; color: var(--faint); margin-bottom: .3rem; }
+  .card .v { font-size: 1.7rem; font-family: var(--mono); color: var(--ink); }
+  .card .v small { font-size: .8rem; color: var(--dim); }
+  .card .d { font-size: .8rem; color: var(--dim); margin-top: .25rem; }
+  .unlock { border-left: 3px solid var(--green); }
+  .unlock h4 { margin: 0 0 .3rem; font-size: .95rem; color: var(--green); }
+  .unlock p { margin: 0; font-size: .84rem; }
+  .pkg { border-left: 3px solid var(--violet); }
+  .pkg h4 { margin: 0 0 .3rem; font-size: .95rem; color: var(--violet); }
+  .pkg p { margin: 0 0 .4rem; font-size: .84rem; }
+  .pkg .issues { font-family: var(--mono); font-size: .72rem; color: var(--faint); }
+  table { width: 100%; border-collapse: collapse; font-size: .82rem; margin: .6rem 0 1rem; }
+  th { text-align: left; color: var(--faint); font-weight: 600; font-size: .72rem; text-transform: uppercase; letter-spacing: .08em; padding: .45rem .6rem; border-bottom: 1px solid #2a3a75; }
+  td { padding: .5rem .6rem; border-bottom: 1px solid #1a2450; color: var(--dim); vertical-align: top; }
+  td:first-child { color: var(--ink); }
+  tr:hover td { background: #121a3d; }
+  .tag { display: inline-block; font-family: var(--mono); font-size: .68rem; padding: .1em .5em; border-radius: 99px; border: 1px solid; white-space: nowrap; }
+  .t-ok { color: var(--green); border-color: var(--green); }
+  .t-fail { color: var(--red); border-color: var(--red); }
+  .t-warn { color: var(--amber); border-color: var(--amber); }
+  .t-info { color: var(--cyan); border-color: var(--cyan); }
+  .t-violet { color: var(--violet); border-color: var(--violet); }
+  .chain { display: flex; flex-wrap: wrap; gap: .4rem; align-items: center; margin: 1rem 0; }
+  .chain .step { font-family: var(--mono); font-size: .75rem; padding: .35rem .7rem; border-radius: 8px; background: var(--panel); border: 1px solid #22305e; color: var(--dim); }
+  .chain .step.hot { color: var(--amber); border-color: var(--amber); }
+  .chain .arrow { color: var(--faint); }
+  blockquote { margin: 1rem 0; padding: .8rem 1.2rem; border-left: 3px solid var(--amber); background: #121a3d55; border-radius: 0 8px 8px 0; color: #c3cce8; font-size: .9rem; }
+  .foot { margin-top: 4rem; padding-top: 1.5rem; border-top: 1px solid #1e2850; color: var(--faint); font-size: .78rem; }
+</style>
+</head>
+<body>
+<div class="layout">
+<nav>
+  <div class="brand">✦ baton</div>
+  <div class="flip">✦(◕‿◕)✦</div>
+  <div class="sub">the foundry day · 2026-08-13</div>
+  <a href="#tldr"><span class="n">0</span>TL;DR</a>
+  <a href="#landed"><span class="n">1</span>What landed</a>
+  <a href="#unlocks"><span class="n">2</span>What it unlocks</a>
+  <a href="#findings"><span class="n">3</span>Findings → issues</a>
+  <a href="#waves"><span class="n">4</span>The waves</a>
+  <a href="#packages"><span class="n">5</span>Open: the six packages</a>
+  <a href="#tiers"><span class="n">6</span>Open: the tiers</a>
+  <a href="#comparisons"><span class="n">7</span>pm &amp; dsh verdicts</a>
+  <a href="#ledger"><span class="n">8</span>Ledger</a>
+</nav>
+<main>
+
+<h1>The Foundry Day</h1>
+<p class="lede">On 2026-08-13 baton ran its first full day as its own factory: <b>seventeen multi-agent waves</b> drove the complete methodology chain — contract → red-team → fold → red-first suite → blue-team → fold — while the machinery being built was the machinery being used. This report covers what landed, what it qualitatively unlocks, and the shape of everything open. Every number is from the gate, the receipts, or the issue tracker.</p>
+
+<div class="grid g4" id="tldr" style="margin-top:1.6rem">
+  <div class="card"><div class="k">commits to master</div><div class="v">61</div><div class="d">all as <code>baton 0.1.0</code>, pushed same-day</div></div>
+  <div class="card"><div class="k">waves</div><div class="v">17</div><div class="d">~78 member runs; 5 waves in flight at writing</div></div>
+  <div class="card"><div class="k">issues filed</div><div class="v">26</div><div class="d">#167–#192 — every one from live evidence</div></div>
+  <div class="card"><div class="k">canonical gate</div><div class="v">4,054</div><div class="d">3,677 green · failure set fully accounted</div></div>
+  <div class="card"><div class="k">contracts folded</div><div class="v">9</div><div class="d">every one NOT FOLD-READY on first pass — the chain is not theater</div></div>
+  <div class="card"><div class="k">red-first suites landed</div><div class="v">13</div><div class="d">186 tests, all RED at HEAD with named failure stages</div></div>
+  <div class="card"><div class="k">audits completed</div><div class="v">4</div><div class="d">channels · kernel honesty · project-manager · deepseek-harness</div></div>
+  <div class="card"><div class="k">feature shipped</div><div class="v">#79</div><div class="d">worker delivery push — the BD3-C message lane, closed</div></div>
+</div>
+
+<h2 id="landed"><span class="n">1</span>What landed</h2>
+
+<h3>#79 — the worker delivery push <span class="tag t-ok">shipped + closed</span></h3>
+<p>The BD3-C message lane: minted-sender delivery state per message, in-flight trust-gate closure (#67), and the <code>control.delivery_*</code> event family. Suite 32/32 twice, adjacents green, full gate accepted. This is the down-channel half of bidirectionality — a worker no longer has to poll for its answers; the orchestrator's messages arrive with receipts.</p>
+
+<h3>The foundry era — batch work as multi-member workflow specs <span class="tag t-ok">landed + dogfooded all day</span></h3>
+<p>The bespoke driver is dead. Every batch job today — contracts, red-teams, folds, suites, blue-teams, audits, comparisons — ran as one closed JSON spec through the resident interpreter (#114's workflow-as-data), with steering lanes (approve-on-plan, nudge, claim-on-stall, elevate, signal-on-done, answer-decisions) declared in the spec. Seventeen waves, zero hand-written drivers.</p>
+<div class="chain">
+  <span class="step">contract foundry</span><span class="arrow">→</span>
+  <span class="step">review foundries ×2</span><span class="arrow">→</span>
+  <span class="step">fold foundries ×2</span><span class="arrow">→</span>
+  <span class="step">suite foundries ×3</span><span class="arrow">→</span>
+  <span class="step">blue-team foundries ×2</span><span class="arrow">→</span>
+  <span class="step">fold foundry-c</span><span class="arrow">→</span>
+  <span class="step hot">impl (next)</span>
+</div>
+
+<h3>Nine contracts through the gauntlet <span class="tag t-ok">folded</span></h3>
+<p>Every contract was <b>NOT FOLD-READY</b> on first adversarial pass — with blockers that mattered: #170's DSL had a byte-false round-trip fixture and a self-contradictory purity law; #163's quiescence could declare a mid-thought member dead; #146's seat telemetry could disagree with the allocator; #161's plan-object idempotency keys made updates unreachable. Each got a concrete fix, a fold, and a version bump. The red-team stage is earning its keep — this is what the methodology is <i>for</i>.</p>
+
+<h3>Thirteen red-first suites, blue-teamed <span class="tag t-ok">landed</span> <span class="tag t-warn">folds in flight</span></h3>
+<p>186 new tests across 13 suites, all honestly RED at HEAD with named failure stages (<code>stage: interpreter-phase-null</code> citing <code>application.mjs:11785</code>). The blue-team foundries then attacked the suites themselves — and found SHALLOW rows worth finding (hardcodable round-trip pins, an unsatisfiable shared-module leg), each with a named fix. Fold foundry-c is applying them now.</p>
+
+<h3>The audits <span class="tag t-ok">landed</span></h3>
+<p><b>Channel audit:</b> the collaboration layer as actually exercised — including the day's best forensic find: <code>signalOnMembersDone</code>'s semantics trap (#175), traced through the store with message ids. <b>Kernel-honesty audit (#169):</b> five code-cited findings on the fourth drive — silent lease recovery, invisible credential TTLs, empty capacity refusals, the <code>waves.*</code> pre-gate authority hole, and result-pin materialization ambiguity. <b>Two comparison foundries</b> (project-manager, DeepSeek Harness) grounded in real sources, each with a scope-creep red-team.</p>
+
+<h2 id="unlocks"><span class="n">2</span>What it qualitatively unlocks</h2>
+
+<div class="grid g2">
+  <div class="card unlock"><h4>The factory works</h4><p>A spec-and-test-driven pipeline where the fleet does the authoring and the evidence is structural, not rhetorical. Nine contracts went through red-team→fold today; every one was genuinely unready, and every blocker named its fix. The chain catches real defects <i>before</i> impl — the cheapest place to catch them.</p></div>
+  <div class="card unlock"><h4>Trust machinery that trusts nothing</h4><p>The attempt-echo attribution law refused an entire wave's harvest (0/5 markers) rather than misattribute — and recovery was a ten-minute pin-diff. Harvests refuse directories, wrong content, and unmarked work. Compliance climbed 0/5 → 5/5 → 4/4 → 5/5 as the frames learned; the structural pre-seed (#171) removes the class.</p></div>
+  <div class="card unlock"><h4>The collaboration layer is mapped, not assumed</h4><p>PROVEN: message lane, reply chains, decision grammars, attention inbox, board, scratchpad read/elevate, wave observability. GAPPED with receipts: shared-write (#158), tight cells (#102), wake (#71/#181), quiescence (#163). And the store's sobering stat: 580 messages sent, zero query/steer/inform, zero decision events — the bidirectional lanes existed but had never been used. The lane-proof wave is exercising them now.</p></div>
+  <div class="card unlock"><h4>The coordinator pattern's three failure modes, found and filed</h4><p>Blindness (#174 — members can't see siblings), semantics (#175 — the signal's roles read backwards by every spec author), lifecycle (#181 — the signal arrives after the coordinator's turn ends). One day of real use found all three; each has a filed, suite-pinnable fix. This is what dogfooding is for.</p></div>
+  <div class="card unlock"><h4>A filter for inspiration</h4><p>The pm and dsh foundries didn't just find good ideas — they produced a rubric that rejects confidently. pm's confidence scalar and NLI cascade: rejected. Every wall-clock gate: vetoed or rewritten event-derived. The adoption list is seven items long instead of forty, and each carries its conditions.</p></div>
+  <div class="card unlock"><h4>The laws list became a spec</h4><p>The campaign's standing-laws list — the traps the orchestrator had to remember — is filed as #184 with a full laws→machinery conversion map. The list's existence is the bug; its dissolution into admission refusals and driver scaffolding is the fix. Target shape: the laws shrink to pure methodology.</p></div>
+</div>
+
+<h2 id="findings"><span class="n">3</span>Findings → issues (today's filed evidence)</h2>
+
+<table>
+<tr><th>issue</th><th>finding</th><th>evidence class</th><th>status</th></tr>
+<tr><td>#171</td><td>attempt-echo is instruction-level; 0/5 compliance on wave-a</td><td>harvest receipts</td><td><span class="tag t-info">structural fix proposed</span></td></tr>
+<tr><td>#172</td><td>wave machinery abandons <code>.git/index.lock</code> in the operator's repo</td><td>2 live reaps</td><td><span class="tag t-info">filed</span></td></tr>
+<tr><td>#173</td><td><code>waves.run</code> is synchronous for the wave's whole lifetime</td><td>code + 2 client timeouts</td><td><span class="tag t-info">filed</span></td></tr>
+<tr><td>#174</td><td>members (esp. coordinators) have zero live sibling visibility</td><td>3 blind-QA incidents</td><td><span class="tag t-info">filed · interim law validated</span></td></tr>
+<tr><td>#175</td><td>signalOnMembersDone semantics trap — 3/3 foundries misauthored</td><td>store-cited message ids</td><td><span class="tag t-info">filed + corrected same-day</span></td></tr>
+<tr><td>#176</td><td><code>waves.*</code> verbs dispatch before the authority gate; <code>waves.send</code> unchecked</td><td>2 independent audits</td><td><span class="tag t-fail">HIGH — before #74 seat</span></td></tr>
+<tr><td>#177–#179</td><td>silent lease recovery · empty capacity refusals · result-pin ambiguity</td><td>kernel audit (#169)</td><td><span class="tag t-info">filed</span></td></tr>
+<tr><td>#180</td><td>the resident verifier is <code>command: 'true'</code> — verification is decorative</td><td>resident.deployment.mjs:17</td><td><span class="tag t-info">filed (per-wave profiles)</span></td></tr>
+<tr><td>#181</td><td>signal recipients die before delivery — the coordinator lifecycle gap</td><td>5 instances across waves</td><td><span class="tag t-info">filed</span></td></tr>
+<tr><td>#182</td><td>"why did that die" is pin archaeology — no death certificates</td><td>4 manual recoveries</td><td><span class="tag t-info">filed</span></td></tr>
+<tr><td>#183</td><td>same-key re-drive silently replays a failed wave</td><td>live near-miss</td><td><span class="tag t-info">filed (refusal fix)</span></td></tr>
+<tr><td>#184</td><td>the campaign law list is a bug farm — convert traps to machinery</td><td>the list itself</td><td><span class="tag t-violet">meta-issue</span></td></tr>
+<tr><td>#185</td><td>member writes escape the worktree into the operator's checkout</td><td>2 captured files</td><td><span class="tag t-fail">isolation</span></td></tr>
+<tr><td>#186–#192</td><td>pm adoptions (rubric-surviving): activation-first, typed edges, failure-stall review, auto-scaffold, delta-nudge, parity test shape, impact projection</td><td>comparison foundry</td><td><span class="tag t-info">filed</span></td></tr>
+</table>
+
+<h2 id="waves"><span class="n">4</span>The waves (the day's seventeen)</h2>
+
+<table>
+<tr><th>wave</th><th>members</th><th>result</th><th>note</th></tr>
+<tr><td>contract foundry</td><td>5</td><td><span class="tag t-ok">landed</span></td><td>4 contracts + cross-check QA; marker-miss recovery (the #171 lesson)</td></tr>
+<tr><td>review foundry a</td><td>5</td><td><span class="tag t-ok">landed</span></td><td>4 red-teams: all NOT FOLD-READY, fixes named; first blind-coordinator incident</td></tr>
+<tr><td>review foundry b</td><td>6</td><td><span class="tag t-ok">landed</span></td><td>5 red-teams incl. #170 DSL; blind QA overridden ×3</td></tr>
+<tr><td>fold foundry a</td><td>4</td><td><span class="tag t-ok">WAVE-OK</span></td><td>#155/#156/#161/#164 folded; 4/4 echo compliance</td></tr>
+<tr><td>fold foundry b</td><td>5</td><td><span class="tag t-ok">WAVE-OK</span></td><td>#170 DSL + #163/#165/#167/#146 folded; 5/5 compliance</td></tr>
+<tr><td>suite foundry a</td><td>5</td><td><span class="tag t-ok">landed</span></td><td>the honesty cluster's 4 suites, RED-verified at HEAD</td></tr>
+<tr><td>suite foundry b</td><td>5</td><td><span class="tag t-ok">landed</span></td><td>fold-a suites; QA SOUND ×3 + a 2-line fold applied at landing</td></tr>
+<tr><td>suite foundry c</td><td>6</td><td><span class="tag t-ok">landed</span></td><td>fold-b suites incl. workflow-dsl-red; first corrected-#175 signal spec (delivered correctly)</td></tr>
+<tr><td>blue-team a</td><td>9</td><td><span class="tag t-ok">landed</span></td><td>8 suite attacks — NEEDS-FOLD with named rows across the board</td></tr>
+<tr><td>blue-team b</td><td>6</td><td><span class="tag t-ok">WAVE-OK</span></td><td>wave-c suites; #170's 9 shallow rows + 7 fix instructions</td></tr>
+<tr><td>channel audit</td><td>5</td><td><span class="tag t-ok">landed</span></td><td>the collaboration layer mapped; the signal trap found</td></tr>
+<tr><td>#169 kernel audit</td><td>1</td><td><span class="tag t-ok">landed (4th drive)</span></td><td>5 code-cited kernel findings → #176–#179</td></tr>
+<tr><td>lane-proof</td><td>3</td><td><span class="tag t-warn">in flight</span></td><td>the bidirectional-lanes dogfood — the lanes' first real use</td></tr>
+<tr><td>pm comparison</td><td>5</td><td><span class="tag t-ok">landed</span></td><td>"activation before representation"; 7 rubric-surviving adoptions</td></tr>
+<tr><td>dsh comparison</td><td>5</td><td><span class="tag t-warn">in flight</span></td><td>Cordis/plugin-everything vs the wave primitive</td></tr>
+<tr><td>#170 suite-fold</td><td>1</td><td><span class="tag t-warn">in flight (re-drive)</span></td><td>the blue-team's 7 hardening instructions; first attempt died post-claim (the #182 class)</td></tr>
+<tr><td>fold foundry c</td><td>8</td><td><span class="tag t-warn">in flight</span></td><td>applying every blue-team finding to the 8 suites</td></tr>
+</table>
+
+<h2 id="packages"><span class="n">5</span>Open: the six complete-feature packages</h2>
+<p class="lede" style="font-size:.95rem">The operator's structural law: <b>complete features land at once</b> — trap fixes fold into the package they alter, never a phased patch-later. The packages are serialized through <code>impl/src</code> in this order.</p>
+
+<div class="grid g2">
+  <div class="card pkg"><h4>① The #170 DSL package <span class="tag t-violet">next</span></h4><p>The line-oriented workflow grammar + the <code>waves.compile</code> seam + steering cross-validation at admission — with #176 (authority closure), #183 (terminal-refusal), #171 (deliverable pre-seeding), and #180 (the <code>verification</code> directive) folded in. <b>Unlocks:</b> the end of hand-written workflow JSON; the operator's "something less verbose and better structured" answered; baton-attached fields stop being agent-typed.</p><div class="issues">#170 · #176 · #183 · #171 · #180 · suite: workflow-dsl-red (blue-teamed, fold in flight)</div></div>
+  <div class="card pkg"><h4>② The honesty package</h4><p>#157 + #158 + #159 + #160 as one landing: surfaces that can't lie — CLI wave fidelity (no more advertised-but-dead verbs), the scratchpad write lane, doc-truth conformance (inventory == admission), and the error actionability triple everywhere. <b>Unlocks:</b> the ~50%→~90% surface-honesty gap closes; the suite inventory itself becomes the product map.</p><div class="issues">#157 · #158 · #159 · #160 · suites landed + blue-teamed, folds in flight</div></div>
+  <div class="card pkg"><h4>③ The wave-lifecycle package</h4><p>#168 sideband refs + #172 own-index-file + #173 detach/acceptance-receipt + #185 member confinement — the whole waves.run operator surface at once. <b>Unlocks:</b> waves stop biting the operator: no more dirty-master captures, no more lock archaeology, launches that return receipts instead of hanging for hours, and members that physically cannot write outside their worktree.</p><div class="issues">#168 (4 captures today) · #172 (2 reaps) · #173 (2 timeouts) · #185 (2 escapes)</div></div>
+  <div class="card pkg"><h4>④ The lifecycle-honesty package</h4><p>#71 wake + #181 member wake-on-signal + #163 quiescence + #182 death certificates + #188 failure-stall review — park/wake/settle/death as one machinery. <b>Unlocks:</b> coordinators stay alive for their signals; every death carries a derived suspicionClass with evidence; waves complete when work is done (event-derived), not when a clock says so.</p><div class="issues">#71 · #181 · #163 · #182 · #188 · suites: orchestrator-wake 6/36 · quiescence 3/12 RED</div></div>
+  <div class="card pkg"><h4>⑤ The collaboration package</h4><p>#158 shared-write + #174 member observability + #66 doubt + #70 federation + worker context packs + #186 activation (computed briefings) + #190 delta-nudge. <b>Unlocks:</b> the swarm becomes a knowledge-producing organism — members publish to a shared plane that actually accepts writes, briefings are computed digests instead of fixed strings, and the task→workflow→project elevation tier gets used for the first time.</p><div class="issues">#158 · #174 · #66 · #70 · #87/#48 · #186 · #190</div></div>
+  <div class="card pkg"><h4>⑥ Orchestration depth</h4><p>#12 nested orchestration + #74 coordinator seat + #102 tight cells — after #176 closes the authority seam. <b>Unlocks:</b> the recursive shape — a coordinator member driving its own tightly-coupled cell with its own waves, authority intact all the way down. The "sub-orchestrator with a swarm of cheap models" pattern the operator has been asking for.</p><div class="issues">#12 · #74 · #102 · gated by #176</div></div>
+</div>
+
+<h2 id="tiers"><span class="n">6</span>Open: the tiers behind the packages</h2>
+
+<h3>P1 — remaining impls &amp; diagnostics</h3>
+<p>#80 (TG3 window) · #59 (re-drive continuity) · #61 · #73 · <b>#144 the LSP pool</b> (fully spec'd: hub-managed, lazily-started, one server per repo+language, feeding symbol-accurate scoping) · #99+#179 (the result-materialization surface) · #177/#178/#179 (the kernel-honesty plumbing trio) · #148 (credential TTL + renewal). The diagnostics tier behind them: symbol-anchored citations (the #166 drift-class root fix), AST-level suite assertions, NUL extraction from the two giant sources, #123 atlas discovery verbs.</p>
+
+<h3>P1 — knowledge representation (after package ⑤ activates the plane)</h3>
+<p>#187 typed edges (supports/contradicts/supersedes only — pm's 13-edge ontology is an imported ornament) + Layer-1 deterministic contradiction candidates + belief_status (the confidence scalar stays out) · #192 impact projection (DAG-derived, advisory only) · #189 auto-scaffold on harvest (the next stage's foundry pack materializes — the campaign's most repeated manual act, mechanized) · #191 the CLI↔MCP parity test shape.</p>
+
+<h3>P2 — eval &amp; continued dogfooding</h3>
+<p>EVAL-R0 (#107) holds per its pre-registration until the impl lane clears · the #147 audit shape re-run with the attempt-echo instruction · the knowledge-flow / task-tracking / channel audits continue (the lane-proof wave is the first; knowledge-elevation and plan-object dogfoods queue behind the packages).</p>
+
+<h3>The ideation shelf</h3>
+<p>docs/38 Flip rungs A (pose expansion) + F (the decision-loop chrome — the persona closes the bidirectional loop) · the GitHub PFP (runbook committed; one manual operator step remains) · computer-use/browser-agent tier (low priority; the scoping note is filed) · OhMyPi/dsh-as-member-harness · Program IR trunk (#9).</p>
+
+<h2 id="comparisons"><span class="n">7</span>The comparison verdicts, in one breath each</h2>
+<blockquote><b>project-manager</b> is a research journal with a query surface; baton is a work orchestrator with a control law. We take the journal half's shape — computed briefings, typed contradictions, belief states — and refuse its clocks, its SQLite locality, and its confidence scalar. <i>"Activation before representation":</i> machinery for a knowledge plane nobody writes to is machinery with no consumer.</blockquote>
+<blockquote><b>DeepSeek Harness</b> (in flight): everything-is-a-plugin on Cordis, with two ideas baton should steal with pride — <i>model-visible means logged</i> as a runtime invariant, and <code>agent.inject()</code> landing context in the next admitted request — and one trap to refuse: its primitives serve one live agent; ours serve a swarm.</blockquote>
+
+<h2 id="ledger"><span class="n">8</span>Ledger</h2>
+<p style="font-size:.85rem">Gate: <code>node impl/scripts/run-suite.mjs</code> — 4,054 tests, 3,677 green; the 377 failures decompose exactly into the 20 red-by-design suites (16 campaign + 4 honesty landings) and 12 documented #7 load-flakes under multi-wave load. Nothing unexpected. Issues: open tracker through #192. All commits today as <code>baton 0.1.0 &lt;baton-dogfood@localhost&gt;</code>. Evidence roots: <code>docs/reference/evidence/</code> per-wave dirs; the ledger checkpoint at <code>docs/PROGRESS.md</code>.</p>
+<div class="foot">✦(◕‿◕)✦ generated by the campaign orchestrator (kimi) from gate output, wave receipts, and the issue tracker · 2026-08-13 · baton builds baton</div>
+
+</main>
+</div>
+</body>
+</html>
