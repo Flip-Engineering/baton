@@ -10,6 +10,21 @@
           "run-2436178cfec9d4f3a2745aa48c65eec3"
         ]
       }
+    },
+    {
+      "step": "dead:fold-74b",
+      "receipt": {
+        "phase": "failed"
+      }
+    },
+    {
+      "step": "loop-drained",
+      "receipt": {
+        "pending": []
+      }
     }
-  ]
+  ],
+  "harvest": {},
+  "harvestStalePinsSkipped": 445,
+  "verdict": "FOLD-74B-FAILED"
 }
