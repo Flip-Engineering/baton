@@ -7,7 +7,37 @@ ledger (historical through Phase 65, resumed at 93a.2); live proofs are under
 `docs/reference/evidence/` and `docs/handoff/evidence/`; the open work tracker is the GitHub
 issue list.
 
-## Current checkpoint (2026-08-07)
+## Current checkpoint (2026-08-13)
+
+- Canonical suite: **4,054 tests** (3,677 green). The 377-row failure set is fully accounted
+  for: **20 red-by-design suites** (the Ring-4/campaign pins — #12 nested-orchestration · #59
+  redrive-continuity · #66 doubt-review · #69 repl-realization · #71 orchestrator-wake · #80
+  tg3-window · #99 harvest-accessor · #102 tight-cell · #144 lsp-pool · phase80-revision ·
+  phase83-context-runtime · cross-deployment-knowledge · feedback-forge-hardening ·
+  prescriptive-doctor · suite-resource-governance · worker-verdict-surface — plus the honesty
+  cluster's four new landings #157/#158/#159/#160) **plus 12 documented #7 load-flake
+  members** red under three-wave load (each green twice in isolation). No unexpected
+  failures. The gate is the acceptance authority: `node impl/scripts/run-suite.mjs`.
+- **#79 worker delivery push SHIPPED** (d8282d0): the BD3-C message lane with minted-sender
+  delivery state, the in-flight trust gate (#67), `control.delivery_*` events; suite 32/32,
+  adjacents green, full gate accepted.
+- **The foundry era:** batch work rides multi-member workflow specs through the standing
+  resident (#114's workflow-as-data; the single-member bespoke driver is retired except impl
+  waves). Today: a contract foundry (4 contracts), two review foundries (9 red-team rows), a
+  suite foundry (4 red-first suites, landed + verified RED), a fold foundry (4 contract
+  folds), and a channel-audit foundry ran/running as loose coordinator+rows compositions with
+  the steering lanes (approve-on-plan, nudge, claim-on-stall, elevate, signal-on-done).
+- **The honesty cluster's red-first suites landed** (#157 CLI wave fidelity 8/8 split · #158
+  scratchpad write · #159 doc-truth conformance · #160 error actionability — all RED at HEAD
+  with named failure stages; blue-team stage queued).
+- **Attribution honesty:** the harvest's attempt-marker law (#171) refused an unmarked wave
+  (0/5 echoes) rather than misattribute — recovery by worktree pin-diff is the documented
+  path; the structural pre-seed fix is proposed on the issue.
+- Issues filed through **#174** (#171 attempt-echo discoverability · #172 index.lock
+  abandonment · #173 synchronous `waves.run` launch · #174 member-side sibling blindness —
+  all found by driving real waves, not by reading code).
+
+## Checkpoint archive (2026-08-07)
 
 - Canonical suite: **3,541 tests** (3,418 green; the delta is the five red-by-design Ring-4
   suites — #99/#102/#114/#103/#12 — plus the documented #7 load-flake cluster, green twice
