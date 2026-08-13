@@ -18,26 +18,30 @@
 // DSL must NOT disturb (interpreter string path stays JSON-only; the closed 5-code refusal family;
 // the closed field sets; schemaVersion fixed; the MCP LANE_CRAFTED detail-forwarding arm).
 //
-// ROW INVENTORY (every contract pin P1–P10 / R1–R10 / S1–S5 is a row at its named stage):
+// ROW INVENTORY (every contract pin P1–P10 / R1–R10 / S1–S5 is a row at its named stage; the
+// BT-170 blue-team fold adds P11/P12/P13 + S6 and repairs R1/P6/S5 — see suite-fold-170.md):
 //   PIN rows (GREEN at HEAD):     PIN-A interpreter JSON-only string path (R10 substance) ·
 //                                 PIN-B closed 5-code refusal family (G5) · PIN-C closed field sets
 //                                 (G1 totality target) · PIN-D schemaVersion fixed 1 (S2 half) ·
 //                                 PIN-E MCP LANE_CRAFTED forwards cause.detail (P9 seam, green)
 //   Capability rows (RED at HEAD):P1 round-trip · P2 scope-default + Appendix A fixture · P3 no
 //                                 deeper inheritance · P4 total coverage · P5 sniffing · P6 four-
-//                                 surface parity · P7 compile seam · P8 generated-docs · P9 MCP
-//                                 triple · P10 web triple (GATED on #160 R3, contract N1) ·
-//                                 R1–R9 refusal triples · R10 head-seam (waves run compiles) ·
-//                                 S1 no-eval/no-fs · S2 no-driver/schemaVersion · S3 three-way
-//                                 invariant · S4 closure · S5 constants · OQ6 registry seam
-//                                 (waves.compile row + waves.run gains web)
+//                                 surface parity (facade scoped to waves) · P7 compile seam · P8
+//                                 generated-docs · P9 MCP triple · P10 web triple (GATED on #160
+//                                 R3, contract N1) · P11 answer-decisions (BEHAVIORAL, repeatable) ·
+//                                 P12 symlink-escape (B3 gating) · P13 bare-harvest + false-steering
+//                                 forms · R1–R9 refusal triples (R1 widened to 3 unknown names) ·
+//                                 R10 head-seam (waves run compiles) · S1 no-eval/no-fs · S2
+//                                 no-driver/schemaVersion · S3 three-way invariant · S4 closure ·
+//                                 S5 constants (inline OR shared-module) · S6 code-family scan ·
+//                                 OQ6 registry seam (waves.compile row + waves.run gains web)
 //
 // SPLIT RECORD (`node --test impl/test/workflow-dsl-red.test.mjs` from the repo root):
-//   Run 1 — 31 tests, 5 pass / 26 fail  (5 PIN rows green; 26 capability rows red)
-//   Run 2 — 31 tests, 5 pass / 26 fail  (stable)
+//   Run 1 — 35 tests, 5 pass / 30 fail  (5 PIN rows green; 30 capability rows red)
+//   Run 2 — 35 tests, 5 pass / 30 fail  (stable)
 
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import test from 'node:test';
@@ -486,9 +490,11 @@ test('P6 capability [surfaces-parity] — the compile seam lands on all four sur
   assert.ok(/specDsl/u.test(web), 'stage[surfaces-parity-bus] the web ARG_FIELDS must gain specDsl');
   // MCP: baton_waves_compile is a NEW read-only tool; baton_waves_run gains specDsl.
   assert.ok(mcpApplicationToolNames().includes('baton_waves_compile'), 'stage[surfaces-parity-mcp] the MCP surface must advertise baton_waves_compile');
-  // Facade: baton.waves.compile is a new method on the waves accessor.
+  // Facade: baton.waves.compile is a new method on the waves accessor. Scoped to the accessor and
+  // accepting both property (`compile:`) and method-shorthand (`compile(text) {}`) spellings (BT-170
+  // finding 4 — `/\bcompile\s*:/` was over-broad elsewhere and under-broad for shorthand).
   const client = readFileSync(CLIENT_PATH, 'utf8');
-  assert.ok(/\bcompile\s*:/u.test(client), 'stage[surfaces-parity-facade] the embedded facade must expose a baton.waves.compile method');
+  assert.ok(/waves[\s\S]{0,400}compile/u.test(client), 'stage[surfaces-parity-facade] the embedded facade must expose a baton.waves.compile method on the waves accessor');
 });
 
 test('P8 capability [generated-docs] — renderWavefileGrammar renders the directive table; the conformance main gains the wavefile leg', () => {
@@ -515,15 +521,92 @@ test('P10 capability [web-triple] — the web surface gains specDsl and the #160
     'stage[web-triple-gated-on-160r3] the web must gain the pre-TypeError workflow_* prefix arm (SEQUENCED AFTER #160 R3)');
 });
 
-test('R1 capability [unknown-directive] — an unknown directive refuses workflow_spec_invalid with the closed-list expected', async () => {
+test('P11 capability [answer-decisions] — answerDecisions is BEHAVIORAL: compileWavefile accumulates policy entries in directive order (repeatable, not registry-only)', async () => {
+  const ns = await compiler();
+  const dir = mkdtempSync(join(tmpdir(), 'baton-dsl-p11-'));
+  try {
+    const text = [
+      'wave answer-decisions',
+      'answerDecisions "q1" "opt1"',
+      'answerDecisions "q2" "opt2"',
+    ].join('\n');
+    const ir = ns.compileWavefile(text, { repoRoot: dir });
+    assert.deepEqual(ir.steering.answerDecisions, { policy: { q1: 'opt1', q2: 'opt2' } },
+      'stage[answer-decisions-policy] answerDecisions must accumulate into steering.answerDecisions.policy[pattern]=value (repeatable, directive order)');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('P12 capability [symlink-escape] — a harvest path that is a symlink resolving outside repoRoot refuses workflow_harvest_invalid when repoRoot is provided and compiles when omitted', async () => {
+  const ns = await compiler();
+  const dir = mkdtempSync(join(tmpdir(), 'baton-dsl-p12-'));
+  const outside = mkdtempSync(join(tmpdir(), 'baton-dsl-outside-'));
+  try {
+    symlinkSync(outside, join(dir, 'escape')); // dir/escape -> outside (resolves outside repoRoot)
+    const text = [
+      'wave symlink-escape',
+      'scope reports/**',
+      'member alpha',
+      '  harness mock',
+      '  model mock-model',
+      '  effort low',
+      '  objectiveRef reports/a.md',
+      'harvest escape',
+    ].join('\n');
+    // With repoRoot: the realpath containment (B3) catches the symlink escape. The contract pins the
+    // code + the gating but §3 names only the lexical path-class `expected` leg, so the symlink-escape
+    // expected leg is pinned loosely (it must reference the containment/escape/resolution).
+    assertRefusal(
+      () => ns.compileWavefile(text, { repoRoot: dir }),
+      { code: 'workflow_harvest_invalid', line: 8, field: 'harvest.paths[0]', expected: /outside|escape|contain|repo/u },
+      'stage[symlink-escape-refusal]',
+    );
+    // Without repoRoot: a lexical-only pass runs (D2) — the same text compiles clean.
+    const ir = ns.compileWavefile(text);
+    assert.deepEqual(ir.harvest.paths, [{ path: 'escape' }],
+      'stage[symlink-escape-omitted] the lexical-only pass (no repoRoot) must compile the same text clean');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+    rmSync(outside, { recursive: true, force: true });
+  }
+});
+
+test('P13 capability [harvest-steering-forms] — bare harvest <path> emits {path} (no mustContain) and the explicit false steering forms emit false', async () => {
+  const ns = await compiler();
+  const dir = mkdtempSync(join(tmpdir(), 'baton-dsl-p13-'));
+  try {
+    const text = [
+      'wave harvest-steering-forms',
+      'approveOnAdvertisedPlan false',
+      'claimOnStall false',
+      'harvest reports/out.md',
+    ].join('\n');
+    const ir = ns.compileWavefile(text, { repoRoot: dir });
+    assert.equal(ir.steering.approveOnAdvertisedPlan, false,
+      'stage[harvest-steering-forms-approve-false] approveOnAdvertisedPlan false must emit false (bare = true, explicit false honored)');
+    assert.equal(ir.steering.claimOnStall, false,
+      'stage[harvest-steering-forms-claim-false] claimOnStall false must emit false (bare = true, explicit false honored)');
+    assert.deepEqual(ir.harvest.paths, [{ path: 'reports/out.md' }],
+      'stage[harvest-steering-forms-bare] a bare harvest <path> must emit {path} with no mustContain key');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('R1 capability [unknown-directive] — distinct unknown directives each refuse workflow_spec_invalid naming that token with the closed-list expected', async () => {
   const ns = await compiler();
   const dir = mkdtempSync(join(tmpdir(), 'baton-dsl-r1-'));
   try {
-    assertRefusal(
-      () => ns.compileWavefile('wave ok-key\nmemberr foo\n', { repoRoot: dir }),
-      { code: 'workflow_spec_invalid', line: 2, field: 'memberr', expected: '<closed directive list>' },
-      'stage[unknown-directive]',
-    );
+    // 2–3 distinct unknown names — a single-token special case (`if (token === 'memberr') throw …`)
+    // must not green this row (BT-170 finding 5).
+    for (const name of ['memberr', 'harnes', 'signalOnMembersDonee']) {
+      assertRefusal(
+        () => ns.compileWavefile(`wave ok-key\n${name} foo\n`, { repoRoot: dir }),
+        { code: 'workflow_spec_invalid', line: 2, field: name, expected: '<closed directive list>' },
+        `stage[unknown-directive-${name}]`,
+      );
+    }
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -737,27 +820,61 @@ test('S4 capability [closure] — the directive vocabulary is DISJOINT from the 
   }
 });
 
-test('S5 capability [constants] — the compiler closed constants equal the interpreter constants byte-for-byte', async () => {
+test('S5 capability [constants] — the compiler closed constants equal the interpreter constants byte-for-byte (inline form) OR the compiler imports them from a shared module', async () => {
   const ns = await compiler();
   const interpSrc = readFileSync(INTERPRETER_PATH, 'utf8');
   const compilerSrc = readFileSync(COMPILER_PATH, 'utf8');
   const extractPattern = (src) => /IDEMPOTENCY_PATTERN = \/([^/]+)\//u.exec(src)?.[1];
-  const compilerPattern = extractPattern(compilerSrc);
-  const interpPattern = extractPattern(interpSrc);
-  assert.ok(compilerPattern && interpPattern, 'stage[constants-pattern] both modules must declare IDEMPOTENCY_PATTERN');
-  assert.equal(compilerPattern, interpPattern, 'stage[constants-pattern] IDEMPOTENCY_PATTERN must be byte-identical');
-  // MAX_MEMBERS / MAX_SCOPE / the enum sets — byte-identical to the interpreter's closed values.
-  const interpCeiling = /MAX_MEMBERS = (\d+)/u.exec(interpSrc)?.[1];
-  const compilerCeiling = /MAX_MEMBERS = (\d+)/u.exec(compilerSrc)?.[1];
-  assert.equal(compilerCeiling, interpCeiling, 'stage[constants-max-members] MAX_MEMBERS must be byte-identical');
-  for (const enumName of ['MESSAGE_KINDS', 'SCRATCHPAD_KINDS']) {
-    const enumRe = new RegExp(`${enumName} = new Set\\(\\[([\\s\\S]*?)\\]\\)`, 'u');
-    const interpEnum = enumRe.exec(interpSrc)?.[1];
-    const compilerEnum = enumRe.exec(compilerSrc)?.[1];
-    assert.ok(interpEnum && compilerEnum, `stage[constants-${enumName.toLowerCase()}] both modules must declare ${enumName}`);
-    assert.equal(compilerEnum.trim(), interpEnum.trim(), `stage[constants-${enumName.toLowerCase()}] ${enumName} must be byte-identical`);
+  const extractCeiling = (src) => /MAX_MEMBERS = (\d+)/u.exec(src)?.[1];
+  const extractEnum = (src, enumName) => new RegExp(`${enumName} = new Set\\(\\[([\\s\\S]*?)\\]\\)`, 'u').exec(src)?.[1];
+  const CONSTANT_NAMES = ['IDEMPOTENCY_PATTERN', 'MAX_MEMBERS', 'MESSAGE_KINDS', 'SCRATCHPAD_KINDS'];
+  // Contract S5 sanctions TWO forms: (a) the compiler declares the closed constants inline and they
+  // are byte-identical to the interpreter's inline declarations, OR (b) both modules import one
+  // shared closed-constants module. Detect the form by whether the compiler carries an inline `=`
+  // assignment for any closed constant (a shared-module import names the constants but has no `=`).
+  // (BT-170 finding 3 — the old regexes rejected a correct shared-module compiler source.)
+  const usesInline = /(?:IDEMPOTENCY_PATTERN|MAX_MEMBERS|MESSAGE_KINDS|SCRATCHPAD_KINDS)\s*=/u.test(compilerSrc);
+  if (usesInline) {
+    // Inline form — byte-identical to the interpreter's inline declarations.
+    const compilerPattern = extractPattern(compilerSrc);
+    const interpPattern = extractPattern(interpSrc);
+    assert.ok(compilerPattern && interpPattern, 'stage[constants-pattern] both modules must declare IDEMPOTENCY_PATTERN');
+    assert.equal(compilerPattern, interpPattern, 'stage[constants-pattern] IDEMPOTENCY_PATTERN must be byte-identical');
+    const interpCeiling = extractCeiling(interpSrc);
+    const compilerCeiling = extractCeiling(compilerSrc);
+    assert.equal(compilerCeiling, interpCeiling, 'stage[constants-max-members] MAX_MEMBERS must be byte-identical');
+    for (const enumName of ['MESSAGE_KINDS', 'SCRATCHPAD_KINDS']) {
+      const interpEnum = extractEnum(interpSrc, enumName);
+      const compilerEnum = extractEnum(compilerSrc, enumName);
+      assert.ok(interpEnum && compilerEnum, `stage[constants-${enumName.toLowerCase()}] both modules must declare ${enumName}`);
+      assert.equal(compilerEnum.trim(), interpEnum.trim(), `stage[constants-${enumName.toLowerCase()}] ${enumName} must be byte-identical`);
+    }
+  } else {
+    // Shared-module form (contract S5 alternative) — the compiler imports the closed constants from a
+    // shared module; the source names every one of them (the import), never a divergent inline literal.
+    for (const name of CONSTANT_NAMES) {
+      assert.ok(compilerSrc.includes(name), `stage[constants-shared-${name.toLowerCase()}] the compiler must reference ${name} (imported from a shared closed-constants module)`);
+    }
   }
-  // Or a shared closed-constants module (S5 alternative) — both satisfy the source-scan.
-  assert.ok(compilerSrc.includes('MESSAGE_KINDS') && compilerSrc.includes('SCRATCHPAD_KINDS'),
-    'stage[constants-shared-module] the compiler must declare the closed enums (locally or via a shared module)');
+});
+
+test('S6 capability [code-family] — every workflow_* code literal the compiler throws is within the closed 5-code family, and the render-time objective_ref code stays at the interpreter (the compiler-facing twin of PIN-B)', async () => {
+  await compiler(); // module must exist (named stage at HEAD)
+  const src = readFileSync(COMPILER_PATH, 'utf8');
+  const family = new Set([
+    'workflow_spec_invalid',
+    'workflow_member_invalid',
+    'workflow_steering_unknown',
+    'workflow_harvest_invalid',
+    'workflow_objective_ref_invalid',
+  ]);
+  const literals = [...src.matchAll(/['"]workflow_[a-z_]+['"]/gu)].map((m) => m[0].slice(1, -1));
+  assert.ok(literals.length > 0, 'stage[code-family-present] the compiler must mint at least one workflow_* code (a compiler that never refuses is not a compiler)');
+  for (const literal of literals) {
+    assert.ok(family.has(literal), `stage[code-family-${literal}] the compiler must not mint ${literal} — the closed family is ${[...family].join('|')}`);
+  }
+  // Contract §3: the render-time code workflow_objective_ref_invalid is NOT emitted by the compiler
+  // (objectiveRef existence/containment/byte-bound stay at the interpreter's render).
+  assert.ok(!src.includes("'workflow_objective_ref_invalid'"),
+    'stage[code-family-render-time] the compiler must not mint workflow_objective_ref_invalid (render-time, interpreter-owned)');
 });
