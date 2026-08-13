@@ -198,7 +198,7 @@ async function facadeFixture(t, { authorize = async () => true, adapter = new Sc
     adapters: { mock: adapter },
     runLineagePolicy: DEFAULT_RUN_LINEAGE_POLICY,
     stopDeadlineMs: 1000,
-    watchdog: { stallMs: 0 },
+    watchdog: { stallMs: 60_000 }, // valid positive stallMs; watchdog never fires in this window
     ...(goalPlan ? { goalPlanAuthority: { policy: GOAL_PLAN_POLICY, authorize: async () => true } } : {}),
   });
   drivers.push(driver);

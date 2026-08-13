@@ -24,7 +24,7 @@ function brief() {
 async function accepted(root, taskId, workerSource, structuredMerge, taskBrief = brief()) {
   const adapter = new MockAdapter({ scenario: { outcome: 'completed', edits: [{ path: 'src/value.js', content: workerSource }] } });
   const logDir = mkdtempSync(join(tmpdir(), 'baton-sm-log-'));
-  const driver = createDriver({ repoRoot: root, logDir, adapters: { mock: adapter }, structuredMerge, watchdog: { stallMs: 0 } });
+  const driver = createDriver({ repoRoot: root, logDir, adapters: { mock: adapter }, structuredMerge, watchdog: { stallMs: 60_000 } }); // valid positive stallMs; watchdog never fires in this window
   const handle = await driver.coordinator.spawn('mock', taskBrief, { taskId });
   await until(async () => (await driver.coordinator.result(handle.id)).ready);
   assert.equal((await driver.coordinator.result(handle.id)).status, 'completed');
@@ -202,7 +202,7 @@ test('SM8: post-main coordination failure poisons and replay does not invent str
   await assert.rejects(coordinator.integrate(handle.id, { strategy: 'structured' }), (error) => error.code === 'coordination_write_unavailable');
   const moved = git(['rev-parse', 'HEAD'], root); assert.equal(git(['show', '-s', '--format=%P', moved], root).split(' ').length, 2);
   coordination._appendFile = rawAppend;
-  coordinator.closeAuthority(); coordination.releaseWriterLease(); const replay = createDriver({ repoRoot: root, logDir, coordination, adapters: { mock: new MockAdapter({ card: { concurrencyCeiling: 0 } }) }, structuredMerge: resolver, watchdog: { stallMs: 0 } });
+  coordinator.closeAuthority(); coordination.releaseWriterLease(); const replay = createDriver({ repoRoot: root, logDir, coordination, adapters: { mock: new MockAdapter({ card: { concurrencyCeiling: 0 } }) }, structuredMerge: resolver, watchdog: { stallMs: 60_000 } }); // valid positive stallMs; watchdog never fires in this window
   assert.equal((await replay.coordinator.result(handle.id)).integration, null);
 });
 
@@ -224,7 +224,7 @@ test('SM7/SM8: a post-fast-forward validation failure poisons instead of recordi
   assert.equal(coordination.events().some((event) => event.kind === 'driver.recorded' && event.payload.kind === 'integration.incomplete'), true);
   assert.throws(() => coordinator.list(), (error) => error.code === 'structured_post_effect_inconsistent');
   rmSync(join(root, 'post-effect-dirt.txt'));
-  coordinator.closeAuthority(); coordination.releaseWriterLease(); const replay = createDriver({ repoRoot: root, logDir, coordination, adapters: { mock: new MockAdapter({ card: { concurrencyCeiling: 0 } }) }, structuredMerge: resolver, watchdog: { stallMs: 0 } });
+  coordinator.closeAuthority(); coordination.releaseWriterLease(); const replay = createDriver({ repoRoot: root, logDir, coordination, adapters: { mock: new MockAdapter({ card: { concurrencyCeiling: 0 } }) }, structuredMerge: resolver, watchdog: { stallMs: 60_000 } }); // valid positive stallMs; watchdog never fires in this window
   assert.equal((await replay.coordinator.result(handle.id)).integration, null);
 });
 

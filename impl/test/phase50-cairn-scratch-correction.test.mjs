@@ -34,7 +34,7 @@ async function fixture() {
     reviewer: routedAdapter('reviewer-harness', 'reviewer-family', ['reviewer-model']),
     sameHarness: routedAdapter('producer-harness', 'other-family', ['same-harness-model']),
     sameFamily: routedAdapter('other-harness', 'producer-family', ['same-family-model']),
-  }, watchdog: { stallMs: 0 } });
+  }, watchdog: { stallMs: 60_000 } }); // valid positive stallMs; watchdog never fires in this window
   const producer = await driver.coordinator.spawn('producer', brief, { taskId: 'producer-task', model: 'producer-model', effort: 'low', modelPolicy: { allow: ['producer-model'], allowFamilies: ['producer-family'], reasoningEffort: 'low' } });
   const posted = driver.coordinator.postScratchFact(producer.id, { namespace: 'analysis', key: 'derived-claim', value: 'SECRET assertion /Users/alice/private', grounding: 'derived', envRef: { repoId: 'repo-a', treeSha: git(['rev-parse', 'HEAD'], repoRoot) } }, { expectedFence: producer.fence, idempotencyKey: 'fact:derived' });
   return { ...driver, repoRoot, logDir, producer, fact: posted.fact };
@@ -46,7 +46,7 @@ async function correctionFixture({ correctionOverrides = {}, maxCapabilityBudget
     producer: routedAdapter('producer-harness', 'producer-family', ['producer-model']),
     reviewer: routedAdapter('reviewer-harness', 'reviewer-family', ['reviewer-model'], { outcome: 'completed' }),
     reader: routedAdapter('reader-harness', 'reader-family', ['reader-model'], { outcome: 'completed' }),
-  }, capabilityFactories: { cairn: ({ coordination, readOperational }) => new CairnRunScorecard({ coordination, readOperational, artifactRoot, knowledgeAuditPolicy: auditPolicy(), knowledgePromotionPolicy: promotionPolicy(), knowledgeScratchCorrectionPolicy: correctionPolicy(correctionOverrides) }) }, maxCapabilityBudgetTokens, maxCapabilityEnvelopeBytes, watchdog: { stallMs: 0 } });
+  }, capabilityFactories: { cairn: ({ coordination, readOperational }) => new CairnRunScorecard({ coordination, readOperational, artifactRoot, knowledgeAuditPolicy: auditPolicy(), knowledgePromotionPolicy: promotionPolicy(), knowledgeScratchCorrectionPolicy: correctionPolicy(correctionOverrides) }) }, maxCapabilityBudgetTokens, maxCapabilityEnvelopeBytes, watchdog: { stallMs: 60_000 } }); // valid positive stallMs; watchdog never fires in this window
   const producer = await driver.coordinator.spawn('producer', brief, { taskId: 'producer-task', model: 'producer-model', effort: 'low', modelPolicy: { allow: ['producer-model'], allowFamilies: ['producer-family'], reasoningEffort: 'low' } });
   const post = (key, value, grounding = 'derived') => driver.coordinator.postScratchFact(producer.id, { namespace: 'analysis', key, value, grounding, envRef: { repoId: 'repo-a', treeSha: git(['rev-parse', 'HEAD'], repoRoot) } }, { expectedFence: driver.coordinator.list().find((row) => row.id === producer.id).fence, idempotencyKey: `fact:${key}` }).fact;
   return { ...driver, repoRoot, logDir, artifactRoot, producer, post };
@@ -57,7 +57,7 @@ function reopenCorrection(previous, correctionOverrides = {}) {
     producer: routedAdapter('producer-harness', 'producer-family', ['producer-model']),
     reviewer: routedAdapter('reviewer-harness', 'reviewer-family', ['reviewer-model'], { outcome: 'completed' }),
     reader: routedAdapter('reader-harness', 'reader-family', ['reader-model'], { outcome: 'completed' }),
-  }, capabilityFactories: { cairn: ({ coordination, readOperational }) => new CairnRunScorecard({ coordination, readOperational, artifactRoot: previous.artifactRoot, knowledgeAuditPolicy: auditPolicy(), knowledgePromotionPolicy: promotionPolicy(), knowledgeScratchCorrectionPolicy: correctionPolicy(correctionOverrides) }) }, maxCapabilityBudgetTokens: 64_000, maxCapabilityEnvelopeBytes: 1024 * 1024, watchdog: { stallMs: 0 } });
+  }, capabilityFactories: { cairn: ({ coordination, readOperational }) => new CairnRunScorecard({ coordination, readOperational, artifactRoot: previous.artifactRoot, knowledgeAuditPolicy: auditPolicy(), knowledgePromotionPolicy: promotionPolicy(), knowledgeScratchCorrectionPolicy: correctionPolicy(correctionOverrides) }) }, maxCapabilityBudgetTokens: 64_000, maxCapabilityEnvelopeBytes: 1024 * 1024, watchdog: { stallMs: 60_000 } }); // valid positive stallMs; watchdog never fires in this window
 }
 
 function completedReader(store, id) {
@@ -115,7 +115,7 @@ test('SC1-SC4: direct Scratch oracle binds a private fact snapshot and preserves
   driver.close();
   const replay = createDriver({ repoRoot: driver.repoRoot, repoId: 'repo-a', logDir: driver.logDir, scratchOraclePolicy: oraclePolicy(), adapters: {
     producer: routedAdapter('producer-harness', 'producer-family', ['producer-model']), reviewer: routedAdapter('reviewer-harness', 'reviewer-family', ['reviewer-model']),
-  }, watchdog: { stallMs: 0 } });
+  }, watchdog: { stallMs: 60_000 } }); // valid positive stallMs; watchdog never fires in this window
   assert.equal(replay.coordinator.list().find((row) => row.taskId === 'oracle-task').review.knowledgeTarget.scratchFactDigest, durable.review.knowledgeTarget.scratchFactDigest);
   replay.close();
 });
@@ -286,7 +286,7 @@ test('SC1-SC3: route admission, policy shape, producer-route integrity, and hub-
   await reap(driver); driver.close();
 
   const rows = readFileSync(join(driver.logDir, 'coordination', 'events.jsonl'), 'utf8').trimEnd().split('\n').map(JSON.parse); const claim = rows.find((row) => row.kind === 'task.claimed' && row.payload.id === driver.producer.taskId); claim.payload.routeKey = 'malformed'; writeFileSync(join(driver.logDir, 'coordination', 'events.jsonl'), `${rows.map(JSON.stringify).join('\n')}\n`);
-  const replay = createDriver({ repoRoot: driver.repoRoot, repoId: 'repo-a', logDir: driver.logDir, scratchOraclePolicy: oraclePolicy(), adapters: { producer: routedAdapter('producer-harness', 'producer-family', ['producer-model']), reviewer: routedAdapter('reviewer-harness', 'reviewer-family', ['reviewer-model']) }, watchdog: { stallMs: 0 } });
+  const replay = createDriver({ repoRoot: driver.repoRoot, repoId: 'repo-a', logDir: driver.logDir, scratchOraclePolicy: oraclePolicy(), adapters: { producer: routedAdapter('producer-harness', 'producer-family', ['producer-model']), reviewer: routedAdapter('reviewer-harness', 'reviewer-family', ['reviewer-model']) }, watchdog: { stallMs: 60_000 } }); // valid positive stallMs; watchdog never fires in this window
   await assert.rejects(replay.coordinator.spawnScratchOracle(driver.fact.id, 'reviewer', { model: 'reviewer-model', effort: 'low', verification: { command: 'true', expectExit: 0 } }), (error) => error.code === 'scratch_oracle_route_unavailable'); replay.close();
 });
 

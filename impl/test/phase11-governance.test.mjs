@@ -126,7 +126,7 @@ test('GV1/GV2: replay restores cumulative baselines so resumed snapshots do not 
 
 test('GV4/GV5: three identical completed failing commands interrupt once', async () => {
   const ad = adapter();
-  const { c, log } = system(ad, { watchdog: { loopThreshold: 3, stallMs: 0 } });
+  const { c, log } = system(ad, { watchdog: { loopThreshold: 3, stallMs: 60_000 } }); // valid positive stallMs; watchdog never fires in this window
   const h = await c.spawn('stub', brief());
   for (let i = 0; i < 3; i += 1) ad.emit(h.id, 'content.tool_call', { command: 'npm test', exitCode: 1, status: 'completed' });
   assert.equal(ad.calls.interrupt, 1);
@@ -135,7 +135,7 @@ test('GV4/GV5: three identical completed failing commands interrupt once', async
 
 test('GV4/GV5: an absolute edited path outside scope kills once', async () => {
   const ad = adapter();
-  const { c, log } = system(ad, { watchdog: { stallMs: 0 } });
+  const { c, log } = system(ad, { watchdog: { stallMs: 60_000 } }); // valid positive stallMs; watchdog never fires in this window
   const h = await c.spawn('stub', brief());
   ad.emit(h.id, 'content.file_edit', { path: '/tmp/outside/secret.txt' });
   assert.equal(ad.calls.kill, 1);
@@ -149,7 +149,7 @@ test('GV4/GV5: canonical filesystem aliases do not fabricate an out-of-scope kil
   t.after(() => rmSync(worktree, { recursive: true, force: true }));
   mkdirSync(join(worktree, 'src')); writeFileSync(join(worktree, 'src', 'ok.mjs'), 'export const ok = true;\n');
   const ad = adapter();
-  const { c, log } = system(ad, { watchdog: { stallMs: 0 }, worktreePath: worktree });
+  const { c, log } = system(ad, { watchdog: { stallMs: 60_000 }, worktreePath: worktree }); // valid positive stallMs; watchdog never fires in this window
   const h = await c.spawn('stub', brief());
   ad.emit(h.id, 'content.file_edit', { path: join(realpathSync(worktree), 'src', 'ok.mjs') });
   assert.equal(ad.calls.kill, 0);
@@ -158,7 +158,7 @@ test('GV4/GV5: canonical filesystem aliases do not fabricate an out-of-scope kil
 
 test('GV4/GV5: an empty path scope is unscoped and does not invent a violation', async () => {
   const ad = adapter();
-  const { c, log } = system(ad, { watchdog: { stallMs: 0 } });
+  const { c, log } = system(ad, { watchdog: { stallMs: 60_000 } }); // valid positive stallMs; watchdog never fires in this window
   const unscoped = brief();
   unscoped.pathScope = [];
   const h = await c.spawn('stub', unscoped);
@@ -170,9 +170,9 @@ test('GV4/GV5: an empty path scope is unscoped and does not invent a violation',
 test('OR10: scope orientation policy is explicit and fully deployment-bounded', () => {
   const ad = adapter(); const epoch = 'a'.repeat(64);
   for (const orientation of [undefined, { indexEpoch: epoch, focus: 'src', shape: 'map', budgetTokens: 100, cooldownMs: 0, maxRefreshesPerTurn: 0 }]) {
-    assert.throws(() => system(ad, { watchdog: { stallMs: 0, scopeAction: 'orient', orientation } }), /scope orientation policy/);
+    assert.throws(() => system(ad, { watchdog: { stallMs: 60_000, scopeAction: 'orient', orientation } }), /scope orientation policy/); // valid positive stallMs; watchdog never fires in this window
   }
-  assert.throws(() => system(ad, { watchdog: { stallMs: 0, scopeAction: 'orient', orientation: { indexEpoch: epoch, focus: 'src', shape: 'map', budgetTokens: 100, cooldownMs: 0, maxRefreshesPerTurn: 1 } } }), /registered cartographer/);
+  assert.throws(() => system(ad, { watchdog: { stallMs: 60_000, scopeAction: 'orient', orientation: { indexEpoch: epoch, focus: 'src', shape: 'map', budgetTokens: 100, cooldownMs: 0, maxRefreshesPerTurn: 1 } } }), /registered cartographer/); // valid positive stallMs; watchdog never fires in this window
 });
 
 test('OR10: out-of-scope edits auto-orient with in-flight dedup, cooldown, and a per-turn ceiling', async () => {
@@ -191,7 +191,7 @@ test('OR10: out-of-scope edits auto-orient with in-flight dedup, cooldown, and a
   };
   const { c, log } = system(ad, {
     capabilities, now: () => now,
-    watchdog: { stallMs: 0, scopeAction: 'orient', orientation: { indexEpoch: epoch, focus: 'src/auth', shape: 'map', budgetTokens: 500, cooldownMs: 1_000, maxRefreshesPerTurn: 2, notePrefix: 'Return to auth.' } },
+    watchdog: { stallMs: 60_000, scopeAction: 'orient', orientation: { indexEpoch: epoch, focus: 'src/auth', shape: 'map', budgetTokens: 500, cooldownMs: 1_000, maxRefreshesPerTurn: 2, notePrefix: 'Return to auth.' } }, // valid positive stallMs; watchdog never fires in this window
   });
   const h = await c.spawn('stub', brief());
   ad.emit(h.id, 'content.file_edit', { path: 'docs/first.md' });
@@ -217,7 +217,7 @@ test('OR10: interrupt during automatic orientation voids the queued refresh', as
     cards: () => [{ name: 'cartographer-quartermaster', ops: { 'orientation.slice': {} } }], resume: async () => {}, reverify: async () => {},
     async invoke() { invoked = true; await gate; return { op: 'orientation.slice', status: 'ok', summary: 'late', payload: [], refs: [{ kind: 'orientation-reuse', digest: 'e'.repeat(64) }], cost: { tokens_out: 1, wall_ms: 1, usd: 0, underlying: 'atlas' }, provenance: { mergeAuthority: false, verificationAuthority: false } }; },
   };
-  const { c, log } = system(ad, { capabilities, watchdog: { stallMs: 0, scopeAction: 'orient', orientation: { indexEpoch: epoch, focus: 'src', shape: 'map', budgetTokens: 100, cooldownMs: 0, maxRefreshesPerTurn: 1 } } });
+  const { c, log } = system(ad, { capabilities, watchdog: { stallMs: 60_000, scopeAction: 'orient', orientation: { indexEpoch: epoch, focus: 'src', shape: 'map', budgetTokens: 100, cooldownMs: 0, maxRefreshesPerTurn: 1 } } }); // valid positive stallMs; watchdog never fires in this window
   const h = await c.spawn('stub', brief()); ad.emit(h.id, 'content.file_edit', { path: 'docs/drift.md' });
   await sleep(0); assert.equal(invoked, true);
   void c.interrupt(h.id); assert.equal(c.list()[0].status, 'stopping'); release(); await sleep(0); await sleep(0);
@@ -234,7 +234,7 @@ test('OR10: a native turn start resets path deduplication and the per-turn refre
       return { op: 'orientation.slice', status: 'ok', summary: 'turn anchor', payload: [], refs: [{ kind: 'orientation-reuse', digest: '1'.repeat(64) }], cost: { tokens_out: 1, wall_ms: 1, usd: 0, underlying: 'atlas' }, provenance: { mergeAuthority: false, verificationAuthority: false } };
     },
   };
-  const { c, log } = system(ad, { capabilities, watchdog: { stallMs: 0, scopeAction: 'orient', orientation: { indexEpoch: epoch, focus: 'src', shape: 'brief', budgetTokens: 100, cooldownMs: 0, maxRefreshesPerTurn: 1 } } });
+  const { c, log } = system(ad, { capabilities, watchdog: { stallMs: 60_000, scopeAction: 'orient', orientation: { indexEpoch: epoch, focus: 'src', shape: 'brief', budgetTokens: 100, cooldownMs: 0, maxRefreshesPerTurn: 1 } } }); // valid positive stallMs; watchdog never fires in this window
   const h = await c.spawn('stub', brief());
   ad.emit(h.id, 'content.file_edit', { path: 'docs/repeated.md' }); await sleep(0); await sleep(0);
   ad.emit(h.id, 'content.file_edit', { path: 'docs/limited.md' }); await sleep(0);
@@ -275,7 +275,7 @@ test('GV6: coordinator passes a replacement environment, logs posture only, and 
     remove: (worker) => removed.push(worker),
   };
   const ad = adapter();
-  const { c, log } = system(ad, { runtimeScopes, watchdog: { stallMs: 0 } });
+  const { c, log } = system(ad, { runtimeScopes, watchdog: { stallMs: 60_000 } }); // valid positive stallMs; watchdog never fires in this window
   const h = await c.spawn('stub', brief());
   const spawnOpts = ad.calls.spawn[0][2];
   assert.equal(spawnOpts.replaceEnv, true);
@@ -297,7 +297,7 @@ test('GV6: runtime scope creation failure becomes a durable failed task before a
       reconcile: () => {}, create: () => { throw new Error('private directory unavailable'); },
       remove: (worker) => removed.push(worker),
     },
-    watchdog: { stallMs: 0 },
+    watchdog: { stallMs: 60_000 }, // valid positive stallMs; watchdog never fires in this window
   });
   const h = await c.spawn('stub', brief());
   assert.equal((await c.result(h.id)).status, 'failed');

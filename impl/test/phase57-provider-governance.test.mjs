@@ -72,7 +72,7 @@ function system(ad, opts = {}) {
       remove: async () => {}, reconcile: async () => {},
     },
     referee: async () => { verifies += 1; return { reverified: true, observedExit: 0 }; },
-    route: () => 'stub', stopDeadlineMs: 100, budgetPolicy: { terminalGraceMs: 1 }, watchdog: { stallMs: 0 },
+    route: () => 'stub', stopDeadlineMs: 100, budgetPolicy: { terminalGraceMs: 1 }, watchdog: { stallMs: 60_000 }, // valid positive stallMs; watchdog never fires in this window
   });
   return { coordinator, log, coordination, worktreeCreates: () => worktreeCreates, verifies: () => verifies };
 }

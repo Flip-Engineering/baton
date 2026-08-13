@@ -170,7 +170,7 @@ async function waveFixture() {
     runLineagePolicy: RUN_LINEAGE_POLICY,
     now: () => NOW_MS,
     stopDeadlineMs: 1000,
-    watchdog: { stallMs: 0 },
+    watchdog: { stallMs: 60_000 }, // valid positive stallMs; watchdog never fires in this window
   });
   drivers.push(driver);
   const principalOf = (id) => ({ actor: `direct:${id}`, principalId: id, sessionId: `${id}-session` });

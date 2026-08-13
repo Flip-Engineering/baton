@@ -47,7 +47,7 @@ test('CK8/CK9: public spawn poisons before publishing any handle when task creat
   const repo = dir();
   execFileSync('git', ['init', '-q'], { cwd: repo });
   const coordination = new CoordinationStore(dir(), { appendFile: () => { throw new Error('coordination disk full'); } });
-  const driver = createDriver({ repoRoot: repo, logDir: dir(), coordination, adapters: { mock: new MockAdapter({ scenario: { outcome: 'completed' } }) }, watchdog: { stallMs: 0 } });
+  const driver = createDriver({ repoRoot: repo, logDir: dir(), coordination, adapters: { mock: new MockAdapter({ scenario: { outcome: 'completed' } }) }, watchdog: { stallMs: 60_000 } }); // valid positive stallMs; watchdog never fires in this window
   const brief = { goal: 'must not publish', constraints: [], pathScope: [], definitionOfDone: 'none', verification: { command: 'true', expectExit: 0 }, budget: { tokens: 1, usd: 1, wallMin: 1 } };
   await assert.rejects(driver.coordinator.spawn('mock', brief, { taskId: 'create-write-failure' }), (error) => error.code === 'coordination_write_unavailable');
   assert.deepEqual(coordination.snapshot().tasks, []);
@@ -68,7 +68,7 @@ test('CK8/CK9: claim append failure poisons before adapter/worktree dispatch and
   const coordinator = new Coordinator({
     log: new Log(dir()), fences: new FenceTable(), adapters: { mock: adapter }, coordination,
     worktrees: { create: async () => { worktrees += 1; return { path: dir() }; }, remove: async () => {}, reconcile: async () => {} },
-    referee: async () => ({ reverified: true, observedExit: 0 }), route: () => 'mock', watchdog: { stallMs: 0 },
+    referee: async () => ({ reverified: true, observedExit: 0 }), route: () => 'mock', watchdog: { stallMs: 60_000 }, // valid positive stallMs; watchdog never fires in this window
   });
   const brief = { goal: 'stay pending', constraints: [], pathScope: [], definitionOfDone: 'none', verification: { command: 'true', expectExit: 0 }, budget: { tokens: 1, usd: 1, wallMin: 1 } };
   await assert.rejects(coordinator.spawn('mock', brief, { taskId: 'claim-write-failure' }), (error) => error.code === 'coordination_write_unavailable');
@@ -91,7 +91,7 @@ test('CK1/CK9: operational append failure poisons the coordinator and restart cl
     worktrees: { create: async () => ({ path: dir() }), remove: async () => {}, reconcile: async () => {} },
     referee: async () => ({ reverified: true, observedExit: 0 }),
     route: () => 'mock',
-    watchdog: { stallMs: 0 },
+    watchdog: { stallMs: 60_000 }, // valid positive stallMs; watchdog never fires in this window
   });
   const poisoned = make(failedLog);
   const brief = { goal: 'must be durable', constraints: [], pathScope: [], definitionOfDone: 'done', verification: { command: 'true', expectExit: 0 }, budget: { tokens: 1, usd: 1, wallMin: 1 } };
@@ -118,7 +118,7 @@ test('ER1-ER5: explicit emergency kill confirms and reaps after operational stor
     worktrees: { create: async () => ({ path: worktree }), remove: async () => { removed += 1; }, reconcile: async () => {} },
     referee: async () => ({ reverified: true, observedExit: 0 }),
     route: () => 'mock',
-    watchdog: { stallMs: 0 },
+    watchdog: { stallMs: 60_000 }, // valid positive stallMs; watchdog never fires in this window
     stopDeadlineMs: 1000,
   });
   const brief = { goal: 'emergency reap', constraints: [], pathScope: [], definitionOfDone: 'never completes', verification: { command: 'true', expectExit: 0 }, budget: { tokens: 100, usd: 1, wallMin: 1 } };
@@ -146,7 +146,7 @@ test('ER5: emergency kill timeout keeps ownership when native confirmation never
   const coordinator = new Coordinator({
     log: rawLog, fences: new FenceTable(), adapters: { mock: adapter }, coordination,
     worktrees: { create: async () => ({ path: worktree }), remove: async () => { removed += 1; }, reconcile: async () => {} },
-    referee: async () => ({ reverified: true, observedExit: 0 }), route: () => 'mock', watchdog: { stallMs: 0 }, stopDeadlineMs: 20,
+    referee: async () => ({ reverified: true, observedExit: 0 }), route: () => 'mock', watchdog: { stallMs: 60_000 }, stopDeadlineMs: 20, // valid positive stallMs; watchdog never fires in this window
   });
   const brief = { goal: 'retain ownership', constraints: [], pathScope: [], definitionOfDone: 'never completes', verification: { command: 'true', expectExit: 0 }, budget: { tokens: 100, usd: 1, wallMin: 1 } };
   const handle = await coordinator.spawn('mock', brief, { taskId: 'emergency-timeout' });
@@ -167,7 +167,7 @@ test('CK1/CK9: terminal artifact-batch failure poisons the driver and restarts a
   execFileSync('git', ['add', '.'], { cwd: repo });
   execFileSync('git', ['commit', '-q', '-m', 'base'], { cwd: repo });
   const logDir = dir();
-  const make = (adapters) => createDriver({ repoRoot: repo, logDir, adapters, watchdog: { stallMs: 0 } });
+  const make = (adapters) => createDriver({ repoRoot: repo, logDir, adapters, watchdog: { stallMs: 60_000 } }); // valid positive stallMs; watchdog never fires in this window
   const driver = make({ mock: new MockAdapter({ scenario: { outcome: 'completed', edits: [{ path: 'atomic.txt', content: 'atomic\n', delayMs: 20 }] } }) });
   const rawAppend = driver.coordination._appendFile;
   let injected = false;
@@ -252,7 +252,7 @@ test('CK8/CK9: public driver exposes coordination and queued DAG survives restar
   const make = () => createDriver({
     repoRoot: repo, logDir,
     adapters: { mock: new MockAdapter({ card: { concurrencyCeiling: 0 }, scenario: { outcome: 'completed' } }) },
-    watchdog: { stallMs: 0 },
+    watchdog: { stallMs: 60_000 }, // valid positive stallMs; watchdog never fires in this window
   });
   const brief = { goal: 'queued', constraints: [], pathScope: [], definitionOfDone: 'never dispatch', verification: { command: 'true', expectExit: 0 }, budget: { tokens: 1, usd: 1, wallMin: 1 } };
   const first = make();
@@ -292,7 +292,7 @@ test('CK2/CK9: restart terminalizes a durable claim that crashed before operatio
     logDir,
     coordination,
     adapters: { mock: new MockAdapter({ card: { concurrencyCeiling: 0 } }) },
-    watchdog: { stallMs: 0 },
+    watchdog: { stallMs: 60_000 }, // valid positive stallMs; watchdog never fires in this window
   });
 
   assert.equal(replay.coordination.task(task.id).status, 'failed');
@@ -381,7 +381,7 @@ test('CK8/CK9: completed public task maps verification evidence, terminal state,
   const driver = createDriver({
     repoRoot: repo, logDir: dir(),
     adapters: { mock: new MockAdapter({ scenario: { outcome: 'completed', edits: [{ path: 'done.txt', content: 'done\n' }] } }) },
-    watchdog: { stallMs: 0 },
+    watchdog: { stallMs: 60_000 }, // valid positive stallMs; watchdog never fires in this window
   });
   const brief = { goal: 'complete durably', constraints: [], pathScope: ['done.txt'], definitionOfDone: 'done', verification: { command: 'test -s done.txt', expectExit: 0 }, budget: { tokens: 1000, usd: 1, wallMin: 1 } };
   const handle = await driver.coordinator.spawn('mock', brief, { taskId: 'durable-complete' });
@@ -419,7 +419,7 @@ test('CK2/CK8: blocking input and resolution transition durably before terminal 
     adapters: { mock: new MockAdapter({ scenario: {
       outcome: 'completed', edits: [{ path: 'asked.txt', content: 'asked\n' }],
       ask: { kind: 'question', question: 'continue?', blocking: true, afterEditIndex: 1 },
-    } }) }, watchdog: { stallMs: 0 },
+    } }) }, watchdog: { stallMs: 60_000 }, // valid positive stallMs; watchdog never fires in this window
   });
   const brief = { goal: 'input durably', constraints: [], pathScope: ['asked.txt'], definitionOfDone: 'asked', verification: { command: 'test -s asked.txt', expectExit: 0 }, budget: { tokens: 1000, usd: 1, wallMin: 1 } };
   const handle = await driver.coordinator.spawn('mock', brief, { taskId: 'durable-input' });
@@ -439,7 +439,7 @@ test('CK8/CK9: input transition append failure poisons before pending/blocked st
   execFileSync('git', ['config', 'user.name', 'Baton Test'], { cwd: repo });
   execFileSync('git', ['commit', '--allow-empty', '-q', '-m', 'base'], { cwd: repo });
   const adapter = new MockAdapter({ scenario: { outcome: 'completed', edits: [{ path: 'slow.txt', content: 'x', delayMs: 5000 }] } });
-  const driver = createDriver({ repoRoot: repo, logDir: dir(), adapters: { mock: adapter }, watchdog: { stallMs: 0 } });
+  const driver = createDriver({ repoRoot: repo, logDir: dir(), adapters: { mock: adapter }, watchdog: { stallMs: 60_000 } }); // valid positive stallMs; watchdog never fires in this window
   const brief = { goal: 'input crash window', constraints: [], pathScope: ['slow.txt'], definitionOfDone: 'none', verification: { command: 'true', expectExit: 0 }, budget: { tokens: 1000, usd: 1, wallMin: 1 } };
   const handle = await driver.coordinator.spawn('mock', brief, { taskId: 'input-write-failure' });
   const rawAppend = driver.coordination._appendFile;
@@ -467,7 +467,7 @@ test('CK8/CK9: stop-intent append failure calls no adapter and leaves durable ta
   let adapterKills = 0;
   const rawKill = adapter.kill.bind(adapter);
   adapter.kill = async (...args) => { adapterKills += 1; return rawKill(...args); };
-  const driver = createDriver({ repoRoot: repo, logDir: dir(), adapters: { mock: adapter }, watchdog: { stallMs: 0 } });
+  const driver = createDriver({ repoRoot: repo, logDir: dir(), adapters: { mock: adapter }, watchdog: { stallMs: 60_000 } }); // valid positive stallMs; watchdog never fires in this window
   const brief = { goal: 'stop crash window', constraints: [], pathScope: ['slow.txt'], definitionOfDone: 'none', verification: { command: 'true', expectExit: 0 }, budget: { tokens: 1000, usd: 1, wallMin: 1 } };
   const handle = await driver.coordinator.spawn('mock', brief, { taskId: 'stop-write-failure' });
   const rawAppend = driver.coordination._appendFile;
@@ -491,7 +491,7 @@ test('CK8/CK9: cancellation completion failure resolves bounded, keeps stop inte
   execFileSync('git', ['commit', '--allow-empty', '-q', '-m', 'base'], { cwd: repo });
   const logDir = dir();
   const adapter = new MockAdapter({ scenario: { outcome: 'completed', edits: [{ path: 'slow.txt', content: 'x', delayMs: 5000 }] } });
-  const driver = createDriver({ repoRoot: repo, logDir, adapters: { mock: adapter }, watchdog: { stallMs: 0 } });
+  const driver = createDriver({ repoRoot: repo, logDir, adapters: { mock: adapter }, watchdog: { stallMs: 60_000 } }); // valid positive stallMs; watchdog never fires in this window
   const brief = { goal: 'cancel completion crash', constraints: [], pathScope: ['slow.txt'], definitionOfDone: 'none', verification: { command: 'true', expectExit: 0 }, budget: { tokens: 1000, usd: 1, wallMin: 1 } };
   const handle = await driver.coordinator.spawn('mock', brief, { taskId: 'cancel-completion-failure' });
   const rawAppend = driver.coordination._appendFile;
@@ -506,7 +506,7 @@ test('CK8/CK9: cancellation completion failure resolves bounded, keeps stop inte
   assert.equal(driver.coordinator._workers.get(handle.id).status, 'dead');
   assert.throws(() => driver.coordinator.list(), (error) => error.code === 'coordination_write_unavailable');
   driver.coordination._appendFile = rawAppend;
-  driver.close(); const replay = createDriver({ repoRoot: repo, logDir, coordination: driver.coordination, adapters: { mock: new MockAdapter({ card: { concurrencyCeiling: 0 } }) }, watchdog: { stallMs: 0 } });
+  driver.close(); const replay = createDriver({ repoRoot: repo, logDir, coordination: driver.coordination, adapters: { mock: new MockAdapter({ card: { concurrencyCeiling: 0 } }) }, watchdog: { stallMs: 60_000 } }); // valid positive stallMs; watchdog never fires in this window
   assert.equal(replay.coordination.task('cancel-completion-failure').status, 'failed');
 });
 
@@ -616,7 +616,7 @@ test('CK2/CK8: confirmed kill durably cancels an active public task', async () =
   const driver = createDriver({
     repoRoot: repo, logDir: dir(), stopDeadlineMs: 1000,
     adapters: { mock: new MockAdapter({ scenario: { outcome: 'completed', edits: [{ path: 'slow.txt', content: 'x', delayMs: 5000 }] } }) },
-    watchdog: { stallMs: 0 },
+    watchdog: { stallMs: 60_000 }, // valid positive stallMs; watchdog never fires in this window
   });
   const brief = { goal: 'cancel durably', constraints: [], pathScope: ['slow.txt'], definitionOfDone: 'cancel', verification: { command: 'true', expectExit: 0 }, budget: { tokens: 1000, usd: 1, wallMin: 1 } };
   const handle = await driver.coordinator.spawn('mock', brief, { taskId: 'durable-cancel' });

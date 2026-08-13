@@ -48,7 +48,7 @@ async function completedTask(root, taskId = 'integrate-me') {
   const logDir = mkdtempSync(join(tmpdir(), 'baton-ac5-log-'));
   const driver = createDriver({
     repoRoot: root, logDir, adapters: { mock: adapter },
-    watchdog: { stallMs: 0 },
+    watchdog: { stallMs: 60_000 }, // valid positive stallMs; watchdog never fires in this window
   });
   const handle = await driver.coordinator.spawn('mock', brief({ command: 'test -f src/integrated.txt', expectExit: 0 }), { taskId });
   await until(async () => (await driver.coordinator.result(handle.id)).ready);
@@ -78,7 +78,7 @@ async function integratedPublicationTask({ now, approvalTimeoutMs = 1000 } = {})
   const driver = createDriver({
     repoRoot: root, logDir, adapters: { mock: adapter }, now, approvalTimeoutMs,
     publisher: async (target) => { calls.push(target); return { transport: 'test-publisher' }; },
-    watchdog: { stallMs: 0 },
+    watchdog: { stallMs: 60_000 }, // valid positive stallMs; watchdog never fires in this window
   });
   const handle = await driver.coordinator.spawn('mock', brief({ command: 'test -f src/publish.txt', expectExit: 0 }), { taskId: 'publish-task' });
   await until(async () => (await driver.coordinator.result(handle.id)).ready);
@@ -102,7 +102,7 @@ test('AC0: a provider-native failed result bypasses capture/referee and preserve
   } });
   const driver = createDriver({
     repoRoot: root, logDir: mkdtempSync(join(tmpdir(), 'baton-ac0-log-')), adapters: { mock: adapter },
-    watchdog: { stallMs: 0 },
+    watchdog: { stallMs: 60_000 }, // valid positive stallMs; watchdog never fires in this window
   });
   let captureCalls = 0;
   let refereeCalls = 0;
@@ -139,7 +139,7 @@ test('AC1: createDriver requireRedGreen proves base red and result green', async
   const adapter = new MockAdapter({ scenario: { outcome: 'completed', edits: [{ path: 'src/new.txt', content: 'ok\n' }] } });
   const { coordinator, log } = createDriver({
     repoRoot: root, logDir: mkdtempSync(join(tmpdir(), 'baton-ac1-log-')), adapters: { mock: adapter },
-    requireRedGreen: true, watchdog: { stallMs: 0 },
+    requireRedGreen: true, watchdog: { stallMs: 60_000 }, // valid positive stallMs; watchdog never fires in this window
   });
   const h = await coordinator.spawn('mock', brief({ command: 'test -f src/new.txt', expectExit: 0 }), { taskId: 'red-green' });
   await until(async () => (await coordinator.result(h.id)).ready);
@@ -158,7 +158,7 @@ test('AC2: createDriver requireCoverage computes changed lines and accepts cover
   const adapter = new MockAdapter({ scenario: { outcome: 'completed', edits: [{ path: 'src/x.js', content: 'export const x = 1;\n' }] } });
   const { coordinator } = createDriver({
     repoRoot: root, logDir: mkdtempSync(join(tmpdir(), 'baton-ac2-log-')), adapters: { mock: adapter },
-    requireCoverage: true, watchdog: { stallMs: 0 },
+    requireCoverage: true, watchdog: { stallMs: 60_000 }, // valid positive stallMs; watchdog never fires in this window
   });
   const h = await coordinator.spawn('mock', brief({
     command: 'test -f src/x.js', expectExit: 0, coverageCommand: 'node coverage.mjs',
@@ -179,7 +179,7 @@ test('AC2: requireCoverage rejects a passing but uncovered change', async () => 
   const adapter = new MockAdapter({ scenario: { outcome: 'completed', edits: [{ path: 'src/x.js', content: 'export const x = 1;\n' }] } });
   const { coordinator } = createDriver({
     repoRoot: root, logDir: mkdtempSync(join(tmpdir(), 'baton-ac2b-log-')), adapters: { mock: adapter },
-    requireCoverage: true, watchdog: { stallMs: 0 },
+    requireCoverage: true, watchdog: { stallMs: 60_000 }, // valid positive stallMs; watchdog never fires in this window
   });
   const h = await coordinator.spawn('mock', brief({
     command: 'test -f src/x.js', expectExit: 0, coverageCommand: 'node coverage.mjs',
@@ -198,7 +198,7 @@ test('AC3: required mutation accepts a nonzero all-killed population', async () 
   const adapter = new MockAdapter({ scenario: { outcome: 'completed', edits: [{ path: 'src/x.js', content: 'export const x = 1;\n' }] } });
   const { coordinator } = createDriver({
     repoRoot: root, logDir: mkdtempSync(join(tmpdir(), 'baton-ac3-log-')), adapters: { mock: adapter },
-    requireMutation: true, watchdog: { stallMs: 0 },
+    requireMutation: true, watchdog: { stallMs: 60_000 }, // valid positive stallMs; watchdog never fires in this window
   });
   const h = await coordinator.spawn('mock', brief({
     command: 'test -f src/x.js', expectExit: 0, mutationCommand: 'node mutation.mjs',
@@ -216,7 +216,7 @@ test('AC3: required mutation rejects survivors and records only their closed cou
   const adapter = new MockAdapter({ scenario: { outcome: 'completed', edits: [{ path: 'src/x.js', content: 'export const x = 1;\n' }] } });
   const { coordinator } = createDriver({
     repoRoot: root, logDir: mkdtempSync(join(tmpdir(), 'baton-ac3b-log-')), adapters: { mock: adapter },
-    requireMutation: true, watchdog: { stallMs: 0 },
+    requireMutation: true, watchdog: { stallMs: 60_000 }, // valid positive stallMs; watchdog never fires in this window
   });
   const h = await coordinator.spawn('mock', brief({
     command: 'test -f src/x.js', expectExit: 0, mutationCommand: 'node mutation.mjs',
@@ -239,7 +239,7 @@ test('AC4: independent oracle receives immutable spec/git evidence and unlocks r
   const oracle = familyAdapter('family-b', { outcome: 'completed', summary: 'independent oracle prose' });
   const { coordinator, log } = createDriver({
     repoRoot: root, logDir: mkdtempSync(join(tmpdir(), 'baton-ac4-log-')),
-    adapters: { implementer, oracle }, requireIndependentOracle: true, watchdog: { stallMs: 0 },
+    adapters: { implementer, oracle }, requireIndependentOracle: true, watchdog: { stallMs: 60_000 }, // valid positive stallMs; watchdog never fires in this window
   });
   const parent = await coordinator.spawn('implementer', brief({ command: 'test -f src/reviewed.txt', expectExit: 0 }), { taskId: 'review-parent' });
   await until(async () => (await coordinator.result(parent.id)).ready);
@@ -276,7 +276,7 @@ test('AC4: visible same-family fallback cannot satisfy a required independent or
   const fallback = familyAdapter('shared-family', { outcome: 'completed' });
   const { coordinator, log } = createDriver({
     repoRoot: root, logDir: mkdtempSync(join(tmpdir(), 'baton-ac4-fallback-log-')),
-    adapters: { implementer, fallback }, requireIndependentOracle: true, watchdog: { stallMs: 0 },
+    adapters: { implementer, fallback }, requireIndependentOracle: true, watchdog: { stallMs: 60_000 }, // valid positive stallMs; watchdog never fires in this window
   });
   const parent = await coordinator.spawn('implementer', brief({ command: 'test -f src/x.js', expectExit: 0 }), { taskId: 'same-family-parent' });
   await until(async () => (await coordinator.result(parent.id)).ready);
@@ -300,7 +300,7 @@ test('CK8/CK9: review task creation failure reaches no reviewer adapter and pres
   let reviewerSpawns = 0;
   const rawSpawn = reviewer.spawn.bind(reviewer);
   reviewer.spawn = async (...args) => { reviewerSpawns += 1; return rawSpawn(...args); };
-  const driver = createDriver({ repoRoot: root, logDir: mkdtempSync(join(tmpdir(), 'baton-review-fault-log-')), adapters: { implementer, reviewer }, watchdog: { stallMs: 0 } });
+  const driver = createDriver({ repoRoot: root, logDir: mkdtempSync(join(tmpdir(), 'baton-review-fault-log-')), adapters: { implementer, reviewer }, watchdog: { stallMs: 60_000 } }); // valid positive stallMs; watchdog never fires in this window
   const parent = await driver.coordinator.spawn('implementer', brief({ command: 'test -f src/reviewed.txt', expectExit: 0 }), { taskId: 'review-fault-parent' });
   await until(async () => (await driver.coordinator.result(parent.id)).ready);
   const rawAppend = driver.coordination._appendFile;
@@ -345,7 +345,7 @@ test('AC5: ff-only integration reaps the worker/worktree/branch and records exac
 
   await closeForReplay(coordinator, coordination); const replay = createDriver({
     repoRoot: root, logDir, coordination,
-    adapters: { mock: new MockAdapter({ card: { concurrencyCeiling: 0 } }) }, watchdog: { stallMs: 0 },
+    adapters: { mock: new MockAdapter({ card: { concurrencyCeiling: 0 } }) }, watchdog: { stallMs: 60_000 }, // valid positive stallMs; watchdog never fires in this window
   });
   assert.deepEqual((await replay.coordinator.result(handle.id)).integration, response.integration);
   assert.equal((await replay.coordinator.result(handle.id)).retainedResultRef, `refs/baton/results/${response.integration.resultSha}`);
@@ -370,7 +370,7 @@ test('CK9: post-merge authority-batch failure poisons and replay refuses integra
   coordination._appendFile = rawAppend;
   await closeForReplay(coordinator, coordination); const replay = createDriver({
     repoRoot: root, logDir, coordination,
-    adapters: { mock: new MockAdapter({ card: { concurrencyCeiling: 0 } }) }, watchdog: { stallMs: 0 },
+    adapters: { mock: new MockAdapter({ card: { concurrencyCeiling: 0 } }) }, watchdog: { stallMs: 60_000 }, // valid positive stallMs; watchdog never fires in this window
   });
   assert.equal((await replay.coordinator.result(handle.id)).integration, null);
 });
@@ -394,7 +394,7 @@ test('CK9: replay rejects an asymmetric integration decision without driver and 
 
   await closeForReplay(coordinator, coordination); const replay = createDriver({
     repoRoot: root, logDir, coordination,
-    adapters: { mock: new MockAdapter({ card: { concurrencyCeiling: 0 } }) }, watchdog: { stallMs: 0 },
+    adapters: { mock: new MockAdapter({ card: { concurrencyCeiling: 0 } }) }, watchdog: { stallMs: 60_000 }, // valid positive stallMs; watchdog never fires in this window
   });
   assert.equal((await replay.coordinator.result(handle.id)).integration, null);
 });
@@ -481,7 +481,7 @@ test('AC5: integration refuses an unaccepted captured result', async () => {
   const adapter = new MockAdapter({ scenario: { outcome: 'completed' } });
   const { coordinator } = createDriver({
     repoRoot: root, logDir: mkdtempSync(join(tmpdir(), 'baton-ac5-reject-log-')), adapters: { mock: adapter },
-    watchdog: { stallMs: 0 },
+    watchdog: { stallMs: 60_000 }, // valid positive stallMs; watchdog never fires in this window
   });
   const handle = await coordinator.spawn('mock', brief({ command: 'false', expectExit: 0 }), { taskId: 'rejected-result' });
   await until(async () => (await coordinator.result(handle.id)).ready);
@@ -537,7 +537,7 @@ test('AC6: publication has no side effect before approval and allow publishes th
   await closeForReplay(coordinator, coordination); const replay = createDriver({
     repoRoot: root, logDir, coordination,
     adapters: { mock: new MockAdapter({ card: { concurrencyCeiling: 0 } }) },
-    publisher: async () => { throw new Error('replay must never republish'); }, watchdog: { stallMs: 0 },
+    publisher: async () => { throw new Error('replay must never republish'); }, watchdog: { stallMs: 60_000 }, // valid positive stallMs; watchdog never fires in this window
   });
   assert.deepEqual((await replay.coordinator.result(handle.id)).publication, { requestId: requested.requestId, ...requested.target, actor: 'test-user' });
 });
@@ -560,7 +560,7 @@ test('CK9: replay rejects an asymmetric publication decision without its paired 
   await closeForReplay(coordinator, coordination); const replay = createDriver({
     repoRoot: root, logDir, coordination,
     adapters: { mock: new MockAdapter({ card: { concurrencyCeiling: 0 } }) },
-    publisher: async () => { throw new Error('replay must never republish'); }, watchdog: { stallMs: 0 },
+    publisher: async () => { throw new Error('replay must never republish'); }, watchdog: { stallMs: 60_000 }, // valid positive stallMs; watchdog never fires in this window
   });
   assert.equal((await replay.coordinator.result(handle.id)).publication, null);
   assert.equal(calls.length, 0);
@@ -607,7 +607,7 @@ test('CK8/CK9: post-publish completion failure is bounded and preserves prior au
   await closeForReplay(coordinator, coordination); const replay = createDriver({
     repoRoot: root, logDir, coordination,
     adapters: { mock: new MockAdapter({ card: { concurrencyCeiling: 0 } }) },
-    publisher: async () => { throw new Error('replay must never republish'); }, watchdog: { stallMs: 0 },
+    publisher: async () => { throw new Error('replay must never republish'); }, watchdog: { stallMs: 60_000 }, // valid positive stallMs; watchdog never fires in this window
   });
   const replayed = await replay.coordinator.result(handle.id);
   assert.equal(replayed.status, 'completed', 'publication ambiguity does not rewrite the already integrated task');
@@ -656,7 +656,7 @@ test('AC6: restart drops a pending approval and cannot publish it by replay', as
   const replay = createDriver({
     repoRoot: first.root, logDir: first.logDir,
     adapters: { mock: new MockAdapter({ scenario: { outcome: 'completed' } }) },
-    publisher: async (target) => { replayCalls.push(target); }, watchdog: { stallMs: 0 },
+    publisher: async (target) => { replayCalls.push(target); }, watchdog: { stallMs: 60_000 }, // valid positive stallMs; watchdog never fires in this window
   });
   const response = await replay.coordinator.respond(request.requestId, { decision: 'allow', fence: request.fence }, 'test-user');
   assert.equal(response.result, 'not_found');
