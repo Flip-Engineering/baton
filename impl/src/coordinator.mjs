@@ -6860,8 +6860,8 @@ export class Coordinator {
       budgetError.code = 'message_budget_invalid';
       throw budgetError;
     }
-    if (!['inform', 'query', 'steer'].includes(kind)) {
-      throw new TypeError('message kind must be inform|query|steer');
+    if (!['inform', 'query', 'steer', 'brief', 'result'].includes(kind)) {
+      throw new TypeError('message kind must be inform|query|steer|brief|result');
     }
     if (typeof body !== 'string' || body.length === 0) {
       throw new TypeError('message body is required (non-empty string)');

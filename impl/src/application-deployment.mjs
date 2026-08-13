@@ -1716,6 +1716,31 @@ function defaultMacosKeychainMtime() {
   };
 }
 
+// Issue #74 (D1.2): the scratchpad read-authorization law at the deployment enforcement seam.
+// The shipped default authorize is NO LONGER the permissive `async () => true` — this restrictor
+// is the default. `run.scratchpad.read` of `shared` always resolves; a `worker:<scope>` read
+// resolves only for the member's own partition (principalId === scope), for the top orchestrator
+// (the review authority, FP-18: the deployment owner `local-owner` and its service principals),
+// or via an explicit wave-scoped grant (the named escape hatch — the two-level shape routes
+// through `shared` until a grant lane lands). A sibling `worker:<role>` read refuses
+// application_unauthorized — the "unknown ≡ foreign at the policy seam" default (#87,
+// facade-projection-contract.md:636). Non-read commands stay permissive.
+function restrictingReadAuthorize() {
+  return async (request = {}) => {
+    const { command, principal, subject } = request;
+    if (command !== 'run.scratchpad.read') return true;
+    const scope = subject?.scope;
+    if (scope === 'shared') return true;
+    if (typeof scope === 'string' && scope.startsWith('worker:')) {
+      const principalId = typeof principal?.principalId === 'string' ? principal.principalId : '';
+      if (principalId === scope) return true; // the member's own partition
+      if (principalId === 'local-owner' || principalId.startsWith('service-')) return true; // review authority
+      return false; // a sibling / foreign partition — no implicit cross-worker read
+    }
+    return true;
+  };
+}
+
 export async function openBatonDeployment(rawOptions, createDriver) {
   closed(rawOptions, ['advanced', 'repo'], 'deployment options');
   const repository = repositoryAuthority(rawOptions.repo ?? process.cwd());
@@ -2009,7 +2034,11 @@ export async function openBatonDeployment(rawOptions, createDriver) {
         openSession: (request) => contextRuntime.openSession(request),
         materializeCallResult: (request) => contextRuntime.materializeCallResult(request),
       },
-      authorize: async () => true,
+      // Issue #74 (D1.2): the scratchpad read-authorization law at the deployment seam. The
+      // permissive literal is GONE — the restricting authorize is the default (see
+      // restrictingReadAuthorize below). Non-read commands stay permissive; a foreign
+      // `worker:<scope>` read refuses application_unauthorized at the _authorize seam.
+      authorize: restrictingReadAuthorize(),
     });
     await application.ready;
     return new BatonDeployment(application, principal, readiness, {

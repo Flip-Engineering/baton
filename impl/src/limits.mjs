@@ -129,3 +129,14 @@ export const code = 'limits-module';
  * channel and never changes this digest — the CLI handshake stays green between identical code. */
 export const FRAME_LIMITS_DIGEST = createHash('sha256')
   .update(JSON.stringify(canonical(FRAME_LIMITS))).digest('hex');
+
+// Issue #74 (D2/A5) — the coordinator authority boundary. The ONE new refusal code this rung
+// introduces, plus the graceful escalation path it coaches. A coordinator-seat principal (a
+// worker seat, principalId `worker:<id>` — the G9 seat class that never holds `approve`) reaching
+// a wave/steering authority verb draws `coordinator_authority_forbidden` with {attempted,
+// gracefulPath}, where gracefulPath names the DECISION_REQUEST escalation lane (the human answers
+// via run.answer). The underlying denial stays application_unauthorized at the facade; this is
+// the coordinator-facing coaching wrapper (the #12 Decision-5 split). Byte literals live HERE
+// (Decision 8 no-re-declare law); the application dispatch seam consumes them by import.
+export const COORDINATOR_AUTHORITY_FORBIDDEN = 'coordinator_authority_forbidden';
+export const COORDINATOR_AUTHORITY_GRACEFUL_PATH = 'DECISION_REQUEST';
