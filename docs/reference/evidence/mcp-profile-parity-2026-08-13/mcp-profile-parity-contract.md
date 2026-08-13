@@ -1,6 +1,6 @@
 # Issue #156 — MCP default profile as a bus superset — implementation contract
 
-**Status:** v1.0 DRAFT
+**Status:** v1.1 DRAFT (folded — see Fold record)
 **Date:** 2026-08-13
 **Verification HEAD:** `f5bf3386cb2ac8d2bcd83079a13dfd8be534d894` (current worktree HEAD at drafting)
 **Brief:** `contract-156-brief.md` (this directory)
@@ -39,7 +39,7 @@ registry, `deriveSurfaceNames`, the `approve_plan` alias, the alias rows); (6) t
 `impl/test/phase16-mcp-northbound.test.mjs`, `impl/test/mcp-reflex-surface-red.test.mjs`,
 `impl/test/phase67-progressive-agent-experience.test.mjs`, `impl/test/phase72-kimi-orchestrator-mcp.test.mjs`
 (the five hand-pinned application tool lists), and the conformance gates
-(`render-surface-docs.mjs --check`, `scripts/surface-conformance.mjs` — both exit 0 at HEAD).
+(`render-surface-docs.mjs --check`, `impl/scripts/surface-conformance.mjs` — both exit 0 at HEAD).
 No NUL-bearing file was opened whole.
 
 **Cross-references (not re-specified here):** **#142** — generated docs, never hand-written (the
@@ -56,17 +56,17 @@ presentation-only change. Each is cited at the decision it touches.
 
 | # | Ground truth | Verified anchor |
 |---|--------------|-----------------|
-| G1 | **The application profile is `ORDINARY_APPLICATION_TOOL_DEFINITIONS` = 35 tools** (29 legacy + 6 M4b siblings), selected at construction and named by `mcpApplicationToolNames()`. | `impl/src/mcp-northbound.mjs:690-696` (table), `:1269-1270` (selection), `:2222-2224` (`mcpApplicationToolNames()`); `scripts/surface-inventory-artifact.json:56-92` (`mcp.application` = 35) |
-| G2 | **The parity gap is 14 ops, mechanically derivable.** The web bus = the 25 `web:true` commands in `APPLICATION_COMMAND_DEFINITIONS`; the application profile's served command set = the 11 unique commands in `ORDINARY_APPLICATION_ENTRIES`. Bus − served = exactly the audit's 14. Verified this session by command-level derivation. | `application.mjs:168-207` (web:true/mcp:true flags; `run.status`:183, `run.follow`:184, `run.approve`:185, `run.wait`:186, `run.answer`:187, `run.feedback`:188, `run.evidence`:190, `run.adopt`:191, `run.retry_verification`:192, `run.resume_work`:193, `run.review`:194, `run.integrate`:195, `run.export`:196, `run.recover`:197); `mcp-northbound.mjs:54-70` (`ORDINARY_APPLICATION_ENTRIES`); `scripts/surface-conformance.mjs:378-383` (`webBusNames()`); `scripts/surface-inventory-artifact.json:12` (`webBusCommands` = 25), `:202-…` (`web.bus` = 25) |
-| G3 | **The two hard-missing tools already have full dispatch machinery; only the tool DEFINITION is missing.** `fleet_run_resume_work`→`run.resume_work` and `fleet_run_retry_verification`→`run.retry_verification` are admitted by `MCP_APPLICATION_ENTRIES` (both `mcp:true`), registered in `APPLICATION_TOOL`, `CAPABILITY`, `STATEFUL`, `RECONCILABLE`; `tools/call` refuses only because the name is not in `toolNames` (no definition row). | `mcp-northbound.mjs:14-16` (`MCP_APPLICATION_ENTRIES`), `:33-42` (`APPLICATION_TOOL`), `:79-86` (`CAPABILITY`), `:128-140` (`STATEFUL`), `:141-148` (`RECONCILABLE`), `:383-402` (`APPLICATION_TOOL_DEFINITIONS` — no resume/retry rows), `:1390` (`tools/call` name check); `application.mjs:192-193` (`run.retry_verification`/`run.resume_work` are `web:true, mcp:true, mcpStateful:true, reconcilable:true`); artifact has neither in `mcp.combined` (`surface-inventory-artifact.json:114-200`) |
-| G4 | **The M4b pattern is the existing sibling mechanism.** Each canonical sibling inherits its legacy sibling's exact wire schema, annotations, and dispatch, so one operation is reachable under either spelling. | `mcp-northbound.mjs:23-32` (`CANONICAL_ORDINARY_SIBLINGS`, 6 rows), `:690-694` (sibling definition = `{...base, name: sibling.tool}`), `:751-754` (the M4b contract comment); `surface-audit-mcp.md:65` (the audit's "covers only 10 ops" is its count of ops already reachable under a `baton_*` spelling; the actual table is the 6 rows above) |
+| G1 | **The application profile is `ORDINARY_APPLICATION_TOOL_DEFINITIONS` = 35 tools** (29 legacy + 6 M4b siblings), selected at construction and named by `mcpApplicationToolNames()`. | `impl/src/mcp-northbound.mjs:690-696` (table), `:1269-1270` (selection), `:2222-2224` (`mcpApplicationToolNames()`); `impl/scripts/surface-inventory-artifact.json:56-92` (`mcp.application` = 35) |
+| G2 | **The parity gap is 14 ops, mechanically derivable.** The web bus = the 25 `web:true` commands in `APPLICATION_COMMAND_DEFINITIONS`; the application profile's served command set = the 11 unique commands in `ORDINARY_APPLICATION_ENTRIES`. Bus − served = exactly the audit's 14. Verified this session by command-level derivation. | `application.mjs:168-207` (web:true/mcp:true flags; `run.status`:183, `run.follow`:184, `run.approve`:185, `run.wait`:186, `run.answer`:187, `run.feedback`:188, `run.evidence`:190, `run.adopt`:191, `run.retry_verification`:192, `run.resume_work`:193, `run.review`:194, `run.integrate`:195, `run.export`:196, `run.recover`:197); `mcp-northbound.mjs:54-70` (`ORDINARY_APPLICATION_ENTRIES`); `impl/scripts/surface-conformance.mjs:378-383` (`webBusNames()`); `impl/scripts/surface-inventory-artifact.json:12` (`webBusCommands` = 25), `:202-…` (`web.bus` = 25) |
+| G3 | **The two hard-missing tools already have full dispatch machinery; only the tool DEFINITION is missing.** `fleet_run_resume_work`→`run.resume_work` and `fleet_run_retry_verification`→`run.retry_verification` are admitted by `MCP_APPLICATION_ENTRIES` (both `mcp:true`), registered in `APPLICATION_TOOL`, `CAPABILITY`, `STATEFUL`, `RECONCILABLE`; `tools/call` refuses only because the name is not in `toolNames` (no definition row). | `mcp-northbound.mjs:14-16` (`MCP_APPLICATION_ENTRIES`), `:33-42` (`APPLICATION_TOOL`), `:79-86` (`CAPABILITY`), `:128-140` (`STATEFUL`), `:141-148` (`RECONCILABLE`), `:383-402` (`APPLICATION_TOOL_DEFINITIONS` — no resume/retry rows), `:1390` (`tools/call` name check); `application.mjs:192-193` (`run.retry_verification`/`run.resume_work` are `web:true, mcp:true, mcpStateful:true, reconcilable:true`); artifact has neither in `mcp.combined` (`impl/scripts/surface-inventory-artifact.json:114-200`) |
+| G4 | **The M4b pattern is the existing sibling mechanism.** Each canonical sibling inherits its legacy sibling's exact wire schema, annotations, and dispatch, so one operation is reachable under either spelling. | `mcp-northbound.mjs:23-32` (`CANONICAL_ORDINARY_SIBLINGS`, 6 rows), `:690-694` (sibling definition = `{...base, name: sibling.tool}`), `:685-689` (the M4b contract comment); `surface-audit-mcp.md:65` (the audit's "covers only 10 ops" is its count of ops already reachable under a `baton_*` spelling; the actual table is the 6 rows above) |
 | G5 | **The 12 lifecycle ops have NO legacy `baton_*` base — their canonical spelling is the `fleet_run_*` definition in `APPLICATION_TOOL_DEFINITIONS`.** These 18 `fleet_run_*` rows carry `execution: { taskSupport: 'forbidden' }` (stamped by the table `.map`) but NOT `_meta`. | `mcp-northbound.mjs:383-402` (`fleet_run_start`:384 … `fleet_run_export`:401; the `.map` stamp at `:402`), `:403-685` (the legacy table that DOES carry `_meta`, stamped at `:683-689`) |
 | G6 | **The bus verb semantics for the two hard-missing ops are registry-authoritative and bounded.** `run.resume_work`/`run.retry_verification` take `{runId, reason}`, `reason` max 1_024, coordinate-free (PS5); malformed args throw `application_resume_invalid` / `application_retry_invalid`; `stateFailureCode` passes every `application_*` code through verbatim. | `application-semantics.mjs:675-682` (registry `retry_verification`/`resume_work` label+summary), `:722-723` (capabilities `['resume_work','observe']`/`['retry_verification','observe']`); `application.mjs:1071-1089` (`normalizeRetryVerification`/`normalizeResumeWork`), `:1080` (the PS5 comment), `:5347, 5433` (`_authorize` on both); `mcp-northbound.mjs:201-210` (`stateFailureCode` application_* passthrough) |
-| G7 | **Both conformance gates pass at HEAD.** `render-surface-docs.mjs --check` exits 0 (the generated MCP.md/CLI.md blocks are byte-current) and `scripts/surface-conformance.mjs` prints `surface-conformance: ok` and exits 0 (profile-doc parity holds at 35 application / 86 combined / 25 web). | verified this session at the verification HEAD; `render-surface-docs.mjs:145-154` (`checkSurfaceDocs`), `surface-conformance.mjs:735-745` (parity main) |
+| G7 | **Both conformance gates pass at HEAD.** `render-surface-docs.mjs --check` exits 0 (the generated MCP.md/CLI.md blocks are byte-current) and `impl/scripts/surface-conformance.mjs` prints `surface-conformance: ok` and exits 0 (profile-doc parity holds at 35 application / 86 combined / 25 web). | verified this session at the verification HEAD; `render-surface-docs.mjs:145-154` (`checkSurfaceDocs`), `impl/scripts/surface-conformance.mjs:735-745` (parity main) |
 | G8 | **The 35-tool application inventory is hand-pinned in five test sites** (plus the combined-count/prefix pins). Each lists the exact 35 names and must be updated on implementation. | `impl/test/phase16-mcp-northbound.test.mjs:92-103` (application list), `:121-122` (combined = 86 + ordinary prefix); `impl/test/mcp-reflex-surface-red.test.mjs:201-215` (length 35 + list); `impl/test/phase67-progressive-agent-experience.test.mjs:647-661` (list + `additionalProperties === false` + every tool's `_meta['baton/registryDigest']`); `impl/test/phase72-kimi-orchestrator-mcp.test.mjs:296-308` and `:629-…` (two more 35-lists) |
 | G9 | **MCP.md documents the application default and its kernel-control caveat; the tool inventory below is generated.** | `impl/MCP.md:46-47` (`application` is "the documented default"; `advanced`/`combined` are "explicit kernel-control deployments"), `:83-89` (the initialize prose), `:144-184` (the generated inventory block); `render-surface-docs.mjs:95-119` (`renderMcpToolInventory` — tool list from `mcpApplicationToolNames()`) |
-| G10 | **The doc-parity gate enforces the generated doc's completeness.** For `mcp.application`, `checkProfileDocParity` extracts the tool column from the generated block and asserts every served tool appears; a served table that grows forces the doc to regenerate or the gate fails. | `surface-conformance.mjs:495-545` (`checkProfileDocParity`, the `mcp.application` branch at `:501-523`) |
-| G11 | **The renderer resolves a tool to its operation key via `mcp.baton` surfaceAlias rows, else canonical `byDerived`, else the fallback key = the tool name.** 9 of the 14 ops are canonical (resolve cleanly); 5 are not (`run.status`, `run.follow`, `run.wait`, `run.resume_work`, `run.retry_verification`) and would fall back to showing the tool name as its own operation key. Alias rows live in `SURFACE_ALIAS_ROWS` → `presentationProjection`, which provably cannot move `authorityDigest` (and thus the tools' `_meta` stamps). | `render-surface-docs.mjs:104-115` (alias → byDerived → fallback); `application-semantics.mjs:1731` (`SURFACE_ALIAS_ROWS`), `:2020-2059` (`authorityProjection` excludes `surfaceAliases`; `presentationProjection` includes them), `:2060` (`digest: authorityDigest`); verified: the 14 canonical/not-canonical split (9 canonical, 5 not) |
+| G10 | **The doc-parity gate enforces the generated doc's completeness.** For `mcp.application`, `checkProfileDocParity` extracts the tool column from the generated block and asserts every served tool appears; a served table that grows forces the doc to regenerate or the gate fails. | `impl/scripts/surface-conformance.mjs:495-545` (`checkProfileDocParity`, the `mcp.application` branch at `:502-523`) |
+| G11 | **The renderer resolves a tool to its operation key via `mcp.baton` surfaceAlias rows, else canonical `byDerived`, else the alias-canonical fallback (D4 item 1), else the fallback key = the tool name.** 9 of the 14 ops are canonical (resolve cleanly via `byDerived`); the 5 non-canonical ops (`run.status`, `run.follow`, `run.wait`, `run.resume_work`, `run.retry_verification`) resolve through the 5 `mcp.baton` surfaceAlias rows plus the renderer's canonical-miss fallback (D4 item 1) — no longer the `key = tool` fallback. Alias rows live in `SURFACE_ALIAS_ROWS` → `presentationProjection`, which provably cannot move `authorityDigest` (and thus the tools' `_meta` stamps). | `render-surface-docs.mjs:104-115` (alias → byDerived → fallback); `application-semantics.mjs:1731` (`SURFACE_ALIAS_ROWS`), `:1990-2060` (`authorityProjection` excludes `surfaceAliases`; `presentationProjection` includes them), `:2060` (`digest: authorityDigest`); verified: the 14 canonical/not-canonical split (9 canonical, 5 not) |
 | G12 | **`run.approve` is reachable on the application profile only indirectly today** — via `baton_run_act`'s approve_plan semantic action, which requires a digest-keyed `actionId` the agent must already have read out of a run view. There is no direct `run.approve`. | `application-semantics.mjs:810` (`approve_plan: 'run.approve'`); `surface-audit-mcp.md:40, 68` (the audit's "partial" verdict and finding 5) |
 | G13 | **The wait/follow bounded-wait special cases are hard-coded to the `fleet_run_*` spellings** in two sites. Both must admit the new `baton_run_*` siblings or the siblings bypass the maxWaitMs bound and the observe-path authority gate. | `mcp-northbound.mjs:954-955` (`validateArguments`: `['fleet_run_wait', 'fleet_run_follow']` → `invalid_run_wait`), `:1510` (the observe-path post-dispatch `_authority` gate `['fleet_run_follow', 'fleet_run_wait']`) |
 | G14 | **The 14 commands' admission facts are closed.** All are `web:true, mcp:true, reconcilable:true`; 10 are `mcpStateful:true` (`approve/answer/adopt/export/feedback/integrate/recover/review/resume_work/retry_verification`), 4 are read-only (`status/follow/wait/evidence`). Their capability classes and command args are the sibling tables' source. | verified this session from `APPLICATION_COMMAND_DEFINITIONS` (full table in §2 D1) |
@@ -83,8 +83,8 @@ reject the alternative (flipping the documented default to `combined`).** The op
 the crippled one. `combined` serves the kernel + reflex surface — `fleet_spawn`/`fleet_send`/
 `fleet_kill`, goal/plan, board/package/REPL/knowledge (`mcp-northbound.mjs:697-754, 756-830`) —
 which MCP.md documents as "explicit kernel-control deployments" (`MCP.md:46-47, 87`). Flipping the
-default would balloon the trusted surface from 35 to 102 tools and contradict the documented
-posture, trading a 14-op gap for an 86-tool authority expansion. The sibling extension instead
+default would balloon the trusted surface from 35 to 86 today (102 after D1+D2) and contradict the
+documented posture, trading a 14-op gap for an 86-tool authority expansion. The sibling extension instead
 gives the ordinary surface a stable `baton_*` spelling for every bus verb, exactly as the audit's
 F1 fix prescribes (`surface-audit-mcp.md:124`), reusing the M4b mechanism the audit found sound.
 
@@ -104,7 +104,9 @@ list (the #159 doctrine).** Two new derivations and one new table, all inside
 `mcp-northbound.mjs`:
 
 1. **The served-command set**, exported for the red suite (D3):
-   `mcpApplicationCommandNames() = [...new Set(ORDINARY_APPLICATION_ENTRIES.map(([, command]) => command))].sort()`.
+   `mcpApplicationCommandNames() = [...new Set(ORDINARY_APPLICATION_ENTRIES.map(([, command]) => command))].sort()`,
+   and **the dispatch map**, exported for the red suite's dispatch-binding pin (D3):
+   `mcpApplicationDispatch()` returns the frozen `APPLICATION_TOOL` tool→command map (`:33-42`).
 2. **The uncovered set**, computed at module load from the two admission maps:
    `uncoveredCommands() = webCommands.filter((name) => !servedCommands.has(name))` where
    `webCommands = Object.entries(APPLICATION_COMMAND_DEFINITIONS).filter(([, d]) => d.web).map(([name]) => name)`
@@ -131,6 +133,12 @@ list (the #159 doctrine).** Two new derivations and one new table, all inside
    | run.resume_work | baton_run_resume_work | fleet_run_resume_work (new, D2) | ✓ | resume_work+observe |
    | run.retry_verification | baton_run_retry_verification | fleet_run_retry_verification (new, D2) | ✓ | retry_verification+observe |
 
+*The 14-row table above is **illustrative** (QA M1). The per-op stateful flags and capability-class
+strings are hand-copied for the reader; the authoritative values are
+`APPLICATION_COMMAND_DEFINITIONS[command].mcpStateful` / `.capabilities` in the registry
+(`application.mjs:168-207`), and the sibling derivation spreads them mechanically. A drift between
+this table and the registry is a doc bug, never the spec.*
+
 3. **Three registration spreads** carry each sibling onto every surface that already routes it:
    - `ORDINARY_APPLICATION_ENTRIES` (:54-70): `[tool, command, APPLICATION_COMMAND_DEFINITIONS[command]]` per sibling — this is what makes the served-command set (and the D3 law) grow.
    - `APPLICATION_TOOL` (:33-42): `[tool, command]` per sibling — this is what `_dispatch` (:1691) and `applicationArgs` (:903-912) route on.
@@ -152,6 +160,18 @@ list (the #159 doctrine).** Two new derivations and one new table, all inside
 Because `CAPABILITY` (:85), `STATEFUL` (:139-140), and `RECONCILABLE` (:147-148) are each built by
 spreading `ORDINARY_APPLICATION_ENTRIES`, the three spreads above register every sibling's
 capability classes, stateful idempotency, and reconcilable replay with no further code.
+
+**Construction order — the gap snapshot precedes the spread (red-team Gap 1; QA §2.5 item 4).**
+`uncoveredCommands()` must snapshot the served-command set from the **hand-rows-only**
+`ORDINARY_APPLICATION_ENTRIES` BEFORE the LIFECYCLE rows are spread into it. `ORDINARY_APPLICATION_ENTRIES`
+is a frozen literal; growing it means a new binding, so computing `uncoveredCommands()` after the
+spread (or reading `servedCommands` from the grown table) would return `[]` — the D3 law would pass
+vacuously and no sibling would ever be created. **Hand-inlining the 14 rows is FORBIDDEN**: a
+hand-written sibling table would satisfy the D3 output pin (uncovered = `[]`) while violating the
+#159 doctrine. The red suite pins the MECHANISM, not just the output: (a) `LIFECYCLE_ORDINARY_SIBLINGS`
+is built by `.map` over `uncoveredCommands()` with `key`/`tool`/`source` each derived
+(`deriveSurfaceNames` / the command name — never literal); (b) the pre-spread snapshot reports
+exactly 14 uncovered; (c) the spread occurs after the snapshot.
 
 **The combined profile inherits the siblings automatically** — `TOOL_DEFINITIONS` is
 `[...ORDINARY_APPLICATION_TOOL_DEFINITIONS, ...APPLICATION_TOOL_DEFINITIONS, ...ADVANCED_TOOL_DEFINITIONS, ...REFLEX_TOOL_DEFINITIONS]`
@@ -220,7 +240,7 @@ export (the ordinary dispatch table — the admission map). Neither side is a ha
 ```js
 import { APPLICATION_COMMAND_DEFINITIONS } from '../src/application.mjs';
 import { deriveSurfaceNames } from '../src/application-semantics.mjs';
-import { mcpApplicationCommandNames, mcpApplicationToolNames, mcpCombinedToolNames } from '../src/mcp-northbound.mjs';
+import { mcpApplicationCommandNames, mcpApplicationToolNames, mcpCombinedToolNames, mcpApplicationDispatch } from '../src/mcp-northbound.mjs';
 
 const busCommands = Object.entries(APPLICATION_COMMAND_DEFINITIONS)
   .filter(([, definition]) => definition.web)
@@ -231,9 +251,11 @@ const uncovered = busCommands.filter((command) => !servedCommands.includes(comma
 assert.deepEqual(uncovered, [], 'every web-bus command is a served application command');
 ```
 
-At HEAD the assertion fails with exactly the audit's 14 names in the diff (the red state). On
-implementation it goes green with `[]`. The per-op proof is the diff itself: each uncovered name is
-an op. A second, tool-level row closes the loop — every uncovered command's sibling tool exists at
+At HEAD the red state is the import itself — `mcpApplicationCommandNames()` does not exist (RG-01),
+so the suite's import throws before any assertion runs. Once the export lands, the derivation
+reports the audit's 14 uncovered names (the red state); after D1 it goes green with `[]`. The per-op
+proof is the diff itself: each uncovered name is an op. A second, tool-level row closes the loop —
+every uncovered command's sibling tool exists at
 the default (the D1 mechanism rendered through the ONE shared `deriveSurfaceNames`), so the law is
 proven on tools, not just commands:
 
@@ -243,6 +265,20 @@ const missingSibling = busCommands
   .map((command) => deriveSurfaceNames(command).mcp)
   .filter((tool) => !mcpApplicationToolNames().includes(tool));
 assert.deepEqual(missingSibling, [], 'every uncovered bus command has a default-profile sibling tool');
+```
+
+A third, dispatch-binding row closes the remaining shallow-greenable surface — the sibling exists AND
+is routed to its command by the ordinary dispatch table. This is the exported `mcpApplicationDispatch()`
+map (D1 step 1), the same `APPLICATION_TOOL` the server's `_dispatch` routes on (`:1691`); a
+hand-written sibling table that never dispatches cannot pass it:
+
+```js
+const dispatch = mcpApplicationDispatch();
+const unboundSibling = busCommands
+  .filter((command) => !servedCommands.includes(command))
+  .map((command) => ({ command, tool: deriveSurfaceNames(command).mcp }))
+  .filter(({ command, tool }) => dispatch[tool] !== command);
+assert.deepEqual(unboundSibling, [], 'every uncovered bus command has its sibling tool bound to it in the ordinary dispatch map');
 ```
 
 (Note: a bare `tools.length === commands.length` equality is NOT asserted — the profile serves 49
@@ -267,25 +303,33 @@ encode a stale hand list.
 The #142 law is already satisfied for the inventory: `renderMcpToolInventory` reads
 `mcpApplicationToolNames()` (`render-surface-docs.mjs:95-119`), so adding the 14 siblings to
 `ORDINARY_APPLICATION_TOOL_DEFINITIONS` regenerates the table to 49 rows with no hand edit — and the
-`checkProfileDocParity` gate (`surface-conformance.mjs:501-523`) REFUSES a served tool absent from
-the doc, so a stale block cannot ship. Three follow-through items make the doc teach the final
+`checkProfileDocParity` gate (`impl/scripts/surface-conformance.mjs:502-523`) REFUSES a served tool
+absent from the doc, so a stale block cannot ship. Three follow-through items make the doc teach the final
 shape:
 
-1. **Five `mcp.baton` surfaceAlias rows** so the 5 non-canonical ops resolve to their operation
-   keys instead of the renderer's `key = tool` fallback (G11): `['run.status', 'mcp.baton', 'baton_run_status']`,
+1. **Five `mcp.baton` surfaceAlias rows + a renderer canonical-miss fallback** so the 5
+   non-canonical ops resolve to their operation keys instead of the renderer's `key = tool` fallback
+   (G11): `['run.status', 'mcp.baton', 'baton_run_status']`,
    `['run.follow', 'mcp.baton', 'baton_run_follow']`, `['run.wait', 'mcp.baton', 'baton_run_wait']`,
    `['run.resume_work', 'mcp.baton', 'baton_run_resume_work']`,
    `['run.retry_verification', 'mcp.baton', 'baton_run_retry_verification']`, added to
-   `SURFACE_ALIAS_ROWS` (`application-semantics.mjs:1731`). These touch `presentationProjection`
+   `SURFACE_ALIAS_ROWS` (`application-semantics.mjs:1731`). Each row is in the registry's
+   `[canonical, surface, name]` tuple shape (`application-semantics.mjs:1981`) — `name` = the sibling
+   tool, `surface` = `mcp.baton`, `canonical` = the operation key. **Because these 5 keys are NOT
+   canonical** (`canonicalOperations` has no `entry.key` for them — the G11 9/5 split), the rows
+   alone cannot resolve them: `renderMcpToolInventory` (`render-surface-docs.mjs:104-115`) MUST add
+   a canonical-miss fallback — `canonicalOperations.find((entry) => entry.key === alias.canonical)
+   ?? { key: alias.canonical, profile: 'ordinary' }` — so an alias whose canonical key has no
+   `canonicalOperations` entry still renders the operation key. These touch `presentationProjection`
    only — `authorityProjection` excludes `surfaceAliases` and `digest = authorityDigest`
-   (`application-semantics.mjs:2020-2060`), so the tools' `_meta` stamps and live-session authority
+   (`application-semantics.mjs:1990-2060`), so the tools' `_meta` stamps and live-session authority
    provably cannot move (M4A-3). The 9 canonical ops need no rows (`byDerived` resolves them).
 2. **The prose refresh** (hand-maintained, like all prose): MCP.md's application-default blocks
    (`:46-47`, `:83-89`) must teach that the default serves every web-bus verb — e.g. "the
    documented default; it serves the full run-lifecycle and web-bus surface" — while keeping the
    kernel-control caveat on `advanced`/`combined`.
-3. **Regenerate the inventory artifact** so the counts reflect the new surface: `scripts/surface-conformance.mjs`
-   (`--write-inventory`, the surface-inventory-artifact.json writer) yields `mcp.application` 35 → 49,
+3. **Regenerate the inventory artifact** so the counts reflect the new surface: `impl/scripts/surface-conformance.mjs`
+   (`--write-inventory`, the `impl/scripts/surface-inventory-artifact.json` writer) yields `mcp.application` 35 → 49,
    `mcp.combined` 86 → 102, `mcp.advanced` 19 unchanged, `web.bus` 25 unchanged,
    `webBusCommands` 25 unchanged, `applicationCommandDefinitions` 26 unchanged. The gate's
    `checkProfileDocParity` then passes against the regenerated blocks.
@@ -354,6 +398,11 @@ also inherit the observe-path authority gate (extended `:1510`).
   `baton_decision_answer` (they coexist — one is the run-lifecycle spelling, one the decision
   channel, both reach `run.answer`); touching `run.answer`'s strict `applicationAnswerSchema`
   (a #159-adjacent question, out of scope).
+- **Named residual (red-team Gap 2): the two wait/follow special-case lists (`:954-955`, `:1510`)
+  are hand-extended to admit `baton_run_wait`/`baton_run_follow`, and nothing mechanically keeps a
+  future wait-like verb in both lists.** RG-07 pins only the two named tools. Accepted for this
+  change; a future wait/follow verb can silently bypass the bounded-wait gate until the lists are
+  mechanically derived.
 
 ## 6. Red-first acceptance
 
@@ -376,8 +425,8 @@ weakened).
 | RG-07 | No `baton_run_wait`/`baton_run_follow` exists to bound. | `baton_run_wait` with `timeoutMs > maxWaitMs` returns `invalid_run_wait`; within the bound it dispatches and the observe-path `_authority` gate runs post-dispatch (extended `:954-955`, `:1510`). |
 | RG-08 | Calling `fleet_run_resume_work`/`fleet_run_retry_verification` refuses at the `tools/call` name check today (`:1390`). | Both dispatch to `run.resume_work`/`run.retry_verification`; malformed args return `application_resume_invalid`/`application_retry_invalid`; `idempotencyKey` is required (stateful); an exact retry reconciles (reconcilable). |
 | RG-09 | Combined serves 86 tools with no resume/retry. | Combined serves 102 tools including `fleet_run_resume_work` + `fleet_run_retry_verification`; the 14 `baton_*` siblings lead the ordinary prefix. |
-| RG-10 | The generated MCP.md inventory lists 35 application tools; the 5 non-canonical ops would render as `key = tool`. | `render-surface-docs.mjs --check` passes with the 49-row generated block; the 5 alias rows resolve `run.status`→`baton_run_status`, `run.follow`→`baton_run_follow`, `run.wait`→`baton_run_wait`, `run.resume_work`→`baton_run_resume_work`, `run.retry_verification`→`baton_run_retry_verification` in the Operation column; MCP.md's prose teaches the final shape (D4). |
-| RG-11 | `surface-conformance.mjs` passes today at 35/86 (a 49/102 surface is not representable). | `surface-conformance.mjs` prints `surface-conformance: ok` at 49/102; `surface-inventory-artifact.json` is regenerated (`mcp.application` = 49, `mcp.combined` = 102). |
+| RG-10 | The generated MCP.md inventory lists 35 application tools; the 5 non-canonical ops would render as `key = tool`. | `render-surface-docs.mjs --check` passes with the 49-row generated block; the renderer's canonical-miss fallback + the 5 `mcp.baton` surfaceAlias rows (D4 item 1) resolve the non-canonical ops to `run.status`, `run.follow`, `run.wait`, `run.resume_work`, `run.retry_verification` in the Operation column (with `baton_run_status`/`baton_run_follow`/… in the MCP tool column); MCP.md's prose teaches the final shape (D4). |
+| RG-11 | `impl/scripts/surface-conformance.mjs` passes today at 35/86 (the current committed artifact encodes 35/86). | `impl/scripts/surface-conformance.mjs` prints `surface-conformance: ok` at 49/102; `impl/scripts/surface-inventory-artifact.json` is regenerated (`mcp.application` = 49, `mcp.combined` = 102). |
 | RG-12 | The five hand-pinned application tool lists + combined-count pins are 35/86 today. | `phase16:92-103` + `:121-122`, `mcp-reflex-surface-red.test.mjs:201-215`, `phase67:647-661`, and `phase72:296-308` + `:629-…` are updated to the 49/102 shapes, re-derived from `mcpApplicationToolNames()`/`mcpCombinedToolNames()` outputs (never re-authored by hand); `phase67:660` (every ordinary tool carries `_meta['baton/registryDigest']`) still passes because the sibling constructor adds the stamp. |
 
 **The verification HEAD** is `f5bf3386cb2ac8d2bcd83079a13dfd8be534d894` (current worktree HEAD at
@@ -396,13 +445,15 @@ pinned future-gate properties, not properties the current gate must yet emit.
    run-lifecycle spelling, one decision channel, one op). A reviewer who prefers to treat the
    decision channel as satisfying `run.answer` must justify an exclusion in the parity law — the
    mechanical pin would otherwise fail.
-2. **The doc resolution of the 5 non-canonical ops.** D4 adds 5 `mcp.baton` surfaceAlias rows (a
-   `presentationProjection`-only registry touch; `authorityDigest` provably unmoved, M4A-3) so the
-   generated table teaches the operation keys. The alternative — accepting the renderer's `key =
-   tool` fallback — is a zero-registry change but teaches tool names, not bus verbs. **Verdict:**
-   add the alias rows. Flag for the reviewer: any audit that pins the registry `presentationDigest`
-   (e.g. banned-token/ordering sweeps over `SURFACE_ALIAS_ROWS`) will see the 5 rows move it; the
-   authority surface cannot move.
+2. **The doc resolution of the 5 non-canonical ops.** D4 adds 5 `mcp.baton` surfaceAlias rows +
+   the renderer's canonical-miss fallback (a `presentationProjection`-only registry touch;
+   `authorityDigest` provably unmoved, M4A-3) so the generated table teaches the operation keys.
+   The rows alone cannot resolve the 5 non-canonical keys (no `canonicalOperations` entry exists),
+   so the fallback is the operative fix. The alternative — accepting the renderer's `key = tool`
+   fallback — is a zero-registry change but teaches tool names, not bus verbs. **Verdict:** add the
+   alias rows + the renderer fallback. Flag for the reviewer: any audit that pins the registry
+   `presentationDigest` (e.g. banned-token/ordering sweeps over `SURFACE_ALIAS_ROWS`) will see the
+   5 rows move it; the authority surface cannot move.
 3. **Where the 14 sibling rows live.** D1 uses a new `LIFECYCLE_ORDINARY_SIBLINGS` table derived
    from the admission maps, because the source definitions differ from `CANONICAL_ORDINARY_SIBLINGS`
    (which sources the legacy `baton_*` table; the lifecycle siblings source the `fleet_run_*`
@@ -410,8 +461,50 @@ pinned future-gate properties, not properties the current gate must yet emit.
    `CANONICAL_ORDINARY_SIBLINGS` must extend its source resolution to `APPLICATION_TOOL_DEFINITIONS`.
 4. **The parity law's boundary.** The law is measured against `APPLICATION_COMMAND_DEFINITIONS`
    `web:true` — the same admission map the web bus derives from (`webBusNames()`,
-   `surface-conformance.mjs:378-383`). The web northbound's direct-port wave verbs
+   `impl/scripts/surface-conformance.mjs:378-383`). The web northbound's direct-port wave verbs
    (`WAVE_WEB_ENTRIES`, `web-northbound.mjs:31-38`) are deliberately outside the map (they are
    MCP-only or direct ports, `surface-audit-mcp.md:20-25`); a reviewer who wants the law to also
    cover them must extend the bus side — that is a separate web-parity question (#159-adjacent), not
    part of #156's default-profile gap.
+
+---
+
+## Fold record
+
+**Fold:** v1.0 → v1.1 · **Date:** 2026-08-13
+**Red-team:** `docs/reference/evidence/mcp-profile-parity-2026-08-13/redteam-156.md` (row-rt156)
+**QA:** `docs/reference/evidence/review-foundry-2026-08-13/review-qa.md` §2.5
+**Frame:** `docs/reference/evidence/fold-2026-08-13/foundry-brief.md` (the shared laws)
+
+| Blocker / amendment / note | Resolution |
+|---|---|
+| Blocker 1 — D4 item 1 / RG-10 unachievable (the 5 `mcp.baton` alias rows are inert) | **FOLDED** — fix 1 adopted: keep the 5 rows (they are already the registry's `[canonical, surface, name]` shape — `name` = the tool), add the renderer's canonical-miss fallback `?? { key: alias.canonical, profile: 'ordinary' }` (D4 item 1, G11, RG-10). The red-team's "corrected rows" `['baton_run_status','mcp.baton','run.status']` invert `name`/`canonical` vs the registry tuple and are NOT adopted. |
+| Amendment 2 — D1 Gap 1 (construction order + mechanism pin) | **FOLDED** — D1 pins the gap snapshot before the sibling spread, forbids hand-inlining the 14 rows, and pins the mechanism (`.map` over `uncoveredCommands()`, key/tool/source derived, pre-spread snapshot = 14). |
+| Amendment 3 — C-2 / C-3 / C-4 citation fixes | **FOLDED** — `scripts/` → `impl/scripts/` (G1/G2/G3/G7/G10/D4.3/RG-11/OQ4); M4b comment `:751-754` → `:685-689` (G4); D1 prose "35 to 102" → "35 to 86 today, 102 after D1+D2". |
+| QA §2.5 item 3 — C-6 (D3 red-state sentence) | **FOLDED** — rephrased: the red state is the import throw (no `mcpApplicationCommandNames()`), then the 14-name diff, then `[]`. |
+| QA §2.5 item 2 — strike C-1 and C-5 | **STRUCK** — C-1 (served commands = 11 unique, not 16; the prior report read sibling `key`s as `command`s) and C-5 (MCP.md:87 "families for kernel-control deployments" is correct) are false alarms; the contract's G2 11-unique claim and `MCP.md:46-47, 87` citations stand unchanged. |
+| QA §2.5 item 5 — M1 (D1 table illustrative) | **FOLDED** — the D1 14-row table is marked illustrative; authority = `APPLICATION_COMMAND_DEFINITIONS[command].mcpStateful` / `.capabilities`. |
+| QA §2.5 item 6 — optional third D3 dispatch-binding pin | **FOLDED (adopted)** — new `mcpApplicationDispatch()` export + a third D3 pin row asserting each uncovered command's sibling tool is bound to it in the ordinary dispatch map. |
+| Note 4 — D1 Gap 2 (wait/follow list drift) | **FOLDED as named residual** — accepted; recorded in §5 as a named non-goal. |
+| Note 5 — G10/G11 span imprecisions | **FOLDED** — G10 `mcp.application` branch `:501-523` → `:502-523`; G11 projection region `:2020-2059` → `:1990-2060`. |
+| Note 6 — RG-11 wording | **FOLDED** — "a 49/102 surface is not representable" → "the current committed artifact encodes 35/86". |
+
+**Judgment calls (recorded per the frame):**
+- **Fix 1 over fix 3 for the D4 HOLE:** the renderer fallback is a 1-line presentation-only change
+  that keeps the doc's teaching purpose (the Operation column shows the bus verbs — the point of the
+  parity law) while preserving M4A-3's "authority cannot move" guarantee. Fix 3 would teach tool
+  spellings for exactly the 5 ops the law is about.
+- **The red-team's "corrected rows" are not adopted as stated:** the registry tuple is
+  `[canonical, surface, name]` (`application-semantics.mjs:1981`), so the contract's original rows
+  `['run.status','mcp.baton','baton_run_status']` already put `name` = the tool and satisfy the
+  renderer's `row.name === tool` lookup. The red-team's proposal `['baton_run_status','mcp.baton',
+  'run.status']` would set `name` = `run.status`, making the alias lookup fail. The operative fix is
+  the renderer fallback alone.
+- **The third D3 pin is adopted:** it closes the dispatch-binding gap (sibling exists AND routes),
+  which is the remaining shallow-greenable surface after the construction-order mechanism pin.
+
+**Top-orchestrator decisions applied:** the QA §2.5 fold instruction set in full; the foundry
+brief's shared laws (resolve-not-relitigate; every touched citation re-verified this session; no
+clocks; version bump + fold record appended). No authority-class ambiguity required a
+DECISION_REQUEST — the fix-1-vs-fix-3 and third-pin choices are judgment calls and are recorded
+above.

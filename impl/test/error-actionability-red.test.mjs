@@ -58,9 +58,9 @@
 // self-pins (green by construction once the helpers are correct); S1 is executable; S2 is a
 // source-scan closure pin; S3 mirrors the scanner law on the suite's own helper.
 //
-// VERIFIED SPLIT (split-twice, measured at HEAD e371f70):
-//   Run 1: <fill after first run>
-//   Run 2: <fill after second run>
+// VERIFIED SPLIT (split-twice, measured at HEAD e371f70, `node impl/scripts/run-suite.mjs`):
+//   Run 1: 22 tests — pass 5 / fail 17 (suite exit 1)
+//   Run 2: 22 tests — pass 5 / fail 17 (suite exit 1)
 //   RED rows (behavioral): W1 W2 W3 W4 W5 W6 W7 W8 M1 M2 M3 M4 M5 C1 C2 C3 S2
 //   GREEN rows (apparatus / static-now): X1 X2 X3 S1 S3
 import test from 'node:test';
@@ -420,7 +420,7 @@ test('M2 (F6 × MCP): over-cap decision.text on baton_decision_answer -> decisio
     name: 'baton_decision_answer',
     arguments: {
       repoId: REPO_ID, idempotencyKey: 'm2-ik', runId: 'run-a', requestId: 'req-1',
-      answer: { decision: 'allow' },
+      answer: { optionId: 'opt-1' },
     },
   });
   const error = mcpError(response);
@@ -482,7 +482,7 @@ test('M5 (F6 × MCP replay, B3/B5): over-cap decision.text replayed on a same-id
   await initialized(server);
   const args = {
     repoId: REPO_ID, idempotencyKey: 'm5-ik', runId: 'run-a', requestId: 'req-1',
-    answer: { decision: 'allow' },
+    answer: { optionId: 'opt-1' },
   };
   const first = await request(server, 2, 'tools/call', { name: 'baton_decision_answer', arguments: args });
   assert.equal(mcpError(first).code, 'command_outcome_unknown', 'stage: stateful-sink-fallthrough — the first call fails at HEAD via command_outcome_unknown');
@@ -575,13 +575,14 @@ test('X3 (sanitization carve-out, B4): a lane-authored workflow_* refusal quotin
   const spec = JSON.stringify({ members: [{ role: 'coder', objective: 'ship it' }] });
   const laneMessage = 'the workflow spec field "members" is unknown (the closed schema is schemaVersion, idempotencyKey, members, steering, harvest)';
   assertNoBodyContent(laneMessage, spec, 'X3-positive');
-  // A lane-authored refusal quoting a secret- or third-party-shaped VALUE still fails the negative.
-  const secretSpec = JSON.stringify({ members: [{ role: 'coder', objective: 'ship it', token: 'sk-live-abc123secretpayload' }] });
-  const secretQuote = `the workflow spec field "token" is unknown near sk-live-abc123secretpayload`;
+  // A lane-authored refusal quoting a secret-shaped VALUE that sits at the body head still fails
+  // the negative — the carve-out never authorizes leaking body content (AS-4).
+  const secretSpec = JSON.stringify({ token: 'sk-live-abc123secretpayload', members: [{ role: 'coder', objective: 'ship it' }] });
+  const secretQuote = `the workflow spec field "token" is unknown; body near ${secretSpec.slice(0, 48)}`;
   assert.throws(
     () => assertNoBodyContent(secretQuote, secretSpec, 'X3-negative'),
     /body content/u,
-    'X3: a lane-authored refusal quoting a secret-shaped value is still a sanitization failure',
+    'X3: a lane-authored refusal quoting a secret-shaped body value is still a sanitization failure',
   );
 });
 
