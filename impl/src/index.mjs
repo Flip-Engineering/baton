@@ -39,7 +39,7 @@ import { normalizeRunLineagePolicy } from './run-lineage.mjs';
 import { normalizeWorkflowPolicy } from './workflow-policy.mjs';
 import { normalizeContextProgramPolicy } from './context-program-policy.mjs';
 import { materializeContextCallBrief } from './context-call.mjs';
-import { openBatonDeployment } from './application-deployment.mjs';
+import { openBatonDeployment, DEFAULT_BUDGET } from './application-deployment.mjs';
 
 export { DEFAULT_BATON_DEPLOYMENT_ROUTES } from './application-deployment.mjs';
 
@@ -1098,6 +1098,21 @@ export function createDriver(opts) {
   // DC1: validate before log/store construction or writer admission so malformed shutdown
   // authority can never be masked by an existing lease or leave filesystem side effects.
   const drainPolicy = normalizeDrainPolicy(opts.drainPolicy);
+  // Issue #67 D1/SW-11: the stall budget is admission-checked at the deployment seam. A
+  // misconfigured watchdog.stallMs — at/above the node wall timeout, non-positive, or non-integer —
+  // refuses with the typed refusal, never a silent fallback (a bound that can never fire is the
+  // original bug reborn). The coordinator re-checks at _armWatchdog as a silent defense-in-depth
+  // no-op (it does not know the deployment wall; F1).
+  const nodeWallTimeoutMs = DEFAULT_BUDGET.wallMin * 60_000;
+  if (opts.watchdog?.stallMs !== undefined) {
+    const stallMs = opts.watchdog.stallMs;
+    if (!Number.isSafeInteger(stallMs) || stallMs <= 0 || stallMs >= nodeWallTimeoutMs) {
+      throw Object.assign(
+        new Error('watchdog.stallMs must be a positive integer strictly less than the node wall timeout'),
+        { code: 'watchdog_stall_exceeds_wall' },
+      );
+    }
+  }
   const verificationRuntime = opts.verificationRuntime === undefined
     ? defaultVerificationRuntime()
     : prepareVerificationRuntime(opts.verificationRuntime);
