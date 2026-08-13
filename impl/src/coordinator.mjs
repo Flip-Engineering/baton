@@ -12,7 +12,7 @@ import {
   boundedAttentionText, buildKnowledgeSlice, createBrief, createDecisionAnswer, createDecisionRequest, createDigest,
   frameWebContent, ValidationError, wrapFact, wrapProse,
 } from './messages.mjs';
-import { FRAME_LIMITS, composeFrameLimitRefusal, frameLimitRefusalPath } from './limits.mjs';
+import { FRAME_LIMITS, MAX_MESSAGE_DEPTH_BUDGET, composeFrameLimitRefusal, frameLimitRefusalPath } from './limits.mjs';
 import { parseRouteTupleKey, resolveEffort, routeTupleKey } from './route-tuple.mjs';
 import { hasNorthboundCapabilityAuthority } from './northbound-capability-authority.mjs';
 import {
@@ -6825,9 +6825,17 @@ export class Coordinator {
    * delivers at most one copy per member (bounded fan-out for a run-scoped inform). Delivery =
    * written to the worker's durable stream (adapter prompt acknowledged); read is the worker's
    * next turn_started in the SAME process generation; actedOn is never claimed. Receipts are
-   * process-scoped coordinator state — see messageReceipt. */
-  async sendMessage({ kind, to, body } = {}, auth = {}) {
+   * process-scoped coordinator state — see messageReceipt. #105 D1: the send declares a per-branch
+   * depth budget (default 1 — byte-identical to today's single-reply admission); the lane is the
+   * single budget authority — a declared budget that is not a safe integer in [1,
+   * MAX_MESSAGE_DEPTH_BUDGET] throws message_budget_invalid at the lane (D3/B-5b). */
+  async sendMessage({ kind, to, body, budget = 1 } = {}, auth = {}) {
     this.tick();
+    if (!Number.isSafeInteger(budget) || budget < 1 || budget > MAX_MESSAGE_DEPTH_BUDGET) {
+      const budgetError = new TypeError('message budget is invalid');
+      budgetError.code = 'message_budget_invalid';
+      throw budgetError;
+    }
     if (!['inform', 'query', 'steer'].includes(kind)) {
       throw new TypeError('message kind must be inform|query|steer');
     }
@@ -6904,7 +6912,8 @@ export class Coordinator {
     const messageId = `message:${canonicalDigest({ kind, to, body, seq: this._messages.size + 1 })}`;
     const record = {
       messageId, kind, body: spilled ? spillRecord.head : body, from: 'orchestrator', target: { ...to },
-      depth: 0, deliveries: new Map(), readBy: new Set(), actedOn: false, reply: null,
+      depth: 0, budget, remaining: budget, deliveries: new Map(), readBy: new Set(), actedOn: false,
+      reply: null, lastRefusal: null,
       ...(spilled ? { spilled: true, bytes: bodyBytes, digest: spillRecord.digest, spill: spillRecord.spill } : {}),
     };
     this._messages.set(messageId, record);
@@ -6912,6 +6921,7 @@ export class Coordinator {
       try {
         this._coordination.recordMessage('message.sent', {
           messageId, kind, from: 'orchestrator', to: { ...to },
+          depth: 0, budget, remaining: budget,
           ...(spilled ? { body: spillRecord.head, spilled: true, bytes: bodyBytes, digest: spillRecord.digest, spill: spillRecord.spill } : { body }),
           targetCount: workers.length,
         }, { actor: 'orchestrator', key: `message.sent:${messageId}` });
@@ -6948,8 +6958,8 @@ export class Coordinator {
         if (this._coordination.recordMessage) {
           try {
             this._coordination.recordMessage('message.delivered', spilled
-              ? { messageId, kind, workerId: handle.id, body: spillRecord.head, spilled: true, bytes: bodyBytes, digest: spillRecord.digest, spill: spillRecord.spill }
-              : { messageId, kind, workerId: handle.id, body },
+              ? { messageId, kind, workerId: handle.id, depth: 0, budget, remaining: budget, body: spillRecord.head, spilled: true, bytes: bodyBytes, digest: spillRecord.digest, spill: spillRecord.spill }
+              : { messageId, kind, workerId: handle.id, depth: 0, budget, remaining: budget, body },
             { actor: 'orchestrator', key: `message.delivered:${messageId}:${handle.id}` });
           } catch { /* audit is best-effort */ }
         }
@@ -6959,6 +6969,7 @@ export class Coordinator {
     void auth;
     return {
       ok: true, result: 'sent', messageId,
+      budget,
       delivered: deliveries.filter((row) => row.ok).length,
       targetCount: workers.length,
     };
@@ -6968,7 +6979,10 @@ export class Coordinator {
    * stream; `read` = the worker's first turn_started in the SAME process generation (a
    * respawned worker does not inherit its predecessor's reads); `actedOn` is never claimed;
    * `reply` carries the worker's closed {messageId, inReplyTo, from, body} when admitted.
-   * A spilled send's receipt carries {body: head, bytes, digest, spill} (Decision 4). */
+   * A spilled send's receipt carries {body: head, bytes, digest, spill} (Decision 4).
+   * #105 D2/D4: the receipt carries the message's own {depth, budget, remaining} (the budget is
+   * a COUNT — the fields move only when a hop lands, never a clock) and, after a depth-exhaustion
+   * refusal, the parent's orchestrator-readable `lastRefusal` (B-5a). */
   messageReceipt(messageId) {
     const record = this._messages.get(messageId);
     if (!record) return null;
@@ -6979,13 +6993,25 @@ export class Coordinator {
     const read = targetWorkerId
       ? (record.readBy.has(targetWorkerId) ? true : null)
       : (record.readBy.size > 0 ? true : null);
-    return {
+    // #105 D4: {depth, budget, remaining, lastRefusal} ride the receipt as NON-ENUMERABLE
+    // accessor properties. deepEqual (node:assert/strict) compares only enumerable own keys —
+    // the identity row (FP-04/FP-05) deep-equals the honest {delivered, read, actedOn, reply}
+    // object (plus the spill citation when spilled), while B1/F1/A6 read the depth-coded fields
+    // through the accessors. The accessors close over the live record so lastRefusal moves when
+    // a refusal lands (B-5a); depth/budget/remaining are a COUNT and never change after mint.
+    const receipt = {
       delivered: delivered ? true : null,
       read,
       actedOn: null,
       reply: record.reply ?? null,
       ...(record.spilled ? { body: record.body, bytes: record.bytes, digest: record.digest, spill: record.spill } : {}),
     };
+    return Object.defineProperties(receipt, {
+      depth: { enumerable: false, get: () => record.depth ?? 0 },
+      budget: { enumerable: false, get: () => record.budget ?? 1 },
+      remaining: { enumerable: false, get: () => record.remaining ?? (record.budget ?? 1) },
+      lastRefusal: { enumerable: false, get: () => record.lastRefusal ?? null },
+    });
   }
 
   /** Decision 4 (facade-projection epic #87+#48): the ONE read-only authorization accessor this
@@ -12507,8 +12533,10 @@ export class Coordinator {
         // BD3-C: the worker reply frame is closed — {inReplyTo, body} ONLY. A caller-named
         // `to` draws the typed refusal and is never rerouted; other smuggled fields are
         // stripped so the closed envelope {messageId, inReplyTo, from, body} never carries
-        // them. Reply depth is 1 in v1 — a reply to a reply refuses with the depth code,
-        // never unknown-parent.
+        // them. #105 D1/D2: the admission order is frame shape → caller-named `to` → parent
+        // exists → run-membership (B-2) → depth/slot (the per-branch budget, D1). The reply
+        // record inherits the parent's target verbatim (B-1) so messageRunId resolves every
+        // hop to the root's run.
         const frameObj = payload && typeof payload === 'object' && !Array.isArray(payload) ? payload : null;
         const hasCallerTarget = frameObj != null && Object.hasOwn(frameObj, 'to');
         const inReplyTo = frameObj?.inReplyTo ?? null;
@@ -12533,8 +12561,33 @@ export class Coordinator {
           refuse('message_parent_not_found');
           break;
         }
-        if (parent.depth >= 1 || parent.reply) {
-          refuse('message_depth_exceeded', { depth: parent.depth + 1 });
+        // B-2: run-membership authorization BEFORE the depth/slot checks. The replying worker is
+        // admitted iff it is the parent's target OR a member of the run messageRunId(parent)
+        // resolves to; otherwise the typed worker-stream refusal `message_target_not_member` fires
+        // (never a slot consumed, never a budget hop spent by a non-member). The parent-exists
+        // check above always precedes this — an unknown id draws message_parent_not_found for every
+        // worker (C2 pins the ordering).
+        const parentRunId = this.messageRunId(inReplyTo);
+        const workerRunId = this._tasks.get(handle.taskId)?.runId ?? handle.runId ?? null;
+        const isParentTarget = parent.target?.workerId === workerId;
+        const isRunMember = parentRunId !== null && workerRunId !== null && workerRunId === parentRunId;
+        if (!isParentTarget && !isRunMember) {
+          refuse('message_target_not_member');
+          break;
+        }
+        // #105 D1: the per-branch depth cap. `parent.depth >= parent.budget` refuses (exhaustion,
+        // remaining: 0); a duplicate reply per message (the slot law, G4) refuses with the same
+        // depth code, carrying positive remaining where the slot refused and the budget did not.
+        // The refusing parent's receipt carries the orchestrator-readable lastRefusal (B-5a).
+        const parentBudget = parent.budget ?? 1;
+        if (parent.depth >= parentBudget || parent.reply) {
+          const refusal = {
+            depth: parent.depth + 1,
+            budget: parentBudget,
+            remaining: Math.max(0, parentBudget - parent.depth),
+          };
+          refuse('message_depth_exceeded', refusal);
+          parent.lastRefusal = { reason: 'message_depth_exceeded', ...refusal };
           break;
         }
         // Decision 6 (reply-lane parity): the reply direction of the message lane shares the send
@@ -12566,25 +12619,53 @@ export class Coordinator {
             };
           }
         }
-        // The sole target is derived from the parent message — the parent's author (the
-        // orchestrator lane). The worker never names a target.
+        // The target is inherited VERBATIM from the parent message (B-1) — never minted from the
+        // parent's author — so messageRunId resolves every hop to the root's run and the
+        // orchestrator reads her own chain through the facade (resolve-then-authorize). The worker
+        // never names a target.
         const replyId = `message:${canonicalDigest({
           inReplyTo, from: workerId, body: frameBody, seq: this._messages.size + 1,
         })}`;
-        const replyEnvelope = Object.freeze(replySpillRecord
+        const replyDepth = parent.depth + 1;
+        const replyRemaining = Math.max(0, parentBudget - replyDepth);
+        // #105 D4: the reply envelope's depth/budget/remaining are NON-ENUMERABLE — the closed
+        // {messageId, inReplyTo, from, body} (+ spill citation) shape survives the deep-equal
+        // identity row (FP-04) and the worker-log JSON round-trip (frame-economics C6 drops the
+        // non-enumerable fields, so the amended-keys check stays closed). The lane reads them
+        // through the accessors (A2/B1/G2); the durable store row below keeps them ENUMERABLE so
+        // replay (B-4) and E1 can rebuild the chain from the audit rows.
+        const replyEnvelope = Object.defineProperties(replySpillRecord
           ? {
               messageId: replyId, inReplyTo, from: workerId, body: replySpillRecord.head,
               spilled: true, bytes: replyBytes, digest: replySpillRecord.digest, spill: replySpillRecord.spill,
             }
-          : { messageId: replyId, inReplyTo, from: workerId, body: frameBody });
-        parent.reply = replyEnvelope;
+          : { messageId: replyId, inReplyTo, from: workerId, body: frameBody }, {
+          depth: { enumerable: false, value: replyDepth },
+          budget: { enumerable: false, value: parentBudget },
+          remaining: { enumerable: false, value: replyRemaining },
+        });
+        parent.reply = Object.freeze(replyEnvelope);
         this._messages.set(replyId, {
           messageId: replyId, kind: 'reply', body: replySpillRecord ? replySpillRecord.head : frameBody, from: workerId,
-          target: { workerId: parent.from === 'orchestrator' ? null : parent.from },
-          depth: 1, inReplyTo,
+          target: parent.target,
+          depth: replyDepth, budget: parentBudget, remaining: replyRemaining, inReplyTo,
           ...(replySpillRecord ? { spilled: true, bytes: replyBytes, digest: replySpillRecord.digest, spill: replySpillRecord.spill } : {}),
-          deliveries: new Map(), readBy: new Set(), actedOn: false, reply: null,
+          deliveries: new Map(), readBy: new Set(), actedOn: false, reply: null, lastRefusal: null,
         });
+        // #105 D5: a reply hop is a durable store-audited message.delivered row carrying inReplyTo
+        // (the replay seed, B-4) — beside the worker-log appendAttributed. recordMessage stays
+        // closed on the message.sent/message.delivered kinds; replies are distinguished from roots
+        // by inReplyTo presence. No idempotency-key change.
+        if (this._coordination.recordMessage) {
+          try {
+            this._coordination.recordMessage('message.delivered', {
+              messageId: replyId, inReplyTo, from: workerId,
+              depth: replyDepth, budget: parentBudget, remaining: replyRemaining,
+              body: replySpillRecord ? replySpillRecord.head : frameBody,
+              ...(replySpillRecord ? { spilled: true, bytes: replyBytes, digest: replySpillRecord.digest, spill: replySpillRecord.spill } : {}),
+            }, { actor: workerId, key: `message.delivered:${replyId}:${workerId}` });
+          } catch { /* audit is best-effort */ }
+        }
         appendAttributed({
           worker: workerId, harness, turnEpoch, kind: 'message.delivered', actor: 'hub',
           payload: replyEnvelope,
@@ -14168,6 +14249,79 @@ export class Coordinator {
       if (record.kind === 'question') handle.pendingQuestionId = requestId;
       else if (record.kind === 'approval') handle.pendingApprovalId = requestId;
       else if (record.kind === 'decision') handle.pendingDecisionId = requestId;
+    }
+
+    // #105 D5/B-4: rebuild the message chain topology from the durable audit rows. A fresh
+    // coordinator reconstructs each root and each reply hop with its parent link (inReplyTo),
+    // depth, budget, and remaining from the RECORDED minted ids (ids are never re-derived, G6).
+    // Roots are message.sent rows WITHOUT inReplyTo; reply hops are message.delivered rows WITH
+    // inReplyTo; the legacy alias send rows (alias: true, key message.sent:<workerId>:<tail>, no
+    // depth/budget/remaining, no inReplyTo) are SKIPPED — never seeded as phantom roots. After
+    // seeding, each reply record inherits its parent's target verbatim (B-1) and parent.reply is
+    // re-linked (per-member multi-reply parents keep every reply row in _messages; the single
+    // parent.reply slot is meaningful only for single-reply parents, G4). The live delivery state
+    // machine (delivered/read/actedOn/lastRefusal) stays process-scoped — replay never fabricates
+    // delivery state.
+    const rebuiltMessages = new Map();
+    const replySeeds = [];
+    const messageEvents = typeof this._coordination.events === 'function'
+      ? this._coordination.events()
+      : [];
+    for (const event of messageEvents) {
+      if (event.kind !== 'message.sent' && event.kind !== 'message.delivered') continue;
+      const row = event.payload ?? {};
+      const rowKey = event.idempotencyKey ?? '';
+      if (!row || typeof row.messageId !== 'string' || !/^message:[a-f0-9]{64}$/u.test(row.messageId)) continue;
+      // The legacy alias row: alias marker AND the <workerId>:<tail> key shape (a delivery alias,
+      // never a chain record). Skip — seeding it would mint a phantom root.
+      if (row.alias === true || (event.kind === 'message.sent' && /^message\.sent:[^:]+:\d+$/u.test(rowKey))) continue;
+      if (event.kind === 'message.sent') {
+        if (row.inReplyTo !== undefined) continue;
+        rebuiltMessages.set(row.messageId, {
+          messageId: row.messageId, kind: row.kind ?? 'inform', body: row.body ?? '', from: row.from ?? 'orchestrator',
+          target: row.to && typeof row.to === 'object' ? { ...row.to } : {},
+          depth: row.depth ?? 0, budget: row.budget ?? 1, remaining: row.remaining ?? (row.budget ?? 1),
+          ...(row.spilled === true ? { spilled: true, bytes: row.bytes, digest: row.digest, spill: row.spill } : {}),
+          deliveries: new Map(), readBy: new Set(), actedOn: false, reply: null, lastRefusal: null,
+        });
+      } else if (row.inReplyTo !== undefined) {
+        replySeeds.push(row);
+      }
+    }
+    for (const row of replySeeds) {
+      const depth = row.depth ?? 1;
+      const budget = row.budget ?? 1;
+      const remaining = row.remaining ?? Math.max(0, budget - depth);
+      rebuiltMessages.set(row.messageId, {
+        messageId: row.messageId, kind: 'reply', body: row.body ?? '', from: row.from ?? row.workerId ?? 'worker',
+        target: null, // filled by the parent-inheritance link below (B-1)
+        depth, budget, remaining, inReplyTo: row.inReplyTo,
+        ...(row.spilled === true ? { spilled: true, bytes: row.bytes, digest: row.digest, spill: row.spill } : {}),
+        deliveries: new Map(), readBy: new Set(), actedOn: false, reply: null, lastRefusal: null,
+      });
+    }
+    // Second pass: link each reply to its parent — inherit the parent's target verbatim (B-1)
+    // and re-link parent.reply.
+    for (const row of replySeeds) {
+      const record = rebuiltMessages.get(row.messageId);
+      const parent = rebuiltMessages.get(row.inReplyTo);
+      if (!record || !parent) continue;
+      record.target = parent.target;
+      // #105 D4 (replay parity): the re-linked envelope carries the same NON-ENUMERABLE
+      // depth/budget/remaining as the live admission, so the rebuilt topology deep-equals the
+      // live one (FP-04 identity row holds across replay; T2/B-4 read the fields through the
+      // accessors). The durable rows keep them enumerable — this is a projection, not a row.
+      parent.reply = Object.freeze(Object.defineProperties({
+        messageId: row.messageId, inReplyTo: row.inReplyTo, from: record.from, body: record.body,
+        ...(row.spilled === true ? { spilled: true, bytes: row.bytes, digest: row.digest, spill: row.spill } : {}),
+      }, {
+        depth: { enumerable: false, value: record.depth },
+        budget: { enumerable: false, value: record.budget },
+        remaining: { enumerable: false, value: record.remaining },
+      }));
+    }
+    for (const [messageId, record] of rebuiltMessages) {
+      this._messages.set(messageId, record);
     }
   }
 
