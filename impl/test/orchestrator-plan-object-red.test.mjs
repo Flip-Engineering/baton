@@ -63,21 +63,28 @@
 //
 // §P1 Mint/update/idempotency (stage: plan-write-port-missing / plan-read-port-missing)
 //   M1  plan.write with plan.minted mints the plan — {status:'plan_minted', planId} with
-//       planId = plan:<hex32>, repoId-scoped; plan.read round-trips it. (RED)
+//       planId = plan:<hex32>, repoId-scoped; plan.read round-trips it; the mint also lands a
+//       durable plan.minted ledger event and the snapshot.planObjects projection row (the durable
+//       projection pin). (RED)
 //   M2  a retry of the same mint key + content returns the prior event — exactly-once, no
-//       duplicate mint (the plan.minted:<planId> prior-key discipline). (RED)
-//   M3  changed content under the same mint key refuses plan_replay_conflict. (RED)
+//       duplicate mint (events.length === 1 on the ledger; the plan.minted:<planId> prior-key
+//       discipline). (RED)
+//   M3  changed content under the same mint key refuses plan_replay_conflict — the conflict
+//       appends nothing to the ledger. (RED)
 //   M4  UPDATE ASSERTED (QA §3.4 #2) — upsert v1 then upsert v2 with expectedTaskVersion=2 goes
 //       green; the task's taskVersion becomes 2 and plan.read shows the v2 task. (RED)
 //   M5  upsert v2 with expectedTaskVersion=1 (stale) refuses plan_stale_version. (RED)
 //
 // §P2 Replay / fold seam (stage: plan-fold-unlanded / plan-batch-kind-unregistered)
-//   F1  a raw plan.minted event appends durably and folds into the projection. (RED — at HEAD
-//       _append throws coordination_projection_poisoned, cause unsupported_event_kind at
+//   F1  a raw plan.minted event appends durably and folds into the projection — asserts the
+//       snapshot.planObjects row and byte-identical close/reopen replay. (RED — at HEAD _append
+//       throws coordination_projection_poisoned, cause unsupported_event_kind at
 //       coordination-store.mjs:8862)
-//   F2  a raw plan.task_transitioned event folds (the status-law event kind). (RED — same crash)
-//   F3  the auto-demote plan batch kind is registered in _appendBatch's closed list — the batch
-//       (a plan.task_transitioned demote) folds atomically. (RED — at HEAD _appendBatch refuses
+//   F2  a raw plan.task_transitioned event folds (the status-law event kind) — the fixture mints
+//       alpha first, then appends the raw transition; the projection reads done. (RED — same crash)
+//   F3  the auto-demote plan batch kind is registered in _appendBatch's closed list — the fixture
+//       mints alpha 'doing' v1, then the plan_auto_demote batch (a plan.task_transitioned demote)
+//       folds atomically; the projection reads todo. (RED — at HEAD _appendBatch refuses
 //       'coordination batch kind is invalid' at coordination-store.mjs:1526-1533)
 //   F4  PIN — close/reopen replay recomputes the identical projection from durable facts (the P2
 //       green half: the fold machinery that WILL carry plan events replays byte-identically)
@@ -98,31 +105,36 @@
 //
 // §P4 Status law (stage: plan-status-law-missing)
 //   L1  two tasks cannot be doing simultaneously within a wave subtree — plan_parallel_progress in
-//       the strict-DAG shape, or the auto-demote batch demotes the earlier. (RED)
+//       the strict-DAG shape, or the auto-demote batch demotes the earlier; leg B adds a same-wave
+//       DIFFERENT-run task admitted (the law is per (wave,run) subtree). (RED)
 //   L2  two tasks doing in DIFFERENT wave subtrees are admitted (the law is per-wave-subtree). (RED)
 //   L3  a verified task is marked done immediately and stays done (re-transition refused/stale). (RED)
 //   L4  a done task re-opened by any non-review principal refuses plan_reopen_forbidden. (RED)
 //   L5  the review authority's reviewed-reject re-open (done → todo, H4.2) is the one admitted
-//       exception. (RED)
-//   L6  focusTaskIds beyond planPolicy.maxFocusTasks refuses plan_focus_invalid. (RED)
+//       exception — driven by the capability-carrying review seat under planAuthorize (H2.1). (RED)
+//   L6  focusTaskIds beyond planPolicy.maxFocusTasks refuses plan_focus_invalid — the bound read
+//       from a deployment planPolicy of 3 (never a hardcoded 4). (RED)
 //   L7  plan.focus_upserted sets the bounded focus window with a plan-version CAS — matching
 //       expectedPlanVersion updates the window and bumps the plan version; stale refuses
 //       plan_stale_version. (RED)
 //
 // §P5 Authority matrix (stage: plan-authority-matrix-missing)
-//   A1  a row member reads its OWN task and transitions it to done — admitted (ownedBy.run resolved
-//       via the pinned member→run mapping, H2.2). (RED)
+//   A1  a row member reads its OWN task and transitions it to done — admitted; the task is
+//       pre-decomposed with ownedBy.run null and the lane resolves it from the wave-registry
+//       roster (steering.registered, H2.2) at claim time. (RED)
 //   A2  a row member writing a sibling task refuses plan_authority_forbidden. (RED)
 //   A3  a coordinator writes its subtree (ownedBy.wave/run match) — admitted. (RED)
 //   A4  a coordinator writing outside its subtree refuses coordinator_authority_forbidden (the #74
 //       code with {attempted, gracefulPath}). (RED)
-//   A5  the orchestrator (plan:*) mints/upserts/transitions any task — admitted. (RED)
+//   A5  the orchestrator (plan:*) mints/upserts/transitions any task — admitted; driven by the
+//       capability-carrying review seat under the restricting planAuthorize (H2.1). (RED)
 //
 // §P6 Elevation at wave close (stage: plan-wave-close-elevation-missing)
-//   W1  at wave.closed the review authority reviews the wave's plan tasks — completed → done with
-//       evidence links, incomplete → todo, wave map updated. (RED)
+//   W1  at wave.closed the review authority reviews the wave's plan tasks — closed through the
+//       dedicated appendWaveClosed (the closed 8-key shape); asserts a durable plan.task_evidence_linked
+//       ledger event; completed → done with evidence links, a 'doing' task reverts to todo. (RED)
 //   W2  reviewed-rejected done → re-opened todo (H4.2); an unreviewed/incomplete task never reads
-//       done (no silent auto-promotion). (RED)
+//       done (no silent auto-promotion) — the re-open driven by the review seat under planAuthorize. (RED)
 //
 // §P7 Three-surface admission (stage: cli-plan-verbs-missing / web-plan-ledger-missing /
 //     mcp-plan-tool-missing / registry-plan-rows-missing / docs-plan-rows-missing)
@@ -131,20 +143,26 @@
 //       cli_invalid naming the expected mutation shape (H3.2). (RED)
 //   X3  CLI_WEB_COMMANDS admits plan.read AND plan.write (the admitted web-envelope names). (RED)
 //   X4  the web surface is NOT claimed for plan.* (D3.4 recommended posture) — the web envelope is
-//       refused AND the refusal is ledgered in surface-divergence-ledger.json (#159 D3 #3). (RED —
-//       at HEAD the ledger entries are empty)
+//       refused AND the refusal is ledgered in surface-divergence-ledger.json (#159 D3 #3); the
+//       ledger rows are exactly the two plan verbs, cross-checked against the ACTUAL refusal and the
+//       registry (no advertise-but-dead / ghost rows). (RED — at HEAD the ledger entries are empty)
 //   X5  MCP tools baton_plan_read/baton_plan_write exist with repoId LEADING required (H3.1) and
-//       dispatch (H3.2). (RED — at HEAD the MCP ordinary tool list lacks both)
+//       dispatch (H3.2) — a tools/call for each tool reaches the application port (no
+//       advertise-but-dead tool). (RED — at HEAD the MCP ordinary tool list lacks both, and
+//       tools/call returns a protocol error)
 //   X6  the OPERATION_ROWS registry rows claim surfaces for plan.read/plan.write with closed input
-//       schemas (D3.1). (RED — source: CANONICAL_OPERATION_SPECS has no plan rows)
-//   X7  the generated CLI.md/MCP.md blocks contain the plan rows (D3.5, never hand-edited). (RED)
+//       schemas (D3.1) — content-anchored region AND the parsed registry LIVE gate (a source comment
+//       alone is not a registry row). (RED — source: CANONICAL_OPERATION_SPECS has no plan rows)
+//   X7  the generated CLI.md/MCP.md blocks contain the plan rows (D3.5, never hand-edited) — the
+//       rows must be the registry-DERIVED surface names (a doc-only hand-edit fails the registry gate). (RED)
 //
 // §P8 #74 integration (stage: plan-gated-dispatch-missing)
 //   Q1  a #74 coordinator member's plan.write (task_upserted) writes its subtree's row tasks with
-//       ownedBy binding (pre-decomposed ownedBy.run resolved at claim, H2.2). (RED)
-//   Q2  the interpreter gates a member on its plan task's state — a blocked task's member resolves
-//       waitingOn dispatch_pending (the closed five byte-unchanged, H3.4); a done task's member is
-//       settleable. (RED)
+//       ownedBy binding — the pre-decomposed ownedBy.run (null) resolves at the member's claim from
+//       the wave-registry roster (H2.2). (RED)
+//   Q2  the interpreter gates a member on its plan task's state — a blocked task's → done REFUSES
+//       plan_blocked {blockedByUnmet:[depId]} (the dispatch_pending projection, closed five
+//       byte-unchanged, H3.4); after the dep completes the member is settleable. (RED)
 //
 // §P9 Orchestrator practice (stage: plan-read-at-orchestrator-missing)
 //   O1  plan.read at the orchestrator seat returns the campaign todo as the plan projection —
@@ -187,7 +205,7 @@
 //   refusal codes 'plan_replay_conflict'/'plan_stale_version'/'plan_task_invalid'/
 //       'plan_topology_invalid'/'plan_parallel_progress'/'plan_reopen_forbidden'/
 //       'plan_focus_invalid'/'plan_authority_forbidden'/'coordinator_authority_forbidden'/
-//       'plan_not_found'/'plan_task_not_found'  — invented typed plan refusals
+//       'plan_not_found'/'plan_task_not_found'/'plan_blocked'  — invented typed plan refusals
 //       (HEAD: the plan.write port is absent, so none can fire)
 
 // ===========================================================================
@@ -204,8 +222,11 @@
 // ===========================================================================
 // VERIFIED SPLIT (measured against the PRE-implementation tree; run twice)
 // ===========================================================================
-//   PASS 5 · FAIL 42 — stable across two runs from the repo root
-//   (split recorded in suite-draft-notes.md)
+//   PASS 5 · FAIL 42 — stable across two runs from the repo root (both
+//   measurements, 2026-08-13, row-sf161 fold): pre-implementation and post-fold.
+//   The 5 passes are exactly the pins (F4, R1-R4). The 42 fails are the named-stage
+//   RED rows — unchanged in count, every row still failing its named seam at HEAD.
+//   (split recorded in suite-draft-notes.md + fold-suite-161.md)
 
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
@@ -220,7 +241,7 @@ import { fileURLToPath } from 'node:url';
 import { MockAdapter } from '../src/adapter.mjs';
 import { BatonApplication } from '../src/application.mjs';
 import { CLI_WEB_COMMANDS, parseBatonCli } from '../src/application-cli.mjs';
-import { WAITING_ON_KINDS } from '../src/application-semantics.mjs';
+import { APPLICATION_SEMANTIC_REGISTRY, WAITING_ON_KINDS } from '../src/application-semantics.mjs';
 import {
   bindBaton, createDriver, CoordinationStore, McpFleetServer, WebNorthbound, WebSessionStore,
 } from '../src/index.mjs';
@@ -239,8 +260,20 @@ const OWNED_BY_KEY_ORDER = Object.freeze(['role', 'run', 'wave']);
 const PLAN_TASK_STATUSES = Object.freeze(['todo', 'doing', 'done']);
 
 // planPolicy.maxFocusTasks — deployment-owned default 4 (D1, DR-3). The plan object's focus
-// window is bounded by this policy bound, never a client-code ceiling.
-const MAX_FOCUS_TASKS = 4;
+// window is bounded by this policy bound, never a client-code ceiling. The fold reads the bound
+// from the deployment planPolicy (L6), so no hardcoded numeric ceiling survives in this suite.
+const DEFAULT_PLAN_POLICY = Object.freeze({ maxFocusTasks: 4 });
+
+// H2.1 — the plan:* power is enforced in the deployment authorize (the restricting
+// restrictingReadAuthorize shape the #74 fold landed). The orchestrator seat and the review seat
+// hold the power; a worker's own-task/subtree admission is the lane's ownership composition
+// (H2.1/H2.3), never this seam. Non-plan verbs keep the permissive deployment default — they are
+// not this row's subject. The capability-carrying review seat (principal('plan-review')) is what
+// the string-seat facade (which recognizes only the 'orchestrator' string) cannot admit.
+async function planAuthorize(command, principal, runId, subject) {
+  if (!command.startsWith('plan.')) return true;
+  return principal?.principalId === 'orchestrator' || principal?.principalId === 'plan-review';
+}
 
 let envelopeSeq = 0;
 let seedCounter = 0;
@@ -285,10 +318,14 @@ function ownedBy(role, run, wave) {
 }
 
 function task(id, title, status, { blockedBy = [], owner = null, evidence = [], taskVersion = 1 } = {}) {
+  // D1 — the closed sorted task shape, built in ACTUAL sorted order (law #5): blockedBy, evidence,
+  // id, ownedBy, schemaVersion, status, taskVersion, title. The blue-team S3 fix: a correct
+  // sorted-only fold accepts this canonical literal, and S3's construction-order literal is the
+  // non-closed counterexample — the fixtures and the sorted-order pin no longer contradict.
   return {
-    schemaVersion: 1, id, title, status, blockedBy,
+    blockedBy, evidence, id,
     ownedBy: owner ?? ownedBy('member', `run:${id}`, `wave:${digest({ id }).slice(0, 32)}`),
-    evidence, taskVersion,
+    schemaVersion: 1, status, taskVersion, title,
   };
 }
 
@@ -372,7 +409,7 @@ function createDriverFor(repo, logDir, adapter) {
   });
 }
 
-function buildApplication(driver, deploymentId, authorize = null) {
+function buildApplication(driver, deploymentId, authorize = null, planPolicy = null) {
   const base = {
     driver,
     repoId: REPO_ID,
@@ -406,28 +443,36 @@ function buildApplication(driver, deploymentId, authorize = null) {
     authorize: authorize ?? (async () => true),
   };
   try {
-    // The plan fold may thread deploymentId as an optional constructor field. HEAD does NOT — the
-    // config validator rejects the unknown field, so the bare-options retry is the honest fallback.
-    return new BatonApplication({ ...base, deploymentId });
+    // The plan fold may thread deploymentId and the deployment-owned planPolicy as optional
+    // constructor fields. HEAD accepts neither — the config validator rejects the unknown fields,
+    // so the bare-options retry is the honest fallback (the fold reads planPolicy.maxFocusTasks
+    // from the deployment, never a client-code ceiling).
+    return new BatonApplication({
+      ...base,
+      deploymentId,
+      ...(planPolicy ? { planPolicy } : {}),
+    });
   } catch (error) {
     if (error?.code !== 'application_config_invalid') throw error;
     return new BatonApplication(base);
   }
 }
 
-function openHost(repo, logDir, adapter, authorize = null) {
+function openHost(repo, logDir, adapter, options = null) {
+  const planPolicy = options?.planPolicy ?? DEFAULT_PLAN_POLICY;
+  const authorize = options?.authorize ?? null; // null → the permissive deployment default
   const driver = createDriverFor(repo, logDir, adapter);
   const deploymentId = `deployment-${digest(`${repo}|${logDir}`).slice(0, 32)}`;
-  const application = buildApplication(driver, deploymentId, authorize);
+  const application = buildApplication(driver, deploymentId, authorize, planPolicy);
   const baton = bindBaton(application, principal('orchestrator'));
-  return { application, baton, driver, deploymentId };
+  return { application, baton, driver, deploymentId, planPolicy };
 }
 
-async function hostFixture(t) {
+async function hostFixture(t, options = null) {
   const repo = root('repo');
   const logDir = root('log');
   mkdirSync(join(repo, 'reports'), { recursive: true });
-  const host = openHost(repo, logDir, markerAdapter());
+  const host = openHost(repo, logDir, markerAdapter(), options);
   host.repo = repo;
   host.logDir = logDir;
   host.owner = principal('orchestrator');
@@ -590,6 +635,16 @@ test('M1: plan.write with plan.minted mints the plan and plan.read round-trips i
   assert.equal(read.planId, planId, 'the plan reads back by planId');
   assert.equal(read.campaignId, campaignId, 'the plan is campaign-scoped');
   assert.ok(read.tasks[alpha.id], 'the minted task is present in the projection');
+
+  // Durable projection (blue-team M1-M3 fold): the mint lands a real plan.minted event in the
+  // coordination ledger AND the store snapshot exposes the replay-derived plan-object projection
+  // (_plans/_planTasks, D1) — the in-memory plan lane and the no-op fold both fail here.
+  const ledger = host.driver.coordination.events();
+  assert.ok(ledger.some((event) => event.kind === 'plan.minted' && event.payload.planId === planId),
+    'stage: plan-durable-projection-missing — the mint appends the durable plan.minted event to the coordination ledger (never an in-memory lane)');
+  const snapshot = host.driver.coordination.snapshot();
+  assert.ok((snapshot.planObjects?.plans ?? []).some((plan) => plan.planId === planId),
+    'stage: plan-durable-projection-missing — the store snapshot exposes the plan-object projection (_plans/_planTasks, D1), not a read-time synthesis');
 });
 
 test('M2: a retry of the same mint key + content returns the prior event — exactly-once', async (t) => {
@@ -605,6 +660,13 @@ test('M2: a retry of the same mint key + content returns the prior event — exa
   assert.equal(second.status, 'plan_minted', 'a same-key retry is still reported as a mint, not a second mint');
   const read = await planRead(host, planId, principal('orchestrator'), 'stage: plan-read-port-missing');
   assert.equal(Object.keys(read.tasks).length, 1, 'no duplicate mint appended a second task set');
+
+  // Durable projection (blue-team M1-M3 fold): exactly one plan.minted event in the ledger — the
+  // retry returns the prior event, never a second mint (the in-memory lane double-appends).
+  const events = host.driver.coordination.events()
+    .filter((event) => event.kind === 'plan.minted' && event.payload.planId === planId);
+  assert.equal(events.length, 1,
+    'stage: plan-durable-projection-missing — exactly one plan.minted event in the coordination ledger (the same-key retry resolves the prior event, never a duplicate mint)');
 });
 
 test('M3: changed content under the same mint key refuses plan_replay_conflict', async (t) => {
@@ -619,6 +681,14 @@ test('M3: changed content under the same mint key refuses plan_replay_conflict',
   const conflicting = planWriteBody(planId, mintMutation(planId, campaignId, [beta], [beta.id]), `plan.minted:${planId}`);
   await planWriteRefusal(host, conflicting, principal('orchestrator'),
     'stage: plan-write-port-missing', 'plan_replay_conflict');
+
+  // Durable projection (blue-team M1-M3 fold): the conflict refuses WITHOUT appending — the
+  // ledger still holds exactly the one original mint (the in-memory lane appends the changed
+  // content and never refuses).
+  const events = host.driver.coordination.events()
+    .filter((event) => event.kind === 'plan.minted' && event.payload.planId === planId);
+  assert.equal(events.length, 1,
+    'stage: plan-durable-projection-missing — the changed-content replay refuses plan_replay_conflict and appends nothing to the coordination ledger');
 });
 
 test('M4: update asserted — upsert v1 then v2 with expectedTaskVersion=2 goes green (taskVersion becomes 2)', async (t) => {
@@ -674,7 +744,17 @@ test('F1: a raw plan.minted event appends durably and folds into the projection'
   assert.equal(event.kind, 'plan.minted', 'the plan.minted event is durable');
   assert.equal(event.seq, 1, 'it is the ledger\'s first event');
   assert.equal(store.events().length, 1, 'exactly one ledger event');
+  // Blue-team F1-F3 fold — the durable projection: the event folds into the store snapshot's
+  // plan-object projection, and close/reopen replays the identical projection (the no-op fold
+  // appends the event but never folds it; the in-memory lane never appends at all).
+  const live = store.snapshot();
+  assert.ok((live.planObjects?.plans ?? []).some((plan) => plan.planId === planId),
+    'stage: plan-durable-projection-missing — the plan.minted event folds into the _plans projection, not a no-op fold');
   store.releaseWriterLease();
+  const replay = new CoordinationStore(dir, { clock: () => new Date(NOW).toISOString() });
+  assert.deepEqual(replay.snapshot().planObjects, live.planObjects,
+    'stage: plan-durable-projection-missing — close/reopen replays the identical plan projection from the durable events');
+  replay.releaseWriterLease();
   rmSync(dir, { recursive: true, force: true });
 });
 
@@ -683,9 +763,19 @@ test('F2: a raw plan.task_transitioned event folds (the status-law event kind)',
   const store = new CoordinationStore(dir, { clock: () => new Date(NOW).toISOString() });
   const campaignId = 'campaign-161-f2';
   const planId = planIdFor('f2', campaignId);
-  const taskId = taskIdFor(planId, 'write the alpha report', ownedBy('alpha', 'run:r1', 'wave:w1'));
+  const owner = ownedBy('alpha', 'run:r1', 'wave:w1');
+  const taskId = taskIdFor(planId, 'write the alpha report', owner);
+  const alpha = task(taskId, 'write the alpha report', 'todo', { owner });
+  appendEvent(store, 'plan.minted', mintMutation(planId, campaignId, [alpha], [taskId]), `plan.minted:${planId}`, 'stage: plan-fold-unlanded');
   const event = appendEvent(store, 'plan.task_transitioned', transitionMutation(planId, taskId, 'done', 1), `plan.task_transitioned:${planId}:${taskId}:done:v1`, 'stage: plan-fold-unlanded');
   assert.equal(event.kind, 'plan.task_transitioned', 'the transition event is durable');
+  // Blue-team F1-F3 fold — the durable projection: the transition folds to the task status in the
+  // store snapshot's plan-object projection (a no-op fold leaves the task todo).
+  const live = store.snapshot();
+  const plan = (live.planObjects?.plans ?? []).find((candidate) => candidate.planId === planId);
+  assert.ok(plan, 'stage: plan-durable-projection-missing — the plan folds into the _plans projection');
+  assert.equal(plan.tasks?.[taskId]?.status, 'done',
+    'stage: plan-durable-projection-missing — the transition folds to the task status (immediate completion marking, G9)');
   store.releaseWriterLease();
   rmSync(dir, { recursive: true, force: true });
 });
@@ -695,7 +785,12 @@ test('F3: the auto-demote plan batch kind is registered in _appendBatch\'s close
   const store = new CoordinationStore(dir, { clock: () => new Date(NOW).toISOString() });
   const campaignId = 'campaign-161-f3';
   const planId = planIdFor('f3', campaignId);
-  const taskId = taskIdFor(planId, 'write the alpha report', ownedBy('alpha', 'run:r1', 'wave:w1'));
+  const owner = ownedBy('alpha', 'run:r1', 'wave:w1');
+  const taskId = taskIdFor(planId, 'write the alpha report', owner);
+  // The plan is minted with the earlier task ALREADY doing (the exactly-one-in-progress state the
+  // demote corrects).
+  const alpha = task(taskId, 'write the alpha report', 'doing', { owner, taskVersion: 1 });
+  appendEvent(store, 'plan.minted', mintMutation(planId, campaignId, [alpha], [taskId]), `plan.minted:${planId}`, 'stage: plan-fold-unlanded');
   // DR-3/H4.1: the exactly-one-in-progress law fires the auto-demote batch — a
   // plan.task_transitioned demote append in one atomic batch, registered as a closed plan batch
   // kind (the coordination-store.mjs:1526-1533 list). Judgment call: the literal name
@@ -713,6 +808,13 @@ test('F3: the auto-demote plan batch kind is registered in _appendBatch\'s close
   }
   assert.equal(events.length, 1, 'the batch folds its one transition');
   assert.equal(events[0].batch.kind, 'plan_auto_demote', 'the batch carries the plan batch kind');
+  // Blue-team F1-F3 fold — the durable projection: the batch folds the demote into the store
+  // snapshot's plan-object projection (a no-op fold leaves the earlier task doing).
+  const live = store.snapshot();
+  const plan = (live.planObjects?.plans ?? []).find((candidate) => candidate.planId === planId);
+  assert.ok(plan, 'stage: plan-durable-projection-missing — the plan folds into the _plans projection');
+  assert.equal(plan.tasks?.[taskId]?.status, 'todo',
+    'stage: plan-durable-projection-missing — the auto-demote batch folds the demote into the projection');
   store.releaseWriterLease();
   rmSync(dir, { recursive: true, force: true });
 });
@@ -769,7 +871,10 @@ test('S3: a non-canonical task key order refuses plan_task_invalid', async (t) =
   const planId = planIdFor('s3', campaignId);
   const owner = ownedBy('alpha', 'run:r1', 'wave:w1');
   const alphaId = taskIdFor(planId, 'write the alpha report', owner);
-  // The closed task shape validates as the sorted set (D1) — a reordered literal is non-closed.
+  // The closed task shape validates as the sorted set (D1). Blue-team S3 BROKEN fix: the fixtures
+  // now build the canonical sorted literal, so this construction-order literal (the exact shape
+  // the v1 fixtures used) is the non-closed counterexample — a correct sorted-only fold refuses it
+  // while accepting every fixture mint.
   const reordered = {
     schemaVersion: 1, title: 'write the alpha report', id: alphaId,
     status: 'todo', blockedBy: [], ownedBy: owner, evidence: [], taskVersion: 1,
@@ -870,11 +975,14 @@ test('L1: two tasks cannot be doing simultaneously within a wave subtree', async
   const planId = planIdFor('l1', campaignId);
   const alphaOwner = ownedBy('alpha', 'run:r1', 'wave:w1');
   const betaOwner = ownedBy('beta', 'run:r1', 'wave:w1');
+  const gammaOwner = ownedBy('gamma', 'run:r3', 'wave:w1'); // same wave, DIFFERENT run (the subtree-key pin)
   const alphaId = taskIdFor(planId, 'write the alpha report', alphaOwner);
   const betaId = taskIdFor(planId, 'write the beta report', betaOwner);
+  const gammaId = taskIdFor(planId, 'write the gamma report', gammaOwner);
   const alpha = task(alphaId, 'write the alpha report', 'todo', { owner: alphaOwner });
   const beta = task(betaId, 'write the beta report', 'todo', { owner: betaOwner });
-  await planWrite(host, planWriteBody(planId, mintMutation(planId, campaignId, [alpha, beta], [alphaId, betaId]), `plan.minted:${planId}`), principal('orchestrator'), 'stage: plan-write-port-missing');
+  const gamma = task(gammaId, 'write the gamma report', 'todo', { owner: gammaOwner });
+  await planWrite(host, planWriteBody(planId, mintMutation(planId, campaignId, [alpha, beta, gamma], [alphaId, betaId, gammaId]), `plan.minted:${planId}`), principal('orchestrator'), 'stage: plan-write-port-missing');
 
   await planWrite(host, planWriteBody(planId, transitionMutation(planId, alphaId, 'doing', 1), `plan.task_transitioned:${planId}:${alphaId}:doing:v1`), principal('orchestrator'), 'stage: plan-write-port-missing');
   // Same wave subtree (ownedBy.wave === wave:w1 for both) — the second doing either auto-demotes
@@ -893,6 +1001,13 @@ test('L1: two tasks cannot be doing simultaneously within a wave subtree', async
     assert.equal(error.code, 'plan_parallel_progress',
       'stage: plan-status-law-missing — at HEAD no plan lane exists (application_command_unavailable); the strict-DAG shape refuses the second doing with plan_parallel_progress');
   }
+
+  // Blue-team L1/L2 fold — the subtree key is (wave, run), never wave alone: a same-wave
+  // DIFFERENT-run task is a separate subtree, so its doing is admitted even while another task in
+  // wave:w1 is doing (a wave-only-keyed wrong impl refuses here).
+  const gammaDoing = await planWrite(host, planWriteBody(planId, transitionMutation(planId, gammaId, 'doing', 1), `plan.task_transitioned:${planId}:${gammaId}:doing:v1`), principal('orchestrator'), 'stage: plan-status-law-missing');
+  assert.equal(gammaDoing.status, 'plan_updated',
+    'stage: plan-status-law-missing — a same-wave different-run task may be doing: the uniqueness law binds per ownedBy.wave/run subtree (DR-3, P4)');
 });
 
 test('L2: two tasks doing in DIFFERENT wave subtrees are admitted (the law is per-wave-subtree)', async (t) => {
@@ -945,25 +1060,33 @@ test('L4: a done task re-opened by any non-review principal refuses plan_reopen_
 });
 
 test('L5: the review authority\'s reviewed-reject re-open (done → todo, H4.2) is admitted', async (t) => {
-  const host = await hostFixture(t);
+  // Blue-team authority fold (H2.1) — the review authority is the plan:* holder (the
+  // capability-carrying review seat under the restricting planAuthorize), not the 'orchestrator'
+  // string. The string-seat facade denies the review seat, so this row fails it.
+  const host = await hostFixture(t, { authorize: planAuthorize });
   const campaignId = 'campaign-161-l5';
   const planId = planIdFor('l5', campaignId);
   const owner = ownedBy('alpha', 'run:r1', 'wave:w1');
   const alphaId = taskIdFor(planId, 'write the alpha report', owner);
   const alpha = task(alphaId, 'write the alpha report', 'done', { owner, taskVersion: 1 });
   await planWrite(host, planWriteBody(planId, mintMutation(planId, campaignId, [alpha], [alphaId]), `plan.minted:${planId}`), principal('orchestrator'), 'stage: plan-write-port-missing');
-  const reopened = await planWrite(host, planWriteBody(planId, transitionMutation(planId, alphaId, 'todo', 1), `plan.task_transitioned:${planId}:${alphaId}:todo:v1`), principal('orchestrator'), 'stage: plan-write-port-missing');
-  assert.equal(reopened.taskVersion, 2, 'the review re-open lands (the one admitted done → todo path)');
+  const reopened = await planWrite(host, planWriteBody(planId, transitionMutation(planId, alphaId, 'todo', 1), `plan.task_transitioned:${planId}:${alphaId}:todo:v1`), principal('plan-review'), 'stage: plan-write-port-missing');
+  assert.equal(reopened.taskVersion, 2,
+    'stage: plan-status-law-missing — the review authority\'s re-open (done → todo, H4.2) lands — the one admitted exception, driven by the plan:* review seat (H2.1)');
 });
 
 test('L6: focusTaskIds beyond planPolicy.maxFocusTasks refuses plan_focus_invalid', async (t) => {
-  const host = await hostFixture(t);
+  // Blue-team L6 fold — the bound is read from the deployment planPolicy, never a hardcoded
+  // client ceiling: this host carries a deployment planPolicy of 3, so the refusal must fire at
+  // 4 focus tasks (an impl hardcoding 4 — or reading any other bound — fails here).
+  const host = await hostFixture(t, { planPolicy: { maxFocusTasks: 3 } });
   const campaignId = 'campaign-161-l6';
   const planId = planIdFor('l6', campaignId);
+  const maxFocusTasks = host.planPolicy.maxFocusTasks;
   const owner = ownedBy('alpha', 'run:r1', 'wave:w1');
   const ids = [];
   const tasks = [];
-  for (let index = 0; index < MAX_FOCUS_TASKS + 1; index += 1) {
+  for (let index = 0; index < maxFocusTasks + 1; index += 1) {
     const title = `write report ${index}`;
     const id = taskIdFor(planId, title, { ...owner, role: `member-${index}` });
     ids.push(id);
@@ -971,7 +1094,7 @@ test('L6: focusTaskIds beyond planPolicy.maxFocusTasks refuses plan_focus_invali
   }
   await planWriteRefusal(host, planWriteBody(planId, mintMutation(planId, campaignId, tasks, ids), `plan.minted:${planId}`), principal('orchestrator'),
     'stage: plan-status-law-missing', 'plan_focus_invalid',
-    { focusCount: MAX_FOCUS_TASKS + 1, maxFocusTasks: MAX_FOCUS_TASKS });
+    { focusCount: maxFocusTasks + 1, maxFocusTasks });
 });
 
 test('L7: plan.focus_upserted sets the bounded focus window with a plan-version CAS (stale → plan_stale_version)', async (t) => {
@@ -1010,17 +1133,31 @@ test('A1: a row member reads its OWN task and transitions it to done — admitte
   const host = await hostFixture(t);
   const campaignId = 'campaign-161-a1';
   const planId = planIdFor('a1', campaignId);
-  const owner = ownedBy('alpha', 'run:r1', 'wave:w1');
+  // Blue-team authority fold (H2.2) — the row task is pre-decomposed: ownedBy binds wave + role at
+  // decomposition time and leaves run unresolved (null). The lane resolves ownedBy.run at the
+  // row's claim/transition time from the wave registry roster (G5) — the resolution a
+  // string-seat authority (which matches roles against principalId strings and never resolves a
+  // run) cannot fake.
+  const owner = ownedBy('alpha', null, 'wave:w1');
   const alphaId = taskIdFor(planId, 'write the alpha report', owner);
   const alpha = task(alphaId, 'write the alpha report', 'todo', { owner });
   await planWrite(host, planWriteBody(planId, mintMutation(planId, campaignId, [alpha], [alphaId]), `plan.minted:${planId}`), principal('orchestrator'), 'stage: plan-write-port-missing');
+
+  // The #132 closed roster (G5): the steering.registered record the driver mints when member
+  // alpha's row run spawns — run:r1 on wave:w1.
+  const roster = host.driver.coordination.recordDriver('steering.registered', { runId: 'run:r1', waveId: 'wave:w1', waveRole: 'alpha' }, { actor: 'orchestrator', key: 'steering.registered:run:r1' });
+  assert.equal(roster.ok, true, 'the roster record is admitted');
 
   const memberRead = await planRead(host, planId, principal('worker:member-alpha'), 'stage: plan-read-port-missing');
   assert.equal(memberRead.tasks[alphaId].title, 'write the alpha report',
     'the row member reads its own task (ownedBy.run resolves to the run it actually runs in, H2.2)');
   const memberDone = await planWrite(host, planWriteBody(planId, transitionMutation(planId, alphaId, 'done', 1), `plan.task_transitioned:${planId}:${alphaId}:done:v1`), principal('worker:member-alpha'), 'stage: plan-write-port-missing');
   assert.equal(memberDone.status, 'plan_updated',
-    'the own-task transition to done is admitted — the immediate completion marking (D4)');
+    'stage: plan-authority-matrix-missing — at HEAD no plan lane exists (application_command_unavailable); the own-task transition is admitted — the lane resolved ownedBy.run to run:r1 from the wave roster before admitting (H2.2)');
+
+  const read = await planRead(host, planId, principal('orchestrator'), 'stage: plan-read-port-missing');
+  assert.equal(read.tasks[alphaId].ownedBy.run, 'run:r1',
+    'stage: plan-authority-matrix-missing — the pre-decomposed ownedBy.run resolves at the row\'s claim/transition from the wave registry roster (H2.2) — the durable resolution a string-seat authority cannot fake');
 });
 
 test('A2: a row member writing a sibling task refuses plan_authority_forbidden', async (t) => {
@@ -1070,16 +1207,22 @@ test('A4: a coordinator writing outside its subtree refuses coordinator_authorit
 });
 
 test('A5: the orchestrator (plan:*) mints/upserts/transitions any task — admitted', async (t) => {
-  const host = await hostFixture(t);
+  // Blue-team authority fold (H2.1) — the plan:* power is a capability enforced in the deployment
+  // authorize, never a principalId string. This host carries the restricting planAuthorize (the
+  // #74 restrictingReadAuthorize shape): only the orchestrator seat and the review seat hold
+  // plan:*. Driving the row with the capability-carrying review seat (not the 'orchestrator'
+  // string) kills the string-seat facade, which recognizes only 'orchestrator'.
+  const host = await hostFixture(t, { authorize: planAuthorize });
   const campaignId = 'campaign-161-a5';
   const planId = planIdFor('a5', campaignId);
   const owner = ownedBy('alpha', 'run:r1', 'wave:w1');
   const alphaId = taskIdFor(planId, 'write the alpha report', owner);
   const alpha = task(alphaId, 'write the alpha report', 'todo', { owner });
-  const minted = await planWrite(host, planWriteBody(planId, mintMutation(planId, campaignId, [alpha], [alphaId]), `plan.minted:${planId}`), principal('orchestrator'), 'stage: plan-write-port-missing');
-  assert.equal(minted.status, 'plan_minted', 'the plan:* seat mints');
-  const transitioned = await planWrite(host, planWriteBody(planId, transitionMutation(planId, alphaId, 'done', 1), `plan.task_transitioned:${planId}:${alphaId}:done:v1`), principal('orchestrator'), 'stage: plan-write-port-missing');
-  assert.equal(transitioned.status, 'plan_updated', 'the plan:* seat transitions any task (D2.1)');
+  const minted = await planWrite(host, planWriteBody(planId, mintMutation(planId, campaignId, [alpha], [alphaId]), `plan.minted:${planId}`), principal('plan-review'), 'stage: plan-write-port-missing');
+  assert.equal(minted.status, 'plan_minted', 'the plan:* seat mints (the review seat holds the plan:* power, H2.1)');
+  const transitioned = await planWrite(host, planWriteBody(planId, transitionMutation(planId, alphaId, 'done', 1), `plan.task_transitioned:${planId}:${alphaId}:done:v1`), principal('plan-review'), 'stage: plan-write-port-missing');
+  assert.equal(transitioned.status, 'plan_updated',
+    'stage: plan-authority-matrix-missing — at HEAD no plan lane exists (application_command_unavailable); the capability-carrying review seat transitions any task — the deployment-authorize composition (H2.1), which the string-seat facade cannot admit');
 });
 
 // ===========================================================================
@@ -1087,7 +1230,7 @@ test('A5: the orchestrator (plan:*) mints/upserts/transitions any task — admit
 // ===========================================================================
 
 test('W1: at wave.closed the review authority reviews the wave\'s plan tasks', async (t) => {
-  const host = await hostFixture(t);
+  const host = await hostFixture(t, { authorize: planAuthorize });
   const campaignId = 'campaign-161-w1';
   const planId = planIdFor('w1', campaignId);
   const completedOwner = ownedBy('alpha', 'run:r1', 'wave:w1');
@@ -1095,33 +1238,45 @@ test('W1: at wave.closed the review authority reviews the wave\'s plan tasks', a
   const alphaId = taskIdFor(planId, 'write the alpha report', completedOwner);
   const betaId = taskIdFor(planId, 'write the beta report', incompleteOwner);
   const alpha = task(alphaId, 'write the alpha report', 'done', { owner: completedOwner });
-  const beta = task(betaId, 'write the beta report', 'todo', { owner: incompleteOwner });
+  // The incomplete task is minted 'doing', so the wave-close review must DEMOTE it — a fold that
+  // never runs the close hook leaves it 'doing' (no honest remainder), and this row fails it.
+  const beta = task(betaId, 'write the beta report', 'doing', { owner: incompleteOwner });
   await planWrite(host, planWriteBody(planId, mintMutation(planId, campaignId, [alpha, beta], [alphaId, betaId]), `plan.minted:${planId}`), principal('orchestrator'), 'stage: plan-write-port-missing');
 
-  // The wave closes (the store's wave.closed fold, G5); the plan lane elevates the wave's tasks.
-  let closed = null;
-  try {
-    closed = host.driver.coordination.recordDriver('wave.closed', {
-      waveId: 'wave:w1', blockedOn: [], lanes: [], parked: [], rings: [],
-      knowledge: { candidates: [], admittedThisRun: [], candidatesAwaitingAdmission: [], settlementRunId: null },
-      receiptDigest: digest({ waveId: 'wave:w1' }), settlementErrors: [],
-    }, { actor: 'orchestrator', key: 'wave.closed:wave:w1' });
-  } catch { /* the wave.closed record may be gated at HEAD; the elevation is what this row pins */ }
-  assert.ok(closed === null || closed.ok === true, 'the wave close record is admitted');
+  // Blue-team W1 fold — the wave closes through the DEDICATED wave.closed API (the closed 8-key
+  // shape), never recordDriver (which wraps in driver.recorded and can never trigger the plan
+  // lane's close hook). Tolerating a gated record is no longer the pin: the closure must land.
+  const closed = host.driver.coordination.appendWaveClosed({
+    waveId: 'wave:w1', blockedOn: [], lanes: [], parked: [], rings: [],
+    knowledge: { candidates: [], admittedThisRun: [], candidatesAwaitingAdmission: [], settlementRunId: null },
+    receiptDigest: digest({ waveId: 'wave:w1' }), settlementErrors: [],
+  }, { actor: 'orchestrator', key: 'wave.closed:wave:w1' });
+  assert.equal(closed.ok, true, 'the dedicated wave.closed API admits the closure (closed 8-key shape)');
 
-  const read = await planRead(host, planId, principal('orchestrator'), 'stage: plan-wave-close-elevation-missing');
+  // The wave-close hook must link the completed task's elevation evidence DURABLY — a
+  // plan.task_evidence_linked event on the store ledger, never a hand-edited projection field.
+  const linkedEvents = host.driver.coordination.events()
+    .filter((event) => event.kind === 'plan.task_evidence_linked'
+      && event.payload?.taskId === alphaId);
+  assert.ok(linkedEvents.length > 0,
+    'stage: plan-wave-close-elevation-missing — at HEAD no plan lane exists (application_command_unavailable); the wave.closed hook appends a durable plan.task_evidence_linked event for the completed task (the elevation the close triggers, G5)');
+
+  const read = await planRead(host, planId, principal('plan-review'), 'stage: plan-wave-close-elevation-missing');
   const alphaAfterClose = read.tasks[alphaId];
   const betaAfterClose = read.tasks[betaId];
   assert.equal(alphaAfterClose.status, 'done',
     'stage: plan-wave-close-elevation-missing — at HEAD no plan lane exists (application_command_unavailable); the wave.closed review keeps a completed task done');
   assert.ok(Array.isArray(alphaAfterClose.evidence) && alphaAfterClose.evidence.length > 0,
-    'the completed task gains its elevation evidence links (plan.task_evidence_linked)');
+    'the completed task gains its elevation evidence links (projection-level elevation of plan.task_evidence_linked)');
   assert.equal(betaAfterClose.status, 'todo',
-    'an incomplete task reverts to todo for the next wave — the honest remainder');
+    'a doing task reverts to todo for the next wave — the honest remainder');
 });
 
 test('W2: reviewed-rejected done → re-opened todo (H4.2); an unreviewed/incomplete task never reads done', async (t) => {
-  const host = await hostFixture(t);
+  // Blue-team authority fold (H2.1) — the review re-open is the review authority's power, held by
+  // the capability-carrying review seat under the restricting planAuthorize (the string-seat
+  // facade, which recognizes only 'orchestrator', denies the review seat).
+  const host = await hostFixture(t, { authorize: planAuthorize });
   const campaignId = 'campaign-161-w2';
   const planId = planIdFor('w2', campaignId);
   const owner = ownedBy('alpha', 'run:r1', 'wave:w1');
@@ -1130,10 +1285,11 @@ test('W2: reviewed-rejected done → re-opened todo (H4.2); an unreviewed/incomp
   await planWrite(host, planWriteBody(planId, mintMutation(planId, campaignId, [alpha], [alphaId]), `plan.minted:${planId}`), principal('orchestrator'), 'stage: plan-write-port-missing');
 
   // A done task whose evidence the review finds weak is re-opened by the review authority (H4.2).
-  const reopened = await planWrite(host, planWriteBody(planId, transitionMutation(planId, alphaId, 'todo', 1), `plan.task_transitioned:${planId}:${alphaId}:todo:v1`), principal('orchestrator'), 'stage: plan-write-port-missing');
-  assert.equal(reopened.status, 'plan_updated', 'the review re-open is the admitted reject path');
+  const reopened = await planWrite(host, planWriteBody(planId, transitionMutation(planId, alphaId, 'todo', 1), `plan.task_transitioned:${planId}:${alphaId}:todo:v1`), principal('plan-review'), 'stage: plan-write-port-missing');
+  assert.equal(reopened.status, 'plan_updated',
+    'stage: plan-status-law-missing — the review authority\'s re-open (done → todo, H4.2) lands — the one admitted exception, driven by the plan:* review seat (H2.1)');
 
-  const read = await planRead(host, planId, principal('orchestrator'), 'stage: plan-wave-close-elevation-missing');
+  const read = await planRead(host, planId, principal('plan-review'), 'stage: plan-wave-close-elevation-missing');
   assert.equal(read.tasks[alphaId].status, 'todo',
     'the rejected done task reads todo — no silent auto-promotion (KG-2 rule 7: an unreviewed/incomplete task never reads done)');
 });
@@ -1199,13 +1355,34 @@ test('X4: the plan.* web surface is refused AND ledgered in surface-divergence-l
 
   const ledgerPath = fileURLToPath(new URL('../scripts/surface-divergence-ledger.json', import.meta.url));
   const ledger = JSON.parse(readFileSync(ledgerPath, 'utf8'));
-  const rows = (ledger.entries ?? []).filter((entry) => (
-    entry.command === 'plan.read' || entry.command === 'plan.write'
-    || entry.verb === 'plan.read' || entry.verb === 'plan.write'
-    || entry.name === 'plan.read' || entry.name === 'plan.write'
-  ));
-  assert.ok(rows.length === 2,
+  assert.ok(ledger.schemaVersion === 1 && Array.isArray(ledger.entries),
+    'the ledger is well-formed (schemaVersion 1, entries array) — a comment shortcut adds no rows and fails here');
+  const verbOf = (entry) => {
+    const raw = entry?.command ?? entry?.verb ?? entry?.name;
+    if (raw === 'plan.read' || raw === 'plan.write') return raw;
+    if (raw === 'plan_read' || raw === 'plan_write') return raw.replaceAll('_', '.');
+    return null;
+  };
+  const rows = (ledger.entries ?? []).filter((entry) => verbOf(entry) !== null);
+  assert.equal(rows.length, 2,
     'stage: web-plan-ledger-missing — at HEAD the ledger entries are [] (no plan.* rows); the fold ledger the two plan verbs\' web refusal under #159 D3 #3 (documented and parsed, web refusal documented, no ghost)');
+  const verbs = rows.map(verbOf).sort();
+  assert.deepEqual(verbs, ['plan.read', 'plan.write'],
+    'the ledgered plan rows are exactly the two plan verbs — a hand-edited third row or a non-plan row fails here');
+
+  // Blue-team X4 regeneration/conformance gate — each ledgered plan verb must be REAL: the web
+  // surface genuinely refuses it today (kills advertise-but-dead — a row documenting a verb the
+  // surface actually admits) and the verb has a registry row (the mechanical source every surface
+  // renderer consumes) — a hand-edited ledger row with no registry row is a ghost row.
+  const registered = new Set(APPLICATION_SEMANTIC_REGISTRY.canonicalOperations.map((op) => op.key));
+  for (const verb of verbs) {
+    const wire = verb.replaceAll('.', '_'); // plan.read → plan_read (the web-transport name)
+    const token = validateWebCommandEnvelope(webEnvelope(wire, { planId }));
+    assert.ok(token !== null && token.length > 0,
+      `the ledgered ${verb} is actually refused on the web surface (no advertise-but-dead row)`);
+    assert.ok(registered.has(verb),
+      `stage: registry-plan-rows-missing — the ledgered ${verb} has a registry row (the mechanical source the surface inventory derives from); a hand-edited ledger alone is a ghost row`);
+  }
 });
 
 test('X5: MCP tools baton_plan_read/baton_plan_write exist with repoId leading required (H3.1)', async (t) => {
@@ -1223,6 +1400,23 @@ test('X5: MCP tools baton_plan_read/baton_plan_write exist with repoId leading r
   assert.ok(mcpApplicationToolNames().includes('baton_plan_read')
     && mcpApplicationToolNames().includes('baton_plan_write'),
     'the sorted ordinary surface carries both plan tools');
+
+  // Blue-team X5 dispatch gate — the tools must DISPATCH, not just be listed: a tools/call for
+  // either tool must reach the application port (no advertise-but-dead tool). At HEAD the tools are
+  // unregistered, so tools/call returns a protocol error (-32602 Invalid params,
+  // mcp-northbound.mjs:1390) and the row fails here.
+  const readCall = await server.handle({
+    jsonrpc: '2.0', id: 3, method: 'tools/call',
+    params: { name: 'baton_plan_read', arguments: { repoId: REPO_ID, planId: `plan:${'a'.repeat(32)}` } },
+  });
+  assert.equal(readCall.error, undefined,
+    'stage: mcp-plan-dispatch-missing — at HEAD tools/call errors (the tool is unregistered); the fold dispatches baton_plan_read to the plan.read port (a listed-but-undispatchable tool fails here)');
+  const writeCall = await server.handle({
+    jsonrpc: '2.0', id: 4, method: 'tools/call',
+    params: { name: 'baton_plan_write', arguments: { repoId: REPO_ID, planId: `plan:${'b'.repeat(32)}` } },
+  });
+  assert.equal(writeCall.error, undefined,
+    'stage: mcp-plan-dispatch-missing — at HEAD tools/call errors (the tool is unregistered); the fold dispatches baton_plan_write to the plan.write port');
 });
 
 test('X6: the OPERATION_ROWS registry rows claim surfaces for plan.read/plan.write (D3.1)', () => {
@@ -1239,15 +1433,35 @@ test('X6: the OPERATION_ROWS registry rows claim surfaces for plan.read/plan.wri
     'plan.read claims capabilities observe');
   assert.match(region, /['"]plan\.write['"][\s\S]{0,400}?['"]control['"]/u,
     'plan.write claims capabilities control');
+
+  // Blue-team X6 regeneration gate — the source-region rows must be LIVE: the parsed registry
+  // actually registers the plan verbs as canonical operations. A comment in the source that merely
+  // contains the literal cannot produce a canonicalOperations row (kills the comment shortcut /
+  // advertise-but-dead — a dead registry row has no parsed operation).
+  const registered = new Set(APPLICATION_SEMANTIC_REGISTRY.canonicalOperations.map((op) => op.key));
+  assert.ok(registered.has('plan.read') && registered.has('plan.write'),
+    'stage: registry-plan-rows-missing — the parsed registry registers plan.read/plan.write as canonical operations (a source comment alone is not a registry row)');
 });
 
 test('X7: the generated CLI.md/MCP.md blocks contain the plan rows (D3.5)', () => {
+  // Blue-team X7 regeneration gate — the docs are GENERATED from the registry
+  // (render-surface-docs.mjs, #142), never hand-edited: the plan verbs must be REGISTERED (the
+  // ONE mechanical source) and the docs must carry the registry-DERIVED surface names. A doc-only
+  // hand-edit (advertise-but-dead: CLI.md/MCP.md claim the rows while the registry has none) fails
+  // the registry gate; a comment shortcut fails the derived-name presence check.
+  const planOps = APPLICATION_SEMANTIC_REGISTRY.canonicalOperations
+    .filter((op) => op.key === 'plan.read' || op.key === 'plan.write');
+  assert.equal(planOps.length, 2,
+    'stage: registry-plan-rows-missing — at HEAD the registry has no plan.read/plan.write rows; the fold registers both (the generated docs can only carry rows the registry derives)');
+
   const cliDoc = readFileSync(fileURLToPath(new URL('../CLI.md', import.meta.url)), 'utf8');
-  assert.ok(cliDoc.includes('baton plan read') && cliDoc.includes('baton plan write'),
-    'stage: docs-plan-rows-missing — at HEAD CLI.md has no baton plan read/write rows; the regenerated doc (render-surface-docs.mjs, #142) carries the plan verbs');
   const mcpDoc = readFileSync(fileURLToPath(new URL('../MCP.md', import.meta.url)), 'utf8');
-  assert.ok(mcpDoc.includes('baton_plan_read') && mcpDoc.includes('baton_plan_write'),
-    'stage: docs-plan-rows-missing — at HEAD MCP.md has no baton_plan_read/write rows; the regenerated doc carries the plan tools');
+  for (const op of planOps) {
+    assert.ok(cliDoc.includes(op.names.cli),
+      `stage: docs-plan-rows-missing — the regenerated CLI.md carries ${op.names.cli} (the registry-derived row)`);
+    assert.ok(mcpDoc.includes(op.names.mcp),
+      `stage: docs-plan-rows-missing — the regenerated MCP.md carries ${op.names.mcp} (the registry-derived tool)`);
+  }
 });
 
 // ===========================================================================
@@ -1258,18 +1472,34 @@ test('Q1: a #74 coordinator member\'s plan.write (task_upserted) writes its subt
   const host = await hostFixture(t);
   const campaignId = 'campaign-161-q1';
   const planId = planIdFor('q1', campaignId);
-  const owner = ownedBy('alpha', 'run:r1', 'wave:w1');
+  // Blue-team authority fold (H2.2) — the #74 coordinator decomposes a wave-bound row task whose
+  // ownedBy.run is UNRESOLVED (null): the decomposition binds wave + role only, and the lane
+  // resolves run at claim time from the wave-registry roster. A fold that never consults the
+  // roster (or hardcodes a run string) cannot make this read-back resolve.
+  const owner = ownedBy('alpha', null, 'wave:w1');
   const alphaId = taskIdFor(planId, 'write the alpha report', owner);
-  // The coordinator mints the plan's task set, then writes each row task via plan.task_upserted
+  // The coordinator mints the (empty) plan, then writes each row task via plan.task_upserted
   // with ownedBy binding it to its wave (D3.1) — the durable home of the decomposition.
   await planWrite(host, planWriteBody(planId, mintMutation(planId, campaignId, [], []), `plan.minted:${planId}`), principal('orchestrator'), 'stage: plan-write-port-missing');
   const upserted = await planWrite(host, planWriteBody(planId, upsertMutation(planId, task(alphaId, 'write the alpha report', 'todo', { owner }), 1), `plan.task_upserted:${planId}:${alphaId}:v1`), principal('worker:coordinator-wave1'), 'stage: plan-write-port-missing');
   assert.equal(upserted.status, 'plan_updated',
     'stage: plan-gated-dispatch-missing — at HEAD no plan lane exists (application_command_unavailable); the #74 coordinator decomposition lands in the plan object');
 
+  // The #132 closed roster (G5): the steering.registered record for the coordinator's wave — the
+  // wave registry row the lane consults to resolve the pre-decomposed ownedBy.run at claim time.
+  const roster = host.driver.coordination.recordDriver('steering.registered', { runId: 'run:r1', waveId: 'wave:w1', waveRole: 'alpha' }, { actor: 'orchestrator', key: 'steering.registered:run:r1' });
+  assert.equal(roster.ok, true, 'the roster record is admitted');
+
+  // The row's member claims the task (the transition is the claim): the lane resolves ownedBy.run
+  // from the roster, so the read-back shows the run the task actually runs in (H2.2).
+  const claimed = await planWrite(host, planWriteBody(planId, transitionMutation(planId, alphaId, 'doing', 1), `plan.task_transitioned:${planId}:${alphaId}:doing:v1`), principal('worker:member-alpha'), 'stage: plan-write-port-missing');
+  assert.equal(claimed.status, 'plan_updated',
+    'stage: plan-authority-matrix-missing — the member claims the decomposed task (the lane resolves ownedBy.run from the wave roster before admitting, H2.2)');
+
   const read = await planRead(host, planId, principal('orchestrator'), 'stage: plan-read-port-missing');
   assert.equal(read.tasks[alphaId].ownedBy.wave, 'wave:w1', 'the row task is bound to its wave (D2.2 subtree)');
-  assert.equal(read.tasks[alphaId].ownedBy.run, 'run:r1', 'the pre-decomposed ownedBy.run binds at write time (H2.2)');
+  assert.equal(read.tasks[alphaId].ownedBy.run, 'run:r1',
+    'stage: plan-authority-matrix-missing — the pre-decomposed ownedBy.run resolves at claim time from the wave registry roster (H2.2) — the durable resolution a string-seat authority cannot fake');
 });
 
 test('Q2: the interpreter gates a member on its plan task\'s state — blocked → dispatch_pending, done → settleable', async (t) => {
@@ -1284,10 +1514,18 @@ test('Q2: the interpreter gates a member on its plan task\'s state — blocked �
   const alpha = task(alphaId, 'write the alpha report', 'todo', { owner: memberOwner, blockedBy: [depId] });
   await planWrite(host, planWriteBody(planId, mintMutation(planId, campaignId, [dep, alpha], [alphaId]), `plan.minted:${planId}`), principal('orchestrator'), 'stage: plan-write-port-missing');
 
-  // A member whose plan task is blocked (blockedBy not all done) is honestly waitingOn
-  // dispatch_pending — the mapped kind over the closed five (H3.4), never plan_approval.
-  const memberDone = await planWrite(host, planWriteBody(planId, transitionMutation(planId, depId, 'done', 1), `plan.task_transitioned:${planId}:${depId}:done:v1`), principal('orchestrator'), 'stage: plan-write-port-missing');
-  assert.equal(memberDone.status, 'plan_updated', 'the dependency completes first');
+  // Blue-team Q2 fold — the interpreter gate (P8) is the pin: a member whose plan task is blocked
+  // (blockedBy dep not done) is honestly waitingOn dispatch_pending — the mapped kind over the
+  // closed five (H3.4), never plan_approval. The → done transition REFUSES plan_blocked
+  // {blockedByUnmet:[depId]}: the gate output, not two merely-successful transitions.
+  await planWriteRefusal(host, planWriteBody(planId, transitionMutation(planId, alphaId, 'done', 1), `plan.task_transitioned:${planId}:${alphaId}:done:v1`), principal('worker:member-alpha'),
+    'stage: plan-gated-dispatch-missing', 'plan_blocked', { blockedByUnmet: [depId] });
+
+  // The dependency completes (its own lane, the orchestrator seat), then the member's task is
+  // settleable: the → done transition is admitted with the next taskVersion (immediate completion
+  // marking) — the interpreter gate opens when the plan task's state admits it.
+  const depDone = await planWrite(host, planWriteBody(planId, transitionMutation(planId, depId, 'done', 1), `plan.task_transitioned:${planId}:${depId}:done:v1`), principal('orchestrator'), 'stage: plan-write-port-missing');
+  assert.equal(depDone.status, 'plan_updated', 'the dependency completes first');
   const alphaDone = await planWrite(host, planWriteBody(planId, transitionMutation(planId, alphaId, 'done', 1), `plan.task_transitioned:${planId}:${alphaId}:done:v1`), principal('worker:member-alpha'), 'stage: plan-write-port-missing');
   assert.equal(alphaDone.status, 'plan_updated',
     'stage: plan-gated-dispatch-missing — at HEAD no plan lane exists (application_command_unavailable); the interpreter\'s plan-task gate makes a done task\'s member settleable (immediate completion marking)');
@@ -1324,7 +1562,7 @@ test('R1 PIN: application_unauthorized stays the facade denial', async (t) => {
   const repo = root('repo-r1');
   const logDir = root('log-r1');
   mkdirSync(join(repo, 'reports'), { recursive: true });
-  const host = openHost(repo, logDir, markerAdapter(), async () => false);
+  const host = openHost(repo, logDir, markerAdapter(), { authorize: async () => false });
   t.after(async () => {
     await host.application.shutdown(principal('cleanup')).catch(() => {});
     try { host.driver.coordination.releaseWriterLease(); } catch {}

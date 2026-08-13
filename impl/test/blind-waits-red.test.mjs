@@ -5,19 +5,32 @@
 //   the settle-block loop, the RA6/RA7 pins, the FP-05 unknown≡foreign pin, `application_wait_invalid` in the refusal table,
 //   and the additive-only law. redteam-164.md and fold-164.md do not exist in this worktree (recorded in suite-draft-notes.md).
 // Attempt echo: 08d0dac7-8ad0-4e7c-a13e-9d7a3bb855bc · row-suite-164 · suite-draft-notes.md in the same evidence directory.
+// FOLD (row-sf164, 2026-08-13): folded per the fold laws (docs/reference/evidence/fold-2026-08-13-c/foundry-brief.md)
+//   against blue-team-2026-08-13-a/blueteam-164.md + blueteam-qa.md §#164; authority = the v2 FOLDED contract.
+//   B1 → GREEN (H-4 fold: the loop-exit iteration IS a fresh status() re-read — no distinct return-seam
+//   revalidation); P-MCP split (P-MCP RED four-verb recheck + P-MCP-ceiling GREEN); P-APP flipped to RED (D1.2(a)
+//   app-layer renewal naming); A2-c/A2-d new RED rows (fleet_run_episode / fleet_run_workstreams, B3); A4 re-worked
+//   to a found-anchored comment-stripped region scan; A1-a/A1-b over-stated "full clock" claim documented; P-PUBLISH
+//   scoped as workflow evidence (temporally coupled to #158). Finding→resolution map: fold-suite-164.md in the same
+//   evidence directory.
 
 // ===========================================================================
 // ROW INVENTORY (the stage is the HEAD failure seam, named per row; the split at
-// the bottom was measured twice against the PRE-implementation tree)
+// the bottom was measured twice against the PRE-implementation tree and twice
+// against the POST-fold tree)
 // ===========================================================================
 //
 // §A — run.wait durable-stop truth (D1/D3.1/OQ2(a) — the wait-local terminal-truth helper)
 //   A1-a  run.wait({until:'terminal'}) on a durably-stopped run (phase 'stopping', application.mjs:7598)
 //         returns the already-projected terminal truth WITHOUT sleeping. (RED — at HEAD 'stopping' is outside
-//         APPLICATION_RUN_TERMINAL_PHASES (application.mjs:160), so the loop burns the full clock)
+//         APPLICATION_RUN_TERMINAL_PHASES (application.mjs:160), so the loop sleeps across repeated cycles
+//         (28ms actual) instead of returning on the first cycle. [blue-team SHALLOW: the v1 inventory's "burns
+//         the full clock" was rhetorical — the test measures that a durably-stopped run still sleeps multiple
+//         cycles, not the literal deadline; documented, not changed])
 //   A1-b  run.wait({timeoutMs}) default settle-block on the SAME durably-stopped run must not sleep either —
 //         the durable-stop predicate extends to the settle-block loop (the v2 fold of DR-1(a)). (RED — at HEAD
-//         'stopping' is outside PROVIDER_EXECUTION_SETTLED_PHASES (application.mjs:157), same burn)
+//         'stopping' is outside PROVIDER_EXECUTION_SETTLED_PHASES (application.mjs:157), same burn; same SHALLOW
+//         doc note: 41ms actual across cycles, "full clock" is the rhetorical form)
 //
 // §B — terminal-truth pins (must stay green at HEAD)
 //   A5    unknown run ids refuse application_run_not_found byte-identical, no clock (FP-05, G10 — resolve-then-authorize
@@ -31,26 +44,36 @@
 //         is ADDITIVE, never a canonical-predicate edit). (GREEN — kills an impl that edits the canonical predicates
 //         instead of adding the wait-local helper)
 //
-// §C — transport refusals name the renewal path (D1.2/D2, G7/G8 — RED, both wait verbs each)
+// §C — transport refusals name the renewal path (D1.2/D2, G7/G8 — RED: both wait verbs + both B3 verbs each)
 //   A2-a  MCP fleet_run_wait mid-wait revocation refuses `unauthenticated` AND names the renewal path. (RED — at HEAD
 //         toolError(refused) is code-only, mcp-northbound.mjs:198-200 / :1505-1520)
 //   A2-b  MCP fleet_run_follow — the SAME post-dispatch recheck seam, the second wait verb: the mid-wait revocation
 //         refuses `unauthenticated` AND names the renewal path. (RED — an impl that fixes only fleet_run_wait leaves
 //         fleet_run_follow code-only, so this row stays RED at the same stage mcp-refusal-renewal-missing)
+//   A2-c  MCP fleet_run_episode — NEW RED row (fold-164 B3): a mid-wait revocation must refuse `unauthenticated` AND
+//         name the renewal path on this verb too. (RED — at HEAD the post-dispatch recheck list
+//         (mcp-northbound.mjs:1510) covers only fleet_run_follow/fleet_run_wait, so a mid-wait revocation on
+//         fleet_run_episode is NOT refused — the dispatched value returns; stage mcp-refusal-renewal-missing)
+//   A2-d  MCP fleet_run_workstreams — the second B3 verb: SAME recheck-list gap. (RED — an impl that extends the
+//         recheck to episode only leaves workstreams unchecked, so this row stays RED at the same stage)
 //   A3-a  web run_wait mid-wait expiry refuses 401 `unauthenticated` AND names /v1/auth/refresh. (RED — at HEAD
 //         _postWaitAuthorization returns the bare error(401, unauthenticated), web-northbound.mjs:684-689)
 //   A3-b  web run_follow — the SAME post-wait reauth seam (:895), the second wait verb: the mid-wait expiry refuses
 //         401 `unauthenticated` AND names /v1/auth/refresh. (RED — an impl that fixes only run_wait leaves run_follow
 //         bare, so this row stays RED at the same stage web-refusal-renewal-missing)
 //
-// §D — the return-seam + the driver pump loop (RED)
-//   B1    run.wait lacks a DISTINCT return-seam revalidation after the loop's last wait, before return view (D2(b),
-//         RA6/RA7 template). (RED static — at HEAD run.wait's body has no _authorize call lexically after the
-//         settle-block while loop)
+// §D — the return-seam + the driver pump loop (B1 GREEN per H-4; A4 RED)
+//   B1    run.wait's settle-block loop exit IS a fresh status() re-read — the loop's exit iteration re-reads the
+//         view and returns it directly, so NO distinct return-seam revalidation is required (H-4 fold of D2(b); the
+//         v1 draft's "(b) distinct return-seam revalidation" was folded OUT as redundant and layer-confused).
+//         (GREEN — pins the loop-exit shape: `await this.status(runId, observer, {}, context); } return view;` with
+//         NO `_authorize` call between the last status() and `return view`; a wrong impl that re-adds the seam fails)
 //   A4    the driver pump loop retries blind on a typed refusal — the #148 instance's shape at the driver layer.
-//         (RED static — the wave-driver L4-L6 poll/steer loop, wave-driver.mjs:544-893, blanket-swallows every
-//         status failure as 'unavailable' (L5/D10 catch, :566-571) with NO stop-on-repeated-auth-failure guard and
-//         NO full-envelope log; the #164 acceptance is the #148 driver law landing as client discipline)
+//         (RED static — the wave-driver pump loop, wave-driver.mjs `for (;;)` → the hardCap break, blanket-swallows
+//         every status failure as 'unavailable' (L5/D10 catch) with NO stop-on-repeated-auth-failure guard and NO
+//         full-envelope log; the #164 acceptance is the #148 driver law landing as client discipline. [fold: re-anchored
+//         to the FOUND loop-open + hardCap-break lines, scanned COMMENT-STRIPPED so a doc comment cannot game the
+//         static scan — the v1 absolute line-window anchor is gone])
 //
 // §E — transport-principal discrimination (GREEN — the over-claim class the RED rows must not drift into)
 //   A6    RA6 pin: run.inspect's continuation refuses after mid-wait lease invalidation, never projects (phase77:394-420).
@@ -61,9 +84,14 @@
 //         never the terminal view. (GREEN at HEAD: the MCP post-dispatch recheck and the web _postWaitAuthorization
 //         both run after dispatch regardless of the dispatched value — kills an impl that early-returns terminal
 //         truth BEFORE the transport recheck, short-circuiting the authority check)
-//   P-MCP the MCP wait-verb post-dispatch recheck enumerates EXACTLY ['fleet_run_follow','fleet_run_wait'], the typed
-//         `unauthenticated` code is preserved (additive-only), and the invalid_run_wait ceiling stays (mcp-northbound.mjs:954).
-//         (GREEN — kills an impl that names the renewal on ALL MCP tools or removes the code)
+//   P-MCP the MCP post-dispatch transport recheck list must enumerate the FOUR wait-capable tools —
+//         ['fleet_run_follow','fleet_run_wait'] PLUS ['fleet_run_episode','fleet_run_workstreams'] (fold-164 B3;
+//         contract D2 MCP row + A2) — the typed `unauthenticated` code stays preserved (additive-only), and the
+//         invalid_run_wait ceiling stays. (RED — at HEAD the list covers only the two wait verbs, so a mid-wait
+//         revocation on episode/workstreams is not caught post-dispatch; stage mcp-recheck-episode-workstreams-missing;
+//         this is the static shadow of A2-c/A2-d)
+//   P-MCP-ceiling  invalid_run_wait stays the MCP wait-budget ceiling (A10/MCP pin). (GREEN behavioral — the
+//         request-shape refusal is preserved even after the recheck list grows)
 //   P-WEB the web wait refusal keeps the typed 401 `unauthenticated` / 403 `forbidden` codes AND the
 //         application_wait_timeout_exceeds_web_ceiling token stays (web-northbound.mjs:417). (GREEN — the renewal naming
 //         is ADDITIVE on the code, never a code swap)
@@ -73,9 +101,13 @@
 //   P-FORBIDDEN the `forbidden` refusal at the wait seams is the capability/repo-scope death, NOT a lifetime
 //         renewal — it must never name /v1/auth/refresh (the refusal table; OQ3). (GREEN — the code is preserved and
 //         no lifetime-refresh lane is claimed; kills an impl that blanket-names /v1/auth/refresh on EVERY refusal)
-//   P-APP the APPLICATION layer's run.wait deployment-policy refusal stays application_unauthorized with NO renewal field —
-//         the renewal naming is a TRANSPORT-surface concern, never an application-command concern. (GREEN — kills the
-//         transport-principal over-claim that moves renewal naming into the application layer)
+//   P-APP the APPLICATION layer's run.wait deployment-policy refusal keeps application_unauthorized AND names the
+//         APP-layer renewal — the lease seat / the deployment-policy credential (D1.2(a); the refusal table) — and
+//         never the transport /v1/auth/refresh lane. (RED — at HEAD the application refusal is code-only with no
+//         renewal field, so a caller cannot learn the renewal lane; stage app-refusal-renewal-naming-missing. This is
+//         the v2 fold of the blue-team's inverse pin: renewal naming is required on the application_unauthorized leg
+//         itself, while the transport-principal over-claim — naming /v1/auth/refresh from the application layer — stays
+//         killed)
 //
 // §F — additive-only + refusal-table pins (GREEN)
 //   A9    the terminal/settled literal sets and the WAITING_ON_KINDS closed five stay byte-unchanged (additive-only law).
@@ -84,22 +116,28 @@
 //         table fold). (GREEN — kills an impl that renames or drops the wait-budget refusal)
 //   A4-pin the #148 DRIVER LAW is documented in the friction ledger (Appendix D row 2 — "log the full non-ok envelope and
 //         stop on repeated auth failure — never retry-blind") — the typed refusal + renewal naming is what makes the
-//         stop actionable. (GREEN doc pin — the client discipline exists for the server-side refusals A2-a/A2-b/A3-a/A3-b pin)
+//         stop actionable. (GREEN doc pin — the client discipline exists for the server-side refusals A2-a/A2-b/A2-c/
+//         A2-d/A3-a/A3-b/P-APP pin)
 //
 // §G — workflow evidence (GREEN)
 //   P-PUBLISH the shared-scratchpad publish lane (the #158 run.scratchpad.append verb) is NOT landed at HEAD — an attempt
 //         to publish a `shared`-scope note refuses application_command_unavailable. The refusal is the publish-as-you-go
-//         evidence the coordinator expects; recorded in suite-draft-notes.md. (GREEN — the lane's absence is reproducible)
+//         evidence the coordinator expects. (GREEN — the lane's absence is reproducible. [blue-team DECORATIVE: the pin
+//         is workflow evidence, not a contract law; scoped as such, and it is temporally coupled to #158 — re-examine
+//         when the publish lane lands])
 
 // ===========================================================================
-// VERIFIED SPLIT (measured against the PRE-implementation tree; run twice)
+// VERIFIED SPLIT (measured twice per tree, from the repo root)
 // ===========================================================================
-//   PASS 15 · FAIL 8 — stable across two runs from the repo root
-//   RED: A1-a terminal-truth-predicate-missing, A1-b settle-block-durable-stop-missing, A2-a
-//   mcp-refusal-renewal-missing, A2-b mcp-refusal-renewal-missing, A3-a web-refusal-renewal-missing,
-//   A3-b web-refusal-renewal-missing, A4 driver-stop-on-repeated-auth-missing,
-//   B1 return-seam-revalidation-missing.
-//   (split recorded in suite-draft-notes.md)
+//   BASELINE (pre-fold): tests 31 · pass 23 · fail 8
+//     RED: A1-a terminal-truth-predicate-missing, A1-b settle-block-durable-stop-missing, A2-a
+//     mcp-refusal-renewal-missing, A2-b mcp-refusal-renewal-missing, A3-a web-refusal-renewal-missing,
+//     A3-b web-refusal-renewal-missing, A4 driver-stop-on-repeated-auth-missing,
+//     B1 return-seam-revalidation-missing.
+//   POST-FOLD (after the row-sf164 edits below): tests 34 · pass 23 · fail 11
+//     RED: A1-a, A1-b, A2-a, A2-b, A2-c, A2-d, A3-a, A3-b, A4,
+//     P-MCP mcp-recheck-episode-workstreams-missing, P-APP app-refusal-renewal-naming-missing.
+//     (both splits stable across two runs each)
 
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
@@ -507,6 +545,12 @@ function runWaitBody() {
   const end = srcAnchor('application.mjs', '  _followCategory(event)');
   return srcRegion('application.mjs', start.line, end.line - 1);
 }
+// Fold hardening (row-sf164): the A4 scan must be gamed by CODE, never by a stray comment — strip
+// `//`-to-EOL comments before the auth-stop guard regex runs, so a comment containing the guard's
+// vocabulary (e.g. `unauthenticated` or `non-ok`) cannot turn the row green with zero behavior.
+function stripJsComments(text) {
+  return text.replace(/\/\/[^\n]*/gu, '');
+}
 
 // ===========================================================================
 // §A — run.wait durable-stop truth (RED)
@@ -663,6 +707,8 @@ test('A2-a RED: MCP fleet_run_wait refuses a mid-wait revocation with unauthenti
     'stage: mcp-refusal-renewal-missing — a mid-wait revocation must name the MCP re-authentication renewal path (D1.2/G7); at HEAD toolError(refused) is code-only (mcp-northbound.mjs:198-200) with no renewal field, so the caller cannot learn the renewal verb');
   assert.ok(typeof envelope.error.renewal?.path === 'string' || typeof envelope.error.renewal?.verb === 'string',
     'the renewal names a concrete lane (re-authenticate / refresh)');
+  assert.notEqual(envelope.error.renewal?.path, '/v1/auth/refresh',
+    'stage: mcp-refusal-renewal-names-mcp-lane — the MCP renewal names the MCP re-authentication lane (OQ3; refusal table `unauthenticated`: "MCP: re-authenticate the MCP session"), never the web /v1/auth/refresh lane; a shared web-lane renewal copied onto the MCP surface (a `renewal: { path: \'/v1/auth/refresh\' }` constant) fails this pin (blue-team A2-a SHALLOW → FOLDED)');
 });
 
 test('A2-b RED: MCP fleet_run_follow refuses a mid-wait revocation with unauthenticated AND names the renewal path', async (t) => {
@@ -696,6 +742,70 @@ test('A2-b RED: MCP fleet_run_follow refuses a mid-wait revocation with unauthen
     'stage: mcp-refusal-renewal-missing — fleet_run_follow rides the SAME post-dispatch recheck (mcp-northbound.mjs:1510) as fleet_run_wait; an impl that fixes only fleet_run_wait leaves fleet_run_follow code-only, so this row stays RED at the same stage');
   assert.ok(typeof envelope.error.renewal?.path === 'string' || typeof envelope.error.renewal?.verb === 'string',
     'the renewal names a concrete lane');
+  assert.notEqual(envelope.error.renewal?.path, '/v1/auth/refresh',
+    'stage: mcp-refusal-renewal-names-mcp-lane — the fleet_run_follow renewal also names the MCP re-authentication lane (OQ3), never the web /v1/auth/refresh lane; the shared web-lane renewal cheat fails this pin too (blue-team A2-b SHALLOW → FOLDED)');
+});
+
+test('A2-c RED: MCP fleet_run_episode refuses a mid-wait revocation with unauthenticated AND names the renewal path (A2/D2 fold — B3)', async (t) => {
+  let active = true;
+  let release;
+  const blocked = new Promise((resolve) => { release = resolve; });
+  let entered;
+  const dispatched = new Promise((resolve) => { entered = resolve; });
+  const application = {
+    repoId: REPO, card: runApplicationCard, async authorizeReplay() { return true; },
+    async command() { entered(); await blocked; return { schemaVersion: 1, runId: 'run-a2c', phase: 'running' }; },
+  };
+  const { server } = mcpSetup({ application, isPrincipalActive: () => active });
+  await mcpInitialized(server);
+  t.after(async () => { await server.close().catch(() => {}); });
+
+  const pending = mcpRequest(server, 3, 'tools/call', {
+    name: 'fleet_run_episode', arguments: { repoId: REPO, runId: 'run-a2c', cursor: 0, waitMs: 5_000 },
+  });
+  await dispatched;
+  active = false;
+  release();
+  const response = await pending;
+
+  assert.equal(response.result.isError, true,
+    'stage: mcp-refusal-renewal-missing — fleet_run_episode is a wait-capable MCP tool the v2 contract adds to the post-dispatch transport recheck (fold-164 B3; contract D2 MCP row + A2); at HEAD the recheck list (mcp-northbound.mjs:1510) covers only fleet_run_follow/fleet_run_wait, so a mid-wait revocation on fleet_run_episode is NOT refused and the dispatched value returns — the row stays RED until the recheck list extends AND the renewal is named (blue-team P-MCP fold: the missing episode/workstreams RED row; the cursor is required for a run.episode wait, application.mjs:1917)');
+  const envelope = JSON.parse(response.result.content[0].text);
+  assert.equal(envelope.ok, false, 'D1.3 — never silence: the refusal is not ok:true');
+  assert.equal(envelope.error.code, 'unauthenticated', 'the typed code is preserved (additive-only)');
+  assert.equal(typeof envelope.error.renewal, 'object',
+    'the episode refusal names a concrete MCP re-authentication lane (D1.2/G7, OQ3)');
+});
+
+test('A2-d RED: MCP fleet_run_workstreams refuses a mid-wait revocation with unauthenticated AND names the renewal path (A2/D2 fold — B3)', async (t) => {
+  let active = true;
+  let release;
+  const blocked = new Promise((resolve) => { release = resolve; });
+  let entered;
+  const dispatched = new Promise((resolve) => { entered = resolve; });
+  const application = {
+    repoId: REPO, card: runApplicationCard, async authorizeReplay() { return true; },
+    async command() { entered(); await blocked; return { schemaVersion: 1, runId: 'run-a2d', phase: 'running' }; },
+  };
+  const { server } = mcpSetup({ application, isPrincipalActive: () => active });
+  await mcpInitialized(server);
+  t.after(async () => { await server.close().catch(() => {}); });
+
+  const pending = mcpRequest(server, 3, 'tools/call', {
+    name: 'fleet_run_workstreams', arguments: { repoId: REPO, runId: 'run-a2d', cursor: 0, waitMs: 5_000 },
+  });
+  await dispatched;
+  active = false;
+  release();
+  const response = await pending;
+
+  assert.equal(response.result.isError, true,
+    'stage: mcp-refusal-renewal-missing — fleet_run_workstreams is the second wait-capable MCP tool the v2 contract adds to the post-dispatch transport recheck (fold-164 B3; contract D2 MCP row + A2); at HEAD the recheck list covers only fleet_run_follow/fleet_run_wait, so a mid-wait revocation on fleet_run_workstreams is NOT refused — an impl that extends the recheck to episode only leaves this row RED at the same stage (the cursor is required for a run.workstreams wait, application.mjs:1935)');
+  const envelope = JSON.parse(response.result.content[0].text);
+  assert.equal(envelope.ok, false, 'D1.3 — never silence: the refusal is not ok:true');
+  assert.equal(envelope.error.code, 'unauthenticated', 'the typed code is preserved (additive-only)');
+  assert.equal(typeof envelope.error.renewal, 'object',
+    'the workstreams refusal names a concrete MCP re-authentication lane (D1.2/G7, OQ3)');
 });
 
 test('A3-a RED: web run_wait refuses a mid-wait expiry with 401 unauthenticated AND names /v1/auth/refresh', async (t) => {
@@ -748,28 +858,43 @@ test('A3-b RED: web run_follow refuses a mid-wait expiry with 401 unauthenticate
     'stage: web-refusal-renewal-missing — run_follow rides the SAME post-wait reauth seam (:895) as run_wait; an impl that fixes only run_wait leaves run_follow bare, so this row stays RED at the same stage');
 });
 
-test('B1 RED: run.wait lacks a DISTINCT return-seam revalidation after the loop, before return view (D2(b))', () => {
+test('B1 GREEN: run.wait\'s loop exit iteration is always a fresh status() re-read — no distinct return-seam revalidation (H-4)', () => {
   const body = runWaitBody();
   const lastWhile = body.lastIndexOf('while (');
   assert.ok(lastWhile >= 0, 'the settle-block while loop exists in run.wait');
   const tail = body.slice(lastWhile);
-  const hasReturnSeamRevalidation = /this\._authorize(?:RecursiveCommand)?\(/u.test(tail);
-  assert.equal(hasReturnSeamRevalidation, true,
-    'stage: return-seam-revalidation-missing — D2(b) requires a return-seam revalidation AFTER the loop\'s last wait and BEFORE return view (the RA6/RA7 template, phase77:370-392); at HEAD run.wait\'s settle-block loop is immediately followed by `return view` (application.mjs:8005-8006) with no distinct revalidation — a per-cycle status() re-check alone (which status() runs internally) does not pin the seam, so a wrong impl that keeps only the loop\'s re-check stays RED here');
+  // Fold (row-sf164, blue-team B1 BROKEN → FOLDED): the v2 authority contract FOLDS OUT the v1
+  // draft's (b) — a DISTINCT return-seam revalidation after the loop and before `return view` — as
+  // redundant and layer-confused (contract D2 `run.wait` row + D1 closing; fold-164 H-4). The loop's
+  // exit iteration is ALWAYS a fresh status() re-read, so its view IS the revalidated product; the
+  // transport-principal revalidation belongs to the surface rows (D3.2), never a redundant
+  // application-layer seam. A wrong impl that re-adds the seam (a `this._authorize` call between the
+  // loop's close and `return view`) fails the adjacency + absence pins below.
+  const exitIsFreshStatus = /await this\.status\(runId, observer, \{\}, context\);\s*\}\s*return view;/u.test(tail);
+  assert.equal(exitIsFreshStatus, true,
+    'the settle-block loop\'s last statement is a fresh status() re-read and `return view` follows it directly — the per-cycle re-check the v2 contract mandates (D1/D2); the exit iteration\'s view IS the revalidated product, so there is no post-wait-before-projection gap of the RA6/RA7 kind inside run.wait (H-4 folded)');
+  const tailHasSeamRevalidation = /this\._authorize(?:RecursiveCommand)?\(/u.test(tail);
+  assert.equal(tailHasSeamRevalidation, false,
+    'the run.wait tail carries no distinct return-seam `_authorize` — the v1 (b) seam was folded OUT of the v2 authority as redundant and layer-confused (H-4); a wrong impl that reintroduces it fails this pin, and the per-cycle status() re-check remains the honest seam');
 });
 
-test('A4 RED: the driver pump loop retries blind on a typed refusal — no stop-on-repeated-auth-failure guard (the #148 instance\'s shape)', () => {
-  // The L4-L6 poll/steer loop (wave-driver.mjs:544 `for (;;)` … :893 the top-level function close)
-  // is the wave-driver layer's pump over the bus. Its per-member status read (the L5/D10 catch,
-  // :566-571) blanket-swallows EVERY failure as 'unavailable' — a typed auth refusal
-  // (`application_unauthorized`, `unauthenticated`, a dead recursive lease) is invisible to the
-  // loop, which keeps polling to `hardCapMs`. The #164 acceptance (A4) is the #148 driver law
-  // landing as client discipline: log the full non-ok envelope and STOP on repeated auth failure.
+test('A4 RED: the driver pump loop L5/D10 catch blanket-swallows status failures — no auth-stop guard in the CODE (the #148 instance\'s shape)', () => {
+  // Fold (row-sf164, blue-team A4 SHALLOW → FOLDED): the static scan is re-anchored on FOUND lines
+  // (the pump loop's `for (;;)` open → the hardCap break line that bounds the loop) — no absolute
+  // line-window anchor — and COMMENTS ARE STRIPPED so a stray comment containing the guard vocabulary
+  // cannot turn the row green with zero behavior. The L4-L6 poll/steer loop is the wave-driver
+  // layer's pump over the bus; its per-member status read (the L5/D10 catch) blanket-swallows EVERY
+  // failure as 'unavailable' — a typed auth refusal (`application_unauthorized`, `unauthenticated`,
+  // a dead recursive lease) is invisible to the loop, which keeps polling to `hardCapMs`. The #164
+  // acceptance (A4) is the #148 driver law landing as client discipline: log the full non-ok
+  // envelope and STOP on repeated auth failure.
   const pump = srcAnchor('wave-driver.mjs', '      for (;;) {');
-  const region = srcRegion('wave-driver.mjs', pump.line, 893);
-  const hasStopOnRepeatedAuth = /stop.*repeated.*auth|repeated.*auth.*fail|fail[ _-]?loud|retry[ _-]?blind|non-ok|authFailure|unauthenticated/u.test(region);
+  const hardCap = srcAnchor('wave-driver.mjs', "if (now - startedAt >= policy.hardCapMs) { basis = 'hard_cap'; break; }");
+  assert.ok(hardCap.line > pump.line, 'the hardCap break line bounds the pump loop region');
+  const code = stripJsComments(srcRegion('wave-driver.mjs', pump.line, hardCap.line));
+  const hasStopOnRepeatedAuth = /stop.*repeated.*auth|repeated.*auth.*fail|fail[ _-]?loud|retry[ _-]?blind|non-ok|authFailure|unauthenticated/u.test(code);
   assert.equal(hasStopOnRepeatedAuth, true,
-    'stage: driver-stop-on-repeated-auth-missing — the wave-driver pump loop (wave-driver.mjs:544-893) must log the full non-ok envelope and stop on repeated auth failure (G1/#148 driver law, D2 driver row); at HEAD the L5/D10 catch (:566-571) swallows every status failure as `unavailable` and the region carries NO auth-stop guard, so a typed refusal is pumped through to the deadline blind');
+    'stage: driver-stop-on-repeated-auth-missing — the wave-driver pump loop (wave-driver.mjs, the `for (;;)` L4-L6 poll/steer) must log the full non-ok envelope and stop on repeated auth failure (G1/#148 driver law, D2 driver row); at HEAD the L5/D10 catch swallows every status failure as `unavailable` and the CODE carries no auth-stop guard, so a typed refusal is pumped through to the deadline blind');
 });
 
 // ===========================================================================
@@ -924,14 +1049,24 @@ test('D3.2 GREEN: a dead authority refuses even when the run truth is terminal �
   });
 });
 
-test('P-MCP GREEN: the MCP wait-verb recheck enumerates EXACTLY the wait verbs, the typed code is preserved, and invalid_run_wait stays', async (t) => {
-  // The post-dispatch recheck applies to the two wait verbs ONLY (G7, mcp-northbound.mjs:1510) —
-  // the renewal naming is wait-verb-scoped, never a blanket all-tool rename.
+test('P-MCP RED: the MCP post-dispatch recheck list must extend to fleet_run_episode/fleet_run_workstreams (fold-164 B3)', () => {
+  // Fold (row-sf164, blue-team P-MCP BROKEN over-pin → FOLDED): the old pin froze the recheck list
+  // at the two-verb form, which the folded authority contract requires EXTENDING to the four
+  // wait-capable tools (fold-164 B3 → FOLDED; contract D2 MCP row: "extend it to
+  // fleet_run_episode/fleet_run_workstreams"; A2). At HEAD the list is still the two-verb form
+  // (mcp-northbound.mjs:1510), so the row stays RED until the extension lands — the A2-c/A2-d
+  // behavioral rows pin the same gap.
   const recheck = srcAnchor('mcp-northbound.mjs', "const refused = ['fleet_run_follow', 'fleet_run_wait'].includes(name) ? this._authority(name, args) : null;");
-  assert.equal(recheck.text.includes("['fleet_run_follow', 'fleet_run_wait']"), true,
-    'the wait-verb recheck list is exactly fleet_run_follow + fleet_run_wait');
+  const list = recheck.text.match(/\[[^\]]*\]/u)?.[0] ?? '';
+  assert.equal(
+    ['fleet_run_follow', 'fleet_run_workstreams', 'fleet_run_episode', 'fleet_run_wait'].every((name) => list.includes(name)),
+    true,
+    'stage: mcp-recheck-episode-workstreams-missing — the MCP post-dispatch transport recheck list must enumerate the four wait-capable tools (fleet_run_follow/fleet_run_wait/fleet_run_episode/fleet_run_workstreams), per fold-164 B3 + contract D2 MCP row + A2; at HEAD the list covers only the two wait verbs, so a mid-wait revocation on fleet_run_episode/fleet_run_workstreams is not caught post-dispatch');
+});
 
-  // invalid_run_wait ceiling stays (A10/MCP pin, mcp-northbound.mjs:954-955).
+test('P-MCP-ceiling GREEN: invalid_run_wait stays the MCP wait-budget ceiling (A10/MCP pin)', async (t) => {
+  // Split from the old P-MCP row (fold): the request-shape ceiling is a GREEN invariant — the #164
+  // fold never touches the wait-budget ceiling, and a landed impl must not rename or drop it.
   const application = {
     repoId: REPO, card: runApplicationCard, async authorizeReplay() { return true; },
     async command() { throw new Error('the ceiling must refuse before dispatch'); },
@@ -944,7 +1079,7 @@ test('P-MCP GREEN: the MCP wait-verb recheck enumerates EXACTLY the wait verbs, 
   });
   assert.equal(refused.result.isError, true);
   assert.equal(JSON.parse(refused.result.content[0].text).error.code, 'invalid_run_wait',
-    'the request-shape refusal stays invalid_run_wait — the #164 fold never touches the wait-budget ceiling');
+    'the request-shape refusal stays invalid_run_wait (mcp-northbound.mjs:954-955) — the #164 fold never touches the wait-budget ceiling');
 });
 
 test('P-WEB GREEN: the web wait refusal keeps the typed 401/403 codes and the application_wait_timeout_exceeds_web_ceiling token stays', async (t) => {
@@ -1022,7 +1157,7 @@ test('P-FORBIDDEN GREEN: the `forbidden` wait refusal is the capability/repo-sco
   });
 });
 
-test('P-APP GREEN: the APPLICATION-layer run.wait refusal stays application_unauthorized with NO renewal field — renewal naming is a TRANSPORT concern', async (t) => {
+test('P-APP RED: the APPLICATION-layer run.wait refusal keeps application_unauthorized AND names the app-layer renewal — never the transport /v1/auth/refresh lane (D1.2(a))', async (t) => {
   const f = fixture('papp');
   t.after(() => cleanupFixture(f));
   const runId = 'run-blind-waits-papp';
@@ -1044,9 +1179,19 @@ test('P-APP GREEN: the APPLICATION-layer run.wait refusal stays application_unau
 
   assert.equal(refusal?.code, 'application_unauthorized',
     'the deployment-policy refusal stays application_unauthorized (application.mjs:3222) — the fail-loud law does not rename it');
+  // Fold (row-sf164, blue-team P-APP BROKEN inverse pin → FOLDED): the v2 authority contract's
+  // D1.2(a) requires the per-cycle APPLICATION legs — including the deployment policy — to "refuse
+  // the typed code AND name the renewal path on the cycle that observes them"; the refusal table
+  // marks application_unauthorized as "refusal naming added" (renew the deployment-policy
+  // credential/seat; refresh the session when the principal's session is dead). At HEAD the
+  // application refusal carries no renewal field, so the row stays RED until the naming lands.
+  assert.equal(typeof refusal?.renewal, 'object',
+    'stage: app-refusal-renewal-naming-missing — the application-layer application_unauthorized refusal must name the app-layer renewal lane (the deployment-policy credential/seat / the recursive-lease re-authorization, D1.2(a) + refusal table + OQ3); at HEAD the refusal is code-only, so a caller cannot learn the renewal lane');
+  assert.ok(typeof refusal.renewal?.path === 'string' || typeof refusal.renewal?.verb === 'string' || typeof refusal.renewal?.seat === 'string',
+    'the app-layer renewal names a concrete lane (lease seat / deployment-policy credential)');
   const serialized = JSON.stringify(refusal);
-  assert.equal(serialized.includes('renewal'), false,
-    'the APPLICATION refusal carries NO renewal field — the transport-principal over-claim (naming the renewal inside application.run.wait\'s refusal) is exactly what this pin kills: renewal naming lives on the MCP/web TRANSPORT surfaces (A2-a/A2-b/A3-a/A3-b), never in the application command');
+  assert.equal(serialized.includes('/v1/auth/refresh'), false,
+    'the APPLICATION refusal never names the transport-principal /v1/auth/refresh lane — the web refresh path is a TRANSPORT-surface lane (web-northbound.mjs:166); the app-layer renewal names the lease seat / deployment-policy credential, never the web session refresh (the blue-team P-APP fold action)');
 });
 
 // ===========================================================================
