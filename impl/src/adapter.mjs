@@ -17,6 +17,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { renderVerificationExecution } from './verification-presentation.mjs';
+import { renderAttentionSection } from './messages.mjs';
 
 const STOP_SETTLE_MS = 8;
 const MOCK_TOKEN_METRIC = 'mock_scenario_tokens';
@@ -159,6 +160,11 @@ export function renderBrief(brief, dialect) {
       }
     }
   }
+  // Issue #79 (D1): the worker-delivery push block lands AFTER the last data-bearing section
+  // (`## Ambient knowledge`) so the `## Verification` contract keeps its position. Absent when
+  // there is nothing to serve (the empty-pending-set pin).
+  const attention = renderAttentionSection(brief.attention);
+  if (attention) lines.push(attention);
   return lines.join('\n');
 }
 

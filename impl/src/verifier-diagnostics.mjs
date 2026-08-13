@@ -40,7 +40,10 @@ export function sanitizeVerifierDiagnosticText(value, { sandboxRoots = [] } = {}
   }
   const pathSanitizers = [
     [/(?:file:\/\/)?\/(?:private\/)?(?:tmp|var\/folders)\/[^\s:'"\])}]+/gu, '[temporary-path]'],
-    [/(?:file:\/\/)?\/(?:Users|home)\/[^/\s]+\//gu, '/[home]/'],
+    // Redact the WHOLE home path (username + every subdirectory + a `file.rs:12` line:col suffix),
+    // never just the username — a leaked `projects/secret/lib.rs` tail still crosses the provider
+    // seam as a raw capsule fragment (issue #79 F6). Stops at whitespace/quote.
+    [/(?:file:\/\/)?\/(?:Users|home)\/[^\s'"]+/gu, '/[home]/'],
   ];
   for (const [pattern, replacement] of pathSanitizers) {
     if (pattern.test(text)) {

@@ -10,6 +10,31 @@
           "run-27e15ec9bebdd0bbfde188c0558690d4"
         ]
       }
+    },
+    {
+      "step": "terminal:impl-79",
+      "receipt": {
+        "phase": "work_completed"
+      }
+    },
+    {
+      "step": "loop-drained",
+      "receipt": {
+        "pending": []
+      }
     }
-  ]
+  ],
+  "harvest": {
+    "impl-79": {
+      "pin": "3529638c036fc78c6df698df4995d224bb73e3ef",
+      "paths": [
+        "impl/src/coordinator.mjs",
+        "impl/src/limits.mjs",
+        "impl/src/wave-driver.mjs",
+        "docs/reference/evidence/worker-delivery-push-2026-08-07/impl-79-notes.md"
+      ]
+    }
+  },
+  "harvestStalePinsSkipped": 474,
+  "verdict": "IMPL-79-OK"
 }
