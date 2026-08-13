@@ -52,6 +52,7 @@ ordinary-CLI inventory. The conformance suite fails if they drift from served tr
 | `waves.attach` | `ordinary` | `baton waves attach` | `baton waves attach WAVE_ID --members JSON` |
 | `waves.list` | `ordinary` | `baton waves list` | `baton waves list` |
 | `waves.progress` | `ordinary` | `baton waves progress` | `baton waves progress WAVE_ID --cursor 0` |
+| `waves.run` | `ordinary` | `baton waves run` | `baton waves run path/to/spec.json` |
 | `waves.start` | `ordinary` | `baton waves start` | `baton waves start --members JSON` |
 
 <!-- END GENERATED: cli-verb-inventory -->

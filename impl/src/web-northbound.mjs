@@ -40,6 +40,10 @@ const WAVE_WEB_ENTRIES = Object.freeze([
   ['waves_send', 'waves.send', Object.freeze(['control', 'observe'])],
   ['waves_stop', 'waves.stop', Object.freeze(['emergency_stop', 'observe'])],
   ['waves_list', 'waves.list', Object.freeze(['observe'])],
+  // #153 repair (dogfood launch, 2026-08-13): the #114 interpreter verb rides the
+  // same direct-port admission — runWorkflow's own closed validation (spec|specPath,
+  // workflow_* refusals) is the argument authority, exactly like the five sibling verbs.
+  ['waves_run', 'waves.run', Object.freeze(['control', 'observe'])],
 ]);
 // D1.2/D1.3 — the wave transports are DIRECT PORTS: validateEnvelope skips
 // validateApplicationCommandArgs for them (WEB_DIRECT_PORT_COMMANDS below) and their argument
@@ -53,6 +57,7 @@ const WAVE_ARG_FIELDS = Object.freeze({
   waves_send: new Set(['claimGrant', 'delivery', 'message', 'runId']),
   waves_stop: new Set(['reason', 'runId']),
   waves_list: new Set(['cursor', 'waveId']),
+  waves_run: new Set(['idempotencyKey', 'spec', 'specPath']),
 });
 const WEB_DIRECT_PORT_COMMANDS = new Set(WAVE_WEB_ENTRIES.map(([transport]) => transport));
 

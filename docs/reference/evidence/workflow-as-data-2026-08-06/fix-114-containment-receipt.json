@@ -1,0 +1,37 @@
+{
+  "attempt": "2026-08-07T05:02:01.839Z",
+  "salt": "fc20260807050201",
+  "role": "fix-114-containment",
+  "steps": [
+    {
+      "step": "waves.start",
+      "receipt": {
+        "runs": [
+          "run-896822061f4f5f21ec9e1508a5b0f0f2"
+        ]
+      }
+    },
+    {
+      "step": "terminal:fix-114-containment",
+      "receipt": {
+        "phase": "work_completed"
+      }
+    },
+    {
+      "step": "loop-drained",
+      "receipt": {
+        "pending": []
+      }
+    }
+  ],
+  "harvest": {
+    "fix-114-containment": {
+      "pin": "dc735797317e7a78420fe81f086349fb66da9625",
+      "paths": [
+        "impl/src/workflow-interpreter.mjs"
+      ]
+    }
+  },
+  "harvestStalePinsSkipped": 360,
+  "verdict": "FIX-114-OK"
+}

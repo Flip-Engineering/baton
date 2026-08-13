@@ -24,7 +24,7 @@ export const CLI_WEB_COMMANDS = new Set([
   // S-1 v2: portable atomic attach-and-harvest; #132 D4 adds the two CLI read verbs the client
   // dispatches over the web envelope (waves.list/waves.progress, admitted at the port as direct
   // commands — web-northbound.mjs WEB_DIRECT_PORT_COMMANDS).
-  'waves.attach', 'waves.start', 'waves.list', 'waves.progress',
+  'waves.attach', 'waves.start', 'waves.list', 'waves.progress', 'waves.run',
   // Facade-projection epic (#87+#48, contract v2.2): the eight workflow-surface command names.
   'run.message.send', 'run.message.receipt', 'run.attention.watch',
   'run.scratchpad.read', 'run.scratchpad.elevate', 'run.board.post', 'run.board.read',
