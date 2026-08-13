@@ -1,0 +1,37 @@
+{
+  "attempt": "2026-08-13T06:58:53.100Z",
+  "salt": "x320260813065853",
+  "role": "contract-155",
+  "steps": [
+    {
+      "step": "waves.start",
+      "receipt": {
+        "runs": [
+          "run-a5281298d5f065c2a456db8854cb33dd"
+        ]
+      }
+    },
+    {
+      "step": "terminal:contract-155",
+      "receipt": {
+        "phase": "work_completed"
+      }
+    },
+    {
+      "step": "loop-drained",
+      "receipt": {
+        "pending": []
+      }
+    }
+  ],
+  "harvest": {
+    "contract-155": {
+      "pin": "e62b517ae703be18c4047934f18cb6412161c6b1",
+      "paths": [
+        "docs/reference/evidence/cli-silent-start-2026-08-13/cli-silent-start-contract.md"
+      ]
+    }
+  },
+  "harvestStalePinsSkipped": 460,
+  "verdict": "CONTRACT-155-OK"
+}
