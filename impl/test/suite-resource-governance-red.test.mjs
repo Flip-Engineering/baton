@@ -1,26 +1,29 @@
 // Suite-resource-governance red suite (contract: docs/reference/evidence/
 // suite-resource-governance-2026-08-12/suite-resource-governance-contract.md v1.1 — issue #77;
 // fold maps contract-fold.md (the 6 calibration-seam resolutions) and contract-redteam.md (the
-// attack surface) beside it; blue-team suite-blueteam.md).
+// attack surface) beside it; blue-team suite-blueteam.md; fold-2 map suite-fold-2.md). The
+// v1.2 fold note: `baselineReceiptPath` joins the measureCalibration override set (F3) and the
+// gate honors a BATON_RG_CALIBRATION injection seam (F1).
 //
 // Rows over the folded decisions: A the calibration module (measureCalibration / readCalibration /
 // scaledTimeout — D1, RG-03..RG-06); B the gate surface (the calibration line + the
-// BATON_SUITE_CALIBRATION env — D1.3, RG-01..RG-02); C the parallelism posture
-// (deriveTestConcurrency + the gate's derived flag + the stop-path scaling — D3, RG-09); D the
-// cause-class vocabulary and the outcome-correctness gate (classifyCause + the D2.1 discipline —
-// D2, RG-08, RG-13); E the refusal surface (suite_calibration_invalid / suite_calibration_unavailable
-// — D4, RG-10); F the load-aware markers and the closed G4 membership table (D1.4, RG-12); G the
-// re-arm-on-progress liveness bound (D1.4, blocker B6); H the closed literals and the honest-null
-// analog (§3, RG-07).
+// BATON_SUITE_CALIBRATION env, receipted on passing AND failing runs — D1.3, RG-01..RG-02,
+// RG-07); C the parallelism posture (deriveTestConcurrency + the gate's derived flag + the
+// stop-path scaling + the whole-run budget separation — D3, RG-09); D the cause-class vocabulary
+// and the outcome-correctness gate (classifyCause + the D2.1 discipline — D2, RG-08, RG-13);
+// E the refusal surface (suite_calibration_invalid / suite_calibration_unavailable, both the
+// probe and loadavg branches — D4, RG-10); F the load-aware markers, the closed G4 membership
+// table, and the unmarked-derives default (D1.4, RG-12); G the re-arm-on-progress liveness bound
+// (D1.4, blocker B6); H the closed literals and the honest-null analog (§3, RG-07).
 //
-// INVENTORY + SPLIT (measured 2026-08-12 from the repo root, two runs): 26 rows — A ×6, B ×2,
-// C ×3, D ×5, E ×2, F ×3, G ×1, H ×2 (24 red capability rows) + P ×2 (green pins). Split:
-// 24 red / 2 green; every red row fails at a NAMED stage at HEAD and the split is byte-stable
+// INVENTORY + SPLIT (measured 2026-08-13 from the repo root, two runs): 32 rows — A ×8, B ×3,
+// C ×4, D ×5, E ×3, F ×4, G ×1, H ×2 (30 red capability rows) + P ×2 (green pins). Split:
+// 30 red / 2 green; every red row fails at a NAMED stage at HEAD and the split is byte-stable
 // across the two runs (see suite-draft-notes.md for the receipts).
 //
 // Red-first: written against the v1.1 contract BEFORE implementation; every contract-mandated-but-
 // missing capability fails at a NAMED stage. Harness pattern mirrors the dynamic-import module-
-// missing stage of test/browser-use-red.test.mjs:96-99 and test/frame-economics-red.test.mjs:222-
+// missing stage of impl/test/browser-use-red.test.mjs:96-99 and impl/test/frame-economics-red.test.mjs:222-
 // 241 (limitsOrError / assertLimitsModule).
 //
 // NAMED STAGES (the honest failure a row gives today):
@@ -35,13 +38,17 @@
 // SUITE-PINNED API SURFACE (the contract names behavior, not module names; the implementation is
 // expected to ship this surface — adjust here if the epic renames it):
 //   impl/scripts/suite-calibration.mjs exports:
-//     measureCalibration({ load, probeMs, baselineProbeMs, probe } = {})
+//     measureCalibration({ load, probeMs, baselineProbeMs, probe, baselineReceiptPath } = {})
 //         -> { baselineBasis, baselineProbeMs, cores, factor, load, measuredAt, probeMs,
 //              schemaVersion } (D1.3's closed key set, ACTUAL order). The overrides are the
 //         test-double seam (RG-04/RG-06): load {fifteen,five,one}, probeMs (a measured value),
-//         baselineProbeMs (the recorded baseline), probe (an injected async sampler). Absent
-//         overrides measure the real host; an injected probe that throws refuses with
-//         suite_calibration_unavailable naming the failed measurement (D1.1, D4).
+//         baselineProbeMs (the recorded baseline), probe (an injected async sampler — called
+//         exactly K = 5 times, sequentially, with non-overlapping cadence windows, D1.1/B5),
+//         baselineReceiptPath (a path to the baseline receipt JSON, D1.5/B3: a present receipt
+//         records baselineProbeMs, an absent receipt yields baselineBasis "unrecorded" with the
+//         honest-null baselineProbeMs). Absent overrides measure the real host; an injected probe
+//         that throws — or a throwing load read — refuses with suite_calibration_unavailable
+//         naming the failed measurement (probe/loadavg; D1.1, D4).
 //     readCalibration() -> the parsed BATON_SUITE_CALIBRATION record | null when absent; throws
 //         CalibrationRefusal (code 'suite_calibration_invalid') naming the parse error when
 //         malformed (D4, open question 3).
@@ -54,11 +61,13 @@
 //         CalibrationRefusal (code 'suite_calibration_invalid'). receipt =
 //         { calibration, reruns: { isolated: {failed}, load: {failed} }, outcome: {confirmed},
 //           cause }. The D2.1 discipline + the outcome-correctness gate (B1/RG-13) are the
-//         decision procedure: fails-isolated -> null; passes-load -> null; load-flake with the
-//         outcome unconfirmed -> null (REAL BUG, cap untouched); load-flake with the outcome
-//         confirmed -> the validated cause; a missing calibration context -> refuses (D2.4).
+//         decision procedure: fails-isolated (regardless of load) -> null; passes-load -> null;
+//         load-flake with the outcome unconfirmed -> null (REAL BUG, cap untouched); load-flake
+//         with the outcome confirmed -> the validated cause; a missing calibration context ->
+//         refuses (D2.4).
 //     deriveRowBound(rowId, base, record) -> scaledTimeout(base, record) for 'scale' rows;
-//         base (never derived) for 'absolute-timing' and 'floor-raw' rows (D1.4, RG-12).
+//         base (never derived) for 'absolute-timing' and 'floor-raw' rows (D1.4, RG-12); base *
+//         factor for any unmarked rowId — the load-aware default (D4).
 //     createProgressDeadline({ timeoutMs, now }) -> { observe(), expired() } — the re-arm-on-
 //         progress liveness bound: any observe() re-arms; expired() is 'no new event since the
 //         last tick' (D1.4, blocker B6). now() is the injected clock seam (fake timers allowed).
@@ -71,6 +80,15 @@
 //     MARKERS        frozen ['absolute-timing','floor-raw','load-aware'] — ACTUAL order (D4).
 //     BASELINE_BASIS frozen ['recorded','unrecorded'] — ACTUAL order (D1.5, §3).
 //     CalibrationRefusal  typed error class; .code is a REFUSAL_CODES member.
+//
+//   GATE INJECTION SEAM (F1 — hermeticity under the exact load the suite governs): the gate honors
+//   a BATON_RG_CALIBRATION env override carrying a full calibration record. When present, the gate
+//   short-circuits its start-of-run measurement (no os.loadavg() read, no event-loop-gap probe) and
+//   uses the injected record verbatim for the line and the child env. The override deliberately
+//   uses the BATON_RG_* observation naming the suite established — a BATON_SUITE_* name would be
+//   stripped by the nested-gate sanitizer (below) and the gate would never see it. Every B/C2 gate
+//   probe injects it, so the nested gate NEVER measures real host load and cannot refuse under load
+//   (the #7-class race F1 removes).
 //
 // G4 MEMBERSHIP ANCHORS (the closed table's documented row set — D1.4, blocker B2):
 //   deployment-settle-deadline  phase56-drain-and-close.test.mjs:268  (< 500)  -> scale
@@ -92,22 +110,28 @@
 //          (c) both re-runs, (d) the outcome confirmation (D2.3) — pinned here in the header
 //          inventory, asserted by the review discipline.
 //   D3.2   the double-signal-immediate-SIGKILL escape and the whole-run budget separation are
-//          wrapper-side conventions; the red suite pins the scaling helper (C3) and documents the
-//          escape in suite-draft-notes.md.
+//          wrapper-side conventions; the red suite pins the scaling helper (C3), the separation
+//          (C4), and documents the escape in suite-draft-notes.md.
 //   D1.1   the probe's K=5 sequential event-loop-gap sampling is pinned through the injection seam
-//          (the overrides are the test double); the real measurement is never exercised because no
-//          row may depend on REAL host load (suite law).
+//          (the overrides are the test double — A7 asserts exactly 5 sequential calls); the real
+//          measurement is never exercised because no row may depend on REAL host load (suite law).
 //
 // SUITE-ORACLE NOTES:
-//   * B1/B2 spawn the real gate (run-suite.mjs) with a single fixture via spawnSync. At HEAD the
-//     gate runs clean (no calibration line, no env); after implementation the calibration line and
-//     the child env must appear. The nested gate is given a private BATON_TEST_TMP_PARENT
+//   * B1/B2/B3/C2 spawn the real gate (run-suite.mjs) on a single fixture via spawnSync with the
+//     BATON_RG_CALIBRATION injection seam, so after implementation the nested gate measures nothing
+//     real (F1 — a real event-loop probe under load could refuse a CORRECT implementation). The
+//     spawnSync timeout is dropped: a 30 s wall bound on the nested gate is itself a #7-class real
+//     race the suite should not carry (F1). The nested gate is given a private BATON_TEST_TMP_PARENT
 //     (hermetic; the suite root it allocates is a descendant and is cleaned with the world dir).
-//     The rows assert presence + the closed key set only — never load values — so no row depends
-//     on real host load.
-//   * A4's unrecorded-baseline path is pinned branch-consistently (the suite cannot force the
-//     baseline receipt's absence); the injection seam pins the recorded path, and H2 pins the
-//     closed baselineBasis literal. See suite-draft-notes.md.
+//   * B1/B2 assert presence + the closed key set only — never load values — so no row depends on
+//     real host load. B3 runs a FAILING fixture (the actual flake-report surface) and asserts the
+//     receipt is outcome-independent (RG-07, F4).
+//   * C2 is behavioral, not a source-grep oracle: it observes the test runner's own argv (the
+//     fixture reads its parent process command line — the same /bin/ps the gate itself uses) and
+//     pins the derived value, the host bound at factor 1, and the caller-first/derived-last
+//     precedence (RG-09, F2).
+//   * A4's unrecorded-baseline path is pinned deterministically through the baselineReceiptPath
+//     seam (F3/B3); H2 pins the closed baselineBasis literal. See suite-draft-notes.md.
 
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
@@ -139,6 +163,104 @@ function assertCalibrationModule(module) {
   assert.ok(!(module instanceof Error),
     `stage: calibration-module-missing — impl/scripts/suite-calibration.mjs does not exist (${module?.code ?? module})`);
   return module;
+}
+
+// ===========================================================================
+// The synthetic calibration record the gate probes inject (F1's injection seam).
+// A complete closed-key record used VERBATIM by the nested gate, so no real
+// loadavg / event-loop-gap measurement ever runs in the gate probes.
+// ===========================================================================
+
+function injectedCalibration({ factor = 1, probeMs = 71, baselineProbeMs = 71 } = {}) {
+  return {
+    baselineBasis: 'recorded',
+    baselineProbeMs,
+    cores: availableParallelism(),
+    factor,
+    load: { fifteen: 0, five: 0, one: 0 },
+    measuredAt: '2026-08-12T00:00:00.000Z',
+    probeMs,
+    schemaVersion: 1,
+  };
+}
+
+// The B1/B2 observation channel: the fixture reports what BATON_SUITE_CALIBRATION the child saw.
+const CALIBRATION_OBSERVING_FIXTURE = [
+  "import { writeFileSync } from 'node:fs';",
+  'writeFileSync(process.env.BATON_RG_OBSERVED,',
+  '  JSON.stringify({ calibration: process.env.BATON_SUITE_CALIBRATION ?? null }));',
+].join('\n');
+
+// B3's fixture: identical observation channel, but the child FAILS — the actual surface a flake
+// report cites. The receipt must not depend on the child's outcome (RG-07, F4).
+const FAILING_FIXTURE = [
+  "import { writeFileSync } from 'node:fs';",
+  'writeFileSync(process.env.BATON_RG_OBSERVED,',
+  '  JSON.stringify({ calibration: process.env.BATON_SUITE_CALIBRATION ?? null }));',
+  "throw new Error('forced fixture failure');",
+].join('\n');
+
+// C2's observation channel: the fixture reports the test runner's own argv (the gate's child is
+// its direct parent; /bin/ps is the same command the gate itself depends on). The runner consumes
+// the runner flags, so the derived --test-concurrency is visible in the parent's command line, not
+// the fixture's own argv.
+const ARGV_OBSERVING_FIXTURE = [
+  "import { writeFileSync } from 'node:fs';",
+  "import { execFileSync } from 'node:child_process';",
+  'let parent = null;',
+  'try {',
+  '  parent = execFileSync("/bin/ps", ["-o", "command=", "-p", String(process.ppid)],',
+  '    { encoding: "utf8", timeout: 2000 });',
+  '} catch {}',
+  'writeFileSync(process.env.BATON_RG_OBSERVED,',
+  '  JSON.stringify({ argv: process.argv, parent }));',
+].join('\n');
+
+/**
+ * Spawn the real gate on a single fixture with the calibration injection seam. No spawnSync
+ * timeout: a wall bound on the nested gate is a #7-class real race the suite must not carry (F1);
+ * the fixtures are trivial (write + exit) and the gate reaps its own child.
+ */
+function spawnNestedGate({ fixture, args = [], calibration }) {
+  const world = mkdtempSync(join(tmpdir(), 'baton-rg-'));
+  worlds.push(world);
+  const observed = join(world, 'observed.json');
+  writeFileSync(join(world, 'fixture.mjs'), fixture);
+  const env = {
+    ...process.env,
+    BATON_RG_OBSERVED: observed,
+    BATON_RG_CALIBRATION: JSON.stringify(calibration),
+    BATON_TEST_TMP_PARENT: world,
+    TMPDIR: world, TMP: world, TEMP: world,
+  };
+  for (const key of Object.keys(env)) {
+    if (key.startsWith('BATON_SUITE_') || key === 'BATON_TEST_SUITE_ROOT') delete env[key];
+    // A nested `node --test` refuses to run files when it inherits the parent test-runner's
+    // marker env (node:test run() recursive-skip); the fixture must actually execute.
+    if (key === 'NODE_TEST_CONTEXT') delete env[key];
+  }
+  const outcome = spawnSync(process.execPath, [GATE_SCRIPT, join(world, 'fixture.mjs'), ...args], { encoding: 'utf8', env });
+  return {
+    world, observed,
+    stdout: outcome.stdout ?? '', stderr: outcome.stderr ?? '', status: outcome.status,
+  };
+}
+
+let gateProbePromise = null;
+function gateProbe() {
+  if (!gateProbePromise) {
+    gateProbePromise = (() => {
+      try {
+        return Promise.resolve(spawnNestedGate({
+          fixture: CALIBRATION_OBSERVING_FIXTURE,
+          calibration: injectedCalibration({ factor: 1 }),
+        }));
+      } catch (error) {
+        return Promise.resolve({ world: null, observed: null, stdout: '', stderr: String(error), status: -1 });
+      }
+    })();
+  }
+  return gateProbePromise;
 }
 
 // ===========================================================================
@@ -182,13 +304,15 @@ test('A4 (RG-05/D1.5): measureCalibration returns the closed record shape; the b
   assert.match(rec.measuredAt, /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/, 'measuredAt is an ISO instant (a flake report carries it)');
   assert.equal(rec.baselineBasis, 'recorded', 'an injected baselineProbeMs is a recorded baseline');
   assert.equal(rec.baselineProbeMs, 71, 'baselineProbeMs carries the recorded value');
-  const unrecorded = await cal.measureCalibration({ load: QUIET_LOAD, probeMs: 71 });
-  assert.ok(['recorded', 'unrecorded'].includes(unrecorded.baselineBasis), 'baselineBasis is a closed literal');
-  if (unrecorded.baselineBasis === 'recorded') {
-    assert.ok(Number.isFinite(unrecorded.baselineProbeMs) && unrecorded.baselineProbeMs > 0);
-  } else {
-    assert.equal(unrecorded.baselineProbeMs, null, 'an unrecorded baseline is honest null — never an invented number (D1.5/B3)');
-  }
+  const world = mkdtempSync(join(tmpdir(), 'baton-rg-baseline-'));
+  worlds.push(world);
+  const unrecorded = await cal.measureCalibration({
+    load: QUIET_LOAD, probeMs: 71, baselineReceiptPath: join(world, 'absent-baseline.json'),
+  });
+  assert.equal(unrecorded.baselineBasis, 'unrecorded',
+    'an absent baseline receipt yields unrecorded — never an invented basis (D1.5/B3)');
+  assert.equal(unrecorded.baselineProbeMs, null,
+    'an absent baseline receipt is honest null — never an invented number (D1.5/B3)');
 });
 
 test('A5 (D1.2): the factor is a continuous sub-saturation multiplier, never a saturation step', async () => {
@@ -211,47 +335,44 @@ test('A6 (D1): a calibrated deadline is NEVER shorter than the honest static flo
   assert.ok(cal.scaledTimeout(3000, high) >= 3000, 'factor >= 1: a calibrated deadline never under-cuts the floor');
 });
 
-// ===========================================================================
-// B — the gate surface (D1.3, RG-01..RG-02)
-// ===========================================================================
+test('A7 (RG-05/D1.1/B5): the probe is sampled exactly K=5 times, sequentially — a hardcoded baseline cannot pass', async () => {
+  const cal = assertCalibrationModule(await calibrationOrError());
+  let calls = 0;
+  let inFlight = 0;
+  let maxInFlight = 0;
+  const probe = async () => {
+    calls += 1;
+    inFlight += 1;
+    maxInFlight = Math.max(maxInFlight, inFlight);
+    await Promise.resolve();
+    inFlight -= 1;
+    return 71;
+  };
+  const rec = await cal.measureCalibration({ load: QUIET_LOAD, probe, baselineProbeMs: 71 });
+  assert.equal(calls, 5, 'the event-loop-gap probe runs exactly K=5 samples (D1.1) — the measurement costume never samples');
+  assert.equal(maxInFlight, 1, 'the K samples run sequentially with non-overlapping cadence windows (blocker B5(ii))');
+  assert.equal(rec.probeMs, 71, 'probeMs is the median of the sampled values, never an invented constant');
+});
 
-let gateProbePromise = null;
-function gateProbe() {
-  if (!gateProbePromise) {
-    gateProbePromise = (async () => {
-      const world = mkdtempSync(join(tmpdir(), 'baton-rg-'));
-      worlds.push(world);
-      const fixture = join(world, 'fixture.mjs');
-      const observed = join(world, 'observed.json');
-      // The observation channel must NOT be a BATON_SUITE_* name — the nested gate's env is
-      // sanitized of BATON_SUITE_* so the calibration seam stays isolated (G1); an observation
-      // var with that prefix would be stripped and the fixture could never report back.
-      writeFileSync(fixture, [
-        "import { writeFileSync } from 'node:fs';",
-        'writeFileSync(process.env.BATON_RG_OBSERVED,',
-        '  JSON.stringify({ calibration: process.env.BATON_SUITE_CALIBRATION ?? null }));',
-      ].join('\n'));
-      const env = {
-        ...process.env,
-        BATON_RG_OBSERVED: observed,
-        BATON_TEST_TMP_PARENT: world,
-        TMPDIR: world, TMP: world, TEMP: world,
-      };
-      for (const key of Object.keys(env)) {
-        if (key.startsWith('BATON_SUITE_') || key === 'BATON_TEST_SUITE_ROOT') delete env[key];
-        // A nested `node --test` refuses to run files when it inherits the parent test-runner's
-        // marker env (node:test run() recursive-skip); the fixture must actually execute.
-        if (key === 'NODE_TEST_CONTEXT') delete env[key];
-      }
-      const outcome = spawnSync(process.execPath, [GATE_SCRIPT, fixture], { encoding: 'utf8', timeout: 30_000, env });
-      return {
-        world, observed,
-        stdout: outcome.stdout ?? '', stderr: outcome.stderr ?? '', status: outcome.status,
-      };
-    })().catch((error) => ({ world: null, observed: null, stdout: '', stderr: String(error), status: -1 }));
-  }
-  return gateProbePromise;
-}
+test('A8 (RG-05/D1.5/B3): the baseline comes from the recorded receipt — a present receipt records, an absent one is honest null', async () => {
+  const cal = assertCalibrationModule(await calibrationOrError());
+  const world = mkdtempSync(join(tmpdir(), 'baton-rg-baseline-'));
+  worlds.push(world);
+  const receiptPath = join(world, 'suite-baseline.json');
+  writeFileSync(receiptPath, JSON.stringify({
+    host: 'red-suite-fixture', date: '2026-08-12', method: 'event-loop-gap', sampleN: 5, baselineProbeMs: 71,
+  }));
+  const recorded = await cal.measureCalibration({ load: QUIET_LOAD, probeMs: 114, baselineReceiptPath: receiptPath });
+  assert.equal(recorded.baselineBasis, 'recorded', 'a present baseline receipt yields recorded (D1.5)');
+  assert.equal(recorded.baselineProbeMs, 71, 'baselineProbeMs comes from the receipt — never a bigger constant (D1.5)');
+  const absent = await cal.measureCalibration({ load: QUIET_LOAD, probeMs: 114, baselineReceiptPath: join(world, 'absent.json') });
+  assert.equal(absent.baselineBasis, 'unrecorded', 'an absent baseline receipt yields unrecorded (B3)');
+  assert.equal(absent.baselineProbeMs, null, 'an absent baseline receipt is honest null — never an invented number (D1.5/B3)');
+});
+
+// ===========================================================================
+// B — the gate surface (D1.3, RG-01..RG-02, RG-07)
+// ===========================================================================
 
 test('B1 (RG-01): the gate emits one baton suite calibration: stderr line with the closed key set', async () => {
   const probe = await gateProbe();
@@ -275,6 +396,26 @@ test('B2 (RG-02): the spawned test child receives the identical BATON_SUITE_CALI
     'the child receives the identical record (G1 env seam)');
 });
 
+test('B3 (RG-07): the load-context receipt survives a failing child — the line and env are outcome-independent', async () => {
+  const probe = spawnNestedGate({
+    fixture: FAILING_FIXTURE,
+    calibration: injectedCalibration({ factor: 1 }),
+  });
+  // No status === 0 assertion: the fixture fails by design — this is the exact surface a flake
+  // report cites, and the receipt must not depend on the child's outcome (F4).
+  const lines = probe.stderr.split('\n').filter((line) => line.startsWith('baton suite calibration: '));
+  assert.equal(lines.length, 1,
+    'stage: gate-calibration-line-missing — run-suite.mjs emits no calibration line today (RG-01 red state)');
+  const record = JSON.parse(lines[0].slice('baton suite calibration: '.length));
+  assert.deepEqual(Object.keys(record), RECORD_KEYS, 'the failing-run receipt still carries the closed key set (§3)');
+  const observed = JSON.parse(readFileSync(probe.observed, 'utf8'));
+  assert.ok(observed.calibration,
+    'stage: gate-calibration-env-missing — the failing child saw no BATON_SUITE_CALIBRATION today (RG-02 red state)');
+  assert.deepEqual(JSON.parse(observed.calibration), record,
+    'the failing child receives the identical record — the receipt is outcome-independent (RG-07)');
+  assert.ok(probe.status !== 0, 'the fixture fails by design — the failing-run path is genuinely exercised');
+});
+
 // ===========================================================================
 // C — parallelism posture (D3, RG-09)
 // ===========================================================================
@@ -290,10 +431,40 @@ test('C1 (RG-09): deriveTestConcurrency preserves the idle default and sheds und
     'idle keeps one slot of headroom for the gate, the probe, and the host');
 });
 
-test('C2 (RG-09): the gate passes a derived --test-concurrency flag', () => {
-  const gateSource = readFileSync(GATE_SCRIPT, 'utf8');
-  assert.ok(gateSource.includes('--test-concurrency'),
+test('C2 (RG-09): the gate passes a derived --test-concurrency — behavioral, observed via the child runner argv', async () => {
+  const high = spawnNestedGate({
+    fixture: ARGV_OBSERVING_FIXTURE,
+    calibration: injectedCalibration({ factor: 4, probeMs: 284 }),
+  });
+  assert.equal(high.status, 0, high.stderr);
+  const highParent = JSON.parse(readFileSync(high.observed, 'utf8')).parent ?? '';
+  const match = /--test-concurrency\s+(\d+)/.exec(highParent);
+  assert.ok(match,
     'stage: gate-concurrency-missing — the gate passes no derived --test-concurrency today (RG-09 red state)');
+  const cal = assertCalibrationModule(await calibrationOrError());
+  const cores = availableParallelism();
+  assert.equal(Number(match[1]), cal.deriveTestConcurrency(cores, 4),
+    'the child runner received the derived max(1, ceil((cores - 1) / factor)) at factor 4 (D3.1)');
+
+  const idle = spawnNestedGate({ fixture: ARGV_OBSERVING_FIXTURE, calibration: injectedCalibration({ factor: 1 }) });
+  assert.equal(idle.status, 0, idle.stderr);
+  const idleParent = JSON.parse(readFileSync(idle.observed, 'utf8')).parent ?? '';
+  const idleMatch = /--test-concurrency\s+(\d+)/.exec(idleParent);
+  assert.ok(idleMatch, 'the factor-1 run still derives the flag');
+  assert.ok(Number(idleMatch[1]) <= availableParallelism() - 1,
+    'at factor 1 the concurrency preserves the host bound os.availableParallelism() - 1 — never oversubscribes (D3.1, blocker B4)');
+
+  const precedence = spawnNestedGate({
+    fixture: ARGV_OBSERVING_FIXTURE,
+    args: ['--test-concurrency', '999'],
+    calibration: injectedCalibration({ factor: 4, probeMs: 284 }),
+  });
+  assert.equal(precedence.status, 0, precedence.stderr);
+  const precedenceParent = JSON.parse(readFileSync(precedence.observed, 'utf8')).parent ?? '';
+  const last = [...precedenceParent.matchAll(/--test-concurrency\s+(\d+)/g)].at(-1);
+  assert.ok(last, 'the precedence leg observed the derived flag');
+  assert.equal(Number(last[1]), cal.deriveTestConcurrency(cores, 4),
+    'the derived flag is appended last and authoritative — a caller --test-concurrency is overridden (D3.1 precedence)');
 });
 
 test('C3 (D3.2): the wrapper\'s STOP path is load-aware — grace scales by the factor', async () => {
@@ -301,6 +472,15 @@ test('C3 (D3.2): the wrapper\'s STOP path is load-aware — grace scales by the 
   assert.equal(cal.deriveStopGrace(5000, 1), 5000, 'factor 1 keeps the base grace — an idle run is unchanged');
   assert.equal(cal.deriveStopGrace(5000, 2), 10000, 'a loaded machine gets more grace before SIGKILL');
   assert.equal(cal.deriveStopGrace(1000, 1), 1000);
+});
+
+test('C4 (D3.2): the gate derives no whole-run budget from the calibration — the operator\'s signal is the only backstop', async () => {
+  assertCalibrationModule(await calibrationOrError());
+  const gateSource = readFileSync(GATE_SCRIPT, 'utf8');
+  assert.ok(!gateSource.includes('--test-timeout'),
+    'the gate derives no whole-run --test-timeout from the calibration — the per-file deadlines carry the load-aware calibration; the whole-run budget is the operator\'s SIGTERM/SIGINT backstop, never a product clock (D3.2)');
+  assert.ok(/requestStop|signalGroup/.test(gateSource) && /SIGTERM|SIGINT/.test(gateSource),
+    'the only whole-run backstop is the signal path — requestStop / the double-signal-immediate-SIGKILL escape (D3.2)');
 });
 
 // ===========================================================================
@@ -347,6 +527,9 @@ test('D4 (RG-13/B1): a load-exposed real race is a REAL BUG — the outcome neve
     'the extended-bound re-run never lands the awaited condition -> REAL BUG, cap untouched, no class (RG-13)');
   const isolated = { ...LOAD_RECEIPT, reruns: { isolated: { failed: true }, load: { failed: true } } };
   assert.equal(cal.classifyCause(isolated, 'x'), null, 'a row that fails isolated is NEVER recalibrated (D2.1)');
+  const isolatedQuietLoad = { ...LOAD_RECEIPT, reruns: { isolated: { failed: true }, load: { failed: false } } };
+  assert.equal(cal.classifyCause(isolatedQuietLoad, 'x'), null,
+    'fails isolated regardless of load — a quiet load leg does NOT mask a REAL BUG (D2.1, F9)');
   const blip = { ...LOAD_RECEIPT, reruns: { isolated: { failed: false }, load: { failed: false } } };
   assert.equal(cal.classifyCause(blip, 'x'), null, 'a transient blip (passes both legs) gets no cause class (D2.1 bucket 1)');
 });
@@ -382,6 +565,20 @@ test('E2 (RG-10/D1.1): a forced probe failure refuses with suite_calibration_una
   'the probe is fail-closed: an unmeasured run refuses, never a silent factor 1 (D4)');
 });
 
+test('E3 (RG-10/D4): a throwing load read refuses with suite_calibration_unavailable naming loadavg', async () => {
+  const cal = assertCalibrationModule(await calibrationOrError());
+  const throwingLoad = {
+    fifteen: 0,
+    five: 0,
+    get one() { throw new Error('forced loadavg failure'); },
+  };
+  await assert.rejects(() => cal.measureCalibration({
+    load: throwingLoad, probeMs: 71, baselineProbeMs: 71,
+  }),
+  (error) => error?.code === 'suite_calibration_unavailable' && /loadavg/.test(String(error.message)),
+  'the loadavg read is fail-closed: an unreadable load average refuses naming the measurement, never a silent factor 1 (D4)');
+});
+
 // ===========================================================================
 // F — load-aware markers and the closed G4 membership table (D1.4, RG-12)
 // ===========================================================================
@@ -410,14 +607,36 @@ test('F2 (RG-12/D1.4/B2): the G4 membership table is closed and decidable', asyn
   }
 });
 
-test('F3 (RG-12): an absolute-timing or floor-raw row is excluded from derivation', async () => {
+test('F3 (RG-12): an absolute-timing or floor-raw row is excluded from derivation — all six G4 members', async () => {
   const cal = assertCalibrationModule(await calibrationOrError());
   const high = await cal.measureCalibration({ load: QUIET_LOAD, probeMs: 284, baselineProbeMs: 71 });
-  assert.equal(cal.deriveRowBound('request-timeout-wait', 2000, high), 2000,
-    'the product-timer cap stays raw — scaledTimeout is never applied to it (D1.4)');
-  assert.equal(cal.deriveRowBound('kill-grace-floor', 60, high), 60, 'a floor is never scaled');
-  assert.equal(cal.deriveRowBound('deployment-settle-deadline', 500, high), 2000,
-    'a scale row derives (500 * factor 4)');
+  const bounds = {
+    'request-timeout-wait': 2000,
+    'poll-interval-wake': 1000,
+    'sigkill-window-lower': 4500,
+    'kill-grace-floor': 60,
+    'deployment-settle-deadline': 500,
+    'sigkill-window-upper': 8000,
+  };
+  for (const [rowId, base] of Object.entries(bounds)) {
+    assert.ok(cal.G4_MEMBERSHIP[rowId], `${rowId} is a closed G4 member (blocker B2)`);
+    const derived = cal.deriveRowBound(rowId, base, high);
+    if (cal.G4_MEMBERSHIP[rowId] === 'scale') {
+      assert.equal(derived, base * 4, `${rowId} is scale — its bound derives by the factor (D1.4)`);
+    } else {
+      assert.equal(derived, base,
+        `${rowId} is ${cal.G4_MEMBERSHIP[rowId]} — the bound stays raw, never scaled (D1.4); a floor-raw row scaling would weaken the regression detector`);
+    }
+  }
+});
+
+test('F4 (RG-12/D4): the unmarked default derives — the flake cluster is the load-aware default', async () => {
+  const cal = assertCalibrationModule(await calibrationOrError());
+  const high = await cal.measureCalibration({ load: QUIET_LOAD, probeMs: 284, baselineProbeMs: 71 });
+  assert.equal(cal.deriveRowBound('drain-close-wait', 1000, high), 4000,
+    'an unmarked rowId derives by default — absent both markers, the default is derivation (load-aware), because the flake cluster is the default (D4)');
+  assert.equal(cal.deriveRowBound('never-gated-row', 250, high), 1000,
+    'a second unmarked rowId confirms the default — only the closed G4 table carves product/floor rows out (D1.4)');
 });
 
 // ===========================================================================
