@@ -3,7 +3,7 @@
   "generatedBy": "impl/scripts/surface-conformance.mjs#buildSurfaceInventoryArtifact",
   "counts": {
     "canonicalOperations": 73,
-    "cliWebCommands": 35,
+    "cliWebCommands": 36,
     "parserLifecycleActions": 28,
     "mcpApplicationTools": 35,
     "mcpAdvancedTools": 19,
@@ -47,6 +47,7 @@
       "waves.attach",
       "waves.list",
       "waves.progress",
+      "waves.run",
       "waves.start"
     ],
     "cli.host_local": [
