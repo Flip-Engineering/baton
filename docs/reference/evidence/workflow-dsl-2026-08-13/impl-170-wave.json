@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 1,
+  "idempotencyKey": "impl-170-2026-08-13-wave-a",
+  "members": [
+    {
+      "role": "impl-170",
+      "exact": { "harness": "deepseek", "model": "deepseek-v4-pro[1m]", "effort": "high" },
+      "scope": ["impl/src/**", "docs/reference/evidence/workflow-dsl-2026-08-13/**"],
+      "objectiveRef": "docs/reference/evidence/workflow-dsl-2026-08-13/impl-170-brief.md",
+      "report": "docs/reference/evidence/workflow-dsl-2026-08-13/impl-170-notes.md"
+    }
+  ],
+  "steering": {
+    "approveOnAdvertisedPlan": true,
+    "nudgeOnCheckpoint": { "message": "Continue the impl — both suites green at their named stages, PINs unmoved, adjacents undisturbed. Write impl-170-notes.md incrementally so a mid-flight death still harvests the state." },
+    "claimOnStall": true,
+    "messageOnSpawn": { "kind": "brief", "body": "Read your objectiveRef brief IN FULL first — the contract is the authority, the two suites are your acceptance machinery. The craft laws bind (no clocks, additive-only, NUL discipline, generated docs regenerate never hand-edit, byte literals only in limits.mjs). Your [attempt:] line goes verbatim in the notes' first five lines. Never edit the suites — a wrong row is a DECISION_REQUEST, not a suite edit. Verify before you finish: both target suites + the named adjacents." },
+    "elevateWhenNotes": { "kinds": ["doubt", "plan"], "maxEntries": 20 }
+  },
+  "harvest": {
+    "paths": [
+      { "path": "docs/reference/evidence/workflow-dsl-2026-08-13/impl-170-notes.md", "mustContain": "#170" }
+    ]
+  }
+}
