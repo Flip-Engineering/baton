@@ -1,5 +1,9 @@
 # ROW BRIEF — suite-addendum-170: the red-first rows for the #170 DSL PACKAGE's folded-in items
 
+(Attempt D note: re-driven after attempts a–c died to the interpreter's spawn-window race
+(#199) and the member-task id collision (filed separately) — this line changes the brief's
+content digest so the re-drive mints a fresh member task. Disregard for content purposes.)
+
 Read the suite law first (it binds you): red-first (every capability row fails at a NAMED
 stage at HEAD; PIN rows green) · hermetic (mkdtemp + after-cleanup, no network/providers) ·
 no clocks as controls · namespace imports for invented surfaces · sorted-key literals ACTUAL
