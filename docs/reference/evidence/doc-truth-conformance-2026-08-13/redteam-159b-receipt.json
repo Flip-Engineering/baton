@@ -1,0 +1,37 @@
+{
+  "attempt": "2026-08-13T07:22:05.298Z",
+  "salt": "y720260813072205",
+  "role": "redteam-159b",
+  "steps": [
+    {
+      "step": "waves.start",
+      "receipt": {
+        "runs": [
+          "run-316b6cfc327250d65bcdcb1a470b5af5"
+        ]
+      }
+    },
+    {
+      "step": "terminal:redteam-159b",
+      "receipt": {
+        "phase": "work_completed"
+      }
+    },
+    {
+      "step": "loop-drained",
+      "receipt": {
+        "pending": []
+      }
+    }
+  ],
+  "harvest": {
+    "redteam-159b": {
+      "pin": "90649a1b3d8830f0abb07cffea30954510e767b2",
+      "paths": [
+        "docs/reference/evidence/doc-truth-conformance-2026-08-13/contract-redteam.md"
+      ]
+    }
+  },
+  "harvestStalePinsSkipped": 466,
+  "verdict": "REDTEAM-159B-OK"
+}
