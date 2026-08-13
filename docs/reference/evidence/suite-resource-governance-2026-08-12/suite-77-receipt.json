@@ -1,0 +1,30 @@
+{
+  "attempt": "2026-08-13T01:02:19.474Z",
+  "salt": "sg20260813010219",
+  "role": "suite-77",
+  "steps": [
+    {
+      "step": "waves.start",
+      "receipt": {
+        "runs": [
+          "run-1752e962c7d838f833b52fc0c1759f05"
+        ]
+      }
+    },
+    {
+      "step": "dead:suite-77",
+      "receipt": {
+        "phase": "cancelled"
+      }
+    },
+    {
+      "step": "loop-drained",
+      "receipt": {
+        "pending": []
+      }
+    }
+  ],
+  "harvest": {},
+  "harvestStalePinsSkipped": 418,
+  "verdict": "SUITE-77-FAILED"
+}
