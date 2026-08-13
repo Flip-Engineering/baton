@@ -64,6 +64,17 @@ const RUN_TIMELINE_OPERATIONAL_KINDS = new Set([
   'verify.reverified', 'work.resumed',
 ]);
 
+// Issue #67 D2: the closed re-arm set — the four worker-observable progress-evidence kinds, in
+// ACTUAL sorted order (the literal below IS its own [...set].sort() result). A turn boundary and
+// the three resolution kinds, nothing else: heartbeats, provider calls, tokens, tool calls, file
+// edits, scratchpad notes, and orchestrator/policy kinds are all silence.
+export const REARM_KINDS = Object.freeze([
+  'approval.resolved',
+  'decision.settled',
+  'lifecycle.turn_started',
+  'question.answered',
+]);
+
 /** Epic #78 Decision 2: the orchestrator-selected permission subset is recorded on the grant at
  * mint time (the caller names no permissions). Executor-class members receive the full
  * {read,claim,report} subset; a triage-only coordinator-worker receives exactly {read} — the
@@ -1056,6 +1067,7 @@ export class Coordinator {
     }
     this._watchdog = Object.freeze({
       stallMs: opts.watchdog?.stallMs ?? 120000,
+      blockingInteractionTimeoutMs: opts.watchdog?.blockingInteractionTimeoutMs ?? 20 * 60_000,
       loopThreshold: opts.watchdog?.loopThreshold ?? 3,
       scopeAction,
       orientation: scopeOrientation,
@@ -2921,6 +2933,14 @@ export class Coordinator {
         this._trackAuthorityPromise(() => this._resolveRecord(requestId, { decision: 'deny' }, 'policy')).catch(noop);
       } else if (record.kind === 'decision' && record.state === 'pending' && record.deadlineAt != null && now >= record.deadlineAt) {
         this._trackAuthorityPromise(() => this._expireDecision(requestId, record)).catch(noop);
+      } else if (record.kind === 'question' && record.state === 'pending' && record.deadlineAt == null
+        && record.acknowledged !== true && record.escalated !== true) {
+        // D3: a blocking question with deadlineAt null gets the bounded deployment default. An
+        // acknowledged interaction is skipped (OQ-1); a previously escalated record never re-fires.
+        const effectiveDeadlineAt = record.mintedAt + this._watchdog.blockingInteractionTimeoutMs;
+        if (now >= effectiveDeadlineAt) {
+          this._trackAuthorityPromise(() => this._expireQuestion(requestId, record, effectiveDeadlineAt)).catch(noop);
+        }
       }
     }
     for (const [workerId, waiter] of [...this._stopWaiters]) {
@@ -4568,6 +4588,9 @@ export class Coordinator {
       preservedTurnEpoch: null,
       watchdogActions: new Set(),
       recentFailedActions: [],
+      turnInFlight: false,
+      stallSeamDigestSet: null,
+      stallSeamCycle: null,
       watchdogGeneration: 0,
       watchdogTimer: null,
       runtimeScope: null,
@@ -4642,7 +4665,8 @@ export class Coordinator {
         providerGovernance: null, providerPolicyDigest: null, providerTurn: null, providerPolicyHardExceeded: false,
         providerTelemetryFailed: false, providerTerminalSeal: null,
         sessionPreservation: null, preservedTurnEpoch: null,
-        watchdogActions: new Set(), recentFailedActions: [],
+        watchdogActions: new Set(), recentFailedActions: [], turnInFlight: false,
+        stallSeamDigestSet: null, stallSeamCycle: null,
         watchdogGeneration: 0, watchdogTimer: null, runtimeScope: null, runtimeLease: null,
         spawnAbort: null, recoverySpawnAbort: null, recoverySpawnPending: false, recoverySpawnPromise: null, recoveryStopReason: null,
         recoveryProviderReleaseDeferred: false,
@@ -7432,6 +7456,12 @@ export class Coordinator {
     };
     if (ack && ack.emulated === true) ev.emulated = true;
     this._log.append(ev);
+    // D4 rung 2: an orchestrator claim (control.steer / control.nudge) arms the stall-seam cycle
+    // for a currently-declared stall. Neither steer nor nudge is a REARM kind — they never re-arm
+    // the watchdog; they claim the stall for the ladder.
+    if ((mode === 'steer' || mode === 'nudge') && handle.watchdogActions?.has('stall')) {
+      this._armStallCycle(handle, task, { nudgeId: mode === 'nudge' ? `nudge:${workerId}:${this._log.tail(workerId)}` : null, controlId: opts.controlId ?? null });
+    }
     // BD3-C: run.send / nudge_turn are ALIASES over the lane — the legacy names mint lane
     // receipts (message.sent / message.delivered) with identical worker-visible behavior.
     if (opts.internalKindToken !== ORIENTATION_DELIVERY && this._coordination.recordMessage) {
@@ -8762,11 +8792,21 @@ export class Coordinator {
       if (handle.watchdogGeneration !== generation || handle.status !== 'working') return;
       const task = this._tasks.get(handle.taskId);
       if (!task || task.status !== 'working' || handle.watchdogActions?.has('stall')) return;
+      // D2 blk-5 (the control-law line): no bound fires on elapsed time without an evidence
+      // check. A turn in flight IS the evidence check — re-arm the silence window without
+      // declaring; a 20-minute compile is not a stall.
+      if (handle.turnInFlight === true) {
+        this._armWatchdog(handle);
+        return;
+      }
       handle.watchdogActions?.add('stall');
+      // D4 rung 2 / E5: a fresh stall lifetime starts with an EMPTY per-stall-LIFETIME digest
+      // set, cleared only by _clearStall on a qualifying D2 re-arm inside the claimed window.
+      handle.stallSeamDigestSet = new Set();
       this._log.append({
         worker: handle.id, harness: this._harnessOf(handle.vendor), turnEpoch: this._safeTurnEpoch(handle),
         kind: 'health.stall_suspected', actor: 'policy',
-        payload: { elapsedMs: this._watchdog.stallMs, action: this._watchdog.stallAction, mechanical: true },
+        payload: { elapsedMs: this._watchdog.stallMs, action: this._watchdog.stallAction, basis: 'no_progress_evidence', mechanical: true },
       });
       this._applyWatchdogAction(handle, this._watchdog.stallAction);
     }, this._watchdog.stallMs);
@@ -8788,6 +8828,111 @@ export class Coordinator {
     if (handle.status !== 'working' && handle.status !== 'blocked') return;
     if (action === 'kill') this._beginStop(handle, 'kill', undefined, 'policy').catch(noop);
     else if (action === 'interrupt') this._beginStop(handle, 'interrupt', undefined, 'policy').catch(noop);
+    // D4 rung 1: escalate never stops — it mints the stall_declared attention reason into the
+    // orchestrator inbox (the G8 escalator) and leaves the worker running.
+    else if (action === 'escalate') this._mintStallDeclared(handle);
+  }
+
+  /** D4 rung 1 receipt: the stall_declared attention reason — no-progress evidence, never "too
+   * slow". Surfaced to the run's orchestrator via run.attention.watch (G8). */
+  _mintStallDeclared(handle) {
+    const task = this._tasks.get(handle.taskId);
+    this._attentionReasons.push({
+      seq: ++this._attentionCursor,
+      kind: 'stall_declared',
+      runId: task?.runId ?? null,
+      mintEpoch: ++this._attentionMintEpoch,
+      workerId: handle.id,
+      basis: 'no_progress_evidence',
+      stallMs: this._watchdog.stallMs,
+      windowMs: 0,
+      mintedAt: this._now(),
+    });
+  }
+
+  /** D1/SW-12 runtime disclosure: the resolved watchdog config, byte-stable and readable on the
+   * run status surface — {stallMs, basis, rearmKinds}. */
+  watchdogConfig() {
+    return Object.freeze({
+      stallMs: this._watchdog.stallMs,
+      basis: 'no_progress_evidence',
+      rearmKinds: [...REARM_KINDS],
+    });
+  }
+
+  /** D4 rung 2: arm the stall-seam cycle on a claim (control.steer / control.nudge). The answer
+   * set is the D2 REARM_KINDS (never TG2 scratchpad/capability evidence); expiry is
+   * working-compatible on _progressNudgeWindowMs ?? 300_000. */
+  _armStallCycle(handle, task, { nudgeId, controlId }) {
+    if (!handle || !handle.watchdogActions?.has('stall')) return false;
+    const windowMs = Number.isSafeInteger(this._progressNudgeWindowMs)
+      ? this._progressNudgeWindowMs : 300_000;
+    const cycle = {
+      kind: 'stall_seam',
+      worker: handle.id,
+      taskId: task?.id ?? handle.taskId,
+      nudgeId: nudgeId ?? null,
+      controlId: controlId ?? null,
+      mintedAt: this._now(),
+      windowMs,
+      answered: false,
+      basis: 'no_progress_evidence',
+      lifetime: handle.stallSeamCycle?.lifetime ?? this._now(),
+    };
+    handle.stallSeamCycle = cycle;
+    const timerHandle = this._setTimeout(() => {
+      try { this._expireStallCycle(handle); }
+      catch (err) { /* best-effort; the sweep still covers it */ }
+    }, windowMs);
+    if (timerHandle && typeof timerHandle.unref === 'function') timerHandle.unref();
+    cycle.timer = timerHandle;
+    return true;
+  }
+
+  /** D4 rung 3: a claimed stall-seam window that expires unanswered. Gated on no in-flight turn
+   * (a mid-turn worker is never reaped) and a still-declared stall; the reap is preserve-first
+   * (worktree.progress_unchanged / progress_checkpointed) then adapter.kill. */
+  _expireStallCycle(handle) {
+    const cycle = handle?.stallSeamCycle;
+    if (!cycle || cycle.answered !== false) return;
+    if (this._now() < cycle.mintedAt + cycle.windowMs) return; // window not yet elapsed
+    cycle.answered = true; // idempotency guard (timer + sweep both reach here)
+    if (cycle.timer != null) this._clearTimeout(cycle.timer);
+    const task = this._tasks.get(handle.taskId);
+    if (handle.turnInFlight === true) {
+      // Mid-turn: never reap. The stall stays escalated and the watchdog re-arms (D2).
+      handle.stallSeamCycle = null;
+      this._armWatchdog(handle);
+      return;
+    }
+    if (!handle.watchdogActions?.has('stall')) {
+      handle.stallSeamCycle = null;
+      return;
+    }
+    this._preserveProgressBeforeReap(handle, task, null, true)
+      .then(() => this._applyWatchdogAction(handle, 'kill'))
+      .catch(noop);
+  }
+
+  /** D4 rung 2 answer: a qualifying D2 re-arm inside the claimed window clears the stall. The
+   * ONLY escape — deletes the stall flag, clears the per-stall-LIFETIME digest set, re-arms fresh. */
+  _clearStall(handle) {
+    if (!handle) return;
+    if (handle.stallSeamCycle?.timer != null) this._clearTimeout(handle.stallSeamCycle.timer);
+    handle.watchdogActions?.delete('stall');
+    handle.stallSeamDigestSet = new Set();
+    handle.stallSeamCycle = null;
+    this._armWatchdog(handle);
+  }
+
+  /** The stall-seam cycle answers only on a qualifying D2 REARM kind observed inside the window. */
+  _observeStallSeam(handle, event) {
+    const cycle = handle?.stallSeamCycle;
+    if (!cycle || cycle.answered !== false) return;
+    if (!REARM_KINDS.includes(event.kind)) return;
+    if (this._now() >= cycle.mintedAt + cycle.windowMs) return; // outside the claimed window
+    cycle.answered = true;
+    this._clearStall(handle);
   }
 
   _scheduleScopeOrientation(handle, path) {
@@ -9168,12 +9313,10 @@ export class Coordinator {
   }
 
   _observeWatchdogEvent(handle, event) {
-    if (event.actor !== 'worker') return;
-    this._touchWatchdog(handle);
-    if (event.kind === 'lifecycle.turn_started') {
-      this._resetWatchdogTurn(handle);
-      return;
-    }
+    // D2 blk-8 order: the observation/loop-tracking branches run FIRST, gated on their own kind
+    // checks; the REARM_KINDS silence-return comes LAST so it can never shadow them. The closed
+    // set is the gate — no separate actor filter (the kinds in the set are exactly the
+    // worker-observable ones delivered on the worker observation stream).
     if (event.kind === 'resource.provider_call') {
       this._observeLogicalProviderCall(handle, event.payload ?? {});
       return;
@@ -9229,7 +9372,17 @@ export class Coordinator {
         });
         this._applyWatchdogAction(handle, this._watchdog.scopeAction);
       }
+      return;
     }
+    if (event.kind === 'lifecycle.turn_started') {
+      handle.turnInFlight = true;      // liveness marker (blk-5): a turn in flight is not silence
+      this._resetWatchdogTurn(handle); // turn-boundary reset (loop-tracking + fresh re-arm)
+      return;
+    }
+    if (!REARM_KINDS.includes(event.kind)) return; // EVERYTHING ELSE IS SILENCE
+    this._touchWatchdog(handle);                     // progress evidence re-arms
+    // D4 rung 2: a qualifying D2 re-arm inside the claimed window answers the stall-seam cycle.
+    this._observeStallSeam(handle, event);
   }
 
   _wireAck(waiter, call, operationGeneration, operationMode) {
@@ -9570,6 +9723,25 @@ export class Coordinator {
   async _respond(requestId, answer, actor = 'orchestrator') {
     this.tick();
     return this._resolveRecord(requestId, answer, actor);
+  }
+
+  // Command: claimInteraction() — D3 OQ-1. The orchestrator-side ack on a pending interaction
+  // (the claim_turn shape): an acknowledged interaction is skipped by the deadline sweep, so a
+  // legitimate >window operator review is never preempted (blk-7).
+  claimInteraction(requestId, opts = {}) {
+    return this._withAuthorityOp(() => this._claimInteraction(requestId, opts));
+  }
+
+  async _claimInteraction(requestId, opts = {}) {
+    if (typeof requestId !== 'string' || requestId.length === 0) return { ok: false, result: 'not_found' };
+    const record = this._pending.get(requestId);
+    if (!record) return { ok: false, result: 'not_found' };
+    if (record.state !== 'pending') return { ok: false, result: 'already_resolved' };
+    const actor = opts.actor ?? 'orchestrator';
+    record.acknowledged = true;
+    record.acknowledgedAt = this._now();
+    record.acknowledgedBy = actor;
+    return { ok: true, result: 'acknowledged', requestId, kind: record.kind };
   }
 
   /** Bounded ownership projection used by run-centric application answer routing. */
@@ -10003,6 +10175,53 @@ export class Coordinator {
     }
     finishResolving();
     return { ok: true, result: 'expired' };
+  }
+
+  // D3 (blk-7): the blocking-question null-deadline default. Escalate, never reap, never close —
+  // on expiry release the worker to working, receipt `question.expired {disposition:'escalated'}`,
+  // mint the interaction_expired attention reason, and KEEP the record pending so a late operator
+  // answer still lands (never the decision-expiry already_resolved close).
+  _expireQuestion(requestId, record, effectiveDeadlineAt) {
+    if (record.state !== 'pending' || record.acknowledged === true || record.escalated === true) {
+      return { ok: false, result: 'already_resolved' };
+    }
+    record.escalated = true;
+    const handle = this._workers.get(record.worker);
+    const harness = handle ? this._harnessOf(handle.vendor) : '';
+    const turnEpoch = handle ? this._safeTurnEpoch(handle) : record.turnEpochAtAsk;
+    const expiredEvent = this._log.append({
+      worker: record.worker, harness, turnEpoch, kind: 'question.expired', actor: 'policy',
+      payload: { requestId, resolution: { disposition: 'escalated' } },
+    });
+    const task = handle ? this._tasks.get(handle.taskId) : null;
+    if (task && this._coordination?.task(task.id)?.status === 'input_required') {
+      const evidence = this._coordMapEvent(expiredEvent);
+      this._coordTransition(task, 'working', `task.working:${task.id}:${expiredEvent.seq}`, { ...evidence, interaction: { requestId, disposition: 'escalated' } }, 'policy');
+      task.status = 'working';
+    }
+    if (handle) {
+      if (handle.pendingQuestionId === requestId) handle.pendingQuestionId = null;
+      if (handle.status === 'blocked') handle.status = 'working';
+    }
+    this._mintInteractionExpired(handle, task, requestId, effectiveDeadlineAt);
+    return { ok: true, result: 'expired' };
+  }
+
+  /** D3 receipt: the interaction_expired attention reason — the orchestrator's escalator for a
+   * blocking question whose effective deadline passed. */
+  _mintInteractionExpired(handle, task, requestId, effectiveDeadlineAt) {
+    this._attentionReasons.push({
+      seq: ++this._attentionCursor,
+      kind: 'interaction_expired',
+      runId: task?.runId ?? null,
+      mintEpoch: ++this._attentionMintEpoch,
+      requestId,
+      interactionKind: 'question',
+      disposition: 'escalated',
+      effectiveDeadlineAt,
+      windowMs: 0,
+      mintedAt: this._now(),
+    });
   }
 
   // F13 correction: stop/kill supersede a pending decision with its own typed event
@@ -12348,6 +12567,9 @@ export class Coordinator {
           worker: workerId, harness, turnEpoch, kind, actor,
           payload: sealVerdict.seal ? { ...wr, usageSeal: sealVerdict.seal } : wr,
         });
+        // D2 blk-5 / C4: the turn-terminal seam clears the liveness marker (a zombie flag would
+        // hold liveness forever and make rung-3 reap impossible).
+        handle.turnInFlight = false;
         this._clearWatchdog(handle);
         if (!sealVerdict.ok) {
           this._failTerminalProviderGovernance(handle, terminalEvent, sealVerdict.code);
@@ -12431,6 +12653,7 @@ export class Coordinator {
           if (evidence) this._coordTransition(task, 'failed', `task.failed:${task.id}:${evidence.coordinationSeq}`, evidence);
         }
         if (failActiveTask && !TERMINAL_TASK_STATUSES.has(task.status)) task.status = 'failed';
+        handle.turnInFlight = false;
         this._clearWatchdog(handle);
         // A turn crash does not normally prove transport death. A matching process_closed event
         // immediately before this crash does, so reap directly instead of arming an impossible
@@ -12453,6 +12676,7 @@ export class Coordinator {
           if (evidence) this._coordTransition(task, 'failed', `task.failed:${task.id}:${evidence.coordinationSeq}`, evidence);
         }
         if (failActiveTask && !TERMINAL_TASK_STATUSES.has(task.status)) task.status = 'failed';
+        handle.turnInFlight = false;
         this._clearWatchdog(handle);
         if (handle.processRef && handle.processRef.state !== 'closed') {
           appendAttributed({ worker: workerId, harness, turnEpoch: this._safeTurnEpoch(handle), kind: 'lifecycle.process_attribution_refused', actor: 'policy', payload: boundedProcessObservation(event, 'terminal_without_process_close') });
@@ -12702,6 +12926,11 @@ export class Coordinator {
           consumer: null,
           turnEpochAtAsk: this._safeTurnEpoch(handle),
           deadlineAt: null,
+          // D3: mintedAt anchors the null-deadline default (effectiveDeadlineAt = mintedAt +
+          // blockingInteractionTimeoutMs) entering _sweepDeadlines.
+          mintedAt: this._now(),
+          acknowledged: false,
+          escalated: false,
         };
         const evidence = this._coordMapEvent(askedEvent);
         if (payload?.blocking !== false) {
@@ -14194,6 +14423,9 @@ export class Coordinator {
         preservedTurnEpoch: preservedInterrupt ? preservedTurnEpoch : null,
         watchdogActions: new Set(),
         recentFailedActions: [],
+        turnInFlight: false,
+        stallSeamDigestSet: null,
+        stallSeamCycle: null,
         watchdogGeneration: 0,
         watchdogTimer: null,
         runtimeScope: null,
