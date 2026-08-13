@@ -9,10 +9,11 @@
 //   (facade + MCP staging, realServer wire helpers) and wave-driver-policy-red.test.mjs (the
 //   pausable/scripted adapter machinery).
 //
-// Rows: 29 (25 red + 4 green guards). Red-first: every red row fails today at a NAMED stage —
-//   harvest-invalid / harvest-missing / import-law / lane-missing / member-validation-missing /
-//   objective-ref-invalid / policy-missing:<policy> / recursive-closure-missing /
-//   spec-validation-missing / state-failure-allowlist-missing / steering-unknown — and goes green
+// Rows: 30 (26 red + 4 green guards). Red-first: every red row fails today at a NAMED stage —
+//   harvest-invalid / harvest-missing / harvest-match-evaluation-missing / import-law / lane-missing /
+//   member-validation-missing / objective-ref-invalid / policy-missing:<policy> /
+//   recursive-closure-missing / spec-validation-missing / state-failure-allowlist-missing /
+//   steering-unknown — and goes green
 //   on the contract's implementation ONLY. The four green guards (P1-P4) pin the substrate the
 //   interpreter must build on; they MUST stay green.
 //
@@ -22,7 +23,8 @@
 //   observes the REAL wire/store call: the adapter spawn brief's advertised plan digest, the
 //   `[MESSAGE` prompt frames, the resumed-turn prompt, the coordination store's elevation
 //   records), F4/F5 (harvests are attempt-marker-checked and byte-bound to the authoritative
-//   result sha — W4-01/02 carry the marker, W4-03 is the markerless-miss row), F6 (the singular
+//   result sha — W4-01/02 carry the marker, W4-03 is the markerless-miss row, W4-05 pins the
+//   mustContain-matching-first-line PASS path's named harvest_ok code — #154), F6 (the singular
 //   `wave run`/`baton_wave_run` spellings are refused), F7b/F7d (answerDecisions first-match-wins
 //   insertion order + the allowFreeResponse→text path; the live elevation-refusal retry and the
 //   (runId,requestId) replay-dedup rows are DEFERRED — see suite-fold-2.md), F8 (64 KiB+1 bound,
@@ -65,8 +67,8 @@
 // wave-driver.mjs, wave.mjs, recipes.mjs and application-cli.mjs (NUL-free) for its static pins
 // and never reads the NUL-carrying files whole.
 //
-// Verified split: 25 red / 4 green — `node --test impl/test/workflow-as-data-red.test.mjs` from
-// the repo root, twice (stable): tests 29 · pass 4 (P1-P4) · fail 25 (all red rows, each failing
+// Verified split: 26 red / 4 green — `node --test impl/test/workflow-as-data-red.test.mjs` from
+// the repo root, twice (stable): tests 30 · pass 4 (P1-P4) · fail 26 (all red rows, each failing
 // at its named stage — see suite-draft-notes.md for the row map).
 
 import assert from 'node:assert/strict';
@@ -1213,7 +1215,8 @@ test('W3-signal (stage[policy-missing:signal-on-members-done]): when a named rol
 });
 
 // ---------------------------------------------------------------------------
-// W4 — harvest paths recover with per-path receipts; a mustContain mismatch is a named miss.
+// W4 — harvest paths recover with per-path receipts; a mustContain mismatch is a named miss and a
+// first-line MATCH receipts the named harvest_ok (W4-05, the #154 verdict bug).
 // ---------------------------------------------------------------------------
 
 test('W4-01 (stage[harvest-missing]): a mustContain mismatch is a NAMED harvest_miss — the post-materialization integrity check, waveId-bound to the run\'s authoritative sha (B1/B2/F4/F5)', async (t) => {
@@ -1378,6 +1381,43 @@ test('W4-04 (stage[harvest-missing]): a mustContain that MATCHES receipts ok wit
   assert.equal(typeof entry.actual, 'string', 'the PASS path still receipts actual');
   assert.ok((entry.bytes ?? entry.actual ?? '').includes('[attempt: '),
     'the PASS path still carries the wave\'s attempt marker (D4)');
+});
+
+test('W4-05 (stage[harvest-match-evaluation-missing]): a mustContain matching the file\'s first line receipts matched:true / code:harvest_ok / WAVE-OK — the #154 verdict bug (the old evaluation wrote the miss code before the match check)', async (t) => {
+  // The #147 dogfood shape: the member's report has the mustContain as its first line and the D4
+  // attempt marker verbatim — retrieval populates bytes/actual, the marker check accepts, and the
+  // substring check matches. The old evaluation still dropped this to matched:false / harvest_miss
+  // and WAVE-INCOMPLETE; the row pins the PASS path's NAMED code (F8d's pass path, receipted).
+  const fx = await wadFixture(t, {
+    adapter: new TrackingMarkerAdapter({
+      harness: 'mock',
+      scenariosByMarker: {
+        'w4-e': {
+          outcome: 'completed',
+          carryAttemptMarker: true,
+          edits: [{ path: 'reports/w4-e.md', content: 'CONTROL-SURFACE-AUDIT v1\nw4-e report body\n' }],
+        },
+      },
+    }),
+  });
+  writeObjective(fx.repo, 'w4-e', 'write the w4-e report whose first line is the line-1 marker, then finish');
+  const spec = validSpec({
+    idempotencyKey: 'w4-line1-match',
+    members: [wadMember('w4-e')],
+    harvest: { paths: [{ path: 'reports/w4-e.md', mustContain: 'CONTROL-SURFACE-AUDIT v1' }] },
+  });
+  const receipt = await driveLane(fx.baton, 'harvest-match-evaluation-missing', spec);
+  const entry = (receipt.harvest ?? []).find((e) => e.path === 'reports/w4-e.md');
+  assert.ok(entry, 'stage[harvest-match-evaluation-missing]: the harvest spec yields a per-path receipt for reports/w4-e.md');
+  assert.equal(entry.matched, true, 'stage[harvest-match-evaluation-missing]: a mustContain matching the file\'s first line evaluates matched:true — never a false harvest_miss (the #154 verdict bug)');
+  assert.equal(entry.code, 'harvest_ok', 'the PASS path receipts the NAMED harvest_ok (the miss code is never written for a match)');
+  assert.ok(entry.ok === true || entry.missed === false, 'the matching post-check passes');
+  assert.ok((entry.bytes ?? entry.actual ?? '').includes('[attempt: '),
+    'the recovered content carries the wave\'s attempt marker (D4)');
+  assert.equal(typeof entry.expected, 'string', 'the PASS path still receipts expected');
+  assert.equal(typeof entry.actual, 'string', 'the PASS path still receipts actual');
+  assert.equal(receipt.verdict, 'WAVE-OK', 'a matching first-line mustContain keeps the wave WAVE-OK (the dogfood never drops)');
+  assert.equal(receipt.basis, 'completed', 'the WAVE-OK basis is completed');
 });
 
 // ---------------------------------------------------------------------------
