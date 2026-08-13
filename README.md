@@ -123,19 +123,27 @@ flowchart TB
 
 ### Planned (filed, not started)
 
-- **#146 — fleet seat telemetry** — per-route inFlight/ceiling/deferred as a first-class read (the counts exist; no surface exposes them yet).
-- **#148 — resident credential lifecycle** — the resident token's ~24h fence, programmatic renewal, and the refusal naming the renewal action.
-- **#149 — gate failure digest** — the canonical gate emits a machine-readable closing digest (failing-file set + counts + hash) so acceptance diffs mechanically.
-- **#150 / #151 / #152** *(contract seeds)* — coaching-payload passthrough on both northbounds; spill-kind run-horizon authorization; workflow-surface docs disclosure + `evidenceRef` schema.
-- **#153 follow-ons** — surface-parity pins (verb-set parity across web/CLI/MCP), workflow_* error preservation on the web bus, the CLI bus-transport failure against republished profiles, `recipes.runWorkflow` on the deployment facade.
-- **#154 — harvest verdict bug** — the interpreter's `mustContain` harvest records success as `harvest_miss` (found by the #147 dogfood; small, queued behind the #74 impl which shares the file).
-- **#155–#159** *(from the #147 audit)* — CLI silent-typo→run.start reinterpretation; the MCP default profile made a bus superset; CLI `waves.send`/`waves.stop` ghosts + interpreter-wave registry fidelity; a scratchpad write verb; doc-truth↔admission conformance.
-- **#9 — the Program IR trunk** — closed, replayable, content-addressed workflow programs: the driver-killer's final form.
-- **Remote orchestrator control** *(filed, low)* — driving the resident over Tailscale.
-- **#115/#133 — TUI/Flip brand** — the Flip mascot animated in TUI feedback (low).
-- **#145 — OhMyPi harness evaluation** (low) — a candidate harness for the DeepSeek/GLM seats.
-- **Computer-use worker tier** *(bet, flagged flaky)* — GUI-driving workers behind the same wave machinery.
-- **Programmatic provider reauth** — resolving seat login/reauth failures without human intervention, where providers permit.
+The complete open map is ~112 tracked issues — the lossless catalog lives in the
+[issue tracker](https://github.com/wahargis/baton/issues) and
+[docs/28](docs/28-exhaustive-capability-audit.md); the thematic shape:
+
+**Core platform rungs** — #2 orchestrator-selected exact routes · #3 the live route-matrix proof · #4 locale-independent ordering · #5 cross-controller namespaces · #6 semantic verification of model-authored reviews · #7 transitive process-forest reap under load · #8 durable autonomy/containment authority · **#9 the Program IR trunk** (closed, replayable, content-addressed workflow programs — the driver-killer's final form; #170's DSL is its surface syntax).
+
+**The collaboration layer, completed** — #19 REPL objects as ordinary hand-offs · #24–#27 the KG horizons arc (read models, promotion paths, ambient activation, graph growth) · #96 the project tier across runs · #104 symbol-cited briefs · #122 the compaction firewall.
+
+**Control-surface honesty (the operator's top priority)** — #155–#160 the #147-audit cluster (silent reinterpretation, MCP profile superset, CLI ghosts + registry fidelity, the scratchpad write verb, doc-truth↔admission conformance, error actionability as a gate law) · #136/#139 the cursor/refusal-quality elders · #41 the pattern source · #97 untyped TypeError refusals · #93/#156 the MCP surface completeness arc.
+
+**Orchestration depth** — #12 nested orchestration (gates the #74 full shape + #162) · #102 tightly-coupled cells · #106 steering-policy coverage of the new lanes · #161 the orchestrator plan object · #162 mid-flight wave mutability · #163 quiescence-derived completion · #164 blind waits fail loud · #165 launch-time harvest validation · #167 the actual-inference readiness tier · #146 seat telemetry.
+
+**Kernel honesty (#169's umbrella)** — #143 the `baton_repl_cite` cross-run read escape · #95 the public `driver` field · #98 NUL-byte key separators · #148 the resident credential fence · #168 snapshot sideband refs.
+
+**Craft & governance** — #77 suite resource governance · #72 prescriptive doctor · #82 the frontier-sweep umbrella · #91 the orchestrator investigation surface · #100 wave-retry footguns · #101 the 4096 objective cap · #113 policy single-sourcing · #125 the replay harness · #149 the gate failure digest · #166 the anchor suite-law.
+
+**Eval & proof** — #107 EVAL-R0 (pre-registered, fires on clear seats) · #125's replay-harness precondition · the attended-dogfood practice (recurring real-task waves as the defect-finder).
+
+**Older AX frictions (worker-reported)** — #38 read-only objectives compiling change intent · #39 transient refusals cancelling runs · #49/#50 the glm seat elders · #51 upward state feedback · #52 MockAdapter stray commits · #54 kimi-acp thinking=on · #55–#58 the stall/AX convergence set (partially absorbed by #67) · #60 the worker friction up-channel · #65 keyed-wave close stall · #66 the doubt-review surface.
+
+**Seats & reach** — #145 OhMyPi harness evaluation (low) · #29/#90 remote control over Tailscale (low) · computer-use worker tier (bet, flagged flaky) · programmatic provider reauth (#148-adjacent) · **#115/#133 the Flip experience** (docs/38; the pose grammar + native animation, low).
 
 ---
 
