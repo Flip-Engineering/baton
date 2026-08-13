@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { wrapProse } from './messages.mjs';
-import { FRAME_LIMITS, FRAME_LIMITS_VERSION, FRAME_LIMITS_DIGEST, composeFrameLimitRefusal, frameLimitRefusalPath } from './limits.mjs';
+import { FRAME_LIMITS, FRAME_LIMITS_VERSION, FRAME_LIMITS_DIGEST, composeFrameLimitRefusal, frameLimitRefusalPath, COORDINATOR_AUTHORITY_FORBIDDEN, COORDINATOR_AUTHORITY_GRACEFUL_PATH } from './limits.mjs';
 import {
   normalizeGoalRequest, normalizePlanRequest, planRouteAuthorityState, planRouteMatches,
   planSingleExactRoute,
@@ -3222,6 +3222,21 @@ export class BatonApplication {
     if (allowed !== true) throw applicationError('application command is not authorized', 'application_unauthorized');
   }
 
+  // Issue #74 (D2/A5): the coordinator authority boundary. A coordinator-seat principal (a worker
+  // seat, principalId `worker:<id>` — the G9 seat class that never holds `approve`) reaching a
+  // wave/steering authority verb draws `coordinator_authority_forbidden` with {attempted,
+  // gracefulPath}, where gracefulPath names the DECISION_REQUEST escalation lane. The top
+  // orchestrator (owner / service / observer principals) never fires this code — the boundary
+  // narrows only the worker seat. The underlying denial stays application_unauthorized at the
+  // facade; this is the coordinator-facing coaching wrapper (the #12 Decision-5 split shape).
+  _refuseCoordinatorAuthority(name, principal) {
+    if (typeof principal?.principalId === 'string' && principal.principalId.startsWith('worker:')) {
+      throw applicationError('coordinator seat cannot drive the wave/steering authority', COORDINATOR_AUTHORITY_FORBIDDEN, {
+        attempted: name, gracefulPath: COORDINATOR_AUTHORITY_GRACEFUL_PATH,
+      });
+    }
+  }
+
   async _authorizeSemanticAuthority(authority, principal, runId, context = null) {
     const normalized = normalizeSemanticAuthority(authority, 'application_action_authority_invalid');
     const definition = APPLICATION_SEMANTIC_REGISTRY.actions[normalized.kind];
@@ -4642,6 +4657,10 @@ export class BatonApplication {
         runId: intent.runId, driverKind: intent.driverKind, actor: owner.actor,
         ...(intent.waveId !== undefined ? { waveId: intent.waveId } : {}),
         ...(intent.waveRole !== undefined ? { waveRole: intent.waveRole } : {}),
+        // Issue #74 (D3/A6): the member's EXACT route rides the steering-registered record so the
+        // waves.list seat map can recover it even when the wave was minted by the interpreter seam
+        // (createWave mints a role-only string roster, wave.mjs:180 — the route is not in it).
+        ...(intent.waveId !== undefined ? { route: clone(intent.route) } : {}),
       }, {
         actor: owner.actor,
         key: `run.steering_registered:${intent.runId}`,
@@ -11585,6 +11604,20 @@ export class BatonApplication {
     return null;
   }
 
+  // Issue #74 (D3/A6): the member's EXACT route — the steering-registered `route` (minted by
+  // start(), same event-log-only discipline as _runWaveId/_runWaveRole). This is how waves.list
+  // recovers the seat map for interpreter-seam waves whose registry roster is a role-only string.
+  _runWaveRoute(runId) {
+    const events = this.driver.coordination.events();
+    for (const event of events) {
+      if (event.kind === 'driver.recorded' && event.payload?.kind === APPLICATION_STEERING_REGISTERED_KIND
+        && event.payload?.runId === runId && event.payload?.route !== undefined) {
+        return clone(event.payload.route);
+      }
+    }
+    return null;
+  }
+
   // MCP-W1 (mcp-packaging-decisions v1.0): wave ergonomics on the ordinary surface. A wave is the
   // set of runs bound to one waveId through the steering-registered record; waves.start starts each
   // member through the ORDINARY run.start admission (profile routes + scopes — the _resolveIntent
@@ -11743,8 +11776,12 @@ export class BatonApplication {
         if (typeof member === 'string') {
           // B2/F13: a legacy string-array member is a bare role with NO registered runId — the
           // pinned no-run render (liveness local, nulls, route/scope null), never wave_not_found.
+          // Issue #74 (D3/A6): the seat map — the interpreter seam (createWave, wave.mjs:180)
+          // mints a role-only string roster, so the route is recovered from the member run's
+          // steering-registered `route` record (start() mints it) rather than rendered as null.
+          const route = this._runWaveRoute(this._runIdForWaveMember(row.waveId, member));
           members.push(deepFreeze({
-            role: member, route: null, scope: null,
+            role: member, route: route ?? null, scope: null,
             liveness: 'local', phase: null, progressClass: null, attentionCount: null,
           }));
           continue;
@@ -12514,6 +12551,15 @@ export class BatonApplication {
     // the byte-stable command-table key set is unchanged. waves.send/waves.stop steer ONE member
     // by runId (the resume-steer path attach returns); waves.progress pages per-member bounded
     // projections; deployment.doctor is the quota-free fresh readiness read.
+    // Issue #74 (D2/A5): the coordinator authority boundary at the waves.* dispatch seam. A
+    // coordinator-seat principal (a worker seat, principalId `worker:<id>`) reaching a wave/steering
+    // authority verb draws coordinator_authority_forbidden {attempted, gracefulPath} — never a
+    // silent per-member admission (the seam OQ1 pins: the waves.* ports dispatch BEFORE the
+    // recursive gate, so this coaching refusal is the only authority check they draw). waves.list
+    // and waves.progress are observe verbs (not refused); the top orchestrator never fires the code.
+    if (['waves.start', 'waves.run', 'waves.stop'].includes(name)) {
+      this._refuseCoordinatorAuthority(name, principal);
+    }
     if (name === 'waves.start') return this.startWave(args, principal, context);
     if (name === 'waves.progress') return this.waveProgress(args, principal, context);
     if (name === 'waves.send') return this.sendWaveMember(args, principal, context);
@@ -12771,7 +12817,7 @@ export class BatonApplication {
       || (Object.hasOwn(value, 'runId') === Object.hasOwn(value, 'workerId'))
       || (Object.hasOwn(value, 'runId') && !validId(value.runId))
       || (Object.hasOwn(value, 'workerId') && !validId(value.workerId))
-      || !['inform', 'query', 'steer'].includes(value.kind)
+      || !['inform', 'query', 'steer', 'brief', 'result'].includes(value.kind)
       || typeof value.body !== 'string' || value.body.length === 0 || value.body.includes('\0')) {
       throw applicationError('run message send request is invalid', 'application_message_send_invalid');
     }
