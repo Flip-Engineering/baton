@@ -4,36 +4,57 @@
 // today by construction and must STAY green on the implementation (the fold's "must NOT change" —
 // the sanitized evidence projection, the closed gate/verifier enums, the recovery-digest pin).
 //
-// Row inventory (24 rows — 19 RED / 5 PIN):
-//   A1-A4  RED    R1 + fold B2/B3 + fold Minor 1   (verdict-surface-missing ×4 — the four-field
+// Row inventory (31 rows — 26 RED / 5 PIN):
+//   A1-A6  RED    R1 + fold B2/B3 + fold Minor 1   (verdict-surface-missing ×6 — the four-field
 //                  projection, the exact key `detail`, the closed check domain, the
-//                  required_effect digest/count subset, the sanitized red_green tail)
-//   B1     RED    D1 B3 null row                   (verdict-surface-missing — verification_mutation_failed
-//                  carries check = the closed diagnosticCode and corrective: null)
+//                  required_effect digest/count subset, the sanitized red_green tail, the
+//                  forbidden-effect projection (A5), the coverage projection with the plain
+//                  diagnostic tail (A6))
+//   B1     RED    D1 B3 null row ×8 (parametrized)  (verdict-surface-missing — EACH reachable verifier
+//                  diagnostic carries check = the closed diagnosticCode and corrective: null; the
+//                  parametrization catches a wrong mapping of ANY of the eight null rows)
 //   B2-B3  RED    R3 + OQ1                         (corrective-table-missing — the frozen hub-minted table
 //                  keyed by terminal CODE + the reachable-codes honest-absence scan)
-//   B4     RED    refusal vocabulary               (forced-corrective-refusal-missing — the
-//                  verdict_surface_corrective_forced literal in application.mjs)
+//   B4     RED    refusal vocabulary ×2            (forced-corrective-refusal-missing — the
+//                  verdict_surface_corrective_forced literal in application.mjs (grep half) + the
+//                  behavioral projection: a payload-carried forged corrective is per-record excluded,
+//                  never a map-wide throw and never a fabricated surface)
 //   C1-C2  RED    R4                               (verdict-surface-missing — replay purity with .at(-1)
 //                  supersession + cross-worker isolation)
 //   C3     RED    R4-b run.debug failure leg       (run-debug-verdict-missing — the shared projection
 //                  rides the debug consumer: check + corrective on the failure)
 //   C4     PIN    R5                               (digest-pin green + provider-brief purity — task.brief
 //                  stays byte-stable under the delivery seam)
+//   C5     RED    #79 push consumer                (push-consumer-missing — the Coordinator provider-brief
+//                  seam: composed.attention carries the gate_verdict item for a gate miss after a
+//                  pushed worker turn)
 //   D1     RED    R6 boundary-commits              (live-composition-missing — the no-commit boilerplate
 //                  is suppressed by the refuting #141 norm, the boundary line ships)
 //   D2     RED    R6-schema                        (worktree-harvest-policy-missing — the applicationProfile
-//                  field, fold B5)
+//                  field, fold B5; the G1 slice captures the full profile schema span)
 //   D3     RED    R6 orchestrator-harvest          (live-composition-missing — the no-commit line ships
 //                  under its named source; a TRUE line is never suppressed)
 //   D4-D5  RED    R7 honesty                       (live-composition-missing → underrived-refusal-missing /
 //                  unenforced-refusal-missing — underrived/unenforced lines refuse, never print)
 //   D6     RED    R8 wire_frame lane-conditional   (live-composition-missing — the wire_frame HARD
-//                  CONSTRAINT ships IFF the size census over the served scope shows a >~1500-line file)
+//                  CONSTRAINT ships IFF the size census over the served scope shows a >~1500-line file;
+//                  a large file OUTSIDE the lane’s scope never carries it — M3)
 //   D7     RED    R9 pure function + epoch         (live-composition-missing / epoch-missing — two
 //                  composes derive the same block; the suppression record carries the epoch)
 //   D8     RED    fold Minor 2                     (live-composition-missing — [attempt:] is a per-attempt
 //                  discriminator, never a constraint line)
+//   D9     RED    M1a epoch variation              (live-composition-missing / epoch-missing — the
+//                  suppression epoch DERIVES from the profile digest + admission SHA; different
+//                  inputs derive different epochs, never a hardcoded hex literal)
+//   D10    RED    M1b freeze seam                  (live-composition-missing / epoch-missing — the served
+//                  block is FROZEN for the run: a mid-run policy change WOULD change a fresh compose
+//                  yet never retro-edits the admitted rendered objective)
+//   D11    RED    S2 value-level served lines      (live-composition-missing — a served line carries the
+//                  LIVE input VALUE: the exact pathScope join, the profile digest, the workflow/result
+//                  sources, the profile-constraints verification-command line)
+//   D12    RED    S1 render seam                   (live-composition-missing — the composed block drives
+//                  the REAL recipe objective render seam by harvest policy (S1a) + the static
+//                  IMPLEMENT_CONSTRAINTS list is retired (S1b))
 //   E1     PIN    R2 current shape                 ({digests, counts} — never a path string crosses)
 //   E2     PIN    GT1                              (DEBUG_GATE_CODES closed gate enum, ACTUAL order)
 //   E3     PIN    D1 B3                            (CLOSED_VERIFIER_DIAGNOSTICS closed verifier enum, ACTUAL order)
@@ -86,10 +107,11 @@ import * as recipesNs from '../src/recipes.mjs';
 // ---------------------------------------------------------------------------
 // Verified split (recorded after two consecutive runs from the repo root)
 // ---------------------------------------------------------------------------
-//   run 1: tests 24 · pass 5 · fail 19 · cancelled 0 · skipped 0 · todo 0 (≈3.0 s)
-//   run 2: tests 24 · pass 5 · fail 19 · cancelled 0 · skipped 0 · todo 0 (≈2.6 s)
-//   deterministic — the 5 passes are exactly the PIN rows (C4, E1, E2, E3, E4); the 19 failures
-//   are the RED rows, each confirmed to fail at its NAMED stage.
+//   run 1: tests 31 · pass 5 · fail 26 · cancelled 0 · skipped 0 · todo 0 (≈5.2 s)
+//   run 2: tests 31 · pass 5 · fail 26 · cancelled 0 · skipped 0 · todo 0 (≈5.5 s)
+//   deterministic — the 5 passes are exactly the PIN rows (C4, E1, E2, E3, E4); the 26 failures
+//   are the RED rows, each confirmed to fail at its NAMED stage (the fold G1+G2 fix keeps D2/A3
+//   failing on the ABSENT invented surface, not on the green-side fragility the fold removed).
 
 const dirs = [];
 function tmpDir() {
@@ -149,7 +171,6 @@ const DIGEST_B = 'b'.repeat(64);
 const DIGEST_C = 'c'.repeat(64);
 const DIGEST_D = 'd'.repeat(64);
 const DIGEST_E = 'e'.repeat(64);
-const DIGEST_F = 'f'.repeat(64);
 
 // The R3 hub-minted corrective table (keyed by terminal CODE — #73 law) + the null rows.
 const CORRECTIVE_TABLE_EXPECTED = Object.freeze({
@@ -164,6 +185,14 @@ const CORRECTIVE_TABLE_EXPECTED = Object.freeze({
 const REACHABLE_TERMINAL_CODES = Object.freeze([
   'worker_path_scope_violation', 'forbidden_effect_observed', 'required_effect_absent',
   'verification_red_green_failed', 'verification_coverage_failed',
+  'verification_output_exceeded', 'verification_timed_out', 'verification_spawn_unavailable',
+  'verification_claim_diverged', 'verification_mutation_failed', 'verification_coverage_unavailable',
+  'verification_mutation_unavailable', 'verification_exit_mismatch',
+]);
+// The eight reachable verifier diagnostics that carry corrective: null (OQ1 honest absence — each
+// projects {gate: 'unknown', check: <the code>, detail: {}, corrective: null}). B1 is parametrized
+// over this set so a wrong implementation mapping any of them to check: null is caught.
+const NULL_CORRECTIVE_DIAGNOSTICS = Object.freeze([
   'verification_output_exceeded', 'verification_timed_out', 'verification_spawn_unavailable',
   'verification_claim_diverged', 'verification_mutation_failed', 'verification_coverage_unavailable',
   'verification_mutation_unavailable', 'verification_exit_mismatch',
@@ -211,7 +240,23 @@ function scopeRefusalEvent({ worker = 'w-1', seq = 7 } = {}) {
   };
 }
 
-// A real trust-gate required-effect refusal (coordinator.mjs:13229-13235 mint shape).
+// A real trust-gate forbidden-effect refusal (the coordinator.mjs:13196-13200 mint — the throw
+// carries only the code; the trust-gate error mint at :13510-13517 adds phase + trustPhase).
+function forbiddenEffectEvent({ worker = 'w-1', seq = 8 } = {}) {
+  return {
+    ...baseEvent(worker, seq),
+    payload: {
+      message: 'captured worker result observed an effect forbidden by its approved Plan',
+      code: 'forbidden_effect_observed',
+      phase: 'trust_gate',
+      trustPhase: 'forbidden_effect',
+    },
+  };
+}
+
+// A real trust-gate required-effect refusal (the coordinator.mjs:13229-13235 mint shape, byte-for-byte
+// — the path_scope phase throws first, so the required-effect phase's evidence never carries the
+// out-of-scope fields; the six-field out-of-scope digest/count pair is path_scope's shape only).
 function requiredEffectAbsentEvent({ worker = 'w-1', seq = 6 } = {}) {
   return {
     ...baseEvent(worker, seq),
@@ -221,12 +266,13 @@ function requiredEffectAbsentEvent({ worker = 'w-1', seq = 6 } = {}) {
       phase: 'trust_gate',
       trustPhase: 'required_effect',
       requiredEffectEvidence: {
+        requiredEffect: 'repository_edit',
+        baseSha: 'sha-base',
+        sha: 'sha-captured',
         changedPathCount: 4,
         changedPathsDigest: DIGEST_D,
         inScopeChangedPathCount: 0,
         inScopeChangedPathsDigest: DIGEST_E,
-        outOfScopeChangedPathCount: 4,
-        outOfScopeChangedPathsDigest: DIGEST_F,
       },
     },
   };
@@ -559,18 +605,48 @@ test('A4 (RED): a red_green verifier refusal projects check = the closed diagnos
   assert.equal(surface.corrective, 'failing_check_fix', 'the corrective is keyed by the terminal code');
 });
 
+test('A5 (RED): a forbidden-effect refusal projects gate forbidden_effect, check forbidden_effect, and the retraction corrective (stage: verdict-surface-missing)', () => {
+  assert.equal(typeof applicationNs.projectVerdictSurface, 'function', 'stage: verdict-surface-missing');
+  const surface = applicationNs.projectVerdictSurface([forbiddenEffectEvent()]);
+  assert.ok(surface, 'a forbidden-effect refusal projects a record');
+  assert.equal(surface.gate, 'forbidden_effect', 'WHICH gate — debugGateFromLiveCode maps forbidden_effect_observed (application.mjs:954)');
+  assert.equal(surface.code, 'forbidden_effect_observed', 'the durable terminal code rides the record');
+  assert.equal(surface.check, 'forbidden_effect', 'WHAT was checked — the whitelisted trustPhase (fold B3)');
+  assert.deepEqual(surface.detail, {}, 'no evidence class for the forbidden-effect gate');
+  assert.equal(surface.corrective, 'forbidden_effect_retraction', 'the corrective is keyed by the terminal code (R3)');
+});
+
+test('A6 (RED): a coverage verifier refusal projects gate coverage, the closed code as check, and a sanitized tail (stage: verdict-surface-missing)', () => {
+  assert.equal(typeof applicationNs.projectVerdictSurface, 'function', 'stage: verdict-surface-missing');
+  const surface = applicationNs.projectVerdictSurface([
+    verifierRefusalEvent('verification_coverage_failed', { capsuleText: 'coverage diagnostic detail' }),
+  ]);
+  assert.ok(surface, 'a coverage verifier refusal projects a record');
+  assert.equal(surface.gate, 'coverage', 'WHICH gate — debugGateFromLiveCode maps the coverage diagnostic (application.mjs:957)');
+  assert.equal(surface.code, 'verification_coverage_failed', 'the terminal code rides the record');
+  assert.equal(surface.check, 'verification_coverage_failed', 'check is the closed diagnosticCode itself — never a two-row label (fold B3)');
+  assert.equal(typeof surface.detail?.tail, 'string', 'detail.tail is the sanitizer output (application.mjs:958-990)');
+  assert.ok(surface.detail.tail.includes('coverage diagnostic detail'),
+    'plain diagnostic text rides the sanitizer output verbatim — no parallel redaction path (verifier-diagnostics.mjs:26)');
+  assert.equal(surface.corrective, 'coverage_completion', 'the corrective is keyed by the terminal code (R3)');
+});
+
 // ===========================================================================
 // Section B — the closed corrective table + the refusal vocabulary
 // ===========================================================================
 
-test('B1 (RED): a reachable verifier diagnostic with no corrective carries corrective:null and the closed code as check (stage: verdict-surface-missing)', () => {
+test('B1 (RED): every reachable null verifier diagnostic carries corrective:null and the closed code as check (stage: verdict-surface-missing)', () => {
   assert.equal(typeof applicationNs.projectVerdictSurface, 'function', 'stage: verdict-surface-missing');
-  const surface = applicationNs.projectVerdictSurface([verifierRefusalEvent('verification_mutation_failed')]);
-  assert.ok(surface, 'a null-corrective diagnostic projects a record');
-  assert.equal(surface.gate, 'unknown', 'the diagnostic is not a mapped gate');
-  assert.equal(surface.check, 'verification_mutation_failed', 'the closed diagnosticCode names WHAT was checked (fold B3)');
-  assert.deepEqual(surface.detail, {}, 'no evidence class for the unknown gate');
-  assert.equal(surface.corrective, null, 'the eight null diagnostics escalate — honest absence, never an invented corrective (D1 B3)');
+  // Parametrized over the FULL null-diagnostic set (fold D1 B3) — an implementation mapping any
+  // reachable diagnostic to check: null (instead of the closed code) is caught, not just the sample.
+  for (const code of NULL_CORRECTIVE_DIAGNOSTICS) {
+    const surface = applicationNs.projectVerdictSurface([verifierRefusalEvent(code)]);
+    assert.ok(surface, `${code}: a null-corrective diagnostic projects a record`);
+    assert.equal(surface.gate, 'unknown', `${code}: the diagnostic is not a mapped gate`);
+    assert.equal(surface.check, code, `${code}: the closed diagnosticCode names WHAT was checked (fold B3)`);
+    assert.deepEqual(surface.detail, {}, `${code}: no evidence class for the unknown gate`);
+    assert.equal(surface.corrective, null, `${code}: the null diagnostics escalate — honest absence, never an invented corrective (D1 B3)`);
+  }
 });
 
 test('B2 (RED): VERDICT_CORRECTIVE_TABLE is the frozen hub-minted corrective table, keyed by terminal code (stage: corrective-table-missing)', () => {
@@ -600,11 +676,36 @@ test('B3 (RED): every terminal code REACHABLE on the surface has a corrective or
   }
 });
 
-test('B4 (RED): the verdict_surface_corrective_forced refusal is a typed surface constant in application.mjs (stage: forced-corrective-refusal-missing)', () => {
+test('B4 (RED): a forced corrective outside the closed table refuses verdict_surface_corrective_forced and the surface degrades per-record (stage: forced-corrective-refusal-missing)', () => {
+  // Structural half (the typed code is surface-constant in application.mjs — the refusal vocabulary).
   assert.ok(
     grepAn('verdict_surface_corrective_forced', APP_SRC).includes('verdict_surface_corrective_forced'),
-    'stage: forced-corrective-refusal-missing — the refusal code literal exists in application.mjs (a caller-authored corrective is refused, never absorbed)',
+    'stage: forced-corrective-refusal-missing — the typed refusal literal exists in application.mjs (a caller-authored corrective is refused, never absorbed)',
   );
+  assert.equal(typeof applicationNs.projectVerdictSurface, 'function', 'stage: forced-corrective-refusal-missing — projectVerdictSurface(events) is the invented four-field projection');
+  // Behavioral half: a caller-authored corrective riding the durable event is the forged record the
+  // closed hub-minted table refuses (the #73 B5 precedent). The surface degrades PER-RECORD — the
+  // malformed record is excluded from the projection, the remaining valid record survives, never a
+  // map-wide throw.
+  const malformed = verifierRefusalEvent('verification_red_green_failed', { seq: 9 });
+  malformed.payload.corrective = 'caller_minted';
+  const valid = scopeRefusalEvent({ seq: 7 });
+  const mixed = (() => {
+    try { return { surface: applicationNs.projectVerdictSurface([valid, malformed]) }; }
+    catch (error) { return { refused: error.code }; }
+  })();
+  assert.equal(mixed.refused, undefined, 'stage: forced-corrective-refusal-missing — the refusal degrades per-record, never a map-wide throw');
+  assert.ok(mixed.surface, 'the remaining valid record survives the refused record');
+  assert.equal(mixed.surface.code, 'worker_path_scope_violation', 'the malformed record is excluded — the projection falls back to the prior valid evidence (the forged corrective is never absorbed)');
+  assert.equal(mixed.surface.check, 'path_scope', 'the surviving record carries WHAT was checked');
+  assert.equal(mixed.surface.corrective, 'in_scope_revision', 'the surviving record carries its own table-minted corrective');
+  assert.ok(!JSON.stringify(mixed.surface).includes('caller_minted'), 'the caller-authored corrective never crosses to any consumer');
+  const only = (() => {
+    try { return { surface: applicationNs.projectVerdictSurface([malformed]) }; }
+    catch (error) { return { refused: error.code }; }
+  })();
+  assert.equal(only.refused, undefined, 'a malformed-only stream degrades per-record, never a throw');
+  assert.equal(only.surface, null, 'the malformed record is excluded from the projection — the forged corrective never reaches a surface');
 });
 
 // ===========================================================================
@@ -670,6 +771,35 @@ test('C4 (PIN): the surface never rides the refinement brief — task.brief stay
   );
 });
 
+test('C5 (RED): the #79 gate_verdict push carries check/corrective — the third consumer of the shared projection (stage: push-verdict-missing)', async () => {
+  // R4 is "one projection, three consumers": the projection function (A/B rows), the run.debug
+  // failure leg (C3), and the #79 gate_verdict push (GT3). The push item's pre-fold shape
+  // {kind, code, message, gate, detail} has no check and no corrective — this row pins the fold's
+  // addition on the push consumer (mirror of worker-delivery-push-red.test.mjs F1/F5).
+  const adapter = new ScriptableAdapter();
+  const outOfScope = async () => ({ sha: 'sha-x', baseSha: 'sha-base', changedPaths: ['outside.txt'] });
+  const { coordinator } = setup({ adapter, capture: outOfScope });
+  const { handle, task } = await spawn(coordinator, { pathScope: ['reports/**'] });
+  stageCompletedTurn(adapter, handle, ['outside.txt']);
+  await flush();
+  const gate = coordinator._log.read(handle.id)
+    .find((event) => event.kind === 'error' && event.payload?.phase === 'trust_gate');
+  assert.ok(gate, 'precondition: the scope violation minted the real trust-gate error');
+  assert.equal(gate.payload.code, 'worker_path_scope_violation', 'precondition: the gate code is the scope violation');
+  const composed = coordinator._providerBrief(task.brief, handle.id);
+  assert.ok(
+    Array.isArray(composed?.attention),
+    'stage: push-verdict-missing — the judged worker’s next-turn brief carries the #79 attention block (GT3)',
+  );
+  const verdict = composed.attention.find((entry) => entry.kind === 'gate_verdict');
+  assert.ok(verdict, 'the sanitized gate_verdict item is pushed');
+  assert.equal(verdict.workerId, handle.id, 'the verdict is the judged worker’s OWN (GT3)');
+  assert.equal(verdict.gate, 'scope', 'WHICH gate rides the push');
+  assert.equal(verdict.check, 'path_scope', 'stage: push-verdict-missing — the pushed item carries WHAT was checked (fold B3)');
+  assert.equal(verdict.corrective, 'in_scope_revision', 'the corrective rides the push from the SAME projection (R4)');
+  assert.ok('detail' in verdict, 'the sanitized evidence key is `detail` on this consumer too (fold B2)');
+});
+
 // ===========================================================================
 // Section D — D2 the live objective composition (worktreeHarvestPolicy + honesty)
 // ===========================================================================
@@ -707,7 +837,12 @@ test('D2 (RED): the applicationProfile schema declares the worktreeHarvestPolicy
   const source = readFileSync(new URL('../src/application-deployment.mjs', import.meta.url), 'utf8');
   const start = source.indexOf('function applicationProfile');
   assert.ok(start !== -1, 'precondition: applicationProfile exists');
-  const profileSource = source.slice(start, start + 1200);
+  // Fold G1: anchor the FULL applicationProfile object span (the function head through its closing
+  // `});`), never an arbitrary 1200-char window — a correct placement of the fold-B5 field near the
+  // object's end (past integrationPolicy, alongside followPolicy/exportPolicy) must be found.
+  const end = source.indexOf('});', start);
+  assert.ok(end !== -1, 'precondition: applicationProfile object closes with });');
+  const profileSource = source.slice(start, end);
   assert.ok(
     profileSource.includes('worktreeHarvestPolicy'),
     'stage: worktree-harvest-policy-missing — the profile schema carries worktreeHarvestPolicy (fold B5)',
@@ -808,6 +943,16 @@ test('D6 (RED): the wire_frame line is lane-conditional — it ships IFF the siz
   });
   assert.ok(!smallLane.lines.some((line) => line.includes('wire_frame_oversize')),
     'a lane whose scope has no such file never carries the line (R8)');
+  // M3: the census is read over the lane's SERVED scope — a big file OUTSIDE the lane's pathScope
+  // must never trigger the line (a composition emitting the line on ANY large census entry passes
+  // the two fixtures above; this edge kills it).
+  const bigFileOutsideLane = recipesNs.composeObjectiveConstraintLines({
+    ...base,
+    goal: { pathScope: ['docs/**'] },
+    sizeCensus: { 'docs/guide.md': 100, 'impl/src/application.mjs': 13_330 },
+  });
+  assert.ok(!bigFileOutsideLane.lines.some((line) => line.includes('wire_frame_oversize')),
+    'a large file OUTSIDE the lane’s served scope never carries the wire_frame line — the census is scope-scoped (R8, fold Minor 3)');
 });
 
 test('D7 (RED): the composed block is a pure function of live policy, frozen at admission — two composes derive the same block and a suppression record carrying the epoch (stage: live-composition-missing)', () => {
@@ -846,6 +991,163 @@ test('D8 (RED): the [attempt:] line is a per-attempt discriminator, never a cons
   });
   assert.ok(!result.lines.some((line) => line.includes('[attempt:')),
     'the attempt discriminator never rides the constraint block — renderObjective appends it from the attempt salt (fold Minor 2)');
+});
+
+test('D9 (RED): the suppression epoch DERIVES from the profile digest and the admission SHA — different inputs derive different epochs, never a hardcoded constant (stage: live-composition-missing / epoch-missing)', () => {
+  assert.equal(typeof recipesNs.composeObjectiveConstraintLines, 'function', 'stage: live-composition-missing');
+  const base = {
+    profile: { name: 'default', digest: 'p'.repeat(64), worktreeHarvestPolicy: 'orchestrator-harvest', constraints: [] },
+    goal: { pathScope: ['impl/test/**'] },
+    workflowConstraint: null,
+    resultConstraint: null,
+    admissionSha: 'a'.repeat(40),
+    sizeCensus: { 'impl/test/example.test.mjs': 120 },
+  };
+  const first = recipesNs.composeObjectiveConstraintLines(base);
+  assert.ok(first.suppression?.epoch, 'stage: epoch-missing — the suppression record carries the derivation epoch (fold B6)');
+  assert.equal(first.suppression.epoch.profileDigest, 'p'.repeat(64), 'the epoch names the profile digest');
+  assert.equal(first.suppression.epoch.admissionSha, 'a'.repeat(40), 'the epoch names the admission SHA');
+  // M1 variation: the epoch must TRACK the inputs — a hardcoded hex literal would be caught here.
+  const otherDigest = recipesNs.composeObjectiveConstraintLines({ ...base, profile: { ...base.profile, digest: 'q'.repeat(64) } });
+  const otherSha = recipesNs.composeObjectiveConstraintLines({ ...base, admissionSha: 'b'.repeat(40) });
+  assert.equal(otherDigest.suppression.epoch.profileDigest, 'q'.repeat(64), 'the epoch tracks a different profile digest (M1)');
+  assert.equal(otherSha.suppression.epoch.admissionSha, 'b'.repeat(40), 'the epoch tracks a different admission SHA (M1)');
+  assert.notDeepEqual(otherDigest.suppression.epoch, first.suppression.epoch, 'a different digest derives a different epoch');
+  assert.notDeepEqual(otherSha.suppression.epoch, first.suppression.epoch, 'a different admission SHA derives a different epoch');
+});
+
+test('D10 (RED): the served block is FROZEN for the run — a mid-run policy change does not retro-edit the admitted block the worker received (stage: live-composition-missing / epoch-missing)', () => {
+  assert.equal(typeof recipesNs.composeObjectiveConstraintLines, 'function', 'stage: live-composition-missing');
+  assert.equal(typeof recipesNs.renderObjective, 'function', 'the real recipe objective render seam (recipes.mjs:296-315)');
+  // Admission: the served block is derived ONCE from the admission-time deployment state and the
+  // objective is rendered for the worker — the block is FROZEN for the run (fold B6).
+  const admissionState = {
+    profile: { name: 'default', digest: 'p'.repeat(64), worktreeHarvestPolicy: 'orchestrator-harvest', constraints: [] },
+    goal: { pathScope: ['impl/test/**'] },
+    workflowConstraint: null,
+    resultConstraint: null,
+    admissionSha: 'a'.repeat(40),
+    sizeCensus: { 'impl/test/example.test.mjs': 120 },
+  };
+  const admitted = recipesNs.composeObjectiveConstraintLines(admissionState);
+  const servedObjective = recipesNs.renderObjective({
+    task: 'Implement the assigned contract rung.',
+    constraints: admitted.lines,
+    salt: 'salt', role: 'implementer',
+  });
+  // Mid-run, the deployment policy mutates — a harvest-policy flip and a profile-digest change.
+  const mutatedState = {
+    ...admissionState,
+    profile: { ...admissionState.profile, digest: 'q'.repeat(64), worktreeHarvestPolicy: 'boundary-commits' },
+  };
+  const freshCompose = recipesNs.composeObjectiveConstraintLines(mutatedState);
+  assert.notDeepEqual(freshCompose.lines, admitted.lines,
+    'precondition: the policy mutation WOULD change a fresh derivation (the no-commit line flips)');
+  assert.notDeepEqual(freshCompose.suppression.epoch, admitted.suppression.epoch,
+    'precondition: the mutation moves the derivation epoch');
+  // The FROZEN block the worker received is byte-stable — re-serving the admission state derives
+  // the identical block and identical rendered objective; a mid-run policy change never retro-edits
+  // a served block (the freeze, not a purity corollary).
+  const servedAgain = recipesNs.renderObjective({
+    task: 'Implement the assigned contract rung.',
+    constraints: recipesNs.composeObjectiveConstraintLines(admissionState).lines,
+    salt: 'salt', role: 'implementer',
+  });
+  assert.equal(servedAgain, servedObjective,
+    'the admitted rendered objective is byte-stable — a mid-run policy change never retro-edits a served block (fold B6)');
+  assert.deepEqual(recipesNs.composeObjectiveConstraintLines(admissionState).suppression, admitted.suppression,
+    'the suppression record is frozen with the block');
+});
+
+test('D11 (RED): a served line carries the LIVE input value — the exact pathScope, profile digest, workflow/result sources, and the profile-constraints line ship (stage: live-composition-missing)', () => {
+  assert.equal(typeof recipesNs.composeObjectiveConstraintLines, 'function', 'stage: live-composition-missing');
+  const digest = 'p'.repeat(64);
+  const result = recipesNs.composeObjectiveConstraintLines({
+    profile: {
+      name: 'default', digest, worktreeHarvestPolicy: 'orchestrator-harvest',
+      constraints: ['Do not claim completion without the deployment verification command.'],
+    },
+    goal: { pathScope: ['impl/test/**', 'docs/guide.md'] },
+    workflowConstraint: 'Baton workflow wave:seat:join',
+    resultConstraint: 'Baton objective/result policy explicit change_v1',
+    admissionSha: 'a'.repeat(40),
+    sizeCensus: { 'impl/test/example.test.mjs': 120 },
+  });
+  // S2: value-level derivation, not just the prefix filter — a composition that serves only the
+  // policy-conditional lines and never reads input.goal.pathScope / input.profile.digest passes
+  // the D1/D3 prefix filters alone; this row pins the exact served VALUES.
+  assert.ok(result.lines.includes('Work only within: impl/test/**, docs/guide.md'),
+    'the served Work-only-within line carries the EXACT pathScope joined in order (R7, cli-adapters.mjs:101)');
+  assert.ok(result.lines.includes(`Baton deployment profile default@${digest}`),
+    'the profile line carries the LIVE profile digest — profileConstraint(name, profile) (application.mjs:2214-2215)');
+  assert.ok(result.lines.includes('Baton workflow wave:seat:join'),
+    'the workflow line ships from the composition source (application.mjs:4562)');
+  assert.ok(result.lines.includes('Baton objective/result policy explicit change_v1'),
+    'the result-policy line ships from EXPLICIT_RESULT_CONSTRAINTS (application.mjs:117-119)');
+  assert.ok(result.lines.includes('Do not claim completion without the deployment verification command.'),
+    'the verification-command line ships from the deployment profile constraints (application-deployment.mjs:903-905)');
+  assert.ok(result.lines.some((line) => line.includes('SCRATCHPAD_WRITE')),
+    'the scratchpad closed-shape line ships — the sole retained IMPLEMENT_CONSTRAINTS member (fold B1)');
+  for (const line of result.lines) {
+    assert.ok(NAMED_SOURCE_PATTERNS.some((pattern) => pattern.test(line)),
+      `every served line is re-derivable from a named live source (R7 Rule 1) — ${line}`);
+  }
+});
+
+test('D12 (RED): the composed block drives the REAL recipe objective render seam — the no-commit line ships/absents in the worker-facing objective text by harvest policy, and the static list is retired (stage: live-composition-missing)', () => {
+  assert.equal(typeof recipesNs.composeObjectiveConstraintLines, 'function', 'stage: live-composition-missing');
+  assert.equal(typeof recipesNs.renderObjective, 'function', 'the recipe objective render seam is real (recipes.mjs:296-315)');
+  // S1(a): the served block wired into renderObjective — the seam that ships the false static
+  // boilerplate today. A composition never anchored to this seam leaves the boilerplate shipping.
+  const boundary = recipesNs.composeObjectiveConstraintLines({
+    profile: { name: 'default', digest: 'p'.repeat(64), worktreeHarvestPolicy: 'boundary-commits', constraints: [] },
+    goal: { pathScope: ['impl/test/**'] },
+    workflowConstraint: null,
+    resultConstraint: null,
+    admissionSha: 'a'.repeat(40),
+    sizeCensus: { 'impl/test/example.test.mjs': 120 },
+  });
+  const boundaryObjective = recipesNs.renderObjective({
+    task: 'Implement the assigned contract rung.',
+    constraints: boundary.lines,
+    salt: 'salt', role: 'implementer',
+  });
+  assert.ok(!boundaryObjective.includes('Do NOT git commit'),
+    'the RENDERED objective never ships the no-commit boilerplate on a boundary-commits deployment (R6, fold B1)');
+  assert.ok(boundaryObjective.includes('boundary'),
+    'the rendered objective carries the live boundary-commit line (#141)');
+  const orchestrated = recipesNs.composeObjectiveConstraintLines({
+    profile: { name: 'default', digest: 'q'.repeat(64), worktreeHarvestPolicy: 'orchestrator-harvest', constraints: [] },
+    goal: { pathScope: ['impl/test/**'] },
+    workflowConstraint: null,
+    resultConstraint: null,
+    admissionSha: 'b'.repeat(40),
+    sizeCensus: { 'impl/test/example.test.mjs': 120 },
+  });
+  const orchestratedObjective = recipesNs.renderObjective({
+    task: 'Implement the assigned contract rung.',
+    constraints: orchestrated.lines,
+    salt: 'salt2', role: 'implementer',
+  });
+  assert.ok(orchestratedObjective.includes('Do NOT git commit'),
+    'on an orchestrator-harvest deployment the TRUE no-commit line ships in the rendered objective (Rule 2)');
+  assert.ok(!orchestratedObjective.includes('HARD CONSTRAINT (wire_frame_oversize'),
+    'a lane whose scope has no oversized file never carries the wire_frame line in the rendered objective (R8)');
+  // S1(b): fold B1 retirement — the static list is no longer the objective's constraint source. The
+  // no-commit and wire_frame lines are derived live (or absent); the scratchpad line remains.
+  const recipesSource = readFileSync(new URL('../src/recipes.mjs', import.meta.url), 'utf8');
+  const blockStart = recipesSource.indexOf('const IMPLEMENT_CONSTRAINTS');
+  if (blockStart !== -1) {
+    const blockEnd = recipesSource.indexOf(']);', blockStart);
+    assert.ok(blockEnd !== -1, 'IMPLEMENT_CONSTRAINTS closes with ]);');
+    const staticBlock = recipesSource.slice(blockStart, blockEnd);
+    assert.ok(!staticBlock.includes('Do NOT git commit'),
+      'the no-commit line is retired from the static list — the composition derives it live (fold B1)');
+    assert.ok(!staticBlock.includes('wire_frame_oversize'),
+      'the wire_frame line is retired from the static list — the census derives it live (fold B1)');
+    assert.ok(staticBlock.includes('SCRATCHPAD_WRITE'),
+      'the scratchpad closed-shape line remains the static member (fold B1)');
+  }
 });
 
 // ===========================================================================
