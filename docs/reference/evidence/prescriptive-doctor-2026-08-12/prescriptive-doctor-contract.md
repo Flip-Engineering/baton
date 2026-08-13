@@ -1,8 +1,12 @@
 # The prescriptive doctor — warn on the footguns before they bite — implementation contract (#72)
 
-**v1.1 DRAFT** — v1.0 folded against the red-team report (`contract-redteam.md`, this directory) on
+**v1.2 DRAFT** — v1.0 folded against the red-team report (`contract-redteam.md`, this directory) on
 **2026-08-12**; all nine of its numbered blockers (§D) and every open-question verdict are folded below
-(the blocker→change map is `contract-fold.md`, this directory). **Verification HEAD:**
+(the blocker→change map is `contract-fold.md`, this directory). v1.2 folded against the blue-team
+report (`suite-blueteam.md`) on **2026-08-13** — the ONLY change is the #137 surface-attribution
+correction below (§1.2 W6, §4.1 W6, §4.2 CLI, §6 PT-10): the `create_profile` misdirection lives in
+`setupBatonConnection` (application-cli.mjs:458-466, the step at :464), NOT `inspectBatonConnection`
+(application-cli.mjs:489-638, which never emits `create_profile` in any branch). **Verification HEAD:**
 `dc569eaa0e2c400029eea88996ec086ecd59356b` (the swept effective-tree snapshot; the red-team re-verified
 at `4758d8fa37fdcd5e534862cf52b0cdd2ab7e4fcc`, and the `impl/src` tree is byte-identical — `git diff`
 empty over `impl/src`). Every file:line citation was re-verified for the fold with `grep -an` / `sed -n`
@@ -143,8 +147,10 @@ the surface (mcp-northbound.mjs:559-567, 1806-1808, 2135-2149).
   `webHost.start()` (listen) → `confirmSocket()` → the doctor+session **self-check**
   (application-deployment.mjs:1619-1628) → `authority.publish()` (1629-1632). Until publish, the
   authority's `publicOutline().state` is `'private'` (resident-authority.mjs:403-413) and the selector
-  may be absent. Today `inspectBatonConnection` reports `profiles: missing` and directs to
-  `create_profile` in exactly that window (application-cli.mjs:461-464) — the #137 misdirection.
+  may be absent. Today `setupBatonConnection` reports `profiles: missing` and directs to
+  `create_profile` in exactly that window (application-cli.mjs:458-466, the step at :464) — the #137
+  misdirection. (`inspectBatonConnection`, application-cli.mjs:489-638, builds the local outline and
+  never emits `create_profile` in any branch.)
   The detection reads selector/profile/socket files + the authority's publicOutline state, and
   composes with the #135 staged-startup stages (§4.2).
 - **Route whose last provider result was an auth failure.** Route observations are task-keyed rows with
@@ -352,8 +358,8 @@ mis-attributed had zero runs, #129 — orchestrator-friction-ledger.md:104).
 - **Threshold:** a schema-v2 selector (or a live resident authority lease) exists but
   `publicOutline().state === 'private'` — i.e., the resident is mid-startup, OR the published profile's
   socket lstat fails while the authority's owner pid is live. In this window the warning REPLACES the
-  #137 misdirection: `inspectBatonConnection` today reports `profiles: missing` → `create_profile`
-  (application-cli.mjs:461-464).
+  #137 misdirection: `setupBatonConnection` today reports `profiles: missing` → `create_profile`
+  (application-cli.mjs:458-466, the step at :464).
 - **Cause message:** "A resident authority is starting (stage <stage> of start→listen→self-check→publish);
   no profile is published yet, so `create_profile` would race its self-publication. Wait for the staged
   startup lines to reach 'publish'."
@@ -415,7 +421,9 @@ doctor output stays byte-stable. Reading consumers add **ONE named enumerable `w
   detections whose reads are local; W3/W7 need server-side credential probes / route observations and
   appear only on the remote `--check` and MCP surfaces (the subset is pinned; "identical rows" (PT-3) is
   pinned between the remote surfaces). The #137 anti-misdirection replacement lives in
-  `inspectBatonConnection` (application-cli.mjs:461-464), a modified surface (PT-10).
+  `setupBatonConnection` (application-cli.mjs:458-466), a modified surface (PT-10) —
+  `inspectBatonConnection` (application-cli.mjs:489-638) builds the local outline and never emits
+  `create_profile`.
 - **MCP** — `baton_deployment_doctor` (mcp-northbound.mjs:564-567, 1806-1808) returns the same named
   `warnings` field through `_freshDoctorReadiness` + `_sanitizeDoctorReadiness`
   (mcp-northbound.mjs:2118-2149), so the orchestration surface sees identical warning rows. The
@@ -536,9 +544,10 @@ executables, fixed clocks, no live providers):
   `warning_result_pin_census`; below it fires nothing.
 - **PT-10 (W6 resident-not-published + #137 anti-misdirection):** a fixture resident authority with a
   schema-v2 selector and `publicOutline().state === 'private'` fires `warning_resident_not_published`
-  AND the `inspectBatonConnection` outline no longer reports `profiles: missing` → `create_profile`
-  (application-cli.mjs:461-464) — it reports the resident-starting state; a published fixture fires
-  nothing.
+  AND `setupBatonConnection` no longer reports `profiles: missing` → `create_profile`
+  (application-cli.mjs:458-466, the step at :464) — it reports the resident-starting state
+  (`inspectBatonConnection` on a full valid resident fixture reports `stale`/`stale_authority`); a
+  published fixture fires nothing.
 - **PT-11 (W7 route last auth failure):** a fixture route observation whose highest-eventSeq terminal
   status is `failed` with an auth code fires `warning_route_last_auth_failure` (the read is a per-route
   max accessor, O(routes), not `routeObservations()`' full clone-sort); a `completed` or non-auth
