@@ -66,7 +66,7 @@ function system(ad, options = {}) {
     },
     runtimeScopes: options.runtimeScopes,
     referee: async () => ({ reverified: true, observedExit: 0 }), route: () => 'stub',
-    recoveryTimeoutMs: 100, stopDeadlineMs: 50, budgetPolicy: { terminalGraceMs: 1 }, watchdog: { stallMs: 0 },
+    recoveryTimeoutMs: 100, stopDeadlineMs: 50, budgetPolicy: { terminalGraceMs: 1 }, watchdog: { stallMs: 60_000 }, // valid positive stallMs; watchdog never fires in this window
   });
   return { coordinator, coordination, log, ad, worktree };
 }

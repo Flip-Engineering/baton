@@ -241,7 +241,7 @@ function effectFixture(label, arrange) {
     },
     referee: async () => ({ reverified: true, observedExit: 0 }),
     route: () => 'stub',
-    watchdog: { stallMs: 0 },
+    watchdog: { stallMs: 60_000 }, // valid positive stallMs; watchdog never fires in this window
     stopDeadlineMs: 10,
   });
   return { label, coordination, coordinator, effects, localTaskIds: new Set() };

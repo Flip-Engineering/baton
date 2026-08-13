@@ -812,7 +812,7 @@ test('WN4/WN9: the real coordinator rejects stale web stop fences before adapter
   execFileSync('git', ['add', '.'], { cwd: repo });
   execFileSync('git', ['commit', '-q', '-m', 'base'], { cwd: repo });
   const adapter = new MockAdapter({ scenario: { outcome: 'completed', edits: [{ path: 'slow.txt', content: 'slow\n', delayMs: 10000 }] } });
-  const driver = createDriver({ repoRoot: repo, logDir: join(root(), 'log'), adapters: { mock: adapter }, watchdog: { stallMs: 0 } });
+  const driver = createDriver({ repoRoot: repo, logDir: join(root(), 'log'), adapters: { mock: adapter }, watchdog: { stallMs: 60_000 } }); // valid positive stallMs; watchdog never fires in this window
   const brief = envelope().args.brief;
   const handle = await driver.coordinator.spawn('mock', brief, { taskId: 'fenced-web-stop' });
   const current = driver.coordinator.list().find((worker) => worker.id === handle.id);

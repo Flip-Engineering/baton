@@ -237,7 +237,7 @@ function fixture(options = {}) {
       return { reverified: true, passed: true, observedExit: 0 };
     },
     route: () => 'session', stopDeadlineMs: options.stopDeadlineMs ?? 80,
-    watchdog: { stallMs: 0 },
+    watchdog: { stallMs: 60_000 }, // valid positive stallMs; watchdog never fires in this window
   });
   return {
     adapter, coordinator, coordination, log, removals, verifications, worktrees, ownedWorktree,
@@ -413,7 +413,7 @@ test('P91-7: processless replay refuses a receipt without exact durable Plan con
     worktrees: f.worktrees,
     referee: async () => ({ reverified: true, passed: true, observedExit: 0 }),
     route: () => 'session', stopDeadlineMs: 80, recoveryTimeoutMs: 80,
-    watchdog: { stallMs: 0 },
+    watchdog: { stallMs: 60_000 }, // valid positive stallMs; watchdog never fires in this window
   });
   assert.equal(replay.list()[0].status, 'orphaned');
   assert.equal(replay.list()[0].sessionPreservation.receiptDigest, priorReceipt.receiptDigest);
@@ -765,7 +765,7 @@ test('P91-16: unplanned processless reattachment refuses before a wrong-session 
     worktrees: f.worktrees,
     referee: async () => ({ reverified: true, passed: true, observedExit: 0 }),
     route: () => 'session', stopDeadlineMs: 80, recoveryTimeoutMs: 80,
-    watchdog: { stallMs: 0 },
+    watchdog: { stallMs: 60_000 }, // valid positive stallMs; watchdog never fires in this window
   });
 
   const failed = await replay.recover(handle.id);
@@ -841,7 +841,7 @@ test('P91-17: process close after preservation fails the task, clears control, r
     adapters: { session: sessionAdapter() }, providerGovernance: governance,
     worktrees: f.worktrees,
     referee: async () => ({ reverified: true, passed: true, observedExit: 0 }),
-    route: () => 'session', watchdog: { stallMs: 0 },
+    route: () => 'session', watchdog: { stallMs: 60_000 }, // valid positive stallMs; watchdog never fires in this window
   });
   assert.equal(replay.list()[0].sessionPreservation, null,
     'restart must not resurrect a receipt after its transport closed');
@@ -874,7 +874,7 @@ test('P91-18: blocked-interaction preparation is durable and a crash before cont
     adapters: { session: resumed }, providerGovernance: governance,
     worktrees: f.worktrees,
     referee: async () => ({ reverified: true, passed: true, observedExit: 0 }),
-    route: () => 'session', watchdog: { stallMs: 0 },
+    route: () => 'session', watchdog: { stallMs: 60_000 }, // valid positive stallMs; watchdog never fires in this window
   });
   assert.equal(durable.task(handle.taskId).status, 'failed');
   assert.equal(replay.list()[0].pendingApprovalId, null);
@@ -1167,7 +1167,7 @@ test('P91-24: a preserved epoch quarantines late completion/crash and only its e
     adapters: { session: sessionAdapter() }, providerGovernance: governance,
     worktrees: f.worktrees,
     referee: async () => { throw new Error('replay cannot duplicate verification'); },
-    route: () => 'session', watchdog: { stallMs: 0 },
+    route: () => 'session', watchdog: { stallMs: 60_000 }, // valid positive stallMs; watchdog never fires in this window
   });
   assert.equal(durable.task(handle.taskId).status, 'completed');
   assert.equal(replay.list()[0].sessionPreservation, null);

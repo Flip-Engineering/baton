@@ -101,7 +101,7 @@ function system(ad, { providerGovernance = policy(), log = new Log(mkdtempSync(j
     route: () => 'stub',
     stopDeadlineMs: 100,
     budgetPolicy: { terminalGraceMs: 1 },
-    watchdog: { stallMs: 0 },
+    watchdog: { stallMs: 60_000 }, // valid positive stallMs; watchdog never fires in this window
   });
   return { coordinator, coordination, log, verifies: () => verifies };
 }

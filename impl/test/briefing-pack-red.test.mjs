@@ -428,7 +428,7 @@ async function facadeFixture(t) {
     adapters: { mock: adapter },
     runLineagePolicy: DEFAULT_RUN_LINEAGE_POLICY,
     stopDeadlineMs: 1000,
-    watchdog: { stallMs: 0 },
+    watchdog: { stallMs: 60_000 }, // valid positive stallMs; watchdog never fires in this window
   });
   drivers.push(driver);
   const application = new BatonApplication({

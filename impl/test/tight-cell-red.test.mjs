@@ -395,7 +395,7 @@ async function waveFixture({ pausable = true } = {}) {
     runLineagePolicy: RUN_LINEAGE_POLICY,
     now: () => NOW_MS,
     stopDeadlineMs: 1000,
-    watchdog: { stallMs: 0 },
+    watchdog: { stallMs: 60_000 }, // valid positive stallMs; watchdog never fires in this window
     goalPlanAuthority: {
       policy: Object.freeze({
         schemaVersion: 1,

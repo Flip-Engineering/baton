@@ -225,7 +225,7 @@ test('F8: a worker death expires its board claims through the terminal hook and 
   const driver = createDriver({
     repoRoot: repo, logDir: dir(), stopDeadlineMs: 1000,
     adapters: { mock: new MockAdapter({ scenario: { outcome: 'completed', edits: [{ path: 'slow.txt', content: 'x', delayMs: 5000 }] } }) },
-    watchdog: { stallMs: 0 },
+    watchdog: { stallMs: 60_000 }, // valid positive stallMs; watchdog never fires in this window
   });
   const handle = await driver.coordinator.spawn('mock', brief({ pathScope: ['slow.txt'] }), { taskId: 'board-death' });
   await until(() => driver.coordinator.list()[0]?.status === 'working');

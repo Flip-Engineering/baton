@@ -78,7 +78,7 @@ test('DC2-DC7: one drain cancels pending work, kill-confirms active work, fences
   let nativeKills = 0; const kill = adapter.kill.bind(adapter); adapter.kill = async (...args) => { nativeKills += 1; return kill(...args); };
   driver = createDriver({
     repoRoot: f.directory, logDir: f.logDir, repoId: 'repo-a', adapters: { mock: adapter },
-    drainPolicy: { maxWorkers: 2, timeoutMs: 5_000, pollMs: 5 }, watchdog: { stallMs: 0 },
+    drainPolicy: { maxWorkers: 2, timeoutMs: 5_000, pollMs: 5 }, watchdog: { stallMs: 60_000 }, // valid positive stallMs; watchdog never fires in this window
   });
   const active = await driver.coordinator.spawn('mock', brief('active'), { taskId: 'active' });
   const pending = await driver.coordinator.spawn('mock', brief('pending'), { taskId: 'pending' });
@@ -122,7 +122,7 @@ test('DC4: linked-worktree controllers start and drain without reconciling each 
     rmSync(world, { recursive: true, force: true });
   });
   const adapter = new MockAdapter({ scenario: { outcome: 'completed', delayMs: 60_000, result: { summary: 'late' } } });
-  driverA = createDriver({ repoRoot: controllerA, logDir: join(world, 'log-a'), repoId: 'repo-a', adapters: { mock: adapter }, drainPolicy: { maxWorkers: 1, timeoutMs: 5_000, pollMs: 5 }, watchdog: { stallMs: 0 } });
+  driverA = createDriver({ repoRoot: controllerA, logDir: join(world, 'log-a'), repoId: 'repo-a', adapters: { mock: adapter }, drainPolicy: { maxWorkers: 1, timeoutMs: 5_000, pollMs: 5 }, watchdog: { stallMs: 60_000 } }); // valid positive stallMs; watchdog never fires in this window
   const worker = await driverA.coordinator.spawn('mock', brief('controller A live work'), { taskId: 'controller-a-live' });
   await until(() => driverA.coordinator.list().find((row) => row.id === worker.id)?.status === 'working', 'controller A worker');
   const liveContext = await until(() => driverA.coordinator.list().find((row) => row.id === worker.id)?.sessionContext, 'controller A workspace');
@@ -147,7 +147,7 @@ test('DC4: drain cannot attest while worktree creation or native spawn remains p
   adapter.spawn = async (...args) => { const ack = await nativeSpawn(...args); await spawnGate.promise; return ack; };
   driver = createDriver({
     repoRoot: f.directory, logDir: f.logDir, repoId: 'repo-a', adapters: { mock: adapter },
-    drainPolicy: { maxWorkers: 1, timeoutMs: 2_000, pollMs: 5 }, watchdog: { stallMs: 0 },
+    drainPolicy: { maxWorkers: 1, timeoutMs: 2_000, pollMs: 5 }, watchdog: { stallMs: 60_000 }, // valid positive stallMs; watchdog never fires in this window
   });
   await driver.ready;
   const createWorktree = driver.coordinator._worktrees.create.bind(driver.coordinator._worktrees);
@@ -174,7 +174,7 @@ test('DC4: drain cannot attest while worktree creation or native spawn remains p
 test('DC4: a process start after spawn Ack is quarantined behind a fresh exact kill/close boundary', async (t) => {
   const f = repo('late-process-start'); let driver; t.after(() => { try { driver?.coordination.releaseWriterLease(); } catch {} rmSync(f.world, { recursive: true, force: true }); });
   const adapter = new MockAdapter({ scenario: { outcome: 'completed', delayMs: 60_000, result: { summary: 'late' } } });
-  driver = createDriver({ repoRoot: f.directory, logDir: f.logDir, repoId: 'repo-a', adapters: { mock: adapter }, drainPolicy: { maxWorkers: 1, timeoutMs: 2_000, pollMs: 5 }, watchdog: { stallMs: 0 } });
+  driver = createDriver({ repoRoot: f.directory, logDir: f.logDir, repoId: 'repo-a', adapters: { mock: adapter }, drainPolicy: { maxWorkers: 1, timeoutMs: 2_000, pollMs: 5 }, watchdog: { stallMs: 60_000 } }); // valid positive stallMs; watchdog never fires in this window
   const worker = await driver.coordinator.spawn('mock', brief('late native start'), { taskId: 'late-process-start' });
   await until(() => driver.coordinator._workers.get(worker.id)?.nativeSpawnPending === false && adapter._sessions.has(worker.id), 'spawn Ack boundary');
   const session = adapter._sessions.get(worker.id); const generation = session.opts.processGeneration;
@@ -206,7 +206,7 @@ test('DC4: drain reconciles historical worktree, branch, metadata, and runtime r
 test('DC2/DC4: drain policy-resolves pending interaction and publication authority and discards late asks', async (t) => {
   const f = repo('pending-authority'); let driver; t.after(() => { try { driver?.coordination.releaseWriterLease(); } catch {} rmSync(f.world, { recursive: true, force: true }); });
   const adapter = new MockAdapter({ scenario: { outcome: 'completed', delayMs: 60_000, result: { summary: 'late' } } });
-  driver = createDriver({ repoRoot: f.directory, logDir: f.logDir, repoId: 'repo-a', adapters: { mock: adapter }, drainPolicy: { maxWorkers: 1, timeoutMs: 2_000, pollMs: 5 }, watchdog: { stallMs: 0 } });
+  driver = createDriver({ repoRoot: f.directory, logDir: f.logDir, repoId: 'repo-a', adapters: { mock: adapter }, drainPolicy: { maxWorkers: 1, timeoutMs: 2_000, pollMs: 5 }, watchdog: { stallMs: 60_000 } }); // valid positive stallMs; watchdog never fires in this window
   const worker = await driver.coordinator.spawn('mock', brief('pending authority'), { taskId: 'pending-authority' });
   await until(() => driver.coordinator.list().find((row) => row.id === worker.id)?.status === 'working', 'pending-authority worker');
   const handle = driver.coordinator._workers.get(worker.id);
@@ -258,7 +258,7 @@ test('DC4/DC5: a hung cleanup is deadline-bounded, stays red, and retains writer
   const adapter = new MockAdapter({ scenario: { outcome: 'completed', delayMs: 60_000, result: { summary: 'late' } } });
   driver = createDriver({
     repoRoot: f.directory, logDir: f.logDir, repoId: 'repo-a', adapters: { mock: adapter },
-    drainPolicy: { maxWorkers: 1, timeoutMs: 40, pollMs: 5 }, watchdog: { stallMs: 0 },
+    drainPolicy: { maxWorkers: 1, timeoutMs: 40, pollMs: 5 }, watchdog: { stallMs: 60_000 }, // valid positive stallMs; watchdog never fires in this window
   });
   const handle = await driver.coordinator.spawn('mock', brief('hung cleanup'), { taskId: 'hung-cleanup' });
   await until(() => driver.coordinator.list().find((row) => row.id === handle.id)?.status === 'working', 'hung-cleanup worker');
@@ -305,7 +305,7 @@ for (const [label, retryKey] of [['same identity', 'disposition-first'], ['new i
     let nativeKills = 0; const nativeKill = adapter.kill.bind(adapter); adapter.kill = async (...args) => { nativeKills += 1; return nativeKill(...args); };
     driver = createDriver({
       repoRoot: f.directory, logDir: f.logDir, repoId: 'repo-a', adapters: { mock: adapter },
-      drainPolicy: { maxWorkers: 1, timeoutMs: 100, pollMs: 5 }, watchdog: { stallMs: 0 },
+      drainPolicy: { maxWorkers: 1, timeoutMs: 100, pollMs: 5 }, watchdog: { stallMs: 60_000 }, // valid positive stallMs; watchdog never fires in this window
     });
     await driver.ready;
     const reconcile = driver.coordinator._worktrees.reconcile.bind(driver.coordinator._worktrees); let reconciliations = 0;

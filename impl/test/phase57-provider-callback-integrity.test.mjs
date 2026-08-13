@@ -89,7 +89,7 @@ function system(ad, { log = new Log(mkdtempSync(join(tmpdir(), 'baton-pg57-callb
     route: () => 'stub',
     stopDeadlineMs: 100,
     budgetPolicy: { terminalGraceMs: 10_000 },
-    watchdog: { stallMs: 0 },
+    watchdog: { stallMs: 60_000 }, // valid positive stallMs; watchdog never fires in this window
   });
   return { ad, coordinator, coordination, log };
 }

@@ -49,7 +49,7 @@ test('CK9: two Grok ACP processes run concurrently, confirm kill, and are fully 
     logDir,
     adapters: { grok: adapter },
     stopDeadlineMs: 1000,
-    watchdog: { stallMs: 0 },
+    watchdog: { stallMs: 60_000 }, // valid positive stallMs; watchdog never fires in this window
   });
   const brief = (id) => createBrief({
     goal: `FAKE:STAY_OPEN concurrent lifecycle probe ${id}`,
