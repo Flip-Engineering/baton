@@ -90,6 +90,22 @@ function canonical(value) {
 }
 function canonicalDigest(value) { return createHash('sha256').update(JSON.stringify(canonical(value))).digest('hex'); }
 
+// #111-F3 (carried by the #79 fold): the corrective nudge COACHES instead of the bare
+// completionMessage. A claim_premature_liveness refusal already carries TG4-sanitized fields —
+// `liveness` is per-class COUNTS only (never path strings, never worker prose) and `reason` is
+// the fixed-shape hub text ("no in-scope diff …"). Compose them; never raw gate internals.
+function correctiveCoaching(liveness, reason, fallback) {
+  const counts = liveness && typeof liveness === 'object'
+    ? Object.entries(liveness)
+      .filter(([, value]) => Number.isSafeInteger(value))
+      .map(([key, value]) => `${key}=${value}`)
+      .join(', ')
+    : null;
+  const why = typeof reason === 'string' && reason.length > 0 ? reason : 'no in-scope diff in this pause epoch';
+  if (counts) return `${why}; liveness {${counts}}`;
+  return why || fallback;
+}
+
 function assertInteger(value, field) {
   if (!Number.isSafeInteger(value) || value <= 0) {
     throw driverError(`wave driver policy ${field} is invalid`, 'wave_driver_policy_invalid');
@@ -379,10 +395,13 @@ export function createWaveDriver(baton, rawPolicy = null) {
     // consumed on DELIVERED acknowledgment (D8 — a {ok:false} delivery VALUE consumes nothing).
     // Exhaustion is record-only: the refusal is on the claims evidence, no nudge, and the pause
     // pends to the driver's PRE-EXISTING stall clock.
-    const correctiveNudge = async (role, runHandle, checkpoint, state) => {
+    const correctiveNudge = async (role, runHandle, checkpoint, state, liveness = null, reason = null) => {
       const at = new Date().toISOString();
       try {
-        const result = await runHandle.act('nudge_turn', { message: policy.completionMessage });
+        // #111-F3: coach with the sanitized {liveness counts, reason: no in-scope diff} — never
+        // the bare completionMessage (a worker refused for analysis-only output needs the WHY).
+        const message = correctiveCoaching(liveness, reason, policy.completionMessage);
+        const result = await runHandle.act('nudge_turn', { message });
         if (result && typeof result === 'object' && result.ok === false) {
           throw Object.assign(new Error(String(result.reason ?? result.result ?? 'nudge refused')), {
             code: result.result ?? 'nudge_refused',
@@ -406,11 +425,17 @@ export function createWaveDriver(baton, rawPolicy = null) {
       claimedPauseIds.add(checkpoint.requestId);
       const at = new Date().toISOString();
       let code;
+      let liveness = null;
+      let reason = null;
       try {
         const result = await runHandle.act('claim_turn', {});
         if (result && typeof result === 'object' && result.ok === false) {
+          // #111-F3: carry the TG4-sanitized refusal fields into the corrective nudge so it can
+          // coach with {liveness counts, reason: no in-scope diff} instead of the bare completionMessage.
+          liveness = result.liveness ?? null;
+          reason = typeof result.reason === 'string' ? result.reason : null;
           throw Object.assign(new Error(String(result.reason ?? result.result ?? 'claim refused')), {
-            code: result.result ?? 'claim_refused',
+            code: result.result ?? 'claim_refused', liveness, reason,
           });
         }
         state.claimed = true;
@@ -420,10 +445,12 @@ export function createWaveDriver(baton, rawPolicy = null) {
         // 31b5 :263-295 — claim re-runs the live trust gate and is terminal on a stale checkpoint;
         // a scope mismatch (the pause resolved concurrently) is tolerated and recorded, never fatal.
         code = error?.code ?? null;
+        liveness = error?.liveness ?? liveness ?? null;
+        reason = error?.reason ?? reason ?? null;
         claims.push({ role, requestId: checkpoint.requestId, at, code });
       }
       if (code === 'claim_premature_liveness' && state.refusalsNudged < policy.refusalNudgeBudget) {
-        await correctiveNudge(role, runHandle, checkpoint, state);
+        await correctiveNudge(role, runHandle, checkpoint, state, liveness, reason);
       }
     }
     // Bidirectional v2 rule 3: at-most-once decision-callback dedup, keyed `${runId}:${requestId}`.
