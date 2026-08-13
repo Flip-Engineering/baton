@@ -11,21 +11,29 @@
 //   (the fixture machinery this suite drives through `waves.run` — which EXISTS at HEAD), and
 //   wave-observability-red.test.mjs / trust-gate-steering-red.test.mjs.
 //
-// Rows: 15 (7 red + 8 green/pin). Red-first: every red row fails today at a NAMED stage —
+// Rows: 16 (8 red + 8 green/pin). Red-first: every red row fails today at a NAMED stage —
 //   coordinator-read-law-missing / read-law-missing / steering-trail-falsified /
-//   coordinator-authority-forbidden-missing / seat-route-hidden / composition-example-refused —
-//   and goes green on the contract's implementation ONLY. The eight green/pin rows (P-A4,
-//   P-A5-static, P-A7, P-A8-dir, P-A9, P-A10, P-D1.4, P-A3g) pin the substrate the #74 rung
-//   builds on; they MUST stay green.
+//   coordinator-authority-forbidden-missing / seat-route-hidden / composition-example-refused /
+//   directory-harvest-not-refused — and goes green on the contract's implementation ONLY. The
+//   eight green/pin rows (P-A4, P-A5-static, P-A7, P-A8-dir, P-A9, P-A10, P-D1.4, P-A3g) pin the
+//   substrate the #74 rung builds on; they MUST stay green.
 //
 // Invented surfaces (all absent at HEAD; namespace-proof access so a missing code never kills
 // the file at LOAD):
 //   * the restricting authorize at the deployment seam (D1.2) — the coordinator's artifacts are
-//     protected; a sibling `worker:<role>` read draws `application_unauthorized`
-//   * the truthful denied/raced answer record (D1.3) — `{outcome:'denied', refusal:<code>}`
+//     protected; a sibling `worker:<role>` read draws `application_unauthorized`. The FIXTURE
+//     installs it (so the law's mechanics are provable hermetically, blueteam §1.1) and a STATIC
+//     pin asserts the DEPLOYMENT seam no longer wires the permissive literal (the RED).
+//   * the truthful denied/raced answer record (D1.3) — `{outcome:'denied', refusal:<code>,
+//     optionId?/text?}`, recorded once, never re-auto-answered; the decision key is never marked
+//     handled before the answer attempt (permanence pin)
 //   * the `coordinator_authority_forbidden` refusal at the waves.* authority boundary (D2/A5)
 //   * the coordinator route exposed in the `waves.list` roster (D3/A6) — the seat map
-//   * the v1.1 example spec's `kind:'brief'` / `kind:'result'` in the steering policy (D4/A8)
+//   * the v1.1 example spec's `kind:'brief'` / `kind:'result'` in the steering policy (D4/A8),
+//     whose DELIVERY is asserted (messageOnSpawn messageId + delivered, signalOnMembersDone
+//     recipients, the adapter's received result frame)
+//   * the directory-harvest structural refusal (D4/§4.3) — a directory harvest path refuses
+//     `harvest_miss` regardless of `mustContain`
 //
 // Everything else the suite drives through surfaces that EXIST at HEAD: `waves.run`
 // (application.mjs:12512), `waves.start` (:12502), `waves.list` (:12508), `run.scratchpad.read`
@@ -34,10 +42,10 @@
 // BatonApplication fixture, so the recipe cadence is asserted at the admission seam only (the
 // driver cadence itself is documented in suite-draft-notes.md).
 //
-// RED/GREEN split at HEAD c910836 (recorded after TWO consecutive runs from the repo root;
-// `node --test impl/test/worker-orchestrated-swarm-red.test.mjs` — 15 rows, 8 pass / 7 fail,
+// RED/GREEN split at HEAD e3f52ba (recorded after TWO consecutive runs from the repo root;
+// `node --test impl/test/worker-orchestrated-swarm-red.test.mjs` — 16 rows, 8 pass / 8 fail,
 // identical across both runs):
-//   RED   7 — A1, A2, A3, A3b, A5, A6, A8     (each fails at its named stage)
+//   RED   8 — A1, A2, A3, A3b, A5, A6, A8, A8b   (each fails at its named stage)
 //   GREEN 8 — P-A4, P-A5-static, P-A7, P-A8-dir, P-A9, P-A10, P-D1.4, P-A3g
 //
 // NUL discipline: application.mjs / coordination-store.mjs carry NUL bytes, so the static
@@ -181,6 +189,13 @@ class CarryAdapter extends MockAdapter {
     this.calls.answer.push({ worker, requestId, answer });
     return super.answer(worker, requestId, answer);
   }
+  async prompt(worker, content, mode = 'turn') {
+    // Records the frame so the A8 DELIVERY assertion can prove the coordinator boundary
+    // (`sendMessage`, coordinator.mjs) accepted a message kind end-to-end — a silently
+    // swallowed refusal never reaches this adapter.
+    this.calls.prompt.push({ worker, content, mode });
+    return super.prompt(worker, content, mode);
+  }
 }
 
 // A delivery-race adapter: answer() throws a typed code (the D1.3 "raced a terminal
@@ -310,6 +325,75 @@ function srcAnchor(file, pattern) {
   return { line: Number(first.slice(0, colon)), text: first.slice(colon + 1) };
 }
 
+// NUL-safe grep-all: like srcAnchor but returns EVERY match, and an empty file match
+// (grep exits 1, execFileSync would throw) returns [] instead. Used for EXISTENCE-count
+// pins (a literal that must be absent) and for multi-match structural scans.
+function grepLines(file, pattern) {
+  const root = fileURLToPath(new URL('../src/', import.meta.url));
+  try {
+    const out = execFileSync('/usr/bin/grep', ['-an', pattern, join(root, file)], { encoding: 'utf8', maxBuffer: 4 * 1024 * 1024 })
+      .trim().split('\n').filter(Boolean);
+    return out.map((entry) => {
+      const colon = entry.indexOf(':');
+      return { line: Number(entry.slice(0, colon)), text: entry.slice(colon + 1) };
+    });
+  } catch {
+    return [];
+  }
+}
+
+// The D1.2 read-law restrictor, installed in the A1/A2 FIXTURES so the law's mechanics are
+// provable hermetically (blueteam §1.1 — the deployment seam is not in the hermetic test path,
+// so the fixture must install the suite's invented authorize). `shared` reads always resolve; a
+// `worker:<scope>` read resolves for the top orchestrator (the review authority, FP-18) or for a
+// principal holding an explicit wave-scoped grant (blueteam §2.2 — the grant path is the required
+// escape hatch); every other sibling read refuses. All non-read commands stay permissive.
+function restrictingReadAuthorize({ grants = [] } = {}) {
+  return async (request = {}) => {
+    const { command, principal, subject } = request;
+    if (command === 'run.scratchpad.read') {
+      const scope = subject?.scope;
+      if (scope === 'shared') return true;
+      if (typeof scope === 'string' && scope.startsWith('worker:')) {
+        if (principal?.principalId === 's74-owner') return true;
+        if (grants.includes(`${principal?.principalId}:${scope}`)) return true;
+        return false;
+      }
+    }
+    return true;
+  };
+}
+
+// D1.3 permanence structural pin (blueteam §2.1a): the decision key must never be marked handled
+// BEFORE the answer attempt. At HEAD the pre-answer `s.answeredKeys.add(key)`
+// (workflow-interpreter.mjs:698) precedes the `handle.answer` attempt — a denied/raced throw is
+// therefore masked as permanently handled. A truthful implementation moves the add (or drops it)
+// so the earliest add does not precede the earliest attempt; a shallow impl that keeps the
+// pre-answer add stays RED. No adds anywhere → conformant (the permanence mechanism is gone).
+function permanencePin() {
+  const file = fileURLToPath(new URL('../src/workflow-interpreter.mjs', import.meta.url));
+  const adds = grepLines('workflow-interpreter.mjs', 's.answeredKeys.add');
+  if (adds.length === 0) return;
+  const earliestAdd = Math.min(...adds.map((entry) => entry.line));
+  const attempts = grepLines('workflow-interpreter.mjs', 'handle.answer(');
+  if (attempts.length === 0) return;
+  const earliestAttempt = Math.min(...attempts.map((entry) => entry.line));
+  assert.ok(
+    earliestAdd > earliestAttempt,
+    `D1.3 permanence: s.answeredKeys.add (workflow-interpreter.mjs:${earliestAdd}) must NOT precede the handle.answer attempt (:${earliestAttempt}) — a key marked handled before the answer masks a denied/raced throw`,
+  );
+}
+
+// D1.2 seam-closure static pin: the enforcement seam the contract names is the DEPLOYMENT
+// authorize (§D1.2 — "requires any deployment running the coordinator-member recipe to install the
+// restricting authorize at that seam"). At HEAD createDeployment wires the permissive literal
+// `authorize: async () => true` (application-deployment.mjs:2012); the property-form literal with
+// the trailing comma is UNIQUE to the construction site (the :2044 comment cites the literal in
+// backticks WITHOUT the trailing comma). Once the restrictor replaces it, the literal is absent.
+function deploymentSeamRestrictorInstalled() {
+  return grepLines('application-deployment.mjs', 'authorize: async () => true,').length === 0;
+}
+
 // ---------------------------------------------------------------------------
 // GREEN / PIN rows (must stay green at HEAD)
 // ---------------------------------------------------------------------------
@@ -363,18 +447,20 @@ test('P-A5-static pin: waves.* direct ports dispatch BEFORE the recursive-sessio
   // coordinator reaching waves.start is therefore not refused by the recursive gate;
   // the only gate is the per-member run.start admission. The suite pins the ORDER so
   // the full shape must close the seam explicitly, never by reusing the #12 codes.
+  // The load-bearing alarms are ORDER + EXISTENCE (blueteam §3.2): `start < run < gate`
+  // catches a future widening moving waves.* after the recursive gate; `srcAnchor`
+  // throws if a port becomes a definitions entry or the marker strings disappear.
+  // The tight absolute line windows are dropped — they are re-base churn, not hazard.
   const start = srcAnchor('application.mjs', "name === 'waves.start'");
   const run = srcAnchor('application.mjs', "name === 'waves.run'");
   // The gate throw itself (`application.mjs:12531`) — the single-line form with the code
   // on the same line is UNIQUE to the recursive-session gate (the :12133 occurrence is a
   // two-line split inside a different context gate).
   const gate = srcAnchor('application.mjs', "throw applicationError('recursive Run command is forbidden', 'run_orchestrator_command_forbidden');");
-  assert.ok(start.line >= 12500 && start.line <= 12514, `waves.start direct port (:12502) — got ${start.line}`);
-  assert.ok(run.line >= 12510 && run.line <= 12524, `waves.run direct port (:12512) — got ${run.line}`);
-  assert.ok(gate.line > run.line, 'recursive gate dispatches AFTER the waves.* ports');
-  assert.ok(gate.line >= 12531 && gate.line <= 12537, `gate throw (:12535, re-based for #67) — got ${gate.line}`);
   const notInDefinitions = srcAnchor('application.mjs', 'NOT APPLICATION_COMMAND_DEFINITIONS entries');
   assert.ok(notInDefinitions.line < start.line, 'the direct-port comment precedes the waves.* dispatch');
+  assert.ok(start.line < run.line, 'waves.start dispatches before waves.run');
+  assert.ok(run.line < gate.line, 'the recursive gate dispatches AFTER the waves.* ports (OQ1 pre-gate finding)');
 });
 
 test('P-A7 pin: capacity honesty — WAITING_ON_KINDS stays the byte-unchanged closed five; the run view carries the honest single waitingOn projection (null when not waiting)', async (t) => {
@@ -417,8 +503,12 @@ test('P-A7 pin: capacity honesty — WAITING_ON_KINDS stays the byte-unchanged c
 });
 
 test('P-A8-dir pin: a DIRECTORY harvest path lands harvest_miss → WAVE-INCOMPLETE with basis = the manifest digest', async (t) => {
-  // D4: the harvest path names a FILE, never a directory. gitShow on a tree fails, so
-  // the entry lands harvest_miss and the wave refuses WAVE-INCOMPLETE (honest, typed).
+  // D4: the harvest path names a FILE, never a directory. Mechanism correction (blueteam
+  // §4.3): `git show <sha>:<dir>` does NOT fail — it returns the tree listing — so a directory
+  // harvest only refuses today via a `mustContain` MISMATCH on the recovered listing. This pin
+  // drives the directory case WITH a mustContain (the honest refusal shape); the structurally
+  // enforced file-not-directory law is the A8b RED row (a directory path without mustContain
+  // must refuse harvest_miss regardless).
   const fx = await fixture(t, {
     adapter: new CarryAdapter({
       harness: 'mock',
@@ -497,18 +587,21 @@ test('P-A9 pin: the D6 receipt is the closed seven-key shape — outcomes audit-
 
 test('P-A10 pin: refusal constancy — the facade capability refusal, the closed five, the #105 boundary, and the reply frame stay byte-unchanged; no sorted-key literal, no clock in any refusal', () => {
   // A10: the facade capability refusal stays `application_unauthorized`
-  // (application.mjs:3215); the closed five WAITING_ON_KINDS and the #105 boundary
-  // (`message_depth_exceeded` at coordinator.mjs:12589, the reply frame 'body,inReplyTo'
-  // at claude-session.mjs:161) are byte-unchanged; the D6 receipt adds no sorted-key
-  // literal; no clock enters any refusal.
+  // (application.mjs:3222, in `_authorize`'s tail — :3214); the closed five
+  // WAITING_ON_KINDS and the #105 boundary (`message_depth_exceeded` at
+  // coordinator.mjs:12813, the reply frame 'body,inReplyTo' at claude-session.mjs:161)
+  // are byte-unchanged; the D6 receipt adds no sorted-key literal; no clock enters any
+  // refusal. The load-bearing alarms are the byte strings + EXISTENCE (blueteam §3.2);
+  // the tight absolute windows are dropped (re-base churn). A drift-immune RELATIVE bound
+  // stays: the authz throw must sit inside `_authorize` (after the def at :3214).
   assert.deepEqual([...WAITING_ON_KINDS].sort(), ['capacity_ceiling', 'dispatch_pending', 'plan_approval', 'provider_stalled', 'spawning']);
   const authz = srcAnchor('application.mjs', 'application command is not authorized');
-  assert.ok(authz.line >= 3213 && authz.line <= 3217, `_authorize throw (:3215) — got ${authz.line}`);
+  const authorizeDef = srcAnchor('application.mjs', '^  async _authorize(');
+  assert.ok(authz.line > authorizeDef.line, `the authz throw sits in _authorize's tail (after the def :${authorizeDef.line})`);
   assert.ok(authz.text.includes("'application_unauthorized'"), 'facade capability refusal byte-stable');
   const depth = srcAnchor('coordinator.mjs', 'message_depth_exceeded');
-  assert.ok(depth.line >= 12809 && depth.line <= 12815, `#105 boundary (:12813, re-based for #67) — got ${depth.line}`);
+  assert.ok(depth.text.includes("refuse('message_depth_exceeded'"), '#105 boundary refusal site byte-stable');
   const frame = srcAnchor('claude-session.mjs', 'body,inReplyTo');
-  assert.ok(frame.line >= 158 && frame.line <= 164, `reply frame (:161) — got ${frame.line}`);
   assert.ok(frame.text.includes("'body,inReplyTo'"), 'reply frame closed keys byte-stable');
   // No clock enters a refusal: the interpreter\'s workflow_* and the authorize seam
   // messages are literal (no Date/now interpolation in the refusal construction).
@@ -533,13 +626,22 @@ test('P-D1.4 pin/comment-row: the escalation sequence is concurrency-bounded and
   // roster, ≤64 members, polled in parallel) and by the driver\'s wall-clock hardCap,
   // sequentially UNCAPPED — the human-in-loop answer sequence never hits an arbitrary
   // numeric iteration cap. This is a comment-row + structural pin: the while loop must
-  // stay a clock/concurrency bound, never a counter.
+  // stay a clock/concurrency bound, never a counter. The counter scan runs over the
+  // WHOLE driveLane function body (blueteam §4.1), not just the matched loop line — a
+  // counter smuggled into processMember/answerDecision/the per-key retry escape a
+  // single-line scan.
   const lane = execFileSync('/usr/bin/grep', ['-n', 'while (pending.size > 0', fileURLToPath(new URL('../src/workflow-interpreter.mjs', import.meta.url))], { encoding: 'utf8' }).trim();
   assert.match(lane, /pending\.size > 0/, 'loop runs until no pending member');
   assert.match(lane, /Date\.now\(\) - startedAt < driver\.hardCapMs/, 'loop is wall-clock bounded only');
   assert.doesNotMatch(lane, /attempts\s*<\s*[0-9]+|counter|iteration/, 'no numeric iteration cap in the drive loop');
-  const verdict = srcAnchor('workflow-interpreter.mjs', 'verdict');
-  assert.ok(verdict.line >= 586 && verdict.line <= 606, 'receipt verdict build present');
+  // The driveLane body spans from its def to the next top-level function. Anchoring both
+  // ends by name makes the range drift-immune to line shifts (blueteam §4.1).
+  const laneStart = srcAnchor('workflow-interpreter.mjs', '^async function driveLane');
+  const laneEnd = srcAnchor('workflow-interpreter.mjs', '^function roleStuckOnHandled');
+  const body = execFileSync('/usr/bin/sed', ['-n', `${laneStart.line},${laneEnd.line - 1}p`, fileURLToPath(new URL('../src/workflow-interpreter.mjs', import.meta.url))], { encoding: 'utf8' });
+  assert.doesNotMatch(body, /attempts\s*<\s*[0-9]+|counter|iteration/, 'no numeric iteration cap anywhere in driveLane');
+  const verdict = srcAnchor('workflow-interpreter.mjs', "const verdict = everySettled && everyHarvested");
+  assert.ok(verdict.text.includes("'WAVE-OK'") && verdict.text.includes('WAVE-INCOMPLETE'), 'the verdict literal stays the settled/harvested two-class computation');
 });
 
 test('P-A3g green guard: a DELIVERED decision answer records outcome \'answered\' and settles the member (the machinery works when not denied)', async (t) => {
@@ -573,14 +675,17 @@ test('P-A3g green guard: a DELIVERED decision answer records outcome \'answered\
 // RED rows (must FAIL at HEAD at the named stage)
 // ---------------------------------------------------------------------------
 
-test('A1 red: the coordinator-member recipe admits, but its wave does NOT enforce the D1.2 read law — a sibling reads the coordinator partition (coordinator-read-law-missing)', async (t) => {
-  // D1/A1: the implementContract preset admits `role: 'coordinator'` as an ordinary
-  // member with no distinguishable semantics. GREEN legs: the recipe admits with the
-  // closed fields unchanged and the D6 receipt carries the coordinator\'s per-row
-  // outcome. RED leg: the coordinator\'s artifacts (its `worker:coordinator`
-  // partition) are NOT protected — a sibling read succeeds where the D1.2 read law
-  // requires `application_unauthorized` (application.mjs:3215 at the restricting
-  // authorize, installed at the deployment seam).
+test('A1 red: the coordinator-member recipe admits, but the D1.2 read law is NOT installed at the DEPLOYMENT seam (coordinator-read-law-missing)', async (t) => {
+  // D1/A1: the implementContract preset admits `role: 'coordinator'` as an ordinary member with
+  // no distinguishable semantics. GREEN legs: the recipe admits with the closed fields unchanged,
+  // the D6 receipt carries the coordinator\'s per-row outcome, and the coordinator\'s
+  // `worker:coordinator` partition is REFUSED to a sibling under the D1.2 restricting authorize
+  // (the FIXTURE installs the read law so the law\'s mechanics are provable hermetically — the
+  // deployment seam is not in the hermetic test path, blueteam §1.1). RED leg: the read law is NOT
+  // installed at the DEPLOYMENT seam — createDeployment still wires the permissive
+  // `authorize: async () => true` (application-deployment.mjs:2012), so in production a sibling
+  // read of the coordinator partition succeeds. At HEAD the static seam pin FAILS → RED at
+  // `coordinator-read-law-missing`.
   // GREEN — recipe admission (closed recipe fields unchanged, role + heavy route kept).
   const recipe = implementContractRecipe({
     task: 'coordinate the swarm', route: HEAVY_ROUTE, scope: ['reports/**'], role: 'coordinator',
@@ -589,7 +694,9 @@ test('A1 red: the coordinator-member recipe admits, but its wave does NOT enforc
   assert.equal(recipe.members.length, 1, 'single-member recipe');
   assert.equal(recipe.members[0].role, 'coordinator', 'coordinator role preserved');
   assert.deepEqual(recipe.members[0].exact, HEAVY_ROUTE, 'heavyweight exact route preserved');
-  // GREEN — the top orchestrator\'s wave receipt carries the coordinator\'s per-row outcome.
+  // GREEN — with the restricting authorize installed at the fixture seam, the coordinator\'s wave
+  // enforces D1.2: a sibling read of the `worker:coordinator` partition is REFUSED with the typed
+  // code (exactly the law\'s post-impl behavior at the `_authorize` throw, application.mjs:3222).
   const fx = await fixture(t, {
     adapter: new CarryAdapter({
       harness: 'mock',
@@ -597,6 +704,7 @@ test('A1 red: the coordinator-member recipe admits, but its wave does NOT enforc
         coordinator: { outcome: 'completed', carryAttemptMarker: true, edits: [{ path: 'reports/coordinator.md', content: 'coordinator report\n' }] },
       },
     }),
+    authorize: restrictingReadAuthorize(),
   });
   writeObjective(fx.repo, 'coordinator', 'write the coordinator report');
   const spec = {
@@ -610,27 +718,35 @@ test('A1 red: the coordinator-member recipe admits, but its wave does NOT enforc
   const coordinatorOutcome = receipt.outcomes.find((outcome) => outcome.role === 'coordinator');
   assert.ok(coordinatorOutcome, 'the coordinator\'s per-row outcome rides the D6 receipt');
   assert.equal(coordinatorOutcome.terminal, true, 'coordinator settled');
-  // RED — a sibling read of the coordinator\'s partition must be REFUSED
-  // (application_unauthorized at the restricting authorize, D1.2). At HEAD the default
-  // authorize is permissive, so the read SUCCEEDS — the coordinator is indistinguishable
-  // from any row. This assertion FAILS at HEAD → the row is RED at
-  // `coordinator-read-law-missing`.
   const runs = await runsFor(fx);
   const coordinatorRunId = runs.items?.find((item) => item.objective?.includes('(marker:coordinator)'))?.id;
   assert.ok(typeof coordinatorRunId === 'string', 'coordinator run registered');
   await assert.rejects(
     fx.application.command('run.scratchpad.read', { runId: coordinatorRunId, scope: 'worker:coordinator' }, principalOf('s74-sibling')),
     (error) => error?.code === 'application_unauthorized',
-    'a sibling read of the coordinator\'s `worker:coordinator` partition must be refused (D1.2)',
+    'the D1.2 restricting authorize refuses a sibling read of the coordinator\'s `worker:coordinator` partition',
+  );
+  // RED — the D1.2 enforcement is NOT installed at the DEPLOYMENT seam. At HEAD
+  // application-deployment.mjs:2012 is the permissive `authorize: async () => true`, so the law is
+  // unenforceable in production — the coordinator remains indistinguishable from any row. The
+  // assertion FAILS at HEAD → RED at `coordinator-read-law-missing`.
+  assert.ok(
+    deploymentSeamRestrictorInstalled(),
+    'D1.2 seam closure: the deployment must install the restricting authorize (application-deployment.mjs must not wire the permissive `authorize: async () => true,`) — RED at coordinator-read-law-missing',
   );
 });
 
-test('A2 red: the D1.2 read-authorization law is missing — a sibling `worker:<role>` read succeeds instead of drawing application_unauthorized (read-law-missing)', async (t) => {
-  // D1.2/A2: the read law governs who may read a `worker:<role>` partition — a member
-  // reads `worker:<ownId>` + `shared`; a sibling `worker:<role>` read is REFUSED with
-  // the typed code. GREEN legs (own-scope + shared) pass at HEAD; the RED leg (sibling
-  // refusal) fails because the restricting authorize is NOT installed at the
-  // deployment seam (application-deployment.mjs:1998 is `async () => true`).
+test('A2 red: the D1.2 read-authorization law is NOT installed at the DEPLOYMENT seam — the wave-scoped grant path is asserted reachable (read-law-missing)', async (t) => {
+  // D1.2/A2: the read law governs who may read a `worker:<role>` partition — a member reads
+  // `worker:<ownId>` + `shared`; a sibling `worker:<role>` read is REFUSED with the typed code; a
+  // swarm row reads the coordinator\'s sub-specs ONLY through an explicit wave-scoped grant or via
+  // `shared`. GREEN legs: own-scope + shared read succeed; the sibling `worker:<role>` read is
+  // refused by the fixture-installed restricting authorize; AND the wave-scoped GRANT path is
+  // REACHABLE (a granted swarm row reads the coordinator partition — an over-refusing restrictor
+  // that never implements the grant fails this leg, blueteam §2.2). RED leg: the law is NOT
+  // installed at the DEPLOYMENT seam — application-deployment.mjs:2012 is still the permissive
+  // `async () => true`, so in production the sibling read succeeds. At HEAD the static seam pin
+  // FAILS → RED at `read-law-missing`.
   const fx = await fixture(t, {
     adapter: new CarryAdapter({
       harness: 'mock',
@@ -638,6 +754,7 @@ test('A2 red: the D1.2 read-authorization law is missing — a sibling `worker:<
         coordinator: { outcome: 'completed', carryAttemptMarker: true, edits: [{ path: 'reports/coordinator.md', content: 'coordinator report\n' }] },
       },
     }),
+    authorize: restrictingReadAuthorize({ grants: ['s74-row-1:worker:coordinator'] }),
   });
   writeObjective(fx.repo, 'coordinator', 'write the coordinator report');
   const spec = {
@@ -661,13 +778,25 @@ test('A2 red: the D1.2 read-authorization law is missing — a sibling `worker:<
     'run.scratchpad.read', { runId: coordinatorRunId, scope: 'shared' }, principalOf('s74-sibling'),
   );
   assert.ok(sharedRead, 'shared read succeeds');
-  // RED — a sibling\'s `worker:<role>` read MUST be refused. At HEAD the permissive
-  // authorize admits it → this assertion FAILS at HEAD → the row is RED at
-  // `read-law-missing`.
+  // GREEN — a sibling\'s `worker:<role>` read is REFUSED by the restricting authorize.
   await assert.rejects(
     fx.application.command('run.scratchpad.read', { runId: coordinatorRunId, scope: 'worker:coordinator' }, principalOf('s74-sibling')),
     (error) => error?.code === 'application_unauthorized',
     'a sibling `worker:<role>` read must be refused with the typed code (D1.2)',
+  );
+  // GREEN (blueteam §2.2) — the wave-scoped GRANT path is REACHABLE: a swarm row holding an
+  // explicit grant reads the coordinator\'s `worker:coordinator` partition. A refuse-everything
+  // restrictor (never implementing the grant) FAILS this leg.
+  const grantedRead = await fx.application.command(
+    'run.scratchpad.read', { runId: coordinatorRunId, scope: 'worker:coordinator' }, principalOf('s74-row-1'),
+  );
+  assert.ok(grantedRead, 'a granted swarm-row read of the coordinator partition succeeds (wave-scoped grant)');
+  // RED — the D1.2 law is NOT installed at the DEPLOYMENT seam. At HEAD
+  // application-deployment.mjs:2012 is the permissive `authorize: async () => true` → in production
+  // the sibling read succeeds. The assertion FAILS at HEAD → RED at `read-law-missing`.
+  assert.ok(
+    deploymentSeamRestrictorInstalled(),
+    'D1.2 seam closure: the deployment must install the restricting authorize (application-deployment.mjs must not wire the permissive `authorize: async () => true,`) — RED at read-law-missing',
   );
 });
 
@@ -675,9 +804,11 @@ test('A3 red: a DENIED decision answer is recorded as outcome \'answered\' — t
   // D1.3/A3: the answering path swallows `handle.answer` throws and records
   // `{outcome: 'answered'}` unconditionally (workflow-interpreter.mjs:794-808), and the
   // decision key is marked handled BEFORE the attempt (:698). The contract requires the
-  // truth: a denied answer records `{outcome: 'denied', refusal: <code>}`, does NOT mark
-  // the key handled, and leaves the member parked at input_required. At HEAD the
-  // swallowed throw is masked — this row is RED at `steering-trail-falsified`.
+  // truth: a denied answer records `{outcome: 'denied', refusal: <code>, optionId?/text?}`,
+  // does NOT mark the key handled, leaves the member parked at input_required, and is
+  // recorded ONCE — the no-re-attempt policy: a denied ask is never re-auto-answered (the
+  // ask stays pending for the human, blueteam §1.2c). At HEAD the swallowed throw is masked
+  // — this row is RED at `steering-trail-falsified`.
   const fx = await fixture(t, {
     adapter: new CarryAdapter({
       harness: 'mock',
@@ -700,15 +831,27 @@ test('A3 red: a DENIED decision answer is recorded as outcome \'answered\' — t
   // swallowed `application_unauthorized` throw) → the assertion FAILS → RED.
   assert.equal(denied.outcome, 'denied', 'a denied answer must record outcome denied');
   assert.equal(denied.refusal, 'application_unauthorized', 'the typed refusal code is recorded');
-  assert.equal(denied.optionId, 'opt-a', 'the attempted option is preserved');
+  assert.equal(denied.optionId, 'opt-a', 'the attempted option is preserved (D1.3 optionId?)');
+  assert.equal(typeof denied.requestId, 'string', 'the denied record carries the requestId');
+  // D1.3 no-re-attempt policy (blueteam §1.2c): a denied ask is recorded ONCE and never
+  // re-auto-answered. At HEAD the single `answered` record is itself the falsification; a
+  // correct impl is one `denied` with no later `answered` for the same requestId; a
+  // re-attempting impl accumulates a `denied` record per poll and FAILS the count.
+  const trail = receipt.steering.filter((entry) => entry.trigger === 'answerDecisions' && entry.requestId === denied.requestId);
+  assert.equal(trail.length, 1, 'exactly one answerDecisions record per requestId — a denied ask is never re-auto-answered');
+  assert.ok(!trail.some((entry) => entry.outcome === 'answered'), 'no later answered for the same denied requestId');
+  // D1.3 permanence (blueteam §2.1a): the decision key must never be marked handled BEFORE
+  // the answer attempt — a pre-answer add masks the denied throw as permanently handled.
+  permanencePin();
 });
 
 test('A3b red: a RACED answer delivery is recorded as outcome \'answered\' — the throw is swallowed (steering-trail-falsified)', async (t) => {
   // D1.3 raced leg: when handle.answer surfaces a typed throw (the delivery raced a
   // terminal member / the adapter refused), the trail must record the truth
-  // `{outcome: 'denied', refusal: <code>}`. At HEAD the `try { await handle.answer(...) }
-  // catch {}` swallows the code and records `outcome: 'answered'` — this row is RED at
-  // the same `steering-trail-falsified` stage.
+  // `{outcome: 'denied', refusal: <code>}` — once, never re-auto-answered (D1.3
+  // no-re-attempt policy). At HEAD the `try { await handle.answer(...) } catch {}`
+  // swallows the code and records `outcome: 'answered'` — this row is RED at the same
+  // `steering-trail-falsified` stage.
   const refusalCode = 'application_run_stopped';
   const fx = await fixture(t, {
     adapter: new RefusingAnswerAdapter({
@@ -733,6 +876,13 @@ test('A3b red: a RACED answer delivery is recorded as outcome \'answered\' — t
   // `{outcome: 'answered'}` → the assertion FAILS → RED.
   assert.equal(raced.outcome, 'denied', 'a raced answer must record outcome denied');
   assert.equal(raced.refusal, refusalCode, 'the surfaced refusal code is recorded');
+  assert.equal(typeof raced.requestId, 'string', 'the raced record carries the requestId');
+  // D1.3 no-re-attempt policy: exactly one raced record, no later answered for the same
+  // requestId. At HEAD the single falsified `answered` fails on outcome first.
+  const trail = receipt.steering.filter((entry) => entry.trigger === 'answerDecisions' && entry.requestId === raced.requestId);
+  assert.equal(trail.length, 1, 'exactly one answerDecisions record per requestId — a raced ask is never re-auto-answered');
+  assert.ok(!trail.some((entry) => entry.outcome === 'answered'), 'no later answered for the same raced requestId');
+  permanencePin();
 });
 
 test('A5 red: a worker-seat principal reaching a waves.* authority verb draws NO coordinator_authority_forbidden (coordinator-authority-forbidden-missing)', async (t) => {
@@ -758,6 +908,14 @@ test('A5 red: a worker-seat principal reaching a waves.* authority verb draws NO
     members: [{ role: 'row-1', objective: 'write row-1\n(marker:row-1)\n', exact: { ...ROUTE }, scope: ['reports/**'] }],
   }, principalOf('s74-owner'));
   assert.ok(started?.waveId?.startsWith('wave:'), 'top orchestrator can start a wave');
+  // GREEN leg (blueteam §1.3): a SECOND top-orchestrator principal (s74-observer) starts a wave
+  // too — pinning seat-CLASS, not identity, so a hardcoded allowlist of the four fixture
+  // principals cannot shallow-green the row.
+  const observerStarted = await fx.application.command('waves.start', {
+    idempotencyKey: 's74-a5-observer',
+    members: [{ role: 'row-1', objective: 'write row-1\n(marker:row-1)\n', exact: { ...ROUTE }, scope: ['reports/**'] }],
+  }, principalOf('s74-observer'));
+  assert.ok(observerStarted?.waveId?.startsWith('wave:'), 'a second top-orchestrator principal (s74-observer) starts a wave too (seat-CLASS, not identity)');
   // RED: the worker-seat principal\'s waves.start must draw coordinator_authority_forbidden.
   const workerSeat = Object.freeze({ actor: 'baton:worker:w-1', principalId: 'worker:w-1', sessionId: 'session-worker-w-1' });
   await assert.rejects(
@@ -832,7 +990,11 @@ test('A8 red: the verbatim v1.1 example spec does NOT drive through waves.run �
   // `signalOnMembersDone.message.kind:'result'` are NOT in the interpreter\'s closed
   // kind set `['inform','query','steer']` (workflow-interpreter.mjs:44) — the spec
   // REFUSES `workflow_steering_unknown` before any wave starts. The assertion that the
-  // example drives fails → RED at `composition-example-refused`.
+  // example drives fails → RED at `composition-example-refused`. The GREEN condition also
+  // requires DELIVERY (blueteam §1.5): widening only the interpreter\'s admission set is
+  // not enough — the coordinator boundary (`coordinator.mjs:6864`) must accept
+  // `brief`/`result` end-to-end, so the suite asserts the delivered `messageOnSpawn`
+  // messageId, the `signalOnMembersDone` recipients, and the adapter\'s received result frame.
   const fx = await fixture(t, {
     adapter: new CarryAdapter({
       harness: 'mock',
@@ -874,4 +1036,53 @@ test('A8 red: the verbatim v1.1 example spec does NOT drive through waves.run �
     'the verbatim example settles to the D6 receipt',
   );
   assert.equal(driven.verdict, 'WAVE-OK', 'the coordinator + swarm pattern settles honestly');
+  // D4 DELIVERY (blueteam §1.5): the composition\'s messages must LAND, not be silently dropped.
+  // The messageOnSpawn `brief` records a delivered messageId — the coordinator boundary accepts
+  // `brief` end-to-end, not just the interpreter\'s closed set (an impl widening only the
+  // interpreter admission has pumpMessageOnSpawn\'s `catch { return; }` swallow the coordinator
+  // refusal → no messageOnSpawn entry → this fails).
+  const brief = driven.steering.find((entry) => entry.trigger === 'messageOnSpawn');
+  assert.ok(brief, 'a messageOnSpawn steering entry exists (the brief was not silently dropped)');
+  assert.equal(typeof brief.messageId, 'string', 'the spawn message was delivered with a messageId');
+  assert.ok(Number.isFinite(brief.delivered) && brief.delivered > 0, 'the brief reached at least one member');
+  // The signalOnMembersDone `result` names its recipients (the interpreter reached the branch
+  // when the coordinator settled) AND the adapter actually received the swarm-settled result
+  // frame — proving the coordinator boundary accepts `result` end-to-end.
+  const signal = driven.steering.find((entry) => entry.trigger === 'signalOnMembersDone');
+  assert.ok(signal, 'a signalOnMembersDone steering entry exists');
+  assert.ok(Array.isArray(signal.recipients) && signal.recipients.length > 0, 'the swarm-settled result names its recipients');
+  const resultPrompts = fx.adapter.calls.prompt.filter((entry) => entry.content.includes('[MESSAGE result '));
+  assert.ok(resultPrompts.length > 0, 'the coordinator boundary delivered the result frame to a member (adapter prompt)');
+});
+
+test('A8b red: a DIRECTORY harvest path WITHOUT mustContain recovers the listing — the file-not-directory law is NOT enforced (directory-harvest-not-refused)', async (t) => {
+  // D4/§4.3 (blueteam): `git show <sha>:<dir>` does NOT fail — it returns the tree listing — so
+  // a directory harvest path WITHOUT `mustContain` recovers `ok:true` → WAVE-OK. The contract\'s
+  // file-not-directory law must be enforced structurally: an admission/refusal-time check that each
+  // harvest path is a regular file, refusing `harvest_miss` for directories REGARDLESS of
+  // `mustContain` (the gap P-A8-dir\'s mustContain mismatch currently masks). At HEAD the directory
+  // harvest without mustContain is WAVE-OK → asserting WAVE-INCOMPLETE FAILS → RED at
+  // `directory-harvest-not-refused`.
+  const fx = await fixture(t, {
+    adapter: new CarryAdapter({
+      harness: 'mock',
+      scenariosByMarker: {
+        coordinator: { outcome: 'completed', carryAttemptMarker: true, edits: [{ path: 'reports/coordinator.md', content: 'coordinator report\n' }] },
+      },
+    }),
+  });
+  writeObjective(fx.repo, 'coordinator', 'write the coordinator report');
+  const spec = {
+    schemaVersion: 1,
+    idempotencyKey: 's74-a8b-dir-nomustcontain',
+    members: [member('coordinator')],
+    steering: {},
+    harvest: { paths: [{ path: 'reports' }] },
+  };
+  const receipt = await fx.application.command('waves.run', { spec, driver: LANE_DRIVER }, principalOf('s74-owner'));
+  // The law: a directory harvest path refuses harvest_miss → WAVE-INCOMPLETE, regardless of
+  // mustContain. At HEAD the listing is recovered (`git show` on a tree does NOT fail) → ok:true
+  // → WAVE-OK → the assertion FAILS → RED at `directory-harvest-not-refused`.
+  assert.equal(receipt.verdict, 'WAVE-INCOMPLETE', 'a directory harvest path refuses WAVE-INCOMPLETE even without mustContain (D4)');
+  assert.ok(receipt.harvest.every((entry) => entry.missed === true && entry.code === 'harvest_miss'), 'harvest_miss entries for the directory path');
 });

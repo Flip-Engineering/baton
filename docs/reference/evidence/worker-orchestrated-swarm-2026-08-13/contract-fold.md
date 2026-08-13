@@ -1,6 +1,6 @@
-# Issue #74 — the worker-orchestrated swarm pattern: a sub-orchestrator tier over flash swarms (v1.1 — the folded contract)
+# Issue #74 — the worker-orchestrated swarm pattern: a sub-orchestrator tier over flash swarms (v1.2 — the folded contract)
 
-The folded contract (v1.1) for issue #74: the worker-orchestrated swarm pattern. A heavyweight
+The folded contract (v1.2) for issue #74: the worker-orchestrated swarm pattern. A heavyweight
 sub-orchestrator worker (the **coordinator**) sits over a heterogeneous swarm of cheap workers; the
 coordinator decomposes a big spec+suite into granular sub-specs as ARTIFACTS in the shared layer,
 the swarm executes rows, and the coordinator triages and escalates genuinely big questions to the
@@ -16,20 +16,24 @@ proven), #105 (the reply-chains D8 boundary-routing law), #114 (the workflow-as-
 this pattern rides), and #132 (the wave registry the sub-orchestrator's waves land in).
 
 - **Date:** 2026-08-13
-- **Status:** DRAFT v1.1 — implementation contract (red-first; no code landed for this rung)
-- **Verification HEAD:** `7e68187741369c207835b7ce98565030429eddaf` ("Baton private effective-tree
-  snapshot"), the tree this fold was verified against. Every `file:line` citation below was
-  re-verified with `grep -an`/`sed -n` at this HEAD, not inherited. The two NUL-bearing files whose
-  anchors are grep/sed-verified, never whole-file reads: `application.mjs` and
-  `coordination-store.mjs` (3 NUL bytes each). `coordinator.mjs`, `claude-session.mjs`,
-  `mcp-northbound.mjs`, `workflow-interpreter.mjs`, `recipes.mjs`, `application-cli.mjs`, and
-  `application-deployment.mjs` are NUL-free and read with plain `grep`/`sed`.
+- **Status:** DRAFT v1.2 — implementation contract (red-first; no code landed for this rung)
+- **Verification HEAD:** `e3f52ba` ("Baton private effective-tree snapshot"), the tree this fold was
+  verified against. Every `file:line` citation below was re-verified with `grep -an`/`sed -n` at this
+  HEAD, not inherited. The two NUL-bearing files whose anchors are grep/sed-verified, never
+  whole-file reads: `application.mjs` and `coordination-store.mjs` (3 NUL bytes each).
+  `coordinator.mjs`, `claude-session.mjs`, `mcp-northbound.mjs`, `workflow-interpreter.mjs`,
+  `recipes.mjs`, `application-cli.mjs`, and `application-deployment.mjs` are NUL-free and read with
+  plain `grep`/`sed`.
 - **Fold source:** v1.0 (`worker-orchestrated-swarm-contract.md`, same dir) + the adversarial
-  red-team report (`contract-redteam.md`, same dir). This fold applies every blocker fix, the three
-  citation-drift corrections, and every amendment/note; the verdict'd-SOUND substance (D1
-  double-claim and fabricated-results seams, D3 seat discipline, the two-level posture) is carried
-  byte-stable in substance. The fold-map table below routes every finding to its resolution; the
-  topology audit (`comm-topology-audit.md`, same dir) is context, not re-litigated here.
+  red-team report (`contract-redteam.md`, same dir) + the blue-team acceptance review
+  (`suite-blueteam.md`, same dir). The v1.1 fold applies every blocker fix, the three citation-drift
+  corrections, and every amendment/note; the verdict'd-SOUND substance (D1 double-claim and
+  fabricated-results seams, D3 seat discipline, the two-level posture) is carried byte-stable in
+  substance. The v1.2 fold applies the blue-team's three contract-side consequences (the D1.3 denied
+  record carries `optionId?`/`text?`, the no-re-attempt policy, and the §D4 `git show` mechanism
+  correction), plus the citation-drift correction at `application-deployment.mjs:2012`. The fold-map
+  tables below route every finding to its resolution; the topology audit (`comm-topology-audit.md`,
+  same dir) is context, not re-litigated here.
 - **Brief:** `contract-fold-brief.md` (same dir) — read fully. The issue body (`gh issue view 74`)
   could not be fetched (`gh` is not authenticated in this worktree); the requirements are carried
   by the brief and the read-order below.
@@ -65,6 +69,22 @@ spec (a coordinator member + swarm members + steering policies) through `waves.r
 | D1 fabricated-results seam | SOUND | carried byte-stable in §D1 (red-team verified). |
 | D3 seat discipline | SOUND | carried byte-stable in §D3 (red-team verified). |
 | Two-level authority posture (A4) | SOUND | carried byte-stable in §D2 and A4. |
+
+## Fold-map (v1.1 blueteam → v1.2)
+
+| Finding (from `suite-blueteam.md`) | v1.1 verdict | Resolution — where in v1.2 |
+|---|---|---|
+| **§1.1 (blocker)** — A1/A2 fixtures install the permissive authorize, so the D1.2 sibling-refusal legs can never go green after a correct deployment-seam impl. | needs-fold → folded | **The enforcement seam is CONFIRMED as the deployment `authorize`** (the contract's own §D1.2 framing). The suite now installs the restricting authorize in the A1/A2 FIXTURES (so the law's mechanics are provable hermetically) and pins the DEPLOYMENT seam closure as the RED (`deploymentSeamRestrictorInstalled` — the permissive literal must be absent from `application-deployment.mjs`). The seam sentence in §D1.2 is unchanged; the RED moves to the seam closure. Folded into **A1/A2** (red-first pins) and **§D1.2**. |
+| **§1.2a** — A3 asserts `denied.optionId`, but §D1.3's denied shape has no `optionId`/`text`; a faithful impl that drops the attempted option fails A3. | needs-fold → folded | **§D1.3 denied record carries `optionId?` (optionId path) / `text?` (free-text path)** — the audit needs to know which option/text was attempted. The refusal-vocabulary denied-row is updated to match. Folded into **§D1.3** + **refusal vocabulary**. |
+| **§1.2c** — the re-attempt policy is undefined; removing the pre-answer add makes the drive loop re-attempt a denied ask every poll (~200× at hardCap), `.find()` masks the spam. | needs-fold → folded | **§D1.3 states the no-re-attempt policy**: a denied decision is recorded once and never re-auto-answered — the ask is left pending for the human; the interpreter skips `answerDecisions` for a requestId it has already denied. The suite pins the trail shape (exactly one `answerDecisions` record per requestId, no later `answered`). Folded into **§D1.3** + **A3/A3b**. |
+| **§2.1 (blocker)** — the permanence half is unpinned; an impl records `{denied}` while still marking the key handled, and both rows pass. | needs-fold → folded | **§D1.3 permanence enforced structurally**: the decision key is never marked handled before the `handle.answer` attempt. The suite's `permanencePin` asserts the earliest `s.answeredKeys.add` does not precede the earliest `handle.answer(` (the pre-answer add at `workflow-interpreter.mjs:698` is the permanence mechanism; pin it gone). Folded into **§D1.3** + **A3/A3b**. |
+| **§2.2 (blocker)** — A2's wave-scoped grant path is unasserted; a refuse-everything restrictor passes A2. | needs-fold → folded | **A2's GREEN gains the grant leg**: the fixture-level `restrictingReadAuthorize({grants})` mints an explicit wave-scoped grant and a granted swarm-row read of the coordinator's `worker:coordinator` partition must succeed — over-refusal fails. Folded into **A2**. |
+| **§1.5** — A8's message DELIVERY is unpinned; an impl widening only the interpreter's kind set silently drops `brief`/`result` at the coordinator boundary. | needs-fold → folded | **A8's GREEN requires delivery**: a `messageOnSpawn` steering entry with a delivered `messageId` (`delivered > 0`), the `signalOnMembersDone` recipients, and the adapter's received `[MESSAGE result …]` frame — the coordinator boundary (`coordinator.mjs:6864`) must accept `brief`/`result` end-to-end. Folded into **A8**. |
+| **§3.2** — P-A5-static/P-A10 tight absolute line windows are re-base churn; the load-bearing alarms are ORDER/EXISTENCE/byte-string. | needs-fold → folded | **The static pins drop the absolute windows** and keep `start < run < gate` + `notInDefinitions < start` (P-A5-static) and the byte-strings + a drift-immune relative bound (P-A10: the authz throw sits in `_authorize`'s tail). Folded into **P-A5-static** / **P-A10**. |
+| **§4.1** — P-D1.4's counter scan runs on the matched loop line only; a counter inside the loop body escapes. | needs-fold → folded | **P-D1.4 scans the whole `driveLane` body** (its def to the next top-level function) with the counter regex. Folded into **P-D1.4**. |
+| **§4.3 (mechanism error)** — `git show <sha>:<dir>` does NOT fail; a directory path without `mustContain` harvests `ok:true`, so the file-not-directory law is not structurally enforced. | needs-fold → folded | **§D4 mechanism corrected** (a tree `git show` returns the listing; a directory only refuses via a `mustContain` mismatch today) and the law is stated structurally: an admission/refusal-time check that each harvest path is a regular file refuses `harvest_miss` for directories REGARDLESS of `mustContain`. The suite adds the **A8b** RED row (directory-without-`mustContain` → the gap becomes a named red). Folded into **§D4** + **A8b** / **P-A8-dir**. |
+| **§1.3 (minor)** — A5's owner GREEN leg could be shallow-greened by a hardcoded allowlist of the four fixture principals. | note → folded | **A5 adds a second top-orchestrator principal (`s74-observer`)** asserting it too can start a wave — pinning seat-CLASS, not identity. Folded into **A5**. |
+| A4/P-A4, A5 green-side, A6, P-A7, P-A9, P-A10 alarm, P-A3g | SOUND | carried byte-stable; no v1.2 change (the P-A5-static/P-A10 churn folds above). |
 
 ---
 
@@ -132,44 +152,53 @@ genuinely need the coordinator's artifact wait on their lane read (the #10 inter
    already supports). There is no implicit cross-worker read.
 
 **Enforcement seam.** `run.scratchpad.read` passes `{scope}` straight to
-`_authorize('run.scratchpad.read', principal, runId, {scope})` (`application.mjs:13037`) and then
+`_authorize('run.scratchpad.read', principal, runId, {scope})` (`application.mjs:13051`) and then
 snapshots whatever scope was requested (`scratchpadSnapshot(request.runId, request.scope)`,
-`:13038`); `_authorize` throws `application_unauthorized` when the deployment authorize does not
-return `true` (`:3215`). The shipped default deployment authorize is permissive —
-`authorize: async () => true` (`application-deployment.mjs:1998`) — so under the default there is
-**no scope restriction at all**: a swarm row could read `worker:row-2` as easily as
-`worker:coordinator`, and could read the coordinator's partition across runs. v1.1 therefore
-**requires any deployment running the coordinator-member recipe to install the restricting
-authorize at that seam**: a `worker:<scope>` read resolves only for `scope === worker:<ownId>` (or
-an explicit wave-scoped grant); everything else refuses `application_unauthorized`. This is the
-"unknown ≡ foreign at the policy seam" default (#87, `facade-projection-contract.md:636`)
-implemented for scopes foreign to the caller's run — the same policy law the #87 contract already
-pins for the lane.
+`:13052`); `_authorize` throws `application_unauthorized` when the deployment authorize does not
+return `true` (`:3222`). At HEAD the shipped default deployment authorize is permissive —
+`authorize: async () => true` (`application-deployment.mjs:2012`) — so a swarm row could read
+`worker:row-2` as easily as `worker:coordinator`, and could read the coordinator's partition across
+runs. v1.2 (blueteam §1.1 — the enforcement seam is CONFIRMED as the deployment `authorize`) therefore
+**requires the restricting authorize to be installed AT THE DEPLOYMENT SEAM**: the permissive literal
+is removed from the construction site and the restricting authorize becomes the default — a
+`worker:<scope>` read resolves only for `scope === worker:<ownId>`, for the top orchestrator (the
+review authority, FP-18), or via an explicit wave-scoped grant; everything else refuses
+`application_unauthorized`. This is the "unknown ≡ foreign at the policy seam" default (#87,
+`facade-projection-contract.md:636`) implemented for scopes foreign to the caller's run — the same
+policy law the #87 contract already pins for the lane.
 
-**D1.3 — The truthful steering trail (v1.1 — BLOCKER 1 fold, contract requirement).** The
+**D1.3 — The truthful steering trail (v1.1 — BLOCKER 1 fold; v1.2 — the denied record carries the
+attempted `optionId?`/`text?` and the no-re-attempt policy, contract requirement).** The
 `answerDecisions` policy answering is part of the escalation audit the top orchestrator reads, so
 the steering trail must not be falsifiable. When the policy answering throws — a denied option (the
 answering principal cannot exercise the mapped answer) or a raced terminal member — the interpreter
 MUST:
 
 1. record the truth in the steering trail: `{trigger: 'answerDecisions', role, requestId,
-   outcome: 'denied', refusal: <code>}`, where `<code>` is the thrown refusal's typed code (the
-   facade's code from the `handle.answer` throw — e.g. `application_unauthorized` for a
-   capability-denied answer at `application.mjs:3215`, or the terminal-member refusal for a raced
-   member);
+   outcome: 'denied', refusal: <code>, optionId?/text?}`, where `<code>` is the thrown refusal's
+   typed code (the facade's code from the `handle.answer` throw — e.g. `application_unauthorized`
+   for a capability-denied answer at `application.mjs:3222`, or the terminal-member refusal for a
+   raced member) and `optionId?`/`text?` is the policy value the path attempted (the audit needs to
+   know which option or free text was denied);
 2. NOT mark the decision key handled — neither `s.answeredKeys` nor `s.handledDecisionKeys`;
 3. leave the ask pending for the human — the member's task stays parked at `input_required` (the
    DECISION_REQUEST admission is a blocking decision gate, `coordinator.mjs:12769` → `:12844-12858`
    → `input_required`), and the later human answer via `run.answer` (`application.mjs:180`) settles
-   it.
+   it;
+4. **never re-auto-answer a denied requestId (v1.2 — the no-re-attempt policy):** a denied decision
+   is recorded ONCE. The interpreter skips `answerDecisions` for a requestId it has already denied —
+   the ask stays pending for the human, and the drive loop does NOT re-attempt it on every poll
+   (which would accumulate one `denied` record per poll until `hardCapMs` and spam the trail).
 
 `outcome: 'answered'` may only be recorded AFTER `handle.answer` returns successfully. Today the
 interpreter marks `s.answeredKeys.add(key)` before the attempt (`workflow-interpreter.mjs:698`) and
 both answering paths swallow the `handle.answer` throw and record `outcome: 'answered'`
 unconditionally (the free-text path `:794-799`, the optionId path `:806-809`) — the fold requires
-this to change. The D6 steering trail is then the honest escalation audit: every entry is either
-`deferred` (no policy match), `refused` (a policy-named option the ask does not actually offer,
-`:801-805`), `denied` (a throw — the ask stays open), or a genuinely delivered `answered`.
+this to change: the decision key must NEVER be marked handled BEFORE the answer attempt (a pre-answer
+add masks the denied throw as permanently handled). The D6 steering trail is then the honest
+escalation audit: every entry is either `deferred` (no policy match), `refused` (a policy-named
+option the ask does not actually offer, `:801-805`), `denied` (a throw — the ask stays open, recorded
+once), or a genuinely delivered `answered`.
 
 **D1.4 — The escalation sequence bound (v1.1 — §3.3 note fold).** Escalation spam is bounded in
 concurrency and audited end-to-end, but the sequence of re-asks after a human answers is not
@@ -325,11 +354,14 @@ shape (v1.1 — the harvest path names a FILE, per §5.1 of the red-team):
   `objectiveRef` pointing at the sub-orchestrator brief; **each swarm member** is a cheap route with
   `objectiveRef` pointing at its row brief — the coordinator's decomposition artifacts. `objectiveRef`
   is required; objective text is by reference only (`workflow-interpreter.mjs:205-207`, D5).
-- **The harvest path is a FILE, never a directory.** `harvestOne` reads each path via
-  `gitShow(repoRoot, outcome.resultSha, path)` (`workflow-interpreter.mjs:615`); `git show` on a
-  tree (directory) fails, so the entry lands `harvest_miss` (`:621`, `:631`, `:634`) and the wave
-  refuses `WAVE-INCOMPLETE`. The example above names `docs/results/coordinator.md` — an implementer
-  copying the spec shape gets a working harvest.
+- **The harvest path is a FILE, never a directory (v1.2 — mechanism correction, blueteam §4.3).**
+  `harvestOne` reads each path via `gitShow(repoRoot, outcome.resultSha, path)`
+  (`workflow-interpreter.mjs:615`). Mechanism note: `git show <sha>:<dir>` does NOT fail — it
+  returns the tree listing — so a directory harvest only refuses today via a `mustContain` MISMATCH
+  on the recovered listing. The file-not-directory law is therefore enforced STRUCTURALLY: an
+  admission/refusal-time check that each harvest path is a regular file refuses `harvest_miss` for
+  directories REGARDLESS of `mustContain` (`:621`, `:631`, `:634`). The example above names
+  `docs/results/coordinator.md` — an implementer copying the spec shape gets a working harvest.
 - **The steering policy declares the escalation contract** (D1): `answerDecisions.policy`
   auto-answers policy-matched DECISION_REQUESTs and `defer`s the rest to the human (each lands in
   the steering trail — the escalation audit, truthful under D1.3); `messageOnSpawn` delivers the
@@ -370,9 +402,10 @@ New (this contract):
 (`workflow-interpreter.mjs:789-793`); it is named here because the coordinator's deferred asks are
 the top orchestrator's actionable surface. The **denied record is not a new code**: under D1.3 the
 steering trail records `{trigger: 'answerDecisions', role, requestId, outcome: 'denied', refusal:
-<code>}` where `<code>` is the thrown refusal's own typed code (e.g. `application_unauthorized` for
-a denied option, or the terminal-member refusal for a raced member) — the code is reused, the record
-shape is the new truth. No sorted-key literal is introduced.
+<code>, optionId?/text?}` where `<code>` is the thrown refusal's own typed code (e.g.
+`application_unauthorized` for a denied option, or the terminal-member refusal for a raced member)
+and `optionId?`/`text?` (v1.2) is the policy value the attempted path carried — the code is reused,
+the record shape is the new truth. No sorted-key literal is introduced.
 
 ---
 
@@ -384,7 +417,7 @@ RED = fails at HEAD; GREEN = passes at HEAD and is pinned.
 |---|---|---|
 | A1 | **Coordinator-member recipe (D1).** Red: no coordinator semantics exist — the implementContract preset admits `role: 'coordinator'` as an ordinary member, indistinguishable from any row. Green: a recipe invocation with `role: 'coordinator'` and a heavyweight `exact` route is admitted; the closed recipe fields (G6) are unchanged; the top orchestrator's wave receipt carries the coordinator's per-row outcomes. | **RED** (no coordinator role) |
 | A2 | **Artifact handoff (D1).** Red: no artifact conventions exist — a coordinator's sub-spec has no defined home. Green: row sub-specs land in the coordinator's scratchpad partition (`worker:<role>`, the #68 BD3-A grammar, `facade-projection-contract.md:217`); the read-authorization law (D1.2) governs who may read a `worker:<role>` partition — a member reads `worker:<ownId>` + `shared`, the top orchestrator (review authority, FP-18) reads any member scope of its own wave, a swarm row reads coordinator sub-specs only via an explicit wave-scoped grant or via `shared` — and a **sibling `worker:<role>` read is REFUSED with the typed code** (`application_unauthorized` at the restricting authorize, `application.mjs:3215`); results land in board reports + the D6 `outcomes`; the shared layer survives across successive waves. | **RED** (lanes contracted, not landed; the restricting authorize must be installed at the deployment seam — G11, D1.2) |
-| A3 | **Escalation contract (D1/D4).** Red: no declarative answerable set — every decision reaches the human, and the current answering paths swallow `handle.answer` throws. Green: a coordinator DECISION_REQUEST answered by `answerDecisions.policy` records `outcome: 'answered'` only after `handle.answer` returns successfully; a non-matching ask records `{deferred: true, outcome: 'deferred'}`; a **denied/raced answer records `{outcome: 'denied', refusal: <code>}`, does NOT mark the decision key handled, and leaves the member parked at `input_required` with the ask pending — a later human answer settles it** (D1.3); the #105 D8 boundary is unchanged (blocking → interaction lane, conversational → reply lane). | **RED** (the policy exists in the interpreter, but no coordinator seat rides it, and the answering paths currently record `answered` on a swallowed throw — G5/G11, D1.3) |
+| A3 | **Escalation contract (D1/D4).** Red: no declarative answerable set — every decision reaches the human, and the current answering paths swallow `handle.answer` throws. Green: a coordinator DECISION_REQUEST answered by `answerDecisions.policy` records `outcome: 'answered'` only after `handle.answer` returns successfully; a non-matching ask records `{deferred: true, outcome: 'deferred'}`; a **denied/raced answer records `{outcome: 'denied', refusal: <code>, optionId?/text?}` ONCE (v1.2 — no-re-attempt), does NOT mark the decision key handled (never before the answer attempt), and leaves the member parked at `input_required` with the ask pending — a later human answer settles it, and the interpreter never re-auto-answers a denied requestId** (D1.3); the #105 D8 boundary is unchanged (blocking → interaction lane, conversational → reply lane). | **RED** (the policy exists in the interpreter, but no coordinator seat rides it, and the answering paths currently record `answered` on a swallowed throw — G5/G11, D1.3) |
 | A4 | **Authority boundary, two-level shape (D2).** Red: no coordinator seat exists to attempt anything. Green: a coordinator-seat worker has NO baton connection — discovery fails with the absence refusal (`cli_config_invalid: user connection profile is unavailable`, `application-cli.mjs:126`, label `:257`, byte-identical to #12); the escalation surface is DECISION_REQUEST. | **RED** (no coordinator seat) |
 | A5 | **Authority boundary, full shape + new refusal (D2).** Red: no `coordinator_authority_forbidden` exists; a would-be coordinator authority action is indistinguishable from any denial. Green: a coordinator-seat principal reaching for a wave/steering authority verb draws `coordinator_authority_forbidden` with `{attempted, gracefulPath}`; the top orchestrator's own authority actions never fire the new code. The #12 codes are NOT claimed for the `waves.*` verbs — those dispatch before the recursive gate (`application.mjs:12502-12512` before the gate's `context?.sessionAuthority` check at `:12527`), so a lease-bound `waves.start` is not refused by the gate; the full shape requires `waves.start`/`waves.run`/`waves.stop` added to the recursive gate (or explicitly refused for lease holders) at the dispatch seam (§D2, OQ1 answered). | **RED** (no coordinator seat; the `waves.*` pre-gate dispatch must be closed for the full shape) |
 | A6 | **Seat discipline (D3).** Red: no route-map law — any member may be any seat. Green: the recipe route map `exact: {harness, model, effort}` names the heavyweight coordinator and cheap swarm rows; each member rides the same exact-route profile admission ordinary `run.start` uses; the wave roster (`application.mjs:11610-11614`) and `waves.list` expose the coordinator's route to the top orchestrator. | **RED** (route map exists in recipes/interpreter, but no coordinator seat pins it) |
