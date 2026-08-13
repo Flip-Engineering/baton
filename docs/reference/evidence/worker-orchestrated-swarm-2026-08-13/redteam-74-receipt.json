@@ -10,6 +10,28 @@
           "run-f72c21845f837d35352ca1c479e3e52e"
         ]
       }
+    },
+    {
+      "step": "terminal:redteam-74",
+      "receipt": {
+        "phase": "work_completed"
+      }
+    },
+    {
+      "step": "loop-drained",
+      "receipt": {
+        "pending": []
+      }
     }
-  ]
+  ],
+  "harvest": {
+    "redteam-74": {
+      "pin": "2a7e1c51ce2b03a6e32a7321351a33172a42be12",
+      "paths": [
+        "docs/reference/evidence/worker-orchestrated-swarm-2026-08-13/contract-redteam.md"
+      ]
+    }
+  },
+  "harvestStalePinsSkipped": 422,
+  "verdict": "RT-74-OK"
 }
