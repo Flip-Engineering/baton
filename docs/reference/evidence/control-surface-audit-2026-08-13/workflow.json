@@ -1,0 +1,47 @@
+{
+  "schemaVersion": 1,
+  "idempotencyKey": "csa-147-2026-08-13-wave-a",
+  "members": [
+    {
+      "role": "coordinator",
+      "exact": { "harness": "deepseek", "model": "deepseek-v4-pro[1m]", "effort": "high" },
+      "scope": "docs/reference/evidence/control-surface-audit-2026-08-13/**",
+      "objectiveRef": "docs/reference/evidence/control-surface-audit-2026-08-13/coordinator-brief.md",
+      "report": "docs/reference/evidence/control-surface-audit-2026-08-13/control-surface-audit.md"
+    },
+    {
+      "role": "row-web",
+      "exact": { "harness": "deepseek", "model": "deepseek-v4-flash", "effort": "high" },
+      "scope": "docs/reference/evidence/control-surface-audit-2026-08-13/**",
+      "objectiveRef": "docs/reference/evidence/control-surface-audit-2026-08-13/row-web.md",
+      "report": "docs/reference/evidence/control-surface-audit-2026-08-13/surface-audit-web.md"
+    },
+    {
+      "role": "row-cli",
+      "exact": { "harness": "deepseek", "model": "deepseek-v4-flash", "effort": "high" },
+      "scope": "docs/reference/evidence/control-surface-audit-2026-08-13/**",
+      "objectiveRef": "docs/reference/evidence/control-surface-audit-2026-08-13/row-cli.md",
+      "report": "docs/reference/evidence/control-surface-audit-2026-08-13/surface-audit-cli.md"
+    },
+    {
+      "role": "row-mcp",
+      "exact": { "harness": "deepseek", "model": "deepseek-v4-flash", "effort": "high" },
+      "scope": "docs/reference/evidence/control-surface-audit-2026-08-13/**",
+      "objectiveRef": "docs/reference/evidence/control-surface-audit-2026-08-13/row-mcp.md",
+      "report": "docs/reference/evidence/control-surface-audit-2026-08-13/surface-audit-mcp.md"
+    }
+  ],
+  "steering": {
+    "approveOnAdvertisedPlan": true,
+    "nudgeOnCheckpoint": { "message": "Continue your audit drive — read evidence, write your report incrementally, publish to the shared scratchpad when done." },
+    "claimOnStall": true,
+    "messageOnSpawn": { "kind": "steer", "body": "Read your objectiveRef brief IN FULL first, then audit-brief.md in the same directory (the shared frame binds you). Publish your final report in full to the `shared` scratchpad partition as well as your report file. Authority-class ambiguity → DECISION_REQUEST with options; style calls are yours — record them." },
+    "elevateWhenNotes": { "kinds": ["doubt", "plan"], "maxEntries": 20 },
+    "signalOnMembersDone": { "roles": ["coordinator"], "message": { "kind": "inform", "body": "All rows settled — read their reports from the `shared` scratchpad partition and synthesize control-surface-audit.md per your brief." } }
+  },
+  "harvest": {
+    "paths": [
+      { "path": "docs/reference/evidence/control-surface-audit-2026-08-13/control-surface-audit.md", "mustContain": "CONTROL-SURFACE-AUDIT v1" }
+    ]
+  }
+}
