@@ -1,4 +1,4 @@
-# Issue #167 — the bounded actual-inference readiness tier: implementation contract v1
+# Issue #167 — the bounded actual-inference readiness tier: implementation contract v2 (folded)
 
 The implementation contract for issue #167: static readiness (credential present + executable
 compatible) is not provider-alive — Grok's 402 and glm's capacity deaths each killed waves at turn
@@ -10,31 +10,44 @@ the static readiness substrate (`application-deployment.mjs`), and the wave-driv
 (`wave-driver.mjs`).
 
 - **Date:** 2026-08-13
-- **Status:** DRAFT v1 — red-first. The probe machinery itself is LANDED (#47); the pins below
-  target the honesty gaps #167 names. No code lands in this rung.
+- **Status:** FOLDED v2 — red-first. The probe machinery itself is LANDED (#47); the pins below
+  target the honesty gaps #167 names. No code lands in this rung. Fold provenance: this v2 merges
+  `redteam-167.md` (same dir — 2 citation/mechanism blockers + 2 structural holes + amendments +
+  notes, all resolved in the fold record) and the wave-b coordinator QA's §4.4 set
+  (`review-foundry-2026-08-13-b/review-qa.md` §4). The QA was written WITHOUT the row report; per
+  the blind-QA law (fold-foundry-2026-08-13-b/foundry-brief.md) the row report governs on conflict,
+  and the QA's fold instructions — largely disjoint from the row blockers — are binding.
 - **Verification HEAD:** `e371f704727cbca5fdff86af31ec8b154620a71f` ("Baton private effective-tree
   snapshot"). Every `file:line` citation below was re-verified this session with `grep -an` /
-  `sed -n` / `Read` at this HEAD, not inherited. No NUL-bearing files are cited; the one
-  `application.mjs` anchor is cited with `grep -an` (that file carries NUL bytes).
-- **Brief:** `row-readiness.md` + `foundry-brief.md` (same dir) — read fully. The issue body
+  `sed -n` / `Read` at this HEAD, not inherited — including every citation the fold touched. No
+  NUL-bearing files are cited except `application.mjs` and `coordination-store.mjs`, both cited
+  with `grep -an` (they carry NUL bytes).
+- **Brief:** `row-readiness.md` + `foundry-brief.md` (same dir) — read fully; the fold briefs
+  (`fold-2026-08-13-b/foundry-brief.md`, `row-fold-167.md`) bind this fold. The issue body
   (`gh issue view 167`) could not be fetched (`gh` is not authenticated in this worktree); the
   requirements are carried by the brief, the problem statement, the landed #47 contract
   (`readiness-credentials-contract.md`), and the code itself.
 - **Shared-scratchpad publish:** NOT performed — no worker-facing surface that writes the `shared`
-  partition exists at this HEAD. Verified: the only write up-channel is the coordinator's internal
-  `scratchpad.write` (coordinator.mjs:12693 → coordination-store.mjs:14064), which writes to
-  `worker:<id>` scope only and is reachable solely from inside a live authenticated worker stream
-  (bound `workerId` + turn fence); promotion to `shared` is a coordinator/steering elevation action
-  (`elevateTaskScratchpad`/`settleWorkflowScratchpad`), not a row write. The MCP northbound surface
-  exposes only `baton_run_scratchpad_read`/`baton_run_scratchpad_elevate` (mcp-northbound.mjs:114-115);
-  no `run.scratchpad.append` / `scratchpad.write` routing exists in `application-cli.mjs` or
+  partition exists at this HEAD. Verified: the only write up-channel is the coordinator's
+  `scratchpad.write` dispatch — the `case 'scratchpad.write':` handler (coordinator.mjs:12690-12697)
+  calling `writeScratchpad(workerId, entry, opts)` (method at coordinator.mjs:10790) → the store
+  `writeScratchpad(fields, auth)` (coordination-store.mjs:14064) — which writes to `worker:<id>`
+  scope only (scoped at coordination-store.mjs:14106) and is reachable solely from inside a live
+  authenticated worker stream (bound `workerId` + turn fence); promotion to `shared` is a
+  coordinator/steering elevation action (`elevateTaskScratchpad`/`settleWorkflowScratchpad`), not a
+  row write. The MCP northbound surface exposes only
+  `baton_run_scratchpad_read`/`baton_run_scratchpad_elevate` (mcp-northbound.mjs:114-115); no
+  `run.scratchpad.append` / `scratchpad.write` routing exists in `application-cli.mjs` or
   `mcp-northbound.mjs`. Per `coordinator-brief.md` (line 12) the coordinator falls back to the durable
   files `contract-<issue>.md` where the shared post is absent — that fallback is invoked here; this
-  file IS the publish, and the coordinator should note it.
+  file IS the publish, and the coordinator should note it. *(Fold: the anchor was re-verified —
+  coordinator.mjs:12693 is the `writeScratchpad` call inside the dispatch, not an error; the method
+  definition is at :10790. See fold record, blocker 1.)*
 - **Scope, one sentence:** the actual-inference readiness tier's honesty is closed — the probe is a
   bounded real one-token inference with stated cost and trigger surfaces (D1); the readiness read
   carries a `{static, probedAt, verdict}` projection where a static-only read never relabels itself
-  alive (D2); and wave admission may only refuse or inform — never silently reroute (D3).
+  probe-verified, on the wire as well as in-process (D2); and wave admission may only refuse or
+  inform — never silently reroute (D3).
 
 ---
 
@@ -57,7 +70,7 @@ the static readiness substrate (`application-deployment.mjs`), and the wave-driv
 
 ### G2 — The actual-inference tier is LANDED as `RouteLiveness` (#47), and its probe is real and bounded
 
-- Header (route-liveness.mjs:3-4): "RouteLiveness — the #47 bounded actual-inference readiness tier
+- Header (route-liveness.mjs:3-6): "RouteLiveness — the #47 bounded actual-inference readiness tier
   … an additive liveness attribute on the existing route state: per-route probe cache joined to
   credential identity, single-flight per route, never probe per call."
 - Probe shape (route-liveness.mjs:174-247): one bounded prompt requiring a deterministic,
@@ -94,15 +107,20 @@ the static readiness substrate (`application-deployment.mjs`), and the wave-driv
 - `doctorReadiness()` (application-deployment.mjs:1329-1369) is the single projection function: it
   re-probes workspace capacity + claude/grok credential metadata fresh per read and reuses the frozen
   open-time route states. It attaches `liveness`/`occupancy` as NON-ENUMERABLE row fields
-  (`Object.defineProperty`, :1346-1350) — visible to reading consumers, invisible to
-  `Object.keys`/`JSON.stringify`.
+  (`Object.defineProperty`, application-deployment.mjs:1348-1349) — visible to reading consumers,
+  invisible to `Object.keys`/`JSON.stringify`.
 - The roster row (application-deployment.mjs:1005-1016 `publicRosterRow`) carries `static` /
   `liveness` / `occupancy` / `learning`; the roster projection `#rosterProjection()` (:1419-1442)
   composes the same underlying rows (one projection function, no drift).
 - The enumerable doctor row still reads `state: 'ready'` for a static-ready route (RT-4 pins this
   separation); the liveness class is only reachable through the non-enumerable `liveness` sibling or
   the roster's `liveness` field. This is the D2 gap: a consumer that reads the enumerable doctor row
-  (or the raw application) sees "ready" with no `probedAt`/`verdict` anchor to a measurement.
+  (or the raw application) sees "ready" with no `probedAt`/`verdict` anchor to a measurement. The
+  gap is sharpened on the wire: non-enumerable fields do not survive `JSON.stringify`, so the
+  operator's ONLY reads — `baton doctor` → `BatonWebClient.doctor()` (application-cli.mjs:1961-1978)
+  → GET `/readyz` (web-northbound.mjs:1173) + GET `/v1/application-card` (web-northbound.mjs:1181) —
+  carry neither. The web card re-adds exactly one named additive field, `briefing`
+  (web-northbound.mjs:1507-1513), and does NOT re-add `liveness`. *(Fold: blocker 3.)*
 
 ### G4 — The wave preflight is a composed-row consumer; it refuses, it never reroutes
 
@@ -115,13 +133,21 @@ the static readiness substrate (`application-deployment.mjs`), and the wave-driv
 - The probe handle is `project(route, { withProbe: true })` (route-liveness.mjs:359-389): a
   non-enumerable `probe` closure that runs `ensure(route)` then re-projects.
 
-### G5 — The operator's on-demand probe surface is parsed but dead
+### G5 — The operator's on-demand probe surface is parsed but dead (mechanism re-anchored by the fold)
 
 - `baton doctor [--depth outline|connection|profile|evidence] [--check]` is parsed at
-  application-cli.mjs:1261-1267 (`const check = flag(args, '--check')`, :1264). The doctor handler
-  `if (parsed.kind === 'doctor') return client.doctor();` (:2213) DROPS `check` — it never reaches
-  the deployment. The prior contract's promise of `baton doctor --check` as the operator's
-  forced-retry surface (readiness-credentials-contract.md §4.1.3, fold F-7) is unwired at this HEAD.
+  application-cli.mjs:1261-1267 (`const check = flag(args, '--check')`, :1264). The OPERATOR path
+  does not run the library seam's doctor handler: `impl/scripts/baton.mjs:79-98` handles
+  `parsed.kind === 'doctor'` inline — it reads `parsed.check` at :81
+  (`if (!parsed.check || local.state !== 'configured')`), and on `--check` with a configured local
+  state calls `clientFor(discoverBatonConnection()).doctor()` → `BatonWebClient.doctor()`
+  (application-cli.mjs:1961-1978), which reads GET `/readyz` (web-northbound.mjs:1173, returns
+  `{ready}` only) + GET `/v1/application-card` (web-northbound.mjs:1181 →
+  `_handleOperatorRead` :1470). **No forced probe fires anywhere in that chain** — `--check` only
+  selects local-vs-remote. The library seam `if (parsed.kind === 'doctor') return client.doctor();`
+  (application-cli.mjs:2213) also drops `check`, but the operator never reaches it. The RED state
+  ("no forced-probe surface at HEAD") is real; the mechanism is the baton.mjs inline branch, not the
+  :2213 seam. *(Fold: blocker 2 — G5 and A2 now pin the operative path.)*
 
 ### G6 — The probe's failure codes are not in the typed refusal vocabulary
 
@@ -139,9 +165,9 @@ the static readiness substrate (`application-deployment.mjs`), and the wave-driv
 ### G7 — The probe's byte bounds are inline literals, not #89-registry rows
 
 - `PROBE_PROMPT_MAX_BYTES`/`PROBE_CAPTURE_MAX_BYTES` are declared at route-liveness.mjs:18-19.
-  `FRAME_LIMITS` (limits.mjs:53-106) has no probe lane. This is a #89 no-re-declare-law debt
-  (limits.mjs:1-7, "the registry is the only source"), recorded here and in OQ5 — this rung
-  introduces no NEW byte bound, so it does not add a registry row.
+  `FRAME_LIMITS` (limits.mjs:53-111, merged export :115) has no probe lane. This is a #89
+  no-re-declare-law debt (limits.mjs:1-7, "the registry is the only source"), recorded here and in
+  OQ6 — this rung introduces no NEW byte bound, so it does not add a registry row.
 
 ### G8 — The tier is opt-in per deployment and never blocks when unwired
 
@@ -160,11 +186,12 @@ An orchestrator reading the doctor today sees `grok-4.5@low: ready` (the static 
 route passed static deployment readiness") while the seat behind it will eat a real turn and die —
 Grok's 402 and glm's capacity deaths each killed waves at turn time. The tier exists (#47) but
 (a) there is no operator surface that forces a fresh probe on demand, (b) the readiness read's
-honest signal is a non-enumerable sibling a serializing consumer cannot see, and (c) the probe's
-verdicts collapse to a generic provider failure, so "quota-dead" and "momentarily unreachable" read
-identically. Can the tier's honesty be closed — a bounded real probe with stated cost and triggers,
-an unmissable `{static, probedAt, verdict}` projection, and an admission interaction that refuses or
-informs but never silently reroutes?
+honest signal is a non-enumerable sibling a serializing consumer cannot see — so it vanishes on the
+operator's wire read, and (c) the probe's verdicts collapse to a generic provider failure, so
+"quota-dead" and "momentarily unreachable" read identically. Can the tier's honesty be closed — a
+bounded real probe with stated cost and triggers, an unmissable `{static, probedAt, verdict}`
+projection that survives the wire, and an admission interaction that refuses or informs but never
+silently reroutes?
 
 ---
 
@@ -172,7 +199,7 @@ informs but never silently reroutes?
 
 The campaign control law (bidirectional-v3-decisions.md:134-143) bans clocks as CONTROLS on agent
 work. This contract's probe timeout and liveness windows are **resource circuit-breakers** — "they
-bound spend, not progress" (bidirectional-v3-decisions.md:142-143) — never progress controls. The
+bound spend, not progress" (bidirectional-v3-decisions.md:143-144) — never progress controls. The
 distinction, stated honestly:
 
 - **The probe timeout (≤120s) is a bound on the PROBE, not a workflow control.** It bounds how long
@@ -188,6 +215,8 @@ distinction, stated honestly:
   cadence.** The explicit `baton doctor --check` surface (pinned A2) and the credential-refresh
   surfaces unstick a route immediately, independent of the window — the constructive carve-out the
   law names (the same classification fold F-7 recorded in readiness-credentials-contract.md §3).
+  A `provider_quota` verdict is an exception: it excludes automatic re-probe entirely (operator
+  surface only) — see the refusal vocabulary and OQ3.
 - **No decision below introduces a per-turn limit or a liveness clock on real work.** The probe's
   one-shot bound and the cache's freshness checks are the whole story.
 
@@ -224,17 +253,37 @@ window; ≤ 1 probe per stale route per window; single-flight so a cold 64-route
 one-token calls on its first wave, then 0 while windows are fresh. That bound is a resource
 circuit-breaker, not a cap on agent work.
 
+**What the probe does and does not prove (folded honesty).** The probe is a **liveness ping, not a
+capacity probe** — it measures turn-completion liveness on a bounded one-token turn. A provider that
+answers the ping but 402s or capacity-deaths the real wave still passes the probe and dies at the
+real turn; the probe cannot distinguish "will accept the ping" from "will accept the wave". This is
+the residual of the problem class, not a fixable defect — A4's worker-turn classification catches the
+death after the fact, and the `verdict` label (D2) names exactly the probe's probative power. *(Fold:
+red-team amendment (a).)* The `resource.provider_call` receipt is **self-attested**: minted by
+RouteLiveness after the adapter's terminal event (route-liveness.mjs:342-355), it attests that the
+adapter reported a call, not a billing statement — the adapter is the trust boundary for real turns
+too, so this is inherent. *(Fold: red-team note.)*
+
 **When it runs — three triggers, all through the cache discipline (never per call):**
-1. **Spawn/preflight gate** (application-deployment.mjs:1376-1381 `#livenessGate`): consult the
-   cache, probe only on stale/absent (`RouteLiveness.ensure`, route-liveness.mjs:132-146).
+1. **Spawn gate — every provider-spawn surface** (application-deployment.mjs:1376-1381
+   `#livenessGate`): on a liveness-wired deployment the cache is consulted before ANY real provider
+   turn — `run()` (wired at application-deployment.mjs:1446) and the sibling spawn surfaces
+   `startMany` (:1450-1457), `workflow` (:1459-1466), `explore` (:1468-1471), `review` (:1473-1480),
+   which today call only `assertRouteReady` and consult no liveness. *(Fold: blocker 4.)* The folded
+   fix makes the gate's coverage match the claim: `#livenessGate` is required on all five spawn
+   surfaces (pinned A6, RED at HEAD). Until wired, an unwired surface is an **honest-read-only**
+   spawn — no liveness guarantee is claimed for it, and the contract's claims shrink to the wiring
+   rather than overstate it.
 2. **Wave preflight** (wave-driver.mjs:323-335): per member, cache-short-circuit, probe once per
    stale route, refuse `wave_driver_route_unready` on `failed`.
 3. **On-demand operator surface** — `baton doctor --check` becomes the forced-probe verb (pinned A2,
-   RED at HEAD): it propagates the parsed `check` flag (application-cli.mjs:1264) through the doctor
-   handler (:2213) to the deployment, forcing one fresh probe per stale/absent liveness row and
-   returning the updated honest projection. This is the operator's forced-retry surface the prior
-   contract promised (readiness-credentials-contract.md §4.1.3) and the preflight uses only as a
-   cache-short-circuited read.
+   RED at HEAD). The fold pins the OPERATOR path, not the library seam: the `impl/scripts/baton.mjs`
+   doctor branch (:79-98, `parsed.check` read at :81) must force a fresh probe — via
+   `BatonWebClient.doctor()` (application-cli.mjs:1961) → a web-northbound forced-probe parameter on
+   `/v1/application-card` (web-northbound.mjs:1504-1513) — once per stale/absent liveness route,
+   then return the updated honest projection. *(Fold: blocker 2.)* This is the operator's
+   forced-retry surface the prior contract promised (readiness-credentials-contract.md §4.1.3); at
+   HEAD the flag only selects local-vs-remote and no probe fires.
 
 **Opt-in per deployment.** The tier is wired only when `advanced.liveness` is supplied (G8). Absent →
 `#liveness` is `null`, liveness projects `unobserved` (application-deployment.mjs:1383-1388), no
@@ -250,26 +299,39 @@ projection (semantic order; no byte-stability claim):
 {
   static: { state, code?, summary? },        # the deploymentReadiness verdict (G1) — unchanged
   probedAt: ISO-8601 | null,                 # last probe measurement time (verifiedAt or failedAt), content-derived
-  verdict: 'alive' | 'unverified' | 'failed',# the liveness class — the honest signal
+  verdict: 'probe-verified' | 'unverified' | 'failed',   # the liveness class — the honest signal
   expiresAt?, latencyMs?, code?, credentialKey   # bounded supporting atoms, unchanged from the landed tuple
 }
 ```
 
-**The cardinal law: a static-only read NEVER relabels itself alive.** `verdict: 'alive'` is produced
-ONLY from a content-verified probe whose recorded window is unexpired (route-liveness.mjs:366-368).
-Every other case produces `verdict: 'unverified'`:
+**The cardinal law: a static-only read NEVER relabels itself probe-verified.** `verdict:
+'probe-verified'` is produced ONLY from a content-verified probe whose recorded window is unexpired
+(route-liveness.mjs:366-368). Every other case produces `verdict: 'unverified'`:
 - no probe ever recorded → `probedAt: null`, `verdict: 'unverified'`;
 - window lapsed (`expiresAt ≤ now`) → `probedAt` still shows the last measurement,
-  `verdict: 'unverified'` (route-liveness.mjs:368-371) — honest not-live, never stale-`alive`;
+  `verdict: 'unverified'` (route-liveness.mjs:368-371) — honest not-live, never stale-`probe-verified`;
 - route unsupported (non-pausable adapter) → `verdict: 'unverified'` (route-liveness.mjs:371-374) —
   additive tier, never a fabricated failure;
 - deployment not opted in → `verdict: 'unverified'` (G8).
 
-The projection must be **unmissable**: it is carried on the enumerable roster row and on the doctor
-route row (as an enumerable additive field OR the stated non-enumerable sibling the doctor already
-uses — either satisfies the pin, but the enumerable doctor `state: 'ready'` must never be the ONLY
-signal a consumer can read). A consumer that reads the readiness read must see `verdict` and
-`probedAt` without reaching into a private sibling.
+**The label is scoped to the probe's real probative power.** `probe-verified` means "passed a bounded
+one-token content-verified probe within the recorded window" — NEVER "will complete a real turn".
+A provider that passes the ping can still 402/capacity-death the real wave; the probe's power is
+bounded by its one-token shape (D1's folded honesty paragraph). This caveat is part of the teaching
+sentence, so no orchestrator reads `probe-verified` as a real-turn guarantee. *(Fold: QA §4.4.1
+H1.)*
+
+**The projection must be unmissable — including on the operator's wire read.** Folded (blocker 3):
+the honest fields must be **enumerable** (JSON-surviving) on the doctor route row — `Object.keys` /
+`JSON.stringify` must carry `verdict` + `probedAt`. The non-enumerable sibling form alone is NOT
+sufficient: non-enumerable `liveness`/`occupancy` are dropped by JSON serialization
+(application-deployment.mjs:1348-1349), and the web card re-adds only `briefing`
+(web-northbound.mjs:1507-1513). The northbound re-add (the D6c `briefing` precedent) is required for
+`/v1/application-card` (web-northbound.mjs:1504-1513), the CLI doctor read (application-cli.mjs:
+1961-1978), and `deployment.doctor` (mcp-northbound.mjs:1804-1808); a pin asserts an operator wire
+read carries `verdict` + `probedAt`. A consumer that reads the readiness read — in-process OR over
+the wire — must see `verdict` and `probedAt` without reaching into a private sibling. The enumerable
+doctor `state: 'ready'` must never be the ONLY signal a consumer can read.
 
 **The staleness law.** A probe result ages; the projection says how old it is **from content**, never
 TTL-guessing. "Content" = the `verifiedAt`/`expiresAt`/`latencyMs` recorded AT PROBE TIME into the
@@ -298,6 +360,12 @@ whose route is unverified or failed. The contract pins this with a dedicated tes
 probing, no `member.exact` mutation, no silent seat swap. If an orchestrator wants a different seat,
 it says so in the member's `exact` — that is its authority, not the tier's.
 
+**The "inform" channel rides D2's wire fix.** Until the honest fields survive JSON (D2, folded), an
+EXTERNAL orchestrator (MCP/web/CLI) cannot see `verdict`/`probedAt`; the in-process wave preflight
+reads the non-enumerable sibling by property access and works today (wave-driver.mjs:323-335). The
+external orchestrator's defer-to-a-live-seat read is gated on D2's enumerable + northbound re-add
+landing. *(Fold: red-team §2-D3.)*
+
 ---
 
 ## Refusal vocabulary (closed, typed)
@@ -311,12 +379,15 @@ Extend the typed vocabulary so every probe verdict has a named code in `PROVIDER
 | `authentication_refresh_required` | provider_authentication | existing; the `invalid_grant` class | existing + `baton doctor --check` / credential refresh |
 | `provider_unreachable` | provider_runtime | the provider did not complete a turn within the probe bound (network/timeout) | retry after the bound; `baton doctor --check` forces a fresh probe |
 | `probe_content_mismatch` | provider_protocol | the provider answered but not the content pin | inspect the route's bounded evidence; `baton doctor --check` |
-| `probe_oversize` | provider_protocol | the probe exceeded its own bounds | a tier defect — report it; the bound is registry-declared (OQ5) |
-| `provider_quota` (NEW) | provider_capacity | the provider's quota/capacity is exhausted (HTTP 402 / `insufficient_quota` / rate-capacity wire) | resolve the vendor quota/capacity condition; `baton doctor --check` after |
+| `probe_oversize` | provider_protocol | the probe exceeded its own bounds | a tier defect — report it; the bound is registry-declared (OQ6) |
+| `provider_quota` (NEW) | provider_capacity | the provider's quota/capacity is exhausted (HTTP 402 / `insufficient_quota` / rate-capacity wire) | resolve the vendor quota/capacity condition; `baton doctor --check` after; **NO automatic re-probe within a billing cycle — operator surface only** *(Fold: red-team amendment (c), OQ3 decided)* |
 
 Every code carries `{category, summary, remediation, retryable}` in the existing table shape. A probe
 or worker-turn verdict maps to its code — never a generic "not ready" — so the preflight refusal and
-the terminal-cause projection (application-semantics.mjs:2127-2130) name the actual class.
+the terminal-cause projection (application-semantics.mjs:2127-2130) name the actual class. A
+`provider_quota` row excludes automatic re-probe: the default `failureWindowMs` re-probe cadence is
+NOT applied to a quota-dead route (each probe spends budget on a dead route); `baton doctor --check`
+is the primary unstick.
 
 ---
 
@@ -335,25 +406,40 @@ the terminal-cause projection (application-semantics.mjs:2127-2130) name the act
   bug, not a policy.
 - **No removal of the static substrate.** `deploymentReadiness` / `assertRouteReady` / DP3-DP5 stay
   byte-stable; the tier is additive.
+- **No liveness guarantee on an unwired spawn surface.** Until the spawn gate covers all five
+  provider-spawn surfaces (A6), an unwired surface is honest-read-only: it carries no liveness
+  guarantee, and the contract claims nothing for it (Fold: blocker 4).
 
 ---
 
 ## Acceptance (red-first — every pin RED at the current HEAD)
 
-**A1 (D2 — the honest projection shape).** A static-only readiness read — no probe recorded, or
-window lapsed, or route unsupported, or deployment not opted in — carries `verdict: 'unverified'`
-with `probedAt: null` (or the recorded measurement when one exists), and NEVER `verdict: 'alive'`. A
-`verdict: 'alive'` row requires a content-verified probe with an unexpired recorded window, and its
-`probedAt` equals the recorded `verifiedAt` (content-derived, never a TTL guess). *RED at HEAD: no
-`verdict`/`probedAt` fields exist; the doctor row's enumerable `state: 'ready'` is the only readable
-signal and the roster's liveness tuple spells the class as `state`, not `verdict`.*
+**A1 (D2 — the honest projection shape, wire-surviving).** A static-only readiness read — no probe
+recorded, or window lapsed, or route unsupported, or deployment not opted in — carries
+`verdict: 'unverified'` with `probedAt: null` (or the recorded measurement when one exists), and NEVER
+`verdict: 'probe-verified'`. A `verdict: 'probe-verified'` row requires a content-verified probe with
+an unexpired recorded window, and its `probedAt` equals the recorded `verifiedAt` (content-derived,
+never a TTL guess). The honest fields are **enumerable** on the doctor route row — they survive
+`JSON.stringify` — and the northbound re-add is pinned for `/v1/application-card`
+(web-northbound.mjs:1504-1513), the CLI doctor read (application-cli.mjs:1961-1978), and
+`deployment.doctor` (mcp-northbound.mjs:1804-1808): an operator wire read — `baton doctor`,
+`baton doctor --check`, GET `/v1/application-card`, or `baton_deployment_doctor` — carries
+`verdict` + `probedAt`. *(Fold: blocker 3 — the "OR the stated non-enumerable sibling" clause is
+struck; the wire-surviving form is required.)* *RED at HEAD: no `verdict`/`probedAt` fields exist;
+the doctor row's enumerable `state: 'ready'` is the only readable signal; the roster's liveness
+tuple spells the class as `state`, not `verdict`; the web card re-adds only `briefing`
+(web-northbound.mjs:1507-1513).*
 
-**A2 (D1 — the on-demand probe surface).** `baton doctor --check` propagates the parsed `check` flag
-(application-cli.mjs:1264) through the doctor handler (:2213) to the deployment and forces exactly one
-fresh probe per stale/absent liveness route before returning the updated honest projection; a
-cache-fresh route probes zero times; a `failed` probe returns the typed verdict in the read. *RED at
-HEAD: `check` is parsed at :1264 but dropped at :2213 (`if (parsed.kind === 'doctor') return
-client.doctor();`).*
+**A2 (D1 — the on-demand probe surface, operator path).** `baton doctor --check` — the
+`impl/scripts/baton.mjs:79-98` doctor branch reading `parsed.check` at :81 — forces exactly one fresh
+probe per stale/absent liveness route before returning the updated honest projection; the force rides
+`BatonWebClient.doctor()` (application-cli.mjs:1961) → a web-northbound forced-probe parameter on
+`/v1/application-card` (web-northbound.mjs:1504-1513); a cache-fresh route probes zero times; a
+`failed` probe returns the typed verdict in the read. *(Fold: blocker 2 — the pin asserts the
+operator surface, not the application-cli.mjs:2213 library seam.)* *RED at HEAD: the baton.mjs branch
+consumes `--check` only to select local-vs-remote (`if (!parsed.check || local.state !==
+'configured')`, baton.mjs:81); `BatonWebClient.doctor()` reads `/readyz` + `/v1/application-card` and
+forces no probe; no web-northbound forced-probe parameter exists.*
 
 **A3 (refusal vocabulary — typed probe failures).** A source scan pins that `provider_unreachable`,
 `probe_content_mismatch`, `probe_oversize`, and `provider_quota` each have a
@@ -367,10 +453,13 @@ generic (:2090-2095).*
 provider's quota/capacity wire — HTTP `402`, `insufficient_quota`, rate-limit/capacity wording,
 `quota`/`capacity`/`overloaded`/`limit exceeded` — classifies to the typed `provider_quota` verdict,
 distinct from `provider_unreachable` and `probe_content_mismatch`, and does NOT fire the
-credential-scoped `invalid_grant` invalidation. *RED at HEAD: the only wire-classified verdict is
+credential-scoped `invalid_grant` invalidation. A `provider_quota` row does NOT auto-re-probe: the
+automatic `failureWindowMs` cadence is excluded for it, and `baton doctor --check` is the unstick
+*(Fold: red-team amendment (c), OQ3 decided)*. *RED at HEAD: the only wire-classified verdict is
 `invalid_grant|revok` → `authentication_refresh_required` (route-liveness.mjs:243-244); a 402/capacity
 output falls to `probe_content_mismatch` (:241) or `provider_unreachable` (:246) with no distinction.
-The exact wire grammar is a live-receipt question (OQ2); the pin pins the CLASSIFICATION SEPARATION.*
+The exact wire grammar is a live-receipt question (OQ2); the pin pins the CLASSIFICATION SEPARATION
+and the no-auto-re-probe cadence.*
 
 **A5 (D3 — refuse or inform, never silently reroute).** At wave preflight, a member whose route
 verdict is `failed` is refused `wave_driver_route_unready` with the typed code BEFORE any member
@@ -379,6 +468,15 @@ is probed, no router advice is consumed on the member's behalf. The refusal AND 
 property are both asserted (behavior + source-scan). *RED at HEAD: RT-5/RT-5p pin the refusal; no test
 pins the no-reroute property.*
 
+**A6 (D1 — the probe gate covers every provider-spawn surface).** On a liveness-wired deployment, a
+source scan pins `#livenessGate` (application-deployment.mjs:1376-1381) consulted on EVERY
+provider-spawn surface — `run()` (:1444-1447), `startMany` (:1450-1457), `workflow` (:1459-1466),
+`explore` (:1468-1471), `review` (:1473-1480) — before any real provider turn, exactly as
+`assertRouteReady` is already consulted on each; the refusal is the typed liveness failure, never a
+silent spawn. An unwired surface is honest-read-only: no liveness guarantee is claimed for it.
+*(Fold: blocker 4.)* *RED at HEAD: only `run()` (:1446) consults the gate; the four sibling surfaces
+call `assertRouteReady` only.*
+
 ---
 
 ## Verification
@@ -386,13 +484,13 @@ pins the no-reroute property.*
 ```text
 node --test impl/test/readiness-credentials-red.test.mjs      # the landed #47 suite stays green (26/26 at HEAD)
 node --test impl/test/phase78-deployment-readiness-red.test.mjs   # DP3/DP3b/DP4/DP5 stay byte-stable
-node --test <the new #167 red suite>                          # A1..A5, shipped red-first
+node --test <the new #167 red suite>                          # A1..A6, shipped red-first
 ```
 
 Then the canonical suite fully green. Post-landing live receipts: the first `baton doctor --check`
-forced probe of a quota-dead route records the observed `provider_quota` wire; the first lapsed-window
-read records `probedAt`/`expiresAt` age truth — each in this evidence directory, mirroring the #47
-live-receipt precedent (readiness-credentials-contract.md §6).
+forced probe of a quota-dead route records the observed `provider_quota` wire (the OQ2 live-receipt
+follow-on); the first lapsed-window read records `probedAt`/`expiresAt` age truth — each in this
+evidence directory, mirroring the #47 live-receipt precedent (readiness-credentials-contract.md §6).
 
 ---
 
@@ -400,24 +498,27 @@ live-receipt precedent (readiness-credentials-contract.md §6).
 
 - **OQ1 — verdict vocabulary vs the landed `liveness.state`.** The roster's `liveness` tuple
   currently spells the class as `state: 'verified'|'unverified'|'failed'|'unsupported'`. This contract
-  adds `verdict` (`alive|unverified|failed`) + `probedAt` as the honest projection. Judgment: keep the
-  landed `liveness.state` byte-stable for back-compat (RT-6/RT-4 read it) and ADD the honest fields;
-  do not rename in place. A coordinator ruling could instead rename — either satisfies A1, but the
-  additive path avoids touching the green RT suite.
-- **OQ2 — the quota/capacity wire grammar.** The exact 402/`insufficient_quota`/capacity matcher is
-  unverified against live provider wire (the same class of unverified-wire assumption RT-14b records
-  in readiness-credentials-red.test.mjs:49-52). Judgment: A4 pins the CLASSIFICATION SEPARATION with a
-  fixture; the exact grammar is a live-receipt question, folded later.
-- **OQ3 — re-probe cadence for a quota death.** A quota death is non-transient within a billing cycle;
-  the default 10-min failure window (route-liveness.mjs:17) would re-probe a quota-dead route every 10
-  minutes, each probe spending budget on a dead route. Judgment: `provider_quota` should either use a
-  longer window or treat `baton doctor --check` as the primary unstick; the contract leaves the exact
-  window to the deployment (configurable `failureWindowMs`) but names the operator surface as the
-  primary unstick.
-- **OQ4 — the `--check` wire path.** The CLI client's `doctor()` (application-cli.mjs:2213) reads
-  `/readyz` + `/v1/application-card`; carrying a `check` flag requires either a new doctor command
-  envelope or a query parameter on the existing read. Judgment: the contract pins the surface BEHAVIOR
-  (A2); the wire shape is an implementation choice, sibling-consistent with the existing doctor reads.
+  adds `verdict` (`probe-verified|unverified|failed`, per the QA H1 rename) + `probedAt` as the honest
+  projection. Judgment: keep the landed `liveness.state` byte-stable for back-compat (RT-6/RT-4 read
+  it) and ADD the honest fields; do not rename in place. A coordinator ruling could instead rename —
+  either satisfies A1, but the additive path avoids touching the green RT suite.
+- **OQ2 — the quota/capacity wire grammar (live-receipt follow-on).** The exact
+  402/`insufficient_quota`/capacity matcher is unverified against live provider wire (the same class
+  of unverified-wire assumption RT-14b records in readiness-credentials-red.test.mjs:49-52). Judgment
+  (QA §4.4.3, folded): A4 pins the CLASSIFICATION SEPARATION with a fixture; the exact grammar is a
+  live-receipt question — the first `baton doctor --check` forced probe of a quota-dead route records
+  the observed wire in this evidence directory, mirroring the #47 live-receipt precedent.
+- **OQ3 — re-probe cadence for a quota death (DECIDED by the fold).** A quota death is non-transient
+  within a billing cycle; the default 10-min failure window (route-liveness.mjs:17) would re-probe a
+  quota-dead route every 10 minutes, each probe spending budget on a dead route. Folded decision
+  (red-team amendment (c)): `provider_quota` excludes automatic re-probe — `baton doctor --check` is
+  the primary unstick; the refusal table + A4 carry it.
+- **OQ4 — the `--check` wire path (FOLDED into A1/A2).** The CLI client's `doctor()`
+  (application-cli.mjs:1961-1978) reads `/readyz` + `/v1/application-card`; carrying a forced-probe
+  flag requires a web-northbound forced-probe parameter on `/v1/application-card`
+  (web-northbound.mjs:1504-1513). Judgment: the fold pins the surface BEHAVIOR (A2, operator path)
+  and the wire-survival requirement (A1, enumerable + transport) — this is no longer a post-pin
+  choice (red-team §5).
 - **OQ5 — `probedAt` on a failed probe.** Judgment: `probedAt` records the last probe MEASUREMENT time
   (`verifiedAt` OR `failedAt`), so a failed row still tells the operator WHEN it was measured;
   `verdict` carries the class. A coordinator ruling preferring `probedAt` = verified-only is a one-line
@@ -426,3 +527,39 @@ live-receipt precedent (readiness-credentials-contract.md §6).
   outside `FRAME_LIMITS`. This rung introduces no new byte bound, so it adds no registry row; relocating
   the existing bounds would bump `FRAME_LIMITS_DIGEST` (limits.mjs:130-131) and touch the frame-economics
   contract — out of scope for #167's honesty rung, recorded as a follow-on debt.
+
+---
+
+## Fold record — v1 → v2 (2026-08-13)
+
+- **Red-team:** `docs/reference/evidence/contract-foundry-2026-08-13/redteam-167.md` (row-rt167,
+  verdict NOT FOLD-READY: 2 citation/mechanism blockers + 2 structural holes + 3 amendments + notes).
+- **QA:** `docs/reference/evidence/review-foundry-2026-08-13-b/review-qa.md` §4 (blind — written
+  without the row report; per the blind-QA law the row report governs on conflict; the §4.4 fold set
+  is binding and disjoint from the row blockers).
+- **Verification:** every citation the fold touched re-verified THIS session at HEAD `e371f70`
+  (`sed -n` / `grep -an`; NUL discipline on `application.mjs` + `coordination-store.mjs`).
+
+| Item | Source | Resolution |
+|---|---|---|
+| Blocker 1 — shared-publish citation: "`coordinator.mjs:12693` wrong"; re-cite to `coordinator.mjs:11103` | redteam §1.2-1 / §7-1 | STRUCK (the `:11103` re-anchor is refuted by verification: `:11103` is orientation-leaf code; `coordinator.mjs:12693` is the `case 'scratchpad.write':` dispatch's `writeScratchpad` call; the method is at `coordinator.mjs:10790`, store at `coordination-store.mjs:14064`). Citation FOLDED for precision — the header's shared-publish note now cites `:12690-12697` + `:10790` + `:14064`. |
+| Blocker 2 — G5/A2 anchor the `--check` failure at the wrong seam (`application-cli.mjs:2213`); the operator path is `impl/scripts/baton.mjs:79-98` → `BatonWebClient.doctor()` (`application-cli.mjs:1961`) → `/readyz` + `/v1/application-card`, never forcing a probe | redteam §1.2-2 / §4-A2 / §7-2 | FOLDED — G5, D1-trigger-3, and A2 re-anchored to the operator path end-to-end; A2 asserts a fresh probe fires per stale/absent route on `baton doctor --check` and pins the web-northbound forced-probe parameter. |
+| Blocker 3 — HOLE D2/A1: the honest projection vanishes on the wire (non-enumerable `liveness`/`occupancy` dropped by JSON, application-deployment.mjs:1348-1349; web card re-adds only `briefing`, web-northbound.mjs:1507-1513) | redteam §2-D2 / §4-A1 / §7-3 | FOLDED — D2 requires enumerable (JSON-surviving) `verdict`/`probedAt` on the doctor route row; the "OR the stated non-enumerable sibling" clause struck; the northbound re-add pinned for `/v1/application-card` + CLI doctor + `deployment.doctor`/MCP result; A1 asserts an operator wire read carries `verdict` + `probedAt`. |
+| Blocker 4 — HOLE D1: the probe gate covers only `run()` + wave preflight (`startMany`/`workflow`/`explore`/`review` call only `assertRouteReady`) | redteam §2-D1 / §7-4 | FOLDED — D1-trigger-1 expanded to every provider-spawn surface; new pin A6 (RED at HEAD: only `run()` :1446 wired); unwired surfaces are honest-read-only until wired (claims shrink to the wiring). |
+| Amendment (a) — the probe is a liveness ping, not a capacity probe | redteam §2-D1 note | FOLDED — D1 cost-honesty paragraph states the probe cannot distinguish "will accept the ping" from "will accept the wave"; A4's worker-turn classification is the post-hoc catch. |
+| Amendment (b) — fold OQ4 into A1/A2 as a wire-survival requirement | redteam §5 / §7(b) | FOLDED — OQ4 resolved; the wire-survival requirement is part of A1 (enumerable + transport) + A2 (operator path). |
+| Amendment (c) — `provider_quota` no-auto-re-probe window | redteam §5 / §7(c) | FOLDED — refusal vocabulary row + A4 + OQ3: `provider_quota` excludes automatic re-probe (operator surface only). |
+| QA §4.4.1 (H1) — rename `verdict: 'alive'` → `probe-verified`; carry the caveat into the D2.3 teaching sentence | review-qa §4.3-H1 / §4.4-1 | FOLDED — D2 shape + cardinal law + teaching sentence updated; the caveat ("probe-verified means passed a bounded one-token probe within the window, never will complete a real turn") added. |
+| QA §4.4.2 — keep the bounded probe shape, the `{static, probedAt, verdict}` projection + staleness law, the refuse-or-inform-never-reroute admission | review-qa §4.4-2 | KEPT as written — D1 bounds, D2 staleness law, D3 admission unchanged in substance. |
+| QA §4.4.3 — fold OQ2 as a live-receipt follow-on; keep A4's classification-separation fixture as the pinned floor | review-qa §4.4-3 | FOLDED — OQ2 retained as the live-receipt follow-on; A4 unchanged in its classification-separation floor (plus the folded no-auto-re-probe). |
+| QA §4.1 verdict conflict — "SOUND with one amendment" vs the row report's NOT FOLD-READY | review-qa §4.1 (blind) | RESOLVED per the blind-QA law — the row report governs on conflict; the row's 4 blockers stand and are folded above. The QA's own amendment (H1) is folded; its §4.4.2/3 set is kept/folded. |
+| A3 — typed probe failures (source-scan pin) — red-team §4: RED at HEAD, SOUND | redteam §4-A3 | KEPT as written — a source scan is not shallow-greenable; no text change. |
+| A5 — refuse-or-inform, never reroute — red-team §4: RED at HEAD, SOUND | redteam §4-A5 | KEPT as written — behavior + source-scan; a wrong impl would fail both; no text change. |
+| N1 — the `resource.provider_call` receipt is self-attested (adapter is the trust boundary) | redteam §2-D1 note / §7 | RECORDED + FOLDED — D1's honesty paragraph states the receipt "attests that the adapter reported a call, not a billing statement"; inherent, not a defect. |
+| N2 — the preflight admits an unsupported (non-pausable) route unverified (`state: 'unsupported'` → `unverified`, never `failed`) | redteam §2-D3 note / §7 | RECORDED — already stated (D2: unsupported → `unverified`, additive-never-block; wave-driver.mjs:325-335); posture intentional (every real adapter is `pausable`). |
+| N3 — nit: `limits.mjs` FRAME_LIMITS span is :53-111, merged export at :115 | redteam §1.3 / §7 | RECORDED + FOLDED — G7 re-cites `limits.mjs:53-111, merged export :115`. |
+| N4 — nit: the route-liveness header quote spans :3-6 | redteam §1.3 / §7 | RECORDED + FOLDED — G2 re-cites `route-liveness.mjs:3-6`. |
+| N5 — nit: "they bound spend, not progress" sits at `bidirectional-v3-decisions.md:143-144` | redteam §1.3 / §7 | RECORDED + FOLDED — control-law preamble re-cites `:143-144`. |
+| N6 — §2-D3 coupling: the "inform" channel is wire-blind for any external orchestrator until the D2 fix lands | redteam §2-D3 | RECORDED + FOLDED — D3 states the external orchestrator's defer-to-a-live-seat read is gated on D2's enumerable + northbound re-add. |
+| N7 — §3 note: the worker-turn finding classifies only `invalid_grant|revok`; a real-turn 402/capacity death collapses to the generic until the OQ2 wire grammar lands | redteam §3 note | RECORDED — OQ2's framing covers it (A4's "or worker turn" rides the same live-receipt wire grammar). |
+| N8 — §8 corroborations: operator seam exercised; `fleet_roster` zero wire exposure; no-reroute holds across the spawn layer; probe economics coalesce per route; shared-scratchpad publish non-executable | redteam §8 | RECORDED — corroborate blockers 2/3, D3 SOUND, D1 economics, and the header's shared-publish note; no new blocker. |

@@ -1,20 +1,21 @@
 # #170 implementation contract — the workflow-spec DSL (wavefile), a line-oriented authoring surface over the closed #114 spec
 
-Date: 2026-08-13. Status: contract for implementation, **v1** — ring-2 form (ground truths →
+Date: 2026-08-13. Status: contract for implementation, **v2** — ring-2 form (ground truths →
 decisions → refusal vocabulary → red-first acceptance → open questions). Primary input: the brief
 in this directory (`contract-170-brief.md`) and the operator ask it carries — *"a scripted-dynamic
 workflow through the baton surface — a DSL or literally anything better than this one-off ad-hoc."*
 Every citation below was re-verified this session against the working tree with `grep -an`/`sed -n`
-(HEAD `7661b1f`). NUL discipline applied to `application.mjs` and `coordination-store.mjs` (both
-carry NUL bytes; `grep -a` only). No wall-clock claims; no redesign of the interpreter's closed
-spec — the DSL lowers TO it (`workflow-interpreter.mjs` `admitSpec`), it does not extend it.
+(HEAD `7661b1f`; re-verified at the fold against worktree HEAD `e371f70` — see the fold record).
+NUL discipline applied to `application.mjs` and `coordination-store.mjs` (both carry NUL bytes;
+`grep -a` only). No wall-clock claims; no redesign of the interpreter's closed spec — the DSL lowers
+TO it (`workflow-interpreter.mjs` `admitSpec`), it does not extend it.
 
 **The contract in one sentence.** A new line-oriented authoring format — **wavefile** — whose
 closed directive vocabulary mirrors the interpreter's closed field set exactly, whose compiler is a
-pure function of the text, whose every refusal carries the `{line, field, expected}` triple (the
-#160 law), and whose emitted JSON is byte-for-byte the object `admitSpec` accepts — so the DSL
-text rides every existing surface (CLI/bus/MCP/facade) through ONE seam, `waves.compile`, while the
-interpreter stays untouched.
+pure function of the text given `repoRoot`, whose every refusal carries the `{line, field, expected}`
+triple (the #160 law) on the error AND the wire, and whose emitted JSON is byte-for-byte the object
+`admitSpec` accepts — so the DSL text rides every existing surface (CLI/bus/MCP/facade) through ONE
+seam, `waves.compile`, while the interpreter stays untouched.
 
 ---
 
@@ -71,9 +72,11 @@ value passed as a STRING (the #153 comment — the refusal that cost three resid
 non-empty bounded array" (`workflow-interpreter.mjs:186-187`); the same member must repeat
 `exact`/`scope`/`objectiveRef`/`report` for every row; and the foundry spec repeats the identical
 `scope: ["docs/reference/evidence/contract-foundry-2026-08-13/**"]` on all five members
-(`contract-foundry-2026-08-13/workflow.json:12,25,38,51,64`). A line-oriented grammar makes the
-array shape structural (a `scope` directive IS an array entry — there is no way to pass a scalar)
-and collapses the five repeated scopes to one wave-level default.
+(`contract-foundry-2026-08-13/workflow.json` — every member carries the identical single-entry scope;
+line numbers are deliberately NOT pinned here because the foundry rewrites this artifact between
+waves). A line-oriented grammar makes the array shape structural (a `scope` directive IS an array
+entry — there is no way to pass a scalar) and collapses the five repeated scopes to one wave-level
+default.
 
 **G4 — The route admission is the model/harness/effort authority; aliases exist but are closed and
 named by the deployment adapter, never by the DSL.** The interpreter's `exact` fields are opaque
@@ -108,6 +111,9 @@ accepted set, and `admitSpec`'s closed fields must derive from one source
 (`doc-truth-conformance-2026-08-13/doc-truth-conformance-contract.md` §D1). `waves.run`'s registry
 row currently claims surfaces `['embedded','mcp','cli']` — no `web` (`application-semantics.mjs:1637-1647`)
 — while the web admits `waves_run` (G2); the DSL's new rows must not repeat that ghost-row shape.
+**The DSL's own suite file — the home of every §4 pin — is `impl/test/workflow-dsl-red.test.mjs`**
+(new, this rung); `wave-grammar-red.test.mjs` is only the borrowed SHAPE (its WG-* rows drive
+`waves.attach`, not the DSL).
 
 ---
 
@@ -137,7 +143,8 @@ closed field or block opener, and a directive's placement resolves the two conte
 - **Token** — a maximal run of non-whitespace characters, OR a double-quoted string `"…"` with the
   escapes `\"`, `\\`, `\n`, `\t`, `\uXXXX`. An unterminated quote at end of logical line is a
   grammar refusal (`workflow_spec_invalid`, `field` = the directive, `expected` = `'"closing
-  quote"'`). Tokens are passed to the directives verbatim (UTF-8 preserved; no case folding).
+  quote"'`). Tokens are passed to the directives verbatim (UTF-8 preserved; no case folding) —
+  em-dashes, arrows, and backticks inside a quoted string are literal (OQ5).
 
 **Directive vocabulary (closed, 16 directives).** Every directive except the three block/transport
 openers (`wave`, `member`, `harvest`) is spelled EXACTLY as the interpreter's field name it lowers
@@ -172,7 +179,9 @@ to — the "closed field vocabulary mirroring the interpreter's" is the mirror, 
   to the open member (this is the documented rule, refused with the triple if a member is not open
   at end of file and a stray `scope` would otherwise be ambiguous — a `scope` after the LAST member
   with no open member is a wave-level default ONLY if it appears before the first `member`; anywhere
-  else it is a grammar refusal `expected: 'member'`).
+  else it is a grammar refusal `expected: 'member'`). **Repeated top-level `scope` directives before
+  the first `member` accumulate into the wave-level default array in directive order; every member
+  without an override receives a copy of that array.**
 - `harness`/`model`/`effort`/`objectiveRef`/`report`/member-`scope` are member sub-fields: a line
   starting with any of them while NO member is open is a grammar refusal
   (`workflow_member_invalid`, `field` = the directive, `expected: 'member <role>'`).
@@ -220,32 +229,48 @@ role non-empty/≠`work`/unique, all three exact fields non-empty, scope array �
 entries in the path class plus the bare-directory `"<dir>/**"` corrective, `objectiveRef` present,
 report non-empty when present, steering enums/shapes (kinds ∈ `MESSAGE_KINDS`, elevate kinds ⊆
 `SCRATCHPAD_KINDS`, `maxEntries` positive safe integer, boolean args, policy values non-empty),
-and harvest path class. The render-time checks (`objectiveRef` existence/containment/byte-bound,
-the realpath harvest containment) stay at the interpreter — the compiler checks what is a pure
-function of the text, and the interpreter stays the final authority (defense in depth).
+harvest path class, **and the harvest realpath containment when `repoRoot` is provided** (D2). The
+ONLY checks the compiler leaves to the interpreter are the render-time ones — `objectiveRef`
+existence/containment/byte-bound — because render needs the filesystem AND the salt the interpreter
+mints (`workflow-interpreter.mjs:333-348,506`). The compiler is "pure given `repoRoot`" (D2), and
+the interpreter stays the final authority (defense in depth).
 
 **The round-trip pin.** `waves.compile` emits the precise object `admitSpec` accepts:
-`assert.doesNotThrow(() => admitSpec(compileWavefile(text), repoRoot))` AND
-`canonicalJson(admitSpec(compileWavefile(text), repoRoot)) === canonicalJson(compileWavefile(text))`.
+`assert.doesNotThrow(() => admitSpec(compileWavefile(text, { repoRoot }), repoRoot))` AND
+`canonicalJson(admitSpec(compileWavefile(text, { repoRoot }), repoRoot)) === canonicalJson(compileWavefile(text, { repoRoot }))`.
 The pin is green for every green pin in §4 and is a conformance leg (D4).
+
+**The closure (disjoint from the baton-attached dispatch surface).** The directive vocabulary is
+deliberate and TOTAL over the interpreter's closed spec — and provably DISJOINT from the machinery
+the baton attaches at dispatch/render, which no author writes and no directive expresses: the
+attempt salt (`[attempt: <salt> <role>]`) is minted by the interpreter at render via `randomUUID()`
+(`workflow-interpreter.mjs:506`) — the salt owner is the interpreter, never the author; `runId`/
+`waveId`/lane ids are minted at dispatch and derived, never authored (the spec's only authored
+identity is `idempotencyKey` via `wave <key>`); the driver/poll cadence is an invocation option,
+not a spec field (`application.mjs:11645`); and there is no "harvest projection" in the closed spec
+(`admitHarvest` admits exactly strings or `{path, mustContain?}`, `workflow-interpreter.mjs:291-316`).
+S4 pins this closure as a negative assertion (§4).
 
 ### D2 — The parse discipline
 
-**The compiler is a pure function of the text.** `compileWavefile(text, options = {})` — where
-`options.repoRoot` is optional and used ONLY for the path-class checks that need a realpath (the
-harvest containment; a lexical-only pass runs without it) — performs no `eval`, no `Function`, no
-dynamic `import`, and no file reads. The only file read in the DSL pipeline is the explicit
-`specPath` load at the surface (G2). Importing the compiler module runs NOTHING (the interpreter's
-W5 law made structural — no top-level await, no top-level wave start). The compiler module is
-self-contained: no imports from the interpreter or any other lane module, so it cannot drag a
-top-level side effect into the surface graph.
+**The compiler is a pure function of the text given `repoRoot`.** `compileWavefile(text, options = {})`
+— where `options.repoRoot` is optional and used ONLY for the harvest realpath containment (a
+lexical-only pass runs without it) — performs no `eval`, no `Function`, no dynamic `import`, and no
+file READS. The compiler's only filesystem syscall is the realpath containment check
+(`realpathSync`, or equivalent), allowed ONLY inside the `repoRoot`-gated harvest check and used
+exclusively to detect a symlink escape — never to read file contents. The only file READ in the DSL
+pipeline is the explicit `specPath` load at the surface (G2). Importing the compiler module runs
+NOTHING (the interpreter's W5 law made structural — no top-level await, no top-level wave start).
+The compiler module is self-contained: no imports from the interpreter or any other lane module, so
+it cannot drag a top-level side effect into the surface graph.
 
-**Every refusal carries the #160 triple.** A refusal is thrown as
-`Object.assign(new TypeError(message), { code, line, field, expected })`, where:
+**Every refusal carries the #160 triple — on the error AND on the wire.** A refusal is thrown as
+`Object.assign(new TypeError(message), { code, line, field, expected, detail: { line, field, expected } })`,
+where:
 
 - `code` ∈ the closed refusal vocabulary (§3) — the interpreter's own `workflow_*` codes, so the
   existing MCP `workflow_*` prefix arm (`mcp-northbound.mjs:209-213`) and `LANE_CRAFTED` detail
-  (`:1651-1652`) preserve it with no allowlist change, and #160 R3's web pre-TypeError arm is the
+  (`:1651-1654`) preserve it with no allowlist change, and #160 R3's web pre-TypeError arm is the
   single web-side dependency.
 - `line` — the 1-based logical line number of the offending directive (post-continuation-join; the
   message also carries the original line's text when it does not leak a value — the #41
@@ -255,6 +280,9 @@ top-level side effect into the surface graph.
   or `member <role>` for member refusals.
 - `expected` — the closed shape the parser wanted (e.g. `'member <role>'`, `'inform|query|steer|brief|result'`,
   `'"<pattern>" "<value>"'`, `'non-empty scope'`, `'"<dir>/**"'`).
+- `detail` — the WIRE shape, exactly `{ line, field, expected }`. The MCP `LANE_CRAFTED` arm
+  forwards only `cause?.detail` (`mcp-northbound.mjs:1651-1654`), so the triple rides the wire ONLY
+  through this leg; §3 and P9 pin `error.detail.line/field/expected` explicitly.
 
 No refusal ships without all three legs; a compile that reaches an internal invariant violation
 throws `workflow_spec_invalid` with `expected: 'internal'` and `field` naming the directive — the
@@ -299,7 +327,7 @@ surface funnels text-form specs through ONE compile seam:
 |---|---|---|
 | **CLI** | `baton waves run <wavefile.dsl>` — the text lives in the file | `waves.run {specPath}` (existing parse, `application-cli.mjs:1327-1332`); the application's `runWorkflow` reads, sniffs, compiles, passes the IR object to the interpreter. New: `baton waves compile <specPath>` → prints the emitted IR JSON (the inspectable seam; new `compile` branch in the `waves` verb family, `application-cli.mjs:1323-1384`). |
 | **Bus (web)** | `waves_run {specDsl: "<text>"}` or `waves_run {specPath: "wavefile.dsl"}` | `ARG_FIELDS` gains `specDsl` (`web-northbound.mjs:60`); `waves_run {specPath}` already admitted (`:46`); the application `runWorkflow` sniffs/compiles. New read-only transport `waves_compile {specDsl|specPath}` → `{spec}`. |
-| **MCP** | `baton_waves_run {repoId, specDsl: "<text>"}` | inputSchema gains `specDsl: {type: 'string', minLength: 1}` alongside `spec` (`mcp-northbound.mjs:552-558`); dispatch passes `spec: args.spec ?? compileWavefile(args.specDsl)` (`:1794-1802`). New read-only tool `baton_waves_compile {specDsl}` → `{spec}`. The `workflow_*` MCP allowlist and `LANE_CRAFTED` detail already preserve the compiler's typed refusals (G5). |
+| **MCP** | `baton_waves_run {repoId, specDsl: "<text>"}` | inputSchema gains `specDsl: {type: 'string', minLength: 1}` alongside `spec` (`mcp-northbound.mjs:552-558`); dispatch passes `spec: args.spec ?? compileWavefile(args.specDsl)` (`:1794-1802`). New read-only tool `baton_waves_compile {specDsl}` → `{spec}` (a NEW tool, not a field bolted onto `baton_waves_run` — DR-2). The `workflow_*` MCP allowlist and `LANE_CRAFTED` detail already preserve the compiler's typed refusals (G5). |
 | **Facade (embedded)** | `baton.waves.compile(text) → spec` then `baton.recipes.runWorkflow(spec)`; or `baton.recipes.runWorkflow("wavefile.dsl")` | `baton.waves.compile` is a new method on the `waves` accessor (`application-client.mjs:1553-1565`); `runWorkflow`'s recipes wrapper (`recipes.mjs:584`) sniffs string inputs (path → read → sniff; text → sniff) and compiles before calling the interpreter. |
 
 In every row the interpreter receives ONLY the IR object — its `admitSpec` input stays the IR, its
@@ -312,23 +340,27 @@ already defaults an omitted driver to `PRODUCTION_WORKFLOW_DRIVER` (`application
 DSL path must not override it, and a `waves.compile`-produced IR carries no driver field (the driver
 is an invocation option, not a spec field).
 
-**`waves.compile` as the inspectable seam.** `waves.compile` (CLI `baton waves compile`, MCP
-`baton_waves_compile`, bus `waves_compile`, facade `baton.waves.compile`) is the single place the
-operator reads the emitted IR. It is idempotent, read-only, and admission-free (it never starts a
-wave). Its output is exactly what `waves run`/`runWorkflow` accepts — the round-trip pin in D1 is
-the proof, and a suite row drives the seam end-to-end: compile the DSL → run the emitted IR → the
-run is identical to running the DSL text directly.
+**`waves.compile` as the inspectable seam (DR-2, LAW).** `waves.compile` lands as a NEW direct-port
+command beside `waves.run` at `application.mjs:12560-12573` (the same seam family and pre-gate
+dispatch — one seam, one authorization story), plus a NEW read-only MCP tool `baton_waves_compile`.
+The four surface entrances — CLI `baton waves compile`, MCP `baton_waves_compile`, bus
+`waves_compile`, facade `baton.waves.compile` — all funnel through that one command port. It is
+idempotent, read-only, and admission-free (it never starts a wave). Its output is exactly what
+`waves run`/`runWorkflow` accepts — the round-trip pin in D1 is the proof, and a suite row drives the
+seam end-to-end: compile the DSL → run the emitted IR → the run is identical to running the DSL text
+directly.
 
 **The generated-docs row (#159 doctrine).** The directive table in D1 becomes a generated block,
 derived mechanically from ONE source: a `WAVEFILE_DIRECTIVES` registry inside the compiler module
 (directive → arity → token shapes → IR field → closed enum). A `renderWavefileGrammar()` in
-`render-surface-docs.mjs` renders that table into the reference docs; `checkSurfaceDocs()` gains the
-wavefile block as a byte-stable committed block; and `runSurfaceConformanceMain`
-(`surface-conformance.mjs:682-747`) gains a wavefile leg proving **documented ⇄ parsed ⇄ admitted**:
-the rendered directive set ⊇ the compiler's accepted set ⊇ `admitSpec`'s closed fields, plus the
-round-trip pin. The new `waves.compile` command row is registered in the semantic registry with the
-correct surface set (`['embedded','mcp','cli','web']`) — it must not repeat the `waves.run`
-ghost-row shape (G6).
+`impl/scripts/render-surface-docs.mjs` renders that table into the reference docs; `checkSurfaceDocs()`
+(`impl/scripts/render-surface-docs.mjs:145`) gains the wavefile block as a byte-stable committed
+block; and `runSurfaceConformanceMain` (`impl/scripts/surface-conformance.mjs:682-747`) gains a
+wavefile leg proving **documented ⇄ parsed ⇄ admitted**: the rendered directive set ⊇ the compiler's
+accepted set ⊇ `admitSpec`'s closed fields, plus the round-trip pin. Registry rows, pinned this rung
+(N3/OQ6): the new `waves.compile` command row registers with surfaces `['embedded','mcp','cli','web']`,
+and the existing `waves.run` row gains `web` (its `waves_run` bus transport already exists, G2) — no
+ghost row either way.
 
 ---
 
@@ -342,42 +374,53 @@ interpreter's own constructors — no new code, no allowlist churn.
 
 | Code | Fires on | `field` leg (examples) | `expected` leg (examples) |
 |---|---|---|---|
-| `workflow_spec_invalid` | grammar/structure: unknown directive, wrong arity, unterminated string, `wave` not first, bad `idempotencyKey`, stray member sub-field with no open member | the offending directive (`memberr`, `nudgOnCheckpoint`); `idempotencyKey` | `'wave <key>'`, `'<directive> <arity>'`, `'end of line'`, the `IDEMPOTENCY_PATTERN` |
+| `workflow_spec_invalid` | grammar/structure: unknown directive, wrong arity, unterminated string, `wave` not first, bad `idempotencyKey`, stray member sub-field with no open member | the offending directive (`memberr`, `nudgOnCheckpoint`); `idempotencyKey` | `'wave <key>'`, `'<closed directive list>'` (unknown directive), `'<directive> <arity>'`, `'end of line'`, the `IDEMPOTENCY_PATTERN` |
 | `workflow_member_invalid` | member shape: missing/empty `harness`/`model`/`effort`/`objectiveRef`, duplicate role, role `work`, empty role, bad scope path class, bare-directory scope, member scope missing with no wave default, scope after the last member | `member <role>`; `exact.harness`; `scope` | `'harness|model|effort'`, `'non-empty scope'`, `'"<dir>/**"'`, `'member <role>'` |
 | `workflow_steering_unknown` | steering shape: kind ∉ `MESSAGE_KINDS`, elevate kinds ⊄ `SCRATCHPAD_KINDS`, non-boolean, non-positive `maxEntries`, policy value empty, bad `signalOnMembersDone` roles | the steering field (`messageOnSpawn.kind`, `elevateWhenNotes.kinds`, `answerDecisions.policy`) | `'inform|query|steer|brief|result'`, `'doubt|link|note|plan'`, `'true|false'`, `'positive integer'` |
 | `workflow_harvest_invalid` | harvest shape: path-class escape (NUL/absolute/backslash/`..`), empty path, `mustContain` not a string | `harvest.paths[<n>]` | `'non-empty path in the repo path class'` |
 
 Every code is preserved on the wire per #160: MCP typed via the `workflow_*` prefix arm
-(`mcp-northbound.mjs:209-213`) with the triple in the `LANE_CRAFTED` detail (`:1651-1652`); web/bus
-via the #160 R3 pre-TypeError `workflow_*` arm (today destroyed at `web-northbound.mjs:228-230`);
-CLI via the existing code-forwarding (`application-cli.mjs:1947-1953`). Sanitization: the message
-never quotes a refused argument value (the #41 law) — it names the field, the line, and the expected
-shape.
+(`mcp-northbound.mjs:209-213`) with the triple in the `LANE_CRAFTED` detail via the thrown `detail`
+leg — the wire shape is `error.detail = {line, field, expected}` (`:1651-1654` forwards only
+`cause?.detail`); web/bus via the #160 R3 pre-TypeError `workflow_*` arm (today destroyed at
+`web-northbound.mjs:228-230`); CLI via the existing code-forwarding (`application-cli.mjs:1947-1953`).
+Sanitization: the message never quotes a refused argument value (the #41 law) — it names the field,
+the line, and the expected shape.
+
+**Residual (named, out of the DSL's authority to fix).** `signalOnMembersDone <roles>` and
+`answerDecisions "<pattern>"` are NOT cross-validated against the declared member set / a closed
+question pattern — the interpreter's `admitSteering` checks only non-emptiness + shape
+(`workflow-interpreter.mjs:218-289`), so a typo'd role (`signalOnMembersDone coordiantor result …`)
+or a policy key that names no real question compiles clean and is a SILENT no-op at run time, not a
+refusal. The compiler mirrors `admitSpec` (D1) and therefore cannot catch what the interpreter does
+not validate; the closure (D1) and S4 pin the machinery boundary but not this intent-level typo
+class.
 
 ---
 
 ## 4. RED-FIRST ACCEPTANCE PINS
 
 The suite idiom is `wave-grammar-red.test.mjs` (G6): in-process fixtures, no live providers, red
-rows that fail at a NAMED stage at HEAD and flip green on the implementation. Every DSL row is red at
-HEAD at the stage `workflow_dsl_compile_missing` — the compiler module does not exist and a DSL text
-handed to `waves run` reaches the interpreter's `JSON.parse` refusal. The acceptance gate is the
-full matrix green, plus the two static pins.
+rows that fail at a NAMED stage at HEAD and flip green on the implementation. The DSL's OWN suite
+home is `impl/test/workflow-dsl-red.test.mjs` (G6). Every DSL row is red at HEAD at the stage
+`workflow_dsl_compile_missing` — the compiler module does not exist and a DSL text handed to
+`waves run` reaches the interpreter's `JSON.parse` refusal. The acceptance gate is the full matrix
+green, plus the static pins.
 
 **Green pins (behavioral — each asserts the emitted IR and its `admitSpec` acceptance).**
 
 | Row | Assertion |
 |---|---|
-| P1 round-trip pin | `admitSpec(compileWavefile(text), repoRoot)` does not throw and `canonicalJson(admitSpec(...)) === canonicalJson(compileWavefile(text))` for the Appendix A wavefile AND for every green-pin wavefile below |
-| P2 scope default | a wave-level `scope` is emitted into every member lacking an override; a member `scope` overrides ONLY that member (no cross-member bleed); the foundry wavefile (Appendix A) compiles to the exact `contract-foundry-2026-08-13/workflow.json` object |
+| P1 round-trip pin | `admitSpec(compileWavefile(text, { repoRoot }), repoRoot)` does not throw and `canonicalJson(admitSpec(...)) === canonicalJson(compileWavefile(text, { repoRoot }))` for the Appendix A wavefile AND for every green-pin wavefile below |
+| P2 scope default | a wave-level `scope` is emitted into every member lacking an override; a member `scope` overrides ONLY that member (no cross-member bleed); the foundry wavefile (Appendix A) compiles to the immutable committed fixture `impl/test/fixtures/workflow-dsl-foundry-roundtrip.json` (a byte snapshot of the foundry object, committed — NOT the live `contract-foundry-2026-08-13/workflow.json`, which the foundry rewrites every wave) |
 | P3 no deeper inheritance | a member's emitted `scope` is exactly its own or a copy of the wave default — never a merge; no route/steering/harvest defaults exist |
 | P4 total coverage | a generated totality row iterates `WAVEFILE_DIRECTIVES` × `admitSpec`'s closed fields and asserts every field is expressible (SPEC_FIELDS/MEMBER_FIELDS/EXACT_FIELDS/STEERING_FIELDS/harvest) |
 | P5 sniffing | `waves run <dsl-file>` compiles and runs; `waves run <json-file>` JSON-parses and runs; both reach the same interpreter with the same IR |
 | P6 surfaces parity | the identical Appendix A text is accepted on CLI (`baton waves run`), bus (`waves_run {specDsl}`), MCP (`baton_waves_run {specDsl}`), and facade (`baton.waves.compile` → `runWorkflow`) |
 | P7 compile seam | `waves.compile(dslText)` output, re-fed to `runWorkflow`, produces the identical run receipt as running the DSL text directly |
 | P8 generated-docs row | `renderWavefileGrammar()` renders the directive table; `node impl/scripts/surface-conformance.mjs` prints `surface-conformance: ok` (exit 0) |
-| P9 #160 triple on MCP | a malformed wavefile driven through `baton_waves_run {specDsl}` surfaces the typed `workflow_*` code + `{line, field, expected}` detail (LANE_CRAFTED) |
-| P10 #160 triple on web/bus | the same refusal surfaces typed on the web (the #160 R3 pre-TypeError `workflow_*` arm), not `invalid_command` |
+| P9 #160 triple on MCP | a malformed wavefile driven through `baton_waves_run {specDsl}` surfaces the typed `workflow_*` code + `error.detail = {line, field, expected}` (the LANE_CRAFTED arm forwards the thrown `detail` leg, `mcp-northbound.mjs:1651-1654`) |
+| P10 #160 triple on web/bus | the same refusal surfaces typed on the web (the #160 R3 pre-TypeError `workflow_*` arm), not `invalid_command` — SEQUENCED AFTER #160 R3 lands (today `web-northbound.mjs:228-230` still destroys bare `workflow_*` into `invalid_command`); this pin is gated on that dependency, not green before it |
 
 **Red pins (refusal-shape — each asserts the triple).**
 
@@ -394,35 +437,57 @@ full matrix green, plus the two static pins.
 | R9 | `wave "bad key!"` (pattern violation) → `workflow_spec_invalid {line, field: 'idempotencyKey', expected: '<IDEMPOTENCY_PATTERN>'}` |
 | R10 | HEAD red: `baton waves run <wavefile>` refuses `workflow_spec_invalid` "not valid JSON" today (the seam absent) — the row flips green on the seam |
 
+**Refusal-ordering note (R2, fixed in this rung).** When a member is missing MORE than one required
+field, the `field` leg names the FIRST missing field in the fixed validation order
+`harness` → `model` → `effort` → `objectiveRef`, and `expected` names that one field's shape. The R2
+pin asserts this order — a member missing both `harness` and `objectiveRef` reports
+`field: 'exact.harness'` (not `objectiveRef`); the next refusal surfaces only after the first is
+fixed. No pin accepts "any one of the listed missing fields" — the order is deterministic so the
+suite is not shallow-greenable on the wrong field name.
+
 **Static pins.**
 
-- **S1** — `compileWavefile` performs no `eval`/`Function`/`import()` and no file reads: a source
-  pin (grep -a) asserts the module body contains none of `eval(`, `new Function`, `import(`, and no
-  `readFileSync`; the only file read in the DSL pipeline lives at the surface load.
+- **S1** — `compileWavefile` performs no `eval`/`Function`/`import()` and no file READS: a source
+  pin (grep -a) asserts the module body contains none of `eval(`, `new Function`, `import(`, and
+  none of the fs-read surface `readFileSync`/`readFile`/`openSync`/`fstatSync`; `realpathSync` is
+  permitted ONLY inside the `repoRoot`-gated harvest containment check (D2) — and no fs import sits
+  at module top level outside that gated function. The only file READ in the DSL pipeline lives at
+  the surface load.
 - **S2** — the emitted IR carries no `driver` field and no `schemaVersion` other than `1`: a
   round-trip over every green-pin wavefile asserts `schemaVersion === 1` and `driver` absent.
 - **S3** — the generated `WAVEFILE_DIRECTIVES` set equals the compiler's accepted-directive set and
   is a subset of the documented set (the #159 three-way invariant, in the conformance main).
+- **S4 (closure, negative pin)** — the `WAVEFILE_DIRECTIVES` set is DISJOINT from the
+  baton-attached dispatch surface: no directive names `attempt`, `salt`, `runId`, `waveId`, `lane`,
+  `driver`, `cadence`, or any harvest "projection" — the closure in D1 asserts every such name is
+  machine-minted (attempt salt → interpreter `randomUUID` `workflow-interpreter.mjs:506`; runId/
+  waveId → dispatch-minted; driver/cadence → invocation option `application.mjs:11645`; projection →
+  not in the closed spec).
+- **S5 (constants, source-scan)** — the compiler's exported closed constants (`IDEMPOTENCY_PATTERN`,
+  `MAX_MEMBERS`, `MAX_SCOPE`, `MESSAGE_KINDS`, `SCRATCHPAD_KINDS`, `GLOB_MAGIC`) equal the
+  interpreter's BYTE-FOR-BYTE, pinned by a source-scan assertion (an S3 sibling in the conformance
+  main) — OR both modules import one shared closed-constants module (inert data, not forbidden by
+  D2's side-effect rule). This closes the OQ2 constant-duplication risk the round-trip pin alone
+  cannot see.
 
 ---
 
 ## 5. OPEN QUESTIONS
 
-**OQ1 — The compile seam home.** Should `waves.compile` land as a new direct-port command at
-`application.mjs` (recommended: CLI/bus/MCP all already funnel through `command()`; one seam, one
-authorization story) or as a CLI-only verb with the bus/MCP gaining their own tools? This contract
-specifies the former — a `waves.compile` command port beside `waves.run` at `application.mjs:12560-12573`
-with the same pre-gate dispatch — but the MCP tool name/schema (a `specDsl` field on the existing
-tool vs. a new read-only tool) needs the MCP-packaging decision before implementation.
+**OQ1 — The compile seam home — RESOLVED (top-orchestrator DR-2, option (a)).** `waves.compile`
+lands as a new direct-port command beside `waves.run` at `application.mjs:12560-12573` (the same
+seam family and pre-gate dispatch — one seam, one authorization story) PLUS a new read-only MCP tool
+`baton_waves_compile` (its own tool, not a `specDsl` field bolted onto `baton_waves_run`). All four
+surfaces (CLI/bus/MCP/facade) funnel through that one command port. This is LAW for the impl.
 
-**OQ2 — Compile-side vs interpreter-side validation depth.** The compiler mirrors `admitSpec`'s
-admission-time rules (so a compile-clean wavefile never draws a late interpreter refusal, and the
-round-trip pin is strong), which duplicates validation logic between `workflow-dsl.mjs` and
-`workflow-interpreter.mjs`. The alternative — compile emits structurally and lets `admitSpec` be the
-only validator — weakens the `{line, field, expected}` promise (a member missing `harness` would
-surface as a line-less `workflow_member_invalid` from the interpreter). This contract recommends the
-mirror; the duplication is the price of the #160 triple, and the round-trip pin proves they never
-diverge.
+**OQ2 — Compile-side vs interpreter-side validation depth — RESOLVED (B3, in-contract).** The
+compiler mirrors `admitSpec`'s admission-time rules INCLUDING the harvest realpath containment when
+`repoRoot` is provided (D1/D2). The validation logic is duplicated between `workflow-dsl.mjs` and
+`workflow-interpreter.mjs` — that is the price of the #160 triple — and the round-trip pin (P1) plus
+the constants source-scan (S5) prove they never diverge. `objectiveRef` existence/containment/
+byte-bound stays at the interpreter's render (it needs the filesystem and the salt; not a pure
+admission check). The constant-duplication risk (a future interpreter ceiling/enum change silently
+desyncing the compiler) is closed by S5 (shared module or source-scan).
 
 **OQ3 — Inline text on the CLI.** Today the CLI takes a spec PATH only (`baton waves run <path>`);
 bus/MCP gain `specDsl` inline text. Should the CLI also accept inline text (e.g. `baton waves run
@@ -443,33 +508,38 @@ token and double-quoted strings as single tokens with `\` escapes — so unquote
 sufficient for v1; arbitrary escape sequences are refused (`expected: 'valid escape'`) rather than
 silently emitted.
 
-**OQ6 — The `waves.run` registry surface set.** #159's G11 flagged that `waves.run` claims surfaces
-`['embedded','mcp','cli']` while the web admits `waves_run` (`application-semantics.mjs:1637-1647`
-vs `web-northbound.mjs:46`). The DSL contract's new `waves.compile` row must carry the CORRECT
-surface set; whether fixing the `waves.run` row (adding `web`) rides this contract or the #159
-doc-truth rung is a sequencing decision for the implementation.
+**OQ6 — The `waves.run` registry surface set — RESOLVED (fixed in this rung).** #159's G11 flagged
+that `waves.run` claims surfaces `['embedded','mcp','cli']` while the web admits `waves_run`
+(`application-semantics.mjs:1637-1647` vs `web-northbound.mjs:46`). This rung fixes BOTH rows: the
+new `waves.compile` row registers `['embedded','mcp','cli','web']` (its `waves_compile` bus transport
+and `baton_waves_compile` MCP tool land in the same rung), AND the existing `waves.run` row gains
+`web` (its `waves_run` transport already exists, G2) — no ghost row either way.
 
 ---
 
 ## Appendix A — the foundry round-trip wavefile
 
-The exact `contract-foundry-2026-08-13/workflow.json` expressed as a wavefile. This is the P2/P5/P6
-fixture: it compiles to the precise `admitSpec`-accepted object, collapses the five repeated scopes
+The `contract-foundry-2026-08-13/workflow.json` object (committed snapshot key
+`contract-foundry-2026-08-13-wave-a`) expressed as a wavefile, BYTE-FOR-BYTE — Unicode bodies
+(`→`/`—`/backticks) carried verbatim per OQ5. This is the P2/P5/P6 fixture: it compiles to the
+precise `admitSpec`-accepted object pinned as the immutable committed fixture
+`impl/test/fixtures/workflow-dsl-foundry-roundtrip.json` (a byte snapshot — NOT the live
+`workflow.json` path, which the foundry rewrites between waves), collapses the five repeated scopes
 (G3) to one wave-level default, and is the operator-facing example the generated docs render.
 
 ```wavefile
 # The contract-foundry wave (workflow.json -> wavefile)
-wave contract-foundry-2026-08-13-wave-b
+wave contract-foundry-2026-08-13-wave-a
 
 # Wave-level scope default: applies to every member without its own scope.
 scope docs/reference/evidence/contract-foundry-2026-08-13/**
 
 approveOnAdvertisedPlan
+nudgeOnCheckpoint "Continue your draft drive — read evidence, write your contract incrementally, publish to the shared scratchpad when complete."
 claimOnStall
-nudgeOnCheckpoint "Continue your draft drive - read evidence, write your contract incrementally, publish to the shared scratchpad when complete."
-messageOnSpawn brief "Read your objectiveRef brief IN FULL first, then foundry-brief.md in the same directory (the shared frame binds you). Publish your final draft to the shared scratchpad partition as well as your file. Authority-class ambiguity -> DECISION_REQUEST with options; judgment calls are yours - record them in open questions."
+messageOnSpawn brief "Read your objectiveRef brief IN FULL first, then foundry-brief.md in the same directory (the shared frame binds you). Publish your final draft to the `shared` scratchpad partition as well as your file. Authority-class ambiguity → DECISION_REQUEST with options; judgment calls are yours — record them in open questions."
 elevateWhenNotes doubt,plan 20
-signalOnMembersDone coordinator result "All rows settled - read their drafts from the shared scratchpad partition and write foundry-qa.md per your brief."
+signalOnMembersDone coordinator result "All rows settled — read their drafts from the `shared` scratchpad partition and write foundry-qa.md per your brief."
 
 member coordinator
   harness deepseek
@@ -513,7 +583,8 @@ harvest docs/reference/evidence/contract-foundry-2026-08-13/contract-167.md must
 harvest docs/reference/evidence/contract-foundry-2026-08-13/contract-146.md mustContain "#146"
 ```
 
-The emitted IR for this wavefile is the `workflow.json` object verbatim: five members, each with
+The emitted IR for this wavefile is the immutable committed fixture
+`impl/test/fixtures/workflow-dsl-foundry-roundtrip.json` verbatim: five members, each with
 `exact: {harness, model, effort}` (the foundry's `deepseek` harness / `deepseek-v4-pro[1m]` or
 `deepseek-v4-flash` model / `high` effort), each with `scope: ["docs/reference/evidence/
 contract-foundry-2026-08-13/**"]` from the wave default, the six steering keys
@@ -521,3 +592,53 @@ contract-foundry-2026-08-13/**"]` from the wave default, the six steering keys
 `kind: 'brief'`, `elevateWhenNotes {kinds: ['doubt','plan'], maxEntries: 20}`,
 `signalOnMembersDone {roles: ['coordinator'], message: {kind: 'result', body}}`), and the five
 `{path, mustContain}` harvest entries.
+
+---
+
+## Fold record
+
+- **Date:** 2026-08-13.
+- **Red-team report:** `redteam-170.md` (this directory) — row-rt170, 4 blockers (B1–B4) +
+  amendments (A2–A6) + notes (N1–N5), all binding.
+- **QA:** `docs/reference/evidence/review-foundry-2026-08-13-b/review-qa.md` §1 — the §1.4 fold
+  set (H1/H2/H3 + ship-sound-remainder). Blind QA; the row report governs on conflict (shared law).
+- **Top-orchestrator decisions applied:** DR-2 (OQ1, option (a)) — `waves.compile` as a new
+  direct-port command beside `waves.run` at `application.mjs:12560-12573` PLUS a new read-only MCP
+  tool `baton_waves_compile`.
+
+| Item | Disposition | Where |
+|---|---|---|
+| B1 — stale `workflow.json:12,25,38,51,64` citation | FOLDED — G3 re-cited semantically (file + "every member carries the identical single-entry scope"), volatile line list dropped | G3 |
+| B2 — Appendix A does not lower to `workflow.json`; P2 cannot go green | FOLDED — Appendix A regenerated byte-for-byte from the actual JSON bytes (key `-wave-a`, em-dashes/arrow/backticks restored); P2 now pins the immutable committed fixture `impl/test/fixtures/workflow-dsl-foundry-roundtrip.json`, not the live doc | Appendix A, P2 |
+| B3 — round-trip law self-contradictory | FOLDED — chose: compiler performs realpath harvest containment when `repoRoot` is provided; "pure function" scoped to "given `repoRoot`"; round-trip pin always passes `repoRoot`; S1 amended to allow gated `realpathSync` | D1, D2, P1, S1 |
+| B4 — triple cannot ride the wire | FOLDED — D2 throw now sets `detail: {line, field, expected}`; §3/P9 pin `error.detail.line/field/expected`; cited `mcp-northbound.mjs:1651-1654` | D2, §3, P9 |
+| A2 — multi-entry wave-level `scope` accumulation unstated | FOLDED — accumulation rule added to D1 placement rules | D1 |
+| A3 — R1's `expected` leg missing from the table | FOLDED — `'<closed directive list>'` (unknown directive) added to §3 `workflow_spec_invalid` expected examples | §3 |
+| A4 — S1 grep too narrow | FOLDED — denylist broadened to `readFileSync`/`readFile`/`openSync`/`fstatSync`; `realpathSync` gated; no top-level fs import outside the gated function | S1 |
+| A5 — closure asserted, never proved | FOLDED — D1 closure paragraph (salt→`randomUUID` `:506`, runId/waveId→dispatch, driver→invocation option `:11645`, no projection) + S4 negative pin | D1, S4 |
+| A6 — resolve OQ2/B3 in-contract | FOLDED — OQ2 resolved (mirror incl. realpath containment; constant duplication closed by S5) | OQ2 |
+| N1 — P10 depends on #160 R3 | FOLDED — P10 gated on #160 R3 landing | P10 |
+| N2 — `render-surface-docs.mjs` is under `impl/scripts/` | FOLDED — path corrected | D4, P8 |
+| N3 — `waves.compile` registry row + `waves.run` `web`-addition sequencing | FOLDED — both registry rows pinned in D4 (surfaces `['embedded','mcp','cli','web']`) | D4, OQ6 |
+| N4 — shared-publish not performable from a worker surface | FOLDED as audit note — no contract change; the write/append verb is absent per #158 (recorded in `redteam-170.md` §6) | — |
+| N5 — DSL's own suite file never named | FOLDED — `impl/test/workflow-dsl-red.test.mjs` named in G6 | G6 |
+| H1 (QA §1.4.1) — Appendix A byte-identity precondition | FOLDED — subsumed by B2 | Appendix A, P2 |
+| H2 (QA §1.4.2) — compiler≡interpreter constants | FOLDED — S5 source-scan pin / shared closed-constants module; OQ2 names the constant-duplication risk | S5, OQ2 |
+| H3 (QA §1.4.3) — `signalOnMembersDone`/`answerDecisions` not cross-validated | FOLDED — residual note added to §3 (a DSL typo there is a silent no-op, not a refusal) | §3 |
+| QA §1.4.4 — ship sound remainder; fix OQ6 `waves.run` surface set | FOLDED — 16-directive grammar, D2/D3/D4, refusal vocabulary, and pins shipped as written; `waves.run` row gains `web` | D1–D4, OQ6 |
+| C-3 — verification-HEAD identity (`7661b1f` vs fold HEAD `e371f70`) | FOLDED as note — header re-verification note updated; all anchors hold against the working tree | header |
+| C-2 — first-pass `:146` off-by-one claim | STRUCK — withdrawn in full by the red-team's own second pass (the contract's `workflow-interpreter.mjs:146` harvest-default citation is exact); no contract change | — |
+| R2 — unspecified compile-validation ordering (which missing field does `field:` name?) | FOLDED — validation order fixed (`harness`→`model`→`effort`→`objectiveRef`, first-missing-field-wins); R2 pin asserts that order | §4 red pins |
+
+Conflict resolutions (blind-QA law — the row report governs): QA §1.4.4 lists P9 among "ship as
+written", but B4 (row blocker) proves P9 is false as written (no `detail` leg) — **B4 governs**, so
+D2 sets `detail` and P9 pins `error.detail.line/field/expected` (already folded). QA §1.4.4 also
+lists P1 "as written", while B3 requires the pin to always pass `repoRoot` — **B3 governs**, so P1
+passes `{ repoRoot }` (already folded). No QA instruction is silently dropped; every conflict is
+resolved to the row report.
+
+Judgment calls recorded: B3 chose the recommended horn (compiler does gated realpath containment);
+A3 chose the closed-list shape for unknown directives; H2 chose the source-scan pin as primary with
+the shared-module alternative named (both satisfy D2's side-effect rule since constants are inert
+data); the R2 ordering note chose "fix the validation order" over "accept any one" (deterministic,
+not shallow-greenable).
