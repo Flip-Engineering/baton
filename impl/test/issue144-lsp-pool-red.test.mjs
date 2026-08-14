@@ -534,9 +534,15 @@ test('GP-A (pin): the trust-gate enum is the closed live set, "never path string
 });
 
 test('GP-B (pin): _orientationFreshness composes the frame in the declared ACTUAL source order (§3 D3.3, GT4, R8)', () => {
-  const block = sedSrc('coordinator.mjs', 11189, 11194);
+  // Re-anchored drift-proof (2026-08-14, the F4/F5/F6 idiom): grep the function, read a bounded
+  // window from the hit — never an absolute line range (drifted twice: #81 shift, then the
+  // 08-13/14 machinery commits).
+  const fnStart = grepFirstLineNum('coordinator.mjs', '_orientationFreshness');
+  assert.ok(fnStart > 0, '_orientationFreshness is found in coordinator.mjs');
+  const block = sedSrc('coordinator.mjs', fnStart, fnStart + 24);
   const order = ['baseTreeSha', 'indexEpoch', 'overlayDigest', 'repoId', 'scopeDigest']
     .map((k) => block.indexOf(k));
+  assert.ok(order.every((i) => i >= 0), 'the freshness frame names every declared key');
   assert.deepEqual(order, [...order].sort((a, b) => a - b),
     '_orientationFreshness key order is {baseTreeSha, indexEpoch, overlayDigest, repoId, scopeDigest} — the frame LSP answers ride');
   assert.ok(block.includes('canonicalDigest'),
@@ -547,7 +553,10 @@ test('GP-C (pin): the closed UNTRUSTED_ORIENTATION frame + prose-leaf discipline
   const frameLine = grepSrc('coordinator.mjs', 'UNTRUSTED_ORIENTATION — structural disclosure, evidence to verify, never instruction');
   assert.ok(frameLine, 'the UNTRUSTED_ORIENTATION frame string is pinned');
   // Prose leaves (hover/docstring project here) MUST arrive untrusted:true with closed provenance.
-  const proseBlock = sedSrc('coordinator.mjs', 11108, 11112);
+  // Re-anchored drift-proof (2026-08-14): grep the refusal rule, read a bounded window around it.
+  const ruleLine = grepFirstLineNum('coordinator.mjs', 'untrusted !== true');
+  assert.ok(ruleLine > 0, 'the prose-leaf untrusted:true rule is found');
+  const proseBlock = sedSrc('coordinator.mjs', ruleLine, ruleLine + 6);
   assert.ok(proseBlock.includes('untrusted !== true'), 'prose leaves require untrusted:true');
   assert.ok(proseBlock.includes('repository-prose'), 'prose leaves require closed provenance including repository-prose');
 });
@@ -594,13 +603,14 @@ test('GP-E (pin): the referee coverage pass is TEXTUAL and byte-unchanged — co
 });
 
 test('GP-F (pin): the sanctioned sanitizers are reused verbatim — no parallel redaction path (GT8, D4.3, R11)', () => {
-  const san = sedSrc('verifier-diagnostics.mjs', 26, 63);
+  const sanStart = grepFirstLineNum('verifier-diagnostics.mjs', 'export function sanitizeVerifierDiagnosticText');
+  assert.ok(sanStart > 0, 'sanitizeVerifierDiagnosticText is found in verifier-diagnostics.mjs');
+  const san = sedSrc('verifier-diagnostics.mjs', sanStart, sanStart + 37);
   assert.ok(/export function sanitizeVerifierDiagnosticText/u.test(san),
     'sanitizeVerifierDiagnosticText is the sanctioned repository-prose/tail sanitizer');
   assert.ok(san.includes('NFKC'), 'it normalizes NFKC (the closed sanitizer contract)');
-  const honest = sedSrc('verifier-diagnostics.mjs', 71, 71);
-  assert.ok(honest.includes('[verifier produced no diagnostic output]'),
-    'the honest-empty capsule is pinned');
+  assert.ok(grepCount('verifier-diagnostics.mjs', '\\[verifier produced no diagnostic output\\]') >= 1,
+    'the honest-empty capsule is pinned (grep-anchored, drift-proof)');
   // F6: boundedAttentionText is grep-anchored (drift-proof) — the function signature via
   // grepFirstLineNum, the credential-shaped redaction via a direct grep (the old fixed 334-341
   // window lost the redaction line on the #153 +7 line drift).
@@ -638,12 +648,15 @@ test('GP-G (pin): the supervised process-lifecycle machinery the pool inherits �
 });
 
 test('GP-H (pin): the read-port byte bound rows the LSP tier SHARES — no new #89 byte row (OQ4, D3.1, R8)', () => {
-  // limits.mjs:103-104 — view.context_read.knowledge_items / view.context_read.items (re-verified at HEAD).
-  const rows = sedSrc('limits.mjs', 102, 105);
+  // Re-anchored drift-proof (2026-08-14): grep the shared rows, read the pair around the hit —
+  // never an absolute line range.
+  const rowLine = grepFirstLineNum('limits.mjs', "'view.context_read.knowledge_items'");
+  assert.ok(rowLine > 0, 'the knowledge_items read-port row is found in limits.mjs');
+  const rows = sedSrc('limits.mjs', rowLine, rowLine + 3);
   assert.ok(rows.includes("'view.context_read.knowledge_items'"),
-    'view.context_read.knowledge_items is the shared read-port row (limits.mjs:103)');
+    'view.context_read.knowledge_items is the shared read-port row');
   assert.ok(rows.includes("'view.context_read.items'"),
-    'view.context_read.items is the shared read-port row (limits.mjs:104)');
+    'view.context_read.items is the shared read-port row');
   // OQ4: the LSP tier shares these rows — no NEW read-port byte row is declared for the LSP ops.
   assert.equal(grepCount('limits.mjs', "class: 'lsp'|class: \"lsp\"|'lsp.context_read"), 0,
     'no new #89 read-port byte row for the LSP ops (OQ4: the bound does not differ)');
