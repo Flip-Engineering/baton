@@ -1484,6 +1484,7 @@ export function createDriver(opts) {
     budgetPolicy: opts.budgetPolicy,
     ...(providerGovernance ? { providerGovernance: providerGovernance.projection } : {}),
     watchdog: opts.watchdog,
+    progressNudgeWindowMs: opts.progressNudgeWindowMs,
     drainPolicy,
     ...(goalPlanAuthority ? { goalPlanAuthority } : {}),
     ...(contextProgram ? {

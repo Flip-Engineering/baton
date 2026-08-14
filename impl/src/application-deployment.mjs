@@ -1708,6 +1708,7 @@ export async function openBatonDeployment(rawOptions, createDriver) {
     drainPolicy: { maxWorkers: 64, timeoutMs: 90_000, pollMs: 10 },
     budgetPolicy: { terminalGraceMs: 2_000 },
     watchdog: { stallMs: DEFAULT_BUDGET.wallMin * 60_000 },
+    progressNudgeWindowMs: 300_000,
   });
   const principal = Object.freeze({
     actor: `deployment:${repository.repoId}`, principalId: 'local-owner', sessionId: 'local-owner-session',
