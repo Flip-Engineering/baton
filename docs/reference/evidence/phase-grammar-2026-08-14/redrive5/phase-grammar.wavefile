@@ -1,0 +1,48 @@
+wave phase-grammar-2026-08-14-wave-a-rd5
+member coordinator
+  harness deepseek
+  model "deepseek-v4-pro[1m]"
+  effort high
+  scope "docs/reference/evidence/phase-grammar-2026-08-14/redrive5/**"
+  objectiveRef "docs/reference/evidence/phase-grammar-2026-08-14/redrive5/coordinator-brief.md"
+  report "docs/reference/evidence/phase-grammar-2026-08-14/redrive5/phase-qa.md"
+member row-contract
+  harness deepseek
+  model "deepseek-v4-flash"
+  effort high
+  scope "docs/reference/evidence/phase-grammar-2026-08-14/redrive5/**"
+  objectiveRef "docs/reference/evidence/phase-grammar-2026-08-14/redrive5/row-contract-brief.md"
+  report "docs/reference/evidence/phase-grammar-2026-08-14/redrive5/phase-grammar-contract.md"
+member row-suite
+  harness deepseek
+  model glm-5.2
+  effort high
+  scope "docs/reference/evidence/phase-grammar-2026-08-14/redrive5/**"
+  scope "impl/test/workflow-phases-red.test.mjs"
+  objectiveRef "docs/reference/evidence/phase-grammar-2026-08-14/redrive5/row-suite-brief.md"
+  report "docs/reference/evidence/phase-grammar-2026-08-14/redrive5/suite-notes.md"
+member row-impl-compiler
+  harness deepseek
+  model "deepseek-v4-flash"
+  effort high
+  scope "docs/reference/evidence/phase-grammar-2026-08-14/redrive5/**"
+  scope "impl/src/workflow-dsl.mjs"
+  objectiveRef "docs/reference/evidence/phase-grammar-2026-08-14/redrive5/row-impl-compiler-brief.md"
+  report "docs/reference/evidence/phase-grammar-2026-08-14/redrive5/impl-compiler-notes.md"
+member row-impl-interpreter
+  harness deepseek
+  model "deepseek-v4-flash"
+  effort high
+  scope "docs/reference/evidence/phase-grammar-2026-08-14/redrive5/**"
+  scope "impl/src/workflow-interpreter.mjs"
+  objectiveRef "docs/reference/evidence/phase-grammar-2026-08-14/redrive5/row-impl-interpreter-brief.md"
+  report "docs/reference/evidence/phase-grammar-2026-08-14/redrive5/impl-interpreter-notes.md"
+approveOnAdvertisedPlan
+claimOnStall
+nudgeOnCheckpoint "Continue — contract → suite → impls → acceptance. Await-inputs rows: keep polling. Impl rows: suites green at named stages, existing suites stay green. Write deliverables incrementally."
+messageOnSpawn brief "Read your objectiveRef brief IN FULL first; it binds. The await-inputs discipline is polling, not idling. gh may be unauthenticated in your worktree — ground in the code and this evidence dir. Your [attempt:] line verbatim in your deliverable's first five lines. Judgment calls recorded; authority-class ambiguity → DECISION_REQUEST with options."
+elevateWhenNotes doubt,plan 20
+signalOnMembersDone row-contract,row-suite,row-impl-compiler,row-impl-interpreter result "All four rows settled (you are the remaining member — the pinned #175 semantics). Verify on disk per the #174 law, then run your brief's acceptance including the live two-phase demo, and write phase-qa.md."
+harvest "docs/reference/evidence/phase-grammar-2026-08-14/redrive5/phase-grammar-contract.md" mustContain "phase"
+harvest "docs/reference/evidence/phase-grammar-2026-08-14/redrive5/phase-qa.md" mustContain "PHASE-QA"
+harvest "docs/reference/evidence/phase-grammar-2026-08-14/redrive5/suite-notes.md" mustContain "attempt:"
