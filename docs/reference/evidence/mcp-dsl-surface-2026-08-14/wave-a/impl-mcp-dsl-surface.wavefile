@@ -1,0 +1,53 @@
+wave mcp-dsl-surface-2026-08-14-wave-a
+member coordinator
+  harness deepseek
+  model deepseek-v4-flash
+  effort high
+  scope "docs/reference/evidence/mcp-dsl-surface-2026-08-14/wave-a/**"
+  objectiveRef "docs/reference/evidence/mcp-dsl-surface-2026-08-14/wave-a/coordinator-brief.md"
+  report "docs/reference/evidence/mcp-dsl-surface-2026-08-14/wave-a/verify-notes.md"
+member row-facade-widen
+  harness deepseek
+  model deepseek-v4-flash
+  effort high
+  scope "impl/src/mcp-web-bridge.mjs"
+  scope "docs/reference/evidence/mcp-dsl-surface-2026-08-14/wave-a/**"
+  objectiveRef "docs/reference/evidence/mcp-dsl-surface-2026-08-14/wave-a/row-facade-widen-brief.md"
+  report "docs/reference/evidence/mcp-dsl-surface-2026-08-14/wave-a/notes-row-facade-widen.md"
+member row-descriptor-serve
+  harness deepseek
+  model deepseek-v4-flash
+  effort high
+  scope "impl/src/mcp-descriptor.mjs"
+  scope "impl/src/mcp-web-bridge.mjs"
+  scope "docs/reference/evidence/mcp-dsl-surface-2026-08-14/wave-a/**"
+  objectiveRef "docs/reference/evidence/mcp-dsl-surface-2026-08-14/wave-a/row-descriptor-serve-brief.md"
+  report "docs/reference/evidence/mcp-dsl-surface-2026-08-14/wave-a/notes-row-descriptor-serve.md"
+member row-dsl-views
+  harness deepseek
+  model deepseek-v4-flash
+  effort high
+  scope "impl/src/application.mjs"
+  scope "impl/src/mcp-northbound.mjs"
+  scope "docs/reference/evidence/mcp-dsl-surface-2026-08-14/wave-a/**"
+  objectiveRef "docs/reference/evidence/mcp-dsl-surface-2026-08-14/wave-a/row-dsl-views-brief.md"
+  report "docs/reference/evidence/mcp-dsl-surface-2026-08-14/wave-a/notes-row-dsl-views.md"
+member row-continuation
+  harness deepseek
+  model deepseek-v4-flash
+  effort high
+  scope "impl/src/application-cli.mjs"
+  scope "docs/reference/evidence/mcp-dsl-surface-2026-08-14/wave-a/**"
+  objectiveRef "docs/reference/evidence/mcp-dsl-surface-2026-08-14/wave-a/row-continuation-brief.md"
+  report "docs/reference/evidence/mcp-dsl-surface-2026-08-14/wave-a/notes-row-continuation.md"
+approveOnAdvertisedPlan
+claimOnStall
+nudgeOnCheckpoint "Continue — the suite is the contract; surface WIDENING only, no new harness-side proxies ever again. Write deliverables incrementally."
+messageOnSpawn brief "Read your objectiveRef brief IN FULL first; it binds. gh may be unauthenticated in your worktree. Your [attempt:] line verbatim in your deliverable's first five lines. Judgment calls recorded; authority-class ambiguity → DECISION_REQUEST with options."
+elevateWhenNotes doubt,plan 20
+signalOnMembersDone row-facade-widen,row-descriptor-serve,row-dsl-views,row-continuation result "The rows settled (you are the remaining member — pinned #175 semantics). Verify per your brief and write verify-notes.md."
+harvest "docs/reference/evidence/mcp-dsl-surface-2026-08-14/wave-a/notes-row-facade-widen.md" mustContain "attempt:"
+harvest "docs/reference/evidence/mcp-dsl-surface-2026-08-14/wave-a/notes-row-descriptor-serve.md" mustContain "attempt:"
+harvest "docs/reference/evidence/mcp-dsl-surface-2026-08-14/wave-a/notes-row-dsl-views.md" mustContain "attempt:"
+harvest "docs/reference/evidence/mcp-dsl-surface-2026-08-14/wave-a/notes-row-continuation.md" mustContain "attempt:"
+harvest "docs/reference/evidence/mcp-dsl-surface-2026-08-14/wave-a/verify-notes.md" mustContain "MCP-DSL-SURFACE-VERIFY v1"
