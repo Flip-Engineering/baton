@@ -13,6 +13,7 @@ export async function createBatonDeployment() {
         { harness: 'deepseek', model: 'deepseek-v4-flash', effort: 'high' },
         { harness: 'deepseek', model: 'deepseek-v4-pro[1m]', effort: 'high' },
         { harness: 'glm', model: 'glm-5.2', effort: 'high' },
+        { harness: 'glm', model: 'glm-5.3', effort: 'high' },
       ],
       verification: Object.freeze({ command: 'true', arguments: [] }),
     },

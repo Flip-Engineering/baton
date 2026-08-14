@@ -1,7 +1,7 @@
 wave collab-contracts-2026-08-14-wave-b-rd1
 member coordinator
-  harness deepseek
-  model "deepseek-v4-pro[1m]"
+  harness glm
+  model "glm-5.3"
   effort high
   scope "docs/reference/evidence/collab-contracts-2026-08-14/redrive/**"
   objectiveRef "docs/reference/evidence/collab-contracts-2026-08-14/redrive/coordinator-brief.md"

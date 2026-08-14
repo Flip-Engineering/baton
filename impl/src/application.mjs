@@ -2602,7 +2602,7 @@ export class BatonApplication {
   }
 
   _loadProfileRegistry() {
-    const records = this.driver.coordination.events().filter((event) => event.kind === 'driver.recorded'
+    const records = this.driver.coordination.eventsView().filter((event) => event.kind === 'driver.recorded'
       && event.payload?.kind === APPLICATION_PROFILE_RECORD_KIND);
     if (records.length > MAX_RUN_RECORDS) {
       throw applicationError('application profile registry exceeds its bounded lookup ceiling',
@@ -2997,7 +2997,7 @@ export class BatonApplication {
     // Any partial authority, or any durable control history without its recovery methods,
     // still fails closed before application readiness.
     const hasControlHistory = typeof this.driver.coordination.events === 'function'
-      && this.driver.coordination.events().some((event) => (
+      && this.driver.coordination.eventsView().some((event) => (
         typeof event?.kind === 'string' && event.kind.startsWith('run.control_')
       ));
     if (available.length === 0 && !hasControlHistory) {
@@ -3559,7 +3559,7 @@ export class BatonApplication {
     // node, while ordinary recovery/refinement Plans may have several. The application-owned,
     // content-addressed definition event is the authority.
     if (typeof this.driver.coordination.events !== 'function') return false;
-    return this.driver.coordination.events().some((event) => (
+    return this.driver.coordination.eventsView().some((event) => (
       event.kind === 'driver.recorded'
       && event.payload?.kind === APPLICATION_WORKFLOW_RECORD_KIND
       && event.payload?.repoId === this.repoId
@@ -3633,7 +3633,7 @@ export class BatonApplication {
     if (typeof this.driver.coordination.events !== 'function') {
       return deepFreeze({ schemaVersion: 1, state: 'reconciled', examinedStops: 0, failures: [] });
     }
-    const runIds = [...new Set(this.driver.coordination.events().filter((event) => (
+    const runIds = [...new Set(this.driver.coordination.eventsView().filter((event) => (
       event.kind === 'driver.recorded'
       && event.payload?.kind === APPLICATION_WORKFLOW_MEMBER_STOP_ADMITTED_KIND
       && event.payload?.repoId === this.repoId
@@ -5080,7 +5080,7 @@ export class BatonApplication {
       APPLICATION_WORKFLOW_MEMBER_STOP_ADMITTED_KIND,
       APPLICATION_WORKFLOW_MEMBER_STOP_COMPLETED_KIND,
     ]);
-    const workflowSeqs = this.driver.coordination.events().filter((event) => (
+    const workflowSeqs = this.driver.coordination.eventsView().filter((event) => (
       event.kind === 'driver.recorded' && workflowKinds.has(event.payload?.kind)
       && event.payload?.repoId === this.repoId && event.payload?.runId === runId
       && roundPlanDigests.has(event.payload?.planDigest)
@@ -5965,7 +5965,7 @@ export class BatonApplication {
   }
 
   _workflowDefinitionAncestors(runId, excludeDigest = null, beforeSeq = Infinity) {
-    return this.driver.coordination.events().filter((candidate) => (
+    return this.driver.coordination.eventsView().filter((candidate) => (
       candidate.seq < beforeSeq && candidate.kind === 'driver.recorded'
         && candidate.payload?.kind === APPLICATION_WORKFLOW_RECORD_KIND
         && candidate.payload?.repoId === this.repoId
@@ -5989,7 +5989,7 @@ export class BatonApplication {
 
   _workflowDefinition(current) {
     if (!this._isWorkflowRun(current)) return null;
-    const records = this.driver.coordination.events().filter((event) => event.kind === 'driver.recorded'
+    const records = this.driver.coordination.eventsView().filter((event) => event.kind === 'driver.recorded'
       && event.payload?.kind === APPLICATION_WORKFLOW_RECORD_KIND
       && event.payload?.repoId === this.repoId && event.payload?.runId === current.goal.runId
       && event.payload?.planDigest === current.plan.digest);
@@ -6320,7 +6320,7 @@ export class BatonApplication {
   }
 
   _workflowSelection(current, definition, candidates) {
-    const records = this.driver.coordination.events().filter((event) => (
+    const records = this.driver.coordination.eventsView().filter((event) => (
       event.kind === 'driver.recorded'
       && event.payload?.kind === APPLICATION_WORKFLOW_SELECTION_RECORD_KIND
       && event.payload?.repoId === this.repoId && event.payload?.runId === current.goal.runId
@@ -6370,7 +6370,7 @@ export class BatonApplication {
   }
 
   _workflowFeedback(current, definition, candidates) {
-    const records = this.driver.coordination.events().filter((event) => (
+    const records = this.driver.coordination.eventsView().filter((event) => (
       event.kind === 'driver.recorded'
       && event.payload?.kind === APPLICATION_WORKFLOW_FEEDBACK_RECORD_KIND
       && event.payload?.repoId === this.repoId && event.payload?.runId === current.goal.runId
@@ -6432,7 +6432,7 @@ export class BatonApplication {
   }
 
   _workflowMemberStops(current, definition) {
-    const events = this.driver.coordination.events().filter((event) => (
+    const events = this.driver.coordination.eventsView().filter((event) => (
       event.kind === 'driver.recorded'
       && [APPLICATION_WORKFLOW_MEMBER_STOP_ADMITTED_KIND,
         APPLICATION_WORKFLOW_MEMBER_STOP_COMPLETED_KIND].includes(event.payload?.kind)
@@ -6813,7 +6813,7 @@ export class BatonApplication {
   }
 
   _workflowRevisionFeedbackRows(feedback, candidate) {
-    const byId = new Map(this.driver.coordination.events().filter((event) => (
+    const byId = new Map(this.driver.coordination.eventsView().filter((event) => (
       event.kind === 'driver.recorded'
       && event.payload?.kind === APPLICATION_WORKFLOW_FEEDBACK_RECORD_KIND
     )).map((event) => [event.payload.feedbackId, event]));
@@ -8146,7 +8146,7 @@ export class BatonApplication {
       throw applicationError('application progress clock is invalid',
         'application_progress_clock_invalid');
     }
-    const meaningful = this.driver.coordination.events().filter((event) => (
+    const meaningful = this.driver.coordination.eventsView().filter((event) => (
       typeof event.ts === 'string' && this._followCategory(event) !== null
       && this._eventBelongsToRun(event, current)
     ));
@@ -10674,7 +10674,7 @@ export class BatonApplication {
     try {
       return projectRunTimelinePage({
         runId: current.goal.runId,
-        events: this.driver.coordination.events(),
+        events: this.driver.coordination.eventsView(),
         snapshot: snapshot ?? this.driver.coordination.snapshot(),
         cursor: request.pageCursor ?? null,
         limit: bounds.maxItems,
@@ -11569,7 +11569,7 @@ export class BatonApplication {
   }
 
   _waveDriverDetached(waveId) {
-    const events = this.driver.coordination.events();
+    const events = this.driver.coordination.eventsView();
     return events.some((event) => (
       event.kind === 'driver.recorded'
       && event.payload?.kind === APPLICATION_WAVE_DRIVER_DETACHED_KIND
@@ -11581,7 +11581,7 @@ export class BatonApplication {
   // record — no separate per-run projection map, same event-log-only discipline as the liveness
   // scan this mirrors (coordinator.mjs's `hasDriver` check).
   _runWaveId(runId) {
-    const events = this.driver.coordination.events();
+    const events = this.driver.coordination.eventsView();
     for (const event of events) {
       if (event.kind === 'driver.recorded' && event.payload?.kind === APPLICATION_STEERING_REGISTERED_KIND
         && event.payload?.runId === runId && event.payload?.waveId !== undefined) {
@@ -11594,7 +11594,7 @@ export class BatonApplication {
   // The wave member's role is the steering-registered `waveRole` (93B) — the durable referent,
   // same event-log-only discipline as _runWaveId.
   _runWaveRole(runId) {
-    const events = this.driver.coordination.events();
+    const events = this.driver.coordination.eventsView();
     for (const event of events) {
       if (event.kind === 'driver.recorded' && event.payload?.kind === APPLICATION_STEERING_REGISTERED_KIND
         && event.payload?.runId === runId && event.payload?.waveRole !== undefined) {
@@ -11608,7 +11608,7 @@ export class BatonApplication {
   // start(), same event-log-only discipline as _runWaveId/_runWaveRole). This is how waves.list
   // recovers the seat map for interpreter-seam waves whose registry roster is a role-only string.
   _runWaveRoute(runId) {
-    const events = this.driver.coordination.events();
+    const events = this.driver.coordination.eventsView();
     for (const event of events) {
       if (event.kind === 'driver.recorded' && event.payload?.kind === APPLICATION_STEERING_REGISTERED_KIND
         && event.payload?.runId === runId && event.payload?.route !== undefined) {
@@ -11913,7 +11913,7 @@ export class BatonApplication {
   // referent, same event-log-only discipline as _runWaveId/_runWaveRole.
   _runIdForWaveMember(waveId, waveRole) {
     if (waveId == null || waveRole == null) return null;
-    const events = this.driver.coordination.events();
+    const events = this.driver.coordination.eventsView();
     for (const event of events) {
       if (event.kind === 'driver.recorded' && event.payload?.kind === APPLICATION_STEERING_REGISTERED_KIND
         && event.payload?.waveId === waveId && event.payload?.waveRole === waveRole) {

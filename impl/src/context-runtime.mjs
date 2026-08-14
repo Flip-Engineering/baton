@@ -1155,7 +1155,7 @@ export class RepositoryContextRuntime {
       (candidate) => candidate.binding?.nodeKey === authority.nodeKey,
     );
     const task = dispatch ? this.coordination.task(dispatch.taskId) : null;
-    const definition = this.coordination.events().find((event) => (
+    const definition = this.coordination.eventsView().find((event) => (
       event.kind === 'driver.recorded' && event.payload?.kind === WORKFLOW_DEFINITION
       && event.payload?.repoId === this.repoId
       && event.payload?.runId === current?.goal?.runId
@@ -1168,7 +1168,7 @@ export class RepositoryContextRuntime {
     }
     if (definition.payload.schemaVersion === 3) {
       try {
-        const ancestors = this.coordination.events().filter((candidate) => (
+        const ancestors = this.coordination.eventsView().filter((candidate) => (
           candidate.seq < definition.seq && candidate.kind === 'driver.recorded'
             && candidate.payload?.kind === WORKFLOW_DEFINITION
             && candidate.payload?.repoId === this.repoId

@@ -8930,6 +8930,15 @@ export class CoordinationStore {
     if (limit !== null && (!Number.isSafeInteger(limit) || limit <= 0)) throw new TypeError('event read limit must be a positive safe integer');
     return this._events.slice(start, limit === null ? undefined : start + limit).map(clone);
   }
+
+  // Clone-free read view: every event in _events is frozen at append (load path and both
+  // runtime append paths), so read-only consumers share the store's frozen references
+  // instead of paying a full-log deep clone per call (the loop-starvation furnace).
+  eventsView(fromSeq = 1, limit = null) {
+    const start = Number.isSafeInteger(fromSeq) ? Math.max(0, fromSeq - 1) : 0;
+    if (limit !== null && (!Number.isSafeInteger(limit) || limit <= 0)) throw new TypeError('event read limit must be a positive safe integer');
+    return this._events.slice(start, limit === null ? undefined : start + limit);
+  }
   waitAfter(afterSeq, timeoutMs, options = {}) {
     if (!Number.isSafeInteger(afterSeq) || afterSeq < 0 || afterSeq > this._events.length
       || !Number.isSafeInteger(timeoutMs) || timeoutMs <= 0

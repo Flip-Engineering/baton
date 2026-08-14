@@ -5430,7 +5430,7 @@ export class Coordinator {
     }
     const durable = this._coordination.task(task.id);
     const terminal = durable?.terminalEvent
-      ? this._coordination.events()[durable.terminalEvent - 1] : null;
+      ? this._coordination.eventsView()[durable.terminalEvent - 1] : null;
     const verificationSeq = terminal?.payload?.evidence?.coordinationSeq;
     if (!durable || durable.status !== 'completed' || !Number.isSafeInteger(verificationSeq)) {
       throw Object.assign(new Error('recovery prior task lacks exact durable verification authority'), {
@@ -11648,7 +11648,7 @@ export class Coordinator {
     if (!/^[a-f0-9]{64}$/.test(packDigest ?? '') || !['useful', 'missed'].includes(rating)) {
       return { ok: false, code: 'orientation_rating_refused' };
     }
-    const reads = this._coordination.events().filter((event) => event.kind === 'context.read' && event.payload?.workerId === workerId && event.payload?.packDigest === packDigest);
+    const reads = this._coordination.eventsView().filter((event) => event.kind === 'context.read' && event.payload?.workerId === workerId && event.payload?.packDigest === packDigest);
     if (reads.length === 0) return { ok: false, code: 'orientation_rating_refused' };
     const attempt = { grantOrReadEventSeq: reads[0].seq, packDigest, rating, repoId: reads[0].payload?.repoId ?? task.runId ?? null, runId: task.runId ?? null, taskId: task.id, taskVersion: ctask?.version ?? 0, workerId };
     try {
@@ -11878,7 +11878,7 @@ export class Coordinator {
   }
 
   _waveRoleOf(runId) {
-    for (const event of this._coordination.events() ?? []) {
+    for (const event of this._coordination.eventsView() ?? []) {
       if (event.kind === 'driver.recorded' && event.payload?.kind === 'steering.registered'
         && event.payload?.runId === runId) {
         return event.payload.waveRole ?? null;
@@ -11888,7 +11888,7 @@ export class Coordinator {
   }
 
   _waveIdOf(runId) {
-    for (const event of this._coordination.events() ?? []) {
+    for (const event of this._coordination.eventsView() ?? []) {
       if (event.kind === 'driver.recorded' && event.payload?.kind === 'steering.registered'
         && event.payload?.runId === runId) {
         return event.payload.waveId ?? null;
@@ -14810,7 +14810,7 @@ export class Coordinator {
     const rebuiltMessages = new Map();
     const replySeeds = [];
     const messageEvents = typeof this._coordination.events === 'function'
-      ? this._coordination.events()
+      ? this._coordination.eventsView()
       : [];
     for (const event of messageEvents) {
       if (event.kind !== 'message.sent' && event.kind !== 'message.delivered') continue;

@@ -227,7 +227,9 @@ test('CE2: recovery policy is closed, deployment-owned, digest-bound, and visibl
 
 test('CE2b: durable Run-control history without its complete recovery authority fails application readiness closed', async () => {
   const driver = cardDriver();
-  driver.coordination.events = () => [{ seq: 1, kind: 'run.control_admitted', payload: {} }];
+  const injectedHistory = [{ seq: 1, kind: 'run.control_admitted', payload: {} }];
+  driver.coordination.events = () => injectedHistory;
+  driver.coordination.eventsView = () => injectedHistory;
   const application = new BatonApplication({
     driver, repoId, profiles: { recoverable: requestedProfile },
     principals: {

@@ -85,7 +85,11 @@ test('WLS-1 (stage[waves-list-index-missing]): waves_list builds its roster proj
     repoId: REPO,
     profiles: { default: PROFILE },
     defaults: { profile: 'default', route: null },
-    principals: { planner: principalOf('wls-planner') },
+    principals: {
+      planner: principalOf('wls-planner'),
+      dispatcher: principalOf('wls-dispatcher'),
+      observer: principalOf('wls-observer'),
+    },
     authorize: async () => true,
   });
   t.after(async () => {
@@ -97,21 +101,25 @@ test('WLS-1 (stage[waves-list-index-missing]): waves_list builds its roster proj
   });
 
   // Fatten the log: forty steering-registered records per fake member across twenty fake waves
-  // (the shape the projection scans for). Then spy on events().
+  // (the shape the projection scans for). Then spy on events() AND eventsView() — the
+  // clone-free view (#210) made events() calls vacuous on the read path; the structural
+  // metric is TOTAL log reads regardless of accessor.
   const coordination = driver.coordination;
   const realEvents = coordination.events.bind(coordination);
+  const realView = coordination.eventsView.bind(coordination);
   let eventsCalls = 0;
   coordination.events = (...args) => { eventsCalls += 1; return realEvents(...args); };
+  coordination.eventsView = (...args) => { eventsCalls += 1; return realView(...args); };
 
   // The fixture doesn't need real runs — it needs the projection to see a large log. We call
   // the application's waves.list command and count log reads. At HEAD the projection calls
-  // events() once PER MEMBER (role + route each), so 20 waves × 5 members ≈ 200 reads; the fix
+  // the log once PER MEMBER (role + route each), so 20 waves × 5 members ≈ 200 reads; the fix
   // builds the index once.
   const result = await captureResult(() => application.command('waves.list', {}, principalOf('wls-owner')));
   assert.ok(result.value !== undefined || result.error === undefined || result.error,
     'the command answers (any honest outcome) so the read path is exercised');
   assert.ok(eventsCalls <= 4,
-    `stage[waves-list-index-missing]: waves_list read the event log ${eventsCalls} times in one call — at HEAD the projection scans per member (_runWaveRole/_runWaveRoute); the fix builds a single-pass index per invocation`);
+    `stage[waves-list-index-missing]: waves_list read the event log ${eventsCalls} times in one call (events + eventsView combined) — at HEAD the projection scans per member (_runWaveRole/_runWaveRoute); the fix builds a single-pass index per invocation`);
 });
 
 async function captureResult(fn) {
