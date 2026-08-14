@@ -11842,11 +11842,36 @@ export class BatonApplication {
           // Issue #74 (D3/A6): the seat map — the interpreter seam (createWave, wave.mjs:180)
           // mints a role-only string roster, so the route is recovered from the member run's
           // steering-registered `route` record (start() mints it) rather than rendered as null.
-          const route = this._runWaveRoute(this._runIdForWaveMember(row.waveId, member));
-          members.push(deepFreeze({
-            role: member, route: route ?? null, scope: null,
-            liveness: 'local', phase: null, progressClass: null, attentionCount: null,
-          }));
+          // #157 (D2.3): when the member IS steering-registered, hydrate phase/progressClass/
+          // attentionCount from the live run inspect exactly as the object branch does — never
+          // hardcode nulls for a live member. The hydrated read carries the D5.2 seam: a registered
+          // run that vanished refuses wave_not_found, never a silent null.
+          const runId = this._runIdForWaveMember(row.waveId, member);
+          const route = this._runWaveRoute(runId);
+          let view = null;
+          if (runId !== null) {
+            try {
+              view = await this.inspect({ runId }, principal, context);
+            } catch (error) {
+              if (error?.code !== 'application_run_not_found') throw error;
+              throw applicationError(`wave member ${member} run is no longer available`, 'wave_not_found', { runId, role: member });
+            }
+          }
+          if (runId === null) {
+            members.push(deepFreeze({
+              role: member, route: null, scope: null,
+              liveness: 'local', phase: null, progressClass: null, attentionCount: null,
+            }));
+          } else {
+            const attention = Array.isArray(view?.attention) ? view.attention.length : 0;
+            members.push(deepFreeze({
+              role: member, route: route ?? null, scope: null,
+              liveness: 'local',
+              phase: view?.phase ?? view?.outline?.phase ?? null,
+              progressClass: view?.progressClass ?? view?.outline?.progressClass ?? null,
+              attentionCount: attention,
+            }));
+          }
           continue;
         }
         const role = member?.role ?? null;
