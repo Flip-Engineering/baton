@@ -1,0 +1,29 @@
+✔ T1: a pausable checkpoint turn with no diff gets NO gate dispatch — no verdict, no kill, one policy nudge (60.74375ms)
+✔ T2: a FINAL (claim-classified) turn with no diff on a required-edit plan still fails required_effect_absent (anti-gaming pin) (38.239667ms)
+✔ T3: a pausable checkpoint on a NO-required-effects brief is NOT accepted mid-workflow (no mid-workflow completion) (38.91325ms)
+✔ T5: a resumed turn inside the window answers the cycle — settle working, zero gate events (28.60725ms)
+✔ T6: a distinct scratchpad receipt answers the cycle (coordination work is liveness) (100.240584ms)
+✔ T7: duplicate one-char receipts still count as one distinct answer (no content floor) — and the final still demands the diff (51.019209ms)
+✔ T7b: with NOTHING answering, the window expires and the full final evaluation lands with the steering receipt (91.513083ms)
+✔ T8: a pending question earns nothing; resolving it inside the window answers the cycle (89.227458ms)
+✔ T8b: a question left PENDING past the window does not hold the cycle open (resolution-gating, the 6b farm closed) (82.110625ms)
+✔ T9: a drivered run gets NO policy cycle (the driver's claim cadence owns steering) (23.088625ms)
+✔ T10: one cycle per pause record — a new record arms a new cycle, never a re-arm of the old (45.119459ms)
+✔ T10b: a claim on a cycle-armed record resolves through the full gate WITHOUT the steering-expiry receipt (6c) (31.320333ms)
+✔ T11: a gate failure names its gate in the projected terminal cause and carries the sanitized {gate, detail} verdict (28.002167ms)
+✔ T12: an analysis:true node may omit requiredEffects (the sole legitimate omission path) (4.855166ms)
+✔ T13: omitting repository_edit WITHOUT analysis:true is a plan-validation error (1.42275ms)
+✔ T14: an analysis node's final evaluation SKIPS required_effect and runs every other phase (55.637041ms)
+✔ T14b: a NON-analysis node's edit-free final fails required_effect (the flag is the boundary) (36.939083ms)
+✔ T14c: analysis does NOT exempt the violation phases — an out-of-scope diff still fails path_scope (31.836583ms)
+✔ T15: no shipped constraint or profile text coaches progress-by-diff-timing for the gate (1.172667ms)
+✔ T16: path_scope violation fires identically at a final (regression pin) (26.062458ms)
+✔ T17: an answered cycle on a drivered claim re-runs the FULL gate (drivered final pin) (39.071291ms)
+ℹ tests 21
+ℹ suites 0
+ℹ pass 21
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 1460.449666

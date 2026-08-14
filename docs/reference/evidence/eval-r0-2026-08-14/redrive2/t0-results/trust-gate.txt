@@ -1,0 +1,240 @@
+✖ T1: a pausable checkpoint turn with no diff gets NO gate dispatch — no verdict, no kill, one policy nudge (124.005959ms)
+✔ T2: a FINAL (claim-classified) turn with no diff on a required-edit plan still fails required_effect_absent (anti-gaming pin) (79.634375ms)
+✖ T3: a pausable checkpoint on a NO-required-effects brief is NOT accepted mid-workflow (no mid-workflow completion) (81.727667ms)
+✖ T5: a resumed turn inside the window answers the cycle — settle working, zero gate events (57.492042ms)
+✖ T6: a distinct scratchpad receipt answers the cycle (coordination work is liveness) (140.3445ms)
+✖ T7: duplicate one-char receipts still count as one distinct answer (no content floor) — and the final still demands the diff (50.724ms)
+✖ T7b: with NOTHING answering, the window expires and the full final evaluation lands with the steering receipt (58.433916ms)
+✖ T8: a pending question earns nothing; resolving it inside the window answers the cycle (138.638042ms)
+✖ T8b: a question left PENDING past the window does not hold the cycle open (resolution-gating, the 6b farm closed) (48.816542ms)
+✔ T9: a drivered run gets NO policy cycle (the driver's claim cadence owns steering) (62.704708ms)
+✖ T10: one cycle per pause record — a new record arms a new cycle, never a re-arm of the old (59.922208ms)
+✖ T10b: a claim on a cycle-armed record resolves through the full gate WITHOUT the steering-expiry receipt (6c) (54.319792ms)
+✖ T11: a gate failure names its gate in the projected terminal cause and carries the sanitized {gate, detail} verdict (63.4795ms)
+✖ T12: an analysis:true node may omit requiredEffects (the sole legitimate omission path) (2.2245ms)
+✖ T13: omitting repository_edit WITHOUT analysis:true is a plan-validation error (65.658042ms)
+✖ T14: an analysis node's final evaluation SKIPS required_effect and runs every other phase (81.963459ms)
+✔ T14b: a NON-analysis node's edit-free final fails required_effect (the flag is the boundary) (39.636084ms)
+✔ T14c: analysis does NOT exempt the violation phases — an out-of-scope diff still fails path_scope (34.462375ms)
+✔ T15: no shipped constraint or profile text coaches progress-by-diff-timing for the gate (2.010709ms)
+✔ T16: path_scope violation fires identically at a final (regression pin) (51.7825ms)
+✔ T17: an answered cycle on a drivered claim re-runs the FULL gate (drivered final pin) (42.639417ms)
+ℹ tests 21
+ℹ suites 0
+ℹ pass 7
+ℹ fail 14
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 1911.258167
+
+✖ failing tests:
+
+test at impl/test/trust-gate-steering-red.test.mjs:134:1
+✖ T1: a pausable checkpoint turn with no diff gets NO gate dispatch — no verdict, no kill, one policy nudge (124.005959ms)
+  AssertionError [ERR_ASSERTION]: no required_effect verdict at a checkpoint
+      at TestContext.<anonymous> (file:///private/tmp/eval-r0-rd2-trust-gate/impl/test/trust-gate-steering-red.test.mjs:144:10)
+      at async Test.run (node:internal/test_runner/test:1208:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:385:3) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: 'failed',
+    expected: 'failed',
+    operator: 'notStrictEqual',
+    diff: 'simple'
+  }
+
+test at impl/test/trust-gate-steering-red.test.mjs:167:1
+✖ T3: a pausable checkpoint on a NO-required-effects brief is NOT accepted mid-workflow (no mid-workflow completion) (81.727667ms)
+  AssertionError [ERR_ASSERTION]: checkpoint pauses never accept (A1: acceptance is final-only too)
+      at TestContext.<anonymous> (file:///private/tmp/eval-r0-rd2-trust-gate/impl/test/trust-gate-steering-red.test.mjs:174:10)
+      at async Test.run (node:internal/test_runner/test:1208:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: 'completed',
+    expected: 'completed',
+    operator: 'notStrictEqual',
+    diff: 'simple'
+  }
+
+test at impl/test/trust-gate-steering-red.test.mjs:181:1
+✖ T5: a resumed turn inside the window answers the cycle — settle working, zero gate events (57.492042ms)
+  AssertionError [ERR_ASSERTION]: Expected "actual" to be strictly unequal to:
+  
+  'failed'
+      at TestContext.<anonymous> (file:///private/tmp/eval-r0-rd2-trust-gate/impl/test/trust-gate-steering-red.test.mjs:192:10)
+      at async Test.run (node:internal/test_runner/test:1208:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: 'failed',
+    expected: 'failed',
+    operator: 'notStrictEqual',
+    diff: 'simple'
+  }
+
+test at impl/test/trust-gate-steering-red.test.mjs:200:1
+✖ T6: a distinct scratchpad receipt answers the cycle (coordination work is liveness) (140.3445ms)
+  AssertionError [ERR_ASSERTION]: the distinct receipt answered the cycle before expiry
+      at TestContext.<anonymous> (file:///private/tmp/eval-r0-rd2-trust-gate/impl/test/trust-gate-steering-red.test.mjs:211:10)
+      at async Test.run (node:internal/test_runner/test:1208:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: 'failed',
+    expected: 'failed',
+    operator: 'notStrictEqual',
+    diff: 'simple'
+  }
+
+test at impl/test/trust-gate-steering-red.test.mjs:217:1
+✖ T7: duplicate one-char receipts still count as one distinct answer (no content floor) — and the final still demands the diff (50.724ms)
+  AssertionError [ERR_ASSERTION]: one distinct receipt answers the liveness check (TG2: no content floor)
+      at TestContext.<anonymous> (file:///private/tmp/eval-r0-rd2-trust-gate/impl/test/trust-gate-steering-red.test.mjs:226:10)
+      at async Test.run (node:internal/test_runner/test:1208:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: 'failed',
+    expected: 'failed',
+    operator: 'notStrictEqual',
+    diff: 'simple'
+  }
+
+test at impl/test/trust-gate-steering-red.test.mjs:230:1
+✖ T7b: with NOTHING answering, the window expires and the full final evaluation lands with the steering receipt (58.433916ms)
+  AssertionError [ERR_ASSERTION]: mid-window the worker is ALIVE — the verdict waits for the window (no instant kill)
+      at TestContext.<anonymous> (file:///private/tmp/eval-r0-rd2-trust-gate/impl/test/trust-gate-steering-red.test.mjs:236:10)
+      at async Test.run (node:internal/test_runner/test:1208:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: 'failed',
+    expected: 'failed',
+    operator: 'notStrictEqual',
+    diff: 'simple'
+  }
+
+test at impl/test/trust-gate-steering-red.test.mjs:250:1
+✖ T8: a pending question earns nothing; resolving it inside the window answers the cycle (138.638042ms)
+  AssertionError [ERR_ASSERTION]: the resolved interaction answered the cycle
+      at TestContext.<anonymous> (file:///private/tmp/eval-r0-rd2-trust-gate/impl/test/trust-gate-steering-red.test.mjs:266:10)
+      at async Test.run (node:internal/test_runner/test:1208:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: 'failed',
+    expected: 'failed',
+    operator: 'notStrictEqual',
+    diff: 'simple'
+  }
+
+test at impl/test/trust-gate-steering-red.test.mjs:271:1
+✖ T8b: a question left PENDING past the window does not hold the cycle open (resolution-gating, the 6b farm closed) (48.816542ms)
+  AssertionError [ERR_ASSERTION]: mid-window the worker is alive (the window actually elapses before any verdict)
+      at TestContext.<anonymous> (file:///private/tmp/eval-r0-rd2-trust-gate/impl/test/trust-gate-steering-red.test.mjs:282:10)
+      at async Test.run (node:internal/test_runner/test:1208:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: 'failed',
+    expected: 'failed',
+    operator: 'notStrictEqual',
+    diff: 'simple'
+  }
+
+test at impl/test/trust-gate-steering-red.test.mjs:309:1
+✖ T10: one cycle per pause record — a new record arms a new cycle, never a re-arm of the old (59.922208ms)
+  AssertionError [ERR_ASSERTION]: the first record arms exactly one cycle
+  
+  0 !== 1
+  
+      at TestContext.<anonymous> (file:///private/tmp/eval-r0-rd2-trust-gate/impl/test/trust-gate-steering-red.test.mjs:316:10)
+      at async Test.run (node:internal/test_runner/test:1208:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: 0,
+    expected: 1,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at impl/test/trust-gate-steering-red.test.mjs:327:1
+✖ T10b: a claim on a cycle-armed record resolves through the full gate WITHOUT the steering-expiry receipt (6c) (54.319792ms)
+  AssertionError [ERR_ASSERTION]: the cycle armed
+  
+  0 !== 1
+  
+      at TestContext.<anonymous> (file:///private/tmp/eval-r0-rd2-trust-gate/impl/test/trust-gate-steering-red.test.mjs:333:10)
+      at async Test.run (node:internal/test_runner/test:1208:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: 0,
+    expected: 1,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at impl/test/trust-gate-steering-red.test.mjs:352:1
+✖ T11: a gate failure names its gate in the projected terminal cause and carries the sanitized {gate, detail} verdict (63.4795ms)
+  AssertionError [ERR_ASSERTION]: the projected cause names the gate
+      at TestContext.<anonymous> (file:///private/tmp/eval-r0-rd2-trust-gate/impl/test/trust-gate-steering-red.test.mjs:362:10)
+      at async Test.run (node:internal/test_runner/test:1208:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: 'null',
+    expected: /required_effect_absent/,
+    operator: 'match',
+    diff: 'simple'
+  }
+
+test at impl/test/trust-gate-steering-red.test.mjs:417:1
+✖ T12: an analysis:true node may omit requiredEffects (the sole legitimate omission path) (2.2245ms)
+  Error [GoalPlanValidationError]: goal/plan object has unknown or missing fields
+      at fail (file:///private/tmp/eval-r0-rd2-trust-gate/impl/src/goal-plan.mjs:35:38)
+      at exactObject (file:///private/tmp/eval-r0-rd2-trust-gate/impl/src/goal-plan.mjs:38:78)
+      at normalizeNode (file:///private/tmp/eval-r0-rd2-trust-gate/impl/src/goal-plan.mjs:296:3)
+      at file:///private/tmp/eval-r0-rd2-trust-gate/impl/src/goal-plan.mjs:376:43
+      at Array.map (<anonymous>)
+      at normalizePlanRequest (file:///private/tmp/eval-r0-rd2-trust-gate/impl/src/goal-plan.mjs:376:29)
+      at TestContext.<anonymous> (file:///private/tmp/eval-r0-rd2-trust-gate/impl/test/trust-gate-steering-red.test.mjs:419:22)
+      at Test.runInAsyncScope (node:async_hooks:226:14)
+      at Test.run (node:internal/test_runner/test:1201:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:831:18) {
+    code: 'goal_plan_invalid'
+  }
+
+test at impl/test/trust-gate-steering-red.test.mjs:423:1
+✖ T13: omitting repository_edit WITHOUT analysis:true is a plan-validation error (65.658042ms)
+  AssertionError [ERR_ASSERTION]: Missing expected exception: the refusal names the missing analysis field, not a generic envelope error
+      at TestContext.<anonymous> (file:///private/tmp/eval-r0-rd2-trust-gate/impl/test/trust-gate-steering-red.test.mjs:425:10)
+      at Test.runInAsyncScope (node:async_hooks:226:14)
+      at Test.run (node:internal/test_runner/test:1201:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:831:18)
+      at Test.postRun (node:internal/test_runner/test:1330:19)
+      at Test.run (node:internal/test_runner/test:1258:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    operator: 'throws',
+    diff: 'simple'
+  }
+
+test at impl/test/trust-gate-steering-red.test.mjs:432:1
+✖ T14: an analysis node's final evaluation SKIPS required_effect and runs every other phase (81.963459ms)
+  AssertionError [ERR_ASSERTION]: analysis documents the edit as not-required
+      at TestContext.<anonymous> (file:///private/tmp/eval-r0-rd2-trust-gate/impl/test/trust-gate-steering-red.test.mjs:441:10)
+      at async Test.run (node:internal/test_runner/test:1208:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: 'failed',
+    expected: 'failed',
+    operator: 'notStrictEqual',
+    diff: 'simple'
+  }

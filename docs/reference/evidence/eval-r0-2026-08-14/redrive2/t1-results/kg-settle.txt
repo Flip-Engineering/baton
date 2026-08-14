@@ -1,0 +1,32 @@
+✔ KS1: the pair is ONE two-event batch with the hub-fixed brief and pinned identities (47.991458ms)
+✔ KS1: closed shape — extra fields, caller prose, non-orchestrator actors, unpinned ids all refuse (1.4865ms)
+✔ KS1: replay is exactly-once and same-key-different-fields conflicts (72.112ms)
+✔ KS2: every _activeRunOrchestratorLease refusal code is produced at admission (243.579667ms)
+✔ KS2: the acquiring session admits (control) (25.575042ms)
+✔ KS3: scratchpad.elevate maps to coordinator.elevateTaskScratchpad with normalized args (384.753333ms)
+✔ KS3: scratchpad.settle maps to coordinator.settleWorkflowScratchpad (472.495667ms)
+✔ KS3: knowledge.promote maps to coordinator.admitWorkflowFinding (registry liveMethod agrees) (440.348125ms)
+✔ KS3: knowledge.settlement_lease materializes the bundle with the session derived from the calling principal (561.550042ms)
+✔ KS4: the hook elevates note+plan, candidacies notes with exact title/detail, and surfaces receipt + outline (4490.352958ms)
+✔ KS4: the default (no settlement field) is kg-ritual ON (3173.1625ms)
+✔ KS4: settlement:none performs zero ritual writes (event-log diff) (2150.591584ms)
+✔ KS4: an empty partition is honest-empty with the ritual ON (zero ritual events) (3529.990583ms)
+✔ KS5: a crash between candidacy posts resolves exactly-once on re-drive (3984.881916ms)
+✔ KS6: the hook sweeps expired settlement leases (≤16/pass) with review_window_expired and retires residue (1883.020208ms)
+✔ KS7: promote admits→revokes→completes in order, replays exactly, and resumes from every partial state (317.62075ms)
+✔ KS7: partial state admit-done (crash after step 1) completes without conflict (316.205375ms)
+✔ KS7: partial state admit+revoke-done (crash after step 2) completes without conflict (266.61925ms)
+✔ KS8: shared kinds are exactly note+plan; doubt+link carry orchestrator_skipped dispositions (2334.35975ms)
+✔ KS8: a not-ready elevation refusal is recorded in settlement.errors and close still completes (2571.596083ms)
+✔ KS9: the four rows are embedded-only in the registry, CLI, and recursive gate (1.826125ms)
+✔ KS9: the four names stay out of the recursive-dispatch allowlists (source pin) (6.504917ms)
+✔ KS9b: the knowledge.settlement_lease registry row exists and is embedded-only (stage: row missing) (0.40925ms)
+✔ KS10: a control-character-bearing worker note lands sanitized, framed UNTRUSTED on board reads (2443.168667ms)
+ℹ tests 24
+ℹ suites 0
+ℹ pass 24
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 30568.049166

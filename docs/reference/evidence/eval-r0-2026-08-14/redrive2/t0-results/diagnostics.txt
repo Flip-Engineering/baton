@@ -1,0 +1,112 @@
+✖ DG-1a: wire.frame_degraded surfaces as a bounded whitelist summary (count + last code), never raw frames (1863.754459ms)
+✔ DG-1a: stream-death/crash lands on the failure leg as a whitelisted summary (2127.317042ms)
+✖ DG-1a: #53 closed-shape whitelist amendment is pinned by source-scan (8.070375ms)
+✖ DG-1b: scope refusal carries {gate:'scope', detail:{digests, counts}} — no path strings (2019.708416ms)
+✖ DG-1b: red_green refusal carries sanitized tail; secret-shaped line never appears (2154.153084ms)
+✖ DG-1b: coverage refusal carries sanitized tail via the same gate shape (1140.442666ms)
+✖ DG-1b: unrecognized gate code serializes gate:'unknown' (1414.128167ms)
+✖ DG-1b: run.feedback accepts the same {gate, detail} payload the debug failure leg projects (1044.977167ms)
+ℹ tests 8
+ℹ suites 0
+ℹ pass 1
+ℹ fail 7
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 12414.67025
+
+✖ failing tests:
+
+test at impl/test/diagnostics-red.test.mjs:150:1
+✖ DG-1a: wire.frame_degraded surfaces as a bounded whitelist summary (count + last code), never raw frames (1863.754459ms)
+  AssertionError [ERR_ASSERTION]: one aggregated summary, not one receipt per event
+  
+  0 !== 1
+  
+      at TestContext.<anonymous> (file:///private/tmp/eval-r0-rd2-diagnostics/impl/test/diagnostics-red.test.mjs:164:10)
+      at async Test.run (node:internal/test_runner/test:1208:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:385:3) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: 0,
+    expected: 1,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at impl/test/diagnostics-red.test.mjs:198:1
+✖ DG-1a: #53 closed-shape whitelist amendment is pinned by source-scan (8.070375ms)
+  AssertionError [ERR_ASSERTION]: DIAG-3 amendment must whitelist wire.frame_degraded in the debug projection
+      at TestContext.<anonymous> (file:///private/tmp/eval-r0-rd2-diagnostics/impl/test/diagnostics-red.test.mjs:205:10)
+      at Test.runInAsyncScope (node:async_hooks:226:14)
+      at Test.run (node:internal/test_runner/test:1201:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:831:18)
+      at Test.postRun (node:internal/test_runner/test:1330:19)
+      at Test.run (node:internal/test_runner/test:1258:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: false,
+    expected: true,
+    operator: '==',
+    diff: 'simple'
+  }
+
+test at impl/test/diagnostics-red.test.mjs:225:1
+✖ DG-1b: scope refusal carries {gate:'scope', detail:{digests, counts}} — no path strings (2019.708416ms)
+  AssertionError [ERR_ASSERTION]: scope refusal must land on the failure leg
+      at TestContext.<anonymous> (file:///private/tmp/eval-r0-rd2-diagnostics/impl/test/diagnostics-red.test.mjs:249:10)
+      at async Test.run (node:internal/test_runner/test:1208:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: null,
+    expected: true,
+    operator: '==',
+    diff: 'simple'
+  }
+
+test at impl/test/diagnostics-red.test.mjs:268:1
+✖ DG-1b: red_green refusal carries sanitized tail; secret-shaped line never appears (2154.153084ms)
+  AssertionError [ERR_ASSERTION]: red_green refusal must land on the failure leg
+      at TestContext.<anonymous> (file:///private/tmp/eval-r0-rd2-diagnostics/impl/test/diagnostics-red.test.mjs:297:10)
+      at async Test.run (node:internal/test_runner/test:1208:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: null,
+    expected: true,
+    operator: '==',
+    diff: 'simple'
+  }
+
+test at impl/test/diagnostics-red.test.mjs:306:1
+✖ DG-1b: coverage refusal carries sanitized tail via the same gate shape (1140.442666ms)
+  TypeError: Cannot read properties of null (reading 'gate')
+      at TestContext.<anonymous> (file:///private/tmp/eval-r0-rd2-diagnostics/impl/test/diagnostics-red.test.mjs:334:24)
+      at async Test.run (node:internal/test_runner/test:1208:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7)
+
+test at impl/test/diagnostics-red.test.mjs:338:1
+✖ DG-1b: unrecognized gate code serializes gate:'unknown' (1414.128167ms)
+  AssertionError [ERR_ASSERTION]: The expression evaluated to a falsy value:
+  
+    assert.ok(failure)
+  
+      at TestContext.<anonymous> (file:///private/tmp/eval-r0-rd2-diagnostics/impl/test/diagnostics-red.test.mjs:351:10)
+      at async Test.run (node:internal/test_runner/test:1208:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: null,
+    expected: true,
+    operator: '==',
+    diff: 'simple'
+  }
+
+test at impl/test/diagnostics-red.test.mjs:356:1
+✖ DG-1b: run.feedback accepts the same {gate, detail} payload the debug failure leg projects (1044.977167ms)
+  TypeError: Cannot read properties of null (reading 'gate')
+      at TestContext.<anonymous> (file:///private/tmp/eval-r0-rd2-diagnostics/impl/test/diagnostics-red.test.mjs:377:36)
+      at async Test.run (node:internal/test_runner/test:1208:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7)
