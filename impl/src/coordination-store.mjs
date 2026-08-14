@@ -12,6 +12,10 @@ import {
   goalPlanDigest, normalizeGoalPlanPolicy, normalizeGoalRequest, normalizePlanRequest,
   planBriefMatches, planRouteAuthorityState, planRouteMatches,
 } from './goal-plan.mjs';
+import {
+  PLAN_OBJECT_BATCH_KINDS, PLAN_OBJECT_EVENT_KINDS, foldPlanObjectEvent, planObjectDigest,
+  planObjectSnapshot, readPlanObject, waveRoleRunKey,
+} from './orchestrator-plan.mjs';
 import { usdFromNanos, usdToNanos } from './usd.mjs';
 import {
   CANONICAL_ORDER_VERSION, canonicalJson, compareCanonicalStrings,
@@ -122,6 +126,9 @@ const PROJECTION_CHECKPOINT_FIELDS = Object.freeze([
   '_waveClosures',
   // D2.3 (epic #132): replay-derived wave.started registry rows by waveId.
   '_waveRegistry',
+  // #161: replay-derived campaign-plan objects (planId -> plan) and the (waveId, waveRole) ->
+  // runId roster index the plan lane resolves pre-decomposed ownedBy.run bindings from (H2.2).
+  '_campaignPlans', '_waveRoleRuns',
   '_replManifestAdmissions',
   // REPL-2 (Part G rule 23): gains _replBindings, _replBindingHistory, _replBindingFences.
   '_replBindings', '_replBindingHistory', '_replBindingFences',
@@ -1229,6 +1236,13 @@ export class CoordinationStore {
     // D2.3 (epic #132): replay-derived wave.started registry rows by waveId — the in-flight wave
     // set for THIS deployment. Rebuilt by re-applying the log in _apply; wave.closed closes rows.
     this._waveRegistry = new Map();
+    // #161 (D1): the campaign-plan object projection — planId -> plan (the contract's
+    // _plans/_planTasks naming is taken by the goal-plan fold; these are the campaign twins).
+    // Rebuilt by re-applying the log in _apply via foldPlanObjectEvent; folds apply events, they
+    // never authorize (H2.3). #161 (H2.2): the (waveId, waveRole) -> runId roster index the lane
+    // resolves pre-decomposed ownedBy.run bindings from at claim time.
+    this._campaignPlans = new Map();
+    this._waveRoleRuns = new Map();
     // REFLEX-2 boards: immutable versioned items + per-itemId claims + reports, and a
     // board-scoped, replay-derivable fence counter (the count of orchestrator-authority
     // events per board — NOT the worker FenceTable). All rebuilt purely by re-applying the
@@ -1530,6 +1544,9 @@ export class CoordinationStore {
       'goal_plan_node_dispatch', 'goal_plan_wave_dispatch', 'goal_plan_recovery_dispatch',
       'scratchpad_task_settlement', 'scratchpad_link_citation',
       'scratchpad_workflow_settlement', 'scratchpad_stop_cleanup',
+      // #161 (H4.1): the plan lane's auto-demote batch — a -> doing transition that demotes the
+      // subtree's current doing task to todo in the same atomic append (the kimi behavior, DR-3).
+      ...PLAN_OBJECT_BATCH_KINDS,
     ].includes(batchKind)) {
       throw new TypeError('coordination batch kind is invalid');
     }
@@ -8092,7 +8109,15 @@ export class CoordinationStore {
       // Phase 60 recovery records are closed, causally validated state. Malformed or unmatched
       // known records are integrity failures on replay, never durable facts that projection may
       // silently ignore and later redeliver.
-      if (p?.kind === 'steering.registered' && typeof p?.runId === 'string') this._steeringRuns.add(p.runId);
+      if (p?.kind === 'steering.registered' && typeof p?.runId === 'string') {
+        this._steeringRuns.add(p.runId);
+        // #161 (H2.2): the (waveId, waveRole) -> runId binding — the roster row the plan lane
+        // resolves a pre-decomposed ownedBy.run (null) from at the row's claim/transition time.
+        if (typeof p.waveId === 'string' && p.waveId.length > 0
+          && typeof p.waveRole === 'string' && p.waveRole.length > 0) {
+          this._waveRoleRuns.set(waveRoleRunKey(p.waveId, p.waveRole), p.runId);
+        }
+      }
       if (p?.kind === 'recovery.continuation_intent') {
         this._recoveryDispatches.set(p.workerId, this._validateRecoveryContinuationPayload(p, event, true));
       } else if (['recovery.dispatch_accepted', 'recovery.dispatch_refused'].includes(p?.kind)) {
@@ -8911,6 +8936,16 @@ export class CoordinationStore {
       // Epic #81 (O-6/O-7): append-only orientation audit receipts — attempt-scoped pack grants
       // (authority never collapses across attempts) and closed rating records (advisory). No
       // projection state; replay re-derives the audit by re-reading the log. Zero promotion weight.
+    } else if (PLAN_OBJECT_EVENT_KINDS.has(event.kind)) {
+      // #161 (D1/P2): the plan-object fold — the orchestrator's campaign plan state as a
+      // first-class coordination citizen. The lane module owns the closed payload shapes and the
+      // deterministic projection; an unfolderable event poisons the projection here (the TT4/board
+      // precedent). Folds apply events; they never authorize (H2.3) — ownership resolution is the
+      // lane's, and the fold resolves a pre-decomposed ownedBy.run (null) only from the durable
+      // roster facts (H2.2), so close/reopen replays the identical projection.
+      foldPlanObjectEvent(this._campaignPlans, event, {
+        resolveRunId: (waveId, role) => this._waveRoleRuns.get(waveRoleRunKey(waveId, role)) ?? null,
+      });
     } else {
       throw new CoordinationIntegrityError(`unsupported coordination event kind ${event.kind}`, 'unsupported_event_kind');
     }
@@ -11685,7 +11720,7 @@ export class CoordinationStore {
     });
   }
 
-  snapshot() { return freeze({ tasks: [...this._tasks.values()].map(clone), runs: [...this._runs.values()].map(clone), ...(this._runStops.size > 0 ? { runStops: [...this._runStops.values()].map(clone) } : {}), ...(this._runControls.size > 0 ? { runControls: [...this._runControls.values()].map(clone) } : {}), ...(this._runLineagePolicy ? { runAuthority: this.runAuthoritySnapshot() } : {}), ...(this._runResultAdoptions.size > 0 ? { runResultAdoptions: [...this._runResultAdoptions.values()].map(clone) } : {}), ...(this._runResultExports.size > 0 ? { runResultExports: [...this._runResultExports.values()].map(clone) } : {}), ...(this._contextProgramPolicy ? { context: { policy: clone(this._contextProgramPolicy), sessions: [...this._contextSessions.values()].map(clone), cells: [...this._contextCells.values()].map(clone), calls: this.contextCalls() } } : {}), ...(this._replManifestAdmissions.size > 0 ? { repl: { manifests: [...this._replManifestAdmissions.values()].map(clone) } } : {}), artifacts: [...this._artifacts.values()].map(clone), ...(this._recoveryAttemptsById.size > 0 ? { recoveryAttempts: [...this._recoveryAttemptsById.values()].map(clone) } : {}), ...(this._representationPolicy || this._representations.size > 0 ? { representations: [...this._representations.values()].map(clone) } : {}), ...(this._goalPlanPolicy || this._goals.size > 0 ? { goalPlan: { goals: [...this._goals.values()].map(clone), plans: [...this._plans.values()].map(clone), approvals: [...this._planApprovals.values()].map(clone), dispatches: [...this._planDispatches.values()].map(clone), budgetSettlements: [...this._planBudgetSettlements.values()].map(clone) } } : {}), ...(this._routePolicy ? { routeLearning: { policy: clone(this._routePolicy), observations: this.routeObservations() } } : {}), reuseDecisions: [...this._reuseDecisions.values()].map(clone), reuseRiskGuards: [...this._reuseRiskGuards.values()].map(clone), ...(this._reuseProviderGuards.size > 0 || this._reuseProviderContributions.size > 0 ? { reuseProviderGuards: [...this._reuseProviderGuards.values()].map(clone), reuseProviderContributions: [...this._reuseProviderContributions.values()].map(clone) } : {}), reusePolicy: { heads: [...this._reusePolicyHeads.values()].map(clone), transitions: this._reusePolicyTransitions.map(clone) }, ...(this._advisoryFeedCards.size > 0 || this._providerReceipts.size > 0 ? { provider: { receiptCount: this._providerReceipts.size, processingCount: this._providerProcessing.size, pendingCoordinateCount: this._providerPending.size } } : {}), evidence: [...this._evidence.values()].map(clone), scratch: { facts: [...this._scratchFacts.values()].map(clone), claims: [...this._scratchClaims.values()].map(clone), reads: this._scratchReads.map(clone) }, scratchpad: this._scratchpadSnapshot(), knowledge: { nodes: [...this._knowledgeNodes.values()].map(clone), edges: [...this._knowledgeEdges.values()].map(clone), reads: this._knowledgeReads.map(clone), ...(this._knowledgeRecallAssessments.size > 0 ? { assessments: [...this._knowledgeRecallAssessments.values()].map(clone) } : {}), contamination: this._contamination.map(clone) }, lastSeq: this._events.length }); }
+  snapshot() { return freeze({ tasks: [...this._tasks.values()].map(clone), runs: [...this._runs.values()].map(clone), ...(this._runStops.size > 0 ? { runStops: [...this._runStops.values()].map(clone) } : {}), ...(this._runControls.size > 0 ? { runControls: [...this._runControls.values()].map(clone) } : {}), ...(this._runLineagePolicy ? { runAuthority: this.runAuthoritySnapshot() } : {}), ...(this._runResultAdoptions.size > 0 ? { runResultAdoptions: [...this._runResultAdoptions.values()].map(clone) } : {}), ...(this._runResultExports.size > 0 ? { runResultExports: [...this._runResultExports.values()].map(clone) } : {}), ...(this._contextProgramPolicy ? { context: { policy: clone(this._contextProgramPolicy), sessions: [...this._contextSessions.values()].map(clone), cells: [...this._contextCells.values()].map(clone), calls: this.contextCalls() } } : {}), ...(this._replManifestAdmissions.size > 0 ? { repl: { manifests: [...this._replManifestAdmissions.values()].map(clone) } } : {}), artifacts: [...this._artifacts.values()].map(clone), ...(this._recoveryAttemptsById.size > 0 ? { recoveryAttempts: [...this._recoveryAttemptsById.values()].map(clone) } : {}), ...(this._representationPolicy || this._representations.size > 0 ? { representations: [...this._representations.values()].map(clone) } : {}), ...(this._goalPlanPolicy || this._goals.size > 0 ? { goalPlan: { goals: [...this._goals.values()].map(clone), plans: [...this._plans.values()].map(clone), approvals: [...this._planApprovals.values()].map(clone), dispatches: [...this._planDispatches.values()].map(clone), budgetSettlements: [...this._planBudgetSettlements.values()].map(clone) } } : {}), ...(this._routePolicy ? { routeLearning: { policy: clone(this._routePolicy), observations: this.routeObservations() } } : {}), reuseDecisions: [...this._reuseDecisions.values()].map(clone), reuseRiskGuards: [...this._reuseRiskGuards.values()].map(clone), ...(this._reuseProviderGuards.size > 0 || this._reuseProviderContributions.size > 0 ? { reuseProviderGuards: [...this._reuseProviderGuards.values()].map(clone), reuseProviderContributions: [...this._reuseProviderContributions.values()].map(clone) } : {}), reusePolicy: { heads: [...this._reusePolicyHeads.values()].map(clone), transitions: this._reusePolicyTransitions.map(clone) }, ...(this._advisoryFeedCards.size > 0 || this._providerReceipts.size > 0 ? { provider: { receiptCount: this._providerReceipts.size, processingCount: this._providerProcessing.size, pendingCoordinateCount: this._providerPending.size } } : {}), evidence: [...this._evidence.values()].map(clone), scratch: { facts: [...this._scratchFacts.values()].map(clone), claims: [...this._scratchClaims.values()].map(clone), reads: this._scratchReads.map(clone) }, scratchpad: this._scratchpadSnapshot(), knowledge: { nodes: [...this._knowledgeNodes.values()].map(clone), edges: [...this._knowledgeEdges.values()].map(clone), reads: this._knowledgeReads.map(clone), ...(this._knowledgeRecallAssessments.size > 0 ? { assessments: [...this._knowledgeRecallAssessments.values()].map(clone) } : {}), contamination: this._contamination.map(clone) }, ...(this._campaignPlans.size > 0 ? { planObjects: planObjectSnapshot(this._campaignPlans) } : {}), lastSeq: this._events.length }); }
 
   /** Narrow current Goal/Plan index used by resident startup reconciliation. This avoids cloning
    * unrelated tasks, evidence, knowledge, Web/MCP receipts, or historical Goal/Plan versions. */
@@ -13414,8 +13449,60 @@ export class CoordinationStore {
       throw new CoordinationRefusal('wave is already closed', 'wave_already_closed');
     }
     const event = this._append('wave.closed', payload, auth);
+    // #161 (D2/P6): the wave-close elevation — the wave's plan tasks are reviewed at close.
+    this._planElevationAtWaveClose(payload.waveId, auth, event.seq);
     const record = this._waveClosures.get(payload.waveId) ?? null;
     return { ok: true, event: clone(event), record: record ? clone(record) : null };
+  }
+
+  /** #161 (D2/P6): the at-wave-close plan elevation, folded from the closure itself. Completed
+   * tasks keep done and gain DURABLE elevation evidence links (plan.task_evidence_linked on this
+   * ledger, never a hand-edited projection field); a doing task reverts to todo for the next wave
+   * (the honest remainder) through the registered plan_auto_demote batch. No silent
+   * auto-promotion: an unreviewed or incomplete task never reads done. The reviewed-reject
+   * re-open (done -> todo, H4.2) stays the surfaced review-authority write — the hook never
+   * re-opens. Replay re-folds the appended events; this hook runs at admission only. */
+  _planElevationAtWaveClose(waveId, auth, closedEventSeq) {
+    if (this._campaignPlans.size === 0) return;
+    const demotions = [];
+    for (const plan of this._campaignPlans.values()) {
+      for (const taskId of Object.keys(plan.tasks).sort()) {
+        const task = plan.tasks[taskId];
+        if (task.ownedBy?.wave !== waveId) continue;
+        if (task.status === 'done') {
+          const evidence = [{ coordinationSeq: closedEventSeq }];
+          const payload = {
+            schemaVersion: 1, planId: plan.planId, taskId: task.id, evidence,
+            expectedTaskVersion: task.taskVersion,
+            requestDigest: planObjectDigest({
+              schemaVersion: 1, planId: plan.planId, taskId: task.id, evidence,
+              expectedTaskVersion: task.taskVersion,
+            }),
+          };
+          this._append('plan.task_evidence_linked', payload, {
+            actor: auth.actor,
+            key: `plan.task_evidence_linked:${plan.planId}:${task.id}:${planObjectDigest(evidence)}:v${task.taskVersion}`,
+          });
+        } else if (task.status === 'doing') {
+          demotions.push({
+            kind: 'plan.task_transitioned',
+            payload: {
+              schemaVersion: 1, planId: plan.planId, taskId: task.id, toStatus: 'todo',
+              expectedTaskVersion: task.taskVersion,
+              requestDigest: planObjectDigest({
+                schemaVersion: 1, planId: plan.planId, taskId: task.id, toStatus: 'todo',
+                expectedTaskVersion: task.taskVersion,
+              }),
+            },
+            auth: {
+              actor: auth.actor,
+              key: `plan.task_transitioned:${plan.planId}:${task.id}:todo:v${task.taskVersion}`,
+            },
+          });
+        }
+      }
+    }
+    if (demotions.length > 0) this._appendBatch(demotions, 'plan_auto_demote');
   }
 
   waveClosure(waveId) {
@@ -13431,6 +13518,29 @@ export class CoordinationStore {
   // replay-derived _waveRegistry map, cloned so a reader never mutates the projection.
   waveRegistry() {
     return [...this._waveRegistry.values()].map(clone);
+  }
+
+  // #161: the plan-object projection reads — cloned snapshots so a reader never mutates the
+  // replay-derived _campaignPlans map (folds apply events; they never authorize, H2.3).
+  campaignPlans() {
+    return planObjectSnapshot(this._campaignPlans);
+  }
+
+  campaignPlan(planId) {
+    return readPlanObject(this._campaignPlans, planId);
+  }
+
+  // #161 (G4/H1.1): the idempotency-keyed prior event for a plan mutation key — the write lane's
+  // replay adjudication (exactly-once retries) without exposing the raw _byKey index.
+  priorCoordinationEvent(key) {
+    const event = this._byKey.get(key) ?? null;
+    return event ? clone(event) : null;
+  }
+
+  // #161 (H2.2): the wave-role roster run resolution — ownedBy.run (null, pre-decomposed) resolves
+  // from the steering.registered fold at claim time.
+  waveRoleRun(waveId, waveRole) {
+    return this._waveRoleRuns.get(waveRoleRunKey(waveId, waveRole)) ?? null;
   }
 
   ledgerHeadSeq() {
