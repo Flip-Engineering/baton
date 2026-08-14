@@ -328,25 +328,9 @@ export class KimiAcpCli {
       void session.process.closePromise.then((outcome) => this._onClose(session, outcome));
       const processStarted = processStartedPayload(processGeneration, session.process.child?.pid);
       if (processStarted) this._emit(session, 'lifecycle.process_started', processStarted);
-      if (options.timeoutMs > 0) {
-        session.wallTimer = setTimeout(() => {
-          if (session.closed || session.killing) return;
-          session.timeoutFailure = { code: 'provider_timeout', error: 'Kimi session wall-time expired', usageSeal: unavailableUsageSeal() };
-          // The ACP child rejects the active prompt as soon as SIGKILL closes the
-          // transport. Publish the authoritative timeout before initiating that
-          // close, and mark the process as an intentional kill so the secondary
-          // code-less rejection cannot win the terminal classification race.
-          this._emitCrash(session, session.timeoutFailure);
-          session.killing = true;
-          session.pendingInterrupt = null;
-          session.steerPending = null;
-          void session.process.kill({
-            kind: 'kill.confirmed',
-            payload: { terminalCause: 'timeout', usageSeal: unavailableUsageSeal() },
-          });
-        }, options.timeoutMs);
-        session.wallTimer.unref?.();
-      }
+      // #163 law: the wall-time fate clock is GONE — options.timeoutMs is accepted for
+      // back-compat and deliberately ignored for fate. A member's fate rests on evidence
+      // only (process exit; quiescence-derived wave completion).
 
       try {
         const initialized = await session.process.request('initialize', {

@@ -295,21 +295,40 @@ export class GrokAcpCli {
       catch (error) { done(error); }
     });
   }
-
   /**
    * A client-initiated request. `timeoutMs: null` means unbounded — used ONLY by session/prompt,
    * whose response is the turn terminal (GA3); the close handler settles it if the child dies.
+   * #163 transport-recovery law: a request timeout NEVER hard-fails. Bounded retries with
+   * backoff while the child lives; only the process-exit fact terminalizes.
    */
-  _sendRequest(session, method, params, { timeoutMs } = {}) {
+  _sendRequest(session, method, params, { timeoutMs, retryBackoffMs = [250, 500, 1000, 2000, 4000, 8000, 15000, 30000] } = {}) {
+    const bound = timeoutMs === undefined ? this._requestTimeoutMs : timeoutMs;
+    if (bound === null) return this._sendRequestOnce(session, method, params);
+    const attempt = (n) => this._sendRequestOnce(session, method, params, bound)
+      .catch((error) => {
+        if (error?.code === 'grok_transport_timeout' && n < retryBackoffMs.length - 1) {
+          return new Promise((resolve) => setTimeout(
+            () => resolve(attempt(n + 1)),
+            retryBackoffMs[n],
+          ));
+        }
+        throw error;
+      });
+    return attempt(0);
+  }
+
+  _sendRequestOnce(session, method, params, boundMs) {
     return new Promise((resolve, reject) => {
       const id = (session.reqSeq += 1);
-      const bound = timeoutMs === undefined ? this._requestTimeoutMs : timeoutMs;
       let timer = null;
-      if (bound !== null) {
+      if (boundMs !== undefined && boundMs !== null) {
         timer = setTimeout(() => {
           session.pendingRequests.delete(id);
-          reject(new GrokRpcTimeoutError(`grok agent stdio: "${method}" timed out after ${bound}ms`));
-        }, bound);
+          reject(Object.assign(
+            new GrokRpcTimeoutError(`grok agent stdio: "${method}" timed out after ${boundMs}ms (retrying)`),
+            { code: 'grok_transport_timeout' },
+          ));
+        }, boundMs);
       }
       session.pendingRequests.set(id, { resolve, reject, timer });
       this._writeRaw(session, { id, method, params }).then((written) => {
@@ -322,7 +341,6 @@ export class GrokAcpCli {
   }
 
   _attachChild(session) {
-    session.child.stdout.setEncoding('utf8');
     session.child.stdout.on('data', (chunk) => {
       session.buf += chunk;
       let nl;
@@ -760,10 +778,8 @@ export class GrokAcpCli {
         return { ok: false, code: 'provider_ready_refused', reason: 'launch worker policy was rejected by coordinator policy' };
       }
     }
-    if (opts.timeoutMs > 0) {
-      session.wallTimer = setTimeout(() => this._onWallTimeout(session, opts.timeoutMs), opts.timeoutMs);
-      if (typeof session.wallTimer.unref === 'function') session.wallTimer.unref();
-    }
+    // #163 law: the wall-time fate clock is GONE — opts.timeoutMs is accepted for back-compat
+    // and deliberately ignored for fate. A member's fate rests on evidence only.
 
     try {
       // GA6: baton delegates no client-side fs/terminal to the worker's agent — the worker does

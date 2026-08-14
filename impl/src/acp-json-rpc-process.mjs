@@ -85,16 +85,33 @@ export class AcpJsonRpcProcess {
     return this;
   }
 
+  /**
+   * #163 transport-recovery law: a request timeout NEVER kills the process. The per-attempt
+   * wait stays (it detects a lost frame), but a timeout now RETRIES with backoff while the
+   * process lives; only the process-exit fact (or a caller-explicit null timeout for
+   * turn-terminal requests) settles. The final ladder rung surfaces AcpSetupTimeoutError
+   * WITHOUT #fail — the caller decides; a live child is never killed by our patience.
+   */
   request(method, params = {}, options = {}) {
     const timeoutMs = options.timeoutMs === null ? null : (options.timeoutMs ?? this.setupTimeoutMs);
+    if (timeoutMs === null) return this.#requestOnce(method, params, null);
+    const backoff = [250, 500, 1000, 2000, 4000, 8000, 15000, 30000];
+    const attempt = (n) => this.#requestOnce(method, params, timeoutMs).catch((error) => {
+      if (error instanceof AcpSetupTimeoutError && !this.closed && !this.failure && n < backoff.length - 1) {
+        return new Promise((resolve) => setTimeout(() => resolve(attempt(n + 1)), backoff[n]));
+      }
+      throw error;
+    });
+    return attempt(0);
+  }
+
+  #requestOnce(method, params, timeoutMs) {
     return new Promise((resolve, reject) => {
       if (!this.child || this.closed || this.failure) { reject(this.failure ?? new Error('ACP process is not open')); return; }
       const id = ++this.sequence;
       const timer = timeoutMs === null ? null : setTimeout(() => {
         this.pending.delete(id);
-        const error = new AcpSetupTimeoutError(method, timeoutMs);
-        reject(error);
-        this.#fail(error);
+        reject(new AcpSetupTimeoutError(method, timeoutMs));
       }, timeoutMs);
       this.pending.set(id, { resolve, reject, timer, method });
       this.#write({ jsonrpc: '2.0', id, method, params }).catch((error) => {
@@ -103,7 +120,6 @@ export class AcpJsonRpcProcess {
         this.pending.delete(id);
         if (pending.timer) clearTimeout(pending.timer);
         pending.reject(error);
-        this.#fail(error);
       });
     });
   }

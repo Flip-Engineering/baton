@@ -189,25 +189,34 @@ test('native Kimi interrupt and process-group kill have distinct confirmed termi
   assert.ok(closeIndex >= 0 && closeIndex < killIndex);
 });
 
-test('native Kimi wall timeout wins the ACP-close race and releases exact process ownership', async () => {
+// #163 law: the wall-time fate clock is retired. The old pin proved a self-firing timeout
+// wins the close race; the new pin proves the INVERSE — a prompt-hanging member with
+// timeoutMs set is HELD ALIVE, and only an explicit kill terminalizes with the exact
+// ownership release the old pin defended.
+test('native Kimi holds a timeoutMs-bearing prompt-hang member alive; explicit kill releases exact ownership', async () => {
   const worker = 'wall-timeout';
   const { adapter, spawn, events } = setup('prompt-hang');
   assert.equal((await spawn(worker, { timeoutMs: 250 })).ok, true);
   const started = await waitFor(events, (event) => event.kind === 'lifecycle.process_started');
+  // Well past the old 250ms window: no timeout crash, no close — patience is not evidence.
+  await new Promise((resolve) => setTimeout(resolve, 1500));
+  assert.equal(events.some((event) => event.kind === 'lifecycle.crashed' && event.payload?.code === 'provider_timeout'), false,
+    'no wall-time crash exists');
+  assert.equal(events.some((event) => event.kind === 'lifecycle.process_closed'), false,
+    'the member is held open past the timeout window');
+  await adapter.kill(worker);
   await waitFor(events, (event) => event.kind === 'lifecycle.process_closed');
+  // Full terminal settle before the next test spawns (isolation: no reap residue race):
+  await waitFor(events, (event) => event.kind === 'kill.confirmed');
+  await new Promise((resolve) => setImmediate(resolve));
   await new Promise((resolve) => setImmediate(resolve));
 
   const terminals = events.filter((event) => [
     'lifecycle.crashed', 'lifecycle.process_closed', 'kill.confirmed',
     'lifecycle.process_reap_unconfirmed',
   ].includes(event.kind));
-  const crashes = terminals.filter((event) => event.kind === 'lifecycle.crashed');
-  assert.equal(crashes.length, 1);
-  assert.equal(crashes[0].payload.code, 'provider_timeout');
   assert.equal(terminals.some((event) => event.payload?.code === 'provider_protocol_error'), false);
-  assert.deepEqual(terminals.map((event) => event.kind), [
-    'lifecycle.crashed', 'lifecycle.process_closed', 'kill.confirmed',
-  ]);
+  assert.equal(terminals.some((event) => event.kind === 'kill.confirmed'), true);
   assert.throws(
     () => process.kill(started.payload.pid, 0),
     (error) => error?.code === 'ESRCH',

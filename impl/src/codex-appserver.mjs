@@ -835,10 +835,8 @@ export class CodexAppServerCli {
     this._attachChild(session);
     const processStarted = processStartedPayload(session.processGeneration, child.pid);
     if (processStarted) this._emit(session, 'lifecycle.process_started', processStarted);
-    if (opts.timeoutMs > 0) {
-      session.wallTimer = setTimeout(() => this._onWallTimeout(session, opts.timeoutMs), opts.timeoutMs);
-      if (typeof session.wallTimer.unref === 'function') session.wallTimer.unref();
-    }
+    // #163 law: the wall-time fate clock is GONE — opts.timeoutMs is accepted for back-compat
+    // and deliberately ignored for fate. A member's fate rests on evidence only.
 
     try {
       await this._sendRequest(session, 'initialize', { clientInfo: { name: 'baton', version: '0.1.0' } });

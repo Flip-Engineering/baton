@@ -293,7 +293,11 @@ test('PL6: kill during Codex/Grok setup can confirm only after the real process 
   }
 });
 
-test('PL7: wall timeout records the exact close before the timeout crash for every session adapter', async (t) => {
+// #163 law (operator ruling): the wall-time fate clock is RETIRED across every adapter.
+// The pin's close-ordering guarantee now rides an explicit operator kill instead of a
+// self-firing timer: spawn with a timeoutMs (accepted, ignored for fate), prove the member
+// is HELD ALIVE past the old window, then kill and assert the exact close ordering.
+test('PL7: no wall-time fate clock exists — a timeoutMs-bearing member is held alive; explicit kill orders the exact close', async (t) => {
   for (const [name, make, marker] of adapterCases()) {
     await t.test(name, async () => {
       const adapter = make(); const worker = `phase51-${name}-timeout`; const events = collect(adapter);
@@ -301,12 +305,20 @@ test('PL7: wall timeout records the exact close before the timeout crash for eve
         const ack = await adapter.spawn(worker, brief(marker), {
           worktree: mkdtempSync(join(tmpdir(), `phase51-${name}-timeout-`)),
           processGeneration: 17,
-          timeoutMs: 750,
+          timeoutMs: 750, // accepted for back-compat; MUST be inert for fate
         });
         assert.equal(ack.ok, true);
-        await until(() => events.some((event) => event.kind === 'lifecycle.crashed' && event.payload?.phase === 'timeout'), `${name} timeout crash`, 5000);
+        // Held alive WELL past the old 750ms window — elapsed time is not evidence:
+        await sleep(2000);
+        assert.equal(events.some((event) => event.kind === 'lifecycle.crashed' && event.payload?.phase === 'timeout'), false,
+          'no timeout crash exists — the fate clock is retired');
+        assert.equal(events.some((event) => event.kind === 'lifecycle.process_closed'), false,
+          'the member is held open past the old timeout window');
+        // The explicit operator kill IS evidence; the close ordering holds exactly as before:
+        await adapter.kill(worker);
+        await until(() => events.some((event) => event.kind === 'lifecycle.process_closed'), `${name} close after kill`, 5000);
         assertClosedPair(events, 17, true);
-        assert.equal(events.some((event) => event.kind === 'kill.confirmed'), false, 'policy timeout is not a user-requested confirmed kill');
+        assert.equal(events.some((event) => event.kind === 'kill.confirmed'), true, 'the explicit kill confirms');
       } finally { await emergencyCleanup(adapter, worker); }
     });
   }
@@ -351,16 +363,25 @@ test('PL7/PL10: pre-close Kimi timeout retains runtime, worktree, and local auth
   try {
     await until(() => log.read(handle.id).some((event) => event.kind === 'lifecycle.spawned' && event.actor === 'worker'), 'pre-close Kimi ready');
     const session = adapter._sessions.get(handle.id);
-    // Model a transport that has already been classified as untrusted. The scheduler normally
-    // requests its own kill; use a no-op request boundary here so the wall timeout remains the
-    // authoritative pre-close cause while the installed record still owns runtime/worktree reap.
     const ownedHandle = coordinator._workers.get(handle.id);
+    // #163: the wall-time fate clock is retired — the pin now drives the pre-close cause
+    // directly through the classification the timer used to feed (timeoutFailure + kill),
+    // preserving the reap-hold ordering this test defends. Model a transport already
+    // classified untrusted; the no-op request boundary keeps the fixture cause authoritative
+    // while the installed record owns runtime/worktree reap.
+    session.timeoutFailure = { code: 'provider_timeout', error: 'fixture pre-close timeout', usageSeal: { tokens: 'unavailable', usd: 'unavailable', counterId: null, tokenMetric: null } };
+    adapter._emitCrash(session, session.timeoutFailure);
+    session.killing = true;
+    session.pendingInterrupt = null;
+    session.steerPending = null;
     coordinator._scheduleUntrustedTransportReap(ownedHandle, {
       kill: async () => ({ ok: true }),
     }, { removeWorktree: true, reason: 'fixture_untrusted_transport' });
     assert.equal(ownedHandle.untrustedTransportReap?.reason, 'fixture_untrusted_transport');
-    assert.equal(typeof session.wallTimer?._onTimeout, 'function');
-    session.wallTimer._onTimeout();
+    void session.process.kill({
+      kind: 'kill.confirmed',
+      payload: { terminalCause: 'timeout', usageSeal: { tokens: 'unavailable', usd: 'unavailable', counterId: null, tokenMetric: null } },
+    });
 
     await until(() => attempts === 2, 'held second reap after pre-close timeout');
     const owned = coordinator._workers.get(handle.id);
