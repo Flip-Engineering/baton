@@ -414,10 +414,9 @@ const applicationIntentSchema = schema({
 }, ['objective']);
 const applicationAnswerSchema = {
   oneOf: [
-    schema({ text: { type: 'string', minLength: 1, maxLength: FRAME_LIMITS['decision.text'].value } }, ['text']),
-    schema({ decision: { type: 'string', enum: ['allow', 'deny', 'cancel'] } }, ['decision']),
     // Part B (issue #16): the typed decision-channel answer form.
     schema({ optionId: { type: 'string', minLength: 1, maxLength: 256 } }, ['optionId']),
+    schema({ text: { type: 'string', minLength: 1, maxLength: FRAME_LIMITS['decision.text'].value } }, ['text']),
   ],
 };
 const applicationFeedbackFindingSchema = schema({
@@ -1024,6 +1023,16 @@ function validateArguments(name, args, maxWaitMs = null) {
   if (!nonempty(args.repoId)) return 'invalid_repo';
   if (STATEFUL.has(name) && !SAFE_ID.test(args.idempotencyKey ?? '')) return 'invalid_idempotency_key';
   if (FENCED.has(name) && !Number.isSafeInteger(args.expectedFence)) return 'expected_fence_required';
+  // Doc-truth R9 (D3 #5): fleet_run_answer shares the SAME applicationAnswerSchema as
+  // baton_decision_answer, but it ALSO sits in APPLICATION_TOOL — its application-validator pass
+  // below would collapse a decision/renamed answer to invalid_run_command before the ordinary
+  // answer-shape guard could run. This pre-validator guard refuses any answer key other than
+  // `optionId`/`text` with invalid_arguments BEFORE the application-validator (and hub dispatch),
+  // so a decision/renamed form never reaches run.answer. Kind-matching stays hub-side.
+  if (name === 'fleet_run_answer') {
+    const answerKeys = record(args.answer) ? Object.keys(args.answer) : [];
+    if (answerKeys.length !== 1 || !['optionId', 'text'].includes(answerKeys[0])) return 'invalid_arguments';
+  }
   if (APPLICATION_TOOL[name]) {
     try {
       const command = APPLICATION_TOOL[name];
@@ -1479,7 +1488,7 @@ export class McpFleetServer {
       // and an absent pack degrades to the honest-empty line, never a fabricated digest (D5b).
       const briefingHead = this.coordination?.contextPackHead?.(BRIEFING_FAMILY) ?? null;
       const briefingSentence = briefingHead
-        ? `Briefing pack ${briefingHead.packId} minted at event ${briefingHead.observedSeq} (ledger at ${this.coordination.ledgerHeadSeq()}, Δ=${this.coordination.ledgerHeadSeq() - briefingHead.observedSeq}); resolve via the orchestrator's embedded context.briefing command.`
+        ? `Briefing pack ${briefingHead.packId} minted at event ${briefingHead.observedSeq} (ledger at ${this.coordination.ledgerHeadSeq()}, Δ=${this.coordination.ledgerHeadSeq() - briefingHead.observedSeq}); resolve through the orchestrator's embedded briefing lane.`
         : 'No orchestrator briefing pack minted yet.';
       return protocolResult(id, {
         protocolVersion: PROTOCOL_VERSION,

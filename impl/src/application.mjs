@@ -12706,6 +12706,7 @@ export class BatonApplication {
     if (name === 'run.attention.watch') return this.attentionWatch(args, principal);
     if (name === 'run.scratchpad.read') return this.scratchpadRead(args, principal);
     if (name === 'run.scratchpad.elevate') return this.scratchpadElevate(args, principal);
+    if (name === 'run.scratchpad.append') return this.scratchpadAppend(args, principal);
     if (name === 'run.board.post') return this.boardPost(args, principal);
     if (name === 'run.board.read') return this.boardRead(args, principal);
     if (name === 'run.knowledge.seed') return this.knowledgeSeed(args, principal);
@@ -13106,6 +13107,25 @@ export class BatonApplication {
     return deepFreeze({ runId: value.runId, taskId: value.taskId, entryIds: [...value.entryIds] });
   }
 
+  _normalizeScratchpadAppend(value) {
+    if (!value || typeof value !== 'object' || Array.isArray(value)
+      || Object.keys(value).some((key) => !['runId', 'scope', 'kind', 'body', 'idempotencyKey'].includes(key))
+      || !validId(value.runId)
+      || typeof value.scope !== 'string' || !/^(?:shared|worker:[A-Za-z0-9._:-]{1,256})$/u.test(value.scope)
+      || (value.kind !== undefined && !['note', 'plan', 'doubt', 'link'].includes(value.kind))
+      || !Object.hasOwn(value, 'body') || value.body === null || value.body === undefined
+      || (typeof value.body !== 'string' && (typeof value.body !== 'object' || Array.isArray(value.body)))
+      || (value.idempotencyKey !== undefined
+        && (typeof value.idempotencyKey !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/u.test(value.idempotencyKey)))) {
+      throw applicationError('run scratchpad append request is invalid', 'application_scratchpad_append_invalid');
+    }
+    const kind = value.kind ?? 'note';
+    return deepFreeze({
+      runId: value.runId, scope: value.scope, kind, body: clone(value.body),
+      ...(value.idempotencyKey !== undefined ? { idempotencyKey: value.idempotencyKey } : {}),
+    });
+  }
+
   _normalizeBoardPost(value) {
     if (!value || typeof value !== 'object' || Array.isArray(value)
       || Object.keys(value).some((key) => !['runId', 'board', 'title', 'detail', 'owner', 'evidence'].includes(key))
@@ -13353,6 +13373,36 @@ export class BatonApplication {
       taskId: request.taskId, entryCount: request.entryIds.length,
     });
     const outcome = this.driver.coordinator.elevateTaskScratchpad(request.taskId, request.entryIds);
+    return deepFreeze({ schemaVersion: 1, ...outcome });
+  }
+
+  // run.scratchpad.append — Decision 8: the #158 shared/worker append write, routed into the
+  // kernel appendScratchpad (never re-implemented at the surface). The D1 scope law is the
+  // _authorize seam's job (the deployment restrictor); this lane enforces the closed envelope,
+  // builds the per-kind entry closure, and namespaces every caller idempotency key by scope
+  // (H3.1) so a same-key cross-scope retry lands on a DISTINCT kernel binding.
+  async scratchpadAppend(rawRequest, rawPrincipal) {
+    this._assertOpen();
+    await this.ready;
+    const request = this._normalizeScratchpadAppend(rawRequest);
+    const principal = normalizePrincipal(rawPrincipal, 'scratchpad append principal');
+    await this._authorize('run.scratchpad.append', principal, request.runId, { scope: request.scope });
+    const { kind, body } = request;
+    const entry = kind === 'note'
+      ? { kind: 'note', text: body }
+      : kind === 'plan'
+        ? { kind: 'plan', objective: body.objective, steps: body.steps, supersedes: body.supersedes ?? null }
+        : kind === 'doubt'
+          ? { kind: 'doubt', question: body.question, context: body.context ?? null }
+          : { kind: 'link', label: body.label, relation: body.relation, target: body.target };
+    const outcome = this.driver.coordination.appendScratchpad(
+      { runId: request.runId, scope: request.scope, entry },
+      {
+        actor: principal.actor, principalId: principal.principalId,
+        ...(request.idempotencyKey !== undefined
+          ? { key: `${request.idempotencyKey}:${request.scope}` } : {}),
+      },
+    );
     return deepFreeze({ schemaVersion: 1, ...outcome });
   }
 
