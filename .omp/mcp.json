@@ -1,0 +1,14 @@
+{
+  "$schema": "https://raw.githubusercontent.com/can1357/oh-my-pi/main/packages/coding-agent/src/config/mcp-schema.json",
+  "mcpServers": {
+    "baton": {
+      "type": "stdio",
+      "command": "node",
+      "args": [
+        "/Users/wahargis/Development/Experiments/baton/impl/scripts/mcp-stdio.mjs",
+        "/Users/wahargis/Development/Experiments/baton/.baton/mcp-server.mjs"
+      ],
+      "timeout": 120000
+    }
+  }
+}
