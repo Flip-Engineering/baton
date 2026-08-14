@@ -1749,6 +1749,28 @@ const CANONICAL_OPERATION_SPECS = [
     op: 'application.help', effect: 'help_read', capabilities: ['observe'], outputView: 'outline',
     example: 'baton help',
   }],
+  // #170 (plan-object lane, D3.1): plan.read/plan.write register the fold's direct command ports.
+  // Both are closed input schemas; plan.* is deliberately absent from the web surface (plan_read /
+  // plan_write are not in COMMAND_CAPABILITY — web refuses them, ledgered in
+  // scripts/surface-divergence-ledger.json). plan.read is the observe verb; plan.write is the
+  // control verb that admitPlanWrite gates by shape/authority/version/status.
+  ['plan.read', {
+    profile: 'ordinary', surfaces: ['cli', 'mcp', 'embedded'], effect: 'plan_read',
+    capabilities: ['observe'], outputView: 'outline', helpTopic: 'plan',
+    example: 'baton plan read PLAN_ID',
+    inputSchema: objectSchema({
+      planId: { type: 'string', pattern: '^plan:[a-f0-9]{32}$' },
+    }, ['planId']),
+  }],
+  ['plan.write', {
+    profile: 'ordinary', surfaces: ['cli', 'mcp', 'embedded'], effect: 'plan_write',
+    capabilities: ['control', 'observe'], outputView: 'outline', helpTopic: 'plan',
+    idempotent: true, example: 'baton plan write PLAN_ID --mutation JSON',
+    inputSchema: objectSchema({
+      planId: { type: 'string', pattern: '^plan:[a-f0-9]{32}$' },
+      mutation: { type: 'object' },
+    }, ['planId']),
+  }],
 ];
 
 // docs/36 §8.1 — the registry OWNS aliases (legacy spellings). These rows were the M0 ledger's

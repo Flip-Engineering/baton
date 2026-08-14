@@ -36,6 +36,14 @@ import {
 // Epic #103 (D7/D3): the ONE orchestrator-briefing family constant, shared with the store that
 // mints it — the resolve lane, the post-close mint seam, and the MCP sentence all name it.
 import { BRIEFING_FAMILY } from './coordination-store.mjs';
+// #170 (plan-object lane): the plan object fold/admission core — the command ports below are the
+// surface seams over the same admitPlanWrite the suite drives directly, so MCP/CLI/web and the
+// embedded fold share one enforcement spine (shape → replay → lookup → CAS → authority → law).
+import {
+  PLAN_OBJECT_ID_PATTERN,
+  DEFAULT_PLAN_POLICY,
+  admitPlanWrite,
+} from './orchestrator-plan.mjs';
 
 export { APPLICATION_SEMANTIC_REGISTRY } from './application-semantics.mjs';
 
@@ -2475,7 +2483,7 @@ function semanticSourceSlice(text, source) {
  */
 export class BatonApplication {
   constructor(options) {
-    const optionalConfiguration = ['context', 'exportRoot', 'exportDeliveryChunkBytes', 'defaults', 'clock', 'deploymentId']
+    const optionalConfiguration = ['context', 'exportRoot', 'exportDeliveryChunkBytes', 'defaults', 'clock', 'deploymentId', 'planPolicy']
       .filter((field) => Object.hasOwn(options ?? {}, field));
     exactObject(options, ['driver', 'repoId', 'profiles', 'principals', 'authorize', ...optionalConfiguration],
     'application_config_invalid', 'application configuration');
@@ -2496,6 +2504,10 @@ export class BatonApplication {
     // application is constructed bare (the embedded test host) — the wave.started mint then omits
     // the column rather than minting a foreign row.
     this.deploymentId = options.deploymentId ?? null;
+    // #170 (plan-object lane, L6): the plan focus policy the plan.write port feeds admitPlanWrite
+    // (focus cap surfaces as plan_focus_invalid with {focusCount, maxFocusTasks}). Defaults to the
+    // fold's own DEFAULT_PLAN_POLICY so a bare host still enforces the law.
+    this.planPolicy = options.planPolicy ?? DEFAULT_PLAN_POLICY;
     this.authorize = options.authorize;
     this._clock = options.clock ?? (() => new Date().toISOString());
     if (typeof this._clock !== 'function') {
@@ -12787,6 +12799,12 @@ export class BatonApplication {
     // server-side as 'orchestrator'; never advertised on any user-facing surface.
     if (name === '_wave.closed') return this.appendWaveClosedInternal(args, principal);
     if (name === '_briefing.mint') return this.mintCampaignBriefingInternal(args, principal);
+    // #170 (plan-object lane): the two direct plan ports — dispatched before the args table like
+    // the other direct lanes (waves.*, deployment.doctor, the briefing seams) because the plan
+    // verbs carry their own shape/authority laws in admitPlanWrite. plan.read is the observe verb
+    // over the fold snapshot; plan.write the single admission seam over the event fold.
+    if (name === 'plan.read') return this.planReadCommand(args, principal);
+    if (name === 'plan.write') return this.planWriteCommand(args, principal);
     validateApplicationCommandArgs(name, args);
     const recursiveReadCommands = new Set(['application.help', 'run.inspect', 'run.episode',
       'run.workstreams', 'run.status', 'run.follow', 'run.wait']);
@@ -13535,6 +13553,56 @@ export class BatonApplication {
     return this._buildView(current, this.principals.observer, {
       action: { command: 'run.stop', reason: request.reason, result: 'stopped' },
     });
+  }
+
+  // #170 (plan-object lane, surface ports): plan.read / plan.write — the observe and control
+  // verbs over the plan object fold. Both are direct ports: authorize by command name, then let
+  // the fold's own spine (admitPlanWrite for writes, readPlanObject for reads) enforce shape,
+  // replay, CAS, authority, reopen, blockedBy, status, and changed-content laws. The snapshot map
+  // is built fresh from campaignPlans() so the ports always see the store's latest folded state.
+  //
+  // H2.1 (plan-object-contract.md §D2.4): the plan:* power lives in the deployment authorize, and
+  // the plan lane invokes it positionally (command, principal, runId, subject) — the restricting
+  // #74 authorize shape the plan rows pin (orchestrator/review seats, never the string-seat
+  // facade) — unlike the generic `_authorize`, which passes the whole request object.
+  async _authorizePlanCommand(command, principal, runId, subject = {}) {
+    const allowed = await (this._authorizeOverride ?? this.authorize)(
+      command, clone(principal), runId, clone(subject),
+    );
+    if (allowed !== true) throw applicationError('application command is not authorized', 'application_unauthorized');
+  }
+
+  async planReadCommand(args, principal) {
+    await this._authorizePlanCommand('plan.read', principal, null, { operation: 'plan.read' });
+    const planId = args?.planId;
+    if (!PLAN_OBJECT_ID_PATTERN.test(planId ?? '')) {
+      throw applicationError('plan.read requires a plan:<hex32> planId', 'plan_task_invalid');
+    }
+    return this.driver.coordination.campaignPlan(planId);
+  }
+
+  async planWriteCommand(body, principal) {
+    await this._authorizePlanCommand('plan.write', principal, null, { operation: 'plan.write' });
+    const snapshot = this.driver.coordination.campaignPlans();
+    const plans = new Map(snapshot.plans.map((plan) => [plan.planId, plan]));
+    const admitted = admitPlanWrite({
+      body,
+      principal,
+      planPower: true,
+      planPolicy: this.planPolicy,
+      plans,
+      priorEvent: (key) => this.driver.coordination.priorCoordinationEvent(key),
+      resolveRunId: (waveId, waveRole) => this.driver.coordination.waveRoleRun(waveId, waveRole),
+      actor: principal?.principalId ?? null,
+    });
+    if (admitted.replay) return admitted.outcome;
+    if (admitted.batchKind) {
+      this.driver.coordination._appendBatch(admitted.entries, admitted.batchKind);
+    } else {
+      const entry = admitted.entries[0];
+      this.driver.coordination._append(entry.kind, entry.payload, entry.auth);
+    }
+    return admitted.outcome;
   }
 
   async detach() {

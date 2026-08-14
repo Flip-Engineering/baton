@@ -29,6 +29,9 @@ export const CLI_WEB_COMMANDS = new Set([
   'run.message.send', 'run.message.receipt', 'run.attention.watch',
   'run.scratchpad.read', 'run.scratchpad.elevate', 'run.board.post', 'run.board.read',
   'run.knowledge.seed',
+  // #170 (plan-object lane, D3.2/X3): the two direct plan ports ride the web envelope — the CLI
+  // compiles `baton plan read|write` into these command names for the client's envelope dispatch.
+  'plan.read', 'plan.write',
 ]);
 // CS-2 (control-surface v2): the five web-admitted verbs (run.episode, run.workstreams,
 // run.workstream.notify, run.workstream.stop; run.result folds to run.episode) join the
@@ -1348,6 +1351,32 @@ export function parseBatonCli(rawArgs) {
       'context eval is host-local: use embedded BatonRun.context().evaluate(...) or MCP baton_context_eval',
       'cli_command_host_local',
     );
+  }
+  // #170 (plan-object lane, D3.2): `baton plan read PLAN_ID` / `baton plan write PLAN_ID --mutation JSON`
+  // → the plan.read / plan.write direct ports. Both verbs ride the web envelope via CLI_WEB_COMMANDS
+  // (X3); the write body passes through as the closed plan.* mutation — admitPlanWrite's own spine
+  // owns shape/replay/authority/CAS laws at the port, so the parser only normalizes JSON (H3.2). A
+  // malformed body refuses cli_invalid naming --mutation.
+  if (args[0] === 'plan') {
+    args.shift();
+    const planAction = args.shift();
+    if (planAction === 'read') {
+      const planIdValue = id(args.shift(), 'plan ID');
+      noRemainder(args);
+      if (!/^plan:[a-f0-9]{32}$/u.test(planIdValue)) throw cliError('plan ID is invalid');
+      return { kind: 'command', name: 'plan.read', args: { planId: planIdValue }, idempotencyKey };
+    }
+    if (planAction === 'write') {
+      const planIdValue = id(args.shift(), 'plan ID');
+      const mutationRaw = take(args, '--mutation', { required: true });
+      noRemainder(args);
+      if (!/^plan:[a-f0-9]{32}$/u.test(planIdValue)) throw cliError('plan ID is invalid');
+      let mutation;
+      try { mutation = JSON.parse(mutationRaw); }
+      catch { throw cliError('--mutation must be JSON', 'cli_invalid'); }
+      return { kind: 'command', name: 'plan.write', args: { planId: planIdValue, mutation }, idempotencyKey };
+    }
+    throw cliError('expected plan read or plan write');
   }
   // S-1 v2: baton waves attach WAVE_ID --members JSON (plural spelling only). The singular `wave`
   // always refuses cli_command_unavailable with the corrective naming the RIGHT plural verb for the

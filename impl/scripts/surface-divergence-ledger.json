@@ -72,6 +72,22 @@
       "dimension": "name",
       "retiresIn": "M5",
       "note": "waves.compile is web-admitted in the current tree (WAVE_WEB_ENTRIES, #170) but absent from the pinned 31-name card (contract-fold v1.1 D2/G3); ledgered pending wave reconciliation of the card-vs-admission drift"
+    },
+    {
+      "surface": "cli",
+      "name": "plan.read",
+      "canonical": "plan.read",
+      "dimension": "name",
+      "retiresIn": "M5",
+      "refusal": "'unsupported command' (web-northbound.mjs:405) — plan.read is a cli/mcp/embedded-only direct port (#170 D3.4); the plan.* web surface is refused by design until a web transport contract exists"
+    },
+    {
+      "surface": "cli",
+      "name": "plan.write",
+      "canonical": "plan.write",
+      "dimension": "name",
+      "retiresIn": "M5",
+      "refusal": "'unsupported command' (web-northbound.mjs:405) — plan.write is a cli/mcp/embedded-only direct port (#170 D3.4); the plan.* web surface is refused by design until a web transport contract exists"
     }
   ],
   "cliLocalToolingCodes": [

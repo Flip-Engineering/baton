@@ -103,6 +103,11 @@ const CAPABILITY = Object.freeze({
   baton_waves_list: ['observe'],
   baton_waves_run: ['control', 'observe'],
   baton_waves_compile: ['observe'],
+  // #170 (plan-object lane, D3.2/H3.1): the two direct plan ports on the ordinary surface — read
+  // is the observe verb, write the control verb (a member's own-task/subtree admission is the
+  // plan lane's ownership composition, never this capability seam).
+  baton_plan_read: ['observe'],
+  baton_plan_write: ['control', 'observe'],
   baton_deployment_doctor: ['observe'],
   baton_scratchpad_elevate: ['control', 'observe'],
   baton_scratchpad_settle: ['control', 'observe'],
@@ -623,6 +628,26 @@ const LEGACY_ORDINARY_APPLICATION_TOOL_DEFINITIONS = Object.freeze([
     }, ['repoId', 'specDsl']),
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
+  {
+    // #170 (plan-object lane, D3.2/H3.1): the direct plan ports ride the ordinary surface beside
+    // the facade rows. repoId leads the required set (#159 G10); planId is the plan:<hex32> object
+    // identity. baton_plan_write carries the closed mutation (mint/upsert/transition/focus/
+    // evidence) — the port's admitPlanWrite spine owns shape/replay/CAS/authority laws.
+    name: 'baton_plan_read',
+    description: 'Read the plan object projection (the campaign plan todo) by planId.',
+    inputSchema: schema({
+      ...repo, planId: { type: 'string', pattern: '^plan:[a-f0-9]{32}$' },
+    }, ['repoId', 'planId']),
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  {
+    name: 'baton_plan_write',
+    description: 'Admit a plan mutation against the plan object fold: mint, task upsert/transition, focus window, or evidence link.',
+    inputSchema: schema({
+      ...repo, ...idem, planId: { type: 'string', pattern: '^plan:[a-f0-9]{32}$' }, mutation: { type: 'object' },
+    }, ['repoId', 'planId']),
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
   // MCP-W3 (mcp-packaging-decisions v1.0): deployment.doctor — quota-free, per-call FRESH
   // readiness; credential posture as metadata only (source kind, expiry class), never secret
   // material. It is the route-picking prerequisite, so charging quota would blind callers exactly
@@ -900,6 +925,7 @@ const REFLEX_READ_ONLY_TOOLS = new Set(SURFACING_MATRIX_MCP_ROWS
 // reach the typed stateFailureCode lane, never the generic 'command_failed'.
 const ORDINARY_EXPLICIT_TOOLS = new Set([
   'baton_waves_start', 'baton_waves_progress', 'baton_waves_send', 'baton_waves_stop', 'baton_waves_list', 'baton_waves_run', 'baton_waves_compile',
+  'baton_plan_read', 'baton_plan_write',
   'baton_deployment_doctor',
   'baton_scratchpad_elevate', 'baton_scratchpad_settle', 'baton_knowledge_promote',
   'baton_knowledge_settlement_lease',
@@ -1927,6 +1953,29 @@ export class McpFleetServer {
     // #170 (D4/DR-2): the read-only compile seam — a wavefile lowers to the closed spec object.
     else if (name === 'baton_waves_compile') {
       value = { spec: compileWavefile(args.specDsl) };
+    }
+    // #170 (plan-object lane, D3.2): the direct plan ports. repoId is stripped (the application
+    // scopes to THIS deployment); baton_plan_write passes the closed mutation through — admitPlanWrite
+    // owns the shape/replay/CAS/authority laws, and a caller idempotencyKey rides the exact-once key.
+    else if (name === 'baton_plan_read') {
+      value = await this.application.command('plan.read', {
+        planId: args.planId,
+      }, {
+        actor: actor ?? `mcp:${principal.userId}:${principal.sessionId}`,
+        principalId: principal.userId,
+        sessionId: principal.sessionId,
+      }, this._applicationDispatchContext(args, callId, principal));
+    }
+    else if (name === 'baton_plan_write') {
+      value = await this.application.command('plan.write', {
+        planId: args.planId,
+        mutation: args.mutation,
+        ...(Object.hasOwn(args, 'idempotencyKey') ? { idempotencyKey: args.idempotencyKey } : {}),
+      }, {
+        actor: actor ?? `mcp:${principal.userId}:${principal.sessionId}`,
+        principalId: principal.userId,
+        sessionId: principal.sessionId,
+      }, this._applicationDispatchContext(args, callId, principal));
     }
     // MCP-W3: deployment.doctor — quota-free (handle), per-call FRESH doctorReadiness, secret
     // material stripped at the surface (canary-pinned by MP10).

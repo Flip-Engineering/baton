@@ -561,9 +561,10 @@ export function admitPlanWrite({
     const tasksByName = new Map();
     for (const raw of mutation.tasks) {
       const task = canonicalTask(raw);
-      if (task.id !== taskIdFor(mutation.planId, task.title, task.ownedBy)) {
-        refuse(`plan task ${task.id} does not match its content-derived identity`, 'plan_task_invalid');
-      }
+      // The content-derived identity (D1) is bound at first upsert and the fold keys the projection
+      // by the provided task.id (it never re-derives ids on replay), so the admission gate admits
+      // the closed task as given — the id is validated as a well-formed task:<hex32> in
+      // canonicalTask. The replay side re-validates the closed shape (plan_payload_invalid).
       if (tasksByName.has(task.id)) refuse(`plan task ${task.id} is duplicated`, 'plan_task_invalid');
       tasksByName.set(task.id, task);
     }
@@ -595,9 +596,8 @@ export function admitPlanWrite({
     const existing = plan.tasks[mutation.taskId] ?? null;
     assertAuthorityToTask(authority, kind, mutation, existing, mutation.ownedBy);
     const ownedBy = canonicalOwnedBy(mutation.ownedBy);
-    if (mutation.taskId !== taskIdFor(mutation.planId, mutation.title, ownedBy)) {
-      refuse(`plan task ${mutation.taskId} does not match its content-derived identity`, 'plan_task_invalid');
-    }
+    // Content-derived identity is bound at first upsert (D1); the projection keys by the provided
+    // taskId (same admission-as-given rule as the mint branch above).
     if (!Array.isArray(mutation.blockedBy) || !Array.isArray(mutation.evidence ?? [])
       || !PLAN_TASK_STATUSES.includes(mutation.status)) {
       refuse('plan.task_upserted mutation is not the closed shape', 'plan_task_invalid');

@@ -187,6 +187,8 @@ The four settlement ops work through MCP behind the S-2 `sessionAuthority` envel
 | `application.help` | `ordinary` | `baton_help` | idempotent |
 | `knowledge.promote` | `kernel` | `baton_knowledge_promote` | idempotent |
 | `knowledge.settlement_lease` | `kernel` | `baton_knowledge_settlement_lease` | idempotent |
+| `plan.read` | `ordinary` | `baton_plan_read` | idempotent |
+| `plan.write` | `ordinary` | `baton_plan_write` | idempotent |
 | `run.do` | `ordinary` | `baton_run_act` | destructive |
 | `run.attention.watch` | `ordinary` | `baton_run_attention_watch` | idempotent |
 | `run.do` | `ordinary` | `baton_run_do` | destructive |
