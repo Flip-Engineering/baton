@@ -1,0 +1,23 @@
+wave audit-147-rerun-2026-08-14-wave-c
+member coordinator
+  harness deepseek
+  model deepseek-v4-flash
+  effort high
+  scope "docs/reference/evidence/audit-147-rerun-2026-08-14/redrive2/**"
+  objectiveRef "docs/reference/evidence/audit-147-rerun-2026-08-14/redrive2/coordinator-brief.md"
+  report "docs/reference/evidence/audit-147-rerun-2026-08-14/redrive2/verify-notes.md"
+member row-audit-147
+  harness deepseek
+  model "deepseek-v4-flash"
+  effort high
+  scope "docs/reference/evidence/audit-147-rerun-2026-08-14/redrive2/**"
+  objectiveRef "docs/reference/evidence/audit-147-rerun-2026-08-14/redrive2/row-audit-147-brief.md"
+  report "docs/reference/evidence/audit-147-rerun-2026-08-14/redrive2/notes-row-audit-147.md"
+approveOnAdvertisedPlan
+claimOnStall
+nudgeOnCheckpoint "Continue — the brief is the contract. Write deliverables incrementally; every claim cites evidence."
+messageOnSpawn brief "Read your objectiveRef brief IN FULL first; it binds. gh may be unauthenticated in your worktree — ground in the repo. Your [attempt:] line verbatim in your deliverable's first five lines. Judgment calls recorded; authority-class ambiguity → DECISION_REQUEST with options."
+elevateWhenNotes doubt,plan 20
+signalOnMembersDone row-audit-147 result "The row settled (you are the remaining member — pinned #175 semantics). Verify per your brief and write verify-notes.md."
+harvest "docs/reference/evidence/audit-147-rerun-2026-08-14/redrive2/notes-row-audit-147.md" mustContain "attempt:"
+harvest "docs/reference/evidence/audit-147-rerun-2026-08-14/redrive2/verify-notes.md" mustContain "AUDIT_147-VERIFY v1"

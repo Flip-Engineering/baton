@@ -1,0 +1,23 @@
+wave impl-gate-digest-2026-08-14-wave-d
+member coordinator
+  harness deepseek
+  model deepseek-v4-flash
+  effort high
+  scope "docs/reference/evidence/impl-gate-digest-2026-08-14/redrive3/**"
+  objectiveRef "docs/reference/evidence/impl-gate-digest-2026-08-14/redrive3/coordinator-brief.md"
+  report "docs/reference/evidence/impl-gate-digest-2026-08-14/redrive3/verify-notes.md"
+member row-gate-digest
+  harness flash
+  model "deepseek-v4-flash"
+  effort high
+  scope "docs/reference/evidence/impl-gate-digest-2026-08-14/redrive3/**"
+  objectiveRef "docs/reference/evidence/impl-gate-digest-2026-08-14/redrive3/row-gate-digest-brief.md"
+  report "docs/reference/evidence/impl-gate-digest-2026-08-14/redrive3/notes-row-gate-digest.md"
+approveOnAdvertisedPlan
+claimOnStall
+nudgeOnCheckpoint "Continue — the brief is the contract. Write deliverables incrementally; every claim cites evidence."
+messageOnSpawn brief "Read your objectiveRef brief IN FULL first; it binds. gh may be unauthenticated in your worktree — ground in the repo. Your [attempt:] line verbatim in your deliverable's first five lines. Judgment calls recorded; authority-class ambiguity → DECISION_REQUEST with options."
+elevateWhenNotes doubt,plan 20
+signalOnMembersDone row-gate-digest result "The row settled (you are the remaining member — pinned #175 semantics). Verify per your brief and write verify-notes.md."
+harvest "docs/reference/evidence/impl-gate-digest-2026-08-14/redrive3/notes-row-gate-digest.md" mustContain "attempt:"
+harvest "docs/reference/evidence/impl-gate-digest-2026-08-14/redrive3/verify-notes.md" mustContain "GATE_DIGEST-VERIFY v1"

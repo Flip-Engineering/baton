@@ -1,0 +1,7 @@
+# ROW BRIEF — row-retry: the retry contract (package ④ lifecycle-honesty)
+
+Read `foundry-brief.md` first (the frame + laws bind you — Ring-2 contract form: ground truths (cited fresh, NUL discipline on application.mjs + coordination-store.mjs) → decisions → closed refusal vocabulary → red-first acceptance pins at named stages → open questions; no clocks; sorted-key literals ACTUAL order; your [attempt: <salt> <role>] line VERBATIM in the first five lines). Your issue set + the campaign evidence:
+
+- #201 [HIGH] durable member retry (the operator's priority): classify-then-resume — the #182 classifier is the precondition; resume = content-addressed re-drive with declared inheritance per #59; budget deployment-owned; the roster shows 'retrying' honestly · #188 failure-stall review (event-derived, pm-adoption ③) · #50 (glm stream death ~20min silent) + #55 (stall marker blind to mid-turn provider activity) fold in · #163 quiescence must read retrying correctly (cross-ref its folded contract at docs/reference/evidence/contract-foundry-2026-08-13/contract-163.md)
+
+**Deliverable:** `docs/reference/evidence/lch-contracts-2026-08-14/redrive/contract-retry.md` ONLY (plus the shared publish — or the recorded refusal). Every acceptance pin RED at HEAD at a named stage, green only for a correct impl (shallow-greenability is a defect). Judgment calls recorded; authority-class ambiguity → DECISION_REQUEST with options.
