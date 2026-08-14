@@ -3,208 +3,247 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>baton — campaign state · 2026-08-14</title>
+<title>baton — campaign state · 2026-08-14 (v2, exhaustive)</title>
 <style>
   :root {
     --bg:#0b0e14; --panel:#12161f; --panel2:#171c28; --ink:#dbe4f0; --dim:#8b98ad;
-    --acc:#7ee0c2; --acc2:#8fb8ff; --warn:#ffb86b; --bad:#ff7b8a; --line:#232b3b;
+    --acc:#7ee0c2; --acc2:#8fb8ff; --warn:#ffb86b; --bad:#ff7b8a; --line:#232b3b; --violet:#c9a7ff;
   }
   * { box-sizing:border-box; }
   body { margin:0; background:var(--bg); color:var(--ink);
-    font:15px/1.65 -apple-system,"SF Pro Text",Inter,sans-serif; }
+    font:15px/1.6 -apple-system,"SF Pro Text",Inter,sans-serif; }
   code, .mono { font:12.5px/1.5 "SF Mono",Menlo,monospace; }
   code { background:#0e131c; padding:1px 6px; border-radius:4px; color:var(--acc); }
-  nav { position:sticky; top:0; z-index:9; background:rgba(11,14,20,.92); backdrop-filter:blur(10px);
-    border-bottom:1px solid var(--line); padding:10px 28px; display:flex; gap:22px; align-items:center; flex-wrap:wrap; }
-  nav .brand { color:var(--acc); font-weight:700; letter-spacing:.5px; }
-  nav a { color:var(--dim); text-decoration:none; font-size:13px; }
+  nav { position:sticky; top:0; z-index:9; background:rgba(11,14,20,.93); backdrop-filter:blur(10px);
+    border-bottom:1px solid var(--line); padding:10px 26px; display:flex; gap:18px; align-items:center; flex-wrap:wrap; }
+  nav .brand { color:var(--acc); font-weight:700; }
+  nav a { color:var(--dim); text-decoration:none; font-size:12.5px; }
   nav a:hover { color:var(--acc); }
-  main { max-width:1080px; margin:0 auto; padding:36px 28px 90px; }
-  h1 { font-size:30px; margin:18px 0 4px; }
-  h2 { font-size:21px; margin:44px 0 6px; padding-top:14px; border-top:1px solid var(--line); }
+  main { max-width:1120px; margin:0 auto; padding:34px 28px 90px; }
+  h1 { font-size:29px; margin:16px 0 4px; }
+  h2 { font-size:21px; margin:46px 0 4px; padding-top:14px; border-top:1px solid var(--line); }
   h2 .tick { color:var(--acc); margin-right:8px; }
-  h3 { font-size:16px; margin:26px 0 6px; color:var(--acc2); }
-  p { margin:8px 0; color:var(--ink); }
+  h3 { font-size:15.5px; margin:24px 0 4px; color:var(--acc2); }
+  p { margin:8px 0; }
   .sub { color:var(--dim); }
-  .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:12px; margin:18px 0; }
-  .card { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:14px 16px; }
-  .card .big { font-size:26px; font-weight:700; color:var(--acc); }
-  .card .lbl { color:var(--dim); font-size:12px; text-transform:uppercase; letter-spacing:.8px; }
-  table { width:100%; border-collapse:collapse; margin:14px 0; font-size:13.5px; }
-  th { text-align:left; color:var(--dim); font-weight:600; font-size:12px; text-transform:uppercase;
-    letter-spacing:.7px; padding:8px 10px; border-bottom:1px solid var(--line); }
-  td { padding:9px 10px; border-bottom:1px solid #1a2130; vertical-align:top; }
+  .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(200px,1fr)); gap:12px; margin:18px 0; }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:13px 15px; }
+  .card .big { font-size:24px; font-weight:700; color:var(--acc); }
+  .card .lbl { color:var(--dim); font-size:11.5px; text-transform:uppercase; letter-spacing:.7px; }
+  table { width:100%; border-collapse:collapse; margin:12px 0 20px; font-size:13px; }
+  th { text-align:left; color:var(--dim); font-weight:600; font-size:11.5px; text-transform:uppercase;
+    letter-spacing:.6px; padding:7px 9px; border-bottom:1px solid var(--line); }
+  td { padding:8px 9px; border-bottom:1px solid #1a2130; vertical-align:top; }
   tr:hover td { background:#131927; }
-  .pill { display:inline-block; padding:1px 9px; border-radius:20px; font-size:11.5px; font-weight:600; }
+  .pill { display:inline-block; padding:1px 8px; border-radius:20px; font-size:11px; font-weight:600; white-space:nowrap; }
   .live { background:#123528; color:var(--acc); } .land { background:#1b2a45; color:var(--acc2); }
   .queue { background:#2c2416; color:var(--warn); } .gap { background:#33181e; color:var(--bad); }
+  .spec { background:#2a2038; color:var(--violet); }
+  .issue { color:var(--acc2); font-family:Menlo,monospace; font-size:12px; white-space:nowrap; }
   .story { background:var(--panel); border-left:3px solid var(--acc); border-radius:0 10px 10px 0;
-    padding:14px 18px; margin:14px 0; }
-  .story b { color:var(--acc); }
-  ul { margin:8px 0; padding-left:22px; } li { margin:5px 0; }
-  .flip { font-size:19px; color:var(--acc); }
-  .foot { margin-top:60px; color:var(--dim); font-size:12.5px; border-top:1px solid var(--line); padding-top:16px; }
+    padding:13px 17px; margin:14px 0; }
+  ul { margin:6px 0; padding-left:20px; } li { margin:4px 0; }
+  .cluster { background:var(--panel2); border:1px solid var(--line); border-radius:12px; padding:6px 18px 14px; margin:16px 0; }
+  .foot { margin-top:56px; color:var(--dim); font-size:12.5px; border-top:1px solid var(--line); padding-top:16px; }
+  .flip { color:var(--acc); }
 </style>
 </head>
 <body>
 <nav>
   <span class="brand">✦(◕‿◕)◦ baton</span>
-  <a href="#landed">landed</a><a href="#unlocks">unlocks</a><a href="#fleet">the live fleet</a>
-  <a href="#frontier">the frontier</a><a href="#frictions">friction ledger</a>
+  <a href="#landed">landed 24h</a><a href="#fleet">fleet</a><a href="#c1">C1 comms</a><a href="#c2">C2 durability</a>
+  <a href="#c3">C3 grammar</a><a href="#c4">C4 oversight</a><a href="#c6">C6 depth</a><a href="#k">K</a>
+  <a href="#p">P</a><a href="#d">D diagnostics</a><a href="#g">G</a><a href="#e">E</a><a href="#backlog">backlog</a>
 </nav>
 <main>
-  <p class="sub">campaign state · 2026-08-14 · resident v16 · orchestrated by kimi, built by the fleet</p>
-  <h1>24 hours of baton, building baton.</h1>
-  <p class="sub">55+ commits · issues #86–#211 filed from live evidence · every line below is gate-verified or store-cited.</p>
+  <p class="sub">campaign state · 2026-08-14 · v2 EXHAUSTIVE — every open issue mapped · resident v16 · orchestrator: kimi</p>
+  <h1>baton, building baton: the full map.</h1>
+  <p class="sub">60+ open issues, every one assigned to a campaign lane · fleet composition law: <b>glm-5.3 suborchestrates DSv4-Flash + GLM-5.2 rows</b> (cheap-wide by default, v4-pro for the heaviest impls) · all counts store-cited or gate-verified.</p>
 
   <div class="grid">
-    <div class="card"><div class="big">16</div><div class="lbl">DSL directives landed</div></div>
+    <div class="card"><div class="big">16</div><div class="lbl">DSL directives landed (#170)</div></div>
     <div class="card"><div class="big">14</div><div class="lbl">red-first suites armed</div></div>
-    <div class="card"><div class="big">4+7</div><div class="lbl">waves live / landing</div></div>
-    <div class="card"><div class="big">97%→32%</div><div class="lbl">resident CPU, P0 fix</div></div>
-    <div class="card"><div class="big">10/10</div><div class="lbl">members checkpointed across 2 kills</div></div>
-    <div class="card"><div class="big">59s→ms</div><div class="lbl">event-log read cost class</div></div>
+    <div class="card"><div class="big">6+8</div><div class="lbl">waves live / on launchers</div></div>
+    <div class="card"><div class="big">97→32%</div><div class="lbl">resident CPU (#210)</div></div>
+    <div class="card"><div class="big">14/14</div><div class="lbl">members checkpointed across 2 kills</div></div>
+    <div class="card"><div class="big">#86–#218</div><div class="lbl">issues filed from live evidence</div></div>
   </div>
 
-  <h2 id="landed"><span class="tick">▸</span>What landed in 24h</h2>
-
-  <h3>★ The workflow DSL (#170) — the driver era ends</h3>
-  <p>A 16-directive line grammar (<code>.wavefile</code>), a pure compiler (<code>workflow-dsl.mjs</code>),
-  and the <code>waves.compile</code> seam — with steering cross-validation that catches member/role
-  mismatches at admission with <code>{line, field, expected}</code> precision. Folded in: authority
-  closure (#176), terminal-replay refusal (#183), deliverable pre-seeding (#171), verification
-  profiles (#180), the adapter contract (#196). 35/35 + 12/12 suites, full gate accepted.
-  Every wave in today's fleet is DSL-authored. Hand-rolled drivers are banned.</p>
-
-  <h3>The P0 loop-starvation fix (#210) — a detective story with a commit at the end</h3>
-  <div class="story">
-    <p>Four wave launches <b>vanished</b> — no refusal, no trace. The archaeology: <code>waves_list</code>
-    cost <b>59s</b> on the 87k-event ledger; <code>/readyz</code> — the cheapest endpoint — starved past
-    15s; one launch left a <i>base commit but no admission event</i> (the wedge struck mid-request).
-    The mechanism: <code>events()</code> deep-cloned the entire ledger <b>per call</b>, and the
-    workflow-view helpers called it <b>per member, per drive-poll</b>. Two drives × ten members =
-    a 97%-CPU event loop that never reached <code>accept()</code>.</p>
-    <p>The fix: events are frozen at append on every path, so read-only consumers never needed the
-    clone — a new <code>eventsView()</code> (frozen shared references, bounds parity) and 25 call sites
-    switched. Red-first pin (<code>ELRS-1/2</code>), adjacents green, full gate at baseline.
-    v16 answers <code>/readyz</code> in <b>143ms</b>. <span class="mono">49b42d3</span></p>
-  </div>
-
-  <h3>Recovery proved itself — twice, under fire</h3>
-  <p>Two resident kills (v14's wedge, the planned v15→v16 drain) terminalized 14 in-flight members.
-  Every one checkpointed its worktree progress first: <b>the honesty package's four rows + QA were
-  recovered from checkpoint pins intact</b> (2,589 lines of patches, content-addressed), including a
-  182-line kernel design doc and a cross-seam coordination map one row wrote <i>for the other rows</i>.
-  The kernel keeps its promises; the campaign loses nothing to process death anymore.</p>
-
-  <h3>The contract foundry line</h3>
-  <p>9 contracts folded through red-team + blue-team chains (#155 v1.1, #156 v1.1, #161 v2.0, #164 v2,
-  #170 v2, #163, #165, #167, #146) · PM + DeepSeek-Harness comparison foundries: 12 rubric-filtered
-  adoptions (activation-before-representation chief among them) · lane-proof: the first live
-  DECISION_REQUEST answer + honest defer-park, proven end-to-end.</p>
-
-  <h3>Fleet assets</h3>
-  <p>glm-5.3 route live (Fable/K3-class coordinator seat; first live exercise in flight) · GLM
-  ceiling 1→4 (the 1× was a scaffolding fossil) · deepseek wide at 4 · the persistent launcher
-  (retry-until-admitted) replaces launch-by-luck.</p>
-
-  <h2 id="unlocks"><span class="tick">▸</span>What it qualitatively unlocks</h2>
+  <h2 id="landed"><span class="tick">▸</span>Landed in 24h (gate-verified)</h2>
   <ul>
-    <li><b>Orchestration as authorship.</b> A campaign is a text file now: rosters, routes, scopes,
-    steering lanes, harvest contracts. I compose fleets instead of scripting drivers.</li>
-    <li><b>A floor under everything.</b> Drain-checkpoints + content-addressed pins + recovery
-    terminalization = work survives any process death. Re-drives are routine, not rescue.</li>
-    <li><b>Specs with teeth.</b> 14 red-first suites stand armed over the frontier — every impl wave
-    lands against a named-stage contract it cannot talk its way past.</li>
-    <li><b>Honesty about the gaps.</b> The collaboration-plane audit (#211) counted what never
-    fired: zero <code>decision.*</code> events ever, 3,057 messages sent vs 160 delivered, a
-    write-only knowledge plane. The machinery now knows what it doesn't do.</li>
+    <li><b>#170 the workflow DSL</b> — 16-directive line grammar + pure compiler + <code>waves.compile</code> + steering cross-validation; folded #176/#183/#171/#180/#196. 35/35 + 12/12, gate accepted. <i>Every wave in today's fleet is DSL-authored.</i></li>
+    <li><b>#210 the loop-starvation P0</b> — <code>events()</code> deep-cloned the 87k-event ledger per call, per member, per poll → 97% CPU, launches vanishing mid-request. <code>eventsView()</code> + 25 switches; <code>/readyz</code> 15s+ → 143ms. <span class="mono">49b42d3</span></li>
+    <li><b>Recovery proved twice</b> — 14 members terminalized across two resident kills; all checkpointed; the honesty package's 4 rows + QA recovered from pins intact (2,589 patch lines).</li>
+    <li><b>9 contracts folded</b> through red/blue chains · <b>PM + DSH comparison foundries</b> (12 rubric-filtered adoptions) · <b>lane-proof</b>: first live DECISION_REQUEST answer + defer-park.</li>
+    <li><b>Fleet assets</b>: glm-5.3 route + GLM ceiling 1→4 · deepseek wide · persistent launcher mesh · the campaign-state tooling.</li>
   </ul>
 
-  <h2 id="fleet"><span class="tick">▸</span>The live fleet — v16, right now</h2>
+  <h2 id="fleet"><span class="tick">▸</span>The fleet — v16, live</h2>
   <table>
-    <tr><th>wave</th><th>roster</th><th>mission</th><th>state</th></tr>
-    <tr><td class="mono">honesty-c</td><td>glm-5.3 coord + 4 v4-pro rows</td>
-      <td>Complete the surface-honesty package: CLI append branch, dispatch legs, _authorize
-      restrictor, doc-truth stages — plus the phase11/12 collateral as landing blockers</td>
-      <td><span class="pill live">RUNNING</span></td></tr>
-    <tr><td class="mono">③ lifecycle rd2</td><td>v4-pro coord + 4 flash rows</td>
-      <td>Contracts: filesystem (#168/172/185) · launch-receipt (#173/202/207) · member-creation
-      (#199/200/204) · ledger invariant (#194/205)</td><td><span class="pill live">RUNNING</span></td></tr>
-    <tr><td class="mono">WF-1 phase-grammar rd2</td><td>v4-pro coord + contract/suite/compiler/interpreter rows</td>
-      <td><b>The north-star:</b> the phase level of the DSL — an entire methodology pipeline as one
-      script (phases, outcomes as values, gating, orchestrator checkpoints, couplings)</td>
-      <td><span class="pill live">RUNNING</span></td></tr>
-    <tr><td class="mono">⑤ collab rd1</td><td>glm-5.3 coord + 4 flash rows</td>
-      <td>Contracts: member lanes · knowledge activation · context/inject lanes (#195) ·
-      federation doubt — the communication plane's spec</td><td><span class="pill live">RUNNING</span></td></tr>
-    <tr><td class="mono">④ lch rd1</td><td>5 members</td>
-      <td>Contracts: wake (#71/181) · death certs (#182) · durable retry (#201/188) · quiescence</td>
-      <td><span class="pill queue">LAUNCHER RETRYING</span></td></tr>
-    <tr><td class="mono">WLS rd1</td><td>coordinator + fix row</td>
-      <td>waves_list single-pass roster index + pin-vacuity guard</td>
-      <td><span class="pill queue">LAUNCHER RETRYING</span></td></tr>
-    <tr><td class="mono">impl ×4</td><td>telemetry · plan-object · lsp-pool · result-accessor</td>
-      <td>Impl against armed red-first suites: #146 seats/readiness · #161 plan object ·
-      #144 LSP pool · #99/#179 run.result()</td><td><span class="pill queue">LAUNCHER RETRYING</span></td></tr>
-    <tr><td class="mono">readme-split</td><td>glm-5.2 row + flash coord</td>
-      <td>The product README + progress-ledger separation</td>
-      <td><span class="pill queue">LAUNCHER RETRYING</span></td></tr>
+    <tr><th>wave</th><th>composition</th><th>mission</th><th>state</th></tr>
+    <tr><td class="mono">honesty-c</td><td class="mono">glm-5.3 ⊃ 4×v4-pro</td><td>surface-honesty completion: CLI append · dispatch · restrictor · doc-truth + phase11/12 blockers</td><td><span class="pill live">RUNNING</span></td></tr>
+    <tr><td class="mono">③ lifecycle rd2</td><td class="mono">v4-pro ⊃ 4×flash</td><td>contracts: filesystem · launch-receipt · member-creation · ledger-invariant</td><td><span class="pill live">RUNNING</span></td></tr>
+    <tr><td class="mono">WF-1 phase-grammar rd2</td><td class="mono">v4-pro ⊃ v4-pro rows</td><td><b>north-star:</b> the campaign-as-DSL phase level (#9)</td><td><span class="pill live">RUNNING</span></td></tr>
+    <tr><td class="mono">⑤ collab rd1</td><td class="mono">glm-5.3 ⊃ 4×flash</td><td>contracts: member lanes · knowledge activation · context/inject · federation doubt</td><td><span class="pill live">RUNNING</span></td></tr>
+    <tr><td class="mono">impl-telemetry</td><td class="mono">glm-5.2 ⊃ glm-5.3</td><td>#146 seat telemetry + readiness probes</td><td><span class="pill live">STARTED</span></td></tr>
+    <tr><td class="mono">impl-lsp-pool</td><td class="mono">flash ⊃ glm-5.3</td><td>#144 LSP pool (13 RED pins + 10 guards)</td><td><span class="pill live">STARTED</span></td></tr>
+    <tr><td class="mono">④ lch rd1 · WLS rd1 · plan-object · result-accessor · kg-activation · readme-split</td><td class="mono">mixed</td><td>④ lifecycle-honesty contracts · waves_list index · #161 · #99/#179 · the KG read path · docs</td><td><span class="pill queue">LAUNCHER MESH RETRYING</span></td></tr>
   </table>
-  <p class="sub">Constraint stack, honestly: the edge still drops launches under drive load (#209's
-  lived form — the launcher mesh retries through it) · member spawning serializes under box load ·
-  seat ceilings gate the rest. The fleet grows as capacity frees.</p>
+  <p class="sub">Spawn-rate constraint named + filed (#218): adapter seat ceilings queue members <i>silently</i> — 24 reservations, 5 materialized, 19 invisible-pending. Mitigation live: rows re-seated across glm-5.3/5.2 to draw idle seats; the permanent fix is in the C2/C4 lanes below.</p>
 
-  <h2 id="frontier"><span class="tick">▸</span>The open frontier</h2>
+  <div class="cluster" id="c1">
+  <h2 style="border-top:none"><span class="tick">▸</span>C1 · COMMUNICATIONS — the full inventory</h2>
+  <p class="sub">The operator's #1 priority, and the plane with the most documented debt. Every item, no compression.</p>
+
+  <h3>The attention spine (orchestrator ⇐ fleet)</h3>
   <table>
-    <tr><th>campaign</th><th>content</th><th>state</th></tr>
-    <tr><td>C1 · communications</td><td>inject mid-flight · member lanes · REPL object passing ·
-      attention push that interrupts without polling (#208/195/174/206/205)</td>
-      <td><span class="pill live">SPEC IN FLIGHT</span></td></tr>
-    <tr><td>C2 · durability</td><td>typed member-creation failures · drain-restart · durable retry
-      resume-not-drop · death certs · lease/reservation recovery</td>
-      <td><span class="pill live">SPEC IN FLIGHT</span></td></tr>
-    <tr><td>C3 · phase grammar</td><td>the campaign-as-DSL: phases, outcomes, gating, checkpoints,
-      mid-flight amendment — the 12-stage methodology as the reference template (#9)</td>
-      <td><span class="pill live">IMPL IN FLIGHT</span></td></tr>
-    <tr><td>C4 · oversight/telemetry</td><td>seat telemetry + actual-inference readiness probes ·
-      blocked_interaction surfacing "you must act" · response shapes · control-plane precedence</td>
-      <td><span class="pill queue">IMPL LAUNCHING</span></td></tr>
-    <tr><td>C6 · orchestration depth</td><td>nested orchestration (#12) · coordinator seat (#74) ·
-      tight cells (#102) · quiescence settle (#163) · mid-flight mutability</td>
-      <td><span class="pill queue">GATED ON WF-1</span></td></tr>
-    <tr><td>K · knowledge</td><td>8 campaign-earned edge types + belief_status (#187-amended) ·
-      foundry-loop first-writers · activation before representation</td>
-      <td><span class="pill queue">GATED ON ⑤</span></td></tr>
-    <tr><td>P · planning</td><td>the orchestrator plan object as a baton citizen (#161) · shared
-      task lists · upward decision-posits (multi-choice + free response)</td>
-      <td><span class="pill queue">IMPL LAUNCHING</span></td></tr>
-    <tr><td>D · diagnostics</td><td>LSP pool (#144) → symbol-anchored citations → AST-level suite
-      assertions · atlas discovery verbs (#123)</td><td><span class="pill queue">IMPL LAUNCHING</span></td></tr>
-    <tr><td>#212 · native worktree dispatch</td><td>scope-as-physics: declared projections, write-time
-      enforcement, machinery-owned landing order — adherence retired</td>
-      <td><span class="pill gap">FILED TODAY</span></td></tr>
+    <tr><th>issue</th><th>content</th><th>state</th></tr>
+    <tr><td class="issue">#208</td><td><b>No live attention/notification push</b> from waves to the orchestrator — parked members waited ~1h for manual archaeology. The wave-level parked-member aggregate pushed to the launcher.</td><td><span class="pill spec">⑤ CONTRACTS</span></td></tr>
+    <tr><td class="issue">#205</td><td>The decision lane round-trips but <b>never ledgers</b> — zero <code>decision.*</code> events ever; the first live DECISION_REQUEST was answered and the store has no record.</td><td><span class="pill spec">⑤ CONTRACTS</span></td></tr>
+    <tr><td class="issue">#10</td><td><code>blocked_interaction</code> classification — <code>status()</code> must surface "you must act"; today an agent must know to call <code>actions()</code>.</td><td><span class="pill queue">C4 LANE</span></td></tr>
+    <tr><td class="issue">#108</td><td><code>attention.watch</code> silently dead for the documented MCP principal (empty page + cursor rewind, never an error).</td><td><span class="pill queue">BACKLOG</span></td></tr>
+    <tr><td class="issue">#181</td><td>Member wake-on-signal: signal recipients must stay parked-alive until delivery (the coordinator lifecycle gap — a coordinator died before its rows' signal).</td><td><span class="pill spec">④ CONTRACTS</span></td></tr>
+    <tr><td class="issue">#212</td><td>Orchestrator-controlled shared+individual task lists; <b>upward decision-posits</b> (multi-choice + free-response, AskUserQuestion-shaped, worker→orchestrator, gating).</td><td><span class="pill queue">P LANE</span></td></tr>
   </table>
 
-  <h2 id="frictions"><span class="tick">▸</span>The friction ledger (what still bites)</h2>
+  <h3>The member voice (fleet ⇒ orchestrator / fleet ⇄ fleet)</h3>
+  <table>
+    <tr><th>issue</th><th>content</th><th>state</th></tr>
+    <tr><td class="issue">#206</td><td>Members have <b>no reachable message-origination surface</b>: web unsupported-command, CLI handshake fails in worktree, member MCP session timeout. The fleet cannot speak.</td><td><span class="pill spec">⑤ CONTRACTS</span></td></tr>
+    <tr><td class="issue">#174</td><td>No live sibling visibility — coordinators verdict blind (member-side twin of #157).</td><td><span class="pill spec">⑤ CONTRACTS</span></td></tr>
+    <tr><td class="issue">#195</td><td>The <code>inject()</code>-shaped <b>mid-flight context lane</b> (dsh-adoption): context objects into LIVE members without restart.</td><td><span class="pill spec">⑤ CONTRACTS</span></td></tr>
+    <tr><td class="issue">#213</td><td><b>Context/memory objects as passable bodies</b>: per-worker partitions, shared workflow layers, REPL object passing, tiered promotion task→workflow→project with orchestrator-gated elevation.</td><td><span class="pill queue">P LANE</span></td></tr>
+    <tr><td class="issue">#194</td><td>Model-visible-means-logged invariant + the durable no-step turn (dsh ①).</td><td><span class="pill spec">⑤/④ CONTRACTS</span></td></tr>
+    <tr><td class="issue">#190</td><td>Delta-aware re-briefing: event-derived delta + silence floor (the cry-wolf-guarded nudge).</td><td><span class="pill queue">K LANE</span></td></tr>
+    <tr><td class="issue">#188</td><td>Failure-stall → forced review (event-derived; #67's failure half).</td><td><span class="pill queue">④ CHAIN</span></td></tr>
+  </table>
+
+  <h3>The transport + surface parity</h3>
+  <table>
+    <tr><th>issue</th><th>content</th><th>state</th></tr>
+    <tr><td class="issue">#206/153/156</td><td>Surface parity cluster: waves.run unreachable off-process · MCP default profile not a bus superset (12+ lifecycle ops missing) · member message surfaces dead.</td><td><span class="pill live">HONESTY-C RUNS</span></td></tr>
+    <tr><td class="issue">#138</td><td>No stateless HTTP MCP endpoint — stdio-only excludes process-per-call orchestrators.</td><td><span class="pill queue">BACKLOG</span></td></tr>
+    <tr><td class="issue">#128</td><td>Production HTTPS provider-webhook route — the push path is built, never mounted.</td><td><span class="pill queue">BACKLOG</span></td></tr>
+    <tr><td class="issue">#124</td><td>Side-channel board surfacing — claim state inside the tool results workers already read.</td><td><span class="pill queue">BACKLOG</span></td></tr>
+    <tr><td class="issue">#121</td><td><code>run.debug</code> board leg (R53R-2's premise reversed by #78).</td><td><span class="pill queue">BACKLOG</span></td></tr>
+    <tr><td class="issue">#134</td><td>Interim driver harvest attributes wrong-wave pins — waveId binding + attempt marker.</td><td><span class="pill queue">BACKLOG</span></td></tr>
+    <tr><td class="issue">#136</td><td>runs.list continuation: CLI cannot pass a cursor; refusal names no next action.</td><td><span class="pill queue">BACKLOG</span></td></tr>
+    <tr><td class="issue">#197</td><td>Delegated-turn subagent providers + followup routing (dsh ④) — the suborchestration transport half.</td><td><span class="pill queue">C6 LANE</span></td></tr>
+    <tr><td class="issue">#198</td><td>Dispatch-mode declarations + coordinator-granted capability scoping (dsh ⑤).</td><td><span class="pill queue">C6 LANE</span></td></tr>
+    <tr><td class="issue">#106</td><td>Steering lanes as driver POLICY (message-on-spawn, elevate-when-notes, answer-decisions), not bespoke poll loops per driver.</td><td><span class="pill queue">BACKLOG</span></td></tr>
+  </table>
+  <p class="sub"><b>Audit anchors (#211):</b> 3,057 sent / 160 delivered · zero decision kinds · the message lane is send-mostly. The ⑤ foundry's four contracts carry these counts as grounding.</p>
+  </div>
+
+  <div class="cluster" id="c2">
+  <h2 style="border-top:none"><span class="tick">▸</span>C2 · DURABILITY / LIFECYCLE</h2>
+  <table>
+    <tr><th>issue</th><th>content</th><th>state</th></tr>
+    <tr><td class="issue">#199/#200/#204</td><td>The phantom member-creation cluster: spawn-window race verdicts live members failed · content-derived task ids collide on re-drive · no drain-restart.</td><td><span class="pill spec">③ CONTRACTS RUN</span></td></tr>
+    <tr><td class="issue">#207</td><td>objectiveRef 64KiB admission vs run.start 4096B cap — briefs 4–64KiB phantom-fail every member; the refusal is swallowed from the receipt.</td><td><span classpill spec">③ CONTRACTS RUN</span></td></tr>
+    <tr><td class="issue">#201</td><td><b>[HIGH] Durable member retry</b>: classify, resume-in-place with restored session context — no more orchestrator hand-recovery.</td><td><span class="pill spec">④ CONTRACTS</span></td></tr>
+    <tr><td class="issue">#218</td><td>Seat-ceiling queueing is invisible (19 NULL reservations, zero events) — the queue state must be first-class + ledgered.</td><td><span class="pill gap">FILED TODAY</span></td></tr>
+    <tr><td class="issue">#216</td><td>Drive-pump per-member git digest per poll — the post-#210 starvation residual; event-derived digests + control-plane precedence.</td><td><span class="pill gap">FILED TODAY</span></td></tr>
+    <tr><td class="issue">#141/#142</td><td>Deadline-drain reaps uncommitted work (2.5h lost, zero pins — now fixed by drain-checkpoints, proven) · trust gate kills completed work over brief-invited evidence files.</td><td><span class="pill queue">③/④ CHAINS</span></td></tr>
+    <tr><td class="issue">#143</td><td><code>baton_repl_cite</code> accepts caller-supplied runId with no membership check — live cross-run read escape (red-team found).</td><td><span class="pill queue">BACKLOG</span></td></tr>
+    <tr><td class="issue">#148</td><td>Resident credential dies ~24h mid-session, no renewal path — pump loops go blind.</td><td><span class="pill queue">BACKLOG</span></td></tr>
+    <tr><td class="issue">#168/#172/#185</td><td>Filesystem cluster: base pins to a sideband ref (master stays campaign-linear) · snapshot machinery abandons index.lock · member writes can escape the worktree into the operator's checkout.</td><td><span class="pill spec">③ CONTRACTS RUN</span></td></tr>
+    <tr><td class="issue">#217</td><td><b>Native worktree dispatch</b>: scope-as-physics (projections at dispatch, write-time enforcement, machinery-owned landings) — adherence retired.</td><td><span class="pill gap">FILED TODAY</span></td></tr>
+    <tr><td class="issue">#177/#178/#179</td><td>Kernel-honesty payload findings (#169 audit): lease recovery · capacity refusal payload names holder · result materialization.</td><td><span class="pill queue">C4 LANE</span></td></tr>
+    <tr><td class="issue">#184</td><td>The law list is a bug farm — convert agent-discipline traps into machinery (the admission/guard layer spec).</td><td><span class="pill queue">G LANE</span></td></tr>
+    <tr><td class="issue">#120</td><td><code>rate_limited</code> progress class — stop dropping the wire's rate_limit_event (false-death mode).</td><td><span class="pill queue">BACKLOG</span></td></tr>
+  </table>
+  </div>
+
+  <div class="cluster" id="c3">
+  <h2 style="border-top:none"><span class="tick">▸</span>C3 · PHASE GRAMMAR (the north-star) &nbsp;·&nbsp; C6 · ORCHESTRATION DEPTH</h2>
+  <table>
+    <tr><th>issue</th><th>content</th><th>state</th></tr>
+    <tr><td class="issue">#9 / WF-1</td><td>The campaign-as-DSL: named phases · outcomes as first-class values · conditional gating · orchestrator checkpoints · three couplings (loose/shared/tight) · mid-flight amendment · the 12-stage methodology as the reference phase-library template.</td><td><span class="pill live">IMPL IN FLIGHT</span></td></tr>
+    <tr><td class="issue">#162</td><td>Mid-flight wave mutability: amend membership, scopes, steering policy without teardown.</td><td><span class="pill queue">RIDES WF-1</span></td></tr>
+    <tr><td class="issue">#12/#74</td><td>Nested orchestration + the coordinator seat (member-driven waves.run; the recursive shape — glm-5.3 suborchestrating flash swarms runs ON this).</td><td><span class="pill queue">GATED: WF-1 LANDS</span></td></tr>
+    <tr><td class="issue">#102</td><td>Tight cells: a coupled group behaves as one unit with shared context (vs loose groupings' distinct contexts).</td><td><span class="pill queue">SUITE RED</span></td></tr>
+    <tr><td class="issue">#163/#80/#59</td><td>Quiescence-derived completion (kill the interpreter's hardCap wall clock) · TG3's 5-min one-shot window → evidence-derived · re-drive continuity.</td><td><span class="pill queue">SUITES RED</span></td></tr>
+    <tr><td class="issue">#127</td><td>Phase-79 workflow strategy + join expansion (review_revise / debate_synthesize; all_verified / first_verified).</td><td><span class="pill queue">BACKLOG</span></td></tr>
+  </table>
+  </div>
+
+  <div class="cluster" id="c4">
+  <h2 style="border-top:none"><span class="tick">▸</span>C4 · OVERSIGHT / TELEMETRY / SURFACE HONESTY</h2>
+  <table>
+    <tr><th>issue</th><th>content</th><th>state</th></tr>
+    <tr><td class="issue">#146/#167</td><td>Seat telemetry (per-route inFlight/ceiling/deferred as a first-class read) + the bounded actual-inference readiness probe (static-ready ≠ provider-alive).</td><td><span class="pill live">IMPL STARTED</span></td></tr>
+    <tr><td class="issue">#157–#160</td><td>The honesty package: CLI ghosts (waves.send/stop parser-refused, null registry phases) · kernel write lane · doc-truth conformance · error actionability.</td><td><span class="pill live">HONESTY-C RUNS</span></td></tr>
+    <tr><td class="issue">#202/#209</td><td>Bare-text response shapes · bus 503 under flood (control-plane precedence; #210 named the mechanism, the policy half remains).</td><td><span class="pill queue">C4 WAVE WORK</span></td></tr>
+    <tr><td class="issue">#99/#179</td><td><code>run.result()</code> materialization accessor — no more git cat-file pin probing.</td><td><span class="pill queue">LAUNCHER MESH</span></td></tr>
+    <tr><td class="issue">#149</td><td>Gate emits no machine-readable failure digest — acceptance is hand-tabulated log archaeology.</td><td><span class="pill queue">BACKLOG</span></td></tr>
+    <tr><td class="issue">#129/#135/#137</td><td>Launch/startup honesty cluster: waves.start silent oversize refusal · serve silent for minutes (staged readiness lines) · setup misdirects 'profiles: missing' mid-publish.</td><td><span class="pill queue">BACKLOG</span></td></tr>
+    <tr><td class="issue">#139/#160</td><td>Error quality: refusals name the class not the field · actionability enforced at the conformance gate (the #41 pattern as gate law).</td><td><span class="pill live">HONESTY-C (part)</span></td></tr>
+    <tr><td class="issue">#165</td><td>Launch-time harvest-contract validation: file-only targets + brief-deliverable coverage, refuse at launch.</td><td><span class="pill queue">BACKLOG</span></td></tr>
+    <tr><td class="issue">#147/#159</td><td>The conformance gate: inventory ↔ admission comparison makes the whole drift class impossible; audit re-run with attempt-echo.</td><td><span class="pill queue">G LANE</span></td></tr>
+  </table>
+  </div>
+
+  <div class="cluster" id="k">
+  <h2 style="border-top:none"><span class="tick">▸</span>K · KNOWLEDGE — <span style="color:var(--bad)">the write-only plane (operator-prioritized)</span></h2>
+  <table>
+    <tr><th>issue</th><th>content</th><th>state</th></tr>
+    <tr><td class="issue">#24-27/#186</td><td><b>ACTIVATION FIRST</b>: ambient knowledge served into spawn briefs (bounded, provenance-wrapped, honest-empty, expired-never-serves) + candidacy queue projection + ritual hooks + horizon digests + gate honesty (KG-A1..A5).</td><td><span class="pill queue">IMPL PACKED, LAUNCHER ARMED</span></td></tr>
+    <tr><td class="issue">#187 (amended)</td><td>8 campaign-earned edge types (Attacks · Blocks · Resolves · Violates · ConvergesWith · EscalatesTo · Decides · ElevatedTo) + belief_status; rejects: RelatedTo, CitedIn, the confidence scalar.</td><td><span class="pill queue">AFTER ACTIVATION</span></td></tr>
+    <tr><td class="issue">#189/#191/#192</td><td>Auto-scaffold on harvest (next stage's pack skeleton materializes) · CLI↔MCP parity test shape · impact-propagation projection (DAG-derived, advisory).</td><td><span class="pill queue">K CHAIN</span></td></tr>
+    <tr><td class="issue">#118/#119/#122</td><td>Knowledge-poverty cluster: failed-verification postmortem digest · command-recipe registry · compaction firewall / recite-from-outside.</td><td><span class="pill queue">BACKLOG</span></td></tr>
+  </table>
+  </div>
+
+  <div class="cluster" id="p">
+  <h2 style="border-top:none"><span class="tick">▸</span>P · PLANNING / CONTEXT</h2>
+  <table>
+    <tr><th>issue</th><th>content</th><th>state</th></tr>
+    <tr><td class="issue">#161</td><td>The orchestrator's plan/campaign state as a first-class baton object (durable, worker-queryable, steerable) — contract v2.0 folded.</td><td><span class="pill queue">LAUNCHER MESH</span></td></tr>
+    <tr><td class="issue">#212/#213</td><td>Shared+individual task lists with upward decision-posits · context/memory objects as passable bodies with tiered promotion.</td><td><span class="pill gap">FILED TODAY</span></td></tr>
+  </table>
+  </div>
+
+  <div class="cluster" id="d">
+  <h2 style="border-top:none"><span class="tick">▸</span>D · DIAGNOSTICS — the full inventory</h2>
+  <table>
+    <tr><th>issue</th><th>content</th><th>state</th></tr>
+    <tr><td class="issue">#144</td><td><b>LSP pool</b>: hub-managed, lazily started, one server per repo+language; honest unavailability, hermetic fixtures. The diagnostics foundation.</td><td><span class="pill live">IMPL STARTED</span></td></tr>
+    <tr><td class="issue">#214</td><td>Symbol-anchored citations + AST-level suite assertions (post-#144) — the #166 drift-class ROOT fix: contracts/suites cite symbols, never line windows.</td><td><span class="pill gap">FILED TODAY</span></td></tr>
+    <tr><td class="issue">#215</td><td>NUL extraction from application.mjs + coordination-store.mjs — retire the per-brief NUL discipline.</td><td><span class="pill gap">FILED TODAY</span></td></tr>
+    <tr><td class="issue">#123</td><td>Atlas fleet discovery verbs over the landed index ("where does X persist" — the channel-audit archaeology cost) — close 'rigorous, unreached-for'.</td><td><span class="pill queue">BACKLOG</span></td></tr>
+    <tr><td class="issue">#104</td><td>Symbol-cited briefs: objectives carry coordinates that resolve at read time, not line numbers that drift mid-landing.</td><td><span class="pill queue">BACKLOG</span></td></tr>
+    <tr><td class="issue">#130</td><td>Quartermaster positive-clearance + provenance composition cluster (AF5/PI12/RD1/TA11).</td><td><span class="pill queue">BACKLOG</span></td></tr>
+    <tr><td class="issue">#125</td><td>Replay harness / deterministic reproducibility — before the eval, not after.</td><td><span class="pill queue">BACKLOG</span></td></tr>
+    <tr><td class="issue">#166</td><td>Suite law conversion sweep: order/existence/byte-string pins, never absolute line windows (the sweep half; the law half is G).</td><td><span class="pill queue">BACKLOG</span></td></tr>
+  </table>
+  </div>
+
+  <div class="cluster" id="g">
+  <h2 style="border-top:none"><span class="tick">▸</span>G · CRAFT/GOVERNANCE &nbsp;·&nbsp; E · EVAL &nbsp;·&nbsp; IDEATION</h2>
+  <table>
+    <tr><th>issue</th><th>content</th><th>state</th></tr>
+    <tr><td class="issue">#150/151/152</td><td>Contract seeds: coaching-payload passthrough · spill query run-horizon auth · workflow-surface docs disclosure + evidenceRef schema.</td><td><span class="pill queue">SEED WAVE</span></td></tr>
+    <tr><td class="issue">#116/#117</td><td>Restore grammar-m4a registry-v2 invariant tests (coverage silently lost) · effect tripwire on the integrate gate.</td><td><span class="pill queue">BACKLOG</span></td></tr>
+    <tr><td class="issue">#107/#126</td><td>EVAL-R0 (five landed rungs solo-vs-driven, pre-registered pivot criterion) · fleet_bakeoff (N vendors, same contract, referee judge).</td><td><span class="pill queue">EVAL LANE</span></td></tr>
+    <tr><td class="issue">#145</td><td>OhMyPi as the deepseek/glm harness (vs the claude-code shim) — evaluation.</td><td><span class="pill queue">LOW</span></td></tr>
+    <tr><td class="issue">#193</td><td>CUA/browser worker tier (LOW): per-worker session context, coupled sessions, vision-assist seats; cua+browser-use anchors.</td><td><span class="pill queue">IDEATION</span></td></tr>
+    <tr><td class="issue">#115/#133</td><td>Flip-flavored harness-agnostic TUI feedback surface · animated Flip (brand.mjs frame ticker).</td><td><span class="pill queue">IDEATION</span></td></tr>
+    <tr><td class="issue">docs/38</td><td>Flip rungs A (pose expansion) + F (decision-loop chrome ✦(◕o◕)❗ on parked decisions, MCP elicitation).</td><td><span class="pill queue">IDEATION</span></td></tr>
+  </table>
+  </div>
+
+  <h2 id="backlog"><span class="tick">▸</span>The standing method + what rides next</h2>
   <ul>
-    <li><b>The edge under load.</b> #210 fixed the clone furnace; the accept path still loses races
-    when drives flood — launches need the persistent-retry mesh. The real fix (control-plane
-    precedence, #209) is wave work.</li>
-    <li><b>Silence classes that shouldn't exist.</b> Phantom member-creation (#199/200/204) was
-    hours-quiet before anyone noticed; reservations-without-materialization is now its named
-    signature and a ③ contract row.</li>
-    <li><b>The decision void.</b> Parked members surface only as a task state; there is no
-    ledgered decision object with options. ⑤'s context-lanes row owns the vocabulary.</li>
-    <li><b>The write-only knowledge plane.</b> 184 auto-promotions, zero reads. Activation (#186/190)
-    before representation — the pm-comparison's cleanest adoption.</li>
-    <li><b>Self-inflicted, on record:</b> never edit a running shell script (flood v1 died mid-byte);
-    the operator's law stands — the orchestrator orchestrates; waves develop.</li>
+    <li><b>Pipeline per lane</b> (the 12-stage law): ground → spec → red-team spec → blue-team spec → test contract → red-team testing → blue-team testing → scope-creep audit → remediate → implement → validate → return-to-orchestrator. Every lane above moves through it as DSL-authored multi-member waves.</li>
+    <li><b>Fleet composition law:</b> glm-5.3 suborchestrates DSv4-Flash + GLM-5.2 rows (cheap-wide; Flash's competency-per-cost is the fleet's engine); v4-pro for the heaviest impl rows; kimi orchestrates.</li>
+    <li><b>Next dispatch window</b> (file-lock-gated, fires as honesty-c/WF-1 land): C6 impls (#163/#80/#59 interpreter work) · cli-silent-start impl (#155) · #156 MCP superset · the seeds wave (#150-152 + #184 spec) · #147 audit re-run · EVAL-R0.</li>
+    <li><b>The two unblocks in flight:</b> the spawn/ceiling silence class (#218) and the pump-digest residual (#216) — both filed with live evidence today; their fixes ride the C2/C4 lanes they belong to.</li>
   </ul>
 
   <div class="foot">
-    <span class="flip">✦(◕‿◕)◦</span> baton · campaign state 2026-08-14 · generated by the orchestrator
-    from the coordination ledger, the git log, and the gate · commits 49b42d3 / 8f110da / bf93263 / 5939e6b
+    <span class="flip">✦(◕‿◕)◦</span> baton · campaign state 2026-08-14 v2 · orchestrator-generated from the coordination ledger, the gate, and the issue body ·
+    commits 49b42d3 / 8f110da / bf93263 / 5939e6b / 780dce3 / 30108cc
   </div>
 </main>
 </body>
