@@ -77,7 +77,7 @@ are pinned by the #70 suite's K-P1 row — re-verified green in this session's r
 **GT5 — The deployment identity seam federation rides.** `stableDeploymentId` reads/writes
 `resident/deployment.json` as the exact closed `{schemaVersion, repoId, deploymentId}` triple
 (`resident-authority.mjs:115-130`); the repoId mint rejects NUL-bearing repo paths in
-`application-deployment.mjs` (`repositoryAuthority`, `:177-183` this session). These are the
+`application-deployment.mjs` (`repositoryAuthority`, `:177-180` this session). These are the
 coordinates the #70 projection's `sourceRoot` (the primary's `deploymentId`) derives from — no new
 identity surface is needed for the seam.
 
@@ -373,3 +373,38 @@ the green row lands. Until settled, (a) is the working assumption and is NOT pin
 | FD6b | #192 never-throttle | surface absent | DR-1 settled + landed |
 | FD6c | #192 DAG-derived | surface absent | DR-1 settled + landed |
 | FD7 | vocabulary hygiene | constants absent | both families exported frozen, sorted |
+
+## 9. Cross-contract boundary map (for the coordinator's coherence cross-check)
+
+The four collab rows share the settle ritual, the application-semantics registry, and the
+knowledge tier. This contract's ownership lines, so overlap/gap is nameable rather than
+discovered:
+
+- **vs `contract-member-lanes` (#205/#206/#174):** the `decision.requested`/`decision.settled`
+  event family is the member-lanes row's surface (the kinds exist in the adapter/coordinator
+  seams — `adapter.mjs:499`, `:645`; `coordinator.mjs:73` — and #205 ledgering rides that row). A
+  doubt **resolution is NOT a decision event**: `knowledge.doubt_resolved` is this row's kind, and
+  a DECISION_REQUEST settled mid-flight does not resolve a doubt nor vice versa. No shared kind,
+  no overlap. The one touchpoint: both rows add embedded-only rows to the application-semantics
+  registry — additive, no shared row name (`knowledge.doubts`/`knowledge.promote_doubt` here).
+- **vs `contract-knowledge-activation` (#186/#190):** that row owns computed member briefings at
+  spawn and elevation ergonomics. **A doubt record is not a briefing input in v1** — the projected
+  carried tier (D1) is an orchestrator-read surface, never a spawn-time pack field; if a later
+  contract wants carried doubts in member briefings, it must UNTRUSTED-frame them and cite this
+  contract's D1 read shape rather than re-deriving one. Elevation ergonomics (first-writers) stay
+  entirely in that row; this contract's only elevation claim is the #66 D1 selection change it
+  inherits, unchanged.
+- **vs `contract-context-lanes` (#195/#87/#203):** a projected carried doubt is **not a context
+  pack** and never rides `inject()` — it is served on the `knowledge.doubts` read only (OQ2 holds
+  the wave-scoped/project split). The 8 KiB `MAX_CONTEXT_PACK_BODY_BYTES` envelope
+  (`coordination-store.mjs:496`) does not bound this surface; the #66 D7 `view.open_doubts.*`
+  rows do.
+- **vs the lifecycle rows (package ③):** the settle ritual's filesystem/launch/member-creation
+  mechanics are theirs; this contract's ritual claims are exactly the #66-inherited selection,
+  raise-before-sweep ordering, and the receipt field — nothing about worktrees, index reaps, or
+  spawn receipts. The #192 landing zone is the one genuine package-③ boundary crossing, and it is
+  escalated as DR-1 rather than decided here.
+
+No gap found inside this row's own seam: every doubt state transition (`open`/`reviewed`/
+`answered`/`dismissed`/`carried`) has an owner (#66) or a read rule (D1); every cross-root
+movement is carried-only; every refusal condition maps to a closed code (§3).
