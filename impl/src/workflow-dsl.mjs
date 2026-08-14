@@ -9,6 +9,18 @@
 // refusal carries the #160 {line, field, expected} triple on the error AND the wire `detail` leg.
 // Importing this module runs NOTHING (no top-level await, no wave start, no side effects).
 //
+// The phase grammar (the campaign-as-DSL rung) is a SEPARATE closed registry layered on the SAME
+// line grammar: a `phase <name>` block holds member directives (per-phase rosters; a member role
+// re-cast across phases is a fresh admission), `outcome <name> from <file> line <pattern>` declares
+// a first-class extraction from the phase's harvest, `when <predicate>` gates the phase on prior
+// outcomes over the CLOSED predicate vocabulary (parse-time refusal of anything outside it), and
+// `coupling loose|shared|tight` declares the per-phase-per-member context coupling. A wavefile with
+// no `phase` directive compiles BYTE-IDENTICAL to the #170 16-directive lowering (the wave registry's
+// 16-entry totality is untouched — the phase registry is disjoint, never folded into it); a wavefile
+// with phase blocks lowers to the campaign spec the interpreter consumes (`kind: "campaign"` +
+// `phases[]`, phase-addressed by name for mid-flight-amendment diffing). The compiler stays pure of
+// the text given `repoRoot` and every refusal stays inside the closed `workflow_*` family.
+//
 // This module is self-contained: it imports only node builtins, never the interpreter or another
 // lane module, so it cannot drag a top-level side effect into the surface import graph.
 
@@ -54,6 +66,25 @@ export const WAVEFILE_DIRECTIVES = Object.freeze({
   signalOnMembersDone: { arity: 3, tokens: ['<roles>', '<kind>', '"<message>"'], field: 'steering.signalOnMembersDone', enum: 'MESSAGE_KINDS' },
   harvest: { arity: '1–2', tokens: ['<path>', 'mustContain "<text>"'], field: 'harvest.paths[]' },
 });
+
+// ---------------------------------------------------------------------------
+// The phase-level closed registry (the campaign-as-DSL rung). DISJOINT from WAVEFILE_DIRECTIVES —
+// the wave registry's 16-entry totality (the #170 P4/S3 pins) is untouched. The phase layer re-casts
+// members across named phases and lowers to the interpreter's campaign spec.
+// ---------------------------------------------------------------------------
+
+export const PHASE_DIRECTIVES = Object.freeze({
+  phase: { arity: '1–2', tokens: ['<name>', 'checkpoint'], field: 'phases[]' },
+  when: { arity: '1–3', tokens: ['<predicate>'], field: 'phases[].when' },
+  outcome: { arity: 5, tokens: ['<name>', 'from', '<file>', 'line', '"<pattern>"'], field: 'phases[].outcomes[]' },
+  coupling: { arity: 1, tokens: ['loose|shared|tight'], field: 'phases[].members[].coupling' },
+});
+
+const PHASE_DIRECTIVE_NAMES = new Set(Object.keys(PHASE_DIRECTIVES));
+const COUPLING_VALUES = new Set(['loose', 'shared', 'tight']);
+// The CLOSED predicate vocabulary for `when:` — equality/negation over named outcomes, no eval
+// (contract-brief #3). Anything outside this shape refuses workflow_spec_invalid at parse time.
+const WHEN_PREDICATE_SHAPE = '<outcome> | !<outcome> | <outcome> == "<value>" | <outcome> != "<value>"';
 
 const DIRECTIVE_NAMES = new Set(Object.keys(WAVEFILE_DIRECTIVES));
 const CLOSED_LIST = '<closed directive list>';
@@ -243,6 +274,42 @@ function requireArg(tokens, index, line, field) {
   return tokens[index];
 }
 
+// The CLOSED `when:` predicate vocabulary (contract-brief #3): equality/negation over NAMED
+// outcomes, no eval, no free expression. Accepted shapes: `<outcome>` (exists), `!<outcome>` (not),
+// `<outcome> == "<value>"` (eq), `<outcome> != "<value>"` (neq). Anything else refuses
+// workflow_spec_invalid naming `when` with the closed vocabulary as the `expected` leg.
+function parseWhenPredicate(args, line) {
+  const isOutcome = (name) => typeof name === 'string' && name.length > 0 && IDEMPOTENCY_PATTERN.test(name);
+  const bad = () => refuse(CODE_SPEC, line, 'when', WHEN_PREDICATE_SHAPE,
+    `wavefile line ${line}: when predicate must be one of ${WHEN_PREDICATE_SHAPE}`);
+  if (args.length === 1) {
+    let name = args[0];
+    let op = 'exists';
+    if (typeof name === 'string' && name.startsWith('!')) { name = name.slice(1); op = 'not'; }
+    if (!isOutcome(name)) throw bad();
+    return { outcome: name, op };
+  }
+  if (args.length === 3) {
+    const [name, operator, value] = args;
+    if (!isOutcome(name)) throw bad();
+    if (operator !== '==' && operator !== '!=') throw bad();
+    if (typeof value !== 'string' || value.length === 0) throw bad();
+    return { outcome: name, op: operator === '==' ? 'eq' : 'neq', value };
+  }
+  throw bad();
+}
+
+// `outcome <name> from <file> line <pattern>` — the `from <file>` leg is a harvested-file
+// reference in the repo path class (lexical containment only: it names a phase's harvest target,
+// which may not exist yet at compile time — no realpath, no read).
+function validateOutcomeFile(file, line) {
+  if (typeof file !== 'string' || file.length === 0 || file.includes('\0')
+    || file.startsWith('/') || file.includes('\\') || file.split('/').includes('..')) {
+    throw refuse(CODE_HARVEST, line, 'outcome.from', 'non-empty path in the repo path class',
+      `wavefile line ${line}: outcome from path escapes the repository root`);
+  }
+}
+
 function closeCurrentMember(state) {
   const member = state.current;
   if (!member) return;
@@ -273,7 +340,34 @@ function closeCurrentMember(state) {
     objectiveRef: member.objectiveRef,
   };
   if (member.report !== null) normalized.report = member.report;
-  state.members.push(normalized);
+  // Phase members carry the per-phase-per-member context coupling (default `loose` — file refs);
+  // wave members stay byte-identical to the #170 member shape (no coupling key).
+  if (state.currentPhase) normalized.coupling = member.coupling ?? 'loose';
+  if (state.currentPhase) state.currentPhase.members.push(normalized);
+  else state.members.push(normalized);
+}
+
+// Close the open phase (and any open member inside it) into `state.phases`. A member phase must
+// hold at least one member; the phase is emitted phase-addressed by `name` (the mid-flight-amendment
+// diff identity) with the deterministic key order name → kind → when → outcomes → members.
+function closeCurrentPhase(state) {
+  const phase = state.currentPhase;
+  closeCurrentMember(state); // always close any open member (wave or phase roster)
+  if (!phase) return;
+  state.currentPhase = null;
+  if (phase.members.length === 0) {
+    throw refuse(CODE_SPEC, phase.line, `phase ${phase.name}`, '>= 1 member',
+      `wavefile line ${phase.line}: phase ${phase.name} declares no member`);
+  }
+  if (phase.members.length > MAX_MEMBERS) {
+    throw refuse(CODE_SPEC, phase.line, 'members', `<= ${MAX_MEMBERS}`,
+      `wavefile line ${phase.line}: phase ${phase.name} exceeds the member ceiling`);
+  }
+  const normalized = { name: phase.name, kind: phase.kind };
+  if (phase.when !== null) normalized.when = phase.when;
+  normalized.outcomes = phase.outcomes;
+  normalized.members = phase.members;
+  state.phases.push(normalized);
 }
 
 function dispatch(directive, tokens, line, state, repoRoot) {
@@ -294,6 +388,12 @@ function dispatch(directive, tokens, line, state, repoRoot) {
 
   if (directive === 'member') {
     closeCurrentMember(state);
+    // A campaign is phase-structured: a top-level member (no open phase) once phases began is a
+    // structure mix — refuse rather than silently re-route it to the wave roster.
+    if (state.phaseStarted && !state.currentPhase) {
+      throw refuse(CODE_SPEC, line, 'member', 'phase <name>',
+        `wavefile line ${line}: a top-level member cannot mix with phase blocks — declare the member inside a phase`);
+    }
     const role = requireArg(tokens, 1, line, 'member');
     if (tokens.length !== 2) throw refuse(CODE_SPEC, line, 'member', 'member <role>', 'the member directive takes one role');
     if (role.length === 0) {
@@ -302,11 +402,100 @@ function dispatch(directive, tokens, line, state, repoRoot) {
     if (role === 'work') {
       throw refuse(CODE_MEMBER, line, `member ${role}`, 'non-empty role', `wavefile line ${line}: member role "work" is reserved`);
     }
-    if (state.members.some((m) => m.role === role)) {
+    // Role uniqueness is PER-PHASE (a role re-cast across phases is a fresh admission — the
+    // contract's roster re-cast); the wave roster keeps global uniqueness as today.
+    const roster = state.currentPhase ? state.currentPhase.members : state.members;
+    if (roster.some((m) => m.role === role)) {
       throw refuse(CODE_MEMBER, line, `member ${role}`, 'unique role', `wavefile line ${line}: member role is duplicated`);
     }
     state.memberStarted = true;
-    state.current = { role, line, harness: null, model: null, effort: null, objectiveRef: null, report: null, scope: [] };
+    state.current = { role, line, harness: null, model: null, effort: null, objectiveRef: null, report: null, scope: [], coupling: null };
+    return;
+  }
+
+  if (directive === 'phase') {
+    closeCurrentPhase(state);
+    // A campaign is EITHER wave-structured (top-level members) OR phase-structured — never both.
+    if (state.members.length > 0) {
+      throw refuse(CODE_SPEC, line, 'phase', 'phase-only campaign',
+        `wavefile line ${line}: a campaign cannot mix phase blocks with top-level members`);
+    }
+    const name = requireArg(tokens, 1, line, 'phase');
+    const args = tokens.slice(1);
+    if (args.length > 2) throw refuse(CODE_SPEC, line, 'phase', 'phase <name> [checkpoint]', 'the phase directive takes a name and an optional checkpoint marker');
+    let kind = 'member';
+    if (args.length === 2) {
+      if (args[1] !== 'checkpoint') throw refuse(CODE_SPEC, line, 'phase', 'phase <name> [checkpoint]', 'the phase directive takes a name and an optional checkpoint marker');
+      kind = 'checkpoint';
+    }
+    if (!IDEMPOTENCY_PATTERN.test(name)) {
+      throw refuse(CODE_SPEC, line, 'phase.name', '<name>',
+        'the phase name must match the closed identifier pattern');
+    }
+    if (state.phases.some((phase) => phase.name === name)) {
+      throw refuse(CODE_SPEC, line, `phase ${name}`, 'unique phase name', `wavefile line ${line}: phase name is duplicated`);
+    }
+    state.phaseStarted = true;
+    state.currentPhase = { name, kind, line, when: null, outcomes: [], members: [] };
+    return;
+  }
+
+  if (directive === 'when') {
+    closeCurrentMember(state);
+    if (!state.currentPhase) {
+      throw refuse(CODE_SPEC, line, 'when', 'phase <name>',
+        `wavefile line ${line}: when must follow an open phase`);
+    }
+    if (state.currentPhase.when !== null) {
+      throw refuse(CODE_SPEC, line, 'when', 'one when per phase',
+        `wavefile line ${line}: a phase declares at most one when gate`);
+    }
+    state.currentPhase.when = parseWhenPredicate(tokens.slice(1), line);
+    return;
+  }
+
+  if (directive === 'outcome') {
+    closeCurrentMember(state);
+    if (!state.currentPhase) {
+      throw refuse(CODE_SPEC, line, 'outcome', 'phase <name>',
+        `wavefile line ${line}: outcome must follow an open phase`);
+    }
+    const args = tokens.slice(1);
+    if (args.length !== 5 || args[1] !== 'from' || args[3] !== 'line') {
+      throw refuse(CODE_SPEC, line, 'outcome', 'outcome <name> from <file> line "<pattern>"',
+        `wavefile line ${line}: outcome takes a name, a from file, and a line pattern`);
+    }
+    const [name, , file, , pattern] = args;
+    if (!IDEMPOTENCY_PATTERN.test(name)) {
+      throw refuse(CODE_SPEC, line, 'outcome.name', '<name>',
+        'the outcome name must match the closed identifier pattern');
+    }
+    validateOutcomeFile(file, line);
+    if (state.outcomeNames.has(name)) {
+      throw refuse(CODE_SPEC, line, `outcome ${name}`, 'unique outcome name',
+        `wavefile line ${line}: outcome name is duplicated (when gates reference outcomes by name)`);
+    }
+    state.outcomeNames.add(name);
+    state.currentPhase.outcomes.push({ name, from: file, line: pattern });
+    return;
+  }
+
+  if (directive === 'coupling') {
+    if (!state.current) {
+      throw refuse(CODE_MEMBER, line, 'coupling', 'member <role>',
+        `wavefile line ${line}: coupling must follow an open member`);
+    }
+    if (!state.currentPhase) {
+      throw refuse(CODE_MEMBER, line, 'coupling', 'phase <name>',
+        `wavefile line ${line}: coupling is per-phase-per-member — it requires an open phase`);
+    }
+    const value = requireArg(tokens, 1, line, 'coupling');
+    if (tokens.length !== 2) throw refuse(CODE_SPEC, line, 'coupling', 'coupling <loose|shared|tight>', 'the coupling directive takes one value');
+    if (!COUPLING_VALUES.has(value)) {
+      throw refuse(CODE_MEMBER, line, 'coupling', 'loose|shared|tight',
+        `wavefile line ${line}: coupling must be one of loose|shared|tight`);
+    }
+    state.current.coupling = value;
     return;
   }
 
@@ -334,7 +523,7 @@ function dispatch(directive, tokens, line, state, repoRoot) {
     validateScopeEntry(path, line);
     if (state.current) {
       state.current.scope.push(path);
-    } else if (!state.memberStarted) {
+    } else if (!state.memberStarted && !state.phaseStarted) {
       state.waveScope.push(path);
     } else {
       throw refuse(CODE_MEMBER, line, 'scope', 'member', `wavefile line ${line}: scope after the last member must name an open member`);
@@ -443,7 +632,7 @@ function dispatch(directive, tokens, line, state, repoRoot) {
   }
 
   throw refuse(CODE_SPEC, line, directive, CLOSED_LIST,
-    `wavefile line ${line}: unknown directive — expected one of ${[...DIRECTIVE_NAMES].join(', ')}`);
+    `wavefile line ${line}: unknown directive — expected one of ${[...DIRECTIVE_NAMES, ...PHASE_DIRECTIVE_NAMES].join(', ')}`);
 }
 
 // ---------------------------------------------------------------------------
@@ -468,6 +657,10 @@ export function compileWavefile(text, options = {}) {
     seenDirective: false,
     memberStarted: false,
     signalOnMembersDoneLine: null,
+    phases: [],
+    currentPhase: null,
+    phaseStarted: false,
+    outcomeNames: new Set(),
   };
 
   for (const { line, text: lineText } of logicalLines(text)) {
@@ -489,16 +682,20 @@ export function compileWavefile(text, options = {}) {
   if (!state.seenDirective || state.key === null) {
     throw refuse(CODE_SPEC, 1, '<first token>', 'wave <key>', 'a wavefile must start with wave <key>');
   }
-  closeCurrentMember(state);
+  closeCurrentPhase(state);
   if (state.members.length > MAX_MEMBERS) {
     throw refuse(CODE_SPEC, 1, 'members', `<= ${MAX_MEMBERS}`, 'the wavefile exceeds the member ceiling');
   }
 
   // Steering cross-validation at admission (the fold H3): a signalOnMembersDone role that names no
-  // declared member refuses rather than silently no-op'ing at run time.
+  // declared member refuses rather than silently no-op'ing at run time. In a campaign the declared
+  // roles are the union of every phase's roster (a role re-cast across phases still names a member).
+  const declaredRoles = state.phases.length > 0
+    ? [...new Set(state.phases.flatMap((phase) => phase.members.map((member) => member.role)))]
+    : state.members.map((member) => member.role);
   if (state.steering.signalOnMembersDone) {
     for (const role of state.steering.signalOnMembersDone.roles) {
-      if (!state.members.some((member) => member.role === role)) {
+      if (!declaredRoles.includes(role)) {
         throw refuse(CODE_STEERING, state.signalOnMembersDoneLine ?? 1, 'signalOnMembersDone.roles',
           'declared member role', 'the signalOnMembersDone roles must name declared members');
       }
@@ -514,6 +711,19 @@ export function compileWavefile(text, options = {}) {
   if (Object.keys(state.answerPolicy).length > 0) steering.answerDecisions = { policy: state.answerPolicy };
   if (state.steering.signalOnMembersDone !== undefined) steering.signalOnMembersDone = state.steering.signalOnMembersDone;
 
+  // The campaign lowering (phase blocks present): `kind: "campaign"` + the phase-addressed `phases`
+  // array (name → the mid-flight-amendment diff identity), steering/harvest shared at the top level.
+  // The wave lowering (no phases) is BYTE-IDENTICAL to the #170 16-directive output.
+  if (state.phases.length > 0) {
+    return {
+      schemaVersion: 1,
+      idempotencyKey: state.key,
+      kind: 'campaign',
+      phases: state.phases,
+      steering,
+      harvest: { paths: state.harvest },
+    };
+  }
   return {
     schemaVersion: 1,
     idempotencyKey: state.key,
