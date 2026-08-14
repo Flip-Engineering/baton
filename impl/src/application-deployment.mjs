@@ -23,7 +23,7 @@ import {
   defaultRepositoryContextPolicy, RepositoryContextRuntime,
 } from './context-runtime.mjs';
 import { GrokAcpCli } from './grok-acp.mjs';
-import { KimiAcpCli } from './kimi-acp.mjs';
+import { OmpRpcCli } from './omp-rpc.mjs';
 import { RuntimeIsolation } from './runtime-isolation.mjs';
 import { ResidentAuthority, stableDeploymentId } from './resident-authority.mjs';
 import { DEFAULT_RUN_LINEAGE_POLICY } from './run-lineage.mjs';
@@ -825,6 +825,16 @@ function builtInAdapters(routes, repoRoot, adapterOptions = {}, claudeCredential
       });
     } else if (route.harness === 'grok') {
       adapters[key] = new GrokAcpCli({ requestTimeoutMs: 45_000, model: route.model, ceiling: 4 });
+    } else if (route.harness === 'omp') {
+      // #228: OhMyPi as a native member harness — deepseek/glm ride omp's first-class
+      // providers directly, no anthropic-compat translation. Exact models per the catalog;
+      // provider-true backpressure only (no synthetic seat caps, #221 law).
+      const catalog = Object.fromEntries([...new Set(rows.map((row) => row.model))].map((model) => [
+        model, [...new Set(rows.filter((row) => row.model === model).map((row) => row.effort))],
+      ]));
+      adapters[key] = new OmpRpcCli({
+        requestTimeoutMs: 45_000, model: route.model, modelCatalog: catalog, ceiling: 4,
+      });
     } else if (route.harness === 'kimi-code') {
       const catalog = Object.fromEntries([...new Set(rows.map((row) => row.model))].map((model) => [
         model, [...new Set(rows.filter((row) => row.model === model).map((row) => row.effort))],

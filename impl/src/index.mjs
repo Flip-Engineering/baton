@@ -142,7 +142,7 @@ export { loadOrCreateWorktreeCapacityIntegrityKey, normalizeWorktreeCapacityPoli
 export { ClaudeSessionCli, GlmSessionCli, KimiSessionCli } from './claude-session.mjs';
 export { CodexAppServerCli } from './codex-appserver.mjs';
 export { GrokAcpCli } from './grok-acp.mjs';
-export { KimiAcpCli } from './kimi-acp.mjs';
+export { OmpRpcCli, OmpRpcProcess } from './omp-rpc.mjs';
 export { AcpJsonRpcProcess, AcpProtocolError, AcpSetupTimeoutError } from './acp-json-rpc-process.mjs';
 export { createBrief } from './messages.mjs';
 export { verify, accept, defaultVerificationRuntime, prepareVerificationRuntime } from './referee.mjs';
