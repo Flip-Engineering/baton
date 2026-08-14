@@ -82,7 +82,12 @@ try {
       process.stdout.write(`${JSON.stringify(local, null, 2)}\n`);
       if (parsed.check && local.state !== 'configured') process.exitCode = 1;
     } else {
-      const remote = await clientFor(discoverBatonConnection()).doctor();
+      // #167 A2 (D1 trigger 3): `--check` is the on-demand forced probe — the OPERATOR path
+      // (baton.mjs → BatonWebClient.doctor() → /v1/application-card?forceProbe) forces
+      // exactly one fresh probe per stale route. The signal rides the client call; the web
+      // northbound consumes it when its leg lands (the northbound files are another wave's
+      // partition this window).
+      const remote = await clientFor(discoverBatonConnection()).doctor({ forceProbe: parsed.check === true });
       const result = {
         schemaVersion: 1, state: remote.ready === true ? 'ready' : 'not_ready',
         depth: parsed.depth, outline: { ...local.outline, credential: 'accepted', remote: remote.ready === true ? 'ready' : 'not_ready' },
