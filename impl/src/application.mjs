@@ -11620,6 +11620,33 @@ export class BatonApplication {
     return null;
   }
 
+  // #221 (wls-remediation-2026-08-14): the single-pass steering index for the waves.list roster
+  // projection. One event-log read builds BOTH directions — runId → { waveId, waveRole, route }
+  // and the (waveId, waveRole) → runId inverse — so every roster member is served from the maps
+  // instead of _runIdForWaveMember/_runWaveRole/_runWaveRoute each re-reading the full log per
+  // member. Per-invocation only (no cross-call cache), so it stays as fresh as the helpers it
+  // replaces: event-log-derived, no clocks.
+  _waveMemberSteeringIndex() {
+    const byRunId = new Map();
+    const runIdByMember = new Map();
+    for (const event of this.driver.coordination.eventsView()) {
+      if (event.kind !== 'driver.recorded'
+        || event.payload?.kind !== APPLICATION_STEERING_REGISTERED_KIND) continue;
+      const payload = event.payload;
+      const runId = payload?.runId;
+      if (typeof runId !== 'string') continue;
+      byRunId.set(runId, {
+        waveId: payload.waveId,
+        waveRole: payload.waveRole,
+        route: payload.route,
+      });
+      if (payload.waveId !== undefined && payload.waveRole !== undefined) {
+        runIdByMember.set(`${payload.waveId}|${payload.waveRole}`, runId);
+      }
+    }
+    return { byRunId, runIdByMember };
+  }
+
   // MCP-W1 (mcp-packaging-decisions v1.0): wave ergonomics on the ordinary surface. A wave is the
   // set of runs bound to one waveId through the steering-registered record; waves.start starts each
   // member through the ORDINARY run.start admission (profile routes + scopes — the _resolveIntent
@@ -11855,6 +11882,11 @@ export class BatonApplication {
     const pageSize = 16;
     const cursor = Number.isSafeInteger(request.cursor) ? request.cursor : 0;
     const page = open.slice(cursor, cursor + pageSize);
+    // #221 (wls-remediation-2026-08-14): build the roster projection's steering index ONCE per
+    // invocation — a single event-log pass — then serve every member from the maps below. At HEAD
+    // _runIdForWaveMember/_runWaveRoute re-read the full log per member, so a fat ledger (87k
+    // events) × a big roster blew the bus command budget (503 temporarily_unavailable).
+    const steering = this._waveMemberSteeringIndex();
     const waves = [];
     for (const row of page) {
       const members = [];
@@ -11869,8 +11901,9 @@ export class BatonApplication {
           // attentionCount from the live run inspect exactly as the object branch does — never
           // hardcode nulls for a live member. The hydrated read carries the D5.2 seam: a registered
           // run that vanished refuses wave_not_found, never a silent null.
-          const runId = this._runIdForWaveMember(row.waveId, member);
-          const route = this._runWaveRoute(runId);
+          const runId = steering.runIdByMember.get(`${row.waveId}|${member}`) ?? null;
+          const route = runId !== null && steering.byRunId.get(runId)?.route !== undefined
+            ? clone(steering.byRunId.get(runId).route) : null;
           let view = null;
           if (runId !== null) {
             try {
@@ -11898,7 +11931,7 @@ export class BatonApplication {
           continue;
         }
         const role = member?.role ?? null;
-        const runId = this._runIdForWaveMember(row.waveId, role);
+        const runId = role == null ? null : steering.runIdByMember.get(`${row.waveId}|${role}`) ?? null;
         let view = null;
         if (runId !== null) {
           try {
