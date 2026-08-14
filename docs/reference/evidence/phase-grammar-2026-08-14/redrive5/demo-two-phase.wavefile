@@ -1,0 +1,22 @@
+# demo-two-phase.wavefile — the coordinator's live dogfood of the phase grammar (WF-1).
+# Phase A: one flash member writes demo-a-outcome.md carrying an `outcome:` line.
+# Phase B: `when:`-gated on that outcome; one flash member writes demo-b-ran.md.
+wave demo-two-phase-pg
+phase demo-a
+  outcome verdict from "demo-a-outcome.md" line "^outcome: (.+)$"
+  member writer-a
+    harness mock
+    model mock-model
+    effort low
+    scope "**"
+    objectiveRef "objectives/writer-a.md"
+    report "demo-a-outcome.md"
+phase demo-b
+  when demo-a.verdict == "pass"
+  member writer-b
+    harness mock
+    model mock-model
+    effort low
+    scope "**"
+    objectiveRef "objectives/writer-b.md"
+    report "demo-b-ran.md"
