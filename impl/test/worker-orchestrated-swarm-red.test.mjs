@@ -490,7 +490,7 @@ test('P-A7 pin: capacity honesty — WAITING_ON_KINDS stays the byte-unchanged c
     steering: {},
     harvest: { paths: [] },
   };
-  await fx.application.command('waves.run', { spec, driver: LANE_DRIVER }, principalOf('s74-owner'));
+  await fx.application.command('waves.run', { spec, driver: LANE_DRIVER, detach: false }, principalOf('s74-owner'));
   const runs = await runsFor(fx);
   const runId = runs.items?.[0]?.id;
   assert.ok(typeof runId === 'string' && runId.startsWith('run-'), 'wave member run registered');
@@ -525,7 +525,7 @@ test('P-A8-dir pin: a DIRECTORY harvest path lands harvest_miss → WAVE-INCOMPL
     steering: {},
     harvest: { paths: [{ path: 'reports', mustContain: 'coordinator report' }] },
   };
-  const receipt = await fx.application.command('waves.run', { spec, driver: LANE_DRIVER }, principalOf('s74-owner'));
+  const receipt = await fx.application.command('waves.run', { spec, driver: LANE_DRIVER, detach: false }, principalOf('s74-owner'));
   assert.equal(receipt.verdict, 'WAVE-INCOMPLETE', 'a directory harvest refuses honestly');
   assert.ok(receipt.harvest.every((entry) => entry.missed === true && entry.code === 'harvest_miss'), 'harvest_miss entries');
   assert.equal(typeof receipt.basis, 'string', 'basis present');
@@ -563,7 +563,7 @@ test('P-A9 pin: the D6 receipt is the closed seven-key shape — outcomes audit-
       ],
     },
   };
-  const receipt = await fx.application.command('waves.run', { spec, driver: LANE_DRIVER }, principalOf('s74-owner'));
+  const receipt = await fx.application.command('waves.run', { spec, driver: LANE_DRIVER, detach: false }, principalOf('s74-owner'));
   assert.deepEqual(
     Object.keys(receipt).sort(),
     ['basis', 'harvest', 'manifestDigest', 'outcomes', 'steering', 'verdict', 'waveId'],
@@ -662,7 +662,7 @@ test('P-A3g green guard: a DELIVERED decision answer records outcome \'answered\
     steering: { answerDecisions: { policy: { 'Which path?': 'opt-a' } } },
     harvest: { paths: [] },
   };
-  const receipt = await fx.application.command('waves.run', { spec, driver: LANE_DRIVER }, principalOf('s74-owner'));
+  const receipt = await fx.application.command('waves.run', { spec, driver: LANE_DRIVER, detach: false }, principalOf('s74-owner'));
   assert.equal(receipt.verdict, 'WAVE-OK', 'delivered answer settles the wave');
   const delivered = receipt.steering.find((entry) => entry.trigger === 'answerDecisions');
   assert.ok(delivered, 'an answerDecisions record exists');
@@ -714,7 +714,7 @@ test('A1 red: the coordinator-member recipe admits, but the D1.2 read law is NOT
     steering: {},
     harvest: { paths: [] },
   };
-  const receipt = await fx.application.command('waves.run', { spec, driver: LANE_DRIVER }, principalOf('s74-owner'));
+  const receipt = await fx.application.command('waves.run', { spec, driver: LANE_DRIVER, detach: false }, principalOf('s74-owner'));
   const coordinatorOutcome = receipt.outcomes.find((outcome) => outcome.role === 'coordinator');
   assert.ok(coordinatorOutcome, 'the coordinator\'s per-row outcome rides the D6 receipt');
   assert.equal(coordinatorOutcome.terminal, true, 'coordinator settled');
@@ -764,7 +764,7 @@ test('A2 red: the D1.2 read-authorization law is NOT installed at the DEPLOYMENT
     steering: {},
     harvest: { paths: [] },
   };
-  await fx.application.command('waves.run', { spec, driver: LANE_DRIVER }, principalOf('s74-owner'));
+  await fx.application.command('waves.run', { spec, driver: LANE_DRIVER, detach: false }, principalOf('s74-owner'));
   const runs = await runsFor(fx);
   const coordinatorRunId = runs.items?.find((item) => item.objective?.includes('(marker:coordinator)'))?.id;
   assert.ok(typeof coordinatorRunId === 'string', 'coordinator run registered');
@@ -824,7 +824,7 @@ test('A3 red: a DENIED decision answer is recorded as outcome \'answered\' — t
     steering: { answerDecisions: { policy: { 'Which path?': 'opt-a' } } },
     harvest: { paths: [] },
   };
-  const receipt = await fx.application.command('waves.run', { spec, driver: LANE_DRIVER }, principalOf('s74-owner'));
+  const receipt = await fx.application.command('waves.run', { spec, driver: LANE_DRIVER, detach: false }, principalOf('s74-owner'));
   const denied = receipt.steering.find((entry) => entry.trigger === 'answerDecisions');
   assert.ok(denied, 'an answerDecisions record exists');
   // The truthful record under D1.3. At HEAD this is `{outcome: 'answered'}` (the
@@ -868,7 +868,7 @@ test('A3b red: a RACED answer delivery is recorded as outcome \'answered\' — t
     steering: { answerDecisions: { policy: { 'Which path?': 'opt-a' } } },
     harvest: { paths: [] },
   };
-  const receipt = await fx.application.command('waves.run', { spec, driver: LANE_DRIVER }, principalOf('s74-owner'));
+  const receipt = await fx.application.command('waves.run', { spec, driver: LANE_DRIVER, detach: false }, principalOf('s74-owner'));
   const raced = receipt.steering.find((entry) => entry.trigger === 'answerDecisions');
   assert.ok(raced, 'an answerDecisions record exists');
   assert.ok(fx.adapter.thrown.length >= 1, 'the answer delivery threw');
@@ -973,7 +973,7 @@ test('A6 red: waves.list hides the coordinator\'s route — the seat map is abse
     steering: {},
     harvest: { paths: [] },
   };
-  const receipt = await fx.application.command('waves.run', { spec, driver: LANE_DRIVER }, principalOf('s74-owner'));
+  const receipt = await fx.application.command('waves.run', { spec, driver: LANE_DRIVER, detach: false }, principalOf('s74-owner'));
   assert.equal(receipt.verdict, 'WAVE-OK', 'both seats settle');
   const wl = await fx.application.command('waves.list', {}, principalOf('s74-owner'));
   const coordinatorRow = wl.waves?.find((wave) => wave.waveId === receipt.waveId)
@@ -1029,7 +1029,7 @@ test('A8 red: the verbatim v1.1 example spec does NOT drive through waves.run �
   // The assertion that drives the RED: the verbatim example must drive through
   // `waves.run` to a D6 receipt. At HEAD it throws `workflow_steering_unknown` (kind
   // 'brief' not in the closed inform|query|steer set) → the assertion FAILS → RED.
-  const driven = await fx.application.command('waves.run', { spec: exampleSpec, driver: LANE_DRIVER }, principalOf('s74-owner'));
+  const driven = await fx.application.command('waves.run', { spec: exampleSpec, driver: LANE_DRIVER, detach: false }, principalOf('s74-owner'));
   assert.deepEqual(
     Object.keys(driven).sort(),
     ['basis', 'harvest', 'manifestDigest', 'outcomes', 'steering', 'verdict', 'waveId'],
@@ -1079,7 +1079,7 @@ test('A8b red: a DIRECTORY harvest path WITHOUT mustContain recovers the listing
     steering: {},
     harvest: { paths: [{ path: 'reports' }] },
   };
-  const receipt = await fx.application.command('waves.run', { spec, driver: LANE_DRIVER }, principalOf('s74-owner'));
+  const receipt = await fx.application.command('waves.run', { spec, driver: LANE_DRIVER, detach: false }, principalOf('s74-owner'));
   // The law: a directory harvest path refuses harvest_miss → WAVE-INCOMPLETE, regardless of
   // mustContain. At HEAD the listing is recovered (`git show` on a tree does NOT fail) → ok:true
   // → WAVE-OK → the assertion FAILS → RED at `directory-harvest-not-refused`.

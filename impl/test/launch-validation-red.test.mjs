@@ -197,7 +197,7 @@ function laneOf(baton, stage) {
 }
 
 function driveLane(baton, stage, spec) {
-  return laneOf(baton, stage)(spec, { driver: LANE_DRIVER });
+  return laneOf(baton, stage)(spec, { driver: LANE_DRIVER, detach: false });
 }
 
 async function captureError(fn) {
@@ -422,7 +422,7 @@ test('A5 (stage[d3-transport-code-survival]): the directory-harvest refusal code
   // refusal code is cadence-independent, and the assertion never waits on the 20 s production poll).
   const parsed = parseBatonCli(['waves', 'run', cliPath]);
   assert.equal(parsed?.command, 'waves.run', `stage[${stage}]: baton waves run <spec.json> must parse to the waves.run command`);
-  const cli = await captureError(() => fx.application.command('waves.run', { specPath: cliPath, driver: LANE_DRIVER }, principalOf('lv-cli'), null));
+  const cli = await captureError(() => fx.application.command('waves.run', { specPath: cliPath, driver: LANE_DRIVER, detach: false }, principalOf('lv-cli'), null));
   assert.equal(cli?.error?.code, code,
     `stage[${stage}]: the CLI leg must surface the typed directory refusal — at HEAD the admission check is absent (A4) and the wave runs`);
   assert.match(cli?.error?.message ?? '', /docs\/reports/u,

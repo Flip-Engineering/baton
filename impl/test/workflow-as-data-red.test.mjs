@@ -450,7 +450,7 @@ function laneOf(baton, stage) {
 // runs the interpreter on the 20 s default poll (a faithful implementation would make the W3/W4
 // scenario delays meaningless under any per-test timeout).
 function driveLane(baton, stage, spec) {
-  return laneOf(baton, stage)(spec, { driver: LANE_DRIVER });
+  return laneOf(baton, stage)(spec, { driver: LANE_DRIVER, detach: false });
 }
 
 // F10b: the transitive import-graph law — no module reachable from the lane runs a top-level
@@ -1463,7 +1463,7 @@ test('W6-01 (stage[lane-missing]): refusal constancy — a malformed spec refuse
   // Facade leg: baton.recipes.runWorkflow refuses with the field-named code — driven with the
   // pinned fast driver policy so the refusal is a validation refusal, never a 20 s poll (F11).
   const lane = laneOf(fx.baton, 'lane-missing'); // THROWS today — the lane is absent
-  const facade = await captureError(() => lane(specPath, { driver: LANE_DRIVER }));
+  const facade = await captureError(() => lane(specPath, { driver: LANE_DRIVER, detach: false }));
   assert.equal(facade?.error?.code, code,
     `stage[lane-missing]: the embedded facade refuses the malformed spec as ${code}`);
 
@@ -1479,7 +1479,7 @@ test('W6-01 (stage[lane-missing]): refusal constancy — a malformed spec refuse
   assert.equal(parsed?.command, 'waves.run',
     `stage[lane-missing]: D2 pins the plural verb → waves.run`);
   assert.ok(parsed?.args?.specPath ?? parsed?.args?.spec, 'the spec path rides the parsed args');
-  const cli = await captureError(() => fx.application.command('waves.run', { specPath }, principalOf('wad-cli'), null));
+  const cli = await captureError(() => fx.application.command('waves.run', { specPath, detach: false }, principalOf('wad-cli'), null));
   assert.equal(cli?.error?.code, code,
     `stage[lane-missing]: the CLI leg refuses the malformed spec as ${code}`);
 
