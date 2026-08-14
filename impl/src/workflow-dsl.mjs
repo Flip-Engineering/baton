@@ -64,6 +64,25 @@ const STEERING_DIRECTIVES = new Set([
 const MEMBER_SUB_FIELDS = new Set(['harness', 'model', 'effort', 'objectiveRef', 'report']);
 
 // ---------------------------------------------------------------------------
+// The phase-level closed registry (the campaign-as-DSL rung: the #170 grammar gains a phase
+// level ABOVE the single-wave surface). A wavefile is EITHER the flat 16-directive grammar
+// (byte-identical lowering to today's IR) OR a phase-structured campaign (`phase` blocks). The
+// phase directive set is a SEPARATE closed registry so WAVEFILE_DIRECTIVES stays the frozen 16
+// the #170 totality/three-way pins guard (S3/P4 — the phase level is the next rung, not a 17th
+// directive). Phase refusals reuse the SAME closed 5-code `workflow_*` family (S6).
+// ---------------------------------------------------------------------------
+
+export const PHASE_DIRECTIVES = Object.freeze({
+  phase: { arity: 1, tokens: ['<name>'], field: 'phases[].id' },
+  checkpoint: { arity: 0, tokens: [], field: 'phases[].kind' },
+  when: { arity: 1, tokens: ['<outcome> | !<outcome>'], field: 'phases[].when' },
+  outcome: { arity: 5, tokens: ['<name>', 'from', '<file>', 'line', '"<pattern>"'], field: 'phases[].outcomes[]' },
+  coupling: { arity: 1, tokens: ['loose|shared|tight'], field: 'phases[].members[].coupling' },
+});
+const PHASE_DIRECTIVE_NAMES = new Set(Object.keys(PHASE_DIRECTIVES));
+const COUPLING_KINDS = new Set(['loose', 'shared', 'tight']);
+
+// ---------------------------------------------------------------------------
 // Refusal construction (D2 — the #160 triple on the error AND the wire detail leg).
 // ---------------------------------------------------------------------------
 
@@ -243,10 +262,10 @@ function requireArg(tokens, index, line, field) {
   return tokens[index];
 }
 
-function closeCurrentMember(state) {
-  const member = state.current;
-  if (!member) return;
-  state.current = null;
+// Finalize an open member into the closed member shape (the R2 fold validation, shared by the
+// flat and phase rosters — byte-identical refusal triple either way). `coupling` is emitted only
+// when declared (phase members default it to "loose" at open; flat members never carry it).
+function finalizeMember(member, state) {
   // R2 (fold): missing-field refusal names the FIRST missing field in fixed order.
   if (!member.harness) throw refuse(CODE_MEMBER, member.line, 'exact.harness', 'harness|model|effort',
     `wavefile line ${member.line}: member ${member.role} is missing its harness route field`);
@@ -273,7 +292,37 @@ function closeCurrentMember(state) {
     objectiveRef: member.objectiveRef,
   };
   if (member.report !== null) normalized.report = member.report;
-  state.members.push(normalized);
+  if (member.coupling !== null) normalized.coupling = member.coupling;
+  return normalized;
+}
+
+function closeCurrentMember(state) {
+  const member = state.current;
+  if (!member) return;
+  state.current = null;
+  const normalized = finalizeMember(member, state);
+  if (state.currentPhase) state.currentPhase.members.push(normalized);
+  else state.members.push(normalized);
+}
+
+// A phase must hold at least one member (a roster). Closed on phase transition / EOF; the refusal
+// line is the phase opener so an empty phase names itself, never the directive that follows it.
+function closeCurrentPhase(state) {
+  const phase = state.currentPhase;
+  if (!phase) return;
+  state.currentPhase = null;
+  if (phase.members.length === 0) {
+    throw refuse(CODE_SPEC, phase.line, `phase ${phase.name}`, 'at least one member',
+      `wavefile line ${phase.line}: phase ${phase.name} has no members`);
+  }
+  state.phases.push(phase);
+}
+
+// Steering/harvest/phase/EOF are wave-level transitions: they close the open member AND the open
+// phase (a phase block ends on the next wave-level directive, exactly as a member block does).
+function closeMemberAndPhase(state) {
+  closeCurrentMember(state);
+  closeCurrentPhase(state);
 }
 
 function dispatch(directive, tokens, line, state, repoRoot) {
@@ -302,11 +351,134 @@ function dispatch(directive, tokens, line, state, repoRoot) {
     if (role === 'work') {
       throw refuse(CODE_MEMBER, line, `member ${role}`, 'non-empty role', `wavefile line ${line}: member role "work" is reserved`);
     }
+    if (state.phased) {
+      if (!state.currentPhase) {
+        throw refuse(CODE_MEMBER, line, `member ${role}`, 'phase <name>',
+          `wavefile line ${line}: member must appear inside a phase`);
+      }
+      // Per-phase roster uniqueness: a role may be RE-CAST across phases (a new admission per
+      // phase), but never duplicated within one phase.
+      if (state.currentPhase.members.some((m) => m.role === role)) {
+        throw refuse(CODE_MEMBER, line, `member ${role}`, 'unique role',
+          `wavefile line ${line}: member role is duplicated within phase ${state.currentPhase.name}`);
+      }
+      state.memberStarted = true;
+      state.current = { role, line, harness: null, model: null, effort: null, objectiveRef: null, report: null, scope: [], coupling: 'loose' };
+      return;
+    }
     if (state.members.some((m) => m.role === role)) {
       throw refuse(CODE_MEMBER, line, `member ${role}`, 'unique role', `wavefile line ${line}: member role is duplicated`);
     }
     state.memberStarted = true;
-    state.current = { role, line, harness: null, model: null, effort: null, objectiveRef: null, report: null, scope: [] };
+    state.current = { role, line, harness: null, model: null, effort: null, objectiveRef: null, report: null, scope: [], coupling: null };
+    return;
+  }
+
+  if (directive === 'phase') {
+    closeMemberAndPhase(state);
+    const name = requireArg(tokens, 1, line, 'phase');
+    if (tokens.length !== 2) throw refuse(CODE_SPEC, line, 'phase', 'phase <name>', 'the phase directive takes one name');
+    if (state.members.length > 0) {
+      throw refuse(CODE_SPEC, line, 'phase', 'phase <name>',
+        `wavefile line ${line}: cannot mix phase blocks with top-level members`);
+    }
+    if (!IDEMPOTENCY_PATTERN.test(name)) {
+      throw refuse(CODE_SPEC, line, 'phase', '<identifier>',
+        `wavefile line ${line}: phase name must match the closed identifier pattern`);
+    }
+    if (state.phases.some((p) => p.name === name)) {
+      throw refuse(CODE_SPEC, line, `phase ${name}`, 'unique phase name',
+        `wavefile line ${line}: phase name is duplicated`);
+    }
+    state.phased = true;
+    state.currentPhase = { name, line, kind: 'work', when: null, outcomes: [], members: [] };
+    return;
+  }
+
+  if (directive === 'checkpoint') {
+    if (tokens.length !== 1) throw refuse(CODE_SPEC, line, 'checkpoint', 'checkpoint', `wavefile line ${line}: checkpoint takes no arguments`);
+    if (!state.currentPhase) {
+      throw refuse(CODE_SPEC, line, 'checkpoint', 'phase <name>',
+        `wavefile line ${line}: checkpoint must appear inside a phase`);
+    }
+    closeCurrentMember(state);
+    state.currentPhase.kind = 'checkpoint';
+    return;
+  }
+
+  if (directive === 'when') {
+    closeCurrentMember(state);
+    if (!state.currentPhase) {
+      throw refuse(CODE_SPEC, line, 'when', 'phase <name>',
+        `wavefile line ${line}: when must appear inside a phase`);
+    }
+    const predicate = requireArg(tokens, 1, line, 'when');
+    if (tokens.length !== 2) {
+      throw refuse(CODE_SPEC, line, 'when', 'when <outcome> | when !<outcome>',
+        `wavefile line ${line}: when takes one predicate`);
+    }
+    let negate = false;
+    let name = predicate;
+    if (name.startsWith('!')) { negate = true; name = name.slice(1); }
+    if (!IDEMPOTENCY_PATTERN.test(name)) {
+      throw refuse(CODE_SPEC, line, 'when', '<outcome> | !<outcome>',
+        `wavefile line ${line}: when predicate must be a named outcome (optionally negated)`);
+    }
+    if (state.currentPhase.when !== null) {
+      throw refuse(CODE_SPEC, line, 'when', 'one when per phase',
+        `wavefile line ${line}: phase ${state.currentPhase.name} already declares a when gate`);
+    }
+    state.currentPhase.when = negate ? { outcome: name, negate: true } : { outcome: name };
+    return;
+  }
+
+  if (directive === 'outcome') {
+    closeCurrentMember(state);
+    if (!state.currentPhase) {
+      throw refuse(CODE_SPEC, line, 'outcome', 'phase <name>',
+        `wavefile line ${line}: outcome must appear inside a phase`);
+    }
+    if (tokens.length !== 6 || tokens[2] !== 'from' || tokens[4] !== 'line') {
+      throw refuse(CODE_SPEC, line, 'outcome', 'outcome <name> from <file> line "<pattern>"',
+        `wavefile line ${line}: outcome takes a name, from a file, and a line pattern`);
+    }
+    const name = tokens[1];
+    const file = tokens[3];
+    const pattern = tokens[5];
+    if (!IDEMPOTENCY_PATTERN.test(name)) {
+      throw refuse(CODE_SPEC, line, 'outcome', '<identifier>',
+        `wavefile line ${line}: outcome name must match the closed identifier pattern`);
+    }
+    validateHarvestPath(file, line, `outcome[${name}].from`, repoRoot);
+    if (pattern.length === 0) {
+      throw refuse(CODE_SPEC, line, 'outcome', 'non-empty line pattern',
+        `wavefile line ${line}: outcome line pattern must be non-empty`);
+    }
+    if (state.outcomeNames.has(name)) {
+      throw refuse(CODE_SPEC, line, `outcome ${name}`, 'unique outcome name',
+        `wavefile line ${line}: outcome name is duplicated across the campaign`);
+    }
+    state.outcomeNames.add(name);
+    state.currentPhase.outcomes.push({ name, from: file, line: pattern });
+    return;
+  }
+
+  if (directive === 'coupling') {
+    if (!state.currentPhase) {
+      throw refuse(CODE_MEMBER, line, 'coupling', 'phase <name>',
+        `wavefile line ${line}: coupling is a phase-member context and must appear inside a phase`);
+    }
+    if (!state.current) {
+      throw refuse(CODE_MEMBER, line, 'coupling', 'member <role>',
+        `wavefile line ${line}: coupling must follow an open member`);
+    }
+    const kind = requireArg(tokens, 1, line, 'coupling');
+    if (tokens.length !== 2) throw refuse(CODE_MEMBER, line, 'coupling', 'coupling loose|shared|tight', `wavefile line ${line}: coupling takes one kind`);
+    if (!COUPLING_KINDS.has(kind)) {
+      throw refuse(CODE_MEMBER, line, 'coupling', 'loose|shared|tight',
+        `wavefile line ${line}: coupling must be loose, shared, or tight`);
+    }
+    state.current.coupling = kind;
     return;
   }
 
@@ -343,7 +515,7 @@ function dispatch(directive, tokens, line, state, repoRoot) {
   }
 
   if (directive === 'approveOnAdvertisedPlan' || directive === 'claimOnStall') {
-    closeCurrentMember(state);
+    closeMemberAndPhase(state);
     let value = true;
     if (args.length === 1) {
       if (args[0] === 'true') value = true;
@@ -357,7 +529,7 @@ function dispatch(directive, tokens, line, state, repoRoot) {
   }
 
   if (directive === 'nudgeOnCheckpoint') {
-    closeCurrentMember(state);
+    closeMemberAndPhase(state);
     const message = requireArg(tokens, 1, line, directive);
     if (tokens.length !== 2) throw refuse(CODE_SPEC, line, directive, 'nudgeOnCheckpoint "<message>"', `wavefile line ${line}: ${directive} takes one message`);
     state.steering.nudgeOnCheckpoint = { message };
@@ -365,7 +537,7 @@ function dispatch(directive, tokens, line, state, repoRoot) {
   }
 
   if (directive === 'messageOnSpawn') {
-    closeCurrentMember(state);
+    closeMemberAndPhase(state);
     const kind = requireArg(tokens, 1, line, directive);
     const body = requireArg(tokens, 2, line, directive);
     if (tokens.length !== 3) throw refuse(CODE_SPEC, line, directive, 'messageOnSpawn <kind> "<body>"', `wavefile line ${line}: ${directive} takes a kind and a body`);
@@ -378,7 +550,7 @@ function dispatch(directive, tokens, line, state, repoRoot) {
   }
 
   if (directive === 'elevateWhenNotes') {
-    closeCurrentMember(state);
+    closeMemberAndPhase(state);
     const kindsTok = requireArg(tokens, 1, line, directive);
     const maxTok = requireArg(tokens, 2, line, directive);
     if (tokens.length !== 3) throw refuse(CODE_SPEC, line, directive, 'elevateWhenNotes <kinds> <maxEntries>', `wavefile line ${line}: ${directive} takes kinds and maxEntries`);
@@ -399,7 +571,7 @@ function dispatch(directive, tokens, line, state, repoRoot) {
   }
 
   if (directive === 'answerDecisions') {
-    closeCurrentMember(state);
+    closeMemberAndPhase(state);
     const pattern = requireArg(tokens, 1, line, directive);
     const value = requireArg(tokens, 2, line, directive);
     if (tokens.length !== 3) throw refuse(CODE_SPEC, line, directive, 'answerDecisions "<pattern>" "<value>"', `wavefile line ${line}: ${directive} takes a pattern and a value`);
@@ -411,7 +583,7 @@ function dispatch(directive, tokens, line, state, repoRoot) {
   }
 
   if (directive === 'signalOnMembersDone') {
-    closeCurrentMember(state);
+    closeMemberAndPhase(state);
     const rolesTok = requireArg(tokens, 1, line, directive);
     const kind = requireArg(tokens, 2, line, directive);
     const message = requireArg(tokens, 3, line, directive);
@@ -426,7 +598,7 @@ function dispatch(directive, tokens, line, state, repoRoot) {
   }
 
   if (directive === 'harvest') {
-    closeCurrentMember(state);
+    closeMemberAndPhase(state);
     const path = requireArg(tokens, 1, line, directive);
     let mustContain = null;
     if (args.length === 1) {
@@ -443,7 +615,7 @@ function dispatch(directive, tokens, line, state, repoRoot) {
   }
 
   throw refuse(CODE_SPEC, line, directive, CLOSED_LIST,
-    `wavefile line ${line}: unknown directive — expected one of ${[...DIRECTIVE_NAMES].join(', ')}`);
+    `wavefile line ${line}: unknown directive — expected one of ${[...DIRECTIVE_NAMES, ...PHASE_DIRECTIVE_NAMES].join(', ')}`);
 }
 
 // ---------------------------------------------------------------------------
@@ -468,6 +640,10 @@ export function compileWavefile(text, options = {}) {
     seenDirective: false,
     memberStarted: false,
     signalOnMembersDoneLine: null,
+    phased: false,
+    phases: [],
+    currentPhase: null,
+    outcomeNames: new Set(),
   };
 
   for (const { line, text: lineText } of logicalLines(text)) {
@@ -490,15 +666,27 @@ export function compileWavefile(text, options = {}) {
     throw refuse(CODE_SPEC, 1, '<first token>', 'wave <key>', 'a wavefile must start with wave <key>');
   }
   closeCurrentMember(state);
-  if (state.members.length > MAX_MEMBERS) {
+  closeCurrentPhase(state);
+  if (state.phased) {
+    for (const phase of state.phases) {
+      if (phase.members.length > MAX_MEMBERS) {
+        throw refuse(CODE_SPEC, phase.line, `phase ${phase.name}`, `<= ${MAX_MEMBERS}`,
+          `wavefile line ${phase.line}: phase ${phase.name} exceeds the member ceiling`);
+      }
+    }
+  } else if (state.members.length > MAX_MEMBERS) {
     throw refuse(CODE_SPEC, 1, 'members', `<= ${MAX_MEMBERS}`, 'the wavefile exceeds the member ceiling');
   }
 
   // Steering cross-validation at admission (the fold H3): a signalOnMembersDone role that names no
-  // declared member refuses rather than silently no-op'ing at run time.
+  // declared member refuses rather than silently no-op'ing at run time. In phase mode the declared
+  // set is the union of every phase roster.
   if (state.steering.signalOnMembersDone) {
+    const declaredRoles = state.phased
+      ? state.phases.flatMap((phase) => phase.members.map((member) => member.role))
+      : state.members.map((member) => member.role);
     for (const role of state.steering.signalOnMembersDone.roles) {
-      if (!state.members.some((member) => member.role === role)) {
+      if (!declaredRoles.includes(role)) {
         throw refuse(CODE_STEERING, state.signalOnMembersDoneLine ?? 1, 'signalOnMembersDone.roles',
           'declared member role', 'the signalOnMembersDone roles must name declared members');
       }
@@ -514,12 +702,34 @@ export function compileWavefile(text, options = {}) {
   if (Object.keys(state.answerPolicy).length > 0) steering.answerDecisions = { policy: state.answerPolicy };
   if (state.steering.signalOnMembersDone !== undefined) steering.signalOnMembersDone = state.steering.signalOnMembersDone;
 
+  const harvest = { paths: state.harvest };
+
+  // Phase mode emits the phase-addressed shape the phase driver consumes: phases in directive
+  // order (stable `id` per phase — the diffable, phase-addressed identity for mid-flight
+  // amendment), each with a fixed key order. Flat mode emits the byte-identical #170 IR (no
+  // `phases` key) so the single-wave surface and its round-trip pin are undisturbed.
+  if (state.phased) {
+    return {
+      schemaVersion: 1,
+      idempotencyKey: state.key,
+      phases: state.phases.map((phase) => ({
+        id: phase.name,
+        kind: phase.kind,
+        when: phase.when,
+        outcomes: phase.outcomes,
+        members: phase.members,
+      })),
+      steering,
+      harvest,
+    };
+  }
+
   return {
     schemaVersion: 1,
     idempotencyKey: state.key,
     members: state.members,
     steering,
-    harvest: { paths: state.harvest },
+    harvest,
   };
 }
 
