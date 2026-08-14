@@ -12630,6 +12630,7 @@ export class BatonApplication {
     if (name === 'run.attention.watch') return this.attentionWatch(args, principal);
     if (name === 'run.scratchpad.read') return this.scratchpadRead(args, principal);
     if (name === 'run.scratchpad.elevate') return this.scratchpadElevate(args, principal);
+    if (name === 'run.scratchpad.append') return this.scratchpadAppend(args, principal);
     if (name === 'run.board.post') return this.boardPost(args, principal);
     if (name === 'run.board.read') return this.boardRead(args, principal);
     if (name === 'run.knowledge.seed') return this.knowledgeSeed(args, principal);
@@ -13277,6 +13278,65 @@ export class BatonApplication {
       taskId: request.taskId, entryCount: request.entryIds.length,
     });
     const outcome = this.driver.coordinator.elevateTaskScratchpad(request.taskId, request.entryIds);
+    return deepFreeze({ schemaVersion: 1, ...outcome });
+  }
+
+  _normalizeScratchpadAppend(value) {
+    if (!value || typeof value !== 'object' || Array.isArray(value)
+      || Object.keys(value).some((key) => !['runId', 'scope', 'kind', 'body', 'idempotencyKey'].includes(key))
+      || !validId(value.runId)
+      || typeof value.scope !== 'string' || !/^(?:shared|worker:[A-Za-z0-9._:-]{1,256})$/u.test(value.scope)
+      || (value.kind !== undefined && !['note', 'plan', 'doubt', 'link'].includes(value.kind))
+      || (value.idempotencyKey !== undefined
+        && (typeof value.idempotencyKey !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/u.test(value.idempotencyKey)))) {
+      throw applicationError('run scratchpad append request is invalid', 'application_scratchpad_append_invalid');
+    }
+    const kind = value.kind ?? 'note';
+    const body = value.body;
+    if (body === undefined || body === null) {
+      throw applicationError('run scratchpad append request is invalid', 'application_scratchpad_append_invalid');
+    }
+    let entry;
+    if (kind === 'note') {
+      if (typeof body !== 'string') {
+        throw applicationError('run scratchpad append note body is invalid', 'application_scratchpad_append_invalid');
+      }
+      entry = { kind, text: body };
+    } else {
+      if (typeof body !== 'object' || Array.isArray(body)) {
+        throw applicationError('run scratchpad append entry body is invalid', 'application_scratchpad_append_invalid');
+      }
+      entry = {
+        kind, ...clone(body),
+        ...(kind === 'plan' && !Object.hasOwn(body, 'supersedes') ? { supersedes: null } : {}),
+        ...(kind === 'doubt' && !Object.hasOwn(body, 'context') ? { context: null } : {}),
+      };
+    }
+    return deepFreeze({
+      runId: value.runId, scope: value.scope, entry: deepFreeze(entry),
+      ...(value.idempotencyKey !== undefined ? { idempotencyKey: value.idempotencyKey } : {}),
+    });
+  }
+
+  // run.scratchpad.append — issue #158: the direct EPHEMERAL write lane. The D1 write law
+  // (own-run predicate, review-authority shared-only) is enforced at the _authorize seam
+  // (application-deployment.mjs restrictor); this handler routes into the kernel's
+  // appendScratchpad — envelope closure, body bound, and idempotency stay kernel-side, never
+  // re-implemented here.
+  async scratchpadAppend(rawRequest, rawPrincipal) {
+    this._assertOpen();
+    await this.ready;
+    const request = this._normalizeScratchpadAppend(rawRequest);
+    const principal = normalizePrincipal(rawPrincipal, 'scratchpad append principal');
+    await this._authorize('run.scratchpad.append', principal, request.runId, { scope: request.scope });
+    // H3.1: the surface namespaces every idempotency key by scope before the kernel auth, so a
+    // key first used for worker:<ownId> and then for shared lands on DISTINCT kernel bindings.
+    const key = request.idempotencyKey !== undefined
+      ? `${request.idempotencyKey}:${request.scope}` : null;
+    const outcome = this.driver.coordination.appendScratchpad(
+      { runId: request.runId, scope: request.scope, entry: request.entry },
+      { actor: principal.actor, principalId: principal.principalId, ...(key !== null ? { key } : {}) },
+    );
     return deepFreeze({ schemaVersion: 1, ...outcome });
   }
 

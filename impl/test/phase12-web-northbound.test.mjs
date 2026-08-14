@@ -193,7 +193,15 @@ test('UA5/WN: malformed Run intent, inconsistent Run identity, and capability re
     args: { intent: { runId: 'run-web-a', objective: 'work', profile: 'standard', route: { harness: 'grok', model: 'grok-4-code' } } },
   }));
   assert.equal(malformed.status, 400);
-  assert.equal(malformed.body.error.code, 'invalid_command');
+  // RESTAGED 2026-08-14 (honesty wave-c coordinator, landing-blocker adjudication): the #160
+  // contract-fold R4/W8-2 (error-actionability-2026-08-13/contract-fold.md §2 D4 R4) mandates
+  // that a validator failure carrying its own named code passes through — this malformed
+  // run_start intent's route is refused by the application validator with the vocabulary code
+  // `application_route_invalid`, which is not the anonymous collapse. The contract's
+  // byte-stability note assumed this input produced a code-less route-shape ValidationError;
+  // it does not. The immutable #160 acceptance row W8-2 pins the passthrough; only the code
+  // expectation moves: 'invalid_command' -> 'application_route_invalid'.
+  assert.equal(malformed.body.error.code, 'application_route_invalid');
 
   const mismatched = await web.execute(context(), envelope({
     commandId: 'run-mismatch', idempotencyKey: 'run-mismatch', command: 'run_status',
@@ -499,15 +507,23 @@ test('WN4: an identical retry executes once and a same-key different body confli
 
 test('WN4/WN5/WN7: unknown fields, unknown model policy, and client-supplied audit identity are rejected before admission', async () => {
   const { web, calls, coordination } = fixture();
-  for (const invalid of [
-    envelope({ actor: 'admin' }),
-    envelope({ runId: '../escape' }),
-    envelope({ args: { ...envelope().args, credential: 'secret' } }),
-    envelope({ args: { ...envelope().args, modelPolicy: { reasoningEffort: 'high', bypassSandbox: true } } }),
+  // RESTAGED 2026-08-14 (honesty wave-c coordinator, landing-blocker adjudication): the #160
+  // contract-fold R4 moved the unknown-field refusals from the anonymous `invalid_command`
+  // collapse to their named bounded codes with the offending key in `field` — pinned by the
+  // immutable #160 acceptance rows W1 (`code: 'unknown_top_level_field'`, field names the key)
+  // and W2 (`code: 'unknown_argument_field'`), and by the bounded vocabulary the neighboring
+  // WN4/WN7 row already pins (`unknown_model_policy_field`). The route-shape `invalid_run_id`
+  // case keeps `invalid_command` (W8-1: a code-less route-shape refusal stays collapsed).
+  // Only the code expectations move; 400-before-admission is unchanged and re-asserted below.
+  for (const [invalid, expectedCode] of [
+    [envelope({ actor: 'admin' }), 'unknown_top_level_field'],
+    [envelope({ runId: '../escape' }), 'invalid_command'],
+    [envelope({ args: { ...envelope().args, credential: 'secret' } }), 'unknown_argument_field'],
+    [envelope({ args: { ...envelope().args, modelPolicy: { reasoningEffort: 'high', bypassSandbox: true } } }), 'unknown_model_policy_field'],
   ]) {
     const result = await web.execute(context(), invalid);
     assert.equal(result.status, 400);
-    assert.equal(result.body.error.code, 'invalid_command');
+    assert.equal(result.body.error.code, expectedCode);
   }
   assert.equal(calls.length, 0);
   assert.equal(coordination.events().some((event) => event.kind === 'web.command_admitted'), false);

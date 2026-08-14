@@ -560,10 +560,17 @@ test('NR1/NR3: recovery attaches without provider work, commits its refinement a
   const admittedBrief = f.replay._tasks.get(f.replay._workers.get(f.handle.id).taskId).brief;
   // Epic #81 (OR-S1): the admission injects the L0 orientation grant into every spawn/recovery
   // prompt brief — compare the delegation fields, then assert the grant positively.
-  const { orientation, ...promptDelegation } = f.resumed.calls.promptBrief[0][1];
+  // RESTAGED 2026-08-14 (honesty wave-c coordinator, landing-blocker adjudication): Issue #79
+  // (commit d8282d0, BD3-C worker-delivery push) additionally attaches the per-worker
+  // `attention` projection to the provider-facing brief — coordinator.mjs:3867-3877 builds a
+  // NEW frozen value and never mutates the admitted task.brief, so the delegation comparison
+  // destructs it out exactly like the orientation grant and asserts it positively below.
+  // Bisect: green at d8282d0~1, red at d8282d0 — predates the honesty wave's rows.
+  const { orientation, attention, ...promptDelegation } = f.resumed.calls.promptBrief[0][1];
   assert.deepEqual([f.handle.id, promptDelegation], [f.handle.id, admittedBrief], 'coordinator uses the immutable admitted Brief through the adapter dialect hook');
   assert.ok(orientation && typeof orientation.frame === 'string' && orientation.frame.startsWith('UNTRUSTED_ORIENTATION'), 'OR-S1: the L0 orientation grant is cited into the recovery prompt brief');
-  assert.deepEqual(f.resumed.calls.prompt[0].slice(1), [{ ...admittedBrief, orientation }, 'turn']);
+  assert.deepEqual(attention, [], '#79 (D1/D3): the empty pending push set attaches [] and mints no receipt');
+  assert.deepEqual(f.resumed.calls.prompt[0].slice(1), [{ ...admittedBrief, orientation, attention }, 'turn']);
 
   const created = coordinationAtPrompt.find((event) => event.kind === 'task.created'
     && event.payload.id.startsWith('recovery:'));
@@ -606,8 +613,11 @@ test('NR3/NR5: refused recovery continuation fails the refinement and kills/reap
   assert.equal(f.resumed.calls.prompt.length, 1);
   const admittedBrief = f.replay._tasks.get(f.replay._workers.get(f.handle.id).taskId).brief;
   // Epic #81 (OR-S1): same L0 grant injection — compare delegation, then assert the grant.
-  const { orientation, ...promptDelegation } = f.resumed.calls.prompt[0][1];
+  // RESTAGED 2026-08-14 (honesty wave-c coordinator): same #79 delivery-projection restage as
+  // the promptBrief site above — `attention` is destructed out and asserted positively.
+  const { orientation, attention, ...promptDelegation } = f.resumed.calls.prompt[0][1];
   assert.deepEqual([promptDelegation, 'turn'], [admittedBrief, 'turn'], 'custom adapters fall back to prompt(worker, admitted brief, turn)');
+  assert.deepEqual(attention, [], '#79 (D1/D3): the empty pending push set attaches [] and mints no receipt');
   assert.ok(orientation && typeof orientation.frame === 'string' && orientation.frame.startsWith('UNTRUSTED_ORIENTATION'), 'OR-S1: the L0 orientation grant is cited into the refused-recovery prompt brief');
   assert.equal(recovered.ok, false);
   assert.equal(recovered.result, 'dispatch_refused');

@@ -412,14 +412,25 @@ const applicationIntentSchema = schema({
   route: applicationRouteSchema,
   scope: { type: 'array', minItems: 1, maxItems: 64, uniqueItems: true, items: { type: 'string', minLength: 1, maxLength: 4_096 } },
 }, ['objective']);
+// D3 #5 (doc-truth-conformance): the accepted answer keys are exactly optionId/text. Both answer
+// consumers (baton_decision_answer and fleet_run_answer) read this closed set through the shared
+// answerShapeRejected guard, and applicationAnswerSchema advertises exactly these forms — one set,
+// so the schema and the guards cannot drift. The retired {decision} form (issue #16 Part B) is
+// gone: it would have settled an APPROVAL through a decision-only channel.
+const ACCEPTED_ANSWER_KEYS = Object.freeze(['optionId', 'text']);
 const applicationAnswerSchema = {
   oneOf: [
     schema({ text: { type: 'string', minLength: 1, maxLength: FRAME_LIMITS['decision.text'].value } }, ['text']),
-    schema({ decision: { type: 'string', enum: ['allow', 'deny', 'cancel'] } }, ['decision']),
-    // Part B (issue #16): the typed decision-channel answer form.
     schema({ optionId: { type: 'string', minLength: 1, maxLength: 256 } }, ['optionId']),
   ],
 };
+// The shared answer-shape guard: a record-shaped answer must carry exactly ONE accepted key. Read
+// by both answer consumers — baton_decision_answer AND fleet_run_answer — so neither can accept a
+// retired or renamed form (invalid_arguments).
+function answerShapeRejected(answer) {
+  const keys = record(answer) ? Object.keys(answer) : [];
+  return keys.length !== 1 || !ACCEPTED_ANSWER_KEYS.includes(keys[0]);
+}
 const applicationFeedbackFindingSchema = schema({
   kind: { type: 'string', enum: ['defect', 'risk', 'suggestion', 'question', 'observation'] },
   severity: { type: 'string', enum: ['info', 'low', 'medium', 'high', 'critical'] },
@@ -1024,6 +1035,11 @@ function validateArguments(name, args, maxWaitMs = null) {
   if (!nonempty(args.repoId)) return 'invalid_repo';
   if (STATEFUL.has(name) && !SAFE_ID.test(args.idempotencyKey ?? '')) return 'invalid_idempotency_key';
   if (FENCED.has(name) && !Number.isSafeInteger(args.expectedFence)) return 'expected_fence_required';
+  // D3 #5 (folded from red-team B6): fleet_run_answer is an APPLICATION_TOOL (→ run.answer), so
+  // the shared answer-shape guard must run BEFORE validateApplicationCommandArgs — otherwise a
+  // decision-shaped answer would still reach run.answer and settle an approval through the
+  // decision-only channel.
+  if (name === 'fleet_run_answer' && answerShapeRejected(args.answer)) return 'invalid_arguments';
   if (APPLICATION_TOOL[name]) {
     try {
       const command = APPLICATION_TOOL[name];
@@ -1110,11 +1126,10 @@ function validateArguments(name, args, maxWaitMs = null) {
   // server-side (hand-rolled validation stays the discipline, Part I), so this tool's own
   // answer-shape guard must reject any key other than `optionId`/`text` BEFORE hub dispatch —
   // `{decision}` would otherwise reach `run.answer` and settle an APPROVAL through this
-  // decision-only tool. Kind-matching against the pending interaction stays hub-side.
-  if (name === 'baton_decision_answer') {
-    const answerKeys = record(args.answer) ? Object.keys(args.answer) : [];
-    if (answerKeys.length !== 1 || !['optionId', 'text'].includes(answerKeys[0])) return 'invalid_arguments';
-  }
+  // decision-only tool. Kind-matching against the pending interaction stays hub-side. The guard is
+  // the shared answerShapeRejected (ACCEPTED_ANSWER_KEYS) so it can never disagree with the schema
+  // or with fleet_run_answer.
+  if (name === 'baton_decision_answer' && answerShapeRejected(args.answer)) return 'invalid_arguments';
   if (name === 'fleet_capability_invoke') {
     if (!/^[A-Za-z0-9._:-]{1,128}$/.test(args.name ?? '') || !nonempty(args.op) || args.op.length > 256
       || !Number.isSafeInteger(args.budgetTokens) || args.budgetTokens <= 0) return 'invalid_capability_invocation';
@@ -1479,7 +1494,7 @@ export class McpFleetServer {
       // and an absent pack degrades to the honest-empty line, never a fabricated digest (D5b).
       const briefingHead = this.coordination?.contextPackHead?.(BRIEFING_FAMILY) ?? null;
       const briefingSentence = briefingHead
-        ? `Briefing pack ${briefingHead.packId} minted at event ${briefingHead.observedSeq} (ledger at ${this.coordination.ledgerHeadSeq()}, Δ=${this.coordination.ledgerHeadSeq() - briefingHead.observedSeq}); resolve via the orchestrator's embedded context.briefing command.`
+        ? `Briefing pack ${briefingHead.packId} minted at event ${briefingHead.observedSeq} (ledger at ${this.coordination.ledgerHeadSeq()}, Δ=${this.coordination.ledgerHeadSeq() - briefingHead.observedSeq}); the pack is an embedded-only data note, not an MCP command.`
         : 'No orchestrator briefing pack minted yet.';
       return protocolResult(id, {
         protocolVersion: PROTOCOL_VERSION,
