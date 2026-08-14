@@ -1,0 +1,24 @@
+wave handshake-patience-2026-08-14-wave-a
+member coordinator
+  harness deepseek
+  model deepseek-v4-flash
+  effort high
+  scope "docs/reference/evidence/handshake-patience-2026-08-14/wave-a/**"
+  objectiveRef "docs/reference/evidence/handshake-patience-2026-08-14/wave-a/coordinator-brief.md"
+  report "docs/reference/evidence/handshake-patience-2026-08-14/wave-a/verify-notes.md"
+member row-handshake-timeout
+  harness deepseek
+  model deepseek-v4-flash
+  effort high
+  scope "impl/src/application-cli.mjs"
+  scope "docs/reference/evidence/handshake-patience-2026-08-14/wave-a/**"
+  objectiveRef "docs/reference/evidence/handshake-patience-2026-08-14/wave-a/row-handshake-timeout-brief.md"
+  report "docs/reference/evidence/handshake-patience-2026-08-14/wave-a/notes-row-handshake-timeout.md"
+approveOnAdvertisedPlan
+claimOnStall
+nudgeOnCheckpoint "Continue — the suite is the contract; timeout-floor removal ONLY, no behavior change on the server. Write deliverables incrementally."
+messageOnSpawn brief "Read your objectiveRef brief IN FULL first; it binds. gh may be unauthenticated in your worktree. Your [attempt:] line verbatim in your deliverable's first five lines. Judgment calls recorded; authority-class ambiguity → DECISION_REQUEST with options."
+elevateWhenNotes doubt,plan 20
+signalOnMembersDone row-handshake-timeout result "The row settled (you are the remaining member — pinned #175 semantics). Verify per your brief and write verify-notes.md."
+harvest "docs/reference/evidence/handshake-patience-2026-08-14/wave-a/notes-row-handshake-timeout.md" mustContain "attempt:"
+harvest "docs/reference/evidence/handshake-patience-2026-08-14/wave-a/verify-notes.md" mustContain "HANDSHAKE-PATIENCE-VERIFY v1"
