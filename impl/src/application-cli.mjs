@@ -25,9 +25,10 @@ export const CLI_WEB_COMMANDS = new Set([
   // dispatches over the web envelope (waves.list/waves.progress, admitted at the port as direct
   // commands — web-northbound.mjs WEB_DIRECT_PORT_COMMANDS).
   'waves.attach', 'waves.start', 'waves.list', 'waves.progress', 'waves.run', 'waves.compile',
+  'waves.send', 'waves.stop',
   // Facade-projection epic (#87+#48, contract v2.2): the eight workflow-surface command names.
   'run.message.send', 'run.message.receipt', 'run.attention.watch',
-  'run.scratchpad.read', 'run.scratchpad.elevate', 'run.board.post', 'run.board.read',
+  'run.scratchpad.read', 'run.scratchpad.elevate', 'run.scratchpad.append', 'run.board.post', 'run.board.read',
   'run.knowledge.seed',
 ]);
 // CS-2 (control-surface v2): the five web-admitted verbs (run.episode, run.workstreams,
@@ -118,6 +119,37 @@ function duration(value) {
   const milliseconds = Number(match[1]) * scale;
   if (!Number.isSafeInteger(milliseconds) || milliseconds <= 0 || milliseconds > 86_400_000) throw cliError('duration is outside the Run wait ceiling');
   return milliseconds;
+}
+
+// #158 (H2.3): the closed per-kind scratchpad body validator the append branch applies — a note
+// body rides text verbatim; every other kind rides JSON parsed into the kernel's closed per-kind
+// shape (normalizeScratchpadEntry, coordination-store.mjs:607-696). A malformed body refuses
+// cli_invalid naming the expected shape (never a silent string).
+function scratchpadAppendBody(kind, rawBody) {
+  if (kind === 'note') return rawBody;
+  let parsed;
+  try { parsed = JSON.parse(rawBody); } catch {
+    throw cliError(`${kind} body must be JSON`, 'cli_invalid');
+  }
+  if (!record(parsed)) throw cliError(`${kind} body must be a JSON object`, 'cli_invalid');
+  if (kind === 'plan') {
+    if (!nonempty(parsed.objective)
+      || !Array.isArray(parsed.steps) || parsed.steps.length < 1 || parsed.steps.length > 16
+      || parsed.steps.some((step) => !record(step) || !nonempty(step.text)
+        || !['todo', 'doing', 'done'].includes(step.state))) {
+      throw cliError('plan body must be a JSON object {objective, steps:[{text, state}]}', 'cli_invalid');
+    }
+  } else if (kind === 'doubt') {
+    if (!nonempty(parsed.question)
+      || (parsed.context !== undefined && typeof parsed.context !== 'string')) {
+      throw cliError('doubt body must be a JSON object {question, context?}', 'cli_invalid');
+    }
+  } else if (kind === 'link') {
+    if (!nonempty(parsed.label) || !['url', 'repo_path', 'entry'].includes(parsed.target?.type)) {
+      throw cliError('link body must be a JSON object {label, relation, target}', 'cli_invalid');
+    }
+  }
+  return parsed;
 }
 
 function readBoundedFile(path, label, { ownerOnly = false, ownerUid = null } = {}) {
@@ -1335,7 +1367,12 @@ export function parseBatonCli(rawArgs) {
     if (action === 'compile') {
       const specPath = args.shift();
       noRemainder(args);
-      if (typeof specPath !== 'string' || specPath.length === 0) throw cliError('waves compile requires a spec path');
+      if (typeof specPath !== 'string' || specPath.length === 0) {
+        // #157 D3.3/N6: the closed-set pin derives waves.compile's minimal invocation as BARE (the
+        // registry required set is empty), so the parse admits the bare verb — the app seam
+        // (compileWaveSpec → _resolveWorkflowSpec) is where a missing spec refuses.
+        return { kind: 'command', command: 'waves.compile', name: 'waves.compile', args: {}, idempotencyKey };
+      }
       return { kind: 'command', command: 'waves.compile', name: 'waves.compile', args: { specPath }, idempotencyKey };
     }
     // #132 D4.1/D4.2 (wave-observability-2026-08-06/contract.md §D4): the read/steer verbs.
@@ -1382,13 +1419,64 @@ export function parseBatonCli(rawArgs) {
         idempotencyKey,
       };
     }
+    // #157 (D1.2(1)): the member steer — `baton waves send RUN_ID --message TEXT
+    // [--nudge|--now|--turn] [--claim-grant JSON]` → waves.send (schema: application-semantics.mjs
+    // :1599-1613). runId rides positionally through the id() helper (the same helper waves.attach
+    // uses); delivery modes are bounded at most-one, mirroring the run send take
+    // (application-cli.mjs:1733-1738); --claim-grant is parsed like --members JSON.
+    if (action === 'send') {
+      const sendRunId = id(args.shift(), 'run ID');
+      const message = take(args, '--message');
+      const modes = [['--nudge', 'nudge'], ['--now', 'now'], ['--turn', 'turn']]
+        .filter(([name]) => flag(args, name));
+      const claimGrantRaw = take(args, '--claim-grant');
+      noRemainder(args);
+      if (message === null || !nonempty(message) || modes.length > 1) {
+        throw cliError('waves send requires --message and at most one delivery mode (--nudge|--now|--turn)',
+          'cli_action_inputs_invalid');
+      }
+      let claimGrant;
+      if (claimGrantRaw !== null) {
+        try { claimGrant = JSON.parse(claimGrantRaw); } catch {
+          throw cliError('--claim-grant must be JSON', 'cli_action_inputs_invalid');
+        }
+        if (!record(claimGrant)) throw cliError('--claim-grant must be a JSON object', 'cli_action_inputs_invalid');
+      }
+      return {
+        kind: 'command', command: 'waves.send', name: 'waves.send',
+        args: {
+          runId: sendRunId,
+          message,
+          ...(modes.length === 0 ? {} : { delivery: modes[0][1] }),
+          ...(claimGrant === undefined ? {} : { claimGrant }),
+        },
+        idempotencyKey,
+      };
+    }
+    // #157 (D1.2(1)): `baton waves stop RUN_ID --reason TEXT` → waves.stop (schema:
+    // application-semantics.mjs:1614-1621). --reason is CLI-required (OQ1 — the dispatcher
+    // requires it at application.mjs:11900/11967-11968), refusing early cli_action_inputs_invalid
+    // rather than surfacing a server refusal.
+    if (action === 'stop') {
+      const stopRunId = id(args.shift(), 'run ID');
+      const reason = take(args, '--reason');
+      noRemainder(args);
+      if (reason === null || !nonempty(reason)) {
+        throw cliError('waves stop requires --reason', 'cli_action_inputs_invalid');
+      }
+      return {
+        kind: 'command', command: 'waves.stop', name: 'waves.stop',
+        args: { runId: stopRunId, reason },
+        idempotencyKey,
+      };
+    }
     // F5/D4.5 (A5-4): a BARE `baton waves attach` issues the registry read waves.list — the
     // attachable set — never the wave-ID-invalid refusal.
     if (action === 'attach' && args.length === 0) {
       return { kind: 'command', command: 'waves.list', name: 'waves.list', args: {}, idempotencyKey };
     }
     if (action !== 'attach') {
-      throw cliError('expected waves list, progress, start, attach, or run', 'cli_command_unavailable');
+      throw cliError('expected waves list, progress, start, send, stop, attach, or run', 'cli_command_unavailable');
     }
     const waveId = id(args.shift(), 'wave ID');
     const membersRaw = take(args, '--members');
@@ -1514,6 +1602,34 @@ export function parseBatonCli(rawArgs) {
         args: { runId: runIdValue, taskId, entryIds },
         idempotencyKey,
       };
+    }
+    // #158 (D2.1/H2.3): the append verb — `baton run scratchpad append RUN_ID --scope
+    // shared|worker:ID --kind note|plan|doubt|link --body TEXT`. The closed arg closure is
+    // {runId, scope, kind, body} (no caller-supplied workerId, H1.3); scope validates against the
+    // closed set exactly as the read branch does; a non-note body rides the closed per-kind JSON
+    // shape (scratchpadAppendBody).
+    if (sub === 'append') {
+      const runIdValue = id(args.shift(), 'Run ID');
+      const scope = take(args, '--scope', { required: true });
+      const kind = take(args, '--kind') ?? 'note';
+      const body = take(args, '--body', { required: true });
+      noRemainder(args);
+      if (!/^(?:shared|worker:[A-Za-z0-9._:-]{1,256})$/u.test(scope ?? '')) throw cliError('--scope must be shared or worker:ID');
+      if (!['note', 'plan', 'doubt', 'link'].includes(kind)) throw cliError('--kind must be note|plan|doubt|link');
+      return {
+        kind: 'command', name: 'run.scratchpad.append',
+        args: { runId: runIdValue, scope, kind, body: scratchpadAppendBody(kind, body) },
+        idempotencyKey,
+      };
+    }
+    // #158 (D4): the bare-`run scratchpad` trap — the parser teaches the closed subverb set
+    // read|elevate|append (never `unexpected argument undefined`); an unknown subverb is named AND
+    // the set is restated. The teaching message and the append branch land in the same rung.
+    if (sub === undefined) {
+      throw cliError('run scratchpad requires a subcommand: read|elevate|append', 'cli_invalid');
+    }
+    if (sub !== 'read' && sub !== 'elevate' && sub !== 'append') {
+      throw cliError(`run scratchpad ${sub} is not a subcommand; use read|elevate|append`, 'cli_invalid');
     }
     throw cliError(`unexpected argument ${sub}`);
   }

@@ -11837,15 +11837,31 @@ export class BatonApplication {
       const members = [];
       for (const member of row.roster ?? []) {
         if (typeof member === 'string') {
-          // B2/F13: a legacy string-array member is a bare role with NO registered runId — the
-          // pinned no-run render (liveness local, nulls, route/scope null), never wave_not_found.
-          // Issue #74 (D3/A6): the seat map — the interpreter seam (createWave, wave.mjs:180)
-          // mints a role-only string roster, so the route is recovered from the member run's
-          // steering-registered `route` record (start() mints it) rather than rendered as null.
-          const route = this._runWaveRoute(this._runIdForWaveMember(row.waveId, member));
+          // B2/F13 (no-run) + D2.3 (hydrated): a legacy string-array member is a bare role. Issue
+          // #74 recovers the seat map (route) from the steering record; D2.3 hydrates the SAME
+          // read — when the member IS steering-registered, inspect the run exactly as the object
+          // branch does (phase/progressClass/attentionCount) instead of hardcoding nulls.
+          const runId = this._runIdForWaveMember(row.waveId, member);
+          const route = this._runWaveRoute(runId);
+          let view = null;
+          if (runId !== null) {
+            try {
+              view = await this.inspect({ runId }, principal, context);
+            } catch (error) {
+              // D5.2 seam: a member whose run WAS registered and then disappeared refuses the
+              // whole read typed wave_not_found — never a silent null render (parity with the
+              // object branch).
+              if (error?.code !== 'application_run_not_found') throw error;
+              throw applicationError(`wave member ${member} run is no longer available`, 'wave_not_found', { runId, role: member });
+            }
+          }
+          const attention = Array.isArray(view?.attention) ? view.attention.length : 0;
           members.push(deepFreeze({
             role: member, route: route ?? null, scope: null,
-            liveness: 'local', phase: null, progressClass: null, attentionCount: null,
+            liveness: 'local',
+            phase: view?.phase ?? view?.outline?.phase ?? null,
+            progressClass: view?.progressClass ?? view?.outline?.progressClass ?? null,
+            attentionCount: runId === null ? null : attention,
           }));
           continue;
         }
