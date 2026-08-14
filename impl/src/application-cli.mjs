@@ -1246,6 +1246,45 @@ function buildEpisodeCommand(args, runId, topic, role, idempotencyKey) {
   };
 }
 
+// #158 D2.2/H2.3 — the closed per-kind append body. `--kind note` carries `--body` as text
+// verbatim; plan/doubt/link carry a JSON `--body` that must match the kernel's closed per-kind
+// shape (normalizeScratchpadEntry, coordination-store.mjs:607-696) minus the `kind` key. A
+// malformed or shape-mismatched body refuses cli_invalid naming the expected shape (mirroring the
+// elevate branch's --entries JSON handling, application-cli.mjs:1500-1501).
+function scratchpadAppendBody(kind, rawBody) {
+  if (kind === 'note') return rawBody;
+  let body;
+  try { body = JSON.parse(rawBody); }
+  catch { throw cliError(`--body must be JSON matching the closed ${kind} shape`); }
+  if (kind === 'plan') {
+    if (!record(body) || !nonempty(body.objective)
+      || !Array.isArray(body.steps) || body.steps.length < 1 || body.steps.length > 16
+      || body.steps.some((step) => !record(step) || !nonempty(step.text)
+        || !['todo', 'doing', 'done'].includes(step.state))) {
+      throw cliError('--body must be JSON matching {objective, steps, supersedes?} for kind plan');
+    }
+    return body;
+  }
+  if (kind === 'doubt') {
+    if (!record(body) || !nonempty(body.question)
+      || (body.context !== null && typeof body.context !== 'string')) {
+      throw cliError('--body must be JSON matching {question, context} for kind doubt');
+    }
+    return body;
+  }
+  if (kind === 'link') {
+    if (!record(body) || !nonempty(body.label)
+      || !['reference', 'supports', 'contradicts', 'depends_on'].includes(body.relation)
+      || !record(body.target)) {
+      throw cliError('--body must be JSON matching {label, relation, target} for kind link');
+    }
+    return body;
+  }
+  throw cliError('--kind must be note|plan|doubt|link');
+}
+
+const SCRATCHPAD_APPEND_KINDS = new Set(['note', 'plan', 'doubt', 'link']);
+
 export function parseBatonCli(rawArgs) {
   const args = resolveCanonicalCliArgs(rawArgs);
   if (args.length === 0 || (args.length === 1 && ['--help', '-h'].includes(args[0]))) {
@@ -1513,6 +1552,15 @@ export function parseBatonCli(rawArgs) {
       idempotencyKey,
     };
   }
+  if (args[0] === 'application') {
+    // R5 (doc-truth D4 verb-column leg): `application.help`'s mechanical cli spelling
+    // (`baton application help`, deriveSurfaceNames) must compile to the same help command as the
+    // taught `baton help` example — a taught verb that refuses is a conformance finding.
+    args.shift();
+    if (args.shift() !== 'help') throw cliError('expected application help');
+    noRemainder(args);
+    return { kind: 'command', name: 'application.help', args: { topic: 'application', depth: 'outline' }, idempotencyKey };
+  }
   if (args.shift() !== 'run') {
     throw cliError('expected credentials, setup, doctor, route, explore, review, context, waves, or run');
   }
@@ -1607,7 +1655,26 @@ export function parseBatonCli(rawArgs) {
         idempotencyKey,
       };
     }
-    throw cliError(`unexpected argument ${sub}`);
+    if (sub === 'append') {
+      const runIdValue = id(args.shift(), 'Run ID');
+      const scope = take(args, '--scope', { required: true });
+      const kind = take(args, '--kind') ?? 'note';
+      const rawBody = take(args, '--body', { required: true });
+      noRemainder(args);
+      if (!/^(?:shared|worker:[A-Za-z0-9._:-]{1,256})$/u.test(scope ?? '')) {
+        throw cliError('--scope must be shared or worker:ID');
+      }
+      if (!SCRATCHPAD_APPEND_KINDS.has(kind)) throw cliError('--kind must be note|plan|doubt|link');
+      return {
+        kind: 'command', name: 'run.scratchpad.append',
+        args: { runId: runIdValue, scope, kind, body: scratchpadAppendBody(kind, rawBody) },
+        idempotencyKey,
+      };
+    }
+    // D4 (bare-subcommand teaching): a bare `run scratchpad` names the closed subcommand set, never
+    // `unexpected argument undefined`; an unknown subverb names itself AND restates the closed set.
+    if (sub === undefined) throw cliError('run scratchpad requires a subcommand: read|elevate|append');
+    throw cliError(`run scratchpad has no ${sub} subcommand; expected read|elevate|append`);
   }
   if (action === 'board') {
     const sub = args.shift();
@@ -1674,6 +1741,15 @@ export function parseBatonCli(rawArgs) {
     'send', 'interrupt', 'progress', 'events', 'output', 'episode', 'workstreams', 'notify', 'result',
     'stop', 'evidence', 'adopt', 'select', 'feedback', 'revise', 'stop-member',
     'retry', 'resume', 'review', 'integrate', 'export', 'debug']);
+  // #159 R1/R4 (doc-truth): `run watch RUN_ID` serves run.watch. The branch lives AFTER the
+  // lifecycleActions literal (watch is neither a facade noun nor a lifecycle verb), so the
+  // silent-start (#155) recognized-first-token derivation — the lifecycle Set literal plus the
+  // pre-gate facade dispatch — stays at its pinned 39. watch is served without entering that set.
+  if (action === 'watch') {
+    const watchRunId = id(args.shift(), 'Run ID');
+    noRemainder(args);
+    return { kind: 'command', name: 'run.watch', args: { runId: watchRunId }, idempotencyKey };
+  }
   if (!lifecycleActions.has(action)) {
     // #160 R6 (F8, error-actionability-2026-08-13/contract-fold.md §2 F8): an unknown run verb is
     // never silently reinterpreted as a Run objective — a single-token distance-1 typo of exactly
