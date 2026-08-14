@@ -132,6 +132,40 @@ surface-inventory artifact: the profile inventory derives from `APPLICATION_SEMA
 canonical operations, and the registry row is the kernel row's work (mine is the CLI admission,
 which is what the artifact's `cliWebCommands` count reflects: 37 → 40).
 
+## Cross-seam coordination intelligence (for row-sf159 / row-sf160 / the coordinator)
+
+During the continue-verification pass I mapped the CLI-seam gaps the OTHER two suites' rows pin,
+because every one of them touches `application-cli.mjs` (my owned file) — but none is in my
+dispatch acceptance (which is cli-wave-fidelity + the scratchpad CLI rows only; the fold-suite-159
+and fold-suite-160 headers name `row-sf159` / `row-sf160` as those rows' owners). Recorded here so
+those rows inherit the terrain map.
+
+- **`run.watch` (doc-truth R1/R4 — row-sf159).** `parseBatonCli(['run','watch','run:r1'])` today
+  throws `cli_invalid: unexpected argument run:r1` and BARE `run watch` silently reinterprets to
+  `run.start` objective `'watch'` (the R4 headline). The fix is additive: recognize `watch` as a
+  run first-token and serve `run watch RUN_ID` → `run.watch`, with bare `run watch` refusing the
+  value-required (Run ID) shape — `cli_invalid` + `/run id|runId|required/i`.
+  ⚠️ **Cross-wave constraint:** adding `watch` as a recognized first-token inflates the
+  cli-silent-start suite's (#155) DERIVED detection set from 39 → 40, which breaks that suite's
+  currently-GREEN PT-7 pin (`assert.equal(detection.size, 39)`, cli-silent-start-red.test.mjs:439)
+  — the 39 is "at HEAD", so #155's impl may re-pin it, but row-sf159 must coordinate rather than
+  silently break the pin.
+- **Unknown-`run`-verb refusal (error-actionability C2 — row-sf160).** `parseBatonCli(['run',
+  'shwo'])` today returns `run.start` objective `'shwo'` (the F8 silent-reinterpretation defect at
+  `application-cli.mjs:1578`). C2 wants `cli_command_unavailable` + a message naming the closed run
+  verb set. ⚠️ **Cross-wave constraint:** a naive "refuse ALL unknown run verbs" breaks the
+  cli-silent-start (#155) currently-GREEN PT-3 pin (`run deploy`/`refactor`/`stow` must stay
+  objective-first — never-a-guess). The only rule satisfying both is Damerau-distance-1 detection
+  against the recognized first-token set (exactly #155's core), so C2 and #155's PT-2a share one
+  implementation surface — row-sf160 should implement F8 on top of #155's guard, or land both.
+- **Divergence ledger (doc-truth R7 + error-actionability C3/S2).** The committed
+  `surface-divergence-ledger.json` is `{schemaVersion:1, entries:[]}`; R7 needs full-shape entries
+  for the whitelisted-but-web-refused facade ports and C3/S2 need the 20 CLI-local tooling codes
+  ledgered deliberately code-only. The ledger is `impl/scripts/` — outside my owned files.
+
+None of the above changes my acceptance: my seam rows are all green (modulo the A10-1 leg (b)
+broken regex above), and the adjacents in my verify list are undisturbed.
+
 ## Generated-surface regeneration
 
 - `impl/CLI.md`: `render-surface-docs.mjs` added the `waves.send` / `waves.stop` rows to the
