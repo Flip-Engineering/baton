@@ -41,6 +41,7 @@ const DEFAULT_POLICY = Object.freeze({
   preflight: true,
   evidencePath: null,
   onProgress: null,
+  settlement: null,
   // Bidirectional v2 rule 3: the embedded decision-gating callback. Async, awaited, fired AT MOST
   // ONCE per (runId, requestId); its return is validated against `{optionId}|{text}|undefined`.
   onDecision: null,

@@ -246,7 +246,7 @@ function canonicalActionPath(path) {
 const TERMINAL_TASK_STATUSES = new Set(['completed', 'failed', 'cancelled']);
 const COORDINATION_MUTATORS = new Set([
   'createTask', 'claimTask', 'transitionTask', 'transitionTaskWithArtifacts', 'mapOperationalEvent',
-  'createAndClaimRecoveryRefinement', 'createAndClaimPlanRecoveryRefinement', 'recordRecoveryContinuationIntent', 'completeRecoveryDispatch',
+  'createAndClaimRecoveryRefinement', 'createAndClaimPlanRecoveryRefinement', 'createAndClaimSettlementTask', 'sweepSettlementLeases', 'recordRecoveryContinuationIntent', 'completeRecoveryDispatch',
   'admitRunResultExport', 'completeRunResultExport',
   'recordDriver', 'completeIntegration', 'completePublication', 'registerArtifact', 'supersedeArtifact', 'claimScratch', 'postScratchFact',
   'readScratch', 'expireScratchClaim', 'expireScratchFact', 'addKnowledgeNode', 'promoteKnowledgeNode',
@@ -724,7 +724,7 @@ export class Coordinator {
   /** @param {object} opts */
   constructor(opts) {
     if (!opts?.coordination) throw new TypeError('Coordinator requires a durable coordination store');
-    for (const method of ['snapshot', 'task', 'integrationAuthority', 'publicationAuthority', 'createTask', 'claimTask', 'transitionTask', 'transitionTaskWithArtifacts', 'createAndClaimRecoveryRefinement', 'recordRecoveryContinuationIntent', 'completeRecoveryDispatch', 'mapOperationalEvent', 'recordDriver', 'completeIntegration', 'completePublication', 'registerArtifact', 'artifact', 'recordReuseDecision', 'reuseDecision', 'reuseDecisionAdmission', 'reusePolicyState', 'activateReusePolicy', 'reuseRiskGuard', 'recordReuseRiskGuard', 'reuseRiskAdmission', 'recordReuseTtlInvalidation', 'reuseTtlAdmission', 'claimScratch', 'postScratchFact', 'readScratch', 'activeScratchClaims', 'expireScratchClaim', 'writeScratchpad', 'elevateTaskScratchpad', 'settleWorkflowScratchpad', 'reapRunScratchpads', 'scratchpadSnapshotBatch', 'scratchpadSnapshot', 'addKnowledgeNode', 'promoteKnowledgeNode', 'readKnowledge']) {
+    for (const method of ['snapshot', 'task', 'integrationAuthority', 'publicationAuthority', 'createTask', 'claimTask', 'transitionTask', 'transitionTaskWithArtifacts', 'createAndClaimRecoveryRefinement', 'createAndClaimSettlementTask', 'recordRecoveryContinuationIntent', 'completeRecoveryDispatch', 'mapOperationalEvent', 'recordDriver', 'completeIntegration', 'completePublication', 'registerArtifact', 'artifact', 'recordReuseDecision', 'reuseDecision', 'reuseDecisionAdmission', 'reusePolicyState', 'activateReusePolicy', 'reuseRiskGuard', 'recordReuseRiskGuard', 'reuseRiskAdmission', 'recordReuseTtlInvalidation', 'reuseTtlAdmission', 'claimScratch', 'postScratchFact', 'readScratch', 'activeScratchClaims', 'expireScratchClaim', 'writeScratchpad', 'elevateTaskScratchpad', 'settleWorkflowScratchpad', 'reapRunScratchpads', 'scratchpadSnapshotBatch', 'scratchpadSnapshot', 'addKnowledgeNode', 'promoteKnowledgeNode', 'readKnowledge']) {
       if (typeof opts.coordination[method] !== 'function') throw new TypeError(`Coordinator coordination store is missing ${method}()`);
     }
     this._closed = false;

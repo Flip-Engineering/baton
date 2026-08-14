@@ -1326,6 +1326,7 @@ export class CoordinationStore {
         }
         this._validateRecoveryReplayTransactions();
         this._validateGoalPlanReplayTransactions();
+        this._validateSettlementReplayTransactions();
       } finally { this._loading = false; }
       const source = checkpoint.state === 'valid'
         ? (lines.length > 0 ? 'checkpoint_tail' : 'checkpoint')
@@ -1391,6 +1392,7 @@ export class CoordinationStore {
       'goal_plan_node_dispatch', 'goal_plan_wave_dispatch', 'goal_plan_recovery_dispatch',
       'scratchpad_task_settlement', 'scratchpad_link_citation',
       'scratchpad_workflow_settlement', 'scratchpad_stop_cleanup',
+      'settlement_task_create_claim',
     ].includes(batchKind)) {
       throw new TypeError('coordination batch kind is invalid');
     }
@@ -1406,10 +1408,11 @@ export class CoordinationStore {
       const index = entries.indexOf(created);
       const dispatch = index > 0 && entries[index - 1]?.kind === 'plan.node_dispatched'
         ? entries[index - 1] : null;
-      const hint = batchKind === 'recovery_refinement_create_claim' || batchKind === 'goal_plan_recovery_dispatch'
-        ? 'recovery'
-        : dispatch?.payload?.preservedResume ? 'preserved_resume'
-          : dispatch?.payload?.revision ? 'revision' : null;
+      const hint = batchKind === 'settlement_task_create_claim' ? 'root'
+        : batchKind === 'recovery_refinement_create_claim' || batchKind === 'goal_plan_recovery_dispatch'
+          ? 'recovery'
+          : dispatch?.payload?.preservedResume ? 'preserved_resume'
+            : dispatch?.payload?.revision ? 'revision' : null;
       this._validateTaskTopology(created.payload, hint, false);
     }
     const start = this._events.length;
@@ -1463,6 +1466,7 @@ export class CoordinationStore {
   }
 
   _taskTopologyHint(event) {
+    if (event.batch?.kind === 'settlement_task_create_claim') return 'root';
     if (event.batch?.kind === 'recovery_refinement_create_claim'
       || event.batch?.kind === 'goal_plan_recovery_dispatch') return 'recovery';
     if (event.batch?.kind === 'goal_plan_node_dispatch') {
@@ -2011,6 +2015,31 @@ export class CoordinationStore {
         }
       }
       index += 1;
+    }
+  }
+
+  _validateSettlementReplayTransactions() {
+    const fail = (message) => { throw new CoordinationIntegrityError(message, 'settlement_batch_integrity'); };
+    for (let index = 0; index < this._events.length; index += 1) {
+      const first = this._events[index];
+      if (first.batch?.kind !== 'settlement_task_create_claim') continue;
+      if (first.kind !== 'task.created' || !first.batch || first.batch.schemaVersion !== 1
+        || first.batch.kind !== 'settlement_task_create_claim' || first.batch.index !== 0
+        || first.batch.count !== 2 || !/^[a-f0-9]{64}$/.test(first.batch.id ?? '')) {
+        fail(`settlement transaction at seq ${first.seq} lacks an exact batch identity`);
+      }
+      const second = this._events[index + 1];
+      if (!second || second.seq !== first.seq + 1 || second.ts !== first.ts
+        || !second.batch || second.batch.schemaVersion !== 1 || second.batch.kind !== 'settlement_task_create_claim'
+        || second.batch.id !== first.batch.id || second.batch.index !== 1 || second.batch.count !== 2
+        || this._recoveryBatchIdentity('settlement_task_create_claim', [first, second]) !== first.batch.id) {
+        fail(`settlement transaction at seq ${first.seq} is torn or mismatched`);
+      }
+      if (second.kind !== 'task.claimed' || second.actor !== first.actor
+        || second.idempotencyKey !== `${first.idempotencyKey}:claim`) {
+        fail(`settlement transaction at seq ${first.seq} is not an exact create/claim pair`);
+      }
+      this._validateSettlementTaskPair(first, second, true);
     }
   }
 
@@ -2616,6 +2645,78 @@ export class CoordinationStore {
     throw integrity
       ? new CoordinationIntegrityError(message, code)
       : new CoordinationRefusal(message, code);
+  }
+
+  _settlementFailure(message, code, integrity) {
+    throw integrity
+      ? new CoordinationIntegrityError(message, code)
+      : new CoordinationRefusal(message, code);
+  }
+
+  // D1 (kg-settlement): the hub-fixed settlement-task shape. The caller supplies only the pinned
+  // identities ({id, runId, reservedWorkerId}); the objective is the hub constant and the brief
+  // capabilities are exactly the orchestrator class, so no worker prose can ever enter the anchor.
+  _normalizedSettlementCreatedPayload(fields, integrity = false) {
+    const fail = (message, code = 'settlement_task_invalid') => this._settlementFailure(message, code, integrity);
+    const fieldNames = ['id', 'reservedWorkerId', 'runId'];
+    if (!fields || typeof fields !== 'object' || Array.isArray(fields)
+      || Object.keys(fields).sort().join(',') !== fieldNames.sort().join(',')
+      || !boundedText(fields.id, 4_096) || !boundedText(fields.runId, 4_096)
+      || !boundedText(fields.reservedWorkerId, 256)) {
+      fail('settlement task request is malformed');
+    }
+    const prefix = 'settlement-task:';
+    if (!fields.id.startsWith(prefix) || fields.id.length <= prefix.length) {
+      fail('settlement task id is not pinned to a wave');
+    }
+    const waveId = fields.id.slice(prefix.length);
+    if (fields.runId !== `run-settlement:${waveId}`) {
+      fail('settlement task run is not pinned to the same wave');
+    }
+    return {
+      id: fields.id,
+      runId: fields.runId,
+      reservedWorkerId: fields.reservedWorkerId,
+      relation: 'settlement',
+      taskType: 'general',
+      brief: { objective: `settlement task for wave ${waveId}`, capabilities: ['baton_orchestrator'] },
+      deps: [],
+      refines: null,
+    };
+  }
+
+  _normalizedSettlementClaimedPayload(createdPayload) {
+    return {
+      id: createdPayload.id,
+      worker: createdPayload.reservedWorkerId,
+      expectedVersion: 1,
+      newVersion: 2,
+    };
+  }
+
+  _validateSettlementTaskPair(createdEvent, claimedEvent, integrity = false) {
+    const fail = (message, code = 'settlement_batch_integrity') => this._settlementFailure(message, code, integrity);
+    const created = createdEvent?.payload;
+    const createdFields = [
+      'brief', 'deps', 'id', 'refines', 'relation', 'reservedWorkerId', 'runId', 'taskType',
+    ];
+    const claimFields = ['expectedVersion', 'id', 'newVersion', 'worker'];
+    if (!created || Object.keys(created).sort().join(',') !== createdFields.sort().join(',')
+      || !claimedEvent?.payload || Object.keys(claimedEvent.payload).sort().join(',') !== claimFields.sort().join(',')) {
+      fail('settlement task batch payload is open or malformed');
+    }
+    const request = {
+      id: created.id,
+      runId: created.runId,
+      reservedWorkerId: created.reservedWorkerId,
+    };
+    const expectedCreated = this._normalizedSettlementCreatedPayload(request, integrity);
+    const expectedClaimed = this._normalizedSettlementClaimedPayload(created);
+    if (canonicalDigest(created) !== canonicalDigest(expectedCreated)
+      || canonicalDigest(claimedEvent.payload) !== canonicalDigest(expectedClaimed)) {
+      fail('settlement task batch changes the pinned identity or hub brief');
+    }
+    return { created: expectedCreated, claimed: expectedClaimed };
   }
 
   _verifiedRecoveryPrior(task, integrity = false) {
@@ -12171,6 +12272,56 @@ export class CoordinationStore {
     return freeze({ ok: true, result: 'claimed', createdEvent: clone(createdEvent), claimedEvent: clone(claimedEvent), task });
   }
 
+  // D1 (kg-settlement): the settlement task is a hub-internal lease anchor — one atomic
+  // create+claim batch (relation 'settlement', brief exactly the orchestrator capability class),
+  // bypassing plan-mandatory the same way recovery refinements do. The objective is the hub-fixed
+  // constant; the caller supplies NO objective/brief fields at all.
+  createAndClaimSettlementTask(fields, auth) {
+    if (auth?.actor !== 'orchestrator' || typeof auth?.key !== 'string' || auth.key.length === 0) {
+      throw new CoordinationRefusal('settlement task requires orchestrator authority', 'settlement_task_invalid');
+    }
+    const createdPayload = this._normalizedSettlementCreatedPayload(fields, false);
+    const claimedPayload = this._normalizedSettlementClaimedPayload(createdPayload);
+    const prior = this._byKey.get(auth.key);
+    if (prior) {
+      const claimed = this._events[prior.seq];
+      if (prior.kind !== 'task.created' || prior.actor !== auth.actor
+        || canonicalDigest(prior.payload) !== canonicalDigest(createdPayload)
+        || prior.batch?.kind !== 'settlement_task_create_claim'
+        || claimed?.kind !== 'task.claimed' || claimed.actor !== auth.actor
+        || claimed.batch?.id !== prior.batch.id
+        || prior.batch.index !== 0 || claimed.batch?.index !== 1
+        || prior.batch.count !== 2 || claimed.batch?.count !== 2 || claimed.ts !== prior.ts
+        || claimed.idempotencyKey !== `${auth.key}:claim`
+        || canonicalDigest(claimed.payload) !== canonicalDigest(claimedPayload)
+        || this._recoveryBatchIdentity('settlement_task_create_claim', [prior, claimed]) !== prior.batch.id) {
+        throw new CoordinationRefusal('settlement task idempotency conflict', 'settlement_task_conflict');
+      }
+      this._validateSettlementTaskPair(prior, claimed, false);
+      return freeze({
+        ok: true, result: 'idempotent', event: clone(prior),
+        createdEvent: clone(prior), claimedEvent: clone(claimed), task: this.task(fields.id),
+      });
+    }
+    if (this._tasks.has(fields.id)) {
+      throw new CoordinationRefusal('settlement task target is unavailable', 'settlement_task_invalid');
+    }
+    this._assertRunAdmissionOpen(fields.runId ?? null);
+    const fixedTs = this._clock();
+    const [createdEvent, claimedEvent] = this._appendBatch([
+      { kind: 'task.created', payload: createdPayload, auth, fixedTs },
+      { kind: 'task.claimed', payload: claimedPayload, auth: { actor: auth.actor, key: `${auth.key}:claim` }, fixedTs },
+    ], 'settlement_task_create_claim');
+    const task = this.task(fields.id);
+    if (!task || task.status !== 'working' || task.assignee !== fields.reservedWorkerId || task.version !== 2) {
+      throw new CoordinationIntegrityError('settlement task batch did not materialize exactly', 'settlement_task_integrity');
+    }
+    return freeze({
+      ok: true, result: 'claimed', event: clone(createdEvent),
+      createdEvent: clone(createdEvent), claimedEvent: clone(claimedEvent), task,
+    });
+  }
+
   sealRunScorecard(fields, auth) {
     const prior = this._byKey.get(auth?.key);
     if (prior) {
@@ -14541,11 +14692,6 @@ export class CoordinationStore {
       || !validKnowledgeWorkflowAdmissionPolicy(policy) || policy.repoId !== repoId) {
       throw new CoordinationRefusal('workflow admission authority is invalid', 'workflow_admit_invalid');
     }
-    const leaseRecord = this._runOrchestratorLeases.get(lease?.id);
-    if (!leaseRecord || leaseRecord.status !== 'active' || leaseRecord.leaseDigest !== lease?.digest
-      || leaseRecord.issuedEvent !== lease?.issuedEvent || leaseRecord.parent?.runId !== runId) {
-      throw new CoordinationRefusal('workflow admission lease binding is invalid', 'workflow_admit_lease_invalid');
-    }
     const policyDigest = canonicalDigest(policy);
     const requestDigest = canonicalDigest({ actor: auth.actor, idempotencyKey: auth.key, repoId, runId, policyDigest, candidateFindingId });
     const prior = this._byKey.get(auth.key);
@@ -14555,6 +14701,20 @@ export class CoordinationStore {
       }
       this._validateWorkflowAdmissionPayload(prior.payload, prior, false);
       return freeze({ event: clone(prior), finding: clone(this._knowledgeNodes.get(prior.payload.nodes[0].id)), replayed: true });
+    }
+    // XB keystone: NEW admissions route through the full _activeRunOrchestratorLease gate
+    // (revoked/expired/session-mismatch/parent-inactive/run-stopping), the same semantics
+    // _deriveRunOrchestratorLeasePayload enforces for child-run admission. Prior-replay above
+    // is checked first so an admission survives the later revocation of its lease unchanged.
+    const leaseRecord = this._activeRunOrchestratorLease({
+      orchestratorLeaseId: lease?.id,
+      principalId: auth?.principalId,
+      sessionId: auth?.sessionId,
+      sessionAuthorityDigest: auth?.sessionAuthorityDigest,
+    });
+    if (leaseRecord.leaseDigest !== lease?.digest || leaseRecord.issuedEvent !== lease?.issuedEvent
+      || leaseRecord.parent?.runId !== runId) {
+      throw new CoordinationRefusal('workflow admission lease binding is invalid', 'workflow_admit_lease_invalid');
     }
     const derived = this._deriveWorkflowAdmission(repoId, runId, candidateFindingId, policy);
     const core = {

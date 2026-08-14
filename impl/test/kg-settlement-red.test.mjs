@@ -89,7 +89,9 @@ const SETTLEMENT_WORKER_ID = `settlement-worker:${WAVE_ID}`;
 const REVIEW_SESSION = {
   principalId: 'wave-owner', sessionId: 'session-wave-owner',
   authorityDigest: digest({ kind: 'authenticated-worker-session', principalId: 'wave-owner', sessionId: 'session-wave-owner' }),
-  expiresAt: '2026-08-01T08:30:00.000Z',
+  // Relative to the harness's real clock (the app driver is un-clocked): always a future
+  // expiry regardless of when the suite runs, so issueRunOrchestratorLease admits it.
+  expiresAt: new Date(Date.now() + 3_600_000).toISOString(),
 };
 const ADMISSION_POLICY = Object.freeze({ repoId, maxBatchBytes: 16 * 1024 * 1024, maxResultBytes: 16 * 1024 * 1024 });
 
@@ -214,7 +216,7 @@ test('KS2: every _activeRunOrchestratorLease refusal code is produced at admissi
   {
     const { store, lease, session, candidateFindingId } = primitiveAdmissionFixture('ks2-revoked');
     store.revokeRunOrchestratorLease({ schemaVersion: 1, leaseId: lease.id, leaseDigest: lease.digest, reason: 'operator' },
-      auth(`run.orchestrator_lease_revoked:${lease.id}`));
+      auth(`run.orchestrator_lease.revoke:${lease.id}`));
     assert.equal(refusalCode(() => store.admitWorkflowFinding(repoId, SETTLEMENT_RUN_ID, candidateFindingId, ADMISSION_POLICY,
       sessionAuth('knowledge.workflow_admitted:rv', session), lease)), 'run_orchestrator_lease_revoked');
   }
@@ -563,7 +565,7 @@ test('KS7: partial state admit+revoke-done (crash after step 2) completes withou
   store.admitWorkflowFinding(repoId, SETTLEMENT_RUN_ID, candidateFindingId, ADMISSION_POLICY,
     sessionAuth(`knowledge.workflow_admitted:${candidateFindingId}`, session), lease);
   store.revokeRunOrchestratorLease({ schemaVersion: 1, leaseId: lease.id, leaseDigest: lease.digest, reason: 'operator' },
-    auth(`run.orchestrator_lease_revoked:${lease.id}`));
+    auth(`run.orchestrator_lease.revoke:${lease.id}`));
   await application.command('knowledge.promote', {
     runId: SETTLEMENT_RUN_ID, candidateFindingId, policy: ADMISSION_POLICY, lease,
   }, principal('wave-owner'));
@@ -866,7 +868,9 @@ function seedExpiredSettlementBundle(store, waveId, admittedControl = false) {
   const session = {
     principalId: 'wave-owner', sessionId: 'session-wave-owner',
     authorityDigest: digest({ kind: 'authenticated-worker-session', principalId: 'wave-owner', sessionId: 'session-wave-owner' }),
-    expiresAt: '2026-08-01T06:30:00.000Z', // expired before the hook runs (hook clock: 08:00)
+    // Issued just-valid (+250ms) so issueRunOrchestratorLease admits it synchronously, but
+    // expired by the time the settle-window sweep hook runs (driveWave reaches settle ≥1.5s later).
+    expiresAt: new Date(Date.now() + 250).toISOString(),
   };
   const leaseIdentity = {
     repoId, parentRunId: runId, parentTaskId: taskId, parentTaskVersion: 2,
