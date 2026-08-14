@@ -1,0 +1,55 @@
+wave impl-honesty-2026-08-14-wave-e
+member coordinator
+  harness glm
+  model "glm-5.3"
+  effort high
+  scope "docs/reference/evidence/honesty-package-2026-08-14/**"
+  objectiveRef "docs/reference/evidence/honesty-package-2026-08-14/complete3/coordinator-brief.md"
+  report "docs/reference/evidence/honesty-package-2026-08-14/complete-qa.md"
+member row-cli2
+  harness deepseek
+  model "deepseek-v4-pro[1m]"
+  effort high
+  scope "impl/src/application-cli.mjs"
+  scope "impl/CLI.md"
+  scope "docs/reference/evidence/honesty-package-2026-08-14/**"
+  objectiveRef "docs/reference/evidence/honesty-package-2026-08-14/complete3/row-cli2-brief.md"
+  report "docs/reference/evidence/honesty-package-2026-08-14/notes-row-cli2.md"
+member row-web2
+  harness deepseek
+  model "deepseek-v4-pro[1m]"
+  effort high
+  scope "impl/src/application.mjs"
+  scope "impl/src/mcp-northbound.mjs"
+  scope "impl/src/web-northbound.mjs"
+  scope "impl/MCP.md"
+  scope "docs/reference/evidence/honesty-package-2026-08-14/**"
+  objectiveRef "docs/reference/evidence/honesty-package-2026-08-14/complete3/row-web2-brief.md"
+  report "docs/reference/evidence/honesty-package-2026-08-14/notes-row-web2.md"
+member row-deploy2
+  harness deepseek
+  model deepseek-v4-flash
+  effort high
+  scope "impl/src/deployment.mjs"
+  scope "impl/scripts/resident.deployment.mjs"
+  scope "docs/reference/evidence/honesty-package-2026-08-14/**"
+  objectiveRef "docs/reference/evidence/honesty-package-2026-08-14/complete3/row-deploy2-brief.md"
+  report "docs/reference/evidence/honesty-package-2026-08-14/notes-row-deploy2.md"
+member row-docs2
+  harness deepseek
+  model deepseek-v4-flash
+  effort high
+  scope "impl/scripts/surface-inventory-artifact.json"
+  scope "impl/scripts/surface-divergence-ledger.json"
+  scope "docs/reference/evidence/honesty-package-2026-08-14/**"
+  objectiveRef "docs/reference/evidence/honesty-package-2026-08-14/complete3/row-docs2-brief.md"
+  report "docs/reference/evidence/honesty-package-2026-08-14/notes-row-docs2.md"
+approveOnAdvertisedPlan
+claimOnStall
+nudgeOnCheckpoint "Continue — the suites are your contract; named stages turn green by correct impl only, never by suite edits. Await-inputs rows keep polling. Write deliverables incrementally."
+messageOnSpawn brief "Read your objectiveRef brief IN FULL first; it binds. The recovered rows' notes in the parent evidence dir are your terrain map — read the one your brief names. gh may be unauthenticated in your worktree. Your [attempt:] line verbatim in your deliverable's first five lines. Judgment calls recorded; authority-class ambiguity → DECISION_REQUEST with options."
+elevateWhenNotes doubt,plan 20
+signalOnMembersDone row-cli2,row-web2,row-deploy2,row-docs2 result "All four rows settled (you are the remaining member — the pinned #175 semantics). Verify on disk per the #174 law, run your brief's acceptance, write complete-qa.md."
+harvest "docs/reference/evidence/honesty-package-2026-08-14/complete-qa.md" mustContain "attempt:"
+harvest "docs/reference/evidence/honesty-package-2026-08-14/notes-row-cli2.md" mustContain "attempt:"
+harvest "docs/reference/evidence/honesty-package-2026-08-14/notes-row-web2.md" mustContain "attempt:"

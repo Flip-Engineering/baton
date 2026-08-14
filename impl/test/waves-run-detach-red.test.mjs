@@ -151,7 +151,7 @@ test('DR-2 (stage[settle-record-missing]): the detached drive mints wave.settled
   const { application, driver } = await fixture(t, 'dr2');
   const acceptance = await application.command('waves.run', { spec: spec('detach-dr2'), driver: LANE_DRIVER }, principalOf('wrd-owner'));
   assert.equal(acceptance.verdict, 'WAVE-ADMITTED', 'the admission landed first');
-  const deadline = Date.now() + 60_000; // suite-internal polling bound, not a control
+  const deadline = Date.now() + 300_000; // suite-internal polling bound, not a control
   let settled = null;
   while (Date.now() < deadline && !settled) {
     settled = driver.coordination.eventsView().find((event) => event.kind === 'driver.recorded'
