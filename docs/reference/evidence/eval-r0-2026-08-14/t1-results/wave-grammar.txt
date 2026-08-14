@@ -1,0 +1,13 @@
+✔ WG-1: waves.attach registry row (exact key/profile/surfaces/schema) + derived names; singular refused; no waves.start (3.839666ms)
+✔ WG-2: atomic transport attach — MCP + web bind, settle, return outcomes; typed refusals; exactly-once driver_detached (3110.538625ms)
+✔ WG-3: hidden-by-declaration — advertised schemas exclude mintWaveDetached/waveId; validators accept them (0.513542ms)
+✔ WG-4: per-run observe required; no emergency_stop transported; deployment-facade parity (1209.056125ms)
+✔ WG-5: two-commit landing discipline holds (digest change confined; suite markers; no waves.start) (41.737875ms)
+ℹ tests 5
+ℹ suites 0
+ℹ pass 5
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 4836.664333

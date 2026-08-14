@@ -1,0 +1,29 @@
+✔ T1: a pausable checkpoint turn with no diff gets NO gate dispatch — no verdict, no kill, one policy nudge (125.450083ms)
+✔ T2: a FINAL (claim-classified) turn with no diff on a required-edit plan still fails required_effect_absent (anti-gaming pin) (59.304542ms)
+✔ T3: a pausable checkpoint on a NO-required-effects brief is NOT accepted mid-workflow (no mid-workflow completion) (242.066625ms)
+✔ T5: a resumed turn inside the window answers the cycle — settle working, zero gate events (100.400708ms)
+✔ T6: a distinct scratchpad receipt answers the cycle (coordination work is liveness) (207.563833ms)
+✔ T7: duplicate one-char receipts still count as one distinct answer (no content floor) — and the final still demands the diff (153.978583ms)
+✔ T7b: with NOTHING answering, the window expires and the full final evaluation lands with the steering receipt (262.607209ms)
+✔ T8: a pending question earns nothing; resolving it inside the window answers the cycle (147.679208ms)
+✔ T8b: a question left PENDING past the window does not hold the cycle open (resolution-gating, the 6b farm closed) (135.892333ms)
+✔ T9: a drivered run gets NO policy cycle (the driver's claim cadence owns steering) (73.107416ms)
+✔ T10: one cycle per pause record — a new record arms a new cycle, never a re-arm of the old (78.772167ms)
+✔ T10b: a claim on a cycle-armed record resolves through the full gate WITHOUT the steering-expiry receipt (6c) (193.284041ms)
+✔ T11: a gate failure names its gate in the projected terminal cause and carries the sanitized {gate, detail} verdict (107.9165ms)
+✔ T12: an analysis:true node may omit requiredEffects (the sole legitimate omission path) (21.4465ms)
+✔ T13: omitting repository_edit WITHOUT analysis:true is a plan-validation error (4.920917ms)
+✔ T14: an analysis node's final evaluation SKIPS required_effect and runs every other phase (201.212542ms)
+✔ T14b: a NON-analysis node's edit-free final fails required_effect (the flag is the boundary) (112.449125ms)
+✔ T14c: analysis does NOT exempt the violation phases — an out-of-scope diff still fails path_scope (194.372917ms)
+✔ T15: no shipped constraint or profile text coaches progress-by-diff-timing for the gate (3.071708ms)
+✔ T16: path_scope violation fires identically at a final (regression pin) (149.962834ms)
+✔ T17: an answered cycle on a drivered claim re-runs the FULL gate (drivered final pin) (102.59625ms)
+ℹ tests 21
+ℹ suites 0
+ℹ pass 21
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 3829.372209

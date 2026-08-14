@@ -1,0 +1,16 @@
+✔ DG-1a: wire.frame_degraded surfaces as a bounded whitelist summary (count + last code), never raw frames (717.493417ms)
+✔ DG-1a: stream-death/crash lands on the failure leg as a whitelisted summary (714.619041ms)
+✔ DG-1a: #53 closed-shape whitelist amendment is pinned by source-scan (1.827584ms)
+✔ DG-1b: scope refusal carries {gate:'scope', detail:{digests, counts}} — no path strings (815.579167ms)
+✔ DG-1b: red_green refusal carries sanitized tail; secret-shaped line never appears (845.014584ms)
+✔ DG-1b: coverage refusal carries sanitized tail via the same gate shape (696.398583ms)
+✔ DG-1b: unrecognized gate code serializes gate:'unknown' (684.587417ms)
+✔ DG-1b: run.feedback accepts the same {gate, detail} payload the debug failure leg projects (960.160083ms)
+ℹ tests 8
+ℹ suites 0
+ℹ pass 8
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 5666.494

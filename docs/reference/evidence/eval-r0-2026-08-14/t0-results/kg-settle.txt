@@ -1,0 +1,369 @@
+✖ KS1: the pair is ONE two-event batch with the hub-fixed brief and pinned identities (9.437208ms)
+✖ KS1: closed shape — extra fields, caller prose, non-orchestrator actors, unpinned ids all refuse (4.225291ms)
+✖ KS1: replay is exactly-once and same-key-different-fields conflicts (1.268ms)
+✖ KS2: every _activeRunOrchestratorLease refusal code is produced at admission (44.528541ms)
+✔ KS2: the acquiring session admits (control) (43.606209ms)
+✖ KS3: scratchpad.elevate maps to coordinator.elevateTaskScratchpad with normalized args (455.790917ms)
+✖ KS3: scratchpad.settle maps to coordinator.settleWorkflowScratchpad (243.665625ms)
+✖ KS3: knowledge.promote maps to coordinator.admitWorkflowFinding (registry liveMethod agrees) (357.311417ms)
+✖ KS3: knowledge.settlement_lease materializes the bundle with the session derived from the calling principal (362.214375ms)
+✖ KS4: the hook elevates note+plan, candidacies notes with exact title/detail, and surfaces receipt + outline (3284.53775ms)
+✖ KS4: the default (no settlement field) is kg-ritual ON (3863.340375ms)
+✖ KS4: settlement:none performs zero ritual writes (event-log diff) (318.406792ms)
+✖ KS4: an empty partition is honest-empty with the ritual ON (zero ritual events) (2501.45775ms)
+✖ KS5: a crash between candidacy posts resolves exactly-once on re-drive (2414.907834ms)
+✖ KS6: the hook sweeps expired settlement leases (≤16/pass) with review_window_expired and retires residue (514.047209ms)
+✖ KS7: promote admits→revokes→completes in order, replays exactly, and resumes from every partial state (524.743291ms)
+✖ KS7: partial state admit-done (crash after step 1) completes without conflict (644.976791ms)
+✖ KS7: partial state admit+revoke-done (crash after step 2) completes without conflict (489.190167ms)
+✖ KS8: shared kinds are exactly note+plan; doubt+link carry orchestrator_skipped dispositions (3501.644166ms)
+✖ KS8: a not-ready elevation refusal is recorded in settlement.errors and close still completes (2301.947459ms)
+✔ KS9: the four rows are embedded-only in the registry, CLI, and recursive gate (1.630834ms)
+✔ KS9: the four names stay out of the recursive-dispatch allowlists (source pin) (5.445583ms)
+✖ KS9b: the knowledge.settlement_lease registry row exists and is embedded-only (stage: row missing) (1.695792ms)
+✖ KS10: a control-character-bearing worker note lands sanitized, framed UNTRUSTED on board reads (3510.693459ms)
+ℹ tests 24
+ℹ suites 0
+ℹ pass 3
+ℹ fail 21
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 26611.531167
+
+✖ failing tests:
+
+test at impl/test/kg-settlement-red.test.mjs:141:1
+✖ KS1: the pair is ONE two-event batch with the hub-fixed brief and pinned identities (9.437208ms)
+  TypeError: store.createAndClaimSettlementTask is not a function
+      at TestContext.<anonymous> (file:///private/tmp/eval-r0-kg-settle/impl/test/kg-settlement-red.test.mjs:144:25)
+      at Test.runInAsyncScope (node:async_hooks:226:14)
+      at Test.run (node:internal/test_runner/test:1201:25)
+      at Test.start (node:internal/test_runner/test:1096:17)
+      at startSubtestAfterBootstrap (node:internal/test_runner/harness:385:17)
+
+test at impl/test/kg-settlement-red.test.mjs:162:1
+✖ KS1: closed shape — extra fields, caller prose, non-orchestrator actors, unpinned ids all refuse (4.225291ms)
+  AssertionError [ERR_ASSERTION]: {"id":"settlement-task:wave:b331adda1653c04b393c21de163364e4","runId":"run-settlement:wave:b331adda1653c04b393c21de163364e4","reservedWorkerId":"settlement-worker:wave:b331adda1653c04b393c21de163364e4","objective":"caller prose"}
+  + actual - expected
+  
+  + 'TypeError'
+  - 'settlement_task_invalid'
+  
+      at TestContext.<anonymous> (file:///private/tmp/eval-r0-kg-settle/impl/test/kg-settlement-red.test.mjs:170:12)
+      at Test.runInAsyncScope (node:async_hooks:226:14)
+      at Test.run (node:internal/test_runner/test:1201:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:831:18)
+      at Test.postRun (node:internal/test_runner/test:1330:19)
+      at Test.run (node:internal/test_runner/test:1258:12)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:385:3) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: 'TypeError',
+    expected: 'settlement_task_invalid',
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at impl/test/kg-settlement-red.test.mjs:181:1
+✖ KS1: replay is exactly-once and same-key-different-fields conflicts (1.268ms)
+  TypeError: store.createAndClaimSettlementTask is not a function
+      at TestContext.<anonymous> (file:///private/tmp/eval-r0-kg-settle/impl/test/kg-settlement-red.test.mjs:183:23)
+      at Test.runInAsyncScope (node:async_hooks:226:14)
+      at Test.run (node:internal/test_runner/test:1201:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:831:18)
+      at Test.postRun (node:internal/test_runner/test:1330:19)
+      at Test.run (node:internal/test_runner/test:1258:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7)
+
+test at impl/test/kg-settlement-red.test.mjs:204:1
+✖ KS2: every _activeRunOrchestratorLease refusal code is produced at admission (44.528541ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  + actual - expected
+  
+  + 'workflow_admit_lease_invalid'
+  - 'run_orchestrator_lease_not_found'
+  
+      at TestContext.<anonymous> (file:///private/tmp/eval-r0-kg-settle/impl/test/kg-settlement-red.test.mjs:208:12)
+      at Test.runInAsyncScope (node:async_hooks:226:14)
+      at Test.run (node:internal/test_runner/test:1201:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:831:18)
+      at Test.postRun (node:internal/test_runner/test:1330:19)
+      at Test.run (node:internal/test_runner/test:1258:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: 'workflow_admit_lease_invalid',
+    expected: 'run_orchestrator_lease_not_found',
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at impl/test/kg-settlement-red.test.mjs:273:1
+✖ KS3: scratchpad.elevate maps to coordinator.elevateTaskScratchpad with normalized args (455.790917ms)
+  AssertionError [ERR_ASSERTION]: Expected "actual" to be strictly unequal to:
+  
+  'application_command_unavailable'
+      at TestContext.<anonymous> (file:///private/tmp/eval-r0-kg-settle/impl/test/kg-settlement-red.test.mjs:280:10)
+      at async Test.run (node:internal/test_runner/test:1208:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: 'application_command_unavailable',
+    expected: 'application_command_unavailable',
+    operator: 'notStrictEqual',
+    diff: 'simple'
+  }
+
+test at impl/test/kg-settlement-red.test.mjs:289:1
+✖ KS3: scratchpad.settle maps to coordinator.settleWorkflowScratchpad (243.665625ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  
+  0 !== 1
+  
+      at TestContext.<anonymous> (file:///private/tmp/eval-r0-kg-settle/impl/test/kg-settlement-red.test.mjs:295:10)
+      at async Test.run (node:internal/test_runner/test:1208:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: 0,
+    expected: 1,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at impl/test/kg-settlement-red.test.mjs:302:1
+✖ KS3: knowledge.promote maps to coordinator.admitWorkflowFinding (registry liveMethod agrees) (357.311417ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  
+  0 !== 1
+  
+      at TestContext.<anonymous> (file:///private/tmp/eval-r0-kg-settle/impl/test/kg-settlement-red.test.mjs:309:10)
+      at async Test.run (node:internal/test_runner/test:1208:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: 0,
+    expected: 1,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at impl/test/kg-settlement-red.test.mjs:314:1
+✖ KS3: knowledge.settlement_lease materializes the bundle with the session derived from the calling principal (362.214375ms)
+  Error: unsupported application command knowledge.settlement_lease
+      at applicationError (file:///private/tmp/eval-r0-kg-settle/impl/src/application.mjs:223:24)
+      at validateApplicationCommandArgs (file:///private/tmp/eval-r0-kg-settle/impl/src/application.mjs:1665:26)
+      at BatonApplication.command (file:///private/tmp/eval-r0-kg-settle/impl/src/application.mjs:11792:5)
+      at TestContext.<anonymous> (file:///private/tmp/eval-r0-kg-settle/impl/test/kg-settlement-red.test.mjs:317:36)
+      at Test.runInAsyncScope (node:async_hooks:226:14)
+      at Test.run (node:internal/test_runner/test:1201:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:831:18)
+      at Test.postRun (node:internal/test_runner/test:1330:19)
+      at Test.run (node:internal/test_runner/test:1258:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    code: 'application_command_unavailable'
+  }
+
+test at impl/test/kg-settlement-red.test.mjs:344:1
+✖ KS4: the hook elevates note+plan, candidacies notes with exact title/detail, and surfaces receipt + outline (3284.53775ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal:
+  + actual - expected
+  
+  + []
+  - [
+  -   'note',
+  -   'plan'
+  - ]
+  
+      at TestContext.<anonymous> (file:///private/tmp/eval-r0-kg-settle/impl/test/kg-settlement-red.test.mjs:355:10)
+      at async Test.run (node:internal/test_runner/test:1208:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: [],
+    expected: [ 'note', 'plan' ],
+    operator: 'deepStrictEqual',
+    diff: 'simple'
+  }
+
+test at impl/test/kg-settlement-red.test.mjs:391:1
+✖ KS4: the default (no settlement field) is kg-ritual ON (3863.340375ms)
+  AssertionError [ERR_ASSERTION]: the ritual runs when the policy field is absent
+  
+  0 !== 1
+  
+      at TestContext.<anonymous> (file:///private/tmp/eval-r0-kg-settle/impl/test/kg-settlement-red.test.mjs:396:10)
+      at async Test.run (node:internal/test_runner/test:1208:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: 0,
+    expected: 1,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at impl/test/kg-settlement-red.test.mjs:400:1
+✖ KS4: settlement:none performs zero ritual writes (event-log diff) (318.406792ms)
+  Error: wave driver policy field "settlement" is unknown
+      at driverError (file:///private/tmp/eval-r0-kg-settle/impl/src/wave-driver.mjs:58:24)
+      at freezePolicy (file:///private/tmp/eval-r0-kg-settle/impl/src/wave-driver.mjs:76:11)
+      at createWaveDriver (file:///private/tmp/eval-r0-kg-settle/impl/src/wave-driver.mjs:236:18)
+      at driveWave (file:///private/tmp/eval-r0-kg-settle/impl/test/kg-settlement-red.test.mjs:790:22)
+      at ritualWave (file:///private/tmp/eval-r0-kg-settle/impl/test/kg-settlement-red.test.mjs:814:29)
+      at async TestContext.<anonymous> (file:///private/tmp/eval-r0-kg-settle/impl/test/kg-settlement-red.test.mjs:404:30)
+      at async Test.run (node:internal/test_runner/test:1208:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    code: 'wave_driver_policy_invalid'
+  }
+
+test at impl/test/kg-settlement-red.test.mjs:412:1
+✖ KS4: an empty partition is honest-empty with the ritual ON (zero ritual events) (2501.45775ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  
+  undefined !== 0
+  
+      at TestContext.<anonymous> (file:///private/tmp/eval-r0-kg-settle/impl/test/kg-settlement-red.test.mjs:417:10)
+      at async Test.run (node:internal/test_runner/test:1208:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    expected: 0,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at impl/test/kg-settlement-red.test.mjs:425:1
+✖ KS5: a crash between candidacy posts resolves exactly-once on re-drive (2414.907834ms)
+  AssertionError [ERR_ASSERTION]: both notes elevated before the crash window
+      at TestContext.<anonymous> (file:///private/tmp/eval-r0-kg-settle/impl/test/kg-settlement-red.test.mjs:450:10)
+      at async Test.run (node:internal/test_runner/test:1208:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: false,
+    expected: true,
+    operator: '==',
+    diff: 'simple'
+  }
+
+test at impl/test/kg-settlement-red.test.mjs:473:1
+✖ KS6: the hook sweeps expired settlement leases (≤16/pass) with review_window_expired and retires residue (514.047209ms)
+  TypeError: store.createAndClaimSettlementTask is not a function
+      at seedExpiredSettlementBundle (file:///private/tmp/eval-r0-kg-settle/impl/test/kg-settlement-red.test.mjs:862:9)
+      at TestContext.<anonymous> (file:///private/tmp/eval-r0-kg-settle/impl/test/kg-settlement-red.test.mjs:481:5)
+      at async Test.run (node:internal/test_runner/test:1208:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7)
+
+test at impl/test/kg-settlement-red.test.mjs:504:1
+✖ KS7: promote admits→revokes→completes in order, replays exactly, and resumes from every partial state (524.743291ms)
+  Error: unsupported application command knowledge.settlement_lease
+      at applicationError (file:///private/tmp/eval-r0-kg-settle/impl/src/application.mjs:223:24)
+      at validateApplicationCommandArgs (file:///private/tmp/eval-r0-kg-settle/impl/src/application.mjs:1665:26)
+      at BatonApplication.command (file:///private/tmp/eval-r0-kg-settle/impl/src/application.mjs:11792:5)
+      at TestContext.<anonymous> (file:///private/tmp/eval-r0-kg-settle/impl/test/kg-settlement-red.test.mjs:514:42)
+      at Test.runInAsyncScope (node:async_hooks:226:14)
+      at Test.run (node:internal/test_runner/test:1201:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:831:18)
+      at Test.postRun (node:internal/test_runner/test:1330:19)
+      at Test.run (node:internal/test_runner/test:1258:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    code: 'application_command_unavailable'
+  }
+
+test at impl/test/kg-settlement-red.test.mjs:543:1
+✖ KS7: partial state admit-done (crash after step 1) completes without conflict (644.976791ms)
+  TypeError: store.createAndClaimSettlementTask is not a function
+      at seedCommandSettlementBundle (file:///private/tmp/eval-r0-kg-settle/impl/test/kg-settlement-red.test.mjs:834:9)
+      at TestContext.<anonymous> (file:///private/tmp/eval-r0-kg-settle/impl/test/kg-settlement-red.test.mjs:546:50)
+      at Test.runInAsyncScope (node:async_hooks:226:14)
+      at Test.run (node:internal/test_runner/test:1201:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:831:18)
+      at Test.postRun (node:internal/test_runner/test:1330:19)
+      at Test.run (node:internal/test_runner/test:1258:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7)
+
+test at impl/test/kg-settlement-red.test.mjs:558:1
+✖ KS7: partial state admit+revoke-done (crash after step 2) completes without conflict (489.190167ms)
+  TypeError: store.createAndClaimSettlementTask is not a function
+      at seedCommandSettlementBundle (file:///private/tmp/eval-r0-kg-settle/impl/test/kg-settlement-red.test.mjs:834:9)
+      at TestContext.<anonymous> (file:///private/tmp/eval-r0-kg-settle/impl/test/kg-settlement-red.test.mjs:561:50)
+      at Test.runInAsyncScope (node:async_hooks:226:14)
+      at Test.run (node:internal/test_runner/test:1201:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:831:18)
+      at Test.postRun (node:internal/test_runner/test:1330:19)
+      at Test.run (node:internal/test_runner/test:1258:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7)
+
+test at impl/test/kg-settlement-red.test.mjs:579:1
+✖ KS8: shared kinds are exactly note+plan; doubt+link carry orchestrator_skipped dispositions (3501.644166ms)
+  AssertionError [ERR_ASSERTION]: note+plan elevate; doubt AND link are skipped
+  + actual - expected
+  
+  + []
+  - [
+  -   'note',
+  -   'plan'
+  - ]
+  
+      at TestContext.<anonymous> (file:///private/tmp/eval-r0-kg-settle/impl/test/kg-settlement-red.test.mjs:589:10)
+      at async Test.run (node:internal/test_runner/test:1208:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: [],
+    expected: [ 'note', 'plan' ],
+    operator: 'deepStrictEqual',
+    diff: 'simple'
+  }
+
+test at impl/test/kg-settlement-red.test.mjs:600:1
+✖ KS8: a not-ready elevation refusal is recorded in settlement.errors and close still completes (2301.947459ms)
+  AssertionError [ERR_ASSERTION]: settlement.errors is an array
+      at TestContext.<anonymous> (file:///private/tmp/eval-r0-kg-settle/impl/test/kg-settlement-red.test.mjs:610:10)
+      at async Test.run (node:internal/test_runner/test:1208:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: false,
+    expected: true,
+    operator: '==',
+    diff: 'simple'
+  }
+
+test at impl/test/kg-settlement-red.test.mjs:646:1
+✖ KS9b: the knowledge.settlement_lease registry row exists and is embedded-only (stage: row missing) (1.695792ms)
+  AssertionError [ERR_ASSERTION]: the settlement_lease row lands with the implementation
+      at TestContext.<anonymous> (file:///private/tmp/eval-r0-kg-settle/impl/test/kg-settlement-red.test.mjs:648:10)
+      at Test.runInAsyncScope (node:async_hooks:226:14)
+      at Test.run (node:internal/test_runner/test:1201:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:831:18)
+      at Test.postRun (node:internal/test_runner/test:1330:19)
+      at Test.run (node:internal/test_runner/test:1258:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    expected: true,
+    operator: '==',
+    diff: 'simple'
+  }
+
+test at impl/test/kg-settlement-red.test.mjs:656:1
+✖ KS10: a control-character-bearing worker note lands sanitized, framed UNTRUSTED on board reads (3510.693459ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  
+  0 !== 1
+  
+      at TestContext.<anonymous> (file:///private/tmp/eval-r0-kg-settle/impl/test/kg-settlement-red.test.mjs:663:10)
+      at async Test.run (node:internal/test_runner/test:1208:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: 0,
+    expected: 1,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }

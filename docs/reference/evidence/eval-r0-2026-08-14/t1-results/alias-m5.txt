@@ -1,0 +1,13 @@
+✔ M5-1: the divergence ledger is empty and the M4 retirement is pinned (31.4545ms)
+✔ M5-2: the C4 banned-token lint rejects legacy synonym verbs and passes the canonical tree (25.792334ms)
+✔ M5-3: run.steer is deleted as a surface alias and canonical run.send stays (0.397834ms)
+✔ M5-4: legacy run-phase strings are grep-clean in the surface layers (2.545166ms)
+✔ M5-5: GLOSSARY.md speaks the post-sunset vocabulary (0.291792ms)
+ℹ tests 5
+ℹ suites 0
+ℹ pass 5
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 287.772541

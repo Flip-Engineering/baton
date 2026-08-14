@@ -1,0 +1,108 @@
+✖ WG-1: waves.attach registry row (exact key/profile/surfaces/schema) + derived names; singular refused; no waves.start (100.064416ms)
+✖ WG-2: atomic transport attach — MCP + web bind, settle, return outcomes; typed refusals; exactly-once driver_detached (4768.163041ms)
+✖ WG-3: hidden-by-declaration — advertised schemas exclude mintWaveDetached/waveId; validators accept them (34.220584ms)
+✖ WG-4: per-run observe required; no emergency_stop transported; deployment-facade parity (5926.966083ms)
+✖ WG-5: two-commit landing discipline holds (digest change confined; suite markers; no waves.start) (11.341667ms)
+ℹ tests 5
+ℹ suites 0
+ℹ pass 0
+ℹ fail 5
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 12694.414667
+
+✖ failing tests:
+
+test at impl/test/wave-grammar-red.test.mjs:184:1
+✖ WG-1: waves.attach registry row (exact key/profile/surfaces/schema) + derived names; singular refused; no waves.start (100.064416ms)
+  AssertionError [ERR_ASSERTION]: waves.attach must be a canonical operation
+      at TestContext.<anonymous> (file:///private/tmp/eval-r0-wave-grammar/impl/test/wave-grammar-red.test.mjs:187:10)
+      at Test.runInAsyncScope (node:async_hooks:226:14)
+      at Test.run (node:internal/test_runner/test:1201:25)
+      at Test.start (node:internal/test_runner/test:1096:17)
+      at startSubtestAfterBootstrap (node:internal/test_runner/harness:385:17) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    expected: true,
+    operator: '==',
+    diff: 'simple'
+  }
+
+test at impl/test/wave-grammar-red.test.mjs:243:1
+✖ WG-2: atomic transport attach — MCP + web bind, settle, return outcomes; typed refusals; exactly-once driver_detached (4768.163041ms)
+  Error: unsupported application command waves.attach
+      at applicationError (file:///private/tmp/eval-r0-wave-grammar/impl/src/application.mjs:212:24)
+      at validateApplicationCommandArgs (file:///private/tmp/eval-r0-wave-grammar/impl/src/application.mjs:1505:26)
+      at BatonApplication.command (file:///private/tmp/eval-r0-wave-grammar/impl/src/application.mjs:11429:5)
+      at TestContext.<anonymous> (file:///private/tmp/eval-r0-wave-grammar/impl/test/wave-grammar-red.test.mjs:268:46)
+      at async Test.run (node:internal/test_runner/test:1208:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    code: 'application_command_unavailable'
+  }
+
+test at impl/test/wave-grammar-red.test.mjs:410:1
+✖ WG-3: hidden-by-declaration — advertised schemas exclude mintWaveDetached/waveId; validators accept them (34.220584ms)
+  AssertionError [ERR_ASSERTION]: The expression evaluated to a falsy value:
+  
+    assert.ok(attachOp?.transportHidden?.includes('mintWaveDetached'))
+  
+      at TestContext.<anonymous> (file:///private/tmp/eval-r0-wave-grammar/impl/test/wave-grammar-red.test.mjs:413:10)
+      at Test.runInAsyncScope (node:async_hooks:226:14)
+      at Test.run (node:internal/test_runner/test:1201:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:831:18)
+      at Test.postRun (node:internal/test_runner/test:1330:19)
+      at Test.run (node:internal/test_runner/test:1258:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    expected: true,
+    operator: '==',
+    diff: 'simple'
+  }
+
+test at impl/test/wave-grammar-red.test.mjs:477:1
+✖ WG-4: per-run observe required; no emergency_stop transported; deployment-facade parity (5926.966083ms)
+  AssertionError [ERR_ASSERTION]: The validation function is expected to return "true". Received false
+  
+  Caught error:
+  
+  Error: unsupported application command waves.attach
+      at async TestContext.<anonymous> (file:///private/tmp/eval-r0-wave-grammar/impl/test/wave-grammar-red.test.mjs:508:5)
+      at async Test.run (node:internal/test_runner/test:1208:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: Error: unsupported application command waves.attach
+        at applicationError (file:///private/tmp/eval-r0-wave-grammar/impl/src/application.mjs:212:24)
+        at validateApplicationCommandArgs (file:///private/tmp/eval-r0-wave-grammar/impl/src/application.mjs:1505:26)
+        at BatonApplication.command (file:///private/tmp/eval-r0-wave-grammar/impl/src/application.mjs:11429:5)
+        at TestContext.<anonymous> (file:///private/tmp/eval-r0-wave-grammar/impl/test/wave-grammar-red.test.mjs:509:26)
+        at async Test.run (node:internal/test_runner/test:1208:7)
+        at async Test.processPendingSubtests (node:internal/test_runner/test:831:7),
+    operator: 'rejects',
+    diff: 'simple'
+  }
+
+test at impl/test/wave-grammar-red.test.mjs:545:1
+✖ WG-5: two-commit landing discipline holds (digest change confined; suite markers; no waves.start) (11.341667ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  
+  0 !== 1
+  
+      at TestContext.<anonymous> (file:///private/tmp/eval-r0-wave-grammar/impl/test/wave-grammar-red.test.mjs:556:10)
+      at Test.runInAsyncScope (node:async_hooks:226:14)
+      at Test.run (node:internal/test_runner/test:1201:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:831:18)
+      at Test.postRun (node:internal/test_runner/test:1330:19)
+      at Test.run (node:internal/test_runner/test:1258:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: 0,
+    expected: 1,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
