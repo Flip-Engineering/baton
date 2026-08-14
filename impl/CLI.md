@@ -42,6 +42,7 @@ ordinary-CLI inventory. The conformance suite fails if they drift from served tr
 | `run.resume` | `ordinary` | `baton run resume` | `baton run resume RUN_ID --reason R` |
 | `run.retry` | `ordinary` | `baton run retry` | `baton run retry RUN_ID --reason R` |
 | `run.review` | `ordinary` | `baton run review` | `baton run review RUN_ID --exact codex/gpt-5.6-sol@low --reason R` |
+| `run.scratchpad.append` | `ordinary` | `baton run scratchpad append` | `baton run scratchpad append RUN_ID --scope shared --kind note --body TEXT` |
 | `run.scratchpad.elevate` | `ordinary` | `baton run scratchpad elevate` | `baton run scratchpad elevate RUN_ID --task TASK_ID --entries JSON` |
 | `run.scratchpad.read` | `ordinary` | `baton run scratchpad read` | `baton run scratchpad read RUN_ID --scope shared --cursor 0` |
 | `run.send` | `ordinary` | `baton run send` | `baton run send RUN_ID TEXT` |

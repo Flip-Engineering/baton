@@ -27,7 +27,7 @@ export const CLI_WEB_COMMANDS = new Set([
   'waves.attach', 'waves.start', 'waves.list', 'waves.progress', 'waves.send', 'waves.stop', 'waves.run', 'waves.compile',
   // Facade-projection epic (#87+#48, contract v2.2): the eight workflow-surface command names.
   'run.message.send', 'run.message.receipt', 'run.attention.watch',
-  'run.scratchpad.read', 'run.scratchpad.elevate', 'run.board.post', 'run.board.read',
+  'run.scratchpad.read', 'run.scratchpad.elevate', 'run.scratchpad.append', 'run.board.post', 'run.board.read',
   'run.knowledge.seed',
 ]);
 // CS-2 (control-surface v2): the five web-admitted verbs (run.episode, run.workstreams,
@@ -118,6 +118,37 @@ function duration(value) {
   const milliseconds = Number(match[1]) * scale;
   if (!Number.isSafeInteger(milliseconds) || milliseconds <= 0 || milliseconds > 86_400_000) throw cliError('duration is outside the Run wait ceiling');
   return milliseconds;
+}
+
+// #158 (H2.3): the closed per-kind scratchpad body validator the append branch applies — a note
+// body rides text verbatim; every other kind rides JSON parsed into the kernel's closed per-kind
+// shape (normalizeScratchpadEntry, coordination-store.mjs:607-696). A malformed body refuses
+// cli_invalid naming the expected shape (never a silent string).
+function scratchpadAppendBody(kind, rawBody) {
+  if (kind === 'note') return rawBody;
+  let parsed;
+  try { parsed = JSON.parse(rawBody); } catch {
+    throw cliError(`${kind} body must be JSON`, 'cli_invalid');
+  }
+  if (!record(parsed)) throw cliError(`${kind} body must be a JSON object`, 'cli_invalid');
+  if (kind === 'plan') {
+    if (!nonempty(parsed.objective)
+      || !Array.isArray(parsed.steps) || parsed.steps.length < 1 || parsed.steps.length > 16
+      || parsed.steps.some((step) => !record(step) || !nonempty(step.text)
+        || !['todo', 'doing', 'done'].includes(step.state))) {
+      throw cliError('plan body must be a JSON object {objective, steps:[{text, state}]}', 'cli_invalid');
+    }
+  } else if (kind === 'doubt') {
+    if (!nonempty(parsed.question)
+      || (parsed.context !== undefined && typeof parsed.context !== 'string')) {
+      throw cliError('doubt body must be a JSON object {question, context?}', 'cli_invalid');
+    }
+  } else if (kind === 'link') {
+    if (!nonempty(parsed.label) || !['url', 'repo_path', 'entry'].includes(parsed.target?.type)) {
+      throw cliError('link body must be a JSON object {label, relation, target}', 'cli_invalid');
+    }
+  }
+  return parsed;
 }
 
 function readBoundedFile(path, label, { ownerOnly = false, ownerUid = null } = {}) {
@@ -1299,6 +1330,17 @@ export function parseBatonCli(rawArgs) {
     noRemainder(args);
     return { kind: 'command', name: 'application.help', args: { topic, depth: 'outline' }, idempotencyKey };
   }
+  // #159 R5 (doc-truth-conformance): the application.help canonical verb is `baton application help`
+  // (deriveSurfaceNames, application-semantics.mjs:1130) — the same help read as `baton help`, under
+  // its noun-first spelling, so the taught verb is never a refusing spelling.
+  if (args[0] === 'application') {
+    args.shift();
+    if (args.shift() !== 'help') throw cliError('expected application help');
+    const topic = args.shift() ?? 'application';
+    if (!id(topic, 'help topic')) throw cliError('help topic is invalid');
+    noRemainder(args);
+    return { kind: 'command', name: 'application.help', args: { topic, depth: 'outline' }, idempotencyKey };
+  }
   if (args[0] === 'doctor') {
     args.shift();
     const depth = take(args, '--depth') ?? 'outline';
@@ -1607,7 +1649,32 @@ export function parseBatonCli(rawArgs) {
         idempotencyKey,
       };
     }
-    throw cliError(`unexpected argument ${sub}`);
+    // #158 (D2.1/H2.3): the append verb — `baton run scratchpad append RUN_ID --scope
+    // shared|worker:ID --kind note|plan|doubt|link --body TEXT`. The closed arg closure is
+    // {runId, scope, kind, body} (no caller-supplied workerId, H1.3); scope validates against the
+    // closed set exactly as the read branch does; a non-note body rides the closed per-kind JSON
+    // shape (scratchpadAppendBody).
+    if (sub === 'append') {
+      const runIdValue = id(args.shift(), 'Run ID');
+      const scope = take(args, '--scope', { required: true });
+      const kind = take(args, '--kind') ?? 'note';
+      const body = take(args, '--body', { required: true });
+      noRemainder(args);
+      if (!/^(?:shared|worker:[A-Za-z0-9._:-]{1,256})$/u.test(scope ?? '')) throw cliError('--scope must be shared or worker:ID');
+      if (!['note', 'plan', 'doubt', 'link'].includes(kind)) throw cliError('--kind must be note|plan|doubt|link');
+      return {
+        kind: 'command', name: 'run.scratchpad.append',
+        args: { runId: runIdValue, scope, kind, body: scratchpadAppendBody(kind, body) },
+        idempotencyKey,
+      };
+    }
+    // #158 (D4): the bare-`run scratchpad` trap — the parser teaches the closed subverb set
+    // read|elevate|append (never `unexpected argument undefined`); an unknown subverb is named AND
+    // the set is restated. The teaching message and the append branch land in the same rung.
+    if (sub === undefined) {
+      throw cliError('run scratchpad requires a subcommand: read|elevate|append', 'cli_invalid');
+    }
+    throw cliError(`run scratchpad ${sub} is not a subcommand; use read|elevate|append`, 'cli_invalid');
   }
   if (action === 'board') {
     const sub = args.shift();
@@ -1675,6 +1742,15 @@ export function parseBatonCli(rawArgs) {
     'stop', 'evidence', 'adopt', 'select', 'feedback', 'revise', 'stop-member',
     'retry', 'resume', 'review', 'integrate', 'export', 'debug']);
   if (!lifecycleActions.has(action)) {
+    // #159 R1/R4 (doc-truth-conformance): `run watch RUN_ID` → run.watch; bare `run watch` refuses
+    // the value-required (Run ID) shape. `watch` is handled HERE — after the `lifecycleActions`
+    // declaration — so the cli-silent-start (#155) DERIVED detection set stays closed (watch is a
+    // served run first-token, never a detection-set inflation, never a silent run.start objective).
+    if (action === 'watch') {
+      const watchRunId = id(args.shift(), 'Run ID');
+      noRemainder(args);
+      return { kind: 'command', name: 'run.watch', args: { runId: watchRunId }, idempotencyKey };
+    }
     // #160 R6 (F8, error-actionability-2026-08-13/contract-fold.md §2 F8): an unknown run verb is
     // never silently reinterpreted as a Run objective — a single-token distance-1 typo of exactly
     // one recognized first-token refuses cli_command_unavailable with the closed verb set (mirror
