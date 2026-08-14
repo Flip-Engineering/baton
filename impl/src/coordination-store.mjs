@@ -14240,8 +14240,8 @@ export class CoordinationStore {
     const steeringRegistered = this._steeringRuns.has(fields.runId);
     const workerId = auth.principalId;
     // D3: the surface body bound is the #89 admission row verbatim (OQ4). A note body over
-    // scratchpad.entry.body (8192) refuses scratchpad_entry_exceeded — the kernel's steering
-    // 8192/2048 note split is a doc note, never a second surface code.
+    // the FRAME_LIMITS['scratchpad.entry.body'] cap refuses scratchpad_entry_exceeded — the
+    // kernel's steering/non-steering note split is a doc note, never a second surface code.
     if (typeof fields.entry?.text === 'string'
       && Buffer.byteLength(fields.entry.text) > MAX_SCRATCHPAD_ENTRY_BYTES) {
       throw new CoordinationRefusal('scratchpad entry body exceeds the admission bound', 'scratchpad_entry_exceeded');

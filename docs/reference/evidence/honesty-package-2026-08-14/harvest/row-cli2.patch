@@ -1,0 +1,179 @@
+diff --git a/impl/src/application-cli.mjs b/impl/src/application-cli.mjs
+index 79540007..ac676979 100644
+--- a/impl/src/application-cli.mjs
++++ b/impl/src/application-cli.mjs
+@@ -1088,16 +1088,23 @@ export function projectBatonCliResult(parsed, result) {
+   return Object.freeze(compact);
+ }
+ 
+-// #160 R6 (F8, error-actionability-2026-08-13/contract-fold.md §2 F8/R6): the run-branch facade
+-// nouns handled in the earlier `if (action === '<noun>')` dispatch windows. Kept as an ARRAY (not
+-// a `new Set([...])` literal) so the maximal-set source-scan in the CLI-parser suite's
++// #155 D1 (cli-silent-start-2026-08-13/cli-silent-start-contract.md): the run-branch facade nouns
++// handled in the earlier `if (action === '<noun>')` dispatch windows. ONE named constant, pinned by
++// the PT-4(a) source-scan to equal the run-branch facade dispatch labels. Kept as an ARRAY (not a
++// `new Set([...])` literal) so the maximal-set source-scan in the CLI-parser suite's
+ // extractLifecycleVerbs still resolves to the lifecycleActions set, never this one.
+-const RUN_FACADE_VERBS = Object.freeze(['message', 'attention', 'scratchpad', 'board', 'knowledge']);
++const FACADE_NOUNS = ['message', 'attention', 'scratchpad', 'board', 'knowledge'];
++
++// #155 D1: the canonical alias first-tokens that resolve upstream via resolveCanonicalCliArgs
++// (view / list / member — application-semantics.mjs OPERATION_ALIASES cli canonical rows), never
++// handled by a run-branch handler. Cross-checked by the PT-4(b) source-scan against the
++// OPERATION_ALIASES derivation.
++const ALIAS_FIRST_TOKENS = ['view', 'list', 'member'];
+ 
+ // Optimal-string-alignment Damerau-Levenshtein distance (adjacent transpositions count as 1). Used
+ // ONLY to tell a typo'd run verb from a plain objective: `run deploy` (distance-1 from zero verbs)
+ // and `run stow` (distance-1 from two) both stay objective-first; `run shwo` (~show, exactly one)
+-// is a typo and refuses. This is the R6 refusal seam, not the parser's recognition-table work.
++// is a typo and refuses. This is the D2 rule-3 refusal seam, not the parser's recognition-table work.
+ function damerauLevenshteinDistance(a, b) {
+   const m = a.length;
+   const n = b.length;
+@@ -1116,17 +1123,24 @@ function damerauLevenshteinDistance(a, b) {
+   return dp[m][n];
+ }
+ 
+-// R6 (F8): returns the cli_command_unavailable refusal message when `action` is a single-token
+-// distance-1 typo of EXACTLY ONE recognized first-token; null otherwise (objective-first start).
+-// The message names the closed live verb set (excluding the refused-only follow/steer/member), so
+-// the caller is taught the real verbs — never a silent run.start reinterpretation.
+-function cliRunVerbTypoRefusal(action, lifecycleActions) {
++// #155 D2 rule 3 / D3 (F8): returns the cli_command_unavailable refusal message when `action` is a
++// single-token distance-1 typo of EXACTLY ONE recognized first-token (the full
++// RUN_RECOGNIZED_FIRST_TOKENS set, including the refused-only follow/steer positions and the member
++// prefix); null otherwise (objective-first start). Each refusal names the class ("not a run verb"),
++// the single suggested verb (or the dead verb's existing text for follow/steer, the member subverb
++// teaching for member), and the `run start OBJECTIVE` escape — never a silent run.start
++// reinterpretation.
++function cliRunVerbTypoRefusal(action, recognized) {
+   if (typeof action !== 'string' || action.length === 0 || /\s/u.test(action)) return null;
+-  const recognized = new Set([...lifecycleActions, ...RUN_FACADE_VERBS, 'start', 'follow']);
+   const neighbors = [...recognized].filter((verb) => verb !== action && damerauLevenshteinDistance(action, verb) <= 1);
+   if (neighbors.length !== 1) return null;
+-  const closedLiveVerbs = [...recognized].filter((verb) => !['follow', 'steer', 'member'].includes(verb)).sort();
+-  return `unknown run verb ${action}; expected ${closedLiveVerbs.join(', ')}`;
++  const neighbor = neighbors[0];
++  const escape = `To start a run with '${action}' as the objective, use 'run start ${action}'.`;
++  if (neighbor === 'follow') return `follow is not shipped by the Run application. ${escape}`;
++  if (neighbor === 'steer') return `steer was deleted at the M5 alias sunset; use run send. ${escape}`;
++  if (neighbor === 'member') return 'expected run member view, send, stop, or interrupt';
++  if (neighbor === 'attention') return `run ${action} is not a run verb; did you mean 'run attention watch'? ${escape}`;
++  return `run ${action} is not a run verb; did you mean 'run ${neighbor}'? ${escape}`;
+ }
+ 
+ function parseStart(args, objective, idempotencyKey, resultIntent = 'change') {
+@@ -1299,6 +1313,15 @@ export function parseBatonCli(rawArgs) {
+     noRemainder(args);
+     return { kind: 'command', name: 'application.help', args: { topic, depth: 'outline' }, idempotencyKey };
+   }
++  // #159 D4 verb-column leg — the derived surface name for the application.help operation is
++  // `baton application help` (deriveSurfaceNames('application.help').cli); it must parse to
++  // application.help, never refuse as a top-level unknown first-token.
++  if (args[0] === 'application') {
++    args.shift();
++    if (args.shift() !== 'help') throw cliError('expected application help');
++    noRemainder(args);
++    return { kind: 'command', name: 'application.help', args: { topic: 'application', depth: 'outline' }, idempotencyKey };
++  }
+   if (args[0] === 'doctor') {
+     args.shift();
+     const depth = take(args, '--depth') ?? 'outline';
+@@ -1607,7 +1630,52 @@ export function parseBatonCli(rawArgs) {
+         idempotencyKey,
+       };
+     }
+-    throw cliError(`unexpected argument ${sub}`);
++    if (sub === 'append') {
++      // #158 D2.2/H2.3 — the folded shared-scratchpad WRITE verb. The closed arg closure is
++      // {runId, scope, kind, body} (no caller-supplied workerId — H1.3); --scope validates against
++      // the closed {shared, worker:<id>} set exactly as the read branch does; --kind defaults to
++      // note; a non-note body is JSON-parsed into the kernel's closed per-kind shape
++      // (normalizeScratchpadEntry, coordination-store.mjs) and a malformed/mis-shaped body refuses
++      // cli_invalid naming the expected shape — never a silent string (H2.3).
++      const runIdValue = id(args.shift(), 'Run ID');
++      const scope = take(args, '--scope', { required: true });
++      const kind = take(args, '--kind') ?? 'note';
++      const body = take(args, '--body', { required: true });
++      noRemainder(args);
++      if (!/^(?:shared|worker:[A-Za-z0-9._:-]{1,256})$/u.test(scope ?? '')) throw cliError('--scope must be shared or worker:ID');
++      if (!['note', 'plan', 'doubt', 'link'].includes(kind)) throw cliError('--kind must be note|plan|doubt|link');
++      let parsedBody = body;
++      if (kind !== 'note') {
++        let parsed;
++        try { parsed = JSON.parse(body); }
++        catch { throw cliError(`${kind} body must be JSON matching the closed ${kind} shape`); }
++        if (kind === 'plan') {
++          if (!record(parsed) || !nonempty(parsed.objective) || !Array.isArray(parsed.steps) || parsed.steps.length < 1
++            || parsed.steps.some((step) => !record(step) || !nonempty(step.text) || !['todo', 'doing', 'done'].includes(step.state))) {
++            throw cliError('plan body must match {objective, steps:[{text, state}]} with state in todo|doing|done');
++          }
++          parsedBody = parsed;
++        } else if (kind === 'doubt') {
++          if (!record(parsed) || !nonempty(parsed.question)) throw cliError('doubt body must match {question, context}');
++          parsedBody = parsed;
++        } else {
++          if (!record(parsed) || !nonempty(parsed.label) || !nonempty(parsed.relation) || !record(parsed.target)) {
++            throw cliError('link body must match {label, relation, target}');
++          }
++          parsedBody = parsed;
++        }
++      }
++      return {
++        kind: 'command', name: 'run.scratchpad.append',
++        args: { runId: runIdValue, scope, kind, body: parsedBody },
++        idempotencyKey,
++      };
++    }
++    // #158 D4 — bare `run scratchpad` and an unknown sub-verb teach the closed set read|elevate|append,
++    // never the `unexpected argument undefined` leak (F-9 family).
++    throw cliError(sub === undefined
++      ? 'run scratchpad requires a subcommand: read|elevate|append'
++      : `unknown run scratchpad subcommand ${sub}; expected read|elevate|append`);
+   }
+   if (action === 'board') {
+     const sub = args.shift();
+@@ -1674,13 +1742,35 @@ export function parseBatonCli(rawArgs) {
+     'send', 'interrupt', 'progress', 'events', 'output', 'episode', 'workstreams', 'notify', 'result',
+     'stop', 'evidence', 'adopt', 'select', 'feedback', 'revise', 'stop-member',
+     'retry', 'resume', 'review', 'integrate', 'export', 'debug']);
+-  if (!lifecycleActions.has(action)) {
+-    // #160 R6 (F8, error-actionability-2026-08-13/contract-fold.md §2 F8): an unknown run verb is
+-    // never silently reinterpreted as a Run objective — a single-token distance-1 typo of exactly
+-    // one recognized first-token refuses cli_command_unavailable with the closed verb set (mirror
+-    // the waves branch). A token distance-1 from zero (a plain objective like `run deploy`) or from
+-    // two-or-more (ambiguous — the parser never guesses) keeps the objective-first start.
+-    const typoRefusal = cliRunVerbTypoRefusal(action, lifecycleActions);
++  // #155 D1 — the recognized run first-token set is DERIVED from the parser's own dispatch, never a
++  // second hand-list (the D-1/#103 compose-don't-duplicate law): lifecycle verbs + facade nouns +
++  // the explicit start/follow positions + the canonical alias first-tokens. It is the single runtime
++  // source for the typo guard below; the spread-composed form keeps the maximal-set source-scan's
++  // extractLifecycleVerbs pinned to lifecycleActions (the composition-form requirement).
++  const RUN_RECOGNIZED_FIRST_TOKENS = new Set([...lifecycleActions, ...FACADE_NOUNS, 'start', 'follow', ...ALIAS_FIRST_TOKENS]);
++  // #155 D2 rule 2: the bare / unknown-sub `member` incomplete-prefix refusal. `run member view|
++  // send|stop|interrupt` resolves upstream via resolveCanonicalCliArgs; a bare `run member` (or an
++  // unknown sub-verb) reaches here unresolved and must refuse with the subverb teaching, never a
++  // silent run.start (audit D-3).
++  if (action === 'member') {
++    throw cliError('expected run member view, send, stop, or interrupt', 'cli_command_unavailable');
++  }
++  // #159 D3 #1 (F-2): `run watch RUN_ID` is a served verb — canonical run.watch, op run.follow. It
++  // is dispatched by a dedicated branch rather than membership in RUN_RECOGNIZED_FIRST_TOKENS so the
++  // #155 detection set stays at 39 (the immutable PT-7 pin; run.watch keeps cli: null, never a
++  // recognized first-token — PT-4(c)). Bare `run watch` refuses value-required.
++  if (action === 'watch') {
++    const watchRunId = id(args.shift(), 'Run ID');
++    noRemainder(args);
++    return { kind: 'command', name: 'run.watch', args: { runId: watchRunId }, idempotencyKey };
++  }
++  // #155 D2 rule 3 (F8): an unknown run verb is never silently reinterpreted as a Run objective — a
++  // single-token distance-1 typo of exactly one recognized first-token refuses cli_command_unavailable
++  // with the suggestion + the run start escape. A token distance-1 from zero (a plain objective like
++  // `run deploy`) or from two-or-more (ambiguous — the parser never guesses) keeps the objective-first
++  // start (rule 4).
++  if (!RUN_RECOGNIZED_FIRST_TOKENS.has(action)) {
++    const typoRefusal = cliRunVerbTypoRefusal(action, RUN_RECOGNIZED_FIRST_TOKENS);
+     if (typoRefusal !== null) throw cliError(typoRefusal, 'cli_command_unavailable');
+     return parseStart(args, action, idempotencyKey);
+   }

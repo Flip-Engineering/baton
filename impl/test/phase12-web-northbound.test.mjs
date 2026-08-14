@@ -193,7 +193,14 @@ test('UA5/WN: malformed Run intent, inconsistent Run identity, and capability re
     args: { intent: { runId: 'run-web-a', objective: 'work', profile: 'standard', route: { harness: 'grok', model: 'grok-4-code' } } },
   }));
   assert.equal(malformed.status, 400);
-  assert.equal(malformed.body.error.code, 'invalid_command');
+  // Restage 2026-08-14 (honesty wave-c, #160 R4): a NAMED application-validator refusal now
+  // passes through its typed code on the web surface (web-northbound.mjs #160 R4 W3/W8-2 hook —
+  // "a NAMED validator refusal … passes through its code + message instead of the anonymous
+  // … collapse"); the malformed route selector surfaces application_route_invalid, pinned
+  // positively by error-actionability-red W8-2. The untyped route-shape arm keeps invalid_command
+  // (W8-1, asserted below in WN4's runId leg). Before-admission is unchanged: applicationCalls
+  // stays empty and no web.command_admitted event is minted (asserted at test end).
+  assert.equal(malformed.body.error.code, 'application_route_invalid');
 
   const mismatched = await web.execute(context(), envelope({
     commandId: 'run-mismatch', idempotencyKey: 'run-mismatch', command: 'run_status',
@@ -499,15 +506,21 @@ test('WN4: an identical retry executes once and a same-key different body confli
 
 test('WN4/WN5/WN7: unknown fields, unknown model policy, and client-supplied audit identity are rejected before admission', async () => {
   const { web, calls, coordination } = fixture();
-  for (const invalid of [
-    envelope({ actor: 'admin' }),
-    envelope({ runId: '../escape' }),
-    envelope({ args: { ...envelope().args, credential: 'secret' } }),
-    envelope({ args: { ...envelope().args, modelPolicy: { reasoningEffort: 'high', bypassSandbox: true } } }),
+  // Restage 2026-08-14 (honesty wave-c, #160 R4): the pre-admission unknown-field refusals now
+  // carry their fixed bounded codes with the offending key named in `field` (W1/W2 —
+  // web-northbound.mjs: "the field is only named when it is a safe bounded identifier"), pinned
+  // positively by this suite's WN4/WN7 bounded-codes test and error-actionability-red W1/W2.
+  // The untyped route-shape leg (runId '../escape') keeps the generic invalid_command (W8-1).
+  // Before-admission is unchanged: zero application calls, no web.command_admitted event.
+  for (const [invalid, expected] of [
+    [envelope({ actor: 'admin' }), 'unknown_top_level_field'],
+    [envelope({ runId: '../escape' }), 'invalid_command'],
+    [envelope({ args: { ...envelope().args, credential: 'secret' } }), 'unknown_argument_field'],
+    [envelope({ args: { ...envelope().args, modelPolicy: { reasoningEffort: 'high', bypassSandbox: true } } }), 'unknown_model_policy_field'],
   ]) {
     const result = await web.execute(context(), invalid);
     assert.equal(result.status, 400);
-    assert.equal(result.body.error.code, 'invalid_command');
+    assert.equal(result.body.error.code, expected);
   }
   assert.equal(calls.length, 0);
   assert.equal(coordination.events().some((event) => event.kind === 'web.command_admitted'), false);
