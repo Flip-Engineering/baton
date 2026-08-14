@@ -115,6 +115,7 @@ const CAPABILITY = Object.freeze({
   baton_run_attention_watch: ['observe'],
   baton_run_scratchpad_read: ['observe'],
   baton_run_scratchpad_elevate: ['control', 'observe'],
+  baton_run_scratchpad_append: ['control', 'observe'],
   baton_run_knowledge_seed: ['control', 'observe'],
   // Matrix mutations keep the existing transported posture: observe admits the tool call, while
   // the run-orchestrator lease resolved inside S-2 is the control authority.
@@ -197,9 +198,57 @@ function toolResult(value, isError = false) {
   const structuredContent = record(normalizedValue) ? normalizedValue : { result: normalizedValue };
   return Object.freeze({ content: Object.freeze([{ type: 'text', text: JSON.stringify(structuredContent) }]), structuredContent: Object.freeze(structuredContent), isError });
 }
-function toolError(code, message = null, detail = null) {
-  return toolResult({ ok: false, error: { code, ...(message == null ? {} : { message }), ...(detail == null ? {} : { detail }) } }, true);
+function toolError(code, message = null, detail = null, field = null) {
+  return toolResult({ ok: false, error: { code, ...(message == null ? {} : { message }), ...(detail == null ? {} : { detail }), ...(field == null ? {} : { field }) } }, true);
 }
+// #160 R2 (error-actionability-2026-08-13/contract-fold.md §2 D4 R2): the coaching size family —
+// every cataloged byte-lane refusalCode from limits.mjs except the `workflow_*` lane (which the
+// workflow_* arm handles). Derived from the closed catalog so a new lane's refusalCode is
+// automatically covered (additive-only).
+const COACHING_REFUSAL_CODES = new Set(
+  Object.values(FRAME_LIMITS)
+    .map((row) => row?.refusalCode)
+    .filter((code) => typeof code === 'string' && !code.startsWith('workflow_')),
+);
+
+// #160 R2: the centralized LANE_CRAFTED decision used at ALL six MCP error sinks. The wire code is
+// stateFailureCode(cause); the message + detail ride ONLY for the lane-crafted families (coaching,
+// wave_member_invalid, wave_not_found, workflow_*). Coaching refusals put the triple on the Error
+// ROOT (coachingApplicationError application.mjs:247-252 / coachingValidationError messages.mjs:228-235),
+// so `cause.detail` is null — the detail object is CONSTRUCTED from the root fields. Lane-authored
+// wave/workflow refusals carry a prebuilt detail object and pass it through verbatim.
+function laneCraftedToolError(cause) {
+  const stateCode = stateFailureCode(cause);
+  const LANE_CRAFTED = typeof cause?.code === 'string'
+    && (COACHING_REFUSAL_CODES.has(cause.code) || cause.code === 'wave_member_invalid' || cause.code === 'wave_not_found' || cause.code.startsWith('workflow_'));
+  if (!LANE_CRAFTED) return toolError(stateCode);
+  // Coaching refusals put the triple on the Error ROOT (coachingApplicationError application.mjs /
+  // coachingValidationError messages.mjs) — construct the detail object from those root fields.
+  // The constructed gracefulPath makes the refusal actionable regardless of which surface renders it.
+  if (COACHING_REFUSAL_CODES.has(cause?.code)) {
+    return toolError(stateCode, cause?.message ?? null, {
+      ...(cause?.field != null ? { field: cause.field } : {}),
+      ...(cause?.cap != null ? { cap: cause.cap } : {}),
+      ...(cause?.actual != null ? { actual: cause.actual } : {}),
+      unit: cause?.unit ?? 'bytes',
+      gracefulPath: cause?.gracefulPath ?? null,
+    });
+  }
+  // Wave refusals carry their OWN prebuilt {actual, cap, cause, role} detail; the lane's message
+  // rides BOTH at the error root (W6/F4) and INSIDE the detail so the actionability triple resolves
+  // on every surface (M4 — the observe path renders the same payload as the stateful path). The
+  // per-field assertions in wave-observability A6-1/A6-2/A6-3 never deepEqual the whole detail.
+  if (cause?.code === 'wave_member_invalid' || cause?.code === 'wave_not_found') {
+    const laneDetail = cause?.detail && typeof cause.detail === 'object' && !Array.isArray(cause.detail)
+      ? { ...cause.detail, ...(typeof cause?.message === 'string' ? { message: cause.message } : {}) }
+      : (typeof cause?.message === 'string' ? { message: cause.message } : null);
+    return toolError(stateCode, cause?.message ?? null, laneDetail);
+  }
+  // workflow_* (B3): the LANE_CRAFTED arm forwards cause?.detail VERBATIM (workflow-dsl PIN-E pin —
+  // error.detail deepEquals {line, field, expected}), never augmented.
+  return toolError(stateCode, cause?.message ?? null, cause?.detail ?? null);
+}
+
 function stateFailureCode(cause) {
   if (cause?.mcpCode === 'stale_fence') return 'stale_fence';
   if (cause?.code === 'application_unauthorized') return 'forbidden';
@@ -277,6 +326,11 @@ function stateFailureCode(cause) {
     'context_package_attach_invalid', 'context_package_unavailable'].includes(cause?.code)) return cause.code;
   if (['ModelSelectionError', 'SessionSelectionError', 'DuplicateTaskIdError', 'UnknownVendorError', 'DependencyCycleError', 'TypeError'].includes(cause?.name)) return 'invalid_command';
   if (cause?.name === 'WorkerNotFoundError') return 'not_found';
+  // #160 R2 (error-actionability-2026-08-13/contract-fold.md §2 D4 R2): the coaching size family
+  // (every byte-lane refusalCode from limits.mjs except workflow_*). Checked right before the
+  // fallthrough so a coaching throw never degrades to command_outcome_unknown — the refusal rides
+  // with its {cap, actual, unit, gracefulPath} triple (constructed by laneCraftedToolError).
+  if (COACHING_REFUSAL_CODES.has(cause?.code)) return cause.code;
   return 'command_outcome_unknown';
 }
 function protocolResult(id, result) { return { jsonrpc: '2.0', id, result }; }
@@ -680,6 +734,18 @@ const LEGACY_ORDINARY_APPLICATION_TOOL_DEFINITIONS = Object.freeze([
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
   },
   {
+    name: 'baton_run_scratchpad_append',
+    description: "Append one entry to a run scratchpad scope (shared or worker:<id>) as a direct EPHEMERAL write (issue #158). Returns the store receipt verbatim {ok, result:'written'|'idempotent', entryId, entryDigest, scope, scratchpadFence, eventSeq}. The entry's author is server-bound to the caller identity; an exact retry under the same idempotencyKey replays the prior receipt.",
+    inputSchema: schema({
+      ...repo, runId,
+      scope: { type: 'string', pattern: '^(?:shared|worker:[A-Za-z0-9._:-]{1,256})$' },
+      kind: { type: 'string', enum: ['note', 'plan', 'doubt', 'link'] },
+      body: { oneOf: [{ type: 'string', minLength: 1 }, { type: 'object' }, { type: 'array' }] },
+      idempotencyKey: { type: 'string', pattern: '^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$' },
+    }, ['repoId', 'runId', 'scope']),
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+  },
+  {
     name: 'baton_run_knowledge_seed',
     description: "Seed one content-addressed knowledge node inside a run's horizon. An exact retry replays idempotent under the server-derived key; distinct content seeds a distinct node, never a silent overwrite.",
     inputSchema: schema({
@@ -838,7 +904,8 @@ const ORDINARY_EXPLICIT_TOOLS = new Set([
   'baton_scratchpad_elevate', 'baton_scratchpad_settle', 'baton_knowledge_promote',
   'baton_knowledge_settlement_lease',
   'baton_run_message_send', 'baton_run_message_receipt', 'baton_run_attention_watch',
-  'baton_run_scratchpad_read', 'baton_run_scratchpad_elevate', 'baton_run_knowledge_seed',
+  'baton_run_scratchpad_read', 'baton_run_scratchpad_elevate', 'baton_run_scratchpad_append',
+  'baton_run_knowledge_seed',
 ]);
 const TOOL_DEFINITIONS = Object.freeze([...ORDINARY_APPLICATION_TOOL_DEFINITIONS, ...APPLICATION_TOOL_DEFINITIONS, ...ADVANCED_TOOL_DEFINITIONS, ...REFLEX_TOOL_DEFINITIONS]);
 const TOOL_BY_NAME = new Map(TOOL_DEFINITIONS.map((tool) => [tool.name, tool]));
@@ -963,7 +1030,20 @@ function validateArguments(name, args, maxWaitMs = null) {
       const commandArgs = applicationArgs(name, args);
       validateApplicationCommandArgs(command, commandArgs);
     }
-    catch { return 'invalid_run_command'; }
+    catch (cause) {
+      // #160 R1 (error-actionability-2026-08-13/contract-fold.md §2 D4 R1): a NAMED coaching
+      // refusal thrown by the application VALIDATOR (a byte-lane oversize such as the legacy-alias
+      // run.legacy_send.body → run_legacy_send_exceeded at application.mjs) passes through as a
+      // structured refusal so it stays actionable on the MCP wire — but a shape/route error
+      // (application_route_invalid, application_intent_invalid, ...) still collapses to the generic
+      // invalid_run_command the pre-#160 surface asserted (phase16 UA5 pin). The coaching family
+      // never reaches this catch from run.start's objective (that byte law lives at the start()
+      // admission seam, handled by the stateful sink's laneCraftedToolError).
+      if (typeof cause?.code === 'string' && COACHING_REFUSAL_CODES.has(cause.code)) {
+        return { code: cause.code, message: typeof cause?.message === 'string' ? cause.message : cause.code };
+      }
+      return 'invalid_run_command';
+    }
     if (['fleet_run_wait', 'fleet_run_follow'].includes(name)
       && (!Number.isSafeInteger(maxWaitMs) || args.timeoutMs > maxWaitMs)) return 'invalid_run_wait';
   }
@@ -1118,14 +1198,21 @@ function validateArguments(name, args, maxWaitMs = null) {
   if (name === 'baton_waves_start') {
     if (!Array.isArray(args.members) || args.members.length === 0 || args.members.length > 64) return 'invalid_wave_start';
     const roles = new Set();
-    for (const member of args.members) {
+    for (let index = 0; index < args.members.length; index += 1) {
+      const member = args.members[index];
       if (!record(member) || !nonempty(member.role) || !nonempty(member.objective)
         || !record(member.exact) || !nonempty(member.exact.harness)
         || !nonempty(member.exact.model) || !nonempty(member.exact.effort)
         || (Object.hasOwn(member, 'scope')
           && (!Array.isArray(member.scope) || member.scope.length === 0 || member.scope.length > 64
-            || member.scope.some((item) => !nonempty(item))))) return 'invalid_wave_start';
-      if (roles.has(member.role)) return 'invalid_wave_start';
+            || member.scope.some((item) => !nonempty(item))))) {
+        // #160 M3 (error-actionability-2026-08-13/contract-fold.md §2 D4 M3): the refusal names the
+        // offending member by POSITION so the caller can fix exactly the bad wave member.
+        return { code: 'invalid_wave_start', field: `member.${index}`, message: `invalid_wave_start: member ${index} is invalid` };
+      }
+      if (roles.has(member.role)) {
+        return { code: 'invalid_wave_start', field: `member.${index}`, message: `invalid_wave_start: duplicate member role ${member.role}` };
+      }
       roles.add(member.role);
     }
   }
@@ -1206,6 +1293,17 @@ function validateArguments(name, args, maxWaitMs = null) {
       || new Set(args.entryIds).size !== args.entryIds.length
       || args.entryIds.some((id) => typeof id !== 'string' || !/^scratchpad-entry:[a-f0-9]{64}$/.test(id))) {
       return 'invalid_scratchpad_elevate';
+    }
+  }
+  if (name === 'baton_run_scratchpad_append') {
+    if (!/^[A-Za-z0-9._:-]{1,256}$/.test(args.runId ?? '')
+      || typeof args.scope !== 'string' || !/^(?:shared|worker:[A-Za-z0-9._:-]{1,256})$/.test(args.scope)
+      || (Object.hasOwn(args, 'kind') && !['note', 'plan', 'doubt', 'link'].includes(args.kind))
+      || !Object.hasOwn(args, 'body') || args.body === null || args.body === undefined
+      || (typeof args.body !== 'string' && typeof args.body !== 'object')
+      || (Object.hasOwn(args, 'idempotencyKey')
+        && (typeof args.idempotencyKey !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/.test(args.idempotencyKey)))) {
+      return 'invalid_scratchpad_append';
     }
   }
   if (name === 'baton_run_knowledge_seed') {
@@ -1434,8 +1532,13 @@ export class McpFleetServer {
     } : suppliedArgs;
     const invalid = validateArguments(params.name, args, this.maxWaitMs);
     if (invalid) {
-      try { this._audit('tool_invalid', params.name, args, invalid); } catch { return protocolResult(id, toolError('temporarily_unavailable')); }
-      return protocolResult(id, toolError(invalid));
+      // #160 R1/M3: validateArguments may return a STRUCTURED refusal ({code, field, message}) when
+      // a named application-validator refusal or a wave-member pointer must ride the wire.
+      const refusalCode = typeof invalid === 'string' ? invalid : invalid.code;
+      try { this._audit('tool_invalid', params.name, args, refusalCode); } catch { return protocolResult(id, toolError('temporarily_unavailable')); }
+      return protocolResult(id, typeof invalid === 'string'
+        ? toolError(invalid)
+        : toolError(invalid.code, invalid.message, null, invalid.field));
     }
     const refused = this._authority(params.name, args);
     if (refused) {
@@ -1477,7 +1580,7 @@ export class McpFleetServer {
       } catch (cause) {
         try { this._audit('tool_refused', params.name, args, stateFailureCode(cause)); }
         catch { return protocolResult(id, toolError('temporarily_unavailable')); }
-        return protocolResult(id, toolError(stateFailureCode(cause)));
+        return protocolResult(id, laneCraftedToolError(cause));
       }
       if (!Array.isArray(semanticAuthority?.requiredCapabilities)
         || !semanticAuthority.requiredCapabilities.every(
@@ -1537,15 +1640,22 @@ export class McpFleetServer {
         catch { return toolError('temporarily_unavailable'); }
         // Part F: read-only reflex tools (not APPLICATION_TOOL-registered — Part A.2) map typed
         // codes too, never the generic 'command_failed'.
-        const code = (name === 'baton_run_message_receipt' || name === 'baton_run_scratchpad_elevate')
-          && cause?.code === 'application_unauthorized'
-          ? 'application_unauthorized' : stateFailureCode(cause);
-        // The coaching message rides ONLY typed lane refusals (their messages are the lane's own
-        // sanitized compositions — FP-15's cap+actual naming); an untyped internal throw keeps the
-        // MN1/MN8 sanitization law — never a private provider detail in a tool error.
-        return toolError(name === 'fleet_goal_plan_status' || APPLICATION_TOOL[name]
-          || REFLEX_READ_ONLY_TOOLS.has(name) || ORDINARY_EXPLICIT_TOOLS.has(name)
-          ? code : 'command_failed', typeof cause?.code === 'string' ? (cause?.message ?? null) : null);
+        if (name !== 'fleet_goal_plan_status' && !APPLICATION_TOOL[name]
+          && !REFLEX_READ_ONLY_TOOLS.has(name) && !ORDINARY_EXPLICIT_TOOLS.has(name)) {
+          return toolError('command_failed', typeof cause?.code === 'string' ? (cause?.message ?? null) : null);
+        }
+        // The two message-elevation verbs surface their ONE typed code verbatim (application_
+        // unauthorized), never the generic 'forbidden' mapping.
+        if ((name === 'baton_run_message_receipt' || name === 'baton_run_scratchpad_elevate')
+          && cause?.code === 'application_unauthorized') {
+          return toolError('application_unauthorized', cause?.message ?? null);
+        }
+        // #160 R2 (error-actionability-2026-08-13/contract-fold.md §2 D4 R2): the LANE-CRAFTED
+        // families ride their message + constructed detail on this observe path too (M4 — a
+        // baton_waves_progress wave_member_invalid must carry {actual, cap, cause, role}); an
+        // untyped internal throw keeps the MN1/MN8 sanitization law — never a private provider
+        // detail in a tool error.
+        return laneCraftedToolError(cause);
       }
     }
     const callId = randomUUID();
@@ -1571,7 +1681,7 @@ export class McpFleetServer {
         let outcome;
         try { outcome = toolResult(await this._dispatchDrain(args, admittedActor, callId)); }
         catch (cause) {
-          outcome = toolError(stateFailureCode(cause));
+          outcome = laneCraftedToolError(cause);
           try { this.coordination.failMcpCall(callId, outcome, { actor: admittedActor, key: `mcp.fail:${callId}` }); }
           catch { return toolError('temporarily_unavailable'); }
           return outcome;
@@ -1602,7 +1712,7 @@ export class McpFleetServer {
             : this._dispatch(name, args, admittedActor, admittedCallId, admittedPrincipal)));
         }
         catch (cause) {
-          outcome = toolError(stateFailureCode(cause));
+          outcome = laneCraftedToolError(cause);
           try { this.coordination.failMcpCall(admittedCallId, outcome, { actor: admittedActor, key: `mcp.fail:${admittedCallId}` }); }
           catch { return toolError('temporarily_unavailable'); }
           if (APPLICATION_TOOL[name]) this._applicationDispatches.delete(admittedCallId);
@@ -1635,7 +1745,7 @@ export class McpFleetServer {
             } : {}),
             ...(sessionAuthority ? { sessionAuthority: clone(sessionAuthority) } : {}),
           });
-        } catch (cause) { return toolError(stateFailureCode(cause)); }
+        } catch (cause) { return laneCraftedToolError(cause); }
       }
       if (GOAL_PLAN_MUTATIONS.has(name)) {
         const prior = admission.call.outcome;
@@ -1656,20 +1766,14 @@ export class McpFleetServer {
           : this._dispatch(name, args, actor, callId)));
     }
     catch (cause) {
-      // #132 D5.2 (wave-observability-2026-08-06/contract.md §D5.1/§D5.2): a TYPED lane refusal
-      // (wave_member_invalid / wave_not_found) carries the lane's OWN message byte-identically plus
-      // the {actual, cap, cause, role} detail (W6/F4). An untyped internal throw keeps the MN1/MN8
-      // sanitization law — code-only, never a private provider detail in a tool error.
-      const stateCode = stateFailureCode(cause);
-      // The message/detail payload rides ONLY for the lane-crafted codes (wave_member_invalid /
-      // wave_not_found / workflow_*) whose messages are authored by the lane itself (W6/F4).
-      // Any other typed error keeps the MN1/MN8 sanitization law: code-only, never a private
-      // provider/detail leak (the GP7/GP8 pin — an arbitrary typed throw's message is NOT safe).
-      const LANE_CRAFTED = typeof cause?.code === 'string'
-        && (cause.code === 'wave_member_invalid' || cause.code === 'wave_not_found' || cause.code.startsWith('workflow_'));
-      outcome = LANE_CRAFTED
-        ? toolError(stateCode, cause?.message ?? null, cause?.detail ?? null)
-        : toolError(stateCode);
+      // #132 D5.2 + #160 R2 (error-actionability-2026-08-13/contract-fold.md §2 D4 R2): a TYPED
+      // lane refusal carries the lane's OWN message byte-identically plus the constructed detail —
+      // {actual, cap, cause, role} for wave_member_invalid / wave_not_found (W6/F4), a root-field
+      // coaching triple {cap, actual, unit, gracefulPath} for the coaching family, the lane's own
+      // detail for workflow_* (B3). An untyped internal throw keeps the MN1/MN8 sanitization law —
+      // code-only, never a private provider detail in a tool error (the GP7/GP8 pin — an arbitrary
+      // typed throw's message is NOT safe).
+      outcome = laneCraftedToolError(cause);
       try { this.coordination.failMcpCall(callId, outcome, { actor, key: `mcp.fail:${callId}` }); }
       catch { return toolError('temporarily_unavailable'); }
       if (APPLICATION_TOOL[name]) this._applicationDispatches.delete(callId);
@@ -1932,6 +2036,17 @@ export class McpFleetServer {
     else if (name === 'baton_run_scratchpad_elevate') {
       value = await this.application.command('run.scratchpad.elevate', {
         runId: args.runId, taskId: args.taskId, entryIds: clone(args.entryIds),
+      }, {
+        actor: actor ?? `mcp:${principal.userId}:${principal.sessionId}`,
+        principalId: principal.userId, sessionId: principal.sessionId,
+      }, this._applicationDispatchContext(args, callId, principal));
+    }
+    else if (name === 'baton_run_scratchpad_append') {
+      value = await this.application.command('run.scratchpad.append', {
+        runId: args.runId, scope: args.scope,
+        ...(Object.hasOwn(args, 'kind') ? { kind: args.kind } : {}),
+        body: clone(args.body),
+        ...(Object.hasOwn(args, 'idempotencyKey') ? { idempotencyKey: args.idempotencyKey } : {}),
       }, {
         actor: actor ?? `mcp:${principal.userId}:${principal.sessionId}`,
         principalId: principal.userId, sessionId: principal.sessionId,

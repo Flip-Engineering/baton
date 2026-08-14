@@ -96,29 +96,65 @@ the route-picking prerequisite: call it before starting work.
 
 The wave-ergonomics tools are the ordinary agent workflow. Wave members are detached — the start
 response returns `{waveId, members: [{role, runId}]}`; live handles never cross the transport.
+Every wave tool takes the repository coordinate first (`repoId`).
 
 - `baton_waves_start` — start a detached wave.
 - `baton_waves_progress` — page member progress with cursors.
 - `baton_waves_send` and `baton_waves_stop` — steer or stop ONE member by runId.
+- `baton_waves_list` and `baton_waves_run` — page the wave list and compile a wave spec.
 - `baton_decision_answer` — answer a pending decision.
 
-1. **Start** — `baton_waves_start` with `{idempotencyKey, members: [{role, objective, exact,
-   scope}]}`. Quota is debited PER MEMBER, not per call. Each member rides the deployment
-   profile's exact-route admission; a route outside the profile refuses with the typed route code.
-2. **Page progress** — `baton_waves_progress` with `{waveId, cursor}` returns members paginated
-   ≤16 per page with an explicit `{cursor, nextCursor}`. Every member is a bounded projection
+1. **Start** — `baton_waves_start` debits quota PER MEMBER, not per call. Each member rides the
+   deployment profile's exact-route admission; a route outside the profile refuses with the typed
+   route code:
+
+   ```json
+   { "repoId": "repo-a", "idempotencyKey": "ik-1", "members": [{ "role": "alpha", "objective": "probe" }] }
+   ```
+
+2. **Page progress** — `baton_waves_progress` returns members paginated ≤16 per page with an
+   explicit `{cursor, nextCursor}`. Every member is a bounded projection
    (`{role, phase, progressClass, attention, knowledge}`) — never an oversized frame, and never
-   a cached one: each read is rebuilt from live state.
-3. **Answer decisions** — `baton_decision_answer` with `{runId, requestId, answer}`. The
-   repository coordinate is enforced BEFORE the interaction read: a cross-repo requestId refuses
-   `application_interaction_not_found` identically to an unknown one (no existence leak). A late
-   answer returns the DISTINCT typed outcome `{result: "already_resolved", resolvedBy}` — a late
-   answerer must NOT re-spawn work.
-4. **Resume-steer** — `baton_waves_attach` returns the members' runIds. `baton_waves_send` /
-   `baton_waves_stop` are LIVE on those runIds afterward — that IS the resume path. The attach
+   a cached one: each read is rebuilt from live state:
+
+   ```json
+   { "repoId": "repo-a", "waveId": "wave:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "cursor": "c1" }
+   ```
+
+3. **List and run** — `baton_waves_list` pages waves by cursor, and `baton_waves_run` compiles a
+   wave spec against the interpreter's closed validation:
+
+   ```json
+   { "repoId": "repo-a", "cursor": "c1" }
+   ```
+
+   ```json
+   { "repoId": "repo-a", "spec": "wave:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" }
+   ```
+
+4. **Answer decisions** — `baton_decision_answer` enforces the repository coordinate BEFORE the
+   interaction read: a cross-repo requestId refuses `application_interaction_not_found`
+   identically to an unknown one (no existence leak). A late answer returns the DISTINCT typed
+   outcome `{result: "already_resolved", resolvedBy}` — a late answerer must NOT re-spawn work:
+
+   ```json
+   { "repoId": "repo-a", "idempotencyKey": "ik-2", "runId": "run:r1", "requestId": "req-1", "answer": { "optionId": "opt-1" } }
+   ```
+
+5. **Steer or stop** — `baton_waves_send` / `baton_waves_stop` are LIVE on the members' runIds;
+   `baton_waves_attach` returns those runIds, and re-attach IS the resume path. The attach
    response carries `harvestReplayed: true` when the wave's detached record already settled; key
-   outcome accounting on `resultSha`, never `outcomes.length` (the store never double-admits).
-5. **Harvest** — a host that dies mid-wave leaves its runs live and steerable via re-attach; an
+   outcome accounting on `resultSha`, never `outcomes.length` (the store never double-admits):
+
+   ```json
+   { "repoId": "repo-a", "runId": "run:r1", "message": "hello" }
+   ```
+
+   ```json
+   { "repoId": "repo-a", "runId": "run:r1", "reason": "probe" }
+   ```
+
+6. **Harvest** — a host that dies mid-wave leaves its runs live and steerable via re-attach; an
    MCP host that never re-attaches leaves the wave to the drivers' own stall machinery.
 
 ## Admit knowledge
@@ -162,6 +198,7 @@ The four settlement ops work through MCP behind the S-2 `sessionAuthority` envel
 | `run.member.view` | `ordinary` | `baton_run_member_view` | idempotent |
 | `run.message.receipt` | `ordinary` | `baton_run_message_receipt` | idempotent |
 | `run.message.send` | `ordinary` | `baton_run_message_send` | effectful |
+| `run.scratchpad.append` | `ordinary` | `baton_run_scratchpad_append` | idempotent |
 | `run.scratchpad.elevate` | `ordinary` | `baton_run_scratchpad_elevate` | idempotent |
 | `run.scratchpad.read` | `ordinary` | `baton_run_scratchpad_read` | idempotent |
 | `run.start` | `ordinary` | `baton_run_start` | idempotent |

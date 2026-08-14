@@ -652,7 +652,7 @@ test('AX1/AX6/AX7: cards, CLI, MCP, and browser project one digest; default inve
     'baton_deployment_doctor', 'baton_decision_answer',
     'baton_scratchpad_elevate', 'baton_scratchpad_settle', 'baton_knowledge_promote', 'baton_knowledge_settlement_lease',
     'baton_run_message_send', 'baton_run_message_receipt', 'baton_run_attention_watch',
-    'baton_run_scratchpad_read', 'baton_run_scratchpad_elevate', 'baton_run_knowledge_seed',
+    'baton_run_scratchpad_read', 'baton_run_scratchpad_elevate', 'baton_run_scratchpad_append', 'baton_run_knowledge_seed',
     'baton_run_do', 'baton_run_view', 'baton_run_member_view', 'baton_run_member_send',
     'baton_run_member_stop', 'baton_application_help',
   ]);

@@ -54,7 +54,9 @@ ordinary-CLI inventory. The conformance suite fails if they drift from served tr
 | `waves.list` | `ordinary` | `baton waves list` | `baton waves list` |
 | `waves.progress` | `ordinary` | `baton waves progress` | `baton waves progress WAVE_ID --cursor 0` |
 | `waves.run` | `ordinary` | `baton waves run` | `baton waves run path/to/spec.json` |
+| `waves.send` | `ordinary` | `baton waves send` | `baton waves send RUN_ID --message TEXT` |
 | `waves.start` | `ordinary` | `baton waves start` | `baton waves start --members JSON` |
+| `waves.stop` | `ordinary` | `baton waves stop` | `baton waves stop RUN_ID --reason TEXT` |
 
 <!-- END GENERATED: cli-verb-inventory -->
 
@@ -189,8 +191,9 @@ it does not inspect a disposable worktree, merge, checkout, or publish. Use
 are not CLI fields. `run send` and `run interrupt` resolve the current semantic recipient inside
 Baton; ordinary callers never supply a worker ID or fence. Interrupt ends only that provider turn
 and preserves the Run/worktree for continuation, while `run stop` closes dispatch authority and
-reaps the whole Run subtree. The worker-targeted `run steer` command remains an advanced
-compatibility surface.
+reaps the whole Run subtree. Worker steering is `run send` (and `run interrupt` for turn-scoped
+stops); the deleted `steer` verb was sunset at the M5 alias migration and refuses with corrective
+naming.
 
 Routine mutations and status return a compact machine-readable outline: objective, phase, current
 progress, exact requested/resolved/observed route, attention, action outcome, and next expansion.

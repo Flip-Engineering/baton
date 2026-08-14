@@ -301,7 +301,7 @@ test('KC6/KC7/KC8: Kimi MCP bridges only the compact application surface over au
     'baton_deployment_doctor', 'baton_decision_answer',
     'baton_scratchpad_elevate', 'baton_scratchpad_settle', 'baton_knowledge_promote', 'baton_knowledge_settlement_lease',
     'baton_run_message_send', 'baton_run_message_receipt', 'baton_run_attention_watch',
-    'baton_run_scratchpad_read', 'baton_run_scratchpad_elevate', 'baton_run_knowledge_seed',
+    'baton_run_scratchpad_read', 'baton_run_scratchpad_elevate', 'baton_run_scratchpad_append', 'baton_run_knowledge_seed',
     'baton_run_do', 'baton_run_view', 'baton_run_member_view', 'baton_run_member_send',
     'baton_run_member_stop', 'baton_application_help',
   ]);
@@ -635,7 +635,7 @@ test('KC6/KC7/KC8: packaged Kimi MCP entry crosses a real authenticated Web list
     'baton_scratchpad_elevate', 'baton_scratchpad_settle', 'baton_knowledge_promote', 'baton_knowledge_settlement_lease',
     // Facade-projection epic (#87+#48): the six workflow-surface tools join the packaged bridge.
     'baton_run_message_send', 'baton_run_message_receipt', 'baton_run_attention_watch',
-    'baton_run_scratchpad_read', 'baton_run_scratchpad_elevate', 'baton_run_knowledge_seed',
+    'baton_run_scratchpad_read', 'baton_run_scratchpad_elevate', 'baton_run_scratchpad_append', 'baton_run_knowledge_seed',
     'baton_run_do', 'baton_run_view', 'baton_run_member_view', 'baton_run_member_send',
     'baton_run_member_stop', 'baton_application_help',
   ]);

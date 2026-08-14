@@ -45,6 +45,12 @@ const WAVE_WEB_ENTRIES = Object.freeze([
   // workflow_* refusals) is the argument authority, exactly like the five sibling verbs.
   ['waves_run', 'waves.run', Object.freeze(['control', 'observe'])],
   ['waves_compile', 'waves.compile', Object.freeze(['observe'])],
+  // #158 (scratchpad-write-2026-08-13/contract-fold.md H2.1): the folded scratchpad WRITE direct
+  // port. WEB_DIRECT_PORT_COMMANDS is derived from THIS array, so validateEnvelope skips
+  // validateApplicationCommandArgs and the append's own closed normalizer (the kernel fold,
+  // coordination-store.mjs appendScratchpad) is the argument authority — the same direct-port
+  // admission the five wave verbs ride. Capability classes match the MCP capability map.
+  ['run_scratchpad_append', 'run.scratchpad.append', Object.freeze(['control', 'observe'])],
 ]);
 // D1.2/D1.3 — the wave transports are DIRECT PORTS: validateEnvelope skips
 // validateApplicationCommandArgs for them (WEB_DIRECT_PORT_COMMANDS below) and their argument
@@ -90,6 +96,8 @@ const COMMAND_CAPABILITY = Object.freeze({
   spawn: 'control', scratch_oracle: 'control', send: 'control', interrupt: 'control', kill: 'emergency_stop', drain: 'emergency_stop', respond: 'approve',
   list: 'observe', result: 'observe', wait: 'observe', capabilities: 'observe', provider_status: 'observe', capability_invoke: 'control', reuse_decide: 'control', reuse_recheck: 'control',
   goal_define: 'goal:define', plan_propose: 'plan:propose', plan_approve: 'plan:approve', goal_plan_status: 'goal:observe',
+  // #158 (H2.1): the scratchpad WRITE direct port's capability classes (matches the MCP capability map).
+  run_scratchpad_append: ['control', 'observe'],
   ...Object.fromEntries(WEB_APPLICATION_ENTRIES.map(([transport, , definition]) => [transport, definition.capabilities])),
   ...Object.fromEntries(CANONICAL_WEB_ENTRIES.map(([transport, , definition]) => [transport, definition.capabilities])),
   ...Object.fromEntries(WAVE_WEB_ENTRIES.map(([transport, , capabilities]) => [transport, capabilities])),
@@ -131,6 +139,9 @@ const ARG_FIELDS = Object.freeze({
   plan_propose: new Set(['goal', 'predecessor', 'nodes']),
   plan_approve: new Set(['goal', 'plan', 'expectedDisposition', 'disposition']),
   goal_plan_status: new Set(['goalId', 'goalVersion', 'goalDigest', 'planId', 'planVersion', 'planDigest', 'throughSeq']),
+  // #158 (H2.1): the closed {runId, scope, kind, body, idempotencyKey} accepted set — the D2.1
+  // verb closure, exactly the fields the folded append verb admits on every surface.
+  run_scratchpad_append: new Set(['runId', 'scope', 'kind', 'body', 'idempotencyKey']),
   ...Object.fromEntries(WEB_APPLICATION_ENTRIES.map(([transport, name, definition]) => [
     transport, advertisedArgs(definition, name),
   ])),
@@ -148,9 +159,14 @@ const ACCEPTED_ARG_FIELDS = Object.freeze({
     transport, acceptedArgs(definition, name),
   ])),
 });
-const APPLICATION_COMMAND = Object.freeze(Object.fromEntries(
-  [...WEB_APPLICATION_ENTRIES, ...CANONICAL_WEB_ENTRIES, ...WAVE_WEB_ENTRIES].map(([transport, name]) => [transport, name]),
-));
+const APPLICATION_COMMAND = Object.freeze({
+  ...Object.fromEntries(
+    [...WEB_APPLICATION_ENTRIES, ...CANONICAL_WEB_ENTRIES, ...WAVE_WEB_ENTRIES].map(([transport, name]) => [transport, name]),
+  ),
+  // #158 (H2.1): the scratchpad WRITE direct port routes to the folded application verb. The
+  // WAVE_WEB_ENTRIES spread above already derives it; the literal pins the routing beside the table.
+  run_scratchpad_append: 'run.scratchpad.append',
+});
 const FORBIDDEN_KEY = /^(?:access[_-]?token|refresh[_-]?token|token|secret|credential|password|api[_-]?key|authorization)$/i;
 const MODEL_POLICY_FIELDS = new Set(['allow', 'deny', 'prefer', 'allowFamilies', 'denyFamilies', 'reasoningEffort', 'serviceTier']);
 const VERIFICATION_FIELDS = new Set(['command', 'expectExit', 'timeoutMs', 'coverageCommand', 'mutationCommand']);
@@ -183,7 +199,7 @@ function equalDigest(left, right) {
 }
 function actor(principal) { return `web:${principal.userId}:${principal.sessionId}`; }
 function result(status, body) { return Object.freeze({ status, body: Object.freeze(body) }); }
-function error(status, code, message = code) { return result(status, { ok: false, error: { code, message } }); }
+function error(status, code, message = code, field = null) { return result(status, { ok: false, error: { code, message, ...(field == null ? {} : { field }) } }); }
 function dispatchFailure(cause) {
   const goalPlanCode = cause?.code;
   if (typeof goalPlanCode === 'string' && goalPlanCode.startsWith('worker_policy_')) {
@@ -235,6 +251,23 @@ function dispatchFailure(cause) {
       code: cause.code,
       message: cause?.message ?? 'workflow precondition failed',
       ...(cause?.detail ? { detail: cause.detail } : {}),
+    } } };
+  }
+  // #160 R3 (error-actionability-2026-08-13/contract-fold.md §2 D4 R3 / OQ2): the coaching arm —
+  // a byte-lane refusal (spill_body_exceeded, decision_text_exceeded, ...) carries its typed code
+  // + the {field (lane), cap, actual, unit, gracefulPath} triple instead of degrading to the 503
+  // fallback. 413 for pure size refusals (OQ2; W4 accepts 400/413). Keyed off cause.code, never
+  // cause.name (an untyped TypeError still hits the name arm below and stays invalid_command).
+  if (COACHING_REFUSAL_CODES.has(cause?.code)) {
+    const field = coachingWireField(cause);
+    return { httpStatus: 413, body: { ok: false, error: {
+      code: cause.code,
+      message: cause?.message ?? 'size limit exceeded',
+      ...(field == null ? {} : { field }),
+      cap: cause?.cap,
+      actual: cause?.actual,
+      unit: cause?.unit ?? 'bytes',
+      gracefulPath: cause?.gracefulPath ?? null,
     } } };
   }
   if (['ModelSelectionError', 'SessionSelectionError', 'DuplicateTaskIdError', 'UnknownVendorError', 'DependencyCycleError', 'TypeError'].includes(cause?.name)) {
@@ -301,6 +334,81 @@ function containsForbiddenKey(value) {
   return Object.entries(value).some(([key, child]) => FORBIDDEN_KEY.test(key) || containsForbiddenKey(child));
 }
 function string(value) { return typeof value === 'string' && value.length > 0; }
+// #160 R4 (error-actionability-2026-08-13/contract-fold.md §2 D4 R4): the offending key is named
+// in `field` ONLY when it is a safe bounded identifier (the #41 posture — naming the KEY, never
+// the VALUE; and never echoing a client-supplied 60KB marker back at the caller). The regex is
+// the same identifier pattern the envelope itself requires (web-northbound.mjs:414-415), so a
+// field name that passed admission is always safe to name on a refusal.
+function safeFieldName(value) {
+  return typeof value === 'string' && /^[A-Za-z0-9._:-]{1,256}$/.test(value) ? value : null;
+}
+// #160 R4 (W3): the offending ARG key for an application-command validator refusal — the first
+// required arg the caller omitted, or the first extra arg outside the closed schema. Named only
+// when safe (an identifier, never content).
+function applicationArgField(appCommand, args) {
+  const definition = APPLICATION_COMMAND_DEFINITIONS[appCommand];
+  if (!definition || !Array.isArray(definition.args)) return null;
+  const present = args && typeof args === 'object' && !Array.isArray(args) ? args : {};
+  for (const key of definition.args) {
+    if (!Object.hasOwn(present, key)) return safeFieldName(key);
+  }
+  const allowed = new Set(definition.args);
+  const extra = Object.keys(present).find((key) => !allowed.has(key));
+  return extra ? safeFieldName(extra) : null;
+}
+// The coaching size family (contract §3): every cataloged byte-lane refusalCode from limits.mjs
+// except the `workflow_*` lane (wave.run.spec_path carries refusalCode workflow_spec_invalid,
+// which the workflow_* arm handles BEFORE this arm). Derived from the closed catalog so a new
+// lane's refusalCode is automatically covered (additive-only).
+const COACHING_REFUSAL_CODES = new Set(
+  Object.values(FRAME_LIMITS)
+    .map((row) => row?.refusalCode)
+    .filter((code) => typeof code === 'string' && !code.startsWith('workflow_')),
+);
+// The wire `field` for each byte lane. The web arm reads the cause's `field` (the lane, when the
+// throwing helper carries it) and maps it through this table; `run.objective` names the run_start
+// envelope arg `objective` (W4), while `decision.text` keeps the compound lane name (W7-B). When
+// the cause carries no lane, the code-level table supplies the default field.
+const COACHING_LANE_FIELD = Object.freeze({
+  'message.send.body': 'body',
+  'message.reply.body': 'body',
+  'run.objective': 'objective',
+  'wave.member.objective': 'objective',
+  'decision.question': 'question',
+  'decision.need': 'need',
+  'decision.rationale': 'rationale',
+  'orientation.note': 'note',
+  'steering.focus': 'focus',
+  'board.title': 'title',
+  'board.detail': 'detail',
+  'board.report.body': 'body',
+  'run.legacy_send.body': 'body',
+  'decision.option.label': 'label',
+  'decision.option.summary': 'summary',
+  'decision.text': 'decision.text',
+  'scratchpad.entry.body': 'body',
+});
+const COACHING_CODE_FIELD = Object.freeze({
+  spill_body_exceeded: 'objective',
+  decision_question_exceeded: 'question',
+  decision_need_exceeded: 'need',
+  decision_rationale_exceeded: 'rationale',
+  orientation_note_exceeded: 'note',
+  steering_focus_exceeded: 'focus',
+  board_title_exceeded: 'title',
+  board_detail_exceeded: 'detail',
+  board_report_exceeded: 'body',
+  run_legacy_send_exceeded: 'body',
+  decision_option_label_exceeded: 'label',
+  decision_option_summary_exceeded: 'summary',
+  decision_text_exceeded: 'decision.text',
+  scratchpad_entry_exceeded: 'body',
+});
+function coachingWireField(cause) {
+  const lane = typeof cause?.field === 'string' ? cause.field : null;
+  if (lane && COACHING_LANE_FIELD[lane]) return COACHING_LANE_FIELD[lane];
+  return COACHING_CODE_FIELD[cause?.code] ?? null;
+}
 function exactRecord(value, fields) {
   return isRecord(value) && Object.keys(value).length === fields.size
     && Object.keys(value).every((key) => fields.has(key));
@@ -409,7 +517,12 @@ function validateEnvelope(envelope) {
   envelope = resolveWebCommandEnvelope(envelope);
   if (!isRecord(envelope)) return 'command envelope must be an object';
   const unknown = Object.keys(envelope).find((key) => !TOP_LEVEL.has(key));
-  if (unknown) return 'unknown_top_level_field';
+  if (unknown) {
+    // #160 R4: name the offending KEY in `field` (W1). The field is only named when it is a safe
+    // bounded identifier — a 60KB client-supplied marker is never echoed (phase12 :516-532 pins).
+    const field = safeFieldName(unknown);
+    return field ? { code: 'unknown_top_level_field', field, message: 'unknown_top_level_field' } : 'unknown_top_level_field';
+  }
   if (envelope.schemaVersion !== 1) return 'unsupported schemaVersion';
   if (!/^[A-Za-z0-9._:-]{1,128}$/.test(envelope.commandId ?? '')
     || !/^[A-Za-z0-9._:-]{1,256}$/.test(envelope.idempotencyKey ?? '')
@@ -421,11 +534,29 @@ function validateEnvelope(envelope) {
   // declared-hidden fields so they do not appear in web-admitted argument inventories.
   const allowed = ACCEPTED_ARG_FIELDS[envelope.command] ?? ARG_FIELDS[envelope.command];
   const unknownArg = Object.keys(envelope.args).find((key) => !allowed.has(key));
-  if (unknownArg) return 'unknown_argument_field';
+  if (unknownArg) {
+    // #160 R4: name the offending ARG key in `field` (W2); unsafe markers stay route-shape.
+    const field = safeFieldName(unknownArg);
+    return field ? { code: 'unknown_argument_field', field, message: 'unknown_argument_field' } : 'unknown_argument_field';
+  }
   if (containsForbiddenKey(envelope.args)) return 'credential-bearing command fields are forbidden';
   if (APPLICATION_COMMAND[envelope.command] && !WEB_DIRECT_PORT_COMMANDS.has(envelope.command)) {
     try { validateApplicationCommandArgs(APPLICATION_COMMAND[envelope.command], envelope.args); }
-    catch { return 'application_command_arguments_invalid'; }
+    catch (cause) {
+      // #160 R4 (contract-fold.md §2 D4 R4; W3/W8-2): a NAMED validator refusal — the application
+      // validator throws applicationError with a typed code — passes through its code + message
+      // instead of the anonymous application_command_arguments_invalid collapse. An untyped
+      // route-shape ValidationError (no code) keeps the collapse (W8-1; phase12 :196/:510 pins).
+      if (typeof cause?.code === 'string') {
+        const field = applicationArgField(APPLICATION_COMMAND[envelope.command], envelope.args);
+        return {
+          code: cause.code,
+          message: typeof cause?.message === 'string' ? cause.message : cause.code,
+          ...(field == null ? {} : { field }),
+        };
+      }
+      return 'application_command_arguments_invalid';
+    }
     if (envelope.command === 'run_wait' && envelope.args.timeoutMs > 30_000) return 'application_wait_timeout_exceeds_web_ceiling';
     if (Object.hasOwn(envelope, 'expectedFence')) return 'application_command_does_not_accept_fence';
     const applicationRunId = envelope.command === 'run_start'
@@ -443,7 +574,12 @@ function validateEnvelope(envelope) {
     if (Object.hasOwn(envelope.args, 'modelPolicy') && !isRecord(envelope.args.modelPolicy)) return 'modelPolicy must be an object';
     if (isRecord(envelope.args.modelPolicy)) {
       const unknownPolicy = Object.keys(envelope.args.modelPolicy).find((key) => !MODEL_POLICY_FIELDS.has(key));
-      if (unknownPolicy) return 'unknown_model_policy_field';
+      if (unknownPolicy) {
+        // #160 R4: the unknown model-policy key is named in `field` when safe (phase12 :522 keeps
+        // the marker case route-shape — the response must stay under 512 bytes, never echo it).
+        const field = safeFieldName(unknownPolicy);
+        return field ? { code: 'unknown_model_policy_field', field, message: 'unknown_model_policy_field' } : 'unknown_model_policy_field';
+      }
     }
     if (Object.hasOwn(envelope.args, 'goalPlan') && (!planGate(envelope.args.goalPlan) || !planBrief(envelope.args.brief))) return 'plan-gated spawn fields are invalid';
   }
@@ -676,20 +812,31 @@ export class WebNorthbound {
 
   _authorize(ctx, envelope) {
     const principal = ctx.principal;
-    if (!this.allowedOrigins.has(ctx.origin) || envelope.origin !== ctx.origin) return error(403, 'forbidden');
+    // #160 R5 (error-actionability-2026-08-13/contract-fold.md §2 D4 R5): each distinct
+    // precondition denial names ITS precondition class in `field` (origin | csrf | repoId |
+    // capability) and the command class in `message`, so the four collapses are distinguishable
+    // on the wire (W6). The `field` values are the closed F3 set the conformance shape-check pins.
+    const commandClass = APPLICATION_COMMAND[envelope.command] ?? envelope.command;
+    if (!this.allowedOrigins.has(ctx.origin) || envelope.origin !== ctx.origin) {
+      return error(403, 'forbidden', `forbidden: ${commandClass} refused by the origin precondition`, 'origin');
+    }
     if (principal.authMethod === 'cookie') {
       const csrfValid = string(ctx.csrfToken) && (principal.csrfTokenDigest
         ? equalDigest(tokenHash(ctx.csrfToken), principal.csrfTokenDigest)
         : ctx.csrfToken === principal.csrfToken);
-      if (!csrfValid) return error(403, 'forbidden');
+      if (!csrfValid) return error(403, 'forbidden', `forbidden: ${commandClass} refused by the csrf precondition`, 'csrf');
     }
-    if (!this.repoIds.has(envelope.repoId) || !Array.isArray(principal.repoIds) || !principal.repoIds.includes(envelope.repoId)) return error(403, 'forbidden');
+    if (!this.repoIds.has(envelope.repoId) || !Array.isArray(principal.repoIds) || !principal.repoIds.includes(envelope.repoId)) {
+      return error(403, 'forbidden', `forbidden: ${commandClass} refused by the repoId precondition`, 'repoId');
+    }
     if (this.isPrincipalActive && !this.isPrincipalActive(principal, { repoId: envelope.repoId })) return error(401, 'unauthenticated');
     const requiredCapabilities = Array.isArray(COMMAND_CAPABILITY[envelope.command])
       ? COMMAND_CAPABILITY[envelope.command]
       : [COMMAND_CAPABILITY[envelope.command]];
     if (!Array.isArray(principal.capabilities)
-      || !requiredCapabilities.every((capability) => principal.capabilities.includes(capability))) return error(403, 'forbidden');
+      || !requiredCapabilities.every((capability) => principal.capabilities.includes(capability))) {
+      return error(403, 'forbidden', `forbidden: ${commandClass} refused by the capability precondition`, 'capability');
+    }
     return null;
   }
 
@@ -770,8 +917,17 @@ export class WebNorthbound {
     }
     const validation = validateEnvelope(envelope);
     if (validation) {
-      try { this._audit('command_invalid', ctx, { reason: validation }); } catch { return error(503, 'temporarily_unavailable'); }
-      return error(400, 'invalid_command', validation);
+      // #160 R4 (contract-fold.md §2 D4 R4): a structured validator refusal carries its typed
+      // code + field and passes through at 400; a route-shape string keeps invalid_command (W8-1,
+      // the phase12 :196/:465/:510/:554/:590 pins). The audit reason is always the code string —
+      // never the offending key, so a client-supplied marker never leaks into the audit either.
+      if (typeof validation === 'string') {
+        try { this._audit('command_invalid', ctx, { reason: validation }); } catch { return error(503, 'temporarily_unavailable'); }
+        return error(400, 'invalid_command', validation);
+      }
+      const { code, field, message } = validation;
+      try { this._audit('command_invalid', ctx, { reason: code }); } catch { return error(503, 'temporarily_unavailable'); }
+      return error(400, code, message, field);
     }
     const authorizationFailure = this._authorize(ctx, envelope);
     if (authorizationFailure) {

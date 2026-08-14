@@ -16,7 +16,9 @@ import {
   deriveSurfaceNames,
 } from '../src/application-semantics.mjs';
 import { APPLICATION_COMMAND_DEFINITIONS } from '../src/application.mjs';
+import * as applicationCli from '../src/application-cli.mjs';
 import { CLI_WEB_COMMANDS, parseBatonCli } from '../src/application-cli.mjs';
+import * as webNorthbound from '../src/web-northbound.mjs';
 import {
   mcpApplicationToolNames,
   mcpAdvancedToolNames,
@@ -44,6 +46,14 @@ const SURFACES = new Set([
   'enum.runPhase',
   'application',
   'mcp',
+]);
+
+// D2 — the six wave direct-port verbs (contract-fold v1.1 D2 / G3): the wave verbs admitted on the
+// web bus WITHOUT an APPLICATION_COMMAND_DEFINITIONS entry. The R2 card is the web-admitted
+// application-command names ∪ these six; the pinned 31 excludes the post-contract waves_compile
+// addition (#170), which the D1 web leg reconciles at landing.
+const WAVE_DIRECT_PORT_VERBS = Object.freeze([
+  'waves.list', 'waves.progress', 'waves.run', 'waves.send', 'waves.start', 'waves.stop',
 ]);
 
 // docs/36 §6 explicit exclusions / §8.3 profiles (R-OP-2, R-OP-10) — the kernel and authoring
@@ -103,6 +113,11 @@ function inventoryObservations(inventory) {
     ...inventory.commandDefinitions.map((name) => observation('application.commands', name)),
     ...inventory.webCommands.map((name) => observation('web', name)),
     ...inventory.cliCommands.map(({ id }) => observation('cli', `baton ${id.replaceAll('.', ' ')}`)),
+    // D3 #3 — the web-refused whitelist verbs (the eight facade ports + waves.compile): their
+    // dot-name CLI observations document the divergence the ledger rows cover. Without these the
+    // ledger rows would be "dead" (unobservable) under validateLedger, so the whitelist would not
+    // be honestly ledgered.
+    ...cliWebRefusedVerbs().map((name) => observation('cli', name)),
     ...inventory.mcpFleetTools.map((name) => observation('mcp.fleet', name)),
     ...inventory.mcpBatonTools.map((name) => observation('mcp.baton', name)),
     ...inventory.embeddedMethods.map((name) => observation('embedded', name)),
@@ -270,6 +285,14 @@ export function canonicalizeLedger(ledger) {
       dimension: entry.dimension,
       retiresIn: entry.retiresIn,
     })).sort(compareRows),
+    // #160 F9 / fold B1 (error-actionability-2026-08-13): the CLI-local tooling codes are
+    // ledgered deliberately code-only via the S2 escape hatch, in the contract's fixed
+    // first-appearance order. Preserved here (spread copy, NOT sorted) so the SC6 canonical
+    // round-trip holds for the enumeration order the contract pins. Absent when the ledger has
+    // no such field (pre-#160 ledgers keep the legacy two-key canonical form).
+    ...(Array.isArray(ledger.cliLocalToolingCodes)
+      ? { cliLocalToolingCodes: [...ledger.cliLocalToolingCodes] }
+      : {}),
   };
 }
 
@@ -376,11 +399,28 @@ function cliOrdinaryKeys() {
   return servedCliOrdinaryKeys();
 }
 
+// D2 — the application-command admission set, deduped and sorted in codepoint order, in canonical
+// DOT names: the same 31 names the card advertises (web-northbound.mjs:1521). The single source is
+// the D1 webBusAdmittedCommandNames() accessor (exported by web-northbound.mjs at landing); the
+// fallback below is the interim derivation — web-admitted APPLICATION_COMMAND_DEFINITIONS names ∪
+// the six wave direct ports — that matches the R2 card exactly until the accessor lands.
 function webBusNames() {
-  return Object.entries(APPLICATION_COMMAND_DEFINITIONS)
-    .filter(([, definition]) => definition.web)
-    .map(([name]) => name.replaceAll('.', '_'))
-    .sort();
+  const admitted = webNorthbound?.webBusAdmittedCommandNames?.();
+  if (Array.isArray(admitted)) return [...admitted].sort();
+  return [
+    ...Object.entries(APPLICATION_COMMAND_DEFINITIONS)
+      .filter(([, definition]) => definition.web)
+      .map(([name]) => name),
+    ...WAVE_DIRECT_PORT_VERBS,
+  ].sort();
+}
+
+// D3 #3 — the web-refused CLI whitelist verbs: CLI_WEB_COMMANDS names that are NOT web-admitted
+// (absent from the web.bus card). These are the eight facade ports (contracted via #87+#48) plus
+// the post-contract waves_compile (#170), each of which needs a divergence-ledger row.
+function cliWebRefusedVerbs() {
+  const admitted = new Set(webBusNames());
+  return [...CLI_WEB_COMMANDS].filter((name) => !admitted.has(name)).sort();
 }
 
 export function instantiateProfileInventory(profile) {
@@ -594,15 +634,39 @@ export { checkSurfaceDocs };
 
 const INVENTORY_ARTIFACT_URL = new URL('./surface-inventory-artifact.json', import.meta.url);
 
+// B7 — the artifact's parserLifecycleActions count derives from the parser's lifecycle DISPATCH
+// set (the `lifecycleActions` literal plus branch special-cases), never a hand-maintained probe
+// list. When the D1 CLI leg exports cliParsedCommandNames() at landing, that compile-set is the
+// source; the interim fallback replicates the same extraction the acceptance suite's R11 leg 2
+// performs (the parser's own literal + `action === '…'`/`[…].includes(action)` special-cases).
+function parserLifecycleDispatchCount() {
+  if (typeof applicationCli.cliParsedCommandNames === 'function') {
+    return applicationCli.cliParsedCommandNames().length;
+  }
+  const src = readFileSync(new URL('../src/application-cli.mjs', import.meta.url), 'latin1');
+  const marker = 'const lifecycleActions = new Set(';
+  const start = src.indexOf(marker);
+  if (start < 0) return 0;
+  const gate = src.indexOf('if (!lifecycleActions.has(action)) return parseStart', start);
+  if (gate < 0) return 0;
+  const region = src.slice(start, gate);
+  const actions = new Set();
+  const literalEnd = region.indexOf(');');
+  if (literalEnd >= 0) {
+    for (const match of region.slice(marker.length, literalEnd).matchAll(/'([^']+)'/g)) {
+      actions.add(match[1]);
+    }
+  }
+  for (const match of region.matchAll(/action\s*===\s*'([^']+)'/gu)) actions.add(match[1]);
+  for (const match of region.matchAll(/\[([^\]]*)\]\.includes\(action\)/gu)) {
+    for (const inner of match[1].matchAll(/'([^']+)'/gu)) actions.add(inner[1]);
+  }
+  return actions.size;
+}
+
 export function buildSurfaceInventoryArtifact() {
   // Deterministic: parser lifecycle, web whitelist, MCP profiles, registry counts.
   // Never regex extraction alone — parser probe + instantiated MCP tool tables + registry.
-  const lifecycleProbe = [
-    'show', 'do', 'recover', 'status', 'approve', 'answer', 'send', 'interrupt',
-    'progress', 'events', 'output', 'episode', 'workstreams', 'notify', 'result', 'stop',
-    'evidence', 'adopt', 'select', 'feedback', 'revise', 'stop-member', 'retry', 'resume',
-    'review', 'integrate', 'export', 'debug',
-  ];
   let parsedResume = null;
   try {
     parsedResume = parseBatonCli([
@@ -624,7 +688,7 @@ export function buildSurfaceInventoryArtifact() {
     counts: {
       canonicalOperations: APPLICATION_SEMANTIC_REGISTRY.canonicalOperations.length,
       cliWebCommands: CLI_WEB_COMMANDS.size,
-      parserLifecycleActions: lifecycleProbe.length,
+      parserLifecycleActions: parserLifecycleDispatchCount(),
       mcpApplicationTools: mcpApplicationToolNames().length,
       mcpAdvancedTools: mcpAdvancedToolNames().length,
       mcpCombinedTools: mcpCombinedToolNames().length,
@@ -741,6 +805,14 @@ export function runSurfaceConformanceMain({ writeInventory = false } = {}) {
   }
   for (const collision of checkWebNameDisjoint()) {
     findings.push(`web-name collision: ${collision.key} → ${collision.web}`);
+  }
+  // D1 web leg (kernel boundary, folded from red-team B3) — the web.bus inventory (31 dot names)
+  // is disjoint from the kernel/authoring profile literals. checkWebNameDisjoint covers derived
+  // web transports; this closes the inventory-vs-literals gap the red team found unspecified.
+  for (const name of webBusNames()) {
+    if (KERNEL_AUTHORING_WEB_LITERALS.includes(name)) {
+      findings.push(`web-name collision: ${name} is a kernel/authoring literal`);
+    }
   }
   for (const finding of checkSurfaceDocs()) {
     findings.push(`stale generated docs: ${finding}`);
