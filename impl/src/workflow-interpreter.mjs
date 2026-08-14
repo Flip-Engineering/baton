@@ -15,9 +15,12 @@
 // the `waves.run` direct port for the CLI (`baton waves run`) and MCP (`baton_waves_run`) surfaces.
 
 import { createHash, randomUUID } from 'node:crypto';
-import { execFileSync } from 'node:child_process';
+import { execFile, execFileSync } from 'node:child_process';
+import { promisify } from 'node:util';
 import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { basename, dirname, isAbsolute, relative, resolve, sep } from 'node:path';
+
+const execFileAsync = promisify(execFile);
 
 // ---------------------------------------------------------------------------
 // Refusal vocabulary (D — field/role-named, recursive).
@@ -534,10 +537,18 @@ export async function runWorkflow(baton, specOrPath, options = {}) {
   // refuses a dirty working tree (pinBaseSha's DirtyRepoError). The lane's objective/spec files are
   // written into the tree as inputs — commit the current working-tree state so the base is clean.
   // Local only (never pushed); result pins the D4 harvest reads are separate refs, unaffected.
+  // Bootstrap fix (2026-08-14): these were execFileSync — a 30–60 s event-loop blockade per launch
+  // on a dirty tree, starving every other waves.run admission queued behind it on the serial bus
+  // (measured: 15 of 16 flood launches timed out before their requests were read). Now async, and
+  // skipped outright when the tree is already clean — a clean-tree launch pays one fast status
+  // probe instead of an add+commit cycle.
   if (repoRoot) {
     try {
-      execFileSync('git', ['add', '-A'], { cwd: repoRoot, stdio: 'ignore' });
-      execFileSync('git', ['-c', 'user.name=Baton', '-c', 'user.email=baton@local', 'commit', '-q', '-m', `baton workflow base ${spec.idempotencyKey}`], { cwd: repoRoot, stdio: 'ignore' });
+      const status = await execFileAsync('git', ['status', '--porcelain'], { cwd: repoRoot, maxBuffer: 16 * 1024 * 1024 });
+      if (status.stdout.trim().length > 0) {
+        await execFileAsync('git', ['add', '-A'], { cwd: repoRoot });
+        await execFileAsync('git', ['-c', 'user.name=Baton', '-c', 'user.email=baton@local', 'commit', '-q', '-m', `baton workflow base ${spec.idempotencyKey}`], { cwd: repoRoot });
+      }
     } catch { /* nothing to commit, or commits unavailable — the wave will surface any real base issue */ }
   }
 
