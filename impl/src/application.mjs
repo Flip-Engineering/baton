@@ -3212,7 +3212,7 @@ export class BatonApplication {
   }
 
   async _authorize(command, principal, runId, subject = {}) {
-    const allowed = await this.authorize(deepFreeze({
+    const allowed = await (this._authorizeOverride ?? this.authorize)(deepFreeze({
       command,
       principal: clone(principal),
       repoId: this.repoId,
@@ -11633,16 +11633,79 @@ export class BatonApplication {
     await this.ready;
     const principal = normalizePrincipal(rawPrincipal, 'workflow run principal');
     const request = rawRequest && typeof rawRequest === 'object' && !Array.isArray(rawRequest) ? rawRequest : {};
-    const specOrPath = request.spec ?? request.specPath;
     const { bindBaton } = await import('./application-client.mjs');
     const { runWorkflow } = await import('./workflow-interpreter.mjs');
     const baton = bindBaton(this, principal);
     const repoRoot = this.driver?.coordinator?._repoRoot ?? null;
+    // #170 (D2/D4): the compile seam — a DSL text (specDsl inline, or a specPath whose content is
+    // a wavefile) compiles to the closed IR object before the interpreter; a JSON spec passes
+    // through (the interpreter's string path stays JSON-only — the sniffing lives at the surface).
+    const specOrPath = await this._resolveWorkflowSpec(request, repoRoot);
     // #153 follow-on (2026-08-13): the shipped path supplies the production cadence when the
     // caller omits it. The interpreter's own DEFAULT_DRIVER is the suite-pinned FAST policy
     // (workflow-as-data-red LANE_DRIVER); unoverridden it tore a real wave down at the 3 s
     // hard cap (first dogfood wave, WAVE-INCOMPLETE with cancelled rows).
     return runWorkflow(baton, specOrPath, { repoRoot, driver: request.driver ?? PRODUCTION_WORKFLOW_DRIVER });
+  }
+
+  // #170 (D2/D4): the surface-side compile seam. A DSL text (specDsl inline, or a specPath whose
+  // content is a wavefile) compiles to the closed IR object waves.run accepts; a JSON spec passes
+  // through untouched. The only file READ in the DSL pipeline is this explicit specPath load.
+  async _resolveWorkflowSpec(request, repoRoot) {
+    if (request.spec !== undefined) return request.spec;
+    if (request.specDsl !== undefined) {
+      const { compileWavefile } = await import('./workflow-dsl.mjs');
+      return compileWavefile(String(request.specDsl), { repoRoot });
+    }
+    if (request.specPath !== undefined) {
+      const { readFileSync } = await import('node:fs');
+      let text;
+      try { text = readFileSync(request.specPath, 'utf8'); }
+      catch { throw applicationError('the workflow spec path cannot be read', 'workflow_spec_invalid'); }
+      return this._sniffWorkflowText(text, repoRoot);
+    }
+    return request.spec ?? request.specPath;
+  }
+
+  // D2 sniffing rule: strip leading whitespace/blank lines; a first non-whitespace `{` is JSON
+  // (the existing parse path), anything else is a wavefile (compile). Never guesses by extension.
+  async _sniffWorkflowText(text, repoRoot) {
+    if (text.replace(/^\s+/u, '').startsWith('{')) {
+      try { return JSON.parse(text); }
+      catch { throw applicationError('the workflow spec is not valid JSON', 'workflow_spec_invalid'); }
+    }
+    const { compileWavefile } = await import('./workflow-dsl.mjs');
+    return compileWavefile(text, { repoRoot });
+  }
+
+  // #170 (D4/DR-2): the read-only inspectable compile seam. Compiles a wavefile (specDsl inline or
+  // specPath file) to the closed IR object waves.run accepts; a JSON spec passes through. It is
+  // admission-free (never starts a wave).
+  async compileWaveSpec(rawRequest) {
+    this._assertOpen();
+    await this.ready;
+    const request = rawRequest && typeof rawRequest === 'object' && !Array.isArray(rawRequest) ? rawRequest : {};
+    const repoRoot = this.driver?.coordinator?._repoRoot ?? null;
+    return this._resolveWorkflowSpec(request, repoRoot);
+  }
+
+  // #183 (wave_already_terminal): a waves.start with an idempotency key whose wave is already
+  // terminal refuses typed, naming the prior waveId + derived verdict + the re-key next action.
+  // Live-wave dedupe is preserved: a key whose wave is still (or partly) live proceeds.
+  async assertWaveStartReplayable(waveId) {
+    let listed;
+    try { listed = await this.listRuns(this.principals.observer, null); }
+    catch { return; } // no listing surface — the start path proceeds; the run.start dedupe governs
+    const bound = (listed?.items ?? []).filter((item) => typeof item?.id === 'string' && this._runWaveId(item.id) === waveId);
+    if (bound.length === 0) return;
+    const closed = new Set(['completed', 'result_ready', 'failed', 'cancelled', 'denied', 'stopped', 'stopping', 'closed', 'work_completed']);
+    if (!bound.every((item) => closed.has(item.phase))) return; // live wave — dedupe preserved
+    const clean = new Set(['completed', 'result_ready', 'stopped', 'stopping', 'work_completed']);
+    const verdict = bound.every((item) => clean.has(item.phase)) ? 'WAVE-OK' : 'WAVE-INCOMPLETE';
+    throw applicationError(
+      `wave ${waveId} is already terminal (${verdict}); re-key to re-drive a fresh wave`,
+      'wave_already_terminal', { priorWaveId: waveId, verdict },
+    );
   }
 
   async startWave(rawRequest, rawPrincipal, rawContext = null) {
@@ -12496,7 +12559,22 @@ export class BatonApplication {
     });
   }
 
-  async command(name, args, rawPrincipal, rawContext = null) {
+  // Per-call authorize override (#176 PG-PIN): an optional `options.authorize` (5th arg) overrides
+  // `this.authorize` for the duration of ONE command dispatch — the direct ports' own `_authorize`
+  // is untouched (it still reads `this.authorize`, through `_authorize`'s override check).
+  async command(name, args, rawPrincipal, rawContext = null, rawOptions = null) {
+    const override = rawOptions && typeof rawOptions.authorize === 'function' ? rawOptions.authorize : null;
+    if (!override) return this._commandDispatch(name, args, rawPrincipal, rawContext);
+    const previous = this._authorizeOverride;
+    this._authorizeOverride = override;
+    try {
+      return await this._commandDispatch(name, args, rawPrincipal, rawContext);
+    } finally {
+      this._authorizeOverride = previous;
+    }
+  }
+
+  async _commandDispatch(name, args, rawPrincipal, rawContext = null) {
     if (!validText(name, 64)) throw applicationError('application command is invalid', 'application_command_invalid');
     // docs/36 §9 M1/M3 — resolve canonical operation names to their legacy transport handlers in
     // the dispatch layer. The Episode fold routes `run.view` to the Episode projection when the
@@ -12524,6 +12602,16 @@ export class BatonApplication {
     if (name === 'run.board.post') return this.boardPost(args, principal);
     if (name === 'run.board.read') return this.boardRead(args, principal);
     if (name === 'run.knowledge.seed') return this.knowledgeSeed(args, principal);
+    // #176 (waves.* authority closure): the six waves.* verbs pass the recursive-session gate like
+    // their run.* siblings — a sessionAuthority-context call refuses typed rather than dispatching
+    // unchecked (the observe verbs are not exempt). Checked on the RAW context before full context
+    // validation so any session-authority marker refuses (never a pre-gate dispatch).
+    if (rawContext?.sessionAuthority
+      && ['waves.start', 'waves.run', 'waves.stop', 'waves.send', 'waves.progress', 'waves.list', 'waves.compile'].includes(name)) {
+      const runId = args?.runId ?? null;
+      if (validId(runId)) this._authorizeRecursiveCommand(name, runId, principal, rawContext);
+      throw applicationError('recursive waves command is forbidden', 'run_orchestrator_command_forbidden');
+    }
     const context = normalizeCommandContext(rawContext);
     // CS-3: run.debug is a direct port (not in APPLICATION_COMMAND_DEFINITIONS). Validate via
     // validateDebugArgs inside debug(); skip the legacy command-table validator.
@@ -12571,6 +12659,9 @@ export class BatonApplication {
     // command-definitions table) — it validates the closed spec and drives the wave over the
     // embedded facade, throwing the field/role-named workflow_* refusals the MCP allowlist preserves.
     if (name === 'waves.run') return this.runWorkflow(args, principal, context);
+    // #170 (D4/DR-2): the read-only compile seam — waves.compile emits the closed IR object
+    // waves.run accepts, admission-free (it never starts a wave).
+    if (name === 'waves.compile') return this.compileWaveSpec(args, principal, context);
     if (name === 'deployment.doctor') return this.doctorReadiness();
     // Epic #103 (D7): the orchestrator's embedded briefing resolve lane — server-derived like the
     // settlement commands (kg-settlement-decisions.md D2), never advertised on MCP/CLI/web. It

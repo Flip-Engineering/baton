@@ -1561,7 +1561,20 @@ export class BatonClient {
         (runId) => this.#application.command('run.inspect', { runId, mintWaveDetached: true, waveId }),
         options?.repoRoot ?? null,
       ),
+      // #170 (D4): the read-only compile seam — a wavefile text lowers to the closed IR object
+      // baton.recipes.runWorkflow accepts (the four-surface seam's embedded leg).
+      compile: (text, options = {}) => this.#application.command('waves.compile', {
+        specDsl: text, ...(options?.repoRoot ? { repoRoot: options.repoRoot } : {}),
+      }),
     });
+  }
+
+  // #183: waves.start's terminal-replay gate — delegated to the application's wave registry read.
+  // createWave calls this before member validation so a terminal key refuses typed, never silently
+  // replays (the live-wave dedupe is preserved on the run.start path).
+  async _assertWaveStartReplayable(waveId) {
+    if (typeof this.#application.assertWaveStartReplayable !== 'function') return;
+    return this.#application.assertWaveStartReplayable(waveId);
   }
 
   // Composition v2 rule 3: the recipes library is an embedded-facade accessor over the shipped
@@ -1674,6 +1687,10 @@ export function bindBaton(application, principal) {
     // Issue #114: surface the repository root to the client so baton.recipes.runWorkflow's D4
     // harvest can read the authoritative result sha (the driver knows the repo; the facade did not).
     repoRoot: application?.driver?.repoRoot ?? application?.driver?.coordinator?._repoRoot ?? null,
+    // #183: the terminal-replay gate, exposed to createWave's waves.start path.
+    ...(typeof application.assertWaveStartReplayable === 'function'
+      ? { assertWaveStartReplayable: (waveId) => application.assertWaveStartReplayable(waveId) }
+      : {}),
   }));
 }
 

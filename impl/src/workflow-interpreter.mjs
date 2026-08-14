@@ -128,7 +128,7 @@ function escapesRepo(repoRoot, relPath) {
 // D1 — the closed spec validator.
 // ---------------------------------------------------------------------------
 
-function admitSpec(raw, repoRoot) {
+export function admitSpec(raw, repoRoot) {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw specInvalid('the workflow spec must be an object');
   // Data, not code — refuse a function smuggled into ANY known slot before type validation (B6).
   assertNoFunctions(raw, 'spec');
@@ -421,6 +421,20 @@ function normalizeDriver(driver) {
   return { pollIntervalMs, stallTimeoutMs, hardCapMs };
 }
 
+// #180 (per-wave verification profile): driver.verification accepts the closed vocabulary
+// `none` / `suite:<path>` / `gate`. An unknown profile refuses workflow_spec_invalid naming the
+// field; the member outcome projects the profile as `verifiedBy`. The member-facing top-level
+// `verification` SPEC field stays REMOVED (B4) — this is a driver-policy field, never a spec field.
+function normalizeVerification(driver) {
+  const raw = driver && typeof driver === 'object' ? driver.verification : undefined;
+  if (raw === undefined || raw === null) return null;
+  if (typeof raw !== 'string' || raw.length === 0) {
+    throw specInvalid('the workflow driver "verification" must be "none", "suite:<path>", or "gate"');
+  }
+  if (raw === 'none' || raw === 'gate' || raw.startsWith('suite:')) return raw;
+  throw specInvalid(`the workflow driver "verification" profile is unknown (must be none, suite:<path>, or gate)`);
+}
+
 const sleep = (ms) => new Promise((resolveSleep) => { setTimeout(resolveSleep, ms); });
 
 // The run view the loop steers on: actions/approval live in inspect().outline; attention/nodes/
@@ -488,6 +502,7 @@ export async function runWorkflow(baton, specOrPath, options = {}) {
     ? options.repoRoot
     : (typeof baton.repoRoot === 'string' && baton.repoRoot.length > 0 ? baton.repoRoot : null);
   const driver = normalizeDriver(options.driver);
+  const verification = normalizeVerification(options.driver);
 
   // JSON.parse-only loading (D2 — no eval, no Function, no import() of the spec path).
   let raw = specOrPath;
@@ -593,6 +608,7 @@ export async function runWorkflow(baton, specOrPath, options = {}) {
     }
     const outcome = { role: member.role, phase, terminal, resultSha: pre.resultSha };
     if (member.report !== undefined) outcome.report = member.report;
+    if (verification !== null) outcome.verifiedBy = verification;
     outcomes.push(outcome);
   }
 

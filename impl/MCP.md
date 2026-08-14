@@ -172,6 +172,7 @@ The four settlement ops work through MCP behind the S-2 `sessionAuthority` envel
 | `scratchpad.elevate` | `kernel` | `baton_scratchpad_elevate` | idempotent |
 | `scratchpad.settle` | `kernel` | `baton_scratchpad_settle` | idempotent |
 | `waves.attach` | `ordinary` | `baton_waves_attach` | idempotent |
+| `waves.compile` | `ordinary` | `baton_waves_compile` | idempotent |
 | `waves.list` | `ordinary` | `baton_waves_list` | idempotent |
 | `waves.progress` | `ordinary` | `baton_waves_progress` | idempotent |
 | `waves.run` | `ordinary` | `baton_waves_run` | idempotent |

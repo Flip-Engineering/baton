@@ -6,8 +6,9 @@
 // Program-IR aligned: members ↔ parallel branches, settle ↔ join, materialization ↔ collect,
 // stopMember ↔ selective stop, evidence() ↔ the wave trace. It holds no durable state of its own.
 
-import { statSync } from 'node:fs';
+import { mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { createHash, randomUUID } from 'node:crypto';
+import { dirname, resolve, sep } from 'node:path';
 
 import { applicationTerminal, canonicalRunPhase } from './application-semantics.mjs';
 
@@ -57,7 +58,8 @@ function validateMember(member, index, repoRoot = null) {
   // seat; a workflow role literally named `work` would collide with it, so it is a wave-admission
   // (registry) lint error, never a surface member role.
   if (role.trim() === 'work') throw waveError(`wave member ${role} role "work" is reserved`, 'wave_member_role_reserved');
-  if (typeof member.objective !== 'string' || member.objective.trim().length === 0) {
+  if ((typeof member.objective !== 'string' || member.objective.trim().length === 0)
+    && (typeof member.objectiveRef !== 'string' || member.objectiveRef.trim().length === 0)) {
     throw waveError(`wave member ${role} objective is invalid`);
   }
   if (!Array.isArray(member.scope) || member.scope.length === 0 || member.scope.length > 64
@@ -102,6 +104,36 @@ function validateMember(member, index, repoRoot = null) {
     throw waveError(`wave member ${role} manual routing requires model and effort together`);
   }
   return Object.freeze({ ...member, role: role.trim() });
+}
+
+// #171 (deliverable pre-seeding) + #114: a spec-shaped member (objectiveRef, no objective) renders
+// its objective from the referenced file and pre-seeds its declared report with the verbatim
+// [attempt: <salt> <role>] header; a pre-rendered member (the interpreter path) passes through.
+function renderWaveMember(member, index, repoRoot, salt) {
+  const base = validateMember(member, index, repoRoot);
+  if (typeof base.objective === 'string' && base.objective.trim().length > 0) return base;
+  const ref = base.objectiveRef;
+  let text = '';
+  if (repoRoot && ref) {
+    try { text = readFileSync(resolve(repoRoot, ref), 'utf8'); }
+    catch { /* scaffold — a missing objectiveRef is the interpreter's render-time refusal */ }
+  }
+  const objective = `[attempt: ${salt} ${base.role}] ${text}`.trimEnd();
+  const rendered = { role: base.role, objective, exact: { ...base.exact }, scope: [...base.scope] };
+  if (base.report !== undefined) rendered.report = base.report;
+  preseedReport(repoRoot, rendered, salt);
+  return Object.freeze(rendered);
+}
+
+function preseedReport(repoRoot, member, salt) {
+  if (!repoRoot || typeof member.report !== 'string' || member.report.length === 0) return;
+  const root = resolve(repoRoot);
+  const target = resolve(repoRoot, member.report);
+  if (target !== root && !target.startsWith(`${root}${sep}`)) return;
+  try {
+    mkdirSync(dirname(target), { recursive: true });
+    writeFileSync(target, `[attempt: ${salt} ${member.role}]\n`);
+  } catch { /* scaffold — a member writing its own report overrides */ }
 }
 
 function terminalFrom(outline) {
@@ -165,10 +197,6 @@ export async function createWave(baton, options = {}) {
   }
   const approve = options.approve !== false;
   const repoRoot = typeof options.repoRoot === 'string' && options.repoRoot.length > 0 ? options.repoRoot : null;
-  const members = membersInput.map((member, index) => validateMember(member, index, repoRoot));
-  if (new Set(members.map(({ role }) => role)).size !== members.length) {
-    throw waveError('wave member roles contain duplicates');
-  }
   // 93B rule 1: durable wave identity minted pre-loop. An explicit options.idempotencyKey
   // means "this is one logical wave" — a client retry derives the same waveId, and the
   // pre-loop `wave.started` record (minted inside the first member's run.start) dedups by
@@ -177,6 +205,16 @@ export async function createWave(baton, options = {}) {
     ? validateWaveIdempotencyKey(options.idempotencyKey)
     : randomUUID();
   const waveId = `wave:${createHash('sha256').update(idempotencyKey).digest('hex').slice(0, 32)}`;
+  // #183 (wave_already_terminal): a terminal wave's key refuses typed BEFORE member validation —
+  // never a silent replay. A fresh (unkeyed) start skips the lookup.
+  if (options.idempotencyKey !== undefined && typeof baton._assertWaveStartReplayable === 'function') {
+    await baton._assertWaveStartReplayable(waveId);
+  }
+  const salt = randomUUID();
+  const members = membersInput.map((member, index) => renderWaveMember(member, index, repoRoot, salt));
+  if (new Set(members.map(({ role }) => role)).size !== members.length) {
+    throw waveError('wave member roles contain duplicates');
+  }
   const roster = members.map((member) => member.role);
 
   const state = {
