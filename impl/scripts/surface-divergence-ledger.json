@@ -1,4 +1,77 @@
 {
   "schemaVersion": 1,
-  "entries": []
+  "entries": [
+    {
+      "surface": "cli",
+      "name": "run.attention.watch",
+      "canonical": "run.attention.watch",
+      "dimension": "name",
+      "retiresIn": "M5",
+      "refusal": "'unsupported command' (web-northbound.mjs:405) — facade port contracted via #87+#48, web-refused until #87 lands"
+    },
+    {
+      "surface": "cli",
+      "name": "run.board.post",
+      "canonical": "run.board.post",
+      "dimension": "name",
+      "retiresIn": "M5",
+      "refusal": "'unsupported command' (web-northbound.mjs:405) — facade port contracted via #87+#48, web-refused until #87 lands"
+    },
+    {
+      "surface": "cli",
+      "name": "run.board.read",
+      "canonical": "run.board.read",
+      "dimension": "name",
+      "retiresIn": "M5",
+      "refusal": "'unsupported command' (web-northbound.mjs:405) — facade port contracted via #87+#48, web-refused until #87 lands"
+    },
+    {
+      "surface": "cli",
+      "name": "run.knowledge.seed",
+      "canonical": "run.knowledge.seed",
+      "dimension": "name",
+      "retiresIn": "M5",
+      "refusal": "'unsupported command' (web-northbound.mjs:405) — facade port contracted via #87+#48, web-refused until #87 lands"
+    },
+    {
+      "surface": "cli",
+      "name": "run.message.receipt",
+      "canonical": "run.message.receipt",
+      "dimension": "name",
+      "retiresIn": "M5",
+      "refusal": "'unsupported command' (web-northbound.mjs:405) — facade port contracted via #87+#48, web-refused until #87 lands"
+    },
+    {
+      "surface": "cli",
+      "name": "run.message.send",
+      "canonical": "run.message.send",
+      "dimension": "name",
+      "retiresIn": "M5",
+      "refusal": "'unsupported command' (web-northbound.mjs:405) — facade port contracted via #87+#48, web-refused until #87 lands"
+    },
+    {
+      "surface": "cli",
+      "name": "run.scratchpad.elevate",
+      "canonical": "run.scratchpad.elevate",
+      "dimension": "name",
+      "retiresIn": "M5",
+      "refusal": "'unsupported command' (web-northbound.mjs:405) — facade port contracted via #87+#48, web-refused until #87 lands"
+    },
+    {
+      "surface": "cli",
+      "name": "run.scratchpad.read",
+      "canonical": "run.scratchpad.read",
+      "dimension": "name",
+      "retiresIn": "M5",
+      "refusal": "'unsupported command' (web-northbound.mjs:405) — facade port contracted via #87+#48, web-refused until #87 lands"
+    },
+    {
+      "surface": "cli",
+      "name": "waves.compile",
+      "canonical": "waves.compile",
+      "dimension": "name",
+      "retiresIn": "M5",
+      "note": "waves.compile is web-admitted in the current tree (WAVE_WEB_ENTRIES, #170) but absent from the pinned 31-name card (contract-fold v1.1 D2/G3); ledgered pending wave reconciliation of the card-vs-admission drift"
+    }
+  ]
 }
