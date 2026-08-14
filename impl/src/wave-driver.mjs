@@ -32,12 +32,14 @@ const OBJECTIVE_MAX_BYTES = FRAME_LIMITS['wave.member.objective'].value;
 
 // §2: closed field set, all optional, frozen. Every default mirrors the documented production
 // cadence (a multi-hour wave); the red suite overrides these with short relative timeouts.
+// #163 law (operator ruling 2026-08-14): there is NO hardCapMs — clock-based kill caps are
+// retired; the key is unknown here and refuses loudly. The drive settles on member terminality
+// or the stall finalization the wave author chose, never on a wall-clock cap.
 const DEFAULT_POLICY = Object.freeze({
   steering: 'nudge-on-checkpoint',
   completionMessage: 'Continue the current turn.',
   pollIntervalMs: 20_000,
   stallTimeoutMs: 20 * 60_000,
-  hardCapMs: 3 * 3_600_000,
   settleTimeoutMs: 5_000,
   finalization: 'none',
   unproductiveNudgeBudget: 1,
@@ -113,7 +115,8 @@ function assertInteger(value, field) {
 }
 
 // §2: freeze the closed policy field set, validating each field. Unknown fields reject so a typo
-// (e.g. `hardCapMs` vs `hardcapMs`) fails loudly instead of silently falling back to the default.
+// (e.g. `stallTimeoutMs` vs `stalltimeoutMs`) fails loudly instead of silently falling back to the
+// default — and the retired `hardCapMs` (#163 law) rejects by the same closed-set discipline.
 function freezePolicy(raw) {
   if (raw === null || raw === undefined) return DEFAULT_POLICY;
   if (typeof raw !== 'object' || Array.isArray(raw)) {
@@ -132,7 +135,6 @@ function freezePolicy(raw) {
   }
   assertInteger(policy.pollIntervalMs, 'pollIntervalMs');
   assertInteger(policy.stallTimeoutMs, 'stallTimeoutMs');
-  assertInteger(policy.hardCapMs, 'hardCapMs');
   assertInteger(policy.settleTimeoutMs, 'settleTimeoutMs');
   if (!FINALIZATIONS.has(policy.finalization)) {
     throw driverError(`wave driver policy finalization is invalid: ${String(policy.finalization)}`, 'wave_driver_policy_invalid');
@@ -802,7 +804,8 @@ export function createWaveDriver(baton, rawPolicy = null) {
           }
           break;
         }
-        if (now - startedAt >= policy.hardCapMs) { basis = 'hard_cap'; break; }
+        // #163 law: no wall-clock cap bounds the drive — the loop settles on member terminality
+        // or the stall finalization above, never on elapsed time.
 
         await waitForWake(liveMembers);
       }

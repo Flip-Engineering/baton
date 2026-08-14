@@ -880,18 +880,21 @@ test('B1 GREEN: run.wait\'s loop exit iteration is always a fresh status() re-re
 
 test('A4 RED: the driver pump loop L5/D10 catch blanket-swallows status failures — no auth-stop guard in the CODE (the #148 instance\'s shape)', () => {
   // Fold (row-sf164, blue-team A4 SHALLOW → FOLDED): the static scan is re-anchored on FOUND lines
-  // (the pump loop's `for (;;)` open → the hardCap break line that bounds the loop) — no absolute
+  // (the pump loop's `for (;;)` open → the `waitForWake` line at the loop's tail) — no absolute
   // line-window anchor — and COMMENTS ARE STRIPPED so a stray comment containing the guard vocabulary
-  // cannot turn the row green with zero behavior. The L4-L6 poll/steer loop is the wave-driver
-  // layer's pump over the bus; its per-member status read (the L5/D10 catch) blanket-swallows EVERY
-  // failure as 'unavailable' — a typed auth refusal (`application_unauthorized`, `unauthenticated`,
-  // a dead recursive lease) is invisible to the loop, which keeps polling to `hardCapMs`. The #164
-  // acceptance (A4) is the #148 driver law landing as client discipline: log the full non-ok
-  // envelope and STOP on repeated auth failure.
+  // cannot turn the row green with zero behavior. (Re-anchored 2026-08-14: the hardCap break that
+  // used to bound the loop is RETIRED under the #163 law — the loop is now clock-free.) The L4-L6
+  // poll/steer loop is the wave-driver layer's pump over the bus; its per-member status read (the
+  // L5/D10 catch) blanket-swallows EVERY failure as 'unavailable' — a typed auth refusal
+  // (`application_unauthorized`, `unauthenticated`, a dead recursive lease) is invisible to the
+  // loop, which keeps polling. The #164 acceptance (A4) is the #148 driver law landing as client
+  // discipline: log the full non-ok envelope and STOP on repeated auth failure.
   const pump = srcAnchor('wave-driver.mjs', '      for (;;) {');
-  const hardCap = srcAnchor('wave-driver.mjs', "if (now - startedAt >= policy.hardCapMs) { basis = 'hard_cap'; break; }");
-  assert.ok(hardCap.line > pump.line, 'the hardCap break line bounds the pump loop region');
-  const code = stripJsComments(srcRegion('wave-driver.mjs', pump.line, hardCap.line));
+  const loopTail = srcAnchor('wave-driver.mjs', '        await waitForWake(liveMembers);');
+  assert.ok(loopTail.line > pump.line, 'the waitForWake line bounds the pump loop region');
+  const code = stripJsComments(srcRegion('wave-driver.mjs', pump.line, loopTail.line));
+  assert.ok(!/hardCapMs|hard_cap/u.test(code),
+    'the #163 law: the pump loop carries NO clock-cap exit (hardCapMs/hard_cap are retired)');
   const hasStopOnRepeatedAuth = /stop.*repeated.*auth|repeated.*auth.*fail|fail[ _-]?loud|retry[ _-]?blind|non-ok|authFailure|unauthenticated/u.test(code);
   assert.equal(hasStopOnRepeatedAuth, true,
     'stage: driver-stop-on-repeated-auth-missing — the wave-driver pump loop (wave-driver.mjs, the `for (;;)` L4-L6 poll/steer) must log the full non-ok envelope and stop on repeated auth failure (G1/#148 driver law, D2 driver row); at HEAD the L5/D10 catch swallows every status failure as `unavailable` and the CODE carries no auth-stop guard, so a typed refusal is pumped through to the deadline blind');

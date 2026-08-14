@@ -53,8 +53,10 @@
 // baton.recipes is a frozen { run, implementContract } container · P3 createWaveDriver accepts the
 // shipped steering/finalization vocabulary · P4 MAX_WAVE_PROGRESS_BYTES + the 64-member ceiling.
 // F11: the lane's driver policy is pinned fast (`{ driver: { pollIntervalMs: 15, stallTimeoutMs:
-// 400, hardCapMs: 3000 } }`) on every happy-path row — never the 20 s default poll
-// (wave-driver.mjs DEFAULT_POLICY), so the W3/W4 timing budgets are bounded and load-insensitive.
+// 400 } }`) on every happy-path row — never the 20 s default poll
+// (wave-driver.mjs DEFAULT_POLICY), so the W3/W4 timing budgets are bounded and load-insensitive
+// (restaged 2026-08-14: the hardCapMs: 3000 suite backstop is retired under the #163 law — the
+// lane settles on terminality/quiescence, never a wall clock).
 // F16: scenario delayMs budgets are re-derived against that policy — every edit delay is 100 ms,
 // well under stallTimeoutMs 400, so a deliberate mid-turn pause never trips the wave-level stall
 // clock (and the fixture's stopDeadlineMs 2_000 stays a real shutdown budget, not a wait budget).
@@ -343,7 +345,7 @@ const edit = (role, turn, content = `${role} turn ${turn}\n`) => ({
 // F11: the lane's driver policy, pinned FAST. P3 proves createWaveDriver accepts exactly this
 // vocabulary — threading it through runWorkflow(spec, { driver }) keeps the W3/W4 scenario delays
 // and stop deadlines meaningful instead of waiting on the 20 s default poll (wave-driver.mjs:35-41).
-const LANE_DRIVER = Object.freeze({ pollIntervalMs: 15, stallTimeoutMs: 400, hardCapMs: 3000 });
+const LANE_DRIVER = Object.freeze({ pollIntervalMs: 15, stallTimeoutMs: 400 });
 
 // F16: the suite's one fixed far-future instant — no wall-clock TTL on the MCP principal, no
 // Date.now() drifting across a slow green-state leg. Parsed once at module load (deterministic),
@@ -527,7 +529,7 @@ test('P3 (guard): createWaveDriver accepts the shipped steering/finalization voc
   const fx = await wadFixture(t);
   const driver = createWaveDriver(fx.baton, {
     steering: 'nudge-on-checkpoint', finalization: 'claim-on-stall',
-    pollIntervalMs: 15, stallTimeoutMs: 400, hardCapMs: 3000,
+    pollIntervalMs: 15, stallTimeoutMs: 400,
   });
   assert.equal(typeof driver.run, 'function', 'the driver exposes run over the shipped vocabulary');
 });

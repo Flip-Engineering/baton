@@ -947,7 +947,7 @@ const decisionAsk = (overrides = {}) => ({
 
 const DRIVER_POLICY = Object.freeze({
   preflight: false, steering: 'nudge-on-checkpoint',
-  pollIntervalMs: 30, stallTimeoutMs: 800, hardCapMs: 20_000, settleTimeoutMs: 1_500,
+  pollIntervalMs: 30, stallTimeoutMs: 800, settleTimeoutMs: 1_500,
   finalization: 'none', unproductiveNudgeBudget: 1, saltObjectives: false,
 });
 

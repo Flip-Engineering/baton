@@ -12,7 +12,7 @@
 // Clocks: this suite drives a real Coordinator through short real setTimeout delays — the same
 // style as turn-checkpoints-31b5-surface-red (no fake now() for this class of end-to-end fixture).
 // Every wave-driver timing parameter is a short RELATIVE timeout (pollIntervalMs/stallTimeoutMs/
-// hardCapMs); no test hardcodes a future date, so none is a time-bomb (fixture-clock-lint clean).
+// settleTimeoutMs); no test hardcodes a future date, so none is a time-bomb (fixture-clock-lint clean).
 
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
@@ -236,7 +236,6 @@ const FAST = Object.freeze({
   steering: 'nudge-on-checkpoint',
   pollIntervalMs: 15,
   stallTimeoutMs: 400,
-  hardCapMs: 3_000,
   settleTimeoutMs: 1_500,
   finalization: 'none',
   unproductiveNudgeBudget: 1,
@@ -257,7 +256,7 @@ test('D1: two productive pauses are nudged exactly once each, then L6 declares d
   };
   const { baton, repo } = harness(t, scriptsByMarker);
   const receipt = await createWaveDriver(baton, {
-    ...FAST, stallTimeoutMs: 10_000, hardCapMs: 30_000, unproductiveNudgeBudget: 0, finalization: 'claim-on-stall',
+    ...FAST, stallTimeoutMs: 10_000, unproductiveNudgeBudget: 0, finalization: 'claim-on-stall',
   }).run({ repoRoot: repo, members: [member('worker', 'write the worker report')] });
   assert.equal(receipt.basis, 'completed');
   assert.equal(receipt.nudges.length, 2, `expected exactly 2 nudges, got ${JSON.stringify(receipt.nudges)}`);
@@ -283,7 +282,7 @@ test('D2: a live member resets the wave-level stall clock; a frozen sibling stil
   };
   const { baton, repo } = harness(t, scriptsByMarker);
   const receipt = await createWaveDriver(baton, {
-    ...FAST, stallTimeoutMs: 10_000, hardCapMs: 30_000, unproductiveNudgeBudget: 0, finalization: 'claim-on-stall',
+    ...FAST, stallTimeoutMs: 10_000, unproductiveNudgeBudget: 0, finalization: 'claim-on-stall',
   }).run({ repoRoot: repo, members: [member('lively', 'write five lively reports'), member('frozen', 'write one frozen report')] });
   assert.equal(receipt.basis, 'completed');
   assert.ok(receipt.nudges.filter((entry) => entry.role === 'lively').length >= 5, 'the lively member keeps producing turns without stalling');
@@ -306,19 +305,22 @@ test('D3: a frozen member view breaks the loop with basis stall and clean close'
   assert.ok(Array.isArray(receipt.outcomes), 'outcomes survive a stall');
 });
 
-// D4 — hard cap, with stall-before-cap precedence when both cross in one poll.
-test('D4: hardCapMs fires basis hard_cap on a live marker; a frozen marker yields stall first', async (t) => {
+// D4 — the #163 law: the retired clock cap refuses loudly; a frozen marker still yields stall.
+test('D4: a numeric hardCapMs refuses as an unknown policy field; a frozen marker yields stall', async (t) => {
   const lively = harness(t, { default: Array.from({ length: 30 }, (_, index) => ({ edits: [edit('worker', index)] })) });
-  const capped = await createWaveDriver(lively.baton, {
-    ...FAST, pollIntervalMs: 10, stallTimeoutMs: 60_000, hardCapMs: 120, unproductiveNudgeBudget: 99,
-  }).run({ repoRoot: lively.repo, members: [member('worker', 'thirty reports')] });
-  assert.equal(capped.basis, 'hard_cap');
+  assert.throws(
+    () => createWaveDriver(lively.baton, {
+      ...FAST, pollIntervalMs: 10, stallTimeoutMs: 60_000, hardCapMs: 120, unproductiveNudgeBudget: 99,
+    }),
+    (error) => error?.code === 'wave_driver_policy_invalid' && /unknown/.test(error?.message ?? ''),
+    'the retired hardCapMs is an unknown policy field and refuses loudly (the #163 law — no clock decides the fate of agentic work)',
+  );
 
   const frozen = harness(t, { default: [{ edits: [edit('worker', 1)] }] });
   const stalledFirst = await createWaveDriver(frozen.baton, {
-    ...FAST, steering: 'none', stallTimeoutMs: 200, hardCapMs: 20_000, finalization: 'none',
+    ...FAST, steering: 'none', stallTimeoutMs: 200, finalization: 'none',
   }).run({ repoRoot: frozen.repo, members: [member('worker', 'one slow report')] });
-  assert.equal(stalledFirst.basis, 'stall', 'a frozen view yields stall, never hard_cap (the stall check precedes the cap check)');
+  assert.equal(stalledFirst.basis, 'stall', 'a frozen view yields stall (the stall check is the only abnormal exit left)');
 });
 
 // D5 — salt semantics + oversize ergonomics: salted objectives carry attempt-uuid + role,
@@ -371,7 +373,7 @@ test('D6: the unproductive-checkpoint budget ends the treadmill — claim path a
   const script = { default: [{ edits: [edit('worker', 1)] }] }; // tail repeats: frozen path set
   const claimed = harness(t, script);
   const withClaim = await createWaveDriver(claimed.baton, {
-    ...FAST, stallTimeoutMs: 60_000, hardCapMs: 60_000, unproductiveNudgeBudget: 1, finalization: 'claim-on-stall',
+    ...FAST, stallTimeoutMs: 60_000, unproductiveNudgeBudget: 1, finalization: 'claim-on-stall',
   }).run({ repoRoot: claimed.repo, members: [member('worker', 'write the worker report')] });
   assert.equal(withClaim.basis, 'completed', 'the claim path completes without waiting for the stall clock');
   assert.equal(withClaim.nudges.length, 1);
@@ -445,10 +447,7 @@ test('D9: stall fan-out claims every paused member exactly once', async (t) => {
   };
   const { baton, repo } = harness(t, scriptsByMarker);
   const receipt = await createWaveDriver(baton, {
-    // hardCapMs 12s (FAST's 3s): waves.start alone measures ~3.9s on the loaded machine
-    // (repo-grown git-bound start latency, the #7 family's own warning) — the fan-out
-    // semantics under test never depended on the cap, only that it outlives the start.
-    ...FAST, steering: 'none', stallTimeoutMs: 250, unproductiveNudgeBudget: 99, finalization: 'claim-on-stall', hardCapMs: 12_000,
+    ...FAST, steering: 'none', stallTimeoutMs: 250, unproductiveNudgeBudget: 99, finalization: 'claim-on-stall',
   }).run({ repoRoot: repo, members: [member('alpha', 'write alpha'), member('beta', 'write beta')] });
   assert.equal(receipt.basis, 'completed', 'fan-out recovers every member from the stall');
   assert.equal(receipt.claims.length, 2);
@@ -456,7 +455,7 @@ test('D9: stall fan-out claims every paused member exactly once', async (t) => {
 
   const control = harness(t, scriptsByMarker);
   const withoutClaim = await createWaveDriver(control.baton, {
-    ...FAST, steering: 'none', stallTimeoutMs: 250, unproductiveNudgeBudget: 99, finalization: 'none', hardCapMs: 12_000,
+    ...FAST, steering: 'none', stallTimeoutMs: 250, unproductiveNudgeBudget: 99, finalization: 'none',
   }).run({ repoRoot: control.repo, members: [member('alpha', 'write alpha'), member('beta', 'write beta')] });
   assert.equal(withoutClaim.basis, 'stall');
   assert.equal(withoutClaim.claims.length, 0);

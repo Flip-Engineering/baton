@@ -87,7 +87,7 @@ const ROUTE = Object.freeze({ harness: 'mock', model: 'mock-model', effort: 'low
 // on the 15 ms poll, never the 20 s production cadence, so the admission/coverage rows stay
 // load-insensitive. (The web and MCP transports cannot take a driver arg at HEAD — web ARG_FIELDS
 // rejects it, MCP drops it — so A5's web/MCP legs ride the production cadence by construction.)
-const LANE_DRIVER = Object.freeze({ pollIntervalMs: 15, stallTimeoutMs: 400, hardCapMs: 3000 });
+const LANE_DRIVER = Object.freeze({ pollIntervalMs: 15, stallTimeoutMs: 400 });
 
 // F16 (workflow-as-data): one fixed far-future instant — no wall-clock TTL on northbound principals.
 const FAR_FUTURE_MS = Date.parse('2099-01-01T00:00:00.000Z');

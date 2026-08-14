@@ -100,7 +100,7 @@ const ROUTE = Object.freeze({ harness: 'mock', model: 'mock-model', effort: 'low
 
 // The suite's fast lane policy (the F11 law: the interpreter is never driven on its default
 // poll cadence inside a test).
-const LANE_DRIVER = Object.freeze({ pollIntervalMs: 15, stallTimeoutMs: 400, hardCapMs: 3000 });
+const LANE_DRIVER = Object.freeze({ pollIntervalMs: 15, stallTimeoutMs: 400 });
 
 async function pkgFixture(t) {
   const repo = root('repo');

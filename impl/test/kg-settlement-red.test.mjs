@@ -805,7 +805,7 @@ async function driveWave(context, writes, driverPolicy = {}) {
   driveWave.t0 = Date.now();
   const waveDriver = createWaveDriver(context.baton, {
     steering: 'nudge-on-checkpoint', finalization: 'claim-on-stall',
-    pollIntervalMs: 50, stallTimeoutMs: 3_000, hardCapMs: 15_000, settleTimeoutMs: 2_000,
+    pollIntervalMs: 50, stallTimeoutMs: 3_000, settleTimeoutMs: 2_000,
     saltObjectives: false, preflight: false,
     onProgress: (line) => dbg(`progress ${line}`),
     ...(driverPolicy.settlement !== undefined ? { settlement: driverPolicy.settlement } : {}),

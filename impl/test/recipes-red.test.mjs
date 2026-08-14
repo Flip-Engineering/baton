@@ -62,7 +62,7 @@ function validRecipe(overrides = {}) {
         report: 'reports/alpha.md',
       },
     ],
-    policy: { steering: 'none', pollIntervalMs: 20, stallTimeoutMs: 5_000, hardCapMs: 30_000, settleTimeoutMs: 5_000, preflight: false },
+    policy: { steering: 'none', pollIntervalMs: 20, stallTimeoutMs: 5_000, settleTimeoutMs: 5_000, preflight: false },
     ...overrides,
   };
 }
@@ -234,7 +234,7 @@ test('RC-1: the recipe is one normative closed schema — unknown/oversize/dupli
   // Function value anywhere in the recipe refuses (R-DC-6: data, not code) — runtime deep scan.
   // Built inline (no structuredClone — functions are not structurally cloneable, which is the point).
   assert.throws(
-    () => admitRecipe({ name: 'fn', version: '1', members: [{ role: 'alpha', exact: { harness: 'mock', model: 'mock-model', effort: 'low' }, scope: ['reports/**'], objectiveTemplate: { task: 't', constraints: [] } }], policy: { steering: 'none', pollIntervalMs: 20, stallTimeoutMs: 5_000, hardCapMs: 30_000, settleTimeoutMs: 5_000, preflight: false, unproductiveNudgeBudget: () => 1 } }),
+    () => admitRecipe({ name: 'fn', version: '1', members: [{ role: 'alpha', exact: { harness: 'mock', model: 'mock-model', effort: 'low' }, scope: ['reports/**'], objectiveTemplate: { task: 't', constraints: [] } }], policy: { steering: 'none', pollIntervalMs: 20, stallTimeoutMs: 5_000, settleTimeoutMs: 5_000, preflight: false, unproductiveNudgeBudget: () => 1 } }),
     (error) => error?.code === 'recipe_schema_invalid' && /function/ui.test(error.message),
     'a function value in policy refuses (data, not code)',
   );
@@ -402,7 +402,7 @@ test('RC-6: implementContract over a MockAdapter seat returns the createWaveDriv
     scope: ['impl/**'],
     idempotencyKey: 'rc6-key',
     manifestPath,
-    policy: { steering: 'none', pollIntervalMs: 20, stallTimeoutMs: 5_000, hardCapMs: 30_000, settleTimeoutMs: 5_000, preflight: false },
+    policy: { steering: 'none', pollIntervalMs: 20, stallTimeoutMs: 5_000, settleTimeoutMs: 5_000, preflight: false },
   });
   assert.equal(tracker.calls.length, 1, 'the preset starts exactly one implementer seat');
 
@@ -422,7 +422,7 @@ test('RC-6: implementContract over a MockAdapter seat returns the createWaveDriv
     task: 'the assigned contract rung',
     route: { harness: 'mock', model: 'mock-model', effort: 'low' },
     scope: ['impl/**'],
-    policy: { steering: 'none', pollIntervalMs: 20, stallTimeoutMs: 5_000, hardCapMs: 30_000, settleTimeoutMs: 5_000, preflight: false },
+    policy: { steering: 'none', pollIntervalMs: 20, stallTimeoutMs: 5_000, settleTimeoutMs: 5_000, preflight: false },
   }))), 'the preset recipe digest is stable');
 
   const firstRunIds = (await baton.runs.list()).items.map((item) => item.id).sort();
@@ -435,7 +435,7 @@ test('RC-6: implementContract over a MockAdapter seat returns the createWaveDriv
     scope: ['impl/**'],
     idempotencyKey: 'rc6-key',
     manifestPath,
-    policy: { steering: 'none', pollIntervalMs: 20, stallTimeoutMs: 5_000, hardCapMs: 30_000, settleTimeoutMs: 5_000, preflight: false },
+    policy: { steering: 'none', pollIntervalMs: 20, stallTimeoutMs: 5_000, settleTimeoutMs: 5_000, preflight: false },
   });
   assert.equal(tracker.calls.length, 0, 'the idempotencyKey retry attaches — zero additional starts');
   const retryRunIds = (await baton.runs.list()).items.map((item) => item.id).sort();

@@ -118,10 +118,10 @@
 //         draw four claim attempts; today per-member keying stops after one) (RED)
 //   WD4   budget exhaustion → honest closure: refusal recorded with NO nudge, nothing
 //         settles the worker (act counts frozen), no new pauseId is claimed into existence,
-//         the PRE-EXISTING stall clock fires (basis 'stall' with hardCapMs 75× larger —
-//         never the 3h wall), the D9 fan-out no-ops (the per-pauseId attempt was consumed),
-//         the guaranteed close reaps. Also pins the DEFAULT budget: no policy field passed,
-//         exactly TWO corrective nudges. (RED)
+//         the PRE-EXISTING stall clock fires (basis 'stall' — never a wall-clock cap; the
+//         #163 law retired hardCapMs), the D9 fan-out no-ops (the per-pauseId attempt was
+//         consumed), the guaranteed close reaps. Also pins the DEFAULT budget: no policy
+//         field passed, exactly TWO corrective nudges. (RED)
 //
 // §G Exoneration pins (acceptance (c): the six non-suite claimTurn call sites' behavior
 //   classes stay byte-identical)
@@ -1057,7 +1057,7 @@ function fakeWave(programsByRole) {
 
 const DRIVER_POLICY = Object.freeze({
   preflight: false, steering: 'nudge-on-checkpoint',
-  pollIntervalMs: 20, stallTimeoutMs: 400, hardCapMs: 30_000, settleTimeoutMs: 1_500,
+  pollIntervalMs: 20, stallTimeoutMs: 400, settleTimeoutMs: 1_500,
   finalization: 'claim-on-stall', unproductiveNudgeBudget: 1, saltObjectives: false,
 });
 // The application error lane (application.mjs:11896-11899) forwards the coordinator's
@@ -1152,10 +1152,10 @@ test('WD4: budget exhaustion is the honest closure — record-only, the pause pe
     },
   });
   // NO refusalNudgeBudget passed: the DEFAULT is 2 (grounded in the #64 claim cadence).
-  const receipt = await createWaveDriver(wave.baton, { ...DRIVER_POLICY, hardCapMs: 30_000 })
+  const receipt = await createWaveDriver(wave.baton, { ...DRIVER_POLICY })
     .run({ members: wave.members });
   assert.equal(receipt.basis, 'stall',
-    'closure rides the driver layer\'s own stall clock (hardCapMs is 75× larger — never the wall)');
+    'closure rides the driver layer\'s own stall clock (never a wall-clock cap — the #163 law retired hardCapMs)');
   assert.equal(actCallsOf(wave, 'w', 'claim_turn').length, 4,
     'each fresh pauseId claimed once; the D9 fan-out then no-ops (the per-pauseId attempt was already consumed)');
   assert.deepEqual(receipt.claims.map((row) => row.requestId), ['cp-2', 'cp-3', 'cp-4', 'cp-final']);

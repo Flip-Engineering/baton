@@ -1130,7 +1130,7 @@ test('C8 (OQ5): the wave driver downgrades its precheck to a spill-aware ADVISOR
   let driver = null;
   try {
     driver = createWaveDriver(fakeBaton, {
-      preflight: false, settlement: 'none', pollIntervalMs: 5, stallTimeoutMs: 50, hardCapMs: 2000,
+      preflight: false, settlement: 'none', pollIntervalMs: 5, stallTimeoutMs: 50,
       onAdvisory: (advisory) => advisories.push(advisory),
     });
   } catch {

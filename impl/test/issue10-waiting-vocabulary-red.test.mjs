@@ -568,12 +568,12 @@ function fakeWave(programsByRole) {
 
 const DRIVER_POLICY = Object.freeze({
   preflight: false, steering: 'nudge-on-checkpoint',
-  pollIntervalMs: 20, stallTimeoutMs: 400, hardCapMs: 30_000, settleTimeoutMs: 1_500,
+  pollIntervalMs: 20, stallTimeoutMs: 400, settleTimeoutMs: 1_500,
   finalization: 'claim-on-stall', unproductiveNudgeBudget: 1, saltObjectives: false,
 });
 // STRIP rows: a churning waitingOn must not reset the clock (stallTimeoutMs fires first); today
 // the churn resets it every poll and the wave rides to the cap.
-const STRIP_POLICY = { ...DRIVER_POLICY, stallTimeoutMs: 250, hardCapMs: 1_200 };
+const STRIP_POLICY = { ...DRIVER_POLICY, stallTimeoutMs: 250 };
 const actCallsOf = (wave, role, action) => wave.runs.get(role).actCalls.filter((call) => call.action === action);
 
 // A canonical waitingOn value for a kind (the D3 since-stamp shape). provider_stalled rides a

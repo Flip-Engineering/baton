@@ -414,13 +414,19 @@ async function materializeSha(handle, member, repoRoot, startedAtMs, excludeShas
 // The lane's driver policy — configurable, pinned fast by the caller (F11).
 // ---------------------------------------------------------------------------
 
-const DEFAULT_DRIVER = Object.freeze({ pollIntervalMs: 15, stallTimeoutMs: 400, hardCapMs: 3000 });
+const DEFAULT_DRIVER = Object.freeze({ pollIntervalMs: 15, stallTimeoutMs: 400, hardCapMs: null });
 
 function normalizeDriver(driver) {
   const base = driver && typeof driver === 'object' ? driver : {};
   const pollIntervalMs = Number.isSafeInteger(base.pollIntervalMs) && base.pollIntervalMs > 0 ? base.pollIntervalMs : DEFAULT_DRIVER.pollIntervalMs;
   const stallTimeoutMs = Number.isSafeInteger(base.stallTimeoutMs) && base.stallTimeoutMs > 0 ? base.stallTimeoutMs : DEFAULT_DRIVER.stallTimeoutMs;
-  const hardCapMs = Number.isSafeInteger(base.hardCapMs) && base.hardCapMs > 0 ? base.hardCapMs : DEFAULT_DRIVER.hardCapMs;
+  // #163 law (operator ruling 2026-08-14): clock-based kill caps are RETIRED — a numeric hardCapMs
+  // refuses at admission naming the law; the null sentinel (or an omitted key) is the only accepted
+  // form, and the drive settles on terminality / handled-decision stuck / observed quiescence.
+  if (base.hardCapMs !== undefined && base.hardCapMs !== null) {
+    throw specInvalid('the workflow driver "hardCapMs" is retired under the #163 law — clock-based caps never decide the fate of agentic work; omit the key or pass hardCapMs: null (the drive settles on quiescence, never a clock)');
+  }
+  const hardCapMs = base.hardCapMs === null ? null : DEFAULT_DRIVER.hardCapMs;
   return { pollIntervalMs, stallTimeoutMs, hardCapMs };
 }
 
@@ -448,7 +454,7 @@ async function readView(handle, needStatus = false) {
   // inspect() carries phase/actions/attention/terminal — enough for approve/checkpoint/message/
   // signal/terminal. status() (taskId/workerId, decision options) is read ONLY when a policy needs
   // it (answerDecisions/elevateWhenNotes), so the common poll is one command, not two — the W3/W4
-  // timing budgets stay inside the fast driver's hardCap even with a full member roster.
+  // polls stay cheap even with a full member roster.
   if (needStatus) { try { stat = await handle.status(); } catch { /* the run may be mid-stop */ } }
   try { insp = await handle.inspect(); } catch { /* the run may be mid-stop */ }
   const io = insp?.outline ?? {};
@@ -465,6 +471,11 @@ async function readView(handle, needStatus = false) {
   const planDigest = approveAction?.target?.planDigest ?? approveAction?.freshness?.planDigest
     ?? so.goal?.planDigest ?? so.plan?.planDigest ?? so.plan?.digest ?? so.planPreview?.planDigest
     ?? io.route?.planDigest ?? null;
+  // #163 (B3/A7): the quiescence predicate reads the outline's own progress projection —
+  // lastProgress.at (the last meaningful event), silenceMs, and the semantic progressClass.
+  // progressClass projects as the { class, silenceMs, meaningfulEventAt } object on the outline;
+  // the view flattens the class string.
+  const progressProjection = io.progressClass ?? so.progressClass ?? null;
   return {
     phase,
     actions,
@@ -475,11 +486,50 @@ async function readView(handle, needStatus = false) {
     task: so.task ?? null,
     terminal: insp?.terminal === true || io.terminal === true || so.terminal === true || TERMINAL_PHASES.has(phase ?? ''),
     terminalStatus: so.terminalOutcome?.status ?? io.terminalOutcome?.status ?? null,
+    lastProgress: io.lastProgress ?? null,
+    silenceMs: Number.isSafeInteger(io.silenceMs) ? io.silenceMs
+      : (Number.isSafeInteger(progressProjection?.silenceMs) ? progressProjection.silenceMs : null),
+    progressClass: typeof progressProjection === 'string' ? progressProjection
+      : (progressProjection?.class ?? null),
   };
 }
 
 const TERMINAL_PHASES = new Set(['work_completed', 'completed', 'result_ready', 'cancelled', 'failed', 'stopped', 'denied', 'closed']);
 const isTerminal = (v) => v.terminal === true || TERMINAL_PHASES.has(v.phase ?? '') || v.terminalStatus === 'completed';
+
+// ---------------------------------------------------------------------------
+// #163 quiescence vocabulary (contract-foundry v2) — the law that replaced the clock cap
+// (operator ruling 2026-08-14: timeout/clock control flows never decide the fate of agentic
+// work; the drive settles on terminality, handled-decision stuck, or observed quiescence).
+// ---------------------------------------------------------------------------
+
+// A member in one of these phases is INSIDE a working turn (mid-turn or mid-delivery) — it is
+// presumed productive, so it is never quiesced; one that also goes silent past the cadence
+// window is phase-stuck and terminalized-unrecoverable instead (A12 leg b).
+const ACTIVE_TURN_PHASES = new Set(['running', 'pre_delivery', 'post_delivery']);
+// Terminal phases the wave cannot recover from (contrast work_completed/completed/result_ready —
+// the success-resting set). One landing hard-breaks the drive (A5/DR-1(a)).
+const UNRECOVERABLE_TERMINAL_PHASES = new Set(['failed', 'cancelled', 'denied']);
+// The quiescence window floor, in silent polls (D1.2) — the window is
+// max(2 * maxObservedGapMs, QUIESCENCE_MIN_SILENT_POLLS * pollIntervalMs): the roster's own
+// observed cadence, never a bare wall clock (A2).
+const QUIESCENCE_MIN_SILENT_POLLS = 8;
+// The declaration/terminalization confirmation count (D1.3) — a candidate is confirmed across a
+// poll pair, and terminalization waits one more (A12's N = confirmation-pair + 1).
+const QUIESCENCE_CONFIRMATION_POLLS = 2;
+// The phase-stuck floor, in silent polls (A12 amended, 2026-08-14): terminalizing an active-turn
+// member is the drive's strongest judgment, so its floor is many cadences —
+// max(4 * maxObservedGapMs, QUIESCENCE_STUCK_MIN_POLLS * pollIntervalMs). The v2 N-poll reading
+// murdered any member whose in-turn event gap outlived the quiet floor (measured: the cadence
+// suite's 400/800 ms in-turn edits and every loaded happy-path row died at 8 polls × 15 ms).
+const QUIESCENCE_STUCK_MIN_POLLS = 96;
+// The #67 liveness re-arm kinds, mirrored (D1.1/A3): the application-side outline projection
+// (lastProgress.at) already counts exactly these kinds plus content evidence as meaningful, so
+// an observed advance of lastProgress.at IS the reset — this set is the contract mirror the
+// predicate's correctness rests on (kept named so the two sides cannot drift silently).
+const QUIESCENCE_REARM_KINDS = Object.freeze(new Set([
+  'approval.resolved', 'decision.settled', 'lifecycle.turn_started', 'question.answered',
+]));
 
 // answerDecisions match — exact literal first, then anchored regex; first-match-wins (F7b).
 function matchDecision(policy, question) {
@@ -553,9 +603,7 @@ export async function runWorkflow(baton, specOrPath, options = {}) {
   }
 
   // The pin-recovery lower bound is stamped BEFORE the wave starts (result pins commit after this),
-  // with resolveResultPin's own 60 s grace covering the clock. The driver's hardCap budget, by
-  // contrast, is stamped AFTER waves.start — starting + approving + provisioning a full member
-  // roster's worktrees is itself wall-clock work that must not eat the members' drive-to-settle budget.
+  // with resolveResultPin's own 60 s grace covering the clock.
   const pinFloorMs = Date.now();
   const wave = await baton.waves.start({
     members: rendered,
@@ -577,20 +625,19 @@ export async function runWorkflow(baton, specOrPath, options = {}) {
     answeredKeys: new Set(), handledDecisionKeys: new Set(), deniedDecisionKeys: new Set(), signaled: false,
   };
 
-  const startedAt = Date.now(); // the drive-to-settle budget starts once the roster is live.
-
-  // #173 (2026-08-14, the launch-blocker): the drive-to-settle leg is a CONTINUATION. Detached
-  // callers (the production bus — every waves.run through a resident) get the acceptance receipt
-  // synchronously and the drive runs untethered; the settlement receipt lands in the store via
-  // onSettle (wave.settled). Without the split, each waves.run held its command for the wave's
-  // whole life — two live drives on the serial command loop wedged the bus for every other
-  // launch (the flood-window starvation, measured: zero admissions in 43 attempts × 7 waves).
+  // #163 law (operator ruling 2026-08-14): no drive-to-settle clock exists. The drive exits on
+  // terminality (pending_empty), an unrecoverable terminal (terminalized_unrecoverable), the
+  // handled-decision stuck break (stuck_handled), or the observed-quiescence declaration
+  // (quiesced) — never on elapsed time.
   const settle = async () => {
+  let drive;
   try {
-    await driveLane(wave, spec, driver, startedAt, steering, steeringState, reportByRole);
+    drive = await driveLane(wave, spec, driver, steering, steeringState, reportByRole);
   } finally {
     // guaranteed nothing: the loop is self-bounded; harvest happens below over the settled runs.
   }
+  const driveExit = drive?.exit ?? 'pending_empty';
+  const quiescence = drive?.quiescence ?? new Map();
 
   // Build outcomes: capture resultSha pre-close (reliable), terminal state post-close.
   const handles = wave.runs;
@@ -628,6 +675,18 @@ export async function runWorkflow(baton, specOrPath, options = {}) {
     const outcome = { role: member.role, phase, terminal, resultSha: pre.resultSha };
     if (member.report !== undefined) outcome.report = member.report;
     if (verification !== null) outcome.verifiedBy = verification;
+    // #163 (OQ5): on a quiesced exit the outcome carries the declaration snapshot — the last
+    // meaningful event, the observed silence at declaration, and the declaration's own
+    // progressClass 'silent' (the wave-level judgment the declaration makes: every survivor was
+    // inactive and silent past the cadence-derived window).
+    if (driveExit === 'quiesced') {
+      const q = quiescence.get(member.role) ?? null;
+      if (q !== null) {
+        if (typeof q.lastMeaningfulAt === 'string' && q.lastMeaningfulAt.length > 0) outcome.quiescenceLastMeaningfulAt = q.lastMeaningfulAt;
+        if (Number.isSafeInteger(q.silenceAtDeclarationMs)) outcome.quiescenceSilenceMs = q.silenceAtDeclarationMs;
+        outcome.progressClass = 'silent';
+      }
+    }
     outcomes.push(outcome);
   }
 
@@ -636,8 +695,12 @@ export async function runWorkflow(baton, specOrPath, options = {}) {
 
   const everySettled = outcomes.every((outcome) => outcome.terminal === true || outcome.phase === 'result_ready');
   const everyHarvested = harvest.every((entry) => entry.ok === true);
-  const verdict = everySettled && everyHarvested ? 'WAVE-OK' : `WAVE-INCOMPLETE`;
-  const basis = verdict === 'WAVE-OK' ? 'completed' : manifestDigest;
+  // #163 (D1.4/D1.5): the verdict names the exit. Quiescence receipts WAVE-QUIESCED over the
+  // 'quiesced' basis; an unrecoverable terminal / stuck-decision roster receipts WAVE-INCOMPLETE
+  // over the manifestDigest; a fully settled + harvested roster receipts WAVE-OK over 'completed'.
+  const verdict = driveExit === 'quiesced' ? 'WAVE-QUIESCED'
+    : (everySettled && everyHarvested ? 'WAVE-OK' : 'WAVE-INCOMPLETE');
+  const basis = verdict === 'WAVE-OK' ? 'completed' : (verdict === 'WAVE-QUIESCED' ? 'quiesced' : manifestDigest);
 
   void stopReceipt;
   // D6 — the receipt: EXACTLY the seven contract keys, in sorted order (F14).
@@ -734,7 +797,12 @@ function pathEscapes(repoRoot, path) {
 
 // The one control loop — poll each member, fire the steering policies, drive to settle. It is the
 // GENERALIZED form of run-dynamic-workflow.mjs's steps 4-7, parameterized by the spec's policies.
-async function driveLane(wave, spec, driver, startedAt, steering, s, reportByRole) {
+// #163: there is no settle clock. The loop exits exactly one of four ways (the closed D1.5 enum):
+// 'pending_empty' (every member terminal), 'terminalized_unrecoverable' (an unrecoverable terminal
+// or a phase-stuck active turn), 'stuck_handled' (every survivor parked on a handled decision), or
+// 'quiesced' (every survivor silent past the cadence-derived window) — and returns the exit plus
+// the per-member quiescence snapshot for the receipt.
+async function driveLane(wave, spec, driver, steering, s, reportByRole) {
   const st = spec.steering;
   const handles = wave.runs;
   const pending = new Set([...handles.keys()]);
@@ -743,9 +811,17 @@ async function driveLane(wave, spec, driver, startedAt, steering, s, reportByRol
   // status() carries the goal planDigest (approveOnAdvertisedPlan), decision options (answerDecisions),
   // the checkpoint attention (nudge/claim), and taskId/workerId (elevate). Pure messageOnSpawn /
   // signalOnMembersDone / no-steering waves poll inspect-only. Members poll in parallel, so even the
-  // two-command read stays inside the fast driver's hardCap.
+  // two-command read stays cheap with a full roster.
   const needStatus = Boolean(st.answerDecisions || st.elevateWhenNotes || st.approveOnAdvertisedPlan
     || st.nudgeOnCheckpoint || st.claimOnStall);
+
+  // #163 quiescence state: per-member { lastMeaningfulAt, silentSinceMs, active, phase,
+  // progressClass } plus the roster-wide maxObservedGapMs — the window derives from the roster's
+  // own observed cadence (A2), never a bare clock.
+  const quiescence = new Map();
+  const unreadablePolls = new Map(); // A12 leg (a): consecutive phase-less reads per member.
+  let maxObservedGapMs = 0;
+  let exit = null;
 
   async function processMember(role) {
     const handle = handles.get(role);
@@ -787,14 +863,58 @@ async function driveLane(wave, spec, driver, startedAt, steering, s, reportByRol
     // 5. elevateWhenNotes — read the worker tier, elevate once per (runId, role).
     if (st.elevateWhenNotes && !s.elevated.has(role)) await tryElevate(handle, role, v, st.elevateWhenNotes, steering, s);
 
-    // 6. terminal detection.
-    if (isTerminal(v)) { pending.delete(role); doneRoles.add(role); }
+    // 6. terminal detection — an unrecoverable terminal (failed/cancelled/denied) hard-breaks the
+    // whole drive (A5/DR-1(a)); survivor result-shas are still harvested by the settle leg.
+    if (isTerminal(v)) {
+      pending.delete(role); doneRoles.add(role);
+      unreadablePolls.delete(role);
+      if (UNRECOVERABLE_TERMINAL_PHASES.has(v.phase ?? '') && exit === null) {
+        steering.push({ evidence: 'wave_terminalized_unrecoverable', role, phase: v.phase ?? null });
+        exit = 'terminalized_unrecoverable';
+      }
+      return;
+    }
+
+    // A12 leg (a): an UNREADABLE member (readView could not project a phase — the run is
+    // wedged at the transport seam) accumulates confirmation polls; at N = confirmation-pair + 1
+    // consecutive unreadable polls it is terminalized-unrecoverable and hard-breaks the drive.
+    if (v.phase === null) {
+      const unreadable = (unreadablePolls.get(role) ?? 0) + 1;
+      unreadablePolls.set(role, unreadable);
+      if (unreadable >= QUIESCENCE_CONFIRMATION_POLLS + 1 && exit === null) {
+        steering.push({ evidence: 'wave_terminalized_unrecoverable', role, phase: null });
+        exit = 'terminalized_unrecoverable';
+      }
+      return;
+    }
+    unreadablePolls.delete(role);
+
+    // 7. quiescence tracking (#163): an observed advance of the outline's lastProgress.at resets
+    // the member's silence and feeds the roster-wide cadence term maxObservedGapMs (A2/A3).
+    const meaningfulAt = typeof v.lastProgress?.at === 'string' ? v.lastProgress.at : null;
+    const priorQ = quiescence.get(role) ?? null;
+    if (priorQ !== null && meaningfulAt !== null && priorQ.lastMeaningfulAt !== null
+      && meaningfulAt !== priorQ.lastMeaningfulAt) {
+      const gapMs = Date.parse(meaningfulAt) - Date.parse(priorQ.lastMeaningfulAt);
+      if (Number.isFinite(gapMs) && gapMs > maxObservedGapMs) maxObservedGapMs = gapMs;
+    }
+    const advanced = priorQ === null || meaningfulAt !== priorQ.lastMeaningfulAt;
+    quiescence.set(role, {
+      lastMeaningfulAt: meaningfulAt ?? priorQ?.lastMeaningfulAt ?? null,
+      silentSinceMs: advanced || priorQ === null ? Date.now() : priorQ.silentSinceMs,
+      active: ACTIVE_TURN_PHASES.has(v.phase ?? ''),
+      phase: v.phase ?? priorQ?.phase ?? null,
+      progressClass: v.progressClass ?? priorQ?.progressClass ?? null,
+    });
   }
 
-  while (pending.size > 0 && Date.now() - startedAt < driver.hardCapMs) {
+  while (pending.size > 0) {
     await Promise.all([...pending].map((role) => processMember(role)));
 
-    // 7. signalOnMembersDone — when the named roles are terminal, signal the remaining members.
+    // A5/A12: an unrecoverable terminalization (observed inside the poll) hard-breaks the drive.
+    if (exit === 'terminalized_unrecoverable') break;
+
+    // 8. signalOnMembersDone — when the named roles are terminal, signal the remaining members.
     if (st.signalOnMembersDone && !s.signaled && signalRoles.size > 0
       && [...signalRoles].every((role) => doneRoles.has(role) || !handles.has(role))) {
       s.signaled = true;
@@ -808,14 +928,50 @@ async function driveLane(wave, spec, driver, startedAt, steering, s, reportByRol
       steering.push({ trigger: 'signalOnMembersDone', role: [...signalRoles][0], doneRoles: [...signalRoles], recipients });
     }
 
-    // Early break: every remaining member is stuck on a decision the policy already handled
-    // (deferred / refused). Waiting out the hard cap would only slow the suite.
+    // Stuck break (D3.3 — evaluated BEFORE the quiescence check): every remaining member is
+    // parked on a decision the policy already handled (deferred / refused); no steering move
+    // remains, so the drive exits 'stuck_handled' rather than declaring the roster quiet.
     if (pending.size > 0 && [...pending].every((role) => s.handledDecisionKeys.size > 0 && roleStuckOnHandled(handles.get(role), role, s))) {
+      exit = 'stuck_handled';
+      break;
+    }
+
+    // #163 quiescence predicate (A1/A2/A12): the quiet window is the roster's own cadence —
+    // max(2 * maxObservedGapMs, QUIESCENCE_MIN_SILENT_POLLS * pollIntervalMs). The phase-stuck
+    // window is deliberately DEEPER — max(4 * maxObservedGapMs, QUIESCENCE_STUCK_MIN_POLLS *
+    // pollIntervalMs): terminalizing a member that claims an active turn is the strongest
+    // judgment the drive makes, so it waits many cadences (A12 amended — v2's N-poll reading
+    // murders any member whose in-turn event gap outlives the floor; measured 2026-08-14: the
+    // cadence suite's 400/800 ms in-turn edits and every loaded happy-path row died at the
+    // 8-poll floor). A roster whose every survivor is inactive AND silent past the quiet window
+    // is declared quiesced.
+    const windowMs = Math.max(2 * maxObservedGapMs, QUIESCENCE_MIN_SILENT_POLLS * driver.pollIntervalMs);
+    const stuckWindowMs = Math.max(4 * maxObservedGapMs, QUIESCENCE_STUCK_MIN_POLLS * driver.pollIntervalMs);
+    const observedAtMs = Date.now();
+    for (const role of pending) {
+      const q = quiescence.get(role) ?? null;
+      if (q?.active === true && observedAtMs - q.silentSinceMs >= stuckWindowMs) {
+        steering.push({ evidence: 'wave_terminalized_unrecoverable', role, phase: q.phase ?? null });
+        exit = 'terminalized_unrecoverable';
+      }
+    }
+    if (exit !== null) break;
+    if (pending.size > 0 && [...pending].every((role) => {
+      const q = quiescence.get(role) ?? null;
+      return q !== null && q.active !== true && observedAtMs - q.silentSinceMs >= windowMs;
+    })) {
+      for (const role of pending) {
+        const q = quiescence.get(role);
+        q.silenceAtDeclarationMs = observedAtMs - q.silentSinceMs;
+      }
+      steering.push({ evidence: 'wave_quiesced', roles: [...pending], windowMs, maxObservedGapMs });
+      exit = 'quiesced';
       break;
     }
 
     await sleep(driver.pollIntervalMs);
   }
+  return { exit: exit ?? 'pending_empty', quiescence };
 }
 
 function roleStuckOnHandled(handle, role, s) {
@@ -875,7 +1031,7 @@ async function answerDecision(handle, role, decision, policy, steering, s, key) 
   // D1.3 no-re-attempt (v1.2): a decision this policy already DENIED is recorded ONCE and never
   // re-auto-answered — the ask stays pending for the human (the later human answer via run.answer
   // settles it). Skipping before any attempt keeps the drive loop from accumulating one `denied`
-  // record per poll until hardCapMs and spamming the steering trail.
+  // record per poll until the wave settles and spamming the steering trail.
   if (s.deniedDecisionKeys.has(key)) return;
   if (allowFreeResponse) {
     try {

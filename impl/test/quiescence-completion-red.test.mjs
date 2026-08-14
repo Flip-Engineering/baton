@@ -19,22 +19,25 @@
 //   R4c  the reset set is the union with the four #67 liveness re-arm kinds (A3, REARM_KINDS mirror).
 //   R4d  normalizeDriver accepts hardCapMs === null and the loop condition honors the sentinel (A6, D2.2).
 //   R4e  the named verdict WAVE-QUIESCED, both evidence lines, and the CLOSED exit enum of D1.5
-//        ('quiesced'/'terminalized_unrecoverable'/'pending_empty'/'stuck_handled'/'hard_cap') exist.
+//        ('quiesced'/'terminalized_unrecoverable'/'pending_empty'/'stuck_handled') exist —
+//        restaged 2026-08-14: 'hard_cap' is OUT of the enum (the operator ruling retired every
+//        clock-cap kill; the numeric hardCapMs form refuses at admission — see N1).
 //   R5   a member terminalizing unrecoverably hard-breaks the loop (A5, DR-1(a)) with the
 //        wave_terminalized_unrecoverable evidence line; the survivor result-sha is still harvested.
 //   R6   PRODUCTION_WORKFLOW_DRIVER ships hardCapMs: null (A6, D2.1) — the production cadence is
 //        uncapped.
-//   P1   PIN — the suite lane driver stays byte-identical (hardCapMs: 3000 backstop, D2.4/A11) and
-//        a settling wave receipts WAVE-OK with the seven-key D6 receipt (F14). Kills an impl that
-//        changes the fast policy or drops the D6 shape.
+//   P1   PIN — the suite lane driver stays byte-identical (NO hardCapMs key — restaged
+//        2026-08-14: the operator ruling retired the 3000ms backstop; quiescence is UNGATED, so
+//        the fast policy runs the predicate and settles on terminality) and a settling wave
+//        receipts WAVE-OK with the seven-key D6 receipt (F14). Kills an impl that changes the
+//        fast policy or drops the D6 shape.
 //   P2   PIN — a decision-stuck roster exits fast via the stuck-decision early-break (D3.3/A10),
 //        receipts WAVE-INCOMPLETE and NEVER WAVE-QUIESCED. Kills an impl that lets quiescence
 //        preempt the stuck-break or misreports a decision-stuck roster.
-//   N1   PIN — the quiescence check is gated on hardCapMs === null (A13): the SAME quiet-roster
-//        fixture as R1 driven under LANE_DRIVER (hardCapMs: 3000) NEVER receipts WAVE-QUIESCED and
-//        pushes no wave_quiesced line — the loop runs to the 3000ms suite backstop (D2.4, A11/A13).
-//        GREEN at HEAD (no quiescence machinery at all) — kills an impl that runs the predicate in
-//        the suite (a false 120ms-floor WAVE-QUIESCED would fail A11's fast policy).
+//   N1   PIN — RESTAGED to the operator ruling (2026-08-14, "timeout/clock based control flows
+//        are not appropriate for baton"): a NUMERIC hardCapMs now refuses at admission
+//        (workflow_spec_invalid naming the retirement) — the gating question is moot because no
+//        clock mode exists; the quiescence predicate runs under every accepted driver.
 //   N2   a roster observed to produce meaningful events at a CONTROLLED gap (two content.file_edit
 //        events, the second delayMs 400/800) is NOT quiesced at the 120ms floor — the declaration's
 //        quiescenceSilenceMs scales with 2× the observed cadence across BOTH scenarios (A2/D1.2), so
@@ -76,9 +79,11 @@ import { bindBaton, createDriver } from '../src/index.mjs';
 const REPO = 'repo-quiescence-suite';
 
 // The suite lane driver — the fast pinned policy the two red suites share, byte-identical to
-// workflow-as-data-red.test.mjs:346 (LANE_DRIVER). hardCapMs: 3000 is the suite-only wall-clock
-// backstop (D2.4/A11): quiescence is gated on hardCapMs === null, so this policy never runs it.
-const LANE_DRIVER = Object.freeze({ pollIntervalMs: 15, stallTimeoutMs: 400, hardCapMs: 3000 });
+// workflow-as-data-red.test.mjs:346 (LANE_DRIVER). Restaged 2026-08-14 (operator ruling): the
+// hardCapMs: 3000 suite backstop is RETIRED — clock caps never decide the fate of agentic work;
+// the fast policy runs the quiescence predicate ungated (its members complete, so it exits
+// 'pending_empty' long before any silence window).
+const LANE_DRIVER = Object.freeze({ pollIntervalMs: 15, stallTimeoutMs: 400 });
 
 // F14: the D6 receipt is EXACTLY these seven keys, in ACTUAL sorted order.
 const RECEIPT_KEYS = ['basis', 'harvest', 'manifestDigest', 'outcomes', 'steering', 'verdict', 'waveId'];
@@ -295,7 +300,13 @@ describe('R5 (stage[hard-break-evidence-missing])', () => {
     const adapter = new ScenarioAdapter({
       harness: 'mock',
       scenariosByMarker: {
-        'q-a': { outcome: 'failed', summary: 'nope' },
+        // Amended 2026-08-14 (impl-row feedback, #163): the v2 fixture failed q-a instantly and
+        // assumed the survivor finalized in the same poll batch — an unverified timing read
+        // (measured false on a loaded machine: the hard-break killed the survivor mid-turn and
+        // its pin never minted). q-a now churns a 300 ms in-turn edit before failing, so the
+        // survivor's completion is deterministic UNDER LOAD and the row pins the law (hard-break
+        // + survivor harvest), not a scheduling race.
+        'q-a': { outcome: 'failed', summary: 'nope', edits: [{ path: 'reports/q-a.md', content: 'doomed\n', delayMs: 300 }] },
         'q-b': { outcome: 'completed', summary: 'done', edits: [{ path: 'reports/q-b.md', content: 'x\n' }] },
       },
     });
@@ -382,9 +393,9 @@ describe('R4e (stage[quiescence-vocabulary-missing])', () => {
       'stage[quiescence-vocabulary-missing]: the wave_quiesced evidence line exists');
     assert.ok(INTERPRETER_SRC.includes('wave_terminalized_unrecoverable'),
       'stage[quiescence-vocabulary-missing]: the wave_terminalized_unrecoverable evidence line exists');
-    for (const exit of ['quiesced', 'terminalized_unrecoverable', 'pending_empty', 'stuck_handled', 'hard_cap']) {
+    for (const exit of ['quiesced', 'terminalized_unrecoverable', 'pending_empty', 'stuck_handled']) {
       assert.ok(INTERPRETER_SRC.includes(`'${exit}'`),
-        `stage[quiescence-vocabulary-missing]: the closed driveLane exit enum contains ${exit} (D1.5 refusal vocabulary)`);
+        `stage[quiescence-vocabulary-missing]: the closed driveLane exit enum contains ${exit} (D1.5 refusal vocabulary — 'hard_cap' is retired under the 2026-08-14 operator ruling)`);
     }
   });
 });
@@ -405,8 +416,8 @@ describe('R6 (stage[production-driver-uncapped-missing])', () => {
 
 describe('P1 (stage[lane-driver-preserved])', () => {
   it('the fast pinned lane policy stays byte-identical and a settling wave receipts WAVE-OK + the seven-key receipt', async (t) => {
-    assert.deepEqual(LANE_DRIVER, Object.freeze({ pollIntervalMs: 15, stallTimeoutMs: 400, hardCapMs: 3000 }),
-      'stage[lane-driver-preserved]: the suite lane driver stays byte-identical (hardCapMs: 3000 backstop, D2.4/A11)');
+    assert.deepEqual(LANE_DRIVER, Object.freeze({ pollIntervalMs: 15, stallTimeoutMs: 400 }),
+      'stage[lane-driver-preserved]: the suite lane driver stays byte-identical (no clock key — the #163 law, restaged 2026-08-14)');
     const adapter = new ScenarioAdapter({
       harness: 'mock',
       scenariosByMarker: {
@@ -466,12 +477,12 @@ describe('P2 (stage[stuck-decision-preserved])', () => {
 // N3 (post-declaration re-wake, A9).
 // ===========================================================================
 
-describe('N1 (stage[null-gating-missing])', () => {
-  it('a quiet roster driven under LANE_DRIVER never receipts WAVE-QUIESCED — the check is gated on hardCapMs === null', async (t) => {
-    // The SAME quiet-roster fixture as R1 (single pausable member that parks), but driven under the
-    // suite's fast pinned policy. hardCapMs: 3000 is a wall-clock backstop, so quiescence must be
-    // gated OFF (D2.4: the check runs only where no clock exists). A wrong landing that runs the
-    // predicate under LANE_DRIVER would declare WAVE-QUIESCED at the 120ms floor and break A11.
+describe('N1 (stage[clock-cap-retired])', () => {
+  it('a numeric hardCapMs refuses at admission naming the retirement — no clock mode exists (operator ruling 2026-08-14)', async (t) => {
+    // RESTAGED to the operator ruling ("timeout/clock based control flows are not appropriate for
+    // baton — an arbitrary cap/limit, just in general"): the v2 contract's null-gating question is
+    // moot because no numeric clock mode survives admission. The refusal is loud, typed, and names
+    // the law — a caller that still asks for a cap learns the settle is quiescence-derived.
     const adapter = new ScenarioAdapter({
       harness: 'mock', pausable: true,
       scenariosByMarker: {
@@ -484,12 +495,11 @@ describe('N1 (stage[null-gating-missing])', () => {
       schemaVersion: 1, idempotencyKey: 'qs-n1', members: [member('q-a')],
       steering: {}, harvest: { paths: ['reports/q-a.md'] },
     };
-    const receipt = await fx.baton.recipes.runWorkflow(spec, { driver: LANE_DRIVER });
-
-    assert.notEqual(receipt.verdict, 'WAVE-QUIESCED',
-      'stage[null-gating-missing]: under LANE_DRIVER (hardCapMs: 3000) the quiet roster is NEVER declared quiesced — the check runs only where no clock exists (D2.4/A13)');
-    assert.ok(!(receipt.steering ?? []).some((entry) => entry?.evidence === 'wave_quiesced'),
-      'stage[null-gating-missing]: no wave_quiesced evidence line under the lane driver (A11 — the suite never runs the quiescence machinery)');
+    await assert.rejects(
+      () => fx.baton.recipes.runWorkflow(spec, { driver: { pollIntervalMs: 15, stallTimeoutMs: 400, hardCapMs: 3000 } }),
+      (error) => error?.code === 'workflow_spec_invalid' && /hardCapMs/.test(error?.message ?? ''),
+      'stage[clock-cap-retired]: a numeric hardCapMs refuses workflow_spec_invalid naming the retired key — no clock mode exists (the #163 law, operator ruling 2026-08-14)',
+    );
   });
 });
 

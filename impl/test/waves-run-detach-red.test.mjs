@@ -29,7 +29,7 @@ import { MockAdapter } from '../src/adapter.mjs';
 import { createDriver } from '../src/index.mjs';
 
 const REPO = 'repo-waves-run-detach';
-const LANE_DRIVER = Object.freeze({ pollIntervalMs: 15, stallTimeoutMs: 400, hardCapMs: 30_000 });
+const LANE_DRIVER = Object.freeze({ pollIntervalMs: 15, stallTimeoutMs: 400 });
 const ROUTE = Object.freeze({ harness: 'mock', model: 'mock-model', effort: 'low' });
 
 function root(label) {

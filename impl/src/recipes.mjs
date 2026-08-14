@@ -41,7 +41,7 @@ const ROLE_FIELDS = Object.freeze(['role', 'exact', 'scope', 'objectiveTemplate'
 const EXACT_FIELDS = Object.freeze(['harness', 'model', 'effort']);
 const TEMPLATE_FIELDS = Object.freeze(['task', 'constraints']);
 const POLICY_FIELDS = Object.freeze([
-  'steering', 'finalization', 'pollIntervalMs', 'stallTimeoutMs', 'hardCapMs',
+  'steering', 'finalization', 'pollIntervalMs', 'stallTimeoutMs',
   'settleTimeoutMs', 'unproductiveNudgeBudget', 'preflight',
 ]);
 const RUN_OPTION_FIELDS = Object.freeze([
@@ -56,13 +56,13 @@ const IDEMPOTENCY_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/u;
 // The recipe policy allowlist is the DATA-only subset of createWaveDriver's policy (R-DC-6): no
 // functions, no signals. `saltObjectives` is forced false by the wrapper (the sole salt owner);
 // `evidencePath` is a per-invocation run option; `onProgress`/`signal` are signals, excluded. The
-// defaults mirror createWaveDriver's documented production cadence.
+// defaults mirror createWaveDriver's documented production cadence. #163 law: no hardCapMs —
+// a recipe policy naming the retired clock cap refuses as an unknown field.
 const DEFAULT_RECIPE_POLICY = Object.freeze({
   steering: 'nudge-on-checkpoint',
   finalization: 'none',
   pollIntervalMs: 20_000,
   stallTimeoutMs: 20 * 60_000,
-  hardCapMs: 3 * 3_600_000,
   settleTimeoutMs: 5_000,
   unproductiveNudgeBudget: 1,
   preflight: true,
@@ -136,7 +136,6 @@ function admitPolicy(raw) {
   }
   assertPositiveInt(merged.pollIntervalMs, 'recipe policy "pollIntervalMs"');
   assertPositiveInt(merged.stallTimeoutMs, 'recipe policy "stallTimeoutMs"');
-  assertPositiveInt(merged.hardCapMs, 'recipe policy "hardCapMs"');
   assertPositiveInt(merged.settleTimeoutMs, 'recipe policy "settleTimeoutMs"');
   if (!Number.isSafeInteger(merged.unproductiveNudgeBudget) || merged.unproductiveNudgeBudget < 0) {
     throw recipeError('recipe policy "unproductiveNudgeBudget" must be a non-negative integer', 'recipe_schema_invalid');
@@ -540,7 +539,6 @@ const IMPLEMENT_DEFAULT_POLICY = Object.freeze({
   finalization: 'claim-on-stall',
   pollIntervalMs: 20_000,
   stallTimeoutMs: 20 * 60_000,
-  hardCapMs: 3 * 3_600_000,
   settleTimeoutMs: 15_000,
   unproductiveNudgeBudget: 1,
   preflight: true,

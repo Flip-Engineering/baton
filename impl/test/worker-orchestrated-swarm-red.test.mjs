@@ -74,7 +74,7 @@ import { WAITING_ON_KINDS } from '../src/application-semantics.mjs';
 // ---------------------------------------------------------------------------
 
 const REPO = 'repo-s74';
-const LANE_DRIVER = Object.freeze({ pollIntervalMs: 15, stallTimeoutMs: 400, hardCapMs: 3000 });
+const LANE_DRIVER = Object.freeze({ pollIntervalMs: 15, stallTimeoutMs: 400 });
 
 const ROUTE = Object.freeze({ harness: 'mock', model: 'mock-model', effort: 'low' });
 const HEAVY_ROUTE = Object.freeze({ harness: 'mock', model: 'mock-model-heavy', effort: 'high' });
@@ -622,17 +622,18 @@ test('P-A10 pin: refusal constancy — the facade capability refusal, the closed
 });
 
 test('P-D1.4 pin/comment-row: the escalation sequence is concurrency-bounded and sequentially uncapped — no hardcoded iteration counter enters driveLane', () => {
-  // D1.4: the interpreter\'s decision-answer loop is bounded by CONCURRENCY (the
-  // roster, ≤64 members, polled in parallel) and by the driver\'s wall-clock hardCap,
-  // sequentially UNCAPPED — the human-in-loop answer sequence never hits an arbitrary
-  // numeric iteration cap. This is a comment-row + structural pin: the while loop must
-  // stay a clock/concurrency bound, never a counter. The counter scan runs over the
-  // WHOLE driveLane function body (blueteam §4.1), not just the matched loop line — a
-  // counter smuggled into processMember/answerDecision/the per-key retry escape a
-  // single-line scan.
+  // D1.4 (restaged 2026-08-14, the #163 law): the interpreter's decision-answer loop is bounded
+  // by CONCURRENCY (the roster, ≤64 members, polled in parallel) and by the quiescence/stuck/
+  // terminality exits — NEVER by a wall-clock hardCap (retired by the operator ruling:
+  // timeout/clock control flows never decide the fate of agentic work), sequentially UNCAPPED —
+  // the human-in-loop answer sequence never hits an arbitrary numeric iteration cap. This is a
+  // comment-row + structural pin: the while loop must stay a roster/quiescence bound, never a
+  // counter or a clock. The counter+clock scan runs over the WHOLE driveLane function body
+  // (blueteam §4.1), not just the matched loop line — a counter or clock smuggled into
+  // processMember/answerDecision/the per-key retry escapes a single-line scan.
   const lane = execFileSync('/usr/bin/grep', ['-n', 'while (pending.size > 0', fileURLToPath(new URL('../src/workflow-interpreter.mjs', import.meta.url))], { encoding: 'utf8' }).trim();
   assert.match(lane, /pending\.size > 0/, 'loop runs until no pending member');
-  assert.match(lane, /Date\.now\(\) - startedAt < driver\.hardCapMs/, 'loop is wall-clock bounded only');
+  assert.doesNotMatch(lane, /Date\.now\(\)|hardCapMs/, 'the #163 law: the loop carries NO wall-clock bound');
   assert.doesNotMatch(lane, /attempts\s*<\s*[0-9]+|counter|iteration/, 'no numeric iteration cap in the drive loop');
   // The driveLane body spans from its def to the next top-level function. Anchoring both
   // ends by name makes the range drift-immune to line shifts (blueteam §4.1).
@@ -640,8 +641,12 @@ test('P-D1.4 pin/comment-row: the escalation sequence is concurrency-bounded and
   const laneEnd = srcAnchor('workflow-interpreter.mjs', '^function roleStuckOnHandled');
   const body = execFileSync('/usr/bin/sed', ['-n', `${laneStart.line},${laneEnd.line - 1}p`, fileURLToPath(new URL('../src/workflow-interpreter.mjs', import.meta.url))], { encoding: 'utf8' });
   assert.doesNotMatch(body, /attempts\s*<\s*[0-9]+|counter|iteration/, 'no numeric iteration cap anywhere in driveLane');
-  const verdict = srcAnchor('workflow-interpreter.mjs', "const verdict = everySettled && everyHarvested");
-  assert.ok(verdict.text.includes("'WAVE-OK'") && verdict.text.includes('WAVE-INCOMPLETE'), 'the verdict literal stays the settled/harvested two-class computation');
+  assert.doesNotMatch(body, /hardCapMs|hard_cap/, 'the #163 law: no clock-cap anywhere in driveLane');
+  const verdict = srcAnchor('workflow-interpreter.mjs', "const verdict = driveExit === 'quiesced'");
+  const verdictRest = srcAnchor('workflow-interpreter.mjs', "everySettled && everyHarvested ? 'WAVE-OK' : 'WAVE-INCOMPLETE'");
+  assert.ok(verdict.text.includes('WAVE-QUIESCED') && verdictRest.line === verdict.line + 1
+    && verdictRest.text.includes("'WAVE-OK'") && verdictRest.text.includes('WAVE-INCOMPLETE'),
+    'the verdict literal is the exit-aware three-class computation (quiesced / settled+harvested / incomplete)');
 });
 
 test('P-A3g green guard: a DELIVERED decision answer records outcome \'answered\' and settles the member (the machinery works when not denied)', async (t) => {

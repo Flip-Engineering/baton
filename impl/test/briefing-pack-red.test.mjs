@@ -413,7 +413,7 @@ const GOAL_PLAN_POLICY = Object.freeze({
 
 const DRIVER_POLICY = Object.freeze({
   preflight: false, steering: 'nudge-on-checkpoint',
-  pollIntervalMs: 30, stallTimeoutMs: 5000, hardCapMs: 30000, settleTimeoutMs: 1500,
+  pollIntervalMs: 30, stallTimeoutMs: 5000, settleTimeoutMs: 1500,
   finalization: 'none', unproductiveNudgeBudget: 1, saltObjectives: false,
 });
 

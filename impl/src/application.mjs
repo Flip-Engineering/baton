@@ -114,8 +114,11 @@ const RESULT_POLICY_CONSTRAINT_PREFIX = 'Baton objective/result policy ';
 // caller omits driver options — mirrors the wave driver's documented production policy
 // (wave-driver.mjs DEFAULT_POLICY: a multi-hour wave). The interpreter's own DEFAULT_DRIVER
 // stays the suite-pinned fast policy.
+// #163 law (operator ruling 2026-08-14): hardCapMs ships ONLY as the null sentinel -
+// the production cadence is uncapped; the drive settles on terminality, handled-decision
+// stuck, or observed quiescence, never on a wall clock.
 const PRODUCTION_WORKFLOW_DRIVER = Object.freeze({
-  pollIntervalMs: 20_000, stallTimeoutMs: 20 * 60_000, hardCapMs: 3 * 3_600_000,
+  pollIntervalMs: 20_000, stallTimeoutMs: 20 * 60_000, hardCapMs: null,
 });
 // The unqualified marker predates explicit resultIntent and must remain replayable as
 // compatibility evidence. New explicit requests use a distinct reserved namespace so
