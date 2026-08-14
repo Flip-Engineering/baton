@@ -1,0 +1,25 @@
+wave impl-kg-activation-2026-08-14-wave-b
+member coordinator
+  harness deepseek
+  model deepseek-v4-flash
+  effort high
+  scope "docs/reference/evidence/impl-kg-activation-2026-08-14/redrive1/**"
+  objectiveRef "docs/reference/evidence/impl-kg-activation-2026-08-14/redrive1/coordinator-brief.md"
+  report "docs/reference/evidence/impl-kg-activation-2026-08-14/redrive1/verify-notes.md"
+member row-kg-activation
+  harness glm
+  model "glm-5.3"
+  effort high
+  scope "impl/src/coordinator.mjs"
+  scope "impl/src/coordination-store.mjs"
+  scope "docs/reference/evidence/impl-kg-activation-2026-08-14/redrive1/**"
+  objectiveRef "docs/reference/evidence/impl-kg-activation-2026-08-14/redrive1/row-kg-activation-brief.md"
+  report "docs/reference/evidence/impl-kg-activation-2026-08-14/redrive1/notes-row-kg-activation.md"
+approveOnAdvertisedPlan
+claimOnStall
+nudgeOnCheckpoint "Continue — the suite is the contract; additive projections + brief serving ONLY (no new surfaces, no auto-promotion). NUL discipline on the store. Write deliverables incrementally."
+messageOnSpawn brief "Read your objectiveRef brief IN FULL first; it binds, and it names a deeper decisions doc — read that too. gh may be unauthenticated in your worktree. Your [attempt:] line verbatim in your deliverable's first five lines. Judgment calls recorded; authority-class ambiguity → DECISION_REQUEST with options."
+elevateWhenNotes doubt,plan 20
+signalOnMembersDone row-kg-activation result "The row settled (you are the remaining member — pinned #175 semantics). Verify per your brief and write verify-notes.md."
+harvest "docs/reference/evidence/impl-kg-activation-2026-08-14/redrive1/notes-row-kg-activation.md" mustContain "attempt:"
+harvest "docs/reference/evidence/impl-kg-activation-2026-08-14/redrive1/verify-notes.md" mustContain "KG_ACTIVATION-VERIFY v1"
