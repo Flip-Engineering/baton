@@ -212,11 +212,13 @@ function repositorySnapshot(repoRoot, stateRoot) {
     `snapshot-index-${process.pid}-${randomBytes(8).toString('hex')}`,
   );
   const timestamp = new Date().toISOString();
+  // #220: the snapshot committer is versioned — `baton <version> (deployment snapshot)`.
+  const batonVersion = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version;
   const gitEnv = {
     GIT_INDEX_FILE: indexPath,
-    GIT_AUTHOR_NAME: 'Baton deployment snapshot',
+    GIT_AUTHOR_NAME: `baton ${batonVersion} (deployment snapshot)`,
     GIT_AUTHOR_EMAIL: 'baton-snapshot@localhost',
-    GIT_COMMITTER_NAME: 'Baton deployment snapshot',
+    GIT_COMMITTER_NAME: `baton ${batonVersion} (deployment snapshot)`,
     GIT_COMMITTER_EMAIL: 'baton-snapshot@localhost',
     GIT_AUTHOR_DATE: timestamp,
     GIT_COMMITTER_DATE: timestamp,

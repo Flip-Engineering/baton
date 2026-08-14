@@ -22,6 +22,10 @@ import { basename, dirname, isAbsolute, relative, resolve, sep } from 'node:path
 
 const execFileAsync = promisify(execFile);
 
+// #220: the machinery's commit identity is versioned — `baton <version>` (never a stale
+// placeholder name). Resolved from the package manifest once, at module scope.
+const BATON_VERSION = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version;
+
 // ---------------------------------------------------------------------------
 // Refusal vocabulary (D — field/role-named, recursive).
 // ---------------------------------------------------------------------------
@@ -597,7 +601,7 @@ export async function runWorkflow(baton, specOrPath, options = {}) {
       const status = await execFileAsync('git', ['status', '--porcelain'], { cwd: repoRoot, maxBuffer: 16 * 1024 * 1024 });
       if (status.stdout.trim().length > 0) {
         await execFileAsync('git', ['add', '-A'], { cwd: repoRoot });
-        await execFileAsync('git', ['-c', 'user.name=Baton', '-c', 'user.email=baton@local', 'commit', '-q', '-m', `baton workflow base ${spec.idempotencyKey}`], { cwd: repoRoot });
+        await execFileAsync('git', ['-c', `user.name=baton ${BATON_VERSION}`, '-c', 'user.email=baton@local', 'commit', '-q', '-m', `baton workflow base ${spec.idempotencyKey}`], { cwd: repoRoot });
       }
     } catch { /* nothing to commit, or commits unavailable — the wave will surface any real base issue */ }
   }
