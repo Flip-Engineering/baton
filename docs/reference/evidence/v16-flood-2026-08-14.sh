@@ -12,7 +12,7 @@ launch() { # $1=key $2=specPath
     -d "{\"schemaVersion\":1,\"commandId\":\"$1\",\"idempotencyKey\":\"$1\",\"command\":\"waves_run\",\"args\":{\"specPath\":\"$2\"},\"repoId\":\"repo-76d484205f22eed0163d8f21b8287740\",\"origin\":\"https://baton.local\"}" >/dev/null 2>&1
   for i in 1 2 3 4 5 6; do
     sleep 10
-    if grep -q "web.admit.*$1\|web.complete.*$1" "$LEDGER"; then echo "$1 ADMITTED"; return 0; fi
+    if grep -E 'web\.command_(admitted|completed)' "$LEDGER" | grep -q "$1"; then echo "$1 ADMITTED"; return 0; fi
   done
   echo "$1 NOT-ADMITTED (investigate before next launch)"; return 1
 }
