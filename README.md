@@ -10,6 +10,13 @@
 
 The name: a conductor's baton directs an orchestra; a relay baton gets passed between runners. Both are the point.
 
+> **Project updates.** Dated, evidence-cited campaign reports live in [`reviews/`](reviews/) — latest:
+> **[baton-update-2026-08-14](reviews/baton-update-2026-08-14.html)** (the no-clock law, the detached bus,
+> the uncapped fleet — 48h with focus on the last 12h/6h) ·
+> [campaign state 2026-08-14](reviews/baton-campaign-state-2026-08-14.html) ·
+> [foundry day 2026-08-13](reviews/baton-foundry-day-2026-08-13.html) ·
+> [24h report](reviews/baton-24h-report.html).
+
 > **Reading the status tiers.** Every capability below is labeled **[shipped]** (landed in
 > `master`, pinned green by the canonical suite), **[in flight]** (mid-pipeline: contract →
 > adversarial red-team → fold → red-first suite → blue-team → fold → implementation, with the
