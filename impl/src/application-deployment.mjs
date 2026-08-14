@@ -17,6 +17,9 @@ import { ClaudeCredentialCache } from './claude-credential-cache.mjs';
 import { GrokCredentialCache } from './grok-credential-cache.mjs';
 import { RouteLiveness } from './route-liveness.mjs';
 import { routeTupleKey } from './route-tuple.mjs';
+import {
+  computeSeatAtom, honestVerdict, observedAtEventSeq, resolveSeatVendor, seatQueue,
+} from './readiness-projection.mjs';
 import { CodexAppServerCli } from './codex-appserver.mjs';
 import { createRecipes } from './recipes.mjs';
 import {
@@ -1005,9 +1008,12 @@ function publicRouteRuntime(card) {
 // §4.2.1/§4.2.2 fold F-5: the fleet_roster row is the stated named sibling of publicRouteRuntime —
 // the same whitelist-projector discipline (bounded, vendor-neutral atoms; no executable paths, no
 // credential values, no private runtime paths, no provider tokens). The liveness/occupancy/learning
-// fields carry only the bounded atoms the projection functions already produce.
-function publicRosterRow(route, { static: staticFields, liveness, occupancy, learning }) {
-  return Object.freeze({
+// fields carry only the bounded atoms the projection functions already produce. The verdict/probedAt
+// pair is the #167 honest projection (D2) — property-accessible NON-enumerable siblings (RT-6's
+// closed-row law: the enumerable row stays the 8-key §4.2.1 set; the wire re-add is the
+// northbound's job, the D6c precedent).
+function publicRosterRow(route, { static: staticFields, liveness, occupancy, learning, verdict, probedAt }) {
+  const row = {
     harness: route.harness,
     model: route.model,
     effort: route.effort,
@@ -1016,7 +1022,10 @@ function publicRosterRow(route, { static: staticFields, liveness, occupancy, lea
     liveness,
     occupancy,
     learning,
-  });
+  };
+  Object.defineProperty(row, 'verdict', { value: verdict, enumerable: false });
+  Object.defineProperty(row, 'probedAt', { value: probedAt, enumerable: false });
+  return Object.freeze(row);
 }
 
 // §4.2.2 fold F-2: the fleet_roster OPERATION's provenance envelope — claimed on the operation's
@@ -1347,8 +1356,31 @@ class BatonDeployment {
       // exposed as non-enumerable row fields: accessible via property access (the wave-driver
       // preflight, the doctor consumers) while leaving the pre-existing enumerable row shape
       // (DP5's closed pin) and serialized doctor output unchanged.
+      //
+      // #167 (D2): the row carries the honest projection — verdict + probedAt — as NON-enumerable
+      // siblings (the D6b briefing precedent, G1/RT-4): the DP5 closed enumerable row and the
+      // serialized doctor output stay byte-stable, while the honest "is the provider actually
+      // alive" answer stays accessible by property read (wave-driver preflight, doctor consumers)
+      // and is re-added explicitly by the northbound wire surfaces (D6c precedent). verdict ∈
+      // { probe-verified | unverified | failed }, probedAt the last recorded measurement or null
+      // (OQ5: never cleared when the verified window lapses). The A1a "enumerable spelling" is
+      // unsatisfiable against the fleet's closed-row pins (phase78 DP5, seat A8) — judgment call
+      // recorded in the row notes.
       const live = this.#composeLive(row);
+      const honest = honestVerdict(live.liveness);
       const composed = { ...row };
+      Object.defineProperty(composed, 'verdict', { value: honest.verdict, enumerable: false });
+      Object.defineProperty(composed, 'probedAt', { value: honest.probedAt, enumerable: false });
+      // #167 (G1): the static substrate is exposed as a sibling (same shape as the roster row's
+      // `static`), so consumers can assert the static layer without the honest projection
+      // overwriting it. Non-enumerable, like liveness/occupancy — it is not part of the DP5
+      // enumerable row.
+      const staticFields = Object.freeze({
+        state: row.state,
+        ...(row.code ? { code: row.code } : {}),
+        ...(row.summary ? { summary: row.summary } : {}),
+      });
+      Object.defineProperty(composed, 'static', { value: staticFields, enumerable: false });
       Object.defineProperty(composed, 'liveness', { value: live.liveness, enumerable: false });
       Object.defineProperty(composed, 'occupancy', { value: live.occupancy, enumerable: false });
       return Object.freeze(composed);
@@ -1367,7 +1399,21 @@ class BatonDeployment {
       ledgerHeadSeq: coordination.ledgerHeadSeq(),
       epochLag: coordination.ledgerHeadSeq() - briefingHead.observedSeq,
     } : null;
-    const base = workspace ? { ...this.#readiness, routes, workspace } : { ...this.#readiness, routes };
+    // #146 (D1/D2.1/D2.2): the LIVE seat telemetry — one closed D1 atom per readiness route in
+    // route order, plus the replay-consistent freshness label (an event seq, never wall time),
+    // plus the #218 queue surface (per-adapter inFlight/ceiling/seat_queued). The atom is the
+    // closed 6-key set { route, state, inFlight, ceiling, deferred, inFlightRevision } — the
+    // revision is the vendor's incarnation-local handle-revision counter (readiness-projection
+    // .mjs handleRevision), never a clock. All three are additive siblings: the DP5 enumerable
+    // route rows are untouched by the atoms.
+    const seats = Object.freeze(this.#readiness.routes.map((route) => computeSeatAtom({
+      route, state: route.state,
+      coordinator: this.#driver?.coordinator ?? null,
+      coordination,
+    })));
+    const base = workspace
+      ? { ...this.#readiness, routes, seats, observedAtEventSeq: observedAtEventSeq(coordination), seatQueue: seatQueue(this.#driver?.coordinator ?? null, coordination), workspace }
+      : { ...this.#readiness, routes, seats, observedAtEventSeq: observedAtEventSeq(coordination), seatQueue: seatQueue(this.#driver?.coordinator ?? null, coordination) };
     Object.defineProperty(base, 'briefing', { value: briefing, enumerable: false });
     return Object.freeze(base);
   }
@@ -1392,12 +1438,17 @@ class BatonDeployment {
   }
 
   #occupancyFor(route) {
-    const match = this.#liveness?.adapterFor(route);
-    const vendor = match?.vendor ?? route.harness;
-    const inFlight = typeof this.#driver.coordinator?._inFlightCount === 'function'
-      ? this.#driver.coordinator._inFlightCount(vendor) : 0;
-    const ceiling = Number.isSafeInteger(match?.adapter?.card()?.concurrencyCeiling)
-      ? match.adapter.card().concurrencyCeiling : 1;
+    // B2 (#146): the SINGLE occupancy source — occupancy reads the same allocator-bound value
+    // as the seat atom (the auto-eligible candidate set), never `adapterFor` (which gates on
+    // turnCompletion pausable and would fabricate a number where the allocator reads honest-null).
+    const coordinator = this.#driver?.coordinator ?? null;
+    const vendor = resolveSeatVendor(coordinator, route);
+    if (vendor === null) return Object.freeze({ inFlight: null, concurrencyCeiling: null });
+    const adapter = coordinator?._adapters?.[vendor] ?? null;
+    const card = typeof adapter?.card === 'function' ? adapter.card() : null;
+    const inFlight = typeof coordinator?._inFlightCount === 'function'
+      ? coordinator._inFlightCount(vendor) : null;
+    const ceiling = Number.isSafeInteger(card?.concurrencyCeiling) ? card.concurrencyCeiling : null;
     return Object.freeze({ inFlight, concurrencyCeiling: ceiling });
   }
 
@@ -1433,7 +1484,13 @@ class BatonDeployment {
         : Object.freeze({ state: 'unobserved', credentialKey: null });
       const occupancy = this.#occupancyFor(route);
       const learning = this.#learningFor(route);
-      return publicRosterRow(route, { static: staticFields, liveness, occupancy, learning });
+      // #167 (D2): the roster row carries the same honest projection as the doctor row — the
+      // liveness class is never a private sibling.
+      const honest = honestVerdict(liveness);
+      return publicRosterRow(route, {
+        static: staticFields, liveness, occupancy, learning,
+        verdict: honest.verdict, probedAt: honest.probedAt,
+      });
     }));
     const observations = this.#driver.coordination.routeObservations();
     return Object.freeze({
@@ -1454,7 +1511,10 @@ class BatonDeployment {
   async startMany(requests) {
     if (Array.isArray(requests)) {
       for (const request of requests) {
-        if (record(request)) assertRouteReady(request, this.#readiness);
+        if (record(request)) {
+          assertRouteReady(request, this.#readiness);
+          await this.#livenessGate(request);
+        }
       }
     }
     return this.#baton.runs.startMany(requests);
@@ -1463,7 +1523,10 @@ class BatonDeployment {
   async workflow(objective, options = {}) {
     if (record(options) && Array.isArray(options.team)) {
       for (const member of options.team) {
-        if (record(member) && record(member.exact)) assertRouteReady({ exact: member.exact }, this.#readiness);
+        if (record(member) && record(member.exact)) {
+          assertRouteReady({ exact: member.exact }, this.#readiness);
+          await this.#livenessGate({ exact: member.exact });
+        }
       }
     }
     return this.#baton.workflow(objective, options);
@@ -1471,13 +1534,17 @@ class BatonDeployment {
 
   async explore(objective, options = {}) {
     assertRouteReady(options, this.#readiness);
+    await this.#livenessGate(options);
     return this.#baton.explore(objective, options);
   }
 
   async review(objective, options = {}) {
     if (record(options) && Array.isArray(options.routes)) {
       for (const exact of options.routes) {
-        if (record(exact)) assertRouteReady({ exact }, this.#readiness);
+        if (record(exact)) {
+          assertRouteReady({ exact }, this.#readiness);
+          await this.#livenessGate({ exact });
+        }
       }
     }
     return this.#baton.review(objective, options);

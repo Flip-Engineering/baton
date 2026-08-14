@@ -82,12 +82,23 @@ try {
       process.stdout.write(`${JSON.stringify(local, null, 2)}\n`);
       if (parsed.check && local.state !== 'configured') process.exitCode = 1;
     } else {
-      const remote = await clientFor(discoverBatonConnection()).doctor();
+      // #167 D1 trigger 3: --check forces a fresh probe per stale route on the OPERATOR path —
+      // the honest verdict is a measurement, never a cached "last time I looked" label. The
+      // forceProbe signal rides the doctor call (the web/cli seams accept it additively).
+      const forceProbe = parsed.check === true;
+      const remote = await clientFor(discoverBatonConnection()).doctor({ forceProbe });
       const result = {
         schemaVersion: 1, state: remote.ready === true ? 'ready' : 'not_ready',
         depth: parsed.depth, outline: { ...local.outline, credential: 'accepted', remote: remote.ready === true ? 'ready' : 'not_ready' },
         deployment: remote.deployment,
         routes: remote.routes,
+        // #146/#218 (D2.3): the operator surface teaches the live seat telemetry — seats (one
+        // closed D1 atom per readiness route), seatQueue (per-adapter inFlight/ceiling/
+        // seat_queued), and the replay-consistent freshness label observedAtEventSeq (an event
+        // seq, never wall time). All additive JSON fields; absent when the remote predates them.
+        seats: remote.deployment?.seats ?? null,
+        seatQueue: remote.deployment?.seatQueue ?? null,
+        observedAtEventSeq: remote.deployment?.observedAtEventSeq ?? null,
         // Epic #103 (D6c): the ONE named additive briefing field (D6c/B5) — a JSON field, never
         // a separate text render. Reads the doctor sibling by property access; absent pack → null.
         briefing: remote.briefing ?? null,
