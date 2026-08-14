@@ -3762,7 +3762,9 @@ export class Coordinator {
     try {
       nativeSpawnSource = this._adapters[vendor].spawn(workerId, providerBrief, {
         worktreeReady,
-        timeoutMs: wallMin ? wallMin * 60000 : undefined,
+        // #163 law (operator ruling): NO wall-time clock feeds a member's fate — fate rests
+        // on evidence only (process exit; quiescence-derived wave completion). budget.wallMin
+        // stays admitted but is inert for fate; its schema removal is tracked separately.
         signal: spawnAbort.signal,
         model: task.modelResolved ?? undefined,
         reasoningEffort: task.effortResolved ?? undefined,

@@ -825,10 +825,9 @@ export class ClaudeSessionCli {
       },
     }) : null;
     this._sessions.set(worker, session);
-    if (opts.timeoutMs > 0) {
-      session.wallTimer = setTimeout(() => this._onWallTimeout(session, opts.timeoutMs), opts.timeoutMs);
-      if (typeof session.wallTimer.unref === 'function') session.wallTimer.unref();
-    }
+    // #163 law: the wall-time fate clock is GONE — a member's fate rests on evidence only
+    // (process exit; quiescence-derived wave completion). opts.timeoutMs is accepted for
+    // back-compat and deliberately ignored for fate.
 
     this._attachChild(session, child);
 
