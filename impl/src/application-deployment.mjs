@@ -17,6 +17,7 @@ import { ClaudeCredentialCache } from './claude-credential-cache.mjs';
 import { GrokCredentialCache } from './grok-credential-cache.mjs';
 import { RouteLiveness } from './route-liveness.mjs';
 import { routeTupleKey } from './route-tuple.mjs';
+import { honestProjection, seatAtom } from './readiness-projection.mjs';
 import { CodexAppServerCli } from './codex-appserver.mjs';
 import { createRecipes } from './recipes.mjs';
 import {
@@ -1253,6 +1254,13 @@ class BatonDeployment {
   #claudeCredentialProbe = null;
   #grokCredentialProbe = null;
   #liveness = null;
+  // The #167 honesty gate: the enumerable {verdict, probedAt} projection lands on the doctor
+  // route row ONLY when the deployment explicitly configured advanced.liveness. A deployment
+  // that did not configure the tier keeps the DP5 closed enumerable set on the doctor wire
+  // (seat-telemetry A8) while the roster (a bounded document, never the DP5 wire) always carries
+  // the projection (readiness-honesty A1b). The liveness controller itself is always wired
+  // (openBatonDeployment); this gate is purely the wire-shape reconciliation.
+  #livenessConfigured = false;
   #adapters = {};
   #routes = [];
   #residentAuthority = null;
@@ -1272,6 +1280,7 @@ class BatonDeployment {
     this.#claudeCredentialProbe = deployment.claudeCredentialProbe ?? null;
     this.#grokCredentialProbe = deployment.grokCredentialProbe ?? null;
     this.#liveness = deployment.liveness ?? null;
+    this.#livenessConfigured = deployment.livenessConfigured === true;
     this.#adapters = deployment.adapters ?? {};
     this.#routes = deployment.routes ?? [];
     this.#card = Object.freeze({ ...application.card(), readiness });
@@ -1336,6 +1345,12 @@ class BatonDeployment {
     const workspace = this.#workspaceProbe ? this.#workspaceProbe() : null;
     const credential = this.#claudeCredentialProbe ? this.#claudeCredentialProbe() : null;
     const grokCredential = this.#grokCredentialProbe ? this.#grokCredentialProbe() : null;
+    // #146 D1/D2.1: the seat projection is computed ONCE per readiness route, then consumed by
+    // BOTH the additive `seats` array (one closed D1 atom per route, in readiness route order)
+    // and the route row's non-enumerable occupancy sibling — the single occupancy source (B2).
+    // observedAtEventSeq is the ledger head (an event seq, never wall time — D3/B3).
+    const seats = Object.freeze(this.#readiness.routes.map((route) => this.#seatFor(route).atom));
+    const observedAtEventSeq = this.#driver?.coordination?.ledgerHeadSeq?.() ?? 0;
     const routes = Object.freeze(this.#readiness.routes.map((route) => {
       let row = route;
       if (route.harness === 'claude-code' && route.model.startsWith('claude-') && credential) {
@@ -1350,9 +1365,31 @@ class BatonDeployment {
       // preflight, the doctor consumers) while leaving the pre-existing enumerable row shape
       // (DP5's closed pin) and serialized doctor output unchanged.
       const live = this.#composeLive(row);
+      const seat = this.#seatFor(row);
       const composed = { ...row };
       Object.defineProperty(composed, 'liveness', { value: live.liveness, enumerable: false });
-      Object.defineProperty(composed, 'occupancy', { value: live.occupancy, enumerable: false });
+      Object.defineProperty(composed, 'occupancy', { value: seat.occupancy, enumerable: false });
+      // #167 D2: when the deployment explicitly configured the liveness tier, the doctor wire
+      // gains the ENUMERABLE {verdict, probedAt} honest projection (A1a/V-stale/A5) — JSON
+      // round-trips survive. Without that explicit config the route row keeps the DP5 closed
+      // enumerable set (seat-telemetry A8): the wire is byte-stable for non-liveness deployments.
+      if (this.#livenessConfigured) {
+        const honest = this.#honestFor(row);
+        composed.verdict = honest.verdict;
+        composed.probedAt = honest.probedAt;
+        // #167 D2 (G1): with the liveness tier configured, the static substrate is exposed as
+        // the named non-enumerable `static` sibling (same bounded fields as the roster's) so a
+        // lapsed-window doctor row still reads its readiness state (V-stale/A1a) — the verdict
+        // is a projection over the liveness row, never a replacement for the static read.
+        Object.defineProperty(composed, 'static', {
+          value: Object.freeze({
+            state: row.state,
+            ...(row.code ? { code: row.code } : {}),
+            ...(row.summary ? { summary: row.summary } : {}),
+          }),
+          enumerable: false,
+        });
+      }
       return Object.freeze(composed);
     }));
     // Epic #103 (D6b): the non-enumerable `briefing` sibling — { packId, composedAtEventSeq,
@@ -1369,7 +1406,9 @@ class BatonDeployment {
       ledgerHeadSeq: coordination.ledgerHeadSeq(),
       epochLag: coordination.ledgerHeadSeq() - briefingHead.observedSeq,
     } : null;
-    const base = workspace ? { ...this.#readiness, routes, workspace } : { ...this.#readiness, routes };
+    const base = workspace
+      ? { ...this.#readiness, routes, seats, observedAtEventSeq, workspace }
+      : { ...this.#readiness, routes, seats, observedAtEventSeq };
     Object.defineProperty(base, 'briefing', { value: briefing, enumerable: false });
     return Object.freeze(base);
   }
@@ -1393,14 +1432,31 @@ class BatonDeployment {
     return { liveness, occupancy: this.#occupancyFor(route) };
   }
 
+  // #146 B2: the SINGLE occupancy source. Occupancy is the allocator-bound seat atom's read —
+  // never adapterFor (which gates on pausability and so diverges from the allocator on
+  // non-pausable test doubles). Every consumer — the doctor row's non-enumerable sibling, the
+  // roster row, and the additive seats array — reads the same numbers (A10).
   #occupancyFor(route) {
-    const match = this.#liveness?.adapterFor(route);
-    const vendor = match?.vendor ?? route.harness;
-    const inFlight = typeof this.#driver.coordinator?._inFlightCount === 'function'
-      ? this.#driver.coordinator._inFlightCount(vendor) : 0;
-    const ceiling = Number.isSafeInteger(match?.adapter?.card()?.concurrencyCeiling)
-      ? match.adapter.card().concurrencyCeiling : 1;
-    return Object.freeze({ inFlight, concurrencyCeiling: ceiling });
+    return this.#seatFor(route).occupancy;
+  }
+
+  // #146 D1/D1.1: the allocator-bound seat projection for one readiness route. The vendor is the
+  // allocator's AUTO binding (the doctor/generic read — exactly-one eligible candidate, else
+  // honest-null); the D1 closed atom and the single-source occupancy both derive from it. The
+  // atom carries the closed six-key set {ceiling, deferred, inFlight, inFlightRevision, route,
+  // state} (readiness-projection.mjs) — inFlightRevision is the vendor's incarnation-local
+  // handle-registry revision, never a clock (A11/B3).
+  #seatFor(route) {
+    return seatAtom(this.#driver, route);
+  }
+
+  // #167 D2: the honest {verdict, probedAt} projection over the projected liveness row. The
+  // liveness controller is always wired, so this reads the real projected state ('unverified'
+  // for never-probed/unsupported, the retained measurement for a lapsed window, 'failed' for a
+  // failed probe, 'probe-verified' for a fresh content-verified probe).
+  #honestFor(route) {
+    const liveness = this.#liveness ? this.#liveness.project(route) : null;
+    return honestProjection(liveness);
   }
 
   #learningFor(route) {
@@ -1435,7 +1491,12 @@ class BatonDeployment {
         : Object.freeze({ state: 'unobserved', credentialKey: null });
       const occupancy = this.#occupancyFor(route);
       const learning = this.#learningFor(route);
-      return publicRosterRow(route, { static: staticFields, liveness, occupancy, learning });
+      // #167 D2: the roster is a bounded document (not the DP5 doctor wire), so the honest
+      // {verdict, probedAt} projection is ALWAYS enumerable here (A1b) — the liveness class is
+      // not a private sibling. Same single-source occupancy as the doctor (A10).
+      const honest = this.#honestFor(route);
+      const row = publicRosterRow(route, { static: staticFields, liveness, occupancy, learning });
+      return Object.freeze({ ...row, verdict: honest.verdict, probedAt: honest.probedAt });
     }));
     const observations = this.#driver.coordination.routeObservations();
     return Object.freeze({
@@ -1456,7 +1517,10 @@ class BatonDeployment {
   async startMany(requests) {
     if (Array.isArray(requests)) {
       for (const request of requests) {
-        if (record(request)) assertRouteReady(request, this.#readiness);
+        if (record(request)) {
+          assertRouteReady(request, this.#readiness);
+          await this.#livenessGate(request);
+        }
       }
     }
     return this.#baton.runs.startMany(requests);
@@ -1465,7 +1529,10 @@ class BatonDeployment {
   async workflow(objective, options = {}) {
     if (record(options) && Array.isArray(options.team)) {
       for (const member of options.team) {
-        if (record(member) && record(member.exact)) assertRouteReady({ exact: member.exact }, this.#readiness);
+        if (record(member) && record(member.exact)) {
+          assertRouteReady({ exact: member.exact }, this.#readiness);
+          await this.#livenessGate({ exact: member.exact });
+        }
       }
     }
     return this.#baton.workflow(objective, options);
@@ -1473,13 +1540,17 @@ class BatonDeployment {
 
   async explore(objective, options = {}) {
     assertRouteReady(options, this.#readiness);
+    await this.#livenessGate(options);
     return this.#baton.explore(objective, options);
   }
 
   async review(objective, options = {}) {
     if (record(options) && Array.isArray(options.routes)) {
       for (const exact of options.routes) {
-        if (record(exact)) assertRouteReady({ exact }, this.#readiness);
+        if (record(exact)) {
+          assertRouteReady({ exact }, this.#readiness);
+          await this.#livenessGate({ exact });
+        }
       }
     }
     return this.#baton.review(objective, options);
@@ -2050,6 +2121,10 @@ export async function openBatonDeployment(rawOptions, createDriver) {
     return new BatonDeployment(application, principal, readiness, {
       driver, repository, deploymentRoot, residentOptions, workspaceProbe, adapters, routes,
       liveness: livenessController,
+      // #167 wire-shape gate: the enumerable {verdict, probedAt} projection lands on the doctor
+      // route row only for deployments that explicitly configured advanced.liveness (the
+      // seat-telemetry A8 DP5 closed-set reconciliation — see the field doc on BatonDeployment).
+      livenessConfigured: advanced.liveness !== undefined,
       claudeCredentialProbe: claudeCredentialCache ? () => claudeCredentialCache.metadata() : null,
       claudeCredentialCache,
       grokCredentialProbe,

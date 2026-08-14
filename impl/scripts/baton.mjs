@@ -82,7 +82,10 @@ try {
       process.stdout.write(`${JSON.stringify(local, null, 2)}\n`);
       if (parsed.check && local.state !== 'configured') process.exitCode = 1;
     } else {
-      const remote = await clientFor(discoverBatonConnection()).doctor();
+      // #167 D1 trigger 3 (blocker 2): `baton doctor --check` forces exactly one fresh probe per
+      // stale route through the OPERATOR path. The forced-probe signal rides the /v1/application-
+      // card request as `forceProbe` (BatonWebClient.doctor → the web-northbound card handler).
+      const remote = await clientFor(discoverBatonConnection()).doctor({ forceProbe: true });
       const result = {
         schemaVersion: 1, state: remote.ready === true ? 'ready' : 'not_ready',
         depth: parsed.depth, outline: { ...local.outline, credential: 'accepted', remote: remote.ready === true ? 'ready' : 'not_ready' },
