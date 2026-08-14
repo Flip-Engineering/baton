@@ -1,164 +1,149 @@
 IMPL_TELEMETRY-VERIFY v1
-[attempt: d6d859c7-9db8-4a27-9362-2f264f1a3496 coordinator]
-Status: GROUNDED — awaiting row-telemetry settle signal (signalOnMembersDone). Sections §1–§4
-are measured and final at base 09200e9; §5 (verdict, row counts, spot-audit) is written on
-settle. This header block is replaced then.
+[attempt: 7663f995-5032-4aad-be5e-dd8a06fd31f5 coordinator]
+Status: GROUNDED — row-telemetry is mid-impl in sibling worktree (partition files dirty, notes
+not yet written); §1–§4 are measured and final at base 5ae2c7e5; §5 (verdict, row counts,
+spot-audit) is written on settle. This is the REDRIVE-2 grounding: every number below was
+re-measured this session at this base by me; nothing is carried from redrive1's notes without
+re-measurement (and one redrive1 anchor-set is re-derived below after a measurement pitfall).
 
-# impl-telemetry redrive1 — coordinator verification notes
+# impl-telemetry redrive2 — coordinator verification notes
 
-Coordinator: wave `impl-telemetry-2026-08-14-wave-b`, member `coordinator` (this worktree,
-`ws-1b1187d205a60c97a6d6a17c39d9f112`, base `09200e9`). Row under verification: `row-telemetry`
-(glm-5.3), contract: `impl/test/seat-telemetry-red.test.mjs` (#146) +
-`impl/test/readiness-honesty-red.test.mjs` (#167). Verification law: the #174 paraphrase carried
-by the coordinator brief — verify on disk in sibling worktrees `../../wt/ws-*/`; silence is not
-death; read the row's notes file. Signal: `signalOnMembersDone row-telemetry` (pinned #175
-semantics — I am the remaining member). gh is UNAUTHENTICATED in this worktree (verified:
-`gh issue list` refuses, "please run gh auth login"); all evidence below is grounded in the code
-and suite runs, none in GitHub.
+Coordinator: wave `impl-telemetry-2026-08-14-wave-c`, member `coordinator` (this worktree
+`ws-c7944a399093520f243d39735275d76c`, base `5ae2c7e5`). Row under verification:
+`row-telemetry` (glm-5.3, worktree identified on disk: `ws-06061e8a898e163496a840272f627b5f` —
+first sibling to dirty the partition files `impl/src/application-deployment.mjs`,
+`impl/scripts/baton.mjs`, and create `impl/src/readiness-projection.mjs`). Contract:
+`impl/test/seat-telemetry-red.test.mjs` (#146) + `impl/test/readiness-honesty-red.test.mjs`
+(#167), plus the #218 queue-read addendum. Verification law: #174 paraphrase in the coordinator
+brief — verify on disk in sibling worktrees `../../wt/ws-*/`; silence is not death; read the
+row's notes file. Signal: `signalOnMembersDone row-telemetry` (pinned #175 semantics — I am the
+remaining member). gh is unauthenticated in this worktree; all evidence is grounded in code and
+suite runs, none in GitHub.
 
-## §1 Suites read in full, immutability baseline
+## §1 Suites read, immutability baseline (SHA-256, first 16 hex, this session at 5ae2c7e5)
 
-Both contract suites read in full at base. SHA-256 at base `09200e9` (the row's tree must match
-these byte-for-byte — suites are immutable, green must be earned by impl):
+- `seat-telemetry-red.test.mjs` 301349633f491749 — byte-identical to redrive1's recorded SHA
+- `readiness-honesty-red.test.mjs` 44ada6edeb8939cf — identical
+- Adjacents: deepseek-routes-red 85cc05825b5a9301 · glm-session dcb97cf8387efd77 · adapter
+  86611ab73b61b005 · cli-adapters 1f6f072117b144b4 — all identical
+- Row partition files at base: application-deployment.mjs c3018c3e179e5375 · baton.mjs
+  340ff2fd84cb9fde — identical to redrive1's; the four commits 09200e9..5ae2c7e5 did not touch
+  any of the above (verified `git diff --stat 09200e9..5ae2c7e5`).
 
-- `impl/test/seat-telemetry-red.test.mjs` — 301349633f491749f68955ef9c7c5554847beaddba2f72d72308d709fab1735f
-- `impl/test/readiness-honesty-red.test.mjs` — 44ada6edeb8939cfb8ac30b2b18ee10d4c82946fbb39040803a930e5282e263d
-- Adjacents: deepseek-routes-red 85cc0582…c3efb07 · glm-session dcb97cf8…492eb8 · adapter
-  86611ab7…4a6235 · cli-adapters 1f6f0721…cc5fa5d
-- Row partition files at base: application-deployment.mjs c3018c3e…cee8480 · baton.mjs
-  340ff2fd…2884cf1
+The row's tree must match these byte-for-byte at settle — suites are immutable; green is earned
+by impl only.
 
-Suite stage inventories (from the suite headers, verified by run):
-- seat-telemetry: 14 tests — rows A1–A11 RED at named stages (`doctor-seats-missing`,
+Stage inventories (suite headers, confirmed by run):
+- seat-telemetry: 14 tests — RED rows A1–A11 at named stages (`doctor-seats-missing`,
   `capacity-deferred-missing`, `waves-capacity-missing`, `seats-freshness-label-missing`,
-  `surface-teaching-missing`, `capacity-inflight-missing`, `inFlightRevision-missing`), A-L is
-  the fixture-lint GREEN GUARD.
+  `surface-teaching-missing`, `capacity-inflight-missing`, `inFlightRevision-missing`), A-L the
+  fixture-lint GREEN GUARD.
 - readiness-honesty: 17 tests — 9 RED rows (A1a/A1b/A1c/A2/A3/A4/A5/A6/V-stale), 8 PIN rows
-  (A1p/A3p/A4p/A5p/A6p/P-stale/A-L/A-Lcap) green at HEAD and must STAY green.
+  (A1p/A3p/A4p/A5p/A6p/P-stale/A-L/A-Lcap) green at HEAD, must STAY green.
 
-## §2 Measured baseline at base 09200e9 (my tree, run from repo root)
+## §2 Measured baseline at base 5ae2c7e5 (my tree, clean, run from repo root)
 
-`node --test impl/test/<suite>.test.mjs`, measured this session:
+`node --test impl/test/<suite>.test.mjs`:
 
-| suite | tests | pass | fail | expected at base |
+| suite | tests | pass | fail | at base |
 |---|---|---|---|---|
-| seat-telemetry-red | 14 | 0 | 14 | RED (all rows fail at their named stage) — CONFIRMED |
-| readiness-honesty-red | 17 | 8 | 9 | 8 pins green / 9 red rows fail at named stage — CONFIRMED, matches the suite header's recorded split exactly |
-| deepseek-routes-red | 4 | 4 | 0 | green — CONFIRMED |
-| glm-session | 11 | 10 | 1 | NOT green at base (see §4) |
-| adapter | 42 | 42 | 0 | green — CONFIRMED |
-| cli-adapters | 24 | 24 | 0 | green — CONFIRMED |
+| seat-telemetry-red | 14 | 0 | 14 | all rows RED; A-L guard ALSO fails (§3.1) |
+| readiness-honesty-red | 17 | 8 | 9 | 8 pins green / 9 red rows — matches header split |
+| deepseek-routes-red | 4 | 4 | 0 | green |
+| glm-session | 11 | 11 | 0 | green THIS run — the GL2 race flake recorded by redrive1 did not reproduce (see §4) |
+| adapter | 42 | 42 | 0 | green |
+| cli-adapters | 24 | 24 | 0 | green |
 
-Every seat-telemetry red row failed AT ITS NAMED STAGE (assertion messages carry the stage
-names) with one exception: **A-L, the suite's fixture-lint GREEN GUARD, also fails at base**
-(timeout waiting for `ceiling-skip receipt minted`) — see §3.1.
+## §3 Structural findings (re-measured independently at 5ae2c7e5)
 
-## §3 Structural findings (measured, cited)
+### §3.0 Measurement pitfall, recorded for the record
 
-### §3.1 The A-L green-guard premise is destroyed by operator ruling #221, which is IN the base
+`application.mjs` and `coordination-store.mjs` contain NUL bytes (the readiness-honesty suite
+header states this explicitly and scopes its source scans to the NUL-free inventories).
+Plain `grep -n` on `application.mjs` treats it as binary and returns NOTHING — my first anchor
+sweep falsely suggested redrive1's anchors were stale. Re-run with `grep -an` (text-forced):
+the anchors exist and are simply line-shifted by the +53 net lines of 85519556/8ec52a6c. All
+application.mjs anchors below are text-forced greps at 5ae2c7e5.
 
-- Commit `a3e96e8` "fix(#221): RIP OUT the invented seat-ceiling pre-cap — operator ruling" is
-  an ancestor of base `09200e9` (git log). It removed the ceiling-skip from
-  `coordinator.mjs:_dispatchPass` (verified: `_dispatchPass` at impl/src/coordinator.mjs:2911
-  now dispatches unconditionally; the in-code comment cites #221: "Backpressure is
-  provider-TRUE now … never a silent synthetic queue").
-- `deferTaskDispatch` (the `task.dispatch_deferred` mint, coordination-store.mjs:13261) has NO
-  caller in coordinator.mjs at base (`grep -n deferTaskDispatch impl/src/coordinator.mjs` → 0
-  hits; `git log -S deferTaskDispatch -- impl/src/coordinator.mjs` names `a3e96e8`).
-- The suite's A-L lint (seat-telemetry-red.test.mjs:217-242) and A2's fixture (:296-342) WAIT
-  for a `task.dispatch_deferred` event that the base machinery never mints. A-L failed at base
-  with exactly `Error: timeout waiting for ceiling-skip receipt minted` (7.3s); A2 with
-  `timeout waiting for beta ceiling-skipped receipt` (7.4s).
-- Consequence: A-L (green guard) and A2's premise are unsatisfiable at this base without
-  re-adding coordinator.mjs receipt minting — which would contradict the #221 operator ruling
-  AND fall outside the row's file partition.
+### §3.1 The A-L green-guard premise is destroyed by operator ruling #221, which is in the base
 
-### §3.2 The suites demand edits in files the row brief forbids
+Re-verified at 5ae2c7e5, independently:
+- `git log -S deferTaskDispatch -- impl/src/coordinator.mjs` → last touch `a3e96e88`
+  "fix(#221): RIP OUT the invented seat-ceiling pre-cap — operator ruling", an ancestor of base
+  (git log). Text-forced grep for `deferTaskDispatch` in coordinator.mjs: zero call sites — the
+  mint has no caller.
+- Measured this session: A-L fails `Error: timeout waiting for ceiling-skip receipt minted`
+  (12.5s); A2 fails `timeout waiting for beta ceiling-skipped receipt` (10.7s) — the suite waits
+  on a `task.dispatch_deferred` event the base machinery never mints.
+- Consequence unchanged: A-L (a GREEN GUARD) and A2's premise are unsatisfiable at this base
+  without re-adding coordinator.mjs receipt minting — contradicting #221 and outside the row's
+  partition.
 
-Row partition (row-telemetry-brief.md): `application-deployment.mjs` + `impl/scripts/baton.mjs`
-+ NEW modules the suites name + this evidence tree. Explicitly forbidden: `application.mjs`,
-`workflow-*.mjs`, the northbounds (other waves own them this window). Measured anchors:
+### §3.2 The suites demand edits in files the row brief forbids (anchors re-measured at 5ae2c7e5)
 
-- `waves.list` capacity block (A2/A3/A9-1): rendered in `application.mjs` (wave rows pushed at
-  application.mjs:~11925; handler dispatch `waves.list` → `waveList` at application.mjs:12719).
-  Anchor cited by the suite itself: "application.mjs:11811-11818".
-- `doctorReadiness` seats for the BatonApplication path (A4/A5/A6/A9-2/A9-3 call
-  `host.application.doctorReadiness()` on `BatonApplication`): defined at
-  application.mjs:12540.
-- readiness-honesty A1c/A2 (and seat-telemetry A5/A7/A11): byte-scans of `web-northbound.mjs` (`_handleOperatorRead`),
-  `application-cli.mjs` (`doctor()`), `mcp-northbound.mjs` (`_freshDoctorReadings`/
-  `_freshDoctorReadiness`, `baton_deployment_doctor` tool text) — northbounds, forbidden.
-- readiness-honesty A3: `PROVIDER_TERMINAL_GUIDANCE` + `projectTypedTerminalCause` in
-  `application-semantics.mjs` — not in the partition.
-- readiness-honesty A4: quota classification + no-auto-re-probe in `route-liveness.mjs`
-  `ensure()` — not in the partition.
+Row partition: `application-deployment.mjs` + `impl/scripts/baton.mjs` + NEW modules the suites
+name + this evidence tree. Forbidden: `application.mjs`, `workflow-*.mjs`, the northbounds.
+Measured anchors (text-forced):
+- `waves.list` dispatch → `waveList` at application.mjs:12772 (`if (name === 'waves.list')
+  return this.waveList(...)`); wave-row roster construction around :11925 region. A2/A3/A9-1
+  anchor here (the suite itself cites "application.mjs:11811-11818"). OUT of partition.
+- `BatonApplication.doctorReadiness` defined at application.mjs:12593; the openHost fixtures
+  build BatonApplication via src/index.mjs. A4/A5/A6/A9-2/A9-3 exercise this path. OUT.
+- readiness-honesty A1c (:687+) byte-scans `web-northbound.mjs` (`_handleOperatorRead`,
+  confirmed present), `application-cli.mjs` (`doctor()` at :2071), `mcp-northbound.mjs`
+  (`_freshDoctorReadiness`/`baton_deployment_doctor`) — northbounds, OUT.
+- readiness-honesty A3 imports `projectTypedTerminalCause` from `application-semantics.mjs`
+  (suite :79; `PROVIDER_TERMINAL_GUIDANCE` at application-semantics.mjs:2109) — OUT.
+- readiness-honesty A4 pins quota classification + re-probe cadence in `route-liveness.mjs`
+  (`ensure()` at :132; constants cited by the suite at :13/:17) — OUT.
 
-Consequence: "both suites green at every named stage" is unsatisfiable within the row's
-partition at this base even setting §3.1 aside. Row-by-row earnability (by fixture surface):
+Earnability by fixture surface therefore matches redrive1's split (I re-derived it from the
+suites, not copied): seat-telemetry IN-partition A1/A8/A10 (openBaton deployment fixtures →
+BatonDeployment.doctorReadiness/card in application-deployment.mjs), MIXED A5/A7/A11,
+OUT A-L/A2/A3/A4/A6/A9-1/A9-2/A9-3; readiness-honesty IN-partition A1a/A1b/A6/V-stale
+(+A5's deployment-doctor leg), OUT A1c/A2/A3/A4.
 
-- **seat-telemetry IN-partition (openBaton deployment fixtures → BatonDeployment.doctorReadiness
-  at application-deployment.mjs:1333 / card at :1375): A1, A8, A10.** These the row can
-  genuinely earn. (A1's card-inheritance leg, A8's additive-posture + occupancy-null
-  correction, A10's occupancy===seats single-source — all on the deployment class.)
-- **seat-telemetry MIXED (three-file source scans spanning application-deployment.mjs AND
-  mcp-northbound.mjs AND application-cli.mjs): A5, A7, A11** — 2 of 3 scanned files are
-  northbounds; not fully earnable in-partition.
-- **seat-telemetry OUT entirely: A-L, A2 (§3.1 receipt premise), A3, A9-1 (application.mjs
-  waveList rows ~:11925), A4, A6, A9-2, A9-3 (application.mjs BatonApplication.doctorReadiness
-  :12540 — the openHost fixtures build BatonApplication via src/index.mjs).**
-- **readiness-honesty IN-partition (openBatonDeployment fixtures → application-deployment.mjs,
-  fleet.roster facade :1324): A1a, A1b, V-stale (enumerable verdict/probedAt composition on the
-  deployment doctor/roster rows), A6 (#livenessGate scans application-deployment.mjs only).**
-  A5 is behaviorally in-partition on the doctor row but its preflight leg may require
-  wave-driver.mjs verdict consultation (out) — judged on settle.
-- **readiness-honesty OUT: A1c, A2 (northbound + application-cli scans), A3
-  (application-semantics.mjs), A4 (route-liveness.mjs quota class + no-auto-re-probe).**
+### §3.3 Suite-vs-contract lineage
 
-### §3.3 Suite-vs-contract lineage note
+The suites were authored (attempt ea57954b…) against a pre-#221 world whose contract-146 D1/D2
+pins assume #10 deferral receipts are minted. Root cause of §3.1; unchanged by redrive.
 
-contract-146.md (v1.1 fold, verified at HEAD `e371f70`) predates the #221 rip-out; its D1/D2
-pins assume the #10 durable deferral receipts are being minted. The suites (attempt
-`ea57954b…`) were authored against that pre-#221 world. This is the root of §3.1.
+## §4 glm-session GL2 — re-measured
 
-## §4 glm-session GL2 flake (adjacent, failing-test law)
-
-`glm-session` is 10/11 at base: `GL2: exact GLM dispatch rejects a different wire-observed
-model before accepting provider output` (glm-session.test.mjs:165) failed in the full-suite run
-and in isolated run 1, PASSED in isolated runs 2 and 3 (`node --test --test-name-pattern GL2`:
-fail, pass, pass). Failure mode: the `resource.provider_call`/`content.message` event lands
-before the model_mismatch crash is observed (:181 `c.events.some(...) === false` assert) — a
-race, non-deterministic. Actions per the failing-test law: fix/root-cause — NOT mine to make
-(this verifier's scope is read-and-run plus this evidence tree; the adjacent belongs to other
-waves); flaky-issue check/file — IMPOSSIBLE here, `gh` unauthenticated (verified above).
-Recorded here as the tracking artifact; recommend a `bug`-tagged flaky issue once auth exists.
-This flake is NOT attributable to the row (present at base, row partition excludes
-glm-session surfaces).
+glm-session measured 11/11 green at base THIS session (two full runs of the sweep). Redrive1
+recorded the GL2 race (`resource.provider_call`/`content.message` landing before the
+model_mismatch crash is observed) failing once in three runs. My runs did not reproduce it; the
+flake classification (non-deterministic event race, present at base, NOT attributable to the
+row) stands on redrive1's three-run evidence plus my two non-reproducing runs. Per the
+failing-test law: not fixable in this verifier's scope (read-and-run + this evidence tree);
+flaky-issue check/file IMPOSSIBLE — gh unauthenticated (verified: `gh issue list` refuses,
+"please run gh auth login"). This note remains the tracking artifact; recommend a `bug`-tagged
+flaky issue once auth exists.
 
 ## §5 Row verification (written on settle)
 
-PENDING — row-telemetry has not settled: no `notes-row-telemetry.md` and no in-partition impl
-changes exist in ANY sibling worktree `../../wt/ws-*/` as of this grounding (verified by poll;
-other waves' worktrees are active and correctly left alone). A background watcher polls the
-siblings for the row's report or impl changes.
+PENDING — row-telemetry is mid-impl in `ws-06061e8a…` (measured: application-deployment.mjs
++80/−11, baton.mjs +7, readiness-projection.mjs new; no notes file yet as of this grounding).
+A watcher polls the siblings for `notes-row-telemetry.md`; settle also arrives as the
+signalOnMembersDone message. On settle: run both suites + four adjacents FROM THE ROW'S TREE,
+spot-audit two stages against the row's code, record measured counts and the #218 queue-read
+check, then finalize the verdict below.
 
-### §5.x DECISION_REQUEST (authority-class ambiguity) — filed at settle with the row's outcome
+### §5.x DECISION_REQUEST (authority-class ambiguity) — carried, re-grounded at 5ae2c7e5
 
-The acceptance ("both suites green at every named stage … adjacents green-unchanged") cannot be
-met by ANY correct row impl inside the row's partition at base 09200e9 (§3.1, §3.2). Options:
+The acceptance ("both suites green at every named stage; adjacents green-unchanged") cannot be
+met by ANY correct row impl inside the row's partition at base 5ae2c7e5 (§3.1, §3.2 —
+re-measured). Options:
 
-- **Option A — re-scope the wave's acceptance to the row's real partition.** Judge the row on
-  the in-partition stages only (deployment.doctor/card seats via `openBaton` fixtures, baton.mjs
-  leg, readiness-projection module, #218 queue read), require every out-of-partition row to stay
-  RED-at-its-named-stage (proving no suite edit), pins stay green, adjacents unchanged. The
-  out-of-partition stages are re-driven by a later wave that owns application.mjs /
-  northbounds / coordinator.
+- **Option A — re-scope acceptance to the row's real partition.** Judge on in-partition stages
+  only; require out-of-partition rows to stay RED-at-named-stage (proving no suite edit); pins
+  stay green; adjacents unchanged; #218 queue read lands regardless. Out-of-partition stages
+  re-driven by a later wave that owns application.mjs / northbounds / coordinator.
 - **Option B — widen the row's partition** (application.mjs, mcp/web northbounds,
-  application-cli.mjs, application-semantics.mjs, route-liveness.mjs) so the suites can go
-  fully green. Contradicts the brief's "other waves own them this window" and multiplies
-  merge conflict risk across the ~15 live sibling worktrees.
-- **Option C — restore the deferral receipts in coordinator.mjs** to satisfy A-L/A2. Directly
-  contradicts operator ruling #221 (in-base commit `a3e96e8`); requires operator authority,
-  not row or coordinator authority.
+  application-cli.mjs, application-semantics.mjs, route-liveness.mjs). Contradicts "other waves
+  own them this window"; multiplies conflict risk across ~17 live sibling worktrees.
+- **Option C — restore #10 deferral receipts in coordinator.mjs** to satisfy A-L/A2. Directly
+  contradicts operator ruling #221 (in-base `a3e96e88`); requires operator authority.
 
-My recommendation: **Option A**, with #221 treated as binding (Option C is not ours to make).
-The #218 addendum's queue read must still land in the row's impl regardless.
+Recommendation: **Option A** (#221 binding; Option C is not ours to make). The verdict in §5 is
+written under Option A semantics unless the operator rules otherwise before settle.
