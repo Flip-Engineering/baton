@@ -12563,6 +12563,12 @@ export class BatonApplication {
   // `this.authorize` for the duration of ONE command dispatch — the direct ports' own `_authorize`
   // is untouched (it still reads `this.authorize`, through `_authorize`'s override check).
   async command(name, args, rawPrincipal, rawContext = null, rawOptions = null) {
+    // Public-entry principal validation (phase77 RA2's injection guard): a forged principal
+    // (an extra authority field, e.g. orchestratorLeaseId) refuses application_authority_invalid
+    // HERE, before the dispatch body, so a detached prototype call — command.call with a minimal
+    // `this` — still rejects the injection without needing the full instance. The dispatch body
+    // re-normalizes below (idempotent on an already-valid principal).
+    normalizePrincipal(rawPrincipal, 'command principal');
     const override = rawOptions && typeof rawOptions.authorize === 'function' ? rawOptions.authorize : null;
     if (!override) return this._commandDispatch(name, args, rawPrincipal, rawContext);
     const previous = this._authorizeOverride;
@@ -12608,9 +12614,17 @@ export class BatonApplication {
     // validation so any session-authority marker refuses (never a pre-gate dispatch).
     if (rawContext?.sessionAuthority
       && ['waves.start', 'waves.run', 'waves.stop', 'waves.send', 'waves.progress', 'waves.list', 'waves.compile'].includes(name)) {
-      const runId = args?.runId ?? null;
-      if (validId(runId)) this._authorizeRecursiveCommand(name, runId, principal, rawContext);
-      throw applicationError('recursive waves command is forbidden', 'run_orchestrator_command_forbidden');
+      // #176 exception (S-2 admission seam): waves.send's closed claimGrant mint is the
+      // orchestrator's board-grant transport — it REQUIRES the session authority (board-workerhalf
+      // BW-03/05/22) and is a board operation, not a recursive steering verb. Exempt it from the
+      // closure; every other waves.* verb (and a non-claimGrant waves.send) still refuses typed.
+      const isClaimGrant = name === 'waves.send' && args && typeof args === 'object'
+        && !Array.isArray(args) && args.claimGrant !== undefined;
+      if (!isClaimGrant) {
+        const runId = args?.runId ?? null;
+        if (validId(runId)) this._authorizeRecursiveCommand(name, runId, principal, rawContext);
+        throw applicationError('recursive waves command is forbidden', 'run_orchestrator_command_forbidden');
+      }
     }
     const context = normalizeCommandContext(rawContext);
     // CS-3: run.debug is a direct port (not in APPLICATION_COMMAND_DEFINITIONS). Validate via
