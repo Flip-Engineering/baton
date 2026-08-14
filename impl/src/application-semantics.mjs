@@ -1289,6 +1289,17 @@ const CANONICAL_OPERATION_SPECS = [
     effect: 'run_read', capabilities: ['observe'], outputView: 'evidence', helpTopic: 'run',
     inputSchema: runIdSchema, example: 'baton run evidence RUN_ID',
   }],
+  // Issues #99+#179 (impl-result-accessor-2026-08-14, harvest-accessor contract v1.1): the
+  // result-materialization pair. run.resultpin is the read projection over a run's preserved
+  // result pin (the RECORDED-base delta, never pin^); waves.harvest applies that exact delta onto
+  // the main checkout. Both stay direct ports at application.mjs — the byte-stable command table
+  // is untouched; no web surface in v1.
+  ['run.resultpin', {
+    profile: 'ordinary', surfaces: ['embedded', 'mcp', 'cli'], effect: 'run_read',
+    capabilities: ['observe'], outputView: 'index', helpTopic: 'run',
+    example: 'baton run resultpin RUN_ID',
+    inputSchema: objectSchema({ runId: id }, ['runId']),
+  }],
   // CS-3 (control-surface v2 rule 3): run.debug registers the #53 direct port
   // (application.mjs debug method). Host-local only — surfaces {embedded, cli}, no web/mcp.
   ['run.debug', {
@@ -1657,6 +1668,19 @@ const CANONICAL_OPERATION_SPECS = [
       spec: { type: 'object' },
       specDsl: { type: 'string', minLength: 1 },
       specPath: { type: 'string', minLength: 1, maxLength: FRAME_LIMITS['wave.run.spec_path'].value },
+    }, []),
+  }],
+  // Issues #99+#179 (impl-result-accessor-2026-08-14): the harvest act lane — one XOR source
+  // (resultSha ownership pin or runId recorded ref), onto restricted to the main checkout, the
+  // ordered preconditions each typed. Effectful-idempotent (a contained pin skips; nothing pushes).
+  ['waves.harvest', {
+    profile: 'ordinary', surfaces: ['embedded', 'mcp', 'cli'], effect: 'control',
+    capabilities: ['control', 'observe'], outputView: 'outline', helpTopic: 'run',
+    example: 'baton waves harvest RUN_ID',
+    inputSchema: objectSchema({
+      runId: id,
+      resultSha: { type: 'string', pattern: '^[a-f0-9]{40}$' },
+      onto: { type: 'string', minLength: 1, maxLength: 4096 },
     }, []),
   }],
   ['deployment.doctor', {

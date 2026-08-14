@@ -117,6 +117,10 @@ const CAPABILITY = Object.freeze({
   baton_run_scratchpad_elevate: ['control', 'observe'],
   baton_run_scratchpad_append: ['control', 'observe'],
   baton_run_knowledge_seed: ['control', 'observe'],
+  // Issues #99+#179 (impl-result-accessor-2026-08-14): the result-materialization pair. The read
+  // projection is observe-only; the harvest is an effectful-idempotent control verb (H5).
+  baton_run_resultpin: ['observe'],
+  baton_waves_harvest: ['control', 'observe'],
   // Matrix mutations keep the existing transported posture: observe admits the tool call, while
   // the run-orchestrator lease resolved inside S-2 is the control authority.
   ...Object.fromEntries(SURFACING_MATRIX_MCP_ROWS.map((operation) => [operation.names.mcp, ['observe']])),
@@ -249,6 +253,29 @@ function laneCraftedToolError(cause) {
   return toolError(stateCode, cause?.message ?? null, cause?.detail ?? null);
 }
 
+// Issues #99+#179 (impl-result-accessor-2026-08-14): the harvest-accessor wire vocabulary. The
+// twelve lane codes surface as themselves; the five kernel codes (structured_* from the
+// integration engine, captured_change_oversize from the delta lane) translate once, here.
+const HARVEST_ACCESSOR_TRANSLATIONS = Object.freeze({
+  result_not_ready: 'result_not_ready',
+  pin_not_found: 'pin_not_found',
+  pin_unverifiable: 'pin_unverifiable',
+  pin_mismatch: 'pin_mismatch',
+  pin_base_mismatch: 'pin_base_mismatch',
+  result_delta_oversize: 'result_delta_oversize',
+  harvest_conflict: 'harvest_conflict',
+  harvest_onto_dirty: 'harvest_onto_dirty',
+  harvest_onto_invalid: 'harvest_onto_invalid',
+  harvest_onto_advanced: 'harvest_onto_advanced',
+  harvest_base_diverged: 'harvest_base_diverged',
+  harvest_apply_failed: 'harvest_apply_failed',
+  structured_main_dirty: 'harvest_onto_dirty',
+  structured_main_advanced: 'harvest_onto_advanced',
+  structured_tool_unavailable: 'harvest_conflict',
+  structured_merge_failed: 'harvest_apply_failed',
+  captured_change_oversize: 'result_delta_oversize',
+});
+
 function stateFailureCode(cause) {
   if (cause?.mcpCode === 'stale_fence') return 'stale_fence';
   if (cause?.code === 'application_unauthorized') return 'forbidden';
@@ -316,6 +343,14 @@ function stateFailureCode(cause) {
   if (['temporal_incoherence', 'missing_evidence', 'invalid_evidence', 'causal_orphan',
     'missing_endpoint', 'duplicate_node', 'knowledge_node_conflict', 'reserved_knowledge_field'].includes(cause?.code)) return cause.code;
   if (['context_artifact_unavailable', 'context_package_not_found', 'context_package_branch_not_found'].includes(cause?.code)) return 'artifact_unavailable';
+  // Issues #99+#179 (impl-result-accessor-2026-08-14, harvest-accessor contract v1.1): the
+  // run.resultpin/waves.harvest refusal vocabulary reaches the wire AS ITSELF (never
+  // command_outcome_unknown), and the kernel's structured_*/captured_* codes translate ONCE here
+  // to the harvest vocabulary (the H3/H4 pins).
+  if (typeof cause?.code === 'string') {
+    const harvestTranslation = HARVEST_ACCESSOR_TRANSLATIONS[cause.code];
+    if (harvestTranslation) return harvestTranslation;
+  }
   if (['board_admission_invalid', 'board_lease_required', 'board_session_mismatch', 'board_run_closed',
     'board_parent_stale', 'board_replay_conflict',
     'stale_board_fence', 'board_item_not_found', 'board_item_not_open', 'board_item_digest_mismatch',
@@ -757,6 +792,27 @@ const LEGACY_ORDINARY_APPLICATION_TOOL_DEFINITIONS = Object.freeze([
     }, ['repoId', 'runId', 'type', 'grounding', 'body']),
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
+  // Issues #99+#179 (impl-result-accessor-2026-08-14, harvest-accessor contract v1.1): the
+  // result-materialization pair. The read projection resolves the run's preserved result pin and
+  // its RECORDED-base delta (never pin^); the harvest applies that exact delta onto the main
+  // checkout through the structured-integration engine. No wire idempotencyKey/sessionAuthority —
+  // authority comes from the connection; replay safety lives in the engine's exact-parent checks.
+  {
+    name: 'baton_run_resultpin',
+    description: 'Read one Run\'s preserved result projection: {ready, resultSha, baseSha, changedPaths, changedFiles} over the RECORDED capture base — never HEAD, never pin^. Refusals name their exact state (result_not_ready, pin_not_found, pin_mismatch, pin_unverifiable, pin_base_mismatch).',
+    inputSchema: schema({ ...repo, runId }, ['repoId', 'runId']),
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  {
+    name: 'baton_waves_harvest',
+    description: 'Apply one verified result pin\'s RECORDED-base delta onto the deployment main checkout (three-way, non-destructive probe first, structured-integration engine under it). Source is exactly one of resultSha (ownership pin) or runId (recorded ref re-verified); onto, when present, must be the main checkout. Effectful-idempotent: a contained pin skips already_integrated, a conflict refuses harvest_conflict naming the paths, and nothing is ever pushed.',
+    inputSchema: schema({
+      ...repo, runId,
+      resultSha: commitSha,
+      onto: { type: 'string', minLength: 1, maxLength: 4096 },
+    }, ['repoId']),
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
 ].map((tool) => Object.freeze({
   ...tool,
   _meta: Object.freeze({ 'baton/registryDigest': APPLICATION_SEMANTIC_REGISTRY.digest }),
@@ -906,6 +962,7 @@ const ORDINARY_EXPLICIT_TOOLS = new Set([
   'baton_run_message_send', 'baton_run_message_receipt', 'baton_run_attention_watch',
   'baton_run_scratchpad_read', 'baton_run_scratchpad_elevate', 'baton_run_scratchpad_append',
   'baton_run_knowledge_seed',
+  'baton_run_resultpin', 'baton_waves_harvest',
 ]);
 const TOOL_DEFINITIONS = Object.freeze([...ORDINARY_APPLICATION_TOOL_DEFINITIONS, ...APPLICATION_TOOL_DEFINITIONS, ...ADVANCED_TOOL_DEFINITIONS, ...REFLEX_TOOL_DEFINITIONS]);
 const TOOL_BY_NAME = new Map(TOOL_DEFINITIONS.map((tool) => [tool.name, tool]));
@@ -2056,6 +2113,25 @@ export class McpFleetServer {
       value = await this.application.command('run.knowledge.seed', {
         runId: args.runId, type: args.type, grounding: args.grounding, body: args.body,
         ...(Object.hasOwn(args, 'evidence') ? { evidence: clone(args.evidence) } : {}),
+      }, {
+        actor: actor ?? `mcp:${principal.userId}:${principal.sessionId}`,
+        principalId: principal.userId, sessionId: principal.sessionId,
+      }, this._applicationDispatchContext(args, callId, principal));
+    }
+    // Issues #99+#179 (impl-result-accessor-2026-08-14): the result-materialization pair. Explicit
+    // branches (never APPLICATION_COMMAND_DEFINITIONS keys, so the generic application branch never
+    // maps their failures or strips their fields) dispatching the facade direct ports with the
+    // CONNECTION-derived principal — never tool arguments.
+    else if (name === 'baton_run_resultpin') {
+      value = await this.application.command('run.resultpin', { runId: args.runId }, {
+        actor: actor ?? `mcp:${principal.userId}:${principal.sessionId}`,
+        principalId: principal.userId, sessionId: principal.sessionId,
+      }, this._applicationDispatchContext(args, callId, principal));
+    }
+    else if (name === 'baton_waves_harvest') {
+      value = await this.application.command('waves.harvest', {
+        ...(Object.hasOwn(args, 'runId') ? { runId: args.runId } : { resultSha: args.resultSha }),
+        ...(Object.hasOwn(args, 'onto') ? { onto: args.onto } : {}),
       }, {
         actor: actor ?? `mcp:${principal.userId}:${principal.sessionId}`,
         principalId: principal.userId, sessionId: principal.sessionId,

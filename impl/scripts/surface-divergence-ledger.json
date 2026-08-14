@@ -27,6 +27,22 @@
     },
     {
       "surface": "cli",
+      "name": "run.resultpin",
+      "canonical": "run.resultpin",
+      "dimension": "name",
+      "retiresIn": "M5",
+      "refusal": "'unsupported command' (web-northbound.mjs web command gate) — result-materialization direct port (impl-result-accessor-2026-08-14, #99+#179), web-refused in v1 (registry surfaces omit web)"
+    },
+    {
+      "surface": "cli",
+      "name": "waves.harvest",
+      "canonical": "waves.harvest",
+      "dimension": "name",
+      "retiresIn": "M5",
+      "refusal": "'unsupported command' (web-northbound.mjs web command gate) — result-materialization direct port (impl-result-accessor-2026-08-14, #99+#179), web-refused in v1 (registry surfaces omit web)"
+    },
+    {
+      "surface": "cli",
       "name": "run.knowledge.seed",
       "canonical": "run.knowledge.seed",
       "dimension": "name",

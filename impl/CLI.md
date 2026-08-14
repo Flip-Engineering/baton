@@ -39,6 +39,7 @@ ordinary-CLI inventory. The conformance suite fails if they drift from served tr
 | `run.message.receipt` | `ordinary` | `baton run message receipt` | `baton run message receipt MESSAGE_ID` |
 | `run.message.send` | `ordinary` | `baton run message send` | `baton run message send RUN_ID --kind inform --body TEXT` |
 | `run.recover` | `ordinary` | `baton run recover` | `baton run recover RUN_ID` |
+| `run.resultpin` | `ordinary` | `baton run resultpin` | `baton run resultpin RUN_ID` |
 | `run.resume` | `ordinary` | `baton run resume` | `baton run resume RUN_ID --reason R` |
 | `run.retry` | `ordinary` | `baton run retry` | `baton run retry RUN_ID --reason R` |
 | `run.review` | `ordinary` | `baton run review` | `baton run review RUN_ID --exact codex/gpt-5.6-sol@low --reason R` |
@@ -51,6 +52,7 @@ ordinary-CLI inventory. The conformance suite fails if they drift from served tr
 | `run.watch` | `ordinary` | `baton run watch` | `baton run watch RUN_ID` |
 | `waves.attach` | `ordinary` | `baton waves attach` | `baton waves attach WAVE_ID --members JSON` |
 | `waves.compile` | `ordinary` | `baton waves compile` | `baton waves compile path/to/spec.dsl` |
+| `waves.harvest` | `ordinary` | `baton waves harvest` | `baton waves harvest RUN_ID` |
 | `waves.list` | `ordinary` | `baton waves list` | `baton waves list` |
 | `waves.progress` | `ordinary` | `baton waves progress` | `baton waves progress WAVE_ID --cursor 0` |
 | `waves.run` | `ordinary` | `baton waves run` | `baton waves run path/to/spec.json` |

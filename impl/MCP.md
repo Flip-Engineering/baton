@@ -198,6 +198,7 @@ The four settlement ops work through MCP behind the S-2 `sessionAuthority` envel
 | `run.member.view` | `ordinary` | `baton_run_member_view` | idempotent |
 | `run.message.receipt` | `ordinary` | `baton_run_message_receipt` | idempotent |
 | `run.message.send` | `ordinary` | `baton_run_message_send` | effectful |
+| `run.resultpin` | `ordinary` | `baton_run_resultpin` | idempotent |
 | `run.scratchpad.append` | `ordinary` | `baton_run_scratchpad_append` | idempotent |
 | `run.scratchpad.elevate` | `ordinary` | `baton_run_scratchpad_elevate` | idempotent |
 | `run.scratchpad.read` | `ordinary` | `baton_run_scratchpad_read` | idempotent |
@@ -210,6 +211,7 @@ The four settlement ops work through MCP behind the S-2 `sessionAuthority` envel
 | `scratchpad.settle` | `kernel` | `baton_scratchpad_settle` | idempotent |
 | `waves.attach` | `ordinary` | `baton_waves_attach` | idempotent |
 | `waves.compile` | `ordinary` | `baton_waves_compile` | idempotent |
+| `waves.harvest` | `ordinary` | `baton_waves_harvest` | idempotent |
 | `waves.list` | `ordinary` | `baton_waves_list` | idempotent |
 | `waves.progress` | `ordinary` | `baton_waves_progress` | idempotent |
 | `waves.run` | `ordinary` | `baton_waves_run` | idempotent |

@@ -1,4 +1,8 @@
 import { createHash, randomUUID } from 'node:crypto';
+import { execFileSync } from 'node:child_process';
+import { mkdtempSync, realpathSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { wrapProse } from './messages.mjs';
 import { FRAME_LIMITS, FRAME_LIMITS_VERSION, FRAME_LIMITS_DIGEST, composeFrameLimitRefusal, frameLimitRefusalPath, COORDINATOR_AUTHORITY_FORBIDDEN, COORDINATOR_AUTHORITY_GRACEFUL_PATH } from './limits.mjs';
 import {
@@ -12656,6 +12660,14 @@ export class BatonApplication {
     if (name === 'run.board.post') return this.boardPost(args, principal);
     if (name === 'run.board.read') return this.boardRead(args, principal);
     if (name === 'run.knowledge.seed') return this.knowledgeSeed(args, principal);
+    // Issues #99+#179 (impl-result-accessor-2026-08-14, harvest-accessor contract v1.1): the two
+    // result-materialization direct ports. Dispatched in this block — ahead of
+    // normalizeCommandContext, the command table, and the recursive-session gate — because their
+    // closed normalizers refuse shape failures as their OWN application_*_invalid codes before any
+    // state lookup, exactly like their workflow-surface siblings (the N2 pre-gate pin). Never
+    // APPLICATION_COMMAND_DEFINITIONS keys (the M1 byte-stable-table pin).
+    if (name === 'run.resultpin') return this.resultPin(args, principal);
+    if (name === 'waves.harvest') return this.wavesHarvest(args, principal);
     // #176 (waves.* authority closure): the six waves.* verbs pass the recursive-session gate like
     // their run.* siblings — a sessionAuthority-context call refuses typed rather than dispatching
     // unchecked (the observe verbs are not exempt). Checked on the RAW context before full context
@@ -13536,5 +13548,440 @@ export class BatonApplication {
     });
     this._closed = closed;
     return closed;
+  }
+
+  // =========================================================================
+  // Issues #99+#179 (impl-result-accessor-2026-08-14, harvest-accessor contract v1.1):
+  // the run.resultpin / waves.harvest direct ports. run.resultpin is the read projection over a
+  // run's preserved result pin; waves.harvest is the act lane that applies the recorded-base
+  // delta onto the deployment's main checkout through the structured-integration engine. Both
+  // dispatch as direct ports in _commandDispatch (ahead of the command table and the
+  // recursive-session gate) and never join APPLICATION_COMMAND_DEFINITIONS.
+  // =========================================================================
+
+  // The ownership-pin sha shape at the accessor's gate. v1 is sha1-only: the delta lane
+  // (index.mjs changedPathsAtCommit) is 40-hex while the ownership ref namespace admits 64-hex —
+  // so a 64-hex sha refuses at the shape gate, never an unmapped captured_change_invalid.
+  _resultPinShapeInvalid(code) {
+    return applicationError(`${code === 'application_run_resultpin_invalid' ? 'run.resultpin' : 'waves.harvest'} arguments are invalid`, code);
+  }
+
+  // Closed shape {runId} — the A3 pin. Refused BEFORE any state lookup, so a shape failure never
+  // reaches authorization (the REFUSE_ALL tooth) and never leaks a bare TypeError.
+  _normalizeResultPinRequest(raw) {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)
+      || Object.keys(raw).length !== 1 || !Object.hasOwn(raw, 'runId') || !validId(raw.runId)) {
+      throw this._resultPinShapeInvalid('application_run_resultpin_invalid');
+    }
+    return { runId: raw.runId };
+  }
+
+  // Closed shape {onto?, resultSha|runId} — the A4 pin. The source is XOR (exactly one of
+  // resultSha/runId); resultSha is 40-hex at this gate; onto, when present, is a non-empty string.
+  _normalizeWavesHarvestRequest(raw) {
+    const refuse = () => this._resultPinShapeInvalid('application_waves_harvest_invalid');
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw refuse();
+    for (const key of Object.keys(raw)) {
+      if (key !== 'onto' && key !== 'resultSha' && key !== 'runId') throw refuse();
+    }
+    const hasSha = Object.hasOwn(raw, 'resultSha');
+    const hasRun = Object.hasOwn(raw, 'runId');
+    if (hasSha === hasRun) throw refuse();
+    if (hasSha && !/^[a-f0-9]{40}$/u.test(raw.resultSha ?? '')) throw refuse();
+    if (hasRun && !validId(raw.runId)) throw refuse();
+    if (Object.hasOwn(raw, 'onto') && (typeof raw.onto !== 'string' || raw.onto.length === 0)) throw refuse();
+    return Object.freeze({
+      ...(hasSha ? { resultSha: raw.resultSha } : { runId: raw.runId }),
+      ...(Object.hasOwn(raw, 'onto') ? { onto: raw.onto } : {}),
+    });
+  }
+
+  // One bounded git invocation against the deployment repository root. Non-zero exits throw
+  // ( callers that need a boolean outcome use _harvestGitOk).
+  _harvestGit(args, cwd) {
+    return execFileSync('git', args, { cwd, maxBuffer: 16 * 1024 * 1024 });
+  }
+
+  _harvestGitOk(args, cwd) {
+    try {
+      execFileSync('git', args, { cwd, stdio: 'ignore' });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  _deploymentRepoRoot() {
+    const repoRoot = this.driver?.coordinator?._repoRoot ?? null;
+    if (typeof repoRoot !== 'string' || repoRoot.length === 0) {
+      throw applicationError('deployment repository root is unavailable', 'harvest_apply_failed');
+    }
+    return repoRoot;
+  }
+
+  // runId → run view result block → attributing task/handle → the RECORDED capture base. This is
+  // the stale-base law: baseSha comes from the recorded attribution (handle.sessionContext.baseSha,
+  // the same source coordinator.result() projects), NEVER HEAD and NEVER rev-parse pin^.
+  async _resolvePreservedPin({ runId, principal }) {
+    const current = this._findRun(runId, { allowUnavailableProfile: true });
+    const view = await this._buildView(current, principal, {});
+    const result = view?.result ?? null;
+    if (!result || typeof result.sha !== 'string' || !/^[a-f0-9]{40}$/u.test(result.sha)) {
+      throw applicationError(`run ${runId} has no preserved result`, 'result_not_ready');
+    }
+    const preservation = result?.preservation?.state ?? 'unavailable';
+    if (preservation === 'missing') {
+      throw applicationError(`preserved result ref for run ${runId} no longer resolves`, 'pin_not_found');
+    }
+    if (preservation === 'mismatch') {
+      throw applicationError(`preserved result ref for run ${runId} resolves to a different commit`, 'pin_mismatch');
+    }
+    if (preservation === 'unverifiable') {
+      throw applicationError(`preserved result ref for run ${runId} cannot be verified`, 'pin_unverifiable');
+    }
+    if (preservation !== 'pinned' && preservation !== 'integrated') {
+      throw applicationError(`run ${runId} has no pinned result`, 'result_not_ready');
+    }
+    const node = view?.nodes?.[0] ?? null;
+    const taskId = node?.taskId ?? null;
+    const task = taskId ? this.driver.coordination.task(taskId) : null;
+    const workerId = task?.assignee ?? null;
+    if (!workerId) {
+      throw applicationError(`preserved result for run ${runId} has no attributing worker`, 'result_not_ready');
+    }
+    let attribution = null;
+    try { attribution = await this.driver.coordinator.result(workerId); }
+    catch (error) { if (error?.code !== 'not_found') throw error; }
+    const baseSha = attribution?.sessionContext?.baseSha ?? null;
+    if (!/^[a-f0-9]{40}$/u.test(baseSha ?? '')) {
+      throw applicationError(`recorded capture base for run ${runId} is unreachable`, 'result_not_ready');
+    }
+    return {
+      runId, taskId, workerId, baseSha, resultSha: result.sha, repoRoot: this._deploymentRepoRoot(),
+    };
+  }
+
+  // The sha source: the ownership pin refs/baton/results/<sha> must resolve back to the SAME sha
+  // (a real-but-unpinned commit refuses pin_not_found), and the recorded base comes from the
+  // attributing task — the runId lane's attribution, discovered by capturedSha, never by guessing.
+  async _resolveShaPreservedPin(resultSha) {
+    const worktrees = this.driver?.coordinator?._worktrees ?? null;
+    if (!worktrees || typeof worktrees.resolveResult !== 'function') {
+      throw applicationError('result pin verification is unavailable', 'pin_unverifiable');
+    }
+    const ref = `refs/baton/results/${resultSha}`;
+    const resolvedSha = await worktrees.resolveResult(ref);
+    if (resolvedSha === null) {
+      throw applicationError(`result pin ${ref} does not resolve`, 'pin_not_found');
+    }
+    if (resolvedSha !== resultSha) {
+      throw applicationError(`result pin ${ref} resolves to ${resolvedSha}`, 'pin_mismatch');
+    }
+    const coordinator = this.driver.coordinator;
+    for (const handle of coordinator.list()) {
+      let attribution = null;
+      try { attribution = await coordinator.result(handle.id); }
+      catch (error) { if (error?.code !== 'not_found') throw error; }
+      if (attribution?.capturedSha !== resultSha || attribution?.taskId == null) continue;
+      const baseSha = attribution.sessionContext?.baseSha ?? null;
+      if (!/^[a-f0-9]{40}$/u.test(baseSha ?? '')) continue;
+      return {
+        runId: attribution.runId, taskId: attribution.taskId, workerId: handle.id,
+        baseSha, resultSha, repoRoot: this._deploymentRepoRoot(),
+      };
+    }
+    throw applicationError(`result pin ${ref} is not attributed to a recorded capture`, 'result_not_ready');
+  }
+
+  // The ancestry cross-check: the RECORDED base must be ancestral to the pin. A corrupted or
+  // foreign attribution refuses pin_base_mismatch — the accessor never proceeds on pin^.
+  _assertRecordedBaseAncestry(resolved) {
+    if (!this._harvestGitOk(['merge-base', '--is-ancestor', resolved.baseSha, resolved.resultSha], resolved.repoRoot)) {
+      throw applicationError(
+        `recorded base ${resolved.baseSha} is not ancestral to preserved result ${resolved.resultSha}`,
+        'pin_base_mismatch',
+      );
+    }
+  }
+
+  // The recorded-base delta, translated from the kernel's captured_change_* vocabulary
+  // ( oversize → result_delta_oversize, per the H4 translation pin).
+  _recordedChangedPaths(resolved) {
+    const worktrees = this.driver?.coordinator?._worktrees ?? null;
+    if (!worktrees || typeof worktrees.changedPathsAtCommit !== 'function') {
+      throw applicationError('captured change inspection is unavailable', 'result_not_ready');
+    }
+    try {
+      // maxPaths 1_024 is the kernel lane's own default ceiling (index.mjs changedPathsAtCommit),
+      // derived from the result-export file policy — not a new accessor-side limit.
+      return [...worktrees.changedPathsAtCommit(resolved.baseSha, resolved.resultSha, 1_024)];
+    } catch (error) {
+      if (error?.code === 'captured_change_oversize') {
+        throw applicationError('recorded result delta exceeds the changed-path ceiling', 'result_delta_oversize');
+      }
+      if (error?.code === 'captured_change_invalid') {
+        throw applicationError('recorded result delta is unreadable', 'result_not_ready');
+      }
+      throw error;
+    }
+  }
+
+  // The bounded changedFiles inventory: rows {blob, digest, mode, path, size} for exactly the
+  // changed paths present in the RESULT tree (a deletion has no result-side row — the v1
+  // boundary recorded in the evidence notes), byte-wise sorted, paged to a serialized 256 KiB
+  // budget with a digest over the FULL row set and a continuing cursor on truncation.
+  _changedFileRows(resolved, changedPaths) {
+    if (changedPaths.length === 0) {
+      return { rows: [], truncated: false, changedFilesDigest: null, cursor: null };
+    }
+    const { repoRoot, resultSha } = resolved;
+    const entries = new Map();
+    const listing = this._harvestGit(['ls-tree', '-z', '-r', '--full-tree', resultSha], repoRoot);
+    let start = 0;
+    while (start < listing.length) {
+      const end = listing.indexOf(0, start);
+      if (end < 0) break;
+      const row = listing.subarray(start, end);
+      start = end + 1;
+      if (row.length === 0) continue;
+      const tab = row.indexOf(9);
+      if (tab <= 0) continue;
+      const header = row.toString('ascii', 0, tab);
+      const match = /^(100644|100755) blob ([a-f0-9]{40})$/u.exec(header);
+      if (!match) continue;
+      entries.set(row.toString('utf8', tab + 1), { mode: match[1], blob: match[2] });
+    }
+    const rows = [];
+    for (const path of changedPaths) {
+      const entry = entries.get(path);
+      if (!entry) continue;
+      const size = Number(this._harvestGit(['cat-file', '-s', entry.blob], repoRoot).toString('utf8').trim());
+      const bytes = this._harvestGit(['cat-file', 'blob', entry.blob], repoRoot);
+      if (!Number.isSafeInteger(size) || bytes.length !== size) {
+        throw applicationError('changed file content changed during projection', 'result_not_ready');
+      }
+      rows.push({
+        blob: entry.blob,
+        digest: createHash('sha256').update(bytes).digest('hex'),
+        mode: entry.mode,
+        path,
+        size,
+      });
+    }
+    rows.sort((left, right) => Buffer.from(left.path, 'utf8').compare(Buffer.from(right.path, 'utf8')));
+    const changedFilesDigest = digest(rows);
+    // The 256 KiB serialized page budget is the contract's Decision-6 cap (the same budget the
+    // scratchpad read lane uses) — measured over the serialized admitted rows.
+    const pageBytes = 256 * 1024;
+    const admitted = [];
+    let used = 2; // '[]'
+    let truncated = false;
+    for (const row of rows) {
+      const cost = Buffer.byteLength(JSON.stringify(row), 'utf8') + (admitted.length > 0 ? 1 : 0);
+      if (admitted.length > 0 && used + cost > pageBytes) { truncated = true; break; }
+      admitted.push(row);
+      used += cost;
+    }
+    if (admitted.length < rows.length) truncated = true;
+    return {
+      rows: admitted,
+      truncated,
+      changedFilesDigest: truncated ? changedFilesDigest : null,
+      cursor: truncated ? admitted.length : null,
+    };
+  }
+
+  // The read lane: run.resultpin (HA-03). Closed args, host-policy authorization, then the
+  // recorded-base projection. Refusals are the readiness trichotomy's own codes.
+  async resultPin(rawRequest, rawPrincipal) {
+    this._assertOpen();
+    await this.ready;
+    const request = this._normalizeResultPinRequest(rawRequest);
+    const principal = normalizePrincipal(rawPrincipal, 'result pin principal');
+    await this._authorize('run.resultpin', principal, request.runId, {});
+    const resolved = await this._resolvePreservedPin({ runId: request.runId, principal });
+    this._assertRecordedBaseAncestry(resolved);
+    const changedPaths = this._recordedChangedPaths(resolved);
+    const page = this._changedFileRows(resolved, changedPaths);
+    return deepFreeze({
+      baseSha: resolved.baseSha,
+      changedFiles: page.rows,
+      ...(page.truncated ? { changedFilesDigest: page.changedFilesDigest } : {}),
+      changedPaths,
+      ...(page.truncated ? { cursor: page.cursor } : {}),
+      ready: true,
+      resultSha: resolved.resultSha,
+      ...(page.truncated ? { truncated: true } : {}),
+    });
+  }
+
+  // The non-destructive three-way probe (HA-06): a throwaway detached worktree at ontoHeadSha
+  // replaying the engine's own merge invocation; nothing commits, onto is untouched, no stage
+  // persists. The conflict classes read from git status's unmerged XY codes.
+  async _probeHarvestMerge(repoRoot, ontoHeadSha, resultSha) {
+    const stageRoot = mkdtempSync(join(tmpdir(), 'baton-harvest-probe-'));
+    try {
+      this._harvestGit(['worktree', 'add', '--detach', stageRoot, ontoHeadSha], repoRoot);
+      let mergeClean = true;
+      try {
+        this._harvestGit([
+          '-c', 'core.hooksPath=/dev/null', '-c', 'merge.conflictStyle=diff3',
+          'merge', '--no-verify', '--no-commit', '--no-ff', resultSha,
+        ], stageRoot);
+      } catch { mergeClean = false; }
+      const unmerged = this._harvestGit(['diff', '--name-only', '--diff-filter=U', '-z'], stageRoot)
+        .toString('utf8').split('\0').filter(Boolean);
+      const statusClasses = new Map();
+      const status = this._harvestGit(['status', '--porcelain', '-z'], stageRoot).toString('utf8').split('\0');
+      for (const entry of status) {
+        if (entry.length < 4) continue;
+        statusClasses.set(entry.slice(3), entry.slice(0, 2));
+      }
+      const classOf = (xy) => ({
+        AA: 'both_added', UU: 'both_modified', DU: 'deleted_by_us', UD: 'deleted_by_them',
+        AU: 'added_by_us', UA: 'added_by_them', DD: 'both_deleted',
+      })[xy] ?? 'unmerged';
+      const conflicts = unmerged.map((path) => ({ class: classOf(statusClasses.get(path) ?? ''), path }))
+        .sort((left, right) => Buffer.from(left.path, 'utf8').compare(Buffer.from(right.path, 'utf8')));
+      return { clean: mergeClean && conflicts.length === 0, conflicts };
+    } finally {
+      try { this._harvestGit(['worktree', 'remove', '--force', stageRoot], repoRoot); } catch { /* best effort */ }
+      try { this._harvestGit(['worktree', 'prune'], repoRoot); } catch { /* best effort */ }
+      try { rmSync(stageRoot, { recursive: true, force: true }); } catch { /* best effort */ }
+    }
+  }
+
+  // The kernel's structured_* / captured_change_* codes translate ONCE, here — the wire
+  // vocabulary is the harvest lane's own, never command_outcome_unknown (the H4 pin).
+  _translateHarvestKernelError(error) {
+    const translations = {
+      structured_main_dirty: 'harvest_onto_dirty',
+      structured_main_advanced: 'harvest_onto_advanced',
+      structured_tool_unavailable: 'harvest_conflict',
+      structured_merge_failed: 'harvest_apply_failed',
+      captured_change_oversize: 'result_delta_oversize',
+    };
+    const code = translations[error?.code];
+    if (!code) throw error;
+    throw applicationError(error?.message ?? code, code);
+  }
+
+  // The act lane: waves.harvest (HA-05..HA-07, HA-12, HA-13). One XOR source resolves a verified
+  // ownership pin plus its recorded capture base; the ordered preconditions each refuse typed;
+  // a clean probe proceeds to the structured-integration engine stage + finalize.
+  async wavesHarvest(rawRequest, rawPrincipal) {
+    this._assertOpen();
+    await this.ready;
+    const request = this._normalizeWavesHarvestRequest(rawRequest);
+    const principal = normalizePrincipal(rawPrincipal, 'waves harvest principal');
+    await this._authorize('waves.harvest', principal, request.runId ?? null, {});
+    const repoRoot = this._deploymentRepoRoot();
+    // Decision 2: onto is absent or names the deployment's main checkout (realpath equality).
+    if (Object.hasOwn(request, 'onto')) {
+      let ontoReal = null;
+      let mainReal = null;
+      try { ontoReal = realpathSync(request.onto); } catch {
+        throw applicationError(`harvest onto ${request.onto} is not the main checkout`, 'harvest_onto_invalid');
+      }
+      try { mainReal = realpathSync(repoRoot); } catch {
+        throw applicationError('deployment repository root is unavailable', 'harvest_apply_failed');
+      }
+      if (ontoReal !== mainReal) {
+        throw applicationError(`harvest onto ${request.onto} is not the main checkout`, 'harvest_onto_invalid');
+      }
+    }
+    // Source resolution + ownership verification (both sources verify the pin the same way).
+    const resolved = Object.hasOwn(request, 'runId')
+      ? await this._resolvePreservedPin({ runId: request.runId, principal })
+      : await this._resolveShaPreservedPin(request.resultSha);
+    this._assertRecordedBaseAncestry(resolved);
+    // Preconditions, ordered (the contract's pinned order).
+    if (this._harvestGit(['status', '--porcelain'], repoRoot).toString('utf8').trim() !== '') {
+      throw applicationError('harvest onto main checkout is dirty', 'harvest_onto_dirty');
+    }
+    const ontoHeadSha = this._harvestGit(['rev-parse', 'HEAD'], repoRoot).toString('utf8').trim();
+    const skipped = (reason) => deepFreeze({
+      baseSha: resolved.baseSha,
+      changedPaths: this._recordedChangedPaths(resolved),
+      ok: true,
+      reason,
+      result: 'skipped',
+      resultSha: resolved.resultSha,
+    });
+    if (this._harvestGitOk(['merge-base', '--is-ancestor', resolved.resultSha, ontoHeadSha], repoRoot)) {
+      return skipped('already_integrated');
+    }
+    let mergeBaseSha = null;
+    try {
+      mergeBaseSha = this._harvestGit(['merge-base', ontoHeadSha, resolved.resultSha], repoRoot)
+        .toString('utf8').trim();
+    } catch { mergeBaseSha = ''; }
+    if (mergeBaseSha !== resolved.baseSha) {
+      throw applicationError(
+        `harvest base diverged: baseSha=${resolved.baseSha} mergeBaseSha=${mergeBaseSha} `
+        + `ontoHeadSha=${ontoHeadSha} resultSha=${resolved.resultSha}`,
+        'harvest_base_diverged',
+      );
+    }
+    const changedPaths = this._recordedChangedPaths(resolved);
+    if (changedPaths.length === 0) {
+      return deepFreeze({
+        baseSha: resolved.baseSha,
+        changedPaths,
+        ok: true,
+        reason: 'empty_delta',
+        result: 'skipped',
+        resultSha: resolved.resultSha,
+      });
+    }
+    const probe = await this._probeHarvestMerge(repoRoot, ontoHeadSha, resolved.resultSha);
+    if (!probe.clean) {
+      throw Object.assign(
+        new Error(`harvest conflicts on ${probe.conflicts.map((row) => row.path).join(', ')}`),
+        {
+          code: 'harvest_conflict',
+          conflicts: deepFreeze([...probe.conflicts]),
+          ontoHeadSha,
+          resultSha: resolved.resultSha,
+        },
+      );
+    }
+    const worktrees = this.driver?.coordinator?._worktrees ?? null;
+    if (!worktrees || typeof worktrees.stageStructuredIntegration !== 'function'
+      || typeof worktrees.finalizeStructuredIntegration !== 'function') {
+      throw applicationError('structured integration engine is unavailable', 'harvest_apply_failed');
+    }
+    let stage;
+    try {
+      stage = await worktrees.stageStructuredIntegration(resolved.taskId, resolved.resultSha);
+    } catch (error) {
+      // A conflict between a clean probe and the stage re-probes honestly (OQ3 translation).
+      if (error?.code === 'structured_tool_unavailable' || error?.code === 'structured_merge_failed') {
+        const reprobe = await this._probeHarvestMerge(repoRoot, ontoHeadSha, resolved.resultSha);
+        if (!reprobe.clean) {
+          throw Object.assign(
+            new Error(`harvest conflicts on ${reprobe.conflicts.map((row) => row.path).join(', ')}`),
+            { code: 'harvest_conflict', conflicts: deepFreeze([...reprobe.conflicts]), ontoHeadSha, resultSha: resolved.resultSha },
+          );
+        }
+      }
+      throw this._translateHarvestKernelError(error);
+    }
+    let finalize;
+    try {
+      finalize = await worktrees.finalizeStructuredIntegration(stage);
+    } catch (error) {
+      throw this._translateHarvestKernelError(error);
+    }
+    return deepFreeze({
+      afterSha: finalize.afterSha,
+      baseSha: resolved.baseSha,
+      changedPaths,
+      classes: deepFreeze([...stage.classes].map((row) => row.class)),
+      ok: true,
+      reason: null,
+      result: 'applied-clean',
+      resultSha: resolved.resultSha,
+    });
   }
 }

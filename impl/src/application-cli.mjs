@@ -29,6 +29,9 @@ export const CLI_WEB_COMMANDS = new Set([
   'run.message.send', 'run.message.receipt', 'run.attention.watch',
   'run.scratchpad.read', 'run.scratchpad.elevate', 'run.board.post', 'run.board.read',
   'run.knowledge.seed',
+  // Issues #99+#179 (impl-result-accessor-2026-08-14): the result-materialization pair (the I3
+  // pin) — direct ports at application.mjs, gated into the web dispatch set here.
+  'run.resultpin', 'waves.harvest',
 ]);
 // CS-2 (control-surface v2): the five web-admitted verbs (run.episode, run.workstreams,
 // run.workstream.notify, run.workstream.stop; run.result folds to run.episode) join the
@@ -1372,6 +1375,26 @@ export function parseBatonCli(rawArgs) {
       if (typeof specPath !== 'string' || specPath.length === 0) throw cliError('waves run requires a spec path');
       return { kind: 'command', command: 'waves.run', name: 'waves.run', args: { specPath }, idempotencyKey };
     }
+    // Issues #99+#179 (impl-result-accessor-2026-08-14): `baton waves harvest SHA|RUN_ID
+    // [--onto PATH]` → waves.harvest. The source is exactly one positional — a 40-hex resultSha
+    // (the ownership pin) or a Run ID (the recorded ref re-verified server-side); --onto, when
+    // present, must name the deployment main checkout.
+    if (action === 'harvest') {
+      const sourceRaw = args.shift();
+      const onto = take(args, '--onto');
+      noRemainder(args);
+      if (typeof sourceRaw !== 'string' || sourceRaw.length === 0 || sourceRaw.startsWith('--')) {
+        throw cliError('waves harvest requires exactly one source (result SHA or RUN_ID)');
+      }
+      if (onto !== null && onto.length === 0) throw cliError('--onto is invalid');
+      const harvestArgs = /^[a-f0-9]{40}$/u.test(sourceRaw)
+        ? { resultSha: sourceRaw }
+        : { runId: id(sourceRaw, 'Run ID') };
+      return {
+        kind: 'command', command: 'waves.harvest', name: 'waves.harvest',
+        args: { ...harvestArgs, ...(onto === null ? {} : { onto }) }, idempotencyKey,
+      };
+    }
     // #170 (D4): the inspectable compile seam — `baton waves compile [specPath]` → waves.compile.
     // The registry schema requires nothing (`required: []`, application-semantics.mjs:1651+), so a
     // bare `baton waves compile` is admitted (the D3 closed-set pin derives the minimal invocation
@@ -1480,7 +1503,7 @@ export function parseBatonCli(rawArgs) {
       };
     }
     if (action !== 'attach') {
-      throw cliError('expected waves list, progress, start, send, stop, attach, run, or compile', 'cli_command_unavailable');
+      throw cliError('expected waves list, progress, start, send, stop, attach, run, harvest, or compile', 'cli_command_unavailable');
     }
     const waveId = id(args.shift(), 'wave ID');
     const membersRaw = take(args, '--members');
@@ -1673,7 +1696,7 @@ export function parseBatonCli(rawArgs) {
   const lifecycleActions = new Set(['show', 'do', 'recover', 'status', 'approve', 'answer', 'steer',
     'send', 'interrupt', 'progress', 'events', 'output', 'episode', 'workstreams', 'notify', 'result',
     'stop', 'evidence', 'adopt', 'select', 'feedback', 'revise', 'stop-member',
-    'retry', 'resume', 'review', 'integrate', 'export', 'debug']);
+    'retry', 'resume', 'review', 'integrate', 'export', 'debug', 'resultpin']);
   if (!lifecycleActions.has(action)) {
     // #160 R6 (F8, error-actionability-2026-08-13/contract-fold.md §2 F8): an unknown run verb is
     // never silently reinterpreted as a Run objective — a single-token distance-1 typo of exactly
@@ -1685,6 +1708,13 @@ export function parseBatonCli(rawArgs) {
     return parseStart(args, action, idempotencyKey);
   }
   const runId = id(args.shift(), 'Run ID');
+  // Issues #99+#179 (impl-result-accessor-2026-08-14): `baton run resultpin RUN_ID` — the read
+  // projection over the run's preserved result pin. Shifted BEFORE the episode/result branch so
+  // the occupied `run result` episode spelling is untouched (the I5 guard).
+  if (action === 'resultpin') {
+    noRemainder(args);
+    return { kind: 'command', command: 'run.resultpin', name: 'run.resultpin', args: { runId }, idempotencyKey };
+  }
   if (action === 'episode' || action === 'result') {
     const topic = action === 'result' ? 'result'
       : args[0] && !args[0].startsWith('--') ? args.shift() : 'outline';
