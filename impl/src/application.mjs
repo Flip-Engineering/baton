@@ -890,6 +890,30 @@ function normalizeAnswer(value) {
   throw applicationError('Run answer is invalid', 'application_answer_invalid');
 }
 
+// #158 D2.1 — the append verb's body → kernel entry closure. The surface `body` for `note` is the
+// note text (a string); for `plan`/`doubt`/`link` it is the kernel's closed per-kind shape
+// (normalizeScratchpadEntry, coordination-store.mjs:607-696). This builder only closes the shape
+// (defaulting `supersedes`/`context` to null); the kernel's normalizeScratchpadEntry stays the
+// authoritative deep validator — the surface never re-implements it (the #158 dispatch law).
+function scratchpadAppendEntry(kind, body) {
+  if (kind === 'note') {
+    if (typeof body !== 'string') {
+      throw applicationError('run scratchpad append note body must be a string', 'application_scratchpad_append_invalid');
+    }
+    return { kind: 'note', text: body };
+  }
+  if (body === null || typeof body !== 'object' || Array.isArray(body)) {
+    throw applicationError(`run scratchpad append ${kind} body must be an object`, 'application_scratchpad_append_invalid');
+  }
+  if (kind === 'plan') {
+    return { ...body, kind: 'plan', supersedes: body.supersedes ?? null };
+  }
+  if (kind === 'doubt') {
+    return { ...body, kind: 'doubt', context: body.context ?? null };
+  }
+  return { ...body, kind: 'link' };
+}
+
 // F3: the answer shape must match the pending interaction's own kind, checked at the hub
 // BEFORE any adapter call — a {decision} answer may only settle an approval-kind record, a
 // {text} answer a question-kind (or free-response decision) record, and {optionId} only a
@@ -12653,6 +12677,7 @@ export class BatonApplication {
     if (name === 'run.attention.watch') return this.attentionWatch(args, principal);
     if (name === 'run.scratchpad.read') return this.scratchpadRead(args, principal);
     if (name === 'run.scratchpad.elevate') return this.scratchpadElevate(args, principal);
+    if (name === 'run.scratchpad.append') return this.scratchpadAppend(args, principal);
     if (name === 'run.board.post') return this.boardPost(args, principal);
     if (name === 'run.board.read') return this.boardRead(args, principal);
     if (name === 'run.knowledge.seed') return this.knowledgeSeed(args, principal);
@@ -13053,6 +13078,30 @@ export class BatonApplication {
     return deepFreeze({ runId: value.runId, taskId: value.taskId, entryIds: [...value.entryIds] });
   }
 
+  _normalizeScratchpadAppend(value) {
+    // #158 D2.1 — the closed append closure {runId, scope, kind?, body, idempotencyKey?}. The body
+    // closure is built by scratchpadAppendEntry; the kernel's normalizeScratchpadEntry stays the
+    // deep authority. `workerId` is deliberately absent — the entry's author is server-bound to
+    // auth.principalId (H1.3).
+    if (!value || typeof value !== 'object' || Array.isArray(value)
+      || Object.keys(value).some((key) => !['runId', 'scope', 'kind', 'body', 'idempotencyKey'].includes(key))
+      || !validId(value.runId)
+      || typeof value.scope !== 'string' || !/^(?:shared|worker:[A-Za-z0-9._:-]{1,256})$/u.test(value.scope)
+      || (value.kind !== undefined && !['note', 'plan', 'doubt', 'link'].includes(value.kind))
+      || !Object.hasOwn(value, 'body') || value.body === undefined
+      || (value.idempotencyKey !== undefined
+        && (typeof value.idempotencyKey !== 'string'
+          || !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/u.test(value.idempotencyKey)))) {
+      throw applicationError('run scratchpad append request is invalid', 'application_scratchpad_append_invalid');
+    }
+    const kind = value.kind ?? 'note';
+    const entry = scratchpadAppendEntry(kind, value.body);
+    return deepFreeze({
+      runId: value.runId, scope: value.scope, entry,
+      ...(value.idempotencyKey !== undefined ? { idempotencyKey: value.idempotencyKey } : {}),
+    });
+  }
+
   _normalizeBoardPost(value) {
     if (!value || typeof value !== 'object' || Array.isArray(value)
       || Object.keys(value).some((key) => !['runId', 'board', 'title', 'detail', 'owner', 'evidence'].includes(key))
@@ -13300,6 +13349,29 @@ export class BatonApplication {
       taskId: request.taskId, entryCount: request.entryIds.length,
     });
     const outcome = this.driver.coordinator.elevateTaskScratchpad(request.taskId, request.entryIds);
+    return deepFreeze({ schemaVersion: 1, ...outcome });
+  }
+
+  // run.scratchpad.append — #158: the folded shared-scratchpad WRITE verb. A direct EPHEMERAL
+  // write into the kernel's appendScratchpad (D1 law 4 — never scratchpadElevate/elevateTaskScratchpad,
+  // so it mints no scratch-fact / KG candidacy). The surface namespaces every caller-supplied
+  // idempotency key by scope before the kernel auth (H3.1); an absent key derives kernel-side.
+  async scratchpadAppend(rawRequest, rawPrincipal) {
+    this._assertOpen();
+    await this.ready;
+    const request = this._normalizeScratchpadAppend(rawRequest);
+    const principal = normalizePrincipal(rawPrincipal, 'scratchpad append principal');
+    await this._authorize('run.scratchpad.append', principal, request.runId, { scope: request.scope });
+    const outcome = this.driver.coordination.appendScratchpad(
+      { runId: request.runId, scope: request.scope, entry: request.entry },
+      {
+        actor: principal.actor,
+        principalId: principal.principalId,
+        sessionId: principal.sessionId,
+        ...(request.idempotencyKey !== undefined
+          ? { key: `${request.idempotencyKey}:${request.scope}` } : {}),
+      },
+    );
     return deepFreeze({ schemaVersion: 1, ...outcome });
   }
 

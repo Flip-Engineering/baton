@@ -193,7 +193,12 @@ test('UA5/WN: malformed Run intent, inconsistent Run identity, and capability re
     args: { intent: { runId: 'run-web-a', objective: 'work', profile: 'standard', route: { harness: 'grok', model: 'grok-4-code' } } },
   }));
   assert.equal(malformed.status, 400);
-  assert.equal(malformed.body.error.code, 'invalid_command');
+  // #160 R4 (W8-2, error-actionability-red.test.mjs:384-402): a validator refusal carrying a
+  // named vocabulary code passes through its code instead of the anonymous invalid_command
+  // collapse — the run.start route validator throws typed `application_route_invalid`.
+  // Restaged 2026-08-14: still 400, still before application admission (applicationCalls stays
+  // empty below); only the refusal CODE spelling moved with the #160 typed-code contract.
+  assert.equal(malformed.body.error.code, 'application_route_invalid');
 
   const mismatched = await web.execute(context(), envelope({
     commandId: 'run-mismatch', idempotencyKey: 'run-mismatch', command: 'run_status',
@@ -499,15 +504,21 @@ test('WN4: an identical retry executes once and a same-key different body confli
 
 test('WN4/WN5/WN7: unknown fields, unknown model policy, and client-supplied audit identity are rejected before admission', async () => {
   const { web, calls, coordination } = fixture();
-  for (const invalid of [
-    envelope({ actor: 'admin' }),
-    envelope({ runId: '../escape' }),
-    envelope({ args: { ...envelope().args, credential: 'secret' } }),
-    envelope({ args: { ...envelope().args, modelPolicy: { reasoningEffort: 'high', bypassSandbox: true } } }),
+  // #160 R4 (W1/W2, error-actionability-red.test.mjs:273-287): unknown top-level and
+  // unknown model-policy fields refuse with their TYPED codes (`unknown_top_level_field`,
+  // `unknown_model_policy_field`) instead of the anonymous invalid_command collapse.
+  // Restaged 2026-08-14 per-case; the remaining shape (invalid run id) is a route-shape
+  // string and keeps invalid_command (W8-1). The credential-bearing arg is also an UNKNOWN
+  // arg field, so W2's typed `unknown_argument_field` fires before the forbidden-key check.
+  for (const [invalid, expectedCode] of [
+    [envelope({ actor: 'admin' }), 'unknown_top_level_field'],
+    [envelope({ runId: '../escape' }), 'invalid_command'],
+    [envelope({ args: { ...envelope().args, credential: 'secret' } }), 'unknown_argument_field'],
+    [envelope({ args: { ...envelope().args, modelPolicy: { reasoningEffort: 'high', bypassSandbox: true } } }), 'unknown_model_policy_field'],
   ]) {
     const result = await web.execute(context(), invalid);
     assert.equal(result.status, 400);
-    assert.equal(result.body.error.code, 'invalid_command');
+    assert.equal(result.body.error.code, expectedCode);
   }
   assert.equal(calls.length, 0);
   assert.equal(coordination.events().some((event) => event.kind === 'web.command_admitted'), false);

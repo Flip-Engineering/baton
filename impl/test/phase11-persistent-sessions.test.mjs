@@ -560,10 +560,16 @@ test('NR1/NR3: recovery attaches without provider work, commits its refinement a
   const admittedBrief = f.replay._tasks.get(f.replay._workers.get(f.handle.id).taskId).brief;
   // Epic #81 (OR-S1): the admission injects the L0 orientation grant into every spawn/recovery
   // prompt brief — compare the delegation fields, then assert the grant positively.
-  const { orientation, ...promptDelegation } = f.resumed.calls.promptBrief[0][1];
+  // Issue #79 (D1/D3, d8282d0): the delivery seam attaches the per-worker `attention`
+  // projection to a NEW provider-facing value — never a mutation of the admitted brief — and
+  // the field is always present once a worker is addressed (empty pending set attaches `[]`).
+  // Restaged 2026-08-14 under the OR-S1 strip-and-assert precedent: compare the delegation
+  // fields, then assert both injected projections positively.
+  const { orientation, attention, ...promptDelegation } = f.resumed.calls.promptBrief[0][1];
   assert.deepEqual([f.handle.id, promptDelegation], [f.handle.id, admittedBrief], 'coordinator uses the immutable admitted Brief through the adapter dialect hook');
   assert.ok(orientation && typeof orientation.frame === 'string' && orientation.frame.startsWith('UNTRUSTED_ORIENTATION'), 'OR-S1: the L0 orientation grant is cited into the recovery prompt brief');
-  assert.deepEqual(f.resumed.calls.prompt[0].slice(1), [{ ...admittedBrief, orientation }, 'turn']);
+  assert.ok(Array.isArray(attention), '#79 D1: the worker-delivery attention projection is attached to the recovery prompt brief');
+  assert.deepEqual(f.resumed.calls.prompt[0].slice(1), [{ ...admittedBrief, orientation, attention }, 'turn']);
 
   const created = coordinationAtPrompt.find((event) => event.kind === 'task.created'
     && event.payload.id.startsWith('recovery:'));
@@ -606,9 +612,12 @@ test('NR3/NR5: refused recovery continuation fails the refinement and kills/reap
   assert.equal(f.resumed.calls.prompt.length, 1);
   const admittedBrief = f.replay._tasks.get(f.replay._workers.get(f.handle.id).taskId).brief;
   // Epic #81 (OR-S1): same L0 grant injection — compare delegation, then assert the grant.
-  const { orientation, ...promptDelegation } = f.resumed.calls.prompt[0][1];
+  // Issue #79 (D1/D3, d8282d0): same delivery-seam `attention` projection as NR1/NR3 —
+  // restaged 2026-08-14 under the OR-S1 strip-and-assert precedent.
+  const { orientation, attention, ...promptDelegation } = f.resumed.calls.prompt[0][1];
   assert.deepEqual([promptDelegation, 'turn'], [admittedBrief, 'turn'], 'custom adapters fall back to prompt(worker, admitted brief, turn)');
   assert.ok(orientation && typeof orientation.frame === 'string' && orientation.frame.startsWith('UNTRUSTED_ORIENTATION'), 'OR-S1: the L0 orientation grant is cited into the refused-recovery prompt brief');
+  assert.ok(Array.isArray(attention), '#79 D1: the worker-delivery attention projection is attached to the refused-recovery prompt brief');
   assert.equal(recovered.ok, false);
   assert.equal(recovered.result, 'dispatch_refused');
   await until(() => f.resumed.calls.kill.length === 1);
