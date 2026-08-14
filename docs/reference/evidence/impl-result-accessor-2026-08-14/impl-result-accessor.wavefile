@@ -7,8 +7,8 @@ member coordinator
   objectiveRef "docs/reference/evidence/impl-result-accessor-2026-08-14/coordinator-brief.md"
   report "docs/reference/evidence/impl-result-accessor-2026-08-14/verify-notes.md"
 member row-result-accessor
-  harness deepseek
-  model "deepseek-v4-pro[1m]"
+  harness glm
+  model "glm-5.3"
   effort high
   scope "impl/src/application.mjs"
   scope "docs/reference/evidence/impl-result-accessor-2026-08-14/**"
