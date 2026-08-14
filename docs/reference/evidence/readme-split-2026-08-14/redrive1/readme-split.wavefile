@@ -1,0 +1,25 @@
+wave readme-split-2026-08-14-wave-b
+member coordinator
+  harness deepseek
+  model deepseek-v4-flash
+  effort high
+  scope "docs/reference/evidence/readme-split-2026-08-14/redrive1/**"
+  objectiveRef "docs/reference/evidence/readme-split-2026-08-14/redrive1/coordinator-brief.md"
+  report "docs/reference/evidence/readme-split-2026-08-14/redrive1/verify-notes.md"
+member row-readme
+  harness glm
+  model glm-5.2
+  effort high
+  scope "README.md"
+  scope "docs/reference/progress-ledger-2026-08-14.md"
+  scope "docs/reference/evidence/readme-split-2026-08-14/redrive1/**"
+  objectiveRef "docs/reference/evidence/readme-split-2026-08-14/redrive1/row-readme-brief.md"
+  report "docs/reference/evidence/readme-split-2026-08-14/redrive1/notes-row-readme.md"
+approveOnAdvertisedPlan
+claimOnStall
+nudgeOnCheckpoint "Continue — the brief is the contract. Nothing deleted without a new home; capability claims cite suites/docs/issues. Write deliverables incrementally."
+messageOnSpawn brief "Read your objectiveRef brief IN FULL first; it binds. gh may be unauthenticated in your worktree — ground in the repo's docs and git log. Your [attempt:] line verbatim in your deliverable's first five lines. Judgment calls recorded; authority-class ambiguity → DECISION_REQUEST with options."
+elevateWhenNotes doubt,plan 20
+signalOnMembersDone row-readme result "The row settled (you are the remaining member — pinned #175 semantics). Verify per your brief and write verify-notes.md."
+harvest "docs/reference/evidence/readme-split-2026-08-14/redrive1/notes-row-readme.md" mustContain "attempt:"
+harvest "docs/reference/evidence/readme-split-2026-08-14/redrive1/verify-notes.md" mustContain "README_SPLIT-VERIFY v1"

@@ -1,0 +1,23 @@
+wave eval-r0-2026-08-14-wave-b
+member coordinator
+  harness deepseek
+  model deepseek-v4-flash
+  effort high
+  scope "docs/reference/evidence/eval-r0-2026-08-14/redrive1/**"
+  objectiveRef "docs/reference/evidence/eval-r0-2026-08-14/redrive1/coordinator-brief.md"
+  report "docs/reference/evidence/eval-r0-2026-08-14/redrive1/verify-notes.md"
+member row-eval-r0
+  harness glm
+  model "glm-5.2"
+  effort high
+  scope "docs/reference/evidence/eval-r0-2026-08-14/redrive1/**"
+  objectiveRef "docs/reference/evidence/eval-r0-2026-08-14/redrive1/row-eval-r0-brief.md"
+  report "docs/reference/evidence/eval-r0-2026-08-14/redrive1/notes-row-eval-r0.md"
+approveOnAdvertisedPlan
+claimOnStall
+nudgeOnCheckpoint "Continue — the brief is the contract. Write deliverables incrementally; every claim cites evidence."
+messageOnSpawn brief "Read your objectiveRef brief IN FULL first; it binds. gh may be unauthenticated in your worktree — ground in the repo. Your [attempt:] line verbatim in your deliverable's first five lines. Judgment calls recorded; authority-class ambiguity → DECISION_REQUEST with options."
+elevateWhenNotes doubt,plan 20
+signalOnMembersDone row-eval-r0 result "The row settled (you are the remaining member — pinned #175 semantics). Verify per your brief and write verify-notes.md."
+harvest "docs/reference/evidence/eval-r0-2026-08-14/redrive1/notes-row-eval-r0.md" mustContain "attempt:"
+harvest "docs/reference/evidence/eval-r0-2026-08-14/redrive1/verify-notes.md" mustContain "EVAL_R0-VERIFY v1"

@@ -1,0 +1,24 @@
+wave impl-lsp-pool-2026-08-14-wave-d
+member coordinator
+  harness deepseek
+  model deepseek-v4-flash
+  effort high
+  scope "docs/reference/evidence/impl-lsp-pool-2026-08-14/redrive3/**"
+  objectiveRef "docs/reference/evidence/impl-lsp-pool-2026-08-14/redrive3/coordinator-brief.md"
+  report "docs/reference/evidence/impl-lsp-pool-2026-08-14/redrive3/verify-notes.md"
+member row-lsp-pool
+  harness glm
+  model "glm-5.3"
+  effort high
+  scope "impl/src/lsp-pool.mjs"
+  scope "docs/reference/evidence/impl-lsp-pool-2026-08-14/redrive3/**"
+  objectiveRef "docs/reference/evidence/impl-lsp-pool-2026-08-14/redrive3/row-lsp-pool-brief.md"
+  report "docs/reference/evidence/impl-lsp-pool-2026-08-14/redrive3/notes-row-lsp-pool.md"
+approveOnAdvertisedPlan
+claimOnStall
+nudgeOnCheckpoint "Continue — the suite is the contract; named stages green by correct impl only, never suite edits. Hermetic: no real LSP binaries at test time. Write deliverables incrementally."
+messageOnSpawn brief "Read your objectiveRef brief IN FULL first; it binds. gh may be unauthenticated in your worktree — ground in the code and the suite. Your [attempt:] line verbatim in your deliverable's first five lines. Judgment calls recorded; authority-class ambiguity → DECISION_REQUEST with options."
+elevateWhenNotes doubt,plan 20
+signalOnMembersDone row-lsp-pool result "The row settled (you are the remaining member — pinned #175 semantics). Verify per your brief and write verify-notes.md."
+harvest "docs/reference/evidence/impl-lsp-pool-2026-08-14/redrive3/notes-row-lsp-pool.md" mustContain "attempt:"
+harvest "docs/reference/evidence/impl-lsp-pool-2026-08-14/redrive3/verify-notes.md" mustContain "IMPL_LSP_POOL-VERIFY v1"
