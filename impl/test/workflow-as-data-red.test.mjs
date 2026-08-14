@@ -768,6 +768,47 @@ test('W2-01 (stage[lane-missing]): a 4-member suite-drafting wave runs from a sp
   // lives on the lane module's transitive import graph (W5-01, F10b).
 });
 
+test('W2-phantom (stage[phantom-surfacing]): a member whose start threw is named with its typed start error — the roster never silently shrinks', async (t) => {
+  // 2026-08-14, the v20 flood's quiet killer: members whose runs.start throws (capacity refusal,
+  // spawn race, route failure) never enter wave.runs; the settle receipted a bare 'failed' with
+  // no cause and no event. The law: the drive names every phantom at start
+  // (wave_member_start_failed, steering channel) and the settle attaches terminalCause 'start'
+  // plus the typed error to the phantom's outcome.
+  const adapter = new TrackingMarkerAdapter({
+    harness: 'mock',
+    scenariosByMarker: {
+      'w2-live': { outcome: 'completed', edits: [{ path: 'reports/w2-live.md', content: 'live\n' }] },
+    },
+  });
+  const fx = await wadFixture(t, { adapter });
+  writeObjective(fx.repo, 'w2-live', 'write the live report');
+  writeObjective(fx.repo, 'w2-ghost', 'this member never starts');
+  const spec = validSpec({
+    idempotencyKey: 'w2-phantom',
+    members: [
+      wadMember('w2-live'),
+      wadMember('w2-ghost', { exact: { harness: 'no-such-harness', model: 'ghost', effort: 'low' } }),
+    ],
+    steering: {},
+    harvest: { paths: ['reports/w2-live.md'] },
+  });
+  const receipt = await driveLane(fx.baton, 'phantom-surfacing', spec);
+  const ghost = receipt.outcomes.find((outcome) => outcome.role === 'w2-ghost');
+  assert.ok(ghost, 'the phantom member has an outcome row');
+  assert.equal(ghost.phase, 'failed', 'the phantom is failed');
+  assert.equal(ghost.terminalCause, 'start',
+    'stage[phantom-surfacing]: the phantom outcome names terminalCause start, never a bare failed');
+  assert.ok(ghost.error && typeof ghost.error === 'object',
+    'stage[phantom-surfacing]: the phantom outcome carries the typed start error');
+  assert.ok(typeof ghost.error.code === 'string' && ghost.error.code.length > 0,
+    'stage[phantom-surfacing]: the start error carries a typed code');
+  assert.ok(receipt.steering.some((entry) => entry?.evidence === 'wave_member_start_failed' && entry?.role === 'w2-ghost'),
+    'stage[phantom-surfacing]: the drive named the phantom at start via the steering channel');
+  const live = receipt.outcomes.find((outcome) => outcome.role === 'w2-live');
+  assert.equal(live?.phase === 'result_ready' || live?.terminal === true, true,
+    'the surviving member settles normally (a phantom never aborts the roster)');
+});
+
 // ---------------------------------------------------------------------------
 // W3 — each steering policy fires and receipts.
 // ---------------------------------------------------------------------------

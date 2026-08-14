@@ -645,11 +645,32 @@ export async function runWorkflow(baton, specOrPath, options = {}) {
 
   // Build outcomes: capture resultSha pre-close (reliable), terminal state post-close.
   const handles = wave.runs;
+  // Phantom surfacing (2026-08-14): a member absent from wave.runs failed AT START — the wave
+  // handle's progress() projects it with terminalCause 'start' and the typed start error. One
+  // read, only when phantoms exist; the outcome carries the cause, never a bare 'failed'.
+  const phantomDetail = new Map();
+  if (spec.members.some((member) => !handles.has(member.role))) {
+    try {
+      const phantomSnap = await wave.progress();
+      for (const row of phantomSnap?.members ?? []) {
+        if (typeof row?.role === 'string' && row.terminalCause === 'start') {
+          phantomDetail.set(row.role, { terminalCause: 'start', error: row.error ?? null });
+        }
+      }
+    } catch { /* best-effort detail; the phantom failure itself is already recorded */ }
+  }
   const preOutcome = new Map();
   const excludeShas = [];
   for (const member of spec.members) {
     const handle = handles.get(member.role) ?? null;
-    if (!handle) { preOutcome.set(member.role, { phase: 'failed', terminal: true, resultSha: null }); continue; }
+    if (!handle) {
+      const detail = phantomDetail.get(member.role) ?? null;
+      preOutcome.set(member.role, {
+        phase: 'failed', terminal: true, resultSha: null,
+        terminalCause: detail?.terminalCause ?? 'start', error: detail?.error ?? null,
+      });
+      continue;
+    }
     let view = null;
     try { view = await readView(handle); } catch { /* unreadable — settle at close */ }
     const resultSha = await materializeSha(handle, member, repoRoot, pinFloorMs, excludeShas);
@@ -677,6 +698,8 @@ export async function runWorkflow(baton, specOrPath, options = {}) {
       }
     }
     const outcome = { role: member.role, phase, terminal, resultSha: pre.resultSha };
+    if (pre.terminalCause !== undefined) outcome.terminalCause = pre.terminalCause;
+    if (pre.error) outcome.error = pre.error;
     if (member.report !== undefined) outcome.report = member.report;
     if (verification !== null) outcome.verifiedBy = verification;
     // #163 (OQ5): on a quiesced exit the outcome carries the declaration snapshot — the last
@@ -812,6 +835,15 @@ async function driveLane(wave, spec, driver, steering, s, reportByRole) {
   const pending = new Set([...handles.keys()]);
   const doneRoles = new Set();
   const signalRoles = new Set(st.signalOnMembersDone?.roles ?? []);
+  // Phantom surfacing (2026-08-14 — the v20 flood's quiet killer): a member whose start threw
+  // (capacity refusal, spawn race, route failure) never enters wave.runs — without this line the
+  // roster silently shrinks and the settle receipts a bare 'failed' with no cause. Name every
+  // phantom at drive start; the settle leg attaches the typed start error to its outcome.
+  for (const member of spec.members) {
+    if (!handles.has(member.role)) {
+      steering.push({ evidence: 'wave_member_start_failed', role: member.role });
+    }
+  }
   // status() carries the goal planDigest (approveOnAdvertisedPlan), decision options (answerDecisions),
   // the checkpoint attention (nudge/claim), and taskId/workerId (elevate). Pure messageOnSpawn /
   // signalOnMembersDone / no-steering waves poll inspect-only. Members poll in parallel, so even the
