@@ -374,7 +374,10 @@ export function createWaveDriver(baton, rawPolicy = null) {
       return { ...member, objective };
     });
 
-    const startOptions = { ...options, members: saltedMembers };
+    // #183 (allowTerminalReplay): the driver's same-key re-drive is the idempotent ritual resume —
+    // it re-attaches to the prior wave's runs (runId dedupe via saltObjectives:false) rather than
+    // replays, so createWave's terminal-replay refusal is skipped on this path.
+    const startOptions = { ...options, members: saltedMembers, allowTerminalReplay: true };
     const totalMembers = saltedMembers.length;
 
     const nudges = [];

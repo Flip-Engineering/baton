@@ -206,8 +206,11 @@ export async function createWave(baton, options = {}) {
     : randomUUID();
   const waveId = `wave:${createHash('sha256').update(idempotencyKey).digest('hex').slice(0, 32)}`;
   // #183 (wave_already_terminal): a terminal wave's key refuses typed BEFORE member validation —
-  // never a silent replay. A fresh (unkeyed) start skips the lookup.
-  if (options.idempotencyKey !== undefined && typeof baton._assertWaveStartReplayable === 'function') {
+  // never a silent replay. A fresh (unkeyed) start skips the lookup. The wave-driver's ritual
+  // re-drive (allowTerminalReplay: true) is the idempotent resume path — its same-key re-drive
+  // re-attaches via runId dedupe rather than replays, so it skips this refusal.
+  if (options.idempotencyKey !== undefined && options.allowTerminalReplay !== true
+    && typeof baton._assertWaveStartReplayable === 'function') {
     await baton._assertWaveStartReplayable(waveId);
   }
   const salt = randomUUID();

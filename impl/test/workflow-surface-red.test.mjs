@@ -1426,8 +1426,8 @@ test('FP-14-tools (stage: tools absent): the six ordinary tools register with cl
   for (const [tool] of SIX_TOOLS) {
     assert.ok(names.includes(tool), `${tool} joins the ordinary application surface (27 → 33)`);
   }
-  assert.equal(names.length, 35,
-    'the ordinary surface is exactly the landed 27 + the six + baton_waves_run (#114, contract-required) + baton_waves_list (#132, §4 drift — the impl-132 brief owns 34 → 35) — a stowaway tool greens nothing (blue-team D5)');
+  assert.equal(names.length, 36,
+    'the ordinary surface is exactly the landed 27 + the six + baton_waves_run (#114, contract-required) + baton_waves_list (#132, §4 drift) + baton_waves_compile (#170, DR-2(a) contract-required) — a stowaway tool greens nothing (blue-team D5)');
   assert.equal(names.some((name) => /^baton_(run_)?board_/u.test(name)), false,
     'no ordinary MCP board tools — boards stay the combined-surface S-2 family (Decision 10)');
   const { server } = mockAppServer();
