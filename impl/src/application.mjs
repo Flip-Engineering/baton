@@ -11492,11 +11492,12 @@ export class BatonApplication {
     let boundCount = 0;
     let mismatchCount = 0;
     const bindings = [];
+    const steeringIndex = this._steeringRegisteredIndex();
     for (const entry of matched) {
       await this._authorize('run.status', principal, entry.runId, {
         operation: 'waves.attach', waveId,
       });
-      const boundWaveId = this._runWaveId(entry.runId);
+      const boundWaveId = this._runWaveId(entry.runId, steeringIndex);
       if (boundWaveId === null || boundWaveId !== waveId) {
         mismatchCount += 1;
         continue;
@@ -11579,45 +11580,61 @@ export class BatonApplication {
     ));
   }
 
+  // WLS-1 (waves-list-scaling 2026-08-14): the roster projections share ONE per-invocation,
+  // single-pass index over the event log instead of re-scanning eventsView() per member runId
+  // (previously _runWaveRole/_runWaveRoute and siblings each scanned the full log once per member,
+  // so waves.list over a fat log x a big roster exhausted the command budget). The index is built
+  // fresh on every invocation - event-log-derived only, no clocks, no cross-invocation cache that
+  // could go stale. First-defined-per-field preserves the exact prior per-field scan order.
+  _steeringRegisteredIndex() {
+    const events = this.driver.coordination.eventsView();
+    const byRunId = new Map();
+    const byWaveRole = new Map();
+    for (const event of events) {
+      if (event.kind !== 'driver.recorded' || event.payload?.kind !== APPLICATION_STEERING_REGISTERED_KIND) {
+        continue;
+      }
+      const { runId, waveId, waveRole, route } = event.payload;
+      if (runId !== undefined) {
+        let record = byRunId.get(runId);
+        if (record === undefined) { record = {}; byRunId.set(runId, record); }
+        if (record.waveId === undefined && waveId !== undefined) record.waveId = waveId;
+        if (record.waveRole === undefined && waveRole !== undefined) record.waveRole = waveRole;
+        if (record.route === undefined && route !== undefined) record.route = route;
+      }
+      if (waveId !== undefined && waveRole !== undefined) {
+        let roles = byWaveRole.get(waveId);
+        if (roles === undefined) { roles = new Map(); byWaveRole.set(waveId, roles); }
+        if (!roles.has(waveRole)) roles.set(waveRole, runId);
+      }
+    }
+    return { byRunId, byWaveRole };
+  }
+
   // 93B: the durable referent for "this run belongs to waveId" is its own steering.registered
   // record — no separate per-run projection map, same event-log-only discipline as the liveness
   // scan this mirrors (coordinator.mjs's `hasDriver` check).
-  _runWaveId(runId) {
-    const events = this.driver.coordination.eventsView();
-    for (const event of events) {
-      if (event.kind === 'driver.recorded' && event.payload?.kind === APPLICATION_STEERING_REGISTERED_KIND
-        && event.payload?.runId === runId && event.payload?.waveId !== undefined) {
-        return event.payload.waveId;
-      }
-    }
-    return null;
+  _runWaveId(runId, index = null) {
+    const idx = index ?? this._steeringRegisteredIndex();
+    const record = idx.byRunId.get(runId);
+    return record?.waveId !== undefined ? record.waveId : null;
   }
 
   // The wave member's role is the steering-registered `waveRole` (93B) — the durable referent,
   // same event-log-only discipline as _runWaveId.
-  _runWaveRole(runId) {
-    const events = this.driver.coordination.eventsView();
-    for (const event of events) {
-      if (event.kind === 'driver.recorded' && event.payload?.kind === APPLICATION_STEERING_REGISTERED_KIND
-        && event.payload?.runId === runId && event.payload?.waveRole !== undefined) {
-        return event.payload.waveRole;
-      }
-    }
-    return null;
+  _runWaveRole(runId, index = null) {
+    const idx = index ?? this._steeringRegisteredIndex();
+    const record = idx.byRunId.get(runId);
+    return record?.waveRole !== undefined ? record.waveRole : null;
   }
 
   // Issue #74 (D3/A6): the member's EXACT route — the steering-registered `route` (minted by
   // start(), same event-log-only discipline as _runWaveId/_runWaveRole). This is how waves.list
   // recovers the seat map for interpreter-seam waves whose registry roster is a role-only string.
-  _runWaveRoute(runId) {
-    const events = this.driver.coordination.eventsView();
-    for (const event of events) {
-      if (event.kind === 'driver.recorded' && event.payload?.kind === APPLICATION_STEERING_REGISTERED_KIND
-        && event.payload?.runId === runId && event.payload?.route !== undefined) {
-        return clone(event.payload.route);
-      }
-    }
-    return null;
+  _runWaveRoute(runId, index = null) {
+    const idx = index ?? this._steeringRegisteredIndex();
+    const record = idx.byRunId.get(runId);
+    return record?.route !== undefined ? clone(record.route) : null;
   }
 
   // MCP-W1 (mcp-packaging-decisions v1.0): wave ergonomics on the ordinary surface. A wave is the
@@ -11719,7 +11736,8 @@ export class BatonApplication {
     let listed;
     try { listed = await this.listRuns(this.principals.observer, null); }
     catch { return; } // no listing surface — the start path proceeds; the run.start dedupe governs
-    const bound = (listed?.items ?? []).filter((item) => typeof item?.id === 'string' && this._runWaveId(item.id) === waveId);
+    const steeringIndex = this._steeringRegisteredIndex();
+    const bound = (listed?.items ?? []).filter((item) => typeof item?.id === 'string' && this._runWaveId(item.id, steeringIndex) === waveId);
     if (bound.length === 0) return;
     const closed = new Set(['completed', 'result_ready', 'failed', 'cancelled', 'denied', 'stopped', 'stopping', 'closed', 'work_completed']);
     if (!bound.every((item) => closed.has(item.phase))) return; // live wave — dedupe preserved
@@ -11807,8 +11825,9 @@ export class BatonApplication {
     const request = this._normalizeWaveProgress(rawRequest);
     const pageSize = 16;
     const listed = await this.listRuns(this.principals.observer, context);
+    const steeringIndex = this._steeringRegisteredIndex();
     const candidates = (listed?.items ?? [])
-      .filter((item) => typeof item?.id === 'string' && this._runWaveId(item.id) === request.waveId);
+      .filter((item) => typeof item?.id === 'string' && this._runWaveId(item.id, steeringIndex) === request.waveId);
     const cursor = Number.isSafeInteger(request.cursor) ? request.cursor : 0;
     const page = candidates.slice(cursor, cursor + pageSize);
     const members = [];
@@ -11825,7 +11844,7 @@ export class BatonApplication {
         kind: entry?.kind ?? null, summary: entry?.summary ?? null,
       })) : [];
       members.push(deepFreeze({
-        role: this._runWaveRole(item.id) ?? null,
+        role: this._runWaveRole(item.id, steeringIndex) ?? null,
         phase,
         progressClass,
         attention,
@@ -11855,6 +11874,7 @@ export class BatonApplication {
     const pageSize = 16;
     const cursor = Number.isSafeInteger(request.cursor) ? request.cursor : 0;
     const page = open.slice(cursor, cursor + pageSize);
+    const steeringIndex = this._steeringRegisteredIndex();
     const waves = [];
     for (const row of page) {
       const members = [];
@@ -11869,8 +11889,8 @@ export class BatonApplication {
           // attentionCount from the live run inspect exactly as the object branch does — never
           // hardcode nulls for a live member. The hydrated read carries the D5.2 seam: a registered
           // run that vanished refuses wave_not_found, never a silent null.
-          const runId = this._runIdForWaveMember(row.waveId, member);
-          const route = this._runWaveRoute(runId);
+          const runId = this._runIdForWaveMember(row.waveId, member, steeringIndex);
+          const route = this._runWaveRoute(runId, steeringIndex);
           let view = null;
           if (runId !== null) {
             try {
@@ -11898,7 +11918,7 @@ export class BatonApplication {
           continue;
         }
         const role = member?.role ?? null;
-        const runId = this._runIdForWaveMember(row.waveId, role);
+        const runId = this._runIdForWaveMember(row.waveId, role, steeringIndex);
         let view = null;
         if (runId !== null) {
           try {
@@ -11934,16 +11954,10 @@ export class BatonApplication {
 
   // The member's run is the steering-registered runId for (waveId, waveRole) — the durable
   // referent, same event-log-only discipline as _runWaveId/_runWaveRole.
-  _runIdForWaveMember(waveId, waveRole) {
+  _runIdForWaveMember(waveId, waveRole, index = null) {
     if (waveId == null || waveRole == null) return null;
-    const events = this.driver.coordination.eventsView();
-    for (const event of events) {
-      if (event.kind === 'driver.recorded' && event.payload?.kind === APPLICATION_STEERING_REGISTERED_KIND
-        && event.payload?.waveId === waveId && event.payload?.waveRole === waveRole) {
-        return event.payload.runId;
-      }
-    }
-    return null;
+    const idx = index ?? this._steeringRegisteredIndex();
+    return idx.byWaveRole.get(waveId)?.get(waveRole) ?? null;
   }
 
   // waves.send / waves.stop — resume-steer on the member runIds attach returns. Both are
