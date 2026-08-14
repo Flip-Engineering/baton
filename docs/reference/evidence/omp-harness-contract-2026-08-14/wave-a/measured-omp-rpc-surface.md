@@ -10,3 +10,10 @@ Live probe: `omp --mode rpc --no-extensions --no-lsp --no-skills --no-rules --no
 - Open: MCP notification consumption (omp-side #208 posture); get_session_stats/contextUsage as usage-seal source
 
 Full issue-comment form: github.com/wahargis/baton/issues/228
+
+
+## Probe #2 — usage-seal + route identity (2026-08-14)
+
+- get_session_stats: {tokens:{input,output,reasoning,cacheRead,cacheWrite,total}, cost, premiumRequests, contextUsage, sessionFile, sessionId} — the resource.tokens usage-seal source; richer than compat (reasoning/cache split + cost).
+- get_state.model: full route tuple {id, provider, api, baseUrl, cost, contextWindow, thinking} — route.observed natively.
+- #208 consumer side settled: baton attention push terminates at the ORCHESTRATOR's MCP client (omp session notifications surface), never the member harness; member-side nested orchestration rides set_host_tools (#74). No protocol invention needed.
