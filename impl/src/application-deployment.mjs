@@ -1745,6 +1745,61 @@ function restrictingReadAuthorize() {
   };
 }
 
+// Issue #158 (D1 write law): the scratchpad APPEND-authorization law at the deployment enforcement
+// seam. The kernel folds the write-integrity invariants (envelope closure, the idempotent _byKey
+// binding, the partition caps); the D1 write law — which principal may append to which partition —
+// is ENFORCED here at the surface `_authorize` seam, never in the kernel fold (notes-row-kernel
+// §1). The posture is STRICTER than the D1.2 read law:
+//   * `shared` resolves for every principal (law 1), including the review authority's advisory
+//     append (law 3, H1.4 — the disclosed shared drain);
+//   * a `worker:<scope>` partition resolves ONLY for `principalId === scope` (law 2); the review
+//     authority (`local-owner` / `service-*`) is SHARED-ONLY and never writes a member partition
+//     (law 3 — the trust-doctrine divergence from the read law's grant);
+//   * the own-run predicate (H1.1) is ENFORCED via the seat-resolver closure — a member seat whose
+//     ACTIVE run differs from the caller-supplied runId refuses, on `shared` and on its own
+//     partition (the active run is resolved, never taken from the caller);
+//   * unknown scope ≡ foreign at the policy seam (#87).
+// Every non-append command stays permissive (the read restrictor owns `run.scratchpad.read`).
+function restrictingAppendAuthorize(seatResolver) {
+  return async (request = {}) => {
+    const { command, principal, runId, subject } = request;
+    if (command !== 'run.scratchpad.append') return true;
+    const scope = subject?.scope;
+    const pid = typeof principal?.principalId === 'string' ? principal.principalId : '';
+    const activeRunOf = (id) => {
+      if (typeof seatResolver !== 'function') return undefined;
+      try { return seatResolver(id); } catch { return undefined; }
+    };
+    if (scope === 'shared') {
+      if (pid.startsWith('worker:') && activeRunOf(pid) !== undefined && activeRunOf(pid) !== runId) {
+        return false; // H1.1 — the own-run predicate binds the member's shared append too
+      }
+      return true;
+    }
+    if (typeof scope === 'string' && scope.startsWith('worker:')) {
+      if (pid === 'local-owner' || pid.startsWith('service-')) return false; // law 3 — shared-only
+      if (pid !== scope) return false; // law 2 — a member appends only to its own partition
+      if (activeRunOf(pid) !== undefined && activeRunOf(pid) !== runId) return false; // H1.1
+      return true;
+    }
+    return false; // unknown ≡ foreign at the policy seam
+  };
+}
+
+// The deployment's single `authorize` seam AND-composes the D1.2 read law and the D1 write law:
+// each restrictor self-selects on its own verb and stays permissive for every other command, so
+// the AND is exact — a request resolves only when both agree (the read verb's law, then the append
+// verb's law).
+function deploymentScratchpadAuthorize({ seatResolver }) {
+  const read = restrictingReadAuthorize();
+  const append = restrictingAppendAuthorize(seatResolver);
+  return async (request = {}) => {
+    const readAllowed = await read(request);
+    if (readAllowed !== true) return false;
+    return append(request);
+  };
+}
+
 export async function openBatonDeployment(rawOptions, createDriver) {
   closed(rawOptions, ['advanced', 'repo'], 'deployment options');
   const repository = repositoryAuthority(rawOptions.repo ?? process.cwd());
@@ -2017,6 +2072,16 @@ export async function openBatonDeployment(rawOptions, createDriver) {
     privateDirectory(join(deploymentRoot, 'resident')),
     repository.repoId, residentOptions.ownerUid,
   );
+  // Issue #158 (H1.1): the append restrictor's seat-resolver closure — a member seat's ACTIVE run
+  // is resolved from the coordinator (driver.coordinator._getWorker, the same binding
+  // writeScratchpad's wrapper uses), never taken from the caller-supplied runId. An unknown seat
+  // (no active worker handle / no runId) resolves `undefined` — the own-run predicate is enforced
+  // only for a seat whose active run is known.
+  const appendSeatResolver = (workerId) => {
+    try {
+      return driver.coordinator._getWorker(workerId)?.runId ?? undefined;
+    } catch { return undefined; }
+  };
   let application;
   try {
     contextRuntime.attachCoordination(driver.coordination);
@@ -2038,11 +2103,13 @@ export async function openBatonDeployment(rawOptions, createDriver) {
         openSession: (request) => contextRuntime.openSession(request),
         materializeCallResult: (request) => contextRuntime.materializeCallResult(request),
       },
-      // Issue #74 (D1.2): the scratchpad read-authorization law at the deployment seam. The
-      // permissive literal is GONE — the restricting authorize is the default (see
-      // restrictingReadAuthorize below). Non-read commands stay permissive; a foreign
-      // `worker:<scope>` read refuses application_unauthorized at the _authorize seam.
-      authorize: restrictingReadAuthorize(),
+      // Issue #74 (D1.2) + #158 (D1 write law): the scratchpad read AND append laws at the
+      // deployment seam. The permissive literal is GONE — the restricting authorize is the
+      // default (restrictingReadAuthorize / restrictingAppendAuthorize below), AND-composed by
+      // deploymentScratchpadAuthorize with the seat-resolver closure (appendSeatResolver above).
+      // A foreign `worker:<scope>` read or append refuses application_unauthorized at the
+      // _authorize seam.
+      authorize: deploymentScratchpadAuthorize({ seatResolver: appendSeatResolver }),
     });
     await application.ready;
     return new BatonDeployment(application, principal, readiness, {
