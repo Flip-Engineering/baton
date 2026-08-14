@@ -514,6 +514,13 @@ export async function runWorkflow(baton, specOrPath, options = {}) {
     catch { throw specInvalid(`the workflow spec at "${specOrPath}" is not valid JSON`); }
   }
 
+  // A campaign spec (`kind: "campaign"`) rides the SAME lane: the phase driver takes over before
+  // single-wave admission — admitSpec would refuse the campaign's `phases` shape as an unknown
+  // field. The single-wave path below is otherwise untouched.
+  if (raw && typeof raw === 'object' && !Array.isArray(raw) && raw.kind === 'campaign') {
+    return runCampaign(baton, raw, options);
+  }
+
   const spec = admitSpec(raw, repoRoot);
   const manifestDigest = createHash('sha256').update(canonicalJson(spec)).digest('hex');
 
@@ -952,6 +959,344 @@ async function tryElevate(handle, role, v, policy, steering, s) {
     s.elevated.add(role);
     steering.push({ trigger: 'elevateWhenNotes', role, evidence: 'scratchpad_elevation_refused', code: res?.result ?? null });
   }
+}
+
+// ---------------------------------------------------------------------------
+// The PHASE grammar (campaign-as-DSL) — the campaign spec + the phase driver.
+//
+// A campaign is a SEQUENCE of phases over the SAME wave machinery: each member phase lowers to
+// its own wave (per-phase members, steering, harvest) driven by the same start → driveLane →
+// harvest legs below, plus three phase-level additions — a closed `when` gate over prior
+// extracted outcomes (eq/neq, fail-closed on absent), a declared `outcome` extraction from the
+// phase's authoritative harvest bytes, and an orchestrator `checkpoint` phase that parks the
+// campaign with a decision packet on the steering trail. Refusals reuse ONLY the five closed
+// codes (the campaign surface adds none). Phase-addressed identity: each phase's wave key is
+// `<campaignKey>:<phaseName>` — a settled phase re-driven under the same key refuses
+// `wave_already_terminal` (#183) and is REUSED: its outcome is read from the settled
+// materialized harvest, never recomputed (the mid-flight amendment law, D6).
+// ---------------------------------------------------------------------------
+
+const CAMPAIGN_FIELDS = ['schemaVersion', 'idempotencyKey', 'kind', 'phases'];
+const PHASE_FIELDS = ['name', 'when', 'checkpoint', 'decision', 'outcome', 'coupling', 'members', 'steering', 'harvest'];
+const CAMPAIGN_WHEN_OPS = new Set(['eq', 'neq']);
+const COUPLING_KINDS = new Set(['loose', 'shared', 'tight']);
+
+function admitCampaignWhen(raw, index) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw specInvalid(`campaign phase[${index}] "when" must be an object`);
+  for (const key of Object.keys(raw)) {
+    if (key !== 'op' && key !== 'outcome' && key !== 'value') throw specInvalid(`campaign phase[${index}] "when" carries the unknown field "${key}"`);
+  }
+  if (!CAMPAIGN_WHEN_OPS.has(raw.op)) throw specInvalid(`campaign phase[${index}] "when" op must be eq|neq (the closed predicate vocabulary)`);
+  if (typeof raw.outcome !== 'string' || raw.outcome.length === 0) throw specInvalid(`campaign phase[${index}] "when" outcome must be a non-empty string`);
+  if (typeof raw.value !== 'string') throw specInvalid(`campaign phase[${index}] "when" value must be a string`);
+  return { op: raw.op, outcome: raw.outcome, value: raw.value };
+}
+
+function admitCampaignDecision(raw, index) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw specInvalid(`campaign phase[${index}] "decision" must be an object`);
+  for (const key of Object.keys(raw)) {
+    if (key !== 'question' && key !== 'options') throw specInvalid(`campaign phase[${index}] "decision" carries the unknown field "${key}"`);
+  }
+  if (typeof raw.question !== 'string' || raw.question.length === 0) throw specInvalid(`campaign phase[${index}] "decision" question must be a non-empty string`);
+  if (!Array.isArray(raw.options) || raw.options.some((option) => typeof option !== 'string' || option.length === 0)) {
+    throw specInvalid(`campaign phase[${index}] "decision" options must be an array of non-empty ids`);
+  }
+  return { question: raw.question, options: [...raw.options] };
+}
+
+function admitCampaignOutcome(raw, index, repoRoot) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw specInvalid(`campaign phase[${index}] "outcome" must be an object`);
+  for (const key of Object.keys(raw)) {
+    if (key !== 'name' && key !== 'file' && key !== 'pattern') throw specInvalid(`campaign phase[${index}] "outcome" carries the unknown field "${key}"`);
+  }
+  if (typeof raw.name !== 'string' || raw.name.length === 0) throw specInvalid(`campaign phase[${index}] "outcome" name must be a non-empty string`);
+  if (typeof raw.pattern !== 'string' || raw.pattern.length === 0) throw specInvalid(`campaign phase[${index}] "outcome" pattern must be a non-empty string`);
+  assertHarvestContained(raw.file, repoRoot);
+  return { name: raw.name, file: raw.file, pattern: raw.pattern };
+}
+
+// A campaign member is the closed #170 member shape PLUS the coupling declaration (default
+// loose). The coupling is peeled off before admitMember so the single-wave closed shape stays
+// exactly what it was (MEMBER_FIELDS untouched — coupling is campaign-only, never leaked).
+function admitCampaignMember(raw, index, phaseCoupling) {
+  const isObject = raw && typeof raw === 'object' && !Array.isArray(raw);
+  const coupling = isObject ? raw.coupling : undefined;
+  if (coupling !== undefined && !COUPLING_KINDS.has(coupling)) {
+    throw memberInvalid(`workflow member[${index}] "coupling" must be loose|shared|tight`);
+  }
+  const { coupling: _declared, ...rest } = isObject ? raw : {};
+  const member = admitMember(rest, index);
+  // The cascade the compiler lowers: member declaration → phase declaration → loose.
+  member.coupling = COUPLING_KINDS.has(coupling) ? coupling
+    : (COUPLING_KINDS.has(phaseCoupling) ? phaseCoupling : 'loose');
+  return member;
+}
+
+function admitCampaignPhase(raw, index, repoRoot) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw specInvalid(`campaign phase[${index}] must be an object`);
+  for (const key of Object.keys(raw)) {
+    if (!PHASE_FIELDS.includes(key)) throw specInvalid(`campaign phase[${index}] carries the unknown field "${key}" (the closed phase shape is ${PHASE_FIELDS.join(', ')})`);
+  }
+  if (typeof raw.name !== 'string' || raw.name.trim().length === 0) throw specInvalid(`campaign phase[${index}] "name" must be a non-empty string`);
+  const when = raw.when === undefined || raw.when === null ? null : admitCampaignWhen(raw.when, index);
+  const checkpoint = raw.checkpoint === undefined ? false : raw.checkpoint;
+  if (typeof checkpoint !== 'boolean') throw specInvalid(`campaign phase[${index}] "checkpoint" must be a boolean`);
+  const decision = raw.decision === undefined || raw.decision === null ? null : admitCampaignDecision(raw.decision, index);
+  const outcome = raw.outcome === undefined || raw.outcome === null ? null : admitCampaignOutcome(raw.outcome, index, repoRoot);
+  const coupling = raw.coupling === undefined ? 'loose' : raw.coupling;
+  if (!COUPLING_KINDS.has(coupling)) throw specInvalid(`campaign phase[${index}] "coupling" must be loose|shared|tight`);
+  const members = (raw.members ?? []).map((member, memberIndex) => admitCampaignMember(member, memberIndex, coupling));
+  const steering = raw.steering === undefined ? {} : admitSteering(raw.steering);
+  const harvest = raw.harvest === undefined ? { paths: [] } : admitHarvest(raw.harvest, repoRoot);
+  return { name: raw.name.trim(), when, checkpoint, decision, outcome, coupling, members, steering, harvest };
+}
+
+// The campaign admission (the compileCampaign round-trip target): the closed four-field shape,
+// validated recursively, deep-frozen. Normalization is identity-preserving — an admitted
+// campaign canonicalizes identically to its input (the round-trip pin).
+export function admitCampaign(raw, repoRoot) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw specInvalid('the campaign spec must be an object');
+  assertNoFunctions(raw, 'campaign');
+  for (const key of Object.keys(raw)) {
+    if (!CAMPAIGN_FIELDS.includes(key)) throw specInvalid(`the campaign spec field "${key}" is unknown (the closed campaign shape is ${CAMPAIGN_FIELDS.join(', ')})`);
+  }
+  if (raw.kind !== 'campaign') throw specInvalid('the campaign spec "kind" must be exactly "campaign"');
+  if (raw.schemaVersion !== 1) throw specInvalid('the campaign spec "schemaVersion" must be exactly 1 (a closed enum)');
+  if (typeof raw.idempotencyKey !== 'string' || !IDEMPOTENCY_PATTERN.test(raw.idempotencyKey)) {
+    throw specInvalid('the campaign spec "idempotencyKey" must be a non-empty identifier string');
+  }
+  if (!Array.isArray(raw.phases) || raw.phases.length === 0) throw specInvalid('the campaign spec "phases" must be a non-empty array');
+  if (raw.phases.length > MAX_MEMBERS) throw specInvalid(`the campaign spec "phases" exceeds the ${MAX_MEMBERS}-phase ceiling`);
+  const phases = raw.phases.map((phase, index) => admitCampaignPhase(phase, index, repoRoot));
+  const names = phases.map((phase) => phase.name);
+  const duplicate = names.find((name, index) => names.indexOf(name) !== index);
+  if (duplicate !== undefined) throw specInvalid(`the campaign phase name "${duplicate}" is duplicated (phase names must be unique)`);
+  return deepFreeze({ schemaVersion: 1, idempotencyKey: raw.idempotencyKey, kind: 'campaign', phases });
+}
+
+// A fresh per-phase steering-state (the closed shape driveLane drives with).
+function newPhaseSteeringState() {
+  return {
+    approved: new Set(), messaged: new Map(), msgAttempts: new Map(), msgDone: new Set(),
+    elevated: new Set(), nudgedReqs: new Set(), nudgedRoles: new Set(), claimedRoles: new Set(),
+    answeredKeys: new Set(), handledDecisionKeys: new Set(), deniedDecisionKeys: new Set(), signaled: false,
+  };
+}
+
+// The closed predicate evaluation: eq/neq over a prior extracted outcome. An ABSENT outcome
+// (never extracted, or extracted without a match) fails BOTH operators — gates fail closed and
+// the driver never fabricates an outcome value.
+function evaluateWhen(when, outcomes) {
+  const record = outcomes.get(when.outcome) ?? null;
+  if (!record || record.matched !== true) return { satisfied: false, reason: 'outcome-absent', value: null };
+  const equal = record.value === when.value;
+  return { satisfied: when.op === 'eq' ? equal : !equal, reason: equal ? 'outcome-equal' : 'outcome-not-equal', value: record.value };
+}
+
+// The declared outcome extraction (never a prose read): the FIRST line of the harvested bytes
+// containing the pattern; the value is that line's text after the LAST occurrence of the
+// pattern, trimmed. No regex, no eval — a substring selection over authoritative bytes.
+function extractOutcomeFromBytes(outcome, bytes) {
+  if (!outcome || typeof bytes !== 'string') return null;
+  const lines = bytes.split('\n');
+  const index = lines.findIndex((line) => line.includes(outcome.pattern));
+  if (index === -1) return { name: outcome.name, matched: false, value: null };
+  const line = lines[index];
+  const pos = line.lastIndexOf(outcome.pattern);
+  return { name: outcome.name, matched: true, value: line.slice(pos + outcome.pattern.length).trim() };
+}
+
+// Amendment reuse: the settled phase's outcome is read from the materialized harvest file in the
+// repo working tree (the settled ledger artifact the prior drive's harvest wrote), NEVER
+// recomputed by re-driving the phase's members.
+function reuseSettledPhase(phase, repoRoot, steering) {
+  let extracted = null;
+  if (phase.outcome && repoRoot) {
+    try {
+      extracted = extractOutcomeFromBytes(phase.outcome, readFileSync(resolve(repoRoot, phase.outcome.file), 'utf8'));
+    } catch {
+      extracted = { name: phase.outcome.name, matched: false, value: null };
+    }
+  }
+  steering.push({ trigger: 'phase_reused', phase: phase.name, settled: true, outcome: extracted });
+  return { name: phase.name, verdict: 'REUSED', waveId: null, outcome: extracted };
+}
+
+// Drive ONE member phase as its own wave and settle it — the same legs runWorkflow drives
+// (render → base-commit → waves.start → driveLane → close → harvest), parameterized by the
+// phase's template and its phase-addressed derived key. A declared coupling rides as a loud
+// declaration: shared/tight are carried and receipted, never silently dropped to loose.
+async function driveCampaignPhase(baton, spec, phase, repoRoot, driver, salt, steering, outcomes) {
+  const phaseKey = `${spec.idempotencyKey}:${phase.name}`;
+  for (const member of phase.members) {
+    if (member.coupling !== 'loose') {
+      // #158 (shared write verb) / #102 (the cell) are the named preconditions — declared,
+      // carried, and receipted; never silently degraded.
+      const gap = member.coupling === 'shared' ? '#158' : '#102';
+      steering.push({ trigger: 'phase_coupling', phase: phase.name, role: member.role, coupling: member.coupling, precondition: gap });
+    }
+  }
+
+  const rendered = phase.members.map((member) => {
+    const renderedMember = {
+      role: member.role,
+      objective: renderObjective(repoRoot, member, salt),
+      exact: { ...member.exact },
+      scope: [...member.scope],
+    };
+    if (member.report !== undefined) renderedMember.report = member.report;
+    return renderedMember;
+  });
+
+  // The same clean-base law as the single-wave lane: the wave provisions each member's worktree
+  // from a clean base commit, so the phase's inputs are committed before the start. Local only.
+  if (repoRoot) {
+    try {
+      execFileSync('git', ['add', '-A'], { cwd: repoRoot, stdio: 'ignore' });
+      execFileSync('git', ['-c', 'user.name=Baton', '-c', 'user.email=baton@local', 'commit', '-q', '-m', `baton workflow base ${phaseKey}`], { cwd: repoRoot, stdio: 'ignore' });
+    } catch { /* nothing to commit, or commits unavailable — the wave surfaces any real base issue */ }
+  }
+
+  const pinFloorMs = Date.now();
+  let wave;
+  try {
+    wave = await baton.waves.start({ members: rendered, idempotencyKey: phaseKey, approve: true, repoRoot });
+  } catch (error) {
+    // Amendment (D6): the phase-addressed key already settled in a prior run → REUSE, never
+    // re-drive. Any other start failure propagates.
+    if (error?.code === 'wave_already_terminal') {
+      const receipt = reuseSettledPhase(phase, repoRoot, steering);
+      if (phase.outcome && receipt.outcome) outcomes.set(phase.outcome.name, { ...receipt.outcome, phase: phase.name });
+      return { receipt, settled: true };
+    }
+    throw error;
+  }
+  steering.push({ trigger: 'phase_start', phase: phase.name, waveId: wave.waveId });
+
+  const startedAt = Date.now();
+  await driveLane(wave, { steering: phase.steering }, driver, startedAt, steering, newPhaseSteeringState(), new Map());
+
+  // Member outcomes: capture resultSha pre-close (reliable), terminal state post-close.
+  const handles = wave.runs;
+  const preOutcome = new Map();
+  const excludeShas = [];
+  for (const member of phase.members) {
+    const handle = handles.get(member.role) ?? null;
+    if (!handle) { preOutcome.set(member.role, { phase: 'failed', terminal: true, resultSha: null }); continue; }
+    let view = null;
+    try { view = await readView(handle); } catch { /* unreadable — settle at close */ }
+    const resultSha = await materializeSha(handle, member, repoRoot, pinFloorMs, excludeShas);
+    if (resultSha) excludeShas.push(resultSha);
+    preOutcome.set(member.role, { phase: view?.phase ?? null, terminal: view ? isTerminal(view) : false, resultSha });
+  }
+
+  let stopReceipt = null;
+  try { stopReceipt = await wave.close({ reason: 'Workflow campaign phase settled.' }); } catch { /* best effort */ }
+  void stopReceipt;
+
+  const phaseOutcomes = [];
+  for (const member of phase.members) {
+    const pre = preOutcome.get(member.role) ?? { phase: null, terminal: false, resultSha: null };
+    let memberPhase = pre.phase;
+    let terminal = pre.terminal;
+    if (!terminal) {
+      const handle = handles.get(member.role) ?? null;
+      if (handle) {
+        try { const v = await readView(handle); memberPhase = v.phase ?? memberPhase; terminal = isTerminal(v); }
+        catch { terminal = true; memberPhase = memberPhase ?? 'stopped'; }
+      }
+    }
+    phaseOutcomes.push({ role: member.role, phase: memberPhase, terminal, resultSha: pre.resultSha });
+  }
+
+  const everySettled = phaseOutcomes.every((outcome) => outcome.terminal === true || outcome.phase === 'result_ready');
+  const harvest = phase.harvest.paths.map((entry) => harvestOne(entry, repoRoot, salt, wave.waveId, phaseOutcomes));
+  const everyHarvested = harvest.every((entry) => entry.ok === true);
+
+  // The declared outcome extraction reads the phase's AUTHORITATIVE harvest bytes (the
+  // result-sha-recovered content), never a fresh disk read.
+  let extracted = null;
+  if (phase.outcome) {
+    const entry = harvest.find((harvestEntry) => harvestEntry.path === phase.outcome.file
+      && harvestEntry.ok === true && typeof harvestEntry.bytes === 'string');
+    extracted = extractOutcomeFromBytes(phase.outcome, entry?.bytes ?? null);
+    steering.push({ trigger: 'phase_outcome', phase: phase.name, outcome: extracted });
+    outcomes.set(phase.outcome.name, { ...extracted, phase: phase.name });
+  }
+
+  const settled = everySettled && everyHarvested;
+  if (!settled) steering.push({ trigger: 'phase_failed', phase: phase.name });
+  return { receipt: { name: phase.name, verdict: settled ? 'OK' : 'FAILED', waveId: wave.waveId, outcome: extracted }, settled };
+}
+
+// The campaign lane — drive the phases SEQUENTIALLY: gate each phase on its `when` over prior
+// outcomes (a false gate SKIPS the phase — fail-closed, recorded, never a hard failure), park on
+// a checkpoint phase (the decision packet rides the steering trail; later phases never start),
+// and drive each surviving member phase to settle before the next admits. No wall-clock governs
+// sequencing — settle, harvest, outcome, and answer evidence only (#163).
+export async function runCampaign(baton, specOrPath, options = {}) {
+  if (!baton || typeof baton !== 'object' || !baton.waves || typeof baton.waves.start !== 'function') {
+    throw workflowError('runCampaign requires a Baton client facade with waves.start', 'workflow_facade_invalid');
+  }
+  const repoRoot = typeof options.repoRoot === 'string' && options.repoRoot.length > 0
+    ? options.repoRoot
+    : (typeof baton.repoRoot === 'string' && baton.repoRoot.length > 0 ? baton.repoRoot : null);
+  const driver = normalizeDriver(options.driver);
+
+  let raw = specOrPath;
+  if (typeof specOrPath === 'string') {
+    let text;
+    try { text = readFileSync(specOrPath, 'utf8'); }
+    catch { throw specInvalid(`the campaign spec path "${specOrPath}" cannot be read`); }
+    try { raw = JSON.parse(text); }
+    catch { throw specInvalid(`the campaign spec at "${specOrPath}" is not valid JSON`); }
+  }
+
+  const spec = admitCampaign(raw, repoRoot);
+  const manifestDigest = createHash('sha256').update(canonicalJson(spec)).digest('hex');
+  const salt = randomUUID();
+
+  const steering = [];
+  const outcomes = new Map();
+  const phaseReceipts = [];
+  let parked = false;
+
+  for (const phase of spec.phases) {
+    if (phase.when) {
+      const gate = evaluateWhen(phase.when, outcomes);
+      steering.push({ trigger: 'phase_gate', phase: phase.name, when: phase.when, satisfied: gate.satisfied, reason: gate.reason, value: gate.value });
+      if (!gate.satisfied) {
+        steering.push({ trigger: 'phase_skip', phase: phase.name });
+        phaseReceipts.push({ name: phase.name, verdict: 'SKIPPED', waveId: null, outcome: null });
+        continue;
+      }
+    }
+    if (phase.checkpoint) {
+      parked = true;
+      steering.push({ trigger: 'phase_checkpoint', phase: phase.name, decision: phase.decision });
+      phaseReceipts.push({ name: phase.name, verdict: 'PARKED', waveId: null, outcome: null });
+      break;
+    }
+    const result = await driveCampaignPhase(baton, spec, phase, repoRoot, driver, salt, steering, outcomes);
+    phaseReceipts.push(result.receipt);
+    if (!result.settled) break;
+  }
+
+  const everyDone = phaseReceipts.every((receipt) =>
+    receipt.verdict === 'OK' || receipt.verdict === 'REUSED' || receipt.verdict === 'SKIPPED' || receipt.verdict === 'PARKED');
+  const verdict = parked ? 'CAMPAIGN-PARKED' : (everyDone ? 'CAMPAIGN-OK' : 'CAMPAIGN-INCOMPLETE');
+  const basis = verdict === 'CAMPAIGN-OK' ? 'completed' : manifestDigest;
+
+  return {
+    basis,
+    kind: 'campaign',
+    manifestDigest,
+    outcomes: Object.fromEntries([...outcomes.entries()]
+      .map(([name, record]) => [name, { matched: record.matched, value: record.value, phase: record.phase }])),
+    phases: phaseReceipts,
+    steering,
+    verdict,
+  };
 }
 
 export default runWorkflow;
