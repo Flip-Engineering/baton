@@ -12706,6 +12706,7 @@ export class BatonApplication {
     if (name === 'run.attention.watch') return this.attentionWatch(args, principal);
     if (name === 'run.scratchpad.read') return this.scratchpadRead(args, principal);
     if (name === 'run.scratchpad.elevate') return this.scratchpadElevate(args, principal);
+    if (name === 'run.scratchpad.append') return this.scratchpadAppend(args, principal);
     if (name === 'run.board.post') return this.boardPost(args, principal);
     if (name === 'run.board.read') return this.boardRead(args, principal);
     if (name === 'run.knowledge.seed') return this.knowledgeSeed(args, principal);
@@ -13106,6 +13107,33 @@ export class BatonApplication {
     return deepFreeze({ runId: value.runId, taskId: value.taskId, entryIds: [...value.entryIds] });
   }
 
+  _normalizeScratchpadAppend(value) {
+    // D2.1 (scratchpad-write-2026-08-13/contract-fold.md): the closed arg closure
+    // {runId, scope, kind?, body, idempotencyKey?}. The workerId is server-bound (the kernel
+    // binds it to auth.principalId); a caller cannot forge an author at the surface (H1.3).
+    if (!value || typeof value !== 'object' || Array.isArray(value)
+      || Object.keys(value).some((key) => !['runId', 'scope', 'kind', 'body', 'idempotencyKey'].includes(key))
+      || !validId(value.runId)
+      || typeof value.scope !== 'string' || !/^(?:shared|worker:[A-Za-z0-9._:-]{1,256})$/u.test(value.scope)
+      || (value.kind !== undefined && !['note', 'plan', 'doubt', 'link'].includes(value.kind))
+      || value.body === undefined || value.body === null
+      || (value.idempotencyKey !== undefined
+        && (typeof value.idempotencyKey !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/u.test(value.idempotencyKey)))) {
+      throw applicationError('run scratchpad append request is invalid', 'application_scratchpad_append_invalid');
+    }
+    const kind = value.kind ?? 'note';
+    // Body type discipline (D2.1): a note body is the text verbatim (a string); a plan/doubt/link
+    // body is the JSON value the kernel's normalizeScratchpadEntry validates per-kind (an object).
+    if (kind === 'note' ? typeof value.body !== 'string'
+      : (typeof value.body !== 'object' || Array.isArray(value.body))) {
+      throw applicationError('run scratchpad append request is invalid', 'application_scratchpad_append_invalid');
+    }
+    return deepFreeze({
+      runId: value.runId, scope: value.scope, kind, body: clone(value.body),
+      ...(value.idempotencyKey !== undefined ? { idempotencyKey: value.idempotencyKey } : {}),
+    });
+  }
+
   _normalizeBoardPost(value) {
     if (!value || typeof value !== 'object' || Array.isArray(value)
       || Object.keys(value).some((key) => !['runId', 'board', 'title', 'detail', 'owner', 'evidence'].includes(key))
@@ -13353,6 +13381,44 @@ export class BatonApplication {
       taskId: request.taskId, entryCount: request.entryIds.length,
     });
     const outcome = this.driver.coordinator.elevateTaskScratchpad(request.taskId, request.entryIds);
+    return deepFreeze({ schemaVersion: 1, ...outcome });
+  }
+
+  // The kernel's closed per-kind entry shapes (coordination-store.mjs normalizeScratchpadEntry):
+  // note {kind, text} · plan {kind, objective, steps, supersedes} · doubt {kind, question,
+  // context} · link {kind, label, relation, target}. The surface maps the closed arg body into
+  // the exact entry closure; the kernel re-validates every shape (scratchpad_entry_invalid).
+  _scratchpadAppendEntry(kind, body) {
+    if (kind === 'note') return { kind: 'note', text: body };
+    if (kind === 'plan') {
+      return { kind: 'plan', objective: body.objective, steps: body.steps, supersedes: body.supersedes ?? null };
+    }
+    if (kind === 'doubt') {
+      return { kind: 'doubt', question: body.question, context: body.context ?? null };
+    }
+    return { kind: 'link', label: body.label, relation: body.relation, target: body.target };
+  }
+
+  // run.scratchpad.append — the #158 ephemeral WRITE lane (D1 law 4: a direct write, never a
+  // scratch-fact / KG candidacy shortcut — elevation stays the promotion law). The D1 write law
+  // is enforced at the _authorize seam (the surface passes {scope}); the kernel appendScratchpad
+  // fold keeps the write-integrity invariants (envelope closure, body bound, idempotency,
+  // partition caps). Idempotency keys are namespaced by scope before the kernel auth (H3.1) so a
+  // same-key cross-scope retry lands on DISTINCT kernel bindings.
+  async scratchpadAppend(rawRequest, rawPrincipal) {
+    this._assertOpen();
+    await this.ready;
+    const request = this._normalizeScratchpadAppend(rawRequest);
+    const principal = normalizePrincipal(rawPrincipal, 'scratchpad append principal');
+    await this._authorize('run.scratchpad.append', principal, request.runId, { scope: request.scope });
+    const outcome = this.driver.coordination.appendScratchpad(
+      { runId: request.runId, scope: request.scope, entry: this._scratchpadAppendEntry(request.kind, request.body) },
+      {
+        actor: principal.actor, principalId: principal.principalId,
+        ...(request.idempotencyKey !== undefined
+          ? { key: `${request.idempotencyKey}:${request.scope}` } : {}),
+      },
+    );
     return deepFreeze({ schemaVersion: 1, ...outcome });
   }
 
