@@ -412,10 +412,14 @@ const applicationIntentSchema = schema({
   route: applicationRouteSchema,
   scope: { type: 'array', minItems: 1, maxItems: 64, uniqueItems: true, items: { type: 'string', minLength: 1, maxLength: 4_096 } },
 }, ['objective']);
+// The closed answer form (D3 #5, doc-truth-conformance-2026-08-13/contract-fold.md): exactly
+// `optionId` and `text`. The `{decision}` string form is retired from the MCP surface — the
+// shared guard below (ACCEPTED_ANSWER_KEYS) refuses it on BOTH consumers, so the advertised
+// schema and the hand-rolled validator can never disagree (D4 answer-shape closure).
+const ACCEPTED_ANSWER_KEYS = Object.freeze(['optionId', 'text']);
 const applicationAnswerSchema = {
   oneOf: [
     schema({ text: { type: 'string', minLength: 1, maxLength: FRAME_LIMITS['decision.text'].value } }, ['text']),
-    schema({ decision: { type: 'string', enum: ['allow', 'deny', 'cancel'] } }, ['decision']),
     // Part B (issue #16): the typed decision-channel answer form.
     schema({ optionId: { type: 'string', minLength: 1, maxLength: 256 } }, ['optionId']),
   ],
@@ -1024,6 +1028,18 @@ function validateArguments(name, args, maxWaitMs = null) {
   if (!nonempty(args.repoId)) return 'invalid_repo';
   if (STATEFUL.has(name) && !SAFE_ID.test(args.idempotencyKey ?? '')) return 'invalid_idempotency_key';
   if (FENCED.has(name) && !Number.isSafeInteger(args.expectedFence)) return 'expected_fence_required';
+  // Answer-shape closure (D3 #5 / R6 / R9): the advertised `answer` `oneOf` is never evaluated
+  // server-side (hand-rolled validation stays the discipline), so this guard must reject any key
+  // other than the shared ACCEPTED_ANSWER_KEYS (`optionId`/`text`) BEFORE hub dispatch on BOTH
+  // answer consumers — `baton_decision_answer` and `fleet_run_answer`. `{decision}` (and any
+  // rename, e.g. `{resolution}`) would otherwise reach `run.answer` and settle an APPROVAL through
+  // the decision channel. It runs before the APPLICATION_TOOL validator so a retired answer shape
+  // refuses with the guard's `invalid_arguments`, never the non-guard `invalid_run_command`
+  // collapse. Kind-matching against the pending interaction stays hub-side.
+  if (name === 'baton_decision_answer' || name === 'fleet_run_answer') {
+    const answerKeys = record(args.answer) ? Object.keys(args.answer) : [];
+    if (answerKeys.length !== 1 || !ACCEPTED_ANSWER_KEYS.includes(answerKeys[0])) return 'invalid_arguments';
+  }
   if (APPLICATION_TOOL[name]) {
     try {
       const command = APPLICATION_TOOL[name];
@@ -1106,15 +1122,6 @@ function validateArguments(name, args, maxWaitMs = null) {
   if (name === 'fleet_send' && (!nonempty(args.message) || !['turn', 'steer', 'nudge'].includes(args.mode))) return 'invalid_send';
   if (name === 'fleet_respond' && !nonempty(args.requestId)) return 'invalid_request';
   if (name === 'fleet_wait' && Object.hasOwn(args, 'timeoutMs') && (!Number.isSafeInteger(args.timeoutMs) || args.timeoutMs < 0)) return 'invalid_timeout';
-  // Reflex surface contract Part C.7 (R6): the advertised `answer` `oneOf` is never evaluated
-  // server-side (hand-rolled validation stays the discipline, Part I), so this tool's own
-  // answer-shape guard must reject any key other than `optionId`/`text` BEFORE hub dispatch —
-  // `{decision}` would otherwise reach `run.answer` and settle an APPROVAL through this
-  // decision-only tool. Kind-matching against the pending interaction stays hub-side.
-  if (name === 'baton_decision_answer') {
-    const answerKeys = record(args.answer) ? Object.keys(args.answer) : [];
-    if (answerKeys.length !== 1 || !['optionId', 'text'].includes(answerKeys[0])) return 'invalid_arguments';
-  }
   if (name === 'fleet_capability_invoke') {
     if (!/^[A-Za-z0-9._:-]{1,128}$/.test(args.name ?? '') || !nonempty(args.op) || args.op.length > 256
       || !Number.isSafeInteger(args.budgetTokens) || args.budgetTokens <= 0) return 'invalid_capability_invocation';
@@ -1479,7 +1486,7 @@ export class McpFleetServer {
       // and an absent pack degrades to the honest-empty line, never a fabricated digest (D5b).
       const briefingHead = this.coordination?.contextPackHead?.(BRIEFING_FAMILY) ?? null;
       const briefingSentence = briefingHead
-        ? `Briefing pack ${briefingHead.packId} minted at event ${briefingHead.observedSeq} (ledger at ${this.coordination.ledgerHeadSeq()}, Δ=${this.coordination.ledgerHeadSeq() - briefingHead.observedSeq}); resolve via the orchestrator's embedded context.briefing command.`
+        ? `Briefing pack ${briefingHead.packId} minted at event ${briefingHead.observedSeq} (ledger at ${this.coordination.ledgerHeadSeq()}, Δ=${this.coordination.ledgerHeadSeq() - briefingHead.observedSeq}); the briefing pack is an embedded-only data note.`
         : 'No orchestrator briefing pack minted yet.';
       return protocolResult(id, {
         protocolVersion: PROTOCOL_VERSION,

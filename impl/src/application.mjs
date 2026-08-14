@@ -12706,6 +12706,7 @@ export class BatonApplication {
     if (name === 'run.attention.watch') return this.attentionWatch(args, principal);
     if (name === 'run.scratchpad.read') return this.scratchpadRead(args, principal);
     if (name === 'run.scratchpad.elevate') return this.scratchpadElevate(args, principal);
+    if (name === 'run.scratchpad.append') return this.scratchpadAppend(args, principal);
     if (name === 'run.board.post') return this.boardPost(args, principal);
     if (name === 'run.board.read') return this.boardRead(args, principal);
     if (name === 'run.knowledge.seed') return this.knowledgeSeed(args, principal);
@@ -13106,6 +13107,29 @@ export class BatonApplication {
     return deepFreeze({ runId: value.runId, taskId: value.taskId, entryIds: [...value.entryIds] });
   }
 
+  _normalizeScratchpadAppend(value) {
+    // Issue #158 — the append verb's closed envelope. The validator is exactly as permissive as
+    // the kernel's normalizeScratchpadEntry (never narrower): runId/scope/kind/idempotencyKey are
+    // the surface closure; the entry body's per-kind shape is the kernel's authority, reached
+    // through appendScratchpad. `kind` defaults to `note` (the registry row's default-free enum).
+    if (!value || typeof value !== 'object' || Array.isArray(value)
+      || Object.keys(value).some((key) => !['runId', 'scope', 'kind', 'body', 'idempotencyKey'].includes(key))
+      || !validId(value.runId)
+      || typeof value.scope !== 'string' || !/^(?:shared|worker:[A-Za-z0-9._:-]{1,256})$/u.test(value.scope)
+      || (value.kind !== undefined && !['note', 'plan', 'doubt', 'link'].includes(value.kind))
+      || !Object.hasOwn(value, 'body') || value.body === undefined
+      || (value.idempotencyKey !== undefined
+        && (typeof value.idempotencyKey !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/u.test(value.idempotencyKey)))) {
+      throw applicationError('run scratchpad append request is invalid', 'application_scratchpad_append_invalid');
+    }
+    return deepFreeze({
+      runId: value.runId, scope: value.scope,
+      kind: value.kind ?? 'note',
+      body: value.body,
+      ...(value.idempotencyKey !== undefined ? { idempotencyKey: value.idempotencyKey } : {}),
+    });
+  }
+
   _normalizeBoardPost(value) {
     if (!value || typeof value !== 'object' || Array.isArray(value)
       || Object.keys(value).some((key) => !['runId', 'board', 'title', 'detail', 'owner', 'evidence'].includes(key))
@@ -13353,6 +13377,48 @@ export class BatonApplication {
       taskId: request.taskId, entryCount: request.entryIds.length,
     });
     const outcome = this.driver.coordinator.elevateTaskScratchpad(request.taskId, request.entryIds);
+    return deepFreeze({ schemaVersion: 1, ...outcome });
+  }
+
+  // run.scratchpad.append — Issue #158: the folded shared-scratchpad WRITE verb. A facade direct
+  // port (never an APPLICATION_COMMAND_DEFINITIONS key, mirroring read/elevate) projecting the
+  // kernel appendScratchpad lane. The D1 scope law is enforced at the authorize seam; the closed
+  // validator is exactly as permissive as the kernel's normalizeScratchpadEntry (never narrower),
+  // and lane-thrown coded refusals (scratchpad_entry_exceeded, scratchpad_partition_exhausted,
+  // scratchpad_write_conflict, …) propagate with their .code untouched. The author is server-bound
+  // to the caller principal (H1.3); the idempotency key is namespaced by scope before the kernel
+  // auth (H3.1) so a same-key different-scope retry lands a DISTINCT binding (P-A4: the kernel
+  // _byKey has no scope term).
+  async scratchpadAppend(rawRequest, rawPrincipal) {
+    this._assertOpen();
+    await this.ready;
+    const request = this._normalizeScratchpadAppend(rawRequest);
+    const principal = normalizePrincipal(rawPrincipal, 'scratchpad append principal');
+    await this._authorize('run.scratchpad.append', principal, request.runId, { scope: request.scope });
+    const body = request.body;
+    const content = body && typeof body === 'object' && !Array.isArray(body) ? body : {};
+    let entry;
+    if (request.kind === 'note') {
+      entry = { kind: 'note', text: body };
+    } else if (request.kind === 'plan') {
+      entry = {
+        kind: 'plan', objective: content.objective, steps: content.steps,
+        supersedes: content.supersedes ?? null,
+      };
+    } else if (request.kind === 'doubt') {
+      entry = { kind: 'doubt', question: content.question, context: content.context ?? null };
+    } else {
+      entry = { kind: 'link', label: content.label, relation: content.relation, target: content.target };
+    }
+    const outcome = this.driver.coordination.appendScratchpad(
+      { runId: request.runId, scope: request.scope, entry },
+      {
+        actor: principal.actor, principalId: principal.principalId,
+        ...(request.idempotencyKey !== undefined
+          ? { key: `${request.idempotencyKey}:${request.scope}` }
+          : {}),
+      },
+    );
     return deepFreeze({ schemaVersion: 1, ...outcome });
   }
 
