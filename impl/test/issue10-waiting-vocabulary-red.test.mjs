@@ -598,7 +598,7 @@ function stripWave(kind) {
 // §A — capacity_ceiling
 // ===========================================================================
 
-test('CC-START (RED): a ceiling-skipped dispatch mints task.dispatch_deferred once — idempotent re-drive, full payload', async () => {
+test('CC-START (#221): the invented ceiling pre-cap is GONE — an over-ceiling task dispatches immediately and no synthetic deferral ever mints', async () => {
   const adapter = new ScriptableAdapter();
   adapter._card.concurrencyCeiling = 1;
   const { coordinator, coordination } = setup({ adapter });
@@ -606,83 +606,58 @@ test('CC-START (RED): a ceiling-skipped dispatch mints task.dispatch_deferred on
   const b = await coordinator.spawn('mock', makeBrief({ goal: 'CC-START b' }));
   const taskA = coordinator._tasks.get(a.taskId);
   const taskB = coordinator._tasks.get(b.taskId);
-  assert.equal(taskA.status, 'working', 'PIN: A takes the single slot');
-  assert.equal(taskB.status, 'pending', 'PIN: B is queued behind the ceiling');
+  assert.equal(taskA.status, 'working', 'PIN: A works');
+  assert.equal(taskB.status, 'working',
+    'PIN (#221): B dispatches immediately — the invented seat-ceiling pre-cap is ripped out of _dispatchPass; provider-true backpressure (typed 429/rate_limited on the member) is the only queue');
 
   const receipts = () => coordination.events(1).filter((e) => e.kind === 'task.dispatch_deferred');
-  assert.equal(receipts().length, 1,
-    'stage[dispatch-deferred-receipt-missing]: the ceiling skip must mint exactly one task.dispatch_deferred receipt (got 0 today)');
+  assert.equal(receipts().length, 0,
+    'PIN (#221): no synthetic task.dispatch_deferred ever mints from a ceiling skip — the deferral machinery is reserved for provider-true signals');
 
   coordinator.tick(); coordinator.tick(); coordinator.tick();
-  assert.equal(receipts().length, 1,
-    'the re-driven pass re-skips idempotent — the same key returns the same event, never a duplicate');
-
-  const receipt = receipts()[0];
-  assert.equal(receipt.payload.taskId, taskB.id, 'the receipt names the deferred task');
-  assert.equal(receipt.payload.vendor, 'mock', 'the receipt names the resolved vendor');
-  assert.equal(receipt.payload.ceiling, 1, 'the receipt carries the ceiling');
-  assert.equal(receipt.payload.inFlight, 1, 'the receipt carries the in-flight count');
-  const created = coordination.events(1).find((e) => e.kind === 'task.created' && e.payload?.id === taskB.id);
-  assert.ok(created, 'the queued task has a created event');
-  assert.equal(receipt.payload.taskCreatedSeq, created.seq, 'the receipt pins the task.created seq');
-  assert.equal(receipt.idempotencyKey, `task.dispatch_deferred:${taskB.id}:${created.seq}`,
-    'the idempotency key is the contract shape');
-
-  // #88: the queued task is not paused — the preflight is vacuously safe.
-  assert.equal(taskB.status, 'pending', 'PIN: the queued task is not paused');
-  assert.equal(coordinator.pausedTurns({ taskId: taskB.id }).length, 0, 'PIN: no pause record for a queued task');
+  assert.equal(receipts().length, 0, 're-driven passes never mint either');
+  assert.equal(coordinator.pausedTurns({ taskId: taskB.id }).length, 0, 'PIN: no pause record — nothing ever queued');
 });
 
-test('CC-SHOW (RED): a ceiling-queued run projects waitingOn.capacity_ceiling on view, outline, and runs.list', async (t) => {
+test('CC-SHOW (#221): a run NEVER projects waitingOn.capacity_ceiling from a synthetic cap — over-ceiling runs dispatch; the class is reserved for provider-true signals', async (t) => {
   const { application, driver } = harnessApp(t, markerAdapter({
     slow: { outcome: 'completed', edits: [{ path: 'reports/slow.md', content: 'slow\n', delayMs: 1200 }] },
     fast: { outcome: 'completed', edits: [{ path: 'reports/fast.md', content: 'fast\n', delayMs: 100 }] },
   }, { concurrencyCeiling: 1 }));
   const owner = principal('owner');
-  const a = await application.start({ objective: 'CC-SHOW (marker:slow): hold the slot', profile: 'standard', route: ROUTE, scope: ['**'] }, owner);
+  const a = await application.start({ objective: 'CC-SHOW (marker:slow): first', profile: 'standard', route: ROUTE, scope: ['**'] }, owner);
   await application.approve(a.runId, a.plan.digest, principal('approver'));
-  const b = await application.start({ objective: 'CC-SHOW (marker:fast): queued behind', profile: 'standard', route: ROUTE, scope: ['**'] }, owner);
+  const b = await application.start({ objective: 'CC-SHOW (marker:fast): over the invented cap', profile: 'standard', route: ROUTE, scope: ['**'] }, owner);
   const approvedB = await application.approve(b.runId, b.plan.digest, principal('approver'));
-  assert.equal(approvedB.phase, 'running', 'PIN: the queued run rides the running phase — the field is additive');
+  assert.equal(approvedB.phase, 'running', 'PIN: the run rides the running phase');
   const bTask = [...driver.coordinator._tasks.values()].find((task) => task.runId === b.runId);
-  assert.equal(bTask.status, 'pending', 'PIN: B is queued (pending, undispatched)');
+  assert.equal(bTask.status, 'working', 'PIN (#221): B dispatches — no synthetic ceiling queue exists');
 
   const view = await application.status(b.runId, owner);
-  assert.ok(view.waitingOn, 'stage[waiting-on-projection-missing]: a ceiling-queued run must project waitingOn');
-  assert.equal(view.waitingOn.kind, 'capacity_ceiling', 'stage[waiting-on-projection-missing]: the kind');
-  assert.equal(view.waitingOn.since.turnEpoch, null, 'stage[waiting-on-projection-missing]: fence-less since');
-  assert.deepEqual(view.waitingOn.detail, { vendor: 'mock', ceiling: 1, inFlight: 1 },
-    'stage[waiting-on-projection-missing]: the receipt detail');
-
+  assert.ok(view.waitingOn?.kind !== 'capacity_ceiling',
+    'PIN (#221): waitingOn NEVER reads capacity_ceiling from an invented pre-cap — the class survives only for provider-true rate signals (#120)');
   const listed = (await application.listRuns(owner)).items.find((item) => item.id === b.runId);
-  assert.ok(listed.waitingOn, 'stage[waiting-on-projection-missing]: the runs.list item carries waitingOn');
-  assert.deepEqual(listed.waitingOn, view.waitingOn, 'the list item projects the SAME waitingOn');
+  assert.ok(listed.waitingOn?.kind !== 'capacity_ceiling', 'the runs.list item agrees');
   const outline = projectBatonCliResult(parseBatonCli(['run', 'status', b.runId]), view);
-  assert.ok(outline.waitingOn, 'stage[waiting-on-projection-missing]: the outline carries waitingOn');
-  assert.deepEqual(outline.waitingOn, view.waitingOn, 'the outline projects the SAME waitingOn');
+  assert.ok(outline.waitingOn?.kind !== 'capacity_ceiling', 'the outline agrees');
 });
 
-test('CC-EXIT (RED): once the slot frees and B claims, waitingOn reads honest null', async (t) => {
+test('CC-EXIT (#221): no queue to exit — B works from admission and waitingOn reads honest null throughout', async (t) => {
   const { application, driver } = harnessApp(t, markerAdapter({
     slow: { outcome: 'completed', edits: [{ path: 'reports/slow.md', content: 'slow\n', delayMs: 1000 }] },
     fast: { outcome: 'completed', edits: [{ path: 'reports/fast.md', content: 'fast\n', delayMs: 80 }] },
   }, { concurrencyCeiling: 1 }));
   const owner = principal('owner');
-  const a = await application.start({ objective: 'CC-EXIT (marker:slow): holds then frees', profile: 'standard', route: ROUTE, scope: ['**'] }, owner);
+  const a = await application.start({ objective: 'CC-EXIT (marker:slow): first', profile: 'standard', route: ROUTE, scope: ['**'] }, owner);
   await application.approve(a.runId, a.plan.digest, principal('approver'));
-  const b = await application.start({ objective: 'CC-EXIT (marker:fast): claims later', profile: 'standard', route: ROUTE, scope: ['**'] }, owner);
+  const b = await application.start({ objective: 'CC-EXIT (marker:fast): never queued', profile: 'standard', route: ROUTE, scope: ['**'] }, owner);
   await application.approve(b.runId, b.plan.digest, principal('approver'));
 
-  const queuedView = await application.status(b.runId, owner);
-  assert.ok(queuedView.waitingOn, 'stage[waiting-on-projection-missing]: B queued behind the ceiling projects waitingOn');
-  assert.equal(queuedView.waitingOn.kind, 'capacity_ceiling', 'stage[waiting-on-projection-missing]: the queued kind');
-
-  await until(async () => {
-    const task = [...driver.coordinator._tasks.values()].find((taskItem) => taskItem.runId === b.runId);
-    return task?.status === 'working' ? true : null;
-  }, 'B claims the freed slot');
+  const bTask = [...driver.coordinator._tasks.values()].find((taskItem) => taskItem.runId === b.runId);
+  assert.equal(bTask.status, 'working', 'PIN (#221): B works from admission — there is no slot to wait for');
   const view = await application.status(b.runId, owner);
-  assert.equal(view.waitingOn, null, 'stage[waiting-on-exit-missing]: a dispatched run must read honest null');
+  assert.equal(view.waitingOn?.kind === 'capacity_ceiling' ? view.waitingOn : null, null,
+    'PIN (#221): honest null from the start — no synthetic queue to exit');
 });
 
 test('CC-HONEST (RED): reduceMember classes capacity_ceiling, never working', () => {
@@ -779,15 +754,15 @@ test('DP-EXIT-a (RED): a restored resolver dispatches the pending task and waiti
   assert.equal(view.waitingOn, null, 'stage[waiting-on-exit-missing]: a dispatched-and-completed run reads honest null');
 });
 
-test('DP-EXIT-b (RED): a pending task that gains a receipt FLIPS to capacity_ceiling — the Arm-2→Arm-1 exit', async (t) => {
+test('DP-EXIT-b (#221): a dispatch_pending task exits DIRECTLY to dispatch on vendor resolution — never through a synthetic capacity_ceiling stop', async (t) => {
   const { application, driver } = harnessApp(t, markerAdapter({
     slow: { outcome: 'completed', edits: [{ path: 'reports/slow.md', content: 'slow\n', delayMs: 1200 }] },
     fast: { outcome: 'completed', edits: [{ path: 'reports/fast.md', content: 'fast\n', delayMs: 100 }] },
   }, { concurrencyCeiling: 1 }));
   const owner = principal('owner');
-  const a = await application.start({ objective: 'DP-EXIT-b (marker:slow): holds the slot', profile: 'standard', route: ROUTE, scope: ['**'] }, owner);
+  const a = await application.start({ objective: 'DP-EXIT-b (marker:slow): first', profile: 'standard', route: ROUTE, scope: ['**'] }, owner);
   await application.approve(a.runId, a.plan.digest, principal('approver'));
-  const b = await application.start({ objective: 'DP-EXIT-b (marker:fast): flips to ceiling', profile: 'standard', route: ROUTE, scope: ['**'] }, owner);
+  const b = await application.start({ objective: 'DP-EXIT-b (marker:fast): exits straight to dispatch', profile: 'standard', route: ROUTE, scope: ['**'] }, owner);
   const realResolve = stallVendorFor(driver, b.runId);
   await application.approve(b.runId, b.plan.digest, principal('approver'));
 
@@ -797,10 +772,11 @@ test('DP-EXIT-b (RED): a pending task that gains a receipt FLIPS to capacity_cei
 
   driver.coordinator._resolveVendor = realResolve;
   driver.coordinator.tick();
+  const bTask = [...driver.coordinator._tasks.values()].find((task) => task.runId === b.runId);
+  assert.equal(bTask.status, 'working', 'PIN (#221): the vendor resolves → the task dispatches. No ceiling stop exists to flip into');
   view = await application.status(b.runId, owner);
-  assert.ok(view.waitingOn, 'stage[waiting-on-exit-missing]: the kind flips, never drops to null mid-queue');
-  assert.equal(view.waitingOn.kind, 'capacity_ceiling',
-    'stage[waiting-on-exit-missing]: dispatch_pending exits to capacity_ceiling while the slot is still held');
+  assert.ok(view.waitingOn?.kind !== 'capacity_ceiling',
+    'PIN (#221): dispatch_pending NEVER exits to capacity_ceiling — the invented pre-cap is gone; only provider-true signals may queue a member');
 });
 
 test('DP-EXIT-c (RED): a cancelled pre-dispatch run reads honest null', async (t) => {

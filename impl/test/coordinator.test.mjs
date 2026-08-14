@@ -391,7 +391,7 @@ test('active worktree authority loss escalates an in-flight soft interrupt to on
   assert.equal(coordinator.list().find((worker) => worker.id === handle.id).status, 'dead');
 });
 
-test('spawn() at the vendor concurrency ceiling queues as pending (GLM=1 case); promotes once a slot frees', async () => {
+test('spawn() (#221): the invented vendor ceiling is gone — a second same-vendor spawn dispatches immediately, no queue, no promotion hop', async () => {
   const adapter = new ScriptableAdapter({ harness: 'glm-via-claude', concurrencyCeiling: 1 });
   const { coordinator, worktrees } = setup({ adapters: { glm: adapter }, route: fixedRoute('glm') });
 
@@ -399,9 +399,10 @@ test('spawn() at the vendor concurrency ceiling queues as pending (GLM=1 case); 
   assert.equal(handleA.status, 'working');
 
   const handleB = await coordinator.spawn('glm', makeBrief(), { taskId: 'b' });
-  assert.equal(handleB.status, 'pending');
-  assert.equal(worktrees.calls.create.length, 1, 'no worktree for the queued task yet');
-  assert.equal(adapter.calls.spawn.length, 1, 'no adapter.spawn call for the queued task yet');
+  assert.equal(handleB.status, 'working',
+    '#221: the ceiling pre-cap is ripped out — B dispatches immediately; provider-true backpressure is the only queue');
+  assert.equal(worktrees.calls.create.length, 2, 'B gets its worktree at once — no pending limbo');
+  assert.equal(adapter.calls.spawn.length, 2, 'B reaches the adapter at once');
 
   adapter.emit({
     worker: handleA.id,
@@ -415,15 +416,15 @@ test('spawn() at the vendor concurrency ceiling queues as pending (GLM=1 case); 
   coordinator.tick();
 
   const b = coordinator.list().find((w) => w.id === handleB.id);
-  assert.equal(b.status, 'working');
+  assert.equal(b.status, 'working', 'B simply continues — there was never a queue to promote from');
   assert.equal(adapter.calls.spawn.length, 2);
 });
 
-// core#6: a worker in 'stopping' (or 'blocked') still occupies a concurrency seat until it
-// reaches idle/terminal — the ceiling accounting race. Every OTHER ceiling test frees the
-// slot via a completed lifecycle.turn_completed; this one frees it via an in-flight
-// interrupt() that has NOT yet been confirmed, which must NOT free the seat.
-test('D11/core#6: a "stopping" worker still counts against its vendor ceiling until its stop is confirmed, not merely requested (GLM=1)', async () => {
+// core#6 (restaged under #221): the ceiling accounting this test pinned is GONE — the
+// invented pre-cap was ripped out of _dispatchPass. What survives and stays pinned here is
+// the lifecycle truth: an interrupt-REQUESTED worker stays 'stopping' until the stop is
+// confirmed — and, new law, a sibling spawn dispatches regardless (there is no seat to free).
+test('D11/core#6 (#221): a "stopping" worker holds its lifecycle state until stop-confirmation — and the sibling dispatches immediately, no seat arithmetic', async () => {
   const adapter = new ScriptableAdapter({ harness: 'glm-via-claude', concurrencyCeiling: 1 });
   const { coordinator, worktrees } = setup({ adapters: { glm: adapter }, route: fixedRoute('glm') });
 
@@ -439,16 +440,17 @@ test('D11/core#6: a "stopping" worker still counts against its vendor ceiling un
   const handleB = await coordinator.spawn('glm', makeBrief(), { taskId: 'b' });
   assert.equal(
     handleB.status,
-    'pending',
-    'a second GLM task must not dispatch while the first is only "stopping", not yet confirmed-stopped — GLM concurrencyCeiling:1 is a hard vendor limit'
+    'working',
+    '#221: no invented seat waits on a stopping sibling — B dispatches; the provider, not a literal, applies backpressure'
   );
-  assert.equal(worktrees.calls.create.length, 1, 'no worktree for the still-blocked second task');
-  assert.equal(adapter.calls.spawn.length, 1, 'no adapter.spawn call for the still-blocked second task');
+  assert.equal(worktrees.calls.create.length, 2, 'B gets its worktree immediately');
+  assert.equal(adapter.calls.spawn.length, 2, 'B reaches the adapter immediately');
 
-  // Explicitly re-check after a tick — the seat must remain occupied, not freed by the
-  // mere fact that an interrupt was requested.
+  // The lifecycle half still holds: a tick does not transition A out of 'stopping' — only the
+  // confirmed-stop event does.
   coordinator.tick();
-  assert.equal(coordinator.list().find((w) => w.id === handleB.id).status, 'pending');
+  assert.equal(coordinator.list().find((w) => w.id === handleA.id).status, 'stopping',
+    'A remains stopping until the stop is CONFIRMED — request alone never transitions it');
 });
 
 test('a task with an unsatisfied dep stays pending even with free concurrency headroom', async () => {
@@ -570,7 +572,7 @@ test('spawn() with a duplicate taskId throws DuplicateTaskIdError on the second 
   assert.equal(adapter.calls.spawn.length, 1, 'the failed duplicate must not have dispatched a second worker');
 });
 
-test('with one free slot and two simultaneously-ready tasks, exactly one dispatches per tick(), deterministically FIFO', async () => {
+test('with two simultaneously-ready tasks, both dispatch in the same pass once their dep completes (#221 — no per-tick slot arithmetic)', async () => {
   const adapter = new ScriptableAdapter({ concurrencyCeiling: 1 });
   const { coordinator } = setup({ adapters: { mock: adapter }, route: fixedRoute('mock') });
 
@@ -578,8 +580,8 @@ test('with one free slot and two simultaneously-ready tasks, exactly one dispatc
   assert.equal(base.status, 'working');
   const first = await coordinator.spawn('mock', makeBrief(), { taskId: 't1', deps: ['t0'] });
   const second = await coordinator.spawn('mock', makeBrief(), { taskId: 't2', deps: ['t0'] });
-  assert.equal(first.status, 'pending');
-  assert.equal(second.status, 'pending');
+  assert.equal(first.status, 'pending', 'dep-gated: t1 waits on t0, never on a seat');
+  assert.equal(second.status, 'pending', 'dep-gated: t2 waits on t0, never on a seat');
 
   adapter.emit({
     worker: base.id,
@@ -595,9 +597,9 @@ test('with one free slot and two simultaneously-ready tasks, exactly one dispatc
   const table = coordinator.list();
   const firstNow = table.find((w) => w.id === first.id);
   const secondNow = table.find((w) => w.id === second.id);
-  assert.equal(firstNow.status, 'working', 't1 was created first (FIFO) and must dispatch');
-  assert.equal(secondNow.status, 'pending', 't2 must remain queued behind the ceiling');
-  assert.equal(adapter.calls.spawn.length, 2, 't0 + exactly one of {t1,t2}');
+  assert.equal(firstNow.status, 'working', '#221: deps met → dispatch, full stop');
+  assert.equal(secondNow.status, 'working', '#221: both ready tasks dispatch in the same pass — no invented ceiling serializes them');
+  assert.equal(adapter.calls.spawn.length, 3, 't0 + both dependents');
 });
 
 // ============================================================
@@ -1643,24 +1645,22 @@ test('Coordinator construction invokes worktrees.reconcile() exactly once', () =
 // list() / wait() — behaviors 49-53
 // ============================================================
 
-test('list() reports pending and working workers with correct status/budgetUsed/pendingApprovalId fields', async () => {
+test('list() reports working workers with correct status/budgetUsed/pendingApprovalId fields (#221: the pending-via-ceiling case no longer exists)', async () => {
   const adapter = new ScriptableAdapter({ concurrencyCeiling: 1 });
   const { coordinator } = setup({ adapters: { mock: adapter }, route: fixedRoute('mock') });
 
-  const working = await coordinator.spawn('mock', makeBrief(), { taskId: 't-working' });
-  const pendingHandle = await coordinator.spawn('mock', makeBrief(), { taskId: 't-pending' });
-  assert.equal(pendingHandle.status, 'pending');
+  const first = await coordinator.spawn('mock', makeBrief(), { taskId: 't-first' });
+  const second = await coordinator.spawn('mock', makeBrief(), { taskId: 't-second' });
+  assert.equal(second.status, 'working', '#221: no invented ceiling queues the second spawn');
 
   const table = coordinator.list();
-  const w = table.find((x) => x.id === working.id);
-  assert.equal(w.status, 'working');
-  assert.ok('budgetUsed' in w);
-  assert.ok('pendingApprovalId' in w);
-
-  const p = table.find((x) => x.id === pendingHandle.id);
-  assert.equal(p.status, 'pending');
-  assert.deepEqual(coordinator.localResourceOwnership(working.id), { owned: true });
-  assert.deepEqual(coordinator.localResourceOwnership(pendingHandle.id), { owned: false });
+  for (const handle of [first, second]) {
+    const row = table.find((x) => x.id === handle.id);
+    assert.equal(row.status, 'working');
+    assert.ok('budgetUsed' in row);
+    assert.ok('pendingApprovalId' in row);
+    assert.deepEqual(coordinator.localResourceOwnership(handle.id), { owned: true });
+  }
 });
 
 test('list() reflects a worker transitioning stopping -> dead', async () => {

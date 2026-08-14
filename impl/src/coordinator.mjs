@@ -2917,25 +2917,11 @@ export class Coordinator {
       const selection = this._resolveVendor(task);
       const vendor = selection?.vendor;
       if (!vendor || !this._adapters[vendor]) continue;
-      const card = this._adapters[vendor].card();
-      if (this._inFlightCount(vendor) >= card.concurrencyCeiling) {
-        // Issue #10 D5 Arm 1: the ceiling skip mints ONE durable deferral receipt per task
-        // dispatch, idempotency-keyed on (taskId, taskCreatedSeq) so re-driven passes never
-        // re-mint. The payload is MINT-TIME data — inFlight is the skip-time count, frozen.
-        if (this._coordination?.deferTaskDispatch && typeof this._coordination.task === 'function') {
-          const taskCreatedSeq = this._coordination.task(task.id)?.createdEvent;
-          if (Number.isSafeInteger(taskCreatedSeq) && taskCreatedSeq > 0) {
-            this._coordination.deferTaskDispatch({
-              taskId: task.id,
-              vendor,
-              ceiling: card.concurrencyCeiling,
-              inFlight: this._inFlightCount(vendor),
-              taskCreatedSeq,
-            }, { actor: 'orchestrator', key: `task.dispatch_deferred:${task.id}:${taskCreatedSeq}` });
-          }
-        }
-        continue;
-      }
+      // #221 (operator ruling, 2026-08-14): the seat-ceiling pre-cap is ripped out. It was an
+      // invented literal that silently queued spawns ahead of any real provider signal — the
+      // phantom/fleet-stall wedge's true mechanism (misread as a spawn defect for two days).
+      // Backpressure is provider-TRUE now: a real 429/quota answer arrives as a typed,
+      // retried, ledgered provider event on the member — never a silent synthetic queue.
       this._dispatch(task, vendor, selection.model, selection.effort, selection.workerPolicyResolution);
     }
   }
