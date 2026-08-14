@@ -1,0 +1,47 @@
+wave lch-contracts-2026-08-14-wave-a
+member coordinator
+  harness deepseek
+  model "deepseek-v4-pro[1m]"
+  effort high
+  scope "docs/reference/evidence/lch-contracts-2026-08-14/**"
+  objectiveRef "docs/reference/evidence/lch-contracts-2026-08-14/coordinator-brief.md"
+  report "docs/reference/evidence/lch-contracts-2026-08-14/contract-qa.md"
+member wake
+  harness deepseek
+  model deepseek-v4-flash
+  effort high
+  scope "docs/reference/evidence/lch-contracts-2026-08-14/**"
+  objectiveRef "docs/reference/evidence/lch-contracts-2026-08-14/row-wake.md"
+  report "docs/reference/evidence/lch-contracts-2026-08-14/contract-wake.md"
+member death
+  harness deepseek
+  model deepseek-v4-flash
+  effort high
+  scope "docs/reference/evidence/lch-contracts-2026-08-14/**"
+  objectiveRef "docs/reference/evidence/lch-contracts-2026-08-14/row-death.md"
+  report "docs/reference/evidence/lch-contracts-2026-08-14/contract-death.md"
+member retry
+  harness deepseek
+  model deepseek-v4-flash
+  effort high
+  scope "docs/reference/evidence/lch-contracts-2026-08-14/**"
+  objectiveRef "docs/reference/evidence/lch-contracts-2026-08-14/row-retry.md"
+  report "docs/reference/evidence/lch-contracts-2026-08-14/contract-retry.md"
+member quiescence-compat
+  harness deepseek
+  model deepseek-v4-flash
+  effort high
+  scope "docs/reference/evidence/lch-contracts-2026-08-14/**"
+  objectiveRef "docs/reference/evidence/lch-contracts-2026-08-14/row-quiescence-compat.md"
+  report "docs/reference/evidence/lch-contracts-2026-08-14/contract-quiescence-compat.md"
+approveOnAdvertisedPlan
+claimOnStall
+nudgeOnCheckpoint "Continue the contract — ground truths cited fresh, decisions, closed refusal vocabulary, red-first pins at named stages. Write incrementally."
+messageOnSpawn brief "Read your objectiveRef brief IN FULL first, then foundry-brief.md in the same directory (the frame + laws bind you). gh may be unauthenticated in your worktree — ground in the code and the local evidence dirs. Your [attempt:] line verbatim in your contract first five lines. Judgment calls recorded; authority-class ambiguity → DECISION_REQUEST with options."
+elevateWhenNotes doubt,plan 20
+signalOnMembersDone row-wake,row-death,row-retry,row-quiescence-compat result "All four rows settled (you are the remaining member — pinned #175 semantics). Verify on disk per the #174 law, then cross-check per your brief and write contract-qa.md."
+harvest "docs/reference/evidence/lch-contracts-2026-08-14/contract-qa.md" mustContain "CONTRACT-QA v1"
+harvest "docs/reference/evidence/lch-contracts-2026-08-14/contract-wake.md" mustContain "contract"
+harvest "docs/reference/evidence/lch-contracts-2026-08-14/contract-death.md" mustContain "contract"
+harvest "docs/reference/evidence/lch-contracts-2026-08-14/contract-retry.md" mustContain "contract"
+harvest "docs/reference/evidence/lch-contracts-2026-08-14/contract-quiescence-compat.md" mustContain "contract"
