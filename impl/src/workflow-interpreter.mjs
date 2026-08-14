@@ -567,6 +567,14 @@ export async function runWorkflow(baton, specOrPath, options = {}) {
   };
 
   const startedAt = Date.now(); // the drive-to-settle budget starts once the roster is live.
+
+  // #173 (2026-08-14, the launch-blocker): the drive-to-settle leg is a CONTINUATION. Detached
+  // callers (the production bus — every waves.run through a resident) get the acceptance receipt
+  // synchronously and the drive runs untethered; the settlement receipt lands in the store via
+  // onSettle (wave.settled). Without the split, each waves.run held its command for the wave's
+  // whole life — two live drives on the serial command loop wedged the bus for every other
+  // launch (the flood-window starvation, measured: zero admissions in 43 attempts × 7 waves).
+  const settle = async () => {
   try {
     await driveLane(wave, spec, driver, startedAt, steering, steeringState, reportByRole);
   } finally {
@@ -631,6 +639,29 @@ export async function runWorkflow(baton, specOrPath, options = {}) {
     verdict,
     waveId,
   };
+  };
+
+  if (options.detach === true) {
+    // The acceptance receipt: closed keys, sorted. The wave's truth from here is the store —
+    // wave.started (already minted), then wave.settled via onSettle when the drive lands.
+    const acceptance = Object.freeze({
+      accepted: true,
+      manifestDigest,
+      members: Object.freeze(spec.members.map((member) => member.role)),
+      schemaVersion: 1,
+      verdict: 'WAVE-ADMITTED',
+      waveId,
+    });
+    const onSettle = typeof options.onSettle === 'function' ? options.onSettle : null;
+    const settled = Promise.resolve().then(settle);
+    settled.then(
+      (receipt) => { if (onSettle) { try { onSettle(null, receipt); } catch { /* the record lane is best-effort */ } } },
+      (cause) => { if (onSettle) { try { onSettle(cause, null); } catch { /* best effort */ } } },
+    );
+    settled.catch(() => { /* onSettle carries the truth; never an unhandled rejection */ });
+    return acceptance;
+  }
+  return settle();
 }
 
 function harvestOne(entry, repoRoot, salt, waveId, outcomes) {

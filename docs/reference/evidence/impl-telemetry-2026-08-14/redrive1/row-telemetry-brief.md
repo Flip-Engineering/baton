@@ -19,3 +19,11 @@ acceptance suites.
 counts). Notes: `docs/reference/evidence/impl-telemetry-2026-08-14/notes-row-telemetry.md` —
 mechanism, anchors, suite counts, judgment calls. `[attempt: <salt> row-telemetry]` verbatim
 in its first five lines. Authority-class ambiguity → DECISION_REQUEST with options.
+
+## Addendum (orchestrator, 2026-08-14 — #218's content is yours)
+
+The seat telemetry surface must expose the QUEUE, not just the seats: per-adapter
+inFlight/ceiling/**seat_queued (with member ids + queue position)**. The lived failure:
+19 members silently pending behind the deepseek ceiling while the roster showed nothing.
+If the suites don't pin the queue read, name that in your notes as a suite gap and pin the
+read in your impl anyway (the surface honesty law: the machinery knows → the surface says).

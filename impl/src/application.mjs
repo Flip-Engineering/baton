@@ -138,6 +138,8 @@ const APPLICATION_STEERING_REGISTERED_KIND = 'steering.registered';
 // `wave.driver_detached` mints at attach-time, keyed `wave.driver_detached:${waveId}` — both ride
 // the same generic `driver.recorded` envelope as steering.registered, no dedicated projection.
 const APPLICATION_WAVE_STARTED_KIND = 'wave.started';
+// #173: the detached drive's settlement receipt — minted from runWorkflow's onSettle, keyed on waveId.
+const APPLICATION_WAVE_SETTLED_KIND = 'wave.settled';
 const APPLICATION_WAVE_DRIVER_DETACHED_KIND = 'wave.driver_detached';
 const READ_ONLY_RESULT_DEFINITION = Object.freeze([
   'A bounded evidence-backed textual/result capsule answers the declared read-only objective.',
@@ -11645,7 +11647,28 @@ export class BatonApplication {
     // caller omits it. The interpreter's own DEFAULT_DRIVER is the suite-pinned FAST policy
     // (workflow-as-data-red LANE_DRIVER); unoverridden it tore a real wave down at the 3 s
     // hard cap (first dogfood wave, WAVE-INCOMPLETE with cancelled rows).
-    return runWorkflow(baton, specOrPath, { repoRoot, driver: request.driver ?? PRODUCTION_WORKFLOW_DRIVER });
+    // #173 (2026-08-14): the bus DETACHES — waves.run returns the acceptance receipt after
+    // waves.start; the drive continues untethered and its settlement receipt mints wave.settled
+    // (idempotency-keyed on waveId; a failed settle mints the error, never silence). A caller
+    // that needs the synchronous seven-key receipt passes detach:false (the suites' path).
+    const detach = request.detach !== false;
+    const onSettle = (cause, receipt) => {
+      try {
+        if (typeof this.driver?.coordination?.recordDriver === 'function') {
+          this.driver.coordination.recordDriver(APPLICATION_WAVE_SETTLED_KIND, {
+            waveId: receipt?.waveId ?? null,
+            ...(cause ? { error: { code: cause?.code ?? 'workflow_settle_failed', message: String(cause?.message ?? cause).slice(0, 512) } }
+                      : { receipt }),
+          }, {
+            actor: principal.actor,
+            key: `wave.settled:${receipt?.waveId ?? 'unknown'}`,
+          });
+        }
+      } catch { /* the settle record is best-effort; the wave's member truth is already durable */ }
+    };
+    return runWorkflow(baton, specOrPath, {
+      repoRoot, driver: request.driver ?? PRODUCTION_WORKFLOW_DRIVER, detach, onSettle,
+    });
   }
 
   // #170 (D2/D4): the surface-side compile seam. A DSL text (specDsl inline, or a specPath whose
