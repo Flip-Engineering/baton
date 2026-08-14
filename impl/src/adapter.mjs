@@ -72,13 +72,20 @@ export class AdapterCrashError extends Error {
   }
 }
 
+// #195 (PA-A): the adapter contract Definition role as a NAMED export — the shape a registry checks
+// against. assertIsAdapter derives its required-method list from this declaration so the contract
+// and the check share one source.
+export const ADAPTER_CONTRACT_DEFINITION = Object.freeze({
+  schemaVersion: 1,
+  methods: Object.freeze(['card', 'spawn', 'prompt', 'interrupt', 'approve', 'answer', 'kill', 'onEvent']),
+});
+
 /** Throws TypeError with a precise message if `obj` doesn't duck-type the D1 Adapter. */
 export function assertIsAdapter(obj) {
   if (!obj || typeof obj !== 'object') {
     throw new TypeError('assertIsAdapter: expected an object implementing the D1 Adapter contract');
   }
-  const required = ['card', 'spawn', 'prompt', 'interrupt', 'approve', 'answer', 'kill', 'onEvent'];
-  for (const method of required) {
+  for (const method of ADAPTER_CONTRACT_DEFINITION.methods) {
     if (typeof obj[method] !== 'function') {
       throw new TypeError(`assertIsAdapter: missing required method "${method}()"`);
     }

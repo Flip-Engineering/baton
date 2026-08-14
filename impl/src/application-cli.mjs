@@ -24,7 +24,7 @@ export const CLI_WEB_COMMANDS = new Set([
   // S-1 v2: portable atomic attach-and-harvest; #132 D4 adds the two CLI read verbs the client
   // dispatches over the web envelope (waves.list/waves.progress, admitted at the port as direct
   // commands — web-northbound.mjs WEB_DIRECT_PORT_COMMANDS).
-  'waves.attach', 'waves.start', 'waves.list', 'waves.progress', 'waves.run',
+  'waves.attach', 'waves.start', 'waves.list', 'waves.progress', 'waves.run', 'waves.compile',
   // Facade-projection epic (#87+#48, contract v2.2): the eight workflow-surface command names.
   'run.message.send', 'run.message.receipt', 'run.attention.watch',
   'run.scratchpad.read', 'run.scratchpad.elevate', 'run.board.post', 'run.board.read',
@@ -1330,6 +1330,13 @@ export function parseBatonCli(rawArgs) {
       noRemainder(args);
       if (typeof specPath !== 'string' || specPath.length === 0) throw cliError('waves run requires a spec path');
       return { kind: 'command', command: 'waves.run', name: 'waves.run', args: { specPath }, idempotencyKey };
+    }
+    // #170 (D4): the inspectable compile seam — `baton waves compile <specPath>` → waves.compile.
+    if (action === 'compile') {
+      const specPath = args.shift();
+      noRemainder(args);
+      if (typeof specPath !== 'string' || specPath.length === 0) throw cliError('waves compile requires a spec path');
+      return { kind: 'command', command: 'waves.compile', name: 'waves.compile', args: { specPath }, idempotencyKey };
     }
     // #132 D4.1/D4.2 (wave-observability-2026-08-06/contract.md §D4): the read/steer verbs.
     // `baton waves list` → waves.list — the registry read, no args (A5-1).

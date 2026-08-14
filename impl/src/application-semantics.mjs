@@ -1635,15 +1635,29 @@ const CANONICAL_OPERATION_SPECS = [
   // containment-checked at the interpreter (the D5 lexical + realpath law). The lane stays a
   // direct port at application.mjs — the byte-stable command table is untouched.
   ['waves.run', {
-    profile: 'ordinary', surfaces: ['embedded', 'mcp', 'cli'], effect: 'control',
+    profile: 'ordinary', surfaces: ['embedded', 'mcp', 'cli', 'web'], effect: 'control',
     capabilities: ['control', 'observe'], outputView: 'outline', helpTopic: 'run',
     example: 'baton waves run path/to/spec.json',
     inputSchema: objectSchema({
       idempotencyKey: id,
       spec: { type: 'object' },
+      specDsl: { type: 'string', minLength: 1 },
       specPath: { type: 'string', minLength: 1, maxLength: FRAME_LIMITS['wave.run.spec_path'].value },
       driver: { type: 'object' },
     }, ['idempotencyKey']),
+  }],
+  // #170 (D4/DR-2): the read-only inspectable compile seam — a wavefile (specDsl or specPath text)
+  // lowers to the closed IR object waves.run accepts; admission-free (never starts a wave).
+  ['waves.compile', {
+    profile: 'ordinary', surfaces: ['embedded', 'mcp', 'cli', 'web'], effect: 'observe',
+    capabilities: ['observe'], outputView: 'outline', helpTopic: 'run',
+    example: 'baton waves compile path/to/spec.dsl',
+    inputSchema: objectSchema({
+      idempotencyKey: id,
+      spec: { type: 'object' },
+      specDsl: { type: 'string', minLength: 1 },
+      specPath: { type: 'string', minLength: 1, maxLength: FRAME_LIMITS['wave.run.spec_path'].value },
+    }, []),
   }],
   ['deployment.doctor', {
     profile: 'ordinary', surfaces: ['embedded', 'mcp', 'cli'], effect: 'deployment_read',
@@ -1972,6 +1986,9 @@ function buildCanonicalOperation([key, spec]) {
     aliases: Object.freeze(surfaceAliases),
     example: spec.example ?? deriveSurfaceNames(key).cli,
     helpTopic: spec.helpTopic ?? source?.helpTopic ?? key,
+    // #195 (PA-B): the machine-checkable canonical output declaration — every command entry names
+    // its canonical output shape so a referee can check a card's output against the registry.
+    canonicalOutput: spec.canonicalOutput ?? spec.outputView ?? 'outline',
     // S-1 v2 R-WG-3: fields excluded from advertised MCP/web schemas but accepted by validators.
     transportHidden,
   });
@@ -2048,13 +2065,30 @@ export const APPLICATION_DIGEST_PROJECTIONS = freeze({
 const authorityDigest = hashRegistryProjection(authorityProjection);
 const presentationDigest = hashRegistryProjection(presentationProjection);
 
+// #195 (PA-B): every top-level registry value declares its canonical output shape. Attached
+// NON-enumerably so deepEqual/JSON projections of the containers stay byte-unchanged; the `in`
+// check (and the machine-checkable referee) still sees it.
+function withDeclaredOutput(value, shape) {
+  const copy = Array.isArray(value) ? [...value] : { ...value };
+  Object.defineProperty(copy, 'canonicalOutput', { value: shape, enumerable: false, configurable: false });
+  return copy;
+}
+
 export const APPLICATION_SEMANTIC_REGISTRY = freeze({
-  ...core,
-  aliases,
-  canonicalOperations,
-  surfaceAliases,
-  enums: APPLICATION_LIFECYCLE_ENUMS,
-  serializationOrder: APPLICATION_SERIALIZATION_ORDER,
+  schemaVersion: core.schemaVersion,
+  version: core.version,
+  depths: withDeclaredOutput(core.depths, 'depth_names'),
+  sections: withDeclaredOutput(core.sections, 'section_rows'),
+  operations: withDeclaredOutput(core.operations, 'operation_definitions'),
+  actions: withDeclaredOutput(core.actions, 'action_definitions'),
+  cli: withDeclaredOutput(core.cli, 'cli_help_topics'),
+  defaultOperations: withDeclaredOutput(core.defaultOperations, 'operation_names'),
+  advanced: withDeclaredOutput(core.advanced, 'advanced_operations'),
+  aliases: withDeclaredOutput(aliases, 'operation_aliases'),
+  canonicalOperations: withDeclaredOutput(canonicalOperations, 'command_entries'),
+  surfaceAliases: withDeclaredOutput(surfaceAliases, 'surface_alias_rows'),
+  enums: withDeclaredOutput(APPLICATION_LIFECYCLE_ENUMS, 'lifecycle_enums'),
+  serializationOrder: withDeclaredOutput(APPLICATION_SERIALIZATION_ORDER, 'serialization_order'),
   authorityDigest,
   presentationDigest,
   digest: authorityDigest,

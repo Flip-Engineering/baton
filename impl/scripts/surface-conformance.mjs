@@ -23,6 +23,7 @@ import {
   mcpCombinedToolNames,
   mcpDispatchToolNames,
 } from '../src/mcp-northbound.mjs';
+import { WAVEFILE_DIRECTIVES } from '../src/workflow-dsl.mjs';
 
 // docs/36 §6.1 / M4A-2 — `deriveSurfaceNames` is imported, not redefined: the registry, the audit,
 // and this harness compute every surface name through the ONE function, so they cannot drift.
@@ -679,6 +680,26 @@ export function writeSurfaceInventoryArtifact() {
 
 // ── Executable main (CS-1 / R-CS-6) ─────────────────────────────────────────
 
+// #170 (D4/P8) — the wavefile leg: the documented 16-directive table ⇄ the compiler's accepted set
+// (the #159 three-way invariant's parsed/documented half; the admitted half is the round-trip pin).
+const WAVEFILE_DOCUMENTED = new Set([
+  'wave', 'member', 'harness', 'model', 'effort', 'scope', 'objectiveRef', 'report',
+  'approveOnAdvertisedPlan', 'claimOnStall', 'nudgeOnCheckpoint', 'messageOnSpawn',
+  'elevateWhenNotes', 'answerDecisions', 'signalOnMembersDone', 'harvest',
+]);
+
+export function checkWavefileGrammar() {
+  const accepted = Object.keys(WAVEFILE_DIRECTIVES);
+  const findings = [];
+  for (const name of accepted) {
+    if (!WAVEFILE_DOCUMENTED.has(name)) findings.push(`wavefile directive undocumented: ${name}`);
+  }
+  for (const name of WAVEFILE_DOCUMENTED) {
+    if (!accepted.includes(name)) findings.push(`wavefile directive unaccepted: ${name}`);
+  }
+  return findings;
+}
+
 export function runSurfaceConformanceMain({ writeInventory = false } = {}) {
   const findings = [];
   const ledgerUrl = new URL('./surface-divergence-ledger.json', import.meta.url);
@@ -723,6 +744,9 @@ export function runSurfaceConformanceMain({ writeInventory = false } = {}) {
   }
   for (const finding of checkSurfaceDocs()) {
     findings.push(`stale generated docs: ${finding}`);
+  }
+  for (const finding of checkWavefileGrammar()) {
+    findings.push(`wavefile grammar: ${finding}`);
   }
   for (const finding of lintProseInventories()) {
     findings.push(`prose-inventory: ${finding}`);

@@ -13,6 +13,7 @@ import { pathToFileURL } from 'node:url';
 import { APPLICATION_SEMANTIC_REGISTRY, deriveSurfaceNames } from '../src/application-semantics.mjs';
 import { CLI_WEB_COMMANDS } from '../src/application-cli.mjs';
 import { mcpApplicationToolNames } from '../src/mcp-northbound.mjs';
+import { WAVEFILE_DIRECTIVES } from '../src/workflow-dsl.mjs';
 
 const CLI_DOC = new URL('../CLI.md', import.meta.url);
 const MCP_DOC = new URL('../MCP.md', import.meta.url);
@@ -113,6 +114,22 @@ export function renderMcpToolInventory() {
   });
   return [
     '| Operation | Profile | MCP tool | Annotation |',
+    '|---|---|---|---|',
+    ...rows,
+  ].join('\n');
+}
+
+/**
+ * The #170 wavefile directive table (D4/P8) — rendered mechanically from the compiler's
+ * WAVEFILE_DIRECTIVES registry (the ONE source), never hand-edited. The conformance main proves the
+ * documented ⇄ parsed ⇄ admitted invariant against this table.
+ */
+export function renderWavefileGrammar() {
+  const rows = Object.entries(WAVEFILE_DIRECTIVES).map(([directive, definition]) => (
+    `| \`${directive}\` | \`${definition.arity}\` | \`${definition.tokens.join(' ')}\` | \`${definition.field}\` |`
+  ));
+  return [
+    '| Directive | Arity | Tokens | IR field |',
     '|---|---|---|---|',
     ...rows,
   ].join('\n');

@@ -44,6 +44,7 @@ const WAVE_WEB_ENTRIES = Object.freeze([
   // same direct-port admission — runWorkflow's own closed validation (spec|specPath,
   // workflow_* refusals) is the argument authority, exactly like the five sibling verbs.
   ['waves_run', 'waves.run', Object.freeze(['control', 'observe'])],
+  ['waves_compile', 'waves.compile', Object.freeze(['observe'])],
 ]);
 // D1.2/D1.3 — the wave transports are DIRECT PORTS: validateEnvelope skips
 // validateApplicationCommandArgs for them (WEB_DIRECT_PORT_COMMANDS below) and their argument
@@ -57,7 +58,8 @@ const WAVE_ARG_FIELDS = Object.freeze({
   waves_send: new Set(['claimGrant', 'delivery', 'message', 'runId']),
   waves_stop: new Set(['reason', 'runId']),
   waves_list: new Set(['cursor', 'waveId']),
-  waves_run: new Set(['idempotencyKey', 'spec', 'specPath']),
+  waves_run: new Set(['idempotencyKey', 'spec', 'specPath', 'specDsl']),
+  waves_compile: new Set(['idempotencyKey', 'spec', 'specPath', 'specDsl']),
 });
 const WEB_DIRECT_PORT_COMMANDS = new Set(WAVE_WEB_ENTRIES.map(([transport]) => transport));
 
@@ -224,6 +226,16 @@ function dispatchFailure(cause) {
     'plan_effect_mismatch', 'plan_not_approved', 'plan_predecessor_required', 'plan_route_mismatch', 'plan_self_approval',
     'plan_stale', 'plan_version_limit', 'goal_plan_required'].includes(goalPlanCode)) {
     return { httpStatus: 409, body: { ok: false, error: { code: goalPlanCode, message: 'goal/plan state conflict' } } };
+  }
+  // #160 R3 (the #170 P10 dependency): the pre-TypeError workflow_* arm — a bare workflow_* throw
+  // preserves its typed code + the {line, field, expected} detail instead of degrading to
+  // invalid_command at the TypeError-name arm below.
+  if (typeof cause?.code === 'string' && cause.code.startsWith('workflow_')) {
+    return { httpStatus: 400, body: { ok: false, error: {
+      code: cause.code,
+      message: cause?.message ?? 'workflow precondition failed',
+      ...(cause?.detail ? { detail: cause.detail } : {}),
+    } } };
   }
   if (['ModelSelectionError', 'SessionSelectionError', 'DuplicateTaskIdError', 'UnknownVendorError', 'DependencyCycleError', 'TypeError'].includes(cause?.name)) {
     return { httpStatus: 400, body: { ok: false, error: { code: 'invalid_command', message: 'command precondition failed' } } };

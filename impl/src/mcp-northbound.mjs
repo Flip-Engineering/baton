@@ -10,6 +10,7 @@ import {
   SURFACING_MATRIX_KEYS,
   deriveSurfaceNames,
 } from './application-semantics.mjs';
+import { compileWavefile } from './workflow-dsl.mjs';
 
 const MCP_APPLICATION_ENTRIES = Object.entries(APPLICATION_COMMAND_DEFINITIONS)
   .filter(([, definition]) => definition.mcp)
@@ -101,6 +102,7 @@ const CAPABILITY = Object.freeze({
   baton_waves_stop: ['emergency_stop', 'observe'],
   baton_waves_list: ['observe'],
   baton_waves_run: ['control', 'observe'],
+  baton_waves_compile: ['observe'],
   baton_deployment_doctor: ['observe'],
   baton_scratchpad_elevate: ['control', 'observe'],
   baton_scratchpad_settle: ['control', 'observe'],
@@ -548,13 +550,24 @@ const LEGACY_ORDINARY_APPLICATION_TOOL_DEFINITIONS = Object.freeze([
   {
     // Issue #114 (D2, OQ2 folded — the family plural): the workflow-as-data interpreter lane. ONE
     // closed spec drives a whole wave; malformed specs refuse with the field/role-named workflow_*
-    // codes the stateFailureCode allowlist preserves.
+    // codes the stateFailureCode allowlist preserves. specDsl (a wavefile text) compiles through
+    // the #170 seam before the interpreter.
     name: 'baton_waves_run',
     description: 'Run a workflow-as-data spec: one closed JSON document (members + steering + harvest) drives a whole wave through the shared interpreter. No per-wave driver script.',
     inputSchema: schema({
-      ...repo, spec: { type: 'object' },
-    }, ['repoId', 'spec']),
+      ...repo, spec: { type: 'object' }, specDsl: { type: 'string', minLength: 1 },
+    }, ['repoId']),
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  {
+    // #170 (D4/DR-2): the read-only compile seam — a wavefile (specDsl text) lowers to the closed
+    // IR object baton_waves_run accepts, admission-free (it never starts a wave).
+    name: 'baton_waves_compile',
+    description: 'Compile a workflow-spec wavefile (specDsl text) to the closed workflow spec object without starting a wave.',
+    inputSchema: schema({
+      ...repo, specDsl: { type: 'string', minLength: 1 },
+    }, ['repoId', 'specDsl']),
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
   // MCP-W3 (mcp-packaging-decisions v1.0): deployment.doctor — quota-free, per-call FRESH
   // readiness; credential posture as metadata only (source kind, expiry class), never secret
@@ -820,7 +833,7 @@ const REFLEX_READ_ONLY_TOOLS = new Set(SURFACING_MATRIX_MCP_ROWS
 // keys, so the generic application branch never maps their failures) — every one of them must
 // reach the typed stateFailureCode lane, never the generic 'command_failed'.
 const ORDINARY_EXPLICIT_TOOLS = new Set([
-  'baton_waves_start', 'baton_waves_progress', 'baton_waves_send', 'baton_waves_stop', 'baton_waves_list', 'baton_waves_run',
+  'baton_waves_start', 'baton_waves_progress', 'baton_waves_send', 'baton_waves_stop', 'baton_waves_list', 'baton_waves_run', 'baton_waves_compile',
   'baton_deployment_doctor',
   'baton_scratchpad_elevate', 'baton_scratchpad_settle', 'baton_knowledge_promote',
   'baton_knowledge_settlement_lease',
@@ -1123,8 +1136,12 @@ function validateArguments(name, args, maxWaitMs = null) {
   if (name === 'baton_waves_send' && (!nonempty(args.runId) || !nonempty(args.message))) {
     return 'invalid_wave_send';
   }
-  if (name === 'baton_waves_run' && (!args.spec || typeof args.spec !== 'object' || Array.isArray(args.spec))) {
+  if (name === 'baton_waves_run'
+    && !((record(args.spec) && !Array.isArray(args.spec)) || nonempty(args.specDsl))) {
     return 'invalid_workflow_run';
+  }
+  if (name === 'baton_waves_compile' && !nonempty(args.specDsl)) {
+    return 'invalid_workflow_compile';
   }
   if (name === 'baton_waves_stop' && !nonempty(args.runId)) {
     return 'invalid_wave_stop';
@@ -1792,14 +1809,20 @@ export class McpFleetServer {
       }, this._applicationDispatchContext(args, callId, principal));
     }
     // Issue #114 (D2): the workflow-as-data lane — the spec object drives a whole wave via waves.run.
+    // #170 (D4): a specDsl wavefile text compiles through the seam before the interpreter.
     else if (name === 'baton_waves_run') {
+      const spec = args.specDsl !== undefined ? compileWavefile(args.specDsl) : clone(args.spec);
       value = await this.application.command('waves.run', {
-        spec: clone(args.spec),
+        spec,
       }, {
         actor: actor ?? `mcp:${principal.userId}:${principal.sessionId}`,
         principalId: principal.userId,
         sessionId: principal.sessionId,
       }, this._applicationDispatchContext(args, callId, principal));
+    }
+    // #170 (D4/DR-2): the read-only compile seam — a wavefile lowers to the closed spec object.
+    else if (name === 'baton_waves_compile') {
+      value = { spec: compileWavefile(args.specDsl) };
     }
     // MCP-W3: deployment.doctor — quota-free (handle), per-call FRESH doctorReadiness, secret
     // material stripped at the surface (canary-pinned by MP10).
