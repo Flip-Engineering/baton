@@ -18,6 +18,17 @@ spec watches the row; you are the remaining member — pinned #175 semantics).
    live-check outcome. Line 1 must be exactly `WLS-VERIFY v1`. Your `[attempt:]` line verbatim
    in the first five lines. Escalate authority-class questions via DECISION_REQUEST.
 
+## Pin-vacuity guard (added after the #210 eventsView landing)
+
+The eventsView fix (#210) switched the read path off `events()`; WLS-1's spy now counts BOTH
+accessors, but on the suite's empty-registry fixture the read count may stay ≤4 for the wrong
+reason (no members → no per-member scans; or the command refusing early). Before you verdict
+sound: extend the fixture to register several fake wave records (driver.recorded /
+APPLICATION_WORKFLOW_RECORD_KIND payloads — see `_workflowDefinitionAncestors` in
+application.mjs for the filter shape) so the per-member path genuinely executes, confirm the
+pin is RED against the pre-fix tree and GREEN only with the single-pass index, and quote both
+runs in verify-notes.md. A pin that never exercised the defect is a failed pin.
+
 ## Laws
 
 Cited evidence, no clocks, no fabrication, read-and-run only outside your deliverable.
