@@ -1747,6 +1747,72 @@ function restrictingReadAuthorize() {
   };
 }
 
+// Issue #158 (D1, H1.1): the append restrictor's seat resolver — the coordinator's
+// `_getWorker` binding (the same resolution writeScratchpad's wrapper uses to derive a
+// member's active run: handle.taskId → task.runId ?? task.id, coordinator.mjs:11108-11116).
+// A worker whose seat cannot be resolved is UNKNOWN at the policy seam — the own-run
+// predicate is skipped exactly as the suite's fixture skips an untracked seat.
+function workerRunResolver(coordinator) {
+  return (workerId) => {
+    let handle;
+    try { handle = coordinator._getWorker(workerId); }
+    catch { return null; }
+    const task = coordinator._tasks?.get(handle.taskId) ?? null;
+    if (!task) return null;
+    return task.runId ?? task.id;
+  };
+}
+
+// Issue #158 (D1 law 2/3, H1.1): the scratchpad WRITE/append authorization law at the
+// deployment enforcement seam. The write law is STRICTER than the D1.2 read law:
+//   law 1 — `shared` resolves for every principal (the disclosed shared drain, G8);
+//   law 2 — `worker:<scope>` resolves only for the member's own partition
+//           (principalId === scope), and the H1.1 own-run predicate binds every scope the
+//           member may target — a member whose active run (resolved through the
+//           seat-resolver) differs from the caller-supplied runId refuses;
+//   law 3 — a review authority (`local-owner` / `service-*`) is SHARED-ONLY — it NEVER
+//           writes a member worker:<scope> partition (the trust-doctrine divergence from
+//           the D1.2 read grant, which lets the review authority read any member scope);
+//   unknown scope ≡ foreign at the policy seam (#87).
+// Non-append commands stay permissive (the read law is composed at the install site).
+function restrictingAppendAuthorize(resolveWorkerRun) {
+  return async (request = {}) => {
+    const { command, principal, runId, subject } = request;
+    if (command !== 'run.scratchpad.append') return true;
+    const scope = subject?.scope;
+    const principalId = typeof principal?.principalId === 'string' ? principal.principalId : '';
+    const review = principalId === 'local-owner' || principalId.startsWith('service-');
+    if (scope === 'shared') {
+      if (principalId.startsWith('worker:') && typeof resolveWorkerRun === 'function') {
+        const activeRun = resolveWorkerRun(principalId);
+        if (activeRun !== null && activeRun !== undefined && activeRun !== runId) return false; // H1.1 own-run predicate
+      }
+      return true; // law 1 — every principal contributes to shared directly
+    }
+    if (typeof scope === 'string' && scope.startsWith('worker:')) {
+      if (review) return false; // law 3 — the review authority never writes a member partition
+      if (principalId !== scope) return false; // law 2 — a member appends only to its own partition
+      if (typeof resolveWorkerRun === 'function') {
+        const activeRun = resolveWorkerRun(principalId);
+        if (activeRun !== null && activeRun !== undefined && activeRun !== runId) return false; // H1.1 own-run predicate
+      }
+      return true;
+    }
+    return false; // unknown ≡ foreign at the policy seam
+  };
+}
+
+// The deployment's single authorize seam composes the D1.2 read restrictor (the shipped
+// default) with the #158 write restrictor, constructed with the coordinator's `_getWorker`
+// seat-resolver so the H1.1 own-run predicate is ENFORCED at the seam. `rw` is the
+// restrictor wrapper — the read/write law pair land on the same authorize seam the #74
+// fold named, never a raw permissive literal.
+function rw(resolveWorkerRun) {
+  const read = restrictingReadAuthorize();
+  const append = restrictingAppendAuthorize(resolveWorkerRun);
+  return async (request = {}) => (await append(request)) && (await read(request));
+}
+
 export async function openBatonDeployment(rawOptions, createDriver) {
   closed(rawOptions, ['advanced', 'repo'], 'deployment options');
   const repository = repositoryAuthority(rawOptions.repo ?? process.cwd());
@@ -2040,11 +2106,12 @@ export async function openBatonDeployment(rawOptions, createDriver) {
         openSession: (request) => contextRuntime.openSession(request),
         materializeCallResult: (request) => contextRuntime.materializeCallResult(request),
       },
-      // Issue #74 (D1.2): the scratchpad read-authorization law at the deployment seam. The
-      // permissive literal is GONE — the restricting authorize is the default (see
-      // restrictingReadAuthorize below). Non-read commands stay permissive; a foreign
-      // `worker:<scope>` read refuses application_unauthorized at the _authorize seam.
-      authorize: restrictingReadAuthorize(),
+      // Issue #74 (D1.2) + #158 (D1): the scratchpad read AND write/append laws at the
+      // deployment seam. The permissive literal is GONE — the composed restricting
+      // authorize (rw below) is the default: the D1.2 read restrictor stays installed, and
+      // the #158 append restrictor lands beside it, constructed with the coordinator's
+      // `_getWorker` seat-resolver so the H1.1 own-run predicate is ENFORCED at the seam.
+      authorize: rw(workerRunResolver(driver.coordinator)),
     });
     await application.ready;
     return new BatonDeployment(application, principal, readiness, {
