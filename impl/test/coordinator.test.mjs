@@ -366,6 +366,31 @@ test('active worktree authority loss fails and kills before accepting more worke
   assert.equal(adapters.mock.calls.kill.length, 1);
 });
 
+test('a THROWING worktree-availability read never kills outright — unknown defers; a persistent unknown streak fails (the reap-murder law)', async () => {
+  const { coordinator, adapters, worktrees, log } = setup();
+  const handle = await coordinator.spawn('mock', makeBrief());
+  worktrees.worktreeAvailable = () => { throw new Error('transient fs race'); };
+
+  coordinator.tick();
+  await Promise.resolve();
+  await Promise.resolve();
+  assert.equal(log.read(handle.id).filter((event) => event.kind === 'worktree.authority_lost').length, 0,
+    'one errored availability read is UNKNOWN — never fatal on its own');
+  assert.equal(adapters.mock.calls.kill.length, 0);
+
+  coordinator.tick();
+  await Promise.resolve();
+  await Promise.resolve();
+  assert.equal(adapters.mock.calls.kill.length, 0, 'two consecutive unknown reads still defer');
+
+  coordinator.tick();
+  await Promise.resolve();
+  await Promise.resolve();
+  assert.equal(log.read(handle.id).filter((event) => event.kind === 'worktree.authority_lost').length, 1,
+    'a persistent unknown streak (3 sweeps, the evidence-count confirmation) fails the member');
+  assert.equal(adapters.mock.calls.kill.length, 1);
+});
+
 test('active worktree authority loss escalates an in-flight soft interrupt to one exact kill', async () => {
   const { coordinator, adapters, worktrees, log } = setup({ stopDeadlineMs: 15000 });
   const handle = await coordinator.spawn('mock', makeBrief());

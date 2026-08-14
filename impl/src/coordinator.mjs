@@ -2929,8 +2929,22 @@ export class Coordinator {
   _sweepDeadlines() {
     const now = this._now();
     for (const handle of this._workers.values()) {
-      if (['working', 'blocked', 'idle', 'stopping'].includes(handle.status)
-        && !this._worktreeAuthorityAvailable(handle)) this._failWorktreeAuthority(handle);
+      if (['working', 'blocked', 'idle', 'stopping'].includes(handle.status)) {
+        // 2026-08-14: the availability read is tri-state — a positive FALSE kills at once; an
+        // errored read (null) is UNKNOWN and only a persistent unknown streak (the evidence-
+        // count confirmation, never a clock) is fatal. A transient fs hiccup racing the check
+        // must never murder a live member (the reap-murder class, 7 members in one sweep).
+        const availability = this._worktreeAuthorityAvailable(handle);
+        if (availability === false) {
+          handle.worktreeAvailabilityUnknownPolls = 0;
+          this._failWorktreeAuthority(handle);
+        } else if (availability === null) {
+          const streak = (handle.worktreeAvailabilityUnknownPolls = (handle.worktreeAvailabilityUnknownPolls ?? 0) + 1);
+          if (streak >= 3) this._failWorktreeAuthority(handle);
+        } else {
+          handle.worktreeAvailabilityUnknownPolls = 0;
+        }
+      }
     }
     for (const [requestId, record] of [...this._pending]) {
       if ((record.kind === 'approval' || record.kind === 'publication') && record.state === 'pending' && record.deadlineAt != null && now >= record.deadlineAt) {
@@ -3278,7 +3292,12 @@ export class Coordinator {
       const logicalOwner = validWorkspaceOwnerBoundPayload(handle.workspaceOwnerBinding)
         ? handle.workspaceOwnerBinding.logicalTaskId : handle.taskId;
       return this._worktrees.worktreeAvailable(logicalOwner, handle.sessionContext) === true;
-    } catch { return false; }
+    } catch {
+      // 2026-08-14 (the reap-murder lesson): an errored availability read is UNKNOWN, never
+      // fatal on its own — a transient fs/git hiccup racing this check must not murder a live
+      // member. The sweep kills on a positive false, or on a persistent unknown streak only.
+      return null;
+    }
   }
 
   _restoreRecoveredPhysicalWorkspaceAuthority(handle, context, opts = {}) {
@@ -7785,7 +7804,7 @@ export class Coordinator {
     if (task.runId && this._coordination.runStop?.(task.runId)) {
       return { ok: false, result: 'run_stopping' };
     }
-    if (!this._worktreeAuthorityAvailable(handle)
+    if (this._worktreeAuthorityAvailable(handle) === false
       || handle.processRef?.state === 'closed'
       || handle.processRef?.state === 'unconfirmed_after_restart'
       || handle.sessionPreservation?.transport !== 'attached') {
@@ -12493,7 +12512,7 @@ export class Coordinator {
       });
       return;
     }
-    if (actor === 'worker' && !this._worktreeAuthorityAvailable(handle)) {
+    if (actor === 'worker' && this._worktreeAuthorityAvailable(handle) === false) {
       this._failWorktreeAuthority(handle);
       // Process-terminal observations must still close exact process authority. All other
       // worker output is rejected once its checkout identity has disappeared.
