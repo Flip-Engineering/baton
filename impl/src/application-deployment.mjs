@@ -860,14 +860,18 @@ function builtInAdapters(routes, repoRoot, adapterOptions = {}, claudeCredential
         model: 'deepseek-v4-flash', approvals: false, ceiling: 4, maxWireFrameBytes,
       });
     } else if (route.harness === 'glm') {
-      if (rows.some((row) => row.model !== 'glm-5.2')) {
-        throw deploymentError('current GLM routes permit only glm-5.2');
+      const allowedModels = new Set(['glm-5.2', 'glm-5.3']);
+      if (rows.some((row) => !allowedModels.has(row.model))) {
+        throw deploymentError('current GLM routes permit only glm-5.2 and glm-5.3');
       }
       const credential = join(repoRoot, 'glm_key.json');
-      if (!existingRegular(credential)) throw deploymentError('GLM 5.2 requires the project credential file');
+      if (!existingRegular(credential)) throw deploymentError('GLM routes require the project credential file');
       adapters[key] = new GlmSessionCli({
         authTokenFile: credential, authTokenJsonPointer: '/glm_key', harness: 'glm',
-        model: 'glm-5.2', approvals: false, ceiling: 1, maxWireFrameBytes,
+        // Operator policy (2026-08-14): the 1× ceiling on the cheapest seats was a scaffolding
+        // fossil — GLM runs wide like its cheap-seat siblings (4). glm-5.2 stays the
+        // construction default; per-run route.model (e.g. glm-5.3) flows through the dialect.
+        model: 'glm-5.2', approvals: false, ceiling: 4, maxWireFrameBytes,
       });
     } else {
       throw deploymentError(`unsupported built-in route ${route.harness}`);
