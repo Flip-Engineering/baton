@@ -1,0 +1,140 @@
+From 757cf506d7710d49d4dcf1acc6633b7c1f946cd3 Mon Sep 17 00:00:00 2001
+From: Phase 65 <phase77@example.invalid>
+Date: Thu, 13 Aug 2026 19:47:13 -0700
+Subject: [PATCH] =?UTF-8?q?docs:=20honesty-package=20row-cli=20harvest=20?=
+ =?UTF-8?q?=E2=80=94=20cross-seam=20map=20+=20wave-level=20notes?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+- notes-row-cli.md gains the cross-seam coordination intelligence: run.watch
+  (doc-truth R1/R4, row-sf159) and the unknown-run-verb refusal (error-actionability
+  C2, row-sf160) both sit in application-cli.mjs but are other rows' acceptance, and
+  both carry cross-wave constraints against cli-silent-start (#155) green pins
+  (PT-7 detection.size 39, PT-3 never-a-guess)
+- impl-honesty-notes.md created (harvest mustContain #157): row-cli status, landed
+  changes, green rows, A10-1 leg (b) DECISION_REQUEST, adjacents verified, remaining
+  work split for the other rows
+
+Co-Authored-By: Claude <noreply@anthropic.com>
+---
+ .../impl-honesty-notes.md                     | 61 +++++++++++++++++++
+ .../notes-row-cli.md                          | 34 +++++++++++
+ 2 files changed, 95 insertions(+)
+ create mode 100644 docs/reference/evidence/honesty-package-2026-08-14/impl-honesty-notes.md
+
+diff --git a/docs/reference/evidence/honesty-package-2026-08-14/impl-honesty-notes.md b/docs/reference/evidence/honesty-package-2026-08-14/impl-honesty-notes.md
+new file mode 100644
+index 0000000..93d3a58
+--- /dev/null
++++ b/docs/reference/evidence/honesty-package-2026-08-14/impl-honesty-notes.md
+@@ -0,0 +1,61 @@
++[attempt: c8a3f4fc-fe15-4311-953e-5fc21b03ec44 row-cli]
++
++# impl-honesty notes — honesty package ② (#157 + #158 + #159 + #160, one landing)
++
++Wave-level running notes. Each row appends its seam's status under its own `[attempt:]` header.
++Harvest gate: this file must reference **#157** (row-cli's issue).
++
++## Row-cli status (2026-08-13, committed `e218238`)
++
++**Seam:** CLI wave fidelity (#157) + the CLI-admission half of #158. Owned files:
++`impl/src/application-cli.mjs`, `impl/src/application.mjs`, `impl/CLI.md` (regenerated),
++`impl/scripts/surface-inventory-artifact.json` (regenerated). Detailed decisions, evidence, and
++the A10-1 DECISION_REQUEST live in `notes-row-cli.md` (same dir).
++
++**Landed:**
++- `waves.send` / `waves.stop` served — `CLI_WEB_COMMANDS` admission + `parseBatonCli` branches
++  (id-validated runId, at-most-one delivery, `--claim-grant` JSON, CLI-required `--reason`);
++  closed-set refusal text updated.
++- `waves.compile` bare minimal invocation admitted (D3.3/N6 closed-set pin); app seam refuses a
++  missing spec.
++- `run.scratchpad.append` — `CLI_WEB_COMMANDS` admission + parser branch with the closed per-kind
++  body (`scratchpadAppendBody`: note/plan/doubt/link) + D4 teaching (`read|elevate|append`).
++- D2 hydration — `waveList` string-member branch inspects steering-registered runs for
++  phase/progressClass/attentionCount and refuses typed `wave_not_found` for a vanished registered
++  run (D5.2); no-run render pinned. NUL bytes intact (3, matching HEAD).
++- Generated surfaces regenerated via shipped generators: CLI.md (+waves.send/waves.stop rows),
++  surface-inventory-artifact.json (`cliWebCommands` 37 → 40).
++
++**Green (my acceptance):**
++- `cli-wave-fidelity-red` **16/16**.
++- `scratchpad-write-red` CLI rows: **A1-1, A1-2, A9-1, A9-2, P-A1** green; A10-1 leg (a) green,
++  leg (b) **DECISION_REQUEST** — the suite's `/run\\.scratchpad\\.append/u` (double-backslash)
++  regex cannot match a correct `CLI_WEB_COMMANDS` admission (plain dots); P-A1's single-backslash
++  style for read/elevate proves the typo. Suite not edited (craft law). Options in notes-row-cli.md.
++
++**Adjacents verified undisturbed:** workflow-dsl 35/35 · workflow-dsl-package 12/12 ·
++workflow-as-data 30/30 · wave-observability 30/30 · control-surface-truth 7/7 ·
++mcp-profile-parity 8/13 (designed) · blind-waits 23/11 (designed) · orchestrator-plan-object 5/42
++(designed) · doc-truth + error-actionability 8/27 byte-identical to HEAD baseline · deployment
++verification exit 0.
++
++## Cross-seam coordination intelligence (for the other rows)
++
++Mapped during the continue-verification pass — all touch `application-cli.mjs` (row-cli's file)
++but belong to `row-sf159` / `row-sf160`:
++
++- **`run.watch` (doc-truth R1/R4 — row-sf159):** `run watch RUN_ID` throws today; bare `run watch`
++  silently reinterprets to run.start. Fix = recognize `watch`, serve `run.watch`, bare refuses
++  value-required. ⚠️ Inflates cli-silent-start (#155) detection set 39→40, breaking green PT-7 —
++  coordinate.
++- **Unknown-`run`-verb refusal (error-actionability C2 — row-sf160):** `run shwo` → run.start
++  today (F8). Naive refuse-all breaks #155 green PT-3 (never-a-guess). Correct rule = Damerau-1
++  against the recognized set (shared surface with #155 PT-2a).
++- **Divergence ledger (R7 + C3/S2):** `surface-divergence-ledger.json` is empty; needs full-shape
++  entries + the 20 CLI-local tooling codes. File is `impl/scripts/` (not row-cli's).
++
++## Remaining (other rows)
++
++- scratchpad-write red rows (A2-1..A8-1, A10-1 legs c/d/e) — kernel/web/MCP/registry/deployment
++  seams.
++- doc-truth R1-R11 + error-actionability C/W/M/S rows — row-sf159 / row-sf160 seams.
+diff --git a/docs/reference/evidence/honesty-package-2026-08-14/notes-row-cli.md b/docs/reference/evidence/honesty-package-2026-08-14/notes-row-cli.md
+index be4b382..570e682 100644
+--- a/docs/reference/evidence/honesty-package-2026-08-14/notes-row-cli.md
++++ b/docs/reference/evidence/honesty-package-2026-08-14/notes-row-cli.md
+@@ -132,6 +132,40 @@ surface-inventory artifact: the profile inventory derives from `APPLICATION_SEMA
+ canonical operations, and the registry row is the kernel row's work (mine is the CLI admission,
+ which is what the artifact's `cliWebCommands` count reflects: 37 → 40).
+ 
++## Cross-seam coordination intelligence (for row-sf159 / row-sf160 / the coordinator)
++
++During the continue-verification pass I mapped the CLI-seam gaps the OTHER two suites' rows pin,
++because every one of them touches `application-cli.mjs` (my owned file) — but none is in my
++dispatch acceptance (which is cli-wave-fidelity + the scratchpad CLI rows only; the fold-suite-159
++and fold-suite-160 headers name `row-sf159` / `row-sf160` as those rows' owners). Recorded here so
++those rows inherit the terrain map.
++
++- **`run.watch` (doc-truth R1/R4 — row-sf159).** `parseBatonCli(['run','watch','run:r1'])` today
++  throws `cli_invalid: unexpected argument run:r1` and BARE `run watch` silently reinterprets to
++  `run.start` objective `'watch'` (the R4 headline). The fix is additive: recognize `watch` as a
++  run first-token and serve `run watch RUN_ID` → `run.watch`, with bare `run watch` refusing the
++  value-required (Run ID) shape — `cli_invalid` + `/run id|runId|required/i`.
++  ⚠️ **Cross-wave constraint:** adding `watch` as a recognized first-token inflates the
++  cli-silent-start suite's (#155) DERIVED detection set from 39 → 40, which breaks that suite's
++  currently-GREEN PT-7 pin (`assert.equal(detection.size, 39)`, cli-silent-start-red.test.mjs:439)
++  — the 39 is "at HEAD", so #155's impl may re-pin it, but row-sf159 must coordinate rather than
++  silently break the pin.
++- **Unknown-`run`-verb refusal (error-actionability C2 — row-sf160).** `parseBatonCli(['run',
++  'shwo'])` today returns `run.start` objective `'shwo'` (the F8 silent-reinterpretation defect at
++  `application-cli.mjs:1578`). C2 wants `cli_command_unavailable` + a message naming the closed run
++  verb set. ⚠️ **Cross-wave constraint:** a naive "refuse ALL unknown run verbs" breaks the
++  cli-silent-start (#155) currently-GREEN PT-3 pin (`run deploy`/`refactor`/`stow` must stay
++  objective-first — never-a-guess). The only rule satisfying both is Damerau-distance-1 detection
++  against the recognized first-token set (exactly #155's core), so C2 and #155's PT-2a share one
++  implementation surface — row-sf160 should implement F8 on top of #155's guard, or land both.
++- **Divergence ledger (doc-truth R7 + error-actionability C3/S2).** The committed
++  `surface-divergence-ledger.json` is `{schemaVersion:1, entries:[]}`; R7 needs full-shape entries
++  for the whitelisted-but-web-refused facade ports and C3/S2 need the 20 CLI-local tooling codes
++  ledgered deliberately code-only. The ledger is `impl/scripts/` — outside my owned files.
++
++None of the above changes my acceptance: my seam rows are all green (modulo the A10-1 leg (b)
++broken regex above), and the adjacents in my verify list are undisturbed.
++
+ ## Generated-surface regeneration
+ 
+ - `impl/CLI.md`: `render-surface-docs.mjs` added the `waves.send` / `waves.stop` rows to the
+-- 
+2.50.1
+

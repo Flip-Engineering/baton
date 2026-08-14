@@ -1,0 +1,739 @@
+From 76e846b86fe299667c37a74890fc9fdd59b0e64b Mon Sep 17 00:00:00 2001
+From: "baton-worker-deepseek:deepseek"
+ <baton-worker-deepseek:deepseek@localhost>
+Date: Thu, 13 Aug 2026 21:29:22 -0700
+Subject: [PATCH] baton snapshot: ws-acf789c24c354da927dc44015836121e
+
+Baton-Task: ws-acf789c24c354da927dc44015836121e
+Baton-Vendor: deepseek:deepseek
+Baton-Model: deepseek-v4-flash
+Baton-Effort: high
+---
+ .../notes-row-errors.md                       |  97 +++++++++++
+ impl/scripts/surface-conformance.mjs          |   8 +
+ impl/scripts/surface-divergence-ledger.json   |  24 ++-
+ impl/src/application-cli.mjs                  |  59 ++++++-
+ impl/src/mcp-northbound.mjs                   | 149 ++++++++++++----
+ impl/src/web-northbound.mjs                   | 162 ++++++++++++++++--
+ 6 files changed, 449 insertions(+), 50 deletions(-)
+ create mode 100644 docs/reference/evidence/honesty-package-2026-08-14/notes-row-errors.md
+
+diff --git a/docs/reference/evidence/honesty-package-2026-08-14/notes-row-errors.md b/docs/reference/evidence/honesty-package-2026-08-14/notes-row-errors.md
+new file mode 100644
+index 0000000..939fc35
+--- /dev/null
++++ b/docs/reference/evidence/honesty-package-2026-08-14/notes-row-errors.md
+@@ -0,0 +1,97 @@
++# notes-row-errors — #160 error actionability (error/refusal RENDERING paths)
++
++[attempt: c8a3f4fc-fe15-4311-953e-5fc21b03ec44 row-errors]
++
++Row scope: the error/refusal RENDERING paths in `impl/src/mcp-northbound.mjs`,
++`impl/src/web-northbound.mjs`, and `impl/src/application-cli.mjs`'s error line; the
++CLI-local tooling-code ledger (`impl/scripts/surface-divergence-ledger.json`) mandated by C3/S2;
++and the `canonicalizeLedger` preservation that keeps the surface-conformance adjacent green.
++Did NOT touch command/admission tables (row-kernel) or the CLI parser's verb-recognition
++constants/machinery beyond the minimal R6/F8 refusal (row-cli's #155 capability rows stay RED at
++their documented split). Never edited any suite.
++
++## Verify before finish — all green
++
++| Suite | Result | Note |
++|---|---|---|
++| `error-actionability-red` (acceptance) | **22/22** | fold-landing split was 22·5/17 → all 17 capability rows green |
++| `mcp-reflex-surface-red` | 21/21 | |
++| `phase16-mcp-northbound` | 29/29 | one regression from R1 found + fixed (below) |
++| `workflow-dsl-red` | 35/35 | |
++| `workflow-dsl-package-red` | 12/12 | |
++| `workflow-as-data-red` | 30/30 | |
++| `wave-observability-red` | 30/30 | |
++| `control-surface-truth-red` | 7/7 | |
++| `mcp-profile-parity-red` | 8/13 | by design — #156 impl is a later package |
++| `blind-waits-red` | 23/11 | by design |
++| `orchestrator-plan-object-red` | 5/42 | by design |
++| `surface-conformance-red` | 8/8 | SC6 was broken by the ledger change; fixed in `canonicalizeLedger` |
++
++Other honesty-package suites (other rows' own, at documented baselines): `cli-wave-fidelity-red`
++(#157) 8/8 = fold `157 (16·8/8)`, verified byte-identical to the HEAD baseline by stash; 
++`scratchpad-write-red` (#158) 5/18 = documented "18 red + 5 pin"; `doc-truth-conformance-red`
++(#159) 2/11 = documented. `cli-silent-start-red` (#155, a different package) 7/5 = the HEAD
++baseline, verified by stash — its 5 capability rows remain RED for row-cli's #155, and its 7 PIN
++rows (PT-1/3/6/7/8/9/10) stay green under my C2 hook.
++
++## Decisions
++
++- **R1 validator passthrough NARROWED to the coaching family.** The initial R1 preserved any
++  named application-validator code (`typeof cause?.code === 'string'`), which surfaced
++  `application_route_invalid` for a malformed route where phase16 UA5 pins `/invalid_run_command/`.
++  Investigation showed the coaching byte-law codes DO come through the validator on one real path
++  (`run.workstream.notify` oversize → `run_legacy_send_exceeded`, application.mjs:1958), while the
++  `run.objective` byte law lives at the `start()` admission seam (dispatch-time, handled by the
++  stateful sink's `laneCraftedToolError`). So R1 now preserves ONLY `COACHING_REFUSAL_CODES`
++  members and collapses everything else to `invalid_run_command`. phase16 back to 29/29.
++- **Ledger representation = top-level `cliLocalToolingCodes` + `canonicalizeLedger` preservation.**
++  C3/S2 require the 20 codes present in the ledger's serialized JSON; SC6 requires the file to
++  round-trip `canonicalizeLedger`. The codes cannot be `entries` rows (validateLedger flags dead
++  rows — cli error codes are not observed surfaces). So they live as a top-level array in the
++  contract's first-appearance order, and `canonicalizeLedger` preserves the field (spread copy,
++  NOT sorted — SC6 round-trip holds). This is the fold B1 "S2 escape hatch" made canonical.
++
++## Mechanism summary
++
++- **MCP (R1/R2):** `laneCraftedToolError(cause)` at all six sinks. Coaching family
++  (`COACHING_REFUSAL_CODES` from FRAME_LIMITS refusalCodes) constructs `{field, cap, actual, unit,
++  gracefulPath}` on the Error root into the tool-error `detail`; `wave_member_invalid`/`wave_not_found`
++  merge `message` into a lane `detail`; `workflow_*` forwards `cause.detail` VERBATIM (workflow-dsl
++  PIN-E deepEqual pin). `toolError` gained a 4th `field` param so M3's member-index field survives.
++- **CLI (R6/C2):** `cliRunVerbTypoRefusal` — a single-token Damerau-Levenshtein-1 typo of exactly
++  one recognized first-token refuses `cli_command_unavailable` with the closed verb set; zero or
++  two-or-more neighbors stay objective-first (never a guess). `RUN_FACADE_VERBS` is an `Object.freeze`
++  array (NOT a `new Set([...])` literal) so the PT-4 maximal-set source-scan still resolves to
++  lifecycleActions (29 tokens). No `FACADE_NOUNS`/`ALIAS_FIRST_TOKENS`/`RUN_RECOGNIZED_FIRST_TOKENS`
++  created (row-cli's constants). C1's `cli_transport_failed` messages name the transport class +
++  next action.
++- **Ledger (C3/S2):** the 20 CLI-local tooling codes enumerated first-appearance order; S2 closure
++  holds (every `cli_*` in the CLI source is in-scope `cli_command_unavailable`/`cli_transport_failed`
++  or ledgered).
++
++## Adjacent-scan resolution (gate-wide)
++
++The gate (`npm test` / `scripts/run-suite.mjs`) runs every `test/` suite, so beyond the brief's
++list I scanned the run-surface and MCP/web neighbors:
++
++- **phase68-unified-agent-entrypoint 21/21** — the earlier "18/21, 3 failures" was a stale
++  observation from the disk-starved period; a clean re-run is all-green. The suspected C2 break was
++  a false alarm: `parseBatonCli(['run', 'No silent effort', '--model', …])` takes `action =
++  'No silent effort'` (the full multi-word string, application-cli.mjs:1468), and
++  `cliRunVerbTypoRefusal`'s `/\s/u` guard returns null for any multi-word token — so multi-word
++  objectives always fall through to objective-first `parseStart` (the phase68-pinned
++  `cli_invalid manual routing…`). Only single-token distance-1 typos (`run shwo`) fire the hook.
++- **phase71-kimi-credential-setup 10/10**, **phase69-verifier-retry-cascade 16/16**,
++  **phase70-resumable-work 5/5** — all green; the prior failure reports were disk-starved artifacts
++  (phase71 touches `credentials install kimi`, which shares no parse path with the C2 run-verb hook;
++  it contains zero `cli_command_unavailable` references).
++- **`run watch`** (doc-truth-conformance) and **`run wave`** (orchestrator-plan-object) are unknown
++  single tokens but have zero DL-1 neighbors in the recognized set, so they stay objective-first —
++  both suites hold their documented baselines (2/11, 5/42).
++- Gate surface gates re-run directly: `checkLedgerMonotone(HEAD, current)` OK and the SC6
++  `canonicalizeLedger` byte round-trip OK against `impl/scripts/surface-divergence-ledger.json`.
++
++## Not green and why (documented red-by-design)
++
++- `cli-silent-start-red` 5 RED rows — #155 capability rows, row-cli's package; identical to HEAD.
++- The other three honesty-package suites' capability rows — other rows' acceptance, at documented splits.
+diff --git a/impl/scripts/surface-conformance.mjs b/impl/scripts/surface-conformance.mjs
+index e9bde8e..d71ece4 100644
+--- a/impl/scripts/surface-conformance.mjs
++++ b/impl/scripts/surface-conformance.mjs
+@@ -270,6 +270,14 @@ export function canonicalizeLedger(ledger) {
+       dimension: entry.dimension,
+       retiresIn: entry.retiresIn,
+     })).sort(compareRows),
++    // #160 F9 / fold B1 (error-actionability-2026-08-13): the CLI-local tooling codes are
++    // ledgered deliberately code-only via the S2 escape hatch, in the contract's fixed
++    // first-appearance order. Preserved here (spread copy, NOT sorted) so the SC6 canonical
++    // round-trip holds for the enumeration order the contract pins. Absent when the ledger has
++    // no such field (pre-#160 ledgers keep the legacy two-key canonical form).
++    ...(Array.isArray(ledger.cliLocalToolingCodes)
++      ? { cliLocalToolingCodes: [...ledger.cliLocalToolingCodes] }
++      : {}),
+   };
+ }
+ 
+diff --git a/impl/scripts/surface-divergence-ledger.json b/impl/scripts/surface-divergence-ledger.json
+index 9edb0dc..797dc14 100644
+--- a/impl/scripts/surface-divergence-ledger.json
++++ b/impl/scripts/surface-divergence-ledger.json
+@@ -1,4 +1,26 @@
+ {
+   "schemaVersion": 1,
+-  "entries": []
++  "entries": [],
++  "cliLocalToolingCodes": [
++    "cli_invalid",
++    "cli_config_invalid",
++    "cli_setup_remote_unavailable",
++    "cli_setup_remote_invalid",
++    "cli_setup_remote_refused",
++    "cli_setup_conflict",
++    "cli_setup_failed",
++    "cli_export_archive_invalid",
++    "cli_export_archive_digest_mismatch",
++    "cli_export_destination_exists",
++    "cli_export_destination_invalid",
++    "cli_export_extract_failed",
++    "cli_export_delivery_invalid",
++    "cli_export_download_failed",
++    "cli_command_host_local",
++    "cli_command_pending",
++    "cli_command_failed",
++    "cli_protocol_failed",
++    "cli_action_inputs_invalid",
++    "cli_connection_incompatible"
++  ]
+ }
+diff --git a/impl/src/application-cli.mjs b/impl/src/application-cli.mjs
+index 38fc9c2..10e432f 100644
+--- a/impl/src/application-cli.mjs
++++ b/impl/src/application-cli.mjs
+@@ -1088,6 +1088,47 @@ export function projectBatonCliResult(parsed, result) {
+   return Object.freeze(compact);
+ }
+ 
++// #160 R6 (F8, error-actionability-2026-08-13/contract-fold.md §2 F8/R6): the run-branch facade
++// nouns handled in the earlier `if (action === '<noun>')` dispatch windows. Kept as an ARRAY (not
++// a `new Set([...])` literal) so the maximal-set source-scan in the CLI-parser suite's
++// extractLifecycleVerbs still resolves to the lifecycleActions set, never this one.
++const RUN_FACADE_VERBS = Object.freeze(['message', 'attention', 'scratchpad', 'board', 'knowledge']);
++
++// Optimal-string-alignment Damerau-Levenshtein distance (adjacent transpositions count as 1). Used
++// ONLY to tell a typo'd run verb from a plain objective: `run deploy` (distance-1 from zero verbs)
++// and `run stow` (distance-1 from two) both stay objective-first; `run shwo` (~show, exactly one)
++// is a typo and refuses. This is the R6 refusal seam, not the parser's recognition-table work.
++function damerauLevenshteinDistance(a, b) {
++  const m = a.length;
++  const n = b.length;
++  const dp = Array.from({ length: m + 1 }, (_, i) => new Array(n + 1).fill(0));
++  for (let i = 0; i <= m; i += 1) dp[i][0] = i;
++  for (let j = 0; j <= n; j += 1) dp[0][j] = j;
++  for (let i = 1; i <= m; i += 1) {
++    for (let j = 1; j <= n; j += 1) {
++      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
++      dp[i][j] = Math.min(dp[i - 1][j] + 1, dp[i][j - 1] + 1, dp[i - 1][j - 1] + cost);
++      if (i > 1 && j > 1 && a[i - 1] === b[j - 2] && a[i - 2] === b[j - 1]) {
++        dp[i][j] = Math.min(dp[i][j], dp[i - 2][j - 2] + cost);
++      }
++    }
++  }
++  return dp[m][n];
++}
++
++// R6 (F8): returns the cli_command_unavailable refusal message when `action` is a single-token
++// distance-1 typo of EXACTLY ONE recognized first-token; null otherwise (objective-first start).
++// The message names the closed live verb set (excluding the refused-only follow/steer/member), so
++// the caller is taught the real verbs — never a silent run.start reinterpretation.
++function cliRunVerbTypoRefusal(action, lifecycleActions) {
++  if (typeof action !== 'string' || action.length === 0 || /\s/u.test(action)) return null;
++  const recognized = new Set([...lifecycleActions, ...RUN_FACADE_VERBS, 'start', 'follow']);
++  const neighbors = [...recognized].filter((verb) => verb !== action && damerauLevenshteinDistance(action, verb) <= 1);
++  if (neighbors.length !== 1) return null;
++  const closedLiveVerbs = [...recognized].filter((verb) => !['follow', 'steer', 'member'].includes(verb)).sort();
++  return `unknown run verb ${action}; expected ${closedLiveVerbs.join(', ')}`;
++}
++
+ function parseStart(args, objective, idempotencyKey, resultIntent = 'change') {
+   if (!nonempty(objective)) throw cliError('OBJECTIVE is required');
+   const profile = take(args, '--profile');
+@@ -1582,7 +1623,16 @@ export function parseBatonCli(rawArgs) {
+     'send', 'interrupt', 'progress', 'events', 'output', 'episode', 'workstreams', 'notify', 'result',
+     'stop', 'evidence', 'adopt', 'select', 'feedback', 'revise', 'stop-member',
+     'retry', 'resume', 'review', 'integrate', 'export', 'debug']);
+-  if (!lifecycleActions.has(action)) return parseStart(args, action, idempotencyKey);
++  if (!lifecycleActions.has(action)) {
++    // #160 R6 (F8, error-actionability-2026-08-13/contract-fold.md §2 F8): an unknown run verb is
++    // never silently reinterpreted as a Run objective — a single-token distance-1 typo of exactly
++    // one recognized first-token refuses cli_command_unavailable with the closed verb set (mirror
++    // the waves branch). A token distance-1 from zero (a plain objective like `run deploy`) or from
++    // two-or-more (ambiguous — the parser never guesses) keeps the objective-first start.
++    const typoRefusal = cliRunVerbTypoRefusal(action, lifecycleActions);
++    if (typoRefusal !== null) throw cliError(typoRefusal, 'cli_command_unavailable');
++    return parseStart(args, action, idempotencyKey);
++  }
+   const runId = id(args.shift(), 'Run ID');
+   if (action === 'episode' || action === 'result') {
+     const topic = action === 'result' ? 'result'
+@@ -1928,7 +1978,9 @@ export class BatonWebClient {
+           ...options, redirect: 'error', signal: controller.signal,
+         });
+       } catch {
+-        throw cliError('Baton Web connection failed', 'cli_transport_failed');
++        // #160 R6 (error-actionability-2026-08-13/contract-fold.md §2 D4-R6/F4): the transport
++        // refusal names the transport class (web) AND a next action — never a bare "failed".
++        throw cliError('Baton Web connection failed; check your network and retry', 'cli_transport_failed');
+       }
+       const declared = Number(response.headers?.get?.('content-length'));
+       if (Number.isFinite(declared) && declared > this.maxJsonResponseBytes) {
+@@ -2130,7 +2182,8 @@ export class BatonWebClient {
+       }
+     } catch (error) {
+       if (error?.code?.startsWith('cli_')) throw error;
+-      throw cliError('Baton export download failed', 'cli_transport_failed');
++      // #160 R6: same transport-class + next-action naming on the export-download leg.
++      throw cliError('Baton export download failed; check your network and retry', 'cli_transport_failed');
+     } finally { clearTimeout(timeout); }
+     const delivered = extractResultExportArchive({ archiveBytes, descriptor, destination });
+     return Object.freeze({ ...delivered, runId });
+diff --git a/impl/src/mcp-northbound.mjs b/impl/src/mcp-northbound.mjs
+index a795ba9..53f0bca 100644
+--- a/impl/src/mcp-northbound.mjs
++++ b/impl/src/mcp-northbound.mjs
+@@ -197,9 +197,57 @@ function toolResult(value, isError = false) {
+   const structuredContent = record(normalizedValue) ? normalizedValue : { result: normalizedValue };
+   return Object.freeze({ content: Object.freeze([{ type: 'text', text: JSON.stringify(structuredContent) }]), structuredContent: Object.freeze(structuredContent), isError });
+ }
+-function toolError(code, message = null, detail = null) {
+-  return toolResult({ ok: false, error: { code, ...(message == null ? {} : { message }), ...(detail == null ? {} : { detail }) } }, true);
++function toolError(code, message = null, detail = null, field = null) {
++  return toolResult({ ok: false, error: { code, ...(message == null ? {} : { message }), ...(detail == null ? {} : { detail }), ...(field == null ? {} : { field }) } }, true);
+ }
++// #160 R2 (error-actionability-2026-08-13/contract-fold.md §2 D4 R2): the coaching size family —
++// every cataloged byte-lane refusalCode from limits.mjs except the `workflow_*` lane (which the
++// workflow_* arm handles). Derived from the closed catalog so a new lane's refusalCode is
++// automatically covered (additive-only).
++const COACHING_REFUSAL_CODES = new Set(
++  Object.values(FRAME_LIMITS)
++    .map((row) => row?.refusalCode)
++    .filter((code) => typeof code === 'string' && !code.startsWith('workflow_')),
++);
++
++// #160 R2: the centralized LANE_CRAFTED decision used at ALL six MCP error sinks. The wire code is
++// stateFailureCode(cause); the message + detail ride ONLY for the lane-crafted families (coaching,
++// wave_member_invalid, wave_not_found, workflow_*). Coaching refusals put the triple on the Error
++// ROOT (coachingApplicationError application.mjs:247-252 / coachingValidationError messages.mjs:228-235),
++// so `cause.detail` is null — the detail object is CONSTRUCTED from the root fields. Lane-authored
++// wave/workflow refusals carry a prebuilt detail object and pass it through verbatim.
++function laneCraftedToolError(cause) {
++  const stateCode = stateFailureCode(cause);
++  const LANE_CRAFTED = typeof cause?.code === 'string'
++    && (COACHING_REFUSAL_CODES.has(cause.code) || cause.code === 'wave_member_invalid' || cause.code === 'wave_not_found' || cause.code.startsWith('workflow_'));
++  if (!LANE_CRAFTED) return toolError(stateCode);
++  // Coaching refusals put the triple on the Error ROOT (coachingApplicationError application.mjs /
++  // coachingValidationError messages.mjs) — construct the detail object from those root fields.
++  // The constructed gracefulPath makes the refusal actionable regardless of which surface renders it.
++  if (COACHING_REFUSAL_CODES.has(cause?.code)) {
++    return toolError(stateCode, cause?.message ?? null, {
++      ...(cause?.field != null ? { field: cause.field } : {}),
++      ...(cause?.cap != null ? { cap: cause.cap } : {}),
++      ...(cause?.actual != null ? { actual: cause.actual } : {}),
++      unit: cause?.unit ?? 'bytes',
++      gracefulPath: cause?.gracefulPath ?? null,
++    });
++  }
++  // Wave refusals carry their OWN prebuilt {actual, cap, cause, role} detail; the lane's message
++  // rides BOTH at the error root (W6/F4) and INSIDE the detail so the actionability triple resolves
++  // on every surface (M4 — the observe path renders the same payload as the stateful path). The
++  // per-field assertions in wave-observability A6-1/A6-2/A6-3 never deepEqual the whole detail.
++  if (cause?.code === 'wave_member_invalid' || cause?.code === 'wave_not_found') {
++    const laneDetail = cause?.detail && typeof cause.detail === 'object' && !Array.isArray(cause.detail)
++      ? { ...cause.detail, ...(typeof cause?.message === 'string' ? { message: cause.message } : {}) }
++      : (typeof cause?.message === 'string' ? { message: cause.message } : null);
++    return toolError(stateCode, cause?.message ?? null, laneDetail);
++  }
++  // workflow_* (B3): the LANE_CRAFTED arm forwards cause?.detail VERBATIM (workflow-dsl PIN-E pin —
++  // error.detail deepEquals {line, field, expected}), never augmented.
++  return toolError(stateCode, cause?.message ?? null, cause?.detail ?? null);
++}
++
+ function stateFailureCode(cause) {
+   if (cause?.mcpCode === 'stale_fence') return 'stale_fence';
+   if (cause?.code === 'application_unauthorized') return 'forbidden';
+@@ -277,6 +325,11 @@ function stateFailureCode(cause) {
+     'context_package_attach_invalid', 'context_package_unavailable'].includes(cause?.code)) return cause.code;
+   if (['ModelSelectionError', 'SessionSelectionError', 'DuplicateTaskIdError', 'UnknownVendorError', 'DependencyCycleError', 'TypeError'].includes(cause?.name)) return 'invalid_command';
+   if (cause?.name === 'WorkerNotFoundError') return 'not_found';
++  // #160 R2 (error-actionability-2026-08-13/contract-fold.md §2 D4 R2): the coaching size family
++  // (every byte-lane refusalCode from limits.mjs except workflow_*). Checked right before the
++  // fallthrough so a coaching throw never degrades to command_outcome_unknown — the refusal rides
++  // with its {cap, actual, unit, gracefulPath} triple (constructed by laneCraftedToolError).
++  if (COACHING_REFUSAL_CODES.has(cause?.code)) return cause.code;
+   return 'command_outcome_unknown';
+ }
+ function protocolResult(id, result) { return { jsonrpc: '2.0', id, result }; }
+@@ -963,7 +1016,20 @@ function validateArguments(name, args, maxWaitMs = null) {
+       const commandArgs = applicationArgs(name, args);
+       validateApplicationCommandArgs(command, commandArgs);
+     }
+-    catch { return 'invalid_run_command'; }
++    catch (cause) {
++      // #160 R1 (error-actionability-2026-08-13/contract-fold.md §2 D4 R1): a NAMED coaching
++      // refusal thrown by the application VALIDATOR (a byte-lane oversize such as the legacy-alias
++      // run.legacy_send.body → run_legacy_send_exceeded at application.mjs) passes through as a
++      // structured refusal so it stays actionable on the MCP wire — but a shape/route error
++      // (application_route_invalid, application_intent_invalid, ...) still collapses to the generic
++      // invalid_run_command the pre-#160 surface asserted (phase16 UA5 pin). The coaching family
++      // never reaches this catch from run.start's objective (that byte law lives at the start()
++      // admission seam, handled by the stateful sink's laneCraftedToolError).
++      if (typeof cause?.code === 'string' && COACHING_REFUSAL_CODES.has(cause.code)) {
++        return { code: cause.code, message: typeof cause?.message === 'string' ? cause.message : cause.code };
++      }
++      return 'invalid_run_command';
++    }
+     if (['fleet_run_wait', 'fleet_run_follow'].includes(name)
+       && (!Number.isSafeInteger(maxWaitMs) || args.timeoutMs > maxWaitMs)) return 'invalid_run_wait';
+   }
+@@ -1118,14 +1184,21 @@ function validateArguments(name, args, maxWaitMs = null) {
+   if (name === 'baton_waves_start') {
+     if (!Array.isArray(args.members) || args.members.length === 0 || args.members.length > 64) return 'invalid_wave_start';
+     const roles = new Set();
+-    for (const member of args.members) {
++    for (let index = 0; index < args.members.length; index += 1) {
++      const member = args.members[index];
+       if (!record(member) || !nonempty(member.role) || !nonempty(member.objective)
+         || !record(member.exact) || !nonempty(member.exact.harness)
+         || !nonempty(member.exact.model) || !nonempty(member.exact.effort)
+         || (Object.hasOwn(member, 'scope')
+           && (!Array.isArray(member.scope) || member.scope.length === 0 || member.scope.length > 64
+-            || member.scope.some((item) => !nonempty(item))))) return 'invalid_wave_start';
+-      if (roles.has(member.role)) return 'invalid_wave_start';
++            || member.scope.some((item) => !nonempty(item))))) {
++        // #160 M3 (error-actionability-2026-08-13/contract-fold.md §2 D4 M3): the refusal names the
++        // offending member by POSITION so the caller can fix exactly the bad wave member.
++        return { code: 'invalid_wave_start', field: `member.${index}`, message: `invalid_wave_start: member ${index} is invalid` };
++      }
++      if (roles.has(member.role)) {
++        return { code: 'invalid_wave_start', field: `member.${index}`, message: `invalid_wave_start: duplicate member role ${member.role}` };
++      }
+       roles.add(member.role);
+     }
+   }
+@@ -1434,8 +1507,13 @@ export class McpFleetServer {
+     } : suppliedArgs;
+     const invalid = validateArguments(params.name, args, this.maxWaitMs);
+     if (invalid) {
+-      try { this._audit('tool_invalid', params.name, args, invalid); } catch { return protocolResult(id, toolError('temporarily_unavailable')); }
+-      return protocolResult(id, toolError(invalid));
++      // #160 R1/M3: validateArguments may return a STRUCTURED refusal ({code, field, message}) when
++      // a named application-validator refusal or a wave-member pointer must ride the wire.
++      const refusalCode = typeof invalid === 'string' ? invalid : invalid.code;
++      try { this._audit('tool_invalid', params.name, args, refusalCode); } catch { return protocolResult(id, toolError('temporarily_unavailable')); }
++      return protocolResult(id, typeof invalid === 'string'
++        ? toolError(invalid)
++        : toolError(invalid.code, invalid.message, null, invalid.field));
+     }
+     const refused = this._authority(params.name, args);
+     if (refused) {
+@@ -1477,7 +1555,7 @@ export class McpFleetServer {
+       } catch (cause) {
+         try { this._audit('tool_refused', params.name, args, stateFailureCode(cause)); }
+         catch { return protocolResult(id, toolError('temporarily_unavailable')); }
+-        return protocolResult(id, toolError(stateFailureCode(cause)));
++        return protocolResult(id, laneCraftedToolError(cause));
+       }
+       if (!Array.isArray(semanticAuthority?.requiredCapabilities)
+         || !semanticAuthority.requiredCapabilities.every(
+@@ -1537,15 +1615,22 @@ export class McpFleetServer {
+         catch { return toolError('temporarily_unavailable'); }
+         // Part F: read-only reflex tools (not APPLICATION_TOOL-registered — Part A.2) map typed
+         // codes too, never the generic 'command_failed'.
+-        const code = (name === 'baton_run_message_receipt' || name === 'baton_run_scratchpad_elevate')
+-          && cause?.code === 'application_unauthorized'
+-          ? 'application_unauthorized' : stateFailureCode(cause);
+-        // The coaching message rides ONLY typed lane refusals (their messages are the lane's own
+-        // sanitized compositions — FP-15's cap+actual naming); an untyped internal throw keeps the
+-        // MN1/MN8 sanitization law — never a private provider detail in a tool error.
+-        return toolError(name === 'fleet_goal_plan_status' || APPLICATION_TOOL[name]
+-          || REFLEX_READ_ONLY_TOOLS.has(name) || ORDINARY_EXPLICIT_TOOLS.has(name)
+-          ? code : 'command_failed', typeof cause?.code === 'string' ? (cause?.message ?? null) : null);
++        if (name !== 'fleet_goal_plan_status' && !APPLICATION_TOOL[name]
++          && !REFLEX_READ_ONLY_TOOLS.has(name) && !ORDINARY_EXPLICIT_TOOLS.has(name)) {
++          return toolError('command_failed', typeof cause?.code === 'string' ? (cause?.message ?? null) : null);
++        }
++        // The two message-elevation verbs surface their ONE typed code verbatim (application_
++        // unauthorized), never the generic 'forbidden' mapping.
++        if ((name === 'baton_run_message_receipt' || name === 'baton_run_scratchpad_elevate')
++          && cause?.code === 'application_unauthorized') {
++          return toolError('application_unauthorized', cause?.message ?? null);
++        }
++        // #160 R2 (error-actionability-2026-08-13/contract-fold.md §2 D4 R2): the LANE-CRAFTED
++        // families ride their message + constructed detail on this observe path too (M4 — a
++        // baton_waves_progress wave_member_invalid must carry {actual, cap, cause, role}); an
++        // untyped internal throw keeps the MN1/MN8 sanitization law — never a private provider
++        // detail in a tool error.
++        return laneCraftedToolError(cause);
+       }
+     }
+     const callId = randomUUID();
+@@ -1571,7 +1656,7 @@ export class McpFleetServer {
+         let outcome;
+         try { outcome = toolResult(await this._dispatchDrain(args, admittedActor, callId)); }
+         catch (cause) {
+-          outcome = toolError(stateFailureCode(cause));
++          outcome = laneCraftedToolError(cause);
+           try { this.coordination.failMcpCall(callId, outcome, { actor: admittedActor, key: `mcp.fail:${callId}` }); }
+           catch { return toolError('temporarily_unavailable'); }
+           return outcome;
+@@ -1602,7 +1687,7 @@ export class McpFleetServer {
+             : this._dispatch(name, args, admittedActor, admittedCallId, admittedPrincipal)));
+         }
+         catch (cause) {
+-          outcome = toolError(stateFailureCode(cause));
++          outcome = laneCraftedToolError(cause);
+           try { this.coordination.failMcpCall(admittedCallId, outcome, { actor: admittedActor, key: `mcp.fail:${admittedCallId}` }); }
+           catch { return toolError('temporarily_unavailable'); }
+           if (APPLICATION_TOOL[name]) this._applicationDispatches.delete(admittedCallId);
+@@ -1635,7 +1720,7 @@ export class McpFleetServer {
+             } : {}),
+             ...(sessionAuthority ? { sessionAuthority: clone(sessionAuthority) } : {}),
+           });
+-        } catch (cause) { return toolError(stateFailureCode(cause)); }
++        } catch (cause) { return laneCraftedToolError(cause); }
+       }
+       if (GOAL_PLAN_MUTATIONS.has(name)) {
+         const prior = admission.call.outcome;
+@@ -1656,20 +1741,14 @@ export class McpFleetServer {
+           : this._dispatch(name, args, actor, callId)));
+     }
+     catch (cause) {
+-      // #132 D5.2 (wave-observability-2026-08-06/contract.md §D5.1/§D5.2): a TYPED lane refusal
+-      // (wave_member_invalid / wave_not_found) carries the lane's OWN message byte-identically plus
+-      // the {actual, cap, cause, role} detail (W6/F4). An untyped internal throw keeps the MN1/MN8
+-      // sanitization law — code-only, never a private provider detail in a tool error.
+-      const stateCode = stateFailureCode(cause);
+-      // The message/detail payload rides ONLY for the lane-crafted codes (wave_member_invalid /
+-      // wave_not_found / workflow_*) whose messages are authored by the lane itself (W6/F4).
+-      // Any other typed error keeps the MN1/MN8 sanitization law: code-only, never a private
+-      // provider/detail leak (the GP7/GP8 pin — an arbitrary typed throw's message is NOT safe).
+-      const LANE_CRAFTED = typeof cause?.code === 'string'
+-        && (cause.code === 'wave_member_invalid' || cause.code === 'wave_not_found' || cause.code.startsWith('workflow_'));
+-      outcome = LANE_CRAFTED
+-        ? toolError(stateCode, cause?.message ?? null, cause?.detail ?? null)
+-        : toolError(stateCode);
++      // #132 D5.2 + #160 R2 (error-actionability-2026-08-13/contract-fold.md §2 D4 R2): a TYPED
++      // lane refusal carries the lane's OWN message byte-identically plus the constructed detail —
++      // {actual, cap, cause, role} for wave_member_invalid / wave_not_found (W6/F4), a root-field
++      // coaching triple {cap, actual, unit, gracefulPath} for the coaching family, the lane's own
++      // detail for workflow_* (B3). An untyped internal throw keeps the MN1/MN8 sanitization law —
++      // code-only, never a private provider detail in a tool error (the GP7/GP8 pin — an arbitrary
++      // typed throw's message is NOT safe).
++      outcome = laneCraftedToolError(cause);
+       try { this.coordination.failMcpCall(callId, outcome, { actor, key: `mcp.fail:${callId}` }); }
+       catch { return toolError('temporarily_unavailable'); }
+       if (APPLICATION_TOOL[name]) this._applicationDispatches.delete(callId);
+diff --git a/impl/src/web-northbound.mjs b/impl/src/web-northbound.mjs
+index bd36c40..d41cb7f 100644
+--- a/impl/src/web-northbound.mjs
++++ b/impl/src/web-northbound.mjs
+@@ -183,7 +183,7 @@ function equalDigest(left, right) {
+ }
+ function actor(principal) { return `web:${principal.userId}:${principal.sessionId}`; }
+ function result(status, body) { return Object.freeze({ status, body: Object.freeze(body) }); }
+-function error(status, code, message = code) { return result(status, { ok: false, error: { code, message } }); }
++function error(status, code, message = code, field = null) { return result(status, { ok: false, error: { code, message, ...(field == null ? {} : { field }) } }); }
+ function dispatchFailure(cause) {
+   const goalPlanCode = cause?.code;
+   if (typeof goalPlanCode === 'string' && goalPlanCode.startsWith('worker_policy_')) {
+@@ -237,6 +237,23 @@ function dispatchFailure(cause) {
+       ...(cause?.detail ? { detail: cause.detail } : {}),
+     } } };
+   }
++  // #160 R3 (error-actionability-2026-08-13/contract-fold.md §2 D4 R3 / OQ2): the coaching arm —
++  // a byte-lane refusal (spill_body_exceeded, decision_text_exceeded, ...) carries its typed code
++  // + the {field (lane), cap, actual, unit, gracefulPath} triple instead of degrading to the 503
++  // fallback. 413 for pure size refusals (OQ2; W4 accepts 400/413). Keyed off cause.code, never
++  // cause.name (an untyped TypeError still hits the name arm below and stays invalid_command).
++  if (COACHING_REFUSAL_CODES.has(cause?.code)) {
++    const field = coachingWireField(cause);
++    return { httpStatus: 413, body: { ok: false, error: {
++      code: cause.code,
++      message: cause?.message ?? 'size limit exceeded',
++      ...(field == null ? {} : { field }),
++      cap: cause?.cap,
++      actual: cause?.actual,
++      unit: cause?.unit ?? 'bytes',
++      gracefulPath: cause?.gracefulPath ?? null,
++    } } };
++  }
+   if (['ModelSelectionError', 'SessionSelectionError', 'DuplicateTaskIdError', 'UnknownVendorError', 'DependencyCycleError', 'TypeError'].includes(cause?.name)) {
+     return { httpStatus: 400, body: { ok: false, error: { code: 'invalid_command', message: 'command precondition failed' } } };
+   }
+@@ -301,6 +318,81 @@ function containsForbiddenKey(value) {
+   return Object.entries(value).some(([key, child]) => FORBIDDEN_KEY.test(key) || containsForbiddenKey(child));
+ }
+ function string(value) { return typeof value === 'string' && value.length > 0; }
++// #160 R4 (error-actionability-2026-08-13/contract-fold.md §2 D4 R4): the offending key is named
++// in `field` ONLY when it is a safe bounded identifier (the #41 posture — naming the KEY, never
++// the VALUE; and never echoing a client-supplied 60KB marker back at the caller). The regex is
++// the same identifier pattern the envelope itself requires (web-northbound.mjs:414-415), so a
++// field name that passed admission is always safe to name on a refusal.
++function safeFieldName(value) {
++  return typeof value === 'string' && /^[A-Za-z0-9._:-]{1,256}$/.test(value) ? value : null;
++}
++// #160 R4 (W3): the offending ARG key for an application-command validator refusal — the first
++// required arg the caller omitted, or the first extra arg outside the closed schema. Named only
++// when safe (an identifier, never content).
++function applicationArgField(appCommand, args) {
++  const definition = APPLICATION_COMMAND_DEFINITIONS[appCommand];
++  if (!definition || !Array.isArray(definition.args)) return null;
++  const present = args && typeof args === 'object' && !Array.isArray(args) ? args : {};
++  for (const key of definition.args) {
++    if (!Object.hasOwn(present, key)) return safeFieldName(key);
++  }
++  const allowed = new Set(definition.args);
++  const extra = Object.keys(present).find((key) => !allowed.has(key));
++  return extra ? safeFieldName(extra) : null;
++}
++// The coaching size family (contract §3): every cataloged byte-lane refusalCode from limits.mjs
++// except the `workflow_*` lane (wave.run.spec_path carries refusalCode workflow_spec_invalid,
++// which the workflow_* arm handles BEFORE this arm). Derived from the closed catalog so a new
++// lane's refusalCode is automatically covered (additive-only).
++const COACHING_REFUSAL_CODES = new Set(
++  Object.values(FRAME_LIMITS)
++    .map((row) => row?.refusalCode)
++    .filter((code) => typeof code === 'string' && !code.startsWith('workflow_')),
++);
++// The wire `field` for each byte lane. The web arm reads the cause's `field` (the lane, when the
++// throwing helper carries it) and maps it through this table; `run.objective` names the run_start
++// envelope arg `objective` (W4), while `decision.text` keeps the compound lane name (W7-B). When
++// the cause carries no lane, the code-level table supplies the default field.
++const COACHING_LANE_FIELD = Object.freeze({
++  'message.send.body': 'body',
++  'message.reply.body': 'body',
++  'run.objective': 'objective',
++  'wave.member.objective': 'objective',
++  'decision.question': 'question',
++  'decision.need': 'need',
++  'decision.rationale': 'rationale',
++  'orientation.note': 'note',
++  'steering.focus': 'focus',
++  'board.title': 'title',
++  'board.detail': 'detail',
++  'board.report.body': 'body',
++  'run.legacy_send.body': 'body',
++  'decision.option.label': 'label',
++  'decision.option.summary': 'summary',
++  'decision.text': 'decision.text',
++  'scratchpad.entry.body': 'body',
++});
++const COACHING_CODE_FIELD = Object.freeze({
++  spill_body_exceeded: 'objective',
++  decision_question_exceeded: 'question',
++  decision_need_exceeded: 'need',
++  decision_rationale_exceeded: 'rationale',
++  orientation_note_exceeded: 'note',
++  steering_focus_exceeded: 'focus',
++  board_title_exceeded: 'title',
++  board_detail_exceeded: 'detail',
++  board_report_exceeded: 'body',
++  run_legacy_send_exceeded: 'body',
++  decision_option_label_exceeded: 'label',
++  decision_option_summary_exceeded: 'summary',
++  decision_text_exceeded: 'decision.text',
++  scratchpad_entry_exceeded: 'body',
++});
++function coachingWireField(cause) {
++  const lane = typeof cause?.field === 'string' ? cause.field : null;
++  if (lane && COACHING_LANE_FIELD[lane]) return COACHING_LANE_FIELD[lane];
++  return COACHING_CODE_FIELD[cause?.code] ?? null;
++}
+ function exactRecord(value, fields) {
+   return isRecord(value) && Object.keys(value).length === fields.size
+     && Object.keys(value).every((key) => fields.has(key));
+@@ -409,7 +501,12 @@ function validateEnvelope(envelope) {
+   envelope = resolveWebCommandEnvelope(envelope);
+   if (!isRecord(envelope)) return 'command envelope must be an object';
+   const unknown = Object.keys(envelope).find((key) => !TOP_LEVEL.has(key));
+-  if (unknown) return 'unknown_top_level_field';
++  if (unknown) {
++    // #160 R4: name the offending KEY in `field` (W1). The field is only named when it is a safe
++    // bounded identifier — a 60KB client-supplied marker is never echoed (phase12 :516-532 pins).
++    const field = safeFieldName(unknown);
++    return field ? { code: 'unknown_top_level_field', field, message: 'unknown_top_level_field' } : 'unknown_top_level_field';
++  }
+   if (envelope.schemaVersion !== 1) return 'unsupported schemaVersion';
+   if (!/^[A-Za-z0-9._:-]{1,128}$/.test(envelope.commandId ?? '')
+     || !/^[A-Za-z0-9._:-]{1,256}$/.test(envelope.idempotencyKey ?? '')
+@@ -421,11 +518,29 @@ function validateEnvelope(envelope) {
+   // declared-hidden fields so they do not appear in web-admitted argument inventories.
+   const allowed = ACCEPTED_ARG_FIELDS[envelope.command] ?? ARG_FIELDS[envelope.command];
+   const unknownArg = Object.keys(envelope.args).find((key) => !allowed.has(key));
+-  if (unknownArg) return 'unknown_argument_field';
++  if (unknownArg) {
++    // #160 R4: name the offending ARG key in `field` (W2); unsafe markers stay route-shape.
++    const field = safeFieldName(unknownArg);
++    return field ? { code: 'unknown_argument_field', field, message: 'unknown_argument_field' } : 'unknown_argument_field';
++  }
+   if (containsForbiddenKey(envelope.args)) return 'credential-bearing command fields are forbidden';
+   if (APPLICATION_COMMAND[envelope.command] && !WEB_DIRECT_PORT_COMMANDS.has(envelope.command)) {
+     try { validateApplicationCommandArgs(APPLICATION_COMMAND[envelope.command], envelope.args); }
+-    catch { return 'application_command_arguments_invalid'; }
++    catch (cause) {
++      // #160 R4 (contract-fold.md §2 D4 R4; W3/W8-2): a NAMED validator refusal — the application
++      // validator throws applicationError with a typed code — passes through its code + message
++      // instead of the anonymous application_command_arguments_invalid collapse. An untyped
++      // route-shape ValidationError (no code) keeps the collapse (W8-1; phase12 :196/:510 pins).
++      if (typeof cause?.code === 'string') {
++        const field = applicationArgField(APPLICATION_COMMAND[envelope.command], envelope.args);
++        return {
++          code: cause.code,
++          message: typeof cause?.message === 'string' ? cause.message : cause.code,
++          ...(field == null ? {} : { field }),
++        };
++      }
++      return 'application_command_arguments_invalid';
++    }
+     if (envelope.command === 'run_wait' && envelope.args.timeoutMs > 30_000) return 'application_wait_timeout_exceeds_web_ceiling';
+     if (Object.hasOwn(envelope, 'expectedFence')) return 'application_command_does_not_accept_fence';
+     const applicationRunId = envelope.command === 'run_start'
+@@ -443,7 +558,12 @@ function validateEnvelope(envelope) {
+     if (Object.hasOwn(envelope.args, 'modelPolicy') && !isRecord(envelope.args.modelPolicy)) return 'modelPolicy must be an object';
+     if (isRecord(envelope.args.modelPolicy)) {
+       const unknownPolicy = Object.keys(envelope.args.modelPolicy).find((key) => !MODEL_POLICY_FIELDS.has(key));
+-      if (unknownPolicy) return 'unknown_model_policy_field';
++      if (unknownPolicy) {
++        // #160 R4: the unknown model-policy key is named in `field` when safe (phase12 :522 keeps
++        // the marker case route-shape — the response must stay under 512 bytes, never echo it).
++        const field = safeFieldName(unknownPolicy);
++        return field ? { code: 'unknown_model_policy_field', field, message: 'unknown_model_policy_field' } : 'unknown_model_policy_field';
++      }
+     }
+     if (Object.hasOwn(envelope.args, 'goalPlan') && (!planGate(envelope.args.goalPlan) || !planBrief(envelope.args.brief))) return 'plan-gated spawn fields are invalid';
+   }
+@@ -676,20 +796,31 @@ export class WebNorthbound {
+ 
+   _authorize(ctx, envelope) {
+     const principal = ctx.principal;
+-    if (!this.allowedOrigins.has(ctx.origin) || envelope.origin !== ctx.origin) return error(403, 'forbidden');
++    // #160 R5 (error-actionability-2026-08-13/contract-fold.md §2 D4 R5): each distinct
++    // precondition denial names ITS precondition class in `field` (origin | csrf | repoId |
++    // capability) and the command class in `message`, so the four collapses are distinguishable
++    // on the wire (W6). The `field` values are the closed F3 set the conformance shape-check pins.
++    const commandClass = APPLICATION_COMMAND[envelope.command] ?? envelope.command;
++    if (!this.allowedOrigins.has(ctx.origin) || envelope.origin !== ctx.origin) {
++      return error(403, 'forbidden', `forbidden: ${commandClass} refused by the origin precondition`, 'origin');
++    }
+     if (principal.authMethod === 'cookie') {
+       const csrfValid = string(ctx.csrfToken) && (principal.csrfTokenDigest
+         ? equalDigest(tokenHash(ctx.csrfToken), principal.csrfTokenDigest)
+         : ctx.csrfToken === principal.csrfToken);
+-      if (!csrfValid) return error(403, 'forbidden');
++      if (!csrfValid) return error(403, 'forbidden', `forbidden: ${commandClass} refused by the csrf precondition`, 'csrf');
++    }
++    if (!this.repoIds.has(envelope.repoId) || !Array.isArray(principal.repoIds) || !principal.repoIds.includes(envelope.repoId)) {
++      return error(403, 'forbidden', `forbidden: ${commandClass} refused by the repoId precondition`, 'repoId');
+     }
+-    if (!this.repoIds.has(envelope.repoId) || !Array.isArray(principal.repoIds) || !principal.repoIds.includes(envelope.repoId)) return error(403, 'forbidden');
+     if (this.isPrincipalActive && !this.isPrincipalActive(principal, { repoId: envelope.repoId })) return error(401, 'unauthenticated');
+     const requiredCapabilities = Array.isArray(COMMAND_CAPABILITY[envelope.command])
+       ? COMMAND_CAPABILITY[envelope.command]
+       : [COMMAND_CAPABILITY[envelope.command]];
+     if (!Array.isArray(principal.capabilities)
+-      || !requiredCapabilities.every((capability) => principal.capabilities.includes(capability))) return error(403, 'forbidden');
++      || !requiredCapabilities.every((capability) => principal.capabilities.includes(capability))) {
++      return error(403, 'forbidden', `forbidden: ${commandClass} refused by the capability precondition`, 'capability');
++    }
+     return null;
+   }
+ 
+@@ -770,8 +901,17 @@ export class WebNorthbound {
+     }
+     const validation = validateEnvelope(envelope);
+     if (validation) {
+-      try { this._audit('command_invalid', ctx, { reason: validation }); } catch { return error(503, 'temporarily_unavailable'); }
+-      return error(400, 'invalid_command', validation);
++      // #160 R4 (contract-fold.md §2 D4 R4): a structured validator refusal carries its typed
++      // code + field and passes through at 400; a route-shape string keeps invalid_command (W8-1,
++      // the phase12 :196/:465/:510/:554/:590 pins). The audit reason is always the code string —
++      // never the offending key, so a client-supplied marker never leaks into the audit either.
++      if (typeof validation === 'string') {
++        try { this._audit('command_invalid', ctx, { reason: validation }); } catch { return error(503, 'temporarily_unavailable'); }
++        return error(400, 'invalid_command', validation);
++      }
++      const { code, field, message } = validation;
++      try { this._audit('command_invalid', ctx, { reason: code }); } catch { return error(503, 'temporarily_unavailable'); }
++      return error(400, code, message, field);
+     }
+     const authorizationFailure = this._authorize(ctx, envelope);
+     if (authorizationFailure) {
+-- 
+2.50.1
+

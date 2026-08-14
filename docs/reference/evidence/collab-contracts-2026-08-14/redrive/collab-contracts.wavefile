@@ -1,0 +1,47 @@
+wave collab-contracts-2026-08-14-wave-b-rd1
+member coordinator
+  harness deepseek
+  model "deepseek-v4-pro[1m]"
+  effort high
+  scope "docs/reference/evidence/collab-contracts-2026-08-14/redrive/**"
+  objectiveRef "docs/reference/evidence/collab-contracts-2026-08-14/redrive/coordinator-brief.md"
+  report "docs/reference/evidence/collab-contracts-2026-08-14/redrive/contract-qa.md"
+member row-member-lanes
+  harness deepseek
+  model deepseek-v4-flash
+  effort high
+  scope "docs/reference/evidence/collab-contracts-2026-08-14/redrive/**"
+  objectiveRef "docs/reference/evidence/collab-contracts-2026-08-14/redrive/row-member-lanes.md"
+  report "docs/reference/evidence/collab-contracts-2026-08-14/redrive/contract-member-lanes.md"
+member row-knowledge-activation
+  harness deepseek
+  model deepseek-v4-flash
+  effort high
+  scope "docs/reference/evidence/collab-contracts-2026-08-14/redrive/**"
+  objectiveRef "docs/reference/evidence/collab-contracts-2026-08-14/redrive/row-knowledge-activation.md"
+  report "docs/reference/evidence/collab-contracts-2026-08-14/redrive/contract-knowledge-activation.md"
+member row-context-lanes
+  harness deepseek
+  model deepseek-v4-flash
+  effort high
+  scope "docs/reference/evidence/collab-contracts-2026-08-14/redrive/**"
+  objectiveRef "docs/reference/evidence/collab-contracts-2026-08-14/redrive/row-context-lanes.md"
+  report "docs/reference/evidence/collab-contracts-2026-08-14/redrive/contract-context-lanes.md"
+member row-federation-doubt
+  harness deepseek
+  model deepseek-v4-flash
+  effort high
+  scope "docs/reference/evidence/collab-contracts-2026-08-14/redrive/**"
+  objectiveRef "docs/reference/evidence/collab-contracts-2026-08-14/redrive/row-federation-doubt.md"
+  report "docs/reference/evidence/collab-contracts-2026-08-14/redrive/contract-federation-doubt.md"
+approveOnAdvertisedPlan
+claimOnStall
+nudgeOnCheckpoint "Continue the contract — ground truths cited fresh, decisions, closed refusal vocabulary, red-first pins at named stages. Write incrementally."
+messageOnSpawn brief "Read your objectiveRef brief IN FULL first, then foundry-brief.md in the same directory (the frame + laws bind you). gh may be unauthenticated in your worktree — ground in the code and the local evidence dirs. Your [attempt:] line verbatim in your contract first five lines. Judgment calls recorded; authority-class ambiguity → DECISION_REQUEST with options."
+elevateWhenNotes doubt,plan 20
+signalOnMembersDone row-member-lanes,row-knowledge-activation,row-context-lanes,row-federation-doubt result "All four rows settled (you are the remaining member — pinned #175 semantics). Verify on disk per the #174 law, then cross-check per your brief and write contract-qa.md."
+harvest "docs/reference/evidence/collab-contracts-2026-08-14/redrive/contract-qa.md" mustContain "CONTRACT-QA v1"
+harvest "docs/reference/evidence/collab-contracts-2026-08-14/redrive/contract-member-lanes.md" mustContain "contract"
+harvest "docs/reference/evidence/collab-contracts-2026-08-14/redrive/contract-knowledge-activation.md" mustContain "contract"
+harvest "docs/reference/evidence/collab-contracts-2026-08-14/redrive/contract-context-lanes.md" mustContain "contract"
+harvest "docs/reference/evidence/collab-contracts-2026-08-14/redrive/contract-federation-doubt.md" mustContain "contract"
