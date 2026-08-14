@@ -270,6 +270,14 @@ export function canonicalizeLedger(ledger) {
       dimension: entry.dimension,
       retiresIn: entry.retiresIn,
     })).sort(compareRows),
+    // #160 F9 / fold B1 (error-actionability-2026-08-13): the CLI-local tooling codes are
+    // ledgered deliberately code-only via the S2 escape hatch, in the contract's fixed
+    // first-appearance order. Preserved here (spread copy, NOT sorted) so the SC6 canonical
+    // round-trip holds for the enumeration order the contract pins. Absent when the ledger has
+    // no such field (pre-#160 ledgers keep the legacy two-key canonical form).
+    ...(Array.isArray(ledger.cliLocalToolingCodes)
+      ? { cliLocalToolingCodes: [...ledger.cliLocalToolingCodes] }
+      : {}),
   };
 }
 

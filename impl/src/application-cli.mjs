@@ -1088,6 +1088,47 @@ export function projectBatonCliResult(parsed, result) {
   return Object.freeze(compact);
 }
 
+// #160 R6 (F8, error-actionability-2026-08-13/contract-fold.md §2 F8/R6): the run-branch facade
+// nouns handled in the earlier `if (action === '<noun>')` dispatch windows. Kept as an ARRAY (not
+// a `new Set([...])` literal) so the maximal-set source-scan in the CLI-parser suite's
+// extractLifecycleVerbs still resolves to the lifecycleActions set, never this one.
+const RUN_FACADE_VERBS = Object.freeze(['message', 'attention', 'scratchpad', 'board', 'knowledge']);
+
+// Optimal-string-alignment Damerau-Levenshtein distance (adjacent transpositions count as 1). Used
+// ONLY to tell a typo'd run verb from a plain objective: `run deploy` (distance-1 from zero verbs)
+// and `run stow` (distance-1 from two) both stay objective-first; `run shwo` (~show, exactly one)
+// is a typo and refuses. This is the R6 refusal seam, not the parser's recognition-table work.
+function damerauLevenshteinDistance(a, b) {
+  const m = a.length;
+  const n = b.length;
+  const dp = Array.from({ length: m + 1 }, (_, i) => new Array(n + 1).fill(0));
+  for (let i = 0; i <= m; i += 1) dp[i][0] = i;
+  for (let j = 0; j <= n; j += 1) dp[0][j] = j;
+  for (let i = 1; i <= m; i += 1) {
+    for (let j = 1; j <= n; j += 1) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      dp[i][j] = Math.min(dp[i - 1][j] + 1, dp[i][j - 1] + 1, dp[i - 1][j - 1] + cost);
+      if (i > 1 && j > 1 && a[i - 1] === b[j - 2] && a[i - 2] === b[j - 1]) {
+        dp[i][j] = Math.min(dp[i][j], dp[i - 2][j - 2] + cost);
+      }
+    }
+  }
+  return dp[m][n];
+}
+
+// R6 (F8): returns the cli_command_unavailable refusal message when `action` is a single-token
+// distance-1 typo of EXACTLY ONE recognized first-token; null otherwise (objective-first start).
+// The message names the closed live verb set (excluding the refused-only follow/steer/member), so
+// the caller is taught the real verbs — never a silent run.start reinterpretation.
+function cliRunVerbTypoRefusal(action, lifecycleActions) {
+  if (typeof action !== 'string' || action.length === 0 || /\s/u.test(action)) return null;
+  const recognized = new Set([...lifecycleActions, ...RUN_FACADE_VERBS, 'start', 'follow']);
+  const neighbors = [...recognized].filter((verb) => verb !== action && damerauLevenshteinDistance(action, verb) <= 1);
+  if (neighbors.length !== 1) return null;
+  const closedLiveVerbs = [...recognized].filter((verb) => !['follow', 'steer', 'member'].includes(verb)).sort();
+  return `unknown run verb ${action}; expected ${closedLiveVerbs.join(', ')}`;
+}
+
 function parseStart(args, objective, idempotencyKey, resultIntent = 'change') {
   if (!nonempty(objective)) throw cliError('OBJECTIVE is required');
   const profile = take(args, '--profile');
@@ -1582,7 +1623,16 @@ export function parseBatonCli(rawArgs) {
     'send', 'interrupt', 'progress', 'events', 'output', 'episode', 'workstreams', 'notify', 'result',
     'stop', 'evidence', 'adopt', 'select', 'feedback', 'revise', 'stop-member',
     'retry', 'resume', 'review', 'integrate', 'export', 'debug']);
-  if (!lifecycleActions.has(action)) return parseStart(args, action, idempotencyKey);
+  if (!lifecycleActions.has(action)) {
+    // #160 R6 (F8, error-actionability-2026-08-13/contract-fold.md §2 F8): an unknown run verb is
+    // never silently reinterpreted as a Run objective — a single-token distance-1 typo of exactly
+    // one recognized first-token refuses cli_command_unavailable with the closed verb set (mirror
+    // the waves branch). A token distance-1 from zero (a plain objective like `run deploy`) or from
+    // two-or-more (ambiguous — the parser never guesses) keeps the objective-first start.
+    const typoRefusal = cliRunVerbTypoRefusal(action, lifecycleActions);
+    if (typoRefusal !== null) throw cliError(typoRefusal, 'cli_command_unavailable');
+    return parseStart(args, action, idempotencyKey);
+  }
   const runId = id(args.shift(), 'Run ID');
   if (action === 'episode' || action === 'result') {
     const topic = action === 'result' ? 'result'
@@ -1928,7 +1978,9 @@ export class BatonWebClient {
           ...options, redirect: 'error', signal: controller.signal,
         });
       } catch {
-        throw cliError('Baton Web connection failed', 'cli_transport_failed');
+        // #160 R6 (error-actionability-2026-08-13/contract-fold.md §2 D4-R6/F4): the transport
+        // refusal names the transport class (web) AND a next action — never a bare "failed".
+        throw cliError('Baton Web connection failed; check your network and retry', 'cli_transport_failed');
       }
       const declared = Number(response.headers?.get?.('content-length'));
       if (Number.isFinite(declared) && declared > this.maxJsonResponseBytes) {
@@ -2130,7 +2182,8 @@ export class BatonWebClient {
       }
     } catch (error) {
       if (error?.code?.startsWith('cli_')) throw error;
-      throw cliError('Baton export download failed', 'cli_transport_failed');
+      // #160 R6: same transport-class + next-action naming on the export-download leg.
+      throw cliError('Baton export download failed; check your network and retry', 'cli_transport_failed');
     } finally { clearTimeout(timeout); }
     const delivered = extractResultExportArchive({ archiveBytes, descriptor, destination });
     return Object.freeze({ ...delivered, runId });

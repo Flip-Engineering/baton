@@ -1,4 +1,26 @@
 {
   "schemaVersion": 1,
-  "entries": []
+  "entries": [],
+  "cliLocalToolingCodes": [
+    "cli_invalid",
+    "cli_config_invalid",
+    "cli_setup_remote_unavailable",
+    "cli_setup_remote_invalid",
+    "cli_setup_remote_refused",
+    "cli_setup_conflict",
+    "cli_setup_failed",
+    "cli_export_archive_invalid",
+    "cli_export_archive_digest_mismatch",
+    "cli_export_destination_exists",
+    "cli_export_destination_invalid",
+    "cli_export_extract_failed",
+    "cli_export_delivery_invalid",
+    "cli_export_download_failed",
+    "cli_command_host_local",
+    "cli_command_pending",
+    "cli_command_failed",
+    "cli_protocol_failed",
+    "cli_action_inputs_invalid",
+    "cli_connection_incompatible"
+  ]
 }
