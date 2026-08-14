@@ -1076,7 +1076,7 @@ export class CoordinationStore {
     // projection surface through the parsed-event cache. The durable checkpoint writer opts
     // into its authoritative parsed-prefix cache; the append-only ledger remains the source.
     if (!durable) {
-      payload._events = this._events.map((event) => event.kind === 'scratchpad.entry_written'
+      payload._events = this._events.map((event) => (event.kind === 'scratchpad.entry_written' || event.kind === 'scratchpad.entry_appended')
         && !this._scratchpadEntries.has(event.payload.entryId)
         ? freeze({ ...clone(event), payload: freeze({ ...clone(event.payload), content: '[reaped]' }) })
         : event);
@@ -7786,6 +7786,7 @@ export class CoordinationStore {
       admittedRunId = this._replManifestAdmissions.get(p?.manifestDigest)?.runId ?? null;
     }
     else if (event.kind === 'scratchpad.entry_written') admittedRunId = p?.runId ?? null;
+    else if (event.kind === 'scratchpad.entry_appended') admittedRunId = p?.runId ?? null;
     else if (event.kind === 'scratchpad.entry_elevated') {
       const source = this._scratchpadEntries.get(p?.sourceEntryId);
       admittedRunId = source?.runId ?? p?.runId ?? null;
@@ -8361,6 +8362,58 @@ export class CoordinationStore {
       catch { throw new CoordinationIntegrityError('scratchpad written content is invalid', 'scratchpad_entry_integrity'); }
       if (canonicalDigest(normalized) !== canonicalDigest(p.content) || this._scratchpadEntries.has(p.entryId)) {
         throw new CoordinationIntegrityError('scratchpad written entry changed during replay', 'scratchpad_entry_integrity');
+      }
+      const scopeKey = scratchpadScopeKey(p.runId, p.scope);
+      const ids = this._scratchpadEntriesByScope.get(scopeKey) ?? [];
+      if (p.ordinal !== ids.length + 1) {
+        throw new CoordinationIntegrityError('scratchpad ordinal is invalid', 'scratchpad_entry_integrity');
+      }
+      const row = freeze({
+        schemaVersion: 1, entryId: p.entryId, entryDigest: p.entryDigest,
+        contentDigest: p.contentDigest, runId: p.runId, taskId: p.taskId,
+        workerId: p.workerId, scope: p.scope, ordinal: p.ordinal, kind: p.kind,
+        content: clone(p.content), createdEvent: event.seq, createdAt: event.ts,
+        source: null, scratchFactId: null,
+      });
+      this._scratchpadEntries.set(p.entryId, row);
+      this._scratchpadEntriesByScope.set(scopeKey, freeze([...ids, p.entryId]));
+      this._scratchpadFences.set(scopeKey, (this._scratchpadFences.get(scopeKey) ?? 0) + 1);
+    } else if (event.kind === 'scratchpad.entry_appended') {
+      // Issue #158 — the surface append verb's write (the unlanded tight-cell D-depth-2 direct
+      // shared-tier write, G8). Unlike the worker lane's entry_written, whose scope is hard-bound
+      // to the author's own partition, an appended entry carries an EXPLICIT scope — `shared` or a
+      // member partition — with the author identity server-bound to the payload workerId (H1.3).
+      // The D1 scope law is enforced at the surface authorize seam, never in this fold; here we
+      // keep only the replay-integrity invariant: a valid SCRATCHPAD_SCOPE, canonical mints, and a
+      // monotone ordinal within the addressed partition. The append is workflow-ephemeral (law 4):
+      // it never mints a scratch-fact / KG candidacy — elevation stays the promotion law.
+      const fields = [
+        'schemaVersion', 'runId', 'taskId', 'workerId', 'scope', 'ordinal',
+        'entryId', 'entryDigest', 'contentDigest', 'kind', 'content',
+      ];
+      if (!scratchpadExact(p, fields) || p.schemaVersion !== 1 || !validRunId(p.runId)
+        || !validRunId(p.taskId) || !validRunId(p.workerId)
+        || !SCRATCHPAD_SCOPE.test(p.scope ?? '') || !Number.isSafeInteger(p.ordinal) || p.ordinal <= 0
+        || !SCRATCHPAD_ENTRY_ID.test(p.entryId ?? '') || !SCRATCHPAD_DIGEST.test(p.entryDigest ?? '')
+        || !SCRATCHPAD_DIGEST.test(p.contentDigest ?? '') || !SCRATCHPAD_KINDS.has(p.kind)
+        || p.content?.kind !== p.kind
+        || p.contentDigest !== canonicalDigest(p.content)
+        || p.entryId !== `scratchpad-entry:${canonicalDigest({
+          runId: p.runId, taskId: p.taskId, workerId: p.workerId, scope: p.scope,
+          ordinal: p.ordinal, mintSeq: event.seq,
+        })}`
+        || p.entryDigest !== canonicalDigest({
+          schemaVersion: 1, entryId: p.entryId, runId: p.runId, taskId: p.taskId,
+          workerId: p.workerId, scope: p.scope, ordinal: p.ordinal, kind: p.kind,
+          contentDigest: p.contentDigest, content: p.content,
+        })) {
+        throw new CoordinationIntegrityError('scratchpad appended entry is invalid', 'scratchpad_entry_integrity');
+      }
+      let normalized;
+      try { normalized = normalizeScratchpadEntry(p.content, null, { noteMaxBytes: FRAME_LIMITS['scratchpad.entry.body'].value }); }
+      catch { throw new CoordinationIntegrityError('scratchpad appended content is invalid', 'scratchpad_entry_integrity'); }
+      if (canonicalDigest(normalized) !== canonicalDigest(p.content) || this._scratchpadEntries.has(p.entryId)) {
+        throw new CoordinationIntegrityError('scratchpad appended entry changed during replay', 'scratchpad_entry_integrity');
       }
       const scopeKey = scratchpadScopeKey(p.runId, p.scope);
       const ids = this._scratchpadEntriesByScope.get(scopeKey) ?? [];
@@ -14049,6 +14102,10 @@ export class CoordinationStore {
       runId, scope, observedSeq: capture.observedSeq,
       scratchpadFence: capture.fenceTuple[0][1], fenceTuple: capture.fenceTuple,
       entries: capture.slices[0].entries,
+      // The single-scope snapshot exposes the batch's slice structure too (Issue #158 — the
+      // surface append rows read the scoped slice back via slices[0].entries); `.entries` above
+      // stays the canonical projection for existing single-scope consumers.
+      slices: capture.slices,
     });
   }
 
@@ -14146,6 +14203,123 @@ export class CoordinationStore {
       }
     }
     if (!event) event = this._append('scratchpad.entry_written', payload, auth);
+    const entry = this._scratchpadEntries.get(entryId);
+    return freeze({
+      ok: true, result: 'written', event: clone(event), entry: clone(entry),
+      entryId, entryDigest, scope, scratchpadFence: this.scratchpadFence(fields.runId, scope),
+      eventSeq: event.seq,
+    });
+  }
+
+  // Issue #158 — the surface append verb's write (the unlanded tight-cell D-depth-2 direct
+  // shared-tier write, G8). The entry's scope is EXPLICIT — `shared` or a member partition —
+  // while the author identity is server-bound to auth.principalId (H1.3), never a caller field
+  // (D2.1 excludes workerId). The D1 scope law is enforced at the surface authorize seam; this
+  // fold only enforces the closed envelope, the declared partition caps (D3: 128 worker / 512
+  // shared), and the _byKey replay binding {kind, actor, runId, taskId, workerId, contentDigest}
+  // with NO scope term (P-A4 — the surface disambiguates the two-scope verb's keys by namespacing
+  // every key by scope, H3.1). Absent caller keys derive run.scratchpad.append:<runId>:<scope>:
+  // <contentDigest> (OQ2) so the surface need not compute the kernel's content digest. A written
+  // append is workflow-ephemeral (law 4): it never mints a scratch-fact / KG candidacy.
+  appendScratchpad(fields, auth) {
+    if (!scratchpadExact(fields, ['runId', 'scope', 'entry'])
+      || typeof auth?.actor !== 'string' || auth.actor.length === 0
+      || typeof auth?.principalId !== 'string' || auth.principalId.length === 0
+      || !validRunId(fields?.runId) || !SCRATCHPAD_SCOPE.test(fields?.scope ?? '')) {
+      throw new CoordinationRefusal('scratchpad append envelope is invalid', 'scratchpad_write_invalid');
+    }
+    const steeringRegistered = this._steeringRuns.has(fields.runId);
+    const workerId = auth.principalId;
+    // D3: the surface body bound is the #89 admission row verbatim (OQ4). A note body over
+    // scratchpad.entry.body (8192) refuses scratchpad_entry_exceeded — the kernel's steering
+    // 8192/2048 note split is a doc note, never a second surface code.
+    if (typeof fields.entry?.text === 'string'
+      && Buffer.byteLength(fields.entry.text) > MAX_SCRATCHPAD_ENTRY_BYTES) {
+      throw new CoordinationRefusal('scratchpad entry body exceeds the admission bound', 'scratchpad_entry_exceeded');
+    }
+    let content;
+    try {
+      content = normalizeScratchpadEntry(fields.entry,
+        (entryId, entryDigest, requirement) => this._scratchpadResolveForWorker(
+          fields.runId, workerId, entryId, entryDigest, requirement,
+        ),
+        steeringRegistered ? { noteMaxBytes: FRAME_LIMITS['scratchpad.entry.body'].value } : {});
+    } catch (error) {
+      if (error?.code === 'scratchpad_entry_invalid' || error?.code === 'scratchpad_entry_exceeded') throw error;
+      throw new CoordinationRefusal('scratchpad entry is invalid', 'scratchpad_entry_invalid');
+    }
+    const contentDigest = canonicalDigest(content);
+    const key = typeof auth?.key === 'string' && auth.key.length > 0
+      ? auth.key
+      : `run.scratchpad.append:${fields.runId}:${fields.scope}:${contentDigest}`;
+    if (!SCRATCHPAD_IDEMPOTENCY_KEY.test(key)) {
+      throw new CoordinationRefusal('scratchpad write idempotency key is invalid', 'scratchpad_write_invalid');
+    }
+    const prior = this._byKey.get(key);
+    if (prior) {
+      if (prior.kind !== 'scratchpad.entry_appended' || prior.actor !== auth.actor
+        || prior.payload?.runId !== fields.runId || prior.payload?.taskId !== fields.runId
+        || prior.payload?.workerId !== workerId || prior.payload?.contentDigest !== contentDigest) {
+        throw new CoordinationRefusal('scratchpad idempotency binding changed', 'scratchpad_write_conflict');
+      }
+      const priorRow = this._scratchpadEntries.get(prior.payload.entryId) ?? {
+        ...clone(prior.payload), createdEvent: prior.seq, createdAt: prior.ts, source: null, scratchFactId: null,
+      };
+      return freeze({
+        ok: true, result: 'idempotent', event: clone(prior), entry: clone(priorRow),
+        entryId: prior.payload.entryId, entryDigest: prior.payload.entryDigest,
+        scope: prior.payload.scope, scratchpadFence: this.scratchpadFence(fields.runId, prior.payload.scope),
+        eventSeq: prior.seq,
+      });
+    }
+    const scope = fields.scope;
+    const scopeKey = scratchpadScopeKey(fields.runId, scope);
+    const ids = this._scratchpadEntriesByScope.get(scopeKey) ?? [];
+    const cap = scope === 'shared' ? MAX_SCRATCHPAD_SHARED_ENTRIES : MAX_SCRATCHPAD_WORKER_ENTRIES;
+    if (ids.length >= cap) {
+      throw new CoordinationRefusal('scratchpad partition is full', 'scratchpad_partition_exhausted');
+    }
+    const taskId = fields.runId;
+    const ordinal = ids.length + 1;
+    const mintSeq = this._events.length + 1;
+    const entryId = `scratchpad-entry:${canonicalDigest({
+      runId: fields.runId, taskId, workerId, scope, ordinal, mintSeq,
+    })}`;
+    const entryDigest = canonicalDigest({
+      schemaVersion: 1, entryId, runId: fields.runId, taskId,
+      workerId, scope, ordinal, kind: content.kind,
+      contentDigest, content,
+    });
+    const payload = {
+      schemaVersion: 1, runId: fields.runId, taskId,
+      workerId, scope, ordinal, entryId, entryDigest,
+      contentDigest, kind: content.kind, content: clone(content),
+    };
+    const authForEvent = { actor: auth.actor, key };
+    let event;
+    if (content.kind === 'link' && content.target.type === 'entry') {
+      const target = this._scratchpadEntries.get(content.target.entryId);
+      if (target?.scope === 'shared' && target.scratchFactId) {
+        const resource = `scratchpad:${target.entryId}`;
+        const envRef = { repoId: this._repoId, treeSha: this._deploymentBaseSha };
+        const result = this.checkScratch(resource, envRef);
+        const readPayload = {
+          readerActor: 'scratchpad.link', readerWorker: workerId,
+          taskId, runId: fields.runId,
+          citationLinkEntryId: entryId, citationLinkEntryDigest: entryDigest,
+          targetEntryId: target.entryId, targetEntryDigest: target.entryDigest,
+          citationRelation: content.relation, resource, envRef, result: clone(result),
+        };
+        [event] = this._appendBatch([
+          { kind: 'scratchpad.entry_appended', payload, auth: authForEvent },
+          {
+            kind: 'scratch.read', payload: readPayload,
+            auth: { actor: auth.actor, key: `${key}:citation` },
+          },
+        ], 'scratchpad_link_citation');
+      }
+    }
+    if (!event) event = this._append('scratchpad.entry_appended', payload, authForEvent);
     const entry = this._scratchpadEntries.get(entryId);
     return freeze({
       ok: true, result: 'written', event: clone(event), entry: clone(entry),

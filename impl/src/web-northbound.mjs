@@ -45,6 +45,12 @@ const WAVE_WEB_ENTRIES = Object.freeze([
   // workflow_* refusals) is the argument authority, exactly like the five sibling verbs.
   ['waves_run', 'waves.run', Object.freeze(['control', 'observe'])],
   ['waves_compile', 'waves.compile', Object.freeze(['observe'])],
+  // #158 (scratchpad-write-2026-08-13/contract-fold.md H2.1): the folded scratchpad WRITE direct
+  // port. WEB_DIRECT_PORT_COMMANDS is derived from THIS array, so validateEnvelope skips
+  // validateApplicationCommandArgs and the append's own closed normalizer (the kernel fold,
+  // coordination-store.mjs appendScratchpad) is the argument authority — the same direct-port
+  // admission the five wave verbs ride. Capability classes match the MCP capability map.
+  ['run_scratchpad_append', 'run.scratchpad.append', Object.freeze(['control', 'observe'])],
 ]);
 // D1.2/D1.3 — the wave transports are DIRECT PORTS: validateEnvelope skips
 // validateApplicationCommandArgs for them (WEB_DIRECT_PORT_COMMANDS below) and their argument
@@ -90,6 +96,8 @@ const COMMAND_CAPABILITY = Object.freeze({
   spawn: 'control', scratch_oracle: 'control', send: 'control', interrupt: 'control', kill: 'emergency_stop', drain: 'emergency_stop', respond: 'approve',
   list: 'observe', result: 'observe', wait: 'observe', capabilities: 'observe', provider_status: 'observe', capability_invoke: 'control', reuse_decide: 'control', reuse_recheck: 'control',
   goal_define: 'goal:define', plan_propose: 'plan:propose', plan_approve: 'plan:approve', goal_plan_status: 'goal:observe',
+  // #158 (H2.1): the scratchpad WRITE direct port's capability classes (matches the MCP capability map).
+  run_scratchpad_append: ['control', 'observe'],
   ...Object.fromEntries(WEB_APPLICATION_ENTRIES.map(([transport, , definition]) => [transport, definition.capabilities])),
   ...Object.fromEntries(CANONICAL_WEB_ENTRIES.map(([transport, , definition]) => [transport, definition.capabilities])),
   ...Object.fromEntries(WAVE_WEB_ENTRIES.map(([transport, , capabilities]) => [transport, capabilities])),
@@ -131,6 +139,9 @@ const ARG_FIELDS = Object.freeze({
   plan_propose: new Set(['goal', 'predecessor', 'nodes']),
   plan_approve: new Set(['goal', 'plan', 'expectedDisposition', 'disposition']),
   goal_plan_status: new Set(['goalId', 'goalVersion', 'goalDigest', 'planId', 'planVersion', 'planDigest', 'throughSeq']),
+  // #158 (H2.1): the closed {runId, scope, kind, body, idempotencyKey} accepted set — the D2.1
+  // verb closure, exactly the fields the folded append verb admits on every surface.
+  run_scratchpad_append: new Set(['runId', 'scope', 'kind', 'body', 'idempotencyKey']),
   ...Object.fromEntries(WEB_APPLICATION_ENTRIES.map(([transport, name, definition]) => [
     transport, advertisedArgs(definition, name),
   ])),
@@ -148,9 +159,14 @@ const ACCEPTED_ARG_FIELDS = Object.freeze({
     transport, acceptedArgs(definition, name),
   ])),
 });
-const APPLICATION_COMMAND = Object.freeze(Object.fromEntries(
-  [...WEB_APPLICATION_ENTRIES, ...CANONICAL_WEB_ENTRIES, ...WAVE_WEB_ENTRIES].map(([transport, name]) => [transport, name]),
-));
+const APPLICATION_COMMAND = Object.freeze({
+  ...Object.fromEntries(
+    [...WEB_APPLICATION_ENTRIES, ...CANONICAL_WEB_ENTRIES, ...WAVE_WEB_ENTRIES].map(([transport, name]) => [transport, name]),
+  ),
+  // #158 (H2.1): the scratchpad WRITE direct port routes to the folded application verb. The
+  // WAVE_WEB_ENTRIES spread above already derives it; the literal pins the routing beside the table.
+  run_scratchpad_append: 'run.scratchpad.append',
+});
 const FORBIDDEN_KEY = /^(?:access[_-]?token|refresh[_-]?token|token|secret|credential|password|api[_-]?key|authorization)$/i;
 const MODEL_POLICY_FIELDS = new Set(['allow', 'deny', 'prefer', 'allowFamilies', 'denyFamilies', 'reasoningEffort', 'serviceTier']);
 const VERIFICATION_FIELDS = new Set(['command', 'expectExit', 'timeoutMs', 'coverageCommand', 'mutationCommand']);

@@ -796,14 +796,14 @@ test('A3-2 §4: baton_waves_list lands in the pinned MCP enumeration — 34 → 
   const { server } = await mcpFixture(t, host);
   const listed = await server.handle({ jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} });
   const names = listed.result.tools.map((tool) => tool.name);
-  assert.equal(names.length, 36,
-    'stage: mcp-waves-list-row-missing — the pinned MCP enumeration is 35 post-#114 (baton_waves_run); §4 inserts baton_waves_list (34 → 35), then #170 inserts baton_waves_compile (35 → 36)');
+  assert.equal(names.length, 37,
+    'stage: mcp-waves-list-row-missing — the pinned MCP enumeration is 35 post-#114 (baton_waves_run); §4 inserts baton_waves_list (34 → 35), #170 inserts baton_waves_compile (35 → 36), then #158 inserts baton_run_scratchpad_append (36 → 37)');
   assert.equal(names[14], 'baton_waves_stop', 'baton_waves_stop stays at 0-based position 14');
   assert.equal(names[15], 'baton_waves_list',
     'baton_waves_list sits at 0-based position 15, immediately after baton_waves_stop — the §4 pinned insertion point');
   assert.equal(names[16], 'baton_waves_run', 'baton_waves_run (#114) follows at 0-based position 16 — the waves family stays contiguous');
   const sorted = mcpApplicationToolNames();
-  assert.equal(sorted.length, 36, 'the sorted ordinary surface grows to 36 tools (baton_waves_compile, #170)');
+  assert.equal(sorted.length, 37, 'the sorted ordinary surface grows to 37 tools (baton_waves_compile #170 + baton_run_scratchpad_append #158)');
   assert.ok(sorted.includes('baton_waves_list'), 'the sorted ordinary surface carries baton_waves_list');
 });
 

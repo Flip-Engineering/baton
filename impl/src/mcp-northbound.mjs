@@ -115,6 +115,7 @@ const CAPABILITY = Object.freeze({
   baton_run_attention_watch: ['observe'],
   baton_run_scratchpad_read: ['observe'],
   baton_run_scratchpad_elevate: ['control', 'observe'],
+  baton_run_scratchpad_append: ['control', 'observe'],
   baton_run_knowledge_seed: ['control', 'observe'],
   // Matrix mutations keep the existing transported posture: observe admits the tool call, while
   // the run-orchestrator lease resolved inside S-2 is the control authority.
@@ -680,6 +681,18 @@ const LEGACY_ORDINARY_APPLICATION_TOOL_DEFINITIONS = Object.freeze([
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
   },
   {
+    name: 'baton_run_scratchpad_append',
+    description: "Append one entry to a run scratchpad scope (shared or worker:<id>) as a direct EPHEMERAL write (issue #158). Returns the store receipt verbatim {ok, result:'written'|'idempotent', entryId, entryDigest, scope, scratchpadFence, eventSeq}. The entry's author is server-bound to the caller identity; an exact retry under the same idempotencyKey replays the prior receipt.",
+    inputSchema: schema({
+      ...repo, runId,
+      scope: { type: 'string', pattern: '^(?:shared|worker:[A-Za-z0-9._:-]{1,256})$' },
+      kind: { type: 'string', enum: ['note', 'plan', 'doubt', 'link'] },
+      body: { oneOf: [{ type: 'string', minLength: 1 }, { type: 'object' }, { type: 'array' }] },
+      idempotencyKey: { type: 'string', pattern: '^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$' },
+    }, ['repoId', 'runId', 'scope']),
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+  },
+  {
     name: 'baton_run_knowledge_seed',
     description: "Seed one content-addressed knowledge node inside a run's horizon. An exact retry replays idempotent under the server-derived key; distinct content seeds a distinct node, never a silent overwrite.",
     inputSchema: schema({
@@ -838,7 +851,8 @@ const ORDINARY_EXPLICIT_TOOLS = new Set([
   'baton_scratchpad_elevate', 'baton_scratchpad_settle', 'baton_knowledge_promote',
   'baton_knowledge_settlement_lease',
   'baton_run_message_send', 'baton_run_message_receipt', 'baton_run_attention_watch',
-  'baton_run_scratchpad_read', 'baton_run_scratchpad_elevate', 'baton_run_knowledge_seed',
+  'baton_run_scratchpad_read', 'baton_run_scratchpad_elevate', 'baton_run_scratchpad_append',
+  'baton_run_knowledge_seed',
 ]);
 const TOOL_DEFINITIONS = Object.freeze([...ORDINARY_APPLICATION_TOOL_DEFINITIONS, ...APPLICATION_TOOL_DEFINITIONS, ...ADVANCED_TOOL_DEFINITIONS, ...REFLEX_TOOL_DEFINITIONS]);
 const TOOL_BY_NAME = new Map(TOOL_DEFINITIONS.map((tool) => [tool.name, tool]));
@@ -1206,6 +1220,17 @@ function validateArguments(name, args, maxWaitMs = null) {
       || new Set(args.entryIds).size !== args.entryIds.length
       || args.entryIds.some((id) => typeof id !== 'string' || !/^scratchpad-entry:[a-f0-9]{64}$/.test(id))) {
       return 'invalid_scratchpad_elevate';
+    }
+  }
+  if (name === 'baton_run_scratchpad_append') {
+    if (!/^[A-Za-z0-9._:-]{1,256}$/.test(args.runId ?? '')
+      || typeof args.scope !== 'string' || !/^(?:shared|worker:[A-Za-z0-9._:-]{1,256})$/.test(args.scope)
+      || (Object.hasOwn(args, 'kind') && !['note', 'plan', 'doubt', 'link'].includes(args.kind))
+      || !Object.hasOwn(args, 'body') || args.body === null || args.body === undefined
+      || (typeof args.body !== 'string' && typeof args.body !== 'object')
+      || (Object.hasOwn(args, 'idempotencyKey')
+        && (typeof args.idempotencyKey !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/.test(args.idempotencyKey)))) {
+      return 'invalid_scratchpad_append';
     }
   }
   if (name === 'baton_run_knowledge_seed') {
@@ -1932,6 +1957,17 @@ export class McpFleetServer {
     else if (name === 'baton_run_scratchpad_elevate') {
       value = await this.application.command('run.scratchpad.elevate', {
         runId: args.runId, taskId: args.taskId, entryIds: clone(args.entryIds),
+      }, {
+        actor: actor ?? `mcp:${principal.userId}:${principal.sessionId}`,
+        principalId: principal.userId, sessionId: principal.sessionId,
+      }, this._applicationDispatchContext(args, callId, principal));
+    }
+    else if (name === 'baton_run_scratchpad_append') {
+      value = await this.application.command('run.scratchpad.append', {
+        runId: args.runId, scope: args.scope,
+        ...(Object.hasOwn(args, 'kind') ? { kind: args.kind } : {}),
+        body: clone(args.body),
+        ...(Object.hasOwn(args, 'idempotencyKey') ? { idempotencyKey: args.idempotencyKey } : {}),
       }, {
         actor: actor ?? `mcp:${principal.userId}:${principal.sessionId}`,
         principalId: principal.userId, sessionId: principal.sessionId,

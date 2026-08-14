@@ -162,6 +162,7 @@ The four settlement ops work through MCP behind the S-2 `sessionAuthority` envel
 | `run.member.view` | `ordinary` | `baton_run_member_view` | idempotent |
 | `run.message.receipt` | `ordinary` | `baton_run_message_receipt` | idempotent |
 | `run.message.send` | `ordinary` | `baton_run_message_send` | effectful |
+| `run.scratchpad.append` | `ordinary` | `baton_run_scratchpad_append` | idempotent |
 | `run.scratchpad.elevate` | `ordinary` | `baton_run_scratchpad_elevate` | idempotent |
 | `run.scratchpad.read` | `ordinary` | `baton_run_scratchpad_read` | idempotent |
 | `run.start` | `ordinary` | `baton_run_start` | idempotent |

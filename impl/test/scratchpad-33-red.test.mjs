@@ -161,13 +161,13 @@ test('SP1: a worker writes only its own scope and never the shared partition', (
 test('SP1: the exported surface has no readScratchpad, worker settlement API, or generic append', async () => {
   const store = freshStore('sp1-surface');
   for (const absent of [
-    'readScratchpad', 'appendScratchpad', 'editScratchpad', 'deleteScratchpad',
+    'readScratchpad', 'editScratchpad', 'deleteScratchpad',
     'promoteScratchpad', 'workerElevateScratchpad',
   ]) {
     assert.equal(typeof store[absent], 'undefined', `${absent}() must not exist`);
   }
   for (const present of [
-    'writeScratchpad', 'elevateTaskScratchpad', 'settleWorkflowScratchpad', 'reapRunScratchpads',
+    'writeScratchpad', 'appendScratchpad', 'elevateTaskScratchpad', 'settleWorkflowScratchpad', 'reapRunScratchpads',
     'scratchpadSnapshotBatch', 'scratchpadSnapshot',
   ]) {
     assert.equal(typeof store[present], 'function', `${present}() is part of the closed surface`);
@@ -439,7 +439,9 @@ test('SP4: exactly three scratchpad kinds are folded and there is no scratchpad.
   }
   const scratchpadKinds = [...folded].filter((kind) => kind.startsWith('scratchpad.')).sort();
   assert.deepEqual(scratchpadKinds, [
-    'scratchpad.entry_elevated', 'scratchpad.entry_written', 'scratchpad.partition_reaped',
+    // #158 (scratchpad-write-2026-08-13/contract-fold.md D3): the append lane lands a fourth
+    // folded kind — the direct shared/worker-tier write the entry_written hard-scope never served.
+    'scratchpad.entry_appended', 'scratchpad.entry_elevated', 'scratchpad.entry_written', 'scratchpad.partition_reaped',
   ]);
   assert.equal(folded.has('scratchpad.read'), false, 'a scratchpad poll is never evented');
 });
