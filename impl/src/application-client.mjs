@@ -1621,6 +1621,14 @@ export class BatonClient {
     return this.#application.command('_briefing.mint', {});
   }
 
+  // Issue #208: the wave driver's attention-state emit. INTERNAL deployment plumbing (underscore-
+  // prefixed, never a user-facing surface) — same embedded command path as the settlement seams,
+  // so the wave watch's listeners receive a re-folded aggregate on every attention-state change
+  // (and once when the wave settles).
+  async _waveAttentionEmit(waveId, reason = null) {
+    return this.#application.command('_wave.attention.emit', { waveId, reason });
+  }
+
   async routes() {
     const doctor = await this.doctor();
     if (!Array.isArray(doctor?.routes)) {

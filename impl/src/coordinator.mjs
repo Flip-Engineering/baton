@@ -1227,6 +1227,13 @@ export class Coordinator {
     this._attentionReasons = [];
     this._attentionCursor = 0;
     this._attentionMintEpoch = 0;
+    // Wave-level attention watch (issue #208): a subscription registry (NOT a reason log). The
+    // wave-level aggregate is a fold over what exists (registry roster + steering index + live
+    // member views), computed at the application layer on subscribe and on each emit; this registry
+    // only holds the subscription → (waveId, listener, afterSeq) rows and the monotonic emit seq.
+    this._waveAttentionSubscriptions = new Map();
+    this._waveAttentionCursor = 0;
+    this._waveAttentionSubscriptionSeq = 0;
 
     this._workerSeq = 0;
     this._taskSeq = 0;
@@ -7521,6 +7528,94 @@ export class Coordinator {
     }
     reason.perPhase = { run: 1 };
     this._attentionReasons.push(reason);
+  }
+
+  // -------------------------------------------------------------------------
+  // Wave-level attention watch (issue #208) — the wave-scoped sibling of BD3-D. The watch is a
+  // subscription registry, NOT a reason log: the wave-level aggregate is a fold over what exists
+  // (registry roster + steering-registered run index + live per-member inspect views), so the
+  // registry holds listeners keyed by subscriptionId, and `emitWaveAttention` fans the application-
+  // folded aggregate to every listener of that wave. Scope authority mirrors the run-level lane's
+  // own seam (Decision 5 — no facade narrowing): wave-owner, or a live run-orchestrator lease on
+  // ANY member run (the wave's orchestrator is the run orchestrator of its member runs).
+  // -------------------------------------------------------------------------
+
+  waveAttentionScopeAuthorized(principal, waveId) {
+    if (principal?.principalId === 'wave-owner') return true;
+    const runIds = this._waveMemberRunIds(waveId);
+    return runIds.length > 0 && runIds.some((runId) => this._isReviewAuthority(principal, runId));
+  }
+
+  /** Resolve the wave's member runIds from the steering.registered fold — the same event-log-only
+   * discipline as _waveIdOf/_waveRoleOf (a wave's membership is what its member runs registered). */
+  _waveMemberRunIds(waveId) {
+    const runIds = [];
+    for (const event of this._coordination?.eventsView() ?? []) {
+      if (event.kind !== 'driver.recorded' || event.payload?.kind !== 'steering.registered'
+        || event.payload?.waveId !== waveId) continue;
+      if (typeof event.payload.runId === 'string' && !runIds.includes(event.payload.runId)) {
+        runIds.push(event.payload.runId);
+      }
+    }
+    return runIds;
+  }
+
+  /** Register a wave-attention subscription. The caller's afterSeq is their known emit seq (0 for
+   * a fresh observer); the response's `nextAfterSeq` (the current cursor) is authoritative. The
+   * aggregate is a FOLD (never a log of per-event deltas), so a subscriber receives NO replay of
+   * prior emits — the response aggregate is always the current fold, and every FUTURE emit is
+   * delivered. */
+  waveAttentionSubscribe({ waveId, afterSeq = 0 } = {}, principal = {}) {
+    if (typeof waveId !== 'string' || !/^wave:[a-f0-9]{32}$/u.test(waveId)
+      || !Number.isSafeInteger(afterSeq) || afterSeq < 0) {
+      throw Object.assign(new TypeError('wave attention subscription is invalid'), { code: 'wave_attention_subscribe_invalid' });
+    }
+    if (!this.waveAttentionScopeAuthorized(principal, waveId)) {
+      throw Object.assign(new Error('wave attention scope is forbidden'), { code: 'wave_attention_scope_forbidden' });
+    }
+    const subscriptionId = `wave-attention:${++this._waveAttentionSubscriptionSeq}:${this._coordination?.eventCursor?.() ?? 0}`;
+    // baselineSeq = the emit cursor at subscribe: only emits minted AFTER this row is created are
+    // delivered (the response aggregate already reflects everything before it).
+    this._waveAttentionSubscriptions.set(subscriptionId, {
+      waveId, baselineSeq: this._waveAttentionCursor, callback: null, principalId: principal?.principalId ?? null,
+    });
+    return { subscriptionId, waveId, nextAfterSeq: this._waveAttentionCursor };
+  }
+
+  /** Attach the listener callback (idempotent — one callback per subscription). */
+  waveAttentionListener(subscriptionId, callback) {
+    const sub = this._waveAttentionSubscriptions.get(subscriptionId);
+    if (!sub) {
+      throw Object.assign(new Error('wave attention subscription is unknown'), { code: 'wave_attention_subscription_unknown' });
+    }
+    if (callback !== null && callback !== undefined && typeof callback !== 'function') {
+      throw Object.assign(new TypeError('wave attention listener is invalid'), { code: 'wave_attention_listener_invalid' });
+    }
+    sub.callback = callback ?? null;
+    return sub.waveId;
+  }
+
+  waveAttentionUnsubscribe(subscriptionId) {
+    if (!this._waveAttentionSubscriptions.has(subscriptionId)) return false;
+    this._waveAttentionSubscriptions.delete(subscriptionId);
+    return true;
+  }
+
+  /** Fan one folded aggregate to every listener of the wave. Returns the emit seq (monotonic,
+   * per-coordinator). The emitted aggregate carries `observedSeq: seq` (the envelope's own seq —
+   * a fold observed at this emit). A listener throw is isolated (never aborts the fan-out); the
+   * seq advances regardless. */
+  emitWaveAttention(waveId, aggregate, reason = null) {
+    const seq = ++this._waveAttentionCursor;
+    const folded = deepFreeze({ ...(aggregate ?? {}), observedSeq: seq });
+    for (const sub of this._waveAttentionSubscriptions.values()) {
+      if (sub.waveId !== waveId || typeof sub.callback !== 'function') continue;
+      if (seq <= sub.baselineSeq) continue;
+      try {
+        sub.callback({ seq, waveId, aggregate: folded, reason });
+      } catch { /* the listener renders; a throw never breaks the fan-out */ }
+    }
+    return seq;
   }
 
   send(workerId, message, mode, opts = {}) {

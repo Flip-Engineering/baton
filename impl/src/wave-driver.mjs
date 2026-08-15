@@ -475,6 +475,11 @@ export function createWaveDriver(baton, rawPolicy = null) {
     let lastMarker = '';
     let lastMarkerAt = startedAt;
     let basis = null;
+    // Issue #208: the wave-attention emit baseline. Per-poll per-role {cls, terminal} folded from
+    // the SAME reducer output the driver already renders — an attention-state change (a member
+    // parks/unparks/terminates) triggers one _wave.attention.emit, which re-folds the aggregate at
+    // the application layer and fans it to the wave's listeners.
+    let lastWaveAttention = new Map();
 
     const aborted = () => policy.signal?.aborted === true;
     const sleep = (ms) => {
@@ -631,6 +636,40 @@ export function createWaveDriver(baton, rawPolicy = null) {
           } else {
             classByRole.set(role, phase === SUCCESS_RESTING || terminal ? 'terminal' : 'settled');
           }
+        }
+
+        // Issue #208: attention-state change → one emit. Fold this poll's per-role class+terminal
+        // (the reducer output the driver already renders) and compare with the prior poll; the first
+        // poll counts as a change (the baseline push). The emit re-folds the aggregate server-side
+        // — the pushed aggregate byte-matches a fresh waves.attention.watch — and fans to listeners.
+        if (wave?.waveId && typeof baton._waveAttentionEmit === 'function') {
+          const attentionState = new Map();
+          for (const [role, runHandle] of runs) {
+            attentionState.set(role, {
+              cls: classByRole.get(role) ?? null,
+              terminal: statusInfo.get(role)?.terminal === true,
+            });
+          }
+          const attentionChanged = attentionState.size !== lastWaveAttention.size
+            || [...attentionState].some(([role, state]) => {
+              const prior = lastWaveAttention.get(role);
+              return !prior || prior.cls !== state.cls || prior.terminal !== state.terminal;
+            });
+          if (attentionChanged) {
+            let reason = 'attention_changed';
+            const parked = (cls) => cls !== null && !['working', 'terminal', 'settled', 'result_ready'].includes(cls);
+            const newlyTerminal = [...attentionState].some(([role, state]) => state.terminal
+              && lastWaveAttention.get(role) && lastWaveAttention.get(role).terminal === false);
+            const newlyParked = [...attentionState].some(([role, state]) => parked(state.cls)
+              && lastWaveAttention.get(role) && !parked(lastWaveAttention.get(role).cls));
+            const newlyUnparked = [...attentionState].some(([role, state]) => !parked(state.cls)
+              && lastWaveAttention.get(role) && parked(lastWaveAttention.get(role).cls));
+            if (newlyTerminal) reason = 'member_terminal';
+            else if (newlyParked) reason = 'member_parked';
+            else if (newlyUnparked) reason = 'member_unparked';
+            try { await baton._waveAttentionEmit(wave.waveId, reason); } catch { /* advisory */ }
+          }
+          lastWaveAttention = attentionState;
         }
 
         // L5 wave-level marker: one live member (any per-member digest change) resets the clock for
@@ -811,6 +850,13 @@ export function createWaveDriver(baton, rawPolicy = null) {
       }
 
       outcomes = await wave.settle({ timeoutMs: policy.settleTimeoutMs });
+      // Issue #208: the settle emit — the final folded aggregate (every member resting or terminal)
+      // pushed to the wave's listeners once, so a watcher observes the wave reaching its settled
+      // state even when the final poll's attention signature was already terminal (the re-fold is
+      // cheap and the reason names the settle). Advisory, never gating.
+      if (wave?.waveId && typeof baton._waveAttentionEmit === 'function') {
+        try { await baton._waveAttentionEmit(wave.waveId, 'settled'); } catch { /* advisory */ }
+      }
       // KG settlement D3: the settle-window ritual runs between the members resting and wave close
       // (the pre-stop window). It rides the embedded settlement command from this deployment's own
       // top-level principal; a typed refusal is captured, never allowed to abort the guaranteed
