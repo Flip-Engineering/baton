@@ -305,6 +305,13 @@ export async function createBatonWebMcpServer(options) {
     calls += 1;
     return { ok: calls <= maxCalls };
   };
+  // #208 items 2-3 (attention-spine-2026-08-14 wave-a row-mcp-push): the server→client attention
+  // notification lane rides the SAME connection this server serves — the harness's own stdio
+  // descriptor (serveMcpStdio drains `takeNotifications()` after each response; never a new
+  // channel). The fold's truth source is the injected `coordination` store; for a remote-facade
+  // deployment whose resident's attention events don't land in this local store, the fold is
+  // honestly empty (no fabricated notifications) and the watch's pull-on-open remains the
+  // authoritative read.
   return new McpFleetServer({
     coordinator: { list() { return []; } },
     coordination: options.coordination,

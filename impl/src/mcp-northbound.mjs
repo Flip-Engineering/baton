@@ -77,6 +77,17 @@ export const SURFACING_MATRIX_MCP_ROWS = Object.freeze(
 );
 
 const PROTOCOL_VERSION = '2025-11-25';
+// #208 items 2-3 (attention-spine-2026-08-14 wave-a row-mcp-push): the server→client MCP
+// notification transport. Capability-gated at initialize; the push folds the resident's
+// coordination store event stream (never a new store surface). The single lane carries every
+// attention-shape telemetry class with an attention-kind discriminator.
+const NOTIFICATION_ATTENTION_METHOD = 'notifications/attention';
+const NOTIFICATION_ATTENTION_SCHEMA = 1;
+// The closed store-event → attention-shape fold table. task.created (spawn), task.transitioned
+// into input_required (blocked interaction) and into a terminal status (member death), and
+// driver.recorded (drive verdict) ride the lane; a transitioned whose target is neither
+// input_required nor terminal (e.g. paused is a turn-settlement pause, not a stall) stays out.
+const NOTIFICATION_TERMINAL_STATUSES = new Set(['completed', 'failed', 'cancelled']);
 const CAPABILITY = Object.freeze({
   fleet_spawn: 'control', fleet_scratch_oracle: 'control', fleet_send: 'control', fleet_wait: 'observe', fleet_respond: 'approve',
   fleet_interrupt: 'control', fleet_result: 'observe', fleet_list: 'observe', fleet_capabilities: 'observe',
@@ -1408,6 +1419,14 @@ export class McpFleetServer {
     // Part D rule 10: process-local, non-evented board view cache — rebuilt from an empty Map on
     // every restart (a fresh McpFleetServer instance), never a durable/ledger-backed cache.
     this._boardViewCache = new Map();
+    // #208 items 2-3: the attention notification transport. `_clientNotificationCapable` is set
+    // once at initialize from the client's advertised capabilities; `_attentionSubscriptions`
+    // maps runId → {runId, kind, cursor, notificationSeq} for every authorized watch scope on a
+    // notification-capable connection (cursor = last folded store event seq, so the fold never
+    // re-scans history); `takeNotifications()` folds the store stream and drains the coalesced
+    // aggregate on the caller's cadence (the delivery window — never a fixed clock).
+    this._clientNotificationCapable = false;
+    this._attentionSubscriptions = new Map();
   }
 
   async close() {
@@ -1474,6 +1493,12 @@ export class McpFleetServer {
       if (id === undefined || !record(params) || !nonempty(params.protocolVersion) || !record(params.capabilities)
         || !record(params.clientInfo) || !nonempty(params.clientInfo.name) || !nonempty(params.clientInfo.version)) return protocolError(id, -32602, 'Invalid params');
       this.lifecycle = 'initializing';
+      // #208 items 2-3: the client negotiates the server→client notification capability at
+      // initialize (params.capabilities.notifications). A client that does not advertise it is
+      // served by the watch's pull-on-open — honestly reported at subscribe time, never silent
+      // loss. Tolerant of the MCP spec's empty-object advertisement and of a literal true.
+      const clientNotifications = params.capabilities?.notifications;
+      this._clientNotificationCapable = clientNotifications === true || record(clientNotifications);
       // Epic #103 (D6a): one bounded trailing sentence composed per initialize from the family
       // head — the pack is data, not a gate (initialize succeeds identically with or without it),
       // and an absent pack degrades to the honest-empty line, never a fabricated digest (D5b).
@@ -2002,6 +2027,11 @@ export class McpFleetServer {
       }, this._applicationDispatchContext(args, callId, principal));
     }
     else if (name === 'baton_run_attention_watch') {
+      // #208 items 2-3: a push subscription is registered ONLY when the lane actually paged the
+      // scope (the watch is the authority gate). A control-capable principal whose scope the lane
+      // refused pages an honest empty result and degrades to pull-on-open — never a push for a
+      // scope the connection was not authorized to view.
+      let scopeAuthorized = true;
       try {
         value = await this.application.command('run.attention.watch', {
           runId: args.runId,
@@ -2018,11 +2048,13 @@ export class McpFleetServer {
         // lane's refusal byte-identically (FP-15 pins that wire).
         if (cause?.code === 'attention_scope_forbidden' && Array.isArray(principal.capabilities)
           && principal.capabilities.includes('control')) {
+          scopeAuthorized = false;
           value = { schemaVersion: 1, runId: args.runId, afterCursor: 0, throughCursor: 0, reasons: [] };
         } else {
           throw cause;
         }
       }
+      value = { ...value, push: this._attentionPushReport(args.runId, args.kind, scopeAuthorized) };
     }
     else if (name === 'baton_run_scratchpad_read') {
       value = await this.application.command('run.scratchpad.read', {
@@ -2248,6 +2280,126 @@ export class McpFleetServer {
     return { sessionAuthority: principal.sessionAuthority ?? null };
   }
 
+  // #208 items 2-3: the transport-honest subscribe-time push report. A notification-capable
+  // connection whose watch scope the lane authorized registers a push subscription whose fold
+  // cursor starts at the store's current tail (events admitted after this watch page are folded,
+  // never a re-read of history — no per-subscription rescan). A connection that cannot receive
+  // notifications, or whose watch scope the lane refused, degrades to the watch's pull-on-open,
+  // reported honestly at subscribe time — never silent loss.
+  _attentionPushReport(runId, kind, scopeAuthorized) {
+    if (this._clientNotificationCapable && scopeAuthorized) {
+      const existing = this._attentionSubscriptions.get(runId);
+      if (existing) {
+        existing.kind = typeof kind === 'string' ? kind : null;
+      } else {
+        this._attentionSubscriptions.set(runId, {
+          runId,
+          kind: typeof kind === 'string' ? kind : null,
+          cursor: this.coordination.eventCursor(),
+          notificationSeq: 0,
+        });
+      }
+      return Object.freeze({ enabled: true, method: NOTIFICATION_ATTENTION_METHOD, coalesced: true });
+    }
+    return Object.freeze({ enabled: false, fallback: 'pull-on-open' });
+  }
+
+  // #208 items 2-3: the closed store-event → attention-shape classifier. The event's runId is
+  // attributed from the event payload (task.created / driver.recorded carry it directly;
+  // task.transitioned does not — the resident's task projection supplies the durable run
+  // binding, an existing read surface, never a new store surface). Returns null when the event
+  // is not attention-shaped, is not bound to the subscription's run, or falls outside its kind
+  // filter (the watch's shape-only target).
+  _classifyAttentionEvent(event, subscription) {
+    const { payload } = event;
+    let runId = null;
+    let kind = null;
+    let taskId = null;
+    let status = null;
+    if (event.kind === 'task.created') {
+      runId = payload?.runId ?? null;
+      kind = 'member_spawn';
+      taskId = payload?.id ?? null;
+      status = 'pending';
+    } else if (event.kind === 'task.transitioned') {
+      taskId = payload?.id ?? null;
+      if (payload?.to === 'input_required') kind = 'input_required';
+      else if (NOTIFICATION_TERMINAL_STATUSES.has(payload?.to)) kind = 'member_terminal';
+      if (kind === null) return null;
+      runId = this.coordination.task(taskId)?.runId ?? null;
+      status = payload?.to ?? null;
+    } else if (event.kind === 'driver.recorded') {
+      taskId = payload?.taskId ?? null;
+      kind = 'drive_verdict';
+      runId = payload?.runId ?? (taskId ? (this.coordination.task(taskId)?.runId ?? null) : null);
+    } else {
+      return null;
+    }
+    if (runId !== subscription.runId) return null;
+    if (subscription.kind !== null && subscription.kind !== kind) return null;
+    return {
+      kind,
+      event: {
+        seq: event.seq,
+        kind,
+        ...(taskId === null ? {} : { taskId }),
+        ...(status === null ? {} : { status }),
+        ...(event.kind === 'driver.recorded' && typeof payload?.kind === 'string'
+          ? { drive: payload.kind } : {}),
+      },
+    };
+  }
+
+  // #208 items 2-3: fold the coordination store event stream for every active push subscription
+  // and coalesce attention-shaped events into at most one aggregate notification per
+  // (runId, attention-kind) per drain — the drain cadence (the response cadence on stdio) is the
+  // delivery window, never a fixed clock. Coalescing merges members into the aggregate; the
+  // terminal shape is its own kind (member_terminal), so merging never drops it. An empty drain
+  // emits nothing.
+  takeNotifications() {
+    if (!this._clientNotificationCapable || this._attentionSubscriptions.size === 0) return [];
+    const tail = this.coordination.eventCursor();
+    const coalesced = new Map();
+    for (const subscription of this._attentionSubscriptions.values()) {
+      const from = subscription.cursor + 1;
+      if (from > tail) continue;
+      const view = this.coordination.eventsView(from, tail - from + 1);
+      if (view.length === 0) { subscription.cursor = tail; continue; }
+      const lastSeq = view[view.length - 1].seq;
+      for (const event of view) {
+        const classified = this._classifyAttentionEvent(event, subscription);
+        if (classified === null) continue;
+        const key = `${subscription.runId}\0${classified.kind}`;
+        let row = coalesced.get(key);
+        if (!row) {
+          row = { subscription, runId: subscription.runId, kind: classified.kind, events: [], count: 0 };
+          coalesced.set(key, row);
+        }
+        row.count += 1;
+        row.events.push(classified.event);
+      }
+      subscription.cursor = Math.max(subscription.cursor, lastSeq);
+    }
+    const notifications = [];
+    for (const row of coalesced.values()) {
+      row.subscription.notificationSeq += 1;
+      notifications.push(Object.freeze({
+        jsonrpc: '2.0',
+        method: NOTIFICATION_ATTENTION_METHOD,
+        params: Object.freeze({
+          schemaVersion: NOTIFICATION_ATTENTION_SCHEMA,
+          runId: row.runId,
+          kind: row.kind,
+          seq: row.subscription.notificationSeq,
+          aggregate: Object.freeze({ count: row.count }),
+          events: Object.freeze(row.events),
+          throughSeq: row.events[row.events.length - 1].seq,
+        }),
+      }));
+    }
+    return notifications;
+  }
+
   // MCP-W3: per-call FRESH doctorReadiness, never open-time cached. The server may carry a
   // doctorReadiness hook (MP10 injects one); otherwise the application facade's own doctor/
   // doctorReadiness is consulted; a bare deployment derives the route readiness from its live
@@ -2314,7 +2466,17 @@ export async function serveMcpStdio(server, opts = {}) {
     try { message = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(line)); }
     catch { return writeFrame(output, protocolError(null, -32700, 'Parse error')); }
     if (Array.isArray(message)) return writeFrame(output, protocolError(null, -32600, 'Invalid Request'));
-    return writeFrame(output, await server.handle(message));
+    const frame = await server.handle(message);
+    await writeFrame(output, frame);
+    // #208 items 2-3: the server→client attention notification lane rides the SAME connection
+    // the harness opened. Drain after each response — the response cadence is the delivery
+    // window (coalesced at most one per runId+attention-shape per drain), never a fixed clock.
+    if (typeof server.takeNotifications === 'function') {
+      for (const notification of server.takeNotifications()) {
+        await writeFrame(output, notification);
+      }
+    }
+    return null;
   };
   try {
     for await (const chunk of input) {
