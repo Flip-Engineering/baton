@@ -1,0 +1,669 @@
+✔ BD-1 (durable claim): completed park carries origin; pausedTurnStatus + attention project claim; pre-v2 has none; restart keeps claim (8339.612375ms)
+✔ BD-2 (sanitize pipeline): redact-before-bound, unicode scalar safe, empty→null, untrusted wrapper, RunView ceiling (19390.552459ms)
+✔ BD-4 (one-pending admission): second DECISION_REQUEST refused decision_already_pending; first survives; reentrancy during answer (269.391417ms)
+✔ BD-5 (tombstones + deadlineAt): answered/expired in decisionSettled; deadlineAt projected; one durable outcome (6815.781916ms)
+✔ BD-3 (callback lifecycle): async onDecision awaited, fired once, {optionId} resolves via run.answer with durable decision.settled (8706.818625ms)
+✔ BD-3 (deferred / invalid / throw): a failed or absent callback answer never closes the wave, decision stays pending (30371.370167ms)
+✔ BD-3 (outcome union): applied + each coordinator refusal + application_interaction_not_found are recorded, never a driver crash (23.731167ms)
+✔ BD-6 (wake): a target change wakes before pollIntervalMs; active-follow count returns to zero (28.930667ms)
+✔ BD-6 (no early wake): unrelated backlog advances the cursor but does not end the sleep; cursors are monotonic (579.349875ms)
+✔ BD-6 (downgrade + terminal exclusion): application_follow_unavailable downgrades once per member; terminal members are excluded (56.864583ms)
+✔ BD-7 (reducer): a checkpoint+decision member classifies decision and is NOT nudged or claimed; onDecision fires for the gated decision (22.596708ms)
+✔ BD-7 (reducer): question and approval classify distinctly and never fire onDecision (30.919833ms)
+✔ BD-7 (reducer): multiple pending interactions surface in stable requestId order; only the gated one is decided (24.509208ms)
+✔ BD-7 (claim-checkpoint): a claim-checkpoint with no interaction is claimed at the next poll WITHOUT waiting for the unproductive budget (22.615958ms)
+✔ BD-8 (no regression): a claim-absent checkpoint still rides the unproductive budget to stall; nudge dedup per requestId holds (305.2725ms)
+✔ D9a: appendWaveClosed mints exactly one wave.closed; waveClosure derives it; a fresh store replays the fold (221.261458ms)
+✔ D9b: the record derives with the closed 8-key shape + epoch anchor; a bounds violation refuses wave_closed_invalid (94.471709ms)
+✔ D9c: a second append for the same waveId refuses wave_already_closed even for DIFFERENT content (the exactly-once key is the waveId, never the content digest) (172.032167ms)
+✔ A9-1: a driven wave close mints exactly one wave.closed whose receiptDigest matches the evidence file (8233.864625ms)
+✔ A1-1: the close mints exactly one content-backed briefing pack (head resolves, D1 schema, packId recomputes, not hollow) (9763.891875ms)
+✔ D1-1: every body field composes from its named ledger source (the wave.closed record) (8368.514292ms)
+✔ A9-2: a failed wave.closed append is captured into the bounded errors and NEVER blocks close (D9 honesty rule 3) (6656.839458ms)
+✔ D1-2: BRIEFING_SCHEMA_FIELD_SOURCES names every D1 field’s store source; an unknown field refuses by name (5.250958ms)
+✔ A3-1: degradation runs the pinned order — landings oldest-first (min 1) → parked reason detail → rings lane summaries (5.803084ms)
+✔ A3-2: an input still over 8192 bytes after full degradation refuses briefing_pack_overflow with the drop ledger (63.320292ms)
+✔ D2-1: the D2 migration backfill mints exactly one honest-empty pack from a non-empty ledger, gated on no head, and fires once (149.011375ms)
+✔ D4-1: a fresh-key same-content re-mint replays idempotently (event null, head unmoved, ledger unchanged) (32.955791ms)
+✔ N2-1: the content short-circuit fires BEFORE the auth-key replay check (stable key, same content → idempotent) (35.819083ms)
+✔ D4-2: an explicit STALE predecessor (superseded packId) refuses context_pack_stale even when the content matches the live head (27.40475ms)
+✔ D4-3 PIN: same auth-key + DIFFERENT content still refuses context_pack_conflict (the auth-key replay check is preserved) (29.157166ms)
+✔ D4-4 PIN: SAME body + DIFFERENT validity still mints on a fresh key — the short-circuit compares {body, validity}, never body alone (75.314291ms)
+✔ A6-1: worker AND operator actors minting family orchestrator-briefing refuse context_pack_forbidden with no event (1.371459ms)
+✔ A6-2 PIN: worker and operator actors minting an existing family (spec) still mint — the gate is family-scoped (111.387709ms)
+✔ B3-1: context.briefing resolves the family head with pack/ledgerHeadSeq/epochLag + the UNTRUSTED frame (868.943167ms)
+✔ B3-2: after K unrelated ledger events, context.briefing reports epochLag === K (767.946333ms)
+✔ B3-3: an idle resolve reports Δ = 0 and carries the "no events since event N" disclosure (955.963791ms)
+✔ B3-4: with no head, context.briefing refuses the typed briefing_pack_unavailable, never a bare null (1038.120583ms)
+✔ D6a-1: initialize carries the head packId + "minted at event N" and names context.briefing; sentence ≤ 240 bytes (62.740042ms)
+✔ D6a-2: with no pack, initialize carries the honest-empty sentence and still succeeds (1.424667ms)
+✔ D6a-3 PIN: initialize succeeds identically with and without a pack (the pack is data, not a gate) (66.732292ms)
+✔ A8-1: doctor exposes the non-enumerable briefing sibling with REAL values, and the lag tracks the ledger after it moves (2432.069834ms)
+✔ A8-2 PIN: serialized doctor output is byte-stable for non-reading consumers (Object.keys/JSON.stringify exclude the sibling) (1541.048375ms)
+✔ A8-3: the CLI doctor render adds ONE named briefing field (never a text render) (1.238ms)
+✔ A8-4: the CLI remote doctor render carries the REAL briefing.packId (behavioral positive path — kills a dead briefing:null) (6952.616958ms)
+✔ A7-1: an injected oversized standing-laws config forces briefing_pack_overflow into the bounded errors; the wave stays closed (5771.348417ms)
+✔ P-CloseBase PIN: a real wave close is unconditional with a bounded errors block (no briefing seam required) (8172.895834ms)
+✔ T18 (#88 headline): a diffless pause carrying counted liveness REFUSES claim_premature_liveness — worker alive, rollback-clean, claimable later (1210.710041ms)
+✔ T18e: a null capture tuple is diffless (the !sha || !baseSha arm) — refused, never a silent pass (123.655083ms)
+✔ T18w: a hub-receipted scratchpad.write_result {ok:true} counts as liveness (259.520584ms)
+✔ T18r: a hub-receipted context.read_result {ok:true} counts as liveness (250.8975ms)
+✔ T18p: a worker resource.provider_call counts as liveness (logical provider-call accounting) (93.901917ms)
+✔ T18m: worker analysis content.message counts as liveness — the messages-only pause refuses (blue-team BLOCKER 1) (139.532416ms)
+✔ T18q: an interaction RESOLVED inside the window counts as liveness (resolution-gated) (92.562083ms)
+✔ T18a: an approval RESOLVED inside the window counts as liveness (approval.resolved — blue-team BLOCKER 2 sibling row) (255.060709ms)
+✔ T18v: a decision SETTLED inside the window counts as liveness (decision.settled — blue-team BLOCKER 2 sibling row) (309.032416ms)
+✔ T18b (#64 control, PIN): a SILENT diffless drivered claim still dies required_effect_absent — the preflight never engages (86.981667ms)
+✔ T18d (PIN, the anti-stale law): liveness from BEFORE the pause's own epoch never counts (209.182208ms)
+✔ T18s (PIN, the seq bound): a scratchpad receipt minted AFTER the pause — same epoch, seq > mintedEvent — never counts (311.598958ms)
+✔ T18x (PIN, CP7): a board.claim_result buys nothing at claim time (post-memo receipt classes excluded) (218.628875ms)
+✔ T18y (PIN): FAILED receipts never count — an ok:false write and an ok:false read buy nothing (137.599292ms)
+✔ T18z (PIN): a PENDING interaction buys nothing — resolution-gating is load-bearing (253.191458ms)
+✔ T18n (PIN, the T18m removal control): the SAME pause with the content.message events REMOVED dies by the full gate (255.609875ms)
+✔ T18h: a refused claim on a cycle-armed record leaves the cycle ARMED — the ordinary expiry still lands the gate WITH the steering receipt (541.246833ms)
+✔ T18g: the swallowed-expiry re-check — the window fires DURING the preflight capture; the refuse path runs the expiry synchronously after rollback (493.843875ms)
+✔ T18c: a preflight THROW rolls back and rethrows with its own typed code — resolving always released, the armed cycle untouched, zero events (69.1225ms)
+✔ T18f: baseSha derives sessionContext ?? captured (a captured-vs-captured shallow mirror gate-kills where the gate would refuse) (157.9655ms)
+✔ T18i: an out-of-scope diff never rescues the claim (the in-scope filter is the gate's own) (151.344417ms)
+✔ CP9a: the claim_turn registry entry is honest — destructive true, the summary naming the final evaluation and the refusal (0.489833ms)
+✔ CP9b: the authority PROJECTION (the descriptor byte-source) carries claim_turn.destructive true (0.212542ms)
+✔ WD1 (PIN): a claim_premature_liveness refusal is recorded on the claims evidence with its code (735.737ms)
+✔ WD2: exactly ONE corrective nudge for the SAME pause — exempt from the L4 one-nudge-per-pause dedup exactly once (612.10375ms)
+✔ WD3: a refused corrective-nudge DELIVERY consumes no budget (D8 symmetry); the NEXT pauseId is claimed again (717.441209ms)
+✔ WD4: budget exhaustion is the honest closure — record-only, the pause pends, the PRE-EXISTING stall clock reaps (never the 3h wall) (709.150916ms)
+✔ X1 (PIN, the claim-diffed-pause class): a diffed pause WITH counted liveness still claims and completes (41.133958ms)
+✔ X2 (PIN, the no-requiredEffects-brief class): a diffless pause WITH counted liveness on a repository_edit-free brief still claims (38.496416ms)
+✔ X3 (PIN, the already_resolved class): a nudge-resolved record refuses already_resolved AT RESERVATION, before the preflight (53.285916ms)
+✔ A1: limits.mjs exports one deep-frozen FRAME_LIMITS plus VERSION and DIGEST (212.408458ms)
+✔ A2: every admission lane is cataloged with value, unit, graceful class, and refusal code (4.62875ms)
+✔ A3: the substrate guards are declared — and only spill.body mints a refusal (0.686833ms)
+✔ A4: the view class is declared with shed-flagged graceful degradation (0.582334ms)
+✔ A5: FRAME_LIMITS_DIGEST is canonical-derivation stable and byte-stable across processes (1639.517125ms)
+✔ A6: board.report.body is cataloged as a live admission row at the LIVE 4,096 store value (v1.2, blue-team blocker 1) (5.248625ms)
+✔ B1 (GOLDEN, graceful class): a send beyond the spill ceiling draws the spill_body_exceeded coaching refusal (131.661125ms)
+✔ B2: a reply beyond the spill ceiling lands message.rejected {spill_body_exceeded, cap, actual, unit, gracefulPath} on the worker stream (261.647792ms)
+✔ B3: a run objective beyond the spill ceiling draws the typed spill_body_exceeded application error (1858.968917ms)
+✔ B4 (GOLDEN, hard class): an oversize decision question gains the coaching ValidationError (0.994458ms)
+✔ B5: the store's reuse-need ceiling carries the coaching shape (registry ceiling-of-ceilings) (3.3305ms)
+✔ B6: the store's reuse-rationale ceiling carries the coaching shape at 8,192 (2.124917ms)
+✔ B7: the orientation push note ceiling carries the coaching shape (147.174083ms)
+✔ B8: the steering-policy focus ceiling carries the coaching shape at injection (9.035958ms)
+✔ B9: the live board-title store bound carries the coaching shape at 160 (3.745833ms)
+✔ B10: the live board-detail store bound carries the coaching shape at 4,096 (7.81325ms)
+✔ B11: the decision option-label ceiling carries the coaching shape at 160 (1.971459ms)
+✔ B12: the decision option-summary ceiling carries the coaching shape at 512 (0.538791ms)
+✔ B13: the decision answer-text ceiling carries the coaching shape at 4,096 (0.789333ms)
+✔ B14: the scratchpad entry canonical ceiling gains the coaching shape (numberless today) (6.701042ms)
+✔ B15: the live board-report body store bound carries the coaching shape at 4,096 (v1.2, blue-team blocker 1) (2.012916ms)
+✔ B16: the legacy-alias send door carries the coaching shape at its LIVE 16,384 (v1.2, blue-team blocker 2) (894.720334ms)
+✔ C1: the store mints digest-addressed spills and materializes them byte-identically (31.763292ms)
+✔ C2: spill mints are idempotent by key and content-addressed across keys (51.031292ms)
+✔ C3: an oversize send is ADMITTED with spill — receipts carry head + digest citation (38.4205ms)
+✔ C4 (blocker 4): the provider-bound frame for a spilled send carries EXACTLY head + citation (164.176875ms)
+✔ C5 (blocker 4): the worker resolves the spill through the closed read-port kind (60.674917ms)
+✔ C6 (parity + blocker 11): an oversize reply spills like a send; the amended envelope adds ONLY the citation keys (193.760375ms)
+✔ C7: an oversize run objective is admitted with spill; run views resolve it transparently (1170.459958ms)
+✔ C8 (OQ5): the wave driver downgrades its precheck to a spill-aware ADVISORY and passes the objective through (3.87ms)
+✔ C9 (blocker 3): a body beyond the 1 MiB spill ceiling is NOT admitted and mints NO spill (137.86925ms)
+✔ C10 (v1.2, blue-team blocker 4): an oversize MULTIBYTE wave member is admitted with byte-measured spill through the REAL wave-start admission — never walled (5847.795167ms)
+✔ D1 (the split): an oversize DECISION_REQUEST question PARSES shape-only — it is never scanner-null (1.4545ms)
+✔ D2 (pin): a large-but-parseable SCRATCHPAD_WRITE frame is admitted shape-only (1.407583ms)
+✔ D3 (pin): a large-but-parseable CONTEXT_READ frame is admitted shape-only (1.037416ms)
+✔ D4 (pin): a large-but-parseable BOARD_CLAIM frame is admitted shape-only (0.906708ms)
+✔ D5 (pin): a BOARD_REPORT body over the LIVE 4,096 admission bound is still admitted shape-only at the wire (0.529125ms)
+✔ D6 (pin): the scan windows stay substrate resource guards — over-window frames are prose for all six grammars (0.463166ms)
+✔ D7: all six scanner doc comments carry the shape-only law sentence (Decision 5's named edit) (6.65475ms)
+✔ D8 (the split, seam half): the oversize question reaches admission and draws the COACHING refusal (118.769208ms)
+✔ E1: doctorReadiness() carries the frozen limits projection with version, digest, and lanes (1860.514959ms)
+✔ E2: card() publishes agentExperience.limitsRegistryDigest beside registryDigest (1654.745458ms)
+✔ E3 (blocker 5): a reuseDecisionPolicy override leaves the published digest byte-identical — the override rides effective (1483.444667ms)
+✔ E4 (OQ4): a deployment override ABOVE the registry ceiling refuses at injection — never a silent min() (30.809291ms)
+✔ E5: the connection handshake verifies limitsRegistryDigest exactly like the semantic registry digest (223.877292ms)
+✔ E6: the doctor projection covers every registry lane with the closed row shape (1025.892291ms)
+✖ F1: no module re-declares a cataloged byte literal or hand-types byte prose outside limits.mjs (2751.414042ms)
+✔ F2 (pin): the store's deliberate-local field caps stay plain shape refusals (3.97475ms)
+✔ F3 (pin): context_pack.body keeps its exact substrate refusal — value unchanged, only imported (1.32625ms)
+✔ G1 (OQ2): attention text capped inside the read-port renderer carries the [truncated] marker (351.693042ms)
+✔ CC-START (#221): the invented ceiling pre-cap is GONE — an over-ceiling task dispatches immediately and no synthetic deferral ever mints (554.091333ms)
+✔ CC-SHOW (#221): a run NEVER projects waitingOn.capacity_ceiling from a synthetic cap — over-ceiling runs dispatch; the class is reserved for provider-true signals (11204.133583ms)
+✔ CC-EXIT (#221): no queue to exit — B works from admission and waitingOn reads honest null throughout (10862.728541ms)
+✔ CC-HONEST (RED): reduceMember classes capacity_ceiling, never working (7.05675ms)
+✔ CC-STRIP (RED): waitingOn.capacity_ceiling transitions never move the wave marker — the stall clock fires, never the cap (491.903042ms)
+✔ DP-START (RED): a claimed-but-undispatched task projects waitingOn.dispatch_pending with since = the task.created seq (1328.046209ms)
+✔ DP-SHOW (RED): dispatch_pending projects identically on view, outline, and runs.list (1347.562583ms)
+✔ DP-EXIT-a (RED): a restored resolver dispatches the pending task and waitingOn clears to null (5365.599708ms)
+✔ DP-EXIT-b (#221): a dispatch_pending task exits DIRECTLY to dispatch on vendor resolution — never through a synthetic capacity_ceiling stop (8522.906125ms)
+✔ DP-EXIT-c (RED): a cancelled pre-dispatch run reads honest null (1279.137459ms)
+✔ DP-HONEST (RED): reduceMember classes dispatch_pending, never working (0.866292ms)
+✔ DP-STRIP (RED): waitingOn.dispatch_pending transitions never move the wave marker (468.246834ms)
+✔ SP-START-WT (RED): a deferred worktree creation projects spawnPending true + spawnWindow worktree (30.554ms)
+✔ SP-START-SPAWN (RED): a deferred native ack projects spawnWindow spawn (87.114625ms)
+✔ SP-START-RECOVERY (RED): a recovery re-spawn projects spawnWindow recovery (43.464917ms)
+✔ SP-SHOW (RED): a mid-native-spawn run projects waitingOn.spawning on view, outline, and runs.list (7043.287125ms)
+✔ SP-EXIT-WT (RED): resolving the worktree slides the window worktree→spawn without null; the ack clears it (166.719833ms)
+✔ SP-EXIT-SETTLED (RED): a settled spawn clears the run view's waitingOn to null (5622.370375ms)
+✔ SP-REFUSAL (RED): sendMessage to a mid-spawn worker refuses worker_spawning in EVERY window; unknown workers stay worker_not_active (398.654166ms)
+✔ SP-HONEST (RED): reduceMember classes spawning, never working (0.784208ms)
+✔ SP-STRIP (RED): waitingOn.spawning transitions never move the wave marker (478.666542ms)
+✔ PA-START (RED): a run awaiting plan approval projects waitingOn.plan_approval beside the approve_plan interaction (1438.464709ms)
+✔ PA-SHOW (RED): plan_approval projects identically on view, outline, and runs.list (987.530334ms)
+✔ PA-EXIT (RED): approve dispatches the run and waitingOn clears to null (4845.465292ms)
+✔ PA-HONEST (RED): reduceMember classes plan_approval, never working (0.567333ms)
+✔ PA-STRIP (RED): waitingOn.plan_approval transitions never move the wave marker (501.711416ms)
+✔ PS-START (RED): a watchdog stall suspicion projects waitingOn.provider_stalled with the suspicion epoch (7077.644625ms)
+✔ PS-SHOW (RED): provider_stalled projects identically on view, outline, and runs.list (7057.875291ms)
+✔ PS-EXIT (RED): first worker content after the suspicion clears the stall projection to null (5681.083042ms)
+✔ PS-HONEST (RED): a blocked member reads honest null — the interaction owns the projection; reduceMember classes provider_stalled, never working (4450.706917ms)
+✔ PS-STRIP (RED): waitingOn.provider_stalled transitions never move the wave marker (486.424042ms)
+✔ D9-INVARIANT (PIN): a drivered paused task reads the three raw spawn flags false (44.4375ms)
+✔ D9-COMPOUND (RED): a member with BOTH a claim-ready checkpoint AND waitingOn is never claimed — waiting beats checkpoint (612.623542ms)
+✔ D9-SHAPE (RED): reduceMember exposes BOTH flags — blocked and waiting — and a checkpoint without waitingOn keeps its class (0.430709ms)
+✔ DIGEST (RED): semanticViewDigest is exported, moves on a waitingOn transition, and keeps the derived fields stripped (0.623ms)
+✔ WAITING_ON_KINDS (RED): the frozen CLOSED enum of exactly the five kinds (0.250625ms)
+✔ EXO-1 (PIN): a checkpoint WITHOUT waitingOn still claims exactly once — the ordinary pause is untouched (459.107375ms)
+✔ EXO-2 (PIN): a blocking interaction WITHOUT waitingOn suppresses claim — the interaction precedence is unchanged (617.32075ms)
+✔ KS1: the pair is ONE two-event batch with the hub-fixed brief and pinned identities (294.087833ms)
+✔ KS1: closed shape — extra fields, caller prose, non-orchestrator actors, unpinned ids all refuse (13.369ms)
+✔ KS1: replay is exactly-once and same-key-different-fields conflicts (101.377542ms)
+✔ KS2: every _activeRunOrchestratorLease refusal code is produced at admission (1157.637083ms)
+✔ KS2: the acquiring session admits (control) (293.198083ms)
+✔ KS3: scratchpad.elevate maps to coordinator.elevateTaskScratchpad with normalized args (1792.878875ms)
+✔ KS3: scratchpad.settle maps to coordinator.settleWorkflowScratchpad (891.861083ms)
+✔ KS3: knowledge.promote maps to coordinator.admitWorkflowFinding (registry liveMethod agrees) (610.158458ms)
+✔ KS3: knowledge.settlement_lease materializes the bundle with the session derived from the calling principal (474.087542ms)
+✔ KS4: the hook elevates note+plan, candidacies notes with exact title/detail, and surfaces receipt + outline (10206.935375ms)
+✔ KS4: the default (no settlement field) is kg-ritual ON (9445.072ms)
+✔ KS4: settlement:none performs zero ritual writes (event-log diff) (5506.707459ms)
+✔ KS4: an empty partition is honest-empty with the ritual ON (zero ritual events) (6981.115334ms)
+✖ KS5: a crash between candidacy posts resolves exactly-once on re-drive (9713.701167ms)
+✔ KS6: the hook sweeps expired settlement leases (≤16/pass) with review_window_expired and retires residue (8437.015042ms)
+✔ KS7: promote admits→revokes→completes in order, replays exactly, and resumes from every partial state (806.303125ms)
+✔ KS7: partial state admit-done (crash after step 1) completes without conflict (964.089042ms)
+✔ KS7: partial state admit+revoke-done (crash after step 2) completes without conflict (934.973125ms)
+✔ KS8: shared kinds are exactly note+plan; doubt+link carry orchestrator_skipped dispositions (6723.73325ms)
+✔ KS8: a not-ready elevation refusal is recorded in settlement.errors and close still completes (8807.460417ms)
+✔ KS9: the four rows are mcp-enabled in the registry, CLI, and recursive gate (10.535583ms)
+✔ KS9: the four names stay out of the recursive-dispatch allowlists (source pin) (8.761958ms)
+✔ KS9b: the knowledge.settlement_lease registry row exists and is mcp-enabled (stage: row missing) (0.46475ms)
+✔ KS10: a control-character-bearing worker note lands sanitized, framed UNTRUSTED on board reads (6657.652333ms)
+✖ A1 (stage[d1a-directory-refused]): the driver refuses a directory --targets before waves.start (8035.126083ms)
+✖ A2 (stage[d2a-coverage-refused]): a brief deliverable absent from --targets refuses exit 2 naming the uncovered set (9784.645375ms)
+✖ A3 (stage[d2-grammar-prose]): a prose line inside ## Deliverables refuses deliverables_malformed naming the line (8207.763084ms)
+✖ A3-nearmiss (stage[d2-grammar-nearmiss-heading]): a `### Deliverables` heading with no ## Deliverables section refuses deliverables_malformed (7556.732084ms)
+✖ A4 (stage[d1b-admission-directory]): a string harvest.paths entry naming a launch-tree directory refuses workflow_harvest_invalid AT ADMISSION (9022.302875ms)
+✖ A4-object (stage[d1b-admission-directory-object]): the {path, mustContain} harvest entry form refuses a directory the same way (7355.517916ms)
+✖ A5 (stage[d3-transport-code-survival]): the directory-harvest refusal code reaches waves.run on CLI, MCP, AND web — no transport-side re-spelling (7537.820833ms)
+✖ A7 (stage[d2b-objective-render-coverage]): a member objectiveRef brief declaring a deliverable absent from harvest.paths refuses workflow_harvest_invalid AT THE OBJECTIVE RENDER (6733.571625ms)
+✖ S1 (stage[static-launch-refusal-tokens]): the four driver launch-refusal tokens exist in the driver source (1.084125ms)
+✔ A6 (stage[d2-normalization-non-refusal]): ./docs/x.md (or docs//x.md) vs --targets docs/x.md does NOT refuse — the normalized set difference is empty (8233.8115ms)
+✔ P2 (stage[d1b-containment-guard]): a harvest.paths containment escape still refuses workflow_harvest_invalid at admission (733.50275ms)
+✔ E1 (stage[exit-code-map]): the driver exit-code map holds — exit 2 for argument refusals, exit 1 ONLY for start-refused, verdicts receipt-carried (10.089125ms)
+▶ R1 (stage[quiescence-verdict-missing])
+  ✔ a quiet full roster receipts WAVE-QUIESCED with basis "quiesced" and per-member quiescence evidence (9726.246917ms)
+✔ R1 (stage[quiescence-verdict-missing]) (9728.297584ms)
+▶ R2 (stage[totality-evidence-missing])
+  ✔ a mid-turn member + quiet member never quiesces; the phase-stuck member is terminalized-unrecoverable (17421.498167ms)
+✔ R2 (stage[totality-evidence-missing]) (17422.112667ms)
+▶ R5 (stage[hard-break-evidence-missing])
+  ✖ a member terminalizing unrecoverably hard-breaks the loop and the survivor result-sha is harvested (12753.630292ms)
+✖ R5 (stage[hard-break-evidence-missing]) (12757.783333ms)
+▶ R3 (stage[readview-projection-missing])
+  ✔ the landed readView return projects lastProgress / silenceMs / progressClass from the outline (A7/B3) (0.394667ms)
+✔ R3 (stage[readview-projection-missing]) (0.547375ms)
+▶ R4a (stage[quiescence-floor-missing])
+  ✔ the window floor is the named evidence-count constant and the cadence term is observed, never a bare wall clock (A2/D1.2) (0.216667ms)
+✔ R4a (stage[quiescence-floor-missing]) (1.596709ms)
+▶ R4b (stage[active-turn-phases-missing])
+  ✔ ACTIVE_TURN_PHASES is a named module-scope set (D1.1) (0.126625ms)
+✔ R4b (stage[active-turn-phases-missing]) (0.268125ms)
+▶ R4c (stage[reset-set-missing])
+  ✔ the reset set is the union with the four #67 liveness re-arm kinds (A3/D1.1) (0.2135ms)
+✔ R4c (stage[reset-set-missing]) (0.286917ms)
+▶ R4d (stage[null-sentinel-missing])
+  ✔ normalizeDriver accepts the null sentinel and the loop condition honors it (A6/D2.2) (0.107875ms)
+✔ R4d (stage[null-sentinel-missing]) (0.152417ms)
+▶ R4e (stage[quiescence-vocabulary-missing])
+  ✔ the named verdict, both evidence lines, and the closed exit enum exist (D1.5) (0.382208ms)
+✔ R4e (stage[quiescence-vocabulary-missing]) (0.428959ms)
+▶ R6 (stage[production-driver-uncapped-missing])
+  ✔ PRODUCTION_WORKFLOW_DRIVER ships hardCapMs: null — the production cadence is uncapped (A6/D2.1) (0.132083ms)
+✔ R6 (stage[production-driver-uncapped-missing]) (0.192667ms)
+▶ P1 (stage[lane-driver-preserved])
+  ✔ the fast pinned lane policy stays byte-identical and a settling wave receipts WAVE-OK + the seven-key receipt (15317.194959ms)
+✔ P1 (stage[lane-driver-preserved]) (15318.022292ms)
+▶ P2 (stage[stuck-decision-preserved])
+  ✔ a decision-stuck roster exits via the stuck-decision early-break, never WAVE-QUIESCED (D3.3/A10) (6650.043833ms)
+✔ P2 (stage[stuck-decision-preserved]) (6650.356458ms)
+▶ N1 (stage[clock-cap-retired])
+  ✔ a numeric hardCapMs refuses at admission naming the retirement — no clock mode exists (operator ruling 2026-08-14) (1079.529625ms)
+✔ N1 (stage[clock-cap-retired]) (1079.727958ms)
+▶ N2 (stage[cadence-derived-window-missing])
+  ✖ a roster observed producing at a controlled gap quiesces only after 2× its cadence, and the window scales across scenarios (A2/D1.2) (19162.433208ms)
+✖ N2 (stage[cadence-derived-window-missing]) (19164.050542ms)
+▶ N3 (stage[post-declaration-rewake-missing])
+  ✔ after a WAVE-QUIESCED declaration no member emits a work event past the declaration snapshot (A9/G8) (7328.393209ms)
+✔ N3 (stage[post-declaration-rewake-missing]) (7329.28825ms)
+✔ RC-1: the recipe is one normative closed schema — unknown/oversize/duplicate/non-exact/function refused; a valid recipe deep-freezes (113.032208ms)
+✔ RC-2: renderObjective composes the pinned shape with salt as an input — identical salt is identical, different salts differ, the byte cap refuses (29.55525ms)
+✔ RC-3: the invocation manifest is the identity boundary — same key loads+attaches (zero new starts), different key mints fresh, the manifest round-trips (20646.948916ms)
+✔ RC-5: run options never enter the digest; the override allowlist merges + re-validates before any side effect; onDecision is accepted and deferred (13870.180125ms)
+✔ RC-6: implementContract over a MockAdapter seat returns the createWaveDriver receipt shape with recipe routes/scopes; a same-key retry attaches (9636.52225ms)
+✔ baton.recipes is an embedded facade over the shipped createWaveDriver — no new command surface (1971.984208ms)
+✔ A1 SW-01 (RED): DEFAULT_WATCHDOG is a separately-frozen deployment constant strictly smaller than the wall (2.383084ms)
+✔ A2 SW-11 (RED): a stallMs at/above the node wall refuses at admission with watchdog_stall_exceeds_wall (422.795667ms)
+✔ A3 SW-11 (RED): a non-positive stallMs refuses at admission with watchdog_stall_exceeds_wall (430.75475ms)
+✔ A4 SW-11 (RED): a non-integer stallMs refuses at admission with watchdog_stall_exceeds_wall (388.902167ms)
+✔ A5 SW-12 (RED): the resolved watchdog config is disclosed byte-stable on the run status surface (6710.340667ms)
+✔ B1 SW-04 (RED): REARM_KINDS is the frozen closed four-kind set in ACTUAL sorted order (0.949ms)
+✔ B2 SW-05 (RED): a scratchpad-note stream (the chatty-idler farm class) buys zero re-arms — the stall fires despite the notes (158.254333ms)
+✔ B3 SW-03 (RED): a heartbeat/tokens/provider-call stream never re-arms — the any-event re-arm is killed (233.674875ms)
+✔ B4 (PIN): a worker-stream resolution stream never stalls — the closed set keeps the resolution kinds live (962.058667ms)
+✔ B5 (PIN): an orchestrator steer/nudge stream never re-arms a worker liveness — the stall fires on schedule (206.8245ms)
+✔ C1 (RED): a lifecycle.turn_started sets handle.turnInFlight — the per-handle liveness marker (115.404833ms)
+✔ C2 (RED): a turn in flight with ZERO events for >stallMs is never declared stalled (538.756792ms)
+✔ C3 (PIN): a slow-but-productive worker — a long in-flight turn with provider activity — is never declared stalled (1074.4575ms)
+✔ C4 (RED): a turn that settles clears turnInFlight — the zombie mirror of the stall bug dies here (188.102083ms)
+✔ D1 SW-08 (RED): a null-deadline blocking question gets a bounded default; expiry escalates, releases, never closes (136.45375ms)
+✔ D2 SW-08 (RED): an operator-acked interaction extends its effective deadline and is skipped by the sweep (62.870709ms)
+✔ D3 SW-06 (PIN): a blocked worker reads honest null + blockedInteraction — never a waiting kind (4279.96375ms)
+✔ D4 SW-07 (PIN): a blocked worker is never stall-declared — the G3 non-working refusal is retained (307.986125ms)
+✔ D5 SW-08 (PIN): an escalated blocking question stays answerable — a late operator answer lands, never already_resolved (58.10975ms)
+✔ E1 SW-02 (RED): the stall declaration names its basis — no_progress_evidence, never "too slow" (95.175542ms)
+✔ E2 SW-09 (RED): the ladder escalates first — the stall_declared reason lands, never a direct stop (107.681166ms)
+✔ E3 SW-10 (RED): a claimed stall (steer/nudge) arms the stall-seam cycle — reap is last (120.81775ms)
+✔ E4 SW-10 (RED): claim-then-idle dies — a scratchpad note inside the claimed window does NOT clear the stall (106.876291ms)
+✔ E5 SW-10 (RED): the stall-seam cycle dedups per-stall LIFETIME — handle.stallSeamDigestSet lives on the stall, not the cycle (142.101667ms)
+✔ E6 SW-10 (RED): the claimed stall-seam cycle expires to a RECEIPTED reap — preserve-first, never mid-turn (288.118875ms)
+✔ E7 SW-10 (RED): a qualifying D2 re-arm inside the claimed window calls _clearStall — the ladder has a reachable escape hatch (106.668834ms)
+✔ E8 SW-02 (PIN): the stalled worker reads waitingOn.provider_stalled — and a later worker-actor REARM clears it (6233.591209ms)
+✔ D1: two productive pauses are nudged exactly once each, then L6 declares done and claims (11517.96125ms)
+✔ D2: a live member resets the wave-level stall clock; a frozen sibling still finishes (25895.001917ms)
+✔ D3: a frozen member view breaks the loop with basis stall and clean close (8723.253125ms)
+✔ D4: a numeric hardCapMs refuses as an unknown policy field; a frozen marker yields stall (7848.022125ms)
+✔ D5: objective salting, opt-out, and the admission byte-check (20232.121833ms)
+✔ D6: the unproductive-checkpoint budget ends the treadmill — claim path and none path (15679.694ms)
+✔ D7: receipt envelope shape, evidence file, and loud write failure (9142.018583ms)
+✔ D8: a failed nudge is recorded, not consumed, and recovered on the next poll (5365.963708ms)
+✔ D9: stall fan-out claims every paused member exactly once (16835.526625ms)
+✔ D10: consecutive status failures stall; transient failures reset (11913.326208ms)
+✔ D11: expectedFence 'current' resolves to the live worker fence for a Run-bound worker (5691.791834ms)
+✔ W1: waves.start begins members individually and explicitly approves them — nothing parks at awaiting_plan_approval; the result section alone materializes results (17157.263042ms)
+✔ W2: one member crashing changes nothing about the sibling lifecycle (no fail-fast cascade) (10569.878292ms)
+✔ W3: settle always produces an outcome for every member, including a member that never finishes before the timeout (13807.78475ms)
+✔ W4: a blocked member surfaces attention through progress, never reads as completed (6332.048167ms)
+✔ W5: a bare-directory scope fails admission with the corrective glob form; glob scopes pass (7105.098333ms)
+✔ W6: stopMember stops exactly that member and the sibling continues to completion (7374.824083ms)
+✔ W7: materialized results disambiguate preserved pins by report path, never by newest-pin guessing (11047.23575ms)
+✔ W8: close returns per-member stops with ownership receipts and a zero-residue summary (12297.720417ms)
+✔ W9: the baton.waves facade starts a wave through the client getter (4009.91ms)
+✔ W10: pin resolution returns the path-carrying pin, never the newest pin (failure mode #6 positively pinned) (1285.025416ms)
+✖ stall-break: a slow-cadence wave is judged by 2x its own observed marker gap, never the fixed 20-min default (35579.2715ms)
+✖ stall-break: a wave silent from the first marker is judged by 8x pollIntervalMs, never a fixed 20-min default (35812.223042ms)
+✔ DR-1 (stage[detach-acceptance-missing]): waves.run at the bus returns the closed acceptance receipt — never the settlement — synchronously (65563.450542ms)
+✔ DR-2 (stage[settle-record-missing]): the detached drive mints wave.settled with the D6 seven-key receipt, keyed on the waveId (122298.877084ms)
+✔ DR-3 (pin): detach:false preserves the synchronous seven-key receipt (the suite/driver path is undisturbed) (125788.429167ms)
+✔ WS-1 (stage[unknown_argument_field]): waves_run with detach:false is admitted on the web wire and forwards detach to the application (181.738583ms)
+✔ WS-2 (pin): waves_run without detach behaves exactly as today — no detach:false semantics forwarded (97.183834ms)
+✔ WS-3 (stage[detach-untyped]): a non-boolean detach refuses typed at the application normalizer, naming the field (1509.150208ms)
+✔ P-A4 pin: a coordinator-seat worker has NO baton connection — discovery fails with the byte-identical absence refusal (79.90125ms)
+✔ P-A5-static pin: waves.* direct ports dispatch BEFORE the recursive-session gate; #12 codes are NOT claimed for waves.* verbs (373.156875ms)
+✔ P-A7 pin: capacity honesty — WAITING_ON_KINDS stays the byte-unchanged closed five; the run view carries the honest single waitingOn projection (null when not waiting) (8140.547666ms)
+✔ P-A8-dir pin: a DIRECTORY harvest path lands harvest_miss → WAVE-INCOMPLETE with basis = the manifest digest (7070.862209ms)
+✔ P-A9 pin: the D6 receipt is the closed seven-key shape — outcomes audit-shaped for the sub-orchestrator, no new surface (9421.432667ms)
+✔ P-A10 pin: refusal constancy — the facade capability refusal, the closed five, the #105 boundary, and the reply frame stay byte-unchanged; no sorted-key literal, no clock in any refusal (183.51725ms)
+✔ P-D1.4 pin/comment-row: the escalation sequence is concurrency-bounded and sequentially uncapped — no hardcoded iteration counter enters driveLane (56.173916ms)
+✔ P-A3g green guard: a DELIVERED decision answer records outcome 'answered' and settles the member (the machinery works when not denied) (8520.044917ms)
+✔ A1 red: the coordinator-member recipe admits, but the D1.2 read law is NOT installed at the DEPLOYMENT seam (coordinator-read-law-missing) (7799.679792ms)
+✔ A2 red: the D1.2 read-authorization law is NOT installed at the DEPLOYMENT seam — the wave-scoped grant path is asserted reachable (read-law-missing) (6134.028375ms)
+✔ A3 red: a DENIED decision answer is recorded as outcome 'answered' — the steering trail is falsified (steering-trail-falsified) (4962.012583ms)
+✔ A3b red: a RACED answer delivery is recorded as outcome 'answered' — the throw is swallowed (steering-trail-falsified) (4978.27825ms)
+✔ A5 red: a worker-seat principal reaching a waves.* authority verb draws NO coordinator_authority_forbidden (coordinator-authority-forbidden-missing) (518.420958ms)
+✔ A6 red: waves.list hides the coordinator's route — the seat map is absent from the registry view (seat-route-hidden) (9462.072459ms)
+✖ A8 red: the verbatim v1.1 example spec does NOT drive through waves.run — the steering policy kinds refuse (composition-example-refused) (15948.840875ms)
+✔ A8b red: a DIRECTORY harvest path WITHOUT mustContain recovers the listing — the file-not-directory law is NOT enforced (directory-harvest-not-refused) (7023.180792ms)
+✔ P1 (guard): the wave substrate exports resolve — createWave, resolveResultPin, createWaveDriver (14.268583ms)
+✔ P2 (guard): the facade surface is a frozen recipes container with run/implementContract (1100.690792ms)
+✔ P3 (guard): createWaveDriver accepts the shipped steering/finalization vocabulary (965.401292ms)
+✔ P4 (guard): MAX_WAVE_PROGRESS_BYTES and the 64-member ceiling hold (1.208ms)
+✔ W1-01 (stage[spec-validation-missing]): malformed top-level fields refuse workflow_spec_invalid naming the field — schemaVersion is an enum, verification is REMOVED (B4), and a function anywhere is data-not-code (B6) (1317.575209ms)
+✔ W1-02 (stage[member-validation-missing]): member-level violations refuse workflow_member_invalid role-named — scope `..`/absolute/backslash/NUL refuses at ADMISSION (B6) (1581.909166ms)
+✔ W1-03 (stage[objective-ref-invalid]): objectiveRef violations refuse workflow_objective_ref_invalid (1292.532583ms)
+✔ W1-04 (stage[steering-unknown]): unknown or mistyped steering policies refuse workflow_steering_unknown naming the key — RECURSIVE closure and enum values are closed too (B6) (1105.711583ms)
+✔ W1-05 (stage[harvest-invalid]): harvest violations refuse workflow_harvest_invalid — every path is containment-checked (B1/D4) (1124.42075ms)
+✔ W1-06 (stage[lane-missing]): a valid spec validates and returns the D6 receipt shape (5036.594583ms)
+✔ W2-01 (stage[lane-missing]): a 4-member suite-drafting wave runs from a spec — 4 result_ready, zero per-wave driver script (27107.215291ms)
+✔ W2-phantom (stage[phantom-surfacing]): a member whose start threw is named with its typed start error — the roster never silently shrinks (5383.363417ms)
+✔ W3-approve (stage[policy-missing:approve-on-advertised-plan]): a member with an advertised plan is approved once with the advertised digest (4297.465125ms)
+✔ W3-checkpoint (stage[policy-missing:nudge-on-checkpoint+claim-on-stall]): a checkpoint is nudged and a stalled member is claimed — both receipted (4529.716167ms)
+✔ W3-message (stage[policy-missing:message-on-spawn]): a spawn-window message is sent and receipts with a durable messageId (5048.269959ms)
+✔ W3-message-bounds (stage[policy-missing:message-on-spawn]): a non-delivering member draws at most 3 messageOnSpawn attempts then a steering_message_undelivered evidence line — a fourth retry does NOT fire (5256.725666ms)
+✔ W3-elevate (stage[policy-missing:elevate-when-notes]): a noted member elevates its scratchpad notes once (4371.336667ms)
+✔ W3-elevate-bounds (stage[policy-missing:elevate-when-notes]): a member that writes notes on successive edits is elevated exactly once per wave — refires are deduped by (runId, role) (6941.073791ms)
+✔ W3-answer (stage[policy-missing:answer-decisions]): a pending decision is answered per the closed policy map and receipts (7479.373083ms)
+✔ W3-answer-bounds (stage[policy-missing:answer-decisions]): a non-matching pattern defers; an invalid optionId refuses — never a wrong auto-commit (B5) (9267.5405ms)
+✔ W3-answer-first-match (stage[policy-missing:answer-decisions]): when two policy patterns match one question, the insertion-order FIRST match wins (F7b) (7794.970709ms)
+✔ W3-answer-free (stage[policy-missing:answer-decisions]): an allowFreeResponse decision is answered with the mapped TEXT, never an optionId (F7d) (10660.536542ms)
+✔ W3-signal (stage[policy-missing:signal-on-members-done]): when a named role reaches terminal the remaining member is signaled (17344.797792ms)
+✔ W4-01 (stage[harvest-missing]): a mustContain mismatch is a NAMED harvest_miss — the post-materialization integrity check, waveId-bound to the run's authoritative sha (B1/B2/F4/F5) (10125.82ms)
+✔ W4-02 (stage[harvest-missing]): a mixed harvest recovers the present path from the run's authoritative sha and receipts the absent path as a NAMED harvest_miss — verdict WAVE-INCOMPLETE over a manifest-digest basis (B1/B2/F4/F5/F9) (11192.753125ms)
+✔ W4-03 (stage[harvest-missing]): a byte-similar artifact WITHOUT the wave's attempt marker receipts a named harvest_miss — the D4 marker check is the attribution discriminator (F4) (10882.861625ms)
+✔ W4-04 (stage[harvest-missing]): a mustContain that MATCHES receipts ok with expected/actual — the post-check has a PASS path, never a selection mechanism (F8d) (15489.565459ms)
+✔ W4-05 (stage[harvest-match-evaluation-missing]): a mustContain matching the file's FIRST LINE receipts matched:true + code:harvest_ok and keeps the wave WAVE-OK — the success path is a NAMED harvest_ok, never a silent harvest_miss (#154) (13120.09125ms)
+✔ W5-01 (stage[lane-missing]): importing the lane module starts nothing — no wave, no spawn, no network (17.287792ms)
+✔ W6-01 (stage[lane-missing]): refusal constancy — a malformed spec refuses byte-identically on facade, CLI, and MCP (1213.213958ms)
+✔ W6-02 (stage[state-failure-allowlist-missing]): the five workflow_* codes ride the MCP stateFailureCode allowlist — a workflow_* refusal never degrades to command_outcome_unknown on the wire (5.126125ms)
+✔ PK-A (stage[terminal-replay-not-refused]): a same-key waves.start against a TERMINAL wave refuses wave_already_terminal naming the prior waveId + verdict (125058.269709ms)
+✔ PK-PIN: a same-key call against a LIVE wave still returns the live wave (dedupe preserved) (1482.919416ms)
+✔ PG-A (stage[pre-gate-dispatch]): waves.send under a sessionAuthority context refuses with the typed authority code — at HEAD it dispatches unchecked (1058.705583ms)
+✔ PG-B (stage[pre-gate-dispatch]): waves.list under a sessionAuthority context refuses likewise (observe verbs are not exempt) (1116.274583ms)
+✔ PG-PIN: the facade direct ports keep their own _authorize (an unauthorized principal’s run.message.send refuses application_unauthorized) (1197.506541ms)
+✔ PS-A (stage[preseed-absent]): waves.start pre-seeds each member’s declared report file with the verbatim [attempt: <salt> <role>] header BEFORE the member writes (1959.343792ms)
+✔ PS-PIN: the interpreter’s closed spec admission is undisturbed (an unknown top-level field still refuses workflow_spec_invalid) (1310.477166ms)
+✔ PV-A (stage[verification-profile-absent]): a driver-policy verification profile is honored and the member outcome projects verifiedBy (127936.994875ms)
+✔ PV-B (stage[verification-profile-absent]): an unknown verification profile refuses typed, naming the field (799.4515ms)
+✔ PV-PIN: a member-facing top-level `verification` field on the SPEC stays REMOVED (B4) — workflow_spec_invalid (597.996041ms)
+✔ PA-A (stage[adapter-definition-missing]): the adapter contract’s Definition role is a named export (adapter.mjs) (0.612708ms)
+✔ PA-B (stage[canonical-output-missing]): every semantic-registry command entry declares a canonical output shape (machine-checkable by a referee) (4.617041ms)
+ℹ tests 336
+ℹ suites 15
+ℹ pass 320
+ℹ fail 16
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 384449.668209
+
+✖ failing tests:
+
+test at test/frame-economics-red.test.mjs:1786:1
+✖ F1: no module re-declares a cataloged byte literal or hand-types byte prose outside limits.mjs (2751.414042ms)
+  AssertionError [ERR_ASSERTION]: stage: single-source-not-landed — cataloged lane literals and hand-typed byte prose live outside limits.mjs (Acceptance F: the registry is the only source; the first retirees are coordinator.mjs's <=2048 prose and 2_048 send cap, wave-driver.mjs's OBJECTIVE_MAX_BYTES, and the store's :3485 reuse literals):
+  coordination-store.mjs:14360: // scratchpad.entry.body (8192) refuses scratchpad_entry_exceeded — the kernel's steering
+  coordination-store.mjs:14361: // 8192/2048 note split is a doc note, never a second surface code.
+  omp-rpc.mjs:24: const DEFAULT_STREAM_CHUNK_BYTES = 4 * 1024;
+  + actual - expected
+  
+  + [
+  +   "coordination-store.mjs:14360: // scratchpad.entry.body (8192) refuses scratchpad_entry_exceeded — the kernel's steering",
+  +   'coordination-store.mjs:14361: // 8192/2048 note split is a doc note, never a second surface code.',
+  +   'omp-rpc.mjs:24: const DEFAULT_STREAM_CHUNK_BYTES = 4 * 1024;'
+  + ]
+  - []
+  
+      at TestContext.<anonymous> (file:///Users/wahargis/Development/Experiments/baton/.baton/wt/ws-1075a589cebbb7a8d1d487123ef9310e/impl/test/frame-economics-red.test.mjs:1801:10)
+      at Test.runInAsyncScope (node:async_hooks:226:14)
+      at Test.run (node:internal/test_runner/test:1201:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:831:18)
+      at Test.postRun (node:internal/test_runner/test:1330:19)
+      at Test.run (node:internal/test_runner/test:1258:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: [ "coordination-store.mjs:14360: // scratchpad.entry.body (8192) refuses scratchpad_entry_exceeded — the kernel's steering", 'coordination-store.mjs:14361: // 8192/2048 note split is a doc note, never a second surface code.', 'omp-rpc.mjs:24: const DEFAULT_STREAM_CHUNK_BYTES = 4 * 1024;' ],
+    expected: [],
+    operator: 'deepStrictEqual',
+    diff: 'simple'
+  }
+
+test at test/kg-settlement-red.test.mjs:425:1
+✖ KS5: a crash between candidacy posts resolves exactly-once on re-drive (9713.701167ms)
+  AssertionError [ERR_ASSERTION]: the re-drive completes the candidacy exactly once
+  
+  1 !== 2
+  
+      at TestContext.<anonymous> (file:///Users/wahargis/Development/Experiments/baton/.baton/wt/ws-1075a589cebbb7a8d1d487123ef9310e/impl/test/kg-settlement-red.test.mjs:454:10)
+      at async Test.run (node:internal/test_runner/test:1208:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: 1,
+    expected: 2,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at test/launch-validation-red.test.mjs:254:1
+✖ A1 (stage[d1a-directory-refused]): the driver refuses a directory --targets before waves.start (8035.126083ms)
+  AssertionError [ERR_ASSERTION]: stage[d1a-directory-refused]: --targets docs/reports names a real directory — the launch must refuse with exit 2 (the driver's launch-refusal class); at HEAD it reaches waves.start and exits 1 with authentication_required
+  
+  1 !== 2
+  
+      at TestContext.<anonymous> (file:///Users/wahargis/Development/Experiments/baton/.baton/wt/ws-1075a589cebbb7a8d1d487123ef9310e/impl/test/launch-validation-red.test.mjs:262:10)
+      at Test.runInAsyncScope (node:async_hooks:226:14)
+      at Test.run (node:internal/test_runner/test:1201:25)
+      at Test.start (node:internal/test_runner/test:1096:17)
+      at startSubtestAfterBootstrap (node:internal/test_runner/harness:385:17) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: 1,
+    expected: 2,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at test/launch-validation-red.test.mjs:276:1
+✖ A2 (stage[d2a-coverage-refused]): a brief deliverable absent from --targets refuses exit 2 naming the uncovered set (9784.645375ms)
+  AssertionError [ERR_ASSERTION]: stage[d2a-coverage-refused]: the brief names docs/a2-deliverable.md absent from --targets — the launch must refuse with exit 2; at HEAD the driver never reads the brief (G6) and reaches waves.start (exit 1)
+  
+  1 !== 2
+  
+      at TestContext.<anonymous> (file:///Users/wahargis/Development/Experiments/baton/.baton/wt/ws-1075a589cebbb7a8d1d487123ef9310e/impl/test/launch-validation-red.test.mjs:293:10)
+      at Test.runInAsyncScope (node:async_hooks:226:14)
+      at Test.run (node:internal/test_runner/test:1201:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:831:18)
+      at Test.postRun (node:internal/test_runner/test:1330:19)
+      at Test.run (node:internal/test_runner/test:1258:12)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:385:3) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: 1,
+    expected: 2,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at test/launch-validation-red.test.mjs:306:1
+✖ A3 (stage[d2-grammar-prose]): a prose line inside ## Deliverables refuses deliverables_malformed naming the line (8207.763084ms)
+  AssertionError [ERR_ASSERTION]: stage[d2-grammar-prose]: the prose bullet is not a strict bullet/bare path — the launch must refuse with exit 2 naming the line; at HEAD no brief read exists (G6)
+  
+  1 !== 2
+  
+      at TestContext.<anonymous> (file:///Users/wahargis/Development/Experiments/baton/.baton/wt/ws-1075a589cebbb7a8d1d487123ef9310e/impl/test/launch-validation-red.test.mjs:321:10)
+      at Test.runInAsyncScope (node:async_hooks:226:14)
+      at Test.run (node:internal/test_runner/test:1201:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:831:18)
+      at Test.postRun (node:internal/test_runner/test:1330:19)
+      at Test.run (node:internal/test_runner/test:1258:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: 1,
+    expected: 2,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at test/launch-validation-red.test.mjs:334:1
+✖ A3-nearmiss (stage[d2-grammar-nearmiss-heading]): a `### Deliverables` heading with no ## Deliverables section refuses deliverables_malformed (7556.732084ms)
+  AssertionError [ERR_ASSERTION]: stage[d2-grammar-nearmiss-heading]: a near-miss heading (## Deliverables at depth 3) must refuse — a typo'd heading can never silently disable the coverage guarantee (D2); at HEAD no brief read exists (G6)
+  
+  1 !== 2
+  
+      at TestContext.<anonymous> (file:///Users/wahargis/Development/Experiments/baton/.baton/wt/ws-1075a589cebbb7a8d1d487123ef9310e/impl/test/launch-validation-red.test.mjs:349:10)
+      at Test.runInAsyncScope (node:async_hooks:226:14)
+      at Test.run (node:internal/test_runner/test:1201:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:831:18)
+      at Test.postRun (node:internal/test_runner/test:1330:19)
+      at Test.run (node:internal/test_runner/test:1258:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: 1,
+    expected: 2,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at test/launch-validation-red.test.mjs:361:1
+✖ A4 (stage[d1b-admission-directory]): a string harvest.paths entry naming a launch-tree directory refuses workflow_harvest_invalid AT ADMISSION (9022.302875ms)
+  AssertionError [ERR_ASSERTION]: stage[d1b-admission-directory]: harvest.paths ["docs/reports"] names a real launch-tree directory — admitHarvestEntry must refuse at admission; at HEAD it checks containment only (:300-327) and the directory passes admission (the W1-05 table case, G8)
+  + actual - expected
+  
+  + undefined
+  - 'workflow_harvest_invalid'
+  
+      at TestContext.<anonymous> (file:///Users/wahargis/Development/Experiments/baton/.baton/wt/ws-1075a589cebbb7a8d1d487123ef9310e/impl/test/launch-validation-red.test.mjs:371:10)
+      at async Test.run (node:internal/test_runner/test:1208:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    expected: 'workflow_harvest_invalid',
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at test/launch-validation-red.test.mjs:381:1
+✖ A4-object (stage[d1b-admission-directory-object]): the {path, mustContain} harvest entry form refuses a directory the same way (7355.517916ms)
+  AssertionError [ERR_ASSERTION]: stage[d1b-admission-directory-object]: the {path, mustContain} entry form must refuse the same directory at admission (D1b covers BOTH entry forms, :308,311,314); at HEAD it passes admission
+  + actual - expected
+  
+  + undefined
+  - 'workflow_harvest_invalid'
+  
+      at TestContext.<anonymous> (file:///Users/wahargis/Development/Experiments/baton/.baton/wt/ws-1075a589cebbb7a8d1d487123ef9310e/impl/test/launch-validation-red.test.mjs:391:10)
+      at async Test.run (node:internal/test_runner/test:1208:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    expected: 'workflow_harvest_invalid',
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at test/launch-validation-red.test.mjs:403:1
+✖ A5 (stage[d3-transport-code-survival]): the directory-harvest refusal code reaches waves.run on CLI, MCP, AND web — no transport-side re-spelling (7537.820833ms)
+  AssertionError [ERR_ASSERTION]: stage[d3-transport-code-survival]: the CLI leg must surface the typed directory refusal — at HEAD the admission check is absent (A4) and the wave runs
+  + actual - expected
+  
+  + undefined
+  - 'workflow_harvest_invalid'
+  
+      at TestContext.<anonymous> (file:///Users/wahargis/Development/Experiments/baton/.baton/wt/ws-1075a589cebbb7a8d1d487123ef9310e/impl/test/launch-validation-red.test.mjs:426:10)
+      at async Test.run (node:internal/test_runner/test:1208:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    expected: 'workflow_harvest_invalid',
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at test/launch-validation-red.test.mjs:468:1
+✖ A7 (stage[d2b-objective-render-coverage]): a member objectiveRef brief declaring a deliverable absent from harvest.paths refuses workflow_harvest_invalid AT THE OBJECTIVE RENDER (6733.571625ms)
+  AssertionError [ERR_ASSERTION]: stage[d2b-objective-render-coverage]: the objectiveRef brief declares docs/lv-a7-deliverable.md absent from harvest.paths — renderObjective must refuse at the objective render; at HEAD it reads the brief only to build the objective text (:339)
+  + actual - expected
+  
+  + undefined
+  - 'workflow_harvest_invalid'
+  
+      at TestContext.<anonymous> (file:///Users/wahargis/Development/Experiments/baton/.baton/wt/ws-1075a589cebbb7a8d1d487123ef9310e/impl/test/launch-validation-red.test.mjs:486:10)
+      at async Test.run (node:internal/test_runner/test:1208:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    expected: 'workflow_harvest_invalid',
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at test/launch-validation-red.test.mjs:498:1
+✖ S1 (stage[static-launch-refusal-tokens]): the four driver launch-refusal tokens exist in the driver source (1.084125ms)
+  AssertionError [ERR_ASSERTION]: stage[static-launch-refusal-tokens]: the launch-refusal token target_directory_refused must exist in the driver source as a literal — at HEAD none of the four exist (the refusal vocabulary is RED)
+      at TestContext.<anonymous> (file:///Users/wahargis/Development/Experiments/baton/.baton/wt/ws-1075a589cebbb7a8d1d487123ef9310e/impl/test/launch-validation-red.test.mjs:502:12)
+      at Test.runInAsyncScope (node:async_hooks:226:14)
+      at Test.run (node:internal/test_runner/test:1201:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:831:18)
+      at Test.postRun (node:internal/test_runner/test:1330:19)
+      at Test.run (node:internal/test_runner/test:1258:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: false,
+    expected: true,
+    operator: '==',
+    diff: 'simple'
+  }
+
+test at test/quiescence-completion-red.test.mjs:299:3
+✖ a member terminalizing unrecoverably hard-breaks the loop and the survivor result-sha is harvested (12753.630292ms)
+  AssertionError [ERR_ASSERTION]: stage[hard-break-evidence-missing]: the survivor result-sha is still harvested (A5, survivor result-shas not worktree state)
+      at TestContext.<anonymous> (file:///Users/wahargis/Development/Experiments/baton/.baton/wt/ws-1075a589cebbb7a8d1d487123ef9310e/impl/test/quiescence-completion-red.test.mjs:330:12)
+      at async Test.run (node:internal/test_runner/test:1208:7)
+      at async Promise.all (index 0)
+      at async Suite.run (node:internal/test_runner/test:1619:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: false,
+    expected: true,
+    operator: '==',
+    diff: 'simple'
+  }
+
+test at test/quiescence-completion-red.test.mjs:507:3
+✖ a roster observed producing at a controlled gap quiesces only after 2× its cadence, and the window scales across scenarios (A2/D1.2) (19162.433208ms)
+  AssertionError [ERR_ASSERTION]: stage[cadence-derived-window-missing]: the window scales with the observed cadence — a bare constant cannot satisfy both scenarios (A2's amended discriminator)
+      at TestContext.<anonymous> (file:///Users/wahargis/Development/Experiments/baton/.baton/wt/ws-1075a589cebbb7a8d1d487123ef9310e/impl/test/quiescence-completion-red.test.mjs:550:12)
+      at async Test.run (node:internal/test_runner/test:1208:7)
+      at async Promise.all (index 0)
+      at async Suite.run (node:internal/test_runner/test:1619:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: false,
+    expected: true,
+    operator: '==',
+    diff: 'simple'
+  }
+
+test at test/wave-driver-stall-derived-red.test.mjs:273:1
+✖ stall-break: a slow-cadence wave is judged by 2x its own observed marker gap, never the fixed 20-min default (35579.2715ms)
+  Error: the wave was not terminated by any stall window — the driver hung (the fixed 20-min default cannot fire inside a test; RED at pre-change head)
+      at Timeout.<anonymous> (file:///Users/wahargis/Development/Experiments/baton/.baton/wt/ws-1075a589cebbb7a8d1d487123ef9310e/impl/test/wave-driver-stall-derived-red.test.mjs:250:51)
+      at listOnTimeout (node:internal/timers:605:17)
+      at process.processTimers (node:internal/timers:541:7) {
+    code: 'derived_stall_window_timeout'
+  }
+
+test at test/wave-driver-stall-derived-red.test.mjs:299:1
+✖ stall-break: a wave silent from the first marker is judged by 8x pollIntervalMs, never a fixed 20-min default (35812.223042ms)
+  Error: the wave was not terminated by any stall window — the driver hung (the fixed 20-min default cannot fire inside a test; RED at pre-change head)
+      at Timeout.<anonymous> (file:///Users/wahargis/Development/Experiments/baton/.baton/wt/ws-1075a589cebbb7a8d1d487123ef9310e/impl/test/wave-driver-stall-derived-red.test.mjs:250:51)
+      at listOnTimeout (node:internal/timers:605:17)
+      at process.processTimers (node:internal/timers:541:7) {
+    code: 'derived_stall_window_timeout'
+  }
+
+test at test/worker-orchestrated-swarm-red.test.mjs:992:1
+✖ A8 red: the verbatim v1.1 example spec does NOT drive through waves.run — the steering policy kinds refuse (composition-example-refused) (15948.840875ms)
+  AssertionError [ERR_ASSERTION]: the coordinator + swarm pattern settles honestly
+  + actual - expected
+  
+  + 'WAVE-INCOMPLETE'
+  - 'WAVE-OK'
+          ^
+  
+      at TestContext.<anonymous> (file:///Users/wahargis/Development/Experiments/baton/.baton/wt/ws-1075a589cebbb7a8d1d487123ef9310e/impl/test/worker-orchestrated-swarm-red.test.mjs:1043:10)
+      at async Test.run (node:internal/test_runner/test:1208:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: 'WAVE-INCOMPLETE',
+    expected: 'WAVE-OK',
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
