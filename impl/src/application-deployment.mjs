@@ -89,18 +89,21 @@ const KIMI_CREDENTIAL_FILES = Object.freeze([
 ]);
 const GLM_EFFORTS = Object.freeze(['low', 'medium', 'high', 'xhigh', 'max']);
 const glmRoutes = () => GLM_EFFORTS.map((effort) => Object.freeze({
-  harness: 'glm', model: 'glm-5.2', effort,
+  // #228 (operator-ordered migration): deepseek/glm ride omp (OhMyPi) as FIRST-CLASS
+  // providers — native provider support, no anthropic-compat translation, no orphaned
+  // claude-code member processes. Route ids are provider/model paths.
+  harness: 'omp', model: 'glm/glm-5.2', effort,
 }));
 const DEEPSEEK_FLASH_EFFORTS = Object.freeze(['low', 'medium', 'high', 'xhigh', 'max']);
 const DEEPSEEK_PRO_EFFORTS = Object.freeze(['low', 'medium']);
 const deepseekRoutes = () => [
   ...DEEPSEEK_FLASH_EFFORTS.map((effort) => Object.freeze({
-    harness: 'deepseek', model: 'deepseek-v4-flash', effort,
+    harness: 'omp', model: 'deepseek/deepseek-v4-flash', effort,
   })),
   // The pro[1m] label precedes its unpublished update: retain it as an explicit pre-update
   // opt-in only. Flash stays first so it is the adapter-configured default model.
   ...DEEPSEEK_PRO_EFFORTS.map((effort) => Object.freeze({
-    harness: 'deepseek', model: 'deepseek-v4-pro[1m]', effort,
+    harness: 'omp', model: 'deepseek/deepseek-v4-pro[1m]', effort,
   })),
 ];
 
