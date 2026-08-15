@@ -1,0 +1,23 @@
+wave bus-deadlock-2026-08-15-wave-a
+member coordinator
+  harness deepseek
+  model deepseek-v4-flash
+  effort high
+  scope "docs/reference/evidence/bus-deadlock-2026-08-15/wave-a/**"
+  objectiveRef "docs/reference/evidence/bus-deadlock-2026-08-15/wave-a/coordinator-brief.md"
+  report "docs/reference/evidence/bus-deadlock-2026-08-15/wave-a/verify-notes.md"
+member row-contract
+  harness deepseek
+  model deepseek-v4-flash
+  effort high
+  scope "docs/reference/evidence/bus-deadlock-2026-08-15/wave-a/**"
+  objectiveRef "docs/reference/evidence/bus-deadlock-2026-08-15/wave-a/row-contract-brief.md"
+  report "docs/reference/evidence/bus-deadlock-2026-08-15/wave-a/contract-bus-deadlock.md"
+approveOnAdvertisedPlan
+claimOnStall
+nudgeOnCheckpoint "Continue — CONTRACT ONLY (no implementation): closed normative sections, testable invariants, named refusal codes, red-first pin designs for each leg. Write deliverables incrementally."
+messageOnSpawn brief "Read your objectiveRef brief IN FULL first; it binds. gh may be unauthenticated in your worktree. Your [attempt:] line verbatim in your deliverable's first five lines. Judgment calls recorded; authority-class ambiguity → DECISION_REQUEST with options."
+elevateWhenNotes doubt,plan 20
+signalOnMembersDone row-contract result "The row settled (you are the remaining member — pinned #175 semantics). Verify per your brief and write verify-notes.md."
+harvest "docs/reference/evidence/bus-deadlock-2026-08-15/wave-a/contract-bus-deadlock.md" mustContain "attempt:"
+harvest "docs/reference/evidence/bus-deadlock-2026-08-15/wave-a/verify-notes.md" mustContain "BUS-DEADLOCK-CONTRACT-VERIFY v1"
