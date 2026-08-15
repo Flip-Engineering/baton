@@ -17,7 +17,10 @@ import { normalizeProcessGeneration, ProcessCloseReapLatch, processStartedPayloa
 import { usdToNanos } from './usd.mjs';
 import { attestWorkerPolicyObservation } from './worker-policy.mjs';
 import { renderVerificationExecution } from './verification-presentation.mjs';
+<<<<<<< Updated upstream
 import { renderAttentionSection } from './messages.mjs';
+=======
+>>>>>>> Stashed changes
 
 const DEFAULT_MAX_WIRE_FRAME_BYTES = 1024 * 1024;
 const CODEX_TOKEN_METRIC = 'codex_turn_input_plus_output_tokens';
@@ -617,7 +620,10 @@ export class ZCodeCli extends ClaudeCli {
     super({
       harness: 'glm-via-claude', version: opts.version ?? 'claude-cli+zai-anthropic', ceiling: opts.ceiling ?? 1, // Z.ai Pro ≈ 1 in-flight
       model: opts.model, maxWireFrameBytes: opts.maxWireFrameBytes, live: opts.live,
+<<<<<<< Updated upstream
       reapOwnedProcessGroup: opts.reapOwnedProcessGroup,
+=======
+>>>>>>> Stashed changes
       permissionMode: opts.permissionMode, env: {
         ANTHROPIC_BASE_URL: opts.baseUrl ?? 'https://api.z.ai/api/anthropic',
         ANTHROPIC_AUTH_TOKEN: token ?? '',

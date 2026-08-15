@@ -17,7 +17,11 @@ const principal = (overrides = {}) => ({
 const runApplicationCard = () => ({
   schemaVersion: 1,
   repoId: 'repo-a',
+<<<<<<< Updated upstream
   commands: ['application.help', 'runs.list', 'run.start', 'run.inspect', 'run.episode', 'run.workstreams', 'run.workstream.notify', 'run.workstream.stop', 'run.act', 'run.status', 'run.follow', 'run.recover', 'run.approve', 'run.wait', 'run.answer', 'run.feedback', 'run.steer', 'run.stop', 'run.evidence', 'run.adopt', 'run.retry_verification', 'run.resume_work', 'run.review', 'run.integrate', 'run.export', 'waves.attach', 'application.shutdown'],
+=======
+  commands: ['application.help', 'runs.list', 'run.start', 'run.inspect', 'run.act', 'run.status', 'run.follow', 'run.recover', 'run.approve', 'run.wait', 'run.answer', 'run.feedback', 'run.steer', 'run.stop', 'run.evidence', 'run.adopt', 'run.retry_verification', 'run.resume_work', 'run.review', 'run.integrate', 'run.export', 'application.shutdown'],
+>>>>>>> Stashed changes
 });
 function setup(overrides = {}) {
   const calls = [];
@@ -108,6 +112,7 @@ test('UA5/MN1: an application-backed MCP server exposes the semantic ordinary su
   assert.equal(response.result.tools.some((tool) => /shutdown|close|drain/.test(tool.name)), false);
   const advanced = setup({ application, surface: 'combined' }); await initialized(advanced.server);
   const combined = await request(advanced.server, 3, 'tools/list', {});
+<<<<<<< Updated upstream
   // S-3 extends the derived combined reflex projection with board.drop, REPL citation, and
   // knowledge recall/horizon while leaving the ordinary application surface unchanged.
   // names verbatim, taskSupport forbidden, additionalProperties false, and _meta present on the
@@ -180,6 +185,27 @@ test('KC6/KC7: a remote application facade is transport-owned and MCP close cann
     schemaVersion: 1, state: 'transport_closed', applicationOwned: false,
   });
   assert.deepEqual(calls, []);
+=======
+  assert.equal(combined.result.tools.length, 39);
+  assert.deepEqual(combined.result.tools.slice(0, 5).map((tool) => tool.name), response.result.tools.map((tool) => tool.name));
+>>>>>>> Stashed changes
+});
+
+test('KC6/KC7: a remote application facade is transport-owned and MCP close cannot shut Baton down', async () => {
+  const calls = [];
+  const application = {
+    repoId: 'repo-a', card: runApplicationCard,
+    async authorizeReplay() { return true; },
+    async command(name) { calls.push(name); return {}; },
+  };
+  const { server } = setup({
+    application, surface: 'application',
+    applicationOwned: false, shutdownPrincipal: undefined,
+  });
+  assert.deepEqual(await server.close(), {
+    schemaVersion: 1, state: 'transport_closed', applicationOwned: false,
+  });
+  assert.deepEqual(calls, []);
 });
 
 test('UA5/MN: Run tools map exactly to the application bus and keep status/wait fresh', async () => {
@@ -201,6 +227,10 @@ test('UA5/MN: Run tools map exactly to the application bus and keep status/wait 
     ['fleet_run_wait', { repoId: 'repo-a', runId: 'run-mcp-a', timeoutMs: 25_000 }, 'run.wait'],
     ['fleet_run_answer', { repoId: 'repo-a', idempotencyKey: 'run-answer', runId: 'run-mcp-a', requestId: 'question-1', answer: { decision: 'allow' } }, 'run.answer'],
     ['fleet_run_feedback', { repoId: 'repo-a', idempotencyKey: 'run-feedback', runId: 'run-mcp-a', role: 'builder', feedback: 'Preserve the exact route evidence.' }, 'run.feedback'],
+<<<<<<< Updated upstream
+=======
+    ['fleet_run_steer', { repoId: 'repo-a', idempotencyKey: 'run-steer', runId: 'run-mcp-a', target: 'worker-a', mode: 'nudge', message: 'Keep going.', reason: 'Operator guidance.' }, 'run.steer'],
+>>>>>>> Stashed changes
     ['fleet_run_stop', { repoId: 'repo-a', idempotencyKey: 'run-stop', runId: 'run-mcp-a', reason: 'Operator cancelled this Run.' }, 'run.stop'],
     ['fleet_run_evidence', { repoId: 'repo-a', runId: 'run-mcp-a' }, 'run.evidence'],
     ['fleet_run_adopt', { repoId: 'repo-a', idempotencyKey: 'run-adopt', runId: 'run-mcp-a', nodeKey: 'work', resultSha: 'b'.repeat(40), evidenceDigest: 'c'.repeat(64), reason: 'Select the verified result.' }, 'run.adopt'],
@@ -212,13 +242,17 @@ test('UA5/MN: Run tools map exactly to the application bus and keep status/wait 
     assert.equal(response.result.isError, false);
     assert.equal(applicationCalls.at(-1).name, expected);
   }
-  assert.deepEqual(applicationCalls.map((call) => call.principal), Array(12).fill({
+  assert.deepEqual(applicationCalls.map((call) => call.principal), Array(13).fill({
     actor: 'mcp:operator-a:stdio-a', principalId: 'operator-a', sessionId: 'stdio-a',
   }));
   assert.equal(applicationCalls.some((call) => Object.hasOwn(call.args, 'repoId') || Object.hasOwn(call.args, 'idempotencyKey')), false);
   assert.deepEqual(coordination.events().filter((event) => event.kind === 'mcp.call_admitted')
     .map((event) => [event.payload.tool, event.payload.runId]), [
+<<<<<<< Updated upstream
       ['fleet_run_start', 'run-mcp-a'], ['fleet_run_approve', 'run-mcp-a'], ['fleet_run_answer', 'run-mcp-a'], ['fleet_run_feedback', 'run-mcp-a'], ['fleet_run_stop', 'run-mcp-a'], ['fleet_run_adopt', 'run-mcp-a'], ['fleet_run_review', 'run-mcp-a'], ['fleet_run_integrate', 'run-mcp-a'],
+=======
+      ['fleet_run_start', 'run-mcp-a'], ['fleet_run_approve', 'run-mcp-a'], ['fleet_run_answer', 'run-mcp-a'], ['fleet_run_feedback', 'run-mcp-a'], ['fleet_run_steer', 'run-mcp-a'], ['fleet_run_stop', 'run-mcp-a'], ['fleet_run_adopt', 'run-mcp-a'], ['fleet_run_review', 'run-mcp-a'], ['fleet_run_integrate', 'run-mcp-a'],
+>>>>>>> Stashed changes
     ]);
   await request(server, 20, 'tools/call', { name: 'fleet_run_status', arguments: { repoId: 'repo-a', runId: 'run-mcp-a' } });
   assert.equal(applicationCalls.filter((call) => call.name === 'run.status').length, 2, 'read-only status is fresh rather than a cached call replay');

@@ -12,9 +12,12 @@ import { createLocalSocketFetch } from '../src/local-web-transport.mjs';
 import {
   formatKimiCredentialInstallResult, KIMI_CREDENTIAL_HELP, promptAndInstallKimiCredential,
 } from '../src/kimi-credential-setup.mjs';
+<<<<<<< Updated upstream
 import { flipLine } from '../src/brand.mjs';
 
 const TTY = process.stderr.isTTY === true;
+=======
+>>>>>>> Stashed changes
 
 function integer(value, fallback) {
   if (value === undefined) return fallback;
@@ -39,6 +42,7 @@ function clientFor(connection) {
   });
 }
 
+<<<<<<< Updated upstream
 async function serveDeployment(deployment) {
   if (!deployment || typeof deployment.host !== 'function' || typeof deployment.close !== 'function') {
     throw Object.assign(new Error('serve deployment factory returned an invalid deployment'), {
@@ -62,6 +66,8 @@ async function serveDeployment(deployment) {
   if (outcome.closed.state !== 'closed') process.exitCode = 1;
 }
 
+=======
+>>>>>>> Stashed changes
 try {
   const parsed = parseBatonCli(process.argv.slice(2));
   if (parsed.kind === 'help' || parsed.name === 'application.help') {
@@ -86,11 +92,14 @@ try {
       const result = {
         schemaVersion: 1, state: remote.ready === true ? 'ready' : 'not_ready',
         depth: parsed.depth, outline: { ...local.outline, credential: 'accepted', remote: remote.ready === true ? 'ready' : 'not_ready' },
+<<<<<<< Updated upstream
         deployment: remote.deployment,
         routes: remote.routes,
         // Epic #103 (D6c): the ONE named additive briefing field (D6c/B5) — a JSON field, never
         // a separate text render. Reads the doctor sibling by property access; absent pack → null.
         briefing: remote.briefing ?? null,
+=======
+>>>>>>> Stashed changes
         application: remote.application,
       };
       process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
@@ -98,6 +107,7 @@ try {
     }
   } else if (parsed.kind === 'serve') {
     if (parsed.configPath === null) {
+<<<<<<< Updated upstream
       await serveDeployment(await openBaton({ repo: process.cwd() }));
     } else {
       const module = await import(pathToFileURL(resolve(parsed.configPath)).href);
@@ -114,6 +124,35 @@ try {
         process.stderr.write(`baton serve: ${JSON.stringify(outcome.closed)}\n`);
         if (outcome.closed.state !== 'closed') process.exitCode = 1;
       }
+=======
+      const deployment = await openBaton({ repo: process.cwd() });
+      const lifecycle = new SignalLifecycleOwner({
+        signalEmitter: process,
+        shutdown: () => deployment.close(),
+      });
+      const outcome = await lifecycle.run(async ({ signal }) => {
+        const hosted = await deployment.host();
+        process.stderr.write(`baton serve: ${JSON.stringify(hosted)}\n`);
+        await new Promise((resolveSignal) => {
+          if (signal.aborted) resolveSignal();
+          else signal.addEventListener('abort', resolveSignal, { once: true });
+        });
+        return hosted;
+      });
+      process.stderr.write(`baton serve: ${JSON.stringify(outcome.closed)}\n`);
+      if (outcome.closed.state !== 'closed') process.exitCode = 1;
+    } else {
+      const module = await import(pathToFileURL(resolve(parsed.configPath)).href);
+      const factory = module.createBatonWebHost ?? module.default;
+      if (typeof factory !== 'function') throw Object.assign(new Error('serve config must export default or createBatonWebHost()'), { code: 'cli_config_invalid' });
+      const configured = await factory();
+      const host = configured instanceof BatonWebHost ? configured : new BatonWebHost(configured);
+      const outcome = await host.serve(process, (listening) => {
+        process.stderr.write(`baton serve: ${JSON.stringify(listening)}\n`);
+      });
+      process.stderr.write(`baton serve: ${JSON.stringify(outcome.closed)}\n`);
+      if (outcome.closed.state !== 'closed') process.exitCode = 1;
+>>>>>>> Stashed changes
     }
   } else {
     const connection = discoverBatonConnection();

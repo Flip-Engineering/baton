@@ -314,6 +314,7 @@ export function recoveryProcessAbsentPayload(processRef) {
   };
 }
 
+<<<<<<< Updated upstream
 export function recoveryProcessReapedPayload(processRef, authority) {
   return {
     schemaVersion: 1,
@@ -325,6 +326,8 @@ export function recoveryProcessReapedPayload(processRef, authority) {
   };
 }
 
+=======
+>>>>>>> Stashed changes
 export function validRecoveryProcessAbsentPayload(payload) {
   return exactKeys(payload, ['generation', 'pid', 'processGroupId', 'reason', 'schemaVersion'])
     && payload.schemaVersion === 1
@@ -334,6 +337,7 @@ export function validRecoveryProcessAbsentPayload(payload) {
     && payload.reason === 'process_group_absent';
 }
 
+<<<<<<< Updated upstream
 export function validRecoveryProcessReapedPayload(payload) {
   return exactKeys(payload, RECOVERY_REAPED_KEYS)
     && payload.schemaVersion === 1
@@ -347,6 +351,8 @@ export function validRecoveryProcessReapedPayload(payload) {
     && payload.reason === 'process_group_reaped';
 }
 
+=======
+>>>>>>> Stashed changes
 export function validProcessStartedPayload(payload) {
   return exactKeys(payload, START_KEYS)
     && payload.schemaVersion === 1

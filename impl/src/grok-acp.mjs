@@ -20,7 +20,11 @@
 import { spawn, execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { renderBrief } from './adapter.mjs';
+<<<<<<< Updated upstream
 import { normalizeProcessGeneration, ProcessCloseReapLatch, processStartedPayload } from './process-lifecycle.mjs';
+=======
+import { normalizeProcessGeneration, processClosedPayload, processReapUnconfirmedPayload, processStartedPayload, reapOwnedProcessGroup } from './process-lifecycle.mjs';
+>>>>>>> Stashed changes
 import { attestWorkerPolicyObservation } from './worker-policy.mjs';
 
 const DEFAULT_MAX_WIRE_FRAME_BYTES = 1024 * 1024;
@@ -234,8 +238,11 @@ export class GrokAcpCli {
           configuredPreferences: [], observation: 'unavailable',
         },
       },
+<<<<<<< Updated upstream
       // Issue #31 §2.1(1): a completed turn is a steerable checkpoint, not an implicit claim.
       turnCompletion: 'pausable',
+=======
+>>>>>>> Stashed changes
       verbs: {
         spawn: 'native',
         prompt: 'native',
@@ -777,6 +784,13 @@ export class GrokAcpCli {
       if (session.killing || session.closed) {
         return { ok: false, code: 'provider_ready_refused', reason: 'launch worker policy was rejected by coordinator policy' };
       }
+<<<<<<< Updated upstream
+=======
+    }
+    if (opts.timeoutMs > 0) {
+      session.wallTimer = setTimeout(() => this._onWallTimeout(session, opts.timeoutMs), opts.timeoutMs);
+      if (typeof session.wallTimer.unref === 'function') session.wallTimer.unref();
+>>>>>>> Stashed changes
     }
     // #163 law: the wall-time fate clock is GONE — opts.timeoutMs is accepted for back-compat
     // and deliberately ignored for fate. A member's fate rests on evidence only.

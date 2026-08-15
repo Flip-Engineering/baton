@@ -1015,7 +1015,11 @@ export class WebNorthbound {
     const scopeKey = hash({ userId: ctx.principal.userId, command: envelope.command, repoId: envelope.repoId, idempotencyKey: envelope.idempotencyKey });
     const requestDigest = hash(canonicalRequest(envelope));
     let semanticAuthority = null;
+<<<<<<< Updated upstream
     if (APPLICATION_COMMAND[envelope.command] === 'run.act') {
+=======
+    if (envelope.command === 'run_act') {
+>>>>>>> Stashed changes
       const prior = this.coordination.webCommandByScope?.(scopeKey) ?? null;
       if (prior && prior.requestDigest !== requestDigest) {
         try { this._audit('idempotency_refused', ctx, { command: envelope.command, repoId: envelope.repoId, reason: 'idempotency_conflict' }); }
@@ -1026,12 +1030,15 @@ export class WebNorthbound {
         semanticAuthority = prior?.semanticAuthority ?? await this.application.actionAuthority(
           envelope.args,
           { actor: webActor, principalId: ctx.principal.userId, sessionId: ctx.principal.sessionId },
+<<<<<<< Updated upstream
           {
             transport: 'web', requestId: String(envelope.commandId),
             idempotencyKey: `web.command:${envelope.commandId}`,
             capabilityAuthority: northboundCapabilityToken('web'),
             capabilities: [...ctx.principal.capabilities],
           },
+=======
+>>>>>>> Stashed changes
         );
       } catch (cause) {
         const failure = dispatchFailure(cause);
@@ -1059,10 +1066,13 @@ export class WebNorthbound {
       }
     }
 
+<<<<<<< Updated upstream
     if (READ_ONLY_COMMANDS.has(envelope.command)) {
       return this._executeObservation(ctx, envelope, webActor, scopeKey, requestDigest);
     }
 
+=======
+>>>>>>> Stashed changes
     let admission;
     try {
       admission = this.coordination.admitWebCommand({
@@ -1079,7 +1089,11 @@ export class WebNorthbound {
       try { this._audit('idempotency_refused', ctx, { command: envelope.command, repoId: envelope.repoId, reason: admission.result }); } catch { return error(503, 'temporarily_unavailable'); }
       return error(409, admission.result === 'idempotency_conflict' ? 'idempotency_conflict' : 'invalid_command');
     }
+<<<<<<< Updated upstream
     if (APPLICATION_COMMAND[envelope.command] === 'run.act'
+=======
+    if (envelope.command === 'run_act'
+>>>>>>> Stashed changes
       && admission.command.semanticAuthority?.authorityDigest !== semanticAuthority?.authorityDigest) {
       try { this._audit('authorization_refused', ctx, { command: envelope.command, repoId: envelope.repoId }); }
       catch { return error(503, 'temporarily_unavailable'); }
@@ -1110,7 +1124,11 @@ export class WebNorthbound {
       }
       if (admission.command.status === 'admitted' && (RECONCILABLE.has(envelope.command)
         || (envelope.command === 'spawn' && envelope.args.goalPlan))) {
+<<<<<<< Updated upstream
         if (APPLICATION_COMMAND[envelope.command] === 'run.act'
+=======
+        if (envelope.command === 'run_act'
+>>>>>>> Stashed changes
           && admission.command.sessionId !== ctx.principal.sessionId) {
           return error(403, 'forbidden');
         }
@@ -1167,9 +1185,15 @@ export class WebNorthbound {
           }, {
             transport: 'web', requestId: String(envelope.commandId),
             idempotencyKey: `web.command:${envelope.commandId}`,
+<<<<<<< Updated upstream
             capabilityAuthority: northboundCapabilityToken('web'),
             capabilities: [...ctx.principal.capabilities],
             ...(APPLICATION_COMMAND[envelope.command] === 'run.act' ? {
+=======
+            ...(envelope.command === 'run_act' ? {
+              capabilityAuthority: northboundCapabilityToken('web'),
+              capabilities: [...ctx.principal.capabilities],
+>>>>>>> Stashed changes
               semanticAuthority: admission.command.semanticAuthority,
             } : {}),
             ...(lease ? { sessionAuthority: {
@@ -1279,9 +1303,15 @@ export class WebNorthbound {
       }, {
         transport: 'web', requestId: String(envelope.commandId),
         idempotencyKey: `web.command:${envelope.commandId}`,
+<<<<<<< Updated upstream
         capabilityAuthority: northboundCapabilityToken('web'),
         capabilities: [...principal.capabilities],
         ...(APPLICATION_COMMAND[envelope.command] === 'run.act' ? {
+=======
+        ...(envelope.command === 'run_act' ? {
+          capabilityAuthority: northboundCapabilityToken('web'),
+          capabilities: [...principal.capabilities],
+>>>>>>> Stashed changes
           semanticAuthority,
         } : {}),
         ...(lease ? { sessionAuthority: {
@@ -1650,12 +1680,15 @@ export class WebNorthbound {
             actor: actor(principal), principalId: principal.userId,
             sessionId: principal.sessionId,
           },
+<<<<<<< Updated upstream
           {
             transport: 'web', requestId: String(envelope.commandId),
             idempotencyKey: `web.command:${envelope.commandId}`,
             capabilityAuthority: northboundCapabilityToken('web'),
             capabilities: [...principal.capabilities],
           },
+=======
+>>>>>>> Stashed changes
         );
       } catch (cause) {
         const failure = dispatchFailure(cause);

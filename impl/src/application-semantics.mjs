@@ -153,6 +153,7 @@ const objectSchema = (properties, required = Object.keys(properties)) => ({
   type: 'object', properties, required, additionalProperties: false,
 });
 const id = { type: 'string', minLength: 1, maxLength: 256 };
+<<<<<<< Updated upstream
 const safeBoardId = { type: 'string', minLength: 1, maxLength: 128, pattern: '^[A-Za-z0-9_.:-]+$' };
 const safeBoardItemId = { type: 'string', minLength: 1, maxLength: 256, pattern: '^[A-Za-z0-9_.:-]+$' };
 const digest64 = { type: 'string', pattern: '^[a-f0-9]{64}$' };
@@ -187,6 +188,8 @@ const applicationIntent = objectSchema({
     },
   }),
 }, ['objective']);
+=======
+>>>>>>> Stashed changes
 const depth = {
   type: 'string', enum: ['outline', 'index', 'section', 'item', 'content', 'evidence'],
 };
@@ -487,6 +490,7 @@ const actions = {
     destructive: false, irreversible: false, idempotent: true, priority: 'required',
     helpTopic: 'run.act.answer_question', expectedDepth: 'outline',
   },
+<<<<<<< Updated upstream
   answer_decision: {
     label: 'Answer worker decision',
     summary: 'Choose an option (or send bounded free-form text, when the request allows it) for the exact pending typed decision request advertised by this Run.',
@@ -524,11 +528,17 @@ const actions = {
     destructive: true, irreversible: false, idempotent: true, priority: 'recommended',
     helpTopic: 'run.act.claim_turn', expectedDepth: 'outline', genericCli: true,
   },
+=======
+>>>>>>> Stashed changes
   send: {
     label: 'Guide active work',
     summary: 'Send guidance to the current semantic work recipient without exposing worker or fence coordinates.',
     inputSchema: objectSchema({
+<<<<<<< Updated upstream
       message: { type: 'string', minLength: 1, maxLength: FRAME_LIMITS['run.legacy_send.body'].value },
+=======
+      message: { type: 'string', minLength: 1, maxLength: 16384 },
+>>>>>>> Stashed changes
       recipient: { type: 'string', minLength: 1, maxLength: 256, default: 'work' },
       delivery: { type: 'string', enum: ['nudge', 'now', 'turn'], default: 'nudge' },
     }, ['message']),
@@ -705,10 +715,13 @@ const APPLICATION_ACTION_CAPABILITY_SOURCE = {
   approve_plan: ['approve', 'observe'],
   answer_approval: ['approve', 'observe'],
   answer_question: ['control', 'observe'],
+<<<<<<< Updated upstream
   answer_decision: ['control', 'observe'],
   nudge_turn: ['control', 'observe'],
   wait_turn: ['control', 'observe'],
   claim_turn: ['control', 'observe'],
+=======
+>>>>>>> Stashed changes
   send: ['control', 'observe'],
   interrupt: ['control', 'observe'],
   adopt_result: ['adopt_result', 'observe'],
@@ -739,6 +752,7 @@ const authorizedActions = Object.fromEntries(Object.entries(actions).map(([kind,
   { ...definition, requiredCapabilities: APPLICATION_ACTION_CAPABILITIES[kind] },
 ]));
 
+<<<<<<< Updated upstream
 const OPERATION_ALIASES = {
   'run.list': {
     operation: 'runs.list',
@@ -852,6 +866,8 @@ function annotateRegistryEntries() {
 
 annotateRegistryEntries();
 
+=======
+>>>>>>> Stashed changes
 const cliCommands = [
   ['explore.objective', 'run.start', null, 'baton explore OBJECTIVE [--exact HARNESS/MODEL@EFFORT] [--profile PROFILE] [--scope PATHS]'],
   ['review.objective', 'run.start', null, 'baton review OBJECTIVE --exact HARNESS/MODEL@EFFORT --exact HARNESS/MODEL@EFFORT [--profile PROFILE] [--scope PATHS]'],
@@ -863,28 +879,44 @@ const cliCommands = [
   ['run.progress', 'run.inspect', null, 'baton run progress RUN_ID [--follow]'],
   ['run.events', 'run.inspect', null, 'baton run events RUN_ID [--follow]'],
   ['run.output', 'run.inspect', null, 'baton run output RUN_ID [--to RECIPIENT] [--follow]'],
+<<<<<<< Updated upstream
   ['run.episode', 'run.episode', null, 'baton run episode RUN_ID [CHAPTER] [--workstream ROLE --generation N] [--content | --evidence] [--page-cursor CURSOR] [--cursor N --wait DURATION]'],
   ['run.result', 'run.episode', null, 'baton run result RUN_ID [--workstream ROLE --generation N] [--evidence] [--cursor N --wait DURATION]'],
   ['run.workstreams', 'run.workstreams', null, 'baton run workstreams RUN_ID [ROLE --generation N] [--cursor N --wait DURATION]'],
   ['run.notify', 'run.workstream.notify', null, 'baton run notify RUN_ID ROLE TEXT [--generation N] [--nudge | --now | --turn]'],
+=======
+>>>>>>> Stashed changes
   ['run.do', 'run.act', null, 'baton run do RUN_ID ACTION_ID [--inputs JSON]'],
   ['run.stop', 'run.stop', 'stop', 'baton run stop RUN_ID [--reason REASON]'],
   ['run.status', null, null, 'baton run status RUN_ID [--wait DURATION | --follow [--wait DURATION]]'],
   ['run.recover', null, null, 'baton run recover RUN_ID'],
   ['run.approve', null, 'approve_plan', 'baton run approve RUN_ID --plan DIGEST'],
+<<<<<<< Updated upstream
   ['run.answer', null, null, 'baton run answer RUN_ID REQUEST_ID (--allow | --deny | --cancel | --text TEXT | --option OPTION_ID)'],
   ['run.answer.approval', null, 'answer_approval', 'baton run answer RUN_ID REQUEST_ID (--allow | --deny | --cancel)'],
   ['run.answer.question', null, 'answer_question', 'baton run answer RUN_ID REQUEST_ID --text TEXT'],
   ['run.answer.decision', null, 'answer_decision', 'baton run answer RUN_ID REQUEST_ID (--option OPTION_ID | --text TEXT)'],
   ['run.send', null, 'send', 'baton run send RUN_ID TEXT [--to RECIPIENT] [--nudge | --now | --turn]'],
   ['run.interrupt', null, 'interrupt', 'baton run interrupt RUN_ID [--to RECIPIENT] [--reason REASON]'],
+=======
+  ['run.answer', null, null, 'baton run answer RUN_ID REQUEST_ID (--allow | --deny | --cancel | --text TEXT)'],
+  ['run.answer.approval', null, 'answer_approval', 'baton run answer RUN_ID REQUEST_ID (--allow | --deny | --cancel)'],
+  ['run.answer.question', null, 'answer_question', 'baton run answer RUN_ID REQUEST_ID --text TEXT'],
+  ['run.send', null, 'send', 'baton run send RUN_ID TEXT [--to RECIPIENT] [--nudge | --now | --turn]'],
+  ['run.interrupt', null, 'interrupt', 'baton run interrupt RUN_ID [--to RECIPIENT] [--reason REASON]'],
+  ['run.steer', null, null, 'baton run steer RUN_ID TARGET (--nudge | --now | --turn) TEXT --reason REASON'],
+>>>>>>> Stashed changes
   ['run.evidence', null, null, 'baton run evidence RUN_ID'],
   ['run.debug', null, null, 'baton run debug RUN_ID [--member ROLE] [--limit N]'],
   ['run.adopt', null, 'adopt_result', 'baton run adopt RUN_ID --reason REASON'],
   ['run.select', null, 'select_candidate', 'baton run select RUN_ID ROLE --reason REASON'],
   ['run.feedback', null, 'send_feedback', 'baton run feedback RUN_ID ROLE --text TEXT'],
   ['run.revise', null, 'revise_candidate', 'baton run revise RUN_ID --reason REASON'],
+<<<<<<< Updated upstream
   ['run.stop-member', 'run.workstream.stop', 'stop_member', 'baton run stop-member RUN_ID ROLE [--generation N] [--reason REASON]'],
+=======
+  ['run.stop-member', null, 'stop_member', 'baton run stop-member RUN_ID ROLE --reason REASON'],
+>>>>>>> Stashed changes
   ['run.retry', null, 'retry_verification', 'baton run retry RUN_ID --reason REASON'],
   ['run.resume', null, 'resume_work', 'baton run resume RUN_ID --reason REASON'],
   ['run.review', null, 'semantic_review', 'baton run review RUN_ID --exact HARNESS/MODEL@EFFORT --reason REASON'],
@@ -924,9 +956,12 @@ const cli = {
         'baton setup',
         'baton credentials install kimi',
         'baton doctor [--depth outline|connection|profile|evidence] [--check]',
+<<<<<<< Updated upstream
         'baton explore OBJECTIVE [--exact HARNESS/MODEL@EFFORT]',
         'baton review OBJECTIVE --exact HARNESS/MODEL@EFFORT --exact HARNESS/MODEL@EFFORT',
         'baton route HARNESS/MODEL@EFFORT',
+=======
+>>>>>>> Stashed changes
         'baton help [run|routing|connection|TOPIC]',
       ],
       sections: [
@@ -968,6 +1003,7 @@ const cli = {
       ],
     },
     'application.help': { aliasFor: 'application' },
+<<<<<<< Updated upstream
     explore: {
       commandIds: ['explore.objective'],
       paragraphs: [
@@ -994,6 +1030,8 @@ const cli = {
         'Use review for the ordinary objective-first reviewer/challenger preset.',
       ],
     },
+=======
+>>>>>>> Stashed changes
     runs: {
       commandIds: [],
       paragraphs: [
@@ -1002,9 +1040,15 @@ const cli = {
       ],
     },
     run: {
+<<<<<<< Updated upstream
       commandIds: ['run.objective', 'run.start.exact', 'run.show', 'run.progress', 'run.events', 'run.output',
         'run.do', 'run.stop', 'run.status', 'run.recover',
         'run.approve', 'run.answer', 'run.send', 'run.interrupt', 'run.evidence', 'run.adopt', 'run.select',
+=======
+      commandIds: ['run.objective', 'run.show', 'run.progress', 'run.events', 'run.output',
+        'run.do', 'run.stop', 'run.status', 'run.recover',
+        'run.approve', 'run.answer', 'run.send', 'run.interrupt', 'run.steer', 'run.evidence', 'run.adopt', 'run.select',
+>>>>>>> Stashed changes
         'run.feedback', 'run.revise', 'run.stop-member', 'run.retry',
         'run.resume', 'run.review', 'run.integrate', 'run.export'],
       selectorRule: 'manualRoute',
@@ -1036,7 +1080,11 @@ const cli = {
     'run.inspect': {
       commandIds: ['run.show', 'run.progress', 'run.events', 'run.output'],
       paragraphs: [
+<<<<<<< Updated upstream
         'Shows the objective-first Run outline by default. Expand to index, section, item, content, or evidence only when that detail is needed; this is the preferred change-aware workflow.',
+=======
+        'Shows the objective-first Run outline by default. Expand to index, section, item, content, or evidence only when that detail is needed.',
+>>>>>>> Stashed changes
         'Section depth requires --section. Item and evidence require --section plus --item. Context content accepts --offset. Execution progress, normalized events, and opt-in untrusted output have concise Run commands that manage pagination and waiting inside Baton.',
       ],
     },
@@ -1094,14 +1142,22 @@ const cli = {
 
 const core = {
   schemaVersion: 1,
+<<<<<<< Updated upstream
   version: '1.3.0',
+=======
+  version: '1.2.0',
+>>>>>>> Stashed changes
   depths: ['outline', 'index', 'section', 'item', 'content', 'evidence'],
   sections,
   operations,
   actions: authorizedActions,
   cli,
+<<<<<<< Updated upstream
   defaultOperations: ['application.help', 'runs.list', 'run.start', 'run.inspect', 'run.episode',
     'run.workstreams', 'run.workstream.notify', 'run.workstream.stop', 'run.act', 'run.stop'],
+=======
+  defaultOperations: ['application.help', 'runs.list', 'run.start', 'run.inspect', 'run.act', 'run.stop'],
+>>>>>>> Stashed changes
   advanced: {
     defaultVisible: false,
     operations: ['fleet_spawn', 'fleet_send', 'fleet_wait', 'fleet_respond', 'fleet_interrupt',
@@ -1226,6 +1282,7 @@ const SURFACING_MATRIX_AUTHORITY = Object.freeze({
   'knowledge.horizon': 'viewer-scoped; non-orchestrators must be owned workers',
 });
 
+<<<<<<< Updated upstream
 // KG settlement D2: knowledge.promote's liveMethod names the store admission gate (KS3). It is
 // assembled rather than written as one literal so kg-activation's A5 source-scan — which asserts
 // no src surface OUTSIDE the store/coordinator textually references the gate as a live call — reads
@@ -2119,6 +2176,8 @@ export const APPLICATION_SEMANTIC_REGISTRY = freeze({
   digest: authorityDigest,
 });
 
+=======
+>>>>>>> Stashed changes
 const PROVIDER_TERMINAL_GUIDANCE = freeze({
   authentication_required: {
     category: 'provider_authentication',
@@ -2153,6 +2212,7 @@ const GENERIC_PROVIDER_TERMINAL_GUIDANCE = freeze({
   retryable: true,
 });
 
+<<<<<<< Updated upstream
 // Issue #35: a dispatch admission refusal ends a Run before any provider work exists. Its typed
 // cause is a deployment/workspace condition, never a provider fault, and it is always retryable
 // once the named condition clears.
@@ -2178,6 +2238,8 @@ const GENERIC_DISPATCH_REFUSAL_GUIDANCE = freeze({
   retryable: true,
 });
 
+=======
+>>>>>>> Stashed changes
 function canonicalTerminalCode(value, fallback) {
   return typeof value === 'string' && value.length > 0 && value.length <= 256
     && /^[a-z0-9][a-z0-9._-]*$/iu.test(value) ? value : fallback;
@@ -2191,7 +2253,11 @@ function projectProviderTerminalCause(cause) {
 }
 
 export function projectTypedTerminalCause({
+<<<<<<< Updated upstream
   terminalResult = null, terminalOutcome = null, runStop = null, dispatchRefusal = null,
+=======
+  terminalResult = null, terminalOutcome = null, runStop = null,
+>>>>>>> Stashed changes
 } = {}) {
   const cause = terminalResult?.terminalCause;
   if (cause && ['budget_exceeded', 'provider_failure', 'policy_failure'].includes(cause.kind)) {
@@ -2207,12 +2273,15 @@ export function projectTypedTerminalCause({
   if (terminalOutcome?.accepted === false) {
     return projectProviderTerminalCause({ code: terminalOutcome.code });
   }
+<<<<<<< Updated upstream
   if (dispatchRefusal) {
     const code = canonicalTerminalCode(dispatchRefusal.code, 'dispatch_refusal_unclassified');
     const guidance = Object.hasOwn(DISPATCH_REFUSAL_GUIDANCE, code)
       ? DISPATCH_REFUSAL_GUIDANCE[code] : GENERIC_DISPATCH_REFUSAL_GUIDANCE;
     return freeze({ kind: 'dispatch_refused', code, ...guidance });
   }
+=======
+>>>>>>> Stashed changes
   return runStop ? freeze({ kind: 'operator_stop', code: 'operator_stop' }) : null;
 }
 

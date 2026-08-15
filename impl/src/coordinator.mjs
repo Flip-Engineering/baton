@@ -8,6 +8,7 @@ import { existsSync, mkdirSync, realpathSync, writeFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { Cursor } from './log.mjs';
+<<<<<<< Updated upstream
 import {
   attentionItemLine, boundedAttentionText, buildKnowledgeSlice, createBrief, createDecisionAnswer, createDecisionRequest, createDigest,
   frameWebContent, isAttentionSpillItem, ValidationError, wrapFact, wrapHubDerived, wrapProse,
@@ -21,6 +22,15 @@ import {
   validProcessClosedPayload, validProcessReadyPayload, validProcessReapUnconfirmedPayload,
   validProcessStartedPayload, validProcessAuthorityPayload, validRecoveryProcessAbsentPayload,
   validRecoveryProcessReapedPayload,
+=======
+import { createBrief, createDigest, wrapFact, wrapProse } from './messages.mjs';
+import { parseRouteTupleKey, resolveEffort, routeTupleKey } from './route-tuple.mjs';
+import { hasNorthboundCapabilityAuthority } from './northbound-capability-authority.mjs';
+import {
+  processGroupAlive, processReadyPayload, recoveryProcessAbsentPayload,
+  validProcessClosedPayload, validProcessReadyPayload, validProcessReapUnconfirmedPayload,
+  validProcessStartedPayload, validRecoveryProcessAbsentPayload,
+>>>>>>> Stashed changes
 } from './process-lifecycle.mjs';
 import { normalizeProviderGovernancePolicy, providerGovernanceRoute, validateProviderGovernanceCard } from './provider-governance.mjs';
 import { normalizePhysicalOwnerId, normalizeSparseCheckoutIdentity, normalizeSparsePaths, sparseCheckoutIdentity } from './worktree.mjs';
@@ -37,7 +47,10 @@ import { normalizeRunLineagePolicy } from './run-lineage.mjs';
 import {
   createRecoveryAttemptAdmission, createRecoveryAttemptCompletion, recoveryAttemptSeriesId,
 } from './recovery-attempt.mjs';
+<<<<<<< Updated upstream
 import { normalizeVerifierFailureCapsule, sanitizeVerifierDiagnosticText } from './verifier-diagnostics.mjs';
+=======
+>>>>>>> Stashed changes
 
 const ORIENTATION_DELIVERY = Symbol('orientation-delivery');
 const WORKTREE_FAILURE = Symbol('worktree-failure');
@@ -63,6 +76,7 @@ const RUN_TIMELINE_OPERATIONAL_KINDS = new Set([
   'resource.provider_call', 'resource.tokens',
   'verify.reverified', 'work.resumed',
 ]);
+<<<<<<< Updated upstream
 
 // Issue #67 D2: the closed re-arm set — the four worker-observable progress-evidence kinds, in
 // ACTUAL sorted order (the literal below IS its own [...set].sort() result). A turn boundary and
@@ -101,6 +115,8 @@ function permissionsForWaveRole(role) {
   if (role === 'coordinator-worker') return ['read'];
   return ['read', 'claim', 'report'];
 }
+=======
+>>>>>>> Stashed changes
 
 function validLogicalCallId(value) {
   return typeof value === 'string' && value.length > 0
@@ -300,6 +316,7 @@ const COORDINATION_MUTATORS = new Set([
   'recordRepresentationProduction',
   'defineGoal', 'proposePlan', 'approvePlan', 'createPlanGatedTask', 'createPlanRevisionTask',
   'admitContextSession', 'admitContextCell', 'settleContextCell', 'admitContextMapCall',
+<<<<<<< Updated upstream
   'admitReplManifest', 'admitReplSession',
   'admitContextEffectCall',
   'settleContextCall', 'settleContextMapCall', 'settleContextEffectCall',
@@ -307,6 +324,11 @@ const COORDINATION_MUTATORS = new Set([
   'admitBoardCommand',
   'requestBoardClaim', 'submitBoardReport', 'expireBoardClaim',
   'writeScratchpad', 'elevateTaskScratchpad', 'settleWorkflowScratchpad', 'reapRunScratchpads',
+=======
+  'admitContextEffectCall',
+  'settleContextCall', 'settleContextMapCall', 'settleContextEffectCall',
+  'recordTaskResourceRelease',
+>>>>>>> Stashed changes
 ]);
 
 const DEFAULT_DRAIN_POLICY = Object.freeze({ maxWorkers: 1024, maxInteractions: 15_000, timeoutMs: 60_000, pollMs: 10 });
@@ -341,6 +363,7 @@ function canonical(value) {
 }
 function canonicalDigest(value) { return createHash('sha256').update(JSON.stringify(canonical(value))).digest('hex'); }
 
+<<<<<<< Updated upstream
 /** Decision 3: a size refusal on a cataloged admission lane carries {cap, actual, unit,
  * gracefulPath} on the thrown error AND a human message composed by the ONE helper — numbers
  * only, never body content (AS-4). */
@@ -435,6 +458,8 @@ function projectHorizonScratchpad(capture, viewer) {
   return deepFreeze(result);
 }
 
+=======
+>>>>>>> Stashed changes
 const CLOSED_VERIFIER_OUTCOMES = new Set(['passed', 'candidate_failed', 'inconclusive']);
 const CLOSED_VERIFIER_OWNERS = new Set(['candidate', 'verifier', 'baseline_or_environment']);
 const CLOSED_VERIFIER_EXECUTIONS = new Map([
@@ -479,11 +504,14 @@ function closedVerificationVerdict(value, verification = {}) {
   const capturedOutputBytes = Number.isSafeInteger(observed.capturedOutputBytes)
     && observed.capturedOutputBytes >= 0 ? observed.capturedOutputBytes : 0;
   const emptyDigest = createHash('sha256').update('').digest('hex');
+<<<<<<< Updated upstream
   const capturedOutputDigest = hex64OrNull(observed.capturedOutputDigest) ?? emptyDigest;
   const failureCapsule = passed ? null : normalizeVerifierFailureCapsule(
     observed.failureCapsule,
     { capturedOutputBytes, capturedOutputDigest },
   );
+=======
+>>>>>>> Stashed changes
   let diagnosticCode = CLOSED_VERIFIER_DIAGNOSTICS.has(observed.diagnosticCode)
     ? observed.diagnosticCode : null;
   if (!diagnosticCode) {
@@ -510,8 +538,12 @@ function closedVerificationVerdict(value, verification = {}) {
     survivedMutantCount: survived.length,
     survivedMutantsDigest: canonicalDigest(survived),
     capturedOutputBytes,
+<<<<<<< Updated upstream
     capturedOutputDigest,
     ...(failureCapsule ? { failureCapsule } : {}),
+=======
+    capturedOutputDigest: hex64OrNull(observed.capturedOutputDigest) ?? emptyDigest,
+>>>>>>> Stashed changes
     diagnosticCode,
     durationMs: Number.isFinite(observed.durationMs) && observed.durationMs >= 0
       ? Math.trunc(observed.durationMs) : null,
@@ -966,6 +998,7 @@ export class Coordinator {
       throw new TypeError('Context Brief materializer must be a function');
     }
     this._contextBriefMaterializer = opts.contextBriefMaterializer ?? null;
+<<<<<<< Updated upstream
     // KG-3 rule 6/6a (v2-P0-1): the briefing rides the `{ brief, briefing }` wrapper the
     // provider seam passes to spawn (:2814) and the recovery prompt (:4553-4555), NEVER
     // task.brief. Inert unless a briefing provider is configured, so existing dispatch
@@ -974,6 +1007,8 @@ export class Coordinator {
       throw new TypeError('Knowledge briefing provider must be a function');
     }
     this._knowledgeBriefingProvider = opts.knowledgeBriefingProvider ?? null;
+=======
+>>>>>>> Stashed changes
     this._goalPlanAuthority = null;
     if (opts.goalPlanAuthority !== undefined) {
       const authority = opts.goalPlanAuthority;
@@ -1286,6 +1321,7 @@ export class Coordinator {
     }
 
     this._replay();
+<<<<<<< Updated upstream
     // An exact durable process authority can also prove that its group is already absent. Close
     // that generation now, before generic worktree/runtime reconciliation, so this controller's
     // first usable state agrees with the cleanup it is about to expose. This is policy-observed
@@ -1421,6 +1457,8 @@ export class Coordinator {
         }));
       }
     };
+=======
+>>>>>>> Stashed changes
     if (!this._startupRecoveryAuthority) {
       // Phase 91: replay must identify closed preservation receipts before worktree
       // reconciliation. An empty expected set would destroy the exact checkout bound by the
@@ -1429,19 +1467,33 @@ export class Coordinator {
       // still reconciled away. Runtime scopes are never trusted across controller incarnation.
       const preservedOwners = [...this._workers.values()].filter((handle) => {
         const task = this._tasks.get(handle.taskId);
+<<<<<<< Updated upstream
         const preservationAuthority = this._exactProcesslessPreservationAuthority(handle, task);
         if (!preservationAuthority.ok) {
           handle.preservationAuthorityDiagnostic = preservationAuthority.result;
         }
+=======
+>>>>>>> Stashed changes
         return handle.status === 'orphaned'
           && handle.sessionPreservation?.state === 'preserved'
           && handle.sessionPreservation?.transport === 'attached'
           && handle.sessionContext?.ownerTaskId
+<<<<<<< Updated upstream
           && task && !TERMINAL_TASK_STATUSES.has(task.status)
           && preservationAuthority.ok;
       }).map((handle) => workspaceOwnerExpectation(handle));
       const expectedOwners = uniqueOwnerExpectations([...preservedOwners, ...recoveredProcessOwners]);
       reconcileStartupResources(expectedOwners, recoveredProcessWorkers);
+=======
+          && task && !TERMINAL_TASK_STATUSES.has(task.status);
+      }).map((handle) => handle.sessionContext.ownerTaskId);
+      if (this._worktrees && typeof this._worktrees.reconcile === 'function') {
+        this._trackStartupCleanup(() => this._worktrees.reconcile(preservedOwners));
+      }
+      if (this._runtimeScopes && typeof this._runtimeScopes.reconcile === 'function') {
+        this._trackStartupCleanup(() => this._runtimeScopes.reconcile([]));
+      }
+>>>>>>> Stashed changes
     } else {
       const eligible = [...this._workers.values()].filter((handle) => {
         const adapter = this._adapters[handle.vendor];
@@ -1594,6 +1646,7 @@ export class Coordinator {
     return rows;
   }
 
+<<<<<<< Updated upstream
   _recoveryDispatchRefusal(handle, task, opts = {}) {
     if (task && this._coordination?.taskResourceRelease?.(task.id)) return 'resources_released';
     if (opts.allowUnvalidatedOwner !== true
@@ -1604,6 +1657,10 @@ export class Coordinator {
       && handle.workspaceOwnerProcessAuthorityValid !== true) {
       return 'workspace_owner_process_authority_unproven';
     }
+=======
+  _recoveryDispatchRefusal(handle, task) {
+    if (task && this._coordination?.taskResourceRelease?.(task.id)) return 'resources_released';
+>>>>>>> Stashed changes
     const state = handle && typeof this._coordination?.recoveryDispatchState === 'function'
       ? this._coordination.recoveryDispatchState(handle.id)
       : null;
@@ -1817,6 +1874,7 @@ export class Coordinator {
         dispositions.set(workerId, 'alreadyTerminal');
         return;
       }
+<<<<<<< Updated upstream
       // Replay can signal only a generation carrying a durable kernel-start observation that
       // still matches the group leader. Legacy generations remain absence-only, preserving their
       // no-PID-reuse behavior. A successful recovered reap is policy-observed closure rather than
@@ -1882,13 +1940,37 @@ export class Coordinator {
         this._coordMapEvent(closed);
         handle.processRef = { ...handle.processRef, state: 'closed', closedSeq: closed.seq };
         handle.recoveredProcessAuthority = false;
+=======
+      // A restarted controller cannot safely signal an old PID/PGID because the numeric identity
+      // may have been reused. It may, however, prove that the exact recorded process group is
+      // absent. Persist that observation before releasing the historical process coordinate so
+      // Run-stop replay converges without inventing an adapter acknowledgement.
+      if (handle.currentIncarnation !== true
+        && handle.processRef?.state === 'unconfirmed_after_restart'
+        && !processGroupAlive(handle.processRef.processGroupId)) {
+        const absent = this._log.append({
+          worker: handle.id,
+          harness: handle.vendor ? this._harnessOf(handle.vendor) : '',
+          turnEpoch: this._safeTurnEpoch(handle),
+          kind: 'control.recovery_process_absent',
+          actor: 'policy',
+          ...this._routeAttribution(handle, task),
+          payload: recoveryProcessAbsentPayload(handle.processRef),
+        });
+        this._coordMapEvent(absent);
+        handle.processRef = { ...handle.processRef, state: 'closed', closedSeq: absent.seq };
+>>>>>>> Stashed changes
         handle.status = 'dead';
         const runtimeRemoved = this._removeRuntimeScope(handle);
         await this._removeOwnedTaskWorktree(handle, task);
         if (!runtimeRemoved) return;
         handle.localAuthority = false;
+<<<<<<< Updated upstream
         dispositions.set(workerId, exactSignal ? 'killConfirmed' : 'alreadyTerminal');
         recoveredSignals.delete(workerId);
+=======
+        dispositions.set(workerId, 'alreadyTerminal');
+>>>>>>> Stashed changes
         return;
       }
       try {
@@ -1952,9 +2034,12 @@ export class Coordinator {
       && recorded.terminalEvent === recordedTask?.terminalEvent) {
       return recorded;
     }
+<<<<<<< Updated upstream
     // Issue #33 v2: every durable terminal observation settles its worker partition before
     // process/session/worktree cleanup can release the authenticated handle.
     this._settleTerminalScratchpad(taskId, { entryIds: [], terminalCaptureSha: recordedTask?.terminalCaptureSha ?? null });
+=======
+>>>>>>> Stashed changes
     await this.stopRunTargets([workerId], actor);
     const runtimeRemoved = this._removeRuntimeScope(handle);
     await this._removeOwnedTaskWorktree(handle, task);
@@ -1981,9 +2066,13 @@ export class Coordinator {
       terminalKind: null, terminalSeq: null,
     } : {
       state: processTerminal?.kind === 'control.recovery_process_absent'
+<<<<<<< Updated upstream
         ? 'absent_after_restart'
         : processTerminal?.kind === 'control.recovery_process_reaped'
           ? 'reaped_after_restart' : 'closed',
+=======
+        ? 'absent_after_restart' : 'closed',
+>>>>>>> Stashed changes
       generation: handle.processRef.generation,
       pid: handle.processRef.pid,
       processGroupId: handle.processRef.processGroupId,
@@ -2943,11 +3032,16 @@ export class Coordinator {
       const selection = this._resolveVendor(task);
       const vendor = selection?.vendor;
       if (!vendor || !this._adapters[vendor]) continue;
+<<<<<<< Updated upstream
       // #221 (operator ruling, 2026-08-14): the seat-ceiling pre-cap is ripped out. It was an
       // invented literal that silently queued spawns ahead of any real provider signal — the
       // phantom/fleet-stall wedge's true mechanism (misread as a spawn defect for two days).
       // Backpressure is provider-TRUE now: a real 429/quota answer arrives as a typed,
       // retried, ledgered provider event on the member — never a silent synthetic queue.
+=======
+      const card = this._adapters[vendor].card();
+      if (this._inFlightCount(vendor) >= card.concurrencyCeiling) continue;
+>>>>>>> Stashed changes
       this._dispatch(task, vendor, selection.model, selection.effort, selection.workerPolicyResolution);
     }
   }
@@ -2955,6 +3049,7 @@ export class Coordinator {
   _sweepDeadlines() {
     const now = this._now();
     for (const handle of this._workers.values()) {
+<<<<<<< Updated upstream
       if (['working', 'blocked', 'idle', 'stopping'].includes(handle.status)) {
         // 2026-08-14: the availability read is tri-state — a positive FALSE kills at once; an
         // errored read (null) is UNKNOWN and only a persistent unknown streak (the evidence-
@@ -2971,6 +3066,10 @@ export class Coordinator {
           handle.worktreeAvailabilityUnknownPolls = 0;
         }
       }
+=======
+      if (['working', 'blocked', 'idle', 'stopping'].includes(handle.status)
+        && !this._worktreeAuthorityAvailable(handle)) this._failWorktreeAuthority(handle);
+>>>>>>> Stashed changes
     }
     for (const [requestId, record] of [...this._pending]) {
       if ((record.kind === 'approval' || record.kind === 'publication') && record.state === 'pending' && record.deadlineAt != null && now >= record.deadlineAt) {
@@ -3150,6 +3249,7 @@ export class Coordinator {
     };
   }
 
+<<<<<<< Updated upstream
   _exactProcesslessPreservationAuthority(handle, task) {
     const receipt = handle?.sessionPreservation;
     const fields = [
@@ -3252,6 +3352,8 @@ export class Coordinator {
     return { ok: true, context };
   }
 
+=======
+>>>>>>> Stashed changes
   _semanticTargetMatches(handle, expected, expectedDigest) {
     if (!handle || !expected || typeof expected !== 'object'
       || canonicalDigest(expected) !== expectedDigest) return false;
@@ -3315,6 +3417,7 @@ export class Coordinator {
       || typeof this._worktrees?.worktreeAvailable !== 'function') return true;
     if (handle.worktreeAuthorityLost === true) return false;
     try {
+<<<<<<< Updated upstream
       const logicalOwner = validWorkspaceOwnerBoundPayload(handle.workspaceOwnerBinding)
         ? handle.workspaceOwnerBinding.logicalTaskId : handle.taskId;
       return this._worktrees.worktreeAvailable(logicalOwner, handle.sessionContext) === true;
@@ -3374,6 +3477,10 @@ export class Coordinator {
     handle.ownedWorktreeAuthority = true;
     handle.workspaceOwnerBindingDiagnostic = null;
     return true;
+=======
+      return this._worktrees.worktreeAvailable(handle.taskId, handle.sessionContext) === true;
+    } catch { return false; }
+>>>>>>> Stashed changes
   }
 
   _failWorktreeAuthority(handle) {
@@ -3582,7 +3689,11 @@ export class Coordinator {
     handle.currentIncarnation = true;
     handle.localAuthority = true;
     let providerBrief;
+<<<<<<< Updated upstream
     try { providerBrief = this._providerBrief(task.brief, workerId); }
+=======
+    try { providerBrief = this._providerBrief(task.brief); }
+>>>>>>> Stashed changes
     catch (error) {
       if (task.sessionRequest?.mode === 'new'
         && typeof this._worktrees?.releaseCapacity === 'function') {
@@ -3838,6 +3949,7 @@ export class Coordinator {
     }
   }
 
+<<<<<<< Updated upstream
   /** BD3-B: the live-head CAS at spawn admission. Every cited packId must be the current head
    * of its family; possession of a superseded digest is never authority. Throws
    * context_pack_stale (or context_pack_invalid for a malformed citation list) — the typed
@@ -4202,6 +4314,16 @@ export class Coordinator {
         });
       }
     }
+=======
+  _providerBrief(brief) {
+    if (!brief?.contextCall) return brief;
+    if (!this._contextBriefMaterializer) {
+      throw Object.assign(new Error('Context Brief materialization is unavailable'), {
+        code: 'context_map_attachment_unavailable',
+      });
+    }
+    return createBrief(this._contextBriefMaterializer(brief));
+>>>>>>> Stashed changes
   }
 
   /** SC1d: a refused spawn Ack may never strand its task in 'working'. `lifecycle.crashed` is
@@ -4425,8 +4547,13 @@ export class Coordinator {
       }
     };
     if (typeof this._worktrees?.reserveCapacityMany === 'function') {
+<<<<<<< Updated upstream
       const reservations = await Promise.resolve(this._worktrees.reserveCapacityMany(prepared.map(({ taskId, runId, workerId }) => ({
         taskId, requestedBaseSha: null, runId, attemptId: workerId, processGeneration: 1,
+=======
+      const reservations = await Promise.resolve(this._worktrees.reserveCapacityMany(prepared.map(({ taskId }) => ({
+        taskId, requestedBaseSha: null,
+>>>>>>> Stashed changes
       }))));
       if (!Array.isArray(reservations) || reservations.length !== prepared.length) {
         throw Object.assign(new Error('plan wave capacity authority returned an invalid result'), {
@@ -4438,9 +4565,13 @@ export class Coordinator {
       });
     } else if (typeof this._worktrees?.reserveCapacity === 'function') {
       const reservations = await Promise.allSettled(prepared.map((member) => (
+<<<<<<< Updated upstream
         this._worktrees.reserveCapacity(member.taskId, null, {
           runId: member.runId, attemptId: member.workerId, processGeneration: 1,
         })
+=======
+        this._worktrees.reserveCapacity(member.taskId, null)
+>>>>>>> Stashed changes
       )));
       prepared.forEach(({ taskId }, index) => {
         if (reservations[index].status === 'fulfilled' && reservations[index].value !== null) {
@@ -4586,6 +4717,7 @@ export class Coordinator {
     const taskId = opts.taskId ?? this._autoTaskId();
     normalizePhysicalOwnerId(taskId, 'taskId');
     const reconcileExistingPlanTask = this._tasks.has(taskId) && Boolean(opts.goalPlan);
+<<<<<<< Updated upstream
     if (this._tasks.has(taskId) && !reconcileExistingPlanTask) {
       // Epic #81 (O-6): a retried spawn reuses the SAME brief object against the SAME attempt and
       // exact-replays the binding — no second grant, no DuplicateTaskIdError. A fresh brief object
@@ -4598,6 +4730,9 @@ export class Coordinator {
       throw new DuplicateTaskIdError(`duplicate taskId "${taskId}"`);
     }
     if (brief && typeof brief === 'object') { this._orientationRetryBriefs ??= new WeakMap(); this._orientationRetryBriefs.set(brief, taskId); }
+=======
+    if (this._tasks.has(taskId) && !reconcileExistingPlanTask) throw new DuplicateTaskIdError(`duplicate taskId "${taskId}"`);
+>>>>>>> Stashed changes
     // PS5: a preserved-resume re-dispatch is the orchestrator-owned continuation of one approved
     // Plan node from its pinned checkpoint. It is the one sanctioned pairing of plan-gated
     // authority with a refinement lineage and a fresh worktree base, gated by a private token so
@@ -4679,7 +4814,10 @@ export class Coordinator {
     if (planMandatory && !opts.goalPlan && !derivedReviewAuthorized) throw Object.assign(new Error('an approved goal/plan node is required'), { code: 'goal_plan_required' });
     if (opts.goalPlan && !this._goalPlanAuthority) throw Object.assign(new Error('goal/plan authority is not configured'), { code: 'goal_plan_unavailable' });
     if (opts.goalPlan && vendor === 'auto') throw Object.assign(new Error('plan-gated dispatch requires an exact harness'), { code: 'plan_route_mismatch' });
+<<<<<<< Updated upstream
     const workerId = this._allocWorkerId();
+=======
+>>>>>>> Stashed changes
     let planAuth = null; let planState = null; let capacityPrepared = false;
     let capacityPreflightDone = false;
     let revisionParentTaskId = null;
@@ -4722,9 +4860,13 @@ export class Coordinator {
             code: 'plan_revision_result_ref_mismatch',
           });
         }
+<<<<<<< Updated upstream
         const prepared = await this._worktrees.reserveCapacity(taskId, worktreeBaseSha, {
           runId, attemptId: workerId, processGeneration: 1,
         });
+=======
+        const prepared = await this._worktrees.reserveCapacity(taskId, worktreeBaseSha);
+>>>>>>> Stashed changes
         capacityPreflightDone = true;
         if (prepared?.baseSha && prepared.baseSha !== worktreeBaseSha) {
           await Promise.resolve(this._worktrees.releaseCapacity?.(taskId));
@@ -4779,6 +4921,10 @@ export class Coordinator {
       }, derivedTopologyRelation);
     }
 
+<<<<<<< Updated upstream
+=======
+    const workerId = this._allocWorkerId();
+>>>>>>> Stashed changes
     const taskFields = () => ({
       id: taskId, brief: admittedBrief, deps, refines: revisionParentTaskId ?? opts.refines ?? null,
       runId,
@@ -4820,9 +4966,13 @@ export class Coordinator {
     try {
       if (!capacityPreflightDone && !capacityPrepared && sessionRequest.mode === 'new'
         && typeof this._worktrees?.reserveCapacity === 'function') {
+<<<<<<< Updated upstream
         const prepared = await this._worktrees.reserveCapacity(taskId, worktreeBaseSha, {
           runId, attemptId: workerId, processGeneration: 1,
         });
+=======
+        const prepared = await this._worktrees.reserveCapacity(taskId, worktreeBaseSha);
+>>>>>>> Stashed changes
         if (prepared?.baseSha) worktreeBaseSha = prepared.baseSha;
         capacityPrepared = prepared !== null;
         if (this._drainState !== 'open') {
@@ -5011,8 +5161,12 @@ export class Coordinator {
         providerGovernance: null, providerPolicyDigest: null, providerTurn: null, providerPolicyHardExceeded: false,
         providerTelemetryFailed: false, providerTerminalSeal: null,
         sessionPreservation: null, preservedTurnEpoch: null,
+<<<<<<< Updated upstream
         watchdogActions: new Set(), recentFailedActions: [], turnInFlight: false,
         stallSeamDigestSet: null, stallSeamCycle: null,
+=======
+        watchdogActions: new Set(), recentFailedActions: [],
+>>>>>>> Stashed changes
         watchdogGeneration: 0, watchdogTimer: null, runtimeScope: null, runtimeLease: null,
         spawnAbort: null, recoverySpawnAbort: null, recoverySpawnPending: false, recoverySpawnPromise: null, recoveryStopReason: null,
         recoveryProviderReleaseDeferred: false,
@@ -5463,7 +5617,11 @@ export class Coordinator {
     }
     const durable = this._coordination.task(task.id);
     const terminal = durable?.terminalEvent
+<<<<<<< Updated upstream
       ? this._coordination.eventsView()[durable.terminalEvent - 1] : null;
+=======
+      ? this._coordination.events()[durable.terminalEvent - 1] : null;
+>>>>>>> Stashed changes
     const verificationSeq = terminal?.payload?.evidence?.coordinationSeq;
     if (!durable || durable.status !== 'completed' || !Number.isSafeInteger(verificationSeq)) {
       throw Object.assign(new Error('recovery prior task lacks exact durable verification authority'), {
@@ -5588,6 +5746,15 @@ export class Coordinator {
     if (!task || !handle.sessionRef || handle.sessionRef.persistence !== 'native') {
       return { ok: false, result: 'session_not_resumable' };
     }
+<<<<<<< Updated upstream
+=======
+    if (handle.sessionPreservation?.state === 'preserved') {
+      return this._reattachPreservedSession(handle, task, opts);
+    }
+    if (task.brief?.goalPlan && !planRecovery) {
+      return { ok: false, result: 'goal_plan_continuation_not_authorized' };
+    }
+>>>>>>> Stashed changes
     let planRecoveryState = null;
     if (planRecovery) {
       if (!task.brief?.goalPlan || task.runId !== planRecovery.runId || handle.runId !== planRecovery.runId) {
@@ -5716,6 +5883,7 @@ export class Coordinator {
       timerHandle = this._setTimeout(() => { timedOut = true; resolve({ timeout: true }); }, timeoutMs);
       if (timerHandle && typeof timerHandle.unref === 'function') timerHandle.unref();
     });
+<<<<<<< Updated upstream
     const exactRecoveredProcess = handle.processRef?.state === 'unconfirmed_after_restart'
       && handle.processRef.generation === handle.processGeneration
       && handle.recoveredProcessAuthority === true
@@ -5724,6 +5892,9 @@ export class Coordinator {
     if (!exactRecoveredProcess && /^ws-[a-f0-9]{32}$/u.test(context.ownerTaskId ?? '')) {
       handle.workspaceOwnerProcessAuthorityValid = false;
     }
+=======
+    handle.processGeneration = (handle.processGeneration ?? 0) + 1;
+>>>>>>> Stashed changes
     // Policy observation is bound to one exact process generation. A recovered child must
     // re-attest; replayed testimony from the dead predecessor cannot satisfy readiness.
     handle.workerPolicyObserved = null;
@@ -5841,11 +6012,14 @@ export class Coordinator {
     for (const event of admission.events) {
       this._handleEvent(event, handle.vendor, { admittedReady: event.kind === 'lifecycle.spawned' });
     }
+<<<<<<< Updated upstream
     if (/^ws-[a-f0-9]{32}$/u.test(context.ownerTaskId ?? '')
       && !this._restoreRecoveredPhysicalWorkspaceAuthority(handle, context)) {
       await stopRecoveryTransport('recovery_workspace_authority_unproven');
       return { ok: false, result: 'workspace_owner_process_authority_unproven' };
     }
+=======
+>>>>>>> Stashed changes
     if (handle.modelMismatch || handle.effortMismatch || handle.workerPolicyMismatch
       || ['dead', 'exited', 'stopping'].includes(handle.status)) {
       await stopRecoveryTransport('recovery_route_mismatch');
@@ -5875,7 +6049,11 @@ export class Coordinator {
       adapterCardDigest,
     };
     let providerBrief;
+<<<<<<< Updated upstream
     try { providerBrief = this._providerBrief(activeTask.brief, workerId); }
+=======
+    try { providerBrief = this._providerBrief(activeTask.brief); }
+>>>>>>> Stashed changes
     catch (error) {
       this._log.append({
         worker: workerId, harness: this._harnessOf(handle.vendor),
@@ -6096,16 +6274,31 @@ export class Coordinator {
 
   async _reattachPreservedSession(handle, task, opts = {}) {
     const workerId = handle.id;
+<<<<<<< Updated upstream
     const contextAuthority = this._exactPreservedRecoveryContext(handle, opts);
     if (!contextAuthority.ok) return contextAuthority;
     const { context } = contextAuthority;
     const preservationAuthority = this._exactProcesslessPreservationAuthority(handle, task);
     if (!preservationAuthority.ok) return preservationAuthority;
     const adapter = this._adapters[handle.vendor];
+=======
+    const adapter = this._adapters[handle.vendor];
+    if (!adapter || !cardSupportsSession(adapter.card(), { mode: 'resume' })) {
+      return { ok: false, result: 'session_not_resumable' };
+    }
+>>>>>>> Stashed changes
     if (task.runId && (this._coordination.runStop?.(task.runId)
       || this._coordination.run?.(task.runId)?.status === 'sealed')) {
       return { ok: false, result: 'run_stopping' };
     }
+<<<<<<< Updated upstream
+=======
+    const rawContext = opts.context ?? handle.sessionContext;
+    const context = rawContext
+      ? normalizeSessionRequest({ mode: 'resume', id: handle.sessionRef.id, context: rawContext }).context
+      : null;
+    if (!context) return { ok: false, result: 'session_context_required' };
+>>>>>>> Stashed changes
     try { await this._validateSessionContext(context); }
     catch (error) {
       return { ok: false, result: error.code ?? 'session_context_mismatch', reason: error.message };
@@ -6129,6 +6322,7 @@ export class Coordinator {
     const runtime = this._ensureRuntimeScope(handle);
     handle.currentIncarnation = true;
     handle.localAuthority = true;
+<<<<<<< Updated upstream
     const processlessPreservedAttach = preservationAuthority.processless === true;
     if (!processlessPreservedAttach) {
       handle.processGeneration = (handle.processGeneration ?? 0) + 1;
@@ -6136,6 +6330,9 @@ export class Coordinator {
         handle.workspaceOwnerProcessAuthorityValid = false;
       }
     }
+=======
+    handle.processGeneration = (handle.processGeneration ?? 0) + 1;
+>>>>>>> Stashed changes
     handle.workerPolicyObserved = null;
     handle.workerPolicyMismatch = null;
     const abort = new AbortController();
@@ -6178,7 +6375,10 @@ export class Coordinator {
     const failed = outcome?.timeout ? 'recovery_timeout'
       : outcome?.error ? 'recovery_exception'
         : outcome?.ack?.ok !== true ? 'recovery_refused'
+<<<<<<< Updated upstream
           : outcome.ack.attached !== true ? 'recovery_attachment_unproven'
+=======
+>>>>>>> Stashed changes
           : observed !== handle.sessionRef.id ? 'session_identity_mismatch'
             : admission.events.filter((event) => event.kind === 'lifecycle.spawned').length !== 1
               || unexpected.length > 0 ? 'recovery_protocol_violation'
@@ -6197,6 +6397,7 @@ export class Coordinator {
     for (const event of admission.events) {
       this._handleEvent(event, handle.vendor, { admittedReady: event.kind === 'lifecycle.spawned' });
     }
+<<<<<<< Updated upstream
     if (/^ws-[a-f0-9]{32}$/u.test(context.ownerTaskId ?? '')
       && !this._restoreRecoveredPhysicalWorkspaceAuthority(handle, context,
         processlessPreservedAttach && outcome?.ack?.attached === true ? {
@@ -6207,15 +6408,22 @@ export class Coordinator {
         handle, task, 'workspace_owner_process_authority_unproven',
       );
     }
+=======
+>>>>>>> Stashed changes
     if (handle.modelMismatch || handle.effortMismatch || handle.workerPolicyMismatch
       || handle.processRef?.state === 'closed') {
       return this._failPreservedReattachment(handle, task, 'recovery_route_mismatch');
     }
     const binding = this._semanticControlBinding(handle, task);
     const core = {
+<<<<<<< Updated upstream
       schemaVersion: 2, state: 'preserved', transport: 'attached', attached: true,
       reattachment: 'confirmed', ...binding,
       adapterCardDigest: canonicalDigest(preservationAuthority.card),
+=======
+      schemaVersion: 1, state: 'preserved', transport: 'attached',
+      reattachment: 'confirmed', ...binding,
+>>>>>>> Stashed changes
       turnEpoch: this._safeTurnEpoch(handle), fence: this._fences.current(workerId).fence,
     };
     const preservation = deepFreeze({ ...core, receiptDigest: canonicalDigest(core) });
@@ -6248,6 +6456,7 @@ export class Coordinator {
         `task.failed:${task.id}:preserved_reattachment:${failed.seq}`, evidence);
       task.status = 'failed';
     }
+<<<<<<< Updated upstream
     const retainUnownedWorktree = /^ws-[a-f0-9]{32}$/u.test(
       handle.sessionContext?.ownerTaskId ?? '',
     ) && handle.ownedWorktreeAuthority !== true;
@@ -6257,6 +6466,9 @@ export class Coordinator {
     const reap = await this._beginStop(handle, 'kill', undefined, 'policy', {
       retainUnownedWorktree,
     });
+=======
+    const reap = await this._beginStop(handle, 'kill', undefined, 'policy');
+>>>>>>> Stashed changes
     const reapConfirmed = reap?.ok === true
       && ['confirmed', 'already_dead', 'already_stopped'].includes(reap.result);
     return {
@@ -7657,6 +7869,7 @@ export class Coordinator {
   async _deliver(handle, message, mode, opts) {
     const workerId = handle.id;
     const task = this._tasks.get(handle.taskId);
+<<<<<<< Updated upstream
     // Plan continuation authority and sealed-Run authority precede the delivery slot's other
     // observations. In particular, a queued turn that became terminal while waiting cannot
     // consult a mutable adapter card, emit semantic-target telemetry, or cross any provider or
@@ -7671,6 +7884,8 @@ export class Coordinator {
         name: 'CoordinationRefusal', code: 'run_sealed',
       });
     }
+=======
+>>>>>>> Stashed changes
     if (opts.semanticTarget && !this._semanticTargetMatches(
       handle, opts.semanticTarget, opts.semanticTargetDigest,
     )) {
@@ -7832,7 +8047,11 @@ export class Coordinator {
     if (task.runId && this._coordination.runStop?.(task.runId)) {
       return { ok: false, result: 'run_stopping' };
     }
+<<<<<<< Updated upstream
     if (this._worktreeAuthorityAvailable(handle) === false
+=======
+    if (!this._worktreeAuthorityAvailable(handle)
+>>>>>>> Stashed changes
       || handle.processRef?.state === 'closed'
       || handle.processRef?.state === 'unconfirmed_after_restart'
       || handle.sessionPreservation?.transport !== 'attached') {
@@ -8063,7 +8282,11 @@ export class Coordinator {
     this.tick();
     const handle = this._getWorker(workerId);
     if (handle.status !== 'blocked') return { ok: true, result: 'not_blocked' };
+<<<<<<< Updated upstream
     const requestId = handle.pendingApprovalId ?? handle.pendingQuestionId ?? handle.pendingDecisionId;
+=======
+    const requestId = handle.pendingApprovalId ?? handle.pendingQuestionId;
+>>>>>>> Stashed changes
     const record = requestId ? this._pending.get(requestId) : null;
     if (!record || record.state !== 'pending' || record.worker !== workerId) {
       return { ok: false, result: 'interaction_resolution_unavailable' };
@@ -8086,6 +8309,7 @@ export class Coordinator {
     }
     this._resolveInteractionAuthority(requestId, record);
     record.consumer = actor;
+<<<<<<< Updated upstream
     // F2 (decision-only): a decision settlement is always {disposition, answer}; question/
     // approval keep their legacy raw-decision resolution shape for backward compatibility.
     record.resolution = record.kind === 'decision'
@@ -8094,6 +8318,11 @@ export class Coordinator {
     if (handle.pendingApprovalId === requestId) handle.pendingApprovalId = null;
     if (handle.pendingQuestionId === requestId) handle.pendingQuestionId = null;
     if (handle.pendingDecisionId === requestId) handle.pendingDecisionId = null;
+=======
+    record.resolution = { decision: 'cancel', reason: 'semantic_interrupt' };
+    if (handle.pendingApprovalId === requestId) handle.pendingApprovalId = null;
+    if (handle.pendingQuestionId === requestId) handle.pendingQuestionId = null;
+>>>>>>> Stashed changes
     handle.status = 'working';
     return {
       ok: true, result: 'interaction_superseded',
@@ -8410,6 +8639,7 @@ export class Coordinator {
           () => this._resolveRecord(handle.pendingQuestionId, { decision: 'cancel' }, actor),
           this._drainState === 'draining',
         );
+<<<<<<< Updated upstream
       } else if (handle.pendingDecisionId) {
         // F13 correction: stop/kill get their own typed supersession, distinct from a genuine
         // cancel answer — never silence, never `already_handled`.
@@ -8417,6 +8647,8 @@ export class Coordinator {
           () => this._supersedeDecision(handle.pendingDecisionId, mode, actor),
           this._drainState === 'draining',
         );
+=======
+>>>>>>> Stashed changes
       }
     }
     // A preserved-turn interrupt is an in-session control operation. Aborting the spawn
@@ -8450,12 +8682,18 @@ export class Coordinator {
       then: mode === 'interrupt' ? then : undefined,
       controlId: context?.controlId ?? null,
       preserveTurn: context?.preserveTurn === true,
+<<<<<<< Updated upstream
       retainUnownedWorktree: context?.retainUnownedWorktree === true,
+=======
+>>>>>>> Stashed changes
       confirmationPayload: null,
       interactionReady: false,
       interactionResolutionOk: false,
       operationGeneration: 1,
+<<<<<<< Updated upstream
       reapRetryHandle: null,
+=======
+>>>>>>> Stashed changes
     };
     this._stopWaiters.set(handle.id, waiter);
 
@@ -8489,6 +8727,7 @@ export class Coordinator {
     }));
   }
 
+<<<<<<< Updated upstream
   /**
    * An unconfirmed descendant reap explicitly drives another bounded kill. The existing stop
    * deadline remains the outer bound, and yielding through a short timer prevents deterministic
@@ -8522,6 +8761,8 @@ export class Coordinator {
     }
   }
 
+=======
+>>>>>>> Stashed changes
   _resolveStopRequests(waiter, physicalResult) {
     for (const request of waiter.requests) {
       if (waiter.mode === 'kill' && request.requestedMode === 'interrupt'
@@ -9802,6 +10043,7 @@ export class Coordinator {
     if (!attached) return null;
     const binding = this._semanticControlBinding(handle, task);
     const core = {
+<<<<<<< Updated upstream
       schemaVersion: 2,
       state: 'preserved',
       transport: 'attached',
@@ -9809,6 +10051,13 @@ export class Coordinator {
       reattachment: 'not_required',
       ...binding,
       adapterCardDigest: canonicalDigest(card),
+=======
+      schemaVersion: 1,
+      state: 'preserved',
+      transport: 'attached',
+      reattachment: 'not_required',
+      ...binding,
+>>>>>>> Stashed changes
       turnEpoch: this._safeTurnEpoch(handle),
       fence: this._fences.current(handle.id).fence,
     };
@@ -9858,8 +10107,12 @@ export class Coordinator {
           const runtimeRemoved = this._removeRuntimeScope(handle);
           if (task && !TERMINAL_TASK_STATUSES.has(task.status)) task.status = 'cancelled';
           waiter.cleanupPromise = this._preserveProgressBeforeReap(handle, task, stopEvent, preserveProgress)
+<<<<<<< Updated upstream
             .then(() => waiter.retainUnownedWorktree
               ? undefined : this._removeOwnedTaskWorktree(handle, task)).then(() => {
+=======
+            .then(() => this._removeOwnedTaskWorktree(handle, task)).then(() => {
+>>>>>>> Stashed changes
             if (!runtimeRemoved) throw Object.assign(new Error('runtime cleanup failed'), { code: 'runtime_cleanup_failed' });
           });
         } else if (waiter.preserveTurn === true) {
@@ -12522,6 +12775,7 @@ export class Coordinator {
       if (!['dead', 'stopping', 'exited'].includes(handle.status)) this._beginStop(handle, 'kill', undefined, 'policy').catch(noop);
       return;
     }
+<<<<<<< Updated upstream
     if (actor === 'worker'
       && ['lifecycle.turn_completed', 'lifecycle.crashed', 'lifecycle.exited'].includes(kind)
       && handle.currentIncarnation !== true
@@ -12541,6 +12795,9 @@ export class Coordinator {
       return;
     }
     if (actor === 'worker' && this._worktreeAuthorityAvailable(handle) === false) {
+=======
+    if (actor === 'worker' && !this._worktreeAuthorityAvailable(handle)) {
+>>>>>>> Stashed changes
       this._failWorktreeAuthority(handle);
       // Process-terminal observations must still close exact process authority. All other
       // worker output is rejected once its checkout identity has disappeared.
@@ -12847,7 +13104,10 @@ export class Coordinator {
         const closed = appendAttributed({ worker: workerId, harness, turnEpoch, kind, actor, payload });
         const preservationLost = handle.sessionPreservation?.state === 'preserved';
         handle.processRef = { ...current, state: 'closed', ready: payload.ready, closedSeq: closed.seq };
+<<<<<<< Updated upstream
         handle.recoveredProcessAuthority = false;
+=======
+>>>>>>> Stashed changes
         if (preservationLost) {
           const task = this._tasks.get(handle.taskId);
           handle.sessionPreservation = null;
@@ -12932,6 +13192,7 @@ export class Coordinator {
           this._failProviderResult(handle, terminalEvent, wr);
           break;
         }
+<<<<<<< Updated upstream
         // REFLEX-1 live finding (decision-live-2026-07-22, w-144): the emulated blocking
         // decision channel is turn-ending by construction — the worker asks, the hub parks the
         // task input_required, and THEN the provider's result frame arrives as an ordinary
@@ -12967,6 +13228,8 @@ export class Coordinator {
             if (!settled) break;
           }
         }
+=======
+>>>>>>> Stashed changes
         if (this._drainState === 'open' && handle.status !== 'stopping' && handle.status !== 'dead') {
           const releaseAuthority = this._acquireAuthorityOp();
           // Adapters are required to consume worktreeReady, but terminal authority must remain
@@ -13498,7 +13761,10 @@ export class Coordinator {
       task.result = null;
       task.verdict = null;
       this._expireScratchClaims(handle, task, 'provider_turn_failed');
+<<<<<<< Updated upstream
       this._expireBoardClaims(handle, task, 'provider_turn_failed');
+=======
+>>>>>>> Stashed changes
     }
     this._clearWatchdog(handle);
     if (handle.processRef?.state === 'closed' && !this._stopWaiters.has(handle.id)) {
@@ -13510,7 +13776,11 @@ export class Coordinator {
     }
   }
 
+<<<<<<< Updated upstream
   async _runTrustGate(handle, workerResult, opts = {}) {
+=======
+  async _runTrustGate(handle, workerResult) {
+>>>>>>> Stashed changes
     const task = this._tasks.get(handle.taskId);
     if (!task) return;
     // SC13/SC14: a late terminal event from a stopped session cannot reopen a terminal task.
@@ -13535,6 +13805,7 @@ export class Coordinator {
       const captured = await this._captureTrustWorktree(handle, task);
       const sha = captured && captured.sha;
       const changedPaths = Array.isArray(captured?.changedPaths) ? captured.changedPaths : [];
+<<<<<<< Updated upstream
       const derivedSemanticReview = task.taskType === 'review'
         && task.review?.structured?.purpose === 'run_semantic_review';
       if (task.brief?.goalPlan && changedPaths.length > 0
@@ -13545,6 +13816,8 @@ export class Coordinator {
           { code: 'forbidden_effect_observed' },
         );
       }
+=======
+>>>>>>> Stashed changes
       const inScopeChangedPaths = changedPaths.filter((path) => pathInScope(task.brief.pathScope, path));
       const outOfScopeChangedPaths = changedPaths.filter((path) => !pathInScope(task.brief.pathScope, path));
       if (outOfScopeChangedPaths.length > 0) {
@@ -13561,10 +13834,14 @@ export class Coordinator {
           },
         });
       }
+<<<<<<< Updated upstream
       // TG5: `analysis: true` documents repository_edit as not-required for this node — the
       // required_effect progress verdict is skipped; every other phase (capture, forbidden_effect,
       // path_scope, environment, coverage) still runs.
       if (!task.brief?.analysis && task.brief?.requiredEffects?.includes('repository_edit')) {
+=======
+      if (task.brief?.requiredEffects?.includes('repository_edit')) {
+>>>>>>> Stashed changes
         const baseSha = task.sessionContext?.baseSha ?? captured?.baseSha ?? null;
         if (!sha || !baseSha || sha === baseSha || changedPaths.length === 0 || inScopeChangedPaths.length === 0) {
           trustPhase = 'required_effect';
@@ -13859,7 +14136,10 @@ export class Coordinator {
           message: String((err && err.message) || err), code, phase: 'trust_gate', trustPhase,
           ...(err?.requiredEffectEvidence ? { requiredEffectEvidence: err.requiredEffectEvidence } : {}),
           ...(err?.pathScopeEvidence ? { pathScopeEvidence: err.pathScopeEvidence } : {}),
+<<<<<<< Updated upstream
           ...(opts.steered ? { steered: opts.steered } : {}),
+=======
+>>>>>>> Stashed changes
         },
       });
       let durable = this._coordination.task(task.id);
@@ -13879,6 +14159,7 @@ export class Coordinator {
       if (['evidence_mapping', 'terminal_batch', 'promotion'].includes(trustPhase)) this._poisonCoordination(err);
       task.status = durable?.status ?? 'failed';
       if (task.status !== 'completed') task.verdict = null;
+<<<<<<< Updated upstream
       if (['forbidden_effect_observed', 'required_effect_absent', 'worker_path_scope_violation'].includes(code)) {
         handle.terminalCause ??= deepFreeze({ kind: 'policy_failure', code });
         // TG4: the projected terminal cause names the gate — never 'unknown' — on the task
@@ -13887,6 +14168,12 @@ export class Coordinator {
         task.result = null;
         this._expireScratchClaims(handle, task, code);
         this._expireBoardClaims(handle, task, code);
+=======
+      if (['required_effect_absent', 'worker_path_scope_violation'].includes(code)) {
+        handle.terminalCause ??= deepFreeze({ kind: 'policy_failure', code });
+        task.result = null;
+        this._expireScratchClaims(handle, task, code);
+>>>>>>> Stashed changes
         if (handle.processRef?.state === 'closed' && !this._stopWaiters.has(handle.id)) {
           handle.status = 'exited';
           this._cleanupClosedTransport(handle, task, errorEvent).catch(noop);
@@ -14076,6 +14363,7 @@ export class Coordinator {
               && e.payload.pid === processRef.pid
               && e.payload.processGroupId === processRef.processGroupId) {
               processRef = { ...processRef, state: 'closed', closedSeq: e.seq };
+<<<<<<< Updated upstream
             }
             break;
           case 'control.recovery_process_reaped':
@@ -14087,6 +14375,8 @@ export class Coordinator {
               && e.payload.processGroupId === processRef.processGroupId
               && e.payload.pidStart === processAuthority.pidStart) {
               processRef = { ...processRef, state: 'closed', closedSeq: e.seq };
+=======
+>>>>>>> Stashed changes
             }
             break;
           case 'lifecycle.process_ready':
@@ -14360,16 +14650,22 @@ export class Coordinator {
               preservedTurnEpoch = null;
               replayPreservation = null;
             }
+<<<<<<< Updated upstream
             // Issue #31 Part B rule 4: a later turn start proves any pause from the prior turn
             // moved on, so it is no longer an open record.
             for (const [pauseId, record] of reconstructedPaused) {
               if (record.worker === workerId) reconstructedPaused.delete(pauseId);
             }
+=======
+>>>>>>> Stashed changes
             if (!TERMINAL_TASK_STATUSES.has(terminalStatus)) terminalStatus = 'working';
             break;
           }
           case 'lifecycle.turn_completed':
+<<<<<<< Updated upstream
             lastTurnCompletedSeq = e.seq ?? lastTurnCompletedSeq;
+=======
+>>>>>>> Stashed changes
             if (preservedTurnEpoch !== null) break;
             if (!TERMINAL_TASK_STATUSES.has(terminalStatus)) {
               lastResult = e.payload;
@@ -14573,6 +14869,15 @@ export class Coordinator {
             if (e.payload?.disposition === 'semantic_interrupt'
               && terminalStatus === 'input_required') terminalStatus = 'working';
             if (e.payload?.requestId) reconstructedPending.delete(e.payload.requestId);
+            break;
+          case 'control.interaction_superseded':
+            // Semantic interrupt preparation durably consumes the blocked interaction before
+            // admitting its v2 control target. If the controller crashes in that gap, replay
+            // must never resurrect the prompt or silently redeliver it. The generic unattached
+            // nonterminal rule below then fails the task safe unless the preserved-interrupt
+            // receipt was subsequently closed.
+            if (e.payload?.disposition === 'semantic_interrupt'
+              && terminalStatus === 'input_required') terminalStatus = 'working';
             break;
           default:
             break;

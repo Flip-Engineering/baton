@@ -366,6 +366,7 @@ test('active worktree authority loss fails and kills before accepting more worke
   assert.equal(adapters.mock.calls.kill.length, 1);
 });
 
+<<<<<<< Updated upstream
 test('a THROWING worktree-availability read never kills outright — unknown defers; a persistent unknown streak fails (the reap-murder law)', async () => {
   const { coordinator, adapters, worktrees, log } = setup();
   const handle = await coordinator.spawn('mock', makeBrief());
@@ -391,6 +392,8 @@ test('a THROWING worktree-availability read never kills outright — unknown def
   assert.equal(adapters.mock.calls.kill.length, 1);
 });
 
+=======
+>>>>>>> Stashed changes
 test('active worktree authority loss escalates an in-flight soft interrupt to one exact kill', async () => {
   const { coordinator, adapters, worktrees, log } = setup({ stopDeadlineMs: 15000 });
   const handle = await coordinator.spawn('mock', makeBrief());
@@ -416,7 +419,11 @@ test('active worktree authority loss escalates an in-flight soft interrupt to on
   assert.equal(coordinator.list().find((worker) => worker.id === handle.id).status, 'dead');
 });
 
+<<<<<<< Updated upstream
 test('spawn() (#221): the invented vendor ceiling is gone — a second same-vendor spawn dispatches immediately, no queue, no promotion hop', async () => {
+=======
+test('spawn() at the vendor concurrency ceiling queues as pending (GLM=1 case); promotes once a slot frees', async () => {
+>>>>>>> Stashed changes
   const adapter = new ScriptableAdapter({ harness: 'glm-via-claude', concurrencyCeiling: 1 });
   const { coordinator, worktrees } = setup({ adapters: { glm: adapter }, route: fixedRoute('glm') });
 
@@ -1679,6 +1686,7 @@ test('list() reports working workers with correct status/budgetUsed/pendingAppro
   assert.equal(second.status, 'working', '#221: no invented ceiling queues the second spawn');
 
   const table = coordinator.list();
+<<<<<<< Updated upstream
   for (const handle of [first, second]) {
     const row = table.find((x) => x.id === handle.id);
     assert.equal(row.status, 'working');
@@ -1686,6 +1694,17 @@ test('list() reports working workers with correct status/budgetUsed/pendingAppro
     assert.ok('pendingApprovalId' in row);
     assert.deepEqual(coordinator.localResourceOwnership(handle.id), { owned: true });
   }
+=======
+  const w = table.find((x) => x.id === working.id);
+  assert.equal(w.status, 'working');
+  assert.ok('budgetUsed' in w);
+  assert.ok('pendingApprovalId' in w);
+
+  const p = table.find((x) => x.id === pendingHandle.id);
+  assert.equal(p.status, 'pending');
+  assert.deepEqual(coordinator.localResourceOwnership(working.id), { owned: true });
+  assert.deepEqual(coordinator.localResourceOwnership(pendingHandle.id), { owned: false });
+>>>>>>> Stashed changes
 });
 
 test('list() reflects a worker transitioning stopping -> dead', async () => {

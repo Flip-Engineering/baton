@@ -12,7 +12,11 @@
 
 import { spawn, execFileSync } from 'node:child_process';
 import { renderBrief } from './adapter.mjs';
+<<<<<<< Updated upstream
 import { normalizeProcessGeneration, ProcessCloseReapLatch, processStartedPayload } from './process-lifecycle.mjs';
+=======
+import { normalizeProcessGeneration, processClosedPayload, processReapUnconfirmedPayload, processStartedPayload, reapOwnedProcessGroup } from './process-lifecycle.mjs';
+>>>>>>> Stashed changes
 import { attestWorkerPolicyObservation } from './worker-policy.mjs';
 
 const DEFAULT_MAX_WIRE_FRAME_BYTES = 1024 * 1024;
@@ -287,6 +291,31 @@ export class CodexAppServerCli {
       isolation: {
         configHome: 'driver-scoped', environment: 'driver-scoped', filesystem: 'unverified',
         osSandbox: 'unverified', network: 'uncontrolled', credentialProjection: 'explicit',
+<<<<<<< Updated upstream
+=======
+      },
+      permissions: {
+        mode: this._approvalPolicy, sandbox: this._sandbox,
+        boundary: this._sandbox === 'danger-full-access'
+          ? 'Unattended full host permissions by default; containment is a separate deployment boundary'
+          : 'Harness sandbox requested; its containment remains separately attested',
+      },
+      workerPolicy: {
+        schemaVersion: 1,
+        autonomy: {
+          supported: [autonomy], default: autonomy, perTask: false,
+          observation: 'launch', mechanisms: [`approval-policy-${this._approvalPolicy}`],
+        },
+        access: {
+          supported: [this._sandbox === 'danger-full-access' ? 'full' : 'workspace'],
+          default: this._sandbox === 'danger-full-access' ? 'full' : 'workspace', perTask: false,
+          observation: 'launch', mechanisms: [`codex-sandbox-${this._sandbox}`],
+        },
+        containment: {
+          hostProcess: 'same_uid', guarantees: ['private_runtime'],
+          configuredPreferences: [], observation: 'unavailable',
+        },
+>>>>>>> Stashed changes
       },
       permissions: {
         mode: this._approvalPolicy, sandbox: this._sandbox,
@@ -882,9 +911,13 @@ export class CodexAppServerCli {
         reason: `expected native thread ${opts.session.id}, observed ${session.threadId ?? '(none)'}`,
       };
     }
+<<<<<<< Updated upstream
     // Requested and resolved route authority is not provider observation. When app-server omits
     // the model field, preserve that absence instead of manufacturing native testimony.
     session.modelObserved = threadResult.model ?? null;
+=======
+    session.modelObserved = threadResult.model ?? session.modelRequested;
+>>>>>>> Stashed changes
     let workerPolicyObserved = null;
     if (opts.workerPolicy) {
       try {

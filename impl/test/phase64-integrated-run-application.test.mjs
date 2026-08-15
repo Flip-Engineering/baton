@@ -8,7 +8,11 @@ import test from 'node:test';
 
 import {
   BatonApplication, CoordinationStore, DEFAULT_WORKER_POLICY_REQUEST, MockAdapter, bindBaton,
+<<<<<<< Updated upstream
   bindBatonPort, createBrief, createDriver,
+=======
+  bindBatonPort, createDriver,
+>>>>>>> Stashed changes
 } from '../src/index.mjs';
 
 const root = (name) => mkdtempSync(join(tmpdir(), `baton-phase64-${name}-`));
@@ -186,6 +190,7 @@ const intent = (overrides = {}) => ({
   ...overrides,
 });
 
+<<<<<<< Updated upstream
 const managedContextBrief = () => createBrief({
   goal: 'hold a second Baton-managed workspace for adversarial recovery coverage',
   constraints: [], pathScope: ['**'], definitionOfDone: 'wait for an addressed answer',
@@ -203,6 +208,8 @@ async function until(read, label, timeoutMs = 5_000) {
   throw new Error(`timeout waiting for ${label}`);
 }
 
+=======
+>>>>>>> Stashed changes
 test('UA2/RT5: Pythonic Run streams consume internal pagination and expose attributed facts only', async () => {
   const calls = [];
   const pages = [
@@ -656,8 +663,12 @@ test('UA5: the shared command bus exposes the same run flow and a deployment-der
   const spawn = adapter.spawn.bind(adapter);
   adapter.spawn = (...args) => { spawnCalls += 1; return spawn(...args); };
   const card = application.card();
+<<<<<<< Updated upstream
   // M4b: the canonical grammar names advertise beside the retained legacy commands (docs/36 §9 M4).
   assert.deepEqual(card.commands, ['application.help', 'runs.list', 'run.start', 'run.inspect', 'run.episode', 'run.workstreams', 'run.workstream.notify', 'run.workstream.stop', 'run.act', 'run.status', 'run.follow', 'run.approve', 'run.wait', 'run.answer', 'run.feedback', 'run.stop', 'run.evidence', 'run.adopt', 'run.retry_verification', 'run.resume_work', 'run.review', 'run.integrate', 'run.export', 'run.recover', 'waves.attach', 'application.shutdown', 'run.do', 'run.list', 'run.member.send', 'run.member.stop', 'run.member.view', 'run.resume', 'run.retry', 'run.view', 'run.watch']);
+=======
+  assert.deepEqual(card.commands, ['application.help', 'runs.list', 'run.start', 'run.inspect', 'run.act', 'run.status', 'run.follow', 'run.approve', 'run.wait', 'run.answer', 'run.feedback', 'run.steer', 'run.stop', 'run.evidence', 'run.adopt', 'run.retry_verification', 'run.resume_work', 'run.review', 'run.integrate', 'run.export', 'run.recover', 'application.shutdown']);
+>>>>>>> Stashed changes
   assert.deepEqual(card.profiles[0].routes, [{ harness: 'mock', model: 'model-a', effort: 'low' }]);
 
   const proposed = await application.command('run.start', { intent: intent({ runId: 'run-command-bus' }) }, principal('command-owner'));
@@ -832,7 +843,11 @@ test('P91 application: interrupt projects one paused attached member, then send 
   await application.shutdown(principal('shutdown-admin'));
 });
 
+<<<<<<< Updated upstream
 test('P91 application restart: coordinate-free recovery attach-only reuses the preserved member without a prompt', async (t) => {
+=======
+test('P91 application restart: coordinate-free recovery attach-only reuses the preserved member without a prompt', async () => {
+>>>>>>> Stashed changes
   const first = fixture('phase91-application-restart', {
     scenario: {
       outcome: 'completed', summary: 'preserved restart completes',
@@ -851,7 +866,10 @@ test('P91 application restart: coordinate-free recovery attach-only reuses the p
   await run.inspect();
   await run.interrupt({ reason: 'Preserve for controller restart.' });
   const taskId = first.driver.coordinator.list()[0].taskId;
+<<<<<<< Updated upstream
   const preservedProcessGeneration = first.driver.coordinator.list()[0].processGeneration;
+=======
+>>>>>>> Stashed changes
   const taskCount = first.driver.coordination.snapshot().tasks.length;
   first.driver.coordination.releaseWriterLease({ requireOwned: true });
 
@@ -862,12 +880,15 @@ test('P91 application restart: coordinate-free recovery attach-only reuses the p
   enablePreservedMockSession(resumedAdapter);
   const spawnOptions = [];
   let promptCalls = 0;
+<<<<<<< Updated upstream
   let cardCalls = 0;
   const cardResumed = resumedAdapter.card.bind(resumedAdapter);
   resumedAdapter.card = (...args) => {
     cardCalls += 1;
     return cardResumed(...args);
   };
+=======
+>>>>>>> Stashed changes
   const spawnResumed = resumedAdapter.spawn.bind(resumedAdapter);
   resumedAdapter.spawn = (worker, brief, opts) => {
     spawnOptions.push(opts);
@@ -897,6 +918,7 @@ test('P91 application restart: coordinate-free recovery attach-only reuses the p
     handles: resumedDriver.coordinator.list(),
     attention: beforeRecovery.attention, contextVerdict,
   }));
+<<<<<<< Updated upstream
   assert.deepEqual(contextVerdict, { ok: true }, JSON.stringify({
     preservationDiagnostic: resumedDriver.coordinator._workers.get(workerId)
       ?.preservationAuthorityDiagnostic,
@@ -1044,6 +1066,11 @@ test('P91 application restart: coordinate-free recovery attach-only reuses the p
   await expectPreEffectRefusal('preservation_card_mismatch');
   resumedAdapter.card = exactCard;
 
+=======
+  assert.deepEqual(contextVerdict, { ok: true });
+  assert.deepEqual(beforeRecovery.nextActions, [{ kind: 'stop' }]);
+
+>>>>>>> Stashed changes
   const recovered = await restarted.recover(proposed.runId, principal('restart-owner'));
   assert.equal(recovered.phase, 'interrupted', JSON.stringify({
     action: recovered.lastAction, recovery: recovered.recovery,
@@ -1064,6 +1091,7 @@ test('P91 application restart: coordinate-free recovery attach-only reuses the p
   assert.equal(spawnOptions[0].session.id, `mock-native-${workerId}`);
   assert.equal(promptCalls, 0, 'reattachment cannot admit a successor prompt');
   assert.equal(resumedDriver.coordinator.list()[0].taskId, taskId);
+<<<<<<< Updated upstream
   assert.equal(resumedDriver.coordinator.list()[0].processGeneration,
     preservedProcessGeneration, 'processless attach-only recovery reuses the preserved generation');
   const recoveredHandle = resumedDriver.coordinator._workers.get(workerId);
@@ -1071,6 +1099,8 @@ test('P91 application restart: coordinate-free recovery attach-only reuses the p
   assert.equal(recoveredHandle.workspaceOwnerProcessAuthorityValid, true);
   assert.equal(recoveredHandle.ownedWorktreeAuthority, true);
   assert.equal(recoveredHandle.status, 'interrupted');
+=======
+>>>>>>> Stashed changes
   assert.equal(resumedDriver.coordination.snapshot().tasks.length, taskCount);
 
   const resumedRun = bindBaton(restarted, principal('restart-owner')).runs.open(proposed.runId);
@@ -1089,6 +1119,7 @@ test('P91 application restart: coordinate-free recovery attach-only reuses the p
   await new Promise((resolve) => setTimeout(resolve, 40));
 });
 
+<<<<<<< Updated upstream
 test('P92.2 processless recovery: ack.ok without attached authority exposes nothing and cleans up exactly', async (t) => {
   const first = fixture('phase92-2-unattached-ack', {
     scenario: {
@@ -1211,6 +1242,8 @@ test('P92.2 processless recovery: ack.ok without attached authority exposes noth
   await new Promise((resolve) => setTimeout(resolve, 40));
 });
 
+=======
+>>>>>>> Stashed changes
 test('P91 application: process-close attachment uncertainty is quarantined with stop as the only safe action', async () => {
   const { application, adapter, driver } = fixture('phase91-unproven-attachment', {
     scenario: {

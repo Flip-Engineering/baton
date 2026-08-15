@@ -39,7 +39,11 @@ import { normalizeRunLineagePolicy } from './run-lineage.mjs';
 import { normalizeWorkflowPolicy } from './workflow-policy.mjs';
 import { normalizeContextProgramPolicy } from './context-program-policy.mjs';
 import { materializeContextCallBrief } from './context-call.mjs';
+<<<<<<< Updated upstream
 import { openBatonDeployment, DEFAULT_BUDGET } from './application-deployment.mjs';
+=======
+import { openBatonDeployment } from './application-deployment.mjs';
+>>>>>>> Stashed changes
 
 export { DEFAULT_BATON_DEPLOYMENT_ROUTES } from './application-deployment.mjs';
 
@@ -142,7 +146,11 @@ export { loadOrCreateWorktreeCapacityIntegrityKey, normalizeWorktreeCapacityPoli
 export { ClaudeSessionCli, GlmSessionCli, KimiSessionCli } from './claude-session.mjs';
 export { CodexAppServerCli } from './codex-appserver.mjs';
 export { GrokAcpCli } from './grok-acp.mjs';
+<<<<<<< Updated upstream
 export { OmpRpcCli, OmpRpcProcess } from './omp-rpc.mjs';
+=======
+export { KimiAcpCli } from './kimi-acp.mjs';
+>>>>>>> Stashed changes
 export { AcpJsonRpcProcess, AcpProtocolError, AcpSetupTimeoutError } from './acp-json-rpc-process.mjs';
 export { createBrief } from './messages.mjs';
 export { verify, accept, defaultVerificationRuntime, prepareVerificationRuntime } from './referee.mjs';
@@ -170,9 +178,12 @@ export { OidcBrowserFlow, OidcFlowError, OIDC_FLOW_COOKIE_NAME, WEB_CSRF_COOKIE_
 export { operatorAsset } from './web-operator.mjs';
 export { McpFleetServer, serveMcpStdio } from './mcp-northbound.mjs';
 export {
+<<<<<<< Updated upstream
   loadMcpDescriptor, createMcpServerFromDescriptor, createMcpServerFromDescriptorPath,
 } from './mcp-descriptor.mjs';
 export {
+=======
+>>>>>>> Stashed changes
   BatonWebApplicationFacade, connectBatonWebApplication, createBatonWebMcpServer,
   kimiBatonAcpMcpServer, kimiBatonMcpEntry,
 } from './mcp-web-bridge.mjs';
@@ -211,6 +222,7 @@ export {
   KIMI_CREDENTIAL_HELP, promptAndInstallKimiCredential, readHiddenKimiCredential,
 } from './kimi-credential-setup.mjs';
 export {
+<<<<<<< Updated upstream
   BatonClient, BatonContextCall, BatonContextCell, BatonContextExpression, BatonEpisode,
   BatonRun, BatonRunContext, BatonRunGroup, BatonRuns, BatonWorkstream, BatonWorkstreams,
   bindBaton, bindBatonPort,
@@ -221,6 +233,11 @@ export {
   admitRecipe, createRecipes, implementContractRecipe, mergeOverrides, recipeDigest,
   renderObjective, renderMember,
 } from './recipes.mjs';
+=======
+  BatonClient, BatonContextCall, BatonContextCell, BatonContextExpression, BatonRun,
+  BatonRunContext, BatonRunGroup, BatonRuns, bindBaton, bindBatonPort,
+} from './application-client.mjs';
+>>>>>>> Stashed changes
 export { BatonWebHost, SignalLifecycleOwner } from './application-host.mjs';
 export { HttpsHmacAdvisoryFeedSource, signHmacAdvisoryPollPageForTest } from './https-hmac-advisory-feed.mjs';
 export { Ed25519AdvisoryWebhookSource, HmacAdvisoryWebhookSource, signEd25519AdvisoryWebhookForTest, signHmacAdvisoryWebhookForTest } from './hmac-advisory-webhook.mjs';
@@ -370,20 +387,28 @@ function worktreeManager(repoRoot, opts = {}) {
   return {
     reserveCapacity(taskId, requestedBaseSha = null, binding = null) {
       worktreeMod.normalizePhysicalOwnerId(taskId, 'taskId');
+<<<<<<< Updated upstream
       if (failedWorkerTransactions.has(taskId)) throw failedTransactionPending();
       if (!opts.worktreeCapacity) return null;
+=======
+>>>>>>> Stashed changes
       const selected = requestedBaseSha ?? opts.deploymentBaseSha
         ?? localGit(['rev-parse', 'HEAD'], repoRoot, { encoding: 'utf8' }).trim();
       if (!/^[a-f0-9]{40}$/u.test(selected)) throw new TypeError('worktree base SHA must be an exact commit ID');
       localGit(['cat-file', '-e', `${selected}^{commit}`], repoRoot, { stdio: 'ignore' });
       const existing = pendingWorkerReservations.get(taskId);
       if (existing) {
+<<<<<<< Updated upstream
         if (existing.capacitySettled === true) throw failedTransactionPending();
         if (existing.selected !== selected || !pendingBindingMatches(existing, taskId, binding)) {
+=======
+        if (existing.selected !== selected) {
+>>>>>>> Stashed changes
           throw Object.assign(new Error('pending capacity reservation is bound to another base'), {
             code: 'worktree_capacity_reservation_conflict',
           });
         }
+<<<<<<< Updated upstream
         return existing.result ?? Object.freeze({
           baseSha: selected, reservation: existing.reservation, ownerReceipt: existing.ownerReceipt,
         });
@@ -392,6 +417,12 @@ function worktreeManager(repoRoot, opts = {}) {
       let reservation;
       try { reservation = opts.worktreeCapacity.reserve(
         `worker:${ownerReceipt.physicalOwnerId}`,
+=======
+        return Object.freeze({ baseSha: selected, reservation: existing.reservation });
+      }
+      const reservation = opts.worktreeCapacity.reserve(
+        `worker:${taskId}`,
+>>>>>>> Stashed changes
         capacityRequest(selected, opts.workerSparsePaths ?? [], opts.workerSparseCheckoutIdentity),
       ); } catch (error) {
         const cleanupError = retainUnknownCapacityOutcome(taskId, ownerReceipt);
@@ -490,6 +521,34 @@ function worktreeManager(repoRoot, opts = {}) {
       });
       return Object.freeze(results);
     },
+    reserveCapacityMany(entries) {
+      if (!Array.isArray(entries) || entries.length === 0) throw new TypeError('capacity wave must contain at least one task');
+      const prepared = entries.map((entry) => {
+        if (!entry || typeof entry !== 'object' || Array.isArray(entry)
+          || Object.keys(entry).sort().join(',') !== ['requestedBaseSha', 'taskId'].sort().join(',')) {
+          throw new TypeError('capacity wave entry is invalid');
+        }
+        const { taskId, requestedBaseSha } = entry;
+        worktreeMod.normalizePhysicalOwnerId(taskId, 'taskId');
+        const selected = requestedBaseSha ?? opts.deploymentBaseSha
+          ?? localGit(['rev-parse', 'HEAD'], repoRoot, { encoding: 'utf8' }).trim();
+        if (!/^[a-f0-9]{40}$/u.test(selected)) throw new TypeError('worktree base SHA must be an exact commit ID');
+        localGit(['cat-file', '-e', `${selected}^{commit}`], repoRoot, { stdio: 'ignore' });
+        return { taskId, selected };
+      });
+      if (new Set(prepared.map(({ taskId }) => taskId)).size !== prepared.length) throw new TypeError('capacity wave contains duplicate tasks');
+      if (!opts.worktreeCapacity) return Object.freeze(prepared.map(() => null));
+      const reservations = opts.worktreeCapacity.reserveMany(prepared.map(({ taskId, selected }) => ({
+        id: `worker:${taskId}`,
+        request: capacityRequest(selected, opts.workerSparsePaths ?? [], opts.workerSparseCheckoutIdentity),
+      })));
+      const results = prepared.map(({ taskId, selected }, index) => {
+        const reservation = reservations[index];
+        pendingWorkerReservations.set(taskId, { selected, reservation });
+        return Object.freeze({ baseSha: selected, reservation });
+      });
+      return Object.freeze(results);
+    },
     releaseCapacity(taskId) {
       const pending = pendingWorkerReservations.get(taskId);
       if (!pending || !opts.worktreeCapacity) return false;
@@ -507,6 +566,7 @@ function worktreeManager(repoRoot, opts = {}) {
       const owned = entries.filter(({ pending }) => pending);
       if (!opts.worktreeCapacity) return Object.freeze(taskIds.map(() => true));
       if (owned.length === 0) return Object.freeze(taskIds.map(() => false));
+<<<<<<< Updated upstream
       const unsettled = owned.filter(({ pending }) => pending.capacitySettled !== true);
       if (unsettled.length > 0) {
         const released = opts.worktreeCapacity.releaseMany(
@@ -522,6 +582,11 @@ function worktreeManager(repoRoot, opts = {}) {
         try { byTask.set(taskId, finalizePendingReceipt(taskId, pending)); }
         catch { byTask.set(taskId, false); }
       }
+=======
+      const outcomes = opts.worktreeCapacity.releaseMany(owned.map(({ pending }) => pending.reservation));
+      owned.forEach(({ taskId }, index) => { if (outcomes[index]) pendingWorkerReservations.delete(taskId); });
+      const byTask = new Map(owned.map(({ taskId }, index) => [taskId, outcomes[index]]));
+>>>>>>> Stashed changes
       return Object.freeze(taskIds.map((taskId) => byTask.get(taskId) ?? false));
     },
     settleCapacityMany(taskIds) {
@@ -531,15 +596,22 @@ function worktreeManager(repoRoot, opts = {}) {
       const owned = taskIds.map((taskId) => ({ taskId, pending: pendingWorkerReservations.get(taskId) }))
         .filter(({ pending }) => pending);
       if (!opts.worktreeCapacity || owned.length === 0) return Object.freeze(taskIds.map(() => true));
+<<<<<<< Updated upstream
       const unsettled = owned.filter(({ pending }) => pending.capacitySettled !== true);
       const outcomes = unsettled.length === 0 ? [] : opts.worktreeCapacity.releaseMany(
         unsettled.map(({ pending }) => pending.reservation),
       );
       if (!Array.isArray(outcomes) || outcomes.length !== unsettled.length) {
+=======
+      const outcomes = opts.worktreeCapacity.releaseMany(owned.map(({ pending }) => pending.reservation));
+      if (!Array.isArray(outcomes) || outcomes.length !== owned.length
+        || outcomes.some((released) => released !== true)) {
+>>>>>>> Stashed changes
         throw Object.assign(new Error('capacity settlement wave is incomplete'), {
           code: 'worktree_capacity_release_failed',
         });
       }
+<<<<<<< Updated upstream
       unsettled.forEach(({ pending }, index) => {
         if (outcomes[index]) pending.capacitySettled = true;
       });
@@ -562,6 +634,12 @@ function worktreeManager(repoRoot, opts = {}) {
     async create(taskId, requestedBaseSha = null, binding = null) {
       const failedTransaction = failedWorkerTransactions.get(taskId);
       if (failedTransaction) await finalizeFailedTransaction(failedTransaction);
+=======
+      owned.forEach(({ taskId }) => pendingWorkerReservations.delete(taskId));
+      return Object.freeze(taskIds.map(() => true));
+    },
+    async create(taskId, requestedBaseSha = null) {
+>>>>>>> Stashed changes
       let selected = requestedBaseSha ?? opts.deploymentBaseSha ?? null;
       if (selected === null) {
         const base = await worktreeMod.pinBaseSha(repoRoot, {});
@@ -603,6 +681,7 @@ function worktreeManager(repoRoot, opts = {}) {
       }
       let capacityReservation = pending?.reservation;
       if (pending) pendingWorkerReservations.delete(taskId);
+<<<<<<< Updated upstream
       let ownerReceipt = pending?.ownerReceipt ?? allocateOwner(taskId, selected, binding);
       if (!capacityReservation && opts.worktreeCapacity) {
         try { capacityReservation = opts.worktreeCapacity.reserve(
@@ -657,12 +736,38 @@ function worktreeManager(repoRoot, opts = {}) {
             code: cleanupError?.code ?? 'worktree_cleanup_failed',
             admissionError: error?.code ?? null,
           });
+=======
+      if (!capacityReservation && opts.worktreeCapacity) capacityReservation = opts.worktreeCapacity.reserve(
+        `worker:${taskId}`,
+        capacityRequest(selected, opts.workerSparsePaths ?? [], opts.workerSparseCheckoutIdentity),
+      );
+      let r = null;
+      try {
+        r = await worktreeMod.createFromBase(repoRoot, taskId, selected, { dependencyDirs: opts.workerDependencyDirs ?? [], sparsePaths: opts.workerSparsePaths ?? [], ...(opts.toolchainProjection ? { toolchainProjection: opts.toolchainProjection } : {}) });
+        if (capacityReservation) {
+          capacityReservation = opts.worktreeCapacity.materialize(capacityReservation, r.dir);
+          workerReservations.set(taskId, capacityReservation);
+        }
+        return { path: r.dir, branch: r.branch, baseSha: r.baseSha, sparsePaths: r.sparsePaths, sparseCheckoutIdentity: r.sparseCheckoutIdentity, ...(capacityReservation ? { capacityReservation: capacityReservationIdentity(capacityReservation) } : {}), ...(r.toolchainProjection ? { toolchainProjection: r.toolchainProjection } : {}) };
+      } catch (error) {
+        let cleanupError = null;
+        if (r) {
+          try { await worktreeMod.reap(repoRoot, taskId, { force: true, deleteBranch: true }); }
+          catch (cause) { cleanupError = cause; }
+        }
+        if (capacityReservation) opts.worktreeCapacity.release(capacityReservation);
+        if (cleanupError) {
+          throw Object.assign(new Error('worktree capacity materialization cleanup failed', {
+            cause: cleanupError,
+          }), { code: 'worktree_cleanup_failed', admissionError: error?.code ?? null });
+>>>>>>> Stashed changes
         }
         throw error;
       }
     },
     worktreeAvailable(taskId, context) {
       try {
+<<<<<<< Updated upstream
         if (!context || typeof context.ownerTaskId !== 'string' || typeof context.worktree !== 'string') {
           return false;
         }
@@ -675,6 +780,13 @@ function worktreeManager(repoRoot, opts = {}) {
             || realpathSync(context.worktree) !== realpathSync(receipt.worktree))) return false;
         if (receipt && receipt.logicalTaskId !== taskId) return false;
         const expected = resolve(realpathSync(repoRoot), '.baton', 'wt', physicalOwnerId);
+=======
+        worktreeMod.normalizePhysicalOwnerId(taskId, 'taskId');
+        if (!context || context.ownerTaskId !== taskId || typeof context.worktree !== 'string') {
+          return false;
+        }
+        const expected = resolve(realpathSync(repoRoot), '.baton', 'wt', taskId);
+>>>>>>> Stashed changes
         if (!existsSync(context.worktree) || realpathSync(context.worktree) !== expected
           || !existsSync(expected) || !existsSync(`${expected}.meta.json`)) return false;
         const stat = lstatSync(expected);
@@ -1120,7 +1232,10 @@ export function createDriver(opts) {
     ? null
     : normalizeProviderGovernancePolicy(opts.providerGovernance, Object.keys(opts.adapters ?? {}));
   const deploymentRepoId = opts.repoId ?? 'local';
+<<<<<<< Updated upstream
   const atlasDeployment = normalizeAtlasDeployment(opts.atlas, opts.repoRoot);
+=======
+>>>>>>> Stashed changes
   if (opts.deploymentBaseSha !== undefined) {
     if (!/^[a-f0-9]{40}$/u.test(opts.deploymentBaseSha)) {
       throw new TypeError('deployment base SHA must be an exact commit ID');
@@ -1252,8 +1367,13 @@ export function createDriver(opts) {
   }
   const coordination = opts.coordination ?? new CoordinationStore(join(opts.logDir, 'coordination'), {
     repoId: deploymentRepoId,
+<<<<<<< Updated upstream
     operationalRead: (worker, seq) => log.at(worker, seq),
     operationalRangeRead: (worker, throughSeq) => log.range(worker, throughSeq),
+=======
+    operationalRead: (worker, seq) => log.read(worker, seq).find((event) => event.seq === seq) ?? null,
+    operationalRangeRead: (worker, throughSeq) => log.read(worker).filter((event) => event.seq <= throughSeq),
+>>>>>>> Stashed changes
     clock: () => new Date(now()).toISOString(),
     advisoryFeedCards,
     advisoryReceiptReverify: (receipt) => advisoryFeeds.reverifyReceiptSync(receipt),

@@ -9,9 +9,13 @@ const SECRET_NAME = /(TOKEN|KEY|SECRET|PASSWORD|PASSWD|CREDENTIAL|AUTH|COOKIE|SE
 const PROVIDER_OR_INJECTION = /^(ANTHROPIC_|OPENAI_|XAI_|ZAI_|Z_AI_|MOONSHOT_|KIMI_|AWS_|GOOGLE_|GCLOUD_|CLOUD_ML_|AZURE_|FOUNDRY_|GITHUB_|NODE_OPTIONS$|PYTHONPATH$|PYTHONHOME$|RUBYOPT$|PERL5OPT$|BASH_ENV$|ENV$|CDPATH$|GIT_CONFIG|GIT_DIR$|GIT_WORK_TREE$|DYLD_|LD_|.*_PROXY$)/i;
 const ALWAYS_KEEP = new Set(['PATH', 'SHELL', 'LANG', 'LC_ALL', 'LC_CTYPE', 'TERM', 'USER', 'LOGNAME', 'TZ']);
 
+<<<<<<< Updated upstream
 // #234: exported so deployment readiness resolves the SAME family/credential-state facts the
 // dispatch path (RuntimeIsolation.create) resolves — one derivation, never a drifting copy.
 export function runtimeIdentity(selection) {
+=======
+function runtimeIdentity(selection) {
+>>>>>>> Stashed changes
   // Coordinator callers supply the selected adapter card. A registry key is only a private map
   // coordinate and cannot determine provider credentials or the executable's configuration home.
   // String support remains for direct/legacy RuntimeIsolation embedders.
@@ -25,6 +29,7 @@ export function runtimeIdentity(selection) {
     throw new TypeError('runtime isolation requires a selected adapter card');
   }
   const harness = card.harness;
+<<<<<<< Updated upstream
   // #230: omp is its own surface. Its provider auth (deepseek/glm keys, oauth) lives in
   // ~/.omp/agent — projected as a HOME-relative tree (omp resolves $HOME/.omp), never the
   // claude config-dir fallback that left members auth-less and provider-silent for hours.
@@ -32,6 +37,11 @@ export function runtimeIdentity(selection) {
     : harness === 'grok' ? 'grok'
       : harness === 'kimi-code' ? 'kimi-code'
         : harness === 'omp' ? 'omp' : 'claude';
+=======
+  const surface = harness === 'codex' ? 'codex'
+    : harness === 'grok' ? 'grok'
+      : harness === 'kimi-code' ? 'kimi-code' : 'claude';
+>>>>>>> Stashed changes
   const provider = card.modelSelection?.family;
   const family = surface === 'claude' && typeof provider === 'string' && provider.length > 0
     ? provider : surface;
@@ -86,9 +96,12 @@ export class RuntimeIsolation {
     if (surface === 'codex') env.CODEX_HOME = config;
     else if (surface === 'grok') env.GROK_HOME = config;
     else if (surface === 'kimi-code') env.KIMI_CODE_HOME = config;
+<<<<<<< Updated upstream
     // #230: omp reads $HOME/.omp — no config-dir override; the credential tree projects
     // HOME-relative (below), exactly omp's native resolution.
     else if (surface === 'omp') { /* HOME-relative; no config env var */ }
+=======
+>>>>>>> Stashed changes
     else env.CLAUDE_CONFIG_DIR = config;
 
     if (surface === 'kimi-code') {
@@ -131,9 +144,12 @@ export class RuntimeIsolation {
     }
 
     let projectedTreeCount = 0;
+<<<<<<< Updated upstream
     // #230: omp resolves credentials at $HOME/.omp — its tree projects INTO the isolated
     // home (HOME-relative), not the config root. Same law as grok's ~/.grok placement.
     const treeTarget = surface === 'omp' ? home : config;
+=======
+>>>>>>> Stashed changes
     for (const tree of this.credentialTrees[family] ?? []) {
       if (!tree || typeof tree.sourceRoot !== 'string' || !Array.isArray(tree.relativeFiles)) {
         throw new TypeError('runtime credential tree requires sourceRoot and relativeFiles');
@@ -143,7 +159,11 @@ export class RuntimeIsolation {
         throw Object.assign(new Error('runtime credential tree cannot originate inside the repository'), { code: 'credential_source_in_repository' });
       }
       const projected = projectCredentialTree({
+<<<<<<< Updated upstream
         sourceRoot: tree.sourceRoot, targetRoot: treeTarget, relativeFiles: tree.relativeFiles,
+=======
+        sourceRoot: tree.sourceRoot, targetRoot: config, relativeFiles: tree.relativeFiles,
+>>>>>>> Stashed changes
         ...(tree.maxFileBytes ? { maxFileBytes: tree.maxFileBytes } : {}),
         ...(tree.maxTotalBytes ? { maxTotalBytes: tree.maxTotalBytes } : {}),
       });

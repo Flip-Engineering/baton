@@ -293,8 +293,12 @@ function normalizeNode(value, policy, goal, options) {
   const hasRevision = Object.hasOwn(value ?? {}, 'revision');
   const hasContextScope = Object.hasOwn(value ?? {}, 'contextScope');
   const hasContextCall = Object.hasOwn(value ?? {}, 'contextCall');
+<<<<<<< Updated upstream
   const hasAnalysis = Object.hasOwn(value ?? {}, 'analysis');
   exactObject(value, ['key', 'objective', 'definitionOfDone', 'deps', 'pathScope', 'risk', 'budget', 'verification', 'routes', 'capabilities', 'effects', ...(hasContextScope ? ['contextScope'] : []), ...(hasRequiredEffects ? ['requiredEffects'] : []), ...(hasWorkerPolicy ? ['workerPolicy'] : []), ...(hasRevision ? ['revision'] : []), ...(hasContextCall ? ['contextCall'] : []), ...(hasAnalysis ? ['analysis'] : [])]);
+=======
+  exactObject(value, ['key', 'objective', 'definitionOfDone', 'deps', 'pathScope', 'risk', 'budget', 'verification', 'routes', 'capabilities', 'effects', ...(hasContextScope ? ['contextScope'] : []), ...(hasRequiredEffects ? ['requiredEffects'] : []), ...(hasWorkerPolicy ? ['workerPolicy'] : []), ...(hasRevision ? ['revision'] : []), ...(hasContextCall ? ['contextCall'] : [])]);
+>>>>>>> Stashed changes
   const key = normalizedText(value.key, 256, 'node.key');
   if (!/^[A-Za-z0-9._:-]+$/.test(key)) fail('plan node key is invalid', 'plan_node_invalid');
   const deps = normalizedSet(value.deps, policy.limits.maxDepsPerNode, 256, 'node.deps');
@@ -335,7 +339,10 @@ function normalizeNode(value, policy, goal, options) {
     ...(hasWorkerPolicy ? { workerPolicy: normalizeWorkerPolicyRequest(value.workerPolicy) } : {}),
     ...(hasRevision ? { revision } : {}),
     ...(hasContextCall ? { contextCall } : {}),
+<<<<<<< Updated upstream
     ...(hasAnalysis ? { analysis: value.analysis === true } : {}),
+=======
+>>>>>>> Stashed changes
   };
   if (riskIndex(policy, result.risk) < riskIndex(policy, goal.risk)) fail('plan node risk weakens the goal execution-control tier', 'plan_risk_mismatch');
   if (result.definitionOfDone.some((item) => !goal.definitionOfDone.includes(item))) fail('plan node assigns an unknown definition-of-done item', 'plan_goal_mismatch');
@@ -344,6 +351,7 @@ function normalizeNode(value, policy, goal, options) {
     || result.requiredEffects.some((item) => item !== 'repository_edit'))) {
     fail('plan node required effects exceed authorized or supported effects', 'plan_required_effect_invalid');
   }
+<<<<<<< Updated upstream
   // BU-2-1 amendment (b): `analysis: true` declares the node diff-free, so requiring
   // `repository_edit` is a self-contradiction (it would silently skip the very check it
   // demands). Refused here at construction, symmetric with validateBrief's refusal.
@@ -359,6 +367,8 @@ function normalizeNode(value, policy, goal, options) {
     && !result.requiredEffects.includes('repository_edit') && result.analysis !== true) {
     fail('plan node omits repository_edit from requiredEffects without the analysis:true field', 'plan_required_effect_invalid');
   }
+=======
+>>>>>>> Stashed changes
   return result;
 }
 function assertDag(nodes) {
@@ -459,7 +469,10 @@ export function semanticBriefCore(value) {
     ...(Object.hasOwn(value, 'workerPolicy') ? ['workerPolicy'] : []),
     ...(Object.hasOwn(value, 'revisionContext') ? ['revisionContext'] : []),
     ...(Object.hasOwn(value, 'contextCall') ? ['contextCall'] : []),
+<<<<<<< Updated upstream
     ...(Object.hasOwn(value, 'analysis') ? ['analysis'] : []),
+=======
+>>>>>>> Stashed changes
   ];
   return Object.fromEntries(fields
     .filter((key) => Object.hasOwn(value, key)).map((key) => [key, clone(value[key])]));
@@ -474,7 +487,10 @@ export function planBriefMatches(value, authoritative, { goalPlanCoordinates = f
     ...(Object.hasOwn(authoritative ?? {}, 'workerPolicy') ? ['workerPolicy'] : []),
     ...(Object.hasOwn(authoritative ?? {}, 'revisionContext') ? ['revisionContext'] : []),
     ...(Object.hasOwn(authoritative ?? {}, 'contextCall') ? ['contextCall'] : []),
+<<<<<<< Updated upstream
     ...(Object.hasOwn(authoritative ?? {}, 'analysis') ? ['analysis'] : []),
+=======
+>>>>>>> Stashed changes
     ...(goalPlanCoordinates ? ['goalPlan'] : []),
   ];
   return value !== null && typeof value === 'object' && !Array.isArray(value)

@@ -1013,6 +1013,7 @@ test('WC24: materialized allocations retain growth headroom without double-count
   assert.equal(snapshot.reservations.find((row) => row.id === second.id).materializedAt, null);
   assert.deepEqual(authority.releaseMany([materialized, second]), [true, true]);
 });
+<<<<<<< Updated upstream
 
 test('P92.2-PO2/WC25: failed materialized capacity release retains physical cleanup authority for exact retry', async (t) => {
   // Red at pre-fix candidate 2188b0c: remove() reaped the checkout and common-Git receipt before
@@ -2291,3 +2292,5 @@ test('P92.2-PO2/WC48: pending remove retains its receipt-finalization latch', as
   assert.equal(physicalWorkspaceOwnerReceipt(f.repo, pending.ownerReceipt.physicalOwnerId), null);
   assert.deepEqual(driver.worktreeCapacity.snapshot().reservations, []);
 });
+=======
+>>>>>>> Stashed changes

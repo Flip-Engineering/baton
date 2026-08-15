@@ -102,7 +102,11 @@ test('AC0: a provider-native failed result bypasses capture/referee and preserve
   } });
   const driver = createDriver({
     repoRoot: root, logDir: mkdtempSync(join(tmpdir(), 'baton-ac0-log-')), adapters: { mock: adapter },
+<<<<<<< Updated upstream
     watchdog: { stallMs: 60_000 }, // valid positive stallMs; watchdog never fires in this window
+=======
+    watchdog: { stallMs: 0 },
+>>>>>>> Stashed changes
   });
   let captureCalls = 0;
   let refereeCalls = 0;

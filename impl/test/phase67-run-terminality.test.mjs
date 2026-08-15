@@ -13,6 +13,7 @@ import {
   providerSettled,
 } from '../src/application-semantics.mjs';
 
+<<<<<<< Updated upstream
 // docs/36 §7.1 M2: `closed` is a dead string, deleted from both sets. The registry L4 predicates
 // own the canonical settled/terminal vocabulary; the application sets record the still-legacy
 // state machine's literals and must agree with the predicates on every literal they carry.
@@ -24,6 +25,16 @@ const runTerminalPhases = ['completed', 'failed', 'cancelled', 'denied', 'stoppe
 const providerUnavailablePhases = [
   'work_completed', 'selection_required', 'candidate_selected',
   'completed', 'failed', 'denied',
+=======
+const settledPhases = [
+  'work_completed', 'selection_required', 'candidate_selected',
+  'completed', 'failed', 'cancelled', 'denied', 'stopped', 'closed',
+];
+const runTerminalPhases = ['completed', 'failed', 'cancelled', 'denied', 'stopped', 'closed'];
+const providerUnavailablePhases = [
+  'work_completed', 'selection_required', 'candidate_selected',
+  'completed', 'failed', 'denied', 'closed',
+>>>>>>> Stashed changes
 ];
 const providerStoppedPhases = ['cancelled', 'stopped'];
 

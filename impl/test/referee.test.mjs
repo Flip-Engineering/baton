@@ -503,7 +503,11 @@ test('verify() appends exactly one verify.reverified event whose payload deep-eq
 // closed captured-output receipt — behavior 62 / Phase 90 RV
 // ============================================================
 
+<<<<<<< Updated upstream
 test('successful captured verifier output is represented only by its exact byte count and SHA-256 digest', async (t) => {
+=======
+test('captured verifier output is represented only by its exact byte count and SHA-256 digest', async (t) => {
+>>>>>>> Stashed changes
   const sandbox = makeSandbox();
   t.after(() => sandbox.cleanup());
 
@@ -515,6 +519,7 @@ test('successful captured verifier output is represented only by its exact byte 
   assert.equal(verdict.capturedOutputBytes, 5000);
   assert.equal(verdict.capturedOutputDigest, createHash('sha256').update('x'.repeat(5000)).digest('hex'));
   assert.equal(Object.hasOwn(verdict, 'observedOutputTail'), false);
+<<<<<<< Updated upstream
   assert.equal(verdict.failureCapsule, null);
   assert.equal(Object.hasOwn(verdict, 'note'), false);
 });
@@ -548,6 +553,9 @@ test('failed verifier output retains one bounded sanitized tail capsule bound to
   assert.match(verdict.failureCapsule.text, /\[verification-sandbox\]/u);
   assert.equal(verdict.failureCapsule.textDigest,
     createHash('sha256').update(verdict.failureCapsule.text).digest('hex'));
+=======
+  assert.equal(Object.hasOwn(verdict, 'note'), false);
+>>>>>>> Stashed changes
 });
 
 test('closed plan verification executes argv without a shell, strips ambient env, and fails at the output bound', async (t) => {
@@ -573,6 +581,9 @@ test('closed plan verification executes argv without a shell, strips ambient env
   assert.equal(verdict.capturedOutputDigest, createHash('sha256').update('x'.repeat(64)).digest('hex'));
   assert.equal(verdict.diagnosticCode, 'verification_output_exceeded');
   assert.equal(Object.hasOwn(verdict, 'observedOutputTail'), false);
+<<<<<<< Updated upstream
   assert.equal(verdict.failureCapsule.kind, 'verification_failure_tail');
   assert.equal(verdict.failureCapsule.capturedOutputDigest, verdict.capturedOutputDigest);
+=======
+>>>>>>> Stashed changes
 });

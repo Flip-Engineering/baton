@@ -6,13 +6,18 @@ import {
 } from 'node:fs';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { TextDecoder } from 'node:util';
+<<<<<<< Updated upstream
 import { APPLICATION_SEMANTIC_REGISTRY, canonicalRunPhase } from './application-semantics.mjs';
 import { FRAME_LIMITS_DIGEST } from './limits.mjs';
+=======
+import { APPLICATION_SEMANTIC_REGISTRY } from './application-semantics.mjs';
+>>>>>>> Stashed changes
 import { bindBatonPort } from './application-client.mjs';
 import { foldCanonicalCase } from './canonical-order.mjs';
 import { createLocalSocketFetch } from './local-web-transport.mjs';
 import { publishResultExportNoReplace } from './result-export.mjs';
 
+<<<<<<< Updated upstream
 export const CLI_WEB_COMMANDS = new Set([
   'application.help',
   'runs.list',
@@ -46,6 +51,20 @@ const RESIDENT_PROFILE_FIELDS = Object.freeze([
   'incarnation', 'registryDigest', 'startedAt',
 ]);
 const RESIDENT_PROFILE_OWNER_FIELDS = Object.freeze(['ownerPid', 'ownerPidStart']);
+=======
+const COMMANDS = new Set([
+  'application.help',
+  'runs.list',
+  'run.start', 'run.inspect', 'run.act',
+  'run.status', 'run.follow', 'run.recover', 'run.approve', 'run.wait', 'run.answer',
+  'run.steer', 'run.stop', 'run.evidence', 'run.adopt', 'run.retry_verification',
+  'run.resume_work', 'run.review', 'run.integrate', 'run.export',
+]);
+const TERMINAL_RUN_PHASES = new Set(['work_completed', 'completed', 'failed', 'cancelled', 'denied', 'stopped', 'closed']);
+const CONNECTION_ENV = Object.freeze(['BATON_URL', 'BATON_ORIGIN', 'BATON_REPO_ID', 'BATON_TOKEN']);
+const DEFAULT_APPLICATION_WAIT_MS = 30_000;
+const WEB_WAIT_TRANSPORT_SLACK_MS = 15_000;
+>>>>>>> Stashed changes
 
 function cliError(message, code = 'cli_invalid') { return Object.assign(new Error(message), { code }); }
 function record(value) { return value !== null && typeof value === 'object' && !Array.isArray(value); }
@@ -256,12 +275,20 @@ export function discoverBatonConnection({
   const profilePath = join(configRoot, 'baton', 'connections', `${repository.profile}.json`);
   const profile = readConnectionJson(profilePath, 'user connection profile', { ownerOnly: true, ownerUid });
   exactKeys(profile, resident
+<<<<<<< Updated upstream
     ? residentProfileKeys(profile)
     : ['schemaVersion', 'url', 'origin', 'tokenFile'], 'user connection profile');
   if (profile.schemaVersion !== repository.schemaVersion || !nonempty(profile.url)
     || !nonempty(profile.origin) || !nonempty(profile.tokenFile)
     || (resident && (!residentProfileOwnerValid(profile)
       || profile.transport !== 'local' || !isAbsolute(profile.socketPath)
+=======
+    ? ['schemaVersion', 'transport', 'socketPath', 'url', 'origin', 'tokenFile', 'deploymentId', 'incarnation', 'registryDigest', 'startedAt']
+    : ['schemaVersion', 'url', 'origin', 'tokenFile'], 'user connection profile');
+  if (profile.schemaVersion !== repository.schemaVersion || !nonempty(profile.url)
+    || !nonempty(profile.origin) || !nonempty(profile.tokenFile)
+    || (resident && (profile.transport !== 'local' || !isAbsolute(profile.socketPath)
+>>>>>>> Stashed changes
       || profile.socketPath.includes('\0') || Buffer.byteLength(profile.socketPath) > 103
       || profile.deploymentId !== repository.deploymentId
       || profile.incarnation !== repository.incarnation
@@ -309,6 +336,7 @@ function setupProfileNames(configRoot) {
     .filter((name) => {
       try { id(name, 'connection profile'); return true; } catch { return false; }
     })
+<<<<<<< Updated upstream
     // Issue #37: resident-published profiles (schema v2, `baton serve` publications) share this
     // directory but are a different artifact class — never schema-v1 setup candidates. Content,
     // not name, decides: an unreadable or malformed file stays a candidate so its selection
@@ -320,16 +348,25 @@ function setupProfileNames(configRoot) {
           || Object.hasOwn(parsed, 'transport') || Object.hasOwn(parsed, 'socketPath')));
       } catch { return true; }
     })
+=======
+>>>>>>> Stashed changes
     .sort();
 }
 
 function readSetupProfile(configRoot, profileName, ownerUid) {
   const profilePath = join(configRoot, 'baton', 'connections', `${profileName}.json`);
+<<<<<<< Updated upstream
   const label = `user connection profile ${profileName}.json`;
   const profile = readConnectionJson(profilePath, label, { ownerOnly: true, ownerUid });
   exactKeys(profile, ['schemaVersion', 'url', 'origin', 'tokenFile'], label);
   if (profile.schemaVersion !== 1 || !nonempty(profile.url) || !nonempty(profile.origin) || !nonempty(profile.tokenFile)) {
     throw cliError(`${label} is invalid`, 'cli_config_invalid');
+=======
+  const profile = readConnectionJson(profilePath, 'user connection profile', { ownerOnly: true, ownerUid });
+  exactKeys(profile, ['schemaVersion', 'url', 'origin', 'tokenFile'], 'user connection profile');
+  if (profile.schemaVersion !== 1 || !nonempty(profile.url) || !nonempty(profile.origin) || !nonempty(profile.tokenFile)) {
+    throw cliError('user connection profile is invalid', 'cli_config_invalid');
+>>>>>>> Stashed changes
   }
   let base;
   let origin;
@@ -458,7 +495,11 @@ export async function setupBatonConnection({
   if (profile === null && profiles.length !== 1) {
     return Object.freeze({
       schemaVersion: 1, state: 'needs_user_input',
+<<<<<<< Updated upstream
       outline: Object.freeze({ repository: 'ready', profiles: profiles.length === 0 ? 'missing' : 'select_profile', connection: 'not_written' }),
+=======
+      outline: Object.freeze({ repository: 'ready', profiles: profiles.length === 0 ? 'missing' : 'selection_required', connection: 'not_written' }),
+>>>>>>> Stashed changes
       profiles: Object.freeze(profiles),
       next: Object.freeze(profiles.length === 0
         ? [{ action: 'create_profile', command: 'baton help connection' }]
@@ -522,12 +563,16 @@ export function inspectBatonConnection({
     return Object.freeze({
       schemaVersion: 1, state: 'needs_setup', depth,
       outline: Object.freeze({ repository: 'ready', connection: 'missing', profile: 'not_checked', credential: 'not_read', remote: 'not_checked' }),
+<<<<<<< Updated upstream
       // Issue #36: `baton serve` is the ordinary zero-assembly path; `baton setup` is the
       // advanced explicit-network flow. Offer both, ordinary first.
       next: Object.freeze([
         { action: 'serve', command: 'baton serve' },
         { action: 'setup', command: 'baton setup' },
       ]),
+=======
+      next: Object.freeze([{ action: 'setup', command: 'baton setup' }]),
+>>>>>>> Stashed changes
       ...(depth === 'evidence' ? { evidence: Object.freeze({ selector: 'absent', gitCommonDirectory: 'resolved' }) } : {}),
     });
   }
@@ -568,12 +613,20 @@ export function inspectBatonConnection({
   try {
     profile = readConnectionJson(profilePath, 'user connection profile', { ownerOnly: true, ownerUid });
     exactKeys(profile, resident
+<<<<<<< Updated upstream
       ? residentProfileKeys(profile)
       : ['schemaVersion', 'url', 'origin', 'tokenFile'], 'user connection profile');
     if (profile.schemaVersion !== repository.schemaVersion || !nonempty(profile.url)
       || !nonempty(profile.origin) || !nonempty(profile.tokenFile)
       || (resident && (!residentProfileOwnerValid(profile)
         || profile.transport !== 'local' || !isAbsolute(profile.socketPath)
+=======
+      ? ['schemaVersion', 'transport', 'socketPath', 'url', 'origin', 'tokenFile', 'deploymentId', 'incarnation', 'registryDigest', 'startedAt']
+      : ['schemaVersion', 'url', 'origin', 'tokenFile'], 'user connection profile');
+    if (profile.schemaVersion !== repository.schemaVersion || !nonempty(profile.url)
+      || !nonempty(profile.origin) || !nonempty(profile.tokenFile)
+      || (resident && (profile.transport !== 'local' || !isAbsolute(profile.socketPath)
+>>>>>>> Stashed changes
         || profile.socketPath.includes('\0') || Buffer.byteLength(profile.socketPath) > 103
         || profile.deploymentId !== repository.deploymentId
         || profile.incarnation !== repository.incarnation
@@ -589,6 +642,7 @@ export function inspectBatonConnection({
       ...(depth === 'connection' || depth === 'profile' ? { connection: Object.freeze({ profile: repository.profile, repoId: repository.repoId }) } : {}),
     });
   }
+<<<<<<< Updated upstream
   if (resident) {
     let socketState = 'absent';
     try {
@@ -622,6 +676,8 @@ export function inspectBatonConnection({
       });
     }
   }
+=======
+>>>>>>> Stashed changes
   return Object.freeze({
     schemaVersion: 1, state: 'configured', depth,
     outline: Object.freeze({ repository: 'ready', connection: 'ready', profile: 'ready', credential: 'not_read', remote: 'not_checked' }),
@@ -928,7 +984,11 @@ function compactRunResult(result) {
 function compactNextActions(actions) {
   if (!Array.isArray(actions)) return [];
   const allowed = new Set([
+<<<<<<< Updated upstream
     'kind', 'actionId', 'planDigest', 'requestId', 'role', 'reason', 'state', 'do',
+=======
+    'kind', 'actionId', 'planDigest', 'requestId', 'role', 'reason', 'state',
+>>>>>>> Stashed changes
   ]);
   return actions.map((action) => Object.fromEntries(Object.entries(action ?? {})
     .filter(([key]) => allowed.has(key))));
@@ -942,7 +1002,10 @@ function compactSemanticActions(actions) {
     label: action.label,
     summary: action.summary,
     destructive: action.destructive === true,
+<<<<<<< Updated upstream
     ...(record(action.do) ? { do: action.do } : {}),
+=======
+>>>>>>> Stashed changes
     ...(Array.isArray(action.choices) && action.choices.length > 0
       ? { choices: action.choices } : {}),
     ...(action.help?.topic ? { help: `baton help ${action.help.topic}` } : {}),
@@ -963,7 +1026,10 @@ function compactInspectOutline(result) {
     terminal: result.terminal === true,
     outline: {
       objective: outline.objective ?? null,
+<<<<<<< Updated upstream
       resultIntent: outline.resultIntent ?? null,
+=======
+>>>>>>> Stashed changes
       phase: outline.phase ?? null,
       stage: outline.stage ?? null,
       narrative: outline.narrative ?? null,
@@ -1041,10 +1107,14 @@ export function projectBatonCliResult(parsed, result) {
     && nonempty(result.runId)) return compactInspectSection(result);
   if (!RUN_VIEW_OUTPUT_KINDS.has(parsed.kind)
     || !nonempty(result.runId) || !nonempty(result.phase) || result.depth !== undefined
+<<<<<<< Updated upstream
     // Issue #53: run.debug's result is already the bounded, whitelisted projection rule 4
     // requires the CLI and the embedded accessor to share byte-for-byte — never the generic
     // run-view compact form (which would drop members/lastMessages/writeReceipts/failure).
     || parsed.name === 'run.evidence' || parsed.name === 'run.debug') return result;
+=======
+    || parsed.name === 'run.evidence') return result;
+>>>>>>> Stashed changes
   const route = record(result.route) ? {
     ...(record(result.route.requested) ? { requested: result.route.requested } : {}),
     ...(record(result.route.resolved) ? { resolved: result.route.resolved } : {}),
@@ -1055,9 +1125,12 @@ export function projectBatonCliResult(parsed, result) {
     schemaVersion: 1,
     runId: result.runId,
     ...(nonempty(result.objective) ? { objective: result.objective } : {}),
+<<<<<<< Updated upstream
     ...(nonempty(result.resultIntent) ? { resultIntent: result.resultIntent } : {}),
     ...(record(result.objectiveResultPolicy)
       ? { objectiveResultPolicy: result.objectiveResultPolicy } : {}),
+=======
+>>>>>>> Stashed changes
     phase: result.phase,
     ...(record(result.progress) ? { progress: {
       current: result.progress.current ?? null,
@@ -1070,10 +1143,13 @@ export function projectBatonCliResult(parsed, result) {
       required: attention.length > 0,
       ...(attention.length > 0 ? { items: attention } : {}),
     },
+<<<<<<< Updated upstream
     blockedInteraction: record(result.blockedInteraction) ? result.blockedInteraction : null,
     waitingOn: record(result.waitingOn) ? result.waitingOn : null,
     progressClass: record(result.progressClass) ? result.progressClass : null,
     requiredAction: record(result.requiredAction) ? result.requiredAction : null,
+=======
+>>>>>>> Stashed changes
     nextActions: compactNextActions(result.nextActions),
     ...(record(result.lastAction) ? { lastAction: result.lastAction } : {}),
     ...(compactRunResult(result.result) ? { result: compactRunResult(result.result) } : {}),
@@ -1081,13 +1157,18 @@ export function projectBatonCliResult(parsed, result) {
     ...(record(result.ownership) ? { resources: {
       ownedWorkers: result.ownership.workers ?? 0,
       reaped: (result.ownership.workers ?? 0) === 0
+<<<<<<< Updated upstream
         && TERMINAL_RUN_PHASES.has(canonicalRunPhase(result.phase)),
+=======
+        && TERMINAL_RUN_PHASES.has(result.phase),
+>>>>>>> Stashed changes
     } } : {}),
     inspect: { command: `baton run show ${result.runId}` },
   };
   return Object.freeze(compact);
 }
 
+<<<<<<< Updated upstream
 // #160 R6 (F8, error-actionability-2026-08-13/contract-fold.md §2 F8/R6): the run-branch facade
 // nouns handled in the earlier `if (action === '<noun>')` dispatch windows. Kept as an ARRAY (not
 // a `new Set([...])` literal) so the maximal-set source-scan in the CLI-parser suite's
@@ -1130,6 +1211,9 @@ function cliRunVerbTypoRefusal(action, lifecycleActions) {
 }
 
 function parseStart(args, objective, idempotencyKey, resultIntent = 'change') {
+=======
+function parseStart(args, objective, idempotencyKey) {
+>>>>>>> Stashed changes
   if (!nonempty(objective)) throw cliError('OBJECTIVE is required');
   const profile = take(args, '--profile');
   const exactValue = take(args, '--exact');
@@ -1320,6 +1404,7 @@ export function parseBatonCli(rawArgs) {
     noRemainder(args);
     return { kind: 'serve', configPath };
   }
+<<<<<<< Updated upstream
   if (args[0] === 'route') {
     args.shift();
     const exact = route(args.shift());
@@ -1516,6 +1601,9 @@ export function parseBatonCli(rawArgs) {
   if (args.shift() !== 'run') {
     throw cliError('expected credentials, setup, doctor, route, explore, review, context, waves, or run');
   }
+=======
+  if (args.shift() !== 'run') throw cliError('expected credentials, setup, doctor, or run');
+>>>>>>> Stashed changes
   const action = args.shift();
   if (action === 'follow') {
     throw cliError(`${action} is not shipped by the Run application`, 'cli_command_unavailable');
@@ -1523,6 +1611,7 @@ export function parseBatonCli(rawArgs) {
   if (action === 'start') {
     return parseStart(args, args.shift(), idempotencyKey);
   }
+<<<<<<< Updated upstream
   // Facade-projection epic (#87+#48, contract v2.2): the nine workflow-surface verbs. Each sub-verb
   // shifts BEFORE the generic runId shift (the start-precedent early branch per noun), so an
   // unknown sub-verb stays a loud cli_invalid parse error, never a silent run-start objective.
@@ -1732,6 +1821,18 @@ export function parseBatonCli(rawArgs) {
     const follow = flag(args, '--follow');
     const recipient = action === 'output' ? take(args, '--to') : null;
     noRemainder(args);
+=======
+  const lifecycleActions = new Set(['show', 'do', 'recover', 'status', 'approve', 'answer', 'steer',
+    'send', 'interrupt', 'progress', 'events', 'output',
+    'stop', 'evidence', 'adopt', 'select', 'feedback', 'revise', 'stop-member',
+    'retry', 'review', 'integrate', 'export']);
+  if (!lifecycleActions.has(action)) return parseStart(args, action, idempotencyKey);
+  const runId = id(args.shift(), 'Run ID');
+  if (['progress', 'events', 'output'].includes(action)) {
+    const follow = flag(args, '--follow');
+    const recipient = action === 'output' ? take(args, '--to') : null;
+    noRemainder(args);
+>>>>>>> Stashed changes
     return {
       kind: 'stream', runId, channel: action, follow,
       ...(recipient === null ? {} : { recipient: id(recipient, 'recipient') }),
@@ -1739,6 +1840,7 @@ export function parseBatonCli(rawArgs) {
     };
   }
   if (action === 'show') {
+<<<<<<< Updated upstream
     const section = take(args, '--section');
     // docs/36 §4.1‡ / §9 M3 — the Episode fold. `run view --section episode.CHAPTER` folds the
     // Episode read (carrying its --role/--generation axes) into run.view; it compiles through the
@@ -1766,6 +1868,10 @@ export function parseBatonCli(rawArgs) {
       };
     }
     const depth = take(args, '--depth') ?? 'outline';
+=======
+    const depth = take(args, '--depth') ?? 'outline';
+    const section = take(args, '--section');
+>>>>>>> Stashed changes
     const item = take(args, '--item');
     const rawOffset = take(args, '--offset');
     noRemainder(args);
@@ -1836,6 +1942,47 @@ export function parseBatonCli(rawArgs) {
     return { kind: 'command', name: 'run.answer', args: { runId, requestId, answer }, idempotencyKey };
   }
   if (action === 'send') {
+<<<<<<< Updated upstream
+=======
+    const message = args.shift();
+    const recipient = take(args, '--to');
+    const modes = [['--nudge', 'nudge'], ['--now', 'now'], ['--turn', 'turn']]
+      .filter(([name]) => flag(args, name));
+    noRemainder(args);
+    if (!nonempty(message) || modes.length > 1
+      || (recipient !== null && !id(recipient, 'semantic recipient'))) {
+      throw cliError('send requires bounded guidance and at most one delivery mode');
+    }
+    return {
+      kind: 'semantic-action', actionKind: 'send', runId,
+      inputs: {
+        message, ...(recipient === null ? {} : { recipient }),
+        ...(modes.length === 0 ? {} : { delivery: modes[0][1] }),
+      },
+      idempotencyKey,
+    };
+  }
+  if (action === 'interrupt') {
+    const recipient = take(args, '--to');
+    const reason = take(args, '--reason');
+    noRemainder(args);
+    if ((recipient !== null && !id(recipient, 'semantic recipient'))
+      || (reason !== null && !nonempty(reason))) {
+      throw cliError('interrupt recipient or reason is invalid');
+    }
+    return {
+      kind: 'semantic-action', actionKind: 'interrupt', runId,
+      inputs: {
+        ...(recipient === null ? {} : { recipient }),
+        ...(reason === null ? {} : { reason }),
+      },
+      idempotencyKey,
+    };
+  }
+  if (action === 'steer') {
+    const target = id(args.shift(), 'worker target');
+    const modes = [['--nudge', 'nudge'], ['--now', 'now'], ['--turn', 'turn']].filter(([name]) => flag(args, name));
+>>>>>>> Stashed changes
     const message = args.shift();
     const recipient = take(args, '--to');
     const modes = [['--nudge', 'nudge'], ['--now', 'now'], ['--turn', 'turn']]
@@ -1938,6 +2085,7 @@ export function parseBatonCli(rawArgs) {
   }
   if (action === 'stop-member') {
     const role = id(args.shift(), 'Workflow role');
+<<<<<<< Updated upstream
     const rawGeneration = take(args, '--generation');
     const reason = take(args, '--reason'); noRemainder(args);
     const generation = rawGeneration === null ? null : Number(rawGeneration);
@@ -1950,6 +2098,12 @@ export function parseBatonCli(rawArgs) {
         runId, role, ...(generation === null ? {} : { generation }),
         ...(reason === null ? {} : { reason }),
       }, idempotencyKey,
+=======
+    const reason = take(args, '--reason', { required: true }); noRemainder(args);
+    return {
+      kind: 'semantic-action', actionKind: 'stop_member', runId,
+      inputs: { role, reason }, idempotencyKey,
+>>>>>>> Stashed changes
     };
   }
   if (action === 'retry') {
@@ -2003,11 +2157,16 @@ export class BatonWebClient {
     this.#token = options.token;
     this.commandTimeoutMs = options.commandTimeoutMs;
     this.pollMs = options.pollMs;
+<<<<<<< Updated upstream
     // #226 (operator ruling): NO silent cap on caller patience. The request ceiling IS the
     // caller's commandTimeoutMs; the old ~45s floor (min with DEFAULT_APPLICATION_WAIT_MS +
     // slack) broke bridge/CLI opens under fleet load. Per-command waits that legitimately
     // need longer than a plain GET derive their own bound in _requestTimeoutForCommand.
     this.requestTimeoutMs = options.commandTimeoutMs;
+=======
+    this.requestTimeoutMs = Math.min(options.commandTimeoutMs,
+      DEFAULT_APPLICATION_WAIT_MS + WEB_WAIT_TRANSPORT_SLACK_MS);
+>>>>>>> Stashed changes
     this.maxJsonResponseBytes = 2 * 1024 * 1024;
     this.fetch = options.fetchImpl;
     this.clock = options.clock;
@@ -2032,9 +2191,13 @@ export class BatonWebClient {
           ...options, redirect: 'error', signal: controller.signal,
         });
       } catch {
+<<<<<<< Updated upstream
         // #160 R6 (error-actionability-2026-08-13/contract-fold.md §2 D4-R6/F4): the transport
         // refusal names the transport class (web) AND a next action — never a bare "failed".
         throw cliError('Baton Web connection failed; check your network and retry', 'cli_transport_failed');
+=======
+        throw cliError('Baton Web connection failed', 'cli_transport_failed');
+>>>>>>> Stashed changes
       }
       const declared = Number(response.headers?.get?.('content-length'));
       if (Number.isFinite(declared) && declared > this.maxJsonResponseBytes) {
@@ -2058,6 +2221,7 @@ export class BatonWebClient {
         throw cliError('Baton Web returned invalid JSON', 'cli_protocol_failed');
       }
       if (!response.ok) {
+<<<<<<< Updated upstream
         const wire = record(body?.error) ? body.error : null;
         const code = typeof wire?.code === 'string' && /^[a-z][a-z0-9_]{0,63}$/u.test(wire.code)
           ? wire.code : 'cli_command_failed';
@@ -2071,6 +2235,12 @@ export class BatonWebClient {
         const error = cliError(message, code);
         if (wire !== null) error.detail = wire;
         throw error;
+=======
+        const receivedCode = body?.error?.code;
+        const code = typeof receivedCode === 'string' && /^[a-z][a-z0-9_]{0,63}$/u.test(receivedCode)
+          ? receivedCode : 'cli_command_failed';
+        throw cliError('Baton Web request was refused', code);
+>>>>>>> Stashed changes
       }
       return body;
     } finally {
@@ -2095,6 +2265,38 @@ export class BatonWebClient {
       briefing: deployment?.briefing ?? null,
       application: card.application,
     };
+  }
+
+  async session() {
+    const body = await this._json('/v1/session', { headers: { ...this._headers(), 'sec-fetch-site': 'none' } });
+    const identity = body?.identity;
+    const expiresAt = Date.parse(body?.expiresAt);
+    const identityFields = ['capabilities', 'repoIds', 'sessionId', 'userId'];
+    if (!record(body) || Object.keys(body).sort().join(',') !== ['expiresAt', 'identity', 'ok'].join(',')
+      || body.ok !== true || !record(identity)
+      || Object.keys(identity).sort().join(',') !== identityFields.sort().join(',')
+      || !/^[A-Za-z0-9._:-]{1,256}$/u.test(identity.userId ?? '')
+      || !/^[A-Za-z0-9._:-]{1,256}$/u.test(identity.sessionId ?? '')
+      || !Array.isArray(identity.capabilities) || identity.capabilities.length === 0
+      || identity.capabilities.length > 256
+      || identity.capabilities.some((value) => !/^[A-Za-z0-9._:-]{1,256}$/u.test(value ?? ''))
+      || new Set(identity.capabilities).size !== identity.capabilities.length
+      || !Array.isArray(identity.repoIds) || identity.repoIds.length === 0 || identity.repoIds.length > 256
+      || identity.repoIds.some((value) => !/^[A-Za-z0-9._:-]{1,256}$/u.test(value ?? ''))
+      || new Set(identity.repoIds).size !== identity.repoIds.length
+      || !identity.capabilities.includes('observe') || !identity.repoIds.includes(this.repoId)
+      || !Number.isFinite(expiresAt) || expiresAt <= this.clock()) {
+      throw cliError('Baton Web returned an invalid authenticated session', 'cli_protocol_failed');
+    }
+    return Object.freeze({
+      schemaVersion: 1,
+      identity: Object.freeze({
+        userId: identity.userId, sessionId: identity.sessionId,
+        capabilities: Object.freeze([...identity.capabilities]),
+        repoIds: Object.freeze([...identity.repoIds]),
+      }),
+      expiresAt: new Date(expiresAt).toISOString(),
+    });
   }
 
   async session() {
@@ -2283,8 +2485,12 @@ export class BatonWebClient {
       }
     } catch (error) {
       if (error?.code?.startsWith('cli_')) throw error;
+<<<<<<< Updated upstream
       // #160 R6: same transport-class + next-action naming on the export-download leg.
       throw cliError('Baton export download failed; check your network and retry', 'cli_transport_failed');
+=======
+      throw cliError('Baton export download failed', 'cli_transport_failed');
+>>>>>>> Stashed changes
     } finally { clearTimeout(timeout); }
     const delivered = extractResultExportArchive({ archiveBytes, descriptor, destination });
     return Object.freeze({ ...delivered, runId });
@@ -2350,11 +2556,14 @@ export async function connectBaton({
     || !Array.isArray(doctor.application?.commands)
     || requiredCommands.some((command) => !doctor.application.commands.includes(command))
     || doctor.application?.agentExperience?.registryDigest !== APPLICATION_SEMANTIC_REGISTRY.digest
+<<<<<<< Updated upstream
     // Decision 7: the limits registry digest verifies exactly like the semantic registry's — a
     // server that publishes limitsRegistryDigest must match; an older server that omits it is
     // not rejected (the frame-economics handshake is additive).
     || (doctor.application?.agentExperience?.limitsRegistryDigest !== undefined
       && doctor.application?.agentExperience?.limitsRegistryDigest !== FRAME_LIMITS_DIGEST)
+=======
+>>>>>>> Stashed changes
     || !session.identity.repoIds.includes(connection.repoId)
     || (connection.transport === 'local'
       && (doctor.application?.resident?.schemaVersion !== 1
@@ -2365,7 +2574,10 @@ export async function connectBaton({
   }
   return bindBatonPort(Object.freeze({
     command: (name, args) => client.command(name, args),
+<<<<<<< Updated upstream
     doctor: () => client.doctor(),
+=======
+>>>>>>> Stashed changes
   }));
 }
 

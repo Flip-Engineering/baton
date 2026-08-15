@@ -1,6 +1,9 @@
 import { createHash, randomUUID } from 'node:crypto';
+<<<<<<< Updated upstream
 import { wrapProse } from './messages.mjs';
 import { FRAME_LIMITS, FRAME_LIMITS_VERSION, FRAME_LIMITS_DIGEST, composeFrameLimitRefusal, frameLimitRefusalPath, COORDINATOR_AUTHORITY_FORBIDDEN, COORDINATOR_AUTHORITY_GRACEFUL_PATH } from './limits.mjs';
+=======
+>>>>>>> Stashed changes
 import {
   normalizeGoalRequest, normalizePlanRequest, planRouteAuthorityState, planRouteMatches,
   planSingleExactRoute,
@@ -23,6 +26,7 @@ import {
 import {
   identifyResultExportRoot, ResultExportLifecycle,
 } from './result-export.mjs';
+<<<<<<< Updated upstream
 import {
   APPLICATION_SEMANTIC_REGISTRY, applicationOperationAliasMap,
   PROGRESS_SILENCE_THRESHOLD_MS, projectTypedTerminalCause,
@@ -36,13 +40,22 @@ import {
 // Epic #103 (D7/D3): the ONE orchestrator-briefing family constant, shared with the store that
 // mints it — the resolve lane, the post-close mint seam, and the MCP sentence all name it.
 import { BRIEFING_FAMILY } from './coordination-store.mjs';
+=======
+import { APPLICATION_SEMANTIC_REGISTRY, projectTypedTerminalCause } from './application-semantics.mjs';
+import { hasNorthboundCapabilityAuthority } from './northbound-capability-authority.mjs';
+import { projectRunTimelinePage } from './run-timeline.mjs';
+>>>>>>> Stashed changes
 
 export { APPLICATION_SEMANTIC_REGISTRY } from './application-semantics.mjs';
 
 const MAX_PROFILES = 256;
+<<<<<<< Updated upstream
 // View ceilings imported from the registry (Decision 8: the registry is the only source; no
 // module re-declares a cataloged lane's byte literal).
 const MAX_PROFILE_BYTES = FRAME_LIMITS['view.profile.bytes'].value;
+=======
+const MAX_PROFILE_BYTES = 256 * 1024;
+>>>>>>> Stashed changes
 const APPLICATION_PROFILE_RECORD_KIND = 'application.profile_registered';
 const APPLICATION_PROFILE_RECORD_ACTOR = 'application:profile-registry';
 const APPLICATION_WORKFLOW_RECORD_KIND = 'application.workflow_definition_bound';
@@ -56,6 +69,7 @@ const MAX_RUN_VIEW_BYTES = FRAME_LIMITS['view.run.bytes'].value;
 const MAX_RUN_VIEW_WORKERS = 1_024;
 const MAX_RUN_LIST_ITEMS = 64;
 const MAX_ATTENTION = 64;
+<<<<<<< Updated upstream
 const MAX_ATTENTION_TEXT_BYTES = FRAME_LIMITS['view.attention_text.bytes'].value;
 const MAX_BLOCKED_INTERACTION_SUMMARY_BYTES = FRAME_LIMITS['view.blocked_interaction_summary.bytes'].value;
 const DEFAULT_TURN_NUDGE_MESSAGE = 'Continue the current turn.';
@@ -88,6 +102,14 @@ const MAX_WORKFLOW_PLAN_HISTORY = 16;
 // VR9/RV closed verifier projection bounds. Durable verdicts carry exact captured-byte metadata,
 // closed enums, and at most one sanitized bounded failure tail. A malformed duration or capsule is
 // dropped rather than passed through.
+=======
+const MAX_ATTENTION_TEXT_BYTES = 4_096;
+const MAX_REVIEW_SOURCE_BYTES = 4 * 1024 * 1024;
+const MAX_WORKFLOW_PLAN_HISTORY = 16;
+// VR9/RV closed verifier projection bounds. Durable verdicts carry only exact captured-byte
+// metadata and closed enums; raw command output and free-form diagnostics never cross the referee
+// receipt boundary. A malformed duration is dropped rather than passed through.
+>>>>>>> Stashed changes
 const VERIFIER_DURATION_BOUND_MS = 7 * 24 * 60 * 60 * 1_000;
 const HEX64 = /^[a-f0-9]{64}$/u;
 const VERIFIER_OUTCOMES = Object.freeze(new Set(['passed', 'candidate_failed', 'inconclusive']));
@@ -109,6 +131,7 @@ function closedEnum(value, allowed) {
   return typeof value === 'string' && allowed.has(value) ? value : null;
 }
 const SEMANTIC_ACTION_DISPATCH = Object.freeze({});
+<<<<<<< Updated upstream
 const RESULT_POLICY_CONSTRAINT_PREFIX = 'Baton objective/result policy ';
 // #153 follow-on (2026-08-13): the production cadence for the shipped waves.run path when the
 // caller omits driver options — mirrors the wave driver's documented production policy
@@ -160,6 +183,12 @@ const EPISODE_TOPICS = Object.freeze([
 // vocabulary; the outward-facing surfaces resolve through them.
 export const PROVIDER_EXECUTION_SETTLED_PHASES = new Set([
   'work_completed', 'selection_required', 'candidate_selected', 'completed', 'failed', 'cancelled', 'denied', 'stopped',
+=======
+// Provider execution can settle while the application Run remains open for
+// result finalization. These closed sets intentionally model separate lifecycles.
+export const PROVIDER_EXECUTION_SETTLED_PHASES = new Set([
+  'work_completed', 'selection_required', 'candidate_selected', 'completed', 'failed', 'cancelled', 'denied', 'stopped', 'closed',
+>>>>>>> Stashed changes
 ]);
 export const APPLICATION_RUN_TERMINAL_PHASES = new Set([
   'completed', 'failed', 'cancelled', 'denied', 'stopped',
@@ -174,6 +203,7 @@ export const APPLICATION_COMMAND_DEFINITIONS = Object.freeze({
   'application.help': Object.freeze({ args: Object.freeze(['topic', 'depth', 'runId']), capabilities: Object.freeze(['observe']), web: true, mcp: true, mcpStateful: false, reconcilable: true }),
   'runs.list': Object.freeze({ args: Object.freeze([]), capabilities: Object.freeze(['observe']), web: true, mcp: true, mcpStateful: false, reconcilable: true }),
   'run.start': Object.freeze({ args: Object.freeze(['intent']), capabilities: Object.freeze(['control', 'observe']), web: true, mcp: true, mcpStateful: true, reconcilable: true }),
+<<<<<<< Updated upstream
   // `mintWaveDetached` (93B): an attach-only side-channel flag consumed solely by the direct
   // command port (waves.attach) — never advertised through the web/mcp JSON schemas, which stay
   // byte-stable in application-semantics.mjs.
@@ -184,6 +214,9 @@ export const APPLICATION_COMMAND_DEFINITIONS = Object.freeze({
   'run.workstreams': Object.freeze({ args: Object.freeze(['runId', 'role', 'generation', 'cursor', 'waitMs']), capabilities: Object.freeze(['observe']), web: true, mcp: true, mcpStateful: false, reconcilable: true }),
   'run.workstream.notify': Object.freeze({ args: Object.freeze(['runId', 'role', 'generation', 'message', 'delivery']), capabilities: Object.freeze(['control', 'observe']), web: true, mcp: true, mcpStateful: true, reconcilable: true }),
   'run.workstream.stop': Object.freeze({ args: Object.freeze(['runId', 'role', 'generation', 'reason']), capabilities: Object.freeze(['emergency_stop', 'observe']), web: true, mcp: true, mcpStateful: true, reconcilable: true }),
+=======
+  'run.inspect': Object.freeze({ args: Object.freeze(['runId', 'depth', 'section', 'item', 'offset', 'pageCursor', 'recipient', 'cursor', 'waitMs']), capabilities: Object.freeze(['observe']), web: true, mcp: true, mcpStateful: false, reconcilable: true }),
+>>>>>>> Stashed changes
   'run.act': Object.freeze({ args: Object.freeze(['runId', 'actionId', 'inputs']), capabilities: Object.freeze([]), semanticCapabilities: true, web: true, mcp: true, mcpStateful: true, reconcilable: true }),
   'run.status': Object.freeze({ args: Object.freeze(['runId']), capabilities: Object.freeze(['observe']), web: true, mcp: true, mcpStateful: false, reconcilable: true }),
   'run.follow': Object.freeze({ args: Object.freeze(['runId', 'afterCursor', 'timeoutMs']), capabilities: Object.freeze(['observe']), web: true, mcp: true, mcpStateful: false, reconcilable: true }),
@@ -191,6 +224,10 @@ export const APPLICATION_COMMAND_DEFINITIONS = Object.freeze({
   'run.wait': Object.freeze({ args: Object.freeze(['runId', 'timeoutMs', 'until']), capabilities: Object.freeze(['observe']), web: true, mcp: true, mcpStateful: false, reconcilable: true }),
   'run.answer': Object.freeze({ args: Object.freeze(['runId', 'requestId', 'answer']), capabilities: Object.freeze(['approve', 'observe']), web: true, mcp: true, mcpStateful: true, reconcilable: true }),
   'run.feedback': Object.freeze({ args: Object.freeze(['runId', 'role', 'feedback']), capabilities: Object.freeze(['control', 'observe']), web: true, mcp: true, mcpStateful: true, reconcilable: true }),
+<<<<<<< Updated upstream
+=======
+  'run.steer': Object.freeze({ args: Object.freeze(['runId', 'target', 'mode', 'message', 'reason']), capabilities: Object.freeze(['control', 'observe']), web: true, mcp: true, mcpStateful: true, reconcilable: false }),
+>>>>>>> Stashed changes
   'run.stop': Object.freeze({ args: Object.freeze(['runId', 'reason']), capabilities: Object.freeze(['emergency_stop', 'observe']), web: true, mcp: true, mcpStateful: true, reconcilable: true }),
   'run.evidence': Object.freeze({ args: Object.freeze(['runId']), capabilities: Object.freeze(['observe']), web: true, mcp: true, mcpStateful: false, reconcilable: true }),
   'run.adopt': Object.freeze({ args: Object.freeze(['runId', 'nodeKey', 'resultSha', 'evidenceDigest', 'reason']), capabilities: Object.freeze(['adopt_result', 'observe']), web: true, mcp: true, mcpStateful: true, reconcilable: true }),
@@ -277,12 +314,17 @@ function digest(value) {
 // Transport admission, audit, and completion events advance the global cursor without changing
 // a Run's semantic authority. Keep those events observable through `cursor`, but never let them
 // invalidate an action Baton just offered to an authenticated caller.
+<<<<<<< Updated upstream
 export function semanticViewDigest(view) {
   // progressClass/requiredAction are DERIVED from the underlying fields below them (phase,
   // attention, timing cadence, terminalCause), so they never carry independent authority:
   // excluding them keeps the actionId token stable across the actionId's own derivation
   // (P1-C view-digest-dependent token) without weakening freshness.
   const { cursor: _transportCursor, progressClass: _derivedProgress, requiredAction: _derivedAction, ...semanticView } = view;
+=======
+function semanticViewDigest(view) {
+  const { cursor: _transportCursor, ...semanticView } = view;
+>>>>>>> Stashed changes
   return digest(semanticView);
 }
 
@@ -1159,6 +1201,7 @@ function semanticAuthorityForAction(action) {
   return deepFreeze({ ...payload, authorityDigest: digest(payload) });
 }
 
+<<<<<<< Updated upstream
 function capabilityEligibleSemanticActions(candidates, context) {
   if (!context?.capabilityAuthority) return candidates;
   return candidates.filter(({ kind }) => (
@@ -1168,6 +1211,8 @@ function capabilityEligibleSemanticActions(candidates, context) {
   ));
 }
 
+=======
+>>>>>>> Stashed changes
 function normalizeCommandContext(value) {
   if (value === undefined || value === null) return null;
   const fields = ['idempotencyKey', 'requestId', 'transport'];
@@ -1499,6 +1544,7 @@ function normalizeProfileRegistryEvent(event) {
 }
 
 function normalizeIntent(value) {
+<<<<<<< Updated upstream
   const allowed = new Set([
     // Issue #31 §2.2(4): `driverKind` declares WHO is driving a run. The dispatcher validates
     // `run.start` args through this same function before the handler runs, and start() derives
@@ -1517,6 +1563,9 @@ function normalizeIntent(value) {
   const hasWaveRole = Object.hasOwn(value ?? {}, 'waveRole');
   const hasWaveStart = Object.hasOwn(value ?? {}, 'waveStart');
   const waveStart = value?.waveStart;
+=======
+  const allowed = new Set(['runId', 'objective', 'profile', 'route', 'scope', 'composition']);
+>>>>>>> Stashed changes
   if (!value || typeof value !== 'object' || Array.isArray(value)
     || Object.keys(value).some((key) => !allowed.has(key))
     || !Object.hasOwn(value, 'objective')
@@ -1603,6 +1652,7 @@ function normalizeWorkflowComposition(value) {
   });
 }
 
+<<<<<<< Updated upstream
 function normalizeGateCauseFeedback(value) {
   // Diagnostics DG-1b / R-DG-6: run.feedback structured inputs accept the same {gate, detail}
   // payload the run.debug failure leg projects — no new seam.
@@ -1660,6 +1710,9 @@ function normalizeWorkflowFeedback(value) {
     && typeof value.gate === 'string') {
     return normalizeGateCauseFeedback(value);
   }
+=======
+function normalizeWorkflowFeedback(value) {
+>>>>>>> Stashed changes
   const input = typeof value === 'string'
     ? {
       summary: value,
@@ -1693,8 +1746,11 @@ function normalizeWorkflowFeedback(value) {
 }
 
 function assertWorkflowFeedbackAnchors(feedback, candidate) {
+<<<<<<< Updated upstream
   // Gate-cause feedback has no path anchors (digests-only / sanitized tail).
   if (feedback.gate !== undefined) return true;
+=======
+>>>>>>> Stashed changes
   const changedPaths = new Set(candidate.changedPaths);
   for (const finding of feedback.findings) {
     if (finding.line !== null && finding.path === null) {
@@ -2301,7 +2357,10 @@ function terminalCauseNarrative(cause) {
   }
   if (cause?.kind === 'provider_failure') return `Run terminated: ${cause.code}.`;
   if (cause?.kind === 'policy_failure') return `Run terminated: ${cause.code}.`;
+<<<<<<< Updated upstream
   if (cause?.kind === 'dispatch_refused') return `Run refused at dispatch: ${cause.code}. ${cause.remediation ?? ''}`.trimEnd();
+=======
+>>>>>>> Stashed changes
   if (cause?.kind === 'operator_stop') return 'Run terminated: operator_stop.';
   return null;
 }
@@ -2475,7 +2534,11 @@ function semanticSourceSlice(text, source) {
  */
 export class BatonApplication {
   constructor(options) {
+<<<<<<< Updated upstream
     const optionalConfiguration = ['context', 'exportRoot', 'exportDeliveryChunkBytes', 'defaults', 'clock', 'deploymentId']
+=======
+    const optionalConfiguration = ['context', 'exportRoot', 'exportDeliveryChunkBytes', 'defaults', 'clock']
+>>>>>>> Stashed changes
       .filter((field) => Object.hasOwn(options ?? {}, field));
     exactObject(options, ['driver', 'repoId', 'profiles', 'principals', 'authorize', ...optionalConfiguration],
     'application_config_invalid', 'application configuration');
@@ -2607,7 +2670,11 @@ export class BatonApplication {
   }
 
   _loadProfileRegistry() {
+<<<<<<< Updated upstream
     const records = this.driver.coordination.eventsView().filter((event) => event.kind === 'driver.recorded'
+=======
+    const records = this.driver.coordination.events().filter((event) => event.kind === 'driver.recorded'
+>>>>>>> Stashed changes
       && event.payload?.kind === APPLICATION_PROFILE_RECORD_KIND);
     if (records.length > MAX_RUN_RECORDS) {
       throw applicationError('application profile registry exceeds its bounded lookup ceiling',
@@ -3002,7 +3069,11 @@ export class BatonApplication {
     // Any partial authority, or any durable control history without its recovery methods,
     // still fails closed before application readiness.
     const hasControlHistory = typeof this.driver.coordination.events === 'function'
+<<<<<<< Updated upstream
       && this.driver.coordination.eventsView().some((event) => (
+=======
+      && this.driver.coordination.events().some((event) => (
+>>>>>>> Stashed changes
         typeof event?.kind === 'string' && event.kind.startsWith('run.control_')
       ));
     if (available.length === 0 && !hasControlHistory) {
@@ -3098,7 +3169,11 @@ export class BatonApplication {
     const reason = operation === 'interrupt'
       ? (inputs.reason ?? action.inputSchema.properties.reason.default) : 'Send Run guidance.';
     if (!action.choices.includes(recipient)
+<<<<<<< Updated upstream
       || (operation === 'send' && (!validText(message, FRAME_LIMITS['run.legacy_send.body'].value)
+=======
+      || (operation === 'send' && (!validText(message, 16_384)
+>>>>>>> Stashed changes
         || SECRET_SHAPED_TEXT.some((pattern) => pattern.test(message))
         || !['nudge', 'now', 'turn'].includes(delivery)))
       || !validText(reason, 1_024)) {
@@ -3227,6 +3302,7 @@ export class BatonApplication {
     if (allowed !== true) throw applicationError('application command is not authorized', 'application_unauthorized');
   }
 
+<<<<<<< Updated upstream
   // Issue #74 (D2/A5): the coordinator authority boundary. A coordinator-seat principal (a worker
   // seat, principalId `worker:<id>` — the G9 seat class that never holds `approve`) reaching a
   // wave/steering authority verb draws `coordinator_authority_forbidden` with {attempted,
@@ -3242,6 +3318,8 @@ export class BatonApplication {
     }
   }
 
+=======
+>>>>>>> Stashed changes
   async _authorizeSemanticAuthority(authority, principal, runId, context = null) {
     const normalized = normalizeSemanticAuthority(authority, 'application_action_authority_invalid');
     const definition = APPLICATION_SEMANTIC_REGISTRY.actions[normalized.kind];
@@ -3284,25 +3362,43 @@ export class BatonApplication {
     }), principal, runId);
   }
 
+<<<<<<< Updated upstream
   async _resolveSemanticAction(request, principal, context = null) {
+=======
+  async _resolveSemanticAction(request, principal) {
+>>>>>>> Stashed changes
     const current = this._findRun(request.runId);
     const view = this._withContextProjection(
       current, await this._buildView(current, this.principals.observer),
     );
+<<<<<<< Updated upstream
     const action = this._semanticActions(current, view, principal, context)
+=======
+    const action = this._semanticActions(current, view, principal)
+>>>>>>> Stashed changes
       .find((candidate) => candidate.actionId === request.actionId);
     return { current, view, action: action ?? null };
   }
 
+<<<<<<< Updated upstream
   async actionAuthority(rawRequest, rawPrincipal, rawContext = null) {
     this._assertOpen();
     await this.ready;
     const context = normalizeCommandContext(rawContext);
+=======
+  async actionAuthority(rawRequest, rawPrincipal) {
+    this._assertOpen();
+    await this.ready;
+>>>>>>> Stashed changes
     validateApplicationCommandArgs('run.act', rawRequest);
     const request = deepFreeze(clone(rawRequest));
     const principal = normalizePrincipal(rawPrincipal, 'action authority principal');
     await this._authorize('run.status', principal, request.runId, { operation: 'action_authority' });
+<<<<<<< Updated upstream
     const { action } = await this._resolveSemanticAction(request, principal, context);
+=======
+    const { action } = await this._resolveSemanticAction(request, principal);
+>>>>>>> Stashed changes
     if (!action) {
       throw applicationError('Run action is outside the current authority scope',
         'application_action_scope_mismatch');
@@ -3334,8 +3430,12 @@ export class BatonApplication {
         'run_orchestrator_command_forbidden');
     }
     if (context?.sessionAuthority && name !== 'run.start' && name !== 'application.help') {
+<<<<<<< Updated upstream
       const recursiveCommand = ['run.status', 'run.inspect', 'run.episode', 'run.workstreams',
         'run.wait', 'run.follow'].includes(name)
+=======
+      const recursiveCommand = ['run.status', 'run.inspect', 'run.wait', 'run.follow'].includes(name)
+>>>>>>> Stashed changes
         ? 'run.status' : name;
       this._authorizeRecursiveCommand(recursiveCommand, args.runId, principal, context);
     }
@@ -3353,8 +3453,12 @@ export class BatonApplication {
         ownerPrincipalId: principal.principalId,
       }).slice(0, 32)}`;
       await this._authorize(name, principal, runId, {
+<<<<<<< Updated upstream
         objectiveDigest: digest(intent.objective), ...explicitResultIntentIdentity(intent),
         profile: intent.profile, route: intent.route,
+=======
+        objectiveDigest: digest(intent.objective), profile: intent.profile, route: intent.route,
+>>>>>>> Stashed changes
         compositionDigest: intent.composition ? digest(intent.composition) : null, scope,
       });
       this._authorizeRecursiveCommand('run.start', runId, principal, context);
@@ -3438,6 +3542,7 @@ export class BatonApplication {
     return true;
   }
 
+<<<<<<< Updated upstream
   /** Decision 4 item 4: resolve a spilled objective's citation to the full body at the reader
    * projection seam — a routine reader never sees the citation. The goal record stores a bounded
    * head + `[SPILLED {...}]` citation; this resolves it via the durable spill artifact. */
@@ -3487,6 +3592,14 @@ export class BatonApplication {
         .sort((left, right) => (left.binding.nodeKey < right.binding.nodeKey ? -1 : 1)) : [];
       [dispatch] = dispatches;
       dispatch ??= null;
+=======
+  _findRun(runId, { allowUnavailableProfile = false } = {}) {
+    const snapshot = this.driver.coordination.snapshot();
+    const goalPlan = snapshot.goalPlan;
+    if (!goalPlan || goalPlan.goals.length > MAX_RUN_RECORDS || goalPlan.plans.length > MAX_RUN_RECORDS
+      || goalPlan.approvals.length > MAX_RUN_RECORDS || goalPlan.dispatches.length > MAX_RUN_RECORDS) {
+      throw applicationError('application run projection exceeds its bounded lookup ceiling', 'application_run_lookup_oversize');
+>>>>>>> Stashed changes
     }
     if (!goal) throw applicationError(`unknown run ${runId}`, 'application_run_not_found');
     const resultIdentity = resultIntentConstraint(goal.constraints);
@@ -3545,6 +3658,7 @@ export class BatonApplication {
     if (!profileRef || (!profile && !allowUnavailableProfile)) {
       throw applicationError(`run ${runId} deployment profile is unavailable`, 'application_profile_stale');
     }
+<<<<<<< Updated upstream
     // Decision 4 item 4: readers resolve a spilled objective's citation transparently — the goal
     // record's stored head+citation becomes the full body at every projection seam (a routine
     // reader never sees the citation). Non-spilled goals pass through unchanged.
@@ -3552,6 +3666,16 @@ export class BatonApplication {
     const resolvedGoal = resolved === goal.objective ? goal : { ...goal, objective: resolved };
     return {
       goal: resolvedGoal, plan, approval, dispatch, dispatches, profile, profileName: profileRef.name,
+=======
+    const approval = plan ? goalPlan.approvals.find((row) => row.plan.planId === plan.planId
+      && row.plan.version === plan.version && row.plan.digest === plan.digest) ?? null : null;
+    const dispatches = plan ? goalPlan.dispatches.filter((row) => row.binding?.planId === plan.planId
+      && row.binding?.planVersion === plan.version && row.binding?.planDigest === plan.digest)
+      .sort((left, right) => (left.binding.nodeKey < right.binding.nodeKey ? -1 : 1)) : [];
+    const dispatch = dispatches[0] ?? null;
+    return {
+      goal, plan, approval, dispatch, dispatches, profile, profileName: profileRef.name,
+>>>>>>> Stashed changes
       profileDigest: profileRef.digest,
       profileState: profile ? 'available' : 'historical_definition_unavailable',
     };
@@ -3564,7 +3688,11 @@ export class BatonApplication {
     // node, while ordinary recovery/refinement Plans may have several. The application-owned,
     // content-addressed definition event is the authority.
     if (typeof this.driver.coordination.events !== 'function') return false;
+<<<<<<< Updated upstream
     return this.driver.coordination.eventsView().some((event) => (
+=======
+    return this.driver.coordination.events().some((event) => (
+>>>>>>> Stashed changes
       event.kind === 'driver.recorded'
       && event.payload?.kind === APPLICATION_WORKFLOW_RECORD_KIND
       && event.payload?.repoId === this.repoId
@@ -3638,7 +3766,11 @@ export class BatonApplication {
     if (typeof this.driver.coordination.events !== 'function') {
       return deepFreeze({ schemaVersion: 1, state: 'reconciled', examinedStops: 0, failures: [] });
     }
+<<<<<<< Updated upstream
     const runIds = [...new Set(this.driver.coordination.eventsView().filter((event) => (
+=======
+    const runIds = [...new Set(this.driver.coordination.events().filter((event) => (
+>>>>>>> Stashed changes
       event.kind === 'driver.recorded'
       && event.payload?.kind === APPLICATION_WORKFLOW_MEMBER_STOP_ADMITTED_KIND
       && event.payload?.repoId === this.repoId
@@ -4501,7 +4633,10 @@ export class BatonApplication {
       childRunId: intent.runId,
       intentDigest: digest({
         objective: intent.objective, profile: intent.profile,
+<<<<<<< Updated upstream
         ...explicitResultIntentIdentity(intent),
+=======
+>>>>>>> Stashed changes
         route: intent.route, composition: intent.composition,
         scope: intent.scope, runId: intent.runId,
       }),
@@ -4564,8 +4699,12 @@ export class BatonApplication {
         'application_profile_invalid');
     }
     await this._authorize('run.start', owner, intent.runId, {
+<<<<<<< Updated upstream
       objectiveDigest: digest(intent.objective), ...explicitResultIntentIdentity(intent),
       profile: intent.profile, route: intent.route,
+=======
+      objectiveDigest: digest(intent.objective), profile: intent.profile, route: intent.route,
+>>>>>>> Stashed changes
       compositionDigest: intent.composition ? digest(intent.composition) : null, scope: intent.scope,
     });
     if (owner.principalId === this.principals.planner.principalId) {
@@ -4582,6 +4721,7 @@ export class BatonApplication {
     const workflowConstraint = intent.composition
       ? `Baton workflow ${intent.composition.strategy}:${intent.composition.workspace}:${intent.composition.join}`
       : null;
+<<<<<<< Updated upstream
     const durableResult = existingRun === null
       ? null : resultIntentConstraint(existingRun.goal.constraints);
     const explicitResultIntent = Object.hasOwn(intent, 'resultIntent');
@@ -4599,6 +4739,12 @@ export class BatonApplication {
       constraints: [...profile.constraints, constraint, ...(workflowConstraint ? [workflowConstraint] : []),
         ...(resultConstraint !== null && !profile.constraints.includes(resultConstraint)
           ? [resultConstraint] : [])],
+=======
+    const goalFields = {
+      objective: intent.objective,
+      definitionOfDone: clone(profile.definitionOfDone),
+      constraints: [...profile.constraints, constraint, ...(workflowConstraint ? [workflowConstraint] : [])],
+>>>>>>> Stashed changes
       risk: profile.risk,
       budget: clone(profile.goalBudget),
       predecessor: null,
@@ -4616,18 +4762,28 @@ export class BatonApplication {
       verification: clone(profile.verification),
       routes: exactPlanRoutes(intent.route),
       capabilities: clone(profile.capabilities),
+<<<<<<< Updated upstream
       effects: readOnlyResult
         ? profile.effects.filter((effect) => effect !== 'repository_edit') : clone(profile.effects),
       ...(profile.workerPolicy ? { workerPolicy: clone(profile.workerPolicy) } : {}),
       ...(!readOnlyResult && Object.hasOwn(profile, 'requiredEffects')
         ? { requiredEffects: clone(profile.requiredEffects) } : {}),
+=======
+      effects: clone(profile.effects),
+      ...(profile.workerPolicy ? { workerPolicy: clone(profile.workerPolicy) } : {}),
+      ...(Object.hasOwn(profile, 'requiredEffects') ? { requiredEffects: clone(profile.requiredEffects) } : {}),
+>>>>>>> Stashed changes
     };
     const workflowPolicy = intent.composition
       ? normalizeWorkflowPolicy(this.driver.coordination.workflowPolicy()) : null;
     const nodeFields = intent.composition ? intent.composition.team.map((member) => ({
       ...clone(singleNode),
       key: `attempt:${member.role}`,
+<<<<<<< Updated upstream
       objective: `${member.role} parallel attempt: ${storedObjective}`,
+=======
+      objective: `${member.role} parallel attempt: ${intent.objective}`,
+>>>>>>> Stashed changes
       // Divide one deployment-owned Goal envelope across the bounded recursive Plan chain.
       // Ordinary callers never manage this headroom or any numeric execution ceiling.
       budget: clone(workflowNodeBudget(
@@ -4651,6 +4807,7 @@ export class BatonApplication {
     const defined = await this.driver.coordinator.defineGoal(goalFields,
       authority(owner, this.repoId, intent.runId, 'goal:define', `application:${intent.runId}:goal:v1`));
     const goal = defined.goal;
+<<<<<<< Updated upstream
     // Issue #31 §2.2(4): register the run's steering driver ONCE, at genuine run creation.
     // `defineGoal` also runs on a resume (a later goal/plan revision against an existing run), so
     // gating on `existingRun === null` is what keeps a retry of runs.start from re-admitting or
@@ -4690,6 +4847,8 @@ export class BatonApplication {
         });
       }
     }
+=======
+>>>>>>> Stashed changes
     const normalizedPlan = normalizePlanRequest({
       goal: { goalId: goal.goalId, version: goal.version, digest: goal.digest },
       predecessor: null,
@@ -5076,7 +5235,10 @@ export class BatonApplication {
 
   _buildWorkflowEvidence(current, view) {
     const runId = current.goal.runId;
+<<<<<<< Updated upstream
     const resultIdentity = resultIntentConstraint(current.goal.constraints);
+=======
+>>>>>>> Stashed changes
     const roundPlanDigests = new Set((view.rounds ?? []).map((round) => round.plan.digest));
     const workflowKinds = new Set([
       APPLICATION_WORKFLOW_RECORD_KIND,
@@ -5085,7 +5247,11 @@ export class BatonApplication {
       APPLICATION_WORKFLOW_MEMBER_STOP_ADMITTED_KIND,
       APPLICATION_WORKFLOW_MEMBER_STOP_COMPLETED_KIND,
     ]);
+<<<<<<< Updated upstream
     const workflowSeqs = this.driver.coordination.eventsView().filter((event) => (
+=======
+    const workflowSeqs = this.driver.coordination.events().filter((event) => (
+>>>>>>> Stashed changes
       event.kind === 'driver.recorded' && workflowKinds.has(event.payload?.kind)
       && event.payload?.repoId === this.repoId && event.payload?.runId === runId
       && roundPlanDigests.has(event.payload?.planDigest)
@@ -5110,12 +5276,19 @@ export class BatonApplication {
       runStop?.admittedEvent, runStop?.completedEvent,
     ].filter(Number.isSafeInteger);
     const core = {
+<<<<<<< Updated upstream
       schemaVersion: resultIdentity.explicit ? 2 : 1,
+=======
+      schemaVersion: 1,
+>>>>>>> Stashed changes
       kind: 'baton.workflow.evidence',
       state: APPLICATION_RUN_TERMINAL_PHASES.has(view.phase) ? 'terminal' : 'provider_settled',
       repoId: this.repoId,
       runId,
+<<<<<<< Updated upstream
       ...(resultIdentity.explicit ? { resultIntent: resultIdentity.resultIntent } : {}),
+=======
+>>>>>>> Stashed changes
       observedThroughSeq: relevantSeqs.length > 0 ? Math.max(...relevantSeqs) : 0,
       bindings: {
         profileDigest: view.profile.digest,
@@ -5828,7 +6001,10 @@ export class BatonApplication {
 
   async _historicalProfileView(current, observer, options = {}) {
     const runId = current.goal.runId;
+<<<<<<< Updated upstream
     const resultIntent = resultIntentFromConstraints(current.goal.constraints);
+=======
+>>>>>>> Stashed changes
     if (options.expected) {
       throw applicationError('historical Run policy is unavailable for mutation replay', 'application_profile_stale');
     }
@@ -5836,11 +6012,14 @@ export class BatonApplication {
     const node = projection?.nodes?.[0] ?? null;
     const task = node?.taskId ? this.driver.coordination.task(node.taskId) : null;
     const workerId = task?.assignee ?? null;
+<<<<<<< Updated upstream
     const scratchpad = workerId && typeof this.driver.coordination.scratchpadSnapshotBatch === 'function'
       ? projectScratchpadView(this.driver.coordination.scratchpadSnapshotBatch(
         runId, [`worker:${workerId}`, 'shared'],
       ), { role: 'orchestrator', requestedWorkerId: workerId }, this._scratchpadViewCache)
       : null;
+=======
+>>>>>>> Stashed changes
     let terminalResult = null;
     if (workerId) {
       try { terminalResult = await this.driver.coordinator.result(workerId); }
@@ -5852,10 +6031,14 @@ export class BatonApplication {
           : node?.state === 'accepted' ? 'work_completed'
             : node?.state === 'failed' ? 'failed'
               : node?.state === 'cancelled' ? 'cancelled'
+<<<<<<< Updated upstream
                 // Issue #31 §2.1(3): a parked turn is neither finished nor merely 'running'.
                 // Rendering it 'running' is the dishonest projection the spec forbids.
                 : node?.state === 'paused' ? 'paused'
                   : node?.taskId ? 'running' : 'approved';
+=======
+                : node?.taskId ? 'running' : 'approved';
+>>>>>>> Stashed changes
     const runStop = this.driver.coordination.runStop?.(runId) ?? null;
     if (runStop?.status === 'stopped') phase = 'stopped';
     else if (runStop) phase = 'stopping';
@@ -5888,16 +6071,22 @@ export class BatonApplication {
     });
     const terminalCause = projectTypedTerminalCause({ terminalResult, runStop });
     const planNode = current.plan?.nodes?.[0] ?? null;
+<<<<<<< Updated upstream
     const historicalAttention = phase === 'interruption_uncertain' ? [{
       kind: 'session_preservation', state: 'quarantined',
       reason: 'session_attachment_unproven',
       summary: 'Reusable provider-session attachment is unproven; whole-Run stop is the only safe action.',
     }] : [];
+=======
+>>>>>>> Stashed changes
     const view = {
       schemaVersion: 1,
       runId,
       objective: current.goal.objective,
+<<<<<<< Updated upstream
       resultIntent,
+=======
+>>>>>>> Stashed changes
       profile: {
         name: current.profileName, digest: current.profileDigest,
         state: 'historical_definition_unavailable',
@@ -5927,10 +6116,15 @@ export class BatonApplication {
           route: requested, capabilities: clone(planNode.capabilities), effects: clone(planNode.effects),
         },
         profileDigest: current.profileDigest, planDigest: current.plan.digest,
+<<<<<<< Updated upstream
         resultIntent,
       } : null,
       nodes: clone(projection?.nodes ?? []),
       scratchpad,
+=======
+      } : null,
+      nodes: clone(projection?.nodes ?? []),
+>>>>>>> Stashed changes
       route: route ? {
         ...clone(route),
         rationale: {
@@ -5942,9 +6136,17 @@ export class BatonApplication {
         ? { state: 'requested', request: clone(planNode.workerPolicy) }
         : { state: 'legacy_unattested' },
       budget: { allocated: clone(current.goal.budget), node: clone(node?.budget ?? null), termination: terminalCause },
+<<<<<<< Updated upstream
       attention: historicalAttention, attentionTruncated: false,
       blockedInteraction: projectBlockedInteraction(phase, historicalAttention),
       waitingOn: null,
+=======
+      attention: phase === 'interruption_uncertain' ? [{
+        kind: 'session_preservation', state: 'quarantined',
+        reason: 'session_attachment_unproven',
+        summary: 'Reusable provider-session attachment is unproven; whole-Run stop is the only safe action.',
+      }] : [], attentionTruncated: false,
+>>>>>>> Stashed changes
       verification: { state: verificationState, verdict: null },
       semanticReview,
       progress,
@@ -5960,9 +6162,12 @@ export class BatonApplication {
       recovery: null, preservation: { state: 'unavailable', available: false, checkpointSha: null },
       resume: null, terminalCause, stop, close: null,
     };
+<<<<<<< Updated upstream
     const semanticProgress = this._semanticProgressProjection(current, view, observer);
     view.progressClass = semanticProgress.progressClass;
     if (semanticProgress.requiredAction) view.requiredAction = semanticProgress.requiredAction;
+=======
+>>>>>>> Stashed changes
     if (Buffer.byteLength(JSON.stringify(view)) > MAX_RUN_VIEW_BYTES) {
       throw applicationError('historical Run view exceeds its deployment byte ceiling', 'application_run_view_oversize');
     }
@@ -5970,7 +6175,11 @@ export class BatonApplication {
   }
 
   _workflowDefinitionAncestors(runId, excludeDigest = null, beforeSeq = Infinity) {
+<<<<<<< Updated upstream
     return this.driver.coordination.eventsView().filter((candidate) => (
+=======
+    return this.driver.coordination.events().filter((candidate) => (
+>>>>>>> Stashed changes
       candidate.seq < beforeSeq && candidate.kind === 'driver.recorded'
         && candidate.payload?.kind === APPLICATION_WORKFLOW_RECORD_KIND
         && candidate.payload?.repoId === this.repoId
@@ -5994,7 +6203,11 @@ export class BatonApplication {
 
   _workflowDefinition(current) {
     if (!this._isWorkflowRun(current)) return null;
+<<<<<<< Updated upstream
     const records = this.driver.coordination.eventsView().filter((event) => event.kind === 'driver.recorded'
+=======
+    const records = this.driver.coordination.events().filter((event) => event.kind === 'driver.recorded'
+>>>>>>> Stashed changes
       && event.payload?.kind === APPLICATION_WORKFLOW_RECORD_KIND
       && event.payload?.repoId === this.repoId && event.payload?.runId === current.goal.runId
       && event.payload?.planDigest === current.plan.digest);
@@ -6306,11 +6519,14 @@ export class BatonApplication {
       };
       candidates.push(deepFreeze({
         ...core,
+<<<<<<< Updated upstream
         verification: this._closedVerdictProjection(
           operational.payload,
           current.plan.nodes.find((candidate) => candidate.key === binding.nodeKey),
           'completed', worker,
         ),
+=======
+>>>>>>> Stashed changes
         retainedResultRef: commit.refs.retainedResultRef,
         retention: {
           state: 'pinned', ref: commit.refs.retainedResultRef,
@@ -6325,7 +6541,11 @@ export class BatonApplication {
   }
 
   _workflowSelection(current, definition, candidates) {
+<<<<<<< Updated upstream
     const records = this.driver.coordination.eventsView().filter((event) => (
+=======
+    const records = this.driver.coordination.events().filter((event) => (
+>>>>>>> Stashed changes
       event.kind === 'driver.recorded'
       && event.payload?.kind === APPLICATION_WORKFLOW_SELECTION_RECORD_KIND
       && event.payload?.repoId === this.repoId && event.payload?.runId === current.goal.runId
@@ -6375,7 +6595,11 @@ export class BatonApplication {
   }
 
   _workflowFeedback(current, definition, candidates) {
+<<<<<<< Updated upstream
     const records = this.driver.coordination.eventsView().filter((event) => (
+=======
+    const records = this.driver.coordination.events().filter((event) => (
+>>>>>>> Stashed changes
       event.kind === 'driver.recorded'
       && event.payload?.kind === APPLICATION_WORKFLOW_FEEDBACK_RECORD_KIND
       && event.payload?.repoId === this.repoId && event.payload?.runId === current.goal.runId
@@ -6437,7 +6661,11 @@ export class BatonApplication {
   }
 
   _workflowMemberStops(current, definition) {
+<<<<<<< Updated upstream
     const events = this.driver.coordination.eventsView().filter((event) => (
+=======
+    const events = this.driver.coordination.events().filter((event) => (
+>>>>>>> Stashed changes
       event.kind === 'driver.recorded'
       && [APPLICATION_WORKFLOW_MEMBER_STOP_ADMITTED_KIND,
         APPLICATION_WORKFLOW_MEMBER_STOP_COMPLETED_KIND].includes(event.payload?.kind)
@@ -6818,7 +7046,11 @@ export class BatonApplication {
   }
 
   _workflowRevisionFeedbackRows(feedback, candidate) {
+<<<<<<< Updated upstream
     const byId = new Map(this.driver.coordination.eventsView().filter((event) => (
+=======
+    const byId = new Map(this.driver.coordination.events().filter((event) => (
+>>>>>>> Stashed changes
       event.kind === 'driver.recorded'
       && event.payload?.kind === APPLICATION_WORKFLOW_FEEDBACK_RECORD_KIND
     )).map((event) => [event.payload.feedbackId, event]));
@@ -7091,23 +7323,36 @@ export class BatonApplication {
       const memberStops = this._workflowMemberStops(roundCurrent, definition);
       const attempts = definition.attempts.map((attempt) => {
         const node = projection.nodes.find((candidate) => candidate.key === attempt.nodeKey);
+<<<<<<< Updated upstream
         const candidate = candidates.find((entry) => entry.role === attempt.role) ?? null;
         return {
           role: attempt.role, nodeKey: attempt.nodeKey, taskId: node?.taskId ?? null,
           state: node?.state ?? 'blocked', route: clone(workflowAttemptRoute(definition, attempt)),
           candidateId: candidate?.candidateId ?? null,
           verification: clone(candidate?.verification ?? null),
+=======
+        return {
+          role: attempt.role, nodeKey: attempt.nodeKey, taskId: node?.taskId ?? null,
+          state: node?.state ?? 'blocked', route: clone(workflowAttemptRoute(definition, attempt)),
+          candidateId: candidates.find((candidate) => candidate.role === attempt.role)?.candidateId ?? null,
+>>>>>>> Stashed changes
         };
       });
       const allSettled = attempts.every((attempt) => (
         ['accepted', 'failed', 'cancelled', 'stale'].includes(attempt.state)
       ));
+<<<<<<< Updated upstream
       const readOnlyResult = resultIntentFromConstraints(current.goal.constraints)
         === 'read_only_evidence';
       const state = !projection.approval ? 'awaiting_plan_approval'
         : projection.approval.disposition === 'rejected' ? 'denied'
           : selection ? 'candidate_selected'
             : readOnlyResult && allSettled && candidates.length > 0 ? 'completed'
+=======
+      const state = !projection.approval ? 'awaiting_plan_approval'
+        : projection.approval.disposition === 'rejected' ? 'denied'
+          : selection ? 'candidate_selected'
+>>>>>>> Stashed changes
             : allSettled && candidates.length > 0 ? 'selection_required'
               : allSettled ? 'failed' : 'running';
       const revision = roundCurrent.plan.nodes[0]?.revision
@@ -7181,6 +7426,7 @@ export class BatonApplication {
         phase: node?.state === 'accepted' ? 'work_completed'
           : ['failed', 'cancelled'].includes(node?.state) ? node.state : 'running',
       });
+<<<<<<< Updated upstream
       const attemptVerification = this._closedVerdictProjection(
         terminalResult, planNode, node?.state ?? 'blocked', handle?.id ?? null,
       ) ?? {
@@ -7199,6 +7445,10 @@ export class BatonApplication {
       attempts.push({
         role: binding.role, nodeKey: binding.nodeKey, taskId: node?.taskId ?? null,
         scratchpadRef,
+=======
+      attempts.push({
+        role: binding.role, nodeKey: binding.nodeKey, taskId: node?.taskId ?? null,
+>>>>>>> Stashed changes
         state: handle?.status === 'interrupted' && handle.controllableAttached === true
           ? 'interrupted'
           : sessionAttachmentUnproven(handle)
@@ -7221,7 +7471,12 @@ export class BatonApplication {
           editedPaths: clone(workerStory.editedPaths),
           warnings: clone(workerStory.warnings),
         } : null,
+<<<<<<< Updated upstream
         verification: attemptVerification,
+=======
+        verification: node?.state === 'accepted' ? 'mechanically_verified'
+          : node?.state === 'failed' ? 'failed' : 'pending',
+>>>>>>> Stashed changes
         terminalCause: projectTypedTerminalCause({
           terminalResult, terminalOutcome: node?.terminalOutcome ?? null,
         }),
@@ -7256,6 +7511,7 @@ export class BatonApplication {
       attempt.taskId !== null && !['accepted', 'failed', 'cancelled'].includes(attempt.state)
       && attempt.memberStop === null
     )).map((attempt) => attempt.role);
+<<<<<<< Updated upstream
     const resultIdentity = resultIntentConstraint(current.goal.constraints);
     const resultIntent = resultIdentity.resultIntent;
     const objectivePolicy = objectiveResultPolicy(resultIntent);
@@ -7270,6 +7526,13 @@ export class BatonApplication {
             // merely 'running'. Checked BEFORE the `anyDispatched` fallback it would otherwise
             // fall through to, and left subordinate to the runStop precedence below.
             : attempts.some((attempt) => attempt.state === 'paused') ? 'paused'
+=======
+    let phase = !projection.approval ? 'awaiting_plan_approval'
+      : projection.approval.disposition === 'rejected' ? 'denied'
+        : selection ? (selectedIntegration ? 'completed' : 'candidate_selected')
+          : allSettled && candidates.length > 0 ? 'selection_required'
+            : allSettled && anyFailed ? 'failed'
+>>>>>>> Stashed changes
             : anyDispatched ? 'running' : 'approved';
     if (runStop?.status === 'stopped') phase = 'stopped';
     else if (runStop) phase = 'stopping';
@@ -7321,7 +7584,10 @@ export class BatonApplication {
           approvalKind: request.kind,
         })),
       ]);
+<<<<<<< Updated upstream
     const decisionAttention = projectDecisionAttention(this.driver.coordinator, workers);
+=======
+>>>>>>> Stashed changes
     const selectionAttention = phase === 'selection_required' ? [{
       kind: 'candidate_selection', state: 'required',
       summary: 'Parallel Candidates are verified; operator selection is required.',
@@ -7344,6 +7610,7 @@ export class BatonApplication {
       summary: 'Reusable provider-session attachment is unproven; whole-Run stop is the only safe action.',
     }] : [];
     const attention = [
+<<<<<<< Updated upstream
       ...workerAttention, ...decisionAttention, ...selectionAttention, ...revisionAttention,
       ...recoveryAttention, ...preservationAttention,
     ].slice(0, MAX_ATTENTION);
@@ -7358,6 +7625,11 @@ export class BatonApplication {
     const decisionSettled = typeof this.driver.coordinator.decisionSettledProjection === 'function'
       ? this.driver.coordinator.decisionSettledProjection(workers.map((handle) => handle.id))
       : [];
+=======
+      ...workerAttention, ...selectionAttention, ...revisionAttention, ...recoveryAttention,
+      ...preservationAttention,
+    ].slice(0, MAX_ATTENTION);
+>>>>>>> Stashed changes
     const terminalCause = attempts.find((attempt) => attempt.terminalCause)?.terminalCause ?? null;
     const verificationState = allAccepted ? 'mechanically_verified'
       : candidates.length > 0 && allSettled ? 'partially_verified'
@@ -7367,6 +7639,7 @@ export class BatonApplication {
       { key: 'intent', label: 'Workflow intent', state: 'complete', detail: 'Workflow definition bound to exact Goal and Plan.' },
       { key: 'plan', label: 'Workflow Plan', state: projection.approval?.disposition === 'approved' ? 'complete' : 'active', detail: `${attempts.length} attributable isolated Attempts.` },
       { key: 'wave', label: 'Parallel Wave', state: allSettled ? 'complete' : anyDispatched ? 'active' : 'pending', detail: `${attempts.filter((attempt) => ['accepted', 'failed', 'cancelled'].includes(attempt.state)).length}/${attempts.length} settled.` },
+<<<<<<< Updated upstream
       { key: 'selection', label: readOnlyResult ? 'Evidence result set' : 'Candidate selection',
         state: phase === 'selection_required' ? 'blocked'
           : selection || (readOnlyResult && phase === 'completed') ? 'complete' : 'pending',
@@ -7375,6 +7648,9 @@ export class BatonApplication {
             : readOnlyResult && phase === 'completed'
               ? `${candidates.length} verified evidence result(s) accepted without repository selection.`
               : 'Awaiting verified Candidates.' },
+=======
+      { key: 'selection', label: 'Candidate selection', state: phase === 'selection_required' ? 'blocked' : selection ? 'complete' : 'pending', detail: phase === 'selection_required' ? 'Operator selection is required.' : selection ? `${selection.candidate.role} selected.` : 'Awaiting verified Candidates.' },
+>>>>>>> Stashed changes
       { key: 'cleanup', label: 'Owned-resource cleanup', state: resourcesSettled ? 'complete' : 'active', detail: resourcesSettled ? 'Owned resources settled.' : 'Owned resources remain active.' },
     ];
     const currentStage = stages.find((stage) => ['active', 'blocked', 'failed'].includes(stage.state))
@@ -7389,6 +7665,7 @@ export class BatonApplication {
       round: rounds.length,
       revision: current.plan.nodes[0]?.revision?.revisionId ?? null,
       profileDigest: current.profile.digest, planDigest: current.plan.digest,
+<<<<<<< Updated upstream
       ...(resultIdentity.explicit ? { resultIntent } : {}),
     };
     const knowledgeProjection = this._knowledgeProjection(runId);
@@ -7400,6 +7677,13 @@ export class BatonApplication {
       phase, cursor: projection.coordinationUpperBound,
       knowledge: knowledgeProjection.knowledge,
       knowledgeDigest: knowledgeProjection.knowledgeDigest,
+=======
+    };
+    const view = {
+      schemaVersion: 1, runId, objective: current.goal.objective,
+      profile: { name: current.profileName, digest: current.profile.digest },
+      phase, cursor: projection.coordinationUpperBound,
+>>>>>>> Stashed changes
       nextActions: phase === 'awaiting_plan_approval'
         ? [{ kind: 'approve_plan', planDigest: current.plan.digest }]
         : phase === 'selection_required'
@@ -7445,7 +7729,10 @@ export class BatonApplication {
       },
       planPreview: { ...planPreviewCore, displayDigest: digest(planPreviewCore) },
       nodes: clone(projection.nodes),
+<<<<<<< Updated upstream
       scratchpad: null,
+=======
+>>>>>>> Stashed changes
       attempts: clone(attempts),
       candidates: clone(candidates),
       feedback: clone(feedback),
@@ -7458,11 +7745,14 @@ export class BatonApplication {
       attention, attentionTruncated: workerAttention.length + selectionAttention.length
         + revisionAttention.length + recoveryAttention.length + preservationAttention.length
         > attention.length,
+<<<<<<< Updated upstream
       blockedInteraction,
       waitingOn,
       decisionSettled,
       watchdog: typeof this.driver.coordinator?.watchdogConfig === 'function'
         ? this.driver.coordinator.watchdogConfig() : null,
+=======
+>>>>>>> Stashed changes
       verification: {
         state: verificationState,
         verdict: candidates.length > 0 ? {
@@ -7488,6 +7778,7 @@ export class BatonApplication {
           receiptDigest: selectedAdoption.receipt?.receiptDigest
             ?? selectedAdoption.receiptDigest ?? null,
         } : null,
+<<<<<<< Updated upstream
       } : readOnlyResult && phase === 'completed' ? {
         state: 'accepted_evidence_set', candidateCount: candidates.length,
         candidates: candidates.map((candidate) => ({
@@ -7495,6 +7786,8 @@ export class BatonApplication {
           taskId: candidate.taskId, resultSha: candidate.resultSha,
           evidenceDigest: candidate.evidenceDigest,
         })),
+=======
+>>>>>>> Stashed changes
       } : candidates.length > 0 ? {
         state: 'selection_required', candidateCount: candidates.length,
       } : null,
@@ -7531,9 +7824,12 @@ export class BatonApplication {
       } : null,
       close: null,
     };
+<<<<<<< Updated upstream
     const semanticProgress = this._semanticProgressProjection(current, view, observer);
     view.progressClass = semanticProgress.progressClass;
     if (semanticProgress.requiredAction) view.requiredAction = semanticProgress.requiredAction;
+=======
+>>>>>>> Stashed changes
     if (Buffer.byteLength(JSON.stringify(view)) > MAX_RUN_VIEW_BYTES) {
       throw applicationError('Workflow view exceeds its deployment byte ceiling',
         'application_run_view_oversize');
@@ -7629,6 +7925,26 @@ export class BatonApplication {
           : (!durableRetry || ['pending', 'inconclusive', 'cancelled'].includes(durableRetry.status)));
       retryProjection = {
         available, attempt, checkpointSha: result.checkpoint.sha, candidatePreserved, originOutcome,
+<<<<<<< Updated upstream
+=======
+      };
+    }
+    // PS5: while a cancelled Run's pinned checkpoint and approved Plan remain current, offer one
+    // coordinate-free resume_work action. Preservation is not acceptance: the projection only
+    // advertises the resume, never an adopted result.
+    let resumeProjection = null;
+    if (phase === 'cancelled' && result?.checkpoint?.state === 'pinned' && !runStop
+      && projection.approval?.disposition === 'approved'
+      && typeof this.driver.coordinator.resumePreservedWork === 'function') {
+      let candidatePreserved = false;
+      if (workerId && typeof this.driver.coordinator.inspectCheckpoint === 'function') {
+        candidatePreserved = (await this.driver.coordinator.inspectCheckpoint(workerId)).state === 'pinned';
+      }
+      resumeProjection = {
+        available: candidatePreserved && !!node.taskId,
+        checkpointSha: result.checkpoint.sha,
+        candidatePreserved,
+>>>>>>> Stashed changes
       };
     }
     // PS5: while a cancelled Run's pinned checkpoint and approved Plan remain current, offer one
@@ -7688,6 +8004,7 @@ export class BatonApplication {
           approvalKind: request.kind,
         })),
       ]);
+<<<<<<< Updated upstream
     allAttention.push(...projectDecisionAttention(this.driver.coordinator, workers));
     // Issue #31 §2.3, 31-b Part F rules 12-13: a still-unconsumed pause record is a turn
     // checkpoint a driver can act on. Pushed ALONGSIDE — never instead of — any genuinely pending
@@ -7732,6 +8049,8 @@ export class BatonApplication {
         });
       }
     }
+=======
+>>>>>>> Stashed changes
     if (phase === 'interruption_uncertain') {
       allAttention.push({
         kind: 'session_preservation', state: 'quarantined',
@@ -7819,8 +8138,12 @@ export class BatonApplication {
         cancelledAt: durableExport.cancelledAt ?? null,
       } : null;
     if (!runStop && node.state === 'accepted') {
+<<<<<<< Updated upstream
       if (readOnlyResult) phase = 'completed';
       else if (semanticReview.state === 'review_running') phase = 'reviewing';
+=======
+      if (semanticReview.state === 'review_running') phase = 'reviewing';
+>>>>>>> Stashed changes
       else if ((integration || durableExport?.status === 'completed')
         && (current.profile.reviewPolicy.mode === 'none' || semanticReview.state === 'semantic_reviewed')) phase = 'completed';
       else phase = 'work_completed';
@@ -7836,8 +8159,13 @@ export class BatonApplication {
       : [];
     const canAdopt = !readOnlyResult && resultSha && preservation?.state === 'pinned'
       && current.profile.resultPolicy.mode === 'manual' && adoptionState(adoption) !== 'adopted';
+<<<<<<< Updated upstream
     const canReview = !readOnlyResult && current.profile.reviewPolicy.mode === 'required' && semanticReview.state === 'semantics_unverified';
     const canIntegrate = !readOnlyResult && current.profile.integrationPolicy.mode === 'manual'
+=======
+    const canReview = current.profile.reviewPolicy.mode === 'required' && semanticReview.state === 'semantics_unverified';
+    const canIntegrate = current.profile.integrationPolicy.mode === 'manual'
+>>>>>>> Stashed changes
       && (!current.profile.integrationPolicy.requireSemanticReview
         || semanticReview.state === 'semantic_reviewed')
       && (!current.profile.integrationPolicy.requireAdoptedResult || adoptionState(adoption) === 'adopted')
@@ -7984,6 +8312,7 @@ export class BatonApplication {
   async wait(runId, rawObserver, options = {}, rawContext = null) {
     this._assertOpen();
     const context = normalizeCommandContext(rawContext);
+<<<<<<< Updated upstream
     // `until` is an optional condition selector (docs/36 §4.1 read row); validate the options as a
     // subset so historical callers that pass only { timeoutMs } keep the settle-block semantics.
     if (!options || typeof options !== 'object' || Array.isArray(options)
@@ -7991,11 +8320,16 @@ export class BatonApplication {
       || !Number.isSafeInteger(options.timeoutMs) || options.timeoutMs <= 0
       || options.timeoutMs > 24 * 60 * 60 * 1000
       || (options.until !== undefined && !['settled', 'terminal'].includes(options.until))) {
+=======
+    exactObject(options, ['timeoutMs'], 'application_wait_invalid', 'wait options');
+    if (!Number.isSafeInteger(options.timeoutMs) || options.timeoutMs <= 0 || options.timeoutMs > 24 * 60 * 60 * 1000) {
+>>>>>>> Stashed changes
       throw applicationError('wait timeout is invalid', 'application_wait_invalid');
     }
     const observer = normalizePrincipal(rawObserver, 'run observer');
     const deadline = Date.now() + options.timeoutMs;
     let view = await this.status(runId, observer, {}, context);
+<<<<<<< Updated upstream
     // docs/36 §4.1 read row / R-OP-9 — `--until terminal` blocks until the application Run itself is
     // terminal; the default (settled) preserves run.wait's historical provider-settlement block.
     if (options.until === 'terminal') {
@@ -8005,6 +8339,8 @@ export class BatonApplication {
       }
       return view;
     }
+=======
+>>>>>>> Stashed changes
     while (!PROVIDER_EXECUTION_SETTLED_PHASES.has(view.phase) && Date.now() < deadline) {
       await this.driver.coordinator.wait(Math.min(100, Math.max(1, deadline - Date.now())));
       view = await this.status(runId, observer, {}, context);
@@ -8018,10 +8354,14 @@ export class BatonApplication {
     if (['task.created', 'task.claimed', 'task.transitioned', 'task.acceptance_revoked'].includes(event.kind)) return 'execution';
     if (event.kind.startsWith('run.orchestrator_lease_') || event.kind.startsWith('run.lineage_')) return 'orchestration';
     if (event.kind.startsWith('context.')) return 'context';
+<<<<<<< Updated upstream
     if (['artifact.registered', 'artifact.superseded'].includes(event.kind)) return 'evidence';
     if (event.kind === 'evidence.mapped') {
       return NOISE_TELEMETRY_OPERATIONAL_KINDS.has(event.payload?.kind) ? null : 'evidence';
     }
+=======
+    if (['artifact.registered', 'artifact.superseded', 'evidence.mapped'].includes(event.kind)) return 'evidence';
+>>>>>>> Stashed changes
     if (event.kind.startsWith('run.result_')) return 'result';
     if (event.kind.startsWith('run.stop_')) return 'cleanup';
     if (event.kind === 'driver.recorded') {
@@ -8041,12 +8381,17 @@ export class BatonApplication {
     const payload = event.payload ?? {};
     const runId = current.goal.runId;
     if (event.kind === 'evidence.mapped') {
+<<<<<<< Updated upstream
       const operational = typeof this.driver.log?.at === 'function'
         ? this.driver.log.at(payload.worker, payload.workerSeq)
         : typeof this.driver.log?.read === 'function'
           ? this.driver.log.read(payload.worker, payload.workerSeq)
             .find((candidate) => candidate.seq === payload.workerSeq)
           : null;
+=======
+      const operational = this.driver.log.read(payload.worker)
+        .find((candidate) => candidate.seq === payload.workerSeq);
+>>>>>>> Stashed changes
       if (!operational) return false;
       if (operational.runId !== null && operational.runId !== undefined) {
         return operational.runId === runId;
@@ -8086,6 +8431,7 @@ export class BatonApplication {
     return false;
   }
 
+<<<<<<< Updated upstream
   // Issue #55: mid-turn liveness. resource.provider_call/resource.tokens events land per
   // provider call in the worker OPERATIONAL log (driver.log) but are noise-filtered OUT of
   // 'meaningful' progress — so without this projection the single-run view is byte-static
@@ -8139,6 +8485,8 @@ export class BatonApplication {
     return deepFreeze({ providerCalls, tokens, contentEvents, lastActivityAt });
   }
 
+=======
+>>>>>>> Stashed changes
   _progressTiming(current, view) {
     // Narrow projection test doubles created before Phase 89 sometimes instantiate the prototype
     // without running the constructor. Production applications always own `_clock`; the fallback
@@ -8151,7 +8499,11 @@ export class BatonApplication {
       throw applicationError('application progress clock is invalid',
         'application_progress_clock_invalid');
     }
+<<<<<<< Updated upstream
     const meaningful = this.driver.coordination.eventsView().filter((event) => (
+=======
+    const meaningful = this.driver.coordination.events().filter((event) => (
+>>>>>>> Stashed changes
       typeof event.ts === 'string' && this._followCategory(event) !== null
       && this._eventBelongsToRun(event, current)
     ));
@@ -8186,6 +8538,7 @@ export class BatonApplication {
     });
   }
 
+<<<<<<< Updated upstream
   // v2 P1-C: the run-view semantic-progress projection. progressClass is always present (the
   // reducer is total over phase/attention/timing/terminalCause); requiredAction rides ONLY when
   // the rule-2 blocking predicate holds. `principal` scopes the advertised actionId to the view
@@ -8274,6 +8627,8 @@ export class BatonApplication {
     return projectRequiredAction({ phase, attention, actions: action ? [action] : [] });
   }
 
+=======
+>>>>>>> Stashed changes
   _followChange(event, category) {
     const summaries = {
       plan: 'Run Plan authority changed.',
@@ -8388,7 +8743,11 @@ export class BatonApplication {
     }
   }
 
+<<<<<<< Updated upstream
   _semanticActionId(current, view, principal, kind, target = null, viewDigest = semanticViewDigest(view)) {
+=======
+  _semanticActionId(current, view, principal, kind, target = null) {
+>>>>>>> Stashed changes
     return digest({
       schemaVersion: 1,
       registryDigest: APPLICATION_SEMANTIC_REGISTRY.digest,
@@ -8397,7 +8756,11 @@ export class BatonApplication {
       principalScopeDigest: digest({ principalId: principal.principalId, sessionId: principal.sessionId }),
       profileDigest: current.profile.digest,
       planDigest: current.plan?.digest ?? null,
+<<<<<<< Updated upstream
       viewDigest,
+=======
+      viewDigest: semanticViewDigest(view),
+>>>>>>> Stashed changes
       kind,
       target,
     });
@@ -8542,6 +8905,7 @@ export class BatonApplication {
     }).filter(Boolean);
   }
 
+<<<<<<< Updated upstream
   // REFLEX-4 slice A (docs/32 §3.4, issue #19): the sole relaxation `application.context_eval`
   // makes versus `_contextTargets` above — no `_isWorkflowRun` gate, so a caller need not hold
   // the target role's own dispatch to evaluate a pure program against it. Everything else
@@ -8567,6 +8931,11 @@ export class BatonApplication {
     const sessionItems = context.sessions
       .filter((session) => session.manifest.kind === 'baton.context_manifest')
       .map((session) => ({
+=======
+  _contextSectionItems(current) {
+    const context = this._contextState(current);
+    const sessionItems = context.sessions.map((session) => ({
+>>>>>>> Stashed changes
       id: session.sessionId,
       section: 'context',
       state: session.state,
@@ -9612,6 +9981,7 @@ export class BatonApplication {
     return cell;
   }
 
+<<<<<<< Updated upstream
   // REFLEX-4 slice A (docs/32 §3.4, issue #19; red-team F12, docs/reference/evidence/
   // reflex-wave-live-2026-07-21/reflex-redteam.md): application.context_eval is the pure-only
   // Bench surface without a Workflow run/action gate. Named explicitly, per the F12 refinement:
@@ -9849,6 +10219,11 @@ export class BatonApplication {
         target: { planDigest: current.plan.digest },
       });
     }
+=======
+  _semanticActions(current, view, principal) {
+    const candidates = [];
+    if (view.phase === 'awaiting_plan_approval') candidates.push({ kind: 'approve_plan', source: null, target: null });
+>>>>>>> Stashed changes
     for (const candidate of view.nextActions ?? []) {
       if (['adopt_result', 'select_candidate', 'send_feedback', 'revise_candidate', 'stop_member', 'semantic_review', 'integrate', 'export_result', 'retry_verification', 'resume_work'].includes(candidate.kind)
         && !candidates.some((entry) => entry.kind === candidate.kind)) {
@@ -9856,7 +10231,11 @@ export class BatonApplication {
       }
     }
     for (const attention of view.attention ?? []) {
+<<<<<<< Updated upstream
       if (!['answer_approval', 'answer_question', 'answer_decision'].includes(attention.kind)
+=======
+      if (!['answer_approval', 'answer_question'].includes(attention.kind)
+>>>>>>> Stashed changes
         || !validText(attention.requestId, 4_096)) continue;
       const target = {
         kind: attention.kind,
@@ -9864,6 +10243,7 @@ export class BatonApplication {
         requestId: attention.requestId,
         ...(attention.kind === 'answer_approval'
           ? { approvalKind: attention.approvalKind ?? null }
+<<<<<<< Updated upstream
           : attention.kind === 'answer_decision'
             ? {
               question: attention.question ?? null,
@@ -9890,6 +10270,12 @@ export class BatonApplication {
         candidates.push({ kind, source: attention, target });
       }
     }
+=======
+          : { question: attention.question ?? null }),
+      };
+      candidates.push({ kind: attention.kind, source: attention, target });
+    }
+>>>>>>> Stashed changes
     if (!this.driver.coordination.runStop?.(current.goal.runId)) {
       const controls = this._semanticControlTargets(current);
       for (const kind of ['send', 'interrupt']) {
@@ -9958,12 +10344,18 @@ export class BatonApplication {
       && (stopClosesOpenDispatchAuthority || (view.ownership?.workers ?? 0) > 0)) {
       candidates.push({ kind: 'stop', source: null, target: null });
     }
+<<<<<<< Updated upstream
     const eligible = capabilityEligibleSemanticActions(candidates, context);
     // The view digest is invariant across every candidate (one view → one freshness token);
     // hoisting it keeps the hot status/act path from re-hashing the whole view per action.
     const viewDigest = semanticViewDigest(view);
     return eligible.map(({ kind, source, target, authorityTarget = target }) => {
       const definition = APPLICATION_SEMANTIC_REGISTRY.actions[kind];
+=======
+    return candidates.map(({ kind, source, target, authorityTarget = target }) => {
+      const definition = APPLICATION_SEMANTIC_REGISTRY.actions[kind];
+      const viewDigest = semanticViewDigest(view);
+>>>>>>> Stashed changes
       const inputSchema = clone(definition.inputSchema);
       if (kind === 'integrate' && source?.strategies) {
         inputSchema.properties.strategy.enum = clone(source.strategies);
@@ -9991,6 +10383,7 @@ export class BatonApplication {
           delete inputSchema.properties.recipient.default;
           if (!inputSchema.required.includes('recipient')) inputSchema.required.push('recipient');
         }
+<<<<<<< Updated upstream
       }
       const actionId = this._semanticActionId(current, view, principal, kind, authorityTarget, viewDigest);
       let doInputs = {};
@@ -10006,6 +10399,11 @@ export class BatonApplication {
       }
       return deepFreeze({
         actionId,
+=======
+      }
+      return deepFreeze({
+        actionId: this._semanticActionId(current, view, principal, kind, authorityTarget),
+>>>>>>> Stashed changes
         kind,
         do: { action: { kind, actionId }, inputs: doInputs },
         label: definition.label,
@@ -10075,7 +10473,11 @@ export class BatonApplication {
       timedOut: change.timedOut ?? false,
       terminal,
       truncated: false,
+<<<<<<< Updated upstream
       help: [{ topic: 'run.inspect', depth: 'outline' }],
+=======
+      help: [{ topic: depth === 'outline' ? 'run.inspect' : `run.inspect.${depth}`, depth: 'outline' }],
+>>>>>>> Stashed changes
       ...(terminal || !changeAware
         ? {} : { continuation: { operation: metadata.operation, arguments: continuationArguments } }),
     };
@@ -10091,6 +10493,7 @@ export class BatonApplication {
     return `section-summary:${sectionId}:g${goalVersion}:p${planVersion}`;
   }
 
+<<<<<<< Updated upstream
   _episodeBindings(current, view) {
     const rows = [];
     const currentRound = (view.rounds ?? []).find((round) => (
@@ -10494,6 +10897,8 @@ export class BatonApplication {
     return base;
   }
 
+=======
+>>>>>>> Stashed changes
   // VR9/RV: the durable referee verdict is already a closed receipt. This projection validates its
   // enums, bounds, byte count, and digest without ever reading command output or free-form text.
   _closedVerdictProjection(result, planNode, phase, workerId) {
@@ -10515,6 +10920,7 @@ export class BatonApplication {
       && verdict.durationMs <= VERIFIER_DURATION_BOUND_MS ? Math.trunc(verdict.durationMs) : null;
     const capturedOutputBytes = Number.isSafeInteger(verdict.capturedOutputBytes)
       && verdict.capturedOutputBytes >= 0 ? verdict.capturedOutputBytes : null;
+<<<<<<< Updated upstream
     const capturedOutputDigest = sanitizeHex64(verdict.capturedOutputDigest);
     const failureCapsule = capturedOutputBytes === null || capturedOutputDigest === null
       ? null : normalizeVerifierFailureCapsule(verdict.failureCapsule, {
@@ -10543,6 +10949,10 @@ export class BatonApplication {
     return deepFreeze({
       accepted,
       acceptancePolicy: { mode: policyMode, ...requirements },
+=======
+    return deepFreeze({
+      accepted: ['work_completed', 'reviewing', 'completed'].includes(phase),
+>>>>>>> Stashed changes
       digest: sanitizeHex64(digest(verdict)),
       outcome: closedEnum(verdict.outcome, VERIFIER_OUTCOMES),
       failureOwnership: verdict.failureOwnership == null
@@ -10553,8 +10963,12 @@ export class BatonApplication {
       baseExecution: projectExecution(verdict.baseExecution),
       outputExceeded: verdict.outputExceeded === true,
       capturedOutputBytes,
+<<<<<<< Updated upstream
       capturedOutputDigest,
       ...(failureCapsule ? { failureCapsule } : {}),
+=======
+      capturedOutputDigest: sanitizeHex64(verdict.capturedOutputDigest),
+>>>>>>> Stashed changes
       diagnosticCode: closedEnum(verdict.diagnosticCode, VERIFIER_DIAGNOSTIC_CODES),
       durationMs,
       runtimeDigest: sanitizeHex64(verdict.runtimeDigest),
@@ -10562,6 +10976,7 @@ export class BatonApplication {
     });
   }
 
+<<<<<<< Updated upstream
   _semanticSectionItems(current, view, sectionId, episodeContext = null) {
     if (sectionId === 'context') return this._contextSectionItems(current);
     if (sectionId === 'workstreams') return episodeContext?.streams
@@ -10571,6 +10986,10 @@ export class BatonApplication {
       return EPISODE_TOPICS
         .map((topic) => this._episodeItem(current, view, topic, null, context)).filter(Boolean);
     }
+=======
+  _semanticSectionItems(current, view, sectionId) {
+    if (sectionId === 'context') return this._contextSectionItems(current);
+>>>>>>> Stashed changes
     if (sectionId === 'plan') {
       const projected = new Map((view.nodes ?? []).map((node) => [node.key, node]));
       return (current.plan?.nodes ?? []).map((node) => ({
@@ -10674,24 +11093,39 @@ export class BatonApplication {
     ];
   }
 
+<<<<<<< Updated upstream
   _runTimelineContent(current, request, bounds, snapshot = null, taskIds = null) {
+=======
+  _runTimelineContent(current, request, bounds) {
+>>>>>>> Stashed changes
     const includeOutput = request.item === 'execution:output';
     try {
       return projectRunTimelinePage({
         runId: current.goal.runId,
+<<<<<<< Updated upstream
         events: this.driver.coordination.eventsView(),
         snapshot: snapshot ?? this.driver.coordination.snapshot(),
+=======
+        events: this.driver.coordination.events(),
+        snapshot: this.driver.coordination.snapshot(),
+>>>>>>> Stashed changes
         cursor: request.pageCursor ?? null,
         limit: bounds.maxItems,
         maxBytes: Math.max(1_024, bounds.maxBytes - 8_192),
         includeOutput,
         recipient: request.recipient ?? null,
+<<<<<<< Updated upstream
         taskIds,
         maxFragmentBytes: Math.max(256, Math.min(4_096, bounds.maxBytes - 16_384)),
         resolveOperational: ({ worker, workerSeq }) => typeof this.driver.log.at === 'function'
           ? this.driver.log.at(worker, workerSeq)
           : this.driver.log.read(worker, workerSeq)
             .find((event) => event.seq === workerSeq) ?? null,
+=======
+        maxFragmentBytes: Math.max(256, Math.min(4_096, bounds.maxBytes - 16_384)),
+        resolveOperational: ({ worker, workerSeq }) => this.driver.log.read(worker)
+          .find((event) => event.seq === workerSeq) ?? null,
+>>>>>>> Stashed changes
       });
     } catch (error) {
       if (error?.code?.startsWith('run_timeline_')) {
@@ -10701,6 +11135,7 @@ export class BatonApplication {
     }
   }
 
+<<<<<<< Updated upstream
   _episodeOutputContent(current, request, bounds, episodeContext = null) {
     const raw = request.item.slice('episode:output'.length);
     const coordinate = raw.startsWith(':') ? raw.slice(1) : '';
@@ -10727,6 +11162,8 @@ export class BatonApplication {
     });
   }
 
+=======
+>>>>>>> Stashed changes
   _runProgressContent(current, view) {
     const timing = this._progressTiming(current, view);
     return deepFreeze({
@@ -10759,23 +11196,33 @@ export class BatonApplication {
       viewDigest: semanticViewDigest(view), cursor: view.cursor,
       changed: false, timedOut: false, terminal,
       truncated: false,
+<<<<<<< Updated upstream
       help: [{ topic: 'run.inspect', depth: 'outline' }],
       policy: clone(view.policy),
     };
     const episodeContext = request.depth === 'index'
       || ['episode', 'workstreams'].includes(request.section)
       ? this._episodeContext(current, view) : null;
+=======
+      help: [{ topic: request.depth === 'outline' ? 'run.inspect' : `run.inspect.${request.depth}`, depth: 'outline' }],
+      policy: clone(view.policy),
+    };
+>>>>>>> Stashed changes
     if (request.depth === 'outline') {
       const timing = this._progressTiming(current, view);
       return this._finalizeSemanticInspection({
         ...base, expansions: [{ depth: 'index' }],
         outline: {
           objective: current.goal.objective,
+<<<<<<< Updated upstream
           resultIntent: view.resultIntent,
+=======
+>>>>>>> Stashed changes
           phase: view.phase, narrative: view.narrative, risk: current.goal.risk,
           stage: view.progress?.current ?? null,
           ...timing,
           progress: clone(view.progress),
+<<<<<<< Updated upstream
           progressClass: clone(view.progressClass ?? null),
           // issue #10 / docs/32 §5: the outline carries the additive waitingOn projection.
           waitingOn: clone(view.waitingOn ?? null),
@@ -10785,6 +11232,8 @@ export class BatonApplication {
           // receipt's `knowledge.candidates` projection is unchanged (kg-activation A3/A4).
           knowledge: { candidatesAwaitingAdmission: view.knowledge?.candidates ?? 0 },
           ...(view.requiredAction ? { requiredAction: clone(view.requiredAction) } : {}),
+=======
+>>>>>>> Stashed changes
           attention: { count: 0, state: 'clear', summary: 'No historical attention is projected.' },
           route: clone(view.route), workerPolicy: clone(view.workerPolicy),
           context: clone(this._contextState(current).projection),
@@ -10805,7 +11254,11 @@ export class BatonApplication {
     }
     if (request.depth === 'index') {
       const sections = APPLICATION_SEMANTIC_REGISTRY.sections.map((definition) => {
+<<<<<<< Updated upstream
         const items = this._semanticSectionItems(current, view, definition.id, episodeContext);
+=======
+        const items = this._semanticSectionItems(current, view, definition.id);
+>>>>>>> Stashed changes
         return {
           id: definition.id, state: items[0]?.state ?? 'empty', summary: definition.summary,
           itemCount: items.length, truncated: items.length > MAX_ATTENTION, authorized: true,
@@ -10818,7 +11271,11 @@ export class BatonApplication {
     }
     const definition = APPLICATION_SEMANTIC_REGISTRY.sections.find((entry) => entry.id === request.section);
     if (!definition) throw applicationError('Run inspection section is unavailable', 'application_inspect_section_invalid');
+<<<<<<< Updated upstream
     const allItems = this._semanticSectionItems(current, view, request.section, episodeContext);
+=======
+    const allItems = this._semanticSectionItems(current, view, request.section);
+>>>>>>> Stashed changes
     const items = allItems.slice(0, MAX_ATTENTION);
     if (request.depth === 'section') {
       return this._finalizeSemanticInspection({
@@ -10830,6 +11287,7 @@ export class BatonApplication {
         },
       }, bounds);
     }
+<<<<<<< Updated upstream
     const selected = this._selectedSemanticItem(
       current, view, request.section, request.item, items, episodeContext,
     );
@@ -10837,6 +11295,12 @@ export class BatonApplication {
     if (request.depth === 'item') {
       const hasContent = request.section === 'context'
         || (request.section === 'episode' && request.item.startsWith('episode:output'))
+=======
+    const selected = items.find((entry) => entry.id === request.item);
+    if (!selected) throw applicationError('Run inspection item is unavailable', 'application_inspect_item_invalid');
+    if (request.depth === 'item') {
+      const hasContent = request.section === 'context'
+>>>>>>> Stashed changes
         || (request.section === 'execution'
           && ['execution:progress', 'execution:events', 'execution:output'].includes(request.item));
       return this._finalizeSemanticInspection({
@@ -10848,6 +11312,7 @@ export class BatonApplication {
       }, bounds);
     }
     if (request.depth === 'content') {
+<<<<<<< Updated upstream
       if (request.section === 'episode' && request.item.startsWith('episode:output')) {
         const content = this._episodeOutputContent(current, request, bounds, episodeContext);
         const hasMore = content.hasMore === true;
@@ -10869,6 +11334,8 @@ export class BatonApplication {
           item: { id: selected.id, section: selected.section }, content,
         }, bounds);
       }
+=======
+>>>>>>> Stashed changes
       if (request.section === 'execution'
         && ['execution:progress', 'execution:events', 'execution:output'].includes(request.item)) {
         const content = request.item === 'execution:progress'
@@ -10919,12 +11386,18 @@ export class BatonApplication {
       ...(current.plan ? [{ kind: 'plan', digest: current.plan.digest, provenance: 'durable Plan authority' }] : []),
       ...(current.approval ? [{ kind: 'approval', digest: current.approval.digest, provenance: 'durable Plan approval authority' }] : []),
       ...(request.section === 'context' ? this._contextItemEvidence(current, selected) : []),
+<<<<<<< Updated upstream
       ...(request.section === 'episode'
         ? this._episodeEvidence(current, view, selected, episodeContext) : []),
     ];
     return this._finalizeSemanticInspection({
       ...base, expansions: [],
       item: { id: selected.id, section: selected.section, state: selected.state }, evidence,
+=======
+    ];
+    return this._finalizeSemanticInspection({
+      ...base, expansions: [], item: { id: selected.id, section: selected.section }, evidence,
+>>>>>>> Stashed changes
     }, bounds);
   }
 
@@ -10941,6 +11414,7 @@ export class BatonApplication {
     this._authorizeRecursiveCommand('run.status', request.runId, principal, context);
     await this._authorize('run.status', principal, request.runId, authorizationSubject);
     const current = this._findRun(request.runId, { allowUnavailableProfile: true });
+<<<<<<< Updated upstream
     // 93B rule 4: `waves.attach` mints `wave.driver_detached` at attach-time (never at close) —
     // this is a pure side effect on the coordination log, never on the returned outline/view, and
     // only fires when the request explicitly asks for it (ordinary run.inspect/runs.attach never
@@ -10961,6 +11435,8 @@ export class BatonApplication {
           key: `wave.driver_detached:${boundWaveId}`,
         });
     }
+=======
+>>>>>>> Stashed changes
     if (!current.profile) {
       const view = this._withContextProjection(
         current, await this._buildView(current, this.principals.observer),
@@ -11045,6 +11521,7 @@ export class BatonApplication {
       const attention = view.attention ?? [];
       const timing = this._progressTiming(current, view);
       const orchestration = this.driver.coordination.runOrchestrationView?.(current.goal.runId) ?? null;
+<<<<<<< Updated upstream
       // The outline's actions are scoped to THIS caller, so requiredAction is re-derived from the
       // same caller-scoped semantic actions (never the view's observer-scoped token — R-SP-3/8).
       const semanticActions = this._semanticActions(current, view, principal, context);
@@ -11052,6 +11529,10 @@ export class BatonApplication {
       const outline = {
         objective: current.goal.objective,
         resultIntent: view.resultIntent,
+=======
+      const outline = {
+        objective: current.goal.objective,
+>>>>>>> Stashed changes
         phase: view.phase,
         stage: view.progress?.current ?? null,
         ...timing,
@@ -11076,10 +11557,13 @@ export class BatonApplication {
         },
         ...(orchestration ? { orchestration: clone(orchestration) } : {}),
         ...(view.workflow ? { workflow: clone(view.workflow) } : {}),
+<<<<<<< Updated upstream
         // KG activation rule 4 / settlement D3: the candidacy ritual count rides the terminal
         // outline (only `candidatesAwaitingAdmission`, never `candidates`, so the raw wave close
         // receipt's `knowledge.candidates` projection stays unchanged — kg-activation A3/A4).
         knowledge: { candidatesAwaitingAdmission: view.knowledge?.candidates ?? 0 },
+=======
+>>>>>>> Stashed changes
         context: clone(this._contextState(current).projection),
         // PS3/PS7: outline depth says plainly whether work was preserved, the stop reason, the
         // cleanup state, and the next semantic action — never the checkpoint ref/SHA or a path.
@@ -11089,7 +11573,11 @@ export class BatonApplication {
           summary: view.preservation?.state === 'pinned' ? 'Work preserved; resume available after fresh verification.'
             : 'No preserved work is advertised.',
         },
+<<<<<<< Updated upstream
         actions: semanticActions,
+=======
+        actions: this._semanticActions(current, view, principal),
+>>>>>>> Stashed changes
       };
       return this._finalizeSemanticInspection({
         ...base,
@@ -11116,7 +11604,11 @@ export class BatonApplication {
     }
     const sectionDefinition = APPLICATION_SEMANTIC_REGISTRY.sections.find((entry) => entry.id === request.section);
     if (!sectionDefinition) throw applicationError('Run inspection section is unavailable', 'application_inspect_section_invalid');
+<<<<<<< Updated upstream
     const allItems = this._semanticSectionItems(current, view, request.section, episodeContext);
+=======
+    const allItems = this._semanticSectionItems(current, view, request.section);
+>>>>>>> Stashed changes
     const items = allItems.slice(0, bounds.maxItems);
     if (request.depth === 'section') {
       return this._finalizeSemanticInspection({
@@ -11135,7 +11627,10 @@ export class BatonApplication {
     if (!selected) throw applicationError('Run inspection item is unavailable', 'application_inspect_item_invalid');
     if (request.depth === 'item') {
       const hasContent = request.section === 'context'
+<<<<<<< Updated upstream
         || (request.section === 'episode' && request.item.startsWith('episode:output'))
+=======
+>>>>>>> Stashed changes
         || (request.section === 'execution'
           && ['execution:progress', 'execution:events', 'execution:output'].includes(request.item));
       return this._finalizeSemanticInspection({
@@ -11147,6 +11642,7 @@ export class BatonApplication {
       }, bounds);
     }
     if (request.depth === 'content') {
+<<<<<<< Updated upstream
       if (request.section === 'episode' && request.item.startsWith('episode:output')) {
         const content = this._episodeOutputContent(current, request, bounds, episodeContext);
         const hasMore = content.hasMore === true;
@@ -11171,6 +11667,8 @@ export class BatonApplication {
           item: { id: selected.id, section: selected.section }, content,
         }, bounds);
       }
+=======
+>>>>>>> Stashed changes
       if (request.section === 'execution'
         && ['execution:progress', 'execution:events', 'execution:output'].includes(request.item)) {
         const content = request.item === 'execution:progress'
@@ -11224,6 +11722,7 @@ export class BatonApplication {
       ...(current.plan ? [{ kind: 'plan', digest: current.plan.digest, provenance: 'durable Plan authority' }] : []),
       ...(current.approval ? [{ kind: 'approval', digest: current.approval.digest, provenance: 'durable Plan approval authority' }] : []),
       ...(request.section === 'context' ? this._contextItemEvidence(current, selected) : []),
+<<<<<<< Updated upstream
       ...(request.section === 'episode'
         ? this._episodeEvidence(current, view, selected, episodeContext) : []),
     ];
@@ -12184,6 +12683,17 @@ export class BatonApplication {
     this._assertOpen();
     await this.ready;
     const context = normalizeCommandContext(rawContext);
+=======
+    ];
+    return this._finalizeSemanticInspection({
+      ...base, expansions: [], item: { id: selected.id, section: selected.section }, evidence,
+    }, bounds);
+  }
+
+  async listRuns(rawPrincipal) {
+    this._assertOpen();
+    await this.ready;
+>>>>>>> Stashed changes
     const principal = normalizePrincipal(rawPrincipal, 'Run list principal');
     await this._authorize('runs.list', principal, null, { operation: 'runs.list' });
     const goalPlan = this.driver.coordination.snapshot().goalPlan;
@@ -12222,6 +12732,7 @@ export class BatonApplication {
       const view = this._withContextProjection(
         current, await this._buildView(current, this.principals.observer),
       );
+<<<<<<< Updated upstream
       const semanticActions = current.profile
         ? this._semanticActions(current, view, principal, context)
         : [];
@@ -12244,6 +12755,21 @@ export class BatonApplication {
         attention: attention.length > 0 ? 'required' : 'clear',
         blockedInteraction: clone(view.blockedInteraction ?? null),
         waitingOn: clone(view.waitingOn ?? null),
+=======
+      const actions = current.profile
+        ? this._semanticActions(current, view, principal).map((action) => action.kind)
+        : [];
+      const attention = view.attention ?? [];
+      const timing = this._progressTiming(current, view);
+      items.push(deepFreeze({
+        id: goal.runId,
+        objective: goal.objective,
+        phase: view.phase,
+        stage: view.progress?.current ?? null,
+        ...timing,
+        terminal: APPLICATION_RUN_TERMINAL_PHASES.has(view.phase),
+        attention: attention.length > 0 ? 'required' : 'clear',
+>>>>>>> Stashed changes
         route: clone(view.route),
         resources: {
           state: projectedCleanupState(view),
@@ -12275,6 +12801,7 @@ export class BatonApplication {
       topic: request.topic, depth: request.depth,
     });
     if (request.runId !== undefined) this._findRun(request.runId);
+<<<<<<< Updated upstream
     const known = new Set([
       'application', 'advanced', 'worker-policy', 'workflow', 'run.inspect.context',
       ...APPLICATION_SEMANTIC_REGISTRY.sections.map(({ id }) => `run.inspect.${id}`),
@@ -12325,25 +12852,45 @@ export class BatonApplication {
         ...(request.runId ? { runId: request.runId } : {}),
       },
     };
+=======
+    const section = APPLICATION_SEMANTIC_REGISTRY.sections.find((entry) => request.topic.endsWith(`.${entry.id}`));
+    const workerPolicyTopic = request.topic === 'worker-policy' || request.topic.endsWith('.worker-policy');
+>>>>>>> Stashed changes
     return deepFreeze({
       schemaVersion: 1,
       topic: request.topic,
       depth: request.depth,
       registryDigest: APPLICATION_SEMANTIC_REGISTRY.digest,
+<<<<<<< Updated upstream
       title: workerPolicyTopic ? 'worker permission policy'
         : section ? `${section.id.replaceAll('_', ' ')} inspection` : request.topic,
       summary,
+=======
+      title: workerPolicyTopic ? 'worker permission policy' : section ? `${section.id.replaceAll('_', ' ')} inspection` : request.topic,
+      summary: workerPolicyTopic
+        ? 'Worker policy separates approval autonomy, full-versus-workspace harness access, and independently attested containment. The default is unattended full access; a worktree and private runtime do not prove host containment.'
+        : section?.summary ?? 'Start or open a Run, inspect only the depth needed, then perform a currently offered action. For a nonterminal response, call its continuation descriptor to wait for the next relevant change; this is the preferred change-aware workflow.',
+>>>>>>> Stashed changes
       examples: workerPolicyTopic && request.runId
         ? [{ operation: 'run.inspect', arguments: { runId: request.runId, depth: 'outline' }, resultField: 'outline.workerPolicy' }]
         : section && request.runId
         ? [{ operation: 'run.inspect', arguments: { runId: request.runId, depth: 'section', section: section.id } }]
         : [{ operation: 'run.inspect', arguments: { runId: 'RUN_ID', depth: 'outline' } }],
+<<<<<<< Updated upstream
       links: links.map((topic) => ({ topic, depth: 'outline' })),
       expansions: request.depth === 'content' ? [] : [{ topic: request.topic, depth: 'content' }],
       ...(request.depth === 'content' ? {
         content: { kind: 'baton.help.content', topic: request.topic, paragraphs, commands },
       } : {}),
       continuation,
+=======
+      links: [
+        { topic: 'run.inspect', depth: 'outline' },
+        { topic: 'run.act', depth: 'outline' },
+        { topic: 'worker-policy', depth: 'outline' },
+        { topic: 'advanced', depth: 'outline' },
+      ],
+>>>>>>> Stashed changes
     });
   }
 
@@ -12480,6 +13027,7 @@ export class BatonApplication {
         throw applicationError('Run action inputs are invalid', 'application_action_input_invalid');
       }
       await this.answer(request.runId, action.target.requestId, { text: request.inputs.text }, principal);
+<<<<<<< Updated upstream
     } else if (action.kind === 'answer_decision') {
       if (!validText(action.target?.requestId, 4_096)) {
         throw applicationError('Run action inputs are invalid', 'application_action_input_invalid');
@@ -12523,6 +13071,8 @@ export class BatonApplication {
       if (claimed?.ok === false) {
         throw applicationError(claimed.reason ?? 'Run turn claim delivery failed', claimed.result ?? 'application_action_delivery_failed');
       }
+=======
+>>>>>>> Stashed changes
     } else if (action.kind === 'select_candidate') {
       if (!action.choices.includes(request.inputs.role)
         || !validText(request.inputs.reason, 1_024)) {
@@ -12618,6 +13168,7 @@ export class BatonApplication {
       throw applicationError('Run action is unavailable', 'application_action_unavailable');
     }
     return this.inspect({ runId: request.runId, depth: 'outline' }, principal, context);
+<<<<<<< Updated upstream
   }
 
   // MCP-W3 (mcp-packaging-decisions v1.0): deployment.doctor's per-call FRESH readiness. The
@@ -12647,6 +13198,8 @@ export class BatonApplication {
         lanes: deepFreeze(lanes),
       }),
     });
+=======
+>>>>>>> Stashed changes
   }
 
   card() {
@@ -12694,6 +13247,7 @@ export class BatonApplication {
     });
   }
 
+<<<<<<< Updated upstream
   // Per-call authorize override (#176 PG-PIN): an optional `options.authorize` (5th arg) overrides
   // `this.authorize` for the duration of ONE command dispatch — the direct ports' own `_authorize`
   // is untouched (it still reads `this.authorize`, through `_authorize`'s override check).
@@ -12716,6 +13270,9 @@ export class BatonApplication {
   }
 
   async _commandDispatch(name, args, rawPrincipal, rawContext = null) {
+=======
+  async command(name, args, rawPrincipal, rawContext = null) {
+>>>>>>> Stashed changes
     if (!validText(name, 64)) throw applicationError('application command is invalid', 'application_command_invalid');
     // docs/36 §9 M1/M3 — resolve canonical operation names to their legacy transport handlers in
     // the dispatch layer. The Episode fold routes `run.view` to the Episode projection when the
@@ -12728,6 +13285,7 @@ export class BatonApplication {
       if (APPLICATION_COMMAND_DEFINITIONS[legacy]) name = legacy;
     }
     const principal = normalizePrincipal(rawPrincipal, 'command principal');
+<<<<<<< Updated upstream
     // Facade-projection epic (#87+#48, contract v2.2): the eight workflow-surface direct ports.
     // Dispatched here — BEFORE normalizeCommandContext, validateApplicationCommandArgs, and the
     // recursive-session gate — because the projection law (Decision 1/2) is a refusal-constancy
@@ -12824,6 +13382,11 @@ export class BatonApplication {
     validateApplicationCommandArgs(name, args);
     const recursiveReadCommands = new Set(['application.help', 'run.inspect', 'run.episode',
       'run.workstreams', 'run.status', 'run.follow', 'run.wait']);
+=======
+    const context = normalizeCommandContext(rawContext);
+    validateApplicationCommandArgs(name, args);
+    const recursiveReadCommands = new Set(['application.help', 'run.inspect', 'run.status', 'run.follow', 'run.wait']);
+>>>>>>> Stashed changes
     const recursiveEffectCommands = new Set(['run.start', 'run.stop']);
     if (context?.sessionAuthority && name !== 'run.act'
       && !recursiveReadCommands.has(name) && !recursiveEffectCommands.has(name)) {
@@ -12835,13 +13398,18 @@ export class BatonApplication {
       return this.help(args, principal);
     }
     if (name === 'runs.list') {
+<<<<<<< Updated upstream
       return this.listRuns(principal, context);
+=======
+      return this.listRuns(principal);
+>>>>>>> Stashed changes
     }
     if (name === 'run.start') {
       return this.start(args.intent, principal, context);
     }
     if (name === 'run.inspect') {
       return this.inspect(args, principal, context);
+<<<<<<< Updated upstream
     }
     if (name === 'run.episode') {
       return this.episode(args, principal, context);
@@ -12854,6 +13422,8 @@ export class BatonApplication {
     }
     if (name === 'run.workstream.stop') {
       return this.stopWorkstream(args, principal);
+=======
+>>>>>>> Stashed changes
     }
     if (name === 'run.act') {
       return this.act(args, principal, context);
@@ -12868,9 +13438,13 @@ export class BatonApplication {
       return this.approve(args.runId, args.planDigest, principal);
     }
     if (name === 'run.wait') {
+<<<<<<< Updated upstream
       return this.wait(args.runId, principal, {
         timeoutMs: args.timeoutMs, ...(args.until === undefined ? {} : { until: args.until }),
       }, context);
+=======
+      return this.wait(args.runId, principal, { timeoutMs: args.timeoutMs }, context);
+>>>>>>> Stashed changes
     }
     if (name === 'run.answer') {
       return this.answer(args.runId, args.requestId, args.answer, principal);

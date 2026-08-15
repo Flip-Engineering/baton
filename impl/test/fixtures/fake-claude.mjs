@@ -39,6 +39,7 @@
 //   "REPORT_ENV:<VAR>"             -> completes with result text `env:<VAR>=<value-or-<unset>>` — phase10
 //                                     SC6's effect-level proof of env threading (tests use fake values only).
 //   "REPORT_ARGV"                  -> completes with the JSON encoded child argv.
+<<<<<<< Updated upstream
 //   "BIG_TOOL_RESULT"              -> emits one oversized stream-json `user`/`tool_result` frame
 //                                     (default payload ~1.1MiB), then a normal assistant+result
 //                                     completion. Optional suffix: BIG_TOOL_RESULT:<bytes>[:id]
@@ -49,6 +50,8 @@
 //   "BIG_TOOL_RESULT_SECRET"       -> like BIG_TOOL_RESULT but plants FAKE_CLAUDE_SECRET (or a
 //                                     fixed probe token) in the frame HEAD for secret-precedence
 //                                     tests.
+=======
+>>>>>>> Stashed changes
 //   anything else                  -> emits an assistant text event ("Echo: <text>") then a success
 //                                     result.
 //
@@ -293,6 +296,7 @@ function startNonApprovalTurn(text) {
     process.exit(1);
   }
 
+<<<<<<< Updated upstream
   if (text.includes('BIG_TOOL_RESULT_SECRET')) {
     const secret = process.env.FAKE_CLAUDE_SECRET ?? 'SUPER_SECRET_PROBE_TOKEN';
     const line = buildToolResultLine({
@@ -327,6 +331,8 @@ function startNonApprovalTurn(text) {
     return;
   }
 
+=======
+>>>>>>> Stashed changes
   if (text.includes('TRIGGER_AUTH_REFUSAL')) {
     emitResult({ text: 'Not logged in · Please run /login', isError: true });
     currentTurn = null;

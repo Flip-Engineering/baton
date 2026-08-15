@@ -83,16 +83,85 @@ flowchart TB
 
 ---
 
+<<<<<<< Updated upstream
 ## Capabilities
+=======
+**What baton is:** a run-centric **fleet application** — one orchestrator agent directs full Claude
+Code / Codex / Kimi Code / GLM 5.2 / Grok workers across vendors while Baton compiles the objective into approved
+work, routes it, watches it, handles attention, verifies it, and closes its resources. The
+Coordinator is the safety kernel beneath that application, not the interface every agent should
+have to assemble manually. `Claude → (Codex + GLM)` and `Codex → (Claude + GLM)` remain core uses.
+>>>>>>> Stashed changes
 
 ### Shipped (landed, suite-green)
 
+<<<<<<< Updated upstream
 **Orchestration core**
 - **Runs** — the ordinary API: concise intent → readable Plan → visible approval → one bounded RunView → attention → evidence → cleanup. `run.start / status / approve / act / answer / wait / stop / evidence / review / adopt / integrate / recover / resume_work`.
 - **Waves** — multi-member orchestration with durable wave identity, per-member scopes/routes, attach-and-harvest, re-drive-the-failed, and the live registry projection (**#132**: `waves list` on CLI/bus/MCP, roster + phase + progress class).
 - **Workflow-as-data** (**#114**) — whole multi-member workflows as one declarative spec through `baton.recipes.runWorkflow` / `baton waves run` / `baton_waves_run`: closed member fields, steering policy map, decision deferral to the human, harvest with `mustContain`, the closed seven-key D6 receipt.
 - **The resident** — `baton serve`: a standing owner-local deployment publishing an authenticated bus over an owner-only Unix socket; CLI and MCP clients discover it through `.git/baton/connection.json`; signal close revokes only the current incarnation.
 - **Turn-checkpoint steering** (**#31**) — nudge/wait/claim instead of turn-boundary kills; every pause snapshots a recovery pin.
+=======
+**Architecture, plainly:** the ordinary surface is one Run application: concise intent and
+deployment profile, visible Plan approval, exact route, one bounded RunView, attention, evidence,
+and cleanup. Direct embedding, authenticated Web, the `baton` CLI, MCP, and the browser Run desk
+share that command bus. The CLI is a thin authenticated Web client rather than another fleet
+controller. `baton serve` now starts the ordinary owner-local resident without a configuration
+module: authenticated HTTP runs over an owner-only Unix socket, discovery is published only after
+an authenticated card/session/readiness challenge, and signal close revokes and CAS-removes only
+the current incarnation. `baton serve CONFIG_MODULE` remains an advanced explicit-network seam. Underneath,
+the reliable Coordinator kernel makes dispatch, fencing, verification, replay, and reap exact.
+Phase 64 now ships the initial Run bus through direct embedding, authenticated Web, MCP stdio, and
+the authenticated browser desk: start, status, distinct approval, bounded wait, answer, and
+server-fenced steering all return one RunView. Phase 90 adds Pythonic and CLI
+`run.send` / `run.interrupt` through the same semantic `run.act` authority: the caller names
+`work` or a Workflow role while Baton derives the exact worker, task, fence, and role generation.
+Each control moves durably through admitted, effect-started, provider-acknowledged, and settled
+states, so restart either executes a still-safe admission, settles an acknowledgement without
+redelivery, or exposes an explicit unknown outcome. Routine CLI results are compact outlines;
+`run show` expands explicitly through index, section, item, Context content, and evidence instead
+of printing budgets, ceilings, coordinates, and every lifecycle chapter after each action.
+The execution chapter also exposes stable progress, normalized event, and opt-in provider-output
+content. `run.progress()`, `run.events()`, `run.output()` and `baton run
+progress|events|output` consume opaque resume, page, and wait policy internally. Events contain
+safe Run-scoped facts; output is explicitly labeled untrusted; neither default projection exposes
+worker/task/fence/process coordinates or deployment ceilings.
+Durable `run.stop` fences further Run effects,
+reaps that Run's exact workers, survives restart, and leaves other Runs and the Baton host live.
+Accepted verification now pins its exact commit before disposable branch cleanup. `run.evidence`
+returns a bounded stable manifest, while policy-gated `run.adopt` durably selects that result
+without merging, changing the checkout, or publishing; both are first-class in Web, MCP, and the
+browser Run desk. Adoption deliberately leaves semantic state unverified and cannot relabel the
+Run complete. RunView and the desk also expose one progress board spanning Plan, dispatch,
+provider identity, verification, semantic state, result selection, and cleanup, so ordinary
+operation no longer requires correlating receipts or process tables.
+Phase 65 adds the missing trust-to-effect continuation to that same surface. `run.review` launches
+one deployment-pinned exact independent reviewer, validates a closed JSON report against immutable
+Git source ranges and accepted artifact/Representation evidence, preserves disagreement and
+uncertainty, and reaps the reviewer. `run.integrate` separately requires a fresh displayed evidence
+digest, policy-required result adoption and semantic approval, then delegates one local `ff-only`
+or structured transaction to the Coordinator. Web, MCP, CLI, and the browser Run desk expose the
+same commands; none push, publish, or deploy. Restart reconstruction, report forgery/scope
+smuggling, review/stop races, stale evidence, dirty checkout, and non-fast-forward refusal are
+covered by executable contracts. Historical dogfood evidence used older GLM routes, but those are
+not current routing recommendations. Baton now restricts GLM work to `glm-5.2`, with effort chosen
+explicitly by the orchestrator instead of inherited from a blanket low-effort default.
+MCP EOF/signals separately invoke the host-only exact deployment shutdown path. The `baton` CLI
+ships `doctor`, start, status/wait, approve, answer, semantic send/interrupt, advanced steer,
+progressive show, Run progress/events/output, stop, evidence, and evidence-bound
+adopt, semantic review, evidence-bound integration, typed feedback, Candidate selection,
+approval-gated revision, and role-addressed member stop through repository discovery. The
+`BATON_URL`, `BATON_ORIGIN`, `BATON_REPO_ID`, and `BATON_TOKEN` tuple remains a compatibility
+override; credentials are never command arguments. See [impl/CLI.md](impl/CLI.md).
+Cursor follow, materialized result export, exact recovery, and the bounded parallel Workflow plus
+one-round revision vertical now ship; deeper multi-round/strategy composition remains active. Southbound, the product tier
+uses persistent Claude stream-json, Codex app-server, and Grok ACP sessions; one-shot subprocess
+adapters remain an explicitly limited fire-and-forget tier. All retained Goal/Plan, causal graph,
+Vantage, Evidence Ladder, Scratch, Skill Forge, Atlas AST/CST/SCIP/CPG/IR, semantic merge,
+behavioral fingerprint, evaluation, and later capability scope remains in [docs/28](docs/28-exhaustive-capability-audit.md).
+Homelab integration is excluded.
+>>>>>>> Stashed changes
 
 **Communication & attention**
 - **waitingOn vocabulary** (**#10**) — one honest projection of what a run is waiting on (the closed five kinds), surfacing *blocked_interaction* so an orchestrator never has to guess that it must act.

@@ -59,7 +59,10 @@ const BUSY = process.env.FAKE_CODEX_BUSY === '1';
 const TURN_START_FAIL = process.env.FAKE_CODEX_TURN_START_FAIL === '1';
 const HANG = process.env.FAKE_CODEX_HANG === '1';
 const MALFORMED = process.env.FAKE_CODEX_MALFORMED === '1';
+<<<<<<< Updated upstream
 const OMIT_THREAD_MODEL = process.env.FAKE_CODEX_OMIT_THREAD_MODEL === '1';
+=======
+>>>>>>> Stashed changes
 const OVERSIZE_BYTES = Number.parseInt(process.env.FAKE_CODEX_OVERSIZE_BYTES ?? '8192', 10);
 
 let busyConsumed = false;

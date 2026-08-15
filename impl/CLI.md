@@ -191,9 +191,14 @@ it does not inspect a disposable worktree, merge, checkout, or publish. Use
 are not CLI fields. `run send` and `run interrupt` resolve the current semantic recipient inside
 Baton; ordinary callers never supply a worker ID or fence. Interrupt ends only that provider turn
 and preserves the Run/worktree for continuation, while `run stop` closes dispatch authority and
+<<<<<<< Updated upstream
 reaps the whole Run subtree. Worker steering is `run send` (and `run interrupt` for turn-scoped
 stops); the deleted `steer` verb was sunset at the M5 alias migration and refuses with corrective
 naming.
+=======
+reaps the whole Run subtree. The worker-targeted `run steer` command remains an advanced
+compatibility surface.
+>>>>>>> Stashed changes
 
 Routine mutations and status return a compact machine-readable outline: objective, phase, current
 progress, exact requested/resolved/observed route, attention, action outcome, and next expansion.

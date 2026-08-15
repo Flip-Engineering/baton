@@ -5,8 +5,12 @@ import {
 import { createHash, randomUUID } from 'node:crypto';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { execFileSync } from 'node:child_process';
+<<<<<<< Updated upstream
 import { basename, join } from 'node:path';
 import { deserialize, serialize } from 'node:v8';
+=======
+import { join } from 'node:path';
+>>>>>>> Stashed changes
 import {
   GoalPlanValidationError, assertGoalSuccessor, buildAuthoritativeBrief, goalPlanCanonical,
   goalPlanDigest, normalizeGoalPlanPolicy, normalizeGoalRequest, normalizePlanRequest,
@@ -27,7 +31,10 @@ import {
   normalizeRecoveryAttemptAdmission, normalizeRecoveryAttemptCompletion,
 } from './recovery-attempt.mjs';
 import {
+<<<<<<< Updated upstream
   DEFAULT_MAX_REPL_MANIFESTS_PER_RUN,
+=======
+>>>>>>> Stashed changes
   normalizeRunLineagePolicy, RUN_ORCHESTRATOR_CAPABILITIES,
   RUN_ORCHESTRATOR_REVOCATION_REASONS,
 } from './run-lineage.mjs';
@@ -41,9 +48,13 @@ import {
   contextCellIdentity, contextProgramIsPure, contextSessionIdentity, normalizeContextArtifactRef,
   normalizeContextAuthority,
 } from './context-authority.mjs';
+<<<<<<< Updated upstream
 import {
   contextValueDigest, normalizeContextManifest, normalizeContextProgram, normalizeReplManifest,
 } from './context-program.mjs';
+=======
+import { contextValueDigest, normalizeContextManifest, normalizeContextProgram } from './context-program.mjs';
+>>>>>>> Stashed changes
 import { validatePureContextOutputLineage } from './context-lineage.mjs';
 import { validateContextMapResultLineage } from './context-result-lineage.mjs';
 import { validateContextEffectResultLineage } from './context-effect-result-lineage.mjs';
@@ -59,10 +70,14 @@ import {
 import { pathInScopes } from './path-scope.mjs';
 import {
   validProcessClosedPayload, validProcessStartedPayload, validRecoveryProcessAbsentPayload,
+<<<<<<< Updated upstream
   validRecoveryProcessReapedPayload,
 } from './process-lifecycle.mjs';
 import { frameWebContent, referencesWebFetchHandle } from './messages.mjs';
 import { FRAME_LIMITS, composeFrameLimitRefusal, frameLimitRefusalPath } from './limits.mjs';
+=======
+} from './process-lifecycle.mjs';
+>>>>>>> Stashed changes
 
 function writerProcessStartIdentity(pid) {
   try {
@@ -797,7 +812,11 @@ export class CoordinationStore {
         || typeof this._contextSourceAttest !== 'function') {
         throw new TypeError('Context Program authority requires one deployment tree, environment, and artifact resolver identity');
       }
+<<<<<<< Updated upstream
     } else if (opts.contextEnvironmentDigest !== undefined
+=======
+    } else if (opts.deploymentBaseSha !== undefined || opts.contextEnvironmentDigest !== undefined
+>>>>>>> Stashed changes
       || opts.contextReferenceIdentity !== undefined || opts.contextReferenceRead !== undefined
       || opts.contextSourceAttest !== undefined) {
       throw new TypeError('Context Program dependencies require Context Program policy');
@@ -809,6 +828,7 @@ export class CoordinationStore {
     if (this._goalPlanPolicy && this._repoId !== this._goalPlanPolicy.repoId) {
       throw new TypeError('coordination repository identity differs from goal/plan authority');
     }
+<<<<<<< Updated upstream
     // Epic #81 (O-2): per-attempt constructive ceilings on orientation receipts/proposals — the
     // flood control that replaces the v1 maxScanEvents scan ceiling (a scan bound, not a write
     // bound). Checked BEFORE append; no clock participates (campaign law).
@@ -823,6 +843,8 @@ export class CoordinationStore {
       }
       this._orientationReceiptCeilings = freeze(clone(c));
     }
+=======
+>>>>>>> Stashed changes
     this._taskTopologyPolicy = opts.taskTopologyPolicy === undefined
       ? null : normalizeTaskTopologyPolicy(opts.taskTopologyPolicy);
     this._runLineagePolicy = opts.runLineagePolicy === undefined
@@ -832,6 +854,7 @@ export class CoordinationStore {
         code: 'run_lineage_policy_invalid',
       });
     }
+<<<<<<< Updated upstream
     this._checkpointAuthorityDigest = canonicalDigest({
       schemaVersion: 1,
       repoId: this._repoId,
@@ -853,6 +876,8 @@ export class CoordinationStore {
       contextEnvironmentDigest: this._contextEnvironmentDigest,
       contextReferenceIdentity: this._contextReferenceIdentity,
     });
+=======
+>>>>>>> Stashed changes
     this._resetProjection();
     if (opts.operationalRangeRead !== undefined && typeof opts.operationalRangeRead !== 'function') throw new TypeError('operationalRangeRead must be a function');
     this._operationalRead = opts.operationalRead ?? null;
@@ -1205,7 +1230,11 @@ export class CoordinationStore {
 
   _resetProjection() {
     this._projectionPoison = null;
+<<<<<<< Updated upstream
     this._events = []; this._byKey = new Map(); this._tasks = new Map(); this._runs = new Map(); this._artifacts = new Map(); this._steeringRuns = new Set();
+=======
+    this._events = []; this._byKey = new Map(); this._tasks = new Map(); this._runs = new Map(); this._artifacts = new Map();
+>>>>>>> Stashed changes
     this._reuseDecisions = new Map(); this._reuseSubjects = new Map(); this._reuseRiskGuards = new Map(); this._reusePolicyHeads = new Map(); this._reusePolicyTransitions = [];
     this._routeObservations = new Map();
     this._representations = new Map(); this._representationRequests = new Map();
@@ -1225,6 +1254,7 @@ export class CoordinationStore {
     this._contextSessions = new Map(); this._contextCells = new Map(); this._contextCalls = new Map();
     this._contextPrograms = new Map(); this._contextArtifacts = new Map();
     this._taskResourceReleases = new Map();
+<<<<<<< Updated upstream
     // BD3-B context packs: a server-owned supersession chain per family. Old versions are
     // retained as content history; only the live head materializes at spawn/nudge. BD3-A read
     // audit rides `_contextReads` (zero promotion weight — never the scratch.read family).
@@ -1278,6 +1308,8 @@ export class CoordinationStore {
     this._scratchpadEntries = new Map(); this._scratchpadEntriesByScope = new Map();
     this._scratchpadFences = new Map(); this._scratchpadElevations = new Map();
     this._scratchpadReaps = [];
+=======
+>>>>>>> Stashed changes
   }
 
   _configureAdvisoryFeedCards(cards) {
@@ -1399,19 +1431,25 @@ export class CoordinationStore {
         || (observed.pidStart !== undefined && observed.pidStart !== lease.pidStart)) {
         throw new CoordinationRefusal('coordination writer lease was replaced', 'coordination_writer_lost');
       }
+<<<<<<< Updated upstream
       if (this._startupState?.state === 'ready' && !this._projectionPoison) {
         try { this._writeProjectionCheckpoint(); }
         catch { /* the ledger is authoritative; cache telemetry cannot block exact lease release */ }
       }
+=======
+>>>>>>> Stashed changes
       try { unlinkSync(lease.path); }
       catch { throw new CoordinationRefusal('coordination writer lease could not be released', 'coordination_writer_lost'); }
       if (existsSync(lease.path)) throw new CoordinationRefusal('coordination writer lease release was not exact', 'coordination_writer_lost');
       this._writerLease = null; return true;
     }
+<<<<<<< Updated upstream
     if (this._startupState?.state === 'ready' && !this._projectionPoison) {
       try { this._writeProjectionCheckpoint(); }
       catch { /* ownership/removal semantics take precedence over a best-effort cache */ }
     }
+=======
+>>>>>>> Stashed changes
     try {
       const observed = JSON.parse(readFileSync(lease.path, 'utf8'));
       if (observed?.token === lease.token && observed?.pid === process.pid
@@ -1527,10 +1565,13 @@ export class CoordinationStore {
     this._byKey.set(key, event);
     try { this._apply(event); }
     catch (error) { throw this._poisonProjection(event, error); }
+<<<<<<< Updated upstream
     if (event.seq % this._checkpointInterval === 0) {
       try { this._writeProjectionCheckpoint(); }
       catch { /* the ledger remains authoritative; clean release retries and reports failure */ }
     }
+=======
+>>>>>>> Stashed changes
     this._notifyAppend();
     return event;
   }
@@ -1540,6 +1581,7 @@ export class CoordinationStore {
     if (!Array.isArray(entries) || entries.length === 0) throw new TypeError('coordination batch requires entries');
     if (batchKind !== null && ![
       'recovery_refinement_create_claim', 'recovery_dispatch_refusal',
+<<<<<<< Updated upstream
       'settlement_task_create_claim',
       'goal_plan_node_dispatch', 'goal_plan_wave_dispatch', 'goal_plan_recovery_dispatch',
       'scratchpad_task_settlement', 'scratchpad_link_citation',
@@ -1547,6 +1589,9 @@ export class CoordinationStore {
       // #161 (H4.1): the plan lane's auto-demote batch — a -> doing transition that demotes the
       // subtree's current doing task to todo in the same atomic append (the kimi behavior, DR-3).
       ...PLAN_OBJECT_BATCH_KINDS,
+=======
+      'goal_plan_node_dispatch', 'goal_plan_wave_dispatch', 'goal_plan_recovery_dispatch',
+>>>>>>> Stashed changes
     ].includes(batchKind)) {
       throw new TypeError('coordination batch kind is invalid');
     }
@@ -1564,9 +1609,14 @@ export class CoordinationStore {
         ? entries[index - 1] : null;
       const hint = batchKind === 'recovery_refinement_create_claim' || batchKind === 'goal_plan_recovery_dispatch'
         ? 'recovery'
+<<<<<<< Updated upstream
         : batchKind === 'settlement_task_create_claim' ? 'root'
           : dispatch?.payload?.preservedResume ? 'preserved_resume'
             : dispatch?.payload?.revision ? 'revision' : null;
+=======
+        : dispatch?.payload?.preservedResume ? 'preserved_resume'
+          : dispatch?.payload?.revision ? 'revision' : null;
+>>>>>>> Stashed changes
       this._validateTaskTopology(created.payload, hint, false);
     }
     const start = this._events.length;
@@ -1620,7 +1670,10 @@ export class CoordinationStore {
   }
 
   _taskTopologyHint(event) {
+<<<<<<< Updated upstream
     if (event.batch?.kind === 'settlement_task_create_claim') return 'root';
+=======
+>>>>>>> Stashed changes
     if (event.batch?.kind === 'recovery_refinement_create_claim'
       || event.batch?.kind === 'goal_plan_recovery_dispatch') return 'recovery';
     if (event.batch?.kind === 'goal_plan_node_dispatch') {
@@ -1794,6 +1847,7 @@ export class CoordinationStore {
       || payload.schemaVersion !== 1 || payload.scope !== 'application_run_subtree') {
       fail('run orchestrator lease payload is invalid');
     }
+<<<<<<< Updated upstream
     // Epic #78 Decision 6 rule 6: replay reconstructs byte-identically across store restart even
     // when the issuing run-lineage policy is not re-supplied to the reopened store. The policy
     // was authoritative at issue time; replay re-validates the payload's internal
@@ -1805,6 +1859,8 @@ export class CoordinationStore {
       if (event.idempotencyKey !== `run.orchestrator_lease:${payload.leaseId}`) fail('run orchestrator lease binding is invalid');
       return payload;
     }
+=======
+>>>>>>> Stashed changes
     const request = this._normalizeRunOrchestratorLeaseRequest({
       schemaVersion: 1,
       repoId: payload.repoId,
@@ -1818,6 +1874,7 @@ export class CoordinationStore {
     return expected;
   }
 
+<<<<<<< Updated upstream
   // The lease revocation idempotency key accepts either the recursive-lineage form
   // (`run.orchestrator_lease.revoke:<id>`) or the settlement-ritual form
   // (`run.orchestrator_lease_revoked:<id>`, rule 16b's revoke step) — the same leaseId is bound
@@ -1827,6 +1884,8 @@ export class CoordinationStore {
       || key === `run.orchestrator_lease_revoked:${leaseId}`;
   }
 
+=======
+>>>>>>> Stashed changes
   _validateRunOrchestratorLeaseRevoked(payload, event, integrity = false) {
     const fail = (message, code = 'run_orchestrator_lease_invalid') => this._runLineageFailure(message, code, integrity);
     const fields = ['leaseDigest', 'leaseId', 'reason', 'revocationDigest', 'schemaVersion'];
@@ -1840,7 +1899,11 @@ export class CoordinationStore {
     }
     const { revocationDigest, ...core } = payload;
     if (revocationDigest !== canonicalDigest(core)
+<<<<<<< Updated upstream
       || !this._isRunOrchestratorLeaseRevokeKey(event.idempotencyKey, payload.leaseId)
+=======
+      || event.idempotencyKey !== `run.orchestrator_lease.revoke:${payload.leaseId}`
+>>>>>>> Stashed changes
       || !boundedText(event.actor, 256)) fail('run orchestrator lease revocation binding is invalid');
     return lease;
   }
@@ -1980,7 +2043,11 @@ export class CoordinationStore {
       || fields.schemaVersion !== 1 || !boundedText(fields.leaseId, 512)
       || !/^[a-f0-9]{64}$/.test(fields.leaseDigest ?? '')
       || !RUN_ORCHESTRATOR_REVOCATION_REASONS.includes(fields.reason)
+<<<<<<< Updated upstream
       || !this._isRunOrchestratorLeaseRevokeKey(auth?.key, fields.leaseId)
+=======
+      || auth?.key !== `run.orchestrator_lease.revoke:${fields.leaseId}`
+>>>>>>> Stashed changes
       || !boundedText(auth?.actor, 256)) {
       this._runLineageFailure('run orchestrator lease revocation request is invalid', 'run_orchestrator_lease_invalid');
     }
@@ -2005,6 +2072,7 @@ export class CoordinationStore {
   }
 
   activeRunOrchestratorLeaseForSession(fields) {
+<<<<<<< Updated upstream
     // Two lookup postures share one method: the web transport's envelope
     // ({repoId, principalId, sessionId, expiresAt}) and the coordinator's run-scoped review
     // authority lookup ({repoId, runId, principalId, sessionId}) — the latter matches the lease
@@ -2016,14 +2084,26 @@ export class CoordinationStore {
       || !validRunId(fields.repoId) || !validRunId(fields.principalId) || !validRunId(fields.sessionId)
       || (!byRun && (!Number.isFinite(Date.parse(fields.expiresAt ?? ''))
         || new Date(Date.parse(fields.expiresAt)).toISOString() !== fields.expiresAt))) {
+=======
+    const expected = ['expiresAt', 'principalId', 'repoId', 'sessionId'];
+    if (!fields || Object.keys(fields).sort().join(',') !== expected.sort().join(',')
+      || !validRunId(fields.repoId) || !validRunId(fields.principalId) || !validRunId(fields.sessionId)
+      || !Number.isFinite(Date.parse(fields.expiresAt ?? ''))
+      || new Date(Date.parse(fields.expiresAt)).toISOString() !== fields.expiresAt) {
+>>>>>>> Stashed changes
       this._runLineageFailure('run orchestrator session lookup is invalid', 'run_orchestrator_lease_invalid');
     }
     const matches = [...this._runOrchestratorLeases.values()].filter((lease) => {
       if (lease.repoId !== fields.repoId
+<<<<<<< Updated upstream
         || lease.session.principalId !== fields.principalId || lease.session.sessionId !== fields.sessionId) return false;
       if (byRun) {
         if (lease.parent.runId !== fields.runId) return false;
       } else if (lease.session.expiresAt !== fields.expiresAt) return false;
+=======
+        || lease.session.principalId !== fields.principalId || lease.session.sessionId !== fields.sessionId
+        || lease.session.expiresAt !== fields.expiresAt) return false;
+>>>>>>> Stashed changes
       return true;
     });
     if (matches.length > 1) {
@@ -4319,6 +4399,7 @@ export class CoordinationStore {
     return { ...core, targetDigest: canonicalDigest(core) };
   }
 
+<<<<<<< Updated upstream
   _validSessionPreservationReceipt(receipt, allowHistorical = false) {
     if (receipt === null) return true;
     const version = receipt?.schemaVersion;
@@ -4336,12 +4417,29 @@ export class CoordinationStore {
       || (version !== 2 && !(allowHistorical && version === 1))
       || receipt.state !== 'preserved' || receipt.transport !== 'attached'
       || (version === 2 && receipt.attached !== true)
+=======
+  _validSessionPreservationReceipt(receipt) {
+    if (receipt === null) return true;
+    const fields = [
+      'fence', 'planBindingDigest', 'processGeneration', 'reattachment', 'receiptDigest',
+      'routeDigest', 'runAuthorityDigest', 'schemaVersion', 'sessionDigest', 'state',
+      'transport', 'turnEpoch', 'worktreeDigest',
+    ];
+    if (!receipt || typeof receipt !== 'object' || Array.isArray(receipt)
+      || Object.keys(receipt).sort().join(',') !== fields.sort().join(',')
+      || receipt.schemaVersion !== 1 || receipt.state !== 'preserved'
+      || receipt.transport !== 'attached'
+>>>>>>> Stashed changes
       || !['not_required', 'confirmed'].includes(receipt.reattachment)
       || !Number.isSafeInteger(receipt.processGeneration) || receipt.processGeneration < 0
       || !Number.isSafeInteger(receipt.turnEpoch) || receipt.turnEpoch < 0
       || !Number.isSafeInteger(receipt.fence) || receipt.fence < 0
       || ['sessionDigest', 'worktreeDigest', 'routeDigest', 'planBindingDigest',
+<<<<<<< Updated upstream
         ...(version === 2 ? ['adapterCardDigest'] : []), 'runAuthorityDigest', 'receiptDigest']
+=======
+        'runAuthorityDigest', 'receiptDigest']
+>>>>>>> Stashed changes
         .some((field) => !/^[a-f0-9]{64}$/u.test(receipt[field] ?? ''))) return false;
     const core = clone(receipt); delete core.receiptDigest;
     return receipt.receiptDigest === canonicalDigest(core);
@@ -4389,7 +4487,11 @@ export class CoordinationStore {
       || !/^control:[a-f0-9]{64}$/u.test(p.controlId ?? '')
       || !/^[a-f0-9]{64}$/u.test(p.actionId ?? '')
       || !['send', 'interrupt'].includes(p.operation) || !boundedText(p.recipient, 256)
+<<<<<<< Updated upstream
       || (p.operation === 'send' && (!boundedText(p.message, FRAME_LIMITS['run.legacy_send.body'].value)
+=======
+      || (p.operation === 'send' && (!boundedText(p.message, 16_384)
+>>>>>>> Stashed changes
         || !['nudge', 'now', 'turn'].includes(p.delivery)))
       || (p.operation === 'interrupt' && (p.message !== null || p.delivery !== null))
       || (version >= 2 && p.turnDisposition !== (p.operation === 'interrupt' ? 'preserve_turn' : null))
@@ -4496,7 +4598,11 @@ export class CoordinationStore {
       || (p.schemaVersion >= 2 && (
         (p.outcome.actualDelivery !== null
           && !['nudge', 'now', 'turn'].includes(p.outcome.actualDelivery))
+<<<<<<< Updated upstream
         || !this._validSessionPreservationReceipt(p.outcome.preservation, integrity)
+=======
+        || !this._validSessionPreservationReceipt(p.outcome.preservation)
+>>>>>>> Stashed changes
         || !this._validPreservedContinuationReceipt(p.outcome.continuation)
         || (control.operation === 'interrupt'
           && (p.outcome.actualDelivery !== null || p.outcome.continuation !== null))
@@ -4550,8 +4656,11 @@ export class CoordinationStore {
     const outcomeFields = ['code', 'deliveredDespiteStale', 'emulated', 'result',
       ...(p?.schemaVersion >= 2 ? ['actualDelivery', 'continuation', 'preservation'] : [])];
     const control = this._runControls.get(p?.controlId);
+<<<<<<< Updated upstream
     const continuesHistoricalAck = control?.status === 'provider_acked'
       && control.providerAck?.outcome?.preservation?.schemaVersion === 1;
+=======
+>>>>>>> Stashed changes
     if (!p || Object.keys(p).sort().join(',') !== fields.sort().join(',')
       || p.schemaVersion !== control?.schemaVersion || !control
       || !['admitted', 'provider_acked'].includes(control.status)
@@ -4566,9 +4675,13 @@ export class CoordinationStore {
       || (p.schemaVersion >= 2 && (
         (p.outcome.actualDelivery !== null
           && !['nudge', 'now', 'turn'].includes(p.outcome.actualDelivery))
+<<<<<<< Updated upstream
         || !this._validSessionPreservationReceipt(
           p.outcome.preservation, integrity || continuesHistoricalAck,
         )
+=======
+        || !this._validSessionPreservationReceipt(p.outcome.preservation)
+>>>>>>> Stashed changes
         || !this._validPreservedContinuationReceipt(p.outcome.continuation)
         || (control.operation === 'interrupt'
           && (p.outcome.actualDelivery !== null || p.outcome.continuation !== null))
@@ -5318,6 +5431,7 @@ export class CoordinationStore {
       this._contextFailure('Context session tree, environment, or policy is stale',
         integrity ? 'context_session_integrity' : 'context_session_stale', integrity);
     }
+<<<<<<< Updated upstream
     // REPL-1 rule 12: the cell-admission currency gate for a ReplManifest session keys on the
     // settled admission record, not a working Plan-gated dispatch. `admitContextCell`'s
     // caller-principal pin (canonicalDigest(authority) !== session.authority) then remains the
@@ -5332,6 +5446,8 @@ export class CoordinationStore {
       this._assertRunAdmissionOpen(session.runId, integrity);
       return freeze({ goal: null, plan: null, node: null, task: null });
     }
+=======
+>>>>>>> Stashed changes
     const goal = this._goals.get(this._goalVersionKey(
       manifest.workflow.goal.goalId, manifest.workflow.goal.version,
     ));
@@ -5442,6 +5558,7 @@ export class CoordinationStore {
       this._contextFailure('Context session tree, environment, or policy differs from deployment authority',
         integrity ? 'context_session_integrity' : 'context_session_invalid', integrity);
     }
+<<<<<<< Updated upstream
     // REPL-1 rule 10a: a ReplManifest session skips the Workflow goal/plan/approval and
     // node/task/dispatch blocks entirely and is instead grounded by its settled
     // `repl.manifest_admitted` record (which folds at a lower seq, so this is replay-derivable).
@@ -5460,6 +5577,8 @@ export class CoordinationStore {
         requestCore, admissionCore,
       });
     }
+=======
+>>>>>>> Stashed changes
     const goal = this._goals.get(this._goalVersionKey(
       manifest.workflow.goal.goalId, manifest.workflow.goal.version,
     ));
@@ -6667,21 +6786,33 @@ export class CoordinationStore {
         return fail('task resource-release invented a process-free state');
       }
     } else {
+<<<<<<< Updated upstream
       if (!['closed', 'absent_after_restart', 'reaped_after_restart'].includes(release.process.state)
+=======
+      if (!['closed', 'absent_after_restart'].includes(release.process.state)
+>>>>>>> Stashed changes
         || !Number.isSafeInteger(release.process.generation) || release.process.generation <= 0
         || !Number.isSafeInteger(release.process.pid) || release.process.pid <= 0
         || !Number.isSafeInteger(release.process.processGroupId)
         || release.process.processGroupId !== release.process.pid
         || !Number.isSafeInteger(release.process.terminalSeq)
+<<<<<<< Updated upstream
         || !['lifecycle.process_closed', 'control.recovery_process_absent',
           'control.recovery_process_reaped']
+=======
+        || !['lifecycle.process_closed', 'control.recovery_process_absent']
+>>>>>>> Stashed changes
           .includes(release.process.terminalKind)
         || (release.process.state === 'closed'
           && release.process.terminalKind !== 'lifecycle.process_closed')
         || (release.process.state === 'absent_after_restart'
+<<<<<<< Updated upstream
           && release.process.terminalKind !== 'control.recovery_process_absent')
         || (release.process.state === 'reaped_after_restart'
           && release.process.terminalKind !== 'control.recovery_process_reaped')) {
+=======
+          && release.process.terminalKind !== 'control.recovery_process_absent')) {
+>>>>>>> Stashed changes
         return fail('task resource-release process proof is invalid');
       }
       const terminal = prefix.find((row) => row.seq === release.process.terminalSeq);
@@ -6697,9 +6828,13 @@ export class CoordinationStore {
         ? 'worker' : 'policy';
       const terminalPayloadValid = release.process.terminalKind === 'lifecycle.process_closed'
         ? validProcessClosedPayload(terminal?.payload)
+<<<<<<< Updated upstream
         : release.process.terminalKind === 'control.recovery_process_absent'
           ? validRecoveryProcessAbsentPayload(terminal?.payload)
           : validRecoveryProcessReapedPayload(terminal?.payload);
+=======
+        : validRecoveryProcessAbsentPayload(terminal?.payload);
+>>>>>>> Stashed changes
       if (!started || started.actor !== 'worker'
         || started.worker !== payload.workerId
         || started.taskId !== task.id || started.runId !== task.runId
@@ -7796,6 +7931,7 @@ export class CoordinationStore {
     else if (event.kind === 'context.call_settled') {
       admittedRunId = this._contextCallRunId(this._contextCalls.get(p?.callId));
     }
+<<<<<<< Updated upstream
     else if (event.kind === 'repl.manifest_admitted') admittedRunId = p?.runId ?? null;
     // REPL-2 bindings derive their runId from the repl.manifest_admitted record their write
     // cited — the same lookup Part B rule 4(d) performs at admission time (Part G rule 25).
@@ -7811,6 +7947,8 @@ export class CoordinationStore {
         throw new CoordinationIntegrityError('scratchpad elevation Run binding is invalid', 'scratchpad_entry_integrity');
       }
     }
+=======
+>>>>>>> Stashed changes
     if (admittedRunId !== null && (this._runStopByTarget.has(admittedRunId) || this._runStops.has(admittedRunId))) {
       throw new CoordinationIntegrityError(`effect ${event.kind} was admitted after run ${admittedRunId} began stopping`, 'run_stopping');
     }
@@ -7892,6 +8030,7 @@ export class CoordinationStore {
       const children = [...(this._runChildrenByParent.get(lineage.parentRunId) ?? [])];
       children.push(lineage.childRunId);
       this._runChildrenByParent.set(lineage.parentRunId, freeze(children));
+<<<<<<< Updated upstream
     } else if (event.kind === 'package.admitted') {
       const normalized = this._normalizeContextPackage(p, true);
       this._contextPackages.set(normalized.packageDigest, freeze({
@@ -7912,6 +8051,8 @@ export class CoordinationStore {
         packageDigest: p.packageDigest, scope: p.scope, attachedEvent: event.seq, attachedAt: event.ts,
       }));
       this._contextPackageAttachments.set(p.runId, freeze(attachments));
+=======
+>>>>>>> Stashed changes
     } else if (event.kind === 'context.session_admitted') {
       const validated = this._validateContextSessionPayload(p, event, true);
       this._contextSessions.set(validated.session.sessionId, freeze({
@@ -9505,6 +9646,7 @@ export class CoordinationStore {
   goalVersion(goalId, version) { return clone(this._goals.get(this._goalVersionKey(goalId, version)) ?? null); }
   planVersion(planId, version) { return clone(this._plans.get(this._planVersionKey(planId, version)) ?? null); }
 
+<<<<<<< Updated upstream
   // REFLEX-3 (docs/32 §3.3, issue #18; contract: docs/reference/evidence/
   // reflex-wave-live-2026-07-21/reflex3-packages-decisions.md, red-team F11/F14 lines 205-231,
   // 282-294): a typed, immutable, replay-safe knowledge/context hand-off package.
@@ -9943,6 +10085,8 @@ export class CoordinationStore {
     };
   }
 
+=======
+>>>>>>> Stashed changes
   admitContextSession(fields, auth) {
     if (!this._contextProgramPolicy) {
       throw new CoordinationRefusal('Context Program authority is unavailable',
@@ -10050,6 +10194,7 @@ export class CoordinationStore {
     return freeze({ ok: true, result: 'admitted', event: clone(event), session: projected });
   }
 
+<<<<<<< Updated upstream
   replManifestAdmission(manifestDigest) {
     return clone(this._replManifestAdmissions.get(manifestDigest) ?? null);
   }
@@ -10316,6 +10461,8 @@ export class CoordinationStore {
     return freeze({ ok: true, result: 'admitted', event: clone(event), session: projected });
   }
 
+=======
+>>>>>>> Stashed changes
   admitContextCell(fields, auth) {
     if (!this._contextProgramPolicy) {
       throw new CoordinationRefusal('Context Program authority is unavailable',
@@ -11709,6 +11856,7 @@ export class CoordinationStore {
     });
   }
 
+<<<<<<< Updated upstream
   _scratchpadSnapshot() {
     const reaps = [...this._scratchpadReaps].sort((a, b) => b.eventSeq - a.eventSeq);
     let retained = reaps.slice(0, MAX_SCRATCHPAD_SNAPSHOT_REAPS);
@@ -11785,6 +11933,9 @@ export class CoordinationStore {
     }
     return freeze([...new Set(ids)].sort(compareCanonicalStrings));
   }
+=======
+  snapshot() { return freeze({ tasks: [...this._tasks.values()].map(clone), runs: [...this._runs.values()].map(clone), ...(this._runStops.size > 0 ? { runStops: [...this._runStops.values()].map(clone) } : {}), ...(this._runControls.size > 0 ? { runControls: [...this._runControls.values()].map(clone) } : {}), ...(this._runLineagePolicy ? { runAuthority: this.runAuthoritySnapshot() } : {}), ...(this._runResultAdoptions.size > 0 ? { runResultAdoptions: [...this._runResultAdoptions.values()].map(clone) } : {}), ...(this._runResultExports.size > 0 ? { runResultExports: [...this._runResultExports.values()].map(clone) } : {}), ...(this._contextProgramPolicy ? { context: { policy: clone(this._contextProgramPolicy), sessions: [...this._contextSessions.values()].map(clone), cells: [...this._contextCells.values()].map(clone), calls: this.contextCalls() } } : {}), artifacts: [...this._artifacts.values()].map(clone), ...(this._recoveryAttemptsById.size > 0 ? { recoveryAttempts: [...this._recoveryAttemptsById.values()].map(clone) } : {}), ...(this._representationPolicy || this._representations.size > 0 ? { representations: [...this._representations.values()].map(clone) } : {}), ...(this._goalPlanPolicy || this._goals.size > 0 ? { goalPlan: { goals: [...this._goals.values()].map(clone), plans: [...this._plans.values()].map(clone), approvals: [...this._planApprovals.values()].map(clone), dispatches: [...this._planDispatches.values()].map(clone), budgetSettlements: [...this._planBudgetSettlements.values()].map(clone) } } : {}), ...(this._routePolicy ? { routeLearning: { policy: clone(this._routePolicy), observations: this.routeObservations() } } : {}), reuseDecisions: [...this._reuseDecisions.values()].map(clone), reuseRiskGuards: [...this._reuseRiskGuards.values()].map(clone), ...(this._reuseProviderGuards.size > 0 || this._reuseProviderContributions.size > 0 ? { reuseProviderGuards: [...this._reuseProviderGuards.values()].map(clone), reuseProviderContributions: [...this._reuseProviderContributions.values()].map(clone) } : {}), reusePolicy: { heads: [...this._reusePolicyHeads.values()].map(clone), transitions: this._reusePolicyTransitions.map(clone) }, ...(this._advisoryFeedCards.size > 0 || this._providerReceipts.size > 0 ? { provider: { receiptCount: this._providerReceipts.size, processingCount: this._providerProcessing.size, pendingCoordinateCount: this._providerPending.size } } : {}), evidence: [...this._evidence.values()].map(clone), scratch: { facts: [...this._scratchFacts.values()].map(clone), claims: [...this._scratchClaims.values()].map(clone), reads: this._scratchReads.map(clone) }, knowledge: { nodes: [...this._knowledgeNodes.values()].map(clone), edges: [...this._knowledgeEdges.values()].map(clone), reads: this._knowledgeReads.map(clone), ...(this._knowledgeRecallAssessments.size > 0 ? { assessments: [...this._knowledgeRecallAssessments.values()].map(clone) } : {}), contamination: this._contamination.map(clone) }, lastSeq: this._events.length }); }
+>>>>>>> Stashed changes
   healthCheck() { try { if (!existsSync(this.file)) return this._events.length === 0; const raw = readFileSync(this.file, 'utf8'); return raw.length === 0 || raw.endsWith('\n'); } catch { return false; } }
   readyTasks() {
     return [...this._tasks.values()].filter((task) => task.status === 'pending' && task.assignee == null
@@ -12329,11 +12480,15 @@ export class CoordinationStore {
     }
     const known = this._goalHeads.has(this._goalScopeKey(fields.repoId, fields.runId))
       || lineage?.repoId === fields.repoId
+<<<<<<< Updated upstream
       || [...this._tasks.values()].some((task) => task.runId === fields.runId)
       // A run that owns a board (the facade/epic #87+#48 orchestrator posture records a
       // boardAdmission binding) is a real run for the stop lane too — a board-bound run must be
       // closable so the facade's board run-open check can observe the closed state.
       || [...this._boardRunBindings.values()].some((binding) => binding.runId === fields.runId);
+=======
+      || [...this._tasks.values()].some((task) => task.runId === fields.runId);
+>>>>>>> Stashed changes
     if (!known) throw new CoordinationRefusal(`unknown run ${fields.runId}`, 'not_found');
     const targets = this._runStopTargets(fields.runId);
     const schemaVersion = targets.targetContextCallIds?.length > 0 ? 3

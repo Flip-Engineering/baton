@@ -15,6 +15,7 @@
  */
 
 import { pathMatchesScope } from './path-scope.mjs';
+<<<<<<< Updated upstream
 import { canonicalMemberState } from './application-semantics.mjs';
 
 // docs/36 §7.2: the registry owns the member-state vocabulary. The internal WorkerStatus stream
@@ -31,6 +32,8 @@ export function canonicalMemberStatus(worker) {
   if (status === 'orphaned') return 'stopped';
   return canonicalMemberState(status);
 }
+=======
+>>>>>>> Stashed changes
 
 // ---------------------------------------------------------------------------
 // Typedefs (JSDoc only — see spec for full definitions)
@@ -50,7 +53,11 @@ export function canonicalMemberStatus(worker) {
  */
 
 /**
+<<<<<<< Updated upstream
  * @typedef {"idle"|"working"|"stopping"|"interrupted"|"blocked"|"input_required"|"paused"|"orphaned"|"exited"} WorkerStatus
+=======
+ * @typedef {"idle"|"working"|"stopping"|"interrupted"|"blocked"|"input_required"|"orphaned"|"exited"} WorkerStatus
+>>>>>>> Stashed changes
  */
 
 /**
@@ -130,7 +137,11 @@ export const MAX_ACTION_SIGNATURE_WINDOW = 10;
 
 // States in which "stalled" must never fire — the worker is legitimately
 // waiting on someone else, not silently stuck.
+<<<<<<< Updated upstream
 const NEVER_STALLED_STATUSES = new Set(['blocked', 'input_required', 'paused', 'stopping', 'interrupted', 'exited', 'orphaned']);
+=======
+const NEVER_STALLED_STATUSES = new Set(['blocked', 'input_required', 'stopping', 'interrupted', 'exited', 'orphaned']);
+>>>>>>> Stashed changes
 
 // ---------------------------------------------------------------------------
 // State construction helpers

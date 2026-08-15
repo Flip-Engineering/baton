@@ -146,8 +146,12 @@ test('AX1: one closed semantic registry defines the compact ordinary vocabulary,
   assert.equal(value.schemaVersion, 1);
   assert.match(value.digest, /^[a-f0-9]{64}$/u);
   assert.deepEqual(Object.keys(value.operations).sort(), [
+<<<<<<< Updated upstream
     'application.help', 'run.act', 'run.episode', 'run.inspect', 'run.start', 'run.stop',
     'run.workstream.notify', 'run.workstream.stop', 'run.workstreams', 'runs.list',
+=======
+    'application.help', 'run.act', 'run.inspect', 'run.start', 'run.stop', 'runs.list',
+>>>>>>> Stashed changes
   ]);
   assert.deepEqual(value.depths, [
     'outline', 'index', 'section', 'item', 'content', 'evidence',

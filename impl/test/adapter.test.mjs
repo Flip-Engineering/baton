@@ -934,6 +934,7 @@ test('renderBrief separates unattended harness capability from Baton write autho
   }
 });
 
+<<<<<<< Updated upstream
 test('renderBrief makes Plan repository-mutation authority explicit in every provider dialect', () => {
   const dialects = ['codex-v2', 'claude', 'grok-acp', 'kimi-acp'];
   const evidenceOnly = makeBrief({
@@ -966,6 +967,8 @@ test('renderBrief makes Plan repository-mutation authority explicit in every pro
   }
 });
 
+=======
+>>>>>>> Stashed changes
 // ============================================================
 // SubprocessAdapter family — behaviors 19-22 (guard-off only; never live)
 // ============================================================

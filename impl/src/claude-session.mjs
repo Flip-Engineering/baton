@@ -14,7 +14,10 @@ import { renderPrompt } from './cli-adapters.mjs';
 import { normalizeProcessGeneration, ProcessCloseReapLatch, processStartedPayload } from './process-lifecycle.mjs';
 import { usdToNanos } from './usd.mjs';
 import { attestWorkerPolicyObservation } from './worker-policy.mjs';
+<<<<<<< Updated upstream
 import { createDecisionRequest, ValidationError } from './messages.mjs';
+=======
+>>>>>>> Stashed changes
 
 const DEFAULT_MAX_WIRE_FRAME_BYTES = 1024 * 1024;
 const CLAUDE_TOKEN_METRIC = 'anthropic_input_plus_output_tokens_excluding_cache';
@@ -437,13 +440,21 @@ export function buildClaudeSessionArgs({ approvals = false, sessionId, forkSessi
 // (referee/story) consistency (CS5/§4b). Not trusted from the wire — the hub re-runs verification.
 // ---------------------------------------------------------------------------
 
+<<<<<<< Updated upstream
 function makeResult(status, summary, usage, usd, failureCode = null, authenticationSummary = null) {
+=======
+function makeResult(status, summary, usage, usd, failureCode = null) {
+>>>>>>> Stashed changes
   const tokens = safeUsageTokenTotal(usage);
   const exactUsd = usdToNanos(usd) === null ? null : usd;
   return {
     status,
     summary: failureCode === 'authentication_refresh_required'
+<<<<<<< Updated upstream
       ? (authenticationSummary ?? 'Provider authentication requires refresh.') : (summary ?? '').slice(0, 500),
+=======
+      ? 'Provider authentication requires refresh.' : (summary ?? '').slice(0, 500),
+>>>>>>> Stashed changes
     artifacts: { commits: [], files: [] },
     verification: { command: null, claimedExit: null },
     openQuestions: [],
@@ -457,11 +468,14 @@ function claudeResultFailureCode(obj) {
   const message = obj.result.trim();
   return message === 'authentication_error'
     || /^Not logged in\s*[·:.-]?\s*Please run (?:\/login|claude auth login)\.?$/iu.test(message)
+<<<<<<< Updated upstream
     // The REAL terminal auth shape, receipted live 2026-08-01 (env-token-only runtime, revoked
     // access token): {"is_error":true, "result":"Failed to authenticate. API Error: 401 OAuth
     // access token has been revoked.", "api_error_status":401} — the vendor does NOT refresh in
     // --print mode; it fails the call with this exact result (R11V-2's verification step).
     || /^Failed to authenticate\. API Error: 401\b/u.test(message)
+=======
+>>>>>>> Stashed changes
     ? 'authentication_refresh_required' : null;
 }
 
@@ -497,10 +511,13 @@ export class ClaudeSessionCli {
       maxWireFrameBytes,
       authenticationProbe: opts.authenticationProbe ?? spawnSync,
       providerSecrets: Object.freeze((opts.providerSecrets ?? []).filter((value) => typeof value === 'string' && value.length > 0)),
+<<<<<<< Updated upstream
       providerSecretsProbe: opts.providerSecretsProbe,
       credentialController: opts.credentialController,
       authenticationSummary: opts.authenticationSummary,
       reapOwnedProcessGroup: opts.reapOwnedProcessGroup,
+=======
+>>>>>>> Stashed changes
     };
     /** @type {Map<string, object>} worker -> session */
     this._sessions = new Map();
@@ -604,11 +621,14 @@ export class ClaudeSessionCli {
           configuredPreferences: [], observation: 'unavailable',
         },
       },
+<<<<<<< Updated upstream
       // Issue #31 §2.1(1): this harness holds its session open across a completed turn, so a
       // finished turn is a checkpoint the orchestrator may steer from, not an implicit claim.
       // Absent on every other card, which reads as 'claim' — the byte-identical legacy path.
       // Inherited unmodified by GlmSessionCli/KimiSessionCli through their `{...base}` spread.
       turnCompletion: 'pausable',
+=======
+>>>>>>> Stashed changes
       verbs: {
         spawn: 'native',
         prompt: 'native',
@@ -707,6 +727,7 @@ export class ClaudeSessionCli {
     if (pending.cancelled || opts.signal?.aborted) return { ok: false, reason: 'spawn cancelled before child creation', cancelled: true };
     if (!cwd) return { ok: false, reason: 'spawn requires a worktree (opts.worktree, or opts.worktreeReady resolving {path})' };
 
+<<<<<<< Updated upstream
     // Issue #11 v3 spawn-TTL gate: refresh before child creation, then project the cache's
     // current access token into this spawn. No known-dead token reaches a provider process.
     let credentialEnv = null;
@@ -723,14 +744,21 @@ export class ClaudeSessionCli {
       }
     }
 
+=======
+>>>>>>> Stashed changes
     let route;
     try {
       route = this._prepareProviderRoute({
         model: opts.model ?? this._cfg.model,
         effort: opts.reasoningEffort,
         env: opts.replaceEnv
+<<<<<<< Updated upstream
           ? { ...(opts.env ?? {}), ...(this._cfg.env ?? {}), ...(credentialEnv ?? {}) }
           : { ...process.env, ...(this._cfg.env ?? {}), ...(opts.env ?? {}), ...(credentialEnv ?? {}) },
+=======
+          ? { ...(opts.env ?? {}), ...(this._cfg.env ?? {}) }
+          : { ...process.env, ...(this._cfg.env ?? {}), ...(opts.env ?? {}) },
+>>>>>>> Stashed changes
       });
     } catch (error) {
       return { ok: false, code: error?.code ?? 'provider_route_invalid', reason: String(error?.message ?? 'provider route invalid') };
@@ -782,7 +810,10 @@ export class ClaudeSessionCli {
       timeoutFailure: null,
       processFailure: null,
       buf: '',
+<<<<<<< Updated upstream
       discardingFrame: null, // issue #28: session-scoped latch for oversized tool_result discard
+=======
+>>>>>>> Stashed changes
       stderrCanaryTail: '',
       spawnedEmitted: false,
       sessionIdWire: null,
@@ -805,9 +836,12 @@ export class ClaudeSessionCli {
       workerPolicyObserved,
       pendingBrief: opts.attachOnly === true ? null : renderPrompt(brief),
       bootstrapTurnPending: false,
+<<<<<<< Updated upstream
       retryCount: 0,
       lastTurnText: null,
       spawnSpec: Object.freeze({ argv: Object.freeze([...argv]), cwd, env: Object.freeze({ ...route.env }) }),
+=======
+>>>>>>> Stashed changes
     };
     session.processClose = Number.isSafeInteger(session.pid) && session.pid > 0 ? new ProcessCloseReapLatch({
       generation: session.processGeneration,
@@ -829,7 +863,16 @@ export class ClaudeSessionCli {
     // (process exit; quiescence-derived wave completion). opts.timeoutMs is accepted for
     // back-compat and deliberately ignored for fate.
 
+<<<<<<< Updated upstream
     this._attachChild(session, child);
+=======
+    child.stdout.setEncoding('utf8');
+    child.stdout.on('data', (chunk) => this._onData(session, chunk));
+    child.stderr.on('data', (chunk) => this._onStderr(session, chunk));
+
+    child.on('close', (code, signal) => this._onClose(session, code, signal));
+    child.on('error', (err) => this._onSpawnError(session, err));
+>>>>>>> Stashed changes
 
     const processStarted = processStartedPayload(session.processGeneration, session.pid);
     if (processStarted) this._emit(session, 'lifecycle.process_started', processStarted);
@@ -853,7 +896,10 @@ export class ClaudeSessionCli {
       session.turnInFlight = true;
       session.turnEpoch = 1;
       session.bootstrapTurnPending = true;
+<<<<<<< Updated upstream
       session.lastTurnText = pendingBrief;
+=======
+>>>>>>> Stashed changes
       this._write(session, {
         type: 'user', message: { role: 'user', content: [{ type: 'text', text: pendingBrief }] },
       });
@@ -956,11 +1002,15 @@ export class ClaudeSessionCli {
     while ((nl = session.buf.indexOf('\n')) !== -1) {
       const line = session.buf.slice(0, nl);
       session.buf = session.buf.slice(nl + 1);
+<<<<<<< Updated upstream
       // Rule 4: provider-secret check runs before degradation (ordering preserved).
+=======
+>>>>>>> Stashed changes
       if (this._containsProviderSecret(line)) {
         this._providerSecretFailure(session);
         return;
       }
+<<<<<<< Updated upstream
       const lineBytes = Buffer.byteLength(line, 'utf8');
       if (lineBytes > this._cfg.maxWireFrameBytes) {
         // Completed-line ingestion site: degrade tool_result, else honest kill.
@@ -968,6 +1018,9 @@ export class ClaudeSessionCli {
           this._emitFrameDegraded(session, lineBytes + 1, this._parseToolUseIdFromHead(line));
           continue;
         }
+=======
+      if (Buffer.byteLength(line, 'utf8') > this._cfg.maxWireFrameBytes) {
+>>>>>>> Stashed changes
         this._wireFrameFailure(session);
         return;
       }
@@ -985,6 +1038,7 @@ export class ClaudeSessionCli {
         return;
       }
     }
+<<<<<<< Updated upstream
     // Partial-buffer ingestion site — secret check first, then size (else-if preserved).
     if (!session.terminal && this._containsProviderSecret(session.buf)) this._providerSecretFailure(session);
     else if (!session.terminal && Buffer.byteLength(session.buf, 'utf8') > this._cfg.maxWireFrameBytes) {
@@ -1008,6 +1062,14 @@ export class ClaudeSessionCli {
     const secrets = [...this._cfg.providerSecrets, ...(Array.isArray(dynamic) ? dynamic : [])]
       .filter((secret) => typeof secret === 'string' && secret.length > 0);
     if (typeof value === 'string') return secrets.some((secret) => value.includes(secret));
+=======
+    if (!session.terminal && this._containsProviderSecret(session.buf)) this._providerSecretFailure(session);
+    else if (!session.terminal && Buffer.byteLength(session.buf, 'utf8') > this._cfg.maxWireFrameBytes) this._wireFrameFailure(session);
+  }
+
+  _containsProviderSecret(value) {
+    if (typeof value === 'string') return this._cfg.providerSecrets.some((secret) => value.includes(secret));
+>>>>>>> Stashed changes
     if (Array.isArray(value)) return value.some((item) => this._containsProviderSecret(item));
     if (value && typeof value === 'object') return Object.values(value).some((item) => this._containsProviderSecret(item));
     return false;
@@ -1016,7 +1078,10 @@ export class ClaudeSessionCli {
   _providerSecretFailure(session) {
     if (session.terminal || session.processFailure) return;
     session.buf = '';
+<<<<<<< Updated upstream
     session.discardingFrame = null;
+=======
+>>>>>>> Stashed changes
     session.processFailure = {
       error: 'provider output contained protected credential material',
       code: 'provider_output_secret',
@@ -1027,18 +1092,26 @@ export class ClaudeSessionCli {
   }
 
   _onStderr(session, chunk) {
+<<<<<<< Updated upstream
     const dynamic = typeof this._cfg.providerSecretsProbe === 'function'
       ? this._cfg.providerSecretsProbe() : [];
     const secrets = [...this._cfg.providerSecrets, ...(Array.isArray(dynamic) ? dynamic : [])]
       .filter((secret) => typeof secret === 'string' && secret.length > 0);
     if (session.terminal || secrets.length === 0) return;
+=======
+    if (session.terminal || this._cfg.providerSecrets.length === 0) return;
+>>>>>>> Stashed changes
     const candidate = `${session.stderrCanaryTail}${String(chunk)}`;
     if (this._containsProviderSecret(candidate)) {
       session.stderrCanaryTail = '';
       this._providerSecretFailure(session);
       return;
     }
+<<<<<<< Updated upstream
     const maxSecretBytes = Math.max(...secrets.map((secret) => Buffer.byteLength(secret, 'utf8')));
+=======
+    const maxSecretBytes = Math.max(...this._cfg.providerSecrets.map((secret) => Buffer.byteLength(secret, 'utf8')));
+>>>>>>> Stashed changes
     session.stderrCanaryTail = candidate.slice(-Math.max(0, maxSecretBytes - 1));
   }
 
@@ -1201,6 +1274,7 @@ export class ClaudeSessionCli {
     }
     const status = obj.is_error ? 'failed' : 'completed';
     const failureCode = claudeResultFailureCode(obj);
+<<<<<<< Updated upstream
     if (failureCode === 'authentication_refresh_required'
       && this._cfg.credentialController && session.retryCount === 0 && session.lastTurnText) {
       session.retryCount = 1;
@@ -1213,6 +1287,10 @@ export class ClaudeSessionCli {
         status, obj.result, obj.usage, obj.total_cost_usd, failureCode,
         failureCode ? this._cfg.authenticationSummary?.(failureCode) : null,
       ),
+=======
+    this._emit(session, 'lifecycle.turn_completed', {
+      result: makeResult(status, obj.result, obj.usage, obj.total_cost_usd, failureCode),
+>>>>>>> Stashed changes
       usageSeal: usage.seal,
       pid: session.pid,
       modelRequested: session.modelRequested,

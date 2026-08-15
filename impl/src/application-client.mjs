@@ -1,8 +1,12 @@
 import { contextProgramIsPure } from './context-authority.mjs';
 import { normalizeContextProgram } from './context-program.mjs';
+<<<<<<< Updated upstream
 import { APPLICATION_SEMANTIC_REGISTRY, canonicalRunPhase } from './application-semantics.mjs';
 import { createRecipes } from './recipes.mjs';
 import { attachWave, createWave } from './wave.mjs';
+=======
+import { APPLICATION_SEMANTIC_REGISTRY } from './application-semantics.mjs';
+>>>>>>> Stashed changes
 
 function clientError(message, code = 'application_client_invalid') {
   return Object.assign(new Error(message), { code });
@@ -65,6 +69,7 @@ function automaticActionInputs(action) {
   return inputs;
 }
 
+<<<<<<< Updated upstream
 function advertisedActionInputs(action, supplied) {
   const inputs = { ...supplied };
   const properties = action?.inputSchema?.properties;
@@ -77,6 +82,8 @@ function advertisedActionInputs(action, supplied) {
   return inputs;
 }
 
+=======
+>>>>>>> Stashed changes
 function abortSignal(value) {
   return value !== undefined && !(value instanceof AbortSignal);
 }
@@ -111,6 +118,7 @@ function conciseProgress(view) {
 
 function prepareRunStart(objective, options) {
   if (!nonempty(objective)) throw clientError('Run objective is required');
+<<<<<<< Updated upstream
   exactOptions(options, new Set([
     'runId', 'resultIntent', 'profile', 'scope', 'model', 'harness', 'effort', 'exact', 'driverKind',
     // 93B: wave binding (waveId/waveRole) + the pre-loop wave.started payload (waveStart) ride
@@ -118,10 +126,15 @@ function prepareRunStart(objective, options) {
     'waveId', 'waveRole', 'waveStart',
   ]), 'start');
   for (const field of ['runId', 'profile', 'model', 'harness', 'effort', 'driverKind', 'waveId', 'waveRole']) {
+=======
+  exactOptions(options, new Set(['runId', 'profile', 'scope', 'model', 'harness', 'effort', 'exact']), 'start');
+  for (const field of ['runId', 'profile', 'model', 'harness', 'effort']) {
+>>>>>>> Stashed changes
     if (options[field] !== undefined && !nonempty(options[field])) {
       throw clientError(`Run ${field} is invalid`);
     }
   }
+<<<<<<< Updated upstream
   if (options.waveStart !== undefined) {
     exactOptions(options.waveStart, new Set(['roster', 'idempotencyKey']), 'wave start');
     if (!nonempty(options.waveStart.idempotencyKey) || !Array.isArray(options.waveStart.roster)
@@ -130,15 +143,20 @@ function prepareRunStart(objective, options) {
       throw clientError('Run waveStart is invalid');
     }
   }
+=======
+>>>>>>> Stashed changes
   if (options.scope !== undefined && (!Array.isArray(options.scope) || options.scope.length === 0
     || options.scope.length > 64 || options.scope.some((value) => !nonempty(value))
     || new Set(options.scope).size !== options.scope.length)) {
     throw clientError('Run scope is invalid');
   }
+<<<<<<< Updated upstream
   const resultIntent = options.resultIntent ?? 'change';
   if (!['change', 'read_only_evidence'].includes(resultIntent)) {
     throw clientError('Run resultIntent is invalid');
   }
+=======
+>>>>>>> Stashed changes
   if (options.exact !== undefined) {
     exactOptions(options.exact, new Set(['harness', 'model', 'effort']), 'exact route');
     if (['harness', 'model', 'effort'].some((field) => !nonempty(options.exact[field]))) {
@@ -155,8 +173,13 @@ function prepareRunStart(objective, options) {
     && (options.model === undefined || options.effort === undefined)) {
     throw clientError('manual routing requires model and effort together');
   }
+<<<<<<< Updated upstream
   const intent = { objective: objective.normalize('NFKC').trim(), resultIntent };
   for (const key of ['runId', 'profile', 'scope', 'driverKind', 'waveId', 'waveRole', 'waveStart']) {
+=======
+  const intent = { objective: objective.normalize('NFKC').trim() };
+  for (const key of ['runId', 'profile', 'scope']) {
+>>>>>>> Stashed changes
     if (options[key] !== undefined) intent[key] = options[key];
   }
   if (options.exact !== undefined) intent.route = options.exact;
@@ -173,7 +196,11 @@ function prepareRunStart(objective, options) {
 function prepareWorkflowStart(objective, options) {
   if (!nonempty(objective)) throw clientError('Workflow objective is required');
   exactOptions(options, new Set([
+<<<<<<< Updated upstream
     'runId', 'resultIntent', 'profile', 'scope', 'strategy', 'workspace', 'join', 'team',
+=======
+    'runId', 'profile', 'scope', 'strategy', 'workspace', 'join', 'team',
+>>>>>>> Stashed changes
   ]), 'workflow');
   const strategy = options.strategy ?? 'parallel_attempts';
   const workspace = options.workspace ?? 'isolated';
@@ -206,6 +233,7 @@ function prepareWorkflowStart(objective, options) {
     || new Set(options.scope).size !== options.scope.length)) {
     throw clientError('Workflow scope is invalid');
   }
+<<<<<<< Updated upstream
   const resultIntent = options.resultIntent ?? 'change';
   if (!['change', 'read_only_evidence'].includes(resultIntent)) {
     throw clientError('Workflow resultIntent is invalid');
@@ -213,6 +241,10 @@ function prepareWorkflowStart(objective, options) {
   return Object.freeze({
     objective: objective.normalize('NFKC').trim(),
     resultIntent,
+=======
+  return Object.freeze({
+    objective: objective.normalize('NFKC').trim(),
+>>>>>>> Stashed changes
     ...(options.runId === undefined ? {} : { runId: options.runId }),
     ...(options.profile === undefined ? {} : { profile: options.profile }),
     ...(options.scope === undefined ? {} : { scope: options.scope }),
@@ -220,6 +252,7 @@ function prepareWorkflowStart(objective, options) {
   });
 }
 
+<<<<<<< Updated upstream
 function prepareReviewStart(objective, options) {
   if (!nonempty(objective)) throw clientError('Review objective is required');
   exactOptions(options, new Set(['runId', 'profile', 'scope', 'routes']), 'review');
@@ -237,6 +270,8 @@ function prepareReviewStart(objective, options) {
   });
 }
 
+=======
+>>>>>>> Stashed changes
 function runGroupSummary(runs, views) {
   if (!Array.isArray(views) || views.length !== runs.length) {
     throw clientError('Run-group status views are invalid');
@@ -255,6 +290,7 @@ function runGroupSummary(runs, views) {
     const cleanupIncomplete = ['active', 'blocked'].includes(cleanup)
       && (view?.terminal === true || ['stopped', 'stopping'].includes(view?.outline?.phase));
     const phase = view?.outline?.phase ?? 'unknown';
+<<<<<<< Updated upstream
     const canonicalPhase = canonicalRunPhase(phase);
     const state = cleanupIncomplete ? 'cleanup_incomplete'
       : attention === 'required' ? 'attention'
@@ -263,6 +299,15 @@ function runGroupSummary(runs, views) {
             : canonicalPhase === 'result_ready' ? 'ready'
               : canonicalPhase === 'completed' ? 'completed'
                 : ['planning', 'awaiting_approval'].includes(canonicalPhase) ? 'waiting'
+=======
+    const state = cleanupIncomplete ? 'cleanup_incomplete'
+      : attention === 'required' ? 'attention'
+        : ['failed', 'denied', 'cancelled'].includes(phase) ? 'failed'
+          : phase === 'stopped' ? 'stopped'
+            : phase === 'work_completed' ? 'ready'
+              : ['completed', 'closed'].includes(phase) ? 'completed'
+                : ['planning', 'awaiting_plan_approval'].includes(phase) ? 'waiting'
+>>>>>>> Stashed changes
                   : 'active';
     return Object.freeze({
       runId: runs[index].id,
@@ -700,6 +745,7 @@ export class BatonRunContext {
   }
 }
 
+<<<<<<< Updated upstream
 const EPISODE_TOPICS = Object.freeze([
   'outline', 'output', 'sources', 'derivations', 'contradictions', 'trace', 'route',
   'verification', 'result', 'cleanup', 'help',
@@ -834,6 +880,8 @@ export class BatonWorkstreams {
   help(depth = 'outline') { return this.#run.help('run.workstreams', depth); }
 }
 
+=======
+>>>>>>> Stashed changes
 export class BatonRun {
   #application;
   #last;
@@ -874,11 +922,14 @@ export class BatonRun {
     return this.#last;
   }
 
+<<<<<<< Updated upstream
   async _command(name, args) {
     this.#last = await this.#application.command(name, args);
     return this.#last;
   }
 
+=======
+>>>>>>> Stashed changes
   outline() { return this.inspect({ depth: 'outline' }); }
 
   index() { return this.inspect({ depth: 'index' }); }
@@ -887,10 +938,13 @@ export class BatonRun {
 
   context() { return new BatonRunContext(this); }
 
+<<<<<<< Updated upstream
   workstreams() { return new BatonWorkstreams(this); }
 
   episode() { return new BatonEpisode(this); }
 
+=======
+>>>>>>> Stashed changes
   async help(topic = this.helpTopic, depth = 'outline') {
     if (!nonempty(topic)
       || !['outline', 'index', 'section', 'item', 'content', 'evidence'].includes(depth)) {
@@ -950,6 +1004,7 @@ export class BatonRun {
 
   follow(options = {}) { return this.changes(options); }
 
+<<<<<<< Updated upstream
   // Bidirectional v2 rule 6: ONE-SHOT cursor-following wait riding the run.follow command —
   // distinct from changes()/follow() (the async iterators, which wake on their initial
   // inspection and would spin a poll loop). The wave driver's wake laws ride this: one
@@ -982,6 +1037,8 @@ export class BatonRun {
     return raced.view;
   }
 
+=======
+>>>>>>> Stashed changes
   async *_timeline(channel, options = {}) {
     exactOptions(options, new Set(['signal', 'recipient']), channel);
     if (abortSignal(options.signal)
@@ -1121,8 +1178,12 @@ export class BatonRun {
     }
     if (!descriptor) throw clientError(`Run action ${action} is unavailable`, 'application_action_unavailable');
     this.#last = await this.#application.command('run.act', {
+<<<<<<< Updated upstream
       runId: this.id, actionId: descriptor.actionId,
       inputs: advertisedActionInputs(descriptor, inputs),
+=======
+      runId: this.id, actionId: descriptor.actionId, inputs,
+>>>>>>> Stashed changes
     });
     return this.#last;
   }
@@ -1136,6 +1197,7 @@ export class BatonRun {
     if (!nonempty(role) || !nonempty(reason)) throw clientError('Workflow member stop is invalid');
     return this.act('stop_member', { role, reason });
   }
+<<<<<<< Updated upstream
   adopt(reason) {
     if (reason !== undefined && !nonempty(reason)) throw clientError('Run adoption reason is invalid');
     return this.act('adopt_result', reason === undefined ? {} : { reason });
@@ -1143,6 +1205,12 @@ export class BatonRun {
   revise(reason) {
     if (reason !== undefined && !nonempty(reason)) throw clientError('Workflow revision reason is invalid');
     return this.act('revise_candidate', reason === undefined ? {} : { reason });
+=======
+  adopt(reason = 'Adopt the verified result.') { return this.act('adopt_result', { reason }); }
+  revise(reason = 'Revise the selected Candidate using its recorded feedback.') {
+    if (!nonempty(reason)) throw clientError('Workflow revision reason is invalid');
+    return this.act('revise_candidate', { reason });
+>>>>>>> Stashed changes
   }
   export() { return this.act('export_result'); }
   review(inputs) { return this.act('semantic_review', inputs); }
@@ -1173,6 +1241,132 @@ export class BatonRun {
     this.#last = await this.#application.command('run.debug', {
       runId: this.id, ...options,
     });
+    return this.#last;
+  }
+
+  async sendFeedback(role, feedback) {
+    if (!nonempty(role) || (typeof feedback !== 'string'
+      && (!feedback || typeof feedback !== 'object' || Array.isArray(feedback)))) {
+      throw clientError('Workflow feedback is invalid');
+    }
+    this.#last = await this.#application.command('run.feedback', {
+      runId: this.id, role, feedback,
+    });
+    return this.#last;
+  }
+
+  async apply(options = {}) {
+    exactOptions(options, new Set(['strategy', 'reason']), 'apply');
+    let descriptor = outlineActions(this.#last).find((action) => action.kind === 'integrate');
+    if (!descriptor) {
+      await this.inspect();
+      descriptor = outlineActions(this.#last).find((action) => action.kind === 'integrate');
+    }
+    if (!descriptor) {
+      throw clientError('Run has no adopted result available to apply', 'application_action_unavailable');
+    }
+    const advertised = Array.isArray(descriptor.choices) ? descriptor.choices : [];
+    const strategy = options.strategy
+      ?? descriptor.inputSchema?.properties?.strategy?.default
+      ?? (advertised.includes('ff-only') ? 'ff-only' : advertised[0]);
+    const reason = options.reason
+      ?? descriptor.inputSchema?.properties?.reason?.default
+      ?? 'Apply the adopted verified result.';
+    if (!advertised.includes(strategy) || !nonempty(reason)) {
+      throw clientError('Run apply options are outside the advertised integration authority',
+        'application_action_input_invalid');
+    }
+    return this.act(descriptor.actionId, { strategy, reason });
+  }
+
+  async answer(requestId, answer) {
+    if (!nonempty(requestId) || !answer || typeof answer !== 'object' || Array.isArray(answer)) {
+      throw clientError('Run answer is invalid');
+    }
+    this.#last = await this.#application.command('run.answer', {
+      runId: this.id, requestId, answer,
+    });
+    return this.#last;
+  }
+
+  async send(message, options = {}) {
+    if (!nonempty(message)) throw clientError('Run guidance is invalid');
+    exactOptions(options, new Set(['recipient', 'delivery']), 'send');
+    if (options.recipient !== undefined && !nonempty(options.recipient)) {
+      throw clientError('Run guidance recipient is invalid');
+    }
+    if (options.delivery !== undefined
+      && !['nudge', 'now', 'turn'].includes(options.delivery)) {
+      throw clientError('Run guidance delivery is invalid');
+    }
+    const actions = await this.actions();
+    const descriptor = actions.find((action) => action.kind === 'send');
+    if (!descriptor) {
+      throw clientError('Run has no active semantic recipient for guidance',
+        'application_action_unavailable');
+    }
+    const recipient = options.recipient
+      ?? descriptor.inputSchema?.properties?.recipient?.default;
+    if (!nonempty(recipient)) {
+      throw clientError('Run guidance recipient is ambiguous; select an advertised role',
+        'application_control_recipient_ambiguous');
+    }
+    return this.act(descriptor.actionId, {
+      message, recipient,
+      delivery: options.delivery
+        ?? descriptor.inputSchema?.properties?.delivery?.default
+        ?? 'nudge',
+    });
+  }
+
+  async interrupt(options = {}) {
+    exactOptions(options, new Set(['recipient', 'reason']), 'interrupt');
+    if ((options.recipient !== undefined && !nonempty(options.recipient))
+      || (options.reason !== undefined && !nonempty(options.reason))) {
+      throw clientError('Run interrupt is invalid');
+    }
+    const actions = await this.actions();
+    const descriptor = actions.find((action) => action.kind === 'interrupt');
+    if (!descriptor) {
+      throw clientError('Run has no active semantic recipient to interrupt',
+        'application_action_unavailable');
+    }
+    const recipient = options.recipient
+      ?? descriptor.inputSchema?.properties?.recipient?.default;
+    if (!nonempty(recipient)) {
+      throw clientError('Run interrupt recipient is ambiguous; select an advertised role',
+        'application_control_recipient_ambiguous');
+    }
+    return this.act(descriptor.actionId, {
+      recipient,
+      reason: options.reason
+        ?? descriptor.inputSchema?.properties?.reason?.default
+        ?? 'Interrupt the current work turn.',
+    });
+  }
+
+  async steer(target, message, options = {}) {
+    if (!nonempty(target) || !nonempty(message)) throw clientError('Run steer is invalid');
+    exactOptions(options, new Set(['mode', 'reason']), 'steer');
+    const mode = options.mode ?? 'nudge';
+    const reason = options.reason ?? 'Orchestrator steered the active worker.';
+    if (!['nudge', 'now', 'turn'].includes(mode) || !nonempty(reason)) {
+      throw clientError('Run steer is invalid');
+    }
+    this.#last = await this.#application.command('run.steer', {
+      runId: this.id, target, mode, message, reason,
+    });
+    return this.#last;
+  }
+
+  candidates() { return this.inspect({ depth: 'section', section: 'candidates' }); }
+
+  feedback() { return this.inspect({ depth: 'section', section: 'feedback' }); }
+
+  rounds() { return this.inspect({ depth: 'section', section: 'rounds' }); }
+
+  async evidence() {
+    this.#last = await this.#application.command('run.evidence', { runId: this.id });
     return this.#last;
   }
 
@@ -1360,7 +1554,11 @@ export class BatonRuns {
       throw clientError('startMany requires one bounded non-empty request array');
     }
     const allowed = new Set([
+<<<<<<< Updated upstream
       'objective', 'runId', 'resultIntent', 'profile', 'scope', 'model', 'harness', 'effort', 'exact',
+=======
+      'objective', 'runId', 'profile', 'scope', 'model', 'harness', 'effort', 'exact',
+>>>>>>> Stashed changes
     ]);
     const normalized = requests.map((request) => {
       if (!request || typeof request !== 'object' || Array.isArray(request)) {
@@ -1533,7 +1731,10 @@ export class BatonRunGroup {
 
 export class BatonClient {
   #application;
+<<<<<<< Updated upstream
   #repoRoot;
+=======
+>>>>>>> Stashed changes
 
   constructor(application) {
     if (!application || typeof application.command !== 'function') {
@@ -1541,6 +1742,7 @@ export class BatonClient {
     }
     this.runs = new BatonRuns(application);
     this.#application = application;
+<<<<<<< Updated upstream
     // Issue #114: the repository root rides the command port (when the binder knows it) so the
     // workflow-as-data interpreter's D4 harvest can read the authoritative result sha via git.
     this.#repoRoot = typeof application.repoRoot === 'string' && application.repoRoot.length > 0
@@ -1583,6 +1785,11 @@ export class BatonClient {
     return createRecipes(this, this.#repoRoot);
   }
 
+=======
+    Object.freeze(this);
+  }
+
+>>>>>>> Stashed changes
   help(topic = 'application', depth = 'outline') {
     if (!nonempty(topic)
       || !['outline', 'index', 'section', 'item', 'content', 'evidence'].includes(depth)) {
@@ -1591,6 +1798,7 @@ export class BatonClient {
     return this.#application.command('application.help', { topic, depth });
   }
 
+<<<<<<< Updated upstream
   async doctor() {
     if (typeof this.#application.doctor !== 'function') {
       throw clientError('Deployment doctor is unavailable', 'application_doctor_unavailable');
@@ -1667,6 +1875,8 @@ export class BatonClient {
     });
   }
 
+=======
+>>>>>>> Stashed changes
   async workflow(objective, options = {}) {
     const intent = prepareWorkflowStart(objective, options);
     const initial = await this.#application.command('run.start', { intent });
@@ -1684,6 +1894,7 @@ export function bindBaton(application, principal) {
   }
   return new BatonClient(Object.freeze({
     command: (name, args) => application.command(name, args, principal),
+<<<<<<< Updated upstream
     // Issue #114: surface the repository root to the client so baton.recipes.runWorkflow's D4
     // harvest can read the authoritative result sha (the driver knows the repo; the facade did not).
     repoRoot: application?.driver?.repoRoot ?? application?.driver?.coordinator?._repoRoot ?? null,
@@ -1691,6 +1902,8 @@ export function bindBaton(application, principal) {
     ...(typeof application.assertWaveStartReplayable === 'function'
       ? { assertWaveStartReplayable: (waveId) => application.assertWaveStartReplayable(waveId) }
       : {}),
+=======
+>>>>>>> Stashed changes
   }));
 }
 
@@ -1700,6 +1913,7 @@ export function bindBatonPort(commandPort) {
   }
   const port = Object.freeze({
     command: (name, args) => commandPort.command(name, args),
+<<<<<<< Updated upstream
     ...(typeof commandPort.doctor === 'function'
       ? { doctor: () => commandPort.doctor() } : {}),
   });
@@ -1729,4 +1943,8 @@ export function embeddedCanonicalFacade(registry = APPLICATION_SEMANTIC_REGISTRY
     }));
   }
   return facade;
+=======
+  });
+  return new BatonClient(port);
+>>>>>>> Stashed changes
 }

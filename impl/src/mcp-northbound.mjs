@@ -56,6 +56,7 @@ const APPLICATION_TOOL = Object.freeze(Object.fromEntries(
     ...CANONICAL_ORDINARY_SIBLINGS.map((sibling) => [sibling.tool, sibling.command]),
   ].map(([tool, name]) => [tool, name]),
 ));
+<<<<<<< Updated upstream
 // REFLEX-4 slice A (docs/32 §3.4, issue #19): application.context_eval has no MCP tool here (not
 // in MCP_APPLICATION_ENTRIES above, not in ORDINARY_APPLICATION_ENTRIES/
 // ORDINARY_APPLICATION_TOOL_DEFINITIONS below) because it is not an APPLICATION_COMMAND_DEFINITIONS
@@ -76,6 +77,15 @@ const LEGACY_ORDINARY_APPLICATION_ROWS = Object.freeze([
   ['baton_run_stop', 'run.stop'],
   // S-1 v2: portable atomic attach-and-harvest (canonical baton_waves_attach).
   ['baton_waves_attach', 'waves.attach'],
+=======
+const ORDINARY_APPLICATION_ENTRIES = Object.freeze([
+  ['baton_help', 'application.help', APPLICATION_COMMAND_DEFINITIONS['application.help']],
+  ['baton_runs', 'runs.list', APPLICATION_COMMAND_DEFINITIONS['runs.list']],
+  ['baton_run_start', 'run.start', APPLICATION_COMMAND_DEFINITIONS['run.start']],
+  ['baton_run_inspect', 'run.inspect', APPLICATION_COMMAND_DEFINITIONS['run.inspect']],
+  ['baton_run_act', 'run.act', APPLICATION_COMMAND_DEFINITIONS['run.act']],
+  ['baton_run_stop', 'run.stop', APPLICATION_COMMAND_DEFINITIONS['run.stop']],
+>>>>>>> Stashed changes
 ]);
 const ORDINARY_APPLICATION_ENTRIES = Object.freeze([
   ...LEGACY_ORDINARY_APPLICATION_ROWS.map(([tool, command]) => [
@@ -279,6 +289,7 @@ function stateFailureCode(cause) {
   if (typeof cause?.code === 'string' && cause.code.startsWith('application_')) return cause.code;
   if (typeof cause?.code === 'string' && cause.code.startsWith('worker_policy_')) return cause.code;
   if (typeof cause?.code === 'string' && cause.code.startsWith('run_orchestrator_')) return cause.code;
+<<<<<<< Updated upstream
   // Issue #114 (B3): the workflow-as-data lane's five refusal codes (workflow_spec_invalid,
   // workflow_member_invalid, workflow_steering_unknown, workflow_harvest_invalid,
   // workflow_objective_ref_invalid) surface typed on the wire — checked BEFORE the TypeError-name
@@ -295,6 +306,9 @@ function stateFailureCode(cause) {
   // wire. The worker-stream codes (message_depth_exceeded / message_target_not_member /
   // message_parent_not_found) deliberately stay stream-only, never MCP tool errors.
   if (cause?.code === 'message_budget_invalid') return cause.code;
+=======
+  if (cause?.code === 'run_stopping') return cause.code;
+>>>>>>> Stashed changes
   if (['capability_not_found', 'capability_op_unavailable', 'capability_budget_invalid', 'cancelled',
     'capability_result_invalid', 'capability_result_oversize', 'capability_authority_forbidden', 'capability_args_invalid',
     'capability_resume_invalid', 'capability_reverify_invalid', 'capability_actor_invalid', 'capability_repo_invalid', 'capability_idempotency_invalid',
@@ -458,6 +472,22 @@ const applicationFeedbackSchema = {
     }, ['summary', 'findings']),
   ],
 };
+const applicationFeedbackFindingSchema = schema({
+  kind: { type: 'string', enum: ['defect', 'risk', 'suggestion', 'question', 'observation'] },
+  severity: { type: 'string', enum: ['info', 'low', 'medium', 'high', 'critical'] },
+  message: { type: 'string', minLength: 1, maxLength: 4_096 },
+  path: { oneOf: [{ type: 'string', minLength: 1, maxLength: 4_096 }, { type: 'null' }] },
+  line: { oneOf: [{ type: 'integer', minimum: 1 }, { type: 'null' }] },
+}, ['kind', 'severity', 'message', 'path', 'line']);
+const applicationFeedbackSchema = {
+  oneOf: [
+    { type: 'string', minLength: 1, maxLength: 4_096 },
+    schema({
+      summary: { type: 'string', minLength: 1, maxLength: 4_096 },
+      findings: { type: 'array', minItems: 1, maxItems: 32, items: applicationFeedbackFindingSchema },
+    }, ['summary', 'findings']),
+  ],
+};
 const APPLICATION_TOOL_DEFINITIONS = Object.freeze([
   { name: 'fleet_run_start', description: 'Start one Baton Run from a concise objective, explicit change or read-only evidence result intent, deployment profile, and exact harness/model/effort route; returns a readable Plan awaiting approval.', inputSchema: schema({ ...repo, ...idem, intent: applicationIntentSchema }, ['repoId', 'idempotencyKey', 'intent']), annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false } },
   { name: 'fleet_run_status', description: 'Read the fresh bounded authoritative RunView for one Run.', inputSchema: schema({ ...repo, runId }, ['repoId', 'runId']), annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false } },
@@ -467,6 +497,10 @@ const APPLICATION_TOOL_DEFINITIONS = Object.freeze([
   { name: 'fleet_run_wait', description: 'Wait a bounded deployment-approved interval and return a fresh authoritative RunView.', inputSchema: schema({ ...repo, runId, timeoutMs: { type: 'integer', minimum: 1 } }, ['repoId', 'runId', 'timeoutMs']), annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false } },
   { name: 'fleet_run_answer', description: 'Answer one Run-owned pending question or approval exactly once.', inputSchema: schema({ ...repo, ...idem, runId, requestId: { type: 'string', minLength: 1, maxLength: 4_096 }, answer: applicationAnswerSchema }, ['repoId', 'idempotencyKey', 'runId', 'requestId', 'answer']), annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false } },
   { name: 'fleet_run_feedback', description: 'Attach typed operator feedback to one immutable verified Workflow candidate selected by role.', inputSchema: schema({ ...repo, ...idem, runId, role: runId, feedback: applicationFeedbackSchema }, ['repoId', 'idempotencyKey', 'runId', 'role', 'feedback']), annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false } },
+<<<<<<< Updated upstream
+=======
+  { name: 'fleet_run_steer', description: 'Steer one current Run-owned worker using its server-resolved fence and an explicit human reason.', inputSchema: schema({ ...repo, ...idem, runId, target: runId, mode: { type: 'string', enum: ['nudge', 'now', 'turn'] }, message: { type: 'string', minLength: 1, maxLength: 4_096 }, reason: { type: 'string', minLength: 1, maxLength: 1_024 } }, ['repoId', 'idempotencyKey', 'runId', 'target', 'mode', 'message', 'reason']), annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false } },
+>>>>>>> Stashed changes
   { name: 'fleet_run_stop', description: 'Durably close one Run to new effects, then kill and reap only its exact workers and return its stop receipt.', inputSchema: schema({ ...repo, ...idem, runId, reason: { type: 'string', minLength: 1, maxLength: 1_024 } }, ['repoId', 'idempotencyKey', 'runId', 'reason']), annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false } },
   { name: 'fleet_run_evidence', description: 'Return one bounded content-addressed terminal evidence manifest for a Run.', inputSchema: schema({ ...repo, runId }, ['repoId', 'runId']), annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false } },
   { name: 'fleet_run_episode', description: 'Read one progressively addressed Episode chapter without inspect selectors.', inputSchema: schema({ ...repo, runId, topic: runId, detail: { type: 'string', enum: ['item', 'content', 'evidence'] }, role: runId, generation: { type: 'integer', minimum: 1 }, pageCursor: { type: 'string', minLength: 1, maxLength: 4096 }, cursor: { type: 'integer', minimum: 0 }, waitMs: { type: 'integer', minimum: 1 } }, ['repoId', 'runId']), annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false } },
@@ -505,8 +539,11 @@ const LEGACY_ORDINARY_APPLICATION_TOOL_DEFINITIONS = Object.freeze([
     inputSchema: schema({
       ...repo, runId, depth: { type: 'string', enum: APPLICATION_SEMANTIC_REGISTRY.depths },
       section: runId, item: runId, cursor: { type: 'integer', minimum: 0 },
+<<<<<<< Updated upstream
       offset: { type: 'integer', minimum: 0 },
       pageCursor: { type: 'string', minLength: 1, maxLength: 4096 }, recipient: runId,
+=======
+>>>>>>> Stashed changes
       waitMs: { type: 'integer', minimum: 1 },
     }, ['repoId', 'runId']),
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
@@ -1433,9 +1470,13 @@ export class McpFleetServer {
       : this.surface === 'advanced' ? ADVANCED_TOOL_DEFINITIONS : TOOL_DEFINITIONS;
     this.toolDefinitions = selectedTools.map((tool) => {
       const copy = clone(tool);
+<<<<<<< Updated upstream
       // docs/36 §8.4 (M5) — the per-deployment schema mutation retired: the advertised schema is
       // deployment-independent, and the deployment bound is enforced at validation time
       // (validateArguments rejects timeoutMs > this.maxWaitMs with invalid_run_wait).
+=======
+      if (['fleet_run_wait', 'fleet_run_follow'].includes(copy.name)) copy.inputSchema.properties.timeoutMs.maximum = this.maxWaitMs;
+>>>>>>> Stashed changes
       if (this.bindApplicationContext) {
         delete copy.inputSchema.properties.repoId;
         delete copy.inputSchema.properties.idempotencyKey;
@@ -1619,16 +1660,23 @@ export class McpFleetServer {
             principalId: this.principal.userId,
             sessionId: this.principal.sessionId,
           },
+<<<<<<< Updated upstream
           {
             transport: 'mcp', requestId: String(id), idempotencyKey: `mcp.call:${id}`,
             capabilityAuthority: northboundCapabilityToken('mcp'),
             capabilities: [...this.principal.capabilities],
           },
+=======
+>>>>>>> Stashed changes
         );
       } catch (cause) {
         try { this._audit('tool_refused', params.name, args, stateFailureCode(cause)); }
         catch { return protocolResult(id, toolError('temporarily_unavailable')); }
+<<<<<<< Updated upstream
         return protocolResult(id, laneCraftedToolError(cause));
+=======
+        return protocolResult(id, toolError(stateFailureCode(cause)));
+>>>>>>> Stashed changes
       }
       if (!Array.isArray(semanticAuthority?.requiredCapabilities)
         || !semanticAuthority.requiredCapabilities.every(
@@ -1639,6 +1687,7 @@ export class McpFleetServer {
         return protocolResult(id, toolError('forbidden'));
       }
     }
+<<<<<<< Updated upstream
     // MCP-W3 (mcp-packaging-decisions v1.0): deployment.doctor is quota-free — it is the
     // route-picking prerequisite, and charging quota would blind callers exactly when they need
     // it (glm #6). MCP-W1 (codex #1): waves.start debits quota PER MEMBER, never once per call —
@@ -1657,6 +1706,11 @@ export class McpFleetServer {
         }
       } catch { return protocolResult(id, toolError('temporarily_unavailable')); }
     }
+=======
+    let quota;
+    try { quota = await this.takeToolQuota({ userId: this.principal.userId, sessionId: this.principal.sessionId, tool: params.name, repoId: args.repoId }); }
+    catch { return protocolResult(id, toolError('temporarily_unavailable')); }
+>>>>>>> Stashed changes
     if (!quota?.ok) {
       try { this._audit('tool_rate_limited', params.name, args); } catch { return protocolResult(id, toolError('temporarily_unavailable')); }
       return protocolResult(id, toolError('rate_limited'));
@@ -1675,7 +1729,11 @@ export class McpFleetServer {
           requestId,
         })}`;
         const value = await this._dispatch(name, args, null, observeCallId, this.principal);
+<<<<<<< Updated upstream
         const refused = ['run.follow', 'run.wait'].includes(APPLICATION_TOOL[name]) ? this._authority(name, args) : null;
+=======
+        const refused = ['fleet_run_follow', 'fleet_run_wait'].includes(name) ? this._authority(name, args) : null;
+>>>>>>> Stashed changes
         if (refused) {
           this._audit('tool_refused_after_wait', name, args, refused);
           return toolError(refused);
@@ -1780,18 +1838,42 @@ export class McpFleetServer {
       }
       if (admission.call.status === 'completed' && APPLICATION_TOOL[name]) {
         try {
+<<<<<<< Updated upstream
           const sessionAuthority = this.principal.sessionAuthority ?? null;
+=======
+          const lease = typeof this.coordination.activeRunOrchestratorLeaseForSession === 'function'
+            ? this.coordination.activeRunOrchestratorLeaseForSession({
+              repoId: args.repoId,
+              principalId: this.principal.userId,
+              sessionId: this.principal.sessionId,
+              expiresAt: this.principal.expiresAt,
+            }) : null;
+>>>>>>> Stashed changes
           await this.application.authorizeReplay(APPLICATION_TOOL[name], applicationArgs(name, args), {
             actor, principalId: this.principal.userId, sessionId: this.principal.sessionId,
           }, {
             transport: 'mcp', requestId: String(admission.call.callId),
             idempotencyKey: `mcp.call:${admission.call.callId}`,
+<<<<<<< Updated upstream
             capabilityAuthority: northboundCapabilityToken('mcp'),
             capabilities: [...this.principal.capabilities],
             ...(APPLICATION_TOOL[name] === 'run.act' ? {
               semanticAuthority: admission.call.semanticAuthority,
             } : {}),
             ...(sessionAuthority ? { sessionAuthority: clone(sessionAuthority) } : {}),
+=======
+            ...(APPLICATION_TOOL[name] === 'run.act' ? {
+              capabilityAuthority: northboundCapabilityToken('mcp'),
+              capabilities: [...this.principal.capabilities],
+              semanticAuthority: admission.call.semanticAuthority,
+            } : {}),
+            ...(lease ? { sessionAuthority: {
+              schemaVersion: 1,
+              authorityDigest: lease.session.authorityDigest,
+              expiresAt: lease.session.expiresAt,
+              orchestratorLeaseId: lease.leaseId,
+            } } : {}),
+>>>>>>> Stashed changes
           });
         } catch (cause) { return laneCraftedToolError(cause); }
       }
@@ -1861,6 +1943,16 @@ export class McpFleetServer {
   async _dispatch(name, args, actor, callId, principal = this.principal, semanticAuthority = null) {
     let value;
     if (APPLICATION_TOOL[name]) {
+<<<<<<< Updated upstream
+=======
+      const lease = typeof this.coordination.activeRunOrchestratorLeaseForSession === 'function'
+        ? this.coordination.activeRunOrchestratorLeaseForSession({
+          repoId: args.repoId,
+          principalId: principal.userId,
+          sessionId: principal.sessionId,
+          expiresAt: principal.expiresAt,
+        }) : null;
+>>>>>>> Stashed changes
       value = await this.application.command(
         APPLICATION_TOOL[name],
         applicationArgs(name, args),
@@ -1870,6 +1962,7 @@ export class McpFleetServer {
           sessionId: principal.sessionId,
         },
         {
+<<<<<<< Updated upstream
           ...this._applicationDispatchContext(args, callId, principal),
           ...(APPLICATION_TOOL[name] === 'run.act' ? { semanticAuthority } : {}),
         },
@@ -2109,6 +2202,23 @@ export class McpFleetServer {
         principalId: principal.userId, sessionId: principal.sessionId,
       }, this._applicationDispatchContext(args, callId, principal));
     }
+=======
+          transport: 'mcp', requestId: String(callId), idempotencyKey: `mcp.call:${callId}`,
+          ...(APPLICATION_TOOL[name] === 'run.act' ? {
+            capabilityAuthority: northboundCapabilityToken('mcp'),
+            capabilities: [...principal.capabilities],
+            semanticAuthority,
+          } : {}),
+          ...(lease ? { sessionAuthority: {
+            schemaVersion: 1,
+            authorityDigest: lease.session.authorityDigest,
+            expiresAt: lease.session.expiresAt,
+            orchestratorLeaseId: lease.leaseId,
+          } } : {}),
+        },
+      );
+    }
+>>>>>>> Stashed changes
     else if (name === 'fleet_spawn') value = await this.coordinator.spawn(args.harness, args.brief, {
       model: args.model, effort: args.effort, modelPolicy: args.modelPolicy, taskId: args.taskId ?? `mcp-${callId}`,
       deps: args.deps, taskType: args.taskType, session: args.session, refines: args.refines,

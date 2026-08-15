@@ -573,6 +573,7 @@ function coordinatorFixture(adapter, log = new Log(mkdtempSync(join(tmpdir(), 'p
   return { coordinator: make(), make, log, coordination };
 }
 
+<<<<<<< Updated upstream
 test('PL7: each observed unconfirmed reap drives a bounded coordinator kill and converges without restart', async () => {
   let attempts = 0;
   const exactGroups = [];
@@ -674,6 +675,8 @@ test('PL7/PL10: explicit reap retries stop at the outer deadline and remain oper
   assert.equal(coordinator._workers.get(handle.id).localAuthority, false);
 });
 
+=======
+>>>>>>> Stashed changes
 async function establishVerifiedRecoveryPrior(coordinator, adapter, handle) {
   adapter.emit('lifecycle.turn_completed', handle.id, {
     status: 'completed',
