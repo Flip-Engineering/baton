@@ -347,9 +347,9 @@ function createWaveHandle({ repoRoot, members, state, waveId = null }) {
   async function progress() {
     const members = [];
     for (const [role, entry] of state.members) {
-      if (!entry.run) {
-        // §7.2: a wave member that never started surfaces the canonical member state `failed`
-        // with a typed cause (`start`), never the legacy run phase `start_failed`.
+      if (!entry.run || entry.startError) {
+        // §7.2 + #230: a member whose start OR approve phase threw surfaces `failed` with the
+        // typed cause — a live handle that can never dispatch must not read as a silent member.
         members.push({ role, phase: 'failed', terminalCause: 'start', terminal: true, attention: null, error: entry.startError, knowledgeDigest: null });
         continue;
       }
@@ -449,7 +449,7 @@ function createWaveHandle({ repoRoot, members, state, waveId = null }) {
   async function settle({ timeoutMs = 60_000 } = {}) {
     if (!Number.isSafeInteger(timeoutMs) || timeoutMs <= 0) throw waveError('wave settle timeoutMs is invalid');
     const deadline = Date.now() + timeoutMs;
-    const settled = new Set([...state.members.keys()].filter((role) => !state.members.get(role).run));
+    const settled = new Set([...state.members.keys()].filter((role) => !state.members.get(role).run || state.members.get(role).startError));
     while (settled.size < state.members.size && Date.now() < deadline) {
       for (const [role, entry] of state.members) {
         if (settled.has(role) || !entry.run) continue;
@@ -468,7 +468,13 @@ function createWaveHandle({ repoRoot, members, state, waveId = null }) {
     for (const [role, entry] of state.members) {
       if (state.outcomes.some((outcome) => outcome.role === role)) continue;
       const outcome = { role };
-      if (!entry.run) {
+      if (!entry.run || entry.startError) {
+        // #230: a member whose start OR approve phase threw is START-FAILED in wave terms —
+        // createWave records startError for both (runs.start and the follow-on run.approve ride
+        // the same catch). A run handle may exist (start succeeded) while the machinery can
+        // never dispatch it; polling it to a quiescence-stop erases the typed refusal — the
+        // fleet-wide silent-swallow that cost the 2026-08-15 wave-b packs. The typed error
+        // settles verbatim, never silence.
         Object.assign(outcome, { phase: 'failed', terminalCause: 'start', terminal: true, narrative: null, resultSha: null, error: entry.startError });
       } else {
         try {
@@ -543,7 +549,7 @@ function createWaveHandle({ repoRoot, members, state, waveId = null }) {
   const wave = {
     waveId,
     get runs() {
-      return new Map([...state.members.entries()].filter(([, entry]) => entry.run).map(([role, entry]) => [role, entry.run]));
+      return new Map([...state.members.entries()].filter(([, entry]) => entry.run && !entry.startError).map(([role, entry]) => [role, entry.run]));
     },
     get pumpQuiescent() { return pumpQuiescent(); },
     progress, send, stopMember, settle, close, evidence,

@@ -299,6 +299,28 @@ export class OmpRpcCli {
         supported: ['mid-turn-message', 'interrupt'],
         observation: 'native-rpc',
       },
+      // #230: the worker-policy advertisement the deployment's DEFAULT_WORKER_POLICY_REQUEST
+      // resolves against (coordinator._spawn). Without it every deployment-level plan dispatch
+      // refused post-approval with worker_policy_invalid — the fleet-wide approval→dispatch
+      // seam death (six wave-b packs + probes, 2026-08-15). Facts, mirroring the claude-session
+      // posture: one dedicated omp process per member in its own worktree cwd (private_runtime),
+      // launched with the configured permission mode (unattended autonomy, full same-UID access
+      // — honest: yolo means filesystem/network containment is unverified).
+      workerPolicy: {
+        schemaVersion: 1,
+        autonomy: {
+          supported: ['unattended'], default: 'unattended', perTask: false,
+          observation: 'launch', mechanisms: [`permission-mode-${this._permissionMode}`],
+        },
+        access: {
+          supported: ['full'], default: 'full', perTask: false,
+          observation: 'launch', mechanisms: ['omp-unsandboxed-permissions'],
+        },
+        containment: {
+          hostProcess: 'same_uid', guarantees: ['private_runtime'],
+          configuredPreferences: ['worktree-cwd', 'profile-isolation'], observation: 'unavailable',
+        },
+      },
       containment: {
         hostProcess: 'same_uid', guarantees: ['worktree-cwd', 'tools-allowlist', 'profile-isolation'],
         surface: 'rpc-stdio',
