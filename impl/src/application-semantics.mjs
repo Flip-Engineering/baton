@@ -1150,6 +1150,19 @@ export function deriveSurfaceNames(key) {
   });
 }
 
+// Issue #233 (canonical naming unification): the ONE admission-name derivation every
+// northbound surface imports. A flagged operation is admitted under BOTH spellings on each
+// surface — its canonical dot-name (the operation key, the durable identity the dispatch layer
+// and the wire card already speak) and the surface's derived transport — so no surface
+// maintains a second, divergent spelling of the same verb. The transports are exactly
+// deriveSurfaceNames outputs (`web` underscore transport; `mcp` is the fleet_* application-tool
+// transport `fleet_${web}`), byte-identical to the retained legacy tables, which stay admitted
+// beside the canonical names.
+export function canonicalAndTransportNames(key) {
+  const names = deriveSurfaceNames(key);
+  return Object.freeze({ canonical: key, web: names.web, mcp: `fleet_${names.web}` });
+}
+
 const ALL_SURFACES = Object.freeze(['cli', 'mcp', 'web', 'embedded']);
 export const APPLICATION_OPERATION_PROFILES = Object.freeze([
   'ordinary', 'kernel', 'authoring', 'worker', 'remote_bridge', 'host',

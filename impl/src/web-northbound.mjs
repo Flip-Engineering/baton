@@ -10,11 +10,21 @@ import { operatorAsset } from './web-operator.mjs';
 import { northboundCapabilityToken } from './northbound-capability-authority.mjs';
 import { sanitizeGoalPlanProjection } from './goal-plan.mjs';
 import { APPLICATION_COMMAND_DEFINITIONS, validateApplicationCommandArgs } from './application.mjs';
-import { APPLICATION_SEMANTIC_REGISTRY, applicationOperationAliasMap } from './application-semantics.mjs';
+import { APPLICATION_SEMANTIC_REGISTRY, applicationOperationAliasMap, canonicalAndTransportNames } from './application-semantics.mjs';
 
+// Issue #233 (canonical naming unification): every web-flagged application definition is
+// admitted under BOTH spellings, derived through the ONE canonicalAndTransportNames seam — the
+// canonical dot-name (the definition key, the durable identity the wire card already
+// advertises) beside its derived underscore transport. Both spellings route to the SAME
+// definition, so capability, argument, reconcilability, and read-only class derivation below
+// admit the pair identically; the caller's chosen spelling stays the admitted identity
+// (M4B-1 — the scope key records envelope.command verbatim, never resolved away).
 const WEB_APPLICATION_ENTRIES = Object.entries(APPLICATION_COMMAND_DEFINITIONS)
   .filter(([, definition]) => definition.web)
-  .map(([name, definition]) => [name.replaceAll('.', '_'), name, definition]);
+  .flatMap(([name, definition]) => {
+    const { canonical, web } = canonicalAndTransportNames(name);
+    return [[web, name, definition], [canonical, name, definition]];
+  });
 // docs/36 §9 M4 (M4b — the transport flip) — the canonical grammar transport names admitted beside
 // the retained legacy names. Each canonical transport is a first-class admitted command that maps
 // to the SAME application command as its legacy sibling (the registry alias map), so both spellings
@@ -69,7 +79,32 @@ const WAVE_ARG_FIELDS = Object.freeze({
   waves_run: new Set(['detach', 'idempotencyKey', 'spec', 'specPath', 'specDsl']),
   waves_compile: new Set(['idempotencyKey', 'spec', 'specPath', 'specDsl']),
 });
-const WEB_DIRECT_PORT_COMMANDS = new Set(WAVE_WEB_ENTRIES.map(([transport]) => transport));
+// Issue #233: each pinned direct-port row admits BOTH spellings — the row's canonical dot-name
+// beside its byte-stable underscore transport (the pinned key set above is untouched; the dot
+// rows are additions beside it, the same alias pattern CANONICAL_WEB_ENTRIES demonstrates).
+// ARG_FIELDS follow the rows: the dot spelling accepts exactly its transport's closed set.
+const WAVE_DOT_WEB_ENTRIES = Object.freeze(WAVE_WEB_ENTRIES
+  .map(([transport, name, capabilities]) => [name, name, capabilities]));
+const WAVE_DOT_ARG_FIELDS = Object.freeze(Object.fromEntries(
+  WAVE_WEB_ENTRIES.map(([transport, name]) => [name, WAVE_ARG_FIELDS[transport]]),
+));
+// Issue #233: deployment.doctor on the web lane — the measured surface split (MCP admitted it
+// as baton_deployment_doctor; the web wire 404'd). Both spellings derive through the ONE seam
+// and ride the direct-port admission: the application dispatch layer already routes
+// command('deployment.doctor') to the fresh readiness read (application.mjs), and the port's
+// argument authority is the closed empty set — the envelope's top-level repoId is the
+// deployment scope, exactly as the MCP tool's repoId argument is transport-bound there.
+const DEPLOYMENT_WEB_ENTRIES = Object.freeze(
+  [canonicalAndTransportNames('deployment.doctor').web, canonicalAndTransportNames('deployment.doctor').canonical]
+    .map((transport) => [transport, 'deployment.doctor', Object.freeze(['observe'])]),
+);
+const DEPLOYMENT_ARG_FIELDS = Object.freeze(Object.fromEntries(
+  DEPLOYMENT_WEB_ENTRIES.map(([transport]) => [transport, new Set()]),
+));
+const WEB_DIRECT_PORT_COMMANDS = new Set([
+  ...WAVE_WEB_ENTRIES.flatMap(([transport, name]) => [transport, name]),
+  ...DEPLOYMENT_WEB_ENTRIES.map(([transport]) => transport),
+]);
 
 // S-1 v2 R-WG-3: advertised web ARG_FIELDS exclude transportHidden fields; the validator still
 // accepts them (acceptance set = advertised ∪ transportHidden).
@@ -103,6 +138,8 @@ const COMMAND_CAPABILITY = Object.freeze({
   ...Object.fromEntries(WEB_APPLICATION_ENTRIES.map(([transport, , definition]) => [transport, definition.capabilities])),
   ...Object.fromEntries(CANONICAL_WEB_ENTRIES.map(([transport, , definition]) => [transport, definition.capabilities])),
   ...Object.fromEntries(WAVE_WEB_ENTRIES.map(([transport, , capabilities]) => [transport, capabilities])),
+  ...Object.fromEntries(WAVE_DOT_WEB_ENTRIES.map(([transport, , capabilities]) => [transport, capabilities])),
+  ...Object.fromEntries(DEPLOYMENT_WEB_ENTRIES.map(([transport, , capabilities]) => [transport, capabilities])),
 });
 const FENCE_REQUIRED = new Set(['send', 'interrupt', 'kill']);
 const RECONCILABLE = new Set(['goal_define', 'plan_propose', 'plan_approve',
@@ -151,6 +188,8 @@ const ARG_FIELDS = Object.freeze({
     transport, advertisedArgs(definition, name),
   ])),
   ...Object.fromEntries(Object.entries(WAVE_ARG_FIELDS)),
+  ...Object.fromEntries(Object.entries(WAVE_DOT_ARG_FIELDS)),
+  ...Object.fromEntries(Object.entries(DEPLOYMENT_ARG_FIELDS)),
 });
 const ACCEPTED_ARG_FIELDS = Object.freeze({
   ...Object.fromEntries(Object.entries(ARG_FIELDS).map(([transport, fields]) => [transport, fields])),
