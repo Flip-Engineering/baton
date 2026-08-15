@@ -483,6 +483,25 @@ function createWaveHandle({ repoRoot, members, state, waveId = null }) {
           outcome.phase = canonicalRunPhase(outline.phase) ?? null;
           outcome.terminal = terminalFrom(outline);
           outcome.narrative = outline.narrative ?? null;
+          // #235: the transport-liveness settle class — EVIDENCE ONLY (the #163 law holds:
+          // no termination changes). A member whose run view carries the provider_silent
+          // attention entry (the coordinator's never-trafficked projection) settles with the
+          // DISTINCT 'provider_silent' class so a wedged member never reads as plain
+          // 'silent'/'quiesced' among healthy ones — and the steering evidence names it.
+          const attention = attentionFrom(outline);
+          const providerSilent = Array.isArray(attention)
+            ? attention.find((item) => item?.kind === 'provider_silent') ?? null
+            : null;
+          if (providerSilent) {
+            outcome.progressClass = 'provider_silent';
+            state.steering.push({
+              role,
+              evidence: 'provider_silent',
+              summary: typeof providerSilent.summary === 'string'
+                ? providerSilent.summary : 'no provider traffic observed this turn',
+              note: typeof providerSilent.note === 'string' ? providerSilent.note : null,
+            });
+          }
           outcome.resultSha = await materialize(entry);
         } catch (error) {
           Object.assign(outcome, { phase: 'outcome_error', terminal: false, resultSha: null, error: { code: error?.code ?? null, message: String(error?.message ?? error) } });

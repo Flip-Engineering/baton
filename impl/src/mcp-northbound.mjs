@@ -8,13 +8,22 @@ import { APPLICATION_COMMAND_DEFINITIONS, validateApplicationCommandArgs, projec
 import {
   APPLICATION_SEMANTIC_REGISTRY,
   SURFACING_MATRIX_KEYS,
+  canonicalAndTransportNames,
   deriveSurfaceNames,
 } from './application-semantics.mjs';
 import { compileWavefile } from './workflow-dsl.mjs';
 
+// Issue #233 (canonical naming unification): every mcp-flagged application definition is
+// admitted under BOTH spellings, derived through the ONE canonicalAndTransportNames seam — the
+// canonical dot-name (the definition key, the durable identity) beside its derived fleet_*
+// transport. Both spellings map to the SAME application command, so capability, stateful,
+// reconcilability, and argument validation derive identically for the pair.
 const MCP_APPLICATION_ENTRIES = Object.entries(APPLICATION_COMMAND_DEFINITIONS)
   .filter(([, definition]) => definition.mcp)
-  .map(([name, definition]) => [`fleet_${name.replaceAll('.', '_')}`, name, definition]);
+  .flatMap(([name, definition]) => {
+    const { canonical, mcp } = canonicalAndTransportNames(name);
+    return [[mcp, name, definition], [canonical, name, definition]];
+  });
 // docs/36 §9 M4 (M4b — the transport flip) — the canonical grammar tools rendered beside the
 // retained legacy baton_* ordinary tools. Each pairs a §6 operation key with its legacy sibling
 // tool and the application command both dispatch to: the canonical tool's NAME comes from the ONE
@@ -52,22 +61,35 @@ const APPLICATION_TOOL = Object.freeze(Object.fromEntries(
 // ORDINARY_APPLICATION_TOOL_DEFINITIONS below) because it is not an APPLICATION_COMMAND_DEFINITIONS
 // entry at all — see the note above that table in application.mjs. It is reachable only as a
 // direct method call, `application.contextEval(...)`, today.
-const ORDINARY_APPLICATION_ENTRIES = Object.freeze([
-  ['baton_help', 'application.help', APPLICATION_COMMAND_DEFINITIONS['application.help']],
-  ['baton_runs', 'runs.list', APPLICATION_COMMAND_DEFINITIONS['runs.list']],
-  ['baton_run_start', 'run.start', APPLICATION_COMMAND_DEFINITIONS['run.start']],
-  ['baton_run_inspect', 'run.inspect', APPLICATION_COMMAND_DEFINITIONS['run.inspect']],
-  ['baton_run_episode', 'run.episode', APPLICATION_COMMAND_DEFINITIONS['run.episode']],
-  ['baton_run_workstreams', 'run.workstreams', APPLICATION_COMMAND_DEFINITIONS['run.workstreams']],
-  ['baton_workstream_notify', 'run.workstream.notify', APPLICATION_COMMAND_DEFINITIONS['run.workstream.notify']],
-  ['baton_workstream_stop', 'run.workstream.stop', APPLICATION_COMMAND_DEFINITIONS['run.workstream.stop']],
-  ['baton_run_act', 'run.act', APPLICATION_COMMAND_DEFINITIONS['run.act']],
-  ['baton_run_stop', 'run.stop', APPLICATION_COMMAND_DEFINITIONS['run.stop']],
+// The retained legacy ordinary tools, as [tool, command] rows — the dot-name twins below derive
+// from these rows through the ONE seam, never a second hand-kept list.
+const LEGACY_ORDINARY_APPLICATION_ROWS = Object.freeze([
+  ['baton_help', 'application.help'],
+  ['baton_runs', 'runs.list'],
+  ['baton_run_start', 'run.start'],
+  ['baton_run_inspect', 'run.inspect'],
+  ['baton_run_episode', 'run.episode'],
+  ['baton_run_workstreams', 'run.workstreams'],
+  ['baton_workstream_notify', 'run.workstream.notify'],
+  ['baton_workstream_stop', 'run.workstream.stop'],
+  ['baton_run_act', 'run.act'],
+  ['baton_run_stop', 'run.stop'],
   // S-1 v2: portable atomic attach-and-harvest (canonical baton_waves_attach).
-  ['baton_waves_attach', 'waves.attach', APPLICATION_COMMAND_DEFINITIONS['waves.attach']],
+  ['baton_waves_attach', 'waves.attach'],
+]);
+const ORDINARY_APPLICATION_ENTRIES = Object.freeze([
+  ...LEGACY_ORDINARY_APPLICATION_ROWS.map(([tool, command]) => [
+    tool, command, APPLICATION_COMMAND_DEFINITIONS[command],
+  ]),
   ...CANONICAL_ORDINARY_SIBLINGS.map((sibling) => (
     [sibling.tool, sibling.command, APPLICATION_COMMAND_DEFINITIONS[sibling.command]]
   )),
+  // Issue #233: the canonical dot-name twins of the retained ordinary tools — each dot name is
+  // the command itself (canonicalAndTransportNames(command).canonical), admitted beside its
+  // legacy baton_* spelling with the same definition row.
+  ...LEGACY_ORDINARY_APPLICATION_ROWS.map(([, command]) => [
+    canonicalAndTransportNames(command).canonical, command, APPLICATION_COMMAND_DEFINITIONS[command],
+  ]),
 ]);
 
 export const SURFACING_MATRIX_MCP_ROWS = Object.freeze(
@@ -773,6 +795,21 @@ const ORDINARY_APPLICATION_TOOL_DEFINITIONS = Object.freeze([
     return Object.freeze({ ...base, name: sibling.tool });
   }),
 ]);
+// Issue #233: the canonical dot-name twins of every advertised application tool. A dot twin is
+// its base tool under the dot spelling of the application command APPLICATION_TOOL routes it to
+// (canonicalAndTransportNames(command).canonical), inheriting the base's exact wire schema,
+// annotations, _meta, and dispatch — the same clone pattern the M4b siblings above use, so a
+// caller reaches one operation under either spelling. Derived ONLY from advertised tables: the
+// unadvertised dispatch-map ghosts keep the advertised inventory's existing shape.
+const CANONICAL_DOT_TOOL_DEFINITIONS = Object.freeze([...new Map(
+  [...ORDINARY_APPLICATION_TOOL_DEFINITIONS, ...APPLICATION_TOOL_DEFINITIONS]
+    .map((tool) => [APPLICATION_TOOL[tool.name], tool])
+    // tools whose name carries no APPLICATION_COMMAND mapping (reflex/special tools admitted
+    // beside the application tables) have NO dot twin — a literal undefined key would collapse
+    // them into one broken inventory entry (the conformance 'served but undocumented: undefined'
+    // class, caught live 2026-08-15).
+    .filter(([command]) => typeof command === 'string'),
+).entries()].map(([dotName, tool]) => Object.freeze({ ...tool, name: dotName })));
 const ADVANCED_TOOL_DEFINITIONS = Object.freeze([
   { name: 'fleet_spawn', description: 'Spawn one Baton worker with independently selected harness, model, effort, run, and approved Goal/Plan node.', inputSchema: fleetSpawnSchema, annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false } },
   { name: 'fleet_scratch_oracle', description: 'Spawn an explicitly routed independent oracle over one immutable derived Scratch fact.', inputSchema: schema({ ...repo, ...idem, runId, scratchFactId: text, harness: text, model: text, effort: text, modelPolicy: schema({ allow: textArray, deny: textArray, prefer: textArray, allowFamilies: textArray, denyFamilies: textArray, reasoningEffort: text, serviceTier: text }), verification: { type: 'object' }, budget: { type: 'object' }, constraints: textArray, goal: text, definitionOfDone: text, taskId: text }, ['repoId', 'idempotencyKey', 'scratchFactId', 'harness', 'verification']), annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false } },
@@ -907,8 +944,7 @@ const ORDINARY_EXPLICIT_TOOLS = new Set([
   'baton_run_scratchpad_read', 'baton_run_scratchpad_elevate', 'baton_run_scratchpad_append',
   'baton_run_knowledge_seed',
 ]);
-const TOOL_DEFINITIONS = Object.freeze([...ORDINARY_APPLICATION_TOOL_DEFINITIONS, ...APPLICATION_TOOL_DEFINITIONS, ...ADVANCED_TOOL_DEFINITIONS, ...REFLEX_TOOL_DEFINITIONS]);
-const TOOL_BY_NAME = new Map(TOOL_DEFINITIONS.map((tool) => [tool.name, tool]));
+const TOOL_DEFINITIONS = Object.freeze([...ORDINARY_APPLICATION_TOOL_DEFINITIONS, ...APPLICATION_TOOL_DEFINITIONS, ...CANONICAL_DOT_TOOL_DEFINITIONS, ...ADVANCED_TOOL_DEFINITIONS, ...REFLEX_TOOL_DEFINITIONS]);
 
 function closedRecord(value, fields) {
   return record(value) && Object.keys(value).sort().join(',') === [...fields].sort().join(',');
@@ -992,8 +1028,11 @@ function applicationArgs(name, args) {
 }
 
 function applicationRunId(name, args) {
-  if (!APPLICATION_TOOL[name]) return args.runId ?? null;
-  return ['fleet_run_start', 'baton_run_start'].includes(name) ? args.intent.runId ?? null : args.runId;
+  const command = APPLICATION_TOOL[name];
+  if (!command) return args.runId ?? null;
+  // #233: command-level (not tool-level) so both admitted spellings derive the runId the
+  // same way — the dot twin inherits its transport's rule.
+  return command === 'run.start' ? args.intent.runId ?? null : args.runId;
 }
 
 function transportHiddenFields(commandName) {
@@ -1044,7 +1083,7 @@ function validateArguments(name, args, maxWaitMs = null) {
       }
       return 'invalid_run_command';
     }
-    if (['fleet_run_wait', 'fleet_run_follow'].includes(name)
+    if (['run.wait', 'run.follow'].includes(APPLICATION_TOOL[name])
       && (!Number.isSafeInteger(maxWaitMs) || args.timeoutMs > maxWaitMs)) return 'invalid_run_wait';
   }
   if (name === 'fleet_spawn') {
@@ -1627,7 +1666,7 @@ export class McpFleetServer {
           requestId,
         })}`;
         const value = await this._dispatch(name, args, null, observeCallId, this.principal);
-        const refused = ['fleet_run_follow', 'fleet_run_wait'].includes(name) ? this._authority(name, args) : null;
+        const refused = ['run.follow', 'run.wait'].includes(APPLICATION_TOOL[name]) ? this._authority(name, args) : null;
         if (refused) {
           this._audit('tool_refused_after_wait', name, args, refused);
           return toolError(refused);

@@ -62,6 +62,23 @@ const WAVE_WEB_ENTRIES = Object.freeze([
   // admission the five wave verbs ride. Capability classes match the MCP capability map.
   ['run_scratchpad_append', 'run.scratchpad.append', Object.freeze(['control', 'observe'])],
 ]);
+// #227/#233 (2026-08-15, the wire-card coverage regression): the workflow-surface verbs ride
+// direct ports beside the wave verbs — the MCP web-bridge facade (mcp-web-bridge.mjs
+// ORDINARY_COMMANDS) requires them on the resident's advertised card, and the application
+// dispatch already exists (application.mjs's messageSend/attentionWatch/scratchpadRead/
+// boardPost/knowledgeSeed seam). Without these rows ANY real resident's card fails the facade
+// constructor ('Baton Web application facade is invalid') — the bridge was unreachable against
+// real deployments. Capabilities mirror the semantics registry's classes per verb.
+const WORKFLOW_WEB_ENTRIES = Object.freeze([
+  ['run_message_send', 'run.message.send', Object.freeze(['control', 'observe'])],
+  ['run_message_receipt', 'run.message.receipt', Object.freeze(['observe'])],
+  ['run_attention_watch', 'run.attention.watch', Object.freeze(['observe'])],
+  ['run_scratchpad_read', 'run.scratchpad.read', Object.freeze(['observe'])],
+  ['run_scratchpad_elevate', 'run.scratchpad.elevate', Object.freeze(['control', 'observe'])],
+  ['run_board_post', 'run.board.post', Object.freeze(['control', 'observe'])],
+  ['run_board_read', 'run.board.read', Object.freeze(['observe'])],
+  ['run_knowledge_seed', 'run.knowledge.seed', Object.freeze(['control', 'observe'])],
+]);
 // D1.2/D1.3 — the wave transports are DIRECT PORTS: validateEnvelope skips
 // validateApplicationCommandArgs for them (WEB_DIRECT_PORT_COMMANDS below) and their argument
 // authority is the port's own closed normalizer (_normalizeWaveStart/_normalizeWaveProgress/
@@ -103,8 +120,11 @@ const DEPLOYMENT_ARG_FIELDS = Object.freeze(Object.fromEntries(
 ));
 const WEB_DIRECT_PORT_COMMANDS = new Set([
   ...WAVE_WEB_ENTRIES.flatMap(([transport, name]) => [transport, name]),
+  ...WORKFLOW_WEB_ENTRIES.flatMap(([transport, name]) => [transport, name]),
   ...DEPLOYMENT_WEB_ENTRIES.map(([transport]) => transport),
 ]);
+const WORKFLOW_DOT_WEB_ENTRIES = Object.freeze(WORKFLOW_WEB_ENTRIES
+  .map(([transport, name, capabilities]) => [name, name, capabilities]));
 
 // S-1 v2 R-WG-3: advertised web ARG_FIELDS exclude transportHidden fields; the validator still
 // accepts them (acceptance set = advertised ∪ transportHidden).
@@ -139,6 +159,8 @@ const COMMAND_CAPABILITY = Object.freeze({
   ...Object.fromEntries(CANONICAL_WEB_ENTRIES.map(([transport, , definition]) => [transport, definition.capabilities])),
   ...Object.fromEntries(WAVE_WEB_ENTRIES.map(([transport, , capabilities]) => [transport, capabilities])),
   ...Object.fromEntries(WAVE_DOT_WEB_ENTRIES.map(([transport, , capabilities]) => [transport, capabilities])),
+  ...Object.fromEntries(WORKFLOW_WEB_ENTRIES.map(([transport, , capabilities]) => [transport, capabilities])),
+  ...Object.fromEntries(WORKFLOW_DOT_WEB_ENTRIES.map(([transport, , capabilities]) => [transport, capabilities])),
   ...Object.fromEntries(DEPLOYMENT_WEB_ENTRIES.map(([transport, , capabilities]) => [transport, capabilities])),
 });
 const FENCE_REQUIRED = new Set(['send', 'interrupt', 'kill']);
@@ -189,7 +211,11 @@ const ARG_FIELDS = Object.freeze({
   ])),
   ...Object.fromEntries(Object.entries(WAVE_ARG_FIELDS)),
   ...Object.fromEntries(Object.entries(WAVE_DOT_ARG_FIELDS)),
-  ...Object.fromEntries(Object.entries(DEPLOYMENT_ARG_FIELDS)),
+  // #227/#233: the workflow-eight direct ports carry their closed application-side argument
+  // authority (the application.mjs normalizers); the advertised/accepted set is empty here —
+  // validateEnvelope skips validateApplicationCommandArgs for direct ports.
+  ...Object.fromEntries(WORKFLOW_WEB_ENTRIES.map(([transport]) => [transport, new Set()])),
+  ...Object.fromEntries(WORKFLOW_DOT_WEB_ENTRIES.map(([transport]) => [transport, new Set()])),
 });
 const ACCEPTED_ARG_FIELDS = Object.freeze({
   ...Object.fromEntries(Object.entries(ARG_FIELDS).map(([transport, fields]) => [transport, fields])),
@@ -203,6 +229,7 @@ const ACCEPTED_ARG_FIELDS = Object.freeze({
 const APPLICATION_COMMAND = Object.freeze({
   ...Object.fromEntries(
     [...WEB_APPLICATION_ENTRIES, ...CANONICAL_WEB_ENTRIES, ...WAVE_WEB_ENTRIES,
+      ...WORKFLOW_WEB_ENTRIES, ...WORKFLOW_DOT_WEB_ENTRIES,
       ...WAVE_DOT_WEB_ENTRIES, ...DEPLOYMENT_WEB_ENTRIES].map(([transport, name]) => [transport, name]),
   ),
   // #158 (H2.1): the scratchpad WRITE direct port routes to the folded application verb. The
@@ -1731,7 +1758,7 @@ export class WebNorthbound {
         // dishonest impl cannot special-case the card. The card lists the DOT-spelled names
         // (waves.start, ...) beside the existing WEB_APPLICATION_ENTRIES names — never the
         // underscore transports.
-        application: { ...card, readiness, commands: [...WEB_APPLICATION_ENTRIES, ...WAVE_WEB_ENTRIES].map(([, name]) => name) },
+        application: { ...card, readiness, commands: [...WEB_APPLICATION_ENTRIES, ...WAVE_WEB_ENTRIES, ...WORKFLOW_WEB_ENTRIES].map(([, name]) => name) },
       }));
     }
     const asset = operatorAsset(pathname);

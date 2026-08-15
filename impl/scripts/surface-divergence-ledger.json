@@ -72,6 +72,86 @@
       "dimension": "name",
       "retiresIn": "M5",
       "note": "waves.compile is web-admitted in the current tree (WAVE_WEB_ENTRIES, #170) but absent from the pinned 31-name card (contract-fold v1.1 D2/G3); ledgered pending wave reconciliation of the card-vs-admission drift"
+    },
+    {
+      "surface": "mcp.web-bridge",
+      "name": "run.episode",
+      "canonical": "run.view",
+      "dimension": "name",
+      "retiresIn": "M5",
+      "note": "#227 widening: the bridge forwards the application.commands wire spelling; the canonical operation is run.view — name-shape divergence only (identical dispatch); retires as an mcp.web-bridge surface alias per the run.act/run.inspect precedent"
+    },
+    {
+      "surface": "mcp.web-bridge",
+      "name": "run.follow",
+      "canonical": "run.watch",
+      "dimension": "name",
+      "retiresIn": "M5",
+      "note": "#227 widening: the bridge forwards the application.commands wire spelling; the canonical operation is run.watch — name-shape divergence only (identical dispatch); retires as an mcp.web-bridge surface alias per the run.act/run.inspect precedent"
+    },
+    {
+      "surface": "mcp.web-bridge",
+      "name": "run.resume_work",
+      "canonical": "run.resume",
+      "dimension": "name",
+      "retiresIn": "M5",
+      "note": "#227 widening: the bridge forwards the application.commands wire spelling; the canonical operation is run.resume — name-shape divergence only (identical dispatch); retires as an mcp.web-bridge surface alias per the run.act/run.inspect precedent"
+    },
+    {
+      "surface": "mcp.web-bridge",
+      "name": "run.retry_verification",
+      "canonical": "run.retry",
+      "dimension": "name",
+      "retiresIn": "M5",
+      "note": "#227 widening: the bridge forwards the application.commands wire spelling; the canonical operation is run.retry — name-shape divergence only (identical dispatch); retires as an mcp.web-bridge surface alias per the run.act/run.inspect precedent"
+    },
+    {
+      "surface": "mcp.web-bridge",
+      "name": "run.status",
+      "canonical": "run.view",
+      "dimension": "name",
+      "retiresIn": "M5",
+      "note": "#227 widening: the bridge forwards the application.commands wire spelling; the canonical operation is run.view — name-shape divergence only (identical dispatch); retires as an mcp.web-bridge surface alias per the run.act/run.inspect precedent"
+    },
+    {
+      "surface": "mcp.web-bridge",
+      "name": "run.wait",
+      "canonical": "run.view",
+      "dimension": "name",
+      "retiresIn": "M5",
+      "note": "#227 widening: the bridge forwards the application.commands wire spelling; the canonical operation is run.view — name-shape divergence only (identical dispatch); retires as an mcp.web-bridge surface alias per the run.act/run.inspect precedent"
+    },
+    {
+      "surface": "mcp.web-bridge",
+      "name": "run.workstream.notify",
+      "canonical": "run.member.send",
+      "dimension": "name",
+      "retiresIn": "M5",
+      "note": "#227 widening: the bridge forwards the application.commands wire spelling; the canonical operation is run.member.send — name-shape divergence only (identical dispatch); retires as an mcp.web-bridge surface alias per the run.act/run.inspect precedent"
+    },
+    {
+      "surface": "mcp.web-bridge",
+      "name": "run.workstream.stop",
+      "canonical": "run.member.stop",
+      "dimension": "name",
+      "retiresIn": "M5",
+      "note": "#227 widening: the bridge forwards the application.commands wire spelling; the canonical operation is run.member.stop — name-shape divergence only (identical dispatch); retires as an mcp.web-bridge surface alias per the run.act/run.inspect precedent"
+    },
+    {
+      "surface": "mcp.web-bridge",
+      "name": "run.workstreams",
+      "canonical": "run.member.view",
+      "dimension": "name",
+      "retiresIn": "M5",
+      "note": "#227 widening: the bridge forwards the application.commands wire spelling; the canonical operation is run.member.view — name-shape divergence only (identical dispatch); retires as an mcp.web-bridge surface alias per the run.act/run.inspect precedent"
+    },
+    {
+      "surface": "mcp.web-bridge",
+      "name": "runs.list",
+      "canonical": "run.list",
+      "dimension": "name",
+      "retiresIn": "M5",
+      "note": "#227 widening: the bridge forwards the application.commands wire spelling; the canonical operation is run.list — name-shape divergence only (identical dispatch); retires as an mcp.web-bridge surface alias per the run.act/run.inspect precedent"
     }
   ],
   "cliLocalToolingCodes": [

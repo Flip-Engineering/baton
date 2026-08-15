@@ -28,6 +28,19 @@ const DEFAULT_STREAM_CHUNK_BYTES = 4 * 1024;
 // the loop continues observing; only process exit (with cause) terminalizes.
 const RETRY_BACKOFF_MS = [250, 500, 1000, 2000, 4000, 8000, 15000, 30000];
 
+// #235: provider-traffic truth source — the agent-session frame lane itself. These frame types
+// are emitted by omp only once the provider conversation is live (assistant deltas, tool
+// executions, agent/turn boundaries, provider retry events). Startup/UI frames (ready,
+// available_commands_update, extension_ui_request) are NOT traffic: an auth-less omp still
+// answers its RPC and UI lanes while the provider socket never opens (measured 2026-08-15:
+// 25 min 'silent' with zero established sockets). Responses to our own commands are transport
+// acks, not provider traffic.
+const PROVIDER_TRAFFIC_FRAME_TYPES = new Set([
+  'agent_start', 'turn_start', 'message_update',
+  'tool_execution_start', 'tool_execution_end', 'agent_end',
+  'auto_retry_start', 'retry_fallback_applied',
+]);
+
 function unavailableUsageSeal() {
   return { tokens: 'unavailable', usd: 'unavailable', counterId: null, tokenMetric: null };
 }
@@ -420,6 +433,7 @@ export class OmpRpcCli {
   }
 
   _onFrame(session, frame) {
+    this._observeTransportLiveness(session, frame);
     switch (frame.type) {
       case 'agent_start':
         this._emit(session, 'content.message', { phase: 'agent_start' });
@@ -467,6 +481,28 @@ export class OmpRpcCli {
     }
   }
 
+  /**
+   * #235: emit `lifecycle.transport_liveness` on provider-traffic TRANSITIONS only — the
+   * baseline rides spawn (never observed), and the first traffic frame flips it exactly once.
+   * Bounded (≤2 events per session) and honest: startup/UI frames and command-response acks
+   * never count as traffic, so an auth-less member that answers the RPC lane while the
+   * provider socket never opens keeps reading `provider_dial_never_observed` forever.
+   * Evidence classification only — the #163 law: this changes what receipts report, never
+   * what they terminate.
+   */
+  _observeTransportLiveness(session, frame) {
+    if (!PROVIDER_TRAFFIC_FRAME_TYPES.has(frame?.type)) return;
+    if (session.providerTrafficObserved) return; // transitions only, never per frame
+    session.providerTrafficObserved = true;
+    session.lastProviderTrafficAt = new Date().toISOString();
+    this._emit(session, 'lifecycle.transport_liveness', {
+      kind: 'transport_liveness',
+      providerTraffic: true,
+      lastTrafficAt: session.lastProviderTrafficAt,
+      note: 'provider_traffic_observed',
+    });
+  }
+
   async spawn(worker, brief, options = {}) {
     const existing = this._sessions.get(worker);
     if ((existing && !existing.closed) || this._pendingSpawns.has(worker)) {
@@ -492,16 +528,19 @@ export class OmpRpcCli {
       const childEnv = options.replaceEnv
         ? { ...(options.env ?? {}), ...(this._env ?? {}) }
         : { ...process.env, ...(this._env ?? {}), ...(options.env ?? {}) };
+      const args = this._args ?? buildOmpRpcArgs({ model, effort, permissionMode: this._permissionMode });
       const session = {
         worker, process: null, cwd,
         processGeneration, processReapTimeoutMs: options.processReapTimeoutMs ?? 2000,
         providerReady: false, setupFailed: false, closed: false, killing: false, killConfirmed: false,
         processClosedEmitted: false,
+        // #235 transport liveness: false until the first provider-traffic frame (frames are the
+        // truth source — see PROVIDER_TRAFFIC_FRAME_TYPES). Evidence observation only.
+        providerTrafficObserved: false, lastProviderTrafficAt: null,
         turnEpoch: 0, turnSequence: 0, activeTurn: null, terminalTurns: new Set(),
         pendingInterrupt: null, steerPending: null,
         modelRequested: model, effortRequested: effort,
       };
-      const args = this._args ?? buildOmpRpcArgs({ model, effort, permissionMode: this._permissionMode });
       session.process = new OmpRpcProcess({
         command: this._cmd, args, cwd, env: childEnv,
         waitAttemptMs: this._requestTimeoutMs,
@@ -544,6 +583,16 @@ export class OmpRpcCli {
         return { ok: false, code: 'setup_process_exit', reason: String(error?.message ?? error) };
       }
       this._emit(session, 'lifecycle.process_ready', { phase: 'process_ready', model, effort });
+      // #235: the transport-liveness BASELINE — a session that has carried only startup frames
+      // reports the provider dial as never observed, before the first turn rides out. Evidence
+      // classification only (the #163 law): the observation never terminates anything; it lets
+      // a zero-traffic member read 'provider_silent' instead of plain 'silent'.
+      this._emit(session, 'lifecycle.transport_liveness', {
+        kind: 'transport_liveness',
+        providerTraffic: false,
+        lastTrafficAt: null,
+        note: 'provider_dial_never_observed',
+      });
       // #230: the FIRST TURN rides spawn — the sibling session-adapter contract
       // (claude-session's pendingBrief flush at process-ready). The coordinator dispatches
       // the brief through spawn() and issues no separate first prompt; an adapter that

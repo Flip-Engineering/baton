@@ -711,7 +711,10 @@ export async function runWorkflow(baton, specOrPath, options = {}) {
       if (q !== null) {
         if (typeof q.lastMeaningfulAt === 'string' && q.lastMeaningfulAt.length > 0) outcome.quiescenceLastMeaningfulAt = q.lastMeaningfulAt;
         if (Number.isSafeInteger(q.silenceAtDeclarationMs)) outcome.quiescenceSilenceMs = q.silenceAtDeclarationMs;
-        outcome.progressClass = 'silent';
+        // #235: the DISTINCT class — a never-trafficked member quiesces as 'provider_silent',
+        // never plain 'silent' (the #230 dogfood: 25 min of 'silent' hid zero provider
+        // sockets). Evidence classification only; the quiesce itself is unchanged.
+        outcome.progressClass = q.providerSilent === true ? 'provider_silent' : 'silent';
       }
     }
     outcomes.push(outcome);
@@ -941,6 +944,11 @@ async function driveLane(wave, spec, driver, steering, s, reportByRole) {
       active: ACTIVE_TURN_PHASES.has(v.phase ?? ''),
       phase: v.phase ?? priorQ?.phase ?? null,
       progressClass: v.progressClass ?? priorQ?.progressClass ?? null,
+      // #235: the never-trafficked marker rides the SAME view the predicate reads — the run
+      // view's provider_silent attention entry (the coordinator transport-liveness
+      // projection). Evidence classification only; it never gates termination.
+      providerSilent: Array.isArray(v.attention)
+        && v.attention.some((entry) => entry?.kind === 'provider_silent'),
     });
   }
 
@@ -1000,7 +1008,14 @@ async function driveLane(wave, spec, driver, steering, s, reportByRole) {
         const q = quiescence.get(role);
         q.silenceAtDeclarationMs = observedAtMs - q.silentSinceMs;
       }
-      steering.push({ evidence: 'wave_quiesced', roles: [...pending], windowMs, maxObservedGapMs });
+      // #235: the declaration's evidence names the never-trafficked members — a quiesce that
+      // reads a wedged member as plainly 'silent' among healthy ones is the exact
+      // observability gap this closes. Evidence only; the exit is unchanged.
+      const providerSilentRoles = [...pending].filter((role) => quiescence.get(role)?.providerSilent === true);
+      steering.push({
+        evidence: 'wave_quiesced', roles: [...pending], windowMs, maxObservedGapMs,
+        ...(providerSilentRoles.length > 0 ? { providerSilent: [...providerSilentRoles] } : {}),
+      });
       exit = 'quiesced';
       break;
     }

@@ -48,6 +48,11 @@ const KERNEL_WEB_COMMANDS = Object.freeze([
 const WEB_DIRECT_PORT_OPERATIONS = Object.freeze([
   'waves.start', 'waves.progress', 'waves.send', 'waves.stop', 'waves.list',
   'waves.run', 'waves.compile', 'run.scratchpad.append', 'deployment.doctor',
+  // #227 wire-card coverage (2026-08-15): the workflow-surface direct ports — the MCP web
+  // bridge facade requires them on the resident card; the web lane now admits them.
+  'run.message.send', 'run.message.receipt', 'run.attention.watch',
+  'run.scratchpad.read', 'run.scratchpad.elevate',
+  'run.board.post', 'run.board.read', 'run.knowledge.seed',
 ]);
 
 // The retained legacy MCP spellings for mcp:true definitions (hand baton_* ordinary tools).

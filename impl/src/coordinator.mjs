@@ -2374,6 +2374,32 @@ export class Coordinator {
     return rows;
   }
 
+  /** #235: the transport-liveness attention projection — EVIDENCE CLASSIFICATION ONLY (the
+   * #163 law: no clock, counter, or liveness receipt ever decides a member's fate; this
+   * changes what attention reports, never what it terminates). A worker whose LATEST
+   * `lifecycle.transport_liveness` observation says the provider dial was never observed
+   * (`provider_dial_never_observed`, #230's auth-less shape: live process, zero provider
+   * sockets) AND whose turn is still in flight surfaces a `provider_silent` attention entry.
+   * A trafficked or unobserved worker surfaces nothing — the projection never prose-guesses.
+   * Log-derived (findLast over the worker's operational log), so live projection and replay
+   * share one shape. */
+  providerSilenceAttention(workerId) {
+    const handle = this._workers.get(workerId);
+    if (!handle || handle.turnInFlight !== true) return null;
+    const observation = this._log.read(workerId).findLast?.(
+      (event) => event.kind === 'lifecycle.transport_liveness',
+    ) ?? null;
+    const payload = observation?.payload ?? null;
+    if (!payload || payload.providerTraffic === true) return null;
+    return {
+      kind: 'provider_silent',
+      workerId,
+      summary: 'no provider traffic observed this turn',
+      note: typeof payload.note === 'string' ? payload.note : null,
+      lastTrafficAt: typeof payload.lastTrafficAt === 'string' ? payload.lastTrafficAt : null,
+    };
+  }
+
   /**
    * Part A rule 1. Reserve the pause record's single-consumer slot, mirroring `_resolveRecord`'s
    * `pending → resolving → resolved` shape (:8353-8375) verbatim — including the `resolvingDone`
