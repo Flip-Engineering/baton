@@ -23,9 +23,13 @@ function runtimeIdentity(selection) {
     throw new TypeError('runtime isolation requires a selected adapter card');
   }
   const harness = card.harness;
+  // #230: omp is its own surface. Its provider auth (deepseek/glm keys, oauth) lives in
+  // ~/.omp/agent — projected as a HOME-relative tree (omp resolves $HOME/.omp), never the
+  // claude config-dir fallback that left members auth-less and provider-silent for hours.
   const surface = harness === 'codex' ? 'codex'
     : harness === 'grok' ? 'grok'
-      : harness === 'kimi-code' ? 'kimi-code' : 'claude';
+      : harness === 'kimi-code' ? 'kimi-code'
+        : harness === 'omp' ? 'omp' : 'claude';
   const provider = card.modelSelection?.family;
   const family = surface === 'claude' && typeof provider === 'string' && provider.length > 0
     ? provider : surface;
@@ -80,6 +84,9 @@ export class RuntimeIsolation {
     if (surface === 'codex') env.CODEX_HOME = config;
     else if (surface === 'grok') env.GROK_HOME = config;
     else if (surface === 'kimi-code') env.KIMI_CODE_HOME = config;
+    // #230: omp reads $HOME/.omp — no config-dir override; the credential tree projects
+    // HOME-relative (below), exactly omp's native resolution.
+    else if (surface === 'omp') { /* HOME-relative; no config env var */ }
     else env.CLAUDE_CONFIG_DIR = config;
 
     if (surface === 'kimi-code') {
@@ -122,6 +129,9 @@ export class RuntimeIsolation {
     }
 
     let projectedTreeCount = 0;
+    // #230: omp resolves credentials at $HOME/.omp — its tree projects INTO the isolated
+    // home (HOME-relative), not the config root. Same law as grok's ~/.grok placement.
+    const treeTarget = surface === 'omp' ? home : config;
     for (const tree of this.credentialTrees[family] ?? []) {
       if (!tree || typeof tree.sourceRoot !== 'string' || !Array.isArray(tree.relativeFiles)) {
         throw new TypeError('runtime credential tree requires sourceRoot and relativeFiles');
@@ -131,7 +141,7 @@ export class RuntimeIsolation {
         throw Object.assign(new Error('runtime credential tree cannot originate inside the repository'), { code: 'credential_source_in_repository' });
       }
       const projected = projectCredentialTree({
-        sourceRoot: tree.sourceRoot, targetRoot: config, relativeFiles: tree.relativeFiles,
+        sourceRoot: tree.sourceRoot, targetRoot: treeTarget, relativeFiles: tree.relativeFiles,
         ...(tree.maxFileBytes ? { maxFileBytes: tree.maxFileBytes } : {}),
         ...(tree.maxTotalBytes ? { maxTotalBytes: tree.maxTotalBytes } : {}),
       });

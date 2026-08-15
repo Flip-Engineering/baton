@@ -638,6 +638,16 @@ function defaultCredentialProjection(repoRoot, { projectNativeKimi = false, clau
   const kimiRoot = join(homedir(), '.kimi-code');
   const credentialTrees = projectNativeKimi
     ? { 'kimi-code': [{ sourceRoot: kimiRoot, relativeFiles: KIMI_CREDENTIAL_FILES }] } : {};
+  // #230: omp's provider auth (deepseek/glm keys, oauth) lives in ~/.omp/agent — projected
+  // HOME-relative into each member's isolated home, exactly omp's native $HOME/.omp
+  // resolution. Without it omp parks auth-less and never dials the provider (measured
+  // 2026-08-15: 25+ min of a live member with zero established sockets).
+  const ompRoot = join(homedir(), '.omp');
+  if (existingRegular(join(ompRoot, 'agent', 'agent.db'))) {
+    credentialTrees.omp = [{
+      sourceRoot: homedir(), relativeFiles: Object.freeze(['.omp/agent/agent.db', '.omp/agent/config.yml']),
+    }];
+  }
   const credentialEnv = {};
   if (claudeCredentialCache) {
     Object.defineProperty(credentialEnv, 'claude', {
