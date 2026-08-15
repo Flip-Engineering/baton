@@ -53,6 +53,11 @@ export function frameLimitRefusalPath(row, cap = row?.value) {
 const ADMISSION = Object.freeze({
   'message.send.body': { lane: 'message.send.body', class: 'admission', value: 2048, unit: 'bytes', graceful: 'spill-digest-citation', enforcedAt: 'coordinator.sendMessage', refusalCode: 'spill_body_exceeded' },
   'message.reply.body': { lane: 'message.reply.body', class: 'admission', value: 2048, unit: 'bytes', graceful: 'spill-digest-citation', enforcedAt: 'coordinator message.send reply admission', refusalCode: 'spill_body_exceeded' },
+  // row-admission-align (#207 root): the workflow interpreter's BY-REFERENCE admission enforces
+  // this cap at render (workflow-interpreter.mjs OBJECTIVE_REF_MAX_BYTES, aligned here) — a brief
+  // over the cap refuses workflow_objective_ref_invalid at compile/admit naming both byte counts.
+  // The spill-aware PASS is the INLINE path's (application start mints the durable spill artifact;
+  // the by-reference lane renders the full brief into the member objective and does not split).
   'run.objective': { lane: 'run.objective', class: 'admission', value: 4096, unit: 'bytes', graceful: 'spill-digest-citation', enforcedAt: 'application run.start admission', refusalCode: 'spill_body_exceeded' },
   'wave.member.objective': { lane: 'wave.member.objective', class: 'admission', value: 4096, unit: 'bytes', graceful: 'spill-digest-citation', enforcedAt: 'application startWave/attachWave member admission', refusalCode: 'spill_body_exceeded' },
   'wave.run.spec_path': { lane: 'wave.run.spec_path', class: 'admission', value: 4096, unit: 'bytes', graceful: null, enforcedAt: 'waves.run admission (the semantic-registry input schema; the interpreter containment re-checks)', refusalCode: 'workflow_spec_invalid' },

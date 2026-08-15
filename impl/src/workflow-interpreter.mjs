@@ -19,6 +19,11 @@ import { execFile, execFileSync } from 'node:child_process';
 import { promisify } from 'node:util';
 import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { basename, dirname, isAbsolute, relative, resolve, sep } from 'node:path';
+// Decision 8 (no-re-declare law): the frame-economics registry is the ONE source of every
+// cataloged lane's byte value. limits.mjs is pure data + one refusal-text composer (imports only
+// node:crypto) and runs NOTHING at top level, so the F10b transitive-graph law (no reachable
+// module runs a top-level driver call site) stays intact for this lane.
+import { FRAME_LIMITS } from './limits.mjs';
 
 const execFileAsync = promisify(execFile);
 
@@ -43,7 +48,17 @@ const objectiveRefInvalid = (message) => workflowError(message, 'workflow_object
 // Closed-schema primitives (recipes-lane pattern, recipes.mjs:74-121).
 // ---------------------------------------------------------------------------
 
-const OBJECTIVE_REF_MAX_BYTES = 64 * 1024; // D5 — the byte bound pinned at its exact value (F8b).
+// D5 — the objectiveRef brief bound, ALIGNED to the run.start objective lane (row-admission-align,
+// #207 root). The interpreter renders the FULL brief into the member objective (salt prefix) and
+// hands it to the embedded client, which admits at the run.objective cap; a brief over the cap
+// therefore cannot start its member — yet the old 64 KiB envelope ADMITTED it and every member
+// phantom-failed at start with the client's misleading "Run objective is required". OQ5's
+// spill-aware advisory PASS is sound only where the lane actually splits (mints a durable
+// digest-citable spill — the inline run.start path): this by-reference lane does not, so the bound
+// aligns to the registry value (Decision 8) instead of masquerading as a spill envelope. The F8b
+// behavior pin (64 KiB + 1 refuses, workflow-as-data-red W1-03) still holds — the refusal now
+// names both byte counts.
+const OBJECTIVE_REF_MAX_BYTES = FRAME_LIMITS['run.objective'].value;
 const MAX_MEMBERS = 64;                     // the wave-machinery member ceiling (P4).
 const MAX_SCOPE = 64;
 const GLOB_MAGIC = /[*?[\]{}!+@]/u;
@@ -344,14 +359,23 @@ function renderObjective(repoRoot, member, salt) {
   const target = resolve(repoRoot, ref);
   if (!existsSync(target)) throw objectiveRefInvalid(`the member "${member.role}" objectiveRef "${ref}" does not exist`);
   const text = readFileSync(target, 'utf8');
-  if (Buffer.byteLength(text) > OBJECTIVE_REF_MAX_BYTES) {
-    throw objectiveRefInvalid(`the member "${member.role}" objectiveRef "${ref}" is oversize (limit ${OBJECTIVE_REF_MAX_BYTES} bytes — D5)`);
-  }
   // The salt line (`[attempt: <salt> <role>] `) mirrors createWaveDriver's own prefix
   // (wave-driver.mjs:334) so the wave's attempt marker rides the member's committed report and the
   // D4 harvest can attribute it (B2). The interpreter is the sole salt owner here (createWave does
   // not salt), so the wave starts with saltObjectives off implicitly (raw objective already salted).
-  return `[attempt: ${salt} ${member.role}] ${text}`;
+  const rendered = `[attempt: ${salt} ${member.role}] ${text}`;
+  // Row-admission-align (#207 root): the byte bound measures the RENDERED objective — exactly what
+  // run.start admits — and refuses at the compile/admit seam naming BOTH byte counts (measured +
+  // cap), a typed workflow_objective_ref_invalid (the objectiveRef member of the
+  // workflow_spec_invalid refusal class, consistent with the sibling D5 byte-bound refusal at this
+  // seam). Fail-loud at admission, never a per-member phantom start failure.
+  const renderedBytes = Buffer.byteLength(rendered);
+  if (renderedBytes > OBJECTIVE_REF_MAX_BYTES) {
+    throw objectiveRefInvalid(
+      `the member "${member.role}" objectiveRef "${ref}" brief is ${renderedBytes} bytes (cap ${OBJECTIVE_REF_MAX_BYTES} — the run.start objective lane); the interpreter admits by reference only what run.start can start — resend within the ${OBJECTIVE_REF_MAX_BYTES}-byte cap`,
+    );
+  }
+  return rendered;
 }
 
 // ---------------------------------------------------------------------------
