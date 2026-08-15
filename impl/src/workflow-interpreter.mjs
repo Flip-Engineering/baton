@@ -14,7 +14,7 @@
 // side-effect-free; recipes.mjs exposes it as baton.recipes.runWorkflow; application.mjs registers
 // the `waves.run` direct port for the CLI (`baton waves run`) and MCP (`baton_waves_run`) surfaces.
 
-import { createHash, randomUUID } from 'node:crypto';
+import { createHash } from 'node:crypto';
 import { execFile, execFileSync } from 'node:child_process';
 import { promisify } from 'node:util';
 import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
@@ -575,7 +575,13 @@ export async function runWorkflow(baton, specOrPath, options = {}) {
   const manifestDigest = createHash('sha256').update(canonicalJson(spec)).digest('hex');
 
   // Render every member's objective (D5 — objectiveRef → salt line). Salt owner is the interpreter.
-  const salt = randomUUID();
+  // #200 (member task namespace): the attempt salt derives from the wave key instead of a fresh
+  // uuid — the member objective (→ runId → taskId) then derives from (idempotencyKey, role, brief
+  // content): a same-key re-drive of the same spec dedupes to the same run (idempotent resume,
+  // never a stranded fresh run), and two distinct-key waves never share a member task. The D4
+  // harvest marker check below (harvestOne) uses this SAME salt, so the deterministic value keeps
+  // the attempt attribution intact.
+  const salt = createHash('sha256').update(`wave-attempt:${spec.idempotencyKey}`).digest('hex').slice(0, 32);
   const rendered = spec.members.map((member) => {
     const renderedMember = {
       role: member.role,

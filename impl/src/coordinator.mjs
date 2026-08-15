@@ -57,7 +57,8 @@ const RUN_TIMELINE_OPERATIONAL_KINDS = new Set([
   'control.session_preservation_reattached',
   'control.stale_rejected',
   'kill.confirmed', 'kill.requested',
-  'lifecycle.crashed', 'lifecycle.process_closed', 'lifecycle.process_ready',
+  'lifecycle.crashed', 'lifecycle.process_closed', 'lifecycle.process_generation_advanced',
+  'lifecycle.process_ready',
   'lifecycle.process_reap_unconfirmed', 'lifecycle.process_started', 'lifecycle.spawned',
   'lifecycle.turn_completed', 'lifecycle.turn_started',
   'resource.provider_call', 'resource.tokens',
@@ -115,6 +116,20 @@ function addSafeTokenCounts(left, right) {
   if (!Number.isSafeInteger(left) || left < 0 || !Number.isSafeInteger(right) || right < 0) return null;
   const total = left + right;
   return Number.isSafeInteger(total) ? total : null;
+}
+
+// Issue #199 (the double-spawn window): within ONE admission window, multiple
+// lifecycle.spawned events are a protocol violation only when they name DIFFERENT session
+// identities. A same-identity repeat is a harness retry the coordinator owns — the newest binds
+// (the generation advance at commit), never a violation of the single-provider-ready law.
+function sameMemberSpawnedRetry(events) {
+  const spawned = events.filter((event) => event.kind === 'lifecycle.spawned');
+  if (spawned.length <= 1) return true;
+  const first = spawned[0]?.payload?.threadId ?? spawned[0]?.payload?.sessionId;
+  if (typeof first !== 'string' || first.length === 0) return false;
+  return spawned.every((event) => (
+    (event?.payload?.threadId ?? event?.payload?.sessionId) === first
+  ));
 }
 
 function logicalCallTransition(prior, next) {
@@ -5789,7 +5804,9 @@ export class Coordinator {
     if (!failed) {
       const spawned = admission.events.filter((event) => event.kind === 'lifecycle.spawned');
       const unexpected = admission.events.filter((event) => event.kind !== 'lifecycle.spawned');
-      if (spawned.length !== 1 || unexpected.length > 0) {
+      // Issue #199: same-identity spawned repeats are a harness retry the coordinator owns
+      // (the commit below advances the generation), never a protocol violation.
+      if ((spawned.length !== 1 && !sameMemberSpawnedRetry(admission.events)) || unexpected.length > 0) {
         failed = {
           result: 'recovery_protocol_violation',
           reason: spawned.length !== 1
@@ -6180,8 +6197,11 @@ export class Coordinator {
         : outcome?.ack?.ok !== true ? 'recovery_refused'
           : outcome.ack.attached !== true ? 'recovery_attachment_unproven'
           : observed !== handle.sessionRef.id ? 'session_identity_mismatch'
-            : admission.events.filter((event) => event.kind === 'lifecycle.spawned').length !== 1
-              || unexpected.length > 0 ? 'recovery_protocol_violation'
+            // Issue #199: same-identity spawned repeats are a harness retry the coordinator
+            // owns (the commit below advances the generation), never a protocol violation.
+            : ((admission.events.filter((event) => event.kind === 'lifecycle.spawned').length !== 1
+              && !sameMemberSpawnedRetry(admission.events))
+              || unexpected.length > 0) ? 'recovery_protocol_violation'
                 : handle.processRef?.state === 'closed' ? 'recovery_transport_closed' : null;
     if (failed) {
       if (handle.turnAdmission === admission) handle.turnAdmission = null;
@@ -12506,6 +12526,49 @@ export class Coordinator {
   // Event handling — worker-originated events delivered via Adapter.onEvent(cb).
   // =========================================================================
 
+  /** Issue #199 (the double-spawn window): a harness retry's newer process is bound to the SAME
+   * member — a generation advance, never a new claim or a kill. The wire session identity has
+   * already proved this is our member (the gate matched handle.sessionRef.id); the newer
+   * {generation, pid} becomes the tracked process so replay and every later close/ready
+   * correlation follow the harness's current process. The member keeps its task claim and keeps
+   * working — the durable advance event is what replay binds to. */
+  _advanceMemberProcessGeneration(handle, event, payload) {
+    const { worker: workerId, harness, turnEpoch } = event;
+    const prior = handle.processRef;
+    const processGroupId = Number.isSafeInteger(payload?.processGroupId)
+      ? payload.processGroupId : payload.pid;
+    const advanced = this._log.append({
+      worker: workerId, harness, turnEpoch: this._safeTurnEpoch(handle),
+      kind: 'lifecycle.process_generation_advanced', actor: 'policy',
+      ...this._routeAttribution(handle),
+      payload: {
+        schemaVersion: 1,
+        sessionId: payload?.threadId ?? payload?.sessionId ?? null,
+        generation: payload.processGeneration,
+        pid: payload.pid,
+        processGroupId,
+        supersededGeneration: prior?.generation ?? null,
+        supersededPid: prior?.pid ?? null,
+      },
+    });
+    handle.processGeneration = payload.processGeneration;
+    handle.processRef = {
+      generation: payload.processGeneration, pid: payload.pid, processGroupId,
+      state: 'ready', ready: true, startedSeq: null, closedSeq: null,
+    };
+    handle.processAuthority = null;
+    handle.recoveredProcessAuthority = false;
+    handle.localAuthority = true;
+    // Policy observation is bound to one exact process generation; the replacement process must
+    // re-attest (mirror of the recovery respawn reset).
+    handle.workerPolicyObserved = null;
+    handle.workerPolicyMismatch = null;
+    if (typeof this._coordination?.recordWorkerGeneration === 'function') {
+      this.recordWorkerGeneration(handle);
+    }
+    return advanced;
+  }
+
   _handleEvent(event, sourceVendor = null, opts = {}) {
     const { worker: workerId, kind, harness, turnEpoch, payload, actor } = event;
     const handle = this._workers.get(workerId);
@@ -12552,6 +12615,13 @@ export class Coordinator {
       const providerId = payload?.threadId ?? payload?.sessionId;
       const processBound = handle.processRef !== null
         || (payload?.processGeneration !== undefined && payload?.pid !== undefined);
+      // Issue #199 (the double-spawn window): a second lifecycle.spawned carrying the member's
+      // OWN wire session identity (handle.sessionRef.id — bound by the first spawned) is a
+      // harness retry the coordinator owns. Bind it to the same member (a process-generation
+      // advance when it names a newer process) instead of refusing attribution and killing a
+      // healthy, still-working member whose claim is intact.
+      const sameMemberRetry = typeof providerId === 'string' && providerId.length > 0
+        && handle.sessionRef?.id === providerId;
       const validProviderReady = !processBound || ((handle.processRef?.state === 'initializing'
         || ((opts.admittedReady === true || handle.turnAdmission)
           && (handle.processRef?.state === 'ready'
@@ -12560,7 +12630,7 @@ export class Coordinator {
         && payload?.processGeneration === handle.processRef.generation
         && payload?.pid === handle.processRef.pid
         && typeof providerId === 'string' && providerId.length > 0);
-      if (!validProviderReady) {
+      if (!validProviderReady && !sameMemberRetry) {
         this._log.append({
           worker: workerId, harness, turnEpoch: this._safeTurnEpoch(handle),
           kind: 'lifecycle.process_attribution_refused', actor: 'policy',
@@ -12569,6 +12639,13 @@ export class Coordinator {
         });
         if (!['dead', 'stopping', 'exited'].includes(handle.status)) this._beginStop(handle, 'kill', undefined, 'policy').catch(noop);
         return;
+      }
+      if (sameMemberRetry && !validProviderReady
+        && Number.isSafeInteger(payload?.processGeneration) && Number.isSafeInteger(payload?.pid)
+        && handle.processRef !== null
+        && (payload.processGeneration !== handle.processRef.generation
+          || payload.pid !== handle.processRef.pid)) {
+        this._advanceMemberProcessGeneration(handle, event, payload);
       }
     }
     if (handle.turnAdmission && actor === 'worker' && ![
@@ -14096,6 +14173,26 @@ export class Coordinator {
               processRef = { ...processRef, state: 'ready', ready: true };
             }
             break;
+          // Issue #199: a policy-observed generation advance binds a harness retry's newer
+          // process to the SAME member on replay — the durable twin of the live gate's
+          // same-member retry branch (_handleEvent), so a restart reconstructs the member at the
+          // generation the harness is actually on, never the superseded one.
+          case 'lifecycle.process_generation_advanced': {
+            const gp = e.payload ?? {};
+            if (e.actor === 'policy' && Number.isSafeInteger(gp.generation) && Number.isSafeInteger(gp.pid)
+              && typeof gp.sessionId === 'string'
+              && (sessionRef === null || sessionRef.id === gp.sessionId)
+              && (processRef === null || gp.generation > processRef.generation)) {
+              processGeneration = gp.generation;
+              processRef = {
+                generation: gp.generation, pid: gp.pid,
+                processGroupId: Number.isSafeInteger(gp.processGroupId) ? gp.processGroupId : gp.pid,
+                state: 'ready', ready: true, startedSeq: e.seq, closedSeq: null,
+              };
+              processAuthority = null;
+            }
+            break;
+          }
           case 'lifecycle.spawned':
             taskId = e.payload?.taskId ?? taskId;
             brief = e.payload?.brief ?? brief;
