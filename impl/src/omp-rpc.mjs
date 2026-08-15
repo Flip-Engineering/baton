@@ -544,6 +544,13 @@ export class OmpRpcCli {
         return { ok: false, code: 'setup_process_exit', reason: String(error?.message ?? error) };
       }
       this._emit(session, 'lifecycle.process_ready', { phase: 'process_ready', model, effort });
+      // #230: the FIRST TURN rides spawn — the sibling session-adapter contract
+      // (claude-session's pendingBrief flush at process-ready). The coordinator dispatches
+      // the brief through spawn() and issues no separate first prompt; an adapter that
+      // returns ready without sending it leaves a healthy, prompt-less member idling
+      // forever (measured 2026-08-15: live process, zero provider sockets, 20-min stall
+      // flag; the same brief hand-driven completed in 24s).
+      this._startTurn(session, renderBrief(brief, 'omp-rpc'));
       return { ok: true, sessionId: session.process.child?.pid ? `omp-pid-${session.process.child.pid}` : null };
     } finally {
       this._pendingSpawns.delete(worker);

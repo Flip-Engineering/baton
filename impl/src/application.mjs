@@ -11676,6 +11676,12 @@ export class BatonApplication {
     await this.ready;
     const principal = normalizePrincipal(rawPrincipal, 'workflow run principal');
     const request = rawRequest && typeof rawRequest === 'object' && !Array.isArray(rawRequest) ? rawRequest : {};
+    // #232: detach is wire-admitted (boolean, default true) so the synchronous settle receipt —
+    // the seven-key shape carrying each member's typed startError — is client-reachable; the
+    // port's own closed normalizer refuses any non-boolean spelling typed, naming the field.
+    if (request.detach !== undefined && typeof request.detach !== 'boolean') {
+      throw applicationError('the waves.run "detach" argument must be a boolean', 'invalid_workflow_run');
+    }
     const { bindBaton } = await import('./application-client.mjs');
     const { runWorkflow } = await import('./workflow-interpreter.mjs');
     const baton = bindBaton(this, principal);

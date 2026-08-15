@@ -9,7 +9,9 @@ const SECRET_NAME = /(TOKEN|KEY|SECRET|PASSWORD|PASSWD|CREDENTIAL|AUTH|COOKIE|SE
 const PROVIDER_OR_INJECTION = /^(ANTHROPIC_|OPENAI_|XAI_|ZAI_|Z_AI_|MOONSHOT_|KIMI_|AWS_|GOOGLE_|GCLOUD_|CLOUD_ML_|AZURE_|FOUNDRY_|GITHUB_|NODE_OPTIONS$|PYTHONPATH$|PYTHONHOME$|RUBYOPT$|PERL5OPT$|BASH_ENV$|ENV$|CDPATH$|GIT_CONFIG|GIT_DIR$|GIT_WORK_TREE$|DYLD_|LD_|.*_PROXY$)/i;
 const ALWAYS_KEEP = new Set(['PATH', 'SHELL', 'LANG', 'LC_ALL', 'LC_CTYPE', 'TERM', 'USER', 'LOGNAME', 'TZ']);
 
-function runtimeIdentity(selection) {
+// #234: exported so deployment readiness resolves the SAME family/credential-state facts the
+// dispatch path (RuntimeIsolation.create) resolves — one derivation, never a drifting copy.
+export function runtimeIdentity(selection) {
   // Coordinator callers supply the selected adapter card. A registry key is only a private map
   // coordinate and cannot determine provider credentials or the executable's configuration home.
   // String support remains for direct/legacy RuntimeIsolation embedders.

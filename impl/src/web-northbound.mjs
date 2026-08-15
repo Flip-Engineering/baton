@@ -64,7 +64,9 @@ const WAVE_ARG_FIELDS = Object.freeze({
   waves_send: new Set(['claimGrant', 'delivery', 'message', 'runId']),
   waves_stop: new Set(['reason', 'runId']),
   waves_list: new Set(['cursor', 'waveId']),
-  waves_run: new Set(['idempotencyKey', 'spec', 'specPath', 'specDsl']),
+  // #232: detach (boolean, default true) is admitted on the run lane so the synchronous settle
+  // path — the seven-key receipt carrying each member's typed startError — is client-reachable.
+  waves_run: new Set(['detach', 'idempotencyKey', 'spec', 'specPath', 'specDsl']),
   waves_compile: new Set(['idempotencyKey', 'spec', 'specPath', 'specDsl']),
 });
 const WEB_DIRECT_PORT_COMMANDS = new Set(WAVE_WEB_ENTRIES.map(([transport]) => transport));

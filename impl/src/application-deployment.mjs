@@ -24,11 +24,11 @@ import {
 } from './context-runtime.mjs';
 import { GrokAcpCli } from './grok-acp.mjs';
 import { OmpRpcCli } from './omp-rpc.mjs';
-import { RuntimeIsolation } from './runtime-isolation.mjs';
+import { RuntimeIsolation, runtimeIdentity } from './runtime-isolation.mjs';
 import { ResidentAuthority, stableDeploymentId } from './resident-authority.mjs';
 import { DEFAULT_RUN_LINEAGE_POLICY } from './run-lineage.mjs';
 import { inspectToolchainProjection } from './toolchain-projection.mjs';
-import { DEFAULT_WORKER_POLICY_REQUEST } from './worker-policy.mjs';
+import { DEFAULT_WORKER_POLICY_REQUEST, resolveWorkerPolicy } from './worker-policy.mjs';
 import { normalizeWorkflowPolicy } from './workflow-policy.mjs';
 import { ensureBatonExcluded } from './worktree.mjs';
 import { WebSessionStore } from './web-auth.mjs';
@@ -1101,11 +1101,29 @@ async function projectedAdapterAuthentication(adapters, repoRoot, runtimeRoot, p
   }
   return results;
 }
+/** #234 readiness honesty: the static credential facts the dispatch path resolves —
+ * RuntimeIsolation's adapterManaged rule over the SAME projection the deployment wires into
+ * the runtime. A family with a non-empty env/file/tree projection, or an adapter that manages
+ * its own credential (providerCompatibility.credentialState 'available'), resolves; anything
+ * else would spawn an auth-less member. Local filesystem facts only — never a network probe,
+ * never a projection copy (the tree ENTRY is the admission fact, exactly the inventory
+ * defaultCredentialProjection builds). */
+function credentialProjectionResolves(projection, card) {
+  const { family, adapterCredentialState } = runtimeIdentity({ card });
+  if (adapterCredentialState === 'available') return true;
+  const env = projection.credentialEnv[family];
+  if (record(env) && Object.values(env).some((value) => value !== undefined && value !== null)) return true;
+  const files = projection.credentialFiles[family];
+  if (Array.isArray(files) && files.some((path) => existingRegular(path))) return true;
+  const trees = projection.credentialTrees[family];
+  return Array.isArray(trees) && trees.length > 0;
+}
 
 function deploymentReadiness(
   preflight,
   routes,
   adapters,
+  projection,
   nativeKimiAuthentication = null,
   nativeGrokAuthentication = null,
   adapterAuthentication = new Map(),
@@ -1202,6 +1220,27 @@ function deploymentReadiness(
       return Object.freeze({
         ...publicFields, state: 'blocked', code: 'harness_unavailable',
         summary: 'The configured harness executable was not observed as compatible.', runtime,
+      });
+    }
+    // #234 readiness honesty: 'ready' means dispatchable AND authenticated, so the fallthrough
+    // must also clear the two predicates the dispatch path enforces after route matching —
+    // coordinator selection's resolveWorkerPolicy(DEFAULT_WORKER_POLICY_REQUEST, card.workerPolicy)
+    // and RuntimeIsolation's adapterManaged credential rule. Both resolve the same static
+    // deployment facts; neither probes the network.
+    try {
+      resolveWorkerPolicy(DEFAULT_WORKER_POLICY_REQUEST, matchedCard.workerPolicy);
+    } catch {
+      return Object.freeze({
+        ...publicFields, state: 'blocked', code: 'route_policy_unsupported',
+        summary: 'The matched adapter advertises no worker policy that satisfies the deployment worker policy.',
+        runtime,
+      });
+    }
+    if (!credentialProjectionResolves(projection, matchedCard)) {
+      return Object.freeze({
+        ...publicFields, state: 'blocked', code: 'route_credentials_unprojected',
+        summary: 'No provider credential is projected into the worker runtime for this route.',
+        runtime,
       });
     }
     return Object.freeze({
@@ -1954,7 +1993,7 @@ export async function openBatonDeployment(rawOptions, createDriver) {
       summary: "Kimi-through-Claude is not configured; provision Baton's private Kimi credential to enable this exact route.",
     })] : [];
   const readiness = deploymentReadiness(
-    preflight, routes, adapters, nativeKimiAuthentication, nativeGrokAuthentication,
+    preflight, routes, adapters, projection, nativeKimiAuthentication, nativeGrokAuthentication,
     adapterAuthentication, additionalRouteStates,
   );
   // Issue #35: doctor observes workspace capacity FRESH at each read (statfs is cheap and disk

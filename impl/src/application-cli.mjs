@@ -2058,12 +2058,19 @@ export class BatonWebClient {
         throw cliError('Baton Web returned invalid JSON', 'cli_protocol_failed');
       }
       if (!response.ok) {
-        const receivedCode = body?.error?.code;
-        const code = typeof receivedCode === 'string' && /^[a-z][a-z0-9_]{0,63}$/u.test(receivedCode)
-          ? receivedCode : 'cli_command_failed';
+        const wire = record(body?.error) ? body.error : null;
+        const code = typeof wire?.code === 'string' && /^[a-z][a-z0-9_]{0,63}$/u.test(wire.code)
+          ? wire.code : 'cli_command_failed';
         // Issue #41: say what was refused and how — the path and status are the caller's own
-        // request facts, never a secret.
-        throw cliError(`Baton Web request was refused (${options.method ?? 'GET'} ${path}, HTTP ${response.status})`, code);
+        // request facts, never a secret. Issue #231: a typed wire refusal additionally
+        // carries the wire's own message verbatim (multi-line DSL diagnostics survive
+        // unmangled) and its full parsed error object as an enumerable `detail`, so catch
+        // sites like the #227 list-continuation ladder key on the WIRE code and cursor.
+        const refused = `Baton Web request was refused (${options.method ?? 'GET'} ${path}, HTTP ${response.status})`;
+        const message = nonempty(wire?.message) ? `${refused}: ${wire.message}` : refused;
+        const error = cliError(message, code);
+        if (wire !== null) error.detail = wire;
+        throw error;
       }
       return body;
     } finally {
