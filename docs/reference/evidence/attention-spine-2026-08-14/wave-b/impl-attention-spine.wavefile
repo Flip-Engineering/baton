@@ -1,0 +1,35 @@
+wave attention-spine-2026-08-14-wave-b
+member coordinator
+  harness omp
+  model "deepseek/deepseek-v4-flash"
+  effort high
+  scope "docs/reference/evidence/attention-spine-2026-08-14/wave-b/**"
+  objectiveRef "docs/reference/evidence/attention-spine-2026-08-14/wave-b/coordinator-brief.md"
+  report "docs/reference/evidence/attention-spine-2026-08-14/wave-b/verify-notes.md"
+member row-wave-attention-watch
+  harness omp
+  model "deepseek/deepseek-v4-flash"
+  effort high
+  scope "impl/src/application.mjs"
+  scope "impl/src/wave-driver.mjs"
+  scope "docs/reference/evidence/attention-spine-2026-08-14/wave-b/**"
+  objectiveRef "docs/reference/evidence/attention-spine-2026-08-14/wave-b/row-wave-attention-watch-brief.md"
+  report "docs/reference/evidence/attention-spine-2026-08-14/wave-b/notes-row-wave-attention-watch.md"
+member row-mcp-push
+  harness omp
+  model "deepseek/deepseek-v4-flash"
+  effort high
+  scope "impl/src/mcp-northbound.mjs"
+  scope "impl/src/mcp-web-bridge.mjs"
+  scope "docs/reference/evidence/attention-spine-2026-08-14/wave-b/**"
+  objectiveRef "docs/reference/evidence/attention-spine-2026-08-14/wave-b/row-mcp-push-brief.md"
+  report "docs/reference/evidence/attention-spine-2026-08-14/wave-b/notes-row-mcp-push.md"
+approveOnAdvertisedPlan
+claimOnStall
+nudgeOnCheckpoint "Continue — the suite is the contract; watch+push ONLY, no polling semantics, no new commands beyond the watch verb. Write deliverables incrementally."
+messageOnSpawn brief "Read your objectiveRef brief IN FULL first; it binds. gh may be unauthenticated in your worktree. Your [attempt:] line verbatim in your deliverable's first five lines. Judgment calls recorded; authority-class ambiguity → DECISION_REQUEST with options."
+elevateWhenNotes doubt,plan 20
+signalOnMembersDone row-wave-attention-watch,row-mcp-push result "The rows settled (you are the remaining member — pinned #175 semantics). Verify per your brief and write verify-notes.md."
+harvest "docs/reference/evidence/attention-spine-2026-08-14/wave-b/notes-row-wave-attention-watch.md" mustContain "attempt:"
+harvest "docs/reference/evidence/attention-spine-2026-08-14/wave-b/notes-row-mcp-push.md" mustContain "attempt:"
+harvest "docs/reference/evidence/attention-spine-2026-08-14/wave-b/verify-notes.md" mustContain "ATTENTION-SPINE-VERIFY v1"
