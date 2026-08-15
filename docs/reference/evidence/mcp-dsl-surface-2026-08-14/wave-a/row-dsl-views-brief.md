@@ -21,5 +21,17 @@ Issue #227 item 3 (#208 cross-ref). Deliverable: implementation + red-first pin.
    returns only post-seq transitions (RED: no sinceSeq arg exists); (b) a settled wave's
    wavefileView re-compiles (RED: no view field).
 
+## Measured traps (orchestrator's near-miss, 2026-08-14 — pin these)
+
+The orchestrator attempted this row directly and REVERTED in favor of this wave; the draft
+carried a #210-class read bug the row must avoid by construction:
+
+1. **NEVER call `eventsView()` (no args) for the ledger cursor/length** — it copies the
+   whole world per call. The store needs (or already has) an O(1) cursor/length accessor;
+   use it, and PIN its use (a test asserting the delta path makes zero full-ledger copies).
+2. The delta filter (`seq > sinceSeq`) rides a slice — verify `eventsView(from)` returns a
+   tail slice or an iterator, and bound the response (`events.slice(-64)` + `truncated`).
+3. The WLS-1 single-pass index pattern is the precedent for any per-wave filtering.
+
 ## Hard bounds
 Additive; projection-only (no new store writes); batteries green.
