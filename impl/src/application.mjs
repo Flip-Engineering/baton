@@ -11871,13 +11871,16 @@ export class BatonApplication {
       });
     }
     const pageSize = 16;
-    const listed = await this.listRuns(this.principals.observer, context);
-    // WLS-1: one single-pass steering-registered index serves the candidate filter and every
-    // page member — the per-member full-log rescans (_runWaveId/_runWaveRole) are the same
-    // 87k-event furnace waves.list hit.
+    // WLS-1 (2026-08-15 hardening): the candidate set comes from the wave's OWN steering index —
+    // the single-pass byWaveRole map — never the fleet-wide run catalog. listRuns refuses past
+    // 64 lifetime runs (its bounded-continuation ceiling), while a wave's roster is bounded by
+    // the wave law (≤64 members) regardless of fleet size; progress must never inherit the
+    // catalog's ceiling. Steering-registration order (the roster at start) is the member order.
     const waveIndex = this._runWaveIndex();
-    const candidates = (listed?.items ?? [])
-      .filter((item) => typeof item?.id === 'string' && this._runWaveId(item.id, waveIndex) === request.waveId);
+    const roles = waveIndex.byWaveRole.get(request.waveId) ?? new Map();
+    const candidates = [...roles.entries()]
+      .filter(([, runId]) => typeof runId === 'string')
+      .map(([waveRole, runId]) => ({ id: runId, waveRole }));
     const cursor = Number.isSafeInteger(request.cursor) ? request.cursor : 0;
     const page = candidates.slice(cursor, cursor + pageSize);
     const members = [];
@@ -11894,7 +11897,7 @@ export class BatonApplication {
         kind: entry?.kind ?? null, summary: entry?.summary ?? null,
       })) : [];
       members.push(deepFreeze({
-        role: this._runWaveRole(item.id, waveIndex) ?? null,
+        role: item.waveRole ?? null,
         phase,
         progressClass,
         attention,
