@@ -11846,6 +11846,30 @@ export class BatonApplication {
     const context = normalizeCommandContext(rawContext);
     const principal = normalizePrincipal(rawPrincipal, 'wave progress principal');
     const request = this._normalizeWaveProgress(rawRequest);
+    // #227 sinceSeq: the delta path (dogfood-proven surface, 2026-08-14). When sinceSeq is
+    // present the response is the wave's ledger delta — events at seq > sinceSeq filtered to
+    // the wave's evidence — plus nextSinceSeq via the O(1) cursor (never a full-ledger copy;
+    // the #210 law, pinned in mcp-surface-widening-red).
+    if (request.sinceSeq !== null) {
+      const events = this.driver.coordination.eventsView(request.sinceSeq + 1);
+      const waveEvents = [];
+      for (const event of events) {
+        const payload = event?.payload ?? {};
+        if (payload.waveId === request.waveId) {
+          waveEvents.push({
+            seq: event.seq, ts: event.ts, kind: payload.kind ?? event.kind ?? null,
+            worker: payload.worker ?? null, role: payload.role ?? null,
+            phase: payload.phase ?? null, verdict: payload.receipt?.verdict ?? payload.verdict ?? null,
+          });
+        }
+        if (waveEvents.length >= 64) break;
+      }
+      const nextSinceSeq = this.driver.coordination.eventCursor();
+      return deepFreeze({
+        schemaVersion: 1, waveId: request.waveId, delta: true, sinceSeq: request.sinceSeq,
+        nextSinceSeq, events: waveEvents, truncated: events.length > 0 && waveEvents.length === 64,
+      });
+    }
     const pageSize = 16;
     const listed = await this.listRuns(this.principals.observer, context);
     // WLS-1: one single-pass steering-registered index serves the candidate filter and every
@@ -12106,12 +12130,13 @@ export class BatonApplication {
 
   _normalizeWaveProgress(value) {
     if (!value || typeof value !== 'object' || Array.isArray(value)
-      || Object.keys(value).some((key) => !['waveId', 'cursor'].includes(key))
+      || Object.keys(value).some((key) => !['waveId', 'cursor', 'sinceSeq'].includes(key))
       || typeof value.waveId !== 'string' || !/^wave:[a-f0-9]{32}$/u.test(value.waveId)
-      || (value.cursor !== undefined && !Number.isSafeInteger(value.cursor))) {
+      || (value.cursor !== undefined && !Number.isSafeInteger(value.cursor))
+      || (value.sinceSeq !== undefined && (!Number.isSafeInteger(value.sinceSeq) || value.sinceSeq < 0))) {
       throw applicationError('wave progress request is invalid', 'application_wave_progress_invalid');
     }
-    return deepFreeze({ waveId: value.waveId, cursor: value.cursor ?? 0 });
+    return deepFreeze({ waveId: value.waveId, cursor: value.cursor ?? 0, sinceSeq: value.sinceSeq ?? null });
   }
 
   // D2.4: waves.list — the registry read accepts only the optional cursor.

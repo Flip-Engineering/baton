@@ -19,10 +19,33 @@ import { hasNorthboundCapabilityAuthority } from './northbound-capability-author
 // canonical operation ← legacy application command (both reach one remote operation): run.view ←
 // run.inspect, run.do ← run.act; the others are already one spelling. The registry owns these as
 // aliases (retiring the mcp.web-bridge ledger rows); the bridge forwards the legacy spelling.
+// #227 (operator-ordered direct landing, 2026-08-15): the facade carries the WIRE's registry —
+// the resident admits every verb below (WAVE_WEB_ENTRIES + the application table); the old
+// five-verb allowlist forced every harness to hand-roll a BatonWebClient proxy. The wire card
+// (doctor.application.commands) is the authority: every listed command EXCEPT shutdown
+// (never proxied — host-side lifecycle only).
 const ORDINARY_COMMANDS = Object.freeze([
-  'application.help', 'run.start', 'run.inspect', 'run.act', 'run.stop',
+  'application.help',
+  'run.start', 'run.inspect', 'run.act', 'run.stop', 'run.status',
+  'run.follow', 'run.wait', 'run.approve', 'run.answer', 'run.feedback',
+  'run.evidence', 'run.adopt', 'run.retry_verification', 'run.resume_work',
+  'run.review', 'run.integrate', 'run.export', 'run.recover',
+  'run.episode', 'run.workstreams', 'run.workstream.notify', 'run.workstream.stop',
+  'run.message.send', 'run.message.receipt', 'run.attention.watch',
+  'run.scratchpad.read', 'run.scratchpad.append', 'run.scratchpad.elevate',
+  'run.board.post', 'run.board.read', 'run.knowledge.seed',
+  'runs.list',
+  'waves.attach', 'waves.start', 'waves.list', 'waves.progress', 'waves.send',
+  'waves.stop', 'waves.run', 'waves.compile',
 ]);
-const MUTATIONS = new Set(['run.start', 'run.act', 'run.stop']);
+const MUTATIONS = new Set([
+  'run.start', 'run.act', 'run.stop', 'run.answer', 'run.approve', 'run.feedback',
+  'run.adopt', 'run.retry_verification', 'run.resume_work', 'run.review', 'run.integrate',
+  'run.export', 'run.recover', 'run.workstream.notify', 'run.workstream.stop',
+  'run.message.send', 'run.scratchpad.append', 'run.scratchpad.elevate',
+  'run.board.post', 'run.knowledge.seed',
+  'waves.start', 'waves.send', 'waves.stop', 'waves.run',
+]);
 const SAFE_RUN_ID = /^[A-Za-z0-9._:-]{1,256}$/u;
 
 function bridgeError(message, code = 'application_unavailable') {

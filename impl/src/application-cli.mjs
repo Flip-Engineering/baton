@@ -2127,6 +2127,46 @@ export class BatonWebClient {
     id(idempotencyKey, 'idempotency key');
     const command = name.replaceAll('.', '_');
     const runId = name === 'run.start' ? args.intent.runId ?? null : args.runId;
+    // #227 bounded list continuation: a server-side continuation refusal names its cursor;
+    // the client drains pages (bounded, ≤64) instead of throwing. List verbs become usable
+    // at fleet scale. Non-refusal errors propagate untouched.
+    const LIST_CONTINUATION = new Set(['runs.list', 'waves.list']);
+    const MAX_CONTINUATION_PAGES = 64;
+    if (LIST_CONTINUATION.has(name)) {
+      let pageArgs = { ...args };
+      let drained = [];
+      for (let page = 0; page < MAX_CONTINUATION_PAGES; page += 1) {
+        const envelope = {
+          schemaVersion: 1, commandId: randomUUID(), idempotencyKey, command, args: pageArgs,
+          repoId: this.repoId, origin: this.origin,
+        };
+        let body;
+        try {
+          body = await this._json('/v1/commands', {
+            method: 'POST', headers: this._headers(true), body: JSON.stringify(envelope),
+          }, this._requestTimeoutForCommand(name, pageArgs));
+        } catch (error) {
+          const cursor = error?.continuationCursor ?? error?.detail?.continuationCursor ?? null;
+          if (error?.code !== 'application_run_list_continuation_required' || cursor === null) throw error;
+          pageArgs = { ...pageArgs, continuationCursor: cursor };
+          continue;
+        }
+        if (body.status === 'admitted') {
+          const result = await this.reconcile(envelope.commandId);
+          const items = result?.items ?? [];
+          drained = drained.concat(items);
+          if (result?.continuationCursor === undefined) return { ...result, items: drained };
+          pageArgs = { ...pageArgs, continuationCursor: result.continuationCursor };
+          continue;
+        }
+        const result = body.result ?? body;
+        const items = result?.items ?? [];
+        drained = drained.concat(items);
+        if (result?.continuationCursor === undefined) return { ...result, items: drained };
+        pageArgs = { ...pageArgs, continuationCursor: result.continuationCursor };
+      }
+      throw cliError('list continuation exceeded the bounded page budget', 'cli_continuation_exhausted');
+    }
     const envelope = {
       schemaVersion: 1, commandId: randomUUID(), idempotencyKey, command, args,
       repoId: this.repoId, ...(runId ? { runId } : {}), origin: this.origin,

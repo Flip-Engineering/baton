@@ -8966,6 +8966,13 @@ export class CoordinationStore {
     return this._events.slice(start, limit === null ? undefined : start + limit).map(clone);
   }
 
+  // #227 (2026-08-15): the O(1) ledger cursor. Delta consumers (waves.progress sinceSeq)
+  // need the current tail position WITHOUT materializing the ledger — eventsView() with no
+  // arguments copies the world (the #210 class). Length only, never a copy.
+  eventCursor() {
+    return this._events.length;
+  }
+
   // Clone-free read view: every event in _events is frozen at append (load path and both
   // runtime append paths), so read-only consumers share the store's frozen references
   // instead of paying a full-log deep clone per call (the loop-starvation furnace).
