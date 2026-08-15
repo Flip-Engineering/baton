@@ -36,6 +36,10 @@ import {
 // Epic #103 (D7/D3): the ONE orchestrator-briefing family constant, shared with the store that
 // mints it — the resolve lane, the post-close mint seam, and the MCP sentence all name it.
 import { BRIEFING_FAMILY } from './coordination-store.mjs';
+// Wave-attention-watch (#208 item 1): the aggregate projection helpers ride the wave driver's own
+// fold (the anchor — the drive loop already computes parked/attention state), imported here so the
+// watch lane and the pull-on-open projection share ONE projection law with the emitting driver.
+import { memberAttentionKind, projectWaveAttentionAggregate } from './wave-driver.mjs';
 
 export { APPLICATION_SEMANTIC_REGISTRY } from './application-semantics.mjs';
 
@@ -2591,6 +2595,11 @@ export class BatonApplication {
     this._semanticReviewPromises = new Map();
     this._scratchpadViewCache = new Map();
     this._followControllers = new Set();
+    // Wave-attention-watch (#208 item 1): the watcher registry. waveId → Map<subscriptionId,
+    // {principalId, onAggregate}>. In-process only (the direct command port — the MCP push rides
+    // the same seam); the aggregate fan-out is the `_wave.attention` internal command the wave
+    // driver emits through its member run handle's command port (Decision 5 authority).
+    this._waveAttentionWatchers = new Map();
     this.ready = Promise.resolve().then(() => this._reconcileProfileRegistry())
       .then(() => this._reconcileRunStops())
       .then(() => this._reconcileRunControls())
@@ -11905,6 +11914,87 @@ export class BatonApplication {
     return deepFreeze({ schemaVersion: 1, waveId: request.waveId, cursor, nextCursor, members });
   }
 
+  // Wave-attention-watch (#208 item 1): the observe+subscribe verb. The caller names a waveId
+  // (the unguessable digest it was already told) and optionally an in-process `onAggregate`
+  // delivery callback. The lane returns the pull-on-open aggregate AND registers the watcher, so
+  // every later driver emission (park entry/exit, terminal, settle) delivers WITHOUT any consumer
+  // poll — NO per-subscription store rescan; the fan-out rides the driver's own fold.
+  async attentionWatchWave(rawRequest, rawPrincipal, rawContext = null) {
+    this._assertOpen();
+    await this.ready;
+    const context = normalizeCommandContext(rawContext);
+    const principal = normalizePrincipal(rawPrincipal, 'wave attention watch principal');
+    const request = this._normalizeWaveAttentionWatch(rawRequest);
+    // Scope authority mirrors Decision 5 (the lane's own seam, no facade narrowing): the
+    // coordinator's attention-scope admission for a deployment scope — wave-owner always, any
+    // authenticated principal otherwise. An unknown waveId still subscribes (it pages an empty
+    // pull-on-open at the lane); the waveId digest is the caller's own admission ticket.
+    if (!this.driver.coordinator._attentionScopeAuthorized(principal, null)) {
+      throw applicationError('wave attention watch is forbidden', 'attention_scope_forbidden');
+    }
+    const waveId = request.waveId;
+    const aggregate = await this._waveAttentionAggregate(waveId, principal, context);
+    const subscriptionId = `watch:${waveId}:${randomUUID().slice(0, 8)}`;
+    let byWave = this._waveAttentionWatchers.get(waveId);
+    if (!byWave) { byWave = new Map(); this._waveAttentionWatchers.set(waveId, byWave); }
+    byWave.set(subscriptionId, {
+      principalId: principal.principalId,
+      onAggregate: typeof request.onAggregate === 'function' ? request.onAggregate : null,
+    });
+    return deepFreeze({ schemaVersion: 1, waveId, subscriptionId, aggregate });
+  }
+
+  // The wave-level pull-on-open projection — the same rows the driver folds each poll, computed
+  // here from the wave's member runs through the ordinary run.inspect seam (mirrors waveProgress).
+  // Unknown members (run not found) contribute the unknown row, never a stale park.
+  async _waveAttentionAggregate(waveId, principal, context) {
+    const index = this._runWaveIndex();
+    const roles = index.byWaveRole.get(waveId);
+    const rows = [];
+    if (roles) {
+      for (const [role, runId] of roles) {
+        let view = null;
+        try {
+          view = await this.inspect({ runId }, principal, context);
+        } catch (error) {
+          if (error?.code !== 'application_run_not_found') throw error;
+        }
+        const outline = view ?? {};
+        rows.push({
+          role,
+          phase: outline.phase ?? null,
+          terminal: outline.terminal === true,
+          terminalCause: outline.terminalCause ?? null,
+          cursor: Number.isSafeInteger(outline.cursor) ? outline.cursor : null,
+          attention: memberAttentionKind(outline),
+        });
+      }
+    }
+    return projectWaveAttentionAggregate(waveId, rows, { trigger: 'open' });
+  }
+
+  // The `_wave.attention` internal emission seam (the wave driver's aggregate delivery). The
+  // waveId's registered watchers each receive the frozen aggregate; a throwing watcher is captured
+  // and counted as a delivery failure, never propagated to the emitting drive.
+  emitWaveAttentionInternal(args) {
+    const waveId = typeof args?.waveId === 'string' ? args.waveId : null;
+    const aggregate = args?.aggregate ?? null;
+    const byWave = waveId === null ? null : this._waveAttentionWatchers.get(waveId);
+    if (!byWave) return { delivered: 0, waveId };
+    let delivered = 0;
+    let failed = 0;
+    for (const watcher of byWave.values()) {
+      if (typeof watcher.onAggregate !== 'function') continue;
+      try {
+        watcher.onAggregate(aggregate);
+        delivered += 1;
+      } catch {
+        failed += 1;
+      }
+    }
+    return { delivered, failed, waveId };
+  }
+
   // D2.4 (wave-observability-2026-08-06/contract.md §D2.4): waves.list — the observe verb
   // answering the OPEN rows of the wave registry projection (never live run inspection for the
   // membership; per-member phase/attention are the SAME bounded live reads waveProgress uses, so
@@ -12137,6 +12227,23 @@ export class BatonApplication {
       throw applicationError('wave progress request is invalid', 'application_wave_progress_invalid');
     }
     return deepFreeze({ waveId: value.waveId, cursor: value.cursor ?? 0, sinceSeq: value.sinceSeq ?? null });
+  }
+
+  // Wave-attention-watch (#208 item 1): the closed subscribe shape — waveId (the unguessable
+  // wave:<hex> digest) and the optional in-process onAggregate delivery callback. The callback is
+  // extracted into the watcher registry and never serialized; deepFreeze leaves a function frozen
+  // and inert, so the request object stays closed even with the delivery hook attached.
+  _normalizeWaveAttentionWatch(value) {
+    if (!value || typeof value !== 'object' || Array.isArray(value)
+      || Object.keys(value).some((key) => !['waveId', 'onAggregate'].includes(key))
+      || typeof value.waveId !== 'string' || !/^wave:[a-f0-9]{32}$/u.test(value.waveId)
+      || (value.onAggregate !== undefined && typeof value.onAggregate !== 'function')) {
+      throw applicationError('wave attention watch request is invalid', 'application_wave_attention_watch_invalid');
+    }
+    return deepFreeze({
+      waveId: value.waveId,
+      ...(value.onAggregate !== undefined ? { onAggregate: value.onAggregate } : {}),
+    });
   }
 
   // D2.4: waves.list — the registry read accepts only the optional cursor.
@@ -12739,7 +12846,7 @@ export class BatonApplication {
     // unchecked (the observe verbs are not exempt). Checked on the RAW context before full context
     // validation so any session-authority marker refuses (never a pre-gate dispatch).
     if (rawContext?.sessionAuthority
-      && ['waves.start', 'waves.run', 'waves.stop', 'waves.send', 'waves.progress', 'waves.list', 'waves.compile'].includes(name)) {
+      && ['waves.start', 'waves.run', 'waves.stop', 'waves.send', 'waves.progress', 'waves.list', 'waves.attention.watch', 'waves.compile'].includes(name)) {
       // #176 exception (S-2 admission seam): waves.send's closed claimGrant mint is the
       // orchestrator's board-grant transport — it REQUIRES the session authority (board-workerhalf
       // BW-03/05/22) and is a board operation, not a recursive steering verb. Exempt it from the
@@ -12795,6 +12902,11 @@ export class BatonApplication {
     // D2.4 (wave-observability-2026-08-06/contract.md §D2.4): waves.list — the observe verb
     // answering the OPEN rows of the wave registry projection, paged ≤16 with {cursor, nextCursor}.
     if (name === 'waves.list') return this.waveList(args, principal, context);
+    // Wave-attention-watch (#208 item 1): the observe+subscribe verb — the lane emits the AGGREGATE
+    // on park/terminal/settle transitions, never a consumer poll. A direct port (not in the
+    // command-definitions table) dispatched before the recursive gate exactly like the other
+    // observe verbs; the onAggregate callback is in-process delivery (the MCP push rides it).
+    if (name === 'waves.attention.watch') return this.attentionWatchWave(args, principal, context);
     // Issue #114 (D2): the workflow-as-data interpreter lane. A direct port (not in the
     // command-definitions table) — it validates the closed spec and drives the wave over the
     // embedded facade, throwing the field/role-named workflow_* refusals the MCP allowlist preserves.
@@ -12812,6 +12924,11 @@ export class BatonApplication {
     // server-side as 'orchestrator'; never advertised on any user-facing surface.
     if (name === '_wave.closed') return this.appendWaveClosedInternal(args, principal);
     if (name === '_briefing.mint') return this.mintCampaignBriefingInternal(args, principal);
+    // Wave-attention-watch (#208 item 1): the driver's aggregate-emission seam. Underscore-prefixed,
+    // top-level only — the wave driver calls it through its member run handle's command port with
+    // the wave-owner authority (Decision 5's seam). The fan-out is the ONE delivery the lane owns;
+    // a watcher that throws is captured, never allowed to disturb the emitting drive.
+    if (name === '_wave.attention') return this.emitWaveAttentionInternal(args, principal);
     validateApplicationCommandArgs(name, args);
     const recursiveReadCommands = new Set(['application.help', 'run.inspect', 'run.episode',
       'run.workstreams', 'run.status', 'run.follow', 'run.wait']);

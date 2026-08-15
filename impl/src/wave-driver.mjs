@@ -262,6 +262,64 @@ export function reduceMember(interactions, checkpoint, waitingOn) {
   return { class: 'working', gated: null, interactions: [], blocked: false, waiting: false };
 }
 
+// Wave-attention-watch (#208 item 1): the per-member parked-attention projection. A member is
+// parked when its GATED blocking interaction carries an attention kind — decision / question /
+// approval — issue #10's blocked_interaction attention class, REUSED, never re-invented (the
+// run-level lane's own canonical kinds). Every other status (turn_checkpoint, a named waitingOn,
+// plain working, terminal) projects null: the aggregate counts parked members, not checkpoints.
+export function memberAttentionKind(outline) {
+  const interactions = interactionsOf(outline);
+  if (interactions.length === 0) return null;
+  return BLOCKING_INTERACTION_KINDS[interactions[0].kind] ?? null;
+}
+
+/** The closed parked-attention union the lane aggregates over (the blocker projection kinds). */
+export function isParkedAttentionKind(kind) {
+  return kind === 'decision' || kind === 'question' || kind === 'approval';
+}
+
+// The closed aggregate envelope the watch lane emits: N parked members, the oldest park's
+// store-global event-seq (min status cursor among parked members — the same cursor the loop's
+// liveness discipline strips, so it is a durable store position, never a clock), and per-member
+// rows carrying the attention kind + terminality. `rows` are the driver's own per-poll status
+// folds; `extra` carries the emission trigger ({trigger}, and {settled, settleBasis} at settle).
+export function projectWaveAttentionAggregate(waveId, rows, extra = {}) {
+  const members = [];
+  let parkedCount = 0;
+  let oldestParkedAtEventSeq = null;
+  for (const row of rows ?? []) {
+    const attention = isParkedAttentionKind(row?.attention) ? row.attention : null;
+    const member = {
+      role: row?.role ?? null,
+      phase: row?.phase ?? null,
+      terminal: row?.terminal === true,
+      attention,
+      cursor: Number.isSafeInteger(row?.cursor) ? row.cursor : null,
+    };
+    if (row?.terminalCause !== undefined && row.terminalCause !== null) {
+      member.terminalCause = row.terminalCause;
+    }
+    members.push(member);
+    if (attention !== null) {
+      parkedCount += 1;
+      if (Number.isSafeInteger(row?.cursor)
+        && (oldestParkedAtEventSeq === null || row.cursor < oldestParkedAtEventSeq)) {
+        oldestParkedAtEventSeq = row.cursor;
+      }
+    }
+  }
+  return Object.freeze({
+    schemaVersion: 1,
+    waveId,
+    parkedCount,
+    oldestParkedAtEventSeq,
+    members: Object.freeze(members),
+    ...(extra.settled !== undefined ? { settled: extra.settled } : {}),
+    ...(extra.settleBasis !== undefined ? { settleBasis: extra.settleBasis } : {}),
+    ...(extra.trigger !== undefined ? { trigger: extra.trigger } : {}),
+  });
+}
+
 // Bidirectional v2 rule 3: validate the closed callback return union `{optionId}|{text}|undefined`.
 function normalizeDecisionReturn(value) {
   if (value === undefined) return { kind: 'deferred' };
@@ -475,6 +533,11 @@ export function createWaveDriver(baton, rawPolicy = null) {
     let lastMarker = '';
     let lastMarkerAt = startedAt;
     let basis = null;
+    // Wave-attention-watch (#208 item 1): per-poll attention folds + the emission signature. The
+    // aggregate is a projection of the statuses this loop already reads; lastAttentionSignature
+    // gates the delivery so the lane emits ONLY on a folded change (park entry/exit, terminal).
+    const memberAttention = new Map();
+    let lastAttentionSignature = null;
 
     const aborted = () => policy.signal?.aborted === true;
     const sleep = (ms) => {
@@ -608,6 +671,17 @@ export function createWaveDriver(baton, rawPolicy = null) {
           markerParts.push([role, phase, markerDigest]);
           const claimed = memberState.get(role)?.claimed === true;
           statusInfo.set(role, { terminal: terminal || claimed });
+          // Wave-attention-watch (#208 item 1): the per-poll attention fold — role → the aggregate
+          // row the watch projects (phase, terminality, store-global cursor, parked attention kind).
+          // A claimed member is effectively settled (the pause resolved into work_completed) and a
+          // status-read failure contributes the unknown row, never a stale park.
+          memberAttention.set(role, {
+            phase,
+            terminal: terminal || claimed,
+            terminalCause: outline?.terminalCause ?? null,
+            cursor,
+            attention: claimed ? null : memberAttentionKind(outline),
+          });
           if (!terminal && !claimed) {
             // v2 rule 7: reduce this member from the same status view — ordered, precedence-fixed.
             const interactions = interactionsOf(outline);
@@ -630,6 +704,33 @@ export function createWaveDriver(baton, rawPolicy = null) {
             if (cursor !== null) liveMembers.push({ role, run: runHandle, cursor });
           } else {
             classByRole.set(role, phase === SUCCESS_RESTING || terminal ? 'terminal' : 'settled');
+          }
+        }
+
+        // Wave-attention-watch (#208 item 1): the aggregate is a fold over what this poll already
+        // read (the anchor — the loop computes parked/attention state). Emit ONLY on a folded
+        // signature change (park entry/exit, terminal transition — the lane's own trigger set);
+        // the delivery rides the first member run handle's command port with the wave-owner
+        // authority (Decision 5's seam, no facade narrowing), best-effort — a refused or absent
+        // watch never disturbs the drive, and `_command` on a fake facade is guarded by typeof.
+        if (wave?.waveId) {
+          const signature = JSON.stringify(
+            [...memberAttention.entries()]
+              .sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0))
+              .map(([role, row]) => [role, row.attention, row.terminal]),
+          );
+          if (signature !== lastAttentionSignature) {
+            lastAttentionSignature = signature;
+            const rows = [...memberAttention.entries()].map(([role, row]) => ({ role, ...row }));
+            const aggregate = projectWaveAttentionAggregate(wave.waveId, rows, { trigger: 'change' });
+            const firstHandle = wave.runs.values().next().value;
+            if (firstHandle && typeof firstHandle._command === 'function') {
+              try {
+                await firstHandle._command('_wave.attention', {
+                  waveId: wave.waveId, aggregate, trigger: 'change', at: new Date().toISOString(),
+                });
+              } catch { /* best-effort delivery; the drive loop is primary */ }
+            }
           }
         }
 
@@ -811,6 +912,23 @@ export function createWaveDriver(baton, rawPolicy = null) {
       }
 
       outcomes = await wave.settle({ timeoutMs: policy.settleTimeoutMs });
+      // Wave-attention-watch (#208 item 1): the settle aggregate — the wave's final folded state,
+      // emitted once in the guaranteed post-settle, pre-close window (the driver's own close seam).
+      // `settled` + `settleBasis` mark the terminal envelope; the MCP push coalesces the shape.
+      if (wave?.waveId) {
+        const rows = [...memberAttention.entries()].map(([role, row]) => ({ role, ...row }));
+        const aggregate = projectWaveAttentionAggregate(wave.waveId, rows, {
+          trigger: 'settle', settled: true, settleBasis: basis,
+        });
+        const firstHandle = wave.runs.values().next().value;
+        if (firstHandle && typeof firstHandle._command === 'function') {
+          try {
+            await firstHandle._command('_wave.attention', {
+              waveId: wave.waveId, aggregate, trigger: 'settle', at: new Date().toISOString(),
+            });
+          } catch { /* best-effort delivery; the drive loop is primary */ }
+        }
+      }
       // KG settlement D3: the settle-window ritual runs between the members resting and wave close
       // (the pre-stop window). It rides the embedded settlement command from this deployment's own
       // top-level principal; a typed refusal is captured, never allowed to abort the guaranteed
