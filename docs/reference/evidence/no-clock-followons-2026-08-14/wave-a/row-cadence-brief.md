@@ -27,6 +27,24 @@ Deliverable: implementation + red-first pin suite. Two smaller #163 follow-ons i
 3. Red-first pins: a tool-call-only member (no checkpoints) classifies non-silent (RED at
    pre-change head); the settle-timeout pin.
 
+## Measured evidence (2026-08-15 00:12Z instance, wave 99c21cd8 — red facts for this row)
+
+Live instance traced through the ledger: members spawned clean, brief delivered, then the
+interpreter stopped BOTH members 12 seconds after brief delivery with:
+- stop reason = the GENERIC 'Wave driver settled.' (wave.mjs close()) — the decision BASIS
+  (why INCOMPLETE, what signal classified them) rides only the settle receipt, never the
+  per-member stop, and the ledger row carries reasonDigest(digest('Wave driver settled.'))
+  — an opaque digest of a constant string.
+- zero lifecycle.crashed/process_closed before the stop — a pure drive-loop decision on a
+  non-activity signal, inside any cadence-derived window.
+
+Pins this row adds beyond the original three:
+4. Every member stop the driver issues carries its DECISION basis (verdict + the signal
+   that fired it) on the stop outline — 'Wave driver settled.' is never the reason a
+   member sees when the basis is 'incomplete: no-admission-signal' or equivalent.
+5. The drive loop never classifies a member terminal on a signal other than member evidence
+   (the 12s-brief-to-stop instance is the red case: no crash, no close, no cadence breach).
+
 ## Hard bounds
 
 Same as the sibling row: additive, no suite edits, batteries green, no new surfaces.
