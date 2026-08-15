@@ -946,6 +946,15 @@ const ORDINARY_EXPLICIT_TOOLS = new Set([
 ]);
 const TOOL_DEFINITIONS = Object.freeze([...ORDINARY_APPLICATION_TOOL_DEFINITIONS, ...APPLICATION_TOOL_DEFINITIONS, ...CANONICAL_DOT_TOOL_DEFINITIONS, ...ADVANCED_TOOL_DEFINITIONS, ...REFLEX_TOOL_DEFINITIONS]);
 
+// #233 regression (2026-08-15, caught live by the fleet-drive): the canonical-naming fold
+// dropped this map while its consumer survived — every tools/call argument validation
+// ('TOOL_BY_NAME is not defined'). Restored: dot twins resolve FIRST (a caller may address
+// either spelling), legacy spellings fall through to their base tool.
+const TOOL_BY_NAME = new Map([
+  ...TOOL_DEFINITIONS.map((tool) => [tool.name, tool]),
+  ...CANONICAL_DOT_TOOL_DEFINITIONS.map((tool) => [tool.name, tool]),
+]);
+
 function closedRecord(value, fields) {
   return record(value) && Object.keys(value).sort().join(',') === [...fields].sort().join(',');
 }

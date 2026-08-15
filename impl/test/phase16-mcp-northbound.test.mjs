@@ -118,7 +118,7 @@ test('UA5/MN1: an application-backed MCP server exposes the semantic ordinary su
     'baton_package_admit', 'baton_package_attach', 'baton_package_read',
     'baton_repl_cite', 'baton_knowledge_recall', 'baton_knowledge_horizon',
   ];
-  assert.equal(combined.result.tools.length, 88); // 64 ordinary/advanced + 6 workflow-surface (#87+#48) + 1 waves.run (#114) + 1 waves.list (#132) + 1 waves.compile (#170) + 1 scratchpad.append (#158) + 14 S-3 reflex (decision.answer + settlement rows are ordinary at MCP-W1/W2)
+  assert.equal(combined.result.tools.length, 111); // 88 pre-#233 (64 ordinary/advanced + 6 workflow-surface #87+#48 + waves.run #114 + waves.list #132 + waves.compile #170 + scratchpad.append #158 + 14 S-3 reflex) + 23 canonical dot-name twins (#233: every application tool admitted under its dot spelling beside the legacy baton_*/fleet_* transport)
   assert.deepEqual(combined.result.tools.slice(0, response.result.tools.length).map((tool) => tool.name), response.result.tools.map((tool) => tool.name), 'the combined inventory preserves the ordinary application surface verbatim as its prefix');
   assert.deepEqual(combined.result.tools.map((tool) => tool.name).filter((name) => reflexNames.includes(name)), reflexNames);
   assert.equal(combined.result.tools.every((tool) => tool.inputSchema.additionalProperties === false), true);
