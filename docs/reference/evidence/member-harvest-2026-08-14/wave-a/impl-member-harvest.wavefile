@@ -1,14 +1,14 @@
 wave member-harvest-2026-08-14-wave-a
 member coordinator
-  harness deepseek
-  model deepseek-v4-flash
+  harness omp
+  model "deepseek/deepseek-v4-flash"
   effort high
   scope "docs/reference/evidence/member-harvest-2026-08-14/wave-a/**"
   objectiveRef "docs/reference/evidence/member-harvest-2026-08-14/wave-a/coordinator-brief.md"
   report "docs/reference/evidence/member-harvest-2026-08-14/wave-a/verify-notes.md"
 member row-harvest-at-settle
-  harness deepseek
-  model deepseek-v4-flash
+  harness omp
+  model "deepseek/deepseek-v4-flash"
   effort high
   scope "impl/src/runtime-isolation.mjs"
   scope "impl/src/coordinator.mjs"

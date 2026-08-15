@@ -1,14 +1,14 @@
 wave attention-spine-2026-08-14-wave-a
 member coordinator
-  harness deepseek
-  model deepseek-v4-flash
+  harness omp
+  model "deepseek/deepseek-v4-flash"
   effort high
   scope "docs/reference/evidence/attention-spine-2026-08-14/wave-a/**"
   objectiveRef "docs/reference/evidence/attention-spine-2026-08-14/wave-a/coordinator-brief.md"
   report "docs/reference/evidence/attention-spine-2026-08-14/wave-a/verify-notes.md"
 member row-wave-attention-watch
-  harness deepseek
-  model deepseek-v4-flash
+  harness omp
+  model "deepseek/deepseek-v4-flash"
   effort high
   scope "impl/src/application.mjs"
   scope "impl/src/wave-driver.mjs"
@@ -16,8 +16,8 @@ member row-wave-attention-watch
   objectiveRef "docs/reference/evidence/attention-spine-2026-08-14/wave-a/row-wave-attention-watch-brief.md"
   report "docs/reference/evidence/attention-spine-2026-08-14/wave-a/notes-row-wave-attention-watch.md"
 member row-mcp-push
-  harness deepseek
-  model deepseek-v4-flash
+  harness omp
+  model "deepseek/deepseek-v4-flash"
   effort high
   scope "impl/src/mcp-northbound.mjs"
   scope "impl/src/mcp-web-bridge.mjs"

@@ -667,8 +667,8 @@ function locallyReadyRoutes(repoRoot) {
       : route.harness === 'grok' ? grokReady
         : route.harness === 'kimi-code' ? kimiReady
           : route.harness === 'claude-code' ? claudeReady
-            : route.harness === 'deepseek'
-              ? existingRegular(join(repoRoot, 'deepseek_key.json')) : false
+            : route.harness === 'omp' ? existingRegular(join(repoRoot, 'deepseek_key.json'))
+              || existingRegular(join(repoRoot, 'glm_key.json')) : false
   ));
   if (existingRegular(kimiThroughClaudeCredential())) {
     routes.push(Object.freeze({
@@ -690,11 +690,11 @@ function locallyConfiguredRoutes(repoRoot) {
     ),
     // ClaudeSessionCli is a built-in adapter, so its advertised route inventory is deployment
     // configuration rather than an ambient executable/authentication observation. The bounded
-    // version and projected `auth status --json` probes below remain the readiness authorities.
     'claude-code': true,
     // The built-in adapter can report the repo-local credential absence without launching a
-    // provider, so configuration inventory remains honest even before the key is provisioned.
     deepseek: true,
+    // #228: omp is a built-in adapter; its inventory is honest pre-credential.
+    omp: true,
   };
   const routes = DEFAULT_ROUTES.filter((route) => configured[route.harness] === true);
   if (existingRegular(kimiThroughClaudeCredential())) {

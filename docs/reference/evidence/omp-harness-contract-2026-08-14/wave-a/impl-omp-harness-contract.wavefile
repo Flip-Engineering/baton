@@ -1,21 +1,21 @@
 wave omp-harness-contract-2026-08-14-wave-a
 member coordinator
-  harness deepseek
-  model deepseek-v4-flash
+  harness omp
+  model "deepseek/deepseek-v4-flash"
   effort high
   scope "docs/reference/evidence/omp-harness-contract-2026-08-14/wave-a/**"
   objectiveRef "docs/reference/evidence/omp-harness-contract-2026-08-14/wave-a/coordinator-brief.md"
   report "docs/reference/evidence/omp-harness-contract-2026-08-14/wave-a/verify-notes.md"
 member row-adapter-contract
-  harness deepseek
-  model deepseek-v4-flash
+  harness omp
+  model "deepseek/deepseek-v4-flash"
   effort high
   scope "docs/reference/evidence/omp-harness-contract-2026-08-14/wave-a/**"
   objectiveRef "docs/reference/evidence/omp-harness-contract-2026-08-14/wave-a/row-adapter-contract-brief.md"
   report "docs/reference/evidence/omp-harness-contract-2026-08-14/wave-a/contract-omp-adapter.md"
 member row-dogfood-contract
-  harness deepseek
-  model deepseek-v4-flash
+  harness omp
+  model "deepseek/deepseek-v4-flash"
   effort high
   scope "docs/reference/evidence/omp-harness-contract-2026-08-14/wave-a/**"
   objectiveRef "docs/reference/evidence/omp-harness-contract-2026-08-14/wave-a/row-dogfood-contract-brief.md"

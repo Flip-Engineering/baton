@@ -1,35 +1,35 @@
 wave collab-contracts-2026-08-14-wave-b-rd4
 member coordinator
-  harness deepseek
-  model "deepseek-v4-pro[1m]"
+  harness omp
+  model "deepseek/deepseek-v4-pro[1m]"
   effort high
   scope "docs/reference/evidence/collab-contracts-2026-08-14/redrive4/**"
   objectiveRef "docs/reference/evidence/collab-contracts-2026-08-14/redrive4/coordinator-brief.md"
   report "docs/reference/evidence/collab-contracts-2026-08-14/redrive4/contract-qa.md"
 member row-member-lanes
-  harness deepseek
-  model glm-5.2
+  harness omp
+  model "glm/glm-5.2"
   effort high
   scope "docs/reference/evidence/collab-contracts-2026-08-14/redrive4/**"
   objectiveRef "docs/reference/evidence/collab-contracts-2026-08-14/redrive4/row-member-lanes.md"
   report "docs/reference/evidence/collab-contracts-2026-08-14/redrive4/contract-member-lanes.md"
 member row-knowledge-activation
-  harness deepseek
-  model glm-5.2
+  harness omp
+  model "glm/glm-5.2"
   effort high
   scope "docs/reference/evidence/collab-contracts-2026-08-14/redrive4/**"
   objectiveRef "docs/reference/evidence/collab-contracts-2026-08-14/redrive4/row-knowledge-activation.md"
   report "docs/reference/evidence/collab-contracts-2026-08-14/redrive4/contract-knowledge-activation.md"
 member row-context-lanes
-  harness deepseek
-  model glm-5.2
+  harness omp
+  model "glm/glm-5.2"
   effort high
   scope "docs/reference/evidence/collab-contracts-2026-08-14/redrive4/**"
   objectiveRef "docs/reference/evidence/collab-contracts-2026-08-14/redrive4/row-context-lanes.md"
   report "docs/reference/evidence/collab-contracts-2026-08-14/redrive4/contract-context-lanes.md"
 member row-federation-doubt
-  harness deepseek
-  model glm-5.2
+  harness omp
+  model "glm/glm-5.2"
   effort high
   scope "docs/reference/evidence/collab-contracts-2026-08-14/redrive4/**"
   objectiveRef "docs/reference/evidence/collab-contracts-2026-08-14/redrive4/row-federation-doubt.md"

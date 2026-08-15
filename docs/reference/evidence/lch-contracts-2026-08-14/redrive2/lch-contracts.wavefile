@@ -1,35 +1,35 @@
 wave lch-contracts-2026-08-14-wave-b-rd2
 member coordinator
-  harness glm
-  model "glm-5.3"
+  harness omp
+  model "glm/glm-5.3"
   effort high
   scope "docs/reference/evidence/lch-contracts-2026-08-14/redrive2/**"
   objectiveRef "docs/reference/evidence/lch-contracts-2026-08-14/redrive2/coordinator-brief.md"
   report "docs/reference/evidence/lch-contracts-2026-08-14/redrive2/contract-qa.md"
 member row-wake
-  harness glm
-  model glm-5.2
+  harness omp
+  model "glm/glm-5.2"
   effort high
   scope "docs/reference/evidence/lch-contracts-2026-08-14/redrive2/**"
   objectiveRef "docs/reference/evidence/lch-contracts-2026-08-14/redrive2/row-wake.md"
   report "docs/reference/evidence/lch-contracts-2026-08-14/redrive2/contract-wake.md"
 member row-death
-  harness glm
-  model glm-5.2
+  harness omp
+  model "glm/glm-5.2"
   effort high
   scope "docs/reference/evidence/lch-contracts-2026-08-14/redrive2/**"
   objectiveRef "docs/reference/evidence/lch-contracts-2026-08-14/redrive2/row-death.md"
   report "docs/reference/evidence/lch-contracts-2026-08-14/redrive2/contract-death.md"
 member row-retry
-  harness glm
-  model glm-5.2
+  harness omp
+  model "glm/glm-5.2"
   effort high
   scope "docs/reference/evidence/lch-contracts-2026-08-14/redrive2/**"
   objectiveRef "docs/reference/evidence/lch-contracts-2026-08-14/redrive2/row-retry.md"
   report "docs/reference/evidence/lch-contracts-2026-08-14/redrive2/contract-retry.md"
 member row-quiescence-compat
-  harness glm
-  model glm-5.2
+  harness omp
+  model "glm/glm-5.2"
   effort high
   scope "docs/reference/evidence/lch-contracts-2026-08-14/redrive2/**"
   objectiveRef "docs/reference/evidence/lch-contracts-2026-08-14/redrive2/row-quiescence-compat.md"

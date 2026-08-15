@@ -1,14 +1,14 @@
 wave phantom-root-2026-08-14-wave-a
 member coordinator
-  harness deepseek
-  model deepseek-v4-flash
+  harness omp
+  model "deepseek/deepseek-v4-flash"
   effort high
   scope "docs/reference/evidence/phantom-root-2026-08-14/wave-a/**"
   objectiveRef "docs/reference/evidence/phantom-root-2026-08-14/wave-a/coordinator-brief.md"
   report "docs/reference/evidence/phantom-root-2026-08-14/wave-a/verify-notes.md"
 member row-task-namespace
-  harness deepseek
-  model deepseek-v4-flash
+  harness omp
+  model "deepseek/deepseek-v4-flash"
   effort high
   scope "impl/src/wave.mjs"
   scope "impl/src/workflow-interpreter.mjs"
@@ -16,8 +16,8 @@ member row-task-namespace
   objectiveRef "docs/reference/evidence/phantom-root-2026-08-14/wave-a/row-task-namespace-brief.md"
   report "docs/reference/evidence/phantom-root-2026-08-14/wave-a/notes-row-task-namespace.md"
 member row-admission-align
-  harness deepseek
-  model deepseek-v4-flash
+  harness omp
+  model "deepseek/deepseek-v4-flash"
   effort high
   scope "impl/src/workflow-interpreter.mjs"
   scope "impl/src/limits.mjs"
@@ -25,8 +25,8 @@ member row-admission-align
   objectiveRef "docs/reference/evidence/phantom-root-2026-08-14/wave-a/row-admission-align-brief.md"
   report "docs/reference/evidence/phantom-root-2026-08-14/wave-a/notes-row-admission-align.md"
 member row-spawn-window
-  harness deepseek
-  model deepseek-v4-flash
+  harness omp
+  model "deepseek/deepseek-v4-flash"
   effort high
   scope "impl/src/wave.mjs"
   scope "impl/src/coordinator.mjs"

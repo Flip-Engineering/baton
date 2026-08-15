@@ -1,14 +1,14 @@
 wave impl-telemetry-2026-08-14-wave-e
 member coordinator
-  harness deepseek
-  model deepseek-v4-pro[1m]
+  harness omp
+  model "deepseek/deepseek-v4-pro[1m]"
   effort high
   scope "docs/reference/evidence/impl-telemetry-2026-08-14/redrive4/**"
   objectiveRef "docs/reference/evidence/impl-telemetry-2026-08-14/redrive4/coordinator-brief.md"
   report "docs/reference/evidence/impl-telemetry-2026-08-14/redrive4/verify-notes.md"
 member row-telemetry
-  harness deepseek
-  model "deepseek-v4-flash"
+  harness omp
+  model "deepseek/deepseek-v4-flash"
   effort high
   scope "impl/src/application-deployment.mjs"
   scope "impl/scripts/baton.mjs"

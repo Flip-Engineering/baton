@@ -1,14 +1,14 @@
 wave bus-deadlock-2026-08-15-wave-a
 member coordinator
-  harness deepseek
-  model deepseek-v4-flash
+  harness omp
+  model "deepseek/deepseek-v4-flash"
   effort high
   scope "docs/reference/evidence/bus-deadlock-2026-08-15/wave-a/**"
   objectiveRef "docs/reference/evidence/bus-deadlock-2026-08-15/wave-a/coordinator-brief.md"
   report "docs/reference/evidence/bus-deadlock-2026-08-15/wave-a/verify-notes.md"
 member row-contract
-  harness deepseek
-  model deepseek-v4-flash
+  harness omp
+  model "deepseek/deepseek-v4-flash"
   effort high
   scope "docs/reference/evidence/bus-deadlock-2026-08-15/wave-a/**"
   objectiveRef "docs/reference/evidence/bus-deadlock-2026-08-15/wave-a/row-contract-brief.md"

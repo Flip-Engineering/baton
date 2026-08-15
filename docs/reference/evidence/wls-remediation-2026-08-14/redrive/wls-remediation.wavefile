@@ -1,14 +1,14 @@
 wave wls-remediation-2026-08-14-wave-a-rd1
 member coordinator
-  harness deepseek
-  model "deepseek-v4-pro[1m]"
+  harness omp
+  model "deepseek/deepseek-v4-pro[1m]"
   effort high
   scope "docs/reference/evidence/wls-remediation-2026-08-14/redrive/**"
   objectiveRef "docs/reference/evidence/wls-remediation-2026-08-14/redrive/coordinator-brief.md"
   report "docs/reference/evidence/wls-remediation-2026-08-14/redrive/verify-notes.md"
 member row-fix
-  harness deepseek
-  model "deepseek-v4-pro[1m]"
+  harness omp
+  model "deepseek/deepseek-v4-pro[1m]"
   effort high
   scope "impl/src/application.mjs"
   scope "docs/reference/evidence/wls-remediation-2026-08-14/redrive/**"

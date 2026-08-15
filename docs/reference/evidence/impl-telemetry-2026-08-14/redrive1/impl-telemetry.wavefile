@@ -1,14 +1,14 @@
 wave impl-telemetry-2026-08-14-wave-b
 member coordinator
-  harness glm
-  model glm-5.2
+  harness omp
+  model "glm/glm-5.2"
   effort high
   scope "docs/reference/evidence/impl-telemetry-2026-08-14/redrive1/**"
   objectiveRef "docs/reference/evidence/impl-telemetry-2026-08-14/redrive1/coordinator-brief.md"
   report "docs/reference/evidence/impl-telemetry-2026-08-14/redrive1/verify-notes.md"
 member row-telemetry
-  harness glm
-  model "glm-5.3"
+  harness omp
+  model "glm/glm-5.3"
   effort high
   scope "impl/src/application-deployment.mjs"
   scope "impl/scripts/baton.mjs"

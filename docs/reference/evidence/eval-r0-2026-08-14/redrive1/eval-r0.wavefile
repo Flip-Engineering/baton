@@ -1,14 +1,14 @@
 wave eval-r0-2026-08-14-wave-b
 member coordinator
-  harness deepseek
-  model deepseek-v4-flash
+  harness omp
+  model "deepseek/deepseek-v4-flash"
   effort high
   scope "docs/reference/evidence/eval-r0-2026-08-14/redrive1/**"
   objectiveRef "docs/reference/evidence/eval-r0-2026-08-14/redrive1/coordinator-brief.md"
   report "docs/reference/evidence/eval-r0-2026-08-14/redrive1/verify-notes.md"
 member row-eval-r0
-  harness glm
-  model "glm-5.2"
+  harness omp
+  model "glm/glm-5.2"
   effort high
   scope "docs/reference/evidence/eval-r0-2026-08-14/redrive1/**"
   objectiveRef "docs/reference/evidence/eval-r0-2026-08-14/redrive1/row-eval-r0-brief.md"

@@ -1,22 +1,22 @@
 wave mcp-dsl-surface-2026-08-14-wave-a
 member coordinator
-  harness deepseek
-  model deepseek-v4-flash
+  harness omp
+  model "deepseek/deepseek-v4-flash"
   effort high
   scope "docs/reference/evidence/mcp-dsl-surface-2026-08-14/wave-a/**"
   objectiveRef "docs/reference/evidence/mcp-dsl-surface-2026-08-14/wave-a/coordinator-brief.md"
   report "docs/reference/evidence/mcp-dsl-surface-2026-08-14/wave-a/verify-notes.md"
 member row-facade-widen
-  harness deepseek
-  model deepseek-v4-flash
+  harness omp
+  model "deepseek/deepseek-v4-flash"
   effort high
   scope "impl/src/mcp-web-bridge.mjs"
   scope "docs/reference/evidence/mcp-dsl-surface-2026-08-14/wave-a/**"
   objectiveRef "docs/reference/evidence/mcp-dsl-surface-2026-08-14/wave-a/row-facade-widen-brief.md"
   report "docs/reference/evidence/mcp-dsl-surface-2026-08-14/wave-a/notes-row-facade-widen.md"
 member row-descriptor-serve
-  harness deepseek
-  model deepseek-v4-flash
+  harness omp
+  model "deepseek/deepseek-v4-flash"
   effort high
   scope "impl/src/mcp-descriptor.mjs"
   scope "impl/src/mcp-web-bridge.mjs"
@@ -24,8 +24,8 @@ member row-descriptor-serve
   objectiveRef "docs/reference/evidence/mcp-dsl-surface-2026-08-14/wave-a/row-descriptor-serve-brief.md"
   report "docs/reference/evidence/mcp-dsl-surface-2026-08-14/wave-a/notes-row-descriptor-serve.md"
 member row-dsl-views
-  harness deepseek
-  model deepseek-v4-flash
+  harness omp
+  model "deepseek/deepseek-v4-flash"
   effort high
   scope "impl/src/application.mjs"
   scope "impl/src/mcp-northbound.mjs"
@@ -33,8 +33,8 @@ member row-dsl-views
   objectiveRef "docs/reference/evidence/mcp-dsl-surface-2026-08-14/wave-a/row-dsl-views-brief.md"
   report "docs/reference/evidence/mcp-dsl-surface-2026-08-14/wave-a/notes-row-dsl-views.md"
 member row-continuation
-  harness deepseek
-  model deepseek-v4-flash
+  harness omp
+  model "deepseek/deepseek-v4-flash"
   effort high
   scope "impl/src/application-cli.mjs"
   scope "docs/reference/evidence/mcp-dsl-surface-2026-08-14/wave-a/**"

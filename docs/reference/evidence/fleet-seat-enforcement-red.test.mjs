@@ -10,7 +10,7 @@ import { join } from 'node:path';
 //
 // RED at HEAD: every fired pack says `harness deepseek`.
 
-const EVIDENCE = join(import.meta.dirname, '..', 'reference', 'evidence');
+const EVIDENCE = import.meta.dirname;
 
 function activeWavefiles() {
   const out = [];

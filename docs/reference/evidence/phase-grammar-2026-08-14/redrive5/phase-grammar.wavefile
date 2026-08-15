@@ -1,37 +1,37 @@
 wave phase-grammar-2026-08-14-wave-a-rd5
 member coordinator
-  harness deepseek
-  model "deepseek-v4-pro[1m]"
+  harness omp
+  model "deepseek/deepseek-v4-pro[1m]"
   effort high
   scope "docs/reference/evidence/phase-grammar-2026-08-14/redrive5/**"
   objectiveRef "docs/reference/evidence/phase-grammar-2026-08-14/redrive5/coordinator-brief.md"
   report "docs/reference/evidence/phase-grammar-2026-08-14/redrive5/phase-qa.md"
 member row-contract
-  harness deepseek
-  model "deepseek-v4-flash"
+  harness omp
+  model "deepseek/deepseek-v4-flash"
   effort high
   scope "docs/reference/evidence/phase-grammar-2026-08-14/redrive5/**"
   objectiveRef "docs/reference/evidence/phase-grammar-2026-08-14/redrive5/row-contract-brief.md"
   report "docs/reference/evidence/phase-grammar-2026-08-14/redrive5/phase-grammar-contract.md"
 member row-suite
-  harness deepseek
-  model glm-5.2
+  harness omp
+  model "glm/glm-5.2"
   effort high
   scope "docs/reference/evidence/phase-grammar-2026-08-14/redrive5/**"
   scope "impl/test/workflow-phases-red.test.mjs"
   objectiveRef "docs/reference/evidence/phase-grammar-2026-08-14/redrive5/row-suite-brief.md"
   report "docs/reference/evidence/phase-grammar-2026-08-14/redrive5/suite-notes.md"
 member row-impl-compiler
-  harness deepseek
-  model "deepseek-v4-flash"
+  harness omp
+  model "deepseek/deepseek-v4-flash"
   effort high
   scope "docs/reference/evidence/phase-grammar-2026-08-14/redrive5/**"
   scope "impl/src/workflow-dsl.mjs"
   objectiveRef "docs/reference/evidence/phase-grammar-2026-08-14/redrive5/row-impl-compiler-brief.md"
   report "docs/reference/evidence/phase-grammar-2026-08-14/redrive5/impl-compiler-notes.md"
 member row-impl-interpreter
-  harness deepseek
-  model "deepseek-v4-flash"
+  harness omp
+  model "deepseek/deepseek-v4-flash"
   effort high
   scope "docs/reference/evidence/phase-grammar-2026-08-14/redrive5/**"
   scope "impl/src/workflow-interpreter.mjs"

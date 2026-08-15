@@ -1,14 +1,14 @@
 wave contract-seeds-2026-08-14-wave-b
 member coordinator
-  harness deepseek
-  model deepseek-v4-flash
+  harness omp
+  model "deepseek/deepseek-v4-flash"
   effort high
   scope "docs/reference/evidence/contract-seeds-2026-08-14/redrive1/**"
   objectiveRef "docs/reference/evidence/contract-seeds-2026-08-14/redrive1/coordinator-brief.md"
   report "docs/reference/evidence/contract-seeds-2026-08-14/redrive1/verify-notes.md"
 member row-seeds
-  harness deepseek
-  model "deepseek-v4-flash"
+  harness omp
+  model "deepseek/deepseek-v4-flash"
   effort high
   scope "docs/reference/evidence/contract-seeds-2026-08-14/redrive1/**"
   objectiveRef "docs/reference/evidence/contract-seeds-2026-08-14/redrive1/row-seeds-brief.md"

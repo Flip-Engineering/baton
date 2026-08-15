@@ -1,14 +1,14 @@
 wave readme-split-2026-08-14-wave-c
 member coordinator
-  harness deepseek
-  model deepseek-v4-flash
+  harness omp
+  model "deepseek/deepseek-v4-flash"
   effort high
   scope "docs/reference/evidence/readme-split-2026-08-14/redrive2/**"
   objectiveRef "docs/reference/evidence/readme-split-2026-08-14/redrive2/coordinator-brief.md"
   report "docs/reference/evidence/readme-split-2026-08-14/redrive2/verify-notes.md"
 member row-readme
-  harness deepseek
-  model glm-5.2
+  harness omp
+  model "glm/glm-5.2"
   effort high
   scope "README.md"
   scope "docs/reference/progress-ledger-2026-08-14.md"

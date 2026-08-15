@@ -1,37 +1,37 @@
 wave phase-grammar-2026-08-14-wave-a-rd4
 member coordinator
-  harness glm
-  model "glm-5.3"
+  harness omp
+  model "glm/glm-5.3"
   effort high
   scope "docs/reference/evidence/phase-grammar-2026-08-14/redrive4/**"
   objectiveRef "docs/reference/evidence/phase-grammar-2026-08-14/redrive4/coordinator-brief.md"
   report "docs/reference/evidence/phase-grammar-2026-08-14/redrive4/phase-qa.md"
 member row-contract
-  harness glm
-  model "glm-5.3"
+  harness omp
+  model "glm/glm-5.3"
   effort high
   scope "docs/reference/evidence/phase-grammar-2026-08-14/redrive4/**"
   objectiveRef "docs/reference/evidence/phase-grammar-2026-08-14/redrive4/row-contract-brief.md"
   report "docs/reference/evidence/phase-grammar-2026-08-14/redrive4/phase-grammar-contract.md"
 member row-suite
-  harness glm
-  model glm-5.2
+  harness omp
+  model "glm/glm-5.2"
   effort high
   scope "docs/reference/evidence/phase-grammar-2026-08-14/redrive4/**"
   scope "impl/test/workflow-phases-red.test.mjs"
   objectiveRef "docs/reference/evidence/phase-grammar-2026-08-14/redrive4/row-suite-brief.md"
   report "docs/reference/evidence/phase-grammar-2026-08-14/redrive4/suite-notes.md"
 member row-impl-compiler
-  harness glm
-  model "glm-5.3"
+  harness omp
+  model "glm/glm-5.3"
   effort high
   scope "docs/reference/evidence/phase-grammar-2026-08-14/redrive4/**"
   scope "impl/src/workflow-dsl.mjs"
   objectiveRef "docs/reference/evidence/phase-grammar-2026-08-14/redrive4/row-impl-compiler-brief.md"
   report "docs/reference/evidence/phase-grammar-2026-08-14/redrive4/impl-compiler-notes.md"
 member row-impl-interpreter
-  harness glm
-  model "glm-5.3"
+  harness omp
+  model "glm/glm-5.3"
   effort high
   scope "docs/reference/evidence/phase-grammar-2026-08-14/redrive4/**"
   scope "impl/src/workflow-interpreter.mjs"

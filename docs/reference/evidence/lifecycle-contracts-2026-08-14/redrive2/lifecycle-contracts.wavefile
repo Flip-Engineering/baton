@@ -1,35 +1,35 @@
 wave lifecycle-contracts-2026-08-14-wave-a-rd2
 member coordinator
-  harness deepseek
-  model "deepseek-v4-pro[1m]"
+  harness omp
+  model "deepseek/deepseek-v4-pro[1m]"
   effort high
   scope "docs/reference/evidence/lifecycle-contracts-2026-08-14/redrive2/**"
   objectiveRef "docs/reference/evidence/lifecycle-contracts-2026-08-14/redrive2/coordinator-brief.md"
   report "docs/reference/evidence/lifecycle-contracts-2026-08-14/redrive2/contract-qa.md"
 member row-lc-fs
-  harness deepseek
-  model deepseek-v4-flash
+  harness omp
+  model "deepseek/deepseek-v4-flash"
   effort high
   scope "docs/reference/evidence/lifecycle-contracts-2026-08-14/redrive2/**"
   objectiveRef "docs/reference/evidence/lifecycle-contracts-2026-08-14/redrive2/row-lc-fs.md"
   report "docs/reference/evidence/lifecycle-contracts-2026-08-14/redrive2/contract-filesystem.md"
 member row-lc-launch
-  harness deepseek
-  model deepseek-v4-flash
+  harness omp
+  model "deepseek/deepseek-v4-flash"
   effort high
   scope "docs/reference/evidence/lifecycle-contracts-2026-08-14/redrive2/**"
   objectiveRef "docs/reference/evidence/lifecycle-contracts-2026-08-14/redrive2/row-lc-launch.md"
   report "docs/reference/evidence/lifecycle-contracts-2026-08-14/redrive2/contract-launch.md"
 member row-lc-members
-  harness deepseek
-  model deepseek-v4-flash
+  harness omp
+  model "deepseek/deepseek-v4-flash"
   effort high
   scope "docs/reference/evidence/lifecycle-contracts-2026-08-14/redrive2/**"
   objectiveRef "docs/reference/evidence/lifecycle-contracts-2026-08-14/redrive2/row-lc-members.md"
   report "docs/reference/evidence/lifecycle-contracts-2026-08-14/redrive2/contract-members.md"
 member row-lc-ledger
-  harness deepseek
-  model deepseek-v4-flash
+  harness omp
+  model "deepseek/deepseek-v4-flash"
   effort high
   scope "docs/reference/evidence/lifecycle-contracts-2026-08-14/redrive2/**"
   objectiveRef "docs/reference/evidence/lifecycle-contracts-2026-08-14/redrive2/row-lc-ledger.md"

@@ -1,35 +1,35 @@
 wave lch-contracts-2026-08-14-wave-b-rd4
 member coordinator
-  harness deepseek
-  model "deepseek-v4-pro[1m]"
+  harness omp
+  model "deepseek/deepseek-v4-pro[1m]"
   effort high
   scope "docs/reference/evidence/lch-contracts-2026-08-14/redrive4/**"
   objectiveRef "docs/reference/evidence/lch-contracts-2026-08-14/redrive4/coordinator-brief.md"
   report "docs/reference/evidence/lch-contracts-2026-08-14/redrive4/contract-qa.md"
 member row-wake
-  harness deepseek
-  model deepseek-v4-flash
+  harness omp
+  model "deepseek/deepseek-v4-flash"
   effort high
   scope "docs/reference/evidence/lch-contracts-2026-08-14/redrive4/**"
   objectiveRef "docs/reference/evidence/lch-contracts-2026-08-14/redrive4/row-wake.md"
   report "docs/reference/evidence/lch-contracts-2026-08-14/redrive4/contract-wake.md"
 member row-death
-  harness deepseek
-  model deepseek-v4-flash
+  harness omp
+  model "deepseek/deepseek-v4-flash"
   effort high
   scope "docs/reference/evidence/lch-contracts-2026-08-14/redrive4/**"
   objectiveRef "docs/reference/evidence/lch-contracts-2026-08-14/redrive4/row-death.md"
   report "docs/reference/evidence/lch-contracts-2026-08-14/redrive4/contract-death.md"
 member row-retry
-  harness deepseek
-  model deepseek-v4-flash
+  harness omp
+  model "deepseek/deepseek-v4-flash"
   effort high
   scope "docs/reference/evidence/lch-contracts-2026-08-14/redrive4/**"
   objectiveRef "docs/reference/evidence/lch-contracts-2026-08-14/redrive4/row-retry.md"
   report "docs/reference/evidence/lch-contracts-2026-08-14/redrive4/contract-retry.md"
 member row-quiescence-compat
-  harness deepseek
-  model deepseek-v4-flash
+  harness omp
+  model "deepseek/deepseek-v4-flash"
   effort high
   scope "docs/reference/evidence/lch-contracts-2026-08-14/redrive4/**"
   objectiveRef "docs/reference/evidence/lch-contracts-2026-08-14/redrive4/row-quiescence-compat.md"
