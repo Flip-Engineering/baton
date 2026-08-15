@@ -8209,11 +8209,37 @@ export class BatonApplication {
     const progressClass = projectProgressClass({
       phase: semanticView.phase,
       attention,
-      timing,
+      // The CLASSIFICATION's silence basis extends to the activity projection (leg-b) while the
+      // view's own timing block stays coordinator-meaningful-only (AX1-F).
+      timing: this._livenessTiming(timing, semanticView),
       terminalCause: semanticView.terminalCause ?? null,
     });
     const requiredAction = this._semanticRequiredAction(current, semanticView, principal);
     return deepFreeze({ progressClass, requiredAction });
+  }
+
+  // #163 leg-b (row-cadence, 2026-08-15): the per-member LIVENESS classification folds the
+  // activity projection's lastActivityAt — the latest member-originated evidence event, tool
+  // calls and messages included (grok emits no resource.* events at all — the BD-A3 class the
+  // :8128 comment names). The view's OWN timing block (lastProgress.at / silenceMs) stays
+  // coordinator-meaningful-only — AX1-F pins that tool-call/message telemetry is noise for
+  // PROGRESS meaning, and it is exactly right for LIVENESS. So the extension is scoped to the
+  // classification the driver folds: a tool-calling member never reads 'silent' while its
+  // events advance (the 2026-08-15 00:12Z quiescence red case). Views without an activity
+  // projection (planning/historical doubles) fall through unchanged.
+  _livenessTiming(timing, view) {
+    const activityAt = typeof view?.activity?.lastActivityAt === 'string'
+      ? view.activity.lastActivityAt : null;
+    const meaningfulAt = timing?.lastProgress?.at ?? null;
+    if (activityAt === null || meaningfulAt === null || !(activityAt > meaningfulAt)) return timing;
+    const observedMs = Date.parse(timing?.observedAt ?? '');
+    const lastMs = Date.parse(activityAt);
+    if (!Number.isFinite(observedMs) || !Number.isFinite(lastMs)) return timing;
+    return deepFreeze({
+      ...timing,
+      lastProgress: { ...timing.lastProgress, at: new Date(lastMs).toISOString() },
+      silenceMs: Math.min(Number.MAX_SAFE_INTEGER, Math.max(0, Math.trunc(observedMs - lastMs))),
+    });
   }
 
   // v2 rule 3, HOT PATH: the resolving action for the rule-2 block, computed WITHOUT the full

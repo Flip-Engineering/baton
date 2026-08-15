@@ -79,6 +79,22 @@ const STEERING_MODES = Object.freeze(new Set(['nudge-on-checkpoint', 'none']));
 const FINALIZATIONS = Object.freeze(new Set(['none', 'claim-on-stall']));
 const SETTLEMENTS = Object.freeze(new Set(['kg-ritual', 'none']));
 
+// #163 follow-on (row-cadence, 2026-08-15): every member stop the driver issues carries its
+// DECISION basis — the verdict and the signal that fired it. The retired constant left the
+// ledger with reasonDigest(digest('Wave driver settled.')) — an opaque digest of a constant
+// string with zero per-member truth (measured 2026-08-15 00:12Z, wave 99c21cd8). The receipt's
+// `basis` is the verdict; the reason mirrors it onto every member stop outline. The fallback
+// (no basis — the abnormal path where the loop never decided) stays the generic constant.
+const STOP_REASON_BY_BASIS = Object.freeze({
+  completed: 'Wave driver settled: basis completed — every member reached a terminal state on member evidence',
+  stall: 'Wave driver settled: basis stall — the wave-level stall clock fired on a static member-evidence marker',
+  aborted: 'Wave driver settled: basis aborted — the caller abort signal fired',
+});
+
+function closeReason(basis) {
+  return Object.hasOwn(STOP_REASON_BY_BASIS, basis ?? '') ? STOP_REASON_BY_BASIS[basis] : 'Wave driver settled.';
+}
+
 function driverError(message, code, extra = {}) {
   return Object.assign(new Error(message), { code, ...extra });
 }
@@ -830,7 +846,7 @@ export function createWaveDriver(baton, rawPolicy = null) {
     } finally {
       // L1: close is guaranteed — even on a thrown settle/loop, the wave's resources are reaped.
       if (wave) {
-        try { stop = await wave.close({ reason: 'Wave driver settled.' }); }
+        try { stop = await wave.close({ reason: closeReason(basis) }); }
         catch { /* close is best-effort in the abnormal path; the loop's own stop is primary */ }
       }
     }
