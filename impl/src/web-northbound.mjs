@@ -202,7 +202,8 @@ const ACCEPTED_ARG_FIELDS = Object.freeze({
 });
 const APPLICATION_COMMAND = Object.freeze({
   ...Object.fromEntries(
-    [...WEB_APPLICATION_ENTRIES, ...CANONICAL_WEB_ENTRIES, ...WAVE_WEB_ENTRIES].map(([transport, name]) => [transport, name]),
+    [...WEB_APPLICATION_ENTRIES, ...CANONICAL_WEB_ENTRIES, ...WAVE_WEB_ENTRIES,
+      ...WAVE_DOT_WEB_ENTRIES, ...DEPLOYMENT_WEB_ENTRIES].map(([transport, name]) => [transport, name]),
   ),
   // #158 (H2.1): the scratchpad WRITE direct port routes to the folded application verb. The
   // WAVE_WEB_ENTRIES spread above already derives it; the literal pins the routing beside the table.
@@ -598,9 +599,12 @@ function validateEnvelope(envelope) {
       }
       return 'application_command_arguments_invalid';
     }
-    if (envelope.command === 'run_wait' && envelope.args.timeoutMs > 30_000) return 'application_wait_timeout_exceeds_web_ceiling';
+    // #233: command-level (not transport-level) so both admitted spellings draw the identical
+    // web wait ceiling and runId-derivation rules.
+    if (APPLICATION_COMMAND[envelope.command] === 'run.wait'
+      && envelope.args.timeoutMs > 30_000) return 'application_wait_timeout_exceeds_web_ceiling';
     if (Object.hasOwn(envelope, 'expectedFence')) return 'application_command_does_not_accept_fence';
-    const applicationRunId = envelope.command === 'run_start'
+    const applicationRunId = APPLICATION_COMMAND[envelope.command] === 'run.start'
       ? envelope.args.intent.runId ?? null
       : envelope.args.runId;
     if (Object.hasOwn(envelope, 'runId') && envelope.runId !== applicationRunId) {
@@ -710,7 +714,7 @@ function canonicalRequest(envelope) {
 
 function admittedRunId(envelope) {
   if (!APPLICATION_COMMAND[envelope.command]) return envelope.runId ?? null;
-  if (envelope.command === 'run_start') return envelope.args.intent.runId ?? null;
+  if (APPLICATION_COMMAND[envelope.command] === 'run.start') return envelope.args.intent.runId ?? null;
   return envelope.args.runId;
 }
 
@@ -2101,3 +2105,11 @@ export function createLocalAuthenticatedWebServer(northbound) {
 }
 
 export { validateEnvelope as validateWebCommandEnvelope };
+
+// Issue #233: the web lane's admitted command-name inventory — exactly the keys of the
+// COMMAND_CAPABILITY table validateEnvelope gates admission on (the admission seam at the
+// 'unsupported command' refusal). Exported so the closed-set pin derives the expected set
+// through the same seam the server uses, never a second hand-kept list.
+export function webAdmittedCommandNames() {
+  return Object.keys(COMMAND_CAPABILITY).sort();
+}
