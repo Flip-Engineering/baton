@@ -2003,8 +2003,11 @@ export class BatonWebClient {
     this.#token = options.token;
     this.commandTimeoutMs = options.commandTimeoutMs;
     this.pollMs = options.pollMs;
-    this.requestTimeoutMs = Math.min(options.commandTimeoutMs,
-      DEFAULT_APPLICATION_WAIT_MS + WEB_WAIT_TRANSPORT_SLACK_MS);
+    // #226 (operator ruling): NO silent cap on caller patience. The request ceiling IS the
+    // caller's commandTimeoutMs; the old ~45s floor (min with DEFAULT_APPLICATION_WAIT_MS +
+    // slack) broke bridge/CLI opens under fleet load. Per-command waits that legitimately
+    // need longer than a plain GET derive their own bound in _requestTimeoutForCommand.
+    this.requestTimeoutMs = options.commandTimeoutMs;
     this.maxJsonResponseBytes = 2 * 1024 * 1024;
     this.fetch = options.fetchImpl;
     this.clock = options.clock;
