@@ -17,7 +17,7 @@ import { spawn } from 'node:child_process';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { renderBrief } from './adapter.mjs';
-import { ProcessCloseReapLatch, normalizeProcessGeneration, processStartedPayload } from './process-lifecycle.mjs';
+import { ProcessCloseReapLatch, normalizeProcessGeneration, processReadyPayload, processStartedPayload } from './process-lifecycle.mjs';
 
 const DEFAULT_MAX_WIRE_FRAME_BYTES = 2 * 1024 * 1024;
 const DEFAULT_MAX_EVENT_PAYLOAD_BYTES = 64 * 1024;
@@ -91,9 +91,12 @@ export class OmpRpcProcess {
     this.cwd = options.cwd;
     this.env = options.env;
     this.waitAttemptMs = options.waitAttemptMs ?? 30_000; // per-attempt transport wait, NOT a fate bound
+    this.reapTimeoutMs = options.reapTimeoutMs;           // exact-close reap bound (evidence, never fate)
     this.maxFrameBytes = options.maxFrameBytes ?? DEFAULT_MAX_WIRE_FRAME_BYTES;
     this.spawnFn = options.spawnFn ?? spawn;
     this.processGeneration = normalizeProcessGeneration(options.processGeneration);
+    this.reapOwnedProcessGroup = typeof options.reapOwnedProcessGroup === 'function'
+      ? options.reapOwnedProcessGroup : null;
     this.onFrame = options.onFrame ?? null;
     this.onProcessClosed = options.onProcessClosed ?? null;
     this.onReapUnconfirmed = options.onReapUnconfirmed ?? null;
@@ -118,6 +121,23 @@ export class OmpRpcProcess {
       cwd: this.cwd, env: this.env, stdio: ['pipe', 'pipe', 'pipe'],
     });
     const child = this._child;
+    // The exact-close latch is created at START (the AcpJsonRpcProcess pattern): kill() must be
+    // able to record its stop authority BEFORE the exit lands, and the exit must drive
+    // close() so process_closed/kill.confirmed can ever emit. Creating it lazily at exit (the
+    // old shape) meant no stop record existed when kill() asked and close() was never called —
+    // every stop degraded to unconfirmed crash noise and a forced reap.
+    if (Number.isSafeInteger(child?.pid) && child.pid > 0) {
+      this.processClose = new ProcessCloseReapLatch({
+        generation: this.processGeneration,
+        pid: child.pid,
+        ...(Number.isSafeInteger(this.reapTimeoutMs) && this.reapTimeoutMs > 0
+          ? { timeoutMs: this.reapTimeoutMs } : {}),
+        ...(this.reapOwnedProcessGroup ? { reap: this.reapOwnedProcessGroup } : {}),
+        onProcessClosed: this.onProcessClosed,
+        onReapUnconfirmed: this.onReapUnconfirmed,
+        onStopConfirmed: this.onStopConfirmed,
+      });
+    }
     child.stdout.setEncoding('utf8');
     child.stdout.on('data', (chunk) => this._onStdout(chunk));
     child.stderr.on('data', () => { /* stderr capture is the #225 harvest lane's, not fate */ });
@@ -234,21 +254,27 @@ export class OmpRpcProcess {
     if (this._exited) return;
     this._exited = true;
     this._exitFacts = { code: code ?? null, signal: signal ?? null };
-    const pid = Number.isSafeInteger(this._child?.pid) && this._child.pid > 0 ? this._child.pid : null;
-    this.processClose = new ProcessCloseReapLatch({
-      generation: this.processGeneration,
-      ...(pid ? { pid } : {}),
-      onProcessClosed: (closed) => this.onProcessClosed?.(closed),
-      onReapUnconfirmed: (unconfirmed) => this.onReapUnconfirmed?.(unconfirmed),
-      onStopConfirmed: (stopKind, stopPayload) => this.onStopConfirmed?.(stopKind, stopPayload),
-    });
     // The close fact IS the death cert: exit code + signal ride the payload (#225's fields).
     // Release every pending waiter with the exit evidence — no one hangs on a dead child.
     for (const [, waiter] of this._pending) {
       waiter({ type: 'response', success: false, error: 'process exited', code: 'transport_process_exit' });
     }
     this._pending.clear();
-    this._resolveClose({ exitCode: code ?? null, signal: signal ?? null, failure: this.failure ?? null });
+    const outcome = { exitCode: code ?? null, signal: signal ?? null, failure: this.failure ?? null };
+    if (!this.processClose) {
+      // No pid → no exact-close authority; resolve with the raw exit facts (the old shape).
+      this._resolveClose(outcome);
+      return;
+    }
+    // Drive the exact-close latch (AcpJsonRpcProcess's pattern): the reap confirms the group is
+    // gone, THEN process_closed/kill.confirmed emit and the close promise settles. A confirmed
+    // stop recorded by kill() before the exit publishes kill.confirmed here — an organic exit
+    // (no stop record) leaves the crash lane to the session's close handler, unchanged.
+    void this.processClose.close(code, signal, this._readyFrame != null, () => {
+      this._resolveClose(outcome);
+    }).catch(() => {
+      this._resolveClose(outcome);
+    });
   }
 }
 
@@ -284,7 +310,7 @@ export class OmpRpcCli {
     try { this._version = versionProbe(); } catch { this._version = 'unknown'; }
     this._sessions = new Map();
     this._pendingSpawns = new Map();
-    this._callback = null;
+    this._cb = null;
   }
 
   card() {
@@ -341,10 +367,10 @@ export class OmpRpcCli {
     };
   }
 
-  onEvent(callback) { this._callback = callback; }
+  onEvent(callback) { this._cb = callback; }
 
   _emit(session, kind, payload) {
-    this._callback?.({
+    this._cb?.({
       worker: session.worker, harness: 'omp', turnEpoch: session.turnEpoch,
       actor: 'worker', kind, payload,
     });
@@ -544,6 +570,7 @@ export class OmpRpcCli {
       session.process = new OmpRpcProcess({
         command: this._cmd, args, cwd, env: childEnv,
         waitAttemptMs: this._requestTimeoutMs,
+        reapTimeoutMs: options.processReapTimeoutMs,
         maxFrameBytes: this._maxWireFrameBytes,
         spawnFn: this._spawnFn,
         processGeneration,
@@ -582,7 +609,11 @@ export class OmpRpcCli {
         await session.process.kill({ kind: 'kill.confirmed', payload: { terminalCause: 'setup', usageSeal: unavailableUsageSeal() } });
         return { ok: false, code: 'setup_process_exit', reason: String(error?.message ?? error) };
       }
-      this._emit(session, 'lifecycle.process_ready', { phase: 'process_ready', model, effort });
+      // The exact process-lifecycle contract shape (validProcessReadyPayload is exact-keys):
+      // the coordinator's live process_ready case promotes the handle's processRef to ready,
+      // which the later process_closed exact-close validation must match.
+      const processReady = processReadyPayload(processGeneration, session.process.child?.pid);
+      if (processReady) this._emit(session, 'lifecycle.process_ready', processReady);
       // #235: the transport-liveness BASELINE — a session that has carried only startup frames
       // reports the provider dial as never observed, before the first turn rides out. Evidence
       // classification only (the #163 law): the observation never terminates anything; it lets

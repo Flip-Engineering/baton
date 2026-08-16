@@ -84,10 +84,13 @@ export class RouteLiveness {
     for (const [vendor, adapter] of Object.entries(this._adapters)) {
       if (typeof adapter?.onEvent !== 'function') continue;
       // The adapter listener is single-slot; the coordinator already registered its callback.
-      // Capture it across every adapter's private storage spelling (GrokAcpCli/ClaudeSessionCli
-      // use `_cb`, the readiness suite's ScriptableAdapter uses `_onEvent`, MockAdapter uses
-      // `_userCb`) so the wrapper forwards to the coordinator instead of orphaning it.
-      const prior = adapter._userCb ?? adapter._cb ?? adapter._onEvent ?? null;
+      // Capture it across every adapter's private storage spelling (GrokAcpCli/ClaudeSessionCli/
+      // OmpRpcCli use `_cb`, the readiness suite's ScriptableAdapter uses `_onEvent`, MockAdapter
+      // uses `_userCb`, and `_callback` is captured so a future spelling can never silently
+      // orphan the coordinator again) so the wrapper forwards instead of replacing. An orphaned
+      // listener is not a degraded read path — it deafens the coordinator to EVERY worker event
+      // (the #230 false-stall murder: omp members' live turns read as no_progress_evidence).
+      const prior = adapter._userCb ?? adapter._cb ?? adapter._onEvent ?? adapter._callback ?? null;
       adapter.onEvent((event) => {
         if (prior) prior(event);
         this._onAdapterEvent(event, vendor);

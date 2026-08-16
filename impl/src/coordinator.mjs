@@ -12832,6 +12832,26 @@ export class Coordinator {
         }
         break;
       }
+      case 'lifecycle.process_ready': {
+        // Live parity with the replay case (14092): an adapter's exact contract-shaped
+        // process_ready promotes the initializing processRef to ready — without it the later
+        // process_closed exact-close validation (`payload.ready === current.ready`) can never
+        // match for an adapter that reports readiness this way (omp), and every stop degrades
+        // into attribution-refused noise. Adapters that promote via a threadId-carrying
+        // spawned payload are untouched (the initializing-state gate makes this idempotent).
+        const current = handle.processRef;
+        const valid = actor === 'worker' && validProcessReadyPayload(payload) && current
+          && current.state === 'initializing'
+          && payload.generation === current.generation && payload.pid === current.pid
+          && payload.processGroupId === current.processGroupId;
+        if (!valid) {
+          appendAttributed({ worker: workerId, harness, turnEpoch: this._safeTurnEpoch(handle), kind: 'lifecycle.process_attribution_refused', actor: 'policy', payload: boundedProcessObservation(event, 'invalid_process_ready') });
+          break;
+        }
+        appendAttributed({ worker: workerId, harness, turnEpoch, kind, actor, payload });
+        handle.processRef = { ...current, state: 'ready', ready: true };
+        break;
+      }
       case 'lifecycle.process_closed': {
         const current = handle.processRef;
         const valid = actor === 'worker' && validProcessClosedPayload(payload) && current
