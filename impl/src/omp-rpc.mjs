@@ -610,7 +610,11 @@ export class OmpRpcCli {
       }).start();
       this._sessions.set(worker, session);
       void session.process.closePromise.then((outcome) => this._onClose(session, outcome));
-      this._emit(session, 'lifecycle.spawned', { phase: 'spawn', usageSeal: unavailableUsageSeal() });
+      // #236: the attestation rides the spawned payload itself — the coordinator's
+      // required_observation_missing gate fires ON lifecycle.spawned (worker actor), so a
+      // separate later worker_policy.observed event loses the race. Sibling contract:
+      // claude-session carries workerPolicyObserved in its spawned payload.
+      this._emit(session, 'lifecycle.spawned', { phase: 'spawn', usageSeal: unavailableUsageSeal(), ...(workerPolicyObserved ? { workerPolicyObserved } : {}) });
       const processStarted = processStartedPayload(processGeneration, session.process.child?.pid);
       if (processStarted) this._emit(session, 'lifecycle.process_started', processStarted);
       try {
