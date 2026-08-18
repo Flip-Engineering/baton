@@ -17,6 +17,7 @@ import { spawn } from 'node:child_process';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { renderBrief } from './adapter.mjs';
+import { attestWorkerPolicyObservation } from './worker-policy.mjs';
 import { ProcessCloseReapLatch, normalizeProcessGeneration, processReadyPayload, processStartedPayload } from './process-lifecycle.mjs';
 
 const DEFAULT_MAX_WIRE_FRAME_BYTES = 2 * 1024 * 1024;
@@ -550,6 +551,23 @@ export class OmpRpcCli {
       if (pending.cancelled || options.signal?.aborted) return { ok: false, cancelled: true, reason: 'spawn cancelled before child creation' };
       if (!cwd) return { ok: false, code: 'worktree_unavailable', reason: 'spawn requires a worktree' };
 
+      // #236: the launch attestation — the sibling session-CLI contract (claude-session.mjs
+      // :749-757). The #230 workerPolicy advertisement carries observation:'launch', so the
+      // coordinator REQUIRES worker_policy.observed at spawn; omitting it fail-and-kills the
+      // member with required_observation_missing (measured on the deafness-fixed resident:
+      // the un-deafened coordinator surfaced what deafness had hidden). omp launches with
+      // yolo permissions — unattended autonomy, full same-UID access — attested honestly.
+      let workerPolicyObserved = null;
+      if (options.workerPolicy) {
+        try {
+          workerPolicyObserved = attestWorkerPolicyObservation(options.workerPolicy, {
+            autonomy: 'unattended',
+            access: 'full',
+          });
+        } catch (error) {
+          return { ok: false, code: error?.code ?? 'worker_policy_invalid', reason: String(error?.message ?? error) };
+        }
+      }
       const processGeneration = normalizeProcessGeneration(options.processGeneration);
       const childEnv = options.replaceEnv
         ? { ...(options.env ?? {}), ...(this._env ?? {}) }
@@ -610,7 +628,13 @@ export class OmpRpcCli {
         return { ok: false, code: 'setup_process_exit', reason: String(error?.message ?? error) };
       }
       // The exact process-lifecycle contract shape (validProcessReadyPayload is exact-keys):
-      // the coordinator's live process_ready case promotes the handle's processRef to ready,
+      if (workerPolicyObserved) {
+        this._emit(session, 'worker_policy.observed', {
+          processGeneration, pid: session.process.child?.pid ?? null,
+          processGroupId: session.process.child?.pid ?? null,
+          workerPolicyObserved,
+        });
+      }
       // which the later process_closed exact-close validation must match.
       const processReady = processReadyPayload(processGeneration, session.process.child?.pid);
       if (processReady) this._emit(session, 'lifecycle.process_ready', processReady);
