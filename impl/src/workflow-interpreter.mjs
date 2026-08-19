@@ -20,6 +20,11 @@ import { promisify } from 'node:util';
 import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { basename, dirname, isAbsolute, relative, resolve, sep } from 'node:path';
 
+// Issue #207 (row-admission-align): the admission bound is the registry's run.objective cap
+// (Decision 8 no-re-declare law — the cap lives in limits.mjs, never re-declared here). limits.mjs
+// is pure data + node:crypto, so the lane's W5 transitive import-graph law is untouched.
+import { FRAME_LIMITS } from './limits.mjs';
+
 const execFileAsync = promisify(execFile);
 
 // #220: the machinery's commit identity is versioned — `baton <version>` (never a stale
@@ -43,7 +48,15 @@ const objectiveRefInvalid = (message) => workflowError(message, 'workflow_object
 // Closed-schema primitives (recipes-lane pattern, recipes.mjs:74-121).
 // ---------------------------------------------------------------------------
 
-const OBJECTIVE_REF_MAX_BYTES = 64 * 1024; // D5 — the byte bound pinned at its exact value (F8b).
+// Issue #207 (row-admission-align, judgment call): OBJECTIVE_REF_MAX_BYTES is the by-reference
+// FILE envelope (D5/F8b — pinned at its exact value). The ADMISSION bound is the run.objective
+// cap (limits.mjs — 4096), enforced on the RENDERED objective at admission (workflow_spec_invalid
+// naming both byte counts — the exact string run.start measures). A brief within the envelope but
+// over the cap refuses at admission: the interpreter does not split, so the spill lane stays the
+// INLINE path's mechanism (OQ5's spill-aware advisory-PASS governs createWaveDriver, never this
+// by-reference seam — a by-reference brief has no resend-with-citation option; the ref IS the
+// citation). A file beyond the envelope refuses here at render (workflow_objective_ref_invalid).
+const OBJECTIVE_REF_MAX_BYTES = 64 * 1024;
 const MAX_MEMBERS = 64;                     // the wave-machinery member ceiling (P4).
 const MAX_SCOPE = 64;
 const GLOB_MAGIC = /[*?[\]{}!+@]/u;
@@ -344,8 +357,9 @@ function renderObjective(repoRoot, member, salt) {
   const target = resolve(repoRoot, ref);
   if (!existsSync(target)) throw objectiveRefInvalid(`the member "${member.role}" objectiveRef "${ref}" does not exist`);
   const text = readFileSync(target, 'utf8');
-  if (Buffer.byteLength(text) > OBJECTIVE_REF_MAX_BYTES) {
-    throw objectiveRefInvalid(`the member "${member.role}" objectiveRef "${ref}" is oversize (limit ${OBJECTIVE_REF_MAX_BYTES} bytes — D5)`);
+  const bytes = Buffer.byteLength(text);
+  if (bytes > OBJECTIVE_REF_MAX_BYTES) {
+    throw objectiveRefInvalid(`the member "${member.role}" objectiveRef "${ref}" is oversize (${bytes} bytes; the ${OBJECTIVE_REF_MAX_BYTES}-byte by-reference envelope — D5)`);
   }
   // The salt line (`[attempt: <salt> <role>] `) mirrors createWaveDriver's own prefix
   // (wave-driver.mjs:334) so the wave's attempt marker rides the member's committed report and the
@@ -576,13 +590,21 @@ export async function runWorkflow(baton, specOrPath, options = {}) {
 
   // Render every member's objective (D5 — objectiveRef → salt line). Salt owner is the interpreter.
   const salt = randomUUID();
+  // Issue #207 (row-admission-align): the admission bound is the run.objective cap, enforced on
+  // the RENDERED objective — the exact string run.start measures (file text + the attempt
+  // marker). A by-reference brief whose rendered objective exceeds the cap refuses HERE (typed
+  // workflow_spec_invalid, naming both byte counts), never as a per-member run.start refusal or
+  // spill after the wave has started — fail-loud at the seam, never the #207 phantom shape. The
+  // D5 envelope (OBJECTIVE_REF_MAX_BYTES) bounds the referenced FILE; the cap binds the rendered
+  // objective. The cap comes from the limits registry (Decision 8 — never re-declared).
+  const objectiveCap = FRAME_LIMITS['run.objective'].value;
   const rendered = spec.members.map((member) => {
-    const renderedMember = {
-      role: member.role,
-      objective: renderObjective(repoRoot, member, salt),
-      exact: { ...member.exact },
-      scope: [...member.scope],
-    };
+    const objective = renderObjective(repoRoot, member, salt);
+    const bytes = Buffer.byteLength(objective);
+    if (bytes > objectiveCap) {
+      throw specInvalid(`the workflow member "${member.role}" objectiveRef "${member.objectiveRef}" brief renders to ${bytes} bytes, exceeding the ${objectiveCap}-byte run.objective admission cap`);
+    }
+    const renderedMember = { role: member.role, objective, exact: { ...member.exact }, scope: [...member.scope] };
     if (member.report !== undefined) renderedMember.report = member.report;
     return renderedMember;
   });
