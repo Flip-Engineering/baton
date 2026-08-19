@@ -126,10 +126,14 @@ test('PROBE-4: wave 1 completes; wave 2 same objective binds', async (t) => {
   console.log('worktrees present:', Boolean(wt));
   if (wt && typeof wt.create === 'function') {
     const orig = wt.create.bind(wt);
-    wt.create = (taskId, baseSha, opts) => orig(taskId, baseSha, opts).catch((err) => {
-      console.log('WORKTREE CREATE FAILED:', err?.code, String(err?.message).slice(0, 300));
-      throw err;
-    });
+    wt.create = (taskId, baseSha, opts) => {
+      const st = execFileSync('git', ['status', '--porcelain'], { cwd: driver.repoRoot, encoding: 'utf8' });
+      console.log('WORKTREE CREATE dirty@dispatch:', JSON.stringify(st));
+      return orig(taskId, baseSha, opts).catch((err) => {
+        console.log('WORKTREE CREATE FAILED:', err?.code, String(err?.message).slice(0, 300));
+        throw err;
+      });
+    };
   }
   const w1 = await createWave(baton, { members: [member('alpha', obj)], idempotencyKey: 'key-1', repoRoot: driver.repoRoot });
   dirtyProbe();
