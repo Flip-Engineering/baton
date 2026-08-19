@@ -1,0 +1,54 @@
+{
+  "schemaVersion": 3,
+  "mcpNative": [
+    {"name":"fleet_spawn","owner":"fleet-kernel","reason":"provider worker allocation and session spawn predate the application command registry"},
+    {"name":"fleet_scratch_oracle","owner":"fleet-kernel","reason":"kernel scratch/oracle control surface"},
+    {"name":"fleet_send","owner":"fleet-kernel","reason":"direct fenced worker communication primitive"},
+    {"name":"fleet_wait","owner":"fleet-kernel","reason":"direct worker observation primitive"},
+    {"name":"fleet_respond","owner":"fleet-kernel","reason":"direct worker approval/response primitive"},
+    {"name":"fleet_interrupt","owner":"fleet-kernel","reason":"direct fenced worker interruption primitive"},
+    {"name":"fleet_result","owner":"fleet-kernel","reason":"direct worker result retrieval primitive"},
+    {"name":"fleet_list","owner":"fleet-kernel","reason":"kernel worker inventory"},
+    {"name":"fleet_capabilities","owner":"fleet-kernel","reason":"kernel capability discovery"},
+    {"name":"fleet_provider_status","owner":"fleet-kernel","reason":"provider runtime status surface"},
+    {"name":"fleet_goal_define","owner":"goal-plan-kernel","reason":"goal authority mutation"},
+    {"name":"fleet_plan_propose","owner":"goal-plan-kernel","reason":"plan authority mutation"},
+    {"name":"fleet_plan_approve","owner":"goal-plan-kernel","reason":"plan approval authority mutation"},
+    {"name":"fleet_goal_plan_status","owner":"goal-plan-kernel","reason":"goal/plan authority observation"},
+    {"name":"fleet_capability_invoke","owner":"fleet-kernel","reason":"capability invocation over kernel authority"},
+    {"name":"fleet_reuse_decide","owner":"reuse-kernel","reason":"reuse decision authority"},
+    {"name":"fleet_reuse_recheck","owner":"reuse-kernel","reason":"reuse recheck authority"},
+    {"name":"fleet_kill","owner":"fleet-kernel","reason":"emergency worker kill authority"},
+    {"name":"fleet_drain","owner":"fleet-kernel","reason":"emergency deployment drain authority"}
+  ],
+  "cliNative": [
+    {"name":"credentials install kimi","owner":"cli-host","reason":"owner-local credential installation; credentials never transit the application command bus"},
+    {"name":"setup","owner":"cli-host","reason":"owner-local connection profile installation"},
+    {"name":"serve","canonicalKey":"deployment.serve","owner":"cli-host","reason":"owner-local resident process bootstrap implements the deployment.serve capability outside the authenticated command bus"},
+    {"name":"doctor","canonicalKey":"deployment.doctor","owner":"cli-host","reason":"local diagnosis has a host-local mode; authenticated --check folds into deployment.doctor"},
+    {"name":"route","canonicalKey":"deployment.view","owner":"cli-host","reason":"owner-local exact-route inspection implements the deployment.view capability; run routing itself remains registry-owned"}
+  ],
+  "mcpDispatchOnlyAliases": [
+    {"name":"fleet_application_help","canonicalKey":"application.help","reason":"legacy application dispatch spelling retained internally; canonical/ordinary tool is separately advertised"},
+    {"name":"fleet_run_act","canonicalKey":"run.do","reason":"legacy application dispatch spelling retained internally; canonical run.do transport is advertised"},
+    {"name":"fleet_run_inspect","canonicalKey":"run.view","reason":"legacy inspect dispatch spelling retained internally; canonical run.view transport is advertised"},
+    {"name":"fleet_run_resume_work","canonicalKey":"run.resume","reason":"legacy application command spelling retained in dispatch compatibility mapping"},
+    {"name":"fleet_run_retry_verification","canonicalKey":"run.retry","reason":"legacy application command spelling retained in dispatch compatibility mapping"},
+    {"name":"fleet_runs_list","canonicalKey":"run.list","reason":"legacy plural-list dispatch spelling retained internally"},
+    {"name":"fleet_waves_attach","canonicalKey":"waves.attach","reason":"legacy application dispatch spelling retained internally; canonical waves.attach is advertised"},
+    {"name":"run.resume_work","canonicalKey":"run.resume","reason":"legacy application command name retained as internal dispatch alias"},
+    {"name":"run.retry_verification","canonicalKey":"run.retry","reason":"legacy application command name retained as internal dispatch alias"}
+  ],
+  "registryCliExceptions": [
+    {"key":"context.eval","classification":"not_live_on_cli","reason":"context algebra is currently exposed through embedded/MCP objects; the semantic row inherited the broad default surface set"},
+    {"key":"context.map","classification":"not_live_on_cli","reason":"context algebra is currently exposed through embedded/MCP objects; the semantic row inherited the broad default surface set"},
+    {"key":"context.reduce","classification":"not_live_on_cli","reason":"context algebra is currently exposed through embedded/MCP objects; the semantic row inherited the broad default surface set"},
+    {"key":"context.retry","classification":"not_live_on_cli","reason":"context algebra is currently exposed through embedded/MCP objects; the semantic row inherited the broad default surface set"},
+    {"key":"decision.list","classification":"not_live_on_cli","reason":"decision listing is represented through run views/attention on CLI; there is no distinct decision.list parser verb"},
+    {"key":"deployment.shutdown","classification":"not_live_on_cli","reason":"resident shutdown is host/application authority and has no direct CLI parser verb"},
+    {"key":"run.attention.list","classification":"represented_by_other_cli_operation","reason":"CLI exposes run.attention.watch, which subsumes bounded attention listing and continuation"},
+    {"key":"run.member.interrupt","classification":"represented_by_other_cli_operation","reason":"CLI run interrupt accepts a recipient selector rather than a distinct member-interrupt verb"},
+    {"key":"run.scratchpad","classification":"represented_by_other_cli_operation","reason":"CLI exposes concrete run scratchpad read/elevate operations rather than the generic compatibility operation"},
+    {"key":"run.scratchpad.append","classification":"not_live_on_cli","reason":"scratchpad append remains an internal/worker-oriented capability; no operator CLI parser verb exists"}
+  ]
+}

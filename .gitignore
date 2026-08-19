@@ -2,3 +2,5 @@
 node_modules/
 glm_key.json
 deepseek_key.json
+impl/*.tgz
+baton-status.json
