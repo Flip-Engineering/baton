@@ -127,8 +127,11 @@ test('PROBE-4: wave 1 completes; wave 2 same objective binds', async (t) => {
   if (wt && typeof wt.create === 'function') {
     const orig = wt.create.bind(wt);
     wt.create = (taskId, baseSha, opts) => {
-      const st = execFileSync('git', ['status', '--porcelain'], { cwd: driver.repoRoot, encoding: 'utf8' });
-      console.log('WORKTREE CREATE dirty@dispatch:', JSON.stringify(st));
+      const env = {};
+      for (const [key, value] of Object.entries(process.env)) if (!key.startsWith('GIT_')) env[key] = value;
+      env.GIT_CONFIG_NOSYSTEM = '1'; env.GIT_CONFIG_GLOBAL = '/dev/null';
+      const st = execFileSync('git', ['status', '--porcelain'], { cwd: driver.repoRoot, encoding: 'utf8', env });
+      console.log('WORKTREE CREATE dirty@dispatch (worktree env):', JSON.stringify(st));
       return orig(taskId, baseSha, opts).catch((err) => {
         console.log('WORKTREE CREATE FAILED:', err?.code, String(err?.message).slice(0, 300));
         throw err;
