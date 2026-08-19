@@ -147,6 +147,16 @@ function boundedProcessObservation(event, code, extra = {}) {
   };
 }
 
+/** #225 death cert: adapter-carried terminal facts (exitCode/signal close tuple, provider cause
+ * class of the last failed request, bounded SECRET_SHAPED_TEXT-redacted stderr/stdout tails).
+ * Preserved onto the ledger fold VERBATIM when the adapter emitted one — never invented,
+ * re-derived, or re-ordered by the coordinator (the adapter owns the close tuple, the observed
+ * provider cause, and the stream tails; the route tuple rides the fold's own attribution). */
+function terminalDeathCert(event) {
+  return event && typeof event === 'object' && event.deathCert !== undefined
+    ? { deathCert: event.deathCert } : {};
+}
+
 function validWorkspaceOwnerBoundPayload(value) {
   const fields = [
     'attemptId', 'baseSha', 'branch', 'controllerId', 'deploymentId', 'logicalTaskId',
@@ -12864,7 +12874,7 @@ export class Coordinator {
           if (!['dead', 'stopping', 'exited'].includes(handle.status)) this._beginStop(handle, 'kill', undefined, 'policy').catch(noop);
           break;
         }
-        const closed = appendAttributed({ worker: workerId, harness, turnEpoch, kind, actor, payload });
+        const closed = appendAttributed({ worker: workerId, harness, turnEpoch, kind, actor, payload, ...terminalDeathCert(event) });
         const preservationLost = handle.sessionPreservation?.state === 'preserved';
         handle.processRef = { ...current, state: 'closed', ready: payload.ready, closedSeq: closed.seq };
         handle.recoveredProcessAuthority = false;
@@ -13002,6 +13012,7 @@ export class Coordinator {
         const terminalEvent = appendAttributed({
           worker: workerId, harness, turnEpoch, kind, actor,
           payload: sealVerdict.seal ? { ...payload, usageSeal: sealVerdict.seal } : payload,
+          ...terminalDeathCert(event),
         });
         handle.terminalCause ??= deepFreeze({
           kind: 'provider_failure', code: typedTerminalCode(payload?.code, 'provider_crashed'),

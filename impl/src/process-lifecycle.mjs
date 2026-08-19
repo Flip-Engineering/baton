@@ -157,7 +157,12 @@ export class ProcessCloseReapLatch {
   get confirmed() { return this._confirmed; }
   get pending() { return this._closeFact !== null && !this._confirmed; }
 
-  /** Capture the exact close tuple once, then join or start its bounded reap. */
+  /**
+   * Capture the exact close tuple once, then join or start its bounded reap.
+   * The retained close-derived callback (when bound) is flushed with the EXACT close fact on
+   * confirmation — the adapter's terminal-cause emission structures exitCode/signal from it
+   * (#225 death cert) instead of re-observing or string-interpolating the exit facts.
+   */
   close(code, signal, ready, closeDerived = undefined) {
     if (closeDerived !== undefined && typeof closeDerived !== 'function') {
       throw new TypeError('ProcessCloseReapLatch close-derived fact must be a function');
