@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Fleet driver — one orchestrator directs cross-vendor coding-tool workers through AI/AX and an authenticated web command surface, with reliable control, a hard-to-fool trust gate, and structural code evidence.",
+  "description": "Fleet driver — one orchestrator directs cross-vendor coding-tool workers through AI/AX and authenticated CLI, MCP, Web and embedded control surfaces.",
   "engines": {
     "node": ">=20"
   },
@@ -15,17 +15,35 @@
   "exports": {
     ".": "./src/index.mjs",
     "./impl": "./src/index.mjs",
+    "./core": "./src/index.mjs",
+    "./converged": "./src/index-converged.mjs",
+    "./holistic-runtime": "./src/holistic-runtime.mjs",
+    "./production-convergence": "./src/production-deployment-convergence.mjs",
+    "./control-surface": "./src/control-surface-unification.mjs",
+    "./surface": "./src/surface-capability-catalog.mjs",
+    "./surface-resolution": "./src/surface-capability-resolution.mjs",
+    "./surface-cli": "./src/surface-cli.mjs",
+    "./configured-mcp-client": "./src/configured-mcp-client.mjs",
     "./src/*": "./src/*"
   },
   "files": [
     "src",
     "scripts",
     "MCP.md",
-    "CLI.md"
+    "CLI.md",
+    "SURFACE.md"
   ],
   "scripts": {
     "test": "node scripts/run-suite.mjs",
+    "test:release": "node scripts/run-shipped-suite.mjs",
+    "test:contracts": "node scripts/run-contract-suite.mjs",
+    "test:contracts:validate": "node scripts/validate-holistic-contracts.mjs",
+    "test:surfaces": "node scripts/control-surface-audit.mjs && node scripts/cli-web-closure-audit.mjs && node scripts/unified-capability-audit.mjs",
+    "test:unified-surfaces": "node --test test/surface-capability-catalog.test.mjs test/surface-cli.test.mjs test/unified-cli-surface.test.mjs test/unified-mcp-surface.test.mjs",
+    "test:production-convergence": "node --test test/production-convergence.test.mjs test/production-convergence-persistence.test.mjs test/production-deployment-convergence.test.mjs test/production-real-substrate-convergence.test.mjs test/production-cli-convergence.test.mjs test/production-mcp-convergence.test.mjs test/production-attention-authorization.test.mjs test/production-web-convergence.test.mjs test/production-web-workflow-ports.test.mjs test/converged-export-surface.test.mjs",
+    "test:package": "node scripts/release-package-smoke.mjs",
     "test:watch": "node scripts/run-suite.mjs --watch",
+    "status:generate": "node scripts/generate-release-status.mjs",
     "demo": "node demo.mjs",
     "postinstall": "node scripts/postinstall.mjs"
   },
