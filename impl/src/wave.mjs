@@ -20,6 +20,48 @@ const RESULT_SHA = /^[a-f0-9]{40,64}$/u;
 const GLOB_MAGIC = /[*?[\]{}!+@]/u;
 const POLL_MS = 50;
 export const MAX_WAVE_PROGRESS_BYTES = 7 * 1024 * 1024;
+// Issue #199 (the spawn-confirmation window): the drive treats a member as failed ONLY on
+// terminal evidence. A status read showing an unrecoverable phase (`failed`/`cancelled`/`denied`)
+// with NO typed cause on the run view is a SUSPICIOUS read racing the window — it defers to the
+// next poll, and only this many CONSECUTIVE suspicious reads confirm the verdict (the landed
+// tri-state evidence-count pattern, 3794b583 — never a single-read instant verdict).
+const SPAWN_WINDOW_CONFIRMATION_POLLS = 3;
+
+// The run view's terminal-evidence fields: a typed terminal cause (a task failed transition with
+// cause — provider_failure/policy_failure/budget_exceeded/dispatch_refused/operator_stop) or an
+// admitted run stop (the process_closed-with-no-successor / operator-stop class). A member whose
+// read carries neither has no terminal evidence — startError is carried separately by the wave
+// entry itself.
+function terminalEvidenceFrom(outline) {
+  return outline?.terminalCause !== null && outline?.terminalCause !== undefined
+    || outline?.stop !== null && outline?.stop !== undefined;
+}
+
+// The unrecoverable FAILURE-verdict phases a status read can race inside the spawn-confirmation
+// window. Success phases ('completed', legacy 'work_completed') and 'stopped' (an admitted run
+// stop) are terminal evidence by themselves; only these three demand a typed cause before the
+// drive settles a member as failed.
+const FAILURE_VERDICT_PHASES = new Set(['failed', 'cancelled', 'denied']);
+
+// Issue #199: the evidence-count terminal confirmation. A read that is terminal AND carries
+// terminal evidence (or is a non-failure terminal) settles immediately; a bare failure phase
+// racing the window defers — only SPAWN_WINDOW_CONFIRMATION_POLLS consecutive suspicious reads
+// confirm the verdict (the landed tri-state pattern, 3794b583). Any non-suspicious read resets
+// the count, so evidence advancing inside the window never produces a failed verdict.
+function terminalWithConfirmation(entry, outline) {
+  const phase = canonicalRunPhase(outline?.phase) ?? null;
+  const terminal = terminalFrom(outline);
+  if (!terminal) {
+    entry.spawnWindowSuspiciousPolls = 0;
+    return false;
+  }
+  if (!FAILURE_VERDICT_PHASES.has(phase) || terminalEvidenceFrom(outline)) {
+    entry.spawnWindowSuspiciousPolls = 0;
+    return true;
+  }
+  entry.spawnWindowSuspiciousPolls = (entry.spawnWindowSuspiciousPolls ?? 0) + 1;
+  return (entry.spawnWindowSuspiciousPolls ?? 0) >= SPAWN_WINDOW_CONFIRMATION_POLLS;
+}
 
 function boundedJsonBytes(value, limit = MAX_WAVE_PROGRESS_BYTES) {
   let bytes = 0;
@@ -358,7 +400,9 @@ function createWaveHandle({ repoRoot, members, state, waveId = null }) {
       members.push({
         role,
         phase: canonicalRunPhase(outline.phase) ?? null,
-        terminal: terminalFrom(outline),
+        // Issue #199: the evidence-count confirmation — a suspicious failure read (no terminal
+        // evidence) defers to the next poll; only consecutive suspicious reads confirm terminal.
+        terminal: terminalWithConfirmation(entry, outline),
         attention: attentionFrom(outline),
         scratchpad: outline.scratchpad ?? null,
         // KG activation rule 4: the workflow horizon's knowledge digest rides the member's run view,
@@ -455,7 +499,12 @@ function createWaveHandle({ repoRoot, members, state, waveId = null }) {
         if (settled.has(role) || !entry.run) continue;
         const view = await entry.run.status();
         const outline = view?.view ?? view;
-        if (terminalFrom(outline) || canonicalRunPhase(outline?.phase) === SUCCESS_RESTING) {
+        // Issue #199 (the spawn-confirmation window): a member settles on terminal evidence
+        // (typed cause / admitted stop / success) — NEVER on a bare failure phase racing the
+        // window; a suspicious read defers to the next poll, and only the evidence-count
+        // (SPAWN_WINDOW_CONFIRMATION_POLLS consecutive reads) confirms the failed verdict.
+        if (terminalWithConfirmation(entry, outline)
+          || canonicalRunPhase(outline?.phase) === SUCCESS_RESTING) {
           settled.add(role);
         } else {
           armPump(entry);
