@@ -21,8 +21,6 @@ member row-cadence
   effort high
   scope "impl/src/**"
   scope "impl/test/**"
-  scope "impl/src/**"
-  scope "impl/test/**"
   scope "docs/reference/evidence/no-clock-followons-2026-08-15/wave-h/**"
   objectiveRef "docs/reference/evidence/no-clock-followons-2026-08-15/wave-h/row-cadence-brief.md"
   report "docs/reference/evidence/no-clock-followons-2026-08-15/wave-h/notes-row-cadence.md"

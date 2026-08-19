@@ -12,8 +12,6 @@ member row-task-namespace
   effort high
   scope "impl/src/**"
   scope "impl/test/**"
-  scope "impl/src/**"
-  scope "impl/test/**"
   scope "docs/reference/evidence/phantom-root-2026-08-15/wave-h/**"
   objectiveRef "docs/reference/evidence/phantom-root-2026-08-15/wave-h/row-task-namespace-brief.md"
   report "docs/reference/evidence/phantom-root-2026-08-15/wave-h/notes-row-task-namespace.md"
@@ -23,8 +21,6 @@ member row-admission-align
   effort high
   scope "impl/src/**"
   scope "impl/test/**"
-  scope "impl/src/**"
-  scope "impl/test/**"
   scope "docs/reference/evidence/phantom-root-2026-08-15/wave-h/**"
   objectiveRef "docs/reference/evidence/phantom-root-2026-08-15/wave-h/row-admission-align-brief.md"
   report "docs/reference/evidence/phantom-root-2026-08-15/wave-h/notes-row-admission-align.md"
@@ -32,8 +28,6 @@ member row-spawn-window
   harness omp
   model "deepseek/deepseek-v4-flash"
   effort high
-  scope "impl/src/**"
-  scope "impl/test/**"
   scope "impl/src/**"
   scope "impl/test/**"
   scope "docs/reference/evidence/phantom-root-2026-08-15/wave-h/**"

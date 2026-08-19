@@ -19,6 +19,11 @@ import { execFile, execFileSync } from 'node:child_process';
 import { promisify } from 'node:util';
 import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { basename, dirname, isAbsolute, relative, resolve, sep } from 'node:path';
+// #207 (row-admission-align): the run.start objective cap comes from the frame-economics registry —
+// Decision 8's no-re-declare law (the interpreter never re-declares a cataloged lane's byte
+// literal). limits.mjs is pure data + one refusal-text composer and imports only node:crypto, so
+// the lane's W5 transitive-graph law (no reachable module runs a top-level wave start) holds.
+import { FRAME_LIMITS } from './limits.mjs';
 
 const execFileAsync = promisify(execFile);
 
@@ -43,7 +48,15 @@ const objectiveRefInvalid = (message) => workflowError(message, 'workflow_object
 // Closed-schema primitives (recipes-lane pattern, recipes.mjs:74-121).
 // ---------------------------------------------------------------------------
 
-const OBJECTIVE_REF_MAX_BYTES = 64 * 1024; // D5 — the byte bound pinned at its exact value (F8b).
+// D5 — the byte bound pinned at its exact value (F8b). #207 (row-admission-align) judgment call
+// (recorded in docs/reference/evidence/phantom-root-2026-08-15/wave-g/notes-row-admission-align.md):
+// this 64 KiB stays the READ/containment envelope (a brief up to 64 KiB is read and rendered —
+// W1-03 pins the 64 KiB + 1 refusal at this exact value), while the run.start objective cap
+// (run.objective, FRAME_LIMITS below) is the ADMISSION bound enforced at compile/admit: the
+// interpreter does NOT split, so a rendered objective over the run cap refuses
+// workflow_spec_invalid naming both byte counts — fail-loud at the seam, never a per-member
+// phantom start failure.
+const OBJECTIVE_REF_MAX_BYTES = 64 * 1024;
 const MAX_MEMBERS = 64;                     // the wave-machinery member ceiling (P4).
 const MAX_SCOPE = 64;
 const GLOB_MAGIC = /[*?[\]{}!+@]/u;
@@ -354,6 +367,25 @@ function renderObjective(repoRoot, member, salt) {
   return `[attempt: ${salt} ${member.role}] ${text}`;
 }
 
+// #207 — the admission alignment: a member objective the run machinery cannot start refuses HERE
+// (the interpreter's compile/admit seam — fail-loud at the seam, never a per-member phantom start
+// failure), naming BOTH byte counts: the measured RENDERED objective (the exact bytes the run
+// machinery would admit — the embedded client's nonempty byte wall, application-client.mjs:11-13,
+// measures Buffer.byteLength of the objective it receives against this same cap) and the
+// run.objective cap. The cap is the registry row (FRAME_LIMITS, imported above — Decision 8's
+// no-re-declare law), never a re-declared literal; the interpreter does NOT split, so a rendered
+// objective over the cap is an unstartable member and the spec refuses at admission.
+function assertObjectiveAdmissible(member, objective) {
+  const bytes = Buffer.byteLength(objective);
+  const cap = FRAME_LIMITS['run.objective'].value;
+  if (bytes > cap) {
+    throw specInvalid(
+      `the member "${member.role}" objectiveRef "${member.objectiveRef}" renders to ${bytes} bytes (cap ${cap} — run.objective); `
+      + `a brief within the ${OBJECTIVE_REF_MAX_BYTES}-byte D5 envelope that the run machinery cannot start is refused at admission (#207)`,
+    );
+  }
+}
+
 // ---------------------------------------------------------------------------
 // D4 — harvest a path from the run's authoritative result sha (git object at the sha).
 // ---------------------------------------------------------------------------
@@ -575,11 +607,15 @@ export async function runWorkflow(baton, specOrPath, options = {}) {
   const manifestDigest = createHash('sha256').update(canonicalJson(spec)).digest('hex');
 
   // Render every member's objective (D5 — objectiveRef → salt line). Salt owner is the interpreter.
+  // #207: each rendered objective is admission-checked against the run.start cap before any wave
+  // machinery is touched — a brief the members cannot start refuses the SPEC at compile/admit.
   const salt = randomUUID();
   const rendered = spec.members.map((member) => {
+    const objective = renderObjective(repoRoot, member, salt);
+    assertObjectiveAdmissible(member, objective);
     const renderedMember = {
       role: member.role,
-      objective: renderObjective(repoRoot, member, salt),
+      objective,
       exact: { ...member.exact },
       scope: [...member.scope],
     };
