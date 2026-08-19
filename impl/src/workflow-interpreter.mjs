@@ -14,7 +14,7 @@
 // side-effect-free; recipes.mjs exposes it as baton.recipes.runWorkflow; application.mjs registers
 // the `waves.run` direct port for the CLI (`baton waves run`) and MCP (`baton_waves_run`) surfaces.
 
-import { createHash, randomUUID } from 'node:crypto';
+import { createHash } from 'node:crypto';
 import { execFile, execFileSync } from 'node:child_process';
 import { promisify } from 'node:util';
 import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
@@ -337,6 +337,18 @@ function assertHarvestContained(path, repoRoot) {
 // D5 — render each member's objective from its objectiveRef (containment + byte bound).
 // ---------------------------------------------------------------------------
 
+// #200 (row-task-namespace): the member task id carries the wave namespace. The runId digest
+// deliberately excludes waveId (application.mjs), so the namespace rides the member objective via
+// a DETERMINISTIC wave-derived salt line — the same (idempotencyKey, role, brief) renders the same
+// objective (same-key re-drives dedupe idempotently), distinct keys render distinct objectives (a
+// same-brief re-drive with a NEW key NEVER binds a prior wave's task). Mirrors wave.mjs's
+// waveNamespaceSalt so the interpreter and createWave agree on the wave's salt line; the 36-char
+// [0-9a-f-] shape matches the attempt-line pins (workflow-dsl-package-red PS-A).
+function waveNamespaceSalt(idempotencyKey) {
+  const hex = createHash('sha256').update(`baton:wave-namespace:${idempotencyKey}`).digest('hex').slice(0, 32);
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
 function renderObjective(repoRoot, member, salt) {
   const ref = member.objectiveRef;
   if (!repoRoot) throw objectiveRefInvalid(`the member "${member.role}" objectiveRef "${ref}" cannot be resolved (no repository root)`);
@@ -349,8 +361,11 @@ function renderObjective(repoRoot, member, salt) {
   }
   // The salt line (`[attempt: <salt> <role>] `) mirrors createWaveDriver's own prefix
   // (wave-driver.mjs:334) so the wave's attempt marker rides the member's committed report and the
-  // D4 harvest can attribute it (B2). The interpreter is the sole salt owner here (createWave does
-  // not salt), so the wave starts with saltObjectives off implicitly (raw objective already salted).
+  // D4 harvest can attribute it (B2). The interpreter is the sole salt owner for its own rendered
+  // members (createWave passes already-salted objectives through), so the wave starts with
+  // saltObjectives off implicitly (raw objective already salted) — and #200 (row-task-namespace)
+  // the salt is WAVE-DERIVED, so the member task id carries the wave namespace: distinct keys
+  // derive distinct member runIds/task ids, same-key re-drives keep the idempotent dedupe.
   return `[attempt: ${salt} ${member.role}] ${text}`;
 }
 
@@ -574,8 +589,11 @@ export async function runWorkflow(baton, specOrPath, options = {}) {
   const spec = admitSpec(raw, repoRoot);
   const manifestDigest = createHash('sha256').update(canonicalJson(spec)).digest('hex');
 
-  // Render every member's objective (D5 — objectiveRef → salt line). Salt owner is the interpreter.
-  const salt = randomUUID();
+  // Render every member's objective (D5 — objectiveRef → salt line). Salt owner is the interpreter;
+  // #200 (row-task-namespace): the salt is WAVE-DERIVED from the spec's idempotencyKey — distinct
+  // keys render distinct member objectives (a same-brief re-drive with a NEW key never binds a
+  // prior wave's task), the same key renders the same objective (idempotent same-key dedupe).
+  const salt = waveNamespaceSalt(spec.idempotencyKey);
   const rendered = spec.members.map((member) => {
     const renderedMember = {
       role: member.role,

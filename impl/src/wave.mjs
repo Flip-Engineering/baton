@@ -108,10 +108,21 @@ function validateMember(member, index, repoRoot = null) {
 
 // #171 (deliverable pre-seeding) + #114: a spec-shaped member (objectiveRef, no objective) renders
 // its objective from the referenced file and pre-seeds its declared report with the verbatim
-// [attempt: <salt> <role>] header; a pre-rendered member (the interpreter path) passes through.
+// [attempt: <salt> <role>] header; a pre-rendered member (the interpreter path) passes through —
+// UNLESS its objective carries no attempt marker at all: #200 (row-task-namespace) — a raw brief
+// (the wave-driver's saltObjectives:false ritual path, the recipes wrapper's rendered members, a
+// direct waves.start with pre-rendered objectives) gets the wave-namespaced salt line here, so two
+// waves with byte-identical briefs and DISTINCT keys derive distinct member runIds/task ids
+// instead of binding the same task. Already-salted objectives (the interpreter's or the driver's
+// [attempt: <salt> <role>] line) pass through untouched.
 function renderWaveMember(member, index, repoRoot, salt) {
   const base = validateMember(member, index, repoRoot);
-  if (typeof base.objective === 'string' && base.objective.trim().length > 0) return base;
+  if (typeof base.objective === 'string' && base.objective.trim().length > 0) {
+    if (!base.objective.startsWith('[attempt: ')) {
+      return Object.freeze({ ...base, objective: `[attempt: ${salt} ${base.role}] ${base.objective}`.trimEnd() });
+    }
+    return base;
+  }
   const ref = base.objectiveRef;
   let text = '';
   if (repoRoot && ref) {
@@ -213,7 +224,11 @@ export async function createWave(baton, options = {}) {
     && typeof baton._assertWaveStartReplayable === 'function') {
     await baton._assertWaveStartReplayable(waveId);
   }
-  const salt = randomUUID();
+  // #200 (row-task-namespace): the member-render salt is WAVE-DERIVED, never a per-invocation
+  // random — distinct keys render distinct member objectives (a same-brief re-drive with a new
+  // key NEVER binds a prior wave's task), and the same key renders the same objective (same-key
+  // retries/re-drives dedupe idempotently to the existing run instead of minting an orphan).
+  const salt = waveNamespaceSalt(idempotencyKey);
   const members = membersInput.map((member, index) => renderWaveMember(member, index, repoRoot, salt));
   if (new Set(members.map(({ role }) => role)).size !== members.length) {
     throw waveError('wave member roles contain duplicates');
@@ -260,6 +275,18 @@ function validateWaveIdempotencyKey(value) {
     throw waveError('wave idempotencyKey is invalid', 'wave_idempotency_invalid');
   }
   return value;
+}
+
+// #200 (row-task-namespace): the member task id carries the wave namespace. The runId digest
+// deliberately excludes waveId (application.mjs), so the namespace rides the member OBJECTIVE via
+// a DETERMINISTIC wave-derived salt line. The same (idempotencyKey, role, brief) renders the same
+// objective — a same-key re-drive dedupes idempotently to the prior run — while distinct keys
+// render distinct objectives, so a same-brief re-drive with a NEW key NEVER binds a prior wave's
+// task. The value keeps the 36-char [0-9a-f-] shape the attempt-line pins expect
+// (workflow-dsl-package-red PS-A pre-seed assertion).
+function waveNamespaceSalt(idempotencyKey) {
+  const hex = createHash('sha256').update(`baton:wave-namespace:${idempotencyKey}`).digest('hex').slice(0, 32);
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
 
 // 93B rule 2: attach-and-harvest. Rediscover a prior wave's member runs from the run list
