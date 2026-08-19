@@ -116,6 +116,15 @@ test('PROBE-4: wave 1 completes; wave 2 same objective binds', async (t) => {
   const obj = 'identical objective text';
   execFileSync('git', ['add', '-A'], { cwd: driver.repoRoot });
   execFileSync('git', ['-c', 'user.name=Baton Test', '-c', 'user.email=baton@example.test', 'commit', '-q', '-m', 'brief'], { cwd: driver.repoRoot });
+  const wt = driver.coordinator._worktrees;
+  console.log('worktrees present:', Boolean(wt));
+  if (wt && typeof wt.create === 'function') {
+    const orig = wt.create.bind(wt);
+    wt.create = (taskId, baseSha, opts) => orig(taskId, baseSha, opts).catch((err) => {
+      console.log('WORKTREE CREATE FAILED:', err?.code, String(err?.message).slice(0, 300));
+      throw err;
+    });
+  }
   const w1 = await createWave(baton, { members: [member('alpha', obj)], idempotencyKey: 'key-1', repoRoot: driver.repoRoot });
   const h1 = w1.runs.get('alpha');
   try {
