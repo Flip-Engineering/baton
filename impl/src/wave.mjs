@@ -48,6 +48,40 @@ function waveError(message, code = 'wave_invalid') {
   return Object.assign(new TypeError(message), { code });
 }
 
+// #200 (row-task-namespace): the wave-namespace attempt salt. Member task ids derive from
+// (wave idempotencyKey, role, brief content) — the salt is DETERMINISTIC per wave key, so a
+// same-brief re-drive under a DISTINCT key derives a DISTINCT member task id (never a bind to
+// the prior wave's run — today the second drive re-attaches the first's dead run and verdicts
+// failed with no spawn), while a same-key re-drive derives the SAME member task ids (idempotent
+// resume, never an orphan mint). The `[attempt: <salt> <role>]` prefix format is unchanged; only
+// the salt's derivation changed from a per-call random UUID to the wave key. Exported so the
+// derivation is directly pinnable; workflow-interpreter.mjs mirrors it inline (its W5 law keeps
+// the lane's transitive import graph node-builtins-only).
+export function waveAttemptSalt(idempotencyKey) {
+  return createHash('sha256').update(`wave-attempt:${idempotencyKey}`).digest('hex').slice(0, 16);
+}
+
+// #200 (row-task-namespace): the member run id derivation — the wave namespace folded into the
+// member task identity. The application's ordinary runId digest deliberately excludes the wave
+// binding (application.mjs start()), so two waves with byte-identical member briefs and DISTINCT
+// keys resolve to the SAME run — the re-drive binds the prior (possibly dead) task with no fresh
+// spawn. This derivation is a function of (wave idempotencyKey, role, brief content): the digest
+// folds waveId (the key's deterministic hash) + waveRole + the member objective (the brief
+// content) beside the route/scope the ordinary digest also carries. Deterministic — a same-key
+// re-drive reproduces the SAME member run id (idempotent resume); distinct keys never collide.
+// `run-<32hex>` keeps the ordinary runId shape; the objective text is NOT altered, so stored
+// schemas and objective-based lookups are unchanged.
+export function memberRunId(idempotencyKey, member, waveId) {
+  return `run-${createHash('sha256').update(JSON.stringify({
+    objective: member.objective,
+    waveId,
+    waveRole: member.role,
+    route: member.exact ?? { harness: member.harness, model: member.model, effort: member.effort },
+    scope: [...member.scope],
+    namespace: 'baton-wave-member',
+  })).digest('hex').slice(0, 32)}`;
+}
+
 function validateMember(member, index, repoRoot = null) {
   if (!member || typeof member !== 'object' || Array.isArray(member)) {
     throw waveError(`wave member[${index}] must be an object`);
@@ -109,6 +143,10 @@ function validateMember(member, index, repoRoot = null) {
 // #171 (deliverable pre-seeding) + #114: a spec-shaped member (objectiveRef, no objective) renders
 // its objective from the referenced file and pre-seeds its declared report with the verbatim
 // [attempt: <salt> <role>] header; a pre-rendered member (the interpreter path) passes through.
+// #200 (row-task-namespace): the wave namespace rides the member RUN ID (minted explicitly in
+// createWave, memberRunId) — the stored objective text is never mutated, so every wave-internal
+// lookup that matches objectives (attach on both the embedded facade and the direct port) keeps
+// its exact-match semantics.
 function renderWaveMember(member, index, repoRoot, salt) {
   const base = validateMember(member, index, repoRoot);
   if (typeof base.objective === 'string' && base.objective.trim().length > 0) return base;
@@ -213,7 +251,10 @@ export async function createWave(baton, options = {}) {
     && typeof baton._assertWaveStartReplayable === 'function') {
     await baton._assertWaveStartReplayable(waveId);
   }
-  const salt = randomUUID();
+  // #200 (row-task-namespace): the attempt salt is the wave-namespace salt — deterministic per
+  // wave key, never a per-call random UUID. Distinct keys with byte-identical member briefs
+  // derive DISTINCT member task ids; a same-key re-drive derives the SAME ids (idempotent).
+  const salt = waveAttemptSalt(idempotencyKey);
   const members = membersInput.map((member, index) => renderWaveMember(member, index, repoRoot, salt));
   if (new Set(members.map(({ role }) => role)).size !== members.length) {
     throw waveError('wave member roles contain duplicates');
@@ -240,10 +281,20 @@ export async function createWave(baton, options = {}) {
       // 93B: waveId/waveRole bind each run to this wave (into steering.registered, so a
       // driver dying mid-loop leaves members discoverable); waveStart rides the first
       // member's start to mint the pre-loop wave.started record.
+      // #200 (row-task-namespace): the member run id is MINTED HERE with the wave namespace
+      // folded in — memberRunId(idempotencyKey, member, waveId) — so a same-brief re-drive
+      // under a DISTINCT key derives a DISTINCT member task id (the second drive spawns fresh,
+      // never binding the prior wave's dead run), while a same-key re-drive derives the SAME id
+      // (idempotent resume, never an orphan mint). The objective text is deliberately untouched:
+      // the stored member objective stays byte-identical to what the caller passed, so every
+      // wave-internal objective lookup (attach on the embedded facade and the direct port) keeps
+      // its exact-match back-compat. The wave namespace (key → waveId) + role + brief content
+      // are the digest's inputs — a non-wave ordinary run.start never passes through here.
       entry.run = await baton.runs.start(member.objective, {
         ...route, scope: [...member.scope], driverKind: 'wave',
         waveId, waveRole: member.role,
         waveStart: { roster, idempotencyKey },
+        runId: memberRunId(idempotencyKey, member, waveId),
       });
       if (approve) await entry.run.approve();
     } catch (error) {
