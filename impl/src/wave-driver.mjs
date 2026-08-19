@@ -35,11 +35,16 @@ const OBJECTIVE_MAX_BYTES = FRAME_LIMITS['wave.member.objective'].value;
 // #163 law (operator ruling 2026-08-14): there is NO hardCapMs — clock-based kill caps are
 // retired; the key is unknown here and refuses loudly. The drive settles on member terminality
 // or the stall finalization the wave author chose, never on a wall-clock cap.
+// row-stall-break (#163 follow-on): the production DEFAULT stall window is DERIVED from the
+// wave's own observed marker-advance cadence (max(2x maxObservedGapMs, 8x pollIntervalMs)) —
+// `null` is the derive sentinel. A policy that pins an explicit numeric stallTimeoutMs stays
+// authoritative (back-compat, the red suites rely on it); the retired 20-minute constant is
+// gone from the default.
 const DEFAULT_POLICY = Object.freeze({
   steering: 'nudge-on-checkpoint',
   completionMessage: 'Continue the current turn.',
   pollIntervalMs: 20_000,
-  stallTimeoutMs: 20 * 60_000,
+  stallTimeoutMs: null,
   settleTimeoutMs: 5_000,
   finalization: 'none',
   unproductiveNudgeBudget: 1,
@@ -127,6 +132,10 @@ function freezePolicy(raw) {
     throw driverError(`wave driver policy field "${unknown}" is unknown`, 'wave_driver_policy_invalid');
   }
   const policy = { ...DEFAULT_POLICY, ...raw };
+  // row-stall-break: an absent/undefined stallTimeoutMs keeps the null derive sentinel — only an
+  // explicitly PINNED numeric value is validated and honored. `null` (the DEFAULT) is the derive
+  // sentinel; the derived window replaces only the fixed production default.
+  if (policy.stallTimeoutMs === undefined) policy.stallTimeoutMs = null;
   if (!STEERING_MODES.has(policy.steering)) {
     throw driverError(`wave driver policy steering is invalid: ${String(policy.steering)}`, 'wave_driver_policy_invalid');
   }
@@ -134,7 +143,7 @@ function freezePolicy(raw) {
     throw driverError('wave driver policy completionMessage is invalid', 'wave_driver_policy_invalid');
   }
   assertInteger(policy.pollIntervalMs, 'pollIntervalMs');
-  assertInteger(policy.stallTimeoutMs, 'stallTimeoutMs');
+  if (policy.stallTimeoutMs !== null) assertInteger(policy.stallTimeoutMs, 'stallTimeoutMs');
   assertInteger(policy.settleTimeoutMs, 'settleTimeoutMs');
   if (!FINALIZATIONS.has(policy.finalization)) {
     throw driverError(`wave driver policy finalization is invalid: ${String(policy.finalization)}`, 'wave_driver_policy_invalid');
@@ -474,6 +483,12 @@ export function createWaveDriver(baton, rawPolicy = null) {
     const startedAt = Date.now();
     let lastMarker = '';
     let lastMarkerAt = startedAt;
+    // row-stall-break: the wave's own observed marker-advance cadence — the largest poll-to-poll
+    // gap between lastMarkerAt moves (L5) — feeds the DERIVED fatal window
+    // max(2x maxObservedGapMs, 8x pollIntervalMs), mirroring the quiescence quiet window
+    // (workflow-interpreter.mjs QUIESCENCE_MIN_SILENT_POLLS). One live member resets the clock
+    // for all; a wave that advances slower than any fixed constant is never broken by one.
+    let maxObservedGapMs = 0;
     let basis = null;
 
     const aborted = () => policy.signal?.aborted === true;
@@ -634,9 +649,16 @@ export function createWaveDriver(baton, rawPolicy = null) {
         }
 
         // L5 wave-level marker: one live member (any per-member digest change) resets the clock for
-        // all. A sibling-ONLY cursor movement is already stripped, so it never resets.
+        // all. A sibling-ONLY cursor movement is already stripped, so it never resets. The gap
+        // since the prior advance is the wave's observed cadence sample (row-stall-break) — the
+        // fatal window derives from the worst of these, never a fixed constant.
         const marker = JSON.stringify(markerParts);
-        if (marker !== lastMarker) { lastMarker = marker; lastMarkerAt = Date.now(); }
+        if (marker !== lastMarker) {
+          const at = Date.now();
+          const gapMs = at - lastMarkerAt;
+          if (gapMs > maxObservedGapMs) maxObservedGapMs = gapMs;
+          lastMarker = marker; lastMarkerAt = at;
+        }
 
         if (typeof policy.onProgress === 'function') {
           // v2 rule 7: the reducer's class is the rendered label (a decision-parked member never
@@ -770,8 +792,14 @@ export function createWaveDriver(baton, rawPolicy = null) {
         if (settled === totalMembers) { basis = 'completed'; break; }
 
         const now = Date.now();
+        // row-stall-break (#163 follow-on): the fatal window is DERIVED from the wave's own
+        // observed marker-advance cadence — max(2x maxObservedGapMs, 8x pollIntervalMs), the same
+        // derivation the quiescence quiet window uses. A policy that pins an explicit
+        // stallTimeoutMs stays authoritative (back-compat); the derived value replaces only the
+        // fixed production DEFAULT (the 20-minute constant is retired).
+        const stallWindowMs = policy.stallTimeoutMs ?? Math.max(2 * maxObservedGapMs, 8 * policy.pollIntervalMs);
         // D4: stall is checked BEFORE cap when both cross in one poll.
-        if (now - lastMarkerAt >= policy.stallTimeoutMs) {
+        if (now - lastMarkerAt >= stallWindowMs) {
           if (policy.finalization === 'claim-on-stall') {
             // D9: claim fan-out at wave stall — every pending-paused member, one claim each, scope
             // mismatch tolerated and recorded.

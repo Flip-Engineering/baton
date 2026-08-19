@@ -38,6 +38,7 @@ import {
   createRecoveryAttemptAdmission, createRecoveryAttemptCompletion, recoveryAttemptSeriesId,
 } from './recovery-attempt.mjs';
 import { normalizeVerifierFailureCapsule, sanitizeVerifierDiagnosticText } from './verifier-diagnostics.mjs';
+import { synthesizeTerminalDeathCert } from './death-cert.mjs';
 
 const ORIENTATION_DELIVERY = Symbol('orientation-delivery');
 const WORKTREE_FAILURE = Symbol('worktree-failure');
@@ -12791,7 +12792,16 @@ export class Coordinator {
       }
     }
     const attribution = this._routeAttribution(handle);
-    const appendAttributed = (partial) => this._log.append({ ...partial, ...attribution });
+    // Issue #225: the death-cert block rides terminal events through the intake. An
+    // adapter-provided block passes through wholesale; otherwise the coordinator synthesizes
+    // the cert from the close facts that DO exist in the payload (other adapter tiers), so
+    // the ledger event carries exitCode/signal canonically — never envelope-only.
+    const deathCert = event?.deathCert ?? synthesizeTerminalDeathCert(event);
+    const appendAttributed = (partial) => this._log.append({
+      ...partial,
+      ...(deathCert ? { deathCert } : {}),
+      ...attribution,
+    });
     let nativeObservationEvent = null;
 
     switch (kind) {

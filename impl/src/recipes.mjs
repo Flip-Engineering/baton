@@ -57,12 +57,14 @@ const IDEMPOTENCY_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/u;
 // functions, no signals. `saltObjectives` is forced false by the wrapper (the sole salt owner);
 // `evidencePath` is a per-invocation run option; `onProgress`/`signal` are signals, excluded. The
 // defaults mirror createWaveDriver's documented production cadence. #163 law: no hardCapMs —
-// a recipe policy naming the retired clock cap refuses as an unknown field.
+// a recipe policy naming the retired clock cap refuses as an unknown field. row-stall-break
+// (#163 follow-on): the default stall window is DERIVED from the wave's own observed cadence —
+// the recipe default deliberately carries NO stallTimeoutMs (the driver derives it); a recipe
+// that names an explicit stallTimeoutMs still pins it (back-compat).
 const DEFAULT_RECIPE_POLICY = Object.freeze({
   steering: 'nudge-on-checkpoint',
   finalization: 'none',
   pollIntervalMs: 20_000,
-  stallTimeoutMs: 20 * 60_000,
   settleTimeoutMs: 5_000,
   unproductiveNudgeBudget: 1,
   preflight: true,
@@ -135,7 +137,9 @@ function admitPolicy(raw) {
     throw recipeError(`recipe policy "finalization" is invalid: ${String(merged.finalization)}`, 'recipe_schema_invalid');
   }
   assertPositiveInt(merged.pollIntervalMs, 'recipe policy "pollIntervalMs"');
-  assertPositiveInt(merged.stallTimeoutMs, 'recipe policy "stallTimeoutMs"');
+  // row-stall-break: an unpinned recipe policy carries no stallTimeoutMs — the driver derives
+  // the stall window from the wave's observed cadence. Only an EXPLICIT pin is validated.
+  if (merged.stallTimeoutMs !== undefined) assertPositiveInt(merged.stallTimeoutMs, 'recipe policy "stallTimeoutMs"');
   assertPositiveInt(merged.settleTimeoutMs, 'recipe policy "settleTimeoutMs"');
   if (!Number.isSafeInteger(merged.unproductiveNudgeBudget) || merged.unproductiveNudgeBudget < 0) {
     throw recipeError('recipe policy "unproductiveNudgeBudget" must be a non-negative integer', 'recipe_schema_invalid');
@@ -538,7 +542,6 @@ const IMPLEMENT_DEFAULT_POLICY = Object.freeze({
   steering: 'nudge-on-checkpoint',
   finalization: 'claim-on-stall',
   pollIntervalMs: 20_000,
-  stallTimeoutMs: 20 * 60_000,
   settleTimeoutMs: 15_000,
   unproductiveNudgeBudget: 1,
   preflight: true,

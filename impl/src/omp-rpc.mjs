@@ -19,6 +19,7 @@ import { createHash } from 'node:crypto';
 import { renderBrief } from './adapter.mjs';
 import { attestWorkerPolicyObservation } from './worker-policy.mjs';
 import { ProcessCloseReapLatch, normalizeProcessGeneration, processReadyPayload, processStartedPayload } from './process-lifecycle.mjs';
+import { DeathCertTail, deathCertBlock, providerStatusClass } from './death-cert.mjs';
 
 const DEFAULT_MAX_WIRE_FRAME_BYTES = 2 * 1024 * 1024;
 const DEFAULT_MAX_EVENT_PAYLOAD_BYTES = 64 * 1024;
@@ -118,6 +119,11 @@ export class OmpRpcProcess {
     this.onReapUnconfirmed = options.onReapUnconfirmed ?? null;
     this.onStopConfirmed = options.onStopConfirmed ?? null;
     this.onTransportStall = options.onTransportStall ?? null;
+    // Issue #225: bounded redacted stderr/stdout tails — the death-cert evidence lanes. The
+    // literal-secret set is the credential-shaped ENV values (probed at snapshot time, so a
+    // rotated credential is never baked into a long-lived closure).
+    this.stdoutTail = new DeathCertTail({ literalSecrets: () => this._credentialEnvValues() });
+    this.stderrTail = new DeathCertTail({ literalSecrets: () => this._credentialEnvValues() });
     this._child = null;
     this._pending = new Map();
     this._readyWaiters = [];
@@ -155,11 +161,24 @@ export class OmpRpcProcess {
       });
     }
     child.stdout.setEncoding('utf8');
-    child.stdout.on('data', (chunk) => this._onStdout(chunk));
-    child.stderr.on('data', () => { /* stderr capture is the #225 harvest lane's, not fate */ });
+    child.stdout.on('data', (chunk) => {
+      this.stdoutTail.append(chunk);
+      this._onStdout(chunk);
+    });
+    child.stderr.on('data', (chunk) => {
+      // The #225 harvest lane owns stderr capture now — bounded, redacted, never fate.
+      this.stderrTail.append(chunk);
+    });
     child.on('error', (error) => { this.failure = error; this._onExit(null, null); });
     child.on('exit', (code, signal) => this._onExit(code, signal));
     return this;
+  }
+
+  /** Credential-shaped env VALUES (the redaction literal set for the death-cert tails). */
+  _credentialEnvValues() {
+    return Object.entries(this.env ?? {})
+      .filter(([key]) => /(?:key|token|secret|password|credential|auth)/iu.test(key))
+      .map(([, value]) => value);
   }
 
   /**
@@ -244,6 +263,9 @@ export class OmpRpcProcess {
   }
 
   _onStdout(chunk) {
+    // Issue #225: the bounded redacted stdout tail rides the terminal death cert. Captured
+    // here — every chunk reaches this lane (real 'data' events and frame injection alike).
+    this.stdoutTail.append(chunk);
     this._buffer += chunk;
     let index;
     while ((index = this._buffer.indexOf('\n')) >= 0) {
@@ -385,11 +407,35 @@ export class OmpRpcCli {
 
   onEvent(callback) { this._cb = callback; }
 
-  _emit(session, kind, payload) {
+  _emit(session, kind, payload, deathCert = null) {
     this._cb?.({
       worker: session.worker, harness: 'omp', turnEpoch: session.turnEpoch,
       actor: 'worker', kind, payload,
+      // Issue #225: the death-cert block rides terminal events at the envelope (the payload
+      // of process_closed stays byte-identical — its exact-keys validator is the terminal
+      // semantics pin). Enrichment only: absent for non-terminal events.
+      ...(deathCert ? { deathCert } : {}),
     });
+  }
+
+  /** Issue #225: the death-cert block for a terminal event — exact close tuple + provider
+   * cause class + bounded redacted stderr/stdout tails. */
+  _sessionDeathCert(session) {
+    const closeFact = session.process?.processClose?.closeFact ?? null;
+    return deathCertBlock({
+      exitCode: closeFact?.code ?? null,
+      signal: closeFact?.signal ?? null,
+      providerCauseClass: session.providerCauseClass ?? null,
+      stderrTail: session.process?.stderrTail?.snapshot() ?? '',
+      stdoutTail: session.process?.stdoutTail?.snapshot() ?? '',
+    });
+  }
+
+  /** Issue #225: record the provider cause class — the HTTP status class of the last failed
+   * request — when the provider lane reports one. Enrichment only; never fatal (#163). */
+  _observeProviderStatus(session, frame) {
+    const observed = providerStatusClass(frame?.status ?? frame?.httpStatus ?? frame?.error?.status);
+    if (observed) session.providerCauseClass = observed;
   }
 
   _appendStreamChunk(session, turn, streamKind, value) {
@@ -516,10 +562,22 @@ export class OmpRpcCli {
         this._onAgentEnd(session, frame);
         return;
       case 'auto_retry_start':
+        this._observeProviderStatus(session, frame);
         this._emit(session, 'content.message', { phase: 'notice', note: 'provider_retry_started' });
         return;
       case 'retry_fallback_applied':
+        this._observeProviderStatus(session, frame);
         this._emit(session, 'content.message', { phase: 'notice', note: 'provider_retry_fallback', model: frame.model ?? null });
+        return;
+      case 'provider_error':
+        // Issue #225: an explicit provider-failure frame. The failed request's HTTP status
+        // class rides the terminal death cert; the frame itself is a notice, never fatal.
+        this._observeProviderStatus(session, frame);
+        this._emit(session, 'content.message', {
+          phase: 'notice', note: 'provider_error', error: String(frame?.error ?? '').slice(0, 200),
+          ...(providerStatusClass(frame?.status ?? frame?.httpStatus ?? frame?.error?.status)
+            ? { statusClass: providerStatusClass(frame?.status ?? frame?.httpStatus ?? frame?.error?.status) } : {}),
+        });
         return;
       case 'extension_ui_request':
         // Measured anomaly pin (#228): UI frames can arrive even with --no-extensions.
@@ -607,6 +665,9 @@ export class OmpRpcCli {
         // #235 transport liveness: false until the first provider-traffic frame (frames are the
         // truth source — see PROVIDER_TRAFFIC_FRAME_TYPES). Evidence observation only.
         providerTrafficObserved: false, lastProviderTrafficAt: null,
+        // Issue #225: the provider cause class (HTTP status class of the last failed request),
+        // observed on the provider lane; rides the terminal death cert.
+        providerCauseClass: null,
         turnEpoch: 0, turnSequence: 0, activeTurn: null, terminalTurns: new Set(),
         pendingInterrupt: null, steerPending: null,
         modelRequested: model, effortRequested: effort,
@@ -621,7 +682,7 @@ export class OmpRpcCli {
         reapOwnedProcessGroup: this._reapOwnedProcessGroup,
         onProcessClosed: (payload) => {
           session.processClosedEmitted = true;
-          this._emit(session, 'lifecycle.process_closed', payload);
+          this._emit(session, 'lifecycle.process_closed', payload, this._sessionDeathCert(session));
         },
         onReapUnconfirmed: (payload) => this._emit(session, 'lifecycle.process_reap_unconfirmed', payload),
         onStopConfirmed: (kind, payload) => {
@@ -653,7 +714,7 @@ export class OmpRpcCli {
           phase: 'setup', error: String(error?.message ?? error),
           code: error?.code ?? 'setup_process_exit',
           exitCode: error?.exitCode ?? null, signal: error?.signal ?? null,
-        });
+        }, this._sessionDeathCert(session));
         await session.process.kill({ kind: 'kill.confirmed', payload: { terminalCause: 'setup', usageSeal: unavailableUsageSeal() } });
         return { ok: false, code: 'setup_process_exit', reason: String(error?.message ?? error) };
       }
@@ -702,7 +763,7 @@ export class OmpRpcCli {
         exitCode: outcome?.exitCode ?? null,
         signal: outcome?.signal ?? null,
         error: outcome?.failure ? String(outcome.failure.message ?? outcome.failure) : 'omp rpc process exited during an active turn',
-      });
+      }, this._sessionDeathCert(session));
       session.activeTurn = null;
     }
     if (this._sessions.get(session.worker) === session && session.process?.processClose?.confirmed) {

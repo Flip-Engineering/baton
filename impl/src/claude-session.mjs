@@ -15,6 +15,7 @@ import { normalizeProcessGeneration, ProcessCloseReapLatch, processStartedPayloa
 import { usdToNanos } from './usd.mjs';
 import { attestWorkerPolicyObservation } from './worker-policy.mjs';
 import { createDecisionRequest, ValidationError } from './messages.mjs';
+import { DeathCertTail, deathCertBlock, providerStatusClass } from './death-cert.mjs';
 
 const DEFAULT_MAX_WIRE_FRAME_BYTES = 1024 * 1024;
 const CLAUDE_TOKEN_METRIC = 'anthropic_input_plus_output_tokens_excluding_cache';
@@ -659,7 +660,7 @@ export class ClaudeSessionCli {
   }
 
   /** CS16: once a session-terminal kind fires, no further event is EVER emitted for that worker. */
-  _emit(session, kind, payload) {
+  _emit(session, kind, payload, deathCert = null) {
     if (session.deadEmitted && !['lifecycle.process_closed', 'lifecycle.process_reap_unconfirmed', 'kill.confirmed'].includes(kind)) return;
     const evt = {
       worker: session.worker,
@@ -668,11 +669,36 @@ export class ClaudeSessionCli {
       actor: this._actorFor(kind),
       kind,
       payload,
+      // Issue #225: the death-cert block rides terminal events at the envelope (the payload
+      // of process_closed stays byte-identical — its exact-keys validator is the terminal
+      // semantics pin). Enrichment only: absent for non-terminal events.
+      ...(deathCert ? { deathCert } : {}),
     };
     if (this._cb) this._cb(evt);
     if (kind === 'lifecycle.exited' || kind === 'lifecycle.crashed' || kind === 'kill.confirmed') {
       session.deadEmitted = true;
     }
+  }
+
+  /** The adapter's current provider credential VALUES (probed live, never baked in). */
+  _providerSecretValues() {
+    const dynamic = typeof this._cfg.providerSecretsProbe === 'function'
+      ? this._cfg.providerSecretsProbe() : [];
+    return [...this._cfg.providerSecrets, ...(Array.isArray(dynamic) ? dynamic : [])]
+      .filter((secret) => typeof secret === 'string' && secret.length > 0);
+  }
+
+  /** Issue #225: the death-cert block for a terminal event — exact close tuple + provider
+   * cause class + bounded redacted stderr/stdout tails. */
+  _sessionDeathCert(session) {
+    const closeFact = session.processClose?.closeFact ?? null;
+    return deathCertBlock({
+      exitCode: closeFact?.code ?? null,
+      signal: closeFact?.signal ?? null,
+      providerCauseClass: session.providerCauseClass ?? null,
+      stderrTail: session.stderrTail?.snapshot() ?? '',
+      stdoutTail: session.stdoutTail?.snapshot() ?? '',
+    });
   }
 
   // ---------------------------------------------------------------------------
@@ -784,6 +810,11 @@ export class ClaudeSessionCli {
       buf: '',
       discardingFrame: null, // issue #28: session-scoped latch for oversized tool_result discard
       stderrCanaryTail: '',
+      // Issue #225: bounded redacted tails + the provider cause class — the death-cert
+      // observation state carried to the terminal events.
+      stdoutTail: new DeathCertTail({ literalSecrets: () => this._providerSecretValues() }),
+      stderrTail: new DeathCertTail({ literalSecrets: () => this._providerSecretValues() }),
+      providerCauseClass: null,
       spawnedEmitted: false,
       sessionIdWire: null,
       turnInFlight: false,
@@ -816,7 +847,7 @@ export class ClaudeSessionCli {
       reap: this._cfg.reapOwnedProcessGroup,
       onProcessClosed: (payload) => {
         session.processClosedEmitted = true;
-        this._emit(session, 'lifecycle.process_closed', payload);
+        this._emit(session, 'lifecycle.process_closed', payload, this._sessionDeathCert(session));
       },
       onReapUnconfirmed: (payload) => this._emit(session, 'lifecycle.process_reap_unconfirmed', payload),
       onStopConfirmed: (kind, payload) => {
@@ -1003,10 +1034,7 @@ export class ClaudeSessionCli {
   _containsProviderSecret(value) {
     // Defense in depth on provider EGRESS only. Worker ingress is enforced separately by the
     // env-only RuntimeIsolation projection and absence of credentialFiles.claude.
-    const dynamic = typeof this._cfg.providerSecretsProbe === 'function'
-      ? this._cfg.providerSecretsProbe() : [];
-    const secrets = [...this._cfg.providerSecrets, ...(Array.isArray(dynamic) ? dynamic : [])]
-      .filter((secret) => typeof secret === 'string' && secret.length > 0);
+    const secrets = this._providerSecretValues();
     if (typeof value === 'string') return secrets.some((secret) => value.includes(secret));
     if (Array.isArray(value)) return value.some((item) => this._containsProviderSecret(item));
     if (value && typeof value === 'object') return Object.values(value).some((item) => this._containsProviderSecret(item));
@@ -1027,10 +1055,7 @@ export class ClaudeSessionCli {
   }
 
   _onStderr(session, chunk) {
-    const dynamic = typeof this._cfg.providerSecretsProbe === 'function'
-      ? this._cfg.providerSecretsProbe() : [];
-    const secrets = [...this._cfg.providerSecrets, ...(Array.isArray(dynamic) ? dynamic : [])]
-      .filter((secret) => typeof secret === 'string' && secret.length > 0);
+    const secrets = this._providerSecretValues();
     if (session.terminal || secrets.length === 0) return;
     const candidate = `${session.stderrCanaryTail}${String(chunk)}`;
     if (this._containsProviderSecret(candidate)) {
@@ -1171,8 +1196,22 @@ export class ClaudeSessionCli {
       case 'control_response':
         this._handleIncomingControlResponse(session, obj);
         return;
+      case 'rate_limit_event': {
+        // Issue #225: the provider cause class — the HTTP status class of the last failed
+        // request, observed on the wire (a rate limit IS a provider 4xx failure). The frame
+        // stays unsurfaced as an event; the observation rides the terminal death cert.
+        const observed = providerStatusClass(obj?.rate_limit?.status ?? obj?.status);
+        if (observed) session.providerCauseClass = observed;
+        return;
+      }
+      case 'error': {
+        // Provider protocol errors may carry the failed request's HTTP status.
+        const observed = providerStatusClass(obj?.status ?? obj?.error?.status);
+        if (observed) session.providerCauseClass = observed;
+        return;
+      }
       default:
-        return; // user (tool results), rate_limit_event, deltas — not surfaced
+        return; // user (tool results), deltas — not surfaced
     }
   }
 
@@ -1223,10 +1262,16 @@ export class ClaudeSessionCli {
   _attachChild(session, child) {
     child.stdout.setEncoding('utf8');
     child.stdout.on('data', (chunk) => {
-      if (session.child === child) this._onData(session, chunk);
+      if (session.child === child) {
+        session.stdoutTail.append(chunk);
+        this._onData(session, chunk);
+      }
     });
     child.stderr.on('data', (chunk) => {
-      if (session.child === child) this._onStderr(session, chunk);
+      if (session.child === child) {
+        session.stderrTail.append(chunk);
+        this._onStderr(session, chunk);
+      }
     });
     child.on('close', (code, signal) => {
       if (session.child === child) void this._onClose(session, code, signal);
@@ -1244,7 +1289,7 @@ export class ClaudeSessionCli {
       reap: this._cfg.reapOwnedProcessGroup,
       onProcessClosed: (payload) => {
         session.processClosedEmitted = true;
-        this._emit(session, 'lifecycle.process_closed', payload);
+        this._emit(session, 'lifecycle.process_closed', payload, this._sessionDeathCert(session));
       },
       onReapUnconfirmed: (payload) => this._emit(session, 'lifecycle.process_reap_unconfirmed', payload),
       onStopConfirmed: (kind, payload) => {
@@ -1271,6 +1316,11 @@ export class ClaudeSessionCli {
       session.pid = child.pid;
       session.buf = '';
       session.stderrCanaryTail = '';
+      // Issue #225: a respawn opens a fresh observation window — the death cert reflects the
+      // final child's tails and its own provider failures.
+      session.stdoutTail = new DeathCertTail({ literalSecrets: () => this._providerSecretValues() });
+      session.stderrTail = new DeathCertTail({ literalSecrets: () => this._providerSecretValues() });
+      session.providerCauseClass = null;
       session.processClosePending = false;
       session.processClosedEmitted = false;
       session.retryAwaitingInit = true;
@@ -1545,12 +1595,13 @@ export class ClaudeSessionCli {
     const timeoutFailure = session.timeoutFailure;
     const processFailure = session.processFailure;
     const closeDerived = () => {
+      const deathCert = this._sessionDeathCert(session);
       if (timeoutFailure) {
-        this._emit(session, 'lifecycle.crashed', timeoutFailure);
+        this._emit(session, 'lifecycle.crashed', timeoutFailure, deathCert);
       } else if (processFailure) {
-        this._emit(session, 'lifecycle.crashed', processFailure);
+        this._emit(session, 'lifecycle.crashed', processFailure, deathCert);
       } else if (!wasStopping && (session.turnInFlight || code !== 0)) {
-        this._emit(session, 'lifecycle.crashed', { error: `exited ${code}${signal ? ` (${signal})` : ''}`, usageSeal: unavailableUsageSeal() });
+        this._emit(session, 'lifecycle.crashed', { error: `exited ${code}${signal ? ` (${signal})` : ''}`, usageSeal: unavailableUsageSeal() }, deathCert);
       }
     };
     if (wasStopping) {
@@ -1574,7 +1625,7 @@ export class ClaudeSessionCli {
     session.terminal = true;
     if (session.killTimer) clearTimeout(session.killTimer);
     if (session.wallTimer) clearTimeout(session.wallTimer);
-    this._emit(session, 'lifecycle.crashed', { error: String(err?.message ?? err), usageSeal: unavailableUsageSeal() });
+    this._emit(session, 'lifecycle.crashed', { error: String(err?.message ?? err), usageSeal: unavailableUsageSeal() }, this._sessionDeathCert(session));
   }
 
   _onWallTimeout(session, timeoutMs) {

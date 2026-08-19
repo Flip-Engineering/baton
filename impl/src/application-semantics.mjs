@@ -42,10 +42,11 @@ export const CANONICAL_ATTENTION_KINDS = Object.freeze([
 // The blocking details are pinned to the LIVE projectBlockedInteraction output
 // (application.mjs:321-331): approve_plan/select_candidate are phase-derived, `decision`
 // (answer_decision's live kind) maps to `answer_required`, and turn_checkpoint is attention-
-// derived. The silence boundary is an order of magnitude under the wave driver's deployment-
-// wide stall clock (wave-driver.mjs stallTimeoutMs = 20 min) so a run-view consumer learns of
-// silence long before any driver stall fan-out, and far above per-poll jitter (follow polls at
-// most profile followPolicy.maxWaitMs).
+// attention-derived. The silence boundary is an order of magnitude under the wave driver's
+// deployment-wide stall clock — row-stall-break (#163): the driver's DEFAULT stall window now
+// derives from the wave's own observed marker cadence (max(2x gap, 8x pollIntervalMs), never a
+// fixed 20-minute constant) — so a run-view consumer learns of silence long before any driver
+// stall fan-out, and far above per-poll jitter (follow polls at most profile followPolicy.maxWaitMs).
 export const PROGRESS_CLASS_PREFIXES = Object.freeze(['terminal:', 'blocked_interaction:']);
 export const PROGRESS_CLASS_LEAVES = Object.freeze(['silent', 'progressing']);
 export const PROGRESS_BLOCKED_INTERACTION_DETAILS = Object.freeze([
