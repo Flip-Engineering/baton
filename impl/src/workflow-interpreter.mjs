@@ -682,8 +682,26 @@ export async function runWorkflow(baton, specOrPath, options = {}) {
     });
   }
 
+  // #163 follow-on (row-cadence, wave-h): the member stops carry the drive's DECISION BASIS —
+  // the drive exit (verdict) and the signal that fired it. 'Workflow interpreter settled.' is
+  // never the reason a member sees when the drive quiesced or terminalized: the composed stop
+  // reason and the structured basis name the actual verdict + signal (wave.close threading).
+  const INTERPRETER_EXIT_SIGNALS = Object.freeze({
+    pending_empty: 'member-terminality',
+    quiesced: 'quiescence-window',
+    terminalized_unrecoverable: 'unrecoverable-terminal',
+    stuck_handled: 'handled-decision-stuck',
+  });
   let stopReceipt = null;
-  try { stopReceipt = await wave.close({ reason: 'Workflow interpreter settled.' }); } catch { /* best effort */ }
+  try {
+    stopReceipt = await wave.close({
+      reason: 'Workflow interpreter settled.',
+      basis: {
+        verdict: driveExit,
+        signal: INTERPRETER_EXIT_SIGNALS[driveExit] ?? 'member-terminality',
+      },
+    });
+  } catch { /* best effort */ }
 
   const outcomes = [];
   for (const member of spec.members) {

@@ -40,6 +40,11 @@ const DEFAULT_POLICY = Object.freeze({
   completionMessage: 'Continue the current turn.',
   pollIntervalMs: 20_000,
   stallTimeoutMs: 20 * 60_000,
+  // #163 follow-on (row-cadence, wave-h): settleTimeoutMs is PACING ONLY — it bounds the
+  // post-loop settle wait (wave.settle) and never appears on any terminal path. The drive's
+  // basis is decided in the loop (member terminality / stall / abort) before settle runs, and
+  // wave.settle reads member status for outcomes — a timeout only stops the wait, it never
+  // classifies a member terminal (pinned: test/cadence-settle-basis-red.test.mjs C1).
   settleTimeoutMs: 5_000,
   finalization: 'none',
   unproductiveNudgeBudget: 1,
@@ -475,6 +480,10 @@ export function createWaveDriver(baton, rawPolicy = null) {
     let lastMarker = '';
     let lastMarkerAt = startedAt;
     let basis = null;
+    // #163 follow-on (row-cadence, wave-h): the SIGNAL that fired the basis rides the member
+    // stops (wave.close's structured basis). Member stops are named by the evidence that fired
+    // them — never a bare 'Wave driver settled.' constant. Set exactly where basis is set.
+    let basisSignal = null;
 
     const aborted = () => policy.signal?.aborted === true;
     const sleep = (ms) => {
@@ -574,7 +583,7 @@ export function createWaveDriver(baton, rawPolicy = null) {
 
       // L4-L6 poll/steer loop.
       for (;;) {
-        if (aborted()) { basis = 'aborted'; break; }
+        if (aborted()) { basis = 'aborted'; basisSignal = 'abort-signal'; break; }
 
         // L5: ONE status read per member per poll. The cursor-stripped digest doubles as the stall
         // marker AND the source of the turn_checkpoint (requestId + changedPathsDigest).
@@ -767,7 +776,7 @@ export function createWaveDriver(baton, rawPolicy = null) {
         for (const [role, info] of statusInfo) {
           if (info.terminal || memberState.get(role)?.claimed === true) settled += 1;
         }
-        if (settled === totalMembers) { basis = 'completed'; break; }
+        if (settled === totalMembers) { basis = 'completed'; basisSignal = 'member-terminality'; break; }
 
         const now = Date.now();
         // D4: stall is checked BEFORE cap when both cross in one poll.
@@ -799,8 +808,10 @@ export function createWaveDriver(baton, rawPolicy = null) {
               }
             }
             basis = recovered === totalMembers ? 'completed' : 'stall';
+            basisSignal = recovered === totalMembers ? 'member-terminality' : 'stall-clock';
           } else {
             basis = 'stall';
+            basisSignal = 'stall-clock';
           }
           break;
         }
@@ -810,6 +821,9 @@ export function createWaveDriver(baton, rawPolicy = null) {
         await waitForWake(liveMembers);
       }
 
+      // settleTimeoutMs paces this wait ONLY (pacing-only, #163 follow-on): the basis is already
+      // decided above, and wave.settle builds outcomes from member status reads — a settle that
+      // times out leaves non-terminal members non-terminal (pinned: C1).
       outcomes = await wave.settle({ timeoutMs: policy.settleTimeoutMs });
       // KG settlement D3: the settle-window ritual runs between the members resting and wave close
       // (the pre-stop window). It rides the embedded settlement command from this deployment's own
@@ -829,8 +843,18 @@ export function createWaveDriver(baton, rawPolicy = null) {
       }
     } finally {
       // L1: close is guaranteed — even on a thrown settle/loop, the wave's resources are reaped.
+      // #163 follow-on (row-cadence, wave-h): the member stops carry the loop's DECISION BASIS
+      // (verdict + the signal that fired it). 'Wave driver settled.' is never the reason a member
+      // sees when the basis was stall/abort — the composed reason and the structured basis name
+      // the verdict and its signal. An abnormal exit (basis still null) is named 'interrupted',
+      // never silently mislabeled as a normal settle.
       if (wave) {
-        try { stop = await wave.close({ reason: 'Wave driver settled.' }); }
+        try {
+          stop = await wave.close({
+            reason: 'Wave driver settled.',
+            basis: { verdict: basis ?? 'interrupted', signal: basisSignal ?? 'abnormal-exit' },
+          });
+        }
         catch { /* close is best-effort in the abnormal path; the loop's own stop is primary */ }
       }
     }

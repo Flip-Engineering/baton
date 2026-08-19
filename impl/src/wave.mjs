@@ -514,7 +514,21 @@ function createWaveHandle({ repoRoot, members, state, waveId = null }) {
     return [...state.outcomes];
   }
 
-  async function close({ reason = 'Wave settled.' } = {}) {
+  // #163 follow-on (row-cadence, wave-h): a member stop must name the DECISION BASIS that fired
+  // it. `basis` is the optional structured { verdict, signal } the drive loop derived; when
+  // present it rides BOTH the member-facing stop reason (composed below, so the ledger's
+  // reasonDigest is a digest of a reason that names verdict+signal — never an opaque digest of
+  // a constant string) and the per-member stop entry. A close without a basis (plain callers,
+  // back-compat) passes the reason through verbatim and adds no fields.
+  function composeStopReason(reason, basis) {
+    if (!basis || typeof basis !== 'object'
+      || typeof basis.verdict !== 'string' || basis.verdict.length === 0) return reason;
+    const signal = typeof basis.signal === 'string' && basis.signal.length > 0
+      ? ` signal=${basis.signal}` : '';
+    return `${reason} basis=${basis.verdict}${signal}`;
+  }
+
+  async function close({ reason = 'Wave settled.', basis = null } = {}) {
     await drainPumps();
     const stops = [];
     // KG activation rule 3: aggregate the candidacy ritual counts from each member's stop outline.
@@ -525,7 +539,7 @@ function createWaveHandle({ repoRoot, members, state, waveId = null }) {
     for (const [role, entry] of state.members) {
       if (!entry.run) continue;
       try {
-        const stopped = await entry.run.stop(reason);
+        const stopped = await entry.run.stop(composeStopReason(reason, basis));
         const outline = stopped?.outline ?? {};
         // Residue truth is the RunView's resources block (ownedCount/cleanupState); a stop view
         // without it is reported as unknown, never coalesced to zero (docs/31 #8).
@@ -541,6 +555,7 @@ function createWaveHandle({ repoRoot, members, state, waveId = null }) {
           stop: stopped?.stop ?? null,
           resources: resources ? { state: resources.state ?? null, cleanupState: resources.cleanupState ?? null, ownedCount } : null,
           ownedCount,
+          ...(basis ? { basis } : {}),
         });
       } catch (error) {
         stops.push({ role, ownedCount: null, error: { code: error?.code ?? null, message: String(error?.message ?? error) } });
@@ -549,7 +564,10 @@ function createWaveHandle({ repoRoot, members, state, waveId = null }) {
     state.stops.push(...stops);
     const remainingCount = stops.reduce((total, stop) => total + (stop.ownedCount ?? 1), 0);
     const residueUnknown = stops.some((stop) => stop.ownedCount === null);
-    return { reason, stops, remainingCount, residueUnknown, knowledge: { candidates: knowledgeCandidates, admittedThisRun: knowledgeAdmitted } };
+    return {
+      reason, stops, remainingCount, residueUnknown, basis,
+      knowledge: { candidates: knowledgeCandidates, admittedThisRun: knowledgeAdmitted },
+    };
   }
 
   function evidence() {
