@@ -8166,6 +8166,17 @@ export class BatonApplication {
       throw applicationError('application progress timestamp is invalid',
         'application_progress_clock_invalid');
     }
+    // AX-1 leg-b (row-cadence, 2026-08-15): the LIVENESS classification folds the
+    // member-activity horizon. `view.activity.lastActivityAt` (the `_activityProjection` store
+    // projection) is the latest member-originated evidence event — content.tool_call /
+    // content.message / resource.* included — NOT only checkpoints/messages. AX-1 rule 3 stays:
+    // telemetry is not a forward-progress MILESTONE, so `lastProgress.at` is unchanged (AX1-F);
+    // but it IS liveness — `silenceMs` (the progressClass input the drivers fold) is measured
+    // against the later of the last meaningful event and the member's own last activity, so a
+    // tool-calling member whose events advance never reads 'silent'.
+    const activityMs = (view?.activity && typeof view.activity.lastActivityAt === 'string')
+      ? Date.parse(view.activity.lastActivityAt) : NaN;
+    const silenceBasisMs = Number.isFinite(activityMs) ? Math.max(lastMs, activityMs) : lastMs;
     const terminal = APPLICATION_RUN_TERMINAL_PHASES.has(view.phase);
     const completedAt = terminal ? new Date(lastMs).toISOString() : null;
     const untilMs = terminal ? lastMs : observedMs;
@@ -8181,7 +8192,7 @@ export class BatonApplication {
         stage: view.progress?.current ?? null,
         summary: view.progress?.summary ?? 'Run progress is unavailable.',
       },
-      silenceMs: terminal ? 0 : boundedDuration(observedMs, lastMs),
+      silenceMs: terminal ? 0 : boundedDuration(observedMs, silenceBasisMs),
       completedAt,
     });
   }

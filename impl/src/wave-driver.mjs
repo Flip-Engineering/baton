@@ -40,6 +40,9 @@ const DEFAULT_POLICY = Object.freeze({
   completionMessage: 'Continue the current turn.',
   pollIntervalMs: 20_000,
   stallTimeoutMs: 20 * 60_000,
+  // RC-2 (row-cadence, 2026-08-15): the settle-window field is PACING ONLY — it bounds
+  // wave.settle()'s outcome-collection wait AFTER the drive loop's basis is decided by member
+  // evidence, so it never appears on a terminal path (never terminates fate).
   settleTimeoutMs: 5_000,
   finalization: 'none',
   unproductiveNudgeBudget: 1,
@@ -78,6 +81,17 @@ const POLICY_FIELDS = Object.freeze(new Set(Object.keys(DEFAULT_POLICY)));
 const STEERING_MODES = Object.freeze(new Set(['nudge-on-checkpoint', 'none']));
 const FINALIZATIONS = Object.freeze(new Set(['none', 'claim-on-stall']));
 const SETTLEMENTS = Object.freeze(new Set(['kg-ritual', 'none']));
+
+// Pin 4 (row-cadence, 2026-08-15): the close reason a member's stop outline sees carries the
+// DECISION basis (verdict + the signal that fired it) — never the opaque digest-of-a-constant.
+// The vocabulary is closed: every drive-loop basis maps to the member-evidence signal that
+// fired it (the 00:12Z 2026-08-15 wave stopped members with the generic 'Wave driver settled.'
+// — a reasonDigest of a constant string — and the basis rode only the settle receipt).
+const STOP_BASIS_SIGNALS = Object.freeze({
+  completed: { basis: 'completed', signal: 'all-members-settled' },
+  stall: { basis: 'stall', signal: 'wave-stall-marker' },
+  aborted: { basis: 'aborted', signal: 'abort-signal' },
+});
 
 function driverError(message, code, extra = {}) {
   return Object.assign(new Error(message), { code, ...extra });
@@ -811,7 +825,9 @@ export function createWaveDriver(baton, rawPolicy = null) {
       }
 
       outcomes = await wave.settle({ timeoutMs: policy.settleTimeoutMs });
-      // KG settlement D3: the settle-window ritual runs between the members resting and wave close
+      // RC-2 (row-cadence): the settle window above is PACING ONLY — the basis was already
+      // decided by member evidence inside the loop; this wait bounds outcome collection, never
+      // fate. KG settlement D3: the settle-window ritual runs between the members resting and wave close
       // (the pre-stop window). It rides the embedded settlement command from this deployment's own
       // top-level principal; a typed refusal is captured, never allowed to abort the guaranteed
       // close. 'none' opts out entirely.
@@ -830,7 +846,13 @@ export function createWaveDriver(baton, rawPolicy = null) {
     } finally {
       // L1: close is guaranteed — even on a thrown settle/loop, the wave's resources are reaped.
       if (wave) {
-        try { stop = await wave.close({ reason: 'Wave driver settled.' }); }
+        // Pin 4 (row-cadence): the member stop reason carries the DECISION basis (verdict + the
+        // signal that fired it), so a member's stop outline never reads the opaque constant — an
+        // incomplete wave names basis=stall signal=wave-stall-marker instead of 'Wave driver
+        // settled.'. `basis` is decided BEFORE this close from member evidence only (L5 marker /
+        // terminal reads); the settle window is pacing, never a fate path (RC-2).
+        const verdict = STOP_BASIS_SIGNALS[basis] ?? { basis: 'unknown', signal: 'driver-abnormal-exit' };
+        try { stop = await wave.close({ reason: `Wave driver settled: basis=${verdict.basis} signal=${verdict.signal}` }); }
         catch { /* close is best-effort in the abnormal path; the loop's own stop is primary */ }
       }
     }
