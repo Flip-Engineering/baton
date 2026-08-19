@@ -140,6 +140,29 @@ function terminalFrom(outline) {
   return outline?.terminal === true || applicationTerminal(outline?.phase);
 }
 
+// #199 contract 1 (the landed tri-state pattern, 3794b583): the drive verdicts a member failed
+// ONLY on terminal evidence — a task failed transition WITH a typed cause, an explicit
+// application terminal flag, or a node-level typed terminal outcome. A terminal PHASE read that
+// carries none of that evidence is a suspicious read racing the spawn-confirmation window: it
+// defers to the next poll, and only a persistent evidence-less streak settles it (the
+// evidence-count confirmation, never a clock). This is the wave-surface mirror of the
+// coordinator's tri-state worktree-availability rule — a status read never decides the fate of
+// agentic work on its own.
+const TERMINAL_EVIDENCE_STREAK = 3;
+function terminalEvidence(outline) {
+  if (outline?.terminal === true) return true;
+  if (outline?.terminalCause != null) return true;
+  const nodes = Array.isArray(outline?.nodes) ? outline.nodes : [];
+  return nodes.some((node) => node?.terminalOutcome != null);
+}
+// A terminal-phase read whose typed evidence is absent is suspicious; a success-resting read is
+// never suspicious (result_ready/work_completed settle verbatim).
+function suspiciousTerminalRead(outline) {
+  return terminalFrom(outline)
+    && canonicalRunPhase(outline?.phase) !== SUCCESS_RESTING
+    && !terminalEvidence(outline);
+}
+
 function attentionFrom(outline) {
   const attention = outline?.attention;
   if (Array.isArray(attention) && attention.length === 0) return null;
@@ -355,10 +378,22 @@ function createWaveHandle({ repoRoot, members, state, waveId = null }) {
       }
       const view = await entry.run.status();
       const outline = view?.view ?? view ?? {};
+      // #199 contract 1: a suspicious terminal read (terminal phase without typed evidence)
+      // defers to the next poll — the member reads non-terminal until the evidence lands or the
+      // evidence-count streak confirms it, so a status read racing the spawn window never
+      // surfaces an instant failed verdict.
+      if (suspiciousTerminalRead(outline)) {
+        entry.suspiciousStreak = (entry.suspiciousStreak ?? 0) + 1;
+      } else {
+        entry.suspiciousStreak = 0;
+      }
+      const phase = canonicalRunPhase(outline.phase) ?? null;
+      const terminal = terminalFrom(outline)
+        && (!suspiciousTerminalRead(outline) || (entry.suspiciousStreak ?? 0) >= TERMINAL_EVIDENCE_STREAK);
       members.push({
         role,
-        phase: canonicalRunPhase(outline.phase) ?? null,
-        terminal: terminalFrom(outline),
+        phase,
+        terminal,
         attention: attentionFrom(outline),
         scratchpad: outline.scratchpad ?? null,
         // KG activation rule 4: the workflow horizon's knowledge digest rides the member's run view,
@@ -455,9 +490,23 @@ function createWaveHandle({ repoRoot, members, state, waveId = null }) {
         if (settled.has(role) || !entry.run) continue;
         const view = await entry.run.status();
         const outline = view?.view ?? view;
-        if (terminalFrom(outline) || canonicalRunPhase(outline?.phase) === SUCCESS_RESTING) {
+        if (canonicalRunPhase(outline?.phase) === SUCCESS_RESTING) {
+          entry.suspiciousStreak = 0;
           settled.add(role);
+        } else if (terminalFrom(outline)) {
+          if (terminalEvidence(outline)) {
+            entry.suspiciousStreak = 0;
+            settled.add(role);
+          } else {
+            // #199 contract 1: a suspicious terminal read (no typed evidence) defers to the
+            // next poll — only the evidence-count streak (3 reads, the 3794b583 pattern) can
+            // settle it, so a status read racing the spawn window never verdicts the member.
+            entry.suspiciousStreak = (entry.suspiciousStreak ?? 0) + 1;
+            if (entry.suspiciousStreak >= TERMINAL_EVIDENCE_STREAK) settled.add(role);
+            else armPump(entry);
+          }
         } else {
+          entry.suspiciousStreak = 0;
           armPump(entry);
         }
       }
@@ -481,7 +530,12 @@ function createWaveHandle({ repoRoot, members, state, waveId = null }) {
           const view = await entry.run.status();
           const outline = view?.view ?? view ?? {};
           outcome.phase = canonicalRunPhase(outline.phase) ?? null;
-          outcome.terminal = terminalFrom(outline);
+          // #199 contract 1: the verdict never mints failed from a single suspicious read — the
+          // evidence-count confirmation governs here exactly as in the settle loop.
+          outcome.terminal = terminalFrom(outline)
+            && (canonicalRunPhase(outline.phase) === SUCCESS_RESTING
+              || terminalEvidence(outline)
+              || (entry.suspiciousStreak ?? 0) >= TERMINAL_EVIDENCE_STREAK);
           outcome.narrative = outline.narrative ?? null;
           // #235: the transport-liveness settle class — EVIDENCE ONLY (the #163 law holds:
           // no termination changes). A member whose run view carries the provider_silent

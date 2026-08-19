@@ -12560,7 +12560,38 @@ export class Coordinator {
         && payload?.processGeneration === handle.processRef.generation
         && payload?.pid === handle.processRef.pid
         && typeof providerId === 'string' && providerId.length > 0);
-      if (!validProviderReady) {
+      // #199 (contract 2): a second lifecycle.spawned can be a HARNESS RETRY the coordinator
+      // owns — the adapter re-attests provider readiness for the SAME member after the first
+      // spawned already confirmed it (the double-spawn window: claim -> spawned ->
+      // turn_started/process_started -> second spawned). It names the same live process (same
+      // generation/pid as the confirmed processRef), or names no process coordinates at all
+      // (a session-bound attestation that can only come from the member's own adapter session),
+      // while the member is still live. Bind it to the SAME member (generation advance) — never
+      // an attribution refusal + kill that fails the claimed task while the provider keeps
+      // working orphaned. A payload naming a DIFFERENT generation/pid, or a terminal/stopping
+      // member, cannot belong to the live member and stays a refusal.
+      const memberProcessConfirmed = (handle.processRef !== null
+        && ['initializing', 'ready'].includes(handle.processRef.state))
+        || (handle.processRef?.state === 'unconfirmed_after_restart'
+          && handle.recoveredProcessAuthority === true);
+      const payloadNamesProcess = payload?.processGeneration !== undefined || payload?.pid !== undefined;
+      const sameLiveProcess = !payloadNamesProcess
+        || (payload?.processGeneration === handle.processRef.generation
+          && payload?.pid === handle.processRef.pid);
+      // A same-member re-attestation names the member's already-confirmed identity (never a
+      // substituted one), or — a session-bound attestation that names no identity AND no
+      // process (the omp shape) — the member has no confirmed identity to contradict, and the
+      // attestation can only originate from the member's own adapter session (an adapter
+      // refuses a second spawn for a live worker).
+      const identityMatchesMember = handle.sessionRef?.id
+        ? providerId === handle.sessionRef.id
+        : typeof providerId === 'string' && providerId.length > 0;
+      const harnessRetrySameMember = !validProviderReady
+        && !['dead', 'stopping', 'exited'].includes(handle.status)
+        && memberProcessConfirmed
+        && sameLiveProcess
+        && (identityMatchesMember || (!payloadNamesProcess && !handle.sessionRef?.id));
+      if (!validProviderReady && !harnessRetrySameMember) {
         this._log.append({
           worker: workerId, harness, turnEpoch: this._safeTurnEpoch(handle),
           kind: 'lifecycle.process_attribution_refused', actor: 'policy',
@@ -12575,6 +12606,21 @@ export class Coordinator {
       'lifecycle.crashed', 'lifecycle.exited', 'kill.confirmed', 'lifecycle.process_started',
       'lifecycle.process_closed', 'worker_policy.observed',
     ].includes(kind)) {
+      if (kind === 'lifecycle.spawned') {
+        // #199 (contract 2): a harness retry re-attests the SAME provider identity the open
+        // admission already confirmed — the first spawned IS the confirmation. Keep the first
+        // event as the admission's single spawned so the recovery protocol check
+        // (`spawned.length !== 1` -> recovery_protocol_violation) never double-counts a
+        // same-member re-attestation. A DIFFERENT identity stays a second spawned (NR1/NR2:
+        // substituted identities are still refused).
+        const identity = payload?.threadId ?? payload?.sessionId;
+        const alreadyConfirmed = handle.turnAdmission.events.some((entry) => (
+          entry.kind === 'lifecycle.spawned'
+          && (entry.payload?.threadId ?? entry.payload?.sessionId) === identity
+          && typeof identity === 'string' && identity.length > 0
+        ));
+        if (alreadyConfirmed) return;
+      }
       handle.turnAdmission.events.push(event);
       if (kind === 'lifecycle.spawned') {
         // Provider readiness is process telemetry even while recovery/follow-up admission is
