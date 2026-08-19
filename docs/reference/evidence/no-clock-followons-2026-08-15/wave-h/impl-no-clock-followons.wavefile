@@ -1,0 +1,37 @@
+wave no-clock-followons-2026-08-15-wave-h
+member coordinator
+  harness omp
+  model "deepseek/deepseek-v4-flash"
+  effort high
+  scope "docs/reference/evidence/no-clock-followons-2026-08-15/wave-h/**"
+  objectiveRef "docs/reference/evidence/no-clock-followons-2026-08-15/wave-h/coordinator-brief.md"
+  report "docs/reference/evidence/no-clock-followons-2026-08-15/wave-h/verify-notes.md"
+member row-stall-break
+  harness omp
+  model "deepseek/deepseek-v4-flash"
+  effort high
+  scope "impl/src/**"
+  scope "impl/test/**"
+  scope "docs/reference/evidence/no-clock-followons-2026-08-15/wave-h/**"
+  objectiveRef "docs/reference/evidence/no-clock-followons-2026-08-15/wave-h/row-stall-break-brief.md"
+  report "docs/reference/evidence/no-clock-followons-2026-08-15/wave-h/notes-row-stall-break.md"
+member row-cadence
+  harness omp
+  model "deepseek/deepseek-v4-flash"
+  effort high
+  scope "impl/src/**"
+  scope "impl/test/**"
+  scope "impl/src/**"
+  scope "impl/test/**"
+  scope "docs/reference/evidence/no-clock-followons-2026-08-15/wave-h/**"
+  objectiveRef "docs/reference/evidence/no-clock-followons-2026-08-15/wave-h/row-cadence-brief.md"
+  report "docs/reference/evidence/no-clock-followons-2026-08-15/wave-h/notes-row-cadence.md"
+approveOnAdvertisedPlan
+claimOnStall
+nudgeOnCheckpoint "Continue — the suite is the contract; derivation replaces fixed clocks ONLY, terminal semantics byte-stable. Write deliverables incrementally."
+messageOnSpawn brief "Read your objectiveRef brief IN FULL first; it binds. gh may be unauthenticated in your worktree. Your [attempt:] line verbatim in your deliverable's first five lines. Judgment calls recorded; authority-class ambiguity → DECISION_REQUEST with options."
+elevateWhenNotes doubt,plan 20
+signalOnMembersDone row-stall-break,row-cadence result "The rows settled (you are the remaining member — pinned #175 semantics). Verify per your brief and write verify-notes.md."
+harvest "docs/reference/evidence/no-clock-followons-2026-08-15/wave-h/notes-row-stall-break.md" mustContain "attempt:"
+harvest "docs/reference/evidence/no-clock-followons-2026-08-15/wave-h/notes-row-cadence.md" mustContain "attempt:"
+harvest "docs/reference/evidence/no-clock-followons-2026-08-15/wave-h/verify-notes.md" mustContain "NOCLOCK-FOLLOWONS-VERIFY v1"
