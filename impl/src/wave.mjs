@@ -10,7 +10,12 @@ import { mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { createHash, randomUUID } from 'node:crypto';
 import { dirname, resolve, sep } from 'node:path';
 
-import { applicationTerminal, canonicalRunPhase } from './application-semantics.mjs';
+import {
+  applicationTerminal,
+  canonicalRunPhase,
+  SPAWN_WINDOW_CONFIRMATION_READS,
+  typedTerminalEvidence,
+} from './application-semantics.mjs';
 
 // docs/36 §7.1/L4: terminality is the registry predicate — the wave no longer hand-maintains its
 // own union (the F5 divergence where it omitted `denied`/`closed` is gone). `result_ready` is the
@@ -137,7 +142,14 @@ function preseedReport(repoRoot, member, salt) {
 }
 
 function terminalFrom(outline) {
-  return outline?.terminal === true || applicationTerminal(outline?.phase);
+  if (outline?.terminal === true) return true;
+  if (canonicalRunPhase(outline?.phase) === 'failed') {
+    // Issue #199 (row-spawn-window): a `failed` phase is terminal ONLY on typed terminal
+    // evidence (task failed transition with cause, process_closed with no successor, or
+    // startError) — never on a bare status read racing the spawn-confirmation window.
+    return typedTerminalEvidence(outline) !== null;
+  }
+  return applicationTerminal(outline?.phase);
 }
 
 function attentionFrom(outline) {
@@ -450,14 +462,31 @@ function createWaveHandle({ repoRoot, members, state, waveId = null }) {
     if (!Number.isSafeInteger(timeoutMs) || timeoutMs <= 0) throw waveError('wave settle timeoutMs is invalid');
     const deadline = Date.now() + timeoutMs;
     const settled = new Set([...state.members.keys()].filter((role) => !state.members.get(role).run || state.members.get(role).startError));
+    // Issue #199 (row-spawn-window): a failed-phase status read WITHOUT typed terminal evidence
+    // races the spawn-confirmation window — it defers to the next poll, and only a persistent
+    // streak of consecutive suspicious reads confirms the failed verdict (the 3794b583 tri-state
+    // evidence-count pattern; never a clock).
+    const suspiciousByRole = new Map();
+    const confirmedSuspicious = new Set();
     while (settled.size < state.members.size && Date.now() < deadline) {
       for (const [role, entry] of state.members) {
         if (settled.has(role) || !entry.run) continue;
         const view = await entry.run.status();
         const outline = view?.view ?? view;
         if (terminalFrom(outline) || canonicalRunPhase(outline?.phase) === SUCCESS_RESTING) {
+          suspiciousByRole.delete(role);
           settled.add(role);
+        } else if (canonicalRunPhase(outline?.phase) === 'failed') {
+          const streak = (suspiciousByRole.get(role) ?? 0) + 1;
+          suspiciousByRole.set(role, streak);
+          if (streak >= SPAWN_WINDOW_CONFIRMATION_READS) {
+            confirmedSuspicious.add(role);
+            settled.add(role);
+          } else {
+            armPump(entry);
+          }
         } else {
+          suspiciousByRole.delete(role);
           armPump(entry);
         }
       }
@@ -481,7 +510,9 @@ function createWaveHandle({ repoRoot, members, state, waveId = null }) {
           const view = await entry.run.status();
           const outline = view?.view ?? view ?? {};
           outcome.phase = canonicalRunPhase(outline.phase) ?? null;
-          outcome.terminal = terminalFrom(outline);
+          // #199: a suspicious read settled only by the evidence-count streak is still the
+          // confirmed failed verdict — the final read may itself race the window.
+          outcome.terminal = terminalFrom(outline) || confirmedSuspicious.has(role);
           outcome.narrative = outline.narrative ?? null;
           // #235: the transport-liveness settle class — EVIDENCE ONLY (the #163 law holds:
           // no termination changes). A member whose run view carries the provider_silent

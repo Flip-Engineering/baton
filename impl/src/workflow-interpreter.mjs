@@ -20,6 +20,8 @@ import { promisify } from 'node:util';
 import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { basename, dirname, isAbsolute, relative, resolve, sep } from 'node:path';
 
+import { typedTerminalEvidence } from './application-semantics.mjs';
+
 const execFileAsync = promisify(execFile);
 
 // #220: the machinery's commit identity is versioned — `baton <version>` (never a stale
@@ -480,6 +482,14 @@ async function readView(handle, needStatus = false) {
   // progressClass projects as the { class, silenceMs, meaningfulEventAt } object on the outline;
   // the view flattens the class string.
   const progressProjection = io.progressClass ?? so.progressClass ?? null;
+  // Issue #199 (row-spawn-window): the failed class is terminal ONLY on typed terminal evidence
+  // (task failed transition with cause, process_closed with no successor, or startError) — never
+  // on a bare status read racing the spawn-confirmation window. A failed phase WITHOUT evidence
+  // stays non-terminal; the poll loop's evidence-count streak confirms it.
+  const typedEvidence = phase === 'failed' ? typedTerminalEvidence({
+    terminalCause: io.terminalCause ?? so.terminalCause ?? null,
+    nodes: Array.isArray(so.nodes) ? so.nodes : null,
+  }) : null;
   return {
     phase,
     actions,
@@ -488,8 +498,11 @@ async function readView(handle, needStatus = false) {
     workerId,
     planDigest,
     task: so.task ?? null,
-    terminal: insp?.terminal === true || io.terminal === true || so.terminal === true || TERMINAL_PHASES.has(phase ?? ''),
+    terminal: (insp?.terminal === true || io.terminal === true || so.terminal === true
+      || TERMINAL_PHASES.has(phase ?? '')) && (phase !== 'failed' || typedEvidence !== null),
     terminalStatus: so.terminalOutcome?.status ?? io.terminalOutcome?.status ?? null,
+    terminalCause: io.terminalCause ?? so.terminalCause ?? null,
+    nodeTerminalOutcome: Array.isArray(so.nodes) ? (so.nodes[0]?.terminalOutcome ?? null) : null,
     lastProgress: io.lastProgress ?? null,
     silenceMs: Number.isSafeInteger(io.silenceMs) ? io.silenceMs
       : (Number.isSafeInteger(progressProjection?.silenceMs) ? progressProjection.silenceMs : null),
@@ -499,7 +512,10 @@ async function readView(handle, needStatus = false) {
 }
 
 const TERMINAL_PHASES = new Set(['work_completed', 'completed', 'result_ready', 'cancelled', 'failed', 'stopped', 'denied', 'closed']);
-const isTerminal = (v) => v.terminal === true || TERMINAL_PHASES.has(v.phase ?? '') || v.terminalStatus === 'completed';
+// The terminal flag now folds the failed-class gate (readView), so the predicate never
+// re-derives terminality from a bare phase — a failed phase without typed terminal evidence is
+// NOT terminal, exactly as contract 1 requires.
+const isTerminal = (v) => v.terminal === true || v.terminalStatus === 'completed';
 
 // ---------------------------------------------------------------------------
 // #163 quiescence vocabulary (contract-foundry v2) — the law that replaced the clock cap
@@ -859,6 +875,10 @@ async function driveLane(wave, spec, driver, steering, s, reportByRole) {
   // own observed cadence (A2), never a bare clock.
   const quiescence = new Map();
   const unreadablePolls = new Map(); // A12 leg (a): consecutive phase-less reads per member.
+  // Issue #199 (row-spawn-window): consecutive failed-phase reads WITHOUT typed terminal
+  // evidence per member — the drive defers on a suspicious read and only the evidence-count
+  // streak confirms the failed verdict (the 3794b583 tri-state pattern).
+  const suspiciousFailedPolls = new Map();
   let maxObservedGapMs = 0;
   let exit = null;
 
@@ -927,6 +947,21 @@ async function driveLane(wave, spec, driver, steering, s, reportByRole) {
       return;
     }
     unreadablePolls.delete(role);
+
+    // Issue #199 (row-spawn-window, contract 1): a failed-phase read WITHOUT typed terminal
+    // evidence is a status read racing the spawn-confirmation window — DEFER to the next poll;
+    // only the evidence-count streak (confirmation-pair + 1, the 3794b583 pattern) confirms the
+    // failed verdict. The member is never verdict-failed on a single suspicious read.
+    if (v.phase === 'failed' && v.terminal !== true) {
+      const suspicious = (suspiciousFailedPolls.get(role) ?? 0) + 1;
+      suspiciousFailedPolls.set(role, suspicious);
+      if (suspicious >= QUIESCENCE_CONFIRMATION_POLLS + 1 && exit === null) {
+        steering.push({ evidence: 'wave_terminalized_unrecoverable', role, phase: 'failed' });
+        exit = 'terminalized_unrecoverable';
+      }
+      return;
+    }
+    suspiciousFailedPolls.delete(role);
 
     // 7. quiescence tracking (#163): an observed advance of the outline's lastProgress.at resets
     // the member's silence and feeds the roster-wide cadence term maxObservedGapMs (A2/A3).

@@ -12506,6 +12506,29 @@ export class Coordinator {
   // Event handling — worker-originated events delivered via Adapter.onEvent(cb).
   // =========================================================================
 
+  /**
+   * Issue #199 (row-spawn-window, contract 2): the double-spawn window. A worker-actor
+   * lifecycle.spawned (or its process_started) that cannot be attributed to the current
+   * processRef is a harness retry the coordinator OWNS when (a) the coordinator's own spawn is
+   * still being confirmed — a native/recovery spawn is pending, the turn admission transaction
+   * is open, the process is still `initializing`, or the event was admitted as ready by an
+   * admission transaction — and (b) the retry does not testify to a STALE generation (explicitly
+   * older than the coordinator's own current generation). Owned retries BIND to the same member
+   * (generation advance); they are never a new claim and never an attribution kill. A genuinely
+   * foreign or stale process identity stays refused by the strict attribution gates.
+   */
+  _ownedHarnessRetry(handle, payload, opts = {}) {
+    if (!handle || !payload || typeof payload !== 'object') return false;
+    const generation = payload.processGeneration;
+    if (generation !== undefined && generation !== null) {
+      if (!Number.isSafeInteger(generation) || generation < handle.processGeneration) return false;
+    }
+    if (handle.nativeSpawnPending === true || handle.recoverySpawnPending === true
+      || handle.turnAdmission != null || opts.admittedReady === true
+      || handle.processRef?.state === 'initializing') return true;
+    return false;
+  }
+
   _handleEvent(event, sourceVendor = null, opts = {}) {
     const { worker: workerId, kind, harness, turnEpoch, payload, actor } = event;
     const handle = this._workers.get(workerId);
@@ -12560,7 +12583,7 @@ export class Coordinator {
         && payload?.processGeneration === handle.processRef.generation
         && payload?.pid === handle.processRef.pid
         && typeof providerId === 'string' && providerId.length > 0);
-      if (!validProviderReady) {
+      if (!validProviderReady && !this._ownedHarnessRetry(handle, payload, opts)) {
         this._log.append({
           worker: workerId, harness, turnEpoch: this._safeTurnEpoch(handle),
           kind: 'lifecycle.process_attribution_refused', actor: 'policy',
@@ -12670,6 +12693,29 @@ export class Coordinator {
         && payload?.pid === handle.processRef.pid
         && typeof nativeId === 'string' && nativeId.length > 0) {
         handle.processRef = { ...handle.processRef, state: 'ready', ready: true };
+      }
+      // Issue #199 (contract 2): the double-spawn window — a second lifecycle.spawned whose wire
+      // identity does not match the current processRef is the harness retry the coordinator
+      // owns. Bind it to the SAME member (generation advance): reacquire the exact process
+      // identity the retry testifies to so the retried process's follow-on lifecycle events
+      // attribute correctly — never a new claim, never an attribution kill.
+      if (this._ownedHarnessRetry(handle, payload, opts)
+        && Number.isSafeInteger(payload?.pid) && Number.isSafeInteger(payload?.processGeneration)
+        && ['initializing', 'ready'].includes(handle.processRef?.state)
+        && (payload.pid !== handle.processRef?.pid
+          || payload.processGeneration !== handle.processRef?.generation)) {
+        if (payload.processGeneration > handle.processGeneration) {
+          handle.processGeneration = payload.processGeneration;
+        }
+        handle.processRef = {
+          generation: payload.processGeneration,
+          pid: payload.pid,
+          processGroupId: payload.processGroupId ?? payload.pid,
+          state: 'initializing', ready: false, startedSeq: null, closedSeq: null,
+        };
+        handle.processAuthority = null;
+        handle.recoveredProcessAuthority = false;
+        handle.localAuthority = true;
       }
     }
     const policyObservationEvent = actor === 'worker'
@@ -12815,6 +12861,24 @@ export class Coordinator {
             handle.recoveredProcessAuthority = false;
             handle.localAuthority = true;
             this._beginStop(handle, 'kill', undefined, 'policy').catch(noop);
+          } else if (this._ownedHarnessRetry(handle, payload, opts)) {
+            // Issue #199 (contract 2): the double-spawn window — a same-generation process start
+            // arriving while the first process is STILL initializing is the harness retry the
+            // coordinator owns. Bind it to the same member (generation advance): reacquire the
+            // exact transport identity and keep the member working — never a kill, never a new
+            // claim.
+            handle.processRef = { generation: payload.generation, pid: payload.pid, processGroupId: payload.processGroupId, state: 'initializing', ready: false, startedSeq: null, closedSeq: null };
+            handle.processAuthority = null;
+            handle.recoveredProcessAuthority = false;
+            handle.localAuthority = true;
+            const authorityPayload = processAuthorityPayload(handle.processRef);
+            if (authorityPayload) {
+              appendAttributed({
+                worker: workerId, harness, turnEpoch,
+                kind: 'lifecycle.process_authority', actor: 'policy', payload: authorityPayload,
+              });
+              handle.processAuthority = { ...authorityPayload };
+            }
           } else if (!['dead', 'stopping', 'exited'].includes(handle.status)) this._beginStop(handle, 'kill', undefined, 'policy').catch(noop);
           break;
         }
