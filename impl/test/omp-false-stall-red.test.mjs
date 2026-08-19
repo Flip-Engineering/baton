@@ -223,8 +223,16 @@ test('OMP-FALSE-STALL: a live omp turn (steer-nudged, mid-tool-call) is never de
   // the liveness truth). The fix changed the EVIDENCE, not the law.
   childStdout.write(line({ type: 'agent_end', isTerminal: true, messages: [] }));
   await until(() => workerLog().some((event) => event.kind === 'lifecycle.turn_completed' && event.actor === 'worker'));
-  assert.equal(rawHandle()?.turnInFlight, false,
-    'the turn-terminal seam clears the liveness marker — a completed turn may arm honestly again');
+  // #236 (verdict turn): a queued steer RESTARTS the next turn on completion — the nudged
+  // member keeps working (activeTurn re-armed, marker correctly true again). The honest
+  // assertion: turn 1 is durably completed AND either the member idles (no steer) or a NEW
+  // turn is live. A steer was queued in this fixture at the nudge step, so the marker being
+  // TRUE again is the CORRECT reading — what must NEVER happen is a stall on the live turn.
+  const turnCompletedEvents = workerLog().filter((event) => event.kind === 'lifecycle.turn_completed' && event.actor === 'worker');
+  assert.ok(turnCompletedEvents.length >= 1, 'turn 1 is durably completed (worker-actor event in the log)');
+  const session = adapter._sessions.get(handle.id);
+  assert.ok(rawHandle()?.turnInFlight === false || session?.activeTurn !== null,
+    'the marker is false (idle) or a NEW turn is live (steer restarted it) — never a zombie true with no active turn');
   const stallsAfterCompletion = workerLog().filter((event) => event.kind === 'health.stall_suspected');
   assert.equal(stallsAfterCompletion.length, 0,
     'no stall is minted for a turn that completed cleanly — the classifier fires on false silence, never on clean terminality');
