@@ -39,6 +39,13 @@ function adapter() {
   value.card = () => ({
     ...card(),
     authPosture: 'subscription',
+    providerCompatibility: { credentialState: 'available' },
+    workerPolicy: {
+      schemaVersion: 1,
+      autonomy: { supported: ['unattended'], default: 'unattended', perTask: false, observation: 'launch', mechanisms: ['fixture'] },
+      access: { supported: ['full'], default: 'full', perTask: false, observation: 'launch', mechanisms: ['fixture'] },
+      containment: { hostProcess: 'same_uid', guarantees: ['private_runtime'], configuredPreferences: [], observation: 'unavailable' },
+    },
     modelSelection: {
       mode: 'exact', configuredDefault: ROUTE.model, available: [ROUTE.model],
       family: ROUTE.harness, acceptedPrefixes: [], acceptedAliases: [],

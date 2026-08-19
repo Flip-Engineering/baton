@@ -48,7 +48,7 @@ for (const contract of rows) {
   }
 }
 
-const documented = [...spec.matchAll(/^\| ([A-Z]+-\d{3}) \|/gmu)].map((match) => match[1]);
+const documented = [...spec.matchAll(/^\| ([A-Z][A-Z0-9]*-\d{3}) \|/gmu)].map((match) => match[1]);
 for (const id of documented) {
   if (!ids.has(id)) throw new Error(`holistic-contracts: documented acceptance id ${id} has no manifest row`);
 }
