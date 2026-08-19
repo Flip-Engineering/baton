@@ -474,7 +474,14 @@ export function createWaveDriver(baton, rawPolicy = null) {
     const startedAt = Date.now();
     let lastMarker = '';
     let lastMarkerAt = startedAt;
+    // row-cadence (P4/P5): the drive-loop DECISION basis is the pair {basis, signal} — the
+    // verdict and the member-originated/cadence-derived signal that fired it. Every member stop
+    // the driver issues carries this pair on the stop outline (the close reason), so the ledger's
+    // run.stop reasonDigest is never the opaque digest of a constant string. 'unset'/'driver-error'
+    // name the honest case where the loop threw before any basis branch was reached.
     let basis = null;
+    let driveSignal = null;
+    let stopReason = null;
 
     const aborted = () => policy.signal?.aborted === true;
     const sleep = (ms) => {
@@ -574,7 +581,7 @@ export function createWaveDriver(baton, rawPolicy = null) {
 
       // L4-L6 poll/steer loop.
       for (;;) {
-        if (aborted()) { basis = 'aborted'; break; }
+        if (aborted()) { basis = 'aborted'; driveSignal = 'abort'; break; }
 
         // L5: ONE status read per member per poll. The cursor-stripped digest doubles as the stall
         // marker AND the source of the turn_checkpoint (requestId + changedPathsDigest).
@@ -767,7 +774,12 @@ export function createWaveDriver(baton, rawPolicy = null) {
         for (const [role, info] of statusInfo) {
           if (info.terminal || memberState.get(role)?.claimed === true) settled += 1;
         }
-        if (settled === totalMembers) { basis = 'completed'; break; }
+        if (settled === totalMembers) {
+          // P5: the exit signal is the per-member terminal/claim EVIDENCE folded this poll —
+          // never a count or clock. A roster that reached this branch did so because every
+          // member's status view read terminal (or a claim resolved it), nothing else.
+          basis = 'completed'; driveSignal = 'all-members-settled'; break;
+        }
 
         const now = Date.now();
         // D4: stall is checked BEFORE cap when both cross in one poll.
@@ -799,8 +811,10 @@ export function createWaveDriver(baton, rawPolicy = null) {
               }
             }
             basis = recovered === totalMembers ? 'completed' : 'stall';
+            driveSignal = recovered === totalMembers ? 'claim-recovery' : 'stall-window';
           } else {
             basis = 'stall';
+            driveSignal = 'stall-window';
           }
           break;
         }
@@ -830,7 +844,13 @@ export function createWaveDriver(baton, rawPolicy = null) {
     } finally {
       // L1: close is guaranteed — even on a thrown settle/loop, the wave's resources are reaped.
       if (wave) {
-        try { stop = await wave.close({ reason: 'Wave driver settled.' }); }
+        // row-cadence (P4): the close reason IS the decision basis. Each member's run.stop carries
+        // this exact reason, so the per-member stop outline (and the ledger's run.stop reasonDigest)
+        // names the verdict AND the signal that fired it — never the bare constant. The pair is set
+        // by the drive-loop exit branch; a loop that threw before any basis branch names that
+        // honestly instead of hiding behind a generic string.
+        stopReason = `Wave driver settled. basis=${basis ?? 'unset'} signal=${driveSignal ?? 'driver-error'}`;
+        try { stop = await wave.close({ reason: stopReason }); }
         catch { /* close is best-effort in the abnormal path; the loop's own stop is primary */ }
       }
     }
@@ -852,6 +872,9 @@ export function createWaveDriver(baton, rawPolicy = null) {
       remainingCount: stop?.remainingCount ?? evidence.stops.length,
       residueUnknown: stop?.residueUnknown ?? false,
       basis,
+      // row-cadence (P4): the exact reason every member stop carried — the decision basis
+      // {verdict, signal} — rides the receipt too, so the WHY is never only on the settle path.
+      stopReason,
       nudges,
       claims,
       // Bidirectional v2 rule 3: one driver-evidence line per fired decision callback.
