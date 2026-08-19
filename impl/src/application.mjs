@@ -8151,9 +8151,18 @@ export class BatonApplication {
       throw applicationError('application progress clock is invalid',
         'application_progress_clock_invalid');
     }
+    // #236 (quiescence murder, 2026-08-19): content evidence (tool_call/message mapped into
+    // the ledger) is NOISE for semantic-progress display but IS liveness — the interpreter's
+    // quiescence predicate reads lastProgress.at as its silence reset, and its contract note
+    // (workflow-interpreter QUIESCENCE_REARM_KINDS) asserts content evidence counts. A member
+    // executing a 7-minute tool call must never read as silent. Timing therefore takes the
+    // semantic-meaningful stream UNION the run's content-liveness evidence; display projections
+    // that need semantics-only keep using _followCategory directly.
     const meaningful = this.driver.coordination.eventsView().filter((event) => (
-      typeof event.ts === 'string' && this._followCategory(event) !== null
-      && this._eventBelongsToRun(event, current)
+      typeof event.ts === 'string' && this._eventBelongsToRun(event, current)
+      && (this._followCategory(event) !== null
+        || (event.kind === 'evidence.mapped'
+          && NOISE_TELEMETRY_OPERATIONAL_KINDS.has(event.payload?.kind)))
     ));
     const configuredStartMs = Date.parse(current.goal.definedAt);
     const firstEventMs = Date.parse(meaningful[0]?.ts);
