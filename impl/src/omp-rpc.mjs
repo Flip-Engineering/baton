@@ -29,6 +29,21 @@ const DEFAULT_STREAM_CHUNK_BYTES = 4 * 1024;
 // the loop continues observing; only process exit (with cause) terminalizes.
 const RETRY_BACKOFF_MS = [250, 500, 1000, 2000, 4000, 8000, 15000, 30000];
 
+// #236: the final assistant message's text — the turn verdict's summary. omp's agent_end
+// carries messages[] with the conversation tail; the LAST assistant message is the verdict
+// prose. turn_end carries the same shape as its single message field.
+function extractFinalAssistantText(event) {
+  const messages = Array.isArray(event?.messages) ? event.messages : [];
+  for (let i = messages.length - 1; i >= 0; i -= 1) {
+    const message = messages[i];
+    if (message?.role !== 'assistant') continue;
+    const content = Array.isArray(message.content) ? message.content : [];
+    const text = content.filter((part) => typeof part?.text === 'string').map((part) => part.text).join('');
+    if (text.length > 0) return text.slice(0, 4096);
+  }
+  return null;
+}
+
 // #235: provider-traffic truth source — the agent-session frame lane itself. These frame types
 // are emitted by omp only once the provider conversation is live (assistant deltas, tool
 // executions, agent/turn boundaries, provider retry events). Startup/UI frames (ready,
@@ -441,8 +456,19 @@ export class OmpRpcCli {
         modelRequested: session.modelRequested, modelObserved: telemetry.model ?? null,
       });
     }
+    // #236: the turn VERDICT — the sibling session-CLI contract (claude-session emits
+    // status/summary/artifacts on turn_completed). Measured wave-f: members finished real
+    // work (clean exit, worktree checkpointed) yet every task failed AT completion because
+    // the trust gate read a verdict-less turn_completed. The verdict's summary is the final
+    // assistant message's text; artifacts.files is an ARRAY (empty when omp reports none) —
+    // never undefined, so consumers can treat it as the reducer shape.
+    const finalText = extractFinalAssistantText(event);
     this._emit(session, 'lifecycle.turn_completed', {
       phase: 'turn_completed', turnId: turn?.turnId ?? null, turnEpoch: session.turnEpoch,
+      status: 'completed',
+      summary: finalText,
+      artifacts: { files: Array.isArray(event.artifacts) ? event.artifacts : [] },
+      openQuestions: [],
       usageSeal: telemetry
         ? { tokens: 'reported', usd: telemetry.cost !== undefined ? 'reported' : 'unavailable', counterId: null, tokenMetric: 'agent_end.telemetry' }
         : unavailableUsageSeal(),

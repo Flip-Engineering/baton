@@ -198,12 +198,31 @@ export function identifyResultExportRoot(rawRoot) {
 }
 
 function processLiveness(pid) {
-  try { process.kill(pid, 0); return 'alive'; }
-  catch (cause) {
+  try {
+    process.kill(pid, 0);
+    // #238: a ZOMBIE (killed, not yet reaped) answers kill(0) like a live process with the
+    // same start identity — its lease was un-reapable until manual rm (the resident's
+    // successor couldn't boot: result_export_root_busy). ps stat 'Z' is positive death
+    // evidence: a zombie is a dead process pending reap and can never hold authority.
+    return statIsZombie(pid) ? 'dead' : 'alive';
+  } catch (cause) {
     if (cause?.code === 'ESRCH') return 'dead';
     if (cause?.code === 'EPERM') return 'alive';
     return 'unknown';
   }
+}
+
+/** #238: the zombie-state evidence primitive. A process whose ps state marker starts with
+ * 'Z' is dead-pending-reap (kill(0) still answers; the start identity still matches). Never
+ * authoritative for an absent pid — absence remains ESRCH's case. */
+export function statIsZombie(pid) {
+  if (!Number.isSafeInteger(pid) || pid <= 0) return false;
+  try {
+    const state = execFileSync('/bin/ps', ['-o', 'state=', '-p', String(pid)], {
+      encoding: 'utf8', maxBuffer: 64, stdio: ['ignore', 'pipe', 'ignore'],
+    }).trim();
+    return state.startsWith('Z');
+  } catch { return false; }
 }
 
 function processStartIdentity(pid) {
