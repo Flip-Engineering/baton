@@ -12864,7 +12864,18 @@ export class Coordinator {
           if (!['dead', 'stopping', 'exited'].includes(handle.status)) this._beginStop(handle, 'kill', undefined, 'policy').catch(noop);
           break;
         }
-        const closed = appendAttributed({ worker: workerId, harness, turnEpoch, kind, actor, payload });
+        // Issue #225 death certs: the close payload stays exact-keys contract-shaped (replay and
+        // the exact-close validation both re-check it), so the fold preserves the adapter's
+        // event-level death-cert projection — exitCode/signal derived from the close tuple when
+        // the adapter did not name them, plus any bounded tails and provider cause class.
+        const closed = appendAttributed({
+          worker: workerId, harness, turnEpoch, kind, actor, payload,
+          exitCode: event.exitCode ?? payload.code ?? null,
+          signal: event.signal ?? payload.signal ?? null,
+          ...(event.stderrTail !== undefined ? { stderrTail: event.stderrTail } : {}),
+          ...(event.stdoutTail !== undefined ? { stdoutTail: event.stdoutTail } : {}),
+          ...(event.providerCauseClass !== undefined ? { providerCauseClass: event.providerCauseClass } : {}),
+        });
         const preservationLost = handle.sessionPreservation?.state === 'preserved';
         handle.processRef = { ...current, state: 'closed', ready: payload.ready, closedSeq: closed.seq };
         handle.recoveredProcessAuthority = false;

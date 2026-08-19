@@ -14,9 +14,12 @@ import { renderPrompt } from './cli-adapters.mjs';
 import { normalizeProcessGeneration, ProcessCloseReapLatch, processStartedPayload } from './process-lifecycle.mjs';
 import { usdToNanos } from './usd.mjs';
 import { attestWorkerPolicyObservation } from './worker-policy.mjs';
-import { createDecisionRequest, ValidationError } from './messages.mjs';
+import { createDecisionRequest, SECRET_SHAPED_TEXT, ValidationError } from './messages.mjs';
 
 const DEFAULT_MAX_WIRE_FRAME_BYTES = 1024 * 1024;
+// Issue #225 death certs: the bounded stderr/stdout tail that rides terminal events — last 4KiB
+// each, redacted with the SECRET_SHAPED_TEXT discipline at capture (never unbounded).
+const DEATH_CERT_TAIL_BYTES = 4 * 1024;
 const CLAUDE_TOKEN_METRIC = 'anthropic_input_plus_output_tokens_excluding_cache';
 
 // Part B / F7 (issue #16): the emulated up-channel grammar. This scans ONLY the model's own
@@ -465,6 +468,21 @@ function claudeResultFailureCode(obj) {
     ? 'authentication_refresh_required' : null;
 }
 
+/** HTTP status class of a provider request — 429 -> '4xx' (issue #225 death-cert cause class). */
+function httpStatusClass(status) {
+  return Number.isSafeInteger(status) && status >= 100 && status <= 599
+    ? `${Math.floor(status / 100)}xx` : null;
+}
+
+/** Tail-hygiene: keep tab/LF and printable text, strip C0 (except tab/LF) and C1 so the ledger
+ * tail can never smuggle control bytes; newlines survive so the tail stays readable. */
+function tailSafeText(text) {
+  return [...String(text ?? '')].filter((ch) => {
+    const c = ch.codePointAt(0);
+    return c === 0x09 || c === 0x0a || (c > 0x1f && c < 0x7f) || c > 0x9f;
+  }).join('');
+}
+
 // ---------------------------------------------------------------------------
 // ClaudeSessionCli
 // ---------------------------------------------------------------------------
@@ -658,8 +676,10 @@ export class ClaudeSessionCli {
     return 'worker';
   }
 
-  /** CS16: once a session-terminal kind fires, no further event is EVER emitted for that worker. */
-  _emit(session, kind, payload) {
+  /** CS16: once a session-terminal kind fires, no further event is EVER emitted for that worker.
+   * `extra` carries event-level death-cert fields (issue #225) beside the contract-shaped payload —
+   * used for process_closed, whose payload is exact-keys pinned. */
+  _emit(session, kind, payload, extra = null) {
     if (session.deadEmitted && !['lifecycle.process_closed', 'lifecycle.process_reap_unconfirmed', 'kill.confirmed'].includes(kind)) return;
     const evt = {
       worker: session.worker,
@@ -668,11 +688,40 @@ export class ClaudeSessionCli {
       actor: this._actorFor(kind),
       kind,
       payload,
+      ...(extra ?? {}),
     };
     if (this._cb) this._cb(evt);
     if (kind === 'lifecycle.exited' || kind === 'lifecycle.crashed' || kind === 'kill.confirmed') {
       session.deadEmitted = true;
     }
+  }
+
+  /** The death-cert projection (issue #225): the exact close tuple + bounded redacted stream tails
+   * + the provider cause class, each present when the fact exists. Rides process_closed at the
+   * event level (its payload is exact-keys contract-shaped) and crashed inside the payload. */
+  _deathCertPayload(session, closeFact = null) {
+    return {
+      exitCode: closeFact && Number.isSafeInteger(closeFact.code) ? closeFact.code : null,
+      signal: typeof closeFact?.signal === 'string' ? closeFact.signal : null,
+      stderrTail: session.stderrTail || null,
+      stdoutTail: session.stdoutTail || null,
+      providerCauseClass: session.providerCauseClass ?? null,
+    };
+  }
+
+  /** Bounded last-4KiB stream tail, redacted with the SECRET_SHAPED_TEXT discipline at capture so
+   * no credential-shaped material lingers in the retained window (issue #225). */
+  _captureDeathCertTail(current, chunk) {
+    let redacted = tailSafeText(String(chunk ?? ''));
+    for (const pattern of SECRET_SHAPED_TEXT) {
+      pattern.lastIndex = 0;
+      redacted = redacted.replace(pattern, '[redacted]');
+    }
+    if (redacted.length === 0) return current;
+    const joined = `${current}${redacted}`;
+    let head = 0;
+    while (head < joined.length && Buffer.byteLength(joined.slice(head)) > DEATH_CERT_TAIL_BYTES) head += 1;
+    return joined.slice(head);
   }
 
   // ---------------------------------------------------------------------------
@@ -784,6 +833,11 @@ export class ClaudeSessionCli {
       buf: '',
       discardingFrame: null, // issue #28: session-scoped latch for oversized tool_result discard
       stderrCanaryTail: '',
+      // Issue #225 death certs: bounded redacted tails + the provider cause class of the last
+      // failed request, carried by the terminal events when the facts exist.
+      stderrTail: '',
+      stdoutTail: '',
+      providerCauseClass: null,
       spawnedEmitted: false,
       sessionIdWire: null,
       turnInFlight: false,
@@ -816,7 +870,8 @@ export class ClaudeSessionCli {
       reap: this._cfg.reapOwnedProcessGroup,
       onProcessClosed: (payload) => {
         session.processClosedEmitted = true;
-        this._emit(session, 'lifecycle.process_closed', payload);
+        // The close payload stays exact-keys contract-shaped; the death cert rides the event level.
+        this._emit(session, 'lifecycle.process_closed', payload, this._deathCertPayload(session, payload));
       },
       onReapUnconfirmed: (payload) => this._emit(session, 'lifecycle.process_reap_unconfirmed', payload),
       onStopConfirmed: (kind, payload) => {
@@ -944,6 +999,9 @@ export class ClaudeSessionCli {
   }
 
   _onData(session, chunk) {
+    // Issue #225: retain the bounded redacted stdout tail BEFORE framing — the death cert must
+    // reflect everything the process emitted, including bytes a discard latch would drop.
+    session.stdoutTail = this._captureDeathCertTail(session.stdoutTail, chunk);
     let data = String(chunk);
     // Active discard latch — drop through the terminating newline before normal framing.
     if (session.discardingFrame) {
@@ -1027,6 +1085,8 @@ export class ClaudeSessionCli {
   }
 
   _onStderr(session, chunk) {
+    // Issue #225: retain the bounded redacted stderr tail regardless of secret-canary state.
+    session.stderrTail = this._captureDeathCertTail(session.stderrTail, chunk);
     const dynamic = typeof this._cfg.providerSecretsProbe === 'function'
       ? this._cfg.providerSecretsProbe() : [];
     const secrets = [...this._cfg.providerSecrets, ...(Array.isArray(dynamic) ? dynamic : [])]
@@ -1200,6 +1260,12 @@ export class ClaudeSessionCli {
       return;
     }
     const status = obj.is_error ? 'failed' : 'completed';
+    // Issue #225: the provider cause class of the LAST FAILED request — the real wire carries the
+    // HTTP status on error results (receipted shape: {"is_error":true, ..., "api_error_status":401}).
+    if (obj.is_error) {
+      const causeClass = httpStatusClass(obj.api_error_status);
+      if (causeClass !== null) session.providerCauseClass = causeClass;
+    }
     const failureCode = claudeResultFailureCode(obj);
     if (failureCode === 'authentication_refresh_required'
       && this._cfg.credentialController && session.retryCount === 0 && session.lastTurnText) {
@@ -1244,7 +1310,8 @@ export class ClaudeSessionCli {
       reap: this._cfg.reapOwnedProcessGroup,
       onProcessClosed: (payload) => {
         session.processClosedEmitted = true;
-        this._emit(session, 'lifecycle.process_closed', payload);
+        // The close payload stays exact-keys contract-shaped; the death cert rides the event level.
+        this._emit(session, 'lifecycle.process_closed', payload, this._deathCertPayload(session, payload));
       },
       onReapUnconfirmed: (payload) => this._emit(session, 'lifecycle.process_reap_unconfirmed', payload),
       onStopConfirmed: (kind, payload) => {
@@ -1545,12 +1612,19 @@ export class ClaudeSessionCli {
     const timeoutFailure = session.timeoutFailure;
     const processFailure = session.processFailure;
     const closeDerived = () => {
+      // Issue #225: every adapter crash carries the death cert — the exact close tuple the latch
+      // captured, the bounded redacted tails, and the provider cause class when one was observed.
+      const deathCert = this._deathCertPayload(session, session.processClose?.closeFact);
       if (timeoutFailure) {
-        this._emit(session, 'lifecycle.crashed', timeoutFailure);
+        this._emit(session, 'lifecycle.crashed', { ...timeoutFailure, ...deathCert });
       } else if (processFailure) {
-        this._emit(session, 'lifecycle.crashed', processFailure);
+        this._emit(session, 'lifecycle.crashed', { ...processFailure, ...deathCert });
       } else if (!wasStopping && (session.turnInFlight || code !== 0)) {
-        this._emit(session, 'lifecycle.crashed', { error: `exited ${code}${signal ? ` (${signal})` : ''}`, usageSeal: unavailableUsageSeal() });
+        this._emit(session, 'lifecycle.crashed', {
+          error: `exited ${code}${signal ? ` (${signal})` : ''}`,
+          usageSeal: unavailableUsageSeal(),
+          ...deathCert,
+        });
       }
     };
     if (wasStopping) {
@@ -1574,7 +1648,13 @@ export class ClaudeSessionCli {
     session.terminal = true;
     if (session.killTimer) clearTimeout(session.killTimer);
     if (session.wallTimer) clearTimeout(session.wallTimer);
-    this._emit(session, 'lifecycle.crashed', { error: String(err?.message ?? err), usageSeal: unavailableUsageSeal() });
+    // Issue #225: no close tuple exists before the child started — carry the facts that DO exist
+    // (the bounded tails and any observed provider cause class), null for the rest.
+    this._emit(session, 'lifecycle.crashed', {
+      error: String(err?.message ?? err),
+      usageSeal: unavailableUsageSeal(),
+      ...this._deathCertPayload(session),
+    });
   }
 
   _onWallTimeout(session, timeoutMs) {
