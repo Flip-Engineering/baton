@@ -119,9 +119,12 @@ test('PROBE-4: wave 1 completes; wave 2 same objective binds', async (t) => {
   const w1 = await createWave(baton, { members: [member('alpha', obj)], idempotencyKey: 'key-1', repoRoot: driver.repoRoot });
   const h1 = w1.runs.get('alpha');
   try {
-    const v = await h1.inspect({ depth: 'outline' });
-    console.log('W1 outline:', JSON.stringify(v?.outline ?? v, null, 0).slice(0, 1200));
-  } catch (e) { console.log('W1 status err:', e?.code ?? String(e)); }
+    const workers = driver.coordinator.list().filter((w) => w.runId === h1?.id);
+    for (const w of workers) {
+      const log = w._log?.items ?? [];
+      console.log('W1 worker log:', JSON.stringify(log.slice(-8).map((item) => ({ kind: item.kind, code: item.payload?.code ?? item.payload?.error?.code ?? null, summary: item.payload?.summary ?? null }))));
+    }
+  } catch (e) { console.log('W1 worker log err:', e?.code ?? String(e)); }
   const s1 = await w1.settle({ timeoutMs: 30000 });
   console.log('W1 outcome:', JSON.stringify(s1.map((o) => ({ role: o.role, phase: o.phase, error: o.error?.code, resultSha: o.resultSha ?? null }))));
   // wave 2 — identical objective, distinct key
