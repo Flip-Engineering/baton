@@ -475,6 +475,11 @@ export function createWaveDriver(baton, rawPolicy = null) {
     let lastMarker = '';
     let lastMarkerAt = startedAt;
     let basis = null;
+    // #163 row-cadence: the SIGNAL that fired the verdict rides beside it — every member stop
+    // the driver issues carries basis + signal, so a member never sees the opaque constant
+    // ('Wave driver settled.') when the drive settled on a wave-level or operator signal.
+    let basisSignal = null;
+    let closeReason = null;
 
     const aborted = () => policy.signal?.aborted === true;
     const sleep = (ms) => {
@@ -574,7 +579,7 @@ export function createWaveDriver(baton, rawPolicy = null) {
 
       // L4-L6 poll/steer loop.
       for (;;) {
-        if (aborted()) { basis = 'aborted'; break; }
+        if (aborted()) { basis = 'aborted'; basisSignal = 'policy signal aborted the drive'; break; }
 
         // L5: ONE status read per member per poll. The cursor-stripped digest doubles as the stall
         // marker AND the source of the turn_checkpoint (requestId + changedPathsDigest).
@@ -767,7 +772,11 @@ export function createWaveDriver(baton, rawPolicy = null) {
         for (const [role, info] of statusInfo) {
           if (info.terminal || memberState.get(role)?.claimed === true) settled += 1;
         }
-        if (settled === totalMembers) { basis = 'completed'; break; }
+        if (settled === totalMembers) {
+          basis = 'completed';
+          basisSignal = 'every member settled on member evidence';
+          break;
+        }
 
         const now = Date.now();
         // D4: stall is checked BEFORE cap when both cross in one poll.
@@ -799,8 +808,12 @@ export function createWaveDriver(baton, rawPolicy = null) {
               }
             }
             basis = recovered === totalMembers ? 'completed' : 'stall';
+            basisSignal = recovered === totalMembers
+              ? 'claim fan-out recovered every member after the stall clock fired'
+              : 'wave-level marker stagnation past the stall window';
           } else {
             basis = 'stall';
+            basisSignal = 'wave-level marker stagnation past the stall window';
           }
           break;
         }
@@ -829,8 +842,15 @@ export function createWaveDriver(baton, rawPolicy = null) {
       }
     } finally {
       // L1: close is guaranteed — even on a thrown settle/loop, the wave's resources are reaped.
+      // #163 row-cadence: the close reason carries the DECISION basis (verdict + the signal that
+      // fired it) — it lands verbatim on every member stop outline and in the ledger row's
+      // reasonDigest, so the digest of a constant string can never be the record again. An
+      // abnormal exit (no verdict) is named honestly as basis 'none'.
       if (wave) {
-        try { stop = await wave.close({ reason: 'Wave driver settled.' }); }
+        closeReason = basis !== null
+          ? `Wave driver settled — basis: ${basis}; signal: ${basisSignal ?? 'no signal recorded'}`
+          : 'Wave driver settled — basis: none; signal: drive loop exited without a verdict';
+        try { stop = await wave.close({ reason: closeReason }); }
         catch { /* close is best-effort in the abnormal path; the loop's own stop is primary */ }
       }
     }
@@ -852,6 +872,7 @@ export function createWaveDriver(baton, rawPolicy = null) {
       remainingCount: stop?.remainingCount ?? evidence.stops.length,
       residueUnknown: stop?.residueUnknown ?? false,
       basis,
+      closeReason,
       nudges,
       claims,
       // Bidirectional v2 rule 3: one driver-evidence line per fired decision callback.
