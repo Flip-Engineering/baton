@@ -1563,7 +1563,10 @@ function normalizeIntent(value) {
     // Deliberately NOT folded into intentDigest or runId derivation: driverKind describes who is
     // driving a run, not what the run is. Two calls with identical objective/profile/route/scope
     // must resolve to the SAME run whether or not a wave happens to be the caller. Same rationale
-    // for waveId/waveRole/waveStart below.
+    // for waveRole/waveStart below. #200 (D2.1) EXCEPTS waveId for wave-driven runs: the wave
+    // namespace is part of what a wave-bound run IS — start() folds intent.waveId into the runId
+    // digest exactly when present, so distinct logical waves never share a member task while
+    // ordinary non-wave runs stay byte-unchanged.
     ...(hasDriverKind ? { driverKind: value.driverKind } : {}),
     ...(hasWaveId ? { waveId: value.waveId } : {}),
     ...(hasWaveRole ? { waveRole: value.waveRole } : {}),
@@ -4549,6 +4552,13 @@ export class BatonApplication {
       composition: requestedIntent.composition,
       scope,
       ownerPrincipalId: owner.principalId,
+      // #200 (D2.1): the wave namespace is part of what a wave-driven run IS — a wave-bound
+      // intent (intent.waveId present) folds the wave instance into the member task id, so two
+      // distinct logical waves with byte-identical member briefs resolve to DISTINCT member
+      // runs and a same-key + same-objective re-drive resolves to the SAME run (the ritual
+      // resume stays idempotent: both drives derive the same (waveId, objective) pair).
+      // Ordinary non-wave runs are byte-unchanged (the fold applies only when waveId is present).
+      ...(requestedIntent.waveId ? { waveId: requestedIntent.waveId } : {}),
     }).slice(0, 32)}`;
     const intent = deepFreeze({ ...requestedIntent, runId, scope });
     let existingRun = null;
