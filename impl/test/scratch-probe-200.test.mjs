@@ -116,6 +116,12 @@ test('PROBE-4: wave 1 completes; wave 2 same objective binds', async (t) => {
   const obj = 'identical objective text';
   execFileSync('git', ['add', '-A'], { cwd: driver.repoRoot });
   execFileSync('git', ['-c', 'user.name=Baton Test', '-c', 'user.email=baton@example.test', 'commit', '-q', '-m', 'brief'], { cwd: driver.repoRoot });
+  const dirtyProbe = () => {
+    try {
+      const st = execFileSync('git', ['status', '--porcelain'], { cwd: driver.repoRoot, encoding: 'utf8' });
+      console.log('REPO STATUS:', JSON.stringify(st));
+    } catch { /* ignore */ }
+  };
   const wt = driver.coordinator._worktrees;
   console.log('worktrees present:', Boolean(wt));
   if (wt && typeof wt.create === 'function') {
@@ -126,6 +132,7 @@ test('PROBE-4: wave 1 completes; wave 2 same objective binds', async (t) => {
     });
   }
   const w1 = await createWave(baton, { members: [member('alpha', obj)], idempotencyKey: 'key-1', repoRoot: driver.repoRoot });
+  dirtyProbe();
   const h1 = w1.runs.get('alpha');
   try {
     const workers = driver.coordinator.list().filter((w) => w.runId === h1?.id);
