@@ -598,9 +598,22 @@ export class OmpRpcCli {
       const childEnv = options.replaceEnv
         ? { ...(options.env ?? {}), ...(this._env ?? {}) }
         : { ...process.env, ...(this._env ?? {}), ...(options.env ?? {}) };
-      const args = this._args ?? buildOmpRpcArgs({ model, effort, permissionMode: this._permissionMode });
+      // #201 A1b: resume authority — options.session {id, mode:'resume'} + sessionDir pin the
+      // prior session and the isolated session store. The argv carries both so a retried
+      // member re-enters ITS OWN conversation, not a fresh one.
+      const resumeArgs = [];
+      if (options.session?.mode === 'resume' && typeof options.session.id === 'string' && options.session.id.length > 0) {
+        resumeArgs.push('--resume', options.session.id);
+      }
+      if (typeof options.sessionDir === 'string' && options.sessionDir.length > 0) {
+        resumeArgs.push('--session-dir', options.sessionDir);
+      }
+      const args = this._args ?? [...buildOmpRpcArgs({ model, effort, permissionMode: this._permissionMode }), ...resumeArgs];
       const session = {
         worker, process: null, cwd,
+        sessionDir: options.sessionDir ?? null,
+        resumeOf: options.session?.mode === 'resume' ? options.session.id ?? null : null,
+        observedSessionId: null, observedSessionFile: null,
         processGeneration, processReapTimeoutMs: options.processReapTimeoutMs ?? 2000,
         providerReady: false, setupFailed: false, closed: false, killing: false, killConfirmed: false,
         processClosedEmitted: false,
@@ -678,14 +691,21 @@ export class OmpRpcCli {
         lastTrafficAt: null,
         note: 'provider_dial_never_observed',
       });
+      // #201 A1: the resume-handle discovery — one get_session_stats observation after ready
+      // (fire-and-forget; the response lands on the frame lane and pins the session identity).
+      // The death cert carries it so durable retry knows WHICH conversation to resume.
+      void session.process.send({ type: 'get_session_stats' }).then((frame) => {
+        const data = frame?.data ?? frame;
+        if (typeof data?.sessionId === 'string' && data.sessionId.length > 0) {
+          session.observedSessionId = data.sessionId;
+          session.observedSessionFile = typeof data.sessionFile === 'string' ? data.sessionFile : null;
+        }
+      }).catch(() => { /* observation only; the death cert omits what it never observed */ });
       // #230: the FIRST TURN rides spawn — the sibling session-adapter contract
       // (claude-session's pendingBrief flush at process-ready). The coordinator dispatches
-      // the brief through spawn() and issues no separate first prompt; an adapter that
-      // returns ready without sending it leaves a healthy, prompt-less member idling
-      // forever (measured 2026-08-15: live process, zero provider sockets, 20-min stall
-      // flag; the same brief hand-driven completed in 24s).
+      // the brief through spawn() and issues no separate first prompt.
       this._startTurn(session, renderBrief(brief, 'omp-rpc'));
-      return { ok: true, sessionId: session.process.child?.pid ? `omp-pid-${session.process.child.pid}` : null };
+      return { ok: true, sessionId: session.observedSessionId ?? (session.process.child?.pid ? `omp-pid-${session.process.child.pid}` : null) };
     } finally {
       this._pendingSpawns.delete(worker);
     }
@@ -697,11 +717,15 @@ export class OmpRpcCli {
     this._flushTurnStreams(session);
     if (turn && !session.killConfirmed) {
       // The death-cert class: exit facts WITH the crash event — the #225 fields, native.
+      // #201 A1: the RESUME HANDLE rides the cert — the observed session identity and
+      // session-file (absent when never observed; never invented).
       this._emit(session, 'lifecycle.crashed', {
         phase: 'process_exit',
         exitCode: outcome?.exitCode ?? null,
         signal: outcome?.signal ?? null,
         error: outcome?.failure ? String(outcome.failure.message ?? outcome.failure) : 'omp rpc process exited during an active turn',
+        ...(session.observedSessionId ? { sessionId: session.observedSessionId } : {}),
+        ...(session.observedSessionFile ? { sessionFile: session.observedSessionFile } : {}),
       });
       session.activeTurn = null;
     }

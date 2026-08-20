@@ -143,7 +143,11 @@ const PROJECTION_CHECKPOINT_FIELDS = Object.freeze([
 const TERMINAL = new Set(['completed', 'failed', 'cancelled']);
 const TRANSITIONS = new Map([
   ['pending', new Set(['working', 'cancelled'])],
-  ['working', new Set(['input_required', 'paused', 'completed', 'failed', 'cancelled'])],
+  ['working', new Set(['input_required', 'paused', 'retry_pending', 'completed', 'failed', 'cancelled'])],
+  // #201 durable member retry: `retry_pending` is a NON-terminal park — a death-cert crash
+  // under retry authority holds the task for the successor incarnation's resume. Outbound:
+  // `working` (the resume/retry re-dispatch), and failed/cancelled (exhaustion or stop).
+  ['retry_pending', new Set(['working', 'failed', 'cancelled'])],
   ['input_required', new Set(['working', 'failed', 'cancelled'])],
   // Issue #31 §2.1(3): `paused` is a new NON-terminal state — a turn checkpoint parked pending a
   // steering decision. Its outbound set is exactly `input_required`'s: `working` (unpark), and
@@ -15278,6 +15282,39 @@ export class CoordinationStore {
     }
     const event = this._append('worker.generation_bound', clone(fields), auth);
     return { ok: true, result: 'recorded', event: clone(event) };
+  }
+
+  /** #201 A3: the successor-incarnation orphan scan — tasks claimed by workers whose durable
+   * generation is absent from the caller's live-worker set (or parked retry_pending) surface
+   * as reclaimable. Pure read over the replayed ledger: a task with an assignee whose LAST
+   * worker.generation_bound names a generation the caller did not present is an orphan; a task
+   * claimed by a live worker, unclaimed, or terminal never surfaces. */
+  orphans({ liveWorkers = [] } = {}) {
+    const live = new Set(Array.isArray(liveWorkers) ? liveWorkers : []);
+    const lastGeneration = new Map();
+    for (const event of this._events) {
+      if (event.kind === 'worker.generation_bound') {
+        lastGeneration.set(event.payload.workerId, event.payload);
+      }
+    }
+    const rows = [];
+    for (const task of this._tasks.values()) {
+      if (TERMINAL.has(task.status)) continue;
+      const workerId = task.assignee ?? task.reservedWorkerId ?? null;
+      if (workerId === null) continue;
+      if (task.status === 'retry_pending') {
+        rows.push({ taskId: task.id, workerId, status: task.status,
+          processGeneration: lastGeneration.get(workerId)?.processGeneration ?? null });
+        continue;
+      }
+      if (live.has(workerId)) continue;
+      const generation = lastGeneration.get(workerId);
+      // A claimed task with NO durable generation record is pre-A2-3 legacy state — surface it
+      // (absence of the binding cannot prove the claimant lives).
+      rows.push({ taskId: task.id, workerId, status: task.status,
+        processGeneration: generation?.processGeneration ?? null });
+    }
+    return rows;
   }
 
   /** Decision 2: the durable grant revoke. Every terminator (member task terminalization,

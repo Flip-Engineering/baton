@@ -34,7 +34,9 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 class FakeStream extends EventEmitter {
   setEncoding() { /* fake */ }
-  write() { return true; }
+  // write() MUST emit — the adapter reads frames from stdout 'data' events; a no-op write
+  // silently discards every frame and waitReady retries forever (the draft's hang).
+  write(chunk) { this.emit('data', chunk); return true; }
 }
 
 class FakeChild extends EventEmitter {
@@ -57,6 +59,9 @@ const READY = JSON.stringify({ type: 'ready', protocolVersion: 1 }) + '\n';
 function sessionedChild({ sessionId = 'sess-a1b2c3', sessionFile = '/home/w/sess-a1b2c3.jsonl' } = {}) {
   const child = new FakeChild();
   const writes = [];
+  // the ready frame must cross the stdout lane or waitReady retries forever (a LIVE child
+  // is never failed — the transport-recovery law). Emit on the next tick.
+  setImmediate(() => { child.stdout.write(READY); });
   child.stdin.write = (line) => {
     writes.push(line);
     let frame = null;
@@ -242,7 +247,7 @@ test('A2 RETRY_PENDING: a death-cert crash under retry authority transitions the
   assert.equal(evidence.deathCert?.exitCode, 137, 'the evidence digest carries the death-cert exit code');
   assert.equal(evidence.deathCert?.sessionId, 'sess-a1b2c3', 'the evidence digest carries the resume handle');
   assert.equal(evidence.retry?.attempt, 1, 'the first admitted retry is attempt 1');
-  assert.equal(task.status, 'failed', false === true ? 'unreachable' || task.status : task.status);
+  assert.notEqual(task.status, 'failed', 'the parked task never reads failed — retry_pending is the durable state');
 
   const failed = coordination.events().find((e) => e.kind === 'task.transitioned'
     && e.payload?.id === task.id && e.payload?.to === 'failed');

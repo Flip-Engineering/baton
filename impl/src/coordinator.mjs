@@ -1025,6 +1025,11 @@ export class Coordinator {
     this._now = opts.now || Date.now;
     this._approvalTimeoutMs = opts.approvalTimeoutMs ?? 60000;
     this._stopDeadlineMs = opts.stopDeadlineMs ?? 15000;
+    // #201 durable member retry: the bounded retry COUNT for death-cert crashes (never a
+    // clock — the #163 law). Absent/null = authority OFF (deaths settle failed exactly as
+    // today); N>=0 = up to N retry_pending parks per member task before failed.
+    this._memberRetryAttempts = Number.isSafeInteger(opts.memberRetryAttempts) && opts.memberRetryAttempts >= 0
+      ? opts.memberRetryAttempts : null;
     // TG3 (trust-gate steering): the bounded continuation window a pausable checkpoint's
     // steering cycle waits for an answer before the full final evaluation runs unanswered.
     // A deployment knob, NOT stallTimeoutMs/watchdog — the cycle is once per pause record and
@@ -1784,7 +1789,9 @@ export class Coordinator {
         kind, actor, ...this._routeAttribution(handle, task), payload: {},
       });
       const evidence = this._coordMapEvent(cancelled);
-      if (task && !TERMINAL_TASK_STATUSES.has(task.status)) {
+      // #201: a retry_pending park survives the crash-path stop — the task belongs to the
+      // successor incarnation's resume, not this dying generation's cancel semantics.
+      if (task && !TERMINAL_TASK_STATUSES.has(task.status) && task.status !== 'retry_pending') {
         this._coordTransition(task, 'cancelled', `task.cancelled:${task.id}:${cancelled.seq}`, evidence);
         task.status = 'cancelled';
       }
@@ -2835,11 +2842,9 @@ export class Coordinator {
           kind: 'control.drain_cancelled', actor: 'policy', ...this._routeAttribution(handle, task), payload: {},
         });
         const evidence = this._coordMapEvent(cancelled);
-        if (task && !TERMINAL_TASK_STATUSES.has(task.status)) this._coordTransition(task, 'cancelled', `task.cancelled:${task.id}:${cancelled.seq}`, evidence);
-        if (task) task.status = 'cancelled';
-        handle.status = 'dead';
-        if (!handle.processRef && !handle.runtimeScope && !handle.worktree) handle.localAuthority = false;
-        await this._beforeDrainDeadline(this._removeOwnedTaskWorktree(handle, task), deadline);
+        // #201: retry_pending parks survive drain-cancel — the successor incarnation resumes them.
+        if (task && !TERMINAL_TASK_STATUSES.has(task.status) && task.status !== 'retry_pending') this._coordTransition(task, 'cancelled', `task.cancelled:${task.id}:${cancelled.seq}`, evidence);
+        if (task && !TERMINAL_TASK_STATUSES.has(task.status) && task.status !== 'retry_pending') task.status = 'cancelled';
         setDisposition(workerId, 'pendingCancelled');
       } else if (!this._ownsLocalResources(handle) && (!handle.processRef || handle.processRef.state === 'closed')) {
         setDisposition(workerId, 'alreadyTerminal');
@@ -9848,7 +9853,8 @@ export class Coordinator {
         const task = this._tasks.get(handle.taskId);
         if (waiter.mode === 'kill') {
           const preserveProgress = Boolean(task && !TERMINAL_TASK_STATUSES.has(task.status));
-          if (task && !TERMINAL_TASK_STATUSES.has(task.status)) {
+          // #201: retry_pending parks survive the kill-confirmed cancel — the successor resumes.
+          if (task && !TERMINAL_TASK_STATUSES.has(task.status) && task.status !== 'retry_pending') {
             const evidence = this._coordMapEvent(stopEvent);
             this._coordTransition(task, 'cancelled', `task.cancelled:${task.id}:${stopEvent.seq}`, evidence);
           }
@@ -9856,7 +9862,7 @@ export class Coordinator {
           handle.sessionPreservation = null;
           handle.preservedTurnEpoch = null;
           const runtimeRemoved = this._removeRuntimeScope(handle);
-          if (task && !TERMINAL_TASK_STATUSES.has(task.status)) task.status = 'cancelled';
+          if (task && !TERMINAL_TASK_STATUSES.has(task.status) && task.status !== 'retry_pending') task.status = 'cancelled';
           waiter.cleanupPromise = this._preserveProgressBeforeReap(handle, task, stopEvent, preserveProgress)
             .then(() => waiter.retainUnownedWorktree
               ? undefined : this._removeOwnedTaskWorktree(handle, task)).then(() => {
@@ -13014,13 +13020,38 @@ export class Coordinator {
         const task = this._tasks.get(handle.taskId);
         const failActiveTask = task && !TERMINAL_TASK_STATUSES.has(task.status)
           && task.status !== 'verifying' && !turnWasTerminal;
-        if (failActiveTask) {
+        // #201 durable member retry: a death-cert crash under retry authority parks the task
+        // retry_pending (evidence-bound, never failed) so the successor incarnation can resume
+        // by the cert's handle. Authority OFF (default) settles failed exactly as before.
+        const deathCert = {
+          exitCode: payload?.exitCode ?? null, signal: payload?.signal ?? null,
+          ...(typeof payload?.sessionId === 'string' && payload.sessionId.length > 0
+            ? { sessionId: payload.sessionId } : {}),
+          ...(typeof payload?.sessionFile === 'string' && payload.sessionFile.length > 0
+            ? { sessionFile: payload.sessionFile } : {}),
+        };
+        const resumeHandle = typeof deathCert.sessionId === 'string' ? deathCert.sessionId : null;
+        const retryEligible = failActiveTask && this._memberRetryAttempts !== null
+          && (handle.memberRetries ?? 0) < this._memberRetryAttempts;
+        if (retryEligible) {
+          handle.memberRetries = (handle.memberRetries ?? 0) + 1;
+          if (resumeHandle) {
+            handle.sessionRef = deepFreeze({ id: resumeHandle, persistence: 'native' });
+          }
+          const evidence = this._coordMapEvent(terminalEvent);
+          const retryEvidence = evidence ? {
+            ...evidence,
+            deathCert: { ...deathCert },
+            retry: { attempt: handle.memberRetries, of: this._memberRetryAttempts },
+          } : null;
+          if (retryEvidence) this._coordTransition(task, 'retry_pending',
+            `task.retry_pending:${task.id}:${retryEvidence.coordinationSeq}`, retryEvidence);
+          task.status = 'retry_pending';
+        } else if (failActiveTask) {
           const evidence = this._coordMapEvent(terminalEvent);
           if (evidence) this._coordTransition(task, 'failed', `task.failed:${task.id}:${evidence.coordinationSeq}`, evidence);
+          if (!TERMINAL_TASK_STATUSES.has(task.status)) task.status = 'failed';
         }
-        if (failActiveTask && !TERMINAL_TASK_STATUSES.has(task.status)) task.status = 'failed';
-        handle.turnInFlight = false;
-        this._clearWatchdog(handle);
         // A turn crash does not normally prove transport death. A matching process_closed event
         // immediately before this crash does, so reap directly instead of arming an impossible
         // stop waiter for a child that can no longer emit kill.confirmed.
