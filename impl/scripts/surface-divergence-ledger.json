@@ -2,6 +2,174 @@
   "schemaVersion": 1,
   "entries": [
     {
+      "name": "cli.credentials.install.kimi",
+      "category": "control",
+      "cli": "baton credentials install kimi",
+      "mcp": null,
+      "reason": "cli-only operator/local command (setup, deployment lifecycle, credential install) — no MCP form by design"
+    },
+    {
+      "name": "cli.setup",
+      "category": "control",
+      "cli": "baton setup",
+      "mcp": null,
+      "reason": "cli-only operator/local command (setup, deployment lifecycle, credential install) — no MCP form by design"
+    },
+    {
+      "name": "deployment.doctor",
+      "category": "control",
+      "cli": "baton doctor",
+      "mcp": null,
+      "reason": "cli-only operator/local command (setup, deployment lifecycle, credential install) — no MCP form by design"
+    },
+    {
+      "name": "deployment.serve",
+      "category": "control",
+      "cli": "baton serve",
+      "mcp": null,
+      "reason": "cli-only operator/local command (setup, deployment lifecycle, credential install) — no MCP form by design"
+    },
+    {
+      "name": "deployment.view",
+      "category": "control",
+      "cli": "baton route",
+      "mcp": null,
+      "reason": "cli-only operator/local command (setup, deployment lifecycle, credential install) — no MCP form by design"
+    },
+    {
+      "name": "fleet_capabilities",
+      "category": "diagnostics",
+      "cli": null,
+      "mcp": "fleet_capabilities",
+      "reason": "mcp-only fleet-driver verb — the wave machinery lane; CLI reaches it through the canonical run.*/waves.* names"
+    },
+    {
+      "name": "fleet_capability_invoke",
+      "category": "control",
+      "cli": null,
+      "mcp": "fleet_capability_invoke",
+      "reason": "mcp-only fleet-driver verb — the wave machinery lane; CLI reaches it through the canonical run.*/waves.* names"
+    },
+    {
+      "name": "fleet_drain",
+      "category": "control",
+      "cli": null,
+      "mcp": "fleet_drain",
+      "reason": "mcp-only fleet-driver verb — the wave machinery lane; CLI reaches it through the canonical run.*/waves.* names"
+    },
+    {
+      "name": "fleet_goal_define",
+      "category": "control",
+      "cli": null,
+      "mcp": "fleet_goal_define",
+      "reason": "mcp-only fleet-driver verb — the wave machinery lane; CLI reaches it through the canonical run.*/waves.* names"
+    },
+    {
+      "name": "fleet_goal_plan_status",
+      "category": "observation",
+      "cli": null,
+      "mcp": "fleet_goal_plan_status",
+      "reason": "mcp-only fleet-driver verb — the wave machinery lane; CLI reaches it through the canonical run.*/waves.* names"
+    },
+    {
+      "name": "fleet_interrupt",
+      "category": "communication",
+      "cli": null,
+      "mcp": "fleet_interrupt",
+      "reason": "mcp-only fleet-driver verb — the wave machinery lane; CLI reaches it through the canonical run.*/waves.* names"
+    },
+    {
+      "name": "fleet_kill",
+      "category": "control",
+      "cli": null,
+      "mcp": "fleet_kill",
+      "reason": "mcp-only fleet-driver verb — the wave machinery lane; CLI reaches it through the canonical run.*/waves.* names"
+    },
+    {
+      "name": "fleet_list",
+      "category": "observation",
+      "cli": null,
+      "mcp": "fleet_list",
+      "reason": "mcp-only fleet-driver verb — the wave machinery lane; CLI reaches it through the canonical run.*/waves.* names"
+    },
+    {
+      "name": "fleet_plan_approve",
+      "category": "communication",
+      "cli": null,
+      "mcp": "fleet_plan_approve",
+      "reason": "mcp-only fleet-driver verb — the wave machinery lane; CLI reaches it through the canonical run.*/waves.* names"
+    },
+    {
+      "name": "fleet_plan_propose",
+      "category": "control",
+      "cli": null,
+      "mcp": "fleet_plan_propose",
+      "reason": "mcp-only fleet-driver verb — the wave machinery lane; CLI reaches it through the canonical run.*/waves.* names"
+    },
+    {
+      "name": "fleet_provider_status",
+      "category": "diagnostics",
+      "cli": null,
+      "mcp": "fleet_provider_status",
+      "reason": "mcp-only fleet-driver verb — the wave machinery lane; CLI reaches it through the canonical run.*/waves.* names"
+    },
+    {
+      "name": "fleet_respond",
+      "category": "communication",
+      "cli": null,
+      "mcp": "fleet_respond",
+      "reason": "mcp-only fleet-driver verb — the wave machinery lane; CLI reaches it through the canonical run.*/waves.* names"
+    },
+    {
+      "name": "fleet_result",
+      "category": "diagnostics",
+      "cli": null,
+      "mcp": "fleet_result",
+      "reason": "mcp-only fleet-driver verb — the wave machinery lane; CLI reaches it through the canonical run.*/waves.* names"
+    },
+    {
+      "name": "fleet_reuse_decide",
+      "category": "communication",
+      "cli": null,
+      "mcp": "fleet_reuse_decide",
+      "reason": "mcp-only fleet-driver verb — the wave machinery lane; CLI reaches it through the canonical run.*/waves.* names"
+    },
+    {
+      "name": "fleet_reuse_recheck",
+      "category": "control",
+      "cli": null,
+      "mcp": "fleet_reuse_recheck",
+      "reason": "mcp-only fleet-driver verb — the wave machinery lane; CLI reaches it through the canonical run.*/waves.* names"
+    },
+    {
+      "name": "fleet_scratch_oracle",
+      "category": "control",
+      "cli": null,
+      "mcp": "fleet_scratch_oracle",
+      "reason": "mcp-only fleet-driver verb — the wave machinery lane; CLI reaches it through the canonical run.*/waves.* names"
+    },
+    {
+      "name": "fleet_send",
+      "category": "communication",
+      "cli": null,
+      "mcp": "fleet_send",
+      "reason": "mcp-only fleet-driver verb — the wave machinery lane; CLI reaches it through the canonical run.*/waves.* names"
+    },
+    {
+      "name": "fleet_spawn",
+      "category": "control",
+      "cli": null,
+      "mcp": "fleet_spawn",
+      "reason": "mcp-only fleet-driver verb — the wave machinery lane; CLI reaches it through the canonical run.*/waves.* names"
+    },
+    {
+      "name": "fleet_wait",
+      "category": "observation",
+      "cli": null,
+      "mcp": "fleet_wait",
+      "reason": "mcp-only fleet-driver verb — the wave machinery lane; CLI reaches it through the canonical run.*/waves.* names"
+    },
+    {
       "surface": "cli",
       "name": "run.attention.watch",
       "canonical": "run.attention.watch",
@@ -24,6 +192,22 @@
       "dimension": "name",
       "retiresIn": "M5",
       "refusal": "'unsupported command' (web-northbound.mjs:405) — facade port contracted via #87+#48, web-refused until #87 lands"
+    },
+    {
+      "surface": "mcp.web-bridge",
+      "name": "run.episode",
+      "canonical": "run.view",
+      "dimension": "name",
+      "retiresIn": "M5",
+      "note": "#227 widening: the bridge forwards the application.commands wire spelling; the canonical operation is run.view — name-shape divergence only (identical dispatch); retires as an mcp.web-bridge surface alias per the run.act/run.inspect precedent"
+    },
+    {
+      "surface": "mcp.web-bridge",
+      "name": "run.follow",
+      "canonical": "run.watch",
+      "dimension": "name",
+      "retiresIn": "M5",
+      "note": "#227 widening: the bridge forwards the application.commands wire spelling; the canonical operation is run.watch — name-shape divergence only (identical dispatch); retires as an mcp.web-bridge surface alias per the run.act/run.inspect precedent"
     },
     {
       "surface": "cli",
@@ -50,46 +234,6 @@
       "refusal": "'unsupported command' (web-northbound.mjs:405) — facade port contracted via #87+#48, web-refused until #87 lands"
     },
     {
-      "surface": "cli",
-      "name": "run.scratchpad.elevate",
-      "canonical": "run.scratchpad.elevate",
-      "dimension": "name",
-      "retiresIn": "M5",
-      "refusal": "'unsupported command' (web-northbound.mjs:405) — facade port contracted via #87+#48, web-refused until #87 lands"
-    },
-    {
-      "surface": "cli",
-      "name": "run.scratchpad.read",
-      "canonical": "run.scratchpad.read",
-      "dimension": "name",
-      "retiresIn": "M5",
-      "refusal": "'unsupported command' (web-northbound.mjs:405) — facade port contracted via #87+#48, web-refused until #87 lands"
-    },
-    {
-      "surface": "cli",
-      "name": "waves.compile",
-      "canonical": "waves.compile",
-      "dimension": "name",
-      "retiresIn": "M5",
-      "note": "waves.compile is web-admitted in the current tree (WAVE_WEB_ENTRIES, #170) but absent from the pinned 31-name card (contract-fold v1.1 D2/G3); ledgered pending wave reconciliation of the card-vs-admission drift"
-    },
-    {
-      "surface": "mcp.web-bridge",
-      "name": "run.episode",
-      "canonical": "run.view",
-      "dimension": "name",
-      "retiresIn": "M5",
-      "note": "#227 widening: the bridge forwards the application.commands wire spelling; the canonical operation is run.view — name-shape divergence only (identical dispatch); retires as an mcp.web-bridge surface alias per the run.act/run.inspect precedent"
-    },
-    {
-      "surface": "mcp.web-bridge",
-      "name": "run.follow",
-      "canonical": "run.watch",
-      "dimension": "name",
-      "retiresIn": "M5",
-      "note": "#227 widening: the bridge forwards the application.commands wire spelling; the canonical operation is run.watch — name-shape divergence only (identical dispatch); retires as an mcp.web-bridge surface alias per the run.act/run.inspect precedent"
-    },
-    {
       "surface": "mcp.web-bridge",
       "name": "run.resume_work",
       "canonical": "run.resume",
@@ -104,6 +248,22 @@
       "dimension": "name",
       "retiresIn": "M5",
       "note": "#227 widening: the bridge forwards the application.commands wire spelling; the canonical operation is run.retry — name-shape divergence only (identical dispatch); retires as an mcp.web-bridge surface alias per the run.act/run.inspect precedent"
+    },
+    {
+      "surface": "cli",
+      "name": "run.scratchpad.elevate",
+      "canonical": "run.scratchpad.elevate",
+      "dimension": "name",
+      "retiresIn": "M5",
+      "refusal": "'unsupported command' (web-northbound.mjs:405) — facade port contracted via #87+#48, web-refused until #87 lands"
+    },
+    {
+      "surface": "cli",
+      "name": "run.scratchpad.read",
+      "canonical": "run.scratchpad.read",
+      "dimension": "name",
+      "retiresIn": "M5",
+      "refusal": "'unsupported command' (web-northbound.mjs:405) — facade port contracted via #87+#48, web-refused until #87 lands"
     },
     {
       "surface": "mcp.web-bridge",
@@ -152,6 +312,14 @@
       "dimension": "name",
       "retiresIn": "M5",
       "note": "#227 widening: the bridge forwards the application.commands wire spelling; the canonical operation is run.list — name-shape divergence only (identical dispatch); retires as an mcp.web-bridge surface alias per the run.act/run.inspect precedent"
+    },
+    {
+      "surface": "cli",
+      "name": "waves.compile",
+      "canonical": "waves.compile",
+      "dimension": "name",
+      "retiresIn": "M5",
+      "note": "waves.compile is web-admitted in the current tree (WAVE_WEB_ENTRIES, #170) but absent from the pinned 31-name card (contract-fold v1.1 D2/G3); ledgered pending wave reconciliation of the card-vs-admission drift"
     }
   ],
   "cliLocalToolingCodes": [
