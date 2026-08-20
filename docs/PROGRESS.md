@@ -7,6 +7,42 @@ ledger (historical through Phase 65, resumed at 93a.2); live proofs are under
 `docs/reference/evidence/` and `docs/handoff/evidence/`; the open work tracker is the GitHub
 issue list.
 
+# Current checkpoint (2026-08-20)
+
+- **The #228 omp migration era is COMPLETE**: the fleet rides OhMyPi natively — after the
+  7-defect #230 stack (dispatch, credentials, brief-deafness, orphaned listeners, quiescence
+  murder, verdict-less completions), waves run green end-to-end (WAVE-OK probe 49s fire→harvest;
+  wave-h delivered 7/9 members with result SHAs).
+- **The unified surface era**: PR 239 merged (367 capabilities, 8 categories, CLI/MCP parity,
+  0 unresolved) and now LIVE — the resident itself rides `openConvergedBaton` (the convergence
+  layer is THE surface, not an opt-in library); fleet tooling fires through
+  `baton surface invoke`; `waves_list` answered 101.8s→(post-fixes) seconds-class with real data.
+- **#229 DEADLOCK root-caused and fixed — a three-furnace stack, each measured live**: ①
+  `_runWaveIndex` full-ledger scan per call (→ eventCursor memo, warm reads iterate 0 events) ②
+  `_findRun` full-store clone per dead member (→ narrow-miss authority) ③ the inline projection
+  checkpoint per 256th append — a 401 took 49.5s, the boundary paid a 140MB serialize inline (→
+  deferred+coalesced; shutdown writes stay inline). The production signature ("TCP accepts,
+  HTTP never answers", 3×) is dead; bounded residual cost tracks #210/#216/#223.
+- **Durability (#201)**: death certs carry sessionId/sessionFile; resume argv (--resume,
+  --session-dir); retry_pending parks (bounded COUNT, never a clock — #163 law); orphan scan;
+  `resumeOrphans` projection — the successor's wiring row landed. Live demonstration: an
+  operator restart mid-wave terminalized 3 members with no retry authority (the exact gap).
+- **The honesty cluster closes**: #157 (CLI wave verbs + interpreter hydration — live-verified
+  on the exact wave the issue named) ✓ · #158 (`run.scratchpad.append` on every surface —
+  de-ghosting the MCP tool that dispatched to a nonexistent verb) ✓ · #191 (the parity matrix
+  as test — pm's clean adopt; first generation surfaced 24 silent divergences, now explicit
+  ledger rows) ✓ · #159 (11 pinned conformance reds) in flight via wave-c · #160 next.
+- **Dogfood-surfaced defects, all red-first**: #243 omp `answer()` was a stub — member
+  questions unanswerable on the entire fleet (protocol pinned from the omp binary:
+  extension_ui_request/response; questions now surface as interaction.requested) · #244 wave
+  reap DROPPED member snapshot commits — all three wave-b rows dangled until manual recovery
+  (settle receipts now carry snapshotSha) · PR #242 reviewed-and-closed with receipts (docs +
+  tests importing src modules that don't exist on the branch — the #237 disease).
+- **Campaign hygiene**: 11 stale branches purged (4 agent convergence variants, July snapshots,
+  portfolio branch salvaged for its repo-link fix); 0 open PRs; every closed issue carries its
+  fix commit; the resident restarts on every landed head (the stale-registryDigest CLI refusal
+  taught that lesson).
+
 ## Current checkpoint (2026-08-13)
 
 - Canonical suite: **4,054 tests** (3,677 green). The 377-row failure set is fully accounted
