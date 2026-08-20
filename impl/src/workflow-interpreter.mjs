@@ -823,7 +823,12 @@ function harvestOne(entry, repoRoot, salt, waveId, outcomes) {
   }
   const base = { path, waveId };
   if (!recovered) {
-    return { ...base, ok: false, missed: true, matched: false, code: 'harvest_miss', resultSha: null, bytes: null };
+    // #241 (row-harvest-recovery): a miss never means the work is lost — the member outcome's
+    // resultSha is the pinned checkpoint, the pointer to the recoverable work. The absent-path
+    // miss surfaces the first roster-order member outcome's resultSha as recoverySha; with no
+    // outcome sha the pointer stays null (never invented).
+    const recoverySha = outcomes.find((outcome) => outcome?.resultSha)?.resultSha ?? null;
+    return { ...base, ok: false, missed: true, matched: false, code: 'harvest_miss', recoverySha, resultSha: null, bytes: null };
   }
   const { resultSha, bytes } = recovered;
   // A `mustContain` entry is the integrity-checked lane: the recovered content must carry THIS
@@ -833,10 +838,10 @@ function harvestOne(entry, repoRoot, salt, waveId, outcomes) {
   if (entry.mustContain !== undefined) {
     const carriesMarker = bytes.includes(`[attempt: ${salt}`);
     if (!carriesMarker) {
-      return { ...base, ok: false, missed: true, matched: false, code: 'harvest_miss', resultSha, bytes, actual: bytes };
+      return { ...base, ok: false, missed: true, matched: false, code: 'harvest_miss', recoverySha: resultSha, resultSha, bytes, actual: bytes };
     }
     if (!bytes.includes(entry.mustContain)) {
-      return { ...base, ok: false, missed: true, matched: false, code: 'harvest_miss', resultSha, bytes, expected: entry.mustContain, actual: bytes };
+      return { ...base, ok: false, missed: true, matched: false, code: 'harvest_miss', recoverySha: resultSha, resultSha, bytes, expected: entry.mustContain, actual: bytes };
     }
     materializeToDisk(repoRoot, path, bytes);
     return { ...base, ok: true, missed: false, matched: true, code: 'harvest_ok', resultSha, bytes, expected: entry.mustContain, actual: bytes };
