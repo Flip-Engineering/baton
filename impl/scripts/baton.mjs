@@ -6,6 +6,7 @@ import {
   BatonWebClient, batonCliHelp, discoverBatonConnection, inspectBatonConnection,
   parseBatonCli, projectBatonCliResult, runBatonCli, setupBatonConnection,
 } from '../src/application-cli.mjs';
+import { BATON_TOP_HELP, runBatonTop } from '../src/baton-top.mjs';
 import { BatonWebHost, SignalLifecycleOwner } from '../src/application-host.mjs';
 import { flipLine } from '../src/brand.mjs';
 import { callConfiguredMcpTool } from '../src/configured-mcp-client.mjs';
@@ -145,6 +146,19 @@ try {
         process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
         if (remote.ready !== true) process.exitCode = 1;
       }
+    } else if (parsed.kind === 'top_help') {
+      process.stdout.write(`${BATON_TOP_HELP}\n`);
+    } else if (parsed.kind === 'top') {
+      // docs/38 — `baton top` is the operator seat: explicit human output through the existing
+      // authenticated resident client (surfaceSnapshot seam); ordinary commands keep machine-clean
+      // JSON, so no JSON projection is appended here.
+      const connection = discoverBatonConnection();
+      await runBatonTop(parsed, {
+        client: clientFor(connection),
+        stdout: process.stdout,
+        stdin: process.stdin,
+        clock: Date.now,
+      });
     } else if (parsed.kind === 'serve') {
       if (parsed.configPath === null) {
         await serveDeployment(await openBaton({ repo: process.cwd() }));

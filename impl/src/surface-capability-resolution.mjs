@@ -67,9 +67,66 @@ export const UNIFIED_NOTIFICATION_WATCH_TOOL = Object.freeze({
   },
 });
 
+// docs/38 — the Flip-driven visualization surface. `baton_surface_visualize` is a read-only meta
+// tool composing the already-authorized surface snapshot authority and, when follow is requested,
+// the surface watch authority, into one bounded visual model plus an ANSI-free static rendering.
+// It never becomes an authority: cursors move only through the existing watch seams, and action
+// suggestions lower through baton_surface_invoke/run.answer.
+export const UNIFIED_VISUALIZATION_CAPABILITY = freeze({
+  id: 'surface.visualize',
+  owner: 'surface-kernel',
+  kind: 'surface_meta',
+  key: 'surface.visualize',
+  names: { cli: 'baton surface visualize', mcp: 'baton_surface_visualize' },
+  aliases: { cli: [], mcp: [], web: [], embedded: [] },
+  categories: ['observation', 'telemetry', 'diagnostics', 'notifications'],
+  mode: 'query',
+  lane: 'projection',
+  capabilities: ['observe'],
+  schema: schema({
+    view: { type: 'string', enum: ['overview', 'topology', 'timeline', 'telemetry'] },
+    runId: { type: 'string', minLength: 1, maxLength: 256 },
+    waveId: { type: 'string', minLength: 1, maxLength: 256 },
+    width: { type: 'integer', minimum: 40, maximum: 240 },
+    follow: { type: 'boolean' },
+    afterCursor: { type: 'integer', minimum: 0 },
+    attentionCursor: { type: 'integer', minimum: 0 },
+    kind: { type: 'string', minLength: 1, maxLength: 256 },
+    timeoutMs: { type: 'integer', minimum: 1, maximum: 30000 },
+  }),
+  effect: 'bounded read-only visual model plus ANSI-free static rendering over the existing snapshot and optional watch authorities',
+  description: 'Composes the existing surface snapshot/watch meta authorities into one deterministic visual projection and static rendering; it creates no second authority.',
+  notification: true,
+  handler: 'surface.visualize',
+  hostLocal: false,
+  operatorFacing: true,
+  remotePosture: 'operator',
+  parityRequired: true,
+  invocation: { meta: true },
+  surfaces: {
+    cli: { declared: true, direct: true, generic: true, via: ['direct'], reachable: true },
+    mcp: { declared: true, direct: true, generic: true, via: ['direct'], reachable: true },
+    web: { declared: false, direct: false, reachable: false },
+    embedded: { declared: true, direct: true, reachable: true },
+  },
+});
+
+export const UNIFIED_VISUALIZATION_TOOL = Object.freeze({
+  name: 'baton_surface_visualize',
+  description: 'Project one bounded read-only visual model (overview, topology, timeline, telemetry) from the existing surface snapshot and optional watch authorities, returning structured content plus an ANSI-free static rendering and the exact next refresh cursors.',
+  inputSchema: clone(UNIFIED_VISUALIZATION_CAPABILITY.schema),
+  annotations: {
+    readOnlyHint: true,
+    destructiveHint: false,
+    idempotentHint: true,
+    openWorldHint: false,
+  },
+});
+
 export const COMPLETE_UNIFIED_MCP_META_TOOL_DEFINITIONS = Object.freeze([
   ...UNIFIED_MCP_META_TOOL_DEFINITIONS,
   UNIFIED_NOTIFICATION_WATCH_TOOL,
+  UNIFIED_VISUALIZATION_TOOL,
 ]);
 
 function liveTransportSpellings(id) {
@@ -131,6 +188,7 @@ export function completeUnifiedCapabilityCatalog(filters = {}) {
   return Object.freeze([
     ...base,
     UNIFIED_NOTIFICATION_WATCH_CAPABILITY,
+    UNIFIED_VISUALIZATION_CAPABILITY,
   ].filter((row) => matchesFilters(row, filters)).map(clone));
 }
 
