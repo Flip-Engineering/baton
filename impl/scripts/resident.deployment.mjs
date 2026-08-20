@@ -5,10 +5,10 @@
 // harness — deepseek/glm as FIRST-CLASS omp providers, no anthropic-compat translation.
 // The previous explicit compat routes (harness deepseek/glm) orphaned claude-code member
 // processes and died cause-lessly at ~2h; these are the same seats on the native surface.
-import { openBaton } from '../src/index.mjs';
+import { openConvergedBaton } from '../src/index-converged.mjs';
 
 export async function createBatonDeployment() {
-  return openBaton({
+  return openConvergedBaton({
     repo: process.cwd(),
     advanced: {
       routes: [
