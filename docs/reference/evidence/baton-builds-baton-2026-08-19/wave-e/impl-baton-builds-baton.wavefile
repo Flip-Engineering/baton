@@ -1,0 +1,10 @@
+wave bbb-2026-08-20-wave-e
+member row-feature-audit
+  harness omp
+  model "deepseek/deepseek-v4-flash"
+  effort high
+  scope "docs/reference/evidence/baton-builds-baton-2026-08-19/wave-e/**"
+  objectiveRef "docs/reference/evidence/baton-builds-baton-2026-08-19/wave-e/row-feature-audit-brief.md"
+  report "docs/reference/evidence/baton-builds-baton-2026-08-19/wave-e/notes-row-feature-audit.md"
+messageOnSpawn brief "Read your objectiveRef brief IN FULL; it binds. Read-only audit with one JSON deliverable + notes. Use the surface catalog as source of truth. Your [attempt:] line verbatim in your report's first five lines."
+harvest "docs/reference/evidence/baton-builds-baton-2026-08-19/wave-e/feature-audit.json" mustContain "schemaVersion"
