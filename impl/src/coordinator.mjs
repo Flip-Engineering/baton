@@ -12399,6 +12399,73 @@ export class Coordinator {
     return Object.freeze({ owned: this._ownsLocalResources(handle) });
   }
 
+  /** #201 (row-resume-wiring): the successor incarnation's orphan re-dispatch projection.
+   * Pure read over store.orphans({liveWorkers}) + each orphan row's LAST death-cert evidence —
+   * a retry_pending row's durable park transition evidence (evidence.deathCert / evidence.retry)
+   * or a dead-generation working/input_required/paused row's last lifecycle.crashed operational
+   * event (payload.sessionId / payload.sessionFile, the #225/#201 adapter death cert). Returns
+   * durable resume INTENTS only — NO spawn is executed here; sessionId null = a FRESH retry
+   * with no resume handle (never invented). sessionDir is the death-cert session file's
+   * directory — the `--session-dir` argv coordinate (contract D3: the session file lives under
+   * the member's profile-isolated home). */
+  resumeOrphans({ liveWorkers = [] } = {}) {
+    this._assertReadable();
+    if (!this._coordination || typeof this._coordination.orphans !== 'function') return [];
+    return this._coordination.orphans({ liveWorkers }).map((row) => {
+      const cert = this._lastDeathCertEvidence(row);
+      return {
+        taskId: row.taskId,
+        workerId: row.workerId,
+        sessionId: cert.sessionId,
+        sessionDir: cert.sessionFile ? dirname(cert.sessionFile) : null,
+        retry: cert.retry,
+      };
+    });
+  }
+
+  /** The row's LAST death-cert evidence, normalized to {sessionId, sessionFile, retry}.
+   * For a retry_pending row the durable retry_pending transition evidence is authoritative
+   * (its deathCert + retry counters); for a dead-generation claim the worker's last
+   * lifecycle.crashed operational event is (its payload sessionId/sessionFile — the same
+   * source the store's evidence.mapped lifecycle.crashed entries digest). Absent evidence
+   * yields all-null — the successor re-enters the D1 gate with a fresh retry, never a
+   * fabricated resume handle. */
+  _lastDeathCertEvidence(row) {
+    if (row?.status === 'retry_pending' && typeof this._coordination?.events === 'function') {
+      const events = this._coordination.events();
+      for (let index = events.length - 1; index >= 0; index -= 1) {
+        const event = events[index];
+        if (event.kind !== 'task.transitioned' || event.payload?.id !== row.taskId
+          || event.payload?.to !== 'retry_pending' || !event.payload?.evidence) continue;
+        const evidence = event.payload.evidence;
+        const deathCert = evidence.deathCert ?? null;
+        return {
+          sessionId: typeof deathCert?.sessionId === 'string' && deathCert.sessionId.length > 0
+            ? deathCert.sessionId : null,
+          sessionFile: typeof deathCert?.sessionFile === 'string' && deathCert.sessionFile.length > 0
+            ? deathCert.sessionFile : null,
+          retry: evidence.retry && Number.isSafeInteger(evidence.retry.attempt)
+            ? { attempt: evidence.retry.attempt, of: Number.isSafeInteger(evidence.retry.of) ? evidence.retry.of : null }
+            : null,
+        };
+      }
+      return { sessionId: null, sessionFile: null, retry: null };
+    }
+    const events = row?.workerId ? this._log.read(row.workerId) : [];
+    for (let index = events.length - 1; index >= 0; index -= 1) {
+      if (events[index].kind !== 'lifecycle.crashed') continue;
+      const payload = events[index].payload ?? {};
+      return {
+        sessionId: typeof payload.sessionId === 'string' && payload.sessionId.length > 0
+          ? payload.sessionId : null,
+        sessionFile: typeof payload.sessionFile === 'string' && payload.sessionFile.length > 0
+          ? payload.sessionFile : null,
+        retry: null,
+      };
+    }
+    return { sessionId: null, sessionFile: null, retry: null };
+  }
+
   // =========================================================================
   // Command: wait()
   // =========================================================================
