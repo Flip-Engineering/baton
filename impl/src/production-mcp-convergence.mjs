@@ -358,6 +358,155 @@ async function surfaceWatch(target, runtime, input, message) {
   });
 }
 
+const VISUAL_VIEWS = new Set(['overview', 'topology', 'timeline', 'telemetry']);
+
+function validateVisualizeArgs(args, target) {
+  const view = args.view ?? 'overview';
+  if (!VISUAL_VIEWS.has(view)) {
+    throw new BatonControlError('surface_visualization_invalid', `view must be one of ${[...VISUAL_VIEWS].join(', ')}`, { field: 'view' });
+  }
+  if (args.runId !== undefined && !safeId(args.runId)) {
+    throw new BatonControlError('surface_visualization_invalid', 'visualization runId is invalid', { field: 'runId' });
+  }
+  if (args.waveId !== undefined && !safeId(args.waveId)) {
+    throw new BatonControlError('surface_visualization_invalid', 'visualization waveId is invalid', { field: 'waveId' });
+  }
+  if (args.width !== undefined && (!Number.isSafeInteger(args.width) || args.width < 40 || args.width > 240)) {
+    throw new BatonControlError('surface_visualization_invalid', 'width must be an integer between 40 and 240', { field: 'width' });
+  }
+  if (args.follow !== undefined && typeof args.follow !== 'boolean') {
+    throw new BatonControlError('surface_visualization_invalid', 'follow must be a boolean', { field: 'follow' });
+  }
+  for (const field of ['afterCursor', 'attentionCursor']) {
+    if (args[field] !== undefined && (!Number.isSafeInteger(args[field]) || args[field] < 0)) {
+      throw new BatonControlError('surface_visualization_invalid', `${field} must be a non-negative safe integer`, { field });
+    }
+  }
+  if (args.kind !== undefined && !safeId(args.kind)) {
+    throw new BatonControlError('surface_visualization_invalid', 'visualization kind is invalid', { field: 'kind' });
+  }
+  const maximum = Math.min(30_000, Number.isSafeInteger(target.maxWaitMs) ? target.maxWaitMs : 30_000);
+  if (args.timeoutMs !== undefined && (!Number.isSafeInteger(args.timeoutMs) || args.timeoutMs < 1 || args.timeoutMs > maximum)) {
+    throw new BatonControlError('surface_visualization_invalid', `timeoutMs must be between 1 and ${maximum}`, { field: 'timeoutMs' });
+  }
+  return Object.freeze({
+    view,
+    runId: args.runId ?? null,
+    waveId: args.waveId ?? null,
+    width: args.width ?? 96,
+    follow: args.follow === true,
+    afterCursor: args.afterCursor ?? 0,
+    attentionCursor: args.attentionCursor ?? 0,
+    kind: args.kind ?? null,
+    timeoutMs: args.timeoutMs ?? null,
+  });
+}
+
+// docs/38 — the bounded visualization meta tool. Composes the already-authorized snapshot and
+// (on follow) watch authorities into one canonical visual model plus an ANSI-free static text
+// rendering. The visual-model/visual-renderer siblings land in parallel waves; they load lazily
+// so the package import graph stays inert (docs/38 acceptance #8). No renderer becomes an
+// authority and no ANSI ever enters the MCP text channel.
+async function surfaceVisualize(target, runtime, args, message) {
+  const validated = validateVisualizeArgs(args, target);
+  if (validated.follow && !safeId(validated.runId)) {
+    throw new BatonControlError(
+      'surface_visualization_invalid',
+      'visualization follow requires a runId; a global watch authority is not invented',
+      { field: 'runId' },
+    );
+  }
+  const snapshot = await surfaceSnapshot(target, runtime, {
+    runId: validated.runId, waveId: validated.waveId,
+  });
+  let watch = null;
+  let nextAfterCursor = validated.afterCursor;
+  let nextAttentionCursor = validated.attentionCursor;
+  if (validated.follow) {
+    watch = await surfaceWatch(target, runtime, {
+      runId: validated.runId,
+      ...(validated.waveId === null ? {} : { waveId: validated.waveId }),
+      afterCursor: validated.afterCursor,
+      attentionCursor: validated.attentionCursor,
+      ...(validated.kind === null ? {} : { kind: validated.kind }),
+      timeoutMs: validated.timeoutMs,
+    }, message);
+    nextAfterCursor = Number.isSafeInteger(watch?.nextAfterCursor)
+      ? watch.nextAfterCursor : validated.afterCursor;
+    nextAttentionCursor = Number.isSafeInteger(watch?.nextAttentionCursor)
+      ? watch.nextAttentionCursor : validated.attentionCursor;
+  }
+  let modelModule;
+  let rendererModule;
+  try {
+    [modelModule, rendererModule] = await Promise.all([
+      import('./visual-model.mjs'),
+      import('./visual-renderer.mjs'),
+    ]);
+  } catch (error) {
+    throw new BatonControlError(
+      'surface_visualization_unavailable',
+      'visual model/renderer siblings are not yet available in this deployment',
+      { detail: { cause: BatonControlError.from(error).envelope().error } },
+    );
+  }
+  if (typeof modelModule.projectBatonVisualModel !== 'function'
+    || typeof rendererModule.renderBatonVisual !== 'function') {
+    throw new BatonControlError(
+      'surface_visualization_unavailable',
+      'visual siblings must export projectBatonVisualModel and renderBatonVisual',
+    );
+  }
+  const model = modelModule.projectBatonVisualModel({
+    snapshot, ...(watch === null ? {} : { watch }), width: validated.width,
+  });
+  const text = rendererModule.renderBatonVisual(model, {
+    width: validated.width, color: false, motion: false, view: validated.view,
+  });
+  const accessibleSummary = typeof model?.accessibleSummary === 'string'
+    ? model.accessibleSummary : text;
+  const actions = (Array.isArray(model?.attention) ? model.attention : [])
+    .filter((item) => typeof item?.runId === 'string' && typeof item?.requestId === 'string')
+    .flatMap((item) => ['allow', 'deny'].map((decision) => Object.freeze({
+      tool: 'baton_surface_invoke',
+      name: 'run.answer',
+      args: { runId: item.runId, requestId: item.requestId, answer: { decision } },
+      label: `${decision} ${item.prompt ?? item.id ?? item.requestId}`,
+    })));
+  const value = Object.freeze({
+    schemaVersion: 1,
+    kind: 'baton.surface_visualization',
+    view: validated.view,
+    model: clone(model),
+    presentation: Object.freeze({
+      text,
+      accessibleSummary,
+      refresh: Object.freeze({
+        tool: 'baton_surface_visualize',
+        view: validated.view,
+        runId: validated.runId,
+        waveId: validated.waveId,
+        width: validated.width,
+        follow: validated.follow,
+        afterCursor: nextAfterCursor,
+        attentionCursor: nextAttentionCursor,
+        kind: validated.kind,
+        timeoutMs: validated.timeoutMs,
+      }),
+      motion: Object.freeze({ frames: 4, kind: 'flip_sparkle', required: false }),
+      actions: Object.freeze(actions),
+    }),
+    convergence: runtime.audit(),
+  });
+  return {
+    jsonrpc: '2.0', id: message.id,
+    result: {
+      structuredContent: value,
+      content: [{ type: 'text', text: value.presentation.text }],
+    },
+  };
+}
+
 function augmentInstructions(response) {
   if (!response?.result || typeof response.result.instructions !== 'string') return response;
   const suffix = ' Unified surface tools project Baton\'s existing control, observation, telemetry, communication, task management, knowledge, diagnostics/environment awareness, and notification authorities; use baton_surface_catalog for profile-specific availability and baton_surface_watch for the composed existing notification loop.';
@@ -456,6 +605,12 @@ async function handleMeta(target, shadow, runtime, message) {
         'runId', 'waveId', 'afterCursor', 'attentionCursor', 'kind', 'timeoutMs',
       ], ['runId']);
       response = toolResult(message.id, await surfaceWatch(target, runtime, args, message));
+    } else if (name === 'baton_surface_visualize') {
+      const args = closedArgs(message, [
+        'view', 'runId', 'waveId', 'width', 'follow', 'afterCursor', 'attentionCursor',
+        'kind', 'timeoutMs',
+      ]);
+      response = await surfaceVisualize(target, runtime, args, message);
     } else if (name === 'baton_surface_invoke') {
       const args = closedArgs(message, ['name', 'args', 'idempotencyKey'], ['name', 'args']);
       if (!record(args.args)) throw new BatonControlError('surface_arguments_invalid', 'surface invoke args must be an object', { field: 'args' });

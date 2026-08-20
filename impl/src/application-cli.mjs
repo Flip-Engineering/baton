@@ -7,6 +7,7 @@ import {
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { TextDecoder } from 'node:util';
 import { APPLICATION_SEMANTIC_REGISTRY, canonicalRunPhase } from './application-semantics.mjs';
+import { parseBatonTopCli } from './baton-top.mjs';
 import { FRAME_LIMITS_DIGEST } from './limits.mjs';
 import { bindBatonPort } from './application-client.mjs';
 import { foldCanonicalCase } from './canonical-order.mjs';
@@ -1251,6 +1252,11 @@ export function parseBatonCli(rawArgs) {
   if (args.length === 0 || (args.length === 1 && ['--help', '-h'].includes(args[0]))) {
     return { kind: 'help', topic: 'application' };
   }
+  // docs/38 — `baton top` is the operator seat verb. It parses in baton-top.mjs and returns null
+  // for any non-top argv, so the ordinary CLI below is never swallowed (its kind top/top_help
+  // dispatches through the resident client in scripts/baton.mjs).
+  const top = parseBatonTopCli(args);
+  if (top !== null) return top;
   const idempotencyKey = take(args, '--idempotency-key') ?? randomUUID();
   if (args[0] === 'credentials') {
     args.shift();
