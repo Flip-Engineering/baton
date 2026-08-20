@@ -1,0 +1,32 @@
+wave bbb-2026-08-20-wave-b
+member row-plan-effects
+  harness omp
+  model "deepseek/deepseek-v4-flash"
+  effort high
+  scope "impl/src/**"
+  scope "impl/test/**"
+  scope "docs/reference/evidence/baton-builds-baton-2026-08-19/wave-b/**"
+  objectiveRef "docs/reference/evidence/baton-builds-baton-2026-08-19/wave-b/row-plan-effects-brief.md"
+  report "docs/reference/evidence/baton-builds-baton-2026-08-19/wave-b/notes-row-plan-effects.md"
+member row-harvest-recovery
+  harness omp
+  model "deepseek/deepseek-v4-flash"
+  effort high
+  scope "impl/src/**"
+  scope "impl/test/**"
+  scope "docs/reference/evidence/baton-builds-baton-2026-08-19/wave-b/**"
+  objectiveRef "docs/reference/evidence/baton-builds-baton-2026-08-19/wave-b/row-harvest-recovery-brief.md"
+  report "docs/reference/evidence/baton-builds-baton-2026-08-19/wave-b/notes-row-harvest-recovery.md"
+member row-resume-wiring
+  harness omp
+  model "deepseek/deepseek-v4-flash"
+  effort high
+  scope "impl/src/**"
+  scope "impl/test/**"
+  scope "docs/reference/evidence/baton-builds-baton-2026-08-19/wave-b/**"
+  objectiveRef "docs/reference/evidence/baton-builds-baton-2026-08-19/wave-b/row-resume-wiring-brief.md"
+  report "docs/reference/evidence/baton-builds-baton-2026-08-19/wave-b/notes-row-resume-wiring.md"
+messageOnSpawn brief "Read your objectiveRef brief IN FULL first; it binds. RED-first: write the pin, verify RED at HEAD for the intended reason, implement to GREEN, run the named batteries. Your [attempt:] line verbatim in your report's first five lines."
+harvest "docs/reference/evidence/baton-builds-baton-2026-08-19/wave-b/notes-row-plan-effects.md" mustContain "attempt:"
+harvest "docs/reference/evidence/baton-builds-baton-2026-08-19/wave-b/notes-row-harvest-recovery.md" mustContain "attempt:"
+harvest "docs/reference/evidence/baton-builds-baton-2026-08-19/wave-b/notes-row-resume-wiring.md" mustContain "attempt:"
