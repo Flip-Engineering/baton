@@ -6483,21 +6483,63 @@ export class Coordinator {
 
   /** Reverify the physical protected ref for an accepted result without creating or changing it. */
   async inspectPreservedResult(workerId, expectedSha) {
+    const [entry] = await this.inspectPreservedResults([{ workerId, expectedSha }]);
+    return entry;
+  }
+
+  /** #216 (row-git-batch): reverify MANY members' protected result refs with ONE git process.
+   * Same per-entry rules as inspectPreservedResult — the batch resolves every distinct
+   * retained ref through a single worktrees.resolveResults call (one for-each-ref), so a
+   * waves.list page pays one process for N completed members instead of N. A worktree stub
+   * without the batch resolver falls back to the single-ref resolve (stub semantics). */
+  async inspectPreservedResults(entries) {
     this._assertReadable();
-    const handle = this._getWorker(workerId);
-    const task = this._tasks.get(handle.taskId);
-    if (!task || task.status !== 'completed' || task.capturedSha !== expectedSha || !task.retainedResultRef) {
-      return Object.freeze({ sha: expectedSha, ref: task?.retainedResultRef ?? null, state: 'unavailable' });
+    if (!Array.isArray(entries) || entries.length > 4096) {
+      throw new TypeError('preserved inspection batch is invalid');
     }
-    if (!this._worktrees || typeof this._worktrees.resolveResult !== 'function') {
-      return Object.freeze({ sha: expectedSha, ref: task.retainedResultRef, state: 'unverifiable' });
+    const prepared = entries.map((entry) => {
+      if (!entry || typeof entry.workerId !== 'string' || typeof entry.expectedSha !== 'string') {
+        throw new TypeError('preserved inspection entry is invalid');
+      }
+      const handle = this._getWorker(entry.workerId);
+      const task = this._tasks.get(handle.taskId);
+      return { workerId: entry.workerId, expectedSha: entry.expectedSha, task };
+    });
+    const resolvable = prepared.filter((entry) => entry.task
+      && entry.task.status === 'completed' && entry.task.capturedSha === entry.expectedSha
+      && entry.task.retainedResultRef);
+    const batchCapable = resolvable.length > 0 && this._worktrees
+      && typeof this._worktrees.resolveResults === 'function';
+    const resolvedByEntry = new Map();
+    if (batchCapable) {
+      const refs = [...new Set(resolvable.map((entry) => entry.task.retainedResultRef))];
+      const resolved = await this._worktrees.resolveResults(refs);
+      for (const entry of resolvable) {
+        resolvedByEntry.set(`${entry.workerId}\0${entry.expectedSha}`,
+          resolved.get(entry.task.retainedResultRef) ?? null);
+      }
+    } else if (this._worktrees && typeof this._worktrees.resolveResult === 'function') {
+      for (const entry of resolvable) {
+        resolvedByEntry.set(`${entry.workerId}\0${entry.expectedSha}`,
+          await this._worktrees.resolveResult(entry.task.retainedResultRef));
+      }
     }
-    const resolved = await this._worktrees.resolveResult(task.retainedResultRef);
-    return Object.freeze({
-      sha: expectedSha,
-      ref: task.retainedResultRef,
-      state: resolved === expectedSha ? 'pinned' : resolved === null ? 'missing' : 'mismatch',
-      resolved,
+    return prepared.map((entry) => {
+      const { task, expectedSha } = entry;
+      if (!task || task.status !== 'completed' || task.capturedSha !== expectedSha
+        || !task.retainedResultRef) {
+        return Object.freeze({ sha: expectedSha, ref: task?.retainedResultRef ?? null, state: 'unavailable' });
+      }
+      if (!this._worktrees || typeof this._worktrees.resolveResult !== 'function') {
+        return Object.freeze({ sha: expectedSha, ref: task.retainedResultRef, state: 'unverifiable' });
+      }
+      const resolved = resolvedByEntry.get(`${entry.workerId}\0${expectedSha}`) ?? null;
+      return Object.freeze({
+        sha: expectedSha,
+        ref: task.retainedResultRef,
+        state: resolved === expectedSha ? 'pinned' : resolved === null ? 'missing' : 'mismatch',
+        resolved,
+      });
     });
   }
 

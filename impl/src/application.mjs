@@ -7251,11 +7251,18 @@ export class BatonApplication {
     const selectedTask = selectedCandidate
       ? this.driver.coordination.task(selectedCandidate.taskId) : null;
     let selectedPreservation = null;
-    if (selectedTask?.assignee && selectedCandidate
-      && typeof this.driver.coordinator.inspectPreservedResult === 'function') {
-      selectedPreservation = await this.driver.coordinator.inspectPreservedResult(
-        selectedTask.assignee, selectedCandidate.resultSha,
-      );
+    if (selectedTask?.assignee && selectedCandidate) {
+      // #216 (row-git-batch): consume the page-level batched resolution when the selected
+      // candidate's (assignee, resultSha) was pre-resolved; otherwise fall back to the
+      // single-ref inspection (one process for this one view).
+      const preserved = options?.preservedResults;
+      if (preserved instanceof Map && preserved.has(`${selectedTask.assignee}\0${selectedCandidate.resultSha}`)) {
+        selectedPreservation = preserved.get(`${selectedTask.assignee}\0${selectedCandidate.resultSha}`);
+      } else if (typeof this.driver.coordinator.inspectPreservedResult === 'function') {
+        selectedPreservation = await this.driver.coordinator.inspectPreservedResult(
+          selectedTask.assignee, selectedCandidate.resultSha,
+        );
+      }
     }
     const selectedAdoption = selectedCandidate
       ? this.driver.coordination.runResultAdoption?.(runId, selectedCandidate.nodeKey) ?? null
@@ -7597,8 +7604,16 @@ export class BatonApplication {
     const resultStability = acceptedVerification?.stability ?? result?.verificationStability ?? null;
     const adoption = this.driver.coordination.runResultAdoption?.(runId, node.key) ?? null;
     let preservation = null;
-    if (workerId && resultSha && typeof this.driver.coordinator.inspectPreservedResult === 'function') {
-      preservation = await this.driver.coordinator.inspectPreservedResult(workerId, resultSha);
+    if (workerId && resultSha) {
+      // #216 (row-git-batch): a page-level batch (waves.list) pre-resolves every member's
+      // preserved ref in ONE git process and threads the keyed results here — the view
+      // consumes the batch instead of paying its own resolveResult per member.
+      const preserved = options?.preservedResults;
+      if (preserved instanceof Map && preserved.has(`${workerId}\0${resultSha}`)) {
+        preservation = preserved.get(`${workerId}\0${resultSha}`);
+      } else if (typeof this.driver.coordinator.inspectPreservedResult === 'function') {
+        preservation = await this.driver.coordinator.inspectPreservedResult(workerId, resultSha);
+      }
     }
     let phase;
     if (!projection.approval) phase = 'awaiting_plan_approval';
@@ -10954,7 +10969,7 @@ export class BatonApplication {
     }, bounds);
   }
 
-  async inspect(rawRequest, rawPrincipal, rawContext = null) {
+  async inspect(rawRequest, rawPrincipal, rawContext = null, viewOptions = null) {
     this._assertOpen();
     await this.ready;
     const context = normalizeCommandContext(rawContext);
@@ -10989,7 +11004,7 @@ export class BatonApplication {
     }
     if (!current.profile) {
       const view = this._withContextProjection(
-        current, await this._buildView(current, this.principals.observer),
+        current, await this._buildView(current, this.principals.observer, viewOptions ?? undefined),
       );
       return this._historicalProfileInspection(current, view, request);
     }
@@ -11005,7 +11020,7 @@ export class BatonApplication {
       ? undefined : (request.waitMs ?? policy.maxWaitMs);
     const bounds = this._semanticBounds(current);
     let view = this._withContextProjection(
-      current, await this._buildView(current, this.principals.observer),
+      current, await this._buildView(current, this.principals.observer, viewOptions ?? undefined),
     );
     if (request.cursor !== undefined && request.cursor > view.cursor) {
       throw applicationError('Run inspection cursor is ahead of durable authority', 'application_inspect_cursor_ahead');
@@ -11041,7 +11056,7 @@ export class BatonApplication {
           }
           this._authorizeRecursiveCommand('run.status', request.runId, principal, context);
           view = this._withContextProjection(
-            current, await this._buildView(current, this.principals.observer),
+            current, await this._buildView(current, this.principals.observer, viewOptions ?? undefined),
           );
           await this._authorize('run.status', principal, request.runId, authorizationSubject);
           if (notification?.advanced === false && !APPLICATION_RUN_TERMINAL_PHASES.has(view.phase)) {
@@ -11976,6 +11991,11 @@ export class BatonApplication {
     // WLS-1: one single-pass steering-registered index serves every member on this page — the
     // per-member full-log rescans (_runIdForWaveMember/_runWaveRoute) are the 87k-event furnace.
     const waveIndex = this._runWaveIndex();
+    // #216 (row-git-batch): the page resolves EVERY completed member's preserved-result ref in
+    // ONE git process before any view build (inspectPreservedResults → worktrees.resolveResults);
+    // the per-member inspect calls consume the keyed results instead of one resolveResult each
+    // (~90 members × ~3 git calls ≈ 11-13 s per waves_list at HEAD).
+    const preservedResults = await this._pagePreservedInspections(page, waveIndex);
     const waves = [];
     for (const row of page) {
       const members = [];
@@ -11995,7 +12015,7 @@ export class BatonApplication {
           let view = null;
           if (runId !== null) {
             try {
-              view = await this.inspect({ runId }, principal, context);
+              view = await this.inspect({ runId }, principal, context, { preservedResults });
             } catch (error) {
               if (error?.code !== 'application_run_not_found') throw error;
               throw applicationError(`wave member ${member} run is no longer available`, 'wave_not_found', { runId, role: member });
@@ -12023,7 +12043,7 @@ export class BatonApplication {
         let view = null;
         if (runId !== null) {
           try {
-            view = await this.inspect({ runId }, principal, context);
+            view = await this.inspect({ runId }, principal, context, { preservedResults });
           } catch (error) {
             // D5.2 seam: a member whose run WAS registered and then disappeared refuses the whole
             // read typed wave_not_found — the registry row is never a silent success shape.
@@ -12051,6 +12071,41 @@ export class BatonApplication {
     }
     const nextCursor = cursor + page.length < open.length ? cursor + page.length : null;
     return deepFreeze({ schemaVersion: 1, cursor, nextCursor, waves });
+  }
+
+  /** #216 (row-git-batch): pre-resolve every completed member's preserved-result ref on the
+   * page in ONE coordinator batch (one worktrees.resolveResults → one git process). Returns a
+   * Map<`${workerId}\0${expectedSha}`, inspection> the view builds consume, or null when the
+   * page has no resolvable member or the coordinator lacks the batch seam. Purely memory/log
+   * reads per member (the coordinator's own task authority) — never a git spawn. */
+  async _pagePreservedInspections(page, waveIndex) {
+    if (typeof this.driver.coordinator.inspectPreservedResults !== 'function') return null;
+    if (typeof this.driver.coordinator.result !== 'function') return null;
+    const workers = this.driver.coordinator.list();
+    const entries = [];
+    for (const row of page) {
+      for (const member of row.roster ?? []) {
+        const role = typeof member === 'string' ? member : member?.role ?? null;
+        const runId = this._runIdForWaveMember(row.waveId, role, waveIndex);
+        if (runId === null) continue;
+        const worker = workers.find((candidate) => candidate.runId === runId);
+        if (!worker?.id) continue;
+        let memberResult;
+        try { memberResult = await this.driver.coordinator.result(worker.id); }
+        catch { continue; }
+        if (memberResult?.status === 'completed' && typeof memberResult.capturedSha === 'string'
+          && memberResult.retainedResultRef) {
+          entries.push({ workerId: worker.id, expectedSha: memberResult.capturedSha });
+        }
+      }
+    }
+    if (entries.length === 0) return null;
+    const inspected = await this.driver.coordinator.inspectPreservedResults(entries);
+    const map = new Map();
+    for (let index = 0; index < entries.length; index += 1) {
+      map.set(`${entries[index].workerId}\0${entries[index].expectedSha}`, inspected[index]);
+    }
+    return map;
   }
 
   // The member's run is the steering-registered runId for (waveId, waveRole) — the durable

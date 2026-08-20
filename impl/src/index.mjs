@@ -255,6 +255,12 @@ function capacityReservationIdentity(row) {
 
 /** worktree.mjs's real functions wrapped into the coordinator's manager interface. */
 function worktreeManager(repoRoot, opts = {}) {
+  if (opts.gitExec !== undefined && typeof opts.gitExec !== 'function') {
+    throw new TypeError('gitExec must be a spawn function');
+  }
+  // #216 (row-git-batch): the preserved-result resolution spawn is a seam (tests count real
+  // git processes through it); production defaults to the module-local localGit.
+  const git = opts.gitExec ?? localGit;
   let verifyReservationSeq = 0;
   const verifyReservations = new Map();
   const workerReservations = new Map();
@@ -839,12 +845,38 @@ function worktreeManager(repoRoot, opts = {}) {
       localGit(['update-ref', ref, sha], repoRoot, { stdio: 'ignore' });
       return ref;
     },
-    async resolveResult(ref) {
-      if (typeof ref !== 'string' || !/^refs\/baton\/results\/[a-f0-9]{40,64}$/u.test(ref)) {
-        throw Object.assign(new Error('result ref is outside Baton ownership'), { code: 'result_ref_invalid' });
+    // #216 (row-git-batch): N preserved-result refs resolve in ONE git process. A single
+    // `for-each-ref refs/baton/results/` lists every owned ref; each requested ref maps to
+    // its current object sha (or null when the ref is missing — the same missing/mismatch
+    // truth `rev-parse --verify` gave per ref, without N spawns). The retained refs are
+    // lightweight (`update-ref ref sha`), so %(objectname) IS the commit sha the single-ref
+    // `^{commit}` peel produced.
+    async resolveResults(refs) {
+      if (!Array.isArray(refs)) throw new TypeError('resolveResults requires an array of result refs');
+      if (refs.length === 0) return new Map();
+      for (const ref of refs) {
+        if (typeof ref !== 'string' || !/^refs\/baton\/results\/[a-f0-9]{40,64}$/u.test(ref)) {
+          throw Object.assign(new Error('result ref is outside Baton ownership'), { code: 'result_ref_invalid' });
+        }
       }
-      try { return localGit(['rev-parse', '--verify', `${ref}^{commit}`], repoRoot, { encoding: 'utf8' }).trim(); }
-      catch { return null; }
+      let output;
+      try {
+        output = git(['for-each-ref', '--format=%(refname)%00%(objectname)', 'refs/baton/results/'], repoRoot, { encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 });
+      } catch { output = ''; }
+      const resolved = new Map();
+      for (const line of output.split('\n')) {
+        if (line.length === 0) continue;
+        const separator = line.indexOf('\0');
+        if (separator === -1) continue;
+        resolved.set(line.slice(0, separator), line.slice(separator + 1));
+      }
+      const result = new Map();
+      for (const ref of refs) result.set(ref, resolved.get(ref) ?? null);
+      return result;
+    },
+    async resolveResult(ref) {
+      // Single-ref wrapper over the batch: one call is still exactly one git process.
+      return (await this.resolveResults([ref])).get(ref);
     },
     async retainCheckpoint(sha) {
       const ref = `refs/baton/checkpoints/${sha}`;
@@ -1465,6 +1497,8 @@ export function createDriver(opts) {
       ownerAuthority: workspaceOwnerAuthority,
       log,
       structuredMerge: opts.structuredMerge,
+      // #216 (row-git-batch): the preserved-result resolution spawn seam (test spy hook).
+      gitExec: opts.gitExec,
     }),
     runtimeScopes,
     capabilities,
