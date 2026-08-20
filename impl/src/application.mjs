@@ -4591,6 +4591,15 @@ export class BatonApplication {
       ? EXPLICIT_RESULT_CONSTRAINTS[intent.resultIntent] : durableResult?.marker ?? null;
     const objectivePolicy = objectiveResultPolicy(effectiveResultIntent);
     const readOnlyResult = objectivePolicy.mode === 'read_only_evidence';
+    // #240 (row-plan-effects): the wave VERIFICATION seat (waveRole 'coordinator' — the member
+    // whose duty is reading the rows' deliverables and writing verify-notes) must not carry a
+    // REQUIRED repository_edit: an honest verifier with no diff can never satisfy the trust
+    // gate (required_effect_absent), so a profile-minted requiredEffects:['repository_edit']
+    // kills the seat. The effect stays DECLARED (in effects, so the verify-notes write remains
+    // in-scope when it happens) but is dropped from requiredEffects, and `analysis: true` is the
+    // TG5-blessed encoding of an effectful node whose repository_edit is declared-but-not-required
+    // (goal-plan.mjs:354-361). Non-coordinator seats keep the profile's required effects verbatim.
+    const coordinatorSeat = intent.driverKind === 'wave' && intent.waveRole === 'coordinator';
     const definitionOfDone = readOnlyResult
       ? clone(READ_ONLY_RESULT_DEFINITION) : clone(profile.definitionOfDone);
     const goalFields = {
@@ -4620,7 +4629,10 @@ export class BatonApplication {
         ? profile.effects.filter((effect) => effect !== 'repository_edit') : clone(profile.effects),
       ...(profile.workerPolicy ? { workerPolicy: clone(profile.workerPolicy) } : {}),
       ...(!readOnlyResult && Object.hasOwn(profile, 'requiredEffects')
-        ? { requiredEffects: clone(profile.requiredEffects) } : {}),
+        ? { requiredEffects: coordinatorSeat
+          ? profile.requiredEffects.filter((effect) => effect !== 'repository_edit')
+          : clone(profile.requiredEffects) } : {}),
+      ...(coordinatorSeat ? { analysis: true } : {}),
     };
     const workflowPolicy = intent.composition
       ? normalizeWorkflowPolicy(this.driver.coordination.workflowPolicy()) : null;

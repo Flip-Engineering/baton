@@ -1,147 +1,179 @@
+// [attempt: 4b19d324-91d7-4f4f-86af-aa156a744331 row-plan-effects]
+// row-plan-effects attempt 4b19d324-91d7-4f4f-86af-aa156a744331 — #240 red-first pin: the
+// wave coordinator (verification) seat's plan must not REQUIRE repository_edit.
+// Authority: docs/reference/evidence/baton-builds-baton-2026-08-19/wave-a/row-plan-effects-brief.md
+//   + the wave-b dispatch brief (attempt line above). Measured (wave-h): the wave's coordinator
+//   seat — whose duty is verification (read the rows' deliverables, write verify-notes.md) —
+//   failed the trust gate `required_effect_absent` because its plan minted from the deployment
+//   profile carries requiredEffects:['repository_edit']. An honest verifier with no diff can
+//   never satisfy that gate. The gate is correct; the PLAN SHAPE is wrong for the role.
+//
+// The two assertions (per the dispatch brief):
+//   1. coordinator-seat plan/brief: repository_edit stays DECLARED (in effects — the
+//      verify-notes write stays in-scope when it happens) but is NOT required (absent from
+//      requiredEffects) — the seat must be able to complete with no diff.
+//   2. row-seat control: repository_edit stays REQUIRED — the trust gate is preserved for
+//      ordinary wave members, so the fix can never be a blanket effects weakening.
+//
+// At HEAD the coordinator seat's plan node carries requiredEffects:['repository_edit'] minted
+// verbatim from the deployment profile (application.mjs singleNode), so assertion 1 fails RED
+// with exactly the wrong-for-the-role shape; assertion 2 is the still-green control. The wave
+// machinery passes driverKind:'wave' + waveId + waveRole + waveStart through run.start exactly
+// as createWave does (wave.mjs:243-247), and the plan is read back from the authoritative
+// store index (coordination-store.mjs goalPlanRun) — never a projected view.
+
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { MockAdapter, createDriver } from '../src/index.mjs';
+import { createDriver } from '../src/index.mjs';
 import { BatonApplication } from '../src/application.mjs';
+import { MockAdapter } from '../src/adapter.mjs';
 
-// #240 red pin — coordinator plans over-declare repository_edit for verification roles.
-//
-// Measured (wave-h, the no-clock-followons coordinator): the coordinator seat's plan —
-// minted from the deployment profile at admission (application.mjs singleNode) — carries
-// requiredEffects: ['repository_edit']. An honest coordinator whose deliverable is the
-// verification verdict, not a diff, then fails the trust gate with required_effect_absent.
-//
-// The contract: repository_edit stays DECLARED for the coordinator seat (it may still
-// write its verify-notes) but is never REQUIRED — absence of an edit is not a violation
-// for a verification duty. Implementation/row seats keep the requirement.
-//
-// RED   = a driverKind:'wave', waveRole:'coordinator' run's spawn brief carries
-//         requiredEffects including repository_edit.
-// GREEN = the coordinator seat's brief carries effects including repository_edit but
-//         requiredEffects WITHOUT it; a row seat's brief keeps it required.
+const REPO = 'repo-coordinator-plan-effects-240';
+const WAVE_ID = 'wave:0123456789abcdef0123456789abcdef';
 
-const REPO = 'issue-240-repo';
+const principal = (id) => ({ actor: `plan-effects:${id}`, principalId: id, sessionId: `${id}-session` });
+const root = (prefix) => mkdtempSync(join(tmpdir(), `baton-${prefix}-`));
 
+// The deployment-profile shape the coordinator seat actually mints from: effects declares
+// repository_edit AND requiredEffects requires it (application-deployment.mjs:947-948).
 const goalPlanPolicy = Object.freeze({
-  schemaVersion: 1, repoId: REPO, mandatory: true, approvalTtlMs: 60_000,
+  schemaVersion: 1, repoId: REPO, mandatory: false,
+  approvalTtlMs: 60 * 60 * 1_000,
   riskClasses: ['low', 'medium', 'high', 'critical'],
   effectClasses: ['repository_edit', 'provider_call'],
   capabilityClasses: ['code', 'test'],
   limits: Object.freeze({
-    maxGoalVersions: 16, maxPlanVersions: 16, maxNodes: 16, maxDepsPerNode: 16,
+    maxGoalVersions: 16, maxPlanVersions: 16, maxNodes: 32, maxDepsPerNode: 16,
     maxTextBytes: 4096, maxItems: 64, maxScopePaths: 64, maxRouteValues: 32,
     maxGoalBytes: 64 * 1024, maxPlanBytes: 256 * 1024, maxStatusBytes: 256 * 1024,
-    maxTokens: 100_000, maxUsd: 10, maxWallMin: 60, maxProviderTurns: 100,
+    maxTokens: 1_000_000, maxUsd: 100, maxWallMin: 24 * 60, maxProviderTurns: 10_000,
   }),
 });
-const verification = Object.freeze({
-  command: 'true', arguments: [], cwd: '.', envAllowlist: ['PATH'], expectExit: 0,
-  expectResult: 'exit_code', timeoutMs: 10_000, maxOutputBytes: 64 * 1024,
-  requiredPredecessorEvidence: [],
-});
+
 const profile = Object.freeze({
-  schemaVersion: 1, repoId: REPO,
-  definitionOfDone: ['the work is done'],
-  constraints: ['remain inside scope'],
+  schemaVersion: 1,
+  repoId: REPO,
+  definitionOfDone: ['the role deliverable is verified'],
+  constraints: [],
   risk: 'high',
-  goalBudget: { tokens: 20_000, usd: 2, wallMin: 10, providerTurns: 8 },
-  nodeBudget: { tokens: 10_000, usd: 1, wallMin: 5, providerTurns: 4 },
-  pathScope: ['**'],
-  verification,
+  goalBudget: { tokens: 40_000, usd: 4, wallMin: 20, providerTurns: 12 },
+  nodeBudget: { tokens: 20_000, usd: 2, wallMin: 10, providerTurns: 6 },
+  pathScope: ['docs/**'],
+  verification: {
+    command: 'true', arguments: [], cwd: '.', envAllowlist: ['PATH'], expectExit: 0,
+    expectResult: 'exit_code', timeoutMs: 10_000, maxOutputBytes: 64 * 1024,
+    requiredPredecessorEvidence: [],
+  },
   routes: [{ harness: 'mock', model: 'model-a', effort: 'low' }],
   capabilities: ['code', 'test'],
-  effects: ['repository_edit', 'provider_call'],
+  effects: ['provider_call', 'repository_edit'],
   requiredEffects: ['repository_edit'],
   resultPolicy: { mode: 'manual', maxAdoptedResults: 1, locator: 'git_ref' },
 });
 
-function briefCapturingAdapter() {
-  const adapter = new MockAdapter({
-    harness: 'mock', scenario: { outcome: 'completed', delayMs: 5, summary: 'done', files: {} },
-  });
-  const card = adapter.card.bind(adapter);
-  adapter.card = () => ({
+function mockAdapter() {
+  const instance = new MockAdapter({ harness: 'mock', scenario: {
+    outcome: 'completed', delayMs: 5, summary: 'done', files: {},
+  } });
+  const card = instance.card.bind(instance);
+  instance.card = () => ({
     ...card(),
     modelSelection: {
       mode: 'exact', configuredDefault: 'model-a', available: ['model-a'], family: 'mock',
-      acceptedPrefixes: ['mock-'], acceptedAliases: [], reasoningEffort: ['low'],
+      acceptedPrefixes: ['model-'], acceptedAliases: [], reasoningEffort: ['low'],
       serviceTier: null, provenance: 'test', refreshedAt: null,
     },
   });
-  const briefs = [];
-  const spawn = adapter.spawn.bind(adapter);
-  adapter.spawn = async (worker, brief, opts = {}) => {
-    briefs.push(brief);
-    return spawn(worker, brief, opts);
-  };
-  return { adapter, briefs };
+  return instance;
 }
 
-function fixture(label) {
-  const repository = mkdtempSync(join(tmpdir(), `bt240-${label}-repo-`));
-  const logDir = mkdtempSync(join(tmpdir(), `bt240-${label}-log-`));
-  execFileSync('git', ['init', '-q'], { cwd: repository });
-  execFileSync('git', ['config', 'user.email', 'issue240@example.invalid'], { cwd: repository });
-  execFileSync('git', ['config', 'user.name', 'Issue 240'], { cwd: repository });
-  writeFileSync(join(repository, 'base.txt'), 'base\n');
-  execFileSync('git', ['add', '-A'], { cwd: repository });
-  execFileSync('git', ['commit', '-qm', 'base'], { cwd: repository });
-  const { adapter, briefs } = briefCapturingAdapter();
+async function buildFixture() {
+  const repo = root('coordinator-plan-effects-repo');
+  const logDir = root('coordinator-plan-effects-log');
+  execFileSync('git', ['init', '-q'], { cwd: repo });
+  execFileSync('git', ['config', 'user.email', 'plan-effects@example.invalid'], { cwd: repo });
+  execFileSync('git', ['config', 'user.name', 'Plan Effects 240'], { cwd: repo });
+  writeFileSync(join(repo, 'base.txt'), 'base\n');
+  execFileSync('git', ['add', 'base.txt'], { cwd: repo });
+  execFileSync('git', ['commit', '-qm', 'base'], { cwd: repo });
+
   const driver = createDriver({
-    repoRoot: repository, repoId: REPO, logDir, now: Date.now,
-    adapters: { mock: adapter }, goalPlanAuthority: { policy: goalPlanPolicy, authorize: async () => true },
-    stopDeadlineMs: 2_000, watchdog: { stallMs: 60_000 },
+    repoRoot: repo, repoId: REPO, logDir, now: () => Date.now(),
+    adapters: { mock: mockAdapter() },
+    goalPlanAuthority: { policy: goalPlanPolicy, authorize: async () => true },
+    stopDeadlineMs: 2_000,
   });
-  const principalId = `${label}-principal`;
   const application = new BatonApplication({
     driver, repoId: REPO, profiles: { default: profile },
-    principals: { owner: { actor: `direct:${principalId}`, principalId, sessionId: `${principalId}-session`, powers: ['plan', 'dispatch', 'observe'], repoId: REPO, runId: null, idempotencyKey: `${label}-owner` } },
+    principals: {
+      planner: principal('planner'), dispatcher: principal('dispatcher'),
+      observer: principal('observer'),
+    },
     authorize: async () => true,
   });
-  return { application, adapter, briefs, repository, cleanup: () => { rmSync(repository, { recursive: true, force: true }); rmSync(logDir, { recursive: true, force: true }); } };
+  await application.ready;
+  return { application, driver, repo, logDir };
 }
 
-const owner = (label) => ({ actor: `direct:${label}-principal`, principalId: `${label}-principal`, sessionId: `${label}-principal-session` });
+async function cleanup(f) {
+  try { await f.application.close?.(); } catch { /* a RED failure may interrupt teardown */ }
+}
 
-test('COORDINATOR-SEAT (#240): the wave coordinator\'s plan declares repository_edit but never requires it', async (t) => {
-  const f = fixture('coord');
-  t.after(() => { try { f.cleanup(); } catch {} });
-  const started = await f.application.start({
-    runId: 'run-240-coordinator',
-    objective: 'Verify rows and write verify-notes.',
-    profile: 'default',
-    route: { harness: 'mock', model: 'model-a', effort: 'low' },
-    scope: ['docs/**'],
-    driverKind: 'wave',
-    waveId: 'wave-240-a',
-    waveRole: 'coordinator',
-  }, owner('coord'), { transport: 'direct', requestId: 'coord-1', idempotencyKey: 'direct:coord-1' });
-  assert.ok(started?.runId || started?.ok !== false, `run started (${JSON.stringify(started).slice(0, 120)})`);
-  assert.ok(f.briefs.length >= 1, `a worker was spawned with a brief (got ${f.briefs.length})`);
-  const brief = f.briefs[0];
-  assert.ok(brief.effects?.includes('repository_edit'),
-    'repository_edit stays DECLARED for the coordinator seat (the verify-notes write is in-scope when it happens)');
-  assert.equal((brief.requiredEffects ?? []).includes('repository_edit'), false,
-    `the coordinator seat's brief must NOT require repository_edit (got ${JSON.stringify(brief.requiredEffects)}) — an honest verifier with no diff must not fail required_effect_absent`);
+// The coordinator seat starts exactly as createWave starts its members (wave.mjs:243-247):
+// driverKind:'wave' + waveId + waveRole + waveStart riding run.start options.
+async function startCoordinator(f) {
+  return f.application.command('run.start', { intent: {
+    runId: 'run-coordinator-seat',
+    objective: 'Verify the row deliverables and write the verify-notes.',
+    profile: 'default', driverKind: 'wave', waveId: WAVE_ID, waveRole: 'coordinator',
+    waveStart: { roster: ['coordinator', 'row-alpha'], idempotencyKey: 'plan-effects-coordinator' },
+    route: { harness: 'mock', model: 'model-a', effort: 'low' }, scope: ['docs/**'],
+  } }, principal('owner'));
+}
+
+// A row seat is a wave member with any NON-verification role (here 'row-alpha').
+async function startRow(f) {
+  return f.application.command('run.start', { intent: {
+    runId: 'run-row-seat',
+    objective: 'Implement the row slice.',
+    profile: 'default', driverKind: 'wave', waveId: WAVE_ID, waveRole: 'row-alpha',
+    route: { harness: 'mock', model: 'model-a', effort: 'low' }, scope: ['docs/**'],
+  } }, principal('owner'));
+}
+
+test('coordinator-seat plan: repository_edit stays DECLARED but is NOT required — a diff-less verifier must not fail required_effect_absent', async (t) => {
+  const f = await buildFixture();
+  try {
+    await startCoordinator(f);
+    const plan = f.driver.coordination.goalPlanRun(REPO, 'run-coordinator-seat')?.plan;
+    assert.ok(plan, 'the coordinator run must mint a plan at run.start');
+    const node = plan.nodes[0];
+    assert.ok(node, 'the coordinator plan must carry its node');
+    assert.ok(node.effects.includes('repository_edit'),
+      'repository_edit stays DECLARED — the verify-notes write stays in-scope when it happens');
+    assert.equal((node.requiredEffects ?? []).includes('repository_edit'), false,
+      'repository_edit is NOT REQUIRED for the verification seat — an honest verifier with no diff completes (RED at HEAD: the profile-minted requiredEffects:[repository_edit] survives into the node)');
+  } finally {
+    await cleanup(f);
+  }
 });
 
-test('ROW-SEAT (control): an implementation seat keeps repository_edit required', async (t) => {
-  const f = fixture('row');
-  t.after(() => { try { f.cleanup(); } catch {} });
-  await f.application.start({
-    runId: 'run-240-row',
-    objective: 'Implement the slice.',
-    profile: 'default',
-    route: { harness: 'mock', model: 'model-a', effort: 'low' },
-    scope: ['impl/**'],
-    driverKind: 'wave',
-    waveId: 'wave-240-a',
-    waveRole: 'row-implement',
-  }, owner('row'), { transport: 'direct', requestId: 'row-1', idempotencyKey: 'direct:row-1' });
-  assert.ok(f.briefs.length >= 1, `a worker was spawned with a brief (got ${f.briefs.length})`);
-  assert.ok(f.briefs[0].requiredEffects?.includes('repository_edit'),
-    'an implementation seat keeps repository_edit required');
+test('row-seat control: repository_edit stays REQUIRED — the trust gate is preserved for ordinary wave members', async (t) => {
+  const f = await buildFixture();
+  try {
+    await startRow(f);
+    const plan = f.driver.coordination.goalPlanRun(REPO, 'run-row-seat')?.plan;
+    assert.ok(plan, 'the row run must mint a plan at run.start');
+    const node = plan.nodes[0];
+    assert.ok(node, 'the row plan must carry its node');
+    assert.deepEqual(node.requiredEffects, ['repository_edit'],
+      'a row seat still REQUIRES repository_edit — the fix must never be a blanket effects weakening');
+    assert.ok(node.effects.includes('repository_edit'), 'the row seat keeps the declared effect');
+  } finally {
+    await cleanup(f);
+  }
 });
