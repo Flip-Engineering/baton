@@ -4,8 +4,12 @@ import {
 } from 'node:fs';
 import { dirname, isAbsolute, join, relative, sep } from 'node:path';
 
-const DEFAULT_FILE_LIMIT = 1024 * 1024;
-const DEFAULT_TOTAL_LIMIT = 4 * 1024 * 1024;
+// #245: identity stores GROW by design (the omp agent.db carries session history — the
+// 2026-08-20 campaign's reached 1.36MB and killed every member at spawn under the old
+// 1MiB default). 8MiB/file, 32MiB total accommodates years of growth while the oversize
+// guard still catches pathological sources (the pin refuses a 64MiB file).
+const DEFAULT_FILE_LIMIT = 8 * 1024 * 1024;
+const DEFAULT_TOTAL_LIMIT = 32 * 1024 * 1024;
 const SECRET_ASSIGNMENT = /(?:api[_-]?key|token|secret|password)\s*=\s*["']([^"']{8,})["']/gi;
 
 function projectionError(code) {
