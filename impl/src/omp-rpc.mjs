@@ -521,11 +521,29 @@ export class OmpRpcCli {
       case 'retry_fallback_applied':
         this._emit(session, 'content.message', { phase: 'notice', note: 'provider_retry_fallback', model: frame.model ?? null });
         return;
-      case 'extension_ui_request':
-        // Measured anomaly pin (#228): UI frames can arrive even with --no-extensions.
-        // Tolerate without blocking the member: answer cancelled, never fatal.
-        session.process.notify({ type: 'extension_ui_response', id: frame.id, cancelled: true });
+      case 'extension_ui_request': {
+        // #243: UI frames can arrive even with --no-extensions (measured, #228) — but they
+        // are also the protocol's QUESTION lane (methods input/confirm/select/cancel, pinned
+        // from the omp 17.3.4 binary: response {type:'extension_ui_response', id, value} or
+        // {cancelled:true}). Auto-cancelling here made every member question unanswerable.
+        // Now: the question SURFACES as interaction.requested (full frame payload — the
+        // operator sees method/title/placeholder); the frame id is held open for answer().
+        // A malformed frame (no string id) still answers cancelled — never fatal.
+        if (typeof frame.id !== 'string' || frame.id.length === 0 || typeof frame.method !== 'string') {
+          session.process.notify({ type: 'extension_ui_response', id: frame.id ?? null, cancelled: true });
+          return;
+        }
+        const held = session.interactionRequests ?? (session.interactionRequests = new Map());
+        held.set(frame.id, { method: frame.method, receivedAt: this._now?.() ?? null });
+        if (held.size > 32) held.delete(held.keys().next().value);
+        this._emit(session, 'interaction.requested', {
+          id: frame.id, method: frame.method,
+          title: typeof frame.title === 'string' ? frame.title : null,
+          placeholder: typeof frame.placeholder === 'string' ? frame.placeholder : null,
+          message: typeof frame.message === 'string' ? frame.message : null,
+        });
         return;
+      }
       case 'extension_error':
         this._emit(session, 'content.message', { phase: 'notice', note: 'extension_error', error: String(frame.error ?? '').slice(0, 200) });
         return;
@@ -762,7 +780,26 @@ export class OmpRpcCli {
   }
 
   async approve() { return { ok: false, reason: 'omp rpc approvals are handled by launch flags, not runtime elicitation' }; }
-  async answer() { return { ok: false, reason: 'omp rpc question elicitation is not yet schema-pinned' }; }
+  // #243: answer a held extension_ui_request (protocol pinned from omp 17.3.4:
+  // {type:'extension_ui_response', id, value} for an answered request, {cancelled:true}
+  // for an unknown/dead one — never fatal, never blocks the member).
+  async answer(worker, reply) {
+    const session = this._sessions.get(worker);
+    if (!session || session.closed || !session.process) {
+      return { ok: false, notSent: true, reason: `unknown worker ${worker}` };
+    }
+    const id = reply && typeof reply === 'object' && !Array.isArray(reply)
+      && typeof reply.id === 'string' ? reply.id : null;
+    if (id === null) return { ok: false, notSent: true, reason: 'answer reply requires a string id' };
+    const held = session.interactionRequests;
+    if (!held || !held.has(id)) {
+      session.process.notify({ type: 'extension_ui_response', id, cancelled: true });
+      return { ok: true, cancelled: true };
+    }
+    held.delete(id);
+    session.process.notify({ type: 'extension_ui_response', id, value: reply.value });
+    return { ok: true };
+  }
 
   async kill(worker) {
     const session = this._sessions.get(worker);
