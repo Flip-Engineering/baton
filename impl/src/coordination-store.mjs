@@ -1532,8 +1532,20 @@ export class CoordinationStore {
     try { this._apply(event); }
     catch (error) { throw this._poisonProjection(event, error); }
     if (event.seq % this._checkpointInterval === 0) {
-      try { this._writeProjectionCheckpoint(); }
-      catch { /* the ledger remains authoritative; clean release retries and reports failure */ }
+      // #229 (measured 2026-08-20): the checkpoint is HOUSEKEEPING (crash-recovery
+      // acceleration; the ledger stays authoritative) — writing it INLINE blocked the
+      // request path 49.5s per boundary on the 140k-event campaign ledger (a 401's one
+      // audit append crossed 547×256). Deferred + coalesced: one pending write at a
+      // time, landing on the next macrotask drain; the clean-shutdown write still
+      // guarantees durability on release.
+      if (!this._checkpointPending) {
+        this._checkpointPending = true;
+        setImmediate(() => {
+          this._checkpointPending = false;
+          try { this._writeProjectionCheckpoint(); }
+          catch { /* the ledger remains authoritative; clean release retries and reports failure */ }
+        });
+      }
     }
     this._notifyAppend();
     return event;
