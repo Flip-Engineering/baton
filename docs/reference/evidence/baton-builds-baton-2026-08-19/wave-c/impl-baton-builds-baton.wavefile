@@ -1,4 +1,4 @@
-wave bbb-2026-08-20-wave-c
+wave bbb-2026-08-20-wave-c-rd2
 member row-conformance-core
   harness omp
   model "deepseek/deepseek-v4-flash"
