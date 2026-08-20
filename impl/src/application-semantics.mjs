@@ -1711,6 +1711,18 @@ const CANONICAL_OPERATION_SPECS = [
       cursor: { type: 'integer', minimum: 0 },
     }, ['runId', 'scope']),
   }],
+  ['run.scratchpad.append', {
+    profile: 'ordinary', surfaces: ['embedded', 'mcp', 'cli'], effect: 'control',
+    capabilities: ['observe'], outputView: 'outline', helpTopic: 'run',
+    example: 'baton run scratchpad append RUN_ID --scope shared --body TEXT [--kind note]',
+    inputSchema: objectSchema({
+      runId: id,
+      scope: { type: 'string', pattern: '^(?:shared|worker:[A-Za-z0-9._:-]{1,256})$' },
+      kind: { type: 'string', enum: ['note', 'plan', 'doubt', 'link'] },
+      body: { type: 'string', minLength: 1 },
+      idempotencyKey: { type: 'string', pattern: '^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$' },
+    }, ['runId', 'scope', 'body']),
+  }],
   ['run.scratchpad.elevate', {
     profile: 'ordinary', surfaces: ['embedded', 'mcp', 'cli'], effect: 'control',
     capabilities: ['control', 'observe'], outputView: 'outline', helpTopic: 'run',

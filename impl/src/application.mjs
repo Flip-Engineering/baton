@@ -12779,6 +12779,7 @@ export class BatonApplication {
     if (name === 'run.message.receipt') return this.messageReceipt(args, principal);
     if (name === 'run.attention.watch') return this.attentionWatch(args, principal);
     if (name === 'run.scratchpad.read') return this.scratchpadRead(args, principal);
+    if (name === 'run.scratchpad.append') return this.scratchpadAppend(args, principal);
     if (name === 'run.scratchpad.elevate') return this.scratchpadElevate(args, principal);
     if (name === 'run.board.post') return this.boardPost(args, principal);
     if (name === 'run.board.read') return this.boardRead(args, principal);
@@ -13161,6 +13162,33 @@ export class BatonApplication {
     });
   }
 
+  _normalizeScratchpadAppend(value) {
+    // #158: the shared-scratchpad write envelope — the MCP tool's shipped schema
+    // (baton_run_scratchpad_append): {runId, scope, kind?, body, idempotencyKey?}. Scope
+    // follows the D1.2 law verbatim (workers write worker:<id> + shared). The entry body
+    // bound is the store's own admission row (appendScratchpad D3); validated there,
+    // never duplicated here.
+    if (!value || typeof value !== 'object' || Array.isArray(value)
+      || Object.keys(value).some((key) => !['runId', 'scope', 'kind', 'body', 'idempotencyKey'].includes(key))
+      || !validId(value.runId)
+      || typeof value.scope !== 'string' || !/^(?:shared|worker:[A-Za-z0-9._:-]{1,256})$/u.test(value.scope)
+      || (value.kind !== undefined && !['note', 'plan', 'doubt', 'link'].includes(value.kind))
+      || (value.idempotencyKey !== undefined
+        && (typeof value.idempotencyKey !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/u.test(value.idempotencyKey)))
+      || (typeof value.body !== 'string' && (value.body === null || typeof value.body !== 'object'))) {
+      throw applicationError('run scratchpad append request is invalid', 'application_scratchpad_append_invalid');
+    }
+    if (typeof value.body === 'string' && value.body.length === 0) {
+      throw applicationError('run scratchpad append request is invalid', 'application_scratchpad_append_invalid');
+    }
+    return deepFreeze({
+      runId: value.runId, scope: value.scope,
+      kind: value.kind ?? 'note',
+      body: value.body,
+      ...(value.idempotencyKey !== undefined ? { idempotencyKey: value.idempotencyKey } : {}),
+    });
+  }
+
   _normalizeScratchpadElevate(value) {
     // Decision 12: ≤128 unique scratchpad-entry:<64 hex> ids (the store's MAX_SCRATCHPAD_WORKER_ENTRIES).
     if (!value || typeof value !== 'object' || Array.isArray(value)
@@ -13428,6 +13456,32 @@ export class BatonApplication {
     });
     const outcome = this.driver.coordinator.elevateTaskScratchpad(request.taskId, request.entryIds);
     return deepFreeze({ schemaVersion: 1, ...outcome });
+  }
+
+  // run.scratchpad.append — #158: the write side of the #33 accessor pair, matching the
+  // MCP tool's shipped schema (baton_run_scratchpad_append — which was a ghost until this
+  // verb existed). Members publish to their own worker scope or `shared` through the SAME
+  // kernel (appendScratchpad) the member machinery uses — no more surface-asymmetric
+  // handoffs (the #147 audit's §2 #10). The author is server-bound to the caller.
+  async scratchpadAppend(rawRequest, rawPrincipal) {
+    this._assertOpen();
+    await this.ready;
+    const request = this._normalizeScratchpadAppend(rawRequest);
+    const principal = normalizePrincipal(rawPrincipal, 'scratchpad append principal');
+    await this._authorize('run.scratchpad.append', principal, request.runId, {
+      scope: request.scope, entryKind: request.kind,
+    });
+    const entry = {
+      kind: request.kind,
+      text: typeof request.body === 'string' ? request.body : JSON.stringify(request.body),
+    };
+    const key = request.idempotencyKey
+      ?? `run.scratchpad.append:${request.runId}:${request.scope}:${request.kind}:${digest(entry)}`;
+    const outcome = this.driver.coordination.appendScratchpad(
+      { runId: request.runId, scope: request.scope, entry },
+      { actor: principal.actor, principalId: principal.principalId, key },
+    );
+    return deepFreeze({ schemaVersion: 1, runId: request.runId, scope: request.scope, ...outcome });
   }
 
   // run.board.post — Decision 8: the binding law verbatim, orchestrator posture, appendGate.
