@@ -1,0 +1,903 @@
+{
+  "schemaVersion": 1,
+  "generatedFrom": "surface-capability-catalog (the executable inventory)",
+  "parityLaw": "every row: cli === null iff mcp === null — divergences only as ledgered rows",
+  "rows": [
+    {
+      "name": "application.help",
+      "category": "observation",
+      "cli": "baton application help",
+      "mcp": "baton_application_help",
+      "web": "application_help",
+      "ledgered": false
+    },
+    {
+      "name": "board.claim",
+      "category": "control",
+      "cli": "baton board claim",
+      "mcp": "baton_board_claim",
+      "web": "board_claim",
+      "ledgered": false
+    },
+    {
+      "name": "board.close",
+      "category": "control",
+      "cli": "baton board close",
+      "mcp": "baton_board_close",
+      "web": "board_close",
+      "ledgered": false
+    },
+    {
+      "name": "board.drop",
+      "category": "control",
+      "cli": "baton board drop",
+      "mcp": "baton_board_drop",
+      "web": "board_drop",
+      "ledgered": false
+    },
+    {
+      "name": "board.post",
+      "category": "control",
+      "cli": "baton board post",
+      "mcp": "baton_board_post",
+      "web": "board_post",
+      "ledgered": false
+    },
+    {
+      "name": "board.read",
+      "category": "knowledge",
+      "cli": "baton board read",
+      "mcp": "baton_board_read",
+      "web": "board_read",
+      "ledgered": false
+    },
+    {
+      "name": "board.reorder",
+      "category": "control",
+      "cli": "baton board reorder",
+      "mcp": "baton_board_reorder",
+      "web": "board_reorder",
+      "ledgered": false
+    },
+    {
+      "name": "board.report",
+      "category": "control",
+      "cli": "baton board report",
+      "mcp": "baton_board_report",
+      "web": "board_report",
+      "ledgered": false
+    },
+    {
+      "name": "board.retitle",
+      "category": "control",
+      "cli": "baton board retitle",
+      "mcp": "baton_board_retitle",
+      "web": "board_retitle",
+      "ledgered": false
+    },
+    {
+      "name": "cli.credentials.install.kimi",
+      "category": "control",
+      "cli": "baton credentials install kimi",
+      "mcp": null,
+      "web": null,
+      "ledgered": true
+    },
+    {
+      "name": "cli.setup",
+      "category": "control",
+      "cli": "baton setup",
+      "mcp": null,
+      "web": null,
+      "ledgered": true
+    },
+    {
+      "name": "context.eval",
+      "category": "control",
+      "cli": "baton context eval",
+      "mcp": "baton_context_eval",
+      "web": "context_eval",
+      "ledgered": false
+    },
+    {
+      "name": "context.map",
+      "category": "control",
+      "cli": "baton context map",
+      "mcp": "baton_context_map",
+      "web": "context_map",
+      "ledgered": false
+    },
+    {
+      "name": "context.reduce",
+      "category": "control",
+      "cli": "baton context reduce",
+      "mcp": "baton_context_reduce",
+      "web": "context_reduce",
+      "ledgered": false
+    },
+    {
+      "name": "context.retry",
+      "category": "control",
+      "cli": "baton context retry",
+      "mcp": "baton_context_retry",
+      "web": "context_retry",
+      "ledgered": false
+    },
+    {
+      "name": "decision.list",
+      "category": "communication",
+      "cli": "baton decision list",
+      "mcp": "baton_decision_list",
+      "web": "decision_list",
+      "ledgered": false
+    },
+    {
+      "name": "deployment.doctor",
+      "category": "diagnostics",
+      "cli": "baton deployment doctor",
+      "mcp": "baton_deployment_doctor",
+      "web": "deployment_doctor",
+      "ledgered": true
+    },
+    {
+      "name": "deployment.doctor",
+      "category": "control",
+      "cli": "baton doctor",
+      "mcp": null,
+      "web": null,
+      "ledgered": true
+    },
+    {
+      "name": "deployment.serve",
+      "category": "control",
+      "cli": "baton deployment serve",
+      "mcp": "baton_deployment_serve",
+      "web": "deployment_serve",
+      "ledgered": true
+    },
+    {
+      "name": "deployment.serve",
+      "category": "control",
+      "cli": "baton serve",
+      "mcp": null,
+      "web": null,
+      "ledgered": true
+    },
+    {
+      "name": "deployment.shutdown",
+      "category": "control",
+      "cli": "baton deployment shutdown",
+      "mcp": "baton_deployment_shutdown",
+      "web": "deployment_shutdown",
+      "ledgered": false
+    },
+    {
+      "name": "deployment.view",
+      "category": "observation",
+      "cli": "baton deployment view",
+      "mcp": "baton_deployment_view",
+      "web": "deployment_view",
+      "ledgered": true
+    },
+    {
+      "name": "deployment.view",
+      "category": "control",
+      "cli": "baton route",
+      "mcp": null,
+      "web": null,
+      "ledgered": true
+    },
+    {
+      "name": "fleet_capabilities",
+      "category": "diagnostics",
+      "cli": null,
+      "mcp": "fleet_capabilities",
+      "web": null,
+      "ledgered": true
+    },
+    {
+      "name": "fleet_capability_invoke",
+      "category": "control",
+      "cli": null,
+      "mcp": "fleet_capability_invoke",
+      "web": null,
+      "ledgered": true
+    },
+    {
+      "name": "fleet_drain",
+      "category": "control",
+      "cli": null,
+      "mcp": "fleet_drain",
+      "web": null,
+      "ledgered": true
+    },
+    {
+      "name": "fleet_goal_define",
+      "category": "control",
+      "cli": null,
+      "mcp": "fleet_goal_define",
+      "web": null,
+      "ledgered": true
+    },
+    {
+      "name": "fleet_goal_plan_status",
+      "category": "observation",
+      "cli": null,
+      "mcp": "fleet_goal_plan_status",
+      "web": null,
+      "ledgered": true
+    },
+    {
+      "name": "fleet_interrupt",
+      "category": "communication",
+      "cli": null,
+      "mcp": "fleet_interrupt",
+      "web": null,
+      "ledgered": true
+    },
+    {
+      "name": "fleet_kill",
+      "category": "control",
+      "cli": null,
+      "mcp": "fleet_kill",
+      "web": null,
+      "ledgered": true
+    },
+    {
+      "name": "fleet_list",
+      "category": "observation",
+      "cli": null,
+      "mcp": "fleet_list",
+      "web": null,
+      "ledgered": true
+    },
+    {
+      "name": "fleet_plan_approve",
+      "category": "communication",
+      "cli": null,
+      "mcp": "fleet_plan_approve",
+      "web": null,
+      "ledgered": true
+    },
+    {
+      "name": "fleet_plan_propose",
+      "category": "control",
+      "cli": null,
+      "mcp": "fleet_plan_propose",
+      "web": null,
+      "ledgered": true
+    },
+    {
+      "name": "fleet_provider_status",
+      "category": "diagnostics",
+      "cli": null,
+      "mcp": "fleet_provider_status",
+      "web": null,
+      "ledgered": true
+    },
+    {
+      "name": "fleet_respond",
+      "category": "communication",
+      "cli": null,
+      "mcp": "fleet_respond",
+      "web": null,
+      "ledgered": true
+    },
+    {
+      "name": "fleet_result",
+      "category": "diagnostics",
+      "cli": null,
+      "mcp": "fleet_result",
+      "web": null,
+      "ledgered": true
+    },
+    {
+      "name": "fleet_reuse_decide",
+      "category": "communication",
+      "cli": null,
+      "mcp": "fleet_reuse_decide",
+      "web": null,
+      "ledgered": true
+    },
+    {
+      "name": "fleet_reuse_recheck",
+      "category": "control",
+      "cli": null,
+      "mcp": "fleet_reuse_recheck",
+      "web": null,
+      "ledgered": true
+    },
+    {
+      "name": "fleet_scratch_oracle",
+      "category": "control",
+      "cli": null,
+      "mcp": "fleet_scratch_oracle",
+      "web": null,
+      "ledgered": true
+    },
+    {
+      "name": "fleet_send",
+      "category": "communication",
+      "cli": null,
+      "mcp": "fleet_send",
+      "web": null,
+      "ledgered": true
+    },
+    {
+      "name": "fleet_spawn",
+      "category": "control",
+      "cli": null,
+      "mcp": "fleet_spawn",
+      "web": null,
+      "ledgered": true
+    },
+    {
+      "name": "fleet_wait",
+      "category": "observation",
+      "cli": null,
+      "mcp": "fleet_wait",
+      "web": null,
+      "ledgered": true
+    },
+    {
+      "name": "knowledge.horizon",
+      "category": "knowledge",
+      "cli": "baton knowledge horizon",
+      "mcp": "baton_knowledge_horizon",
+      "web": "knowledge_horizon",
+      "ledgered": false
+    },
+    {
+      "name": "knowledge.promote",
+      "category": "control",
+      "cli": "baton knowledge promote",
+      "mcp": "baton_knowledge_promote",
+      "web": "knowledge_promote",
+      "ledgered": false
+    },
+    {
+      "name": "knowledge.recall",
+      "category": "knowledge",
+      "cli": "baton knowledge recall",
+      "mcp": "baton_knowledge_recall",
+      "web": "knowledge_recall",
+      "ledgered": false
+    },
+    {
+      "name": "knowledge.settlement_lease",
+      "category": "control",
+      "cli": "baton knowledge settlement_lease",
+      "mcp": "baton_knowledge_settlement_lease",
+      "web": "knowledge_settlement_lease",
+      "ledgered": false
+    },
+    {
+      "name": "package.admit",
+      "category": "control",
+      "cli": "baton package admit",
+      "mcp": "baton_package_admit",
+      "web": "package_admit",
+      "ledgered": false
+    },
+    {
+      "name": "package.attach",
+      "category": "control",
+      "cli": "baton package attach",
+      "mcp": "baton_package_attach",
+      "web": "package_attach",
+      "ledgered": false
+    },
+    {
+      "name": "package.read",
+      "category": "knowledge",
+      "cli": "baton package read",
+      "mcp": "baton_package_read",
+      "web": "package_read",
+      "ledgered": false
+    },
+    {
+      "name": "repl.binding",
+      "category": "control",
+      "cli": "baton repl binding",
+      "mcp": "baton_repl_binding",
+      "web": "repl_binding",
+      "ledgered": false
+    },
+    {
+      "name": "repl.cite",
+      "category": "knowledge",
+      "cli": "baton repl cite",
+      "mcp": "baton_repl_cite",
+      "web": "repl_cite",
+      "ledgered": false
+    },
+    {
+      "name": "repl.manifest",
+      "category": "control",
+      "cli": "baton repl manifest",
+      "mcp": "baton_repl_manifest",
+      "web": "repl_manifest",
+      "ledgered": false
+    },
+    {
+      "name": "run.adopt",
+      "category": "control",
+      "cli": "baton run adopt",
+      "mcp": "baton_run_adopt",
+      "web": "run_adopt",
+      "ledgered": false
+    },
+    {
+      "name": "run.answer",
+      "category": "communication",
+      "cli": "baton run answer",
+      "mcp": "baton_run_answer",
+      "web": "run_answer",
+      "ledgered": false
+    },
+    {
+      "name": "run.approve",
+      "category": "control",
+      "cli": "baton run approve",
+      "mcp": "baton_run_approve",
+      "web": "run_approve",
+      "ledgered": false
+    },
+    {
+      "name": "run.attention.list",
+      "category": "notifications",
+      "cli": "baton run attention list",
+      "mcp": "baton_run_attention_list",
+      "web": "run_attention_list",
+      "ledgered": false
+    },
+    {
+      "name": "run.attention.watch",
+      "category": "notifications",
+      "cli": "baton run attention watch",
+      "mcp": "baton_run_attention_watch",
+      "web": "run_attention_watch",
+      "ledgered": true
+    },
+    {
+      "name": "run.board.post",
+      "category": "control",
+      "cli": "baton run board post",
+      "mcp": "baton_run_board_post",
+      "web": "run_board_post",
+      "ledgered": true
+    },
+    {
+      "name": "run.board.read",
+      "category": "knowledge",
+      "cli": "baton run board read",
+      "mcp": "baton_run_board_read",
+      "web": "run_board_read",
+      "ledgered": true
+    },
+    {
+      "name": "run.debug",
+      "category": "diagnostics",
+      "cli": "baton run debug",
+      "mcp": "baton_run_debug",
+      "web": "run_debug",
+      "ledgered": false
+    },
+    {
+      "name": "run.do",
+      "category": "control",
+      "cli": "baton run do",
+      "mcp": "baton_run_do",
+      "web": "run_do",
+      "ledgered": false
+    },
+    {
+      "name": "run.episode",
+      "category": "control",
+      "cli": null,
+      "mcp": "run.episode",
+      "web": null,
+      "ledgered": true
+    },
+    {
+      "name": "run.evidence",
+      "category": "diagnostics",
+      "cli": "baton run evidence",
+      "mcp": "baton_run_evidence",
+      "web": "run_evidence",
+      "ledgered": false
+    },
+    {
+      "name": "run.export",
+      "category": "control",
+      "cli": "baton run export",
+      "mcp": "baton_run_export",
+      "web": "run_export",
+      "ledgered": false
+    },
+    {
+      "name": "run.feedback",
+      "category": "communication",
+      "cli": "baton run feedback",
+      "mcp": "baton_run_feedback",
+      "web": "run_feedback",
+      "ledgered": false
+    },
+    {
+      "name": "run.follow",
+      "category": "control",
+      "cli": null,
+      "mcp": "run.follow",
+      "web": null,
+      "ledgered": true
+    },
+    {
+      "name": "run.integrate",
+      "category": "control",
+      "cli": "baton run integrate",
+      "mcp": "baton_run_integrate",
+      "web": "run_integrate",
+      "ledgered": false
+    },
+    {
+      "name": "run.interrupt",
+      "category": "communication",
+      "cli": "baton run interrupt",
+      "mcp": "baton_run_interrupt",
+      "web": "run_interrupt",
+      "ledgered": false
+    },
+    {
+      "name": "run.knowledge.seed",
+      "category": "control",
+      "cli": "baton run knowledge seed",
+      "mcp": "baton_run_knowledge_seed",
+      "web": "run_knowledge_seed",
+      "ledgered": true
+    },
+    {
+      "name": "run.list",
+      "category": "observation",
+      "cli": "baton run list",
+      "mcp": "baton_run_list",
+      "web": "run_list",
+      "ledgered": false
+    },
+    {
+      "name": "run.member.interrupt",
+      "category": "communication",
+      "cli": "baton run member interrupt",
+      "mcp": "baton_run_member_interrupt",
+      "web": "run_member_interrupt",
+      "ledgered": false
+    },
+    {
+      "name": "run.member.send",
+      "category": "communication",
+      "cli": "baton run member send",
+      "mcp": "baton_run_member_send",
+      "web": "run_member_send",
+      "ledgered": false
+    },
+    {
+      "name": "run.member.stop",
+      "category": "control",
+      "cli": "baton run member stop",
+      "mcp": "baton_run_member_stop",
+      "web": "run_member_stop",
+      "ledgered": false
+    },
+    {
+      "name": "run.member.view",
+      "category": "observation",
+      "cli": "baton run member view",
+      "mcp": "baton_run_member_view",
+      "web": "run_member_view",
+      "ledgered": false
+    },
+    {
+      "name": "run.message.receipt",
+      "category": "communication",
+      "cli": "baton run message receipt",
+      "mcp": "baton_run_message_receipt",
+      "web": "run_message_receipt",
+      "ledgered": true
+    },
+    {
+      "name": "run.message.send",
+      "category": "communication",
+      "cli": "baton run message send",
+      "mcp": "baton_run_message_send",
+      "web": "run_message_send",
+      "ledgered": true
+    },
+    {
+      "name": "run.recover",
+      "category": "control",
+      "cli": "baton run recover",
+      "mcp": "baton_run_recover",
+      "web": "run_recover",
+      "ledgered": false
+    },
+    {
+      "name": "run.resume",
+      "category": "control",
+      "cli": "baton run resume",
+      "mcp": "baton_run_resume",
+      "web": "run_resume",
+      "ledgered": false
+    },
+    {
+      "name": "run.retry",
+      "category": "control",
+      "cli": "baton run retry",
+      "mcp": "baton_run_retry",
+      "web": "run_retry",
+      "ledgered": false
+    },
+    {
+      "name": "run.review",
+      "category": "control",
+      "cli": "baton run review",
+      "mcp": "baton_run_review",
+      "web": "run_review",
+      "ledgered": false
+    },
+    {
+      "name": "run.revise",
+      "category": "control",
+      "cli": "baton run revise",
+      "mcp": "baton_run_revise",
+      "web": "run_revise",
+      "ledgered": false
+    },
+    {
+      "name": "run.scratchpad",
+      "category": "knowledge",
+      "cli": "baton run scratchpad",
+      "mcp": "baton_run_scratchpad",
+      "web": "run_scratchpad",
+      "ledgered": false
+    },
+    {
+      "name": "run.scratchpad.append",
+      "category": "control",
+      "cli": "baton run scratchpad append",
+      "mcp": "baton_run_scratchpad_append",
+      "web": "run_scratchpad_append",
+      "ledgered": false
+    },
+    {
+      "name": "run.scratchpad.append",
+      "category": "control",
+      "cli": "baton run scratchpad append",
+      "mcp": "baton_run_scratchpad_append",
+      "web": "run_scratchpad_append",
+      "ledgered": false
+    },
+    {
+      "name": "run.scratchpad.elevate",
+      "category": "control",
+      "cli": "baton run scratchpad elevate",
+      "mcp": "baton_run_scratchpad_elevate",
+      "web": "run_scratchpad_elevate",
+      "ledgered": true
+    },
+    {
+      "name": "run.scratchpad.read",
+      "category": "knowledge",
+      "cli": "baton run scratchpad read",
+      "mcp": "baton_run_scratchpad_read",
+      "web": "run_scratchpad_read",
+      "ledgered": true
+    },
+    {
+      "name": "run.select",
+      "category": "control",
+      "cli": "baton run select",
+      "mcp": "baton_run_select",
+      "web": "run_select",
+      "ledgered": false
+    },
+    {
+      "name": "run.send",
+      "category": "communication",
+      "cli": "baton run send",
+      "mcp": "baton_run_send",
+      "web": "run_send",
+      "ledgered": false
+    },
+    {
+      "name": "run.start",
+      "category": "control",
+      "cli": "baton run start",
+      "mcp": "baton_run_start",
+      "web": "run_start",
+      "ledgered": false
+    },
+    {
+      "name": "run.status",
+      "category": "control",
+      "cli": null,
+      "mcp": "run.status",
+      "web": null,
+      "ledgered": true
+    },
+    {
+      "name": "run.stop",
+      "category": "control",
+      "cli": "baton run stop",
+      "mcp": "baton_run_stop",
+      "web": "run_stop",
+      "ledgered": false
+    },
+    {
+      "name": "run.view",
+      "category": "diagnostics",
+      "cli": "baton run view",
+      "mcp": "baton_run_view",
+      "web": "run_view",
+      "ledgered": false
+    },
+    {
+      "name": "run.wait",
+      "category": "control",
+      "cli": null,
+      "mcp": "run.wait",
+      "web": null,
+      "ledgered": true
+    },
+    {
+      "name": "run.watch",
+      "category": "diagnostics",
+      "cli": "baton run watch",
+      "mcp": "baton_run_watch",
+      "web": "run_watch",
+      "ledgered": false
+    },
+    {
+      "name": "run.workstream.notify",
+      "category": "communication",
+      "cli": null,
+      "mcp": "run.workstream.notify",
+      "web": null,
+      "ledgered": true
+    },
+    {
+      "name": "run.workstream.stop",
+      "category": "control",
+      "cli": null,
+      "mcp": "run.workstream.stop",
+      "web": null,
+      "ledgered": true
+    },
+    {
+      "name": "run.workstreams",
+      "category": "control",
+      "cli": null,
+      "mcp": "run.workstreams",
+      "web": null,
+      "ledgered": true
+    },
+    {
+      "name": "runs.list",
+      "category": "control",
+      "cli": null,
+      "mcp": "runs.list",
+      "web": null,
+      "ledgered": true
+    },
+    {
+      "name": "scratchpad.elevate",
+      "category": "control",
+      "cli": "baton scratchpad elevate",
+      "mcp": "baton_scratchpad_elevate",
+      "web": "scratchpad_elevate",
+      "ledgered": false
+    },
+    {
+      "name": "scratchpad.settle",
+      "category": "control",
+      "cli": "baton scratchpad settle",
+      "mcp": "baton_scratchpad_settle",
+      "web": "scratchpad_settle",
+      "ledgered": false
+    },
+    {
+      "name": "surface.catalog",
+      "category": "observation",
+      "cli": "baton surface catalog",
+      "mcp": "baton_surface_catalog",
+      "web": null,
+      "ledgered": false
+    },
+    {
+      "name": "surface.describe",
+      "category": "observation",
+      "cli": "baton surface describe",
+      "mcp": "baton_surface_describe",
+      "web": null,
+      "ledgered": false
+    },
+    {
+      "name": "surface.invoke",
+      "category": "control",
+      "cli": "baton surface invoke",
+      "mcp": "baton_surface_invoke",
+      "web": null,
+      "ledgered": false
+    },
+    {
+      "name": "surface.snapshot",
+      "category": "observation",
+      "cli": "baton surface snapshot",
+      "mcp": "baton_surface_snapshot",
+      "web": null,
+      "ledgered": false
+    },
+    {
+      "name": "waves.attach",
+      "category": "control",
+      "cli": "baton waves attach",
+      "mcp": "baton_waves_attach",
+      "web": "waves_attach",
+      "ledgered": false
+    },
+    {
+      "name": "waves.compile",
+      "category": "observation",
+      "cli": "baton waves compile",
+      "mcp": "baton_waves_compile",
+      "web": "waves_compile",
+      "ledgered": true
+    },
+    {
+      "name": "waves.list",
+      "category": "observation",
+      "cli": "baton waves list",
+      "mcp": "baton_waves_list",
+      "web": "waves_list",
+      "ledgered": false
+    },
+    {
+      "name": "waves.progress",
+      "category": "observation",
+      "cli": "baton waves progress",
+      "mcp": "baton_waves_progress",
+      "web": "waves_progress",
+      "ledgered": false
+    },
+    {
+      "name": "waves.run",
+      "category": "control",
+      "cli": "baton waves run",
+      "mcp": "baton_waves_run",
+      "web": "waves_run",
+      "ledgered": false
+    },
+    {
+      "name": "waves.send",
+      "category": "communication",
+      "cli": "baton waves send",
+      "mcp": "baton_waves_send",
+      "web": "waves_send",
+      "ledgered": false
+    },
+    {
+      "name": "waves.start",
+      "category": "control",
+      "cli": "baton waves start",
+      "mcp": "baton_waves_start",
+      "web": "waves_start",
+      "ledgered": false
+    },
+    {
+      "name": "waves.stop",
+      "category": "control",
+      "cli": "baton waves stop",
+      "mcp": "baton_waves_stop",
+      "web": "waves_stop",
+      "ledgered": false
+    }
+  ]
+}
