@@ -1245,7 +1245,7 @@ test('A4-pin GREEN: the #148 DRIVER LAW is documented — the typed refusal + re
 // §G — workflow evidence (GREEN)
 // ===========================================================================
 
-test('P-PUBLISH GREEN: the shared-scratchpad publish lane (run.scratchpad.append, #158) is NOT landed at HEAD — the refusal is the publish-as-you-go evidence', async (t) => {
+test('P-PUBLISH (folded 2026-08-20): the shared-scratchpad publish lane (run.scratchpad.append, #158) IS landed — the verb validates, the publish-as-you-go law is satisfied', async (t) => {
   const f = fixture('ppublish');
   t.after(() => cleanupFixture(f));
   const runId = 'run-blind-waits-ppublish';
@@ -1261,6 +1261,14 @@ test('P-PUBLISH GREEN: the shared-scratchpad publish lane (run.scratchpad.append
     refusal = error;
   }
 
-  assert.equal(refusal?.code, 'application_command_unavailable',
-    'the #158 publish verb is absent at HEAD — a shared-scratchpad publish attempt refuses application_command_unavailable (run.scratchpad.read/elevate are the only scratchpad direct ports, application.mjs:12522-12523). This refusal IS the workflow evidence the foundry-brief publish-as-you-go law expects; recorded in suite-draft-notes.md.');
+  // #158 landed (b41edfed): the verb EXISTS and validates. This pin's original premise
+  // (absence → application_command_unavailable) inverted with the landing; the temporally-
+  // coupled re-examination the blue-team note demanded. The publish attempt now refuses at
+  // VALIDATION (the fixture's shape — the landed envelope is {runId, scope, kind, body},
+  // this fixture sends the retired {title, text} form), never at availability. The lane
+  // is live: the publish-as-you-go law's workflow evidence is the verb's existence.
+  assert.equal(refusal?.code, 'application_scratchpad_append_invalid',
+    'the #158 publish verb is LIVE — attempts refuse at validation (retired envelope shape here), never application_command_unavailable. The publish-as-you-go lane exists.');
+  assert.notEqual(refusal?.code, 'application_command_unavailable',
+    'the ghost refusal would mean the lane regressed to unavailability');
 });

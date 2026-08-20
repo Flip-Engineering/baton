@@ -5800,7 +5800,7 @@ export class BatonApplication {
       resultIntent,
       profile: { name: current.profileName, digest: current.profile.digest },
       phase,
-      cursor: this.driver.coordination.snapshot().lastSeq,
+      cursor: this.driver.this.driver.coordination.eventCursor(),
       nextActions: runStop?.status === 'stopped' ? [{ kind: 'evidence' }]
         : runStop ? [{ kind: 'wait' }, { kind: 'status' }] : [{ kind: 'retry_planning' }],
       goal: { id: current.goal.goalId, version: current.goal.version, digest: current.goal.digest },
@@ -5924,7 +5924,7 @@ export class BatonApplication {
         currentProfileApplied: false, mutationAuthority: 'closed',
       },
       phase,
-      cursor: projection?.coordinationUpperBound ?? this.driver.coordination.snapshot().lastSeq,
+      cursor: projection?.coordinationUpperBound ?? this.driver.this.driver.coordination.eventCursor(),
       nextActions: runStop || ownedWorkers.length === 0 ? [] : [{ kind: 'stop' }],
       goal: { id: current.goal.goalId, version: current.goal.version, digest: current.goal.digest },
       plan: current.plan ? {
@@ -6670,7 +6670,7 @@ export class BatonApplication {
         role: binding.role, nodeKey: binding.nodeKey, taskId: task.id, workerId,
         targetDigest: digest(target), reasonDigest: digest(reason), source,
         prefix: {
-          throughSeq: this.driver.coordination.snapshot().lastSeq,
+          throughSeq: this.driver.this.driver.coordination.eventCursor(),
           goalDigest: current.goal.digest, planDigest: current.plan.digest,
           definitionDigest: definition.definitionDigest,
         },
@@ -6818,7 +6818,7 @@ export class BatonApplication {
       planDigest: current.plan.digest, definitionDigest: definition.definitionDigest,
       feedbackId, source, target, feedback: clone(feedback),
       prefix: {
-        throughSeq: this.driver.coordination.snapshot().lastSeq,
+        throughSeq: this.driver.this.driver.coordination.eventCursor(),
         goalDigest: current.goal.digest, planDigest: current.plan.digest,
         definitionDigest: definition.definitionDigest,
       },
