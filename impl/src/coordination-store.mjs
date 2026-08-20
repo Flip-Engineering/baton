@@ -11801,6 +11801,82 @@ export class CoordinationStore {
     }
     return freeze([...new Set(ids)].sort(compareCanonicalStrings));
   }
+
+  /** Bounded dispatches across every Plan generation of one Run's current Goal — the narrow
+   * read behind semantic control-target resolution (workflow interrupt recipients), which
+   * previously cloned the entire store through snapshot().goalPlan.dispatches. */
+  goalPlanDispatches(repoId, runId, limit = 100_000) {
+    if (!boundedText(repoId, 256) || !validRunId(runId)
+      || !Number.isSafeInteger(limit) || limit <= 0 || limit > 100_000) {
+      throw new TypeError('goal/plan Run dispatch request is invalid');
+    }
+    const goal = this._goalHeads.get(this._goalScopeKey(repoId, runId)) ?? null;
+    if (!goal) return freeze([]);
+    const dispatches = [];
+    for (const plan of this._plans.values()) {
+      if (plan.repoId !== repoId || plan.runId !== runId
+        || plan.goal.goalId !== goal.goalId || plan.goal.version !== goal.version
+        || plan.goal.digest !== goal.digest) continue;
+      for (const node of plan.nodes) {
+        const dispatch = this._planDispatches.get(this._planNodeKey(
+          plan.planId, plan.version, node.key,
+        ));
+        if (!dispatch) continue;
+        dispatches.push(dispatch);
+        if (dispatches.length > limit) throw new CoordinationRefusal(
+          'goal/plan Run dispatches exceed their bounded ceiling', 'goal_plan_status_oversize',
+        );
+      }
+    }
+    return freeze(dispatches.map(clone));
+  }
+
+  /** Approval + dispatches for ONE Plan generation of one Run's current Goal — the narrow read
+   * behind workflow Plan-history projections (_runAtPlan), which previously cloned the entire
+   * store through snapshot().goalPlan (approvals + dispatches). */
+  goalPlanPlanState(repoId, runId, planId, version, digest) {
+    if (!boundedText(repoId, 256) || !validRunId(runId) || !boundedText(planId, 256)
+      || !Number.isSafeInteger(version) || !boundedText(digest, 256)) {
+      throw new TypeError('goal/plan Plan state request is invalid');
+    }
+    const goal = this._goalHeads.get(this._goalScopeKey(repoId, runId)) ?? null;
+    if (!goal) return null;
+    const plan = this._plans.get(this._planVersionKey(planId, version)) ?? null;
+    if (!plan || plan.repoId !== repoId || plan.runId !== runId || plan.digest !== digest
+      || plan.goal.goalId !== goal.goalId || plan.goal.version !== goal.version
+      || plan.goal.digest !== goal.digest) return null;
+    const approval = this._planApprovals.get(this._planVersionKey(planId, version)) ?? null;
+    const dispatches = plan.nodes.map((node) => this._planDispatches.get(
+      this._planNodeKey(plan.planId, plan.version, node.key),
+    )).filter(Boolean).sort((left, right) => compareCanonicalStrings(
+      left.binding.nodeKey, right.binding.nodeKey,
+    ));
+    return freeze({
+      approval: clone(approval), dispatches: freeze(dispatches.map(clone)),
+    });
+  }
+
+  /** Bounded current Goal/Plan heads for one repo — the projection behind runs.list, which
+   * previously cloned the entire store through snapshot().goalPlan (all goal/plan bodies of
+   * every repo). Heads only: no historical versions, no dispatch bodies. */
+  goalPlanSummary(repoId, limit = 100_000) {
+    if (!boundedText(repoId, 256) || !Number.isSafeInteger(limit) || limit <= 0 || limit > 100_000) {
+      throw new TypeError('goal/plan summary request is invalid');
+    }
+    const goals = []; const plans = [];
+    for (const goal of this._goalHeads.values()) {
+      if (goal.repoId !== repoId || goal.runId === null) continue;
+      goals.push(goal);
+      if (goals.length > limit) throw new CoordinationRefusal(
+        'goal/plan summary exceeds its bounded ceiling', 'goal_plan_status_oversize',
+      );
+      const plan = this._planHeads.get(this._planHeadKey(goal));
+      if (plan) plans.push(plan);
+    }
+    return freeze({
+      goals: freeze(goals.map(clone)), plans: freeze(plans.map(clone)),
+    });
+  }
   healthCheck() { try { if (!existsSync(this.file)) return this._events.length === 0; const raw = readFileSync(this.file, 'utf8'); return raw.length === 0 || raw.endsWith('\n'); } catch { return false; } }
   readyTasks() {
     return [...this._tasks.values()].filter((task) => task.status === 'pending' && task.assignee == null

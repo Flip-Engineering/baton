@@ -2662,8 +2662,10 @@ export class BatonApplication {
 
   _semanticControlTargets(current) {
     const definition = this._isWorkflowRun(current) ? this._workflowDefinition(current) : null;
+    // #210: the narrow read serves the run's own dispatches (bounded clones of only those
+    // rows); the full-store snapshot goalPlan deep clone is gone from this path.
     const dispatches = definition
-      ? (this.driver.coordination.snapshot().goalPlan?.dispatches ?? []) : [];
+      ? (this.driver.coordination.goalPlanDispatches?.(this.repoId, current.goal.runId) ?? []) : [];
     const rows = this.driver.coordinator.list().filter((worker) => (
       worker.runId === current.goal.runId
       && Number.isSafeInteger(worker.fence)
@@ -3579,22 +3581,37 @@ export class BatonApplication {
   }
 
   _runAtPlan(current, plan) {
-    const snapshot = this.driver.coordination.snapshot();
-    const goalPlan = snapshot.goalPlan;
-    const approval = goalPlan.approvals.find((row) => row.plan.planId === plan.planId
-      && row.plan.version === plan.version && row.plan.digest === plan.digest) ?? null;
-    const dispatches = goalPlan.dispatches.filter((row) => row.binding?.planId === plan.planId
-      && row.binding?.planVersion === plan.version && row.binding?.planDigest === plan.digest)
-      .sort((left, right) => (left.binding.nodeKey < right.binding.nodeKey ? -1 : 1));
+    // #210: one narrow accessor serves the plan's own approval + dispatches (bounded clone of
+    // only those rows); the full-store snapshot goalPlan deep clone is gone from this path.
+    const state = this.driver.coordination.goalPlanPlanState?.(
+      this.repoId, current.goal.runId, plan.planId, plan.version, plan.digest,
+    ) ?? { approval: null, dispatches: [] };
     return {
-      ...current, plan, approval, dispatch: dispatches[0] ?? null, dispatches,
+      ...current, plan, approval: state.approval,
+      dispatch: state.dispatches[0] ?? null, dispatches: state.dispatches,
     };
   }
 
   _workflowPlanHistory(current) {
     if (!this._isWorkflowRun(current)) return [];
-    const snapshot = this.driver.coordination.snapshot();
-    const plans = snapshot.goalPlan?.plans ?? [];
+    // #210: the bounded Run Plan history (goalPlanRunPlans) serves this walk; the full-store
+    // snapshot goalPlan deep clone is gone from this path (legacy stores without the narrow
+    // accessor keep the snapshot fallback).
+    let plans = [];
+    if (typeof this.driver.coordination.goalPlanRunPlans === 'function') {
+      try {
+        plans = this.driver.coordination.goalPlanRunPlans(this.repoId, current.goal.runId);
+      } catch (error) {
+        if (error?.code === 'goal_plan_status_oversize') {
+          throw applicationError('Workflow Plan history is cyclic or exceeds its bounded ceiling',
+            'application_workflow_integrity');
+        }
+        throw error;
+      }
+    } else if (typeof this.driver.coordination.snapshot === 'function') {
+      const snapshot = this.driver.coordination.snapshot();
+      plans = snapshot.goalPlan?.plans ?? [];
+    }
     const chain = []; const seen = new Set();
     let cursor = current.plan;
     while (cursor) {
@@ -4281,11 +4298,17 @@ export class BatonApplication {
 
   async _reconcileApprovedRuns() {
     this._assertOpen();
-    const runIds = typeof this.driver.coordination.goalPlanRunIds === 'function'
-      ? this.driver.coordination.goalPlanRunIds(this.repoId, MAX_RUN_RECORDS)
-      : [...new Set((this.driver.coordination.snapshot().goalPlan?.goals ?? [])
+    // #210: the narrow Run index is authoritative on modern stores (zero full-store clones);
+    // the legacy arm below fires only for stores without goalPlanRunIds.
+    let runIds;
+    if (typeof this.driver.coordination.goalPlanRunIds === 'function') {
+      runIds = this.driver.coordination.goalPlanRunIds(this.repoId, MAX_RUN_RECORDS);
+    } else {
+      const snapshot = this.driver.coordination.snapshot();
+      runIds = [...new Set((snapshot.goalPlan?.goals ?? [])
         .filter((goal) => goal.repoId === this.repoId && goal.runId !== null)
         .map((goal) => goal.runId))].sort();
+    }
     if (runIds.length > MAX_RUN_RECORDS) {
       throw applicationError('application run scheduler exceeds its bounded lookup ceiling', 'application_run_lookup_oversize');
     }
@@ -12226,7 +12249,24 @@ export class BatonApplication {
     const context = normalizeCommandContext(rawContext);
     const principal = normalizePrincipal(rawPrincipal, 'Run list principal');
     await this._authorize('runs.list', principal, null, { operation: 'runs.list' });
-    const goalPlan = this.driver.coordination.snapshot().goalPlan;
+    // #210: the bounded head-only summary (goalPlanSummary) serves runs.list — every member
+    // read used to deep-clone the ENTIRE store through the snapshot goalPlan projection. The
+    // legacy arm below fires only for stores without the narrow accessor.
+    let goalPlan;
+    if (typeof this.driver.coordination.goalPlanSummary === 'function') {
+      try {
+        goalPlan = this.driver.coordination.goalPlanSummary(this.repoId, MAX_RUN_RECORDS);
+      } catch (error) {
+        if (error?.code === 'goal_plan_status_oversize') {
+          throw applicationError('Run list exceeds its bounded lookup ceiling',
+            'application_run_list_oversize');
+        }
+        throw error;
+      }
+    } else {
+      const snapshot = this.driver.coordination.snapshot();
+      goalPlan = snapshot.goalPlan;
+    }
     if (!goalPlan || goalPlan.goals.length > MAX_RUN_RECORDS) {
       throw applicationError('Run list exceeds its bounded lookup ceiling',
         'application_run_list_oversize');
