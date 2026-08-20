@@ -1,0 +1,13 @@
+wave bbb-2026-08-20-wave-c
+member row-conformance-core
+  harness omp
+  model "deepseek/deepseek-v4-flash"
+  effort high
+  scope "impl/src/**"
+  scope "impl/scripts/**"
+  scope "impl/test/**"
+  scope "docs/reference/evidence/baton-builds-baton-2026-08-19/wave-c/**"
+  objectiveRef "docs/reference/evidence/baton-builds-baton-2026-08-19/wave-c/row-conformance-core-brief.md"
+  report "docs/reference/evidence/baton-builds-baton-2026-08-19/wave-c/notes-row-conformance-core.md"
+messageOnSpawn brief "Read your objectiveRef brief IN FULL first; it binds. The 11 red rows are enumerated — run both conformance suites first to see them live. RED-first is already done for you; implement to GREEN, run the named batteries. Your [attempt:] line verbatim in your report's first five lines."
+harvest "docs/reference/evidence/baton-builds-baton-2026-08-19/wave-c/notes-row-conformance-core.md" mustContain "attempt:"
