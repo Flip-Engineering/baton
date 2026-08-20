@@ -3465,7 +3465,12 @@ export class BatonApplication {
     let goal; let plan; let approval; let dispatches; let dispatch;
     if (indexed) {
       ({ goal, plan, approval, dispatches, dispatch } = indexed);
-    } else {
+    } else if (typeof this.driver.coordination.goalPlanRun !== 'function') {
+      // #229 (measured 2026-08-20): on a modern store the narrow read is AUTHORITATIVE —
+      // a miss means no goal/plan state exists for this run (same key dimensions the
+      // snapshot filter would scan). The snapshot() fallback deep-clones the ENTIRE store
+      // per member read — the 139s waves_list loop-block, healthz starved the whole way.
+      // The fallback stays only for legacy stores without the narrow accessor.
       const snapshot = this.driver.coordination.snapshot();
       const goalPlan = snapshot.goalPlan;
       if (!goalPlan || goalPlan.goals.length > MAX_RUN_RECORDS || goalPlan.plans.length > MAX_RUN_RECORDS
