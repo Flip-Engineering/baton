@@ -11599,9 +11599,22 @@ export class BatonApplication {
   // First-match-wins preserves the per-record iteration order of _runWaveId/_runWaveRole/
   // _runWaveRoute/_runIdForWaveMember exactly.
   _runWaveIndex() {
-    const byRunId = new Map();
-    const byWaveRole = new Map();
-    for (const event of this.driver.coordination.eventsView()) {
+    // #229 (live capture 2026-08-20): waves.list/progress rebuilt this index with a FULL
+    // 140k-event scan per call, on the resident's single event loop — multi-second bursts
+    // starved the HTTP parser (the 'TCP accepts, never answers' wedge; sample: main thread
+    // 100% inside one eventsView scan). Memoize on the #227 O(1) eventCursor: only events
+    // PAST the last-seen cursor re-scan. The store is append-only in-process, so the cursor
+    // is a valid revision key.
+    const revision = this.driver.coordination.eventCursor();
+    const memo = this._runWaveIndexMemo;
+    if (memo && memo.revision === revision) {
+      return { byRunId: memo.byRunId, byWaveRole: memo.byWaveRole };
+    }
+    const events = this.driver.coordination.eventsView(memo ? memo.cursor + 1 : 1);
+    const byRunId = memo ? memo.byRunId : new Map();
+    const byWaveRole = memo ? memo.byWaveRole : new Map();
+    for (let i = 0; i < events.length; i++) {
+      const event = events[i];
       if (event.kind !== 'driver.recorded'
         || event.payload?.kind !== APPLICATION_STEERING_REGISTERED_KIND) continue;
       const p = event.payload;
@@ -11614,6 +11627,7 @@ export class BatonApplication {
         if (!roles.has(p.waveRole)) roles.set(p.waveRole, p.runId);
       }
     }
+    this._runWaveIndexMemo = { revision, cursor: revision, byRunId, byWaveRole };
     return { byRunId, byWaveRole };
   }
 
