@@ -178,10 +178,14 @@ export function wrapProductionCliClient(client, { runtime = new ProductionConver
       }
       if (key === 'surfaceSnapshot') {
         return async ({ runId = null, waveId = null } = {}) => {
+          // #250: a frame is BOUNDED reads — never the list projections. runs.list and
+          // waves.list are the #210/#216 furnaces (101.8s per waves_list measured on the
+          // campaign ledger); firing them per frame (the default 1s refresh) wedges the
+          // resident. The un-scoped frame reads doctor (pulse/routes); scoped frames add
+          // their bounded projections. The visual model consumes run.value.workstreams +
+          // doctor only — the roster rides the run-scoped frame, never runs.list.
           const requests = {
             doctor: Promise.resolve().then(() => target.doctor()),
-            runs: Promise.resolve().then(() => target.command('runs.list', {})),
-            waves: Promise.resolve().then(() => target.command('waves.list', {})),
             ...(runId ? { run: Promise.resolve().then(() => target.command('run.inspect', { runId, depth: 'outline' })) } : {}),
             ...(waveId ? { wave: Promise.resolve().then(() => target.command('waves.progress', { waveId })) } : {}),
           };
