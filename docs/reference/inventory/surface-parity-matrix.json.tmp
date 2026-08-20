@@ -9,6 +9,7 @@
       "cli": "baton application help",
       "mcp": "baton_application_help",
       "web": "application_help",
+      "divergence": null,
       "ledgered": false
     },
     {
@@ -17,6 +18,7 @@
       "cli": "baton board claim",
       "mcp": "baton_board_claim",
       "web": "board_claim",
+      "divergence": null,
       "ledgered": false
     },
     {
@@ -25,6 +27,7 @@
       "cli": "baton board close",
       "mcp": "baton_board_close",
       "web": "board_close",
+      "divergence": null,
       "ledgered": false
     },
     {
@@ -33,6 +36,7 @@
       "cli": "baton board drop",
       "mcp": "baton_board_drop",
       "web": "board_drop",
+      "divergence": null,
       "ledgered": false
     },
     {
@@ -41,6 +45,7 @@
       "cli": "baton board post",
       "mcp": "baton_board_post",
       "web": "board_post",
+      "divergence": null,
       "ledgered": false
     },
     {
@@ -49,6 +54,7 @@
       "cli": "baton board read",
       "mcp": "baton_board_read",
       "web": "board_read",
+      "divergence": null,
       "ledgered": false
     },
     {
@@ -57,6 +63,7 @@
       "cli": "baton board reorder",
       "mcp": "baton_board_reorder",
       "web": "board_reorder",
+      "divergence": null,
       "ledgered": false
     },
     {
@@ -65,6 +72,7 @@
       "cli": "baton board report",
       "mcp": "baton_board_report",
       "web": "board_report",
+      "divergence": null,
       "ledgered": false
     },
     {
@@ -73,6 +81,7 @@
       "cli": "baton board retitle",
       "mcp": "baton_board_retitle",
       "web": "board_retitle",
+      "divergence": null,
       "ledgered": false
     },
     {
@@ -81,7 +90,8 @@
       "cli": "baton credentials install kimi",
       "mcp": null,
       "web": null,
-      "ledgered": true
+      "divergence": "cli-only operator/local command — no MCP form",
+      "ledgered": false
     },
     {
       "name": "cli.setup",
@@ -89,7 +99,8 @@
       "cli": "baton setup",
       "mcp": null,
       "web": null,
-      "ledgered": true
+      "divergence": "cli-only operator/local command — no MCP form",
+      "ledgered": false
     },
     {
       "name": "context.eval",
@@ -97,6 +108,7 @@
       "cli": "baton context eval",
       "mcp": "baton_context_eval",
       "web": "context_eval",
+      "divergence": null,
       "ledgered": false
     },
     {
@@ -105,6 +117,7 @@
       "cli": "baton context map",
       "mcp": "baton_context_map",
       "web": "context_map",
+      "divergence": null,
       "ledgered": false
     },
     {
@@ -113,6 +126,7 @@
       "cli": "baton context reduce",
       "mcp": "baton_context_reduce",
       "web": "context_reduce",
+      "divergence": null,
       "ledgered": false
     },
     {
@@ -121,6 +135,7 @@
       "cli": "baton context retry",
       "mcp": "baton_context_retry",
       "web": "context_retry",
+      "divergence": null,
       "ledgered": false
     },
     {
@@ -129,6 +144,7 @@
       "cli": "baton decision list",
       "mcp": "baton_decision_list",
       "web": "decision_list",
+      "divergence": null,
       "ledgered": false
     },
     {
@@ -137,7 +153,8 @@
       "cli": "baton deployment doctor",
       "mcp": "baton_deployment_doctor",
       "web": "deployment_doctor",
-      "ledgered": true
+      "divergence": null,
+      "ledgered": false
     },
     {
       "name": "deployment.doctor",
@@ -145,7 +162,8 @@
       "cli": "baton doctor",
       "mcp": null,
       "web": null,
-      "ledgered": true
+      "divergence": "cli-only operator/local command — no MCP form",
+      "ledgered": false
     },
     {
       "name": "deployment.serve",
@@ -153,7 +171,8 @@
       "cli": "baton deployment serve",
       "mcp": "baton_deployment_serve",
       "web": "deployment_serve",
-      "ledgered": true
+      "divergence": null,
+      "ledgered": false
     },
     {
       "name": "deployment.serve",
@@ -161,7 +180,8 @@
       "cli": "baton serve",
       "mcp": null,
       "web": null,
-      "ledgered": true
+      "divergence": "cli-only operator/local command — no MCP form",
+      "ledgered": false
     },
     {
       "name": "deployment.shutdown",
@@ -169,6 +189,7 @@
       "cli": "baton deployment shutdown",
       "mcp": "baton_deployment_shutdown",
       "web": "deployment_shutdown",
+      "divergence": null,
       "ledgered": false
     },
     {
@@ -177,7 +198,8 @@
       "cli": "baton deployment view",
       "mcp": "baton_deployment_view",
       "web": "deployment_view",
-      "ledgered": true
+      "divergence": null,
+      "ledgered": false
     },
     {
       "name": "deployment.view",
@@ -185,7 +207,8 @@
       "cli": "baton route",
       "mcp": null,
       "web": null,
-      "ledgered": true
+      "divergence": "cli-only operator/local command — no MCP form",
+      "ledgered": false
     },
     {
       "name": "fleet_capabilities",
@@ -193,7 +216,8 @@
       "cli": null,
       "mcp": "fleet_capabilities",
       "web": null,
-      "ledgered": true
+      "divergence": "mcp-only driver verb — CLI reaches it through the canonical run.*/waves.* names",
+      "ledgered": false
     },
     {
       "name": "fleet_capability_invoke",
@@ -201,7 +225,8 @@
       "cli": null,
       "mcp": "fleet_capability_invoke",
       "web": null,
-      "ledgered": true
+      "divergence": "mcp-only driver verb — CLI reaches it through the canonical run.*/waves.* names",
+      "ledgered": false
     },
     {
       "name": "fleet_drain",
@@ -209,7 +234,8 @@
       "cli": null,
       "mcp": "fleet_drain",
       "web": null,
-      "ledgered": true
+      "divergence": "mcp-only driver verb — CLI reaches it through the canonical run.*/waves.* names",
+      "ledgered": false
     },
     {
       "name": "fleet_goal_define",
@@ -217,7 +243,8 @@
       "cli": null,
       "mcp": "fleet_goal_define",
       "web": null,
-      "ledgered": true
+      "divergence": "mcp-only driver verb — CLI reaches it through the canonical run.*/waves.* names",
+      "ledgered": false
     },
     {
       "name": "fleet_goal_plan_status",
@@ -225,7 +252,8 @@
       "cli": null,
       "mcp": "fleet_goal_plan_status",
       "web": null,
-      "ledgered": true
+      "divergence": "mcp-only driver verb — CLI reaches it through the canonical run.*/waves.* names",
+      "ledgered": false
     },
     {
       "name": "fleet_interrupt",
@@ -233,7 +261,8 @@
       "cli": null,
       "mcp": "fleet_interrupt",
       "web": null,
-      "ledgered": true
+      "divergence": "mcp-only driver verb — CLI reaches it through the canonical run.*/waves.* names",
+      "ledgered": false
     },
     {
       "name": "fleet_kill",
@@ -241,7 +270,8 @@
       "cli": null,
       "mcp": "fleet_kill",
       "web": null,
-      "ledgered": true
+      "divergence": "mcp-only driver verb — CLI reaches it through the canonical run.*/waves.* names",
+      "ledgered": false
     },
     {
       "name": "fleet_list",
@@ -249,7 +279,8 @@
       "cli": null,
       "mcp": "fleet_list",
       "web": null,
-      "ledgered": true
+      "divergence": "mcp-only driver verb — CLI reaches it through the canonical run.*/waves.* names",
+      "ledgered": false
     },
     {
       "name": "fleet_plan_approve",
@@ -257,7 +288,8 @@
       "cli": null,
       "mcp": "fleet_plan_approve",
       "web": null,
-      "ledgered": true
+      "divergence": "mcp-only driver verb — CLI reaches it through the canonical run.*/waves.* names",
+      "ledgered": false
     },
     {
       "name": "fleet_plan_propose",
@@ -265,7 +297,8 @@
       "cli": null,
       "mcp": "fleet_plan_propose",
       "web": null,
-      "ledgered": true
+      "divergence": "mcp-only driver verb — CLI reaches it through the canonical run.*/waves.* names",
+      "ledgered": false
     },
     {
       "name": "fleet_provider_status",
@@ -273,7 +306,8 @@
       "cli": null,
       "mcp": "fleet_provider_status",
       "web": null,
-      "ledgered": true
+      "divergence": "mcp-only driver verb — CLI reaches it through the canonical run.*/waves.* names",
+      "ledgered": false
     },
     {
       "name": "fleet_respond",
@@ -281,7 +315,8 @@
       "cli": null,
       "mcp": "fleet_respond",
       "web": null,
-      "ledgered": true
+      "divergence": "mcp-only driver verb — CLI reaches it through the canonical run.*/waves.* names",
+      "ledgered": false
     },
     {
       "name": "fleet_result",
@@ -289,7 +324,8 @@
       "cli": null,
       "mcp": "fleet_result",
       "web": null,
-      "ledgered": true
+      "divergence": "mcp-only driver verb — CLI reaches it through the canonical run.*/waves.* names",
+      "ledgered": false
     },
     {
       "name": "fleet_reuse_decide",
@@ -297,7 +333,8 @@
       "cli": null,
       "mcp": "fleet_reuse_decide",
       "web": null,
-      "ledgered": true
+      "divergence": "mcp-only driver verb — CLI reaches it through the canonical run.*/waves.* names",
+      "ledgered": false
     },
     {
       "name": "fleet_reuse_recheck",
@@ -305,7 +342,8 @@
       "cli": null,
       "mcp": "fleet_reuse_recheck",
       "web": null,
-      "ledgered": true
+      "divergence": "mcp-only driver verb — CLI reaches it through the canonical run.*/waves.* names",
+      "ledgered": false
     },
     {
       "name": "fleet_scratch_oracle",
@@ -313,7 +351,8 @@
       "cli": null,
       "mcp": "fleet_scratch_oracle",
       "web": null,
-      "ledgered": true
+      "divergence": "mcp-only driver verb — CLI reaches it through the canonical run.*/waves.* names",
+      "ledgered": false
     },
     {
       "name": "fleet_send",
@@ -321,7 +360,8 @@
       "cli": null,
       "mcp": "fleet_send",
       "web": null,
-      "ledgered": true
+      "divergence": "mcp-only driver verb — CLI reaches it through the canonical run.*/waves.* names",
+      "ledgered": false
     },
     {
       "name": "fleet_spawn",
@@ -329,7 +369,8 @@
       "cli": null,
       "mcp": "fleet_spawn",
       "web": null,
-      "ledgered": true
+      "divergence": "mcp-only driver verb — CLI reaches it through the canonical run.*/waves.* names",
+      "ledgered": false
     },
     {
       "name": "fleet_wait",
@@ -337,7 +378,8 @@
       "cli": null,
       "mcp": "fleet_wait",
       "web": null,
-      "ledgered": true
+      "divergence": "mcp-only driver verb — CLI reaches it through the canonical run.*/waves.* names",
+      "ledgered": false
     },
     {
       "name": "knowledge.horizon",
@@ -345,6 +387,7 @@
       "cli": "baton knowledge horizon",
       "mcp": "baton_knowledge_horizon",
       "web": "knowledge_horizon",
+      "divergence": null,
       "ledgered": false
     },
     {
@@ -353,6 +396,7 @@
       "cli": "baton knowledge promote",
       "mcp": "baton_knowledge_promote",
       "web": "knowledge_promote",
+      "divergence": null,
       "ledgered": false
     },
     {
@@ -361,6 +405,7 @@
       "cli": "baton knowledge recall",
       "mcp": "baton_knowledge_recall",
       "web": "knowledge_recall",
+      "divergence": null,
       "ledgered": false
     },
     {
@@ -369,6 +414,7 @@
       "cli": "baton knowledge settlement_lease",
       "mcp": "baton_knowledge_settlement_lease",
       "web": "knowledge_settlement_lease",
+      "divergence": null,
       "ledgered": false
     },
     {
@@ -377,6 +423,7 @@
       "cli": "baton package admit",
       "mcp": "baton_package_admit",
       "web": "package_admit",
+      "divergence": null,
       "ledgered": false
     },
     {
@@ -385,6 +432,7 @@
       "cli": "baton package attach",
       "mcp": "baton_package_attach",
       "web": "package_attach",
+      "divergence": null,
       "ledgered": false
     },
     {
@@ -393,6 +441,7 @@
       "cli": "baton package read",
       "mcp": "baton_package_read",
       "web": "package_read",
+      "divergence": null,
       "ledgered": false
     },
     {
@@ -401,6 +450,7 @@
       "cli": "baton repl binding",
       "mcp": "baton_repl_binding",
       "web": "repl_binding",
+      "divergence": null,
       "ledgered": false
     },
     {
@@ -409,6 +459,7 @@
       "cli": "baton repl cite",
       "mcp": "baton_repl_cite",
       "web": "repl_cite",
+      "divergence": null,
       "ledgered": false
     },
     {
@@ -417,6 +468,7 @@
       "cli": "baton repl manifest",
       "mcp": "baton_repl_manifest",
       "web": "repl_manifest",
+      "divergence": null,
       "ledgered": false
     },
     {
@@ -425,6 +477,7 @@
       "cli": "baton run adopt",
       "mcp": "baton_run_adopt",
       "web": "run_adopt",
+      "divergence": null,
       "ledgered": false
     },
     {
@@ -433,6 +486,7 @@
       "cli": "baton run answer",
       "mcp": "baton_run_answer",
       "web": "run_answer",
+      "divergence": null,
       "ledgered": false
     },
     {
@@ -441,6 +495,7 @@
       "cli": "baton run approve",
       "mcp": "baton_run_approve",
       "web": "run_approve",
+      "divergence": null,
       "ledgered": false
     },
     {
@@ -449,6 +504,7 @@
       "cli": "baton run attention list",
       "mcp": "baton_run_attention_list",
       "web": "run_attention_list",
+      "divergence": null,
       "ledgered": false
     },
     {
@@ -457,6 +513,7 @@
       "cli": "baton run attention watch",
       "mcp": "baton_run_attention_watch",
       "web": "run_attention_watch",
+      "divergence": null,
       "ledgered": true
     },
     {
@@ -465,6 +522,7 @@
       "cli": "baton run board post",
       "mcp": "baton_run_board_post",
       "web": "run_board_post",
+      "divergence": null,
       "ledgered": true
     },
     {
@@ -473,6 +531,7 @@
       "cli": "baton run board read",
       "mcp": "baton_run_board_read",
       "web": "run_board_read",
+      "divergence": null,
       "ledgered": true
     },
     {
@@ -481,6 +540,7 @@
       "cli": "baton run debug",
       "mcp": "baton_run_debug",
       "web": "run_debug",
+      "divergence": null,
       "ledgered": false
     },
     {
@@ -489,15 +549,8 @@
       "cli": "baton run do",
       "mcp": "baton_run_do",
       "web": "run_do",
+      "divergence": null,
       "ledgered": false
-    },
-    {
-      "name": "run.episode",
-      "category": "control",
-      "cli": null,
-      "mcp": "run.episode",
-      "web": null,
-      "ledgered": true
     },
     {
       "name": "run.evidence",
@@ -505,6 +558,7 @@
       "cli": "baton run evidence",
       "mcp": "baton_run_evidence",
       "web": "run_evidence",
+      "divergence": null,
       "ledgered": false
     },
     {
@@ -513,6 +567,7 @@
       "cli": "baton run export",
       "mcp": "baton_run_export",
       "web": "run_export",
+      "divergence": null,
       "ledgered": false
     },
     {
@@ -521,15 +576,8 @@
       "cli": "baton run feedback",
       "mcp": "baton_run_feedback",
       "web": "run_feedback",
+      "divergence": null,
       "ledgered": false
-    },
-    {
-      "name": "run.follow",
-      "category": "control",
-      "cli": null,
-      "mcp": "run.follow",
-      "web": null,
-      "ledgered": true
     },
     {
       "name": "run.integrate",
@@ -537,6 +585,7 @@
       "cli": "baton run integrate",
       "mcp": "baton_run_integrate",
       "web": "run_integrate",
+      "divergence": null,
       "ledgered": false
     },
     {
@@ -545,6 +594,7 @@
       "cli": "baton run interrupt",
       "mcp": "baton_run_interrupt",
       "web": "run_interrupt",
+      "divergence": null,
       "ledgered": false
     },
     {
@@ -553,6 +603,7 @@
       "cli": "baton run knowledge seed",
       "mcp": "baton_run_knowledge_seed",
       "web": "run_knowledge_seed",
+      "divergence": null,
       "ledgered": true
     },
     {
@@ -561,6 +612,7 @@
       "cli": "baton run list",
       "mcp": "baton_run_list",
       "web": "run_list",
+      "divergence": null,
       "ledgered": false
     },
     {
@@ -569,6 +621,7 @@
       "cli": "baton run member interrupt",
       "mcp": "baton_run_member_interrupt",
       "web": "run_member_interrupt",
+      "divergence": null,
       "ledgered": false
     },
     {
@@ -577,6 +630,7 @@
       "cli": "baton run member send",
       "mcp": "baton_run_member_send",
       "web": "run_member_send",
+      "divergence": null,
       "ledgered": false
     },
     {
@@ -585,6 +639,7 @@
       "cli": "baton run member stop",
       "mcp": "baton_run_member_stop",
       "web": "run_member_stop",
+      "divergence": null,
       "ledgered": false
     },
     {
@@ -593,6 +648,7 @@
       "cli": "baton run member view",
       "mcp": "baton_run_member_view",
       "web": "run_member_view",
+      "divergence": null,
       "ledgered": false
     },
     {
@@ -601,6 +657,7 @@
       "cli": "baton run message receipt",
       "mcp": "baton_run_message_receipt",
       "web": "run_message_receipt",
+      "divergence": null,
       "ledgered": true
     },
     {
@@ -609,6 +666,7 @@
       "cli": "baton run message send",
       "mcp": "baton_run_message_send",
       "web": "run_message_send",
+      "divergence": null,
       "ledgered": true
     },
     {
@@ -617,6 +675,7 @@
       "cli": "baton run recover",
       "mcp": "baton_run_recover",
       "web": "run_recover",
+      "divergence": null,
       "ledgered": false
     },
     {
@@ -625,6 +684,7 @@
       "cli": "baton run resume",
       "mcp": "baton_run_resume",
       "web": "run_resume",
+      "divergence": null,
       "ledgered": false
     },
     {
@@ -633,6 +693,7 @@
       "cli": "baton run retry",
       "mcp": "baton_run_retry",
       "web": "run_retry",
+      "divergence": null,
       "ledgered": false
     },
     {
@@ -641,6 +702,7 @@
       "cli": "baton run review",
       "mcp": "baton_run_review",
       "web": "run_review",
+      "divergence": null,
       "ledgered": false
     },
     {
@@ -649,6 +711,7 @@
       "cli": "baton run revise",
       "mcp": "baton_run_revise",
       "web": "run_revise",
+      "divergence": null,
       "ledgered": false
     },
     {
@@ -657,6 +720,7 @@
       "cli": "baton run scratchpad",
       "mcp": "baton_run_scratchpad",
       "web": "run_scratchpad",
+      "divergence": null,
       "ledgered": false
     },
     {
@@ -665,6 +729,7 @@
       "cli": "baton run scratchpad append",
       "mcp": "baton_run_scratchpad_append",
       "web": "run_scratchpad_append",
+      "divergence": null,
       "ledgered": false
     },
     {
@@ -673,6 +738,7 @@
       "cli": "baton run scratchpad append",
       "mcp": "baton_run_scratchpad_append",
       "web": "run_scratchpad_append",
+      "divergence": null,
       "ledgered": false
     },
     {
@@ -681,6 +747,7 @@
       "cli": "baton run scratchpad elevate",
       "mcp": "baton_run_scratchpad_elevate",
       "web": "run_scratchpad_elevate",
+      "divergence": null,
       "ledgered": true
     },
     {
@@ -689,6 +756,7 @@
       "cli": "baton run scratchpad read",
       "mcp": "baton_run_scratchpad_read",
       "web": "run_scratchpad_read",
+      "divergence": null,
       "ledgered": true
     },
     {
@@ -697,6 +765,7 @@
       "cli": "baton run select",
       "mcp": "baton_run_select",
       "web": "run_select",
+      "divergence": null,
       "ledgered": false
     },
     {
@@ -705,6 +774,7 @@
       "cli": "baton run send",
       "mcp": "baton_run_send",
       "web": "run_send",
+      "divergence": null,
       "ledgered": false
     },
     {
@@ -713,15 +783,8 @@
       "cli": "baton run start",
       "mcp": "baton_run_start",
       "web": "run_start",
+      "divergence": null,
       "ledgered": false
-    },
-    {
-      "name": "run.status",
-      "category": "control",
-      "cli": null,
-      "mcp": "run.status",
-      "web": null,
-      "ledgered": true
     },
     {
       "name": "run.stop",
@@ -729,6 +792,7 @@
       "cli": "baton run stop",
       "mcp": "baton_run_stop",
       "web": "run_stop",
+      "divergence": null,
       "ledgered": false
     },
     {
@@ -737,15 +801,8 @@
       "cli": "baton run view",
       "mcp": "baton_run_view",
       "web": "run_view",
+      "divergence": null,
       "ledgered": false
-    },
-    {
-      "name": "run.wait",
-      "category": "control",
-      "cli": null,
-      "mcp": "run.wait",
-      "web": null,
-      "ledgered": true
     },
     {
       "name": "run.watch",
@@ -753,39 +810,8 @@
       "cli": "baton run watch",
       "mcp": "baton_run_watch",
       "web": "run_watch",
+      "divergence": null,
       "ledgered": false
-    },
-    {
-      "name": "run.workstream.notify",
-      "category": "communication",
-      "cli": null,
-      "mcp": "run.workstream.notify",
-      "web": null,
-      "ledgered": true
-    },
-    {
-      "name": "run.workstream.stop",
-      "category": "control",
-      "cli": null,
-      "mcp": "run.workstream.stop",
-      "web": null,
-      "ledgered": true
-    },
-    {
-      "name": "run.workstreams",
-      "category": "control",
-      "cli": null,
-      "mcp": "run.workstreams",
-      "web": null,
-      "ledgered": true
-    },
-    {
-      "name": "runs.list",
-      "category": "control",
-      "cli": null,
-      "mcp": "runs.list",
-      "web": null,
-      "ledgered": true
     },
     {
       "name": "scratchpad.elevate",
@@ -793,6 +819,7 @@
       "cli": "baton scratchpad elevate",
       "mcp": "baton_scratchpad_elevate",
       "web": "scratchpad_elevate",
+      "divergence": null,
       "ledgered": false
     },
     {
@@ -801,6 +828,7 @@
       "cli": "baton scratchpad settle",
       "mcp": "baton_scratchpad_settle",
       "web": "scratchpad_settle",
+      "divergence": null,
       "ledgered": false
     },
     {
@@ -809,6 +837,7 @@
       "cli": "baton surface catalog",
       "mcp": "baton_surface_catalog",
       "web": null,
+      "divergence": null,
       "ledgered": false
     },
     {
@@ -817,6 +846,7 @@
       "cli": "baton surface describe",
       "mcp": "baton_surface_describe",
       "web": null,
+      "divergence": null,
       "ledgered": false
     },
     {
@@ -825,6 +855,7 @@
       "cli": "baton surface invoke",
       "mcp": "baton_surface_invoke",
       "web": null,
+      "divergence": null,
       "ledgered": false
     },
     {
@@ -833,6 +864,7 @@
       "cli": "baton surface snapshot",
       "mcp": "baton_surface_snapshot",
       "web": null,
+      "divergence": null,
       "ledgered": false
     },
     {
@@ -841,6 +873,7 @@
       "cli": "baton waves attach",
       "mcp": "baton_waves_attach",
       "web": "waves_attach",
+      "divergence": null,
       "ledgered": false
     },
     {
@@ -849,6 +882,7 @@
       "cli": "baton waves compile",
       "mcp": "baton_waves_compile",
       "web": "waves_compile",
+      "divergence": null,
       "ledgered": true
     },
     {
@@ -857,6 +891,7 @@
       "cli": "baton waves list",
       "mcp": "baton_waves_list",
       "web": "waves_list",
+      "divergence": null,
       "ledgered": false
     },
     {
@@ -865,6 +900,7 @@
       "cli": "baton waves progress",
       "mcp": "baton_waves_progress",
       "web": "waves_progress",
+      "divergence": null,
       "ledgered": false
     },
     {
@@ -873,6 +909,7 @@
       "cli": "baton waves run",
       "mcp": "baton_waves_run",
       "web": "waves_run",
+      "divergence": null,
       "ledgered": false
     },
     {
@@ -881,6 +918,7 @@
       "cli": "baton waves send",
       "mcp": "baton_waves_send",
       "web": "waves_send",
+      "divergence": null,
       "ledgered": false
     },
     {
@@ -889,6 +927,7 @@
       "cli": "baton waves start",
       "mcp": "baton_waves_start",
       "web": "waves_start",
+      "divergence": null,
       "ledgered": false
     },
     {
@@ -897,6 +936,7 @@
       "cli": "baton waves stop",
       "mcp": "baton_waves_stop",
       "web": "waves_stop",
+      "divergence": null,
       "ledgered": false
     }
   ]
