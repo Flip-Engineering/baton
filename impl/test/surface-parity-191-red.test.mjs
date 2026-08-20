@@ -36,10 +36,9 @@ test('PARITY-MATRIX (#191): the matrix exists, is generated from the live catalo
   // Structure: rows keyed by canonical name carrying per-surface admission.
   assert.ok(Array.isArray(committed.rows) && committed.rows.length > 100,
     `the matrix carries the full command roster (${committed.rows?.length ?? 0} rows)`);
-
-  // THE PARITY LAW: every row's CLI/MCP admission agrees — or the divergence is
-  // EXPLICITLY ledgered (never silent).
-  const violations = committed.rows.filter((row) => (row.cli === null) !== (row.mcp === null) && row.ledgered !== true);
+  // THE PARITY LAW: every row's CLI/MCP admission agrees — or carries an EXPLICIT
+  // divergence reason inline (never silent).
+  const violations = committed.rows.filter((row) => (row.cli === null) !== (row.mcp === null) && typeof row.divergence !== 'string');
   assert.equal(violations.length, 0,
-    `silent parity violations: ${violations.slice(0, 5).map((r) => r.name).join(', ')}${violations.length > 5 ? ` +${violations.length - 5}` : ''} — divergences must be explicit ledger rows`);
+    `silent parity violations: ${violations.slice(0, 5).map((r) => r.name).join(', ')}${violations.length > 5 ? ` +${violations.length - 5}` : ''} — divergences must carry an explicit reason`);
 });

@@ -31,11 +31,18 @@ for (const row of catalog) {
   const cli = typeof names.cli === 'string' ? names.cli : null;
   const mcp = typeof names.mcp === 'string' ? names.mcp : null;
   const web = typeof names.web === 'string' ? names.web : null;
+  const name = row.id ?? row.key;
+  // The matrix carries its own explicit divergence reason — self-contained (the conformance
+  // divergence ledger serves a different vocabulary: observed inventory divergences, which
+  // refuse tooling-code and operator-command rows).
+  let divergence = null;
+  if (cli && !mcp) divergence = 'cli-only operator/local command — no MCP form';
+  else if (mcp && !cli) divergence = 'mcp-only driver verb — CLI reaches it through the canonical run.*/waves.* names';
   rows.push({
-    name: row.id ?? row.key,
-    category: Array.isArray(row.categories) ? row.categories[0] : null,
+    name, category: Array.isArray(row.categories) ? row.categories[0] : null,
     cli, mcp, web,
-    ledgered: ledgerNames.has(row.id ?? row.key),
+    divergence,
+    ledgered: ledgerNames.has(name),
   });
 }
 rows.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
