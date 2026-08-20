@@ -9,7 +9,7 @@
 
 **Repository:** <https://github.com/Flip-Engineering/baton>
 
-**Cross-harness agent orchestration.** An orchestrator agent running in one full coding harness directs *other* full-session harnesses as subordinate workers — with real messaging, telemetry, mid-flight steering, and durable evidence — rather than the flat "spawn a process, wait for stdout" pattern.
+**Cross-harness agent orchestration.** An orchestrator agent running in one full coding harness directs *other* full-session harnesses as subordinate workers. Workers get real messaging, live telemetry, mid-flight steering, and durable evidence — the things you'd want from a teammate, not a subprocess.
 
 The name: a conductor's baton directs an orchestra; a relay baton gets passed between runners. Both are the point.
 
