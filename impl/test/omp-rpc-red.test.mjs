@@ -143,16 +143,25 @@ test('DEATH CERT: process exit mid-turn carries the exit code (#225 field)', asy
   assert.equal(crash.payload.phase, 'process_exit');
 });
 
-test('UI tolerance: extension_ui_request is answered cancelled, never fatal (#228 anomaly pin)', async () => {
+test('UI tolerance: malformed extension_ui_request answers cancelled, never fatal; well-formed questions surface (#228 anomaly, #243 question lane)', async () => {
   const child = new FakeChild();
   const { adapter, events } = makeAdapter(child);
   const outcome = await spawnReady(adapter, 'w-ui');
   assert.equal(outcome.ok, true);
   let answered = null;
   child.stdin.write = (line) => { answered = line; return true; };
-  emitFrame(adapter, 'w-ui', { type: 'extension_ui_request', id: 'ui_1', method: 'confirm' });
-  assert.ok(answered && answered.includes('"cancelled":true'), 'UI request answered cancelled over stdin');
+  // A MALFORMED frame (no method) — the #228 anomaly shape — still answers cancelled.
+  emitFrame(adapter, 'w-ui', { type: 'extension_ui_request', id: 'ui_1' });
+  assert.ok(answered && answered.includes('"cancelled":true'), 'malformed UI request answered cancelled over stdin');
+  // A WELL-FORMED question (#243): surfaces as interaction.requested, held for answer().
+  emitFrame(adapter, 'w-ui', { type: 'extension_ui_request', id: 'ui_2', method: 'confirm', title: 'Proceed?' });
+  const surfaced = events.find((event) => event.kind === 'interaction.requested' && event.payload?.id === 'ui_2');
+  assert.ok(surfaced, 'a well-formed question surfaces as interaction.requested');
+  assert.equal(surfaced.payload.method, 'confirm');
   assert.deepEqual(events.filter((event) => event.kind === 'lifecycle.crashed'), [],
     'a UI frame never kills the member');
+  const ans = await adapter.answer('w-ui', { id: 'ui_2', value: true });
+  assert.equal(ans.ok, true);
+  assert.ok(answered.includes('"id":"ui_2"') && answered.includes('"value":true'), 'answer writes the id-correlated response');
   await adapter.kill('w-ui');
 });
