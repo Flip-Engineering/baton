@@ -1,0 +1,35 @@
+wave bbb-2026-08-20-wave-g
+member row-goalplan-narrow
+  harness omp
+  model "deepseek/deepseek-v4-flash"
+  effort high
+  scope "impl/src/application.mjs"
+  scope "impl/src/coordination-store.mjs"
+  scope "impl/test/**"
+  scope "docs/reference/evidence/baton-builds-baton-2026-08-19/wave-g/**"
+  objectiveRef "docs/reference/evidence/baton-builds-baton-2026-08-19/wave-g/row-goalplan-narrow-brief.md"
+  report "docs/reference/evidence/baton-builds-baton-2026-08-19/wave-g/notes-row-goalplan-narrow.md"
+member row-git-batch
+  harness omp
+  model "deepseek/deepseek-v4-flash"
+  effort high
+  scope "impl/src/index.mjs"
+  scope "impl/src/coordinator.mjs"
+  scope "impl/src/application.mjs"
+  scope "impl/test/**"
+  scope "docs/reference/evidence/baton-builds-baton-2026-08-19/wave-g/**"
+  objectiveRef "docs/reference/evidence/baton-builds-baton-2026-08-19/wave-g/row-git-batch-brief.md"
+  report "docs/reference/evidence/baton-builds-baton-2026-08-19/wave-g/notes-row-git-batch.md"
+member row-compaction
+  harness omp
+  model "deepseek/deepseek-v4-flash"
+  effort high
+  scope "impl/src/coordination-store.mjs"
+  scope "impl/test/**"
+  scope "docs/reference/evidence/baton-builds-baton-2026-08-19/wave-g/**"
+  objectiveRef "docs/reference/evidence/baton-builds-baton-2026-08-19/wave-g/row-compaction-brief.md"
+  report "docs/reference/evidence/baton-builds-baton-2026-08-19/wave-g/notes-row-compaction.md"
+messageOnSpawn brief "Read your objectiveRef brief IN FULL first; it binds. RED-first: pin RED at HEAD, implement to GREEN, run the named batteries. Parallel siblings share files — application.mjs between goalplan and git-batch, coordination-store between goalplan and compaction: keep edits surgical (only your enumerated sites), record conflicts in notes, verify integration when siblings land. Your [attempt:] line verbatim in your report's first five lines."
+harvest "docs/reference/evidence/baton-builds-baton-2026-08-19/wave-g/notes-row-goalplan-narrow.md" mustContain "attempt:"
+harvest "docs/reference/evidence/baton-builds-baton-2026-08-19/wave-g/notes-row-git-batch.md" mustContain "attempt:"
+harvest "docs/reference/evidence/baton-builds-baton-2026-08-19/wave-g/notes-row-compaction.md" mustContain "attempt:"
