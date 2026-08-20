@@ -434,16 +434,30 @@ function resolveResultPin(repoRoot, report, startedAtMs, excludeShas) {
 async function materializeSha(handle, member, repoRoot, startedAtMs, excludeShas) {
   // The authoritative result sha: the result section first (#99 accessor seam), then the preserved
   // result pin (docs/31 #6). Both yield a git-object sha the harvest reads with `git show`.
+  // #244: the SNAPSHOT sha (the member's deliverable commit, task.capturedSha via the
+  // coordinator result accessor) rides alongside — the settle receipt carries it so a
+  // reaped-but-unintegrated member is MECHANICALLY recoverable (never git-log archaeology).
+  let snapshotSha = null;
+  let resultSha = null;
   try {
     const results = await handle.inspect({ depth: 'section', section: 'result' });
-    const sha = results?.section?.items?.[0]?.value?.sha;
+    const value = results?.section?.items?.[0]?.value;
+    // #244: capturedSha is the member's DELIVERABLE commit (the worktree snapshot,
+    // task.capturedSha through the coordinator result projection) — the settle receipt
+    // carries it so a reaped-but-unintegrated member is mechanically recoverable.
+    if (RESULT_SHA.test(value?.capturedSha ?? '')) snapshotSha = value.capturedSha;
+    const sha = value?.sha;
     if (RESULT_SHA.test(sha ?? '') && repoRoot) {
-      try { execFileSync('git', ['cat-file', '-e', `${sha}^{commit}`], { cwd: repoRoot, stdio: 'ignore' }); return sha; }
-      catch { /* not a readable commit here — fall through to the pin resolver */ }
+      try {
+        execFileSync('git', ['cat-file', '-e', `${sha}^{commit}`], { cwd: repoRoot, stdio: 'ignore' });
+        resultSha = sha;
+      } catch { /* not a readable commit here — fall through to the pin resolver */ }
     }
   } catch { /* the result section can be empty post-stop */ }
-  if (member?.report) return resolveResultPin(repoRoot, member.report, startedAtMs, excludeShas);
-  return null;
+  if (resultSha === null && member?.report) {
+    resultSha = resolveResultPin(repoRoot, member.report, startedAtMs, excludeShas);
+  }
+  return { resultSha, snapshotSha };
 }
 
 // ---------------------------------------------------------------------------
@@ -709,12 +723,13 @@ export async function runWorkflow(baton, specOrPath, options = {}) {
     }
     let view = null;
     try { view = await readView(handle); } catch { /* unreadable — settle at close */ }
-    const resultSha = await materializeSha(handle, member, repoRoot, pinFloorMs, excludeShas);
+    const { resultSha, snapshotSha } = await materializeSha(handle, member, repoRoot, pinFloorMs, excludeShas);
     if (resultSha) excludeShas.push(resultSha);
     preOutcome.set(member.role, {
       phase: view?.phase ?? null,
       terminal: view ? isTerminal(view) : false,
       resultSha,
+      snapshotSha,
     });
   }
 
@@ -733,7 +748,7 @@ export async function runWorkflow(baton, specOrPath, options = {}) {
         catch { /* the stop made it terminal even if the post-read is unavailable */ terminal = true; phase = phase ?? 'stopped'; }
       }
     }
-    const outcome = { role: member.role, phase, terminal, resultSha: pre.resultSha };
+    const outcome = { role: member.role, phase, terminal, resultSha: pre.resultSha, snapshotSha: pre.snapshotSha ?? null };
     if (pre.terminalCause !== undefined) outcome.terminalCause = pre.terminalCause;
     if (pre.error) outcome.error = pre.error;
     if (member.report !== undefined) outcome.report = member.report;
