@@ -16,6 +16,13 @@
       "reason": "cli-only operator/local command (setup, deployment lifecycle, credential install) — no MCP form by design"
     },
     {
+      "name": "cli_continuation_exhausted",
+      "category": "cli_local_tooling",
+      "cli": "cli_continuation_exhausted",
+      "mcp": null,
+      "reason": "CLI-local tooling code (bounded list-continuation pagination exhaustion) — deliberately code-only, same class as the 20 ledgered siblings (C3)"
+    },
+    {
       "name": "deployment.doctor",
       "category": "control",
       "cli": "baton doctor",

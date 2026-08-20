@@ -577,6 +577,7 @@ const CLI_LOCAL_TOOLING_CODES = Object.freeze([
   'cli_export_destination_invalid', 'cli_export_extract_failed', 'cli_export_delivery_invalid',
   'cli_export_download_failed', 'cli_command_host_local', 'cli_command_pending', 'cli_command_failed',
   'cli_protocol_failed', 'cli_action_inputs_invalid', 'cli_connection_incompatible',
+  'cli_continuation_exhausted',
 ]);
 
 // -------------------------------------------------------------------------------------------
