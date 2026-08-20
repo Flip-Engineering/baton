@@ -1299,6 +1299,18 @@ export function parseBatonCli(rawArgs) {
     noRemainder(args);
     return { kind: 'command', name: 'application.help', args: { topic, depth: 'outline' }, idempotencyKey };
   }
+  // R5 (row-conformance-core / D4): `baton application help [TOPIC]` — the taught CLI verb of the
+  // application.help row (deriveSurfaceNames('application.help').cli) — compiles to the same
+  // application.help command as `baton help`/`baton --help`. A bare `baton application` stays a
+  // loud cli_invalid (never a silent reinterpretation).
+  if (args[0] === 'application') {
+    args.shift();
+    if (args.shift() !== 'help') throw cliError('expected application help');
+    const topic = args.shift() ?? 'application';
+    if (!id(topic, 'help topic')) throw cliError('help topic is invalid');
+    noRemainder(args);
+    return { kind: 'command', name: 'application.help', args: { topic, depth: 'outline' }, idempotencyKey };
+  }
   if (args[0] === 'doctor') {
     args.shift();
     const depth = take(args, '--depth') ?? 'outline';
@@ -1513,6 +1525,37 @@ export function parseBatonCli(rawArgs) {
       idempotencyKey,
     };
   }
+  // R1/R4 (row-conformance-core / D1): `baton run watch RUN_ID` — the documented run.watch CLI
+  // verb (registry example 'baton run watch RUN_ID', inputSchema {runId, channel?, recipient?,
+  // afterCursor?}) — compiles to the run.watch command. Intercepted before the generic run branch
+  // so a bare `run watch` refuses value-required (Run ID is invalid), NEVER the objective-first
+  // run.start reinterpretation, and so the run-branch typo-guard's recognized first-token set
+  // stays closed (watch is a handled verb, not a recognized-first-token guard member).
+  if (args[0] === 'run' && args[1] === 'watch') {
+    args.splice(0, 2);
+    const runIdValue = id(args.shift(), 'Run ID');
+    const channel = take(args, '--channel');
+    const recipient = take(args, '--recipient');
+    const afterCursorRaw = take(args, '--after-cursor');
+    noRemainder(args);
+    if (channel !== null && !['progress', 'events', 'output'].includes(channel)) {
+      throw cliError('--channel must be progress|events|output');
+    }
+    if (recipient !== null) id(recipient, 'recipient ID');
+    if (afterCursorRaw !== null && (!Number.isSafeInteger(Number(afterCursorRaw)) || Number(afterCursorRaw) < 0)) {
+      throw cliError('--after-cursor must be a non-negative integer');
+    }
+    return {
+      kind: 'command', name: 'run.watch',
+      args: {
+        runId: runIdValue,
+        ...(channel === null ? {} : { channel }),
+        ...(recipient === null ? {} : { recipient }),
+        ...(afterCursorRaw === null ? {} : { afterCursor: Number(afterCursorRaw) }),
+      },
+      idempotencyKey,
+    };
+  }
   if (args.shift() !== 'run') {
     throw cliError('expected credentials, setup, doctor, route, explore, review, context, waves, or run');
   }
@@ -1682,8 +1725,8 @@ export function parseBatonCli(rawArgs) {
     // two-or-more (ambiguous — the parser never guesses) keeps the objective-first start.
     const typoRefusal = cliRunVerbTypoRefusal(action, lifecycleActions);
     if (typoRefusal !== null) throw cliError(typoRefusal, 'cli_command_unavailable');
-    return parseStart(args, action, idempotencyKey);
   }
+  if (!lifecycleActions.has(action)) return parseStart(args, action, idempotencyKey, 'change');
   const runId = id(args.shift(), 'Run ID');
   if (action === 'episode' || action === 'result') {
     const topic = action === 'result' ? 'result'

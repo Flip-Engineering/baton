@@ -278,13 +278,23 @@ function compareRows(left, right) {
 export function canonicalizeLedger(ledger) {
   return {
     schemaVersion: 1,
-    entries: [...ledger.entries].map((entry) => ({
-      surface: entry.surface,
-      name: entry.name,
-      canonical: entry.canonical,
-      dimension: entry.dimension,
-      retiresIn: entry.retiresIn,
-    })).sort(compareRows),
+    // The canonical row is the full R7 shape: the five validateLedger fields PLUS the divergence
+    // sentence (reason/refusal/note — the ledger row documents the divergence it covers, never a
+    // bare name-presence). Preserving the original divergence key keeps the canonical round-trip
+    // byte-stable for every documented row.
+    entries: [...ledger.entries].map((entry) => {
+      const divergenceKey = entry.reason !== undefined ? 'reason'
+        : entry.refusal !== undefined ? 'refusal'
+        : entry.note !== undefined ? 'note' : null;
+      return {
+        surface: entry.surface,
+        name: entry.name,
+        canonical: entry.canonical,
+        dimension: entry.dimension,
+        retiresIn: entry.retiresIn,
+        ...(divergenceKey === null ? {} : { [divergenceKey]: entry[divergenceKey] }),
+      };
+    }).sort(compareRows),
     // #160 F9 / fold B1 (error-actionability-2026-08-13): the CLI-local tooling codes are
     // ledgered deliberately code-only via the S2 escape hatch, in the contract's fixed
     // first-appearance order. Preserved here (spread copy, NOT sorted) so the SC6 canonical

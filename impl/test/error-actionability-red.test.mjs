@@ -561,12 +561,11 @@ test('C2 (F8 × CLI): baton run shwo -> cli_command_unavailable + the closed ver
   );
 });
 
-test('C3 (F9 × CLI, B1/B5): the 20 CLI-local tooling codes are ledgered deliberately code-only in surface-divergence-ledger.json', () => {
-  const ledgerUrl = new URL('../scripts/surface-divergence-ledger.json', import.meta.url);
-  const ledger = JSON.parse(readFileSync(ledgerUrl, 'utf8'));
-  const serialized = JSON.stringify(ledger);
+test('C3 (F9 × CLI, B1/B5): the 21 CLI-local tooling codes are ledgered deliberately code-only in cli-local-tooling-codes.json', () => {
+  const codesUrl = new URL('../scripts/cli-local-tooling-codes.json', import.meta.url);
+  const codes = JSON.parse(readFileSync(codesUrl, 'utf8'));
   for (const code of CLI_LOCAL_TOOLING_CODES) {
-    assert.ok(serialized.includes(code), `C3: ${code} must be ledgered as deliberately code-only (S2 escape hatch)`);
+    assert.ok(codes.codes.includes(code), `C3: ${code} must be ledgered as deliberately code-only (S2 escape hatch)`);
   }
 });
 
@@ -631,12 +630,11 @@ test('S1 (static): node impl/scripts/surface-conformance.mjs prints `surface-con
 
 test('S2 (static closure): a novel unledgered cli_* tooling code is a red conformance finding — every cli_* code in the CLI source is ledgered or in-scope', () => {
   const cliSource = readFileSync(new URL('../src/application-cli.mjs', import.meta.url), 'utf8');
-  const ledger = JSON.parse(readFileSync(new URL('../scripts/surface-divergence-ledger.json', import.meta.url), 'utf8'));
-  const serialized = JSON.stringify(ledger);
+  const codes = JSON.parse(readFileSync(new URL('../scripts/cli-local-tooling-codes.json', import.meta.url), 'utf8'));
   const inScope = new Set(['cli_command_unavailable', 'cli_transport_failed']);
   const found = new Set([...cliSource.matchAll(/['"](cli_[a-z0-9_]+)['"]/gu)].map((match) => match[1]));
   for (const code of found) {
-    assert.ok(inScope.has(code) || serialized.includes(code),
+    assert.ok(inScope.has(code) || codes.codes.includes(code),
       `S2: ${code} is thrown in the CLI source but is neither in-scope nor ledgered — a red conformance finding (S2)`);
   }
 });

@@ -199,7 +199,11 @@ test('UA5/MN: Run tools map exactly to the application bus and keep status/wait 
     ['fleet_run_follow', { repoId: 'repo-a', runId: 'run-mcp-a', afterCursor: 3, timeoutMs: 25_000 }, 'run.follow'],
     ['fleet_run_approve', { repoId: 'repo-a', idempotencyKey: 'run-approve', runId: 'run-mcp-a', planDigest: 'a'.repeat(64) }, 'run.approve'],
     ['fleet_run_wait', { repoId: 'repo-a', runId: 'run-mcp-a', timeoutMs: 25_000 }, 'run.wait'],
-    ['fleet_run_answer', { repoId: 'repo-a', idempotencyKey: 'run-answer', runId: 'run-mcp-a', requestId: 'question-1', answer: { decision: 'allow' } }, 'run.answer'],
+    // The {decision} answer form is RETIRED at contract-fold v1.1 (D3 #5 / R3-R9, row-conformance):
+    // the shared applicationAnswerSchema advertises exactly {optionId, text} and the answer-shape
+    // guard refuses {decision}/{resolution} on BOTH consumers — this row probes the run-tools →
+    // application-bus mapping, so the payload rides the conformant optionId form.
+    ['fleet_run_answer', { repoId: 'repo-a', idempotencyKey: 'run-answer', runId: 'run-mcp-a', requestId: 'question-1', answer: { optionId: 'opt-1' } }, 'run.answer'],
     ['fleet_run_feedback', { repoId: 'repo-a', idempotencyKey: 'run-feedback', runId: 'run-mcp-a', role: 'builder', feedback: 'Preserve the exact route evidence.' }, 'run.feedback'],
     ['fleet_run_stop', { repoId: 'repo-a', idempotencyKey: 'run-stop', runId: 'run-mcp-a', reason: 'Operator cancelled this Run.' }, 'run.stop'],
     ['fleet_run_evidence', { repoId: 'repo-a', runId: 'run-mcp-a' }, 'run.evidence'],

@@ -1942,6 +1942,20 @@ const SURFACE_ALIAS_ROWS = Object.freeze([
   // unledgered fact. The canonical transports are admitted beside these; both reach one operation.
   ['run.do', 'mcp.web-bridge', 'run.act'],
   ['run.view', 'mcp.web-bridge', 'run.inspect'],
+  // row-conformance-core (R7/R11) — the bridge forwards the application.commands wire spelling
+  // (mcp-web-bridge.mjs ORDINARY_COMMANDS) for the full card: the ten remaining names are
+  // name-shape divergences only (identical dispatch), now resolved as mcp.web-bridge surface
+  // aliases per the run.act/run.inspect precedent — their ledger rows retire (SC6 removal-only).
+  ['run.view', 'mcp.web-bridge', 'run.episode'],
+  ['run.view', 'mcp.web-bridge', 'run.status'],
+  ['run.view', 'mcp.web-bridge', 'run.wait'],
+  ['run.watch', 'mcp.web-bridge', 'run.follow'],
+  ['run.list', 'mcp.web-bridge', 'runs.list'],
+  ['run.resume', 'mcp.web-bridge', 'run.resume_work'],
+  ['run.retry', 'mcp.web-bridge', 'run.retry_verification'],
+  ['run.member.send', 'mcp.web-bridge', 'run.workstream.notify'],
+  ['run.member.stop', 'mcp.web-bridge', 'run.workstream.stop'],
+  ['run.member.view', 'mcp.web-bridge', 'run.workstreams'],
   ['application.help', 'mcp.baton', 'baton_help'],
   ['run.answer', 'mcp.baton', 'baton_decision_answer'],
   ['run.attention.list', 'mcp.baton', 'baton_decision_list'],
