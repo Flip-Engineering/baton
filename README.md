@@ -134,7 +134,7 @@ flowchart TB
 ### Planned (filed, not started)
 
 The complete open map is ~112 tracked issues — the lossless catalog lives in the
-[issue tracker](https://github.com/user/baton/issues) and
+[issue tracker](https://github.com/Flip-Engineering/baton/issues) and
 [docs/28](docs/28-exhaustive-capability-audit.md); the thematic shape:
 
 **Core platform rungs** — #2 orchestrator-selected exact routes · #3 the live route-matrix proof · #4 locale-independent ordering · #5 cross-controller namespaces · #6 semantic verification of model-authored reviews · #7 transitive process-forest reap under load · #8 durable autonomy/containment authority · **#9 the Program IR trunk** (closed, replayable, content-addressed workflow programs — the driver-killer's final form; #170's DSL is its surface syntax).
@@ -182,5 +182,5 @@ The full verb inventory is generated from the executable registry: [impl/CLI.md]
 - **[GLOSSARY.md](GLOSSARY.md)** — any leftover jargon.
 - **Design docs (`docs/`)** — the full table of the exploration corpus (problem framing through representation ladder) is preserved in the [superseded README](docs/reference/README-superseded-2026-08-13.md); nothing was discarded.
 - **Specs (`spec/`)** — per-phase implementation contracts; the campaign-era contracts/red-teams/folds live in **`docs/reference/evidence/<epic>-<date>/`** (the spec-driven pipeline's working papers).
-- **Issues** — [github.com/user/baton/issues](https://github.com/user/baton/issues): the tracked in-flight + planned roster (this README names the headline ones).
+- **Issues** — [github.com/Flip-Engineering/baton/issues](https://github.com/Flip-Engineering/baton/issues): the tracked in-flight + planned roster (this README names the headline ones).
 - **The orchestrator friction ledger** — [docs/reference/evidence/frontier-sweep-2026-08-03/orchestrator-friction-ledger.md](docs/reference/evidence/frontier-sweep-2026-08-03/orchestrator-friction-ledger.md): every AX friction the orchestrator hit while building baton with baton, with dispositions.
