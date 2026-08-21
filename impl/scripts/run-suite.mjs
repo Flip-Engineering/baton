@@ -102,7 +102,7 @@ const detached = process.platform !== 'win32';
 // Issue #40: the detached group also watches its own parent — if this process dies without
 // handlers (SIGKILL-class), the test runner terminates itself instead of working headless.
 const watchdogUrl = new URL('./suite-orphan-watchdog.mjs', import.meta.url).href;
-const child = spawn(process.execPath, ['--import', watchdogUrl, '--test', ...process.argv.slice(2)], {
+const child = spawn(process.execPath, ['--import', watchdogUrl, '--test', '--test-force-exit', ...process.argv.slice(2)], {
   detached,
   stdio: 'inherit',
   env: {

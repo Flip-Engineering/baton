@@ -328,13 +328,15 @@ test('CI4: worker result narrative is prose and never nested in a trusted lifecy
   assert.equal(JSON.stringify(lifecycle).includes('I changed the parser'), false);
 });
 
-test('CI3: driver-level wall timeout reaps the real child, worktree, metadata, and task branch', async (t) => {
+test('CI3: driver-level wall timeout reaps the real child, worktree, metadata, and task branch', { timeout: 8_000 }, async (t) => {
   const repoRoot = mkdtempSync(join(tmpdir(), 'baton-p11-repo-'));
   const logDir = mkdtempSync(join(tmpdir(), 'baton-p11-driver-log-'));
   t.after(() => {
     rmSync(repoRoot, { recursive: true, force: true });
     rmSync(logDir, { recursive: true, force: true });
   });
+  let driverHandle = null;
+  try {
   git(['init', '-q'], repoRoot);
   git(['config', 'user.email', 'baton-test@example.com'], repoRoot);
   git(['config', 'user.name', 'Baton Test'], repoRoot);
@@ -347,12 +349,13 @@ test('CI3: driver-level wall timeout reaps the real child, worktree, metadata, a
   globalThis.setTimeout = (callback, ms, ...args) => realSetTimeout(callback, ms === 60_000 ? 1_000 : ms, ...args);
   t.after(restoreTimer);
   const cli = new ClaudeSessionCli({ cmd: process.execPath, args: [FAKE_CLAUDE], killGraceMs: 20 });
-  const { coordinator, log } = createDriver({
+  const driverHandle = createDriver({
     repoRoot,
     logDir,
     adapters: { claude: cli },
     stopDeadlineMs: 250,
   });
+  const { coordinator, log } = driverHandle;
   const timed = brief('HOLD_UNTIL_INTERRUPT');
   // Keep the integration budget above fixture process startup jitter in the bare parallel suite;
   // the assertion is about real timeout cleanup after a wire session exists.
@@ -361,10 +364,16 @@ test('CI3: driver-level wall timeout reaps the real child, worktree, metadata, a
   await until(() => log.read(h.id).find((e) => e.kind === 'lifecycle.process_started' && e.actor === 'worker'));
   restoreTimer();
   const crashed = await until(() => log.read(h.id).find((e) => e.kind === 'lifecycle.crashed' && e.payload?.phase === 'timeout'));
+  restoreTimer(); // restore BEFORE the assertions — an assert-fail keeps the real 60s timer
+  // (agent-owned, harmless) instead of the compressed 1s one that re-fires post-test and hangs node.
   const events = log.read(h.id);
   const started = events.find((e) => e.kind === 'lifecycle.process_started' && e.actor === 'worker');
   const closed = events.find((e) => e.kind === 'lifecycle.process_closed' && e.actor === 'worker');
   const pid = started?.payload?.pid;
+  // Reap the real child unconditionally BEFORE the assertions: if any assert below fails,
+  // the detached child would otherwise survive and stall the file (node --test waits on the
+  // live stdio pipe — the suite hang class). The failing 'reaps' test must never leak.
+  try { if (Number.isSafeInteger(pid) && pid > 0) { try { process.kill(-pid, 'SIGKILL'); } catch { /* group absent */ } try { process.kill(pid, 'SIGKILL'); } catch { /* child gone */ } } } catch { /* noop */ }
   assert.ok(pid, 'a real child process must have existed');
   assert.ok(closed && crashed); assert.equal(closed.payload.pid, pid); assert.equal(closed.payload.generation, started.payload.generation);
   assert.ok(started.seq < closed.seq && closed.seq < crashed.seq, 'exact OS close precedes its timeout crash');
@@ -378,6 +387,14 @@ test('CI3: driver-level wall timeout reaps the real child, worktree, metadata, a
   assert.equal(existsSync(join(repoRoot, '.baton', 'wt', 'timeout-reap')), false);
   assert.equal(existsSync(join(repoRoot, '.baton', 'wt', 'timeout-reap.meta.json')), false);
   assert.equal(git(['branch', '--list', 'baton/timeout-reap'], repoRoot), '');
+  } finally {
+    // Guaranteed drain on EVERY exit path (pass or assert-fail): kill the fleet and close
+    // the driver so no real child or runner-scoped handle survives. The failure path leaked
+    // before — asserts skipped post-failure cleanup, stalling the whole suite.
+    try { if (driverHandle?.coordinator) { const hs = driverHandle.coordinator.list(); for (const hh of hs) await driverHandle.coordinator.kill(hh.workerId).catch(() => {}); } } catch { /* noop */ }
+    try { await driverHandle?.drainAndClose?.(); } catch { /* already closed */ }
+    try { await driverHandle?.closeAsync?.(); } catch { /* already closed */ }
+  }
 });
 
 test('CI5: wire spawn enriches task identity and duplicate turn-start does not double count', () => {
