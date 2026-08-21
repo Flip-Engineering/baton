@@ -115,6 +115,14 @@ test('DISPATCH-REAL: the real OmpRpcCli seat admits the plan dispatch after appr
     assert.equal(dispatches.length, 1, `approval must dispatch (got ${dispatches.length})`);
     assert.equal(dispatches[0]?.payload?.route?.vendor, 'omp', 'dispatch vendor must be omp');
   } finally {
-    await application.close?.();
+    // The dispatch spawned a REAL omp child; BatonApplication has shutdown(), not close()
+    // — the old `application.close?.()` no-op'd and leaked the child, hanging the whole
+    // suite (reproduced: runner never exits after the assertion passes). Drain the fleet.
+    try {
+      for (const handle of driver.coordinator.list()) {
+        await driver.coordinator.kill(handle.workerId).catch(() => {});
+      }
+    } catch { /* the worker may already be terminal */ }
+    await application.shutdown?.(principal('shutdown')).catch(() => {});
   }
 });
