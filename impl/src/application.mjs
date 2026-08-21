@@ -2662,8 +2662,10 @@ export class BatonApplication {
 
   _semanticControlTargets(current) {
     const definition = this._isWorkflowRun(current) ? this._workflowDefinition(current) : null;
+    // #210: the narrow read serves the run's own dispatches (bounded clones of only those
+    // rows); the full-store snapshot goalPlan deep clone is gone from this path.
     const dispatches = definition
-      ? (this.driver.coordination.snapshot().goalPlan?.dispatches ?? []) : [];
+      ? (this.driver.coordination.goalPlanDispatches?.(this.repoId, current.goal.runId) ?? []) : [];
     const rows = this.driver.coordinator.list().filter((worker) => (
       worker.runId === current.goal.runId
       && Number.isSafeInteger(worker.fence)
@@ -3579,22 +3581,37 @@ export class BatonApplication {
   }
 
   _runAtPlan(current, plan) {
-    const snapshot = this.driver.coordination.snapshot();
-    const goalPlan = snapshot.goalPlan;
-    const approval = goalPlan.approvals.find((row) => row.plan.planId === plan.planId
-      && row.plan.version === plan.version && row.plan.digest === plan.digest) ?? null;
-    const dispatches = goalPlan.dispatches.filter((row) => row.binding?.planId === plan.planId
-      && row.binding?.planVersion === plan.version && row.binding?.planDigest === plan.digest)
-      .sort((left, right) => (left.binding.nodeKey < right.binding.nodeKey ? -1 : 1));
+    // #210: one narrow accessor serves the plan's own approval + dispatches (bounded clone of
+    // only those rows); the full-store snapshot goalPlan deep clone is gone from this path.
+    const state = this.driver.coordination.goalPlanPlanState?.(
+      this.repoId, current.goal.runId, plan.planId, plan.version, plan.digest,
+    ) ?? { approval: null, dispatches: [] };
     return {
-      ...current, plan, approval, dispatch: dispatches[0] ?? null, dispatches,
+      ...current, plan, approval: state.approval,
+      dispatch: state.dispatches[0] ?? null, dispatches: state.dispatches,
     };
   }
 
   _workflowPlanHistory(current) {
     if (!this._isWorkflowRun(current)) return [];
-    const snapshot = this.driver.coordination.snapshot();
-    const plans = snapshot.goalPlan?.plans ?? [];
+    // #210: the bounded Run Plan history (goalPlanRunPlans) serves this walk; the full-store
+    // snapshot goalPlan deep clone is gone from this path (legacy stores without the narrow
+    // accessor keep the snapshot fallback).
+    let plans = [];
+    if (typeof this.driver.coordination.goalPlanRunPlans === 'function') {
+      try {
+        plans = this.driver.coordination.goalPlanRunPlans(this.repoId, current.goal.runId);
+      } catch (error) {
+        if (error?.code === 'goal_plan_status_oversize') {
+          throw applicationError('Workflow Plan history is cyclic or exceeds its bounded ceiling',
+            'application_workflow_integrity');
+        }
+        throw error;
+      }
+    } else if (typeof this.driver.coordination.snapshot === 'function') {
+      const snapshot = this.driver.coordination.snapshot();
+      plans = snapshot.goalPlan?.plans ?? [];
+    }
     const chain = []; const seen = new Set();
     let cursor = current.plan;
     while (cursor) {
@@ -4281,11 +4298,17 @@ export class BatonApplication {
 
   async _reconcileApprovedRuns() {
     this._assertOpen();
-    const runIds = typeof this.driver.coordination.goalPlanRunIds === 'function'
-      ? this.driver.coordination.goalPlanRunIds(this.repoId, MAX_RUN_RECORDS)
-      : [...new Set((this.driver.coordination.snapshot().goalPlan?.goals ?? [])
+    // #210: the narrow Run index is authoritative on modern stores (zero full-store clones);
+    // the legacy arm below fires only for stores without goalPlanRunIds.
+    let runIds;
+    if (typeof this.driver.coordination.goalPlanRunIds === 'function') {
+      runIds = this.driver.coordination.goalPlanRunIds(this.repoId, MAX_RUN_RECORDS);
+    } else {
+      const snapshot = this.driver.coordination.snapshot();
+      runIds = [...new Set((snapshot.goalPlan?.goals ?? [])
         .filter((goal) => goal.repoId === this.repoId && goal.runId !== null)
         .map((goal) => goal.runId))].sort();
+    }
     if (runIds.length > MAX_RUN_RECORDS) {
       throw applicationError('application run scheduler exceeds its bounded lookup ceiling', 'application_run_lookup_oversize');
     }
@@ -7251,11 +7274,18 @@ export class BatonApplication {
     const selectedTask = selectedCandidate
       ? this.driver.coordination.task(selectedCandidate.taskId) : null;
     let selectedPreservation = null;
-    if (selectedTask?.assignee && selectedCandidate
-      && typeof this.driver.coordinator.inspectPreservedResult === 'function') {
-      selectedPreservation = await this.driver.coordinator.inspectPreservedResult(
-        selectedTask.assignee, selectedCandidate.resultSha,
-      );
+    if (selectedTask?.assignee && selectedCandidate) {
+      // #216 (row-git-batch): consume the page-level batched resolution when the selected
+      // candidate's (assignee, resultSha) was pre-resolved; otherwise fall back to the
+      // single-ref inspection (one process for this one view).
+      const preserved = options?.preservedResults;
+      if (preserved instanceof Map && preserved.has(`${selectedTask.assignee}\0${selectedCandidate.resultSha}`)) {
+        selectedPreservation = preserved.get(`${selectedTask.assignee}\0${selectedCandidate.resultSha}`);
+      } else if (typeof this.driver.coordinator.inspectPreservedResult === 'function') {
+        selectedPreservation = await this.driver.coordinator.inspectPreservedResult(
+          selectedTask.assignee, selectedCandidate.resultSha,
+        );
+      }
     }
     const selectedAdoption = selectedCandidate
       ? this.driver.coordination.runResultAdoption?.(runId, selectedCandidate.nodeKey) ?? null
@@ -7597,8 +7627,16 @@ export class BatonApplication {
     const resultStability = acceptedVerification?.stability ?? result?.verificationStability ?? null;
     const adoption = this.driver.coordination.runResultAdoption?.(runId, node.key) ?? null;
     let preservation = null;
-    if (workerId && resultSha && typeof this.driver.coordinator.inspectPreservedResult === 'function') {
-      preservation = await this.driver.coordinator.inspectPreservedResult(workerId, resultSha);
+    if (workerId && resultSha) {
+      // #216 (row-git-batch): a page-level batch (waves.list) pre-resolves every member's
+      // preserved ref in ONE git process and threads the keyed results here — the view
+      // consumes the batch instead of paying its own resolveResult per member.
+      const preserved = options?.preservedResults;
+      if (preserved instanceof Map && preserved.has(`${workerId}\0${resultSha}`)) {
+        preservation = preserved.get(`${workerId}\0${resultSha}`);
+      } else if (typeof this.driver.coordinator.inspectPreservedResult === 'function') {
+        preservation = await this.driver.coordinator.inspectPreservedResult(workerId, resultSha);
+      }
     }
     let phase;
     if (!projection.approval) phase = 'awaiting_plan_approval';
@@ -10954,7 +10992,7 @@ export class BatonApplication {
     }, bounds);
   }
 
-  async inspect(rawRequest, rawPrincipal, rawContext = null) {
+  async inspect(rawRequest, rawPrincipal, rawContext = null, viewOptions = null) {
     this._assertOpen();
     await this.ready;
     const context = normalizeCommandContext(rawContext);
@@ -10989,7 +11027,7 @@ export class BatonApplication {
     }
     if (!current.profile) {
       const view = this._withContextProjection(
-        current, await this._buildView(current, this.principals.observer),
+        current, await this._buildView(current, this.principals.observer, viewOptions ?? undefined),
       );
       return this._historicalProfileInspection(current, view, request);
     }
@@ -11005,7 +11043,7 @@ export class BatonApplication {
       ? undefined : (request.waitMs ?? policy.maxWaitMs);
     const bounds = this._semanticBounds(current);
     let view = this._withContextProjection(
-      current, await this._buildView(current, this.principals.observer),
+      current, await this._buildView(current, this.principals.observer, viewOptions ?? undefined),
     );
     if (request.cursor !== undefined && request.cursor > view.cursor) {
       throw applicationError('Run inspection cursor is ahead of durable authority', 'application_inspect_cursor_ahead');
@@ -11041,7 +11079,7 @@ export class BatonApplication {
           }
           this._authorizeRecursiveCommand('run.status', request.runId, principal, context);
           view = this._withContextProjection(
-            current, await this._buildView(current, this.principals.observer),
+            current, await this._buildView(current, this.principals.observer, viewOptions ?? undefined),
           );
           await this._authorize('run.status', principal, request.runId, authorizationSubject);
           if (notification?.advanced === false && !APPLICATION_RUN_TERMINAL_PHASES.has(view.phase)) {
@@ -11976,6 +12014,11 @@ export class BatonApplication {
     // WLS-1: one single-pass steering-registered index serves every member on this page — the
     // per-member full-log rescans (_runIdForWaveMember/_runWaveRoute) are the 87k-event furnace.
     const waveIndex = this._runWaveIndex();
+    // #216 (row-git-batch): the page resolves EVERY completed member's preserved-result ref in
+    // ONE git process before any view build (inspectPreservedResults → worktrees.resolveResults);
+    // the per-member inspect calls consume the keyed results instead of one resolveResult each
+    // (~90 members × ~3 git calls ≈ 11-13 s per waves_list at HEAD).
+    const preservedResults = await this._pagePreservedInspections(page, waveIndex);
     const waves = [];
     for (const row of page) {
       const members = [];
@@ -11995,7 +12038,7 @@ export class BatonApplication {
           let view = null;
           if (runId !== null) {
             try {
-              view = await this.inspect({ runId }, principal, context);
+              view = await this.inspect({ runId }, principal, context, { preservedResults });
             } catch (error) {
               if (error?.code !== 'application_run_not_found') throw error;
               throw applicationError(`wave member ${member} run is no longer available`, 'wave_not_found', { runId, role: member });
@@ -12023,7 +12066,7 @@ export class BatonApplication {
         let view = null;
         if (runId !== null) {
           try {
-            view = await this.inspect({ runId }, principal, context);
+            view = await this.inspect({ runId }, principal, context, { preservedResults });
           } catch (error) {
             // D5.2 seam: a member whose run WAS registered and then disappeared refuses the whole
             // read typed wave_not_found — the registry row is never a silent success shape.
@@ -12051,6 +12094,41 @@ export class BatonApplication {
     }
     const nextCursor = cursor + page.length < open.length ? cursor + page.length : null;
     return deepFreeze({ schemaVersion: 1, cursor, nextCursor, waves });
+  }
+
+  /** #216 (row-git-batch): pre-resolve every completed member's preserved-result ref on the
+   * page in ONE coordinator batch (one worktrees.resolveResults → one git process). Returns a
+   * Map<`${workerId}\0${expectedSha}`, inspection> the view builds consume, or null when the
+   * page has no resolvable member or the coordinator lacks the batch seam. Purely memory/log
+   * reads per member (the coordinator's own task authority) — never a git spawn. */
+  async _pagePreservedInspections(page, waveIndex) {
+    if (typeof this.driver.coordinator.inspectPreservedResults !== 'function') return null;
+    if (typeof this.driver.coordinator.result !== 'function') return null;
+    const workers = this.driver.coordinator.list();
+    const entries = [];
+    for (const row of page) {
+      for (const member of row.roster ?? []) {
+        const role = typeof member === 'string' ? member : member?.role ?? null;
+        const runId = this._runIdForWaveMember(row.waveId, role, waveIndex);
+        if (runId === null) continue;
+        const worker = workers.find((candidate) => candidate.runId === runId);
+        if (!worker?.id) continue;
+        let memberResult;
+        try { memberResult = await this.driver.coordinator.result(worker.id); }
+        catch { continue; }
+        if (memberResult?.status === 'completed' && typeof memberResult.capturedSha === 'string'
+          && memberResult.retainedResultRef) {
+          entries.push({ workerId: worker.id, expectedSha: memberResult.capturedSha });
+        }
+      }
+    }
+    if (entries.length === 0) return null;
+    const inspected = await this.driver.coordinator.inspectPreservedResults(entries);
+    const map = new Map();
+    for (let index = 0; index < entries.length; index += 1) {
+      map.set(`${entries[index].workerId}\0${entries[index].expectedSha}`, inspected[index]);
+    }
+    return map;
   }
 
   // The member's run is the steering-registered runId for (waveId, waveRole) — the durable
@@ -12226,7 +12304,24 @@ export class BatonApplication {
     const context = normalizeCommandContext(rawContext);
     const principal = normalizePrincipal(rawPrincipal, 'Run list principal');
     await this._authorize('runs.list', principal, null, { operation: 'runs.list' });
-    const goalPlan = this.driver.coordination.snapshot().goalPlan;
+    // #210: the bounded head-only summary (goalPlanSummary) serves runs.list — every member
+    // read used to deep-clone the ENTIRE store through the snapshot goalPlan projection. The
+    // legacy arm below fires only for stores without the narrow accessor.
+    let goalPlan;
+    if (typeof this.driver.coordination.goalPlanSummary === 'function') {
+      try {
+        goalPlan = this.driver.coordination.goalPlanSummary(this.repoId, MAX_RUN_RECORDS);
+      } catch (error) {
+        if (error?.code === 'goal_plan_status_oversize') {
+          throw applicationError('Run list exceeds its bounded lookup ceiling',
+            'application_run_list_oversize');
+        }
+        throw error;
+      }
+    } else {
+      const snapshot = this.driver.coordination.snapshot();
+      goalPlan = snapshot.goalPlan;
+    }
     if (!goalPlan || goalPlan.goals.length > MAX_RUN_RECORDS) {
       throw applicationError('Run list exceeds its bounded lookup ceiling',
         'application_run_list_oversize');

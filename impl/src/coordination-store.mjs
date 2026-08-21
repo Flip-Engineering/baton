@@ -95,6 +95,19 @@ const CANONICAL_ORDER_RECEIPT = 'canonical-order-receipt.json';
 const CANONICAL_ORDER_TEMP_PREFIX = '.canonical-order-receipt.';
 const PROJECTION_CHECKPOINT = 'projection.checkpoint';
 const PROJECTION_CHECKPOINT_TEMP_PREFIX = '.projection.checkpoint.';
+// Issue #223 ledger compaction: terminal-wave event prefixes are archived into
+// content-addressed segment files under <root>/segments/ (segment = the event range
+// [fromSeq, throughSeq] + sha256 of the exact JSONL bytes). The segment INDEX is a compact
+// ordered roster of the archived prefix; it is a cache — the segment files are immutable
+// and the index is rebuilt by scanning them if it is absent or behind the ledger's
+// truncation. `compact({ beforeSeq })` is the operator verb that lands this seam; a later
+// row wires the cadence policy that decides which waves are terminal and picks the cut.
+const SEGMENTS_DIR = 'segments';
+const SEGMENT_INDEX_FILE = 'index.json';
+const SEGMENT_FILE_SUFFIX = '.jsonl';
+const SEGMENT_TEMP_PREFIX = '.segment.';
+const SEGMENT_INDEX_TEMP_PREFIX = '.segment-index.';
+const LEDGER_TEMP_PREFIX = '.events.jsonl.';
 const PROJECTION_CHECKPOINT_FIELDS = Object.freeze([
   '_events', '_byKey', '_tasks', '_runs', '_artifacts',
   '_reuseDecisions', '_reuseSubjects', '_reuseRiskGuards', '_reusePolicyHeads',
@@ -863,6 +876,10 @@ export class CoordinationStore {
     this._operationalRangeRead = opts.operationalRangeRead ?? null;
     this._writerLease = null;
     this._writerLeaseRequired = false;
+    // #223: the in-memory segment index ({archivedThroughSeq, segments[]} or null) — ledger
+    // metadata, NOT projection state. It records how much of the history lives in archived
+    // content-addressed segments so the checkpoint can cache the live window only.
+    this._segmentIndex = null;
     if (this._canonicalOrderPolicy) this._openCanonicalOrderLedger();
     else this._load();
   }
@@ -1083,11 +1100,18 @@ export class CoordinationStore {
 
   _projectionCheckpointPayload({ durable = false } = {}) {
     const payload = Object.fromEntries(PROJECTION_CHECKPOINT_FIELDS.map((field) => [field, this[field]]));
+    // #223: the checkpoint is a parsed-event cache for the LIVE WINDOW. When the ledger has
+    // been compacted (archived events live in segments, not in events.jsonl), the cache holds
+    // only the window events — they are the exact bytes of the current ledger, so the
+    // parsed-prefix integrity check below still holds. The projection maps and _byKey remain
+    // the FULL state: replay and idempotent retries need every key, archived or not.
+    const base = this._segmentIndex?.archivedThroughSeq ?? 0;
+    if (base > 0) payload._events = this._events.slice(base);
     // Diagnostic projection inspection must not copy reaped scratchpad prose back into the
     // projection surface through the parsed-event cache. The durable checkpoint writer opts
     // into its authoritative parsed-prefix cache; the append-only ledger remains the source.
     if (!durable) {
-      payload._events = this._events.map((event) => (event.kind === 'scratchpad.entry_written' || event.kind === 'scratchpad.entry_appended')
+      payload._events = payload._events.map((event) => (event.kind === 'scratchpad.entry_written' || event.kind === 'scratchpad.entry_appended')
         && !this._scratchpadEntries.has(event.payload.entryId)
         ? freeze({ ...clone(event), payload: freeze({ ...clone(event.payload), content: '[reaped]' }) })
         : event);
@@ -1112,10 +1136,14 @@ export class CoordinationStore {
       );
     }
     const projectionBytes = serialize(this._projectionCheckpointPayload({ durable: true }));
+    // #223: throughSeq is the count of events the parsed cache covers — the LIVE WINDOW.
+    // Archived events live in segments and are NOT part of the ledger bytes or the cache.
+    const base = this._segmentIndex?.archivedThroughSeq ?? 0;
+    const windowCount = this._events.length - base;
     const envelope = {
       schemaVersion: 1,
       authorityDigest: this._checkpointAuthorityDigest,
-      throughSeq: this._events.length,
+      throughSeq: windowCount,
       prefixBytes: raw.byteLength,
       prefixDigest: sha256Bytes(raw),
       projectionDigest: sha256Bytes(projectionBytes),
@@ -1150,7 +1178,7 @@ export class CoordinationStore {
     }
   }
 
-  _restoreProjectionCheckpoint(raw) {
+  _restoreProjectionCheckpoint(raw, base = 0) {
     if (!existsSync(this._checkpointFile)) return { state: 'absent', throughSeq: 0, prefixBytes: 0 };
     try {
       const stat = lstatSync(this._checkpointFile);
@@ -1183,9 +1211,11 @@ export class CoordinationStore {
         || !Array.isArray(projection._events)
         || projection._events.length !== envelope.throughSeq
         || !(projection._byKey instanceof Map)
-        || projection._byKey.size !== envelope.throughSeq
+        // #223: a compacted checkpoint caches the window only; the idempotency map and the
+        // final absolute seq still span the FULL history (archived base + window).
+        || projection._byKey.size !== base + envelope.throughSeq
         || (envelope.throughSeq > 0
-          && projection._events.at(-1)?.seq !== envelope.throughSeq)) {
+          && projection._events.at(-1)?.seq !== base + envelope.throughSeq)) {
         throw new Error('checkpoint projection is invalid');
       }
       const parsedPrefix = projection._events.map((event) => freeze(event));
@@ -1425,6 +1455,282 @@ export class CoordinationStore {
     this._writerLease = null; return true;
   }
 
+  _segmentDirectory() { return join(this.root, SEGMENTS_DIR); }
+
+  _segmentFilePath(digest) { return join(this._segmentDirectory(), `${digest}${SEGMENT_FILE_SUFFIX}`); }
+
+  _cleanupSegmentTemps() {
+    const dir = this._segmentDirectory();
+    if (!existsSync(dir)) return;
+    for (const name of readdirSync(dir)) {
+      if (!name.startsWith(SEGMENT_TEMP_PREFIX) && !name.startsWith(SEGMENT_INDEX_TEMP_PREFIX)) continue;
+      try { unlinkSync(join(dir, name)); }
+      catch { throw new CoordinationRefusal('coordination segment temporary could not be removed', 'coordination_segment_write_failed'); }
+    }
+  }
+
+  _writeSegment(digest, bytes) {
+    const dir = this._segmentDirectory();
+    mkdirSync(dir, { recursive: true, mode: 0o700 });
+    const path = this._segmentFilePath(digest);
+    // Content-addressed: the file name IS the sha256 of its exact bytes, so an existing
+    // file under the same name is byte-identical and the write is idempotent.
+    if (existsSync(path)) return path;
+    const temporary = join(dir, `${SEGMENT_TEMP_PREFIX}${randomUUID()}`);
+    let fd = null;
+    try {
+      fd = openSync(temporary, 'wx', 0o600);
+      writeFileSync(fd, bytes);
+      fsyncSync(fd);
+      closeSync(fd); fd = null;
+      renameSync(temporary, path);
+      chmodSync(path, 0o600);
+      try { const rootFd = openSync(dir, 'r'); try { fsyncSync(rootFd); } finally { closeSync(rootFd); } } catch { /* directory fsync is unavailable on some supported hosts */ }
+    } catch (error) {
+      if (fd !== null) try { closeSync(fd); } catch { /* original write error wins */ }
+      try { unlinkSync(temporary); } catch { /* rename or cleanup already completed */ }
+      throw error;
+    }
+    return path;
+  }
+
+  _writeSegmentIndex(index) {
+    const dir = this._segmentDirectory();
+    mkdirSync(dir, { recursive: true, mode: 0o700 });
+    const bytes = Buffer.from(`${JSON.stringify(index)}\n`, 'utf8');
+    const temporary = join(dir, `${SEGMENT_INDEX_TEMP_PREFIX}${randomUUID()}`);
+    let fd = null;
+    try {
+      fd = openSync(temporary, 'wx', 0o600);
+      writeFileSync(fd, bytes);
+      fsyncSync(fd);
+      closeSync(fd); fd = null;
+      renameSync(temporary, join(dir, SEGMENT_INDEX_FILE));
+      chmodSync(join(dir, SEGMENT_INDEX_FILE), 0o600);
+      try { const rootFd = openSync(dir, 'r'); try { fsyncSync(rootFd); } finally { closeSync(rootFd); } } catch { /* directory fsync is unavailable on some supported hosts */ }
+    } catch (error) {
+      if (fd !== null) try { closeSync(fd); } catch { /* original write error wins */ }
+      try { unlinkSync(temporary); } catch { /* rename or cleanup already completed */ }
+      throw error;
+    }
+  }
+
+  // #223 replay path — load segments (index) + window. The index is a cache: the immutable
+  // content-addressed segment files are the durable archive, so an absent or stale index is
+  // rebuilt by scanning them. Returns { archivedThroughSeq, segments: [{fromSeq, throughSeq,
+  // digest, bytes}] } — the archived prefix coverage the LEDGER's own coverage requires.
+  _loadSegmentState(raw) {
+    const dir = this._segmentDirectory();
+    const indexFile = join(dir, SEGMENT_INDEX_FILE);
+    let index = null;
+    if (existsSync(indexFile)) {
+      // The index is a CACHE over immutable segment files: a malformed index must never
+      // brick startup — it falls through to the scan-rebuild path, which verifies the
+      // actual segment content (digests, ranges) and reconstructs the coverage.
+      let parsed = null;
+      try { parsed = JSON.parse(readFileSync(indexFile, 'utf8')); } catch { /* malformed index → rebuild */ }
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+        && parsed.schemaVersion === 1
+        && Number.isSafeInteger(parsed.archivedThroughSeq) && parsed.archivedThroughSeq >= 0
+        && Array.isArray(parsed.segments)) {
+        let expected = 1;
+        let valid = true;
+        for (const segment of parsed.segments) {
+          if (!segment || typeof segment !== 'object' || Array.isArray(segment)
+            || !Number.isSafeInteger(segment.fromSeq) || !Number.isSafeInteger(segment.throughSeq)
+            || segment.throughSeq < segment.fromSeq || segment.fromSeq !== expected
+            || typeof segment.digest !== 'string' || !/^[a-f0-9]{64}$/u.test(segment.digest)
+            || !Number.isSafeInteger(segment.bytes) || segment.bytes < 0) {
+            valid = false; break;
+          }
+          expected = segment.throughSeq + 1;
+        }
+        if (valid && expected === parsed.archivedThroughSeq + 1) index = parsed;
+      }
+    }
+    // The first live event seq anchors what the LEDGER itself covers.
+    let firstSeq = null;
+    if (raw.byteLength > 0) {
+      const newline = raw.indexOf(0x0a);
+      if (newline < 0) throw new CoordinationIntegrityError('coordination stream has a truncated tail', 'truncated_tail');
+      let first;
+      try { first = JSON.parse(raw.subarray(0, newline).toString('utf8')); }
+      catch { throw new CoordinationIntegrityError('invalid JSON at coordination line 1', 'invalid_json'); }
+      firstSeq = first?.seq;
+      if (!Number.isSafeInteger(firstSeq) || firstSeq <= 0) {
+        throw new CoordinationIntegrityError('coordination sequence gap at line 1', 'sequence_gap');
+      }
+    }
+    // A ledger that still starts at seq 1 IS the complete history — no archived prefix is
+    // required, and any on-disk index is a compaction whose ledger rewrite has not committed
+    // (the next compaction self-heals it).
+    if (firstSeq === 1) return { archivedThroughSeq: 0, segments: [] };
+    // A consistent index (archived prefix + window == full history) is trusted; replay still
+    // verifies every segment file's digest as it reads it.
+    if (index !== null && (firstSeq === null || firstSeq === index.archivedThroughSeq + 1)) {
+      return index;
+    }
+    // The index is absent or behind the ledger's truncation (a crash between the ledger
+    // rewrite and the index write): rebuild from the immutable segment files.
+    const segments = [];
+    if (existsSync(dir)) {
+      for (const name of readdirSync(dir).sort()) {
+        if (!name.endsWith(SEGMENT_FILE_SUFFIX) || !/^[a-f0-9]{64}\.jsonl$/u.test(name)) continue;
+        const bytes = readFileSync(join(dir, name));
+        if (sha256Bytes(bytes) !== name.slice(0, 64)) {
+          throw new CoordinationIntegrityError('coordination segment digest mismatch', 'coordination_segment_integrity');
+        }
+        const text = bytes.toString('utf8');
+        if (!Buffer.from(text, 'utf8').equals(bytes)) {
+          throw new CoordinationIntegrityError('coordination segment is not exact UTF-8', 'invalid_utf8');
+        }
+        if (bytes.byteLength > 0 && bytes.at(-1) !== 0x0a) {
+          throw new CoordinationIntegrityError('coordination segment has a truncated tail', 'coordination_segment_truncated');
+        }
+        const segmentLines = text.length === 0 ? [] : text.slice(0, -1).split('\n');
+        if (segmentLines.length === 0) {
+          throw new CoordinationIntegrityError('coordination segment is empty', 'coordination_segment_integrity');
+        }
+        let fromSeq; let throughSeq;
+        try {
+          fromSeq = JSON.parse(segmentLines[0]).seq;
+          throughSeq = JSON.parse(segmentLines[segmentLines.length - 1]).seq;
+        } catch { throw new CoordinationIntegrityError('coordination segment is invalid JSON', 'invalid_json'); }
+        if (!Number.isSafeInteger(fromSeq) || !Number.isSafeInteger(throughSeq)
+          || throughSeq < fromSeq || throughSeq - fromSeq + 1 !== segmentLines.length) {
+          throw new CoordinationIntegrityError('coordination segment sequence range is invalid', 'coordination_segment_integrity');
+        }
+        segments.push({ fromSeq, throughSeq, digest: name.slice(0, 64), bytes: bytes.byteLength });
+      }
+    }
+    segments.sort((left, right) => left.fromSeq - right.fromSeq);
+    let expected = 1;
+    for (const segment of segments) {
+      if (segment.fromSeq !== expected) throw new CoordinationIntegrityError('coordination archived prefix has a gap', 'coordination_segment_gap');
+      expected = segment.throughSeq + 1;
+    }
+    const scannedThroughSeq = segments.length === 0 ? 0 : segments[segments.length - 1].throughSeq;
+    const needed = firstSeq === null ? scannedThroughSeq : firstSeq - 1;
+    if (segments.length === 0) {
+      // No segment files at all: a firstSeq > 1 ledger is a plain sequence gap, not a
+      // compacted store (the segment file is always written BEFORE the ledger is truncated).
+      if (needed > 0) throw new CoordinationIntegrityError('coordination sequence gap at line 1', 'sequence_gap');
+      return { archivedThroughSeq: 0, segments: [] };
+    }
+    if (scannedThroughSeq < needed) {
+      throw new CoordinationIntegrityError('coordination archived prefix is incomplete', 'coordination_segment_gap');
+    }
+    // Segments may cover more than the ledger needs (a compaction whose ledger rewrite
+    // committed but whose index did not): the ledger is the window authority.
+    const active = segments.filter((segment) => segment.throughSeq <= needed);
+    if (needed > 0 && (active.length === 0 || active[active.length - 1].throughSeq !== needed)) {
+      throw new CoordinationIntegrityError('coordination archived prefix is incomplete', 'coordination_segment_gap');
+    }
+    return { archivedThroughSeq: needed, segments: active };
+  }
+
+  // Issue #223 — the operator verb that lands the compaction seam. `beforeSeq` is the first
+  // seq that stays LIVE; the terminal prefix [1, beforeSeq) is archived into a
+  // content-addressed segment, the live events.jsonl is rewritten to the window, the
+  // checkpoint is rebuilt for the window, and the segment index records the archive. The
+  // in-memory projection is UNTOUCHED (it already spans the full history), so no waiter or
+  // reader observes a discontinuity. Deciding which waves are terminal and picking the cut
+  // is the cadence row's policy; this verb takes the operator's cut as given.
+  //
+  // Crash ordering (single writer, verb serialized by the writer lease): segment file →
+  // segment index → ledger rewrite → checkpoint. The segment file lands before the ledger
+  // truncates, so the archived events always exist on disk before the live window loses
+  // them; an index write that committed without the ledger rewrite (or vice versa) is
+  // reconciled by _loadSegmentState on the next open.
+  compact({ beforeSeq }) {
+    this._assertWriterLease();
+    if (this._canonicalOrderPolicy) {
+      throw new CoordinationRefusal('coordination compaction is refused while the ledger is canonical-order pinned', 'coordination_compact_refused');
+    }
+    if (!Number.isSafeInteger(beforeSeq) || beforeSeq < 2 || beforeSeq > this._events.length + 1) {
+      throw new CoordinationRefusal('coordination compaction cut is outside the ledger', 'coordination_compact_invalid');
+    }
+    const prior = this._segmentIndex;
+    const archivedThroughSeq = beforeSeq - 1;
+    const startSeq = (prior?.archivedThroughSeq ?? 0) + 1;
+    if (startSeq > archivedThroughSeq) return null; // the requested prefix is already archived
+    const raw = existsSync(this.file) ? readFileSync(this.file) : Buffer.alloc(0);
+    if (!this._loadedLedgerIdentity
+      || raw.byteLength !== this._loadedLedgerIdentity.bytes
+      || sha256Bytes(raw) !== this._loadedLedgerIdentity.digest
+      || this._events.length !== this._loadedLedgerIdentity.events) {
+      throw new CoordinationIntegrityError(
+        'coordination compaction refused because the ledger diverged from the loaded prefix',
+        'coordination_compact_ledger_drift',
+      );
+    }
+    const text = raw.toString('utf8');
+    if (!Buffer.from(text, 'utf8').equals(raw)) {
+      throw new CoordinationIntegrityError('coordination stream is not exact UTF-8', 'invalid_utf8');
+    }
+    const lines = raw.byteLength === 0 ? [] : text.slice(0, -1).split('\n');
+    const take = archivedThroughSeq - startSeq + 1;
+    if (lines.length < take) {
+      throw new CoordinationIntegrityError('coordination window is missing events at the compaction cut', 'coordination_compact_window_gap');
+    }
+    const archivedLines = lines.slice(0, take);
+    const windowLines = lines.slice(take);
+    let firstArchived; let firstWindow = null;
+    try {
+      firstArchived = JSON.parse(archivedLines[0]);
+      if (windowLines.length > 0) firstWindow = JSON.parse(windowLines[0]);
+    } catch {
+      throw new CoordinationIntegrityError('coordination stream has invalid JSON at the compaction cut', 'invalid_json');
+    }
+    if (!Number.isSafeInteger(firstArchived?.seq) || firstArchived.seq !== startSeq
+      || (firstWindow !== null && (!Number.isSafeInteger(firstWindow?.seq) || firstWindow.seq !== beforeSeq))) {
+      throw new CoordinationIntegrityError('coordination compaction cut sequence is invalid', 'coordination_compact_cut_mismatch');
+    }
+    const segmentBytes = Buffer.from(`${archivedLines.join('\n')}\n`, 'utf8');
+    const digest = sha256Bytes(segmentBytes);
+    this._cleanupSegmentTemps();
+    this._writeSegment(digest, segmentBytes);
+    const next = {
+      schemaVersion: 1,
+      archivedThroughSeq,
+      segments: [...(prior?.segments ?? []), { fromSeq: startSeq, throughSeq: archivedThroughSeq, digest, bytes: segmentBytes.byteLength }],
+    };
+    this._writeSegmentIndex(next);
+    const windowBytes = Buffer.from(windowLines.length === 0 ? '' : `${windowLines.join('\n')}\n`, 'utf8');
+    const temporary = join(this.root, `${LEDGER_TEMP_PREFIX}${randomUUID()}`);
+    let fd = null;
+    try {
+      fd = openSync(temporary, 'wx', 0o600);
+      writeFileSync(fd, windowBytes);
+      fsyncSync(fd);
+      closeSync(fd); fd = null;
+      renameSync(temporary, this.file);
+      chmodSync(this.file, 0o600);
+      try { const rootFd = openSync(this.root, 'r'); try { fsyncSync(rootFd); } finally { closeSync(rootFd); } } catch { /* directory fsync is unavailable on some supported hosts */ }
+    } catch (error) {
+      if (fd !== null) try { closeSync(fd); } catch { /* original write error wins */ }
+      try { unlinkSync(temporary); } catch { /* rename or cleanup already completed */ }
+      throw error;
+    }
+    this._segmentIndex = next;
+    // The ledger identity now tracks the LIVE WINDOW bytes (appends keep extending it); the
+    // event count stays the full global history so seq allocation never regresses.
+    this._loadedLedgerHash = createHash('sha256').update(windowBytes);
+    this._loadedLedgerIdentity = freeze({
+      bytes: windowBytes.byteLength,
+      digest: this._loadedLedgerHash.copy().digest('hex'),
+      events: this._events.length,
+    });
+    this._writeProjectionCheckpoint();
+    return freeze({
+      schemaVersion: 1, beforeSeq, archivedThroughSeq,
+      windowEvents: this._events.length - archivedThroughSeq,
+      segment: { fromSeq: startSeq, throughSeq: archivedThroughSeq, digest, bytes: segmentBytes.byteLength },
+      segments: next.segments.length,
+      ledgerBytes: windowBytes.byteLength,
+    });
+  }
+
   _load() {
     const raw = existsSync(this.file) ? readFileSync(this.file) : Buffer.alloc(0);
     this._reportStartup({
@@ -1435,18 +1741,27 @@ export class CoordinationStore {
       if (raw.byteLength > 0 && raw.at(-1) !== 0x0a) {
         throw new CoordinationIntegrityError('coordination stream has a truncated tail', 'truncated_tail');
       }
-      const checkpoint = this._restoreProjectionCheckpoint(raw);
+      const segments = this._loadSegmentState(raw);
+      const base = segments.archivedThroughSeq;
+      this._segmentIndex = base > 0 ? segments : null;
+      const checkpoint = this._restoreProjectionCheckpoint(raw, base);
       const tail = raw.subarray(checkpoint.prefixBytes);
       const text = tail.toString('utf8');
       if (!Buffer.from(text, 'utf8').equals(tail)) {
         throw new CoordinationIntegrityError('coordination stream is not exact UTF-8', 'invalid_utf8');
       }
       const lines = text.length === 0 ? [] : text.slice(0, -1).split('\n');
-      const totalEvents = checkpoint.throughSeq + lines.length;
+      const segmentEvents = (segments.segments ?? []).reduce((sum, segment) => sum + (segment.throughSeq - segment.fromSeq + 1), 0);
+      const totalEvents = base + checkpoint.throughSeq + lines.length;
+      const replaySource = (checkpointState) => (base > 0
+        ? (checkpointState === 'valid' ? (lines.length > 0 ? 'segments_checkpoint_tail' : 'segments_checkpoint')
+          : checkpointState === 'corrupt' ? 'segments_ledger_fallback' : 'segments_ledger')
+        : checkpointState === 'valid' ? (lines.length > 0 ? 'checkpoint_tail' : 'checkpoint')
+          : checkpointState === 'corrupt' ? 'ledger_fallback'
+            : raw.byteLength === 0 ? 'empty' : 'ledger');
       this._reportStartup({
         schemaVersion: 1, state: 'replaying',
-        source: checkpoint.state === 'valid' ? 'checkpoint_tail'
-          : checkpoint.state === 'corrupt' ? 'ledger_fallback' : 'ledger',
+        source: replaySource(checkpoint.state),
         totalEvents, checkpointEvents: checkpoint.throughSeq, replayedEvents: 0,
         checkpoint: checkpoint.state, failure: null,
       });
@@ -1463,33 +1778,49 @@ export class CoordinationStore {
           this._byKey.set(frozen.idempotencyKey, frozen);
           this._apply(frozen);
         };
+        for (const segment of segments.segments ?? []) {
+          const bytes = readFileSync(this._segmentFilePath(segment.digest));
+          if (sha256Bytes(bytes) !== segment.digest) {
+            throw new CoordinationIntegrityError('coordination segment digest mismatch', 'coordination_segment_integrity');
+          }
+          const text = bytes.toString('utf8');
+          if (!Buffer.from(text, 'utf8').equals(bytes)) {
+            throw new CoordinationIntegrityError('coordination segment is not exact UTF-8', 'invalid_utf8');
+          }
+          if (bytes.byteLength > 0 && bytes.at(-1) !== 0x0a) {
+            throw new CoordinationIntegrityError('coordination segment has a truncated tail', 'coordination_segment_truncated');
+          }
+          const segmentLines = text.length === 0 ? [] : text.slice(0, -1).split('\n');
+          for (let offset = 0; offset < segmentLines.length; offset += 1) {
+            let event;
+            try { event = JSON.parse(segmentLines[offset]); }
+            catch { throw new CoordinationIntegrityError(`invalid JSON at coordination segment ${segment.digest} line ${offset + 1}`, 'invalid_json'); }
+            applyReplayEvent(event, segment.fromSeq - 1 + offset);
+          }
+        }
         for (let index = 0; index < (checkpoint.events ?? []).length; index += 1) {
-          applyReplayEvent(checkpoint.events[index], index);
+          applyReplayEvent(checkpoint.events[index], base + index);
         }
         for (let offset = 0; offset < lines.length; offset += 1) {
-          const index = checkpoint.throughSeq + offset;
+          const index = base + checkpoint.throughSeq + offset;
           let event;
           try { event = JSON.parse(lines[offset]); }
           catch { throw new CoordinationIntegrityError(`invalid JSON at coordination line ${index + 1}`, 'invalid_json'); }
           applyReplayEvent(event, index);
           if ((offset + 1) % 256 === 0) this._reportStartup({
             schemaVersion: 1, state: 'replaying',
-            source: checkpoint.state === 'valid' ? 'checkpoint_tail'
-              : checkpoint.state === 'corrupt' ? 'ledger_fallback' : 'ledger',
+            source: replaySource(checkpoint.state),
             totalEvents, checkpointEvents: checkpoint.throughSeq,
-            replayedEvents: offset + 1, checkpoint: checkpoint.state, failure: null,
+            replayedEvents: segmentEvents + offset + 1, checkpoint: checkpoint.state, failure: null,
           });
         }
         this._validateRecoveryReplayTransactions();
         this._validateGoalPlanReplayTransactions();
       } finally { this._loading = false; }
-      const source = checkpoint.state === 'valid'
-        ? (lines.length > 0 ? 'checkpoint_tail' : 'checkpoint')
-        : checkpoint.state === 'corrupt' ? 'ledger_fallback'
-          : raw.byteLength === 0 ? 'empty' : 'ledger';
+      const source = replaySource(checkpoint.state);
       this._reportStartup({
         schemaVersion: 1, state: 'ready', source, totalEvents,
-        checkpointEvents: checkpoint.throughSeq, replayedEvents: lines.length,
+        checkpointEvents: checkpoint.throughSeq, replayedEvents: segmentEvents + lines.length,
         checkpoint: checkpoint.state, failure: null,
       });
       this._loadedLedgerHash = createHash('sha256').update(raw);
@@ -11800,6 +12131,82 @@ export class CoordinationStore {
       );
     }
     return freeze([...new Set(ids)].sort(compareCanonicalStrings));
+  }
+
+  /** Bounded dispatches across every Plan generation of one Run's current Goal — the narrow
+   * read behind semantic control-target resolution (workflow interrupt recipients), which
+   * previously cloned the entire store through snapshot().goalPlan.dispatches. */
+  goalPlanDispatches(repoId, runId, limit = 100_000) {
+    if (!boundedText(repoId, 256) || !validRunId(runId)
+      || !Number.isSafeInteger(limit) || limit <= 0 || limit > 100_000) {
+      throw new TypeError('goal/plan Run dispatch request is invalid');
+    }
+    const goal = this._goalHeads.get(this._goalScopeKey(repoId, runId)) ?? null;
+    if (!goal) return freeze([]);
+    const dispatches = [];
+    for (const plan of this._plans.values()) {
+      if (plan.repoId !== repoId || plan.runId !== runId
+        || plan.goal.goalId !== goal.goalId || plan.goal.version !== goal.version
+        || plan.goal.digest !== goal.digest) continue;
+      for (const node of plan.nodes) {
+        const dispatch = this._planDispatches.get(this._planNodeKey(
+          plan.planId, plan.version, node.key,
+        ));
+        if (!dispatch) continue;
+        dispatches.push(dispatch);
+        if (dispatches.length > limit) throw new CoordinationRefusal(
+          'goal/plan Run dispatches exceed their bounded ceiling', 'goal_plan_status_oversize',
+        );
+      }
+    }
+    return freeze(dispatches.map(clone));
+  }
+
+  /** Approval + dispatches for ONE Plan generation of one Run's current Goal — the narrow read
+   * behind workflow Plan-history projections (_runAtPlan), which previously cloned the entire
+   * store through snapshot().goalPlan (approvals + dispatches). */
+  goalPlanPlanState(repoId, runId, planId, version, digest) {
+    if (!boundedText(repoId, 256) || !validRunId(runId) || !boundedText(planId, 256)
+      || !Number.isSafeInteger(version) || !boundedText(digest, 256)) {
+      throw new TypeError('goal/plan Plan state request is invalid');
+    }
+    const goal = this._goalHeads.get(this._goalScopeKey(repoId, runId)) ?? null;
+    if (!goal) return null;
+    const plan = this._plans.get(this._planVersionKey(planId, version)) ?? null;
+    if (!plan || plan.repoId !== repoId || plan.runId !== runId || plan.digest !== digest
+      || plan.goal.goalId !== goal.goalId || plan.goal.version !== goal.version
+      || plan.goal.digest !== goal.digest) return null;
+    const approval = this._planApprovals.get(this._planVersionKey(planId, version)) ?? null;
+    const dispatches = plan.nodes.map((node) => this._planDispatches.get(
+      this._planNodeKey(plan.planId, plan.version, node.key),
+    )).filter(Boolean).sort((left, right) => compareCanonicalStrings(
+      left.binding.nodeKey, right.binding.nodeKey,
+    ));
+    return freeze({
+      approval: clone(approval), dispatches: freeze(dispatches.map(clone)),
+    });
+  }
+
+  /** Bounded current Goal/Plan heads for one repo — the projection behind runs.list, which
+   * previously cloned the entire store through snapshot().goalPlan (all goal/plan bodies of
+   * every repo). Heads only: no historical versions, no dispatch bodies. */
+  goalPlanSummary(repoId, limit = 100_000) {
+    if (!boundedText(repoId, 256) || !Number.isSafeInteger(limit) || limit <= 0 || limit > 100_000) {
+      throw new TypeError('goal/plan summary request is invalid');
+    }
+    const goals = []; const plans = [];
+    for (const goal of this._goalHeads.values()) {
+      if (goal.repoId !== repoId || goal.runId === null) continue;
+      goals.push(goal);
+      if (goals.length > limit) throw new CoordinationRefusal(
+        'goal/plan summary exceeds its bounded ceiling', 'goal_plan_status_oversize',
+      );
+      const plan = this._planHeads.get(this._planHeadKey(goal));
+      if (plan) plans.push(plan);
+    }
+    return freeze({
+      goals: freeze(goals.map(clone)), plans: freeze(plans.map(clone)),
+    });
   }
   healthCheck() { try { if (!existsSync(this.file)) return this._events.length === 0; const raw = readFileSync(this.file, 'utf8'); return raw.length === 0 || raw.endsWith('\n'); } catch { return false; } }
   readyTasks() {
