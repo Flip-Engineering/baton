@@ -45,8 +45,8 @@
       "source": "wire"
     },
     "sessionContext": {
-      "worktree": "/Users/wahargis/Development/Experiments/baton/.baton/wt/codex-web-stream-hardening",
-      "repoRoot": "/Users/wahargis/Development/Experiments/baton",
+      "worktree": "$HOME/Development/Experiments/baton/.baton/wt/codex-web-stream-hardening",
+      "repoRoot": "$HOME/Development/Experiments/baton",
       "baseSha": "f7cb352b32c634b72c26d1a6976ac3b3d47ab673",
       "branch": "baton/codex-web-stream-hardening",
       "ownerTaskId": "codex-web-stream-hardening"

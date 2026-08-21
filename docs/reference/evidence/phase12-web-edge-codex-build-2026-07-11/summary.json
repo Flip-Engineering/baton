@@ -53,8 +53,8 @@
       "source": "wire"
     },
     "sessionContext": {
-      "worktree": "/Users/wahargis/Development/Experiments/baton/.baton/wt/codex-web-edge-policy",
-      "repoRoot": "/Users/wahargis/Development/Experiments/baton",
+      "worktree": "$HOME/Development/Experiments/baton/.baton/wt/codex-web-edge-policy",
+      "repoRoot": "$HOME/Development/Experiments/baton",
       "baseSha": "e1beb14eb7f594e560dae3a34569ae57122dcd7f",
       "branch": "baton/codex-web-edge-policy",
       "ownerTaskId": "codex-web-edge-policy"

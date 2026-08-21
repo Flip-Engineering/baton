@@ -2,7 +2,7 @@ All evidence gathered. Composing the dossier now.
 
 # The ACP Bridges as Adapter Engineering References: claude-agent-acp & codex-acp
 
-*Evidence base: shallow clones of both repos at `main` as of 2026-07-09 (local paths under `/private/tmp/claude-501/-Users-wahargis-Development/73adbbf2-a514-4a17-8729-9cda68da5bac/scratchpad/`, hereafter `$SCRATCH`), GitHub issue/PR archaeology via `gh api`. Local clone evidence outranks READMEs where they disagree; disagreements are flagged inline.*
+*Evidence base: shallow clones of both repos at `main` as of 2026-07-09 (local paths under `/private/tmp/claude-501/-Users-user-Development/73adbbf2-a514-4a17-8729-9cda68da5bac/scratchpad/`, hereafter `$SCRATCH`), GitHub issue/PR archaeology via `gh api`. Local clone evidence outranks READMEs where they disagree; disagreements are flagged inline.*
 
 ## Summary
 
@@ -258,10 +258,10 @@ Dynamic option growth: `proposedExecpolicyAmendment` adds `accept_execpolicy_ame
 ## Sources
 
 **Local (clones at `main`, 2026-07-09):**
-- `$SCRATCH = /private/tmp/claude-501/-Users-wahargis-Development/73adbbf2-a514-4a17-8729-9cda68da5bac/scratchpad`
+- `$SCRATCH = /private/tmp/claude-501/-Users-user-Development/73adbbf2-a514-4a17-8729-9cda68da5bac/scratchpad`
 - `$SCRATCH/claude-agent-acp/src/acp-agent.ts` (5618 lines; grace period 168–177, Session/Turn types 196–330, initialize 768–917, prompt/consumer 1058–2250, cancel 2451–2538, teardown 2540–2620, canUseTool 2899–3072, createSession 3543–3900, runAcp 5485+), `src/index.ts`, `src/settings.ts`, `src/tools.ts`, `src/elicitation.ts`, `package.json`, `CHANGELOG.md`, `docs/model-configuration.md`
 - `$SCRATCH/codex-acp/src/index.ts`, `src/CodexJsonRpcConnection.ts`, `src/StdUtils.ts`, `src/CodexAcpServer.ts` (initialize 191–231, prompt 1425–1605, interrupt machinery 1306–1423, cancel 1669–1678, history merge 1681–1734), `src/CodexAcpClient.ts`, `src/CodexAppServerClient.ts` (approval RequestTypes 89–111, runTurn 240–264, stale turns 723–755), `src/CodexApprovalHandler.ts`, `src/CodexEventHandler.ts` (event switch 105–222), `src/AgentMode.ts`, `src/ApprovalOptionId.ts`, `src/McpApprovalOptionId.ts`, `src/CodexAuthMethod.ts`, `src/AcpExtensions.ts`, `src/TokenCount.ts`, `src/QuotaMeta.ts`, `src/ResponseItemHistoryFallback.ts`, `src/CodexCommands.ts`, `src/CodexCli.ts`, `AGENTS.md`, `package.json`, `README.md`, `__tests__/CodexACPAgent/data/approval-command-allow-once.json`
-- Baton context: `/Users/wahargis/Development/Experiments/baton/docs/02-harness-control-surfaces.md`, `04-architecture-options.md`
+- Baton context: `$HOME/Development/Experiments/baton/docs/02-harness-control-surfaces.md`, `04-architecture-options.md`
 
 **Web/GitHub:**
 - https://github.com/agentclientprotocol/claude-agent-acp — issues #94 (+comments; PRs #197, #316), #497, #642, #643, #655, #658, #680, #712, #719, #749, #773, #781, #782, #825, #838, #844, #851, #853

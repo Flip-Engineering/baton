@@ -64,7 +64,7 @@ conformance rung (executable per-profile inventories, generated docs, dead-path 
 and DeepSeek (`deepseek-v4-flash` primary, `deepseek-v4-pro[1m]` pre-update opt-in) are live
 worker families; Kimi k3 rides the Claude credential path (adapter over-strictness is issue
 #54). Progress ledger: **[docs/PROGRESS.md](docs/PROGRESS.md)**.
-Open work: **[issues #2–#55](https://github.com/wahargis/baton/issues)**.
+Open work: **[issues #2–#55](https://github.com/user/baton/issues)**.
 
 ## Architecture, plainly
 

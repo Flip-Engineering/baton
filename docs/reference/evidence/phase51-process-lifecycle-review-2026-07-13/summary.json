@@ -34,7 +34,7 @@
   },
   "ownershipBefore": {
     "worktrees": [
-      "worktree /Users/wahargis/Development/Experiments/baton",
+      "worktree $HOME/Development/Experiments/baton",
       "worktree /private/tmp/baton-phase51-host-8ec6251"
     ],
     "branches": [],
@@ -43,7 +43,7 @@
   },
   "ownershipAfter": {
     "worktrees": [
-      "worktree /Users/wahargis/Development/Experiments/baton",
+      "worktree $HOME/Development/Experiments/baton",
       "worktree /private/tmp/baton-phase51-host-8ec6251"
     ],
     "branches": [],

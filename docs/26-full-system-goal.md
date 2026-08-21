@@ -110,7 +110,7 @@ silently substitute a model, harness, or effort. Once isolated Grok authenticati
 Grok 4.5 through Grok Build remains the intended cross-family,
 Opus-class review/implementation stand-in. These are operator policy inputs backed by live cards,
 not timeless model folklore. GitHub issue
-[#2](https://github.com/wahargis/baton/issues/2) records the completed deterministic and recursive
+[#2](https://github.com/user/baton/issues/2) records the completed deterministic and recursive
 route-tuple implementation gate. The isolated concurrent Grok rerun is now also complete: Baton
 requested and provider-observed exact `grok-4.5` and `grok-composer-2.5-fast` routes, resumed one
 session, killed it while working, and fully reaped both workers.
@@ -1371,7 +1371,7 @@ This ledger is the current execution tracker layered over the retained catalog a
   control-plane gaps, not successful design Candidates.
   Goal/Plan authority also still represents harness/model/effort as independently admitted sets;
   exact authorized tuple anti-recombination is tracked in
-  [GitHub #2](https://github.com/wahargis/baton/issues/2#issuecomment-5012736166).
+  [GitHub #2](https://github.com/user/baton/issues/2#issuecomment-5012736166).
   Executable review/verify, custom syntax, persistent kernels, and deeper recursion remain
   closed until their independence/gate authorities exist; they are not silently claimed or erased.
 - **Phase 92 — Episode/workstream facade and resident trust/liveness closure green:**

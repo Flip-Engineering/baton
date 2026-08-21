@@ -128,6 +128,6 @@
     "branchesGone": true,
     "writerAuthorityReleased": true
   },
-  "fatal": "Error: review gate incomplete: [{\"taskId\":\"phase43-claude-boundary-review\",\"status\":\"failed\",\"report\":false},{\"taskId\":\"phase43-codex-replay-review\",\"status\":\"cancelled\",\"report\":false},{\"taskId\":\"phase43-glm-causal-review\",\"status\":\"completed\",\"report\":true}]\n    at file:///Users/wahargis/Development/Experiments/baton/docs/reference/evidence/phase43-harness-matrix-review-2026-07-12/run.mjs:36:46\n    at runNextTicks (node:internal/process/task_queues:65:5)\n    at listOnTimeout (node:internal/timers:567:9)\n    at process.processTimers (node:internal/timers:541:7)",
+  "fatal": "Error: review gate incomplete: [{\"taskId\":\"phase43-claude-boundary-review\",\"status\":\"failed\",\"report\":false},{\"taskId\":\"phase43-codex-replay-review\",\"status\":\"cancelled\",\"report\":false},{\"taskId\":\"phase43-glm-causal-review\",\"status\":\"completed\",\"report\":true}]\n    at file://$HOME/Development/Experiments/baton/docs/reference/evidence/phase43-harness-matrix-review-2026-07-12/run.mjs:36:46\n    at runNextTicks (node:internal/process/task_queues:65:5)\n    at listOnTimeout (node:internal/timers:567:9)\n    at process.processTimers (node:internal/timers:541:7)",
   "pass": false
 }

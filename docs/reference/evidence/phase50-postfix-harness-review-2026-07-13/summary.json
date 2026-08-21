@@ -31,7 +31,7 @@
   },
   "ownershipBefore": {
     "worktrees": [
-      "worktree /Users/wahargis/Development/Experiments/baton",
+      "worktree $HOME/Development/Experiments/baton",
       "worktree /private/tmp/baton-phase50-postfix.OuUqZL"
     ],
     "branches": [],
@@ -40,7 +40,7 @@
   },
   "ownershipAfter": {
     "worktrees": [
-      "worktree /Users/wahargis/Development/Experiments/baton",
+      "worktree $HOME/Development/Experiments/baton",
       "worktree /private/tmp/baton-phase50-postfix.OuUqZL"
     ],
     "branches": [],

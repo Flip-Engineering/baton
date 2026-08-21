@@ -9,7 +9,7 @@ import { spawn } from 'node:child_process';
 import { createInterface } from 'node:readline';
 import { writeFileSync, mkdirSync } from 'node:fs';
 
-const SCRATCH = '/private/tmp/claude-501/-Users-wahargis-Development/73adbbf2-a514-4a17-8729-9cda68da5bac/scratchpad';
+const SCRATCH = '/private/tmp/claude-501/-Users-user-Development/73adbbf2-a514-4a17-8729-9cda68da5bac/scratchpad';
 const CWD = `${SCRATCH}/grok-live-cwd-a`;
 mkdirSync(CWD, { recursive: true });
 

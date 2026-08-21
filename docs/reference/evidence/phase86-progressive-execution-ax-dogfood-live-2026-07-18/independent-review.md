@@ -33,7 +33,7 @@ Ran the deployment verification command
   ("atomic no-replace publication is unavailable"). Root cause was **environmental, not
   source**: `publishResultExportNoReplace` (`impl/src/result-export.mjs:60-68`) shells out to
   `python3`, and the first `python3` on this machine's `PATH` was a **dead asdf shim**
-  (`/Users/wahargis/.asdf/shims/python3`, exit 126 — asdf has no `python` plugin installed).
+  (`$HOME/.asdf/shims/python3`, exit 126 — asdf has no `python` plugin installed).
   Working interpreters exist at `/opt/homebrew/bin/python3` and `/usr/bin/python3`. The dead
   shim was moved aside to `…/python3.dead-baton-phase86.bak` (reversible) so `python3`
   resolves to homebrew Python 3.14.3, after which all 42 tests pass. The underlying source

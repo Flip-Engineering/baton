@@ -45,8 +45,8 @@
       "source": "wire"
     },
     "sessionContext": {
-      "worktree": "/Users/wahargis/Development/Experiments/baton/.baton/wt/grok-coordination-spec-review",
-      "repoRoot": "/Users/wahargis/Development/Experiments/baton",
+      "worktree": "$HOME/Development/Experiments/baton/.baton/wt/grok-coordination-spec-review",
+      "repoRoot": "$HOME/Development/Experiments/baton",
       "baseSha": "a281017e559618163e8f8c5824357b940a24e0b6",
       "branch": "baton/grok-coordination-spec-review",
       "ownerTaskId": "grok-coordination-spec-review"

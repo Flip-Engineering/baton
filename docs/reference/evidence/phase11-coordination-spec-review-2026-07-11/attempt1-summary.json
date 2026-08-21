@@ -24,8 +24,8 @@
       "source": "wire"
     },
     "sessionContext": {
-      "worktree": "/Users/wahargis/Development/Experiments/baton/.baton/wt/grok-coordination-spec-review",
-      "repoRoot": "/Users/wahargis/Development/Experiments/baton",
+      "worktree": "$HOME/Development/Experiments/baton/.baton/wt/grok-coordination-spec-review",
+      "repoRoot": "$HOME/Development/Experiments/baton",
       "baseSha": "2ea2240107a39c0176608fb6095a9a25f205d277",
       "branch": "baton/grok-coordination-spec-review",
       "ownerTaskId": "grok-coordination-spec-review"
@@ -57,6 +57,6 @@
     "runtimeGone": true,
     "branchGone": true
   },
-  "fatal": "Error: review did not pass trust gate: {\"ready\":true,\"status\":\"cancelled\",\"verdict\":null,\"vendor\":\"grok\",\"modelRequested\":\"grok-composer-2.5-fast\",\"modelResolved\":\"grok-composer-2.5-fast\",\"modelObserved\":\"grok-composer-2.5-fast\",\"modelMismatch\":null,\"sessionRequest\":{\"mode\":\"new\"},\"sessionRef\":{\"vendor\":\"grok\",\"kind\":\"session\",\"id\":\"019f50b1-acdf-7862-8c37-b5f23aa3fd0a\",\"persistence\":\"native\",\"source\":\"wire\"},\"sessionContext\":{\"worktree\":\"/Users/wahargis/Development/Experiments/baton/.baton/wt/grok-coordination-spec-review\",\"repoRoot\":\"/Users/wahargis/Development/Experiments/baton\",\"baseSha\":\"2ea2240107a39c0176608fb6095a9a25f205d277\",\"branch\":\"baton/grok-coordination-spec-review\",\"ownerTaskId\":\"grok-coordination-spec-review\"},\"lineage\":null,\"review\":null,\"integration\":null,\"publication\":null,\"retainedResultRef\":null}\n    at file:///Users/wahargis/Development/Experiments/baton/docs/reference/evidence/phase11-coordination-spec-review-2026-07-11/run.mjs:105:44\n    at runNextTicks (node:internal/process/task_queues:65:5)\n    at listOnTimeout (node:internal/timers:567:9)\n    at process.processTimers (node:internal/timers:541:7)",
+  "fatal": "Error: review did not pass trust gate: {\"ready\":true,\"status\":\"cancelled\",\"verdict\":null,\"vendor\":\"grok\",\"modelRequested\":\"grok-composer-2.5-fast\",\"modelResolved\":\"grok-composer-2.5-fast\",\"modelObserved\":\"grok-composer-2.5-fast\",\"modelMismatch\":null,\"sessionRequest\":{\"mode\":\"new\"},\"sessionRef\":{\"vendor\":\"grok\",\"kind\":\"session\",\"id\":\"019f50b1-acdf-7862-8c37-b5f23aa3fd0a\",\"persistence\":\"native\",\"source\":\"wire\"},\"sessionContext\":{\"worktree\":\"$HOME/Development/Experiments/baton/.baton/wt/grok-coordination-spec-review\",\"repoRoot\":\"$HOME/Development/Experiments/baton\",\"baseSha\":\"2ea2240107a39c0176608fb6095a9a25f205d277\",\"branch\":\"baton/grok-coordination-spec-review\",\"ownerTaskId\":\"grok-coordination-spec-review\"},\"lineage\":null,\"review\":null,\"integration\":null,\"publication\":null,\"retainedResultRef\":null}\n    at file://$HOME/Development/Experiments/baton/docs/reference/evidence/phase11-coordination-spec-review-2026-07-11/run.mjs:105:44\n    at runNextTicks (node:internal/process/task_queues:65:5)\n    at listOnTimeout (node:internal/timers:567:9)\n    at process.processTimers (node:internal/timers:541:7)",
   "pass": false
 }

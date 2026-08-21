@@ -43,8 +43,8 @@
       "source": "wire"
     },
     "sessionContext": {
-      "worktree": "/Users/wahargis/Development/Experiments/baton/.baton/wt/grok-persistent-session-proof",
-      "repoRoot": "/Users/wahargis/Development/Experiments/baton",
+      "worktree": "$HOME/Development/Experiments/baton/.baton/wt/grok-persistent-session-proof",
+      "repoRoot": "$HOME/Development/Experiments/baton",
       "baseSha": "774a396695a6f4b9dad60e862093d832e41dd762",
       "branch": "baton/grok-persistent-session-proof",
       "ownerTaskId": "grok-persistent-session-proof"
@@ -89,8 +89,8 @@
       "source": "wire"
     },
     "sessionContext": {
-      "worktree": "/Users/wahargis/Development/Experiments/baton/.baton/wt/grok-persistent-session-proof",
-      "repoRoot": "/Users/wahargis/Development/Experiments/baton",
+      "worktree": "$HOME/Development/Experiments/baton/.baton/wt/grok-persistent-session-proof",
+      "repoRoot": "$HOME/Development/Experiments/baton",
       "baseSha": "774a396695a6f4b9dad60e862093d832e41dd762",
       "branch": "baton/grok-persistent-session-proof",
       "ownerTaskId": "grok-persistent-session-proof"
@@ -123,15 +123,15 @@
       "source": "wire"
     },
     "sessionContext": {
-      "worktree": "/Users/wahargis/Development/Experiments/baton/.baton/wt/grok-persistent-session-proof",
-      "repoRoot": "/Users/wahargis/Development/Experiments/baton",
+      "worktree": "$HOME/Development/Experiments/baton/.baton/wt/grok-persistent-session-proof",
+      "repoRoot": "$HOME/Development/Experiments/baton",
       "baseSha": "774a396695a6f4b9dad60e862093d832e41dd762",
       "branch": "baton/grok-persistent-session-proof",
       "ownerTaskId": "grok-persistent-session-proof"
     },
     "lineage": null,
     "taskId": "grok-persistent-session-proof",
-    "worktree": "/Users/wahargis/Development/Experiments/baton/.baton/wt/grok-persistent-session-proof",
+    "worktree": "$HOME/Development/Experiments/baton/.baton/wt/grok-persistent-session-proof",
     "fence": 2,
     "turnEpoch": 2,
     "status": "idle",
@@ -169,15 +169,15 @@
       "source": "wire"
     },
     "sessionContext": {
-      "worktree": "/Users/wahargis/Development/Experiments/baton/.baton/wt/grok-persistent-session-proof",
-      "repoRoot": "/Users/wahargis/Development/Experiments/baton",
+      "worktree": "$HOME/Development/Experiments/baton/.baton/wt/grok-persistent-session-proof",
+      "repoRoot": "$HOME/Development/Experiments/baton",
       "baseSha": "774a396695a6f4b9dad60e862093d832e41dd762",
       "branch": "baton/grok-persistent-session-proof",
       "ownerTaskId": "grok-persistent-session-proof"
     },
     "lineage": null,
     "taskId": "grok-persistent-session-proof",
-    "worktree": "/Users/wahargis/Development/Experiments/baton/.baton/wt/grok-persistent-session-proof",
+    "worktree": "$HOME/Development/Experiments/baton/.baton/wt/grok-persistent-session-proof",
     "fence": 3,
     "turnEpoch": 3,
     "status": "idle",

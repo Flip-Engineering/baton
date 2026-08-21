@@ -51,7 +51,7 @@ node --test \
 ### Environmental note (constraint-compliant; no shim mutation)
 
 The earlier `glm-ax-critic` review worked around a dead `asdf` `python3` shim
-(`/Users/wahargis/.asdf/shims/python3`, exit 126) by **moving the shim aside** so `python3`
+(`$HOME/.asdf/shims/python3`, exit 126) by **moving the shim aside** so `python3`
 on `PATH` resolved to homebrew Python. That is a home-state/toolchain mutation, which this
 rerun's constraints forbid. **It is also no longer necessary:** PX3's hardened publication
 helper resolves `/usr/bin/python3` by absolute path + `realpath` and ignores `PATH`

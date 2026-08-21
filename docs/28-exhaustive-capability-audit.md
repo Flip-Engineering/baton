@@ -31,7 +31,7 @@ evidence and disagreement are retained in
    and reap evidence and reaches provider readiness, but Grok CLI 0.2.99 reports `grok-4.5`; the
    exact-model mismatch is rejected and literal Build acceptance remains red. The shipped tuple
    contract and current evidence are retained in closed
-   [GitHub #2](https://github.com/wahargis/baton/issues/2).
+   [GitHub #2](https://github.com/user/baton/issues/2).
 3. **Trust spine:** immutable briefs, pinned verification, red→green, changed-line coverage,
    mutation, independent-family oracle, ff integration, approval-gated exact-SHA publication, and
    opt-in structured staging with post-effect poison semantics.
@@ -323,10 +323,10 @@ evidence and disagreement are retained in
   are locale-independent, but multiple Atlas, Cairn, supply-chain, capacity, and projection
   artifacts still use host-locale `localeCompare`. A repository-wide canonical-order audit,
   migration/version policy, and cross-locale replay gate remain open in
-  [GitHub #4](https://github.com/wahargis/baton/issues/4).
+  [GitHub #4](https://github.com/user/baton/issues/4).
 - Same-task-ID branch namespaces across independent controllers and branch-only crash residue still
   need explicit ownership and reconciliation contracts; see
-  [GitHub #5](https://github.com/wahargis/baton/issues/5).
+  [GitHub #5](https://github.com/user/baton/issues/5).
 - Goal/Plan capability/effect declarations provide bounded commitments and dispatch checks, but
   finer-grained effect enforcement, authorized continuation/recovery, live amendments, and richer
   risk/multi-principal policy remain open.
@@ -337,7 +337,7 @@ evidence and disagreement are retained in
   Continuous semantic review automation, structured reject postmortems, and broad semantic-oracle
   accuracy are not proven; one successful report is route evidence rather than universal semantic
   correctness. The remaining oracle gap is tracked in
-  [GitHub #6](https://github.com/wahargis/baton/issues/6).
+  [GitHub #6](https://github.com/user/baton/issues/6).
 - Recursive execution now has Phase 55's immutable dual-root projection, Phase 56's public exact
   drain/close plus owned evidence wrapper, Phase 57's truthful route-bound usage/call governance,
   Phase 58's sparse identity, and Phase 59's pre-effect capacity reservation. Provider-terminal

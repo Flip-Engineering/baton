@@ -5,10 +5,10 @@
   "workerId": "w-1",
   "pid": 31942,
   "scope": {
-    "root": "/Users/wahargis/Development/Experiments/baton/.baton/runtime/w-1",
-    "home": "/Users/wahargis/Development/Experiments/baton/.baton/runtime/w-1/home",
-    "tmp": "/Users/wahargis/Development/Experiments/baton/.baton/runtime/w-1/tmp",
-    "config": "/Users/wahargis/Development/Experiments/baton/.baton/runtime/w-1/home/.grok",
+    "root": "$HOME/Development/Experiments/baton/.baton/runtime/w-1",
+    "home": "$HOME/Development/Experiments/baton/.baton/runtime/w-1/home",
+    "tmp": "$HOME/Development/Experiments/baton/.baton/runtime/w-1/tmp",
+    "config": "$HOME/Development/Experiments/baton/.baton/runtime/w-1/home/.grok",
     "family": "grok",
     "strippedEnvKeys": [
       "ANTHROPIC_DEFAULT_HAIKU_MODEL",

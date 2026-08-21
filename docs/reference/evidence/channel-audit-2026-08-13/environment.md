@@ -54,7 +54,7 @@ gh issue view 155 → "To get started with GitHub CLI, please run:  gh auth logi
                      Alternatively, populate the GH_TOKEN environment variable …"  (exit 0)
 ```
 
-The repo's remote is `https://github.com/wahargis/baton.git`, so the failure is **auth**, not repo
+The repo's remote is `https://github.com/user/baton.git`, so the failure is **auth**, not repo
 identity. `gh auth status` reports the same "not logged in" state the host operator's shell has —
 but even a host-side `gh` auth (hosts.yml) would be unreachable to a member, because:
 
@@ -171,7 +171,7 @@ The underlying gap has two halves:
    connection, and a member cannot establish one: `discoverBatonConnection`
    (`application-cli.mjs:215-300`) reads the user connection profile from
    `$HOME/.config/baton/connections/<profile>.json` (`:284-291`) — the operator's profile is at
-   `/Users/wahargis/.config/baton/connections/resident-4421cf292504-672ef8abad50.json` (verified on
+   `$HOME/.config/baton/connections/resident-4421cf292504-672ef8abad50.json` (verified on
    disk) — but the member's HOME is the rewritten private home (§1), so the profile (and its token
    file) is absent → `cli_config_invalid`. Additionally the spawn brief forbids launching a Baton
    CLI/MCP server at all (`cli-adapters.mjs:94-96`).

@@ -18,7 +18,7 @@ Blockers:
 1. **§3.1 auth claim is wrong about the parent repo root.** The report states *"No
    `deepseek_key.json` exists at this worktree's root (or the parent repo root); no `glm_key.json`
    either."* The worktree-root half is true, but **both keys exist at the main repo root**
-   `/Users/wahargis/Development/Experiments/baton/`: `deepseek_key.json` (55 B,
+   `$HOME/Development/Experiments/baton/`: `deepseek_key.json` (55 B,
    `{"deepseek_key":"sk-3b1bcf63f8…"}`) and `glm_key.json` (64 B, `{"glm_key":"17073c24317a…"}`).
    The deployment resolves the credential via `deepseekCredentialProjection(repoRoot)` →
    `join(repoRoot,'deepseek_key.json')` (`impl/src/application-deployment.mjs:107-112`) with
@@ -95,7 +95,7 @@ Blockers:
 
 The row's §6 options remain the right shape, with blocker #1 amended:
 1. **HOLD / re-dispatch (protocol unchanged)** — before re-running the arms, resolve whether the
-   eval session can use the existing `/Users/wahargis/Development/Experiments/baton/deepseek_key.json`
+   eval session can use the existing `$HOME/Development/Experiments/baton/deepseek_key.json`
    (does the deployment's `repoRoot` resolve to the main repo or the worktree?). The capacity
    envelope (~8–10 seat-hours) and the §6.2 scorecard recompute still gate any arm run.
 2. **FOLD-NOW** — abandon the wave at this stage; only if the operator decides the eval cannot

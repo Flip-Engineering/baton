@@ -61,6 +61,6 @@
     "branchesGone": true,
     "writerAuthorityReleased": true
   },
-  "fatal": "Error: review gate incomplete: [{\"taskId\":\"phase43-glm-green-reconciliation-review\",\"status\":\"failed\",\"report\":false}]\n    at file:///Users/wahargis/Development/Experiments/baton/docs/reference/evidence/phase43-green-reconciliation-dogfood-2026-07-12/run.mjs:34:46\n    at runNextTicks (node:internal/process/task_queues:65:5)\n    at listOnTimeout (node:internal/timers:567:9)\n    at process.processTimers (node:internal/timers:541:7)",
+  "fatal": "Error: review gate incomplete: [{\"taskId\":\"phase43-glm-green-reconciliation-review\",\"status\":\"failed\",\"report\":false}]\n    at file://$HOME/Development/Experiments/baton/docs/reference/evidence/phase43-green-reconciliation-dogfood-2026-07-12/run.mjs:34:46\n    at runNextTicks (node:internal/process/task_queues:65:5)\n    at listOnTimeout (node:internal/timers:567:9)\n    at process.processTimers (node:internal/timers:541:7)",
   "pass": false
 }

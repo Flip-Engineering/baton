@@ -9,7 +9,7 @@ Live probe: `omp --mode rpc --no-extensions --no-lsp --no-skills --no-rules --no
 - Host tools: set_host_tools gives members baton verbs without member-side MCP (#74 lane)
 - Open: MCP notification consumption (omp-side #208 posture); get_session_stats/contextUsage as usage-seal source
 
-Full issue-comment form: github.com/wahargis/baton/issues/228
+Full issue-comment form: github.com/user/baton/issues/228
 
 
 ## Probe #2 — usage-seal + route identity (2026-08-14)

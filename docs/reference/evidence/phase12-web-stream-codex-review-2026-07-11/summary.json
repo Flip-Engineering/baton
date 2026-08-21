@@ -45,8 +45,8 @@
       "source": "wire"
     },
     "sessionContext": {
-      "worktree": "/Users/wahargis/Development/Experiments/baton/.baton/wt/codex-web-stream-review",
-      "repoRoot": "/Users/wahargis/Development/Experiments/baton",
+      "worktree": "$HOME/Development/Experiments/baton/.baton/wt/codex-web-stream-review",
+      "repoRoot": "$HOME/Development/Experiments/baton",
       "baseSha": "89b15516cca02e55737eef4399b58edf1e6d5a5d",
       "branch": "baton/codex-web-stream-review",
       "ownerTaskId": "codex-web-stream-review"

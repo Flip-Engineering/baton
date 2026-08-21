@@ -24,8 +24,8 @@
       "source": "wire"
     },
     "sessionContext": {
-      "worktree": "/Users/wahargis/Development/Experiments/baton/.baton/wt/codex-atlas-index-review",
-      "repoRoot": "/Users/wahargis/Development/Experiments/baton",
+      "worktree": "$HOME/Development/Experiments/baton/.baton/wt/codex-atlas-index-review",
+      "repoRoot": "$HOME/Development/Experiments/baton",
       "baseSha": "424cb6734febb8829913bf65512e9c8bcb3c3eed",
       "branch": "baton/codex-atlas-index-review",
       "ownerTaskId": "codex-atlas-index-review"
@@ -51,6 +51,6 @@
     "runtimeGone": true,
     "branchGone": true
   },
-  "fatal": "Error: review failed trust gate: {\"ready\":true,\"status\":\"failed\",\"verdict\":null,\"vendor\":\"codex\",\"modelRequested\":\"gpt-5.4\",\"modelResolved\":\"gpt-5.4\",\"modelObserved\":\"gpt-5.4\",\"modelMismatch\":null,\"sessionRequest\":{\"mode\":\"new\"},\"sessionRef\":{\"vendor\":\"codex\",\"kind\":\"thread\",\"id\":\"019f5300-0772-74f1-9a28-00d6fdcbcac4\",\"persistence\":\"native\",\"source\":\"wire\"},\"sessionContext\":{\"worktree\":\"/Users/wahargis/Development/Experiments/baton/.baton/wt/codex-atlas-index-review\",\"repoRoot\":\"/Users/wahargis/Development/Experiments/baton\",\"baseSha\":\"424cb6734febb8829913bf65512e9c8bcb3c3eed\",\"branch\":\"baton/codex-atlas-index-review\",\"ownerTaskId\":\"codex-atlas-index-review\"},\"lineage\":null,\"review\":null,\"integration\":null,\"publication\":null,\"retainedResultRef\":null}\n    at file:///Users/wahargis/Development/Experiments/baton/docs/reference/evidence/phase13-atlas-index-codex-review-2026-07-11/run.mjs:59:44\n    at runNextTicks (node:internal/process/task_queues:65:5)\n    at listOnTimeout (node:internal/timers:567:9)\n    at process.processTimers (node:internal/timers:541:7)",
+  "fatal": "Error: review failed trust gate: {\"ready\":true,\"status\":\"failed\",\"verdict\":null,\"vendor\":\"codex\",\"modelRequested\":\"gpt-5.4\",\"modelResolved\":\"gpt-5.4\",\"modelObserved\":\"gpt-5.4\",\"modelMismatch\":null,\"sessionRequest\":{\"mode\":\"new\"},\"sessionRef\":{\"vendor\":\"codex\",\"kind\":\"thread\",\"id\":\"019f5300-0772-74f1-9a28-00d6fdcbcac4\",\"persistence\":\"native\",\"source\":\"wire\"},\"sessionContext\":{\"worktree\":\"$HOME/Development/Experiments/baton/.baton/wt/codex-atlas-index-review\",\"repoRoot\":\"$HOME/Development/Experiments/baton\",\"baseSha\":\"424cb6734febb8829913bf65512e9c8bcb3c3eed\",\"branch\":\"baton/codex-atlas-index-review\",\"ownerTaskId\":\"codex-atlas-index-review\"},\"lineage\":null,\"review\":null,\"integration\":null,\"publication\":null,\"retainedResultRef\":null}\n    at file://$HOME/Development/Experiments/baton/docs/reference/evidence/phase13-atlas-index-codex-review-2026-07-11/run.mjs:59:44\n    at runNextTicks (node:internal/process/task_queues:65:5)\n    at listOnTimeout (node:internal/timers:567:9)\n    at process.processTimers (node:internal/timers:541:7)",
   "pass": false
 }

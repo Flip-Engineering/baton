@@ -64,7 +64,7 @@ Blockers:
   coordinator's table and the pre-registration's t0 mandate. The t1-results/*.txt counts read
   exactly: 21/21 · 24/24 · 5/5 · 8/8 · 5/5 (all green at each impl commit). CONFIRMED.
 - **Wave-a §3.1 auth finding re-confirmed.** `deepseek_key.json` (55 B) and `glm_key.json`
-  (64 B) both exist at the main repo root `/Users/wahargis/Development/Experiments/baton/`.
+  (64 B) both exist at the main repo root `$HOME/Development/Experiments/baton/`.
   The deployment resolves the credential via `deepseekCredentialProjection(repoRoot)` →
   `join(repoRoot,'deepseek_key.json')` (`impl/src/application-deployment.mjs:107-110`, `:857`).
   The credential is present at the main repo root; whether an eval session sees it depends on

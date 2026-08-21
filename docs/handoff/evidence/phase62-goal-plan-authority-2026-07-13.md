@@ -81,7 +81,7 @@ GLM legs; they do not relabel the original five-provider matrix.
 Here, report verification means required artifact shape plus execution of the pinned test command;
 it is not a semantic endorsement of every model-authored sentence. The retained GLM report
 mislabels one token-aggregation correction as provider-turn accounting even though its PASS verdict
-and executable gates remain valid. [GitHub #6](https://github.com/wahargis/baton/issues/6) tracks
+and executable gates remain valid. [GitHub #6](https://github.com/user/baton/issues/6) tracks
 source-anchored semantic report verification rather than overstating this evidence.
 
 ## Retained scope

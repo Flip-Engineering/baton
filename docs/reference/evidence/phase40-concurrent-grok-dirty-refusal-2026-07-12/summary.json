@@ -38,10 +38,10 @@
         "sessionContext": null,
         "lineage": null,
         "runtimeScope": {
-          "root": "/Users/wahargis/Development/Experiments/baton/.baton/runtime/w-1",
-          "home": "/Users/wahargis/Development/Experiments/baton/.baton/runtime/w-1/home",
-          "tmp": "/Users/wahargis/Development/Experiments/baton/.baton/runtime/w-1/tmp",
-          "config": "/Users/wahargis/Development/Experiments/baton/.baton/runtime/w-1/home/.grok",
+          "root": "$HOME/Development/Experiments/baton/.baton/runtime/w-1",
+          "home": "$HOME/Development/Experiments/baton/.baton/runtime/w-1/home",
+          "tmp": "$HOME/Development/Experiments/baton/.baton/runtime/w-1/tmp",
+          "config": "$HOME/Development/Experiments/baton/.baton/runtime/w-1/home/.grok",
           "family": "grok",
           "strippedEnvKeys": [
             "ANTHROPIC_DEFAULT_HAIKU_MODEL",
@@ -113,10 +113,10 @@
         "sessionContext": null,
         "lineage": null,
         "runtimeScope": {
-          "root": "/Users/wahargis/Development/Experiments/baton/.baton/runtime/w-2",
-          "home": "/Users/wahargis/Development/Experiments/baton/.baton/runtime/w-2/home",
-          "tmp": "/Users/wahargis/Development/Experiments/baton/.baton/runtime/w-2/tmp",
-          "config": "/Users/wahargis/Development/Experiments/baton/.baton/runtime/w-2/home/.grok",
+          "root": "$HOME/Development/Experiments/baton/.baton/runtime/w-2",
+          "home": "$HOME/Development/Experiments/baton/.baton/runtime/w-2/home",
+          "tmp": "$HOME/Development/Experiments/baton/.baton/runtime/w-2/tmp",
+          "config": "$HOME/Development/Experiments/baton/.baton/runtime/w-2/home/.grok",
           "family": "grok",
           "strippedEnvKeys": [
             "ANTHROPIC_DEFAULT_HAIKU_MODEL",
@@ -184,6 +184,6 @@
     "runtimeGone": true,
     "branchesGone": true
   },
-  "fatal": "Error: w-1 crashed before lifecycle.spawned: {\"error\":\"worktree unavailable\",\"phase\":\"worktree\",\"code\":\"worktree_unavailable\"}\n    at eventOrEarlyFailure (file:///Users/wahargis/Development/Experiments/baton/docs/reference/evidence/phase21-grok-concurrent-reap-2026-07-11/run.mjs:12:302)\n    at file:///Users/wahargis/Development/Experiments/baton/docs/reference/evidence/phase21-grok-concurrent-reap-2026-07-11/run.mjs:18:67\n    at until (file:///Users/wahargis/Development/Experiments/baton/docs/reference/evidence/phase21-grok-concurrent-reap-2026-07-11/run.mjs:11:148)\n    at file:///Users/wahargis/Development/Experiments/baton/docs/reference/evidence/phase21-grok-concurrent-reap-2026-07-11/run.mjs:18:55",
+  "fatal": "Error: w-1 crashed before lifecycle.spawned: {\"error\":\"worktree unavailable\",\"phase\":\"worktree\",\"code\":\"worktree_unavailable\"}\n    at eventOrEarlyFailure (file://$HOME/Development/Experiments/baton/docs/reference/evidence/phase21-grok-concurrent-reap-2026-07-11/run.mjs:12:302)\n    at file://$HOME/Development/Experiments/baton/docs/reference/evidence/phase21-grok-concurrent-reap-2026-07-11/run.mjs:18:67\n    at until (file://$HOME/Development/Experiments/baton/docs/reference/evidence/phase21-grok-concurrent-reap-2026-07-11/run.mjs:11:148)\n    at file://$HOME/Development/Experiments/baton/docs/reference/evidence/phase21-grok-concurrent-reap-2026-07-11/run.mjs:18:55",
   "pass": false
 }

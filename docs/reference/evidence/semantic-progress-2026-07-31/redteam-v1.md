@@ -38,7 +38,7 @@ Verified against live code (this worktree, `impl/src/`):
 | `application.mjs:10686-10716` `runs.list` item | ✓ present | Items carry `attention:'required'\|'clear'`, `blockedInteraction`, `actions: [kinds]` (**kinds only, no actionIds**), timing. Byte ceiling `MAX_RUN_VIEW_BYTES` (:10732-10736). |
 | `wave.mjs:107-121` `attentionFrom` | ✓ exact | Empty-array guard (`:109`) returns `null` **before** the phase fallback; the `blocked_interaction:*`/`turn_checkpoint` strings fire only when `outline.attention` is absent. |
 | `wave.mjs:300-322` `progress()` | ✓ | Member rows `{role, phase, terminal, attention, scratchpad, elapsedMs}`; `boundedJsonBytes` throws `wave_progress_oversize` over `MAX_WAVE_PROGRESS_BYTES = 7*1024*1024` (:21-44). |
-| issue #10 | **not verifiable** | `gh` unauthenticated; `api.github.com/repos/wahargis/baton/issues/10` → 404 (private). Doc's self-consistent citation to #10 as the "AX spine" matches other evidence docs, but the tracker text was not read. |
+| issue #10 | **not verifiable** | `gh` unauthenticated; `api.github.com/repos/user/baton/issues/10` → 404 (private). Doc's self-consistent citation to #10 as the "AX spine" matches other evidence docs, but the tracker text was not read. |
 | `application-semantics.mjs` provider taxonomy | ✓ | `PROVIDER_TERMINAL_GUIDANCE` = `{authentication_required, authentication_refresh_required, wire_frame_oversize, provider_crashed}` (:1630-1666). **No `provider_rate_limited` row.** |
 | `claude-session.mjs:322-337` | ✓ | `claudeResultFailureCode` maps only `authentication_error` → `authentication_refresh_required`; `rate_limit_event` is dropped at :980 ("not surfaced"). |
 
@@ -194,7 +194,7 @@ A run can present a `blockedInteraction`/`requiredAction` kind whose resolving a
 
 **Grounding:**
 
-- `gh issue view 10` → unauthenticated; `api.github.com/repos/wahargis/baton/issues/10` → 404 (private repo). Tracker text unread.
+- `gh issue view 10` → unauthenticated; `api.github.com/repos/user/baton/issues/10` → 404 (private repo). Tracker text unread.
 - `claude-session.mjs:980`, `cli-adapters.mjs:194` — `rate_limit_event` dropped.
 - `coordinator.mjs:10797` — `provider_turn_failed` is the untyped fallback.
 - Contract ground truth #3 (`semantic-progress-decisions.md:31-34`) and seed (`:3-6`).

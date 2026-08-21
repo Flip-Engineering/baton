@@ -4,7 +4,7 @@ All evidence gathered. Composing the dossier now.
 
 ## Summary
 
-- Verified against the installed native binary `/Users/wahargis/.local/share/claude/versions/2.1.205` (Mach-O arm64): the hook system has **30 event types** (far more than the ~14 publicly documented), including `PostToolBatch`, `StopFailure`, `UserPromptExpansion`, `Setup`, `ConfigChange`, `WorktreeCreate/Remove`, `InstructionsLoaded`, `CwdChanged`, `FileChanged`, `MessageDisplay`, and the team events `TeammateIdle`/`TaskCreated`/`TaskCompleted`.
+- Verified against the installed native binary `$HOME/.local/share/claude/versions/2.1.205` (Mach-O arm64): the hook system has **30 event types** (far more than the ~14 publicly documented), including `PostToolBatch`, `StopFailure`, `UserPromptExpansion`, `Setup`, `ConfigChange`, `WorktreeCreate/Remove`, `InstructionsLoaded`, `CwdChanged`, `FileChanged`, `MessageDisplay`, and the team events `TeammateIdle`/`TaskCreated`/`TaskCompleted`.
 - Agent teams (gated by `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1`) persist state in `~/.claude/teams/<team>/config.json` (runtime member registry), `~/.claude/teams/<team>/inboxes/<agent>.json` (mailbox), and `~/.claude/tasks/<team>/{N.json,.lock}` (task files with a PID-lockfile) — all schemas confirmed from live files on this machine.
 - Background agents: `claude --bg` dispatches to a per-user supervisor daemon; live registry at `~/.claude/sessions/<pid>.json`; `claude agents --json` for scripting; hidden subcommands `attach`, `logs`, `stop`, `respawn`, `rm`, `daemon`; completion/input-needed fires the `Notification` hook with matcher types `agent_completed`/`agent_needs_input` (both present in binary matcher enum).
 - Checkpoints are per-session content snapshots at `~/.claude/file-history/<sessionId>/<16hex>@v<N>` indexed by `file-history-snapshot` NDJSON records in the transcript; `--from-pr` resolves via `pr-link` NDJSON records in the same transcript.
@@ -16,20 +16,20 @@ All evidence gathered. Composing the dossier now.
 
 ### 1.1 Config shape and locations
 
-Live stanza from `/Users/wahargis/.claude/settings.json` (this machine):
+Live stanza from `$HOME/.claude/settings.json` (this machine):
 
 ```json
 {
   "hooks": {
     "PreToolUse": [
       { "matcher": "Bash", "hooks": [
-        { "type": "command", "command": "/Users/wahargis/.claude/hooks/rtk-rewrite.sh" },
-        { "type": "command", "command": "/Users/wahargis/.claude/hooks/pm-pre-tool-inject.sh", "timeout": 5 }
+        { "type": "command", "command": "$HOME/.claude/hooks/rtk-rewrite.sh" },
+        { "type": "command", "command": "$HOME/.claude/hooks/pm-pre-tool-inject.sh", "timeout": 5 }
       ]}
     ],
     "PostToolUse": [
       { "matcher": "Bash", "hooks": [
-        { "type": "command", "command": "/Users/wahargis/.claude/hooks/pm-post-tool-extract.sh", "timeout": 5 }
+        { "type": "command", "command": "$HOME/.claude/hooks/pm-post-tool-extract.sh", "timeout": 5 }
       ]}
     ]
   }
@@ -51,7 +51,7 @@ Elicitation, ElicitationResult, ConfigChange, WorktreeCreate, WorktreeRemove,
 InstructionsLoaded, CwdChanged, FileChanged, MessageDisplay
 ```
 
-(Source: `strings` over `/Users/wahargis/.local/share/claude/versions/2.1.205`; the literal appears as `{PreToolUse:{},PostToolUse:{},...,MessageDisplay:{}}`.)
+(Source: `strings` over `$HOME/.local/share/claude/versions/2.1.205`; the literal appears as `{PreToolUse:{},PostToolUse:{},...,MessageDisplay:{}}`.)
 
 ### 1.3 Matcher syntax
 
@@ -128,7 +128,7 @@ Universal: `continue` (false = halt entirely), `stopReason`, `suppressOutput`, `
 - CwdChanged/FileChanged: `watchPaths` (registers/updates FileChanged watch list — binary-embedded help); both get `CLAUDE_ENV_FILE` to export env to subsequent Bash commands.
 - MessageDisplay: `displayContent` (display-only rewrite).
 
-Verified working PreToolUse rewrite example (live hook `/Users/wahargis/.claude/hooks/rtk-rewrite.sh`, lines 76-98):
+Verified working PreToolUse rewrite example (live hook `$HOME/.claude/hooks/rtk-rewrite.sh`, lines 76-98):
 
 ```json
 {
@@ -153,7 +153,7 @@ Gate: `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1` (this machine sets it in `setting
 
 ### 2.1 Team config — `~/.claude/teams/<team>/config.json` (real file, this machine)
 
-Team name is session-derived: `session-` + first 8 chars of the lead session ID (e.g. `session-c99705d9`; lead session `c99705d9-ff46-476c-98c0-3220990b9334`). Pre-2.1.178 teams had human names (`arch-refactor` etc. still on disk from Feb 2026). Verified schema from `/Users/wahargis/.claude/teams/session-c99705d9/config.json`:
+Team name is session-derived: `session-` + first 8 chars of the lead session ID (e.g. `session-c99705d9`; lead session `c99705d9-ff46-476c-98c0-3220990b9334`). Pre-2.1.178 teams had human names (`arch-refactor` etc. still on disk from Feb 2026). Verified schema from `$HOME/.claude/teams/session-c99705d9/config.json`:
 
 ```json
 {
@@ -169,7 +169,7 @@ Team name is session-derived: `session-` + first 8 chars of the lead session ID 
       "agentType": "team-lead",
       "joinedAt": 1783017118705,
       "tmuxPaneId": "leader",
-      "cwd": "/Users/wahargis/Development",
+      "cwd": "$HOME/Development",
       "subscriptions": [],
       "backendType": "in-process"
     },
@@ -183,7 +183,7 @@ Team name is session-derived: `session-` + first 8 chars of the lead session ID 
       "planModeRequired": false,
       "joinedAt": 1783028330878,
       "tmuxPaneId": "in-process",
-      "cwd": "/Users/wahargis/Development",
+      "cwd": "$HOME/Development",
       "subscriptions": [],
       "backendType": "in-process"
     }
@@ -197,7 +197,7 @@ Notes: `agentId` format is `name@team`; `agentType` may be a plugin-scoped subag
 
 `listId` is either the team name (`session-c99705d9`) or a full session UUID for solo sessions (this machine has `2aa9e79e-…` with 931 task files; `CLAUDE_CODE_TASK_LIST_ID` env var in binary allows pointing a session at a list). Layout: one file per task, `<intId>.json`, plus a `.lock` file. Locking is a **PID lockfile**, not flock: binary code writes the holder PID, checks staleness, logs "Acquired PID lock for … (PID …)" / "Cannot acquire lock for … - held by PID", and unlinks on exit/SIGINT/SIGTERM. Docs confirm "Task claiming uses file locking to prevent race conditions."
 
-Real task file (`/Users/wahargis/.claude/tasks/2aa9e79e-…/729.json`, trimmed):
+Real task file (`$HOME/.claude/tasks/2aa9e79e-…/729.json`, trimmed):
 
 ```json
 {
@@ -242,7 +242,7 @@ Settings key `teammateMode` / flag `--teammate-mode <mode>`, values `"tmux" | "i
 `claude --bg, --background` — "Start the session as a background agent and return immediately (manage with `claude agents`)" (`claude --help`, local). `claude agents` opens the agent view; scriptable via `claude agents --json [--all] [--cwd <path>]`. Real output (this machine):
 
 ```json
-[{"pid":4275,"cwd":"/Users/wahargis/Development/flip","kind":"interactive",
+[{"pid":4275,"cwd":"$HOME/Development/flip","kind":"interactive",
   "startedAt":1783570707479,"sessionId":"2aa9e79e-f854-41c0-9170-a113c8aa7e99",
   "name":"flip-bd","status":"busy"}]
 ```
@@ -270,8 +270,8 @@ Hidden subcommands (verified via `claude attach --help`, `claude daemon --help`;
 
 ```json
 {"type":"pr-link","sessionId":"2aa9e79e-f854-41c0-9170-a113c8aa7e99","prNumber":31,
- "prUrl":"https://github.com/wahargis/flip-client/pull/31",
- "prRepository":"wahargis/flip-client","timestamp":"2026-05-25T19:50:37.656Z"}
+ "prUrl":"https://github.com/user/flip-client/pull/31",
+ "prRepository":"user/flip-client","timestamp":"2026-05-25T19:50:37.656Z"}
 ```
 
 Transcripts live at `~/.claude/projects/<project-slug>/<session-id>.jsonl` (slug = cwd with non-alphanumerics → `-`). Other structured record types in the binary alongside `pr-link`: `bridge-session`, `file-history-snapshot`, `attribution-snapshot`, `content-replacement`, `fork-context-ref`. Docs explicitly warn the JSONL entry format "is internal to Claude Code and changes between versions."
@@ -302,7 +302,7 @@ Storage (verified live): `~/.claude/file-history/<sessionId>/<16-hex-file-key>@v
   "timestamp":"2026-05-19T23:31:13.370Z"},"isSnapshotUpdate":true}
 ```
 
-(`/Users/wahargis/.claude/projects/-Users-wahargis-Development-flip/2aa9e79e-….jsonl`.) A snapshot is written per user prompt (`isSnapshotUpdate:false` for the initial empty one, `true` as backups accrue); keys in `trackedFileBackups` are cwd-relative paths.
+(`$HOME/.claude/projects/-Users-user-Development-flip/2aa9e79e-….jsonl`.) A snapshot is written per user prompt (`isSnapshotUpdate:false` for the initial empty one, `true` as backups accrue); keys in `trackedFileBackups` are cwd-relative paths.
 
 UX: `/rewind` or double-`Esc` (empty prompt) opens the menu; actions: **Restore code and conversation / Restore conversation / Restore code / Summarize from here / Summarize up to here / Never mind**; post-`/clear` rewind entry `/resume <session-id> (previous session)` requires v2.1.191+ (docs: https://code.claude.com/docs/en/checkpointing.md). Retention follows `cleanupPeriodDays` (default 30). Controls found locally: settings key `fileCheckpointingEnabled` (binary settings-key table), env `CLAUDE_CODE_DISABLE_FILE_CHECKPOINTING`, `CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING` (binary env table; SDK checkpointing is opt-in). `claude project purge [path]` deletes "transcripts, tasks, file history, config entry" (`claude project --help`, local). Limitations (docs): bash-command file mutations (`rm`/`mv`/`cp`) and external/concurrent-session edits are NOT tracked — only Claude's file-editing tools.
 
@@ -310,7 +310,7 @@ UX: `/rewind` or double-`Esc` (empty prompt) opens the menu; actions: **Restore 
 
 ## 6. Plugin hook surface (live example)
 
-Plugins ship `hooks/hooks.json` in the plugin root; same event/config schema as settings hooks plus a top-level `description`. Live file, verbatim — `/Users/wahargis/.claude/plugins/cache/openai-codex/codex/1.0.6/hooks/hooks.json`:
+Plugins ship `hooks/hooks.json` in the plugin root; same event/config schema as settings hooks plus a top-level `description`. Live file, verbatim — `$HOME/.claude/plugins/cache/openai-codex/codex/1.0.6/hooks/hooks.json`:
 
 ```json
 {
@@ -361,15 +361,15 @@ Plugin cache layout: `~/.claude/plugins/cache/<marketplace>/<plugin>/<version>/`
 ## Sources
 
 **Local (authoritative for 2.1.205):**
-- Binary: `/Users/wahargis/.local/share/claude/versions/2.1.205` (event enum, exit-code help text, zod hook schemas, env-var tables, OTel names, TeammateMailbox/lock strings)
+- Binary: `$HOME/.local/share/claude/versions/2.1.205` (event enum, exit-code help text, zod hook schemas, env-var tables, OTel names, TeammateMailbox/lock strings)
 - `claude --help`, `claude agents --help`, `claude agents --json`, `claude attach --help`, `claude daemon --help`, `claude project --help` (live output)
-- `/Users/wahargis/.claude/settings.json` (hooks + teams gate + `CLAUDE_CODE_STOP_HOOK_BLOCK_CAP`)
-- `/Users/wahargis/.claude/teams/session-c99705d9/config.json`, `…/arch-refactor/config.json`, `…/session-c99705d9/inboxes/team-lead.json`
-- `/Users/wahargis/.claude/tasks/session-c99705d9/{1.json,.lock}`, `/Users/wahargis/.claude/tasks/2aa9e79e-…/{729.json,904.json}`
-- `/Users/wahargis/.claude/sessions/4275.json`, `/Users/wahargis/.claude/session-env/2aa9e79e-…/sessionstart-hook-0.sh`
-- `/Users/wahargis/.claude/file-history/2aa9e79e-…/8d3d1d192523499a@v3`; transcript `/Users/wahargis/.claude/projects/-Users-wahargis-Development-flip/2aa9e79e-….jsonl` (`pr-link`, `file-history-snapshot` records)
-- `/Users/wahargis/.claude/hooks/rtk-rewrite.sh`, `pm-pre-tool-inject.sh`
-- `/Users/wahargis/.claude/plugins/cache/openai-codex/codex/1.0.6/hooks/hooks.json`, `scripts/session-lifecycle-hook.mjs`, `scripts/stop-review-gate-hook.mjs`
+- `$HOME/.claude/settings.json` (hooks + teams gate + `CLAUDE_CODE_STOP_HOOK_BLOCK_CAP`)
+- `$HOME/.claude/teams/session-c99705d9/config.json`, `…/arch-refactor/config.json`, `…/session-c99705d9/inboxes/team-lead.json`
+- `$HOME/.claude/tasks/session-c99705d9/{1.json,.lock}`, `$HOME/.claude/tasks/2aa9e79e-…/{729.json,904.json}`
+- `$HOME/.claude/sessions/4275.json`, `$HOME/.claude/session-env/2aa9e79e-…/sessionstart-hook-0.sh`
+- `$HOME/.claude/file-history/2aa9e79e-…/8d3d1d192523499a@v3`; transcript `$HOME/.claude/projects/-Users-user-Development-flip/2aa9e79e-….jsonl` (`pr-link`, `file-history-snapshot` records)
+- `$HOME/.claude/hooks/rtk-rewrite.sh`, `pm-pre-tool-inject.sh`
+- `$HOME/.claude/plugins/cache/openai-codex/codex/1.0.6/hooks/hooks.json`, `scripts/session-lifecycle-hook.mjs`, `scripts/stop-review-gate-hook.mjs`
 - Live 2.1.205 tool schemas: `SendMessage`, `TaskCreate`, `TaskUpdate`, `TaskList`, `TaskGet`, `TaskStop`
 
 **Web:**

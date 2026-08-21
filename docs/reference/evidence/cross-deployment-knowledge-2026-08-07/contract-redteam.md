@@ -5,7 +5,7 @@ Target: `docs/reference/evidence/cross-deployment-knowledge-2026-08-07/cross-dep
 Method: every anchor re-derived against the **current** working tree (HEAD `90d997c6372a2ef16113555dcb46a7ba2cff40a9`)
 with NUL-safe `grep -an` / ranged `sed -n` of `impl/src/{coordination-store,coordinator,application,application-semantics,application-deployment,index,resident-authority}.mjs`,
 plus the cited docs (`docs/34-knowledge-horizons.md`, `mcp-packaging-decisions.md`, the #69/#132 contracts, `run-task-wave.mjs`)
-and the live `.baton/` sprawl at `/Users/wahargis/Development/Experiments/baton/.baton/`. No implementation files were modified; this report is the only artifact written.
+and the live `.baton/` sprawl at `$HOME/Development/Experiments/baton/.baton/`. No implementation files were modified; this report is the only artifact written.
 
 **Verdict: NOT FOLD-READY — 8 blockers (6 MAJOR, 2 MINOR).** The citation corpus is real — every cited
 function, row, and fold exists — but six `coordinator.mjs` anchors are **+18 lines stale at the current HEAD**

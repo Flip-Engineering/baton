@@ -14,11 +14,11 @@
 
 ## 1. Anthropic agent teams: shared task list + mailbox (local evidence, authoritative)
 
-Feature-gated by `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1` (env or `settings.json` `"env"` block) — confirmed both in docs (https://code.claude.com/docs/en/agent-teams) and in binary strings of `/Users/wahargis/.local/share/claude/versions/2.1.205`.
+Feature-gated by `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1` (env or `settings.json` `"env"` block) — confirmed both in docs (https://code.claude.com/docs/en/agent-teams) and in binary strings of `$HOME/.local/share/claude/versions/2.1.205`.
 
 ### 1.1 Task list on disk
 
-Directory: `~/.claude/tasks/<list-id>/`. List-id resolution (decompiled from the binary): env `CLAUDE_CODE_TASK_LIST_ID` overrides → else current team name → else session id; the id is sanitized `replace(/[^a-zA-Z0-9_-]+/g,"-")`. Per-list contents (observed at `/Users/wahargis/.claude/tasks/2aa9e79e-f854-41c0-9170-a113c8aa7e99/`, 487 records):
+Directory: `~/.claude/tasks/<list-id>/`. List-id resolution (decompiled from the binary): env `CLAUDE_CODE_TASK_LIST_ID` overrides → else current team name → else session id; the id is sanitized `replace(/[^a-zA-Z0-9_-]+/g,"-")`. Per-list contents (observed at `$HOME/.claude/tasks/2aa9e79e-f854-41c0-9170-a113c8aa7e99/`, 487 records):
 
 - `<numeric-id>.json` — one file per task
 - `.highwatermark` — plain integer, the ID allocator (observed value `859`); read/parsed with `parseInt`, reconciled upward under lock if a task id exceeds it
@@ -35,7 +35,7 @@ Task record schema (Zod schema extracted from the binary, field-exact):
   metadata?: Record<string, unknown> }           // free-form; observed e.g. {"shipped":"client PR #294 …"}
 ```
 
-Real record: `/Users/wahargis/.claude/tasks/2aa9e79e-…/448.json` — note `description` is used as a multi-KB findings dump in practice; the schema tolerates it, context budgets don't.
+Real record: `$HOME/.claude/tasks/2aa9e79e-…/448.json` — note `description` is used as a multi-KB findings dump in practice; the schema tolerates it, context budgets don't.
 
 **Claiming**: take the dir-level lock → re-read task → reject with typed reasons — the full set in the binary is `"task_not_found"`, `"already_claimed"` (owner set ≠ claimer), `"already_resolved"` (status completed), `"blocked"` (non-completed tasks remain in `blockedBy`), `"agent_busy"`, `"delisted"` → else set `owner` + `in_progress`. Dependency add is a bidirectional write: adding an edge appends to `blocks` on the blocker *and* `blockedBy` on the blocked task. Docs confirm the model: "a pending task with unresolved dependencies cannot be claimed until those dependencies are completed" and "Task claiming uses file locking to prevent race conditions".
 
@@ -43,7 +43,7 @@ Real record: `/Users/wahargis/.claude/tasks/2aa9e79e-…/448.json` — note `des
 
 ### 1.2 Team config
 
-`~/.claude/teams/<team-name>/config.json` (observed at `/Users/wahargis/.claude/teams/arch-refactor/config.json`): `name`, `description`, `createdAt` (epoch ms), `leadAgentId` (`"team-lead@arch-refactor"` — agent ids are `name@team`), `leadSessionId`, and `members[]` with `agentId`, `name`, `agentType`, `model`, `prompt` (full spawn prompt persisted!), `color`, `planModeRequired`, `joinedAt`, `tmuxPaneId` (`""` or `"in-process"` or a pane id), `cwd`, `subscriptions`, `backendType: "in-process"`. Docs: team dir is deleted at session end; the tasks dir persists (retention via `cleanupPeriodDays`). Default team name is `session-` + first 8 chars of session id (matches observed `session-83eb1687` etc.).
+`~/.claude/teams/<team-name>/config.json` (observed at `$HOME/.claude/teams/arch-refactor/config.json`): `name`, `description`, `createdAt` (epoch ms), `leadAgentId` (`"team-lead@arch-refactor"` — agent ids are `name@team`), `leadSessionId`, and `members[]` with `agentId`, `name`, `agentType`, `model`, `prompt` (full spawn prompt persisted!), `color`, `planModeRequired`, `joinedAt`, `tmuxPaneId` (`""` or `"in-process"` or a pane id), `cwd`, `subscriptions`, `backendType: "in-process"`. Docs: team dir is deleted at session end; the tasks dir persists (retention via `cleanupPeriodDays`). Default team name is `session-` + first 8 chars of session id (matches observed `session-83eb1687` etc.).
 
 ### 1.3 Mailbox
 
@@ -67,7 +67,7 @@ Read side: messages are marked `read:true` (or filtered out by predicate under t
 
 ## 2. OpenAI codex plugin job ledger (local evidence, authoritative)
 
-Source read at `/Users/wahargis/.claude/plugins/cache/openai-codex/codex/1.0.6/scripts/lib/state.mjs`, `tracked-jobs.mjs`, `job-control.mjs`, and `scripts/codex-companion.mjs`; live state at `/Users/wahargis/.claude/plugins/data/codex-openai-codex/state/`.
+Source read at `$HOME/.claude/plugins/cache/openai-codex/codex/1.0.6/scripts/lib/state.mjs`, `tracked-jobs.mjs`, `job-control.mjs`, and `scripts/codex-companion.mjs`; live state at `$HOME/.claude/plugins/data/codex-openai-codex/state/`.
 
 **State dir** (`state.mjs:29-52`): `${CLAUDE_PLUGIN_DATA}/state/{basename(workspaceRoot)}-{sha256(realpath(workspaceRoot)).hex.slice(0,16)}/`, fallback `os.tmpdir()/codex-companion`. Observed: `…/state/Development-6469b41f0e6f6312/` containing `state.json`, `broker.json` (app-server broker endpoint: `{"endpoint":"unix:/var/folders/…/cxc-…/broker.sock","pidFile":…,"pid":71004}`), and `jobs/`.
 
@@ -79,7 +79,7 @@ Source read at `/Users/wahargis/.claude/plugins/cache/openai-codex/codex/1.0.6/s
 { "id": "task-mr413zaw-jo06sm",          // `${prefix}-${Date.now().toString(36)}-${rand6}` (state.mjs:124-127)
   "kind": "task", "kindLabel": "rescue", // kinds: task | review | adversarial-review
   "title": "Codex Task", "jobClass": "task", "summary": "## 1. CRITIQUE",
-  "workspaceRoot": "/Users/wahargis/Development", "write": false,
+  "workspaceRoot": "$HOME/Development", "write": false,
   "sessionId": "c99705d9-…",             // from env CODEX_COMPANION_SESSION_ID (tracked-jobs.mjs:6,60-68)
   "status": "completed",                 // queued | running | completed | failed | cancelled
   "phase": "done",                       // queued|starting|…|done|failed|cancelled; live phases pushed from progress events
@@ -106,7 +106,7 @@ The full `jobs/<id>.json` additionally stores `result` (structured payload incl.
 
 **Does it apply to ephemeral coding workers?** Letta assumes durable server-hosted agent objects; baton workers are throwaway processes. But the *block* abstraction transfers cleanly: a hub-owned, size-capped, labeled text region (brief / findings-board / decisions) injected into every worker spawn prompt and editable through hub tools with Letta's exact write discipline (append free-for-all, replace CAS, rewrite owner-only).
 
-**Local evidence that this is already happening**: Codex 0.144.0 ships experimental `memories` (`codex features list` → `memories  experimental  true`; enabled via `[features] memories = true` in `/Users/wahargis/.codex/config.toml`). On disk at `/Users/wahargis/.codex/memories/`: **its own `.git` repo** ("Initialize Codex git baseline"), `MEMORY.md` (consolidated index organized as `# Task Group:` sections with `scope:`, `applies_to: cwd=…; reuse_rule=…`, `### keywords`), `raw_memories.md`, `memory_summary.md`, `rollout_summaries/<ts>-<slug>.md` each with front-matter `thread_id`, `updated_at`, `rollout_path` (pointing into `~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl`), `cwd`, `git_branch`, and an `extensions/ad_hoc/notes/` inbox whose `instructions.md` mandates consolidation ("Never delete a note file"). This is MemGPT's core-memory/archival split re-materialized as *markdown + git + session-ledger pointers* — sleep-time consolidation included (summaries are written post-turn). For baton: the memory substrate for coding fleets is converging on versioned files keyed to session ledgers, not embeddings.
+**Local evidence that this is already happening**: Codex 0.144.0 ships experimental `memories` (`codex features list` → `memories  experimental  true`; enabled via `[features] memories = true` in `$HOME/.codex/config.toml`). On disk at `$HOME/.codex/memories/`: **its own `.git` repo** ("Initialize Codex git baseline"), `MEMORY.md` (consolidated index organized as `# Task Group:` sections with `scope:`, `applies_to: cwd=…; reuse_rule=…`, `### keywords`), `raw_memories.md`, `memory_summary.md`, `rollout_summaries/<ts>-<slug>.md` each with front-matter `thread_id`, `updated_at`, `rollout_path` (pointing into `~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl`), `cwd`, `git_branch`, and an `extensions/ad_hoc/notes/` inbox whose `instructions.md` mandates consolidation ("Never delete a note file"). This is MemGPT's core-memory/archival split re-materialized as *markdown + git + session-ledger pointers* — sleep-time consolidation included (summaries are written post-turn). For baton: the memory substrate for coding fleets is converging on versioned files keyed to session ledgers, not embeddings.
 
 ## 5. Beads (steveyegge) — task-DAG built for agents (web)
 
@@ -116,9 +116,9 @@ Real and active: https://github.com/steveyegge/beads (Go; also surfaced via Yegg
 
 Mechanisms in current use, locally evidenced where possible:
 
-- **Worktree-per-worker**: Claude Code documents parallel sessions via git worktrees (https://code.claude.com/docs/en/worktrees) and exposes `EnterWorktree`/`ExitWorktree` tools plus `WorktreeCreate`/`WorktreeRemove` hook events (present in this installation's tool inventory; baton doc 04 already commits to per-task worktrees in the Sidecar posture — `/Users/wahargis/Development/Experiments/baton/docs/04-architecture-options.md:73`). Isolation = concurrency safety by construction: no two workers share a checkout.
+- **Worktree-per-worker**: Claude Code documents parallel sessions via git worktrees (https://code.claude.com/docs/en/worktrees) and exposes `EnterWorktree`/`ExitWorktree` tools plus `WorktreeCreate`/`WorktreeRemove` hook events (present in this installation's tool inventory; baton doc 04 already commits to per-task worktrees in the Sidecar posture — `$HOME/Development/Experiments/baton/docs/04-architecture-options.md:73`). Isolation = concurrency safety by construction: no two workers share a checkout.
 - **Commit-message protocol**: session-attribution trailers are already standard practice — `Co-Authored-By: …` and `Claude-Session: https://claude.ai/code/session_…` (mandated in this environment's own harness config), giving `git log --grep` a worker/session join key for free. Codex briefly had `codex_git_commit` as a feature (now `removed` per `codex features list`).
-- **PR-as-result-contract**: `claude --from-pr` (sessions linked to PRs, doc 02 §Claude Code, `/Users/wahargis/Development/Experiments/baton/docs/02-harness-control-surfaces.md:59`), `gh pr` as the acceptance surface, and Codex review targets expressed in git terms (`{type:"baseBranch", branch}` / `{type:"uncommittedChanges"}`, `codex-companion.mjs:259-269`). The reviewable diff *is* the result; everything else is commentary.
+- **PR-as-result-contract**: `claude --from-pr` (sessions linked to PRs, doc 02 §Claude Code, `$HOME/Development/Experiments/baton/docs/02-harness-control-surfaces.md:59`), `gh pr` as the acceptance surface, and Codex review targets expressed in git terms (`{type:"baseBranch", branch}` / `{type:"uncommittedChanges"}`, `codex-companion.mjs:259-269`). The reviewable diff *is* the result; everything else is commentary.
 - **Memory-in-git**: Codex `~/.codex/memories/` is literally a git repo (§4).
 
 **Concurrency story**: git is the only substrate here with a real multi-writer merge engine, but merge semantics are line-based — fine for artifacts, wrong for ledgers (two agents editing one JSONL/markdown task file conflict constantly; beads left exactly this design for Dolt). **Query surface**: `git log/grep/blame` — strong for provenance, useless for "what's ready to work on". **Steal**: worktree-per-worker as law; commit/PR as the artifact registry's primary keys; session-trailer join keys. **Reject**: task state in git (write-only memory — Yegge's founding critique of markdown plans holds for commit messages too).
@@ -165,13 +165,13 @@ What belongs in the hub, judged against the evidence:
 ## Sources
 
 **Local (authoritative for installed versions)**
-- `/Users/wahargis/.claude/tasks/2aa9e79e-f854-41c0-9170-a113c8aa7e99/` — 487 task records, `.highwatermark`, `.lock` (task schema, statuses, real examples; e.g. `448.json`, `729.json` metadata)
-- `/Users/wahargis/.claude/teams/arch-refactor/config.json`, `/Users/wahargis/.claude/teams/2aa9e79e-…/inboxes/*.json` (team config schema; 120 mailbox messages, all `task_assignment`)
-- `/Users/wahargis/.local/share/claude/versions/2.1.205` (binary strings: task Zod schema, claim reasons, lock options `{retries:30,minTimeout:5,maxTimeout:100}`, `writeToMailbox` mechanics, protocol frame literals, `CLAUDE_CODE_TASK_LIST_ID`/`CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS`, OTel vars and `claude_code.*` metrics)
-- `/Users/wahargis/.claude/plugins/cache/openai-codex/codex/1.0.6/scripts/lib/state.mjs` (:8-13, :29-52, :80-127), `lib/tracked-jobs.mjs` (:6, :60-68, :142-204), `lib/job-control.mjs` (:8-25, :109-211), `scripts/codex-companion.mjs` (:69-73, :290-316, :671-710, :963-1022)
-- `/Users/wahargis/.claude/plugins/data/codex-openai-codex/state/Development-6469b41f0e6f6312/{state.json,broker.json,jobs/}` (live job record)
-- `/Users/wahargis/.codex/config.toml` (`memories = true`), `codex features list` output, `/Users/wahargis/.codex/memories/{MEMORY.md,raw_memories.md,rollout_summaries/,extensions/ad_hoc/}` (+ its `.git`), `/Users/wahargis/.codex/sessions/rollout-*.jsonl`
-- `/Users/wahargis/Development/Experiments/baton/docs/02-harness-control-surfaces.md`, `docs/04-architecture-options.md`
+- `$HOME/.claude/tasks/2aa9e79e-f854-41c0-9170-a113c8aa7e99/` — 487 task records, `.highwatermark`, `.lock` (task schema, statuses, real examples; e.g. `448.json`, `729.json` metadata)
+- `$HOME/.claude/teams/arch-refactor/config.json`, `$HOME/.claude/teams/2aa9e79e-…/inboxes/*.json` (team config schema; 120 mailbox messages, all `task_assignment`)
+- `$HOME/.local/share/claude/versions/2.1.205` (binary strings: task Zod schema, claim reasons, lock options `{retries:30,minTimeout:5,maxTimeout:100}`, `writeToMailbox` mechanics, protocol frame literals, `CLAUDE_CODE_TASK_LIST_ID`/`CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS`, OTel vars and `claude_code.*` metrics)
+- `$HOME/.claude/plugins/cache/openai-codex/codex/1.0.6/scripts/lib/state.mjs` (:8-13, :29-52, :80-127), `lib/tracked-jobs.mjs` (:6, :60-68, :142-204), `lib/job-control.mjs` (:8-25, :109-211), `scripts/codex-companion.mjs` (:69-73, :290-316, :671-710, :963-1022)
+- `$HOME/.claude/plugins/data/codex-openai-codex/state/Development-6469b41f0e6f6312/{state.json,broker.json,jobs/}` (live job record)
+- `$HOME/.codex/config.toml` (`memories = true`), `codex features list` output, `$HOME/.codex/memories/{MEMORY.md,raw_memories.md,rollout_summaries/,extensions/ad_hoc/}` (+ its `.git`), `$HOME/.codex/sessions/rollout-*.jsonl`
+- `$HOME/Development/Experiments/baton/docs/02-harness-control-surfaces.md`, `docs/04-architecture-options.md`
 
 **Web**
 - Anthropic agent teams docs: https://code.claude.com/docs/en/agent-teams · worktrees: https://code.claude.com/docs/en/worktrees · monitoring: https://code.claude.com/docs/en/monitoring-usage

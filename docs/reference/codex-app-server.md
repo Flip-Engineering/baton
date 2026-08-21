@@ -15,9 +15,9 @@
 | Evidence | Location |
 |---|---|
 | Installed binary | `codex-cli 0.144.0` (`codex --version`; native binary at `/opt/homebrew/lib/node_modules/@openai/codex/bin/codex-aarch64-apple-darwin`) |
-| Generated schema bundle (`codex app-server generate-json-schema`) | `/private/tmp/claude-501/-Users-wahargis-Development/73adbbf2-a514-4a17-8729-9cda68da5bac/scratchpad/codex-appserver-schema/` — `ClientRequest.json`, `ServerRequest.json`, `ServerNotification.json`, `ClientNotification.json`, per-message files, plus `v1/` (Initialize) and `v2/` (230 files) subdirs |
-| Production client (OpenAI's Codex plugin for Claude Code) | `/Users/wahargis/.claude/plugins/cache/openai-codex/codex/1.0.6/scripts/lib/app-server.mjs`, `broker-lifecycle.mjs`, `broker-endpoint.mjs`, `codex.mjs`, `app-server-protocol.d.ts`, `/Users/wahargis/.claude/plugins/cache/openai-codex/codex/1.0.6/scripts/app-server-broker.mjs` |
-| Live probes | initialize handshake + error-shape probes run against the real binary (scripts at `/private/tmp/claude-501/-Users-wahargis-Development/73adbbf2-a514-4a17-8729-9cda68da5bac/scratchpad/init-probe.mjs`, `err-probe.mjs`, `list-probe.mjs`) |
+| Generated schema bundle (`codex app-server generate-json-schema`) | `/private/tmp/claude-501/-Users-user-Development/73adbbf2-a514-4a17-8729-9cda68da5bac/scratchpad/codex-appserver-schema/` — `ClientRequest.json`, `ServerRequest.json`, `ServerNotification.json`, `ClientNotification.json`, per-message files, plus `v1/` (Initialize) and `v2/` (230 files) subdirs |
+| Production client (OpenAI's Codex plugin for Claude Code) | `$HOME/.claude/plugins/cache/openai-codex/codex/1.0.6/scripts/lib/app-server.mjs`, `broker-lifecycle.mjs`, `broker-endpoint.mjs`, `codex.mjs`, `app-server-protocol.d.ts`, `$HOME/.claude/plugins/cache/openai-codex/codex/1.0.6/scripts/app-server-broker.mjs` |
+| Live probes | initialize handshake + error-shape probes run against the real binary (scripts at `/private/tmp/claude-501/-Users-user-Development/73adbbf2-a514-4a17-8729-9cda68da5bac/scratchpad/init-probe.mjs`, `err-probe.mjs`, `list-probe.mjs`) |
 | Web | `https://developers.openai.com/codex/app-server.md` (redirects to `learn.chatgpt.com/docs/app-server.md`), `https://raw.githubusercontent.com/openai/codex/main/codex-rs/app-server/README.md`, `codex-rs/app-server-daemon/README.md` |
 
 Rule applied throughout: local binary/schema outranks web docs; disagreements are flagged inline.
@@ -41,7 +41,7 @@ Exactly one `initialize` request per connection, then an `initialized` notificat
 
 ```
 >> {"id":0,"method":"initialize","params":{"clientInfo":{"name":"baton-recon","title":"Baton Recon","version":"0.0.1"}}}
-<< {"id":0,"result":{"userAgent":"baton-recon/0.144.0 (Mac OS 15.5.0; arm64) ghostty/1.2.3 (baton-recon; 0.0.1)","codexHome":"/Users/wahargis/.codex","platformFamily":"unix","platformOs":"macos"}}
+<< {"id":0,"result":{"userAgent":"baton-recon/0.144.0 (Mac OS 15.5.0; arm64) ghostty/1.2.3 (baton-recon; 0.0.1)","codexHome":"$HOME/.codex","platformFamily":"unix","platformOs":"macos"}}
 >> {"method":"initialized","params":{}}
 ```
 
@@ -189,7 +189,7 @@ Multi-agent note: `collabAgentToolCall` items carry `receiverThreadIds`; sub-age
 
 ## 12. Production client patterns worth copying (OpenAI's own plugin)
 
-From `/Users/wahargis/.claude/plugins/cache/openai-codex/codex/1.0.6/scripts/`:
+From `$HOME/.claude/plugins/cache/openai-codex/codex/1.0.6/scripts/`:
 
 - **Connect strategy** (`app-server.mjs:335-354`): env `CODEX_COMPANION_APP_SERVER_ENDPOINT` → broker socket if set; else reuse/spawn a broker (unix socket `<tmpdir>/cxc-XXXX/broker.sock`, win32 `pipe:\\.\pipe\<name>`); else spawn `codex app-server` child directly. Broker readiness poll: connect-probe every 50 ms, 2000 ms budget (`broker-lifecycle.mjs:24-41`); state persisted as `broker.json` (`{endpoint, pidFile, logFile, sessionDir, pid}`).
 - **Single-flight broker**: one shared app-server; concurrent clients get `-32001`; only `turn/interrupt` is allowed through while another client streams (`app-server-broker.mjs:170-195`). Streaming ownership follows `turn/start`/`review/start`/`thread/compact/start` and is released on the matching `turn/completed`.
@@ -223,11 +223,11 @@ From `/Users/wahargis/.claude/plugins/cache/openai-codex/codex/1.0.6/scripts/`:
 ## Sources
 
 **Local (outranking)**
-- Schema bundle: `/private/tmp/claude-501/-Users-wahargis-Development/73adbbf2-a514-4a17-8729-9cda68da5bac/scratchpad/codex-appserver-schema/` (`ClientRequest.json`, `ServerRequest.json`, `ServerNotification.json`, `ClientNotification.json`, `v1/Initialize*.json`, `v2/*.json`, `ExecCommandApprovalResponse.json`, `CommandExecutionRequestApprovalResponse.json`, etc.)
-- Live probes (codex 0.144.0): `/private/tmp/claude-501/-Users-wahargis-Development/73adbbf2-a514-4a17-8729-9cda68da5bac/scratchpad/{init-probe.mjs,err-probe.mjs,list-probe.mjs}` outputs
+- Schema bundle: `/private/tmp/claude-501/-Users-user-Development/73adbbf2-a514-4a17-8729-9cda68da5bac/scratchpad/codex-appserver-schema/` (`ClientRequest.json`, `ServerRequest.json`, `ServerNotification.json`, `ClientNotification.json`, `v1/Initialize*.json`, `v2/*.json`, `ExecCommandApprovalResponse.json`, `CommandExecutionRequestApprovalResponse.json`, etc.)
+- Live probes (codex 0.144.0): `/private/tmp/claude-501/-Users-user-Development/73adbbf2-a514-4a17-8729-9cda68da5bac/scratchpad/{init-probe.mjs,err-probe.mjs,list-probe.mjs}` outputs
 - CLI help: `codex --help`, `codex app-server --help`, `codex app-server daemon --help`, `codex app-server proxy --help`, `codex remote-control --help`, `codex features list`
-- Plugin client: `/Users/wahargis/.claude/plugins/cache/openai-codex/codex/1.0.6/scripts/lib/app-server.mjs` (lines 22-42, 96, 136-161, 183-276, 335-354), `broker-lifecycle.mjs` (11-57, 113-171), `broker-endpoint.mjs`, `codex.mjs` (43-90, 380-641, 700-760, 1026-1180), `app-server-protocol.d.ts`, `scripts/app-server-broker.mjs` (12, 146-221)
-- Baton context: `/Users/wahargis/Development/Experiments/baton/docs/02-harness-control-surfaces.md`, `docs/04-architecture-options.md`
+- Plugin client: `$HOME/.claude/plugins/cache/openai-codex/codex/1.0.6/scripts/lib/app-server.mjs` (lines 22-42, 96, 136-161, 183-276, 335-354), `broker-lifecycle.mjs` (11-57, 113-171), `broker-endpoint.mjs`, `codex.mjs` (43-90, 380-641, 700-760, 1026-1180), `app-server-protocol.d.ts`, `scripts/app-server-broker.mjs` (12, 146-221)
+- Baton context: `$HOME/Development/Experiments/baton/docs/02-harness-control-surfaces.md`, `docs/04-architecture-options.md`
 
 **Web**
 - [Codex App Server — official docs](https://developers.openai.com/codex/app-server.md) (served from learn.chatgpt.com/docs/app-server.md)

@@ -53,8 +53,8 @@
       "source": "wire"
     },
     "sessionContext": {
-      "worktree": "/Users/wahargis/Development/Experiments/baton/.baton/wt/codex-route-tuple-review",
-      "repoRoot": "/Users/wahargis/Development/Experiments/baton",
+      "worktree": "$HOME/Development/Experiments/baton/.baton/wt/codex-route-tuple-review",
+      "repoRoot": "$HOME/Development/Experiments/baton",
       "baseSha": "38abb227e62042f684e86d5151f5c69159c31728",
       "branch": "baton/codex-route-tuple-review",
       "ownerTaskId": "codex-route-tuple-review"

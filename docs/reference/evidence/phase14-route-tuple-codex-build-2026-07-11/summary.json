@@ -46,8 +46,8 @@
       "source": "wire"
     },
     "sessionContext": {
-      "worktree": "/Users/wahargis/Development/Experiments/baton/.baton/wt/codex-route-tuple-build",
-      "repoRoot": "/Users/wahargis/Development/Experiments/baton",
+      "worktree": "$HOME/Development/Experiments/baton/.baton/wt/codex-route-tuple-build",
+      "repoRoot": "$HOME/Development/Experiments/baton",
       "baseSha": "8adce87f1d0b78c09cc343f96fe261738cdad799",
       "branch": "baton/codex-route-tuple-build",
       "ownerTaskId": "codex-route-tuple-build"

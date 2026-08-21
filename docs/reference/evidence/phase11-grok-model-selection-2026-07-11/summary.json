@@ -29,8 +29,8 @@
         },
         "sessionRef": null,
         "sessionContext": {
-          "worktree": "/Users/wahargis/Development/Experiments/baton/.baton/wt/grok-model-proof-45",
-          "repoRoot": "/Users/wahargis/Development/Experiments/baton",
+          "worktree": "$HOME/Development/Experiments/baton/.baton/wt/grok-model-proof-45",
+          "repoRoot": "$HOME/Development/Experiments/baton",
           "baseSha": "487af8e36e128835bce57718951b1ac2f30dc45b",
           "branch": "baton/grok-model-proof-45",
           "ownerTaskId": "grok-model-proof-45"
@@ -68,18 +68,18 @@
         },
         "sessionRef": null,
         "sessionContext": {
-          "worktree": "/Users/wahargis/Development/Experiments/baton/.baton/wt/grok-model-proof-45",
-          "repoRoot": "/Users/wahargis/Development/Experiments/baton",
+          "worktree": "$HOME/Development/Experiments/baton/.baton/wt/grok-model-proof-45",
+          "repoRoot": "$HOME/Development/Experiments/baton",
           "baseSha": "487af8e36e128835bce57718951b1ac2f30dc45b",
           "branch": "baton/grok-model-proof-45",
           "ownerTaskId": "grok-model-proof-45"
         },
         "lineage": null,
         "runtimeScope": {
-          "root": "/Users/wahargis/Development/Experiments/baton/.baton/runtime/w-1",
-          "home": "/Users/wahargis/Development/Experiments/baton/.baton/runtime/w-1/home",
-          "tmp": "/Users/wahargis/Development/Experiments/baton/.baton/runtime/w-1/tmp",
-          "config": "/Users/wahargis/Development/Experiments/baton/.baton/runtime/w-1/home/.grok",
+          "root": "$HOME/Development/Experiments/baton/.baton/runtime/w-1",
+          "home": "$HOME/Development/Experiments/baton/.baton/runtime/w-1/home",
+          "tmp": "$HOME/Development/Experiments/baton/.baton/runtime/w-1/tmp",
+          "config": "$HOME/Development/Experiments/baton/.baton/runtime/w-1/home/.grok",
           "family": "grok",
           "strippedEnvKeys": [
             "ANTHROPIC_DEFAULT_HAIKU_MODEL",
@@ -102,7 +102,7 @@
         },
         "review": null,
         "taskId": "grok-model-proof-45",
-        "worktree": "/Users/wahargis/Development/Experiments/baton/.baton/wt/grok-model-proof-45",
+        "worktree": "$HOME/Development/Experiments/baton/.baton/wt/grok-model-proof-45",
         "fence": 2,
         "turnEpoch": 2,
         "status": "exited",
@@ -143,8 +143,8 @@
         },
         "sessionRef": null,
         "sessionContext": {
-          "worktree": "/Users/wahargis/Development/Experiments/baton/.baton/wt/grok-model-proof-composer",
-          "repoRoot": "/Users/wahargis/Development/Experiments/baton",
+          "worktree": "$HOME/Development/Experiments/baton/.baton/wt/grok-model-proof-composer",
+          "repoRoot": "$HOME/Development/Experiments/baton",
           "baseSha": "487af8e36e128835bce57718951b1ac2f30dc45b",
           "branch": "baton/grok-model-proof-composer",
           "ownerTaskId": "grok-model-proof-composer"
@@ -182,18 +182,18 @@
         },
         "sessionRef": null,
         "sessionContext": {
-          "worktree": "/Users/wahargis/Development/Experiments/baton/.baton/wt/grok-model-proof-composer",
-          "repoRoot": "/Users/wahargis/Development/Experiments/baton",
+          "worktree": "$HOME/Development/Experiments/baton/.baton/wt/grok-model-proof-composer",
+          "repoRoot": "$HOME/Development/Experiments/baton",
           "baseSha": "487af8e36e128835bce57718951b1ac2f30dc45b",
           "branch": "baton/grok-model-proof-composer",
           "ownerTaskId": "grok-model-proof-composer"
         },
         "lineage": null,
         "runtimeScope": {
-          "root": "/Users/wahargis/Development/Experiments/baton/.baton/runtime/w-2",
-          "home": "/Users/wahargis/Development/Experiments/baton/.baton/runtime/w-2/home",
-          "tmp": "/Users/wahargis/Development/Experiments/baton/.baton/runtime/w-2/tmp",
-          "config": "/Users/wahargis/Development/Experiments/baton/.baton/runtime/w-2/home/.grok",
+          "root": "$HOME/Development/Experiments/baton/.baton/runtime/w-2",
+          "home": "$HOME/Development/Experiments/baton/.baton/runtime/w-2/home",
+          "tmp": "$HOME/Development/Experiments/baton/.baton/runtime/w-2/tmp",
+          "config": "$HOME/Development/Experiments/baton/.baton/runtime/w-2/home/.grok",
           "family": "grok",
           "strippedEnvKeys": [
             "ANTHROPIC_DEFAULT_HAIKU_MODEL",
@@ -216,7 +216,7 @@
         },
         "review": null,
         "taskId": "grok-model-proof-composer",
-        "worktree": "/Users/wahargis/Development/Experiments/baton/.baton/wt/grok-model-proof-composer",
+        "worktree": "$HOME/Development/Experiments/baton/.baton/wt/grok-model-proof-composer",
         "fence": 2,
         "turnEpoch": 2,
         "status": "exited",

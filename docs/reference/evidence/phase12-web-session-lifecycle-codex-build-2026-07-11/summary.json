@@ -53,8 +53,8 @@
       "source": "wire"
     },
     "sessionContext": {
-      "worktree": "/Users/wahargis/Development/Experiments/baton/.baton/wt/codex-web-session-lifecycle",
-      "repoRoot": "/Users/wahargis/Development/Experiments/baton",
+      "worktree": "$HOME/Development/Experiments/baton/.baton/wt/codex-web-session-lifecycle",
+      "repoRoot": "$HOME/Development/Experiments/baton",
       "baseSha": "45a309e9bb736932ef142c267e44dcb3983dd038",
       "branch": "baton/codex-web-session-lifecycle",
       "ownerTaskId": "codex-web-session-lifecycle"

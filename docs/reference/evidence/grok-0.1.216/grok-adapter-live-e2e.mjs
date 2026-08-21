@@ -7,9 +7,9 @@
 import { mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { GrokAcpCli } from '/Users/wahargis/Development/Experiments/baton/impl/src/grok-acp.mjs';
+import { GrokAcpCli } from '$HOME/Development/Experiments/baton/impl/src/grok-acp.mjs';
 
-const SCRATCH = '/private/tmp/claude-501/-Users-wahargis-Development/73adbbf2-a514-4a17-8729-9cda68da5bac/scratchpad';
+const SCRATCH = '/private/tmp/claude-501/-Users-user-Development/73adbbf2-a514-4a17-8729-9cda68da5bac/scratchpad';
 const dir = mkdtempSync(join(tmpdir(), 'grok-e2e-'));
 const say = (m) => console.log(`### ${m}`);
 say(`workdir: ${dir}`);

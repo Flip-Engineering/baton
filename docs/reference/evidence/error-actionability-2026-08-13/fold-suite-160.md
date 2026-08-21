@@ -104,7 +104,7 @@ stage, for the RIGHT reason:
 
 ## 7. Scope + escape-class check
 
-- `pwd` at every write = `/Users/wahargis/Development/Experiments/baton/.baton/wt/ws-f4fd5a06aad15554e439ed043449b79c`
+- `pwd` at every write = `$HOME/Development/Experiments/baton/.baton/wt/ws-f4fd5a06aad15554e439ed043449b79c`
   (the `ws-*` worktree). No write landed in the main checkout.
 - Written files (this worktree only): `impl/test/error-actionability-red.test.mjs` (folded in
   place) and `docs/reference/evidence/error-actionability-2026-08-13/fold-suite-160.md` (this map).

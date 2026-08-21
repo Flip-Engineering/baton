@@ -15,7 +15,7 @@ Read-only outside this deliverable; no clocks; no redesign — findings, not arc
 
 ## Seed-row provenance (recorded judgment call)
 
-`gh issue view 169` was unreachable this session (GitHub CLI unauthenticated; the `wahargis/baton`
+`gh issue view 169` was unreachable this session (GitHub CLI unauthenticated; the `user/baton`
 repo is private — API returns 404). The five seed rows were therefore derived from
 `kernel-honesty-2026-08-13/audit-169-brief.md`, the friction ledger
 (`frontier-sweep-2026-08-03/orchestrator-friction-ledger.md` Appendices A–D), and the

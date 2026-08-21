@@ -196,6 +196,6 @@
     "runtimeGone": true,
     "branchesGone": true
   },
-  "fatal": "Error: w-1 crashed before lifecycle.spawned: {\"error\":\"Authentication required\",\"phase\":\"spawn\"}\n    at eventOrEarlyFailure (file:///Users/wahargis/Development/Experiments/baton/docs/reference/evidence/phase21-grok-concurrent-reap-2026-07-11/run.mjs:12:302)\n    at file:///Users/wahargis/Development/Experiments/baton/docs/reference/evidence/phase21-grok-concurrent-reap-2026-07-11/run.mjs:18:67\n    at until (file:///Users/wahargis/Development/Experiments/baton/docs/reference/evidence/phase21-grok-concurrent-reap-2026-07-11/run.mjs:11:148)\n    at async file:///Users/wahargis/Development/Experiments/baton/docs/reference/evidence/phase21-grok-concurrent-reap-2026-07-11/run.mjs:18:49",
+  "fatal": "Error: w-1 crashed before lifecycle.spawned: {\"error\":\"Authentication required\",\"phase\":\"spawn\"}\n    at eventOrEarlyFailure (file://$HOME/Development/Experiments/baton/docs/reference/evidence/phase21-grok-concurrent-reap-2026-07-11/run.mjs:12:302)\n    at file://$HOME/Development/Experiments/baton/docs/reference/evidence/phase21-grok-concurrent-reap-2026-07-11/run.mjs:18:67\n    at until (file://$HOME/Development/Experiments/baton/docs/reference/evidence/phase21-grok-concurrent-reap-2026-07-11/run.mjs:11:148)\n    at async file://$HOME/Development/Experiments/baton/docs/reference/evidence/phase21-grok-concurrent-reap-2026-07-11/run.mjs:18:49",
   "pass": false
 }

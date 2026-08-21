@@ -384,7 +384,7 @@ the orchestrator driving baton all day.
   written only by in-run workers via the internal capability `note` arg
   (`web-northbound.mjs:125,509-511`), unreachable from a client. A live resident IS running
   (serve pid 73048, schema-v2 resident profile present at
-  `/Users/wahargis/.config/baton/connections/`), but it is **non-responsive this session**: the
+  `$HOME/.config/baton/connections/`), but it is **non-responsive this session**: the
   socket accepts TCP yet a read-only POST (`runs_list`) timed out at 6 s and `baton doctor
   --check` failed `cli_transport_failed` (E-15); the coordinator's own in-flight
   `waves_run` curl has hung ~22 min. This is itself F-9/S-3. Options for the coordinator:
@@ -411,7 +411,7 @@ worktree. Two independent barriers, both verified this session:
    no note-create command; shared-partition writes are an internal worker capability (`note` arg,
    `web-northbound.mjs:125,509-511`). This is audit finding F-9 / steering gap S-3.
 2. **No responsive live connection is reachable from this worktree.** A resident serve IS running
-   (pid 73048) and its schema-v2 profile resolves at `/Users/wahargis/.config/baton/connections/`
+   (pid 73048) and its schema-v2 profile resolves at `$HOME/.config/baton/connections/`
    (this shell's `HOME` is sandbox-redirected, which is why it was initially reported missing).
    But the resident is non-responsive: a read-only `runs_list` POST to the published socket timed
    out at 6 s (`[curl exit 000]`), `baton doctor --check` failed `cli_transport_failed` (E-15),

@@ -147,7 +147,7 @@ change is required.
 
 1. **Bind read from the main checkout.** The worktree snapshot (HEAD `e371f70`) predates the
    foundry/review commits, so `foundry-brief.md`, `row-fold-164.md`, `redteam-164.md`, and
-   `review-qa.md` were read from the main repo (`/Users/wahargis/Development/Experiments/baton/`).
+   `review-qa.md` were read from the main repo (`$HOME/Development/Experiments/baton/`).
    The contract and fold artifacts are authored in the worktree at
    `docs/reference/evidence/blind-waits-2026-08-13/`. Gap recorded; no content lost.
 2. **Citation re-verification at the fold HEAD.** Re-ran `grep -an`/`sed -n` (NUL discipline on

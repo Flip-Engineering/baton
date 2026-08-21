@@ -305,6 +305,6 @@
     "runtimeGone": true,
     "branchesGone": true
   },
-  "fatal": "Error: review trust gate failed: [{\"taskId\":\"cairn-review-codex-integrity\",\"status\":\"failed\"},{\"taskId\":\"cairn-review-codex-api\",\"status\":\"failed\"}]\n    at file:///Users/wahargis/Development/Experiments/baton/docs/reference/evidence/phase31-cairn-grok-review-2026-07-12/run.mjs:96:68\n    at runNextTicks (node:internal/process/task_queues:65:5)\n    at listOnTimeout (node:internal/timers:567:9)\n    at process.processTimers (node:internal/timers:541:7)",
+  "fatal": "Error: review trust gate failed: [{\"taskId\":\"cairn-review-codex-integrity\",\"status\":\"failed\"},{\"taskId\":\"cairn-review-codex-api\",\"status\":\"failed\"}]\n    at file://$HOME/Development/Experiments/baton/docs/reference/evidence/phase31-cairn-grok-review-2026-07-12/run.mjs:96:68\n    at runNextTicks (node:internal/process/task_queues:65:5)\n    at listOnTimeout (node:internal/timers:567:9)\n    at process.processTimers (node:internal/timers:541:7)",
   "pass": false
 }

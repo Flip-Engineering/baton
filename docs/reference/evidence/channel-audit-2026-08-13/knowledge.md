@@ -16,7 +16,7 @@ deployment profile (`impl/scripts/resident.deployment.mjs` → `openBaton({repo:
 `privateDirectory(join(repository.common, 'baton', 'application-v3'))`; stateRoot =
 `join(deploymentRoot, 'state')`; CoordinationStore wired at `impl/src/index.mjs:1253`).
 
-- **Store:** `/Users/wahargis/Development/Experiments/baton/.git/baton/application-v3/state/coordination/`
+- **Store:** `$HOME/Development/Experiments/baton/.git/baton/application-v3/state/coordination/`
   — `events.jsonl` (59,388 lines at final poll, 35.2 MB), `projection.checkpoint`, `writer.lease`.
   Store wiring: `new CoordinationStore(join(opts.logDir, 'coordination'), …)` at
   `impl/src/index.mjs:1253`; deploymentRoot derivation at `openBatonDeployment`

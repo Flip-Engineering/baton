@@ -17,7 +17,7 @@ The frame's anchor list says the store location is undocumented and row-chan's f
 find it. **Found.** The resident's coordination store (event-sourced, `events.jsonl`) lives at:
 
 ```
-/Users/wahargis/Development/Experiments/baton/.git/baton/application-v3/state/coordination/events.jsonl
+$HOME/Development/Experiments/baton/.git/baton/application-v3/state/coordination/events.jsonl
 ```
 
 **Derivation (citied):** `application-deployment.mjs:1796-1797` —

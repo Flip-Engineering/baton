@@ -173,10 +173,10 @@ There is no `state.json`-style shared blob anywhere; the Board is a set of indep
 ## Sources
 
 **Baton internal (design constraints this module must satisfy)**
-- `/Users/wahargis/Development/Experiments/baton/docs/05-telemetry-steering.md` (event taxonomy, digest levels, control verbs, no-`fleet_chat`, OS-sandbox-as-boundary)
-- `/Users/wahargis/Development/Experiments/baton/docs/08-shared-memory-and-pm.md` (three memory tempos; no-shared-world-state; claims-are-the-only-serialization-point; selective promotion)
-- `/Users/wahargis/Development/Experiments/baton/spec/supervisor-state-machine.md` (I1 fences/leases, I3/I4 cursors, I6 two-phase stop, I7 hub-run verification, bulk/priority lanes)
-- `/Users/wahargis/Development/Experiments/baton/docs/reference/memory-pm-prior-art.md` (Anthropic teams mailbox/task ledger, Letta blocks, claude-flow SQLite, beads — reverse-engineered local evidence)
+- `$HOME/Development/Experiments/baton/docs/05-telemetry-steering.md` (event taxonomy, digest levels, control verbs, no-`fleet_chat`, OS-sandbox-as-boundary)
+- `$HOME/Development/Experiments/baton/docs/08-shared-memory-and-pm.md` (three memory tempos; no-shared-world-state; claims-are-the-only-serialization-point; selective promotion)
+- `$HOME/Development/Experiments/baton/spec/supervisor-state-machine.md` (I1 fences/leases, I3/I4 cursors, I6 two-phase stop, I7 hub-run verification, bulk/priority lanes)
+- `$HOME/Development/Experiments/baton/docs/reference/memory-pm-prior-art.md` (Anthropic teams mailbox/task ledger, Letta blocks, claude-flow SQLite, beads — reverse-engineered local evidence)
 
 **Coordination architectures (2025-26 research)**
 - CodeCRDT — observation-driven / stigmergic Yjs coordination for multi-agent code-gen: https://arxiv.org/pdf/2510.18893
@@ -289,4 +289,4 @@ This reframes the whole module: not "a blackboard workers visit," but "the fleet
 - **The 13-57% blackboard number and PatchBoard's token numbers are real but task-transferred.** 13-57% is from *data-science information discovery* with a central poster and volunteering subordinates (a master/blackboard hybrid), not peer stigmergic coding coordination; PatchBoard's 45.5k-token / 84.6% result is ALFWorld embodied planning. Borrow their *mechanisms* (append-log, schema-validated patches) — the dossier does this correctly — but don't let the *numbers* imply validation of the coding-fleet use case. State that the mechanism transfers and the metrics don't.
 - **"The Board is a projection, losing it loses no knowledge" carries a standing obligation the dossier should make a hard invariant:** the Board must **never** hold a field not reconstructable from `scratch.*` events (the lease-expiry-is-an-event point is the first instance). The moment it does, it silently becomes the `state.json` blob doc 08 §4 outlaws. Write that as an invariant, not a vibe.
 
-**Docs consulted:** `/Users/wahargis/Development/Experiments/baton/docs/08-shared-memory-and-pm.md`, `/docs/05-telemetry-steering.md`, `/docs/04-architecture-options.md`, `/spec/supervisor-state-machine.md` (I1 leases/fences, I3/I4 cursors, I6 two-phase stop, I7 hub-run verification, §4 bulk/priority lanes).
+**Docs consulted:** `$HOME/Development/Experiments/baton/docs/08-shared-memory-and-pm.md`, `/docs/05-telemetry-steering.md`, `/docs/04-architecture-options.md`, `/spec/supervisor-state-machine.md` (I1 leases/fences, I3/I4 cursors, I6 two-phase stop, I7 hub-run verification, §4 bulk/priority lanes).

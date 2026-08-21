@@ -45,8 +45,8 @@
       "source": "wire"
     },
     "sessionContext": {
-      "worktree": "/Users/wahargis/Development/Experiments/baton/.baton/wt/codex-ck9-crash-window-review",
-      "repoRoot": "/Users/wahargis/Development/Experiments/baton",
+      "worktree": "$HOME/Development/Experiments/baton/.baton/wt/codex-ck9-crash-window-review",
+      "repoRoot": "$HOME/Development/Experiments/baton",
       "baseSha": "47a9750e8d27f3e8450f6c1cd162d2efb0da42bb",
       "branch": "baton/codex-ck9-crash-window-review",
       "ownerTaskId": "codex-ck9-crash-window-review"

@@ -81,7 +81,7 @@ resident onto the fixed code, which I cannot do:
 
 1. The resident (PID 39573, `node impl/scripts/baton.mjs serve impl/scripts/resident.deployment.mjs`,
    up since 02:00, ~28 min CPU) serves the MAIN repo
-   (`/Users/wahargis/Development/Experiments/baton`), not a worktree. The fix is unmerged — it
+   (`$HOME/Development/Experiments/baton`), not a worktree. The fix is unmerged — it
    lives only in the row-fix worktree `ws-e7feafa2`.
 2. `node impl/scripts/baton.mjs waves list` from the main repo returns
    `✦ baton: cli_config_invalid: user connection profile is unavailable` — the resident's

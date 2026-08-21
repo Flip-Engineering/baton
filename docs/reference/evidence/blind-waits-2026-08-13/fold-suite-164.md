@@ -116,7 +116,7 @@ proved the row contradicted the folded authority (B1, P-MCP, P-APP):
 
 ## 5. Scope + escape-class check
 
-- `pwd` at every write = `/Users/wahargis/Development/Experiments/baton/.baton/wt/ws-cd992a78f98d9dfbe3984d5b800fb887`
+- `pwd` at every write = `$HOME/Development/Experiments/baton/.baton/wt/ws-cd992a78f98d9dfbe3984d5b800fb887`
   (the `ws-*` worktree). No write landed in the main checkout.
 - Written files (this worktree only): `impl/test/blind-waits-red.test.mjs` (folded in place) and
   `docs/reference/evidence/blind-waits-2026-08-13/fold-suite-164.md` (this map).

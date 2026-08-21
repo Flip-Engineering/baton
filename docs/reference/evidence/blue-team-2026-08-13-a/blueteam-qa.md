@@ -12,7 +12,7 @@ BLUETEAM-QA v1
   premise), so every row published to its durable file only and recorded its publish refusal. I
   verified **on disk first**: seven reports landed in sibling worktrees (`../../wt/ws-*/`) and the
   eighth (`blueteam-161.md`) landed in the **main repo post-harvest**
-  (`/Users/wahargis/Development/Experiments/baton/docs/reference/evidence/blue-team-2026-08-13-a/`).
+  (`$HOME/Development/Experiments/baton/docs/reference/evidence/blue-team-2026-08-13-a/`).
   All eight are present; none was fabricated and none was declared dead. Report → worktree map:
   `157`←ws-243b3c, `158`←ws-b1812d, `159`←ws-4dfc3e, `160`←ws-3b0679, `155`←ws-123c6d,
   `156`←ws-286517, `164`←ws-f4509a, `161`←main repo.

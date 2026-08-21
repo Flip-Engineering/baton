@@ -2,7 +2,7 @@ All evidence gathered. Composing the dossier now.
 
 # Claude Agent SDK — Baton Southbound Adapter Dossier (TypeScript primary, Python deltas)
 
-*Verified 2026-07-09 against locally installed Claude Code CLI **2.1.205** (`/Users/wahargis/.local/share/claude/versions/2.1.205`, Mach-O arm64), locally installed SDK **0.2.44** (`/Users/wahargis/.npm/_npx/7b8cde7936c78aff/node_modules/@anthropic-ai/claude-agent-sdk/`), and npm-latest SDK **0.3.205** (tarball extracted to `/private/tmp/claude-501/-Users-wahargis-Development/73adbbf2-a514-4a17-8729-9cda68da5bac/scratchpad/sdk0325/package/`; `sdk.d.ts` there is 6,879 lines and is the authoritative type source cited below as **[d.ts:N]**). Local binary evidence outranks web docs; disagreements are flagged inline.*
+*Verified 2026-07-09 against locally installed Claude Code CLI **2.1.205** (`$HOME/.local/share/claude/versions/2.1.205`, Mach-O arm64), locally installed SDK **0.2.44** (`$HOME/.npm/_npx/7b8cde7936c78aff/node_modules/@anthropic-ai/claude-agent-sdk/`), and npm-latest SDK **0.3.205** (tarball extracted to `/private/tmp/claude-501/-Users-user-Development/73adbbf2-a514-4a17-8729-9cda68da5bac/scratchpad/sdk0325/package/`; `sdk.d.ts` there is 6,879 lines and is the authoritative type source cited below as **[d.ts:N]**). Local binary evidence outranks web docs; disagreements are flagged inline.*
 
 ## Summary
 
@@ -247,7 +247,7 @@ Example approval exchange:
 → {"type":"control_response","response":{"subtype":"success","request_id":"req_9","response":{"behavior":"allow","updatedInput":{"command":"rm -rf build/tmp"}}}}
 ```
 
-The 2.1.205 binary additionally contains subtypes **not in the public SDK union** (remote-control/bridge channel): `away_summary, bridge_state, bridge_status, channel_enable, claude_authenticate, claude_oauth_callback, elicitation_complete, generate_session_title, host_auth_token_refresh, mcp_authenticate, mcp_clear_auth, mcp_oauth_callback_url, memory_saved, message_rated, model_consent_fallback, model_fallback, oauth_token_refresh, permission_retry, post_turn_summary, remote_control, scheduled_task_fire, set_cwd, set_mcp_permission_mode_override, side_question, stop_hook_summary, submit_feedback, task_summary, turn_duration, turn_starting, ultrareview_launch` (strings dump of `/Users/wahargis/.local/share/claude/versions/2.1.205`). Treat these as undocumented/unstable.
+The 2.1.205 binary additionally contains subtypes **not in the public SDK union** (remote-control/bridge channel): `away_summary, bridge_state, bridge_status, channel_enable, claude_authenticate, claude_oauth_callback, elicitation_complete, generate_session_title, host_auth_token_refresh, mcp_authenticate, mcp_clear_auth, mcp_oauth_callback_url, memory_saved, message_rated, model_consent_fallback, model_fallback, oauth_token_refresh, permission_retry, post_turn_summary, remote_control, scheduled_task_fire, set_cwd, set_mcp_permission_mode_override, side_question, stop_hook_summary, submit_feedback, task_summary, turn_duration, turn_starting, ultrareview_launch` (strings dump of `$HOME/.local/share/claude/versions/2.1.205`). Treat these as undocumented/unstable.
 
 **De-facto reference implementations**: the SDK's own `sdk.mjs` (readable, minified-light) and github.com/agentclientprotocol/claude-agent-acp (v0.58.1, Apache-2.0) — note the latter now sits **on top of the SDK**, not raw stream-json; it demonstrates `canUseTool`→ACP `requestPermission` mapping, `interrupt()` with a force-cancel `AbortController` backstop timer, fork via `{resume: sessionId, forkSession: true}`, and turn settlement keyed on `system/session_state_changed: 'idle'`.
 
@@ -255,14 +255,14 @@ The 2.1.205 binary additionally contains subtypes **not in the public SDK union*
 
 ## 8. Session persistence on disk (local ground truth)
 
-Layout under `~/.claude/projects/<sanitized-cwd>/` (cwd with `/` and `.` → `-`; verified `/Users/wahargis/.claude/projects/-Users-wahargis-Development/`):
+Layout under `~/.claude/projects/<sanitized-cwd>/` (cwd with `/` and `.` → `-`; verified `$HOME/.claude/projects/-Users-user-Development/`):
 
 - `<session-uuid>.jsonl` — main transcript
 - `<session-uuid>/subagents/agent-<id>.jsonl` (and `subagents/workflows/wf_<id>/agent-<id>.jsonl`) — subagent transcripts
 - `<session-uuid>/tool-results/<id>.txt` — large tool outputs spilled out of the JSONL
 - `<session-uuid>/workflows/wf_<id>.json`
 
-Entry `type`s observed in a real 2.1.205 transcript (`/Users/wahargis/.claude/projects/-Users-wahargis-Development/73adbbf2-a514-4a17-8729-9cda68da5bac.jsonl`, 458 lines; keys only, content redacted):
+Entry `type`s observed in a real 2.1.205 transcript (`$HOME/.claude/projects/-Users-user-Development/73adbbf2-a514-4a17-8729-9cda68da5bac.jsonl`, 458 lines; keys only, content redacted):
 
 | type | keys |
 |---|---|
@@ -316,11 +316,11 @@ Entries form a **parent-linked chain** (`parentUuid`), which is what `resumeSess
 ## Sources
 
 **Local (primary, outranks web):**
-- `/private/tmp/claude-501/-Users-wahargis-Development/73adbbf2-a514-4a17-8729-9cda68da5bac/scratchpad/sdk0325/package/sdk.d.ts` (SDK 0.3.205, 6,879 lines — all `[d.ts:N]` citations) and `.../package/sdk.mjs` (runtime; flag list, error strings)
-- `/Users/wahargis/.npm/_npx/7b8cde7936c78aff/node_modules/@anthropic-ai/claude-agent-sdk/sdk.d.ts` (+ `sdk.mjs`, `package.json`, bundled `cli.js` @2.1.44) — SDK 0.2.44 baseline
-- `/Users/wahargis/.local/share/claude/versions/2.1.205` — `--help` output; `strings` dumps (control subtypes, `still_queued`, `apply_flag_settings`, stream-json constraints)
-- `/Users/wahargis/.claude/projects/-Users-wahargis-Development/73adbbf2-a514-4a17-8729-9cda68da5bac.jsonl` + sibling directory — transcript schema (structure only)
-- `/Users/wahargis/Development/Experiments/baton/docs/02-harness-control-surfaces.md`, `04-architecture-options.md` — capability vocabulary context
+- `/private/tmp/claude-501/-Users-user-Development/73adbbf2-a514-4a17-8729-9cda68da5bac/scratchpad/sdk0325/package/sdk.d.ts` (SDK 0.3.205, 6,879 lines — all `[d.ts:N]` citations) and `.../package/sdk.mjs` (runtime; flag list, error strings)
+- `$HOME/.npm/_npx/7b8cde7936c78aff/node_modules/@anthropic-ai/claude-agent-sdk/sdk.d.ts` (+ `sdk.mjs`, `package.json`, bundled `cli.js` @2.1.44) — SDK 0.2.44 baseline
+- `$HOME/.local/share/claude/versions/2.1.205` — `--help` output; `strings` dumps (control subtypes, `still_queued`, `apply_flag_settings`, stream-json constraints)
+- `$HOME/.claude/projects/-Users-user-Development/73adbbf2-a514-4a17-8729-9cda68da5bac.jsonl` + sibling directory — transcript schema (structure only)
+- `$HOME/Development/Experiments/baton/docs/02-harness-control-surfaces.md`, `04-architecture-options.md` — capability vocabulary context
 
 **Web:**
 - https://code.claude.com/docs/en/agent-sdk/python — Python deltas, dataclass/TypedDict split, camelCase `AgentDefinition` note, ≤0.1.59 `setting_sources=[]` bug

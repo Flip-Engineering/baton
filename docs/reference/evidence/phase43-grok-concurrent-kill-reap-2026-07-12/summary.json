@@ -211,6 +211,6 @@
     "branchesGone": true,
     "writerAuthorityReleased": true
   },
-  "fatal": "Error: w-1 crashed before lifecycle.spawned: {\"error\":\"Authentication required\",\"phase\":\"spawn\"}\n    at earlyFailure (file:///Users/wahargis/Development/Experiments/baton/docs/reference/evidence/phase42-grok-concurrent-kill-reap-2026-07-12/run.mjs:24:284)\n    at file:///Users/wahargis/Development/Experiments/baton/docs/reference/evidence/phase42-grok-concurrent-kill-reap-2026-07-12/run.mjs:41:39\n    at until (file:///Users/wahargis/Development/Experiments/baton/docs/reference/evidence/phase42-grok-concurrent-kill-reap-2026-07-12/run.mjs:23:149)\n    at async file:///Users/wahargis/Development/Experiments/baton/docs/reference/evidence/phase42-grok-concurrent-kill-reap-2026-07-12/run.mjs:41:21",
+  "fatal": "Error: w-1 crashed before lifecycle.spawned: {\"error\":\"Authentication required\",\"phase\":\"spawn\"}\n    at earlyFailure (file://$HOME/Development/Experiments/baton/docs/reference/evidence/phase42-grok-concurrent-kill-reap-2026-07-12/run.mjs:24:284)\n    at file://$HOME/Development/Experiments/baton/docs/reference/evidence/phase42-grok-concurrent-kill-reap-2026-07-12/run.mjs:41:39\n    at until (file://$HOME/Development/Experiments/baton/docs/reference/evidence/phase42-grok-concurrent-kill-reap-2026-07-12/run.mjs:23:149)\n    at async file://$HOME/Development/Experiments/baton/docs/reference/evidence/phase42-grok-concurrent-kill-reap-2026-07-12/run.mjs:41:21",
   "pass": false
 }
