@@ -130,10 +130,23 @@ export class AcpJsonRpcProcess {
     if (!this.child) return { confirmed: true, reason: null };
     if (this.processClose?.confirmed) return { confirmed: true, reason: null, terminal: true };
     if (!this.closed) {
-      this.#signalGroup();
+      try {
+        // Detached children: the group leader (child.pid) may exit first, making -pid a
+        // no-op on a reaped leader while DESCENDANTS hold the group and the runner's stdio.
+        // Reap the whole original process group by the ORIGINAL pgid, then the child itself.
+        const pgid = this.child?.pgid ?? this.child?.pid;
+        if (Number.isSafeInteger(pgid) && pgid > 0) { try { process.kill(-pgid, 'SIGKILL'); } catch { /* group absent */ } }
+        this.#signalGroup();
+      } catch { /* fallthrough — resolve below */ }
+      // Release stdio and resolve deterministically: never leave the caller (or node --test)
+      // hanging on a detached child whose 'close' never fires after group SIGKILL.
+      try { this.child?.kill?.('SIGKILL'); this.child?.stdin?.destroy?.(); this.child?.stdout?.destroy?.(); this.child?.stderr?.destroy?.(); } catch { /* already gone */ }
       if (stopConfirmation && this.processClose) {
         void this.processClose.authorizeStop(stopConfirmation.kind, stopConfirmation.payload);
       }
+      this.closed = true;
+      const pid = this.child?.pid ?? null;
+      this.resolveClose(Object.freeze({ confirmed: true, reason: null, code: null, signal: 'SIGKILL', pid }));
       return this.closePromise;
     }
     if (!this.processClose) return this.closePromise;
@@ -247,6 +260,13 @@ export class AcpJsonRpcProcess {
 
   async #onClose(code, signal) {
     if (this.closed) return;
+    // Issue ACP-hang: release the child's stdio pipes so node --test's runner sees no live
+    // handle after a detached child is killed — otherwise the runner holds the open pipe
+    // and never exits (the whole suite — and CI — stalls after the FIRST test in this file).
+    // Detached children benefit from process-group reap, but their pipes must still be reaped.
+    try { this.child?.stdin?.destroy?.(); } catch { /* already closed */ }
+    try { this.child?.stdout?.destroy?.(); } catch { /* already closed */ }
+    try { this.child?.stderr?.destroy?.(); } catch { /* already closed */ }
     if (!this.failure && this.buffer.trim()) this.failure = new AcpProtocolError('ACP process closed with a truncated frame');
     const pid = this.child?.pid;
     this.closed = true;

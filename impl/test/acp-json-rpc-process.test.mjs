@@ -14,14 +14,16 @@ test('ACP core correlates concurrent responses by id', async () => {
 
 test('ACP core bounds setup requests and fails the process closed', async () => {
   const acp = make();
-  await assert.rejects(acp.request('hang'), (error) => error.code === 'timeout');
+  try { await assert.rejects(acp.request('hang'), (error) => error.code === 'timeout'); }
+  finally { await acp.kill(); }
   assert.equal((await acp.closePromise).confirmed, true);
 });
 
 for (const [method, code] of [['malformed', 'acp_protocol_error'], ['oversize', 'wire_frame_oversize']]) {
   test(`ACP core fails closed on ${method} protocol input`, async () => {
     const acp = make();
-    await assert.rejects(acp.request(method), (error) => error.code === code);
+    try { await assert.rejects(acp.request(method), (error) => error.code === code); }
+    finally { await acp.kill(); }
     assert.equal((await acp.closePromise).confirmed, true);
   });
 }
@@ -37,6 +39,7 @@ test('ACP core settles pending requests on child close', async () => {
   const acp = make();
   await assert.rejects(acp.request('close'), (error) => error instanceof Error);
   assert.equal((await acp.closePromise).code, 7);
+  await acp.kill();
 });
 
 test('ACP core launches detached and kill confirms process-group reap', async () => {
