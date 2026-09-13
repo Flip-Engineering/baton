@@ -3,6 +3,7 @@ import { normalizeContextProgram } from './context-program.mjs';
 import { APPLICATION_SEMANTIC_REGISTRY, canonicalRunPhase } from './application-semantics.mjs';
 import { createRecipes } from './recipes.mjs';
 import { attachWave, createWave } from './wave.mjs';
+import { createSwarms } from './swarm-client.mjs';
 
 function clientError(message, code = 'application_client_invalid') {
   return Object.assign(new Error(message), { code });
@@ -10,6 +11,16 @@ function clientError(message, code = 'application_client_invalid') {
 
 function nonempty(value) {
   return typeof value === 'string' && value.trim().length > 0 && Buffer.byteLength(value) <= 4_096;
+}
+
+// Objectives (and other prompts) are text, not identifiers. The application admits an inline
+// objective past the cataloged `run.objective` frame lane by minting a durable spill artifact, so
+// a client-side byte ceiling is not a policy boundary — it is a bug that refuses work the resident
+// would have accepted, and truncating instead would silently change the caller's text. The whole
+// client-side contract is non-empty-after-trim plus no NUL; size policy stays in the runtime's
+// frame-limit catalog.
+function promptText(value) {
+  return typeof value === 'string' && value.trim().length > 0 && !value.includes('\0');
 }
 
 function exactOptions(value, allowed, label) {
@@ -109,8 +120,11 @@ function conciseProgress(view) {
   });
 }
 
-function prepareRunStart(objective, options) {
-  if (!nonempty(objective)) throw clientError('Run objective is required');
+// Exported for the application root: swarm recruitment preflight lowers the SAME pure Run intent
+// the client sends on run.start (validation included), so a recruitment refusal and a start refusal
+// can never disagree about what an admissible objective/route/scope is.
+export function prepareRunStart(objective, options) {
+  if (!promptText(objective)) throw clientError('Run objective is required');
   exactOptions(options, new Set([
     'runId', 'resultIntent', 'profile', 'scope', 'model', 'harness', 'effort', 'exact', 'driverKind',
     // 93B: wave binding (waveId/waveRole) + the pre-loop wave.started payload (waveStart) ride
@@ -171,7 +185,7 @@ function prepareRunStart(objective, options) {
 }
 
 function prepareWorkflowStart(objective, options) {
-  if (!nonempty(objective)) throw clientError('Workflow objective is required');
+  if (!promptText(objective)) throw clientError('Workflow objective is required');
   exactOptions(options, new Set([
     'runId', 'resultIntent', 'profile', 'scope', 'strategy', 'workspace', 'join', 'team',
   ]), 'workflow');
@@ -221,7 +235,7 @@ function prepareWorkflowStart(objective, options) {
 }
 
 function prepareReviewStart(objective, options) {
-  if (!nonempty(objective)) throw clientError('Review objective is required');
+  if (!promptText(objective)) throw clientError('Review objective is required');
   exactOptions(options, new Set(['runId', 'profile', 'scope', 'routes']), 'review');
   if (!Array.isArray(options.routes) || options.routes.length !== 2) {
     throw clientError('Review requires exactly two exact routes');
@@ -843,7 +857,7 @@ export class BatonRun {
       throw clientError('Run handle authority is invalid');
     }
     exactOptions(metadata, new Set(['objective', 'helpTopic']), 'Run metadata');
-    if (metadata.objective !== undefined && !nonempty(metadata.objective)) {
+    if (metadata.objective !== undefined && !promptText(metadata.objective)) {
       throw clientError('Run metadata objective is invalid');
     }
     if (metadata.helpTopic !== undefined && !nonempty(metadata.helpTopic)) {
@@ -1333,12 +1347,12 @@ export class BatonRuns {
       || !/^[a-f0-9]{64}$/u.test(view?.viewDigest ?? '')
       || typeof view?.terminal !== 'boolean'
       || !view?.outline || typeof view.outline !== 'object' || Array.isArray(view.outline)
-      || !nonempty(view.outline.objective) || !nonempty(view.outline.phase)) {
+      || !promptText(view.outline.objective) || !nonempty(view.outline.phase)) {
       throw clientError('Run attachment response is invalid', 'application_attach_invalid');
     }
     return new BatonRun(this.#application, runId, view,
       {
-        ...(nonempty(view.outline.objective) ? { objective: view.outline.objective } : {}),
+        ...(promptText(view.outline.objective) ? { objective: view.outline.objective } : {}),
         helpTopic: view.outline.workflow ? 'workflow' : 'run',
       });
   }
@@ -1568,6 +1582,11 @@ export class BatonClient {
       }),
     });
   }
+
+  // Swarm SDK (docs/39-swarm-runtime.md): the living-swarm facade bound to this client's command
+  // port, so `client.swarms.create(...)`/`open(id)`/`list()` ride the same authority as every
+  // other verb — no second transport, no client-computed permissions.
+  get swarms() { return createSwarms(this.#application); }
 
   // #183: waves.start's terminal-replay gate — delegated to the application's wave registry read.
   // createWave calls this before member validation so a terminal key refuses typed, never silently

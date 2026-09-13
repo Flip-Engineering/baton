@@ -14,6 +14,19 @@ import { foldCanonicalCase } from './canonical-order.mjs';
 import { createLocalSocketFetch } from './local-web-transport.mjs';
 import { publishResultExportNoReplace } from './result-export.mjs';
 
+import {
+  SWARM_CLI_COMMANDS, SWARM_CLI_HELP, SWARM_COMMAND_DEFINITIONS, swarmCliCommand,
+  swarmWebAdmittedCommands,
+} from './swarm-surface.mjs';
+import { APPLICATION_COMMAND_DEFINITIONS } from './application.mjs';
+// Swarm family (docs/39-swarm-runtime.md) — a swarm verb is web-connected exactly when the shared
+// registry carries it: root spreads SWARM_COMMAND_DEFINITIONS into APPLICATION_COMMAND_DEFINITIONS
+// and the web lane admits every row flagged `web`. The whitelist therefore derives through the same
+// projection the web bus uses, so the CLI whitelist, the web admission, and the conformance card
+// stay ONE derivation instead of three lists that can disagree (the closure audit demands exactly
+// that agreement; before the spread the family contributes zero names here).
+const SWARM_CLI_WEB_COMMANDS = swarmWebAdmittedCommands(APPLICATION_COMMAND_DEFINITIONS);
+
 export const CLI_WEB_COMMANDS = new Set([
   'application.help',
   'runs.list',
@@ -30,6 +43,8 @@ export const CLI_WEB_COMMANDS = new Set([
   'run.message.send', 'run.message.receipt', 'run.attention.watch',
   'run.scratchpad.read', 'run.scratchpad.elevate', 'run.board.post', 'run.board.read',
   'run.knowledge.seed',
+  // Swarm family: gated on the shared-registry spread above (see SWARM_CLI_WEB_COMMANDS).
+  ...SWARM_CLI_WEB_COMMANDS,
 ]);
 // CS-2 (control-surface v2): the five web-admitted verbs (run.episode, run.workstreams,
 // run.workstream.notify, run.workstream.stop; run.result folds to run.episode) join the
@@ -888,6 +903,14 @@ export function batonCliHelp(topic = 'application') {
     if (row.aliases.length > 0) blocks.push(`Replaces: ${row.aliases.join(', ')}.`);
     return blocks.join('\n\n');
   }
+  // Swarm family (docs/39): the swarm verbs are their own help topics — the family's usage,
+  // summary, and flag list come from the one table the parser and the MCP tool descriptions read.
+  const swarmHelp = SWARM_CLI_HELP[topic];
+  if (!definition && swarmHelp) {
+    const blocks = [`usage:\n${swarmHelp.usage.map((line) => `  ${line}`).join('\n')}`];
+    blocks.push(...swarmHelp.paragraphs);
+    return blocks.join('\n\n');
+  }
   if (!definition) return `No local help is available for ${topic}.\nUse baton help for the application overview.`;
   const usage = [
     ...(definition.commandIds ?? []).map((id) => commandById.get(id)?.usage),
@@ -1247,6 +1270,67 @@ function buildEpisodeCommand(args, runId, topic, role, idempotencyKey) {
   };
 }
 
+// Swarm family (docs/39): the branch is table-driven from the family's registry rows — declared
+// positionals are consumed in order, every other declared argument is a --kebab-case flag, and the
+// global --idempotency-key (already consumed by parseBatonCli) rides into the args of the verbs
+// whose row requires it. A payload flag takes an inline JSON object or a plain text body — the two
+// forms the wire admits — while --options/--permissions are JSON objects. Effect-kind matching and
+// every permission check stay in the runtime.
+function swarmKebab(field) {
+  return field.replace(/([a-z0-9])([A-Z])/gu, '$1-$2').toLowerCase();
+}
+
+function swarmPayload(token) {
+  const trimmed = token.trim();
+  if (trimmed.startsWith('{')) {
+    try {
+      const parsed = JSON.parse(trimmed);
+      if (parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)) return parsed;
+    } catch { /* a plain-text body that merely starts with { stays text */ }
+  }
+  return token;
+}
+
+function parseSwarmCli(args, idempotencyKey) {
+  if (args[0] !== 'swarm') return null;
+  args.shift();
+  const verb = args.shift() ?? null;
+  const row = verb === null ? null : swarmCliCommand(verb);
+  if (row === null) {
+    throw cliError(
+      `swarm requires a subcommand: ${SWARM_CLI_COMMANDS.map((entry) => entry.verb).join('|')}`,
+      'cli_command_unavailable',
+    );
+  }
+  const values = {};
+  for (const field of row.positional) {
+    const token = args.shift();
+    if (!nonempty(token)) throw cliError(`swarm ${verb} requires <${swarmKebab(field)}>`);
+    values[field] = token;
+  }
+  for (const entry of row.flags) {
+    const token = take(args, entry.flag);
+    if (token === null) continue;
+    if (entry.field === 'afterSeq' || entry.field === 'timeoutMs') {
+      const value = Number(token);
+      if (!Number.isSafeInteger(value)) throw cliError(`${entry.flag} must be an integer`);
+      values[entry.field] = value;
+    } else if (entry.field === 'options' || entry.field === 'permissions') {
+      try { values[entry.field] = JSON.parse(token); }
+      catch { throw cliError(`${entry.flag} must be JSON`); }
+    } else if (entry.field === 'payload') {
+      values[entry.field] = swarmPayload(token);
+    } else {
+      values[entry.field] = token;
+    }
+  }
+  noRemainder(args);
+  if (SWARM_COMMAND_DEFINITIONS[row.command].args.includes('idempotencyKey')) {
+    values.idempotencyKey = idempotencyKey;
+  }
+  return { kind: 'command', name: row.command, args: values, idempotencyKey };
+}
+
 export function parseBatonCli(rawArgs) {
   const args = resolveCanonicalCliArgs(rawArgs);
   if (args.length === 0 || (args.length === 1 && ['--help', '-h'].includes(args[0]))) {
@@ -1292,6 +1376,8 @@ export function parseBatonCli(rawArgs) {
       topic = args[0];
     } else if (args[0] === 'route') {
       topic = 'routing';
+    } else if (args[0] === 'swarm') {
+      topic = swarmCliCommand(args[1] ?? '') === null ? 'swarm' : `swarm.${args[1]}`;
     }
     return {
       kind: 'command', name: 'application.help',
@@ -1344,6 +1430,7 @@ export function parseBatonCli(rawArgs) {
     noRemainder(args);
     return { kind: 'route', exact };
   }
+  if (args[0] === 'swarm') return parseSwarmCli(args, idempotencyKey);
   if (args[0] === 'runs' && args[1] === 'list') {
     args.splice(0, 2);
     noRemainder(args);
