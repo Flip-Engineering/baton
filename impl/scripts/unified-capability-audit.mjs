@@ -20,6 +20,7 @@ const expectedMeta = [
   'baton_surface_describe',
   'baton_surface_invoke',
   'baton_surface_snapshot',
+  'baton_surface_visualize',
   'baton_surface_watch',
 ];
 if (JSON.stringify(metaNames) !== JSON.stringify(expectedMeta)) {
