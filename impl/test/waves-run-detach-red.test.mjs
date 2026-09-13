@@ -79,13 +79,13 @@ async function fixture(t, key) {
   mkdirSync(join(repo, 'objectives'), { recursive: true });
   writeFileSync(join(repo, 'objectives', 'coordinator.md'), 'write the coordinator report\n(marker:coordinator)\n');
   const driver = createDriver({
+    // Like a deployment, this fixture pins its base independently of dirty authored inputs.
+    deploymentBaseSha: execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repo, encoding: 'utf8' }).trim(),
     repoRoot: repo, repoId: REPO, logDir,
     adapters: {
       mock: new MockAdapter({
         harness: 'mock',
-        scenariosByMarker: {
-          coordinator: { outcome: 'completed', carryAttemptMarker: true, edits: [{ path: 'reports/coordinator.md', content: 'coordinator report\n' }] },
-        },
+        scenario: { outcome: 'completed', edits: [{ path: 'reports/coordinator.md', content: 'coordinator report\n' }] },
       }),
     },
     stopDeadlineMs: 2_000,

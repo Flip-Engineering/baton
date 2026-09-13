@@ -177,6 +177,8 @@ async function fixture(t, adapter) {
     scenariosByMarker: { default: { outcome: 'completed' } },
   });
   const driver = createDriver({
+    // Like a deployment, this fixture pins its base independently of dirty authored inputs.
+    deploymentBaseSha: execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repo, encoding: 'utf8' }).trim(),
     repoRoot: repo, repoId: REPO, logDir,
     adapters: { mock: coordAdapter },
     stopDeadlineMs: 2_000,
@@ -285,18 +287,16 @@ test('R1-absent-path-miss-carries-recoverySha (RED at HEAD): a harvest_miss row 
 });
 
 // ===========================================================================
-// R2 — the no-sha branch: a pausable member that completes a turn then PARKS never
-// finalizes — no result section sha, no retained pin, so the outcome settles resultSha
-// null (the quiescence-completion R1 shape: "a quiesced member with no committed result
-// sha"). The absent-path miss must receipt recoverySha null — the pointer is never
-// invented.
+// R2 — a failed member that never writes its report has no result SHA. A missing
+// harvest preserves an explicit null recovery pointer rather than inventing one.
+// This used to depend on a clock stopping a parked worker; failure is now explicit.
 // ===========================================================================
 
 test('R2-absent-path-miss-no-sha (RED at HEAD): with no member resultSha the harvest_miss row receipts recoverySha null — never invented', async (t) => {
-  const fx = await fixture(t, new PausableParkAdapter({
+  const fx = await fixture(t, new MarkerCarryingAdapter({
     harness: 'mock',
     scenariosByMarker: {
-      'hr-b': { outcome: 'completed', summary: 'park', edits: [{ path: 'reports/hr-b.md', content: 'b\n', delayMs: 30 }] },
+      'hr-b': { outcome: 'failed', summary: 'failed before producing report', edits: [] },
     },
   }));
   writeObjective(fx.repo, 'hr-b', 'write the hr-b report, then finish');
@@ -312,13 +312,13 @@ test('R2-absent-path-miss-no-sha (RED at HEAD): with no member resultSha the har
   const outcome = receipt.outcomes[0];
 
   assert.equal(outcome?.resultSha, null,
-    'R2: the quiesced member outcome carries no resultSha (never finalized — no pin)');
+    'R2: the failed member carries no resultSha');
   assert.ok(miss?.code === 'harvest_miss', 'R2: the absent path receipts harvest_miss');
   // RED at HEAD: recoverySha is undefined; the contract is the explicit null (never invented).
   assert.equal(miss.recoverySha, null,
     'R2 (RED at HEAD): no member resultSha → recoverySha null — the pointer is never invented (issue #241)');
-  assert.equal(receipt.verdict, 'WAVE-QUIESCED',
-    'R2: a parked roster receipts the named quiescence verdict');
+  assert.equal(receipt.verdict, 'WAVE-INCOMPLETE',
+    'R2: the failed member does not establish completion');
 });
 
 // ===========================================================================

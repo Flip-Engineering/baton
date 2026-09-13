@@ -42,6 +42,7 @@ const advancedMcpNames = new Set(mcpAdvancedToolNames());
 const combinedMcpNames = Object.freeze(mcpCombinedToolNames());
 const combinedMcpNameSet = new Set(combinedMcpNames);
 const dispatchMcpNames = new Set(mcpDispatchToolNames());
+const semanticKeys = new Set(APPLICATION_SEMANTIC_REGISTRY.canonicalOperations.map((row) => row.key));
 const webCommandNames = new Set(webAdmittedCommandNames());
 const cliExceptionKeys = new Set((nativeManifest.registryCliExceptions ?? []).map((row) => row.key));
 const nativeOwnership = new Map((nativeManifest.mcpNative ?? []).map((row) => [row.name, row]));
@@ -207,7 +208,7 @@ function resolvesApplicationTool(name) {
 }
 
 function nativeMode(name) {
-  return /(?:_read|_list|_view|_status|_progress|_compile|_receipt|_watch|_recall|_horizon|_cite|_result|_capabilities|_wait)$/u.test(name)
+  return /[._](?:read|list|view|status|progress|compile|receipt|watch|recall|horizon|cite|result|capabilities|wait|episode|follow|inspect|workstreams)$/u.test(name)
     ? 'query' : 'effect';
 }
 
@@ -340,30 +341,56 @@ const META_ROWS = Object.freeze([
 
 const APPLICATION_ROWS = Object.freeze(APPLICATION_UNIFIED_COMMAND_REGISTRY.rows().map(applicationRow));
 const NATIVE_MCP_ROWS = Object.freeze(combinedMcpNames
-  .filter((name) => !resolvesApplicationTool(name))
+  // Advertised dotted MCP names are executable command identities, not transport spellings.
+  // Keep them when the semantic registry has no row with that exact key; a compatibility alias
+  // resolving to a broader semantic operation does not own or erase the live command.
+  .filter((name) => !semanticKeys.has(name) && (name.includes('.') || !resolvesApplicationTool(name)))
   .map(nativeMcpRow));
 const NATIVE_CLI_ROWS = Object.freeze((nativeManifest.cliNative ?? []).map(nativeCliRow));
 const ALL_ROWS = Object.freeze([...APPLICATION_ROWS, ...NATIVE_MCP_ROWS, ...NATIVE_CLI_ROWS, ...META_ROWS]);
 
-function namesFor(row) {
-  return unique([
-    row.id,
-    row.key,
-    ...Object.values(row.names ?? {}).filter((value) => typeof value === 'string'),
-    ...Object.values(row.aliases ?? {}).flat().filter((value) => typeof value === 'string'),
-  ]);
+const NAME_PRIORITY = Object.freeze({ alias: 1, transport: 2, canonical: 3 });
+
+function nameClaimsFor(row) {
+  const claims = [];
+  const push = (name, kind) => {
+    if (typeof name === 'string' && name.length > 0) claims.push({ name, kind });
+  };
+  push(row.id, 'canonical');
+  push(row.key, 'canonical');
+  for (const name of Object.values(row.names ?? {})) push(name, 'transport');
+  for (const names of Object.values(row.aliases ?? {})) {
+    for (const name of names ?? []) push(name, 'alias');
+  }
+  return claims;
 }
 
 const INDEX = new Map();
 const CONFLICTS = new Map();
 for (const row of ALL_ROWS) {
-  for (const name of namesFor(row)) {
-    const prior = INDEX.get(name);
-    if (prior && prior.id !== row.id) {
-      CONFLICTS.set(name, unique([prior.id, row.id, ...(CONFLICTS.get(name) ?? [])]));
-      INDEX.delete(name);
-    } else if (!CONFLICTS.has(name)) {
-      INDEX.set(name, row);
+  for (const claim of nameClaimsFor(row)) {
+    const prior = INDEX.get(claim.name);
+    if (!prior) {
+      if (!CONFLICTS.has(claim.name)) INDEX.set(claim.name, { row, kind: claim.kind });
+      continue;
+    }
+    if (prior.row.id === row.id) {
+      if (NAME_PRIORITY[claim.kind] > NAME_PRIORITY[prior.kind]) {
+        INDEX.set(claim.name, { row, kind: claim.kind });
+      }
+      continue;
+    }
+    if (NAME_PRIORITY[claim.kind] !== NAME_PRIORITY[prior.kind]) {
+      if (NAME_PRIORITY[claim.kind] > NAME_PRIORITY[prior.kind]) {
+        INDEX.set(claim.name, { row, kind: claim.kind });
+      }
+    } else {
+      CONFLICTS.set(claim.name, unique([
+        prior.row.id,
+        row.id,
+        ...(CONFLICTS.get(claim.name) ?? []),
+      ]));
+      INDEX.delete(claim.name);
     }
   }
 }
@@ -396,9 +423,9 @@ export function resolveUnifiedCapability(name) {
       field: 'name', detail: { owners: conflicts },
     });
   }
-  const row = INDEX.get(name);
-  if (!row) throw new BatonControlError('surface_capability_unknown', `unknown capability ${name}`, { field: 'name' });
-  return clone(row);
+  const claim = INDEX.get(name);
+  if (!claim) throw new BatonControlError('surface_capability_unknown', `unknown capability ${name}`, { field: 'name' });
+  return clone(claim.row);
 }
 
 export function prepareApplicationSurfaceInvocation(row, args = {}, { surface = 'mcp' } = {}) {

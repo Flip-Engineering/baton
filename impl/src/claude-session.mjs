@@ -14,7 +14,7 @@ import { renderPrompt } from './cli-adapters.mjs';
 import { normalizeProcessGeneration, ProcessCloseReapLatch, processStartedPayload } from './process-lifecycle.mjs';
 import { usdToNanos } from './usd.mjs';
 import { attestWorkerPolicyObservation } from './worker-policy.mjs';
-import { createDecisionRequest, ValidationError } from './messages.mjs';
+import { createDecisionRequest, ValidationError, WORKER_MESSAGE_GUIDANCE } from './messages.mjs';
 
 const DEFAULT_MAX_WIRE_FRAME_BYTES = 1024 * 1024;
 const CLAUDE_TOKEN_METRIC = 'anthropic_input_plus_output_tokens_excluding_cache';
@@ -141,14 +141,8 @@ export function scanForContextRead(text) {
   return parsed;
 }
 
-/** Issue #86 BD3-C sibling grammar: the worker reply lane (`MESSAGE_SEND: <json>`), mirroring
- * CONTEXT_READ's exact wire shape. The frame is closed — {inReplyTo, body} ONLY: a caller-named
- * target is never surfaced (the Coordinator derives the sole target from the parent message and
- * its typed refusal governs the admitted lane, C1). Identity is absent — stream-bound, exactly
- * like the read port. inReplyTo must carry the minted shape message:<64 lowercase hex>. The body
- * is shape-checked only (non-empty string): the 20,480-byte scan window is the parser's resource
- * guard; any frame-economics policy belongs at admission with a graceful spillover path, never
- * as a silent wire cap (campaign law — constructive surfaces, not walls). */
+/** Worker messages carry either a reply reference or a peer destination. Identity and
+ * collaboration membership are derived by the coordinator from the authenticated stream. */
 export function scanForMessageSend(text) {
   if (typeof text !== 'string') return null;
   const match = MESSAGE_SEND_GRAMMAR.exec(text);
@@ -158,10 +152,19 @@ export function scanForMessageSend(text) {
   let parsed;
   try { parsed = JSON.parse(json); } catch { return null; }
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)
-    || Object.keys(parsed).sort().join(',') !== 'body,inReplyTo'
-    || typeof parsed.inReplyTo !== 'string'
-    || !/^message:[a-f0-9]{64}$/u.test(parsed.inReplyTo)
     || typeof parsed.body !== 'string' || parsed.body.length === 0) return null;
+  if (Object.hasOwn(parsed, 'inReplyTo')) {
+    if (Object.keys(parsed).sort().join(',') !== 'body,inReplyTo'
+      || !/^message:[a-f0-9]{64}$/u.test(parsed.inReplyTo)) return null;
+  } else {
+    if (Object.keys(parsed).some((key) => !['to', 'body', 'kind', 'budget'].includes(key))
+      || !parsed.to || typeof parsed.to !== 'object' || Array.isArray(parsed.to)
+      || Object.keys(parsed.to).length !== 1
+      || !['workerId', 'runId'].includes(Object.keys(parsed.to)[0])
+      || typeof Object.values(parsed.to)[0] !== 'string' || Object.values(parsed.to)[0].length === 0
+      || (parsed.kind !== undefined && !['inform', 'query', 'steer', 'brief', 'result'].includes(parsed.kind))
+      || (parsed.budget !== undefined && !Number.isSafeInteger(parsed.budget))) return null;
+  }
   return parsed;
 }
 
@@ -803,7 +806,7 @@ export class ClaudeSessionCli {
       modelRequested: route.model ?? null,
       modelObserved: null,
       workerPolicyObserved,
-      pendingBrief: opts.attachOnly === true ? null : renderPrompt(brief),
+      pendingBrief: opts.attachOnly === true ? null : `${renderPrompt(brief)}\n${WORKER_MESSAGE_GUIDANCE}`,
       bootstrapTurnPending: false,
       retryCount: 0,
       lastTurnText: null,
@@ -1401,7 +1404,7 @@ export class ClaudeSessionCli {
 
   /** Internal recovery dispatch that preserves the ordinary-spawn Brief dialect. */
   async promptBrief(worker, brief) {
-    return this.prompt(worker, renderPrompt(brief), 'turn');
+    return this.prompt(worker, `${renderPrompt(brief)}\n${WORKER_MESSAGE_GUIDANCE}`, 'turn');
   }
 
   // ---------------------------------------------------------------------------

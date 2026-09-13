@@ -9,6 +9,11 @@
 
 **Repository:** <https://github.com/Flip-Engineering/baton>
 
+**Current design work (2026-09-12):** [Evolving agent swarms](docs/39-swarm-runtime.md) — tight
+and loose orchestration, peer communication, continuous collaboration, and scoped acceptance.
+The historical capability/status overview below predates this revision; see the progress ledger
+for checked implementation results.
+
 **Cross-harness agent orchestration.** An orchestrator agent running in one full coding harness directs *other* full-session harnesses as subordinate workers. Workers get real messaging, live telemetry, mid-flight steering, and durable evidence — the things you'd want from a teammate, not a subprocess.
 
 The name: a conductor's baton directs an orchestra; a relay baton gets passed between runners. Both are the point.

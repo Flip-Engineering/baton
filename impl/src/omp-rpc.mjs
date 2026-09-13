@@ -17,12 +17,15 @@ import { spawn } from 'node:child_process';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { renderBrief } from './adapter.mjs';
+import { scanForMessageSend } from './claude-session.mjs';
+import { WORKER_MESSAGE_GUIDANCE } from './messages.mjs';
+import { FRAME_LIMITS } from './limits.mjs';
 import { attestWorkerPolicyObservation } from './worker-policy.mjs';
 import { ProcessCloseReapLatch, normalizeProcessGeneration, processReadyPayload, processStartedPayload } from './process-lifecycle.mjs';
 
 const DEFAULT_MAX_WIRE_FRAME_BYTES = 2 * 1024 * 1024;
 const DEFAULT_MAX_EVENT_PAYLOAD_BYTES = 64 * 1024;
-const DEFAULT_STREAM_CHUNK_BYTES = 4 * 1024;
+const DEFAULT_STREAM_CHUNK_BYTES = FRAME_LIMITS['stream.omp.flush'].value;
 
 // Backoff ladder for transport-level retries: bounded attempt budget with growing gaps.
 // The FINAL attempt never fails the member — it surfaces as a transport_stall notice and
@@ -39,7 +42,7 @@ function extractFinalAssistantText(event) {
     if (message?.role !== 'assistant') continue;
     const content = Array.isArray(message.content) ? message.content : [];
     const text = content.filter((part) => typeof part?.text === 'string').map((part) => part.text).join('');
-    if (text.length > 0) return text.slice(0, 4096);
+    if (text.length > 0) return text.slice(0, FRAME_LIMITS['view.omp.final_summary'].value);
   }
   return null;
 }
@@ -233,7 +236,12 @@ export class OmpRpcProcess {
 
   /** Fire-and-forget notification (steer/abort/UI responses) — best-effort, never fatal. */
   notify(payload) {
-    try { this._child?.stdin.write(`${JSON.stringify(payload)}\n`); } catch { /* retried by the owning lane */ }
+    if (this._exited || !this._child?.stdin || this._child.stdin.destroyed) return false;
+    try {
+      this._child.stdin.write(`${JSON.stringify(payload)}\n`);
+      // write(false) means accepted with backpressure, not refused delivery.
+      return true;
+    } catch { return false; }
   }
 
   async kill({ kind = 'kill.confirmed', payload = {} } = {}) {
@@ -395,10 +403,104 @@ export class OmpRpcCli {
   _appendStreamChunk(session, turn, streamKind, value) {
     if (!turn) return;
     const text = typeof value === 'string' ? value : JSON.stringify(value);
+    if (streamKind === 'text') this._scanMessages(session, turn, text);
     turn.streams[streamKind] += text;
     if (Buffer.byteLength(turn.streams[streamKind]) >= this._streamChunkBytes) {
       this._flushStream(session, turn, streamKind);
     }
+  }
+
+  _scanMessages(session, turn, text) {
+    // Scan only outgoing assistant deltas. Keep incomplete JSON across wire chunks and
+    // consume each complete frame once; prompts and replayed aggregate messages are not ingress.
+    turn.messageBuffer = (turn.messageBuffer ?? '') + text;
+    for (;;) {
+      const start = /(?:^|\n)[ \t]*MESSAGE_SEND:\s*/u.exec(turn.messageBuffer);
+      if (!start) {
+        const tail = turn.messageBuffer.slice(turn.messageBuffer.lastIndexOf('\n') + 1);
+        // Retain a split marker; otherwise keep a non-newline sentinel so a marker
+        // embedded halfway through prose cannot become a new line after compaction.
+        turn.messageBuffer = 'MESSAGE_SEND:'.startsWith(tail.trimStart()) ? tail : '\0';
+        break;
+      }
+      const jsonStart = start.index + start[0].length;
+      if (turn.messageBuffer[jsonStart] !== '{') break;
+      let depth = 0; let quoted = false; let escaped = false; let end = -1;
+      for (let i = jsonStart; i < turn.messageBuffer.length; i += 1) {
+        const char = turn.messageBuffer[i];
+        if (quoted) {
+          if (escaped) escaped = false;
+          else if (char === '\\') escaped = true;
+          else if (char === '"') quoted = false;
+        } else if (char === '"') quoted = true;
+        else if (char === '{') depth += 1;
+        else if (char === '}' && --depth === 0) { end = i + 1; break; }
+      }
+      if (end < 0) break;
+      const frame = scanForMessageSend(turn.messageBuffer.slice(start.index, end));
+      turn.messageBuffer = turn.messageBuffer.slice(end);
+      if (frame) this._emit(session, 'message.send', frame);
+    }
+    if (Buffer.byteLength(turn.messageBuffer) > FRAME_LIMITS['scanner.window.message_send'].value) {
+      this._emit(session, 'content.message', {
+        phase: 'notice', note: 'message_frame_scan_limit', limitBytes: FRAME_LIMITS['scanner.window.message_send'].value,
+      });
+      turn.messageBuffer = '\0';
+    }
+  }
+
+  _onUiRequest(session, frame) {
+    const held = session.interactionRequests ??= new Map();
+    const native = session.nativeInteractionIds ??= new Map();
+    if (frame.method === 'cancel') {
+      const requestId = native.get(frame.targetId);
+      const request = held.get(requestId);
+      if (request?.state === 'pending') {
+        request.state = 'cancelled';
+        this._emit(session, 'question.cancelled', {
+          requestId, nativeRequestId: request.nativeId, reason: 'native_cancelled',
+        });
+      }
+      return;
+    }
+    if (['notify', 'setStatus', 'setWidget', 'setTitle', 'setEditorText'].includes(frame.method)) {
+      this._emit(session, 'content.message', {
+        phase: 'notice', note: 'omp_ui_notification', method: frame.method,
+        ...(typeof frame.message === 'string' ? { text: frame.message } : {}),
+        ...(typeof frame.title === 'string' ? { title: frame.title } : {}),
+        ...(typeof frame.statusText === 'string' ? { text: frame.statusText } : {}),
+      });
+      return;
+    }
+    // Native OMP 17.4.0: confirm reads confirmed:boolean, input/select/editor read value.
+    // Unknown/malformed elicitation is explicitly cancelled with an observable refusal.
+    if (typeof frame.id !== 'string' || frame.id.length === 0
+      || !['input', 'confirm', 'select', 'editor'].includes(frame.method)
+      || (frame.method === 'select' && (!Array.isArray(frame.options)
+        || frame.options.some((option) => typeof option !== 'string')))) {
+      session.process.notify({ type: 'extension_ui_response', id: frame.id ?? null, cancelled: true });
+      this._emit(session, 'content.message', { phase: 'notice', note: 'omp_ui_request_refused', method: frame.method ?? null });
+      return;
+    }
+    if (native.has(frame.id)) {
+      this._emit(session, 'content.message', { phase: 'notice', note: 'omp_duplicate_question', nativeRequestId: frame.id });
+      return;
+    }
+    const requestId = `${session.worker}:omp:${session.processGeneration}:q:${createHash('sha256').update(frame.id).digest('hex')}`;
+    const options = frame.method === 'confirm' ? ['yes', 'no'] : frame.options?.slice();
+    const question = [frame.title, frame.message].filter((value) => typeof value === 'string' && value.length > 0).join('\n') || 'OMP requests input';
+    held.set(requestId, { nativeId: frame.id, method: frame.method, options, state: 'pending', turnEpoch: session.turnEpoch });
+    native.set(frame.id, requestId);
+    // Pending questions are never evicted to make room for another request. Their ids and
+    // full options survive until resolution or session close, matching Coordinator ownership.
+    this._emit(session, 'question.asked', {
+      requestId, nativeRequestId: frame.id, method: frame.method, question, blocking: true,
+      title: typeof frame.title === 'string' ? frame.title : null,
+      ...(typeof frame.message === 'string' ? { message: frame.message } : {}),
+      ...(typeof frame.placeholder === 'string' ? { placeholder: frame.placeholder } : {}),
+      ...(typeof frame.prefill === 'string' ? { prefill: frame.prefill } : {}),
+      ...(options ? { options } : {}),
+    });
   }
 
   _flushStream(session, turn, streamKind) {
@@ -522,27 +624,7 @@ export class OmpRpcCli {
         this._emit(session, 'content.message', { phase: 'notice', note: 'provider_retry_fallback', model: frame.model ?? null });
         return;
       case 'extension_ui_request': {
-        // #243: UI frames can arrive even with --no-extensions (measured, #228) — but they
-        // are also the protocol's QUESTION lane (methods input/confirm/select/cancel, pinned
-        // from the omp 17.3.4 binary: response {type:'extension_ui_response', id, value} or
-        // {cancelled:true}). Auto-cancelling here made every member question unanswerable.
-        // Now: the question SURFACES as interaction.requested (full frame payload — the
-        // operator sees method/title/placeholder); the frame id is held open for answer().
-        // A malformed frame (no string id) still answers cancelled — never fatal.
-        if (typeof frame.id !== 'string' || frame.id.length === 0 || typeof frame.method !== 'string') {
-          session.process.notify({ type: 'extension_ui_response', id: frame.id ?? null, cancelled: true });
-          return;
-        }
-        const held = session.interactionRequests ?? (session.interactionRequests = new Map());
-        held.set(frame.id, { method: frame.method, receivedAt: this._now?.() ?? null });
-        if (held.size > 32) held.delete(held.keys().next().value);
-        this._emit(session, 'interaction.requested', {
-          id: frame.id, method: frame.method,
-          title: typeof frame.title === 'string' ? frame.title : null,
-          placeholder: typeof frame.placeholder === 'string' ? frame.placeholder : null,
-          message: typeof frame.message === 'string' ? frame.message : null,
-        });
-        return;
+        return this._onUiRequest(session, frame);
       }
       case 'extension_error':
         this._emit(session, 'content.message', { phase: 'notice', note: 'extension_error', error: String(frame.error ?? '').slice(0, 200) });
@@ -722,7 +804,7 @@ export class OmpRpcCli {
       // #230: the FIRST TURN rides spawn — the sibling session-adapter contract
       // (claude-session's pendingBrief flush at process-ready). The coordinator dispatches
       // the brief through spawn() and issues no separate first prompt.
-      this._startTurn(session, renderBrief(brief, 'omp-rpc'));
+      this._startTurn(session, `${renderBrief(brief, 'omp-rpc')}\n\n${WORKER_MESSAGE_GUIDANCE}`);
       return { ok: true, sessionId: session.observedSessionId ?? (session.process.child?.pid ? `omp-pid-${session.process.child.pid}` : null) };
     } finally {
       this._pendingSpawns.delete(worker);
@@ -767,7 +849,7 @@ export class OmpRpcCli {
     return { ok: true };
   }
 
-  async promptBrief(worker, brief) { return this.prompt(worker, renderBrief(brief, 'omp-rpc'), 'turn'); }
+  async promptBrief(worker, brief) { return this.prompt(worker, `${renderBrief(brief, 'omp-rpc')}\n\n${WORKER_MESSAGE_GUIDANCE}`, 'turn'); }
 
   async interrupt(worker, then) {
     const session = this._sessions.get(worker);
@@ -780,24 +862,40 @@ export class OmpRpcCli {
   }
 
   async approve() { return { ok: false, reason: 'omp rpc approvals are handled by launch flags, not runtime elicitation' }; }
-  // #243: answer a held extension_ui_request (protocol pinned from omp 17.3.4:
-  // {type:'extension_ui_response', id, value} for an answered request, {cancelled:true}
-  // for an unknown/dead one — never fatal, never blocks the member).
-  async answer(worker, reply) {
+  // The canonical Adapter interface is answer(worker, requestId, answer). An old direct
+  // caller's {id,value} shape remains compatible, but cannot bypass held-request validation.
+  async answer(worker, requestId, reply) {
     const session = this._sessions.get(worker);
     if (!session || session.closed || !session.process) {
       return { ok: false, notSent: true, reason: `unknown worker ${worker}` };
     }
-    const id = reply && typeof reply === 'object' && !Array.isArray(reply)
-      && typeof reply.id === 'string' ? reply.id : null;
-    if (id === null) return { ok: false, notSent: true, reason: 'answer reply requires a string id' };
-    const held = session.interactionRequests;
-    if (!held || !held.has(id)) {
-      session.process.notify({ type: 'extension_ui_response', id, cancelled: true });
-      return { ok: true, cancelled: true };
+    if (requestId && typeof requestId === 'object' && reply === undefined) {
+      reply = requestId;
+      requestId = session.nativeInteractionIds?.get(reply.id) ?? reply.id;
     }
-    held.delete(id);
-    session.process.notify({ type: 'extension_ui_response', id, value: reply.value });
+    const request = session.interactionRequests?.get(requestId);
+    if (!request || request.state !== 'pending' || request.turnEpoch !== session.turnEpoch) {
+      return { ok: false, notSent: true, reason: 'answer has no matching pending question in this turn' };
+    }
+    const response = { type: 'extension_ui_response', id: request.nativeId };
+    if (reply?.cancelled === true || reply?.expired === true) response.cancelled = true;
+    else if (request.method === 'confirm') {
+      const value = reply?.confirmed ?? reply?.value ?? reply?.text;
+      if (typeof value === 'boolean') response.confirmed = value;
+      else if (typeof value === 'string' && /^(yes|true|no|false)$/iu.test(value.trim())) {
+        response.confirmed = /^(yes|true)$/iu.test(value.trim());
+      } else return { ok: false, notSent: true, reason: 'confirmation requires yes/no or a boolean' };
+    } else {
+      const value = reply?.value ?? reply?.text;
+      if (typeof value !== 'string' || (request.method === 'select' && !request.options.includes(value))) {
+        return { ok: false, notSent: true, reason: request.method === 'select' ? 'selection must match an offered option' : 'input requires text' };
+      }
+      response.value = value;
+    }
+    if (session.process.notify(response) !== true) {
+      return { ok: false, notSent: true, reason: 'question response could not be written' };
+    }
+    request.state = response.cancelled ? 'cancelled' : 'answered';
     return { ok: true };
   }
 

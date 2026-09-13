@@ -153,15 +153,15 @@ test('UI tolerance: malformed extension_ui_request answers cancelled, never fata
   // A MALFORMED frame (no method) — the #228 anomaly shape — still answers cancelled.
   emitFrame(adapter, 'w-ui', { type: 'extension_ui_request', id: 'ui_1' });
   assert.ok(answered && answered.includes('"cancelled":true'), 'malformed UI request answered cancelled over stdin');
-  // A WELL-FORMED question (#243): surfaces as interaction.requested, held for answer().
+  // A WELL-FORMED question reaches the canonical question lane, held for answer().
   emitFrame(adapter, 'w-ui', { type: 'extension_ui_request', id: 'ui_2', method: 'confirm', title: 'Proceed?' });
-  const surfaced = events.find((event) => event.kind === 'interaction.requested' && event.payload?.id === 'ui_2');
-  assert.ok(surfaced, 'a well-formed question surfaces as interaction.requested');
+  const surfaced = events.find((event) => event.kind === 'question.asked' && event.payload?.nativeRequestId === 'ui_2');
+  assert.ok(surfaced, 'a well-formed question surfaces as question.asked');
   assert.equal(surfaced.payload.method, 'confirm');
   assert.deepEqual(events.filter((event) => event.kind === 'lifecycle.crashed'), [],
     'a UI frame never kills the member');
   const ans = await adapter.answer('w-ui', { id: 'ui_2', value: true });
   assert.equal(ans.ok, true);
-  assert.ok(answered.includes('"id":"ui_2"') && answered.includes('"value":true'), 'answer writes the id-correlated response');
+  assert.ok(answered.includes('"id":"ui_2"') && answered.includes('"confirmed":true'), 'answer writes the native confirmed boolean');
   await adapter.kill('w-ui');
 });

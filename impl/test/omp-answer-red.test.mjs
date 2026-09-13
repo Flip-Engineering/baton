@@ -6,13 +6,12 @@ import { OmpRpcCli } from '../src/omp-rpc.mjs';
 // #243 red pin — omp answer() was a stub ('not yet schema-pinned'); member questions on
 // the #228 fleet could never be answered. Protocol pinned from the omp 17.3.4 binary:
 //   request:  {type:'extension_ui_request', id, method: 'input'|'confirm'|'select'|'cancel', title, ...}
-//   response: {type:'extension_ui_response', id, value} | {type:'extension_ui_response', id, cancelled:true}
+//   response: input/select {type:'extension_ui_response', id, value}; confirm uses confirmed.
 //
 // RED   = answer() refuses ({ok:false}) and extension_ui_request frames auto-cancel without
 //         ever surfacing the question.
-// GREEN = the request surfaces as an interaction event carrying the frame; answer() writes
-//         the {id, value} response frame to the child's stdin; a dead/unknown request
-//         answers cancelled, never throws.
+// GREEN = the request surfaces as canonical question.asked; answer(worker, requestId, answer)
+//         writes a native response. Unknown/consumed ids refuse without touching the wire.
 
 class FakeStream extends EventEmitter {
   setEncoding() {}
@@ -64,27 +63,28 @@ test('OMP-ANSWER (#243): a member question surfaces and answer() writes the id-c
   }));
   await new Promise((r) => setTimeout(r, 30));
 
-  // THE PIN part 1: the question SURFACED — an interaction event carries the frame, it was
+  // THE PIN part 1: the question SURFACED — the canonical event carries the frame, it was
   // not silently auto-cancelled.
-  const surfaced = events.find((e) => e.kind === 'interaction.requested' && e.payload?.id === 'req-1');
-  assert.ok(surfaced, `the question surfaced as interaction.requested (kinds seen: ${[...new Set(events.map((e) => e.kind))].join(', ')})`);
+  const surfaced = events.find((e) => e.kind === 'question.asked' && e.payload?.nativeRequestId === 'req-1');
+  assert.ok(surfaced, `the question surfaced as question.asked (kinds seen: ${[...new Set(events.map((e) => e.kind))].join(', ')})`);
   assert.equal(surfaced.payload.method, 'input');
   assert.ok(!child.written.some((f) => f.type === 'extension_ui_response' && f.id === 'req-1' && f.cancelled === true),
     'no auto-cancel raced the operator');
 
   // THE PIN part 2: answer() writes the id-correlated response frame.
-  const answered = await adapter.answer('w-243', { id: 'req-1', value: 'glm/glm-5.3' });
+  const answered = await adapter.answer('w-243', surfaced.payload.requestId, { text: 'glm/glm-5.3' });
   assert.equal(answered.ok, true, `answer resolves ok (got ${JSON.stringify(answered)})`);
   const frame = child.written.find((f) => f.type === 'extension_ui_response' && f.id === 'req-1');
   assert.ok(frame, 'the response frame was written to the child');
   assert.equal(frame.value, 'glm/glm-5.3');
   assert.notEqual(frame.cancelled, true);
 
-  // Unknown request id answers cancelled, never throws.
+  // Unknown request id must not write a second, unowned response to the native process.
   const late = await adapter.answer('w-243', { id: 'req-gone', value: 'x' });
-  assert.equal(late.ok, true);
+  assert.equal(late.ok, false);
+  assert.equal(late.notSent, true);
   const lateFrame = child.written.find((f) => f.type === 'extension_ui_response' && f.id === 'req-gone');
-  assert.ok(lateFrame?.cancelled === true, 'an unknown/dead request answers cancelled');
+  assert.equal(lateFrame, undefined, 'unknown/dead requests never write');
 
   await adapter.kill('w-243').catch(() => {});
 });

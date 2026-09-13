@@ -1,0 +1,320 @@
+{
+  "base": "daf9add600783d37ad51e0fe4f2de817ad5d303a",
+  "runs": [
+    {
+      "lane": "catalog",
+      "runId": "run-de50163578d109f2c626b2ddf8b32e29",
+      "route": {
+        "harness": "codex",
+        "model": "gpt-5.6-sol",
+        "effort": "high"
+      },
+      "scope": [
+        "impl/src/surface-capability-catalog.mjs",
+        "impl/src/surface-capability-resolution.mjs",
+        "impl/scripts/unified-capability-audit.mjs",
+        "impl/test/surface-capability-catalog.test.mjs"
+      ],
+      "preservedCommit": "9ab526661869e1b3f028e7e1380a58e8c6db434a",
+      "routeObservation": {
+        "requested": {
+          "harness": "codex",
+          "model": "gpt-5.6-sol",
+          "effort": "high"
+        },
+        "resolved": {
+          "harness": "codex@codex-cli 0.154.0",
+          "model": "gpt-5.6-sol",
+          "effort": "high"
+        },
+        "observed": {
+          "harness": null,
+          "model": "gpt-5.6-sol",
+          "effort": null
+        },
+        "launchEnforcement": {
+          "harness": {
+            "requested": "codex",
+            "resolved": "codex@codex-cli 0.154.0",
+            "state": "matched"
+          },
+          "model": {
+            "requested": "gpt-5.6-sol",
+            "resolved": "gpt-5.6-sol",
+            "state": "matched"
+          },
+          "effort": {
+            "requested": "high",
+            "resolved": "high",
+            "state": "matched"
+          }
+        },
+        "providerAttestation": {
+          "harness": {
+            "observed": null,
+            "state": "not_observed_before_stop"
+          },
+          "model": {
+            "observed": "gpt-5.6-sol",
+            "state": "matched"
+          },
+          "effort": {
+            "observed": null,
+            "state": "not_observed_before_stop"
+          }
+        },
+        "rationale": {
+          "launchEnforcement": "exact deployment-profile route",
+          "providerAttestation": "provider-native observation only"
+        }
+      },
+      "verification": [],
+      "closedResources": {
+        "state": "stopped",
+        "ownedCount": 0,
+        "cleanupState": "stopped",
+        "terminalCause": {
+          "kind": "provider_failure",
+          "code": "provider_crashed",
+          "category": "provider_runtime",
+          "summary": "The provider process or session ended unexpectedly; the specific cause is unclassified.",
+          "remediation": "Check Baton route readiness and the harness-native status, then retry. If it repeats, inspect the Run's bounded evidence.",
+          "retryable": true
+        }
+      },
+      "terminalCause": {
+        "kind": "provider_failure",
+        "code": "provider_crashed",
+        "category": "provider_runtime",
+        "summary": "The provider process or session ended unexpectedly; the specific cause is unclassified.",
+        "remediation": "Check Baton route readiness and the harness-native status, then retry. If it repeats, inspect the Run's bounded evidence.",
+        "retryable": true
+      }
+    },
+    {
+      "lane": "visualize",
+      "runId": "run-be0db000976e794b188173094d4f7433",
+      "route": {
+        "harness": "claude-code",
+        "provider": "claude",
+        "model": "claude-sonnet-4-6",
+        "effort": "high"
+      },
+      "scope": [
+        "impl/src/surface-cli.mjs",
+        "impl/src/production-cli-convergence.mjs",
+        "impl/scripts/baton.mjs",
+        "impl/test/surface-cli.test.mjs",
+        "impl/test/unified-cli-surface.test.mjs"
+      ],
+      "preservedCommit": "fd9ce3a686bdba768f2cf68a6886e5a19b23e72f",
+      "routeObservation": {
+        "requested": {
+          "harness": "claude-code",
+          "model": "claude-sonnet-4-6",
+          "effort": "high"
+        },
+        "resolved": {
+          "harness": "claude-code@2.1.269",
+          "model": "claude-sonnet-4-6",
+          "effort": "high"
+        },
+        "observed": {
+          "harness": null,
+          "model": "claude-sonnet-4-6",
+          "effort": null
+        },
+        "launchEnforcement": {
+          "harness": {
+            "requested": "claude-code",
+            "resolved": "claude-code@2.1.269",
+            "state": "matched"
+          },
+          "model": {
+            "requested": "claude-sonnet-4-6",
+            "resolved": "claude-sonnet-4-6",
+            "state": "matched"
+          },
+          "effort": {
+            "requested": "high",
+            "resolved": "high",
+            "state": "matched"
+          }
+        },
+        "providerAttestation": {
+          "harness": {
+            "observed": null,
+            "state": "not_observed_before_stop"
+          },
+          "model": {
+            "observed": "claude-sonnet-4-6",
+            "state": "matched"
+          },
+          "effort": {
+            "observed": null,
+            "state": "not_observed_before_stop"
+          }
+        },
+        "rationale": {
+          "launchEnforcement": "exact deployment-profile route",
+          "providerAttestation": "provider-native observation only"
+        }
+      },
+      "verification": [],
+      "closedResources": {
+        "state": "stopped",
+        "ownedCount": 0,
+        "cleanupState": "stopped",
+        "terminalCause": {
+          "kind": "budget_exceeded",
+          "code": "budget_hard_limit_exceeded",
+          "dimension": "usd",
+          "used": 1006.2358286999997,
+          "limit": 1000,
+          "ratio": 1.0062358286999997
+        }
+      },
+      "terminalCause": {
+        "kind": "budget_exceeded",
+        "code": "budget_hard_limit_exceeded",
+        "dimension": "usd",
+        "used": 1006.2358286999997,
+        "limit": 1000,
+        "ratio": 1.0062358286999997
+      }
+    },
+    {
+      "lane": "admission",
+      "runId": "run-ce9327edaa1037f52c0512f69f3a32a5",
+      "route": {
+        "harness": "omp",
+        "model": "deepseek/deepseek-v4-flash",
+        "effort": "high"
+      },
+      "scope": [
+        "impl/src/wave.mjs",
+        "impl/test/wave-admission-concurrency.test.mjs"
+      ],
+      "preservedCommit": "3f4e67f5bc7ab978baa7bce9a6515b1abc4f3d9d",
+      "routeObservation": {
+        "requested": {
+          "harness": "omp",
+          "model": "deepseek/deepseek-v4-flash",
+          "effort": "high"
+        },
+        "resolved": {
+          "harness": "omp@omp/17.4.0",
+          "model": "deepseek/deepseek-v4-flash",
+          "effort": "high"
+        },
+        "observed": null,
+        "launchEnforcement": {
+          "harness": {
+            "requested": "omp",
+            "resolved": "omp@omp/17.4.0",
+            "state": "matched"
+          },
+          "model": {
+            "requested": "deepseek/deepseek-v4-flash",
+            "resolved": "deepseek/deepseek-v4-flash",
+            "state": "matched"
+          },
+          "effort": {
+            "requested": "high",
+            "resolved": "high",
+            "state": "matched"
+          }
+        },
+        "providerAttestation": {
+          "harness": {
+            "observed": null,
+            "state": "not_observed_before_stop"
+          },
+          "model": {
+            "observed": null,
+            "state": "not_observed_before_stop"
+          },
+          "effort": {
+            "observed": null,
+            "state": "not_observed_before_stop"
+          }
+        },
+        "rationale": {
+          "launchEnforcement": "exact deployment-profile route",
+          "providerAttestation": "provider-native observation only"
+        }
+      },
+      "verification": [
+        {
+          "taskId": "baton-e9e0b9713e1eb78130bf414a-work",
+          "kind": "verification",
+          "refs": {
+            "worker": "w-1",
+            "workerSeq": 90
+          },
+          "mediaType": "application/vnd.baton.verdict+json",
+          "accepted": true,
+          "provenance": [
+            {
+              "worker": "w-1",
+              "workerSeq": 90,
+              "digest": "bd5b0469bc247182deecbfe97ed8c10d4a67205fb5911703b25c905a51f5ab01",
+              "kind": "verify.reverified",
+              "ts": "2026-09-13T05:11:45.958Z",
+              "coordinationSeq": 90
+            }
+          ],
+          "verdict": {
+            "schemaVersion": 1,
+            "reverified": true,
+            "observedExit": 0,
+            "outputExceeded": false,
+            "hadClaim": false,
+            "matchesClaim": true,
+            "passed": true,
+            "locus": "fresh_sandbox",
+            "redGreen": true,
+            "baseExit": 1,
+            "coverageOfChange": null,
+            "uncoveredChangedLineCount": 0,
+            "uncoveredChangedLinesDigest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+            "mutationStrength": null,
+            "mutationPassed": null,
+            "survivedMutantCount": 0,
+            "survivedMutantsDigest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+            "capturedOutputBytes": 380,
+            "capturedOutputDigest": "0090c609dc9c07b3ffd8d3b24cb7d1ff8076c59d6be8a3c32bab391bc0d0f7e0",
+            "diagnosticCode": "verification_passed",
+            "durationMs": 733,
+            "execution": {
+              "state": "completed",
+              "code": "verification_completed"
+            },
+            "baseExecution": {
+              "state": "completed",
+              "code": "verification_completed"
+            },
+            "runtimeDigest": "d5d4d41ac9fcead707eb133b90ab0e76c60c4f06aa3fac24f470d182436421ae",
+            "outcome": "passed",
+            "failureOwnership": null
+          },
+          "digest": "e06b9e5f11a5b2847bac97012f734973d30b13c587888f581e0e8968398d22ec",
+          "id": "artifact:e06b9e5f11a5b2847bac97012f734973d30b13c587888f581e0e8968398d22ec"
+        }
+      ],
+      "closedResources": {
+        "state": "stopped",
+        "ownedCount": 0,
+        "cleanupState": "stopped",
+        "terminalCause": {
+          "kind": "operator_stop",
+          "code": "operator_stop"
+        }
+      },
+      "terminalCause": {
+        "kind": "operator_stop",
+        "code": "operator_stop"
+      }
+    }
+  ]
+}

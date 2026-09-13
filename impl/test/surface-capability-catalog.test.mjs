@@ -1,6 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
+import { APPLICATION_SEMANTIC_REGISTRY } from '../src/application-semantics.mjs';
+import { mcpCombinedToolNames } from '../src/mcp-northbound.mjs';
 import {
   UNIFIED_SURFACE_CATEGORIES,
   assertUnifiedCapabilityCoverage,
@@ -95,4 +97,21 @@ test('canonical names outrank compatibility aliases and live alias corrections h
   assert.equal(resolveSurfaceCapability('baton_decision_list').id, 'decision.list');
   assert.ok(closure.shadowed.some((row) => row.name === 'run.episode'
     && row.owner === 'run.episode' && row.shadowedOwner === 'run.view'));
+});
+
+test('live dotted MCP commands absent from the semantic key set retain exact catalog identities', () => {
+  const semanticKeys = new Set(
+    APPLICATION_SEMANTIC_REGISTRY.canonicalOperations.map((row) => row.key),
+  );
+  const liveExecutableNames = mcpCombinedToolNames().filter((name) => (
+    name.includes('.') && !semanticKeys.has(name)
+  ));
+  assert.ok(liveExecutableNames.length > 0);
+  for (const name of liveExecutableNames) {
+    assert.equal(resolveUnifiedCapability(name).id, name, `${name} lost its base catalog identity`);
+    assert.equal(resolveSurfaceCapability(name).id, name, `${name} lost its complete catalog identity`);
+  }
+  for (const name of ['run.episode', 'run.inspect', 'run.status', 'run.wait', 'run.workstreams', 'runs.list']) {
+    assert.equal(resolveUnifiedCapability(name).mode, 'query', `${name} lost its read-only mode`);
+  }
 });

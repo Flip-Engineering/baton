@@ -33,6 +33,13 @@ function noRemainder(args) {
   if (args.length > 0) fail('cli_invalid', `unexpected argument ${args[0]}`);
 }
 
+function hasFlag(args, flag) {
+  const index = args.indexOf(flag);
+  if (index < 0) return false;
+  args.splice(index, 1);
+  return true;
+}
+
 function jsonObject(value, flag) {
   let parsed;
   try { parsed = JSON.parse(value); }
@@ -67,6 +74,7 @@ Usage:
   baton surface invoke NAME --args JSON [--idempotency-key KEY] [--mcp-config PATH]
   baton surface snapshot [--run-id RUN] [--wave-id WAVE] [--mcp-config PATH]
   baton surface watch RUN_ID [--wave-id WAVE] [--after-cursor N] [--attention-cursor N] [--kind KIND] [--timeout MS] [--mcp-config PATH]
+  baton surface visualize [--view VIEW] [--run-id RUN] [--wave-id WAVE] [--width N] [--follow] [--after-cursor N] [--attention-cursor N] [--kind KIND] [--timeout MS] [--mcp-config PATH]
 
 Categories:
   ${UNIFIED_SURFACE_CATEGORIES.join(', ')}
@@ -148,7 +156,33 @@ export function parseUnifiedSurfaceCli(argv) {
       mcpConfig,
     });
   }
-  fail('cli_command_unavailable', `unknown surface command ${action}; expected catalog, describe, invoke, snapshot, watch, or help`);
+  if (action === 'visualize') {
+    const viewRaw = take(args, '--view');
+    const runId = take(args, '--run-id');
+    const waveId = take(args, '--wave-id');
+    const widthRaw = take(args, '--width');
+    const follow = hasFlag(args, '--follow');
+    const afterCursor = integer(take(args, '--after-cursor'), 'afterCursor');
+    const attentionCursor = integer(take(args, '--attention-cursor'), 'attentionCursor');
+    const kindRaw = take(args, '--kind');
+    const timeoutMs = integer(take(args, '--timeout'), 'timeoutMs', { minimum: 1, maximum: 30_000 });
+    const mcpConfig = take(args, '--mcp-config');
+    noRemainder(args);
+    return Object.freeze({
+      kind: 'surface_visualize',
+      view: viewRaw === null ? null : boundedId(viewRaw, 'view'),
+      runId: runId === null ? null : boundedId(runId, 'runId'),
+      waveId: waveId === null ? null : boundedId(waveId, 'waveId'),
+      width: integer(widthRaw, 'width', { minimum: 40, maximum: 240 }),
+      follow,
+      afterCursor,
+      attentionCursor,
+      attentionKind: kindRaw === null ? null : boundedId(kindRaw, 'kind'),
+      timeoutMs,
+      mcpConfig,
+    });
+  }
+  fail('cli_command_unavailable', `unknown surface command ${action}; expected catalog, describe, invoke, snapshot, watch, visualize, or help`);
 }
 
 export async function executeUnifiedSurfaceCli(parsed, { client = null, mcpCall = null } = {}) {
@@ -238,6 +272,30 @@ export async function executeUnifiedSurfaceCli(parsed, { client = null, mcpCall 
       fail('cli_config_invalid', 'authenticated Baton notification watch is unavailable');
     }
     return client.surfaceWatch(args);
+  }
+  if (parsed.kind === 'surface_visualize') {
+    const args = {
+      ...(parsed.view !== null ? { view: parsed.view } : {}),
+      ...(parsed.runId !== null ? { runId: parsed.runId } : {}),
+      ...(parsed.waveId !== null ? { waveId: parsed.waveId } : {}),
+      ...(parsed.width !== null ? { width: parsed.width } : {}),
+      follow: parsed.follow,
+      ...(parsed.afterCursor !== null ? { afterCursor: parsed.afterCursor } : {}),
+      ...(parsed.attentionCursor !== null ? { attentionCursor: parsed.attentionCursor } : {}),
+      ...(parsed.attentionKind !== null ? { kind: parsed.attentionKind } : {}),
+      ...(parsed.timeoutMs !== null ? { timeoutMs: parsed.timeoutMs } : {}),
+    };
+    if (parsed.mcpConfig !== null) {
+      if (typeof mcpCall !== 'function') fail('cli_config_invalid', 'MCP surface visualization is unavailable');
+      return mcpCall(parsed.mcpConfig, 'baton_surface_visualize', args);
+    }
+    if (parsed.follow && parsed.runId === null) {
+      fail('surface_visualization_invalid', 'visualization follow requires a runId; a global watch authority is not invented', 'runId');
+    }
+    if (!client || typeof client.surfaceVisualize !== 'function') {
+      fail('cli_config_invalid', 'authenticated Baton client is unavailable');
+    }
+    return client.surfaceVisualize(args);
   }
   fail('cli_command_unavailable', `unsupported surface command ${parsed.kind}`);
 }

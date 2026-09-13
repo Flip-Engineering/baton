@@ -1,5 +1,11 @@
 # The Baton System — complete design
 
+**Current direction (2026-09-12):** [Swarm runtime](docs/39-swarm-runtime.md) supersedes this
+document's universal fixed-workflow, private-attempt, peer-messaging, and group-completion
+restrictions. Baton supports evolving, highly concurrent collaboration with both tight and loose
+orchestration. Earlier mechanisms remain useful where selected; implementation status is separate
+from the intended design.
+
 *The single, authoritative design. It synthesizes everything explored across `docs/`, `spec/`, `docs/capabilities/`, the reviews, and the prototype into one coherent, correctly-steered, deeply-engineered whole. Plain language throughout (see [GLOSSARY.md](GLOSSARY.md) for any leftover codewords). The lossless capability/status catalog is [`docs/26-full-system-goal.md`](docs/26-full-system-goal.md); a later/fenced/research label never deletes an item. Where this document and an older document disagree, this document plus that catalog wins.*
 
 ---

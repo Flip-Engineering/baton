@@ -27,7 +27,7 @@
 //   #171  PS-A spawn pre-seeds the declared report file with the verbatim [attempt:] header
 //         (RED stage: preseed-absent) · PS-PIN the interpreter's closed spec admission is
 //         undisturbed (GREEN)
-//   #180  PV-A a driver-policy verification profile projects verifiedBy onto the member outcome
+//   #180  PV-A a requested profile remains visible without claiming executed verification
 //         (RED stage: verification-profile-absent) · PV-B an unknown profile refuses typed,
 //         naming the field (RED stage: verification-profile-absent) · PV-PIN the member-facing
 //         top-level `verification` field stays REMOVED (B4; GREEN at HEAD)
@@ -107,8 +107,11 @@ async function pkgFixture(t) {
   const logDir = root('log');
   mkdirSync(join(repo, 'reports'), { recursive: true });
   mkdirSync(join(repo, 'objectives'), { recursive: true });
-  const adapter = new MockAdapter({ harness: 'mock', scenariosByMarker: { default: { outcome: 'completed' } } });
+  const adapter = new MockAdapter({ harness: 'mock', scenario: { outcome: 'completed',
+    edits: [{ path: 'reports/pkg-a.md', content: 'completed fixture work\n' }] } });
   const driver = createDriver({
+    // Like a deployment, this fixture pins its base independently of dirty authored inputs.
+    deploymentBaseSha: execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repo, encoding: 'utf8' }).trim(),
     repoRoot: repo, repoId: REPO, logDir,
     adapters: { mock: adapter },
     stopDeadlineMs: 2_000,
@@ -288,7 +291,7 @@ test('PS-PIN: the interpreter’s closed spec admission is undisturbed (an unkno
 // #180 — per-wave verification profile (driver-policy-carried; B4's member-facing removal intact).
 // ---------------------------------------------------------------------------
 
-test('PV-A (stage[verification-profile-absent]): a driver-policy verification profile is honored and the member outcome projects verifiedBy', async (t) => {
+test('PV-A (stage[verification-profile-absent]): a requested verification profile is recorded without claiming it executed', async (t) => {
   const fx = await pkgFixture(t);
   writeObjective(fx.repo, 'pkg-a', 'write the pkg-a report');
   const receipt = await runWorkflow(fx.baton, pkgSpec({ idempotencyKey: 'wdp-verification' }), {
@@ -296,8 +299,9 @@ test('PV-A (stage[verification-profile-absent]): a driver-policy verification pr
     driver: { ...LANE_DRIVER, verification: 'suite:impl/test/workflow-dsl-package-red.test.mjs' },
   });
   const outcome = (receipt.outcomes ?? [])[0] ?? {};
-  assert.equal(outcome.verifiedBy, 'suite:impl/test/workflow-dsl-package-red.test.mjs',
-    'stage[verification-profile-absent]: the member outcome projects verifiedBy from the wave’s verification profile (#180) — at HEAD the driver policy ignores it');
+  assert.equal(outcome.verificationRequested, 'suite:impl/test/workflow-dsl-package-red.test.mjs',
+    'the request remains visible without manufacturing verification evidence');
+  assert.equal(Object.hasOwn(outcome, 'verifiedBy'), false);
 });
 
 test('PV-B (stage[verification-profile-absent]): an unknown verification profile refuses typed, naming the field', async (t) => {

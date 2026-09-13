@@ -251,6 +251,8 @@ async function fixture(t, { authorize = async () => true, adapter = null } = {})
   mkdirSync(join(repo, 'rows'), { recursive: true });
   const coordAdapter = adapter ?? new CarryAdapter({ harness: 'mock', scenariosByMarker: { default: { outcome: 'completed' } } });
   const driver = createDriver({
+    // Like a deployment, this fixture pins its base independently of dirty authored inputs.
+    deploymentBaseSha: execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repo, encoding: 'utf8' }).trim(),
     repoRoot: repo,
     repoId: REPO,
     logDir,
@@ -642,11 +644,11 @@ test('P-D1.4 pin/comment-row: the escalation sequence is concurrency-bounded and
   const body = execFileSync('/usr/bin/sed', ['-n', `${laneStart.line},${laneEnd.line - 1}p`, fileURLToPath(new URL('../src/workflow-interpreter.mjs', import.meta.url))], { encoding: 'utf8' });
   assert.doesNotMatch(body, /attempts\s*<\s*[0-9]+|counter|iteration/, 'no numeric iteration cap anywhere in driveLane');
   assert.doesNotMatch(body, /hardCapMs|hard_cap/, 'the #163 law: no clock-cap anywhere in driveLane');
-  const verdict = srcAnchor('workflow-interpreter.mjs', "const verdict = driveExit === 'quiesced'");
-  const verdictRest = srcAnchor('workflow-interpreter.mjs', "everySettled && everyHarvested ? 'WAVE-OK' : 'WAVE-INCOMPLETE'");
-  assert.ok(verdict.text.includes('WAVE-QUIESCED') && verdictRest.line === verdict.line + 1
-    && verdictRest.text.includes("'WAVE-OK'") && verdictRest.text.includes('WAVE-INCOMPLETE'),
-    'the verdict literal is the exit-aware three-class computation (quiesced / settled+harvested / incomplete)');
+  const verdict = srcAnchor('workflow-interpreter.mjs', "const verdict = driveExit === 'pending_empty'");
+  assert.ok(verdict.text.includes('everySuccessful') && verdict.text.includes('everyHarvested')
+    && verdict.text.includes('cleanupComplete'),
+    'success requires successful member work, recovered harvests and confirmed cleanup');
+
 });
 
 test('P-A3g green guard: a DELIVERED decision answer records outcome \'answered\' and settles the member (the machinery works when not denied)', async (t) => {
@@ -805,6 +807,23 @@ test('A2 red: the D1.2 read-authorization law is NOT installed at the DEPLOYMENT
   );
 });
 
+// An unanswered denied question intentionally keeps its worker alive. These trail
+// tests explicitly stop it after observing the refusal; elapsed silence is no longer
+// a hidden cleanup mechanism.
+async function stopAfterDecisionRefusal(fx, spec, observed) {
+  const pending = fx.application.command('waves.run', { spec, driver: LANE_DRIVER, detach: false }, principalOf('s74-owner'));
+  const deadline = Date.now() + 5_000;
+  while (!observed()) {
+    assert.ok(Date.now() < deadline, 'the test observed the expected answer refusal');
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  await new Promise((resolve) => setImmediate(resolve));
+  for (const worker of fx.driver.coordinator.list()) {
+    await fx.driver.coordinator.kill(worker.id, 'test:explicit-stop-after-refusal');
+  }
+  return pending;
+}
+
 test('A3 red: a DENIED decision answer is recorded as outcome \'answered\' — the steering trail is falsified (steering-trail-falsified)', async (t) => {
   // D1.3/A3: the answering path swallows `handle.answer` throws and records
   // `{outcome: 'answered'}` unconditionally (workflow-interpreter.mjs:794-808), and the
@@ -814,12 +833,16 @@ test('A3 red: a DENIED decision answer is recorded as outcome \'answered\' — t
   // recorded ONCE — the no-re-attempt policy: a denied ask is never re-auto-answered (the
   // ask stays pending for the human, blueteam §1.2c). At HEAD the swallowed throw is masked
   // — this row is RED at `steering-trail-falsified`.
+  let deniedAttempts = 0;
   const fx = await fixture(t, {
     adapter: new CarryAdapter({
       harness: 'mock',
       scenariosByMarker: { coordinator: decisionScenario('coordinator', { carryAttemptMarker: true }) },
     }),
-    authorize: async ({ command, principal }) => !(command === 'run.answer' && principal?.principalId === 's74-owner'),
+    authorize: async ({ command, principal }) => {
+      if (command === 'run.answer' && principal?.principalId === 's74-owner') { deniedAttempts += 1; return false; }
+      return true;
+    },
   });
   writeObjective(fx.repo, 'coordinator', 'write the coordinator report');
   const spec = {
@@ -829,7 +852,8 @@ test('A3 red: a DENIED decision answer is recorded as outcome \'answered\' — t
     steering: { answerDecisions: { policy: { 'Which path?': 'opt-a' } } },
     harvest: { paths: [] },
   };
-  const receipt = await fx.application.command('waves.run', { spec, driver: LANE_DRIVER, detach: false }, principalOf('s74-owner'));
+  const receipt = await stopAfterDecisionRefusal(fx, spec, () => deniedAttempts > 0);
+  assert.equal(deniedAttempts, 1, 'the denied request remains pending without automatic retry');
   const denied = receipt.steering.find((entry) => entry.trigger === 'answerDecisions');
   assert.ok(denied, 'an answerDecisions record exists');
   // The truthful record under D1.3. At HEAD this is `{outcome: 'answered'}` (the
@@ -873,7 +897,7 @@ test('A3b red: a RACED answer delivery is recorded as outcome \'answered\' — t
     steering: { answerDecisions: { policy: { 'Which path?': 'opt-a' } } },
     harvest: { paths: [] },
   };
-  const receipt = await fx.application.command('waves.run', { spec, driver: LANE_DRIVER, detach: false }, principalOf('s74-owner'));
+  const receipt = await stopAfterDecisionRefusal(fx, spec, () => fx.adapter.thrown.length > 0);
   const raced = receipt.steering.find((entry) => entry.trigger === 'answerDecisions');
   assert.ok(raced, 'an answerDecisions record exists');
   assert.ok(fx.adapter.thrown.length >= 1, 'the answer delivery threw');

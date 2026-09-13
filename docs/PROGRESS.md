@@ -7,7 +7,34 @@ ledger (historical through Phase 65, resumed at 93a.2); live proofs are under
 `docs/reference/evidence/` and `docs/handoff/evidence/`; the open work tracker is the GitHub
 issue list.
 
-# Current checkpoint (2026-08-20)
+# Current checkpoint (2026-09-12)
+
+The swarm runtime direction is now [docs/39](39-swarm-runtime.md). Historical fixed-attempt and
+whole-wave requirements do not describe the revised design. Implementation remains incremental.
+
+- Independent wave admissions start concurrently. Failed members no longer stop unrelated peers;
+  silence and transient unreadability do not authorize termination. Workflow success requires
+  successful member outcomes, harvest and known cleanup. Requested checks are labeled requests.
+- Workflow launch preserves the caller's HEAD, index, staged/unstaged files and untracked files,
+  using the deployment's existing pinned base. Closure receipts and late captures are retained.
+- Claude/OMP native message frames support active peer initiation and per-sender reply fan-in.
+  OMP questions now reach coordinator attention with native confirm/cancel behavior preserved.
+- Native Codex, Claude and OMP authored concrete fixes through Baton in concurrent deployments.
+  OMP's admission change passed Baton's fresh-worktree verifier (base exit 1, result exit 0).
+  Codex's catalog change was preserved after an account limit; Claude's visualization change was
+  preserved after exposing a repeated progress-nudge loop. These two are locally verified after
+  integration; they are not claimed as Baton-accepted native results. [Receipts](reference/evidence/selfdev-2026-09-12/native-runs.json).
+- Current focused validation: integrated core 100/100 (one redundant fixture subsequently removed),
+  initial integrated surfaces/lifecycle 71/71, frame/batch 51/51, and all three surface audits pass
+  under Node 22. Full release acceptance and CI have not been established on this branch.
+- The live loop and Claude cost accounting need repair before another ordinary Claude self-build.
+  Existing public MCP refusal coaching/inventory failures also remain under investigation. Dynamic
+  group membership, shared group workspaces and broader dependency conditions remain open design work.
+- Remote review: no open PRs; latest master CI ran zero steps because its self-hosted runner labels
+  have no available matching runner. Earlier hosted CI was blocked by account budget. No CI success
+  or production readiness is inferred from these runs.
+
+## Historical checkpoint (2026-08-20)
 
 - **The #228 omp migration era is COMPLETE**: the fleet rides OhMyPi natively — after the
   7-defect #230 stack (dispatch, credentials, brief-deafness, orphaned listeners, quiescence

@@ -82,7 +82,7 @@ async function serveDeployment(rawDeployment) {
 
 function unifiedNeedsWebClient(command) {
   if (command.mcpConfig !== null) return false;
-  if (command.kind === 'surface_snapshot' || command.kind === 'surface_watch') return true;
+  if (command.kind === 'surface_snapshot' || command.kind === 'surface_watch' || command.kind === 'surface_visualize') return true;
   if (command.kind !== 'surface_invoke') return false;
   const capability = resolveSurfaceCapability(command.name);
   return capability.operatorFacing === true

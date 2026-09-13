@@ -1220,8 +1220,8 @@ export class Coordinator {
     /** @type {Map<string, number>} workerId -> highest seq served but not yet acked */
     this._pendingAck = new Map();
     // BD3-C message lane: messageId -> lane record (minted sender, delivery, receipt state).
-    // Receipts are process-scoped coordinator state — delivered/read/actedOn/reply are never
-    // store-derived (the store only carries append-only audit receipts).
+    // Delivery/read observations are process-scoped; message content and per-sender reply
+    // links reconstruct from durable rows without fabricating delivery acknowledgements.
     this._messages = new Map();
     /** @type {Map<string, number>} workerId -> message-lane process generation. A delivery is
      * marked read only by a turn_started in the SAME generation; a respawn (process_closed then
@@ -6494,7 +6494,7 @@ export class Coordinator {
    * without the batch resolver falls back to the single-ref resolve (stub semantics). */
   async inspectPreservedResults(entries) {
     this._assertReadable();
-    if (!Array.isArray(entries) || entries.length > 4096) {
+    if (!Array.isArray(entries)) {
       throw new TypeError('preserved inspection batch is invalid');
     }
     const prepared = entries.map((entry) => {
@@ -7246,6 +7246,37 @@ export class Coordinator {
    * depth budget (default 1 — byte-identical to today's single-reply admission); the lane is the
    * single budget authority — a declared budget that is not a safe integer in [1,
    * MAX_MESSAGE_DEPTH_BUDGET] throws message_budget_invalid at the lane (D3/B-5b). */
+  _activeMessageMember(workerId) {
+    const handle = this._workers.get(workerId);
+    const task = handle && this._tasks.get(handle.taskId);
+    if (!handle || !task || !['working', 'input_required', 'paused'].includes(task.status)
+      || ['dead', 'exited', 'stopping'].includes(handle.status)) return null;
+    return { handle, runId: task.runId ?? handle.runId ?? null };
+  }
+
+  _messagePeers(leftId, rightId) {
+    const left = this._activeMessageMember(leftId);
+    const right = this._activeMessageMember(rightId);
+    if (!left?.runId || !right?.runId) return false;
+    if (left.runId === right.runId) return true;
+    const waveId = this._waveIdOf(left.runId);
+    if (!waveId || waveId !== this._waveIdOf(right.runId)) return false;
+    return !(this._coordination.eventsView() ?? []).some((event) => (
+      event.kind === 'wave.closed' && event.payload?.waveId === waveId
+    ));
+  }
+
+  // Delivery remains serial per native session; unrelated recipients run independently.
+  _deliverPeerMessage(handle, record, content) {
+    const slot = (handle.sendChain ?? Promise.resolve()).then(async () => {
+      if (!this._messagePeers(record.from, handle.id)) return false;
+      const ack = await this._adapters[handle.vendor].prompt(handle.id, content, 'nudge');
+      return ack?.ok !== false;
+    }).catch(() => false);
+    handle.sendChain = slot.then(noop, noop);
+    return slot;
+  }
+
   async sendMessage({ kind, to, body, budget = 1 } = {}, auth = {}) {
     this.tick();
     if (!Number.isSafeInteger(budget) || budget < 1 || budget > MAX_MESSAGE_DEPTH_BUDGET) {
@@ -7263,6 +7294,18 @@ export class Coordinator {
       || (typeof to.workerId !== 'string' && typeof to.runId !== 'string')
       || (typeof to.workerId === 'string' && typeof to.runId === 'string')) {
       throw new TypeError('message target must be exactly {workerId} or {runId}');
+    }
+    const sender = auth.workerId ?? 'orchestrator';
+    if (auth.workerId) {
+      const targets = typeof to.workerId === 'string' ? [to.workerId]
+        : [...this._workers.values()].filter((handle) => (
+          (this._tasks.get(handle.taskId)?.runId ?? handle.runId) === to.runId
+          && this._activeMessageMember(handle.id)
+        )).map((handle) => handle.id);
+      if (!this._activeMessageMember(sender) || targets.length === 0
+        || targets.some((workerId) => !this._messagePeers(sender, workerId))) {
+        return { ok: false, result: 'message_target_not_member' };
+      }
     }
     // Decision 4: the send lane is graceful — oversize up to the spill.body ceiling is ADMITTED
     // with spill (head + digest citation inline, full body durable); beyond the ceiling draws the
@@ -7320,7 +7363,8 @@ export class Coordinator {
       workers = [handle];
     } else {
       workers = [...this._workers.values()]
-        .filter((handle) => this._tasks.get(handle.taskId)?.runId === to.runId);
+        .filter((handle) => this._tasks.get(handle.taskId)?.runId === to.runId
+          && (!auth.workerId || this._activeMessageMember(handle.id)));
       if (workers.length === 0) return { ok: false, result: 'run_not_active' };
       for (const handle of workers) await settleSpawn(handle);
       const spawning = workers.map(spawningRefusal).find(Boolean) ?? null;
@@ -7328,20 +7372,20 @@ export class Coordinator {
     }
     const messageId = `message:${canonicalDigest({ kind, to, body, seq: this._messages.size + 1 })}`;
     const record = {
-      messageId, kind, body: spilled ? spillRecord.head : body, from: 'orchestrator', target: { ...to },
+      messageId, kind, body: spilled ? spillRecord.head : body, from: sender, target: { ...to },
       depth: 0, budget, remaining: budget, deliveries: new Map(), readBy: new Set(), actedOn: false,
-      reply: null, lastRefusal: null,
+      reply: null, replies: new Map(), lastRefusal: null,
       ...(spilled ? { spilled: true, bytes: bodyBytes, digest: spillRecord.digest, spill: spillRecord.spill } : {}),
     };
     this._messages.set(messageId, record);
     if (this._coordination.recordMessage) {
       try {
         this._coordination.recordMessage('message.sent', {
-          messageId, kind, from: 'orchestrator', to: { ...to },
+          messageId, kind, from: sender, to: { ...to },
           depth: 0, budget, remaining: budget,
           ...(spilled ? { body: spillRecord.head, spilled: true, bytes: bodyBytes, digest: spillRecord.digest, spill: spillRecord.spill } : { body }),
           targetCount: workers.length,
-        }, { actor: 'orchestrator', key: `message.sent:${messageId}` });
+        }, { actor: sender, key: `message.sent:${messageId}` });
       } catch { /* audit is best-effort */ }
     }
     const deliveries = await Promise.all(workers.map(async (handle) => {
@@ -7354,12 +7398,15 @@ export class Coordinator {
       // Decision 4 blocker 4: a spilled send's frame carries EXACTLY the head + the citation —
       // never the full materialized body (that would void the 2,048 cap for the worker's frame
       // budget), never head-only without the resolution lane.
+      const author = sender === 'orchestrator' ? '' : ` from=${sender}`;
       const framed = spilled
-        ? `[MESSAGE ${kind} ${messageId} — UNTRUSTED] ${frameWebContent(spillRecord.head)} [SPILLED ${JSON.stringify({ spilled: true, bytes: bodyBytes, digest: spillRecord.digest, spill: spillRecord.spill })}]`
-        : `[MESSAGE ${kind} ${messageId} — UNTRUSTED] ${frameWebContent(body)}`;
-      const slot = (handle.sendChain ?? Promise.resolve()).then(() =>
-        Promise.resolve(this._adapters[handle.vendor].prompt(handle.id, framed, 'nudge'))
-          .then(() => ({ ok: true }), () => ({ ok: false })));
+        ? `[MESSAGE ${kind} ${messageId}${author} — UNTRUSTED] ${frameWebContent(spillRecord.head)} [SPILLED ${JSON.stringify({ spilled: true, bytes: bodyBytes, digest: spillRecord.digest, spill: spillRecord.spill })}]`
+        : `[MESSAGE ${kind} ${messageId}${author} — UNTRUSTED] ${frameWebContent(body)}`;
+      const slot = auth.workerId
+        ? this._deliverPeerMessage(handle, record, framed).then((ok) => ({ ok }))
+        : (handle.sendChain ?? Promise.resolve()).then(() =>
+          Promise.resolve(this._adapters[handle.vendor].prompt(handle.id, framed, 'nudge'))
+            .then((ack) => ({ ok: ack?.ok !== false }), () => ({ ok: false })));
       handle.sendChain = slot.then(noop, noop);
       const ack = await slot;
       if (ack.ok) {
@@ -7403,7 +7450,7 @@ export class Coordinator {
   messageReceipt(messageId) {
     const record = this._messages.get(messageId);
     if (!record) return null;
-    const targetWorkerId = record.target?.workerId ?? null;
+    const targetWorkerId = record.deliveryTarget?.workerId ?? record.target?.workerId ?? null;
     const delivered = targetWorkerId
       ? record.deliveries.has(targetWorkerId)
       : record.deliveries.size > 0;
@@ -7421,6 +7468,7 @@ export class Coordinator {
       read,
       actedOn: null,
       reply: record.reply ?? null,
+      replies: [...(record.replies?.values() ?? [])],
       ...(record.spilled ? { body: record.body, bytes: record.bytes, digest: record.digest, spill: record.spill } : {}),
     };
     return Object.defineProperties(receipt, {
@@ -10618,6 +10666,41 @@ export class Coordinator {
     });
   }
 
+  // A native harness can withdraw its own question without an answer. Reuse the durable
+  // interaction supersession event, keeping the answering reservation single-consumer.
+  async _cancelNativeQuestion(workerId, requestId) {
+    const record = this._pending.get(requestId);
+    if (!record || record.kind !== 'question' || record.worker !== workerId) return;
+    if (record.state === 'resolving') {
+      await record.resolvingDone;
+      return this._cancelNativeQuestion(workerId, requestId);
+    }
+    if (record.state !== 'pending') return;
+    const handle = this._workers.get(workerId);
+    if (!handle || record.turnEpochAtAsk !== this._safeTurnEpoch(handle)) return;
+    const task = this._tasks.get(handle.taskId);
+    const unblocked = handle.pendingQuestionId === requestId
+      && ![handle.pendingApprovalId, handle.pendingDecisionId].some((id) => id && this._pending.get(id)?.state !== 'resolved');
+    const event = this._log.append({
+      worker: workerId, harness: this._harnessOf(handle.vendor),
+      turnEpoch: this._safeTurnEpoch(handle), kind: 'control.interaction_superseded', actor: 'policy',
+      ...this._routeAttribution(handle, task),
+      payload: { requestId, interactionKind: 'question', disposition: 'native_cancelled', unblocked },
+    });
+    const evidence = this._coordMapEvent(event);
+    if (unblocked && task && this._coordination?.task(task.id)?.status === 'input_required') {
+      this._coordTransition(task, 'working', `task.working:${task.id}:${event.seq}`,
+        { ...evidence, interaction: { requestId, disposition: 'native_cancelled' } }, 'policy');
+      task.status = 'working';
+    }
+    this._resolveInteractionAuthority(requestId, record);
+    record.consumer = 'native';
+    this._bumpInteractionGeneration(handle.taskId);
+    record.resolution = { disposition: 'cancelled', answer: null, reason: 'native_cancelled' };
+    if (handle.pendingQuestionId === requestId) handle.pendingQuestionId = null;
+    if (unblocked && handle.status === 'blocked') handle.status = 'working';
+  }
+
   // F13 correction: stop/kill supersede a pending decision with its own typed event
   // (`control.interaction_superseded`, `disposition: mode`) — never a silent drop, never a
   // fabricated `already_handled`, and never treated as if the worker had actually answered.
@@ -12714,7 +12797,7 @@ export class Coordinator {
 
     if (actor === 'worker' && [
       'lifecycle.turn_completed', 'lifecycle.crashed', 'lifecycle.exited',
-      'question.asked', 'approval.requested',
+      'question.asked', 'question.cancelled', 'approval.requested', 'message.send',
     ].includes(kind)) {
       const currentEpoch = this._safeTurnEpoch(handle);
       if (handle.wireEpochOffset == null && typeof turnEpoch === 'number') handle.wireEpochOffset = currentEpoch - turnEpoch;
@@ -13260,6 +13343,29 @@ export class Coordinator {
         break;
       }
       case 'message.send': {
+        if (payload && typeof payload === 'object' && !Array.isArray(payload)
+          && Object.hasOwn(payload, 'to') && !Object.hasOwn(payload, 'inReplyTo')) {
+          if (Object.keys(payload).some((key) => !['to', 'body', 'kind', 'budget'].includes(key))) {
+            appendAttributed({ worker: workerId, harness, turnEpoch, kind: 'message.rejected',
+              actor: 'policy', payload: { reason: 'message_frame_invalid' } });
+            break;
+          }
+          void this.sendMessage({ ...payload, kind: payload.kind ?? 'inform' }, { workerId })
+            .then((outcome) => {
+              const receipt = { ...outcome, to: payload.to, bodyDigest: canonicalDigest(payload.body) };
+              appendAttributed({ worker: workerId, harness, turnEpoch, actor: 'hub',
+                kind: receipt.ok ? 'message.sent_result' : 'message.rejected',
+                payload: receipt.ok ? receipt : { reason: receipt.result } });
+              if (this._activeMessageMember(workerId)) {
+                const content = `[MESSAGE_RESULT ${JSON.stringify(receipt)}]`;
+                const slot = (handle.sendChain ?? Promise.resolve()).then(() =>
+                  this._adapters[handle.vendor].prompt(handle.id, content, 'nudge'));
+                handle.sendChain = slot.then(noop, noop);
+              }
+            }, (error) => appendAttributed({ worker: workerId, harness, turnEpoch, actor: 'policy',
+              kind: 'message.rejected', payload: { reason: error?.code ?? 'message_frame_invalid' } }));
+          break;
+        }
         // BD3-C: the worker reply frame is closed — {inReplyTo, body} ONLY. A caller-named
         // `to` draws the typed refusal and is never rerouted; other smuggled fields are
         // stripped so the closed envelope {messageId, inReplyTo, from, body} never carries
@@ -13286,6 +13392,10 @@ export class Coordinator {
           refuse('message_target_caller_named');
           break;
         }
+        if (!this._activeMessageMember(workerId)) {
+          refuse('worker_not_active');
+          break;
+        }
         const parent = this._messages.get(inReplyTo);
         if (!parent) {
           refuse('message_parent_not_found');
@@ -13301,16 +13411,22 @@ export class Coordinator {
         const workerRunId = this._tasks.get(handle.taskId)?.runId ?? handle.runId ?? null;
         const isParentTarget = parent.target?.workerId === workerId;
         const isRunMember = parentRunId !== null && workerRunId !== null && workerRunId === parentRunId;
-        if (!isParentTarget && !isRunMember) {
+        const isPeerAuthor = parent.from !== 'orchestrator'
+          && (parent.from === workerId || this._messagePeers(workerId, parent.from));
+        if (parent.from !== 'orchestrator' && !isPeerAuthor) {
           refuse('message_target_not_member');
           break;
         }
-        // #105 D1: the per-branch depth cap. `parent.depth >= parent.budget` refuses (exhaustion,
-        // remaining: 0); a duplicate reply per message (the slot law, G4) refuses with the same
+        if (!isParentTarget && !isRunMember && !isPeerAuthor) {
+          refuse('message_target_not_member');
+          break;
+        }
+        // Depth is per branch. Each sender owns one reply slot on a parent; one responder
+        // never consumes another peer's slot. A repeated reply by the same sender uses the same
         // depth code, carrying positive remaining where the slot refused and the budget did not.
         // The refusing parent's receipt carries the orchestrator-readable lastRefusal (B-5a).
         const parentBudget = parent.budget ?? 1;
-        if (parent.depth >= parentBudget || parent.reply) {
+        if (parent.depth >= parentBudget || parent.replies?.has(workerId)) {
           const refusal = {
             depth: parent.depth + 1,
             budget: parentBudget,
@@ -13374,13 +13490,16 @@ export class Coordinator {
           budget: { enumerable: false, value: parentBudget },
           remaining: { enumerable: false, value: replyRemaining },
         });
-        parent.reply = Object.freeze(replyEnvelope);
+        parent.replies ??= new Map();
+        parent.replies.set(workerId, Object.freeze(replyEnvelope));
+        parent.reply ??= parent.replies.get(workerId);
         this._messages.set(replyId, {
           messageId: replyId, kind: 'reply', body: replySpillRecord ? replySpillRecord.head : frameBody, from: workerId,
           target: parent.target,
+          ...(parent.from !== 'orchestrator' ? { deliveryTarget: { workerId: parent.from } } : {}),
           depth: replyDepth, budget: parentBudget, remaining: replyRemaining, inReplyTo,
           ...(replySpillRecord ? { spilled: true, bytes: replyBytes, digest: replySpillRecord.digest, spill: replySpillRecord.spill } : {}),
-          deliveries: new Map(), readBy: new Set(), actedOn: false, reply: null, lastRefusal: null,
+          deliveries: new Map(), readBy: new Set(), actedOn: false, reply: null, replies: new Map(), lastRefusal: null,
         });
         // #105 D5: a reply hop is a durable store-audited message.delivered row carrying inReplyTo
         // (the replay seed, B-4) — beside the worker-log appendAttributed. recordMessage stays
@@ -13400,6 +13519,28 @@ export class Coordinator {
           worker: workerId, harness, turnEpoch, kind: 'message.delivered', actor: 'hub',
           payload: replyEnvelope,
         });
+        if (parent.from !== 'orchestrator') {
+          const recipient = this._activeMessageMember(parent.from)?.handle;
+          if (recipient && this._messagePeers(workerId, recipient.id)) {
+            const record = this._messages.get(replyId);
+            const content = `[MESSAGE reply ${replyId} inReplyTo=${inReplyTo} from=${workerId} — UNTRUSTED] ${frameWebContent(record.body)}`
+              + (record.spilled ? ` [SPILLED ${JSON.stringify({ spill: record.spill, digest: record.digest, bytes: record.bytes })}]` : '');
+            void this._deliverPeerMessage(recipient, record, content).then((delivered) => {
+              if (delivered) {
+                record.deliveries.set(recipient.id, {
+                  generation: this._messageProcessGeneration.get(recipient.id) ?? 1, delivered: true,
+                });
+                this._log.append({ worker: recipient.id, harness: this._harnessOf(recipient.vendor),
+                  turnEpoch: this._safeTurnEpoch(recipient), kind: 'message.delivered', actor: 'hub',
+                  payload: replyEnvelope });
+              }
+            });
+          }
+        }
+        break;
+      }
+      case 'question.cancelled': {
+        this._trackAuthorityPromise(() => this._cancelNativeQuestion(workerId, payload?.requestId)).catch(noop);
         break;
       }
       case 'question.asked': {
@@ -14730,8 +14871,10 @@ export class Coordinator {
             // must never resurrect the prompt or silently redeliver it. The generic unattached
             // nonterminal rule below then fails the task safe unless the preserved-interrupt
             // receipt was subsequently closed.
-            if (e.payload?.disposition === 'semantic_interrupt'
+            if ((e.payload?.disposition === 'semantic_interrupt'
+              || (e.payload?.disposition === 'native_cancelled' && e.payload?.unblocked === true))
               && terminalStatus === 'input_required') terminalStatus = 'working';
+            if (e.payload?.disposition === 'native_cancelled') this._bumpInteractionGeneration(taskId);
             if (e.payload?.requestId) reconstructedPending.delete(e.payload.requestId);
             break;
           default:
@@ -14997,7 +15140,7 @@ export class Coordinator {
     // depth/budget/remaining, no inReplyTo) are SKIPPED — never seeded as phantom roots. After
     // seeding, each reply record inherits its parent's target verbatim (B-1) and parent.reply is
     // re-linked (per-member multi-reply parents keep every reply row in _messages; the single
-    // parent.reply slot is meaningful only for single-reply parents, G4). The live delivery state
+    // parent.reply retains the first reply for compatibility). The live delivery state
     // machine (delivered/read/actedOn/lastRefusal) stays process-scoped — replay never fabricates
     // delivery state.
     const rebuiltMessages = new Map();
@@ -15020,7 +15163,7 @@ export class Coordinator {
           target: row.to && typeof row.to === 'object' ? { ...row.to } : {},
           depth: row.depth ?? 0, budget: row.budget ?? 1, remaining: row.remaining ?? (row.budget ?? 1),
           ...(row.spilled === true ? { spilled: true, bytes: row.bytes, digest: row.digest, spill: row.spill } : {}),
-          deliveries: new Map(), readBy: new Set(), actedOn: false, reply: null, lastRefusal: null,
+          deliveries: new Map(), readBy: new Set(), actedOn: false, reply: null, replies: new Map(), lastRefusal: null,
         });
       } else if (row.inReplyTo !== undefined) {
         replySeeds.push(row);
@@ -15035,7 +15178,7 @@ export class Coordinator {
         target: null, // filled by the parent-inheritance link below (B-1)
         depth, budget, remaining, inReplyTo: row.inReplyTo,
         ...(row.spilled === true ? { spilled: true, bytes: row.bytes, digest: row.digest, spill: row.spill } : {}),
-        deliveries: new Map(), readBy: new Set(), actedOn: false, reply: null, lastRefusal: null,
+        deliveries: new Map(), readBy: new Set(), actedOn: false, reply: null, replies: new Map(), lastRefusal: null,
       });
     }
     // Second pass: link each reply to its parent — inherit the parent's target verbatim (B-1)
@@ -15045,11 +15188,12 @@ export class Coordinator {
       const parent = rebuiltMessages.get(row.inReplyTo);
       if (!record || !parent) continue;
       record.target = parent.target;
+      if (parent.from !== 'orchestrator') record.deliveryTarget = { workerId: parent.from };
       // #105 D4 (replay parity): the re-linked envelope carries the same NON-ENUMERABLE
       // depth/budget/remaining as the live admission, so the rebuilt topology deep-equals the
       // live one (FP-04 identity row holds across replay; T2/B-4 read the fields through the
       // accessors). The durable rows keep them enumerable — this is a projection, not a row.
-      parent.reply = Object.freeze(Object.defineProperties({
+      const reply = Object.freeze(Object.defineProperties({
         messageId: row.messageId, inReplyTo: row.inReplyTo, from: record.from, body: record.body,
         ...(row.spilled === true ? { spilled: true, bytes: row.bytes, digest: row.digest, spill: row.spill } : {}),
       }, {
@@ -15057,6 +15201,8 @@ export class Coordinator {
         budget: { enumerable: false, value: record.budget },
         remaining: { enumerable: false, value: record.remaining },
       }));
+      parent.replies.set(record.from, reply);
+      parent.reply ??= reply;
     }
     for (const [messageId, record] of rebuiltMessages) {
       this._messages.set(messageId, record);

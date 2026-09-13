@@ -15,8 +15,7 @@
 // the `waves.run` direct port for the CLI (`baton waves run`) and MCP (`baton_waves_run`) surfaces.
 
 import { createHash, randomUUID } from 'node:crypto';
-import { execFile, execFileSync } from 'node:child_process';
-import { promisify } from 'node:util';
+import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { basename, dirname, isAbsolute, relative, resolve, sep } from 'node:path';
 // #207 (row-admission-align): the run.start objective cap comes from the frame-economics registry —
@@ -24,12 +23,6 @@ import { basename, dirname, isAbsolute, relative, resolve, sep } from 'node:path
 // literal). limits.mjs is pure data + one refusal-text composer and imports only node:crypto, so
 // the lane's W5 transitive-graph law (no reachable module runs a top-level wave start) holds.
 import { FRAME_LIMITS } from './limits.mjs';
-
-const execFileAsync = promisify(execFile);
-
-// #220: the machinery's commit identity is versioned — `baton <version>` (never a stale
-// placeholder name). Resolved from the package manifest once, at module scope.
-const BATON_VERSION = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version;
 
 // ---------------------------------------------------------------------------
 // Refusal vocabulary (D — field/role-named, recursive).
@@ -472,9 +465,9 @@ function normalizeDriver(driver) {
   const stallTimeoutMs = Number.isSafeInteger(base.stallTimeoutMs) && base.stallTimeoutMs > 0 ? base.stallTimeoutMs : DEFAULT_DRIVER.stallTimeoutMs;
   // #163 law (operator ruling 2026-08-14): clock-based kill caps are RETIRED — a numeric hardCapMs
   // refuses at admission naming the law; the null sentinel (or an omitted key) is the only accepted
-  // form, and the drive settles on terminality / handled-decision stuck / observed quiescence.
+  // form. Settlement requires observed terminality or explicit handled attention.
   if (base.hardCapMs !== undefined && base.hardCapMs !== null) {
-    throw specInvalid('the workflow driver "hardCapMs" is retired under the #163 law — clock-based caps never decide the fate of agentic work; omit the key or pass hardCapMs: null (the drive settles on quiescence, never a clock)');
+    throw specInvalid('the workflow driver "hardCapMs" is retired under the #163 law — clock-based caps never decide the fate of agentic work; omit the key or pass hardCapMs: null (the drive waits for terminality or handled attention, never a clock)');
   }
   const hardCapMs = base.hardCapMs === null ? null : DEFAULT_DRIVER.hardCapMs;
   return { pollIntervalMs, stallTimeoutMs, hardCapMs };
@@ -482,7 +475,7 @@ function normalizeDriver(driver) {
 
 // #180 (per-wave verification profile): driver.verification accepts the closed vocabulary
 // `none` / `suite:<path>` / `gate`. An unknown profile refuses workflow_spec_invalid naming the
-// field; the member outcome projects the profile as `verifiedBy`. The member-facing top-level
+// field; the member outcome records it as `verificationRequested`, never execution proof. The member-facing top-level
 // `verification` SPEC field stays REMOVED (B4) — this is a driver-policy field, never a spec field.
 function normalizeVerification(driver) {
   const raw = driver && typeof driver === 'object' ? driver.verification : undefined;
@@ -501,12 +494,17 @@ const sleep = (ms) => new Promise((resolveSleep) => { setTimeout(resolveSleep, m
 async function readView(handle, needStatus = false) {
   let insp = null;
   let stat = null;
+  let observationClosed = null;
   // inspect() carries phase/actions/attention/terminal — enough for approve/checkpoint/message/
   // signal/terminal. status() (taskId/workerId, decision options) is read ONLY when a policy needs
   // it (answerDecisions/elevateWhenNotes), so the common poll is one command, not two — the W3/W4
   // polls stay cheap even with a full member roster.
   if (needStatus) { try { stat = await handle.status(); } catch { /* the run may be mid-stop */ } }
-  try { insp = await handle.inspect(); } catch { /* the run may be mid-stop */ }
+  try { insp = await handle.inspect(); } catch (error) {
+    // Explicit local authority shutdown ends this observer, not the worker's lifecycle.
+    // Transient transport failures remain unreadable and retryable.
+    if (['application_closed', 'coordinator_closed'].includes(error?.code)) observationClosed = error.code;
+  }
   const io = insp?.outline ?? {};
   const so = stat?.view ?? stat ?? {};
   const phase = io.phase ?? so.phase ?? null;
@@ -521,13 +519,14 @@ async function readView(handle, needStatus = false) {
   const planDigest = approveAction?.target?.planDigest ?? approveAction?.freshness?.planDigest
     ?? so.goal?.planDigest ?? so.plan?.planDigest ?? so.plan?.digest ?? so.planPreview?.planDigest
     ?? io.route?.planDigest ?? null;
-  // #163 (B3/A7): the quiescence predicate reads the outline's own progress projection —
+  // Progress observations retain their meaning independently of lifecycle decisions —
   // lastProgress.at (the last meaningful event), silenceMs, and the semantic progressClass.
   // progressClass projects as the { class, silenceMs, meaningfulEventAt } object on the outline;
   // the view flattens the class string.
   const progressProjection = io.progressClass ?? so.progressClass ?? null;
   return {
     phase,
+    observationClosed,
     actions,
     attention,
     taskId,
@@ -547,39 +546,9 @@ async function readView(handle, needStatus = false) {
 const TERMINAL_PHASES = new Set(['work_completed', 'completed', 'result_ready', 'cancelled', 'failed', 'stopped', 'denied', 'closed']);
 const isTerminal = (v) => v.terminal === true || TERMINAL_PHASES.has(v.phase ?? '') || v.terminalStatus === 'completed';
 
-// ---------------------------------------------------------------------------
-// #163 quiescence vocabulary (contract-foundry v2) — the law that replaced the clock cap
-// (operator ruling 2026-08-14: timeout/clock control flows never decide the fate of agentic
-// work; the drive settles on terminality, handled-decision stuck, or observed quiescence).
-// ---------------------------------------------------------------------------
-
-// A member in one of these phases is INSIDE a working turn (mid-turn or mid-delivery) — it is
-// presumed productive, so it is never quiesced; one that also goes silent past the cadence
-// window is phase-stuck and terminalized-unrecoverable instead (A12 leg b).
-const ACTIVE_TURN_PHASES = new Set(['running', 'pre_delivery', 'post_delivery']);
-// Terminal phases the wave cannot recover from (contrast work_completed/completed/result_ready —
-// the success-resting set). One landing hard-breaks the drive (A5/DR-1(a)).
-const UNRECOVERABLE_TERMINAL_PHASES = new Set(['failed', 'cancelled', 'denied']);
-// The quiescence window floor, in silent polls (D1.2) — the window is
-// max(2 * maxObservedGapMs, QUIESCENCE_MIN_SILENT_POLLS * pollIntervalMs): the roster's own
-// observed cadence, never a bare wall clock (A2).
-const QUIESCENCE_MIN_SILENT_POLLS = 8;
-// The declaration/terminalization confirmation count (D1.3) — a candidate is confirmed across a
-// poll pair, and terminalization waits one more (A12's N = confirmation-pair + 1).
-const QUIESCENCE_CONFIRMATION_POLLS = 2;
-// The phase-stuck floor, in silent polls (A12 amended, 2026-08-14): terminalizing an active-turn
-// member is the drive's strongest judgment, so its floor is many cadences —
-// max(4 * maxObservedGapMs, QUIESCENCE_STUCK_MIN_POLLS * pollIntervalMs). The v2 N-poll reading
-// murdered any member whose in-turn event gap outlived the quiet floor (measured: the cadence
-// suite's 400/800 ms in-turn edits and every loaded happy-path row died at 8 polls × 15 ms).
-const QUIESCENCE_STUCK_MIN_POLLS = 96;
-// The #67 liveness re-arm kinds, mirrored (D1.1/A3): the application-side outline projection
-// (lastProgress.at) already counts exactly these kinds plus content evidence as meaningful, so
-// an observed advance of lastProgress.at IS the reset — this set is the contract mirror the
-// predicate's correctness rests on (kept named so the two sides cannot drift silently).
-const QUIESCENCE_REARM_KINDS = Object.freeze(new Set([
-  'approval.resolved', 'decision.settled', 'lifecycle.turn_started', 'question.answered',
-]));
+// Terminality and success are different facts. Stopped, cancelled, failed and unknown
+// members never establish successful work, even if cleanup later captures their files.
+const SUCCESS_PHASES = new Set(['work_completed', 'completed', 'result_ready']);
 
 // answerDecisions match — exact literal first, then anchored regex; first-match-wins (F7b).
 function matchDecision(policy, question) {
@@ -637,24 +606,9 @@ export async function runWorkflow(baton, specOrPath, options = {}) {
     return renderedMember;
   });
 
-  // The wave provisions each member's worktree from a clean base commit; the worktree manager
-  // refuses a dirty working tree (pinBaseSha's DirtyRepoError). The lane's objective/spec files are
-  // written into the tree as inputs — commit the current working-tree state so the base is clean.
-  // Local only (never pushed); result pins the D4 harvest reads are separate refs, unaffected.
-  // Bootstrap fix (2026-08-14): these were execFileSync — a 30–60 s event-loop blockade per launch
-  // on a dirty tree, starving every other waves.run admission queued behind it on the serial bus
-  // (measured: 15 of 16 flood launches timed out before their requests were read). Now async, and
-  // skipped outright when the tree is already clean — a clean-tree launch pays one fast status
-  // probe instead of an add+commit cycle.
-  if (repoRoot) {
-    try {
-      const status = await execFileAsync('git', ['status', '--porcelain'], { cwd: repoRoot, maxBuffer: 16 * 1024 * 1024 });
-      if (status.stdout.trim().length > 0) {
-        await execFileAsync('git', ['add', '-A'], { cwd: repoRoot });
-        await execFileAsync('git', ['-c', `user.name=baton ${BATON_VERSION}`, '-c', 'user.email=baton@local', 'commit', '-q', '-m', `baton workflow base ${spec.idempotencyKey}`], { cwd: repoRoot });
-      }
-    } catch { /* nothing to commit, or commits unavailable — the wave will surface any real base issue */ }
-  }
+  // Objective references are rendered above without modifying the caller's checkout.
+  // The configured workspace authority selects its base (production deployments pin
+  // deploymentBaseSha). Starting a workflow never stages, commits or stashes caller files.
 
   // The pin-recovery lower bound is stamped BEFORE the wave starts (result pins commit after this),
   // with resolveResultPin's own 60 s grace covering the clock.
@@ -669,31 +623,22 @@ export async function runWorkflow(baton, specOrPath, options = {}) {
     repoRoot,
   });
   const waveId = wave.waveId;
-  const memberByRole = new Map(spec.members.map((member) => [member.role, member]));
   const reportByRole = new Map(rendered.map((member) => [member.role, member.report ?? null]));
 
   const steering = [];
   const steeringState = {
     approved: new Set(), messaged: new Map(), msgAttempts: new Map(), msgDone: new Set(),
     elevated: new Set(), nudgedReqs: new Set(), nudgedRoles: new Set(), claimedRoles: new Set(),
-    answeredKeys: new Set(), handledDecisionKeys: new Set(), deniedDecisionKeys: new Set(), signaled: false,
+    answeredKeys: new Set(), handledDecisionKeys: new Set(), deniedDecisionKeys: new Set(), awaitingDecisionByRole: new Map(), signaled: false,
   };
 
-  // #163 law (operator ruling 2026-08-14): no drive-to-settle clock exists. The drive exits on
-  // terminality (pending_empty), an unrecoverable terminal (terminalized_unrecoverable), the
-  // handled-decision stuck break (stuck_handled), or the observed-quiescence declaration
-  // (quiesced) — never on elapsed time.
+  // Independent members continue until each reports terminality. Attention may return
+  // control to the caller; elapsed silence and failed peers never terminate live work.
   const settle = async () => {
-  let drive;
-  try {
-    drive = await driveLane(wave, spec, driver, steering, steeringState, reportByRole);
-  } finally {
-    // guaranteed nothing: the loop is self-bounded; harvest happens below over the settled runs.
-  }
-  const driveExit = drive?.exit ?? 'pending_empty';
-  const quiescence = drive?.quiescence ?? new Map();
+  const drive = await driveLane(wave, spec, driver, steering, steeringState, reportByRole);
+  const driveExit = drive.exit;
 
-  // Build outcomes: capture resultSha pre-close (reliable), terminal state post-close.
+  // Preserve pre-close work, then collect any additional result captured during closure.
   const handles = wave.runs;
   // Phantom surfacing (2026-08-14): a member absent from wave.runs failed AT START — the wave
   // handle's progress() projects it with terminalCause 'start' and the typed start error. One
@@ -734,56 +679,54 @@ export async function runWorkflow(baton, specOrPath, options = {}) {
   }
 
   let stopReceipt = null;
-  try { stopReceipt = await wave.close({ reason: 'Workflow interpreter settled.' }); } catch { /* best effort */ }
+  let closeError = null;
+  try { stopReceipt = await wave.close({ reason: 'Workflow interpreter settled.' }); }
+  catch (error) {
+    closeError = { code: error?.code ?? null, message: String(error?.message ?? error) };
+  }
+  // Carry closure evidence in the established receipt rather than silently discarding it.
+  steering.push({ evidence: 'wave_close_result', receipt: stopReceipt, error: closeError });
 
   const outcomes = [];
   for (const member of spec.members) {
     const pre = preOutcome.get(member.role) ?? { phase: null, terminal: false, resultSha: null };
+    const handle = handles.get(member.role) ?? null;
     let phase = pre.phase;
     let terminal = pre.terminal;
-    if (!terminal) {
-      const handle = handles.get(member.role) ?? null;
-      if (handle) {
-        try { const v = await readView(handle); phase = v.phase ?? phase; terminal = isTerminal(v); }
-        catch { /* the stop made it terminal even if the post-read is unavailable */ terminal = true; phase = phase ?? 'stopped'; }
-      }
+    if (!terminal && handle) {
+      const view = await readView(handle);
+      phase = view.phase ?? phase;
+      terminal = isTerminal(view);
     }
-    const outcome = { role: member.role, phase, terminal, resultSha: pre.resultSha, snapshotSha: pre.snapshotSha ?? null };
+    const captured = handle
+      ? await materializeSha(handle, member, repoRoot, pinFloorMs,
+        excludeShas.filter((sha) => sha !== pre.resultSha))
+      : { resultSha: null, snapshotSha: null };
+    if (captured.resultSha && !excludeShas.includes(captured.resultSha)) excludeShas.push(captured.resultSha);
+    const outcome = {
+      role: member.role, phase, terminal,
+      resultSha: captured.resultSha ?? pre.resultSha,
+      snapshotSha: captured.snapshotSha ?? pre.snapshotSha ?? null,
+    };
     if (pre.terminalCause !== undefined) outcome.terminalCause = pre.terminalCause;
     if (pre.error) outcome.error = pre.error;
     if (member.report !== undefined) outcome.report = member.report;
-    if (verification !== null) outcome.verifiedBy = verification;
-    // #163 (OQ5): on a quiesced exit the outcome carries the declaration snapshot — the last
-    // meaningful event, the observed silence at declaration, and the declaration's own
-    // progressClass 'silent' (the wave-level judgment the declaration makes: every survivor was
-    // inactive and silent past the cadence-derived window).
-    if (driveExit === 'quiesced') {
-      const q = quiescence.get(member.role) ?? null;
-      if (q !== null) {
-        if (typeof q.lastMeaningfulAt === 'string' && q.lastMeaningfulAt.length > 0) outcome.quiescenceLastMeaningfulAt = q.lastMeaningfulAt;
-        if (Number.isSafeInteger(q.silenceAtDeclarationMs)) outcome.quiescenceSilenceMs = q.silenceAtDeclarationMs;
-        // #235: the DISTINCT class — a never-trafficked member quiesces as 'provider_silent',
-        // never plain 'silent' (the #230 dogfood: 25 min of 'silent' hid zero provider
-        // sockets). Evidence classification only; the quiesce itself is unchanged.
-        outcome.progressClass = q.providerSilent === true ? 'provider_silent' : 'silent';
-      }
-    }
+    if (verification !== null) outcome.verificationRequested = verification;
     outcomes.push(outcome);
   }
 
   // D4 — harvest per path from the run's authoritative result sha, waveId-bound, marker-verified.
   const harvest = spec.harvest.paths.map((entry) => harvestOne(entry, repoRoot, salt, waveId, outcomes));
 
-  const everySettled = outcomes.every((outcome) => outcome.terminal === true || outcome.phase === 'result_ready');
+  const everySuccessful = outcomes.every((outcome) => SUCCESS_PHASES.has(outcome.phase));
   const everyHarvested = harvest.every((entry) => entry.ok === true);
-  // #163 (D1.4/D1.5): the verdict names the exit. Quiescence receipts WAVE-QUIESCED over the
-  // 'quiesced' basis; an unrecoverable terminal / stuck-decision roster receipts WAVE-INCOMPLETE
-  // over the manifestDigest; a fully settled + harvested roster receipts WAVE-OK over 'completed'.
-  const verdict = driveExit === 'quiesced' ? 'WAVE-QUIESCED'
-    : (everySettled && everyHarvested ? 'WAVE-OK' : 'WAVE-INCOMPLETE');
-  const basis = verdict === 'WAVE-OK' ? 'completed' : (verdict === 'WAVE-QUIESCED' ? 'quiesced' : manifestDigest);
+  const cleanupComplete = closeError === null && stopReceipt?.residueUnknown === false
+    && stopReceipt?.remainingCount === 0 && Array.isArray(stopReceipt?.stops)
+    && stopReceipt.stops.every((stop) => !stop.error);
+  const verdict = driveExit === 'pending_empty' && everySuccessful && everyHarvested && cleanupComplete
+    ? 'WAVE-OK' : 'WAVE-INCOMPLETE';
+  const basis = verdict === 'WAVE-OK' ? 'completed' : manifestDigest;
 
-  void stopReceipt;
   // D6 — the receipt: EXACTLY the seven contract keys, in sorted order (F14).
   return {
     basis,
@@ -883,11 +826,8 @@ function pathEscapes(repoRoot, path) {
 
 // The one control loop — poll each member, fire the steering policies, drive to settle. It is the
 // GENERALIZED form of run-dynamic-workflow.mjs's steps 4-7, parameterized by the spec's policies.
-// #163: there is no settle clock. The loop exits exactly one of four ways (the closed D1.5 enum):
-// 'pending_empty' (every member terminal), 'terminalized_unrecoverable' (an unrecoverable terminal
-// or a phase-stuck active turn), 'stuck_handled' (every survivor parked on a handled decision), or
-// 'quiesced' (every survivor silent past the cadence-derived window) — and returns the exit plus
-// the per-member quiescence snapshot for the receipt.
+// Only observed member terminality or handled attention settles this driver. Silence and
+// unavailable observations remain diagnostic facts, not lifecycle transitions.
 async function driveLane(wave, spec, driver, steering, s, reportByRole) {
   const st = spec.steering;
   const handles = wave.runs;
@@ -910,12 +850,8 @@ async function driveLane(wave, spec, driver, steering, s, reportByRole) {
   const needStatus = Boolean(st.answerDecisions || st.elevateWhenNotes || st.approveOnAdvertisedPlan
     || st.nudgeOnCheckpoint || st.claimOnStall);
 
-  // #163 quiescence state: per-member { lastMeaningfulAt, silentSinceMs, active, phase,
-  // progressClass } plus the roster-wide maxObservedGapMs — the window derives from the roster's
-  // own observed cadence (A2), never a bare clock.
-  const quiescence = new Map();
-  const unreadablePolls = new Map(); // A12 leg (a): consecutive phase-less reads per member.
-  let maxObservedGapMs = 0;
+  const unreadable = new Set();
+  const closedObservers = new Set();
   let exit = null;
 
   async function processMember(role) {
@@ -923,6 +859,12 @@ async function driveLane(wave, spec, driver, steering, s, reportByRole) {
     if (!handle?.id) { pending.delete(role); return; }
     let v;
     try { v = await readView(handle, needStatus); } catch { return; }
+    if (v.observationClosed) {
+      pending.delete(role);
+      closedObservers.add(role);
+      steering.push({ evidence: 'wave_member_observation_closed', role, code: v.observationClosed });
+      return;
+    }
 
     // 1. plan approval — createWave already approved + provisioned the worktree (approve:true). The
     // interpreter never re-approves (a second run.approve wedges the worktree). approveOnAdvertisedPlan
@@ -939,6 +881,8 @@ async function driveLane(wave, spec, driver, steering, s, reportByRole) {
 
     // 3. answerDecisions — match/validate/answer, defer on non-match, refuse on invalid optionId.
     const decision = Array.isArray(v.attention) ? v.attention.find((a) => a?.kind === 'answer_decision' && typeof a?.requestId === 'string') : null;
+    if (decision) s.awaitingDecisionByRole.set(role, `${handle.id}:${decision.requestId}`);
+    else s.awaitingDecisionByRole.delete(role);
     if (st.answerDecisions && decision) {
       const key = `${handle.id}:${decision.requestId}`;
       // D1.3 permanence (v1.2): the decision key is NEVER marked handled before the answer
@@ -958,61 +902,25 @@ async function driveLane(wave, spec, driver, steering, s, reportByRole) {
     // 5. elevateWhenNotes — read the worker tier, elevate once per (runId, role).
     if (st.elevateWhenNotes && !s.elevated.has(role)) await tryElevate(handle, role, v, st.elevateWhenNotes, steering, s);
 
-    // 6. terminal detection — an unrecoverable terminal (failed/cancelled/denied) hard-breaks the
-    // whole drive (A5/DR-1(a)); survivor result-shas are still harvested by the settle leg.
+    // A failed member settles itself; independent survivors continue being driven.
     if (isTerminal(v)) {
       pending.delete(role); doneRoles.add(role);
-      unreadablePolls.delete(role);
-      if (UNRECOVERABLE_TERMINAL_PHASES.has(v.phase ?? '') && exit === null) {
-        steering.push({ evidence: 'wave_terminalized_unrecoverable', role, phase: v.phase ?? null });
-        exit = 'terminalized_unrecoverable';
+      unreadable.delete(role);
+      if (!SUCCESS_PHASES.has(v.phase)) {
+        steering.push({ evidence: 'wave_member_terminal', role, phase: v.phase ?? null });
       }
       return;
     }
-
-    // A12 leg (a): an UNREADABLE member (readView could not project a phase — the run is
-    // wedged at the transport seam) accumulates confirmation polls; at N = confirmation-pair + 1
-    // consecutive unreadable polls it is terminalized-unrecoverable and hard-breaks the drive.
-    if (v.phase === null) {
-      const unreadable = (unreadablePolls.get(role) ?? 0) + 1;
-      unreadablePolls.set(role, unreadable);
-      if (unreadable >= QUIESCENCE_CONFIRMATION_POLLS + 1 && exit === null) {
-        steering.push({ evidence: 'wave_terminalized_unrecoverable', role, phase: null });
-        exit = 'terminalized_unrecoverable';
-      }
-      return;
+    if (v.phase === null && !unreadable.has(role)) {
+      unreadable.add(role);
+      steering.push({ evidence: 'wave_member_unreadable', role });
+    } else if (v.phase !== null && unreadable.delete(role)) {
+      steering.push({ evidence: 'wave_member_readable', role, phase: v.phase });
     }
-    unreadablePolls.delete(role);
-
-    // 7. quiescence tracking (#163): an observed advance of the outline's lastProgress.at resets
-    // the member's silence and feeds the roster-wide cadence term maxObservedGapMs (A2/A3).
-    const meaningfulAt = typeof v.lastProgress?.at === 'string' ? v.lastProgress.at : null;
-    const priorQ = quiescence.get(role) ?? null;
-    if (priorQ !== null && meaningfulAt !== null && priorQ.lastMeaningfulAt !== null
-      && meaningfulAt !== priorQ.lastMeaningfulAt) {
-      const gapMs = Date.parse(meaningfulAt) - Date.parse(priorQ.lastMeaningfulAt);
-      if (Number.isFinite(gapMs) && gapMs > maxObservedGapMs) maxObservedGapMs = gapMs;
-    }
-    const advanced = priorQ === null || meaningfulAt !== priorQ.lastMeaningfulAt;
-    quiescence.set(role, {
-      lastMeaningfulAt: meaningfulAt ?? priorQ?.lastMeaningfulAt ?? null,
-      silentSinceMs: advanced || priorQ === null ? Date.now() : priorQ.silentSinceMs,
-      active: ACTIVE_TURN_PHASES.has(v.phase ?? ''),
-      phase: v.phase ?? priorQ?.phase ?? null,
-      progressClass: v.progressClass ?? priorQ?.progressClass ?? null,
-      // #235: the never-trafficked marker rides the SAME view the predicate reads — the run
-      // view's provider_silent attention entry (the coordinator transport-liveness
-      // projection). Evidence classification only; it never gates termination.
-      providerSilent: Array.isArray(v.attention)
-        && v.attention.some((entry) => entry?.kind === 'provider_silent'),
-    });
   }
 
   while (pending.size > 0) {
     await Promise.all([...pending].map((role) => processMember(role)));
-
-    // A5/A12: an unrecoverable terminalization (observed inside the poll) hard-breaks the drive.
-    if (exit === 'terminalized_unrecoverable') break;
 
     // 8. signalOnMembersDone — when the named roles are terminal, signal the remaining members.
     if (st.signalOnMembersDone && !s.signaled && signalRoles.size > 0
@@ -1028,65 +936,23 @@ async function driveLane(wave, spec, driver, steering, s, reportByRole) {
       steering.push({ trigger: 'signalOnMembersDone', role: [...signalRoles][0], doneRoles: [...signalRoles], recipients });
     }
 
-    // Stuck break (D3.3 — evaluated BEFORE the quiescence check): every remaining member is
+    // Explicit handled-attention exit: every remaining member is
     // parked on a decision the policy already handled (deferred / refused); no steering move
-    // remains, so the drive exits 'stuck_handled' rather than declaring the roster quiet.
+    // remains in this policy. A past decision does not stop a member that resumed work.
     if (pending.size > 0 && [...pending].every((role) => s.handledDecisionKeys.size > 0 && roleStuckOnHandled(handles.get(role), role, s))) {
       exit = 'stuck_handled';
       break;
     }
 
-    // #163 quiescence predicate (A1/A2/A12): the quiet window is the roster's own cadence —
-    // max(2 * maxObservedGapMs, QUIESCENCE_MIN_SILENT_POLLS * pollIntervalMs). The phase-stuck
-    // window is deliberately DEEPER — max(4 * maxObservedGapMs, QUIESCENCE_STUCK_MIN_POLLS *
-    // pollIntervalMs): terminalizing a member that claims an active turn is the strongest
-    // judgment the drive makes, so it waits many cadences (A12 amended — v2's N-poll reading
-    // murders any member whose in-turn event gap outlives the floor; measured 2026-08-14: the
-    // cadence suite's 400/800 ms in-turn edits and every loaded happy-path row died at the
-    // 8-poll floor). A roster whose every survivor is inactive AND silent past the quiet window
-    // is declared quiesced.
-    const windowMs = Math.max(2 * maxObservedGapMs, QUIESCENCE_MIN_SILENT_POLLS * driver.pollIntervalMs);
-    const stuckWindowMs = Math.max(4 * maxObservedGapMs, QUIESCENCE_STUCK_MIN_POLLS * driver.pollIntervalMs);
-    const observedAtMs = Date.now();
-    for (const role of pending) {
-      const q = quiescence.get(role) ?? null;
-      if (q?.active === true && observedAtMs - q.silentSinceMs >= stuckWindowMs) {
-        steering.push({ evidence: 'wave_terminalized_unrecoverable', role, phase: q.phase ?? null });
-        exit = 'terminalized_unrecoverable';
-      }
-    }
-    if (exit !== null) break;
-    if (pending.size > 0 && [...pending].every((role) => {
-      const q = quiescence.get(role) ?? null;
-      return q !== null && q.active !== true && observedAtMs - q.silentSinceMs >= windowMs;
-    })) {
-      for (const role of pending) {
-        const q = quiescence.get(role);
-        q.silenceAtDeclarationMs = observedAtMs - q.silentSinceMs;
-      }
-      // #235: the declaration's evidence names the never-trafficked members — a quiesce that
-      // reads a wedged member as plainly 'silent' among healthy ones is the exact
-      // observability gap this closes. Evidence only; the exit is unchanged.
-      const providerSilentRoles = [...pending].filter((role) => quiescence.get(role)?.providerSilent === true);
-      steering.push({
-        evidence: 'wave_quiesced', roles: [...pending], windowMs, maxObservedGapMs,
-        ...(providerSilentRoles.length > 0 ? { providerSilent: [...providerSilentRoles] } : {}),
-      });
-      exit = 'quiesced';
-      break;
-    }
-
     await sleep(driver.pollIntervalMs);
   }
-  return { exit: exit ?? 'pending_empty', quiescence };
+  return { exit: exit ?? (closedObservers.size > 0 ? 'observation_closed' : 'pending_empty') };
 }
 
 function roleStuckOnHandled(handle, role, s) {
-  // Cheap heuristic: the role has at least one decision key we handled with no answer (defer/refuse).
-  for (const key of s.handledDecisionKeys) {
-    if (key.startsWith(`${handle?.id}:`)) return true;
-  }
-  return false;
+  const key = s.awaitingDecisionByRole.get(role);
+  return typeof key === 'string' && key.startsWith(`${handle?.id}:`)
+    && s.handledDecisionKeys.has(key);
 }
 
 async function pumpMessageOnSpawn(handle, role, policy, steering, s) {

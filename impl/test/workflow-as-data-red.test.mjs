@@ -369,6 +369,8 @@ async function wadFixture(t, { adapter } = {}) {
     scenariosByMarker: { default: { outcome: 'completed' } },
   });
   const driver = createDriver({
+    // Like a deployment, this fixture pins its base independently of dirty authored inputs.
+    deploymentBaseSha: execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repo, encoding: 'utf8' }).trim(),
     repoRoot: repo, repoId: REPO, logDir,
     adapters: { mock: coordAdapter },
     stopDeadlineMs: 2_000,
@@ -1619,3 +1621,35 @@ async function initialized(server) {
   await server.handle({ jsonrpc: '2.0', method: 'notifications/initialized' });
 }
 const wireCall = (server, id, name, args) => wireRequest(server, id, 'tools/call', { name, arguments: args });
+
+
+test('workflow launch preserves staged, unstaged and untracked caller work while using the configured base', async (t) => {
+  const fx = await wadFixture(t, { adapter: new TrackingMarkerAdapter({
+    harness: 'mock', scenariosByMarker: { writer: { outcome: 'completed', carryAttemptMarker: true,
+      edits: [{ path: 'reports/writer.md', content: 'worker result\n' }] } },
+  }) });
+  const git = (...args) => execFileSync('git', args, { cwd: fx.repo, encoding: 'utf8' });
+  writeFileSync(join(fx.repo, 'personal.txt'), 'staged user content\n');
+  git('add', 'personal.txt');
+  writeFileSync(join(fx.repo, 'personal.txt'), 'unstaged user content\n');
+  writeFileSync(join(fx.repo, 'scratch.txt'), 'untracked user content\n');
+  writeObjective(fx.repo, 'writer', 'write the writer report');
+  const indexPath = resolve(fx.repo, git('rev-parse', '--git-path', 'index').trim());
+  const before = {
+    head: git('rev-parse', 'HEAD'), index: readFileSync(indexPath),
+    staged: git('diff', '--cached', '--binary'), unstaged: git('diff', '--binary'),
+    personal: readFileSync(join(fx.repo, 'personal.txt')), scratch: readFileSync(join(fx.repo, 'scratch.txt')),
+    objective: readFileSync(join(fx.repo, 'objectives', 'writer.md')),
+  };
+  const receipt = await driveLane(fx.baton, 'caller-work-preservation', validSpec({
+    idempotencyKey: 'preserve-caller-work', members: [wadMember('writer')], harvest: { paths: [] },
+  }));
+  assert.equal(receipt.verdict, 'WAVE-OK', 'dirty authored input works with a deployment-pinned base');
+  assert.equal(git('rev-parse', 'HEAD'), before.head);
+  assert.deepEqual(readFileSync(indexPath), before.index, 'caller index remains byte-identical');
+  assert.equal(git('diff', '--cached', '--binary'), before.staged);
+  assert.equal(git('diff', '--binary'), before.unstaged);
+  assert.deepEqual(readFileSync(join(fx.repo, 'personal.txt')), before.personal);
+  assert.deepEqual(readFileSync(join(fx.repo, 'scratch.txt')), before.scratch);
+  assert.deepEqual(readFileSync(join(fx.repo, 'objectives', 'writer.md')), before.objective);
+});

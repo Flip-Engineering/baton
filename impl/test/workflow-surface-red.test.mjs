@@ -587,14 +587,14 @@ test('FP-04 (stage: facade receipt absent) THE IDENTITY ROW: facade == coordinat
     assert.equal(viaFacade?.schemaVersion, 1, 'the envelope marker rides');
     assert.equal(viaFacade?.messageId, messageId, 'the messageId echo (Decision 1 envelope completion)');
     return {
-      facade: { delivered: viaFacade.delivered, read: viaFacade.read, actedOn: viaFacade.actedOn, reply: viaFacade.reply },
+      facade: { delivered: viaFacade.delivered, read: viaFacade.read, actedOn: viaFacade.actedOn, reply: viaFacade.reply, replies: viaFacade.replies },
       lane: viaLane,
     };
   };
   // At send: delivered, never read, never acted-on (C3 honesty).
   let pair = await both(sent.messageId);
   assert.deepEqual(pair.facade, pair.lane, 'receipt identity at send');
-  assert.deepEqual(pair.facade, { delivered: true, read: null, actedOn: null, reply: null });
+  assert.deepEqual(pair.facade, { delivered: true, read: null, actedOn: null, reply: null, replies: [] });
   // After a same-generation turn_started: read flips on both paths.
   fx.adapter.emit({ worker: handle.id, harness: 'mock@1.0.0', turnEpoch: 2, kind: 'lifecycle.turn_started', actor: 'worker', payload: {} });
   await flush();
@@ -609,7 +609,7 @@ test('FP-04 (stage: facade receipt absent) THE IDENTITY ROW: facade == coordinat
   await flush();
   pair = await both(sent2.messageId);
   assert.deepEqual(pair.facade, pair.lane, 'receipt identity across process death');
-  assert.deepEqual(pair.facade, { delivered: true, read: null, actedOn: null, reply: null },
+  assert.deepEqual(pair.facade, { delivered: true, read: null, actedOn: null, reply: null, replies: [] },
     'delivered is written at send; read is never upgraded to a lie');
   // A respawned worker does NOT inherit the read (C3b process-scoping, projected as-is).
   fx.adapter.emit({ worker: handle.id, harness: 'mock@1.0.0', turnEpoch: 3, kind: 'lifecycle.turn_started', actor: 'worker', payload: {} });
@@ -619,11 +619,13 @@ test('FP-04 (stage: facade receipt absent) THE IDENTITY ROW: facade == coordinat
   assert.equal(pair.facade.read, null, 'a new process generation does not mark the old delivery read');
   // With a reply: the closed {messageId, inReplyTo, from, body} envelope and NOTHING
   // else (C1b) — smuggled fields never reach either receipt.
+  // A turn event alone cannot revive a closed session: exercise replies through a live replacement.
+  const replyHandle = await coordinator.spawn('mock', makeBrief(), { runId: 'run:b3' });
   const sent3 = await fx.application.command('run.message.send', {
-    workerId: handle.id, kind: 'query', body: 'third',
+    workerId: replyHandle.id, kind: 'query', body: 'third',
   }, wave, null);
   fx.adapter.emit({
-    worker: handle.id, harness: 'mock@1.0.0', turnEpoch: 3, kind: 'message.send', actor: 'worker',
+    worker: replyHandle.id, harness: 'mock@1.0.0', turnEpoch: 1, kind: 'message.send', actor: 'worker',
     payload: { inReplyTo: sent3.messageId, body: 'ack — picking up the first now', priority: 'high', cc: ['w-9'] },
   });
   await flush();
@@ -674,7 +676,7 @@ test('FP-05 (stage: facade receipt absent): resolve-then-authorize — unknown �
   });
   await flush();
   assert.deepEqual(fx2.driver.coordinator.messageReceipt(toDead.messageId),
-    { delivered: true, read: null, actedOn: null, reply: null },
+    { delivered: true, read: null, actedOn: null, reply: null, replies: [] },
     'the lane stays honest across the death (C3) — delivered is written at send, read is never upgraded to a lie');
   const dead = await facadeError(() => fx2.application.command('run.message.receipt', { messageId: toDead.messageId }, wave, null));
   assert.equal(dead?.code, 'application_unauthorized',

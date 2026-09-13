@@ -229,17 +229,23 @@ export async function createWave(baton, options = {}) {
     stops: [],
   };
 
-  // Start members individually and explicitly approve each — nothing parks on a silent
-  // authority gate, and one member's start failure never aborts the others.
-  for (const member of members) {
+  // Admit members concurrently: every start is INITIATED in roster order (the map runs each
+  // per-member admission synchronously up to its first await) but awaited together, so a slow
+  // provider/admission on one member never head-of-line blocks an unrelated sibling. Each member
+  // owns its try/catch — one member's start/approve failure must never abort the others, and no
+  // admission rejection can escape into the shared Promise.all. Entries commit to `state.members`
+  // in roster order AFTER all admissions settle, so the roster/result/progress projections stay
+  // deterministic regardless of which member finishes first.
+  const admitted = await Promise.all(members.map(async (member) => {
     const entry = { member, run: null, startError: null };
     try {
       const route = member.exact
         ? { exact: member.exact }
         : { harness: member.harness, model: member.model, effort: member.effort };
       // 93B: waveId/waveRole bind each run to this wave (into steering.registered, so a
-      // driver dying mid-loop leaves members discoverable); waveStart rides the first
-      // member's start to mint the pre-loop wave.started record.
+      // driver dying mid-loop leaves members discoverable); every member's start carries the
+      // same waveStart payload, and the waveId-keyed append dedup means whichever admission
+      // lands first mints the pre-loop wave.started record.
       entry.run = await baton.runs.start(member.objective, {
         ...route, scope: [...member.scope], driverKind: 'wave',
         waveId, waveRole: member.role,
@@ -249,8 +255,9 @@ export async function createWave(baton, options = {}) {
     } catch (error) {
       entry.startError = { code: error?.code ?? null, message: String(error?.message ?? error) };
     }
-    state.members.set(member.role, entry);
-  }
+    return entry;
+  }));
+  for (const entry of admitted) state.members.set(entry.member.role, entry);
 
   return createWaveHandle({ repoRoot, members, state, waveId });
 }

@@ -150,3 +150,70 @@ test('embedded-only worker capability remains visible but cannot be promoted by 
     (error) => error.code === 'surface_embedded_only',
   );
 });
+
+test('surface visualize parses all fields including --follow boolean flag', () => {
+  const full = parseUnifiedSurfaceCli([
+    'surface', 'visualize', '--view', 'telemetry', '--run-id', 'run:a', '--wave-id', 'wave:a',
+    '--width', '120', '--follow', '--after-cursor', '4', '--attention-cursor', '7',
+    '--kind', 'answer_decision', '--timeout', '2000',
+  ]);
+  assert.deepEqual(full, {
+    kind: 'surface_visualize',
+    view: 'telemetry',
+    runId: 'run:a',
+    waveId: 'wave:a',
+    width: 120,
+    follow: true,
+    afterCursor: 4,
+    attentionCursor: 7,
+    attentionKind: 'answer_decision',
+    timeoutMs: 2000,
+    mcpConfig: null,
+  });
+  const minimal = parseUnifiedSurfaceCli(['surface', 'visualize']);
+  assert.equal(minimal.kind, 'surface_visualize');
+  assert.equal(minimal.follow, false);
+  assert.equal(minimal.view, null);
+  assert.equal(minimal.width, null);
+  assert.throws(
+    () => parseUnifiedSurfaceCli(['surface', 'visualize', '--width', '10']),
+    (error) => error.code === 'cli_invalid' && error.field === 'width',
+  );
+  assert.throws(
+    () => parseUnifiedSurfaceCli(['surface', 'visualize', '--timeout', '0']),
+    (error) => error.code === 'cli_invalid' && error.field === 'timeoutMs',
+  );
+});
+
+test('configured visualize delegates to the existing MCP authority as baton_surface_visualize', async () => {
+  const calls = [];
+  const mcpCall = async (config, name, args) => {
+    calls.push({ config, name, args });
+    return { ok: true, name };
+  };
+  const parsed = parseUnifiedSurfaceCli([
+    'surface', 'visualize', '--view', 'topology', '--run-id', 'run:a',
+    '--follow', '--mcp-config', 'deployment.mjs',
+  ]);
+  const result = await executeUnifiedSurfaceCli(parsed, { mcpCall });
+  assert.equal(result.name, 'baton_surface_visualize');
+  assert.equal(calls[0].args.view, 'topology');
+  assert.equal(calls[0].args.runId, 'run:a');
+  assert.equal(calls[0].args.follow, true);
+});
+
+test('visualize follow without runId is refused before calling the client', async () => {
+  const parsed = parseUnifiedSurfaceCli(['surface', 'visualize', '--follow']);
+  await assert.rejects(
+    executeUnifiedSurfaceCli(parsed, { client: { surfaceVisualize: async () => ({}) } }),
+    (error) => error.code === 'surface_visualization_invalid' && error.field === 'runId',
+  );
+});
+
+test('visualize without mcpConfig requires an authenticated client with surfaceVisualize', async () => {
+  const parsed = parseUnifiedSurfaceCli(['surface', 'visualize', '--run-id', 'run:a']);
+  await assert.rejects(
+    executeUnifiedSurfaceCli(parsed),
+    (error) => error.code === 'cli_config_invalid',
+  );
+});
