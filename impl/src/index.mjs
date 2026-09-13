@@ -21,6 +21,7 @@ import { RuntimeIsolation } from './runtime-isolation.mjs';
 import { CoordinationStore } from './coordination-store.mjs';
 import { routeTupleKey } from './route-tuple.mjs';
 import { withinConcurrencyCeiling } from './concurrency-policy.mjs';
+import { snapshotWorkspace } from './workspace-snapshot.mjs';
 import { CapabilityRegistry } from './capability-registry.mjs';
 import {
   AtlasRepresentationProducer, AtlasCodeIndex, AtlasStructuralDelta,
@@ -267,6 +268,7 @@ function worktreeManager(repoRoot, opts = {}) {
   const workerReservations = new Map();
   const pendingWorkerReservations = new Map();
   const failedWorkerTransactions = new Map();
+  const snapshots = new Map();
   const capacityRequest = (baseSha, sparsePaths, sparseCheckoutIdentity) => ({
     baseSha,
     sparsePaths,
@@ -698,6 +700,39 @@ function worktreeManager(repoRoot, opts = {}) {
         if (error instanceof worktreeMod.WorkspaceOwnerDiagnostic && !error.cause) return false;
         return null;
       }
+    },
+    async snapshot(worktreePath, captureOpts = {}) {
+      const ownerId = captureOpts.ownerTaskId;
+      if (typeof ownerId !== 'string') throw new TypeError('snapshot requires a physical worktree owner');
+      const validate = () => {
+        const owned = worktreeMod.validateOwnedWorktree(repoRoot, ownerId, {
+          expectedPath: worktreePath, expectedBaseSha: captureOpts.expectedBaseSha,
+          expectedBranch: captureOpts.expectedBranch,
+          sparseCheckoutIdentity: captureOpts.workerSparseCheckoutIdentity,
+        });
+        if (/^ws-[a-f0-9]{32}$/u.test(ownerId)) {
+          const receipt = worktreeMod.physicalWorkspaceOwnerReceipt(repoRoot, ownerId);
+          if (!receipt || receipt.state !== 'ready'
+            || receipt.receiptDigest !== captureOpts.ownerReceiptDigest
+            || receipt.deploymentId !== opts.ownerAuthority?.deploymentId
+            || receipt.controllerId !== opts.ownerAuthority?.controllerId) {
+            throw Object.assign(new Error('Snapshot workspace custody changed'), { code: 'workspace_owner_binding_changed' });
+          }
+        }
+        return owned;
+      };
+      const operation = (snapshots.get(ownerId) ?? Promise.resolve()).catch(() => {}).then(async () => {
+        const owned = validate();
+        const captured = await snapshotWorkspace({
+          worktree: owned.dir, baseSha: owned.meta.baseSha,
+          excludedPaths: [...(owned.meta.toolchainProjectionTargets ?? []), ...(owned.meta.copiedDependencies ?? [])],
+        });
+        validate();
+        return { ...captured, sparseCheckoutIdentity: owned.sparseCheckoutIdentity };
+      });
+      snapshots.set(ownerId, operation);
+      try { return await operation; }
+      finally { if (snapshots.get(ownerId) === operation) snapshots.delete(ownerId); }
     },
     async capture(worktreePath, captureOpts = {}) {
       if (typeof captureOpts.ownerTaskId !== 'string') throw new TypeError('capture requires an explicit physical worktree owner');

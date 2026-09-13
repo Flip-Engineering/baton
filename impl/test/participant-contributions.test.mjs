@@ -170,6 +170,35 @@ test('stop waits for an in-flight capture before removing the author workspace',
   assert.equal(f.prompts.length, 0);
 });
 
+test('live captures queue per participant and stop waits for both retained revisions', async (t) => {
+  const f = await fixture(t);
+  await f.coordinator.guideParticipant(f.handle.id, 'Continue working');
+  const entered = deferred();
+  const release = deferred();
+  let calls = 0;
+  f.worktrees.snapshot = async () => {
+    calls++;
+    if (calls === 1) { entered.resolve(); await release.promise; }
+    return { sha: calls === 1 ? SHA : 'c'.repeat(40), baseSha: BASE, changedPaths: [] };
+  };
+  let removed = false;
+  f.worktrees.remove = async () => { removed = true; };
+  const first = f.coordinator.captureContribution(f.handle.id, { contributionId: 'first' });
+  await entered.promise;
+  const second = f.coordinator.captureContribution(f.handle.id, { contributionId: 'second' });
+  await new Promise(setImmediate);
+  assert.equal(calls, 1);
+  const stopping = f.coordinator.kill(f.handle.id);
+  await new Promise(setImmediate);
+  assert.equal(removed, false);
+  release.resolve();
+  const captures = await Promise.all([first, second]);
+  await stopping;
+  assert.equal(removed, true);
+  assert.equal(calls, 2);
+  for (const capture of captures) assert.equal(await f.worktrees.resolveCheckpoint(capture.ref), capture.sha);
+});
+
 test('queued guidance resolves a turn that pauses while an earlier delivery is in flight', async (t) => {
   const f = await fixture(t);
   await f.coordinator.guideParticipant(f.handle.id, 'Continue the investigation.');

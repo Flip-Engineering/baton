@@ -25,12 +25,11 @@
 //
 // The temporary index is seeded by COPYING the real index rather than by
 // `read-tree <baseSha>` so that index metadata survives verbatim: skip-worktree
-// entries (sparse checkouts) and assume-unchanged entries are then honored by
-// `git add -A` exactly as git honors them for an ordinary commit, so files that are
-// not materialized in the worktree are never misrecorded as deletions.
+// entries (sparse checkouts) keep absent files from becoming deletions. Clear
+// assume-unchanged only in the temporary index so visible edits are still captured.
 
 import { execFileSync } from 'node:child_process';
-import { copyFileSync, existsSync, lstatSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, lstatSync, mkdtempSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { isAbsolute, join, resolve as pathResolve } from 'node:path';
 
@@ -40,12 +39,6 @@ export class WorkspaceSnapshotError extends Error {
     if (cause !== undefined) this.cause = cause;
   }
 }
-
-// Resource bounds on caller input (mirrors SPARSE_MAX_* discipline in worktree.mjs):
-// structural bounds on one call, not journals or caps on live work.
-const MAX_EXCLUDED_PATHS = 1024;
-const MAX_PATH_BYTES = 2048;
-const MAX_ARG_BYTES = 4096;
 
 const GIT_AUTHOR = 'baton-live-snapshot';
 const GIT_EMAIL = 'baton-live-snapshot@localhost';
@@ -63,20 +56,21 @@ function gitEnv(gitIndexFile) {
   };
 }
 
-function git(args, cwd, gitIndexFile) {
-  return execFileSync('git', ['--no-optional-locks', ...args], {
-    cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], env: gitEnv(gitIndexFile),
-  }).trim();
+function git(args, cwd, gitIndexFile, input) {
+  const output = execFileSync('git', ['--no-optional-locks', ...args], {
+    cwd, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'], env: gitEnv(gitIndexFile), input,
+  });
+  return args.includes('-z') ? output : output.trim();
 }
 
 /** A path is safe to exclude only if it names something strictly inside the worktree. */
 function validateExcludedPaths(excludedPaths) {
-  if (!Array.isArray(excludedPaths) || excludedPaths.length > MAX_EXCLUDED_PATHS) {
-    throw new TypeError(`excludedPaths must be an array of at most ${MAX_EXCLUDED_PATHS} relative paths`);
+  if (!Array.isArray(excludedPaths)) {
+    throw new TypeError('excludedPaths must be an array of relative paths');
   }
   const seen = new Set();
   for (const raw of excludedPaths) {
-    if (typeof raw !== 'string' || raw.length === 0 || Buffer.byteLength(raw) > MAX_PATH_BYTES || raw.includes('\0')) {
+    if (typeof raw !== 'string' || raw.length === 0 || raw.includes('\0')) {
       throw new WorkspaceSnapshotError(`unsafe excluded path: ${JSON.stringify(raw ?? null)}`, 'workspace_snapshot_invalid_exclusion');
     }
     if (isAbsolute(raw)) {
@@ -95,18 +89,6 @@ function validateExcludedPaths(excludedPaths) {
 }
 
 /**
- * Effective ignore file whose content must survive our excludesFile override:
- * the repo's configured core.excludesFile, else the default info/exclude.
- */
-function effectiveExcludesFile(worktree) {
-  let configured = '';
-  try { configured = git(['config', '--get', 'core.excludesFile'], worktree); } catch { /* unset */ }
-  if (configured) return isAbsolute(configured) ? configured : pathResolve(worktree, configured);
-  const raw = git(['rev-parse', '--git-path', 'info/exclude'], worktree);
-  return isAbsolute(raw) ? raw : pathResolve(worktree, raw);
-}
-
-/**
  * Snapshot the visible work of an active worktree into an immutable commit.
  *
  * @param {{worktree: string, baseSha: string, excludedPaths?: string[]}} args
@@ -116,11 +98,14 @@ function effectiveExcludesFile(worktree) {
  */
 export async function snapshotWorkspace({ worktree, baseSha, excludedPaths = [] }) {
   // ---- shape validation (pure, before anything touches git) ----
-  if (typeof worktree !== 'string' || worktree.length === 0 || Buffer.byteLength(worktree) > MAX_ARG_BYTES || worktree.includes('\0')) {
+  if (typeof worktree !== 'string' || worktree.length === 0 || worktree.includes('\0')) {
     throw new TypeError('worktree must be a non-empty path string');
   }
-  if (typeof baseSha !== 'string' || baseSha.length === 0 || Buffer.byteLength(baseSha) > MAX_ARG_BYTES || baseSha.includes('\0')) {
+  if (typeof baseSha !== 'string' || baseSha.length === 0 || baseSha.includes('\0')) {
     throw new TypeError('baseSha must be a non-empty string');
+  }
+  if (!/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/u.test(baseSha)) {
+    throw new WorkspaceSnapshotError('baseSha must identify a full commit SHA', 'workspace_snapshot_invalid_base');
   }
   const excluded = validateExcludedPaths(excludedPaths);
 
@@ -175,20 +160,17 @@ export async function snapshotWorkspace({ worktree, baseSha, excludedPaths = [] 
     const realIndexRaw = git(['rev-parse', '--git-path', 'index'], worktree);
     const realIndex = isAbsolute(realIndexRaw) ? realIndexRaw : pathResolve(worktree, realIndexRaw);
     if (existsSync(realIndex) && lstatSync(realIndex).isFile()) copyFileSync(realIndex, tempIndex);
-    else git(['read-tree', '--empty'], worktree, tempIndex);
+    else throw new WorkspaceSnapshotError('Workspace index is unavailable', 'workspace_snapshot_index_unavailable');
 
-    // Preserve the repo's own ignore authority: our -c overrides core.excludesFile,
-    // so fold its current content into the temporary file ahead of the excludes.
-    const excludeFile = join(tempRoot, 'excludes');
-    let inherited = '';
-    const inheritedPath = effectiveExcludesFile(worktree);
-    try { if (inheritedPath && existsSync(inheritedPath)) inherited = readFileSync(inheritedPath, 'utf8'); } catch { /* best effort */ }
-    writeFileSync(excludeFile, `${inherited}${excluded.map((path) => `/${path}`).join('\n')}${excluded.length > 0 ? '\n' : ''}`, { encoding: 'utf8', mode: 0o600 });
+    const assumed = git(['ls-files', '-v', '-z'], worktree, tempIndex).split('\0')
+      .filter((row) => /^[a-z] /u.test(row)).map((row) => row.slice(2));
+    if (assumed.length) git(['update-index', '--no-assume-unchanged', '-z', '--stdin'],
+      worktree, tempIndex, `${assumed.join('\0')}\0`);
 
-    // Stage visible work into the temporary index only. add -A honors skip-worktree/
-    // assume-unchanged bits carried over from the copied index, respects .gitignore
-    // and the merged excludes, and writes nothing outside GIT_INDEX_FILE.
-    git(['-c', `core.excludesFile=${excludeFile}`, '-c', 'core.fsmonitor=false', 'add', '-A'], worktree, tempIndex);
+    // Literal pathspec exclusions cannot reinterpret a dependency name as an ignore glob.
+    // Keep the repository's existing ignore configuration, including info/exclude.
+    git(['-c', 'core.fsmonitor=false', 'add', '-A', '--', '.',
+      ...excluded.map((path) => `:(exclude,literal)${path}`)], worktree, tempIndex);
 
     const treeSha = git(['write-tree'], worktree, tempIndex);
     const message = `baton live snapshot\n\nBaton-Base: ${resolvedBase}\nBaton-Head: ${headSha}\nBaton-Excluded: ${excluded.length}\n`;
@@ -207,6 +189,6 @@ export async function snapshotWorkspace({ worktree, baseSha, excludedPaths = [] 
     throw new WorkspaceSnapshotError(`workspace snapshot failed: ${error?.message ?? error}`, 'workspace_snapshot_failed', error);
   } finally {
     // Every exit path cleans the temporary index and excludes file.
-    if (tempRoot) { try { rmSync(tempRoot, { recursive: true, force: true }); } catch { /* best effort */ } }
+    if (tempRoot) rmSync(tempRoot, { recursive: true, force: true });
   }
 }

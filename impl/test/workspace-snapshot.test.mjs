@@ -270,11 +270,7 @@ test('unsafe excluded paths are rejected before any git mutation', async (t) => 
     );
   }
   await assert.rejects(() => snapshotWorkspace({ worktree: dir, baseSha, excludedPaths: 'not-an-array' }), TypeError);
-  await assert.rejects(
-    () => snapshotWorkspace({ worktree: dir, baseSha, excludedPaths: new Array(1025).fill('x') }),
-    TypeError,
-    'excludedPaths is bounded',
-  );
+  await snapshotWorkspace({ worktree: dir, baseSha, excludedPaths: new Array(1025).fill('x') });
   assert.equal(indexBytes(dir), indexBefore);
   assert.equal(liveSnapshotDirs().length, 0);
 });
@@ -373,4 +369,38 @@ test('a repo-configured core.excludesFile keeps ignoring private runtime files i
   assert.deepEqual(result.changedPaths, ['code.txt']);
   assert.equal(inTree(dir, result.sha, 'secret-api.key'), false, 'credentials never enter the snapshot');
   assert.equal(inTree(dir, result.sha, '.env.runtime'), false, 'private runtime never enters the snapshot');
+});
+
+test('literal exclusions preserve neighboring filenames and changedPaths preserves leading whitespace', async (t) => {
+  const { dir, baseSha } = makeRepo();
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  writeFileSync(join(dir, ' leading.txt'), 'visible\n');
+  writeFileSync(join(dir, 'dep*.txt'), 'generated\n');
+  writeFileSync(join(dir, 'departure.txt'), 'source\n');
+  const result = await snapshotWorkspace({ worktree: dir, baseSha, excludedPaths: ['dep*.txt'] });
+  assert.deepEqual(result.changedPaths, [' leading.txt', 'departure.txt']);
+  assert.equal(inTree(dir, result.sha, 'dep*.txt'), false);
+  assert.equal(blobAt(dir, result.sha, 'departure.txt'), 'source\n');
+});
+
+test('a split index snapshots without rewriting its source index', async (t) => {
+  const { dir, baseSha } = makeRepo();
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  sh('git', ['update-index', '--split-index'], dir);
+  writeFileSync(join(dir, 'README.md'), 'live edit\n');
+  const before = indexBytes(dir);
+  const result = await snapshotWorkspace({ worktree: dir, baseSha });
+  assert.equal(indexBytes(dir), before);
+  assert.equal(blobAt(dir, result.sha, 'README.md'), 'live edit\n');
+});
+
+test('assume-unchanged is not a reason to omit a visible tracked edit', async (t) => {
+  const { dir, baseSha } = makeRepo();
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  sh('git', ['update-index', '--assume-unchanged', 'README.md'], dir);
+  writeFileSync(join(dir, 'README.md'), 'visible despite index flag\n');
+  const before = indexBytes(dir);
+  const result = await snapshotWorkspace({ worktree: dir, baseSha });
+  assert.equal(indexBytes(dir), before);
+  assert.equal(blobAt(dir, result.sha, 'README.md'), 'visible despite index flag\n');
 });

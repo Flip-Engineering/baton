@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { execFile, execFileSync } from 'node:child_process';
 import { promisify } from 'node:util';
 import { swarmBridgeCommand } from '../src/swarm-native-bridge.mjs';
-import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, readFileSync, mkdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { BatonApplication, MockAdapter, bindBaton, createDriver } from '../src/index.mjs';
@@ -174,4 +174,44 @@ test('native shells coordinate, recruit and contribute through scoped runtime-in
   await assert.rejects(swarmBridgeCommand({ command: 'swarm.inspect', args: { swarmId: swarm.id } }, { env: builderEnv }),
     { code: 'swarm_bridge_token_invalid' });
   assert.equal((await native(leadEnv, 'swarm.inspect')).caller.participantId, 'lead');
+});
+
+test('an implementer captures and checks its own live code through its native shell', async (t) => {
+  const { baton, driver, adapter } = await fixture(t);
+  let release;
+  const heldTurn = new Promise((done) => { release = done; });
+  const run = adapter._runSession.bind(adapter);
+  adapter._runSession = async (...args) => { await heldTurn; return run(...args); };
+  let environment;
+  const spawn = adapter.spawn.bind(adapter);
+  adapter.spawn = (worker, brief, options) => { environment = options.env; return spawn(worker, brief, options); };
+  const swarm = await baton.swarms.create('Let implementers publish their own running work');
+  const builder = await swarm.recruit('builder', 'Implement a contribution', selection);
+  try {
+    const worker = driver.coordinator.list().find((row) => row.runId === builder.runId);
+    const cwd = worker.worktree;
+    const git = (args) => execFileSync('git', args, { cwd, encoding: 'utf8' }).trim();
+    mkdirSync(join(cwd, 'impl'), { recursive: true });
+    writeFileSync(join(cwd, 'impl/live.txt'), 'staged\n');
+    git(['add', 'impl/live.txt']);
+    writeFileSync(join(cwd, 'impl/live.txt'), 'staged\nadditional live work\n');
+    const indexPath = git(['rev-parse', '--git-path', 'index']);
+    const index = readFileSync(indexPath);
+    const head = git(['rev-parse', 'HEAD']);
+    const native = async (command, args) => {
+      const { stdout } = await promisify(execFile)(process.execPath,
+        [environment.BATON_SWARM_CLIENT, command, JSON.stringify(args)], { env: environment });
+      return JSON.parse(stdout);
+    };
+    const captured = await native('swarm.capture', { participantId: 'builder', contributionId: 'live' });
+    assert.equal(git(['show', `${captured.sha}:impl/live.txt`]), 'staged\nadditional live work');
+    assert.equal(git(['rev-parse', 'HEAD']), head);
+    assert.deepEqual(readFileSync(indexPath), index);
+    assert.equal(driver.coordinator.pausedTurns({ workerId: worker.id }).length, 0);
+    const checked = await native('swarm.check', { participantId: 'builder', contributionId: 'live', checkId: 'own-check' });
+    assert.equal(checked.passed, true);
+    assert.equal((await swarm.inspect()).participants[0].runtime.turn, 'running');
+    assert.deepEqual(readFileSync(indexPath), index, 'verification leaves the live staging area untouched too');
+  } finally { release(); }
+  await paused(driver, builder.runId);
 });

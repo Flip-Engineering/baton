@@ -155,13 +155,19 @@ current active/paused delivery behavior inside the worker's serialized delivery 
 an immutable contribution without finishing its author; independent verification can run while
 the author continues or after its session closes. A check result and an acceptance review are
 separate observations. Organizational close and participant shutdown are separate operations.
+Live capture uses a separate Git index and leaves the author's HEAD, branch and staging area
+unchanged. A contribution can carry both its original finding and an attached immutable revision.
+Routine tool and usage events do not wake swarm watchers into a self-generated feedback loop.
 
 The application test exercises delegated recruitment through the actual SDK, application,
 coordination store, Git worktrees, and mock native adapter. Separate tests exercise contribution
 capture, checking, concurrent guidance, permission boundaries, durable replay, and transport
 exposure. These prove the implementation seams; they are not a claim of complete native swarm
-acceptance. Native worker access is integrated and tested through real child-process clients. Actual GLM/DeepSeek
-coordination is under live exercise; observed harness subagents remain a separate integration.
+acceptance. Native worker access is integrated and tested through real child-process clients,
+including implementer self-capture during an active turn. An actual GLM 5.3 Flash coordinator
+recruited DeepSeek Flash, changed groups/context, received findings, and captured and checked the
+builder's revision while preserving its session. Observed harness subagents remain a separate
+integration.
 
 Still required for the full design: multi-holder group workspace custody; ongoing native swarm
 acceptance across harnesses; richer selected-event subscriptions and delivery; revisable grants;

@@ -2230,7 +2230,7 @@ export class Coordinator {
     this._contributions ??= new ContributionService({
       worktrees: this._worktrees, referee: this._referee, accept: this._accept,
       acceptOptions: this._acceptOpts, closeVerdict: closedVerificationVerdict,
-      capture: (handle, task) => this._captureTrustWorktree(handle, task),
+      capture: (handle, task) => this._captureTrustWorktree(handle, task, { snapshot: true }),
       events: (workerId) => this._log.read(workerId),
       record: (kind, payload, handle, task) => {
         const event = this._log.append({
@@ -2245,12 +2245,29 @@ export class Coordinator {
     return this._contributions;
   }
 
-  /** Capture a contribution at a turn boundary without consuming the pause or finishing work. */
+  /** Snapshot a contribution while its author continues. Legacy mutating ports need a pause. */
   captureContribution(workerId, { contributionId } = {}) {
     return this._withAuthorityOp(async () => {
       const service = this._contributionOperations();
       const prior = service.captured(workerId, contributionId);
       if (prior) return structuredClone(prior);
+      if (typeof this._worktrees.snapshot === 'function') {
+        const handle = this._getWorker(workerId);
+        const task = this._tasks.get(handle.taskId);
+        if (['stopping', 'dead', 'exited'].includes(handle.status)) {
+          throw Object.assign(new Error('Participant workspace is closing or closed'), { code: 'contribution_workspace_unavailable' });
+        }
+        // Register the whole queue before yielding. Stop can close a process, but must wait
+        // for every admitted capture to be retained before it removes this workspace.
+        const operation = (handle.contributionCapturePending ?? Promise.resolve()).catch(() => {}).then(async () => {
+          await handle.worktreeReady;
+          return service.capture({ handle, task, contributionId });
+        });
+        const settled = operation.then(() => {}, () => {});
+        handle.contributionCapturePending = settled;
+        try { return await operation; }
+        finally { if (handle.contributionCapturePending === settled) handle.contributionCapturePending = null; }
+      }
       const pause = this.pausedTurns({ workerId })[0];
       if (!pause) throw Object.assign(new Error('Contribution capture requires a paused turn'), {
         code: 'contribution_capture_not_paused',
@@ -2644,12 +2661,14 @@ export class Coordinator {
 
   /** The trust gate's capture call, shared verbatim by the #88 preflight (CP2 fidelity law 1 —
    * gate-identical worktree + authority kwargs, :12490-12498). */
-  _captureTrustWorktree(handle, task) {
-    return this._worktrees.capture(handle.worktree ?? task.worktree, {
+  _captureTrustWorktree(handle, task, { snapshot = false } = {}) {
+    const capture = snapshot && typeof this._worktrees.snapshot === 'function' ? this._worktrees.snapshot : this._worktrees.capture;
+    return capture.call(this._worktrees, handle.worktree ?? task.worktree, {
       vendor: handle.vendor,
       model: handle.modelObserved ?? handle.modelResolved,
       ...((handle.effortObserved ?? handle.effortResolved) ? { effort: handle.effortObserved ?? handle.effortResolved } : {}),
       ownerTaskId: task.sessionContext?.ownerTaskId ?? task.id,
+      ...(snapshot ? { ownerReceiptDigest: task.sessionContext?.ownerReceiptDigest } : {}),
       ...(task.sessionContext?.baseSha ? { expectedBaseSha: task.sessionContext.baseSha } : {}),
       ...(task.sessionContext?.branch ? { expectedBranch: task.sessionContext.branch } : {}),
       ...(task.sessionContext?.sparseCheckoutIdentity ? { workerSparseCheckoutIdentity: task.sessionContext.sparseCheckoutIdentity } : {}),
