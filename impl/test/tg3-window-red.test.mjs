@@ -1,162 +1,49 @@
-// Issue #80 red suite: the folded TG3-window contract v1.2 (blue-team fold 2)
-// (contract: docs/reference/evidence/tg3-window-2026-08-07/tg3-window-contract.md;
-// fold: contract-fold.md — B1/B2/B3 blockers; red-team: contract-redteam.md;
-// suite-fold-2.md — the F1-F7 finding → resolution map).
+// Issue #80 TG3-window suite, REVISED 2026-09-12 — the autonomous-orchestrator ownership rule.
 //
-// D1 the window is evidence-gated, never longer (candidate (a) — a bigger window — is rejected
-// by construction). D2 the turn-start dispatch receipt (`resource.provider_call
-// {phase: 'requested', callId}`, emitted AT the dispatch point) answers the steering cycle —
-// requested OR completed phase, validity-gated, per-seat, honest naming, anti-gaming (once per
-// record, the FINAL still demands the diff). V1.2 sealed-gate clarification: the D2/B1 "validity
-// gate" is the id/phase/transition validity of `_observeLogicalProviderCall` EXCLUDING the
-// `provider_call_after_terminal` sealed gate for in-window receipts — the D2 path answers AND
-// stays governance-clean (the provider-call rows pin that side: zero governance violations,
-// providerPolicyHardExceeded false, no budget-stop armed, never killed).
-// D3 the honest-stall discriminator is "no start-class evidence": `_expireSteeringCycle` re-checks
-// the evidence fold at fire time (B1) and only a fold EMPTY of start-class identity runs the full
-// final; the expiry is receipted for #55-class debuggability (`{windowMs, startEvidenceObserved,
-// answerClasses}` on the `steered` receipt and the `turn.settled {basis:'steering_expired'}`
-// payload). D4 the paused-only guard is preserved; the #67 REARM_KINDS fold (which excludes
-// `resource.provider_call`) is a depending-on-#67 row.
+// WHAT THIS FILE USED TO PIN (now retired, with the reason). The v1.2 contract made the
+// un-driven pause self-driving: `_admitPauseRecord` armed ONE bounded policy steering cycle —
+// a provenance-marked progress nudge ("baton-progress-check: …"), an armed window, an answer
+// set (`turn_started`, provider calls, distinct scratchpad/capability digests, resolved
+// interactions), and an expiry that ran the full final evaluation when nothing answered.
 //
-// Red-first: every RED row fails at a NAMED stage against the PRE-implementation tree and goes
-// green on the v1.1 implementation ONLY; every PIN row is green today AND green under the correct
-// implementation, but fails a plausible WRONG one (the pin list names what each pin kills). Idioms:
-// trust-gate-steering-red.test.mjs (the TG3 cycle harness) + workflow-as-data-red.test.mjs (the
-// target-state row idiom — a depending-on row fails at its named stage via a first-assertion
-// `assert.ok(...)` on an invented export, so the file LOADs but the row fails).
+// Live counter-example (native-completion-loop, a real native Claude self-build): a worker
+// completed its change with a `pausable` card; the arm-time nudge BEGAN the next turn for the
+// atomic pipe; that `turn_started` answered the cycle; the completed turn then armed another
+// cycle. The policy renewed its own work for 570 provider turns while the model kept reporting
+// "Complete, no remaining work" — the window could never expire because the policy's own prompt
+// always answered it first, so no verdict ever landed. Any correction that keeps the coordinator
+// prompt-driven also keeps mixing two authorities ("the worker is alive" vs "the work is done")
+// inside a timer, and cannot be made honest by better evidence classes, bigger windows, or
+// period heuristics.
 //
-// Hermetic: mock adapters, tmp dirs, test.after cleanup, no network. Real timers drive the window
-// exactly as production does (progressNudgeWindowMs is a deployment knob; the tests use 25ms +
-// sleep(60) to cross it). NUL discipline: application.mjs and coordination-store.mjs are never
-// read whole; the static rows read only the NUL-free sources (coordinator.mjs, codex-appserver.mjs,
-// cli-adapters.mjs, claude-session.mjs). The providerGovernance deployment profile is observe-mode
-// so provider calls are validity-tracked (`_observeLogicalProviderCall`) without strict binding.
+// THE REVISED RULE. The pause seam has exactly ONE disposition: park. `_admitPauseRecord` mints
+// the durable `turn.paused` record, projects it on `pausedTurns()`, and returns — no policy
+// nudge, no window, no expiry verdict, no gate dispatch. A paused task is decided ONLY by an
+// explicit caller act:
+//   * `claim_turn` — runs the existing trust gate / verifier against a fresh capture (the
+//     autonomous orchestrator's completion claim; no steering receipt, no expiry receipt);
+//   * `nudge_turn` — a real fresh turn on the SAME task (a continuation, not a checkpoint
+//     verdict);
+//   * `wait_turn` — a receipt that leaves the record claimable.
+// Driven and un-driven runs are therefore identical, and the coordinator never invents
+// completion authority: native turn completion alone mints no claim, and no clock, count, or
+// prose ever decides a paused task.
 //
-// ===========================================================================
-// ROW INVENTORY (the split at the bottom was measured against the PRE-implementation tree)
-// ===========================================================================
+// Rows below pin the revised contract. The retired mechanics are asserted ABSENT by name so the
+// self-driving cycle cannot quietly return. `REARM_KINDS` (the #67 stall-watchdog fold) and the
+// stall seam's own window knob survive untouched — they are a different, evidence-gated surface.
 //
-// §A Evidence-answer classes (TW-01, TW-02)
-//   TW-01  a valid `requested`- and a valid `completed`-phase provider call for the seat inside
-//          the armed window each settle the cycle (`turn.settled {basis:'steering_answered'}`,
-//          task → working, ZERO gate events) AND stay governance-clean (F1 — the D2 receipt never
-//          fires the sealed gate: zero governance violations, providerPolicyHardExceeded false,
-//          no budget-stop armed, never killed). (RED: stage[provider-call-answer-missing])
-//   TW-02  the turn-start dispatch receipt is emitted at the dispatch point — a REAL codex adapter
-//          wired to the fake app-server emits `resource.provider_call {phase:'requested'}` before
-//          the second `turn_started` on the wire (F6 behavioral, no source shape pinned); cli
-//          carries the requested phase semantically; the atomic claude pipe emits none; a staged
-//          slow-start adapter shows the receipt arriving before `turn_started`. (RED:
-//          stage[dispatch-receipt-emission-missing])
-//
-// §B Expiry disposition (TW-03, TW-04, TW-04b, TW-05)
-//   TW-03  a queued start never expires the window — a `requested` provider call emitted from the
-//          same synchronous turn that armed the window (t≈0, F2 — no real sub-window sleep; the
-//          old "minute 4" staging was the #7 flake class) settles CONSTRUCTIVELY at expiry: task
-//          working, ZERO gate events, ZERO `steered` receipts, governance-clean (F1). (RED:
-//          stage[queued-start-expires])
-//   TW-04  the honest stall still evaluates — an EMPTY fold expiry runs the full final exactly as
-//          today with `steered: {nudgeId, answered:false}` durable on the gate error event.
-//          (PIN — today's T7b behavior)
-//   TW-04b the genuine expiry is receipted for #55-class debuggability — the `steered` receipt
-//          and the `turn.settled {basis:'steering_expired'}` payload carry the fold
-//          `{windowMs, startEvidenceObserved:false, answerClasses:[]}`. (RED:
-//          stage[steered-fold-missing])
-//   TW-05  a D2-gate defect never kills a healthy worker (B1) — the expiry re-checks the fold,
-//          finds a start-class identity, settles CONSTRUCTIVELY (task → working, zero gate events)
-//          and receipts `steering.evidence_gate_defect` carrying the fold
-//          (`startEvidenceObserved:true`, `answerClasses:['provider_call']`), AND leaves the worker
-//          governance-clean (F7 — the re-check's validity test excludes the sealed gate for
-//          in-window receipts, contract v1.2). (RED: stage[evidence-gate-defect-missing])
-//
-// §C Shipped pins + once-per-record (TW-06, TW-07, TW-08a, TW-08b)
-//   TW-06  `turn_started` remains a first-class answer — a resumed turn inside the window settles
-//          the cycle, zero gate events. (PIN)
-//   TW-07  the nudge never self-answers — the policy nudge's own delivery (`control.nudge`,
-//          actor 'policy') and the buffering adapter's ACCEPTANCE never settle the cycle; the
-//          window expires with `steered: {answered:false}`. (PIN)
-//   TW-08a once-per-record bound (existing classes) — the first qualifying answer settles; later
-//          evidence (provider calls, content) never re-arms; a NEW pause record gets its OWN
-//          single cycle; and the FINAL still demands the real diff. (PIN)
-//   TW-08b multiple provider calls answer exactly once — the FIRST, WHICH is pinned (F4: the
-//          settle's recorded answer carries callId 'tw8b-1' with phase 'requested'), governance-
-//          clean (F1), no re-answer, no re-arm. (RED: stage[provider-call-answers-once])
-//
-// §D The watchdog surface is untouched (TW-09a, TW-09b)
-//   TW-09a the shipped half — `_armWatchdog`'s working-only refusal (a blocked worker is never
-//          stall-declared) and `_observeWatchdogEvent`'s own provider-call tracking (a valid
-//          provider call is recorded in the handle's providerTurn) are byte-unchanged. (PIN)
-//   TW-09b the depending-on-#67 half — the #67 REARM_KINDS closed set (frozen, ACTUAL-sorted,
-//          excludes `resource.provider_call`) is asserted byte-unchanged against the #67 v1.1
-//          contract text; verified when #67 folds. (RED: stage[depending-on-#67: rearm-kinds-missing])
-//
-// §E No-clock control-law row + discrimination pins (TW-10, TW-disc-invalid, TW-disc-digest,
-// TW-disc-fold, TW-disc-scope)
-//   TW-10  the queued-start answer is EVIDENCE, never a window extension — the steering answer
-//          set carries the provider_call class, the window default stays byte-unchanged, and no
-//          per-route latency knob or expiry re-arm loop appears. (RED:
-//          stage[answer-not-evidence])
-//   TW-disc-invalid an invalid provider call (empty callId, phase outside the closed set) is
-//          telemetry noise, never an answer — the honest stall fires. (PIN)
-//   TW-disc-digest  the TG6 distinct-digest class holds — a distinct content digest answers and
-//          credits content-IDENTITY; a replay never re-answers or re-arms; the TG6 content-free-
-//          write class is staged (F5: a store-refused content-less write and a direct digest-less
-//          evidence never answer — the honest stall fires); the FINAL still demands the diff. (PIN)
-//   TW-disc-fold   the answer-class evidence fold is APPENDED at each evidence evaluation (F3) —
-//          a qualifying in-window provider_call leaves `record.steering.observedEvidence` carrying
-//          its kind and the provider_call PHASE identity on the pause record. (RED:
-//          stage[observed-evidence-append-missing])
-//   TW-disc-scope   a provider call from ANOTHER worker never reaches the seat's cycle — the seat
-//          still honest-stalls, the other worker is untouched. (PIN)
-//
-// ===========================================================================
-// INVENTED SURFACES (names + exact observable signatures the implementation must land)
-// ===========================================================================
-//
-// 1. `_steeringEvidenceQualifies` provider_call class — a valid `requested`/`completed`-phase
-//    provider call for the seat inside the armed window answers (coordinator.mjs; absent at HEAD).
-// 2. `_observeSteeringCycle` is called for `resource.provider_call` events (a call site beside the
-//    existing :12053/:12454 sites; absent at HEAD).
-// 3. `record.steering.observedEvidence` — the answer-class evidence fold on the in-memory pause
-//    record, appended at each evidence evaluation; the provider_call class records its PHASE
-//    identity (`requested` vs `completed`). (Absent at HEAD; TW-disc-fold pins the APPEND path —
-//    TW-05 injects the fold only to stage the B1 defect, and a fold-less impl that answers without
-//    recording the fold is caught by TW-disc-fold.)
-// 4. `steered` receipt gain `{windowMs, startEvidenceObserved, answerClasses}` on the gate
-//    error-event payload (:13206) AND the `turn.settled {basis:'steering_expired'}` payload.
-//    (Absent at HEAD — the receipt is `{nudgeId, answered:false}` only.)
-// 5. `steering.evidence_gate_defect` — a NEW named error-event receipt (kind 'error',
-//    payload.code 'steering.evidence_gate_defect') on the B1 constructive settle, carrying the
-//    fold. (Absent at HEAD.)
-// 6. Adapter dispatch emission — codex (`codex-appserver.mjs`, at the turn/start dispatch ~:997,
-//    before the await) and cli (`cli-adapters.mjs`, at its exec/turn dispatch) emit
-//    `resource.provider_call {phase:'requested', callId}`; the atomic claude pipe
-//    (`claude-session.mjs`) emits NO requested phase. (All three emit `completed` only at HEAD;
-//    F6: asserted SEMANTICALLY — the real codex adapter's wire order in TW-02, the cli kind+phase
-//    identity within a dispatch emission, NOT a pinned call shape.)
-// 7. `coordinator.mjs` REARM_KINDS — the #67 closed set, frozen, ACTUAL-sorted, excluding
-//    `resource.provider_call`. (Absent at HEAD; depending-on-#67.)
-//
-// ===========================================================================
-// VERIFIED SPLIT (recorded after finalization — two consecutive runs from the repo root)
-// ===========================================================================
-//
-// `node --test impl/test/tg3-window-red.test.mjs` from the repo root, twice (stable):
-//   run 1 → tests 17 · pass 8 · fail 9
-//   run 2 → tests 17 · pass 8 · fail 9
-// The 8 passes are exactly the PIN rows (TW-04, TW-06, TW-07, TW-08a, TW-09a, TW-disc-invalid,
-// TW-disc-digest, TW-disc-scope); the 9 failures are the red rows, each failing at its named stage.
+// Harness: mock adapter (a `pausable` card that accepts prompts but begins no turns), fake
+// worktrees, real timers over the 25ms `progressNudgeWindowMs` knob (asserted inert for the
+// pause seam), hermetic tmp dirs, no network.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { join } from 'node:path';
 
 import { Coordinator } from '../src/coordinator.mjs';
-import { CodexAppServerCli } from '../src/codex-appserver.mjs';
 import { Log } from '../src/log.mjs';
 import { FenceTable } from '../src/fence.mjs';
 import { coordinationForLog } from '../src/coordination-store.mjs';
@@ -178,7 +65,8 @@ const UNAVAILABLE_USAGE_SEAL = Object.freeze({
 });
 
 // The #67 v1.1 closed re-arm set (stall-watchdog-contract.md §B1) — the frozen ACTUAL-sorted
-// literal, asserted byte-unchanged and excluding the #80 provider_call answer class (TW-09b).
+// literal. #67 folded, so this is now SHIPPED and consumed by the stall seam (`_armStallCycle` /
+// `_observeStallSeam`); the retired pause cycle must not have re-used or grown it.
 const REARM_KINDS_SORTED = Object.freeze([
   'approval.resolved', 'decision.settled', 'lifecycle.turn_started', 'question.answered',
 ]);
@@ -196,9 +84,10 @@ function makeBrief(overrides = {}) {
   };
 }
 
-// The governed ScriptableAdapter — the trust-gate-steering card plus the modelSelection and
-// governance sub-card every real adapter carries, so the observe-mode providerGovernance policy
-// resolves the exact route {mock, mock-model, low} and provider calls are validity-tracked.
+// The governed ScriptableAdapter — the `pausable` card plus the modelSelection and governance
+// sub-cards every real adapter carries. `prompt` records the call and begins NO turn (the
+// buffering shape), so "no automatic prompt" is directly observable. `kill` confirms the
+// two-phase stop the way a real adapter does.
 class ScriptableAdapter {
   constructor() {
     this._card = {
@@ -226,9 +115,21 @@ class ScriptableAdapter {
   async spawn(worker, brief) { this.calls.spawn.push({ worker, brief }); return { ok: true }; }
   async prompt(worker, content, mode) { this.calls.prompt.push({ worker, content, mode }); return { ok: true }; }
   async interrupt(worker, then) { this.calls.interrupt.push({ worker, then }); return { ok: true }; }
-  async approve(worker, requestId, decision, payload) { this.calls.approve.push({ worker, requestId, decision, payload }); return { ok: true }; }
-  async answer(worker, requestId, answer) { this.calls.answer.push({ worker, requestId, answer }); return { ok: true }; }
-  async kill(worker) { this.calls.kill.push({ worker }); return { ok: true }; }
+  async approve(worker, requestId, decision, payload) {
+    this.calls.approve.push({ worker, requestId, decision, payload });
+    return { ok: true };
+  }
+  async answer(worker, requestId, answer) {
+    this.calls.answer.push({ worker, requestId, answer });
+    return { ok: true };
+  }
+  async kill(worker) {
+    this.calls.kill.push({ worker });
+    queueMicrotask(() => this.emit({
+      worker, harness: 'mock@1.0.0', turnEpoch: 1, kind: 'kill.confirmed', actor: 'policy', payload: {},
+    }));
+    return { ok: true, terminal: true };
+  }
 }
 
 function passingReferee() {
@@ -239,7 +140,7 @@ function passingReferee() {
 }
 
 // The observe-mode providerGovernance deployment profile — mode 'observe' so provider calls are
-// validity-tracked (`_observeLogicalProviderCall`) with no strict binding, no pre-effect seal.
+// validity-tracked without strict binding, exactly as the real deployment runs.
 const OBSERVE_POLICY = {
   schemaVersion: 1,
   maxWireFrameBytes: 4 * 1024 * 1024,
@@ -274,13 +175,7 @@ function setup({ capture, adapter, governed = true, coordinatorOpts = {} }) {
     now: () => 0,
     approvalTimeoutMs: 60000,
     stopDeadlineMs: 15000,
-    progressNudgeWindowMs: 25, // the TG3 bounded window — small for determinism
-    // The observe-mode providerGovernance deployment profile validates provider calls
-    // (`_observeLogicalProviderCall`) without strict binding. `governed: false` rows skip the
-    // deployment profile entirely — a governed worker completing TWO checkpoint turns reuses the
-    // spawn-sealed providerTurn and would hit usage_seal_duplicate on the second turn (a real
-    // HEAD governance behavior orthogonal to the TG3 window), so the once-per-record row stages
-    // its second record without the seal requirement.
+    progressNudgeWindowMs: 25, // the knob the pause seam must NOT use
     providerGovernance: governed ? OBSERVE_POLICY : undefined,
     ...coordinatorOpts,
   });
@@ -292,24 +187,8 @@ async function flush(times = 40) {
 }
 const sleep = (ms) => new Promise((resolve) => { setTimeout(resolve, ms); });
 
-// The protocol-level fake codex app-server (see codex-appserver.test.mjs) — a real child process
-// that speaks the real wire vocabulary with zero model quota and no network. `--serve` is the
-// fixture's discovery-guard sentinel: without it the fixture exits inert so bare `node --test`
-// never hangs on it.
-const FIXTURE = join(dirname(fileURLToPath(import.meta.url)), 'fixtures', 'fake-codex-appserver.mjs');
-
-// Bounded poll for the behavioral TW-02 codex stage — the fake app-server emits its wire events
-// asynchronously (~10ms after each turn/start). A retry-count bound, never a wall-clock verdict.
-async function until(events, predicate, { attempts = 400, intervalMs = 15 } = {}) {
-  for (let i = 0; i < attempts; i += 1) {
-    const found = events.find(predicate);
-    if (found) return found;
-    await sleep(intervalMs);
-  }
-  throw new Error(`until(): predicate not satisfied within ${attempts} polls; saw kinds: [${events.map((e) => e.kind).join(', ')}]`);
-}
-
 const noDiff = async () => ({ sha: 'sha-base', baseSha: 'sha-base', changedPaths: [] });
+const withDiff = async () => ({ sha: 'sha-result', baseSha: 'sha-base', changedPaths: ['in-scope.txt'] });
 
 function emitTurnCompleted(adapter, handle, turnEpoch = 1, output = 'mid-workflow checkpoint') {
   adapter.emit({
@@ -346,618 +225,241 @@ function emitContentMessage(adapter, handle, text) {
   });
 }
 
-function emitBlockingQuestion(adapter, handle, requestId) {
-  adapter.emit({
-    worker: handle.id, harness: 'mock@1.0.0', turnEpoch: 1, kind: 'question.asked', actor: 'worker',
-    payload: { requestId, question: 'blocking question', blocking: true },
-  });
-}
-
 const gateCodes = ['forbidden_effect_observed', 'worker_path_scope_violation', 'required_effect_absent'];
 const gateEvents = (coordinator, workerId) =>
   coordinator._log.read(workerId).filter((event) => gateCodes.includes(event.payload?.code));
-const nudgeCount = (adapter) =>
-  adapter.calls.prompt.filter((call) => String(call.content).includes('baton-progress-check:')).length;
 const settledWith = (coordinator, workerId, basis) =>
   coordinator._log.read(workerId).find((event) => event.kind === 'turn.settled' && event.payload?.basis === basis);
+const verifyRuns = (coordinator, workerId) =>
+  coordinator._log.read(workerId).filter((event) => event.kind === 'verify.reverified').length;
+const nudgePrompts = (adapter) =>
+  adapter.calls.prompt.filter((call) => /baton-progress-check|report your progress/.test(String(call.content)));
 
-// F1/F7 — the provider-call answer rows must pin the governance-clean side of the sealed gate.
-// The D2 receipt answers the cycle AND stays governance-clean: it never fires
-// `provider_call_after_terminal` / the telemetry-invalid codes (`_observeLogicalProviderCall`'s
-// violation paths), the worker's `providerPolicyHardExceeded` stays false, no budget-stop is armed
-// (the no-clock proof the 250ms kill never fires), and the worker is never killed. The false-green
-// wiring — an answer added through the steering path while the watchdog observation still fires
-// the sealed gate — is caught here, as is the B1 re-check that routes through the sealed gate.
-function assertGovernanceClean(coordinator, handle, adapter, stage) {
-  const worker = coordinator._workers.get(handle.id);
-  const violations = coordinator._log.read(handle.id).filter((event) =>
-    event.kind === 'resource.provider_governance_exceeded'
-    || event.kind === 'resource.provider_telemetry_invalid');
-  assert.equal(violations.length, 0,
-    `stage[${stage}]: the in-window provider_call receipt is governance-clean — zero provider_governance_exceeded / provider_telemetry_invalid events (the D2 path answers WITHOUT firing the sealed gate)`);
-  assert.equal(worker?.providerPolicyHardExceeded ?? false, false,
-    `stage[${stage}]: providerPolicyHardExceeded stays false — the receipt is NOT a post-terminal governance violation`);
-  assert.equal(worker?.budgetStopTimer ?? null, null,
-    `stage[${stage}]: no budget stop is armed — the 250ms kill never fires (no-clock proof)`);
-  assert.equal(adapter.calls.kill.length, 0,
-    `stage[${stage}]: the healthy worker is never killed`);
+/** Stage one parked, un-driven checkpoint on a `pausable` card. */
+async function parked({ adapter, capture, governed = true }) {
+  const kit = setup({ adapter, capture, governed });
+  const handle = await kit.coordinator.spawn('mock', makeBrief());
+  const task = kit.coordinator._tasks.get(handle.taskId);
+  emitTurnCompleted(adapter, handle);
+  await flush();
+  const rows = kit.coordinator.pausedTurns({ taskId: task.id });
+  return { ...kit, handle, task, row: rows[0] ?? null };
 }
 
 // ===========================================================================
-// §A — Evidence-answer classes
+// §A — The revised disposition: park visibly, decide nothing automatically
 // ===========================================================================
 
-test('TW-01 (RED, stage[provider-call-answer-missing]): a valid requested-phase and a valid completed-phase provider call for the seat each settle the steering cycle', async () => {
-  for (const phase of ['requested', 'completed']) {
-    const adapter = new ScriptableAdapter();
-    const { coordinator } = setup({ adapter, capture: noDiff });
-    const handle = await coordinator.spawn('mock', makeBrief());
-    emitTurnCompleted(adapter, handle);
-    await flush(40);
-    emitProviderCall(adapter, handle, `tw1-${phase}`, phase);
-    await flush(40);
-    await sleep(60); // cross the window — the call must have answered in time
-    await flush(40);
-    const task = coordinator._tasks.get(handle.taskId);
-    assert.equal(task.status, 'working',
-      `stage[provider-call-answer-missing]: a valid ${phase}-phase provider call for the seat inside the armed window settles the cycle — task → working (got ${task.status})`);
-    const settled = settledWith(coordinator, handle.id, 'steering_answered');
-    assert.ok(settled,
-      `stage[provider-call-answer-missing]: the ${phase} call settles with turn.settled {basis:'steering_answered'}`);
-    assert.equal(gateEvents(coordinator, handle.id).length, 0,
-      `stage[provider-call-answer-missing]: an answered cycle produces ZERO gate verdict events`);
-    assert.equal(coordinator.pausedTurns({ taskId: task.id }).length, 0,
-      `stage[provider-call-answer-missing]: the pause record is consumed by the answer`);
-    assert.equal(adapter.calls.kill.length, 0,
-      `stage[provider-call-answer-missing]: the healthy worker is never killed`);
-    // F1: the receipt answers AND stays governance-clean — the D2 path never fires the sealed gate
-    // (`provider_call_after_terminal`) for an in-window receipt. This discriminates the false-green
-    // wiring (an answer that still fires the governance violation in _observeWatchdogEvent).
-    assertGovernanceClean(coordinator, handle, adapter, 'provider-call-answer-missing');
-  }
+test('TW-R1: an un-driven pausable checkpoint PARKS — durable record, visible projection, zero automatic prompts, zero verdicts', async () => {
+  const adapter = new ScriptableAdapter();
+  const { coordinator, handle, task, row } = await parked({ adapter, capture: noDiff });
+
+  const entries = coordinator._log.read(handle.id);
+  const pausedEntry = entries.find((event) => event.kind === 'turn.paused');
+  assert.ok(pausedEntry, 'turn.paused is appended to the per-worker log');
+  assert.equal(pausedEntry.actor, 'worker');
+  assert.deepEqual(Object.keys(pausedEntry.payload).sort(),
+    ['changedPathsDigest', 'origin', 'taskId', 'turnEpoch'],
+    'the durable pause payload keeps its four-field contract');
+  assert.equal(task.status, 'paused', 'the task parks in the `paused` state');
+  assert.ok(row, 'the checkpoint is visible to the orchestrator on pausedTurns()');
+  assert.equal(row.state, 'pending');
+  assert.equal(row.consumer, null);
+  assert.equal(row.workerId, handle.id);
+  assert.equal(row.taskId, task.id);
+
+  // NOTHING is automatic: the seam must not prompt the worker, settle the pause, or evaluate
+  // the claim. The record carries no armed window at all (`steering` is absent by construction).
+  assert.equal(adapter.calls.prompt.length, 0, 'no policy prompt is ever sent at a checkpoint');
+  assert.equal(nudgePrompts(adapter).length, 0, 'no progress-nudge text exists on the pause seam');
+  assert.equal(settledWith(coordinator, handle.id, 'steering_answered'), undefined, 'no automatic settle');
+  assert.equal(settledWith(coordinator, handle.id, 'steering_expired'), undefined, 'no expiry settle');
+  assert.equal(verifyRuns(coordinator, handle.id), 0, 'the trust gate/verifier is NOT dispatched');
+  assert.equal(coordinator._pausedTurns.get(row.pauseId).steering, undefined,
+    'the record has no armed window — parking is not a cycle');
+  assert.equal(adapter.calls.kill.length, 0, 'nothing is killed');
 });
 
-test('TW-02 (RED, stage[dispatch-receipt-emission-missing]): the turn-start dispatch receipt is emitted at the dispatch point — before turn_started', async () => {
-  // (a) Behavioral (F6): the REAL codex adapter, wired to a live fake codex app-server (a real
-  // child process, zero model quota, no network), emits `resource.provider_call {phase:'requested'}`
-  // AT the turn-start dispatch — before the turn/start await resolves and before the second
-  // `turn_started` arrives on the wire. No source call-shape is asserted — the wire order is.
-  const codexAdapter = new CodexAppServerCli({
-    cmd: process.execPath,
-    args: [FIXTURE, '--serve'],
-    requestTimeoutMs: 2000,
-    stopDeadlineMs: 15000,
-    versionProbe: () => 'fake-codex/0.144.0-test',
-  });
-  const codexEvents = [];
-  codexAdapter.onEvent((e) => codexEvents.push(e));
-  const codexWorker = 'tw2-codex';
-  try {
-    await codexAdapter.spawn(codexWorker, makeBrief('first task'), { worktree: tmpDir() });
-    await until(codexEvents, (e) => e.kind === 'lifecycle.turn_completed');
-    const firstStartedIdx = codexEvents.findIndex((e) => e.kind === 'lifecycle.turn_started');
-    const promptAck = await codexAdapter.prompt(codexWorker, 'second task', 'turn');
-    assert.equal(promptAck.ok, true, 'the second turn dispatch is accepted');
-    const requested = codexEvents.find((e) => e.kind === 'resource.provider_call'
-      && e.payload?.phase === 'requested');
-    assert.ok(requested,
-      'stage[dispatch-receipt-emission-missing]: codex emits resource.provider_call {phase: requested} at the turn-start dispatch — the durable dispatch receipt');
-    const requestedIdx = codexEvents.indexOf(requested);
-    const secondStarted = await until(codexEvents, (e) => codexEvents.indexOf(e) > firstStartedIdx
-      && e.kind === 'lifecycle.turn_started');
-    assert.ok(requestedIdx < codexEvents.indexOf(secondStarted),
-      'stage[dispatch-receipt-emission-missing]: the dispatch receipt precedes the second turn_started in the wire order — emitted at the dispatch point, before the turn/start await resolves');
-  } finally {
-    try { await codexAdapter.kill(codexWorker); } catch { /* already dead */ }
-  }
-  // (b) Static semantic (F6): cli emits the requested-phase receipt at its exec/turn dispatch; the
-  // atomic claude pipe emits none (turn_started is synchronous with dispatch). Semantic = the kind
-  // and the phase identity co-located within a dispatch emission — NOT a pinned call shape.
-  const cli = readFileSync(new URL('../src/cli-adapters.mjs', import.meta.url), 'utf8');
-  const claude = readFileSync(new URL('../src/claude-session.mjs', import.meta.url), 'utf8');
-  assert.match(cli, /resource\.provider_call[\s\S]{0,250}?phase\s*:\s*['"]requested['"]/u,
-    'stage[dispatch-receipt-emission-missing]: cli must emit resource.provider_call {phase: requested} at its exec/turn dispatch');
-  // The claude negative uses a 120-char window: the tool_call at :1128 carries a `phase:'requested'`
-  // beyond the 250-char window from the provider_call kind, so a wide window would false-match the
-  // atomic pipe on its own (legitimate) tool_call stream.
-  assert.doesNotMatch(claude, /resource\.provider_call[\s\S]{0,120}?phase\s*:\s*['"]requested['"]/u,
-    'the atomic claude pipe emits no requested-phase provider_call (turn_started is synchronous with dispatch)');
-  // (c) Dynamic: a staged slow-start adapter shows the receipt arriving BEFORE turn_started.
+test('TW-R2: no automatic prompt under ANY elapsed time — the pause seam uses no clock', async () => {
   const adapter = new ScriptableAdapter();
-  const { coordinator } = setup({ adapter, capture: noDiff });
-  const handle = await coordinator.spawn('mock', makeBrief());
-  emitTurnCompleted(adapter, handle);
-  await flush(40);
-  emitProviderCall(adapter, handle, 'tw2-dispatch', 'requested');
+  const { coordinator, handle, task, row } = await parked({ adapter, capture: noDiff });
+
+  await sleep(150); // six windows of the 25ms knob
+  await flush();
+  assert.equal(adapter.calls.prompt.length, 0, 'no prompt after six windows');
+  assert.equal(settledWith(coordinator, handle.id, 'steering_expired'), undefined, 'no expiry ever fires');
+  assert.equal(verifyRuns(coordinator, handle.id), 0, 'no timed verdict');
+  assert.equal(task.status, 'paused', 'the checkpoint is still parked');
+  assert.equal(coordinator._pausedTurns.get(row.pauseId)?.state, 'pending', 'the record is still claimable');
+  assert.equal(adapter.calls.kill.length, 0, 'elapsed time kills nothing');
+});
+
+test('TW-R3: worker wire activity is not a claim — provider calls, content, and turn boundaries decide nothing', async () => {
+  const adapter = new ScriptableAdapter();
+  const { coordinator, handle, task, row } = await parked({ adapter, capture: noDiff });
+
+  // Every class the retired cycle used to read as an "answer" or as liveness.
+  emitProviderCall(adapter, handle, 'twr3-requested', 'requested');
+  emitProviderCall(adapter, handle, 'twr3-completed', 'completed');
+  emitContentMessage(adapter, handle, 'still working on it');
+  emitScratchWrite(adapter, handle, 'twr3-note', 'a distinct note');
   emitTurnStarted(adapter, handle, 2);
-  await flush(40);
-  await sleep(60);
-  await flush(40);
-  const events = coordinator._log.read(handle.id);
-  const dispatchIdx = events.findIndex((event) => event.kind === 'resource.provider_call'
-    && event.payload?.phase === 'requested');
-  const startedIdx = events.findIndex((event) => event.kind === 'lifecycle.turn_started'
-    && event.turnEpoch === 2);
-  assert.ok(dispatchIdx >= 0 && startedIdx >= 0 && dispatchIdx < startedIdx,
-    'stage[dispatch-receipt-emission-missing]: the dispatch receipt arrives before turn_started in the wire order');
-  const task = coordinator._tasks.get(handle.taskId);
-  assert.notEqual(task.status, 'failed',
-    'stage[dispatch-receipt-emission-missing]: a worker whose dispatch receipt precedes turn_started is not killed — the receipt is real dispatch evidence');
+  await flush();
+  await sleep(75);
+  await flush();
+
+  assert.equal(adapter.calls.prompt.length, 0, 'no class of worker evidence mints a policy prompt');
+  assert.equal(gateEvents(coordinator, handle.id).length, 0, 'no class of worker evidence mints a verdict');
+  assert.equal(verifyRuns(coordinator, handle.id), 0, 'the verifier is never invoked by wire noise');
+  assert.equal(coordinator._pausedTurns.get(row.pauseId)?.state, 'pending',
+    'the checkpoint survives the worker\'s own activity — only an explicit act decides it');
+  assert.equal(adapter.calls.kill.length, 0, 'no kill');
 });
 
 // ===========================================================================
-// §B — Expiry disposition
+// §B — Explicit authority: claim_turn runs the real verifier
 // ===========================================================================
 
-test('TW-03 (RED, stage[queued-start-expires]): a queued start never expires the window — a requested provider call in-window settles constructively at expiry', async () => {
+test('TW-R4: claim_turn runs the existing verifier and completes an in-scope claim', async () => {
   const adapter = new ScriptableAdapter();
-  const { coordinator } = setup({ adapter, capture: noDiff });
-  const handle = await coordinator.spawn('mock', makeBrief());
-  emitTurnCompleted(adapter, handle);
-  await flush(40);
-  // F2: the receipt is emitted from the same synchronous turn that armed the window (t≈0) — the
-  // semantic the row pins is "a requested-phase receipt in-window, no turn_started, no content
-  // settles the cycle", NOT a real sub-window sleep. The old `sleep(15)` (minute 4 of the 25ms
-  // window) was the #7 real-wall-time flake class.
-  emitProviderCall(adapter, handle, 'tw3-queued', 'requested');
-  await flush(40);
-  await sleep(60); // the window elapses
-  await flush(40);
-  const task = coordinator._tasks.get(handle.taskId);
-  assert.equal(task.status, 'working',
-    `stage[queued-start-expires]: a provider-queued healthy-slow worker is never final-evaluated as unanswered by a clock alone — task → working (got ${task.status})`);
-  assert.equal(gateEvents(coordinator, handle.id).length, 0,
-    'stage[queued-start-expires]: ZERO gate verdict events — the queued start is not an honest stall');
+  const { coordinator, handle, task, row } = await parked({ adapter, capture: withDiff });
+  assert.equal(task.status, 'paused');
+
+  const claimed = await coordinator.claimTurn(row.pauseId, { actor: 'orchestrator' });
+  assert.equal(claimed.ok, true);
+  assert.equal(claimed.result, 'claimed');
+  assert.equal(claimed.outcome, 'completed', 'the live gate accepts the in-scope diff');
+  assert.equal(task.status, 'completed');
+  assert.ok(settledWith(coordinator, handle.id, 'claim'), 'the act is durable as turn.settled {basis: claim}');
+  assert.equal(verifyRuns(coordinator, handle.id), 1, 'the existing verifier ran exactly once');
+  assert.equal(coordinator.pausedTurns({ taskId: task.id }).length, 0, 'the record is consumed');
+  const gate = coordinator._log.read(handle.id).find((event) => event.kind === 'error' && event.payload?.phase === 'trust_gate');
+  assert.equal(gate, undefined, 'an accepted claim writes no gate-failure event');
+  assert.equal(adapter.calls.prompt.length, 0, 'the claim needed no policy prompt');
+});
+
+test('TW-R5: claim_turn on a diffless checkpoint fails the gate — the verifier still demands the effect', async () => {
+  const adapter = new ScriptableAdapter();
+  const { coordinator, handle, task, row } = await parked({ adapter, capture: noDiff });
+
+  const claimed = await coordinator.claimTurn(row.pauseId, { actor: 'orchestrator' });
+  assert.equal(claimed.ok, true);
+  assert.equal(claimed.outcome, 'failed', 'the diffless claim is refused by the authoritative gate');
+  assert.equal(task.status, 'failed');
+  const verdict = gateEvents(coordinator, handle.id).find((event) => event.payload?.code === 'required_effect_absent');
+  assert.ok(verdict, 'the gate verdict names required_effect_absent');
+  assert.equal(verdict.payload?.steered, undefined,
+    'the retired steering receipt no longer exists on a claim verdict');
+  assert.equal(verifyRuns(coordinator, handle.id), 0,
+    'the refusal lands in the gate\'s required-effect phase — the referee never runs (no verify receipt)');
+  assert.equal(coordinator.pausedTurns({ taskId: task.id }).length, 0, 'the record is consumed');
+});
+
+// ===========================================================================
+// §C — Explicit continuation: nudge_turn and wait_turn
+// ===========================================================================
+
+test('TW-R6: nudge_turn is a real continuation — fresh turn on the SAME task, and its completion re-parks', async () => {
+  const adapter = new ScriptableAdapter();
+  // Non-governed: the continuation's completion is a SECOND checkpoint turn, and a governed
+  // worker would reuse the spawn-sealed providerTurn (a separate HEAD governance concern).
+  const { coordinator, handle, task, row } = await parked({ adapter, capture: noDiff, governed: false });
+
+  const nudged = await coordinator.nudgeTurn(row.pauseId, 'continue with the remaining plan', { actor: 'orchestrator' });
+  assert.equal(nudged.ok, true);
+  assert.equal(nudged.result, 'nudged');
+  assert.equal(task.status, 'working', 'the continuation unparks the same task');
+  assert.ok(nudged.turnEpoch > row.turnEpoch, 'a fresh turn was admitted (fence/turn advanced)');
+  assert.ok(settledWith(coordinator, handle.id, 'nudge'), 'durable turn.settled {basis: nudge}');
+  assert.equal(coordinator.pausedTurns({ taskId: task.id }).length, 0, 'the act consumed the record');
+  assert.equal(adapter.calls.prompt.length, 1, 'the one delivery is the caller\'s nudge, never a policy prompt');
+  assert.equal(nudgePrompts(adapter).length, 0, 'the caller\'s text is not a policy progress nudge');
+
+  // The continuation completing is an ordinary new checkpoint: it PARKS again, with no prompt.
+  emitTurnCompleted(adapter, handle, nudged.turnEpoch, 'second checkpoint');
+  await flush();
+  assert.equal(task.status, 'paused', 'the continuation\'s completion parks as a new checkpoint');
+  const rows = coordinator.pausedTurns({ taskId: task.id });
+  assert.equal(rows.length, 1, 'exactly one fresh record');
+  assert.equal(adapter.calls.prompt.length, 1, 'parking a checkpoint sends no prompt — the loop is impossible');
+  assert.equal(verifyRuns(coordinator, handle.id), 0, 'and dispatches no verdict');
+});
+
+test('TW-R7: wait_turn is a receipt — the record stays claimable and a later claim succeeds', async () => {
+  const adapter = new ScriptableAdapter();
+  const { coordinator, handle, task, row } = await parked({ adapter, capture: withDiff });
+
+  const waited = coordinator.waitTurn(row.pauseId, { actor: 'orchestrator' });
+  assert.equal(waited.ok, true);
+  assert.equal(waited.result, 'wait_noted');
+  assert.equal(waited.state, 'pending');
+  assert.equal(coordinator.pausedTurns({ taskId: task.id }).length, 1, 'waiting never consumes the record');
+  assert.equal(task.status, 'paused');
+
+  const claimed = await coordinator.claimTurn(row.pauseId, { actor: 'orchestrator' });
+  assert.equal(claimed.ok, true, 'wait -> claim succeeds on the SAME record');
+  assert.equal(claimed.outcome, 'completed');
   assert.equal(coordinator._log.read(handle.id)
-    .filter((event) => event.kind === 'error' && event.payload?.steered).length, 0,
-    'stage[queued-start-expires]: ZERO steered receipts — the cycle was answered, never expired-unanswered');
-  assert.equal(adapter.calls.kill.length, 0,
-    'stage[queued-start-expires]: the queued-start worker is never killed');
-  // F1: the in-window receipt answers AND stays governance-clean — the sealed gate never fires for
-  // an in-window dispatch receipt (the false-green wiring is caught here).
-  assertGovernanceClean(coordinator, handle, adapter, 'queued-start-expires');
-});
-
-test('TW-04 (PIN): the honest stall still evaluates — an empty-fold expiry runs the full final exactly as today with the steering receipt durable', async () => {
-  const adapter = new ScriptableAdapter();
-  const { coordinator } = setup({ adapter, capture: noDiff });
-  const handle = await coordinator.spawn('mock', makeBrief());
-  emitTurnCompleted(adapter, handle);
-  await flush(40);
-  assert.notEqual(coordinator._tasks.get(handle.taskId).status, 'failed',
-    'mid-window the worker is ALIVE — the verdict waits for the window');
-  await sleep(60); // window expiry, nothing answered
-  await flush(40);
-  const task = coordinator._tasks.get(handle.taskId);
-  assert.equal(task.status, 'failed', 'an unanswered empty-fold expiry produces today\'s full final evaluation');
-  const verdictEvent = coordinator._log.read(handle.id).find((event) => event.kind === 'error'
-    && event.payload?.code === 'required_effect_absent');
-  assert.ok(verdictEvent, 'the gate\'s verdict event exists (kind error, code required_effect_absent)');
-  const steered = verdictEvent?.payload?.steered ?? null;
-  assert.ok(steered, 'the verdict carries the steering receipt');
-  assert.ok(String(steered.nudgeId).startsWith('baton-progress-check:'),
-    'the steering receipt names the armed nudge');
-  assert.equal(steered.answered, false,
-    'the steering receipt is durable on the verdict (steered.answered === false)');
-});
-
-test('TW-04b (RED, stage[steered-fold-missing]): the genuine expiry is receipted for #55-class debuggability — the fold rides the steered receipt and the steering_expired payload', async () => {
-  const adapter = new ScriptableAdapter();
-  const { coordinator } = setup({ adapter, capture: noDiff });
-  const handle = await coordinator.spawn('mock', makeBrief());
-  emitTurnCompleted(adapter, handle);
-  await flush(40);
-  await sleep(60);
-  await flush(40);
-  const task = coordinator._tasks.get(handle.taskId);
-  assert.equal(task.status, 'failed', 'the honest-stall expiry is the staging');
-  const verdictEvent = coordinator._log.read(handle.id).find((event) => event.kind === 'error'
-    && event.payload?.code === 'required_effect_absent');
-  const steered = verdictEvent?.payload?.steered ?? null;
-  assert.ok(steered,
-    'stage[steered-fold-missing]: the gate error event carries the steered receipt');
-  assert.equal(steered.windowMs, 25,
-    'stage[steered-fold-missing]: the steered receipt carries the windowMs of the armed cycle');
-  assert.equal(steered.startEvidenceObserved, false,
-    'stage[steered-fold-missing]: the fold reports no start-class evidence was observed (the honest stall)');
-  assert.ok(Array.isArray(steered.answerClasses),
-    'stage[steered-fold-missing]: the fold reports the observed answer classes (empty here)');
-  const expired = coordinator._log.read(handle.id).find((event) => event.kind === 'turn.settled'
-    && event.payload?.basis === 'steering_expired');
-  assert.ok(expired, 'the steering_expired settle exists');
-  const fold = expired?.payload ?? {};
-  assert.equal(fold.windowMs, 25,
-    'stage[steered-fold-missing]: the steering_expired payload carries the same windowMs fold');
-  assert.equal(fold.startEvidenceObserved, false,
-    'stage[steered-fold-missing]: the steering_expired payload carries the same startEvidenceObserved');
-});
-
-test('TW-05 (RED, stage[evidence-gate-defect-missing]): a D2-gate defect never kills a healthy worker — the expiry re-check finds start evidence and settles constructively with a named defect receipt', async () => {
-  const adapter = new ScriptableAdapter();
-  const { coordinator } = setup({ adapter, capture: noDiff });
-  const handle = await coordinator.spawn('mock', makeBrief());
-  emitTurnCompleted(adapter, handle);
-  await flush(40);
-  const task = coordinator._tasks.get(handle.taskId);
-  const pauseId = coordinator.pausedTurns({ taskId: task.id })[0]?.pauseId;
-  assert.ok(pauseId, 'the pause record pends with an armed cycle');
-  // B1 defect stage: a valid provider_call was OBSERVED in-window and appended to the fold, yet
-  // the cycle was never consumed (the D2 consume-path defect). At HEAD there is no fold and no
-  // fire-time re-check — the expiry runs the full final and kills the worker.
-  const record = coordinator._pausedTurns.get(pauseId);
-  record.steering.observedEvidence = [{ kind: 'provider_call', phase: 'requested', callId: 'tw5-call' }];
-  await sleep(60);
-  await flush(40);
-  assert.equal(coordinator._tasks.get(handle.taskId).status, 'working',
-    `stage[evidence-gate-defect-missing]: the expiry re-check finds the start-class identity and settles CONSTRUCTIVELY — task → working (got ${coordinator._tasks.get(handle.taskId).status})`);
-  assert.equal(gateEvents(coordinator, handle.id).length, 0,
-    'stage[evidence-gate-defect-missing]: ZERO gate verdict events — the defect never kills');
-  const defect = coordinator._log.read(handle.id).find((event) => event.kind === 'error'
-    && event.payload?.code === 'steering.evidence_gate_defect');
-  assert.ok(defect,
-    'stage[evidence-gate-defect-missing]: the constructive settle receipts a named steering.evidence_gate_defect error event');
-  assert.equal(defect.payload?.startEvidenceObserved, true,
-    'stage[evidence-gate-defect-missing]: the defect receipt carries the fold — start evidence WAS observed');
-  assert.ok((defect.payload?.answerClasses ?? []).includes('provider_call'),
-    'stage[evidence-gate-defect-missing]: the defect receipt carries the fold — the provider_call class is named');
-  const settled = settledWith(coordinator, handle.id, 'steering_answered');
-  assert.ok(settled && settled.payload?.via === 'evidence_gate_defect',
-    'stage[evidence-gate-defect-missing]: the constructive settle is turn.settled {basis: steering_answered, via: evidence_gate_defect}');
-  assert.equal(coordinator.pausedTurns({ taskId: task.id }).length, 0,
-    'stage[evidence-gate-defect-missing]: the pause record is consumed by the constructive settle');
-  // F7: the B1 fire-time re-check consumed the injected fold AND left the worker governance-clean —
-  // the re-check's validity test is the id/phase/transition validity of _observeLogicalProviderCall
-  // EXCLUDING the sealed gate for in-window receipts (contract v1.2). A re-check that routes through
-  // the sealed gate fires provider_call_after_terminal and is caught here.
-  assertGovernanceClean(coordinator, handle, adapter, 'evidence-gate-defect-missing');
+    .filter((event) => event.kind === 'turn.wait_noted' && event.payload?.pauseId === row.pauseId).length, 1,
+  'the wait act is durably receipted');
 });
 
 // ===========================================================================
-// §C — Shipped pins + once-per-record
+// §D — The unchanged spine, cancellation, and the retired code
 // ===========================================================================
 
-test('TW-06 (PIN): turn_started remains a first-class answer — a resumed turn inside the window settles the cycle, zero gate events', async () => {
+test('TW-R8: a `claim`-carded turn (the default) is untouched — it reaches the trust gate byte-identically', async () => {
   const adapter = new ScriptableAdapter();
-  const { coordinator } = setup({ adapter, capture: noDiff });
+  adapter._card = { ...adapter._card, turnCompletion: 'claim' };
+  const { coordinator } = setup({ adapter, capture: withDiff });
   const handle = await coordinator.spawn('mock', makeBrief());
-  emitTurnCompleted(adapter, handle);
-  await flush(40);
-  emitTurnStarted(adapter, handle, 2);
-  await flush(40);
-  await sleep(60);
-  await flush(40);
   const task = coordinator._tasks.get(handle.taskId);
-  assert.notEqual(task.status, 'failed');
-  assert.notEqual(task.status, 'completed', 'the checkpoint itself is never accepted');
-  assert.ok(['working', 'paused'].includes(task.status),
-    `the answered cycle settles back to work, never a verdict (got ${task.status})`);
-  assert.equal(coordinator.pausedTurns({ taskId: task.id }).length, 0, 'the pause record is consumed by the answer');
-  assert.equal(gateEvents(coordinator, handle.id).length, 0);
-  assert.equal(adapter.calls.kill.length, 0);
+
+  emitTurnCompleted(adapter, handle, 1, 'final claim');
+  await flush();
+  assert.equal(coordinator.pausedTurns({ taskId: task.id }).length, 0, 'no pause record for a claim card');
+  assert.equal(task.status, 'completed', 'the claim goes straight through the gate');
+  assert.equal(verifyRuns(coordinator, handle.id), 1);
+  assert.equal(adapter.calls.prompt.length, 0, 'no prompt');
 });
 
-test('TW-07 (PIN): the nudge never self-answers — the delivered control.nudge and the buffering adapter\'s acceptance never settle the cycle', async () => {
+test('TW-R9: cancellation — a parked checkpoint is not resurrected by a late completion', async () => {
   const adapter = new ScriptableAdapter();
-  const { coordinator } = setup({ adapter, capture: noDiff });
-  const handle = await coordinator.spawn('mock', makeBrief());
-  emitTurnCompleted(adapter, handle);
-  await flush(40);
-  // The buffering-kind adapter ACCEPTED the nudge (mode 'nudge', provenance-marked) but never
-  // starts a turn — for the claude pipe the nudge IS a turn start when idle, so this stage is
-  // impossible there; the ScriptableAdapter is the codex-like buffering shape.
-  const nudges = adapter.calls.prompt.filter((call) => String(call.content).includes('baton-progress-check:'));
-  assert.equal(nudges.length, 1, 'the cycle armed and delivered exactly one policy nudge');
-  assert.equal(nudges[0].mode, 'nudge', 'the nudge rides the control lane (mode nudge)');
-  const controlReceipt = coordinator._log.read(handle.id).find((event) => event.kind === 'control.nudge'
-    && event.actor === 'policy');
-  assert.ok(controlReceipt, 'the control.nudge receipt exists (actor policy)');
-  await sleep(60); // window expiry — the nudge and its acceptance are NOT answers
-  await flush(40);
-  const task = coordinator._tasks.get(handle.taskId);
-  assert.equal(task.status, 'failed',
-    'the nudge delivery and the adapter\'s acceptance never settle the cycle — the honest stall evaluates');
-  const verdictEvent = coordinator._log.read(handle.id).find((event) => event.kind === 'error'
-    && event.payload?.code === 'required_effect_absent');
-  const steered = verdictEvent?.payload?.steered ?? null;
-  assert.ok(steered && steered.answered === false,
-    'the cycle expires with steered.answered === false — the nudge is not in the answer set');
+  const { coordinator, handle, task, row } = await parked({ adapter, capture: withDiff });
+  assert.equal(task.status, 'paused');
+
+  await coordinator.stopRunTargets([handle.id], 'orchestrator');
+  assert.equal(task.status, 'cancelled', 'the explicit stop closes the parked task');
+
+  emitTurnCompleted(adapter, handle, 2, 'late frame');
+  await flush();
+  assert.equal(task.status, 'cancelled', 'a late completion cannot reopen a cancelled task');
+  const rows = coordinator.pausedTurns({ taskId: task.id });
+  assert.deepEqual(rows.map((entry) => entry.pauseId), [row.pauseId],
+    'the late frame mints no NEW checkpoint — only the pre-stop record is still projected');
+  assert.equal(adapter.calls.prompt.length, 0, 'no prompt after the stop');
+  assert.equal(verifyRuns(coordinator, handle.id), 0, 'the verifier never evaluates a cancelled task');
 });
 
-test('TW-08a (PIN): once-per-record bound — the first qualifying answer settles; later evidence never re-arms; a NEW record gets its own single cycle; and the FINAL still demands the diff', async () => {
-  const adapter = new ScriptableAdapter();
-  // Non-governed: the row's second checkpoint turn needs a fresh providerTurn to seal, which only
-  // a nudge/continuation admission provides at HEAD — a governed multi-turn concern orthogonal to
-  // the once-per-record bound (see setup's `governed` note).
-  const { coordinator } = setup({ adapter, capture: noDiff, governed: false });
-  const handle = await coordinator.spawn('mock', makeBrief());
-  emitTurnCompleted(adapter, handle, 1);
-  await flush(40);
-  assert.equal(nudgeCount(adapter), 1, 'the first record arms exactly one cycle');
-  // Non-answer evidence while the cycle pends.
-  emitProviderCall(adapter, handle, 'tw8a-a', 'requested');
-  emitContentMessage(adapter, handle, 'micro-progress chatter');
-  await flush(40);
-  // The answer (turn_started) settles the FIRST cycle; the provider call above either stayed
-  // non-answering (HEAD) or the first call answered (implementation) — either way exactly one
-  // settle, no re-arm.
-  emitTurnStarted(adapter, handle, 2);
-  await flush(40);
-  emitProviderCall(adapter, handle, 'tw8a-b', 'completed');
-  emitContentMessage(adapter, handle, 'more chatter');
-  await flush(40);
-  assert.equal(nudgeCount(adapter), 1, 'post-answer evidence never re-arms the settled record');
-  assert.equal(settledWith(coordinator, handle.id, 'steering_answered') !== undefined, true,
-    'the first qualifying answer settled exactly once');
-  assert.equal(coordinator.pausedTurns({ taskId: coordinator._tasks.get(handle.taskId).id }).length, 0,
-    'the answered record is consumed');
-  // A NEW record arms a NEW single cycle.
-  emitTurnCompleted(adapter, handle, 2, 'second checkpoint');
-  await flush(40);
-  assert.equal(nudgeCount(adapter), 2, 'the second RECORD gets its own single cycle — no re-arm, no third nudge');
-  // The FINAL still demands the real in-scope diff: cycle 2 expires empty and the full final
-  // evaluation fails required_effect_absent — a dispatch receipt cannot buy a content-floor pass.
-  await sleep(60);
-  await flush(40);
-  const task = coordinator._tasks.get(handle.taskId);
-  assert.equal(task.status, 'failed', 'the FINAL still demands the real diff — the answered checkpoint never waives the gate');
-  const verdictEvent = coordinator._log.read(handle.id).find((event) => event.kind === 'error'
-    && event.payload?.code === 'required_effect_absent');
-  assert.ok(verdictEvent, 'the anti-gaming bound holds: the diff-free final fails required_effect_absent');
-  assert.ok(verdictEvent.payload?.steered?.answered === false,
-    'the second record expired unanswered with the steering receipt — one unanswered cycle precedes the final');
-});
-
-test('TW-08b (RED, stage[provider-call-answers-once]): a worker emitting multiple provider calls answers exactly once — the FIRST; no re-answer, no re-arm', async () => {
-  const adapter = new ScriptableAdapter();
-  const { coordinator } = setup({ adapter, capture: noDiff });
-  const handle = await coordinator.spawn('mock', makeBrief());
-  emitTurnCompleted(adapter, handle);
-  await flush(40);
-  const task = coordinator._tasks.get(handle.taskId);
-  const pauseId = coordinator.pausedTurns({ taskId: task.id })[0]?.pauseId;
-  assert.ok(pauseId, 'the record pends with an armed cycle');
-  assert.equal(nudgeCount(adapter), 1, 'the record arms exactly one cycle');
-  emitProviderCall(adapter, handle, 'tw8b-1', 'requested');
-  emitProviderCall(adapter, handle, 'tw8b-1', 'completed');
-  emitProviderCall(adapter, handle, 'tw8b-2', 'requested');
-  await flush(40);
-  await sleep(60);
-  await flush(40);
-  assert.equal(coordinator._tasks.get(handle.taskId).status, 'working',
-    `stage[provider-call-answers-once]: the first provider call answers the cycle — task → working (got ${coordinator._tasks.get(handle.taskId).status})`);
-  const settles = coordinator._log.read(handle.id).filter((event) => event.kind === 'turn.settled'
-    && event.payload?.basis === 'steering_answered');
-  assert.equal(settles.length, 1,
-    'stage[provider-call-answers-once]: multiple provider calls answer EXACTLY once — the first settle consumes the record');
-  assert.equal(nudgeCount(adapter), 1,
-    'stage[provider-call-answers-once]: no second cycle arms for the same record');
-  assert.equal(coordinator.pausedTurns({ taskId: task.id }).length, 0,
-    'stage[provider-call-answers-once]: the record is consumed by the single answer');
-  assert.equal(gateEvents(coordinator, handle.id).length, 0,
-    'stage[provider-call-answers-once]: the answered record produces no gate verdict');
-  // F1: the in-window receipts answer AND stay governance-clean — the sealed gate never fires for
-  // the dispatch receipt (the false-green wiring is caught here).
-  assertGovernanceClean(coordinator, handle, adapter, 'provider-call-answers-once');
-  // F4: WHICH call answered — the settle's recorded answer names the FIRST call (tw8b-1), in the
-  // requested phase (the D2 requested-only answer class). An impl answering on the second call
-  // (tw8b-1 completed) or the third (tw8b-2 requested) is caught here.
-  const record = coordinator._pausedTurns.get(pauseId);
-  const answer = record?.steering?.answer ?? null;
-  assert.ok(answer,
-    'the settled record retains the answering evidence on steering.answer');
-  const answerCallId = answer.callId ?? answer.payload?.callId ?? null;
-  const answerPhase = answer.phase ?? answer.payload?.phase ?? null;
-  assert.equal(answerCallId, 'tw8b-1',
-    'stage[provider-call-answers-once]: the FIRST provider call (tw8b-1) answered the cycle — not the second (tw8b-1 completed) nor the third (tw8b-2 requested)');
-  assert.equal(answerPhase, 'requested',
-    'stage[provider-call-answers-once]: the answering evidence is the requested-phase dispatch receipt — the D2 requested-only answer class');
-});
-
-// ===========================================================================
-// §D — The watchdog surface is untouched
-// ===========================================================================
-
-test('TW-09a (PIN): the shipped watchdog half — _armWatchdog\'s working-only refusal and _observeWatchdogEvent\'s provider-call tracking are byte-unchanged', async () => {
-  // (a1) Working-only refusal: a blocked worker is never stall-declared.
-  const adapter = new ScriptableAdapter();
-  const { coordinator } = setup({ adapter, capture: noDiff, coordinatorOpts: { watchdog: { stallMs: 60, stallAction: 'escalate' } } });
-  const handle = await coordinator.spawn('mock', makeBrief());
-  await flush(40);
-  emitBlockingQuestion(adapter, handle, 'tw9a-q');
-  await flush(40);
-  const task = coordinator._tasks.get(handle.taskId);
-  assert.equal(task.status, 'input_required', 'the blocking question parked the task');
-  assert.equal(coordinator._workers.get(handle.id).status, 'blocked', 'the handle is blocked');
-  await sleep(150); // well past the 60ms stall window
-  await flush(40);
-  assert.equal(coordinator._log.read(handle.id).filter((event) => event.kind === 'health.stall_suspected').length, 0,
-    'the shipped working-only refusal holds: a blocked worker is never stall-declared');
-  assert.equal(coordinator._tasks.get(handle.taskId).status, 'input_required',
-    'the blocked worker is untouched by the watchdog');
-
-  // (a2) _observeWatchdogEvent's own provider-call tracking: a valid provider call rides the
-  // watchdog observation into the handle's providerTurn — this consumer stays independent of the
-  // steering-cycle answer surface.
-  const adapter2 = new ScriptableAdapter();
-  const { coordinator: c2 } = setup({ adapter: adapter2, capture: noDiff });
-  const handle2 = await c2.spawn('mock', makeBrief());
-  await flush(40);
-  emitProviderCall(adapter2, handle2, 'tw9a-track', 'requested');
-  await flush(40);
-  const h2 = c2._workers.get(handle2.id);
-  assert.equal(h2.providerTurn?.providerCallIds.has('tw9a-track'), true,
-    'the shipped _observeWatchdogEvent provider-call tracking is intact');
-});
-
-test('TW-09b (RED, stage[depending-on-#67: rearm-kinds-missing]): the #67 REARM_KINDS fold is the frozen closed set — ACTUAL-sorted, excluding resource.provider_call (target-state row)', () => {
-  assert.ok(coordinatorNs.REARM_KINDS,
-    'stage[depending-on-#67: rearm-kinds-missing]: the closed re-arm set must be exported from the coordinator (verified when #67 folds)');
-  assert.ok(Object.isFrozen(coordinatorNs.REARM_KINDS),
-    'stage[depending-on-#67: rearm-kinds-missing]: the #67 set is frozen — closed, never grown silently');
-  const values = [...coordinatorNs.REARM_KINDS];
-  assert.deepEqual(values, [...REARM_KINDS_SORTED],
-    'stage[depending-on-#67: rearm-kinds-missing]: exactly the four closed kinds in ACTUAL sorted order — nothing added, nothing dropped');
-  assert.ok(!values.includes('resource.provider_call'),
-    'stage[depending-on-#67: rearm-kinds-missing]: the #80 provider_call answer class is NOT a watchdog re-arm kind — the two surfaces stay separate');
-});
-
-// ===========================================================================
-// §E — No-clock control-law row + discrimination pins
-// ===========================================================================
-
-test('TW-10 (RED, stage[answer-not-evidence]): the queued-start answer is evidence, never a window extension — no clock is added anywhere', () => {
+test('TW-R10 (static): the retired self-driving cycle cannot quietly return, and the stall seam is untouched', () => {
   const src = readFileSync(new URL('../src/coordinator.mjs', import.meta.url), 'utf8');
-  const evStart = src.indexOf('_steeringEvidenceQualifies(record, evidence) {');
-  assert.ok(evStart >= 0, 'the steering evidence evaluator exists');
-  const evTail = src.indexOf('_observeSteeringCycle(handle, evidence) {', evStart);
-  const evidenceFn = src.slice(evStart, evTail > 0 ? evTail : evStart + 6000);
-  assert.match(evidenceFn, /provider_call/u,
-    'stage[answer-not-evidence]: the steering answer set must carry the provider_call evidence class (D2) — the queued-start answer is EVIDENCE (a provider call), never a bigger window');
-  assert.match(src, /_progressNudgeWindowMs[\s\S]{0,120}?300_000/u,
-    'the window default is byte-unchanged — candidate (a) per-route latency scaling is rejected by construction');
-  assert.doesNotMatch(src, /windowMsByRoute|latencyScale|perRouteWindow/u,
-    'no per-route latency knob appears anywhere in the coordinator');
-  assert.doesNotMatch(src, /_expireSteeringCycle[\s\S]{0,400}?_setTimeout/u,
-    'the expiry never re-arms a fresh window — the one-shot bound is the count, not a clock');
+  for (const retired of [
+    'baton-progress-check', '_buildProgressNudge', '_armSteeringCycle', '_observeSteeringCycle',
+    '_steeringEvidenceQualifies', '_settleSteeringCycle', '_expireSteeringCycle', '_clearSteeringTimer',
+  ]) {
+    assert.equal(src.includes(retired), false,
+      `the pause seam must not carry the retired policy cycle (found \`${retired}\`)`);
+  }
+  assert.doesNotMatch(src, /_armSteeringCycle[\s\S]{0,200}?control\.nudge|control\.nudge[\s\S]{0,200}?_armSteeringCycle/u,
+    'no arm-time control.nudge lane survives');
+  // The #67 stall fold is a DIFFERENT surface and is untouched: frozen, ACTUAL-sorted, and it
+  // still excludes resource.provider_call.
+  assert.ok(Object.isFrozen(coordinatorNs.REARM_KINDS), 'REARM_KINDS stays frozen');
+  assert.deepEqual([...coordinatorNs.REARM_KINDS], [...REARM_KINDS_SORTED],
+    'exactly the four closed kinds in ACTUAL sorted order');
+  assert.equal([...coordinatorNs.REARM_KINDS].includes('resource.provider_call'), false,
+    'the stall fold never grew a provider-call kind');
+  // The window knob survives ONLY for the stall seam (D4 rung 2).
+  assert.match(src, /_progressNudgeWindowMs[\s\S]{0,400}?_armStallCycle|_armStallCycle[\s\S]{0,400}?_progressNudgeWindowMs/u,
+    'the bounded window knob now belongs to the stall seam');
 });
-
-test('TW-disc-invalid (PIN): an invalid provider call is telemetry noise, never an answer — the honest stall fires', async () => {
-  const adapter = new ScriptableAdapter();
-  const { coordinator } = setup({ adapter, capture: noDiff });
-  const handle = await coordinator.spawn('mock', makeBrief());
-  emitTurnCompleted(adapter, handle);
-  await flush(40);
-  // An empty callId and a phase outside the closed LOGICAL_CALL_PHASES set — both invalid per
-  // _observeLogicalProviderCall (provider_call_id_invalid / provider_call_phase_invalid).
-  emitProviderCall(adapter, handle, '', 'requested');
-  emitProviderCall(adapter, handle, 'tw-disc-invalid', 'started');
-  await flush(40);
-  await sleep(60);
-  await flush(40);
-  const task = coordinator._tasks.get(handle.taskId);
-  assert.equal(task.status, 'failed',
-    'an invalid provider call never answers the cycle — the honest stall still evaluates');
-  const verdictEvent = coordinator._log.read(handle.id).find((event) => event.kind === 'error'
-    && event.payload?.code === 'required_effect_absent');
-  assert.ok(verdictEvent?.payload?.steered?.answered === false,
-    'the invalid calls were telemetry noise — the cycle expired unanswered with the steering receipt');
-});
-
-test('TW-disc-digest (PIN, TG6 compatibility): the distinct-digest class holds — a distinct content digest answers and credits content-IDENTITY; a replay never re-answers or re-arms, and the FINAL still demands the diff', async () => {
-  const adapter = new ScriptableAdapter();
-  // Non-governed: the row's second checkpoint turn needs a fresh providerTurn to seal, which only
-  // a nudge/continuation admission provides at HEAD (same note as TW-08a).
-  const { coordinator } = setup({ adapter, capture: noDiff, governed: false });
-  const handle = await coordinator.spawn('mock', makeBrief());
-  emitTurnCompleted(adapter, handle, 1);
-  await flush(40);
-  assert.equal(nudgeCount(adapter), 1, 'the first record arms exactly one cycle');
-  emitScratchWrite(adapter, handle, 'tw-digest-a', 'distinct note one');
-  await flush(40);
-  const task = coordinator._tasks.get(handle.taskId);
-  assert.equal(task.status, 'working',
-    'a distinct content digest answers the cycle — content-identity, never a content-free write');
-  assert.equal(gateEvents(coordinator, handle.id).length, 0,
-    'the digest-answered cycle produces ZERO gate verdict events');
-  assert.equal(settledWith(coordinator, handle.id, 'steering_answered') !== undefined, true,
-    'the distinct digest settled the record exactly once');
-  emitScratchWrite(adapter, handle, 'tw-digest-a', 'distinct note one'); // replay — same content digest
-  emitScratchWrite(adapter, handle, 'tw-digest-b', 'distinct note two'); // a second distinct digest
-  await flush(40);
-  assert.equal(coordinator._log.read(handle.id)
-    .filter((event) => event.kind === 'turn.settled' && event.payload?.basis === 'steering_answered').length, 1,
-    'a replayed digest and a second distinct digest never double-settle the consumed record');
-  assert.equal(nudgeCount(adapter), 1,
-    'post-answer scratchpad evidence never re-arms the settled record');
-  // A NEW record arms its own single cycle, and the FINAL still demands the real in-scope diff.
-  emitTurnCompleted(adapter, handle, 2, 'second checkpoint');
-  await flush(40);
-  assert.equal(nudgeCount(adapter), 2, 'the second RECORD gets its own single cycle');
-  // F5 — the TG6 content-free-write class: a scratchpad.write that yields NO content digest is
-  // NEVER an answer. Two shapes: a content-less entry (store-refused — `scratchpad_entry_invalid`,
-  // no digest at all, ok:false → no `_observeSteeringCycle` at :12451-12455) and a directly
-  // evaluated digest-less evidence (the digest guard rejects `digest: null` at :2211-2213). Both
-  // leave the record pending; the honest stall still fires.
-  emitScratchWrite(adapter, handle, 'tw-digest-empty', ''); // content-less entry → no content digest
-  await flush(40);
-  assert.equal(coordinator._tasks.get(handle.taskId).status, 'paused',
-    'a content-free write never answers the cycle — the second record still pends (the honest stall is preserved)');
-  coordinator._observeSteeringCycle(handle, { kind: 'scratchpad', digest: null });
-  await flush(40);
-  assert.equal(coordinator.pausedTurns({ taskId: task.id }).length, 1,
-    'a digest-less scratchpad evidence never answers the cycle — the content-free-write class is pinned');
-  await sleep(60);
-  await flush(40);
-  assert.equal(coordinator._tasks.get(handle.taskId).status, 'failed',
-    'the FINAL still demands the real diff — a digest answer never buys a content-floor pass');
-  const verdictEvent = coordinator._log.read(handle.id).find((event) => event.kind === 'error'
-    && event.payload?.code === 'required_effect_absent');
-  assert.ok(verdictEvent, 'the diff-free final fails required_effect_absent');
-});
-
-test('TW-disc-scope (PIN): a provider call from another worker never reaches the seat\'s cycle — per-handle scoping holds', async () => {
-  const adapter = new ScriptableAdapter();
-  const { coordinator } = setup({ adapter, capture: noDiff });
-  const seat = await coordinator.spawn('mock', makeBrief());
-  emitTurnCompleted(adapter, seat);
-  await flush(40);
-  const other = await coordinator.spawn('mock', makeBrief());
-  await flush(40);
-  // The #47 readiness-tier shape: an isolated worker mints a valid completed-phase receipt.
-  emitProviderCall(adapter, other, 'probe-call', 'completed');
-  await flush(40);
-  await sleep(60);
-  await flush(40);
-  const seatTask = coordinator._tasks.get(seat.taskId);
-  const otherTask = coordinator._tasks.get(other.taskId);
-  assert.equal(seatTask.status, 'failed',
-    'a call from ANOTHER worker never answers the seat\'s cycle — the seat honest-stalls');
-  const verdictEvent = coordinator._log.read(seat.id).find((event) => event.kind === 'error'
-    && event.payload?.code === 'required_effect_absent');
-  assert.ok(verdictEvent?.payload?.steered?.answered === false,
-    'the seat\'s cycle expired unanswered despite the other worker\'s call');
-  assert.notEqual(otherTask.status, 'failed',
-    'the other worker is untouched by the seat\'s pause');
-});
-
-test('TW-disc-fold (RED, stage[observed-evidence-append-missing]): qualifying in-window evidence is APPENDED to record.steering.observedEvidence with its kind and the provider_call phase identity', async () => {
-  const adapter = new ScriptableAdapter();
-  const { coordinator } = setup({ adapter, capture: noDiff });
-  const handle = await coordinator.spawn('mock', makeBrief());
-  emitTurnCompleted(adapter, handle);
-  await flush(40);
-  const task = coordinator._tasks.get(handle.taskId);
-  const pauseId = coordinator.pausedTurns({ taskId: task.id })[0]?.pauseId;
-  assert.ok(pauseId, 'the pause record pends with an armed cycle');
-  // F3 — the append surface: a qualifying in-window provider_call for the seat is APPENDED to
-  // record.steering.observedEvidence (invented surface #3) with its kind and the provider_call
-  // PHASE identity, as the evidence evaluation settles the cycle. At HEAD there is no fold and no
-  // append — RED. A fold-less implementation that answers the cycle without recording the fold is
-  // caught here (TW-05 injects the fold, so it can never test the append path).
-  emitProviderCall(adapter, handle, 'tw-fold', 'requested');
-  await flush(40);
-  const record = coordinator._pausedTurns.get(pauseId);
-  const fold = record?.steering?.observedEvidence ?? null;
-  assert.ok(Array.isArray(fold),
-    'stage[observed-evidence-append-missing]: record.steering.observedEvidence is an array on the pause record — the evidence evaluation APPENDS the observed kind');
-  const call = fold.find((entry) => entry?.kind === 'provider_call');
-  assert.ok(call,
-    'stage[observed-evidence-append-missing]: the fold carries the observed provider_call kind');
-  assert.equal(call.phase, 'requested',
-    'stage[observed-evidence-append-missing]: the provider_call fold entry keeps its PHASE identity (requested vs completed) — the #55-class debug trace');
-  assert.equal(coordinator._tasks.get(handle.taskId).status, 'working',
-    'the appended evidence settled the cycle');
-  assert.equal(coordinator.pausedTurns({ taskId: task.id }).length, 0,
-    'the record was consumed by the answer');
-});
-
-// ===========================================================================
-// VERIFIED SPLIT (measured from the repo root — `node --test impl/test/tg3-window-red.test.mjs`)
-// ===========================================================================
-// Run 1: tests 17 · pass 8 · fail 9
-// Run 2: tests 17 · pass 8 · fail 9
-// The 9 red rows fail at their named stages: TW-01 (provider-call-answer-missing), TW-02
-// (dispatch-receipt-emission-missing), TW-03 (queued-start-expires), TW-04b (steered-fold-missing),
-// TW-05 (evidence-gate-defect-missing), TW-08b (provider-call-answers-once), TW-09b
-// (depending-on-#67: rearm-kinds-missing), TW-10 (answer-not-evidence),
-// TW-disc-fold (observed-evidence-append-missing).
