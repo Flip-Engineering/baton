@@ -1,211 +1,152 @@
 # Workspace preservation: un-captured content survives destructive worktree removal
 
-Wave `omp-rpc` (2026-09-13). Scope: `impl/src/worktree.mjs`, `impl/test/workspace-preservation.test.mjs`,
-this document. Base revision `c200ced7` (worktree `ws-efeb4ac0b86540cdd51f391668aa372b`). Delivered
-`impl/src/worktree.mjs` `git hash-object` `8e958485d9d619b103e2da48e05f83960a78951e`, test suite
-`dbab9c52f0c282d54c9bd232deabc68afcd7f60e`. No shared-workspace feature was added: this change fixes
-the deletion defect at the two destructive boundaries that already exist (`reap`, `reconcile`).
+Wave `omp-rpc` (2026-09-13), revised after root's review of `7db48f83`. Scope:
+`impl/src/worktree.mjs`, `impl/test/workspace-preservation.test.mjs`, this document. Delivered
+`impl/src/worktree.mjs` `git hash-object` `0980e26dd56dce508098d52692e5f73c8fe97a19`, test suite
+`414845e92b44ceae08c6d88b883c5073b800808d`. No shared-workspace feature was added: this fixes the
+deletion defect at the two destructive boundaries that already exist (`reap`, `reconcile`).
+
+The first pass also invented a deletion-policy API — `opts.discard`, `opts.authorizeDiscard`,
+`opts.disposablePaths`, `opts.beforeRemove`, `PRESERVATION_MAX_BYTES`,
+`report.authorizedDiscards`. The revision removes all of it. The assignment is to preserve work, not
+to make its destruction authorizable by a caller. What remains is one observation, one typed refusal
+(two codes), and truthful reconciliation diagnostics.
 
 ## 1. Defect
 
-The independent audit (`/tmp/baton-shared-workspaces-review.md`, F1/F2) found that both destructive
-worktree boundaries remove a checkout without ever observing its content:
+Both boundaries removed a checkout without observing its content: `reap` deletes with
+`git worktree remove --force` (falling back to `rm -rf`) behind only the `meta.stoppedAt` latch that
+`force: true` overrides (`index.mjs` `remove` always passes it), and `reconcile` destroys a dead
+owner's checkout with no content observation anywhere on that path.
 
-- `reap` deletes the directory with `git worktree remove --force` (falling back to `rm -rf`), and the
-  only gate is `meta.stoppedAt` when `opts.force` is unset. Both production callers pass
-  `force: true` (`index.mjs` `remove`).
-- `reconcile` destroys the checkout of a dead owner that the caller did not list as expected —
-  `git worktree remove --force` → `rmSync(..., { recursive: true, force: true })` → `git branch -D`
-  — with no content observation anywhere on that path.
-
-Measured on the base revision (probe: dirty tracked edit + untracked file in a `ws-…` checkout whose
-receipt names a locally dead controller):
+A first-pass observation running `git status --ignored=no` did not fix the second half of that:
+ignored paths are invisible to it, so a checkout whose only content was a Git-ignored `.env` or notes
+directory observed as `clean` and was deleted. Probe with a dead owner and exactly those two paths
+(`node /tmp/probe-ignored-reap.mjs <module>`, git 2.50.1):
 
 ```
-BEFORE  reap(force:true, deleteBranch:true)   -> no refusal; checkout gone; content gone; receipt released
-BEFORE  reconcile([], ownerAuthority=restart)-> removedPhysicalOwners=[ws-…] (+ capacity settled,
-                                                 receipt released); diagnostics=[]
-AFTER   reap(force:true, deleteBranch:true)   -> WorkspacePreservationError
-                                                 workspace_uncommitted_content_retained; content + receipt intact
-AFTER   reconcile([], ownerAuthority=restart)-> removedPhysicalOwners=[]; settled=[]; diagnostics=
-                                                 [workspace_uncommitted_content_retained, …]; content + receipt intact
+base c200ced7    reap(force:true, deleteBranch:true) -> no refusal; checkout, .env, notes gone; receipt released
+this revision    reap(force:true, deleteBranch:true) -> WorkspacePreservationError:
+                                                        workspace_uncommitted_content_retained;
+                                                        checkout, .env, notes, receipt intact
 ```
 
-The same defect covered two "disposable" cases that must keep working; both are calibrated in the
-suite rather than assumed: copied dependencies (metadata `copiedDependencies`), toolchain projection
-targets (hidden by the worktree's own `core.excludesFile` projection excludes), genuine
-create-failure rollback (clean tree), and empty zombie directories.
+## 2. Decision
 
-## 2. Invariant and decision
-
-`observeOwnedWorktreeContent(repoRoot, physicalOwnerId, opts)` reports one of:
+`observeOwnedWorktreeContent(repoRoot, physicalOwnerId)` reports one state:
 
 | state | meaning | removable |
 | --- | --- | --- |
 | `absent` | no directory | yes |
-| `clean` | live checkout, `git status` reports nothing | yes |
-| `disposable` | every changed path is untracked **and** under a declared infrastructure root | yes |
-| `dirty` | at least one changed path has no recorded capture | no |
-| `empty` | not this repository's checkout, and holds no content entries | yes |
-| `unobservable` | live checkout whose status failed, or a non-checkout directory holding entries | no |
+| `clean` | this repository's checkout; Git reports no differing path | yes |
+| `generated` | every differing path is untracked or ignored **and** under an attested root | yes |
+| `dirty` | at least one differing path has no recorded capture | no |
+| `empty` | not this repository's checkout, and holds no entries | yes |
+| `unobservable` | this repository's checkout whose status failed, or a non-checkout holding entries | no |
 
-Declared infrastructure roots come from exactly three sources: the owner metadata's
-`copiedDependencies` and `toolchainProjectionTargets` (only when `validatedMetadata` accepts the
-metadata — corrupt metadata proves nothing and therefore declares nothing), and the caller's
-`opts.disposablePaths` (validated safe relative literals, never `.git`/`.baton`, never escaping).
-Projection targets normally never reach this classification at all: Git itself ignores them through
-the worktree-local `core.excludesFile` that `configureProjectionExcludes` installs, so a projected
-checkout observes as `clean`.
+Ignored paths are enumerated, not assumed away: `--untracked-files=all --ignored=matching`
+(git ≥ 2.16). A wholly ignored directory collapses to a single entry, and per-file untracked
+enumeration keeps an attested root nested inside an untracked tree classifiable.
 
-`removable` is false only for `dirty` and `unobservable`: unknown is not permission. A non-checkout
-directory is judged by a bounded walk — a top-level `.git` administration entry and empty
-directories are content-free, anything else is unproven. Per-file untracked enumeration
-(`--untracked-files=all`) is required: with collapsed `?? dir/` entries, a declared root nested
-inside the untracked tree (`legacy/deps`) cannot be classified, which is a real regression the
-phase55 suite caught during this change.
+Attestation is the only thing that makes content generated, and only owner metadata can attest it:
+`copiedDependencies` and `toolchainProjectionTargets`, and only from metadata `validatedMetadata`
+accepts (corrupt metadata attests nothing). No caller option, no `force`, and no `markStopped`
+substitutes for it — caller-declared paths are never authority to delete source. Even under an
+attested root only untracked or ignored paths classify as generated: a modified tracked path is
+somebody's work whatever the metadata says.
+
+Attested roots are excluded from the walk by pathspec (`:(exclude,top)<root>`), so observing a
+checkout cannot cost a walk of an installed dependency tree: measured on a 20 000-file untracked
+copy, 0 reported paths in 7 ms versus 20 000 paths in 21 ms (git 2.50.1, M4, warm cache). The
+consequence, stated plainly: a tracked modification *inside* an attested root is not observed there.
+That is the copy/projection contract's own ground — `materializeDependencies` copies with
+`errorOnExist`, and projection targets are the toolchain's tree.
+
+Identity is not `--show-toplevel`: another repository checked out at the owned path answers that for
+itself, so the observation also requires the checkout's `--git-common-dir` to be this repository's.
 
 ## 3. Boundary behavior
 
-Both boundaries take the same decision (`authorizeWorktreeRemoval`) and refuse with a typed error
-before their first destructive effect:
+Both boundaries take the same decision before their first destructive effect and refuse with the
+same typed error:
 
-| code | raised by | meaning |
-| --- | --- | --- |
-| `workspace_uncommitted_content_retained` | `reap`, `reconcile` | worked content with no recorded capture and no discard authorization |
-| `workspace_content_unobservable_retained` | `reap`, `reconcile` | content could not be observed |
-| `workspace_discard_authorization_invalid` | `reconcile` (callback return) | the per-owner authorization was malformed |
-| `workspace_removal_deferred` | `reap` (`opts.beforeRemove`) | the caller's transaction gate refused after the decision |
+| code | meaning |
+| --- | --- |
+| `workspace_uncommitted_content_retained` | differing paths have no recorded capture |
+| `workspace_content_unobservable_retained` | content could not be observed (status failed, or not this repository's checkout while holding entries) |
 
-`WorkspacePreservationError` carries `retained: true` and the full `observation` (state, `dir`,
-`dirtyPaths`, `disposablePaths`, `headSha`, `baseSha`). Nothing is removed, released, or logged on a
-refusal: directory, metadata, registration, branch, index, working tree and owner receipt are
-byte-identical afterwards (the suite compares `git status --porcelain=v2 -z --no-renames -uall`
-output before and after).
+`WorkspacePreservationError` carries `retained: true` and the observation (`state`, `dir`,
+`dirtyPaths`, `generatedPaths`, `generatedRoots`, `headSha`, `baseSha`). Nothing is removed,
+released or logged on a refusal: directory, metadata, registration, branch, index, working tree and
+owner receipt are byte-identical afterwards (the suite compares
+`git status --porcelain=v2 -z --no-renames -uall --ignored=matching` before and after, so an ignored
+side effect would be caught too).
 
-**`reap`** order: validate caller configuration → stop latch (`force` still overrides only this) →
-content decision → `opts.beforeRemove` gate → directory removal → registration → branch → metadata
-→ exact absence proof → `worktree.discard_authorized` (if content was discarded) → receipt release →
-`worktree.reaped`. The discard record is written only after the absence proof, so a deferred or
-failed removal never claims a discard that did not happen.
+**`reap`** order, unchanged apart from the decision: stop latch (`force` overrides only this) →
+content decision → removal → registration → branch → metadata → exact absence proof → receipt
+release → `worktree.reaped`. `force` never deletes dirty content.
 
-**`reconcile`** order per candidate: owner/receipt/authority classification (foreign and live
-owners are untouched, as before) → content decision → capacity settlement callback
-(`beforeOwnerCleanup`) → removal → absence proof → discard record → receipt release. The decision
-deliberately runs *before* capacity settlement: a retained checkout still consumes its reservation,
-so its row must not be settled. Retained owners are reported in a new field
-`report.retainedContentOwners`, emit a `retained: true` diagnostic carrying the content evidence,
-and join `retainedExpectedOwners` — which is what keeps the capacity layer's retained set
-(`index.mjs` `reconcile` → `worktreeCapacity.reconcile(retained, retainedUnproven)`) from dropping
-the row for a resource that still exists. `report.removedZombieDirs`, `report.removedPhysicalOwners`
-and `report.errors` never mention a retained owner, and an authorized discard is recorded in
-`report.authorizedDiscards` with its reason, evidence reference and actor.
+**`reconcile`** order per candidate: owner/receipt/authority classification (foreign and live owners
+untouched, as before) → content decision → capacity settlement callback (`beforeOwnerCleanup`) →
+removal → absence proof → receipt release. The decision deliberately runs *before* capacity
+settlement: a retained checkout still consumes its reservation, so it joins
+`retainedExpectedOwners` — which is what keeps the capacity layer from dropping the row — and is
+reported in `retainedContentOwners` and a `retained: true` diagnostic carrying the content evidence.
+`removedZombieDirs`, `removedPhysicalOwners` and `errors` never mention a retained owner.
 
-Authorization is a decision, not a flag: `opts.discard = {reason, evidenceRef?, actor?}` for a whole
-call, or `opts.authorizeDiscard(physicalOwnerId, receipt, observation)` per owner. `evidenceRef` may
-be `null` for an honest "nothing was captured" decision; when a caller captured first, it names the
-pinned revision, and the boundary records it. `force: true` never substitutes for this decision and
-`markStopped` is not one either (both pinned by tests).
+Committed-but-uncaptured work on the owner branch is still destroyable: `reap(deleteBranch: true)`
+deletes `baton/<ws-…>`, and reconcile's loop-1 postcheck does the same, even when
+`headSha !== baseSha`. That is a policy this assignment did not settle; the observation reports both
+shas on every decision, so no silent discard is introduced.
 
-## 4. What the boundary deliberately does not do
+## 4. Verification
 
-It never stages, commits, stashes, moves or rewrites the content it judges: preservation is by
-retention. That is the conservative reading of the brief, and it is measurable:
-
-- `git stash create -u` was probed as a candidate in-boundary capture and **silently omits untracked
-  files**: the returned commit's tree contained only tracked paths and had no third parent, while the
-  index and working tree were unchanged (git 2.50.1). A capture that silently drops untracked work
-  would be worse than the refusal it replaces.
-- The runtime's own capture (`captureCommit`) stages with `git add -A`; in a shared checkout that
-  absorbs every concurrent holder's edits (audit F5). Attribution of a mixed tree is a caller
-  decision, so it stays outside the boundary.
-
-`opts.authorizeDiscard` is synchronous (reconcile is synchronous), so a caller that wants to
-preserve-then-remove either runs its capture before the call or performs a synchronous capture in
-the callback (the suite proves the pattern with a sync add + commit + `update-ref
-refs/baton/checkpoints/<sha>`, then confirms both the modified tracked file and the untracked file
-resolve from the pinned revision after the checkout is gone, and that a caller which declines —
-returns `null` — leaves the content untouched). Nothing about group membership is treated as
-filesystem custody here: the only inputs are owner receipts, metadata, Git state and the caller's
-explicit decision.
-
-## 5. Verification
-
-Verification command (the deployment contract), working directory `.`:
+Command (the deployment contract), working directory `.`:
 
 ```
-node --test impl/test/workspace-preservation.test.mjs     -> exit 0, 24 tests, 24 pass, 0 fail
+node --test impl/test/workspace-preservation.test.mjs     -> exit 0, 27 tests, 27 pass, 0 fail
 ```
 
-Scenarios, mapped to the assigned work: dirty tracked (staged and unstaged), deleted tracked file,
-untracked file, `force` refusal and refusal idempotence; `markStopped` + non-forced refusal; clean
-checkout removal + double-reap no-op + exact absence proof; copied dependency and toolchain
-projection disposability; caller-declared generated residue; discard with and without evidence and
-malformed-authorization rejection before any effect; `beforeRemove` deferral (no discard record) and
-retry; unobservable content retention; empty zombie directory still removed; startup reconciliation
-of a locally-dead owner (dirty retained / clean twin removed, capacity settled only for the removed
-one, idempotent retry); live foreign controller untouched; `authorizeDiscard` decline, invalid
-return, and capture-in-refs removal.
+Scenarios: staged, unstaged, deleted and untracked changes; ignored `.env`, ignored notes directory,
+and an ignored file inside an untracked directory; `force` refusal and refusal idempotence; no caller
+option (including the removed API names) authorizes destruction, at either boundary; `markStopped` is
+not an authorization; clean removal, double reap, exact absence and receipt release;
+metadata-attested copied dependency (plain and Git-ignored) and toolchain projection target still
+clean up; an un-attested look-alike is retained; an attested 1 500-file tree is not enumerated; a
+foreign repository at the owned path and a checkout Git can no longer observe are retained;
+dead-owner startup reconcile (dirty retained, ignored-content retained, clean twin removed, capacity
+settled only for the removed one, idempotent retry); live foreign controller untouched; empty zombie
+directory still removed; the observation interface's absent/clean/identity reports.
 
-Directly affected existing suites, all re-run against the changed module:
+Directly affected suites, all re-run against the changed module (all pass, 0 fail):
 
 | suite | result |
 | --- | --- |
 | `worktree.test.mjs` | 35/35 |
-| `phase58-sparse-worker-worktree.test.mjs` + `phase58-sparse-capture-integrity.test.mjs` | 34/34 |
-| `phase59-worktree-capacity-authority.test.mjs` | 66/66 |
-| `phase92.2-physical-workspace-owner-red.test.mjs` + `issue45-startup-reconcile-red.test.mjs` + `auxiliary-workspace-reconciliation.test.mjs` | 29/29 |
-| `phase58-p0-confinement-regressions.test.mjs` + `phase55-toolchain-projection.test.mjs` + `workspace-observation-truth.test.mjs` + `reap-on-terminal-red.test.mjs` | 25/25 |
-| `swarm-runtime.test.mjs` + `swarm-coordination.test.mjs` + `e2e.test.mjs` | 14/14 |
-| `phase67-signal-reap.test.mjs` + `phase70-preserved-stop.test.mjs` | 7/7 |
+| `phase58-sparse-worker-worktree` + `phase58-sparse-capture-integrity` | 34/34 |
+| `phase59-worktree-capacity-authority` | 66/66 |
+| `phase92.2-physical-workspace-owner-red` + `issue45-startup-reconcile-red` + `auxiliary-workspace-reconciliation` | 29/29 |
+| `phase58-p0-confinement-regressions` + `phase55-toolchain-projection` + `workspace-observation-truth` + `reap-on-terminal-red` | 25/25 |
+| `coordinator.test.mjs` + `issue5-cross-controller-lifecycle-recovery` | 67/67 |
+| `swarm-runtime` + `swarm-coordination` + `e2e` | 14/14 |
+| `phase67-signal-reap` + `phase70-preserved-stop` | 7/7 |
 
-Two failures encountered are **pre-existing at the base revision**, proven by running each suite from
-a read-only `git archive HEAD impl` copy with the workspace `impl/node_modules` linked:
-`phase56-drain-and-close.test.mjs` `DC2-DC7` (asserts the second worker is `pending` under
-`concurrencyCeiling: 1`; observes `working`; fails identically on both revisions) and
-`phase91-semantic-interrupt-preservation-red.test.mjs` `P91-3`…`P91-12`
-(`cancelledByParent: Promise resolution is still pending but the event loop has already resolved`;
-same on both revisions). Neither touches worktree removal.
+## 5. Integration the facade still owns
 
-## 6. Contracts the integration layer must still adjust
+The module edge is fixed; the wiring above it is not (other participants own those files, so it is
+reported here rather than edited):
 
-The module edge is fixed; the wiring above it is not (owned by other participants, so it is reported
-here rather than edited):
-
-1. **`index.mjs` `remove(taskId)` (927-970) releases capacity before calling `reap`.** With the
-   guard, a refusal after that release would retain a checkout whose reservation row is already
-   gone. Settle capacity inside the boundary with the new gate —
-   `reap(root, taskId, { force: true, deleteBranch: true, beforeRemove: () => capacity.settleForCleanup(id) })`
-   — or pre-observe with `observeOwnedWorktreeContent` and skip settlement for a non-removable
-   resource. The gate runs after the preservation decision, before the first effect, and a refusal
-   leaves the reservation untouched.
-2. **`index.mjs` `finalizeFailedTransaction` (343) must classify its own creation residue.** A failed
-   creation can leave materialized dependencies with no metadata on disk (metadata is written after
-   materialization), which is unprovable to the boundary: pass the transaction's declared dependency
-   directories as `disposablePaths`, or an explicit `discard` — otherwise the rollback retains.
-3. **`coordinator.mjs` `_removeOwnedTaskWorktree` (8886) must treat the typed refusal as custody
-   state, not as a generic failure.** Today any error becomes `cleanupError: 'worktree_cleanup_failed'`
-   (8948) and propagates; a `WorkspacePreservationError` should keep `cleanupPending` and surface its
-   own code (and `workspace_removal_deferred` likewise). The preserve-before-reap fail-safe
-   (`preserveUnaccepted`, 8932-8937) is still only enabled for `dead`/`exited` handles on
-   non-terminal tasks — widening it to "checkout holds content no capture recorded" (audit §5.2) turns
-   today's refusal into capture-then-remove for the ordinary stop paths.
-4. **Startup `reconcileStartupResources` (1334) should supply `authorizeDiscard`** so a dirty
-   dead-owner checkout is captured to a checkpoint ref (sync capture) and then removed, instead of
-   being retained indefinitely; without it, retention is the safe default and the owner is reported
-   in `report.retainedContentOwners`, which the capacity layer must also receive (it already lands in
-   `report.retainedExpectedOwners`, so today's `index.mjs` wiring keeps the row).
-5. **`index.mjs` `reconcile` (1034) should forward `disposablePaths` / `discard` / `authorizeDiscard`**
-   from the coordinator (and may expose `observeOwnedWorktreeContent` for pre-flight checks).
-
-## 7. Remaining gap, reported not fixed
-
-Committed-but-uncaptured work on the owner branch is still destroyable at both boundaries:
-`reap(deleteBranch: true)` deletes `baton/<ws-…>` after removal, and reconcile's loop-1 does the same
-at its postcheck, even when `headSha !== baseSha`. The observation now exposes `headSha`/`baseSha`, so
-the missing piece is a policy: pin `refs/baton/checkpoints/<tip>` before deleting a branch whose tip
-moved, or refuse `deleteBranch` for a moved tip without a discard authorization. It is intentionally
-out of this change: the assignment fixes un-captured *working-tree* content first, the coordinator
-already pins captured revisions (`_preserveProgressBeforeReap`), and `reap(deleteBranch)` on a moved
-tip is exercised by existing suites (`phase11`, `phase55`) whose contracts root must judge before
-tightening. No silent discard was introduced for it: the observation reports `headSha`/`baseSha` on
-every decision, and the discard record carries them.
+1. **Capacity ordering in `index.mjs` `remove(taskId)` (927-970).** It releases or settles capacity
+   (948-963) *before* calling `reap` (967), so a refusal at the boundary retains a checkout whose
+   reservation row is already gone. The boundary cannot close this from below: with the invented gate
+   removed there is no callback left to hang settlement on. The fix is ordering in the facade —
+   settle only once the boundary proves removal, or pre-observe with `observeOwnedWorktreeContent`
+   and skip settlement for a non-removable resource.
+2. **`coordinator.mjs` `_removeOwnedTaskWorktree` (8946-8950)** flattens every cleanup failure into
+   `cleanupError: 'worktree_cleanup_failed'`. A `WorkspacePreservationError` is custody state, not a
+   generic failure: keep `cleanupPending` and surface its code.
+3. **Startup `reconcileStartupResources`** now retains a dead owner's un-captured checkout
+   indefinitely. `index.mjs` `reconcile` already feeds `report.retainedExpectedOwners` into
+   `worktreeCapacity.reconcile(retained, retainedUnproven)` (1082-1086), so the reservation row
+   survives. Capturing that content and *then* reaping is a facade sequence (capture, then reap),
+   not a callback this interface offers.

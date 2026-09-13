@@ -1,26 +1,28 @@
-// Workspace preservation — the destructive worktree removal boundary never destroys un-captured
-// content. Every test drives real Git repositories and real checkouts; nothing mocks git, the
-// filesystem, or the process-identity probe.
+// Workspace preservation — the destructive worktree removal boundary never destroys content no
+// capture recorded. Every test drives real Git repositories and real checkouts; nothing mocks git,
+// the filesystem, or the process-identity probe.
 //
 // Contract under test (impl/src/worktree.mjs):
-//   - reap() and reconcile() destroy a checkout only when its content is (a) Git-observed clean,
-//     (b) every changed path is declared runtime infrastructure — the owner metadata's
-//     `copiedDependencies` / `toolchainProjectionTargets`, the worktree's own projection exclude
-//     configuration, or the caller's `disposablePaths` — or (c) the caller supplies an explicit
-//     `discard` authorization. `force` overrides the stop latch, never preservation.
+//   - reap() and reconcile() destroy a checkout only when it holds no content this repository's
+//     captures never recorded: staged, unstaged, deleted and untracked paths, and everything Git
+//     ignores. An ignored `.env` or notes directory is content, not cleanliness.
+//   - The only differences the boundary may destroy are the infrastructure the owner metadata
+//     itself attests as runtime-materialized: `copiedDependencies` and `toolchainProjectionTargets`.
+//     No caller option, and no `force`, substitutes for that attestation. `markStopped` is not one
+//     either, and caller-declared paths are never authority to delete source.
 //   - A refusal is typed (WorkspacePreservationError#code, #retained, #observation) and leaves the
 //     directory, its content, its metadata, its Git registration, its branch, its index and its
 //     owner receipt exactly as they were: a refusal is never reported as a removal.
 //   - reconcile() applies the same rule to an owner whose controller is proven dead, retains the
-//     checkout with a typed diagnostic, and leaves its capacity reservation evidence unsettled.
-//   - The boundary itself never stages, commits, stashes, or moves content: preserving content as
-//     a revision is a caller decision, recorded as authorization evidence.
+//     checkout with a typed diagnostic, and leaves its capacity reservation and receipt unsettled.
+//   - The boundary itself never stages, commits, stashes, or moves content: preservation is by
+//     retention, and reaping content is a decision no part of this interface can express.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync, readdirSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 
@@ -49,15 +51,17 @@ function git(cwd, args, input) {
   }).trim();
 }
 
-/** The full porcelain v2 working-tree + index observation, used to prove a refusal changed
- * nothing (a staged or committed side effect would alter this byte for byte). */
+/** The full porcelain v2 working-tree + index + ignored-path observation, used to prove a refusal
+ * changed nothing (a staged, committed or ignored side effect would alter this byte for byte). */
 function statusRaw(dir) {
-  return execFileSync('git', ['status', '--porcelain=v2', '-z', '--no-renames', '-uall'], {
+  return execFileSync('git', ['status', '--porcelain=v2', '-z', '--no-renames', '-uall', '--ignored=matching'], {
     cwd: dir, encoding: 'utf8', env: gitEnv,
   });
 }
 
-function makeRepo(label = 'repo') {
+/** A real repository whose base commit may already carry the ignore rules the fixture needs, so
+ * that ignored content is genuinely Git-ignored rather than merely untracked. */
+function makeRepo(label = 'repo', { ignore = [] } = {}) {
   const world = mkdtempSync(join(tmpdir(), `baton-preservation-${label}-`));
   const root = join(world, 'repo'); mkdirSync(root);
   git(root, ['init', '-q']);
@@ -66,6 +70,7 @@ function makeRepo(label = 'repo') {
   writeFileSync(join(root, 'README.md'), '# base\n');
   mkdirSync(join(root, 'src'));
   writeFileSync(join(root, 'src', 'main.js'), 'export const value = 1;\n');
+  if (ignore.length > 0) writeFileSync(join(root, '.gitignore'), `${ignore.join('\n')}\n`);
   git(root, ['add', '-A']); git(root, ['commit', '-qm', 'base']);
   return { world, root, baseSha: git(root, ['rev-parse', 'HEAD']) };
 }
@@ -143,18 +148,41 @@ async function rejectsPreservation(promise, code, label) {
   }, label);
 }
 
+/** Everything a refusal must leave untouched: content, index, registration, branch, metadata and
+ * owner receipt. Returns the state a caller re-asserts after a second refusal. */
+function assertIntact(f, id, dir) {
+  assert.equal(existsSync(dir), true, 'checkout retained');
+  assert.equal(existsSync(join(f.root, '.baton', 'wt', `${id}.meta.json`)), true, 'metadata retained');
+  assert.ok(listWorktrees(f.root).some((entry) => entry.dir === dir), 'registration retained');
+  assert.ok(git(f.root, ['branch', '--list', `baton/${id}`]) !== '', 'branch retained');
+  assert.equal(physicalWorkspaceOwnerReceipt(f.root, id)?.physicalOwnerId, id, 'owner receipt retained');
+  assert.equal(physicalWorkspaceOwnerCleanupAbsent(f.root, id), false, 'no absence proof is claimed');
+}
+
 // ---------- reap(): un-captured content is never destroyed ----------
 
 test('reap() retains a dirty checkout for a dead owner even with {force:true}', async (t) => {
   const variants = [
-    ['unstaged tracked modification', (dir, root) => writeFileSync(join(dir, 'README.md'), '# base\nedited\n'), 'README.md'],
-    ['staged tracked modification', (dir) => { writeFileSync(join(dir, 'src', 'main.js'), 'export const value = 2;\n'); git(dir, ['add', 'src/main.js']); }, 'src/main.js'],
-    ['untracked file', (dir) => writeFileSync(join(dir, 'notes.txt'), 'unrecorded notes\n'), 'notes.txt'],
-    ['deleted tracked file', (dir) => rmSync(join(dir, 'src', 'main.js')), 'src/main.js'],
+    ['unstaged tracked modification', (dir) => writeFileSync(join(dir, 'README.md'), '# base\nedited\n'), ['README.md']],
+    ['staged tracked modification', (dir) => { writeFileSync(join(dir, 'src', 'main.js'), 'export const value = 2;\n'); git(dir, ['add', 'src/main.js']); }, ['src/main.js']],
+    ['untracked file', (dir) => writeFileSync(join(dir, 'notes.txt'), 'unrecorded notes\n'), ['notes.txt']],
+    ['deleted tracked file', (dir) => rmSync(join(dir, 'src', 'main.js')), ['src/main.js']],
+    // Git-ignored paths are invisible to `--ignored=no`, which is exactly how a boundary can
+    // delete a checkout it believes is clean while destroying the only copy of this content.
+    ['ignored .env file', (dir) => writeFileSync(join(dir, '.env'), 'SECRET=1\n'), ['.env']],
+    ['ignored notes directory', (dir) => {
+      mkdirSync(join(dir, 'notes'), { recursive: true });
+      writeFileSync(join(dir, 'notes', 'journal.md'), 'unrecorded research\n');
+    }, ['notes']],
+    ['ignored file inside an untracked directory', (dir) => {
+      mkdirSync(join(dir, 'scratch'), { recursive: true });
+      writeFileSync(join(dir, 'scratch', 'draft.txt'), 'draft\n');
+      writeFileSync(join(dir, 'scratch', '.env'), 'TOKEN=2\n');
+    }, ['scratch/.env', 'scratch/draft.txt']],
   ];
-  for (const [label, mutate, expectedPath] of variants) {
+  for (const [label, mutate, expectedPaths] of variants) {
     await t.test(label, async () => {
-      const f = makeRepo('reap-dirty');
+      const f = makeRepo('reap-dirty', { ignore: ['.env', 'notes/', 'scratch/.env'] });
       t.after(() => rmSync(f.world, { recursive: true, force: true }));
       const { id, dir } = await ownedCheckout(f);
       mutate(dir, f.root);
@@ -169,15 +197,12 @@ test('reap() retains a dirty checkout for a dead owner even with {force:true}', 
       const observation = observeOwnedWorktreeContent(f.root, id);
       assert.equal(observation.state, 'dirty');
       assert.equal(observation.removable, false);
-      assert.ok(observation.dirtyPaths.includes(expectedPath),
-        `${label}: observation names ${expectedPath} (${JSON.stringify(observation.dirtyPaths)})`);
+      for (const expectedPath of expectedPaths) {
+        assert.ok(observation.dirtyPaths.includes(expectedPath),
+          `${label}: observation names ${expectedPath} (${JSON.stringify(observation.dirtyPaths)})`);
+      }
       assert.equal(statusRaw(dir), before, `${label}: refusal changed neither index nor working tree`);
-      assert.equal(existsSync(dir), true);
-      assert.equal(existsSync(join(f.root, '.baton', 'wt', `${id}.meta.json`)), true);
-      assert.equal(physicalWorkspaceOwnerReceipt(f.root, id)?.physicalOwnerId, id, `${label}: owner receipt retained`);
-      assert.equal(physicalWorkspaceOwnerCleanupAbsent(f.root, id), false, `${label}: no absence proof is claimed`);
-      assert.ok(git(f.root, ['branch', '--list', `baton/${id}`]) !== '', `${label}: branch retained`);
-      assert.ok(listWorktrees(f.root).some((entry) => entry.dir === dir), `${label}: registration retained`);
+      assertIntact(f, id, dir);
 
       // The refusal is stable: a retry observes the same state and destroys nothing.
       await rejectsPreservation(
@@ -189,7 +214,7 @@ test('reap() retains a dirty checkout for a dead owner even with {force:true}', 
   }
 });
 
-test('markStopped and a non-forced reap are not a discard authorization', async (t) => {
+test('markStopped is not an authorization to destroy un-captured content', async (t) => {
   const f = makeRepo('reap-stopped-dirty');
   t.after(() => rmSync(f.world, { recursive: true, force: true }));
   const { id, dir } = await ownedCheckout(f);
@@ -202,7 +227,65 @@ test('markStopped and a non-forced reap are not a discard authorization', async 
     'workspace_uncommitted_content_retained', 'stopped dirty reap',
   );
   assert.equal(statusRaw(dir), before);
-  assert.equal(existsSync(join(dir, 'partial.txt')), true);
+  assert.equal(readFileSync(join(dir, 'partial.txt'), 'utf8'), 'partial work from an aborted run\n');
+  assertIntact(f, id, dir);
+});
+
+test('no caller option is an authorization to destroy un-captured content', async (t) => {
+  // The names below are the shape a deletion-policy API would take. None of them is one: the
+  // boundary has no caller-supplied authority to delete source, so they are inert.
+  const options = () => ({
+    force: true, deleteBranch: true,
+    discard: { reason: 'invented authorization', evidenceRef: 'refs/anything', actor: 'test:operator' },
+    authorizeDiscard: () => ({ reason: 'invented authorization' }),
+    disposablePaths: ['src'],
+    beforeRemove: () => true,
+  });
+
+  await t.test('reap() retains content whatever the caller passes', async () => {
+    const f = makeRepo('no-authority-reap');
+    t.after(() => rmSync(f.world, { recursive: true, force: true }));
+    const { id, dir } = await ownedCheckout(f, { attemptId: 'no-authority-reap' });
+    mkdirSync(join(dir, 'src', 'private'), { recursive: true });
+    writeFileSync(join(dir, 'src', 'private', 'notes.md'), 'unrecorded design notes\n');
+    writeFileSync(join(dir, 'README.md'), '# base\nedited\n');
+    const before = statusRaw(dir);
+
+    await rejectsPreservation(
+      reap(f.root, id, options()),
+      'workspace_uncommitted_content_retained', 'caller-supplied options',
+    );
+
+    assert.equal(statusRaw(dir), before, 'the options changed nothing');
+    assert.equal(readFileSync(join(dir, 'src', 'private', 'notes.md'), 'utf8'), 'unrecorded design notes\n');
+    assertIntact(f, id, dir);
+  });
+
+  await t.test('reconcile() retains content whatever the caller passes', async () => {
+    const f = makeRepo('no-authority-reconcile');
+    t.after(() => rmSync(f.world, { recursive: true, force: true }));
+    const { id, dir } = await ownedCheckout(f, { attemptId: 'no-authority-reconcile' });
+    writeFileSync(join(dir, 'README.md'), '# base\ndead owner work\n');
+    const before = statusRaw(dir);
+    const settled = [];
+
+    const report = reconcile(f.root, [], {
+      ...options(),
+      ownerAuthority: restartAuthority(),
+      beforeOwnerCleanup: (physicalOwnerId) => { settled.push(physicalOwnerId); return true; },
+    });
+
+    assert.deepEqual(report.errors, []);
+    assert.deepEqual(report.removedPhysicalOwners, [], 'nothing is removed');
+    assert.deepEqual(settled, [], 'a retained resource is never settled');
+    assert.deepEqual(report.retainedContentOwners, [id]);
+    assert.ok(report.diagnostics.some((row) => (
+      row.physicalOwnerId === id && row.code === 'workspace_uncommitted_content_retained' && row.retained === true
+    )));
+    assert.equal(statusRaw(dir), before);
+    assert.equal(readFileSync(join(dir, 'README.md'), 'utf8'), '# base\ndead owner work\n');
+    assert.equal(existsSync(receiptPath(f.root, id)), true, 'owner receipt retained');
+  });
 });
 
 test('a clean checkout is still removed, and reaping twice stays a no-op', async (t) => {
@@ -223,10 +306,10 @@ test('a clean checkout is still removed, and reaping twice stays a no-op', async
   await assert.doesNotReject(() => reap(f.root, id, { deleteBranch: true }), 'second reap is a no-op');
 });
 
-// ---------- runtime-materialized infrastructure still cleans ----------
+// ---------- attested runtime infrastructure is generated, not un-captured content ----------
 
-test('runtime-materialized infrastructure is disposable, not un-captured content', async (t) => {
-  await t.test('metadata-declared copied dependency', async () => {
+test('attested runtime infrastructure is generated, not un-captured content', async (t) => {
+  await t.test('metadata-attested copied dependency', async () => {
     const f = makeRepo('deps');
     t.after(() => rmSync(f.world, { recursive: true, force: true }));
     mkdirSync(join(f.root, 'deps', 'runtime'), { recursive: true });
@@ -235,12 +318,29 @@ test('runtime-materialized infrastructure is disposable, not un-captured content
     assert.equal(existsSync(join(handle.dir, 'deps', 'runtime', 'index.js')), true);
 
     const observation = observeOwnedWorktreeContent(f.root, 'copied-dependency');
-    assert.equal(observation.state, 'disposable');
-    assert.deepEqual(observation.disposableRoots, ['deps']);
-    assert.deepEqual(observation.disposablePaths, ['deps/runtime/index.js']);
-    assert.deepEqual(observation.dirtyPaths, []);
+    assert.deepEqual(observation.generatedRoots, ['deps']);
+    assert.deepEqual(observation.dirtyPaths, [], 'a declared dependency copy is not un-captured work');
+    assert.equal(observation.removable, true);
 
     await reap(f.root, 'copied-dependency', { force: true, deleteBranch: true });
+    assert.equal(existsSync(handle.dir), false);
+  });
+
+  await t.test('metadata-attested copied dependency that Git also ignores', async () => {
+    const f = makeRepo('deps-ignored', { ignore: ['deps/'] });
+    t.after(() => rmSync(f.world, { recursive: true, force: true }));
+    mkdirSync(join(f.root, 'deps', 'runtime'), { recursive: true });
+    writeFileSync(join(f.root, 'deps', 'runtime', 'index.js'), 'module.exports = 1;\n');
+    const handle = await createFromBase(f.root, 'deps-ignored', f.baseSha, { dependencyDirs: ['deps'] });
+
+    const observation = observeOwnedWorktreeContent(f.root, 'deps-ignored');
+    assert.deepEqual(observation.generatedRoots, ['deps']);
+    assert.deepEqual(observation.dirtyPaths, []);
+    assert.deepEqual(observation.generatedPaths, ['deps'], 'the ignored dependency tree is attested, not unproven');
+    assert.equal(observation.state, 'generated');
+    assert.equal(observation.removable, true);
+
+    await reap(f.root, 'deps-ignored', { force: true, deleteBranch: true });
     assert.equal(existsSync(handle.dir), false);
   });
 
@@ -265,161 +365,105 @@ test('runtime-materialized infrastructure is disposable, not un-captured content
     assert.equal(existsSync(join(handle.dir, 'tools', 'runtime', 'index.mjs')), true);
 
     const observation = observeOwnedWorktreeContent(f.root, 'projected-toolchain');
-    assert.equal(observation.state, 'clean', `projection targets are ignored, not un-captured content: ${JSON.stringify(observation.dirtyPaths)}`);
+    assert.deepEqual(observation.dirtyPaths, [], `projection targets are attested, not un-captured content: ${JSON.stringify(observation.dirtyPaths)}`);
+    assert.deepEqual(observation.generatedRoots, ['tools/runtime']);
+    assert.equal(observation.removable, true);
 
     await reap(f.root, 'projected-toolchain', { force: true, deleteBranch: true });
     assert.equal(existsSync(handle.dir), false);
     assert.equal(existsSync(join(f.root, '.baton', 'wt', 'projected-toolchain.projection.exclude')), false);
   });
 
-  await t.test('caller-declared generated infrastructure residue', async () => {
-    const f = makeRepo('generated');
+  await t.test('an un-attested look-alike is un-captured content, not infrastructure', async () => {
+    const f = makeRepo('unattested');
     t.after(() => rmSync(f.world, { recursive: true, force: true }));
-    const { id, dir } = await ownedCheckout(f, { attemptId: 'generated-residue' });
+    const { id, dir } = await ownedCheckout(f, { attemptId: 'unattested-residue' });
     mkdirSync(join(dir, 'generated'), { recursive: true });
     writeFileSync(join(dir, 'generated', 'report.json'), '{}\n');
 
+    const observation = observeOwnedWorktreeContent(f.root, id);
+    assert.deepEqual(observation.generatedRoots, [], 'nothing but owner metadata attests infrastructure');
+    assert.deepEqual(observation.dirtyPaths, ['generated/report.json']);
+
     await rejectsPreservation(
       reap(f.root, id, { force: true, deleteBranch: true }),
-      'workspace_uncommitted_content_retained', 'undeclared residue',
+      'workspace_uncommitted_content_retained', 'unattested residue',
     );
-    assert.equal(existsSync(join(dir, 'generated', 'report.json')), true);
-
-    const observation = observeOwnedWorktreeContent(f.root, id, { disposablePaths: ['generated'] });
-    assert.equal(observation.state, 'disposable');
-    assert.deepEqual(observation.disposablePaths, ['generated/report.json']);
-    await reap(f.root, id, { force: true, deleteBranch: true, disposablePaths: ['generated'] });
-    assert.equal(existsSync(dir), false, 'declared infrastructure is still removable');
+    assert.equal(readFileSync(join(dir, 'generated', 'report.json'), 'utf8'), '{}\n');
   });
 });
 
-// ---------- explicit discard authorization ----------
+test('an attested dependency tree is not walked file by file', async (t) => {
+  const f = makeRepo('attested-scale');
+  t.after(() => rmSync(f.world, { recursive: true, force: true }));
+  mkdirSync(join(f.root, 'deps'));
+  for (let index = 0; index < 1_500; index += 1) {
+    const dir = join(f.root, 'deps', `pkg${index % 25}`);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, `module${index}.js`), 'module.exports = 1;\n');
+  }
+  const handle = await createFromBase(f.root, 'attested-scale', f.baseSha, { dependencyDirs: ['deps'] });
 
-test('an explicit discard authorization destroys content and records its evidence', async (t) => {
-  await t.test('with a preserving reference', async () => {
-    const f = makeRepo('discard-evidence');
+  const observation = observeOwnedWorktreeContent(f.root, 'attested-scale');
+  assert.deepEqual(observation.generatedRoots, ['deps']);
+  assert.deepEqual(observation.dirtyPaths, []);
+  assert.equal(observation.state, 'clean',
+    'the attested tree is excluded from the walk instead of enumerated path by path');
+  assert.equal(observation.removable, true);
+
+  await reap(f.root, 'attested-scale', { force: true, deleteBranch: true });
+  assert.equal(existsSync(handle.dir), false);
+});
+
+// ---------- unknown content is not permission ----------
+
+test('a directory that is not this repository\'s checkout is retained', async (t) => {
+  await t.test('another repository checked out at the owned path', async () => {
+    const f = makeRepo('foreign-repo');
     t.after(() => rmSync(f.world, { recursive: true, force: true }));
-    const { id, dir } = await ownedCheckout(f, { attemptId: 'discard-evidence' });
-    writeFileSync(join(dir, 'README.md'), '# base\ncaptured elsewhere\n');
-    const { events, log } = stubLog();
-
-    await reap(f.root, id, {
-      force: true, deleteBranch: true, log,
-      discard: { reason: 'adapter run aborted; content captured', evidenceRef: 'refs/baton/checkpoints/deadbeef', actor: 'test:operator' },
-    });
-
-    assert.equal(existsSync(dir), false);
-    const recorded = events.filter((event) => event.kind === 'worktree.discard_authorized');
-    assert.equal(recorded.length, 1, 'exactly one discard authorization is recorded');
-    assert.equal(recorded[0].worker, id);
-    assert.deepEqual(recorded[0].payload.dirtyPaths, ['README.md']);
-    assert.equal(recorded[0].payload.reason, 'adapter run aborted; content captured');
-    assert.equal(recorded[0].payload.evidenceRef, 'refs/baton/checkpoints/deadbeef');
-    assert.equal(recorded[0].payload.actor, 'test:operator');
-    assert.equal(events.filter((event) => event.kind === 'worktree.reaped').length, 1);
-  });
-
-  await t.test('without a preserving reference the authorization is still explicit', async () => {
-    const f = makeRepo('discard-no-evidence');
-    t.after(() => rmSync(f.world, { recursive: true, force: true }));
-    const { id, dir } = await ownedCheckout(f, { attemptId: 'discard-no-evidence' });
-    writeFileSync(join(dir, 'junk.txt'), 'aborted run residue\n');
-    const { events, log } = stubLog();
-
-    await reap(f.root, id, { force: true, deleteBranch: true, log, discard: { reason: 'aborted run, nothing worth keeping' } });
-    assert.equal(existsSync(dir), false);
-    const recorded = events.filter((event) => event.kind === 'worktree.discard_authorized');
-    assert.equal(recorded.length, 1);
-    assert.equal(recorded[0].payload.evidenceRef, null);
-  });
-
-  await t.test('a malformed authorization fails before any effect', async () => {
-    const f = makeRepo('discard-malformed');
-    t.after(() => rmSync(f.world, { recursive: true, force: true }));
-    const { id, dir } = await ownedCheckout(f, { attemptId: 'discard-malformed' });
-    writeFileSync(join(dir, 'README.md'), '# base\nedited\n');
+    const dir = join(f.root, '.baton', 'wt', 'foreign-checkout');
+    mkdirSync(dir, { recursive: true });
+    git(dir, ['init', '-q']);
+    git(dir, ['config', 'user.name', 'Foreign Fixture']);
+    git(dir, ['config', 'user.email', 'foreign@example.invalid']);
+    writeFileSync(join(dir, 'foreign.txt'), 'another repository worktree\n');
+    git(dir, ['add', '-A']); git(dir, ['commit', '-qm', 'foreign base']);
     const before = statusRaw(dir);
 
-    for (const discard of [
-      {}, { reason: '' }, { reason: '   ' }, { reason: 'ok', evidence: 'refs/x' },
-      { reason: 'ok', evidenceRef: 7 }, { reason: 'ok', actor: '' }, 'yes',
-    ]) {
-      await assert.rejects(
-        reap(f.root, id, { force: true, deleteBranch: true, discard }),
-        (error) => error instanceof TypeError, `discard ${JSON.stringify(discard)}`,
-      );
-      assert.equal(statusRaw(dir), before, `discard ${JSON.stringify(discard)} changed nothing`);
-      assert.equal(existsSync(dir), true);
-    }
+    // Its top level matches the directory it was given, so only the repository identity proves it
+    // is not a checkout this owner ever had.
+    assert.equal(git(dir, ['rev-parse', '--show-toplevel']), dir);
+    const observation = observeOwnedWorktreeContent(f.root, 'foreign-checkout');
+    assert.equal(observation.state, 'unobservable');
+    assert.equal(observation.removable, false);
+
+    await rejectsPreservation(
+      reap(f.root, 'foreign-checkout', { force: true }),
+      'workspace_content_unobservable_retained', 'foreign checkout reap',
+    );
+    assert.equal(statusRaw(dir), before);
+    assert.equal(readFileSync(join(dir, 'foreign.txt'), 'utf8'), 'another repository worktree\n');
+    assert.equal(existsSync(dir), true);
   });
-});
 
-// ---------- beforeRemove: the caller's transaction gate stays outside the effect ----------
+  await t.test('a checkout Git can no longer observe', async () => {
+    const f = makeRepo('unobservable');
+    t.after(() => rmSync(f.world, { recursive: true, force: true }));
+    const { id, dir } = await ownedCheckout(f, { attemptId: 'unobservable' });
+    writeFileSync(join(dir, 'unrecorded.txt'), 'not reachable through any capture\n');
+    rmSync(join(dir, '.git')); // the checkout can no longer be observed as its own repository
 
-test('beforeRemove defers the removal and is never able to claim an authorization it refused', async (t) => {
-  const f = makeRepo('before-remove');
-  t.after(() => rmSync(f.world, { recursive: true, force: true }));
-  const { id, dir } = await ownedCheckout(f, { attemptId: 'before-remove' });
-  writeFileSync(join(dir, 'README.md'), '# base\nedited\n');
-  const { events, log } = stubLog();
-  const discard = { reason: 'captured before deferred removal', evidenceRef: 'refs/baton/checkpoints/cafe' };
-  let gateCalls = 0;
+    const observation = observeOwnedWorktreeContent(f.root, id);
+    assert.equal(observation.state, 'unobservable');
+    assert.equal(observation.removable, false);
 
-  await rejectsPreservation(
-    reap(f.root, id, {
-      force: true, deleteBranch: true, log, discard,
-      beforeRemove: ({ physicalOwnerId, observation, discard: authorized }) => {
-        gateCalls += 1;
-        assert.equal(physicalOwnerId, id);
-        assert.equal(observation.state, 'dirty');
-        assert.equal(authorized?.evidenceRef, 'refs/baton/checkpoints/cafe');
-        return false;
-      },
-    }),
-    'workspace_removal_deferred', 'deferred removal',
-  );
-  assert.equal(gateCalls, 1);
-  assert.equal(existsSync(dir), true);
-  assert.equal(existsSync(join(dir, 'README.md')), true);
-  assert.equal(physicalWorkspaceOwnerReceipt(f.root, id)?.physicalOwnerId, id);
-  assert.deepEqual(events, [], 'a deferred removal records no discard authorization');
-
-  await reap(f.root, id, {
-    force: true, deleteBranch: true, log, discard,
-    beforeRemove: () => true,
+    await rejectsPreservation(
+      reap(f.root, id, { force: true, deleteBranch: true }),
+      'workspace_content_unobservable_retained', 'unobservable reap',
+    );
+    assert.equal(readFileSync(join(dir, 'unrecorded.txt'), 'utf8'), 'not reachable through any capture\n');
+    assert.equal(existsSync(dir), true);
   });
-  assert.equal(existsSync(dir), false);
-  assert.equal(events.filter((event) => event.kind === 'worktree.discard_authorized').length, 1);
-
-  // The gate runs for the residue path too, where there is no content at all.
-  const clean = await ownedCheckout(f, { attemptId: 'before-remove-clean' });
-  const seen = [];
-  await reap(f.root, clean.id, {
-    force: true, deleteBranch: true,
-    beforeRemove: ({ observation }) => { seen.push(observation.state); return true; },
-  });
-  assert.deepEqual(seen, ['clean']);
-});
-
-// ---------- unobservable content ----------
-
-test('a directory whose content cannot be observed is retained, not cleaned', async (t) => {
-  const f = makeRepo('unobservable');
-  t.after(() => rmSync(f.world, { recursive: true, force: true }));
-  const { id, dir } = await ownedCheckout(f, { attemptId: 'unobservable' });
-  writeFileSync(join(dir, 'unrecorded.txt'), 'not reachable through any capture\n');
-  rmSync(join(dir, '.git')); // the checkout can no longer be observed as its own repository
-
-  const observation = observeOwnedWorktreeContent(f.root, id);
-  assert.equal(observation.state, 'unobservable');
-  assert.equal(observation.removable, false);
-
-  await rejectsPreservation(
-    reap(f.root, id, { force: true, deleteBranch: true }),
-    'workspace_content_unobservable_retained', 'unobservable reap',
-  );
-  assert.equal(existsSync(join(dir, 'unrecorded.txt')), true);
-  assert.equal(existsSync(dir), true);
 });
 
 test('reconcile() still removes a leftover directory that holds no content', async (t) => {
@@ -456,6 +500,8 @@ test('reconcile() retains a dead owner\'s dirty checkout and settles nobody\'s c
   assert.deepEqual(report.removedPhysicalOwners, [clean.id], 'only the clean owner is removed');
   assert.deepEqual(settled, [clean.id], 'capacity settles only for the resource that was removed');
   assert.deepEqual(report.retainedContentOwners, [dirty.id]);
+  assert.ok(report.retainedExpectedOwners.includes(dirty.id),
+    'the retained checkout stays in the retained set, so its reservation is not dropped');
   assert.equal(report.removedZombieDirs.includes(dirty.dir), false);
 
   const diagnostic = report.diagnostics.find((row) => row.physicalOwnerId === dirty.id && row.retained === true);
@@ -490,6 +536,36 @@ test('reconcile() retains a dead owner\'s dirty checkout and settles nobody\'s c
     'only the removed owner emits a reconciled event');
 });
 
+test('reconcile() retains a dead owner\'s checkout whose only difference is Git-ignored content', async (t) => {
+  const f = makeRepo('startup-ignored', { ignore: ['.env', 'notes/'] });
+  t.after(() => rmSync(f.world, { recursive: true, force: true }));
+  const { id, dir } = await ownedCheckout(f, { attemptId: 'startup-ignored' });
+  writeFileSync(join(dir, '.env'), 'DATABASE_URL=postgres://localhost/dev\n');
+  mkdirSync(join(dir, 'notes'), { recursive: true });
+  writeFileSync(join(dir, 'notes', 'todo.md'), 'finish the migration notes\n');
+  const before = statusRaw(dir);
+  const settled = [];
+
+  const report = reconcile(f.root, [], {
+    ownerAuthority: restartAuthority(),
+    beforeOwnerCleanup: (physicalOwnerId) => { settled.push(physicalOwnerId); return true; },
+  });
+
+  assert.deepEqual(report.errors, []);
+  assert.deepEqual(report.removedPhysicalOwners, []);
+  assert.deepEqual(settled, [], 'an ignored-content retention settles no capacity');
+  assert.deepEqual(report.retainedContentOwners, [id]);
+  const diagnostic = report.diagnostics.find((row) => row.physicalOwnerId === id && row.retained === true);
+  assert.equal(diagnostic.code, 'workspace_uncommitted_content_retained');
+  assert.equal(diagnostic.contentState, 'dirty');
+  assert.deepEqual([...diagnostic.dirtyPaths].sort(), ['.env', 'notes']);
+
+  assert.equal(statusRaw(dir), before, 'ignored content is byte-identical after the refusal');
+  assert.equal(readFileSync(join(dir, '.env'), 'utf8'), 'DATABASE_URL=postgres://localhost/dev\n');
+  assert.equal(readFileSync(join(dir, 'notes', 'todo.md'), 'utf8'), 'finish the migration notes\n');
+  assert.equal(existsSync(receiptPath(f.root, id)), true, 'owner receipt retained');
+});
+
 test('reconcile() never touches a live foreign controller\'s checkout, dirty or not', async (t) => {
   const f = makeRepo('foreign');
   t.after(() => rmSync(f.world, { recursive: true, force: true }));
@@ -515,103 +591,23 @@ test('reconcile() never touches a live foreign controller\'s checkout, dirty or 
   assert.equal(existsSync(receiptPath(f.root, receipt.physicalOwnerId)), true);
 });
 
-// ---------- reconcile(): preserve-then-remove is a caller decision the boundary records ----------
+// ---------- the observation interface itself ----------
 
-test('reconcile() authorizeDiscard is the caller\'s capture decision, recorded with its reference', async (t) => {
-  await t.test('a caller that declines to capture keeps the content', async () => {
-    const f = makeRepo('authorize-decline');
-    t.after(() => rmSync(f.world, { recursive: true, force: true }));
-    const { id, dir } = await ownedCheckout(f, { attemptId: 'authorize-decline' });
-    writeFileSync(join(dir, 'README.md'), '# base\nwork\n');
-    writeFileSync(join(dir, 'fresh.txt'), 'untracked work\n');
-    const before = statusRaw(dir);
-    let consulted = 0;
+test('the observation reports absence and identity without touching anything', async (t) => {
+  const f = makeRepo('observation');
+  t.after(() => rmSync(f.world, { recursive: true, force: true }));
+  const { id, dir } = await ownedCheckout(f, { attemptId: 'observation' });
 
-    const report = reconcile(f.root, [], {
-      ownerAuthority: restartAuthority(),
-      authorizeDiscard: (physicalOwnerId, receipt, observation) => {
-        consulted += 1;
-        assert.equal(physicalOwnerId, id);
-        assert.equal(receipt.logicalTaskId, 'preservation-logical');
-        assert.equal(observation.state, 'dirty');
-        return null;
-      },
-    });
+  const clean = observeOwnedWorktreeContent(f.root, id);
+  assert.equal(clean.state, 'clean');
+  assert.equal(clean.removable, true);
+  assert.equal(clean.dir, dir);
+  assert.equal(clean.physicalOwnerId, id);
+  assert.equal(clean.baseSha, f.baseSha);
+  assert.equal(clean.headSha, f.baseSha);
+  assert.ok(Object.isFrozen(clean));
 
-    assert.equal(consulted, 1);
-    assert.deepEqual(report.errors, []);
-    assert.deepEqual(report.removedPhysicalOwners, []);
-    assert.ok(report.diagnostics.some((row) => row.physicalOwnerId === id && row.code === 'workspace_uncommitted_content_retained'));
-    assert.equal(existsSync(dir), true);
-    assert.equal(statusRaw(dir), before, 'a declined capture changes neither index nor working tree');
-  });
-
-  await t.test('an invalid authorization return retains with its own diagnostic', async () => {
-    const f = makeRepo('authorize-invalid');
-    t.after(() => rmSync(f.world, { recursive: true, force: true }));
-    const { id, dir } = await ownedCheckout(f, { attemptId: 'authorize-invalid' });
-    writeFileSync(join(dir, 'README.md'), '# base\nwork\n');
-
-    const report = reconcile(f.root, [], {
-      ownerAuthority: restartAuthority(),
-      authorizeDiscard: () => ({ reason: '' }),
-    });
-
-    assert.deepEqual(report.errors, []);
-    assert.ok(report.diagnostics.some((row) => (
-      row.physicalOwnerId === id && row.code === 'workspace_discard_authorization_invalid' && row.retained === true
-    )));
-    assert.deepEqual(report.retainedContentOwners, [id]);
-    assert.equal(existsSync(dir), true);
-  });
-
-  await t.test('a capture pinned to a ref preserves tracked and untracked content before removal', async () => {
-    const f = makeRepo('authorize-capture');
-    t.after(() => rmSync(f.world, { recursive: true, force: true }));
-    const { id, dir } = await ownedCheckout(f, { attemptId: 'authorize-capture' });
-    writeFileSync(join(dir, 'README.md'), '# base\ncaptured tracked edit\n');
-    writeFileSync(join(dir, 'fresh.txt'), 'captured untracked work\n');
-    const { events, log } = stubLog();
-    let capturedSha = null;
-
-    const report = reconcile(f.root, [], {
-      ownerAuthority: restartAuthority(), log,
-      authorizeDiscard: (physicalOwnerId, receipt, observation) => {
-        assert.equal(observation.state, 'dirty');
-        // The caller's capture: stage, commit and pin. The removal boundary itself performs none
-        // of this — it only records the reference the caller names as evidence.
-        git(dir, ['add', '-A']);
-        git(dir, ['-c', 'user.name=Preservation Capture', '-c', 'user.email=capture@example.invalid',
-          'commit', '-q', '-m', 'baton preserve: caller capture before authorized discard']);
-        capturedSha = git(dir, ['rev-parse', 'HEAD']);
-        git(f.root, ['update-ref', `refs/baton/checkpoints/${capturedSha}`, capturedSha]);
-        return {
-          reason: 'content captured to a pinned checkpoint before removal',
-          evidenceRef: `refs/baton/checkpoints/${capturedSha}`, actor: 'test:operator',
-        };
-      },
-    });
-
-    assert.deepEqual(report.errors, []);
-    assert.deepEqual(report.removedPhysicalOwners, [id]);
-    assert.deepEqual(report.retainedContentOwners, []);
-    assert.equal(report.authorizedDiscards.length, 1);
-    assert.equal(report.authorizedDiscards[0].evidenceRef, `refs/baton/checkpoints/${capturedSha}`);
-    assert.deepEqual([...report.authorizedDiscards[0].dirtyPaths].sort(), ['README.md', 'fresh.txt']);
-
-    const recorded = events.filter((event) => event.kind === 'worktree.discard_authorized');
-    assert.equal(recorded.length, 1);
-    assert.equal(recorded[0].payload.evidenceRef, `refs/baton/checkpoints/${capturedSha}`);
-
-    assert.equal(existsSync(dir), false, 'authorized removal completed');
-    assert.equal(existsSync(receiptPath(f.root, id)), false);
-    assert.equal(git(f.root, ['cat-file', '-t', capturedSha]), 'commit');
-    assert.equal(git(f.root, ['show', `${capturedSha}:README.md`]), '# base\ncaptured tracked edit');
-    assert.equal(git(f.root, ['show', `${capturedSha}:fresh.txt`]), 'captured untracked work');
-    assert.deepEqual(
-      git(f.root, ['ls-tree', '-r', '--name-only', capturedSha]).split('\n').sort(),
-      ['README.md', 'fresh.txt', 'src/main.js'],
-      'the pinned revision names exactly the checkout content, nothing else',
-    );
-  });
+  assert.equal(observeOwnedWorktreeContent(f.root, 'never-allocated').state, 'absent');
+  assert.equal(observeOwnedWorktreeContent(f.root, 'never-allocated').removable, true);
+  assert.throws(() => observeOwnedWorktreeContent(f.root, '../escape'), TypeError);
 });
