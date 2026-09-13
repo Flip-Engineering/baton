@@ -202,3 +202,36 @@ test('OMP discovers peer-message syntax and emits fragmented initiated/reply fra
   fx.child.frame({ type: 'message_update', assistantMessageEvent: { type: 'text_delta', delta: 'Ordinary trailing text.' } });
   assert.deepEqual(events.filter((event) => event.kind === 'message.send').map((event) => event.payload), [initiated, reply]);
 });
+
+test('OMP interrupt through Coordinator suppresses acceptance and delays follow-up until abort confirmation', async (t) => {
+  const fx = await fixture(t);
+  let abortFrame;
+  let abortWritten;
+  const ready = new Promise((resolve) => { abortWritten = resolve; });
+  const write = fx.child.stdin.write;
+  fx.child.stdin.write = (line) => {
+    const frame = JSON.parse(line);
+    if (frame.type !== 'abort') return write(line);
+    fx.child.written.push(frame);
+    abortFrame = frame;
+    abortWritten();
+    return true;
+  };
+  let captures = 0;
+  fx.coordinator._runTrustGate = async () => { captures += 1; };
+  const stopping = fx.coordinator.interrupt(fx.handle.id, 'Continue with revised scope.');
+  await ready;
+  fx.child.frame({ type: 'agent_end', isTerminal: true, messages: [] });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(captures, 0, 'the interrupted turn never enters contribution acceptance');
+  assert.equal(fx.log.read(fx.handle.id).filter((e) => e.kind === 'lifecycle.turn_completed').length, 0);
+  assert.equal(fx.child.written.filter((frame) => frame.type === 'prompt').length, 1);
+  fx.child.frame({ type: 'response', command: 'abort', id: abortFrame.id, success: true });
+  const result = await stopping;
+  assert.equal(result.ok, true);
+  assert.equal(fx.child.written.filter((frame) => frame.type === 'prompt').length, 2);
+  assert.equal(fx.child.written.filter((frame) => frame.type === 'prompt').at(-1).message, 'Continue with revised scope.');
+  assert.equal(fx.coordinator._workers.get(fx.handle.id).turnInFlight, true);
+  assert.equal(fx.coordinator.list().find((worker) => worker.id === fx.handle.id).status, 'working');
+  assert.equal(captures, 0);
+});

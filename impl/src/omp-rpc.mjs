@@ -611,8 +611,10 @@ export class OmpRpcCli {
       return;
     }
     const turn = session.activeTurn;
+    // A replayed terminal frame with no active turn cannot mint another contribution.
+    if (!turn) return;
     this._flushTurnStreams(session);
-    if (turn) session.terminalTurns.add(turn.turnId);
+    session.terminalTurns.add(turn.turnId);
     session.activeTurn = null;
     const telemetry = event.telemetry ?? null;
     if (telemetry && (telemetry.usage || telemetry.tokens)) {
@@ -621,6 +623,18 @@ export class OmpRpcCli {
         reported: true, ...usage, usage,
         modelRequested: session.modelRequested, modelObserved: telemetry.model ?? null,
       });
+    }
+    const usageSeal = telemetry
+      ? { tokens: 'reported', usd: telemetry.cost !== undefined ? 'reported' : 'unavailable', counterId: null, tokenMetric: 'agent_end.telemetry' }
+      : unavailableUsageSeal();
+    const pending = session.pendingInterrupt;
+    if (pending?.turnId === turn.turnId) {
+      // Ending the target turn satisfies interruption, even if normal completion raced abort.
+      // It is not a contribution claim, and the abort response must arrive before continuation.
+      pending.turnEnded = true;
+      pending.usageSeal = usageSeal;
+      this._maybeConfirmInterrupt(session);
+      return;
     }
     // #236: the turn VERDICT — the sibling session-CLI contract (claude-session emits
     // status/summary/artifacts on turn_completed). Measured wave-f: members finished real
@@ -635,18 +649,27 @@ export class OmpRpcCli {
       summary: finalText,
       artifacts: { files: Array.isArray(event.artifacts) ? event.artifacts : [] },
       openQuestions: [],
-      usageSeal: telemetry
-        ? { tokens: 'reported', usd: telemetry.cost !== undefined ? 'reported' : 'unavailable', counterId: null, tokenMetric: 'agent_end.telemetry' }
-        : unavailableUsageSeal(),
+      usageSeal,
     });
     // Native `steer` owns its queue and consumes messages within the active agent run.
     // Replaying a remembered steer here duplicates an already delivered effect and can race
     // verification of the completed turn. Only an explicit later prompt starts another turn.
-    if (session.pendingInterrupt) {
-      const { then } = session.pendingInterrupt;
-      session.pendingInterrupt = null;
-      this._emit(session, 'control.interrupt_confirmed', { phase: 'interrupt_confirmed' });
-      then?.();
+  }
+
+  _maybeConfirmInterrupt(session) {
+    const pending = session.pendingInterrupt;
+    if (!pending || !pending.turnEnded || !pending.wireConfirmed || session.closed || session.killing) return;
+    session.pendingInterrupt = null;
+    this._emit(session, 'control.interrupt_confirmed', {
+      phase: 'interrupt_confirmed', turnId: pending.turnId,
+      sessionId: session.observedSessionId ?? null, transportOpen: !session.process.exited,
+      usageSeal: pending.usageSeal,
+    });
+    // `then` is follow-up content in the Adapter contract, never a JavaScript callback.
+    // Reentrant stop/continuation also supersedes this pending follow-up.
+    if (pending.then !== undefined && session.controlGeneration === pending.generation
+      && !session.activeTurn && !session.closed && !session.killing) {
+      this._startTurn(session, String(pending.then));
     }
   }
 
@@ -900,13 +923,20 @@ export class OmpRpcCli {
   async prompt(worker, content, mode = 'turn') {
     const session = this._sessions.get(worker);
     if (!session || session.closed) return { ok: false, notSent: true, reason: `unknown worker ${worker}` };
+    if (!['turn', 'steer', 'nudge'].includes(mode)) {
+      return { ok: false, notSent: true, reason: `omp rpc ${mode} is unsupported` };
+    }
+    if (session.pendingInterrupt || session.killing) {
+      return { ok: false, notSent: true, reason: 'omp control is still settling' };
+    }
     if (mode === 'steer' || session.activeTurn) {
       if (!session.activeTurn) return { ok: false, notSent: true, reason: 'no active turn to steer' };
       // omp's native mid-turn lane: the steer command queues into the running turn.
-      session.process.notify({ type: 'steer', message: String(content) });
+      if (session.process.notify({ type: 'steer', message: String(content) }) !== true) {
+        return { ok: false, notSent: true, reason: 'steering could not be written' };
+      }
       return { ok: true };
     }
-    if (mode !== 'turn') return { ok: false, notSent: true, reason: `omp rpc ${mode} is unsupported` };
     this._startTurn(session, String(content));
     return { ok: true };
   }
@@ -916,9 +946,32 @@ export class OmpRpcCli {
   async interrupt(worker, then) {
     const session = this._sessions.get(worker);
     if (!session || session.closed) return { ok: false, reason: `unknown worker ${worker}` };
-    if (!session.activeTurn) return { ok: true, reason: 'no active turn to interrupt' };
-    session.pendingInterrupt = { turnId: session.activeTurn.turnId, then };
-    session.process.notify({ type: 'abort' });
+    session.controlGeneration = (session.controlGeneration ?? 0) + 1;
+    if (session.pendingInterrupt) {
+      session.pendingInterrupt.then = then;
+      session.pendingInterrupt.generation = session.controlGeneration;
+      return { ok: true };
+    }
+    if (!session.activeTurn) {
+      const generation = session.controlGeneration;
+      this._emit(session, 'control.interrupt_confirmed', {
+        phase: 'interrupt_confirmed', sessionId: session.observedSessionId ?? null,
+        transportOpen: !session.process.exited, usageSeal: unavailableUsageSeal(),
+      });
+      if (then !== undefined && session.controlGeneration === generation
+        && !session.closed && !session.killing && !session.activeTurn) this._startTurn(session, String(then));
+      return { ok: true, reason: 'no active turn to interrupt' };
+    }
+    const pending = {
+      turnId: session.activeTurn.turnId, then, generation: session.controlGeneration,
+      turnEnded: false, wireConfirmed: false, usageSeal: unavailableUsageSeal(),
+    };
+    session.pendingInterrupt = pending;
+    session.process.send({ type: 'abort' }).then((response) => {
+      if (session.pendingInterrupt !== pending || response?.success !== true || session.process.exited) return;
+      pending.wireConfirmed = true;
+      this._maybeConfirmInterrupt(session);
+    }, () => { /* no confirmation: the coordinator retains stop authority */ });
     return { ok: true };
   }
 
@@ -965,6 +1018,7 @@ export class OmpRpcCli {
     if (!session?.process) return { ok: true, terminal: true };
     if (session.process.processClose?.confirmed) return { ok: true, terminal: true };
     session.killing = true;
+    session.controlGeneration = (session.controlGeneration ?? 0) + 1;
     session.pendingInterrupt = null;
     const terminalCause = session.setupFailed ? 'setup' : session.process.failure ? 'process_error' : null;
     void session.process.kill({

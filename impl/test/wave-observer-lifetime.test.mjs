@@ -537,3 +537,50 @@ test('WAVE-OBSERVER: caller cancellation also detaches pending pump confirmation
   await flush();
   assert.equal(wave.pumpQuiescent, true);
 });
+
+
+test('WAVE-EVIDENCE: drive drainage refreshes after close and after late settlement', async () => {
+  const calls = [];
+  const drive = deferred();
+  const facade = facadeFor(calls, {
+    alpha: {
+      complete: () => drive.promise,
+      stop: async () => {
+        drive.resolve();
+        await flush();
+        return { outline: { resources: { ownedCount: 0 } } };
+      },
+    },
+  });
+  const wave = await createWave(facade, { members: [member('alpha')] });
+  await wave.settle({ timeoutMs: 20 });
+  assert.equal(wave.evidence().pumpDrained, false);
+  const receipt = await wave.close();
+  assert.equal(receipt.pumpQuiescent, true);
+  assert.equal(wave.evidence().pumpDrained, true, 'evidence observes closure, not a stale settle');
+});
+
+test('WAVE-EVIDENCE: a later active observation cannot inherit an earlier drained receipt', async () => {
+  const calls = [];
+  const pumping = deferred();
+  const drive = deferred();
+  let phase = 'completed';
+  const facade = facadeFor(calls, {
+    alpha: {
+      status: async () => ({ view: { phase } }),
+      complete: () => { pumping.resolve(); return drive.promise; },
+    },
+  });
+  const wave = await createWave(facade, { members: [member('alpha')] });
+  await wave.settle({ timeoutMs: 1_000 });
+  assert.equal(wave.evidence().pumpDrained, true);
+  phase = 'working';
+  const observing = wave.settle({ timeoutMs: 30 });
+  await pumping.promise;
+  assert.equal(wave.evidence().pumpDrained, false, 'an active drive is visible before settle publishes');
+  await observing;
+  assert.equal(wave.evidence().pumpDrained, false);
+  drive.resolve();
+  await flush();
+  assert.equal(wave.evidence().pumpDrained, true, 'late settlement updates current evidence without a new observation');
+});

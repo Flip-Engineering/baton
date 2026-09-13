@@ -129,6 +129,19 @@ fresh turn: the same-test regression fails before the repair, and the repaired s
 integration checks pass 32/32. Native steering now stays with its native queue; only an explicit
 continuation starts a subsequent turn. This does not claim to fix the separate OMP usage gap.
 
+An [independent native Claude review](reference/evidence/selfdev-2026-09-12/independent-review-followup.json)
+of `6692d712` found further observer and interrupt inconsistencies. Wave evidence now reads current
+drive ownership: neither late closure nor a newer active observation inherits an old drainage
+flag. All 86 wave observation/driver checks pass. OMP interruption now binds the target turn and
+requires both its terminal event and a successful correlated abort response before confirming.
+The target cannot also enter contribution acceptance. Follow-up text is delivered once after that
+boundary; repeated interrupts share the issued abort and a kill withdraws continuation. The same
+prior-source tests reproduce the callback TypeError and duplicate-effect faults. Coordinator
+integration verifies that acceptance is suppressed and the successor is in flight. A nudge can
+continue an idle session or steer an active one, while unknown modes refuse before effects.
+This review used read-only native CLI tools in the existing checkout after fresh-workspace
+capacity was refused; it is independent review evidence, not a Baton-accepted self-build.
+
 Concurrent deployment startup also reproduced a
 worktree-reconciliation refusal; its original cause remains unconfirmed. A separate minimal
 reproduction proved that generic reconciliation deleted a live verification sandbox without an

@@ -791,7 +791,7 @@ function createWaveHandle({ repoRoot, members, state, waveId = null }) {
         });
         if (outcome.resultSha) assigned.add(outcome.resultSha);
       }
-      const pumpDrained = await observeRetired(retired, deadline, signal) && pumpQuiescent();
+      await observeRetired(retired, deadline, signal);
       if (signal?.aborted) throw waveError('wave observation was cancelled by its caller', 'wave_observer_cancelled');
       // The handle's ledger is the LAST observation per role, not an append-only log of stale reads —
       // and it is published by INVOCATION ORDER: an earlier settle finishing late never overwrites
@@ -800,7 +800,6 @@ function createWaveHandle({ repoRoot, members, state, waveId = null }) {
         publishedSeq = invocation;
         for (const item of observations) if (item.evidence) state.steering.push(item.evidence);
         state.outcomes = outcomes;
-        state.pumpDrained = pumpDrained;
       }
       return [...outcomes];
     } catch (error) {
@@ -889,7 +888,8 @@ function createWaveHandle({ repoRoot, members, state, waveId = null }) {
       steering: [...state.steering],
       stops: [...state.stops],
       progress: [...state.progress],
-      pumpDrained: state.pumpDrained === true,
+      // Evidence is read now: a later drive or late settlement must not inherit an old receipt.
+      pumpDrained: pumpQuiescent(),
     };
   }
 
