@@ -20,21 +20,22 @@
 //   - a REAL `StoryCompiler` fed via a `story: {record}` sink (D3/D8 provenance).
 //   - `Brief`s built via the REAL `messages.createBrief()` (D2), never hand-rolled.
 //
-// FIXTURE NOTE — why this file makes some documented ASSUMPTIONS about exact wiring
-// parameter names: `coordinator.mjs`, `adapter.mjs`'s session methods, and the D7-
-// corrected `CoordinatorOpts.worktrees`/`route`/`referee` shapes do not exist as code
-// yet (src/*.mjs is empty — every test in this suite is intentionally RED pending
-// Phase 5). Where RECONCILIATION.md pins an exact contract (D1-D9), this file follows
-// it to the letter. Where a wiring DETAIL is left implicit (e.g. the precise
-// CoordinatorOpts key names for the D7-corrected worktree dependency), this file picks
-// the most spec-consistent, clearly-commented choice and captures every such choice in
-// a spy wrapper so assertions target OBSERVABLE EFFECTS (a method called with specific
-// args, a file appearing/disappearing on disk, a logged event, a router bucket
-// changing) — never just a returned status string — per this task's own instruction.
+// FIXTURE NOTE — this file drives the SHIPPED cross-cluster system. `coordinator.mjs`,
+// `adapter.mjs`'s session methods, and the D7 worktree/route/referee shapes are real code
+// under src/*.mjs, not empty Phase-5 placeholders. Where RECONCILIATION.md pins an exact
+// contract (D1-D9), this file follows it to the letter. Where a wiring DETAIL is left
+// implicit (e.g., the precise CoordinatorOpts key names for the D7 worktree dependency),
+// this file picks the most spec-consistent, clearly-commented choice and captures every
+// such choice in a spy wrapper so assertions target OBSERVABLE EFFECTS (a method called
+// with specific args, a file appearing/disappearing on disk, a logged event, a router
+// bucket changing) — never just a returned status string — per this task's own instruction.
 //
-// Every test here is expected to stay RED until Phase 5 lands every module; that is
-// the point (integration#8: "every assertion here fails today, for a different one of
-// Findings 1-6, against the spec as written").
+// Two of this file's original contracts went obsolete as the runtime moved; both are
+// restaged below against the actual shipped behavior: admission now appends an empty
+// `attention` grant alongside `orientation` (so the admitted brief is verified field by
+// field, both grants asserted independently), and the invented vendor seat ceiling was
+// ripped out by operator ruling #221 (so the concurrency case now pins REAL concurrent
+// admission and separate verification of both contributions, not a fictional queue).
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -91,6 +92,39 @@ async function waitUntil(predicate, { timeoutMs = 5000, intervalMs = 10 } = {}) 
     }
     await new Promise((resolve) => setTimeout(resolve, intervalMs));
   }
+}
+
+/** A one-shot promise gate. The concurrency case uses it as its deterministic fixture
+ * boundary — an explicit deferred resolved by the test, never a wall-clock sleep standing
+ * in for a concurrency proof. */
+function deferred() {
+  let resolve;
+  let reject;
+  const promise = new Promise((res, rej) => { resolve = res; reject = rej; });
+  return { promise, resolve, reject };
+}
+
+/**
+ * A narrow delivery gate: every D1 method delegates straight to the REAL adapter, but the
+ * initial provider delivery (`spawn` — the call that hands a worker its prompt) is held open
+ * until `release()`. Nothing about the real MockAdapter, its worktree readiness or its git
+ * effects is replaced; only the instant of delivery is deferred. Holding two deliveries open
+ * at once is therefore a deterministic proof that both workers are in flight simultaneously:
+ * a serializing dispatcher could never invoke the second while the first is still undelivered.
+ */
+function gatedDelivery(adapter) {
+  const gate = deferred();
+  const held = [];
+  let released = false;
+  const wrapped = {};
+  for (const method of ['card', 'spawn', 'prompt', 'interrupt', 'approve', 'answer', 'kill', 'onEvent']) {
+    wrapped[method] = adapter[method].bind(adapter);
+  }
+  wrapped.spawn = (...args) => {
+    held.push(args[0]);
+    return gate.promise.then(() => adapter.spawn(...args));
+  };
+  return { adapter: wrapped, held, get released() { return released; }, release: () => { released = true; gate.resolve(); } };
 }
 
 // ---------- spy wrappers: record calls to REAL modules while delegating to them ----------
@@ -271,7 +305,20 @@ function setupSystem({ adapter, adapterVendor = 'mock', now } = {}) {
 }
 
 function cleanupSystem(t, sys) {
-  t.after(() => {
+  t.after(async () => {
+    // Drain exactly the resources this run owns through the same real surfaces that created
+    // them — stop every worker (two-phase, adapter-confirmed) and let the coordinator reap its
+    // own worktrees/runtime — BEFORE the temp repo and log trees are deleted out from under
+    // them. Deleting first would leave git worktree metadata and adapter sessions dangling.
+    try {
+      await Promise.all(sys.coordinator.list().map(
+        (worker) => sys.coordinator.kill(worker.id, 'test-cleanup').catch(() => {}),
+      ));
+    } catch { /* the run may already be fenced or closed */ }
+    // Verified by the suite: after the kill loop above, closeAuthority() reports exact
+    // drainage (it throws coordinator_not_drained while any owned resource remains). The
+    // catch only covers a run that was already fenced/closed by the test itself.
+    try { sys.coordinator.closeAuthority(); } catch { /* already fenced or closed by the run */ }
     rmSync(sys.repoRoot, { recursive: true, force: true });
     rmSync(sys.logDir, { recursive: true, force: true });
   });
@@ -300,12 +347,27 @@ test('E2E happy path: a real task runs the whole spawn->trust-gate->completed pi
   // content but never a caller-owned object whose nested verification could change mid-run.
   assert.equal(sys.adapterCalls.spawn.length, 1);
   assert.notEqual(sys.adapterCalls.spawn[0][1], brief, 'CI1: adapter receives an admission-owned snapshot');
-  // Epic #81 (O-6): every spawn brief also carries the pathScope-scoped L0 orientation grant —
-  // a cited, framed context-pack ADDED at admission, never a mutation of the delegation fields.
-  const { orientation, ...delegationSnapshot } = sys.adapterCalls.spawn[0][1];
-  assert.deepEqual(delegationSnapshot, brief, 'CI1: snapshot preserves the delegation contract');
+  // CI1 delegation identity, verified WITHOUT destructuring known additions away: the admitted
+  // brief's delegation fields must equal the caller's brief exactly, and admission may add
+  // exactly two grants — nothing else. A blanket "everything except these keys equals brief"
+  // comparison would silently swallow any third field a future admission step appends; asserting
+  // the full key set makes that a loud failure instead.
+  const admitted = sys.adapterCalls.spawn[0][1];
+  const { orientation, attention, ...delegationSnapshot } = admitted;
+  assert.deepEqual(
+    Object.keys(admitted).sort(),
+    [...Object.keys(brief), 'attention', 'orientation'].sort(),
+    'CI1: admission adds exactly the orientation grant and the attention push — no arbitrary fields',
+  );
+  assert.deepEqual(delegationSnapshot, brief, 'CI1: snapshot preserves the delegation contract field for field');
+  // O-6: the pathScope-scoped L0 orientation grant — a cited, framed context-pack ADDED at
+  // admission, never a mutation of the delegation fields.
   assert.ok(orientation && orientation.packId, 'O-6: the L0 orientation grant is cited into the brief');
-  assert.ok(Object.isFrozen(sys.adapterCalls.spawn[0][1]), 'CI1: admitted snapshot is immutable');
+  // Issue #79 (D1/D3): a worker-addressed brief always carries the pending-attention push; the
+  // empty pending set is attached as `[]` (the renderer omits the section) — asserted
+  // independently of the orientation grant so neither hides the other.
+  assert.deepEqual(attention, [], 'the empty pending-attention push is attached for an addressed worker');
+  assert.ok(Object.isFrozen(admitted), 'CI1: admitted snapshot is immutable');
 
   await waitUntil(async () => (await sys.coordinator.result(handle.id)).ready);
   const outcome = await sys.coordinator.result(handle.id);
@@ -479,46 +541,73 @@ test('E2E interrupt: two-phase stop actually lands mid-run — stopping synchron
 });
 
 // ============================================================
-// 4. GLM ceiling=1 serializes two tasks on the same vendor.
+// 4. #221: two same-vendor tasks are admitted and run CONCURRENTLY — the invented seat
+//    ceiling is gone; both contributions are verified as separate real runs.
 // ============================================================
 
-test('E2E concurrency: a GLM-shaped ceiling=1 vendor genuinely serializes two tasks end to end', async (t) => {
-  const scenario = { outcome: 'completed', edits: [{ path: 'done.txt', content: 'ok', delayMs: 30 }] };
-  // ASSUMPTION (documented): MockAdapter accepts a `card` override bag alongside `scenario`, so
-  // this test can model a GLM-shaped single-concurrency vendor with the SAME scriptable adapter
-  // used everywhere else, without spinning up a real, env-guarded GlmAdapter (whose live-CLI
-  // guard tests live in adapter.test.mjs). GlmAdapter itself hard-pins concurrencyCeiling:1
-  // (adapter.test.mjs); this override is the only way to exercise Coordinator's ceiling-respecting
-  // dispatch queue against a REAL adapter+worktree+referee stack, which is the whole point of
-  // this suite (vs. coordinator.test.mjs's already-covered fake-adapter version of this scenario).
+test('E2E concurrency (#221): two tasks on the same vendor are admitted together and both real contributions are verified separately', async (t) => {
+  const scenario = { outcome: 'completed', edits: [{ path: 'done.txt', content: 'ok' }] };
+  // The card keeps a GLM-shaped ceiling of 1 — exactly like coordinator.test.mjs's #221 pins. The
+  // OLD contract read that ceiling as a dispatch queue and demanded B stay 'pending' until A
+  // finished. That pre-cap was an invented literal ripped out of `_dispatchPass` (operator ruling
+  // #221): selection never consults a card ceiling, and provider-TRUE backpressure is the only
+  // queue. One shared MockAdapter instance drives both workers; the delivery gate below makes
+  // their overlap provable without a slow delay standing in for concurrency.
   const adapter = new MockAdapter({ scenario, card: { harness: 'glm-via-claude', version: '1.0.0', concurrencyCeiling: 1 } });
-  const sys = setupSystem({ adapter, adapterVendor: 'glm' });
+  const delivered = gatedDelivery(adapter);
+  const sys = setupSystem({ adapter: delivered.adapter, adapterVendor: 'glm' });
   cleanupSystem(t, sys);
 
   const handleA = await sys.coordinator.spawn('glm', makeBrief(), { taskId: 'glm-a', taskType: 'build' });
-  assert.equal(handleA.status, 'working');
-
+  assert.equal(handleA.status, 'working', '#221: A dispatches immediately');
   const handleB = await sys.coordinator.spawn('glm', makeBrief(), { taskId: 'glm-b', taskType: 'build' });
-  assert.equal(handleB.status, 'pending', 'the vendor is at its concurrency ceiling — B must queue, not dispatch');
-  assert.equal(sys.adapterCalls.spawn.length, 1, 'adapter.spawn() must not be called for B while A occupies the only GLM slot');
+  assert.equal(handleB.status, 'working', '#221: the ceiling pre-cap is gone — B dispatches at once, never queued behind A');
 
-  await waitUntil(async () => (await sys.coordinator.result(handleA.id)).ready);
+  // Deterministic in-flight boundary (explicit deferred, no wall-clock sleep): A's initial
+  // delivery is held open, yet B's delivery still reaches the REAL adapter. A serializing
+  // dispatcher could never invoke the adapter for B while A is undelivered, so both deliveries
+  // being held at once is proof the two workers are genuinely in flight together.
+  await waitUntil(() => delivered.held.length === 2);
+  assert.deepEqual([...delivered.held].sort(), [handleA.id, handleB.id].sort(), 'both workers reached real delivery');
+  assert.equal(delivered.released, false, 'both deliveries were held open simultaneously — the workers overlapped');
+  assert.equal(sys.adapterCalls.spawn.length, 2, 'the real adapter saw both spawns before either delivery was released');
+
+  // Release the shared gate: both REAL MockAdapter sessions now run concurrently against their
+  // own real worktrees, capture, fresh sandbox, referee gate and router.
+  delivered.release();
+
+  await waitUntil(async () => (await sys.coordinator.result(handleA.id)).ready
+    && (await sys.coordinator.result(handleB.id)).ready);
   const outcomeA = await sys.coordinator.result(handleA.id);
-  assert.equal(outcomeA.status, 'completed', JSON.stringify(sys.log.read(handleA.id)));
-
-  sys.coordinator.tick();
-  await waitUntil(() => sys.adapterCalls.spawn.length === 2);
-  const bNow = sys.coordinator.list().find((w) => w.id === handleB.id);
-  assert.equal(bNow.status, 'working', 'B must promote to working only once A actually vacated the single GLM slot');
-
-  await waitUntil(async () => (await sys.coordinator.result(handleB.id)).ready);
   const outcomeB = await sys.coordinator.result(handleB.id);
+  assert.equal(outcomeA.status, 'completed', JSON.stringify(sys.log.read(handleA.id)));
   assert.equal(outcomeB.status, 'completed', JSON.stringify(sys.log.read(handleB.id)));
+  assert.equal(outcomeA.verdict.passed, true, 'A\'s real contribution passed the fresh trust gate');
+  assert.equal(outcomeB.verdict.passed, true, 'B\'s real contribution passed the fresh trust gate');
+  assert.equal(accept(outcomeA.verdict), true);
+  assert.equal(accept(outcomeB.verdict), true);
 
-  // Effect: two genuinely separate, sequential trust-gate runs and router recordings — not one
-  // shared/collapsed run. Proves the serialization was real end to end, not just at dispatch time.
+  // Separately-owned trust-gate runs: two captures, two fresh sandboxes, two verdicts, each under
+  // its own task identity — not one shared/collapsed run.
+  assert.equal(sys.worktreeCalls.captureCommit.length, 2);
   assert.equal(sys.worktreeCalls.freshVerifySandbox.length, 2);
   assert.equal(sys.refereeCalls.verify.length, 2);
+  assert.deepEqual(
+    sys.refereeCalls.verify.map(([task]) => task.id).sort(),
+    ['glm-a', 'glm-b'],
+    'each real contribution reached the trust gate under its own task identity',
+  );
+
+  // Both workers produced their own real log trail (real MockAdapter, real worktree, real git).
+  for (const id of [handleA.id, handleB.id]) {
+    const kinds = sys.log.read(id).map((e) => e.kind);
+    assert.ok(kinds.includes('lifecycle.spawned'));
+    assert.ok(kinds.includes('lifecycle.turn_started'));
+    assert.ok(kinds.includes('lifecycle.turn_completed'));
+    assert.ok(kinds.includes('verify.reverified'), `the trust gate logged a verdict for ${id}`);
+  }
+
+  // The router learned two separate VERIFIED wins.
   assert.equal(sys.routerCalls.record.length, 2, 'both verified outcomes were recorded, one per task');
-  assert.ok(sys.routerCalls.record.every(([, , verifiedWin]) => verifiedWin === true));
+  assert.deepEqual(sys.routerCalls.record.map(([, , verifiedWin]) => verifiedWin), [true, true]);
 });
