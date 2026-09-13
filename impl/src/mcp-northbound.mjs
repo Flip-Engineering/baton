@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { flipFace } from './brand.mjs';
 import { BRIEFING_FAMILY } from './coordination-store.mjs';
-import { FRAME_LIMITS, MAX_MESSAGE_DEPTH_BUDGET } from './limits.mjs';
+import { FRAME_LIMITS, MAX_MESSAGE_DEPTH_BUDGET, composeFrameLimitRefusal, frameLimitRefusalPath } from './limits.mjs';
 import { northboundCapabilityToken } from './northbound-capability-authority.mjs';
 import { sanitizeGoalPlanProjection } from './goal-plan.mjs';
 import { APPLICATION_COMMAND_DEFINITIONS, validateApplicationCommandArgs, projectBoardView, projectContextPackageBranch } from './application.mjs';
@@ -239,8 +239,34 @@ const COACHING_REFUSAL_CODES = new Set(
 // ROOT (coachingApplicationError application.mjs:247-252 / coachingValidationError messages.mjs:228-235),
 // so `cause.detail` is null — the detail object is CONSTRUCTED from the root fields. Lane-authored
 // wave/workflow refusals carry a prebuilt detail object and pass it through verbatim.
+// Facade-projection epic (#87+#48, Decision 12 / #89): the message-send body cap is the ONE
+// cataloged size lane whose oversize refusal reuses the lane's closed-shape invalid code
+// (application.mjs _normalizeMessageSend composes cap+actual into its own text). Because that code
+// is not a lane-crafted family, the generic wire mapping would strip it to a bare code — so the
+// projection MARKS the throw at its own dispatch seam with the SAFE triple re-derived from the
+// SAME FRAME_LIMITS row and the caller's measured body bytes (never by parsing or forwarding the
+// exception text). A closed-shape violation (bad kind, unknown key) never satisfies the byte
+// predicate, so it stays unmarked and the MN1/MN8 sanitization law is untouched.
+function markedMessageSendSizeRefusal(cause, body) {
+  const row = FRAME_LIMITS['message.send.body'];
+  if (cause?.code !== 'application_message_send_invalid' || typeof body !== 'string') return cause;
+  const actual = Buffer.byteLength(body);
+  if (actual <= row.value) return cause;
+  return Object.assign(cause, { cap: row.value, actual, unit: row.unit, gracefulPath: frameLimitRefusalPath(row, row.value) });
+}
+
 function laneCraftedToolError(cause) {
   const stateCode = stateFailureCode(cause);
+  // #89 / Decision 12: the MARKED message-send size refusal rides its SAFE {cap, actual, unit,
+  // gracefulPath} triple and a message RE-COMPOSED from the catalog row — the exception's own text
+  // never reaches the wire. An unmarked application_message_send_invalid stays code-only.
+  if (cause?.code === 'application_message_send_invalid'
+    && Number.isSafeInteger(cause?.cap) && Number.isSafeInteger(cause?.actual)) {
+    const row = FRAME_LIMITS['message.send.body'];
+    return toolError(stateCode, composeFrameLimitRefusal(row, cause.actual, cause.cap), {
+      cap: cause.cap, actual: cause.actual, unit: row.unit, gracefulPath: frameLimitRefusalPath(row, cause.cap),
+    });
+  }
   const LANE_CRAFTED = typeof cause?.code === 'string'
     && (COACHING_REFUSAL_CODES.has(cause.code) || cause.code === 'wave_member_invalid' || cause.code === 'wave_not_found' || cause.code.startsWith('workflow_'));
   if (!LANE_CRAFTED) return toolError(stateCode);
@@ -2041,15 +2067,17 @@ export class McpFleetServer {
     // the application context (transport mcp + capability authority). None carries a wire
     // idempotencyKey; replay safety lives server-side in the deterministic keys.
     else if (name === 'baton_run_message_send') {
-      value = await this.application.command('run.message.send', {
-        ...(Object.hasOwn(args, 'runId') ? { runId: args.runId } : {}),
-        ...(Object.hasOwn(args, 'workerId') ? { workerId: args.workerId } : {}),
-        kind: args.kind, body: args.body,
-        ...(Object.hasOwn(args, 'budget') ? { budget: args.budget } : {}),
-      }, {
-        actor: actor ?? `mcp:${principal.userId}:${principal.sessionId}`,
-        principalId: principal.userId, sessionId: principal.sessionId,
-      }, this._applicationDispatchContext(args, callId, principal));
+      try {
+        value = await this.application.command('run.message.send', {
+          ...(Object.hasOwn(args, 'runId') ? { runId: args.runId } : {}),
+          ...(Object.hasOwn(args, 'workerId') ? { workerId: args.workerId } : {}),
+          kind: args.kind, body: args.body,
+          ...(Object.hasOwn(args, 'budget') ? { budget: args.budget } : {}),
+        }, {
+          actor: actor ?? `mcp:${principal.userId}:${principal.sessionId}`,
+          principalId: principal.userId, sessionId: principal.sessionId,
+        }, this._applicationDispatchContext(args, callId, principal));
+      } catch (cause) { throw markedMessageSendSizeRefusal(cause, args.body); }
     }
     else if (name === 'baton_run_message_receipt') {
       value = await this.application.command('run.message.receipt', { messageId: args.messageId }, {
