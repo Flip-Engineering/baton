@@ -45,6 +45,9 @@ whole-wave requirements do not describe the revised design. Implementation remai
   without their operation's cleanup authority. A minimal reproduction demonstrated deletion of a
   live verifier cwd before the repair; all 71 worktree/integration/ownership checks now pass.
   Unknown ownership is retained and reported; automatic auxiliary orphan recovery remains open.
+- The core coordinator suite now passes 58/58. Its first cancelled test expected a read-only list
+  to execute deadline policy, cancelling 47 later tests before their assertions. The replacement
+  checks read-only observation, explicit escalation, and retained unconfirmed resources.
 - Remote: [draft PR #256](https://github.com/Flip-Engineering/baton/pull/256) is published. Hosted CI
   now acquires a runner, installs dependencies and executes the suite. Completion is pending at this
   checkpoint; the branch is not merged and no CI success or release readiness is inferred.

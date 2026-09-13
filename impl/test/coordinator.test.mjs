@@ -114,6 +114,7 @@ class ScriptableAdapter {
       answer: { ok: true },
       kill: { ok: true },
     };
+    this.started = { interrupt: deferred() };
     this._onEvent = null;
   }
   card() {
@@ -138,6 +139,7 @@ class ScriptableAdapter {
   }
   async interrupt(worker, then) {
     this.calls.interrupt.push({ worker, then });
+    this.started.interrupt.resolve(worker);
     if (this.gates.interrupt) await this.gates.interrupt;
     return this.acks.interrupt;
   }
@@ -528,38 +530,31 @@ test('D11/core#10: spawn() rejects a self-cycle with DependencyCycleError and mi
   assert.equal(coordinator.list().length, 0);
 });
 
-// core#7: proves the tick()-driven deadline sweep still works as a redundant backup path,
-// exercised via a command OTHER than the literally-named tick(). Since C4, the coordinator
-// *also* arms a real, unref'd background timer on every fresh stop-waiter (independent of
-// tick()) — so "no background timer thread" is no longer true of the coordinator overall.
-// This test's setup() never overrides opts.setTimeout/opts.clearTimeout, so that real timer
-// is armed for the full stopDeadlineMs (1000ms) here too; but this test's fake logical clock
-// is advanced instantly and a non-tick command (list()) is called in the same real-time tick,
-// so the sweep-based path always wins the race and force-stops microseconds in, long before
-// the real 1-second background timer could ever fire (and _forceStop's clear makes the
-// later-armed real timer moot). What this test actually proves: the deadline sweep is not
-// hardcoded to fire only from a literal `.tick()` call — any public command implicitly
-// ticking first is enough, even with the real background timer also armed alongside it.
-test('core#7: the implicit tick-on-every-command contract fires a deadline sweep as a side effect of a command other than .tick()', async () => {
+// A readable snapshot has no deadline/dispatch authority. The explicit tick still exercises
+// the logical-clock escalation path; an escalation is not proof of process/workspace closure.
+test('core#7: list stays observational after a stop deadline; explicit tick escalates without claiming cleanup', async () => {
   const adapter = new ScriptableAdapter();
   const { coordinator, advance, log } = setup({ adapters: { mock: adapter }, stopDeadlineMs: 1000 });
   const handle = await coordinator.spawn('mock', makeBrief());
 
   const p = coordinator.interrupt(handle.id); // adapter Acks, but no confirmed-stop ever arrives
+  await adapter.started.interrupt.promise; // the stop waiter now owns its deadline
   advance(1001);
 
-  // Deliberately call a DIFFERENT public command instead of .tick() anywhere in this test.
-  coordinator.list();
-  await Promise.resolve();
-  await Promise.resolve();
-  await Promise.resolve();
+  const listed = coordinator.list();
+  assert.equal(listed.find((worker) => worker.id === handle.id).status, 'stopping');
+  assert.equal(adapter.calls.kill.length, 0, 'a read never admits a kill');
+  assert.equal(log.read(handle.id).some((event) => event.kind === 'control.forced_stop'), false);
+  coordinator.tick();
 
   const result = await p;
-  assert.equal(result.result, 'forced', 'the stopDeadlineMs sweep must have fired as a side effect of list(), not require an explicit tick()');
+  assert.equal(result.result, 'forced', 'the explicit sweep escalates the admitted stop');
   assert.equal(coordinator.list().find((w) => w.id === handle.id).status, 'dead');
   assert.equal(adapter.calls.kill.length, 1, 'a forced stop must escalate to adapter.kill()');
   const kinds = log.read(handle.id).map((e) => e.kind);
   assert.ok(kinds.includes('control.forced_stop'));
+  assert.equal(coordinator._workers.get(handle.id).cleanupPending, true, 'forced deadline leaves closure unconfirmed');
+  assert.equal(coordinator._worktrees.calls.remove.length, 0, 'deadline alone never reaps an owned workspace');
 });
 
 test('spawn(\'auto\', brief) resolves the vendor via the injected route() using live cards/inFlight', async () => {
@@ -927,6 +922,7 @@ test('if the adapter never emits a confirmed-stop event, interrupt() resolves fo
   const handle = await coordinator.spawn('mock', makeBrief());
 
   const p = coordinator.interrupt(handle.id); // adapter.interrupt() acks immediately, but no confirmed-stop ever arrives
+  await adapter.started.interrupt.promise;
   advance(1001);
   coordinator.tick();
 
@@ -936,6 +932,8 @@ test('if the adapter never emits a confirmed-stop event, interrupt() resolves fo
   assert.equal(adapter.calls.kill.length, 1, 'a forced stop must escalate to adapter.kill()');
   const kinds = log.read(handle.id).map((e) => e.kind);
   assert.ok(kinds.includes('control.forced_stop'));
+  assert.equal(coordinator._workers.get(handle.id).cleanupPending, true, 'forced deadline leaves closure unconfirmed');
+  assert.equal(coordinator._worktrees.calls.remove.length, 0, 'deadline alone never reaps an owned workspace');
 });
 
 // core#2 / D9: composing interrupt()/kill() on the same worker before the first confirms.

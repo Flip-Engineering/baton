@@ -181,7 +181,10 @@ and [baseline comparison with follow-up dispositions](reference/evidence/selfdev
 record the exact revision and distinguish observed regressions from obsolete contracts and fixture
 failures. Follow-up checks pass 92/92 across browser/orientation/native-driver/oracle behavior,
 9/9 across persistent-session cases, and 33/33 across OMP transport and deployment seams.
-These targeted passes do not turn the remaining full-suite failures into expected results.
+The core coordinator suite also passes 58/58 after correcting its obsolete expectation that
+`list()` admits deadline effects. The first pending test had cancelled 47 following cases before
+they ran; explicit escalation now checks that unconfirmed resources remain owned. These targeted
+passes do not turn the remaining full-suite failures into expected results.
 
 A fresh native Claude self-build on that stable base authored the oracle deadline repair,
 completed exactly one native turn with zero automatic nudges, and exposed a checkpoint. Root
