@@ -88,7 +88,7 @@ const intent = (runId, extra = {}) => ({
 });
 
 /** A driver whose one adapter declares `turnCompletion: 'pausable'` (SC8, 31-a's A1/A2). */
-function pausableFixture(name) {
+function pausableFixture(name, { turnDelayMs = 0 } = {}) {
   const repo = dir(`${name}-repo`);
   execFileSync('git', ['init', '-q'], { cwd: repo });
   execFileSync('git', ['config', 'user.email', '31b5@example.invalid'], { cwd: repo });
@@ -99,7 +99,7 @@ function pausableFixture(name) {
 
   const adapter = new MockAdapter({
     harness: 'mock',
-    scenario: { outcome: 'completed', delayMs: 5, summary: '31b5 fixture turn', files: {} },
+    scenario: { outcome: 'completed', delayMs: 5, turnDelayMs, summary: '31b5 fixture turn', files: {} },
   });
   const card = adapter.card.bind(adapter);
   adapter.card = () => ({
@@ -129,8 +129,8 @@ function pausableFixture(name) {
 }
 
 /** Dispatches one Run with `driverKind:'wave'` (no auto-settle) and waits for its genuine pause. */
-async function pausedRun(name, runId) {
-  const kit = pausableFixture(name);
+async function pausedRun(name, runId, fixtureOpts = {}) {
+  const kit = pausableFixture(name, fixtureOpts);
   const { application } = kit;
   const proposed = await application.start(intent(runId), principal('owner'));
   await application.approve(runId, proposed.plan.digest, principal('approver'));
@@ -150,7 +150,10 @@ async function pausedRun(name, runId) {
 test('turn_checkpoint surface: a pending pause lists nudge_turn/wait_turn/claim_turn with the '
   + 'server-derived target shape, and run.act(nudge_turn) unparks the SAME task working with a '
   + 'freshly armed watchdog', async (t) => {
-  const { application, driver, runId, pauseId, workerId, taskId } = await pausedRun('nudge', 'run-31b5-nudge');
+  // A nudge delivers a real continuation turn (docs/39: a paused native session keeps working on
+  // the next prompt), so the mock's turn is slow enough here that the SAME task is observably
+  // working — not already paused at its NEXT checkpoint — when the act returns.
+  const { application, driver, runId, pauseId, workerId, taskId } = await pausedRun('nudge', 'run-31b5-nudge', { turnDelayMs: 2_000 });
   t.after(async () => { try { await application.shutdown(principal('cleanup')); } catch { /* best effort */ } });
 
   const run = bindBaton(application, principal('owner')).runs.open(runId);
@@ -171,6 +174,7 @@ test('turn_checkpoint surface: a pending pause lists nudge_turn/wait_turn/claim_
   const answered = await run.act(nudge.actionId, { message: 'Please continue with the next step.' });
   assert.equal(answered.outline.actions.some((action) => action.kind === 'nudge_turn'), false,
     'the SAME pause record is consumed once nudged — the checkpoint disappears');
+  assert.equal(driver.coordinator._pausedTurns.get(pauseId).state, 'resolved');
 
   assert.equal(driver.coordination.task(taskId).status, 'working');
   assert.equal(handle.status, 'working');

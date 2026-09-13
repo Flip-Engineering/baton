@@ -186,6 +186,12 @@ test('Phase 58: createDriver composes worker/verify sparse views with projected 
   assert.equal(receipt.state, 'closed');
   assert.equal(receipt.fleet.checks.cleanupDrained, true);
   assert.equal(existsSync(workerPath), false);
+  // 462bcd86: drain reconciliation no longer destroys auxiliary verify/integrate sandboxes it
+  // cannot prove abandoned (another controller's verifier may still be running in one); it
+  // retains them with a workspace_auxiliary_owner_unproven diagnostic, and the owning operation
+  // performs the exact explicit cleanup.
+  assert.equal(existsSync(staleVerify.path), true, 'an unattributed verifier sandbox is retained by drain');
+  await driver.coordinator._worktrees.removeVerifyWorktree(staleVerify.path);
   assert.equal(existsSync(staleVerify.path), false);
   assert.equal(existsSync(runtimePath), false);
   assert.equal(existsSync(join(f.repo, '.baton', 'wt', `${worker.sessionContext.ownerTaskId}.meta.json`)), false);

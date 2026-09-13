@@ -706,6 +706,14 @@ export class MockAdapter {
 
     if (session.terminal) return;
     if (haltSignal.aborted || session.turnGeneration !== turnGeneration) return;
+    // Test pacing only: a scenario may hold its turn open for a while before settling, so a
+    // fixture can observe a continuation (a nudge, a guide) as live work rather than as the
+    // next checkpoint that an instant turn would already have reached.
+    if (Number.isFinite(scenario.turnDelayMs) && scenario.turnDelayMs > 0) {
+      await haltableDelay(scenario.turnDelayMs, haltSignal);
+      if (session.terminal) return;
+      if (haltSignal.aborted || session.turnGeneration !== turnGeneration) return;
+    }
     this._finalizeNatural(session);
   }
 }
