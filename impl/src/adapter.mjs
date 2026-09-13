@@ -428,9 +428,22 @@ export class MockAdapter {
   async prompt(worker, content, mode = 'turn') {
     const session = this._sessions.get(worker);
     if (!session) return { ok: false, notSent: true, reason: `unknown worker ${worker}` };
+    if (session.terminal && (session.stopKind !== null || session.crashed)) {
+      return { ok: false, notSent: true, reason: 'native session is closed' };
+    }
+    const nextTurn = mode === 'turn' && session.terminal;
+    if (nextTurn) {
+      const haltController = new AbortController();
+      Object.assign(session, {
+        terminal: false, runStarted: false, haltController, haltSignal: haltController.signal,
+        wait: null, askHandled: false, askResolve: null, commits: [], appliedPaths: [],
+        editsApplied: 0, deniedApproval: false, timeoutHit: false,
+        opts: { ...session.opts, turnEpoch: (session.opts.turnEpoch ?? 0) + 1 },
+      });
+    }
     const kindMap = { turn: 'control.send', nudge: 'control.nudge', steer: 'control.steer' };
     this._emit(session, kindMap[mode] ?? 'control.send', { content, mode });
-    if (session.attachedOnly && mode === 'turn') {
+    if ((session.attachedOnly && mode === 'turn') || nextTurn) {
       session.attachedOnly = false;
       this._startSession(session);
     }
@@ -444,7 +457,10 @@ export class MockAdapter {
     // session that already reached a terminal state is a moot no-op, not a failure.
     // A typed terminal Ack lets the coordinator complete its two-phase stop without waiting
     // for an event that cannot be emitted after this in-memory session has already ended.
-    if (session.terminal) return { ok: true, terminal: true, reason: 'already terminal' };
+    if (session.terminal) {
+      session.stopKind ??= kind;
+      return { ok: true, terminal: true, reason: 'already terminal' };
+    }
     if (session.stopKind === null) {
       session.stopKind = kind;
       this._emit(session, kind === 'kill' ? 'kill.requested' : 'control.interrupt_requested', {});

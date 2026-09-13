@@ -13,7 +13,11 @@ export async function developWithSwarms({ repo, task, evidencePath }) {
   let participant;
   const evidence = {};
   try {
+    // Optional resident publication uses Baton's existing authenticated discovery. An external
+    // root can connectBaton({ repo }).swarms.open(id) without borrowing a participant credential.
+    if (task.host === true) evidence.host = await deployment.host();
     swarm = await deployment.swarms.create(task.purpose ?? 'Develop Baton using Baton');
+    evidence.swarmId = swarm.id;
     const { harness, model, effort } = task.route;
     participant = await swarm.recruit(task.participantId, task.objective, {
       exact: { harness, model, effort }, scope: task.scope,
@@ -33,8 +37,17 @@ export async function developWithSwarms({ repo, task, evidencePath }) {
     evidence.check = await swarm.check(participant.participantId, 'implementation', 'initial');
     evidence.afterCheck = await swarm.inspect();
     return evidence;
+  } catch (error) {
+    evidence.failure = { code: error.code ?? null, message: error.message };
+    throw error;
   } finally {
     const cleanupErrors = [];
+    // Capture failure must not erase the collaboration findings and native observations when
+    // private harness homes are subsequently removed by explicit stop.
+    if (swarm) {
+      try { evidence.beforeStop = await swarm.inspect(); }
+      catch (error) { evidence.observationError = { code: error.code, message: error.message }; }
+    }
     try {
       if (swarm && participant) evidence.stop = await swarm.stop(participant.participantId, 'Contribution preserved for root review.');
     } catch (error) {

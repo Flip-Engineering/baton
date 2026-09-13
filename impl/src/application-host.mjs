@@ -188,6 +188,8 @@ export class BatonWebHost {
       catch (error) {
         throw Object.assign(new Error('Baton application shutdown failed after Web admission closed'), {
           code: error?.code ?? 'application_host_shutdown_failed', web,
+          detail: error?.message ?? null, path: error?.path ?? null, syscall: error?.syscall ?? null,
+          cause: error,
         });
       }
       return Object.freeze({

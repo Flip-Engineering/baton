@@ -56,11 +56,11 @@ function exactBlockingAdapter() {
       schemaVersion: 1,
       autonomy: {
         supported: ['unattended'], default: 'unattended', perTask: false,
-        observation: 'launch', mechanisms: ['test-unattended'],
+        observation: 'unavailable', mechanisms: ['test-unattended'],
       },
       access: {
         supported: ['full'], default: 'full', perTask: false,
-        observation: 'launch', mechanisms: ['test-full-access'],
+        observation: 'unavailable', mechanisms: ['test-full-access'],
       },
       containment: {
         hostProcess: 'same_uid', guarantees: ['private_runtime'],

@@ -204,6 +204,12 @@ const BIG_OBJECTIVE = 'x'.repeat(SPILL_BODY_CEILING + 1);
 
 // The byte-stable command-table set (grammar-m3 M3-8) in ACTUAL insertion order. A1-7 pins the FULL
 // set with deepEqual (F8) — a length-only check lets a dishonest fold swap rows.
+// docs/39: the living-swarm verbs lead the table (swarm-contract SWARM_COMMAND_DEFINITIONS is
+// spread first in application.mjs), ahead of the byte-stable 26-key M3 set below.
+const SWARM_COMMANDS = Object.freeze([
+  'swarm.list', 'swarm.create', 'swarm.inspect', 'swarm.watch', 'swarm.update',
+  'swarm.recruit', 'swarm.guide', 'swarm.capture', 'swarm.check', 'swarm.stop',
+]);
 const COMMANDS_BEFORE_M3 = Object.freeze([
   'application.help', 'runs.list', 'run.start', 'run.inspect', 'run.episode',
   'run.workstreams', 'run.workstream.notify', 'run.workstream.stop', 'run.act',
@@ -590,9 +596,9 @@ test('A1-6 F7: the application card advertises admitted wave commands in canonic
   }
 });
 
-test('A1-7 PIN: the byte-stable APPLICATION_COMMAND_DEFINITIONS key set is the FULL 26-key insertion-order set (F8)', () => {
-  assert.deepEqual(Object.keys(APPLICATION_COMMAND_DEFINITIONS), COMMANDS_BEFORE_M3,
-    'the FULL 26-key insertion-order set (grammar-m3 M3-8) is byte-stable — a wrong impl that registers the wave verbs as table entries, drops a row, or reorders one breaks the deepEqual (F8)');
+test('A1-7 PIN: the byte-stable APPLICATION_COMMAND_DEFINITIONS key set is the 10 swarm verbs + the FULL 26-key insertion-order set (F8)', () => {
+  assert.deepEqual(Object.keys(APPLICATION_COMMAND_DEFINITIONS), [...SWARM_COMMANDS, ...COMMANDS_BEFORE_M3],
+    'the swarm verbs (docs/39) lead, then the FULL 26-key insertion-order set (grammar-m3 M3-8) stays byte-stable — a wrong impl that registers the wave verbs as table entries, drops a row, or reorders one breaks the deepEqual (F8)');
   for (const verb of ['waves.start', 'waves.progress', 'waves.send', 'waves.stop', 'waves.list']) {
     assert.equal(Object.hasOwn(APPLICATION_COMMAND_DEFINITIONS, verb), false,
       `${verb} stays a WEB_DIRECT_PORT_COMMANDS direct port (application.mjs:12329-12332), never a table row`);
@@ -785,14 +791,14 @@ test('A3-2 §4: baton_waves_list lands in the pinned MCP enumeration — 34 → 
   const { server } = await mcpFixture(t, host);
   const listed = await server.handle({ jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} });
   const names = listed.result.tools.map((tool) => tool.name);
-  assert.equal(names.length, 37,
-    'stage: mcp-waves-list-row-missing — the pinned MCP enumeration is 35 post-#114 (baton_waves_run); §4 inserts baton_waves_list (34 → 35), #170 inserts baton_waves_compile (35 → 36), then #158 inserts baton_run_scratchpad_append (36 → 37)');
+  assert.equal(names.length, 47,
+    'stage: mcp-waves-list-row-missing — the pinned MCP enumeration is 35 post-#114 (baton_waves_run); §4 inserts baton_waves_list (34 → 35), #170 inserts baton_waves_compile (35 → 36), #158 inserts baton_run_scratchpad_append (36 → 37), then docs/39 adds the ten fleet_swarm_* tools (37 → 47)');
   assert.equal(names[14], 'baton_waves_stop', 'baton_waves_stop stays at 0-based position 14');
   assert.equal(names[15], 'baton_waves_list',
     'baton_waves_list sits at 0-based position 15, immediately after baton_waves_stop — the §4 pinned insertion point');
   assert.equal(names[16], 'baton_waves_run', 'baton_waves_run (#114) follows at 0-based position 16 — the waves family stays contiguous');
   const sorted = mcpApplicationToolNames();
-  assert.equal(sorted.length, 37, 'the sorted ordinary surface grows to 37 tools (baton_waves_compile #170 + baton_run_scratchpad_append #158)');
+  assert.equal(sorted.length, 47, 'the sorted ordinary surface grows to 47 tools (baton_waves_compile #170 + baton_run_scratchpad_append #158 + ten fleet_swarm_* docs/39)');
   assert.ok(sorted.includes('baton_waves_list'), 'the sorted ordinary surface carries baton_waves_list');
 });
 

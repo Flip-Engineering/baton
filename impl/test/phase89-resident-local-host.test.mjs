@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
+import { execFile, execFileSync } from 'node:child_process';
+import { promisify } from 'node:util';
 import {
   existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync,
 } from 'node:fs';
@@ -42,6 +43,16 @@ function adapter() {
   value.card = () => ({
     ...card(),
     authPosture: 'subscription',
+    providerCompatibility: { credentialState: 'available' },
+    workerPolicy: {
+      schemaVersion: 1,
+      autonomy: { supported: ['unattended'], default: 'unattended', perTask: false,
+        observation: 'unavailable', mechanisms: ['fixture-unattended'] },
+      access: { supported: ['full'], default: 'full', perTask: false,
+        observation: 'unavailable', mechanisms: ['fixture-full'] },
+      containment: { hostProcess: 'same_uid', guarantees: ['private_runtime'],
+        observation: 'unavailable', configuredPreferences: [] },
+    },
     modelSelection: {
       mode: 'exact', configuredDefault: ROUTE.model, available: [ROUTE.model],
       family: ROUTE.harness, acceptedPrefixes: [], acceptedAliases: [],
@@ -112,6 +123,61 @@ test('RLH1: ordinary host publishes one authenticated local resident and connect
   assert.equal(closed.state, 'closed');
   assert.equal(closed.resident.state, 'closed');
   assert.equal(existsSync(selectorPath), false);
+});
+
+test('an external orchestrator discovers and guides a living swarm through the existing resident transport', { timeout: 30_000 }, async (t) => {
+  const repo = repository(t);
+  const configured = options(t, repo);
+  const owner = await openBaton({ repo, advanced: configured.advanced });
+  // Cleanup hooks run in registration order, so the deployment root registered by options()
+  // is removed before this hook; close explicitly at the end of the test and keep this guard.
+  t.after(async () => { try { await owner.close(); } catch {} });
+  await owner.host();
+  const swarm = await owner.swarms.create('Keep ordinary coordination accessible across processes');
+  await swarm.recruit('reviewer', 'Review the repository and remain available', {
+    exact: ROUTE, resultIntent: 'read_only_evidence',
+  });
+  async function paused() {
+    for (;;) {
+      const view = await swarm.inspect();
+      const worker = view.participants[0].runtime;
+      if (worker.turn === 'paused') return;
+      if (['dead', 'exited'].includes(worker.state)) {
+        const records = ['w-1.jsonl', 'coordination/events.jsonl'].flatMap((file) =>
+          readFileSync(join(configured.deploymentRoot, 'state', file), 'utf8').trim().split('\n').map(JSON.parse));
+        assert.fail(JSON.stringify(records.map(({ kind, payload }) => ({ kind,
+          code: payload?.code, reason: payload?.reason, error: payload?.error, detail: payload?.detail,
+          mapped: payload?.kind,
+        }))));
+      }
+      await swarm.watch({ timeoutMs: 100 });
+    }
+  }
+  await paused();
+  t.diagnostic('initial participant turn paused');
+  const source = `
+    import { connectBaton } from ${JSON.stringify(new URL('../src/index.mjs', import.meta.url).href)};
+    const [repo, home, configRoot, swarmId] = process.argv.slice(1);
+    const connected = await connectBaton({ repo, advanced: { home, env: { HOME: home, XDG_CONFIG_HOME: configRoot } } });
+    const swarm = connected.swarms.open(swarmId);
+    const before = await swarm.inspect();
+    await swarm.guide('reviewer', 'Review the next contribution; stay available afterwards.');
+    console.log(JSON.stringify({ swarmId: before.swarmId, participant: before.participants[0].participantId,
+      turnBeforeGuide: before.participants[0].runtime.turn }));
+  `;
+  const child = await promisify(execFile)(process.execPath, ['--input-type=module', '-e', source,
+    repo, configured.connection.advanced.home, configured.configRoot, swarm.id]);
+  t.diagnostic('external guidance completed');
+  assert.deepEqual(JSON.parse(child.stdout), {
+    swarmId: swarm.id, participant: 'reviewer', turnBeforeGuide: 'paused',
+  });
+  await paused();
+  const view = await swarm.inspect();
+  assert.equal(view.participants[0].status, 'active');
+  assert.equal(view.participants[0].runtime.state, 'working');
+  await swarm.stop('reviewer', 'External guidance verified');
+  const closed = await owner.close();
+  assert.equal(closed.state, 'closed');
 });
 
 test('RLH2: restart preserves deployment identity, rotates incarnation, and removes stale publication', async (t) => {

@@ -14,7 +14,7 @@ import {
 
 const NOW = Date.parse('2026-07-17T23:30:00.000Z');
 const commands = [
-  'application.help', 'runs.list', 'run.start', 'run.inspect', 'run.episode', 'run.workstreams',
+  'swarm.list', 'swarm.create', 'swarm.inspect', 'swarm.watch', 'swarm.update', 'swarm.recruit', 'swarm.guide', 'swarm.capture', 'swarm.check', 'swarm.stop', 'application.help', 'runs.list', 'run.start', 'run.inspect', 'run.episode', 'run.workstreams',
   'run.workstream.notify', 'run.workstream.stop', 'run.act', 'run.status', 'run.follow',
   'run.recover', 'run.approve', 'run.wait', 'run.answer', 'run.feedback', 'run.steer', 'run.stop',
   'run.evidence', 'run.adopt', 'run.retry_verification', 'run.resume_work', 'run.review',
