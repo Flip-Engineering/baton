@@ -9,6 +9,7 @@ import { createHash } from 'node:crypto';
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { Cursor } from './log.mjs';
 import { verifyContribution } from './contribution-verification.mjs';
+import { ContributionService } from './contribution-service.mjs';
 import {
   attentionItemLine, boundedAttentionText, buildKnowledgeSlice, createBrief, createDecisionAnswer, createDecisionRequest, createDigest,
   frameWebContent, isAttentionSpillItem, ValidationError, wrapFact, wrapHubDerived, wrapProse,
@@ -2222,6 +2223,71 @@ export class Coordinator {
       rows.push(row);
     }
     return rows;
+  }
+
+  _contributionOperations() {
+    this._contributions ??= new ContributionService({
+      worktrees: this._worktrees, referee: this._referee, accept: this._accept,
+      acceptOptions: this._acceptOpts, closeVerdict: closedVerificationVerdict,
+      capture: (handle, task) => this._captureTrustWorktree(handle, task),
+      events: (workerId) => this._log.read(workerId),
+      record: (kind, payload, handle, task) => {
+        const event = this._log.append({
+          worker: handle.id, harness: this._harnessOf(handle.vendor),
+          turnEpoch: this._safeTurnEpoch(handle), actor: 'policy', kind, payload,
+          ...this._routeAttribution(handle, task),
+        });
+        this._coordMapEvent(event);
+        return event;
+      },
+    });
+    return this._contributions;
+  }
+
+  /** Capture a contribution at a turn boundary without consuming the pause or finishing work. */
+  captureContribution(workerId, { contributionId } = {}) {
+    return this._withAuthorityOp(async () => {
+      const service = this._contributionOperations();
+      const prior = service.captured(workerId, contributionId);
+      if (prior) return structuredClone(prior);
+      const pause = this.pausedTurns({ workerId })[0];
+      if (!pause) throw Object.assign(new Error('Contribution capture requires a paused turn'), {
+        code: 'contribution_capture_not_paused',
+      });
+      const reservation = await this._reservePauseRecord(pause.pauseId);
+      if (!reservation.ok) throw Object.assign(new Error('Contribution turn changed before capture'), {
+        code: 'contribution_capture_conflict',
+      });
+      const targets = this._pausedActTargets(reservation.record);
+      if (!targets.ok) {
+        reservation.rollback();
+        throw Object.assign(new Error('Contribution author is no longer paused'), {
+          code: 'contribution_capture_not_paused',
+        });
+      }
+      const { handle, task } = targets;
+      // Stop may proceed with process closure, but preservation/reaping waits for this exact
+      // filesystem operation. Verification does not borrow the author's mutable workspace.
+      let release;
+      handle.contributionCapturePending = new Promise((resolve) => { release = resolve; });
+      try {
+        await handle.worktreeReady;
+        return await service.capture({ handle, task, contributionId });
+      } finally {
+        handle.contributionCapturePending = null;
+        release();
+        reservation.rollback();
+      }
+    });
+  }
+
+  /** A retained revision can be checked while its author continues, or after its session stops. */
+  checkContribution(workerId, { contributionId, checkId, signal } = {}) {
+    return this._withAuthorityOp(async () => {
+      const handle = this._getWorker(workerId);
+      const task = this._tasks.get(handle.taskId);
+      return this._contributionOperations().check({ handle, task, contributionId, checkId, signal });
+    });
   }
 
   /** #235: the transport-liveness attention projection — EVIDENCE CLASSIFICATION ONLY (the
@@ -8730,6 +8796,7 @@ export class Coordinator {
   }
 
   async _preserveProgressBeforeReap(handle, task, stopEvent, enabled = true) {
+    if (handle?.contributionCapturePending) await handle.contributionCapturePending;
     if (!enabled || !handle?.worktree || !task) return Object.freeze({ state: 'not_applicable' });
     const manager = this._worktrees;
     // Direct Coordinator fixtures and legacy embedders may provide only create/remove. The real
@@ -8802,6 +8869,9 @@ export class Coordinator {
 
   _removeOwnedTaskWorktree(handle, task) {
     if (!handle) return this._removeTaskWorktree(task);
+    if (handle.contributionCapturePending) {
+      return handle.contributionCapturePending.then(() => this._removeOwnedTaskWorktree(handle, task));
+    }
     if (handle.cleanupPromise) return handle.cleanupPromise;
     // Exact cleanup is idempotent. Once this handle has already finalized its checkout, a later
     // already-dead kill has no owner capability to exercise and must not re-enter the opaque-owner

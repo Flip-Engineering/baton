@@ -1,0 +1,171 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { Coordinator } from '../src/coordinator.mjs';
+import { Log } from '../src/log.mjs';
+import { FenceTable } from '../src/fence.mjs';
+import { coordinationForLog } from '../src/coordination-store.mjs';
+
+const SHA = 'a'.repeat(40);
+const BASE = 'b'.repeat(40);
+const deferred = () => {
+  let resolve;
+  const promise = new Promise((done) => { resolve = done; });
+  return { promise, resolve };
+};
+
+async function fixture(t, { referee, capture } = {}) {
+  const directory = mkdtempSync(join(tmpdir(), 'baton-contributions-'));
+  t.after(() => rmSync(directory, { force: true, recursive: true }));
+  const prompts = [];
+  let emit;
+  const adapter = {
+    card: () => ({ harness: 'mock', version: '1', concurrencyCeiling: null, maxContext: 100000,
+      turnCompletion: 'pausable' }),
+    onEvent(callback) { emit = callback; },
+    async spawn() { return { ok: true }; },
+    async prompt(worker, content, mode) { prompts.push({ worker, content, mode }); return { ok: true }; },
+    async kill(worker) {
+      queueMicrotask(() => emit({ worker, actor: 'worker', kind: 'kill.confirmed', turnEpoch: 1, payload: {} }));
+      return { ok: true };
+    },
+  };
+  const log = new Log(join(directory, 'log'));
+  const pins = new Map();
+  const removed = [];
+  let checks = 0;
+  const worktrees = {
+    async create(id) { return { path: `/owned/${id}`, baseSha: BASE, branch: `baton/${id}` }; },
+    capture: capture ?? (async () => ({ sha: SHA, baseSha: BASE, changedPaths: ['change.mjs'] })),
+    async retainCheckpoint(sha) { const ref = `refs/baton/checkpoints/${sha}`; pins.set(ref, sha); return ref; },
+    async resolveCheckpoint(ref) { return pins.get(ref); },
+    async createVerifyWorktree(id, sha) { return { path: `/check/${id}/${sha}` }; },
+    async createBaseVerifyWorktree(id, sha) { return { path: `/check/${id}/${sha}` }; },
+    async removeVerifyWorktree(path) { removed.push(path); },
+    async remove() {},
+    async reconcile() {},
+  };
+  const coordination = coordinationForLog(log);
+  const coordinator = new Coordinator({ log, coordination, fences: new FenceTable(),
+    adapters: { mock: adapter }, worktrees, route: () => 'mock', now: () => 0,
+    referee: async (...args) => {
+      checks++;
+      if (referee) return referee(...args);
+      return { reverified: true, observedExit: 0, passed: true, matchesClaim: true, locus: 'fresh_sandbox' };
+    },
+  });
+  const handle = await coordinator.spawn('mock', {
+    goal: 'Continue collaborating across several contributions', constraints: [], pathScope: ['**'],
+    definitionOfDone: 'Owner decides when collaboration is done',
+    verification: { command: 'true', expectExit: 0 },
+    budget: { tokens: 100000, usd: 5, wallMin: 30 },
+  });
+  emit({ worker: handle.id, actor: 'worker', kind: 'lifecycle.turn_completed', turnEpoch: 1,
+    payload: { status: 'completed', output: 'First contribution is available.' } });
+  await new Promise(setImmediate);
+  return { coordinator, coordination, handle, prompts, log, worktrees, removed, checks: () => checks };
+}
+
+test('capture and checking preserve a continuing participant and its next turn', async (t) => {
+  const started = deferred();
+  const release = deferred();
+  const f = await fixture(t, { referee: async () => {
+    started.resolve(); await release.promise;
+    return { reverified: true, observedExit: 0, passed: true, matchesClaim: true, locus: 'fresh_sandbox' };
+  } });
+  const pauseId = f.coordinator.pausedTurns({ workerId: f.handle.id })[0].pauseId;
+  const capture = await f.coordinator.captureContribution(f.handle.id, { contributionId: 'first' });
+  assert.equal(capture.sha, SHA);
+  assert.equal(f.coordination.task(f.handle.taskId).status, 'paused');
+  assert.equal(f.coordinator.pausedTurnStatus(pauseId).state, 'pending');
+  const checking = f.coordinator.checkContribution(f.handle.id, { contributionId: 'first', checkId: 'check-1' });
+  const duplicate = f.coordinator.checkContribution(f.handle.id, { contributionId: 'first', checkId: 'check-1' });
+  await started.promise;
+  await f.coordinator.nudgeTurn(pauseId, 'Continue with the second assignment.');
+  assert.equal(f.prompts.length, 1);
+  assert.equal(f.coordination.task(f.handle.taskId).status, 'working');
+  release.resolve();
+  const result = await checking;
+  assert.equal(result.passed, true);
+  assert.deepEqual(await duplicate, result);
+  assert.equal(f.checks(), 1);
+  assert.equal(f.coordination.task(f.handle.taskId).status, 'working');
+  assert.equal(f.log.read(f.handle.id).filter((e) => e.kind === 'verify.reverified').length, 0);
+  assert.equal(f.removed.length, 2);
+  const replayed = await f.coordinator.checkContribution(f.handle.id, { contributionId: 'first', checkId: 'check-1' });
+  assert.deepEqual(replayed, result);
+  assert.equal(f.checks(), 1);
+});
+
+test('unavailable verification preserves the contribution and leaves the author paused', async (t) => {
+  const f = await fixture(t);
+  const capture = await f.coordinator.captureContribution(f.handle.id, { contributionId: 'first' });
+  f.worktrees.createVerifyWorktree = async () => {
+    throw Object.assign(new Error('capacity temporarily unavailable'), { code: 'worktree_capacity_exceeded' });
+  };
+  await assert.rejects(f.coordinator.checkContribution(f.handle.id, {
+    contributionId: 'first', checkId: 'check-1',
+  }), { code: 'worktree_capacity_exceeded' });
+  assert.equal(f.checks(), 0);
+  assert.equal(await f.worktrees.resolveCheckpoint(capture.ref), SHA);
+  assert.equal(f.coordination.task(f.handle.taskId).status, 'paused');
+  const events = f.log.read(f.handle.id);
+  assert.equal(events.filter((e) => e.kind === 'contribution.checked').length, 0);
+  assert.equal(events.find((e) => e.kind === 'contribution.check_unavailable').payload.attempt.verifierStarted, false);
+  // A controller replay must not blindly repeat an attempt whose prior effects are unknown.
+  f.coordinator._contributions = null;
+  await assert.rejects(f.coordinator.checkContribution(f.handle.id, {
+    contributionId: 'first', checkId: 'check-1',
+  }), { code: 'worktree_capacity_exceeded' });
+});
+
+test('a retained contribution can be checked after its author stops', async (t) => {
+  const f = await fixture(t);
+  await f.coordinator.captureContribution(f.handle.id, { contributionId: 'first' });
+  await f.coordinator.kill(f.handle.id);
+  const status = f.coordination.task(f.handle.taskId).status;
+  const checked = await f.coordinator.checkContribution(f.handle.id, {
+    contributionId: 'first', checkId: 'after-stop',
+  });
+  assert.equal(checked.passed, true);
+  assert.equal(f.coordination.task(f.handle.taskId).status, status);
+  assert.equal(f.prompts.length, 0);
+});
+
+test('a failed pin leaves the pause available and does not claim retained work', async (t) => {
+  const f = await fixture(t);
+  f.worktrees.retainCheckpoint = async () => { throw new Error('pin write failed'); };
+  await assert.rejects(f.coordinator.captureContribution(f.handle.id, { contributionId: 'first' }), /pin write failed/);
+  assert.equal(f.coordinator.pausedTurns({ workerId: f.handle.id }).length, 1);
+  assert.equal(f.coordination.task(f.handle.taskId).status, 'paused');
+  assert.equal(f.log.read(f.handle.id).some((e) => e.kind === 'contribution.captured'), false);
+});
+
+test('stop waits for an in-flight capture before removing the author workspace', async (t) => {
+  const started = deferred();
+  const release = deferred();
+  const f = await fixture(t, { capture: async () => {
+    started.resolve();
+    await release.promise;
+    return { sha: SHA, baseSha: BASE, changedPaths: ['change.mjs'] };
+  } });
+  let removed = false;
+  f.worktrees.remove = async () => { removed = true; };
+  const capturing = f.coordinator.captureContribution(f.handle.id, { contributionId: 'before-stop' });
+  await started.promise;
+  const stopping = f.coordinator.kill(f.handle.id);
+  await new Promise(setImmediate);
+  assert.equal(removed, false);
+  release.resolve();
+  const captured = await capturing;
+  await stopping;
+  assert.equal(removed, true);
+  assert.equal(await f.worktrees.resolveCheckpoint(captured.ref), SHA);
+  const checked = await f.coordinator.checkContribution(f.handle.id, {
+    contributionId: 'before-stop', checkId: 'after-capture-and-stop',
+  });
+  assert.equal(checked.passed, true);
+  assert.equal(f.prompts.length, 0);
+});
