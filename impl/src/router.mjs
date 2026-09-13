@@ -12,7 +12,11 @@
  *
  * Zero dependencies. No Math.random() anywhere — the only non-determinism
  * is real wall-clock time, always overridable via an injected `now`.
+ * Concurrency eligibility is the SHARED predicate from concurrency-policy.mjs:
+ * `concurrencyCeiling: null` means "no configured limit" and is always eligible.
  */
+
+import { withinConcurrencyCeiling } from './concurrency-policy.mjs';
 
 // ---------------------------------------------------------------------------
 // Errors
@@ -191,15 +195,16 @@ export class AdaptiveRouter {
 
   /**
    * @param {{taskType:string}} task
-   * @param {RouteCandidate[]} candidates
+   * @param {{modelVersion:string, family:string, concurrencyCeiling:number|null, inFlight:number,
+   *   legacyModelVersions?:string[]}[]} candidates
    * @param {{now?:number}} [opts]
-   * @returns {string|null}
+   * @returns {string|null} the selected modelVersion, or null when nothing is eligible
    */
   pick(task, candidates, opts = {}) {
     const nowMs = this._resolveNow(opts.now);
     const taskType = task.taskType;
 
-    const eligible = candidates.filter((c) => c.inFlight < c.concurrencyCeiling);
+    const eligible = candidates.filter((c) => withinConcurrencyCeiling(c.concurrencyCeiling, c.inFlight));
     if (eligible.length === 0) return null;
 
     const effectiveMode = this._effectiveMode(taskType, eligible, nowMs);
@@ -289,7 +294,7 @@ export class AdaptiveRouter {
   advice(task, candidates, opts = {}) {
     const nowMs = this._resolveNow(opts.now); const taskType = task?.taskType;
     if (typeof taskType !== 'string' || !Array.isArray(candidates)) throw new RouterUsageError('advice() requires a task type and candidate list');
-    const eligible = candidates.filter((candidate) => candidate.inFlight < candidate.concurrencyCeiling);
+    const eligible = candidates.filter((candidate) => withinConcurrencyCeiling(candidate.concurrencyCeiling, candidate.inFlight));
     const effectiveMode = eligible.length === 0 ? (this.mode === 'auto' ? 'round-robin' : this.mode) : this._effectiveMode(taskType, eligible, nowMs);
     const projected = candidates.map((candidate) => {
       let bucket = this._candidateBucket(candidate, taskType); let seededFrom = bucket?.seededFrom ?? null;
@@ -298,7 +303,7 @@ export class AdaptiveRouter {
         if (predecessor) { const prior = decayedStat(predecessor, nowMs, this.halfLifeMs); bucket = { ...predecessor, modelVersion: candidate.modelVersion, weight: prior.weight * this.seedDiscount, count: prior.count * this.seedDiscount, lastUsedTs: nowMs, firstSeenTs: nowMs, seededFrom: predecessor.modelVersion }; seededFrom = predecessor.modelVersion; }
       }
       const decayed = decayedStat(bucket, nowMs, this.halfLifeMs); const rate = decayed.count > 0 ? decayed.weight / decayed.count : this.defaultPriorSuccessRate;
-      return { candidate, bucket, seededFrom, decayed, rate, eligible: candidate.inFlight < candidate.concurrencyCeiling };
+      return { candidate, bucket, seededFrom, decayed, rate, eligible: withinConcurrencyCeiling(candidate.concurrencyCeiling, candidate.inFlight) };
     });
     const eligibleRows = projected.filter((row) => row.eligible); const totalDecayedCount = eligibleRows.reduce((sum, row) => sum + row.decayed.count, 0); let selected = null; let bestScore = -Infinity;
     if (effectiveMode === 'round-robin' && eligibleRows.length > 0) selected = eligibleRows[(this._rrCursor.get(taskType) ?? 0) % eligibleRows.length].candidate.modelVersion;

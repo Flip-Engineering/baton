@@ -16,6 +16,7 @@ import { scanForMessageSend } from './claude-session.mjs';
 import { WORKER_MESSAGE_GUIDANCE } from './messages.mjs';
 import { normalizeProcessGeneration, ProcessCloseReapLatch, processStartedPayload } from './process-lifecycle.mjs';
 import { attestWorkerPolicyObservation } from './worker-policy.mjs';
+import { normalizeConcurrencyCeiling } from './concurrency-policy.mjs';
 
 const DEFAULT_MAX_WIRE_FRAME_BYTES = 1024 * 1024;
 const CODEX_TOKEN_METRIC = 'codex_thread_total_tokens';
@@ -237,7 +238,7 @@ export class CodexAppServerCli {
     this._env = opts.env;
     this._spawnFn = opts.spawnFn ?? spawn;
     this._reapOwnedProcessGroup = opts.reapOwnedProcessGroup;
-    this._ceiling = opts.ceiling ?? 4;
+    this._ceiling = normalizeConcurrencyCeiling(opts.ceiling, 'CodexAppServerCli concurrencyCeiling');
     this._maxContext = opts.maxContext ?? 200000;
     this._model = opts.model;
     this._sandbox = opts.sandbox ?? 'danger-full-access';

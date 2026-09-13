@@ -179,7 +179,7 @@ function makeBrief(overrides = {}) {
 class ScriptableAdapter {
   constructor({ pausable = true } = {}) {
     this._card = {
-      harness: 'mock', version: '1.0.0', authPosture: 'api_key', concurrencyCeiling: Infinity, maxContext: 100000,
+      harness: 'mock', version: '1.0.0', authPosture: 'api_key', concurrencyCeiling: null, maxContext: 100000,
       verbs: { spawn: 'native', interrupt: 'native', answer: 'native', approve: 'native', kill: 'native' },
       decision: 'native',
       ...(pausable ? { turnCompletion: 'pausable' } : {}),

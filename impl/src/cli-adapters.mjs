@@ -18,6 +18,7 @@ import { usdToNanos } from './usd.mjs';
 import { attestWorkerPolicyObservation } from './worker-policy.mjs';
 import { renderVerificationExecution } from './verification-presentation.mjs';
 import { renderAttentionSection } from './messages.mjs';
+import { normalizeConcurrencyCeiling } from './concurrency-policy.mjs';
 
 const DEFAULT_MAX_WIRE_FRAME_BYTES = 1024 * 1024;
 const CODEX_TOKEN_METRIC = 'codex_turn_input_plus_output_tokens';
@@ -223,6 +224,7 @@ class CliAdapter {
     const maxWireFrameBytes = cfg.maxWireFrameBytes ?? DEFAULT_MAX_WIRE_FRAME_BYTES;
     if (!Number.isSafeInteger(maxWireFrameBytes) || maxWireFrameBytes <= 0) throw new TypeError('maxWireFrameBytes must be a positive safe integer');
     cfg.maxWireFrameBytes = maxWireFrameBytes;
+    cfg.ceiling = normalizeConcurrencyCeiling(cfg.ceiling, `${cfg.harness ?? 'cli'} concurrencyCeiling`);
     this._cfg = cfg;
     this._live = cfg.live ?? false; // real runs must opt in; tests never spawn a real CLI
     /** @type {Map<string, object>} worker -> session */
@@ -486,7 +488,7 @@ export class CodexCli extends CliAdapter {
     const sandbox = opts.sandbox ?? 'danger-full-access';
     const approvalPolicy = opts.approvalPolicy ?? 'never';
     super({
-      harness: 'codex', version: opts.version ?? '0.144.0', ceiling: opts.ceiling ?? 4, maxContext: 272000, live: opts.live,
+      harness: 'codex', version: opts.version ?? '0.144.0', ceiling: opts.ceiling, maxContext: 272000, live: opts.live,
       maxWireFrameBytes: opts.maxWireFrameBytes,
       reapOwnedProcessGroup: opts.reapOwnedProcessGroup,
       governance: {
@@ -548,7 +550,7 @@ export class ClaudeCli extends CliAdapter {
   constructor(opts = {}) {
     const permissionMode = opts.permissionMode === undefined ? 'bypassPermissions' : opts.permissionMode;
     super({
-      harness: opts.harness ?? 'claude-code', version: opts.version ?? '2.1.206', ceiling: opts.ceiling ?? 4, maxContext: 200000, live: opts.live,
+      harness: opts.harness ?? 'claude-code', version: opts.version ?? '2.1.206', ceiling: opts.ceiling, maxContext: 200000, live: opts.live,
       maxWireFrameBytes: opts.maxWireFrameBytes,
       reapOwnedProcessGroup: opts.reapOwnedProcessGroup,
       governance: {
@@ -615,7 +617,7 @@ export class ZCodeCli extends ClaudeCli {
   constructor(opts = {}) {
     const token = opts.authToken ?? process.env.Z_AI_API_KEY ?? process.env.ZHIPU_API_KEY;
     super({
-      harness: 'glm-via-claude', version: opts.version ?? 'claude-cli+zai-anthropic', ceiling: opts.ceiling ?? 1, // Z.ai Pro ≈ 1 in-flight
+      harness: 'glm-via-claude', version: opts.version ?? 'claude-cli+zai-anthropic', ceiling: opts.ceiling,
       model: opts.model, maxWireFrameBytes: opts.maxWireFrameBytes, live: opts.live,
       reapOwnedProcessGroup: opts.reapOwnedProcessGroup,
       permissionMode: opts.permissionMode, env: {
@@ -636,7 +638,7 @@ export class ZCodeCli extends ClaudeCli {
 export class PiCli extends CliAdapter {
   constructor(opts = {}) {
     super({
-      harness: 'pi', version: opts.version ?? '0.0.0', ceiling: opts.ceiling ?? 4, maxContext: opts.maxContext ?? 128000, live: opts.live,
+      harness: 'pi', version: opts.version ?? '0.0.0', ceiling: opts.ceiling, maxContext: opts.maxContext ?? 128000, live: opts.live,
       maxWireFrameBytes: opts.maxWireFrameBytes,
       reapOwnedProcessGroup: opts.reapOwnedProcessGroup,
       governance: {

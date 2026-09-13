@@ -20,6 +20,7 @@ import { StoryCompiler } from './story.mjs';
 import { RuntimeIsolation } from './runtime-isolation.mjs';
 import { CoordinationStore } from './coordination-store.mjs';
 import { routeTupleKey } from './route-tuple.mjs';
+import { withinConcurrencyCeiling } from './concurrency-policy.mjs';
 import { CapabilityRegistry } from './capability-registry.mjs';
 import {
   AtlasRepresentationProducer, AtlasCodeIndex, AtlasStructuralDelta,
@@ -1452,13 +1453,14 @@ export function createDriver(opts) {
   };
 
   // C2/D5: real selection via router.pick(task, candidates) over the ceiling-feasible
-  // set — no first-fit fallback. `pick()` already returns null when nothing is eligible,
-  // which is exactly "queue" (the coordinator's own ceiling re-check catches it too).
+  // set — no first-fit fallback. Feasibility is the SHARED predicate: a card with
+  // `concurrencyCeiling: null` has no configured limit and is always feasible, and
+  // `pick()` returns null only when every capable candidate is at its CONFIGURED ceiling.
   const route = (task, cards, inFlight) => {
     // `cards` is already the coordinator's exact model/effort/session/policy-filtered
     // candidate set. Re-expanding from every registered adapter would resurrect rejected
     // candidates and dereference absent cards in heterogeneous fleets.
-    let feasible = Object.keys(cards).filter((v) => (inFlight[v] ?? 0) < cards[v].concurrencyCeiling);
+    let feasible = Object.keys(cards).filter((v) => withinConcurrencyCeiling(cards[v].concurrencyCeiling, inFlight[v] ?? 0));
     // SC7: the explicit capability tag beats operator folklore — when any feasible card lists
     // the task's taskType in nonRefuserFor, restrict to those vendors. Feasibility is computed
     // FIRST (a capable-but-saturated vendor never restricts) and an unlisted taskType leaves

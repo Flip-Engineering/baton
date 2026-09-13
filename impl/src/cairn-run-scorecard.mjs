@@ -142,7 +142,7 @@ export class CairnRunScorecard {
       || !Number.isFinite(Date.parse(args.observedAt)) || new Date(Date.parse(args.observedAt)).toISOString() !== args.observedAt || !Array.isArray(args.candidates) || args.candidates.length === 0 || args.candidates.length > this.routeAdvice.maxCandidates || args.candidates.length > this.routeAdvice.maxRows) throw typed('route advice request is invalid', 'route_advice_invalid');
     const candidates = args.candidates.map((row) => {
       if (!row || Object.keys(row).sort().join(',') !== ['concurrencyCeiling', 'inFlight', 'modelFamily', 'routeKey'].sort().join(',') || typeof row.routeKey !== 'string' || Buffer.byteLength(row.routeKey) > 4096 || typeof row.modelFamily !== 'string' || row.modelFamily.length === 0 || Buffer.byteLength(row.modelFamily) > 128
-        || !Number.isSafeInteger(row.concurrencyCeiling) || row.concurrencyCeiling <= 0 || !Number.isSafeInteger(row.inFlight) || row.inFlight < 0) throw typed('route advice candidate is invalid', 'route_advice_invalid');
+        || !(row.concurrencyCeiling === null || (Number.isSafeInteger(row.concurrencyCeiling) && row.concurrencyCeiling > 0)) || !Number.isSafeInteger(row.inFlight) || row.inFlight < 0) throw typed('route advice candidate is invalid', 'route_advice_invalid');
       let tuple; try { tuple = parseRouteTupleKey(row.routeKey); } catch { throw typed('route advice tuple is invalid', 'route_advice_invalid'); }
       if (tuple.modelFamily !== row.modelFamily || tuple.taskType !== args.taskType) throw typed('route advice tuple is invalid', 'route_advice_invalid');
       return { modelVersion: row.routeKey, family: row.modelFamily, concurrencyCeiling: row.concurrencyCeiling, inFlight: row.inFlight };

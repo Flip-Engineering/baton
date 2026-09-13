@@ -186,7 +186,7 @@ test('CK1/CK9: terminal artifact-batch failure poisons the driver and restarts a
   assert.throws(() => driver.coordinator.list(), (error) => error.code === 'coordination_write_unavailable');
 
   assert.deepEqual(await driver.coordinator.kill(handle.id, 'test-replay-handoff', { emergency: true }), { ok: true, result: 'confirmed_unlogged', auditUnavailable: true });
-  driver.close(); const replay = make({ mock: new MockAdapter({ card: { concurrencyCeiling: 0 } }) });
+  driver.close(); const replay = make({ mock: new MockAdapter() });
   assert.equal(replay.coordination.task('terminal-batch-failure').status, 'failed');
   assert.equal((await replay.coordinator.result(handle.id)).status, 'failed');
 });
@@ -251,7 +251,7 @@ test('CK8/CK9: public driver exposes coordination and queued DAG survives restar
   const logDir = dir();
   const make = () => createDriver({
     repoRoot: repo, logDir,
-    adapters: { mock: new MockAdapter({ card: { concurrencyCeiling: 0 }, scenario: { outcome: 'completed' } }) },
+    adapters: { mock: new MockAdapter({ scenario: { outcome: 'completed' } }) },
     watchdog: { stallMs: 60_000 }, // valid positive stallMs; watchdog never fires in this window
   });
   const brief = { goal: 'queued', constraints: [], pathScope: [], definitionOfDone: 'never dispatch', verification: { command: 'true', expectExit: 0 }, budget: { tokens: 1, usd: 1, wallMin: 1 } };
@@ -291,7 +291,7 @@ test('CK2/CK9: restart terminalizes a durable claim that crashed before operatio
     repoRoot: repo,
     logDir,
     coordination,
-    adapters: { mock: new MockAdapter({ card: { concurrencyCeiling: 0 } }) },
+    adapters: { mock: new MockAdapter() },
     watchdog: { stallMs: 60_000 }, // valid positive stallMs; watchdog never fires in this window
   });
 
@@ -506,7 +506,7 @@ test('CK8/CK9: cancellation completion failure resolves bounded, keeps stop inte
   assert.equal(driver.coordinator._workers.get(handle.id).status, 'dead');
   assert.throws(() => driver.coordinator.list(), (error) => error.code === 'coordination_write_unavailable');
   driver.coordination._appendFile = rawAppend;
-  driver.close(); const replay = createDriver({ repoRoot: repo, logDir, coordination: driver.coordination, adapters: { mock: new MockAdapter({ card: { concurrencyCeiling: 0 } }) }, watchdog: { stallMs: 60_000 } }); // valid positive stallMs; watchdog never fires in this window
+  driver.close(); const replay = createDriver({ repoRoot: repo, logDir, coordination: driver.coordination, adapters: { mock: new MockAdapter() }, watchdog: { stallMs: 60_000 } }); // valid positive stallMs; watchdog never fires in this window
   assert.equal(replay.coordination.task('cancel-completion-failure').status, 'failed');
 });
 

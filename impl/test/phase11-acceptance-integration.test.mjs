@@ -345,7 +345,7 @@ test('AC5: ff-only integration reaps the worker/worktree/branch and records exac
 
   await closeForReplay(coordinator, coordination); const replay = createDriver({
     repoRoot: root, logDir, coordination,
-    adapters: { mock: new MockAdapter({ card: { concurrencyCeiling: 0 } }) }, watchdog: { stallMs: 60_000 }, // valid positive stallMs; watchdog never fires in this window
+    adapters: { mock: new MockAdapter() }, watchdog: { stallMs: 60_000 }, // valid positive stallMs; watchdog never fires in this window
   });
   assert.deepEqual((await replay.coordinator.result(handle.id)).integration, response.integration);
   assert.equal((await replay.coordinator.result(handle.id)).retainedResultRef, `refs/baton/results/${response.integration.resultSha}`);
@@ -370,7 +370,7 @@ test('CK9: post-merge authority-batch failure poisons and replay refuses integra
   coordination._appendFile = rawAppend;
   await closeForReplay(coordinator, coordination); const replay = createDriver({
     repoRoot: root, logDir, coordination,
-    adapters: { mock: new MockAdapter({ card: { concurrencyCeiling: 0 } }) }, watchdog: { stallMs: 60_000 }, // valid positive stallMs; watchdog never fires in this window
+    adapters: { mock: new MockAdapter() }, watchdog: { stallMs: 60_000 }, // valid positive stallMs; watchdog never fires in this window
   });
   assert.equal((await replay.coordinator.result(handle.id)).integration, null);
 });
@@ -394,7 +394,7 @@ test('CK9: replay rejects an asymmetric integration decision without driver and 
 
   await closeForReplay(coordinator, coordination); const replay = createDriver({
     repoRoot: root, logDir, coordination,
-    adapters: { mock: new MockAdapter({ card: { concurrencyCeiling: 0 } }) }, watchdog: { stallMs: 60_000 }, // valid positive stallMs; watchdog never fires in this window
+    adapters: { mock: new MockAdapter() }, watchdog: { stallMs: 60_000 }, // valid positive stallMs; watchdog never fires in this window
   });
   assert.equal((await replay.coordinator.result(handle.id)).integration, null);
 });
@@ -536,7 +536,7 @@ test('AC6: publication has no side effect before approval and allow publishes th
 
   await closeForReplay(coordinator, coordination); const replay = createDriver({
     repoRoot: root, logDir, coordination,
-    adapters: { mock: new MockAdapter({ card: { concurrencyCeiling: 0 } }) },
+    adapters: { mock: new MockAdapter() },
     publisher: async () => { throw new Error('replay must never republish'); }, watchdog: { stallMs: 60_000 }, // valid positive stallMs; watchdog never fires in this window
   });
   assert.deepEqual((await replay.coordinator.result(handle.id)).publication, { requestId: requested.requestId, ...requested.target, actor: 'test-user' });
@@ -559,7 +559,7 @@ test('CK9: replay rejects an asymmetric publication decision without its paired 
 
   await closeForReplay(coordinator, coordination); const replay = createDriver({
     repoRoot: root, logDir, coordination,
-    adapters: { mock: new MockAdapter({ card: { concurrencyCeiling: 0 } }) },
+    adapters: { mock: new MockAdapter() },
     publisher: async () => { throw new Error('replay must never republish'); }, watchdog: { stallMs: 60_000 }, // valid positive stallMs; watchdog never fires in this window
   });
   assert.equal((await replay.coordinator.result(handle.id)).publication, null);
@@ -606,7 +606,7 @@ test('CK8/CK9: post-publish completion failure is bounded and preserves prior au
   coordination._appendFile = rawAppend;
   await closeForReplay(coordinator, coordination); const replay = createDriver({
     repoRoot: root, logDir, coordination,
-    adapters: { mock: new MockAdapter({ card: { concurrencyCeiling: 0 } }) },
+    adapters: { mock: new MockAdapter() },
     publisher: async () => { throw new Error('replay must never republish'); }, watchdog: { stallMs: 60_000 }, // valid positive stallMs; watchdog never fires in this window
   });
   const replayed = await replay.coordinator.result(handle.id);

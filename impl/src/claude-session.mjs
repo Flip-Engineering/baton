@@ -15,6 +15,7 @@ import { normalizeProcessGeneration, ProcessCloseReapLatch, processStartedPayloa
 import { usdFromNanos, usdToNanos } from './usd.mjs';
 import { attestWorkerPolicyObservation } from './worker-policy.mjs';
 import { createDecisionRequest, ValidationError, WORKER_MESSAGE_GUIDANCE } from './messages.mjs';
+import { normalizeConcurrencyCeiling } from './concurrency-policy.mjs';
 
 const DEFAULT_MAX_WIRE_FRAME_BYTES = 1024 * 1024;
 const CLAUDE_TOKEN_METRIC = 'anthropic_input_plus_output_tokens_excluding_cache';
@@ -506,7 +507,7 @@ function claudeResultFailureCode(obj) {
 // ---------------------------------------------------------------------------
 
 export class ClaudeSessionCli {
-  /** @param {{cmd,args,env,harness,version,ceiling,maxContext,approvals,sessionId,killGraceMs,model}} opts */
+  /** @param {{cmd,args,env,harness,version,ceiling:number|null,maxContext,approvals,sessionId,killGraceMs,model}} opts */
   constructor(opts = {}) {
     const maxWireFrameBytes = opts.maxWireFrameBytes ?? DEFAULT_MAX_WIRE_FRAME_BYTES;
     if (!Number.isSafeInteger(maxWireFrameBytes) || maxWireFrameBytes <= 0) throw new TypeError('maxWireFrameBytes must be a positive safe integer');
@@ -523,7 +524,7 @@ export class ClaudeSessionCli {
       env: opts.env ?? {},
       harness: opts.harness ?? 'claude-code',
       version: opts.version ?? observedClaudeVersion(opts.cmd ?? 'claude', opts.versionProbe),
-      ceiling: opts.ceiling ?? 4,
+      ceiling: normalizeConcurrencyCeiling(opts.ceiling, `${opts.harness ?? 'claude-code'} concurrencyCeiling`),
       maxContext: opts.maxContext ?? 200000,
       approvals,
       sessionId: opts.sessionId,
@@ -1658,8 +1659,9 @@ export class ClaudeSessionCli {
  *
  * Credentials resolve `opts.authToken ?? authTokenFile ?? Z_AI_API_KEY ?? ZHIPU_API_KEY` at construction; absence
  * is NOT a constructor error — the credential boundary is live-smoke's gate, presence-checked
- * only, values never printed/logged/committed. Ceiling defaults to 1 (derived: Z.ai Pro ≈ one
- * in-flight session, same derivation as ZCodeCli) and stays configurable.
+ * only, values never printed/logged/committed. No concurrency ceiling is configured here: a
+ * deployment caller may declare one (advanced.adapterOptions.concurrencyCeiling), and
+ * `concurrencyCeiling: null` means "no configured limit".
  *
  * card() adds `nonRefuserFor` — the explicit capability tag SC7's routing selects on, so
  * domain-sensitive work reaches the capable-non-refuser tier deterministically, never by
@@ -1677,7 +1679,7 @@ export class GlmSessionCli extends ClaudeSessionCli {
       harness: opts.harness ?? 'glm-via-claude-session',
       version: opts.version ?? (observedVersion === 'unavailable'
         ? 'unavailable' : `claude-code-${observedVersion}+zai-anthropic`),
-      ceiling: opts.ceiling ?? 1,
+      ceiling: opts.ceiling,
       env: {
         ANTHROPIC_BASE_URL: opts.baseUrl ?? 'https://api.z.ai/api/anthropic',
         ANTHROPIC_AUTH_TOKEN: validatedToken ?? '',
@@ -1739,7 +1741,7 @@ export class KimiSessionCli extends ClaudeSessionCli {
       ...opts,
       harness: 'claude-code',
       version: opts.version ?? observedClaudeVersion(opts.cmd ?? 'claude', opts.versionProbe),
-      ceiling: opts.ceiling ?? 1,
+      ceiling: opts.ceiling,
       maxContext: opts.maxContext ?? 1_048_576,
       model: KIMI_MODEL,
       env: opts.env ?? {},

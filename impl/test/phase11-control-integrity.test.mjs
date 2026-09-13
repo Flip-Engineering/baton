@@ -238,7 +238,7 @@ test('CI2/CK9: accepted input followed by append failure releases one racing con
 
   log._file = originalFile;
   const replay = new Coordinator({
-    log, coordination, fences: new FenceTable(), adapters: { stub: adapter({ card: { concurrencyCeiling: 0 } }) },
+    log, coordination, fences: new FenceTable(), adapters: { stub: adapter() },
     worktrees, repoRoot: tmpdir(), referee: async () => ({}), route: () => 'stub',
     approvalTimeoutMs: 1000, stopDeadlineMs: 50,
   });
@@ -328,7 +328,13 @@ test('CI4: worker result narrative is prose and never nested in a trusted lifecy
   assert.equal(JSON.stringify(lifecycle).includes('I changed the parser'), false);
 });
 
-test('CI3: driver-level wall timeout reaps the real child, worktree, metadata, and task branch', { timeout: 8_000 }, async (t) => {
+// CI3 (corrected 2026-09-13, operator ruling #163): the wall budget is ADMITTED but INERT for a
+// member's fate — silence and elapsed time never terminate a participant, so there is no
+// driver-level wall timeout to wait out. The invariant is the absence of that killer plus the
+// exact cleanup an EXPLICIT stop performs. Timer installation is instrumented instead of
+// waiting a minute; no clock compression, no process.kill fallback, and the guaranteed driver
+// drain stays the only teardown.
+test('CI3 (#163): the driver arms no wall-budget killer, and an explicit stop reaps the exact child, worktree, metadata, and task branch', { timeout: 15_000 }, async (t) => {
   const repoRoot = mkdtempSync(join(tmpdir(), 'baton-p11-repo-'));
   const logDir = mkdtempSync(join(tmpdir(), 'baton-p11-driver-log-'));
   t.after(() => {
@@ -337,60 +343,58 @@ test('CI3: driver-level wall timeout reaps the real child, worktree, metadata, a
   });
   let driverHandle = null;
   try {
-  git(['init', '-q'], repoRoot);
-  git(['config', 'user.email', 'baton-test@example.com'], repoRoot);
-  git(['config', 'user.name', 'Baton Test'], repoRoot);
-  git(['commit', '--allow-empty', '-q', '-m', 'base'], repoRoot);
+    git(['init', '-q'], repoRoot);
+    git(['config', 'user.email', 'baton-test@example.com'], repoRoot);
+    git(['config', 'user.name', 'Baton Test'], repoRoot);
+    git(['commit', '--allow-empty', '-q', '-m', 'base'], repoRoot);
 
-  // Brief budgets use whole-minute deployment ceilings. Scale only the adapter's one-minute
-  // timer so this integration check retains a short wall-clock duration.
-  const realSetTimeout = globalThis.setTimeout;
-  const restoreTimer = () => { globalThis.setTimeout = realSetTimeout; };
-  globalThis.setTimeout = (callback, ms, ...args) => realSetTimeout(callback, ms === 60_000 ? 1_000 : ms, ...args);
-  t.after(restoreTimer);
-  const cli = new ClaudeSessionCli({ cmd: process.execPath, args: [FAKE_CLAUDE], killGraceMs: 20 });
-  const driverHandle = createDriver({
-    repoRoot,
-    logDir,
-    adapters: { claude: cli },
-    stopDeadlineMs: 250,
-  });
-  const { coordinator, log } = driverHandle;
-  const timed = brief('HOLD_UNTIL_INTERRUPT');
-  // Keep the integration budget above fixture process startup jitter in the bare parallel suite;
-  // the assertion is about real timeout cleanup after a wire session exists.
-  timed.budget.wallMin = 1;
-  const h = await coordinator.spawn('claude', timed, { taskId: 'timeout-reap' });
-  await until(() => log.read(h.id).find((e) => e.kind === 'lifecycle.process_started' && e.actor === 'worker'));
-  restoreTimer();
-  const crashed = await until(() => log.read(h.id).find((e) => e.kind === 'lifecycle.crashed' && e.payload?.phase === 'timeout'));
-  restoreTimer(); // restore BEFORE the assertions — an assert-fail keeps the real 60s timer
-  // (agent-owned, harmless) instead of the compressed 1s one that re-fires post-test and hangs node.
-  const events = log.read(h.id);
-  const started = events.find((e) => e.kind === 'lifecycle.process_started' && e.actor === 'worker');
-  const closed = events.find((e) => e.kind === 'lifecycle.process_closed' && e.actor === 'worker');
-  const pid = started?.payload?.pid;
-  // Reap the real child unconditionally BEFORE the assertions: if any assert below fails,
-  // the detached child would otherwise survive and stall the file (node --test waits on the
-  // live stdio pipe — the suite hang class). The failing 'reaps' test must never leak.
-  try { if (Number.isSafeInteger(pid) && pid > 0) { try { process.kill(-pid, 'SIGKILL'); } catch { /* group absent */ } try { process.kill(pid, 'SIGKILL'); } catch { /* child gone */ } } } catch { /* noop */ }
-  assert.ok(pid, 'a real child process must have existed');
-  assert.ok(closed && crashed); assert.equal(closed.payload.pid, pid); assert.equal(closed.payload.generation, started.payload.generation);
-  assert.ok(started.seq < closed.seq && closed.seq < crashed.seq, 'exact OS close precedes its timeout crash');
+    const realSetTimeout = globalThis.setTimeout;
+    const wallBudgetMs = 60_000; // brief.budget.wallMin = 1
+    const budgetTimers = [];
+    globalThis.setTimeout = (callback, ms, ...args) => {
+      if (ms === wallBudgetMs) budgetTimers.push(ms);
+      return realSetTimeout(callback, ms, ...args);
+    };
+    t.after(() => { globalThis.setTimeout = realSetTimeout; });
 
-  const killed = await coordinator.kill(h.id, 'policy');
-  assert.equal(killed.result, 'already_dead', 'the matching OS close is transport-death confirmation');
-  assert.equal(log.read(h.id).some((event) => event.kind === 'kill.requested'), false, 'no impossible second kill is armed after exact close');
-  await until(() => {
-    try { process.kill(pid, 0); return false; } catch { return true; }
-  });
-  assert.equal(existsSync(join(repoRoot, '.baton', 'wt', 'timeout-reap')), false);
-  assert.equal(existsSync(join(repoRoot, '.baton', 'wt', 'timeout-reap.meta.json')), false);
-  assert.equal(git(['branch', '--list', 'baton/timeout-reap'], repoRoot), '');
+    const cli = new ClaudeSessionCli({ cmd: process.execPath, args: [FAKE_CLAUDE], killGraceMs: 20 });
+    // Assign the OUTER handle: the finally-block drain below is the only thing that closes the
+    // driver, and a shadowing `const` here silently made that teardown a no-op (the suite then
+    // hung on the live runner-scoped handles after every assertion had already passed).
+    driverHandle = createDriver({ repoRoot, logDir, adapters: { claude: cli }, stopDeadlineMs: 250 });
+    const { coordinator, log } = driverHandle;
+    const timed = brief('HOLD_UNTIL_INTERRUPT');
+    timed.budget.wallMin = 1;
+    const h = await coordinator.spawn('claude', timed, { taskId: 'timeout-reap' });
+    await until(() => log.read(h.id).find((e) => e.kind === 'lifecycle.process_started' && e.actor === 'worker'));
+
+    // Dispatch is synchronous with spawn's tick, so a wall-budget killer would already be armed.
+    assert.deepEqual(budgetTimers, [],
+      'the driver must never install a wall-budget killer for a member — fate rests on evidence only (#163)');
+    const started = log.read(h.id).find((e) => e.kind === 'lifecycle.process_started' && e.actor === 'worker');
+    const pid = started?.payload?.pid;
+    assert.ok(Number.isSafeInteger(pid) && pid > 0, 'a real child process must have existed');
+    assert.equal(log.read(h.id).some((e) => e.kind === 'lifecycle.crashed' && e.payload?.phase === 'timeout'), false,
+      'no wall-time fate event exists for a live member');
+    assert.equal(log.read(h.id).some((e) => e.kind === 'lifecycle.process_closed'), false,
+      'the real child stays alive until an explicit stop');
+
+    // An explicit stop reaps the exact child and everything the worker owned.
+    const stopped = await coordinator.kill(h.id, 'policy');
+    assert.equal(stopped.ok, true, 'the explicit stop is admitted');
+    const closed = await until(() => log.read(h.id).find((e) => e.kind === 'lifecycle.process_closed' && e.actor === 'worker'));
+    assert.equal(closed.payload.pid, pid, 'the OS close names the exact child');
+    assert.equal(closed.payload.generation, started.payload.generation);
+    assert.ok(started.seq < closed.seq, 'process start precedes the exact OS close');
+    await until(() => {
+      try { process.kill(pid, 0); return false; } catch { return true; }
+    });
+    assert.equal(existsSync(join(repoRoot, '.baton', 'wt', 'timeout-reap')), false);
+    assert.equal(existsSync(join(repoRoot, '.baton', 'wt', 'timeout-reap.meta.json')), false);
+    assert.equal(git(['branch', '--list', 'baton/timeout-reap'], repoRoot), '');
   } finally {
     // Guaranteed drain on EVERY exit path (pass or assert-fail): kill the fleet and close
-    // the driver so no real child or runner-scoped handle survives. The failure path leaked
-    // before — asserts skipped post-failure cleanup, stalling the whole suite.
+    // the driver so no real child or runner-scoped handle survives.
     try { if (driverHandle?.coordinator) { const hs = driverHandle.coordinator.list(); for (const hh of hs) await driverHandle.coordinator.kill(hh.workerId).catch(() => {}); } } catch { /* noop */ }
     try { await driverHandle?.drainAndClose?.(); } catch { /* already closed */ }
     try { await driverHandle?.closeAsync?.(); } catch { /* already closed */ }

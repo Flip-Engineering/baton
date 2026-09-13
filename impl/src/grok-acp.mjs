@@ -22,6 +22,7 @@ import { createHash } from 'node:crypto';
 import { renderBrief } from './adapter.mjs';
 import { normalizeProcessGeneration, ProcessCloseReapLatch, processStartedPayload } from './process-lifecycle.mjs';
 import { attestWorkerPolicyObservation } from './worker-policy.mjs';
+import { normalizeConcurrencyCeiling } from './concurrency-policy.mjs';
 
 const DEFAULT_MAX_WIRE_FRAME_BYTES = 1024 * 1024;
 const GROK_TOKEN_METRIC = 'grok_prompt_meta_total_tokens';
@@ -148,7 +149,7 @@ export class GrokAcpCli {
     this._env = opts.env;
     this._spawnFn = opts.spawnFn ?? spawn;
     this._reapOwnedProcessGroup = opts.reapOwnedProcessGroup;
-    this._ceiling = opts.ceiling ?? 4;
+    this._ceiling = normalizeConcurrencyCeiling(opts.ceiling, 'GrokAcpCli concurrencyCeiling');
     // GA4: 500000 is the live handshake's totalContextTokens for grok-build, not a guess.
     this._maxContext = opts.maxContext ?? 500000;
     this._model = opts.model;

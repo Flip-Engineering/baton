@@ -55,18 +55,22 @@ const emitFrame = (adapter, worker, frame) => {
   adapter._sessions.get(worker)?.process._onStdout(JSON.stringify(frame) + '\n');
 };
 
-test('card: the omp harness card carries native-provider posture and no synthetic seat caps', () => {
-  const adapter = new OmpRpcCli({
+test('card: the omp harness card carries native-provider posture and no invented seat caps', () => {
+  const options = {
     requestTimeoutMs: 1_000,
     modelCatalog: { 'deepseek/deepseek-v4-flash': ['low', 'high'] },
     versionProbe: () => 'omp test',
-  });
+  };
+  const adapter = new OmpRpcCli(options);
   const card = adapter.card();
   assert.equal(card.harness, 'omp');
   assert.equal(card.modelSelection.family, 'omp');
   assert.equal(card.modelSelection.mode, 'exact');
   assert.deepEqual(card.modelSelection.available, ['deepseek/deepseek-v4-flash']);
-  assert.equal(card.concurrencyCeiling, 4, 'no synthetic 1x seat cap (the #221 law)');
+  assert.equal(card.concurrencyCeiling, null,
+    'no configured concurrency policy — absent is null, never an invented 1 or 4 (#221, and no unbounded sentinel)');
+  assert.equal(new OmpRpcCli({ ...options, ceiling: 4 }).card().concurrencyCeiling, 4,
+    'an explicitly configured ceiling is preserved verbatim');
 });
 
 test('TERMINALITY: a mute transport NEVER fails the member — no fate clock exists', async () => {

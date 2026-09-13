@@ -6,6 +6,7 @@ import {
   normalizeProcessGeneration, processStartedPayload,
 } from './process-lifecycle.mjs';
 import { attestWorkerPolicyObservation } from './worker-policy.mjs';
+import { normalizeConcurrencyCeiling } from './concurrency-policy.mjs';
 
 const DEFAULT_MAX_WIRE_FRAME_BYTES = 1024 * 1024;
 const DEFAULT_MAX_EVENT_PAYLOAD_BYTES = 64 * 1024;
@@ -104,7 +105,7 @@ export class KimiAcpCli {
     this._env = options.env;
     this._spawnFn = options.spawnFn;
     this._reapOwnedProcessGroup = options.reapOwnedProcessGroup;
-    this._ceiling = options.ceiling ?? 1;
+    this._ceiling = normalizeConcurrencyCeiling(options.ceiling, 'KimiAcpCli concurrencyCeiling');
     this._maxContext = options.maxContext ?? null;
     this._maxWireFrameBytes = options.maxWireFrameBytes ?? DEFAULT_MAX_WIRE_FRAME_BYTES;
     this._maxEventPayloadBytes = options.maxEventPayloadBytes ?? DEFAULT_MAX_EVENT_PAYLOAD_BYTES;

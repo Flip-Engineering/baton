@@ -60,7 +60,7 @@ async function until(fn, timeoutMs = 5000) {
 class ScriptableAdapter {
   constructor(turnCompletion = 'pausable') {
     this._card = {
-      harness: 'mock', version: '1.0.0', authPosture: 'api_key', concurrencyCeiling: Infinity,
+      harness: 'mock', version: '1.0.0', authPosture: 'api_key', concurrencyCeiling: null,
       maxContext: 100000,
       verbs: {
         spawn: 'native', prompt: 'native', steer: 'native', interrupt: 'native',

@@ -16,6 +16,7 @@
 import { execFileSync } from 'node:child_process';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
+import { normalizeConcurrencyCeiling } from './concurrency-policy.mjs';
 import { renderVerificationExecution } from './verification-presentation.mjs';
 import { renderAttentionSection } from './messages.mjs';
 
@@ -216,7 +217,7 @@ function haltableAskWait(session, haltSignal = session.haltSignal) {
 
 export class MockAdapter {
   /**
-   * @param {{harness?: string, version?: string, concurrencyCeiling?: number,
+   * @param {{harness?: string, version?: string, concurrencyCeiling?: number|null,
    *           maxContext?: number, scenario: object}} config
    */
   constructor(config = {}) {
@@ -226,7 +227,7 @@ export class MockAdapter {
     this._harness = c.harness ?? 'mock';
     this._version = c.version ?? '1.0.0';
     this._model = c.model ?? 'mock-model';
-    this._concurrencyCeiling = c.concurrencyCeiling ?? 4;
+    this._concurrencyCeiling = normalizeConcurrencyCeiling(c.concurrencyCeiling, 'MockAdapter concurrencyCeiling');
     this._maxContext = c.maxContext ?? 128000;
     this._defaultScenario = config.scenario;
     /** @type {Map<string, object>} */
@@ -746,7 +747,7 @@ export class CodexAdapter extends SubprocessAdapterBase {
       harness: 'codex',
       version: '0.1.0',
       authPosture: 'subscription',
-      concurrencyCeiling: 4,
+      concurrencyCeiling: null,
       maxContext: 200000,
       permissions: { mode: 'never', sandbox: 'danger-full-access', boundary: 'Unattended full host permissions by default; containment is a separate deployment boundary' },
       // SC8 honesty: SubprocessAdapterBase implements ONLY spawn — prompt/interrupt/approve/
@@ -768,7 +769,7 @@ export class ClaudeAdapter extends SubprocessAdapterBase {
       harness: 'claude-code',
       version: '0.1.0',
       authPosture: 'subscription',
-      concurrencyCeiling: 4,
+      concurrencyCeiling: null,
       maxContext: 200000,
       permissions: { mode: 'bypassPermissions', sandbox: 'unverified', boundary: 'Approval autonomy only; host filesystem and network containment are unverified' },
       // SC8 honesty: only spawn is implemented on this legacy subprocess tier (see base stubs).
@@ -786,7 +787,8 @@ export class ClaudeAdapter extends SubprocessAdapterBase {
 
 export class GlmAdapter extends ClaudeAdapter {
   card() {
-    const base = super.card();
-    return { ...base, harness: 'glm-via-claude', concurrencyCeiling: 1 };
+    // No configured limit at this tier: such a constraint belongs to a deployment caller that
+    // declares one (advanced.adapterOptions.concurrencyCeiling), never to a subclass default.
+    return { ...super.card(), harness: 'glm-via-claude' };
   }
 }

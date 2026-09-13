@@ -116,7 +116,11 @@ OS containment. The selected strategy determines what is enforced, observed, and
 Durable admission and ordered changes to a contested object may need serialization. Thinking,
 reads, unrelated admissions, independent edits, discussion, and review do not require a global
 barrier. Resource pressure should be derived from actual provider and host constraints and be
-visible to the orchestrator. A slow provider or expensive projection must not block unrelated
+visible to the orchestrator. A worker-concurrency ceiling is either a value the deployment
+caller configured or absent — absence is never a number, no built-in default exists, and a
+configured ceiling is enforced as a ledgered wait (`task.dispatch_deferred`, surfaced as
+`waitingOn.capacity_ceiling`) that resumes when a slot is released rather than silently
+skipping the task. A slow provider or expensive projection must not block unrelated
 control, observation, or emergency operations.
 
 Recovery should consume lifecycle events and reconstruct current authority without depending on

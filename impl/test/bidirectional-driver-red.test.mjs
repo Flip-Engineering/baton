@@ -232,7 +232,7 @@ class ScriptableAdapter {
   constructor() {
     this._card = {
       harness: 'mock', version: '1.0.0', authPosture: 'api_key',
-      concurrencyCeiling: Infinity, maxContext: 100_000,
+      concurrencyCeiling: null, maxContext: 100_000,
       verbs: {
         spawn: 'native', interrupt: 'native', answer: 'native',
         approve: 'native', kill: 'native',
