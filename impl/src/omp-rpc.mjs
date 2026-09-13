@@ -87,9 +87,22 @@ function buildOmpRpcArgs({ model, effort, permissionMode = 'yolo', extraArgs = [
   if (model) args.push('--model', model);
   if (effort) args.push('--thinking', effort);
   if (permissionMode === 'yolo') args.push('--approval-mode', 'yolo');
-  // Member containment: no ambient discovery, no LSP warmup, no title churn. The brief is the
-  // contract; tool scope is the deployment's --tools allowlist when provided via extraArgs.
-  args.push('--no-extensions', '--no-skills', '--no-rules', '--no-lsp', '--no-title', '--no-pty');
+  // NATIVE DEFAULTS (2026-09-12, omp 17.4.0): `--mode rpc` is a TRANSPORT, not a containment
+  // boundary. The six suppression flags this builder used to push unconditionally were read off
+  // the installed binary (/opt/homebrew/Cellar/omp/17.4.0/bin/omp) and each is a session-scoped
+  // capability switch with no RPC protocol dependency:
+  //   --no-extensions → disableExtensionDiscovery (only ambient discovery; `-e` still loads)
+  //   --no-skills     → session `skills = []`        --no-rules → session `rules = []`
+  //   --no-lsp        → `enableLsp = false`
+  //   --no-title      → redundant: rpc mode already sets `PI_NO_TITLE=1` itself
+  //   --no-pty        → redundant: rpc mode reports `hasUI=false`, and omp's interactive-bash
+  //                     PTY gate requires a UI session; `PI_NO_PTY` is auto-set only for rpc-ui
+  // Nothing in omp's rpc mode requires capability suppression, and the extension_ui_request lane
+  // this adapter already answers is how native extensions/questions reach the coordinator. The
+  // brief remains the contract; containment is the runtime's (same-UID private HOME, worktree
+  // cwd, projected credentials — runtime-isolation.mjs), never argv suppression. A caller that
+  // genuinely wants suppression supplies it explicitly through the constructor's `args` seam,
+  // which replaces these defaults entirely (`extraArgs` appends to them).
   return [...args, ...extraArgs];
 }
 
