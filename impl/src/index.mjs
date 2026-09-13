@@ -1553,6 +1553,8 @@ export function createDriver(opts) {
     // and a last-wins Map would silently flip which vendor key receives the dispatch.
     return feasible.find((v) => candidateKey(v) === chosen) ?? null;
   };
+  route.record = (mv, tt, win, recordOpts = {}) => router.record(mv, tt, win, recordOpts);
+
   // The live-holder provider the worktree authority consults before any destructive effect. It is
   // late-bound: the answer comes from the coordinator this same driver is constructing, and the
   // worktree manager never guesses at custody before that authority exists.

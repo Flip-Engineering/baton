@@ -20,7 +20,10 @@ import { SWARM_MCP_TOOL_DEFINITIONS } from './swarm-surface.mjs';
 // transport. Both spellings map to the SAME application command, so capability, stateful,
 // reconcilability, and argument validation derive identically for the pair.
 const MCP_APPLICATION_ENTRIES = Object.entries(APPLICATION_COMMAND_DEFINITIONS)
-  .filter(([, definition]) => definition.mcp)
+  // The swarm family (docs/39) has no retained legacy transport: its tools are the ordinary
+  // baton_swarm_* rows (swarmApplicationToolDefinitions) plus their canonical dot twins, so no
+  // fleet_swarm_* twin is minted here — that spelling would exist only as an unadvertised alias.
+  .filter(([name, definition]) => definition.mcp && !name.startsWith('swarm.'))
   .flatMap(([name, definition]) => {
     const { canonical, mcp } = canonicalAndTransportNames(name);
     return [[mcp, name, definition], [canonical, name, definition]];
