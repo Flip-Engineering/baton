@@ -42,18 +42,21 @@ target mappings. The target-parent count is the overlap-able subset used by capa
 the actual relative parent paths remain private to the deployment authority and are checked against
 the public digest before capacity accounting. The identity contains no source root,
 resolved host path, source path, executable path, environment, credential, file content, inode, or
-timestamp. `manifestDigest` binds the sorted closed file/directory manifest; `projectionDigest`
+timestamp. `manifestDigest` binds the sorted closed file/directory/link manifest; `projectionDigest`
 also binds the source ID, target mapping, corrected directory accounting, and limits.
 
 ### TP2 — safe, complete source traversal
 
 Inspection and every materialization independently walk each mapped source with `lstat`/descriptor
-checks. Only ordinary directories and regular files are supported. Symlinks at any depth, hardlinked
-files, sockets, FIFOs, devices, setuid/setgid files, path escape, control-character names, and
-canonical path collisions refuse. Traversal never follows a link and never silently omits an entry.
+checks. Ordinary directories, regular files, and relative symbolic links to files within the same
+mapping are supported. Links preserve npm executable entry points and their package-relative imports.
+Absolute, escaping, dangling, cyclic, or directory links refuse, as do hardlinked files, sockets,
+FIFOs, devices, setuid/setgid files, control-character names, and canonical path collisions.
+Link validation checks both lexical and resolved targets; links never acquire additional source
+content. Each link consumes one file/inode allowance and its target-string byte length.
 
 The manifest deterministically records each mapping, relative directory, regular file, normalized
-executable bit, byte length, and content SHA-256. It does not record host metadata. Empty directories
+executable bit, byte length, content SHA-256, and exact relative link target. It does not record host metadata. Empty directories
 are represented. Source mappings and target mappings are each non-overlapping so a byte has one
 unambiguous source and destination identity.
 
@@ -71,8 +74,9 @@ override.
 
 Before copying, Baton rescans the complete source and requires the configured manifest digest.
 Materialization writes newly allocated regular files and directories into previously absent target
-paths. It never creates a symlink or hardlink and normalizes modes to ordinary readable data or an
-executable file without privileged bits. Every target file is re-read and matched to the manifest.
+paths and reproduces admitted relative file links inside their mapping. It never creates hardlinks
+and normalizes file modes to ordinary readable data or an executable without privileged bits.
+Every target file and link is re-read and matched to the manifest, including the exact link text.
 
 After copying, Baton rescans the source and requires the same manifest. A mutation between initial
 inspection, pre-copy scan, copy, or post-copy scan refuses `toolchain_projection_changed`, removes
@@ -174,7 +178,8 @@ e-graph capability. Those retained goal items remain explicit, and no homelab in
 1. Inspection produces one deterministic host-path-free identity; exact relocation is identical and
    content/mapping/source-ID/limit changes differ or refuse the configured digest.
 2. Missing/unknown configuration, unsafe/overlapping paths, `.git`/`.baton` targets, source escape,
-   nested symlinks, hardlinks, special files, privileged bits, and destination collisions refuse.
+   unsafe symlinks, hardlinks, special files, privileged bits, and destination collisions refuse;
+   confined npm executable links preserve package-relative behavior in independent projections.
 3. Every independent ceiling accepts exact-limit input and rejects max+1 without partial identity or
    target materialization.
 4. Worker and two verifier copies are byte-identical but path/inode-independent; mutation of any one
