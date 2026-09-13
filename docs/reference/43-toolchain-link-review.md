@@ -177,3 +177,18 @@ add the F4 cleanup test, classify the F2 refusal cause, and update the phase-55 
   (repository execution check, not link proof).
 - Link behaviour assessed statically from `git show ad160507` against the parent revision; the
   commit's own tests were not executed in this worktree because the commit is not checked out here.
+
+## Integration follow-up (2026-09-13)
+
+The parent addressed F3 with distinct source-drift handling for link reads/rechecks, and F4 with
+a deterministic failure after a link has been created in the first mapping. The new regression
+asserts that all created mappings/parents are removed while the original source link and content
+remain intact. A separate regression removes a link after its first stat and expects
+`toolchain_projection_changed`.
+
+F2's deployment message now names changed files, unsupported links and special files rather than
+suggesting reinstalling alone. F5/F6/F8 are reflected in the updated
+`spec/phase55/immutable-toolchain-projection.md`; historical evidence describes its original head.
+Correction to F2: pnpm layouts using directory links remain unsupported. Only confined relative
+file links are admitted; this is not general pnpm/workspace support. F7 is commit organization,
+not a runtime defect. All 15 phase-55 tests pass after these follow-ups.

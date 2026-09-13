@@ -604,7 +604,7 @@ function dependencyProjection(repoRoot, repoId) {
     return Object.freeze({ ...descriptor, expectedManifestDigest: identity.manifestDigest });
   } catch (cause) {
     throw Object.assign(deploymentPreflightError(
-      'Installed dependency trees could not be attested for private worker projection; reinstall dependencies and retry.',
+      'Installed dependency trees could not be attested for private worker projection; check for changed files, unsupported links, or special files. Relative file links must stay inside their dependency mapping.',
     ), { cause });
   }
 }

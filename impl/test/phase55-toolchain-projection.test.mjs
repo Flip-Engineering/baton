@@ -1,9 +1,11 @@
 import { test } from 'node:test';
+import fs from 'node:fs';
+import { syncBuiltinESMExports } from 'node:module';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import {
   chmodSync, existsSync, linkSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, readlinkSync,
-  rmSync, symlinkSync, writeFileSync,
+  realpathSync, rmSync, symlinkSync, writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -181,6 +183,50 @@ test('toolchain links refuse escapes, directories, cycles and changed link targe
   t.after(() => rmSync(target, { recursive: true, force: true }));
   assert.throws(() => authority.materialize(target), { code: 'toolchain_projection_changed' });
   assert.equal(existsSync(join(target, 'tools/runtime')), false);
+});
+
+test('partial toolchain materialization removes already-created links when a later mapping fails', (t) => {
+  const source = makeSource('partial-links'); const target = root('partial-links-target');
+  t.after(() => { rmSync(source, { recursive: true, force: true }); rmSync(target, { recursive: true, force: true }); });
+  symlinkSync('index.mjs', join(source, 'deps/runtime/alias'));
+  write(source, 'later/fail.txt', 'later');
+  const authority = prepared(source, { mappings: [
+    { sourcePath: 'deps/runtime', targetPath: 'tools/runtime' },
+    { sourcePath: 'later', targetPath: 'tools/later' },
+  ] });
+  const original = fs.writeFileSync;
+  let sawLink = false;
+  fs.writeFileSync = (path, ...args) => {
+    if (path === join(realpathSync(target), 'tools/later/fail.txt')) {
+      sawLink = lstatSync(join(target, 'tools/runtime/alias')).isSymbolicLink();
+      throw new Error('injected later write failure');
+    }
+    return original(path, ...args);
+  };
+  syncBuiltinESMExports();
+  try {
+    assert.throws(() => authority.materialize(target), { code: 'toolchain_projection_materialization_failed' });
+  } finally { fs.writeFileSync = original; syncBuiltinESMExports(); }
+  assert.equal(sawLink, true, 'failure occurred after the first link was written');
+  assert.equal(existsSync(join(target, 'tools')), false, 'all created mappings and parents were removed');
+  assert.equal(readlinkSync(join(source, 'deps/runtime/alias')), 'index.mjs');
+  assert.match(readFileSync(join(source, 'deps/runtime/index.mjs'), 'utf8'), /value = 1/);
+});
+
+test('a link disappearing after its initial stat is reported as source drift', (t) => {
+  const source = makeSource('link-disappeared');
+  t.after(() => rmSync(source, { recursive: true, force: true }));
+  const link = join(realpathSync(source), 'deps/runtime/alias');
+  symlinkSync('index.mjs', link);
+  const original = fs.readlinkSync;
+  fs.readlinkSync = (path, ...args) => {
+    if (path === link) rmSync(link);
+    return original(path, ...args);
+  };
+  syncBuiltinESMExports();
+  try {
+    assert.throws(() => inspectToolchainProjection(descriptor(source)), { code: 'toolchain_projection_changed' });
+  } finally { fs.readlinkSync = original; syncBuiltinESMExports(); }
 });
 
 test('TP3: every independent deployment ceiling accepts exact input and refuses max+1 without truncation', (t) => {

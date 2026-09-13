@@ -131,8 +131,9 @@ function scanProjection(config, actualRoot, sourceSide, retainBytes = false) {
       // Preserve that relationship so package-relative imports still work. Never follow a link
       // to acquire extra source authority, and never create directory links in the target.
       let target;
+      try { target = readlinkSync(absolutePath); }
+      catch { if (sourceSide) changed(); else invalid(); }
       try {
-        target = readlinkSync(absolutePath);
         if (isAbsolute(target) || !safeEntryName(target)) invalid();
         const lexical = resolve(dirname(absolutePath), target);
         const resolved = realpathSync(lexical);
@@ -141,11 +142,18 @@ function scanProjection(config, actualRoot, sourceSide, retainBytes = false) {
           if (!within || within === '..' || within.startsWith(`..${sep}`) || isAbsolute(within)) invalid();
         }
         if (!lstatSync(resolved).isFile()) invalid();
-        if (statSignature(before) !== statSignature(lstatSync(absolutePath))
-          || target !== readlinkSync(absolutePath)) changed();
       } catch (error) {
         if (error instanceof ToolchainProjectionError) throw error;
         invalid();
+      }
+      try {
+        if (statSignature(before) !== statSignature(lstatSync(absolutePath))
+          || target !== readlinkSync(absolutePath)) {
+          if (sourceSide) changed(); else invalid();
+        }
+      } catch (error) {
+        if (error instanceof ToolchainProjectionError) throw error;
+        if (sourceSide) changed(); else invalid();
       }
       const bytes = Buffer.byteLength(target);
       counters.files += 1; counters.bytes += bytes;
