@@ -130,7 +130,7 @@ export class SwarmRuntime {
       const paused = worker ? this.coordinator.pausedTurns({ workerId: worker.id }) : [];
       return { ...clone(participant), runtime: {
         workerId: worker?.id ?? null, state: worker?.status ?? 'unbound',
-        turn: paused.length ? 'paused' : null,
+        turn: paused.length ? 'paused' : worker?.status === 'working' ? 'running' : null,
       } };
     });
     const operations = this.store.eventsView().filter((event) => event.kind === 'driver.recorded'
@@ -180,10 +180,17 @@ export class SwarmRuntime {
       const taskIds = new Set(bindings.map((binding) => binding.taskId));
       const workerIds = new Set(bindings.map((binding) => binding.workerId));
       const events = this.store.eventsView().slice(cursor);
-      const relevant = events.some(({ payload }) => payload?.swarmId === args.swarmId
-        || (payload?.runId && runIds.has(payload.runId))
-        || (payload?.taskId && taskIds.has(payload.taskId))
-        || (payload?.worker && workerIds.has(payload.worker)));
+      const relevant = events.some(({ kind, payload }) => {
+        // A watch call is itself a native tool call. Waking on tool/usage telemetry makes
+        // the observer generate the next wake indefinitely, even when every peer is paused.
+        if (['evidence.mapped', 'driver.recorded'].includes(kind)
+          && (payload?.kind === 'content.tool_call' || payload?.kind === 'route.observed'
+            || payload?.kind?.startsWith('resource.'))) return false;
+        return payload?.swarmId === args.swarmId
+          || (payload?.runId && runIds.has(payload.runId))
+          || (payload?.taskId && taskIds.has(payload.taskId))
+          || (payload?.worker && workerIds.has(payload.worker));
+      });
       if (relevant || performance.now() >= deadline) return this.inspect(swarm, principal, context);
       cursor = this.store.ledgerHeadSeq();
       await this.store.waitAfter(cursor, Math.max(1, Math.ceil(deadline - performance.now())), {
@@ -294,14 +301,17 @@ export class SwarmRuntime {
     const worker = this._worker(participant);
     if (command === 'swarm.capture') {
       const existing = swarm.contributions[args.contributionId];
-      if (existing && (existing.participantId !== participant.participantId || existing.body?.kind !== 'revision')) {
-        refuse('Contribution identity already names another finding', 'swarm_replay_conflict');
+      if (existing && existing.participantId !== participant.participantId) {
+        refuse('Contribution identity already belongs to another author', 'swarm_replay_conflict');
       }
       const capture = await this.coordinator.captureContribution(worker.id, { contributionId: args.contributionId });
-      if (!existing) this._write('swarm.contribution_recorded', {
+      if (!this._swarm(args.swarmId).contributions[args.contributionId]) this._write('swarm.contribution_recorded', {
         swarmId: args.swarmId, participantId: participant.participantId, contributionId: args.contributionId,
-        refs: [capture.ref], body: { kind: 'revision', sha: capture.sha },
       }, principal, `swarm-capture:${hash([args.swarmId, participant.participantId, args.contributionId])}`);
+      this._write('swarm.contribution_revision_attached', {
+        swarmId: args.swarmId, participantId: participant.participantId, contributionId: args.contributionId,
+        sha: capture.sha, ref: capture.ref,
+      }, principal, `swarm-capture-revision:${hash([args.swarmId, participant.participantId, args.contributionId])}`);
       return capture;
     }
     if (command === 'swarm.check') {

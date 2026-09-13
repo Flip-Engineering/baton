@@ -18,6 +18,7 @@ export const SWARM_EVENT_KINDS = Object.freeze(new Set([
   'swarm.assignment_updated',
   'swarm.context_updated',
   'swarm.contribution_recorded',
+  'swarm.contribution_revision_attached',
   'swarm.contribution_reviewed',
   'swarm.closed',
 ]));
@@ -247,6 +248,14 @@ export function validateSwarmEvent(kind, payload) {
     if (p.body !== undefined && p.body !== null) validateBody(p.body);
     return;
   }
+  if (kind === 'swarm.contribution_revision_attached') {
+    if (!isNonEmptyString(p.contributionId) || !isNonEmptyString(p.participantId)
+      || !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/u.test(p.sha ?? '')
+      || !isNonEmptyString(p.ref)) {
+      refuse('A contribution revision requires its author, contribution identity, SHA and retained ref', 'invalid_payload');
+    }
+    return;
+  }
   if (kind === 'swarm.contribution_reviewed') {
     if (!isNonEmptyString(p.contributionId)) refuse('swarm.contribution_reviewed requires contributionId', 'invalid_payload');
     if (!SWARM_REVIEW_DECISIONS.includes(p.decision)) {
@@ -450,6 +459,23 @@ export function foldSwarmEvent(swarms, event) {
     });
     const contributions = new Map(Object.entries(swarm.contributions));
     contributions.set(p.contributionId, contribution);
+    swarms.set(p.swarmId, replaceField(swarm, 'contributions', contributions));
+    return;
+  }
+
+  if (kind === 'swarm.contribution_revision_attached') {
+    const contribution = ownGet(swarm.contributions, p.contributionId);
+    if (!contribution) integrity('Contribution is unavailable', 'contribution_not_found');
+    if (contribution.participantId !== p.participantId) integrity('Revision author differs from contribution author', 'contribution_author_mismatch');
+    if (contribution.revision && (contribution.revision.sha !== p.sha || contribution.revision.ref !== p.ref)) {
+      integrity('Contribution already identifies another revision', 'contribution_revision_conflict');
+    }
+    const contributions = new Map(Object.entries(swarm.contributions));
+    contributions.set(p.contributionId, Object.freeze({
+      ...contribution,
+      refs: Object.freeze([...new Set([...(contribution.refs ?? []), p.ref])]),
+      revision: Object.freeze({ sha: p.sha, ref: p.ref, ...meta }),
+    }));
     swarms.set(p.swarmId, replaceField(swarm, 'contributions', contributions));
     return;
   }

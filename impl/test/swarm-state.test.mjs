@@ -60,7 +60,7 @@ describe('SWARM_EVENT_KINDS', () => {
       'swarm.created', 'swarm.participant_joined', 'swarm.participant_bound',
       'swarm.participant_left', 'swarm.group_updated', 'swarm.work_updated',
       'swarm.assignment_updated', 'swarm.context_updated',
-      'swarm.contribution_recorded', 'swarm.contribution_reviewed', 'swarm.closed',
+      'swarm.contribution_recorded', 'swarm.contribution_revision_attached', 'swarm.contribution_reviewed', 'swarm.closed',
     ];
     for (const kind of expected) assert.ok(SWARM_EVENT_KINDS.has(kind), `missing ${kind}`);
     assert.equal(SWARM_EVENT_KINDS.size, expected.length);

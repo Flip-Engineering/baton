@@ -121,6 +121,31 @@ test('reviewers check and accept contributions while authors remain available fo
   assert.equal(f.workers[0].status, 'dead');
 });
 
+test('a captured revision attaches to an existing finding without replacing its text or author', async (t) => {
+  const f = fixture(t);
+  await f.call('create', { purpose: 'Findings and code can describe the same contribution' });
+  await f.recruit('builder');
+  await f.recruit('reviewer', ['read', 'review']);
+  await f.call('update', { event: 'swarm.contribution_recorded', payload: {
+    contributionId: 'critique', body: 'The native watch wakes on its own tool calls.', refs: ['evidence:live-exercise'],
+  } }, principal('w-1'));
+  const finding = f.store.swarm('baton').contributions.critique;
+  await f.call('capture', { participantId: 'builder', contributionId: 'critique' }, principal('w-2'));
+  const attached = f.store.swarm('baton').contributions.critique;
+  assert.equal(attached.body, finding.body);
+  assert.equal(attached.actor, finding.actor);
+  assert.equal(attached.participantId, 'builder');
+  assert.equal(attached.revision.sha, SHA);
+  assert.deepEqual(attached.refs, ['evidence:live-exercise', `refs/baton/checkpoints/${SHA}`]);
+  const cursor = f.store.ledgerHeadSeq();
+  await f.call('capture', { participantId: 'builder', contributionId: 'critique' }, principal('w-2'));
+  assert.equal(f.store.ledgerHeadSeq(), cursor, 'retry does not duplicate the attachment');
+  await assert.rejects(f.call('capture', { participantId: 'reviewer', contributionId: 'critique' }), {
+    code: 'swarm_replay_conflict',
+  });
+  assert.equal((await f.call('check', { participantId: 'builder', contributionId: 'critique', checkId: 'review' }, principal('w-2'))).passed, true);
+});
+
 test('recruitment recovers through the existing idempotent Run authority and retains its original shared context', async (t) => {
   const f = fixture(t);
   await f.call('create', { purpose: 'Recover recruitment' });
@@ -171,4 +196,23 @@ test('watch ignores unrelated swarms, wakes on selected updates, and releases on
   await new Promise(setImmediate);
   f.runtime.close();
   await assert.rejects(pending, { code: 'coordination_wait_aborted' });
+});
+
+test('native watching does not wake itself through tool and token telemetry', async (t) => {
+  const f = fixture(t);
+  await f.call('create', { purpose: 'Wait for collaboration, without a tool feedback loop' });
+  await f.recruit('lead');
+  await f.recruit('builder');
+  const cursor = f.store.ledgerHeadSeq();
+  let resolved = false;
+  const watching = f.call('watch', { afterSeq: cursor, timeoutMs: 1000 }, principal('w-1'))
+    .then((view) => { resolved = true; return view; });
+  for (const kind of ['content.tool_call', 'resource.tokens', 'route.observed']) {
+    f.store.recordDriver(kind, { worker: 'w-1', runId: f.workers[0].runId }, { actor: 'worker', key: `telemetry:${kind}` });
+  }
+  await new Promise(setImmediate);
+  assert.equal(resolved, false);
+  f.store.recordDriver('turn.paused', { worker: 'w-2', runId: f.workers[1].runId }, { actor: 'worker', key: 'builder-paused' });
+  const view = await watching;
+  assert.equal(view.participants.find((row) => row.participantId === 'builder').runtime.turn, 'paused');
 });
