@@ -111,7 +111,6 @@ export class PublicSupplyChainOracle {
     const abort = () => controller.abort(signal?.reason);
     if (signal?.aborted) abort(); else signal?.addEventListener?.('abort', abort, { once: true });
     const timer = setTimeout(() => controller.abort('timeout'), this.timeoutMs);
-    if (typeof timer.unref === 'function') timer.unref();
     try {
       const response = await this.fetch(url, { ...init, redirect: 'error', signal: controller.signal, headers: { accept: 'application/json', ...(init?.headers ?? {}) } });
       if (!response || response.ok !== true) throw typed('supply-chain oracle unavailable', 'oracle_unavailable');
@@ -250,7 +249,7 @@ export class PublicSupplyChainOracle {
     const scanId = randomUUID(); const coordinatesDigest = sha(stable(coordinates)); const batchCount = Math.ceil(coordinates.length / this.maxBatchSize); const scannerCardDigest = sha(stable(this.card()));
     const controller = new AbortController(); let wallExpired = false; const abort = () => controller.abort(ctx.signal?.reason);
     if (ctx.signal?.aborted) abort(); else ctx.signal?.addEventListener?.('abort', abort, { once: true });
-    const wallTimer = setTimeout(() => { wallExpired = true; controller.abort('scan wall deadline'); }, this.maxScanWallMs); wallTimer.unref?.();
+    const wallTimer = setTimeout(() => { wallExpired = true; controller.abort('scan wall deadline'); }, this.maxScanWallMs);
     try {
       const results = []; const batches = []; const sources = []; let totalAdvisories = 0;
       for (let offset = 0; offset < coordinates.length; offset += this.maxBatchSize) {
