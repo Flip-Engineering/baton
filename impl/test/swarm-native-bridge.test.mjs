@@ -247,15 +247,17 @@ test('an implementer cannot make organizer changes; a delegated organizer can', 
       permissions: ['read', 'communicate', 'contribute', 'organize'] }); // delegated organizer
     const alpha = await bridge.issue({ swarmId: 'swarm-1', participantId: 'alpha', runId: 'run-alpha' });
     const beta = await bridge.issue({ swarmId: 'swarm-1', participantId: 'beta', runId: 'run-beta' });
+    // Well-shaped payloads: contract admission (payload shapes) now refuses BEFORE authority, so
+    // the authority refusal under test needs a payload the contract would admit.
     await assert.rejects(call(alpha, 'swarm.update', {
       swarmId: 'swarm-1', event: 'swarm.group_updated', idempotencyKey: 'op-g-1',
-      payload: { purpose: 'mutiny' },
+      payload: { groupId: 'group-pairs', members: ['alpha'], purpose: 'mutiny' },
     }), (error) => error.code === 'swarm_permission_required' && error.status === 422
       && error.detail.permission === 'organize');
-    assert.equal(runtime.applied.length, 0);
     const regroup = await call(beta, 'swarm.update', {
       swarmId: 'swarm-1', event: 'swarm.group_updated', idempotencyKey: 'op-g-2',
-      payload: { purpose: 'split into builder and reviewer pairs' },
+      payload: { groupId: 'group-pairs', members: ['alpha', 'beta'],
+        purpose: 'split into builder and reviewer pairs' },
     });
     assert.equal(regroup.applied, true);
     assert.equal(runtime.applied[0].author, 'swarm-native:beta');
@@ -593,7 +595,11 @@ test('the module executable answers swarm.inspect from env alone and fails with 
     const badArgs = await execFileAsync(process.execPath, [BRIDGE_MODULE, 'swarm.inspect', 'not-json'], { env }).catch((error) => error);
     assert.equal(badArgs.code, 1);
     assert.equal(JSON.parse(badArgs.stderr).error.code, 'swarm_bridge_request_invalid');
-    const missingEnv = await execFileAsync(process.execPath, [BRIDGE_MODULE, 'swarm.inspect']).catch((error) => error);
+    // "No env configured" must mean it: the child inherits nothing bridge-shaped (a deployment
+    // injects BATON_SWARM_BRIDGE_* into THIS test process, and an inherited URL would turn this
+    // probe into a real network call).
+    const missingEnv = await execFileAsync(process.execPath, [BRIDGE_MODULE, 'swarm.inspect'],
+      { env: { PATH: process.env.PATH, HOME: process.env.HOME } }).catch((error) => error);
     assert.equal(missingEnv.code, 1);
     assert.match(JSON.parse(missingEnv.stderr).error.message, /BATON_SWARM_BRIDGE_URL/u);
   });
@@ -605,4 +611,92 @@ test('swarmBridgeMain() returns exit codes and writes envelopes without spawning
   const code = await swarmBridgeMain([], {}, { out: sink(), err: sink() });
   assert.equal(code, 1);
   assert.match(JSON.parse(lines.at(-1)).error.message, /Usage:/u);
+});
+// ============================================================
+// Local help — the shared contract rendered with no credential at all
+// ============================================================
+
+test('the CLI renders family and per-command help locally with no bridge env whatsoever', async () => {
+  // No BATON_SWARM_BRIDGE_* key is present: help must render before any token is issued.
+  const cleanEnv = { PATH: process.env.PATH, HOME: process.env.HOME };
+  for (const argv of [['--help'], ['-h'], ['help']]) {
+    const family = await execFileAsync(process.execPath, [BRIDGE_MODULE, ...argv], { env: cleanEnv });
+    assert.equal(family.stderr, '');
+    assert.match(family.stdout, /Commands:/u);
+    for (const name of SWARM_COMMANDS) assert.ok(family.stdout.includes(name), `family help lists ${name}`);
+    assert.match(family.stdout, /BATON_SWARM_BRIDGE_URL/u);
+    assert.match(family.stdout, /Per-command help/u);
+    assert.match(family.stdout, /idempotencyKey/u);
+  }
+  for (const argv of [['swarm.update', '--help'], ['-h', 'swarm.update'], ['help', 'swarm.update']]) {
+    const command = await execFileAsync(process.execPath, [BRIDGE_MODULE, ...argv], { env: cleanEnv });
+    assert.equal(command.stderr, '');
+    for (const kind of ['swarm.group_updated', 'swarm.context_updated', 'swarm.contribution_recorded',
+      'swarm.contribution_reviewed', 'swarm.participant_left', 'swarm.closed']) {
+      assert.ok(command.stdout.includes(kind), `${argv.join(' ')} names ${kind}`);
+    }
+    assert.match(command.stdout, /groupId/u);
+    assert.match(command.stdout, /decision \(one of accept, reject, comment\)/u);
+    assert.match(command.stdout, /arbitrary JSON or plain text/u);
+    assert.match(command.stdout, /auto-filled from BATON_SWARM_BRIDGE_SWARM_ID/u);
+  }
+  const inspect = await execFileAsync(process.execPath, [BRIDGE_MODULE, 'swarm.inspect', '--help'], { env: cleanEnv });
+  assert.match(inspect.stdout, /swarmId — a swarm identity; auto-filled from BATON_SWARM_BRIDGE_SWARM_ID/u);
+  const unknown = await execFileAsync(process.execPath, [BRIDGE_MODULE, 'swarm.nope', '--help'], { env: cleanEnv })
+    .catch((error) => error);
+  assert.equal(unknown.code, 1);
+  assert.equal(JSON.parse(unknown.stderr).error.code, 'swarm_command_unavailable');
+});
+
+// ============================================================
+// G5 — the minted idempotencyKey is learnable: receipt metadata on effectful calls
+// ============================================================
+
+test('a minted idempotencyKey is printed back as receipt metadata; naming it or supplying your own changes nothing else', async () => {
+  await withBridge({}, async ({ bridge, runtime }) => {
+    runtime.join({ swarmId: 'swarm-1', participantId: 'alpha', runId: 'run-alpha' });
+    const issued = await bridge.issue({ swarmId: 'swarm-1', participantId: 'alpha', runId: 'run-alpha' });
+    const env = {
+      ...process.env,
+      [SWARM_BRIDGE_ENV_KEYS.url]: issued.env[SWARM_BRIDGE_ENV_KEYS.url],
+      [SWARM_BRIDGE_ENV_KEYS.token]: issued.token,
+      [SWARM_BRIDGE_ENV_KEYS.swarmId]: 'swarm-1',
+    };
+    const body = { event: 'swarm.contribution_recorded', payload: { participantId: 'alpha', body: 'a plain-text finding' } };
+    const first = await execFileAsync(process.execPath, [BRIDGE_MODULE, 'swarm.update', JSON.stringify(body)], { env });
+    const receipt = JSON.parse(first.stdout);
+    // Additive envelope: the minted key PLUS the unchanged result, and the key is the one actually used.
+    assert.match(receipt.idempotencyKey, /^[0-9a-f-]{36}$/u);
+    assert.equal(receipt.result.event, 'swarm.contribution_recorded');
+    assert.equal(runtime.calls[0].args.idempotencyKey, receipt.idempotencyKey);
+    assert.equal(runtime.applied.length, 1);
+    // A retry that NAMES the minted key keeps the historical bare-result output shape.
+    const replay = await execFileAsync(process.execPath,
+      [BRIDGE_MODULE, 'swarm.update', JSON.stringify({ ...body, idempotencyKey: receipt.idempotencyKey })], { env });
+    const bare = JSON.parse(replay.stdout);
+    assert.equal(bare.idempotencyKey, undefined);
+    assert.equal(bare.event, 'swarm.contribution_recorded');
+    assert.equal(runtime.calls[1].args.idempotencyKey, receipt.idempotencyKey);
+    // A caller-supplied key from the start never gets the envelope either.
+    const explicit = await execFileAsync(process.execPath,
+      [BRIDGE_MODULE, 'swarm.update', JSON.stringify({ ...body, idempotencyKey: 'op-explicit' })], { env });
+    const explicitParsed = JSON.parse(explicit.stdout);
+    assert.equal(explicitParsed.idempotencyKey, undefined);
+    assert.equal(explicitParsed.event, 'swarm.contribution_recorded');
+    assert.equal(runtime.calls[2].args.idempotencyKey, 'op-explicit');
+  });
+});
+
+test('swarmBridgeMain() renders help in-process and still fails closed without env for real calls', async () => {
+  const lines = [];
+  const sink = () => ({ write: (text) => { lines.push(text); return true; } });
+  assert.equal(await swarmBridgeMain(['--help'], {}, { out: sink(), err: sink() }), 0);
+  assert.match(lines.at(-1), /Commands:/u);
+  assert.equal(await swarmBridgeMain(['swarm.guide', '--help'], {}, { out: sink(), err: sink() }), 0);
+  assert.match(lines.at(-1), /message — non-empty text/u);
+  // The no-args usage refusal keeps its historical shape, now pointing at --help.
+  const code = await swarmBridgeMain([], {}, { out: sink(), err: sink() });
+  assert.equal(code, 1);
+  assert.match(JSON.parse(lines.at(-1)).error.message, /Usage:/u);
+  assert.match(JSON.parse(lines.at(-1)).error.message, /--help/u);
 });
