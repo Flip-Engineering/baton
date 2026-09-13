@@ -12,6 +12,7 @@ import assert from 'node:assert/strict';
 import {
   NATIVE_PHASE,
   normalizeOmpTaskFrame,
+  normalizeOmpSubagentFrame,
   projectOmpParallelTasks,
   normalizeClaudeToolProgressFrame,
   normalizeCodexFrame,
@@ -122,6 +123,76 @@ const OMP_TASK_END_BATCH = {
   },
   isError: false,
 };
+
+// OMP task tool_execution_update — LIVE-probe shape (2026-09-13, real omp --mode rpc child):
+// partialResult.details carries the batch shape plus async:{state:'running',jobId,type:'task'}.
+// All 5 live-captured updates stayed 'running' — a terminal async update was never observed.
+const OMP_TASK_UPDATE_RUNNING = {
+  type: 'tool_execution_update',
+  toolCallId: 'call_00_VQs4Y7tNzk4fIAQH8r762080',
+  toolName: 'task',
+  args: {},
+  partialResult: {
+    content: [{ type: 'text', text: 'Running background task DoneWordAgent...' }],
+    details: {
+      projectAgentsDir: null,
+      results: [],
+      totalDurationMs: 0,
+      progress: [{ index: 0, id: 'DoneWordAgent', agent: 'task', status: 'running' }],
+      async: { state: 'running', jobId: 'DoneWordAgent', type: 'task' },
+    },
+  },
+};
+
+// OMP subagent_lifecycle — LIVE-captured exact payload keys (subscription level 'events').
+// The second lifecycle frame with the SAME id/sessionFile/parentToolCallId and terminal
+// status is the raw completion event for a detached task job.
+const OMP_SUBAGENT_LIFECYCLE_STARTED = {
+  type: 'subagent_lifecycle',
+  payload: {
+    id: 'DoneWordAgent', index: 0, agent: 'task', agentSource: 'bundled',
+    status: 'started', detached: true,
+    sessionFile: '/sessions/2026-09-13T21-14-48-512Z_parent/DoneWordAgent.jsonl',
+    parentToolCallId: 'call_00_VQs4Y7tNzk4fIAQH8r762080',
+  },
+};
+const OMP_SUBAGENT_LIFECYCLE_COMPLETED = {
+  type: 'subagent_lifecycle',
+  payload: { ...OMP_SUBAGENT_LIFECYCLE_STARTED.payload, status: 'completed' },
+};
+const OMP_SUBAGENT_LIFECYCLE_FAILED = {
+  type: 'subagent_lifecycle',
+  payload: { ...OMP_SUBAGENT_LIFECYCLE_STARTED.payload, id: 'FailingAgent', status: 'failed' },
+};
+
+// OMP subagent_progress — payload carries prompt/assignment/output text that must NEVER
+// be retained (only status/identity survive normalization).
+const PROBE_SECRET_TASK_TEXT = 'SECRET-ASSIGNMENT-TEXT-must-not-be-retained';
+const OMP_SUBAGENT_PROGRESS = {
+  type: 'subagent_progress',
+  payload: {
+    index: 0, agent: 'task', agentSource: 'bundled',
+    task: PROBE_SECRET_TASK_TEXT, assignment: PROBE_SECRET_TASK_TEXT,
+    parentToolCallId: 'call_00_VQs4Y7tNzk4fIAQH8r762080', detached: true,
+    progress: {
+      index: 0, id: 'DoneWordAgent', agent: 'task', agentSource: 'bundled', status: 'running',
+      task: PROBE_SECRET_TASK_TEXT, assignment: PROBE_SECRET_TASK_TEXT,
+      recentTools: [], recentOutput: ['SECRET-OUTPUT-TEXT-must-not-be-retained'],
+      toolCount: 1, requests: 1, tokens: 42, cost: 0.0001, durationMs: 900,
+    },
+    sessionFile: '/sessions/2026-09-13T21-14-48-512Z_parent/DoneWordAgent.jsonl',
+  },
+};
+
+// tool_execution_start with the wire-verified `intent` field (w-1 durable evidence: every
+// OMP task start frame carries it; binary pushes `intent: re.intent`).
+const OMP_TASK_START_WITH_INTENT = {
+  ...OMP_TASK_START,
+  intent: 'delegating a review',
+};
+
+const OMP_TASK_UPDATE_BASH = { ...OMP_TASK_UPDATE_RUNNING, toolName: 'bash', toolCallId: 'tcid-bash-2' };
+
 
 // Parent context
 const PARENT = { worker: 'worker-1', sessionId: 'omp-session-parent-X' };
@@ -552,9 +623,160 @@ describe('normalizeOmpTaskFrame — unknown field capture', () => {
     assert.strictEqual(obs.unknownFields.undocumentedField, true);
   });
 
+  it('wire-verified intent field is known, not unknown (w-1 durable evidence)', () => {
+    const obs = normalizeOmpTaskFrame(OMP_TASK_START_WITH_INTENT, PARENT);
+    assert.strictEqual(obs.unknownFields, undefined);
+  });
+
   it('no unknownFields when all fields are known', () => {
     const obs = normalizeOmpTaskFrame(OMP_TASK_START, PARENT);
     assert.strictEqual(obs.unknownFields, undefined);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// normalizeOmpTaskFrame — tool_execution_update (live-probe regressions)
+// ---------------------------------------------------------------------------
+
+describe('normalizeOmpTaskFrame — tool_execution_update', () => {
+  it('update with async running is in-flight STARTED, never COMPLETED', () => {
+    const obs = normalizeOmpTaskFrame(OMP_TASK_UPDATE_RUNNING, PARENT);
+    assert.ok(obs !== null);
+    assert.strictEqual(obs.phase, NATIVE_PHASE.STARTED);
+    assert.strictEqual(obs.nativeFrameType, 'tool_execution_update');
+    assert.strictEqual(obs.jobId, 'DoneWordAgent');
+    assert.strictEqual(obs.asyncType, 'task');
+    assert.strictEqual(obs.asyncState, 'running');
+    assert.ok(obs.gaps.includes('async_job_in_flight'));
+    assert.strictEqual(obs.ok, null, 'a running tick proves no outcome');
+    assert.strictEqual(obs.invocationOk, true, 'an update carries no invocation error');
+  });
+
+  it('update retains typed counts but not the progress/results arrays', () => {
+    const obs = normalizeOmpTaskFrame(OMP_TASK_UPDATE_RUNNING, PARENT);
+    assert.strictEqual(obs.batchResultCount, 0);
+    assert.strictEqual(obs.progressCount, 1);
+    assert.ok(!('partialResult' in obs));
+    assert.ok(!('progress' in obs));
+    assert.ok(!('results' in obs));
+  });
+
+  it('an explicit terminal async state on an update is honored, absent state is not completion', () => {
+    const completed = normalizeOmpTaskFrame({
+      ...OMP_TASK_UPDATE_RUNNING,
+      partialResult: { content: [], details: { async: { state: 'completed', jobId: 'j', type: 'task' } } },
+    }, PARENT);
+    assert.strictEqual(completed.phase, NATIVE_PHASE.COMPLETED);
+    const bare = normalizeOmpTaskFrame({
+      ...OMP_TASK_UPDATE_RUNNING,
+      partialResult: { content: [], details: { progress: [] } },
+    }, PARENT);
+    assert.strictEqual(bare.phase, NATIVE_PHASE.STARTED, 'a bare progress tick is in-flight evidence');
+    assert.ok(bare.gaps.includes('async_state_absent'));
+  });
+
+  it('ordinary tools never produce update observations', () => {
+    assert.strictEqual(normalizeOmpTaskFrame(OMP_TASK_UPDATE_BASH, PARENT), null);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// normalizeOmpSubagentFrame (subscription-gated frames; live-probe regressions)
+// ---------------------------------------------------------------------------
+
+describe('normalizeOmpSubagentFrame — null returns', () => {
+  it('returns null for null/non-object/array', () => {
+    assert.strictEqual(normalizeOmpSubagentFrame(null, PARENT), null);
+    assert.strictEqual(normalizeOmpSubagentFrame('text', PARENT), null);
+    assert.strictEqual(normalizeOmpSubagentFrame([], PARENT), null);
+  });
+
+  it('returns null for non-subagent frame types', () => {
+    assert.strictEqual(normalizeOmpSubagentFrame(OMP_TASK_START, PARENT), null);
+    assert.strictEqual(normalizeOmpSubagentFrame({ type: 'subagent_event', payload: {} }, PARENT), null,
+      'events-level frames carry child conversation content and are never observations here');
+  });
+
+  it('returns null when payload is missing or malformed', () => {
+    assert.strictEqual(normalizeOmpSubagentFrame({ type: 'subagent_lifecycle' }, PARENT), null);
+    assert.strictEqual(normalizeOmpSubagentFrame({ type: 'subagent_lifecycle', payload: 'x' }, PARENT), null);
+  });
+});
+
+describe('normalizeOmpSubagentFrame — lifecycle', () => {
+  it('started lifecycle carries identity and completion_unknown', () => {
+    const obs = normalizeOmpSubagentFrame(OMP_SUBAGENT_LIFECYCLE_STARTED, PARENT);
+    assert.strictEqual(obs.harness, 'omp');
+    assert.strictEqual(obs.subagentId, 'DoneWordAgent');
+    assert.strictEqual(obs.status, 'started');
+    assert.strictEqual(obs.phase, NATIVE_PHASE.STARTED);
+    assert.strictEqual(obs.childSessionFile, OMP_SUBAGENT_LIFECYCLE_STARTED.payload.sessionFile);
+    assert.strictEqual(obs.toolCallId, 'call_00_VQs4Y7tNzk4fIAQH8r762080');
+    assert.strictEqual(obs.detached, true);
+    assert.ok(obs.gaps.includes('completion_unknown'));
+    assert.ok(obs.gaps.includes('process_ownership_unknown'));
+    assert.strictEqual(obs.ok, null);
+  });
+
+  it('completed lifecycle is the terminal child truth, linked to the parent invocation', () => {
+    const obs = normalizeOmpSubagentFrame(OMP_SUBAGENT_LIFECYCLE_COMPLETED, PARENT);
+    assert.strictEqual(obs.phase, NATIVE_PHASE.COMPLETED);
+    assert.strictEqual(obs.ok, true);
+    assert.ok(!obs.gaps.includes('completion_unknown'));
+    // Child key uses the subagent namespace; the parent tool-call invocation linkage is
+    // carried separately and matches the task tool frames' invocation key.
+    assert.ok(JSON.parse(obs.invocationKey)[3].startsWith('subagent:'));
+    const end = normalizeOmpTaskFrame({ ...OMP_TASK_END_ASYNC_RUNNING, toolCallId: 'call_00_VQs4Y7tNzk4fIAQH8r762080' }, PARENT);
+    assert.strictEqual(obs.parentInvocationKey, end.invocationKey);
+  });
+
+  it('failed lifecycle maps to FAILED; unrecognized statuses stay UNKNOWN', () => {
+    const failed = normalizeOmpSubagentFrame(OMP_SUBAGENT_LIFECYCLE_FAILED, PARENT);
+    assert.strictEqual(failed.phase, NATIVE_PHASE.FAILED);
+    assert.strictEqual(failed.ok, false);
+    const odd = normalizeOmpSubagentFrame({
+      type: 'subagent_lifecycle',
+      payload: { ...OMP_SUBAGENT_LIFECYCLE_STARTED.payload, status: 'hibernating' },
+    }, PARENT);
+    assert.strictEqual(odd.phase, NATIVE_PHASE.UNKNOWN, 'completion is never invented from an unknown word');
+    assert.ok(odd.gaps.includes('subagent_status_unknown'));
+  });
+
+  it('a lifecycle without parentToolCallId carries no parent linkage', () => {
+    const obs = normalizeOmpSubagentFrame({
+      type: 'subagent_lifecycle',
+      payload: { ...OMP_SUBAGENT_LIFECYCLE_STARTED.payload, parentToolCallId: undefined },
+    }, PARENT);
+    assert.ok(obs.gaps.includes('parent_tool_call_unknown'));
+    assert.strictEqual(obs.parentInvocationKey, undefined);
+    const end = normalizeOmpTaskFrame({ ...OMP_TASK_END_ASYNC_RUNNING, toolCallId: 'call_00_VQs4Y7tNzk4fIAQH8r762080' }, PARENT);
+    assert.notStrictEqual(obs.invocationKey, end.invocationKey);
+    assert.ok(JSON.parse(obs.invocationKey)[3].startsWith('subagent:'),
+      'the child stays identified by its native id even without parent linkage');
+  });
+});
+
+describe('normalizeOmpSubagentFrame — progress', () => {
+  it('progress is in-flight evidence carrying status but never prompt/output text', () => {
+    const obs = normalizeOmpSubagentFrame(OMP_SUBAGENT_PROGRESS, PARENT);
+    assert.strictEqual(obs.phase, NATIVE_PHASE.STARTED);
+    assert.strictEqual(obs.subagentId, 'DoneWordAgent');
+    assert.strictEqual(obs.progressStatus, 'running');
+    assert.ok(obs.gaps.includes('progress_text_not_retained'));
+    assert.ok(!JSON.stringify(obs).includes('SECRET-ASSIGNMENT-TEXT-must-not-be-retained'));
+    assert.ok(!JSON.stringify(obs).includes('SECRET-OUTPUT-TEXT-must-not-be-retained'));
+    assert.ok(!('tokens' in obs), 'child token usage is not retained');
+  });
+});
+
+describe('normalizeOmpSubagentFrame — unknown field capture', () => {
+  it('captures unknown payload fields presence-only', () => {
+    const obs = normalizeOmpSubagentFrame({
+      type: 'subagent_lifecycle',
+      payload: { ...OMP_SUBAGENT_LIFECYCLE_STARTED.payload, futureField: 'x' },
+    }, PARENT);
+    assert.strictEqual(obs.unknownFields.futureField, true);
+    assert.strictEqual(JSON.stringify(obs).includes('future_value'), false);
   });
 });
 
@@ -668,6 +890,89 @@ describe('projectOmpParallelTasks', () => {
   it('skips non-omp observations without throwing', () => {
     const result = projectOmpParallelTasks([{ harness: 'claude-code', invocationKey: '[]' }]);
     assert.strictEqual(result.active.length, 0);
+  });
+});
+
+describe('projectOmpParallelTasks — async jobs and lifecycle terminal truth', () => {
+  const CALL_ID = 'call_00_VQs4Y7tNzk4fIAQH8r762080';
+  const invoke = () => [
+    normalizeOmpTaskFrame({ type: 'tool_execution_start', toolCallId: CALL_ID, toolName: 'task', args: {} }, PARENT),
+    normalizeOmpTaskFrame({ ...OMP_TASK_END_ASYNC_RUNNING, toolCallId: CALL_ID }, PARENT),
+  ];
+
+  it('an end with async running NEVER completes the job on its own', () => {
+    const result = projectOmpParallelTasks(invoke());
+    assert.strictEqual(result.active.length, 1);
+    assert.strictEqual(result.completed.length, 0);
+    assert.strictEqual(result.active[0].gaps.includes('async_job_in_flight'), true);
+  });
+
+  it('updates and a started lifecycle keep everything honestly in-flight', () => {
+    const result = projectOmpParallelTasks([
+      ...invoke(),
+      normalizeOmpTaskFrame({ ...OMP_TASK_UPDATE_RUNNING, toolCallId: CALL_ID }, PARENT),
+      normalizeOmpSubagentFrame(OMP_SUBAGENT_LIFECYCLE_STARTED, PARENT),
+    ]);
+    assert.strictEqual(result.active.length, 2, 'invocation record + child record, both in-flight');
+    assert.strictEqual(result.completed.length, 0);
+    const child = result.active.find((row) => row.nativeFrameType === 'subagent_lifecycle');
+    assert.strictEqual(child.subagentId, 'DoneWordAgent');
+    assert.strictEqual(child.childSessionFile, OMP_SUBAGENT_LIFECYCLE_STARTED.payload.sessionFile,
+      'actual child identity arrives with the lifecycle frame');
+    const invocation = result.active.find((row) => row.nativeFrameType !== 'subagent_lifecycle');
+    assert.strictEqual(invocation.jobId, 'DoneWordAgent', 'updates carry job identity onto the invocation');
+  });
+
+  it('the terminal lifecycle lands the child in completed while the invocation stays itself', () => {
+    const result = projectOmpParallelTasks([
+      ...invoke(),
+      normalizeOmpSubagentFrame(OMP_SUBAGENT_LIFECYCLE_COMPLETED, PARENT),
+    ]);
+    assert.strictEqual(result.completed.length, 1);
+    assert.strictEqual(result.active.length, 1);
+    const child = result.completed[0];
+    assert.strictEqual(child.phase, NATIVE_PHASE.COMPLETED);
+    assert.strictEqual(child.status, 'completed');
+    assert.strictEqual(child.parentInvocationKey, result.active[0].invocationKey,
+      'child truth stays linked to the management invocation');
+  });
+
+  it('concurrent detached children under one parent: one completes, one fails', () => {
+    const result = projectOmpParallelTasks([
+      normalizeOmpSubagentFrame(OMP_SUBAGENT_LIFECYCLE_COMPLETED, PARENT),
+      normalizeOmpSubagentFrame({
+        type: 'subagent_lifecycle',
+        payload: { ...OMP_SUBAGENT_LIFECYCLE_FAILED.payload, id: 'SecondAgent' },
+      }, PARENT),
+    ]);
+    assert.strictEqual(result.completed.length, 1);
+    assert.strictEqual(result.failed.length, 1, 'batch-safe child keys never conflate siblings');
+    assert.strictEqual(result.completed[0].subagentId, 'DoneWordAgent');
+    assert.strictEqual(result.failed[0].subagentId, 'SecondAgent');
+    for (const row of [...result.completed, ...result.failed]) {
+      assert.strictEqual(row.toolCallId, CALL_ID, 'both children link to the same management invocation');
+    }
+  });
+
+  it('a failed management invocation and a completed child stay separate records', () => {
+    const result = projectOmpParallelTasks([
+      normalizeOmpTaskFrame({ type: 'tool_execution_start', toolCallId: CALL_ID, toolName: 'task', args: {} }, PARENT),
+      normalizeOmpTaskFrame({ ...OMP_TASK_END_ERROR, toolCallId: CALL_ID }, PARENT),
+      normalizeOmpSubagentFrame(OMP_SUBAGENT_LIFECYCLE_COMPLETED, PARENT),
+    ]);
+    assert.strictEqual(result.failed.length, 1, 'the invocation failed (isError end)');
+    assert.strictEqual(result.completed.length, 1, 'the child still completed');
+    assert.strictEqual(result.failed[0].phase, NATIVE_PHASE.FAILED);
+    assert.strictEqual(result.completed[0].status, 'completed');
+  });
+
+  it('progress updates alone are in-flight evidence, never completion', () => {
+    const result = projectOmpParallelTasks([
+      normalizeOmpSubagentFrame(OMP_SUBAGENT_PROGRESS, PARENT),
+    ]);
+    assert.strictEqual(result.active.length, 1);
+    assert.strictEqual(result.active[0].phase, NATIVE_PHASE.STARTED);
+    assert.strictEqual(result.completed.length, 0);
   });
 });
 
