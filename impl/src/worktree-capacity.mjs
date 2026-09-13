@@ -53,7 +53,13 @@ function readIntegrityKey(path) {
 export function loadOrCreateWorktreeCapacityIntegrityKey(repoRoot) {
   const repo = realpathSync(repoRoot); const baton = join(repo, '.baton'); const root = join(baton, 'capacity'); const path = join(root, 'integrity.key');
   for (const directory of [baton, root]) {
-    if (!existsSync(directory)) mkdirSync(directory, { mode: 0o700 });
+    // Concurrent deployment processes opening the same fresh repository race here; losing
+    // that race is normal. Only EEXIST is adopted, and the confinement checks below still
+    // refuse a pre-existing file, symlink, or escaping directory, so authority is unchanged.
+    try { mkdirSync(directory, { mode: 0o700 }); }
+    catch (error) {
+      if (error?.code !== 'EEXIST') throw typed('worktree capacity key root could not be created', 'worktree_capacity_unavailable', error);
+    }
     const stat = lstatSync(directory);
     if (!stat.isDirectory() || stat.isSymbolicLink()) throw typed('worktree capacity key root is not a confined directory', 'worktree_capacity_unavailable');
     chmodSync(directory, 0o700);
