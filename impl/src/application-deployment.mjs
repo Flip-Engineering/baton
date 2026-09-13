@@ -644,8 +644,12 @@ function defaultCredentialProjection(repoRoot, { projectNativeKimi = false, clau
   // 2026-08-15: 25+ min of a live member with zero established sockets).
   const ompRoot = join(homedir(), '.omp');
   if (existingRegular(join(ompRoot, 'agent', 'agent.db'))) {
+    const ompRelativeFiles = ['.omp/agent/agent.db', '.omp/agent/config.yml'];
+    if (existingRegular(join(ompRoot, 'agent', 'models.yml'))) {
+      ompRelativeFiles.push('.omp/agent/models.yml');
+    }
     credentialTrees.omp = [{
-      sourceRoot: homedir(), relativeFiles: Object.freeze(['.omp/agent/agent.db', '.omp/agent/config.yml']),
+      sourceRoot: homedir(), relativeFiles: Object.freeze(ompRelativeFiles),
     }];
   }
   const credentialEnv = {};
