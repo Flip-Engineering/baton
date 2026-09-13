@@ -100,8 +100,9 @@ error, `application-client.mjs:112` — neither names the cap, hence the driver 
 Harness mirrors `wave-driver-red.test.mjs:54-124` with the checkpoint conjunction pinned:
 BOTH a `turnCompletion:'pausable'` card override (exactly as
 `turn-checkpoints-31b5-surface-red.test.mjs:105-113`) AND the `steering.registered` record
-(wave membership via `driverKind:'wave'`, `coordinator.mjs:1991-2004`) — a pausable card
-alone auto-settles, `driverKind` alone mints nothing. The worker watchdog is neutralized
+(wave membership via `driverKind:'wave'`). As revised in September 2026, a pausable card
+alone parks its checkpoint for explicit adjudication; driver registration does not transfer
+completion authority to an automatic policy prompt. The worker watchdog is neutralized
 (`createDriver` `opts.watchdog`, `index.mjs:1398` — long timeout or clearTimeout, the 31b5
 `:177-180` pattern) so timer writes never flap the stall marker.
 

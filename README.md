@@ -11,8 +11,9 @@
 
 **Current design work (2026-09-12):** [Evolving agent swarms](docs/39-swarm-runtime.md) — tight
 and loose orchestration, peer communication, continuous collaboration, and scoped acceptance.
-The historical capability/status overview below predates this revision; see the progress ledger
-for checked implementation results.
+See the [runtime review and validation evidence](docs/40-runtime-review-2026-09-12.md) for checked
+implementation results and remaining gaps. The full suite is currently failing; historical status
+labels below do not establish release acceptance.
 
 **Cross-harness agent orchestration.** An orchestrator agent running in one full coding harness directs *other* full-session harnesses as subordinate workers. Workers get real messaging, live telemetry, mid-flight steering, and durable evidence — the things you'd want from a teammate, not a subprocess.
 
@@ -25,14 +26,12 @@ The name: a conductor's baton directs an orchestra; a relay baton gets passed be
 > [foundry day 2026-08-13](reviews/baton-foundry-day-2026-08-13.html) ·
 > [24h report](reviews/baton-24h-report.html).
 
-> **Reading the status tiers.** Every capability below is labeled **[shipped]** (landed in
-> `master`, pinned green by the canonical suite), **[in flight]** (mid-pipeline: contract →
-> adversarial red-team → fold → red-first suite → blue-team → fold → implementation, with the
-> current stage named), or **[planned]** (filed as a tracked issue, not started). In-flight work
-> lands as *red-first* suites — tests that fail at a named stage until the capability ships — so
-> `node impl/scripts/run-suite.mjs` exits nonzero **by construction** while pinned future
-> behavior exists. That is the methodology working, not a regression: every shipped row is
-> green, and the red set is exactly the declared in-flight roster.
+> **Reading the status tiers.** The capability inventory below is historical. Its **[shipped]**
+> labels describe previously landed implementations; **[in flight]** and **[planned]** describe
+> earlier tracker states. Current test results and native run receipts take precedence. Failing
+> tests include shipped behavior and cannot be explained away by filenames or an expected-red
+> roster. The [runtime review](docs/40-runtime-review-2026-09-12.md) records the complete sweeps,
+> focused follow-up checks, preserved contributions and release limitations.
 
 ---
 
@@ -83,7 +82,7 @@ flowchart TB
 
 **The surfaces share one authority.** The CLI is a bearer-authenticated client of the resident bus, not a second controller; MCP is the primary agent-facing northbound; `openBaton({repo, advanced})` is the direct-embedding path the evidence drivers use. `baton serve` publishes discovery to `.git/baton/connection.json` only after an authenticated card/session/readiness challenge; credentials are never command arguments.
 
-**Waves are the unit of parallel work.** A wave starts N members with per-member scopes and exact routes; the registry (`waves list`) projects roster, phase, and progress class live; outcome materialization pins each member's result as a content-addressed git object; re-drive restarts only the failed members. The **workflow interpreter** composes entire patterns declaratively: a spec names members, steering policies (`approveOnAdvertisedPlan`, `nudgeOnCheckpoint`, `claimOnStall`, `messageOnSpawn`, `elevateWhenNotes`, `answerDecisions`, `signalOnMembersDone`), and a harvest contract; the interpreter drives it to a verdict and a seven-key receipt.
+**Waves expose cohort operations.** A wave starts N members with per-member scopes and exact routes; the registry (`waves list`) projects roster, phase, and progress class live; outcome materialization pins each member's result as a content-addressed git object; re-drive restarts only the failed members. The **workflow interpreter** is an optional recipe layer that composes patterns declaratively: a spec names members, steering policies (`approveOnAdvertisedPlan`, `nudgeOnCheckpoint`, `claimOnStall`, `messageOnSpawn`, `elevateWhenNotes`, `answerDecisions`, `signalOnMembersDone`), and a harvest contract; the interpreter drives it to a verdict and a seven-key receipt.
 
 **Turns, not gates.** Pausable harnesses end turns as checkpoints — the driver steers with `nudge_turn` / `wait_turn` / `claim_turn` instead of killing workers at turn boundaries, and every pause snapshots a recovery pin. The **stall watchdog** (#67) declares stalls only on liveness *evidence* (a closed re-arm set; an in-flight turn is never reaped — the slow-but-productive worker is structurally protected), with an escalate → claim/nudge → preserve-first-reap ladder, every step receipted.
 
@@ -93,7 +92,7 @@ flowchart TB
 
 ## Capabilities
 
-### Shipped (landed, suite-green)
+### Previously landed capabilities (historical inventory)
 
 **Orchestration core**
 - **Runs** — the ordinary API: concise intent → readable Plan → visible approval → one bounded RunView → attention → evidence → cleanup. `run.start / status / approve / act / answer / wait / stop / evidence / review / adopt / integrate / recover / resume_work`.
