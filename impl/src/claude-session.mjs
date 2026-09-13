@@ -12,7 +12,7 @@ import { closeSync, constants, fstatSync, lstatSync, openSync, readFileSync, rea
 import { isAbsolute, relative, resolve } from 'node:path';
 import { renderPrompt } from './cli-adapters.mjs';
 import { normalizeProcessGeneration, ProcessCloseReapLatch, processStartedPayload } from './process-lifecycle.mjs';
-import { usdToNanos } from './usd.mjs';
+import { usdFromNanos, usdToNanos } from './usd.mjs';
 import { attestWorkerPolicyObservation } from './worker-policy.mjs';
 import { createDecisionRequest, ValidationError, WORKER_MESSAGE_GUIDANCE } from './messages.mjs';
 
@@ -240,24 +240,57 @@ function safeUsageTokenTotal(usage) {
   return Number.isSafeInteger(total) ? total : null;
 }
 
-function resultUsage(obj, counterId) {
+/**
+ * A Claude `result` frame carries two counters with DIFFERENT semantics (verified against the
+ * installed CLI 2.1.269's own bundle, whose ResultUsage schema describes `usage` as "MAIN AGENT
+ * LOOP ONLY ... and is per-turn in streaming-input sessions", while `total_cost_usd` is the
+ * costLedger's `totalCostUSD()` session-cumulative accumulator):
+ *
+ *   - `usage`            -> per-turn in stream-json input sessions: additive as-is (delta).
+ *   - `total_cost_usd`   -> cumulative over the process/session: re-adding it every result is the
+ *                           runaway-budget bug, so it is converted to THIS turn's delta here.
+ *
+ * The D3 resource contract is canonical ADDITIVE `tokens`/`usd` and the Coordinator's delta path
+ * folds the payload directly, so the cumulative reading MUST NOT ride the wire unchanged.
+ *
+ * `priorCumulativeUsdNanos` is the last cumulative reading for this session. The ledger is
+ * monotonic within one process, so a lower reading is not a true decrease (the CLI's own
+ * synthesized error results carry `total_cost_usd: 0`); it clamps to a zero delta WITHOUT moving
+ * the baseline, so a placeholder frame can never re-count already-accounted spend. A genuinely
+ * fresh process re-baselines through its `system/init` frame (see `_handleWireObject`).
+ *
+ * Returns the session's next cumulative baseline plus the additive delta the terminal result
+ * must echo, so `resource.tokens` and `budgetUsed` can never disagree.
+ */
+function resultUsage(obj, counterId, priorCumulativeUsdNanos = null) {
   const tokenTotal = safeUsageTokenTotal(obj?.usage);
   const tokensReported = Number.isSafeInteger(tokenTotal);
-  const usdReported = usdToNanos(obj?.total_cost_usd) !== null;
+  const cumulativeUsdNanos = usdToNanos(obj?.total_cost_usd);
+  const usdReported = cumulativeUsdNanos !== null;
+  const baselineAdvances = usdReported
+    && (priorCumulativeUsdNanos === null || cumulativeUsdNanos >= priorCumulativeUsdNanos);
+  const deltaNanos = !usdReported ? null
+    : baselineAdvances ? cumulativeUsdNanos - (priorCumulativeUsdNanos ?? 0)
+      : 0;
+  const usdDelta = deltaNanos === null ? null : usdFromNanos(deltaNanos);
+  const usdDeltaReported = usdDelta !== null;
+  const anythingReported = tokensReported || usdDeltaReported;
   return {
-    reported: tokensReported || usdReported,
+    reported: anythingReported,
     payload: {
       source: 'result', accounting: 'delta',
       ...(tokensReported ? { tokens: tokenTotal } : {}),
-      ...(usdReported ? { usd: obj.total_cost_usd } : {}),
-      ...((tokensReported || usdReported) ? { counterId, tokenMetric: tokensReported ? CLAUDE_TOKEN_METRIC : null } : {}),
+      ...(usdDeltaReported ? { usd: usdDelta } : {}),
+      ...(anythingReported ? { counterId, tokenMetric: tokensReported ? CLAUDE_TOKEN_METRIC : null } : {}),
     },
     seal: {
       tokens: tokensReported ? 'reported' : 'unavailable',
-      usd: usdReported ? 'reported' : 'unavailable',
-      counterId: (tokensReported || usdReported) ? counterId : null,
+      usd: usdDeltaReported ? 'reported' : 'unavailable',
+      counterId: anythingReported ? counterId : null,
       tokenMetric: tokensReported ? CLAUDE_TOKEN_METRIC : null,
     },
+    cumulativeUsdNanos: baselineAdvances ? cumulativeUsdNanos : priorCumulativeUsdNanos,
+    usdDelta: usdDeltaReported ? usdDelta : null,
   };
 }
 
@@ -810,6 +843,9 @@ export class ClaudeSessionCli {
       bootstrapTurnPending: false,
       retryCount: 0,
       lastTurnText: null,
+      // Session-scoped baseline for Claude's cumulative `total_cost_usd` (see resultUsage): the
+      // delta emitted per result is measured against this, and it is re-based on process init.
+      claudeCostNanos: null,
       spawnSpec: Object.freeze({ argv: Object.freeze([...argv]), cwd, env: Object.freeze({ ...route.env }) }),
     };
     session.processClose = Number.isSafeInteger(session.pid) && session.pid > 0 ? new ProcessCloseReapLatch({
@@ -1061,6 +1097,10 @@ export class ClaudeSessionCli {
   _handleWireObject(session, obj) {
     switch (obj.type) {
       case 'system':
+        // A fresh provider process owns a fresh cost ledger (total_cost_usd is a process-lifetime
+        // accumulator), so any init — first spawn or post-refresh respawn — re-bases the session
+        // baseline instead of measuring the new ledger against the dead process's total.
+        if (obj.subtype === 'init') session.claudeCostNanos = null;
         if (obj.subtype === 'init' && session.retryAwaitingInit) {
           try {
             this._validateProviderReady({ modelRequested: session.modelRequested, modelObserved: obj.model ?? null });
@@ -1181,7 +1221,12 @@ export class ClaudeSessionCli {
 
   _handleResult(session, obj) {
     session.turnInFlight = false;
-    const usage = resultUsage(obj, `claude:${session.worker}:${session.turnEpoch}`);
+    const usage = resultUsage(
+      obj, `claude:${session.worker}:${session.turnEpoch}`, session.claudeCostNanos ?? null,
+    );
+    // The delta is what the coordinator folds, so the terminal result echoes the SAME value —
+    // never the cumulative reading (that mismatch is the double-count this adapter must not ship).
+    session.claudeCostNanos = usage.cumulativeUsdNanos;
     if (usage.reported) {
       this._emit(session, 'resource.tokens', {
         ...usage.payload,
@@ -1208,12 +1253,12 @@ export class ClaudeSessionCli {
       && this._cfg.credentialController && session.retryCount === 0 && session.lastTurnText) {
       session.retryCount = 1;
       session.turnInFlight = true;
-      void this._retryAfterAuthenticationRefresh(session, obj);
+      void this._retryAfterAuthenticationRefresh(session, obj, usage.usdDelta);
       return;
     }
     this._emit(session, 'lifecycle.turn_completed', {
       result: makeResult(
-        status, obj.result, obj.usage, obj.total_cost_usd, failureCode,
+        status, obj.result, obj.usage, usage.usdDelta, failureCode,
         failureCode ? this._cfg.authenticationSummary?.(failureCode) : null,
       ),
       usageSeal: usage.seal,
@@ -1257,7 +1302,7 @@ export class ClaudeSessionCli {
     }) : null;
   }
 
-  async _retryAfterAuthenticationRefresh(session, failedResult) {
+  async _retryAfterAuthenticationRefresh(session, failedResult, failedResultUsdDelta = null) {
     try {
       await this._cfg.credentialController.refresh();
       if (session.terminal || session.stopping) return;
@@ -1277,6 +1322,9 @@ export class ClaudeSessionCli {
       session.processClosePending = false;
       session.processClosedEmitted = false;
       session.retryAwaitingInit = true;
+      // A respawned child owns a fresh cost ledger: drop the previous process's cumulative
+      // baseline so its first reading is not measured against spend that process already reported.
+      session.claudeCostNanos = null;
       session.spawnSpec = Object.freeze({ ...session.spawnSpec, env: Object.freeze({ ...env }) });
       session.processClose = this._newProcessCloseLatch(session);
       this._attachChild(session, child);
@@ -1287,7 +1335,7 @@ export class ClaudeSessionCli {
         ? 'authentication_required' : 'authentication_refresh_required';
       this._emit(session, 'lifecycle.turn_completed', {
         result: makeResult(
-          'failed', failedResult.result, failedResult.usage, failedResult.total_cost_usd,
+          'failed', failedResult.result, failedResult.usage, failedResultUsdDelta,
           failureCode, this._cfg.authenticationSummary?.(failureCode),
         ),
         usageSeal: unavailableUsageSeal(), pid: session.pid,
