@@ -63,42 +63,96 @@ function validOptionalNonEmptyString(value, fieldName, errorFn) {
   }
 }
 
-function validOptionalPositiveInt(value, fieldName, errorFn) {
-  if (value !== undefined && (!Number.isSafeInteger(value) || value < 1)) {
-    errorFn(`${fieldName} must be a positive integer if present`, 'invalid_payload');
+// 0 is valid: callers use expectedVersion:0 for create-if-absent CAS.
+function validOptionalNonNegativeInt(value, fieldName, errorFn) {
+  if (value !== undefined && (!Number.isSafeInteger(value) || value < 0)) {
+    errorFn(`${fieldName} must be a non-negative integer if present`, 'invalid_payload');
   }
+}
+
+// Own-property lookup — safe with null-prototype dicts and prototype-named keys.
+function ownGet(dict, key) {
+  return Object.prototype.hasOwnProperty.call(dict, key) ? dict[key] : undefined;
+}
+
+// Validate that value is JSON-compatible. Throws SwarmRefusal.
+function validateBody(value, seen = new Set()) {
+  if (value === null) return;
+  if (value === undefined) refuse('undefined is not a valid body value', 'invalid_body');
+  const t = typeof value;
+  if (t === 'boolean' || t === 'string') return;
+  if (t === 'number') {
+    if (!Number.isFinite(value)) refuse(`non-finite number in body: ${value}`, 'invalid_body');
+    return;
+  }
+  if (t !== 'object') refuse(`non-JSON type ${t} in body`, 'invalid_body');
+  const proto = Object.getPrototypeOf(value);
+  if (!Array.isArray(value) && proto !== null && proto !== Object.prototype) {
+    refuse('non-JSON object instance in body (e.g. Date, Map, Set, RegExp)', 'invalid_body');
+  }
+  if (seen.has(value)) refuse('circular reference in body', 'invalid_body');
+  seen.add(value);
+  if (Array.isArray(value)) {
+    for (const item of value) validateBody(item, seen);
+  } else {
+    for (const k of Object.keys(value)) validateBody(value[k], seen);
+  }
+  seen.delete(value);
+}
+
+// Composite key for context entries: same named key can exist in different group scopes.
+export function swarmContextKey(key, groupId = null) {
+  return JSON.stringify([groupId ?? null, key]);
+}
+
+// Recursive deep-copy + freeze for body values. Assumes validateBody already called.
+// Uses Object.fromEntries so __proto__ and other prototype-named keys survive as own properties.
+function deepFreezeBody(value) {
+  if (value === null || typeof value !== 'object') return value;
+  if (Array.isArray(value)) return Object.freeze(value.map(deepFreezeBody));
+  return Object.freeze(
+    Object.fromEntries(Object.keys(value).map((k) => [k, deepFreezeBody(value[k])]))
+  );
+}
+
+// Extract event metadata for attribution on every row.
+function eventMeta(event) {
+  return {
+    actor: isNonEmptyString(event.actor) ? event.actor : null,
+    seq: Number.isSafeInteger(event.seq) ? event.seq : null,
+    ts: event.ts ?? null,
+  };
 }
 
 // ── initial state ─────────────────────────────────────────────────────────────
 
+// Null-prototype frozen dictionary. Safe for prototype-named keys.
+function nullDict(entries = []) {
+  const d = Object.create(null);
+  for (const [k, v] of entries) d[k] = v;
+  return Object.freeze(d);
+}
+
 function emptySwarm(swarmId, purpose) {
   return Object.freeze({
-    swarmId,
-    purpose,
-    status: 'open',
-    closedReason: null,
-    participants: Object.freeze({}),
-    groups: Object.freeze({}),
-    work: Object.freeze({}),
-    assignments: Object.freeze({}),
-    context: Object.freeze({}),
-    contributions: Object.freeze({}),
-    reviews: Object.freeze({}),
+    swarmId, purpose, status: 'open', closedReason: null,
+    participants: nullDict(), groups: nullDict(), work: nullDict(),
+    assignments: nullDict(), context: nullDict(), contributions: nullDict(), reviews: nullDict(),
   });
 }
 
-// Replace one nested plain-object collection in a frozen swarm row.
+// Replace one nested collection in a frozen swarm row with a null-prototype dict.
 function replaceField(swarm, field, map) {
-  const obj = Object.create(null);
-  for (const [k, v] of map) obj[k] = v;
-  return Object.freeze({ ...swarm, [field]: Object.freeze(obj) });
+  return Object.freeze({ ...swarm, [field]: nullDict(map) });
 }
 
-// Deep-freeze a body value (plain text or JSON object). Strings pass through.
-function freezeBody(body) {
-  if (body === null || body === undefined) return body;
-  if (typeof body !== 'object') return body;
-  return Object.freeze(JSON.parse(JSON.stringify(body)));
+// Generic recursive clone with sorted object keys — deterministic across replay.
+// Uses Object.fromEntries so __proto__ and other prototype-named keys survive as own properties.
+function canonicalClone(value) {
+  if (value === null || value === undefined) return value;
+  if (typeof value !== 'object') return value;
+  if (Array.isArray(value)) return value.map(canonicalClone);
+  return Object.fromEntries(Object.keys(value).sort().map((k) => [k, canonicalClone(value[k])]));
 }
 
 // ── validateSwarmEvent ────────────────────────────────────────────────────────
@@ -152,7 +206,7 @@ export function validateSwarmEvent(kind, payload) {
     if (!p.members.every(isNonEmptyString)) refuse('group members must be non-empty strings', 'invalid_payload');
     if (new Set(p.members).size !== p.members.length) refuse('group members must be distinct', 'invalid_payload');
     validOptionalNonEmptyString(p.purpose, 'group purpose', refuse);
-    validOptionalPositiveInt(p.expectedVersion, 'group expectedVersion', refuse);
+    validOptionalNonNegativeInt(p.expectedVersion, 'group expectedVersion', refuse);
     return;
   }
   if (kind === 'swarm.work_updated') {
@@ -161,7 +215,7 @@ export function validateSwarmEvent(kind, payload) {
     if (p.status !== undefined && !SWARM_WORK_STATUSES.includes(p.status)) {
       refuse(`work status must be one of: ${SWARM_WORK_STATUSES.join(', ')}`, 'invalid_payload');
     }
-    validOptionalPositiveInt(p.expectedVersion, 'work expectedVersion', refuse);
+    validOptionalNonNegativeInt(p.expectedVersion, 'work expectedVersion', refuse);
     return;
   }
   if (kind === 'swarm.assignment_updated') {
@@ -171,14 +225,15 @@ export function validateSwarmEvent(kind, payload) {
     if (!SWARM_ASSIGNMENT_STATUSES.includes(p.status)) {
       refuse(`assignment status must be one of: ${SWARM_ASSIGNMENT_STATUSES.join(', ')}`, 'invalid_payload');
     }
-    validOptionalPositiveInt(p.expectedVersion, 'assignment expectedVersion', refuse);
+    validOptionalNonNegativeInt(p.expectedVersion, 'assignment expectedVersion', refuse);
     return;
   }
   if (kind === 'swarm.context_updated') {
     if (!isNonEmptyString(p.key)) refuse('swarm.context_updated requires a non-empty key', 'invalid_payload');
     if (p.body === undefined || p.body === null) refuse('swarm.context_updated requires body', 'invalid_payload');
+    validateBody(p.body);
     validOptionalNonEmptyString(p.groupId, 'context groupId', refuse);
-    validOptionalPositiveInt(p.expectedVersion, 'context expectedVersion', refuse);
+    validOptionalNonNegativeInt(p.expectedVersion, 'context expectedVersion', refuse);
     return;
   }
   if (kind === 'swarm.contribution_recorded') {
@@ -189,6 +244,7 @@ export function validateSwarmEvent(kind, payload) {
       if (!Array.isArray(p.refs)) refuse('contribution refs must be an array if present', 'invalid_payload');
       if (!p.refs.every(isNonEmptyString)) refuse('contribution refs must be non-empty strings', 'invalid_payload');
     }
+    if (p.body !== undefined && p.body !== null) validateBody(p.body);
     return;
   }
   if (kind === 'swarm.contribution_reviewed') {
@@ -209,24 +265,26 @@ export function validateSwarmEvent(kind, payload) {
 // ── foldSwarmEvent ────────────────────────────────────────────────────────────
 //
 // Pure over (swarms: Map<swarmId, SwarmState>, event): the same log sequence always
-// folds to the same projection. Validates the event shape and referential integrity,
-// then mutates the outer swarms Map with a frozen replacement row.
-// Throws SwarmIntegrityError on any unfolderable event.
+// folds to the same projection. Calls validateSwarmEvent first (converting SwarmRefusal
+// to SwarmIntegrityError), then applies stateful checks (referential integrity,
+// version CAS) and mutates the outer swarms Map with a frozen replacement row.
 //
 // event: { kind, payload, actor?, seq?, ts? }
 
 export function foldSwarmEvent(swarms, event) {
   const { kind, payload: p } = event;
 
-  if (!SWARM_EVENT_KINDS.has(kind)) {
-    integrity(`unsupported swarm event kind: ${kind}`, 'unsupported_event_kind');
-  }
-  if (!p || typeof p !== 'object' || Array.isArray(p) || !isNonEmptyString(p.swarmId)) {
-    integrity('swarm event payload must be a plain object with a non-empty swarmId', 'invalid_payload');
+  // Shape validation — same logic as the write lane; converts to integrity errors.
+  try {
+    validateSwarmEvent(kind, p);
+  } catch (err) {
+    if (err instanceof SwarmRefusal) throw new SwarmIntegrityError(err.message, err.code ?? 'invalid_payload');
+    throw err;
   }
 
+  const meta = eventMeta(event);
+
   if (kind === 'swarm.created') {
-    if (!isNonEmptyString(p.purpose)) integrity('swarm.created requires a non-empty purpose', 'invalid_payload');
     if (swarms.has(p.swarmId)) integrity(`swarm ${p.swarmId} is already created`, 'swarm_duplicate');
     swarms.set(p.swarmId, emptySwarm(p.swarmId, p.purpose));
     return;
@@ -236,89 +294,71 @@ export function foldSwarmEvent(swarms, event) {
   if (!swarm) integrity(`swarm ${p.swarmId} not found`, 'swarm_not_found');
 
   if (kind === 'swarm.participant_joined') {
-    if (!isNonEmptyString(p.participantId)) integrity('swarm.participant_joined requires participantId', 'invalid_payload');
-    if (swarm.participants[p.participantId]) {
+    if (ownGet(swarm.participants, p.participantId)) {
       integrity(`participant ${p.participantId} already exists in swarm ${p.swarmId}`, 'participant_duplicate');
     }
-    if (isNonEmptyString(p.parentId) && !swarm.participants[p.parentId]) {
+    if (isNonEmptyString(p.parentId) && !ownGet(swarm.participants, p.parentId)) {
       integrity(`parentId ${p.parentId} not found in swarm ${p.swarmId}`, 'participant_not_found');
     }
     const participant = Object.freeze({
-      participantId: p.participantId,
-      role: p.role ?? null,
-      parentId: p.parentId ?? null,
-      runId: p.runId ?? null,
-      permissions: p.permissions ? Object.freeze([...p.permissions]) : null,
-      status: 'active',
-      leftReason: null,
-      bindings: Object.freeze([]),
+      participantId: p.participantId, role: p.role ?? null, parentId: p.parentId ?? null,
+      runId: p.runId ?? null, permissions: p.permissions ? Object.freeze([...p.permissions]) : null,
+      status: 'active', leftReason: null, bindings: Object.freeze([]),
+      actor: meta.actor, seq: meta.seq, ts: meta.ts,
     });
-    const participants = new Map(Object.entries(swarm.participants));
-    participants.set(p.participantId, participant);
-    swarms.set(p.swarmId, replaceField(swarm, 'participants', participants));
+    const parts = new Map(Object.entries(swarm.participants));
+    parts.set(p.participantId, participant);
+    swarms.set(p.swarmId, replaceField(swarm, 'participants', parts));
     return;
   }
 
   if (kind === 'swarm.participant_bound') {
-    if (!isNonEmptyString(p.participantId)) integrity('swarm.participant_bound requires participantId', 'invalid_payload');
-    if (!isNonEmptyString(p.workerId)) integrity('swarm.participant_bound requires workerId', 'invalid_payload');
-    if (!isNonEmptyString(p.taskId)) integrity('swarm.participant_bound requires taskId', 'invalid_payload');
-    const participant = swarm.participants[p.participantId];
+    const participant = ownGet(swarm.participants, p.participantId);
     if (!participant) integrity(`participant ${p.participantId} not found in swarm ${p.swarmId}`, 'participant_not_found');
     const binding = Object.freeze({
-      workerId: p.workerId,
-      taskId: p.taskId,
-      sessionId: p.sessionId ?? null,
-      seq: event.seq ?? null,
+      workerId: p.workerId, taskId: p.taskId, sessionId: p.sessionId ?? null,
+      actor: meta.actor, seq: meta.seq, ts: meta.ts,
     });
     const updatedParticipant = Object.freeze({
-      ...participant,
-      bindings: Object.freeze([...participant.bindings, binding]),
+      ...participant, bindings: Object.freeze([...participant.bindings, binding]),
+      actor: meta.actor, seq: meta.seq, ts: meta.ts,
     });
-    const participants = new Map(Object.entries(swarm.participants));
-    participants.set(p.participantId, updatedParticipant);
-    swarms.set(p.swarmId, replaceField(swarm, 'participants', participants));
+    const parts = new Map(Object.entries(swarm.participants));
+    parts.set(p.participantId, updatedParticipant);
+    swarms.set(p.swarmId, replaceField(swarm, 'participants', parts));
     return;
   }
 
   if (kind === 'swarm.participant_left') {
-    if (!isNonEmptyString(p.participantId)) integrity('swarm.participant_left requires participantId', 'invalid_payload');
-    const participant = swarm.participants[p.participantId];
+    const participant = ownGet(swarm.participants, p.participantId);
     if (!participant) integrity(`participant ${p.participantId} not found in swarm ${p.swarmId}`, 'participant_not_found');
     const updatedParticipant = Object.freeze({
-      ...participant,
-      status: 'left',
-      leftReason: p.reason ?? null,
+      ...participant, status: 'left', leftReason: p.reason ?? null,
+      actor: meta.actor, seq: meta.seq, ts: meta.ts,
     });
-    const participants = new Map(Object.entries(swarm.participants));
-    participants.set(p.participantId, updatedParticipant);
-    swarms.set(p.swarmId, replaceField(swarm, 'participants', participants));
+    const parts = new Map(Object.entries(swarm.participants));
+    parts.set(p.participantId, updatedParticipant);
+    swarms.set(p.swarmId, replaceField(swarm, 'participants', parts));
     return;
   }
 
   if (kind === 'swarm.group_updated') {
-    if (!isNonEmptyString(p.groupId)) integrity('swarm.group_updated requires groupId', 'invalid_payload');
-    if (!Array.isArray(p.members)) integrity('swarm.group_updated requires a members array', 'invalid_payload');
-    // Members must be participants that have joined this swarm (any status).
+    // Members must be currently active participants (not left).
     for (const memberId of p.members) {
-      if (!swarm.participants[memberId]) {
-        integrity(`group member ${memberId} not found in swarm ${p.swarmId}`, 'participant_not_found');
-      }
+      const member = ownGet(swarm.participants, memberId);
+      if (!member) integrity(`group member ${memberId} not found in swarm ${p.swarmId}`, 'participant_not_found');
+      if (member.status !== 'active') integrity(`group member ${memberId} is not active in swarm ${p.swarmId}`, 'participant_not_active');
     }
-    const existingGroup = swarm.groups[p.groupId] ?? null;
+    const existingGroup = ownGet(swarm.groups, p.groupId) ?? null;
     const currentVersion = existingGroup?.version ?? 0;
     if (p.expectedVersion !== undefined && p.expectedVersion !== currentVersion) {
-      integrity(
-        `swarm group ${p.groupId} version conflict: expected ${p.expectedVersion}, current ${currentVersion}`,
-        'version_conflict',
-      );
+      integrity(`swarm group ${p.groupId} version conflict: expected ${p.expectedVersion}, current ${currentVersion}`, 'version_conflict');
     }
-    const nextVersion = currentVersion + 1;
     const updatedGroup = Object.freeze({
       groupId: p.groupId,
       purpose: p.purpose !== undefined ? p.purpose : (existingGroup?.purpose ?? null),
-      members: Object.freeze([...p.members]),
-      version: nextVersion,
+      members: Object.freeze([...p.members]), version: currentVersion + 1,
+      actor: meta.actor, seq: meta.seq, ts: meta.ts,
     });
     const groups = new Map(Object.entries(swarm.groups));
     groups.set(p.groupId, updatedGroup);
@@ -327,24 +367,16 @@ export function foldSwarmEvent(swarms, event) {
   }
 
   if (kind === 'swarm.work_updated') {
-    if (!isNonEmptyString(p.workId)) integrity('swarm.work_updated requires workId', 'invalid_payload');
-    if (!isNonEmptyString(p.objective)) integrity('swarm.work_updated requires a non-empty objective', 'invalid_payload');
-    if (p.status !== undefined && !SWARM_WORK_STATUSES.includes(p.status)) {
-      integrity(`work status must be one of: ${SWARM_WORK_STATUSES.join(', ')}`, 'invalid_payload');
-    }
-    const existingWork = swarm.work[p.workId] ?? null;
+    const existingWork = ownGet(swarm.work, p.workId) ?? null;
     const currentVersion = existingWork?.version ?? 0;
     if (p.expectedVersion !== undefined && p.expectedVersion !== currentVersion) {
-      integrity(
-        `swarm work ${p.workId} version conflict: expected ${p.expectedVersion}, current ${currentVersion}`,
-        'version_conflict',
-      );
+      integrity(`swarm work ${p.workId} version conflict: expected ${p.expectedVersion}, current ${currentVersion}`, 'version_conflict');
     }
     const updatedWork = Object.freeze({
-      workId: p.workId,
-      objective: p.objective,
-      status: p.status !== undefined ? p.status : (existingWork?.status ?? null),
-      version: currentVersion + 1,
+      workId: p.workId, objective: p.objective,
+      // Default status is 'open' for new items; preserve existing status if not specified.
+      status: p.status !== undefined ? p.status : (existingWork?.status ?? 'open'),
+      version: currentVersion + 1, actor: meta.actor, seq: meta.seq, ts: meta.ts,
     });
     const work = new Map(Object.entries(swarm.work));
     work.set(p.workId, updatedWork);
@@ -353,19 +385,13 @@ export function foldSwarmEvent(swarms, event) {
   }
 
   if (kind === 'swarm.assignment_updated') {
-    if (!isNonEmptyString(p.assignmentId)) integrity('swarm.assignment_updated requires assignmentId', 'invalid_payload');
-    if (!isNonEmptyString(p.participantId)) integrity('swarm.assignment_updated requires participantId', 'invalid_payload');
-    if (!isNonEmptyString(p.workId)) integrity('swarm.assignment_updated requires workId', 'invalid_payload');
-    if (!SWARM_ASSIGNMENT_STATUSES.includes(p.status)) {
-      integrity(`assignment status must be one of: ${SWARM_ASSIGNMENT_STATUSES.join(', ')}`, 'invalid_payload');
-    }
-    if (!swarm.participants[p.participantId]) {
+    if (!ownGet(swarm.participants, p.participantId)) {
       integrity(`participant ${p.participantId} not found in swarm ${p.swarmId}`, 'participant_not_found');
     }
-    if (!swarm.work[p.workId]) {
+    if (!ownGet(swarm.work, p.workId)) {
       integrity(`work ${p.workId} not found in swarm ${p.swarmId}`, 'work_not_found');
     }
-    const existingAssignment = swarm.assignments[p.assignmentId] ?? null;
+    const existingAssignment = ownGet(swarm.assignments, p.assignmentId) ?? null;
     const currentVersion = existingAssignment?.version ?? 0;
     if (p.expectedVersion !== undefined && p.expectedVersion !== currentVersion) {
       integrity(
@@ -374,11 +400,9 @@ export function foldSwarmEvent(swarms, event) {
       );
     }
     const updatedAssignment = Object.freeze({
-      assignmentId: p.assignmentId,
-      participantId: p.participantId,
-      workId: p.workId,
-      status: p.status,
-      version: currentVersion + 1,
+      assignmentId: p.assignmentId, participantId: p.participantId, workId: p.workId,
+      status: p.status, version: currentVersion + 1,
+      actor: meta.actor, seq: meta.seq, ts: meta.ts,
     });
     const assignments = new Map(Object.entries(swarm.assignments));
     assignments.set(p.assignmentId, updatedAssignment);
@@ -387,51 +411,42 @@ export function foldSwarmEvent(swarms, event) {
   }
 
   if (kind === 'swarm.context_updated') {
-    if (!isNonEmptyString(p.key)) integrity('swarm.context_updated requires a non-empty key', 'invalid_payload');
-    if (p.body === undefined || p.body === null) integrity('swarm.context_updated requires body', 'invalid_payload');
-    if (isNonEmptyString(p.groupId) && !swarm.groups[p.groupId]) {
+    // groupId referential integrity (stateful — not in shape validator).
+    if (isNonEmptyString(p.groupId) && !ownGet(swarm.groups, p.groupId)) {
       integrity(`context groupId ${p.groupId} not found in swarm ${p.swarmId}`, 'group_not_found');
     }
-    const existingContext = swarm.context[p.key] ?? null;
+    // Composite key: same named key may exist independently in global vs. group scope.
+    const ctxKey = swarmContextKey(p.key, p.groupId ?? null);
+    const existingContext = ownGet(swarm.context, ctxKey) ?? null;
     const currentVersion = existingContext?.version ?? 0;
     if (p.expectedVersion !== undefined && p.expectedVersion !== currentVersion) {
-      integrity(
-        `swarm context key '${p.key}' version conflict: expected ${p.expectedVersion}, current ${currentVersion}`,
-        'version_conflict',
-      );
+      integrity(`swarm context '${ctxKey}' version conflict: expected ${p.expectedVersion}, current ${currentVersion}`, 'version_conflict');
     }
     const updatedContext = Object.freeze({
-      key: p.key,
-      body: freezeBody(p.body),
-      groupId: p.groupId ?? null,
-      version: currentVersion + 1,
-      actor: event.actor ?? null,
-      seq: event.seq ?? null,
+      key: p.key, body: deepFreezeBody(p.body), groupId: p.groupId ?? null,
+      version: currentVersion + 1, actor: meta.actor, seq: meta.seq, ts: meta.ts,
     });
     const context = new Map(Object.entries(swarm.context));
-    context.set(p.key, updatedContext);
+    context.set(ctxKey, updatedContext);
     swarms.set(p.swarmId, replaceField(swarm, 'context', context));
     return;
   }
 
   if (kind === 'swarm.contribution_recorded') {
-    if (!isNonEmptyString(p.contributionId)) integrity('swarm.contribution_recorded requires contributionId', 'invalid_payload');
-    if (!isNonEmptyString(p.participantId)) integrity('swarm.contribution_recorded requires participantId', 'invalid_payload');
-    if (!swarm.participants[p.participantId]) {
+    if (!ownGet(swarm.participants, p.participantId)) {
       integrity(`participant ${p.participantId} not found in swarm ${p.swarmId}`, 'participant_not_found');
     }
-    if (isNonEmptyString(p.workId) && !swarm.work[p.workId]) {
+    if (isNonEmptyString(p.workId) && !ownGet(swarm.work, p.workId)) {
       integrity(`work ${p.workId} not found in swarm ${p.swarmId}`, 'work_not_found');
     }
-    if (swarm.contributions[p.contributionId]) {
+    if (ownGet(swarm.contributions, p.contributionId)) {
       integrity(`contribution ${p.contributionId} already exists in swarm ${p.swarmId}`, 'contribution_duplicate');
     }
     const contribution = Object.freeze({
-      contributionId: p.contributionId,
-      participantId: p.participantId,
-      workId: p.workId ?? null,
-      body: p.body !== undefined ? freezeBody(p.body) : null,
+      contributionId: p.contributionId, participantId: p.participantId, workId: p.workId ?? null,
+      body: p.body !== undefined ? deepFreezeBody(p.body) : null,
       refs: p.refs ? Object.freeze([...p.refs]) : null,
+      actor: meta.actor, seq: meta.seq, ts: meta.ts,
     });
     const contributions = new Map(Object.entries(swarm.contributions));
     contributions.set(p.contributionId, contribution);
@@ -440,22 +455,20 @@ export function foldSwarmEvent(swarms, event) {
   }
 
   if (kind === 'swarm.contribution_reviewed') {
-    if (!isNonEmptyString(p.contributionId)) integrity('swarm.contribution_reviewed requires contributionId', 'invalid_payload');
-    if (!SWARM_REVIEW_DECISIONS.includes(p.decision)) {
-      integrity(`review decision must be one of: ${SWARM_REVIEW_DECISIONS.join(', ')}`, 'invalid_payload');
-    }
-    if (!swarm.contributions[p.contributionId]) {
+    if (!ownGet(swarm.contributions, p.contributionId)) {
       integrity(`contribution ${p.contributionId} not found in swarm ${p.swarmId}`, 'contribution_not_found');
     }
+    // reviewerId referential integrity: if given, must be a known participant.
+    if (isNonEmptyString(p.reviewerId) && !ownGet(swarm.participants, p.reviewerId)) {
+      integrity(`reviewerId ${p.reviewerId} not found in swarm ${p.swarmId}`, 'participant_not_found');
+    }
+    // Append — never erase prior reviews; opposing reviews are both retained.
     const review = Object.freeze({
-      reviewerId: p.reviewerId ?? null,
-      decision: p.decision,
-      reason: p.reason ?? null,
-      seq: event.seq ?? null,
+      reviewerId: p.reviewerId ?? null, decision: p.decision, reason: p.reason ?? null,
+      actor: meta.actor, seq: meta.seq, ts: meta.ts,
     });
-    // Append review — never erase prior reviews; opposing reviews are retained.
-    const existingReviews = swarm.reviews[p.contributionId] ?? [];
-    const updatedReviews = Object.freeze([...existingReviews, review]);
+    const existing = ownGet(swarm.reviews, p.contributionId) ?? [];
+    const updatedReviews = Object.freeze([...existing, review]);
     const reviews = new Map(Object.entries(swarm.reviews));
     reviews.set(p.contributionId, updatedReviews);
     swarms.set(p.swarmId, replaceField(swarm, 'reviews', reviews));
@@ -463,14 +476,8 @@ export function foldSwarmEvent(swarms, event) {
   }
 
   if (kind === 'swarm.closed') {
-    if (swarm.status === 'closed') {
-      integrity(`swarm ${p.swarmId} is already closed`, 'swarm_already_closed');
-    }
-    swarms.set(p.swarmId, Object.freeze({
-      ...swarm,
-      status: 'closed',
-      closedReason: p.reason ?? null,
-    }));
+    if (swarm.status === 'closed') integrity(`swarm ${p.swarmId} is already closed`, 'swarm_already_closed');
+    swarms.set(p.swarmId, Object.freeze({ ...swarm, status: 'closed', closedReason: p.reason ?? null }));
     return;
   }
 
@@ -489,102 +496,15 @@ export function readSwarm(swarms, id) {
 
 // ── swarmSnapshot ─────────────────────────────────────────────────────────────
 //
-// Deterministic serializable projection of all swarms. Keys sorted for
-// byte-identical replay; live and post-replay snapshots deep-equal.
+// Deterministic serializable projection of all swarms. Uses canonicalClone so
+// new fields on rows appear automatically; no manual field enumeration.
+// Live and replay snapshots produce byte-identical JSON.stringify output.
 
 export function swarmSnapshot(swarms) {
   const swarmList = [...swarms.keys()].sort().map((swarmId) => {
     const s = swarms.get(swarmId);
-
-    const participants = Object.fromEntries(
-      Object.keys(s.participants).sort().map((pid) => {
-        const p = s.participants[pid];
-        return [pid, {
-          participantId: p.participantId,
-          role: p.role,
-          parentId: p.parentId,
-          runId: p.runId,
-          permissions: p.permissions ? [...p.permissions] : null,
-          status: p.status,
-          leftReason: p.leftReason,
-          bindings: p.bindings.map((b) => ({ ...b })),
-        }];
-      }),
-    );
-
-    const groups = Object.fromEntries(
-      Object.keys(s.groups).sort().map((gid) => {
-        const g = s.groups[gid];
-        return [gid, { groupId: g.groupId, purpose: g.purpose, members: [...g.members], version: g.version }];
-      }),
-    );
-
-    const work = Object.fromEntries(
-      Object.keys(s.work).sort().map((wid) => {
-        const w = s.work[wid];
-        return [wid, { workId: w.workId, objective: w.objective, status: w.status, version: w.version }];
-      }),
-    );
-
-    const assignments = Object.fromEntries(
-      Object.keys(s.assignments).sort().map((aid) => {
-        const a = s.assignments[aid];
-        return [aid, {
-          assignmentId: a.assignmentId,
-          participantId: a.participantId,
-          workId: a.workId,
-          status: a.status,
-          version: a.version,
-        }];
-      }),
-    );
-
-    const context = Object.fromEntries(
-      Object.keys(s.context).sort().map((key) => {
-        const c = s.context[key];
-        return [key, {
-          key: c.key,
-          body: typeof c.body === 'object' && c.body !== null ? JSON.parse(JSON.stringify(c.body)) : c.body,
-          groupId: c.groupId,
-          version: c.version,
-          actor: c.actor,
-          seq: c.seq,
-        }];
-      }),
-    );
-
-    const contributions = Object.fromEntries(
-      Object.keys(s.contributions).sort().map((cid) => {
-        const c = s.contributions[cid];
-        return [cid, {
-          contributionId: c.contributionId,
-          participantId: c.participantId,
-          workId: c.workId,
-          body: typeof c.body === 'object' && c.body !== null ? JSON.parse(JSON.stringify(c.body)) : c.body,
-          refs: c.refs ? [...c.refs] : null,
-        }];
-      }),
-    );
-
-    const reviews = Object.fromEntries(
-      Object.keys(s.reviews).sort().map((cid) => {
-        return [cid, s.reviews[cid].map((r) => ({ ...r }))];
-      }),
-    );
-
-    return {
-      swarmId: s.swarmId,
-      purpose: s.purpose,
-      status: s.status,
-      closedReason: s.closedReason,
-      participants,
-      groups,
-      work,
-      assignments,
-      context,
-      contributions,
-      reviews,
-    };
+    // canonicalClone recurses with sorted keys; handles null-prototype dicts and frozen arrays.
+    return canonicalClone(s);
   });
 
   return { swarms: swarmList };

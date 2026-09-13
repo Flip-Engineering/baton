@@ -8,6 +8,7 @@ import {
   SWARM_REVIEW_DECISIONS,
   SwarmRefusal,
   SwarmIntegrityError,
+  swarmContextKey,
   validateSwarmEvent,
   foldSwarmEvent,
   readSwarm,
@@ -141,7 +142,7 @@ describe('validateSwarmEvent — shape errors', () => {
 
   test('swarm.group_updated rejects invalid expectedVersion', () => {
     const err = refusals(() => validateSwarmEvent('swarm.group_updated', {
-      swarmId: 'sw1', groupId: 'g1', members: ['p1'], expectedVersion: 0,
+      swarmId: 'sw1', groupId: 'g1', members: ['p1'], expectedVersion: -1,
     }));
     assert.equal(err.code, 'invalid_payload');
   });
@@ -191,13 +192,13 @@ describe('evolving empty swarm', () => {
     assert.equal(swarm.swarmId, 'sw1');
     assert.equal(swarm.purpose, 'Investigate X');
     assert.equal(swarm.status, 'open');
-    assert.deepEqual(swarm.participants, {});
-    assert.deepEqual(swarm.groups, {});
-    assert.deepEqual(swarm.work, {});
-    assert.deepEqual(swarm.assignments, {});
-    assert.deepEqual(swarm.context, {});
-    assert.deepEqual(swarm.contributions, {});
-    assert.deepEqual(swarm.reviews, {});
+    assert.equal(Object.keys(swarm.participants).length, 0);
+    assert.equal(Object.keys(swarm.groups).length, 0);
+    assert.equal(Object.keys(swarm.work).length, 0);
+    assert.equal(Object.keys(swarm.assignments).length, 0);
+    assert.equal(Object.keys(swarm.context).length, 0);
+    assert.equal(Object.keys(swarm.contributions).length, 0);
+    assert.equal(Object.keys(swarm.reviews).length, 0);
   });
 
   test('duplicate swarm.created throws SwarmIntegrityError', () => {
@@ -421,7 +422,7 @@ describe('context_updated version conflict', () => {
   test('first update sets version 1', () => {
     const swarms = swarmWithParticipant();
     foldSwarmEvent(swarms, e('swarm.context_updated', { swarmId: 'sw1', key: 'plan', body: 'v1' }, { actor: 'p1' }));
-    const ctx = swarms.get('sw1').context['plan'];
+    const ctx = swarms.get('sw1').context[swarmContextKey('plan')];
     assert.equal(ctx.version, 1);
     assert.equal(ctx.body, 'v1');
     assert.equal(ctx.actor, 'p1');
@@ -433,8 +434,8 @@ describe('context_updated version conflict', () => {
       e('swarm.context_updated', { swarmId: 'sw1', key: 'k', body: 'a' }),
       e('swarm.context_updated', { swarmId: 'sw1', key: 'k', body: 'b' }),
     ]);
-    assert.equal(swarms.get('sw1').context['k'].version, 2);
-    assert.equal(swarms.get('sw1').context['k'].body, 'b');
+    assert.equal(swarms.get('sw1').context[swarmContextKey('k')].version, 2);
+    assert.equal(swarms.get('sw1').context[swarmContextKey('k')].body, 'b');
   });
 
   test('context update with correct expectedVersion succeeds', () => {
@@ -443,7 +444,7 @@ describe('context_updated version conflict', () => {
       e('swarm.context_updated', { swarmId: 'sw1', key: 'k', body: 'a' }),
       e('swarm.context_updated', { swarmId: 'sw1', key: 'k', body: 'b', expectedVersion: 1 }),
     ]);
-    assert.equal(swarms.get('sw1').context['k'].version, 2);
+    assert.equal(swarms.get('sw1').context[swarmContextKey('k')].version, 2);
   });
 
   test('context update with wrong expectedVersion throws version_conflict', () => {
@@ -461,8 +462,8 @@ describe('context_updated version conflict', () => {
       e('swarm.context_updated', { swarmId: 'sw1', key: 'text', body: 'plain text' }),
       e('swarm.context_updated', { swarmId: 'sw1', key: 'json', body: { x: 1, y: [2, 3] } }),
     ]);
-    assert.equal(swarms.get('sw1').context['text'].body, 'plain text');
-    assert.deepEqual(swarms.get('sw1').context['json'].body, { x: 1, y: [2, 3] });
+    assert.equal(swarms.get('sw1').context[swarmContextKey('text')].body, 'plain text');
+    assert.deepEqual(swarms.get('sw1').context[swarmContextKey('json')].body, { x: 1, y: [2, 3] });
   });
 
   test('context scoped to group — unknown groupId refused', () => {
@@ -481,7 +482,7 @@ describe('context_updated version conflict', () => {
       e('swarm.group_updated', { swarmId: 'sw1', groupId: 'g1', members: ['a'] }),
       e('swarm.context_updated', { swarmId: 'sw1', key: 'notes', body: 'hi', groupId: 'g1' }),
     ]);
-    const ctx = swarms.get('sw1').context['notes'];
+    const ctx = swarms.get('sw1').context[swarmContextKey('notes', 'g1')];
     assert.equal(ctx.groupId, 'g1');
     assert.equal(ctx.version, 1);
   });
@@ -497,7 +498,7 @@ describe('work and assignment', () => {
     assert.equal(work.workId, 'w1');
     assert.equal(work.objective, 'Build X');
     assert.equal(work.version, 1);
-    assert.equal(work.status, null);
+    assert.equal(work.status, 'open');
   });
 
   test('work evolves with open/completed/cancelled dispositions', () => {
@@ -555,7 +556,7 @@ describe('work and assignment', () => {
     const swarm = swarms.get('sw1');
     assert.equal(swarm.assignments['a1'].status, 'released');
     assert.equal(swarm.participants['alice'].status, 'active');
-    assert.equal(swarm.work['w1'].status, null);
+    assert.equal(swarm.work['w1'].status, 'open');
   });
 
   test('assignment referential integrity: unknown participant refused', () => {
@@ -623,8 +624,8 @@ describe('accepted contribution — author still active', () => {
     assert.equal(reviews[0].reviewerId, 'reviewer');
     // Author is NOT closed
     assert.equal(swarm.participants['builder'].status, 'active');
-    // Work is NOT closed
-    assert.equal(swarm.work['feat'].status, null);
+    // Work is NOT closed (default status is 'open')
+    assert.equal(swarm.work['feat'].status, 'open');
     // Swarm is NOT closed
     assert.equal(swarm.status, 'open');
   });
@@ -634,8 +635,9 @@ describe('accepted contribution — author still active', () => {
     fold(swarms, [
       e('swarm.work_updated', { swarmId: 'sw1', workId: 'w1', objective: 'Task' }),
       e('swarm.contribution_recorded', { swarmId: 'sw1', contributionId: 'c1', participantId: 'p1', body: 'draft' }),
-      e('swarm.contribution_reviewed', { swarmId: 'sw1', contributionId: 'c1', reviewerId: 'r1', decision: 'accept' }),
-      e('swarm.contribution_reviewed', { swarmId: 'sw1', contributionId: 'c1', reviewerId: 'r2', decision: 'reject', reason: 'needs work' }),
+      // p1 is the only registered participant; reviewerId must be a known participant or omitted
+      e('swarm.contribution_reviewed', { swarmId: 'sw1', contributionId: 'c1', reviewerId: 'p1', decision: 'accept' }),
+      e('swarm.contribution_reviewed', { swarmId: 'sw1', contributionId: 'c1', decision: 'reject', reason: 'needs work' }),
       e('swarm.contribution_reviewed', { swarmId: 'sw1', contributionId: 'c1', decision: 'comment', reason: 'see also X' }),
     ]);
     const reviews = swarms.get('sw1').reviews['c1'];
@@ -748,7 +750,7 @@ describe('deterministic replay', () => {
   test('unknown event kind throws SwarmIntegrityError at fold', () => {
     const swarms = fresh();
     const err = integrity(() => foldSwarmEvent(swarms, e('swarm.frobnicate', { swarmId: 'sw1' })));
-    assert.equal(err.code, 'unsupported_event_kind');
+    assert.equal(err.code, 'unknown_event_kind');
   });
 });
 
@@ -857,7 +859,7 @@ describe('swarmSnapshot completeness', () => {
       e('swarm.assignment_updated', { swarmId: 'sw1', assignmentId: 'as1', participantId: 'alice', workId: 'w1', status: 'active' }),
       e('swarm.context_updated', { swarmId: 'sw1', key: 'readme', body: 'Hello', groupId: 'g1' }, { actor: 'alice', seq: 2 }),
       e('swarm.contribution_recorded', { swarmId: 'sw1', contributionId: 'c1', participantId: 'alice', workId: 'w1', body: 'done', refs: ['sha:xyz'] }),
-      e('swarm.contribution_reviewed', { swarmId: 'sw1', contributionId: 'c1', reviewerId: 'sys', decision: 'accept' }, { seq: 3 }),
+      e('swarm.contribution_reviewed', { swarmId: 'sw1', contributionId: 'c1', reviewerId: 'alice', decision: 'accept' }, { seq: 3 }),
     ]);
 
     const snap = swarmSnapshot(swarms);
@@ -876,12 +878,234 @@ describe('swarmSnapshot completeness', () => {
     assert.equal(s.work['w1'].status, 'open');
     assert.equal(s.groups['g1'].purpose, 'Leads');
     assert.equal(s.assignments['as1'].status, 'active');
-    assert.equal(s.context['readme'].body, 'Hello');
-    assert.equal(s.context['readme'].groupId, 'g1');
-    assert.equal(s.context['readme'].actor, 'alice');
+    const ctxReadme = s.context[swarmContextKey('readme', 'g1')];
+    assert.equal(ctxReadme.body, 'Hello');
+    assert.equal(ctxReadme.groupId, 'g1');
+    assert.equal(ctxReadme.actor, 'alice');
     assert.equal(s.contributions['c1'].body, 'done');
     assert.deepEqual(s.contributions['c1'].refs, ['sha:xyz']);
     assert.equal(s.reviews['c1'][0].decision, 'accept');
-    assert.equal(s.reviews['c1'][0].reviewerId, 'sys');
+    assert.equal(s.reviews['c1'][0].reviewerId, 'alice');
+  });
+});
+
+// ── new invariant tests ───────────────────────────────────────────────────────
+
+describe('nested mutation resistance', () => {
+  test('mutating body object after fold does not affect stored context', () => {
+    const swarms = swarmWithParticipant();
+    const body = { a: { b: 1 } };
+    foldSwarmEvent(swarms, e('swarm.context_updated', { swarmId: 'sw1', key: 'k', body }));
+    body.a.b = 999;
+    body.extra = 'injected';
+    const stored = swarms.get('sw1').context[swarmContextKey('k')].body;
+    assert.equal(stored.a.b, 1, 'nested mutation must not affect stored body');
+    assert.equal(stored.extra, undefined, 'injected key must not appear');
+  });
+
+  test('mutating body object after fold does not affect stored contribution', () => {
+    const swarms = swarmWithParticipant();
+    const body = { data: [1, 2, 3] };
+    foldSwarmEvent(swarms, e('swarm.contribution_recorded', {
+      swarmId: 'sw1', contributionId: 'c1', participantId: 'p1', body,
+    }));
+    body.data.push(4);
+    const stored = swarms.get('sw1').contributions['c1'].body;
+    assert.equal(stored.data.length, 3, 'array push must not affect stored body');
+  });
+
+  test('body with __proto__ own key roundtrips without prototype mutation', () => {
+    const swarms = swarmWithParticipant();
+    // JSON.parse produces a plain object with __proto__ as an own property.
+    const body = JSON.parse('{"__proto__":{"evil":true},"safe":1}');
+    assert.ok(Object.prototype.hasOwnProperty.call(body, '__proto__'), 'fixture has own __proto__');
+    foldSwarmEvent(swarms, e('swarm.context_updated', { swarmId: 'sw1', key: 'k', body }));
+    const stored = swarms.get('sw1').context[swarmContextKey('k')].body;
+    // __proto__ must be preserved as an own data property, not silently dropped or as a setter side-effect.
+    assert.ok(Object.prototype.hasOwnProperty.call(stored, '__proto__'), '__proto__ must survive as own property');
+    assert.equal(stored.safe, 1);
+    // The prototype of 'stored' must remain Object.prototype (not been mutated).
+    assert.equal(Object.getPrototypeOf(stored), Object.prototype);
+  });
+});
+
+describe('prototype-named participant ids', () => {
+  test('__proto__ and constructor as participantIds work safely', () => {
+    const swarms = fresh();
+    fold(swarms, [
+      e('swarm.created', { swarmId: 'sw1', purpose: 'proto test' }),
+      e('swarm.participant_joined', { swarmId: 'sw1', participantId: '__proto__' }),
+      e('swarm.participant_joined', { swarmId: 'sw1', participantId: 'constructor' }),
+    ]);
+    const swarm = swarms.get('sw1');
+    assert.ok(Object.prototype.hasOwnProperty.call(swarm.participants, '__proto__'));
+    assert.ok(Object.prototype.hasOwnProperty.call(swarm.participants, 'constructor'));
+    assert.equal(swarm.participants['__proto__'].status, 'active');
+    assert.equal(swarm.participants['constructor'].status, 'active');
+  });
+
+  test('participant with __proto__ id can receive a binding', () => {
+    const swarms = fresh();
+    fold(swarms, [
+      e('swarm.created', { swarmId: 'sw1', purpose: 'x' }),
+      e('swarm.participant_joined', { swarmId: 'sw1', participantId: '__proto__' }),
+      e('swarm.participant_bound', { swarmId: 'sw1', participantId: '__proto__', workerId: 'w1', taskId: 't1' }),
+    ]);
+    const p = swarms.get('sw1').participants['__proto__'];
+    assert.equal(p.bindings.length, 1);
+    assert.equal(p.bindings[0].workerId, 'w1');
+  });
+});
+
+describe('admission/replay parity', () => {
+  test('shapes that validateSwarmEvent rejects are also rejected at fold', () => {
+    const cases = [
+      ['swarm.created', { swarmId: 'sw1' }],                   // missing purpose
+      ['swarm.participant_joined', { swarmId: 'sw1' }],         // missing participantId
+      ['swarm.work_updated', { swarmId: 'sw1', workId: 'w1' }], // missing objective
+    ];
+    for (const [kind, payload] of cases) {
+      const swarms = fresh();
+      const validateErr = refusals(() => validateSwarmEvent(kind, payload));
+      const foldErr = integrity(() => foldSwarmEvent(swarms, { kind, payload }));
+      assert.equal(foldErr.code, validateErr.code, `code mismatch for ${kind}`);
+    }
+  });
+});
+
+describe('expectedVersion: 0 create-if-absent CAS', () => {
+  test('expectedVersion:0 on a new group succeeds (create-if-absent)', () => {
+    const swarms = swarmWithParticipant();
+    // version 0 = "I expect no row yet" — must not throw
+    assert.doesNotThrow(() => foldSwarmEvent(swarms, e('swarm.group_updated', {
+      swarmId: 'sw1', groupId: 'g1', members: ['p1'], expectedVersion: 0,
+    })));
+    assert.equal(swarms.get('sw1').groups['g1'].version, 1);
+  });
+
+  test('expectedVersion:0 on an existing group throws version_conflict', () => {
+    const swarms = swarmWithParticipant();
+    foldSwarmEvent(swarms, e('swarm.group_updated', { swarmId: 'sw1', groupId: 'g1', members: ['p1'] }));
+    const err = integrity(() => foldSwarmEvent(swarms, e('swarm.group_updated', {
+      swarmId: 'sw1', groupId: 'g1', members: ['p1'], expectedVersion: 0,
+    })));
+    assert.equal(err.code, 'version_conflict');
+  });
+});
+
+describe('group context isolation', () => {
+  test('same key in two different group scopes are independent', () => {
+    const swarms = fresh();
+    fold(swarms, [
+      e('swarm.created', { swarmId: 'sw1', purpose: 'x' }),
+      e('swarm.participant_joined', { swarmId: 'sw1', participantId: 'a' }),
+      e('swarm.group_updated', { swarmId: 'sw1', groupId: 'g1', members: ['a'] }),
+      e('swarm.group_updated', { swarmId: 'sw1', groupId: 'g2', members: ['a'] }),
+      e('swarm.context_updated', { swarmId: 'sw1', key: 'notes', body: 'for g1', groupId: 'g1' }),
+      e('swarm.context_updated', { swarmId: 'sw1', key: 'notes', body: 'for g2', groupId: 'g2' }),
+      e('swarm.context_updated', { swarmId: 'sw1', key: 'notes', body: 'global' }),
+    ]);
+    const ctx = swarms.get('sw1').context;
+    assert.equal(ctx[swarmContextKey('notes', 'g1')].body, 'for g1');
+    assert.equal(ctx[swarmContextKey('notes', 'g2')].body, 'for g2');
+    assert.equal(ctx[swarmContextKey('notes')].body, 'global');
+    // Three separate entries
+    assert.equal(Object.keys(ctx).length, 3);
+  });
+
+  test('same key in same group bumps version, not a second entry', () => {
+    const swarms = fresh();
+    fold(swarms, [
+      e('swarm.created', { swarmId: 'sw1', purpose: 'x' }),
+      e('swarm.participant_joined', { swarmId: 'sw1', participantId: 'a' }),
+      e('swarm.group_updated', { swarmId: 'sw1', groupId: 'g1', members: ['a'] }),
+      e('swarm.context_updated', { swarmId: 'sw1', key: 'notes', body: 'v1', groupId: 'g1' }),
+      e('swarm.context_updated', { swarmId: 'sw1', key: 'notes', body: 'v2', groupId: 'g1' }),
+    ]);
+    const ctx = swarms.get('sw1').context;
+    assert.equal(Object.keys(ctx).length, 1);
+    assert.equal(ctx[swarmContextKey('notes', 'g1')].version, 2);
+    assert.equal(ctx[swarmContextKey('notes', 'g1')].body, 'v2');
+  });
+});
+
+describe('reviewer referential validity', () => {
+  test('reviewerId must be a known participant', () => {
+    const swarms = swarmWithParticipant();
+    foldSwarmEvent(swarms, e('swarm.contribution_recorded', {
+      swarmId: 'sw1', contributionId: 'c1', participantId: 'p1',
+    }));
+    const err = integrity(() => foldSwarmEvent(swarms, e('swarm.contribution_reviewed', {
+      swarmId: 'sw1', contributionId: 'c1', reviewerId: 'nobody', decision: 'accept',
+    })));
+    assert.equal(err.code, 'participant_not_found');
+  });
+
+  test('omitting reviewerId (anonymous review) is allowed', () => {
+    const swarms = swarmWithParticipant();
+    foldSwarmEvent(swarms, e('swarm.contribution_recorded', {
+      swarmId: 'sw1', contributionId: 'c1', participantId: 'p1',
+    }));
+    assert.doesNotThrow(() => foldSwarmEvent(swarms, e('swarm.contribution_reviewed', {
+      swarmId: 'sw1', contributionId: 'c1', decision: 'comment', reason: 'anon note',
+    })));
+    assert.equal(swarms.get('sw1').reviews['c1'][0].reviewerId, null);
+  });
+});
+
+describe('body validation', () => {
+  test('circular reference in body throws SwarmRefusal', () => {
+    const a = {};
+    a.self = a;
+    const err = refusals(() => validateSwarmEvent('swarm.context_updated', { swarmId: 'sw1', key: 'k', body: a }));
+    assert.equal(err.code, 'invalid_body');
+  });
+
+  test('function in body throws SwarmRefusal', () => {
+    const err = refusals(() => validateSwarmEvent('swarm.context_updated', {
+      swarmId: 'sw1', key: 'k', body: { fn: () => {} },
+    }));
+    assert.equal(err.code, 'invalid_body');
+  });
+
+  test('NaN in body throws SwarmRefusal', () => {
+    const err = refusals(() => validateSwarmEvent('swarm.context_updated', {
+      swarmId: 'sw1', key: 'k', body: { x: NaN },
+    }));
+    assert.equal(err.code, 'invalid_body');
+  });
+
+  test('Infinity in body throws SwarmRefusal', () => {
+    const err = refusals(() => validateSwarmEvent('swarm.context_updated', {
+      swarmId: 'sw1', key: 'k', body: { x: Infinity },
+    }));
+    assert.equal(err.code, 'invalid_body');
+  });
+
+  test('Date instance in body throws SwarmRefusal', () => {
+    const err = refusals(() => validateSwarmEvent('swarm.context_updated', {
+      swarmId: 'sw1', key: 'k', body: { d: new Date() },
+    }));
+    assert.equal(err.code, 'invalid_body');
+  });
+
+  test('Map instance in body throws SwarmRefusal', () => {
+    const err = refusals(() => validateSwarmEvent('swarm.context_updated', {
+      swarmId: 'sw1', key: 'k', body: new Map(),
+    }));
+    assert.equal(err.code, 'invalid_body');
+  });
+
+  test('Set instance in body throws SwarmRefusal', () => {
+    const err = refusals(() => validateSwarmEvent('swarm.context_updated', {
+      swarmId: 'sw1', key: 'k', body: { s: new Set() },
+    }));
+    assert.equal(err.code, 'invalid_body');
+  });
+
+  test('plain nested JSON object body is accepted', () => {
+    assert.doesNotThrow(() => validateSwarmEvent('swarm.context_updated', {
+      swarmId: 'sw1', key: 'k', body: { a: 1, b: [true, 'x', null], c: { d: 2.5 } },
+    }));
   });
 });
