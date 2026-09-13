@@ -9,6 +9,7 @@ import {
 } from 'node:fs';
 import { basename, dirname, isAbsolute, join, relative, sep } from 'node:path';
 import { execFileSync } from 'node:child_process';
+import { performance } from 'node:perf_hooks';
 import { compareCanonicalStrings } from './canonical-order.mjs';
 
 export class WorktreeCapacityError extends Error {
@@ -26,6 +27,19 @@ const RESERVATION_FIELDS = Object.freeze([
   'sparseDigest', 'toolchainProjectionDigest', 'createdAt', 'materializedAt',
   'outstandingBytes', 'outstandingInodes',
 ]);
+
+// Independent deployments mutate one repository ledger, so every capacity mutation serializes on
+// a published owner record. The API is synchronous: it cannot await a holder, so ordinary
+// contention is absorbed by blocking this thread in short slices until a deadline. The deadline is
+// real elapsed time (`performance.now`, monotonic), never the injectable domain clock — fixtures
+// freeze that clock for timestamps, and a frozen clock must never become an unbounded wait. Every
+// non-progress turn of the acquisition loop ends in `_waitSlice`, so no state (live holder, live
+// gate, dead lock, churn) can loop past the deadline.
+const LOCK_POLL_MS = 5;
+const DEFAULT_LOCK_WAIT_MS = 5_000;
+const LOCK_WAIT_BUFFER = new Int32Array(new SharedArrayBuffer(4));
+const LOCK_LABEL = 'worktree capacity reservation lock';
+const REAPER_LABEL = 'worktree capacity reservation lock reaper gate';
 
 function digest(value) {
   return createHash('sha256').update(JSON.stringify(canonical(value))).digest('hex');
@@ -212,6 +226,10 @@ function livePid(pid) {
   try { process.kill(pid, 0); return true; } catch (error) { return error?.code === 'EPERM'; }
 }
 
+function waitForLockSlice(ms) {
+  Atomics.wait(LOCK_WAIT_BUFFER, 0, 0, ms);
+}
+
 function validLockOwner(value) {
   return value && typeof value === 'object' && !Array.isArray(value)
     && Object.keys(value).sort().join(',') === ['generation', 'ownerId', 'pid', 'schemaVersion'].sort().join(',')
@@ -221,17 +239,22 @@ function validLockOwner(value) {
 }
 
 export class WorktreeCapacityAuthority {
-  constructor({ repoRoot, policy, integrityKey, observe = defaultObserve, estimate = defaultEstimate, now = Date.now }) {
+  constructor({
+    repoRoot, policy, integrityKey, observe = defaultObserve, estimate = defaultEstimate,
+    now = Date.now, lockWaitMs = DEFAULT_LOCK_WAIT_MS,
+  }) {
     this.repoRoot = repoRoot;
     this.policy = normalizeWorktreeCapacityPolicy(policy);
     if (!Buffer.isBuffer(integrityKey) || integrityKey.byteLength !== 32) throw new TypeError('worktree capacity requires one 32-byte integrity key');
     if (typeof observe !== 'function' || typeof estimate !== 'function' || typeof now !== 'function') throw new TypeError('worktree capacity dependencies must be functions');
+    if (!Number.isSafeInteger(lockWaitMs) || lockWaitMs < 0) throw new TypeError('worktree capacity lock wait deadline must be a non-negative safe integer of milliseconds');
     this.integrityKey = Buffer.from(integrityKey);
-    this.observe = observe; this.estimate = estimate; this.now = now;
+    this.observe = observe; this.estimate = estimate; this.now = now; this.lockWaitMs = lockWaitMs;
     this.ownerId = randomBytes(16).toString('hex');
     this.root = join(repoRoot, '.baton', 'capacity');
     this.statePath = join(this.root, 'reservations.json');
     this.lockPath = join(this.root, 'lock');
+    this.reaperPath = `${this.lockPath}.reaper`;
   }
 
   _seal(state) {
@@ -245,7 +268,13 @@ export class WorktreeCapacityAuthority {
   _ensureRoot() {
     const repo = realpathSync(this.repoRoot); const baton = join(repo, '.baton');
     for (const path of [baton, this.root]) {
-      if (!existsSync(path)) mkdirSync(path, { mode: 0o700 });
+      // Simultaneous first startup of one repository races here; losing that race is normal.
+      // Only EEXIST is adopted, and the confinement checks below still refuse a file, symlink,
+      // or escaping directory, so authority is unchanged.
+      try { mkdirSync(path, { mode: 0o700 }); }
+      catch (error) {
+        if (error?.code !== 'EEXIST') throw typed('worktree capacity root could not be created', 'worktree_capacity_unavailable', error);
+      }
       const stat = lstatSync(path);
       if (!stat.isDirectory() || stat.isSymbolicLink()) throw typed('worktree capacity root is not a confined directory', 'worktree_capacity_unavailable');
       chmodSync(path, 0o700);
@@ -299,55 +328,172 @@ export class WorktreeCapacityAuthority {
     return state;
   }
 
+  // -----------------------------------------------------------------------------------------
+  // Lock protocol. Independent deployment processes share one repository ledger, so every
+  // capacity mutation is serialized by a published record naming the exact {ownerId, generation,
+  // pid} that holds the critical section:
+  //
+  //   publish  link(lock)        — atomic; the loser observes the incumbent instead of overwriting.
+  //   wait     live incumbent    — bounded by `lockWaitMs` of real elapsed time, then a typed
+  //                                PRE-EFFECT refusal: no reservation or release was applied.
+  //   reap     dead incumbent    — only while holding the exclusive reaper gate, and only after
+  //                                the lock is re-read under that gate and proved to be the same
+  //                                dead generation. A live lock is never renamed.
+  //   gate     link(lock.reaper) — serializes reapers. A gate whose owner died is inert (nothing
+  //                                ever acts under it) but irrecoverable: removing a gate cannot
+  //                                be made conditional, so recovery could displace a gate
+  //                                published in the meantime and hand two processes the reaper's
+  //                                authority. It is therefore never touched: reclamation of a
+  //                                dead lock is refused at the deadline while such a gate exists
+  //                                (an operator removes the file, named by the refusal). Fresh
+  //                                acquisition is unaffected, because no live reaper can exist
+  //                                without a live gate.
+  //
+  // A published lock counts only after re-observation (`_confirmLock`): the exact generation is
+  // still at the path and no live gate exists. Corrupt or ambiguous artifacts (a directory,
+  // symlink, permissive mode, oversized file, malformed JSON, unknown schema) refuse immediately
+  // — never adopted, never waited on, never deleted.
+  // -----------------------------------------------------------------------------------------
   _lock(fn) {
-    this._ensureRoot();
-    let generation; let owner;
-    for (let attempt = 0; attempt < 2; attempt += 1) {
-      generation = randomBytes(16).toString('hex'); owner = { schemaVersion: 1, pid: process.pid, ownerId: this.ownerId, generation };
-      try {
-        if (existsSync(`${this.lockPath}.reaper`)) throw Object.assign(new Error(), { code: 'EEXIST' });
-        publishExclusive(this.root, this.lockPath, owner, generation);
-        break;
-      } catch (error) {
-        if (error?.code !== 'EEXIST') throw typed('worktree capacity lock publication failed', 'worktree_capacity_unavailable', error);
-        let observed;
-        try {
-          const stat = lstatSync(this.lockPath);
-          if (!stat.isFile() || stat.isSymbolicLink() || (stat.mode & 0o077) !== 0 || stat.size > 4096) throw new Error();
-          observed = JSON.parse(readFileSync(this.lockPath, 'utf8'));
-        } catch { throw typed('worktree capacity reservation lock is busy', 'worktree_capacity_unavailable'); }
-        if (!validLockOwner(observed) || livePid(observed.pid)) {
-          throw typed('worktree capacity reservation lock is busy', 'worktree_capacity_unavailable');
-        }
-        const reaperPath = `${this.lockPath}.reaper`; const reaperGeneration = randomBytes(16).toString('hex');
-        try { publishExclusive(this.root, reaperPath, { schemaVersion: 1, pid: process.pid, ownerId: this.ownerId, generation: reaperGeneration }, reaperGeneration); }
-        catch { throw typed('worktree capacity reservation lock is busy', 'worktree_capacity_unavailable'); }
-        try {
-          const current = JSON.parse(readFileSync(this.lockPath, 'utf8'));
-          if (!validLockOwner(current) || current.generation !== observed.generation || current.ownerId !== observed.ownerId || livePid(current.pid)) throw typed('worktree capacity reservation lock changed during recovery', 'worktree_capacity_unavailable');
-          const tombstone = `${this.lockPath}.stale-${reaperGeneration}`;
-          renameSync(this.lockPath, tombstone); fsyncDirectory(this.root); rmSync(tombstone, { force: true }); fsyncDirectory(this.root);
-        } finally {
-          try {
-            const gate = JSON.parse(readFileSync(reaperPath, 'utf8'));
-            if (validLockOwner(gate) && gate.generation === reaperGeneration && gate.ownerId === this.ownerId) { unlinkSync(reaperPath); fsyncDirectory(this.root); }
-          } catch { /* replacement gate is not ours */ }
-        }
-      }
+    try { this._ensureRoot(); }
+    catch (error) {
+      if (error instanceof WorktreeCapacityError) throw error;
+      throw typed('worktree capacity root could not be confirmed', 'worktree_capacity_unavailable', error);
     }
-    let acquired;
-    try { acquired = JSON.parse(readFileSync(this.lockPath, 'utf8')); } catch { /* validated below */ }
-    if (!generation || !validLockOwner(acquired) || acquired.generation !== generation || acquired.ownerId !== this.ownerId) throw typed('worktree capacity reservation lock is unavailable', 'worktree_capacity_unavailable');
+    const generation = this._acquire();
     try { return fn(); }
     catch (error) {
       if (error instanceof WorktreeCapacityError) throw error;
       throw typed('worktree capacity state update failed', 'worktree_capacity_unavailable', error);
-    } finally {
-      try {
-        const observed = JSON.parse(readFileSync(this.lockPath, 'utf8'));
-        if (validLockOwner(observed) && observed.generation === generation && observed.ownerId === this.ownerId) { unlinkSync(this.lockPath); fsyncDirectory(this.root); }
-      } catch { /* a missing/replaced lock is never recursively removed */ }
+    } finally { this._removeOwner(this.lockPath, LOCK_LABEL, generation); }
+  }
+
+  // Every turn below returns, throws, or reaches `_waitSlice`, which refuses once the monotonic
+  // deadline passes — no observed state can make this loop unbounded.
+  _acquire() {
+    const deadline = performance.now() + this.lockWaitMs;
+    for (;;) {
+      const gate = this._observeOwner(this.reaperPath, REAPER_LABEL);
+      if (gate !== null && livePid(gate.pid)) {
+        // A reap is in flight and its tombstone rename may land on any lock published now.
+        this._waitSlice(deadline, `the live reaper (pid ${gate.pid}) still held the recovery gate`, { holderPid: gate.pid });
+        continue;
+      }
+      const generation = randomBytes(16).toString('hex');
+      if (this._publish(this.lockPath, generation) && this._confirmLock(generation)) return generation;
+      this._removeOwner(this.lockPath, LOCK_LABEL, generation); // no-op unless we published it
+      const observed = this._observeOwner(this.lockPath, LOCK_LABEL);
+      if (observed === null) {
+        this._waitSlice(deadline, 'the lock could not be published and confirmed', {});
+      } else if (livePid(observed.pid)) {
+        this._waitSlice(deadline, `the live holder (pid ${observed.pid}) still held it`, { holderPid: observed.pid });
+      } else if (gate !== null) {
+        // A dead lock under a dead gate is inert forever, and reclamation needs the gate.
+        this._waitSlice(deadline, `a dead reaper gate (pid ${gate.pid}) blocks reclamation of the dead holder (pid ${observed.pid})`, { gatePid: gate.pid });
+      } else if (!this._reap(observed)) {
+        this._waitSlice(deadline, `the dead holder (pid ${observed.pid}) could not be reclaimed`, {});
+      }
     }
+  }
+
+  // A published lock counts only once both facts are re-observed: the file still carries this
+  // exact generation, and no live reaper gate exists that could be about to tombstone it.
+  _confirmLock(generation) {
+    try {
+      const held = this._observeOwner(this.lockPath, LOCK_LABEL);
+      const gate = this._observeOwner(this.reaperPath, REAPER_LABEL);
+      return held !== null && held.generation === generation && held.ownerId === this.ownerId
+        && (gate === null || !livePid(gate.pid));
+    } catch (error) {
+      // A lock we cannot verify is not a lock we hold: never leave it published.
+      this._removeOwner(this.lockPath, LOCK_LABEL, generation);
+      throw error;
+    }
+  }
+
+  // Waits one poll slice, or refuses pre-effect once the monotonic deadline has passed.
+  _waitSlice(deadline, detail, extra) {
+    const remaining = deadline - performance.now();
+    if (remaining <= 0) {
+      throw Object.assign(typed(
+        `worktree capacity reservation lock is busy: ${detail} at the ${this.lockWaitMs}ms wait deadline; no capacity effect was applied`,
+        'worktree_capacity_unavailable',
+      ), { lockContention: true, ...extra });
+    }
+    waitForLockSlice(Math.min(LOCK_POLL_MS, remaining));
+  }
+
+  // Reaps one proved-dead generation and reports whether it made progress. The reaper gate is
+  // what makes this safe: only its holder may tombstone the lock, and the lock is re-read under
+  // the gate, so a live lock is never renamed away and a lock that changed under us is left for
+  // the next turn.
+  _reap(observed) {
+    const gateGeneration = randomBytes(16).toString('hex');
+    if (!this._publish(this.reaperPath, gateGeneration)) return false; // another reaper holds the gate
+    try {
+      const current = this._observeOwner(this.lockPath, LOCK_LABEL);
+      if (current === null || current.generation !== observed.generation
+        || current.ownerId !== observed.ownerId || livePid(current.pid)) return false;
+      const tombstone = `${this.lockPath}.stale-${gateGeneration}`;
+      try { renameSync(this.lockPath, tombstone); }
+      catch (error) {
+        if (error?.code !== 'ENOENT') throw typed('worktree capacity reservation lock recovery failed', 'worktree_capacity_unavailable', error);
+        return false;
+      }
+      fsyncDirectory(this.root);
+      rmSync(tombstone, { force: true });
+      fsyncDirectory(this.root);
+      return true;
+    } finally { this._removeOwner(this.reaperPath, REAPER_LABEL, gateGeneration); }
+  }
+
+  // Publishes one exact generation; an existing owner is never overwritten.
+  _publish(path, generation) {
+    try {
+      publishExclusive(this.root, path, { schemaVersion: 1, pid: process.pid, ownerId: this.ownerId, generation }, generation);
+      return true;
+    } catch (error) {
+      if (error?.code !== 'EEXIST') throw typed('worktree capacity reservation lock publication failed', 'worktree_capacity_unavailable', error);
+      return false;
+    }
+  }
+
+  _removeOwner(path, label, generation) {
+    try {
+      const observed = this._observeOwner(path, label);
+      if (observed !== null && observed.generation === generation && observed.ownerId === this.ownerId) {
+        unlinkSync(path);
+        fsyncDirectory(this.root);
+      }
+    } catch { /* a replaced or unreadable artifact is never recursively removed */ }
+  }
+
+  // null when the path holds nothing; a typed refusal when it holds anything this deployment did
+  // not publish — an ambiguous artifact is never adopted, waited on, or deleted.
+  _observeOwner(path, label) {
+    let stat;
+    try { stat = lstatSync(path); }
+    catch (error) {
+      if (error?.code === 'ENOENT') return null;
+      throw typed(`${label} could not be observed`, 'worktree_capacity_unavailable', error);
+    }
+    if (!stat.isFile() || stat.isSymbolicLink() || (stat.mode & 0o077) !== 0 || stat.size > 4096) {
+      throw typed(`${label} is not a bounded private regular file`, 'worktree_capacity_unavailable');
+    }
+    let raw;
+    try { raw = readFileSync(path, 'utf8'); }
+    catch (error) {
+      // The artifact can vanish between stat and read — a release, a reap, a publication race.
+      // That is the ordinary race this protocol absorbs: report absent (the caller retries),
+      // never corruption.
+      if (error?.code === 'ENOENT') return null;
+      throw typed(`${label} owner record is unreadable`, 'worktree_capacity_unavailable', error);
+    }
+    let owner;
+    try { owner = JSON.parse(raw); }
+    catch (cause) { throw typed(`${label} owner record is unreadable`, 'worktree_capacity_unavailable', cause); }
+    if (!validLockOwner(owner)) throw typed(`${label} owner record is not an exact deployment generation`, 'worktree_capacity_unavailable');
+    return owner;
   }
 
   reserve(id, request) {
@@ -544,16 +690,32 @@ export class WorktreeCapacityAuthority {
     return this._lock(() => {
       const state = this._read(); const removed = [];
       const adopted = [];
+      const retainedVerifiers = [];
+      // Ownership is exact identity (ownerId), never a shared pid: several deployments can live
+      // in one Node process, so a pid match settles nothing. Verifiers have no adoption protocol
+      // — a verification reservation belongs to the controller that minted it — so a verifier is
+      // settled only when this authority minted it or its owning process is proven gone; a LIVE
+      // FOREIGN controller's verifier is preserved byte-for-byte, because settling it strands
+      // that controller between reserve() and materialize(). The one exception is an explicit
+      // claim: adopting a foreign generation's active worker (below) declares that same-process
+      // generation superseded, so its same-process verifiers are settleable in this reconcile.
+      const superseded = new Set(state.reservations
+        .filter((row) => row.kind === 'worker' && active.has(row.id) && row.ownerId !== this.ownerId)
+        .map((row) => row.ownerId));
       state.reservations = state.reservations.filter((row) => {
-        if (row.kind === 'verify') { removed.push(row.id); return false; }
+        if (row.kind === 'verify') {
+          if (row.ownerId === this.ownerId || !livePid(row.pid)
+            || (row.pid === process.pid && superseded.has(row.ownerId))) {
+            removed.push(row.id); return false;
+          }
+          retainedVerifiers.push(row.id); return true;
+        }
         // A retained checkout whose physical-owner binding failed validation is not cleanup or
         // adoption authority. Preserve its reservation byte-for-byte for its owning controller.
-        if (row.kind === 'worker' && retained.has(row.id)) return true;
-        const ownedInactive = row.ownerId === this.ownerId && !active.has(row.id);
-        if (ownedInactive) { removed.push(row.id); return false; }
-        const deadForeignInactive = row.ownerId !== this.ownerId && !active.has(row.id) && !livePid(row.pid);
-        if (deadForeignInactive) { removed.push(row.id); return false; }
-        if (active.has(row.id) && row.kind === 'worker' && row.ownerId !== this.ownerId) {
+        if (retained.has(row.id)) return true;
+        if (row.ownerId === this.ownerId && !active.has(row.id)) { removed.push(row.id); return false; }
+        if (row.ownerId !== this.ownerId && !active.has(row.id) && !livePid(row.pid)) { removed.push(row.id); return false; }
+        if (active.has(row.id) && row.ownerId !== this.ownerId) {
           const next = Object.freeze({ ...row, ownerId: this.ownerId, nonce: randomBytes(16).toString('hex'), pid: process.pid });
           adopted.push(next); return false;
         }
@@ -561,7 +723,11 @@ export class WorktreeCapacityAuthority {
       });
       state.reservations.push(...adopted);
       if (removed.length > 0 || adopted.length > 0) this._write(state);
-      return Object.freeze({ removed: Object.freeze(removed), adopted: Object.freeze(adopted), active: Object.freeze(state.reservations.map((row) => row.id)) });
+      return Object.freeze({
+        removed: Object.freeze(removed), adopted: Object.freeze(adopted),
+        retainedVerifiers: Object.freeze(retainedVerifiers),
+        active: Object.freeze(state.reservations.map((row) => row.id)),
+      });
     });
   }
 
