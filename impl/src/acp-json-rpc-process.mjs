@@ -56,7 +56,11 @@ export class AcpJsonRpcProcess {
     this.onStopConfirmed = options.onStopConfirmed;
     this.deferStopConfirmation = options.deferStopConfirmation === true;
     this.processClose = null;
+    this.closeAttempt = null;
     this.closePromise = new Promise((resolve) => { this.resolveClose = resolve; });
+    // Resolves once the child-close fact is captured (never on an invented death). kill() awaits
+    // it with a bound so an unobservable exit stays unconfirmed instead of becoming a success.
+    this.closeObservedPromise = new Promise((resolve) => { this.resolveCloseObserved = resolve; });
   }
 
   start() {
@@ -86,23 +90,16 @@ export class AcpJsonRpcProcess {
   }
 
   /**
-   * #163 transport-recovery law: a request timeout NEVER kills the process. The per-attempt
-   * wait stays (it detects a lost frame), but a timeout now RETRIES with backoff while the
-   * process lives; only the process-exit fact (or a caller-explicit null timeout for
-   * turn-terminal requests) settles. The final ladder rung surfaces AcpSetupTimeoutError
-   * WITHOUT #fail — the caller decides; a live child is never killed by our patience.
+   * #163 transport-recovery law, tightened: a request timeout is an UNKNOWN outcome, not a
+   * licence to replay. `session/new` or `session/prompt` may already have landed provider-side
+   * with no idempotency authority, so a timed-out frame is NEVER re-issued — the caller decides
+   * whether an explicit retry is safe (a fresh call takes a fresh id). The timeout surfaces
+   * AcpSetupTimeoutError while the child stays live: no #fail, no signal, no ladder. Only the
+   * process-exit fact, or a caller-explicit null timeout for turn-terminal requests, settles.
    */
   request(method, params = {}, options = {}) {
     const timeoutMs = options.timeoutMs === null ? null : (options.timeoutMs ?? this.setupTimeoutMs);
-    if (timeoutMs === null) return this.#requestOnce(method, params, null);
-    const backoff = [250, 500, 1000, 2000, 4000, 8000, 15000, 30000];
-    const attempt = (n) => this.#requestOnce(method, params, timeoutMs).catch((error) => {
-      if (error instanceof AcpSetupTimeoutError && !this.closed && !this.failure && n < backoff.length - 1) {
-        return new Promise((resolve) => setTimeout(() => resolve(attempt(n + 1)), backoff[n]));
-      }
-      throw error;
-    });
-    return attempt(0);
+    return this.#requestOnce(method, params, timeoutMs);
   }
 
   #requestOnce(method, params, timeoutMs) {
@@ -113,7 +110,7 @@ export class AcpJsonRpcProcess {
         this.pending.delete(id);
         reject(new AcpSetupTimeoutError(method, timeoutMs));
       }, timeoutMs);
-      this.pending.set(id, { resolve, reject, timer, method });
+      this.pending.set(id, { resolve, reject, timer });
       this.#write({ jsonrpc: '2.0', id, method, params }).catch((error) => {
         const pending = this.pending.get(id);
         if (!pending) return;
@@ -126,33 +123,48 @@ export class AcpJsonRpcProcess {
 
   notify(method, params = {}) { return this.#write({ jsonrpc: '2.0', method, params }); }
 
+  /**
+   * Bounded owned cleanup, never a death claim. The signal and the stdio release are our own
+   * doing; the confirmed terminal is ProcessCloseReapLatch's, and only the exact close fact plus
+   * its observed-absent process group can produce it. An exit we cannot observe stays
+   * unconfirmed — a later explicit kill retries the retained latch.
+   */
   async kill(stopConfirmation = null) {
-    if (!this.child) return { confirmed: true, reason: null };
-    if (this.processClose?.confirmed) return { confirmed: true, reason: null, terminal: true };
+    if (!this.child) return Object.freeze({ confirmed: true, reason: null });
+    const latch = this.processClose;
+    if (latch?.confirmed) return Object.freeze({ confirmed: true, reason: null, terminal: true });
     if (!this.closed) {
-      try {
-        // Detached children: the group leader (child.pid) may exit first, making -pid a
-        // no-op on a reaped leader while DESCENDANTS hold the group and the runner's stdio.
-        // Reap the whole original process group by the ORIGINAL pgid, then the child itself.
-        const pgid = this.child?.pgid ?? this.child?.pid;
-        if (Number.isSafeInteger(pgid) && pgid > 0) { try { process.kill(-pgid, 'SIGKILL'); } catch { /* group absent */ } }
-        this.#signalGroup();
-      } catch { /* fallthrough — resolve below */ }
-      // Release stdio and resolve deterministically: never leave the caller (or node --test)
-      // hanging on a detached child whose 'close' never fires after group SIGKILL.
-      try { this.child?.kill?.('SIGKILL'); this.child?.stdin?.destroy?.(); this.child?.stdout?.destroy?.(); this.child?.stderr?.destroy?.(); } catch { /* already gone */ }
-      if (stopConfirmation && this.processClose) {
-        void this.processClose.authorizeStop(stopConfirmation.kind, stopConfirmation.payload);
-      }
-      this.closed = true;
-      const pid = this.child?.pid ?? null;
-      this.resolveClose(Object.freeze({ confirmed: true, reason: null, code: null, signal: 'SIGKILL', pid }));
-      return this.closePromise;
+      // Detached children: the group leader (child.pid) may exit first, making -pid a no-op on a
+      // reaped leader while DESCENDANTS hold the group and the runner's stdio. Reap the whole
+      // original process group by the ORIGINAL pgid, then the child itself. The stdio release
+      // follows so an orphaned descendant cannot hold node --test's handles open.
+      this.#signalOwnedGroup();
+      this.#releaseStdio();
     }
-    if (!this.processClose) return this.closePromise;
-    return stopConfirmation
-      ? this.processClose.authorizeStop(stopConfirmation.kind, stopConfirmation.payload)
-      : this.processClose.retry();
+    if (!latch) {
+      // No positive PID ⇒ no exact group ownership exists to observe. Never invent confirmation.
+      return Object.freeze({ confirmed: false, reason: 'invalid_group', code: null, signal: null, pid: this.child?.pid ?? null });
+    }
+    // Record stop authority BEFORE the exit lands so the latch can publish it on confirmation.
+    const stopAuthority = stopConfirmation
+      ? latch.authorizeStop(stopConfirmation.kind, stopConfirmation.payload)
+      : latch.retry();
+    if (this.closed) return stopAuthority;
+    const observed = await this.#boundedObservation(this.closeObservedPromise, this.reapTimeoutMs * 2);
+    // Unobserved exit: keep the retained latch for an explicit retry rather than publishing a
+    // success we did not witness.
+    if (observed !== true) return latch.retry();
+    const outcome = await this.closeAttempt;
+    // Confirmed: publish the exact close-derived terminal (code/signal/pid) the closePromise
+    // consumer sees. Unconfirmed: return the bounded reap's truthful refusal unchanged.
+    return outcome?.confirmed === true ? this.closePromise : outcome;
+  }
+
+  async #boundedObservation(promise, timeoutMs) {
+    let timer;
+    try {
+      return await Promise.race([promise, new Promise((resolve) => { timer = setTimeout(() => resolve(false), timeoutMs); })]);
+    } finally { clearTimeout(timer); }
   }
 
   #write(frame) {
@@ -209,7 +221,15 @@ export class AcpJsonRpcProcess {
       this.#fail(new AcpProtocolError('invalid ACP error response')); return;
     }
     const pending = this.pending.get(frame.id);
-    if (!pending) { this.#fail(new AcpProtocolError('uncorrelated ACP response')); return; }
+    if (!pending) {
+      // Ids are issued once and never reused, so a response for an id we already settled (at or
+      // below `sequence`) answers a request nobody awaits any more — typically one abandoned by
+      // a timeout whose effect is already an unknown outcome. It cannot be correlated to
+      // anything new, and failing the transport over it would kill productive work. Ids beyond
+      // `sequence` were never issued: that is a genuinely uncorrelated frame and stays fatal.
+      if (frame.id <= this.sequence) return;
+      this.#fail(new AcpProtocolError('uncorrelated ACP response')); return;
+    }
     this.pending.delete(frame.id);
     if (pending.timer) clearTimeout(pending.timer);
     if (frame.error !== undefined) {
@@ -258,15 +278,29 @@ export class AcpJsonRpcProcess {
     try { process.kill(-pid, 'SIGKILL'); } catch { try { this.child.kill('SIGKILL'); } catch {} }
   }
 
+  /** Signal the exact owned group first (pgid may lead the pid), then the child as fallback. */
+  #signalOwnedGroup() {
+    const pgid = this.child?.pgid ?? this.child?.pid;
+    if (Number.isSafeInteger(pgid) && pgid > 0) { try { process.kill(-pgid, 'SIGKILL'); } catch { /* group absent */ } }
+    this.#signalGroup();
+  }
+
+  /** Release the child's stdio pipes so a dying (or orphaned) provider cannot hold our handles. */
+  #releaseStdio() {
+    try {
+      this.child?.stdin?.destroy?.();
+      this.child?.stdout?.destroy?.();
+      this.child?.stderr?.destroy?.();
+    } catch { /* already closed */ }
+  }
+
   async #onClose(code, signal) {
     if (this.closed) return;
     // Issue ACP-hang: release the child's stdio pipes so node --test's runner sees no live
     // handle after a detached child is killed — otherwise the runner holds the open pipe
     // and never exits (the whole suite — and CI — stalls after the FIRST test in this file).
     // Detached children benefit from process-group reap, but their pipes must still be reaped.
-    try { this.child?.stdin?.destroy?.(); } catch { /* already closed */ }
-    try { this.child?.stdout?.destroy?.(); } catch { /* already closed */ }
-    try { this.child?.stderr?.destroy?.(); } catch { /* already closed */ }
+    this.#releaseStdio();
     if (!this.failure && this.buffer.trim()) this.failure = new AcpProtocolError('ACP process closed with a truncated frame');
     const pid = this.child?.pid;
     this.closed = true;
@@ -277,6 +311,7 @@ export class AcpJsonRpcProcess {
         this.pending.delete(id); if (pending.timer) clearTimeout(pending.timer); pending.reject(error);
       }
       this.resolveClose(Object.freeze({ confirmed: false, reason: 'invalid_group', code, signal, pid }));
+      this.resolveCloseObserved(false);
       return;
     }
     // closePromise is the ACP adapter's close-derived terminal boundary. Keep it pending across
@@ -285,6 +320,10 @@ export class AcpJsonRpcProcess {
     const closeAttempt = this.processClose.close(code, signal, this.processReady() === true, () => {
       this.resolveClose(Object.freeze({ confirmed: true, reason: null, code, signal, pid }));
     });
+    // Expose the exact attempt this close fact owns: kill() awaits it so its return value is the
+    // latch's truth, never a locally invented success.
+    this.closeAttempt = closeAttempt;
+    this.resolveCloseObserved(true);
     this.onProcessClosePending?.(this.processClose.closeFact);
     // Install the exact close latch before rejecting the unbounded prompt. Its adapter can now
     // identify that rejection as close-derived and retain the terminal until this attempt proves

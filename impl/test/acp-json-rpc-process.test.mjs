@@ -12,10 +12,17 @@ test('ACP core correlates concurrent responses by id', async () => {
   finally { await acp.kill(); }
 });
 
-test('ACP core bounds setup requests and fails the process closed', async () => {
+test('ACP core surfaces a setup timeout without closing the process', async () => {
   const acp = make();
-  try { await assert.rejects(acp.request('hang'), (error) => error.code === 'timeout'); }
-  finally { await acp.kill(); }
+  try {
+    await assert.rejects(acp.request('hang'),
+      (error) => error.code === 'timeout' && error.name === 'AcpSetupTimeoutError');
+    // A timeout is an unknown outcome, not a transport failure: the child stays live until the
+    // caller explicitly stops it.
+    assert.equal(acp.failure, null);
+    assert.equal(acp.closed, false);
+    assert.doesNotThrow(() => process.kill(acp.child.pid, 0));
+  } finally { await acp.kill(); }
   assert.equal((await acp.closePromise).confirmed, true);
 });
 
