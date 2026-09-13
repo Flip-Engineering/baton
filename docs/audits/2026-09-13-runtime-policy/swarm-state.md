@@ -4,7 +4,7 @@ Module: `impl/src/swarm-state.mjs`
 Tests: `impl/test/swarm-state.test.mjs`  
 Author: baton native worker (claude-sonnet-4-6)  
 Date: 2026-09-13  
-Test result: 74/74 pass, 0 fail, 0 cancelled
+Test result: 94/94 pass, 0 fail, 0 cancelled
 
 ## Purpose
 
@@ -263,8 +263,11 @@ shape only (no state access). Cross-swarm references fail naturally because the 
 checks only the addressed swarm's participants, groups, and work maps.
 
 **`context.body` and `contribution.body` accept any non-null value.** String bodies
-pass through unchanged. Object bodies are deep-cloned with `JSON.parse(JSON.stringify)`
-before freezing to prevent shared mutation.
+pass through unchanged. Object bodies are recursively deep-cloned with
+`deepFreezeBody` (uses `Object.fromEntries` so `__proto__` and other prototype-named
+keys are preserved as own data properties) before freezing to prevent shared mutation.
+`validateBody` is called first to refuse cycles, functions, non-finite numbers, and
+non-JSON instances (`Date`, `Map`, `Set`, `RegExp`).
 
 **`runId` and `permissions` on participants.** Root mints a stable `runId` and records
 the join event before dispatch so membership can be consulted without race. The fold
@@ -291,7 +294,7 @@ over the event sequence; order is the coordination log's guarantee.
 node --test impl/test/swarm-state.test.mjs
 ```
 
-Exit 0, 74 tests, 0 failures. Test coverage includes:
+Exit 0, 94 tests, 0 failures. Test coverage includes:
 - Evolving empty swarm / `readSwarm` / frozen rows
 - Duplicate creation and double-close rejection
 - Recruitment, regrouping, overlapping roles, overlapping group membership
@@ -311,3 +314,11 @@ Exit 0, 74 tests, 0 failures. Test coverage includes:
 - No arbitrary participant/contribution caps
 - Exported constants shape
 - Full lifecycle `swarmSnapshot` shape
+- **Nested mutation resistance**: body mutated after fold does not affect stored state
+- **`__proto__` own-key roundtrip**: JSON body with `__proto__` key stored and retrieved as own property; stored object prototype unchanged
+- **Prototype-named participant ids**: `__proto__` and `constructor` as participantIds handled safely with null-prototype dicts
+- **Admission/replay parity**: shapes rejected by `validateSwarmEvent` carry the same error code when rejected by `foldSwarmEvent`
+- **CAS with `expectedVersion: 0`**: create-if-absent semantics work; conflict detected on existing row
+- **Group context isolation**: same named key in two group scopes and global scope are three independent entries
+- **Reviewer referential validity**: `reviewerId` must be a known participant; anonymous (omitted) reviews accepted
+- **Body validation**: cycles, functions, `NaN`, `Infinity`, `Date`, `Map`, `Set` all refused; plain nested JSON accepted
