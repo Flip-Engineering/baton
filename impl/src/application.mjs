@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { wrapProse } from './messages.mjs';
 import { FRAME_LIMITS, FRAME_LIMITS_VERSION, FRAME_LIMITS_DIGEST, composeFrameLimitRefusal, frameLimitRefusalPath, COORDINATOR_AUTHORITY_FORBIDDEN, COORDINATOR_AUTHORITY_GRACEFUL_PATH } from './limits.mjs';
 import {
@@ -3219,7 +3220,7 @@ export class BatonApplication {
   }
 
   async _authorize(command, principal, runId, subject = {}) {
-    const allowed = await (this._authorizeOverride ?? this.authorize)(deepFreeze({
+    const allowed = await (this._authorizationScope?.getStore() ?? this.authorize)(deepFreeze({
       command,
       principal: clone(principal),
       repoId: this.repoId,
@@ -12841,13 +12842,9 @@ export class BatonApplication {
     normalizePrincipal(rawPrincipal, 'command principal');
     const override = rawOptions && typeof rawOptions.authorize === 'function' ? rawOptions.authorize : null;
     if (!override) return this._commandDispatch(name, args, rawPrincipal, rawContext);
-    const previous = this._authorizeOverride;
-    this._authorizeOverride = override;
-    try {
-      return await this._commandDispatch(name, args, rawPrincipal, rawContext);
-    } finally {
-      this._authorizeOverride = previous;
-    }
+    this._authorizationScope ??= new AsyncLocalStorage();
+    return this._authorizationScope.run(override,
+      () => this._commandDispatch(name, args, rawPrincipal, rawContext));
   }
 
   async _commandDispatch(name, args, rawPrincipal, rawContext = null) {
