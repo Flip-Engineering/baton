@@ -101,7 +101,10 @@ function authorityRoot(repoRoot, name, { create = false } = {}) {
   for (const path of [baton, root]) {
     if (!existsSync(path)) {
       if (!create) return null;
-      mkdirSync(path, { mode: 0o700 });
+      try { mkdirSync(path, { mode: 0o700 }); }
+      catch (error) { if (error?.code !== 'EEXIST') throw error; }
+      // Another controller may win creation. The same confinement checks below apply to
+      // its result; EEXIST is neither a failure by itself nor proof of a safe directory.
     }
     const stat = lstatSync(path);
     if (!stat.isDirectory() || stat.isSymbolicLink()) throw new WorktreeCleanupError(`${name} root is not a confined directory`);

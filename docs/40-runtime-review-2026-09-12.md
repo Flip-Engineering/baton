@@ -66,6 +66,17 @@ Runtime credential isolation also changes HOME/config locations; therefore prese
 native customization requires explicit support, rather than assuming that starting the executable
 preserves its normal skills/plugins/settings. Do not copy an entire credential home as a substitute.
 
+**OMP identity and usage.** The current adapter still ignores native assistant `message_end`
+usage and identity. Installed 17.4.0 source carries `provider`, `model`, `usage.totalTokens` and
+`usage.cost.total` on those messages; its `agent_end` aggregate telemetry is optional. Baton
+currently relies on that optional aggregate and does not normalize every dimension into the
+coordinator's token/USD fields. During the observer self-build, real tool activity was visible
+while the route projection still said provider identity pending. Do not infer zero spend or
+observed model identity from this omission. A follow-up must map native usage once, avoid double
+counting aggregates/replay, distinguish configured from observed model/effort, and remove the
+card's unsupported claim of tool-allowlist enforcement. This is an adapter gap, not a reason to
+disable native tools or subagents.
+
 **Native subagents.** Baton currently has more evidence for the adapter's main process than for
 the harness's delegated participants. Native delegation should remain available, with clear
 statements about what Baton can observe, steer, budget and close. A capability card must not claim
@@ -112,7 +123,9 @@ error. The follow-up removes that unscoped cleanup for verification and integrat
 explicit owner cleanup remains, and unattributed candidates are retained with diagnostics. Four
 new behavioral checks include a real verifier process reading its cwd after reconciliation; the
 combined worktree/integration/ownership checks pass 71/71. Durable auxiliary-operation ownership
-and process-closure evidence are still required for automatic orphan reclamation. Preservation
+and process-closure evidence are still required for automatic orphan reclamation. A further creation-race fix tolerates another controller creating
+the same authority directory, then validates that directory; a symlink still refuses before Git
+effects. All 41 auxiliary/worktree checks pass after that change. Preservation
 can therefore retain abandoned disk contents; it does not claim that those resources were closed.
 These are tracked gaps, not claims of complete dynamic-swarm support.
 

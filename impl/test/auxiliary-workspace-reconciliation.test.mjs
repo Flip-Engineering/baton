@@ -1,4 +1,6 @@
 import test from 'node:test';
+import fs from 'node:fs';
+import { syncBuiltinESMExports } from 'node:module';
 import assert from 'node:assert/strict';
 import { execFileSync, spawn } from 'node:child_process';
 import { once } from 'node:events';
@@ -81,3 +83,39 @@ test('retention never follows an unsafe auxiliary directory symlink', (t) => {
   assert.equal(readFileSync(join(outside, 'precious.txt'), 'utf8'), 'untouched');
   assert.deepEqual(report.removedVerifyDirs, []);
 });
+
+for (const unsafe of [false, true]) {
+  test(`concurrent auxiliary-root creation validates the winner (${unsafe ? 'symlink refused' : 'directory accepted'})`, async (t) => {
+    const { root, sha, cleanup } = fixture(t);
+    const verify = join(root, '.baton', 'verify');
+    const outside = join(root, 'outside'); mkdirSync(outside);
+    writeFileSync(join(outside, 'sentinel'), 'untouched');
+    const original = fs.mkdirSync;
+    let raced = false;
+    fs.mkdirSync = (path, options) => {
+      if (path === verify && !raced) {
+        raced = true;
+        if (unsafe) symlinkSync(outside, verify);
+        else original(path, options);
+        throw Object.assign(new Error('another creator won'), { code: 'EEXIST' });
+      }
+      return original(path, options);
+    };
+    syncBuiltinESMExports();
+    try {
+      if (unsafe) {
+        await assert.rejects(freshVerifySandbox(root, 'race', sha), /not a confined directory/);
+        assert.equal(readFileSync(join(outside, 'sentinel'), 'utf8'), 'untouched');
+        assert.equal(listWorktrees(root).length, 0);
+      } else {
+        const sandbox = await freshVerifySandbox(root, 'race', sha);
+        cleanup(() => sandbox.cleanup());
+        assert.equal(readFileSync(join(sandbox.dir, 'input.txt'), 'utf8'), 'verification input\n');
+      }
+      assert.equal(raced, true);
+    } finally {
+      fs.mkdirSync = original;
+      syncBuiltinESMExports();
+    }
+  });
+}
