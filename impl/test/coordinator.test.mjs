@@ -368,29 +368,35 @@ test('active worktree authority loss fails and kills before accepting more worke
   assert.equal(adapters.mock.calls.kill.length, 1);
 });
 
-test('a THROWING worktree-availability read never kills outright — unknown defers; a persistent unknown streak fails (the reap-murder law)', async () => {
+test('unavailable worktree observations remain unknown across repeated sweeps and recover without stopping the worker', async () => {
   const { coordinator, adapters, worktrees, log } = setup();
   const handle = await coordinator.spawn('mock', makeBrief());
-  worktrees.worktreeAvailable = () => { throw new Error('transient fs race'); };
+  const available = worktrees.worktreeAvailable.bind(worktrees);
+  const unknownReads = [() => { throw new Error('unreadable filesystem'); }, () => null, () => undefined];
+  for (const read of unknownReads) {
+    worktrees.worktreeAvailable = read;
+    for (let observation = 0; observation < 8; observation += 1) {
+      coordinator.tick();
+      await Promise.resolve();
+    }
+    assert.equal(log.read(handle.id).some((event) => event.kind === 'worktree.authority_lost'), false);
+    assert.equal(adapters.mock.calls.kill.length, 0, 'repetition cannot prove authority loss');
+    const current = coordinator.list().find((worker) => worker.id === handle.id);
+    assert.equal(current.status, 'working');
+    assert.equal(current.worktreeObservation.state, 'unknown');
+  }
 
+  worktrees.worktreeAvailable = available;
   coordinator.tick();
-  await Promise.resolve();
-  await Promise.resolve();
-  assert.equal(log.read(handle.id).filter((event) => event.kind === 'worktree.authority_lost').length, 0,
-    'one errored availability read is UNKNOWN — never fatal on its own');
+  assert.equal(coordinator.list().find((worker) => worker.id === handle.id).worktreeObservation.state, 'available');
   assert.equal(adapters.mock.calls.kill.length, 0);
 
+  worktrees.available = false;
   coordinator.tick();
   await Promise.resolve();
   await Promise.resolve();
-  assert.equal(adapters.mock.calls.kill.length, 0, 'two consecutive unknown reads still defer');
-
-  coordinator.tick();
-  await Promise.resolve();
-  await Promise.resolve();
-  assert.equal(log.read(handle.id).filter((event) => event.kind === 'worktree.authority_lost').length, 1,
-    'a persistent unknown streak (3 sweeps, the evidence-count confirmation) fails the member');
-  assert.equal(adapters.mock.calls.kill.length, 1);
+  assert.equal(adapters.mock.calls.kill.length, 1, 'positive absence still stops the worker');
+  assert.equal(log.read(handle.id).filter((event) => event.kind === 'worktree.authority_lost').length, 1);
 });
 
 test('active worktree authority loss escalates an in-flight soft interrupt to one exact kill', async () => {

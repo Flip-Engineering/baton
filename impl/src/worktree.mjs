@@ -353,9 +353,7 @@ function validateWorkspaceOwnerReceipt(value, repoRoot, expectedOwnerId = null) 
 }
 
 function readWorkspaceOwnerReceipt(repoRoot, physicalOwnerId) {
-  let f;
-  try { f = workspaceOwnerReceiptPath(repoRoot, physicalOwnerId); } catch { return null; }
-  if (!existsSync(f)) return null;
+  const f = workspaceOwnerReceiptPath(repoRoot, physicalOwnerId);
   try {
     const stat = lstatSync(f);
     if (!stat.isFile() || stat.isSymbolicLink() || (stat.mode & 0o077) !== 0 || stat.size > 64 * 1024) {
@@ -363,6 +361,7 @@ function readWorkspaceOwnerReceipt(repoRoot, physicalOwnerId) {
     }
     return validateWorkspaceOwnerReceipt(JSON.parse(readFileSync(f, 'utf8')), repoRoot, physicalOwnerId);
   } catch (error) {
+    if (error?.code === 'ENOENT') return null;
     if (error instanceof WorkspaceOwnerDiagnostic) throw error;
     throw Object.assign(new WorkspaceOwnerDiagnostic('physical workspace owner receipt is unreadable', 'workspace_owner_receipt_invalid'), { cause: error });
   }

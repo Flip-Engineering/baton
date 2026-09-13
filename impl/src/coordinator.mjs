@@ -2793,19 +2793,11 @@ export class Coordinator {
     const now = this._now();
     for (const handle of this._workers.values()) {
       if (['working', 'blocked', 'idle', 'stopping'].includes(handle.status)) {
-        // 2026-08-14: the availability read is tri-state — a positive FALSE kills at once; an
-        // errored read (null) is UNKNOWN and only a persistent unknown streak (the evidence-
-        // count confirmation, never a clock) is fatal. A transient fs hiccup racing the check
-        // must never murder a live member (the reap-murder class, 7 members in one sweep).
+        // Only observed authority loss permits this stop. Repeated unavailable observations
+        // remain unknown; polling frequency cannot turn an I/O error into proof of loss.
         const availability = this._worktreeAuthorityAvailable(handle);
         if (availability === false) {
-          handle.worktreeAvailabilityUnknownPolls = 0;
           this._failWorktreeAuthority(handle);
-        } else if (availability === null) {
-          const streak = (handle.worktreeAvailabilityUnknownPolls = (handle.worktreeAvailabilityUnknownPolls ?? 0) + 1);
-          if (streak >= 3) this._failWorktreeAuthority(handle);
-        } else {
-          handle.worktreeAvailabilityUnknownPolls = 0;
         }
       }
     }
@@ -3151,16 +3143,21 @@ export class Coordinator {
     if (!handle || handle.ownedWorktreeAuthority !== true || !handle.worktree
       || typeof this._worktrees?.worktreeAvailable !== 'function') return true;
     if (handle.worktreeAuthorityLost === true) return false;
+    let observed = null;
     try {
       const logicalOwner = validWorkspaceOwnerBoundPayload(handle.workspaceOwnerBinding)
         ? handle.workspaceOwnerBinding.logicalTaskId : handle.taskId;
-      return this._worktrees.worktreeAvailable(logicalOwner, handle.sessionContext) === true;
+      const value = this._worktrees.worktreeAvailable(logicalOwner, handle.sessionContext);
+      observed = value === true ? true : value === false ? false : null;
     } catch {
-      // 2026-08-14 (the reap-murder lesson): an errored availability read is UNKNOWN, never
-      // fatal on its own — a transient fs/git hiccup racing this check must not murder a live
-      // member. The sweep kills on a positive false, or on a persistent unknown streak only.
-      return null;
+      // Failed observation preserves the existing worker and its ownership. Operations that
+      // require positive checkout authority still perform their own checks before effects.
     }
+    handle.worktreeObservation = {
+      state: observed === true ? 'available' : observed === false ? 'unavailable' : 'unknown',
+      observedAt: this._now(),
+    };
+    return observed;
   }
 
   _restoreRecoveredPhysicalWorkspaceAuthority(handle, context, opts = {}) {
@@ -7013,6 +7010,7 @@ export class Coordinator {
       taskId: handle.taskId,
       runId: this._tasks.get(handle.taskId)?.runId ?? handle.runId ?? null,
       worktree: handle.worktree,
+      ...(handle.worktreeObservation ? { worktreeObservation: { ...handle.worktreeObservation } } : {}),
       fence,
       turnEpoch,
       status: handle.recoveryPending === true && opts.exposeRecovery !== true ? 'orphaned' : handle.status,

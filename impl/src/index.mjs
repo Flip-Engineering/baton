@@ -672,7 +672,9 @@ function worktreeManager(repoRoot, opts = {}) {
         if (!context || typeof context.ownerTaskId !== 'string' || typeof context.worktree !== 'string') {
           return false;
         }
-        const physicalOwnerId = worktreeMod.normalizePhysicalOwnerId(context.ownerTaskId, 'physical workspace owner');
+        let physicalOwnerId;
+        try { physicalOwnerId = worktreeMod.normalizePhysicalOwnerId(context.ownerTaskId, 'physical workspace owner'); }
+        catch { return false; }
         const receipt = worktreeMod.physicalWorkspaceOwnerReceipt(repoRoot, physicalOwnerId);
         if (/^ws-[a-f0-9]{32}$/u.test(physicalOwnerId)
           && (!receipt || receipt.logicalTaskId !== taskId || receipt.state !== 'ready'
@@ -681,12 +683,20 @@ function worktreeManager(repoRoot, opts = {}) {
             || realpathSync(context.worktree) !== realpathSync(receipt.worktree))) return false;
         if (receipt && receipt.logicalTaskId !== taskId) return false;
         const expected = resolve(realpathSync(repoRoot), '.baton', 'wt', physicalOwnerId);
-        if (!existsSync(context.worktree) || realpathSync(context.worktree) !== expected
-          || !existsSync(expected) || !existsSync(`${expected}.meta.json`)) return false;
+        if (realpathSync(context.worktree) !== expected) return false;
+        // existsSync also returns false when the filesystem cannot be read. Use observations
+        // whose errors remain distinguishable from an actually absent checkout or receipt.
+        lstatSync(`${expected}.meta.json`);
         const stat = lstatSync(expected);
         return stat.isDirectory() && !stat.isSymbolicLink()
           && realpathSync(expected) === expected;
-      } catch { return false; }
+      } catch (error) {
+        const cause = error?.cause ?? error;
+        if (['ENOENT', 'ENOTDIR'].includes(cause?.code)) return false;
+        if (cause instanceof SyntaxError) return false;
+        if (error instanceof worktreeMod.WorkspaceOwnerDiagnostic && !error.cause) return false;
+        return null;
+      }
     },
     async capture(worktreePath, captureOpts = {}) {
       if (typeof captureOpts.ownerTaskId !== 'string') throw new TypeError('capture requires an explicit physical worktree owner');
