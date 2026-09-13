@@ -41,6 +41,10 @@ whole-wave requirements do not describe the revised design. Implementation remai
   Isolated original revision: 4,445 tests, 3,746 pass, 508 fail, 191 cancelled. These are failure
   inventories, not a passing release gate. [Review and remaining gaps](40-runtime-review-2026-09-12.md).
   Dynamic membership, shared group workspaces and broader dependencies remain open design work.
+- Generic repository reconciliation no longer deletes verification or integration workspaces
+  without their operation's cleanup authority. A minimal reproduction demonstrated deletion of a
+  live verifier cwd before the repair; all 71 worktree/integration/ownership checks now pass.
+  Unknown ownership is retained and reported; automatic auxiliary orphan recovery remains open.
 - Remote: [draft PR #256](https://github.com/Flip-Engineering/baton/pull/256) is published. Hosted CI
   now acquires a runner, installs dependencies and executes the suite. Completion is pending at this
   checkpoint; the branch is not merged and no CI success or release readiness is inferred.

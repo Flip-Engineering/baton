@@ -106,8 +106,15 @@ contested fallback-pin attribution in order; authoritative result reads remain c
 status request can still delay a complete snapshot, and settle's budget does not bound every pending
 read or cancel its drive pumps. `pumpDrained` reports that uncertainty; this needs an abortable
 observer design, separate from worker lifetime. Concurrent deployment startup also reproduced a
-worktree-reconciliation refusal; separate deployment roots alone do not solve shared repository
-ownership. These are tracked gaps, not claims of complete dynamic-swarm support.
+worktree-reconciliation refusal; its original cause remains unconfirmed. A separate minimal
+reproduction proved that generic reconciliation deleted a live verification sandbox without an
+error. The follow-up removes that unscoped cleanup for verification and integration directories:
+explicit owner cleanup remains, and unattributed candidates are retained with diagnostics. Four
+new behavioral checks include a real verifier process reading its cwd after reconciliation; the
+combined worktree/integration/ownership checks pass 71/71. Durable auxiliary-operation ownership
+and process-closure evidence are still required for automatic orphan reclamation. Preservation
+can therefore retain abandoned disk contents; it does not claim that those resources were closed.
+These are tracked gaps, not claims of complete dynamic-swarm support.
 
 The remote tracker already names related gaps: [mutable groups #162](https://github.com/Flip-Engineering/baton/issues/162),
 [worker message initiation #206](https://github.com/Flip-Engineering/baton/issues/206),

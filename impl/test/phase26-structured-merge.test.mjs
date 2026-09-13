@@ -228,7 +228,7 @@ test('SM7/SM8: a post-fast-forward validation failure poisons instead of recordi
   assert.equal((await replay.coordinator.result(handle.id)).integration, null);
 });
 
-test('SM9: restart reconciliation reaps an orphan structured stage', async () => {
+test('SM9: reconciliation preserves an integration stage until its owner explicitly cleans it', async () => {
   const root = repo();
   const resolver = { maxFileBytes: 4096, identity: () => ({ tool: 'fake-mergiraf' }), resolve: async ({ absolutePath }) => { writeFileSync(absolutePath, 'export const values = { alpha: 2, beta: 3 };\n'); return { status: 'resolved' }; } };
   const { coordinator, handle } = await accepted(root, 'sm-orphan', 'export const values = { alpha: 2 };\n', resolver);
@@ -237,5 +237,10 @@ test('SM9: restart reconciliation reaps an orphan structured stage', async () =>
   const stage = await coordinator._worktrees.stageStructuredIntegration(handle.taskId, capturedSha);
   assert.equal(existsSync(stage.stagePath), true);
   const report = await coordinator._worktrees.reconcile();
-  assert.equal(report.removedIntegrationDirs.includes(stage.stagePath), true); assert.equal(existsSync(stage.stagePath), false); assert.equal(existsSync(join(root, '.baton', 'integrate')), false);
+  assert.deepEqual(report.removedIntegrationDirs, []);
+  assert.deepEqual(report.errors, []);
+  assert.equal(existsSync(stage.stagePath), true);
+  assert.ok(report.diagnostics.some((row) => row.kind === 'integrate' && row.path === stage.stagePath && row.retained));
+  await coordinator._worktrees.removeStructuredIntegration(stage);
+  assert.equal(existsSync(stage.stagePath), false);
 });

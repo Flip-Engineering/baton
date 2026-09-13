@@ -1563,27 +1563,39 @@ export function reconcile(repoRoot, expectedActiveTaskIds = [], opts = {}) {
   let registrationsBeforePrune = [];
   try { registrationsBeforePrune = listWorktrees(repoRoot); }
   catch (err) { report.errors.push(`registration-scan: ${err.message || err}`); }
-  // Structured integration is never resumed after coordinator restart: without an in-memory
-  // operation holding the freshly observed verification verdict, a candidate is evidence only.
-  // Reap every detached stage and require a new attempt to reconstruct and reverify it.
-  let mergeRoot = null;
-  try { mergeRoot = authorityRoot(repoRoot, 'integrate', { create: false }); }
-  catch (err) { report.errors.push(`integrate-root: ${err.message || err}`); }
-  if (mergeRoot) {
-    for (const entry of readdirSync(mergeRoot)) {
-      const fullDir = join(mergeRoot, entry);
-      let isDir = false; try { isDir = lstatSync(fullDir).isDirectory() && !lstatSync(fullDir).isSymbolicLink(); } catch { continue; }
-      if (!isDir) continue;
-      try {
-        authorityChild(repoRoot, 'integrate', entry, { kind: 'directory', mustExist: true });
-        try { sh('git', ['worktree', 'remove', '--force', fullDir], repoRoot); }
-        catch { rmSync(fullDir, { recursive: true, force: true }); }
-        removeExactWorktreeRegistration(repoRoot, fullDir);
-        report.removedIntegrationDirs.push(fullDir);
-        logEvent(opts, entry, 'worktree.integration_reconciled', { dir: fullDir });
-      } catch (err) { report.errors.push(`${entry}: ${err.message || err}`); }
+  // A shared repository is not an exclusive controller namespace. Verification and
+  // integration handles own their explicit cleanup; directory placement alone proves neither
+  // abandonment nor process closure. Until these operations carry durable ownership/closure
+  // receipts, retain their workspaces and report the uncertainty. Starting or draining another
+  // controller must never delete a verifier's cwd or an integration candidate still in use.
+  const retainedSandboxes = new Set();
+  function retainSandbox(path, kind) {
+    const absolute = pathResolve(path);
+    if (retainedSandboxes.has(absolute)) return;
+    retainedSandboxes.add(absolute);
+    report.diagnostics.push(Object.freeze({
+      code: 'workspace_auxiliary_owner_unproven', path, kind,
+      authority: 'unproven', retained: true,
+    }));
+  }
+  for (const kind of ['integrate', 'verify']) {
+    try {
+      const root = authorityRoot(repoRoot, kind, { create: false });
+      if (!root) continue;
+      for (const entry of readdirSync(root)) {
+        try {
+          const path = authorityChild(repoRoot, kind, entry, { kind: 'directory', mustExist: true });
+          retainSandbox(path, kind);
+        } catch (error) {
+          // The owning operation may have completed cleanup since this snapshot began.
+          try { lstatSync(join(root, entry)); }
+          catch (observed) { if (observed?.code === 'ENOENT') continue; }
+          report.errors.push(`${kind}/${entry}: ${error.message || error}`);
+        }
+      }
+    } catch (error) {
+      if (error?.code !== 'ENOENT') report.errors.push(`${kind}-root: ${error.message || error}`);
     }
-    try { if (readdirSync(mergeRoot).length === 0) rmSync(mergeRoot, { recursive: true, force: true }); } catch (err) { report.errors.push(`integration-root: ${err.message || err}`); }
   }
 
   const expected = new Set(expectedActiveTaskIds);
@@ -1918,25 +1930,6 @@ export function reconcile(repoRoot, expectedActiveTaskIds = [], opts = {}) {
     retainExpected(physicalOwnerId);
   }
 
-  // Verification sandboxes are never resumable. A crash can occur between sandbox creation and
-  // its in-memory finally block, so restart reconciliation owns every abandoned directory.
-  let verifyRoot = null;
-  try { verifyRoot = authorityRoot(repoRoot, 'verify', { create: false }); }
-  catch (err) { report.errors.push(`verify-root: ${err.message || err}`); }
-  if (verifyRoot) {
-    for (const entry of readdirSync(verifyRoot)) {
-      const fullDir = join(verifyRoot, entry);
-      try {
-        authorityChild(repoRoot, 'verify', entry, { kind: 'directory', mustExist: true });
-        try { sh('git', ['worktree', 'remove', '--force', fullDir], repoRoot); }
-        catch { rmSync(fullDir, { recursive: true, force: true }); }
-        removeExactWorktreeRegistration(repoRoot, fullDir);
-        if (existsSync(fullDir)) throw new WorktreeCleanupError('verification sandbox remained after cleanup');
-        report.removedVerifyDirs.push(fullDir);
-      } catch (err) { report.errors.push(`${entry}: ${err.message || err}`); }
-    }
-    try { if (readdirSync(verifyRoot).length === 0) rmSync(verifyRoot, { recursive: true, force: true }); } catch (err) { report.errors.push(`verify-root: ${err.message || err}`); }
-  }
   try {
     const registered = listWorktrees(repoRoot);
     const retainedOwners = new Set(report.diagnostics.filter((row) => row.retained === true)
@@ -1947,7 +1940,9 @@ export function reconcile(repoRoot, expectedActiveTaskIds = [], opts = {}) {
     for (const entry of registered) {
       const absolute = pathResolve(entry.dir);
       if (absolute.startsWith(verifyPrefix) || absolute.startsWith(integrationPrefix)) {
-        report.errors.push(`registered-owned-sandbox:${basename(absolute)}`);
+        // A registered path may not yet exist (allocation in progress), or may already have
+        // been removed by its cleanup owner. Registration is not orphan/cleanup authority.
+        retainSandbox(entry.dir, absolute.startsWith(verifyPrefix) ? 'verify' : 'integrate');
         continue;
       }
       const withinWorkers = pathRelative(workerRoot, absolute);
