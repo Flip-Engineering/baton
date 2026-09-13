@@ -59,9 +59,14 @@ export const SWARM_COMMAND_DEFINITIONS = Object.freeze({
   }),
   // `options` is the Run start selection ({exact:{harness,model,effort}, scope, profile}) the
   // runtime resolves into a native Run identity it admits and starts under the caller authority;
-  // `permissions` is the requested participant grant set, validated by root.
+  // `permissions` is the requested participant grant set, validated by root. `shareWorkspaceWith`
+  // names an existing participant whose live checkout this participant deliberately works in:
+  // the swarm resolves the target's current holder under its own authority and admits a fresh
+  // native session in that checkout. The caller names a participant, never an internal
+  // workspace id, and the two axes stay independent — adoption is not a native-session resume.
   'swarm.recruit': Object.freeze({
-    args: Object.freeze(['swarmId', 'participantId', 'objective', 'options', 'permissions', 'idempotencyKey']),
+    args: Object.freeze(['swarmId', 'participantId', 'objective', 'options', 'permissions',
+      'shareWorkspaceWith', 'idempotencyKey']),
     capabilities: Object.freeze(['control', 'observe']),
     web: true, mcp: true, mcpStateful: true, reconcilable: true,
   }),
@@ -155,6 +160,7 @@ const SWARM_FIELD_RULES = Object.freeze({
   contributionId: Object.freeze({ check: isId, expectation: 'a contribution identity' }),
   checkId: Object.freeze({ check: isId, expectation: 'a check identity' }),
   objective: Object.freeze({ check: isText, expectation: 'non-empty text' }),
+  shareWorkspaceWith: Object.freeze({ check: isId, expectation: 'a participant identity' }),
   message: Object.freeze({ check: isText, expectation: 'non-empty text' }),
   reason: Object.freeze({ check: isText, expectation: 'non-empty text' }),
   payload: Object.freeze({ check: isBody, expectation: 'a JSON object or a non-empty text body' }),
@@ -189,7 +195,7 @@ const SWARM_COMMAND_ARGUMENTS = Object.freeze({
   }),
   'swarm.recruit': Object.freeze({
     required: Object.freeze(['swarmId', 'participantId', 'objective', 'idempotencyKey']),
-    optional: Object.freeze(['options', 'permissions']),
+    optional: Object.freeze(['options', 'permissions', 'shareWorkspaceWith']),
   }),
   'swarm.guide': Object.freeze({
     required: Object.freeze(['swarmId', 'participantId', 'message', 'idempotencyKey']),
@@ -352,11 +358,12 @@ export const SWARM_COMMAND_ROWS = Object.freeze([
   }),
   Object.freeze({
     command: 'swarm.recruit',
-    description: 'Recruit one participant into the swarm; the runtime resolves and starts the native Run under the requested selection.',
+    description: 'Recruit one participant into the swarm; the runtime resolves and starts the native Run under the requested selection. shareWorkspaceWith names an existing participant whose live checkout the new participant works in.',
     readOnlyHint: false, destructiveHint: false,
     properties: Object.freeze({
       swarmId: ID_SCHEMA, participantId: ID_SCHEMA, objective: TEXT_SCHEMA,
       options: JSON_OBJECT_SCHEMA, permissions: Object.freeze({ type: 'array', items: Object.freeze({ type: 'string', minLength: 1 }) }),
+      shareWorkspaceWith: ID_SCHEMA,
     }),
     required: Object.freeze(['swarmId', 'participantId', 'objective']),
   }),

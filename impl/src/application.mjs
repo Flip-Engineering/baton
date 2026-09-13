@@ -2594,6 +2594,11 @@ export class BatonApplication {
     this._runEffectChains = new Map();
     this._runDeliveryRegistrations = new Map();
     this._semanticReviewPromises = new Map();
+    // Deliberate shared checkouts, per recruited Run: the swarm resolved a participant's LIVE
+    // attachment before admission, and the dispatch of that Run's single work node adopts the
+    // same checkout with a FRESH native session. Deployment-local by construction — it is the
+    // admission of one already-started Run, never durable Run intent.
+    this._workspaceAttachments = new Map();
     this._scratchpadViewCache = new Map();
     this._followControllers = new Set();
     this.ready = Promise.resolve().then(() => this._reconcileProfileRegistry())
@@ -3265,6 +3270,9 @@ export class BatonApplication {
         const applicationContext = context?.applicationContext ?? null;
         const delegated = context?.runId || principal.principalId.startsWith('worker:');
         const starter = applicationContext || !delegated ? principal : this.principals.dispatcher;
+        // The swarm resolved a live shared checkout for this Run before membership was written;
+        // admission here only refuses a shape this deployment cannot honor.
+        if (request.workspace) this._admitWorkspaceAttachment(request.runId, request.workspace);
         await this.start(prepareRunStart(objective, { ...request.options, runId: request.runId }), starter, applicationContext);
         const current = this._findRun(request.runId);
         if (!current.plan) throw applicationError('Participant planning has not completed', 'application_run_incomplete');
@@ -3275,6 +3283,28 @@ export class BatonApplication {
       stopRun: (runId, reason) => this.stop(runId, reason, this.principals.dispatcher),
     });
     return this._swarmService;
+  }
+
+  /** Admit one deliberate shared-checkout attachment for a recruited Run, or refuse its shape.
+   * The attachment is a live observation the swarm already resolved (which checkout, whose native
+   * session handed it over, and how many holders were in it) — never caller-supplied coordinates. */
+  _admitWorkspaceAttachment(runId, workspace) {
+    const fields = ['holderCount', 'sessionContext', 'workspaceId'];
+    if (!workspace || typeof workspace !== 'object' || Array.isArray(workspace)
+      || Object.keys(workspace).sort().join(',') !== fields.sort().join(',')
+      || !/^ws-[a-f0-9]{32}$/u.test(workspace.workspaceId ?? '')
+      || !Number.isSafeInteger(workspace.holderCount) || workspace.holderCount < 1
+      || !workspace.sessionContext || typeof workspace.sessionContext !== 'object'
+      || Array.isArray(workspace.sessionContext)
+      || workspace.sessionContext.ownerTaskId !== workspace.workspaceId) {
+      throw applicationError('shared workspace attachment is invalid', 'application_workspace_attachment_invalid');
+    }
+    if (this._workspaceAttachments.has(runId)) {
+      throw applicationError('this Run already has a shared workspace attachment', 'application_workspace_attachment_conflict');
+    }
+    this._workspaceAttachments.set(runId, Object.freeze({
+      workspaceId: workspace.workspaceId, context: workspace.sessionContext,
+    }));
   }
 
   async _swarmCommand(name, args, principal, context) {
@@ -4407,6 +4437,15 @@ export class BatonApplication {
     const refreshed = this._findRun(current.goal.runId);
     this._assertRunMutable(refreshed.goal.runId);
     if (!refreshed.plan || refreshed.approval?.disposition !== 'approved') return refreshed.dispatch;
+    // A deliberate shared-checkout attachment names ONE working checkout for ONE work node. A
+    // multi-node workflow Plan would silently put every member in one tree, so it refuses here —
+    // before any spawn — with nothing dispatched.
+    if (this._workspaceAttachments.has(refreshed.goal.runId)
+      && refreshed.plan.nodes.length !== 1) {
+      this._workspaceAttachments.delete(refreshed.goal.runId);
+      throw applicationError('a shared workspace attachment requires a single-work-node Run',
+        'application_workspace_attachment_unsupported');
+    }
     if (refreshed.plan.nodes.length === 1 && refreshed.plan.nodes[0]?.revision) {
       await this._validateWorkflowRevisionPlan(refreshed);
       if (refreshed.dispatch) return refreshed.dispatch;
@@ -4524,6 +4563,10 @@ export class BatonApplication {
     const preview = this.driver.coordination.previewPlanDispatch(gate, route);
     const { goalPlan: ignored, ...brief } = preview.brief;
     void ignored;
+    // A fresh native session in the checkout the swarm resolved: the Run stays a plain 'new'
+    // session (no invented native session identity) and the checkout rides as the attachment axis,
+    // so adopting a shared workspace never becomes a session resume.
+    const attachment = this._workspaceAttachments.get(refreshed.goal.runId) ?? null;
     const taskId = `baton-${digest({
       repoId: this.repoId,
       runId: refreshed.goal.runId,
@@ -4537,6 +4580,7 @@ export class BatonApplication {
       model: route.model,
       effort: route.effort,
       goalPlan: gate,
+      ...(attachment ? { attachedWorkspace: attachment.context } : {}),
       actor: this.principals.dispatcher.actor,
       principalId: this.principals.dispatcher.principalId,
       sessionId: this.principals.dispatcher.sessionId,

@@ -48,6 +48,16 @@ export class WorktreeLockedError extends Error {
 export class WorktreeCleanupError extends Error {
   constructor(message) { super(message); this.name = 'WorktreeCleanupError'; this.code = 'worktree_cleanup_failed'; }
 }
+export class WorkspaceCustodyError extends Error {
+  constructor(message, holders = [], observation = null, code = 'workspace_other_holder_live_retained') {
+    super(message);
+    this.name = 'WorkspaceCustodyError';
+    this.code = code;
+    this.retained = true;
+    this.holders = Object.freeze([...holders]);
+    this.observation = observation;
+  }
+}
 export class WorkspacePreservationError extends Error {
   constructor(message, observation = null, code = 'workspace_uncommitted_content_retained') {
     super(message);
@@ -1130,19 +1140,41 @@ export function observeOwnedWorktreeContent(repoRoot, physicalOwnerId) {
   });
 }
 
+/** The live holders of one physical checkout, from the injected provider. Absent provider means
+ * this manager knows no co-holders (single-holder deployments and direct worktree callers); the
+ * controller that owns shared custody always injects it. */
+function liveWorkspaceHolders(opts, physicalOwnerId) {
+  if (typeof opts?.custodyHolders !== 'function') return Object.freeze([]);
+  const holders = opts.custodyHolders(physicalOwnerId, {
+    ...(opts.excludeHolderId ? { excludeHandleId: opts.excludeHolderId } : {}),
+  });
+  return Object.freeze(Array.isArray(holders) ? [...holders] : []);
+}
+
 /** Refuse before the first destructive effect while the checkout holds content no capture
- * recorded. Nothing is removed, released or logged here. */
-function assertRemovableContent(repoRoot, physicalOwnerId) {
+ * recorded, or while another live holder is still working in it. Nothing is removed, released or
+ * logged here. Custody decides whether cleanup may run at all; preservation decides whether the
+ * content may be destroyed — two different reasons, two different refusal codes. */
+function assertRemovableContent(repoRoot, physicalOwnerId, opts = {}) {
   const observation = observeOwnedWorktreeContent(repoRoot, physicalOwnerId);
-  if (observation.removable) return observation;
-  const unobservable = observation.state === 'unobservable';
-  throw new WorkspacePreservationError(
-    `worktree "${physicalOwnerId}" was retained: ${unobservable
-      ? 'its content could not be observed'
-      : `${observation.dirtyPaths.length} differing path(s) have no recorded capture`}`,
-    observation,
-    unobservable ? 'workspace_content_unobservable_retained' : 'workspace_uncommitted_content_retained',
-  );
+  if (!observation.removable) {
+    const unobservable = observation.state === 'unobservable';
+    throw new WorkspacePreservationError(
+      `worktree "${physicalOwnerId}" was retained: ${unobservable
+        ? 'its content could not be observed'
+        : `${observation.dirtyPaths.length} differing path(s) have no recorded capture`}`,
+      observation,
+      unobservable ? 'workspace_content_unobservable_retained' : 'workspace_uncommitted_content_retained',
+    );
+  }
+  const holders = liveWorkspaceHolders(opts, physicalOwnerId);
+  if (holders.length > 0) {
+    throw new WorkspaceCustodyError(
+      `worktree "${physicalOwnerId}" was retained: ${holders.length} other live holder(s) still work in it`,
+      holders, observation,
+    );
+  }
+  return observation;
 }
 
 export function validateOwnedWorktree(repoRoot, taskId, opts = {}) {
@@ -1643,11 +1675,16 @@ export async function markStopped(repoRoot, taskId) {
 /**
  * @param {string} repoRoot
  * @param {string} taskId
- * @param {{force?: boolean, deleteBranch?: boolean, retainOwnerReceipt?: boolean, log?: object}} [opts]
+ * @param {{force?: boolean, deleteBranch?: boolean, retainOwnerReceipt?: boolean, log?: object,
+ *   custodyHolders?: Function, excludeHolderId?: string}} [opts]
+ *   `custodyHolders` is the injected live-holder provider (see assertRemovableContent) and
+ *   `excludeHolderId` names the handle performing this cleanup, which is not a co-holder of it.
  * @returns {Promise<void>}
  * @throws {WorktreeLockedError} when the worktree was never markStopped and `force` is not set
  * @throws {WorkspacePreservationError} when the checkout holds content no capture recorded —
  *   nothing is removed, released or logged in that case
+ * @throws {WorkspaceCustodyError} when another live holder still works in the checkout — nothing
+ *   is removed, released or logged in that case either
  */
 export async function reap(repoRoot, taskId, opts = {}) {
   normalizePhysicalOwnerId(taskId, 'taskId');
@@ -1662,9 +1699,10 @@ export async function reap(repoRoot, taskId, opts = {}) {
     if (!stopped && !opts.force) {
       throw new WorktreeLockedError(`reap: worktree "${taskId}" was never markStopped (pass {force:true} to override)`);
     }
-    // Preservation is an invariant of this boundary: `force` overrides the stop latch, never the
-    // retention of content that no capture recorded.
-    assertRemovableContent(repoRoot, taskId);
+    // Preservation and custody are invariants of this boundary: `force` overrides the stop latch,
+    // never the retention of content that no capture recorded and never another live holder's
+    // checkout.
+    assertRemovableContent(repoRoot, taskId, opts);
   }
   if (existsSync(dir)) {
     try { sh('git', ['worktree', 'remove', '--force', dir], repoRoot); }
@@ -1705,16 +1743,17 @@ export async function reap(repoRoot, taskId, opts = {}) {
 /**
  * Reconcile workspace ownership against this controller's authority.
  *
- * Content preservation is an invariant of this boundary: a checkout whose owner is not expected
- * and whose controller is not live is removed only when it holds no content this repository's
- * captures never recorded. Otherwise it is retained with a typed diagnostic, the owner joins
- * `retainedContentOwners`, and it enters the retained set so its capacity reservation evidence and
- * owner receipt are not settled for a resource that still exists.
+ * Content preservation and shared-checkout custody are invariants of this boundary: a checkout
+ * whose owner is not expected and whose controller is not live is removed only when it holds no
+ * content this repository's captures never recorded AND no other live holder still works in it.
+ * Otherwise it is retained with a typed diagnostic, the owner joins `retainedContentOwners`, and
+ * it enters the retained set so its capacity reservation evidence and owner receipt are not
+ * settled for a resource that still exists.
  *
  * @param {string} repoRoot
  * @param {string[]} expectedActiveTaskIds
  * @param {{log?: object, ownerAuthority?: object, expectedOwnerBindings?: object[],
- *   sparseCheckoutIdentity?: object, beforeOwnerCleanup?: Function}} [opts]
+ *   sparseCheckoutIdentity?: object, custodyHolders?: Function, beforeOwnerCleanup?: Function}} [opts]
  * @returns {Promise<{prunedAdminEntries:string[], removedZombieDirs:string[], removedIntegrationDirs:string[], removedVerifyDirs:string[], errors:string[]}>}
  */
 export function reconcile(repoRoot, expectedActiveTaskIds = [], opts = {}) {
@@ -1935,12 +1974,14 @@ export function reconcile(repoRoot, expectedActiveTaskIds = [], opts = {}) {
         continue;
       }
       if (existsSync(fullDir)) {
-        // Content preservation is decided before capacity settlement: a retained checkout still
-        // consumes its reservation, so the settlement callback must never be consulted for it.
+        // Content preservation and custody are decided before capacity settlement: a retained
+        // checkout still consumes its reservation, so the settlement callback must never be
+        // consulted for it.
         try {
-          assertRemovableContent(repoRoot, normalizedTaskId);
+          assertRemovableContent(repoRoot, normalizedTaskId, opts);
         } catch (error) {
-          if (!(error instanceof WorkspacePreservationError)) throw error;
+          if (!(error instanceof WorkspacePreservationError)
+            && !(error instanceof WorkspaceCustodyError)) throw error;
           const observation = error.observation;
           report.diagnostics.push(Object.freeze({
             code: error.code, physicalOwnerId: normalizedTaskId,
@@ -1950,6 +1991,7 @@ export function reconcile(repoRoot, expectedActiveTaskIds = [], opts = {}) {
             contentState: observation.state,
             dirtyPaths: observation.dirtyPaths,
             headSha: observation.headSha, baseSha: observation.baseSha,
+            ...(error instanceof WorkspaceCustodyError ? { holders: error.holders } : {}),
           }));
           if (!report.retainedContentOwners.includes(normalizedTaskId)) {
             report.retainedContentOwners.push(normalizedTaskId);
@@ -2058,6 +2100,21 @@ export function reconcile(repoRoot, expectedActiveTaskIds = [], opts = {}) {
           deploymentId: receipt.deploymentId, logicalTaskId: receipt.logicalTaskId,
           authority: workspaceOwnerAuthorityState(receipt, opts.ownerAuthority), retained: true,
         }));
+        continue;
+      }
+      // A receipt whose checkout, registration and branch are all absent is still not reapable
+      // while another live holder names it: releasing the lease under a working holder would
+      // destroy its cleanup authority. This is the same custody answer the checkout-present path
+      // gets, applied to the residue path.
+      const heldByOthers = liveWorkspaceHolders(opts, physicalOwnerId);
+      if (heldByOthers.length > 0) {
+        report.diagnostics.push(Object.freeze({
+          code: 'workspace_other_holder_live_retained', physicalOwnerId,
+          deploymentId: receipt.deploymentId, logicalTaskId: receipt.logicalTaskId,
+          authority: workspaceOwnerAuthorityState(receipt, opts.ownerAuthority), retained: true,
+          holders: heldByOthers,
+        }));
+        if (expected.has(physicalOwnerId)) retainExpected(physicalOwnerId);
         continue;
       }
       const authority = workspaceOwnerAuthorityState(receipt, opts.ownerAuthority);
