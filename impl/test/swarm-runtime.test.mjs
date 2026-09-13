@@ -191,11 +191,23 @@ test('watch ignores unrelated swarms, wakes on selected updates, and releases on
   await f.call('update', { event: 'swarm.context_updated', payload: { key: 'finding', body: 'Relevant update' } });
   const view = await watching;
   assert.ok(view.cursor > cursor);
+  assert.equal(view.watch.reason, 'event');
+  assert.ok(view.watch.matchedSeq > cursor);
   assert.equal(Object.values(view.context)[0].body, 'Relevant update');
   const pending = f.call('watch', { afterSeq: view.cursor, timeoutMs: 1000 });
   await new Promise(setImmediate);
   f.runtime.close();
   await assert.rejects(pending, { code: 'coordination_wait_aborted' });
+});
+
+test('watch reports a timeout even when unrelated traffic advanced the deployment cursor', async (t) => {
+  const f = fixture(t);
+  await f.call('create', { purpose: 'Explain why an observer woke' });
+  const cursor = f.store.ledgerHeadSeq();
+  await f.runtime.command('swarm.create', { swarmId: 'elsewhere', purpose: 'Unrelated work', idempotencyKey: 'elsewhere' }, owner);
+  const view = await f.call('watch', { afterSeq: cursor, timeoutMs: 10 });
+  assert.ok(view.cursor > cursor);
+  assert.deepEqual(view.watch, { reason: 'timeout', afterSeq: cursor, matchedSeq: null });
 });
 
 test('native watching does not wake itself through tool and token telemetry', async (t) => {

@@ -158,6 +158,9 @@ separate observations. Organizational close and participant shutdown are separat
 Live capture uses a separate Git index and leaves the author's HEAD, branch and staging area
 unchanged. A contribution can carry both its original finding and an attached immutable revision.
 Routine tool and usage events do not wake swarm watchers into a self-generated feedback loop.
+Watch receipts distinguish a matching event from a timeout, even when unrelated traffic advanced
+the deployment cursor. Native Codex, Claude and OMP collaboration observations appear under their
+parent participant; invocation completion is separate from observed child state and custody.
 
 The application test exercises delegated recruitment through the actual SDK, application,
 coordination store, Git worktrees, and mock native adapter. Separate tests exercise contribution

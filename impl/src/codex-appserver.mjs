@@ -17,6 +17,7 @@ import { WORKER_MESSAGE_GUIDANCE } from './messages.mjs';
 import { normalizeProcessGeneration, ProcessCloseReapLatch, processStartedPayload } from './process-lifecycle.mjs';
 import { attestWorkerPolicyObservation } from './worker-policy.mjs';
 import { normalizeConcurrencyCeiling } from './concurrency-policy.mjs';
+import { normalizeCodexFrame } from './native-subagent-observations.mjs';
 
 const DEFAULT_MAX_WIRE_FRAME_BYTES = 1024 * 1024;
 const CODEX_TOKEN_METRIC = 'codex_thread_total_tokens';
@@ -644,6 +645,10 @@ export class CodexAppServerCli {
   }
 
   _onNotification(session, method, params) {
+    if (method === 'item/started' || method === 'item/completed') {
+      const native = normalizeCodexFrame(params, { worker: session.worker, sessionId: session.threadId });
+      if (native) this._emit(session, 'native.subagent_observed', native);
+    }
     switch (method) {
       case 'turn/started': {
         const turnId = params.turn?.id;

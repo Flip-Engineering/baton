@@ -444,9 +444,10 @@ describe('normalizeOmpTaskFrame — end frames: async state', () => {
       'tool_execution_end with async.state=running must remain STARTED, not COMPLETED');
   });
 
-  it('async.state=running → ok is false (not settled)', () => {
+  it('async.state=running → work outcome is unknown and the invocation succeeded', () => {
     const obs = normalizeOmpTaskFrame(OMP_TASK_END_ASYNC_RUNNING, PARENT);
-    assert.strictEqual(obs.ok, false);
+    assert.strictEqual(obs.ok, null);
+    assert.strictEqual(obs.invocationOk, true);
   });
 
   it('async.state=running → gap async_job_in_flight present', () => {
@@ -548,7 +549,7 @@ describe('normalizeOmpTaskFrame — unknown field capture', () => {
     const frame = { ...OMP_TASK_START, undocumentedField: 'future_value' };
     const obs = normalizeOmpTaskFrame(frame, PARENT);
     assert.ok(obs.unknownFields);
-    assert.strictEqual(obs.unknownFields.undocumentedField, 'future_value');
+    assert.strictEqual(obs.unknownFields.undocumentedField, true);
   });
 
   it('no unknownFields when all fields are known', () => {
@@ -874,9 +875,9 @@ describe('normalizeCodexFrame — spawnAgent inProgress', () => {
     assert.strictEqual(obs.senderThreadId, 'thread-parent-1');
   });
 
-  it('adapter_seam_missing gap always present', () => {
+  it('adapter integration is not guessed from a protocol frame', () => {
     const obs = normalizeCodexFrame(CODEX_COLLAB_SPAWN, CODEX_PARENT);
-    assert.ok(obs.gaps.includes('adapter_seam_missing'));
+    assert.equal(obs.gaps.includes('adapter_seam_missing'), false);
   });
 
   it('controls is always empty', () => {
@@ -994,7 +995,7 @@ describe('normalizeCodexFrame — unknown field capture', () => {
     };
     const obs = normalizeCodexFrame(frame, CODEX_PARENT);
     assert.ok(obs.unknownFields);
-    assert.strictEqual(obs.unknownFields.futureField, 'future_val');
+    assert.strictEqual(obs.unknownFields.futureField, true);
   });
 
   it('no unknownFields for clean item', () => {

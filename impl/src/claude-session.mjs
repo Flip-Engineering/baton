@@ -16,6 +16,7 @@ import { usdFromNanos, usdToNanos } from './usd.mjs';
 import { attestWorkerPolicyObservation } from './worker-policy.mjs';
 import { createDecisionRequest, ValidationError, WORKER_MESSAGE_GUIDANCE } from './messages.mjs';
 import { normalizeConcurrencyCeiling } from './concurrency-policy.mjs';
+import { normalizeClaudeToolProgressFrame } from './native-subagent-observations.mjs';
 
 const DEFAULT_MAX_WIRE_FRAME_BYTES = 1024 * 1024;
 const CLAUDE_TOKEN_METRIC = 'anthropic_input_plus_output_tokens_excluding_cache';
@@ -1096,6 +1097,8 @@ export class ClaudeSessionCli {
   }
 
   _handleWireObject(session, obj) {
+    const native = normalizeClaudeToolProgressFrame(obj, { worker: session.worker, sessionId: session.sessionIdWire });
+    if (native) this._emit(session, 'native.subagent_observed', native);
     switch (obj.type) {
       case 'system':
         if (obj.subtype === 'init' && session.retryAwaitingInit) {

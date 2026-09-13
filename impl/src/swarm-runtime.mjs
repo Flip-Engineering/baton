@@ -128,7 +128,9 @@ export class SwarmRuntime {
       const worker = workers.find((row) => row.runId === participant.runId
         && (!participant.bindings.length || row.id === participant.bindings.at(-1)?.workerId));
       const paused = worker ? this.coordinator.pausedTurns({ workerId: worker.id }) : [];
-      return { ...clone(participant), runtime: {
+      return { ...clone(participant), native: worker && this.coordinator.observedNativeSubagents
+        ? this.coordinator.observedNativeSubagents(worker.id)
+        : { coverage: 'observed_only', agents: [], invocations: [], unidentified: [] }, runtime: {
         workerId: worker?.id ?? null, state: worker?.status ?? 'unbound',
         turn: paused.length ? 'paused' : worker?.status === 'working' ? 'running' : null,
       } };
@@ -168,7 +170,8 @@ export class SwarmRuntime {
   }
 
   async _watch(args, principal, context) {
-    let cursor = args.afterSeq ?? this.store.ledgerHeadSeq();
+    const afterSeq = args.afterSeq ?? this.store.ledgerHeadSeq();
+    let cursor = afterSeq;
     if (cursor > this.store.ledgerHeadSeq()) refuse('Swarm cursor is ahead of this deployment', 'swarm_cursor_invalid');
     const deadline = performance.now() + (args.timeoutMs ?? 30000);
     for (;;) {
@@ -180,7 +183,7 @@ export class SwarmRuntime {
       const taskIds = new Set(bindings.map((binding) => binding.taskId));
       const workerIds = new Set(bindings.map((binding) => binding.workerId));
       const events = this.store.eventsView().slice(cursor);
-      const relevant = events.some(({ kind, payload }) => {
+      const relevant = events.find(({ kind, payload }) => {
         // A watch call is itself a native tool call. Waking on tool/usage telemetry makes
         // the observer generate the next wake indefinitely, even when every peer is paused.
         if (['evidence.mapped', 'driver.recorded'].includes(kind)
@@ -191,7 +194,10 @@ export class SwarmRuntime {
           || (payload?.taskId && taskIds.has(payload.taskId))
           || (payload?.worker && workerIds.has(payload.worker));
       });
-      if (relevant || performance.now() >= deadline) return this.inspect(swarm, principal, context);
+      if (relevant || performance.now() >= deadline) return {
+        ...this.inspect(swarm, principal, context),
+        watch: { reason: relevant ? 'event' : 'timeout', afterSeq, matchedSeq: relevant?.seq ?? null },
+      };
       cursor = this.store.ledgerHeadSeq();
       await this.store.waitAfter(cursor, Math.max(1, Math.ceil(deadline - performance.now())), {
         signal: this.watchController.signal,

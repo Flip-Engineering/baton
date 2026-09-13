@@ -42,8 +42,7 @@
 //     CollabAgentStatus enum: pendingInit|running|interrupted|completed|errored|shutdown|notFound
 //     Optional: model, prompt, reasoningEffort  (NOT in identity record — payload only)
 //     NOT present: agentThreadId, agentPath, kind  (those were binary-string false positives)
-//     Integration seam: codex-appserver.mjs._onNotification() drops collabAgentToolCall in the
-//     `default` case — never reaches Baton event bus. Gap: adapter_seam_missing.
+//     Adapter item/started and item/completed notifications feed these observations.
 //
 // IDENTITY CONSTRAINTS (enforced, never invented):
 //   - OMP tool_execution_start with toolName:'task' is a known child delegation, not completion.
@@ -72,12 +71,12 @@ function makeInvocationKey(harness, parentWorker, parentSessionId, invocationId)
   return JSON.stringify([harness, parentWorker ?? null, parentSessionId ?? null, invocationId ?? null]);
 }
 
-// Capture top-level frame fields not in the known-fields set, so future protocol additions
-// are not silently discarded. Does NOT recurse into nested objects (args/result are payload).
+// Record the presence of unknown protocol fields without retaining their values.
+// Undocumented values may contain credentials, prompts or full tool results.
 function captureUnknownFields(obj, knownFields) {
   const unknown = {};
   for (const key of Object.keys(obj)) {
-    if (!knownFields.has(key)) unknown[key] = obj[key];
+    if (!knownFields.has(key)) Object.defineProperty(unknown, key, { value: true, enumerable: true });
   }
   return Object.keys(unknown).length > 0 ? unknown : null;
 }
@@ -219,7 +218,8 @@ export function normalizeOmpTaskFrame(frame, parentContext) {
     phase,
     nativeFrameType: 'tool_execution_end',
     provenance: 'wire_frame',
-    ok: phase === NATIVE_PHASE.COMPLETED,
+    ok: phase === NATIVE_PHASE.COMPLETED ? true : phase === NATIVE_PHASE.FAILED ? false : null,
+    invocationOk: !isError,
     gaps: endGaps,
     controls: [],
     ...(unknownFields ? { unknownFields } : {}),
@@ -365,7 +365,10 @@ export function normalizeClaudeToolProgressFrame(frame, parentContext) {
   // subagent_retry absent → subagent resolved (outcome not observable from progress frame alone)
   const subagentRetry = frame.subagent_retry !== undefined
     ? (typeof frame.subagent_retry === 'object' && frame.subagent_retry !== null
-      ? frame.subagent_retry : null)
+      ? Object.fromEntries(['agent_id', 'attempt', 'max_retries'].flatMap((key) => {
+        const value = frame.subagent_retry[key];
+        return typeof value === 'string' || Number.isSafeInteger(value) ? [[key, value]] : [];
+      })) : null)
     : null;
 
   const unknownFields = captureUnknownFields(frame, CLAUDE_TOOL_PROGRESS_KNOWN);
@@ -460,13 +463,17 @@ export function normalizeCodexFrame(frame, parentContext) {
   // Schema: `senderThreadId` — required string
   const senderThreadId = typeof item.senderThreadId === 'string' ? item.senderThreadId : null;
   // Schema: `receiverThreadIds` — required array of strings; child target identities
-  const receiverThreadIds = Array.isArray(item.receiverThreadIds) ? item.receiverThreadIds : [];
+  const receiverThreadIds = Array.isArray(item.receiverThreadIds)
+    ? item.receiverThreadIds.filter((id) => typeof id === 'string' && id.length) : [];
   // Schema: `agentsStates` — required object; { [childThreadId]: {status, message?} }
   // Per-child status is SEPARATE from invocation status — both are preserved.
   const agentsStates = item.agentsStates !== null && typeof item.agentsStates === 'object' && !Array.isArray(item.agentsStates)
-    ? item.agentsStates : {};
+    ? Object.fromEntries(Object.entries(item.agentsStates).map(([id, state]) => [id, {
+      status: typeof state?.status === 'string' ? state.status : 'unknown',
+      ...(typeof state?.message === 'string' || state?.message === null ? { message: state.message } : {}),
+    }])) : {};
 
-  const gaps = ['adapter_seam_missing'];
+  const gaps = [];
   if (!collabToolCallId) gaps.push('no_stable_child_id');
   if (!parentSessionId) gaps.push('parent_session_id_unknown');
 

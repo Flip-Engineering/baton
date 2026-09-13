@@ -134,6 +134,20 @@ test('a retained contribution can be checked after its author stops', async (t) 
   assert.equal(f.prompts.length, 0);
 });
 
+test('native subagent observations are durably mapped and remain read-only worker observations', async (t) => {
+  const f = await fixture(t);
+  f.emit({ worker: f.handle.id, actor: 'worker', kind: 'native.subagent_observed', turnEpoch: 1,
+    payload: { harness: 'codex', parentWorker: f.handle.id, parentSessionId: 'parent',
+      invocationKey: JSON.stringify(['codex', f.handle.id, 'parent', 'call']), collabToolCallId: 'call',
+      receiverThreadIds: ['child'], agentsStates: { child: { status: 'running' } }, phase: 'completed' } });
+  const view = f.coordinator.observedNativeSubagents(f.handle.id);
+  assert.equal(view.agents[0].state, 'running');
+  assert.equal(f.coordination.eventsView().some((event) => event.kind === 'evidence.mapped'
+    && event.payload.kind === 'native.subagent_observed'), true);
+  assert.equal(f.coordinator.list().length, 1, 'observed native children are not fake Baton-owned workers');
+  assert.equal(f.coordination.task(f.handle.taskId).status, 'paused');
+});
+
 test('a failed pin leaves the pause available and does not claim retained work', async (t) => {
   const f = await fixture(t);
   f.worktrees.retainCheckpoint = async () => { throw new Error('pin write failed'); };

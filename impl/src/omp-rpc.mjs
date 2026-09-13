@@ -26,6 +26,7 @@ import { OmpTurnUsageAccumulator, OMP_TOKEN_METRIC } from './omp-usage.mjs';
 import { attestWorkerPolicyObservation } from './worker-policy.mjs';
 import { ProcessCloseReapLatch, normalizeProcessGeneration, processReadyPayload, processStartedPayload } from './process-lifecycle.mjs';
 import { normalizeConcurrencyCeiling } from './concurrency-policy.mjs';
+import { normalizeOmpTaskFrame } from './native-subagent-observations.mjs';
 
 const DEFAULT_MAX_WIRE_FRAME_BYTES = 2 * 1024 * 1024;
 const DEFAULT_MAX_EVENT_PAYLOAD_BYTES = 64 * 1024;
@@ -712,6 +713,8 @@ export class OmpRpcCli {
 
   _onFrame(session, frame) {
     this._observeTransportLiveness(session, frame);
+    const native = normalizeOmpTaskFrame(frame, { worker: session.worker, sessionId: session.observedSessionId });
+    if (native) this._emit(session, 'native.subagent_observed', native);
     switch (frame.type) {
       case 'agent_start':
         this._emit(session, 'content.message', { phase: 'agent_start' });

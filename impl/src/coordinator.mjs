@@ -10,6 +10,7 @@ import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:pat
 import { Cursor } from './log.mjs';
 import { verifyContribution } from './contribution-verification.mjs';
 import { ContributionService } from './contribution-service.mjs';
+import { nativeSubagentView } from './native-subagent-view.mjs';
 import {
   attentionItemLine, boundedAttentionText, buildKnowledgeSlice, createBrief, createDecisionAnswer, createDecisionRequest, createDigest,
   frameWebContent, isAttentionSpillItem, ValidationError, wrapFact, wrapHubDerived, wrapProse,
@@ -2297,6 +2298,11 @@ export class Coordinator {
         reservation.rollback();
       }
     });
+  }
+
+  observedNativeSubagents(workerId) {
+    this._assertReadable();
+    return nativeSubagentView(this._log.read(workerId));
   }
 
   /** A retained revision can be checked while its author continues, or after its session stops. */
@@ -13810,6 +13816,9 @@ export class Coordinator {
         break;
       case 'kill.confirmed':
         this._onStopConfirmed(handle, 'kill', payload);
+        break;
+      case 'native.subagent_observed':
+        this._coordMapEvent(appendAttributed({ worker: workerId, harness, turnEpoch, kind, actor, payload }));
         break;
       default:
         nativeObservationEvent = appendAttributed({ worker: workerId, harness, turnEpoch, kind, actor, payload });
