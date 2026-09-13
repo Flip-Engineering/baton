@@ -33,8 +33,8 @@ raw credential handling, command count, or size policy changed.
 
 ## G5 — the minted idempotencyKey is learnable
 
-`swarmBridgeMain` now prints `{ idempotencyKey, result }` when IT minted the key for a stateful
-verb; a caller-supplied key keeps the historical bare-result output byte-for-byte. The receipt is
+`swarmBridgeMain` adds `commandReceipt.idempotencyKey` to the existing result object when it
+mints the key for a stateful verb; failures expose the same key for reconciliation; a caller-supplied key keeps the historical bare-result output byte-for-byte. The receipt is
 additive metadata so a retry can name the key — replay dedupe itself stays the runtime's (`_once`).
 
 ## Local help without a bridge credential
@@ -68,9 +68,8 @@ endpoint lookup, no token read, no network. An unknown command with a help flag 
 - `Swarm.group/context/review` SDK helpers pass payloads through; callers that used the old
   `{groupId, add}` / bare-`{notes}` shapes will now get the detailed admission refusal. Docs
   examples should move to the store's real shapes.
-- `swarm.inspect` integration seam: expose `SWARM_EVENT_PAYLOAD_SCHEMAS` (or
-  `swarmUpdatePayloadSummary()`) from the new module in the inspect view — that is the whole
-  integration.
+- Root integrated `swarm.inspect.updatePayloads`, filtered to the caller's allowed updates,
+  with fields and runnable examples from the same descriptions.
 - `validateSwarmEvent` may adopt the module as its description of record later; the module asserts
   nothing about it, so integration is additive.
 
@@ -85,3 +84,8 @@ endpoint lookup, no token read, no network. An unknown command with a help flag 
   family is not in the committed inventories).
 - Live child-process probes: `--help` and `swarm.update --help` with every
   `BATON_SWARM_BRIDGE_*` key unset → exit 0, help on stdout.
+
+Root integration: both native discovery and custody-review captures exposed Git rejecting an
+ignored dependency directory in a negative add pathspec. Stop preservation retained their exact
+checkpoints; those captures/checks were not successful. Root fixed snapshot staging separately
+and verified the ignored-dependency regression with real Git.

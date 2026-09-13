@@ -110,7 +110,8 @@ export const SWARM_EVENT_PAYLOAD_SCHEMAS = Object.freeze({
 export const SWARM_EVENT_EXAMPLES = Object.freeze(Object.fromEntries(
   Object.entries(SWARM_EVENT_PAYLOAD_SCHEMAS).map(([kind, schema]) => [kind, Object.freeze(Object.fromEntries(
     Object.entries(schema.fields)
-      .filter(([name, field]) => name !== 'swarmId' && !field.autoFilled && field.example !== undefined)
+      .filter(([name, field]) => name !== 'swarmId' && !field.autoFilled && field.example !== undefined
+        && (field.required || name === 'body'))
       .map(([name, field]) => [name, field.example]),
   ))]),
 ));
@@ -168,7 +169,9 @@ export function swarmUpdatePayloadSummary() {
 /** Multi-line payload-shape description for CLI help rendering. */
 export function swarmUpdatePayloadDetails() {
   return ['Payload shape depends on event; bodies stay arbitrary JSON or plain text findings, never a',
-    'fixed record. Per kind:', ...Object.keys(SWARM_EVENT_PAYLOAD_SCHEMAS).map((kind) => `  ${shapeLine(kind)}`),
+    'fixed record. Per kind:', ...Object.keys(SWARM_EVENT_PAYLOAD_SCHEMAS).flatMap((kind) => [
+      `  ${shapeLine(kind)}`, `    Example payload (replace named targets): ${JSON.stringify(SWARM_EVENT_EXAMPLES[kind])}`,
+    ]),
     'The runtime fills swarmId from your token scope and derives author/leave identities from the',
     'caller; you never write them inside the payload.'].join('\n');
 }
@@ -186,4 +189,3 @@ for (const [kind, schema] of Object.entries(SWARM_EVENT_PAYLOAD_SCHEMAS)) {
   }
   if (JSON.stringify(schema).includes('"max')) throw new Error(`swarm event ${kind} schema declares a size or count cap`);
 }
-

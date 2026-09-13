@@ -383,7 +383,7 @@ function bridgeHelpText(command = null) {
       `are required for real calls; ${SWARM_BRIDGE_ENV_KEYS.swarmId} auto-fills the swarmId argument.`,
       'Help itself needs none of them — it renders locally from the shared command contract.',
       'Effectful commands mint an idempotencyKey when you omit one; the minted key is printed back as',
-      '{"idempotencyKey": "...", "result": ...} so a retry can pass that key explicitly.',
+      'commandReceipt.idempotencyKey so a retry can pass that key explicitly; result fields stay at the top level.',
     ].join('\n');
   }
   const row = SWARM_COMMAND_ROWS.find((entry) => entry.command === command);
@@ -411,6 +411,7 @@ function bridgeHelpText(command = null) {
  * `node swarm-native-bridge.mjs swarm.inspect '{"swarmId":"..."}'` with the bridge env set. */
 export async function swarmBridgeMain(argv = process.argv.slice(2), env = process.env, io = { out: process.stdout, err: process.stderr }) {
   const [command, argsText] = argv;
+  let mintedKey = null;
   try {
     const helpRequested = argv.some((argument) => HELP_FLAGS.has(argument));
     if (helpRequested) {
@@ -439,7 +440,6 @@ export async function swarmBridgeMain(argv = process.argv.slice(2), env = proces
     if (definition?.args.includes('swarmId') && args.swarmId === undefined) {
       args.swarmId = env[SWARM_BRIDGE_ENV_KEYS.swarmId];
     }
-    let mintedKey = null;
     if (definition?.mcpStateful && args.idempotencyKey === undefined) {
       mintedKey = randomUUID();
       args.idempotencyKey = mintedKey;
@@ -448,12 +448,14 @@ export async function swarmBridgeMain(argv = process.argv.slice(2), env = proces
     // A caller-supplied key keeps the exact historical output; a minted key is printed back as
     // additive receipt metadata so a retry can name it (replay dedupe itself stays the runtime's).
     io.out.write(mintedKey !== null
-      ? `${JSON.stringify({ idempotencyKey: mintedKey, result: result ?? null }, null, 2)}\n`
+      ? `${JSON.stringify({ ...result, commandReceipt: { idempotencyKey: mintedKey } }, null, 2)}\n`
       : `${JSON.stringify(result, null, 2)}\n`);
     return 0;
   } catch (error) {
     const payload = errorPayload(error);
-    io.err.write(`${JSON.stringify({ ok: false, error: payload }, null, 2)}\n`);
+    io.err.write(`${JSON.stringify({ ok: false, error: payload,
+      ...(mintedKey === null ? {} : { commandReceipt: { idempotencyKey: mintedKey } }),
+    }, null, 2)}\n`);
     return 1;
   }
 }

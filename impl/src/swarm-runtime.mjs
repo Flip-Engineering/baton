@@ -1,6 +1,7 @@
 import { validateSwarmCommand } from './swarm-contract.mjs';
 import { createHash } from 'node:crypto';
 import { canonicalJson } from './canonical-order.mjs';
+import { SWARM_EVENT_PAYLOAD_SCHEMAS, SWARM_EVENT_EXAMPLES } from './swarm-event-schemas.mjs';
 
 const clone = (value) => structuredClone(value);
 const hash = (value) => createHash('sha256').update(JSON.stringify(canonicalJson(value))).digest('hex');
@@ -161,6 +162,9 @@ export class SwarmRuntime {
         'swarm.check': { participantIds: contributionTargets },
       },
       updates,
+      updatePayloads: Object.fromEntries(updates.map((kind) => [kind, {
+        ...clone(SWARM_EVENT_PAYLOAD_SCHEMAS[kind]), example: clone(SWARM_EVENT_EXAMPLES[kind]),
+      }])),
       cursor: this.store.ledgerHeadSeq(),
     };
   }

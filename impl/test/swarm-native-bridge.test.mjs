@@ -665,18 +665,18 @@ test('a minted idempotencyKey is printed back as receipt metadata; naming it or 
     const body = { event: 'swarm.contribution_recorded', payload: { participantId: 'alpha', body: 'a plain-text finding' } };
     const first = await execFileAsync(process.execPath, [BRIDGE_MODULE, 'swarm.update', JSON.stringify(body)], { env });
     const receipt = JSON.parse(first.stdout);
-    // Additive envelope: the minted key PLUS the unchanged result, and the key is the one actually used.
-    assert.match(receipt.idempotencyKey, /^[0-9a-f-]{36}$/u);
-    assert.equal(receipt.result.event, 'swarm.contribution_recorded');
-    assert.equal(runtime.calls[0].args.idempotencyKey, receipt.idempotencyKey);
+    // Existing result fields stay at the top level; receipt metadata names the key actually used.
+    assert.match(receipt.commandReceipt.idempotencyKey, /^[0-9a-f-]{36}$/u);
+    assert.equal(receipt.event, 'swarm.contribution_recorded');
+    assert.equal(runtime.calls[0].args.idempotencyKey, receipt.commandReceipt.idempotencyKey);
     assert.equal(runtime.applied.length, 1);
     // A retry that NAMES the minted key keeps the historical bare-result output shape.
     const replay = await execFileAsync(process.execPath,
-      [BRIDGE_MODULE, 'swarm.update', JSON.stringify({ ...body, idempotencyKey: receipt.idempotencyKey })], { env });
+      [BRIDGE_MODULE, 'swarm.update', JSON.stringify({ ...body, idempotencyKey: receipt.commandReceipt.idempotencyKey })], { env });
     const bare = JSON.parse(replay.stdout);
     assert.equal(bare.idempotencyKey, undefined);
     assert.equal(bare.event, 'swarm.contribution_recorded');
-    assert.equal(runtime.calls[1].args.idempotencyKey, receipt.idempotencyKey);
+    assert.equal(runtime.calls[1].args.idempotencyKey, receipt.commandReceipt.idempotencyKey);
     // A caller-supplied key from the start never gets the envelope either.
     const explicit = await execFileAsync(process.execPath,
       [BRIDGE_MODULE, 'swarm.update', JSON.stringify({ ...body, idempotencyKey: 'op-explicit' })], { env });
@@ -699,4 +699,16 @@ test('swarmBridgeMain() renders help in-process and still fails closed without e
   assert.equal(code, 1);
   assert.match(JSON.parse(lines.at(-1)).error.message, /Usage:/u);
   assert.match(JSON.parse(lines.at(-1)).error.message, /--help/u);
+});
+
+test('a failed native mutation still exposes its generated key for reconciliation', async () => {
+  const lines = [];
+  const sink = { write: (text) => lines.push(text) };
+  const code = await swarmBridgeMain(['swarm.guide', JSON.stringify({
+    swarmId: 'swarm-1', participantId: 'alpha', message: 'continue',
+  })], {}, { out: sink, err: sink });
+  assert.equal(code, 1);
+  const failure = JSON.parse(lines.at(-1));
+  assert.equal(failure.ok, false);
+  assert.match(failure.commandReceipt.idempotencyKey, /^[0-9a-f-]{36}$/u);
 });

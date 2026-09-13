@@ -121,6 +121,21 @@ test('reviewers check and accept contributions while authors remain available fo
   assert.equal(f.workers[0].status, 'dead');
 });
 
+test('inspect gives each participant usable payload examples only for their permitted updates', async (t) => {
+  const f = fixture(t);
+  await f.call('create', { purpose: 'Discover collaboration from the running swarm' });
+  await f.recruit('builder');
+  const caller = principal('w-1');
+  const view = await f.call('inspect', {}, caller);
+  assert.deepEqual(Object.keys(view.updatePayloads), view.updates);
+  assert.equal(view.updatePayloads['swarm.group_updated'], undefined);
+  const schema = view.updatePayloads['swarm.context_updated'];
+  assert.equal(schema.fields.body.type, 'json');
+  await f.call('update', { event: 'swarm.context_updated', payload: schema.example }, caller);
+  const next = await f.call('inspect', {}, caller);
+  assert.deepEqual(Object.values(next.context).find((row) => row.key === schema.example.key).body, schema.example.body);
+});
+
 test('a captured revision attaches to an existing finding without replacing its text or author', async (t) => {
   const f = fixture(t);
   await f.call('create', { purpose: 'Findings and code can describe the same contribution' });
