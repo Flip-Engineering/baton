@@ -1128,5 +1128,293 @@
         "code": "operator_stop"
       }
     }
+  ],
+  "finalProofBase": "89661c1ffc7f1040717165b5d490910434ddd523",
+  "finalProofRuns": [
+    {
+      "lane": "claude_timeout",
+      "runId": "run-3ed923a9be560966ac800efe52e83349",
+      "route": {
+        "harness": "claude-code",
+        "provider": "claude",
+        "model": "claude-sonnet-4-6",
+        "effort": "high"
+      },
+      "scope": [
+        "impl/src/supply-chain-oracle.mjs",
+        "impl/test/phase36-quartermaster-external.test.mjs",
+        "impl/test/oracle-timeout-lifecycle.test.mjs"
+      ],
+      "preservedCommit": "da6e1cb7bed5199a58bdd10eb1a27a4bed535900",
+      "routeObservation": {
+        "requested": {
+          "harness": "claude-code",
+          "model": "claude-sonnet-4-6",
+          "effort": "high"
+        },
+        "resolved": {
+          "harness": "claude-code@2.1.269",
+          "model": "claude-sonnet-4-6",
+          "effort": "high"
+        },
+        "observed": {
+          "harness": null,
+          "model": "claude-sonnet-4-6",
+          "effort": null
+        },
+        "launchEnforcement": {
+          "harness": {
+            "requested": "claude-code",
+            "resolved": "claude-code@2.1.269",
+            "state": "matched"
+          },
+          "model": {
+            "requested": "claude-sonnet-4-6",
+            "resolved": "claude-sonnet-4-6",
+            "state": "matched"
+          },
+          "effort": {
+            "requested": "high",
+            "resolved": "high",
+            "state": "matched"
+          }
+        },
+        "providerAttestation": {
+          "harness": {
+            "observed": null,
+            "state": "not_observed_before_stop"
+          },
+          "model": {
+            "observed": "claude-sonnet-4-6",
+            "state": "matched"
+          },
+          "effort": {
+            "observed": null,
+            "state": "not_observed_before_stop"
+          }
+        },
+        "rationale": {
+          "launchEnforcement": "exact deployment-profile route",
+          "providerAttestation": "provider-native observation only"
+        }
+      },
+      "verification": [
+        {
+          "kind": "verify.reverified",
+          "workerSeq": 55,
+          "at": "2026-09-13T06:29:14.888Z",
+          "verdict": {
+            "schemaVersion": 1,
+            "reverified": true,
+            "observedExit": 0,
+            "outputExceeded": false,
+            "hadClaim": false,
+            "matchesClaim": true,
+            "passed": true,
+            "locus": "fresh_sandbox",
+            "redGreen": true,
+            "baseExit": 1,
+            "coverageOfChange": null,
+            "uncoveredChangedLineCount": 0,
+            "uncoveredChangedLinesDigest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+            "mutationStrength": null,
+            "mutationPassed": null,
+            "survivedMutantCount": 0,
+            "survivedMutantsDigest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+            "capturedOutputBytes": 3336,
+            "capturedOutputDigest": "46402d391f274a469a334d4244e8b7c4f4771ea1180d9025666f2e3d9e477f3e",
+            "diagnosticCode": "verification_passed",
+            "durationMs": 1900,
+            "execution": {
+              "state": "completed",
+              "code": "verification_completed"
+            },
+            "baseExecution": {
+              "state": "completed",
+              "code": "verification_completed"
+            },
+            "runtimeDigest": "9ea0509ae155b69e48e56c4028edcaf268ec08b3ec27df3d90f0a2e9935eb2fd",
+            "outcome": "passed",
+            "failureOwnership": null
+          },
+          "accepted": true
+        }
+      ],
+      "acceptedResult": {
+        "state": "accepted",
+        "nodeKey": "work",
+        "sha": "da6e1cb7bed5199a58bdd10eb1a27a4bed535900",
+        "commitArtifact": {
+          "id": "artifact:92b60a795a4e05fdcca576a88aefcef8b5e840973ba628d3c2dd7cd62cefb4d4",
+          "digest": "92b60a795a4e05fdcca576a88aefcef8b5e840973ba628d3c2dd7cd62cefb4d4"
+        },
+        "verificationArtifact": {
+          "id": "artifact:72b7f0cdf55f35b4561eae99331a9a2b5b7d0d8ca4ddc74157a0ea87c2568eb8",
+          "digest": "72b7f0cdf55f35b4561eae99331a9a2b5b7d0d8ca4ddc74157a0ea87c2568eb8"
+        },
+        "stability": null,
+        "preservation": {
+          "state": "pinned"
+        },
+        "adoption": null
+      },
+      "closedResources": {
+        "state": "stopped",
+        "ownedCount": 0,
+        "cleanupState": "stopped",
+        "terminalCause": {
+          "kind": "operator_stop",
+          "code": "operator_stop"
+        }
+      },
+      "terminalCause": {
+        "kind": "operator_stop",
+        "code": "operator_stop"
+      },
+      "nativeCompletionProof": {
+        "nativeStartedTurns": 1,
+        "nativeCompletedTurns": 1,
+        "automaticNudges": 0,
+        "claimActor": "orchestrator",
+        "recordedUsd": 0.9040269,
+        "recordedTokens": 24476,
+        "processAbsent": true
+      }
+    },
+    {
+      "lane": "omp_control",
+      "runId": "run-82bd81e6a0ab5f54dc3df76d2074807e",
+      "route": {
+        "harness": "omp",
+        "model": "deepseek/deepseek-v4-flash",
+        "effort": "high"
+      },
+      "scope": [
+        "impl/src/omp-rpc.mjs",
+        "impl/test/omp-control-truth.test.mjs"
+      ],
+      "preservedCommit": "772f29862fd7e0abe7375c4efda84d9d87c1913e",
+      "routeObservation": {
+        "requested": {
+          "harness": "omp",
+          "model": "deepseek/deepseek-v4-flash",
+          "effort": "high"
+        },
+        "resolved": {
+          "harness": "omp@omp/17.4.0",
+          "model": "deepseek/deepseek-v4-flash",
+          "effort": "high"
+        },
+        "observed": null,
+        "launchEnforcement": {
+          "harness": {
+            "requested": "omp",
+            "resolved": "omp@omp/17.4.0",
+            "state": "matched"
+          },
+          "model": {
+            "requested": "deepseek/deepseek-v4-flash",
+            "resolved": "deepseek/deepseek-v4-flash",
+            "state": "matched"
+          },
+          "effort": {
+            "requested": "high",
+            "resolved": "high",
+            "state": "matched"
+          }
+        },
+        "providerAttestation": {
+          "harness": {
+            "observed": null,
+            "state": "not_observed_before_stop"
+          },
+          "model": {
+            "observed": null,
+            "state": "not_observed_before_stop"
+          },
+          "effort": {
+            "observed": null,
+            "state": "not_observed_before_stop"
+          }
+        },
+        "rationale": {
+          "launchEnforcement": "exact deployment-profile route",
+          "providerAttestation": "provider-native observation only"
+        }
+      },
+      "verification": [
+        {
+          "kind": "verify.reverified",
+          "workerSeq": 241,
+          "at": "2026-09-13T06:33:35.751Z",
+          "verdict": {
+            "schemaVersion": 1,
+            "reverified": true,
+            "observedExit": 0,
+            "outputExceeded": false,
+            "hadClaim": false,
+            "matchesClaim": true,
+            "passed": true,
+            "locus": "fresh_sandbox",
+            "redGreen": false,
+            "baseExit": 0,
+            "coverageOfChange": null,
+            "uncoveredChangedLineCount": 0,
+            "uncoveredChangedLinesDigest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+            "mutationStrength": null,
+            "mutationPassed": null,
+            "survivedMutantCount": 0,
+            "survivedMutantsDigest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+            "capturedOutputBytes": 7669,
+            "capturedOutputDigest": "ebf64130c935da710e024f9da2c300e1e9ea699649503a638425672f55a9cf17",
+            "diagnosticCode": "verification_red_green_failed",
+            "durationMs": 3480,
+            "execution": {
+              "state": "completed",
+              "code": "verification_completed"
+            },
+            "baseExecution": {
+              "state": "completed",
+              "code": "verification_completed"
+            },
+            "runtimeDigest": "9ea0509ae155b69e48e56c4028edcaf268ec08b3ec27df3d90f0a2e9935eb2fd",
+            "outcome": "passed",
+            "failureOwnership": null
+          },
+          "accepted": true
+        }
+      ],
+      "acceptedResult": {
+        "state": "accepted",
+        "nodeKey": "work",
+        "sha": "772f29862fd7e0abe7375c4efda84d9d87c1913e",
+        "commitArtifact": {
+          "id": "artifact:53030726d85a38aef9d2b4e61f5ba19f3a4472becb9e03abe561652e79fca228",
+          "digest": "53030726d85a38aef9d2b4e61f5ba19f3a4472becb9e03abe561652e79fca228"
+        },
+        "verificationArtifact": {
+          "id": "artifact:9f1c9cc3ff3436298a147159cfa456657350d4dcb760faf719cb0961097d5ed1",
+          "digest": "9f1c9cc3ff3436298a147159cfa456657350d4dcb760faf719cb0961097d5ed1"
+        },
+        "stability": null,
+        "preservation": {
+          "state": "pinned"
+        },
+        "adoption": null
+      },
+      "closedResources": {
+        "state": "stopped",
+        "ownedCount": 0,
+        "cleanupState": "stopped",
+        "terminalCause": {
+          "kind": "operator_stop",
+          "code": "operator_stop"
+        }
+      },
+      "terminalCause": {
+        "kind": "operator_stop",
+        "code": "operator_stop"
+      }
+    }
   ]
 }

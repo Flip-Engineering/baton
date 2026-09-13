@@ -81,6 +81,10 @@ new identities and reported some kills confirmed before observing process/group 
 is an unknown result, not permission to replay an effect; sending a signal is not evidence of
 closure. Both paths were repaired by a separate native worker using the existing process latch; late
 responses to settled issued requests are harmless, while unknown request identities still fail.
+OMP had the same unsupported replay assumption and also derived correlation IDs from payloads,
+letting identical concurrent commands overwrite each other. A further native worker gave each send
+its own identity and made timeout notifications observational, retaining the original pending
+response. Observer exceptions and reentrant settlement cannot crash or leak that observation loop.
 
 **Event processing and recovery.** `Coordinator`, `BatonApplication` and `CoordinationStore` total
 roughly 47,000 lines at the first checkpoint. Their mixing of admission, observation, recovery,
@@ -164,11 +168,29 @@ An empty `expected-red.json` is not proof that there is no unresolved work: the 
 script separately omits filenames ending in `-red.test.mjs`, including tests for shipped behavior.
 Neither filename conventions nor stale historical counts establish release acceptance.
 
-Remote `master` has no open PR at this review. Its latest CI run executed no verification steps
+The stable `89661c1f` run reports **4,502 tests: 3,839 pass, 468 fail, 195 cancelled**.
+[Its failure inventory](reference/evidence/selfdev-2026-09-12/stable-89661c1f-suite-failures.jsonl)
+and [baseline comparison with follow-up dispositions](reference/evidence/selfdev-2026-09-12/stable-suite-comparison.json)
+record the exact revision and distinguish observed regressions from obsolete contracts and fixture
+failures. Follow-up checks pass 92/92 across browser/orientation/native-driver/oracle behavior,
+9/9 across persistent-session cases, and 33/33 across OMP transport and deployment seams.
+These targeted passes do not turn the remaining full-suite failures into expected results.
+
+A fresh native Claude self-build on that stable base authored the oracle deadline repair,
+completed exactly one native turn with zero automatic nudges, and exposed a checkpoint. Root
+reviewed its commit and issued `claim_turn`; Baton accepted the result after actual fresh-worktree
+verification and then closed with zero owned resources. Native model identity was observed as
+`claude-sonnet-4-6`; recorded cost was $0.9040269. This validates the repaired completion path in a
+real harness. Multiple-result cost deltas are additionally covered by deterministic adapter tests.
+
+At the initial remote review there were no open PRs. The latest `master` CI run executed no verification steps
 because the requested self-hosted runner labels had no available matching runner; an earlier
 hosted run was blocked by account budget. The unrelated Flip runner is not a Baton CI resource. The revised workflow defaults to a GitHub-hosted
 runner and permits an administrator-selected `BATON_RUNNER_LABELS` JSON array. This removes the
-missing-label dependency without changing account budgets or claiming a passing run.
+missing-label dependency without changing account budgets. [Draft PR #256](https://github.com/Flip-Engineering/baton/pull/256)
+publishes the reviewed branch. Its [hosted CI run](https://github.com/Flip-Engineering/baton/actions/runs/34742633299)
+successfully acquired a runner, installed dependencies and started the full suite; completion was
+still pending at this checkpoint. No passing CI or merge acceptance is claimed.
 [Latest reviewed CI run](https://github.com/Flip-Engineering/baton/actions/runs/32467651667),
 [earlier hosted run](https://github.com/Flip-Engineering/baton/actions/runs/32433183018).
 

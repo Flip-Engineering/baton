@@ -352,7 +352,9 @@ test('PS1-PS5: Claude, Codex, and Grok each run two public turns on one native s
     let workerId;
     t.after(async () => { if (workerId) await c.kill(workerId, 'policy').catch(() => {}); });
 
-    const h = await c.spawn(name, brief(), { taskId: `two-turn-${name}` });
+    // Use the fixture's controlled response instead of echoing the entire instructional brief,
+    // which includes executable peer-message examples and exceeds this test's token budget.
+    const h = await c.spawn(name, { ...brief(), goal: 'FAKE:REPORT_CWD' }, { taskId: `two-turn-${name}` });
     workerId = h.id;
     // TG1/TG3: a pausable native session checkpoints every turn_completed. This test drives the
     // gate through the epic's drivered path — a live steering registration parks each checkpoint
@@ -372,12 +374,14 @@ test('PS1-PS5: Claude, Codex, and Grok each run two public turns on one native s
     await c.claimTurn(c.pausedTurns()[0].pauseId, { actor: 'orchestrator' });
     await until(() => log.read(h.id).filter((e) => e.kind === 'verify.reverified').length === 1);
 
-    const follow = await c.send(h.id, `follow-up for ${name}`, 'turn');
+    const follow = await c.send(h.id, `FAKE:REPORT_CWD follow-up for ${name}`, 'turn');
     assert.equal(follow.ok, true, `${name}: public follow-up accepted`);
     // The follow-up turn completes → its checkpoint pause pends → claim runs the gate a second time.
     await until(() => log.read(h.id).filter((e) => e.kind === 'turn.paused').length >= 2);
     await c.claimTurn(c.pausedTurns()[0].pauseId, { actor: 'orchestrator' });
     await until(() => log.read(h.id).filter((e) => e.kind === 'verify.reverified').length === 2);
+    assert.equal(log.read(h.id).filter((event) => event.kind === 'lifecycle.turn_completed' && event.actor === 'worker').length, 2,
+      `${name}: exactly two requested native turns completed`);
     assert.deepEqual(c.list()[0].sessionRef, sessionRef, `${name}: native session identity stays stable`);
     const pids = new Set(log.read(h.id).filter((e) => e.kind === 'lifecycle.spawned' && e.actor === 'worker').map((e) => e.payload?.pid).filter(Boolean));
     assert.deepEqual([...pids], [pid], `${name}: second turn must not respawn`);

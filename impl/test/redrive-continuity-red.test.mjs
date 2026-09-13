@@ -840,7 +840,7 @@ test('D9 (RED): an overflow whose spill lane refuses carries redrive_carry_spill
 // Section E — D4 the trust posture (R6)
 // ===========================================================================
 
-test('E1 (PIN): the TG2 evidence law is shipped — only THIS attempt\'s distinct scratchpad digests answer its steering cycle (D4/GT8)', async () => {
+test('E1: current and historical scratchpad contributions retain separate identity and no completion authority', async () => {
   const adapter = new ScriptableAdapter(); // pausable — the steering cycle arms at the pause seam
   const { coordinator } = setup({ adapter, capture: noDiff });
   const { handle, task } = await spawn(coordinator, { runId: 'run:this-e1' });
@@ -867,18 +867,17 @@ test('E1 (PIN): the TG2 evidence law is shipped — only THIS attempt\'s distinc
     payload: { entry: { kind: 'note', text: 'the fresh attempt\'s own note' }, expectedFence: 'current', idempotencyKey: 'e1-fresh-note' },
   });
   await flush();
-  assert.equal(coordinator.pausedTurns({ taskId: task.id }).length, 0, 'THIS attempt\'s distinct digest answered the cycle (TG2)');
-  // The answered record carries the digest that settled it — and ONLY that digest. The dead
-  // attempt's digest is never admitted, though it is a real sha256 (D4/GT8).
-  const answered = [...coordinator._pausedTurns.values()]
-    .find((record) => record.taskId === task.id && record.state === 'resolved' && record.steering?.answered === true);
-  assert.ok(answered, 'the answered pause record is durable');
-  const freshDigest = answered.steering.answer?.digest;
-  assert.match(freshDigest ?? '', HEX64, 'the answering evidence carries the fresh content digest');
-  assert.notEqual(freshDigest, deadDigest, 'the answering digest is the fresh attempt\'s own, not the carried one (TG2)');
-  assert.equal(answered.steering.digestSet.has(deadDigest), false,
-    'a dead-attempt digest is never in the fresh attempt\'s steering.digestSet (D4/GT8)');
-  assert.equal(answered.steering.digestSet.has(freshDigest), true, 'the fresh digest is the one admitted (TG2)');
+  assert.equal(coordinator.pausedTurns({ taskId: task.id }).length, 1,
+    'neither historical nor current notes adjudicate the checkpoint');
+  const snapshot = coordinator._coordination.scratchpadSnapshotBatch(task.runId, [`worker:${handle.id}`, 'shared']);
+  const entries = snapshot.slices.flatMap((slice) => slice.entries);
+  const fresh = entries.find((entry) => entry.content?.text === "the fresh attempt's own note");
+  assert.ok(fresh, 'the current worker contribution is durable in its own namespace');
+  assert.match(fresh.contentDigest, HEX64);
+  assert.notEqual(fresh.contentDigest, deadDigest);
+  assert.equal(entries.some((entry) => entry.contentDigest === deadDigest), false,
+    'a historical contribution is not relabeled as current work');
+
 });
 
 test('E2 (RED): a carry writes NOTHING to the fresh run\'s store — no dead-attempt rows become the fresh attempt\'s own (stage: no-store-write-missing)', async () => {

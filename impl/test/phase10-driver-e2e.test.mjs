@@ -59,9 +59,6 @@ function makeDriver(adapters) {
     logDir: mkdtempSync(join(tmpdir(), 'p10-e2e-log-')),
     adapters,
     stopDeadlineMs: 3000,
-    // TG1/TG3: these pausable native-session vendors checkpoint every turn_completed; a short
-    // steering window lets the cycle expire and the gate evaluate the turn promptly.
-    progressNudgeWindowMs: 50,
   });
 }
 
@@ -133,6 +130,10 @@ test('SC10: codex app-server vendor through createDriver — thread pinned to th
   });
   const h = await coordinator.spawn('codex', fullBrief('FAKE:REPORT_CWD'));
   try {
+    await waitForLogEvent(log, h.id, (event) => event.kind === 'turn.paused', 'native checkpoint');
+    const pause = coordinator.pausedTurns({ taskId: h.taskId })[0];
+    assert.ok(pause, 'native completion is available for explicit verification');
+    assert.equal((await coordinator.claimTurn(pause.pauseId, { actor: 'orchestrator' })).ok, true);
     const r = await pollTask(coordinator, h.id, ['completed', 'failed']);
     assert.equal(r.status, 'completed', JSON.stringify(r.verdict));
     const worktree = coordinator.list().find((w) => w.id === h.id).worktree;
@@ -151,6 +152,10 @@ test('SC10: grok ACP vendor through createDriver — child AND session pinned to
   });
   const h = await coordinator.spawn('grok', fullBrief('FAKE:REPORT_CWD'));
   try {
+    await waitForLogEvent(log, h.id, (event) => event.kind === 'turn.paused', 'native checkpoint');
+    const pause = coordinator.pausedTurns({ taskId: h.taskId })[0];
+    assert.ok(pause, 'native completion is available for explicit verification');
+    assert.equal((await coordinator.claimTurn(pause.pauseId, { actor: 'orchestrator' })).ok, true);
     const r = await pollTask(coordinator, h.id, ['completed', 'failed']);
     assert.equal(r.status, 'completed', JSON.stringify(r.verdict));
     const worktree = coordinator.list().find((w) => w.id === h.id).worktree;

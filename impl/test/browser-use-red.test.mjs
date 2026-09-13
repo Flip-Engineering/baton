@@ -672,32 +672,20 @@ test('BU-2-2-1: a completed fetch mints the registry\'s hub-admitted receipt (ca
   assert.ok(completed.refs.some((ref) => ref.kind === 'web_fetch'), 'the receipt carries the web_fetch artifact ref');
 });
 
-test('BU-2-2-2: _steeringEvidenceQualifies admits the capability_op evidence kind with extract-digest dedup', () => {
-  const adapter = new ScriptableAdapter();
-  const { coordinator } = setup({ adapter, capture: noDiff });
-  const record = { steering: { digestSet: new Set(), resolvedRequestIds: new Set() } };
-  assert.equal(coordinator._steeringEvidenceQualifies(record, { kind: 'capability_op', digest: 'digest-a' }), true,
-    'a fresh fetch digest qualifies as TG2 progress (the one sanctioned extension, BU-2-2 amendment)');
-  assert.equal(coordinator._steeringEvidenceQualifies(record, { kind: 'capability_op', digest: 'digest-a' }), false,
-    'the same extract digest dedups exactly as coordinator.mjs:9881 pins for scratchpad writes');
-  assert.equal(coordinator._steeringEvidenceQualifies(record, { kind: 'capability_op', digest: 'digest-b' }), true,
-    'a different extract digest is fresh evidence (the positive control)');
-  assert.equal(coordinator._steeringEvidenceQualifies(record, { kind: 'capability_op' }), false,
-    'a digest-less capability_op never qualifies');
-});
+// The old BU-2-2-2 tested private digest qualification for automatic pause expiry.
+// That policy is retired by docs/39; fetch attribution and replay are tested below.
 
-test('BU-2-2-3: a worker-bound fetch settles the armed steering cycle (turn.settled, basis steering_answered)', async () => {
+test('BU-2-2-3: an attributed fetch leaves checkpoint adjudication explicit', async () => {
   const mod = await browserUseModule();
   const adapter = new ScriptableAdapter();
-  let coordinatorRef = null;
+  const receipts = [];
   const capability = makeCapability(mod, {
     onFetchReceipt: ({ actor, digest }) => {
-      coordinatorRef?._observeSteeringCycle(coordinatorRef._workers.get(actor), { kind: 'capability_op', digest });
+      receipts.push({ actor, digest });
     },
   });
   const { registry } = makeRegistry(capability);
   const { coordinator } = setup({ adapter, capture: noDiff, coordinatorOpts: { capabilities: registry } });
-  coordinatorRef = coordinator;
   const handle = await coordinator.spawn('mock', makeBrief({ analysis: true }));
   adapter.emit({
     worker: handle.id, harness: 'mock@1.0.0', turnEpoch: 1, kind: 'lifecycle.turn_completed', actor: 'worker',
@@ -705,30 +693,32 @@ test('BU-2-2-3: a worker-bound fetch settles the armed steering cycle (turn.sett
   });
   await flush(40);
   const task = coordinator._tasks.get(handle.taskId);
-  assert.equal(coordinator.pausedTurns({ taskId: task.id }).length, 1, 'the TG3 steering cycle is armed');
+  assert.equal(coordinator.pausedTurns({ taskId: task.id }).length, 1, 'the checkpoint awaits an explicit steering act');
   await coordinator.invokeCapability('browser-use', 'browser.fetch', { url: FETCH_URL }, invokeCtx({ actor: handle.id }));
   await flush(40);
-  assert.equal(coordinator.pausedTurns({ taskId: task.id }).length, 0,
-    'the completed fetch feeds _observeSteeringCycle from the capability\'s invoke path (the folded wiring)');
+  assert.equal(coordinator.pausedTurns({ taskId: task.id }).length, 1,
+    'a fetch receipt does not adjudicate the checkpoint');
+  assert.equal(receipts.length, 1);
+  assert.equal(receipts[0].actor, handle.id);
+  assert.match(receipts[0].digest, /^[a-f0-9]{64}$/u);
   const settled = coordinator._log.read(handle.id).filter((event) => event.kind === 'turn.settled'
     && event.payload?.basis === 'steering_answered');
-  assert.ok(settled.length >= 1, 'the cycle settles as answered, never expired');
+  assert.equal(settled.length, 0, 'the coordinator emits no automatic settlement');
 });
 
-test('BU-2-2-4: an identical re-invoke replays pre-network (capability.op.replayed) and NEVER counts as TG2 progress', async () => {
+test('BU-2-2-4: replay preserves the pending checkpoint and never repeats a fetch or receipt', async () => {
   const mod = await browserUseModule();
   const adapter = new ScriptableAdapter();
   const engine = fakeEngine();
-  let coordinatorRef = null;
+  const receipts = [];
   const capability = makeCapability(mod, {
     engine,
     onFetchReceipt: ({ actor, digest }) => {
-      coordinatorRef?._observeSteeringCycle(coordinatorRef._workers.get(actor), { kind: 'capability_op', digest });
+      receipts.push({ actor, digest });
     },
   });
   const { registry, sink } = makeRegistry(capability);
   const { coordinator } = setup({ adapter, capture: noDiff, coordinatorOpts: { capabilities: registry } });
-  coordinatorRef = coordinator;
   const handle = await coordinator.spawn('mock', makeBrief({ analysis: true }));
   const key = 'bu:invoke:replay-pinned';
   adapter.emit({
@@ -739,18 +729,13 @@ test('BU-2-2-4: an identical re-invoke replays pre-network (capability.op.replay
   await coordinator.invokeCapability('browser-use', 'browser.fetch', { url: FETCH_URL }, invokeCtx({ actor: handle.id, idempotencyKey: key }));
   await flush(40);
   const task = coordinator._tasks.get(handle.taskId);
-  assert.equal(coordinator.pausedTurns({ taskId: task.id }).length, 0, 'the first fetch answers the first cycle');
-  adapter.emit({
-    worker: handle.id, harness: 'mock@1.0.0', turnEpoch: 2, kind: 'lifecycle.turn_completed', actor: 'worker',
-    payload: { status: 'completed', output: 'checkpoint two' },
-  });
-  await flush(40);
-  assert.equal(coordinator.pausedTurns({ taskId: task.id }).length, 1, 'a second cycle arms');
+  assert.equal(coordinator.pausedTurns({ taskId: task.id }).length, 1, 'the first fetch preserves the checkpoint');
   await coordinator.invokeCapability('browser-use', 'browser.fetch', { url: FETCH_URL }, invokeCtx({ actor: handle.id, idempotencyKey: key }));
   await flush(40);
   assert.ok(sink.some((event) => event.kind === 'capability.op.replayed' && event.op === 'browser.fetch'),
     'the identical re-invoke under the same idempotency identity ({repoId, actor, idempotencyKey}) replays the durable result pre-network (registry layer 1)');
   assert.equal(engine.calls.length, 1, 'the replay never reaches the network');
+  assert.equal(receipts.length, 1, 'a replay does not mint another receipt');
   assert.equal(coordinator.pausedTurns({ taskId: task.id }).length, 1,
     'a replayed receipt never counts as fresh TG2 evidence (BU-2-2 boundary case 1)');
 });
@@ -759,17 +744,16 @@ test('BU-2-2-5: an honest-empty invoke NEVER counts as TG2 progress', async () =
   const mod = await browserUseModule();
   const adapter = new ScriptableAdapter();
   const engine = fakeEngine();
-  let coordinatorRef = null;
+  const receipts = [];
   const capability = makeCapability(mod, {
     availability: EMPTY_AVAILABILITY,
     engine,
     onFetchReceipt: ({ actor, digest }) => {
-      coordinatorRef?._observeSteeringCycle(coordinatorRef._workers.get(actor), { kind: 'capability_op', digest });
+      receipts.push({ actor, digest });
     },
   });
   const { registry } = makeRegistry(capability);
   const { coordinator } = setup({ adapter, capture: noDiff, coordinatorOpts: { capabilities: registry } });
-  coordinatorRef = coordinator;
   const handle = await coordinator.spawn('mock', makeBrief({ analysis: true }));
   adapter.emit({
     worker: handle.id, harness: 'mock@1.0.0', turnEpoch: 1, kind: 'lifecycle.turn_completed', actor: 'worker',

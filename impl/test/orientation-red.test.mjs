@@ -1337,7 +1337,7 @@ test('OR-A3 [stage: partial-labeling-missing]: an in-scope unsupported or parse-
 // TG2/TG3 farm-guard pin — an orientation-class read receipt is never progress.
 // ===========================================================================
 
-test('OR-T1 (pin) [farm-guard]: a context.read-class wire emission never answers the TG3 steering cycle; a genuine resumed turn still does', async () => {
+test('OR-T1: context reads and native turn boundaries leave checkpoint adjudication explicit', async () => {
   const adapter = new ScriptableAdapter();
   const { coordinator } = setup({ adapter, capture: noDiff });
   const handle = await coordinator.spawn('mock', makeBrief({ requiredEffects: ['repository_edit'] }));
@@ -1348,13 +1348,17 @@ test('OR-T1 (pin) [farm-guard]: a context.read-class wire emission never answers
   await flush(40);
   const task = coordinator._tasks.get(handle.taskId);
   assert.equal(coordinator.pausedTurns({ taskId: task.id }).length, 1,
-    'control: the TG3 cycle arms on a completed turn with unmet required effects');
+    'the native checkpoint awaits an explicit steering act');
   emitCodeRead(adapter, handle, { kind: 'code', op: 'code.orient.map' }, 'or-t1-read');
   await flush(40);
   assert.equal(coordinator.pausedTurns({ taskId: task.id }).length, 1,
     'an orientation read receipt NEVER counts as progress (the farm-guard stays)');
   adapter.emit({ worker: handle.id, harness: 'mock@1.0.0', turnEpoch: 2, kind: 'lifecycle.turn_started', actor: 'worker', payload: {} });
   await flush(40);
+  assert.equal(coordinator.pausedTurns({ taskId: task.id }).length, 1,
+    'a native boundary alone does not consume the checkpoint');
+  const pause = coordinator.pausedTurns({ taskId: task.id })[0];
+  assert.equal((await coordinator.nudgeTurn(pause.pauseId, 'Continue the investigation')).ok, true);
   assert.equal(coordinator.pausedTurns({ taskId: task.id }).length, 0,
-    'control: a genuine resumed turn answers the cycle — the cycle machinery itself is live in this fixture');
+    'an explicit continuation consumes the checkpoint');
 });

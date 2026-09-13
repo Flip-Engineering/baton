@@ -9,10 +9,12 @@
 //   - the process-exit fact (exit code + signal) through the exact-close latch
 //
 // TRANSPORT RECOVERY LAW (operator, 2026-08-14): a transport timeout is NEVER a hard
-// failure. Every protocol wait (ready frame, commands, responses) retries with backoff and
-// only ever reports evidence. If the child is ALIVE, we keep trying — the durable run
-// recovers and continues. A member is failed only by the process-exit fact itself (with
-// its death-cert fields), never by our own patience expiring.
+// failure. Protocol waits (the ready frame) retry with backoff and only ever report evidence.
+// If the child is ALIVE, we keep trying — the durable run recovers and continues. A member is
+// failed only by the process-exit fact itself (with its death-cert fields), never by our own
+// patience expiring. COMMANDS are the exception to re-sending: rpc.md grants no idempotency,
+// so a timed-out command is observed (transport_stall) and keeps its original correlation id —
+// it is never re-issued, because a second frame would duplicate the native effect.
 import { spawn } from 'node:child_process';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
@@ -27,9 +29,12 @@ const DEFAULT_MAX_WIRE_FRAME_BYTES = 2 * 1024 * 1024;
 const DEFAULT_MAX_EVENT_PAYLOAD_BYTES = 64 * 1024;
 const DEFAULT_STREAM_CHUNK_BYTES = FRAME_LIMITS['stream.omp.flush'].value;
 
-// Backoff ladder for transport-level retries: bounded attempt budget with growing gaps.
-// The FINAL attempt never fails the member — it surfaces as a transport_stall notice and
-// the loop continues observing; only process exit (with cause) terminalizes.
+// Backoff ladder for the READY-frame wait: bounded attempt budget with growing gaps. The FINAL
+// attempt never fails the member — it surfaces as a transport_stall notice and the loop
+// continues observing; only process exit (with cause) terminalizes. Commands do NOT ride this
+// ladder: a timed-out command must never be re-sent (rpc.md grants no idempotency, and a fresh
+// id would duplicate the native effect) — `send()` emits an observation stall and stays
+// correlated instead.
 const RETRY_BACKOFF_MS = [250, 500, 1000, 2000, 4000, 8000, 15000, 30000];
 
 // #236: the final assistant message's text — the turn verdict's summary. omp's agent_end
@@ -136,6 +141,7 @@ export class OmpRpcProcess {
     this.onTransportStall = options.onTransportStall ?? null;
     this._child = null;
     this._pending = new Map();
+    this._commandSeq = 0; // per-instance monotonic correlation identity; payloads never name it
     this._readyWaiters = [];
     this._readyFrame = null;
     this._buffer = '';
@@ -206,44 +212,87 @@ export class OmpRpcProcess {
   }
 
   /**
-   * Issue a command and await its correlated response — RETRYING with backoff while the
-   * child lives. Duplicates are safe (idempotency is omp's per rpc.md; a re-send carries a
-   * fresh correlation id and the stale response, if any, is dropped as uncorrelated).
-   * Resolves ONLY on response or process exit.
+   * Issue a command and await its correlated response.
+   *
+   * IDENTITY (omp 17.4.0 rpc.md, "Request/Response Correlation"): every command accepts an
+   * optional `id` and the response echoes it; the server matches nothing else, and rpc-mode
+   * executes each received frame once. Each CALL therefore owns a fresh id — never one derived
+   * from the payload — so two concurrent identical commands cannot overwrite each other's
+   * waiter. Replies may land in any order (bash is dispatched concurrently and rpc.md pins
+   * "clients MUST match responses on `id`, not on emission order"), so correlation is by id
+   * alone, never by arrival order.
+   *
+   * EFFECT TRUTH: the protocol has NO idempotency guarantee — the only operation rpc.md calls
+   * idempotent is disabling fast mode. A timed-out command is therefore NEVER re-sent: a fresh
+   * id would duplicate the native effect (a second `prompt` is a second agent turn). The waiter
+   * stays correlated across the timeout, the wait surfaces as an observation stall, and it
+   * settles only on the correlated response (however late) or the actual process-exit fact.
+   * `stdin.write(false)` is backpressure (the frame is buffered — accepted), not refusal; only
+   * a synchronous throw means the chunk was not accepted, and that failure is surfaced typed —
+   * never silently re-sent, since a re-send could double an effect already on the wire.
+   *
+   * The minted id is serialized LAST so a caller-supplied `payload.id` can never displace the
+   * correlation identity the wait is registered under.
    */
   send(payload) {
     return new Promise((resolve, reject) => {
-      const attempt = (n) => {
-        if (this._exited) {
-          reject(Object.assign(new Error('omp rpc process exited before response'), {
-            code: 'transport_process_exit',
-            exitCode: this._exitFacts?.code ?? null,
-            signal: this._exitFacts?.signal ?? null,
-          }));
-          return;
-        }
-        const id = `baton-${createHash('sha256').update(JSON.stringify({ payload, n })).digest('hex').slice(0, 12)}`;
-        const timer = setTimeout(() => {
-          this._pending.delete(id);
-          if (n >= RETRY_BACKOFF_MS.length) {
-            this.onTransportStall?.({ phase: 'command_wait', command: payload?.type, attempts: n + 1 });
-          }
-          attempt(n + 1);
-        }, this.waitAttemptMs);
-        if (typeof timer.unref === 'function') timer.unref();
-        this._pending.set(id, (frame) => { clearTimeout(timer); resolve(frame); });
-        try {
-          this._child?.stdin.write(`${JSON.stringify({ id, ...payload })}\n`);
-        } catch {
-          clearTimeout(timer);
-          this._pending.delete(id);
-          // stdin write failure with a live child is transient (buffer full/closing race):
-          // back off and retry; the exit handler terminalizes if the child is truly gone.
-          if (this._exited) { attempt(n); return; }
-          setTimeout(() => attempt(n + 1), RETRY_BACKOFF_MS[Math.min(n, RETRY_BACKOFF_MS.length - 1)]);
-        }
+      if (this._exited) {
+        reject(Object.assign(new Error('omp rpc process exited before response'), {
+          code: 'transport_process_exit',
+          exitCode: this._exitFacts?.code ?? null,
+          signal: this._exitFacts?.signal ?? null,
+        }));
+        return;
+      }
+      this._commandSeq += 1;
+      const id = `baton-${this._commandSeq}`;
+      let timer = null;
+      const clear = () => { if (timer) { clearTimeout(timer); timer = null; } };
+      const waiter = {
+        resolve: (frame) => { clear(); resolve(frame); },
+        reject: (error) => { clear(); reject(error); },
       };
-      attempt(0);
+      let observations = 0;
+      const observe = () => {
+        observations += 1;
+        // Evidence-only: the command was already written exactly once; the wait keeps the
+        // correlation alive while the child lives (TERMINALITY law) and nothing is re-sent.
+        // An observer defect is contained — it may not crash the timer that runs the wait.
+        try {
+          this.onTransportStall?.({
+            phase: 'command_wait', command: payload?.type, id, observations,
+            note: 'child alive; correlated response pending — command NOT re-sent (no effect duplication)',
+          });
+        } catch { /* an observer defect never kills the member */ }
+        // The observer may have synchronously delivered the response or the exit, settling this
+        // waiter: re-arm only while this waiter still owns the correlation, or a settled
+        // request leaks a recurring timer for an id nobody awaits.
+        if (this._pending.get(id) !== waiter) return;
+        timer = setTimeout(observe, this.waitAttemptMs);
+        if (typeof timer.unref === 'function') timer.unref();
+      };
+      this._pending.set(id, waiter);
+      timer = setTimeout(observe, this.waitAttemptMs);
+      if (typeof timer.unref === 'function') timer.unref();
+      try {
+        const stdin = this._child?.stdin;
+        if (!stdin || stdin.destroyed) {
+          throw Object.assign(new Error('omp rpc stdin is unavailable'), { code: 'transport_write_failed' });
+        }
+        stdin.write(`${JSON.stringify({ ...payload, id })}\n`);
+      } catch (error) {
+        clear();
+        this._pending.delete(id);
+        try {
+          this.onTransportStall?.({
+            phase: 'command_write', command: payload?.type, id,
+            note: 'stdin refused the frame; surfaced typed, never silently re-sent',
+          });
+        } catch { /* an observer defect never replaces the typed refusal */ }
+        reject(Object.assign(new Error(`omp rpc command write failed: ${error?.message ?? error}`), {
+          code: 'transport_write_failed', cause: error,
+        }));
+      }
     });
   }
 
@@ -280,7 +329,7 @@ export class OmpRpcProcess {
       if (frame.type === 'response' && frame.id && this._pending.has(frame.id)) {
         const waiter = this._pending.get(frame.id);
         this._pending.delete(frame.id);
-        waiter(frame);
+        waiter.resolve(frame);
         continue;
       }
       try { this.onFrame?.(frame); } catch { /* an observer defect never kills the member */ }
@@ -294,7 +343,7 @@ export class OmpRpcProcess {
     // The close fact IS the death cert: exit code + signal ride the payload (#225's fields).
     // Release every pending waiter with the exit evidence — no one hangs on a dead child.
     for (const [, waiter] of this._pending) {
-      waiter({ type: 'response', success: false, error: 'process exited', code: 'transport_process_exit' });
+      waiter.resolve({ type: 'response', success: false, error: 'process exited', code: 'transport_process_exit' });
     }
     this._pending.clear();
     const outcome = { exitCode: code ?? null, signal: signal ?? null, failure: this.failure ?? null };
@@ -541,10 +590,12 @@ export class OmpRpcCli {
     this._emit(session, 'lifecycle.turn_started', {
       phase: 'turn_started', turnId: turn.turnId, turnEpoch: session.turnEpoch,
     });
-    // Fire-and-forget; responses/agent events stream back on the frame lane. A transport
-    // hiccup here retries inside process.command()'s backoff ladder — never kills the turn.
+    // Fire-and-forget; responses/agent events stream back on the frame lane. send() writes the
+    // prompt exactly once — a transport stall is observed, never re-sent (a duplicate prompt
+    // would start a second agent turn) — so this never kills the turn either way.
     session.process.send({ type: 'prompt', message, streamingBehavior: 'steer' }).catch(() => {
-      // The exit handler owns terminal evidence; a live child's transient failure retries.
+      // The exit handler owns terminal evidence; a live child's pending prompt keeps its
+      // correlation until the response arrives.
     });
   }
 

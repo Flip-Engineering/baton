@@ -24,21 +24,26 @@ whole-wave requirements do not describe the revised design. Implementation remai
   Codex's catalog change was preserved after an account limit; Claude's visualization change was
   preserved after exposing a repeated progress-nudge loop. These two are locally verified after
   integration; they are not claimed as Baton-accepted native results. [Receipts](reference/evidence/selfdev-2026-09-12/native-runs.json).
-- Current focused validation: integrated core 100/100 (one redundant fixture subsequently removed),
+- First-checkpoint focused validation: integrated core 100/100 (one redundant fixture subsequently removed),
   initial integrated surfaces/lifecycle 71/71, frame/batch 51/51, and all three surface audits pass
   under Node 22. Full release acceptance and CI have not been established on this branch.
 - The second native self-development pass repaired Claude completion/accounting, MCP refusal coaching,
   ACP timeout replay and premature close confirmation, wave observation/stop admission, and OMP's
   blanket native capability suppression. Root integration preserves exclusive fallback-pin attribution.
-  Completion/claim/steering checks pass 111/111; wave follow-up checks pass 20/20. A new live Claude
-  self-build against these corrections remains the next acceptance proof.
+  Completion/claim/steering checks pass 111/111; wave follow-up checks pass 20/20. A fresh native
+  Claude self-build completed one turn without automatic nudges; root issued claim_turn after review,
+  Baton verified and accepted the change, and closure reported zero owned resources. The new OMP
+  command-correlation/replay repair also passed Baton acceptance and 33/33 integration checks.
+- Stable `89661c1f` full suite: **4,502 tests, 3,839 pass, 468 fail, 195 cancelled**. Follow-up
+  browser/orientation/native-driver/oracle checks pass 92/92 and persistent-session checks 9/9.
+  The remaining failures are tracked in the comparison evidence; full release acceptance is red.
 - Full discovery sweep: 4,477 tests, 3,790 pass, 491 fail, 196 cancelled (edits were in progress).
   Isolated original revision: 4,445 tests, 3,746 pass, 508 fail, 191 cancelled. These are failure
   inventories, not a passing release gate. [Review and remaining gaps](40-runtime-review-2026-09-12.md).
   Dynamic membership, shared group workspaces and broader dependencies remain open design work.
-- Remote review: no open PRs; latest master CI ran zero steps because its self-hosted runner labels
-  have no available matching runner. Earlier hosted CI was blocked by account budget. No CI success
-  or production readiness is inferred from these runs.
+- Remote: [draft PR #256](https://github.com/Flip-Engineering/baton/pull/256) is published. Hosted CI
+  now acquires a runner, installs dependencies and executes the suite. Completion is pending at this
+  checkpoint; the branch is not merged and no CI success or release readiness is inferred.
 
 ## Historical checkpoint (2026-08-20)
 
