@@ -1,430 +1,317 @@
 # Verification and capture recovery: adversarial design review
 
 Review date: 2026-09-13. Worktree: `ws-2d6ef501906393b37be8328f11b6f097`. Base commit:
-`a966bba6`. This is a technical review artifact — not a claim that any described gap is fixed.
-
-## Purpose and scope
-
-This review traces the precise failure path that occurred when a live native self-build committed
-useful work, but disk exhaustion during the trust gate's verification setup prevented Baton from
-accepting the result. The review distinguishes capacity refusal types, names the exact code paths,
-identifies the state left by each failure mode, and proposes the smallest coherent corrections.
-Root implements; this document only critiques.
-
-The required execution contract (`node --test impl/test/capacity-refusal-visibility-red.test.mjs`)
-passes 6/6 on the reviewed base. That test covers pre-dispatch capacity refusal visibility only;
-it is evidence for what it tests, not for the gaps named below.
+`a966bba6`. This is a technical review artifact — not a claim that any described behavior is
+fixed. Sections are labeled **[PROVEN]**, **[PLAUSIBLE]**, or **[PROPOSED]** to distinguish
+observed source behavior, inferred paths that require the run receipt to confirm, and design
+directions that are not yet implemented.
 
 ---
 
-## I. Complete flow trace
+## I. Traced source paths
 
-### 1. Worker checkpoint → orchestrator completion claim
+### 1. Worker checkpoint → pause park
 
-A worker (native Claude session) finishes a turn. If the adapter card declares
-`turnCompletion: 'pausable'`, the coordinator mints a pause record:
+When a native worker turn completes and the adapter card declares `turnCompletion: 'pausable'`,
+the coordinator mints a pause record (coordinator.mjs:2114–2172 `_admitPauseRecord`):
 
-**coordinator.mjs:2114–2172 `_admitPauseRecord`**
+- Appends a durable `turn.paused` event carrying `turnEpoch` and `changedPathsDigest`.
+- Writes a pause record to `_pausedTurns` keyed `pause:${task.id}:${terminalEvent.seq}`.
+- Transitions task to `paused`. No prompt, no timer, no automatic continuation. **[PROVEN]**
 
-- A `turn.paused` event is appended with the `turnEpoch` and a `changedPathsDigest`
-  (attention evidence only — never gate input).
-- The pause record is written to `_pausedTurns` under key
-  `pause:${task.id}:${terminalEvent.seq}`.
-- The task transitions to `paused`. No prompt, no timer, no automatic continuation.
-- The coordinator parks and returns `false`. The pause is visible on `pausedTurns()`.
+### 2. `claimTurn` → trust gate
 
-An orchestrator calls `claimTurn(pauseId)`:
+An orchestrator calls `claimTurn(pauseId)` (coordinator.mjs:2443–2497):
 
-**coordinator.mjs:2443–2497 `claimTurn`**
+1. `_reservePauseRecord` acquires the single-consumer slot (Part A rule 1).
+2. `_claimLivenessPreflight` (coordinator.mjs:2511) may return `{ok:false}` if the diff is
+   absent but liveness evidence exists; rollback leaves the record claimable.
+3. `turn.settled` unparks task from `paused` → `working`.
+4. `_runTrustGate(handle, record.workerResult ?? null)` runs.
+5. `commit()` or `rollback()` is called.
 
-1. `_reservePauseRecord` acquires the record's single-consumer slot (Part A rule 1).
-2. `_claimLivenessPreflight` (coordinator.mjs:2511) optionally confirms a real in-scope diff
-   exists before the trust gate fires. If the diff is absent but liveness evidence
-   exists, the record stays claimable and the caller is told to nudge first.
-3. A `turn.settled` event unparks the task from `paused` to `working`.
-4. `_runTrustGate(handle, record.workerResult ?? null)` fires.
-5. `commit(...)` or `rollback()` consumes or releases the pause slot.
+After step 5, **the pause record is consumed exactly once** regardless of gate outcome. A failed
+gate moves the task to `'failed'`; the same pause record cannot be claimed again. **[PROVEN]**
 
-**After step 5, the pause record is consumed regardless of the gate outcome.** A failed gate
-transitions the task to `failed`; the pause cannot be re-claimed.
-
-### 2. Trust gate: capture, scope checks, verification worktree, verdict
+### 3. Trust gate internals
 
 **coordinator.mjs:13635–14048 `_runTrustGate`**
 
 ```
-trustPhase = 'capture'  [set at :13653]
-captured = await _captureTrustWorktree(handle, task)   [git rev-parse HEAD or snapshot :13657]
-[forbidden_effect check :13664]
-[path_scope check :13673]
-[required_effect check :13689]
+trustPhase = 'capture'                                        [:13653]
+captured = await _captureTrustWorktree(handle, task)          [:13657]
+  → captureCommit(dir, taskId, opts)                          [worktree.mjs:1194]
+  → if !isClean(dir): git add -A + git commit                 [worktree.mjs:1209]
+  → git rev-parse HEAD                                        [worktree.mjs:1235]
 
-createVerifyWorktree(task.id, sha)                     [:13708]  ← DISK EXHAUSTION HERE
-baseCreateVerifyWorktree(...)                          [:13723]  (optional)
-structuralEvidence.classify(...)                       [:13731]  (optional)
-await this._referee(task, workerResult, {...sandbox})  [:13750]
+[forbidden_effect check]                                      [:13664]
+[path_scope check]                                            [:13673]
+[required_effect check]                                       [:13689]
 
-diagnosticCheckpoint = verdict.outcome is inconclusive | candidate_failed   [:13768]
-if (accept && sha) retainedResultRef = pinAcceptedResult(...)               [:13776]
-if (diagnosticCheckpoint && sha) checkpoint = retainCheckpoint(sha)         [:13778]
+createVerifyWorktree(task.id, sha, {...})                      [:13708]
+  → WorktreeCapacityAuthority.reserveMany(...)                [worktree-capacity.mjs:351]
+    checks floors: throws worktree_capacity_exceeded           [:13399-402]
+  → or ENOSPC from git worktree add
 
-[trustPhase = 'terminal_batch' :13904]
-coordination.transitionTaskWithArtifacts(task.id, terminalStatus, ...)      [:13915]
-task.capturedSha = captured.sha                                              [:13935]
+observedVerdict = await _referee(task, ...)                   [:13750]
+
+diagnosticCheckpoint = verdict.outcome ∈ {inconclusive, candidate_failed}  [:13768]
+if accept && sha: retainedResultRef = pinAcceptedResult(...)  [:13776]
+if diagnosticCheckpoint && sha: checkpoint = retainCheckpoint [:13778]
+
+task.capturedSha = captured.sha   ← ONLY in happy path        [:13935]
 ```
 
-`finally` block removes verify worktrees (always), then if `cleanupAfterVerification` is set,
-`_removeOwnedTaskWorktree` is called.
+`finally` removes verify worktrees; `_removeOwnedTaskWorktree` fires if
+`handle.cleanupAfterVerification` is set. **[PROVEN]**
 
-### 3. Where disk exhaustion hits
+### 4. What happens when `createVerifyWorktree` throws
 
-When the disk is full **at `createVerifyWorktree`** (coordinator.mjs:13708), the thrown error
-is typically `worktree_capacity_exceeded` (from `WorktreeCapacityAuthority.reserveMany` at
-worktree-capacity.mjs:402) or a raw ENOSPC from the git worktree add command.
-
-The exception propagates to the `catch` block at coordinator.mjs:13970:
+The exception enters the catch block at coordinator.mjs:13970 **[PROVEN]**:
 
 ```javascript
-const code = typeof err?.code === 'string' && /^[a-z0-9_]{1,64}$/u.test(err.code)
-  ? err.code : 'trust_gate_failed';
-// logs error event with trustPhase still = 'capture' (never updated for this path)
-// transitions task to 'failed'
-// for POLICY codes (forbidden_effect_observed, required_effect_absent,
-//   worker_path_scope_violation): sets handle.terminalCause    [:14003]
-// for ALL OTHER codes (including worktree_capacity_exceeded): terminalCause stays null
+const code = err?.code ?? 'trust_gate_failed';  // e.g. 'worktree_capacity_exceeded'
+// Logs error event with trustPhase still = 'capture' (never advanced for this path)
+// Attempts: coordination.transitionTask(task.id, 'failed', ...)
+// Policy-code guard at :14003 — sets handle.terminalCause ONLY for:
+//   forbidden_effect_observed | required_effect_absent | worker_path_scope_violation
+// worktree_capacity_exceeded is NOT in that set → handle.terminalCause stays null
 ```
 
-**Key facts at this point:**
-- `task.capturedSha` is **never set** (only set at :13935, inside the happy path).
-- `diagnosticCheckpoint` is **never computed** (requires reaching verdict at :13768).
-- No checkpoint is pinned via the trust gate.
-- `task.status = 'failed'`.
-- `trustPhase` in the logged error event says `'capture'` even though the failure was during
-  verification setup — a misleading label.
+Verified: `projectTypedTerminalCause` (application-semantics.mjs:2219–2242) receives
+`terminalResult.terminalCause = null` and no `dispatchRefusal`, no `terminalOutcome`, no
+`runStop` → **returns null**. The Run view terminalCause is absent, not wrong. There is no
+retryable guidance because there is no terminalCause to read.
 
-### 4. What keeps the work
+`production-convergence-state.mjs:264–271`: `collectRunViews` only considers non-null cause
+objects; a null terminalCause is invisible to the AutomaticRecoveryController. **[PROVEN]**
 
-After `_runTrustGate` returns (with the task failed), coordinator.mjs:14033–14042 runs:
+The `trustPhase` label in the error event says `'capture'` even though the failure was at
+verification setup — a misleading label but verifiable from source. **[PROVEN]**
+
+`task.capturedSha` is never set (only at :13935, inside the happy path). **[PROVEN]**
+`diagnosticCheckpoint` is never evaluated (requires reaching :13768). **[PROVEN]**
+No checkpoint is pinned through the trust gate for this error path. **[PROVEN]**
+
+### 5. The 6.1GB context and progress preservation — what is and is not known
+
+docs/40 records: "a live disk-capacity refusal at capture prevented Baton acceptance. Baton
+preserved the exact commit and closed with zero remaining owned resources. Root just recovered
+6.1GB."
+
+The 6.1GB recovery happened **after** the prior run closed. It does not explain how preservation
+succeeded during that run while the disk was full. Two plausible explanations:
+
+**[PLAUSIBLE — requires run receipt to confirm]**
+
+*Path A:* `captureCommit` (worktree.mjs:1194) when the worker had already committed runs only
+`git rev-parse HEAD` (no disk write), and the trust gate failure hit at `createVerifyWorktree`.
+`_preserveProgressBeforeReap` (coordinator.mjs:8740) then called `retainCheckpoint`, which
+writes a tiny git ref (~40 bytes). On a nearly-but-not-entirely-full volume this can succeed
+where a full worktree checkout cannot.
+
+*Path B:* The failure was elsewhere; the worker's committed branch remains on the disposable
+task branch, which is not removed because `cleanupPending = true` when preservation fails.
+"Preserved the exact commit" refers to physical presence in the git object store, not a durably
+pinned ref.
+
+**Neither path is confirmed without inspecting the run receipt.** The source analysis names
+these as candidate paths, not established facts. The distinction matters: Path A produces a
+re-findable ref; Path B produces a reachable-but-not-indexed commit that a later reconciliation
+could remove.
+
+`_preserveProgressBeforeReap` can itself fail (coordinator.mjs:8800):
 
 ```javascript
-if (handle.cleanupAfterVerification) {
-  const runtimeRemoved = this._removeRuntimeScope(handle);
-  await this._removeOwnedTaskWorktree(handle, task);
-  ...
-}
+throw Object.assign(new Error('progress preservation failed before worktree reap'),
+  { code: 'progress_preservation_failed' });
 ```
 
-`_removeOwnedTaskWorktree` (coordinator.mjs:8804) calls `_preserveProgressBeforeReap`
-when `preserveUnaccepted` is true (coordinator.mjs:8847–8851):
-
-```javascript
-const preserveUnaccepted = Boolean(
-  handle.worktree && existsSync(handle.worktree) && task
-  && ['dead', 'exited'].includes(handle.status)
-  && !['completed', 'verifying'].includes(task.status)
-  && task.checkpoint?.state !== 'pinned'
-  && task.progressPreservation?.state !== 'no_progress'
-);
-```
-
-`_preserveProgressBeforeReap` (coordinator.mjs:8740–8801) tries `manager.capture()` then
-`manager.retainCheckpoint(sha)`. **If the worker already committed its work** (i.e., `isClean(dir)`
-returns true), `captureCommit` only runs `git rev-parse HEAD` — a read with no disk write. This
-can succeed even on a full disk, which explains "Baton preserved the exact commit" from docs/40.
-
-The `retainCheckpoint(sha)` call writes a small git ref entry. On a nearly-full volume that
-just freed 6.1 GB, this also succeeds. A `worktree.progress_checkpointed` event is appended
-and `task.checkpoint = { state: 'pinned', sha, ref }` is set in memory.
-
-**This explains the docs/40 observation: the work survived through the progress-preservation
-path during cleanup, not through the trust gate's own checkpoint pinning.**
+When it fails, `cleanupPending = true`, the worktree is not removed, and the commit remains
+physically present. **Not all infrastructure failures at the trust gate produce pinned
+checkpoints.** Preservation is best-effort and independently failable. **[PROVEN]**
 
 ---
 
-## II. Three distinct failure semantics
+## II. Three distinct failure semantics **[PROVEN from source]**
 
 ### A. Pre-effect capacity refusal
 
-**Code path:** `WorktreeCapacityAuthority.reserveMany` at worktree-capacity.mjs:399–402 throws
-`WorktreeCapacityError(code = 'worktree_capacity_exceeded')` before any git operation begins.
+Fires at `WorktreeCapacityAuthority.reserveMany` (worktree-capacity.mjs:399–402) inside
+`run.approve()`, before any session is started. No git effects exist.
 
-This fires at wave/run dispatch time (inside `run.approve()`), before the session is started.
-No worktree is created. No worker runs. No git effects exist.
-
-**Run state:** `cancelled` with `terminalCause.kind = 'dispatch_refused'`,
+Run state: `cancelled`, `terminalCause.kind = 'dispatch_refused'`,
 `terminalCause.code = 'worktree_capacity_exceeded'`, `terminalCause.retryable = true`.
-(coordinator.mjs area, confirmed by CAP-V2 test at capacity-refusal-visibility-red.test.mjs:148.)
+Confirmed by CAP-V1 through CAP-V6 (capacity-refusal-visibility-red.test.mjs, 6/6 pass).
 
-**Correct remediation:** Free disk / raise capacity floors; start a **new Run**. No work to
-recover. `retryable: true` is accurate here.
+The `retryable: true` guidance here is accurate — no work was done, a new Run is the right
+action once the condition clears.
 
 ### B. Failed verification
 
-**Code path:** `_runTrustGate` → `_referee` runs the verifier subprocess → verifier exits with
-wrong code or fails a gate condition.
+`_runTrustGate` runs the verifier subprocess; it returns. `observedVerdict` is computed.
+`diagnosticCheckpoint = true` when outcome is `inconclusive` or `candidate_failed`. A
+checkpoint is pinned at coordinator.mjs:13778. Task reaches `'failed'` with
+`task.checkpoint = { state: 'pinned', sha, ref }`. **[PROVEN]**
 
-`observedVerdict` is computed. `diagnosticCheckpoint = true` when the outcome is `inconclusive`
-or `candidate_failed`. A checkpoint is pinned at coordinator.mjs:13778. The trust gate completes
-normally, the task reaches `'failed'`, and `task.checkpoint = { state: 'pinned', sha, ref }` is
-set.
+### C. Unavailable verification (infrastructure failure inside trust gate)
 
-**Remediation:** Fix the code; resume from the checkpoint (PS5 / `resumeCheckpoint`) or nudge
-and claim next checkpoint. The checkpoint carries the exact failing SHA for inspection.
+`createVerifyWorktree` throws before any verification subprocess runs. `observedVerdict` is
+never computed. No checkpoint is pinned by the gate. Task reaches `'failed'` with
+`handle.terminalCause = null`. Run view terminalCause is null. **[PROVEN]**
 
-### C. Unavailable verification (infrastructure failure during trust gate)
-
-**Code path:** `_runTrustGate` → `createVerifyWorktree` throws (disk full, lock busy,
-or similar) → caught at coordinator.mjs:13970.
-
-`observedVerdict` is **never computed**. `diagnosticCheckpoint` is **never set**. No checkpoint
-is pinned by the gate. Task goes to `'failed'` with `terminalCause = null` (since the
-worktree capacity code is not in the policy-code set at :14003).
-
-Progress is preserved via cleanup (described in §I.4 above), producing
-`task.checkpoint.state = 'pinned'` in memory and a `worktree.progress_checkpointed` event.
-
-**Remediation:** Fix the infrastructure; resume from the pinned progress checkpoint
-(`resumeCheckpoint` PS5) after the condition clears. A **new Run** discards the preserved work.
-`retryable: true` guidance pointing to a new Run is actively harmful here.
-
-### Gap: the three failure modes are indistinguishable from the Run view
-
-All three result in a terminal Run. Two result in `phase = 'failed'`. Only pre-effect produces
-`phase = 'cancelled'`. But between B (failed verification) and C (unavailable verification):
-- Both produce `phase = 'failed'`.
-- B has a pinned checkpoint from the trust gate's own checkpoint path.
-- C has a pinned checkpoint from the cleanup preservation path (if the process had already exited).
-- Neither projects a `terminalCause` that distinguishes "code failed the check" from
-  "infrastructure prevented the check."
-- The `trustPhase = 'capture'` label in the error event is wrong for C (the failure is in
-  verification setup, not in the snapshot step).
+Progress may or may not be preserved through cleanup (see §I.5). **[PLAUSIBLE]**
 
 ---
 
 ## III. Contribution lifetime vs author lifetime
 
-The native observer worker committed its work (the git commit exists), reported completion, was
-checkpointed at `claim_turn` time, and had its session closed. The **author** (the worker session)
-is fully done. The **contribution** (the git commit pinned as a progress checkpoint) lives
-independently.
+The **author** is the worker session: its process group, capacity reservation, and task slot.
+All of these end at close.
 
-The current design correctly preserves contributions via `_preserveProgressBeforeReap`, but the
-API surface does not distinguish:
+The **contribution** is the git commit the worker produced. If the task branch survives cleanup
+(because `cleanupPending = true` or because a ref was pinned), the commit exists independently.
 
-1. **Author lifetime:** the worker session, its process group, its capacity reservation. These
-   are released on close.
+The current API does not distinguish these lifetimes on the Run view surface. A caller who
+sees `phase: 'failed'`, `terminalCause: null` cannot tell:
 
-2. **Contribution lifetime:** the pinned checkpoint SHA and its git ref. These persist until
-   explicit cleanup by the owning controller. A coordinator restart or reattachment can read
-   `task.checkpoint` from the durable coordination store and resume.
+1. Whether a contribution exists at all.
+2. Whether that contribution is reachable via a durable ref or only via the task branch.
+3. Whether the failure was in the code (check B) or in infrastructure (check C).
 
-The acceptance gate is coupled to the author lifetime (the trust gate runs inside the worker's
-active session context). An infrastructure failure at the end of the author's lifetime
-incorrectly closes the contribution's path to acceptance.
+`resumeCheckpoint` (coordinator.mjs:6403, PS5) is an existing path that re-dispatches a
+pinned SHA into a fresh session. It requires `task.checkpoint.state === 'pinned'`. For path A
+above (if confirmed), that ref exists. For path B, there may be no pinned ref to pass.
 
-**The consequence:** a checkpoint preserved through the cleanup path after a failed trust gate
-is available for `resumeCheckpoint` (PS5), which re-dispatches the work on a fresh session.
-This is the correct recovery path. But neither the Run view nor the terminal cause communicates
-this: the caller sees a failed Run and may retry with a new unrelated Run.
-
----
-
-## IV. Swarm isolation invariant
-
-docs/39 §2 (worker/session failure): "Worker/session failure affects its owned activity and
-actual dependents. Independent peers continue."
-
-The current implementation preserves this correctly for capacity refusal scenarios:
-
-- `createWave` uses `Promise.all` for concurrent admission (wave.mjs:314). One member's
-  `run.approve()` failing with `worktree_capacity_exceeded` records that member's
-  `startError` without affecting siblings.
-- `settle` observes members in independent per-member loops (wave.mjs:654). A member's
-  trust gate failure does not prevent other members from completing.
-- `close` initiates all member stops concurrently (wave.mjs:831). One stop failure produces a
-  typed stop record, not a peer abort.
-
-**No regression here.** Tight and loose groups remain free to continue unaffected peers.
-
-One residual uncertainty: when a verification worktree capacity failure causes a task to fail
-during `_runTrustGate` while that task belongs to a wave member, the wave's `settle` call
-observes the member as terminal (failed). The sibling members are unaffected because settle uses
-per-member independent loops. This is correct per the swarm design.
+The design document (docs/39) notes that acceptance can identify a specific revision and that
+contribution and author lifetimes are separate concepts. Whether re-verifying a contribution
+without re-spawning its author is sanctioned or requires new surface is an open design
+question this review cannot resolve from source alone. **[PROPOSED direction, not current
+behavior]**
 
 ---
 
-## V. Implementation direction
+## IV. Swarm isolation **[PROVEN]**
 
-These are the smallest coherent corrections, ordered by impact. Root decides which to act on.
+`createWave` admits members concurrently via `Promise.all` (wave.mjs:314). One member's
+`startError` from `run.approve()` is caught per-member without aborting siblings.
 
-### V-1. Distinguish unavailable verification from failed verification (highest impact)
+`settle` uses independent per-member loops (wave.mjs:654). One member's trust gate failure
+does not delay or terminate sibling members.
 
-When `createVerifyWorktree` (or `createBaseVerifyWorktree`) throws inside `_runTrustGate`,
-set `trustPhase` to a distinct value before the throw propagates so the logged error event
-carries an accurate label:
+`close` initiates all stops concurrently (wave.mjs:831). One stop failure produces a typed
+record; peers are not affected.
 
-**coordinator.mjs:13708** — set `trustPhase = 'verification_setup'` before calling
-`createVerifyWorktree`, and `trustPhase = 'base_verification_setup'` before
-`createBaseVerifyWorktree`. The existing catch block at :13981 already logs `trustPhase`; this
-change makes the logged phase accurate.
+Independent peers continue unaffected when one member fails at verification. This is correct
+per docs/39 and is preserved by the current implementation.
 
-Additionally, pin a progress checkpoint from inside the catch block when the failure code
-indicates an infrastructure problem (`worktree_capacity_exceeded`,
-`worktree_capacity_unavailable`, `checkpoint_failed`) and a captured SHA exists. This
-consolidates checkpoint pinning into one place rather than relying solely on cleanup.
+---
 
-### V-2. Surface verification-unavailable as a typed terminal cause (high impact)
+## V. Implementation direction **[PROPOSED]**
 
-The conditions at coordinator.mjs:14003 that set `handle.terminalCause` cover policy codes only.
-Add an analogous clause for infrastructure failures during trust gate:
+These are coherent corrections, not implementation commitments. Root selects.
+
+### V-1. Accurate `trustPhase` label
+
+Set `trustPhase = 'verification_setup'` before the `createVerifyWorktree` call at
+coordinator.mjs:13708 (and `'base_verification_setup'` before :13723). The existing catch
+block at :13981 logs `trustPhase`; callers reading the event log currently see `'capture'`
+when the failure was at verification setup.
+
+### V-2. Typed terminal cause for infrastructure failures inside the trust gate
+
+Add an analogous clause beside the policy-code guard at coordinator.mjs:14003:
 
 ```javascript
 if (['worktree_capacity_exceeded', 'worktree_capacity_unavailable'].includes(code)
-    && trustPhase === 'verification_setup') {
-  handle.terminalCause ??= deepFreeze({ kind: 'verification_infrastructure', code });
+    && ['verification_setup', 'base_verification_setup'].includes(trustPhase)) {
+  handle.terminalCause ??= deepFreeze({ kind: 'verification_unavailable', code });
   task.terminalCause = handle.terminalCause;
 }
 ```
 
-This lets the Run view project a distinct `terminalCause.kind = 'verification_infrastructure'`
-separate from `'policy_failure'` and `'provider_failure'`.
+This produces a distinct `terminalCause.kind` that `projectTypedTerminalCause` can route to
+its own guidance object, separate from `dispatch_refused` and from `policy_failure`.
 
-### V-3. Correct the retryable guidance for verification-infrastructure failures
+### V-3. Surface the preserved contribution state in the failed Run view
 
-The DISPATCH_REFUSAL_GUIDANCE at application-semantics.mjs:2185 correctly labels
-`worktree_capacity_exceeded` as retryable. A VERIFICATION_INFRASTRUCTURE_GUIDANCE should carry
-different remediation:
+When a task is `'failed'` and `task.checkpoint.state === 'pinned'` (however it was pinned),
+the Run view should surface the checkpoint sha and whether a re-verification path is
+available. Currently `task.capturedSha` stays null and the checkpoint is invisible to callers.
+This is a projection gap, not a data gap — the data exists in the in-memory task record.
 
-```
-summary: 'The verification environment could not be created; the work is preserved as a checkpoint.'
-remediation: 'Free repository volume space or raise capacity floors, then resume from the pinned checkpoint.'
-retryable: false  // a new Run loses the preserved checkpoint
-```
+### V-4. Contribution-present guidance vs contribution-absent guidance
 
-This requires `projectTypedTerminalCause` to recognize `kind = 'verification_infrastructure'`
-and route to the new guidance object.
+A new Run does not physically delete an existing pinned ref. It creates a new Run that does
+not select the prior contribution. The guidance gap is that callers cannot determine from the
+Run view whether a recoverable contribution exists. The correction is to surface that fact,
+not to prevent new Runs.
 
-### V-4. Surface the preserved checkpoint in the terminal Run view
-
-When a task is `'failed'` AND `task.checkpoint.state === 'pinned'`, the Run view should
-surface the checkpoint SHA and ref. Today `task.capturedSha` is null (never set by the
-trust gate in this path), so the checkpoint is not visible from the standard result surface.
-The Run view projection should include:
-
-```
-checkpoint: { sha, ref, state: 'pinned', origin: 'progress_preserved' }
-```
-
-when `task.checkpoint` exists and `task.capturedSha` is absent. This avoids archaeology
-in the event log to recover the SHA.
-
-### V-5. No universal retry count or timer
-
-The design document (docs/39 §2) explicitly prohibits elapsing time or repeated assertions as
-evidence about work. No proposed correction introduces a retry count or a backoff timer.
-A caller who recovers disk space and wants to re-verify calls `resumeCheckpoint`, which
-re-dispatches the existing pinned SHA into a fresh worker session. That is the one sanctioned
-path.
+Whether the recovery action is `resumeCheckpoint` (existing) or an independent re-verification
+path that does not re-dispatch the author is a separate design question. The review does not
+prescribe the API shape; it prescribes that the contribution state must be visible.
 
 ---
 
-## VI. Adversarial acceptance invariants
+## VI. Selected invariants **[PROPOSED for targeted tests]**
 
-These are behavioral claims that a correct implementation must satisfy. Each can be turned
-into a targeted test in the existing test style.
+These invariants distinguish the three failure modes. They are proposed contracts for targeted
+tests, not universal assertions over existing legacy code.
 
-**INV-1 (pre-effect vs post-work):** A capacity refusal that occurs before any git effect
-produces `phase = 'cancelled'`, `terminalCause.kind = 'dispatch_refused'`, and no pinned
-checkpoint. A capacity failure that occurs during `createVerifyWorktree` after a committed
-worker result produces `phase = 'failed'`, `terminalCause.kind = 'verification_infrastructure'`,
-and a pinned progress checkpoint accessible from the Run view. These two outcomes are never
-conflated.
+**INV-A (pre-effect label):** A Run cancelled by pre-dispatch `worktree_capacity_exceeded`
+carries `terminalCause.kind = 'dispatch_refused'` and `phase = 'cancelled'`. No checkpoint
+field is present. The `retryable` field on the cause is `true`.
 
-**INV-2 (checkpoint pinned after unavailable verification):** After a trust gate that fails at
-verification setup, `task.checkpoint.state === 'pinned'` is set. The checkpoint SHA resolves
-via `resolveCheckpoint` to the worker's committed HEAD. `resumeCheckpoint` on that SHA
-dispatches successfully once the infrastructure condition clears.
+**INV-B (unavailable verification label, proposed):** After the trust gate fails at
+verification setup with a capacity code, `handle.terminalCause.kind` equals
+`'verification_unavailable'`, not `'policy_failure'` and not null. The logged error event
+carries `trustPhase = 'verification_setup'`, not `'capture'`.
 
-**INV-3 (no retryable guidance for post-work failure):** The Run view for a
-`verification_infrastructure` terminal cause carries `retryable: false` and names the
-checkpoint in its remediation. It never says "start a new Run."
+**INV-C (checkpoint visibility, proposed):** A failed Run that has a pinned progress
+checkpoint surfaces the checkpoint sha in its Run view. This is readable without event log
+archaeology.
 
-**INV-4 (independent peers unaffected):** One wave member failing at trust gate verification
-setup does not terminate, pause, or delay sibling members. Their `settle` observations remain
-independent. The wave's `close` still initiates all stops concurrently.
+**INV-D (peer isolation, proven):** One member's trust gate failure within a wave does not
+prevent sibling member status reads from returning or their stops from being initiated.
 
-**INV-5 (pause record consumed only once):** A `claim_turn` that triggers a
-verification-infrastructure failure does not leave the pause record claimable again. The task
-is `'failed'`. A subsequent `claim_turn` on the same `pauseId` is refused. Recovery proceeds
-via `resumeCheckpoint`, not via a second claim.
-
-**INV-6 (trustPhase label accuracy):** The error event appended when `createVerifyWorktree`
-throws carries `trustPhase = 'verification_setup'`, not `'capture'`. A caller reading the
-event log can distinguish "snapshot failed" from "fresh verification sandbox failed."
-
-**INV-7 (contribution outlives author):** A pinned progress checkpoint produced by
-`_preserveProgressBeforeReap` during cleanup survives coordinator restart. After replay, the
-task record carries `checkpoint.state === 'pinned'` and `checkpoint.sha` resolves. The worker
-session (author) is fully closed; the checkpoint (contribution) is independently readable.
+**INV-E (pause consumed once, proven):** After `claimTurn` runs the trust gate — regardless
+of gate outcome — the same `pauseId` cannot be claimed again.
 
 ---
 
 ## VII. Source reference index
 
-| Item | File | Approximate lines |
-|------|------|-------------------|
+| Subject | File | Lines |
+|---------|------|-------|
 | Pause record mint | coordinator.mjs | 2114–2172 |
 | `claimTurn` | coordinator.mjs | 2443–2497 |
 | Liveness preflight | coordinator.mjs | 2511–2574 |
 | `_captureTrustWorktree` | coordinator.mjs | 2579–2588 |
-| Trust gate entry | coordinator.mjs | 13635–13653 |
-| Capture call | coordinator.mjs | 13657–13659 |
+| Trust gate | coordinator.mjs | 13635–14048 |
 | `createVerifyWorktree` call | coordinator.mjs | 13708 |
-| Verdict computation | coordinator.mjs | 13750 |
 | `diagnosticCheckpoint` flag | coordinator.mjs | 13768 |
-| Checkpoint pinning (gate) | coordinator.mjs | 13778–13786 |
-| `task.capturedSha` set | coordinator.mjs | 13935 |
-| Trust gate catch block | coordinator.mjs | 13970–14017 |
-| Policy-code terminalCause | coordinator.mjs | 14003–14008 |
+| Policy-code terminalCause guard | coordinator.mjs | 14003–14008 |
 | `_removeOwnedTaskWorktree` | coordinator.mjs | 8804–8871 |
-| `preserveUnaccepted` test | coordinator.mjs | 8847–8851 |
 | `_preserveProgressBeforeReap` | coordinator.mjs | 8740–8801 |
 | `captureCommit` | worktree.mjs | 1194–1244 |
-| `WorktreeCapacityAuthority.reserveMany` | worktree-capacity.mjs | 351–415 |
-| Capacity floor check | worktree-capacity.mjs | 399–402 |
-| Pre-dispatch guidance | application-semantics.mjs | 2185–2204 |
-| `projectTypedTerminalCause` | application-semantics.mjs | 2219+ |
-| CAP-V1..V6 dispatch tests | capacity-refusal-visibility-red.test.mjs | 97–238 |
-| Harvest recovery invariants | harvest-recovery-red.test.mjs | 241–399 |
+| `reserveMany` capacity floor check | worktree-capacity.mjs | 399–402 |
+| `projectTypedTerminalCause` | application-semantics.mjs | 2219–2242 |
+| `DISPATCH_REFUSAL_GUIDANCE` | application-semantics.mjs | 2185–2204 |
+| `RETRYABLE_KINDS` | production-convergence-state.mjs | 231–240 |
+| `collectRunViews` retryable check | production-convergence-state.mjs | 264–271 |
 
 ---
 
-## VIII. Evidence: test execution
+## VIII. Test execution
 
-The required test suite passes on this base:
+The required execution contract passes on this base:
 
 ```
 node --test impl/test/capacity-refusal-visibility-red.test.mjs
-# tests 6 / pass 6 / fail 0 / cancelled 0
+# tests 6 / pass 6 / fail 0
 ```
 
-CAP-V1 through CAP-V6 cover **pre-dispatch** capacity refusal visibility: typed code survival
-through the Web mapping, cancelled-with-cause terminal state, durable event facts, doctor
-reporting, jitter quantization, and retry refusal. These claims are validated.
-
-The gaps named in §II–V are not covered by any existing targeted test. INV-1 through INV-7
-above are the acceptance invariants for those gaps.
-
----
-
-## Conclusion
-
-The pre-dispatch capacity refusal path (CAP-V1–V6) is correctly implemented and tested. The
-trust gate's handling of infrastructure failure during verification setup is not: it conflates
-unavailable verification with failed verification, loses the `trustPhase` label accuracy, omits
-a distinct `terminalCause.kind`, and projects `retryable: true` guidance that points to a new
-Run when the correct recovery is `resumeCheckpoint` on the preserved progress checkpoint.
-The pause record is correctly consumed exactly once, and the swarm isolation invariant (peers
-continue unaffected) is correctly preserved. The contribution lifetime (the pinned checkpoint)
-correctly outlives the author lifetime (the closed worker session) via the cleanup preservation
-path, but this is invisible from the Run view surface. Corrections are in §V; invariants in §VI.
+These six tests cover pre-dispatch capacity refusal visibility (CAP-V1 through CAP-V6). They
+are cited as evidence for what they test and nothing beyond that. The gaps named in §II-C,
+§III, and §V are not covered by existing targeted tests; INV-B and INV-C name proposed
+contracts for those gaps.
