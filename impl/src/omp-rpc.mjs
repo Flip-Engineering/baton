@@ -769,6 +769,9 @@ export class OmpRpcCli {
       case 'agent_end':
         this._onAgentEnd(session, frame);
         return;
+      case 'auto_retry_start':
+        this._emit(session, 'content.message', { phase: 'notice', note: 'provider_retry_started' });
+        return;
       case 'retry_fallback_applied':
         this._emit(session, 'content.message', { phase: 'notice', note: 'provider_retry_fallback', model: frame.model ?? null });
         return;
