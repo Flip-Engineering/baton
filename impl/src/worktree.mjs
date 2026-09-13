@@ -48,6 +48,15 @@ export class WorktreeLockedError extends Error {
 export class WorktreeCleanupError extends Error {
   constructor(message) { super(message); this.name = 'WorktreeCleanupError'; this.code = 'worktree_cleanup_failed'; }
 }
+export class WorkspacePreservationError extends Error {
+  constructor(message, observation = null, code = 'workspace_uncommitted_content_retained') {
+    super(message);
+    this.name = 'WorkspacePreservationError';
+    this.code = code;
+    this.retained = true;
+    this.observation = observation;
+  }
+}
 export class WorkspaceOwnerDiagnostic extends Error {
   constructor(message, code = 'workspace_owner_ambiguous') {
     super(message); this.name = 'WorkspaceOwnerDiagnostic'; this.code = code;
@@ -994,6 +1003,205 @@ function validatedMetadata(repoRoot, taskId) {
   return Object.freeze({ ...meta, sparsePaths: identity.paths, sparseCheckoutIdentity: identity });
 }
 
+// ---------------------------------------------------------------------------
+// Content preservation at destructive removal boundaries
+// ---------------------------------------------------------------------------
+//
+// A checkout carries two kinds of content the runtime never captured as a revision: work its
+// owner had not captured (staged or unstaged tracked changes, untracked files) and paths the
+// runtime itself materialized (copied dependencies, toolchain projection targets). The first kind
+// is never destroyed merely because the owner is dead or because a caller forces the removal, so
+// reap and reconcile consult this observation before their first destructive effect and retain
+// with a typed refusal when content is unproven. `opts.disposablePaths` names caller-declared
+// runtime infrastructure, and the owner metadata's own `copiedDependencies` /
+// `toolchainProjectionTargets` do the same for checkouts this module created. An unreadable
+// observation, and a directory that is not this repository's checkout, are unproven content:
+// retain. Preservation happens by retention, never by an implicit capture: no path here stages,
+// commits, or otherwise rewrites the index or working tree it is judging.
+
+const PRESERVATION_MAX_BYTES = 4_096;
+
+/** Caller-declared runtime-materialized infrastructure roots, as safe relative literal paths. */
+function normalizeDisposableRoots(values = []) {
+  if (!Array.isArray(values)) throw new TypeError('disposable paths must be an array');
+  const roots = new Set();
+  for (const value of values) {
+    if (typeof value !== 'string' || value.length === 0
+      || Buffer.byteLength(value) > PRESERVATION_MAX_BYTES
+      || value.normalize('NFC') !== value || value.includes('\\')
+      || /[\u0000-\u001f\u007f]/u.test(value) || isAbsolute(value)) {
+      throw new TypeError('disposable path must be one safe relative literal');
+    }
+    const parts = value.split('/').filter((part) => part !== '');
+    if (parts.length === 0 || parts.some((part) => part === '.' || part === '..')
+      || ['.git', '.baton'].includes(foldCanonicalCase(parts[0]))) {
+      throw new TypeError('disposable path escapes repository ownership');
+    }
+    roots.add(parts.join('/'));
+  }
+  return [...roots].sort();
+}
+
+/** Infrastructure roots the owner metadata declares. Corrupt metadata proves nothing, so it
+ * declares nothing and every changed path stays unproven. */
+function declaredDisposableRoots(repoRoot, physicalOwnerId) {
+  try {
+    const meta = validatedMetadata(repoRoot, physicalOwnerId);
+    return normalizeDisposableRoots([
+      ...(Array.isArray(meta.copiedDependencies) ? meta.copiedDependencies : []),
+      ...(Array.isArray(meta.toolchainProjectionTargets) ? meta.toolchainProjectionTargets : []),
+    ]);
+  } catch { return []; }
+}
+
+function gitStatusEntries(dir) {
+  // Per-file untracked enumeration: a collapsed `?? dir/` entry cannot be classified against a
+  // declared infrastructure root nested inside it, and per-file paths make the refusal diagnostic
+  // name exactly what is at stake.
+  const raw = gitFile(
+    ['status', '--porcelain', '-z', '--no-renames', '--untracked-files=all', '--ignored=no'],
+    dir, { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 }, { GIT_OPTIONAL_LOCKS: '0' },
+  );
+  return raw.split('\0').filter(Boolean);
+}
+
+/** Content entries of a directory Git cannot observe as its own checkout: a plain directory
+ * inside the repository resolves to the repository's main worktree, so `git status` there would
+ * report somebody else's state. Only a top-level `.git` administration entry and empty
+ * directories are provably content-free. */
+function countUnobservedEntries(dir) {
+  let entries;
+  try { entries = readdirSync(dir); } catch { return 1; }
+  let content = 0;
+  for (const entry of entries) {
+    if (entry === '.git') continue;
+    let stat;
+    try { stat = lstatSync(join(dir, entry)); } catch { content += 1; continue; }
+    content += stat.isDirectory() && !stat.isSymbolicLink()
+      ? countUnobservedEntries(join(dir, entry)) : 1;
+  }
+  return content;
+}
+
+/**
+ * Observe whether an owned worktree directory holds content no capture recorded.
+ * @param {string} repoRoot
+ * @param {string} physicalOwnerId
+ * @param {{dir?: string, disposablePaths?: string[]}} [opts]
+ * @returns {{schemaVersion:number, physicalOwnerId:string, dir:string, state:'absent'|'clean'|'disposable'|'dirty'|'empty'|'unobservable', removable:boolean, disposableRoots:string[], dirtyPaths:string[], disposablePaths:string[], headSha:string|null, baseSha:string|null, reason:string|null}}
+ */
+export function observeOwnedWorktreeContent(repoRoot, physicalOwnerId, opts = {}) {
+  const dir = opts.dir ?? authorityChild(repoRoot, 'wt', physicalOwnerId, { kind: 'directory' });
+  const disposableRoots = [...new Set([
+    ...declaredDisposableRoots(repoRoot, physicalOwnerId),
+    ...normalizeDisposableRoots(opts.disposablePaths ?? []),
+  ])].sort();
+  const row = (state, extra = {}) => Object.freeze({
+    schemaVersion: 1, physicalOwnerId, dir, state,
+    removable: state !== 'dirty' && state !== 'unobservable',
+    disposableRoots,
+    dirtyPaths: Object.freeze([]), disposablePaths: Object.freeze([]),
+    headSha: null, baseSha: null, reason: null, ...extra,
+  });
+  if (!existsSync(dir)) return row('absent');
+  let liveCheckout = false;
+  try { liveCheckout = realpathSync(sh('git', ['rev-parse', '--show-toplevel'], dir)) === realpathSync(dir); }
+  catch { liveCheckout = false; }
+  if (!liveCheckout) {
+    return countUnobservedEntries(dir) === 0 ? row('empty') : row('unobservable', {
+      reason: 'directory is not this repository\'s checkout and holds entries no capture can record',
+    });
+  }
+  let entries;
+  try { entries = gitStatusEntries(dir); }
+  catch { return row('unobservable', { reason: 'working-tree status could not be observed' }); }
+  const dirtyPaths = []; const disposablePaths = [];
+  for (const entry of entries) {
+    const status = entry.slice(0, 2); const path = entry.slice(3);
+    if (status === '??' && disposableRoots.some((root) => path === root || path.startsWith(`${root}/`))) {
+      disposablePaths.push(path);
+    } else dirtyPaths.push(path);
+  }
+  dirtyPaths.sort(); disposablePaths.sort();
+  const state = dirtyPaths.length > 0 ? 'dirty' : disposablePaths.length > 0 ? 'disposable' : 'clean';
+  let baseSha = null;
+  try { baseSha = validatedMetadata(repoRoot, physicalOwnerId).baseSha; } catch { baseSha = null; }
+  let headSha = null;
+  try { headSha = sh('git', ['rev-parse', 'HEAD'], dir); } catch { headSha = null; }
+  return row(state, {
+    dirtyPaths: Object.freeze(dirtyPaths), disposablePaths: Object.freeze(disposablePaths),
+    headSha, baseSha,
+    reason: state === 'dirty' ? 'changed paths have no recorded capture' : null,
+  });
+}
+
+const DISCARD_AUTHORIZATION_FIELDS = ['actor', 'evidenceRef', 'reason'];
+
+/** The explicit decision a caller must supply to destroy content: a bounded reason plus, where
+ * one exists, the reference that preserves what the removal discards. */
+function normalizeDiscardAuthorization(value) {
+  if (value === undefined || value === null) return null;
+  const invalid = () => new TypeError('discard authorization must be {reason, evidenceRef?, actor?}');
+  if (typeof value !== 'object' || Array.isArray(value)
+    || Object.keys(value).some((key) => !DISCARD_AUTHORIZATION_FIELDS.includes(key))) throw invalid();
+  const reason = value.reason ?? null;
+  const evidenceRef = value.evidenceRef ?? null;
+  const actor = value.actor ?? null;
+  const bounded = (text) => typeof text === 'string' && text.length > 0
+    && Buffer.byteLength(text) <= PRESERVATION_MAX_BYTES && !/[\u0000-\u001f\u007f]/u.test(text);
+  if (!bounded(reason) || reason.trim().length === 0) throw invalid();
+  if (evidenceRef !== null && !bounded(evidenceRef)) throw invalid();
+  if (actor !== null && !bounded(actor)) throw invalid();
+  return Object.freeze({ reason, evidenceRef, actor });
+}
+
+/** Decide whether a checkout may be destroyed. Refuses with a typed WorkspacePreservationError
+ * carrying the observation when un-captured content has no explicit authorization. The caller
+ * records the discard with `discardAuthorizationEvent` only once the removal is proven complete,
+ * so a deferred or failed removal never claims a discard that did not happen. */
+function authorizeWorktreeRemoval(repoRoot, physicalOwnerId, opts = {}) {
+  const observation = observeOwnedWorktreeContent(repoRoot, physicalOwnerId, {
+    ...(opts.dir ? { dir: opts.dir } : {}),
+    ...(opts.disposablePaths ? { disposablePaths: opts.disposablePaths } : {}),
+  });
+  if (observation.removable) return { observation, authorization: null };
+  let authorization = null;
+  if (typeof opts.authorizeDiscard === 'function') {
+    try {
+      authorization = normalizeDiscardAuthorization(
+        opts.authorizeDiscard(physicalOwnerId, opts.receipt ?? null, observation),
+      );
+    } catch (cause) {
+      throw Object.assign(new WorkspacePreservationError(
+        `worktree "${physicalOwnerId}" was retained: its discard authorization was invalid`,
+        observation, 'workspace_discard_authorization_invalid',
+      ), { cause });
+    }
+  } else {
+    authorization = normalizeDiscardAuthorization(opts.discard);
+  }
+  if (!authorization) {
+    const unobservable = observation.state === 'unobservable';
+    throw new WorkspacePreservationError(
+      `worktree "${physicalOwnerId}" was retained: ${unobservable
+        ? 'its content could not be observed'
+        : `${observation.dirtyPaths.length} changed path(s) have no recorded capture`}`,
+      observation,
+      unobservable ? 'workspace_content_unobservable_retained' : 'workspace_uncommitted_content_retained',
+    );
+  }
+  return { observation, authorization };
+}
+
+function discardAuthorizationEvent(observation, authorization) {
+  return {
+    dir: observation.dir, state: observation.state, dirtyPaths: observation.dirtyPaths,
+    headSha: observation.headSha, baseSha: observation.baseSha,
+    reason: authorization.reason, evidenceRef: authorization.evidenceRef,
+    actor: authorization.actor,
+  };
+}
+
 export function validateOwnedWorktree(repoRoot, taskId, opts = {}) {
   normalizePhysicalOwnerId(taskId, 'taskId');
   const dir = authorityChild(repoRoot, 'wt', taskId, { kind: 'directory', mustExist: true });
@@ -1492,16 +1700,28 @@ export async function markStopped(repoRoot, taskId) {
 /**
  * @param {string} repoRoot
  * @param {string} taskId
- * @param {{force?: boolean, deleteBranch?: boolean, log?: object}} [opts]
+ * @param {{force?: boolean, deleteBranch?: boolean, log?: object,
+ *   discard?: {reason: string, evidenceRef?: string|null, actor?: string|null},
+ *   disposablePaths?: string[], authorizeDiscard?: Function, beforeRemove?: Function}} [opts]
  * @returns {Promise<void>}
- * @throws {WorktreeLockedError}
+ * @throws {WorktreeLockedError} when the worktree was never markStopped and `force` is not set
+ * @throws {WorkspacePreservationError} when the checkout holds content no capture recorded and no
+ *   discard authorization is supplied — nothing is removed in that case
  */
 export async function reap(repoRoot, taskId, opts = {}) {
   normalizePhysicalOwnerId(taskId, 'taskId');
+  // Fail before any effect on configuration that can never be honoured.
+  const disposablePaths = normalizeDisposableRoots(opts.disposablePaths ?? []);
+  normalizeDiscardAuthorization(opts.discard);
+  for (const hook of ['authorizeDiscard', 'beforeRemove']) {
+    if (opts[hook] !== undefined && typeof opts[hook] !== 'function') throw new TypeError(`${hook} must be a function`);
+  }
   const root = authorityRoot(repoRoot, 'wt', { create: false });
   const dir = join(root ?? join(realpathSync(repoRoot), '.baton', 'wt'), taskId);
   const metaFile = join(root ?? dirname(dir), `${taskId}.meta.json`);
   const projectionExclude = join(root ?? dirname(dir), `${taskId}.projection.exclude`);
+  let observation = null;
+  let discard = null;
   if (existsSync(dir)) {
     authorityChild(repoRoot, 'wt', taskId, { kind: 'directory', mustExist: true });
     const meta = readMeta(repoRoot, taskId);
@@ -1509,6 +1729,31 @@ export async function reap(repoRoot, taskId, opts = {}) {
     if (!stopped && !opts.force) {
       throw new WorktreeLockedError(`reap: worktree "${taskId}" was never markStopped (pass {force:true} to override)`);
     }
+    // Preservation is an invariant of this boundary: `force` overrides the stop latch, never the
+    // retention of content that no capture recorded.
+    const decision = authorizeWorktreeRemoval(repoRoot, taskId, {
+      dir, disposablePaths, discard: opts.discard,
+      ...(typeof opts.authorizeDiscard === 'function' ? { authorizeDiscard: opts.authorizeDiscard } : {}),
+      ...(opts.log ? { log: opts.log } : {}),
+    });
+    observation = decision.observation;
+    discard = decision.authorization;
+  }
+  if (typeof opts.beforeRemove === 'function') {
+    // The caller's own transaction gate (capacity settlement and its evidence duties) runs after
+    // the preservation decision and before the first destructive effect, so a refusal on either
+    // side leaves directory, metadata, registration, branch and receipt exactly as they were.
+    const confirmed = await opts.beforeRemove(Object.freeze({
+      physicalOwnerId: taskId, dir, observation, discard,
+    }));
+    if (confirmed !== true) {
+      throw new WorkspacePreservationError(
+        `reap: caller deferred removal of "${taskId}" before any effect`,
+        observation, 'workspace_removal_deferred',
+      );
+    }
+  }
+  if (existsSync(dir)) {
     try { sh('git', ['worktree', 'remove', '--force', dir], repoRoot); }
     catch { rmSync(dir, { recursive: true, force: true }); }
   }
@@ -1535,6 +1780,10 @@ export async function reap(repoRoot, taskId, opts = {}) {
   if (existsSync(dir) || existsSync(metaFile) || existsSync(projectionExclude) || registered || branchPresent) {
     throw new WorktreeCleanupError('owned worktree cleanup did not reach an exact absent state');
   }
+  // The removal is proven complete here, so a discard authorization is recorded as performed.
+  if (discard) {
+    logEvent(opts, taskId, 'worktree.discard_authorized', discardAuthorizationEvent(observation, discard));
+  }
   try { releasePhysicalWorkspaceOwner(repoRoot, taskId); }
   catch (error) { throw Object.assign(new WorktreeCleanupError('physical workspace owner receipt could not be released'), { cause: error }); }
   logEvent(opts, taskId, 'worktree.reaped', { dir });
@@ -1545,17 +1794,39 @@ export async function reap(repoRoot, taskId, opts = {}) {
 // ---------------------------------------------------------------------------
 
 /**
+ * Reconcile workspace ownership against this controller's authority.
+ *
+ * Content preservation is an invariant of this boundary: a checkout whose owner is not expected
+ * and whose controller is not live is removed only when its content is Git-observed clean, when
+ * every changed path is declared runtime infrastructure, or when the caller supplies an explicit
+ * discard authorization (`opts.discard` for the whole call, or `opts.authorizeDiscard(
+ * physicalOwnerId, receipt, observation)` per owner, which is where a caller captures first).
+ * Otherwise the checkout is retained with a typed diagnostic, the owner joins
+ * `retainedContentOwners`, and it enters the retained set so its capacity reservation evidence is
+ * not settled for a resource that still exists.
+ *
  * @param {string} repoRoot
  * @param {string[]} expectedActiveTaskIds
- * @param {{log?: object}} [opts]
+ * @param {{log?: object, ownerAuthority?: object, expectedOwnerBindings?: object[],
+ *   sparseCheckoutIdentity?: object, beforeOwnerCleanup?: Function, disposablePaths?: string[],
+ *   discard?: object, authorizeDiscard?: Function}} [opts]
  * @returns {Promise<{prunedAdminEntries:string[], removedZombieDirs:string[], removedIntegrationDirs:string[], removedVerifyDirs:string[], errors:string[]}>}
  */
 export function reconcile(repoRoot, expectedActiveTaskIds = [], opts = {}) {
+  // Fail before any effect on configuration that can never be honoured.
+  const disposablePaths = normalizeDisposableRoots(opts.disposablePaths ?? []);
+  normalizeDiscardAuthorization(opts.discard);
+  if (opts.authorizeDiscard !== undefined && typeof opts.authorizeDiscard !== 'function') {
+    throw new TypeError('authorizeDiscard must be a function');
+  }
   const report = {
     prunedAdminEntries: [], removedZombieDirs: [], removedIntegrationDirs: [],
     removedVerifyDirs: [], validatedExpectedOwners: [], retainedExpectedOwners: [],
     validatedExpectedBindings: [], retainedExpectedBindings: [],
     removedPhysicalOwners: [],
+    // Owners retained because their checkout holds content no capture recorded, and the exact
+    // authorizations that permitted a removal to discard such content instead.
+    retainedContentOwners: [], authorizedDiscards: [],
     // Receipt-only-loop records retained as ambiguous residue (rule 2's refusal set): the open
     // must fail on these. Loop-1 (checkout-present) records with the same diagnostic code proceed,
     // so the loop origin — known only here — is what the facade keys its refusal on.
@@ -1765,6 +2036,38 @@ export function reconcile(repoRoot, expectedActiveTaskIds = [], opts = {}) {
         retainExpected(normalizedTaskId);
         continue;
       }
+      let contentDecision = null;
+      if (existsSync(fullDir)) {
+        // Content preservation is decided before capacity settlement: a retained checkout still
+        // consumes its reservation, so the settlement callback must never be consulted for it.
+        try {
+          contentDecision = authorizeWorktreeRemoval(repoRoot, normalizedTaskId, {
+            dir: fullDir, disposablePaths, discard: opts.discard,
+            ...(typeof opts.authorizeDiscard === 'function' ? { authorizeDiscard: opts.authorizeDiscard } : {}),
+            ...(ownerReceipt ? { receipt: ownerReceipt } : {}),
+            ...(opts.log ? { log: opts.log } : {}),
+          });
+        } catch (error) {
+          if (!(error instanceof WorkspacePreservationError)) throw error;
+          const observation = error.observation;
+          report.diagnostics.push(Object.freeze({
+            code: error.code, physicalOwnerId: normalizedTaskId,
+            deploymentId: ownerReceipt?.deploymentId ?? null,
+            logicalTaskId: ownerReceipt?.logicalTaskId ?? null,
+            authority: ownerReceipt ? ownerState : 'unproven', retained: true,
+            contentState: observation?.state ?? 'unobservable',
+            dirtyPaths: observation?.dirtyPaths ?? Object.freeze([]),
+            headSha: observation?.headSha ?? null, baseSha: observation?.baseSha ?? null,
+          }));
+          if (!report.retainedContentOwners.includes(normalizedTaskId)) {
+            report.retainedContentOwners.push(normalizedTaskId);
+          }
+          // A retained checkout keeps consuming its owner's capacity: joining the retained set is
+          // what keeps the reservation row from being settled for a resource that still exists.
+          retainExpected(normalizedTaskId);
+          continue;
+        }
+      }
       if (/^ws-[a-f0-9]{32}$/u.test(normalizedTaskId)) {
         if (!ownerReceipt) {
           report.diagnostics.push(Object.freeze({
@@ -1806,6 +2109,19 @@ export function reconcile(repoRoot, expectedActiveTaskIds = [], opts = {}) {
         if (branchPresent) sh('git', ['branch', '-D', `baton/${taskId}`], repoRoot);
         try { sh('git', ['show-ref', '--verify', '--quiet', `refs/heads/baton/${taskId}`], repoRoot); branchPresent = true; } catch { branchPresent = false; }
         if (existsSync(fullDir) || existsSync(metaFile) || existsSync(projectionExclude) || branchPresent) throw new WorktreeCleanupError('reconciled worker ownership remained after cleanup');
+        // The removal and its absence proof are complete, so the discard is recorded as performed.
+        if (contentDecision?.authorization) {
+          logEvent(opts, taskId, 'worktree.discard_authorized',
+            discardAuthorizationEvent(contentDecision.observation, contentDecision.authorization));
+          report.authorizedDiscards.push(Object.freeze({
+            physicalOwnerId: normalizedTaskId,
+            reason: contentDecision.authorization.reason,
+            evidenceRef: contentDecision.authorization.evidenceRef,
+            actor: contentDecision.authorization.actor,
+            contentState: contentDecision.observation.state,
+            dirtyPaths: contentDecision.observation.dirtyPaths,
+          }));
+        }
         if (hadDir) report.removedZombieDirs.push(fullDir);
         if (hadResidue || hadBranch) logEvent(opts, taskId, 'worktree.reconciled', { dir: fullDir });
         if (ownerReceipt) {
