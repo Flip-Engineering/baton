@@ -137,7 +137,7 @@ prevented Baton acceptance. Baton preserved the exact commit and closed with zer
 owned resources. The receipt also exposed OMP replaying its last native steering message as a
 fresh turn: the same-test regression fails before the repair, and the repaired steering/native
 integration checks pass 32/32. Native steering now stays with its native queue; only an explicit
-continuation starts a subsequent turn. This does not claim to fix the separate OMP usage gap.
+continuation starts a subsequent turn. Native usage was addressed in the subsequent accounting work described above.
 
 An [independent native Claude review](reference/evidence/selfdev-2026-09-12/independent-review-followup.json)
 of `6692d712` found further observer and interrupt inconsistencies. Wave evidence now reads current
@@ -164,6 +164,16 @@ the same authority directory, then validates that directory; a symlink still ref
 effects. All 41 auxiliary/worktree checks pass after that change. Preservation
 can therefore retain abandoned disk contents; it does not claim that those resources were closed.
 These are tracked gaps, not claims of complete dynamic-swarm support.
+
+A further real-driver review found that filesystem observation failures were collapsed into
+positive workspace-authority loss, while repeated unknown reads could also trigger a kill.
+The adapter and coordinator now preserve the unknown state and expose the most recent
+`worktreeObservation`. Repetition does not establish loss; actually missing or invalid ownership
+still fails. Six real-filesystem regressions include permission failures, restoration, and
+corrupted/absent receipts. The same new tests produce four failures against `a966bba6`; all six
+pass after repair, alongside 199 ownership/capacity/coordinator/worktree checks.
+[Evidence](reference/evidence/selfdev-2026-09-12/workspace-observation-validation.json).
+
 
 The remote tracker already names related gaps: [mutable groups #162](https://github.com/Flip-Engineering/baton/issues/162),
 [worker message initiation #206](https://github.com/Flip-Engineering/baton/issues/206),
@@ -196,6 +206,28 @@ permissions, model controls, session resumption or native delegation semantics. 
 record those differences. Do not reduce all harnesses to a one-shot command because that is the
 smallest common interface.
 
+## Native self-development after disk recovery
+
+Removing inactive, generated Xcode device symbols recovered **6.10 GB of physical APFS space**.
+Source checkouts, uncommitted work, active processes, models and agent history were preserved.
+[Cleanup receipt](reference/evidence/selfdev-2026-09-12/disk-cleanup-2026-09-13.json).
+
+Three more native workers then ran concurrently through Baton. Two OMP workers repaired the
+end-to-end admission/concurrency checks and added the missing unavailable usage seal to setup
+process-exit crashes. A Claude worker produced the [verification recovery critique](41-verification-recovery-review.md),
+received one explicit revision request, and was explicitly claimed. All three contributions
+passed their configured fresh-worktree checks and closed with zero owned resources; their native
+PIDs were independently observed absent. Root tightened the test cleanup and revised the review
+before integration. These are three further Baton-accepted contributions, bringing this pass to
+12 accepted contributions plus the three earlier preserved/local-verified contributions.
+[Native receipts](reference/evidence/selfdev-2026-09-12/round5-native-runs.json).
+
+The live OMP accounting worker produced 111 native usage events during one actual turn. This is
+new native execution evidence for the integrated accounting path, in addition to the earlier
+recorded-stream replay. After its follow-up, all 140 OMP/governance checks pass. The end-to-end
+checks pass 4/4, production convergence 24/24, all surface audits pass, and packed installation
+passes. Configured checks support their specific claims; they do not certify every review finding.
+
 ## Evidence and release honesty
 
 [Native run receipts](reference/evidence/selfdev-2026-09-12/native-runs.json) distinguish:
@@ -223,6 +255,13 @@ behavioral `workflow-swarm-lifecycle` test that checks capture during closure re
 An empty `expected-red.json` is not proof that there is no unresolved work: the shipped-suite
 script separately omits filenames ending in `-red.test.mjs`, including tests for shipped behavior.
 Neither filename conventions nor stale historical counts establish release acceptance.
+
+The latest complete isolated sweep, at `a966bba6` on Node 22.22.2, reports **4,611 tests:
+4,008 pass, 463 fail, 140 cancelled** (`npm test -- --test-concurrency=2`).
+[Run metadata](reference/evidence/selfdev-2026-09-12/stable-a966bba6-suite.json) and the
+[failure inventory](reference/evidence/selfdev-2026-09-12/stable-a966bba6-suite-failures.jsonl)
+record that failed release gate. Later workspace, end-to-end and setup-seal fixes have focused
+checks; they are not retroactively included in that sweep.
 
 The stable `89661c1f` run reports **4,502 tests: 3,839 pass, 468 fail, 195 cancelled**.
 [Its failure inventory](reference/evidence/selfdev-2026-09-12/stable-89661c1f-suite-failures.jsonl)
