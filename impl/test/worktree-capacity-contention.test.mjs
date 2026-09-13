@@ -584,13 +584,14 @@ test('WCC11: a verifier is settled by exact owner identity, never by a shared pi
     'the preserved verifier is reported, not silently kept');
   assert.deepEqual(second.snapshot().reservations, untouched, 'preserved byte-for-byte');
 
-  // Declaring the same generation's active worker supersedes that generation (the restart shape):
-  // its same-process verifier becomes settleable by the authority that adopted the worker.
+  // Adopting a worker transfers that resource alone. A live controller's unrelated verifier
+  // still has exact ownership and may be between reserve and materialize.
   first.reserve('worker:superseded', REQUEST);
   const superseding = second.reconcile(['superseded']);
-  assert.deepEqual(superseding.removed, ['verify:claim-verification:1'],
-    'an adopted generation\'s same-process verifier is settled');
+  assert.deepEqual(superseding.removed, [],
+    'worker adoption does not settle a foreign live verifier');
   assert.equal(superseding.adopted.length, 1);
   assert.equal(superseding.adopted[0].ownerId, second.ownerId);
-  assert.deepEqual(second.snapshot().reservations.map((row) => row.id), ['worker:superseded']);
+  assert.deepEqual(second.snapshot().reservations.map((row) => row.id).sort(),
+    ['verify:claim-verification:1', 'worker:superseded']);
 });

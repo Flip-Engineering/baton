@@ -83,7 +83,7 @@ failure. Ownership is now exact identity:
 | `ownerId === this.ownerId` | settle — this authority's own generation |
 | `!livePid(pid)` | settle — owner process proven gone; capacity is not leaked |
 | live pid of another process, or a foreign same-process generation nobody claimed | **preserve byte-for-byte**, reported in `retainedVerifiers` |
-| foreign same-process generation whose active worker this reconcile adopts | settle — the adoption is an explicit claim that the generation is superseded |
+| foreign live generation whose active worker this reconcile adopts | retain — worker adoption does not prove verification closure |
 
 The last row is the one narrow exception, and it is a declaration, not an inference from pid:
 adopting a foreign generation's active worker (`activeWorkerIds`) already rewrites that row to
@@ -205,7 +205,7 @@ worktree.test.mjs:
    `releaseAbsent(id)`, and every row is visible in `snapshot()` with its owner. No wall-clock
    staleness rule by design — a grace window would be the weakest possible proof.
 4. **In-process supersession requires a declaration.** Two deployments in one process are
-   distinguished only by `ownerId`; a superseded same-process generation's verifiers are settled
+   distinguished by `ownerId`; adopting a worker does not settle that owner's other live verifiers
    exactly when its worker is adopted, otherwise preserved (WCC11). A process exit settles them
    via the dead-pid proof.
 5. **Latency trade.** Under contention a caller waits up to `lockWaitMs` (default 5 s) instead of

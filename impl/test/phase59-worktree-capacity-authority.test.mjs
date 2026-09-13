@@ -766,7 +766,7 @@ test('WC15: a well-formed dead generation lock is reaped before exact admission'
   assert.equal(existsSync(lock), false);
 });
 
-test('WC16: restart reconciliation adopts live workers and removes non-resumable verifiers', async (t) => {
+test('WC16: worker adoption preserves a live foreign verifier until its owner releases it', async (t) => {
   const f = fixture('adopt'); const injected = injectedCapacity(); let driver;
   t.after(() => dispose(driver, f));
   driver = createDriver({
@@ -775,13 +775,15 @@ test('WC16: restart reconciliation adopts live workers and removes non-resumable
   });
   const request = { baseSha: f.sha, sparsePaths: [], sparseCheckoutIdentity: sparseCheckoutIdentity([]), toolchainProjection: null };
   const worker = driver.worktreeCapacity.reserve('worker:capacity-adopted', request);
-  driver.worktreeCapacity.reserve('verify:capacity-abandoned', request);
+  const verifier = driver.worktreeCapacity.reserve('verify:capacity-abandoned', request);
   const restarted = new WorktreeCapacityAuthority({
     repoRoot: f.repo, policy: validPolicy, integrityKey: loadOrCreateWorktreeCapacityIntegrityKey(f.repo),
     estimate: injected.worktreeCapacityEstimate, observe: injected.worktreeCapacityObserve,
   });
   const report = restarted.reconcile(['capacity-adopted']);
-  assert.deepEqual(report.removed, ['verify:capacity-abandoned']);
+  assert.deepEqual(report.removed, []);
+  assert.deepEqual(report.retainedVerifiers, ['verify:capacity-abandoned']);
+  assert.equal(driver.worktreeCapacity.release(verifier), true);
   assert.equal(report.adopted.length, 1);
   assert.notEqual(report.adopted[0].ownerId, worker.ownerId);
   assert.equal(restarted.release(report.adopted[0]), true);
@@ -905,7 +907,7 @@ test('WC22: trust-gate capacity refusal exposes a bounded typed code without cap
   const refusal = driver.log.read(handle.id).find((event) => (
     event.kind === 'error' && event.payload?.phase === 'trust_gate'
   ));
-  assert.equal(refusal?.payload?.trustPhase, 'capture');
+  assert.equal(refusal?.payload?.trustPhase, 'candidate_sandbox');
   assert.equal(refusal?.payload?.code, 'worktree_capacity_exceeded');
   assert.equal(Object.hasOwn(refusal?.payload ?? {}, 'freeBytes'), false);
   assert.equal(Object.hasOwn(refusal?.payload ?? {}, 'reservations'), false);

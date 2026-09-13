@@ -372,7 +372,14 @@ export class WorktreeCapacityAuthority {
   // deadline passes — no observed state can make this loop unbounded.
   _acquire() {
     const deadline = performance.now() + this.lockWaitMs;
+    let firstAttempt = true;
     for (;;) {
+      if (!firstAttempt && performance.now() >= deadline) {
+        this._waitSlice(deadline, 'repeated ownership changes prevented acquisition', {
+          holderPid: this._observeOwner(this.lockPath, LOCK_LABEL)?.pid ?? null,
+        });
+      }
+      firstAttempt = false;
       const gate = this._observeOwner(this.reaperPath, REAPER_LABEL);
       if (gate !== null && livePid(gate.pid)) {
         // A reap is in flight and its tombstone rename may land on any lock published now.
@@ -691,21 +698,11 @@ export class WorktreeCapacityAuthority {
       const state = this._read(); const removed = [];
       const adopted = [];
       const retainedVerifiers = [];
-      // Ownership is exact identity (ownerId), never a shared pid: several deployments can live
-      // in one Node process, so a pid match settles nothing. Verifiers have no adoption protocol
-      // — a verification reservation belongs to the controller that minted it — so a verifier is
-      // settled only when this authority minted it or its owning process is proven gone; a LIVE
-      // FOREIGN controller's verifier is preserved byte-for-byte, because settling it strands
-      // that controller between reserve() and materialize(). The one exception is an explicit
-      // claim: adopting a foreign generation's active worker (below) declares that same-process
-      // generation superseded, so its same-process verifiers are settleable in this reconcile.
-      const superseded = new Set(state.reservations
-        .filter((row) => row.kind === 'worker' && active.has(row.id) && row.ownerId !== this.ownerId)
-        .map((row) => row.ownerId));
+      // Reconciliation may settle this authority's verifiers or a proved-dead process's.
+      // Adopting one worker is not proof that another controller stopped all its verification.
       state.reservations = state.reservations.filter((row) => {
         if (row.kind === 'verify') {
-          if (row.ownerId === this.ownerId || !livePid(row.pid)
-            || (row.pid === process.pid && superseded.has(row.ownerId))) {
+          if (row.ownerId === this.ownerId || !livePid(row.pid)) {
             removed.push(row.id); return false;
           }
           retainedVerifiers.push(row.id); return true;
