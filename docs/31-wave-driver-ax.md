@@ -80,11 +80,16 @@ Baked semantics (each numbered to its failure mode):
    The workflow-member dispatch-race retry is currently **unpinned**: no wave row can build a
    workflow member yet (nested orchestration is issue #12), and docs/31 does not claim coverage
    the surface cannot reach.
-8. `settle` always produces an outcome for every member — including after its own timeout —
-   and `close` reports residue per member from the RunView `resources` block
-   (`ownedCount`/`cleanupState`); a stop view without it is reported as `residueUnknown`, never
-   coalesced to zero. Pumps never outlive the call that armed them: `settle` and `close` drain
-   outstanding `run.complete()` promises with a bounded grace before returning.
+8. `settle({timeoutMs, signal})` observes members independently within one invocation deadline,
+   retaining each member's last observed phase and any later observation failure. Budget expiry
+   returns per-member outcomes; explicit caller cancellation rejects with `wave_observer_cancelled`.
+   `progress({signal})` also supports caller cancellation. Neither cancels worker lifetime.
+   Concurrent observations share a drive per member; the last owner requests its cancellation.
+   A cancelled but unsettled drive remains tracked and cannot be replaced by another drive.
+   `pumpQuiescent`/`pumpDrained` report observed completion, not merely an abort request. `close`
+   requests drive cancellation before explicit member stops and reports residue from RunView
+   `resources` (`ownedCount`/`cleanupState`); absent resource evidence remains `residueUnknown`.
+   No extra grace interval extends an observation budget.
 
 ## Program-IR alignment (not a second scheduler)
 

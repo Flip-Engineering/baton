@@ -487,11 +487,10 @@ test('D3: no act-layer name COLLIDES with `wave.settle` — the rename from v1\'
   assert.ok(/\basync claimTurn\(/.test(source));
   assert.ok(!/\bsettleTurn\b|\bsettlePause\b|\bpauseSettle\b/.test(source),
     'no steering act may carry a `settle` name at this layer');
-  // wave.settle is untouched and still the wave-outcome collector it always was.
+  // The wave collector keeps its distinct name. Its cancellable observation behavior is
+  // covered by wave-observer-lifetime; the argument spelling is not this naming contract.
   const wave = readFileSync(join(SRC, 'wave.mjs'), 'utf8');
-  assert.ok(/async function settle\(\{ timeoutMs = 60_000 \} = \{\} \)?/.test(wave)
-    || /async function settle\(\{ timeoutMs = 60_000 \} = \{\}\)/.test(wave),
-    'wave.settle keeps its exact signature');
+  assert.ok(/\basync function settle\(/.test(wave), 'wave.settle remains the outcome collector');
 });
 
 // ============================================================

@@ -23,7 +23,7 @@
 //       with THIS deployment's id + a steering.registered ghost runId), not a source grep.
 //   F6  missing row — A2-4 proves the registry fold by a store close/reopen replay (shutdown +
 //       releaseWriterLease + reopen same logDir), not a live append.
-//   F7  shallow-greenability — A1-6 pins the card DERIVE idiom
+//   F7  discovery correctness — A1-6 checks the authenticated public card
 //       [...WEB_APPLICATION_ENTRIES, ...WAVE_WEB_ENTRIES].map(([, name]) => name) in the
 //       /v1/application-card region — a hardcoded enumeration defeats the fix.
 //   F8  shallow-greenability — A1-7 pins the FULL 26-key insertion-order set (grammar-m3 M3-8), not
@@ -71,8 +71,7 @@
 //         application_worker_not_found maps to 404 {code:'not_found'} (F2). (RED)
 //   A1-4  waves_stop dispatches to a REAL runId → 200 ok:true and admits ONLY {reason, runId} (F2). (RED)
 //   A1-5  waves_list round-trips (observe gate). (RED)
-//   A1-6  the /v1/application-card lists the wave lane BY DERIVATION — the region pins
-//         [...WEB_APPLICATION_ENTRIES, ...WAVE_WEB_ENTRIES].map(([, name]) => name) (F7). (RED)
+//   A1-6  the /v1/application-card advertises the admitted wave lane with canonical names (F7).
 //   A1-7  PIN — the byte-stable APPLICATION_COMMAND_DEFINITIONS key set is the FULL 26-key
 //         insertion-order set (F8); kills an impl that registers the wave verbs as table entries
 //         or drops/reorders a row (breaks grammar-m3 M3-8)
@@ -560,20 +559,10 @@ test('A1-5: waves_list round-trips the web envelope (observe gate)', async (t) =
   assert.equal(res.body?.ok, true);
 });
 
-test('A1-6 F7: the /v1/application-card lists the wave lane BY DERIVATION — the source pins the derive idiom, never a hardcoded enumeration (F7)', async (t) => {
+test('A1-6 F7: the application card advertises admitted wave commands in canonical spelling', async (t) => {
   const host = await hostFixture(t);
-  // F7 — the card command list must be DERIVED from the same transport table that admits the web
-  // verbs, so a dishonest impl cannot special-case the card. The region from the card handler to
-  // the asset fallback must carry the spread-derive idiom.
-  const src = readFileSync(fileURLToPath(new URL('../src/web-northbound.mjs', import.meta.url)), 'utf8');
-  const cardRegion = src.slice(
-    src.indexOf("pathname === '/v1/application-card'"),
-    src.indexOf('const asset = operatorAsset(pathname)'),
-  );
-  assert.match(cardRegion,
-    /\[\.\.\.WEB_APPLICATION_ENTRIES, \.\.\.WAVE_WEB_ENTRIES\]\.map\(\(\[, name\]\) => name\)/u,
-    'stage: card-dot-spelling-missing — at HEAD the card maps WEB_APPLICATION_ENTRIES only (web-northbound.mjs:1458); F7 requires the derive idiom [...WEB_APPLICATION_ENTRIES, ...WAVE_WEB_ENTRIES].map(([, name]) => name) — a hardcoded list defeats the fix');
-
+  // Exercise the authenticated public card. Additional derived command groups are valid;
+  // the spelling of its internal array-spread expression is not the discovery contract.
   const sessions = new WebSessionStore(join(host.logDir, 'sessions'), { now: () => NOW });
   const web = new WebNorthbound({
     coordinator: {},

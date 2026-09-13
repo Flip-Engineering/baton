@@ -1,8 +1,9 @@
 // Wave driver surface (docs/31): first-class orchestration waves over any Baton client facade.
 // A wave is data — a member roster plus objectives — and every lifecycle semantic is Baton's
-// own: explicit per-member approval, per-member isolation, re-armed drive pumps (never a
-// terminal signal), the closed terminal-phase set, attention surfacing, result materialization
-// with path-existence pin disambiguation, selective member stop, and zero-residue close.
+// own: explicit per-member approval, per-member isolation, cancellable observer-owned drive pumps
+// (never a terminal signal, never lifecycle authority), the closed terminal-phase set, attention
+// surfacing, result materialization with path-existence pin disambiguation, selective member stop,
+// and zero-residue close.
 // Program-IR aligned: members ↔ parallel branches, settle ↔ join, materialization ↔ collect,
 // stopMember ↔ selective stop, evidence() ↔ the wave trace. It holds no durable state of its own.
 
@@ -46,6 +47,59 @@ function boundedJsonBytes(value, limit = MAX_WAVE_PROGRESS_BYTES) {
 
 function waveError(message, code = 'wave_invalid') {
   return Object.assign(new TypeError(message), { code });
+}
+
+// Bound ONE facade read by the observer's own budget (settle's deadline) and, for a caller-owned
+// observation, the caller's signal. A read that does not answer in time is an OBSERVATION failure:
+// the member keeps its real lifecycle, the receipt records that the observer could not see it, and
+// no phase is invented. The abandoned read stays handled on both contests — so a read that settles
+// or rejects after its observation ended can neither escape as an unhandled rejection nor write
+// into a newer observation (it resolves into nothing).
+function observeRead(read, { deadline = Infinity, signal = null } = {}) {
+  const observation = Promise.resolve(read);
+  const bounded = Number.isFinite(deadline);
+  if (!bounded && !signal) return observation;
+  const contests = [observation];
+  let timer = null;
+  let onAbort = null;
+  if (bounded) {
+    const remaining = deadline - Date.now();
+    contests.push(new Promise((_, reject) => {
+      const expire = () => reject(waveError('wave observer budget elapsed', 'wave_observer_timeout'));
+      if (remaining <= 0) { expire(); return; }
+      timer = setTimeout(expire, remaining);
+    }));
+  }
+  if (signal) {
+    contests.push(new Promise((_, reject) => {
+      const cancel = () => reject(waveError('wave observation was cancelled by its caller', 'wave_observer_cancelled'));
+      if (signal.aborted) { cancel(); return; }
+      onAbort = cancel;
+      signal.addEventListener('abort', onAbort, { once: true });
+    }));
+  }
+  return Promise.race(contests).finally(() => {
+    if (timer !== null) clearTimeout(timer);
+    if (onAbort !== null) signal.removeEventListener('abort', onAbort);
+  });
+}
+
+// The poll delay, ended early by the observer's own cancellation: an observation its caller
+// cancelled must not wait out a poll interval before it detaches.
+function observeDelay(ms, signal) {
+  if (!signal) return new Promise((resolve) => setTimeout(resolve, ms));
+  return new Promise((resolve, reject) => {
+    const cancel = () => {
+      clearTimeout(timer);
+      reject(waveError('wave observation was cancelled by its caller', 'wave_observer_cancelled'));
+    };
+    const timer = setTimeout(() => {
+      signal.removeEventListener('abort', cancel);
+      resolve();
+    }, ms);
+    if (signal.aborted) { cancel(); return; }
+    signal.addEventListener('abort', cancel, { once: true });
+  });
 }
 
 // One per-member failure record — the typed code plus the verbatim message, never synthesized.
@@ -170,25 +224,39 @@ function attentionFrom(outline) {
 // git path existence (the pin's tree must carry `report`), a start-time window, and an exclusion
 // set for pins already attributed to other members — never by newest-pin guessing. Exported so
 // the disambiguation is directly pinnable (W10).
-export async function resolveResultPin({ repoRoot, report, startedAtMs, excludeShas = [] }) {
+//
+// The git reads are asynchronous and abortable: pin resolution is part of an observer's invocation
+// window, so a spent budget or a caller's cancellation ends an in-flight subprocess instead of
+// being overrun by it (a synchronous read cannot honour either).
+export async function resolveResultPin({ repoRoot, report, startedAtMs, excludeShas = [], signal = null }) {
   if (typeof repoRoot !== 'string' || repoRoot.length === 0 || typeof report !== 'string'
     || report.length === 0 || !Number.isSafeInteger(startedAtMs)) return null;
-  const { execFileSync } = await import('node:child_process');
+  if (signal?.aborted) return null;
+  const { execFile } = await import('node:child_process');
+  const { promisify } = await import('node:util');
+  const git = promisify(execFile);
+  // `signal: null` is rejected by the child-process API: pass the option only when there is one.
+  const abortable = (options) => (signal ? { ...options, signal } : options);
   let pins;
   try {
-    pins = execFileSync('/usr/bin/git', ['for-each-ref', 'refs/baton/results/', '--format=%(objectname) %(committerdate:unix)'], { cwd: repoRoot, encoding: 'utf8' })
-      .trim().split('\n').filter(Boolean)
+    const { stdout } = await git(
+      '/usr/bin/git',
+      ['for-each-ref', 'refs/baton/results/', '--format=%(objectname) %(committerdate:unix)'],
+      abortable({ cwd: repoRoot, encoding: 'utf8' }),
+    );
+    pins = stdout.trim().split('\n').filter(Boolean)
       .map((row) => ({ sha: row.split(' ')[0], at: Number(row.split(' ')[1]) }))
       .filter((pin) => pin.at * 1000 >= startedAtMs - 60_000)
       .sort((left, right) => right.at - left.at);
   } catch { return null; }
   const excluded = new Set(excludeShas);
   for (const pin of pins) {
+    if (signal?.aborted) return null;
     if (excluded.has(pin.sha)) continue;
     try {
-      execFileSync('/usr/bin/git', ['cat-file', '-e', `${pin.sha}:${report}`], { cwd: repoRoot, stdio: 'ignore' });
+      await git('/usr/bin/git', ['cat-file', '-e', `${pin.sha}:${report}`], abortable({ cwd: repoRoot, stdio: 'ignore' }));
       return pin.sha;
-    } catch { /* pin does not carry this report path */ }
+    } catch { /* pin does not carry this report path (or the read was aborted) */ }
   }
   return null;
 }
@@ -358,7 +426,20 @@ export async function attachWave(baton, waveId, membersInput, mintDetached, repo
 }
 
 function createWaveHandle({ repoRoot, members, state, waveId = null }) {
-  async function progress() {
+  async function progress(options = {}) {
+    if (!options || typeof options !== 'object' || Array.isArray(options)
+      || Object.keys(options).some((key) => key !== 'signal')) {
+      throw waveError('wave progress options are invalid');
+    }
+    const { signal } = options;
+    if (signal !== undefined && !(signal instanceof AbortSignal)) {
+      throw waveError('wave progress signal is invalid');
+    }
+    // A caller's cancellation ends THIS observation as a typed refusal (the run.followOnce
+    // convention for a cancelled read), never a partial snapshot passed off as a roster
+    // observation and never any lifecycle effect on a member. In-flight reads stay handled — the
+    // bound and the abandoned-read discipline live in observeRead.
+    if (signal?.aborted) throw waveError('wave progress was cancelled by its caller', 'wave_observer_cancelled');
     // Observe every member CONCURRENTLY: the historical serial for-of awaited each run.status()
     // before touching the next member, so one slow or failing participant withheld every later
     // peer's observation (wave head-of-line blocking). Promise.all keeps the DECLARED roster order
@@ -372,7 +453,7 @@ function createWaveHandle({ repoRoot, members, state, waveId = null }) {
         return { role, phase: 'failed', terminalCause: 'start', terminal: true, attention: null, error: entry.startError, knowledgeDigest: null };
       }
       try {
-        const view = await entry.run.status();
+        const view = await observeRead(entry.run.status(), { signal });
         const outline = view?.view ?? view ?? {};
         return {
           role,
@@ -386,6 +467,9 @@ function createWaveHandle({ repoRoot, members, state, waveId = null }) {
           elapsedMs: Date.now() - state.startedAt,
         };
       } catch (error) {
+        // The caller's own cancellation is never a member observation failure: it ends the whole
+        // observation as the typed refusal above.
+        if (error?.code === 'wave_observer_cancelled') throw error;
         // An unreadable member is never given a phase it did not report and never reads terminal:
         // the row carries the typed observation failure and the normal row shape for every other
         // field. The failure is per-observation — the next progress() call re-reads from scratch.
@@ -407,27 +491,85 @@ function createWaveHandle({ repoRoot, members, state, waveId = null }) {
     return snapshot;
   }
 
-  const pumps = new Map();
-  function armPump(entry) {
-    if (!entry.run || pumps.get(entry.member.role)) return;
-    const promise = entry.run.complete().then(
-      () => { pumps.delete(entry.member.role); },
-      () => { pumps.delete(entry.member.role); },
-    );
-    pumps.set(entry.member.role, promise);
+  // ── Observer-owned drive pumps ──────────────────────────────────────────────
+  // A drive pump is an OBSERVER: `run.complete()` keeps a member's run moving while the wave
+  // watches it. It is never lifecycle authority — cancelling one requests the end of the drive
+  // loop, never the worker, and `stop`/`close` remain the only paths that end member work.
+  //
+  // At most ONE drive exists per member. Two concurrent `complete()` loops would interleave the
+  // same run handle's client state, and a drive that was cancelled but has NOT settled (a facade
+  // that ignored the abort) must not be forgotten and re-driven underneath: its record is kept
+  // until it actually settles, so the outstanding observer stays visible.
+  //
+  // Every observation that wants a live drive holds an OWNER token on it. A pump is cancelled only
+  // when no owner remains, so releasing one observation never cancels a pump a concurrent
+  // observation still holds: overlapping settle calls cannot cancel each other.
+  const pumps = new Map(); // role → { controller, owners:Set, promise, ended, cancelled }
+  // Once close begins, no new drive may be armed: it would race the member stops close is issuing.
+  let closing = false;
+  // Observation invocations are ordered: the handle's ledger is published by invocation, so an
+  // earlier settle finishing late never overwrites what a later settle already published.
+  let invocationSeq = 0;
+  let publishedSeq = 0;
+
+  function armPump(entry, owner) {
+    // An observation that has been abandoned (its caller cancelled it, or it failed) must not
+    // leave a drive behind that nobody will ever release.
+    if (closing || owner.abandoned) return null;
+    const role = entry.member.role;
+    const existing = pumps.get(role);
+    if (existing) {
+      // A live drive is shared, never duplicated; a cancelled drive awaiting its settlement is
+      // neither inherited (its controller is already aborted) nor replaced (starting a second loop
+      // over the same run handle is exactly what must not happen).
+      if (!existing.cancelled) existing.owners.add(owner);
+      return existing;
+    }
+    const controller = new AbortController();
+    const record = { role, controller, owners: new Set([owner]), ended: false, cancelled: false };
+    record.promise = Promise.resolve(entry.run.complete({ signal: controller.signal }))
+      .then(() => {}, () => {}) // the drive outcome belongs to the run, never to the observer
+      .then(() => {
+        record.ended = true;
+        // Identity-checked reaping: only the record that is still current removes itself, so a
+        // late settlement can never delete a successor.
+        if (pumps.get(role) === record) pumps.delete(role);
+      });
+    pumps.set(role, record);
+    return record;
   }
 
-  // docs/31: pumps never outlive the call that armed them. Before settle returns (including its
-  // own timeout), drain outstanding pumps with a bounded grace so nothing keeps driving in the
-  // background and races close().
-  async function drainPumps(graceMs = 2_000) {
-    if (pumps.size === 0) return true;
-    const pending = [...pumps.values()];
-    const drained = await Promise.race([
-      Promise.allSettled(pending).then(() => true),
-      new Promise((resolve) => setTimeout(() => resolve(false), graceMs)),
-    ]);
-    return drained;
+  // Detach one observation's ownership. A pump is cancelled only when its last owner releases, so
+  // concurrent observations never cancel each other; `releasePumps()` with no owner retires every
+  // pump (close). Cancellation REQUESTS the end of a drive loop — it is not proof that the facade's
+  // loop ended, which is why the record is kept until its promise settles and why callers report
+  // `pumpQuiescent` rather than assuming closure.
+  function releasePumps(owner = null) {
+    const cancelled = [];
+    for (const record of pumps.values()) {
+      if (owner === null) record.owners.clear();
+      else if (!record.owners.delete(owner)) continue;
+      if (record.owners.size > 0 || record.cancelled) continue;
+      record.cancelled = true;
+      record.controller.abort();
+      cancelled.push(record);
+    }
+    return cancelled;
+  }
+
+  // Confirm that cancelled pumps were OBSERVED ending, bounded by the invocation deadline. There is
+  // no grace period here: a facade that ignores the abort simply never confirms, and the caller
+  // reports the uncertainty (pumpQuiescent false, pumpDrained false) instead of claiming closure.
+  async function observeRetired(records, deadline, signal) {
+    const pending = records.filter((record) => !record.ended);
+    if (pending.length === 0) return true;
+    const settled = Promise.allSettled(pending.map((record) => record.promise)).then(() => true);
+    try {
+      return await observeRead(settled, { deadline, signal });
+    } catch (error) {
+      if (error?.code === 'wave_observer_timeout') return false;
+      throw error;
+    }
   }
 
   function pumpQuiescent() { return pumps.size === 0; }
@@ -462,84 +604,157 @@ function createWaveHandle({ repoRoot, members, state, waveId = null }) {
     }
   }
 
-  async function materialize(entry) {
+  // Read the member's preserved result section inside the invocation window (docs/31 #6: run.inspect
+  // returns `section` at top level — a `.view.section` read silently disables this path). `answered`
+  // is false only when the read did not answer at all (a timeout, a failure, or a window that was
+  // already spent), so a result that could not be read is never reported as a result that was not
+  // there. A handle with no result surface at all answers "no authoritative sha".
+  async function materialize(entry, { deadline, signal, canRead }) {
     const { run } = entry;
-    // Result section first (docs/31 #6): run.inspect returns `section` at top level — there is
-    // no `.view` wrapper; a `.view.section` read silently disables this path.
+    if (!canRead()) return { sha: null, answered: false };
+    if (typeof run.inspect !== 'function') return { sha: null, answered: true };
     try {
-      const results = await run.inspect({ depth: 'section', section: 'result' });
+      const results = await observeRead(run.inspect({ depth: 'section', section: 'result' }), { deadline, signal });
       const value = results?.section?.items?.[0]?.value;
-      if (RESULT_SHA.test(value?.sha ?? '')) return value.sha;
-    } catch { /* section projection can be empty post-stop */ }
-    return null;
+      return { sha: RESULT_SHA.test(value?.sha ?? '') ? value.sha : null, answered: true };
+    } catch (error) {
+      // A caller's cancellation is never a member observation failure: it ends the observation.
+      if (error?.code === 'wave_observer_cancelled') throw error;
+      return { sha: null, answered: false, error: failureRecord(error) };
+    }
   }
 
-  async function settle({ timeoutMs = 60_000 } = {}) {
+  async function settle({ timeoutMs = 60_000, signal } = {}) {
     if (!Number.isSafeInteger(timeoutMs) || timeoutMs <= 0) throw waveError('wave settle timeoutMs is invalid');
+    if (signal !== undefined && !(signal instanceof AbortSignal)) throw waveError('wave settle signal is invalid');
+    if (signal?.aborted) throw waveError('wave settle was cancelled by its caller', 'wave_observer_cancelled');
+    // ONE invocation deadline governs everything this call does — status reads, result reads, the
+    // poll cadence, pin resolution and the confirmation of the drive pumps it armed. Nothing is
+    // started after it and nothing gets a second allowance; a member whose read does not answer
+    // inside it settles as UNOBSERVED, never withheld and never invented.
+    const owner = { abandoned: false };
+    const invocation = (invocationSeq += 1);
     const deadline = Date.now() + timeoutMs;
-    const settled = new Set([...state.members.keys()].filter((role) => !state.members.get(role).run || state.members.get(role).startError));
-    while (settled.size < state.members.size && Date.now() < deadline) {
-      // Each round observes every unsettled member CONCURRENTLY. One slow status read no longer
-      // stalls a sibling's observation or its pump arming (the historical serial for-of did both);
-      // one FAILING status read is swallowed per member — an unreadable member is never marked
-      // settled (no invented terminality) and never blocks a peer. The outcome pass below is where
-      // a failing read becomes that member's typed record.
+    // One shared window for every per-member loop, and for the abortable pin subprocess reads below.
+    const deadlineAbort = new AbortController();
+    const deadlineTimer = setTimeout(() => deadlineAbort.abort(), timeoutMs);
+    const pinSignal = signal ? AbortSignal.any([signal, deadlineAbort.signal]) : deadlineAbort.signal;
+    // The latest observation taken for each member INSIDE the window. The receipt is built from
+    // these retained observations; nothing is re-read after the deadline.
+    const retained = new Map();
+    // Nothing NEW may be started once the observation is abandoned (its caller cancelled it) or its
+    // budget is spent: no facade read, no drive admission, no pin resolution.
+    const canObserve = () => !owner.abandoned && !signal?.aborted && Date.now() < deadline;
+    const cadence = () => Math.max(0, Math.min(POLL_MS, deadline - Date.now()));
+    try {
+      // Every member is observed by its OWN loop against the shared deadline. A whole-round barrier
+      // would let one hung member withhold every sibling's next read (and so lose a sibling's later
+      // progress entirely); here a hung member only ever delays the roster AGGREGATION below, while
+      // a healthy member keeps being observed on its own cadence until it rests.
       await Promise.all([...state.members].map(async ([role, entry]) => {
-        if (settled.has(role) || !entry.run) return;
-        try {
-          const view = await entry.run.status();
-          const outline = view?.view ?? view;
-          if (terminalFrom(outline) || canonicalRunPhase(outline?.phase) === SUCCESS_RESTING) {
-            settled.add(role);
-          } else {
-            armPump(entry);
+        if (!entry.run || entry.startError) return; // a typed start failure settles without observation
+        const record = {
+          observed: false, phase: null, resting: false, terminal: false,
+          narrative: null, attention: null, resultSha: null, observationError: null,
+        };
+        retained.set(role, record);
+        while (canObserve() && !record.resting) {
+          try {
+            const view = await observeRead(entry.run.status(), { deadline, signal });
+            const outline = view?.view ?? view ?? {};
+            const phase = canonicalRunPhase(outline.phase) ?? null;
+            record.observed = true;
+            record.phase = phase;
+            // `resting` is the loop's settle condition (terminal or the provider-settled resting
+            // state, which is not application-terminal); `terminal` is the receipt's own claim,
+            // exactly as before: a resting member still reports terminal:false.
+            record.resting = terminalFrom(outline) || phase === SUCCESS_RESTING;
+            record.terminal = terminalFrom(outline);
+            record.narrative = outline.narrative ?? null;
+            record.attention = attentionFrom(outline);
+            record.observationError = null;
+            // A drive is admitted ONLY on a read that answered and still found the member running:
+            // a read that timed out or failed is uncertainty, never a reason to drive — and never a
+            // facade effect started after the budget.
+            if (!record.resting && canObserve()) armPump(entry, owner);
+          } catch (error) {
+            // The caller's own cancellation ends the whole invocation as the typed refusal below.
+            if (error?.code === 'wave_observer_cancelled') throw error;
+            // A read that did not answer is retained as uncertainty ALONGSIDE the last good
+            // observation; it never erases the phase this member was last seen in.
+            record.observationError = failureRecord(error);
           }
-        } catch { /* per-member observation failure: no terminality, no authority, no peer block */ }
+          if (!record.resting && canObserve()) await observeDelay(cadence(), signal);
+        }
+        // The preserved result, read once inside the window as soon as the member rests: an answer
+        // with no authoritative sha settles as no result, a read that did not answer leaves the
+        // uncertainty visible instead of inventing a result.
+        if (record.resting && record.resultSha === null) {
+          const result = await materialize(entry, { deadline, signal, canRead: canObserve });
+          if (result.sha !== null) record.resultSha = result.sha;
+          else if (result.error) record.observationError = result.error;
+        }
       }));
-      if (settled.size < state.members.size) {
-        await new Promise((resolve) => setTimeout(resolve, POLL_MS));
-      }
-    }
-    // timeoutMs is an OBSERVATION BUDGET, never completion authority: nothing here stops, silences,
-    // or terminally stamps a member — one still running settles with its observed non-terminal
-    // phase. And every settle call re-observes from scratch: outcomes are REFRESHED, never replayed
-    // from an earlier call's observation (the historical already-settled-roles skip returned stale
-    // receipts for members that had moved on in the meantime).
-    //
-    // Pin-attribution baseline: shas already attributed to OTHER roles by prior observations,
-    // computed once per call so fallback re-resolution below stays deterministic. A member's
-    // OWN prior pin is never excluded, so a refresh restates it idempotently instead of losing it.
-    const priorOutcomes = new Map(state.outcomes.map((outcome) => [outcome.role, outcome]));
-    const attributed = new Map([...state.members.keys()].map((role) => [
-      role,
-      state.outcomes.filter((outcome) => outcome.role !== role && outcome.resultSha).map((outcome) => outcome.resultSha),
-    ]));
-    const observed = await Promise.all([...state.members].map(async ([role, entry]) => {
-      if (!entry.run || entry.startError) {
-        // #230: a member whose start OR approve phase threw is START-FAILED in wave terms —
-        // createWave records startError for both (runs.start and the follow-on run.approve ride
-        // the same catch). A run handle may exist (start succeeded) while the machinery can
-        // never dispatch it; polling it to a quiescence-stop erases the typed refusal — the
-        // fleet-wide silent-swallow that cost the 2026-08-15 wave-b packs. The typed error
-        // settles verbatim, never silence.
-        return { outcome: { role, phase: 'failed', terminalCause: 'start', terminal: true, narrative: null, resultSha: null, error: entry.startError }, evidence: null };
-      }
-      const outcome = { role };
-      let evidence = null;
-      try {
-        const view = await entry.run.status();
-        const outline = view?.view ?? view ?? {};
-        outcome.phase = canonicalRunPhase(outline.phase) ?? null;
-        outcome.terminal = terminalFrom(outline);
-        outcome.narrative = outline.narrative ?? null;
-        // #235: the transport-liveness settle class — EVIDENCE ONLY (the #163 law holds:
-        // no termination changes). A member whose run view carries the provider_silent
-        // attention entry (the coordinator's never-trafficked projection) settles with the
-        // DISTINCT 'provider_silent' class so a wedged member never reads as plain
+      // timeoutMs is an OBSERVATION BUDGET, never completion authority: nothing here stops, silences,
+      // or terminally stamps a member — one still running settles with its last observed non-terminal
+      // phase. And every settle call re-observes from scratch: outcomes are REFRESHED from this
+      // call's own window, never replayed from an earlier call's observation.
+      //
+      // The observation is over: cancel the drive pumps THIS call owns (a request, confirmed below
+      // within the same deadline). A pump a concurrent observation still owns is left running,
+      // because releases are per-owner. This ends an observer, never a worker.
+      const retired = releasePumps(owner);
+      //
+      // Pin-attribution baseline: shas already attributed to OTHER roles by prior observations,
+      // computed once per call so fallback re-resolution below stays deterministic. A member's
+      // OWN prior pin is never excluded, so a refresh restates it idempotently instead of losing it.
+      const priorOutcomes = new Map(state.outcomes.map((outcome) => [outcome.role, outcome]));
+      const attributed = new Map([...state.members.keys()].map((role) => [
+        role,
+        state.outcomes.filter((outcome) => outcome.role !== role && outcome.resultSha).map((outcome) => outcome.resultSha),
+      ]));
+      const observations = [...state.members].map(([role, entry]) => {
+        if (!entry.run || entry.startError) {
+          // #230: a member whose start OR approve phase threw is START-FAILED in wave terms —
+          // createWave records startError for both (runs.start and the follow-on run.approve ride
+          // the same catch). A run handle may exist (start succeeded) while the machinery can
+          // never dispatch it; polling it to a quiescence-stop erases the typed refusal — the
+          // fleet-wide silent-swallow that cost the 2026-08-15 wave-b packs. The typed error
+          // settles verbatim, never silence.
+          return { outcome: { role, phase: 'failed', terminalCause: 'start', terminal: true, narrative: null, resultSha: null, error: entry.startError }, evidence: null };
+        }
+        const record = retained.get(role);
+        if (!record?.observed) {
+          // Never observed inside this call's window: no phase, no terminality, nothing invented.
+          // The typed observation failure (or the elapsed budget) is the whole record.
+          return {
+            outcome: {
+              role,
+              phase: 'outcome_error',
+              terminal: false,
+              resultSha: null,
+              error: record?.observationError ?? { code: 'wave_observer_timeout', message: 'wave observer budget elapsed' },
+            },
+            evidence: null,
+          };
+        }
+        const outcome = {
+          role,
+          phase: record.phase,
+          terminal: record.terminal,
+          narrative: record.narrative,
+          resultSha: record.resultSha,
+        };
+        // Uncertainty is reported WITH the last known phase, never instead of it.
+        if (record.observationError) outcome.observationError = record.observationError;
+        let evidence = null;
+        // #235: the transport-liveness settle class — EVIDENCE ONLY (the #163 law holds: no
+        // termination states change). A member whose latest observed view carries the
+        // provider_silent attention entry (the coordinator's never-trafficked projection) settles
+        // with the DISTINCT 'provider_silent' class so a wedged member never reads as plain
         // 'silent'/'quiesced' among healthy ones — and the steering evidence names it.
-        const attention = attentionFrom(outline);
-        const providerSilent = Array.isArray(attention)
-          ? attention.find((item) => item?.kind === 'provider_silent') ?? null
+        const providerSilent = Array.isArray(record.attention)
+          ? record.attention.find((item) => item?.kind === 'provider_silent') ?? null
           : null;
         if (providerSilent) {
           outcome.progressClass = 'provider_silent';
@@ -555,36 +770,60 @@ function createWaveHandle({ repoRoot, members, state, waveId = null }) {
             };
           }
         }
-        outcome.resultSha = await materialize(entry);
-      } catch (error) {
-        Object.assign(outcome, { phase: 'outcome_error', terminal: false, resultSha: null, error: failureRecord(error) });
-      }
-      return { outcome, evidence };
-    }));
-    const outcomes = observed.map((item) => item.outcome);
-    // Result reads are independent; fallback attribution contests a shared pin namespace.
-    // Resolve only that attribution in roster order so two concurrent missing-result reads
-    // cannot both claim the same heuristic pin. Authoritative per-run results may share a SHA.
-    const assigned = new Set(outcomes.map((outcome) => outcome.resultSha).filter(Boolean));
-    for (const outcome of outcomes) {
-      const entry = state.members.get(outcome.role);
-      if (outcome.resultSha || outcome.error || !repoRoot || !entry.member.report) continue;
-      outcome.resultSha = await resolveResultPin({
-        repoRoot, report: entry.member.report, startedAtMs: state.startedAt,
-        excludeShas: [...assigned, ...(attributed.get(outcome.role) ?? [])],
+        return { outcome, evidence };
       });
-      if (outcome.resultSha) assigned.add(outcome.resultSha);
+      const outcomes = observations.map((item) => item.outcome);
+      // Result reads are independent; fallback attribution contests a shared pin namespace.
+      // Resolve only that attribution in roster order so two concurrent missing-result reads
+      // cannot both claim the same heuristic pin. Authoritative per-run results may share a SHA.
+      // The resolution rides the same invocation window, and its git subprocess calls are
+      // abortable, so a spent budget or a caller's cancellation ends them instead of being
+      // overrun by a synchronous call.
+      const assigned = new Set(outcomes.map((outcome) => outcome.resultSha).filter(Boolean));
+      for (const outcome of outcomes) {
+        const entry = state.members.get(outcome.role);
+        if (outcome.resultSha || outcome.error || !repoRoot || !entry.member.report) continue;
+        if (!canObserve()) break;
+        outcome.resultSha = await resolveResultPin({
+          repoRoot, report: entry.member.report, startedAtMs: state.startedAt,
+          excludeShas: [...assigned, ...(attributed.get(outcome.role) ?? [])],
+          signal: pinSignal,
+        });
+        if (outcome.resultSha) assigned.add(outcome.resultSha);
+      }
+      const pumpDrained = await observeRetired(retired, deadline, signal) && pumpQuiescent();
+      if (signal?.aborted) throw waveError('wave observation was cancelled by its caller', 'wave_observer_cancelled');
+      // The handle's ledger is the LAST observation per role, not an append-only log of stale reads —
+      // and it is published by INVOCATION ORDER: an earlier settle finishing late never overwrites
+      // the evidence a later settle already published.
+      if (invocation > publishedSeq) {
+        publishedSeq = invocation;
+        for (const item of observations) if (item.evidence) state.steering.push(item.evidence);
+        state.outcomes = outcomes;
+        state.pumpDrained = pumpDrained;
+      }
+      return [...outcomes];
+    } catch (error) {
+      // An unexpected failure (including the caller's own cancellation) still ends this
+      // observation's own pumps — the drives it started do not outlive the call that armed them —
+      // and marks the invocation abandoned so no late per-member loop can start a facade effect.
+      owner.abandoned = true;
+      releasePumps(owner);
+      throw error;
+    } finally {
+      clearTimeout(deadlineTimer);
     }
-    for (const item of observed) if (item.evidence) state.steering.push(item.evidence);
-    // The handle's ledger is the LAST observation per role, not an append-only log of stale reads.
-    state.outcomes = outcomes;
-    const pumpsDrained = await drainPumps();
-    state.pumpDrained = pumpsDrained && pumpQuiescent();
-    return [...outcomes];
   }
 
   async function close({ reason = 'Wave settled.' } = {}) {
-    await drainPumps();
+    // The wave is closing: from here no new drive pump may be armed (a fresh drive would race the
+    // stops below), and every drive this handle started is asked to end BEFORE any stop is issued,
+    // so a member stop is not initiated underneath an observer that is still driving. This is a
+    // REQUEST, not observed closure: aborting a drive loop proves nothing about a facade that
+    // ignores the abort, so close reports the drive accounting (pumpQuiescent) instead of claiming
+    // the stops raced nothing. The worker's lifetime is still ended solely by the stop pass.
+    closing = true;
+    const cancelled = releasePumps();
     // Every member's stop is INITIATED together: a slow or hung member stop must never delay an
     // unrelated member's stop from beginning (the historical serial for-of did exactly that). Each
     // member owns its catch, so one stop's rejection becomes that member's typed stop record —
@@ -627,7 +866,18 @@ function createWaveHandle({ repoRoot, members, state, waveId = null }) {
     state.stops.push(...stops);
     const remainingCount = stops.reduce((total, stop) => total + (stop.ownedCount ?? 1), 0);
     const residueUnknown = stops.some((stop) => stop.ownedCount === null);
-    return { reason, stops, remainingCount, residueUnknown, knowledge: { candidates: knowledgeCandidates, admittedThisRun: knowledgeAdmitted } };
+    // Drive accounting: `pumpQuiescent: false` says an observer this close asked to end had not
+    // confirmed its stop — the stop pass may have run beside a live drive (a facade that ignores
+    // the abort). Reporting it is the honest alternative to claiming the stop raced nothing.
+    return {
+      reason,
+      stops,
+      remainingCount,
+      residueUnknown,
+      knowledge: { candidates: knowledgeCandidates, admittedThisRun: knowledgeAdmitted },
+      drivesCancelled: cancelled.length,
+      pumpQuiescent: pumpQuiescent(),
+    };
   }
 
   function evidence() {

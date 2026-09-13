@@ -410,7 +410,7 @@ export class OmpRpcCli {
       governance: {
         usage: { tokens: 'event-telemetry', usd: 'event-telemetry', terminalSeal: 'reported' },
         providerCalls: { observation: 'native-retry-events', enforcement: 'unavailable' },
-        toolCalls: { observation: 'native', enforcement: 'tools-allowlist' },
+        toolCalls: { observation: 'native', enforcement: 'unavailable' },
         maxWireFrameBytes: this._maxWireFrameBytes,
         contentStream: { mode: 'bounded-coalescing', flushBytes: this._streamChunkBytes },
       },
@@ -447,7 +447,7 @@ export class OmpRpcCli {
         },
       },
       containment: {
-        hostProcess: 'same_uid', guarantees: ['worktree-cwd', 'tools-allowlist', 'profile-isolation'],
+        hostProcess: 'same_uid', guarantees: ['worktree-cwd', 'profile-isolation'],
         surface: 'rpc-stdio',
       },
     };
@@ -639,11 +639,10 @@ export class OmpRpcCli {
         ? { tokens: 'reported', usd: telemetry.cost !== undefined ? 'reported' : 'unavailable', counterId: null, tokenMetric: 'agent_end.telemetry' }
         : unavailableUsageSeal(),
     });
-    if (session.steerPending !== null && session.steerPending !== undefined) {
-      const next = session.steerPending;
-      session.steerPending = null;
-      this._startTurn(session, next);
-    } else if (session.pendingInterrupt) {
+    // Native `steer` owns its queue and consumes messages within the active agent run.
+    // Replaying a remembered steer here duplicates an already delivered effect and can race
+    // verification of the completed turn. Only an explicit later prompt starts another turn.
+    if (session.pendingInterrupt) {
       const { then } = session.pendingInterrupt;
       session.pendingInterrupt = null;
       this._emit(session, 'control.interrupt_confirmed', { phase: 'interrupt_confirmed' });
@@ -785,7 +784,7 @@ export class OmpRpcCli {
         // truth source — see PROVIDER_TRAFFIC_FRAME_TYPES). Evidence observation only.
         providerTrafficObserved: false, lastProviderTrafficAt: null,
         turnEpoch: 0, turnSequence: 0, activeTurn: null, terminalTurns: new Set(),
-        pendingInterrupt: null, steerPending: null,
+        pendingInterrupt: null,
         modelRequested: model, effortRequested: effort,
       };
       session.process = new OmpRpcProcess({
@@ -904,7 +903,6 @@ export class OmpRpcCli {
     if (mode === 'steer' || session.activeTurn) {
       if (!session.activeTurn) return { ok: false, notSent: true, reason: 'no active turn to steer' };
       // omp's native mid-turn lane: the steer command queues into the running turn.
-      session.steerPending = String(content);
       session.process.notify({ type: 'steer', message: String(content) });
       return { ok: true };
     }
@@ -919,7 +917,6 @@ export class OmpRpcCli {
     const session = this._sessions.get(worker);
     if (!session || session.closed) return { ok: false, reason: `unknown worker ${worker}` };
     if (!session.activeTurn) return { ok: true, reason: 'no active turn to interrupt' };
-    session.steerPending = null;
     session.pendingInterrupt = { turnId: session.activeTurn.turnId, then };
     session.process.notify({ type: 'abort' });
     return { ok: true };
@@ -969,7 +966,6 @@ export class OmpRpcCli {
     if (session.process.processClose?.confirmed) return { ok: true, terminal: true };
     session.killing = true;
     session.pendingInterrupt = null;
-    session.steerPending = null;
     const terminalCause = session.setupFailed ? 'setup' : session.process.failure ? 'process_error' : null;
     void session.process.kill({
       kind: 'kill.confirmed',

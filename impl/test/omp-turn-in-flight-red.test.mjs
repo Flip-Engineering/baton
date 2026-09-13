@@ -78,10 +78,16 @@ test('OMP-TURN-IN-FLIGHT: the adapter reports turn-in-flight truth (a working tu
   const completed = events.filter((e) => e.kind === 'lifecycle.turn_completed');
   assert.equal(completed.length, 1,
     'a terminal agent_end emits exactly one lifecycle.turn_completed — the kind that clears handle.turnInFlight at the turn-terminal seam (C4: a zombie flag would hold liveness forever)');
+  assert.equal(events.filter((event) => event.kind === 'lifecycle.turn_started').length, 1,
+    'native steering already belongs to the running turn; completion never replays it as another prompt');
+  assert.equal(adapter._sessions.get('w-pin').activeTurn, null);
+  assert.equal(writes.map((line) => JSON.parse(line)).filter((frame) => frame.type === 'prompt').length, 1);
 
   // And the turn boundary is real for the next turn: a fresh prompt starts one.
   const followUp = await adapter.prompt('w-pin', 'next turn', 'turn');
   assert.equal(followUp.ok, true, 'a prompt with no active turn starts a fresh turn');
   assert.equal(events.filter((e) => e.kind === 'lifecycle.turn_started').length, 2,
     'the fresh turn mints its own lifecycle.turn_started — the marker re-arms on true turn boundaries only');
+  assert.equal(writes.map((line) => JSON.parse(line)).filter((frame) => frame.type === 'prompt').at(-1).message,
+    'next turn', 'only the explicit continuation supplies the next prompt');
 });

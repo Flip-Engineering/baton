@@ -84,8 +84,10 @@ const receipt = await createWaveDriver(baton, policy).run(waveStartOptions);
 residueUnknown }` — `wave.mjs:327-353`) plus additive fields: `basis` (`'completed' | 'stall' |
 'hard_cap' | 'aborted'` — `'completed'` means *all members exited, in any phase including
 failed/cancelled; per-member truth is in `outcomes`*), `nudges: [{ role, requestId, at }]`,
-`claims: [{ role, requestId, at, code }]`, `salt`, `pumpDrained` (false on stall paths —
-`wave.settle` only drains on completion).
+`claims: [{ role, requestId, at, code }]`, `salt`, and `pumpDrained`. The wave handle now requests
+cancellation of observer-owned drives when their last observer leaves; `pumpDrained` is true only
+when those drives have actually ended. Signal-ignoring facades remain visibly unconfirmed; see
+[the revised wave operations](31-wave-driver-ax.md).
 
 **Admission-time objective ergonomics:** after salting, each objective over 4096 bytes
 (`validText`, `application.mjs:225-226`) rejects at driver admission with an error carrying

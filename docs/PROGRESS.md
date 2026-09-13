@@ -48,6 +48,12 @@ whole-wave requirements do not describe the revised design. Implementation remai
 - The core coordinator suite now passes 58/58. Its first cancelled test expected a read-only list
   to execute deadline policy, cancelling 47 later tests before their assertions. The replacement
   checks read-only observation, explicit escalation, and retained unconfirmed resources.
+- The native observer follow-up now preserves healthy progress beside hung peers, supports caller
+  cancellation, shares drives across observers, and tracks cancelled but unsettled drives. Local
+  checks pass 39/39, observer/checkpoint 36/36, and adjacent wave/workflow surfaces 57/57. Baton
+  checkpointed the native commit after a disk-capacity refusal and closed all owned resources;
+  this contribution is locally verified, not Baton-accepted. Its receipt exposed a duplicate OMP
+  steering replay; the repair passes a same-test regression and 32/32 native integration checks.
 - Remote: [draft PR #256](https://github.com/Flip-Engineering/baton/pull/256) is published. Hosted CI
   now acquires a runner, installs dependencies and executes the suite. Completion is pending at this
   checkpoint; the branch is not merged and no CI success or release readiness is inferred.

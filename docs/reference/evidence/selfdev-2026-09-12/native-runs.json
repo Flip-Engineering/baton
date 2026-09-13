@@ -1416,5 +1416,146 @@
         "code": "operator_stop"
       }
     }
-  ]
+  ],
+  "observerFollowup": {
+    "base": "b394a892aaa0f03d0dac8922068c863fe98f54cd",
+    "runId": "run-c95aa34350e5f811cea4f7d680a04cb1",
+    "routeRequested": {
+      "harness": "omp",
+      "model": "deepseek/deepseek-v4-flash",
+      "effort": "high"
+    },
+    "nativeCommit": "f1ef1e59c738b9ba76223e0d6aedcd8006a0097b",
+    "nativeTurnStarts": 3,
+    "nativeTurnCompletions": 1,
+    "acceptance": "not accepted: worktree_capacity_exceeded at trust gate capture; native commit checkpointed by Baton and locally verified after integration",
+    "observedNativeCost": null,
+    "events": [
+      {
+        "kind": "error",
+        "seq": 288,
+        "payload": {
+          "message": "worktree capacity is unavailable for this reservation wave",
+          "code": "worktree_capacity_exceeded",
+          "phase": "trust_gate",
+          "trustPhase": "capture"
+        }
+      },
+      {
+        "kind": "lifecycle.process_closed",
+        "seq": 293,
+        "payload": {
+          "schemaVersion": 1,
+          "generation": 1,
+          "pid": 37266,
+          "processGroupId": 37266,
+          "code": 0,
+          "signal": null,
+          "ready": true
+        }
+      },
+      {
+        "kind": "worktree.progress_checkpointed",
+        "seq": 295,
+        "payload": {
+          "checkpoint": {
+            "state": "pinned",
+            "sha": "f1ef1e59c738b9ba76223e0d6aedcd8006a0097b",
+            "ref": "refs/baton/checkpoints/f1ef1e59c738b9ba76223e0d6aedcd8006a0097b"
+          },
+          "stopSeq": null,
+          "snapshotted": false,
+          "changedPaths": [
+            "impl/src/wave.mjs",
+            "impl/test/wave-observer-lifetime.test.mjs"
+          ]
+        }
+      }
+    ],
+    "closure": [
+      {
+        "kind": "run.stop_completed",
+        "payload": {
+          "schemaVersion": 1,
+          "runId": "run-c95aa34350e5f811cea4f7d680a04cb1",
+          "receipt": {
+            "schemaVersion": 1,
+            "state": "stopped",
+            "scope": "run_subtree",
+            "repoId": "repo-76d484205f22eed0163d8f21b8287740",
+            "runId": "run-c95aa34350e5f811cea4f7d680a04cb1",
+            "targetCount": 1,
+            "remainingCount": 0,
+            "targetDigest": "8b86d04f37a85ee4785432f322fdf5b90ac48ee4eb01e12f40a1af0bff0f890f",
+            "counts": {
+              "pendingCancelled": 0,
+              "killConfirmed": 1,
+              "alreadyTerminal": 0,
+              "processesObserved": 1,
+              "processesClosed": 1
+            },
+            "checks": {
+              "dispatchClosed": true,
+              "interactionsResolved": true,
+              "runAuthorityReleased": true
+            },
+            "effects": {
+              "coordinatorClosed": false,
+              "writerReleased": false,
+              "transportsClosed": false
+            },
+            "receiptDigest": "23db5315deab7932ed6ce43ced027c1308b6746ccac24a7e3f3affbbd1b911ab"
+          }
+        }
+      },
+      {
+        "kind": "fleet.drain_completed",
+        "payload": {
+          "schemaVersion": 1,
+          "drainId": "fleet-drain:fa99d49d00fe3160e9a84552335de20fdccbc68eb8d9c8ec5e4871afaa75b62d",
+          "receipt": {
+            "schemaVersion": 1,
+            "state": "drained",
+            "scope": "local-controller",
+            "repoId": "repo-76d484205f22eed0163d8f21b8287740",
+            "targetCount": 0,
+            "remainingCount": 0,
+            "targetDigest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+            "counts": {
+              "pendingCancelled": 0,
+              "killConfirmed": 0,
+              "alreadyTerminal": 0,
+              "processesObserved": 0,
+              "processesClosed": 0
+            },
+            "checks": {
+              "admissionClosed": true,
+              "authorityOpsDrained": true,
+              "stopWaitersDrained": true,
+              "cleanupDrained": true,
+              "localWorkerAuthorityReleased": true
+            },
+            "effects": {
+              "coordinatorClosed": false,
+              "writerReleased": false,
+              "transportsClosed": false
+            },
+            "receiptDigest": "91e6436ae8199df632fc829d5bf2cb02be9a0b4d19ec4916a4bd662efbb7b756"
+          }
+        }
+      }
+    ],
+    "rootFollowups": [
+      "Do not admit a drive if processing the status exhausted the deadline",
+      "Caller cancellation also detaches pending pump confirmation",
+      "Older observations cannot append stale steering evidence after a newer publication",
+      "Remove OMP replay of native steering at completion; separate regression fails before the repair"
+    ],
+    "secondLane": {
+      "name": "coordinator_checks",
+      "routeRequested": "claude-code/claude-sonnet-4-6/high",
+      "admission": "refused by worktree capacity before native worker spawn; deployment closed",
+      "disposition": "root diagnosed and repaired the obsolete read-triggered deadline expectation; 58/58 pass"
+    }
+  }
 }

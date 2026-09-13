@@ -1,6 +1,6 @@
 # Runtime review and scope corrections
 
-Review date: 2026-09-12. Initial local and remote revision: `67904d59`. First implementation
+Review began 2026-09-12; follow-up 2026-09-13. Initial local and remote revision: `67904d59`. First implementation
 checkpoint: `baeaa777`. This review concerns the actual harness and the intended swarm system,
 not only the workflow DSL. [The revised design](39-swarm-runtime.md) governs subsequent work.
 
@@ -73,8 +73,8 @@ currently relies on that optional aggregate and does not normalize every dimensi
 coordinator's token/USD fields. During the observer self-build, real tool activity was visible
 while the route projection still said provider identity pending. Do not infer zero spend or
 observed model identity from this omission. A follow-up must map native usage once, avoid double
-counting aggregates/replay, distinguish configured from observed model/effort, and remove the
-card's unsupported claim of tool-allowlist enforcement. This is an adapter gap, not a reason to
+counting aggregates/replay, distinguish configured from observed model/effort, and preserve native failure/usage distinctions. The card's unsupported claim of tool-allowlist
+enforcement has been removed. This is an adapter gap, not a reason to
 disable native tools or subagents.
 
 **Native subagents.** Baton currently has more evidence for the adapter's main process than for
@@ -111,12 +111,25 @@ the repository test command. Dynamic runtime discovery still needs further work.
 selection, current account capacity and observed identity are different facts. Concurrency should
 follow real host/provider constraints; arbitrary fixed worker counts are not a swarm design.
 
-Wave handle observation and stop admission now begin independently, preserving returned roster order
-and per-member errors. Repeated settlement refreshes observations. Result recovery resolves only
-contested fallback-pin attribution in order; authoritative result reads remain concurrent. A hung
-status request can still delay a complete snapshot, and settle's budget does not bound every pending
-read or cancel its drive pumps. `pumpDrained` reports that uncertainty; this needs an abortable
-observer design, separate from worker lifetime. Concurrent deployment startup also reproduced a
+Wave observations now use independent per-member loops and one caller deadline, with cancellation
+separate from worker lifetime. Healthy members can finish and contribute results while another
+member's status remains hung. Concurrent observers share one drive per member; cancelled but
+unsettled drives remain tracked, and earlier invocations cannot overwrite later receipts. Result
+pin reads use abortable subprocesses, with only fallback attribution ordered across the roster.
+`progress` and `settle` accept caller signals. A signal-ignoring facade can still leave an observer
+unconfirmed; `close` reports that uncertainty alongside explicit member-stop receipts. The result
+section is read when a member is first observed resting; a result published later may require
+another observation. Local checks pass 39/39 for observer/admission/driver/transport behavior,
+36/36 for observer/checkpoint behavior, and 57/57 for adjacent wave/workflow surfaces.
+
+The native observer author committed useful work, but a live disk-capacity refusal at capture
+prevented Baton acceptance. Baton preserved the exact commit and closed with zero remaining
+owned resources. The receipt also exposed OMP replaying its last native steering message as a
+fresh turn: the same-test regression fails before the repair, and the repaired steering/native
+integration checks pass 32/32. Native steering now stays with its native queue; only an explicit
+continuation starts a subsequent turn. This does not claim to fix the separate OMP usage gap.
+
+Concurrent deployment startup also reproduced a
 worktree-reconciliation refusal; its original cause remains unconfirmed. A separate minimal
 reproduction proved that generic reconciliation deleted a live verification sandbox without an
 error. The follow-up removes that unscoped cleanup for verification and integration directories:
