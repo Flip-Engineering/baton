@@ -106,7 +106,7 @@ const selection = { exact: { harness: 'mock', model: 'model-a', effort: 'low' },
 test('real application supports delegated recruitment and continuing native turns through the swarm SDK', async (t) => {
   const { app, baton, driver } = await fixture(t);
   const swarm = await baton.swarms.create('Develop Baton using a living swarm', { swarmId: 'self-build' });
-  assert.equal((await swarm.inspect()).participants.length, 0);
+  assert.equal((await swarm.view()).participants.length, 0);
   await swarm.context({ key: 'design', body: 'Participants may contribute without ending their sessions.' });
   const lead = await swarm.recruit('lead', 'Coordinate implementation', { ...selection, permissions: SWARM_PERMISSIONS });
   const leadWorker = await paused(driver, lead.runId);
@@ -121,12 +121,12 @@ test('real application supports delegated recruitment and continuing native turn
   const implementation = builderClient.swarms.open(swarm.id);
   await implementation.contribute({ contributionId: 'finding', body: 'The next change can remain independent of reviewer lifetime.' });
   await assert.rejects(implementation.recruit('forbidden', 'Attempt unauthorized recruitment', selection), { code: 'swarm_permission_required' });
-  const view = await swarm.inspect();
+  const view = await swarm.view();
   assert.equal(view.participants.find((row) => row.participantId === 'builder').parentId, 'lead');
   assert.equal(view.contributions.finding.body, 'The next change can remain independent of reviewer lifetime.');
   await delegated.group({ groupId: 'review', members: ['lead', 'builder'] });
   await delegated.group({ groupId: 'implementation', members: ['builder'] });
-  assert.equal((await swarm.inspect()).groups.review.members.length, 2);
+  assert.equal((await swarm.view()).groups.review.members.length, 2);
   const help = await app.command('application.help', { topic: 'swarm', depth: 'content' }, principal('orchestrator'));
   assert.ok(help.content.commands.some((usage) => usage.includes('swarm recruit')));
   await delegated.close();
@@ -152,7 +152,7 @@ test('native shells coordinate, recruit and contribute through scoped runtime-in
       [env.BATON_SWARM_CLIENT, command, ...(args === undefined ? [] : [JSON.stringify(args)])], { env });
     return JSON.parse(stdout);
   };
-  const leadView = await native(leadEnv, 'swarm.inspect');
+  const leadView = await native(leadEnv, 'swarm.view');
   assert.equal(leadView.caller.participantId, 'lead');
   const builder = await native(leadEnv, 'swarm.recruit', {
     participantId: 'builder', objective: 'Build the contribution', options: selection,
@@ -164,16 +164,16 @@ test('native shells coordinate, recruit and contribute through scoped runtime-in
     native(builderEnv, 'swarm.update', { event: 'swarm.contribution_recorded', payload: 'Builder finding from native tools' }),
     native(leadEnv, 'swarm.update', { event: 'swarm.context_updated', payload: { key: 'direction', body: 'Keep the reviewer available' } }),
   ]);
-  const view = await swarm.inspect();
+  const view = await swarm.view();
   const finding = Object.values(view.contributions).find((row) => row.body === 'Builder finding from native tools');
   assert.equal(finding.participantId, 'builder');
   assert.equal(view.participants.find((row) => row.participantId === 'builder').parentId, 'lead');
   const publicState = JSON.stringify({ view, logs: driver.log.read(builderWorker.id) });
   assert.equal(publicState.includes(builderEnv.BATON_SWARM_BRIDGE_TOKEN), false);
   await app.stop(builder.runId, 'Explicit participant stop revokes its native access', principal('orchestrator'));
-  await assert.rejects(swarmBridgeCommand({ command: 'swarm.inspect', args: { swarmId: swarm.id } }, { env: builderEnv }),
+  await assert.rejects(swarmBridgeCommand({ command: 'swarm.view', args: { swarmId: swarm.id } }, { env: builderEnv }),
     { code: 'swarm_bridge_token_invalid' });
-  assert.equal((await native(leadEnv, 'swarm.inspect')).caller.participantId, 'lead');
+  assert.equal((await native(leadEnv, 'swarm.view')).caller.participantId, 'lead');
 });
 
 test('an implementer captures and checks its own live code through its native shell', async (t) => {
@@ -210,7 +210,7 @@ test('an implementer captures and checks its own live code through its native sh
     assert.equal(driver.coordinator.pausedTurns({ workerId: worker.id }).length, 0);
     const checked = await native('swarm.check', { participantId: 'builder', contributionId: 'live', checkId: 'own-check' });
     assert.equal(checked.passed, true);
-    assert.equal((await swarm.inspect()).participants[0].runtime.turn, 'running');
+    assert.equal((await swarm.view()).participants[0].runtime.turn, 'running');
     assert.deepEqual(readFileSync(indexPath), index, 'verification leaves the live staging area untouched too');
   } finally { release(); }
   await paused(driver, builder.runId);

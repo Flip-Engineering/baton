@@ -207,7 +207,7 @@ const BIG_OBJECTIVE = 'x'.repeat(SPILL_BODY_CEILING + 1);
 // docs/39: the living-swarm verbs lead the table (swarm-contract SWARM_COMMAND_DEFINITIONS is
 // spread first in application.mjs), ahead of the byte-stable 26-key M3 set below.
 const SWARM_COMMANDS = Object.freeze([
-  'swarm.list', 'swarm.create', 'swarm.inspect', 'swarm.watch', 'swarm.update',
+  'swarm.list', 'swarm.create', 'swarm.view', 'swarm.watch', 'swarm.update',
   'swarm.recruit', 'swarm.guide', 'swarm.capture', 'swarm.check', 'swarm.stop',
 ]);
 const COMMANDS_BEFORE_M3 = Object.freeze([

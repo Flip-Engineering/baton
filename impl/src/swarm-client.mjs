@@ -6,11 +6,11 @@
 // runtime's JSON unmodified: a cancel is the operation that happened, a capture is the exact
 // immutable revision that was captured, a check is an observation about identified work under
 // identified conditions — never a "task complete" verdict, and never a permission the client
-// computed for itself. `inspect()` (and every mutation's returned view) carries the authoritative
+// computed for itself. `view()` (and every mutation's returned view) carries the authoritative
 // `caller` authority and `availableActions`; read those.
 //
 // Handles are coordinates, not sessions: `swarms.create()`/`swarms.open()` give a Swarm whose id
-// plus inspect/recruit/guide/capture/check/stop work without the caller ever handling a worker id,
+// plus view/recruit/guide/capture/check/stop work without the caller ever handling a worker id,
 // a turn coordinate, or a fence.
 
 import { randomUUID } from 'node:crypto';
@@ -86,13 +86,13 @@ export class Swarm {
   /** Read the authoritative swarm view: purpose, status, participants with their runtime state,
    * groups, work, assignments, context, contributions, reviews, `caller` authority,
    * `availableActions`, recent `updates`, and `cursor`. */
-  inspect() {
-    return this._send('swarm.inspect', { swarmId: this.id });
+  view() {
+    return this._send('swarm.view', { swarmId: this.id });
   }
 
   /**
    * Event-driven observation: await the next coordination append past `afterSeq` and return the
-   * refreshed inspect view. `afterSeq` defaults to the cursor of the last view this handle saw, so
+   * refreshed view. `afterSeq` defaults to the cursor of the last view this handle saw, so
    * a plain `await swarm.watch({ timeoutMs })` waits for "something new since I last looked".
    * One call, one await — the caller owns any loop, and a timeout returns the refreshed view
    * rather than being mistaken for progress.

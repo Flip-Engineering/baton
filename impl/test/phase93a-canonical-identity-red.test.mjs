@@ -32,8 +32,9 @@ test('P93A1-C2: Program identity is NFC-stable, insertion-independent, and negat
 });
 
 test('P93A1-C3: Phase 63 canonical-order and Phase 81 Context identity remain byte-stable', () => {
+  // canonical-order.mjs digest re-pinned after 580ef794 (defineProperty keeps complete JSON identity).
   assert.equal(createHash('sha256').update(readFileSync(new URL('../src/canonical-order.mjs', import.meta.url))).digest('hex'),
-    '22a00b39101650c0a9ede7c6382261a3c8071aa3af87bb07bab7ec7b758a111f');
+    'e87b80ae646415d0e6faf74750c82ec92de937a229ab003f65f78a02a0bd49c8');
   assert.equal(compareCanonicalStrings('😀', '\uE000'), -1);
   assert.deepEqual(canonicalJson({ z: -0, a: 1 }), { a: 1, z: -0 });
   assert.equal(contextValueDigest({ z: 1, a: -0 }),

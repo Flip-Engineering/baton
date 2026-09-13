@@ -26,7 +26,7 @@ const BRIDGE_MODULE = fileURLToPath(new URL('../src/swarm-native-bridge.mjs', im
 const refuse = (message, code, detail = {}) => Object.assign(new Error(message), { code, detail });
 // The double's grant tables mirror the root runtime — the bridge itself keeps neither.
 const COMMAND_PERMISSIONS = Object.freeze({
-  'swarm.inspect': 'read', 'swarm.watch': 'read', 'swarm.recruit': 'recruit',
+  'swarm.view': 'read', 'swarm.watch': 'read', 'swarm.recruit': 'recruit',
   'swarm.guide': 'communicate', 'swarm.capture': 'contribute',
   'swarm.check': 'review', 'swarm.stop': 'stop',
 });
@@ -78,7 +78,7 @@ function createFakeSwarmRuntime() {
     const permission = COMMAND_PERMISSIONS[command];
     if (!permission) throw refuse('Swarm operation is unavailable', 'swarm_command_unavailable');
     granted(permission);
-    if (command === 'swarm.inspect') {
+    if (command === 'swarm.view') {
       return {
         swarmId: args.swarmId,
         caller: { participantId: member.participantId },
@@ -164,7 +164,7 @@ test('issue() binds one scope, returns env config and a receipt that never carri
     assert.equal(status.capabilities[0].state, 'active');
     assert.equal(JSON.stringify(status).includes(issued.token), false);
     assert.equal(JSON.stringify(status).includes(SWARM_BRIDGE_ENV_KEYS.token), false);
-    assert.ok(status.commands.includes('swarm.inspect'));
+    assert.ok(status.commands.includes('swarm.view'));
     assert.ok(status.commands.includes('swarm.update'));
     assert.deepEqual(SWARM_COMMANDS.includes('swarm.update'), true);
   });
@@ -192,7 +192,7 @@ test('an authorized command reaches dispatch with the bridge-minted principal an
     // runtime resolves through context.runId (SwarmRuntime._caller's runId arm).
     runtime.join({ swarmId: 'swarm-1', participantId: 'alpha', runId: 'run-alpha' });
     const issued = await bridge.issue({ swarmId: 'swarm-1', participantId: 'alpha', runId: 'run-alpha' });
-    const result = await call(issued, 'swarm.inspect', { swarmId: 'swarm-1' });
+    const result = await call(issued, 'swarm.view', { swarmId: 'swarm-1' });
     assert.equal(result.caller.participantId, 'alpha');
     assert.ok(result.availableActions.includes('swarm.guide'));
     assert.ok(result.availableActions.includes('swarm.capture'));
@@ -280,7 +280,7 @@ test('a request body can never choose the principal or the context (forged field
     runtime.join({ swarmId: 'swarm-1', participantId: 'alpha', runId: 'run-alpha' });
     const issued = await bridge.issue({ swarmId: 'swarm-1', participantId: 'alpha', runId: 'run-alpha' });
     const response = await post(issued.env[SWARM_BRIDGE_ENV_KEYS.url], issued.token, {
-      command: 'swarm.inspect',
+      command: 'swarm.view',
       args: { swarmId: 'swarm-1' },
       principal: { actor: 'orchestrator', principalId: 'worker:forged', sessionId: 'forged-session' },
       context: { runId: 'run-someone-else' },
@@ -303,7 +303,7 @@ test('contract admission refuses forged identity fields and malformed args befor
       { swarmId: 'swarm-1', sessionId: 'forged-session' },
       { swarmId: 'swarm-1', context: { runId: 'run-someone-else' } },
     ]) {
-      await assert.rejects(call(issued, 'swarm.inspect', forged), (error) => error.code === 'swarm_command_invalid');
+      await assert.rejects(call(issued, 'swarm.view', forged), (error) => error.code === 'swarm_command_invalid');
     }
     // Closed schema on a real mutation verb: missing required field, unknown event kind.
     await assert.rejects(call(issued, 'swarm.update', { swarmId: 'swarm-1', event: 'swarm.contribution_recorded' }),
@@ -317,7 +317,7 @@ test('contract admission refuses forged identity fields and malformed args befor
     }
     assert.equal(runtime.calls.length, 0);
     // The mirror agrees with the exported surface.
-    assert.equal(validateSwarmCommandArgs('swarm.inspect', { swarmId: 'swarm-1' }), true);
+    assert.equal(validateSwarmCommandArgs('swarm.view', { swarmId: 'swarm-1' }), true);
   });
 });
 
@@ -330,11 +330,11 @@ test('unknown and revoked tokens mean the same invalid authority and never reach
     runtime.join({ swarmId: 'swarm-1', participantId: 'alpha', runId: 'run-alpha' });
     const issued = await bridge.issue({ swarmId: 'swarm-1', participantId: 'alpha', runId: 'run-alpha' });
     await assert.rejects(swarmBridgeCommand({
-      command: 'swarm.inspect', args: { swarmId: 'swarm-1' },
+      command: 'swarm.view', args: { swarmId: 'swarm-1' },
       endpoint: issued.env[SWARM_BRIDGE_ENV_KEYS.url], token: 'not-a-real-token',
     }), (error) => error.code === 'swarm_bridge_token_invalid' && error.status === 401);
     assert.deepEqual(bridge.revoke(issued.token), { revoked: 1, activeRemaining: 0 });
-    await assert.rejects(call(issued, 'swarm.inspect', { swarmId: 'swarm-1' }),
+    await assert.rejects(call(issued, 'swarm.view', { swarmId: 'swarm-1' }),
       (error) => error.code === 'swarm_bridge_token_invalid' && error.status === 401);
     const raw = await post(issued.env[SWARM_BRIDGE_ENV_KEYS.url], issued.token, {}).then(readResponse);
     assert.equal(raw.error.code, 'swarm_bridge_token_invalid');
@@ -351,9 +351,9 @@ test('revoke() accepts a partial scope object and only drops matching capabiliti
     assert.deepEqual(bridge.revoke({ participantId: 'alpha' }), { revoked: 1, activeRemaining: 1 });
     assert.equal(bridge.inspect().capabilities.length, 1);
     assert.equal(bridge.inspect().capabilities[0].principalId, 'swarm-native:beta');
-    await assert.rejects(call(alpha, 'swarm.inspect', { swarmId: 'swarm-1' }),
+    await assert.rejects(call(alpha, 'swarm.view', { swarmId: 'swarm-1' }),
       (error) => error.code === 'swarm_bridge_token_invalid');
-    const stillActive = await call(beta, 'swarm.inspect', { swarmId: 'swarm-1' });
+    const stillActive = await call(beta, 'swarm.view', { swarmId: 'swarm-1' });
     assert.equal(stillActive.caller.participantId, 'beta');
   });
 });
@@ -361,7 +361,7 @@ test('revoke() accepts a partial scope object and only drops matching capabiliti
 test('cross-swarm args are refused at the bridge and dispatch never sees them', async () => {
   await withBridge({}, async ({ bridge, runtime }) => {
     const issued = await bridge.issue({ swarmId: 'swarm-1', participantId: 'alpha', runId: 'run-alpha' });
-    await assert.rejects(call(issued, 'swarm.inspect', { swarmId: 'swarm-2' }),
+    await assert.rejects(call(issued, 'swarm.view', { swarmId: 'swarm-2' }),
       (error) => error.code === 'swarm_bridge_swarm_mismatch' && error.status === 403
         && error.detail.authorized === 'swarm-1' && error.detail.requested === 'swarm-2');
     assert.equal(runtime.calls.length, 0);
@@ -377,7 +377,7 @@ test('runtime-owned refusals pass through verbatim (message, code, detail)', asy
         && error.detail.permission === 'contribute' && error.detail.participantId === 'alpha');
     // A stale membership is a runtime decision, not a bridge one — the token itself stays valid.
     runtime.setStatus('run-alpha', 'inactive');
-    await assert.rejects(call(issued, 'swarm.inspect', { swarmId: 'swarm-1' }),
+    await assert.rejects(call(issued, 'swarm.view', { swarmId: 'swarm-1' }),
       (error) => error.code === 'swarm_membership_required' && error.status === 422);
   });
 });
@@ -394,10 +394,10 @@ test('one server carries concurrent participants and concurrent calls with isola
     const alpha = await bridge.issue({ swarmId: 'swarm-1', participantId: 'alpha', runId: 'run-alpha' });
     const beta = await bridge.issue({ swarmId: 'swarm-1', participantId: 'beta', runId: 'run-beta' });
     const results = await Promise.all([
-      call(alpha, 'swarm.inspect', { swarmId: 'swarm-1' }),
+      call(alpha, 'swarm.view', { swarmId: 'swarm-1' }),
       call(alpha, 'swarm.guide', { swarmId: 'swarm-1', participantId: 'beta', message: 'hand off the fence work', idempotencyKey: 'op-i-1' }),
       call(alpha, 'swarm.capture', { swarmId: 'swarm-1', participantId: 'alpha', contributionId: 'c-alpha-1' }),
-      call(beta, 'swarm.inspect', { swarmId: 'swarm-1' }),
+      call(beta, 'swarm.view', { swarmId: 'swarm-1' }),
       call(beta, 'swarm.capture', { swarmId: 'swarm-1', participantId: 'alpha', contributionId: 'c-alpha-2' }), // beta holds review
       call(beta, 'swarm.recruit', { swarmId: 'swarm-1', participantId: 'gamma', objective: 'scout the router', idempotencyKey: 'op-r-1' }),
     ]);
@@ -419,7 +419,7 @@ test('the same token reused concurrently mints one identity — native children 
   await withBridge({}, async ({ bridge, runtime }) => {
     runtime.join({ swarmId: 'swarm-1', participantId: 'alpha', runId: 'run-alpha' });
     const issued = await bridge.issue({ swarmId: 'swarm-1', participantId: 'alpha', runId: 'run-alpha' });
-    const sessions = await Promise.all(Array.from({ length: 5 }, () => call(issued, 'swarm.inspect', { swarmId: 'swarm-1' })));
+    const sessions = await Promise.all(Array.from({ length: 5 }, () => call(issued, 'swarm.view', { swarmId: 'swarm-1' })));
     assert.equal(sessions.length, 5);
     const principals = new Set(runtime.calls.map((entry) => `${entry.principal.principalId}:${entry.principal.sessionId}`));
     assert.equal(principals.size, 1); // one participant identity, no per-call child identities
@@ -481,7 +481,7 @@ test('request frames are bounded by the wire.frame row with a registry-composed 
     assert.equal(typeof error.detail.resourceReason, 'string');
     // A lying declared content-length is refused without reading the body either.
     const response = await post(issued.env[SWARM_BRIDGE_ENV_KEYS.url], issued.token,
-      { command: 'swarm.inspect', args: { swarmId: 'swarm-1' } }, { contentLengthOverride: 99_999_999 });
+      { command: 'swarm.view', args: { swarmId: 'swarm-1' } }, { contentLengthOverride: 99_999_999 });
     const payload = await readResponse(response);
     assert.equal(payload.error.code, 'swarm_bridge_frame_exceeded');
     assert.equal(runtime.calls.length, 0);
@@ -494,7 +494,7 @@ test('response frames are bounded by the same row before anything is written', a
     runtime.dispatch.huge = true;
     const issued = await bridge.issue({ swarmId: 'swarm-1', participantId: 'alpha', runId: 'run-alpha' });
     const response = await post(issued.env[SWARM_BRIDGE_ENV_KEYS.url], issued.token, {
-      command: 'swarm.inspect', args: { swarmId: 'swarm-1' },
+      command: 'swarm.view', args: { swarmId: 'swarm-1' },
     });
     const payload = await readResponse(response);
     assert.equal(payload.ok, false);
@@ -535,7 +535,7 @@ test('close() revokes capabilities, awaits server shutdown, and leaves unrelated
     await assert.rejects(bridge.issue({ swarmId: 'swarm-1', participantId: 'alpha', runId: 'run-alpha' }),
       (error) => error.code === 'swarm_bridge_closed');
     await assert.rejects(swarmBridgeCommand({
-      command: 'swarm.inspect', args: { swarmId: 'swarm-1' },
+      command: 'swarm.view', args: { swarmId: 'swarm-1' },
       endpoint: issued.env[SWARM_BRIDGE_ENV_KEYS.url], token: issued.token,
     }), (error) => error.code === 'swarm_bridge_unreachable');
     // close() is idempotent.
@@ -561,7 +561,7 @@ test('runtime refusals carry no token material in message, code, or detail', asy
     const issued = await bridge.issue({ swarmId: 'swarm-1', participantId: 'alpha', runId: 'run-alpha' });
     let refused = null;
     try {
-      await call(issued, 'swarm.inspect', { swarmId: 'swarm-1' });
+      await call(issued, 'swarm.view', { swarmId: 'swarm-1' });
     } catch (error) { refused = error; }
     assert.equal(refused.code, 'swarm_membership_required');
     assert.equal(JSON.stringify({ m: refused.message, c: refused.code, d: refused.detail }).includes(issued.token), false);
@@ -572,7 +572,7 @@ test('runtime refusals carry no token material in message, code, or detail', asy
 // CLI entry — the native agent's direct invocation surface
 // ============================================================
 
-test('the module executable answers swarm.inspect from env alone and fails with typed JSON errors', async () => {
+test('the module executable answers swarm.view from env alone and fails with typed JSON errors', async () => {
   await withBridge({}, async ({ bridge, runtime }) => {
     runtime.join({ swarmId: 'swarm-1', participantId: 'alpha', runId: 'run-alpha' });
     const issued = await bridge.issue({ swarmId: 'swarm-1', participantId: 'alpha', runId: 'run-alpha' });
@@ -581,7 +581,7 @@ test('the module executable answers swarm.inspect from env alone and fails with 
       [SWARM_BRIDGE_ENV_KEYS.url]: issued.env[SWARM_BRIDGE_ENV_KEYS.url],
       [SWARM_BRIDGE_ENV_KEYS.token]: issued.token,
     };
-    const ok = await execFileAsync(process.execPath, [BRIDGE_MODULE, 'swarm.inspect', JSON.stringify({ swarmId: 'swarm-1' })], { env });
+    const ok = await execFileAsync(process.execPath, [BRIDGE_MODULE, 'swarm.view', JSON.stringify({ swarmId: 'swarm-1' })], { env });
     const parsed = JSON.parse(ok.stdout);
     assert.ok(parsed.availableActions.includes('swarm.guide'));
     assert.equal(ok.stderr, '');
@@ -592,13 +592,13 @@ test('the module executable answers swarm.inspect from env alone and fails with 
     assert.equal(refusedPayload.ok, false);
     assert.equal(refusedPayload.error.code, 'swarm_permission_required');
     assert.equal(JSON.stringify(refusedPayload).includes(issued.token), false);
-    const badArgs = await execFileAsync(process.execPath, [BRIDGE_MODULE, 'swarm.inspect', 'not-json'], { env }).catch((error) => error);
+    const badArgs = await execFileAsync(process.execPath, [BRIDGE_MODULE, 'swarm.view', 'not-json'], { env }).catch((error) => error);
     assert.equal(badArgs.code, 1);
     assert.equal(JSON.parse(badArgs.stderr).error.code, 'swarm_bridge_request_invalid');
     // "No env configured" must mean it: the child inherits nothing bridge-shaped (a deployment
     // injects BATON_SWARM_BRIDGE_* into THIS test process, and an inherited URL would turn this
     // probe into a real network call).
-    const missingEnv = await execFileAsync(process.execPath, [BRIDGE_MODULE, 'swarm.inspect'],
+    const missingEnv = await execFileAsync(process.execPath, [BRIDGE_MODULE, 'swarm.view'],
       { env: { PATH: process.env.PATH, HOME: process.env.HOME } }).catch((error) => error);
     assert.equal(missingEnv.code, 1);
     assert.match(JSON.parse(missingEnv.stderr).error.message, /BATON_SWARM_BRIDGE_URL/u);
@@ -640,7 +640,7 @@ test('the CLI renders family and per-command help locally with no bridge env wha
     assert.match(command.stdout, /arbitrary JSON or plain text/u);
     assert.match(command.stdout, /auto-filled from BATON_SWARM_BRIDGE_SWARM_ID/u);
   }
-  const inspect = await execFileAsync(process.execPath, [BRIDGE_MODULE, 'swarm.inspect', '--help'], { env: cleanEnv });
+  const inspect = await execFileAsync(process.execPath, [BRIDGE_MODULE, 'swarm.view', '--help'], { env: cleanEnv });
   assert.match(inspect.stdout, /swarmId — a swarm identity; auto-filled from BATON_SWARM_BRIDGE_SWARM_ID/u);
   const unknown = await execFileAsync(process.execPath, [BRIDGE_MODULE, 'swarm.nope', '--help'], { env: cleanEnv })
     .catch((error) => error);

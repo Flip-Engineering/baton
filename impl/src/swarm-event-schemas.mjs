@@ -1,7 +1,7 @@
 // swarm-event-schemas.mjs — discoverable payload shapes for the PUBLIC swarm.update event kinds.
 //
 // One declarative source for every surface that describes swarm.update payloads: the contract's
-// argument admission (swarm-contract.mjs), the MCP tool schema, CLI help, and root's swarm.inspect
+// argument admission (swarm-contract.mjs), the MCP tool schema, CLI help, and root's swarm.view
 // projection. Deliberately NOT a second domain validator: `validateSwarmEvent` (swarm-state.mjs,
 // root-owned) remains the enforcement authority on the durable fold. This module DESCRIBES the
 // shapes that validator enforces so agents never need to read code, and lets the contract refuse

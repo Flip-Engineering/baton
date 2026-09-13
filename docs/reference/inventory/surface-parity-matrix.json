@@ -958,6 +958,96 @@
       "ledgered": false
     },
     {
+      "name": "swarm.capture",
+      "category": "control",
+      "cli": "baton swarm capture",
+      "mcp": "baton_swarm_capture",
+      "web": "swarm_capture",
+      "divergence": null,
+      "ledgered": false
+    },
+    {
+      "name": "swarm.check",
+      "category": "control",
+      "cli": "baton swarm check",
+      "mcp": "baton_swarm_check",
+      "web": "swarm_check",
+      "divergence": null,
+      "ledgered": false
+    },
+    {
+      "name": "swarm.create",
+      "category": "control",
+      "cli": "baton swarm create",
+      "mcp": "baton_swarm_create",
+      "web": "swarm_create",
+      "divergence": null,
+      "ledgered": false
+    },
+    {
+      "name": "swarm.guide",
+      "category": "communication",
+      "cli": "baton swarm guide",
+      "mcp": "baton_swarm_guide",
+      "web": "swarm_guide",
+      "divergence": null,
+      "ledgered": false
+    },
+    {
+      "name": "swarm.list",
+      "category": "observation",
+      "cli": "baton swarm list",
+      "mcp": "baton_swarm_list",
+      "web": "swarm_list",
+      "divergence": null,
+      "ledgered": false
+    },
+    {
+      "name": "swarm.recruit",
+      "category": "control",
+      "cli": "baton swarm recruit",
+      "mcp": "baton_swarm_recruit",
+      "web": "swarm_recruit",
+      "divergence": null,
+      "ledgered": false
+    },
+    {
+      "name": "swarm.stop",
+      "category": "control",
+      "cli": "baton swarm stop",
+      "mcp": "baton_swarm_stop",
+      "web": "swarm_stop",
+      "divergence": null,
+      "ledgered": false
+    },
+    {
+      "name": "swarm.update",
+      "category": "control",
+      "cli": "baton swarm update",
+      "mcp": "baton_swarm_update",
+      "web": "swarm_update",
+      "divergence": null,
+      "ledgered": false
+    },
+    {
+      "name": "swarm.view",
+      "category": "observation",
+      "cli": "baton swarm view",
+      "mcp": "baton_swarm_view",
+      "web": "swarm_view",
+      "divergence": null,
+      "ledgered": false
+    },
+    {
+      "name": "swarm.watch",
+      "category": "notifications",
+      "cli": "baton swarm watch",
+      "mcp": "baton_swarm_watch",
+      "web": "swarm_watch",
+      "divergence": null,
+      "ledgered": false
+    },
+    {
       "name": "waves.attach",
       "category": "control",
       "cli": "baton waves attach",

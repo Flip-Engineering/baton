@@ -52,7 +52,7 @@ function fixture(t) {
   const runtime = new SwarmRuntime(ports);
   let key = 0;
   const call = (command, args = {}, caller = owner) => runtime.command(`swarm.${command}`,
-    { ...(['list'].includes(command) ? {} : { swarmId: 'baton' }), ...(['list', 'inspect', 'watch', 'capture', 'check'].includes(command) ? {} : { idempotencyKey: `request-${++key}` }), ...args }, caller);
+    { ...(['list'].includes(command) ? {} : { swarmId: 'baton' }), ...(['list', 'view', 'watch', 'capture', 'check'].includes(command) ? {} : { idempotencyKey: `request-${++key}` }), ...args }, caller);
   const recruit = (participantId, permissions, caller = owner) => call('recruit', {
     participantId, objective: `Continue working as ${participantId}`, ...(permissions ? { permissions } : {}),
   }, caller);
@@ -71,7 +71,7 @@ test('orchestrator starts empty, recruits later, and changes overlapping collabo
   await f.recruit('scout');
   assert.equal(f.starts.at(-1).sharedContext[0].body, 'A turn ending is not a contribution being accepted.');
   assert.equal(f.workers.length, 3);
-  const view = await f.call('inspect');
+  const view = await f.call('view');
   assert.deepEqual(view.groups.runtime.members, ['builder', 'reviewer']);
   assert.deepEqual(view.groups.api.members, ['reviewer']);
   assert.ok(view.availableActions.includes('swarm.recruit'));
@@ -85,7 +85,7 @@ test('delegated coordinator recruits within grants and implementers can contribu
   await f.recruit('builder', undefined, lead);
   assert.equal(f.store.swarm('baton').participants.builder.parentId, 'lead');
   const builder = principal('w-2');
-  const view = await f.call('inspect', {}, builder);
+  const view = await f.call('view', {}, builder);
   assert.ok(view.availableActions.includes('swarm.check'));
   assert.ok(view.availableActions.includes('swarm.update'));
   assert.deepEqual(view.actionTargets['swarm.check'].participantIds, ['builder']);
@@ -97,7 +97,7 @@ test('delegated coordinator recruits within grants and implementers can contribu
   await assert.rejects(f.call('update', { event: 'swarm.contribution_recorded', payload: {
     contributionId: 'forged', participantId: 'lead', body: 'Pretend this came from the lead.',
   } }, builder), { code: 'swarm_author_mismatch' });
-  await assert.rejects(f.call('inspect', {}, principal('unknown')), { code: 'swarm_membership_required' });
+  await assert.rejects(f.call('view', {}, principal('unknown')), { code: 'swarm_membership_required' });
 });
 
 test('reviewers check and accept contributions while authors remain available for further guidance', async (t) => {
@@ -126,13 +126,13 @@ test('inspect gives each participant usable payload examples only for their perm
   await f.call('create', { purpose: 'Discover collaboration from the running swarm' });
   await f.recruit('builder');
   const caller = principal('w-1');
-  const view = await f.call('inspect', {}, caller);
+  const view = await f.call('view', {}, caller);
   assert.deepEqual(Object.keys(view.updatePayloads), view.updates);
   assert.equal(view.updatePayloads['swarm.group_updated'], undefined);
   const schema = view.updatePayloads['swarm.context_updated'];
   assert.equal(schema.fields.body.type, 'json');
   await f.call('update', { event: 'swarm.context_updated', payload: schema.example }, caller);
-  const next = await f.call('inspect', {}, caller);
+  const next = await f.call('view', {}, caller);
   assert.deepEqual(Object.values(next.context).find((row) => row.key === schema.example.key).body, schema.example.body);
 });
 
@@ -197,7 +197,7 @@ test('invalid recruitment is refused before membership or provider effects', asy
 test('watch ignores unrelated swarms, wakes on selected updates, and releases on shutdown', async (t) => {
   const f = fixture(t);
   await f.call('create', { purpose: 'Selected collaboration updates' });
-  const cursor = (await f.call('inspect')).cursor;
+  const cursor = (await f.call('view')).cursor;
   let resolved = false;
   const watching = f.call('watch', { afterSeq: cursor, timeoutMs: 1000 }).then((result) => { resolved = true; return result; });
   await f.runtime.command('swarm.create', { swarmId: 'unrelated', purpose: 'Another collaboration', idempotencyKey: 'unrelated' }, owner);

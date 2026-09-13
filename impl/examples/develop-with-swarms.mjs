@@ -24,7 +24,7 @@ export async function developWithSwarms({ repo, task, evidencePath }) {
       ...(task.permissions ? { permissions: task.permissions } : {}),
     });
     evidence.participant = participant;
-    let view = await swarm.inspect();
+    let view = await swarm.view();
     for (;;) {
       const current = view.participants.find((row) => row.participantId === participant.participantId);
       if (current?.runtime.turn === 'paused') break;
@@ -35,7 +35,7 @@ export async function developWithSwarms({ repo, task, evidencePath }) {
     }
     evidence.capture = await swarm.capture(participant.participantId, 'implementation');
     evidence.check = await swarm.check(participant.participantId, 'implementation', 'initial');
-    evidence.afterCheck = await swarm.inspect();
+    evidence.afterCheck = await swarm.view();
     return evidence;
   } catch (error) {
     evidence.failure = { code: error.code ?? null, message: error.message };
@@ -45,7 +45,7 @@ export async function developWithSwarms({ repo, task, evidencePath }) {
     // Capture failure must not erase the collaboration findings and native observations when
     // private harness homes are subsequently removed by explicit stop.
     if (swarm) {
-      try { evidence.beforeStop = await swarm.inspect(); }
+      try { evidence.beforeStop = await swarm.view(); }
       catch (error) { evidence.observationError = { code: error.code, message: error.message }; }
     }
     try {

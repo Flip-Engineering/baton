@@ -208,6 +208,16 @@ The four settlement ops work through MCP behind the S-2 `sessionAuthority` envel
 | `run.list` | `ordinary` | `baton_runs` | idempotent |
 | `scratchpad.elevate` | `kernel` | `baton_scratchpad_elevate` | idempotent |
 | `scratchpad.settle` | `kernel` | `baton_scratchpad_settle` | idempotent |
+| `swarm.capture` | `ordinary` | `baton_swarm_capture` | idempotent |
+| `swarm.check` | `ordinary` | `baton_swarm_check` | idempotent |
+| `swarm.create` | `ordinary` | `baton_swarm_create` | idempotent |
+| `swarm.guide` | `ordinary` | `baton_swarm_guide` | idempotent |
+| `swarm.list` | `ordinary` | `baton_swarm_list` | idempotent |
+| `swarm.recruit` | `ordinary` | `baton_swarm_recruit` | idempotent |
+| `swarm.stop` | `ordinary` | `baton_swarm_stop` | destructive |
+| `swarm.update` | `ordinary` | `baton_swarm_update` | idempotent |
+| `swarm.view` | `ordinary` | `baton_swarm_view` | idempotent |
+| `swarm.watch` | `ordinary` | `baton_swarm_watch` | idempotent |
 | `waves.attach` | `ordinary` | `baton_waves_attach` | idempotent |
 | `waves.compile` | `ordinary` | `baton_waves_compile` | idempotent |
 | `waves.list` | `ordinary` | `baton_waves_list` | idempotent |
@@ -218,16 +228,6 @@ The four settlement ops work through MCP behind the S-2 `sessionAuthority` envel
 | `waves.stop` | `ordinary` | `baton_waves_stop` | destructive |
 | `run.member.send` | `ordinary` | `baton_workstream_notify` | idempotent |
 | `run.member.stop` | `ordinary` | `baton_workstream_stop` | destructive |
-| `fleet_swarm_capture` | `ordinary` | `fleet_swarm_capture` | idempotent |
-| `fleet_swarm_check` | `ordinary` | `fleet_swarm_check` | idempotent |
-| `fleet_swarm_create` | `ordinary` | `fleet_swarm_create` | idempotent |
-| `fleet_swarm_guide` | `ordinary` | `fleet_swarm_guide` | idempotent |
-| `fleet_swarm_inspect` | `ordinary` | `fleet_swarm_inspect` | idempotent |
-| `fleet_swarm_list` | `ordinary` | `fleet_swarm_list` | idempotent |
-| `fleet_swarm_recruit` | `ordinary` | `fleet_swarm_recruit` | idempotent |
-| `fleet_swarm_stop` | `ordinary` | `fleet_swarm_stop` | idempotent |
-| `fleet_swarm_update` | `ordinary` | `fleet_swarm_update` | idempotent |
-| `fleet_swarm_watch` | `ordinary` | `fleet_swarm_watch` | idempotent |
 
 <!-- END GENERATED: mcp-tool-inventory -->
 

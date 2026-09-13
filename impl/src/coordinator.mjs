@@ -8857,7 +8857,6 @@ export class Coordinator {
         name: 'CoordinationRefusal', code: 'recovery_attempt_invalid',
       });
     }
-    if (process.env.BATON_DEBUG_RECOVERY) console.error("DEBUG-PRIOR", JSON.stringify({ keys: Object.keys(prior).sort().join(","), status: prior.status, taskType: prior.taskType ?? null, hasTaskType: Object.hasOwn(prior, "taskType"), stack: new Error("x").stack.split("\n").slice(1, 5).join(" | ") }));
     const result = this._coordination.createAndClaimRecoveryRefinement({
       id, brief: prior.brief, deps: [], refines: prior.id, taskType: prior.taskType,
       runId: prior.runId ?? null,
@@ -9021,9 +9020,9 @@ export class Coordinator {
       let captured;
       if (this._sharedCheckoutCustody(handle, task)) {
         if (typeof manager.snapshot !== 'function') {
-          throw Object.assign(new Error('shared checkout preservation is unavailable', {
+          throw Object.assign(new Error('shared checkout preservation is unavailable'), {
             code: 'shared_workspace_capture_unavailable',
-          }));
+          });
         }
         captured = await this._captureTrustWorktree(handle, task, { snapshot: true });
       } else {

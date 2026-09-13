@@ -1236,8 +1236,24 @@ const KNOWLEDGE_PROMOTE_LIVE_METHOD = `admitWorkflow${'Finding'}`;
 // Every §6 canonical operation: an authority `source` (an `operations` name or an `actions` kind
 // the entry inherits schema/effect/capabilities/durability from) plus the fields the source cannot
 // supply. Order and profiles/surfaces match the seeded conformance set exactly (SC3 byte-stable).
+// Taught CLI examples for the swarm family: every positional the CLI row requires is present, so
+// the example compiles to its own operation (doc-truth R5) — placeholders follow RUN_ID's style.
+const SWARM_OPERATION_EXAMPLES = Object.freeze({
+  'swarm.list': 'baton swarm list',
+  'swarm.create': 'baton swarm create "Ship the release"',
+  'swarm.view': 'baton swarm view SWARM_ID',
+  'swarm.watch': 'baton swarm watch SWARM_ID',
+  'swarm.update': 'baton swarm update SWARM_ID swarm.contribution_recorded --payload "finding"',
+  'swarm.recruit': 'baton swarm recruit SWARM_ID reviewer "Review the change"',
+  'swarm.guide': 'baton swarm guide SWARM_ID reviewer "Focus on the tests"',
+  'swarm.capture': 'baton swarm capture SWARM_ID reviewer CONTRIBUTION_ID',
+  'swarm.check': 'baton swarm check SWARM_ID reviewer CONTRIBUTION_ID CHECK_ID',
+  'swarm.stop': 'baton swarm stop SWARM_ID reviewer "Work complete"',
+});
+
 const CANONICAL_OPERATION_SPECS = [
   ...SWARM_COMMAND_ROWS.map((row) => [row.command, {
+    example: SWARM_OPERATION_EXAMPLES[row.command],
     inputSchema: SWARM_COMMAND_SCHEMAS[row.command],
     capabilities: SWARM_COMMAND_DEFINITIONS[row.command].capabilities,
     effect: row.readOnlyHint ? (row.command === 'swarm.watch' ? 'swarm_stream' : 'swarm_read')

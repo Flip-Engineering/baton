@@ -28,7 +28,7 @@ const REPO_ID = 'repo-reflex';
 const runApplicationCard = () => ({
   schemaVersion: 1,
   repoId: REPO_ID,
-  commands: ['swarm.list', 'swarm.create', 'swarm.inspect', 'swarm.watch', 'swarm.update', 'swarm.recruit', 'swarm.guide', 'swarm.capture', 'swarm.check', 'swarm.stop', 'application.help', 'runs.list', 'run.start', 'run.inspect', 'run.episode', 'run.workstreams', 'run.workstream.notify', 'run.workstream.stop', 'run.act', 'run.status', 'run.follow', 'run.recover', 'run.approve', 'run.wait', 'run.answer', 'run.feedback', 'run.steer', 'run.stop', 'run.evidence', 'run.adopt', 'run.retry_verification', 'run.resume_work', 'run.review', 'run.integrate', 'run.export', 'waves.attach', 'application.shutdown'],
+  commands: ['swarm.list', 'swarm.create', 'swarm.view', 'swarm.watch', 'swarm.update', 'swarm.recruit', 'swarm.guide', 'swarm.capture', 'swarm.check', 'swarm.stop', 'application.help', 'runs.list', 'run.start', 'run.inspect', 'run.episode', 'run.workstreams', 'run.workstream.notify', 'run.workstream.stop', 'run.act', 'run.status', 'run.follow', 'run.recover', 'run.approve', 'run.wait', 'run.answer', 'run.feedback', 'run.steer', 'run.stop', 'run.evidence', 'run.adopt', 'run.retry_verification', 'run.resume_work', 'run.review', 'run.integrate', 'run.export', 'waves.attach', 'application.shutdown'],
 });
 
 function principal(overrides = {}) {
@@ -198,7 +198,8 @@ test('Inventory: the ordinary (Web-bridge) surface admits exactly the MCP-W1/W2 
   // tool crosses. M4b: the canonical grammar tools render beside the retained legacy tools.
   // Facade-projection epic (#87+#48): the six workflow-surface tools join between the settlement
   // family and the view verbs.
-  assert.equal(response.result.tools.length, 37);
+  // docs/39: the ten baton_swarm_* tools are ordinary application capabilities (37 -> 47).
+  assert.equal(response.result.tools.length, 47);
   assert.deepEqual(response.result.tools.map((tool) => tool.name), [
     'baton_help', 'baton_runs', 'baton_run_start', 'baton_run_inspect', 'baton_run_episode',
     'baton_run_workstreams', 'baton_workstream_notify', 'baton_workstream_stop',
@@ -208,6 +209,9 @@ test('Inventory: the ordinary (Web-bridge) surface admits exactly the MCP-W1/W2 
     'baton_scratchpad_elevate', 'baton_scratchpad_settle', 'baton_knowledge_promote', 'baton_knowledge_settlement_lease',
     'baton_run_message_send', 'baton_run_message_receipt', 'baton_run_attention_watch',
     'baton_run_scratchpad_read', 'baton_run_scratchpad_elevate', 'baton_run_scratchpad_append', 'baton_run_knowledge_seed',
+    'baton_swarm_list', 'baton_swarm_create', 'baton_swarm_view', 'baton_swarm_watch',
+    'baton_swarm_update', 'baton_swarm_recruit', 'baton_swarm_guide', 'baton_swarm_capture',
+    'baton_swarm_check', 'baton_swarm_stop',
     'baton_run_do', 'baton_run_view', 'baton_run_member_view', 'baton_run_member_send',
     'baton_run_member_stop', 'baton_application_help',
   ]);

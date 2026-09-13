@@ -189,7 +189,7 @@ const stopParticipant = (app, { swarmId, participantId, reason, key = null }) =>
   swarmId, participantId, reason, idempotencyKey: key ?? `stop:${swarmId}:${participantId}`,
 });
 
-const inspect = (app, swarmId) => command(app, 'swarm.inspect', { swarmId });
+const inspect = (app, swarmId) => command(app, 'swarm.view', { swarmId });
 
 // Owner receipts live in the repository's COMMON Git administration directory (shared by every
 // worktree), not under the repository's working directory.

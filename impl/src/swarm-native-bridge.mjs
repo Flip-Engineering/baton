@@ -29,7 +29,7 @@
 //
 // This module is executable as a client: `node swarm-native-bridge.mjs <swarm.command> [jsonArgs]`
 // reads BATON_SWARM_BRIDGE_URL / BATON_SWARM_BRIDGE_TOKEN from the environment so a native
-// participant can call `swarm.inspect` (availableActions) without worker/fence/pause ids.
+// participant can call `swarm.view` (availableActions) without worker/fence/pause ids.
 // `--help` (family) and `<swarm.command> --help` (one command) render LOCALLY from the shared
 // contract definitions — no credential is read, so help works before any token is issued.
 
@@ -408,7 +408,7 @@ function bridgeHelpText(command = null) {
 }
 
 /** CLI entry so a native agent can invoke a bridge command directly from its own shell:
- * `node swarm-native-bridge.mjs swarm.inspect '{"swarmId":"..."}'` with the bridge env set. */
+ * `node swarm-native-bridge.mjs swarm.view '{"swarmId":"..."}'` with the bridge env set. */
 export async function swarmBridgeMain(argv = process.argv.slice(2), env = process.env, io = { out: process.stdout, err: process.stderr }) {
   const [command, argsText] = argv;
   let mintedKey = null;

@@ -15,7 +15,7 @@ const UPDATE_PERMISSIONS = Object.freeze({
   'swarm.participant_left': 'organize', 'swarm.closed': 'organize',
 });
 const COMMAND_PERMISSIONS = Object.freeze({
-  'swarm.inspect': 'read', 'swarm.watch': 'read', 'swarm.recruit': 'recruit',
+  'swarm.view': 'read', 'swarm.watch': 'read', 'swarm.recruit': 'recruit',
   'swarm.guide': 'communicate', 'swarm.capture': 'contribute',
   'swarm.check': 'review', 'swarm.stop': 'stop',
 });
@@ -257,7 +257,7 @@ export class SwarmRuntime {
       return this.inspect(this._swarm(swarmId), principal, context);
     }
     let swarm = this._swarm(args.swarmId);
-    if (command === 'swarm.inspect') return this.inspect(swarm, principal, context);
+    if (command === 'swarm.view') return this.inspect(swarm, principal, context);
     if (command === 'swarm.watch') {
       this._permit(swarm, principal, context, 'read');
       return this._watch(args, principal, context);

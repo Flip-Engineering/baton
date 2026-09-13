@@ -139,7 +139,7 @@ test('an external orchestrator discovers and guides a living swarm through the e
   });
   async function paused() {
     for (;;) {
-      const view = await swarm.inspect();
+      const view = await swarm.view();
       const worker = view.participants[0].runtime;
       if (worker.turn === 'paused') return;
       if (['dead', 'exited'].includes(worker.state)) {
@@ -160,7 +160,7 @@ test('an external orchestrator discovers and guides a living swarm through the e
     const [repo, home, configRoot, swarmId] = process.argv.slice(1);
     const connected = await connectBaton({ repo, advanced: { home, env: { HOME: home, XDG_CONFIG_HOME: configRoot } } });
     const swarm = connected.swarms.open(swarmId);
-    const before = await swarm.inspect();
+    const before = await swarm.view();
     await swarm.guide('reviewer', 'Review the next contribution; stay available afterwards.');
     console.log(JSON.stringify({ swarmId: before.swarmId, participant: before.participants[0].participantId,
       turnBeforeGuide: before.participants[0].runtime.turn }));
@@ -172,7 +172,7 @@ test('an external orchestrator discovers and guides a living swarm through the e
     swarmId: swarm.id, participant: 'reviewer', turnBeforeGuide: 'paused',
   });
   await paused();
-  const view = await swarm.inspect();
+  const view = await swarm.view();
   assert.equal(view.participants[0].status, 'active');
   assert.equal(view.participants[0].runtime.state, 'working');
   await swarm.stop('reviewer', 'External guidance verified');

@@ -35,6 +35,7 @@ const conformanceScript = fileURLToPath(
 );
 
 // ── pinned ground truth: the card-advertised web.bus admission (31 dot names, ACTUAL order) ─────
+// Pinned card projection: the 31 pre-swarm names plus the ten docs/39 swarm.* verbs (41).
 const WEB_BUS_DOT_NAMES_31 = [
   'application.help',
   'run.act',
@@ -60,6 +61,16 @@ const WEB_BUS_DOT_NAMES_31 = [
   'run.workstream.stop',
   'run.workstreams',
   'runs.list',
+  'swarm.capture',
+  'swarm.check',
+  'swarm.create',
+  'swarm.guide',
+  'swarm.list',
+  'swarm.recruit',
+  'swarm.stop',
+  'swarm.update',
+  'swarm.view',
+  'swarm.watch',
   'waves.attach',
   'waves.list',
   'waves.progress',
@@ -99,6 +110,9 @@ const WAVE_TOOL_NAMES = new Set([
 // the parser actually admits (a bare "RUN_ID" is a value, not a shape probe).
 const FIXTURES = Object.freeze({
   RUN_ID: 'run:r1',
+  SWARM_ID: 'swarm-1',
+  CONTRIBUTION_ID: 'contribution-1',
+  CHECK_ID: 'check-1',
   R: 'probe',
   REASON: 'probe',
   TEXT: 'hello',

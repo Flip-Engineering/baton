@@ -1,11 +1,14 @@
 // Swarm CLI and MCP projections of the shared command contract.
-import { canonicalAndTransportNames } from './application-semantics.mjs';
+import { canonicalAndTransportNames, deriveSurfaceNames } from './application-semantics.mjs';
 import { swarmUpdatePayloadDetails } from './swarm-event-schemas.mjs';
 import { SWARM_COMMAND_DEFINITIONS, SWARM_COMMAND_NAMES, SWARM_COMMAND_ROWS } from './swarm-contract.mjs';
 export * from './swarm-contract.mjs';
 
+// The swarm verbs are ordinary application capabilities, so their MCP tools carry the registry's
+// ordinary `baton_*` spelling (deriveSurfaceNames — the same source the capability catalog, the
+// parity matrix and the rendered docs teach), not the retained legacy `fleet_*` transport twin.
 export const SWARM_MCP_TOOL_DEFINITIONS = Object.freeze(SWARM_COMMAND_ROWS.map((row) => Object.freeze({
-  name: canonicalAndTransportNames(row.command).mcp,
+  name: deriveSurfaceNames(row.command).mcp,
   command: row.command,
   description: row.description,
   readOnlyHint: row.readOnlyHint,
@@ -25,9 +28,9 @@ function kebabCase(name) {
 
 const SWARM_CLI_SUMMARIES = Object.freeze({
   'swarm.list': 'List the living swarms visible to this connection.',
-  'swarm.create': 'Create one living swarm and print its inspect view.',
-  'swarm.inspect': "Read one swarm's membership, work, shared context, contributions, reviews, caller authority, and available actions.",
-  'swarm.watch': 'Await the next swarm update past a cursor (defaults to the cursor of the last view this session read) and print the refreshed inspect view.',
+  'swarm.create': 'Create one living swarm and print its view.',
+  'swarm.view': "Read one swarm's membership, work, shared context, contributions, reviews, caller authority, and available actions.",
+  'swarm.watch': 'Await the next swarm update past a cursor (defaults to the cursor of the last view this session read) and print the refreshed view.',
   'swarm.update': 'Apply one domain update: group, work, assignment, context, contribution, review, participant leave, or close.',
   'swarm.recruit': 'Recruit one participant; the runtime resolves and starts the native Run under the requested selection.',
   'swarm.guide': 'Send guidance to one participant, active or paused.',
@@ -42,7 +45,7 @@ export const SWARM_CLI_COMMANDS = Object.freeze(SWARM_COMMAND_NAMES.map((name) =
   const verb = name.slice('swarm.'.length);
   const positional = {
     'swarm.create': ['purpose'],
-    'swarm.inspect': ['swarmId'],
+    'swarm.view': ['swarmId'],
     'swarm.watch': ['swarmId'],
     'swarm.update': ['swarmId', 'event'],
     'swarm.recruit': ['swarmId', 'participantId', 'objective'],
@@ -83,7 +86,7 @@ export const SWARM_CLI_HELP = Object.freeze({
     usage: Object.freeze(SWARM_CLI_COMMANDS.map((row) => row.usage)),
     paragraphs: Object.freeze([
       'Living swarms: an orchestrator creates one swarm, recruits participants into it, guides them, and keeps evolving groups, work, assignments, and shared context while contributions are captured and checked independently of the authors\' own status.',
-      'Every verb prints the authoritative JSON result. Permissions are enforced by the runtime: read `caller` and `availableActions` from `baton swarm inspect` instead of assuming an authority.',
+      'Every verb prints the authoritative JSON result. Permissions are enforced by the runtime: read `caller` and `availableActions` from `baton swarm view` instead of assuming an authority.',
       'Closing a swarm is organizational only — stopping participants is an explicit per-participant action.',
     ]),
   }),

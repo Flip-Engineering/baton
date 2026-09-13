@@ -14,7 +14,7 @@ import { applicationSemanticRegistry } from '../src/application-semantics.mjs';
 const NOW = Date.parse('2026-07-23T12:00:00.000Z');
 const ORIGIN = 'https://grammar-m1.test';
 const COMMANDS_BEFORE_M1 = Object.freeze([
-  'swarm.list', 'swarm.create', 'swarm.inspect', 'swarm.watch', 'swarm.update', 'swarm.recruit', 'swarm.guide', 'swarm.capture', 'swarm.check', 'swarm.stop', 'application.help', 'runs.list', 'run.start', 'run.inspect', 'run.episode',
+  'swarm.list', 'swarm.create', 'swarm.view', 'swarm.watch', 'swarm.update', 'swarm.recruit', 'swarm.guide', 'swarm.capture', 'swarm.check', 'swarm.stop', 'application.help', 'runs.list', 'run.start', 'run.inspect', 'run.episode',
   'run.workstreams', 'run.workstream.notify', 'run.workstream.stop', 'run.act',
   'run.status', 'run.follow', 'run.approve', 'run.wait', 'run.answer', 'run.feedback',
   'run.stop', 'run.evidence', 'run.adopt', 'run.retry_verification',

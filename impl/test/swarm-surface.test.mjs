@@ -13,7 +13,7 @@ import { APPLICATION_COMMAND_DEFINITIONS } from '../src/application.mjs';
 import { CLI_WEB_COMMANDS, batonCliHelp, parseBatonCli } from '../src/application-cli.mjs';
 import { bindBatonPort } from '../src/application-client.mjs';
 import { swarmApplicationToolDefinitions } from '../src/mcp-northbound.mjs';
-import { canonicalAndTransportNames } from '../src/application-semantics.mjs';
+import { canonicalAndTransportNames, deriveSurfaceNames } from '../src/application-semantics.mjs';
 import { createSwarms } from '../src/swarm-client.mjs';
 import {
   SWARM_CLI_COMMANDS, SWARM_COMMAND_DEFINITIONS, SWARM_COMMAND_NAMES, SWARM_EVENT_KINDS,
@@ -30,7 +30,7 @@ const REGISTERED = Object.freeze({ ...APPLICATION_COMMAND_DEFINITIONS, ...SWARM_
 const EXAMPLES = Object.freeze({
   'swarm.list': Object.freeze({}),
   'swarm.create': Object.freeze({ purpose: 'Ship the swarm surface', idempotencyKey: 'ik-create' }),
-  'swarm.inspect': Object.freeze({ swarmId: 'swarm:one' }),
+  'swarm.view': Object.freeze({ swarmId: 'swarm:one' }),
   'swarm.watch': Object.freeze({ swarmId: 'swarm:one', afterSeq: 4, timeoutMs: 1_000 }),
   'swarm.update': Object.freeze({
     swarmId: 'swarm:one', event: 'swarm.work_updated',
@@ -100,8 +100,8 @@ test('validation refuses the closed set with typed codes and invents no byte cei
   const refusals = [
     ['unknown command', 'swarm.nope', {}, 'swarm_command_unavailable'],
     ['args not an object', 'swarm.list', [], 'swarm_command_invalid'],
-    ['unknown field', 'swarm.inspect', { swarmId: 'swarm:one', fence: 3 }, 'swarm_command_invalid'],
-    ['missing required field', 'swarm.inspect', {}, 'swarm_command_invalid'],
+    ['unknown field', 'swarm.view', { swarmId: 'swarm:one', fence: 3 }, 'swarm_command_invalid'],
+    ['missing required field', 'swarm.view', {}, 'swarm_command_invalid'],
     ['unclosed event kind', 'swarm.update',
       { swarmId: 'swarm:one', event: 'swarm.made_up', idempotencyKey: 'ik-1' }, 'swarm_command_invalid'],
     ['negative cursor', 'swarm.watch', { swarmId: 'swarm:one', afterSeq: -1 }, 'swarm_command_invalid'],
@@ -164,7 +164,7 @@ test('the CLI branch is table-driven from the family rows', () => {
   }
   const recruit = swarmCliCommand('recruit');
   assert.deepEqual(recruit.positional, ['swarmId', 'participantId', 'objective']);
-  assert.deepEqual(recruit.flags.map((entry) => entry.flag), ['--options', '--permissions']);
+  assert.deepEqual(recruit.flags.map((entry) => entry.flag), ['--options', '--permissions', '--share-workspace-with']);
   assert.equal(swarmCliCommand('bogus'), null);
   assert.ok(batonCliHelp('swarm').includes('baton swarm watch'), 'the family topic lists every verb');
 });
@@ -243,7 +243,7 @@ test('the MCP tool table activates with the registry and follows its stateful fl
   assert.deepEqual(tools.map((tool) => tool.name).sort(),
     SWARM_MCP_TOOL_DEFINITIONS.map((tool) => tool.name).sort());
   assert.deepEqual(SWARM_MCP_TOOL_DEFINITIONS.map((tool) => tool.name).sort(),
-    SWARM_COMMAND_NAMES.map((name) => canonicalAndTransportNames(name).mcp).sort());
+    SWARM_COMMAND_NAMES.map((name) => deriveSurfaceNames(name).mcp).sort());
   const rowsByName = new Map(SWARM_MCP_TOOL_DEFINITIONS.map((tool) => [tool.name, tool]));
   for (const tool of tools) {
     const row = rowsByName.get(tool.name);
@@ -265,12 +265,12 @@ test('the MCP tool table activates with the registry and follows its stateful fl
     assert.equal(tool.annotations.readOnlyHint, row.readOnlyHint);
     assert.equal(tool.annotations.destructiveHint, row.destructiveHint);
   }
-  const list = tools.find((tool) => tool.name === 'fleet_swarm_list');
+  const list = tools.find((tool) => tool.name === 'baton_swarm_list');
   assert.equal(list.annotations.readOnlyHint, true);
-  const stop = tools.find((tool) => tool.name === 'fleet_swarm_stop');
+  const stop = tools.find((tool) => tool.name === 'baton_swarm_stop');
   assert.equal(stop.annotations.destructiveHint, true);
   assert.ok(stop.inputSchema.required.includes('reason'));
-  const capture = tools.find((tool) => tool.name === 'fleet_swarm_capture');
+  const capture = tools.find((tool) => tool.name === 'baton_swarm_capture');
   assert.deepEqual(capture.inputSchema.required, ['repoId', 'swarmId', 'participantId', 'contributionId']);
 });
 
@@ -279,7 +279,7 @@ test('the MCP tool table activates with the registry and follows its stateful fl
 test('orchestrator: create, recruit later, guide, and stop remain honest JSON round trips', async () => {
   const views = {
     'swarm.create': { swarmId: 'swarm:one', purpose: 'Ship it', status: 'open', participants: [], cursor: 3 },
-    'swarm.inspect': { swarmId: 'swarm:one', status: 'open', participants: [], availableActions: ['swarm.recruit'], cursor: 3 },
+    'swarm.view': { swarmId: 'swarm:one', status: 'open', participants: [], availableActions: ['swarm.recruit'], cursor: 3 },
     'swarm.recruit': { swarmId: 'swarm:one', participantId: 'impl-a', runId: 'run:1', status: 'starting', cursor: 9 },
   };
   const port = fakePort((name) => views[name] ?? {});
@@ -289,8 +289,8 @@ test('orchestrator: create, recruit later, guide, and stop remain honest JSON ro
   // who it needs.
   const swarm = await swarms.create('Ship it', { swarmId: 'swarm:one' });
   assert.equal(swarm.id, 'swarm:one');
-  assert.deepEqual(await swarm.inspect(), views['swarm.inspect']);
-  assert.deepEqual(swarm.last, views['swarm.inspect']);
+  assert.deepEqual(await swarm.view(), views['swarm.view']);
+  assert.deepEqual(swarm.last, views['swarm.view']);
   assert.equal(swarm.cursor, 3);
 
   const recruited = await swarm.recruit('impl-a', 'Implement the parser change', {
@@ -338,14 +338,14 @@ test('delegated coordinator: availableActions are the runtime\'s, and the client
     assignments: {}, context: { notes: { version: 3, actor: 'coord-b', body: 'shared' } },
     contributions: {}, reviews: {},
     caller: { participantId: 'coord-b', permissions: ['communicate'] },
-    availableActions: ['swarm.inspect', 'swarm.watch', 'swarm.update', 'swarm.recruit', 'swarm.guide'],
+    availableActions: ['swarm.view', 'swarm.watch', 'swarm.update', 'swarm.recruit', 'swarm.guide'],
     updates: [{ event: 'swarm.group_updated', seq: 12 }],
     cursor: 12,
   };
-  const port = fakePort((name) => (name === 'swarm.inspect' ? view : { swarmId: 'swarm:one', cursor: 13 }));
+  const port = fakePort((name) => (name === 'swarm.view' ? view : { swarmId: 'swarm:one', cursor: 13 }));
   const swarm = createSwarms(port).open('swarm:one');
 
-  const inspected = await swarm.inspect();
+  const inspected = await swarm.view();
   assert.deepEqual(inspected.availableActions, view.availableActions);
   assert.deepEqual(inspected.caller, view.caller);
   assert.deepEqual(inspected.groups['group:api'], { version: 2, actor: 'coord-b', members: ['impl-a'] });
@@ -389,12 +389,12 @@ test('implementer: shared context is readable and a finding is an ordinary contr
     context: { conventions: { version: 4, actor: 'coord-b', body: 'run node --test' } },
     contributions: { 'contribution:1': { author: 'peer-a', kind: 'finding' } },
     caller: { participantId: 'impl-a', permissions: ['contribute'] },
-    availableActions: ['swarm.inspect', 'swarm.capture'], cursor: 20,
+    availableActions: ['swarm.view', 'swarm.capture'], cursor: 20,
   };
-  const port = fakePort((name) => (name === 'swarm.inspect' ? view : { ok: true, cursor: 21 }));
+  const port = fakePort((name) => (name === 'swarm.view' ? view : { ok: true, cursor: 21 }));
   const swarm = createSwarms(port).open('swarm:one');
 
-  const seen = await swarm.inspect();
+  const seen = await swarm.view();
   assert.equal(seen.context.conventions.body, 'run node --test');
   assert.deepEqual(seen.contributions['contribution:1'], { author: 'peer-a', kind: 'finding' });
 
@@ -418,7 +418,7 @@ test('implementer: shared context is readable and a finding is an ordinary contr
 });
 
 test('event-driven observation: watch waits past the last cursor instead of polling', async () => {
-  const port = fakePort((name) => (name === 'swarm.inspect'
+  const port = fakePort((name) => (name === 'swarm.view'
     ? { swarmId: 'swarm:one', cursor: 12 }
     : { swarmId: 'swarm:one', cursor: 15, updates: [{ event: 'swarm.work_updated', seq: 15 }] }));
   const swarm = createSwarms(port).open('swarm:one');
@@ -456,10 +456,10 @@ test('the SDK propagates the runtime refusal unchanged and rides the client port
   const client = bindBatonPort(port);
   assert.deepEqual(await client.swarms.list(), { name: 'swarm.list', cursor: 1 });
   const swarm = client.swarms.open('swarm:one');
-  await swarm.inspect();
+  await swarm.view();
   assert.deepEqual(port.calls, [
     { name: 'swarm.list', args: {} },
-    { name: 'swarm.inspect', args: { swarmId: 'swarm:one' } },
+    { name: 'swarm.view', args: { swarmId: 'swarm:one' } },
   ]);
 });
 
@@ -473,9 +473,9 @@ test('watch retains its newest cursor across contribution receipts and overlappi
   const swarm = createSwarms({ command: async (name, args) => {
     calls.push({ name, args }); return replies.shift();
   } }).open('swarm:cursor');
-  await swarm.inspect();
+  await swarm.view();
   await swarm.capture('builder', 'revision');
-  await swarm.inspect();
+  await swarm.view();
   await swarm.watch();
   assert.equal(calls.at(-1).args.afterSeq, 10);
   assert.equal(swarm.cursor, 11);
@@ -535,7 +535,7 @@ test('the swarm.update payload schema and CLI help expose per-event payload shap
   }
   assert.match(payloadDescription, /arbitrary JSON or plain text/u);
   const tool = swarmApplicationToolDefinitions(REGISTERED).find((entry) => entry.name
-    === canonicalAndTransportNames('swarm.update').mcp);
+    === deriveSurfaceNames('swarm.update').mcp);
   assert.equal(tool.inputSchema.properties.payload.description, payloadDescription,
     'the wire schema carries the same description the contract declares');
   // CLI: the swarm.update help topic names every kind and its caller-supplied fields.

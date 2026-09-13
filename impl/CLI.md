@@ -49,16 +49,16 @@ ordinary-CLI inventory. The conformance suite fails if they drift from served tr
 | `run.stop` | `ordinary` | `baton run stop` | `baton run stop RUN_ID` |
 | `run.view` | `ordinary` | `baton run view` | `baton run view RUN_ID` |
 | `run.watch` | `ordinary` | `baton run watch` | `baton run watch RUN_ID` |
-| `swarm.capture` | `ordinary` | `baton swarm capture` | `baton swarm capture` |
-| `swarm.check` | `ordinary` | `baton swarm check` | `baton swarm check` |
-| `swarm.create` | `ordinary` | `baton swarm create` | `baton swarm create` |
-| `swarm.guide` | `ordinary` | `baton swarm guide` | `baton swarm guide` |
-| `swarm.inspect` | `ordinary` | `baton swarm inspect` | `baton swarm inspect` |
+| `swarm.capture` | `ordinary` | `baton swarm capture` | `baton swarm capture SWARM_ID reviewer CONTRIBUTION_ID` |
+| `swarm.check` | `ordinary` | `baton swarm check` | `baton swarm check SWARM_ID reviewer CONTRIBUTION_ID CHECK_ID` |
+| `swarm.create` | `ordinary` | `baton swarm create` | `baton swarm create "Ship the release"` |
+| `swarm.guide` | `ordinary` | `baton swarm guide` | `baton swarm guide SWARM_ID reviewer "Focus on the tests"` |
 | `swarm.list` | `ordinary` | `baton swarm list` | `baton swarm list` |
-| `swarm.recruit` | `ordinary` | `baton swarm recruit` | `baton swarm recruit` |
-| `swarm.stop` | `ordinary` | `baton swarm stop` | `baton swarm stop` |
-| `swarm.update` | `ordinary` | `baton swarm update` | `baton swarm update` |
-| `swarm.watch` | `ordinary` | `baton swarm watch` | `baton swarm watch` |
+| `swarm.recruit` | `ordinary` | `baton swarm recruit` | `baton swarm recruit SWARM_ID reviewer "Review the change"` |
+| `swarm.stop` | `ordinary` | `baton swarm stop` | `baton swarm stop SWARM_ID reviewer "Work complete"` |
+| `swarm.update` | `ordinary` | `baton swarm update` | `baton swarm update SWARM_ID swarm.contribution_recorded --payload "finding"` |
+| `swarm.view` | `ordinary` | `baton swarm view` | `baton swarm view SWARM_ID` |
+| `swarm.watch` | `ordinary` | `baton swarm watch` | `baton swarm watch SWARM_ID` |
 | `waves.attach` | `ordinary` | `baton waves attach` | `baton waves attach WAVE_ID --members JSON` |
 | `waves.compile` | `ordinary` | `baton waves compile` | `baton waves compile path/to/spec.dsl` |
 | `waves.list` | `ordinary` | `baton waves list` | `baton waves list` |

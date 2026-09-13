@@ -429,17 +429,17 @@ test('P-A4 pin: a coordinator-seat worker has NO baton connection — discovery 
     rmSync(repo, { recursive: true, force: true });
     rmSync(home, { recursive: true, force: true });
   }
-  // Byte-stable source anchor: readBoundedFile throws `${label} is unavailable` with
+  // Byte-stable source anchor (ranges shifted +16 by the swarm CLI import): readBoundedFile throws `${label} is unavailable` with
   // cli_config_invalid at :126; the label 'user connection profile' is passed at the
   // :257 call site through readConnectionJson (:149). grep -an only (NUL-bearing file).
   const unavailable = srcAnchor('application-cli.mjs', "is unavailable");
-  assert.ok(unavailable.line >= 124 && unavailable.line <= 128, 'readBoundedFile throw anchor');
+  assert.ok(unavailable.line >= 140 && unavailable.line <= 144, 'readBoundedFile throw anchor');
   assert.ok(unavailable.text.includes('cli_config_invalid'), 'code byte-stable');
   const profileLabel = srcAnchor('application-cli.mjs', 'user connection profile');
   assert.ok(profileLabel.text.includes("'user connection profile'"), 'label literal');
   const readConn = srcAnchor('application-cli.mjs', 'function readConnectionJson');
-  assert.ok(readConn.line >= 147 && readConn.line <= 152, 'readConnectionJson def anchor (:149)');
-  assert.ok(profileLabel.line >= 255 && profileLabel.line <= 259, 'label call site anchor (:257)');
+  assert.ok(readConn.line >= 163 && readConn.line <= 167, 'readConnectionJson def anchor (:149)');
+  assert.ok(profileLabel.line >= 271 && profileLabel.line <= 275, 'label call site anchor (:257)');
 });
 
 test('P-A5-static pin: waves.* direct ports dispatch BEFORE the recursive-session gate; #12 codes are NOT claimed for waves.* verbs', () => {

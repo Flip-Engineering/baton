@@ -31,6 +31,11 @@ const ledger = JSON.parse(readFileSync(ledgerUrl, 'utf8'));
 
 // The pre-M3 legacy transport inventory — the M3 consolidation must not add or rename a single
 // transport name (UA5 byte-stability; the flips are dispatch-layer only until M4).
+// docs/39: the living-swarm verbs lead the table ahead of the byte-stable pre-M3 set.
+const SWARM_COMMANDS = Object.freeze([
+  'swarm.list', 'swarm.create', 'swarm.view', 'swarm.watch', 'swarm.update',
+  'swarm.recruit', 'swarm.guide', 'swarm.capture', 'swarm.check', 'swarm.stop',
+]);
 const COMMANDS_BEFORE_M3 = Object.freeze([
   'application.help', 'runs.list', 'run.start', 'run.inspect', 'run.episode',
   'run.workstreams', 'run.workstream.notify', 'run.workstream.stop', 'run.act',
@@ -261,7 +266,7 @@ test('M3-8: the ledger stays monotone and valid and every transport name is byte
 
   // No transport name changed: the legacy command table is byte-identical and the new canonical
   // names resolve only in the dispatch-layer alias map, never as command definitions.
-  assert.deepEqual(Object.keys(APPLICATION_COMMAND_DEFINITIONS), COMMANDS_BEFORE_M3);
+  assert.deepEqual(Object.keys(APPLICATION_COMMAND_DEFINITIONS), [...SWARM_COMMANDS, ...COMMANDS_BEFORE_M3]);
   for (const canonical of ['run.view', 'run.watch', 'run.member.view', 'run.member.send',
     'run.member.interrupt', 'run.member.stop']) {
     assert.equal(Object.hasOwn(APPLICATION_COMMAND_DEFINITIONS, canonical), false, canonical);

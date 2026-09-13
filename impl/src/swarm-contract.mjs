@@ -39,7 +39,7 @@ export const SWARM_COMMAND_DEFINITIONS = Object.freeze({
     capabilities: Object.freeze(['control', 'observe']),
     web: true, mcp: true, mcpStateful: true, reconcilable: true,
   }),
-  'swarm.inspect': Object.freeze({
+  'swarm.view': Object.freeze({
     args: Object.freeze(['swarmId']),
     capabilities: Object.freeze(['observe']),
     web: true, mcp: true, mcpStateful: false, reconcilable: true,
@@ -184,7 +184,7 @@ const SWARM_COMMAND_ARGUMENTS = Object.freeze({
     required: Object.freeze(['purpose', 'idempotencyKey']),
     optional: Object.freeze(['swarmId']),
   }),
-  'swarm.inspect': Object.freeze({ required: Object.freeze(['swarmId']), optional: Object.freeze([]) }),
+  'swarm.view': Object.freeze({ required: Object.freeze(['swarmId']), optional: Object.freeze([]) }),
   'swarm.watch': Object.freeze({
     required: Object.freeze(['swarmId']),
     optional: Object.freeze(['afterSeq', 'timeoutMs']),
@@ -329,13 +329,13 @@ export const SWARM_COMMAND_ROWS = Object.freeze([
   }),
   Object.freeze({
     command: 'swarm.create',
-    description: 'Create one living swarm for an evolving purpose and return its authoritative inspect view.',
+    description: 'Create one living swarm for an evolving purpose and return its authoritative view.',
     readOnlyHint: false, destructiveHint: false,
     properties: Object.freeze({ purpose: TEXT_SCHEMA, swarmId: ID_SCHEMA }),
     required: Object.freeze(['purpose']),
   }),
   Object.freeze({
-    command: 'swarm.inspect',
+    command: 'swarm.view',
     description: "Read one swarm's authoritative membership, work, shared context, contributions, reviews, caller authority, and available actions.",
     readOnlyHint: true, destructiveHint: false,
     properties: Object.freeze({ swarmId: ID_SCHEMA }),
@@ -343,7 +343,7 @@ export const SWARM_COMMAND_ROWS = Object.freeze([
   }),
   Object.freeze({
     command: 'swarm.watch',
-    description: 'Await the next swarm update after a cursor and return the refreshed inspect view.',
+    description: 'Await the next swarm update after a cursor and return the refreshed view.',
     readOnlyHint: true, destructiveHint: false,
     properties: Object.freeze({ swarmId: ID_SCHEMA, afterSeq: SEQUENCE_SCHEMA, timeoutMs: WAIT_SCHEMA }),
     required: Object.freeze(['swarmId']),
