@@ -122,7 +122,7 @@ test('UA5/MN1: an application-backed MCP server exposes the semantic ordinary su
     'baton_package_admit', 'baton_package_attach', 'baton_package_read',
     'baton_repl_cite', 'baton_knowledge_recall', 'baton_knowledge_horizon',
   ];
-  assert.equal(combined.result.tools.length, 121); // 111 existing tools plus the ten ordinary baton_swarm_* tools (their fleet_*/dot twins ride MCP_APPLICATION_ENTRIES).
+  assert.equal(combined.result.tools.length, 131); // 111 existing tools plus the ten ordinary baton_swarm_* tools and their ten swarm.* dot twins.
   assert.deepEqual(combined.result.tools.slice(0, response.result.tools.length).map((tool) => tool.name), response.result.tools.map((tool) => tool.name), 'the combined inventory preserves the ordinary application surface verbatim as its prefix');
   assert.deepEqual(combined.result.tools.map((tool) => tool.name).filter((name) => reflexNames.includes(name)), reflexNames);
   assert.equal(combined.result.tools.every((tool) => tool.inputSchema.additionalProperties === false), true);

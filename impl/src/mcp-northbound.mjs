@@ -58,6 +58,7 @@ const APPLICATION_TOOL = Object.freeze(Object.fromEntries(
     ['baton_run_stop', 'run.stop'],
     ['baton_waves_attach', 'waves.attach'],
     ...CANONICAL_ORDINARY_SIBLINGS.map((sibling) => [sibling.tool, sibling.command]),
+    ...SWARM_MCP_TOOL_DEFINITIONS.flatMap((tool) => [[tool.name, tool.command], [tool.command, tool.command]]),
   ].map(([tool, name]) => [tool, name]),
 ));
 // REFLEX-4 slice A (docs/32 §3.4, issue #19): application.context_eval has no MCP tool here (not
@@ -93,6 +94,13 @@ const ORDINARY_APPLICATION_ENTRIES = Object.freeze([
   // legacy baton_* spelling with the same definition row.
   ...LEGACY_ORDINARY_APPLICATION_ROWS.map(([, command]) => [
     canonicalAndTransportNames(command).canonical, command, APPLICATION_COMMAND_DEFINITIONS[command],
+  ]),
+  // docs/39: the swarm family's ordinary rows — the baton_swarm_* tool and its canonical dot twin
+  // both dispatch the swarm.* command with the command's own definition (capabilities, stateful,
+  // reconcilable derive from it like every other ordinary row).
+  ...SWARM_MCP_TOOL_DEFINITIONS.flatMap((tool) => [
+    [tool.name, tool.command, APPLICATION_COMMAND_DEFINITIONS[tool.command]],
+    [tool.command, tool.command, APPLICATION_COMMAND_DEFINITIONS[tool.command]],
   ]),
 ]);
 

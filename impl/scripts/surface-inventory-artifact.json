@@ -7,8 +7,8 @@
     "parserLifecycleActions": 29,
     "mcpApplicationTools": 47,
     "mcpAdvancedTools": 19,
-    "mcpCombinedTools": 121,
-    "mcpDispatchTools": 67,
+    "mcpCombinedTools": 131,
+    "mcpDispatchTools": 87,
     "webBusCommands": 41,
     "applicationCommandDefinitions": 36
   },
@@ -257,6 +257,16 @@
       "run.workstream.stop",
       "run.workstreams",
       "runs.list",
+      "swarm.capture",
+      "swarm.check",
+      "swarm.create",
+      "swarm.guide",
+      "swarm.list",
+      "swarm.recruit",
+      "swarm.stop",
+      "swarm.update",
+      "swarm.view",
+      "swarm.watch",
       "waves.attach"
     ],
     "web.bus": [
