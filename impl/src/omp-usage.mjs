@@ -4,7 +4,8 @@
 //   model: string             — raw model ID       (e.g. "deepseek-v4-flash")
 //   usage.totalTokens: int    — input+output+cacheRead+cacheWrite (canonical baton metric)
 //   usage.cost.total: number  — USD for THIS one provider API call (additive, not cumulative)
-//   stopReason: string        — "end_turn" | "tool_use" | "aborted" | "error" | ...
+//   stopReason: string        — observed native values: "stop" | "toolUse" (captured review
+//                               stream) and "error" | "aborted" | "length" (installed 17.4.0)
 //   errorMessage: string|null — present on stopReason==="error"
 //
 // message_end.message has this same shape (one event per provider API call within a turn).
