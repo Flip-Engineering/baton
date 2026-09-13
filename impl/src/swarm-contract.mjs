@@ -119,8 +119,8 @@ export function swarmWebAdmittedCommands(definitions) {
 // than truncating the caller's text).
 const SAFE_ID = /^[A-Za-z0-9._:-]{1,256}$/u;
 
-function swarmError(message, code) {
-  return Object.assign(new Error(message), { code });
+function swarmError(message, code, detail = {}) {
+  return Object.assign(new Error(message), { code, detail });
 }
 
 function isText(value) {
@@ -227,12 +227,12 @@ export function validateSwarmCommand(name, args) {
   const declared = new Set(definition.args);
   for (const key of Object.keys(args)) {
     if (!declared.has(key)) {
-      throw swarmError(`${name} request is invalid: unknown field ${key}`, 'swarm_command_invalid');
+      throw swarmError(`${name} request is invalid: unknown field ${key}`, 'swarm_command_invalid', { field: key });
     }
   }
   for (const field of shape.required) {
     if (!Object.hasOwn(args, field) || args[field] === undefined) {
-      throw swarmError(`${name} request is invalid: ${field} is required`, 'swarm_command_invalid');
+      throw swarmError(`${name} request is invalid: ${field} is required`, 'swarm_command_invalid', { field });
     }
   }
   for (const [field, value] of Object.entries(args)) {
@@ -240,7 +240,7 @@ export function validateSwarmCommand(name, args) {
     const rule = SWARM_FIELD_RULES[field];
     if (!rule.check(value)) {
       throw swarmError(`${name} request is invalid: ${field} must be ${rule.expectation}`,
-        'swarm_command_invalid');
+        'swarm_command_invalid', { field });
     }
   }
   return true;

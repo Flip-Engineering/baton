@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
+import { execFile, execFileSync } from 'node:child_process';
+import { promisify } from 'node:util';
+import { swarmBridgeCommand } from '../src/swarm-native-bridge.mjs';
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -106,19 +108,19 @@ test('real application supports delegated recruitment and continuing native turn
   const swarm = await baton.swarms.create('Develop Baton using a living swarm', { swarmId: 'self-build' });
   assert.equal((await swarm.inspect()).participants.length, 0);
   await swarm.context({ key: 'design', body: 'Participants may contribute without ending their sessions.' });
-  const lead = await swarm.recruit('lead', 'Coordinate implementation', { options: selection, permissions: SWARM_PERMISSIONS });
+  const lead = await swarm.recruit('lead', 'Coordinate implementation', { ...selection, permissions: SWARM_PERMISSIONS });
   const leadWorker = await paused(driver, lead.runId);
   // The default MockAdapter claims task completion. Swarm membership must override that protocol
   // before the very first turn, while preserving ordinary non-swarm adapter semantics.
   assert.equal(driver.coordination.task(leadWorker.taskId).status, 'paused');
   const leadClient = bindBaton(app, { actor: `worker:${leadWorker.id}`, principalId: `worker:${leadWorker.id}`, sessionId: 'lead-session' });
   const delegated = leadClient.swarms.open(swarm.id);
-  const builder = await delegated.recruit('builder', 'Implement the next contribution', { options: selection });
+  const builder = await delegated.recruit('builder', 'Implement the next contribution', selection);
   const builderWorker = await paused(driver, builder.runId);
   const builderClient = bindBaton(app, { actor: `worker:${builderWorker.id}`, principalId: `worker:${builderWorker.id}`, sessionId: 'builder-session' });
   const implementation = builderClient.swarms.open(swarm.id);
   await implementation.contribute({ contributionId: 'finding', body: 'The next change can remain independent of reviewer lifetime.' });
-  await assert.rejects(implementation.recruit('forbidden', 'Attempt unauthorized recruitment', { options: selection }), { code: 'swarm_permission_required' });
+  await assert.rejects(implementation.recruit('forbidden', 'Attempt unauthorized recruitment', selection), { code: 'swarm_permission_required' });
   const view = await swarm.inspect();
   assert.equal(view.participants.find((row) => row.participantId === 'builder').parentId, 'lead');
   assert.equal(view.contributions.finding.body, 'The next change can remain independent of reviewer lifetime.');
@@ -129,4 +131,47 @@ test('real application supports delegated recruitment and continuing native turn
   assert.ok(help.content.commands.some((usage) => usage.includes('swarm recruit')));
   await delegated.close();
   assert.equal(driver.coordination.task(builderWorker.taskId).status, 'paused', 'closing a group must not terminate participants');
+});
+
+
+test('native shells coordinate, recruit and contribute through scoped runtime-injected identities', async (t) => {
+  const { app, baton, driver, adapter } = await fixture(t);
+  const environments = new Map();
+  const spawn = adapter.spawn.bind(adapter);
+  adapter.spawn = (worker, brief, options) => {
+    assert.ok(brief.goal.includes('BATON_SWARM_CLIENT'));
+    environments.set(worker, options.env);
+    return spawn(worker, brief, options);
+  };
+  const swarm = await baton.swarms.create('Native participants coordinate their own collaboration', { swarmId: 'native-build' });
+  const lead = await swarm.recruit('lead', 'Coordinate the next implementation', { ...selection, permissions: SWARM_PERMISSIONS });
+  const leadWorker = await paused(driver, lead.runId);
+  const leadEnv = environments.get(leadWorker.id);
+  const native = async (env, command, args) => {
+    const { stdout } = await promisify(execFile)(process.execPath,
+      [env.BATON_SWARM_CLIENT, command, ...(args === undefined ? [] : [JSON.stringify(args)])], { env });
+    return JSON.parse(stdout);
+  };
+  const leadView = await native(leadEnv, 'swarm.inspect');
+  assert.equal(leadView.caller.participantId, 'lead');
+  const builder = await native(leadEnv, 'swarm.recruit', {
+    participantId: 'builder', objective: 'Build the contribution', options: selection,
+  });
+  const builderWorker = await paused(driver, builder.runId);
+  const builderEnv = environments.get(builderWorker.id);
+  assert.notEqual(builderEnv.BATON_SWARM_BRIDGE_TOKEN, leadEnv.BATON_SWARM_BRIDGE_TOKEN);
+  await Promise.all([
+    native(builderEnv, 'swarm.update', { event: 'swarm.contribution_recorded', payload: 'Builder finding from native tools' }),
+    native(leadEnv, 'swarm.update', { event: 'swarm.context_updated', payload: { key: 'direction', body: 'Keep the reviewer available' } }),
+  ]);
+  const view = await swarm.inspect();
+  const finding = Object.values(view.contributions).find((row) => row.body === 'Builder finding from native tools');
+  assert.equal(finding.participantId, 'builder');
+  assert.equal(view.participants.find((row) => row.participantId === 'builder').parentId, 'lead');
+  const publicState = JSON.stringify({ view, logs: driver.log.read(builderWorker.id) });
+  assert.equal(publicState.includes(builderEnv.BATON_SWARM_BRIDGE_TOKEN), false);
+  await app.stop(builder.runId, 'Explicit participant stop revokes its native access', principal('orchestrator'));
+  await assert.rejects(swarmBridgeCommand({ command: 'swarm.inspect', args: { swarmId: swarm.id } }, { env: builderEnv }),
+    { code: 'swarm_bridge_token_invalid' });
+  assert.equal((await native(leadEnv, 'swarm.inspect')).caller.participantId, 'lead');
 });

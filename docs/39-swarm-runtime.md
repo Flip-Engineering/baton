@@ -156,7 +156,8 @@ The application test exercises delegated recruitment through the actual SDK, app
 coordination store, Git worktrees, and mock native adapter. Separate tests exercise contribution
 capture, checking, concurrent guidance, permission boundaries, durable replay, and transport
 exposure. These prove the implementation seams; they are not a claim of complete native swarm
-acceptance. Native worker access and observed harness subagents are being integrated separately.
+acceptance. Native worker access is integrated and tested through real child-process clients. Actual GLM/DeepSeek
+coordination is under live exercise; observed harness subagents remain a separate integration.
 
 Still required for the full design: multi-holder group workspace custody; ongoing native swarm
 acceptance across harnesses; richer selected-event subscriptions and delivery; revisable grants;

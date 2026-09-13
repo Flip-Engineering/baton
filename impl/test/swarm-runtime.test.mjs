@@ -87,6 +87,8 @@ test('delegated coordinator recruits within grants and implementers can contribu
   const builder = principal('w-2');
   const view = await f.call('inspect', {}, builder);
   assert.ok(view.availableActions.includes('swarm.check'));
+  assert.ok(view.availableActions.includes('swarm.update'));
+  assert.deepEqual(view.actionTargets['swarm.check'].participantIds, ['builder']);
   assert.equal(view.availableActions.includes('swarm.recruit'), false);
   await f.call('update', { event: 'swarm.contribution_recorded', payload: {
     contributionId: 'finding', participantId: 'builder', body: 'The current interface needs another operation.',

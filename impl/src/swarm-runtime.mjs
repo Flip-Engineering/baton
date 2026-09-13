@@ -36,6 +36,9 @@ export class SwarmRuntime {
   }
 
   _caller(swarm, principal, context) {
+    if (context?.swarmId && context.swarmId !== swarm.swarmId) {
+      refuse('Native participant authority belongs to another swarm', 'swarm_membership_required');
+    }
     const workerId = principal.principalId?.startsWith('worker:')
       ? principal.principalId.slice('worker:'.length) : null;
     if (!workerId && !context?.runId) return null;
@@ -141,12 +144,21 @@ export class SwarmRuntime {
       .filter(([, permission]) => permissions.includes(permission)).map(([command]) => command);
     if (permissions.includes('contribute') && !availableActions.includes('swarm.check')) availableActions.push('swarm.check');
     if (permissions.includes('review') && !availableActions.includes('swarm.capture')) availableActions.push('swarm.capture');
+    const updates = Object.entries(UPDATE_PERMISSIONS)
+      .filter(([, permission]) => permissions.includes(permission)).map(([event]) => event);
+    if (caller && !updates.includes('swarm.participant_left')) updates.push('swarm.participant_left');
+    if (updates.length) availableActions.push('swarm.update');
+    const contributionTargets = permissions.includes('review') ? participants.map((row) => row.participantId)
+      : permissions.includes('contribute') && caller ? [caller.participantId] : [];
     return {
       ...clone(swarm), participants,
       caller: { participantId: caller?.participantId ?? null, permissions: [...permissions] },
       availableActions, attention,
-      updates: Object.entries(UPDATE_PERMISSIONS)
-        .filter(([, permission]) => permissions.includes(permission)).map(([event]) => event),
+      actionTargets: {
+        'swarm.capture': { participantIds: contributionTargets },
+        'swarm.check': { participantIds: contributionTargets },
+      },
+      updates,
       cursor: this.store.ledgerHeadSeq(),
     };
   }

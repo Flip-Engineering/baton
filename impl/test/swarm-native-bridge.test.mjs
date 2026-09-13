@@ -205,7 +205,7 @@ test('an authorized command reaches dispatch with the bridge-minted principal an
       principalId: 'swarm-native:alpha',
       sessionId: `swarm-bridge:${issued.receipt.tokenDigest.slice(0, 16)}`,
     });
-    assert.deepEqual(recorded.context, { runId: 'run-alpha' });
+    assert.deepEqual(recorded.context, { runId: 'run-alpha', swarmId: 'swarm-1', participantId: 'alpha' });
   });
 });
 
@@ -286,7 +286,7 @@ test('a request body can never choose the principal or the context (forged field
     const payload = await readResponse(response);
     assert.equal(payload.ok, true);
     assert.equal(runtime.calls[0].principal.principalId, 'swarm-native:alpha');
-    assert.deepEqual(runtime.calls[0].context, { runId: 'run-alpha' });
+    assert.deepEqual(runtime.calls[0].context, { runId: 'run-alpha', swarmId: 'swarm-1', participantId: 'alpha' });
   });
 });
 
@@ -537,7 +537,7 @@ test('close() revokes capabilities, awaits server shutdown, and leaves unrelated
       endpoint: issued.env[SWARM_BRIDGE_ENV_KEYS.url], token: issued.token,
     }), (error) => error.code === 'swarm_bridge_unreachable');
     // close() is idempotent.
-    assert.deepEqual(await bridge.close(), { closed: true, revokedTotal: 0, activeRemaining: 0 });
+    assert.deepEqual(await bridge.close(), closed);
     // An unrelated loopback process on a neighboring port is untouched.
     const stillAlive = await new Promise((resolve, reject) => {
       const target = new URL(unrelatedUrl);

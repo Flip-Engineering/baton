@@ -108,18 +108,25 @@ export class Swarm {
   }
 
   /**
-   * Recruit one participant. `options.options` is the Run start selection ({exact, scope,
-   * profile}); `options.permissions` is the requested grant set. The runtime resolves the native
+   * Recruit one participant using the same route/scope options as Baton Run startup.
+   * `permissions` is the requested grant set. The runtime resolves the native
    * Run identity, admits it under the caller's authority, and starts it; the caller never handles
    * a worker id or a fence.
    */
   recruit(participantId, objective, options = {}) {
-    exactOptions(options, new Set(['options', 'permissions', 'idempotencyKey']), 'Swarm recruit');
+    const selectionFields = ['exact', 'harness', 'model', 'effort', 'scope', 'profile', 'resultIntent'];
+    exactOptions(options, new Set(['options', 'permissions', 'idempotencyKey', ...selectionFields]), 'Swarm recruit');
+    const selection = Object.fromEntries(selectionFields.filter((field) => options[field] !== undefined)
+      .map((field) => [field, options[field]]));
+    if (options.options !== undefined && Object.keys(selection).length) {
+      throw clientError('Recruitment must use one route selection, not both nested and direct options');
+    }
+    const runOptions = options.options ?? (Object.keys(selection).length ? selection : undefined);
     return this._send('swarm.recruit', {
       swarmId: this.id,
       participantId,
       objective,
-      ...(options.options === undefined ? {} : { options: options.options }),
+      ...(runOptions === undefined ? {} : { options: runOptions }),
       ...(options.permissions === undefined ? {} : { permissions: options.permissions }),
       idempotencyKey: idempotencyOf(options),
     });

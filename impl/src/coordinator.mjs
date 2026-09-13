@@ -8975,19 +8975,42 @@ export class Coordinator {
     handle.localAuthority = false;
   }
 
+  // Deployment-issued participant credentials follow the participant across native turns and
+  // transport recovery. They are never included in public worker/status or coordination records.
+  registerParticipantRuntime(runId, extension) {
+    if (typeof runId !== 'string' || !runId || !extension?.env || typeof extension.env !== 'object'
+      || typeof extension.redactProviderFrame !== 'function') {
+      throw new TypeError('participant runtime requires a Run identity and environment');
+    }
+    this._participantRuntimes ??= new Map();
+    const prior = this._participantRuntimes.get(runId);
+    if (prior && prior !== extension) throw new Error('participant runtime already registered');
+    this._participantRuntimes.set(runId, extension);
+  }
+
+  unregisterParticipantRuntime(runId) {
+    this._participantRuntimes?.delete(runId);
+  }
+
   _ensureRuntimeScope(handle) {
     if (!this._runtimeScopes || typeof this._runtimeScopes.create !== 'function') return null;
     if (handle.runtimeLease) return handle.runtimeLease;
     const adapterCard = this._adapters[handle.vendor]?.card?.();
     if (!adapterCard) throw Object.assign(new Error('selected adapter card unavailable for runtime isolation'), { code: 'runtime_card_unavailable' });
     const lease = this._runtimeScopes.create(handle.id, { card: adapterCard });
-    handle.runtimeLease = lease;
+    const extension = this._participantRuntimes?.get(handle.runId);
+    const runtime = extension ? {
+      ...lease, env: { ...lease.env, ...extension.env },
+      redactProviderFrame: (frame) => extension.redactProviderFrame(
+        lease.redactProviderFrame ? lease.redactProviderFrame(frame) : frame),
+    } : lease;
+    handle.runtimeLease = runtime;
     handle.runtimeScope = { ...lease.posture, active: true };
     this._log.append({
       worker: handle.id, harness: this._harnessOf(handle.vendor), turnEpoch: this._safeTurnEpoch(handle),
       kind: 'runtime.scope_created', actor: 'policy', payload: handle.runtimeScope,
     });
-    return lease;
+    return runtime;
   }
 
   _removeRuntimeScope(handle) {

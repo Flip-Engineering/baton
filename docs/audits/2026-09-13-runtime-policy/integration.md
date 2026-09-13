@@ -51,7 +51,7 @@ message effect is reported as unconfirmed; it is not blindly repeated or declare
 
 ## Evidence at this checkpoint
 
-- 171 focused tests pass across swarm state/store/runtime/SDK/real application, contribution
+- 197 focused tests pass across swarm state/store/runtime/SDK/real application, contribution
   lifecycle, concurrent authorization, MCP, and CLI transport regression suites.
 - All three `npm --prefix impl run test:surfaces` audits pass with the family actually registered.
 - 36 unified capability/CLI/MCP tests pass.
@@ -60,17 +60,36 @@ message effect is reported as unconfirmed; it is not blindly repeated or declare
   using Baton. Their verified result refs remain in Git. This checkpoint is local proof; earlier
   hosted checks on PR #256 were cancelled and are not green validation for these changes.
 
-## Remaining design and implementation work
+## Native agent access
 
-The native participant bridge must let implementers publish findings and delegated coordinators
-organize/recruit directly. A bridge that reserves updates for the root would recreate the very
-bottleneck this work removes. Token scope comes from deployment-issued identity, and current
-membership/grants must remain the effect authority.
+`SwarmNativeAccess` issues a distinct participant credential before native dispatch and connects
+its shell tools to the live `SwarmRuntime`. The coordinator merges that environment after runtime
+isolation and redacts its token from provider frames. Native CLI calls fill the swarm identity and
+per-call mutation key. Explicit participant stop revokes the credential; organizational changes and
+ordinary turn completion do not destroy its continuing authority.
+
+Real child-process tests exercise native-shell inspection, delegated recruitment, concurrent
+builder findings and coordinator context updates, and selective revocation against the actual
+application. A separate real-provider exercise has observed GLM recruiting DeepSeek, forming a
+group, updating shared context, and receiving builder findings. Full capture/check/closure
+acceptance of that live exercise is still pending at this checkpoint.
+
+Two worker designs were corrected during integration: the bridge initially forbade all domain
+updates from participants, and its duplicate validator would have drifted from the main command
+contract. Both are removed. Inspect now identifies target participants for capture/check, so a
+contribute-only implementer can distinguish its own contribution authority from reviewer authority.
+
+## Remaining design and implementation work
 
 Group-owned workspaces need explicit multi-holder custody before any shared cwd is offered.
 Current group membership alone cannot authorize a participant or cleanup path to own that resource.
 Native harness child observations must preserve actual child/session identity and evidence; a
 native tool call is not by itself an independently controllable Baton worker.
+
+Live code capture still requires a paused author. A native implementer cannot end the turn that
+contains its own pending capture tool call. Simply permitting the old branch/index-mutating capture
+would introduce a different hazard. An isolated-index snapshot primitive is under development so
+an explicit capture can pin visible work without changing the live branch, index, or session.
 
 The living domain is no longer a task-completion wrapper, but underlying Run startup still carries
 mandatory goal/plan and budget assumptions. Revisable grants, selected-event subscriptions, safer

@@ -13,15 +13,7 @@
 //   • Refusals: unknown/revoked tokens, cross-swarm args, and schema-invalid requests are refused
 //     at the bridge; every runtime refusal passes through verbatim (message, code, detail).
 //
-// Command admission follows the root-owned contract schema (impl/src/swarm-contract.mjs). The
-// closed command set, required/optional args, and field predicates below are its faithful mirror,
-// validated BEFORE a request can produce a runtime effect; every contract command — including
-// swarm.update (contribution recording, review records, group and shared-context changes) and
-// swarm.list — is admissible for a scoped participant, and the runtime decides per-event grants.
-// INTEGRATION SWAP (root-owned): replace this mirror with
-// `import { validateSwarmCommand } from './swarm-contract.mjs'` and change the single call site
-// `validateSwarmCommandArgs(command, args)` in handle() to `validateSwarmCommand(command, args)`.
-// No other surface reads the mirror; this deployment-owned module ships self-contained until then.
+// Command admission uses swarm-contract.mjs. Runtime membership and grants govern effects.
 //
 // Transport: loopback HTTP (127.0.0.1, ephemeral port) rather than a Unix socket. Rationale:
 // portable on every supported platform (Windows has no portable UDS-over-HTTP story), directly
@@ -39,96 +31,15 @@
 // reads BATON_SWARM_BRIDGE_URL / BATON_SWARM_BRIDGE_TOKEN from the environment so a native
 // participant can call `swarm.inspect` (availableActions) without worker/fence/pause ids.
 
-import { createHash, randomBytes } from 'node:crypto';
+import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { createServer, request as httpRequest } from 'node:http';
 import { pathToFileURL } from 'node:url';
 import { FRAME_LIMITS, composeFrameLimitRefusal } from './limits.mjs';
 
-// ── the contract mirror (source of truth: root impl/src/swarm-contract.mjs) ─────────────────────
-
-const SWARM_EVENT_KINDS = Object.freeze([
-  'swarm.group_updated', 'swarm.work_updated', 'swarm.assignment_updated', 'swarm.context_updated',
-  'swarm.contribution_recorded', 'swarm.contribution_reviewed', 'swarm.participant_left', 'swarm.closed',
-]);
-
-const SAFE_ID = /^[A-Za-z0-9._:-]{1,256}$/u;
-
-const isText = (value) => typeof value === 'string' && value.trim().length > 0 && !value.includes('\0');
-const isId = (value) => typeof value === 'string' && SAFE_ID.test(value);
-const isJsonObject = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
-// A contribution/review body: ordinary JSON, or the plain-text form of a finding/discussion.
-const isBody = (value) => isJsonObject(value) || isText(value);
-const isSequence = (value) => Number.isSafeInteger(value) && value >= 0;
-const isWait = (value) => Number.isSafeInteger(value) && value > 0;
-
-const SWARM_FIELD_RULES = Object.freeze({
-  purpose: Object.freeze({ check: isText, expectation: 'non-empty text' }),
-  swarmId: Object.freeze({ check: isId, expectation: 'a swarm identity' }),
-  participantId: Object.freeze({ check: isId, expectation: 'a participant identity' }),
-  contributionId: Object.freeze({ check: isId, expectation: 'a contribution identity' }),
-  checkId: Object.freeze({ check: isId, expectation: 'a check identity' }),
-  objective: Object.freeze({ check: isText, expectation: 'non-empty text' }),
-  message: Object.freeze({ check: isText, expectation: 'non-empty text' }),
-  reason: Object.freeze({ check: isText, expectation: 'non-empty text' }),
-  payload: Object.freeze({ check: isBody, expectation: 'a JSON object or a non-empty text body' }),
-  options: Object.freeze({ check: isJsonObject, expectation: 'a JSON object' }),
-  permissions: Object.freeze({ check: (value) => Array.isArray(value) && value.every(isText), expectation: 'an array of permission names' }),
-  event: Object.freeze({ check: (value) => SWARM_EVENT_KINDS.includes(value), expectation: `one of ${SWARM_EVENT_KINDS.join(', ')}` }),
-  afterSeq: Object.freeze({ check: isSequence, expectation: 'a non-negative integer' }),
-  timeoutMs: Object.freeze({ check: isWait, expectation: 'a positive integer' }),
-  idempotencyKey: Object.freeze({ check: isId, expectation: 'an idempotency key' }),
-});
-
-// Required/optional per command, exactly as the contract declares them.
-const SWARM_COMMAND_ARGUMENTS = Object.freeze({
-  'swarm.list': Object.freeze({ required: Object.freeze([]), optional: Object.freeze([]) }),
-  'swarm.create': Object.freeze({ required: Object.freeze(['purpose', 'idempotencyKey']), optional: Object.freeze(['swarmId']) }),
-  'swarm.inspect': Object.freeze({ required: Object.freeze(['swarmId']), optional: Object.freeze([]) }),
-  'swarm.watch': Object.freeze({ required: Object.freeze(['swarmId']), optional: Object.freeze(['afterSeq', 'timeoutMs']) }),
-  'swarm.update': Object.freeze({ required: Object.freeze(['swarmId', 'event', 'idempotencyKey']), optional: Object.freeze(['payload']) }),
-  'swarm.recruit': Object.freeze({ required: Object.freeze(['swarmId', 'participantId', 'objective', 'idempotencyKey']), optional: Object.freeze(['options', 'permissions']) }),
-  'swarm.guide': Object.freeze({ required: Object.freeze(['swarmId', 'participantId', 'message', 'idempotencyKey']), optional: Object.freeze([]) }),
-  'swarm.capture': Object.freeze({ required: Object.freeze(['swarmId', 'participantId', 'contributionId']), optional: Object.freeze([]) }),
-  'swarm.check': Object.freeze({ required: Object.freeze(['swarmId', 'participantId', 'contributionId', 'checkId']), optional: Object.freeze([]) }),
-  'swarm.stop': Object.freeze({ required: Object.freeze(['swarmId', 'participantId', 'reason', 'idempotencyKey']), optional: Object.freeze([]) }),
-});
-
-/** The closed command surface a scoped participant can name (the contract's command set). */
-export const SWARM_COMMANDS = Object.freeze(Object.keys(SWARM_COMMAND_ARGUMENTS));
-
-/**
- * Contract-mirror of swarm-contract.mjs `validateSwarmCommand`: closed key set, required set,
- * per-field predicate. Codes: `swarm_command_unavailable` (unknown name), `swarm_command_invalid`
- * (shape, closed-set, or field violation — the message names the offending field). Because the
- * key sets are closed, a request cannot smuggle identity fields (runId/principal/sessionId)
- * past the bridge: only the token table may mint principal and context.
- */
-export function validateSwarmCommandArgs(name, args) {
-  const shape = SWARM_COMMAND_ARGUMENTS[name];
-  if (!shape) throw bridgeError(`unsupported swarm command ${name}`, 'swarm_command_unavailable', { command: name });
-  if (!isJsonObject(args)) {
-    throw bridgeError(`${name} request is invalid: args must be a JSON object`, 'swarm_command_invalid', { command: name });
-  }
-  const declared = new Set([...shape.required, ...shape.optional]);
-  for (const key of Object.keys(args)) {
-    if (!declared.has(key)) {
-      throw bridgeError(`${name} request is invalid: unknown field ${key}`, 'swarm_command_invalid', { command: name, field: key });
-    }
-  }
-  for (const field of shape.required) {
-    if (!Object.hasOwn(args, field) || args[field] === undefined) {
-      throw bridgeError(`${name} request is invalid: ${field} is required`, 'swarm_command_invalid', { command: name, field });
-    }
-  }
-  for (const [field, value] of Object.entries(args)) {
-    if (value === undefined) continue;
-    const rule = SWARM_FIELD_RULES[field];
-    if (!rule.check(value)) {
-      throw bridgeError(`${name} request is invalid: ${field} must be ${rule.expectation}`, 'swarm_command_invalid', { command: name, field });
-    }
-  }
-  return true;
-}
+import { SWARM_COMMAND_NAMES as SWARM_COMMANDS, SWARM_COMMAND_DEFINITIONS,
+  SWARM_COMMAND_SCHEMAS, validateSwarmCommand as validateSwarmCommandArgs } from './swarm-contract.mjs';
+export { SWARM_COMMANDS, validateSwarmCommandArgs };
+const isId = (value) => typeof value === 'string' && /^[A-Za-z0-9._:-]{1,256}$/u.test(value);
 
 // ── the bridge ───────────────────────────────────────────────────────────────────────────────────
 
@@ -236,6 +147,7 @@ export function createSwarmNativeBridge({
   // the issue() return value handed to the deployment for env injection.
   const tokens = new Map(); // digest -> {swarmId, participantId, runId, principalId, actor, sessionId, digest, issuedAt}
   let closed = false;
+  let closePromise = null;
 
   const server = createServer((req, res) => {
     handle(req, res).catch(() => sendJson(res, 500, { ok: false, error: errorPayload({ message: 'Swarm bridge request failed', code: 'swarm_bridge_dispatch_failed', detail: {} }) }));
@@ -267,7 +179,6 @@ export function createSwarmNativeBridge({
       digest = token ? digestToken(token) : null;
       const entry = digest ? tokens.get(digest) : null;
       if (!entry) {
-        // Map-by-digest: the token is 256 bits of CSPRNG output on a loopback-only listener, so a
         throw tokenRefusal();
       }
       const declared = Number(req.headers['content-length']);
@@ -289,13 +200,13 @@ export function createSwarmNativeBridge({
       // refuses identity-shaped fields — only the token table mints principal and context below.
       validateSwarmCommandArgs(command, args);
       // The token's single-swarm scope: every command whose schema names swarmId must name THIS one.
-      if (SWARM_COMMAND_ARGUMENTS[command].required.includes('swarmId') && args.swarmId !== entry.swarmId) {
+      if (SWARM_COMMAND_SCHEMAS[command].required.includes('swarmId') && args.swarmId !== entry.swarmId) {
         throw bridgeError('This swarm bridge token is bound to another swarm', 'swarm_bridge_swarm_mismatch',
           { requested: typeof args.swarmId === 'string' ? args.swarmId : null, authorized: entry.swarmId });
       }
       // Identity is minted HERE only. Nothing in the request can choose principal or context.
       const principal = Object.freeze({ actor: entry.actor, principalId: entry.principalId, sessionId: entry.sessionId });
-      const context = Object.freeze({ runId: entry.runId });
+      const context = Object.freeze({ runId: entry.runId, swarmId: entry.swarmId, participantId: entry.participantId });
       const result = await dispatch({ command, args, principal, context });
       const payload = Buffer.from(JSON.stringify({ ok: true, result: result ?? null }), 'utf8');
       if (payload.length > maxFrameBytes) throw frameRefusal(payload.length, 'response');
@@ -374,7 +285,8 @@ export function createSwarmNativeBridge({
       });
     },
     async close() {
-      if (closed) return { closed: true, revokedTotal: 0, activeRemaining: tokens.size };
+      if (closePromise) return closePromise;
+      closePromise = (async () => {
       closed = true;
       const revokedTotal = tokens.size;
       tokens.clear();
@@ -388,6 +300,8 @@ export function createSwarmNativeBridge({
         server.closeAllConnections?.();
       });
       return { closed: true, revokedTotal, activeRemaining: 0 };
+      })();
+      return closePromise;
     },
   });
 }
@@ -463,6 +377,11 @@ export async function swarmBridgeMain(argv = process.argv.slice(2), env = proces
     if (!args || typeof args !== 'object' || Array.isArray(args)) {
       throw bridgeError('Swarm bridge CLI args must be one JSON object', 'swarm_bridge_request_invalid', { command });
     }
+    const definition = SWARM_COMMAND_DEFINITIONS[command];
+    if (definition?.args.includes('swarmId') && args.swarmId === undefined) {
+      args.swarmId = env[SWARM_BRIDGE_ENV_KEYS.swarmId];
+    }
+    if (definition?.mcpStateful && args.idempotencyKey === undefined) args.idempotencyKey = randomUUID();
     const result = await swarmBridgeCommand({ command, args }, { env });
     io.out.write(`${JSON.stringify(result, null, 2)}\n`);
     return 0;

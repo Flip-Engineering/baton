@@ -1,5 +1,14 @@
 # Native swarm access — scoped participant bridge audit and seam report
 
+> Integration update: the duplicate command validator below has been removed in favor of the
+> shared `swarm-contract.mjs`. `SwarmNativeAccess` now prepares a scoped identity before native
+> dispatch; the coordinator merges its environment after runtime isolation and redacts its token
+> from provider frames. Explicit participant stop revokes access. The CLI fills the swarm identity
+> and per-call mutation key. Real child-process client tests exercise delegated recruitment and
+> concurrent implementer/context updates against the actual application. Full provider exercise is
+> running separately; do not confuse the worker's fake-dispatch tests with that acceptance.
+
+
 Audit date: 2026-09-13. Worktree under audit: `f176ab31a38b657d1f15b9858411e0c87067800c`
 ("Capture and check contributions without ending participant sessions"). Two files were ADDED in
 this worktree — `impl/src/swarm-native-bridge.mjs` and `impl/test/swarm-native-bridge.test.mjs`
