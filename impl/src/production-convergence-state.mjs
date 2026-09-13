@@ -1,5 +1,6 @@
 import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
+import { compareCanonicalStrings } from './canonical-order.mjs';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 
 import {
@@ -285,7 +286,7 @@ export class AutomaticRecoveryController {
     }
   }
   snapshot() {
-    return freeze(Object.fromEntries([...this.#records.entries()].sort(([left], [right]) => left.localeCompare(right))
+    return freeze(Object.fromEntries([...this.#records.entries()].sort(([left], [right]) => compareCanonicalStrings(left, right))
       .map(([runId, value]) => [runId, clone(value)])));
   }
   consider({ name, args, result, application, principal, context, runtime }) {

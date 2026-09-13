@@ -110,7 +110,9 @@ export function canonicalJson(value, options = { maxDepth: 128, maxNodes: 1_000_
         if (item[key] === undefined || typeof item[key] === 'function' || typeof item[key] === 'symbol') {
           throw new TypeError('canonical JSON contains a non-JSON value');
         }
-        result[key] = visit(item[key], depth + 1);
+        Object.defineProperty(result, key, {
+          value: visit(item[key], depth + 1), enumerable: true, writable: true, configurable: true,
+        });
       }
       return result;
     } finally { active.delete(item); }

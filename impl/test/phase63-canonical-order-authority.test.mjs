@@ -15,6 +15,17 @@ import { createDriver, MockAdapter } from '../src/index.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const SRC = join(HERE, '..', 'src');
+
+test('canonical request identity preserves prototype-named JSON fields', () => {
+  const first = JSON.parse('{"nested":{"__proto__":{"revision":1},"constructor":"data"}}');
+  const second = JSON.parse('{"nested":{"__proto__":{"revision":2},"constructor":"data"}}');
+  const a = canonicalJson(first);
+  const b = canonicalJson(second);
+  assert.deepEqual(a, first);
+  assert.equal(Object.getPrototypeOf(a.nested), Object.prototype);
+  assert.notEqual(JSON.stringify(a), JSON.stringify(b));
+});
+
 const root = (name) => mkdtempSync(join(tmpdir(), `baton-phase63-${name}-`));
 const sha256 = (value) => createHash('sha256').update(value).digest('hex');
 const policy = Object.freeze({
