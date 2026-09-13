@@ -1,5 +1,6 @@
 // Swarm CLI and MCP projections of the shared command contract.
 import { canonicalAndTransportNames } from './application-semantics.mjs';
+import { swarmUpdatePayloadDetails } from './swarm-event-schemas.mjs';
 import { SWARM_COMMAND_DEFINITIONS, SWARM_COMMAND_NAMES, SWARM_COMMAND_ROWS } from './swarm-contract.mjs';
 export * from './swarm-contract.mjs';
 
@@ -93,6 +94,7 @@ export const SWARM_CLI_HELP = Object.freeze({
       row.flags.length === 0
         ? 'Arguments are positional; --idempotency-key is accepted globally when the verb is effectful.'
         : `Flags: ${row.flags.map((entry) => entry.flag).join(', ')}; --idempotency-key is accepted globally when the verb is effectful.`,
+      ...(row.command === 'swarm.update' ? [swarmUpdatePayloadDetails()] : []),
     ]),
   })])),
 });

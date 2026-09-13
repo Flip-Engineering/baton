@@ -1,4 +1,6 @@
 // Transport-independent swarm commands, argument validation, and schemas.
+import { SWARM_EVENT_PAYLOAD_SCHEMAS, swarmEventAgentRequiredFields, swarmEventFieldExpectation,
+  swarmUpdatePayloadSummary } from './swarm-event-schemas.mjs';
 /** The closed swarm.update event set. Each event kind is a domain change the runtime applies
  * atomically; `swarm.recruit`/`swarm.guide`/`swarm.stop` are NOT expressible here — spawn and
  * worker binding stay on their own explicit lanes. */
@@ -12,6 +14,12 @@ export const SWARM_EVENT_KINDS = Object.freeze([
   'swarm.participant_left',
   'swarm.closed',
 ]);
+
+// The schema descriptions and the public kind set are one closed vocabulary: disagreeing keys are
+// a build-time error, never a silent gap in what a surface can discover.
+if (Object.keys(SWARM_EVENT_PAYLOAD_SCHEMAS).sort().join('\0') !== [...SWARM_EVENT_KINDS].sort().join('\0')) {
+  throw new Error('swarm event payload schemas disagree with the public swarm.update event set');
+}
 
 // ── the registry rows ────────────────────────────────────────────────────────────────────────────
 // The exact shape of an APPLICATION_COMMAND_DEFINITIONS entry: declared arg names, capability
@@ -214,6 +222,11 @@ for (const name of SWARM_COMMAND_NAMES) {
  * Validate one swarm command request. Throws a typed error; returns true when the request is
  * admissible. Codes: `swarm_command_unavailable` (unknown name), `swarm_command_invalid` (shape,
  * closed-set, or field violation — the message names the offending field and its expectation).
+ * For `swarm.update`, caller-supplied payload fields are presence-checked against the shared
+ * event schema descriptions so the most likely mistake is refused HERE — before any authority
+ * check or durable fold — with `{field, event, expectation}` detail. Deep payload typing stays
+ * with the state validator; auto-filled fields (swarmId, author/leave identities) are never
+ * demanded.
  */
 export function validateSwarmCommand(name, args) {
   const definition = swarmCommandDefinition(name);
@@ -243,7 +256,44 @@ export function validateSwarmCommand(name, args) {
         'swarm_command_invalid', { field });
     }
   }
+  if (name === 'swarm.update' && SWARM_EVENT_KINDS.includes(args.event)) {
+    const payload = args.payload;
+    if (payload === undefined || typeof payload === 'string') {
+      // Plain-text bodies stay admissible for contributions and an absent payload is honest for
+      // kinds the runtime assembles from request identity; but an event that needs caller fields
+      // can never succeed without them, so name them here instead of failing undetailed in the
+      // store.
+      const required = swarmEventAgentRequiredFields(args.event);
+      if (required.length > 0) {
+        throw swarmError(`${name} request is invalid: ${args.event} needs a payload object naming ${required.join(', ')}`,
+          'swarm_command_invalid', {
+            field: 'payload', event: args.event, required,
+            expectation: required.map((field) => `${field} (${swarmEventFieldExpectation(args.event, field)})`).join(', '),
+          });
+      }
+    } else if (isJsonObject(payload)) {
+      const missing = swarmEventAgentRequiredFields(args.event)
+        .filter((field) => !Object.hasOwn(payload, field) || payload[field] === undefined);
+      if (missing.length > 0) {
+        throw swarmError(
+          `${name} request is invalid: payload.${missing[0]} is required for ${args.event} (${swarmEventFieldExpectation(args.event, missing[0])})`,
+          'swarm_command_invalid', {
+            field: `payload.${missing[0]}`, event: args.event, required: missing,
+            expectation: swarmEventFieldExpectation(args.event, missing[0]),
+          });
+      }
+    }
+  }
   return true;
+}
+
+/** Per-field argument summary for help surfaces: required flag plus the SAME expectation text the
+ * validator refuses with. Derived from the command argument tables — no second registry. */
+export function swarmCommandFieldSummary(name) {
+  const shape = SWARM_COMMAND_ARGUMENTS[name];
+  if (!shape) return null;
+  return Object.freeze([...shape.required.map((field) => Object.freeze({ field, required: true, expectation: SWARM_FIELD_RULES[field].expectation })),
+    ...shape.optional.map((field) => Object.freeze({ field, required: false, expectation: SWARM_FIELD_RULES[field].expectation }))]);
 }
 
 // ── MCP tool table ──────────────────────────────────────────────────────────────────────────────
@@ -296,7 +346,8 @@ export const SWARM_COMMAND_ROWS = Object.freeze([
     command: 'swarm.update',
     description: 'Apply one swarm domain update — group, work, assignment, shared context, contribution, review, participant leave, or close — and return the updated inspect view.',
     readOnlyHint: false, destructiveHint: false,
-    properties: Object.freeze({ swarmId: ID_SCHEMA, event: EVENT_SCHEMA, payload: BODY_SCHEMA }),
+    properties: Object.freeze({ swarmId: ID_SCHEMA, event: EVENT_SCHEMA,
+      payload: Object.freeze({ ...BODY_SCHEMA, description: swarmUpdatePayloadSummary() }) }),
     required: Object.freeze(['swarmId', 'event']),
   }),
   Object.freeze({

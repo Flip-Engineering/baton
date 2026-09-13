@@ -17,8 +17,8 @@ import { canonicalAndTransportNames } from '../src/application-semantics.mjs';
 import { createSwarms } from '../src/swarm-client.mjs';
 import {
   SWARM_CLI_COMMANDS, SWARM_COMMAND_DEFINITIONS, SWARM_COMMAND_NAMES, SWARM_EVENT_KINDS,
-  SWARM_MCP_TOOL_DEFINITIONS, swarmCliCommand, swarmRegisteredCommands, swarmWebAdmittedCommands,
-  validateSwarmCommand,
+  SWARM_MCP_TOOL_DEFINITIONS, SWARM_COMMAND_SCHEMAS, SWARM_CLI_HELP, swarmCliCommand,
+  swarmRegisteredCommands, swarmWebAdmittedCommands, validateSwarmCommand,
 } from '../src/swarm-surface.mjs';
 
 // The registry as root will carry it: the live application definitions plus the swarm family. Every
@@ -34,7 +34,7 @@ const EXAMPLES = Object.freeze({
   'swarm.watch': Object.freeze({ swarmId: 'swarm:one', afterSeq: 4, timeoutMs: 1_000 }),
   'swarm.update': Object.freeze({
     swarmId: 'swarm:one', event: 'swarm.work_updated',
-    payload: Object.freeze({ workId: 'work:1', title: 'Investigate the parser' }),
+    payload: Object.freeze({ workId: 'work:1', objective: 'Investigate the parser' }),
     idempotencyKey: 'ik-update',
   }),
   'swarm.recruit': Object.freeze({
@@ -352,14 +352,12 @@ test('delegated coordinator: availableActions are the runtime\'s, and the client
   assert.equal(inspected.cursor, 12);
 
   // Coordination is ordinary domain update: the runtime decides whether this caller may do it.
-  await swarm.group({ groupId: 'group:api', add: ['impl-b'] });
-  await swarm.context({ notes: 'the API contract is frozen at rev 7' });
-  assert.deepEqual(port.calls[1].args, {
-    swarmId: 'swarm:one', event: 'swarm.group_updated',
-    payload: { groupId: 'group:api', add: ['impl-b'] }, idempotencyKey: port.calls[1].args.idempotencyKey,
-  });
+  // The payload is the store's real shape (validateSwarmEvent demands the full members array) —
+  // the contract's early admission now refuses anything the store would refuse undetailed.
+  await swarm.group({ groupId: 'group:api', members: ['impl-a', 'impl-b'] });
+  await swarm.context({ key: 'notes', body: 'the API contract is frozen at rev 7' });
   assert.equal(port.calls[2].args.event, 'swarm.context_updated');
-  assert.equal(port.calls[2].args.payload.notes, 'the API contract is frozen at rev 7');
+  assert.equal(port.calls[2].args.payload.body, 'the API contract is frozen at rev 7');
 });
 
 test('reviewer: a check observes a partial contribution and leaves the author session alone', async () => {
@@ -407,7 +405,7 @@ test('implementer: shared context is readable and a finding is an ordinary contr
     payload: 'The parser drops trailing commas; reproducing now.',
     idempotencyKey: port.calls[1].args.idempotencyKey,
   });
-  await swarm.review({ contributionId: 'contribution:1', verdict: 'partial' });
+  await swarm.review({ contributionId: 'contribution:1', decision: 'comment', reason: 'partial' });
   assert.equal(port.calls[2].args.event, 'swarm.contribution_reviewed');
   await swarm.leave({ participantId: 'impl-a', reason: 'done' });
   assert.equal(port.calls[3].args.event, 'swarm.participant_left');
@@ -525,4 +523,26 @@ test('the objective contract stays non-empty and NUL-free', async () => {
   }));
   const attached = await bindBatonPort(attachPort).runs.attach('run:long');
   assert.equal(attached.objective, LONG_OBJECTIVE);
+});
+// ── G3: per-event payload shapes are discoverable without reading code ────────────────────────
+
+test('the swarm.update payload schema and CLI help expose per-event payload shapes', () => {
+  // MCP: the payload property itself carries the per-kind description through to the wire schema.
+  const payloadDescription = SWARM_COMMAND_SCHEMAS['swarm.update'].properties.payload.description;
+  assert.equal(typeof payloadDescription, 'string');
+  for (const kind of SWARM_EVENT_KINDS) {
+    assert.ok(payloadDescription.includes(kind), `MCP payload description names ${kind}`);
+  }
+  assert.match(payloadDescription, /arbitrary JSON or plain text/u);
+  const tool = swarmApplicationToolDefinitions(REGISTERED).find((entry) => entry.name
+    === canonicalAndTransportNames('swarm.update').mcp);
+  assert.equal(tool.inputSchema.properties.payload.description, payloadDescription,
+    'the wire schema carries the same description the contract declares');
+  // CLI: the swarm.update help topic names every kind and its caller-supplied fields.
+  const helpText = SWARM_CLI_HELP['swarm.update'].paragraphs.join('\n');
+  for (const kind of SWARM_EVENT_KINDS) {
+    assert.ok(helpText.includes(kind), `swarm.update help names ${kind}`);
+  }
+  assert.match(helpText, /groupId/u);
+  assert.match(helpText, /filled in for you: swarmId, reviewerId/u);
 });

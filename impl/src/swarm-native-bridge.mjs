@@ -30,6 +30,8 @@
 // This module is executable as a client: `node swarm-native-bridge.mjs <swarm.command> [jsonArgs]`
 // reads BATON_SWARM_BRIDGE_URL / BATON_SWARM_BRIDGE_TOKEN from the environment so a native
 // participant can call `swarm.inspect` (availableActions) without worker/fence/pause ids.
+// `--help` (family) and `<swarm.command> --help` (one command) render LOCALLY from the shared
+// contract definitions — no credential is read, so help works before any token is issued.
 
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { createServer, request as httpRequest } from 'node:http';
@@ -37,7 +39,9 @@ import { pathToFileURL } from 'node:url';
 import { FRAME_LIMITS, composeFrameLimitRefusal } from './limits.mjs';
 
 import { SWARM_COMMAND_NAMES as SWARM_COMMANDS, SWARM_COMMAND_DEFINITIONS,
-  SWARM_COMMAND_SCHEMAS, validateSwarmCommand as validateSwarmCommandArgs } from './swarm-contract.mjs';
+  SWARM_COMMAND_ROWS, SWARM_COMMAND_SCHEMAS, swarmCommandFieldSummary,
+  validateSwarmCommand as validateSwarmCommandArgs } from './swarm-contract.mjs';
+import { swarmUpdatePayloadDetails } from './swarm-event-schemas.mjs';
 export { SWARM_COMMANDS, validateSwarmCommandArgs };
 const isId = (value) => typeof value === 'string' && /^[A-Za-z0-9._:-]{1,256}$/u.test(value);
 
@@ -361,13 +365,67 @@ export async function swarmBridgeCommand({ command, args = {}, endpoint, token }
   throw Object.assign(new Error(error.message), { code: error.code, detail: error.detail, status: response.statusCode });
 }
 
+const HELP_FLAGS = new Set(['--help', '-h', 'help']);
+
+/** Local help text, rendered from the ONE shared contract (rows, schemas, event descriptions) —
+ * the CLI keeps no command registry of its own. `command === null` renders the family view. */
+function bridgeHelpText(command = null) {
+  if (!command) {
+    return [
+      'Usage: node swarm-native-bridge.mjs <swarm.command> [json-args]',
+      '',
+      'Commands:',
+      ...SWARM_COMMANDS.map((name) => `  ${name.padEnd(14)} ${SWARM_COMMAND_ROWS.find((row) => row.command === name)?.description ?? ''}`),
+      '',
+      'Per-command help: node swarm-native-bridge.mjs <swarm.command> --help',
+      '',
+      `Identity comes from the environment: ${SWARM_BRIDGE_ENV_KEYS.url} and ${SWARM_BRIDGE_ENV_KEYS.token}`,
+      `are required for real calls; ${SWARM_BRIDGE_ENV_KEYS.swarmId} auto-fills the swarmId argument.`,
+      'Help itself needs none of them — it renders locally from the shared command contract.',
+      'Effectful commands mint an idempotencyKey when you omit one; the minted key is printed back as',
+      '{"idempotencyKey": "...", "result": ...} so a retry can pass that key explicitly.',
+    ].join('\n');
+  }
+  const row = SWARM_COMMAND_ROWS.find((entry) => entry.command === command);
+  const lines = [
+    `${command} — ${row?.description ?? ''}`,
+    '',
+    "Arguments (one JSON object):",
+  ];
+  for (const { field, required, expectation } of swarmCommandFieldSummary(command)) {
+    if (field === 'payload') {
+      lines.push(`  payload${required ? '' : ' (optional)'} — per-event shapes:`);
+      lines.push(...swarmUpdatePayloadDetails().split('\n').map((line) => `    ${line}`));
+      continue;
+    }
+    const notes = [];
+    if (field === 'swarmId') notes.push(`auto-filled from ${SWARM_BRIDGE_ENV_KEYS.swarmId}`);
+    if (field === 'idempotencyKey') notes.push('minted per call when omitted; pass it back explicitly to make a retry idempotent');
+    lines.push(`  ${field}${required ? '' : ' (optional)'} — ${expectation}${notes.length > 0 ? `; ${notes.join('; ')}` : ''}`);
+  }
+  lines.push('', `Usage: node swarm-native-bridge.mjs ${command} '<json-args>'`);
+  return lines.join('\n');
+}
+
 /** CLI entry so a native agent can invoke a bridge command directly from its own shell:
  * `node swarm-native-bridge.mjs swarm.inspect '{"swarmId":"..."}'` with the bridge env set. */
 export async function swarmBridgeMain(argv = process.argv.slice(2), env = process.env, io = { out: process.stdout, err: process.stderr }) {
   const [command, argsText] = argv;
   try {
+    const helpRequested = argv.some((argument) => HELP_FLAGS.has(argument));
+    if (helpRequested) {
+      // Local rendering only: no endpoint lookup, no token read, no network. This is the path a
+      // freshly recruited agent takes BEFORE it understands its own environment.
+      const target = argv.find((argument) => !HELP_FLAGS.has(argument) && argument !== undefined);
+      if (target !== undefined && !SWARM_COMMANDS.includes(target)) {
+        throw bridgeError(`Unknown swarm command ${target}; run node swarm-native-bridge.mjs --help for the command list`,
+          'swarm_command_unavailable', { command: target });
+      }
+      io.out.write(`${bridgeHelpText(target ?? null)}\n`);
+      return 0;
+    }
     if (command === undefined) {
-      throw bridgeError(`Usage: node swarm-native-bridge.mjs <swarm.command> [json-args]; env ${SWARM_BRIDGE_ENV_KEYS.url} and ${SWARM_BRIDGE_ENV_KEYS.token} are required`, 'swarm_bridge_request_invalid');
+      throw bridgeError(`Usage: node swarm-native-bridge.mjs <swarm.command> [json-args]; env ${SWARM_BRIDGE_ENV_KEYS.url} and ${SWARM_BRIDGE_ENV_KEYS.token} are required (try --help)`, 'swarm_bridge_request_invalid');
     }
     let args = {};
     if (argsText !== undefined) {
@@ -381,9 +439,17 @@ export async function swarmBridgeMain(argv = process.argv.slice(2), env = proces
     if (definition?.args.includes('swarmId') && args.swarmId === undefined) {
       args.swarmId = env[SWARM_BRIDGE_ENV_KEYS.swarmId];
     }
-    if (definition?.mcpStateful && args.idempotencyKey === undefined) args.idempotencyKey = randomUUID();
+    let mintedKey = null;
+    if (definition?.mcpStateful && args.idempotencyKey === undefined) {
+      mintedKey = randomUUID();
+      args.idempotencyKey = mintedKey;
+    }
     const result = await swarmBridgeCommand({ command, args }, { env });
-    io.out.write(`${JSON.stringify(result, null, 2)}\n`);
+    // A caller-supplied key keeps the exact historical output; a minted key is printed back as
+    // additive receipt metadata so a retry can name it (replay dedupe itself stays the runtime's).
+    io.out.write(mintedKey !== null
+      ? `${JSON.stringify({ idempotencyKey: mintedKey, result: result ?? null }, null, 2)}\n`
+      : `${JSON.stringify(result, null, 2)}\n`);
     return 0;
   } catch (error) {
     const payload = errorPayload(error);
