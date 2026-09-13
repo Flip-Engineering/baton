@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { chmodSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { projectCredentialTree } from '../src/credential-projection.mjs';
@@ -18,28 +18,34 @@ import { projectCredentialTree } from '../src/credential-projection.mjs';
 // GREEN = the default projects multi-MiB identity stores; the bound still exists
 //         (a 64 MiB file still refuses — the guard is a guard, not removed).
 
-function grownDbFixture() {
-  const root = mkdtempSync(join(tmpdir(), 'baton-credgrown-source-'));
+function temporaryDirectory(t, prefix) {
+  const directory = mkdtempSync(join(tmpdir(), prefix));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  return directory;
+}
+
+function grownDbFixture(t) {
+  const root = temporaryDirectory(t, 'baton-credgrown-source-');
   chmodSync(root, 0o700);
   // A 1.5 MiB owned, non-group/other-writable file — the grown agent.db's shape.
   writeFileSync(join(root, 'agent.db'), Buffer.alloc(1.5 * 1024 * 1024, 0x20), { mode: 0o600 });
-  const target = mkdtempSync(join(tmpdir(), 'baton-credgrown-target-'));
+  const target = temporaryDirectory(t, 'baton-credgrown-target-');
   chmodSync(target, 0o700);
   return { root, target };
 }
 
-test('CREDENTIAL-GROWTH (#245-class): a multi-MiB identity store projects under the DEFAULT limits', () => {
-  const { root, target } = grownDbFixture();
+test('CREDENTIAL-GROWTH (#245-class): a multi-MiB identity store projects under the DEFAULT limits', (t) => {
+  const { root, target } = grownDbFixture(t);
   // The default call — no options — exactly as runtime-isolation invokes it.
   const projected = projectCredentialTree({ sourceRoot: root, targetRoot: target, relativeFiles: ['agent.db'] });
   assert.equal(projected.count, 1, 'the 1.5 MiB identity store projects (the fleet can spawn again)');
 });
 
-test('CREDENTIAL-GUARD: a pathological source file still refuses under the DEFAULT limits', () => {
-  const root = mkdtempSync(join(tmpdir(), 'baton-credguard-source-'));
+test('CREDENTIAL-GUARD: a pathological source file still refuses under the DEFAULT limits', (t) => {
+  const root = temporaryDirectory(t, 'baton-credguard-source-');
   chmodSync(root, 0o700);
   writeFileSync(join(root, 'agent.db'), Buffer.alloc(64 * 1024 * 1024, 0x20), { mode: 0o600 });
-  const target = mkdtempSync(join(tmpdir(), 'baton-credguard-target-'));
+  const target = temporaryDirectory(t, 'baton-credguard-target-');
   chmodSync(target, 0o700);
   assert.throws(
     () => projectCredentialTree({ sourceRoot: root, targetRoot: target, relativeFiles: ['agent.db'] }),
