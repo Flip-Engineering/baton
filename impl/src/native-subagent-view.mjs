@@ -1,3 +1,5 @@
+import { NATIVE_PHASE } from './native-subagent-observations.mjs';
+
 /** Read-only observations of harness-managed collaboration. Invocation completion and
  * child-agent completion are distinct; neither grants Baton process or session custody. */
 export function nativeSubagentView(events) {
@@ -10,7 +12,40 @@ export function nativeSubagentView(events) {
     if (!observation || typeof observation !== 'object') continue;
     const identity = observation.toolCallId ?? observation.collabToolCallId ?? observation.toolUseId;
     const attributed = { ...structuredClone(observation), seq: event.seq, ts: event.ts };
-    if (!identity) unidentified.push(attributed);
+
+    // OMP subscription-gated child frames (subagent_lifecycle/subagent_progress) key by
+    // CHILD identity (`subagent:<id>` namespace) and are batch-safe under one
+    // parentToolCallId. They never become invocation records in their own right: terminal
+    // truth lands on the PARENT invocation (via parentInvocationKey) as jobTerminal —
+    // distinct from that invocation's own management completion (invocationOk).
+    const isOmpChildFrame = observation.harness === 'omp'
+      && (observation.nativeFrameType === 'subagent_lifecycle'
+        || observation.nativeFrameType === 'subagent_progress');
+
+    if (isOmpChildFrame) {
+      if (observation.parentInvocationKey) {
+        const prior = invocations.get(observation.parentInvocationKey);
+        if (observation.phase === NATIVE_PHASE.COMPLETED || observation.phase === NATIVE_PHASE.FAILED) {
+          if (prior) {
+            invocations.set(observation.parentInvocationKey, {
+              ...prior,
+              jobTerminal: { state: observation.status, seq: event.seq },
+            });
+          } else {
+            // The parent invocation was never observed (no start/end retained) — the
+            // terminal child truth still surfaces, minimally, instead of being dropped.
+            invocations.set(observation.parentInvocationKey, {
+              invocationKey: observation.parentInvocationKey,
+              jobTerminal: { state: observation.status, seq: event.seq },
+              seq: event.seq, ts: event.ts,
+            });
+          }
+        }
+      }
+      // No parent linkage observable: the child record still counts as seen, unidentified
+      // invocation-wise but identity-bearing as an agent below.
+      if (!identity && !observation.subagentId) unidentified.push(attributed);
+    } else if (!identity) unidentified.push(attributed);
     else {
       const prior = invocations.get(observation.invocationKey);
       const combined = { ...prior, ...attributed };
@@ -39,12 +74,24 @@ export function nativeSubagentView(events) {
           lastInvocationId: observation.collabToolCallId,
         });
       }
-    } else if (observation.harness === 'omp' && observation.childSessionFile) {
-      observeAgent(observation.childSessionFile, 'unknown', {
-        sessionFile: observation.childSessionFile, lastInvocationId: observation.toolCallId,
-        // Completion here describes delegated work, not the lifetime of its native session.
-        workPhase: observation.phase,
-      });
+    } else if (observation.harness === 'omp') {
+      // subagent_lifecycle frames key agents by actual child identity when omp supplies
+      // one (sessionFile, else the native subagent id in an explicit namespace).
+      const nativeId = observation.childSessionFile
+        ?? (observation.subagentId ? `subagent:${observation.subagentId}` : null);
+      if (nativeId) {
+        // Only subagent_lifecycle carries real native child status; tool frames do not.
+        const state = observation.nativeFrameType === 'subagent_lifecycle' && observation.status
+          ? observation.status : null;
+        observeAgent(nativeId, state, {
+          ...(observation.childSessionFile ? { sessionFile: observation.childSessionFile } : {}),
+          ...(observation.subagentId ? { subagentId: observation.subagentId } : {}),
+          ...(observation.agentType ? { agentType: observation.agentType } : {}),
+          lastInvocationId: observation.toolCallId,
+          // Completion here describes delegated work, not the lifetime of its native session.
+          workPhase: observation.phase,
+        });
+      }
     } else if (observation.harness === 'claude-code' && observation.subagentRetry?.agent_id) {
       observeAgent(observation.subagentRetry.agent_id, 'unknown', {
         agentType: observation.subagentType, lastInvocationId: observation.toolUseId,
