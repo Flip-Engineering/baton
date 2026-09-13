@@ -833,6 +833,8 @@ export function swarmApplicationToolDefinitions(definitions = APPLICATION_COMMAN
       const definition = definitions[tool.command];
       return Object.freeze({
         name: tool.name,
+        _meta: Object.freeze({ 'baton/registryDigest': APPLICATION_SEMANTIC_REGISTRY.digest }),
+        execution: Object.freeze({ taskSupport: 'forbidden' }),
         description: tool.description,
         inputSchema: schema({
           ...repo,

@@ -27,7 +27,7 @@ if (!configPath) {
         const configured = await factory();
         if (configured instanceof McpFleetServer) return configured;
         if (!configured || typeof configured !== 'object') throw new TypeError('MCP config factory must return McpFleetServer options or a server');
-        return new McpFleetServer({ ...configured, surface: configured.surface ?? 'combined' });
+        return new McpFleetServer({ ...configured, surface: configured.surface ?? (configured.application ? 'combined' : 'advanced') });
       })();
     const server = wrapProductionMcpServer(rawServer, { expandNative: true });
     const stopInput = () => { if (!process.stdin.destroyed) process.stdin.destroy(); };

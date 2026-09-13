@@ -2997,6 +2997,7 @@ export class Coordinator {
    * @returns {'claim'|'pausable'}
    */
   _turnCompletionOf(handle) {
+    if (this._coordination?.hasSwarmParticipantRun?.(handle?.runId)) return 'pausable';
     return this._adapters[handle?.vendor]?.card()?.turnCompletion ?? 'claim';
   }
 
@@ -7541,6 +7542,13 @@ export class Coordinator {
     this._attentionReasons.push(reason);
   }
 
+  /** Address a continuing participant; pause selection occurs inside its delivery queue. */
+  guideParticipant(workerId, message, { actor = 'orchestrator' } = {}) {
+    return this._withAuthorityOp(() => this._send(workerId, message, 'nudge', {
+      actor, continueParticipant: true,
+    }));
+  }
+
   send(workerId, message, mode, opts = {}) {
     const handle = this._workers.get(workerId);
     const task = handle ? this._tasks.get(handle.taskId) : null;
@@ -7704,6 +7712,14 @@ export class Coordinator {
     if (!task || (TERMINAL_TASK_STATUSES.has(task.status) && !reusableFollowUp)) return { ok: false, result: 'task_terminal' };
 
     if (reusableFollowUp) return this._deliverFollowUp(handle, task, message, opts);
+
+    if (opts.continueParticipant === true) {
+      if (task.runId && this._coordination.run?.(task.runId)?.status === 'sealed') {
+        return { ok: false, result: 'run_sealed' };
+      }
+      const pause = this.pausedTurns({ workerId })[0];
+      if (pause) return this.nudgeTurn(pause.pauseId, message, { actor: opts.actor });
+    }
 
     // C3: pre-check against an externally-supplied fence, BEFORE any delivery attempt —
     // re-evaluated HERE at delivery-slot acquisition, not at send() entry (SC4b).

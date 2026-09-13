@@ -205,16 +205,17 @@ test('UC2b: Web client gives server-owned Run waits transport slack instead of r
     fetchImpl: async () => { throw new Error('not invoked'); },
     clock: Date.now, sleep: async () => {},
   });
-  assert.equal(client._requestTimeoutForCommand('run.status', { runId: 'run-a' }), 45_000);
+  assert.equal(client._requestTimeoutForCommand('run.status', { runId: 'run-a' }), 90_000);
   assert.equal(client._requestTimeoutForCommand('run.wait', {
     runId: 'run-a', timeoutMs: 30_000,
-  }), 45_000);
+  }), 90_000);
   assert.equal(client._requestTimeoutForCommand('run.inspect', {
     runId: 'run-a', cursor: 4,
-  }), 45_000);
+  }), 90_000);
   assert.equal(client._requestTimeoutForCommand('run.inspect', {
     runId: 'run-a', cursor: 4, waitMs: 60_000,
-  }), 75_000);
+  }), 90_000);
+  assert.equal(client._requestTimeoutForCommand('swarm.watch', { swarmId: 'swarm-a', timeoutMs: 120_000 }), 135_000);
 });
 
 test('UC3: adopt reads terminal evidence then binds its displayed digest without caller-side Git inspection', async () => {

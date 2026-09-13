@@ -16,6 +16,7 @@ import {
   PLAN_OBJECT_BATCH_KINDS, PLAN_OBJECT_EVENT_KINDS, foldPlanObjectEvent, planObjectDigest,
   planObjectSnapshot, readPlanObject, waveRoleRunKey,
 } from './orchestrator-plan.mjs';
+import { SWARM_EVENT_KINDS, validateSwarmEvent, foldSwarmEvent, readSwarm, swarmSnapshot } from './swarm-state.mjs';
 import { usdFromNanos, usdToNanos } from './usd.mjs';
 import {
   CANONICAL_ORDER_VERSION, canonicalJson, compareCanonicalStrings,
@@ -141,7 +142,7 @@ const PROJECTION_CHECKPOINT_FIELDS = Object.freeze([
   '_waveRegistry',
   // #161: replay-derived campaign-plan objects (planId -> plan) and the (waveId, waveRole) ->
   // runId roster index the plan lane resolves pre-decomposed ownedBy.run bindings from (H2.2).
-  '_campaignPlans', '_waveRoleRuns',
+  '_campaignPlans', '_waveRoleRuns', '_swarms',
   '_replManifestAdmissions',
   // REPL-2 (Part G rule 23): gains _replBindings, _replBindingHistory, _replBindingFences.
   '_replBindings', '_replBindingHistory', '_replBindingFences',
@@ -1276,6 +1277,7 @@ export class CoordinationStore {
     // never authorize (H2.3). #161 (H2.2): the (waveId, waveRole) -> runId roster index the lane
     // resolves pre-decomposed ownedBy.run bindings from at claim time.
     this._campaignPlans = new Map();
+    this._swarms = new Map();
     this._waveRoleRuns = new Map();
     // REFLEX-2 boards: immutable versioned items + per-itemId claims + reports, and a
     // board-scoped, replay-derivable fence counter (the count of orchestrator-authority
@@ -9283,6 +9285,8 @@ export class CoordinationStore {
       // Epic #81 (O-6/O-7): append-only orientation audit receipts — attempt-scoped pack grants
       // (authority never collapses across attempts) and closed rating records (advisory). No
       // projection state; replay re-derives the audit by re-reading the log. Zero promotion weight.
+    } else if (SWARM_EVENT_KINDS.has(event.kind)) {
+      foldSwarmEvent(this._swarms, event);
     } else if (PLAN_OBJECT_EVENT_KINDS.has(event.kind)) {
       // #161 (D1/P2): the plan-object fold — the orchestrator's campaign plan state as a
       // first-class coordination citizen. The lane module owns the closed payload shapes and the
@@ -12074,7 +12078,7 @@ export class CoordinationStore {
     });
   }
 
-  snapshot() { return freeze({ tasks: [...this._tasks.values()].map(clone), runs: [...this._runs.values()].map(clone), ...(this._runStops.size > 0 ? { runStops: [...this._runStops.values()].map(clone) } : {}), ...(this._runControls.size > 0 ? { runControls: [...this._runControls.values()].map(clone) } : {}), ...(this._runLineagePolicy ? { runAuthority: this.runAuthoritySnapshot() } : {}), ...(this._runResultAdoptions.size > 0 ? { runResultAdoptions: [...this._runResultAdoptions.values()].map(clone) } : {}), ...(this._runResultExports.size > 0 ? { runResultExports: [...this._runResultExports.values()].map(clone) } : {}), ...(this._contextProgramPolicy ? { context: { policy: clone(this._contextProgramPolicy), sessions: [...this._contextSessions.values()].map(clone), cells: [...this._contextCells.values()].map(clone), calls: this.contextCalls() } } : {}), ...(this._replManifestAdmissions.size > 0 ? { repl: { manifests: [...this._replManifestAdmissions.values()].map(clone) } } : {}), artifacts: [...this._artifacts.values()].map(clone), ...(this._recoveryAttemptsById.size > 0 ? { recoveryAttempts: [...this._recoveryAttemptsById.values()].map(clone) } : {}), ...(this._representationPolicy || this._representations.size > 0 ? { representations: [...this._representations.values()].map(clone) } : {}), ...(this._goalPlanPolicy || this._goals.size > 0 ? { goalPlan: { goals: [...this._goals.values()].map(clone), plans: [...this._plans.values()].map(clone), approvals: [...this._planApprovals.values()].map(clone), dispatches: [...this._planDispatches.values()].map(clone), budgetSettlements: [...this._planBudgetSettlements.values()].map(clone) } } : {}), ...(this._routePolicy ? { routeLearning: { policy: clone(this._routePolicy), observations: this.routeObservations() } } : {}), reuseDecisions: [...this._reuseDecisions.values()].map(clone), reuseRiskGuards: [...this._reuseRiskGuards.values()].map(clone), ...(this._reuseProviderGuards.size > 0 || this._reuseProviderContributions.size > 0 ? { reuseProviderGuards: [...this._reuseProviderGuards.values()].map(clone), reuseProviderContributions: [...this._reuseProviderContributions.values()].map(clone) } : {}), reusePolicy: { heads: [...this._reusePolicyHeads.values()].map(clone), transitions: this._reusePolicyTransitions.map(clone) }, ...(this._advisoryFeedCards.size > 0 || this._providerReceipts.size > 0 ? { provider: { receiptCount: this._providerReceipts.size, processingCount: this._providerProcessing.size, pendingCoordinateCount: this._providerPending.size } } : {}), evidence: [...this._evidence.values()].map(clone), scratch: { facts: [...this._scratchFacts.values()].map(clone), claims: [...this._scratchClaims.values()].map(clone), reads: this._scratchReads.map(clone) }, scratchpad: this._scratchpadSnapshot(), knowledge: { nodes: [...this._knowledgeNodes.values()].map(clone), edges: [...this._knowledgeEdges.values()].map(clone), reads: this._knowledgeReads.map(clone), ...(this._knowledgeRecallAssessments.size > 0 ? { assessments: [...this._knowledgeRecallAssessments.values()].map(clone) } : {}), contamination: this._contamination.map(clone) }, ...(this._campaignPlans.size > 0 ? { planObjects: planObjectSnapshot(this._campaignPlans) } : {}), lastSeq: this._events.length }); }
+  snapshot() { return freeze({ tasks: [...this._tasks.values()].map(clone), runs: [...this._runs.values()].map(clone), ...(this._runStops.size > 0 ? { runStops: [...this._runStops.values()].map(clone) } : {}), ...(this._runControls.size > 0 ? { runControls: [...this._runControls.values()].map(clone) } : {}), ...(this._runLineagePolicy ? { runAuthority: this.runAuthoritySnapshot() } : {}), ...(this._runResultAdoptions.size > 0 ? { runResultAdoptions: [...this._runResultAdoptions.values()].map(clone) } : {}), ...(this._runResultExports.size > 0 ? { runResultExports: [...this._runResultExports.values()].map(clone) } : {}), ...(this._contextProgramPolicy ? { context: { policy: clone(this._contextProgramPolicy), sessions: [...this._contextSessions.values()].map(clone), cells: [...this._contextCells.values()].map(clone), calls: this.contextCalls() } } : {}), ...(this._replManifestAdmissions.size > 0 ? { repl: { manifests: [...this._replManifestAdmissions.values()].map(clone) } } : {}), artifacts: [...this._artifacts.values()].map(clone), ...(this._recoveryAttemptsById.size > 0 ? { recoveryAttempts: [...this._recoveryAttemptsById.values()].map(clone) } : {}), ...(this._representationPolicy || this._representations.size > 0 ? { representations: [...this._representations.values()].map(clone) } : {}), ...(this._goalPlanPolicy || this._goals.size > 0 ? { goalPlan: { goals: [...this._goals.values()].map(clone), plans: [...this._plans.values()].map(clone), approvals: [...this._planApprovals.values()].map(clone), dispatches: [...this._planDispatches.values()].map(clone), budgetSettlements: [...this._planBudgetSettlements.values()].map(clone) } } : {}), ...(this._routePolicy ? { routeLearning: { policy: clone(this._routePolicy), observations: this.routeObservations() } } : {}), reuseDecisions: [...this._reuseDecisions.values()].map(clone), reuseRiskGuards: [...this._reuseRiskGuards.values()].map(clone), ...(this._reuseProviderGuards.size > 0 || this._reuseProviderContributions.size > 0 ? { reuseProviderGuards: [...this._reuseProviderGuards.values()].map(clone), reuseProviderContributions: [...this._reuseProviderContributions.values()].map(clone) } : {}), reusePolicy: { heads: [...this._reusePolicyHeads.values()].map(clone), transitions: this._reusePolicyTransitions.map(clone) }, ...(this._advisoryFeedCards.size > 0 || this._providerReceipts.size > 0 ? { provider: { receiptCount: this._providerReceipts.size, processingCount: this._providerProcessing.size, pendingCoordinateCount: this._providerPending.size } } : {}), evidence: [...this._evidence.values()].map(clone), scratch: { facts: [...this._scratchFacts.values()].map(clone), claims: [...this._scratchClaims.values()].map(clone), reads: this._scratchReads.map(clone) }, scratchpad: this._scratchpadSnapshot(), knowledge: { nodes: [...this._knowledgeNodes.values()].map(clone), edges: [...this._knowledgeEdges.values()].map(clone), reads: this._knowledgeReads.map(clone), ...(this._knowledgeRecallAssessments.size > 0 ? { assessments: [...this._knowledgeRecallAssessments.values()].map(clone) } : {}), contamination: this._contamination.map(clone) }, ...(this._campaignPlans.size > 0 ? { planObjects: planObjectSnapshot(this._campaignPlans) } : {}), ...(this._swarms.size > 0 ? { swarms: swarmSnapshot(this._swarms).swarms } : {}), lastSeq: this._events.length }); }
 
   /** Narrow current Goal/Plan index used by resident startup reconciliation. This avoids cloning
    * unrelated tasks, evidence, knowledge, Web/MCP receipts, or historical Goal/Plan versions. */
@@ -13952,6 +13956,40 @@ export class CoordinationStore {
 
   // #161: the plan-object projection reads — cloned snapshots so a reader never mutates the
   // replay-derived _campaignPlans map (folds apply events; they never authorize, H2.3).
+  /** Validate against current state before appending: rejected edits must never poison replay. */
+  recordSwarm(kind, payload, auth) {
+    validateSwarmEvent(kind, payload);
+    if (typeof auth?.actor !== 'string' || !auth.actor || typeof auth?.key !== 'string' || !auth.key) {
+      throw new TypeError('Swarm mutation requires an actor and idempotency key');
+    }
+    const prior = this._byKey.get(auth.key);
+    if (prior) {
+      if (prior.kind !== kind || prior.actor !== auth.actor
+        || JSON.stringify(canonicalJson(prior.payload)) !== JSON.stringify(canonicalJson(payload))) {
+        throw new CoordinationRefusal('Swarm mutation identity already names another request', 'swarm_replay_conflict');
+      }
+      return clone(prior);
+    }
+    const prospective = {
+      schemaVersion: 1, kind, payload: clone(payload), actor: auth.actor,
+      idempotencyKey: auth.key, seq: this._events.length + 1, ts: this._clock(),
+    };
+    foldSwarmEvent(new Map(this._swarms), prospective);
+    return clone(this._append(kind, payload, auth, prospective.ts));
+  }
+
+  swarm(swarmId) { return readSwarm(this._swarms, swarmId); }
+
+  swarms() { return swarmSnapshot(this._swarms).swarms; }
+
+  // Membership changes do not change the native session's turn protocol. Once recruited as
+  // a continuing participant, a Run remains pausable even after leaving or closing its group.
+  hasSwarmParticipantRun(runId) {
+    if (!runId) return false;
+    return [...this._swarms.values()].some((swarm) => Object.values(swarm.participants)
+      .some((participant) => participant.runId === runId));
+  }
+
   campaignPlans() {
     return planObjectSnapshot(this._campaignPlans);
   }

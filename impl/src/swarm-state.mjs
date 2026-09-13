@@ -133,9 +133,9 @@ function nullDict(entries = []) {
   return Object.freeze(d);
 }
 
-function emptySwarm(swarmId, purpose) {
+function emptySwarm(swarmId, purpose, meta) {
   return Object.freeze({
-    swarmId, purpose, status: 'open', closedReason: null,
+    swarmId, purpose, status: 'open', closedReason: null, ...meta,
     participants: nullDict(), groups: nullDict(), work: nullDict(),
     assignments: nullDict(), context: nullDict(), contributions: nullDict(), reviews: nullDict(),
   });
@@ -230,7 +230,7 @@ export function validateSwarmEvent(kind, payload) {
   }
   if (kind === 'swarm.context_updated') {
     if (!isNonEmptyString(p.key)) refuse('swarm.context_updated requires a non-empty key', 'invalid_payload');
-    if (p.body === undefined || p.body === null) refuse('swarm.context_updated requires body', 'invalid_payload');
+    if (p.body === undefined) refuse('swarm.context_updated requires body', 'invalid_payload');
     validateBody(p.body);
     validOptionalNonEmptyString(p.groupId, 'context groupId', refuse);
     validOptionalNonNegativeInt(p.expectedVersion, 'context expectedVersion', refuse);
@@ -286,7 +286,7 @@ export function foldSwarmEvent(swarms, event) {
 
   if (kind === 'swarm.created') {
     if (swarms.has(p.swarmId)) integrity(`swarm ${p.swarmId} is already created`, 'swarm_duplicate');
-    swarms.set(p.swarmId, emptySwarm(p.swarmId, p.purpose));
+    swarms.set(p.swarmId, emptySwarm(p.swarmId, p.purpose, meta));
     return;
   }
 

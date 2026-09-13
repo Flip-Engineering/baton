@@ -218,6 +218,16 @@ The four settlement ops work through MCP behind the S-2 `sessionAuthority` envel
 | `waves.stop` | `ordinary` | `baton_waves_stop` | destructive |
 | `run.member.send` | `ordinary` | `baton_workstream_notify` | idempotent |
 | `run.member.stop` | `ordinary` | `baton_workstream_stop` | destructive |
+| `fleet_swarm_capture` | `ordinary` | `fleet_swarm_capture` | idempotent |
+| `fleet_swarm_check` | `ordinary` | `fleet_swarm_check` | idempotent |
+| `fleet_swarm_create` | `ordinary` | `fleet_swarm_create` | idempotent |
+| `fleet_swarm_guide` | `ordinary` | `fleet_swarm_guide` | idempotent |
+| `fleet_swarm_inspect` | `ordinary` | `fleet_swarm_inspect` | idempotent |
+| `fleet_swarm_list` | `ordinary` | `fleet_swarm_list` | idempotent |
+| `fleet_swarm_recruit` | `ordinary` | `fleet_swarm_recruit` | idempotent |
+| `fleet_swarm_stop` | `ordinary` | `fleet_swarm_stop` | idempotent |
+| `fleet_swarm_update` | `ordinary` | `fleet_swarm_update` | idempotent |
+| `fleet_swarm_watch` | `ordinary` | `fleet_swarm_watch` | idempotent |
 
 <!-- END GENERATED: mcp-tool-inventory -->
 

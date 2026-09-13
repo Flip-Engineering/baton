@@ -139,13 +139,29 @@ These are behavioral examples, not a required sequence for user work:
 
 ## Implementation status
 
-The September 12 implementation increment addresses independent wave progress, truthful workflow
-outcomes, worker peer conversations and reply fan-in, and OMP question/answer delivery. Its tests
-and current results belong in the progress ledger. The same increment revised the pausable-turn
-seam: an un-driven checkpoint now parks visibly for explicit adjudication (`claim_turn`, which
-runs the existing verification) or an explicit continuation (`nudge_turn`), replacing an
-automatic policy prompt cycle whose own nudge began the next native turn and then read that
-boundary back as its answer — a live self-build renewed its own work that way for hundreds of
-provider turns with no verdict. Dynamic recruitment/regrouping, first-class group workspaces,
-broader dependency conditions, and delegated shared namespaces remain follow-on work. Their
-presence in this design is not a claim that those surfaces already exist.
+The September 13 implementation adds a durable living-swarm domain on the existing coordination
+log and existing execution authorities. The ordinary SDK, CLI, MCP, and Web command registry now
+expose create, list, inspect, watch, update, recruit, guide, capture, check, and participant stop.
+Swarms start empty; participants can recruit within delegated grants, join overlapping changing
+groups, publish ordinary findings, and evolve work, assignments, and attributed shared context.
+
+Membership is recorded before the first native turn. A swarm participant ending a turn remains
+available even on an adapter whose ordinary task protocol claims completion. Guidance selects the
+current active/paused delivery behavior inside the worker's serialized delivery slot. Capture pins
+an immutable contribution without finishing its author; independent verification can run while
+the author continues or after its session closes. A check result and an acceptance review are
+separate observations. Organizational close and participant shutdown are separate operations.
+
+The application test exercises delegated recruitment through the actual SDK, application,
+coordination store, Git worktrees, and mock native adapter. Separate tests exercise contribution
+capture, checking, concurrent guidance, permission boundaries, durable replay, and transport
+exposure. These prove the implementation seams; they are not a claim of complete native swarm
+acceptance. Native worker access and observed harness subagents are being integrated separately.
+
+Still required for the full design: multi-holder group workspace custody; ongoing native swarm
+acceptance across harnesses; richer selected-event subscriptions and delivery; revisable grants;
+and removal of remaining mandatory Run goal/plan and budget assumptions. Current group/context
+records do not grant shared filesystem custody. Existing wave/recipe workflows remain available.
+
+See [the integration audit](audits/2026-09-13-runtime-policy/integration.md) for defects corrected,
+validation, and boundaries still under development.

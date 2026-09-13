@@ -49,6 +49,16 @@ ordinary-CLI inventory. The conformance suite fails if they drift from served tr
 | `run.stop` | `ordinary` | `baton run stop` | `baton run stop RUN_ID` |
 | `run.view` | `ordinary` | `baton run view` | `baton run view RUN_ID` |
 | `run.watch` | `ordinary` | `baton run watch` | `baton run watch RUN_ID` |
+| `swarm.capture` | `ordinary` | `baton swarm capture` | `baton swarm capture` |
+| `swarm.check` | `ordinary` | `baton swarm check` | `baton swarm check` |
+| `swarm.create` | `ordinary` | `baton swarm create` | `baton swarm create` |
+| `swarm.guide` | `ordinary` | `baton swarm guide` | `baton swarm guide` |
+| `swarm.inspect` | `ordinary` | `baton swarm inspect` | `baton swarm inspect` |
+| `swarm.list` | `ordinary` | `baton swarm list` | `baton swarm list` |
+| `swarm.recruit` | `ordinary` | `baton swarm recruit` | `baton swarm recruit` |
+| `swarm.stop` | `ordinary` | `baton swarm stop` | `baton swarm stop` |
+| `swarm.update` | `ordinary` | `baton swarm update` | `baton swarm update` |
+| `swarm.watch` | `ordinary` | `baton swarm watch` | `baton swarm watch` |
 | `waves.attach` | `ordinary` | `baton waves attach` | `baton waves attach WAVE_ID --members JSON` |
 | `waves.compile` | `ordinary` | `baton waves compile` | `baton waves compile path/to/spec.dsl` |
 | `waves.list` | `ordinary` | `baton waves list` | `baton waves list` |

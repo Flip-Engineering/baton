@@ -1349,6 +1349,7 @@ class BatonDeployment {
       },
       startMany: (requests) => this.startMany(requests),
     });
+    this.swarms = this.#baton.swarms;
     this.waves = Object.freeze({
       start: (options = {}) => {
         for (const member of options?.members ?? []) {

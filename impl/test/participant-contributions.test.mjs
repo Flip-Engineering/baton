@@ -65,7 +65,7 @@ async function fixture(t, { referee, capture } = {}) {
   emit({ worker: handle.id, actor: 'worker', kind: 'lifecycle.turn_completed', turnEpoch: 1,
     payload: { status: 'completed', output: 'First contribution is available.' } });
   await new Promise(setImmediate);
-  return { coordinator, coordination, handle, prompts, log, worktrees, removed, checks: () => checks };
+  return { coordinator, coordination, handle, prompts, log, worktrees, removed, adapter, emit, checks: () => checks };
 }
 
 test('capture and checking preserve a continuing participant and its next turn', async (t) => {
@@ -168,4 +168,31 @@ test('stop waits for an in-flight capture before removing the author workspace',
   });
   assert.equal(checked.passed, true);
   assert.equal(f.prompts.length, 0);
+});
+
+test('queued guidance resolves a turn that pauses while an earlier delivery is in flight', async (t) => {
+  const f = await fixture(t);
+  await f.coordinator.guideParticipant(f.handle.id, 'Continue the investigation.');
+  assert.equal(f.coordination.task(f.handle.taskId).status, 'working');
+  const started = deferred();
+  const release = deferred();
+  const prompt = f.adapter.prompt;
+  f.adapter.prompt = async (...args) => {
+    if (args[1] === 'Earlier message') { started.resolve(); await release.promise; }
+    return prompt(...args);
+  };
+  const earlier = f.coordinator.send(f.handle.id, 'Earlier message', 'nudge');
+  await started.promise;
+  const guidance = f.coordinator.guideParticipant(f.handle.id, 'Take the newly discovered branch.', { actor: 'peer-reviewer' });
+  f.emit({ worker: f.handle.id, actor: 'worker', kind: 'lifecycle.turn_completed', turnEpoch: 2,
+    payload: { status: 'completed', output: 'Another partial finding.' } });
+  await new Promise(setImmediate);
+  assert.equal(f.coordination.task(f.handle.taskId).status, 'paused');
+  release.resolve();
+  await earlier;
+  assert.equal((await guidance).ok, true);
+  assert.equal(f.coordination.task(f.handle.taskId).status, 'working');
+  assert.equal(f.coordinator.pausedTurns({ workerId: f.handle.id }).length, 0);
+  const resumed = f.log.read(f.handle.id).filter((event) => event.kind === 'turn.settled').at(-1);
+  assert.equal(resumed.actor, 'peer-reviewer');
 });

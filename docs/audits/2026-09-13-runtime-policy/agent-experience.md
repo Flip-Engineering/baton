@@ -1,5 +1,14 @@
 # Agent experience for living swarms — surface audit and interface contract
 
+> Integration update: this is the native worker's pre-integration report. The family is now
+> registered in both the application command map and canonical semantic registry. Pure definitions,
+> schemas, and validation live in `swarm-contract.mjs`; transport projection remains in
+> `swarm-surface.mjs`. Permissions are an array of grants. The MCP startup defect described below
+> is fixed. Real application delegated-recruitment tests now supplement the worker's port tests.
+> `updates` in inspect lists currently permitted update kinds; it is not an event feed. The
+> watch cursor follows relevant swarm/participant updates. See [integration.md](integration.md).
+
+
 Audit date: 2026-09-13. Scope: the public agent experience for living swarms
 ([docs/39](../../39-swarm-runtime.md)) — the command family, the SDK, and the four-surface exposure
 of the family. Files under audit and change: `impl/src/swarm-surface.mjs` (new),

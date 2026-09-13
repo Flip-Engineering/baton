@@ -1,3 +1,4 @@
+import { SWARM_COMMAND_DEFINITIONS, SWARM_COMMAND_SCHEMAS, SWARM_COMMAND_ROWS } from './swarm-contract.mjs';
 import { createHash } from 'node:crypto';
 import { FRAME_LIMITS } from './limits.mjs';
 
@@ -1236,6 +1237,16 @@ const KNOWLEDGE_PROMOTE_LIVE_METHOD = `admitWorkflow${'Finding'}`;
 // the entry inherits schema/effect/capabilities/durability from) plus the fields the source cannot
 // supply. Order and profiles/surfaces match the seeded conformance set exactly (SC3 byte-stable).
 const CANONICAL_OPERATION_SPECS = [
+  ...SWARM_COMMAND_ROWS.map((row) => [row.command, {
+    inputSchema: SWARM_COMMAND_SCHEMAS[row.command],
+    capabilities: SWARM_COMMAND_DEFINITIONS[row.command].capabilities,
+    effect: row.readOnlyHint ? (row.command === 'swarm.watch' ? 'swarm_stream' : 'swarm_read')
+      : row.command === 'swarm.recruit' ? 'provider_call'
+      : row.command === 'swarm.guide' ? 'message_send' : 'swarm_update',
+    destructive: row.destructiveHint,
+    outputView: 'content', helpTopic: row.command,
+    authority: 'SwarmRuntime checks current participant membership and per-operation grants.',
+  }]),
   ['deployment.view', {
     profile: 'ordinary', surfaces: ['cli', 'embedded'], effect: 'deployment_read',
     capabilities: ['observe'], outputView: 'index', helpTopic: 'connection',
@@ -1780,6 +1791,7 @@ const CANONICAL_OPERATION_SPECS = [
 // cli / embedded / application.commands name divergences; relocated here they become *derivable*
 // registry data, so the conformance harness resolves them and their ledger rows retire (M4a §5).
 const SURFACE_ALIAS_ROWS = Object.freeze([
+  ...SWARM_COMMAND_ROWS.map(({ command }) => [command, 'mcp.fleet', canonicalAndTransportNames(command).mcp]),
   ['application.help', 'embedded', 'BatonClient.help'],
   ['context.eval', 'embedded', 'BatonContextCall.complete'],
   ['context.eval', 'embedded', 'BatonContextCall.content'],

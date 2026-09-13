@@ -7,6 +7,7 @@ import { PassThrough } from 'node:stream';
 import test from 'node:test';
 
 import { CoordinationStore, McpFleetServer, serveMcpStdio } from '../src/index.mjs';
+import { APPLICATION_COMMAND_DEFINITIONS } from '../src/application.mjs';
 
 const NOW = Date.parse('2026-07-11T21:00:00.000Z');
 const root = () => mkdtempSync(join(tmpdir(), 'baton-mcp-'));
@@ -17,7 +18,7 @@ const principal = (overrides = {}) => ({
 const runApplicationCard = () => ({
   schemaVersion: 1,
   repoId: 'repo-a',
-  commands: ['application.help', 'runs.list', 'run.start', 'run.inspect', 'run.episode', 'run.workstreams', 'run.workstream.notify', 'run.workstream.stop', 'run.act', 'run.status', 'run.follow', 'run.recover', 'run.approve', 'run.wait', 'run.answer', 'run.feedback', 'run.steer', 'run.stop', 'run.evidence', 'run.adopt', 'run.retry_verification', 'run.resume_work', 'run.review', 'run.integrate', 'run.export', 'waves.attach', 'application.shutdown'],
+  commands: Object.keys(APPLICATION_COMMAND_DEFINITIONS),
 });
 function setup(overrides = {}) {
   const calls = [];
@@ -98,6 +99,9 @@ test('UA5/MN1: an application-backed MCP server exposes the semantic ordinary su
     'baton_scratchpad_elevate', 'baton_scratchpad_settle', 'baton_knowledge_promote', 'baton_knowledge_settlement_lease',
     'baton_run_message_send', 'baton_run_message_receipt', 'baton_run_attention_watch',
     'baton_run_scratchpad_read', 'baton_run_scratchpad_elevate', 'baton_run_scratchpad_append', 'baton_run_knowledge_seed',
+    'fleet_swarm_list', 'fleet_swarm_create', 'fleet_swarm_inspect', 'fleet_swarm_watch',
+    'fleet_swarm_update', 'fleet_swarm_recruit', 'fleet_swarm_guide', 'fleet_swarm_capture',
+    'fleet_swarm_check', 'fleet_swarm_stop',
     'baton_run_do', 'baton_run_view', 'baton_run_member_view', 'baton_run_member_send',
     'baton_run_member_stop', 'baton_application_help',
   ]);
@@ -118,7 +122,7 @@ test('UA5/MN1: an application-backed MCP server exposes the semantic ordinary su
     'baton_package_admit', 'baton_package_attach', 'baton_package_read',
     'baton_repl_cite', 'baton_knowledge_recall', 'baton_knowledge_horizon',
   ];
-  assert.equal(combined.result.tools.length, 111); // 88 pre-#233 (64 ordinary/advanced + 6 workflow-surface #87+#48 + waves.run #114 + waves.list #132 + waves.compile #170 + scratchpad.append #158 + 14 S-3 reflex) + 23 canonical dot-name twins (#233: every application tool admitted under its dot spelling beside the legacy baton_*/fleet_* transport)
+  assert.equal(combined.result.tools.length, 131); // 111 existing tools plus ten swarm transports and ten canonical names.
   assert.deepEqual(combined.result.tools.slice(0, response.result.tools.length).map((tool) => tool.name), response.result.tools.map((tool) => tool.name), 'the combined inventory preserves the ordinary application surface verbatim as its prefix');
   assert.deepEqual(combined.result.tools.map((tool) => tool.name).filter((name) => reflexNames.includes(name)), reflexNames);
   assert.equal(combined.result.tools.every((tool) => tool.inputSchema.additionalProperties === false), true);
@@ -625,5 +629,8 @@ test('MN2/MN3: the packaged subprocess entry runs a configured MCP handshake wit
   const stdout = execFileSync(process.execPath, ['scripts/mcp-stdio.mjs', configPath], { cwd: new URL('..', import.meta.url), input: `${frames.map(JSON.stringify).join('\n')}\n`, encoding: 'utf8' });
   const responses = stdout.trim().split('\n').map(JSON.parse);
   assert.deepEqual(responses.map((response) => response.id), [1, 2]);
-  assert.equal(responses[1].result.tools.length, 19);
+  const names = responses[1].result.tools.map((tool) => tool.name);
+  assert.ok(names.includes('fleet_list'));
+  assert.ok(names.includes('baton_surface_catalog'));
+  assert.equal(new Set(names).size, names.length, 'the packaged tool table has no duplicate names');
 });

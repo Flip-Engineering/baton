@@ -52,6 +52,7 @@ function swarmIdFrom(result, requested) {
 export class Swarm {
   #port;
   #last;
+  #cursor = null;
 
   constructor(port, swarmId, last = null) {
     if (!port || typeof port.command !== 'function' || !isText(swarmId)) {
@@ -59,6 +60,7 @@ export class Swarm {
     }
     this.#port = port;
     this.#last = last;
+    if (Number.isSafeInteger(last?.cursor) && last.cursor >= 0) this.#cursor = last.cursor;
     this.id = swarmId;
     Object.freeze(this);
   }
@@ -68,14 +70,17 @@ export class Swarm {
 
   /** The coordination cursor of the last view, when it carried one. */
   get cursor() {
-    const cursor = this.#last?.cursor;
-    return Number.isSafeInteger(cursor) && cursor >= 0 ? cursor : null;
+    return this.#cursor;
   }
 
   async _send(name, args) {
     validateSwarmCommand(name, args);
-    this.#last = await this.#port.command(name, args);
-    return this.#last;
+    const result = await this.#port.command(name, args);
+    this.#last = result;
+    if (Number.isSafeInteger(result?.cursor) && result.cursor >= 0) {
+      this.#cursor = Math.max(this.#cursor ?? 0, result.cursor);
+    }
+    return result;
   }
 
   /** Read the authoritative swarm view: purpose, status, participants with their runtime state,

@@ -894,6 +894,14 @@ export function batonCliHelp(topic = 'application') {
       : [`baton run do RUN_ID ${actionEntry[0]} [--inputs JSON]`];
     return `usage:\n${usage.map((line) => `  ${line}`).join('\n')}\n\n${action.label}\n${action.summary}`;
   }
+  // Swarm family (docs/39): the swarm verbs are their own help topics — the family's usage,
+  // summary, and flag list come from the one table the parser and the MCP tool descriptions read.
+  const swarmHelp = SWARM_CLI_HELP[topic];
+  if (!definition && swarmHelp) {
+    const blocks = [`usage:\n${swarmHelp.usage.map((line) => `  ${line}`).join('\n')}`];
+    blocks.push(...swarmHelp.paragraphs);
+    return blocks.join('\n\n');
+  }
   if (!definition && CANONICAL_CLI_BY_KEY.has(topic)) {
     // docs/36 §9 M4 — a canonical operation key renders its help from the registry v2 entry: the
     // derived spelling, the H8 example, and (when present) the legacy cli spellings it replaced.
@@ -901,14 +909,6 @@ export function batonCliHelp(topic = 'application') {
     const usage = [...new Set([row.cli, row.example])].map((line) => `  ${line}`).join('\n');
     const blocks = [`usage:\n${usage}`];
     if (row.aliases.length > 0) blocks.push(`Replaces: ${row.aliases.join(', ')}.`);
-    return blocks.join('\n\n');
-  }
-  // Swarm family (docs/39): the swarm verbs are their own help topics — the family's usage,
-  // summary, and flag list come from the one table the parser and the MCP tool descriptions read.
-  const swarmHelp = SWARM_CLI_HELP[topic];
-  if (!definition && swarmHelp) {
-    const blocks = [`usage:\n${swarmHelp.usage.map((line) => `  ${line}`).join('\n')}`];
-    blocks.push(...swarmHelp.paragraphs);
     return blocks.join('\n\n');
   }
   if (!definition) return `No local help is available for ${topic}.\nUse baton help for the application overview.`;
@@ -2324,6 +2324,7 @@ export class BatonWebClient {
   _requestTimeoutForCommand(name, args) {
     let serverWaitMs = 0;
     if (['run.follow', 'run.wait'].includes(name)) serverWaitMs = args.timeoutMs;
+    if (name === 'swarm.watch') serverWaitMs = args.timeoutMs ?? DEFAULT_APPLICATION_WAIT_MS;
     if (name === 'run.inspect' && args.cursor !== undefined) {
       serverWaitMs = args.waitMs ?? DEFAULT_APPLICATION_WAIT_MS;
     }

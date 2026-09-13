@@ -1,0 +1,132 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
+import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+import { BatonApplication, MockAdapter, bindBaton, createDriver } from '../src/index.mjs';
+import { SWARM_PERMISSIONS } from '../src/swarm-runtime.mjs';
+
+const policy = Object.freeze({
+  schemaVersion: 1,
+  repoId: 'repo-phase64',
+  mandatory: true,
+  approvalTtlMs: 60 * 60 * 1000,
+  riskClasses: ['low', 'medium', 'high', 'critical'],
+  effectClasses: ['repository_edit', 'provider_call'],
+  capabilityClasses: ['code', 'test'],
+  limits: Object.freeze({
+    maxGoalVersions: 16, maxPlanVersions: 16, maxNodes: 32, maxDepsPerNode: 16,
+    maxTextBytes: 4096, maxItems: 64, maxScopePaths: 64, maxRouteValues: 32,
+    maxGoalBytes: 64 * 1024, maxPlanBytes: 256 * 1024, maxStatusBytes: 256 * 1024,
+    maxTokens: 1_000_000, maxUsd: 100, maxWallMin: 24 * 60, maxProviderTurns: 10_000,
+  }),
+});
+
+const verification = Object.freeze({
+  command: 'true', arguments: [], cwd: '.', envAllowlist: ['PATH'], expectExit: 0,
+  expectResult: 'exit_code', timeoutMs: 10_000, maxOutputBytes: 64 * 1024,
+  requiredPredecessorEvidence: [],
+});
+
+const profile = Object.freeze({
+  schemaVersion: 1,
+  repoId: 'repo-phase64',
+  definitionOfDone: ['deployment verification passes'],
+  constraints: ['Keep the change inside the approved repository scope'],
+  risk: 'high',
+  goalBudget: { tokens: 20_000, usd: 2, wallMin: 10, providerTurns: 8 },
+  nodeBudget: { tokens: 10_000, usd: 1, wallMin: 5, providerTurns: 4 },
+  pathScope: ['impl/**', 'spec/**'],
+  verification,
+  routes: [{ harness: 'mock', model: 'model-a', effort: 'low' }],
+  capabilities: ['code', 'test'],
+  effects: ['repository_edit'],
+  resultPolicy: { mode: 'manual', maxAdoptedResults: 1, locator: 'git_ref' },
+});
+
+const principal = (principalId) => ({
+  actor: `direct:${principalId}`,
+  principalId,
+  sessionId: `${principalId}-session`,
+});
+
+function configuredAdapter(scenario) {
+  const adapter = new MockAdapter({ harness: 'mock', scenario });
+  const card = adapter.card.bind(adapter);
+  adapter.card = () => ({
+    ...card(),
+    modelSelection: {
+      mode: 'exact', configuredDefault: 'model-a', available: ['model-a'], family: 'mock',
+      acceptedPrefixes: ['model-'], acceptedAliases: [], reasoningEffort: ['low'],
+      serviceTier: null, provenance: 'test', refreshedAt: null,
+    },
+  });
+  return adapter;
+}
+
+
+async function fixture(t) {
+  const directory = mkdtempSync(join(tmpdir(), 'baton-swarm-app-'));
+  const repo = join(directory, 'repo');
+  execFileSync('git', ['init', '-q', repo]);
+  execFileSync('git', ['config', 'user.name', 'Swarm test'], { cwd: repo });
+  execFileSync('git', ['config', 'user.email', 'swarm@example.invalid'], { cwd: repo });
+  writeFileSync(join(repo, 'base.txt'), 'base\n');
+  execFileSync('git', ['add', '.'], { cwd: repo });
+  execFileSync('git', ['commit', '-qm', 'base'], { cwd: repo });
+  const adapter = configuredAdapter({ outcome: 'completed', delayMs: 5, summary: 'Contribution ready', files: {} });
+  const driver = createDriver({ repoRoot: repo, repoId: policy.repoId, logDir: join(directory, 'log'),
+    adapters: { mock: adapter }, goalPlanAuthority: { policy, authorize: async () => true }, stopDeadlineMs: 2000 });
+  const app = new BatonApplication({ driver, repoId: policy.repoId, profiles: { standard: profile },
+    principals: { planner: principal('planner'), dispatcher: principal('dispatcher'), observer: principal('observer') },
+    authorize: async () => true });
+  t.after(async () => {
+    await app.shutdown(principal('cleanup'));
+    rmSync(directory, { force: true, recursive: true });
+  });
+  await app.ready;
+  return { app, driver, adapter, baton: bindBaton(app, principal('orchestrator')) };
+}
+
+async function paused(driver, runId) {
+  const deadline = Date.now() + 5000;
+  for (;;) {
+    const worker = driver.coordinator.list().find((row) => row.runId === runId);
+    if (worker && driver.coordinator.pausedTurns({ workerId: worker.id }).length) return worker;
+    if (Date.now() >= deadline) throw new Error(`Participant did not remain paused: ${JSON.stringify(driver.coordinator.list())}`);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+}
+
+const selection = { exact: { harness: 'mock', model: 'model-a', effort: 'low' }, scope: ['impl/**'] };
+
+test('real application supports delegated recruitment and continuing native turns through the swarm SDK', async (t) => {
+  const { app, baton, driver } = await fixture(t);
+  const swarm = await baton.swarms.create('Develop Baton using a living swarm', { swarmId: 'self-build' });
+  assert.equal((await swarm.inspect()).participants.length, 0);
+  await swarm.context({ key: 'design', body: 'Participants may contribute without ending their sessions.' });
+  const lead = await swarm.recruit('lead', 'Coordinate implementation', { options: selection, permissions: SWARM_PERMISSIONS });
+  const leadWorker = await paused(driver, lead.runId);
+  // The default MockAdapter claims task completion. Swarm membership must override that protocol
+  // before the very first turn, while preserving ordinary non-swarm adapter semantics.
+  assert.equal(driver.coordination.task(leadWorker.taskId).status, 'paused');
+  const leadClient = bindBaton(app, { actor: `worker:${leadWorker.id}`, principalId: `worker:${leadWorker.id}`, sessionId: 'lead-session' });
+  const delegated = leadClient.swarms.open(swarm.id);
+  const builder = await delegated.recruit('builder', 'Implement the next contribution', { options: selection });
+  const builderWorker = await paused(driver, builder.runId);
+  const builderClient = bindBaton(app, { actor: `worker:${builderWorker.id}`, principalId: `worker:${builderWorker.id}`, sessionId: 'builder-session' });
+  const implementation = builderClient.swarms.open(swarm.id);
+  await implementation.contribute({ contributionId: 'finding', body: 'The next change can remain independent of reviewer lifetime.' });
+  await assert.rejects(implementation.recruit('forbidden', 'Attempt unauthorized recruitment', { options: selection }), { code: 'swarm_permission_required' });
+  const view = await swarm.inspect();
+  assert.equal(view.participants.find((row) => row.participantId === 'builder').parentId, 'lead');
+  assert.equal(view.contributions.finding.body, 'The next change can remain independent of reviewer lifetime.');
+  await delegated.group({ groupId: 'review', members: ['lead', 'builder'] });
+  await delegated.group({ groupId: 'implementation', members: ['builder'] });
+  assert.equal((await swarm.inspect()).groups.review.members.length, 2);
+  const help = await app.command('application.help', { topic: 'swarm', depth: 'content' }, principal('orchestrator'));
+  assert.ok(help.content.commands.some((usage) => usage.includes('swarm recruit')));
+  await delegated.close();
+  assert.equal(driver.coordination.task(builderWorker.taskId).status, 'paused', 'closing a group must not terminate participants');
+});

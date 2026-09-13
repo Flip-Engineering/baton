@@ -40,7 +40,7 @@ const EXAMPLES = Object.freeze({
   'swarm.recruit': Object.freeze({
     swarmId: 'swarm:one', participantId: 'impl-a', objective: 'Implement the parser change',
     options: Object.freeze({ exact: Object.freeze({ harness: 'codex', model: 'gpt', effort: 'high' }) }),
-    permissions: Object.freeze({ edit: true }),
+    permissions: Object.freeze(['contribute']),
     idempotencyKey: 'ik-recruit',
   }),
   'swarm.guide': Object.freeze({
@@ -139,13 +139,12 @@ test('validation refuses the closed set with typed codes and invents no byte cei
 // ── the transport registration seam ─────────────────────────────────────────────────────────────
 
 test('web admission derives from the shared registry spread, not from this module alone', () => {
-  assert.deepEqual(swarmRegisteredCommands(APPLICATION_COMMAND_DEFINITIONS), [],
-    'before the spread no swarm verb is registered');
-  assert.deepEqual(swarmWebAdmittedCommands(APPLICATION_COMMAND_DEFINITIONS), [],
-    'and therefore none is admitted on the web lane');
+  assert.deepEqual(swarmRegisteredCommands({}), [], 'an empty registry advertises no swarm verbs');
+  assert.deepEqual(swarmRegisteredCommands(APPLICATION_COMMAND_DEFINITIONS), SWARM_COMMAND_NAMES);
+  assert.deepEqual(swarmWebAdmittedCommands(APPLICATION_COMMAND_DEFINITIONS), SWARM_COMMAND_NAMES);
   assert.deepEqual([...swarmWebAdmittedCommands(REGISTERED)].sort(), [...SWARM_COMMAND_NAMES].sort(),
     'the spread admits every swarm row flagged web');
-  assert.equal(CLI_WEB_COMMANDS.has('swarm.create'), false,
+  assert.equal(CLI_WEB_COMMANDS.has('swarm.create'), true,
     'the CLI web whitelist is registration-gated with it (the closure audit reads this set)');
 });
 
@@ -200,9 +199,9 @@ test('the CLI parses each swarm verb into its exact command args', () => {
     swarmId: 'swarm:one', afterSeq: 7, timeoutMs: 5_000,
   });
   assert.deepEqual(parsed(['swarm', 'recruit', 'swarm:one', 'impl-a', 'Implement X',
-    '--options', '{"exact":{"harness":"h","model":"m","effort":"e"}}', '--permissions', '{"edit":true}']).args, {
+    '--options', '{"exact":{"harness":"h","model":"m","effort":"e"}}', '--permissions', '["contribute"]']).args, {
     swarmId: 'swarm:one', participantId: 'impl-a', objective: 'Implement X',
-    options: { exact: { harness: 'h', model: 'm', effort: 'e' } }, permissions: { edit: true },
+    options: { exact: { harness: 'h', model: 'm', effort: 'e' } }, permissions: ['contribute'],
     idempotencyKey: key,
   });
 
@@ -238,8 +237,8 @@ test('the CLI parses each swarm verb into its exact command args', () => {
 });
 
 test('the MCP tool table activates with the registry and follows its stateful flags', () => {
-  assert.deepEqual(swarmApplicationToolDefinitions(APPLICATION_COMMAND_DEFINITIONS), [],
-    'no swarm tool is advertised before the family is registered');
+  assert.deepEqual(swarmApplicationToolDefinitions({}), [], 'no tools without a registered family');
+  assert.equal(swarmApplicationToolDefinitions(APPLICATION_COMMAND_DEFINITIONS).length, SWARM_COMMAND_NAMES.length);
   const tools = swarmApplicationToolDefinitions(REGISTERED);
   assert.deepEqual(tools.map((tool) => tool.name).sort(),
     SWARM_MCP_TOOL_DEFINITIONS.map((tool) => tool.name).sort());
@@ -331,14 +330,14 @@ test('delegated coordinator: availableActions are the runtime\'s, and the client
   const view = {
     swarmId: 'swarm:one', purpose: 'Ship it', status: 'open',
     participants: [
-      { participantId: 'coord-b', runId: 'run:2', role: 'coordinator', permissions: { guide: true } },
-      { participantId: 'impl-a', runId: 'run:1', role: 'implementer', permissions: { contribute: true } },
+      { participantId: 'coord-b', runId: 'run:2', role: 'coordinator', permissions: ['communicate'] },
+      { participantId: 'impl-a', runId: 'run:1', role: 'implementer', permissions: ['contribute'] },
     ],
     groups: { 'group:api': { version: 2, actor: 'coord-b', members: ['impl-a'] } },
     work: { 'work:1': { version: 1, actor: 'coord-b', title: 'Parser' } },
     assignments: {}, context: { notes: { version: 3, actor: 'coord-b', body: 'shared' } },
     contributions: {}, reviews: {},
-    caller: { participantId: 'coord-b', permissions: { guide: true } },
+    caller: { participantId: 'coord-b', permissions: ['communicate'] },
     availableActions: ['swarm.inspect', 'swarm.watch', 'swarm.update', 'swarm.recruit', 'swarm.guide'],
     updates: [{ event: 'swarm.group_updated', seq: 12 }],
     cursor: 12,
@@ -391,7 +390,7 @@ test('implementer: shared context is readable and a finding is an ordinary contr
     swarmId: 'swarm:one', status: 'open',
     context: { conventions: { version: 4, actor: 'coord-b', body: 'run node --test' } },
     contributions: { 'contribution:1': { author: 'peer-a', kind: 'finding' } },
-    caller: { participantId: 'impl-a', permissions: { contribute: true } },
+    caller: { participantId: 'impl-a', permissions: ['contribute'] },
     availableActions: ['swarm.inspect', 'swarm.capture'], cursor: 20,
   };
   const port = fakePort((name) => (name === 'swarm.inspect' ? view : { ok: true, cursor: 21 }));
@@ -469,6 +468,20 @@ test('the SDK propagates the runtime refusal unchanged and rides the client port
 // ── the client objective ceiling regression (4320-byte objective refused at HEAD) ───────────────
 
 const LONG_OBJECTIVE = 'Investigate the runtime seam '.repeat(160).trim();
+
+test('watch retains its newest cursor across contribution receipts and overlapping reads', async () => {
+  const replies = [{ cursor: 10 }, { sha: 'a'.repeat(40) }, { cursor: 8 }, { cursor: 11 }];
+  const calls = [];
+  const swarm = createSwarms({ command: async (name, args) => {
+    calls.push({ name, args }); return replies.shift();
+  } }).open('swarm:cursor');
+  await swarm.inspect();
+  await swarm.capture('builder', 'revision');
+  await swarm.inspect();
+  await swarm.watch();
+  assert.equal(calls.at(-1).args.afterSeq, 10);
+  assert.equal(swarm.cursor, 11);
+});
 
 test('a long objective reaches the port intact and is never truncated', async () => {
   assert.ok(Buffer.byteLength(LONG_OBJECTIVE) > 4_320, 'the fixture is longer than the old client cap');
