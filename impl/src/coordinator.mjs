@@ -8,6 +8,7 @@ import { existsSync, mkdirSync, realpathSync, writeFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { Cursor } from './log.mjs';
+import { verifyContribution } from './contribution-verification.mjs';
 import {
   attentionItemLine, boundedAttentionText, buildKnowledgeSlice, createBrief, createDecisionAnswer, createDecisionRequest, createDigest,
   frameWebContent, isAttentionSpillItem, ValidationError, wrapFact, wrapHubDerived, wrapProse,
@@ -13639,12 +13640,6 @@ export class Coordinator {
     task.result = workerResult;
     const harness = this._harnessOf(handle.vendor);
 
-    let verifyPath = null;
-    let baseVerifyPath = null;
-    let verifierToolchainProjection = null;
-    let baseVerifierToolchainProjection = null;
-    let verifierSparseCheckoutIdentity = null;
-    let baseVerifierSparseCheckoutIdentity = null;
     let verificationCleanupError = null;
     let structuralEvidence = null;
     let structuralEvidenceAuthority = null;
@@ -13703,53 +13698,38 @@ export class Coordinator {
           );
         }
       }
-      const created = await this._worktrees.createVerifyWorktree(task.id, sha, { requiredPaths: captured?.changedPaths ?? [] });
-      verifyPath = created && created.path;
-      verifierToolchainProjection = created?.toolchainProjection ?? null;
-      verifierSparseCheckoutIdentity = created?.sparseCheckoutIdentity ?? null;
-      const workerToolchainProjection = task.sessionContext?.toolchainProjection ?? null;
-      const declaredWorkerSparseCheckoutIdentity = task.sessionContext?.sparseCheckoutIdentity ?? null;
-      const workerSparseCheckoutIdentity = declaredWorkerSparseCheckoutIdentity
-        ?? (verifierSparseCheckoutIdentity ? captured?.sparseCheckoutIdentity ?? null : null);
-      if ((workerSparseCheckoutIdentity || verifierSparseCheckoutIdentity)
-        && (!workerSparseCheckoutIdentity || !verifierSparseCheckoutIdentity)) throw Object.assign(new Error('verification sparse checkout identity is missing'), { code: 'verification_environment_mismatch' });
-      if ((workerToolchainProjection || verifierToolchainProjection)
-        && (!workerToolchainProjection || !verifierToolchainProjection || canonicalDigest(workerToolchainProjection) !== canonicalDigest(verifierToolchainProjection))) throw Object.assign(new Error('verification toolchain projection mismatch'), { code: 'verification_environment_mismatch' });
-
       const baseSha = task.sessionContext?.baseSha ?? null;
-      if (baseSha && typeof this._worktrees.createBaseVerifyWorktree === 'function') {
-        const baseCreated = await this._worktrees.createBaseVerifyWorktree(task.id, baseSha);
-        baseVerifyPath = baseCreated?.path ?? null;
-        baseVerifierToolchainProjection = baseCreated?.toolchainProjection ?? null;
-        baseVerifierSparseCheckoutIdentity = baseCreated?.sparseCheckoutIdentity ?? null;
-        if ((workerToolchainProjection || baseVerifierToolchainProjection)
-          && (!workerToolchainProjection || !baseVerifierToolchainProjection || canonicalDigest(workerToolchainProjection) !== canonicalDigest(baseVerifierToolchainProjection))) throw Object.assign(new Error('base verification toolchain projection mismatch'), { code: 'verification_environment_mismatch' });
-      }
-      if (this._atlasStructuralEvidence && baseVerifyPath && verifyPath) {
-        structuralEvidence = await this._atlasStructuralEvidence.classify({
-          beforeRoot: baseVerifyPath, afterRoot: verifyPath, changedPaths,
-          budgetTokens: Math.max(1, Math.min(20_000, Number(task.brief.budget?.tokens ?? 20_000))),
-        });
-        const structuralEvent = this._log.append({
-          worker: 'hub-atlas', harness: 'baton', turnEpoch: 0, actor: 'policy', kind: 'atlas.structural_classified',
-          payload: {
-            worker: handle.id, taskId: task.id, runId: task.runId ?? null, operation: 'diff.structural', rung: 'R1',
-            changeClass: structuralEvidence.changeClass, files: structuralEvidence.files,
-            digest: structuralEvidence.digest, bytes: structuralEvidence.bytes, path: structuralEvidence.path,
-            mediaType: structuralEvidence.mediaType, ceiling: structuralEvidence.ceiling, languageCeiling: structuralEvidence.languageCeiling,
-          },
-        });
-        structuralEvidenceAuthority = this._coordMapEvent(structuralEvent);
-      }
-      if (this._acceptOpts.requireCoverage && baseSha && sha && typeof this._worktrees.changedLines === 'function') {
-        task.changedLines = await this._worktrees.changedLines(baseSha, sha);
-      }
-
-      const observedVerdict = await this._referee(task, workerResult, {
-        pinnedVerification: task.brief.verification,
-        sandbox: verifyPath,
-        baseSandbox: baseVerifyPath,
+      const checked = await verifyContribution({
+        worktrees: this._worktrees, referee: this._referee, task, capture: captured, workerResult,
+        onPhase: (phase) => { trustPhase = phase; },
+        beforeVerify: async ({ candidate, base }) => {
+          if (this._atlasStructuralEvidence && base?.path && candidate?.path) {
+            structuralEvidence = await this._atlasStructuralEvidence.classify({
+              beforeRoot: base?.path, afterRoot: candidate?.path, changedPaths,
+              budgetTokens: Math.max(1, Math.min(20_000, Number(task.brief.budget?.tokens ?? 20_000))),
+            });
+            const structuralEvent = this._log.append({
+              worker: 'hub-atlas', harness: 'baton', turnEpoch: 0, actor: 'policy', kind: 'atlas.structural_classified',
+              payload: {
+                worker: handle.id, taskId: task.id, runId: task.runId ?? null, operation: 'diff.structural', rung: 'R1',
+                changeClass: structuralEvidence.changeClass, files: structuralEvidence.files,
+                digest: structuralEvidence.digest, bytes: structuralEvidence.bytes, path: structuralEvidence.path,
+                mediaType: structuralEvidence.mediaType, ceiling: structuralEvidence.ceiling, languageCeiling: structuralEvidence.languageCeiling,
+              },
+            });
+            structuralEvidenceAuthority = this._coordMapEvent(structuralEvent);
+          }
+          if (this._acceptOpts.requireCoverage && baseSha && sha && typeof this._worktrees.changedLines === 'function') {
+            task.changedLines = await this._worktrees.changedLines(baseSha, sha);
+          }
+        },
       });
+      const {
+        observedVerdict, workerToolchainProjection, workerSparseCheckoutIdentity,
+        verifierToolchainProjection, verifierSparseCheckoutIdentity,
+        baseVerifierToolchainProjection, baseVerifierSparseCheckoutIdentity,
+      } = checked;
+      verificationCleanupError = checked.cleanupError;
 
       // C1: referee.accept() (or an injected equivalent) is the SOLE done-gate.
       const acceptOpts = { ...this._acceptOpts, expectExit: task.brief.verification.expectExit };
@@ -13966,6 +13946,7 @@ export class Coordinator {
         }
       }
     } catch (err) {
+      verificationCleanupError ??= err?.cleanupError ?? null;
       const code = typeof err?.code === 'string' && /^[a-z0-9_]{1,64}$/u.test(err.code)
         ? err.code
         : 'trust_gate_failed';
@@ -13977,6 +13958,7 @@ export class Coordinator {
         actor: 'policy',
         payload: {
           message: String((err && err.message) || err), code, phase: 'trust_gate', trustPhase,
+          ...(err?.verificationAttempt ? { verificationAttempt: err.verificationAttempt } : {}),
           ...(err?.requiredEffectEvidence ? { requiredEffectEvidence: err.requiredEffectEvidence } : {}),
           ...(err?.pathScopeEvidence ? { pathScopeEvidence: err.pathScopeEvidence } : {}),
         },
@@ -14013,19 +13995,12 @@ export class Coordinator {
           this._beginStop(handle, 'kill', undefined, 'policy').catch(noop);
         }
       }
-    } finally {
-      const cleanupTargets = [verifyPath, baseVerifyPath].filter((path) => path != null);
-      const cleanupResults = await Promise.allSettled(cleanupTargets.map((path) => this._worktrees.removeVerifyWorktree(path)));
-      const failures = cleanupResults.filter((result) => result.status === 'rejected');
-      if (failures.length > 0) {
-        verificationCleanupError = Object.assign(new Error(`verification cleanup failed for ${failures.length} owned sandbox(es)`), {
-          code: 'worktree_cleanup_failed', causes: failures.map((result) => result.reason),
-        });
-        this._log.append({
-          worker: handle.id, harness, turnEpoch: this._safeTurnEpoch(handle), kind: 'error', actor: 'policy',
-          payload: { message: verificationCleanupError.message, phase: 'verification_cleanup' },
-        });
-      }
+    }
+    if (verificationCleanupError) {
+      this._log.append({
+        worker: handle.id, harness, turnEpoch: this._safeTurnEpoch(handle), kind: 'error', actor: 'policy',
+        payload: { message: verificationCleanupError.message, phase: 'verification_cleanup' },
+      });
     }
 
     if (handle.cleanupAfterVerification) {
