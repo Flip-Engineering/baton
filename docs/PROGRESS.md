@@ -27,9 +27,15 @@ whole-wave requirements do not describe the revised design. Implementation remai
 - Current focused validation: integrated core 100/100 (one redundant fixture subsequently removed),
   initial integrated surfaces/lifecycle 71/71, frame/batch 51/51, and all three surface audits pass
   under Node 22. Full release acceptance and CI have not been established on this branch.
-- The live loop and Claude cost accounting need repair before another ordinary Claude self-build.
-  Existing public MCP refusal coaching/inventory failures also remain under investigation. Dynamic
-  group membership, shared group workspaces and broader dependency conditions remain open design work.
+- The second native self-development pass repaired Claude completion/accounting, MCP refusal coaching,
+  ACP timeout replay and premature close confirmation, wave observation/stop admission, and OMP's
+  blanket native capability suppression. Root integration preserves exclusive fallback-pin attribution.
+  Completion/claim/steering checks pass 111/111; wave follow-up checks pass 20/20. A new live Claude
+  self-build against these corrections remains the next acceptance proof.
+- Full discovery sweep: 4,477 tests, 3,790 pass, 491 fail, 196 cancelled (edits were in progress).
+  Isolated original revision: 4,445 tests, 3,746 pass, 508 fail, 191 cancelled. These are failure
+  inventories, not a passing release gate. [Review and remaining gaps](40-runtime-review-2026-09-12.md).
+  Dynamic membership, shared group workspaces and broader dependencies remain open design work.
 - Remote review: no open PRs; latest master CI ran zero steps because its self-hosted runner labels
   have no available matching runner. Earlier hosted CI was blocked by account budget. No CI success
   or production readiness is inferred from these runs.

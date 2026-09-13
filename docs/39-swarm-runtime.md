@@ -93,6 +93,16 @@ Checks are observations about identified work under identified conditions. "Requ
 being accepted, integration succeeding, and resources being closed are also distinct facts. They
 must not be collapsed into a success flag inferred from process terminality or report existence.
 
+A turn ending, a session pausing, and a work claim being adjudicated are three different facts.
+When a harness declares that its turns are pausable, the coordinator parks the checkpoint and
+stops there: it does not prompt the participant on its own behalf, does not arm a timer whose
+expiry would stand in for adjudication, and does not treat a resumed turn, an elapsed window,
+repeated assertions of completion, or any other count of events as evidence about the work. The
+draft claim stays on the checkpoint as its attributed origin, visible to the orchestrator, and an
+authorized caller decides it explicitly — running the existing verification, or asking for a real
+continuation. Whether a run has a registered driver or not changes nothing about that ownership:
+completion authority is never transferred to a timer or to the coordinator's own prompt.
+
 Acceptance conditions may evolve as the task becomes understood; changes retain their authority
 and history. An accepted result need not close the whole group or terminate its participants.
 Publication serializes only the actual shared revision mutation. Other work remains concurrent.
@@ -131,6 +141,11 @@ These are behavioral examples, not a required sequence for user work:
 
 The September 12 implementation increment addresses independent wave progress, truthful workflow
 outcomes, worker peer conversations and reply fan-in, and OMP question/answer delivery. Its tests
-and current results belong in the progress ledger. Dynamic recruitment/regrouping, first-class
-group workspaces, broader dependency conditions, and delegated shared namespaces remain follow-on
-work. Their presence in this design is not a claim that those surfaces already exist.
+and current results belong in the progress ledger. The same increment revised the pausable-turn
+seam: an un-driven checkpoint now parks visibly for explicit adjudication (`claim_turn`, which
+runs the existing verification) or an explicit continuation (`nudge_turn`), replacing an
+automatic policy prompt cycle whose own nudge began the next native turn and then read that
+boundary back as its answer — a live self-build renewed its own work that way for hundreds of
+provider turns with no verdict. Dynamic recruitment/regrouping, first-class group workspaces,
+broader dependency conditions, and delegated shared namespaces remain follow-on work. Their
+presence in this design is not a claim that those surfaces already exist.

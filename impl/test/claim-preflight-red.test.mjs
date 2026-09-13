@@ -1,3 +1,5 @@
+// September 12: docs/39 retires automatic checkpoint expiry. Preflight refusal,
+// capture failure, reservation rollback and subsequent explicit claims remain independently tested.
 // Claim-time liveness preflight red suite (contract: docs/reference/evidence/
 // claim-preflight-2026-08-03/claim-preflight-contract.md v1.1 — issue #88; red-team fold:
 // contract-redteam.md + contract-fold.md, same directory; blue-team fold: suite-blueteam.md
@@ -797,7 +799,7 @@ test('T18n (PIN, the T18m removal control): the SAME pause with the content.mess
 // §C — insertion ordering + the error path (CP1)
 // ===========================================================================
 
-test('T18h: a refused claim on a cycle-armed record leaves the cycle ARMED — the ordinary expiry still lands the gate WITH the steering receipt', async () => {
+test('T18h: a refused claim leaves the checkpoint pending without automatic expiry', async () => {
   const adapter = new ScriptableAdapter();
   // DriverLESS (the only path that arms a TG3 cycle), a window big enough to outlive the
   // claim but small enough to fire inside the test.
@@ -807,8 +809,7 @@ test('T18h: a refused claim on a cycle-armed record leaves the cycle ARMED — t
   emitFiveToolCalls(adapter, handle);
   emitTurnCompleted(adapter, handle);
   await flush(60);
-  assert.equal(adapter.calls.prompt.filter((call) => String(call.content).includes('baton-progress-check:')).length, 1,
-    'the cycle armed (one provenance-marked nudge)');
+  assert.equal(adapter.calls.prompt.length, 0, 'the checkpoint sends no automatic prompt');
   assert.equal(coordinator._tasks.get(handle.taskId).status, 'paused');
   const pauseId = coordinator.pausedTurns({ taskId: task.id })[0]?.pauseId;
   assert.ok(pauseId);
@@ -818,26 +819,23 @@ test('T18h: a refused claim on a cycle-armed record leaves the cycle ARMED — t
     `stage[cycle-ordering]: the claim refuses BEFORE the timer clear (got ${outcome?.result})`);
   const record = coordinator._pausedTurns.get(pauseId);
   assert.equal(record?.state, 'pending', 'rollback restored pending');
-  assert.equal(record?.steering?.answered, false, 'the cycle was NOT consumed by the refusal');
-  assert.notEqual(record?.steering?.timer ?? null, null,
-    'the window timer is still ARMED after the refusal (insertion BEFORE _clearSteeringTimer)');
+  assert.equal(record?.steering, undefined, 'a refusal does not arm an automatic cycle');
 
   // The window then expires unanswered: TODAY'S expiry lands the full gate with the
   // steering receipt — the cheaper save (the cycle) survives the refused claim.
   await sleep(180);
   await flush(40);
-  assert.equal(coordinator._tasks.get(handle.taskId).status, 'failed',
-    'the ordinary expiry runs the full final evaluation after the window');
+  assert.equal(coordinator._tasks.get(handle.taskId).status, 'paused',
+    'elapsed time cannot overrule the refused claim');
   const settled = coordinator._log.read(handle.id).filter((event) => event.kind === 'turn.settled'
     && event.payload?.basis === 'steering_expired');
-  assert.equal(settled.length, 1, 'the expiry (basis steering_expired) settled the pause, not the claim');
+  assert.equal(settled.length, 0, 'elapsed time cannot settle the checkpoint');
   const verdictEvent = coordinator._log.read(handle.id).find((event) => event.kind === 'error'
     && event.payload?.code === 'required_effect_absent');
-  assert.ok(verdictEvent?.payload?.steered ?? verdictEvent?.payload?.steering ?? null,
-    'the verdict carries the steering receipt (steered.answered === false)');
+  assert.equal(verdictEvent, undefined, 'no automatic verdict follows the refusal');
 });
 
-test('T18g: the swallowed-expiry re-check — the window fires DURING the preflight capture; the refuse path runs the expiry synchronously after rollback', async () => {
+test('T18g: a slow preflight capture cannot create expiry authority while the claim is reserved', async () => {
   const adapter = new ScriptableAdapter();
   // The capture pends (once, armed just before the claim) so the 100ms window fires while
   // the reservation is held: _expireSteeringCycle's guard skips, sets expiryPending; the
@@ -869,18 +867,18 @@ test('T18g: the swallowed-expiry re-check — the window fires DURING the prefli
     `stage[expiryPending-re-check]: the claim still refuses (got ${outcome?.result})`);
   await sleep(60);
   await flush(40);
-  assert.equal(coordinator._tasks.get(handle.taskId).status, 'failed',
-    'the refuse path re-ran the swallowed expiry — the pause is NOT a zombie with a dead cycle');
+  assert.equal(coordinator._tasks.get(handle.taskId).status, 'paused',
+    'the refused claim restores the independently steerable checkpoint');
+  assert.equal(coordinator._pausedTurns.get(pauseId).state, 'pending');
   const settled = coordinator._log.read(handle.id).filter((event) => event.kind === 'turn.settled'
     && event.payload?.basis === 'steering_expired');
-  assert.equal(settled.length, 1, 'the re-check expiry minted steering_expired');
+  assert.equal(settled.length, 0, 'there is no deferred automatic expiry');
   const verdictEvent = coordinator._log.read(handle.id).find((event) => event.kind === 'error'
     && event.payload?.code === 'required_effect_absent');
-  assert.ok(verdictEvent?.payload?.steered ?? verdictEvent?.payload?.steering ?? null,
-    'the verdict carries the steering receipt');
+  assert.equal(verdictEvent, undefined, 'the refused claim is not silently converted into a verdict');
 });
 
-test('T18c: a preflight THROW rolls back and rethrows with its own typed code — resolving always released, the armed cycle untouched, zero events', async () => {
+test('T18c: a preflight throw releases its reservation and preserves a retryable checkpoint', async () => {
   const adapter = new ScriptableAdapter();
   let current = noDiff;
   let throwArmed = false;
@@ -900,33 +898,29 @@ test('T18c: a preflight THROW rolls back and rethrows with its own typed code �
   await flush(60);
   const pauseId = coordinator.pausedTurns({ taskId: task.id })[0]?.pauseId;
   assert.ok(pauseId);
-  try {
-    const preClaimSeq = maxSeq(coordinator, handle);
-    throwArmed = true;
-    const first = await claimOutcome(coordinator, pauseId);
-    assert.equal(first?.result, '__thrown__:capture_failed',
-      'the claim REJECTS with the error\'s own typed code — a preflight throw is NOT a refusal (no claim_premature_liveness is minted)');
-    const record = coordinator._pausedTurns.get(pauseId);
-    assert.equal(record?.state, 'pending', 'rollback-on-throw restored pending');
-    assert.equal(record?.consumer, null);
-    assert.notEqual(record?.steering?.timer ?? null, null,
-      'the armed cycle stays armed (the timer clear is below the preflight)');
-    assert.equal(coordinator._tasks.get(handle.taskId).status, 'paused', 'no settle, no gate run, no kill');
-    assertWorkerAlive(coordinator, adapter, handle, 'the preflight throw');
-    assert.equal(streamAfter(coordinator, handle, preClaimSeq).length, 0,
-      'zero events minted by the thrown preflight');
+  const preClaimSeq = maxSeq(coordinator, handle);
+  throwArmed = true;
+  const first = await claimOutcome(coordinator, pauseId);
+  assert.equal(first?.result, '__thrown__:capture_failed',
+    'the claim REJECTS with the error\'s own typed code — a preflight throw is NOT a refusal (no claim_premature_liveness is minted)');
+  const record = coordinator._pausedTurns.get(pauseId);
+  assert.equal(record?.state, 'pending', 'rollback-on-throw restored pending');
+  assert.equal(record?.consumer, null);
+  assert.equal(record?.steering, undefined, 'a failed capture creates no automatic cycle');
+  assert.equal(coordinator._tasks.get(handle.taskId).status, 'paused', 'no settle, no gate run, no kill');
+  assertWorkerAlive(coordinator, adapter, handle, 'the preflight throw');
+  assert.equal(streamAfter(coordinator, handle, preClaimSeq).length, 0,
+    'zero events minted by the thrown preflight');
 
-    // resolving is never wedged: a SECOND claim with a healthy capture proceeds.
-    current = withDiff;
-    const second = await claimOutcomeGuarded(coordinator, pauseId);
-    assert.notEqual(second?.result, '__wedged__:resolving never released',
-      'resolvingDone was released by the rollback — the racing claim re-enters (:2309)');
-    assert.equal(second?.result, 'claimed', 'the second claim proceeds to the full gate and claims');
-    await flush(60);
-    assert.equal(coordinator._tasks.get(handle.taskId).status, 'completed');
-  } finally {
-    coordinator._clearSteeringTimer(coordinator._pausedTurns.get(pauseId) ?? {});
-  }
+  // resolving is never wedged: a SECOND claim with a healthy capture proceeds.
+  current = withDiff;
+  const second = await claimOutcomeGuarded(coordinator, pauseId);
+  assert.notEqual(second?.result, '__wedged__:resolving never released',
+    'resolvingDone was released by the rollback — the racing claim re-enters (:2309)');
+  assert.equal(second?.result, 'claimed', 'the second claim proceeds to the full gate and claims');
+  await flush(60);
+  assert.equal(coordinator._tasks.get(handle.taskId).status, 'completed');
+
 });
 
 // ===========================================================================

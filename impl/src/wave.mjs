@@ -48,6 +48,13 @@ function waveError(message, code = 'wave_invalid') {
   return Object.assign(new TypeError(message), { code });
 }
 
+// One per-member failure record — the typed code plus the verbatim message, never synthesized.
+// Every wave projection that reports a member failure (start, observation, stop) carries this
+// shape so the same failure reads identically from progress(), settle(), and close().
+function failureRecord(error) {
+  return { code: error?.code ?? null, message: String(error?.message ?? error) };
+}
+
 function validateMember(member, index, repoRoot = null) {
   if (!member || typeof member !== 'object' || Array.isArray(member)) {
     throw waveError(`wave member[${index}] must be an object`);
@@ -253,7 +260,7 @@ export async function createWave(baton, options = {}) {
       });
       if (approve) await entry.run.approve();
     } catch (error) {
-      entry.startError = { code: error?.code ?? null, message: String(error?.message ?? error) };
+      entry.startError = failureRecord(error);
     }
     return entry;
   }));
@@ -335,7 +342,7 @@ export async function attachWave(baton, waveId, membersInput, mintDetached, repo
         entry.run = run;
         attachedCount += 1;
       } catch (error) {
-        entry.startError = { code: error?.code ?? null, message: String(error?.message ?? error) };
+        entry.startError = failureRecord(error);
       }
     } else {
       entry.startError = { code: 'wave_member_not_found', message: 'no run matches this member objective' };
@@ -352,28 +359,48 @@ export async function attachWave(baton, waveId, membersInput, mintDetached, repo
 
 function createWaveHandle({ repoRoot, members, state, waveId = null }) {
   async function progress() {
-    const members = [];
-    for (const [role, entry] of state.members) {
+    // Observe every member CONCURRENTLY: the historical serial for-of awaited each run.status()
+    // before touching the next member, so one slow or failing participant withheld every later
+    // peer's observation (wave head-of-line blocking). Promise.all keeps the DECLARED roster order
+    // in the returned array regardless of which member finishes first, and each member owns its
+    // catch: a status rejection is that member's observation failure — phase unknown, never
+    // terminal, never a peer's problem.
+    const members = await Promise.all([...state.members].map(async ([role, entry]) => {
       if (!entry.run || entry.startError) {
         // §7.2 + #230: a member whose start OR approve phase threw surfaces `failed` with the
         // typed cause — a live handle that can never dispatch must not read as a silent member.
-        members.push({ role, phase: 'failed', terminalCause: 'start', terminal: true, attention: null, error: entry.startError, knowledgeDigest: null });
-        continue;
+        return { role, phase: 'failed', terminalCause: 'start', terminal: true, attention: null, error: entry.startError, knowledgeDigest: null };
       }
-      const view = await entry.run.status();
-      const outline = view?.view ?? view ?? {};
-      members.push({
-        role,
-        phase: canonicalRunPhase(outline.phase) ?? null,
-        terminal: terminalFrom(outline),
-        attention: attentionFrom(outline),
-        scratchpad: outline.scratchpad ?? null,
-        // KG activation rule 4: the workflow horizon's knowledge digest rides the member's run view,
-        // so an orchestrator sees knowledge state change across polls without re-reading the horizon.
-        knowledgeDigest: outline.knowledgeDigest ?? null,
-        elapsedMs: Date.now() - state.startedAt,
-      });
-    }
+      try {
+        const view = await entry.run.status();
+        const outline = view?.view ?? view ?? {};
+        return {
+          role,
+          phase: canonicalRunPhase(outline.phase) ?? null,
+          terminal: terminalFrom(outline),
+          attention: attentionFrom(outline),
+          scratchpad: outline.scratchpad ?? null,
+          // KG activation rule 4: the workflow horizon's knowledge digest rides the member's run view,
+          // so an orchestrator sees knowledge state change across polls without re-reading the horizon.
+          knowledgeDigest: outline.knowledgeDigest ?? null,
+          elapsedMs: Date.now() - state.startedAt,
+        };
+      } catch (error) {
+        // An unreadable member is never given a phase it did not report and never reads terminal:
+        // the row carries the typed observation failure and the normal row shape for every other
+        // field. The failure is per-observation — the next progress() call re-reads from scratch.
+        return {
+          role,
+          phase: null,
+          terminal: false,
+          attention: null,
+          scratchpad: null,
+          knowledgeDigest: null,
+          error: failureRecord(error),
+          elapsedMs: Date.now() - state.startedAt,
+        };
+      }
+    }));
     const snapshot = { elapsedMs: Date.now() - state.startedAt, members };
     boundedJsonBytes(snapshot);
     state.progress.push({ at: new Date().toISOString(), members: members.map(({ role, phase }) => ({ role, phase })) });
@@ -436,7 +463,7 @@ function createWaveHandle({ repoRoot, members, state, waveId = null }) {
   }
 
   async function materialize(entry) {
-    const { member, run } = entry;
+    const { run } = entry;
     // Result section first (docs/31 #6): run.inspect returns `section` at top level — there is
     // no `.view` wrapper; a `.view.section` read silently disables this path.
     try {
@@ -444,13 +471,7 @@ function createWaveHandle({ repoRoot, members, state, waveId = null }) {
       const value = results?.section?.items?.[0]?.value;
       if (RESULT_SHA.test(value?.sha ?? '')) return value.sha;
     } catch { /* section projection can be empty post-stop */ }
-    if (!repoRoot || !member.report) return null;
-    return resolveResultPin({
-      repoRoot,
-      report: member.report,
-      startedAtMs: state.startedAt,
-      excludeShas: state.outcomes.map((outcome) => outcome.resultSha).filter(Boolean),
-    });
+    return null;
   }
 
   async function settle({ timeoutMs = 60_000 } = {}) {
@@ -458,23 +479,42 @@ function createWaveHandle({ repoRoot, members, state, waveId = null }) {
     const deadline = Date.now() + timeoutMs;
     const settled = new Set([...state.members.keys()].filter((role) => !state.members.get(role).run || state.members.get(role).startError));
     while (settled.size < state.members.size && Date.now() < deadline) {
-      for (const [role, entry] of state.members) {
-        if (settled.has(role) || !entry.run) continue;
-        const view = await entry.run.status();
-        const outline = view?.view ?? view;
-        if (terminalFrom(outline) || canonicalRunPhase(outline?.phase) === SUCCESS_RESTING) {
-          settled.add(role);
-        } else {
-          armPump(entry);
-        }
-      }
+      // Each round observes every unsettled member CONCURRENTLY. One slow status read no longer
+      // stalls a sibling's observation or its pump arming (the historical serial for-of did both);
+      // one FAILING status read is swallowed per member — an unreadable member is never marked
+      // settled (no invented terminality) and never blocks a peer. The outcome pass below is where
+      // a failing read becomes that member's typed record.
+      await Promise.all([...state.members].map(async ([role, entry]) => {
+        if (settled.has(role) || !entry.run) return;
+        try {
+          const view = await entry.run.status();
+          const outline = view?.view ?? view;
+          if (terminalFrom(outline) || canonicalRunPhase(outline?.phase) === SUCCESS_RESTING) {
+            settled.add(role);
+          } else {
+            armPump(entry);
+          }
+        } catch { /* per-member observation failure: no terminality, no authority, no peer block */ }
+      }));
       if (settled.size < state.members.size) {
         await new Promise((resolve) => setTimeout(resolve, POLL_MS));
       }
     }
-    for (const [role, entry] of state.members) {
-      if (state.outcomes.some((outcome) => outcome.role === role)) continue;
-      const outcome = { role };
+    // timeoutMs is an OBSERVATION BUDGET, never completion authority: nothing here stops, silences,
+    // or terminally stamps a member — one still running settles with its observed non-terminal
+    // phase. And every settle call re-observes from scratch: outcomes are REFRESHED, never replayed
+    // from an earlier call's observation (the historical already-settled-roles skip returned stale
+    // receipts for members that had moved on in the meantime).
+    //
+    // Pin-attribution baseline: shas already attributed to OTHER roles by prior observations,
+    // computed once per call so fallback re-resolution below stays deterministic. A member's
+    // OWN prior pin is never excluded, so a refresh restates it idempotently instead of losing it.
+    const priorOutcomes = new Map(state.outcomes.map((outcome) => [outcome.role, outcome]));
+    const attributed = new Map([...state.members.keys()].map((role) => [
+      role,
+      state.outcomes.filter((outcome) => outcome.role !== role && outcome.resultSha).map((outcome) => outcome.resultSha),
+    ]));
+    const observed = await Promise.all([...state.members].map(async ([role, entry]) => {
       if (!entry.run || entry.startError) {
         // #230: a member whose start OR approve phase threw is START-FAILED in wave terms —
         // createWave records startError for both (runs.start and the follow-on run.approve ride
@@ -482,55 +522,77 @@ function createWaveHandle({ repoRoot, members, state, waveId = null }) {
         // never dispatch it; polling it to a quiescence-stop erases the typed refusal — the
         // fleet-wide silent-swallow that cost the 2026-08-15 wave-b packs. The typed error
         // settles verbatim, never silence.
-        Object.assign(outcome, { phase: 'failed', terminalCause: 'start', terminal: true, narrative: null, resultSha: null, error: entry.startError });
-      } else {
-        try {
-          const view = await entry.run.status();
-          const outline = view?.view ?? view ?? {};
-          outcome.phase = canonicalRunPhase(outline.phase) ?? null;
-          outcome.terminal = terminalFrom(outline);
-          outcome.narrative = outline.narrative ?? null;
-          // #235: the transport-liveness settle class — EVIDENCE ONLY (the #163 law holds:
-          // no termination changes). A member whose run view carries the provider_silent
-          // attention entry (the coordinator's never-trafficked projection) settles with the
-          // DISTINCT 'provider_silent' class so a wedged member never reads as plain
-          // 'silent'/'quiesced' among healthy ones — and the steering evidence names it.
-          const attention = attentionFrom(outline);
-          const providerSilent = Array.isArray(attention)
-            ? attention.find((item) => item?.kind === 'provider_silent') ?? null
-            : null;
-          if (providerSilent) {
-            outcome.progressClass = 'provider_silent';
-            state.steering.push({
+        return { outcome: { role, phase: 'failed', terminalCause: 'start', terminal: true, narrative: null, resultSha: null, error: entry.startError }, evidence: null };
+      }
+      const outcome = { role };
+      let evidence = null;
+      try {
+        const view = await entry.run.status();
+        const outline = view?.view ?? view ?? {};
+        outcome.phase = canonicalRunPhase(outline.phase) ?? null;
+        outcome.terminal = terminalFrom(outline);
+        outcome.narrative = outline.narrative ?? null;
+        // #235: the transport-liveness settle class — EVIDENCE ONLY (the #163 law holds:
+        // no termination changes). A member whose run view carries the provider_silent
+        // attention entry (the coordinator's never-trafficked projection) settles with the
+        // DISTINCT 'provider_silent' class so a wedged member never reads as plain
+        // 'silent'/'quiesced' among healthy ones — and the steering evidence names it.
+        const attention = attentionFrom(outline);
+        const providerSilent = Array.isArray(attention)
+          ? attention.find((item) => item?.kind === 'provider_silent') ?? null
+          : null;
+        if (providerSilent) {
+          outcome.progressClass = 'provider_silent';
+          // Steering evidence is one line per observation TRANSITION — a repeated settle that
+          // re-observes the same silence never re-appends the line. Pushed in roster order below.
+          if (priorOutcomes.get(role)?.progressClass !== 'provider_silent') {
+            evidence = {
               role,
               evidence: 'provider_silent',
               summary: typeof providerSilent.summary === 'string'
                 ? providerSilent.summary : 'no provider traffic observed this turn',
               note: typeof providerSilent.note === 'string' ? providerSilent.note : null,
-            });
+            };
           }
-          outcome.resultSha = await materialize(entry);
-        } catch (error) {
-          Object.assign(outcome, { phase: 'outcome_error', terminal: false, resultSha: null, error: { code: error?.code ?? null, message: String(error?.message ?? error) } });
         }
+        outcome.resultSha = await materialize(entry);
+      } catch (error) {
+        Object.assign(outcome, { phase: 'outcome_error', terminal: false, resultSha: null, error: failureRecord(error) });
       }
-      state.outcomes.push(outcome);
+      return { outcome, evidence };
+    }));
+    const outcomes = observed.map((item) => item.outcome);
+    // Result reads are independent; fallback attribution contests a shared pin namespace.
+    // Resolve only that attribution in roster order so two concurrent missing-result reads
+    // cannot both claim the same heuristic pin. Authoritative per-run results may share a SHA.
+    const assigned = new Set(outcomes.map((outcome) => outcome.resultSha).filter(Boolean));
+    for (const outcome of outcomes) {
+      const entry = state.members.get(outcome.role);
+      if (outcome.resultSha || outcome.error || !repoRoot || !entry.member.report) continue;
+      outcome.resultSha = await resolveResultPin({
+        repoRoot, report: entry.member.report, startedAtMs: state.startedAt,
+        excludeShas: [...assigned, ...(attributed.get(outcome.role) ?? [])],
+      });
+      if (outcome.resultSha) assigned.add(outcome.resultSha);
     }
+    for (const item of observed) if (item.evidence) state.steering.push(item.evidence);
+    // The handle's ledger is the LAST observation per role, not an append-only log of stale reads.
+    state.outcomes = outcomes;
     const pumpsDrained = await drainPumps();
     state.pumpDrained = pumpsDrained && pumpQuiescent();
-    return [...state.outcomes];
+    return [...outcomes];
   }
 
   async function close({ reason = 'Wave settled.' } = {}) {
     await drainPumps();
-    const stops = [];
-    // KG activation rule 3: aggregate the candidacy ritual counts from each member's stop outline.
-    // `candidates` is repo-scoped (shared across members — the max is the honest queue size);
-    // `admittedThisRun` sums each member run's admits. Zero is surfaced as 0, never a missing field.
-    let knowledgeCandidates = 0;
-    let knowledgeAdmitted = 0;
-    for (const [role, entry] of state.members) {
-      if (!entry.run) continue;
+    // Every member's stop is INITIATED together: a slow or hung member stop must never delay an
+    // unrelated member's stop from beginning (the historical serial for-of did exactly that). Each
+    // member owns its catch, so one stop's rejection becomes that member's typed stop record —
+    // never a hole in the roster and never a peer's problem. Promise.all keeps the DECLARED roster
+    // order for the aggregation below.
+    const observed = await Promise.all([...state.members.values()].map(async (entry) => {
+      const role = entry.member.role;
+      if (!entry.run) return null;
       try {
         const stopped = await entry.run.stop(reason);
         const outline = stopped?.outline ?? {};
@@ -538,20 +600,29 @@ function createWaveHandle({ repoRoot, members, state, waveId = null }) {
         // without it is reported as unknown, never coalesced to zero (docs/31 #8).
         const resources = outline.resources ?? null;
         const ownedCount = Number.isSafeInteger(resources?.ownedCount) ? resources.ownedCount : null;
-        const knowledge = outline.knowledge ?? null;
-        if (knowledge) {
-          knowledgeCandidates = Math.max(knowledgeCandidates, knowledge.candidates ?? 0);
-          knowledgeAdmitted += knowledge.admittedThisRun ?? 0;
-        }
-        stops.push({
-          role,
-          stop: stopped?.stop ?? null,
-          resources: resources ? { state: resources.state ?? null, cleanupState: resources.cleanupState ?? null, ownedCount } : null,
-          ownedCount,
-        });
+        return {
+          record: {
+            role,
+            stop: stopped?.stop ?? null,
+            resources: resources ? { state: resources.state ?? null, cleanupState: resources.cleanupState ?? null, ownedCount } : null,
+            ownedCount,
+          },
+          knowledge: outline.knowledge ?? null,
+        };
       } catch (error) {
-        stops.push({ role, ownedCount: null, error: { code: error?.code ?? null, message: String(error?.message ?? error) } });
+        return { record: { role, ownedCount: null, error: failureRecord(error) }, knowledge: null };
       }
+    }));
+    const stops = observed.filter(Boolean).map((item) => item.record);
+    // KG activation rule 3: aggregate the candidacy ritual counts from each member's stop outline.
+    // `candidates` is repo-scoped (shared across members — the max is the honest queue size);
+    // `admittedThisRun` sums each member run's admits. Zero is surfaced as 0, never a missing field.
+    let knowledgeCandidates = 0;
+    let knowledgeAdmitted = 0;
+    for (const item of observed) {
+      if (!item?.knowledge) continue;
+      knowledgeCandidates = Math.max(knowledgeCandidates, item.knowledge.candidates ?? 0);
+      knowledgeAdmitted += item.knowledge.admittedThisRun ?? 0;
     }
     state.stops.push(...stops);
     const remainingCount = stops.reduce((total, stop) => total + (stop.ownedCount ?? 1), 0);

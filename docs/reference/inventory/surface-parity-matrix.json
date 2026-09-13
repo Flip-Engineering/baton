@@ -472,6 +472,15 @@
       "ledgered": false
     },
     {
+      "name": "run.act",
+      "category": "control",
+      "cli": null,
+      "mcp": "run.act",
+      "web": null,
+      "divergence": "mcp-only driver verb — CLI reaches it through the canonical run.*/waves.* names",
+      "ledgered": false
+    },
+    {
       "name": "run.adopt",
       "category": "control",
       "cli": "baton run adopt",
@@ -553,6 +562,15 @@
       "ledgered": false
     },
     {
+      "name": "run.episode",
+      "category": "observation",
+      "cli": null,
+      "mcp": "run.episode",
+      "web": null,
+      "divergence": "mcp-only driver verb — CLI reaches it through the canonical run.*/waves.* names",
+      "ledgered": false
+    },
+    {
       "name": "run.evidence",
       "category": "diagnostics",
       "cli": "baton run evidence",
@@ -577,6 +595,24 @@
       "mcp": "baton_run_feedback",
       "web": "run_feedback",
       "divergence": null,
+      "ledgered": false
+    },
+    {
+      "name": "run.follow",
+      "category": "notifications",
+      "cli": null,
+      "mcp": "run.follow",
+      "web": null,
+      "divergence": "mcp-only driver verb — CLI reaches it through the canonical run.*/waves.* names",
+      "ledgered": false
+    },
+    {
+      "name": "run.inspect",
+      "category": "diagnostics",
+      "cli": null,
+      "mcp": "run.inspect",
+      "web": null,
+      "divergence": "mcp-only driver verb — CLI reaches it through the canonical run.*/waves.* names",
       "ledgered": false
     },
     {
@@ -787,6 +823,15 @@
       "ledgered": false
     },
     {
+      "name": "run.status",
+      "category": "observation",
+      "cli": null,
+      "mcp": "run.status",
+      "web": null,
+      "divergence": "mcp-only driver verb — CLI reaches it through the canonical run.*/waves.* names",
+      "ledgered": false
+    },
+    {
       "name": "run.stop",
       "category": "control",
       "cli": "baton run stop",
@@ -805,12 +850,57 @@
       "ledgered": false
     },
     {
+      "name": "run.wait",
+      "category": "observation",
+      "cli": null,
+      "mcp": "run.wait",
+      "web": null,
+      "divergence": "mcp-only driver verb — CLI reaches it through the canonical run.*/waves.* names",
+      "ledgered": false
+    },
+    {
       "name": "run.watch",
       "category": "diagnostics",
       "cli": "baton run watch",
       "mcp": "baton_run_watch",
       "web": "run_watch",
       "divergence": null,
+      "ledgered": false
+    },
+    {
+      "name": "run.workstream.notify",
+      "category": "communication",
+      "cli": null,
+      "mcp": "run.workstream.notify",
+      "web": null,
+      "divergence": "mcp-only driver verb — CLI reaches it through the canonical run.*/waves.* names",
+      "ledgered": false
+    },
+    {
+      "name": "run.workstream.stop",
+      "category": "control",
+      "cli": null,
+      "mcp": "run.workstream.stop",
+      "web": null,
+      "divergence": "mcp-only driver verb — CLI reaches it through the canonical run.*/waves.* names",
+      "ledgered": false
+    },
+    {
+      "name": "run.workstreams",
+      "category": "observation",
+      "cli": null,
+      "mcp": "run.workstreams",
+      "web": null,
+      "divergence": "mcp-only driver verb — CLI reaches it through the canonical run.*/waves.* names",
+      "ledgered": false
+    },
+    {
+      "name": "runs.list",
+      "category": "observation",
+      "cli": null,
+      "mcp": "runs.list",
+      "web": null,
+      "divergence": "mcp-only driver verb — CLI reaches it through the canonical run.*/waves.* names",
       "ledgered": false
     },
     {

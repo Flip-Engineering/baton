@@ -1,3 +1,5 @@
+// September 12: automatic checkpoint cycles are retired. These tests retain claim, effect,
+// question, and continuation boundaries under explicit orchestration; docs/39 governs.
 // Trust-gate steering epic red suite (contract: docs/reference/evidence/
 // trust-gate-steering-2026-08-02/trust-gate-steering-decisions.md v1.0 — issues #64/#61).
 //
@@ -131,7 +133,7 @@ function emitScratchWrite(adapter, handle, key, text) {
 // TG1 — checkpoint/final taxonomy (stage: taxonomy missing)
 // ===========================================================================
 
-test('T1: a pausable checkpoint turn with no diff gets NO gate dispatch — no verdict, no kill, one policy nudge', async () => {
+test('T1: a pausable checkpoint turn with no diff gets NO gate dispatch — no verdict, no kill, no policy nudge', async () => {
   const adapter = new ScriptableAdapter();
   const { coordinator, worktrees } = setup({ adapter, capture: noDiff });
   let verifyWorktrees = 0;
@@ -149,7 +151,7 @@ test('T1: a pausable checkpoint turn with no diff gets NO gate dispatch — no v
   assert.equal(coordinator._log.read(handle.id).filter((event) => gateEvents.includes(event.payload?.code)).length, 0,
     'zero gate verdict events');
   const nudges = adapter.calls.prompt.filter((call) => String(call.content).includes('baton-progress-check:'));
-  assert.equal(nudges.length, 1, 'exactly one provenance-marked progress nudge (TG3)');
+  assert.equal(nudges.length, 0, 'a native checkpoint awaits explicit orchestration');
 });
 
 test('T2: a FINAL (claim-classified) turn with no diff on a required-edit plan still fails required_effect_absent (anti-gaming pin)', async () => {
@@ -175,10 +177,10 @@ test('T3: a pausable checkpoint on a NO-required-effects brief is NOT accepted m
 });
 
 // ===========================================================================
-// TG3 — the steering cycle (stage: cycle missing)
+// TG3 — explicit pause ownership (September 12 correction)
 // ===========================================================================
 
-test('T5: a resumed turn inside the window answers the cycle — settle working, zero gate events', async () => {
+test('T5: an unsolicited native turn boundary does not consume a checkpoint', async () => {
   const adapter = new ScriptableAdapter();
   const { coordinator } = setup({ adapter, capture: noDiff });
   const handle = await coordinator.spawn('mock', makeBrief());
@@ -191,13 +193,12 @@ test('T5: a resumed turn inside the window answers the cycle — settle working,
   const task = coordinator._tasks.get(handle.taskId);
   assert.notEqual(task.status, 'failed');
   assert.notEqual(task.status, 'completed', 'the checkpoint itself is never accepted');
-  assert.ok(['working', 'paused'].includes(task.status),
-    `the answered cycle settles back to work, never a verdict (got ${task.status})`);
-  assert.equal(coordinator.pausedTurns({ taskId: task.id }).length, 0, 'the pause record is consumed by the answer');
+  assert.equal(task.status, 'paused', 'a native boundary does not adjudicate work');
+  assert.equal(coordinator.pausedTurns({ taskId: task.id }).length, 1, 'the checkpoint still awaits a steering act');
   assert.equal(adapter.calls.kill.length, 0);
 });
 
-test('T6: a distinct scratchpad receipt answers the cycle (coordination work is liveness)', async () => {
+test('T6: useful scratchpad work preserves the independent checkpoint', async () => {
   const adapter = new ScriptableAdapter();
   const { coordinator } = setup({ adapter, capture: noDiff });
   const handle = await coordinator.spawn('mock', makeBrief());
@@ -205,16 +206,16 @@ test('T6: a distinct scratchpad receipt answers the cycle (coordination work is 
   await flush(40);
   emitScratchWrite(adapter, handle, 't6-note', 'the lease binds a working orchestrator parent');
   await flush(40);
-  await sleep(60); // past the 25ms window — the receipt must have answered in time
+  await sleep(60); // past the retired policy window
   await flush(20);
   const task = coordinator._tasks.get(handle.taskId);
-  assert.notEqual(task.status, 'failed', 'the distinct receipt answered the cycle before expiry');
-  assert.equal(coordinator.pausedTurns({ taskId: task.id }).length, 0,
-    'the cycle SETTLED (answered) — not merely "no verdict yet"');
+  assert.equal(task.status, 'paused', 'a scratchpad receipt is not a completion decision');
+  assert.equal(coordinator.pausedTurns({ taskId: task.id }).length, 1,
+    'the checkpoint remains available to its orchestrator');
   assert.equal(adapter.calls.kill.length, 0);
 });
 
-test('T7: duplicate one-char receipts still count as one distinct answer (no content floor) — and the final still demands the diff', async () => {
+test('T7: repeated scratchpad receipts do not manufacture completion authority', async () => {
   const adapter = new ScriptableAdapter();
   const { coordinator } = setup({ adapter, capture: noDiff });
   const handle = await coordinator.spawn('mock', makeBrief());
@@ -223,31 +224,26 @@ test('T7: duplicate one-char receipts still count as one distinct answer (no con
   for (let index = 0; index < 6; index += 1) emitScratchWrite(adapter, handle, `t7-dup-${index}`, 'x');
   await flush(40);
   const task = coordinator._tasks.get(handle.taskId);
-  assert.notEqual(task.status, 'failed', 'one distinct receipt answers the liveness check (TG2: no content floor)');
-  assert.equal(coordinator.pausedTurns({ taskId: task.id }).length, 0, 'the cycle settled on the first distinct receipt');
+  assert.equal(task.status, 'paused', 'receipt content and repetition do not decide work');
+  assert.equal(coordinator.pausedTurns({ taskId: task.id }).length, 1, 'the original checkpoint remains pending');
 });
 
-test('T7b: with NOTHING answering, the window expires and the full final evaluation lands with the steering receipt', async () => {
+test('T7b: elapsed time never turns an unanswered checkpoint into a verdict', async () => {
   const adapter = new ScriptableAdapter();
   const { coordinator } = setup({ adapter, capture: noDiff });
   const handle = await coordinator.spawn('mock', makeBrief());
   emitTurnCompleted(adapter, handle);
   await flush(40);
-  assert.notEqual(coordinator._tasks.get(handle.taskId).status, 'failed',
-    'mid-window the worker is ALIVE — the verdict waits for the window (no instant kill)');
-  await sleep(60); // window expiry, nothing answered
+  await sleep(60);
   await flush(40);
-  const task = coordinator._tasks.get(handle.taskId);
-  assert.equal(task.status, 'failed', 'unanswered expiry produces today\'s full final evaluation');
-  const verdictEvent = coordinator._log.read(handle.id).find((event) => event.kind === 'error'
-    && event.payload?.code === 'required_effect_absent');
-  assert.ok(verdictEvent, 'the gate\'s verdict event exists (kind error, code required_effect_absent)');
-  assert.ok(JSON.stringify(verdictEvent.payload ?? {}).includes('steered')
-    || JSON.stringify(verdictEvent.payload ?? {}).includes('"answered":false'),
-    'the steering receipt is durable on the verdict (steered.answered === false)');
+  assert.equal(coordinator._tasks.get(handle.taskId).status, 'paused');
+  assert.equal(coordinator.pausedTurns({ taskId: handle.taskId }).length, 1);
+  assert.equal(adapter.calls.kill.length, 0);
+  assert.equal(adapter.calls.prompt.length, 0);
+  assert.equal(coordinator._log.read(handle.id).some((event) => event.kind === 'verify.reverified'), false);
 });
 
-test('T8: a pending question earns nothing; resolving it inside the window answers the cycle', async () => {
+test('T8: answering a question does not consume an independent checkpoint', async () => {
   const adapter = new ScriptableAdapter();
   const { coordinator } = setup({ adapter, capture: noDiff });
   const handle = await coordinator.spawn('mock', makeBrief());
@@ -259,16 +255,16 @@ test('T8: a pending question earns nothing; resolving it inside the window answe
     payload: { requestId, question: 'should I continue with approach A?', blocking: false },
   });
   await flush(40);
-  await coordinator.respond(requestId, { text: 'yes, approach A' }).catch(() => {});
+  assert.equal((await coordinator.respond(requestId, { text: 'yes, approach A' })).ok, true);
   await flush(40);
   await sleep(60);
   await flush(20);
   assert.notEqual(coordinator._tasks.get(handle.taskId).status, 'failed',
-    'the resolved interaction answered the cycle');
-  assert.equal(coordinator.pausedTurns({ taskId: coordinator._tasks.get(handle.taskId).id }).length, 0);
+    'the resolved interaction does not adjudicate the checkpoint');
+  assert.equal(coordinator.pausedTurns({ taskId: coordinator._tasks.get(handle.taskId).id }).length, 1);
 });
 
-test('T8b: a question left PENDING past the window does not hold the cycle open (resolution-gating, the 6b farm closed)', async () => {
+test('T8b: a pending question and checkpoint survive the retired window', async () => {
   const adapter = new ScriptableAdapter();
   const { coordinator } = setup({ adapter, capture: noDiff });
   const handle = await coordinator.spawn('mock', makeBrief());
@@ -280,15 +276,15 @@ test('T8b: a question left PENDING past the window does not hold the cycle open 
   });
   await flush(40);
   assert.notEqual(coordinator._tasks.get(handle.taskId).status, 'failed',
-    'mid-window the worker is alive (the window actually elapses before any verdict)');
-  await sleep(60); // window expiry with the question still pending
+    'the worker remains alive while awaiting a decision');
+  await sleep(60); // the retired policy window cannot decide either question or work
   await flush(40);
   const task = coordinator._tasks.get(handle.taskId);
-  assert.equal(task.status, 'failed', 'a pending question never answers the cycle — the verdict proceeds');
+  assert.equal(task.status, 'paused', 'an unanswered question does not authorize a work verdict');
   const verdictEvent = coordinator._log.read(handle.id).find((event) => event.kind === 'error'
     && event.payload?.code === 'required_effect_absent');
-  assert.ok(verdictEvent?.payload?.steered ?? verdictEvent?.payload?.steering ?? null,
-    'the verdict carries the steering-expiry receipt (the window actually elapsed — not an instant kill)');
+  assert.equal(verdictEvent, undefined, 'there is no automatic gate verdict');
+  assert.equal(coordinator.pausedTurns({ taskId: task.id }).length, 1);
 });
 
 test('T9: a drivered run gets NO policy cycle (the driver\'s claim cadence owns steering)', async () => {
@@ -306,32 +302,35 @@ test('T9: a drivered run gets NO policy cycle (the driver\'s claim cadence owns 
   void log;
 });
 
-test('T10: one cycle per pause record — a new record arms a new cycle, never a re-arm of the old', async () => {
+test('T10: explicit continuation can create another checkpoint without automatic prompts', async () => {
   const adapter = new ScriptableAdapter();
   const { coordinator } = setup({ adapter, capture: noDiff });
   const handle = await coordinator.spawn('mock', makeBrief());
   const nudgeCount = () => adapter.calls.prompt.filter((call) => String(call.content).includes('baton-progress-check:')).length;
   emitTurnCompleted(adapter, handle, 1);
   await flush(40);
-  assert.equal(nudgeCount(), 1, 'the first record arms exactly one cycle');
+  assert.equal(nudgeCount(), 0, 'the first checkpoint admits no automatic prompt');
+  const pauseId = coordinator.pausedTurns({ taskId: handle.taskId })[0].pauseId;
+  assert.equal((await coordinator.nudgeTurn(pauseId, 'Continue the investigation')).ok, true);
   adapter.emit({ worker: handle.id, harness: 'mock@1.0.0', turnEpoch: 2, kind: 'lifecycle.turn_started', actor: 'worker', payload: {} });
   await flush(40);
   emitTurnCompleted(adapter, handle, 2, 'second checkpoint');
   await flush(40);
-  assert.equal(nudgeCount(), 2, 'the second RECORD gets its own single cycle — no re-arm, no third nudge');
+  assert.equal(nudgeCount(), 0, 'the new checkpoint admits no automatic prompt');
+  assert.equal(coordinator.pausedTurns({ taskId: handle.taskId }).length, 1);
   adapter.emit({ worker: handle.id, harness: 'mock@1.0.0', turnEpoch: 2, kind: 'content.message', actor: 'worker', payload: { text: 'micro-progress chatter' } });
   await flush(20);
-  assert.equal(nudgeCount(), 2, 'micro-progress does not re-arm a record\'s cycle');
+  assert.equal(nudgeCount(), 0, 'ordinary chatter cannot trigger policy prompts');
 });
 
-test('T10b: a claim on a cycle-armed record resolves through the full gate WITHOUT the steering-expiry receipt (6c)', async () => {
+test('T10b: an explicit claim runs the full gate and carries no invented expiry authority', async () => {
   const adapter = new ScriptableAdapter();
   const { coordinator } = setup({ adapter, capture: noDiff });
   const handle = await coordinator.spawn('mock', makeBrief());
   emitTurnCompleted(adapter, handle);
   await flush(40);
-  assert.equal(adapter.calls.prompt.filter((call) => String(call.content).includes('baton-progress-check:')).length, 1,
-    'the cycle armed');
+  assert.equal(adapter.calls.prompt.filter((call) => String(call.content).includes('baton-progress-check:')).length, 0,
+    'no automatic prompt precedes an explicit claim');
   const task = coordinator._tasks.get(handle.taskId);
   const pauseId = coordinator.pausedTurns({ taskId: task.id })[0]?.pauseId;
   assert.ok(pauseId, 'the pause record pends');
@@ -495,7 +494,7 @@ test('T16: path_scope violation fires identically at a final (regression pin)', 
   assert.equal(task.status, 'failed', 'an out-of-scope diff still fails at finals');
 });
 
-test('T17: an answered cycle on a drivered claim re-runs the FULL gate (drivered final pin)', async () => {
+test('T17: a registered orchestrator claim runs the full gate', async () => {
   const adapter = new ScriptableAdapter();
   const { coordinator } = setup({ adapter, capture: noDiff });
   const handle = await coordinator.spawn('mock', makeBrief());

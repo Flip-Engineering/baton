@@ -662,3 +662,26 @@ test('XA11: kill() force-ends the worker and emits kill.confirmed once the proce
   assert.equal(confirmed.worker, worker);
   assert.deepEqual(confirmed.payload.usageSeal, { tokens: 'unavailable', usd: 'unavailable', counterId: null, tokenMetric: null });
 });
+
+
+test('Codex native assistant items carry peer initiation and replies once, excluding tool output and late items', async () => {
+  const adapter = makeAdapter();
+  const events = collect(adapter);
+  const worker = 'peer-sender';
+  try {
+    await adapter.spawn(worker, makeBrief('FAKE:PEER_MESSAGES'), { worktree: freshWorktree() });
+    await until(events, (event) => event.kind === 'lifecycle.turn_completed');
+    const messages = events.filter((event) => event.kind === 'message.send');
+    assert.equal(messages.length, 2);
+    assert.ok(messages.every((event) => event.worker === worker));
+    assert.deepEqual(messages.map((event) => event.payload), [
+      { to: { workerId: 'peer' }, kind: 'query', body: 'Review this partial change.' },
+      { inReplyTo: `message:${'a'.repeat(64)}`, body: 'Reply contribution.' },
+    ]);
+    await adapter.prompt(worker, 'FAKE:PEER_MESSAGES', 'turn');
+    await until(events, (event) => event.kind === 'lifecycle.turn_completed'
+      && event.payload.turnId !== events.find((row) => row.kind === 'lifecycle.turn_completed').payload.turnId);
+    assert.equal(events.filter((event) => event.kind === 'message.send').length, 4,
+      'a fresh native turn can initiate its own messages');
+  } finally { await cleanup(adapter, worker); }
+});

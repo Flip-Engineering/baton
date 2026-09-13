@@ -12,6 +12,8 @@
 
 import { spawn, execFileSync } from 'node:child_process';
 import { renderBrief } from './adapter.mjs';
+import { scanForMessageSend } from './claude-session.mjs';
+import { WORKER_MESSAGE_GUIDANCE } from './messages.mjs';
 import { normalizeProcessGeneration, ProcessCloseReapLatch, processStartedPayload } from './process-lifecycle.mjs';
 import { attestWorkerPolicyObservation } from './worker-policy.mjs';
 
@@ -644,6 +646,10 @@ export class CodexAppServerCli {
     switch (method) {
       case 'turn/started': {
         const turnId = params.turn?.id;
+        if (session.messageSendTurn !== turnId) {
+          session.messageSendTurn = turnId;
+          session.messageSendItems = new Set();
+        }
         this._emit(session, 'lifecycle.turn_started', { threadId: params.threadId, turnId });
         return;
       }
@@ -659,6 +665,17 @@ export class CodexAppServerCli {
             turnId,
           });
           this._emit(session, 'content.message', { threadId: params.threadId, turnId, text: item.text });
+          // Only complete assistant-authored items enter the peer-message lane. Tool output and
+          // deltas remain observations; a repeated native item cannot mint a second message.
+          const message = scanForMessageSend(item.text);
+          if (message) {
+            session.messageSendItems ??= new Set();
+            const key = JSON.stringify([turnId, item.id ?? null, item.id == null ? item.text : null]);
+            if (!session.messageSendItems.has(key)) {
+              session.messageSendItems.add(key);
+              this._emit(session, 'message.send', message);
+            }
+          }
         } else if (item.type === 'commandExecution' || item.type === 'mcpToolCall') {
           this._emit(session, 'content.tool_call', {
             callId: String(item.id ?? `codex:${turnId}:${item.type}`),
@@ -933,7 +950,7 @@ export class CodexAppServerCli {
         effort: session.reasoningEffort ?? undefined,
         serviceTier: session.serviceTier ?? undefined,
         sandboxPolicy: session.sandboxPolicy,
-        input: [{ type: 'text', text: renderBrief(brief, 'codex-v2') }],
+        input: [{ type: 'text', text: `${renderBrief(brief, 'codex-v2')}\n${WORKER_MESSAGE_GUIDANCE}` }],
       });
     } catch (err) {
       session.setupFailed = true;
@@ -1010,7 +1027,7 @@ export class CodexAppServerCli {
 
   /** Internal recovery dispatch that preserves the ordinary-spawn Brief dialect. */
   async promptBrief(worker, brief) {
-    return this.prompt(worker, renderBrief(brief, 'codex-v2'), 'turn');
+    return this.prompt(worker, `${renderBrief(brief, 'codex-v2')}\n${WORKER_MESSAGE_GUIDANCE}`, 'turn');
   }
 
   // -------------------------------------------------------------------------

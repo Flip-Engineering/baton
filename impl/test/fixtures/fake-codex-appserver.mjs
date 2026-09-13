@@ -136,6 +136,18 @@ function runTurn(turnId, input) {
 
   itemCompleted(turnId, { id: `${turnId}-ack`, type: 'agentMessage', text: `received: ${text}`.slice(0, 200) });
 
+  if (text.includes('FAKE:PEER_MESSAGES')) {
+    const frame = 'MESSAGE_SEND: ' + JSON.stringify({ to: { workerId: 'peer' }, kind: 'query', body: 'Review this partial change.' });
+    const item = { id: `${turnId}-peer`, type: 'agentMessage', text: frame };
+    itemCompleted(turnId, item);
+    itemCompleted(turnId, item);
+    itemCompleted(turnId, { id: `${turnId}-reply`, type: 'agentMessage', text: 'MESSAGE_SEND: ' + JSON.stringify({ inReplyTo: `message:${'a'.repeat(64)}`, body: 'Reply contribution.' }) });
+    itemCompleted(turnId, { id: `${turnId}-tool`, type: 'commandExecution', aggregatedOutput: frame });
+    finishTurn(turnId, { status: 'completed' });
+    itemCompleted(turnId, { ...item, id: `${turnId}-late` });
+    return;
+  }
+
   if (text.includes('FAKE:OVERSIZE_ITEM')) {
     itemCompleted(turnId, {
       id: `${turnId}-huge-tool`, type: 'commandExecution', command: 'fixture-large-output',

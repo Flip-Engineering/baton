@@ -17,7 +17,9 @@ concurrency:
 jobs:
   verify:
     name: verification-only gate (node ${{ matrix.node }})
-    runs-on: [self-hosted, atari-homelab]
+    # An administrator can select owned self-hosted labels with a JSON array in this variable.
+    # The default can run without the retired homelab runner registration.
+    runs-on: ${{ fromJSON(vars.BATON_RUNNER_LABELS || '["ubuntu-latest"]') }}
     timeout-minutes: 60
     strategy:
       fail-fast: false

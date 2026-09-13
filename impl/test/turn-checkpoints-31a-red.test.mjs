@@ -1,3 +1,4 @@
+// September 12: docs/39 supersedes the historical automatic-cycle rule; every checkpoint parks.
 // Issue #31 slice A — turn checkpoints: card declaration, pause records, `paused` lifecycle
 // parity, and degenerate auto-settle. Red suite.
 //
@@ -307,9 +308,7 @@ test('C4b: TURN_PAUSED also folds directly from `working` (the guard\'s other ad
 // Part B + Part D — the pause record and the un-driven steering cycle
 // ============================================================
 
-test('B1/D4: a pausable card with NO steering.registered marker mints turn.paused and arms '
-  + 'TG3\'s steering cycle — the pause holds pending, no settle, no gate dispatch (deferral is '
-  + 'non-dispatch: the un-driven final is the cycle\'s expiry, never an immediate verdict)', async () => {
+test('B1/D4: an unregistered pausable checkpoint parks with durable origin and no automatic cycle', async () => {
   const kit = lightweightCoordinator({ turnCompletion: 'pausable' });
   const handle = await liveWorker(kit);
   const task = kit.coordinator._tasks.get(handle.taskId);
@@ -344,8 +343,7 @@ test('B1/D4: a pausable card with NO steering.registered marker mints turn.pause
   assert.equal(record.state, 'pending');
   assert.equal(record.consumer, null);
   assert.equal(record.worker, handle.id);
-  assert.ok(record.steering, 'the cycle is armed on the pause record');
-  assert.equal(record.steering.answered, false);
+  assert.equal(record.steering, undefined, 'the checkpoint has no automatic steering cycle');
 
   // Deferral is non-dispatch: the task stays paused — no verdict, no state minted.
   assert.equal(kit.coordination.task(task.id).status, 'paused');

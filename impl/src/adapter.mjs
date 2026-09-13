@@ -122,7 +122,7 @@ export function renderBrief(brief, dialect) {
     lines.push('Use the attached value directly; do not replace it with a broader repository review:');
     lines.push(JSON.stringify(brief.contextInput.value, null, 2));
   } else {
-    lines.push('This task is already dispatched by Baton. Perform the assigned work in this worktree and use only tools explicitly advertised in this Brief.');
+    lines.push('This task is already dispatched by Baton. Use your configured native harness tools, skills, context management and delegation to carry out the assigned work within its authority. Delegated participants inherit the same constraints. Any Baton tools listed here extend those native capabilities.');
   }
   lines.push('## Write authority');
   lines.push('Harness permissions are execution capability, not write authority. Write only inside the assigned Baton worktree and only at the Path scope below. Never modify, move, chmod, delete, replace, or repair anything outside that authority, including the home directory, credentials, toolchains, shims, global configuration, or caches. Report an environmental blocker instead of repairing the host.');
@@ -143,7 +143,7 @@ export function renderBrief(brief, dialect) {
   }
   lines.push('## Definition of done');
   lines.push(brief.definitionOfDone ?? '');
-  lines.push('## Verification (the ONLY definition of done — preserve this exact execution contract)');
+  lines.push('## Verification (preserve this execution contract; also satisfy the assigned work)');
   lines.push(renderVerificationExecution(brief.verification));
   if (brief.outputFormat) {
     lines.push('## Output format');

@@ -1,23 +1,23 @@
-// The campaign resident deployment: `baton serve impl/scripts/resident.deployment.mjs`.
-// Declares the fleet's exact routes so waves.run compositions (the #74 pattern, #147 dogfood)
-// can name heavyweight and cheap seats through the resident's admission.
-// #228 (operator-ordered migration, 2026-08-15): the fleet rides OhMyPi as the member
-// harness — deepseek/glm as FIRST-CLASS omp providers, no anthropic-compat translation.
-// The previous explicit compat routes (harness deepseek/glm) orphaned claude-code member
-// processes and died cause-lessly at ~2h; these are the same seats on the native surface.
+// Example resident: `baton serve impl/scripts/resident.deployment.mjs`.
+// Native routes are starting choices, not a required swarm roster. Embedders can supply their
+// own routes and verifier; ordinary deployment admission checks each selected route.
 import { openConvergedBaton } from '../src/index-converged.mjs';
 
-export async function createBatonDeployment() {
+export async function createBatonDeployment({ repo = process.cwd(), routes, verification } = {}) {
   return openConvergedBaton({
-    repo: process.cwd(),
+    repo,
     advanced: {
-      routes: [
+      routes: routes ?? [
+        { harness: 'codex', model: 'gpt-5.6-sol', effort: 'high' },
+        { harness: 'claude-code', provider: 'claude', model: 'claude-sonnet-4-6', effort: 'high' },
         { harness: 'omp', model: 'deepseek/deepseek-v4-flash', effort: 'high' },
         { harness: 'omp', model: 'deepseek/deepseek-v4-pro[1m]', effort: 'high' },
         { harness: 'omp', model: 'glm/glm-5.2', effort: 'high' },
         { harness: 'omp', model: 'glm/glm-5.3', effort: 'high' },
       ],
-      verification: Object.freeze({ command: 'true', arguments: [] }),
+      // Omission selects the repository's actual test command. A no-op command provides no
+      // verification evidence for a contribution. A caller may choose a relevant check.
+      ...(verification === undefined ? {} : { verification }),
     },
   });
 }

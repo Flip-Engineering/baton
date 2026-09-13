@@ -54,6 +54,8 @@ test('WAVE-ADMISSION: a blocked first admission does not gate an unrelated sibli
   const wavePromise = createWave(facade, { members: [member('alpha'), member('beta')] });
   wavePromise.then(() => { settled = true; }, () => { settled = true; });
 
+  // Admission starts all independent members before waiting for any one provider.
+  assert.deepEqual(calls, ['start:alpha', 'start:beta'], 'both admissions must be initiated');
   // beta's start AND approve land while alpha's start is still pending.
   await betaApproved.promise;
   assert.deepEqual(calls, ['start:alpha', 'start:beta', 'approve:beta'],
