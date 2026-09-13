@@ -236,10 +236,13 @@ function routedAdapter(route, { version, credentialState = 'available', spawnCal
     },
     workerPolicy: {
       schemaVersion: 1,
-      autonomy: { default: 'unattended' },
-      access: { default: 'full' },
+      autonomy: { supported: ['unattended'], default: 'unattended', perTask: false,
+        observation: 'launch', mechanisms: ['fixture-unattended'] },
+      access: { supported: ['full'], default: 'full', perTask: false,
+        observation: 'launch', mechanisms: ['fixture-full'] },
       containment: {
         hostProcess: 'same_uid', guarantees: ['private_runtime'], observation: 'unavailable',
+        configuredPreferences: [],
       },
     },
   });
@@ -317,7 +320,7 @@ test('DP5: an observed route publishes bounded permission, containment, authenti
   t.after(async () => { try { await deployment.close(); } catch {} });
 
   const doctor = await deployment.doctor();
-  assert.equal(doctor.ready, true);
+  assert.equal(doctor.ready, true, JSON.stringify(doctor.routes));
   assert.deepEqual(doctor.routes[0], {
     ...route,
     state: 'ready',

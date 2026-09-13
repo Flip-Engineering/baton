@@ -26,6 +26,7 @@ import { GrokAcpCli } from './grok-acp.mjs';
 import { KimiAcpCli } from './kimi-acp.mjs';
 import { OmpRpcCli } from './omp-rpc.mjs';
 import { normalizeConcurrencyCeiling } from './concurrency-policy.mjs';
+import { normalizeWorktreeCapacityPolicy } from './worktree-capacity.mjs';
 import { RuntimeIsolation, runtimeIdentity } from './runtime-isolation.mjs';
 import { ResidentAuthority, stableDeploymentId } from './resident-authority.mjs';
 import { DEFAULT_RUN_LINEAGE_POLICY } from './run-lineage.mjs';
@@ -56,14 +57,13 @@ const DEFAULT_WATCHDOG = Object.freeze({
   stallAction: 'escalate',                    // was 'interrupt' — D4 rung 1, never a direct stop
 });
 
-// Capacity ceilings are deployment authority, not Run arguments. The advanced seam may replace
-// observation/estimation for deterministic tests or a host integration, but never these limits.
+// Physical availability gates admission. A deployment owner may additionally configure quotas
+// and headroom; ordinary callers do not need to estimate a fleet's eventual size.
 const DEFAULT_WORKTREE_CAPACITY = Object.freeze({
-  maxReservedBytes: 8 * 1024 * 1024 * 1024,
-  maxReservedInodes: 1_000_000,
-  // Keep a meaningful host reserve without making ordinary Baton unusable on a healthy but
-  // space-constrained checkout. Per-wave estimates and the runtime reserve still gate admission;
-  // no model or caller supplies this value.
+  maxReservedBytes: null,
+  maxReservedInodes: null,
+  // Conservative host headroom and per-runtime growth estimates, configurable by the owner.
+  // These are allowances, not measurements of a native harness's future disk use.
   minFreeBytes: 512 * 1024 * 1024,
   minFreeInodes: 100_000,
   runtimeReserveBytes: 64 * 1024 * 1024,
@@ -298,11 +298,20 @@ function normalizeVerification(value, repoRoot) {
 
 function normalizeCapacity(value) {
   if (value === undefined) return null;
-  closed(value, ['estimate', 'observe'], 'advanced capacity');
-  if (typeof value.estimate !== 'function' || typeof value.observe !== 'function') {
-    throw deploymentError('advanced capacity must provide estimate and observe functions');
+  closed(value, ['estimate', 'observe', 'policy'], 'advanced capacity');
+  if ((value.estimate !== undefined && typeof value.estimate !== 'function')
+    || (value.observe !== undefined && typeof value.observe !== 'function')) {
+    throw deploymentError('advanced capacity estimate and observe must be functions when provided');
   }
-  return Object.freeze({ estimate: value.estimate, observe: value.observe });
+  let policy;
+  try {
+    if (value.policy !== undefined) closed(value.policy, Object.keys(DEFAULT_WORKTREE_CAPACITY), 'advanced capacity policy');
+    const { digest, ...normalized } = normalizeWorktreeCapacityPolicy({ ...DEFAULT_WORKTREE_CAPACITY, ...value.policy });
+    policy = Object.freeze(normalized);
+  } catch (error) {
+    throw deploymentError(`advanced capacity policy is invalid: ${error.message}`);
+  }
+  return Object.freeze({ policy, estimate: value.estimate, observe: value.observe });
 }
 
 function existingRegular(path) {
@@ -2026,7 +2035,7 @@ export async function openBatonDeployment(rawOptions, createDriver) {
   // state moves), never once at open — an open-time probe would also consume the advanced
   // observation seam outside its per-reservation contract.
   const workspaceProbe = () => workspaceCapacityReadiness(
-    repository.root, DEFAULT_WORKTREE_CAPACITY, capacity?.observe ?? null,
+    repository.root, capacity?.policy ?? DEFAULT_WORKTREE_CAPACITY, capacity?.observe ?? null,
   );
   const contextRuntime = new RepositoryContextRuntime({
     artifactRoot: contextRoot,
@@ -2041,7 +2050,7 @@ export async function openBatonDeployment(rawOptions, createDriver) {
     deploymentBaseSha: snapshot.sha,
     logDir: stateRoot,
     adapters,
-    worktreeCapacity: DEFAULT_WORKTREE_CAPACITY,
+    worktreeCapacity: capacity?.policy ?? DEFAULT_WORKTREE_CAPACITY,
     ...(capacity ? {
       worktreeCapacityEstimate: capacity.estimate,
       worktreeCapacityObserve: capacity.observe,

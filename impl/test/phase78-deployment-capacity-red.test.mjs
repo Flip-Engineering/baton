@@ -44,6 +44,7 @@ function exactBlockingAdapter() {
   adapter.card = () => ({
     ...card(),
     authPosture: 'subscription',
+    providerCompatibility: { credentialState: 'available' }, // deterministic local adapter; no provider credential
     modelSelection: {
       mode: 'exact', configuredDefault: route.model, available: [route.model],
       family: route.harness, acceptedPrefixes: [], acceptedAliases: [],
@@ -129,7 +130,7 @@ test('DC1: deployment-owned capacity admits one parallel worker, refuses its sib
       adapters: { [route.harness]: fixture.adapter },
       verification: { command: 'true', arguments: [] },
       // This test-only observation seam constrains the host to exactly one estimated worker.
-      // Baton still owns the actual byte/inode policy; callers cannot tune quota knobs.
+      // Physical observations remain authoritative with no fixed fleet quota.
       capacity: {
         estimate(request) {
           estimates.push(request);
@@ -164,6 +165,8 @@ test('DC1: deployment-owned capacity admits one parallel worker, refuses its sib
   await until(() => worktreeCount(repo) === 2, 'one admitted private worktree');
   await until(() => runtimeCount(deploymentRoot) === 1, 'one admitted private runtime');
   assert.ok(observedPolicy, 'the factory must install a deployment-owned default policy');
+  assert.equal(observedPolicy.maxReservedBytes, null);
+  assert.equal(observedPolicy.maxReservedInodes, null);
   assert.deepEqual(
     Object.keys(observedPolicy).sort(),
     [
@@ -243,7 +246,7 @@ test('DC2: deployment close drains an active capacity owner and releases every e
   assert.equal(fixture.sessions().every((session) => session.terminal), true);
 });
 
-test('DC3: the advanced capacity seam is closed and callers cannot tune deployment ceilings', async (t) => {
+test('DC3: malformed capacity configuration refuses before effects', async (t) => {
   const repo = repository();
   const world = mkdtempSync(join(tmpdir(), 'baton-phase78-capacity-invalid-'));
   const deploymentRoot = join(world, 'deployment');
@@ -261,7 +264,8 @@ test('DC3: the advanced capacity seam is closed and callers cannot tune deployme
 
   for (const capacity of [
     { estimate() {}, observe() {}, maxReservedBytes: 1 },
-    { estimate() {} },
+    { policy: { maxReservedBytes: -1 } },
+    { policy: { imaginaryQuota: 1 } },
     { estimate: 1, observe() {} },
   ]) {
     await assert.rejects(
@@ -271,6 +275,32 @@ test('DC3: the advanced capacity seam is closed and callers cannot tune deployme
     assert.equal(existsSync(deploymentRoot), false, 'invalid capacity refuses before deployment roots');
     assert.equal(existsSync(join(repo, '.baton')), false, 'invalid capacity refuses before repo capacity state');
   }
+});
+
+test('deployment owners can configure an explicit quota while retaining physical admission checks', async (t) => {
+  const repo = repository();
+  const deploymentRoot = mkdtempSync(join(tmpdir(), 'baton-capacity-configured-'));
+  const fixture = exactBlockingAdapter();
+  let deployment;
+  t.after(async () => {
+    try { await deployment?.close(); } catch {}
+    rmSync(repo, { recursive: true, force: true });
+    rmSync(deploymentRoot, { recursive: true, force: true });
+  });
+  deployment = await openBaton({ repo, advanced: {
+    deploymentRoot, routes: [route], adapters: { [route.harness]: fixture.adapter },
+    verification: { command: 'true', arguments: [] },
+    capacity: {
+      policy: { maxReservedBytes: 60, runtimeReserveBytes: 0, minFreeBytes: 0 },
+      estimate: () => ({ bytes: 60, inodes: 5 }),
+      observe: () => ({ freeBytes: 1_000_000_000, freeInodes: 1_000_000 }),
+    },
+  } });
+  const first = await deployment.run('Use the explicit owner quota', route);
+  await first.approve();
+  const second = await deployment.run('Cannot exceed the explicit owner quota', route);
+  await assert.rejects(second.approve(), { code: 'worktree_capacity_exceeded' });
+  assert.equal(fixture.spawnCalls(), 1);
 });
 
 test('DC4: always-on capacity uses an attested dependency projection in private worktrees', async (t) => {

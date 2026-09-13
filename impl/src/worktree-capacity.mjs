@@ -20,8 +20,6 @@ const POLICY_FIELDS = Object.freeze([
   'maxReservedBytes', 'maxReservedInodes', 'minFreeBytes', 'minFreeInodes',
   'runtimeReserveBytes', 'runtimeReserveInodes',
 ]);
-const MAX_STATE_BYTES = 4 * 1024 * 1024;
-const MAX_RESERVATIONS = 10_000;
 const RESERVATION_FIELDS = Object.freeze([
   'id', 'kind', 'resourceId', 'ownerId', 'nonce', 'pid', 'bytes', 'inodes', 'baseSha',
   'sparseDigest', 'toolchainProjectionDigest', 'createdAt', 'materializedAt',
@@ -119,12 +117,17 @@ export function normalizeWorktreeCapacityPolicy(value) {
   const normalized = {};
   for (const field of POLICY_FIELDS) {
     const item = value[field];
+    if (field.startsWith('maxReserved') && item === null) {
+      normalized[field] = null;
+      continue;
+    }
     if (!Number.isSafeInteger(item) || item < 0) throw new TypeError(`worktreeCapacity.${field} must be a non-negative safe integer`);
     normalized[field] = item;
   }
-  if (normalized.maxReservedBytes <= 0 || normalized.maxReservedInodes <= 0
-    || normalized.runtimeReserveBytes > normalized.maxReservedBytes
-    || normalized.runtimeReserveInodes > normalized.maxReservedInodes) throw new TypeError('worktreeCapacity ceilings are inconsistent');
+  if ((normalized.maxReservedBytes !== null && (normalized.maxReservedBytes <= 0
+      || normalized.runtimeReserveBytes > normalized.maxReservedBytes))
+    || (normalized.maxReservedInodes !== null && (normalized.maxReservedInodes <= 0
+      || normalized.runtimeReserveInodes > normalized.maxReservedInodes))) throw new TypeError('worktreeCapacity ceilings are inconsistent');
   return Object.freeze({ ...normalized, digest: digest(normalized) });
 }
 
@@ -286,12 +289,12 @@ export class WorktreeCapacityAuthority {
   _read() {
     if (!existsSync(this.statePath)) return { schemaVersion: 1, policyDigest: this.policy.digest, reservations: [] };
     const stateStat = lstatSync(this.statePath);
-    if (!stateStat.isFile() || stateStat.isSymbolicLink() || (stateStat.mode & 0o077) !== 0 || stateStat.size > MAX_STATE_BYTES) throw typed('worktree capacity state is not a bounded private regular file', 'worktree_capacity_unavailable');
+    if (!stateStat.isFile() || stateStat.isSymbolicLink() || (stateStat.mode & 0o077) !== 0) throw typed('worktree capacity state is not a private regular file', 'worktree_capacity_unavailable');
     let state;
     try { state = JSON.parse(readFileSync(this.statePath, 'utf8')); }
     catch (cause) { throw typed('worktree capacity state is unreadable', 'worktree_capacity_unavailable', cause); }
     if (!state || Object.keys(state).sort().join(',') !== ['integrityDigest', 'policyDigest', 'reservations', 'schemaVersion'].sort().join(',')
-      || state.schemaVersion !== 1 || !Array.isArray(state.reservations) || state.reservations.length > MAX_RESERVATIONS) throw typed('worktree capacity state disagrees with deployment policy', 'worktree_capacity_unavailable');
+      || state.schemaVersion !== 1 || !Array.isArray(state.reservations)) throw typed('worktree capacity state disagrees with deployment policy', 'worktree_capacity_unavailable');
     const expectedIntegrity = this._seal(state).integrityDigest;
     if (typeof state.integrityDigest !== 'string' || !/^[a-f0-9]{64}$/u.test(state.integrityDigest)
       || !timingSafeEqual(Buffer.from(state.integrityDigest, 'hex'), Buffer.from(expectedIntegrity, 'hex'))) throw typed('worktree capacity state integrity failed', 'worktree_capacity_unavailable');
@@ -373,17 +376,20 @@ export class WorktreeCapacityAuthority {
   _acquire() {
     const deadline = performance.now() + this.lockWaitMs;
     let firstAttempt = true;
+    let lastWait = { detail: 'repeated ownership changes prevented acquisition', extra: {} };
+    const wait = (detail, extra) => {
+      lastWait = { detail, extra };
+      this._waitSlice(deadline, detail, extra);
+    };
     for (;;) {
       if (!firstAttempt && performance.now() >= deadline) {
-        this._waitSlice(deadline, 'repeated ownership changes prevented acquisition', {
-          holderPid: this._observeOwner(this.lockPath, LOCK_LABEL)?.pid ?? null,
-        });
+        this._waitSlice(deadline, lastWait.detail, lastWait.extra);
       }
       firstAttempt = false;
       const gate = this._observeOwner(this.reaperPath, REAPER_LABEL);
       if (gate !== null && livePid(gate.pid)) {
         // A reap is in flight and its tombstone rename may land on any lock published now.
-        this._waitSlice(deadline, `the live reaper (pid ${gate.pid}) still held the recovery gate`, { holderPid: gate.pid });
+        wait(`the live reaper (pid ${gate.pid}) still held the recovery gate`, { holderPid: gate.pid });
         continue;
       }
       const generation = randomBytes(16).toString('hex');
@@ -391,14 +397,14 @@ export class WorktreeCapacityAuthority {
       this._removeOwner(this.lockPath, LOCK_LABEL, generation); // no-op unless we published it
       const observed = this._observeOwner(this.lockPath, LOCK_LABEL);
       if (observed === null) {
-        this._waitSlice(deadline, 'the lock could not be published and confirmed', {});
+        wait('the lock could not be published and confirmed', {});
       } else if (livePid(observed.pid)) {
-        this._waitSlice(deadline, `the live holder (pid ${observed.pid}) still held it`, { holderPid: observed.pid });
+        wait(`the live holder (pid ${observed.pid}) still held it`, { holderPid: observed.pid });
       } else if (gate !== null) {
         // A dead lock under a dead gate is inert forever, and reclamation needs the gate.
-        this._waitSlice(deadline, `a dead reaper gate (pid ${gate.pid}) blocks reclamation of the dead holder (pid ${observed.pid})`, { gatePid: gate.pid });
+        wait(`a dead reaper gate (pid ${gate.pid}) blocks reclamation of the dead holder (pid ${observed.pid})`, { gatePid: gate.pid });
       } else if (!this._reap(observed)) {
-        this._waitSlice(deadline, `the dead holder (pid ${observed.pid}) could not be reclaimed`, {});
+        wait(`the dead holder (pid ${observed.pid}) could not be reclaimed`, {});
       }
     }
   }
@@ -508,8 +514,8 @@ export class WorktreeCapacityAuthority {
   }
 
   reserveMany(entries) {
-    if (!Array.isArray(entries) || entries.length === 0 || entries.length > MAX_RESERVATIONS) {
-      throw new TypeError('capacity reservation wave must contain a bounded non-empty entry list');
+    if (!Array.isArray(entries) || entries.length === 0) {
+      throw new TypeError('capacity reservation wave must contain a non-empty entry list');
     }
     const prepared = entries.map((entry) => {
       if (!entry || typeof entry !== 'object' || Array.isArray(entry)
@@ -542,7 +548,6 @@ export class WorktreeCapacityAuthority {
       }
       const requested = new Set(prepared.map(({ id }) => id));
       if (state.reservations.some((row) => requested.has(row.id))) throw typed('worktree capacity reservation already exists', 'worktree_capacity_exceeded');
-      if (state.reservations.length + prepared.length > MAX_RESERVATIONS) throw typed('worktree capacity reservation count is exhausted', 'worktree_capacity_exceeded');
       const totals = state.reservations.reduce((sum, row) => ({ bytes: sum.bytes + row.bytes, inodes: sum.inodes + row.inodes }), { bytes: 0, inodes: 0 });
       const outstanding = state.reservations.reduce((sum, row) => ({
         bytes: sum.bytes + row.outstandingBytes,
@@ -555,7 +560,8 @@ export class WorktreeCapacityAuthority {
         || !Number.isSafeInteger(outstanding.inodes + wave.inodes)) {
         throw typed('worktree capacity reservation totals overflow', 'worktree_capacity_unavailable');
       }
-      if (totals.bytes + wave.bytes > this.policy.maxReservedBytes || totals.inodes + wave.inodes > this.policy.maxReservedInodes
+      if ((this.policy.maxReservedBytes !== null && totals.bytes + wave.bytes > this.policy.maxReservedBytes)
+        || (this.policy.maxReservedInodes !== null && totals.inodes + wave.inodes > this.policy.maxReservedInodes)
         || observation.freeBytes - outstanding.bytes - wave.bytes < this.policy.minFreeBytes
         || observation.freeInodes - outstanding.inodes - wave.inodes < this.policy.minFreeInodes) {
         throw typed('worktree capacity is unavailable for this reservation wave', 'worktree_capacity_exceeded');
@@ -633,8 +639,8 @@ export class WorktreeCapacityAuthority {
   }
 
   releaseMany(tokens) {
-    if (!Array.isArray(tokens) || tokens.length === 0 || tokens.length > MAX_RESERVATIONS) {
-      throw new TypeError('capacity release wave must contain a bounded non-empty token list');
+    if (!Array.isArray(tokens) || tokens.length === 0) {
+      throw new TypeError('capacity release wave must contain a non-empty token list');
     }
     for (const token of tokens) {
       if (!token || typeof token !== 'object' || typeof token.id !== 'string'
