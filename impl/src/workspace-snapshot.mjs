@@ -167,10 +167,15 @@ export async function snapshotWorkspace({ worktree, baseSha, excludedPaths = [] 
     if (assumed.length) git(['update-index', '--no-assume-unchanged', '-z', '--stdin'],
       worktree, tempIndex, `${assumed.join('\0')}\0`);
 
-    // Literal pathspec exclusions cannot reinterpret a dependency name as an ignore glob.
-    // Keep the repository's existing ignore configuration, including info/exclude.
-    git(['-c', 'core.fsmonitor=false', 'add', '-A', '--', '.',
+    // Update tracked paths separately: Git rejects negative add pathspecs that name
+    // already ignored directories. Enumerate untracked candidates with ls-files,
+    // which respects both repository ignores and literal projection exclusions.
+    // NUL-delimited stdin preserves arbitrary filenames without an argv-size cap.
+    git(['-c', 'core.fsmonitor=false', 'add', '-u', '--', '.'], worktree, tempIndex);
+    const untracked = git(['ls-files', '--others', '--exclude-standard', '-z', '--', '.',
       ...excluded.map((path) => `:(exclude,literal)${path}`)], worktree, tempIndex);
+    if (untracked) git(['--literal-pathspecs', '-c', 'core.fsmonitor=false', 'add',
+      '--pathspec-from-file=-', '--pathspec-file-nul'], worktree, tempIndex, untracked);
 
     const treeSha = git(['write-tree'], worktree, tempIndex);
     const message = `baton live snapshot\n\nBaton-Base: ${resolvedBase}\nBaton-Head: ${headSha}\nBaton-Excluded: ${excluded.length}\n`;

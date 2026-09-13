@@ -333,9 +333,7 @@ export function projectOmpParallelTasks(observations) {
  *   - tool_progress frames without a string `subagent_type` (Bash, REPL, heartbeat)
  *   - assistant / tool_use / result / system frames (never subagent evidence in this module)
  *
- * Note: claude-session.mjs currently drops tool_progress frames (falls to default in
- * _handleWireObject). The integration seam requires either wrapping _onData or intercepting
- * the raw stream before the adapter's switch statement.
+ * claude-session.mjs calls this at its wire boundary, before ordinary tool handling.
  *
  * @param {object} frame - raw Claude Code stream-json wire frame
  * @param {{ worker?: string|null, sessionId?: string|null }} parentContext
@@ -434,8 +432,7 @@ function collabStatusToPhase(status) {
  *
  * Returns null for all other frame types.
  *
- * INTEGRATION SEAM MISSING: codex-appserver.mjs._onNotification() drops collabAgentToolCall
- * in the `default` case. The `adapter_seam_missing` gap is always present on returned records.
+ * codex-appserver.mjs calls this for item/started and item/completed notifications.
  *
  * @param {object} frame - JSON-RPC item/completed params from Codex app-server
  * @param {{ worker?: string|null, sessionId?: string|null }} parentContext

@@ -171,6 +171,27 @@ test('untracked projected toolchain paths are excluded from the snapshot but lef
   assert.equal(blobAt(dir, result.sha, 'real.txt'), 'real work\n');
 });
 
+test('ignored dependency projections do not break capture of tracked edits and literal untracked filenames', async (t) => {
+  const { dir, baseSha } = makeRepo();
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  writeFileSync(join(dir, '.gitignore'), '*.log\nnode_modules/\n');
+  mkdirSync(join(dir, 'impl', 'node_modules'), { recursive: true });
+  writeFileSync(join(dir, 'impl', 'node_modules', 'package.json'), '{}\n');
+  writeFileSync(join(dir, 'README.md'), 'visible tracked edit\n');
+  const name = ':(glob)*\nnew file.txt';
+  writeFileSync(join(dir, name), 'literal filename\n');
+  writeFileSync(join(dir, 'ignored.log'), 'ignored\n');
+  const beforeIndex = indexBytes(dir);
+  const result = await snapshotWorkspace({ worktree: dir, baseSha, excludedPaths: ['impl/node_modules'] });
+  assert.deepEqual(result.changedPaths, ['.gitignore', name, 'README.md'].sort());
+  assert.equal(blobAt(dir, result.sha, name), 'literal filename\n');
+  assert.equal(blobAt(dir, result.sha, 'README.md'), 'visible tracked edit\n');
+  assert.equal(inTree(dir, result.sha, 'impl/node_modules/package.json'), false);
+  assert.equal(inTree(dir, result.sha, 'ignored.log'), false);
+  assert.equal(indexBytes(dir), beforeIndex);
+  assert.equal(headSha(dir), baseSha);
+});
+
 test('a force-tracked projection path refuses the snapshot before any git mutation', async (t) => {
   const { dir, baseSha } = makeRepo();
   t.after(() => rmSync(dir, { recursive: true, force: true }));
