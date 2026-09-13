@@ -26,7 +26,7 @@ import { OmpTurnUsageAccumulator, OMP_TOKEN_METRIC } from './omp-usage.mjs';
 import { attestWorkerPolicyObservation } from './worker-policy.mjs';
 import { ProcessCloseReapLatch, normalizeProcessGeneration, processReadyPayload, processStartedPayload } from './process-lifecycle.mjs';
 import { normalizeConcurrencyCeiling } from './concurrency-policy.mjs';
-import { normalizeOmpTaskFrame } from './native-subagent-observations.mjs';
+import { normalizeOmpTaskFrame, normalizeOmpSubagentFrame } from './native-subagent-observations.mjs';
 
 const DEFAULT_MAX_WIRE_FRAME_BYTES = 2 * 1024 * 1024;
 const DEFAULT_MAX_EVENT_PAYLOAD_BYTES = 64 * 1024;
@@ -64,9 +64,17 @@ function extractFinalAssistantText(event) {
 // acks, not provider traffic.
 const PROVIDER_TRAFFIC_FRAME_TYPES = new Set([
   'agent_start', 'turn_start', 'message_update',
-  'tool_execution_start', 'tool_execution_end', 'agent_end',
+  'tool_execution_start', 'tool_execution_update', 'tool_execution_end', 'agent_end',
   'auto_retry_start', 'retry_fallback_applied',
 ]);
+
+// rpc.md: subagent frames (subagent_lifecycle/subagent_progress) are gated behind
+// `set_subagent_subscription` and default to 'off'. Baton requests 'progress' — lifecycle
+// and progress frames, the level that carries terminal child truth — and deliberately NOT
+// 'events', whose subagent_event frames carry full child conversation (prompt) content.
+// The control is OMP-owned: the request is fire-and-forget and an older runtime that does
+// not know the command simply answers failure while Baton's observations stay honest.
+export const OMP_SUBAGENT_SUBSCRIPTION_LEVEL = 'progress';
 
 function unavailableUsageSeal() {
   return { tokens: 'unavailable', usd: 'unavailable', counterId: null, tokenMetric: null };
@@ -715,6 +723,10 @@ export class OmpRpcCli {
     this._observeTransportLiveness(session, frame);
     const native = normalizeOmpTaskFrame(frame, { worker: session.worker, sessionId: session.observedSessionId });
     if (native) this._emit(session, 'native.subagent_observed', native);
+    // Subscription-gated subagent frames (subagent_lifecycle/subagent_progress): the only
+    // wire source of real child terminal status and actual child session identity.
+    const subagent = normalizeOmpSubagentFrame(frame, { worker: session.worker, sessionId: session.observedSessionId });
+    if (subagent) this._emit(session, 'native.subagent_observed', subagent);
     switch (frame.type) {
       case 'agent_start':
         this._emit(session, 'content.message', { phase: 'agent_start' });
@@ -756,9 +768,6 @@ export class OmpRpcCli {
         return;
       case 'agent_end':
         this._onAgentEnd(session, frame);
-        return;
-      case 'auto_retry_start':
-        this._emit(session, 'content.message', { phase: 'notice', note: 'provider_retry_started' });
         return;
       case 'retry_fallback_applied':
         this._emit(session, 'content.message', { phase: 'notice', note: 'provider_retry_fallback', model: frame.model ?? null });
@@ -942,6 +951,10 @@ export class OmpRpcCli {
           session.observedSessionFile = typeof data.sessionFile === 'string' ? data.sessionFile : null;
         }
       }).catch(() => { /* observation only; the death cert omits what it never observed */ });
+      // Native async visibility: request the subscription-gated subagent frames BEFORE the
+      // first turn, so a task delegated in turn one already reports lifecycle/progress.
+      // Fire-and-forget (notify, never re-sent, never fatal): the control stays OMP-owned.
+      session.process.notify({ type: 'set_subagent_subscription', level: OMP_SUBAGENT_SUBSCRIPTION_LEVEL });
       // #230: the FIRST TURN rides spawn — the sibling session-adapter contract
       // (claude-session's pendingBrief flush at process-ready). The coordinator dispatches
       // the brief through spawn() and issues no separate first prompt.
