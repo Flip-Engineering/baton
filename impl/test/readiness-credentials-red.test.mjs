@@ -925,7 +925,9 @@ test('RT-6 (stage: fleet_roster surface missing): the roster projects the closed
       assert.ok(['verified', 'unverified', 'failed'].includes(row.liveness?.state),
         'liveness.state is the §4.1.3 closed vocabulary');
       assert.ok(Number.isSafeInteger(row.occupancy?.inFlight), 'every row carries occupancy.inFlight');
-      assert.ok(row.occupancy?.concurrencyCeiling >= 1, 'every row carries the adapter card ceiling');
+      assert.ok(row.occupancy?.concurrencyCeiling === null
+        || (Number.isSafeInteger(row.occupancy.concurrencyCeiling) && row.occupancy.concurrencyCeiling > 0),
+        'occupancy carries the card\'s CONFIGURED ceiling, or null when no unique card matches — never a fabricated 1 (runtime-policy admission audit F3/P4)');
       assert.equal(row.learning, null,
         'a route with no router bucket projects learning: null — honest-empty, never a fabricated prior (§4.2.1)');
     }

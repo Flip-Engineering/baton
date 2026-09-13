@@ -25,6 +25,7 @@ import { FRAME_LIMITS } from './limits.mjs';
 import { OmpTurnUsageAccumulator, OMP_TOKEN_METRIC } from './omp-usage.mjs';
 import { attestWorkerPolicyObservation } from './worker-policy.mjs';
 import { ProcessCloseReapLatch, normalizeProcessGeneration, processReadyPayload, processStartedPayload } from './process-lifecycle.mjs';
+import { normalizeConcurrencyCeiling } from './concurrency-policy.mjs';
 
 const DEFAULT_MAX_WIRE_FRAME_BYTES = 2 * 1024 * 1024;
 const DEFAULT_MAX_EVENT_PAYLOAD_BYTES = 64 * 1024;
@@ -379,7 +380,7 @@ export class OmpRpcCli {
     this._env = options.env;
     this._spawnFn = options.spawnFn;
     this._reapOwnedProcessGroup = options.reapOwnedProcessGroup;
-    this._ceiling = options.ceiling ?? 4; // provider-true backpressure only; no synthetic seat caps (#221 law)
+    this._ceiling = normalizeConcurrencyCeiling(options.ceiling, 'OmpRpcCli concurrencyCeiling');
     this._maxContext = options.maxContext ?? null;
     this._maxWireFrameBytes = options.maxWireFrameBytes ?? DEFAULT_MAX_WIRE_FRAME_BYTES;
     this._maxEventPayloadBytes = options.maxEventPayloadBytes ?? DEFAULT_MAX_EVENT_PAYLOAD_BYTES;

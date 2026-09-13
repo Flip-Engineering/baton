@@ -227,7 +227,7 @@ test('DC2/DC4: drain policy-resolves pending interaction and publication authori
 
 test('DC1/DC5: max+1 refuses before fencing and an exact retry can still close', async (t) => {
   const f = repo('max-plus-one'); let driver; t.after(async () => { try { await driver?.closeAsync(); } catch {} rmSync(f.world, { recursive: true, force: true }); });
-  const adapter = new MockAdapter({ concurrencyCeiling: 0, scenario: { outcome: 'completed' } });
+  const adapter = new MockAdapter({ scenario: { outcome: 'completed' } });
   driver = createDriver({ repoRoot: f.directory, logDir: f.logDir, repoId: 'repo-a', adapters: { mock: adapter }, drainPolicy: { maxWorkers: 1, timeoutMs: 1_000, pollMs: 5 } });
   await driver.coordinator.spawn('mock', brief('one'), { taskId: 'one' }); await driver.coordinator.spawn('mock', brief('two'), { taskId: 'two' });
   await assert.rejects(driver.drainAndClose(), (error) => error.code === 'coordinator_drain_capacity');

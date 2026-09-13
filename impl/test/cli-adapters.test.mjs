@@ -151,12 +151,15 @@ test('all CLI adapters conform to the session Adapter interface', () => {
   assert.doesNotThrow(() => assertIsAdapter(new PiCli()));
 });
 
-test('cards report the right harness identity and concurrency; GLM/Z-Code is pinned to ceiling 1', () => {
+test('cards report the right harness identity and concurrency; no ceiling is configured unless declared', () => {
   assert.equal(new CodexCli().card().harness, 'codex');
   assert.equal(new ClaudeCli().card().harness, 'claude-code');
   const z = new ZCodeCli().card();
   assert.equal(z.harness, 'glm-via-claude');
-  assert.equal(z.concurrencyCeiling, 1, 'Z.ai Pro ≈ 1 in-flight is a hard limit');
+  assert.equal(z.concurrencyCeiling, null,
+    'no configured limit by default — the Z.ai in-flight constraint is a deployment declaration, never a class default');
+  assert.equal(new ZCodeCli({ ceiling: 1 }).card().concurrencyCeiling, 1,
+    'an explicitly configured ceiling is preserved verbatim');
   assert.equal(new CodexCli().card().verbs.interrupt, 'emulated');
   assert.deepEqual(new CodexCli().card().governance.usage, {
     tokens: 'native', usd: 'unavailable', tokenMetric: 'codex_turn_input_plus_output_tokens', terminalSeal: 'native',

@@ -138,13 +138,22 @@ test('card() returns a well-formed HarnessCard for all four adapters', () => {
     assert.equal(typeof card.harness, 'string', `${name}.harness`);
     assert.equal(typeof card.version, 'string', `${name}.version`);
     assert.ok(['subscription', 'api_key'].includes(card.authPosture), `${name}.authPosture`);
-    assert.ok(Number.isInteger(card.concurrencyCeiling) && card.concurrencyCeiling > 0, `${name}.concurrencyCeiling`);
+    // Canonical representation: a configured positive integer, or null for "no configured limit".
+    // A constructor never invents a number, and never publishes an unbounded sentinel.
+    assert.ok(card.concurrencyCeiling === null
+      || (Number.isSafeInteger(card.concurrencyCeiling) && card.concurrencyCeiling > 0),
+    `${name}.concurrencyCeiling: a configured positive integer or null`);
     assert.ok(Number.isInteger(card.maxContext) && card.maxContext > 0, `${name}.maxContext`);
     assert.equal(typeof card.verbs, 'object', `${name}.verbs`);
     assert.ok('spawn' in card.verbs, `${name}.verbs.spawn required`);
     assert.ok('interrupt' in card.verbs, `${name}.verbs.interrupt required`);
   }
-  assert.equal(new GlmAdapter().card().concurrencyCeiling, 1, 'GLM Pro concurrency ceiling is hard-pinned to 1');
+  // The invented 4/1 constructor defaults are GONE: with no `ceiling` option every card reports
+  // null (no configured limit), and an explicitly configured value is honored verbatim. The
+  // Z.ai ≈ 1 in-flight constraint is a deployment declaration, never a subclass default.
+  assert.equal(new GlmAdapter().card().concurrencyCeiling, null, 'no configured limit unless one is declared');
+  assert.equal(new MockAdapter({ scenario: {}, card: { concurrencyCeiling: 3 } }).card().concurrencyCeiling, 3,
+    'an explicitly configured ceiling survives construction');
   assert.deepEqual(mock.card().governance, {
     usage: { tokens: 'native', usd: 'native', tokenMetric: 'mock_scenario_tokens', terminalSeal: 'native' },
     providerCalls: { observation: 'unavailable', enforcement: 'unavailable' },
@@ -1059,10 +1068,10 @@ test('argv() produces the documented cmd/args for each SubprocessAdapter subclas
   assert.equal(new ClaudeAdapter().argv(brief, { ...opts, permissionMode: 'acceptEdits' }).args.at(-1), 'acceptEdits');
 });
 
-test('GlmAdapter.card() reports harness "glm-via-claude" and concurrencyCeiling 1 despite extending ClaudeAdapter', () => {
+test('GlmAdapter.card() reports harness "glm-via-claude" and no configured ceiling despite extending ClaudeAdapter', () => {
   const card = new GlmAdapter().card();
   assert.equal(card.harness, 'glm-via-claude');
-  assert.equal(card.concurrencyCeiling, 1);
+  assert.equal(card.concurrencyCeiling, null, 'no configured limit is invented at this tier');
 });
 
 // ============================================================

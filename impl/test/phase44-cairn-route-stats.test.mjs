@@ -59,3 +59,36 @@ test('RS2-RS4/RS7: replay rejects policy and observation mutation, and later evi
   events = original.trimEnd().split('\n').map(JSON.parse); observed = events.find((event) => event.kind === 'route.outcome_observed'); observed.payload.verifiedWin = !observed.payload.verifiedWin; const { observationDigest, ...core } = observed.payload; observed.payload.observationDigest = sha({ ...core, idempotencyKey: observed.idempotencyKey }); writeFileSync(path, `${events.map(JSON.stringify).join('\n')}\n`); assert.throws(() => createDriver(w.options), (error) => error.code === 'route_observation_integrity'); writeFileSync(path, original);
   events = original.trimEnd().split('\n').map(JSON.parse); observed = events.find((event) => event.kind === 'route.outcome_observed'); observed.payload.modelFamily = 'substituted-family'; writeFileSync(path, `${events.map(JSON.stringify).join('\n')}\n`); assert.throws(() => createDriver(w.options), (error) => error.code === 'route_observation_integrity');
 });
+
+// A route with no configured limit is honest input to advice: `concurrencyCeiling: null` means
+// "no configured limit" (concurrency-policy.mjs), so an idle-looking or busy-looking in-flight
+// count never makes it ineligible. A malformed value is still refused — the null widening must
+// not become a general escape from validation.
+test('RS6 (unbounded): Cairn advice accepts a null ceiling as "no configured limit" and still refuses a malformed one', async () => {
+  const w = world();
+  const handle = await w.driver.coordinator.spawn('primary', brief('done.txt'), { taskId: 'route-unbounded', taskType: 'implementation', model: 'mock-route-model', effort: 'low' });
+  await until(async () => (await w.driver.coordinator.result(handle.id)).ready, 'advice evidence');
+  const observed = w.driver.coordination.routeObservations()[0];
+  const args = {
+    taskType: 'implementation', observedAt: '2026-07-13T10:00:00.000Z',
+    candidates: [{ routeKey: observed.routeKey, modelFamily: observed.modelFamily, concurrencyCeiling: null, inFlight: 9 }],
+  };
+  const result = await w.driver.coordinator.invokeCapability('cairn', 'route.advice', args, { actor: 'orchestrator', budgetTokens: 4000 });
+  assert.equal(result.payload[0].selectedRouteKey, observed.routeKey, 'an unbounded route is selectable at any in-flight count');
+  assert.equal(result.payload[0].rows[0].eligible, true);
+
+  // Infinity is exercised at the predicate/constructor layer (concurrency-policy-admission
+  // REP-1, router.test.mjs): a capability argument round-trips through JSON, where it is not a
+  // representable value, so the boundary cases here are the ones that survive transport.
+  for (const invalid of [0, -1, '4']) {
+    await assert.rejects(
+      w.driver.coordinator.invokeCapability('cairn', 'route.advice',
+        { ...args, candidates: [{ ...args.candidates[0], concurrencyCeiling: invalid }] },
+        { actor: 'orchestrator', budgetTokens: 4000 }),
+      (error) => error.code === 'route_advice_invalid',
+      `a ${String(invalid)} ceiling is refused, never read as unbounded`,
+    );
+  }
+  await w.driver.coordinator.kill(handle.id, 'policy');
+  w.driver.close();
+});

@@ -58,7 +58,7 @@ function freshStore() { return new CoordinationStore(dir()); }
 class ScriptableAdapter {
   constructor() {
     this._card = {
-      harness: 'mock', version: '1.0.0', authPosture: 'api_key', concurrencyCeiling: Infinity,
+      harness: 'mock', version: '1.0.0', authPosture: 'api_key', concurrencyCeiling: null,
       maxContext: 100000, verbs: { spawn: 'native', interrupt: 'native', answer: 'native', approve: 'native', kill: 'native' }, decision: 'native',
     };
     this._cb = null;

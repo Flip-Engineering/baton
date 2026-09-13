@@ -74,7 +74,7 @@ const DIGEST_OF_EMPTY = createHash('sha256').update(JSON.stringify([])).digest('
 class ScriptableAdapter {
   constructor(turnCompletion) {
     this._card = {
-      harness: 'mock', version: '1.0.0', authPosture: 'api_key', concurrencyCeiling: Infinity,
+      harness: 'mock', version: '1.0.0', authPosture: 'api_key', concurrencyCeiling: null,
       maxContext: 100000,
       verbs: {
         spawn: 'native', prompt: 'native', steer: 'native', interrupt: 'native',

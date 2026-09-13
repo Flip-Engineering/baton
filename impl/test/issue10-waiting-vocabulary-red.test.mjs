@@ -276,7 +276,7 @@ function makeBrief(overrides = {}) {
 class ScriptableAdapter {
   constructor() {
     this._card = {
-      harness: 'mock', version: '1.0.0', authPosture: 'api_key', concurrencyCeiling: Infinity, maxContext: 100000,
+      harness: 'mock', version: '1.0.0', authPosture: 'api_key', concurrencyCeiling: null, maxContext: 100000,
       verbs: { spawn: 'native', interrupt: 'native', answer: 'native', approve: 'native', kill: 'native' },
       decision: 'native', turnCompletion: 'pausable',
     };
@@ -597,8 +597,14 @@ function stripWave(kind) {
 // ===========================================================================
 // §A — capacity_ceiling
 // ===========================================================================
+// Restaged 2026-09-13 (runtime-policy admission audit, D1-A). The #221 ruling killed the
+// INVENTED constructor defaults and the silent skip they produced; it did not license ignoring a
+// ceiling the caller actually configures. Policy now: a configured ceiling is enforced on exact
+// and auto routes alike, and the wait is a durable `task.dispatch_deferred` receipt that the run
+// surfaces as waitingOn.capacity_ceiling until a slot is released. An unconfigured card
+// (`concurrencyCeiling: null`) throttles nothing — the §B rows below keep pinning that.
 
-test('CC-START (#221): the invented ceiling pre-cap is GONE — an over-ceiling task dispatches immediately and no synthetic deferral ever mints', async () => {
+test('CC-START: a CONFIGURED ceiling defers the second exact-route task with a durable receipt — never a silent skip', async () => {
   const adapter = new ScriptableAdapter();
   adapter._card.concurrencyCeiling = 1;
   const { coordinator, coordination } = setup({ adapter });
@@ -606,58 +612,76 @@ test('CC-START (#221): the invented ceiling pre-cap is GONE — an over-ceiling 
   const b = await coordinator.spawn('mock', makeBrief({ goal: 'CC-START b' }));
   const taskA = coordinator._tasks.get(a.taskId);
   const taskB = coordinator._tasks.get(b.taskId);
-  assert.equal(taskA.status, 'working', 'PIN: A works');
-  assert.equal(taskB.status, 'working',
-    'PIN (#221): B dispatches immediately — the invented seat-ceiling pre-cap is ripped out of _dispatchPass; provider-true backpressure (typed 429/rate_limited on the member) is the only queue');
+  assert.equal(taskA.status, 'working', 'A holds the single configured slot');
+  assert.equal(taskB.status, 'pending',
+    'B waits for the configured ceiling — deferred, never dispatched over it and never dropped');
 
   const receipts = () => coordination.events(1).filter((e) => e.kind === 'task.dispatch_deferred');
-  assert.equal(receipts().length, 0,
-    'PIN (#221): no synthetic task.dispatch_deferred ever mints from a ceiling skip — the deferral machinery is reserved for provider-true signals');
+  assert.equal(receipts().length, 1, 'the wait is a durable fact, not a silent skip');
+  assert.equal(receipts()[0].payload.taskId, taskB.id);
+  assert.equal(receipts()[0].payload.vendor, 'mock', 'the resolved vendor, never a reroute target');
+  assert.equal(receipts()[0].payload.ceiling, 1, 'the configured ceiling that gated this pass');
+  assert.equal(receipts()[0].payload.inFlight, 1, 'the frozen mint-time in-flight count');
+  assert.equal(receipts()[0].idempotencyKey,
+    `task.dispatch_deferred:${taskB.id}:${receipts()[0].payload.taskCreatedSeq}`,
+    'the store-documented idempotency key');
 
   coordinator.tick(); coordinator.tick(); coordinator.tick();
-  assert.equal(receipts().length, 0, 're-driven passes never mint either');
-  assert.equal(coordinator.pausedTurns({ taskId: taskB.id }).length, 0, 'PIN: no pause record — nothing ever queued');
+  assert.equal(receipts().length, 1, 're-driven passes re-mint nothing');
+  assert.equal(coordinator.pausedTurns({ taskId: taskB.id }).length, 0, 'no pause record — nothing queued a turn');
 });
 
-test('CC-SHOW (#221): a run NEVER projects waitingOn.capacity_ceiling from a synthetic cap — over-ceiling runs dispatch; the class is reserved for provider-true signals', async (t) => {
+test('CC-SHOW: a ceiling-deferred run projects waitingOn.capacity_ceiling with the receipt — view, runs.list, and outline agree', async (t) => {
   const { application, driver } = harnessApp(t, markerAdapter({
-    slow: { outcome: 'completed', edits: [{ path: 'reports/slow.md', content: 'slow\n', delayMs: 1200 }] },
+    slow: { outcome: 'completed', edits: [{ path: 'reports/slow.md', content: 'slow\n', delayMs: 8_000 }] },
     fast: { outcome: 'completed', edits: [{ path: 'reports/fast.md', content: 'fast\n', delayMs: 100 }] },
   }, { concurrencyCeiling: 1 }));
   const owner = principal('owner');
   const a = await application.start({ objective: 'CC-SHOW (marker:slow): first', profile: 'standard', route: ROUTE, scope: ['**'] }, owner);
   await application.approve(a.runId, a.plan.digest, principal('approver'));
-  const b = await application.start({ objective: 'CC-SHOW (marker:fast): over the invented cap', profile: 'standard', route: ROUTE, scope: ['**'] }, owner);
+  await until(() => driver.coordinator._inFlightCount('mock') === 1, 'A holds the configured slot');
+  const b = await application.start({ objective: 'CC-SHOW (marker:fast): over the configured cap', profile: 'standard', route: ROUTE, scope: ['**'] }, owner);
   const approvedB = await application.approve(b.runId, b.plan.digest, principal('approver'));
-  assert.equal(approvedB.phase, 'running', 'PIN: the run rides the running phase');
+  assert.equal(approvedB.phase, 'running', 'the run rides the running phase while its task waits');
   const bTask = [...driver.coordinator._tasks.values()].find((task) => task.runId === b.runId);
-  assert.equal(bTask.status, 'working', 'PIN (#221): B dispatches — no synthetic ceiling queue exists');
+  assert.equal(bTask.status, 'pending', 'the configured ceiling defers B — never a dispatch over the cap');
 
+  const receipt = driver.coordination.events(1)
+    .find((event) => event.kind === 'task.dispatch_deferred' && event.payload?.taskId === bTask.id);
+  assert.ok(receipt, 'the deferral is a durable fact');
   const view = await application.status(b.runId, owner);
-  assert.ok(view.waitingOn?.kind !== 'capacity_ceiling',
-    'PIN (#221): waitingOn NEVER reads capacity_ceiling from an invented pre-cap — the class survives only for provider-true rate signals (#120)');
+  assert.equal(view.waitingOn?.kind, 'capacity_ceiling', 'the run reports WHY it waits');
+  assert.equal(view.waitingOn.since.eventSeq, receipt.seq, 'since is the receipt event epoch, never wall time');
+  assert.deepEqual(view.waitingOn.detail,
+    { vendor: receipt.payload.vendor, ceiling: receipt.payload.ceiling, inFlight: receipt.payload.inFlight },
+    'the detail names the resolved vendor, the configured ceiling, and the frozen observation');
   const listed = (await application.listRuns(owner)).items.find((item) => item.id === b.runId);
-  assert.ok(listed.waitingOn?.kind !== 'capacity_ceiling', 'the runs.list item agrees');
+  assert.equal(listed.waitingOn?.kind, 'capacity_ceiling', 'the runs.list item agrees');
   const outline = projectBatonCliResult(parseBatonCli(['run', 'status', b.runId]), view);
-  assert.ok(outline.waitingOn?.kind !== 'capacity_ceiling', 'the outline agrees');
+  assert.equal(outline.waitingOn?.kind, 'capacity_ceiling', 'the outline agrees');
 });
 
-test('CC-EXIT (#221): no queue to exit — B works from admission and waitingOn reads honest null throughout', async (t) => {
+test('CC-EXIT: the released slot admits the deferred task and waitingOn clears — never a synthetic queue', async (t) => {
   const { application, driver } = harnessApp(t, markerAdapter({
-    slow: { outcome: 'completed', edits: [{ path: 'reports/slow.md', content: 'slow\n', delayMs: 1000 }] },
+    slow: { outcome: 'completed', edits: [{ path: 'reports/slow.md', content: 'slow\n', delayMs: 300 }] },
     fast: { outcome: 'completed', edits: [{ path: 'reports/fast.md', content: 'fast\n', delayMs: 80 }] },
   }, { concurrencyCeiling: 1 }));
   const owner = principal('owner');
   const a = await application.start({ objective: 'CC-EXIT (marker:slow): first', profile: 'standard', route: ROUTE, scope: ['**'] }, owner);
   await application.approve(a.runId, a.plan.digest, principal('approver'));
-  const b = await application.start({ objective: 'CC-EXIT (marker:fast): never queued', profile: 'standard', route: ROUTE, scope: ['**'] }, owner);
+  const b = await application.start({ objective: 'CC-EXIT (marker:fast): waits for the slot', profile: 'standard', route: ROUTE, scope: ['**'] }, owner);
   await application.approve(b.runId, b.plan.digest, principal('approver'));
+  const bTaskOf = () => [...driver.coordinator._tasks.values()].find((taskItem) => taskItem.runId === b.runId);
 
-  const bTask = [...driver.coordinator._tasks.values()].find((taskItem) => taskItem.runId === b.runId);
-  assert.equal(bTask.status, 'working', 'PIN (#221): B works from admission — there is no slot to wait for');
-  const view = await application.status(b.runId, owner);
-  assert.equal(view.waitingOn?.kind === 'capacity_ceiling' ? view.waitingOn : null, null,
-    'PIN (#221): honest null from the start — no synthetic queue to exit');
+  const receipt = await until(() => driver.coordination.events(1)
+    .find((event) => event.kind === 'task.dispatch_deferred' && event.payload?.taskId === bTaskOf()?.id),
+  'B is deferred by the configured ceiling and the receipt is durable');
+  assert.equal(receipt.payload.ceiling, 1);
+
+  await until(() => bTaskOf()?.status === 'working',
+    'the released slot admits B on its own exact route');
+  await until(async () => (await application.status(b.runId, owner)).waitingOn === null,
+    'a dispatched-and-completed run reads honest null — the capacity wait is over');
 });
 
 test('CC-HONEST (RED): reduceMember classes capacity_ceiling, never working', () => {
@@ -678,10 +702,13 @@ test('CC-STRIP (RED): waitingOn.capacity_ceiling transitions never move the wave
 // ===========================================================================
 
 // Patch the coordinator's vendor resolver so a named run's task can never resolve a vendor —
-// the task stays claimed-but-undispatched with NO receipt (the Arm-2 condition).
+// the task stays claimed-but-undispatched with NO receipt (the Arm-2 condition: no capable
+// route, which is NOT the ceiling-deferral case and must never read as capacity_ceiling).
+// `_resolveVendor` returns the closed admission outcome; 'unavailable' is the no-route arm.
 function stallVendorFor(driver, runId) {
   const realResolve = driver.coordinator._resolveVendor.bind(driver.coordinator);
-  driver.coordinator._resolveVendor = (task) => (task.runId === runId ? null : realResolve(task));
+  driver.coordinator._resolveVendor = (task) => (task.runId === runId
+    ? { outcome: 'unavailable', reason: 'no_capable_route' } : realResolve(task));
   return realResolve;
 }
 
@@ -754,15 +781,19 @@ test('DP-EXIT-a (RED): a restored resolver dispatches the pending task and waiti
   assert.equal(view.waitingOn, null, 'stage[waiting-on-exit-missing]: a dispatched-and-completed run reads honest null');
 });
 
-test('DP-EXIT-b (#221): a dispatch_pending task exits DIRECTLY to dispatch on vendor resolution — never through a synthetic capacity_ceiling stop', async (t) => {
+// The row inventory above specifies this exit exactly: restoring the resolver while A still holds
+// the configured slot flips dispatch_pending → capacity_ceiling (Arm-2 → Arm-1), never null
+// mid-queue and never a silent skip.
+test('DP-EXIT-b: restoring the resolver under a held CONFIGURED slot flips dispatch_pending to capacity_ceiling with the durable receipt', async (t) => {
   const { application, driver } = harnessApp(t, markerAdapter({
-    slow: { outcome: 'completed', edits: [{ path: 'reports/slow.md', content: 'slow\n', delayMs: 1200 }] },
+    slow: { outcome: 'completed', edits: [{ path: 'reports/slow.md', content: 'slow\n', delayMs: 8_000 }] },
     fast: { outcome: 'completed', edits: [{ path: 'reports/fast.md', content: 'fast\n', delayMs: 100 }] },
   }, { concurrencyCeiling: 1 }));
   const owner = principal('owner');
   const a = await application.start({ objective: 'DP-EXIT-b (marker:slow): first', profile: 'standard', route: ROUTE, scope: ['**'] }, owner);
   await application.approve(a.runId, a.plan.digest, principal('approver'));
-  const b = await application.start({ objective: 'DP-EXIT-b (marker:fast): exits straight to dispatch', profile: 'standard', route: ROUTE, scope: ['**'] }, owner);
+  await until(() => driver.coordinator._inFlightCount('mock') === 1, 'A holds the configured slot');
+  const b = await application.start({ objective: 'DP-EXIT-b (marker:fast): dispatch_pending flips', profile: 'standard', route: ROUTE, scope: ['**'] }, owner);
   const realResolve = stallVendorFor(driver, b.runId);
   await application.approve(b.runId, b.plan.digest, principal('approver'));
 
@@ -773,10 +804,14 @@ test('DP-EXIT-b (#221): a dispatch_pending task exits DIRECTLY to dispatch on ve
   driver.coordinator._resolveVendor = realResolve;
   driver.coordinator.tick();
   const bTask = [...driver.coordinator._tasks.values()].find((task) => task.runId === b.runId);
-  assert.equal(bTask.status, 'working', 'PIN (#221): the vendor resolves → the task dispatches. No ceiling stop exists to flip into');
+  const receipt = await until(() => driver.coordination.events(1)
+    .find((event) => event.kind === 'task.dispatch_deferred' && event.payload?.taskId === bTask.id),
+  'the resolved-but-saturated vendor mints the Arm-1 receipt');
+  assert.equal(bTask.status, 'pending', 'A still holds the only configured slot — B waits, it is not dispatched over it');
   view = await application.status(b.runId, owner);
-  assert.ok(view.waitingOn?.kind !== 'capacity_ceiling',
-    'PIN (#221): dispatch_pending NEVER exits to capacity_ceiling — the invented pre-cap is gone; only provider-true signals may queue a member');
+  assert.equal(view.waitingOn?.kind, 'capacity_ceiling',
+    'the Arm-2 → Arm-1 exit: a resolved route at its configured ceiling is a ledgered wait — never null mid-queue');
+  assert.equal(view.waitingOn.since.eventSeq, receipt.seq, 'since is the receipt event epoch');
 });
 
 test('DP-EXIT-c (RED): a cancelled pre-dispatch run reads honest null', async (t) => {

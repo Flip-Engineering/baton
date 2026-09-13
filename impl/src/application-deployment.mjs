@@ -23,7 +23,9 @@ import {
   defaultRepositoryContextPolicy, RepositoryContextRuntime,
 } from './context-runtime.mjs';
 import { GrokAcpCli } from './grok-acp.mjs';
+import { KimiAcpCli } from './kimi-acp.mjs';
 import { OmpRpcCli } from './omp-rpc.mjs';
+import { normalizeConcurrencyCeiling } from './concurrency-policy.mjs';
 import { RuntimeIsolation, runtimeIdentity } from './runtime-isolation.mjs';
 import { ResidentAuthority, stableDeploymentId } from './resident-authority.mjs';
 import { DEFAULT_RUN_LINEAGE_POLICY } from './run-lineage.mjs';
@@ -746,17 +748,35 @@ const MIN_ADAPTER_WIRE_FRAME_BYTES = 64 * 1024;
 const MAX_ADAPTER_WIRE_FRAME_BYTES = 16 * 1024 * 1024;
 const DEFAULT_DEPLOYMENT_WIRE_FRAME_BYTES = 8 * 1024 * 1024;
 
+/**
+ * `advanced.adapterOptions` is the deployment CALLER's channel for adapter configuration.
+ * `concurrencyCeiling` is optional and defaults to nothing at all: a built-in route with no
+ * caller-supplied value configures NO limit (`card().concurrencyCeiling === null`), and Baton
+ * never invents one. When supplied it is enforced on every route by dispatch admission
+ * (coordinator `_dispatchPass`), which ledgers `task.dispatch_deferred` instead of skipping.
+ */
 function normalizeAdapterOptions(value) {
   if (value === undefined) return Object.freeze({});
-  closed(value, ['maxWireFrameBytes'], 'advanced adapterOptions');
-  if (value.maxWireFrameBytes === undefined) return Object.freeze({});
-  const n = value.maxWireFrameBytes;
-  if (!Number.isSafeInteger(n) || n < MIN_ADAPTER_WIRE_FRAME_BYTES || n > MAX_ADAPTER_WIRE_FRAME_BYTES) {
-    throw deploymentError(
-      'advanced.adapterOptions.maxWireFrameBytes must be an integer between 64KiB and 16MiB',
-    );
+  closed(value, ['concurrencyCeiling', 'maxWireFrameBytes'], 'advanced adapterOptions');
+  const options = {};
+  if (value.maxWireFrameBytes !== undefined) {
+    const n = value.maxWireFrameBytes;
+    if (!Number.isSafeInteger(n) || n < MIN_ADAPTER_WIRE_FRAME_BYTES || n > MAX_ADAPTER_WIRE_FRAME_BYTES) {
+      throw deploymentError(
+        'advanced.adapterOptions.maxWireFrameBytes must be an integer between 64KiB and 16MiB',
+      );
+    }
+    options.maxWireFrameBytes = n;
   }
-  return Object.freeze({ maxWireFrameBytes: n });
+  if (value.concurrencyCeiling !== undefined) {
+    try {
+      const ceiling = normalizeConcurrencyCeiling(value.concurrencyCeiling, 'advanced.adapterOptions.concurrencyCeiling');
+      if (ceiling !== null) options.concurrencyCeiling = ceiling;
+    } catch (error) {
+      throw deploymentError(error.message);
+    }
+  }
+  return Object.freeze(options);
 }
 
 /**
@@ -782,10 +802,9 @@ class DeepseekSessionCli extends GlmSessionCli {
       ...(credentialPresent ? { authTokenFile } : {}),
       harness: 'deepseek',
       baseUrl: 'https://api.deepseek.com/anthropic',
-      // Operator policy (2026-08-04): deepseek-v4-flash runs WIDE — the inherited glm default
-      // ceiling:1 is GLM Pro's provider constraint, not deepseek's. Default 4 (the claude-family
-      // default); explicit opts.ceiling always wins.
-      ceiling: opts.ceiling ?? 4,
+      // `ceiling` flows through verbatim from the deployment caller (or is absent = null): the
+      // deleted `?? 4` here was a hidden second default that masked the inherited class value.
+      ceiling: opts.ceiling,
     });
     this._deepseekCredentialPresent = credentialPresent;
   }
@@ -818,6 +837,10 @@ class DeepseekSessionCli extends GlmSessionCli {
 }
 
 function builtInAdapters(routes, repoRoot, adapterOptions = {}, claudeCredentialCache = null) {
+  // No built-in route declares a concurrency ceiling. A card configures one only when the
+  // deployment caller supplies it (advanced.adapterOptions.concurrencyCeiling); otherwise it is
+  // null — "no configured limit" — and dispatch admission throttles nothing.
+  const ceiling = adapterOptions.concurrencyCeiling;
   const adapters = {};
   const kimiCommand = existingRegular(join(homedir(), '.kimi-code', 'bin', 'kimi'))
     ? join(homedir(), '.kimi-code', 'bin', 'kimi') : 'kimi';
@@ -834,33 +857,34 @@ function builtInAdapters(routes, repoRoot, adapterOptions = {}, claudeCredential
     const route = rows[0];
     if (route.harness === 'codex') {
       adapters[key] = new CodexAppServerCli({
-        cmd: codexCommand(), requestTimeoutMs: 45_000, model: route.model, ceiling: 4,
+        cmd: codexCommand(), requestTimeoutMs: 45_000, model: route.model, ceiling,
       });
     } else if (route.harness === 'grok') {
-      adapters[key] = new GrokAcpCli({ requestTimeoutMs: 45_000, model: route.model, ceiling: 4 });
+      adapters[key] = new GrokAcpCli({
+        requestTimeoutMs: 45_000, model: route.model, ceiling,
+      });
     } else if (route.harness === 'omp') {
       // #228: OhMyPi as a native member harness — deepseek/glm ride omp's first-class
-      // providers directly, no anthropic-compat translation. Exact models per the catalog;
-      // provider-true backpressure only (no synthetic seat caps, #221 law).
+      // providers directly, no anthropic-compat translation. Exact models per the catalog.
       const catalog = Object.fromEntries([...new Set(rows.map((row) => row.model))].map((model) => [
         model, [...new Set(rows.filter((row) => row.model === model).map((row) => row.effort))],
       ]));
       adapters[key] = new OmpRpcCli({
-        requestTimeoutMs: 45_000, model: route.model, modelCatalog: catalog, ceiling: 4,
+        requestTimeoutMs: 45_000, model: route.model, modelCatalog: catalog, ceiling,
       });
     } else if (route.harness === 'kimi-code') {
       const catalog = Object.fromEntries([...new Set(rows.map((row) => row.model))].map((model) => [
         model, [...new Set(rows.filter((row) => row.model === model).map((row) => row.effort))],
       ]));
       adapters[key] = new KimiAcpCli({
-        cmd: kimiCommand, requestTimeoutMs: 45_000, model: route.model, modelCatalog: catalog, ceiling: 1,
+        cmd: kimiCommand, requestTimeoutMs: 45_000, model: route.model, modelCatalog: catalog, ceiling,
       });
     } else if (route.harness === 'claude-code' && (route.provider ?? 'claude') === 'claude') {
       // Wave workloads legitimately produce multi-MiB stream-json frames (large ranged reads,
       // suite outputs). Issue #28: deployment-owned ceiling (default 8MiB) plus graceful
       // degradation for oversized tool_result frames (discard + wire.frame_degraded receipt).
       adapters[key] = new ClaudeSessionCli({
-        model: route.model, approvals: false, ceiling: 4, maxWireFrameBytes,
+        model: route.model, approvals: false, ceiling, maxWireFrameBytes,
         ...(claudeCredentialCache ? {
           credentialController: claudeCredentialCache,
           providerSecretsProbe: () => [claudeCredentialCache.credential?.accessToken].filter(Boolean),
@@ -871,7 +895,7 @@ function builtInAdapters(routes, repoRoot, adapterOptions = {}, claudeCredential
       const credential = kimiThroughClaudeCredential();
       if (!existingRegular(credential)) throw deploymentError('Kimi-through-Claude requires the private Baton Kimi credential file');
       adapters[key] = new KimiSessionCli({
-        authTokenFile: credential, repoRoot, model: route.model, approvals: false, ceiling: 2, maxWireFrameBytes,
+        authTokenFile: credential, repoRoot, model: route.model, approvals: false, ceiling, maxWireFrameBytes,
       });
     } else if (route.harness === 'deepseek') {
       const allowedModels = new Set(['deepseek-v4-flash', 'deepseek-v4-pro[1m]']);
@@ -880,9 +904,7 @@ function builtInAdapters(routes, repoRoot, adapterOptions = {}, claudeCredential
       }
       adapters[key] = new DeepseekSessionCli({
         ...deepseekCredentialProjection(repoRoot),
-        // Operator policy (2026-08-04): deepseek runs WIDE — the explicit ceiling:1 here was the
-        // same scaffolding fossil as the class default (masked by it until now); 4 per the policy.
-        model: 'deepseek-v4-flash', approvals: false, ceiling: 4, maxWireFrameBytes,
+        model: 'deepseek-v4-flash', approvals: false, ceiling, maxWireFrameBytes,
       });
     } else if (route.harness === 'glm') {
       const allowedModels = new Set(['glm-5.2', 'glm-5.3']);
@@ -893,10 +915,9 @@ function builtInAdapters(routes, repoRoot, adapterOptions = {}, claudeCredential
       if (!existingRegular(credential)) throw deploymentError('GLM routes require the project credential file');
       adapters[key] = new GlmSessionCli({
         authTokenFile: credential, authTokenJsonPointer: '/glm_key', harness: 'glm',
-        // Operator policy (2026-08-14): the 1× ceiling on the cheapest seats was a scaffolding
-        // fossil — GLM runs wide like its cheap-seat siblings (4). glm-5.2 stays the
-        // construction default; per-run route.model (e.g. glm-5.3) flows through the dialect.
-        model: 'glm-5.2', approvals: false, ceiling: 4, maxWireFrameBytes,
+        // glm-5.2 stays the construction default; per-run route.model (e.g. glm-5.3) flows
+        // through the dialect.
+        model: 'glm-5.2', approvals: false, ceiling, maxWireFrameBytes,
       });
     } else {
       throw deploymentError(`unsupported built-in route ${route.harness}`);
@@ -1456,13 +1477,17 @@ class BatonDeployment {
     return { liveness, occupancy: this.#occupancyFor(route) };
   }
 
+  /** RT-7: the coordinator's real seat count plus the card's CONFIGURED ceiling — or `null` when
+   * no unique card matches (ambiguous/unmatched route) or the card declares no limit. Absence is
+   * never projected as a number: the old `: 1` fabricated a policy nobody configured (audit F3). */
   #occupancyFor(route) {
     const match = this.#liveness?.adapterFor(route);
     const vendor = match?.vendor ?? route.harness;
     const inFlight = typeof this.#driver.coordinator?._inFlightCount === 'function'
       ? this.#driver.coordinator._inFlightCount(vendor) : 0;
-    const ceiling = Number.isSafeInteger(match?.adapter?.card()?.concurrencyCeiling)
-      ? match.adapter.card().concurrencyCeiling : 1;
+    const ceiling = match
+      ? normalizeConcurrencyCeiling(match.adapter.card()?.concurrencyCeiling, `${vendor} concurrencyCeiling`)
+      : null;
     return Object.freeze({ inFlight, concurrencyCeiling: ceiling });
   }
 

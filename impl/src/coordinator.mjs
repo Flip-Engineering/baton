@@ -16,6 +16,7 @@ import {
 } from './messages.mjs';
 import { FRAME_LIMITS, MAX_MESSAGE_DEPTH_BUDGET, composeFrameLimitRefusal, frameLimitRefusalPath } from './limits.mjs';
 import { parseRouteTupleKey, resolveEffort, routeTupleKey } from './route-tuple.mjs';
+import { normalizeConcurrencyCeiling } from './concurrency-policy.mjs';
 import { hasNorthboundCapabilityAuthority } from './northbound-capability-authority.mjs';
 import {
   processAuthorityPayload, processAuthorityState, processGroupAlive, processReadyPayload,
@@ -2838,22 +2839,60 @@ export class Coordinator {
     throw error;
   }
 
+  /** One admission pass over every dependency-ready pending task. A task whose resolved vendor is
+   * at its CONFIGURED ceiling defers on a durable `task.dispatch_deferred` receipt instead of a
+   * silent skip; a card that configures no ceiling (`null`) throttles nothing. An exact route is
+   * never rerouted — it waits for its own vendor. */
   _dispatchPass() {
     if (this._closed || this._drainState !== 'open') return;
     for (const taskId of this._taskOrder) {
       const task = this._tasks.get(taskId);
       if (!task || task.status !== 'pending') continue;
       if (task.deps.some((d) => this._tasks.get(d)?.status !== 'completed')) continue;
-      const selection = this._resolveVendor(task);
-      const vendor = selection?.vendor;
-      if (!vendor || !this._adapters[vendor]) continue;
-      // #221 (operator ruling, 2026-08-14): the seat-ceiling pre-cap is ripped out. It was an
-      // invented literal that silently queued spawns ahead of any real provider signal — the
-      // phantom/fleet-stall wedge's true mechanism (misread as a spawn defect for two days).
-      // Backpressure is provider-TRUE now: a real 429/quota answer arrives as a typed,
-      // retried, ledgered provider event on the member — never a silent synthetic queue.
-      this._dispatch(task, vendor, selection.model, selection.effort, selection.workerPolicyResolution);
+      const admission = this._resolveVendor(task);
+      if (admission.outcome === 'deferred') {
+        this._deferTaskDispatch(task, admission);
+        continue;
+      }
+      if (admission.outcome !== 'selected') continue;
+      const { selection } = admission;
+      if (!this._adapters[selection.vendor]) continue;
+      this._dispatch(task, selection.vendor, selection.model, selection.effort, selection.workerPolicyResolution);
     }
+  }
+
+  /** Mint the ceiling-deferral receipt: idempotency-keyed, so re-driven passes and replay mint
+   * nothing. A receipt that CANNOT be recorded is never reported as a durable wait — the
+   * authoritative-coordination failure is fatal and propagates. */
+  _deferTaskDispatch(task, deferral) {
+    const taskCreatedSeq = this._coordination.task(task.id)?.createdEvent;
+    if (!Number.isSafeInteger(taskCreatedSeq) || taskCreatedSeq <= 0) {
+      throw this._poisonDeferral(Object.assign(
+        new Error(`task ${task.id} has no durable created event to key its dispatch deferral`),
+        { code: 'dispatch_deferral_unrecorded' },
+      ));
+    }
+    try {
+      return this._coordination.deferTaskDispatch({
+        taskId: task.id, vendor: deferral.vendor, ceiling: deferral.ceiling,
+        inFlight: deferral.inFlight, taskCreatedSeq,
+      }, {
+        actor: 'orchestrator',
+        key: `task.dispatch_deferred:${task.id}:${taskCreatedSeq}`,
+      });
+    } catch (error) {
+      throw this._poisonDeferral(Object.assign(
+        new Error(`task ${task.id} dispatch deferral was not recorded: ${error?.message ?? error}`),
+        { code: 'dispatch_deferral_unrecorded', cause: error },
+      ));
+    }
+  }
+
+  /** A deferral that could not be recorded is a fatal authoritative-write failure: poison the
+   * coordinator AND throw the typed refusal, so no caller reads it as a durable wait. */
+  _poisonDeferral(refusal) {
+    this._poisonCoordination(refusal);
+    return refusal;
   }
 
   _sweepDeadlines() {
@@ -2890,6 +2929,8 @@ export class Coordinator {
     }
   }
 
+  /** Dispatch admission for one pending task, as a closed outcome: `selected` | `deferred`
+   * {vendor, ceiling, inFlight} | `unavailable` {reason}. */
   _resolveVendor(task) {
     if (task.vendorRequested !== 'auto') {
       const selected = this._resolveExplicitRoute(task.vendorRequested, {
@@ -2897,8 +2938,29 @@ export class Coordinator {
         modelPolicy: task.modelPolicy, effort: task.effortRequested,
         workerPolicyRequest: task.workerPolicyRequest,
       });
-      return selected.ok ? selected.selection : null;
+      if (!selected.ok) return { outcome: 'unavailable', reason: selected.reason ?? 'route_unavailable' };
+      return this._admitResolvedVendor(selected.selection);
     }
+    const auto = this._selectAutoRoute(task);
+    if (auto.selection) return this._admitResolvedVendor(auto.selection);
+    if (auto.saturated) return { outcome: 'deferred', ...auto.saturated };
+    return { outcome: 'unavailable', reason: 'no_capable_route' };
+  }
+
+  /** The ONE configured-ceiling enforcement point, applied to the vendor a route actually
+   * resolved — so no `_route` implementation, adaptive or custom, can dispatch over a configured
+   * ceiling, and an exact route is deferred for its own vendor rather than rerouted. */
+  _admitResolvedVendor(selection) {
+    const vendor = selection.vendor;
+    const inFlight = this._inFlightCount(vendor);
+    const ceiling = this._configuredCeiling(vendor);
+    if (ceiling !== null && inFlight >= ceiling) return { outcome: 'deferred', vendor, ceiling, inFlight };
+    return { outcome: 'selected', selection };
+  }
+
+  /** The auto route: build the capable card set, select over it, and report the first saturated
+   * capable candidate when selection yields nothing (so the wait is ledgered with a real vendor). */
+  _selectAutoRoute(task) {
     const cards = {};
     const resolvedModels = {};
     const resolvedWorkerPolicies = {};
@@ -2924,11 +2986,35 @@ export class Coordinator {
     const inFlight = {};
     for (const name of Object.keys(this._adapters)) inFlight[name] = this._inFlightCount(name);
     const chosen = this._route(task, cards, inFlight);
-    if (!chosen || !this._adapters[chosen] || !Object.hasOwn(resolvedModels, chosen)) return null;
-    return {
-      vendor: chosen, model: resolvedModels[chosen], effort: cards[chosen]._resolvedEffort ?? null,
-      workerPolicyResolution: resolvedWorkerPolicies[chosen] ?? null,
-    };
+    if (chosen && this._adapters[chosen] && Object.hasOwn(resolvedModels, chosen)) {
+      return {
+        selection: {
+          vendor: chosen, model: resolvedModels[chosen], effort: cards[chosen]._resolvedEffort ?? null,
+          workerPolicyResolution: resolvedWorkerPolicies[chosen] ?? null,
+        },
+        saturated: null,
+      };
+    }
+    return { selection: null, saturated: this._firstSaturatedCandidate(cards, inFlight) };
+  }
+
+  /** The card's configured ceiling, or null for "no configured limit"/no card. */
+  _configuredCeiling(vendor) {
+    return normalizeConcurrencyCeiling(
+      this._adapters[vendor]?.card()?.concurrencyCeiling, `${vendor} concurrencyCeiling`,
+    );
+  }
+
+  /** The first capable candidate (registration order) at its configured ceiling. Candidates
+   * without one are skipped: absence never defers anything, and the receipt names a real vendor. */
+  _firstSaturatedCandidate(cards, inFlight) {
+    for (const name of Object.keys(cards)) {
+      const ceiling = normalizeConcurrencyCeiling(cards[name].concurrencyCeiling, `${name} concurrencyCeiling`);
+      if (ceiling === null) continue;
+      const active = inFlight[name] ?? 0;
+      if (active >= ceiling) return { vendor: name, ceiling, inFlight: active };
+    }
+    return null;
   }
 
   _resolveExplicitRoute(requestedHarness, options = {}) {
@@ -2976,6 +3062,13 @@ export class Coordinator {
     };
   }
 
+  /**
+   * The vendor's live seat count: handles in `working | stopping | blocked`. A native-session
+   * worker blocked on an interaction still holds its provider session, so counting it is
+   * provider-true — which means an unanswered question consumes one configured ceiling slot
+   * (audit F9: keep-and-document, not a defect). This is an observation; it is never written
+   * back into a card, and a card that configures no ceiling never reads it for admission.
+   */
   _inFlightCount(vendor) {
     let n = 0;
     for (const h of this._workers.values()) {

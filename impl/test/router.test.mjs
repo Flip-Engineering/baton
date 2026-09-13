@@ -123,6 +123,36 @@ test('respects concurrency: a maxed vendor is skipped in favor of one with headr
   assert.equal(picked, 'other');
 });
 
+// `concurrencyCeiling: null` is the canonical "no configured limit" (concurrency-policy.mjs):
+// it is NEVER a zero-capacity vendor and never ineligible. Both comparisons used to coerce
+// absence into permanent exclusion.
+test('a null ceiling is unbounded: the candidate is eligible at any in-flight count', () => {
+  const router = new AdaptiveRouter({ mode: 'round-robin', now: () => T0 });
+  const unbounded = [
+    candidate({ modelVersion: 'null-ceiling', concurrencyCeiling: null, inFlight: 7 }),
+    candidate({ modelVersion: 'missing-field', concurrencyCeiling: undefined, inFlight: 7 }),
+  ];
+  assert.equal(router.pick({ taskType: 'build' }, unbounded, { now: T0 }), 'null-ceiling');
+  assert.equal(router.pick({ taskType: 'build' }, [unbounded[1]], { now: T0 }), 'missing-field',
+    'an absent field means the same absence as an explicit null');
+});
+
+test('advice() agrees: a null ceiling is eligible and a malformed one is refused', () => {
+  const router = new AdaptiveRouter({ mode: 'round-robin', now: () => T0 });
+  const advice = router.advice({ taskType: 'build' }, [
+    candidate({ modelVersion: 'unbounded', concurrencyCeiling: null, inFlight: 9 }),
+    candidate({ modelVersion: 'maxed', concurrencyCeiling: 1, inFlight: 1 }),
+  ], { now: T0 });
+  assert.equal(advice.selected, 'unbounded');
+  assert.deepEqual(advice.rows.map((row) => [row.modelVersion, row.eligible, row.reason]), [
+    ['unbounded', true, 'round_robin_selected'],
+    ['maxed', false, 'concurrency_saturated'],
+  ]);
+  assert.throws(() => router.advice({ taskType: 'build' }, [candidate({ concurrencyCeiling: Infinity })]),
+    (error) => error instanceof TypeError && /positive safe integer or null/.test(error.message),
+    'a fake-unbounded sentinel is a configuration error, never silently read as "no limit"');
+});
+
 // ===========================================================================
 // mode:auto — off by default until enough history
 // ===========================================================================

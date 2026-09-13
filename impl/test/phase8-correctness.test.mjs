@@ -130,7 +130,7 @@ function spyOn(obj, methodNames) {
 // cluster's fixture, so this file has no build-order/import dependency on coordinator.test.mjs.
 
 class FakeAdapter {
-  constructor({ harness = 'fake', version = '1.0.0', concurrencyCeiling = Infinity } = {}) {
+  constructor({ harness = 'fake', version = '1.0.0', concurrencyCeiling = null } = {}) {
     this._card = {
       harness, version, authPosture: 'api_key', concurrencyCeiling, maxContext: 100000,
       verbs: { spawn: 'native', interrupt: 'native' },

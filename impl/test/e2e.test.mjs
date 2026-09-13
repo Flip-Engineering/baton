@@ -528,19 +528,20 @@ test('E2E interrupt: two-phase stop actually lands mid-run — stopping synchron
 });
 
 // ============================================================
-// 4. #221: two same-vendor tasks are admitted and run CONCURRENTLY — the invented seat
-//    ceiling is gone; both contributions are verified as separate real runs.
+// 4. Two same-vendor tasks are admitted and run CONCURRENTLY when the card configures NO
+//    ceiling — absence throttles nothing (a card that DOES configure one is enforced with a
+//    durable deferral receipt; see coordinator.test.mjs "a configured ceiling defers...").
 // ============================================================
 
-test('E2E concurrency (#221): two tasks on the same vendor are admitted together and both real contributions are verified separately', async (t) => {
+test('E2E concurrency: with no configured ceiling, two tasks on the same vendor are admitted together and both real contributions are verified separately', async (t) => {
   const scenario = { outcome: 'completed', edits: [{ path: 'done.txt', content: 'ok' }] };
-  // The card keeps a GLM-shaped ceiling of 1 — exactly like coordinator.test.mjs's #221 pins. The
-  // OLD contract read that ceiling as a dispatch queue and demanded B stay 'pending' until A
-  // finished. That pre-cap was an invented literal ripped out of `_dispatchPass` (operator ruling
-  // #221): selection never consults a card ceiling, and provider-TRUE backpressure is the only
-  // queue. One shared MockAdapter instance drives both workers; the delivery gate below makes
+  // The card declares no concurrencyCeiling (canonical null = no configured limit). The #221
+  // ruling killed the invented 4/1 constructor defaults; the 2026-09-13 admission pass closed
+  // the other half — a CONFIGURED ceiling now defers with a ledgered receipt instead of a
+  // silent skip — so an unconfigured card is the honest fixture for "both run at once".
+  // One shared MockAdapter instance drives both workers; the delivery gate below makes
   // their overlap provable without a slow delay standing in for concurrency.
-  const adapter = new MockAdapter({ scenario, card: { harness: 'glm-via-claude', version: '1.0.0', concurrencyCeiling: 1 } });
+  const adapter = new MockAdapter({ scenario, card: { harness: 'glm-via-claude', version: '1.0.0' } });
   const delivered = gatedDelivery(adapter);
   const sys = setupSystem({ adapter: delivered.adapter, adapterVendor: 'glm' });
   cleanupSystem(t, sys, delivered.release);

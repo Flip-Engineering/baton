@@ -359,7 +359,7 @@ const OVERSIZED_STANDING_LAWS = Array.from({ length: 60 }, (_, i) => ({
 class ScriptableAdapter {
   constructor() {
     this._card = {
-      harness: 'mock', version: '1.0.0', authPosture: 'api_key', concurrencyCeiling: Infinity, maxContext: 100000,
+      harness: 'mock', version: '1.0.0', authPosture: 'api_key', concurrencyCeiling: null, maxContext: 100000,
       verbs: { spawn: 'native', interrupt: 'native', answer: 'native', approve: 'native', kill: 'native' },
       decision: 'native', turnCompletion: 'pausable',
       modelSelection: {

@@ -70,7 +70,7 @@ function decisionRequestFields(overrides = {}) {
  * decision-kind approve/answer wait-item matching (mirrors adapter.mjs MockAdapter's own
  * decision support, but under full synchronous test control). */
 class ScriptableAdapter {
-  constructor({ harness = 'mock', version = '1.0.0', concurrencyCeiling = Infinity, maxContext = 100000, verbs = {} } = {}) {
+  constructor({ harness = 'mock', version = '1.0.0', concurrencyCeiling = null, maxContext = 100000, verbs = {} } = {}) {
     this._card = {
       harness, version, authPosture: 'api_key', concurrencyCeiling, maxContext,
       verbs: { spawn: 'native', interrupt: 'native', answer: 'native', approve: 'native', kill: 'native', ...verbs },
