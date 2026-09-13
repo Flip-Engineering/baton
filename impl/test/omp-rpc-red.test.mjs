@@ -121,11 +121,12 @@ test('TERMINALITY: agent_end isTerminal:false NEVER settles the turn', async () 
     'the continuation is surfaced as evidence');
   emitFrame(adapter, 'w-term', {
     type: 'agent_end', isTerminal: true,
-    telemetry: { usage: { input: 10, output: 5 }, cost: 0.001 },
+    messages: [{ role: 'assistant', provider: 'deepseek', model: 'deepseek-v4-flash',
+      usage: { totalTokens: 15, cost: { total: 0.001 } } }],
   });
   const done = events.filter((event) => event.kind === 'lifecycle.turn_completed');
   assert.equal(done.length, 1, 'terminal agent_end settles exactly once');
-  assert.equal(done[0].payload.usageSeal.tokens, 'reported', 'usage seal from terminal telemetry');
+  assert.equal(done[0].payload.usageSeal.tokens, 'reported', 'usage seal from native terminal messages');
   await adapter.kill('w-term');
 });
 

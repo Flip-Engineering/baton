@@ -22,6 +22,7 @@ import { renderBrief } from './adapter.mjs';
 import { scanForMessageSend } from './claude-session.mjs';
 import { WORKER_MESSAGE_GUIDANCE } from './messages.mjs';
 import { FRAME_LIMITS } from './limits.mjs';
+import { OmpTurnUsageAccumulator, OMP_TOKEN_METRIC } from './omp-usage.mjs';
 import { attestWorkerPolicyObservation } from './worker-policy.mjs';
 import { ProcessCloseReapLatch, normalizeProcessGeneration, processReadyPayload, processStartedPayload } from './process-lifecycle.mjs';
 
@@ -408,12 +409,12 @@ export class OmpRpcCli {
       concurrencyCeiling: this._ceiling,
       maxContext: this._maxContext,
       governance: {
-        usage: { tokens: 'event-telemetry', usd: 'event-telemetry', terminalSeal: 'reported' },
-        providerCalls: { observation: 'native-retry-events', enforcement: 'unavailable' },
+        usage: { tokens: 'native', usd: 'native', tokenMetric: OMP_TOKEN_METRIC, terminalSeal: 'native' },
+        providerCalls: { observation: 'unavailable', enforcement: 'unavailable' },
         toolCalls: { observation: 'native', enforcement: 'unavailable' },
         maxWireFrameBytes: this._maxWireFrameBytes,
-        contentStream: { mode: 'bounded-coalescing', flushBytes: this._streamChunkBytes },
       },
+      contentStream: { mode: 'bounded-coalescing', flushBytes: this._streamChunkBytes },
       modelSelection: {
         mode: 'exact', configuredDefault: this._defaultModel, available: [...this._catalog.keys()],
         family: 'omp', acceptedPrefixes: [], acceptedAliases: [], reasoningEffort: efforts,
@@ -585,7 +586,8 @@ export class OmpRpcCli {
   _startTurn(session, message) {
     session.turnEpoch += 1;
     session.turnSequence += 1;
-    const turn = { turnId: `omp-${session.turnSequence}`, streams: { text: '' } };
+    const turn = { turnId: `omp-${session.turnSequence}`, streams: { text: '' },
+      usage: new OmpTurnUsageAccumulator(session.worker, session.turnEpoch, session.processGeneration ?? 1) };
     session.activeTurn = turn;
     this._emit(session, 'lifecycle.turn_started', {
       phase: 'turn_started', turnId: turn.turnId, turnEpoch: session.turnEpoch,
@@ -603,6 +605,7 @@ export class OmpRpcCli {
     // TERMINALITY (evidence-only): `isTerminal === false` means omp scheduled more work —
     // maintenance or async delivery will resume the session. NOT terminal, never killed.
     if (event.isTerminal === false) {
+      if (session.activeTurn) this._turnUsage(session).finalize({ isTerminal: false, terminalMessages: event.messages });
       this._flushTurnStreams(session);
       this._emit(session, 'content.message', {
         phase: 'notice', note: 'agent_end_non_terminal',
@@ -616,17 +619,20 @@ export class OmpRpcCli {
     this._flushTurnStreams(session);
     session.terminalTurns.add(turn.turnId);
     session.activeTurn = null;
-    const telemetry = event.telemetry ?? null;
-    if (telemetry && (telemetry.usage || telemetry.tokens)) {
-      const usage = telemetry.usage ?? telemetry.tokens;
-      this._emit(session, 'resource.tokens', {
-        reported: true, ...usage, usage,
-        modelRequested: session.modelRequested, modelObserved: telemetry.model ?? null,
-      });
+    const usage = this._turnUsage(session, turn);
+    if (usage.messageEndCount === 0 && Array.isArray(event.messages)) {
+      // Missing streaming coverage: preserve each native model observation and call's delta.
+      // The terminal list contains the new native messages, never prior session history.
+      for (const message of event.messages) {
+        if (message?.role !== 'assistant') continue;
+        usage.consumeMessageStart({ type: 'message_start', message });
+        this._recordUsageObservation(session, turn, usage.consumeMessageEnd({ type: 'message_end', message }));
+      }
     }
-    const usageSeal = telemetry
-      ? { tokens: 'reported', usd: telemetry.cost !== undefined ? 'reported' : 'unavailable', counterId: null, tokenMetric: 'agent_end.telemetry' }
-      : unavailableUsageSeal();
+    const observation = usage.finalize({ terminalMessages: event.messages });
+    this._recordUsageObservation(session, turn, observation);
+    const usageSeal = observation.seal ?? unavailableUsageSeal();
+    session.lastUsageSeal = usageSeal;
     const pending = session.pendingInterrupt;
     if (pending?.turnId === turn.turnId) {
       // Ending the target turn satisfies interruption, even if normal completion raced abort.
@@ -642,10 +648,17 @@ export class OmpRpcCli {
     // the trust gate read a verdict-less turn_completed. The verdict's summary is the final
     // assistant message's text; artifacts.files is an ARRAY (empty when omp reports none) —
     // never undefined, so consumers can treat it as the reducer shape.
-    const finalText = extractFinalAssistantText(event);
+    const finalAssistant = (Array.isArray(event.messages) ? event.messages : [])
+      .findLast((message) => message?.role === 'assistant') ?? turn.lastAssistant;
+    const finalText = extractFinalAssistantText(event)
+      ?? extractFinalAssistantText({ messages: finalAssistant ? [finalAssistant] : [] });
+    const failed = ['error', 'aborted'].includes(finalAssistant?.stopReason);
     this._emit(session, 'lifecycle.turn_completed', {
       phase: 'turn_completed', turnId: turn?.turnId ?? null, turnEpoch: session.turnEpoch,
-      status: 'completed',
+      status: failed ? 'failed' : 'completed',
+      ...(failed ? { failure: { code: `omp_${finalAssistant.stopReason}`,
+        message: String(finalAssistant.errorMessage ?? finalAssistant.stopReason)
+          .slice(0, FRAME_LIMITS['view.omp.final_summary'].value) } } : {}),
       summary: finalText,
       artifacts: { files: Array.isArray(event.artifacts) ? event.artifacts : [] },
       openQuestions: [],
@@ -654,6 +667,26 @@ export class OmpRpcCli {
     // Native `steer` owns its queue and consumes messages within the active agent run.
     // Replaying a remembered steer here duplicates an already delivered effect and can race
     // verification of the completed turn. Only an explicit later prompt starts another turn.
+  }
+
+  _turnUsage(session, turn = session.activeTurn) {
+    return turn.usage ??= new OmpTurnUsageAccumulator(
+      session.worker, session.turnEpoch, session.processGeneration ?? 1,
+    );
+  }
+
+  _recordUsageObservation(session, turn, observation) {
+    if (!observation?.resourceTokens && !observation?.modelObserved) return;
+    this._emit(session, 'resource.tokens', {
+      source: 'message_end', accounting: 'delta', counterId: this._turnUsage(session, turn).counterId,
+      ...observation.resourceTokens,
+      ...(observation.modelObserved ? { modelObserved: observation.modelObserved } : {}),
+    });
+  }
+
+  _usageSeal(session) {
+    return session.activeTurn?.usage?.snapshot().seal
+      ?? session.pendingInterrupt?.usageSeal ?? session.lastUsageSeal ?? unavailableUsageSeal();
   }
 
   _maybeConfirmInterrupt(session) {
@@ -681,22 +714,36 @@ export class OmpRpcCli {
         return;
       case 'turn_start':
         return;
+      case 'message_start':
+        if (session.activeTurn) this._turnUsage(session).consumeMessageStart(frame);
+        return;
+      case 'message_end': {
+        const turn = session.activeTurn;
+        if (!turn) return;
+        const observation = this._turnUsage(session, turn).consumeMessageEnd(frame);
+        if (observation.ok && observation.code !== 'duplicate_message_end' && frame.message?.role === 'assistant') {
+          turn.lastAssistant = frame.message;
+        }
+        this._recordUsageObservation(session, turn, observation);
+        return;
+      }
       case 'message_update': {
         const delta = frame.assistantMessageEvent;
         if (delta?.type === 'text_delta') {
-          if (!session.activeTurn) session.activeTurn = { turnId: `omp-${session.turnSequence + 1}`, streams: { text: '' } };
-          this._appendStreamChunk(session, session.activeTurn, 'text', delta.delta);
+          // A late delta is content, not proof that another provider turn began. In particular,
+          // it must not invent a turn between interrupt target completion and abort response.
+          if (session.activeTurn) this._appendStreamChunk(session, session.activeTurn, 'text', delta.delta);
         }
         return;
       }
       case 'tool_execution_start':
         this._emit(session, 'content.tool_call', {
-          phase: 'start', toolCallId: frame.toolCallId ?? null, tool: frame.toolName ?? null,
+          phase: 'requested', nativePhase: 'start', toolCallId: frame.toolCallId ?? null, tool: frame.toolName ?? null,
         });
         return;
       case 'tool_execution_end':
         this._emit(session, 'content.tool_call', {
-          phase: 'end', toolCallId: frame.toolCallId ?? null, tool: frame.toolName ?? null,
+          phase: frame.isError === true ? 'failed' : 'completed', nativePhase: 'end', toolCallId: frame.toolCallId ?? null, tool: frame.toolName ?? null,
           ok: frame.isError !== true,
         });
         return;
@@ -906,7 +953,7 @@ export class OmpRpcCli {
       // #201 A1: the RESUME HANDLE rides the cert — the observed session identity and
       // session-file (absent when never observed; never invented).
       this._emit(session, 'lifecycle.crashed', {
-        phase: 'process_exit',
+        phase: 'process_exit', usageSeal: this._usageSeal(session),
         exitCode: outcome?.exitCode ?? null,
         signal: outcome?.signal ?? null,
         error: outcome?.failure ? String(outcome.failure.message ?? outcome.failure) : 'omp rpc process exited during an active turn',
@@ -946,6 +993,7 @@ export class OmpRpcCli {
   async interrupt(worker, then) {
     const session = this._sessions.get(worker);
     if (!session || session.closed) return { ok: false, reason: `unknown worker ${worker}` };
+    if (session.killing) return { ok: false, notSent: true, reason: 'omp process is stopping' };
     session.controlGeneration = (session.controlGeneration ?? 0) + 1;
     if (session.pendingInterrupt) {
       session.pendingInterrupt.then = then;
@@ -1023,7 +1071,7 @@ export class OmpRpcCli {
     const terminalCause = session.setupFailed ? 'setup' : session.process.failure ? 'process_error' : null;
     void session.process.kill({
       kind: 'kill.confirmed',
-      payload: { ...(terminalCause ? { terminalCause } : {}), usageSeal: unavailableUsageSeal() },
+      payload: { ...(terminalCause ? { terminalCause } : {}), usageSeal: this._usageSeal(session) },
     });
     return { ok: true };
   }

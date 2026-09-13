@@ -33,11 +33,11 @@ class Child extends EventEmitter {
   responses(id) { return this.written.filter((frame) => frame.type === 'extension_ui_response' && frame.id === id); }
 }
 
-async function fixture(t) {
+async function fixture(t, { model = 'm', governed = false } = {}) {
   const root = mkdtempSync(join(tmpdir(), 'baton-omp-questions-'));
   const children = [];
   const adapter = new OmpRpcCli({
-    modelCatalog: { m: ['high'] }, versionProbe: () => '17.4.0-fixture', requestTimeoutMs: 1000,
+    modelCatalog: { [model]: ['high'] }, versionProbe: () => '17.4.0-fixture', requestTimeoutMs: 1000,
     reapOwnedProcessGroup: async () => ({ confirmed: true, reason: null }),
     spawnFn: () => {
       const child = new Child(); children.push(child);
@@ -55,6 +55,12 @@ async function fixture(t) {
       worktreeAvailable: () => true,
     },
     referee: async () => ({ reverified: true, passed: true, observedExit: 0 }),
+    ...(governed ? { providerGovernance: {
+      schemaVersion: 1, maxWireFrameBytes: 2 * 1024 * 1024,
+      maxProviderCallsPerTurn: 10, maxToolCallsPerTurn: 10,
+      routes: [{ harness: 'omp', model, effort: 'high', mode: 'observe',
+        terminalReserve: { tokens: 100, usd: 0.01 } }],
+    } } : {}),
     route: () => 'omp', now: Date.now, approvalTimeoutMs: 60000, stopDeadlineMs: 1000,
   });
   t.after(async () => {
@@ -66,7 +72,7 @@ async function fixture(t) {
   const handle = await coordinator.spawn('omp', {
     goal: 'Answer questions', constraints: [], pathScope: ['**'], definitionOfDone: 'Question answered',
     verification: { command: 'true', expectExit: 0 }, budget: { tokens: 10000, usd: 1, wallMin: 10 },
-  }, { model: 'm', effort: 'high' });
+  }, { model, effort: 'high' });
   await new Promise((resolve) => setImmediate(resolve));
   await coordinator._workers.get(handle.id).nativeSpawnPromise;
   assert.ok(children[0], 'Coordinator launched the native adapter boundary');
@@ -234,4 +240,36 @@ test('OMP interrupt through Coordinator suppresses acceptance and delays follow-
   assert.equal(fx.coordinator._workers.get(fx.handle.id).turnInFlight, true);
   assert.equal(fx.coordinator.list().find((worker) => worker.id === fx.handle.id).status, 'working');
   assert.equal(captures, 0);
+});
+
+
+test('OMP native accounting reaches Coordinator budgets, route observation and governed terminal seals', async (t) => {
+  const model = 'deepseek/deepseek-v4-flash';
+  const fx = await fixture(t, { model, governed: true });
+  let captures = 0;
+  fx.coordinator._runTrustGate = async () => { captures += 1; };
+  const native = {
+    role: 'assistant', provider: 'deepseek', model: 'deepseek-v4-flash',
+    timestamp: 100, content: [{ type: 'text', text: 'Implemented.' }], stopReason: 'stop',
+    usage: { input: 5, output: 7, cacheRead: 11, cacheWrite: 0, totalTokens: 23,
+      cost: { total: 0.001 } },
+  };
+  fx.child.frame({ type: 'message_start', message: { role: 'assistant' } });
+  fx.child.frame({ type: 'message_end', message: native });
+  const handle = fx.coordinator._workers.get(fx.handle.id);
+  assert.deepEqual(handle.budgetUsed, { tokens: 23, usd: 0.001 });
+  assert.equal(handle.modelObserved, model);
+  assert.equal(handle.modelMismatch, undefined);
+  assert.equal(handle.turnInFlight, true);
+  fx.child.frame({ type: 'tool_execution_start', toolCallId: 'native-tool', toolName: 'read' });
+  fx.child.frame({ type: 'tool_execution_end', toolCallId: 'native-tool', toolName: 'read', isError: false });
+  assert.equal(handle.providerTurn.toolCalls, 1);
+  assert.notEqual(handle.providerTelemetryFailed, true);
+  fx.child.frame({ type: 'agent_end', isTerminal: true, messages: [native] });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(handle.budgetUsed, { tokens: 23, usd: 0.001 });
+  assert.equal(handle.providerTerminalSeal.tokens, 'reported');
+  assert.equal(handle.providerTerminalSeal.usd, 'reported');
+  assert.notEqual(handle.providerTelemetryFailed, true);
+  assert.equal(captures, 1, 'complete observed usage satisfies the configured observation gate');
 });

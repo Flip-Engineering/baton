@@ -24,26 +24,33 @@ test('OMP-TURN-VERDICT: a terminal agent_end carries the turn verdict — status
     requestTimeoutMs: 5_000, model: 'm', modelCatalog: { m: ['high'] }, ceiling: 1,
     versionProbe: () => 'omp test',
     spawnFn: () => {
-      const child = { pid: 4242, stdin: { write: () => {} }, stdout: new PassThrough(), stderr: new PassThrough(), kill: () => {}, on: () => {}, once: () => {} };
+      const child = { pid: 4242, stdin: {}, stdout: new PassThrough(), stderr: new PassThrough(), kill: () => {}, on: () => {}, once: () => {} };
       const w = (o) => child.stdout.write(JSON.stringify(o) + '\n');
-      setImmediate(() => {
-        w({ type: 'ready', protocolVersion: 1 });
-        setTimeout(() => w({ type: 'agent_start' }), 20);
-        setTimeout(() => w({ type: 'turn_start' }), 25);
-        // the final assistant message — the verdict's summary source
-        setTimeout(() => w({ type: 'message_update', assistantMessageEvent: { type: 'text_delta', delta: 'Implemented and verified the row deliverable.' } }), 40);
-        setTimeout(() => w({ type: 'turn_end', message: { role: 'assistant', content: [{ type: 'text', text: 'Implemented and verified the row deliverable.' }] } }), 60);
-        setTimeout(() => w({ type: 'agent_end', isTerminal: true, messages: [{ role: 'assistant', content: [{ type: 'text', text: 'Implemented and verified the row deliverable.' }] }] }), 80);
-      });
+      child.stdin.write = (line) => {
+        const frame = JSON.parse(line);
+        queueMicrotask(() => {
+          if (frame.id) w({ type: 'response', id: frame.id, success: true });
+          if (frame.type !== 'prompt') return;
+          // Native provider events follow the issued prompt, never startup wall-clock timers.
+          w({ type: 'agent_start' });
+          w({ type: 'turn_start' });
+          const message = { role: 'assistant', content: [{ type: 'text', text: 'Implemented and verified the row deliverable.' }] };
+          w({ type: 'message_update', assistantMessageEvent: { type: 'text_delta', delta: message.content[0].text } });
+          w({ type: 'turn_end', message });
+          w({ type: 'agent_end', isTerminal: true, messages: [message] });
+        });
+        return true;
+      };
+      queueMicrotask(() => w({ type: 'ready', protocolVersion: 1 }));
       return child;
     },
   });
-  const events = [];
-  adapter.onEvent((e) => events.push(e));
+  let resolveCompletion;
+  const completion = new Promise((resolve) => { resolveCompletion = resolve; });
+  adapter.onEvent((e) => { if (e.kind === 'lifecycle.turn_completed') resolveCompletion(e); });
   const ack = await adapter.spawn('w-pin', { goal: 'produce a verdict' }, { worktree: '/tmp', model: 'm', reasoningEffort: 'high' });
   assert.equal(ack.ok, true, `spawn ok (${JSON.stringify(ack).slice(0, 80)})`);
-  await new Promise((r) => setTimeout(r, 400));
-  const completed = events.filter((e) => e.kind === 'lifecycle.turn_completed').at(-1);
+  const completed = await completion;
   assert.ok(completed, 'a terminal agent_end completes the turn');
   assert.equal(completed.payload?.status, 'completed',
     `turn_completed carries status:'completed' (got ${JSON.stringify(completed.payload?.status)}) — the trust gate reads this`);

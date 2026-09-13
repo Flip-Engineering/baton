@@ -46,6 +46,13 @@ function boundedIdentifier(value) {
     && IDENTIFIER.test(value);
 }
 
+// Native model IDs may be provider-qualified and carry context suffixes such as [1m].
+// Validate those literal components without treating a slash as a routing mismatch.
+function boundedModelIdentifier(value) {
+  return typeof value === 'string' && Buffer.byteLength(value) <= MAX_IDENTIFIER_BYTES
+    && value.split('/').every((part) => /^[A-Za-z0-9][A-Za-z0-9._:\-[\]]*$/u.test(part));
+}
+
 function positiveSafeInteger(value) {
   return Number.isSafeInteger(value) && value > 0;
 }
@@ -120,7 +127,7 @@ export function normalizeProviderGovernancePolicy(value, harnesses) {
   const routes = value.routes.map((route) => {
     if (!exactFields(route, ROUTE_FIELDS)
       || !boundedIdentifier(route.harness) || !known.has(route.harness)
-      || !boundedIdentifier(route.model) || !boundedIdentifier(route.effort)
+      || !boundedModelIdentifier(route.model) || !boundedIdentifier(route.effort)
       || !['strict', 'observe'].includes(route.mode)
       || !exactFields(route.terminalReserve, RESERVE_FIELDS)
       || !Number.isSafeInteger(route.terminalReserve.tokens) || route.terminalReserve.tokens < 0

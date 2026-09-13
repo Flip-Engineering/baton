@@ -66,16 +66,26 @@ Runtime credential isolation also changes HOME/config locations; therefore prese
 native customization requires explicit support, rather than assuming that starting the executable
 preserves its normal skills/plugins/settings. Do not copy an entire credential home as a substitute.
 
-**OMP identity and usage.** The current adapter still ignores native assistant `message_end`
-usage and identity. Installed 17.4.0 source carries `provider`, `model`, `usage.totalTokens` and
-`usage.cost.total` on those messages; its `agent_end` aggregate telemetry is optional. Baton
-currently relies on that optional aggregate and does not normalize every dimension into the
-coordinator's token/USD fields. During the observer self-build, real tool activity was visible
-while the route projection still said provider identity pending. Do not infer zero spend or
-observed model identity from this omission. A follow-up must map native usage once, avoid double
-counting aggregates/replay, distinguish configured from observed model/effort, and preserve native failure/usage distinctions. The card's unsupported claim of tool-allowlist
-enforcement has been removed. This is an adapter gap, not a reason to
-disable native tools or subagents.
+**OMP identity and usage.** Native assistant `message_end` events now feed live token/USD
+accounting and observed provider-qualified model identity. The native token metric includes cache
+reads/writes. Process generation and turn identity scope the counters; start/end boundaries avoid
+replaying a completed message while allowing a real subsequent call with identical contents.
+Terminal messages provide fallback when no streaming coverage exists; unverified aggregate
+telemetry is not added. Incomplete coverage cannot certify a full usage seal. Native costs below
+the ledger's nanodollar precision round upward, with the original amount retained; absent amounts
+remain unreported. Ordinary native errors/aborts retain incurred usage and cannot claim successful
+work. Actual model changes remain observable; configured effort is not invented as observed effort.
+The provider-governance parser now accepts native qualified IDs and context suffixes while keeping
+exact route matching. Tool events use canonical lifecycle phases. Native pre-effect enforcement
+and provider-call enumeration remain unavailable; the card states those limits.
+
+A separate native Claude agent authored the accounting helper, which root revised after adverse
+review and integration. Its direct CLI contribution is not Baton acceptance. A captured native
+OMP review stream supplies 41 real assistant calls: replay accounts 5,025,726 native tokens (including
+cache) and $0.051988253 in the canonical ledger, with no terminal aggregate double-count. Raw
+native amounts total approximately $0.0519882328; the difference is the documented rounding.
+All 139 OMP/governance checks, 24 production checks, the surface audits and packed installation
+pass at this follow-up. The full-suite release limitation below remains.
 
 **Native subagents.** Baton currently has more evidence for the adapter's main process than for
 the harness's delegated participants. Native delegation should remain available, with clear

@@ -181,3 +181,17 @@ test('digest binds every public governance field and exact route reserve/mode', 
   ];
   for (const variant of variants) assert.notEqual(normalizeProviderGovernancePolicy(variant, harnesses).digest, base);
 });
+
+
+test('native provider-qualified model IDs and context suffixes retain exact route identity', () => {
+  const models = ['deepseek/deepseek-v4-flash', 'deepseek/deepseek-v4-pro[1m]'];
+  const normalized = normalizeProviderGovernancePolicy(policy({ routes: models.map((model) =>
+    route({ harness: 'omp', model })) }), ['omp']);
+  for (const model of models) {
+    assert.equal(providerGovernanceRoute(normalized, 'omp', model, 'low').model, model);
+    assert.equal(providerGovernanceRoute(normalized, 'omp', model.split('/').at(-1), 'low'), null);
+  }
+  for (const model of ['../private', '/absolute', 'provider/../private', 'provider//model']) {
+    rejects(policy({ routes: [route({ harness: 'omp', model })] }), ['omp']);
+  }
+});

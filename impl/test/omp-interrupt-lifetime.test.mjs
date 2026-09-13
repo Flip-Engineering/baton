@@ -109,3 +109,23 @@ test('OMP an idle interrupt confirms without waiting for a nonexistent turn', as
   assert.equal(f.events.filter((e) => e.kind === 'control.interrupt_confirmed').length, 1);
   assert.equal(f.frames.filter((frame) => frame.type === 'abort').length, 0);
 });
+
+
+test('OMP late text after target completion cannot create a phantom turn or swallow follow-up', async () => {
+  const f = fixture();
+  await f.adapter.interrupt(f.session.worker, 'next scope');
+  f.end();
+  f.adapter._onFrame(f.session, { type: 'message_update',
+    assistantMessageEvent: { type: 'text_delta', delta: 'late target text' } });
+  assert.equal(f.session.activeTurn, null);
+  f.response.resolve({ success: true });
+  await flush();
+  assert.deepEqual(f.frames.filter((frame) => frame.type === 'prompt').map((frame) => frame.message), ['next scope']);
+});
+
+test('OMP interruption during process stop admits no new abort or follow-up', async () => {
+  const f = fixture();
+  await f.adapter.kill(f.session.worker);
+  assert.equal((await f.adapter.interrupt(f.session.worker, 'obsolete')).notSent, true);
+  assert.equal(f.frames.length, 0);
+});
