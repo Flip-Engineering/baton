@@ -12,6 +12,7 @@ import {
   deriveSurfaceNames,
 } from './application-semantics.mjs';
 import { compileWavefile } from './workflow-dsl.mjs';
+import { SWARM_MCP_TOOL_DEFINITIONS } from './swarm-surface.mjs';
 
 // Issue #233 (canonical naming unification): every mcp-flagged application definition is
 // admitted under BOTH spellings, derived through the ONE canonicalAndTransportNames seam — the
@@ -816,8 +817,47 @@ const LEGACY_ORDINARY_APPLICATION_TOOL_DEFINITIONS = Object.freeze([
 // registry (M4b). A canonical tool is its legacy sibling under the derived canonical name; the wire
 // schema and annotations (from idempotent/destructive) are the sibling's, so a caller reaches one
 // operation under either spelling.
+// Swarm family (docs/39-swarm-runtime.md): the ordinary-surface tools for the living-swarm verbs.
+// Registration-gated — a row is advertised exactly when the shared command registry carries its
+// command (root spreads SWARM_COMMAND_DEFINITIONS into APPLICATION_COMMAND_DEFINITIONS), which is
+// also the spread that puts the tool name into APPLICATION_TOOL/CAPABILITY/STATEFUL/RECONCILABLE
+// above. Envelope fields follow the registry row's own flags: repoId always, idempotencyKey only
+// for the stateful verbs (capture/check are identity-keyed, like the wave member lanes). Each
+// tool's dot-spelling twin derives from this table through CANONICAL_DOT_TOOL_DEFINITIONS.
+// Exported (not just module-internal) so the activation is verifiable against a registry map that
+// carries the family — the integration seam root lands — without re-deriving the schema by hand.
+export function swarmApplicationToolDefinitions(definitions = APPLICATION_COMMAND_DEFINITIONS) {
+  return SWARM_MCP_TOOL_DEFINITIONS
+    .filter((tool) => Object.hasOwn(definitions, tool.command))
+    .map((tool) => {
+      const definition = definitions[tool.command];
+      return Object.freeze({
+        name: tool.name,
+        description: tool.description,
+        inputSchema: schema({
+          ...repo,
+          ...(definition.mcpStateful === true ? idem : {}),
+          ...tool.properties,
+        }, [
+          'repoId',
+          ...(definition.mcpStateful === true ? ['idempotencyKey'] : []),
+          ...tool.required,
+        ]),
+        annotations: Object.freeze({
+          readOnlyHint: tool.readOnlyHint,
+          destructiveHint: tool.destructiveHint,
+          idempotentHint: true,
+          openWorldHint: false,
+        }),
+      });
+    });
+}
+
+const SWARM_APPLICATION_TOOL_DEFINITIONS = Object.freeze(swarmApplicationToolDefinitions());
+
 const ORDINARY_APPLICATION_TOOL_DEFINITIONS = Object.freeze([
   ...LEGACY_ORDINARY_APPLICATION_TOOL_DEFINITIONS,
+  ...SWARM_APPLICATION_TOOL_DEFINITIONS,
   ...CANONICAL_ORDINARY_SIBLINGS.map((sibling) => {
     const base = LEGACY_ORDINARY_APPLICATION_TOOL_DEFINITIONS.find((tool) => tool.name === sibling.legacyTool);
     return Object.freeze({ ...base, name: sibling.tool });
