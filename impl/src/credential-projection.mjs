@@ -3,6 +3,7 @@ import {
   openSync, readFileSync, writeSync,
 } from 'node:fs';
 import { dirname, isAbsolute, join, relative, sep } from 'node:path';
+import { parseDocument } from 'yaml';
 
 // #245: identity stores GROW by design (the omp agent.db carries session history — the
 // 2026-08-20 campaign's reached 1.36MB and killed every member at spawn under the old
@@ -46,6 +47,20 @@ function sameIdentity(left, right) {
     && left.mtimeNs === right.mtimeNs && left.ctimeNs === right.ctimeNs;
 }
 
+function collectSecretValues(value, output, key = '') {
+  if (typeof value === 'string') {
+    if (value.length >= 8 && /(?:api[_-]?key|token|secret|password|credential|authorization)/i.test(key)) {
+      output.add(value);
+    }
+    return;
+  }
+  if (Array.isArray(value)) {
+    for (const item of value) collectSecretValues(item, output, key);
+  } else if (value && typeof value === 'object') {
+    for (const [childKey, item] of Object.entries(value)) collectSecretValues(item, output, childKey);
+  }
+}
+
 function collectRedactions(relativeFile, bytes, output) {
   const text = bytes.toString('utf8');
   const credentialShaped = relativeFile.includes(`${sep}credentials${sep}`)
@@ -53,15 +68,7 @@ function collectRedactions(relativeFile, bytes, output) {
     || /(?:^|[._-])(?:auth|credential|key)(?:[._-]|$)/iu.test(relativeFile);
   if (credentialShaped && relativeFile.endsWith('.json')) {
     try {
-      const visit = (value, key = '') => {
-        if (typeof value === 'string') {
-          if (value.length >= 8 && /(?:api[_-]?key|token|secret|password|credential)/i.test(key)) output.add(value);
-          return;
-        }
-        if (Array.isArray(value)) { for (const item of value) visit(item, key); return; }
-        if (value && typeof value === 'object') for (const [childKey, item] of Object.entries(value)) visit(item, childKey);
-      };
-      visit(JSON.parse(text));
+      collectSecretValues(JSON.parse(text), output);
     } catch { throw projectionError('credential_json_invalid'); }
   } else if (credentialShaped) {
     const secret = text.trim();
@@ -69,6 +76,16 @@ function collectRedactions(relativeFile, bytes, output) {
   }
   if (relativeFile.endsWith('config.toml')) {
     for (const match of text.matchAll(SECRET_ASSIGNMENT)) output.add(match[1]);
+  }
+  // Native OMP config/model overlays can carry inline keys and authorization headers.
+  // Parse YAML scalars (including escapes/aliases) without executing tags or key commands.
+  // Parser diagnostics may contain source values, so expose only the bounded refusal code.
+  if (/\.ya?ml$/i.test(relativeFile)) {
+    try {
+      const document = parseDocument(text);
+      if (document.errors.length || document.warnings.length) throw projectionError('credential_yaml_invalid');
+      collectSecretValues(document.toJS(), output);
+    } catch { throw projectionError('credential_yaml_invalid'); }
   }
 }
 

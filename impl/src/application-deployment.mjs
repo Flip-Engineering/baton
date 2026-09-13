@@ -87,18 +87,19 @@ const KIMI_TOKEN_WIRE_FIELDS = Object.freeze([
 const KIMI_CREDENTIAL_FILES = Object.freeze([
   'config.toml', 'device_id', 'credentials/kimi-code.json', 'oauth/kimi-code',
 ]);
-const GLM_EFFORTS = Object.freeze(['low', 'medium', 'high', 'xhigh', 'max']);
+const GLM_EFFORTS = Object.freeze(['low', 'high', 'max']);
 const glmRoutes = () => GLM_EFFORTS.map((effort) => Object.freeze({
   // #228 (operator-ordered migration): deepseek/glm ride omp (OhMyPi) as FIRST-CLASS
   // providers — native provider support, no anthropic-compat translation, no orphaned
   // claude-code member processes. Route ids are provider/model paths.
-  harness: 'omp', model: 'glm/glm-5.2', effort,
+  harness: 'omp', model: 'zai/glm-5.3-flash', effort,
 }));
-const DEEPSEEK_FLASH_EFFORTS = Object.freeze(['low', 'medium', 'high', 'xhigh', 'max']);
+const DEEPSEEK_FLASH_EFFORTS = Object.freeze(['low', 'high', 'max']);
 const DEEPSEEK_PRO_EFFORTS = Object.freeze(['low', 'medium']);
 const deepseekRoutes = () => [
   ...DEEPSEEK_FLASH_EFFORTS.map((effort) => Object.freeze({
-    harness: 'omp', model: 'deepseek/deepseek-v4-flash', effort,
+    // The provider's canonical API name for V4.1 Flash. The old V4 name is an alias.
+    harness: 'omp', model: 'deepseek/deepseek-flash', effort,
   })),
   // The pro[1m] label precedes its unpublished update: retain it as an explicit pre-update
   // opt-in only. Flash stays first so it is the adapter-configured default model.
@@ -130,6 +131,7 @@ const DEFAULT_ROUTES = Object.freeze([
     harness: 'claude-code', provider: 'claude', model: 'claude-opus-4-6', effort,
   })),
   ...deepseekRoutes(),
+  ...glmRoutes(),
 ]);
 
 function deploymentError(message) {
@@ -644,8 +646,12 @@ function defaultCredentialProjection(repoRoot, { projectNativeKimi = false, clau
   // 2026-08-15: 25+ min of a live member with zero established sockets).
   const ompRoot = join(homedir(), '.omp');
   if (existingRegular(join(ompRoot, 'agent', 'agent.db'))) {
+    const ompRelativeFiles = ['.omp/agent/agent.db', '.omp/agent/config.yml'];
+    if (existingRegular(join(ompRoot, 'agent', 'models.yml'))) {
+      ompRelativeFiles.push('.omp/agent/models.yml');
+    }
     credentialTrees.omp = [{
-      sourceRoot: homedir(), relativeFiles: Object.freeze(['.omp/agent/agent.db', '.omp/agent/config.yml']),
+      sourceRoot: homedir(), relativeFiles: Object.freeze(ompRelativeFiles),
     }];
   }
   const credentialEnv = {};
@@ -685,9 +691,6 @@ function locallyReadyRoutes(repoRoot) {
       harness: 'claude-code', provider: 'kimi', model: 'kimi-k3[1m]', effort: 'max',
     }));
   }
-  if (existingRegular(join(repoRoot, 'glm_key.json'))) {
-    routes.push(...glmRoutes());
-  }
   return routes;
 }
 
@@ -711,9 +714,6 @@ function locallyConfiguredRoutes(repoRoot) {
     routes.push(Object.freeze({
       harness: 'claude-code', provider: 'kimi', model: 'kimi-k3[1m]', effort: 'max',
     }));
-  }
-  if (existingRegular(join(repoRoot, 'glm_key.json'))) {
-    routes.push(...glmRoutes());
   }
   return routes;
 }

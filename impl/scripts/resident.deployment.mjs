@@ -10,10 +10,8 @@ export async function createBatonDeployment({ repo = process.cwd(), routes, veri
       routes: routes ?? [
         { harness: 'codex', model: 'gpt-5.6-sol', effort: 'high' },
         { harness: 'claude-code', provider: 'claude', model: 'claude-sonnet-4-6', effort: 'high' },
-        { harness: 'omp', model: 'deepseek/deepseek-v4-flash', effort: 'high' },
-        { harness: 'omp', model: 'deepseek/deepseek-v4-pro[1m]', effort: 'high' },
-        { harness: 'omp', model: 'glm/glm-5.2', effort: 'high' },
-        { harness: 'omp', model: 'glm/glm-5.3', effort: 'high' },
+        { harness: 'omp', model: 'deepseek/deepseek-flash', effort: 'high' },
+        { harness: 'omp', model: 'zai/glm-5.3-flash', effort: 'high' },
       ],
       // Omission selects the repository's actual test command. A no-op command provides no
       // verification evidence for a contribution. A caller may choose a relevant check.

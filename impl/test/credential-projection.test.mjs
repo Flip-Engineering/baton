@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { chmodSync, lstatSync, mkdtempSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, lstatSync, mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { projectCredentialTree } from '../src/credential-projection.mjs';
@@ -41,4 +41,39 @@ test('credential projection refuses traversal and unsafe source directories', ()
   assert.throws(() => projectCredentialTree({ sourceRoot: root, targetRoot: join(target, 'one'), relativeFiles: ['../outside'] }), (error) => error.code === 'relative_path_invalid');
   chmodSync(join(root, 'credentials'), 0o777);
   assert.throws(() => projectCredentialTree({ sourceRoot: root, targetRoot: join(target, 'two'), relativeFiles: ['credentials/kimi-code.json'] }), (error) => error.code === 'source_directory_writable');
+});
+
+test('OMP model YAML keeps routing metadata visible while redacting decoded keys and headers', (t) => {
+  const { root, target } = fixture();
+  t.after(() => { rmSync(root, { recursive: true, force: true }); rmSync(target, { recursive: true, force: true }); });
+  const yaml = [
+    'providers:',
+    '  zai:',
+    '    apiKey: &key plain-model-secret # inline comment',
+    '    headers:',
+    '      Authorization: "Bearer escaped\\u002dmodel-secret"',
+    '    models: [{id: glm-5.3-flash}]',
+    '  sibling:',
+    '    apiKey: *key',
+    "    token: 'quoted''model-secret'",
+    '    password: >-',
+    '      folded-model-secret',
+    '',
+  ].join('\n');
+  writeFileSync(join(root, 'models.yml'), yaml, { mode: 0o600 });
+  const projected = projectCredentialTree({ sourceRoot: root, targetRoot: target, relativeFiles: ['models.yml'] });
+  assert.equal(readFileSync(join(target, 'models.yml'), 'utf8'), yaml);
+  assert.equal(lstatSync(join(target, 'models.yml')).mode & 0o777, 0o600);
+  assert.deepEqual(projected.redactProviderFrame({
+    model: 'glm-5.3-flash',
+    nested: ['plain-model-secret', 'Bearer escaped-model-secret', "quoted'model-secret", 'folded-model-secret'],
+  }), { model: 'glm-5.3-flash', nested: Array(4).fill('[REDACTED]') });
+});
+
+test('malformed model YAML is refused without leaking parser source excerpts', (t) => {
+  const { root, target } = fixture();
+  t.after(() => { rmSync(root, { recursive: true, force: true }); rmSync(target, { recursive: true, force: true }); });
+  writeFileSync(join(root, 'models.yml'), 'apiKey: [sensitive-parser-excerpt\n', { mode: 0o600 });
+  assert.throws(() => projectCredentialTree({ sourceRoot: root, targetRoot: target, relativeFiles: ['models.yml'] }),
+    (error) => error.code === 'credential_yaml_invalid' && !String(error).includes('sensitive-parser-excerpt'));
 });

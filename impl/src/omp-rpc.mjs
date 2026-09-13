@@ -386,6 +386,9 @@ export class OmpRpcCli {
     this._streamChunkBytes = options.streamChunkBytes
       ?? Math.min(DEFAULT_STREAM_CHUNK_BYTES, Math.floor(this._maxEventPayloadBytes / 2));
     this._catalog = catalogFrom(options.modelCatalog ?? {
+      'deepseek/deepseek-flash': ['low', 'high', 'max'],
+      'zai/glm-5.3-flash': ['low', 'high', 'max'],
+      // Keep explicit legacy selections available; deployment defaults use canonical Flash IDs.
       'deepseek/deepseek-v4-flash': ['low', 'medium', 'high'],
       'glm/glm-5.2': ['low', 'medium', 'high'],
     });
