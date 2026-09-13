@@ -157,7 +157,14 @@ export function wrapProductionCliClient(client, { runtime = new ProductionConver
           }
           let dispatch;
           if (capability.kind === 'application_operation') {
-            dispatch = () => invokeApplicationCapability(target, capability, args, idempotencyKey);
+            // When an alias name is used (name !== capability.id) and the capability has a
+            // direct CLI path, call with the exact requested name so live transport aliases
+            // (run.status, run.wait, etc.) are preserved without canonical remapping.
+            if (name !== capability.id && directCliApplicationPath(capability)) {
+              dispatch = () => target.command(name, args, idempotencyKey);
+            } else {
+              dispatch = () => invokeApplicationCapability(target, capability, args, idempotencyKey);
+            }
           } else if (directCliApplicationPath(capability)) {
             // Existing legacy application commands (for example run.status/run.wait/runs.list)
             // can appear as live transport rows in the exhaustive catalogue. Preserve their real
@@ -198,6 +205,106 @@ export function wrapProductionCliClient(client, { runtime = new ProductionConver
             nameClosure: assertSurfaceCapabilityNameClosure(),
             convergence: runtime.audit(),
             ...Object.fromEntries(entries.map(([name], index) => [name, settled(values[index])])),
+          });
+        };
+      }
+      if (key === 'surfaceVisualize') {
+        return async (input = {}) => {
+          const VISUAL_VIEWS = new Set(['overview', 'topology', 'timeline', 'telemetry']);
+          const view = input.view ?? 'overview';
+          if (!VISUAL_VIEWS.has(view)) {
+            throw new BatonControlError('surface_visualization_invalid', `view must be one of ${[...VISUAL_VIEWS].join(', ')}`, { field: 'view' });
+          }
+          const runId = input.runId ?? null;
+          const waveId = input.waveId ?? null;
+          const width = input.width ?? 96;
+          const follow = input.follow === true;
+          const afterCursor = input.afterCursor ?? 0;
+          const attentionCursor = input.attentionCursor ?? 0;
+          const kind = input.kind ?? null;
+          const timeoutMs = input.timeoutMs ?? null;
+          if (follow && !runId) {
+            throw new BatonControlError(
+              'surface_visualization_invalid',
+              'visualization follow requires a runId; a global watch authority is not invented',
+              { field: 'runId' },
+            );
+          }
+          const snapshot = await receiver.surfaceSnapshot({ runId, waveId });
+          let watch = null;
+          let nextAfterCursor = afterCursor;
+          let nextAttentionCursor = attentionCursor;
+          if (follow) {
+            watch = await receiver.surfaceWatch({
+              runId,
+              ...(waveId === null ? {} : { waveId }),
+              afterCursor,
+              attentionCursor,
+              ...(kind === null ? {} : { kind }),
+              ...(timeoutMs === null ? {} : { timeoutMs }),
+            });
+            nextAfterCursor = Number.isSafeInteger(watch?.nextAfterCursor) ? watch.nextAfterCursor : afterCursor;
+            nextAttentionCursor = Number.isSafeInteger(watch?.nextAttentionCursor) ? watch.nextAttentionCursor : attentionCursor;
+          }
+          let modelModule;
+          let rendererModule;
+          try {
+            [modelModule, rendererModule] = await Promise.all([
+              import('./visual-model.mjs'),
+              import('./visual-renderer.mjs'),
+            ]);
+          } catch (error) {
+            throw new BatonControlError(
+              'surface_visualization_unavailable',
+              'visual model/renderer siblings are not yet available in this deployment',
+              { detail: { cause: BatonControlError.from(error).envelope().error } },
+            );
+          }
+          if (typeof modelModule.projectBatonVisualModel !== 'function'
+            || typeof rendererModule.renderBatonVisual !== 'function') {
+            throw new BatonControlError(
+              'surface_visualization_unavailable',
+              'visual siblings must export projectBatonVisualModel and renderBatonVisual',
+            );
+          }
+          const model = modelModule.projectBatonVisualModel({
+            snapshot, ...(watch === null ? {} : { watch }), width,
+          });
+          const text = rendererModule.renderBatonVisual(model, {
+            width, color: false, motion: false, view,
+          });
+          const accessibleSummary = typeof model?.accessibleSummary === 'string' ? model.accessibleSummary : text;
+          const actions = (Array.isArray(model?.attention) ? model.attention : [])
+            .filter((item) => typeof item?.runId === 'string' && typeof item?.requestId === 'string')
+            .flatMap((item) => ['allow', 'deny'].map((decision) => Object.freeze({
+              tool: 'baton_surface_invoke',
+              name: 'run.answer',
+              args: { runId: item.runId, requestId: item.requestId, answer: { decision } },
+              label: `${decision} ${item.prompt ?? item.id ?? item.requestId}`,
+            })));
+          return Object.freeze({
+            schemaVersion: 1,
+            kind: 'baton.surface_visualization',
+            view,
+            model: Object.freeze(model),
+            presentation: Object.freeze({
+              text,
+              accessibleSummary,
+              refresh: Object.freeze({
+                view,
+                runId,
+                waveId,
+                width,
+                follow,
+                afterCursor: nextAfterCursor,
+                attentionCursor: nextAttentionCursor,
+                kind,
+                timeoutMs,
+              }),
+              motion: Object.freeze({ frames: 4, kind: 'flip_sparkle', required: false }),
+              actions: Object.freeze(actions),
+            }),
+            convergence: runtime.audit(),
           });
         };
       }
@@ -278,7 +385,7 @@ export function wrapProductionCliClient(client, { runtime = new ProductionConver
       };
     },
     has(target, key) {
-      return ['convergence', 'surfaceInvoke', 'surfaceSnapshot', 'surfaceWatch'].includes(key)
+      return ['convergence', 'surfaceInvoke', 'surfaceSnapshot', 'surfaceVisualize', 'surfaceWatch'].includes(key)
         || Reflect.has(target, key);
     },
   });

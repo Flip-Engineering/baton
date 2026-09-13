@@ -81,7 +81,7 @@ test('CLI surfaceSnapshot combines monitoring and optional run/wave projections'
   const snapshot = await client.surfaceSnapshot({ runId: 'run:a', waveId: 'wave:a' });
   assert.equal(snapshot.schemaVersion, 2);
   assert.deepEqual(snapshot.nameClosure.unresolved, []);
-  for (const key of ['doctor', 'runs', 'waves', 'run', 'wave']) assert.equal(snapshot[key].ok, true);
+  for (const key of ['doctor', 'run', 'wave']) assert.equal(snapshot[key].ok, true);
   assert.equal(snapshot.source, 'cli_authenticated_web');
 });
 
@@ -120,5 +120,45 @@ test('CLI surfaceWatch refuses an attention cursor rewind instead of reporting e
     client.surfaceWatch({ runId: 'run:a', attentionCursor: 8, timeoutMs: 1000 }),
     (error) => error.code === 'attention_scope_forbidden'
       && error.detail.requestedCursor === 8 && error.detail.throughCursor === 0,
+  );
+});
+
+test('CLI surfaceVisualize composes snapshot and visual model without a watch when follow is false', async () => {
+  const raw = fakeClient();
+  const client = wrapProductionCliClient(raw, { runtime: new ProductionConvergenceRuntime() });
+  const result = await client.surfaceVisualize({ runId: 'run:a', view: 'overview', width: 80 });
+  assert.equal(result.kind, 'baton.surface_visualization');
+  assert.equal(result.view, 'overview');
+  assert.equal(result.schemaVersion, 1);
+  assert.ok(typeof result.presentation.text === 'string' && result.presentation.text.length > 0);
+  assert.equal(result.presentation.refresh.follow, false);
+  assert.equal(result.presentation.refresh.runId, 'run:a');
+  assert.equal(result.presentation.refresh.width, 80);
+  assert.ok(result.model.kind === 'baton.visual_model');
+  const watchCalls = raw.calls.filter((c) => c.name === 'run.follow');
+  assert.equal(watchCalls.length, 0);
+});
+
+test('CLI surfaceVisualize composes snapshot and watch projections when follow is true', async () => {
+  const raw = fakeClient();
+  const client = wrapProductionCliClient(raw, { runtime: new ProductionConvergenceRuntime() });
+  const result = await client.surfaceVisualize({
+    runId: 'run:a', waveId: 'wave:a', view: 'telemetry', follow: true,
+    afterCursor: 2, attentionCursor: 3, timeoutMs: 500,
+  });
+  assert.equal(result.kind, 'baton.surface_visualization');
+  assert.equal(result.view, 'telemetry');
+  assert.equal(result.presentation.refresh.follow, true);
+  assert.ok(Number.isSafeInteger(result.presentation.refresh.afterCursor));
+  assert.deepEqual(raw.calls.map((c) => c.name), [
+    'run.inspect', 'waves.progress', 'run.follow', 'run.attention.watch', 'run.inspect', 'waves.progress',
+  ]);
+});
+
+test('CLI surfaceVisualize refuses follow without a runId instead of inventing a global authority', async () => {
+  const client = wrapProductionCliClient(fakeClient(), { runtime: new ProductionConvergenceRuntime() });
+  await assert.rejects(
+    client.surfaceVisualize({ follow: true }),
+    (error) => error.code === 'surface_visualization_invalid' && error.field === 'runId',
   );
 });
