@@ -78,6 +78,35 @@ export class SwarmRuntime {
     return worker;
   }
 
+  /** Resolve one participant's live shared checkout, under this swarm's own authority.
+   * The named participant is a swarm member — an organizational fact that proves nothing about a
+   * process — so the checkout comes from the controller's LIVE attachment for that participant's
+   * current worker. An absent, departed, unbound, closing, or log-disagreeing source refuses with
+   * a typed code and a reason, and never hands out a checkout by guesswork. */
+  _sharedWorkspace(swarm, sourceParticipantId, participantId) {
+    const unavailable = (reason, detail = {}) => refuse(
+      'The shared checkout is unavailable', 'swarm_workspace_unavailable',
+      { reason, participantId: sourceParticipantId, ...detail },
+    );
+    if (sourceParticipantId === participantId) unavailable('self');
+    const source = Object.hasOwn(swarm.participants, sourceParticipantId)
+      ? swarm.participants[sourceParticipantId] : null;
+    if (!source) unavailable('source_absent');
+    if (source.status !== 'active') unavailable('source_left');
+    const worker = this.coordinator.list().find(
+      (row) => row.id === source.bindings.at(-1)?.workerId && row.runId === source.runId,
+    );
+    const attachment = worker ? this.coordinator.workspaceAttachment(worker.id) : null;
+    if (!attachment) unavailable('holder_not_live');
+    // A source that was itself recruited into a workspace must still be in THAT workspace: the
+    // recorded workspace is durable organizational memory, and disagreement with the live handle
+    // is a refusal rather than a silent hand-off to whatever checkout it moved to.
+    if (source.workspaceId && source.workspaceId !== attachment.workspaceId) {
+      unavailable('workspace_changed', { recordedWorkspaceId: source.workspaceId });
+    }
+    return attachment;
+  }
+
   _write(kind, payload, principal, key) {
     return this.store.recordSwarm(kind, payload, { actor: principal.actor, key });
   }
@@ -286,15 +315,23 @@ export class SwarmRuntime {
       const runId = `run-${hash([args.swarmId, args.participantId]).slice(0, 32)}`;
       await this.prepareRun({ runId, objective: args.objective, options: args.options ?? {} }, principal);
       return this._once(command, args, principal, async (sharedContext) => {
+        this._permit(this._swarm(args.swarmId), principal, context, 'recruit');
+        // The deliberate shared checkout is resolved inside the effect, before any membership is
+        // written: an absent, departed, or process-less source refuses with nothing recorded, so
+        // a refused attachment never leaks a holder into the swarm.
+        const workspace = args.shareWorkspaceWith
+          ? this._sharedWorkspace(swarm, args.shareWorkspaceWith, args.participantId)
+          : null;
         // Membership precedes dispatch, so even a fast first native turn has the continuing
         // participant protocol. The underlying Run remains the existing execution authority.
-        this._permit(this._swarm(args.swarmId), principal, context, 'recruit');
         this._write('swarm.participant_joined', {
           swarmId: args.swarmId, participantId: args.participantId, role: args.objective,
           runId, permissions, ...(caller ? { parentId: caller.participantId } : {}),
+          ...(workspace ? { workspaceId: workspace.workspaceId } : {}),
         }, principal, `swarm-participant:${hash([args.swarmId, args.participantId])}`);
         await this.startRun({ runId, objective: args.objective, options: args.options ?? {},
-          swarmId: args.swarmId, participantId: args.participantId, sharedContext }, principal, context);
+          swarmId: args.swarmId, participantId: args.participantId, sharedContext,
+          ...(workspace ? { workspace } : {}) }, principal, context);
         const worker = this.coordinator.list().find((row) => row.runId === runId);
         if (!worker) refuse('Recruitment admitted but worker binding is not yet available', 'swarm_participant_unbound', { runId });
         this._write('swarm.participant_bound', {
@@ -318,9 +355,14 @@ export class SwarmRuntime {
       if (!this._swarm(args.swarmId).contributions[args.contributionId]) this._write('swarm.contribution_recorded', {
         swarmId: args.swarmId, participantId: participant.participantId, contributionId: args.contributionId,
       }, principal, `swarm-capture:${hash([args.swarmId, participant.participantId, args.contributionId])}`);
+      // The revision record carries the checkout it was observed in, so a shared capture is
+      // honest without reading a worker log: the swarm can tell which physical workspace the
+      // revision came from and which HEAD it showed before the capture.
       this._write('swarm.contribution_revision_attached', {
         swarmId: args.swarmId, participantId: participant.participantId, contributionId: args.contributionId,
         sha: capture.sha, ref: capture.ref,
+        ...(capture.workspace?.physicalOwnerId ? { workspaceId: capture.workspace.physicalOwnerId } : {}),
+        ...(capture.observedHead ? { observedHead: capture.observedHead } : {}),
       }, principal, `swarm-capture-revision:${hash([args.swarmId, participant.participantId, args.contributionId])}`);
       return capture;
     }

@@ -260,6 +260,14 @@ function worktreeManager(repoRoot, opts = {}) {
   if (opts.gitExec !== undefined && typeof opts.gitExec !== 'function') {
     throw new TypeError('gitExec must be a spawn function');
   }
+  // The live-holder provider for deliberate shared checkouts. The controller injects the one
+  // answer ("which live handles are in this physical owner"); worktree.mjs is the only authority
+  // that acts on it. Absent provider = no known co-holders (single-holder deployments and direct
+  // manager callers), which is exactly the behavior before shared custody existed.
+  if (opts.custodyHolders !== undefined && typeof opts.custodyHolders !== 'function') {
+    throw new TypeError('custodyHolders must be a live-holder provider');
+  }
+  const custody = () => (opts.custodyHolders ? { custodyHolders: opts.custodyHolders } : {});
   // #216 (row-git-batch): the preserved-result resolution spawn is a seam (tests count real
   // git processes through it); production defaults to the module-local localGit.
   const git = opts.gitExec ?? localGit;
@@ -728,7 +736,14 @@ function worktreeManager(repoRoot, opts = {}) {
           excludedPaths: [...(owned.meta.toolchainProjectionTargets ?? []), ...(owned.meta.copiedDependencies ?? [])],
         });
         validate();
-        return { ...captured, sparseCheckoutIdentity: owned.sparseCheckoutIdentity };
+        // The observed HEAD is the snapshot commit's parent, read back from the commit itself
+        // rather than re-observed on a checkout concurrent editors may have moved again.
+        let observedHead = null;
+        try {
+          const parents = localGit(['rev-list', '--parents', '-n', '1', captured.sha], owned.dir, { encoding: 'utf8' }).trim().split(' ');
+          observedHead = /^[a-f0-9]{40,64}$/u.test(parents[1] ?? '') ? parents[1] : null;
+        } catch { observedHead = null; }
+        return { ...captured, observedHead, sparseCheckoutIdentity: owned.sparseCheckoutIdentity };
       });
       snapshots.set(ownerId, operation);
       try { return await operation; }
@@ -960,7 +975,7 @@ function worktreeManager(repoRoot, opts = {}) {
       }
     },
     // Terminal policy cleanup owns non-evidence task branches as well as their checkout/metadata.
-    async remove(taskId) {
+    async remove(taskId, removeOpts = {}) {
       const failed = failedWorkerTransactions.get(taskId);
       if (failed) return finalizeFailedTransaction(failed);
       const pending = pendingWorkerReservations.get(taskId);
@@ -982,10 +997,13 @@ function worktreeManager(repoRoot, opts = {}) {
         return;
       }
       // Retain custody until both filesystem removal and capacity settlement are proven.
-      // A preservation refusal therefore leaves the reservation intact. If settlement fails
-      // after removal, the retained owner receipt makes the exact transaction retryable.
+      // A preservation or custody refusal therefore leaves the reservation intact. If settlement
+      // fails after removal, the retained owner receipt makes the exact transaction retryable.
       await worktreeMod.reap(repoRoot, taskId, {
         force: true, deleteBranch: true, retainOwnerReceipt: true,
+        ...custody(),
+        // The handle performing this cleanup is not a co-holder of the checkout it closes.
+        ...(removeOpts.excludeHolderId ? { excludeHolderId: removeOpts.excludeHolderId } : {}),
         ...(opts.log ? { log: opts.log } : {}),
       });
       if (opts.worktreeCapacity) {
@@ -1004,7 +1022,13 @@ function worktreeManager(repoRoot, opts = {}) {
           });
         }
       }
-      worktreeMod.releasePhysicalWorkspaceOwner(repoRoot, taskId);
+      // The receipt release is the last authority this transaction gives up, so a refused release
+      // is a real residue: make it observable instead of dropping the boolean on the floor.
+      if (!worktreeMod.releasePhysicalWorkspaceOwner(repoRoot, taskId)) {
+        throw Object.assign(new Error('physical workspace owner receipt remained after cleanup'), {
+          code: 'worktree_cleanup_failed',
+        });
+      }
     },
     async validateSessionContext(context) {
       try {
@@ -1089,6 +1113,7 @@ function worktreeManager(repoRoot, opts = {}) {
         sparseCheckoutIdentity: opts.workerSparseCheckoutIdentity,
         ownerAuthority: opts.ownerAuthority,
         expectedOwnerBindings: expectedEntries,
+        ...custody(),
         ...(opts.log ? { log: opts.log } : {}),
         ...(opts.worktreeCapacity ? {
           beforeOwnerCleanup: (physicalOwnerId) => opts.worktreeCapacity
@@ -1528,8 +1553,10 @@ export function createDriver(opts) {
     // and a last-wins Map would silently flip which vendor key receives the dispatch.
     return feasible.find((v) => candidateKey(v) === chosen) ?? null;
   };
-  route.record = (mv, tt, win, recordOpts = {}) => router.record(mv, tt, win, recordOpts);
-
+  // The live-holder provider the worktree authority consults before any destructive effect. It is
+  // late-bound: the answer comes from the coordinator this same driver is constructing, and the
+  // worktree manager never guesses at custody before that authority exists.
+  let liveWorkspaceHoldersFor = () => Object.freeze([]);
   const coordinator = new Coordinator({
     log, fences,
     adapters: opts.adapters,
@@ -1545,6 +1572,8 @@ export function createDriver(opts) {
       worktreeCapacity,
       ownerAuthority: workspaceOwnerAuthority,
       log,
+      // Live shared-checkout custody: the one answer every destructive boundary consults.
+      custodyHolders: (physicalOwnerId, holderOpts) => liveWorkspaceHoldersFor(physicalOwnerId, holderOpts),
       structuredMerge: opts.structuredMerge,
       // #216 (row-git-batch): the preserved-result resolution spawn seam (test spy hook).
       gitExec: opts.gitExec,
@@ -1602,6 +1631,8 @@ export function createDriver(opts) {
       ),
     } : {}),
   });
+  liveWorkspaceHoldersFor = (physicalOwnerId, holderOpts) =>
+    coordinator.liveWorkspaceHolders(physicalOwnerId, holderOpts);
 
   let providerPoller = null;
   if (opts.providerPolling !== undefined) {

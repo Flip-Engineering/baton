@@ -41,6 +41,10 @@ import { normalizeRunLineagePolicy } from './run-lineage.mjs';
 import {
   createRecoveryAttemptAdmission, createRecoveryAttemptCompletion, recoveryAttemptSeriesId,
 } from './recovery-attempt.mjs';
+import {
+  attachedToExistingCheckout, isPhysicalWorkspaceId, workspaceAttachmentOf, workspaceCustodyRecord,
+  workspaceHolders,
+} from './shared-workspace-custody.mjs';
 import { normalizeVerifierFailureCapsule, sanitizeVerifierDiagnosticText } from './verifier-diagnostics.mjs';
 
 const ORIENTATION_DELIVERY = Symbol('orientation-delivery');
@@ -2665,19 +2669,49 @@ export class Coordinator {
     };
   }
 
+  /** Whether this handle works in a checkout it deliberately shares with another live holder — or
+   * one it adopted as a shared attachment. Such a checkout is captured live, never committed. */
+  _sharedCheckoutCustody(handle, task) {
+    if (attachedToExistingCheckout(task)) return true;
+    const physicalOwnerId = handle?.sessionContext?.ownerTaskId ?? null;
+    return isPhysicalWorkspaceId(physicalOwnerId)
+      && this.liveWorkspaceHolders(physicalOwnerId).length > 1;
+  }
+
   /** The trust gate's capture call, shared verbatim by the #88 preflight (CP2 fidelity law 1 —
    * gate-identical worktree + authority kwargs, :12490-12498). */
   _captureTrustWorktree(handle, task, { snapshot = false } = {}) {
-    const capture = snapshot && typeof this._worktrees.snapshot === 'function' ? this._worktrees.snapshot : this._worktrees.capture;
-    return capture.call(this._worktrees, handle.worktree ?? task.worktree, {
+    // A checkout this handle shares with another live holder is captured live through the isolated
+    // index, whatever the caller asked for: the committed capture stages the REAL index and commits
+    // on the shared branch its peers are using. Only a checkout this handle alone works in may use
+    // the mutating primitive, and a resume (a native session continuing its own checkout) keeps it.
+    const live = snapshot || this._sharedCheckoutCustody(handle, task);
+    const capture = live && typeof this._worktrees.snapshot === 'function'
+      ? this._worktrees.snapshot : this._worktrees.capture;
+    const operation = capture.call(this._worktrees, handle.worktree ?? task.worktree, {
       vendor: handle.vendor,
       model: handle.modelObserved ?? handle.modelResolved,
       ...((handle.effortObserved ?? handle.effortResolved) ? { effort: handle.effortObserved ?? handle.effortResolved } : {}),
       ownerTaskId: task.sessionContext?.ownerTaskId ?? task.id,
-      ...(snapshot ? { ownerReceiptDigest: task.sessionContext?.ownerReceiptDigest } : {}),
+      ...(live ? { ownerReceiptDigest: task.sessionContext?.ownerReceiptDigest } : {}),
       ...(task.sessionContext?.baseSha ? { expectedBaseSha: task.sessionContext.baseSha } : {}),
       ...(task.sessionContext?.branch ? { expectedBranch: task.sessionContext.branch } : {}),
       ...(task.sessionContext?.sparseCheckoutIdentity ? { workerSparseCheckoutIdentity: task.sessionContext.sparseCheckoutIdentity } : {}),
+    });
+    if (!live) return operation;
+    // A live snapshot describes the CHECKOUT it observed: which physical workspace it was, how
+    // many holders were working in it, and the HEAD it showed before the capture. These are
+    // observations of shared state — never an authorship claim over the recorded paths.
+    return Promise.resolve(operation).then((captured) => {
+      const physicalOwnerId = task.sessionContext?.ownerTaskId ?? null;
+      const workspace = workspaceCustodyRecord(
+        physicalOwnerId, this.liveWorkspaceHolders(physicalOwnerId).length,
+      );
+      return {
+        ...captured,
+        ...(workspace ? { workspace } : {}),
+        ...(captured?.observedHead ? { observedHead: captured.observedHead } : {}),
+      };
     });
   }
 
@@ -3553,7 +3587,8 @@ export class Coordinator {
   }
 
   _failInitialProviderAdmission(handle, task, admission) {
-    if (task?.sessionRequest?.mode === 'new' && typeof this._worktrees?.releaseCapacity === 'function') this._worktrees.releaseCapacity(task.id);
+    if (task?.sessionRequest?.mode === 'new' && task.workspaceAttachment !== true
+      && typeof this._worktrees?.releaseCapacity === 'function') this._worktrees.releaseCapacity(task.id);
     const evidence = this._coordMapEvent(admission.event);
     this._coordTransition(task, 'failed', `task.failed:${task.id}:provider_turn:${admission.event.seq}`, evidence);
     task.status = 'failed';
@@ -3604,7 +3639,7 @@ export class Coordinator {
     let providerBrief;
     try { providerBrief = this._providerBrief(task.brief, workerId); }
     catch (error) {
-      if (task.sessionRequest?.mode === 'new'
+      if (task.sessionRequest?.mode === 'new' && task.workspaceAttachment !== true
         && typeof this._worktrees?.releaseCapacity === 'function') {
         this._worktrees.releaseCapacity(task.id);
       }
@@ -3634,7 +3669,8 @@ export class Coordinator {
       runtime = this._ensureRuntimeScope(handle);
     } catch (err) {
       try { this._runtimeScopes?.remove?.(workerId); } catch { /* best effort */ }
-      if (task.sessionRequest?.mode === 'new' && typeof this._worktrees?.releaseCapacity === 'function') this._worktrees.releaseCapacity(task.id);
+      if (task.sessionRequest?.mode === 'new' && task.workspaceAttachment !== true
+        && typeof this._worktrees?.releaseCapacity === 'function') this._worktrees.releaseCapacity(task.id);
       this._releaseProviderTurnAdmission(handle, 'runtime_scope_unavailable');
       const crashEvent = this._log.append({
         worker: workerId, harness, turnEpoch: this._safeTurnEpoch(handle), kind: 'lifecycle.crashed', actor: 'policy',
@@ -3661,8 +3697,13 @@ export class Coordinator {
     if (typeof this._coordination?.recordWorkerGeneration === 'function') {
       this.recordWorkerGeneration(handle);
     }
+    // A resume (native session continuation) and a deliberate attachment (a FRESH native session
+    // adopted into an existing shared checkout) are independent axes: both borrow a durable
+    // checkout instead of creating one, and neither invents a native session identity for the
+    // other. A checkout created for THIS task is the only independent local authority.
+    const borrowedCheckout = Boolean(task.sessionContext);
     let worktreeSource;
-    if (task.sessionRequest?.mode === 'resume') {
+    if (borrowedCheckout) {
       worktreeSource = Promise.resolve({
           path: task.sessionContext.worktree,
           branch: task.sessionContext.branch,
@@ -3692,9 +3733,9 @@ export class Coordinator {
         if (res && res.path) {
           task.worktree = res.path;
           handle.worktree = res.path;
-          // A resumed/recovered session merely borrows its durable session checkout. Only a
+          // A resumed or attached session merely borrows its durable session checkout. Only a
           // checkout created for this task is independent local authority that must block drain.
-          handle.ownedWorktreeAuthority = task.sessionRequest?.mode !== 'resume';
+          handle.ownedWorktreeAuthority = !borrowedCheckout;
           handle.physicalWorkspaceCleanupCompleted = false;
           const sessionContext = Object.freeze({
             worktree: res.path,
@@ -3764,7 +3805,7 @@ export class Coordinator {
       const terminalized = this._fatalError ? false : this._onSpawnRefused(handle, task, harness, {
         ok: false, reason: failure.message, code: failure.code, [WORKTREE_FAILURE]: true,
       });
-      if (!terminalized && task.sessionRequest?.mode === 'new') this._removeOwnedTaskWorktree(handle, task).catch(noop);
+      if (!terminalized && task.sessionRequest?.mode === 'new' && task.workspaceAttachment !== true) this._removeOwnedTaskWorktree(handle, task).catch(noop);
       throw failure;
     }).finally(() => { handle.worktreeCreationPending = false; });
     handle.worktreeReady = worktreeReady;
@@ -4267,7 +4308,7 @@ export class Coordinator {
       return true;
     }
     this._removeRuntimeScope(handle);
-    if (task.sessionRequest?.mode === 'new') this._removeOwnedTaskWorktree(handle, task).catch(noop);
+    if (task.sessionRequest?.mode === 'new' && task.workspaceAttachment !== true) this._removeOwnedTaskWorktree(handle, task).catch(noop);
     this._dispatchPass();
     return true;
   }
@@ -4602,6 +4643,18 @@ export class Coordinator {
     let worktreeBaseSha = opts.worktreeBaseSha ?? null;
     if (worktreeBaseSha !== null && !/^[a-f0-9]{40}$/.test(worktreeBaseSha)) throw new TypeError('spawn worktreeBaseSha must be an exact commit ID');
     let sessionRequest = normalizeSessionRequest(opts.session);
+    // A deliberate shared checkout is its OWN admission axis: a fresh native session (mode 'new',
+    // no session id — nothing is invented for a session that does not exist yet) that adopts a
+    // checkout already owned by another live holder. It is never expressed as a session request,
+    // so the durable task's session identity and the checkout binding stay independent.
+    const attachedWorkspace = opts.attachedWorkspace === undefined
+      ? null : normalizeSessionRequest({ mode: 'new', context: opts.attachedWorkspace }).context;
+    if (attachedWorkspace && (sessionRequest.mode !== 'new' || sessionRequest.context)) {
+      throw new SessionSelectionError(
+        'a shared workspace attachment cannot be combined with a session resume',
+        'attached_workspace_session_conflict',
+      );
+    }
 
     const taskId = opts.taskId ?? this._autoTaskId();
     normalizePhysicalOwnerId(taskId, 'taskId');
@@ -4689,9 +4742,13 @@ export class Coordinator {
       if (known?.handle && ['pending', 'working', 'blocked', 'stopping', 'idle'].includes(known.handle.status)) {
         throw new SessionSelectionError(`session "${sessionRequest.id}" is already attached`, 'session_already_attached');
       }
-      await this._validateSessionContext(sessionRequest.context);
       if (this._drainState !== 'open') throw Object.assign(new Error('coordinator admission is draining'), { code: 'coordinator_draining' });
     }
+    // Any session context — a resume's continuation or a fresh session's deliberate adoption of an
+    // existing shared checkout — is validated against that exact checkout before admission, so a
+    // torn-down or foreign checkout refuses here rather than admitting a holder with no home.
+    if (sessionRequest.context) await this._validateSessionContext(sessionRequest.context);
+    if (attachedWorkspace) await this._validateSessionContext(attachedWorkspace);
 
     const planMandatory = this._goalPlanAuthority?.policy?.mandatory === true;
     const derivedReviewAuthorized = opts.derivedReviewPlanToken === this._derivedReviewPlanToken
@@ -4838,7 +4895,10 @@ export class Coordinator {
     }
 
     try {
+      // A session that adopts an existing shared checkout consumes the reservation that checkout
+      // already holds: it must not reserve (or later settle) capacity of its own.
       if (!capacityPreflightDone && !capacityPrepared && sessionRequest.mode === 'new'
+        && attachedWorkspace === null
         && typeof this._worktrees?.reserveCapacity === 'function') {
         const prepared = await this._worktrees.reserveCapacity(taskId, worktreeBaseSha, {
           runId, attemptId: workerId, processGeneration: 1,
@@ -4890,7 +4950,10 @@ export class Coordinator {
       modelPolicy,
       sessionRequest,
       worktreeBaseSha,
-      sessionContext: sessionRequest.mode === 'resume' ? sessionRequest.context : null,
+      sessionContext: sessionRequest.context ?? attachedWorkspace ?? null,
+      // A deliberate shared-checkout attachment: this task's fresh session works in a checkout that
+      // already existed, so it never creates one, never owns it, and captures it live.
+      workspaceAttachment: attachedWorkspace !== null,
       lineage: sessionRequest.mode === 'new' ? null : Object.freeze({
         relation: sessionRequest.mode,
         parentSessionId: sessionRequest.id,
@@ -4947,8 +5010,9 @@ export class Coordinator {
       providerGovernance: null,
       providerPolicyDigest: null,
       providerTurn: null,
-      providerPolicyHardExceeded: false,
-      providerTelemetryFailed: false,
+      ownedWorktreeAuthority: false,
+      physicalWorkspaceCleanupCompleted: false,
+      workspaceCleanupDeferred: null,
       providerTerminalSeal: null,
       sessionPreservation: null,
       preservedTurnEpoch: null,
@@ -5011,6 +5075,7 @@ export class Coordinator {
         status: durable.status, assignee: workerId, worktree: null, result: null, verdict: null,
         capturedSha: null, integration: null, retainedResultRef: null, publication: null,
         review: durable.review ? Object.freeze({ ...durable.review }) : null, taskType: durable.taskType ?? 'general', coordinationVersion: durable.version,
+        physicalWorkspaceCleanupCompleted: false, workspaceCleanupDeferred: null,
       };
       this._tasks.set(task.id, task);
       this._taskOrder.push(task.id);
@@ -7197,6 +7262,9 @@ export class Coordinator {
       runId: this._tasks.get(handle.taskId)?.runId ?? handle.runId ?? null,
       worktree: handle.worktree,
       ...(handle.worktreeObservation ? { worktreeObservation: { ...handle.worktreeObservation } } : {}),
+      // A detach is a positive outcome: this says the checkout was deliberately left to its
+      // remaining holders instead of being destroyed with this handle's stop.
+      workspaceCleanupDeferred: handle.workspaceCleanupDeferred ?? null,
       fence,
       turnEpoch,
       status: handle.recoveryPending === true && opts.exposeRecovery !== true ? 'orphaned' : handle.status,
@@ -8789,6 +8857,7 @@ export class Coordinator {
         name: 'CoordinationRefusal', code: 'recovery_attempt_invalid',
       });
     }
+    if (process.env.BATON_DEBUG_RECOVERY) console.error("DEBUG-PRIOR", JSON.stringify({ keys: Object.keys(prior).sort().join(","), status: prior.status, taskType: prior.taskType ?? null, hasTaskType: Object.hasOwn(prior, "taskType"), stack: new Error("x").stack.split("\n").slice(1, 5).join(" | ") }));
     const result = this._coordination.createAndClaimRecoveryRefinement({
       id, brief: prior.brief, deps: [], refines: prior.id, taskType: prior.taskType,
       runId: prior.runId ?? null,
@@ -8945,15 +9014,29 @@ export class Coordinator {
         if (resolved !== task.checkpoint.sha) throw Object.assign(new Error('existing progress checkpoint postcheck failed'), { code: 'checkpoint_failed' });
         return task.checkpoint;
       }
-      const captured = await manager.capture(handle.worktree ?? task.worktree, {
-        vendor: handle.vendor,
-        model: handle.modelObserved ?? handle.modelResolved,
-        ...((handle.effortObserved ?? handle.effortResolved) ? { effort: handle.effortObserved ?? handle.effortResolved } : {}),
-        ownerTaskId: task.sessionContext?.ownerTaskId ?? task.id,
-        ...(task.sessionContext?.baseSha ? { expectedBaseSha: task.sessionContext.baseSha } : {}),
-        ...(task.sessionContext?.branch ? { expectedBranch: task.sessionContext.branch } : {}),
-        ...(task.sessionContext?.sparseCheckoutIdentity ? { workerSparseCheckoutIdentity: task.sessionContext.sparseCheckoutIdentity } : {}),
-      });
+      // A checkout this handle shares with another live holder is preserved live through the
+      // isolated-index snapshot: the paused-turn commit primitive stages the REAL index and commits
+      // on the shared branch, which would corrupt a checkout its peers are using. Only a checkout
+      // this handle alone works in uses the mutating capture, and resume keeps it.
+      let captured;
+      if (this._sharedCheckoutCustody(handle, task)) {
+        if (typeof manager.snapshot !== 'function') {
+          throw Object.assign(new Error('shared checkout preservation is unavailable', {
+            code: 'shared_workspace_capture_unavailable',
+          }));
+        }
+        captured = await this._captureTrustWorktree(handle, task, { snapshot: true });
+      } else {
+        captured = await manager.capture(handle.worktree ?? task.worktree, {
+          vendor: handle.vendor,
+          model: handle.modelObserved ?? handle.modelResolved,
+          ...((handle.effortObserved ?? handle.effortResolved) ? { effort: handle.effortObserved ?? handle.effortResolved } : {}),
+          ownerTaskId: task.sessionContext?.ownerTaskId ?? task.id,
+          ...(task.sessionContext?.baseSha ? { expectedBaseSha: task.sessionContext.baseSha } : {}),
+          ...(task.sessionContext?.branch ? { expectedBranch: task.sessionContext.branch } : {}),
+          ...(task.sessionContext?.sparseCheckoutIdentity ? { workerSparseCheckoutIdentity: task.sessionContext.sparseCheckoutIdentity } : {}),
+        });
+      }
       const sha = captured?.sha;
       if (!/^[a-f0-9]{40,64}$/u.test(sha ?? '')) {
         throw Object.assign(new Error('progress capture did not produce an exact commit'), { code: 'capture_failed' });
@@ -9001,6 +9084,98 @@ export class Coordinator {
     }
   }
 
+  /** Every other live handle deliberately working in one physical checkout. Custody comes from
+   * the controller's own handles — never from swarm membership, and never from the owner receipt,
+   * which stays a single-controller Git lease. */
+  liveWorkspaceHolders(physicalOwnerId, { excludeHandleId = null } = {}) {
+    return workspaceHolders(this._workers.values(), physicalOwnerId, { excludeHandleId });
+  }
+
+  /** The live shared-checkout attachment one worker may hand to a fresh participant, or null when
+   * that holder is absent, unbound, closing, or working in a checkout of its own. */
+  workspaceAttachment(workerId) {
+    if (typeof workerId !== 'string' || workerId.length === 0) return null;
+    return workspaceAttachmentOf(this._workers.values(), workerId);
+  }
+
+  /** Whether this handle's checkout is exactly usable under its own session context — the
+   * precondition for a borrowed holder to close the checkout as the last holder. */
+  _checkoutExactUnderContext(handle, task) {
+    if (typeof this._worktrees?.worktreeAvailable !== 'function') return false;
+    const logicalOwner = handle.workspaceOwnerBinding?.logicalTaskId
+      ?? task?.sessionContext?.logicalTaskId ?? null;
+    if (!logicalOwner) return false;
+    try { return this._worktrees.worktreeAvailable(logicalOwner, handle.sessionContext) === true; }
+    catch { return false; }
+  }
+
+  async _removeTaskWorktree(task, { excludeHolderId = null } = {}) {
+    if (!task || !this._worktrees || typeof this._worktrees.remove !== 'function') return;
+    const ownerTaskId = task.sessionContext?.ownerTaskId ?? task.id;
+    await Promise.resolve(this._worktrees.remove(ownerTaskId, {
+      ...(excludeHolderId ? { excludeHolderId } : {}),
+    }));
+  }
+
+  /** Release one handle's hold on a shared checkout without destroying it. The remaining holder
+   * keeps the receipt, branch, checkout, registration and capacity reservation, so this is a
+   * positive deferred outcome — never `worktree_cleanup_failed` — and the stopping handle is
+   * released exactly as a completed cleanup would release it. */
+  _detachSharedWorkspace(handle, remainingHolders) {
+    const physicalOwnerId = handle.sessionContext?.ownerTaskId ?? null;
+    handle.worktree = null;
+    handle.ownedWorktreeAuthority = false;
+    // The checkout still exists: this handle's resource is not released, and a later stop of the
+    // last holder (or startup reconciliation) closes it through the existing reap chain.
+    handle.physicalWorkspaceCleanupCompleted = false;
+    handle.workspaceCleanupDeferred = 'holders_remain';
+    handle.cleanupPending = handle.runtimeScope?.active === true;
+    handle.cleanupError = null;
+    try {
+      const event = this._log.append({
+        worker: handle.id, harness: this._harnessOf(handle.vendor), turnEpoch: this._safeTurnEpoch(handle),
+        kind: 'worktree.custody_deferred', actor: 'policy', ...this._routeAttribution(handle),
+        payload: { physicalOwnerId, reason: 'holders_remain', holders: [...remainingHolders] },
+      });
+      this._coordMapEvent(event);
+    } catch { /* The detachment remains authoritative when evidence is unavailable. */ }
+    return Promise.resolve(Object.freeze({
+      ok: true, result: 'workspace_cleanup_deferred', reason: 'holders_remain',
+      physicalOwnerId, holders: Object.freeze([...remainingHolders]),
+    }));
+  }
+
+  /** Release one borrowed holder whose checkout is retained because it holds content no capture
+   * recorded. Preservation keeps the resource exactly as it is (checkout, receipt, reservation);
+   * this handle simply stops being one of its holders, so the stop and every later drain converge
+   * on a resource this handle never owned. The refusal code remains readable on the handle. */
+  _releaseRetainedBorrowedCheckout(handle, error) {
+    const physicalOwnerId = handle.sessionContext?.ownerTaskId ?? null;
+    handle.worktree = null;
+    handle.ownedWorktreeAuthority = false;
+    handle.physicalWorkspaceCleanupCompleted = false;
+    handle.workspaceCleanupDeferred = 'content_retained';
+    handle.cleanupPending = handle.runtimeScope?.active === true;
+    handle.cleanupError = error.code;
+    try {
+      const event = this._log.append({
+        worker: handle.id, harness: this._harnessOf(handle.vendor), turnEpoch: this._safeTurnEpoch(handle),
+        kind: 'worktree.custody_content_retained', actor: 'policy', ...this._routeAttribution(handle),
+        payload: {
+          physicalOwnerId, code: error.code,
+          ...(error.observation ? {
+            contentState: error.observation.state,
+            dirtyPaths: [...error.observation.dirtyPaths],
+          } : {}),
+        },
+      });
+      this._coordMapEvent(event);
+    } catch { /* The retention itself remains authoritative when evidence is unavailable. */ }
+    return Promise.resolve(Object.freeze({
+      ok: true, result: 'workspace_cleanup_retained', reason: error.code, physicalOwnerId,
+    }));
+  }
+
   _removeOwnedTaskWorktree(handle, task) {
     if (!handle) return this._removeTaskWorktree(task);
     if (handle.contributionCapturePending) {
@@ -9010,9 +9185,22 @@ export class Coordinator {
     // Exact cleanup is idempotent. Once this handle has already finalized its checkout, a later
     // already-dead kill has no owner capability to exercise and must not re-enter the opaque-owner
     // authorization guard merely because the historical session context retains its coordinate.
-    const opaquePhysicalOwner = /^ws-[a-f0-9]{32}$/u.test(
-      handle.sessionContext?.ownerTaskId ?? '',
-    );
+    const opaquePhysicalOwner = isPhysicalWorkspaceId(handle.sessionContext?.ownerTaskId ?? '')
+      ? handle.sessionContext.ownerTaskId : null;
+    // A deliberate shared checkout outlives any one of its holders. While another live holder
+    // still works in it, this stop releases only THIS handle's hold: the receipt, branch,
+    // checkout, registration and capacity reservation stay live for the remaining holder(s).
+    // Nothing is destroyed here, so preservation is not even consulted.
+    const remainingHolders = opaquePhysicalOwner
+      ? this.liveWorkspaceHolders(opaquePhysicalOwner, { excludeHandleId: handle.id })
+      : Object.freeze([]);
+    const alreadyDeferred = Boolean(opaquePhysicalOwner)
+      && handle.workspaceCleanupDeferred === 'holders_remain'
+      && handle.worktree === null && handle.ownedWorktreeAuthority !== true;
+    if (remainingHolders.length > 0
+      && (handle.worktree !== null || handle.ownedWorktreeAuthority === true || alreadyDeferred)) {
+      return this._detachSharedWorkspace(handle, remainingHolders);
+    }
     if (handle.worktree === null && handle.ownedWorktreeAuthority === false
       && handle.runtimeScope?.active !== true
       && handle.worktreeCreationPending !== true
@@ -9021,8 +9209,13 @@ export class Coordinator {
       handle.cleanupError = null;
       return Promise.resolve();
     }
-    if (opaquePhysicalOwner
-      && handle.ownedWorktreeAuthority !== true) {
+    // The last holder closes a checkout it borrowed, through the SAME preserve-then-reap authority
+    // the allocator uses — but only while the checkout is provably exact under its own session
+    // context. Anything else stays retained with the existing refusal.
+    const borrowedCheckout = Boolean(opaquePhysicalOwner) && attachedToExistingCheckout(task)
+      && handle.ownedWorktreeAuthority !== true;
+    if (opaquePhysicalOwner && handle.ownedWorktreeAuthority !== true
+      && (!borrowedCheckout || !this._checkoutExactUnderContext(handle, task))) {
       handle.cleanupPending = true;
       handle.cleanupError = handle.workspaceOwnerBindingDiagnostic
         ?? 'workspace_owner_binding_unproven';
@@ -9053,15 +9246,30 @@ export class Coordinator {
       && task.checkpoint?.state !== 'pinned'
       && task.progressPreservation?.state !== 'no_progress');
     const cleanup = this._preserveProgressBeforeReap(handle, task, null, preserveUnaccepted)
-      .then(() => this._removeTaskWorktree(task)).then(() => {
+      .then(() => this._removeTaskWorktree(task, { excludeHolderId: handle.id })).then(() => {
       handle.worktree = null;
       handle.ownedWorktreeAuthority = false;
+      handle.workspaceCleanupDeferred = null;
       if (opaquePhysicalOwner) handle.physicalWorkspaceCleanupCompleted = true;
       // Preserve the historical worker path on the task: the mandatory trust/freshness guard
       // compares it with later verification sandboxes even after the checkout was reaped.
       handle.cleanupPending = handle.runtimeScope?.active === true;
       if (!handle.cleanupPending) handle.cleanupError = null;
     }, (error) => {
+      // A holder that appeared after the detach decision (or the manager's own custody backstop)
+      // means the checkout must not be destroyed: detach positively instead of reporting a
+      // cleanup failure.
+      if (error?.code === 'workspace_other_holder_live_retained' && opaquePhysicalOwner) {
+        return this._detachSharedWorkspace(handle, Array.isArray(error.holders) ? error.holders : []);
+      }
+      // A BORROWED checkout whose content must be retained is terminal for this handle: the content
+      // is preserved, the receipt and reservation stay with the retained resource, and the holder
+      // releases its hold instead of blocking every later drain on a checkout it never owned. Only
+      // the checkout's own allocator keeps the blocking retention semantics — it owns the resource
+      // and its capture may still settle it. The refusal code stays observable either way.
+      if (borrowedCheckout && error?.retained === true) {
+        return this._releaseRetainedBorrowedCheckout(handle, error);
+      }
       handle.cleanupPending = true;
       handle.cleanupError = error?.retained === true ? error.code
         : error?.code === 'progress_preservation_failed' ? error.code : 'worktree_cleanup_failed';

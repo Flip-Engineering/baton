@@ -42,6 +42,12 @@ export class ContributionService {
     const receipt = {
       contributionId, workerId: handle.id, taskId: task.id, runId: task.runId ?? null,
       sha: captured.sha, ref, changedPaths: captured.changedPaths ?? [],
+      // A captured checkout is DESCRIBED, never claimed: which physical workspace it was, whether
+      // it was shared (and by how many holders), and the HEAD it showed before the capture. The
+      // author/reviewer identity below is unchanged — these fields say nothing about who wrote
+      // which line.
+      ...(captured.workspace ? { workspace: copy(captured.workspace) } : {}),
+      ...(captured.observedHead ? { observedHead: captured.observedHead } : {}),
       // This is the identified acceptance basis, not the author's current working state.
       // Retain it now so checks after further edits or session closure use the same inputs.
       basis: {

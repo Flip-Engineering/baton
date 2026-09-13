@@ -182,6 +182,12 @@ export function validateSwarmEvent(kind, payload) {
     if (!isNonEmptyString(p.participantId)) refuse('swarm.participant_joined requires participantId', 'invalid_payload');
     validOptionalNonEmptyString(p.role, 'participant role', refuse);
     validOptionalNonEmptyString(p.parentId, 'participant parentId', refuse);
+    // The physical checkout this participant deliberately shares with others, when it was
+    // recruited into one. A durable organizational record, never custody: whether the checkout
+    // may close is decided by the controller's live handles, not by swarm membership.
+    if (p.workspaceId !== undefined && !/^ws-[a-f0-9]{32}$/u.test(p.workspaceId)) {
+      refuse('participant workspaceId must be one physical workspace identity', 'invalid_payload');
+    }
     validOptionalNonEmptyString(p.runId, 'participant runId', refuse);
     if (p.permissions !== undefined) {
       if (!Array.isArray(p.permissions)) refuse('participant permissions must be an array if present', 'invalid_payload');
@@ -254,6 +260,15 @@ export function validateSwarmEvent(kind, payload) {
       || !isNonEmptyString(p.ref)) {
       refuse('A contribution revision requires its author, contribution identity, SHA and retained ref', 'invalid_payload');
     }
+    // Honest shared-checkout metadata: which physical checkout the revision was observed in, and
+    // the HEAD that checkout showed before the capture. Both are checkout observations, never an
+    // authorship claim; `sha`/`ref` alone stay the retained revision.
+    if (p.workspaceId !== undefined && !/^ws-[a-f0-9]{32}$/u.test(p.workspaceId)) {
+      refuse('A contribution revision workspace must be one physical workspace identity', 'invalid_payload');
+    }
+    if (p.observedHead !== undefined && !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/u.test(p.observedHead)) {
+      refuse('A contribution revision observedHead must be an exact commit', 'invalid_payload');
+    }
     return;
   }
   if (kind === 'swarm.contribution_reviewed') {
@@ -312,6 +327,7 @@ export function foldSwarmEvent(swarms, event) {
     const participant = Object.freeze({
       participantId: p.participantId, role: p.role ?? null, parentId: p.parentId ?? null,
       runId: p.runId ?? null, permissions: p.permissions ? Object.freeze([...p.permissions]) : null,
+      workspaceId: p.workspaceId ?? null,
       status: 'active', leftReason: null, bindings: Object.freeze([]),
       actor: meta.actor, seq: meta.seq, ts: meta.ts,
     });
@@ -474,7 +490,13 @@ export function foldSwarmEvent(swarms, event) {
     contributions.set(p.contributionId, Object.freeze({
       ...contribution,
       refs: Object.freeze([...new Set([...(contribution.refs ?? []), p.ref])]),
-      revision: Object.freeze({ sha: p.sha, ref: p.ref, ...meta }),
+      // The revision also names the checkout it was observed in and the HEAD that checkout showed
+      // before the capture — shared-checkout facts that are never an authorship claim over `sha`.
+      revision: Object.freeze({
+        sha: p.sha, ref: p.ref,
+        workspaceId: p.workspaceId ?? null, observedHead: p.observedHead ?? null,
+        ...meta,
+      }),
     }));
     swarms.set(p.swarmId, replaceField(swarm, 'contributions', contributions));
     return;
