@@ -1,6 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { EventEmitter } from 'node:events';
 import { readFileSync } from 'node:fs';
+import { PassThrough } from 'node:stream';
 import { usdToNanos } from '../src/usd.mjs';
 import { OmpRpcCli } from '../src/omp-rpc.mjs';
 import { validateProviderGovernanceCard } from '../src/provider-governance.mjs';
@@ -146,4 +148,45 @@ test('OMP partial streaming coverage preserves known usage without certifying th
   fx.frame({ type: 'agent_end', isTerminal: true, messages: [first, message({ timestamp: 101 })] });
   assert.equal(fx.usage().reduce((total, event) => total + event.payload.tokens, 0), 17);
   assert.equal(fx.complete()[0].payload.usageSeal.tokens, 'unavailable');
+});
+
+
+// TERMINAL COMPLETENESS: a member under provider governance validates the usage seal on
+// EVERY terminal event, so an omitted seal reads as `usage_seal_invalid` telemetry — the
+// Coordinator then fails the task as a provider-governance violation and hard-stops it. A
+// session that died before its first turn observed no usage; that is exactly the unavailable
+// seal, stated. A setup failure is a process-exit cause, never a fabricated accounting breach.
+test('OMP setup process-exit crash states an unavailable usage seal instead of omitting it', async () => {
+  const child = new EventEmitter();
+  child.pid = 4243;
+  child.stdin = { write: () => true };
+  child.stdout = new PassThrough();
+  child.stderr = new PassThrough();
+  child.kill = () => {};
+  const adapter = new OmpRpcCli({
+    requestTimeoutMs: 5_000,
+    modelCatalog: { 'deepseek/deepseek-v4-flash': ['high'] },
+    versionProbe: () => 'omp test',
+    reapOwnedProcessGroup: async () => ({ confirmed: true, reason: null }),
+    spawnFn: () => {
+      setImmediate(() => child.emit('exit', 1, null));
+      return child;
+    },
+  });
+  const events = [];
+  adapter.onEvent((event) => events.push(event));
+  const ack = await adapter.spawn('w-setup', { goal: 'setup' }, {
+    worktree: '/tmp', model: 'deepseek/deepseek-v4-flash', reasoningEffort: 'high',
+  });
+  assert.equal(ack.ok, false);
+  assert.equal(ack.code, 'setup_process_exit');
+  const crashed = events.find((event) => event.kind === 'lifecycle.crashed' && event.payload?.phase === 'setup');
+  assert.ok(crashed, 'the setup process exit is the terminal event');
+  const seal = crashed.payload.usageSeal;
+  assert.ok(seal, 'a terminal event must state its usage seal, never omit it');
+  assert.deepEqual(Object.keys(seal).sort(), ['counterId', 'tokenMetric', 'tokens', 'usd']);
+  assert.equal(seal.tokens, 'unavailable', 'no turn began, so no usage was observed');
+  assert.equal(seal.usd, 'unavailable');
+  assert.equal(seal.counterId, null);
+  assert.equal(seal.tokenMetric, null);
 });

@@ -896,7 +896,8 @@ export class OmpRpcCli {
         // waitReady throws ONLY on the process-exit fact (evidence), never on patience.
         session.setupFailed = true;
         this._emit(session, 'lifecycle.crashed', {
-          phase: 'setup', error: String(error?.message ?? error),
+          phase: 'setup', usageSeal: this._usageSeal(session),
+          error: String(error?.message ?? error),
           code: error?.code ?? 'setup_process_exit',
           exitCode: error?.exitCode ?? null, signal: error?.signal ?? null,
         });
