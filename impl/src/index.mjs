@@ -981,6 +981,13 @@ function worktreeManager(repoRoot, opts = {}) {
         }
         return;
       }
+      // Retain custody until both filesystem removal and capacity settlement are proven.
+      // A preservation refusal therefore leaves the reservation intact. If settlement fails
+      // after removal, the retained owner receipt makes the exact transaction retryable.
+      await worktreeMod.reap(repoRoot, taskId, {
+        force: true, deleteBranch: true, retainOwnerReceipt: true,
+        ...(opts.log ? { log: opts.log } : {}),
+      });
       if (opts.worktreeCapacity) {
         const reservation = workerReservations.get(taskId);
         if (reservation) {
@@ -997,12 +1004,7 @@ function worktreeManager(repoRoot, opts = {}) {
           });
         }
       }
-      // The common-Git receipt remains the exact cleanup authority until capacity absence is
-      // durable. reap() finalizes that receipt only after directory, registration, and branch
-      // absence, so a failed capacity release leaves the complete transaction retryable.
-      await worktreeMod.reap(repoRoot, taskId, {
-        force: true, deleteBranch: true, ...(opts.log ? { log: opts.log } : {}),
-      });
+      worktreeMod.releasePhysicalWorkspaceOwner(repoRoot, taskId);
     },
     async validateSessionContext(context) {
       try {

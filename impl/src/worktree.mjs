@@ -1041,12 +1041,16 @@ function attestedInfrastructureRoots(meta) {
  * nested inside an untracked tree is still classifiable. Attested roots are excluded by pathspec,
  * which is what keeps a copied dependency tree from being walked at all. */
 function gitStatusEntries(dir, generatedRoots) {
+  // Excluding a generated directory from the expensive untracked walk must not hide a
+  // force-added or modified tracked file beneath that same directory.
+  const tracked = gitFile(['status', '--porcelain', '-z', '--no-renames', '--untracked-files=no'],
+    dir, { encoding: 'utf8' }, { GIT_OPTIONAL_LOCKS: '0' });
   const raw = gitFile(
     ['status', '--porcelain', '-z', '--no-renames', '--untracked-files=all', '--ignored=matching',
-      '--', '.', ...generatedRoots.map((root) => `:(exclude,top)${root}`)],
+      '--', '.', ...generatedRoots.map((root) => `:(exclude,top,literal)${root}`)],
     dir, { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 }, { GIT_OPTIONAL_LOCKS: '0' },
   );
-  return raw.split('\0').filter(Boolean);
+  return [...new Set(`${tracked}${raw}`.split('\0').filter(Boolean))];
 }
 
 /** Whether `dir` is a checkout of *this* repository. A matching top-level is not enough: another
@@ -1639,7 +1643,7 @@ export async function markStopped(repoRoot, taskId) {
 /**
  * @param {string} repoRoot
  * @param {string} taskId
- * @param {{force?: boolean, deleteBranch?: boolean, log?: object}} [opts]
+ * @param {{force?: boolean, deleteBranch?: boolean, retainOwnerReceipt?: boolean, log?: object}} [opts]
  * @returns {Promise<void>}
  * @throws {WorktreeLockedError} when the worktree was never markStopped and `force` is not set
  * @throws {WorkspacePreservationError} when the checkout holds content no capture recorded —
@@ -1689,7 +1693,7 @@ export async function reap(repoRoot, taskId, opts = {}) {
   if (existsSync(dir) || existsSync(metaFile) || existsSync(projectionExclude) || registered || branchPresent) {
     throw new WorktreeCleanupError('owned worktree cleanup did not reach an exact absent state');
   }
-  try { releasePhysicalWorkspaceOwner(repoRoot, taskId); }
+  try { if (opts.retainOwnerReceipt !== true) releasePhysicalWorkspaceOwner(repoRoot, taskId); }
   catch (error) { throw Object.assign(new WorktreeCleanupError('physical workspace owner receipt could not be released'), { cause: error }); }
   logEvent(opts, taskId, 'worktree.reaped', { dir });
 }

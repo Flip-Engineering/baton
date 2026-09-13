@@ -1076,14 +1076,14 @@ test('P92.2-PO2/WC25: failed materialized capacity release retains physical clea
     driver.coordinator._worktrees.remove(created.ownerTaskId),
     (error) => error?.code === 'worktree_capacity_unavailable',
   );
-  assert.equal(existsSync(created.path), true);
-  assert.equal(driver.coordinator._worktrees.worktreeAvailable('capacity-release-logical', context), true);
+  assert.equal(existsSync(created.path), false, 'filesystem removal precedes capacity settlement');
+  assert.equal(driver.coordinator._worktrees.worktreeAvailable('capacity-release-logical', context), false);
   assert.equal(
     physicalWorkspaceOwnerReceipt(f.repo, created.ownerTaskId)?.receiptDigest,
     receiptBefore.receiptDigest,
   );
   assert.equal(driver.worktreeCapacity.snapshot().reservations.length, 1);
-  assert.equal(git(['branch', '--list', created.branch], f.repo).replace(/^\+\s+/u, ''), created.branch);
+  assert.equal(git(['branch', '--list', created.branch], f.repo), '');
 
   await driver.coordinator._worktrees.remove(created.ownerTaskId);
   assert.equal(releaseCalls, 2);
@@ -1100,6 +1100,33 @@ test('P92.2-PO2/WC25: failed materialized capacity release retains physical clea
   await driver.coordinator._worktrees.remove(created.ownerTaskId);
   assert.equal(releaseCalls, 2, 'idempotent cleanup must not replay the exact capacity release');
   assert.equal(physicalWorkspaceOwnerReceipt(f.repo, created.ownerTaskId), null);
+});
+
+test('retaining uncommitted workspace content also retains its capacity and owner receipt', async (t) => {
+  const f = fixture('dirty-owner-capacity');
+  const injected = injectedCapacity();
+  let driver;
+  t.after(() => dispose(driver, f));
+  driver = createDriver({ repoRoot: f.repo, logDir: f.logDir, adapters: {},
+    worktreeCapacity: validPolicy,
+    worktreeCapacityEstimate: injected.worktreeCapacityEstimate,
+    worktreeCapacityObserve: injected.worktreeCapacityObserve,
+  });
+  const created = await driver.coordinator._worktrees.create('dirty-owner', f.sha, {
+    runId: 'run-dirty-owner', attemptId: 'attempt-dirty-owner', processGeneration: 1,
+  });
+  writeFileSync(join(created.path, 'notes.txt'), 'Uncommitted work must survive.\n');
+  const receipt = physicalWorkspaceOwnerReceipt(f.repo, created.ownerTaskId);
+  const reservations = driver.worktreeCapacity.snapshot().reservations;
+  await assert.rejects(driver.coordinator._worktrees.remove(created.ownerTaskId), {
+    code: 'workspace_uncommitted_content_retained',
+  });
+  assert.equal(readFileSync(join(created.path, 'notes.txt'), 'utf8'), 'Uncommitted work must survive.\n');
+  assert.deepEqual(physicalWorkspaceOwnerReceipt(f.repo, created.ownerTaskId), receipt);
+  assert.deepEqual(driver.worktreeCapacity.snapshot().reservations, reservations);
+  rmSync(join(created.path, 'notes.txt'));
+  await driver.coordinator._worktrees.remove(created.ownerTaskId);
+  assert.equal(driver.worktreeCapacity.snapshot().reservations.length, 0);
 });
 
 test('P92.2-PO2/WC26: post-create materialization rollback survives release throw and false before exact retry', async (t) => {

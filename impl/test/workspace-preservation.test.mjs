@@ -22,7 +22,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 
@@ -415,6 +415,24 @@ test('an attested dependency tree is not walked file by file', async (t) => {
   assert.equal(existsSync(handle.dir), false);
 });
 
+test('attested infrastructure never hides force-added source from preservation', async (t) => {
+  const f = makeRepo('force-added-dependency');
+  t.after(() => rmSync(f.world, { recursive: true, force: true }));
+  mkdirSync(join(f.root, 'deps'));
+  writeFileSync(join(f.root, 'deps/vendor.js'), 'generated\n');
+  const handle = await createFromBase(f.root, 'force-added', f.baseSha, { dependencyDirs: ['deps'] });
+  writeFileSync(join(handle.dir, 'deps/vendor.js'), 'intentional local source change\n');
+  git(handle.dir, ['add', '-f', 'deps/vendor.js']);
+  const before = statusRaw(handle.dir);
+  const observed = observeOwnedWorktreeContent(f.root, 'force-added');
+  assert.equal(observed.removable, false);
+  assert.ok(observed.dirtyPaths.includes('deps/vendor.js'));
+  await rejectsPreservation(reap(f.root, 'force-added', { force: true, deleteBranch: true }),
+    'workspace_uncommitted_content_retained', 'tracked source inside generated directory');
+  assert.equal(statusRaw(handle.dir), before);
+  assert.equal(readFileSync(join(handle.dir, 'deps/vendor.js'), 'utf8'), 'intentional local source change\n');
+});
+
 // ---------- unknown content is not permission ----------
 
 test('a directory that is not this repository\'s checkout is retained', async (t) => {
@@ -432,7 +450,7 @@ test('a directory that is not this repository\'s checkout is retained', async (t
 
     // Its top level matches the directory it was given, so only the repository identity proves it
     // is not a checkout this owner ever had.
-    assert.equal(git(dir, ['rev-parse', '--show-toplevel']), dir);
+    assert.equal(realpathSync(git(dir, ['rev-parse', '--show-toplevel'])), realpathSync(dir));
     const observation = observeOwnedWorktreeContent(f.root, 'foreign-checkout');
     assert.equal(observation.state, 'unobservable');
     assert.equal(observation.removable, false);

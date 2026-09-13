@@ -9057,8 +9057,8 @@ export class Coordinator {
       if (!handle.cleanupPending) handle.cleanupError = null;
     }, (error) => {
       handle.cleanupPending = true;
-      handle.cleanupError = error?.code === 'progress_preservation_failed'
-        ? 'progress_preservation_failed' : 'worktree_cleanup_failed';
+      handle.cleanupError = error?.retained === true ? error.code
+        : error?.code === 'progress_preservation_failed' ? error.code : 'worktree_cleanup_failed';
       throw error;
     }).finally(() => {
       if (handle.cleanupPromise === cleanup) handle.cleanupPromise = null;

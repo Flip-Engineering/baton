@@ -214,3 +214,10 @@ any contribution. Probe artifacts published during the exercise: `contribution-b
 `builder-critique` contribution (plain text, 3 313 bytes, attributed to `builder`, ledger seq 496),
 published through `swarm.update {event:"swarm.contribution_recorded"}` with an explicit idempotency
 key.
+
+
+## Root integration follow-up
+
+The findings above describe the exercised deployment, not the subsequent fixed tree. Root added a real native-shell application test for implementer self-capture and checking during an active turn; capture now preserves HEAD and index bytes. Capture attaches a revision to an existing finding without replacing its text or author. Inspect reports capture/check target participants and an explicit running turn. Watch filters routine tool, token and route-observation telemetry after the GLM lead actually encountered the predicted feedback loop.
+
+In the completed native exercise, GLM captured the builder revision as `builder-code` at `2fc5f83cae77ac5f93a16a3c89e2bc112ca22a57` and independently checked it through Baton. The builder remained paused and available afterward. Both native sessions were explicitly stopped during deployment cleanup. Command discovery, selective observation and shared physical custody remain separate follow-up work.
