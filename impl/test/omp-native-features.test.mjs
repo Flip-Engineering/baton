@@ -149,3 +149,50 @@ test('RESUME: session resume and the isolated session store still append to the 
     '--resume', 'sess-prior', '--session-dir', '/home/w/sessions',
   ], 'resume authority rides the same argv as the native defaults');
 });
+
+test('Flash defaults admit native efforts with exact selectors and refuse unsupported effort before spawning', async (t) => {
+  const { adapter, launches, children } = captureLaunch({ modelCatalog: undefined });
+  cleanup(t, adapter, children);
+  for (const model of ['zai/glm-5.3-flash', 'deepseek/deepseek-flash']) {
+    for (const effort of ['low', 'high', 'max']) {
+      await launch(adapter, `${model}-${effort}`, { model, reasoningEffort: effort });
+      assert.deepEqual(launches.at(-1).args, [
+        '--mode', 'rpc', '--model', model, '--thinking', effort, '--approval-mode', 'yolo',
+      ]);
+    }
+    const before = launches.length;
+    const rejected = await adapter.spawn(`${model}-medium`, { goal: 'g' }, {
+      model, reasoningEffort: 'medium', worktree: '/tmp',
+    });
+    assert.equal(rejected.code, 'effort_unavailable');
+    assert.equal(launches.length, before);
+  }
+  assert.equal(adapter._sessions.size, 6, 'each admitted worker retains its independent live session');
+});
+
+test('concurrent Flash workers retain distinct native model identities when their messages interleave', async (t) => {
+  const { adapter, children } = captureLaunch({ modelCatalog: undefined });
+  cleanup(t, adapter, children);
+  const events = [];
+  adapter.onEvent((event) => events.push(event));
+  await Promise.all([
+    launch(adapter, 'glm', { model: 'zai/glm-5.3-flash' }),
+    launch(adapter, 'deepseek', { model: 'deepseek/deepseek-flash' }),
+  ]);
+  for (const session of adapter._sessions.values()) adapter._startTurn(session, 'work');
+  children[0].frame({ type: 'message_start', message: { role: 'assistant' } });
+  children[1].frame({ type: 'message_start', message: { role: 'assistant' } });
+  children[1].frame({ type: 'message_end', message: {
+    role: 'assistant', provider: 'deepseek', model: 'deepseek-flash',
+    usage: { totalTokens: 20, cost: { total: 0.001 } }, stopReason: 'stop',
+  } });
+  children[0].frame({ type: 'message_end', message: {
+    role: 'assistant', provider: 'zai', model: 'glm-5.3-flash',
+    usage: { totalTokens: 10, cost: { total: 0 } }, stopReason: 'stop',
+  } });
+  const usage = events.filter((event) => event.kind === 'resource.tokens');
+  assert.deepEqual(usage.map(({ worker, payload }) => [worker, payload.modelObserved, payload.tokens]), [
+    ['deepseek', 'deepseek/deepseek-flash', 20], ['glm', 'zai/glm-5.3-flash', 10],
+  ]);
+  assert.notEqual(usage[0].payload.counterId, usage[1].payload.counterId);
+});

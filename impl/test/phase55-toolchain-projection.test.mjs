@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import {
-  chmodSync, existsSync, linkSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync,
+  chmodSync, existsSync, linkSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, readlinkSync,
   rmSync, symlinkSync, writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -140,6 +140,47 @@ test('TP1/TP2/TP11: invalid configuration, unsafe mappings, links, hardlinks, pr
     (error) => error.code === 'toolchain_projection_changed',
   );
   assert.doesNotThrow(() => prepareToolchainProjection({ ...descriptor(source), expectedManifestDigest: identity.manifestDigest }));
+});
+
+test('npm executable links retain package-relative imports in independent projections', (t) => {
+  const source = makeSource('npm-links'); const target = root('npm-target');
+  t.after(() => { rmSync(source, { recursive: true, force: true }); rmSync(target, { recursive: true, force: true }); });
+  write(source, 'deps/runtime/bin/run.mjs', "import { value } from '../index.mjs'; console.log(value);\n", 0o755);
+  mkdirSync(join(source, 'deps/runtime/.bin'));
+  const link = '../bin/run.mjs';
+  const before = inspectToolchainProjection(descriptor(source));
+  symlinkSync(link, join(source, 'deps/runtime/.bin/run'));
+  const authority = prepared(source);
+  assert.equal(authority.identity().fileCount, before.fileCount + 1);
+  assert.equal(authority.identity().byteCount, before.byteCount + Buffer.byteLength(link));
+  authority.materialize(target);
+  const projected = join(target, 'tools/runtime/.bin/run');
+  assert.equal(readlinkSync(projected), link);
+  assert.equal(sh(process.execPath, [projected], target), '1');
+  assert.deepEqual(authority.verifyMaterialization(target), authority.identity());
+  write(target, 'tools/runtime/index.mjs', 'export const value = 2;\n');
+  assert.equal(sh(process.execPath, [projected], target), '2');
+  assert.match(readFileSync(join(source, 'deps/runtime/index.mjs'), 'utf8'), /value = 1/);
+  assert.throws(() => authority.verifyMaterialization(target), { code: 'toolchain_projection_materialization_failed' });
+});
+
+test('toolchain links refuse escapes, directories, cycles and changed link targets', (t) => {
+  const source = makeSource('link-refusal');
+  t.after(() => rmSync(source, { recursive: true, force: true }));
+  const alias = join(source, 'deps/runtime/alias');
+  write(source, 'deps/outside.mjs', 'outside');
+  for (const destination of ['../outside.mjs', join(source, 'deps/runtime/index.mjs'), 'empty', 'alias', 'missing']) {
+    symlinkSync(destination, alias);
+    assert.throws(() => inspectToolchainProjection(descriptor(source)), { code: 'toolchain_projection_invalid' });
+    rmSync(alias);
+  }
+  symlinkSync('index.mjs', alias);
+  const authority = prepared(source);
+  rmSync(alias); symlinkSync('bin/run', alias);
+  const target = root('changed-link-target');
+  t.after(() => rmSync(target, { recursive: true, force: true }));
+  assert.throws(() => authority.materialize(target), { code: 'toolchain_projection_changed' });
+  assert.equal(existsSync(join(target, 'tools/runtime')), false);
 });
 
 test('TP3: every independent deployment ceiling accepts exact input and refuses max+1 without truncation', (t) => {

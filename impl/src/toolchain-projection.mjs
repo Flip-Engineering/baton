@@ -4,7 +4,7 @@
 import { createHash } from 'node:crypto';
 import {
   closeSync, constants as fsConstants, existsSync, fstatSync, lstatSync, mkdirSync, openSync,
-  readFileSync, readdirSync, realpathSync, rmSync, rmdirSync, writeFileSync,
+  readFileSync, readdirSync, readlinkSync, realpathSync, rmSync, rmdirSync, symlinkSync, writeFileSync,
 } from 'node:fs';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { compareCanonicalStrings, foldCanonicalCase } from './canonical-order.mjs';
@@ -119,13 +119,40 @@ function scanProjection(config, actualRoot, sourceSide, retainBytes = false) {
   const changed = () => { throw typed('toolchain source changed', 'toolchain_projection_changed'); };
   const invalid = () => { throw typed(sourceSide ? 'toolchain source contains an unsupported entry' : 'toolchain materialization is invalid', sourceSide ? 'toolchain_projection_invalid' : 'toolchain_projection_materialization_failed'); };
 
-  const walk = (absolutePath, logicalPath, depth) => {
+  const walk = (absolutePath, logicalPath, depth, mappingRoot) => {
     let before;
     try { before = lstatSync(absolutePath); } catch { if (sourceSide) changed(); else invalid(); }
-    if (before.isSymbolicLink() || (!before.isDirectory() && !before.isFile())) invalid();
+    if (!before.isSymbolicLink() && !before.isDirectory() && !before.isFile()) invalid();
     if (Buffer.byteLength(logicalPath) > config.limits.maxPathBytes || depth > config.limits.maxDepth) exceed();
     const key = foldCanonicalCase(logicalPath.normalize('NFC'));
     if (pathKeys.has(key)) invalid(); pathKeys.add(key);
+    if (before.isSymbolicLink()) {
+      // npm's .bin entries are relative links to executables inside the same projected tree.
+      // Preserve that relationship so package-relative imports still work. Never follow a link
+      // to acquire extra source authority, and never create directory links in the target.
+      let target;
+      try {
+        target = readlinkSync(absolutePath);
+        if (isAbsolute(target) || !safeEntryName(target)) invalid();
+        const lexical = resolve(dirname(absolutePath), target);
+        const resolved = realpathSync(lexical);
+        for (const path of [lexical, resolved]) {
+          const within = relative(mappingRoot, path);
+          if (!within || within === '..' || within.startsWith(`..${sep}`) || isAbsolute(within)) invalid();
+        }
+        if (!lstatSync(resolved).isFile()) invalid();
+        if (statSignature(before) !== statSignature(lstatSync(absolutePath))
+          || target !== readlinkSync(absolutePath)) changed();
+      } catch (error) {
+        if (error instanceof ToolchainProjectionError) throw error;
+        invalid();
+      }
+      const bytes = Buffer.byteLength(target);
+      counters.files += 1; counters.bytes += bytes;
+      if (counters.files > config.limits.maxFiles || bytes > config.limits.maxFileBytes
+        || counters.bytes > config.limits.maxBytes || bytes > config.limits.maxPathBytes) exceed();
+      return Object.freeze({ path: logicalPath, type: 'symlink', target });
+    }
     if (before.isFile()) {
       counters.files += 1; counters.bytes += before.size;
       if (counters.files > config.limits.maxFiles || before.size > config.limits.maxFileBytes || counters.bytes > config.limits.maxBytes) exceed();
@@ -145,7 +172,7 @@ function scanProjection(config, actualRoot, sourceSide, retainBytes = false) {
     let names;
     try { names = readdirSync(absolutePath).sort(compareCanonicalStrings); } catch { if (sourceSide) changed(); else invalid(); }
     if (!names.every(safeEntryName)) invalid();
-    const children = names.map((name) => walk(join(absolutePath, name), `${logicalPath}/${name}`, depth + 1));
+    const children = names.map((name) => walk(join(absolutePath, name), `${logicalPath}/${name}`, depth + 1, mappingRoot));
     let after; let afterNames;
     try { after = lstatSync(absolutePath); afterNames = readdirSync(absolutePath).sort(compareCanonicalStrings); } catch { if (sourceSide) changed(); else invalid(); }
     if (!after.isDirectory() || statSignature(before) !== statSignature(after) || JSON.stringify(names) !== JSON.stringify(afterNames)) {
@@ -158,10 +185,11 @@ function scanProjection(config, actualRoot, sourceSide, retainBytes = false) {
     const actualPath = resolve(actualRoot, sourceSide ? mapping.sourcePath : mapping.targetPath);
     const within = relative(actualRoot, actualPath);
     if (within === '..' || within.startsWith(`..${sep}`) || isAbsolute(within)) invalid();
-    return Object.freeze({ sourcePath: mapping.sourcePath, targetPath: mapping.targetPath, tree: walk(actualPath, mapping.sourcePath, 0) });
+    return Object.freeze({ sourcePath: mapping.sourcePath, targetPath: mapping.targetPath, tree: walk(actualPath, mapping.sourcePath, 0, actualPath) });
   });
   const manifestRows = (nodes) => nodes.flatMap((node) => node.type === 'file'
     ? [{ path: node.path, type: node.type, bytes: node.bytes, executable: node.executable, digest: node.digest }]
+    : node.type === 'symlink' ? [{ path: node.path, type: node.type, target: node.target }]
     : [{ path: node.path, type: node.type }, ...manifestRows(node.children)]);
   const manifest = Object.freeze(trees.map((row) => Object.freeze({ sourcePath: row.sourcePath, entries: Object.freeze(manifestRows([row.tree])) })));
   return Object.freeze({ trees: Object.freeze(trees), manifest, counters: Object.freeze({ ...counters }), manifestDigest: digestValue({ schemaVersion: 1, manifest }) });
@@ -205,7 +233,8 @@ function writeTree(tree, targetRoot, mapping, createdParents) {
   if (tree.type === 'directory') {
     mkdirSync(target, { recursive: false, mode: 0o755 });
     for (const child of tree.children) writeTree(child, targetRoot, mapping, createdParents);
-  } else writeFileSync(target, tree.content, { flag: 'wx', mode: tree.executable ? 0o755 : 0o644 });
+  } else if (tree.type === 'symlink') symlinkSync(tree.target, target);
+  else writeFileSync(target, tree.content, { flag: 'wx', mode: tree.executable ? 0o755 : 0o644 });
 }
 
 export function prepareToolchainProjection(rawConfig) {
