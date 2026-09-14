@@ -235,3 +235,18 @@ inbox and answers with `swarm guide`, `swarm capture`, `swarm check` or `swarm s
 reads state files and never polls. Both directions ride the resident: the swarm must live in the
 published resident (`baton serve`), not in a private in-process deployment.
 
+### A stop that cannot converge names its wait (issue #265, 2026-09-14)
+
+`swarm stop`, a Run stop and the deployment drain poll the same convergence predicates until a
+deadline. When the deadline wins, the refusal is never bare: the error's `detail.waitingOn` lists,
+per target worker, exactly which predicates were still unmet — `disposition` (no stop outcome was
+earned), `local_resources:<hold>` for each hold the worker still carries (its process, runtime
+scope, checkout, a pending cleanup or spawn, a stop waiter), `process:<state>` for an unclosed
+process, `interaction:<id>` for an unanswered approval or question — and the same list is appended
+to the worker's durable log as `control.stop_waiting_on`, so the non-convergence is visible in the
+evidence, not only to the caller. A drain that fails before it reaches its workers names its reason
+instead (`startup_cleanup_pending`, `authority_operations_in_flight`, `pending_interaction_authority`,
+`historical_reconciliation_pending`). The CLI prints the detail under the refusal line. The holds
+are one derivation shared with the predicate itself, so the list can never disagree with the loop
+that produced the refusal.
+
