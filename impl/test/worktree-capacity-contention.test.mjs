@@ -83,8 +83,10 @@ const peers = plan.peers ?? 1;
 
 // Announce, then spin until every peer has arrived, so the reservations below overlap for real.
 function barrier(name) {
-  if (peers <= 1) return;
+  // Always announce (a lone child's 'booted' announcement is the parent's timing signal); only a
+  // real peer set spins for the others.
   fs.writeFileSync(join(barrierDir, name + '.' + process.pid), '');
+  if (peers <= 1) return;
   const deadline = Date.now() + 30000;
   for (;;) {
     const arrived = fs.readdirSync(barrierDir).filter((entry) => entry.startsWith(name + '.')).length;
@@ -124,9 +126,12 @@ const started = Date.now();
 // failed with "Unexpected end of JSON input" under host load when a poll landed mid-write).
 const write = (value) => {
   const staged = outPath + '.' + process.pid + '.tmp';
-  fs.writeFileSync(staged, JSON.stringify({ ...value, elapsed: Date.now() - started, pid: process.pid, sabotageFired }));
+  fs.writeFileSync(staged, JSON.stringify({ ...value, elapsed: Date.now() - started, completedAt: Date.now(), pid: process.pid, sabotageFired }));
   fs.renameSync(staged, outPath);
 };
+// Alive and about to contend: the parent measures any hold it stages from this signal, never from
+// its own spawn call (the authority may take the lock as early as its construction).
+barrier('booted');
 const authority = new WorktreeCapacityAuthority({
   repoRoot: fs.realpathSync(repoArg),
   policy: plan.policy,
@@ -278,22 +283,32 @@ test('WCC2: live contention is waited out, and the live holder keeps its lock', 
   const children = [];
   const planted = plantArtifact(world, 'lock', ownerRecord());
   let observedWhileHeld = null;
-  const release = setTimeout(() => {
-    observedWhileHeld = readFileSync(planted.path, 'utf8');
-    rmSync(planted.path, { force: true });
-  }, 400);
-  t.after(() => { clearTimeout(release); disposable(world, children)(); });
+  let releasedAt = null;
+  let release = null;
+  t.after(() => { if (release) clearTimeout(release); disposable(world, children)(); });
   prepareWorld(world, children);
 
   const planPath = writePlan(world, { holdMs: 0, ids: ['worker:waited'], lockWaitMs: 20_000 });
   const run = launch(world, planPath, 'waited.json', children);
+  // The hold is measured from the moment the child is booted and about to contend — never from
+  // the parent's spawn call: under host load Node's boot ate the 400ms and the child arrived after
+  // the release (#257 WCC2). The proof of waiting is one clock, not two: the child completed after
+  // the parent released.
+  await until(() => readdirSync(world.barrier).some((entry) => entry.startsWith('booted.')), 'the booted child');
+  release = setTimeout(() => {
+    observedWhileHeld = readFileSync(planted.path, 'utf8');
+    rmSync(planted.path, { force: true });
+    releasedAt = Date.now();
+  }, 400);
   await run.settled;
   const outcome = run.outcome();
   assert.equal(outcome.ok, true,
     `a bounded wait must absorb a 400ms live hold: ${outcome.code} ${outcome.message ?? ''}`);
   assert.equal(observedWhileHeld, planted.payload,
     'the live holder record is untouched for as long as it appears live');
-  assert.ok(outcome.elapsed >= 300, `the deployment must wait for the holder (elapsed ${outcome.elapsed}ms)`);
+  assert.equal(typeof releasedAt, 'number', 'the holder was released while the child stood at the lock');
+  assert.ok(outcome.completedAt >= releasedAt,
+    `the deployment must wait for the holder (completed ${outcome.completedAt - releasedAt}ms after the release; elapsed ${outcome.elapsed}ms)`);
 });
 
 test('WCC3: a live holder past the deadline refuses pre-effect, untouched and never stolen', { timeout: 60_000 }, async (t) => {

@@ -607,7 +607,6 @@ export class KimiAcpCli {
       });
       this._flushTurnStreams(session, session.activeTurn?.turnId);
       session.closed = true;
-      if (session.wallTimer) clearTimeout(session.wallTimer);
       for (const wait of session.waits.values()) wait.reject(new Error('Kimi process closed'));
       session.waits.clear();
       const releaseConfirmedOwnership = () => {
