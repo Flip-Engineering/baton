@@ -37,21 +37,22 @@ export function writeExpectedRed(path, rows) {
 }
 
 // A hang is a test the RUNNER had to stop: its file emitted nothing until the progress deadline
-// (fileHung) or node's own per-test timeout fired. `cancelledByParent` with "Promise resolution
-// is still pending but the event loop has already resolved" is different: an earlier test in the
-// file awaited something that can never settle, the event loop drained, and node cancelled the
-// rest. The file finishes in milliseconds, so it is a deterministic red (a dangling await that
-// must be fixed) and is listable in the manifest by name like any other expected-not-to-pass
-// row; the verdict still names it as cancelled so the count stays visible.
+// (fileHung, minted by run-suite) or node's own per-test timeout fired (testTimeoutFailure /
+// testAborted). `cancelledByParent` is different: an earlier test in the file awaited something
+// that can never settle, the event loop drained, and node cancelled the rest (its message reads
+// "Promise resolution is still pending but the event loop has already resolved"). The file
+// finishes in milliseconds, so it is a deterministic red (a dangling await that must be fixed)
+// and is listable in the manifest by name like any other expected-not-to-pass row; the verdict
+// still names it as cancelled so the count stays visible. Classification reads node's typed
+// `failureType` only — never the message prose.
 const HANG_FAILURE_TYPES = new Set(['testTimeoutFailure', 'testAborted', 'fileHung']);
 
 export function isHang(failure) {
-  if (HANG_FAILURE_TYPES.has(failure.failureType)) return true;
-  return /test timed out/u.test(failure.message ?? '');
+  return HANG_FAILURE_TYPES.has(failure.failureType);
 }
 
 export function isCancelled(failure) {
-  return failure.failureType === 'cancelledByParent' || /Promise resolution is still pending/u.test(failure.message ?? '');
+  return failure.failureType === 'cancelledByParent';
 }
 
 /**
