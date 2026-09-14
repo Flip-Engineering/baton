@@ -59,11 +59,11 @@ function options(t, repo) {
   };
 }
 
-test('the CLI parses swarm watch --follow into the follow stream', () => {
-  const parsed = parseBatonCli(['swarm', 'watch', 'swarm-1', '--follow', '--timeout-ms', '250']);
-  assert.equal(parsed.kind, 'swarm_follow');
-  assert.equal(parsed.swarmId, 'swarm-1');
-  assert.equal(parsed.timeoutMs, 250);
+test('the CLI parses swarm watch --follow into the deployment wake stream, pinned to this swarm (#294)', () => {
+  const parsed = parseBatonCli(['swarm', 'watch', 'swarm-1', '--follow', '--since', '250']);
+  assert.equal(parsed.kind, 'wake_watch');
+  assert.deepEqual(parsed.swarms, ['swarm-1']);
+  assert.equal(parsed.since, 250);
   assert.equal(parseBatonCli(['swarm', 'watch', 'swarm-1']).kind, 'command');
 });
 
@@ -96,7 +96,7 @@ test('a real resident wakes a real `baton swarm watch --follow` child on guidanc
   const before = await untilPaused();
 
   const lines = [];
-  const child = spawn(process.execPath, [BATON, 'swarm', 'watch', swarm.id, '--follow', '--timeout-ms', '1500', '--after-seq', String(before.cursor)], {
+  const child = spawn(process.execPath, [BATON, 'swarm', 'watch', swarm.id, '--follow', '--since', String(before.cursor)], {
     cwd: repo, env: { ...process.env, HOME: configured.home, XDG_CONFIG_HOME: configured.env.XDG_CONFIG_HOME }, stdio: ['ignore', 'pipe', 'pipe'],
   });
   let stderr = '';
@@ -117,12 +117,13 @@ test('a real resident wakes a real `baton swarm watch --follow` child on guidanc
   assert.equal(code, 0, `follow child exit ${code}; stderr: ${stderr}`);
   assert.ok(lines.length >= 3, `at least guidance, contribution and close wakes: ${lines.length}`);
   for (const line of lines) {
-    assert.equal(line.kind, 'baton.swarm_wake');
+    assert.equal(line.kind, 'baton.wake');
     assert.equal(line.swarmId, swarm.id);
-    assert.ok(line.event && typeof line.event.kind === 'string', 'every wake names the event that caused it');
+    assert.ok(typeof line.wakeClass === 'string' && line.wakeClass.length > 0, 'every wake names the class that caused it');
   }
-  assert.equal(lines.at(-1).status, 'closed');
-  assert.ok(lines.some((line) => line.contributions >= 1));
+  assert.equal(lines.at(-1).wakeClass, 'closed');
+  assert.ok(lines.some((line) => line.wakeClass === 'guidance_delivered'));
+  assert.ok(lines.some((line) => line.wakeClass === 'contribution_recorded'));
   const closed = await owner.close();
   assert.equal(closed.state, 'closed');
 });

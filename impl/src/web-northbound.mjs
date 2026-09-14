@@ -1014,11 +1014,12 @@ export class WebNorthbound {
     // Issue #294: the deployment-scope wake stream. It rides the same coordination authority the
     // transports already serve and takes its two deployment observations from the application card
     // the resident already publishes (the doctor's fresh workspace capacity observation, and the
-    // publication identity), so no second observation path is invented here.
-    this.wakes = opts.wakes ?? new WakeStream({
-      ...opts, coordination: this.coordination,
-      observation: opts.observation ?? (() => this._wakeObservation()),
-    });
+    // publication identity), so no second observation path is invented here. Built lazily: a host
+    // whose coordination double never serves /v1/wakes (most fixtures, and every host that predates
+    // #294) should not have to grow wake-shaped methods it never calls.
+    this._wakesOpt = opts.wakes ?? null;
+    this._wakesOptions = opts;
+    this._wakes = null;
     this.wakeHeartbeatMs = opts.wakeHeartbeatMs ?? 15_000;
     if (!Number.isSafeInteger(this.wakeHeartbeatMs) || this.wakeHeartbeatMs <= 0) {
       throw new TypeError('wake heartbeat interval must be a positive safe integer');
@@ -2454,6 +2455,17 @@ export class WebNorthbound {
       try { res.end(); } catch { /* terminal already */ }
     }
     return undefined;
+  }
+
+  get wakes() {
+    if (this._wakesOpt !== null) return this._wakesOpt;
+    if (this._wakes === null) {
+      this._wakes = new WakeStream({
+        ...this._wakesOptions, coordination: this.coordination,
+        observation: this._wakesOptions.observation ?? (() => this._wakeObservation()),
+      });
+    }
+    return this._wakes;
   }
 
   /** True while the principal is still authorized for this origin — the same live check the

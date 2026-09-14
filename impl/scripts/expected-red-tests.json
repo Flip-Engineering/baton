@@ -878,10 +878,6 @@
       "reason": "design"
     },
     {
-      "key": "test/phase25-atlas-behavior-fingerprint.test.mjs :: BF2: network, child-process, and worker-thread effects are denied",
-      "reason": "design"
-    },
-    {
       "key": "test/phase62-web-goal-plan.test.mjs :: GP7/GP8: closed nested schemas and typed non-leaking goal/plan failures refuse safely",
       "reason": "design"
     },
@@ -1628,6 +1624,10 @@
     {
       "key": "test/swarm-gap-red.test.mjs :: S-G5 RED (stage: scoped-view-context-unscoped): a scoped view projects only the context its subtree owns",
       "reason": "S-G5"
+    },
+    {
+      "key": "test/swarm-wake.test.mjs :: a real resident wakes a real `baton swarm watch --follow` child on guidance, contribution, and close",
+      "reason": "#320"
     },
     {
       "key": "test/tight-cell-red.test.mjs :: D1 depth1[cell-mate-task-tier-read-missing]: a cell member's CONTEXT_READ resolves the cell's task tiers",

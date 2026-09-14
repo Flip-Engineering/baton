@@ -1258,7 +1258,7 @@ const SWARM_OPERATION_EXAMPLES = Object.freeze({
 // (impl/src/wake-stream.mjs owns the one wake-class table); nothing is restated here.
 const wakeFilterTokens = {
   oneOf: [
-    { type: 'string', minLength: 1, maxLength: 4_096 },
+    { type: 'string', minLength: 1, maxLength: FRAME_LIMITS['wake.filter_token'].value },
     { type: 'array', items: { type: 'string', minLength: 1, maxLength: 256 } },
   ],
 };

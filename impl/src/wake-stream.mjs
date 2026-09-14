@@ -2,6 +2,8 @@ import { request as httpRequest } from 'node:http';
 
 import { createHash } from 'node:crypto';
 
+import { FRAME_LIMITS } from './limits.mjs';
+
 // Issue #294: the deployment-scope wake stream.
 //
 // Before this module every root-side feed was one `baton swarm watch --follow` child per swarm,
@@ -254,7 +256,10 @@ export function wakeClassHelpLines() {
 const SAFE_FILTER_TOKEN = /^[A-Za-z0-9._:-]{1,256}$/u;
 
 function filterList(value, label) {
-  const tokens = Array.isArray(value) ? value : `${value ?? ''}`.split(',');
+  // parseWakeFilter must be idempotent: parsing its own output (an already-parsed filter, as
+  // client.wakes() → openWakeStream() does — the bridge and the CLI each parse once) has to
+  // return the same Set, not stringify it into a single invalid "[object Set]" token.
+  const tokens = Array.isArray(value) ? value : value instanceof Set ? [...value] : `${value ?? ''}`.split(',');
   const cleaned = tokens.map((token) => `${token}`.trim()).filter((token) => token.length > 0);
   for (const token of cleaned) {
     if (!SAFE_FILTER_TOKEN.test(token)) {
@@ -405,7 +410,7 @@ function normalizeObservation(value) {
 
 // ── the stream ──────────────────────────────────────────────────────────────────────────────────
 
-const DEFAULT_REPLAY_LIMIT = 4_096;
+const DEFAULT_REPLAY_LIMIT = FRAME_LIMITS['view.wake_replay.items'].value;
 
 function cursorOf(coordination) {
   if (typeof coordination.eventCursor === 'function') return coordination.eventCursor();
@@ -729,7 +734,7 @@ export function openWakeStream({
 // ── the loopback WebSocket binding (RFC 6455) ───────────────────────────────────────────────────
 
 const WS_GUID = '258EAFA5-E914-47DA-95CA-C5AB0DC85B11';
-const WS_MAX_FRAME_BYTES = 1024 * 1024;
+const WS_MAX_FRAME_BYTES = FRAME_LIMITS['wire.frame'].value;
 
 function acceptKey(key) {
   return createHash('sha1').update(`${key}${WS_GUID}`).digest('base64');

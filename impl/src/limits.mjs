@@ -76,6 +76,9 @@ const ADMISSION = Object.freeze({
   'decision.option.summary': { lane: 'decision.option.summary', class: 'admission', value: 512, unit: 'bytes', graceful: null, enforcedAt: 'messages.createDecisionRequest option summary', refusalCode: 'decision_option_summary_exceeded' },
   'decision.text': { lane: 'decision.text', class: 'admission', value: 4096, unit: 'bytes', graceful: null, enforcedAt: 'messages.createDecisionAnswer text', refusalCode: 'decision_text_exceeded' },
   'scratchpad.entry.body': { lane: 'scratchpad.entry.body', class: 'admission', value: 8192, unit: 'bytes', graceful: null, enforcedAt: 'coordination-store.writeScratchpad', refusalCode: 'scratchpad_entry_exceeded' },
+  // Issue #294: one wake-filter token (a class/swarm/participant name) admitted into a subscribe
+  // or since request — the same admission-class bound every other named-token lane uses.
+  'wake.filter_token': { lane: 'wake.filter_token', class: 'admission', value: 4096, unit: 'bytes', graceful: null, enforcedAt: 'wake-stream.mjs parseWakeFilter', refusalCode: 'invalid_wake_filter' },
 });
 
 const SUBSTRATE = Object.freeze({
@@ -118,6 +121,10 @@ const VIEW = Object.freeze({
   'view.context_read.knowledge_items': { lane: 'view.context_read.knowledge_items', class: 'view', value: 8, unit: 'items', graceful: 'shed-flagged' },
   'view.context_read.items': { lane: 'view.context_read.items', class: 'view', value: 64, unit: 'items', graceful: 'shed-flagged' },
   'view.inspect_captured_file.bytes': { lane: 'view.inspect_captured_file.bytes', class: 'view', value: 4194304, unit: 'bytes', graceful: 'shed-flagged' },
+  // Issue #294: the wake stream's pull-form and lag replay bound (rows, not bytes) — beyond it a
+  // consumer is shed the same way every other view row sheds: a typed marker
+  // (baton.wake_stream_lagged / a bounded page), never a silent truncation.
+  'view.wake_replay.items': { lane: 'view.wake_replay.items', class: 'view', value: 4096, unit: 'items', graceful: 'shed-flagged' },
 });
 
 /** One deep-frozen registry keyed by lane name (Decision 1). Every row: {lane, class, value, unit,
