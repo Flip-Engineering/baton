@@ -72,14 +72,14 @@ function makeRawRepo() {
   return dir;
 }
 
-async function waitUntil(predicate, { timeoutMs = 1500, intervalMs = 10 } = {}) {
-  const start = Date.now();
+/** Wait for the run's own durable settlement: the coordination ledger's append notification drives
+ *  the re-check, and the task's terminal projection is the event that ends the wait — never a
+ *  wall-clock completion budget, so a loaded machine delays the observation instead of failing it. */
+async function settledTask(driver, workerId) {
   for (;;) {
-    if (await predicate()) return;
-    if (Date.now() - start > timeoutMs) {
-      throw new Error(`waitUntil: condition never became true within ${timeoutMs}ms`);
-    }
-    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+    const result = await driver.coordinator.result(workerId);
+    if (result.ready) return result;
+    await driver.coordination.waitAfter(driver.coordination.eventCursor(), 250);
   }
 }
 
@@ -562,8 +562,7 @@ test('C5: a dirty-tree task ends with HEAD authored as baton-worker-<vendor> and
   const brief = makeBrief({ verification: { command: 'test -f done.txt', expectExit: 0 } });
   const handle = await driver.coordinator.spawn('forgevendor', brief, { taskId: 'attrib-1', taskType: 'general' });
 
-  await waitUntil(async () => (await driver.coordinator.result(handle.id)).ready);
-  const outcome = await driver.coordinator.result(handle.id);
+  const outcome = await settledTask(driver, handle.id);
   assert.equal(outcome.status, 'completed');
 
   const worktreeDir = driver.coordinator.list().find((row) => row.id === handle.id).sessionContext.worktree;
@@ -584,8 +583,7 @@ test('C5: a self-committed task still logs the vendor on verify.reverified, even
   const brief = makeBrief({ verification: { command: 'test -f done2.txt', expectExit: 0 } });
   const handle = await driver.coordinator.spawn('mock', brief, { taskId: 'attrib-2', taskType: 'general' });
 
-  await waitUntil(async () => (await driver.coordinator.result(handle.id)).ready);
-  const outcome = await driver.coordinator.result(handle.id);
+  const outcome = await settledTask(driver, handle.id);
   assert.equal(outcome.status, 'completed');
 
   const worktreeDir = driver.coordinator.list().find((row) => row.id === handle.id).sessionContext.worktree;
@@ -656,8 +654,7 @@ test('C7: createDriver() end-to-end — an honest task completes, is attributed,
   const brief = makeBrief({ verification: { command: 'test -f done.txt', expectExit: 0 } });
   const handle = await driver.coordinator.spawn('honestvendor', brief, { taskId: 'c7-honest', taskType: 'general' });
 
-  await waitUntil(async () => (await driver.coordinator.result(handle.id)).ready);
-  const outcome = await driver.coordinator.result(handle.id);
+  const outcome = await settledTask(driver, handle.id);
   assert.equal(
     outcome.status,
     'completed',
@@ -683,8 +680,7 @@ test('C7: createDriver() end-to-end — a forged task never completes, and auto-
   const brief = makeBrief({ verification: { command: 'test -f done.txt', expectExit: 0 } });
   const handle = await driver.coordinator.spawn('auto', brief, { taskId: 'c7-forged', taskType: 'general' });
 
-  await waitUntil(async () => (await driver.coordinator.result(handle.id)).ready);
-  const outcome = await driver.coordinator.result(handle.id);
+  const outcome = await settledTask(driver, handle.id);
 
   assert.equal(outcome.status, 'failed', 'a forged completion must never produce completed, even through the real end-to-end entrypoint');
   assert.equal(outcome.verdict.passed, false);
@@ -705,8 +701,7 @@ test('C7: createDriver({requireCoverage:true}) makes an otherwise-passing task f
   const brief = makeBrief({ verification: { command: 'test -f done.txt', expectExit: 0 } }); // no coverageCommand configured
   const handle = await driver.coordinator.spawn('covvendor', brief, { taskId: 'c7-cov', taskType: 'general' });
 
-  await waitUntil(async () => (await driver.coordinator.result(handle.id)).ready);
-  const outcome = await driver.coordinator.result(handle.id);
+  const outcome = await settledTask(driver, handle.id);
 
   assert.equal(outcome.verdict.passed, true, 'the pinned check itself genuinely passed');
   assert.equal(

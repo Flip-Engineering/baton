@@ -48,6 +48,18 @@ async function until(fn, label, timeoutMs = 3_000) {
   throw new Error(`timeout waiting for ${label}`);
 }
 
+/** The coordination ledger's own settlement event for each task — never a wall-clock completion
+ *  budget. `waitAfter` wakes on the next durable append; a wake without a terminal status simply
+ *  re-checks, so a loaded machine delays the observation instead of failing it. */
+async function settledTasks(driver, taskIds) {
+  const terminal = new Set(['completed', 'failed', 'cancelled']);
+  for (;;) {
+    const tasks = taskIds.map((id) => driver.coordination.task(id));
+    if (tasks.every((task) => task && terminal.has(task.status))) return tasks;
+    await driver.coordination.waitAfter(driver.coordination.eventCursor(), 250);
+  }
+}
+
 function drainReceipt(overrides = {}) {
   const core = {
     schemaVersion: 1, state: 'drained', scope: 'local-controller', repoId: 'repo-a',
@@ -150,24 +162,36 @@ test('DC4: drain cannot attest while worktree creation or native spawn remains p
     drainPolicy: { maxWorkers: 1, timeoutMs: 2_000, pollMs: 5 }, watchdog: { stallMs: 60_000 }, // valid positive stallMs; watchdog never fires in this window
   });
   await driver.ready;
-  const createWorktree = driver.coordinator._worktrees.create.bind(driver.coordinator._worktrees);
-  const removeWorktree = driver.coordinator._worktrees.remove.bind(driver.coordinator._worktrees);
+  // The subject is the drain's pending-boundary attestation, not the cost of `git worktree`: the
+  // fixture checkout materializes and reaps under the gates (the legacy/embedder create+remove
+  // shape, so progress preservation is 'unsupported' rather than a second real git effect), and
+  // the gate release — never a git race against the deployment deadline — ends the wait. The real
+  // reap is DC2-DC7's and the historical-residue row's subject, whose budgets cover it.
+  const checkout = join(f.directory, '.baton', 'wt', 'late-boundaries');
   let created = false; let earlyRemovals = 0; let lateRemovals = 0;
-  driver.coordinator._worktrees.create = async (...args) => { await worktreeGate.promise; const value = await createWorktree(...args); created = true; return value; };
-  driver.coordinator._worktrees.remove = async (...args) => {
-    if (!created) { earlyRemovals += 1; return; }
-    lateRemovals += 1; return removeWorktree(...args);
+  driver.coordinator._worktrees = {
+    create: async (taskId) => {
+      await worktreeGate.promise;
+      mkdirSync(checkout, { recursive: true });
+      created = true;
+      return { path: checkout, branch: `baton/${taskId}`, baseSha: 'sha-base' };
+    },
+    remove: async () => {
+      if (!created) { earlyRemovals += 1; return; }
+      lateRemovals += 1;
+      rmSync(checkout, { recursive: true, force: true });
+    },
   };
   const worker = await driver.coordinator.spawn('mock', brief('late boundaries'), { taskId: 'late-boundaries' });
   await until(() => driver.coordinator._workers.get(worker.id)?.nativeSpawnPending === true, 'native spawn reservation');
   let settled = false; const closing = driver.drainAndClose().finally(() => { settled = true; });
-  await until(() => earlyRemovals > 0, 'early stop cleanup'); await sleep(25);
-  assert.equal(settled, false); assert.equal(driver.coordinator._workers.get(worker.id).worktreeCreationPending, true);
+  await until(() => earlyRemovals > 0, 'early stop cleanup');
+  assert.equal(settled, false, 'the drain cannot attest while a target boundary is pending'); assert.equal(driver.coordinator._workers.get(worker.id).worktreeCreationPending, true);
   assert.equal(driver.coordinator._workers.get(worker.id).nativeSpawnPending, true);
   worktreeGate.resolve(); spawnGate.resolve();
   const receipt = await closing;
   assert.equal(receipt.state, 'closed'); assert.ok(lateRemovals > 0, 'late-created checkout is reaped before attestation');
-  assert.equal(existsSync(join(f.directory, '.baton', 'wt', 'late-boundaries')), false);
+  assert.equal(existsSync(checkout), false);
   assert.equal(git(['branch', '--list', 'baton/late-boundaries'], f.directory), '');
 });
 
@@ -207,6 +231,15 @@ test('DC2/DC4: drain policy-resolves pending interaction and publication authori
   const f = repo('pending-authority'); let driver; t.after(() => { try { driver?.coordination.releaseWriterLease(); } catch {} rmSync(f.world, { recursive: true, force: true }); });
   const adapter = new MockAdapter({ scenario: { outcome: 'completed', delayMs: 60_000, result: { summary: 'late' } } });
   driver = createDriver({ repoRoot: f.directory, logDir: f.logDir, repoId: 'repo-a', adapters: { mock: adapter }, drainPolicy: { maxWorkers: 1, timeoutMs: 2_000, pollMs: 5 }, watchdog: { stallMs: 60_000 } }); // valid positive stallMs; watchdog never fires in this window
+  // The row proves pending interaction/publication authority resolution and late-ask discard, not
+  // the cost of a live stop: a deterministic checkout double keeps the reap inside the drain's
+  // deployment budget (DC2-DC7 proves the real reap).
+  const checkout = join(f.directory, '.baton', 'wt', 'pending-authority');
+  driver.coordinator._worktrees = {
+    create: async (taskId) => { mkdirSync(checkout, { recursive: true }); return { path: checkout, branch: `baton/${taskId}`, baseSha: 'sha-base' }; },
+    remove: async () => { rmSync(checkout, { recursive: true, force: true }); },
+    reconcile: async () => ({}),
+  };
   const worker = await driver.coordinator.spawn('mock', brief('pending authority'), { taskId: 'pending-authority' });
   await until(() => driver.coordinator.list().find((row) => row.id === worker.id)?.status === 'working', 'pending-authority worker');
   const handle = driver.coordinator._workers.get(worker.id);
@@ -229,7 +262,14 @@ test('DC1/DC5: max+1 refuses before fencing and an exact retry can still close',
   const f = repo('max-plus-one'); let driver; t.after(async () => { try { await driver?.closeAsync(); } catch {} rmSync(f.world, { recursive: true, force: true }); });
   const adapter = new MockAdapter({ scenario: { outcome: 'completed' } });
   driver = createDriver({ repoRoot: f.directory, logDir: f.logDir, repoId: 'repo-a', adapters: { mock: adapter }, drainPolicy: { maxWorkers: 1, timeoutMs: 1_000, pollMs: 5 } });
+  // This row proves capacity-before-fencing and the exact retry close: the workers run the real
+  // pipeline to a durable settlement first, and the reap of their checkouts is deterministic here
+  // (DC2-DC7 proves the physical reap — real `git worktree` cost outlives any fixed drain budget
+  // under load, and that budget is not what this row asserts).
+  driver.coordinator._worktrees.remove = async () => {};
+  driver.coordinator._worktrees.reconcile = async () => ({});
   await driver.coordinator.spawn('mock', brief('one'), { taskId: 'one' }); await driver.coordinator.spawn('mock', brief('two'), { taskId: 'two' });
+  await settledTasks(driver, ['one', 'two']);
   await assert.rejects(driver.drainAndClose(), (error) => error.code === 'coordinator_drain_capacity');
   assert.equal(driver.coordinator.list().length, 2, 'capacity refusal occurs before admission closes');
   assert.equal(existsSync(join(f.logDir, 'coordination', 'writer.lease')), true);
@@ -263,9 +303,13 @@ test('DC4/DC5: a hung cleanup is deadline-bounded, stays red, and retains writer
   const handle = await driver.coordinator.spawn('mock', brief('hung cleanup'), { taskId: 'hung-cleanup' });
   await until(() => driver.coordinator.list().find((row) => row.id === handle.id)?.status === 'working', 'hung-cleanup worker');
   driver.coordinator._worktrees.remove = () => new Promise(() => {});
-  const started = Date.now();
-  await assert.rejects(driver.coordinator.drain({ actor: 'orchestrator', repoId: 'repo-a', idempotencyKey: 'hung-cleanup' }), (error) => error.code === 'coordinator_drain_incomplete');
-  assert.ok(Date.now() - started < 500, 'deployment deadline bounds a never-settling cleanup');
+  // The bound is the drain's own deployment deadline — named, with the hung worker on the wait —
+  // never a stopwatch racing how fast the machine happens to be.
+  const failure = await driver.coordinator.drain({ actor: 'orchestrator', repoId: 'repo-a', idempotencyKey: 'hung-cleanup' }).catch((error) => error);
+  assert.equal(failure?.code, 'coordinator_drain_incomplete');
+  assert.equal(failure.detail?.reason, 'deadline', 'the refusal names the deadline that bounded the cleanup');
+  assert.equal(failure.detail?.timeoutMs, 40, 'the bound is the deployment drain policy, not a test budget');
+  assert.deepEqual(failure.detail?.waitingOn?.map((row) => row.workerId), [handle.id], 'the wait names the hung worker');
   assert.equal(existsSync(join(f.logDir, 'coordination', 'writer.lease')), true);
   assert.equal(driver.coordinator._workers.get(handle.id).localAuthority, true);
 });
@@ -286,13 +330,25 @@ test('DC5: synchronous durable admission crossing the deadline is red and retrya
 test('DC4/DC5: a timed-out historical reconciliation remains owned and retries join it', async (t) => {
   const f = repo('historical-reconcile-timeout'); let driver; const gate = deferred();
   t.after(() => { gate.resolve(); try { driver?.coordination.releaseWriterLease(); } catch {} rmSync(f.world, { recursive: true, force: true }); });
-  driver = createDriver({ repoRoot: f.directory, logDir: f.logDir, repoId: 'repo-a', adapters: {}, drainPolicy: { maxWorkers: 1, timeoutMs: 40, pollMs: 5 } });
+  driver = createDriver({ repoRoot: f.directory, logDir: f.logDir, repoId: 'repo-a', adapters: {}, drainPolicy: { maxWorkers: 1, timeoutMs: 1_000, pollMs: 5 } });
   await driver.ready; let reconciliations = 0; let lateMutation = false;
   driver.coordinator._worktrees.reconcile = async () => { reconciliations += 1; await gate.promise; lateMutation = true; };
-  await assert.rejects(driver.coordinator.drain({ actor: 'orchestrator', repoId: 'repo-a', idempotencyKey: 'historical-timeout' }), (error) => error.code === 'coordinator_drain_incomplete');
+  // Only the first attempt runs on a shrink-to-40ms deadline — proof that a timeout retains the
+  // cleanup it could not finish. The retry then keeps the deployment policy's own budget and the
+  // gate, not a wall clock, decides when it can converge.
+  driver.coordinator._drainPolicy = Object.freeze({ maxWorkers: 1, timeoutMs: 40, pollMs: 5 });
+  await assert.rejects(
+    driver.coordinator.drain({ actor: 'orchestrator', repoId: 'repo-a', idempotencyKey: 'historical-timeout' }),
+    (error) => error.code === 'coordinator_drain_incomplete' && error.detail?.reason === 'historical_reconciliation_pending',
+  );
+  driver.coordinator._drainPolicy = Object.freeze({ maxWorkers: 1, timeoutMs: 1_000, pollMs: 5 });
   assert.equal(reconciliations, 1); assert.equal(lateMutation, false); assert.ok(driver.coordinator._drainHistoricalReconcilePromise);
-  let settled = false; const closing = driver.drainAndClose().finally(() => { settled = true; }); await sleep(10);
-  assert.equal(settled, false); assert.equal(reconciliations, 1, 'retry joins the original cleanup rather than starting a second mutation');
+  const retained = driver.coordinator._drainHistoricalReconcilePromise;
+  let settled = false; const closing = driver.drainAndClose().finally(() => { settled = true; });
+  await until(() => driver.coordinator._drainState === 'draining' && driver.coordinator._drainPromise !== null, 'retry drain joins the held cleanup');
+  assert.equal(settled, false, 'the retry cannot attest while the retained cleanup is pending');
+  assert.equal(driver.coordinator._drainHistoricalReconcilePromise, retained, 'the retry joins the original cleanup rather than starting a second mutation');
+  assert.equal(reconciliations, 1);
   gate.resolve(); const receipt = await closing;
   assert.equal(receipt.state, 'closed'); assert.equal(lateMutation, true); assert.equal(reconciliations, 1);
 });
@@ -308,6 +364,15 @@ for (const [label, retryKey] of [['same identity', 'disposition-first'], ['new i
       drainPolicy: { maxWorkers: 1, timeoutMs: 100, pollMs: 5 }, watchdog: { stallMs: 60_000 }, // valid positive stallMs; watchdog never fires in this window
     });
     await driver.ready;
+    // The row proves the durable kill disposition across a timeout, so the live stop it drives must
+    // not race the 100 ms attempt budget against real `git worktree` reap cost: the fixture checkout
+    // reaps deterministically (DC2-DC7 proves the real reap).
+    const checkout = join(f.directory, '.baton', 'wt', `disposition-${retryKey}`);
+    driver.coordinator._worktrees = {
+      create: async (taskId) => { mkdirSync(checkout, { recursive: true }); return { path: checkout, branch: `baton/${taskId}`, baseSha: 'sha-base' }; },
+      remove: async () => { rmSync(checkout, { recursive: true, force: true }); },
+      reconcile: async () => ({}),
+    };
     const reconcile = driver.coordinator._worktrees.reconcile.bind(driver.coordinator._worktrees); let reconciliations = 0;
     driver.coordinator._worktrees.reconcile = async (...args) => { reconciliations += 1; await gate.promise; return reconcile(...args); };
     const handle = await driver.coordinator.spawn('mock', brief('durable disposition'), { taskId: `disposition-${retryKey}` });

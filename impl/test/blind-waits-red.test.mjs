@@ -401,9 +401,13 @@ async function cleanupFixture(f) {
 // Count the blind coordinator.wait sleeps: the verb's own budget stays a wall-clock budget
 // (campaign law — no clock as a control), but the SLEEP is doubled with an immediate resolve so
 // the loop is observable without real waits. At HEAD the durable-stop loop calls it ≥1 time.
-function countCoordinatorWait(f) {
+// `onWait` runs inside the doubled sleep: A1-a/A1-b use it to terminalize the run on the FIRST
+// cycle, so the RED observation (the call count) can never read 0 merely because a loaded machine
+// spent the verb's whole budget inside the first status projection — the false stale these rows
+// produced once under suite load.
+function countCoordinatorWait(f, onWait = null) {
   let calls = 0;
-  f.driver.coordinator.wait = async () => { calls += 1; };
+  f.driver.coordinator.wait = async () => { calls += 1; await onWait?.(calls); };
   return () => calls;
 }
 
@@ -553,10 +557,16 @@ test('A1-a RED: run.wait({until:"terminal"}) on a durably-stopped run burns the 
   await startRun(f, runId, 'a1a');
   const admitted = admitStop(f, runId, 'Stop the durably-stopped run.');
   assert.equal(admitted.stop.status, 'stopping', 'the stop admission is durable but not reaped');
-  const waitCalls = countCoordinatorWait(f);
+  // The stimulus outlives any single status projection, and the first blind cycle terminalizes the
+  // run, so the call count cannot be faked by load — it observes the loop entry the stage names.
+  let firstCycle = false;
+  const waitCalls = countCoordinatorWait(f, () => {
+    if (firstCycle) return; firstCycle = true;
+    f.driver.coordination.completeRunStop(runId, durableStopReceipt(admitted.stop), { actor: 'direct:blind-waits-164', key: `run.stop.complete:${runId}` });
+  });
 
   const view = await f.application.command('run.wait', {
-    runId, until: 'terminal', timeoutMs: 30,
+    runId, until: 'terminal', timeoutMs: 60_000,
   }, f.recursivePrincipal, recursiveContext(f.lease, 'a1a-wait'));
 
   assert.equal(waitCalls(), 0,
@@ -569,11 +579,17 @@ test('A1-b RED: run.wait settle-block on a durably-stopped run burns the clock t
   t.after(() => cleanupFixture(f));
   const runId = 'run-blind-waits-a1b';
   await startRun(f, runId, 'a1b');
-  admitStop(f, runId, 'Stop the settle-block durably-stopped run.');
-  const waitCalls = countCoordinatorWait(f);
+  const admitted = admitStop(f, runId, 'Stop the settle-block durably-stopped run.');
+  // Same load-proof stimulus as A1-a: the first blind cycle terminalizes the run, so the call
+  // count is the loop entry, never a slow first cycle's expired budget.
+  let firstCycle = false;
+  const waitCalls = countCoordinatorWait(f, () => {
+    if (firstCycle) return; firstCycle = true;
+    f.driver.coordination.completeRunStop(runId, durableStopReceipt(admitted.stop), { actor: 'direct:blind-waits-164', key: `run.stop.complete:${runId}` });
+  });
 
   const view = await f.application.command('run.wait', {
-    runId, timeoutMs: 30,
+    runId, timeoutMs: 60_000,
   }, f.recursivePrincipal, recursiveContext(f.lease, 'a1b-wait'));
 
   assert.equal(waitCalls(), 0,

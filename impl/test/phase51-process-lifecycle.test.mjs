@@ -26,7 +26,6 @@ const FAKE_CODEX = fileURLToPath(new URL('./fixtures/fake-codex-appserver.mjs', 
 const FAKE_GROK = fileURLToPath(new URL('./fixtures/fake-grok-acp.mjs', import.meta.url));
 const FAKE_KIMI = fileURLToPath(new URL('./fixtures/fake-kimi-acp.mjs', import.meta.url));
 const ONE_SHOT_REAP_TIMEOUT_MS = 5_000;
-const REAP_SCHEDULING_MARGIN_MS = 10_000;
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const alive = (pid) => { try { process.kill(pid, 0); return true; } catch { return false; } };
 const groupAlive = (pid) => { try { process.kill(-pid, 0); return true; } catch { return false; } };
@@ -53,7 +52,26 @@ async function withLiveLoop(fn) {
   try { return await fn(); } finally { clearInterval(hold); }
 }
 
-function collect(adapter) { const events = []; adapter.onEvent((event) => events.push(event)); return events; }
+/** Resolve on the event that ends the wait — never on a wall-clock budget. `until()` remains for
+ *  state that is not an event. */
+function collect(adapter) {
+  const events = []; const waiters = new Set();
+  adapter.onEvent((event) => {
+    events.push(event);
+    for (const waiter of [...waiters]) {
+      if (!waiter.predicate(event)) continue;
+      waiters.delete(waiter);
+      waiter.resolve(event);
+    }
+  });
+  events.waitFor = (predicate) => {
+    const seen = events.find(predicate);
+    if (seen) return Promise.resolve(seen);
+    return new Promise((resolve) => { waiters.add({ predicate, resolve }); });
+  };
+  return events;
+}
+
 function adapterCases() {
   return [
     ['claude', () => new ClaudeSessionCli({ cmd: process.execPath, args: [FAKE_CLAUDE], killGraceMs: 20 }), 'HOLD_UNTIL_INTERRUPT'],
@@ -127,14 +145,14 @@ test('PL7/PL9: every native harness retains a natural-close terminal across an u
           worktree, processGeneration: 37, processReapTimeoutMs: 500, ...extraSpawn,
         });
         assert.equal(ack.ok, true);
-        await until(() => events.some((event) => event.kind === 'lifecycle.process_started'), `${name} process start`);
-        if (ready) await until(() => events.some((event) => event.kind === 'lifecycle.spawned'), `${name} provider readiness`);
+        await events.waitFor((event) => event.kind === 'lifecycle.process_started');
+        if (ready) await events.waitFor((event) => event.kind === 'lifecycle.spawned');
 
         const session = adapter._sessions.get(worker);
         const pid = session?.child?.pid ?? session?.pid ?? session?.process?.child?.pid;
         assert.ok(Number.isSafeInteger(pid) && pid > 0);
         process.kill(-pid, 'SIGKILL');
-        await until(() => events.some((event) => event.kind === 'lifecycle.process_reap_unconfirmed'), `${name} first reap refusal`);
+        await events.waitFor((event) => event.kind === 'lifecycle.process_reap_unconfirmed');
         assert.equal(events.some((event) => event.kind === 'lifecycle.process_closed'), false,
           `${name} cannot publish close while descendant absence remains unconfirmed`);
         assert.equal(events.some((event) => event.kind === 'lifecycle.crashed'), false,
@@ -156,7 +174,7 @@ test('PL7/PL9: every native harness retains a natural-close terminal across an u
         });
 
         assert.equal((await adapter.kill(worker)).ok, true);
-        await until(() => events.some((event) => event.kind === 'kill.confirmed'), `${name} retry confirmation`);
+        await events.waitFor((event) => event.kind === 'kill.confirmed');
         assertClosedPair(events, 37, ready);
         const order = events.map((event) => event.kind);
         assert.ok(order.indexOf('lifecycle.process_reap_unconfirmed') < order.indexOf('lifecycle.process_closed'));
@@ -560,11 +578,20 @@ test('PL7/PL9: one-shot turn completion does not surrender process-group authori
     assert.ok(Number.isSafeInteger(descendantPid) && descendantPid > 0);
     assert.equal(alive(descendantPid), true); assert.equal(groupAlive(pid), true);
     await adapter.kill(worker);
-    await until(
-      () => events.some((event) => event.kind === 'kill.confirmed'),
-      'one-shot descendant reap',
-      ONE_SHOT_REAP_TIMEOUT_MS + REAP_SCHEDULING_MARGIN_MS,
-    );
+    // The exact-close latch publishes either the confirmed stop or one named refusal; a refusal
+    // inside the kernel's mid-exit window (macOS reports EPERM while a killed group drains)
+    // retains ownership, and the lifecycle's own answer is one new bounded attempt per OBSERVED
+    // refusal — exactly what the coordinator's kill path drives. The wait ends on the
+    // confirmation event, never on a wall-clock budget.
+    let refusals = 0;
+    for (;;) {
+      const outcome = await events.waitFor((event) => event.kind === 'kill.confirmed'
+        || (event.kind === 'lifecycle.process_reap_unconfirmed'
+          && events.filter((row) => row.kind === 'lifecycle.process_reap_unconfirmed').length > refusals));
+      if (outcome.kind === 'kill.confirmed') break;
+      refusals += 1;
+      assert.equal((await adapter.kill(worker)).ok, true, 'a refused reap retains kill authority for the next bounded attempt');
+    }
     assert.equal(alive(descendantPid), false); assert.equal(groupAlive(pid), false);
     assertClosedPair(events, 31, false);
   } finally { await emergencyCleanup(adapter, worker); }

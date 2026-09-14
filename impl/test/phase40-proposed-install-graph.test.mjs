@@ -156,7 +156,10 @@ const lock=JSON.parse(readFileSync('package-lock.json'));if(spawnedPid)lock.bato
   const orphanId = randomUUID(); const orphanRoot = join(owned, `invocation-${orphanId}`); mkdirSync(orphanRoot);
   const orphan = spawn(process.execPath, ['-e', 'setInterval(()=>{},1000)'], { detached: true, stdio: 'ignore', env: { ...process.env, BATON_INVOCATION_ID: orphanId } }); const orphanClosed = new Promise((resolve) => orphan.once('close', resolve)); orphan.unref();
   write(orphanRoot, 'owner.json', `${JSON.stringify({ pid: orphan.pid, invocationId: orphanId })}\n`);
-  const resolver = new NpmProposalResolver({ root: owned, npmPath: bin, npmVersion: 'fixture-1', allowedRegistryOrigins: ['https://registry.npmjs.org'], timeoutMs: 1_000, maxOutputBytes: 64 * 1024 });
+  // The success legs observe the npm child's own completion, so their policy must cover real child
+  // startup on a loaded machine; the 1 s policy is what the slow-pkg leg proves and lives on its
+  // own resolver below (issue #257: a fixed budget racing real work is the flake, not the proof).
+  const resolver = new NpmProposalResolver({ root: owned, npmPath: bin, npmVersion: 'fixture-1', allowedRegistryOrigins: ['https://registry.npmjs.org'], timeoutMs: 15_000, maxOutputBytes: 64 * 1024 });
   assert.equal(existsSync(stale), false); await orphanClosed; assert.throws(() => process.kill(orphan.pid, 0)); assert.equal(resolver.card().reconciled, true);
   assert.throws(() => new NpmProposalResolver({ root: owned, npmPath: bin, npmVersion: 'fixture-1', allowedRegistryOrigins: ['https://registry.npmjs.org'], timeoutMs: 5_000, maxOutputBytes: 64 * 1024 }), (error) => error.code === 'proposal_supervisor_busy');
   const f = await fixture(); f.actual.packages[''].devDependencies = { 'left-pad': '1.3.0' }; f.actual.packages['node_modules/left-pad'] = { version: '1.3.0', resolved: 'https://registry.npmjs.org/left-pad/-/left-pad-1.3.0.tgz', integrity: sri(4), dev: true }; write(f.base, 'package-lock.json', `${JSON.stringify(f.actual)}\n`); write(f.base, 'package.json', `${JSON.stringify({ name: 'demo', version: '1.0.0', private: true, dependencies: { alpha: '1.0.0' }, devDependencies: { 'left-pad': '1.3.0' } })}\n`);
@@ -172,12 +175,15 @@ const lock=JSON.parse(readFileSync('package-lock.json'));if(spawnedPid)lock.bato
   await assert.rejects(resolver.resolve(request('output-pkg')), (error) => error.code === 'proposal_oversize');
   await assert.rejects(resolver.resolve(request('failed-pkg')), (error) => error.code === 'proposal_resolver_failed');
   const spawned = await resolver.resolve(request('spawn-pkg')); const spawnedPid = JSON.parse(spawned.proposedLockfile).batonSpawnPid; assert.throws(() => process.kill(spawnedPid, 0)); assert.equal(readdirSync(owned).some((entry) => entry.startsWith('invocation-')), false);
-  await assert.rejects(resolver.resolve(request('slow-pkg')), (error) => error.code === 'proposal_timeout');
+  const timeoutRoot = root('timeout-policy');
+  const timeoutResolver = new NpmProposalResolver({ root: timeoutRoot, npmPath: bin, npmVersion: 'fixture-1', allowedRegistryOrigins: ['https://registry.npmjs.org'], timeoutMs: 1_000, maxOutputBytes: 64 * 1024 });
+  await assert.rejects(timeoutResolver.resolve(request('slow-pkg')), (error) => error.code === 'proposal_timeout');
+  assert.equal(readdirSync(timeoutRoot).some((entry) => entry.startsWith('invocation-')), false);
   const controller = new AbortController(); const pending = resolver.resolve({ coordinate: { ecosystem: 'npm', package: 'slow-pkg', version: '1.0.0' }, baseLockfile: raw, baseDigest, manifest, manifestDigest }, { signal: controller.signal }); setTimeout(() => controller.abort(), 30);
   await assert.rejects(pending, (error) => error.code === 'cancelled'); assert.equal(readdirSync(owned).some((entry) => entry.startsWith('invocation-')), false);
   const immediate = new AbortController(); const immediatePending = resolver.resolve(request('slow-pkg'), { signal: immediate.signal }); immediate.abort(); await assert.rejects(immediatePending, (error) => error.code === 'cancelled');
   const mismatchRoot = root('mismatch'); assert.throws(() => new NpmProposalResolver({ root: mismatchRoot, npmPath: bin, npmVersion: 'wrong', allowedRegistryOrigins: ['https://registry.npmjs.org'], timeoutMs: 1_000, maxOutputBytes: 1024 }), /does not match/); assert.equal(existsSync(join(mismatchRoot, 'supervisor.lock')), false);
-  const corrected = new NpmProposalResolver({ root: mismatchRoot, npmPath: bin, npmVersion: 'fixture-1', allowedRegistryOrigins: ['https://registry.npmjs.org'], timeoutMs: 1_000, maxOutputBytes: 1024 }); corrected.close(); resolver.close();
+  const corrected = new NpmProposalResolver({ root: mismatchRoot, npmPath: bin, npmVersion: 'fixture-1', allowedRegistryOrigins: ['https://registry.npmjs.org'], timeoutMs: 1_000, maxOutputBytes: 1024 }); corrected.close(); timeoutResolver.close(); resolver.close();
 
   const abandonedRoot = root('abandoned-takeover'); writeFileSync(join(abandonedRoot, 'supervisor.lock'), `${JSON.stringify({ pid: 2_147_483_647, pidStart: 'stale', token: 'stale' })}\n`); writeFileSync(join(abandonedRoot, 'supervisor.takeover'), `${JSON.stringify({ pid: 2_147_483_646, pidStart: 'stale', token: 'abandoned' })}\n`);
   const recovered = new NpmProposalResolver({ root: abandonedRoot, npmPath: bin, npmVersion: 'fixture-1', allowedRegistryOrigins: ['https://registry.npmjs.org'], timeoutMs: 1_000, maxOutputBytes: 1024 }); assert.equal(recovered.card().reconciled, true); recovered.close();
@@ -187,7 +193,13 @@ const lock=JSON.parse(readFileSync('package-lock.json'));if(spawnedPid)lock.bato
   const runner = join(raceRoot, 'contender.mjs'); const moduleUrl = new URL('../src/npm-proposal-resolver.mjs', import.meta.url).href;
   writeFileSync(runner, `import { existsSync, writeFileSync } from 'node:fs';\nimport { NpmProposalResolver } from ${JSON.stringify(moduleUrl)};\nconst [root,bin,ready,go]=process.argv.slice(2);writeFileSync(ready,'ready');while(!existsSync(go))Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0,2);try{const r=new NpmProposalResolver({root,npmPath:bin,npmVersion:'fixture-1',allowedRegistryOrigins:['https://registry.npmjs.org'],timeoutMs:1000,maxOutputBytes:1024});console.log('SUCCESS');await new Promise((x)=>setTimeout(x,300));r.close()}catch(e){console.log(e.code??e.name)}\n`);
   const go = join(raceRoot, 'go'); const children = [0, 1].map((index) => { const ready = join(raceRoot, `ready-${index}`); const child = spawn(process.execPath, [runner, raceRoot, bin, ready, go], { stdio: ['ignore', 'pipe', 'pipe'] }); return { child, ready }; });
-  const deadline = Date.now() + 2_000; while (!children.every((row) => existsSync(row.ready))) { if (Date.now() > deadline) throw new Error('lease contenders did not become ready'); await new Promise((resolve) => setTimeout(resolve, 5)); }
+  // Contender readiness is an event (each child's own ready file), raced against that child's close
+  // so a crashed contender fails loudly instead of hanging — never a wall-clock budget.
+  await Promise.all(children.map(({ child, ready }) => new Promise((resolve, reject) => {
+    const poll = setInterval(() => { if (!existsSync(ready)) return; clearInterval(poll); resolve(); }, 5);
+    child.once('close', (code) => { clearInterval(poll); reject(new Error(`lease contender exited ${code} before becoming ready`)); });
+    child.once('error', (error) => { clearInterval(poll); reject(error); });
+  })));
   writeFileSync(go, 'go'); const outcomes = await Promise.all(children.map(({ child }) => new Promise((resolve) => { let output = ''; child.stdout.on('data', (chunk) => { output += chunk; }); child.once('close', () => resolve(output.trim())); })));
   assert.deepEqual(outcomes.sort(), ['SUCCESS', 'proposal_supervisor_busy']);
 });

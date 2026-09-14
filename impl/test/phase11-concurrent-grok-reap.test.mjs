@@ -48,7 +48,11 @@ test('CK9: two Grok ACP processes run concurrently, confirm kill, and are fully 
     repoRoot: repo,
     logDir,
     adapters: { grok: adapter },
-    stopDeadlineMs: 1000,
+    // The confirmed kill must not race the stop deadline: this row proves transport confirmation
+    // and the full process/worktree/branch reap (which `kill()` resolves only after), not the
+    // deadline — a 1 s budget lost that race to real reap work on a loaded machine and forced the
+    // stop instead of confirming it. The deployment default bounds a genuinely stuck adapter.
+    stopDeadlineMs: 15_000,
     watchdog: { stallMs: 60_000 }, // valid positive stallMs; watchdog never fires in this window
   });
   const brief = (id) => createBrief({
@@ -69,9 +73,12 @@ test('CK9: two Grok ACP processes run concurrently, confirm kill, and are fully 
 
   const stopped = await Promise.all(handles.map((handle) => coordinator.kill(handle.id, 'human')));
   assert.equal(stopped.every((ack) => ack.result === 'confirmed'), true);
-  await until(() => pids.every((pid) => !pidAlive(pid))
-    && taskIds.every((taskId) => !existsSync(join(repo, '.baton', 'wt', taskId))
-      && execFileSync('git', ['branch', '--list', `baton/${taskId}`], { cwd: repo, encoding: 'utf8' }).trim() === ''), 'process/worktree/branch reap');
+  // `kill()` resolves only after the stop waiter's own cleanup chain (preservation, runtime scope,
+  // worktree removal, branch deletion), so the confirmed ack IS the reap event — assert it directly
+  // rather than polling the OS and git against a wall-clock budget.
+  assert.equal(pids.every((pid) => !pidAlive(pid)), true, 'both killed process groups are gone');
+  assert.equal(taskIds.every((taskId) => !existsSync(join(repo, '.baton', 'wt', taskId))), true, 'both checkouts are reaped');
+  assert.equal(taskIds.every((taskId) => execFileSync('git', ['branch', '--list', `baton/${taskId}`], { cwd: repo, encoding: 'utf8' }).trim() === ''), true, 'both worker branches are reaped');
 
   const results = await Promise.all(handles.map((handle) => coordinator.result(handle.id)));
   assert.equal(results.every((result) => result.ready && result.status === 'cancelled'), true);
