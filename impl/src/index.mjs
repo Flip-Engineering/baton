@@ -1281,7 +1281,8 @@ export function createDriver(opts) {
   const worktreeCapacityPolicy = opts.worktreeCapacity === undefined ? null : normalizeWorktreeCapacityPolicy(opts.worktreeCapacity);
   if (opts.worktreeCapacityObserve !== undefined && typeof opts.worktreeCapacityObserve !== 'function') throw new TypeError('worktreeCapacityObserve must be a function');
   if (opts.worktreeCapacityEstimate !== undefined && typeof opts.worktreeCapacityEstimate !== 'function') throw new TypeError('worktreeCapacityEstimate must be a function');
-  if (!worktreeCapacityPolicy && (opts.worktreeCapacityObserve !== undefined || opts.worktreeCapacityEstimate !== undefined)) throw new TypeError('worktree capacity dependencies require worktreeCapacity policy');
+  if (opts.worktreeCapacityRuntimeFootprint !== undefined && typeof opts.worktreeCapacityRuntimeFootprint !== 'function') throw new TypeError('worktreeCapacityRuntimeFootprint must be a function');
+  if (!worktreeCapacityPolicy && (opts.worktreeCapacityObserve !== undefined || opts.worktreeCapacityEstimate !== undefined || opts.worktreeCapacityRuntimeFootprint !== undefined || opts.hostCapacity !== undefined)) throw new TypeError('worktree capacity dependencies require worktreeCapacity policy');
   if (worktreeCapacityPolicy && ((opts.workerDependencyDirs?.length ?? 0) > 0 || (opts.verifyDependencyDirs?.length ?? 0) > 0)) throw new TypeError('worktreeCapacity requires attested toolchainProjection instead of legacy dependency copies');
   const workerSparsePaths = worktreeMod.normalizeSparsePaths(opts.workerSparsePaths ?? []);
   const verifySparsePaths = worktreeMod.normalizeSparsePaths(opts.verifySparsePaths ?? []);
@@ -1295,6 +1296,7 @@ export function createDriver(opts) {
     integrityKey: loadOrCreateWorktreeCapacityIntegrityKey(opts.repoRoot),
     ...(opts.worktreeCapacityObserve ? { observe: opts.worktreeCapacityObserve } : {}),
     ...(opts.worktreeCapacityEstimate ? { estimate: opts.worktreeCapacityEstimate } : {}),
+    ...(opts.worktreeCapacityRuntimeFootprint ? { runtimeFootprint: opts.worktreeCapacityRuntimeFootprint } : {}),
     now: opts.now ?? Date.now,
   }) : null;
   const now = opts.now ?? Date.now;
@@ -1637,6 +1639,9 @@ export function createDriver(opts) {
     // #295 item 4: the deployment's exhausted-route authority, shared verbatim with the readiness
     // derivation and every pre-effect recruit refusal (application-deployment creates it once).
     providerQuotaAuthority: opts.providerQuotaAuthority ?? null,
+    // #297: the host-wide capacity authority every resident on this machine shares; the
+    // contribution check admits its verdict through it. Null when no deployment built one.
+    hostCapacity: opts.hostCapacity ?? null,
     ...(providerGovernance ? { providerGovernance: providerGovernance.projection } : {}),
     watchdog: opts.watchdog,
     drainPolicy,
@@ -1797,6 +1802,6 @@ export function createDriver(opts) {
     });
     return operation;
   };
-  return { coordinator, story, router, log, coordination, advisoryFeeds, providerPoller, providerProcessor, sessionRecovery, worktreeCapacity, ready, close, closeAsync, drainAndClose, standingLaws };
+  return { coordinator, story, router, log, coordination, advisoryFeeds, providerPoller, providerProcessor, sessionRecovery, worktreeCapacity, hostCapacity: opts.hostCapacity ?? null, ready, close, closeAsync, drainAndClose, standingLaws };
   } catch (error) { if (writerLease) coordination.releaseWriterLease(); throw error; }
 }

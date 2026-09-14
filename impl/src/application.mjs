@@ -2663,7 +2663,7 @@ function semanticSourceSlice(text, source) {
  */
 export class BatonApplication {
   constructor(options) {
-    const optionalConfiguration = ['context', 'exportRoot', 'exportDeliveryChunkBytes', 'defaults', 'clock', 'deploymentId']
+    const optionalConfiguration = ['context', 'deploymentSummary', 'exportRoot', 'exportDeliveryChunkBytes', 'defaults', 'clock', 'deploymentId']
       .filter((field) => Object.hasOwn(options ?? {}, field));
     exactObject(options, ['driver', 'repoId', 'profiles', 'principals', 'authorize', ...optionalConfiguration],
     'application_config_invalid', 'application configuration');
@@ -2689,7 +2689,13 @@ export class BatonApplication {
     if (typeof this._clock !== 'function') {
       throw applicationError('application clock is invalid', 'application_config_invalid');
     }
-    this.context = null;
+    // #297/#307: the deployment-level summary rows the swarm view carries (workspace capacity
+    // beside the floor, host capacity and the queue). Null when the application is constructed
+    // bare — the view then carries no deployment summary rather than a fabricated one.
+    this.deploymentSummary = typeof options.deploymentSummary === 'function' ? options.deploymentSummary : null;
+    if (this.deploymentSummary === null && options.deploymentSummary !== undefined) {
+      throw applicationError('application deployment summary must be a function', 'application_config_invalid');
+    }
     if (options.context !== undefined) {
       exactObject(options.context, ['materializeCallResult', 'openSession', 'principal'], 'application_config_invalid',
         'application Context configuration');
@@ -3414,6 +3420,10 @@ export class BatonApplication {
   _swarmRuntime() {
     this._swarmService ??= new SwarmRuntime({
       store: this.driver.coordination, coordinator: this.driver.coordinator,
+      // #297: the host-wide capacity authority every resident shares (driver-built); recruits
+      // admit through it and the view carries the deployment summary beside the queue.
+      hostCapacity: this.driver.hostCapacity ?? null,
+      deploymentSummary: this.deploymentSummary,
       authorize: (command, args, principal) => this._authorize(command, principal, null, {
         swarmId: args.swarmId ?? null, participantId: args.participantId ?? null,
       }),
@@ -3504,7 +3514,6 @@ export class BatonApplication {
 
   async _authorize(command, principal, runId, subject = {}) {
     const allowed = await (this._authorizationScope?.getStore() ?? this.authorize)(deepFreeze({
-      command,
       principal: clone(principal),
       repoId: this.repoId,
       runId,

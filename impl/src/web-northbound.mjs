@@ -561,6 +561,23 @@ function dispatchFailure(cause) {
   if (cause?.code === 'provider_read_unavailable') return { httpStatus: 503, body: { ok: false, error: { code: cause.code, message: 'provider read unavailable' } } };
   if (cause?.name === 'WorkerNotFoundError') return { httpStatus: 404, body: { ok: false, error: { code: 'not_found', message: 'resource not found' } } };
   if (['coordinator_drain_capacity', 'coordinator_drain_incomplete', 'coordinator_draining', 'coordinator_closed'].includes(cause?.code)) return { httpStatus: 409, body: { ok: false, error: { code: cause.code, message: 'coordinator lifecycle conflict' } } };
+  // #307: the refusal names its numbers — free, reserved, the estimate, the floor (and its
+  // source) — and the remedy that would admit this exact request, so "what defines this limit"
+  // is answered by the refusal itself.
+  if (cause?.code === 'worktree_capacity_exceeded' && Number.isSafeInteger(cause?.floorBytes)) {
+    return { httpStatus: 503, body: { ok: false, error: {
+      code: cause.code,
+      message: 'workspace capacity refused this dispatch: '
+        + `${cause.freeBytes} bytes and ${cause.freeInodes} inodes free, `
+        + `${cause.outstandingBytes} bytes and ${cause.outstandingInodes} inodes already reserved outstanding, `
+        + `this dispatch estimates ${cause.estimateBytes} bytes and ${cause.estimateInodes} inodes; `
+        + `the floor is ${cause.floorBytes} bytes and ${cause.floorInodes} inodes`
+        + (cause.floorSource === 'derived'
+          ? ' (derived: the largest recorded checkout estimate plus the measured runtime footprint)'
+          : ` (configured by advanced.capacity.policy.${cause.floorSource === 'mixed' ? 'minFreeBytes/minFreeInodes overrides' : 'minFreeBytes/minFreeInodes'})`)
+        + `; free at least ${cause.deficitBytes} bytes and ${cause.deficitInodes} inodes, then retry`,
+    } } };
+  }
   if (['worktree_capacity_exceeded', 'worktree_capacity_unavailable'].includes(cause?.code)) return { httpStatus: 503, body: { ok: false, error: { code: cause.code, message: 'workspace capacity refused this dispatch; free repository volume space or raise the deployment capacity floors, then retry' } } };
   // D5 (wave-observability-2026-08-06/contract.md §D5.1/§D5.2): the wave lane's typed refusals
   // carry the lane's OWN message byte-identically (W6/F4) plus the {actual, cap, cause, role}

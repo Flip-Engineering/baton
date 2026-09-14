@@ -16,7 +16,7 @@
         {
           "name": "constructor",
           "ordinal": 0,
-          "size": 695,
+          "size": 698,
           "seam": "effect",
           "evidence": [
             "recovery:reconcile_call",
@@ -385,7 +385,7 @@
         {
           "name": "_contributionOperations",
           "ordinal": 0,
-          "size": 19,
+          "size": 20,
           "seam": "observation",
           "evidence": [
             "observation:log_append"
@@ -3879,7 +3879,7 @@
         {
           "name": "constructor",
           "ordinal": 0,
-          "size": 136,
+          "size": 142,
           "seam": "recovery",
           "evidence": [
             "recovery:reconcile_call"
@@ -4071,7 +4071,7 @@
         {
           "name": "_swarmRuntime",
           "ordinal": 0,
-          "size": 56,
+          "size": 60,
           "seam": "effect",
           "evidence": [
             "effect:adapter_verb",
@@ -4099,7 +4099,7 @@
         {
           "name": "_authorize",
           "ordinal": 0,
-          "size": 10,
+          "size": 9,
           "seam": "surface",
           "evidence": [
             "surface:transport_dispatch"
@@ -11687,10 +11687,29 @@
         {
           "name": "constructor",
           "ordinal": 0,
-          "size": 5,
+          "size": 10,
           "seam": "surface",
           "evidence": [
             "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "_activeWorkerHolders",
+          "ordinal": 0,
+          "size": 15,
+          "seam": "observation",
+          "evidence": [
+            "observation:read_name"
+          ]
+        },
+        {
+          "name": "_reconcileHostCapacity",
+          "ordinal": 0,
+          "size": 5,
+          "seam": "recovery",
+          "evidence": [
+            "recovery:restart_name",
+            "recovery:reconcile_call"
           ]
         },
         {
@@ -11850,7 +11869,7 @@
         {
           "name": "inspect",
           "ordinal": 0,
-          "size": 311,
+          "size": 316,
           "seam": "observation",
           "evidence": [
             "observation:swarm_attention_rows"
@@ -11957,9 +11976,10 @@
         {
           "name": "_dispatch",
           "ordinal": 0,
-          "size": 242,
+          "size": 285,
           "seam": "effect",
           "evidence": [
+            "recovery:reconcile_call",
             "effect:action_verb",
             "admission:authority_check",
             "admission:swarm_refusal"

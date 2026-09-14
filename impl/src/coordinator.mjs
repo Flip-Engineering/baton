@@ -1072,6 +1072,9 @@ export class Coordinator {
       },
     });
     this._referee = opts.referee;
+    // #297: the host-wide capacity authority (application-deployment built it once; null when
+    // unwired). The contribution operations admit their verdicts through it.
+    this._hostCapacity = opts.hostCapacity ?? null;
     this._route = opts.route;
     this._routeLearningPolicy = opts.routeLearningPolicy ? Object.freeze({ ...opts.routeLearningPolicy }) : null;
     if (this._routeLearningPolicy && (typeof opts.coordination.routePolicy !== 'function' || typeof opts.coordination.routeObservations !== 'function' || canonicalDigest(opts.coordination.routePolicy()) !== canonicalDigest(this._routeLearningPolicy))) throw new TypeError('Coordinator route learning policy disagrees with durable coordination');
@@ -2592,6 +2595,7 @@ export class Coordinator {
       worktrees: this._worktrees, referee: this._referee, accept: this._accept,
       acceptOptions: this._acceptOpts, closeVerdict: closedVerificationVerdict,
       verificationFor: this._verificationForCapture,
+      hostCapacity: this._hostCapacity,
       capture: (handle, task) => this._captureTrustWorktree(handle, task, { snapshot: true }),
       events: (workerId) => this._log.read(workerId),
       record: (kind, payload, handle, task) => {

@@ -22,8 +22,11 @@ const cleanupLeak = (cleanupError) => (cleanupError ? Object.freeze({
 /** Immutable contribution operations. Session/pause ownership stays with the coordinator;
  * this service owns revision retention, isolated checks, and attributable operation receipts. */
 export class ContributionService {
-  constructor({ worktrees, referee, accept, acceptOptions, capture, record, events, closeVerdict, verificationFor = null }) {
+  constructor({ worktrees, referee, accept, acceptOptions, capture, record, events, closeVerdict, verificationFor = null, hostCapacity = null }) {
     Object.assign(this, { worktrees, referee, accept, acceptOptions, captureTree: capture, record, events, closeVerdict, verificationFor });
+    // #297: the host-wide capacity authority every resident shares — a check's full-suite verdict
+    // is admitted through it before the deployment's own verification lane orders it.
+    this.hostCapacity = hostCapacity;
     this.pending = new Map();
   }
 
@@ -128,6 +131,32 @@ export class ContributionService {
         contributionId, checkId, position: lane.queued + 1, running: lane.running, concurrency: lane.concurrency,
       }, handle, task);
     }
+    // #297: the host admits this verdict BEFORE the deployment's lane orders it — a check whose
+    // suite would be starved waits as a visible host queue entry (its typed queued row is
+    // recorded the moment it is enqueued) instead of starting work the machine cannot run. The
+    // lease is held for the verdict and released whichever way it ends.
+    let admission = null;
+    let hostLease = null;
+    if (this.hostCapacity && typeof this.hostCapacity.acquire === 'function') {
+      let queuedRow = null;
+      const admitted = await this.hostCapacity.acquire('verify', {
+        holder: `check:${contributionId}:${checkId}`,
+        onQueued: (row) => {
+          queuedRow = row;
+          this.record('contribution.check_host_queued', {
+            contributionId, checkId, authority: 'host', kind: 'verify',
+            position: row.position, ahead: row.ahead,
+            running: row.running, workerLeases: row.workerLeases,
+          }, handle, task);
+        },
+      });
+      hostLease = admitted.token;
+      admission = {
+        state: 'admitted', authority: 'host',
+        ...(queuedRow ? { position: queuedRow.position, ahead: queuedRow.ahead,
+          queuedAt: admitted.queuedAt ?? null } : {}),
+      };
+    }
     try {
       checked = await verifyContribution({
         worktrees: this.worktrees, referee: this.referee, task: source,
@@ -138,6 +167,7 @@ export class ContributionService {
           : null,
       });
     } catch (error) {
+      if (hostLease) await this.hostCapacity.release(hostLease).catch(() => {});
       const leak = cleanupLeak(error.cleanupError);
       this.record('contribution.check_unavailable', {
         contributionId, checkId, sha: captured.sha, ref: captured.ref,
@@ -146,6 +176,7 @@ export class ContributionService {
       }, handle, task);
       throw error;
     }
+    if (hostLease) await this.hostCapacity.release(hostLease).catch(() => {});
     const leak = cleanupLeak(checked.cleanupError);
     const receipt = {
       contributionId, checkId, sha: captured.sha, ref: captured.ref,
@@ -155,6 +186,8 @@ export class ContributionService {
       }) === true,
       verdict: this.closeVerdict(checked.observedVerdict, source.brief.verification),
       attempt: checked.attempt,
+      // #297: the typed admission row the check reports beside its verdict.
+      ...(admission ? { admission } : {}),
       ...(leak ? { cleanup: leak } : {}),
     };
     this.record('contribution.checked', receipt, handle, task);

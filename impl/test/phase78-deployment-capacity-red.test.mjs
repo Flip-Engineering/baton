@@ -131,7 +131,10 @@ test('DC1: deployment-owned capacity admits one parallel worker, refuses its sib
       verification: { command: 'true', arguments: [] },
       // This test-only observation seam constrains the host to exactly one estimated worker.
       // Physical observations remain authoritative with no fixed fleet quota.
+      // #307: the deployment default now DERIVES the floor; this fixture pins it to zero so the
+      // staged observation alone decides admission (exactly one 60-byte worker fits).
       capacity: {
+        policy: { minFreeBytes: 0, minFreeInodes: 0 },
         estimate(request) {
           estimates.push(request);
           observedPolicy = request.policy;
@@ -217,7 +220,10 @@ test('DC2: deployment close drains an active capacity owner and releases every e
       routes: [route],
       adapters: { [route.harness]: fixture.adapter },
       verification: { command: 'true', arguments: [] },
+      // #307: the floor is pinned here so the staged observation (floor + headroom) decides
+      // admission, independent of the deployment default's derivation.
       capacity: {
+        policy: { minFreeBytes: 0, minFreeInodes: 0 },
         estimate(request) {
           policy = request.policy;
           return { bytes: 60, inodes: 5 };

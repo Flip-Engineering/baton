@@ -122,11 +122,14 @@ export function normalizeWorktreeCapacityPolicy(value) {
   const normalized = {};
   for (const field of POLICY_FIELDS) {
     const item = value[field];
-    if (field.startsWith('maxReserved') && item === null) {
+    // A null ceiling is "no configured ceiling"; a null floor (#307) is "derive this floor from
+    // the deployment's own records" — both are configurations, and the digest pins WHICH one is
+    // configured so a later switch cannot happen silently under live reservations.
+    if ((field.startsWith('maxReserved') || field.startsWith('minFree')) && item === null) {
       normalized[field] = null;
       continue;
     }
-    if (!Number.isSafeInteger(item) || item < 0) throw new TypeError(`worktreeCapacity.${field} must be a non-negative safe integer`);
+    if (!Number.isSafeInteger(item) || item < 0) throw new TypeError(`worktreeCapacity.${field} must be a non-negative safe integer or null`);
     normalized[field] = item;
   }
   if ((normalized.maxReservedBytes !== null && (normalized.maxReservedBytes <= 0
@@ -134,6 +137,43 @@ export function normalizeWorktreeCapacityPolicy(value) {
     || (normalized.maxReservedInodes !== null && (normalized.maxReservedInodes <= 0
       || normalized.runtimeReserveInodes > normalized.maxReservedInodes))) throw new TypeError('worktreeCapacity ceilings are inconsistent');
   return Object.freeze({ ...normalized, digest: digest(normalized) });
+}
+
+/** #307: THE FLOOR IS A RECORD, NOT A CONSTANT. The workspace floor beneath one reservation wave
+ * is the largest checkout estimate this deployment has ever recorded (its ledger's high-water —
+ * "room for one more participant") plus the runtime footprint the deployment measures from its
+ * own records (ledger and evidence directories; worker homes are already the checkout estimates
+ * the high-water carries). Deployment policy may still pin `minFreeBytes`/`minFreeInodes`
+ * explicitly — a configured floor replaces the derivation, and the policy digest pins which of
+ * the two regimes is in force. Every input is a measurement or a deployment record; nothing here
+ * is chosen. */
+export function deriveWorktreeCapacityFloor({
+  estimateHighWaterBytes, estimateHighWaterInodes, runtimeFootprintBytes, runtimeFootprintInodes,
+}) {
+  for (const [field, value] of Object.entries({
+    estimateHighWaterBytes, estimateHighWaterInodes, runtimeFootprintBytes, runtimeFootprintInodes,
+  })) {
+    if (!Number.isSafeInteger(value) || value < 0) throw new TypeError(`worktree capacity floor derivation requires a non-negative safe integer ${field}`);
+  }
+  return Object.freeze({
+    bytes: estimateHighWaterBytes + runtimeFootprintBytes,
+    inodes: estimateHighWaterInodes + runtimeFootprintInodes,
+  });
+}
+
+/** #307: the ONE capacity-pressure predicate. True when the deployment's workspace capacity
+ * observation has crossed the floor — the deployment-level fact the view's deployment summary
+ * carries (`capacityPressure`) and the wake stream lane turns into a capacity_pressure wake.
+ * Reads the doctor/workspace readiness shape: an explicit `pressure` flag, a blocked typed
+ * observation, or free-below-floor numbers. */
+export function workspaceCapacityPressure(workspace) {
+  if (!workspace || typeof workspace !== 'object' || Array.isArray(workspace)) return false;
+  if (workspace.pressure === true) return true;
+  if (workspace.state === 'blocked' && workspace.code === 'worktree_capacity_exceeded') return true;
+  if (!Number.isSafeInteger(workspace.freeBytes) || !Number.isSafeInteger(workspace.floorBytes)) return false;
+  return workspace.freeBytes < workspace.floorBytes
+    || (Number.isSafeInteger(workspace.freeInodes) && Number.isSafeInteger(workspace.floorInodes)
+      && workspace.freeInodes < workspace.floorInodes);
 }
 
 function defaultObserve({ repoRoot }) {
@@ -249,15 +289,24 @@ function validLockOwner(value) {
 export class WorktreeCapacityAuthority {
   constructor({
     repoRoot, policy, integrityKey, observe = defaultObserve, estimate = defaultEstimate,
-    now = Date.now, lockWaitMs = DEFAULT_LOCK_WAIT_MS,
+    runtimeFootprint = null, now = Date.now, lockWaitMs = DEFAULT_LOCK_WAIT_MS,
   }) {
     this.repoRoot = repoRoot;
     this.policy = normalizeWorktreeCapacityPolicy(policy);
     if (!Buffer.isBuffer(integrityKey) || integrityKey.byteLength !== 32) throw new TypeError('worktree capacity requires one 32-byte integrity key');
     if (typeof observe !== 'function' || typeof estimate !== 'function' || typeof now !== 'function') throw new TypeError('worktree capacity dependencies must be functions');
+    if (runtimeFootprint !== null && typeof runtimeFootprint !== 'function') throw new TypeError('worktree capacity runtime footprint must be a function when provided');
+    // A derived floor (#307) is resolved at each admission from the ledger high-water plus the
+    // deployment-measured runtime footprint; without the footprint dependency the derivation
+    // cannot be honest, so a null floor field requires it.
+    if ((this.policy.minFreeBytes === null || this.policy.minFreeInodes === null)
+      && typeof runtimeFootprint !== 'function') {
+      throw new TypeError('worktree capacity derived floors require a runtimeFootprint dependency');
+    }
     if (!Number.isSafeInteger(lockWaitMs) || lockWaitMs < 0) throw new TypeError('worktree capacity lock wait deadline must be a non-negative safe integer of milliseconds');
     this.integrityKey = Buffer.from(integrityKey);
     this.observe = observe; this.estimate = estimate; this.now = now; this.lockWaitMs = lockWaitMs;
+    this.runtimeFootprint = runtimeFootprint;
     this.ownerId = randomBytes(16).toString('hex');
     this.root = join(repoRoot, '.baton', 'capacity');
     this.statePath = join(this.root, 'reservations.json');
@@ -265,8 +314,42 @@ export class WorktreeCapacityAuthority {
     this.reaperPath = `${this.lockPath}.reaper`;
   }
 
+  /** The effective floor for one admission check: per field, a configured policy floor wins;
+   * a null field (#307) derives from the ledger's estimate high-water plus the measured runtime
+   * footprint. Runs under the lock with the state already read. */
+  #effectiveFloor(estimateHighWater) {
+    const configuredBytes = this.policy.minFreeBytes;
+    const configuredInodes = this.policy.minFreeInodes;
+    const highWater = Object.freeze({ ...estimateHighWater });
+    if (configuredBytes !== null && configuredInodes !== null) {
+      return Object.freeze({ bytes: configuredBytes, inodes: configuredInodes, source: 'configured', estimateHighWater: highWater, runtimeFootprint: null });
+    }
+    let footprint;
+    try {
+      footprint = validateMeasurement(this.runtimeFootprint(), 'worktreeCapacityRuntimeFootprint', ['bytes', 'inodes']);
+    } catch (error) {
+      if (error instanceof WorktreeCapacityError) throw error;
+      throw typed('worktree capacity could not measure its runtime footprint', 'worktree_capacity_unavailable', error);
+    }
+    const derived = deriveWorktreeCapacityFloor({
+      estimateHighWaterBytes: highWater.bytes, estimateHighWaterInodes: highWater.inodes,
+      runtimeFootprintBytes: footprint.bytes, runtimeFootprintInodes: footprint.inodes,
+    });
+    return Object.freeze({
+      bytes: configuredBytes ?? derived.bytes,
+      inodes: configuredInodes ?? derived.inodes,
+      source: configuredBytes !== null || configuredInodes !== null ? 'mixed' : 'derived',
+      estimateHighWater: highWater, runtimeFootprint: Object.freeze(footprint),
+    });
+  }
+
   _seal(state) {
-    const core = { schemaVersion: 1, policyDigest: state.policyDigest, reservations: state.reservations };
+    // Schema 2 records the estimate high-water (#307) beside the reservations; schema 1 ledgers
+    // (no high-water field) stay sealed exactly as written so an older writer's state is still
+    // verifiable byte-for-byte.
+    const core = state.estimateHighWater === undefined
+      ? { schemaVersion: 1, policyDigest: state.policyDigest, reservations: state.reservations }
+      : { schemaVersion: 2, policyDigest: state.policyDigest, reservations: state.reservations, estimateHighWater: state.estimateHighWater };
     const integrityDigest = createHmac('sha256', this.integrityKey).update(JSON.stringify(canonical(core))).digest('hex');
     return { ...core, integrityDigest };
   }
@@ -276,9 +359,6 @@ export class WorktreeCapacityAuthority {
   _ensureRoot() {
     const repo = realpathSync(this.repoRoot); const baton = join(repo, '.baton');
     for (const path of [baton, this.root]) {
-      // Simultaneous first startup of one repository races here; losing that race is normal.
-      // Only EEXIST is adopted, and the confinement checks below still refuse a file, symlink,
-      // or escaping directory, so authority is unchanged.
       try { mkdirSync(path, { mode: 0o700 }); }
       catch (error) {
         if (error?.code !== 'EEXIST') throw typed('worktree capacity root could not be created', 'worktree_capacity_unavailable', error);
@@ -292,19 +372,35 @@ export class WorktreeCapacityAuthority {
   }
 
   _read() {
-    if (!existsSync(this.statePath)) return { schemaVersion: 1, policyDigest: this.policy.digest, reservations: [] };
+    if (!existsSync(this.statePath)) {
+      return { schemaVersion: 2, policyDigest: this.policy.digest, reservations: [], estimateHighWater: { bytes: 0, inodes: 0 } };
+    }
     const stateStat = lstatSync(this.statePath);
     if (!stateStat.isFile() || stateStat.isSymbolicLink() || (stateStat.mode & 0o077) !== 0) throw typed('worktree capacity state is not a private regular file', 'worktree_capacity_unavailable');
     let state;
     try { state = JSON.parse(readFileSync(this.statePath, 'utf8')); }
     catch (cause) { throw typed('worktree capacity state is unreadable', 'worktree_capacity_unavailable', cause); }
-    if (!state || Object.keys(state).sort().join(',') !== ['integrityDigest', 'policyDigest', 'reservations', 'schemaVersion'].sort().join(',')
-      || state.schemaVersion !== 1 || !Array.isArray(state.reservations)) throw typed('worktree capacity state disagrees with deployment policy', 'worktree_capacity_unavailable');
-    const expectedIntegrity = this._seal(state).integrityDigest;
+    // Schema 2 records the estimate high-water (#307); schema 1 ledgers (an older writer) are
+    // still verified byte-for-byte and read with a zero high-water.
+    const v1Keys = ['integrityDigest', 'policyDigest', 'reservations', 'schemaVersion'].sort().join(',');
+    const v2Keys = ['estimateHighWater', 'integrityDigest', 'policyDigest', 'reservations', 'schemaVersion'].sort().join(',');
+    const keys = state && typeof state === 'object' && !Array.isArray(state) ? Object.keys(state).sort().join(',') : null;
+    const schema = keys === v1Keys ? 1 : keys === v2Keys ? 2 : null;
+    const highWaterShape = schema === 2 && (
+      !state.estimateHighWater || state.estimateHighWater === null
+      || Object.keys(state.estimateHighWater).sort().join(',') !== 'bytes,inodes'
+      || !Number.isSafeInteger(state.estimateHighWater.bytes) || state.estimateHighWater.bytes < 0
+      || !Number.isSafeInteger(state.estimateHighWater.inodes) || state.estimateHighWater.inodes < 0);
+    if (schema === null || !Array.isArray(state.reservations) || highWaterShape) {
+      throw typed('worktree capacity state disagrees with deployment policy', 'worktree_capacity_unavailable');
+    }
+    const expectedIntegrity = this._seal(schema === 1
+      ? { schemaVersion: 1, policyDigest: state.policyDigest, reservations: state.reservations }
+      : state).integrityDigest;
     if (typeof state.integrityDigest !== 'string' || !/^[a-f0-9]{64}$/u.test(state.integrityDigest)
       || !timingSafeEqual(Buffer.from(state.integrityDigest, 'hex'), Buffer.from(expectedIntegrity, 'hex'))) throw typed('worktree capacity state integrity failed', 'worktree_capacity_unavailable');
     if (state.policyDigest !== this.policy.digest) {
-      if (state.reservations.length === 0) return { schemaVersion: 1, policyDigest: this.policy.digest, reservations: [] };
+      if (state.reservations.length === 0) return { schemaVersion: 2, policyDigest: this.policy.digest, reservations: [], estimateHighWater: { bytes: 0, inodes: 0 } };
       // G-5: the refusal names the ledger an operator must inspect or clear, and BOTH digests, so
       // a policy change is diagnosable from the error alone instead of from this source.
       const ledger = join('.baton', 'capacity', basename(this.statePath));
@@ -340,7 +436,9 @@ export class WorktreeCapacityAuthority {
     }
     const totals = state.reservations.reduce((sum, row) => ({ bytes: sum.bytes + row.bytes, inodes: sum.inodes + row.inodes }), { bytes: 0, inodes: 0 });
     if (!Number.isSafeInteger(totals.bytes) || !Number.isSafeInteger(totals.inodes)) throw typed('worktree capacity reservation totals overflow', 'worktree_capacity_unavailable');
-    return state;
+    return schema === 1
+      ? { ...state, schemaVersion: 1, estimateHighWater: { bytes: 0, inodes: 0 } }
+      : state;
   }
 
   // -----------------------------------------------------------------------------------------
@@ -572,11 +670,47 @@ export class WorktreeCapacityAuthority {
         || !Number.isSafeInteger(outstanding.inodes + wave.inodes)) {
         throw typed('worktree capacity reservation totals overflow', 'worktree_capacity_unavailable');
       }
-      if ((this.policy.maxReservedBytes !== null && totals.bytes + wave.bytes > this.policy.maxReservedBytes)
-        || (this.policy.maxReservedInodes !== null && totals.inodes + wave.inodes > this.policy.maxReservedInodes)
-        || observation.freeBytes - outstanding.bytes - wave.bytes < this.policy.minFreeBytes
-        || observation.freeInodes - outstanding.inodes - wave.inodes < this.policy.minFreeInodes) {
-        throw typed('worktree capacity is unavailable for this reservation wave', 'worktree_capacity_exceeded');
+      // #307: the floor beneath this wave is derived (policy null) or configured (policy set),
+      // and the refusal NAMES its numbers — free, reserved, estimate, floor — plus the remedy
+      // that would admit this exact request, so "what defines this limit" is answered by the
+      // refusal itself and not by reading the source.
+      const floor = this.#effectiveFloor(state.estimateHighWater ?? { bytes: 0, inodes: 0 });
+      const reasons = [];
+      if (this.policy.maxReservedBytes !== null && totals.bytes + wave.bytes > this.policy.maxReservedBytes) reasons.push('maxReservedBytes');
+      if (this.policy.maxReservedInodes !== null && totals.inodes + wave.inodes > this.policy.maxReservedInodes) reasons.push('maxReservedInodes');
+      const remainingBytes = observation.freeBytes - outstanding.bytes - wave.bytes;
+      const remainingInodes = observation.freeInodes - outstanding.inodes - wave.inodes;
+      if (remainingBytes < floor.bytes) reasons.push('minFreeBytes');
+      if (remainingInodes < floor.inodes) reasons.push('minFreeInodes');
+      if (reasons.length > 0) {
+        const deficitBytes = Math.max(0, outstanding.bytes + wave.bytes + floor.bytes - observation.freeBytes);
+        const deficitInodes = Math.max(0, outstanding.inodes + wave.inodes + floor.inodes - observation.freeInodes);
+        const floorLine = floor.source === 'derived'
+          ? `the derived floor is ${floor.bytes} bytes and ${floor.inodes} inodes (largest recorded checkout estimate ${floor.estimateHighWater.bytes} bytes plus the measured runtime footprint ${floor.runtimeFootprint.bytes} bytes)`
+          : `the configured floor is ${floor.bytes} bytes and ${floor.inodes} inodes (advanced.capacity.policy.minFreeBytes/minFreeInodes)`;
+        const remedy = []
+          .concat(deficitBytes > 0 || deficitInodes > 0
+            ? [`free at least ${deficitBytes} bytes and ${deficitInodes} inodes on the repository volume`]
+            : [])
+          .concat(reasons.includes('maxReservedBytes') || reasons.includes('maxReservedInodes')
+            ? ['settle or release live reservations, or raise advanced.capacity.policy.maxReservedBytes/maxReservedInodes']
+            : [])
+          .concat(floor.source === 'derived' ? [] : ['or lower advanced.capacity.policy.minFreeBytes/minFreeInodes'])
+          .join(', ');
+        throw Object.assign(typed(
+          `worktree capacity is unavailable for this reservation wave: ${observation.freeBytes} bytes and ${observation.freeInodes} inodes free,`
+          + ` ${outstanding.bytes} bytes and ${outstanding.inodes} inodes reserved outstanding,`
+          + ` this wave estimates ${wave.bytes} bytes and ${wave.inodes} inodes; ${floorLine};`
+          + ` ${remedy}; then retry`,
+          'worktree_capacity_exceeded',
+        ), {
+          reasons: Object.freeze(reasons),
+          freeBytes: observation.freeBytes, freeInodes: observation.freeInodes,
+          outstandingBytes: outstanding.bytes, outstandingInodes: outstanding.inodes,
+          estimateBytes: wave.bytes, estimateInodes: wave.inodes,
+          floorBytes: floor.bytes, floorInodes: floor.inodes, floorSource: floor.source,
+          deficitBytes, deficitInodes,
+        });
       }
       const createdAt = new Date(this.now()).toISOString();
       const rows = prepared.map(({ id, request, kind, resourceId, estimate }) => Object.freeze({
@@ -587,6 +721,13 @@ export class WorktreeCapacityAuthority {
         toolchainProjectionDigest: request.toolchainProjection?.projectionDigest ?? null,
         createdAt, materializedAt: null,
       }));
+      // #307: the wave's largest estimate becomes the ledger's new high-water — "enough room for
+      // one more participant" is measured against what this deployment has ACTUALLY checked out,
+      // recorded beside the reservations it protects and sealed with them.
+      state.estimateHighWater = {
+        bytes: Math.max(state.estimateHighWater?.bytes ?? 0, ...prepared.map(({ estimate }) => estimate.bytes)),
+        inodes: Math.max(state.estimateHighWater?.inodes ?? 0, ...prepared.map(({ estimate }) => estimate.inodes)),
+      };
       state.reservations.push(...rows); this._write(state);
       return Object.freeze(rows);
     });
@@ -766,11 +907,25 @@ export class WorktreeCapacityAuthority {
         inodes: sum.inodes + row.outstandingInodes,
       }), { bytes: 0, inodes: 0 });
       const stateDigest = digest({ schemaVersion: state.schemaVersion, policyDigest: state.policyDigest, reservations: state.reservations });
+      // #307: the doctor reads the derivation beside the observation — the effective floor, its
+      // source, and the records that produced it.
+      const floor = this.#effectiveFloor(state.estimateHighWater);
       return Object.freeze({
         policyDigest: this.policy.digest, stateDigest,
         totals: Object.freeze(totals), outstanding: Object.freeze(outstanding),
+        estimateHighWater: Object.freeze({ ...state.estimateHighWater }),
+        floor,
         reservations: Object.freeze(state.reservations.map((row) => Object.freeze({ ...row }))),
       });
+    });
+  }
+
+  /** The effective floor, resolved fresh from the ledger and the measured runtime footprint —
+   * what the doctor's capacity section shows beside the observation (#307). */
+  floor() {
+    return this._lock(() => {
+      const state = this._read();
+      return this.#effectiveFloor(state.estimateHighWater);
     });
   }
 }
