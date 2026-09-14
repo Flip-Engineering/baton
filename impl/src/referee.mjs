@@ -179,7 +179,15 @@ function runClosedCommand(verification, sandboxDir, timeoutMs, runtime, signal =
       .filter((name) => Object.hasOwn(runtime.environment, name))
       .map((name) => [name, runtime.environment[name]]));
     const child = spawn(verification.command, verification.arguments, { cwd, detached: true, env, shell: false });
-    const chunks = []; let bytes = 0; let settled = false; let timedOut = false; let outputExceeded = false; let aborted = false; let timer;
+    // Output is bounded EVIDENCE; the exit code is the verdict (issue #266). A verifier that prints
+    // more than maxOutputBytes is never killed for it: the first half of the bound is kept as the
+    // head, the last half as a rolling tail, and the bytes between are counted, so the failure
+    // capsule still shows how the run ended and a suite that prints its whole transcript still
+    // reports its real exit.
+    const headLimit = Math.ceil(verification.maxOutputBytes / 2);
+    const tailLimit = verification.maxOutputBytes - headLimit;
+    const head = []; const tail = []; let headBytes = 0; let tailBytes = 0; let omittedBytes = 0;
+    let settled = false; let timedOut = false; let outputExceeded = false; let aborted = false; let timer;
     const stop = () => { try { process.kill(-child.pid, 'SIGKILL'); } catch { try { child.kill('SIGKILL'); } catch { /* noop */ } } };
     const onAbort = () => { aborted = true; stop(); };
     if (signal) {
@@ -190,10 +198,13 @@ function runClosedCommand(verification, sandboxDir, timeoutMs, runtime, signal =
       if (settled) return;
       settled = true; clearTimeout(timer);
       signal?.removeEventListener('abort', onAbort);
-      const captured = Buffer.concat(chunks);
+      const captured = Buffer.concat([...head, ...tail]);
+      const text = captured.toString('utf8');
       settle({
-        exitCode: timedOut || outputExceeded || aborted ? null : exitCode,
-        output: captured.toString('utf8'),
+        exitCode: timedOut || aborted ? null : exitCode,
+        output: omittedBytes > 0
+          ? `${Buffer.concat(head).toString('utf8')}\n[verifier output truncated: ${omittedBytes} bytes omitted between head and tail]\n${Buffer.concat(tail).toString('utf8')}`
+          : text,
         capturedOutputBytes: captured.length,
         capturedOutputDigest: createHash('sha256').update(captured).digest('hex'),
         timedOut,
@@ -202,13 +213,21 @@ function runClosedCommand(verification, sandboxDir, timeoutMs, runtime, signal =
       });
     };
     const capture = (chunk) => {
-      if (outputExceeded) return;
-      const remaining = verification.maxOutputBytes - bytes;
-      if (chunk.length > remaining) {
-        if (remaining > 0) chunks.push(chunk.subarray(0, remaining));
-        bytes = verification.maxOutputBytes; outputExceeded = true; stop(); return;
+      let rest = chunk;
+      if (!outputExceeded) {
+        const remaining = headLimit - headBytes;
+        if (chunk.length <= remaining) { head.push(chunk); headBytes += chunk.length; return; }
+        if (remaining > 0) { head.push(chunk.subarray(0, remaining)); headBytes = headLimit; }
+        outputExceeded = true;
+        rest = chunk.subarray(Math.max(0, remaining));
       }
-      chunks.push(chunk); bytes += chunk.length;
+      tail.push(rest); tailBytes += rest.length;
+      while (tailBytes > tailLimit && tail.length > 0) {
+        const excess = tailBytes - tailLimit;
+        const first = tail[0];
+        if (first.length <= excess) { tail.shift(); tailBytes -= first.length; omittedBytes += first.length; }
+        else { tail[0] = first.subarray(excess); tailBytes -= excess; omittedBytes += excess; }
+      }
     };
     child.stdout?.on('data', capture); child.stderr?.on('data', capture);
     child.on('error', () => finish(null)); child.on('close', (code) => finish(code));
@@ -231,11 +250,11 @@ function runPinnedVerification(verification, sandboxDir, timeoutMs, runtime, sig
   return runCommand(verification.command, sandboxDir, timeoutMs, runtimeEnvironmentFor(verification, runtime), signal);
 }
 
-const executionOf = (run) => run.outputExceeded
-  ? { state: 'output_exceeded', code: 'verification_output_exceeded' }
-  : run.timedOut ? { state: 'timed_out', code: 'verification_timed_out' }
-    : run.exitCode == null ? { state: 'unavailable', code: 'verification_spawn_unavailable' }
-      : { state: 'completed', code: 'verification_completed' };
+// `output_exceeded` remains in the closed execution vocabulary for durable verdicts recorded
+// before #266; a live verifier is never terminated for its output, so it is no longer produced.
+const executionOf = (run) => run.timedOut ? { state: 'timed_out', code: 'verification_timed_out' }
+  : run.exitCode == null ? { state: 'unavailable', code: 'verification_spawn_unavailable' }
+    : { state: 'completed', code: 'verification_completed' };
 
 /**
  * Re-derive the truth of a worker's result.
@@ -339,9 +358,7 @@ export async function verify(task, result, sandbox, opts = {}) {
   }
 
   let diagnosticCode;
-  if (resultRun.outputExceeded) {
-    diagnosticCode = 'verification_output_exceeded';
-  } else if (resultRun.timedOut) {
+  if (resultRun.timedOut) {
     diagnosticCode = 'verification_timed_out';
   } else if (execution.state !== 'completed') {
     diagnosticCode = execution.code;

@@ -550,7 +550,7 @@ test('failed verifier output retains one bounded sanitized tail capsule bound to
     createHash('sha256').update(verdict.failureCapsule.text).digest('hex'));
 });
 
-test('closed plan verification executes argv without a shell, strips ambient env, and fails at the output bound', async (t) => {
+test('closed plan verification executes argv without a shell, strips ambient env, and keeps its verdict past the output bound', async (t) => {
   const sandbox = makeSandbox();
   t.after(() => sandbox.cleanup());
   process.env.BATON_TEST_CREDENTIAL = 'must-not-cross';
@@ -566,13 +566,29 @@ test('closed plan verification executes argv without a shell, strips ambient env
     makeResult({ verification: { command: 'node', claimedExit: 0 } }),
     sandbox,
   );
+  // #266: output is bounded evidence (32-byte head + 32-byte tail of the 128 written), the exit
+  // code is the verdict — a verifier is never killed for printing.
   assert.equal(verdict.outputExceeded, true);
-  assert.equal(verdict.passed, false);
-  assert.equal(verdict.observedExit, null);
+  assert.equal(verdict.passed, true);
+  assert.equal(verdict.observedExit, 0);
   assert.equal(verdict.capturedOutputBytes, 64);
   assert.equal(verdict.capturedOutputDigest, createHash('sha256').update('x'.repeat(64)).digest('hex'));
-  assert.equal(verdict.diagnosticCode, 'verification_output_exceeded');
+  assert.equal(verdict.diagnosticCode, 'verification_passed');
   assert.equal(Object.hasOwn(verdict, 'observedOutputTail'), false);
-  assert.equal(verdict.failureCapsule.kind, 'verification_failure_tail');
-  assert.equal(verdict.failureCapsule.capturedOutputDigest, verdict.capturedOutputDigest);
+
+  const failing = await verify(
+    makeTask({ verification: { ...verification, arguments: ['-e', "process.stdout.write('head-'.repeat(40)); process.stderr.write('tail-marker\\n'); process.exit(1);"] } }),
+    makeResult({ verification: { command: 'node', claimedExit: 0 } }),
+    sandbox,
+  );
+  assert.equal(failing.outputExceeded, true);
+  assert.equal(failing.passed, false);
+  assert.equal(failing.observedExit, 1);
+  assert.equal(failing.diagnosticCode, 'verification_claim_diverged');
+  assert.ok(failing.capturedOutputBytes <= 64, 'the capture stays within the bound');
+  assert.match(failing.failureCapsule.text, /tail-marker/u, 'the capsule still shows how the run ended');
+  assert.match(failing.failureCapsule.text, /bytes omitted between head and tail/u);
+  assert.equal(failing.failureCapsule.kind, 'verification_failure_tail');
+  assert.equal(failing.failureCapsule.capturedOutputDigest, failing.capturedOutputDigest);
+  assert.equal(verdict.failureCapsule, null, 'a passing verdict carries no failure capsule, however much it printed');
 });

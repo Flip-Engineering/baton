@@ -158,7 +158,7 @@ test('VR1: createDriver prepares one deployment runtime and propagates it to eve
   }
 });
 
-test('VR2: spawn refusal, timeout, and output overflow are typed inconclusive execution dispositions', async (t) => {
+test('VR2: spawn refusal and timeout are typed inconclusive execution dispositions; output overflow is conclusive (#266)', async (t) => {
   const candidate = sandbox('execution');
   t.after(candidate.cleanup);
   const prepared = runtime();
@@ -171,10 +171,6 @@ test('VR2: spawn refusal, timeout, and output overflow are typed inconclusive ex
       contract: verification(['-e', 'setInterval(() => {}, 1000)'], { timeoutMs: 30 }),
       state: 'timed_out', code: 'verification_timed_out',
     },
-    {
-      contract: verification(['-e', "process.stdout.write('x'.repeat(128))"], { maxOutputBytes: 64 }),
-      state: 'output_exceeded', code: 'verification_output_exceeded',
-    },
   ];
   for (const row of cases) {
     const verdict = await verify(task(row.contract), result, candidate, { runtime: prepared });
@@ -184,6 +180,14 @@ test('VR2: spawn refusal, timeout, and output overflow are typed inconclusive ex
     assert.equal(verdict.passed, false);
     assert.equal(verdict.reverified, false);
   }
+  // Output past the bound is evidence, not an execution failure: the run completes, the exit code
+  // is the verdict, and the capture is bounded (head + tail) with the overflow noted.
+  const overflowing = await verify(task(verification(['-e', "process.stdout.write('x'.repeat(128))"], { maxOutputBytes: 64 })), result, candidate, { runtime: prepared });
+  assert.deepEqual(overflowing.execution, { state: 'completed', code: 'verification_completed' });
+  assert.equal(overflowing.outputExceeded, true);
+  assert.equal(overflowing.observedExit, 0);
+  assert.equal(overflowing.reverified, true);
+  assert.ok(overflowing.capturedOutputBytes <= 64);
 });
 
 test('VR3: a passing base owns a candidate failure; a failing base leaves ownership unresolved', async (t) => {
