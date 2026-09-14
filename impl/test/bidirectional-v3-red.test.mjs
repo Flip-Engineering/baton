@@ -573,18 +573,23 @@ test('A5: the board query kind reuses the S-2 board→run binding check', async 
   assert.equal(foreign?.payload?.ok ?? null, false, 'a board bound to another run refuses with the binding precedence');
 });
 
-test('B4: the pack reaper stops expired packs serving without touching live history', () => {
+test('B4: the pack reaper reports the expiry it OBSERVED — it reclaims nothing, and live history is untouched', () => {
   const store = new CoordinationStore(tmpDir(), { repoId: 'repo-bd3', clock: () => '2026-08-03T05:00:00.000Z' });
-  store.mintContextPack({ type: 'spec', body: 'old', validity: '2026-08-03T01:00:00.000Z' },
+  const expired = store.mintContextPack({ type: 'spec', body: 'old', validity: '2026-08-03T01:00:00.000Z' },
     { actor: 'orchestrator', key: 'bd3-b4-old' });
   store.mintContextPack({ type: 'spec', body: 'fresh', validity: '2026-08-03T06:00:00.000Z' },
     { actor: 'orchestrator', key: 'bd3-b4-fresh' });
-  const reaped = store.reapExpiredContextPacks?.(store._repoId ?? 'repo-bd3') ?? { reaped: 0 };
-  assert.ok(typeof reaped === 'object', 'the reaper exists and reports');
+  const receipt = store.reapExpiredContextPacks(store._repoId ?? 'repo-bd3');
+  assert.deepEqual(receipt, { expired: 1, reaped: 0 },
+    'the receipt counts the expired pack the scan saw; `reaped` names removals, and this store has no reclamation path');
   const live = store.materializeContextPack(store.contextPackHead('spec').packId);
-  assert.ok(String(live?.body ?? live?.pack?.body ?? '').includes('fresh'), 'live packs survive the reaper');
+  assert.ok(String(live?.body ?? live?.pack?.body ?? '').includes('fresh'), 'live packs survive the scan');
   const history = store.contextPack(store.contextPackHead('spec').packId);
-  assert.ok(history, 'the head resolves after the reap');
+  assert.ok(history, 'the head resolves after the scan');
+  assert.ok(store.contextPack(expired.pack.packId), 'the expired pack stays durable — nothing was removed');
+  assert.throws(() => store.materializeContextPack(expired.pack.packId),
+    (error) => error?.code === 'context_pack_expired',
+    'expiry stops the pack serving without any pack being reaped');
 });
 
 test('C4: run.send and nudge_turn ride the lane as aliases (identical worker-visible behavior)', async () => {

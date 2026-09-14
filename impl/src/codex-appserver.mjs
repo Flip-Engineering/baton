@@ -505,7 +505,6 @@ export class CodexAppServerCli {
   async _onClose(session, code, signal) {
     if (session.processClosedEmitted || session.processClosePending) return;
     session.processClosePending = true;
-    if (session.wallTimer) clearTimeout(session.wallTimer);
     if (!session.processClose) { session.terminal = true; return; }
     const wasKilling = session.killing === true;
     const setupFailed = session.setupFailed === true;
@@ -716,7 +715,6 @@ export class CodexAppServerCli {
           // XA8/D9: NOT lifecycle.turn_completed — this is the confirmed-stop event the
           // coordinator awaits; the thread survives (activeTurn cleared above, session stays).
           const result = makeResult('cancelled', 'interrupted', session.lastTokenUsage);
-          if (session.wallTimer) { clearTimeout(session.wallTimer); session.wallTimer = null; }
           this._emit(session, 'control.interrupt_confirmed', {
             threadId: params.threadId, turnId, result, transportOpen: true,
             usageSeal: tokenUsageSeal(session, turnId),
@@ -1135,13 +1133,10 @@ export class CodexAppServerCli {
     return { ok: true };
   }
 
-  _onWallTimeout(session, timeoutMs) {
-    if (session.terminal || session.killing) return;
-    session.timeoutFailure = {
-      error: `session wall-time budget exceeded (${timeoutMs}ms)`,
-      phase: 'timeout',
-      usageSeal: unavailableUsageSeal(),
-    };
-    this._killChild(session);
-  }
+  // #163 (2026-09-14 audit, swarm-b/lead.md finding 10): the wall-time fate clock is retired here
+  // with no replacement. `_onWallTimeout` and the `wallTimer` it would have cancelled are DELETED —
+  // `wallTimer` was cleared in two places and assigned nowhere, so no turn ever ended on the clock
+  // and nothing may start doing so. `session.timeoutFailure` stays as the pre-close classification
+  // a transport may set (`terminalCause: 'timeout'` keeps its precedence in the close path); it is
+  // never minted by a timer.
 }

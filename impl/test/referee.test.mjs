@@ -761,6 +761,52 @@ test('G-12: one timeout is spent once across the candidate, base, coverage and m
   assert.equal(existsSync(join(sandbox.dir, 'mutation-ran.marker')), false, 'no mutation child starts with an empty budget');
 });
 
+// The hardening gate's own evidence field names its observation. A base run that hits the shared
+// deadline reports NO exit code; comparing that absence against `expectExit` used to hand a passing
+// candidate `redGreen: true` from a check that never discriminated anything (2026-09-14 audit,
+// swarm-a/lead.md finding 2). The signal is now underived — null, with the reason it is null.
+test('a timed-out base is not a red->green observation: redGreen stays null with its own reason', async (t) => {
+  const sandbox = makeSandbox('result-sha');
+  const baseSandbox = makeSandbox('base-sha');
+  t.after(() => { sandbox.cleanup(); return baseSandbox.cleanup(); });
+  // The candidate (no marker) exits 0 at once; the base (marker) would need 30 s — far past the
+  // contract's own timeout — so it is killed at the deadline and reports no exit code at all.
+  writeFileSync(join(baseSandbox.dir, 'slow.marker'), 'the base run never finishes inside the budget');
+  const command = 'node -e "require(\'fs\').existsSync(\'slow.marker\') ? setTimeout(() => process.exit(0), 30000) : process.exit(0)"';
+  const verification = { command, expectExit: 0, timeoutMs: 400 };
+  const task = makeTask({ verification });
+  const workerResult = makeResult({ verification: { command, claimedExit: 0 } });
+
+  const verdict = await verify(task, workerResult, sandbox, { baseSandbox });
+
+  assert.equal(verdict.passed, true, 'the candidate genuinely passed its own run');
+  assert.equal(verdict.baseExecution.state, 'timed_out');
+  assert.equal(verdict.baseExit, null);
+  assert.equal(verdict.redGreen, null, 'a base that reported no exit code observed no red->green');
+  assert.equal(verdict.redGreenReason, 'base_timed_out');
+  assert.equal(accept(verdict, { requireRedGreen: true }), false, 'null never satisfies the hardening gate');
+  assert.equal(accept(verdict), true, 'the primary verdict is untouched: only the missing signal is withheld');
+});
+
+// The same rule for the base that never ran at all: the field is null AND the reason says so, so a
+// reader cannot mistake "no observation was taken" for "the observation failed".
+test('a base that never ran is null with base_not_run, and an observed red->green carries no reason', async (t) => {
+  const sandbox = makeSandbox('result-sha');
+  const baseSandbox = makeSandbox('base-sha');
+  t.after(() => { sandbox.cleanup(); return baseSandbox.cleanup(); });
+  writeFileSync(join(sandbox.dir, 'done.txt'), 'ok');
+  const task = makeTask();
+  const workerResult = makeResult({ verification: { command: task.verification.command, claimedExit: 0 } });
+
+  const unobserved = await verify(task, workerResult, sandbox);
+  assert.equal(unobserved.redGreen, null);
+  assert.equal(unobserved.redGreenReason, 'base_not_run');
+
+  const observed = await verify(task, workerResult, sandbox, { baseSandbox });
+  assert.equal(observed.redGreen, true, 'the base really was red before the change');
+  assert.equal(observed.redGreenReason, null, 'a derived signal carries no reason');
+});
+
 // G-15: `expectExit` is threaded into the done-gate by both callers (the coordinator's task gate
 // and contribution-service's check receipt). It was dead weight; the option is live now, and it can
 // only add a refusal — a verdict observed at another exit code is never accepted for this row.

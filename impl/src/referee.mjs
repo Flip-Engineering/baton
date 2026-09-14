@@ -430,6 +430,12 @@ export async function verify(task, result, sandbox, opts = {}) {
   let redGreen = null;
   let baseExit = null;
   let baseExecution = null;
+  // The hardening signal is derived ONLY from a base run that completed and reported an exit code
+  // (2026-09-14 audit, swarm-a/lead.md finding 2). Before this, a base that TIMED OUT reported no
+  // exit code, `null !== expectExit` was trivially true, and a candidate that passed was granted
+  // `redGreen: true` by a check that never discriminated anything. A hardening signal whose
+  // observation did not happen stays null and carries the reason it is null.
+  let redGreenReason = 'base_not_run';
   if (opts.baseSandbox && (passed || opts.classifyFailureOwnership)) {
     const baseBudget = budgetFor('base');
     if (baseBudget > 0) {
@@ -440,7 +446,12 @@ export async function verify(task, result, sandbox, opts = {}) {
       spent('base');
       baseExecution = executionOf(baseRun);
       baseExit = baseRun.timedOut ? null : baseRun.exitCode;
-      redGreen = passed && baseExit !== task.verification.expectExit;
+      if (baseExecution.state === 'completed') {
+        redGreen = passed && baseExit !== task.verification.expectExit;
+        redGreenReason = null;
+      } else {
+        redGreenReason = baseExecution.state === 'timed_out' ? 'base_timed_out' : 'base_unavailable';
+      }
     }
   }
 
@@ -524,6 +535,10 @@ export async function verify(task, result, sandbox, opts = {}) {
     passed,
     locus: 'fresh_sandbox',
     redGreen,
+    // Why redGreen is null (`base_timed_out` | `base_unavailable` | `base_not_run`); null when the
+    // hardening signal WAS observed. A null signal is never a pass: accept({requireRedGreen})
+    // refuses it, and the reason names the observation that did not happen.
+    redGreenReason,
     baseExit,
     coverageOfChange,
     uncoveredChangedLines,

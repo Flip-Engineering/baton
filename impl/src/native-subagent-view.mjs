@@ -1,15 +1,21 @@
 import { NATIVE_PHASE } from './native-subagent-observations.mjs';
 
 /** Read-only observations of harness-managed collaboration. Invocation completion and
- * child-agent completion are distinct; neither grants Baton process or session custody. */
+ * child-agent completion are distinct; neither grants Baton process or session custody.
+ *
+ * `coverage` names the observation itself (2026-09-14 audit, swarm-b/lead.md finding 9): it is
+ * `observed_only` when the stream really carried native observations — never a constant label
+ * stamped beside empty arrays — and `unobserved` when this view saw none to report. */
 export function nativeSubagentView(events) {
   const invocations = new Map();
   const agents = new Map();
   const unidentified = [];
+  let observed = 0;
   for (const event of events) {
     if (event.kind !== 'native.subagent_observed') continue;
     const observation = event.payload;
     if (!observation || typeof observation !== 'object') continue;
+    observed += 1;
     const identity = observation.toolCallId ?? observation.collabToolCallId ?? observation.toolUseId;
     const attributed = { ...structuredClone(observation), seq: event.seq, ts: event.ts };
 
@@ -99,7 +105,9 @@ export function nativeSubagentView(events) {
     }
   }
   return {
-    coverage: 'observed_only', agents: [...agents.values()],
+    // The label is the observation, not a constant: a stream with no native observation in it
+    // reports `unobserved` rather than an observed-but-empty claim.
+    coverage: observed > 0 ? 'observed_only' : 'unobserved', agents: [...agents.values()],
     invocations: [...invocations.values()], unidentified,
   };
 }

@@ -1424,7 +1424,6 @@ export class ClaudeSessionCli {
     const pending = session.pendingInterrupt;
     if (!pending || pending.emitted || !pending.wireConfirmed || !pending.resultSeen || session.terminal) return;
     pending.emitted = true;
-    if (session.wallTimer) { clearTimeout(session.wallTimer); session.wallTimer = null; }
     this._emit(session, 'control.interrupt_confirmed', {
       sessionId: session.sessionIdWire,
       transportOpen: true,
@@ -1605,7 +1604,6 @@ export class ClaudeSessionCli {
     if (session.terminal || session.processClosePending) return;
     session.processClosePending = true;
     if (session.killTimer) clearTimeout(session.killTimer);
-    if (session.wallTimer) clearTimeout(session.wallTimer);
     if (!session.processClose) { session.terminal = true; return; }
     const wasStopping = session.stopping === true;
     const timeoutFailure = session.timeoutFailure;
@@ -1639,19 +1637,16 @@ export class ClaudeSessionCli {
     }
     session.terminal = true;
     if (session.killTimer) clearTimeout(session.killTimer);
-    if (session.wallTimer) clearTimeout(session.wallTimer);
     this._emit(session, 'lifecycle.crashed', { error: String(err?.message ?? err), usageSeal: unavailableUsageSeal() });
   }
 
-  _onWallTimeout(session, timeoutMs) {
-    if (session.terminal || session.deadEmitted || session.stopping) return;
-    session.timeoutFailure = {
-      error: `session wall-time budget exceeded (${timeoutMs}ms)`,
-      phase: 'timeout',
-      usageSeal: unavailableUsageSeal(),
-    };
-    this._signal(session, 'SIGKILL');
-  }
+  // #163 (2026-09-14 audit, swarm-b/lead.md finding 10): the wall-time fate clock is retired here
+  // with no replacement. `_onWallTimeout` and the `wallTimer` it would have cancelled are DELETED —
+  // `wallTimer` was cleared in three places and assigned nowhere, so the timeout close-branches
+  // were unreachable and this adapter never enforced a wall budget at all. Nothing replaces them:
+  // no clock in this adapter may terminate a turn. `session.timeoutFailure` stays as the pre-close
+  // classification a transport may set (`terminalCause: 'timeout'` keeps its precedence in the
+  // close path); it is never minted by a timer.
 }
 
 // ---------------------------------------------------------------------------

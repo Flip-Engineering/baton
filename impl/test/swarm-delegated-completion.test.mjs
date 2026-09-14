@@ -152,6 +152,23 @@ test('completion derives from an accepted contribution, refuses by hand, and acc
     'a finished leaf completes even while its assignment stays active — the release is bookkeeping');
 });
 
+// 2026-09-14 audit S-E3 (swarm-b/lead.md finding 9): `complete` was `[].every(...)` — vacuously
+// true — so a participant holding no assignment at all read as a completed delegation. Completion
+// is derived only where work exists; an empty delegation is underived.
+test('an unassigned participant\'s delegation is underived, never vacuously complete', async (t) => {
+  const { swarm, delegated, paused } = await delegation(t);
+  const quiet = await delegated.recruit('quiet', 'Nothing assigned yet', selection);
+  await paused(quiet.runId);
+
+  const view = await swarm.view();
+  assert.deepEqual(view.participants.find((row) => row.participantId === 'quiet').delegation,
+    { children: [], work: [], complete: null },
+    'no active assignment in the subtree: completeness is underived, never vacuously true');
+  assert.deepEqual(view.participants.find((row) => row.participantId === 'lead').delegation,
+    { children: ['alpha', 'beta', 'quiet'], work: ['W-A', 'W-B'], complete: false },
+    'an idle child neither completes nor opens the lead\'s delegation — its own work decides');
+});
+
 test('the subtree view: the root and the lead see the same delegation, scoped to it', async (t) => {
   const { swarm, delegated, alphaWorker, asWorker } = await delegation(t);
   await asWorker(alphaWorker).swarms.open(swarm.id).contribute({

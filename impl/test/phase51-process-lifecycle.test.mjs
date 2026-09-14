@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { fileURLToPath } from 'node:url';
-import { mkdirSync, mkdtempSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -18,7 +18,7 @@ import { WebNorthbound } from '../src/web-northbound.mjs';
 import { McpFleetServer } from '../src/mcp-northbound.mjs';
 import {
   ProcessCloseReapLatch, processAuthorityPayload, processAuthorityState, reapOwnedProcessGroup,
-  reapRecoveredProcessGroup,
+  reapRecoveredProcessGroup, validProcessReapUnconfirmedPayload,
 } from '../src/process-lifecycle.mjs';
 
 const FAKE_CLAUDE = fileURLToPath(new URL('./fixtures/fake-claude.mjs', import.meta.url));
@@ -458,17 +458,22 @@ test('PL7: an earlier positive-PID process error remains the terminal cause when
   }
 });
 
-test('PL7: timeout remains first cause when an explicit kill races close', async (t) => {
+test('PL7: a pre-close transport cause remains first when an explicit kill races close', async (t) => {
   for (const [name, make, marker] of adapterCases()) {
     await t.test(name, async () => {
       const adapter = make(); const worker = `phase51-${name}-timeout-kill-race`; const events = collect(adapter);
       try {
         const ack = await adapter.spawn(worker, brief(marker), { worktree: mkdtempSync(join(tmpdir(), `phase51-${name}-timeout-kill-`)), processGeneration: 29 });
         assert.equal(ack.ok, true); await until(() => events.some((event) => event.kind === 'lifecycle.spawned'), `${name} ready before timeout race`);
-        const session = adapter._sessions.get(worker); adapter._onWallTimeout(session, 123); await adapter.kill(worker);
+        // #163: the wall-time fate clock is retired, so the pin drives the pre-close cause through
+        // the classification the timer used to feed — exactly as the Kimi sibling above does.
+        // `_onWallTimeout`/`wallTimer` no longer exist to be called: no clock may terminate a turn.
+        const session = adapter._sessions.get(worker);
+        session.timeoutFailure = { code: 'provider_timeout', error: 'fixture pre-close timeout', usageSeal: { tokens: 'unavailable', usd: 'unavailable', counterId: null, tokenMetric: null } };
+        await adapter.kill(worker);
         await until(() => events.some((event) => event.kind === 'kill.confirmed'), `${name} timeout kill confirmation`);
         const terminals = events.filter((event) => ['lifecycle.turn_completed', 'lifecycle.crashed'].includes(event.kind));
-        assert.equal(terminals.length, 1); assert.equal(terminals[0].kind, 'lifecycle.crashed'); assert.equal(terminals[0].payload.phase, 'timeout');
+        assert.equal(terminals.length, 1); assert.equal(terminals[0].kind, 'lifecycle.crashed'); assert.equal(terminals[0].payload.error, 'fixture pre-close timeout');
         assert.equal(events.find((event) => event.kind === 'kill.confirmed').payload.terminalCause, 'timeout');
         assertClosedPair(events, 29, true);
       } finally { await emergencyCleanup(adapter, worker); }
@@ -742,14 +747,84 @@ test('PL7/PL10: process-group reap is bounded and never fabricates exact close o
     probe: () => { probes += 1; },
     signal: () => { signals += 1; },
   });
-  assert.deepEqual(result, { confirmed: false, reason: 'deadline' });
+  assert.deepEqual(result, { confirmed: false, signaled: true, reason: 'deadline' },
+    'a delivered SIGKILL that never converges is named deadline, not closure');
   assert.equal(signals, 1); assert.ok(probes > 1 && probes < 20);
 
+  // EPERM on the PROBE: the SIGKILL itself was accepted, but the group cannot be observed, so
+  // closure is never confirmed — the delivery is reported and the refusal is named.
   const denied = await reapOwnedProcessGroup(4242, {
     probe: () => { const error = new Error('denied'); error.code = 'EPERM'; throw error; },
     signal: () => {},
   });
-  assert.deepEqual(denied, { confirmed: false, reason: 'permission_denied' });
+  assert.deepEqual(denied, { confirmed: false, signaled: true, reason: 'permission_denied' });
+});
+
+// The delivery observation names itself (2026-09-14 audit, swarm-a/lead.md finding 2): before this,
+// `reapRecoveredProcessGroup` stamped `signaled: true` on EVERY result — an already-absent group and
+// an EPERM refusal both reached the coordinator as durable signal authority it never earned.
+test('PL7/PL10: a reap reports a delivered signal only when one was really delivered', async () => {
+  // The pre-probe found nothing to signal: no signal was attempted at all.
+  let signals = 0;
+  const absent = await reapOwnedProcessGroup(4242, {
+    probe: () => { const error = new Error('gone'); error.code = 'ESRCH'; throw error; },
+    signal: () => { signals += 1; },
+  });
+  assert.deepEqual(absent, { confirmed: true, signaled: false, reason: 'absent' });
+  assert.equal(signals, 0, 'an absent group is never signaled');
+
+  // The kernel answered ESRCH to the SIGKILL itself: attempted, never delivered.
+  const raced = await reapOwnedProcessGroup(4242, {
+    probe: () => {},
+    signal: () => { const error = new Error('gone'); error.code = 'ESRCH'; throw error; },
+  });
+  assert.deepEqual(raced, { confirmed: true, signaled: false, reason: 'absent_on_signal' });
+
+  // Any other kernel refusal leaves the delivery unproven even when the poll proves closure.
+  let probes = 0;
+  const refused = await reapOwnedProcessGroup(4242, {
+    probe: () => {
+      probes += 1;
+      if (probes > 1) { const error = new Error('gone'); error.code = 'ESRCH'; throw error; }
+    },
+    signal: () => { const error = new Error('interrupted'); error.code = 'EINTR'; throw error; },
+    sleep: async () => {},
+  });
+  assert.deepEqual(refused, { confirmed: true, signaled: false, reason: 'signal_refused' });
+  assert.equal(validProcessReapUnconfirmedPayload({
+    schemaVersion: 1, generation: 1, pid: 4242, processGroupId: 4242, reason: 'signal_refused',
+  }), true, 'the unproven-delivery reason is a member of the closed receipt vocabulary');
+});
+
+test('PL8/PL10: the recovered reap never mints a delivery it did not make', async () => {
+  const processRef = { generation: 3, pid: 4242, processGroupId: 4242 };
+  const execFileSync = () => '4242 4242 Sun Jul 19 13:53:51 2026\n';
+  const authority = processAuthorityPayload(processRef, { execFileSync });
+  assert.equal(processAuthorityState(processRef, authority, { execFileSync }), 'active');
+
+  let signals = 0;
+  const gone = await reapRecoveredProcessGroup(processRef, authority, {
+    execFileSync,
+    probe: () => { const error = new Error('gone'); error.code = 'ESRCH'; throw error; },
+    signal: () => { signals += 1; },
+  });
+  assert.deepEqual(gone, { confirmed: true, signaled: false, reason: 'absent' });
+  assert.equal(signals, 0);
+  // The coordinator's durable signal-authority row is chosen by exactly this predicate
+  // (`if (reaped.confirmed && reaped.signaled)`), so an unsignaled reap can never earn it.
+  assert.equal(gone.confirmed && gone.signaled, false, 'absence is not signal authority');
+});
+
+test('PL10: a delivery is observed, never stamped, and the durable row rides the reap\'s own truth', () => {
+  const lifecycleSource = readFileSync(fileURLToPath(new URL('../src/process-lifecycle.mjs', import.meta.url)), 'utf8');
+  // Code only: the prose above the function is allowed to quote the fabrication it retired.
+  const lifecycleCode = lifecycleSource.split('\n')
+    .filter((line) => !/^\s*(?:\/\/|\*|\/\*)/u.test(line)).join('\n');
+  assert.equal(/signaled:\s*true/u.test(lifecycleCode), false,
+    'no site may stamp `signaled: true` — the field is set by the delivery observation alone');
+  const coordinatorSource = readFileSync(fileURLToPath(new URL('../src/coordinator.mjs', import.meta.url)), 'utf8');
+  assert.ok(coordinatorSource.includes('reaped.confirmed && reaped.signaled'),
+    'the durable recovery_process_reaped row is chosen by the reap\'s own delivery observation');
 });
 
 test('PL8: recovered signaling requires the exact durable PID-start authority', async () => {
@@ -1195,5 +1270,74 @@ test('PL7/PL8: failed native recovery retains writer authority and runtime owner
     releaseKill?.();
     if (nativePid && alive(nativePid)) { try { process.kill(-nativePid, 'SIGKILL'); } catch {} }
     await emergencyCleanup(adapter, handle.id);
+  }
+});
+
+// LIF-004 ("Elapsed time alone cannot terminalize work") / #163: terminality is not a tier lottery
+// (2026-09-14 audit, swarm-b/lead.md finding 10). The wall-time fate clock was dead in three
+// adapters — `_onWallTimeout` defined and never invoked, `wallTimer` cleared and never assigned —
+// while the one-shot tier SIGKILLed its child on the clock. The vestiges are deleted and the
+// one-shot tier's declared wall budget is notify-only evidence. Exercised per adapter: elapsed time
+// alone never terminalizes a turn, and the explicit stop still does.
+test('PL10/LIF-004: the wall-time fate clock is gone, and elapsed time never terminalizes a turn', async (t) => {
+  // kimi-acp.mjs is deliberately absent from this list: it carries no fate-clock METHOD, and its one
+  // leftover `session.wallTimer` clear (kimi-acp.mjs:610) sits outside this lane's write authority,
+  // so it is reported rather than repaired. Its tier is still exercised behaviourally below.
+  for (const file of ['claude-session.mjs', 'codex-appserver.mjs', 'grok-acp.mjs', 'cli-adapters.mjs']) {
+    const source = readFileSync(fileURLToPath(new URL(`../src/${file}`, import.meta.url)), 'utf8');
+    // Code only: the comments at each retired site are allowed to name what was deleted.
+    const code = source.split('\n').filter((line) => !/^\s*(?:\/\/|\*|\/\*)/u.test(line)).join('\n');
+    assert.equal(/wallTimer|_onWallTimeout/u.test(code), false,
+      `${file}: the fate clock vestiges are deleted, not merely unused`);
+  }
+  const cliSource = readFileSync(fileURLToPath(new URL('../src/cli-adapters.mjs', import.meta.url)), 'utf8');
+  assert.ok(cliSource.includes("kind: 'resource.budget_threshold'") && cliSource.includes("action: 'notify'"),
+    'the one-shot wall budget crossing is notify-only evidence, never a kill');
+
+  const cases = [
+    ['claude', () => new ClaudeSessionCli({ cmd: process.execPath, args: [FAKE_CLAUDE], killGraceMs: 20 }), 'HOLD_UNTIL_INTERRUPT', {}],
+    ['glm', () => new GlmSessionCli({ cmd: process.execPath, args: [FAKE_CLAUDE], authToken: 'fixture-only', model: 'glm-5.2', killGraceMs: 20 }), 'HOLD_UNTIL_INTERRUPT', {}],
+    ['codex', () => new CodexAppServerCli({ cmd: process.execPath, args: [FAKE_CODEX, '--serve'], requestTimeoutMs: 1500, versionProbe: () => 'fake' }), 'FAKE:STAY_OPEN', {}],
+    ['grok', () => new GrokAcpCli({ cmd: process.execPath, args: [FAKE_GROK, '--serve'], requestTimeoutMs: 1500, versionProbe: () => 'fake' }), 'FAKE:STAY_OPEN', {}],
+    ['kimi', () => new KimiAcpCli({ cmd: process.execPath, args: [FAKE_KIMI, '--serve'], requestTimeoutMs: 1500, versionProbe: () => 'fake', env: { FAKE_KIMI_MODE: 'prompt-hang' } }), 'FAKE:STAY_OPEN', { model: 'kimi-code/k3', reasoningEffort: 'max' }],
+    ['one-shot', () => new PiCli({ cmd: process.execPath, args: () => ['-e', 'setInterval(() => {}, 1000)'], parse: () => ({}), live: true }), 'one-shot', { live: true }],
+  ];
+  const TERMINALS = ['lifecycle.crashed', 'lifecycle.turn_completed', 'lifecycle.exited'];
+  for (const [name, make, marker, extraSpawn] of cases) {
+    await t.test(name, async () => {
+      const adapter = make(); const worker = `phase51-terminality-${name}`; const events = collect(adapter);
+      const worktree = mkdtempSync(join(tmpdir(), `phase51-terminality-${name}-`));
+      try {
+        const ack = await adapter.spawn(worker, brief(marker), { worktree, processGeneration: 41, timeoutMs: 30, ...extraSpawn });
+        assert.equal(ack.ok, true);
+        if (name !== 'one-shot') await until(() => events.some((event) => event.kind === 'lifecycle.spawned'), `${name} ready`);
+        const session = adapter._sessions.get(worker);
+        if (name === 'one-shot') {
+          // The declaration is evidence: one notify-only row, and the child keeps running.
+          await until(() => events.some((event) => event.kind === 'resource.budget_threshold'), 'wall budget notification');
+          const alarms = events.filter((event) => event.kind === 'resource.budget_threshold');
+          assert.equal(alarms.length, 1, 'the crossing is reported once');
+          assert.deepEqual({ dimension: alarms[0].payload.dimension, action: alarms[0].payload.action, hardStop: alarms[0].payload.hardStop },
+            { dimension: 'wall', action: 'notify', hardStop: false });
+          assert.equal(alarms[0].payload.limits.wallMs, 30);
+          await sleep(60);
+          assert.equal(events.filter((event) => event.kind === 'resource.budget_threshold').length, 1, 'and never repeats');
+        } else {
+          // No clock exists in these tiers at all: past the same budget, the turn is untouched.
+          await sleep(200);
+          assert.equal(events.some((event) => event.kind === 'resource.budget_threshold'), false,
+            `${name}: no wall budget is declared to this tier, so none is reported`);
+        }
+        assert.equal(events.some((event) => TERMINALS.includes(event.kind)), false,
+          `${name}: elapsed time alone never terminalizes the turn`);
+        const child = session.child ?? session.process?.child;
+        assert.equal(alive(child.pid), true, `${name}: the child is still running`);
+        assert.equal(events.some((event) => event.kind === 'kill.confirmed'), false, `${name}: nothing was stopped`);
+        // The explicit stop is the only terminality this tier has — and it still works.
+        await adapter.kill(worker);
+        await until(() => events.some((event) => event.kind === 'kill.confirmed'), `${name} kill confirmation`);
+        assertClosedPair(events, 41, events.some((event) => event.kind === 'lifecycle.spawned'));
+      } finally { await emergencyCleanup(adapter, worker); }
+    });
   }
 });

@@ -136,7 +136,9 @@ test('ordinary tool frames produce no view content, and cross-harness keys stay 
       result: { details: {} } }, PARENT),
   ];
   const view = nativeSubagentView(eventsFrom(bashOnly));
-  assert.deepEqual(view, { coverage: 'observed_only', agents: [], invocations: [], unidentified: [] });
+  // No native observation reached the view at all: the coverage label says so, instead of claiming
+  // an observation that never happened beside three empty arrays (2026-09-14 audit, finding 9).
+  assert.deepEqual(view, { coverage: 'unobserved', agents: [], invocations: [], unidentified: [] });
 
   const codex = nativeSubagentView(eventsFrom([
     { harness: 'codex', invocationKey: '["codex","w","s","c1"]', parentWorker: 'w', parentSessionId: 's',
@@ -145,4 +147,19 @@ test('ordinary tool frames produce no view content, and cross-harness keys stay 
   ]));
   assert.equal(codex.agents[0].nativeId, 'child-thread');
   assert.equal(codex.agents[0].state, 'running');
+});
+
+test('coverage is the observation itself: unobserved with nothing to report, observed_only once one lands', () => {
+  assert.deepEqual(nativeSubagentView([]),
+    { coverage: 'unobserved', agents: [], invocations: [], unidentified: [] },
+    'an empty stream observed nothing');
+  assert.deepEqual(nativeSubagentView([{ kind: 'content.message', seq: 1, ts: 't', payload: { text: 'hi' } }]),
+    { coverage: 'unobserved', agents: [], invocations: [], unidentified: [] },
+    'a non-native event is not a native observation');
+  assert.equal(nativeSubagentView([{ kind: 'native.subagent_observed', seq: 1, ts: 't', payload: null }]).coverage,
+    'unobserved', 'a malformed payload is not an observation either');
+
+  const observed = nativeSubagentView(eventsFrom(chainFrames()));
+  assert.equal(observed.coverage, 'observed_only', 'a real observation claims the observed label');
+  assert.ok(observed.invocations.length > 0, 'and it carries what was observed');
 });

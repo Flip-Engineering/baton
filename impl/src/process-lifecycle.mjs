@@ -94,10 +94,17 @@ function probeProcessGroup(processGroupId, probe) {
 /**
  * A detached group leader's `close` event proves only that leader was reaped. Any descendants
  * still carrying the group ID remain Baton's responsibility. Escalate the orphaned group and do
- * not release exact-close evidence until a real group probe reports ESRCH.
+ * not release exact-close evidence until a real group probe reports ESRCH. The result reports TWO
+ * separate observations: whether closure was confirmed by the probe, and whether THIS call actually
+ * delivered the SIGKILL (2026-09-14 audit, swarm-a/lead.md finding 2) — `signaled: true` is claimed
+ * only after `signal` returned without refusing. `reason` names what happened to the delivery:
+ * `absent` (the pre-probe found nothing to signal — no signal was attempted), `absent_on_signal`
+ * (the kernel answered ESRCH), `permission_denied` (EPERM), `signal_refused` (any other refusal, so
+ * delivery is unproven) — and is null only when a signal was really delivered and closure was
+ * confirmed by the probe.
  */
 export async function reapOwnedProcessGroup(processGroupId, opts = {}) {
-  if (!positiveSafe(processGroupId)) return Object.freeze({ confirmed: false, reason: 'invalid_group' });
+  if (!positiveSafe(processGroupId)) return Object.freeze({ confirmed: false, signaled: false, reason: 'invalid_group' });
   const probe = opts.probe ?? process.kill.bind(process);
   const signal = opts.signal ?? process.kill.bind(process);
   const now = opts.now ?? Date.now;
@@ -106,19 +113,26 @@ export async function reapOwnedProcessGroup(processGroupId, opts = {}) {
   const pollMs = Number.isSafeInteger(opts.pollMs) && opts.pollMs > 0 ? opts.pollMs : 5;
   const maxAttempts = Number.isSafeInteger(opts.maxAttempts) && opts.maxAttempts > 0 ? opts.maxAttempts : 500;
   let observed = probeProcessGroup(processGroupId, probe);
-  if (!observed.alive) return Object.freeze({ confirmed: true, reason: null });
-  try { signal(-processGroupId, 'SIGKILL'); } catch (error) {
-    if (error?.code === 'ESRCH') return Object.freeze({ confirmed: true, reason: null });
-    if (error?.code === 'EPERM') return Object.freeze({ confirmed: false, reason: 'permission_denied' });
+  if (!observed.alive) return Object.freeze({ confirmed: true, signaled: false, reason: 'absent' });
+  let signaled = false;
+  try {
+    signal(-processGroupId, 'SIGKILL');
+    signaled = true;
+  } catch (error) {
+    if (error?.code === 'ESRCH') return Object.freeze({ confirmed: true, signaled: false, reason: 'absent_on_signal' });
+    if (error?.code === 'EPERM') return Object.freeze({ confirmed: false, signaled: false, reason: 'permission_denied' });
+    // Any other refusal: the kernel did not accept this signal, so delivery stays unproven. The
+    // bounded poll below still decides closure, and no receipt ever claims the missing delivery.
   }
   const deadline = now() + timeoutMs;
   for (let attempts = 0; attempts < maxAttempts && now() <= deadline; attempts += 1) {
     observed = probeProcessGroup(processGroupId, probe);
-    if (!observed.alive) return Object.freeze({ confirmed: true, reason: null });
-    if (observed.reason === 'permission_denied') return Object.freeze({ confirmed: false, reason: observed.reason });
+    if (!observed.alive) return Object.freeze({ confirmed: true, signaled, reason: signaled ? null : 'signal_refused' });
+    if (observed.reason === 'permission_denied') return Object.freeze({ confirmed: false, signaled, reason: observed.reason });
     await sleep(pollMs);
   }
-  return Object.freeze({ confirmed: false, reason: observed.reason === 'probe_error' ? 'probe_error' : 'deadline' });
+  const outcome = observed.reason === 'probe_error' ? 'probe_error' : 'deadline';
+  return Object.freeze({ confirmed: false, signaled, reason: signaled ? outcome : 'signal_refused' });
 }
 
 /**
@@ -261,7 +275,14 @@ export async function reapRecoveredProcessGroup(processRef, authority, opts = {}
     return Object.freeze({ confirmed: false, signaled: false, reason: state });
   }
   const reaped = await reapOwnedProcessGroup(processRef.processGroupId, opts);
-  return Object.freeze({ ...reaped, signaled: true });
+  // The delivery observation is the reap's OWN (2026-09-14 audit, swarm-a/lead.md finding 2): this
+  // function used to stamp `signaled: true` on every result, so a group that was already gone and
+  // an EPERM refusal both reached the coordinator as durable signal authority it never earned.
+  return Object.freeze({
+    confirmed: reaped.confirmed === true,
+    signaled: reaped.signaled === true,
+    reason: reaped.reason ?? null,
+  });
 }
 
 export function normalizeProcessGeneration(value) {
@@ -295,7 +316,7 @@ export function processReapUnconfirmedPayload(generation, pid, reason) {
     generation: normalizeProcessGeneration(generation),
     pid,
     processGroupId: pid,
-    reason: ['deadline', 'permission_denied', 'probe_error'].includes(reason) ? reason : 'probe_error',
+    reason: ['deadline', 'permission_denied', 'probe_error', 'signal_refused'].includes(reason) ? reason : 'probe_error',
   };
 }
 
@@ -373,7 +394,7 @@ export function validProcessReapUnconfirmedPayload(payload) {
     && positiveSafe(payload.generation)
     && positiveSafe(payload.pid)
     && payload.processGroupId === payload.pid
-    && ['deadline', 'permission_denied', 'probe_error'].includes(payload.reason);
+    && ['deadline', 'permission_denied', 'probe_error', 'signal_refused'].includes(payload.reason);
 }
 
 export function validProcessReadyPayload(payload) {

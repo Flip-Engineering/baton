@@ -265,3 +265,36 @@ test('recruiting a participant that already exists is refused by name, whatever 
   assert.equal(view.participants.filter((row) => row.participantId === 'builder').length, 1);
   assert.equal(f.starts.length, 1, 'no second run was started for the collision');
 });
+
+// 2026-09-14 audit S-E3 (swarm-b/lead.md finding 9): the view published `observed_only` with empty
+// arrays whenever the worker was unbound or the coordinator could not answer for native
+// observations — a claim that Baton looked and saw no native collaboration. Absence is now labelled
+// as absence, and only a real observation may claim the observed label.
+test('native coverage labels absence as absence, and passes a real observation through', async (t) => {
+  const f = fixture(t);
+  await f.call('create', { purpose: 'Native observation truth' });
+  await f.recruit('builder');
+
+  // The fixture coordinator answers no native-observation query at all: nothing was observed.
+  const unobserved = await f.call('view');
+  assert.deepEqual(unobserved.participants[0].native,
+    { coverage: 'unobserved', agents: [], invocations: [], unidentified: [] },
+    'a coordinator that cannot answer for native observations has observed nothing');
+  assert.equal(unobserved.participants[0].runtime.state, 'working');
+
+  // An unbound participant observes nothing either — the label never claims otherwise.
+  const bound = f.workers.slice();
+  f.workers.length = 0;
+  const unbound = await f.call('view');
+  assert.equal(unbound.participants[0].runtime.state, 'unbound');
+  assert.equal(unbound.participants[0].native.coverage, 'unobserved');
+
+  // A coordinator that DOES answer passes its own observation through unaltered.
+  f.workers.push(...bound);
+  f.ports.coordinator.observedNativeSubagents = (workerId) => ({
+    coverage: 'observed_only', agents: [{ nativeId: `child-of-${workerId}` }], invocations: [], unidentified: [],
+  });
+  const observed = await f.call('view');
+  assert.equal(observed.participants[0].native.coverage, 'observed_only');
+  assert.equal(observed.participants[0].native.agents[0].nativeId, 'child-of-w-1');
+});

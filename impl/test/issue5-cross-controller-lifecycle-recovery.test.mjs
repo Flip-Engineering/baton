@@ -317,9 +317,6 @@ test('issue 5: cross-controller replay retains exact live process/worktree autho
   // callback and timers can no longer write lifecycle facts. Durable writer authority transfers
   // to the recovered controller exactly as it would after host-process death.
   firstAdapter.onEvent((event) => priorControllerEvents.push(event));
-  for (const session of firstAdapter._sessions.values()) {
-    if (session.wallTimer) { clearTimeout(session.wallTimer); session.wallTimer = null; }
-  }
   for (const handle of firstDriver.coordinator._workers.values()) {
     firstDriver.coordinator._clearWatchdog(handle);
     if (handle.budgetStopTimer) { clearTimeout(handle.budgetStopTimer); handle.budgetStopTimer = null; }
@@ -823,9 +820,6 @@ test('P92.2-PO3: absent process cannot erase retained malformed workspace cleanu
   exactReceipt = JSON.parse(readFileSync(receiptPath, 'utf8'));
   const capacityBefore = first.worktreeCapacity.snapshot().reservations[0];
   firstAdapter.onEvent(() => {});
-  for (const session of firstAdapter._sessions.values()) {
-    if (session.wallTimer) { clearTimeout(session.wallTimer); session.wallTimer = null; }
-  }
   for (const handle of first.coordinator._workers.values()) {
     first.coordinator._clearWatchdog(handle);
     if (handle.budgetStopTimer) { clearTimeout(handle.budgetStopTimer); handle.budgetStopTimer = null; }
@@ -876,9 +870,6 @@ test('P92.2-PO3: immutable gen1 workspace owner binds a separately proven live g
   let first; let second; let third; let firstPid = null; let secondPid = null;
   const detachController = (selectedDriver, selectedAdapter) => {
     selectedAdapter.onEvent(() => {});
-    for (const session of selectedAdapter._sessions.values()) {
-      if (session.wallTimer) { clearTimeout(session.wallTimer); session.wallTimer = null; }
-    }
     for (const handle of selectedDriver.coordinator._workers.values()) {
       selectedDriver.coordinator._clearWatchdog(handle);
       if (handle.budgetStopTimer) {
@@ -989,9 +980,6 @@ test('P92.2-PO3: controller2 exact gen2 recovery restores authority for same-con
   let first; let second; let firstPid = null; let secondPid = null;
   const detachController = (selectedDriver, selectedAdapter) => {
     selectedAdapter.onEvent(() => {});
-    for (const session of selectedAdapter._sessions.values()) {
-      if (session.wallTimer) { clearTimeout(session.wallTimer); session.wallTimer = null; }
-    }
     for (const handle of selectedDriver.coordinator._workers.values()) {
       selectedDriver.coordinator._clearWatchdog(handle);
       if (handle.budgetStopTimer) {

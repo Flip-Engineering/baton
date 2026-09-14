@@ -1097,15 +1097,22 @@ export function pendingRecoveryAttempts(store, limit = 1_000) {
     .slice(0, limit).map(clone);
 }
 
-/** Moved from `CoordinationStore.reapExpiredContextPacks` (issue #259 slice 1). State: the store, passed explicitly. */
+/** Moved from `CoordinationStore.reapExpiredContextPacks` (issue #259 slice 1). State: the store, passed explicitly.
+ *
+ * The receipt names what the scan OBSERVED (2026-09-14 audit, swarm-b/lead.md finding 9): the store
+ * keeps no reclamation path — a minted context pack is durable append-only history and nothing here
+ * removes one — so `reaped` stays 0 and the packs past their validity are reported as `expired`.
+ * Reporting them as `reaped: N` claimed N removals that never happened. A reclamation path, if one
+ * is ever built, increments `reaped` in the same place it deletes the pack.
+ */
 export function reapExpiredContextPacks(store, repoId) {
   void repoId;
   const now = Date.parse(store._clock());
-  let reaped = 0;
+  let expired = 0;
   for (const pack of store._contextPacks.values()) {
-    if (Date.parse(pack.validity) <= now) reaped += 1;
+    if (Date.parse(pack.validity) <= now) expired += 1;
   }
-  return freeze({ reaped });
+  return freeze({ expired, reaped: 0 });
 }
 
 /** Moved from `CoordinationStore.recordRecoveryContinuationIntent` (issue #259 slice 1). State: the store, passed explicitly. */

@@ -229,7 +229,12 @@ export class SwarmRuntime {
    * assigned within the participant's subtree, and whether that delegation is complete — every
    * assigned work item completed, and every still-active child either done (it holds no active
    * assignment) or departed (its membership ended). A live child still holding a seat keeps the
-   * delegation open; releasing its seats (swarm.holder_released) is what closes it. */
+   * delegation open; releasing its seats (swarm.holder_released) is what closes it.
+   *
+   * `complete` is derived only where work exists (2026-09-14 audit, swarm-b/lead.md finding 9):
+   * with nothing assigned in the subtree the `every` predicates were vacuously true, so an idle
+   * participant read as a completed delegation. An empty delegation is underived — null — and only
+   * an assignment with a completion observation may close it. */
   _delegations(swarm) {
     const childrenOf = childrenByParent(swarm);
     const children = (id) => (childrenOf.get(id) ?? []).sort();
@@ -243,12 +248,14 @@ export class SwarmRuntime {
     for (const participant of Object.values(swarm.participants)) {
       const subtree = this._subtreeOf(swarm, participant.participantId);
       const work = [...new Set(subtree.flatMap((id) => [...(activeWorkByHolder.get(id) ?? [])]))].sort();
+      const directs = children(participant.participantId);
       delegations.set(participant.participantId, {
-        children: children(participant.participantId),
+        children: directs,
         work,
-        complete: work.every((workId) => swarm.work?.[workId]?.status === 'completed')
-          && children(participant.participantId).every((childId) => swarm.participants[childId].status !== 'active'
-            || !activeWorkByHolder.has(childId)),
+        complete: work.length === 0 ? null
+          : work.every((workId) => swarm.work?.[workId]?.status === 'completed')
+            && directs.every((childId) => swarm.participants[childId].status !== 'active'
+              || !activeWorkByHolder.has(childId)),
       });
     }
     return delegations;
@@ -291,9 +298,14 @@ export class SwarmRuntime {
       // live holder count for it. An unbound or departed worker carries workspace: null.
       const physicalOwnerId = alive ? worker.sessionContext?.ownerTaskId ?? null : null;
       return { ...clone(participant), delegation: delegations.get(participant.participantId) ?? null,
+        // Absence is labelled as absence (2026-09-14 audit, swarm-b/lead.md finding 9): an unbound
+        // participant, or a coordinator that cannot answer for native observations at all, has
+        // observed nothing. The old shape published `observed_only` beside empty arrays — a claim
+        // that Baton looked and found no native collaboration. The arrays stay for a stable row
+        // shape; `coverage` carries the truth, and only a real observation may claim it.
         native: worker && this.coordinator.observedNativeSubagents
         ? this.coordinator.observedNativeSubagents(worker.id)
-        : { coverage: 'observed_only', agents: [], invocations: [], unidentified: [] }, runtime: {
+        : { coverage: 'unobserved', agents: [], invocations: [], unidentified: [] }, runtime: {
         workerId: worker?.id ?? null, state: worker?.status ?? 'unbound',
         turn: alive && paused.length ? 'paused' : worker?.status === 'working' ? 'running' : null,
       }, guidance: worker ? (guidanceByWorker.get(worker.id) ?? []) : [],

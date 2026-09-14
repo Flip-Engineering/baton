@@ -647,13 +647,20 @@ test('GP-F (pin): the sanctioned sanitizers are reused verbatim — no parallel 
 });
 
 test('GP-G (pin): the supervised process-lifecycle machinery the pool inherits — bounded kill-wait, closed reap reasons, slot-clear latch (GT7, D1.3/D4.2, R3)', () => {
-  const reap = sedSrc('process-lifecycle.mjs', 99, 122);
+  // Anchored on each declaration, never on a line number: the reap and the payload builder may grow
+  // without the pin drifting (the absolute windows this pin used to carry were themselves brittle —
+  // the 2026-09-14 audit's evidence-field fix moved both, and moved nothing the pin defends).
+  const reapStart = grepFirstLineNum('process-lifecycle.mjs', 'export async function reapOwnedProcessGroup');
+  assert.ok(reapStart > 0, 'the bounded reap is found by its own declaration');
+  const reap = sedSrc('process-lifecycle.mjs', reapStart, reapStart + 40);
   assert.ok(reap.includes('timeoutMs') && reap.includes('pollMs') && reap.includes('maxAttempts'),
     'reapOwnedProcessGroup uses the inherited bounded kill-wait (M2: a reap, not a scheduling clock)');
   assert.ok(reap.includes('SIGKILL'), 'the bounded reap is the only kill discipline (no kill -9 outside it)');
-  // The closed reap-unconfirmed reason set lsp_reap_unconfirmed inherits (process-lifecycle.mjs:291-300).
-  const reasons = sedSrc('process-lifecycle.mjs', 291, 300);
-  for (const r of ['deadline', 'permission_denied', 'probe_error']) {
+  // The closed reap-unconfirmed reason set lsp_reap_unconfirmed inherits.
+  const reasonStart = grepFirstLineNum('process-lifecycle.mjs', 'export function processReapUnconfirmedPayload');
+  assert.ok(reasonStart > 0, 'the reap-unconfirmed payload builder is found by its own declaration');
+  const reasons = sedSrc('process-lifecycle.mjs', reasonStart, reasonStart + 10);
+  for (const r of ['deadline', 'permission_denied', 'probe_error', 'signal_refused']) {
     assert.ok(reasons.includes(r), `lsp_reap_unconfirmed inherits the closed reason ${r}`);
   }
   // The ProcessCloseReapLatch clears the singleflight slot BEFORE publishing its refusal (B2 precedent).

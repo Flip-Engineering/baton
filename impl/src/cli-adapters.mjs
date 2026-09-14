@@ -278,11 +278,12 @@ class CliAdapter {
       detached: true, // own process group, so interrupt can signal the whole tree
       stdio: ['pipe', 'pipe', 'pipe'],
     });
+    const spawnedAt = Date.now();
     const session = {
       worker, child, terminal: false, turnSettled: false, processClosePending: false,
       turnEpoch, buf: '', logicalSequence: 0, processGeneration, processClosedEmitted: false,
       processReapTimeoutMs: Number.isSafeInteger(opts.processReapTimeoutMs) && opts.processReapTimeoutMs > 0 ? opts.processReapTimeoutMs : 2000,
-      spawnError: null, timeoutFailure: null,
+      spawnError: null, timeoutFailure: null, wallBudgetNotified: false,
       workerPolicyObserved,
     };
     this._processCloseLatch(session);
@@ -317,10 +318,23 @@ class CliAdapter {
     try { child.stdin.write(renderPrompt(brief) + '\n'); child.stdin.end(); } catch { /* pipe race */ }
 
     if (opts.timeoutMs) {
+      // #163 (2026-09-14 audit, swarm-b/lead.md finding 10): the declared wall budget is ADVISORY —
+      // the brief says so in as many words (adapter.mjs: `wall: N minutes (advisory — no wall-time
+      // clock feeds fate)`) — and this one-shot path used to refuse that promise by SIGKILLing the
+      // child on the clock. The crossing is now EVIDENCE: one notify-only
+      // `resource.budget_threshold` row (the kind the coordinator projects as a `budget_alarm`
+      // attention), and the turn keeps running. Only an explicit interrupt/kill terminates here.
       session.timer = setTimeout(() => {
-        if (session.terminal || session.stopping || session.timeoutFailure) return;
-        session.timeoutFailure = { error: `session wall-time budget exceeded (${opts.timeoutMs}ms)`, phase: 'timeout', usageSeal: unavailableUsageSeal() };
-        this._signal(worker, 'SIGKILL');
+        if (session.terminal || session.turnSettled || session.wallBudgetNotified) return;
+        session.wallBudgetNotified = true;
+        this._emit({
+          worker, harness: this._cfg.harness, turnEpoch, actor: 'worker',
+          kind: 'resource.budget_threshold',
+          payload: {
+            dimension: 'wall', threshold: 1, hardStop: false, action: 'notify',
+            used: { wallMs: Date.now() - spawnedAt }, limits: { wallMs: opts.timeoutMs },
+          },
+        });
       }, opts.timeoutMs);
     }
     return { ok: true };
