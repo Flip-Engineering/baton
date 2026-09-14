@@ -285,10 +285,9 @@ export class KimiAcpCli {
         processGeneration, processReapTimeoutMs: options.processReapTimeoutMs ?? 2000,
         providerReady: false, setupFailed: false, closed: false, killing: false, killConfirmed: false,
         processClosedEmitted: false,
-        turnEpoch: 0, turnSequence: 0, activeTurn: null, terminalTurns: new Set(),
+        turnEpoch: 0, turnSequence: 0, activeTurn: null, lastTurn: null,
         pendingInterrupt: null, steerPending: null, permissionSequence: 0, waits: new Map(),
         configOptions: new Map(), modelRequested: model, effortRequested: effort,
-        crashEmitted: false,
       };
       const captureProcessCloseSnapshot = () => {
         session.processCloseSnapshot ??= Object.freeze({
@@ -403,36 +402,40 @@ export class KimiAcpCli {
     }
   }
 
-  _settleTurn(session, turnId) {
-    if (session.terminalTurns.has(turnId)) return false;
-    session.terminalTurns.add(turnId);
-    if (session.activeTurn?.turnId === turnId) session.activeTurn = null;
+  _settleTurn(session, turn) {
+    if (turn.settled) return false;
+    turn.settled = true;
+    if (session.activeTurn === turn) session.activeTurn = null;
     return true;
   }
 
   _startTurn(session, text) {
     session.turnSequence += 1;
     session.turnEpoch += 1;
-    const turnId = `t${session.turnSequence}`;
-    session.activeTurn = {
-      turnId, toolCalls: new Map(),
+    // A-I8: a turn is a record, not a bare id — it owns its own settle and crash latches, so a
+    // second turn on a live session can crash and publish its own lifecycle fact.
+    const turn = {
+      turnId: `t${session.turnSequence}`, settled: false, crashEmitted: false, toolCalls: new Map(),
       streams: {
         message: { chunks: [], bytes: 0, emitted: false },
         thought: { chunks: [], bytes: 0, emitted: false },
       },
     };
-    this._emit(session, 'lifecycle.turn_started', { sessionId: session.sessionId, turnId });
+    session.activeTurn = turn;
+    session.lastTurn = turn;
+    this._emit(session, 'lifecycle.turn_started', { sessionId: session.sessionId, turnId: turn.turnId });
     session.process.request('session/prompt', {
       sessionId: session.sessionId, prompt: [{ type: 'text', text: String(text) }],
     }, { timeoutMs: null }).then(
-      (result) => this._onTurnEnd(session, turnId, result ?? {}),
-      (error) => this._onTurnError(session, turnId, error),
+      (result) => this._onTurnEnd(session, turn, result ?? {}),
+      (error) => this._onTurnError(session, turn, error),
     );
   }
 
-  _onTurnEnd(session, turnId, result) {
+  _onTurnEnd(session, turn, result) {
+    const { turnId } = turn;
     this._flushTurnStreams(session, turnId);
-    if (!this._settleTurn(session, turnId)) return;
+    if (!this._settleTurn(session, turn)) return;
     const stopReason = result?.stopReason;
     if (stopReason === 'cancelled' && session.steerPending) {
       const steer = session.steerPending;
@@ -451,7 +454,7 @@ export class KimiAcpCli {
       return;
     }
     if (stopReason !== 'end_turn') {
-      this._emitCrash(session, { sessionId: session.sessionId, turnId, code: 'provider_turn_failed', error: `Kimi turn ended with ${stopReason ?? 'no stop reason'}`, usageSeal: unavailableUsageSeal() });
+      this._emitCrash(session, turn, { sessionId: session.sessionId, turnId, code: 'provider_turn_failed', error: `Kimi turn ended with ${stopReason ?? 'no stop reason'}`, usageSeal: unavailableUsageSeal() });
       return;
     }
     this._emit(session, 'lifecycle.turn_completed', {
@@ -460,21 +463,26 @@ export class KimiAcpCli {
     });
   }
 
-  _onTurnError(session, turnId, error) {
+  _onTurnError(session, turn, error) {
     // AcpJsonRpcProcess rejects the prompt as soon as the leader closes. Keep that derived
     // terminal inside the generation-bound close latch until its descendant reap confirms.
     if (session.process.processClose?.pending) return;
-    this._flushTurnStreams(session, turnId);
-    if (!this._settleTurn(session, turnId) || session.killing) return;
-    this._emitCrash(session, {
-      sessionId: session.sessionId, turnId, code: error?.code ?? 'provider_protocol_error',
+    this._flushTurnStreams(session, turn.turnId);
+    if (!this._settleTurn(session, turn) || session.killing) return;
+    this._emitCrash(session, turn, {
+      sessionId: session.sessionId, turnId: turn.turnId, code: error?.code ?? 'provider_protocol_error',
       error: String(error?.message ?? error), usageSeal: unavailableUsageSeal(),
     });
   }
 
-  _emitCrash(session, payload) {
-    if (session.crashEmitted) return;
-    session.crashEmitted = true;
+  /**
+   * A-I8: the crash latch is per TURN. A live session runs many turns, and a second turn's crash
+   * is a second lifecycle fact rather than a duplicate of the first. `turn` is null only where the
+   * close path owns no turn record — then there is nothing to de-duplicate.
+   */
+  _emitCrash(session, turn, payload) {
+    if (turn?.crashEmitted) return;
+    if (turn) turn.crashEmitted = true;
     this._emit(session, 'lifecycle.crashed', payload);
   }
 
@@ -564,7 +572,15 @@ export class KimiAcpCli {
 
   _onReverseRequest(session, method, params) {
     if (method !== 'session/request_permission') {
-      void session.process.kill();
+      // A-E5: an unmapped reverse request is ANSWERED with method-not-found and the session stays
+      // alive — exactly like Codex and Grok. A dangling JSON-RPC request wedges its turn forever,
+      // and a future vendor fs/terminal request must never destroy a whole worker's turn. The
+      // transport writes the -32601 error response from this throw; the event keeps the decline
+      // observable instead of silent.
+      this._emit(session, 'error', {
+        message: `unmapped server->client request "${method}" auto-declined`,
+        code: -32601, correlated: true, serverMethod: method,
+      });
       throw Object.assign(new Error(`unsupported Kimi reverse request ${method}`), { code: -32601 });
     }
     const requestId = `${session.worker}:permission:${++session.permissionSequence}`;
@@ -599,18 +615,21 @@ export class KimiAcpCli {
           this._sessions.delete(session.worker);
         }
       };
+      // The close path latches on the same turn record when one exists: a turn that already
+      // published its crash cannot publish a second one through the generation close.
+      const closingTurn = session.activeTurn ?? session.lastTurn;
       if (closeSnapshot.killing) {
         releaseConfirmedOwnership();
         return;
       }
       if (closeSnapshot.setupFailed) { releaseConfirmedOwnership(); return; }
       if (closeSnapshot.timeoutFailure) {
-        this._emitCrash(session, closeSnapshot.timeoutFailure);
+        this._emitCrash(session, closingTurn, closeSnapshot.timeoutFailure);
         releaseConfirmedOwnership();
         return;
       }
       if (closeSnapshot.processFailure || closeSnapshot.activeTurn) {
-        this._emitCrash(session, {
+        this._emitCrash(session, closingTurn, {
           code: closeSnapshot.processFailure?.code ?? 'provider_process_closed',
           error: closeSnapshot.processFailure?.message ?? 'Kimi process closed during an active turn',
           usageSeal: unavailableUsageSeal(),
@@ -642,8 +661,21 @@ export class KimiAcpCli {
   async interrupt(worker, then) {
     if (this._emitPendingStop(worker, 'control.interrupt_confirmed')) return { ok: true };
     const session = this._sessions.get(worker);
-    if (!session?.sessionId || session.closed) return { ok: false, reason: `unknown worker ${worker}` };
-    if (!session.activeTurn) return { ok: true, reason: 'no active turn to interrupt' };
+    // Ack vocabulary (adapter.mjs): with no owned session — or one that has closed — no stop fact
+    // can exist any more, so the Ack IS the confirmation. A confirmed close releases ownership,
+    // which is exactly when nothing further can be published for that generation.
+    if (!session?.sessionId || session.closed) return { ok: true, terminal: true };
+    if (!session.activeTurn) {
+      // A-E2/A-I3: an idle stop is confirmed the SAME way on every adapter — the event, emitted
+      // now, so the coordinator's stop waiter finalizes instead of burning its whole deadline.
+      // No turn was in flight: no turnId, no result, and the transport observation is derived.
+      this._emit(session, 'control.interrupt_confirmed', {
+        sessionId: session.sessionId, turnId: null,
+        transportOpen: !session.killing && !session.process.failure,
+        usageSeal: unavailableUsageSeal(),
+      });
+      return { ok: true, reason: 'no active turn to interrupt' };
+    }
     session.steerPending = null;
     session.pendingInterrupt = { turnId: session.activeTurn.turnId, then };
     await session.process.notify('session/cancel', { sessionId: session.sessionId });

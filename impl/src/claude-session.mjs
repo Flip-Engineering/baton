@@ -1473,7 +1473,11 @@ export class ClaudeSessionCli {
   async interrupt(worker) {
     if (this._emitPendingStop(worker, 'control.interrupt_confirmed')) return { ok: true };
     const session = this._sessions.get(worker);
-    if (!session || session.terminal) return { ok: true }; // D9: interrupt always resolves
+    // Ack vocabulary (adapter.mjs): a session that already reached its terminal owns no stop fact
+    // to publish — the Ack IS the confirmation. A LIVE idle session needs no special case here:
+    // _sendInterrupt marks resultSeen when no turn is in flight, so the wire round-trip confirms
+    // it as an event exactly like an active-turn interrupt (D9).
+    if (!session || session.terminal) return { ok: true, terminal: true };
     const confirmed = this._sendInterrupt(session);
     confirmed.then(() => {
       if (session.terminal) return;
@@ -1571,7 +1575,7 @@ export class ClaudeSessionCli {
   async kill(worker) {
     const session = this._sessions.get(worker);
     if (!session && this._emitPendingStop(worker, 'kill.confirmed')) return { ok: true };
-    if (!session) return { ok: true }; // D9: kill always resolves
+    if (!session) return { ok: true, terminal: true }; // no owned session — the Ack is the confirmation
     if (!session.processClose || session.processClose.confirmed) return { ok: true, terminal: true };
     if (!session.stopping) {
       session.stopping = true;

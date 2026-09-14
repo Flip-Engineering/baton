@@ -7,7 +7,9 @@
 // 'allow'|'deny'|'cancel' decision; questions carry free-form {text|decision}.
 // Confirmed-stop (interrupt/kill) is ALWAYS an event, never a return value (red core#2):
 // interrupt()/kill() Acks resolve immediately; the authoritative stop is
-// control.interrupt_confirmed / kill.confirmed observed via onEvent.
+// control.interrupt_confirmed / kill.confirmed observed via onEvent. The ONE exception is the
+// typed settled Ack (`terminal:true`) defined in the Ack vocabulary below: it says the worker is
+// already stopped, so no confirmation event can ever follow and the Ack itself is the confirmation.
 //
 // MockAdapter additionally keeps the pre-D1 `run(brief, opts)` convenience
 // (= spawn + await the terminal event + translate to WorkerResult / AdapterCrashError)
@@ -74,6 +76,36 @@ export class AdapterCrashError extends Error {
   }
 }
 
+/**
+ * Ack vocabulary — the exact meaning of every field an interrupt()/kill() return value may carry.
+ * Both verbs return this shape; nothing else about a stop may be smuggled onto it.
+ *
+ *   ok:true        — the request was accepted (or is a moot no-op). On its own it is NOT a
+ *                    confirmation: it says the request was delivered/understood, not that the
+ *                    worker stopped.
+ *   emulated:true  — the stop is a signal or supervisor action rather than a graceful protocol
+ *                    operation. Declared, never silent.
+ *   notSent:true   — nothing was written to the provider; the Ack is not delivery evidence.
+ *   terminal:true  — ONE meaning: this worker's stop is ALREADY SETTLED, so no stop-confirmation
+ *                    event will ever be emitted for this operation, and this Ack IS that
+ *                    confirmation. Every adapter sets it for that same fact, from whichever
+ *                    evidence proves it: the owning session is already terminal (its in-memory
+ *                    turn machine has ended and can publish nothing further about it), or the
+ *                    owned process generation is already reaped (its close latch confirmed), or
+ *                    no owned session/process exists at all. Those are several proofs of ONE
+ *                    fact — an already-stopped worker cannot become more stopped — so one field
+ *                    carries them; splitting them would invent a distinction no consumer can act
+ *                    on (the coordinator's `_wireAck` reads it as "treat the Ack as the
+ *                    confirmation").
+ *   terminal absent — the stop is NOT settled: it arrives as an event
+ *                    (control.interrupt_confirmed / kill.confirmed) on the onEvent stream.
+ *   result         — never present on an Ack; a turn's result rides the terminal event.
+ *
+ * The two verbs are asymmetric, and the Ack must not blur it. An interrupt of an idle-but-LIVE
+ * session is confirmed by the EVENT: the session survives the stop, so there is still a fact to
+ * publish, and `terminal:true` would be a lie about a live worker. An interrupt of a session that
+ * is already terminal is confirmed by the ACK, because no further fact about it can exist.
+ */
 // #195 (PA-A): the adapter contract Definition role as a NAMED export — the shape a registry checks
 // against. assertIsAdapter derives its required-method list from this declaration so the contract
 // and the check share one source.

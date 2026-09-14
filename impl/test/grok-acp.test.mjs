@@ -17,7 +17,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -814,6 +814,92 @@ test('GA18: the child dying mid-turn (not killed by us) settles the pending prom
 
     const crash = await until(events, (e) => e.kind === 'lifecycle.crashed');
     assert.match(crash.payload.error, /closed|died|exit/i);
+  } finally {
+    await cleanup(adapter, worker);
+  }
+});
+
+// ---------------------------------------------------------------------------
+// A-E2/A-I3 + A-F8: one idle-interrupt shape (the event) and one Ack vocabulary
+// ---------------------------------------------------------------------------
+
+test('A-E2/A-I3: an idle interrupt (no active turn) is confirmed by control.interrupt_confirmed, so a stop never waits out its deadline', async () => {
+  const adapter = makeAdapter();
+  const events = collect(adapter);
+  const worker = 'w1';
+  try {
+    await adapter.spawn(worker, makeBrief('idle stop target'), { worktree: freshWorktree() });
+    const started = await until(events, (e) => e.kind === 'lifecycle.turn_started');
+    await until(events, (e) => e.kind === 'lifecycle.turn_completed'); // the worker is now idle, the session is alive
+
+    const ack = await adapter.interrupt(worker);
+    assert.equal(ack.ok, true);
+    assert.notEqual(ack.terminal, true, 'a live session is not a settled terminal — the event carries the stop');
+
+    const confirmed = await until(events, (e) => e.kind === 'control.interrupt_confirmed');
+    assert.equal(confirmed.worker, worker);
+    assert.equal(confirmed.payload.sessionId, started.payload.sessionId, 'the confirmation binds the still-attached session');
+    assert.equal(confirmed.payload.transportOpen, true);
+    assert.equal(confirmed.payload.turnId, null, 'no turn was in flight — the shape says so instead of inventing one');
+    assert.equal(confirmed.payload.result, undefined, 'an idle stop invents no turn result');
+
+    // The session survives: the next turn completes on the SAME sessionId.
+    const completed = () => events.filter((e) => e.kind === 'lifecycle.turn_completed').length;
+    const before = completed();
+    assert.equal((await adapter.prompt(worker, 'second turn after an idle interrupt', 'turn')).ok, true);
+    await until(events, () => completed() > before);
+    const terminal = events.filter((e) => e.kind === 'lifecycle.turn_completed').at(-1);
+    assert.equal(terminal.payload.sessionId, started.payload.sessionId);
+  } finally {
+    await cleanup(adapter, worker);
+  }
+});
+
+test('A-F8: interrupt() of an already-closed session returns the typed settled Ack and emits no phantom event', async () => {
+  const adapter = makeAdapter();
+  const events = collect(adapter);
+  const worker = 'w1';
+  try {
+    await adapter.spawn(worker, makeBrief('trivial'), { worktree: freshWorktree() });
+    await until(events, (e) => e.kind === 'lifecycle.turn_completed');
+    await adapter.kill(worker);
+    await until(events, (e) => e.kind === 'kill.confirmed');
+    const before = events.filter((e) => e.kind === 'control.interrupt_confirmed').length;
+
+    // No confirmation event can ever follow a settled generation: the Ack IS the confirmation.
+    assert.deepEqual(await adapter.interrupt(worker), { ok: true, terminal: true });
+    await delay(50);
+    assert.equal(events.filter((e) => e.kind === 'control.interrupt_confirmed').length, before);
+  } finally {
+    await cleanup(adapter, worker);
+  }
+});
+
+// ---------------------------------------------------------------------------
+// A-E4: the transport-recovery law the ACP sibling states verbatim
+// (impl/src/acp-json-rpc-process.mjs: a timed-out frame is NEVER re-issued)
+// ---------------------------------------------------------------------------
+
+test('A-E4: a timed-out session/new is never re-issued with a fresh id — the setup bound is observation-only', async () => {
+  const ledger = join(freshWorktree(), 'frames.ndjson');
+  const adapter = makeAdapter({
+    env: { FAKE_GROK_HANG_SESSION_NEW: '1', FAKE_GROK_LOG: ledger },
+    requestTimeoutMs: 200,
+  });
+  const worker = 'w1';
+  try {
+    const started = Date.now();
+    const ack = await adapter.spawn(worker, makeBrief('trivial'), { worktree: freshWorktree() });
+    assert.equal(ack.ok, false);
+    assert.equal(ack.code, 'grok_transport_timeout');
+    assert.match(ack.reason, /session\/new.*timed out/);
+    assert.ok(Date.now() - started < 2000, 'one bound settles the call — there is no retry ladder behind it');
+
+    const frames = readFileSync(ledger, 'utf8').trim().split('\n').map((line) => JSON.parse(line));
+    assert.equal(frames.filter((f) => f.method === 'session/new').length, 1,
+      'a frame whose outcome is unknown has no idempotency authority — replaying it would orphan a provider session');
+    const ids = frames.filter((f) => f.id !== undefined).map((f) => f.id);
+    assert.deepEqual([...new Set(ids)], ids, 'every request id crosses the wire exactly once');
   } finally {
     await cleanup(adapter, worker);
   }

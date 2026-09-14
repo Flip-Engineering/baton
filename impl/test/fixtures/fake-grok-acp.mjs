@@ -21,6 +21,11 @@
 //                                  variant, one synthetic id-less error (GA5/GA17).
 //   - env FAKE_GROK_LOAD_ID_MODE=absent|wrong -> session/load omits or substitutes the requested
 //                                  provider identity (Phase 60 recovery-handshake honesty).
+//   - env FAKE_GROK_HANG_SESSION_NEW=1 -> `session/new` received but NEVER answered: the adapter's
+//                                  setup bound must surface one typed timeout and must never
+//                                  re-issue the frame (a replayed session/new has no idempotency
+//                                  authority and would orphan a provider session, A-E4).
+//   - env FAKE_GROK_LOG=<path>  -> append every frame received from the client as one JSON line.
 //   - directives embedded in the prompt text (brief.goal or raw prompt() content):
 //       FAKE:CRASH              -> the prompt request resolves with a JSON-RPC ERROR ("boom")
 //       FAKE:REFUSAL            -> resolves {stopReason:"refusal"}
@@ -34,6 +39,7 @@
 //                                  (phase10 SC1: proves both the wire-pinned and OS-level cwd)
 //       (none)                  -> streams chunks + a tool_call, resolves {stopReason:"end_turn"}
 
+import { appendFileSync } from 'node:fs';
 import readline from 'node:readline';
 
 // Discovery guard (phase8 R1): node's test runner discovers every .mjs under test/ — without the
@@ -44,8 +50,14 @@ if (!process.argv.includes('--serve') && !process.argv.includes('agent')) {
 
 const UNAUTH = process.env.FAKE_GROK_UNAUTH === '1';
 const HANG = process.env.FAKE_GROK_HANG === '1';
+// A-E4: `session/new` is received but NEVER answered. A setup frame whose outcome is unknown
+// must never be re-issued with a fresh id, so this mode is how a test counts the wire.
+const HANG_SESSION_NEW = process.env.FAKE_GROK_HANG_SESSION_NEW === '1';
 const MALFORMED = process.env.FAKE_GROK_MALFORMED === '1';
 const LOAD_ID_MODE = process.env.FAKE_GROK_LOAD_ID_MODE ?? 'exact';
+/** Append-only ledger of every frame received from the client (test evidence, never behaviour). */
+const LOG = process.env.FAKE_GROK_LOG ?? null;
+function record(frame) { if (LOG) appendFileSync(LOG, `${JSON.stringify(frame)}\n`); }
 const modelArgIndex = process.argv.indexOf('--model');
 const MODEL = modelArgIndex >= 0 ? process.argv[modelArgIndex + 1] : 'grok-4.5-fake';
 
@@ -249,6 +261,7 @@ rl.on('line', (line) => {
   if (!line.trim()) return;
   let obj;
   try { obj = JSON.parse(line); } catch { return; }
+  record(obj);
 
   // A response FROM the client to one of our server->client requests (no `method` member).
   if (obj.method === undefined && obj.id !== undefined) {
@@ -296,6 +309,7 @@ rl.on('line', (line) => {
       });
       break;
     case 'session/new': {
+      if (HANG_SESSION_NEW) break; // received, never answered — the frame's outcome stays unknown
       if (UNAUTH) {
         // [live]-verbatim auth gate (probe frame 4).
         send({ id: obj.id, error: { code: -32000, message: 'Authentication required', data: 'no auth method id provided' } });

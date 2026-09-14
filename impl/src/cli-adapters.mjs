@@ -423,25 +423,26 @@ class CliAdapter {
   // interrupt/kill: signal the process group; the confirmed-stop event fires on 'close'.
   async interrupt(worker) {
     const s = this._sessions.get(worker);
-    if (s?.processClose && !s.processClose.confirmed) {
-      s.stopping = true; s.killMode = 'interrupt';
-      if (s.terminal) void s.processClose.authorizeStop('control.interrupt_confirmed', { signal: s.processClose.closeFact?.signal ?? null, usageSeal: unavailableUsageSeal() });
-      else this._signal(worker, 'SIGINT');
-    }
+    // Ack vocabulary (adapter.mjs): a one-shot generation whose close latch already confirmed —
+    // or one this adapter never owned — has no stop fact left to publish, so the Ack IS the
+    // confirmation. Returning ok:true alone would leave a stop waiter waiting for an event that
+    // can no longer be emitted.
+    if (!s?.processClose || s.processClose.confirmed) return { ok: true, terminal: true };
+    s.stopping = true; s.killMode = 'interrupt';
+    if (s.terminal) void s.processClose.authorizeStop('control.interrupt_confirmed', { signal: s.processClose.closeFact?.signal ?? null, usageSeal: unavailableUsageSeal() });
+    else this._signal(worker, 'SIGINT');
     return { ok: true, emulated: true }; // subprocess interrupt is emulated (signal, not a graceful turn/steer)
   }
   async kill(worker) {
     const s = this._sessions.get(worker);
-    if (s?.processClose?.confirmed) return { ok: true, terminal: true };
-    if (s?.processClose) {
-      s.stopping = true; s.killMode = 'kill';
-      const terminalCause = s.timeoutFailure ? 'timeout' : s.wireFailure ? 'wire_frame_oversize' : null;
-      void s.processClose.authorizeStop('kill.confirmed', {
-        signal: s.processClose.closeFact?.signal ?? 'SIGKILL',
-        ...(terminalCause ? { terminalCause } : {}), usageSeal: unavailableUsageSeal(),
-      });
-      if (!s.terminal) this._signal(worker, 'SIGKILL');
-    }
+    if (!s?.processClose || s.processClose.confirmed) return { ok: true, terminal: true };
+    s.stopping = true; s.killMode = 'kill';
+    const terminalCause = s.timeoutFailure ? 'timeout' : s.wireFailure ? 'wire_frame_oversize' : null;
+    void s.processClose.authorizeStop('kill.confirmed', {
+      signal: s.processClose.closeFact?.signal ?? 'SIGKILL',
+      ...(terminalCause ? { terminalCause } : {}), usageSeal: unavailableUsageSeal(),
+    });
+    if (!s.terminal) this._signal(worker, 'SIGKILL');
     return { ok: true };
   }
   // A one-shot `exec`/`-p` run can't be steered/answered mid-flight without the app-server/SDK.

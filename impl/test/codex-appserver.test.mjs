@@ -685,3 +685,56 @@ test('Codex native assistant items carry peer initiation and replies once, exclu
       'a fresh native turn can initiate its own messages');
   } finally { await cleanup(adapter, worker); }
 });
+
+// ---------------------------------------------------------------------------
+// A-E2/A-I3 + A-F8: one idle-interrupt shape (the event) and one Ack vocabulary
+// ---------------------------------------------------------------------------
+
+test('A-E2/A-I3: an idle interrupt (no active turn) is confirmed by control.interrupt_confirmed, so a stop never waits out its deadline', async () => {
+  const adapter = makeAdapter();
+  const events = collect(adapter);
+  const worker = 'w1';
+  try {
+    await adapter.spawn(worker, makeBrief('trivial'), { worktree: freshWorktree() });
+    const first = await until(events, (e) => e.kind === 'lifecycle.turn_completed');
+    const { threadId, turnId } = first.payload;
+
+    const ack = await adapter.interrupt(worker);
+    assert.equal(ack.ok, true);
+    assert.notEqual(ack.terminal, true, 'a live thread is not a settled terminal — the event carries the stop');
+
+    const confirmed = await until(events, (e) => e.kind === 'control.interrupt_confirmed');
+    assert.equal(confirmed.worker, worker);
+    assert.equal(confirmed.payload.threadId, threadId, 'the confirmation binds the still-attached thread');
+    assert.equal(confirmed.payload.turnId, null, 'no turn was in flight — the shape says so instead of inventing one');
+    assert.equal(confirmed.payload.transportOpen, true);
+    assert.equal(confirmed.payload.result, undefined, 'an idle stop invents no turn result');
+
+    // The thread survives: the next turn completes on the SAME threadId.
+    assert.equal((await adapter.prompt(worker, 'second turn after an idle interrupt', 'turn')).ok, true);
+    const second = await until(events, (e) => e.kind === 'lifecycle.turn_completed' && e.payload.turnId !== turnId);
+    assert.equal(second.payload.threadId, threadId);
+  } finally {
+    await cleanup(adapter, worker);
+  }
+});
+
+test('A-F8: interrupt() of a terminal session returns the typed settled Ack and emits no phantom event', async () => {
+  const adapter = makeAdapter();
+  const events = collect(adapter);
+  const worker = 'w1';
+  try {
+    await adapter.spawn(worker, makeBrief('trivial'), { worktree: freshWorktree() });
+    await until(events, (e) => e.kind === 'lifecycle.turn_completed');
+    await adapter.kill(worker);
+    await until(events, (e) => e.kind === 'kill.confirmed');
+    const before = events.filter((e) => e.kind === 'control.interrupt_confirmed').length;
+
+    // No confirmation event can ever follow a terminal session: the Ack IS the confirmation.
+    assert.deepEqual(await adapter.interrupt(worker), { ok: true, terminal: true });
+    await delay(50);
+    assert.equal(events.filter((e) => e.kind === 'control.interrupt_confirmed').length, before);
+  } finally {
+    await cleanup(adapter, worker);
+  }
+});

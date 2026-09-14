@@ -82,7 +82,6 @@
     "test/feedback-forge-hardening-red.test.mjs :: R7 (RED): S1 — the referent boundary is candidate-scoped: run-2 same-shaped submission is not bound by run-1 gate (stage: expect_second_run_refused)",
     "test/feedback-forge-hardening-red.test.mjs :: R8 (RED): M3 — D4 surface constancy: gate_unbound is typed in application.mjs and preserved verbatim through web/MCP facades (stage: expect_gate_unbound_typed)",
     "test/grammar-m5-red.test.mjs :: M5-1: the divergence ledger is empty and the M4 retirement is pinned",
-    "test/grok-acp.test.mjs :: GA3: a server that never answers initialize causes spawn() to resolve {ok:false} within requestTimeoutMs",
     "test/harvest-accessor-red.test.mjs :: A1-resultpin-dispatch (stage: ports absent): run.resultpin dispatches ahead of the command table",
     "test/harvest-accessor-red.test.mjs :: A2-harvest-dispatch (stage: ports absent): waves.harvest dispatches for both XOR sources",
     "test/harvest-accessor-red.test.mjs :: A3-resultpin-closure (stage: ports absent): shape failures refuse application_run_resultpin_invalid before authorize",

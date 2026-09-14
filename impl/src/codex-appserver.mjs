@@ -1043,8 +1043,22 @@ export class CodexAppServerCli {
   async interrupt(worker, then) {
     if (this._emitPendingStop(worker, 'control.interrupt_confirmed')) return { ok: true };
     const session = this._sessions.get(worker);
-    if (!session) return { ok: false, reason: `unknown worker ${worker}` };
-    if (!session.activeTurn) return { ok: true, reason: 'no active turn to interrupt' };
+    // Ack vocabulary (adapter.mjs): with no owned session, or one that is already terminal, no
+    // stop fact can exist any more — the Ack IS the confirmation, never a wait for an event that
+    // can no longer be emitted.
+    if (!session || session.terminal) return { ok: true, terminal: true };
+    if (!session.activeTurn) {
+      // A-E2/A-I3: an idle stop is confirmed the SAME way on every adapter — the event, emitted
+      // now, so the coordinator's stop waiter finalizes instead of burning its whole deadline.
+      // No turn was in flight, so nothing is cancelled and nothing is invented: no turnId, no
+      // result, and the transport observation is derived rather than asserted.
+      this._emit(session, 'control.interrupt_confirmed', {
+        threadId: session.threadId, turnId: null,
+        transportOpen: !session.processFailure && !session.killing,
+        usageSeal: unavailableUsageSeal(),
+      });
+      return { ok: true, reason: 'no active turn to interrupt' };
+    }
 
     const turnId = session.activeTurn.id;
     session.stopGeneration += 1;
@@ -1107,7 +1121,7 @@ export class CodexAppServerCli {
   async kill(worker) {
     const session = this._sessions.get(worker);
     if (!session && this._emitPendingStop(worker, 'kill.confirmed')) return { ok: true };
-    if (!session || !session.child) return { ok: true }; // already gone — a moot no-op, not a failure
+    if (!session || !session.child) return { ok: true, terminal: true }; // no owned generation — already gone
     if (!session.processClose || session.processClose.confirmed) return { ok: true, terminal: true };
     session.stopGeneration += 1;
     session.pendingFollowUp = null; // R5.1: abandon any pending auto-follow-up

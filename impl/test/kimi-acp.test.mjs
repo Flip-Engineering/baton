@@ -273,3 +273,94 @@ test('native Kimi coalesces stream deltas and repeated tool progress without los
     assert.deepEqual(tools.map((event) => event.payload.phase), ['requested', 'progress', 'completed']);
   } finally { await adapter.kill('w'); await waitFor(events, (event) => event.kind === 'kill.confirmed'); }
 });
+
+// ---------------------------------------------------------------------------
+// A-E2/A-I3/A-F8: one idle-interrupt shape (the event) and one Ack vocabulary
+// ---------------------------------------------------------------------------
+
+test('A-E2/A-I3: an idle interrupt is confirmed by control.interrupt_confirmed instead of burning a stop deadline', async () => {
+  const { adapter, spawn, events } = setup();
+  try {
+    assert.equal((await spawn()).ok, true);
+    const started = await waitFor(events, (event) => event.kind === 'lifecycle.turn_started');
+    const first = await waitFor(events, (event) => event.kind === 'lifecycle.turn_completed');
+
+    const ack = await adapter.interrupt('w');
+    assert.equal(ack.ok, true);
+    assert.notEqual(ack.terminal, true, 'a live session is not a settled terminal — the event carries the stop');
+
+    const confirmed = await waitFor(events, (event) => event.kind === 'control.interrupt_confirmed');
+    assert.equal(confirmed.payload.sessionId, started.payload.sessionId, 'the confirmation binds the still-attached session');
+    assert.equal(confirmed.payload.turnId, null, 'no turn was in flight — the shape says so instead of inventing one');
+    assert.equal(confirmed.payload.transportOpen, true);
+    assert.equal(confirmed.payload.result, undefined, 'an idle stop invents no turn result');
+
+    // The session survives: the next turn completes on the SAME sessionId.
+    assert.deepEqual(await adapter.prompt('w', 'second turn after an idle interrupt', 'turn'), { ok: true });
+    const second = await waitFor(events, (event) => event.kind === 'lifecycle.turn_completed'
+      && event.payload.turnId !== first.payload.turnId);
+    assert.equal(second.payload.sessionId, started.payload.sessionId);
+  } finally { await adapter.kill('w'); await waitFor(events, (event) => event.kind === 'kill.confirmed'); }
+});
+
+test('A-F8: interrupt() of a closed session returns the typed settled Ack and emits no phantom event', async () => {
+  const { adapter, spawn, events } = setup();
+  assert.equal((await spawn()).ok, true);
+  await waitFor(events, (event) => event.kind === 'lifecycle.turn_completed');
+  await adapter.kill('w');
+  await waitFor(events, (event) => event.kind === 'kill.confirmed');
+  const before = events.filter((event) => event.kind === 'control.interrupt_confirmed').length;
+
+  assert.deepEqual(await adapter.interrupt('w'), { ok: true, terminal: true });
+  assert.equal(events.filter((event) => event.kind === 'control.interrupt_confirmed').length, before);
+});
+
+// ---------------------------------------------------------------------------
+// A-E5: an unmapped reverse request is a survivable decline, not a worker death
+// ---------------------------------------------------------------------------
+
+test('A-E5: an unmapped reverse request is answered -32601 and the session survives it', async () => {
+  const { adapter, spawn, events, log } = setup('reverse-unknown');
+  try {
+    assert.equal((await spawn()).ok, true);
+    const completed = await waitFor(events, (event) => event.kind === 'lifecycle.turn_completed');
+    assert.equal(completed.payload.stopReason, 'end_turn', 'the client answer unwedged the turn');
+
+    const declined = events.find((event) => event.kind === 'error' && event.payload.serverMethod === 'x.ai/fs/read_text_file');
+    assert.ok(declined, 'the auto-decline is observable, never a silent drop');
+    assert.equal(declined.payload.code, -32601);
+    const frames = readFileSync(log, 'utf8').trim().split('\n').map((line) => JSON.parse(line));
+    const answer = frames.find((frame) => frame.id === 'unknown-1');
+    assert.ok(answer, 'the unmapped request must be ANSWERED — a dangling JSON-RPC request wedges its turn forever');
+    assert.equal(answer.error?.code, -32601);
+    assert.equal(events.some((event) => event.kind === 'lifecycle.crashed'), false,
+      'a future vendor fs/terminal request must not destroy a whole worker turn');
+
+    // The session survives: a second turn completes on the same provider session.
+    assert.deepEqual(await adapter.prompt('w', 'second turn after the decline', 'turn'), { ok: true });
+    const second = await waitFor(events, (event) => event.kind === 'lifecycle.turn_completed'
+      && event.payload.turnId !== completed.payload.turnId);
+    assert.equal(second.payload.sessionId, completed.payload.sessionId);
+  } finally { await adapter.kill('w'); await waitFor(events, (event) => event.kind === 'kill.confirmed'); }
+});
+
+// ---------------------------------------------------------------------------
+// A-E6/A-I8: the crash latch belongs to the turn, not to the session
+// ---------------------------------------------------------------------------
+
+test('A-I8: a second turn crashing on the same live session publishes its own lifecycle.crashed', async () => {
+  const { adapter, spawn, events } = setup('max-steps');
+  const crashes = () => events.filter((event) => event.kind === 'lifecycle.crashed');
+  try {
+    assert.equal((await spawn()).ok, true);
+    const first = await waitFor(events, (event) => event.kind === 'lifecycle.crashed');
+    assert.equal(first.payload.code, 'provider_turn_failed');
+    assert.equal(first.payload.turnId, 't1');
+
+    // The session is still live: the same worker takes a second turn, which crashes on its own.
+    assert.deepEqual(await adapter.prompt('w', 'second turn on the same live session', 'turn'), { ok: true });
+    await waitFor(events, () => crashes().length === 2);
+    assert.deepEqual(crashes().map((event) => event.payload.turnId), ['t1', 't2']);
+    assert.equal(crashes().every((event) => event.payload.code === 'provider_turn_failed'), true);
+  } finally { await adapter.kill('w'); await waitFor(events, (event) => event.kind === 'kill.confirmed'); }
+});

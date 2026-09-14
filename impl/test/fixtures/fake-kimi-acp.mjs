@@ -118,6 +118,13 @@ process.stdin.on('data', (chunk) => {
         });
         continue;
       }
+      if (mode === 'reverse-unknown') {
+        // A server->client request outside the mapped table (A-E5). The turn stays BLOCKED until
+        // the client answers it — an error answer counts, and the session must survive it.
+        reversePromptId = frame.id;
+        write({ id: 'unknown-1', method: 'x.ai/fs/read_text_file', params: { path: '/fake/needs-client-fs' } });
+        continue;
+      }
       if (mode === 'prompt-hang' || mode === 'secret-hang') continue;
       write({ id: frame.id, result: { stopReason: mode === 'max-steps' ? 'max_steps' : 'end_turn' } });
       promptId = null;
@@ -128,6 +135,12 @@ process.stdin.on('data', (chunk) => {
         write({ id: promptId, result: { stopReason: 'cancelled' } });
         promptId = null;
       }
+      continue;
+    }
+    if (frame.id === 'unknown-1') {
+      write({ id: reversePromptId, result: { stopReason: 'end_turn' } });
+      reversePromptId = null;
+      promptId = null;
       continue;
     }
     if (frame.id === 'permission-1') {

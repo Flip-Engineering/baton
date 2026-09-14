@@ -111,3 +111,58 @@ test('KC1/KC4/KC5: public native route uses private subscription state, redacts 
   assert.deepEqual(sourceSnapshot(sourceRoot), before);
   assert.equal(coordinator.closeAuthority(), true);
 });
+
+// ---------------------------------------------------------------------------
+// A-E2/A-I3: a coordinator stop of an IDLE worker converges on the adapter's own event
+// ---------------------------------------------------------------------------
+
+test('A-E2/A-I3: a stop of an idle worker converges on control.interrupt_confirmed, never on the stop deadline', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'baton-native-kimi-idle-stop-'));
+  const worktree = join(root, 'worktree');
+  mkdirSync(worktree);
+  const sourceRoot = sourceFixture();
+  const worktrees = {
+    async create(taskId) { return { path: worktree, branch: `baton/${taskId}`, baseSha: BASE }; },
+    async capture() { return { sha: PROGRESS, snapshotted: true, changedPaths: [] }; },
+    async retainCheckpoint() { return `refs/baton/checkpoints/${PROGRESS}`; },
+    async resolveCheckpoint() { return PROGRESS; },
+    async remove() {},
+    async reconcile() {},
+  };
+  const isolation = new RuntimeIsolation({
+    repoRoot: root,
+    baseEnv: { PATH: process.env.PATH },
+    credentialTrees: { 'kimi-code': [{ sourceRoot, relativeFiles: APPROVED_FILES }] },
+  });
+  const adapter = new KimiAcpCli({
+    cmd: process.execPath, args: [FAKE, '--serve'], requestTimeoutMs: 2000,
+    versionProbe: () => '0.27.0',
+    env: { FAKE_KIMI_MODE: 'normal' },
+    modelCatalog: { 'kimi-code/k3': ['low', 'high', 'max'] },
+  });
+  const log = new Log(join(root, 'log'));
+  const coordinator = new Coordinator({
+    log, coordination: coordinationForLog(log), fences: new FenceTable(),
+    adapters: { 'native-kimi-private-id': adapter }, runtimeScopes: isolation, worktrees,
+    referee: async () => ({ reverified: true, observedExit: 0 }),
+    route: () => { throw new Error('explicit public harness must not use adaptive routing'); },
+    approvalTimeoutMs: 100, stopDeadlineMs: 1000,
+  });
+
+  const handle = await coordinator.spawn('kimi-code', brief(), {
+    taskId: 'native-kimi-idle-stop', model: 'kimi-code/k3', effort: 'max',
+  });
+  // An idle worker reached the ordinary way: the first turn completed and the session stayed
+  // attached (the card's `pausable` completion parks the turn instead of nudging a new one).
+  await until(() => log.read(handle.id).some((event) => event.kind === 'lifecycle.turn_completed'), 'idle worker with a live session');
+
+  const stopped = await coordinator.interrupt(handle.id, undefined, 'operator:test');
+  assert.equal(stopped.ok, true);
+  assert.equal(stopped.result, 'confirmed', 'the adapter event must finalize the stop, not the deadline');
+  assert.equal(log.read(handle.id).some((event) => event.kind === 'control.forced_stop'), false,
+    'the deadline never had to force the stop');
+
+  // The worker is still controllable after the stop: stop it for real and release exact authority.
+  assert.deepEqual(await coordinator.kill(handle.id, 'operator:test'), { ok: true, result: 'confirmed', emulated: false });
+  assert.equal(coordinator.closeAuthority(), true);
+});

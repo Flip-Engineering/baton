@@ -772,3 +772,46 @@ test('CS18: every Claude-family session tier delivers the unified Brief on the w
     await waitForKind('kill.confirmed');
   }
 });
+
+// ---------------------------------------------------------------------------
+// A-E2/A-I3 + A-F8: one idle-interrupt shape (the event) and one Ack vocabulary
+// ---------------------------------------------------------------------------
+
+test('A-E2/A-I3: a LIVE idle session confirms its interrupt as the event (the wire round-trip, no turn in flight)', async () => {
+  const { cli, events, waitForKind } = harness();
+  const w = 'w1';
+  await cli.spawn(w, brief('idle stop target'), { worktree: process.cwd() });
+  const completed = await waitForKind('lifecycle.turn_completed');
+
+  const ack = await cli.interrupt(w);
+  assert.equal(ack.ok, true);
+  assert.notEqual(ack.terminal, true, 'a live session is not a settled terminal — the event carries the stop');
+
+  const confirmed = await waitForKind('control.interrupt_confirmed');
+  assert.equal(confirmed.worker, w);
+  assert.equal(confirmed.payload.transportOpen, true);
+  assert.ok(events.indexOf(confirmed) > events.indexOf(completed), 'the confirmation follows the settled turn');
+
+  // The session survives: the next turn completes on the SAME pid.
+  await cli.prompt(w, 'still alive?', 'turn');
+  const next = await waitForKind('lifecycle.turn_completed', 4000);
+  assert.equal(next.payload.pid, completed.payload.pid);
+
+  await cli.kill(w);
+  await waitForKind('kill.confirmed');
+});
+
+test('A-E2/A-F8: interrupt() of a TERMINAL session returns the typed settled Ack — the event channel is closed', async () => {
+  const { cli, events, waitForKind } = harness();
+  const w = 'w1';
+  await cli.spawn(w, brief('t1'), { worktree: process.cwd() });
+  await waitForKind('lifecycle.turn_completed');
+  await cli.kill(w);
+  await waitForKind('kill.confirmed');
+  const before = events.filter((e) => e.kind === 'control.interrupt_confirmed').length;
+
+  // After the terminal, _emit drops every non-terminal kind, so no event can confirm this stop:
+  // the Ack IS the confirmation, and a stop waiter must not burn its deadline waiting for one.
+  assert.deepEqual(await cli.interrupt(w), { ok: true, terminal: true });
+  assert.equal(events.filter((e) => e.kind === 'control.interrupt_confirmed').length, before);
+});

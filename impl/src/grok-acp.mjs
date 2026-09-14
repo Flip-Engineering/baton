@@ -300,23 +300,15 @@ export class GrokAcpCli {
   /**
    * A client-initiated request. `timeoutMs: null` means unbounded — used ONLY by session/prompt,
    * whose response is the turn terminal (GA3); the close handler settles it if the child dies.
-   * #163 transport-recovery law: a request timeout NEVER hard-fails. Bounded retries with
-   * backoff while the child lives; only the process-exit fact terminalizes.
+   * #163 transport-recovery law, tightened (A-E4): a request timeout is an UNKNOWN outcome, not a
+   * licence to replay. `session/new` and `session/load` may already have landed provider-side with
+   * no idempotency authority, so a timed-out frame is NEVER re-issued — the caller decides
+   * whether an explicit retry is safe (a fresh call takes a fresh id). The timeout surfaces
+   * grok_transport_timeout while the child stays live: no ladder, no signal.
    */
-  _sendRequest(session, method, params, { timeoutMs, retryBackoffMs = [250, 500, 1000, 2000, 4000, 8000, 15000, 30000] } = {}) {
+  _sendRequest(session, method, params, { timeoutMs } = {}) {
     const bound = timeoutMs === undefined ? this._requestTimeoutMs : timeoutMs;
-    if (bound === null) return this._sendRequestOnce(session, method, params);
-    const attempt = (n) => this._sendRequestOnce(session, method, params, bound)
-      .catch((error) => {
-        if (error?.code === 'grok_transport_timeout' && n < retryBackoffMs.length - 1) {
-          return new Promise((resolve) => setTimeout(
-            () => resolve(attempt(n + 1)),
-            retryBackoffMs[n],
-          ));
-        }
-        throw error;
-      });
-    return attempt(0);
+    return this._sendRequestOnce(session, method, params, bound);
   }
 
   _sendRequestOnce(session, method, params, boundMs) {
@@ -327,7 +319,7 @@ export class GrokAcpCli {
         timer = setTimeout(() => {
           session.pendingRequests.delete(id);
           reject(Object.assign(
-            new GrokRpcTimeoutError(`grok agent stdio: "${method}" timed out after ${boundMs}ms (retrying)`),
+            new GrokRpcTimeoutError(`grok agent stdio: "${method}" timed out after ${boundMs}ms`),
             { code: 'grok_transport_timeout' },
           ));
         }, boundMs);
@@ -905,8 +897,22 @@ export class GrokAcpCli {
   async interrupt(worker, then) {
     if (this._emitPendingStop(worker, 'control.interrupt_confirmed')) return { ok: true };
     const session = this._sessions.get(worker);
-    if (!session) return { ok: false, reason: `unknown worker ${worker}` };
-    if (!session.activeTurn) return { ok: true, reason: 'no active turn to interrupt' };
+    // Ack vocabulary (adapter.mjs): with no owned session, or one that has closed, no stop fact
+    // can exist any more — the Ack IS the confirmation, never a wait for an event that can no
+    // longer be emitted.
+    if (!session || session.closed) return { ok: true, terminal: true };
+    if (!session.activeTurn) {
+      // A-E2/A-I3: an idle stop is confirmed the SAME way on every adapter — the event, emitted
+      // now, so the coordinator's stop waiter finalizes instead of burning its whole deadline.
+      // No turn was in flight, so nothing is cancelled and nothing is invented: no turnId, no
+      // result, and the transport observation is derived rather than asserted.
+      this._emit(session, 'control.interrupt_confirmed', {
+        sessionId: session.sessionId, turnId: null,
+        transportOpen: !session.killing && !session.processFailure,
+        usageSeal: unavailableUsageSeal(),
+      });
+      return { ok: true, reason: 'no active turn to interrupt' };
+    }
 
     const { turnId } = session.activeTurn;
     // An interrupt supersedes any not-yet-consumed steer, and any earlier follow-up (R5.1).
@@ -962,7 +968,7 @@ export class GrokAcpCli {
   async kill(worker) {
     const session = this._sessions.get(worker);
     if (!session && this._emitPendingStop(worker, 'kill.confirmed')) return { ok: true };
-    if (!session || !session.child) return { ok: true }; // already gone — a moot no-op
+    if (!session || !session.child) return { ok: true, terminal: true }; // no owned generation — already gone
     if (!session.processClose || session.processClose.confirmed) return { ok: true, terminal: true };
     session.steerPending = null;
     session.pendingFollowUp = null; // R5.1: abandon any pending auto-follow-up

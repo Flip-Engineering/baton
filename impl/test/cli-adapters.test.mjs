@@ -567,3 +567,33 @@ test('CLI_ADAPTERS registry maps the harness names the user asked for', () => {
   assert.equal(CLI_ADAPTERS.glm, ZCodeCli);
   assert.equal(CLI_ADAPTERS.pi, PiCli);
 });
+
+// ---------------------------------------------------------------------------
+// A-E2/A-F8: the one-shot stop Ack is typed when the owned generation is settled
+// ---------------------------------------------------------------------------
+
+test('A-E2/A-F8: an interrupt of an already-reaped one-shot generation returns the typed settled Ack', async () => {
+  const adapter = new PiCli({ cmd: process.execPath, args: () => [FAKE_CLI_ENV], live: true });
+  const events = [];
+  let resolveClosed;
+  const closed = new Promise((resolve) => { resolveClosed = resolve; });
+  adapter.onEvent((event) => {
+    events.push(event);
+    if (event.kind === 'lifecycle.process_closed') resolveClosed(event);
+  });
+
+  const ack = await adapter.spawn('one-shot-settled', {
+    goal: 'finish immediately', constraints: [], pathScope: ['**'],
+    definitionOfDone: 'done', verification: { command: 'true', expectExit: 0 },
+  }, { live: true, worktree: '/tmp', replaceEnv: true, env: { PATH: process.env.PATH } });
+  assert.equal(ack.ok, true);
+  // process_closed is published only after the exact owned group is proven absent.
+  await closed;
+  assert.equal(events.some((event) => event.kind === 'lifecycle.turn_completed'), true);
+
+  // A confirmation event for this generation can never be emitted again: the Ack IS the
+  // confirmation. Without the flag a stop waiter would wait out its whole deadline.
+  assert.deepEqual(await adapter.interrupt('one-shot-settled'), { ok: true, terminal: true });
+  assert.deepEqual(await adapter.interrupt('never-spawned'), { ok: true, terminal: true });
+  assert.deepEqual(await adapter.kill('never-spawned'), { ok: true, terminal: true });
+});
