@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import { canonicalJson } from './canonical-order.mjs';
 import { SWARM_EVENT_PAYLOAD_SCHEMAS, SWARM_EVENT_EXAMPLES } from './swarm-event-schemas.mjs';
 import { foldSwarmEvent } from './swarm-state.mjs';
+import { workspaceCustodyRecord } from './shared-workspace-custody.mjs';
 
 const clone = (value) => structuredClone(value);
 const hash = (value) => createHash('sha256').update(JSON.stringify(canonicalJson(value))).digest('hex');
@@ -255,21 +256,41 @@ export class SwarmRuntime {
       .map((assignment) => assignment.workId)) : null;
     const permissions = caller?.permissions ?? (caller ? DEFAULT_PERMISSIONS : SWARM_PERMISSIONS);
     const workers = this.coordinator.list();
+    const ledger = this.store.eventsView();
     const delegations = this._delegations(swarm);
     const evidenceFor = this._workEvidence(swarm);
+    // Guidance projection: the nudges addressed to each worker, read from the message.sent
+    // lane receipts the delivery path already records. The view mints nothing of its own.
+    const guidanceByWorker = new Map();
+    for (const event of ledger) {
+      if (event.kind !== 'message.sent' || event.payload?.kind !== 'nudge') continue;
+      const workerId = event.payload?.to?.workerId;
+      if (!workerId) continue;
+      if (!guidanceByWorker.has(workerId)) guidanceByWorker.set(workerId, []);
+      guidanceByWorker.get(workerId).push({
+        seq: event.seq, ts: event.ts, from: event.payload.from ?? null, messageId: event.payload.messageId ?? null,
+      });
+    }
     const participants = Object.values(swarm.participants).map((participant) => {
       const worker = this._workerFor(participant, workers);
       const paused = worker ? this.coordinator.pausedTurns({ workerId: worker.id }) : [];
       // A turn is paused only while the worker that paused it is alive: a dead or exited
       // worker's leftover pause record is history, not a turn a guide could resume.
       const alive = worker && ['working', 'blocked', 'pending', 'idle', 'stopping'].includes(worker.status);
+      // The participant's live checkout, projected exactly as capture projects its custody:
+      // the physical owner named by the live worker's session context and the coordinator's
+      // live holder count for it. An unbound or departed worker carries workspace: null.
+      const physicalOwnerId = alive ? worker.sessionContext?.ownerTaskId ?? null : null;
       return { ...clone(participant), delegation: delegations.get(participant.participantId) ?? null,
         native: worker && this.coordinator.observedNativeSubagents
         ? this.coordinator.observedNativeSubagents(worker.id)
         : { coverage: 'observed_only', agents: [], invocations: [], unidentified: [] }, runtime: {
         workerId: worker?.id ?? null, state: worker?.status ?? 'unbound',
         turn: alive && paused.length ? 'paused' : worker?.status === 'working' ? 'running' : null,
-      } };
+      }, guidance: worker ? (guidanceByWorker.get(worker.id) ?? []) : [],
+        workspace: physicalOwnerId !== null
+          ? workspaceCustodyRecord(physicalOwnerId, this.coordinator.liveWorkspaceHolders(physicalOwnerId).length)
+          : null };
     });
     // Organization truth an orchestrator would otherwise assemble by hand: members whose process
     // is gone, sessions that outlived their membership, delegations whose parent is gone, work
@@ -351,7 +372,7 @@ export class SwarmRuntime {
     if (swarm.status !== 'open' && participants.some((row) => row.status === 'active' && !gone(row))) {
       organization.push({ kind: 'closed_with_live_participants', participantIds: participants.filter((row) => row.status === 'active' && !gone(row)).map((row) => row.participantId) });
     }
-    const operations = this.store.eventsView().filter((event) => event.kind === 'driver.recorded'
+    const operations = ledger.filter((event) => event.kind === 'driver.recorded'
       && event.payload.swarmId === swarm.swarmId && event.payload.kind === 'swarm.operation_requested');
     const attention = [
       ...operations.filter((event) => !this.store.priorCoordinationEvent(`${event.idempotencyKey}:completed`))
@@ -766,8 +787,16 @@ export class SwarmRuntime {
     }
     if (command === 'swarm.guide') {
       return this._once(command, args, principal, async () => {
+        const cursor = this.store.ledgerHeadSeq();
         const result = await this.coordinator.guideParticipant(worker.id, args.message, { actor: principal.actor });
-        return { participantId: participant.participantId, result };
+        // The lane receipt is durable coordination log, not process state: deliveries are
+        // serialized per worker, so the newest nudge row for this binding past the pre-call
+        // cursor is the row THIS guide wrote — read back and returned as its receipt.
+        const sent = this.store.eventsView().filter((event) => event.kind === 'message.sent'
+          && event.payload?.kind === 'nudge' && event.payload?.to?.workerId === worker.id
+          && event.seq > cursor).at(-1);
+        return { participantId: participant.participantId, result,
+          guide: sent ? { seq: sent.seq, ts: sent.ts, messageId: sent.payload.messageId ?? null } : null };
       });
     }
     if (command === 'swarm.stop') {
