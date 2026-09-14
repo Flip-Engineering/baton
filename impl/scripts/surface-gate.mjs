@@ -298,6 +298,7 @@ export function checkCanonicalSurfaceResolution() {
  * derived dispatch authority, and every cli divergence the ledger records (a facade port the card
  * does not carry) is dispatchable too — a ledgered port the client refuses is exactly the
  * advertised-but-refused class this check exists to catch.
+ */
 export function checkCliAdmissionDerivation() {
   const findings = [];
   for (const name of CLI_WEB_COMMANDS) {
@@ -325,6 +326,7 @@ export async function runSurfaceGate({ write = false } = {}) {
   }
   const findings = [
     ...checkCanonicalSurfaceResolution().map((f) => `surface-resolution: ${f}`),
+    ...checkCliAdmissionDerivation().map((f) => `cli-admission: ${f}`),
     ...runSurfaceConformanceMain({ writeInventory: write }).map((f) => `surface-conformance: ${f}`),
     ...checkSurfaceParityMatrix().map((f) => `surface-parity: ${f}`),
     ...(await checkMcpDispatchResolvability()).map((f) => `mcp-dispatch: ${f}`),
