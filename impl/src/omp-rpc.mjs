@@ -27,6 +27,7 @@ import { attestWorkerPolicyObservation } from './worker-policy.mjs';
 import { KILL_ESCALATION_GRACE_MS, ProcessCloseReapLatch, normalizeProcessGeneration, processReadyPayload, processStartedPayload } from './process-lifecycle.mjs';
 import { normalizeConcurrencyCeiling } from './concurrency-policy.mjs';
 import { normalizeOmpTaskFrame, normalizeOmpSubagentFrame } from './native-subagent-observations.mjs';
+import { classifyProviderFault } from './provider-faults.mjs';
 
 // The OMP wire ceiling is the registry's DECLARED wire lane (limits.mjs) — the one source for
 // every frame bound, never an adapter-local literal (Decision 8's no-re-declare law). A
@@ -760,12 +761,11 @@ export class OmpRpcCli {
     const finalText = extractFinalAssistantText(event)
       ?? extractFinalAssistantText({ messages: finalAssistant ? [finalAssistant] : [] });
     const failed = ['error', 'aborted'].includes(finalAssistant?.stopReason);
+    const failure = failed ? this._turnFailure(session, finalAssistant) : null;
     this._emit(session, 'lifecycle.turn_completed', {
       phase: 'turn_completed', turnId: turn?.turnId ?? null, turnEpoch: session.turnEpoch,
       status: failed ? 'failed' : 'completed',
-      ...(failed ? { failure: { code: `omp_${finalAssistant.stopReason}`,
-        message: String(finalAssistant.errorMessage ?? finalAssistant.stopReason)
-          .slice(0, FRAME_LIMITS['view.omp.final_summary'].value) } } : {}),
+      ...(failure ? { failure } : {}),
       summary: finalText,
       artifacts: { files: Array.isArray(event.artifacts) ? event.artifacts : [] },
       openQuestions: [],
@@ -774,6 +774,32 @@ export class OmpRpcCli {
     // Native `steer` owns its queue and consumes messages within the active agent run.
     // Replaying a remembered steer here duplicates an already delivered effect and can race
     // verification of the completed turn. Only an explicit later prompt starts another turn.
+  }
+  /**
+   * #295 item 1: the provider fault is TYPED here, at the boundary that received it, and never
+   * re-read as prose downstream (#267). `aborted` is not a provider fault at all — it is this
+   * adapter's own control lane ending the turn — so it keeps its literal code; every other failed
+   * turn rides the taxonomy (`provider_quota_exhausted` with the reset instant the provider's
+   * answer carried, `provider_socket_closed` for the dropped-connection class, and the named
+   * generic `provider_turn_failed` for the rest).
+   *
+   * The typed fault is also retained ON the session: the crash cert published when this process
+   * dies must name the same class and detail, so a provider refusal can never surface as an
+   * anonymous dead runtime.
+   */
+  _turnFailure(session, finalAssistant) {
+    const message = String(finalAssistant?.errorMessage ?? finalAssistant?.stopReason)
+      .slice(0, FRAME_LIMITS['view.omp.final_summary'].value);
+    if (finalAssistant?.stopReason === 'aborted') return { code: 'omp_aborted', message };
+    const fault = classifyProviderFault({
+      stopReason: finalAssistant?.stopReason,
+      errorMessage: finalAssistant?.errorMessage,
+      ...(finalAssistant?.code === undefined ? {} : { code: finalAssistant.code }),
+    }, { route: session.route });
+    session.lastProviderFault = Object.freeze({
+      code: fault.code, detail: fault.detail, message, observedAt: new Date().toISOString(),
+    });
+    return { code: fault.code, message, detail: fault.detail };
   }
 
   _turnUsage(session, turn = session.activeTurn) {
@@ -977,6 +1003,12 @@ export class OmpRpcCli {
         turnEpoch: 0, turnSequence: 0, activeTurn: null, terminalTurns: new Set(),
         pendingInterrupt: null,
         modelRequested: model, effortRequested: effort,
+        // #295: the exact route this session speaks on, and the last provider fault the wire
+        // carried. The route is what a quota refusal is a fact ABOUT (a successor on this route
+        // would be refused identically), and the fault is what the death cert must name so a dead
+        // member is never an anonymous runtime.
+        route: Object.freeze({ harness: 'omp', model, effort }),
+        lastProviderFault: null,
       };
       session.process = new OmpRpcProcess({
         command: this._cmd, args, cwd, env: childEnv,
@@ -1082,19 +1114,30 @@ export class OmpRpcCli {
     // frame ceiling the card ADVERTISES was exceeded, so the cert names that fact and its bound —
     // exit facts plus the typed code, never a silent death and never a fabricated terminal.
     const wireFailure = session.process?.wireFailure ?? null;
-    if (!session.killConfirmed && (turn || wireFailure)) {
+    // #295: a fault the wire already carried is part of the death cert. When the provider refused
+    // this turn and the transport then died, the cert must name THAT class (and its reset instant)
+    // rather than a bare phase — the observed shape this closes is a rate-limited member whose
+    // death read as an anonymous exit with no route and no reason.
+    const providerFault = session.lastProviderFault;
+    if (!session.killConfirmed && (turn || wireFailure || providerFault)) {
       // The death-cert class: exit facts WITH the crash event — the #225 fields, native.
       // #201 A1: the RESUME HANDLE rides the cert — the observed session identity and
       // session-file (absent when never observed; never invented).
+      const certCode = wireFailure ? wireFailure.code : providerFault?.code ?? null;
       this._emit(session, 'lifecycle.crashed', {
         phase: wireFailure ? wireFailure.phase : 'process_exit',
         usageSeal: this._usageSeal(session),
         exitCode: outcome?.exitCode ?? null,
         signal: outcome?.signal ?? null,
-        ...(wireFailure ? { code: wireFailure.code, limitBytes: wireFailure.limitBytes } : {}),
+        ...(certCode ? { code: certCode } : {}),
+        ...(wireFailure ? { limitBytes: wireFailure.limitBytes } : {}),
+        ...(!wireFailure && providerFault ? { detail: providerFault.detail } : {}),
         error: wireFailure
           ? wireFailure.error
-          : (outcome?.failure ? String(outcome.failure.message ?? outcome.failure) : 'omp rpc process exited during an active turn'),
+          : (outcome?.failure ? String(outcome.failure.message ?? outcome.failure)
+            : providerFault
+              ? providerFault.message
+              : 'omp rpc process exited during an active turn'),
         ...(session.observedSessionId ? { sessionId: session.observedSessionId } : {}),
         ...(session.observedSessionFile ? { sessionFile: session.observedSessionFile } : {}),
       });

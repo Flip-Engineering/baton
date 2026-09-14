@@ -10,7 +10,10 @@ import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:pat
 import { Cursor } from './log.mjs';
 import { verifyContribution } from './contribution-verification.mjs';
 import { ContributionService } from './contribution-service.mjs';
-import { nativeSubagentView } from './native-subagent-view.mjs';
+import { nativeSubagentView, NATIVE_SETTLEMENT_GAP } from './native-subagent-view.mjs';
+import {
+  PROVIDER_FAULT_CODES, isTransientProviderFault, normalizeProviderRoute, readProviderFaultDetail,
+} from './provider-faults.mjs';
 import {
   attentionItemLine, boundedAttentionText, buildKnowledgeSlice, createBrief, createDecisionAnswer, createDecisionRequest, createDigest,
   frameWebContent, isAttentionSpillItem, ValidationError, wrapFact, wrapHubDerived, wrapProse,
@@ -49,6 +52,49 @@ import { normalizeVerifierFailureCapsule, sanitizeVerifierDiagnosticText } from 
 
 const ORIENTATION_DELIVERY = Symbol('orientation-delivery');
 const WORKTREE_FAILURE = Symbol('worktree-failure');
+
+// #295 item 2: a dropped provider connection is not the member's death. The turn is re-driven
+// once, in place, on the same session and worktree; only a fault the retry ALSO hits (or one that
+// is not transient at all) settles the member. The count is declared, bounded, and never a clock.
+const TRANSIENT_TURN_RETRY_LIMIT = 1;
+
+// The instruction a re-driven turn carries. Deterministic policy text — the coordinator's own
+// words, like a follow-up or a nudge — never a model-authored summary, so a retry cannot invent
+// work the member never claimed.
+function transientRetryInstruction(code) {
+  return [
+    `The previous turn ended on a transient provider fault (${code}) and recorded no result.`,
+    'Resume the same task in this same worktree from where it stopped: do not repeat work that is',
+    'already complete, finish the remaining work, and report as usual.',
+  ].join(' ');
+}
+
+// The closed set of rules a policy kill names. A `kill.requested` payload with an empty object is
+// an anonymous death (#295 comment b): every site below states WHY the member was killed, so the
+// durable record can be read without guessing at the code path that produced it.
+const KILL_RULES = Object.freeze({
+  stopRequested: 'stop_requested',
+  runStop: 'run_stop',
+  drain: 'deployment_drain',
+  startupReconciliation: 'startup_reconciliation',
+  preservedReattachmentFailed: 'preserved_reattachment_failed',
+  stallReap: 'stall_reap',
+  watchdog: 'watchdog_action',
+  providerBudget: 'provider_budget_hard_limit',
+  providerGovernance: 'provider_governance_violation',
+  providerFault: 'provider_fault',
+  providerCrash: 'provider_crash',
+  preservationUnproven: 'preservation_unproven',
+  stopDeadline: 'stop_deadline',
+  interruptEscalated: 'interrupt_escalated_to_kill',
+  workerPolicyMismatch: 'worker_policy_mismatch',
+  worktreeAuthorityLost: 'worktree_authority_lost',
+  spawnRefused: 'spawn_refused',
+  protocolViolation: 'protocol_violation',
+  processObservationRefused: 'process_observation_refused',
+  terminalObservation: 'terminal_observation',
+});
+
 // BD3-D: the storm-coalescing window for same-run attention wakes. Reasons minted within the
 // window merge into one entry carrying an explicit count + perPhase distribution.
 const ATTENTION_COALESCE_WINDOW_MS = 500;
@@ -1101,6 +1147,22 @@ export class Coordinator {
     // today); N>=0 = up to N retry_pending parks per member task before failed.
     this._memberRetryAttempts = Number.isSafeInteger(opts.memberRetryAttempts) && opts.memberRetryAttempts >= 0
       ? opts.memberRetryAttempts : null;
+    // #295 item 2: a transient provider fault re-drives the turn in place — the transport
+    // dropped, the session is alive, and no result was recorded — at most
+    // TRANSIENT_TURN_RETRY_LIMIT times. A deployment that configured its own member retry
+    // authority raises that count; the bound is a declared count, never a clock (#163).
+    this._transientTurnRetryLimit = Number.isSafeInteger(this._memberRetryAttempts)
+      ? Math.max(TRANSIENT_TURN_RETRY_LIMIT, this._memberRetryAttempts) : TRANSIENT_TURN_RETRY_LIMIT;
+    // #295 item 4: the deployment's exhausted-route authority. The SAME instance the route
+    // readiness derivation and the pre-effect recruit refusal read, so a quota refusal observed
+    // here is a fact the next recruit on that route is refused by — and it expires by derivation
+    // from the recorded reset instant, never by a re-probe.
+    const providerQuota = opts.providerQuotaAuthority ?? null;
+    if (providerQuota !== null
+      && (typeof providerQuota.record !== 'function' || typeof providerQuota.blockFor !== 'function')) {
+      throw new TypeError('providerQuotaAuthority must implement record() and blockFor()');
+    }
+    this._providerQuota = providerQuota;
     // D4 rung 2 (stall seam, #67): the bounded window an armed stall claim waits for its
     // re-arm evidence before the stall ladder escalates. A deployment knob, NOT
     // stallTimeoutMs/watchdog. The pause seam no longer uses it — a paused checkpoint never
@@ -2009,7 +2071,7 @@ export class Coordinator {
         // same exact-physical-state emergency path the fleet drain's own attempts take, so a
         // fatal error surfaces as convergence work, never as a silently swallowed throw that
         // burns the whole deadline.
-        const result = await this.kill(workerId, actor, { drainToken: this._drainKillToken });
+        const result = await this.kill(workerId, actor, { drainToken: this._drainKillToken, rule: KILL_RULES.drain });
         if (result?.ok && result.result === 'confirmed') dispositions.set(workerId, 'killConfirmed');
         else if (result?.ok && ['already_dead', 'already_stopped', 'already_dead_unlogged'].includes(result.result)
           && !this._ownsLocalResources(handle) && (!handle.processRef || handle.processRef.state === 'closed')) {
@@ -3130,7 +3192,7 @@ export class Coordinator {
         return;
       }
       try {
-        const result = await this.kill(handle.id, 'policy', { drainToken: this._drainKillToken });
+        const result = await this.kill(handle.id, 'policy', { drainToken: this._drainKillToken, rule: KILL_RULES.runStop });
         if (result?.ok && result.result === 'confirmed') setDisposition(handle.id, 'killConfirmed');
         else if (result?.ok && ['already_dead', 'already_stopped', 'already_dead_unlogged'].includes(result.result)
           && !this._ownsLocalResources(handle) && (!handle.processRef || handle.processRef.state === 'closed')) setDisposition(handle.id, 'alreadyTerminal');
@@ -3685,7 +3747,7 @@ export class Coordinator {
       task.status = 'failed';
     }
     if (!['dead', 'stopping', 'exited'].includes(handle.status)) {
-      this._stopInBackground(handle);
+      this._stopInBackground(handle, 'kill', KILL_RULES.workerPolicyMismatch);
     }
   }
 
@@ -3781,7 +3843,7 @@ export class Coordinator {
     // Authority loss is a kill condition, including while a soft interrupt is already in
     // flight. _beginStop escalates an existing interrupt waiter to one exact kill.
     if (!['dead', 'exited'].includes(handle.status)) {
-      this._stopInBackground(handle);
+      this._stopInBackground(handle, 'kill', KILL_RULES.worktreeAuthorityLost);
     }
     return true;
   }
@@ -4675,7 +4737,7 @@ export class Coordinator {
     task.status = 'failed';
     if (handle.processRef && ['initializing', 'ready'].includes(handle.processRef.state)) {
       handle.status = 'working';
-      this._stopInBackground(handle);
+      this._stopInBackground(handle, 'kill', KILL_RULES.spawnRefused);
       return true;
     }
     this._removeRuntimeScope(handle);
@@ -6714,7 +6776,7 @@ export class Coordinator {
     // created by this attempt and retain the pre-existing checkout for authoritative restart
     // reconciliation instead of either deleting it without authority or reporting false cleanup.
     const reap = await this._beginStop(handle, 'kill', undefined, 'policy', {
-      retainUnownedWorktree,
+      retainUnownedWorktree, rule: KILL_RULES.preservedReattachmentFailed,
     });
     const reapConfirmed = reap?.ok === true
       && ['confirmed', 'already_dead', 'already_stopped'].includes(reap.result);
@@ -6778,12 +6840,12 @@ export class Coordinator {
 
     const alreadyReaped = handle.processRef === null && handle.runtimeScope?.active !== true;
     if (handle.status === 'idle' && !alreadyReaped) {
-      const stopped = await this.kill(workerId, opts.actor ?? 'orchestrator');
+      const stopped = await this.kill(workerId, opts.actor ?? 'orchestrator', { rule: KILL_RULES.runStop });
       if (!['confirmed', 'already_dead', 'already_stopped'].includes(stopped.result)) {
         throw new IntegrationError('worker could not be safely stopped before integration', 'worker_stop_failed');
       }
     } else if (handle.status === 'exited') {
-      await this.kill(workerId, opts.actor ?? 'orchestrator');
+      await this.kill(workerId, opts.actor ?? 'orchestrator', { rule: KILL_RULES.runStop });
     }
     await this._removeTaskWorktree(task);
 
@@ -7678,6 +7740,13 @@ export class Coordinator {
       controllableAttached: handle.status === 'interrupted'
         && handle.sessionPreservation?.state === 'preserved',
       terminalCause: handle.terminalCause ? { ...handle.terminalCause } : null,
+      // #295 item 5: a retained checkout and the reason its checkpoint could not be written stay
+      // on the worker's own row after death, so the work a dead member produced is never an
+      // unnamed directory. #265 item 2: the observed native children the kill settled ride here
+      // too, with the named gap that says why their terminal frame can no longer arrive.
+      preservationFailure: handle.preservationFailure ? { ...handle.preservationFailure } : null,
+      nativeChildSettlement: handle.nativeChildSettlement ? { ...handle.nativeChildSettlement } : null,
+      providerQuotaBlock: handle.providerQuotaBlock ? { ...handle.providerQuotaBlock } : null,
       sessionPreservationCapable: Boolean(handle.sessionRef)
         && ['native', 'emulated'].includes(
           this._adapters[handle.vendor]?.card()?.sessions?.multiTurn,
@@ -8633,7 +8702,7 @@ export class Coordinator {
     });
     // The old result remains authoritative, but the session is no longer safe to reuse: its wire
     // advanced despite refusing admission. Confirmed two-phase kill owns transport cleanup.
-    this._stopInBackground(handle);
+    this._stopInBackground(handle, 'kill', KILL_RULES.protocolViolation);
   }
 
   // =========================================================================
@@ -8771,6 +8840,10 @@ export class Coordinator {
       const check = this._fences.check(workerId, { fence: opts.expectedFence });
       if (!check.ok) return { ok: false, result: 'stale_fence', current: check.current };
     }
+    // The rule an API kill names: the caller's when it states one (a drain, a startup
+    // reconciliation, an integration pre-stop), else the honest default for an operator stop.
+    const rule = opts.rule ?? (startup ? KILL_RULES.startupReconciliation
+      : draining ? KILL_RULES.drain : KILL_RULES.stopRequested);
     if (handle.status === 'dead' && (!handle.processRef || handle.processRef.state === 'closed')) {
       if (!this._ownsLocalResources(handle) && handle.cleanupPending !== true) {
         return { ok: true, result: 'already_dead' };
@@ -8794,7 +8867,7 @@ export class Coordinator {
       if (handle.localAuthority === true
         && handle.sessionPreservation?.state === 'preserved'
         && handle.sessionPreservation?.transport === 'attached') {
-        return this._beginStop(handle, 'kill', undefined, actor);
+        return this._beginStop(handle, 'kill', undefined, actor, { rule });
       }
       handle.status = 'dead';
       const runtimeRemoved = this._removeRuntimeScope(handle);
@@ -8802,7 +8875,7 @@ export class Coordinator {
       if (!runtimeRemoved) return { ok: false, result: 'cleanup_failed' };
       return { ok: true, result: 'already_dead' };
     }
-    return this._beginStop(handle, 'kill', undefined, actor);
+    return this._beginStop(handle, 'kill', undefined, actor, { rule });
   }
 
   _emergencyKillUnlogged(handle) {
@@ -8937,11 +9010,16 @@ export class Coordinator {
   }
 
   _beginStop(handle, mode, then, actor, context = undefined) {
+    // #295 comment (b): every kill NAMES the rule it applied. A `kill.requested` payload of `{}`
+    // made a policy death unreadable — the record said a stop happened and nothing about why, so
+    // the observed shape ("kill.requested by actor policy with an EMPTY payload") could not be
+    // told from a routine operator stop. The rule is a closed vocabulary word.
+    const rule = context?.rule ?? (mode === 'kill' ? KILL_RULES.stopRequested : null);
     const existing = this._stopWaiters.get(handle.id);
     if (existing) {
       if (mode === 'kill' && existing.mode !== 'kill') {
         const harness = this._harnessOf(handle.vendor);
-        const requested = this._log.append({ worker: handle.id, harness, turnEpoch: this._safeTurnEpoch(handle), kind: 'kill.requested', actor, payload: {} });
+        const requested = this._log.append({ worker: handle.id, harness, turnEpoch: this._safeTurnEpoch(handle), kind: 'kill.requested', actor, payload: { rule: context?.rule ?? KILL_RULES.interruptEscalated, actor, escalation: true } });
         const evidence = this._coordMapEvent(requested);
         this._coordRecord('control.stop_requested', { taskId: handle.taskId, workerId: handle.id, mode: 'kill', escalation: true, evidence }, `driver.stop_requested:${handle.taskId}:${requested.seq}`, actor);
         existing.mode = 'kill';
@@ -8976,7 +9054,7 @@ export class Coordinator {
     const harness = this._harnessOf(handle.vendor);
     const turnEpoch = this._safeTurnEpoch(handle);
     const reqKind = mode === 'kill' ? 'kill.requested' : 'control.interrupt_requested';
-    const reqPayload = mode === 'kill' ? {} : {
+    const reqPayload = mode === 'kill' ? { rule, actor } : {
       then: then ?? null, actor, ...(context?.controlId ? { controlId: context.controlId } : {}),
     };
     const requested = this._log.append({ worker: handle.id, harness, turnEpoch, kind: reqKind, actor, payload: reqPayload });
@@ -9085,12 +9163,12 @@ export class Coordinator {
       // A forced stop has already consumed its deadline. Preserve authority for a later explicit
       // operator retry instead of silently creating an endless succession of deadline windows.
       if (handle.status === 'dead' && handle.cleanupPending === true) return;
-      this._stopInBackground(handle);
+      this._stopInBackground(handle, 'kill', KILL_RULES.terminalObservation);
       return;
     }
     if (waiter.finalized || this._now() >= waiter.deadlineAt) return;
     if (waiter.mode !== 'kill') {
-      this._stopInBackground(handle);
+      this._stopInBackground(handle, 'kill', KILL_RULES.preservationUnproven);
       return;
     }
     if (waiter.reapRetryHandle != null) return;
@@ -9454,14 +9532,26 @@ export class Coordinator {
     } catch (error) {
       const sourceCode = typeof error?.code === 'string' && /^[a-z0-9_]{1,64}$/u.test(error.code)
         ? error.code : 'progress_preservation_failed';
+      // #295 comment (c): preservation failure is never silent, and never anonymous. The row names
+      // the checkout that was RETAINED (the work the member produced is still on disk there) and
+      // the reason the checkpoint could not be written, bounded to a readable line — the shape this
+      // closes was `{stopSeq: null, action: 'retain_worktree'}` leaving 15 minutes of work
+      // stranding in an unnamed directory.
+      const reason = boundedAttentionText(String(error?.message ?? error?.code ?? error), 512);
       try {
         const failed = this._log.append({
           worker: handle.id, harness: this._harnessOf(handle.vendor), turnEpoch: this._safeTurnEpoch(handle),
           kind: 'worktree.progress_preservation_failed', actor: 'policy', ...this._routeAttribution(handle, task),
-          payload: { code: sourceCode, stopSeq: stopEvent?.seq ?? null, action: 'retain_worktree' },
+          payload: {
+            code: sourceCode, stopSeq: stopEvent?.seq ?? null, action: 'retain_worktree',
+            worktreePath: handle.worktree ?? null, reason,
+          },
         });
         this._coordMapEvent(failed);
       } catch { /* Retaining the worktree remains the fail-safe when evidence is unavailable. */ }
+      handle.preservationFailure = Object.freeze({
+        code: sourceCode, worktreePath: handle.worktree ?? null, reason,
+      });
       handle.cleanupPending = true;
       handle.cleanupError = 'progress_preservation_failed';
       throw Object.assign(new Error('progress preservation failed before worktree reap', { cause: error }), { code: 'progress_preservation_failed' });
@@ -9686,7 +9776,13 @@ export class Coordinator {
     // runtime or worktree authority is destroyed; a capture/ref/evidence failure retains both.
     const preserveProgress = Boolean(handle?.ownedWorktreeAuthority && handle?.worktree && task
       && !task.capturedSha && !task.retainedResultRef);
-    await this._preserveProgressBeforeReap(handle, task, stopEvent, preserveProgress);
+    try {
+      await this._preserveProgressBeforeReap(handle, task, stopEvent, preserveProgress);
+    } finally {
+      // The transport is gone and its process group was reaped: the death is settled here too (a
+      // crash reaches this path, never the kill waiter).
+      this._settleTransportDeath(handle, task, stopEvent);
+    }
     const runtimeRemoved = this._removeRuntimeScope(handle);
     await this._removeOwnedTaskWorktree(handle, task);
     if (!runtimeRemoved) throw Object.assign(new Error('runtime cleanup failed'), { code: 'runtime_cleanup_failed' });
@@ -9848,7 +9944,7 @@ export class Coordinator {
     } else if (this._fatalError) {
       stopped = await this._emergencyKillUnlogged(handle);
     } else {
-      stopped = await this._beginStop(handle, 'kill', undefined, 'policy');
+      stopped = await this._beginStop(handle, 'kill', undefined, 'policy', { rule: KILL_RULES.stallReap });
       if (!stopped?.ok && stopped?.result !== 'forced') {
         this._log.append({
           worker: handle.id, harness: this._harnessOf(handle.vendor), turnEpoch: this._safeTurnEpoch(handle),
@@ -9925,7 +10021,7 @@ export class Coordinator {
 
   _applyWatchdogAction(handle, action) {
     if (handle.status !== 'working' && handle.status !== 'blocked') return;
-    if (action === 'kill') this._stopInBackground(handle);
+    if (action === 'kill') this._stopInBackground(handle, 'kill', KILL_RULES.watchdog);
     else if (action === 'interrupt') this._stopInBackground(handle, 'interrupt');
     // D4 rung 1: escalate never stops — it mints the stall_declared attention reason into the
     // orchestrator inbox (the G8 escalator) and leaves the worker running.
@@ -10094,10 +10190,10 @@ export class Coordinator {
   /** Every fire-and-forget stop is receipted (G-46): a rejection — or a synchronous throw out of the
    * stop state machine — means the stop never started and the worker keeps running with nobody
    * told. Never rejects: its callers are fire-and-forget by construction. */
-  _stopInBackground(handle, mode = 'kill') {
+  _stopInBackground(handle, mode = 'kill', rule = KILL_RULES.terminalObservation) {
     const receipt = (error) => this._recordOperationFailure('control.stop_unavailable', handle, 'stop_unavailable', error, { mode });
     try {
-      return Promise.resolve(this._beginStop(handle, mode, undefined, 'policy')).catch(receipt);
+      return Promise.resolve(this._beginStop(handle, mode, undefined, 'policy', { rule })).catch(receipt);
     } catch (error) {
       receipt(error);
       return Promise.resolve(undefined);
@@ -10266,7 +10362,7 @@ export class Coordinator {
     if (handle.status !== 'working' || handle.turnTerminalObserved || handle.budgetStopTimer != null) return;
     handle.budgetStopTimer = this._setTimeout(() => {
       handle.budgetStopTimer = null;
-      if (handle.status === 'working' && !handle.turnTerminalObserved) this._stopInBackground(handle, action);
+      if (handle.status === 'working' && !handle.turnTerminalObserved) this._stopInBackground(handle, action, KILL_RULES.providerBudget);
     }, this._budgetTerminalGraceMs);
     if (handle.budgetStopTimer && typeof handle.budgetStopTimer.unref === 'function') handle.budgetStopTimer.unref();
   }
@@ -10439,7 +10535,7 @@ export class Coordinator {
       this._coordTransition(task, 'failed', `task.failed:${task.id}:provider_telemetry:${invalid.seq}`, evidence);
       task.status = 'failed';
     }
-    if (beginStop && !['dead', 'stopping', 'exited'].includes(handle.status)) this._stopInBackground(handle);
+    if (beginStop && !['dead', 'stopping', 'exited'].includes(handle.status)) this._stopInBackground(handle, 'kill', KILL_RULES.providerGovernance);
   }
 
   _revokeAcceptedProviderOutcome(handle, event) {
@@ -10728,7 +10824,11 @@ export class Coordinator {
       if (handle) {
         const task = this._tasks.get(handle.taskId);
         if (waiter.mode === 'kill') {
-          const preserveProgress = Boolean(task && !TERMINAL_TASK_STATUSES.has(task.status));
+          // #295 item 3: a typed provider fault is a RESUMABLE death — the work the member
+          // produced must outlive it, so a checkpoint is preserved on that class even though the
+          // task itself settled failed. Any other kill of a terminal task preserves nothing.
+          const preserveProgress = Boolean(task && (!TERMINAL_TASK_STATUSES.has(task.status)
+            || handle.terminalCause?.kind === 'provider_failure'));
           // #201: retry_pending parks survive the kill-confirmed cancel — the successor resumes.
           if (task && !TERMINAL_TASK_STATUSES.has(task.status) && task.status !== 'retry_pending') {
             const evidence = this._coordMapEvent(stopEvent);
@@ -10827,14 +10927,22 @@ export class Coordinator {
         ...(preservation ? { preservation } : {}),
       };
     Promise.resolve(waiter.cleanupPromise).then(() => {
+      if (handle && waiter.mode === 'kill') {
+        // #265 item 2 and #295 items (2)+(4): the kill reaped this member's transport, so every
+        // observed native child is settled (unknown + named gap) and a typed provider death lands
+        // as a run-level row naming the route, the fault class, and what was preserved.
+        this._settleTransportDeath(handle, this._tasks.get(handle.taskId), stopEvent);
+      }
       if (handle && waiter.mode === 'kill') handle.localAuthority = false;
+      // The transaction is over the moment its cleanup settles: the waiter must leave the map
+      // before anything reads it (a successor delivery, a convergence predicate, a later stop).
       this._stopWaiters.delete(workerId);
       const preservationReapRequired = waiter.preserveTurn === true && !preservation
         && handle?.localAuthority === true;
       if ((governanceInvalid || preservationReapRequired) && handle) {
         // The interrupt confirmation settles the semantic operation as failed. Transport reap
         // is a distinct kill transaction with its own request/confirmation and cleanup proof.
-        this._beginStop(handle, 'kill', undefined, 'policy').then((killResult) => {
+        this._beginStop(handle, 'kill', undefined, 'policy', { rule: KILL_RULES.preservationUnproven }).then((killResult) => {
           this._resolveStopRequests(waiter, {
             ...result, escalation: killResult?.result ?? 'unknown',
           });
@@ -10847,6 +10955,9 @@ export class Coordinator {
       this._dispatchPass();
     }, (error) => {
       const preservationFailed = error?.code === 'progress_preservation_failed';
+      if (handle && waiter.mode === 'kill') {
+        this._settleTransportDeath(handle, this._tasks.get(handle.taskId), stopEvent);
+      }
       this._resolveStopRequests(waiter, {
         ok: false, result: preservationFailed ? 'preservation_failed' : 'cleanup_failed',
       });
@@ -10863,7 +10974,7 @@ export class Coordinator {
     const harness = handle ? this._harnessOf(handle.vendor) : '';
     let forcedEvent;
     try {
-      forcedEvent = this._log.append({ worker: workerId, harness, turnEpoch: handle ? this._safeTurnEpoch(handle) : 0, kind: 'control.forced_stop', actor: 'policy', payload: {} });
+      forcedEvent = this._log.append({ worker: workerId, harness, turnEpoch: handle ? this._safeTurnEpoch(handle) : 0, kind: 'control.forced_stop', actor: 'policy', payload: { rule: waiter.mode === 'kill' ? KILL_RULES.stopDeadline : KILL_RULES.terminalObservation, mode: waiter.mode, deadlineAt: waiter.deadlineAt ?? null } });
     } catch {
       if (handle) this._bestEffort(this._emergencyKillUnlogged(handle), 'emergency_kill');
       this._resolveStopRequests(waiter, { ok: false, result: 'coordination_unavailable' });
@@ -10891,7 +11002,7 @@ export class Coordinator {
       this._stopWaiters.delete(workerId);
       // Preservation timed out before a qualifying interrupt confirmation. Fail the Plan task,
       // then start a separate confirmed kill transaction; only that transaction may claim reap.
-      Promise.resolve(this._beginStop(handle, 'kill', undefined, 'policy')).then((killResult) => {
+      Promise.resolve(this._beginStop(handle, 'kill', undefined, 'policy', { rule: KILL_RULES.stopDeadline })).then((killResult) => {
         this._resolveStopRequests(waiter, {
           ok: false, result: 'preservation_timeout', escalation: killResult?.result ?? 'unknown',
         });
@@ -10920,24 +11031,56 @@ export class Coordinator {
       this._bestEffort(Promise.resolve(this._adapters[handle.vendor].kill(workerId)), 'adapter_kill');
     }
 
+    let deadlineCleanup = null;
     if (handle) {
       if (handle.processRef && ['initializing', 'ready'].includes(handle.processRef.state)) {
         handle.processRef = { ...handle.processRef, state: 'unconfirmed_after_restart' };
       }
       handle.status = 'dead';
-      // A deadline is an uncertainty observation, not process-close authority. Preserve the
-      // runtime and worktree until an exact correlated close or a later confirmed kill.
+      // #265 item 3: a deadline ends our PATIENCE, never the cleanup. When nothing indicates a
+      // live process (no process authority, or an exact correlated close), the ordinary
+      // preserve-then-reap path runs NOW — otherwise the forced stop leaves a dead member holding
+      // its checkout, its runtime scope and `cleanupPending` forever, and the Run stop can never
+      // converge on it (the observed shape: `control.stop_waiting_on {waiting: [disposition,
+      // local_resources:localAuthority, local_resources:worktree, local_resources:cleanupPending]}`,
+      // eleven minutes after the deadline with the checkout still on disk).
+      //
+      // When a process may still be live the runtime and worktree are RETAINED — uncertainty is
+      // never permission to destroy — and the holds are named durably instead, so the wait is
+      // recorded rather than silently abandoned.
+      // These resources are retained until an EXACT correlated close exists: an absent or
+      // unconfirmed process is exactly the uncertainty a reaper may not act on — nothing observed
+      // means nothing proven gone (the recovery lane reports that state as `unknown`).
+      const exactClose = handle.processRef?.state === 'closed';
       handle.cleanupPending = true;
-      handle.cleanupError = 'stop_unconfirmed';
+      handle.cleanupError = exactClose ? null : 'stop_unconfirmed';
       const task = this._tasks.get(handle.taskId);
       if (!coordinationFailure && task && !TERMINAL_TASK_STATUSES.has(task.status)) {
         task.status = 'failed';
+      }
+      try {
+        this._log.append({
+          worker: workerId, harness, turnEpoch: this._safeTurnEpoch(handle),
+          kind: 'control.stop_deadline_cleanup', actor: 'policy', ...this._routeAttribution(handle, task),
+          payload: {
+            rule: KILL_RULES.stopDeadline, mode: waiter.mode, forcedSeq: forcedEvent.seq,
+            action: exactClose ? 'reap_after_deadline' : 'retain_until_exact_close',
+          },
+        });
+      } catch { /* the deadline receipt below still settles the waiter */ }
+      if (!exactClose) {
+        try { this._stopWaitingOn([workerId], null, 'policy'); } catch { /* named on the next convergence read */ }
+      } else {
+        deadlineCleanup = { handle, task };
       }
     }
 
     const result = coordinationFailure ? { ok: false, result: 'coordination_unavailable' } : { ok: true, result: 'forced' };
     this._resolveStopRequests(waiter, result);
     this._stopWaiters.delete(workerId);
+    // The cleanup runs AFTER the waiter is released: the exact-close path guards on there being no
+    // stop waiter left, and this transaction is over.
+    if (deadlineCleanup) this._cleanupTransportInBackground(deadlineCleanup.handle, deadlineCleanup.task, forcedEvent);
   }
 
   // =========================================================================
@@ -13526,7 +13669,7 @@ export class Coordinator {
         actor: 'policy',
         payload: boundedProcessObservation(event, 'cross_adapter_worker', { sourceVendor, ownerVendor: handle.vendor }),
       });
-      if (!['dead', 'stopping', 'exited'].includes(handle.status)) this._stopInBackground(handle);
+      if (!['dead', 'stopping', 'exited'].includes(handle.status)) this._stopInBackground(handle, 'kill', KILL_RULES.processObservationRefused);
       return;
     }
     if (actor === 'worker'
@@ -13574,7 +13717,7 @@ export class Coordinator {
           payload: boundedProcessObservation(event, 'invalid_provider_ready'),
           ...this._routeAttribution(handle),
         });
-        if (!['dead', 'stopping', 'exited'].includes(handle.status)) this._stopInBackground(handle);
+        if (!['dead', 'stopping', 'exited'].includes(handle.status)) this._stopInBackground(handle, 'kill', KILL_RULES.terminalObservation);
         return;
       }
     }
@@ -13693,7 +13836,7 @@ export class Coordinator {
           payload: boundedProcessObservation(event, 'invalid_worker_policy_observation'),
           ...this._routeAttribution(handle),
         });
-        if (!['dead', 'stopping', 'exited'].includes(handle.status)) this._stopInBackground(handle);
+        if (!['dead', 'stopping', 'exited'].includes(handle.status)) this._stopInBackground(handle, 'kill', KILL_RULES.terminalObservation);
         return;
       }
     }
@@ -13772,7 +13915,7 @@ export class Coordinator {
         }
         // Use the ordinary confirmed two-phase stop so process/worktree ownership remains live
         // until the adapter proves the mismatched session is gone.
-        this._stopInBackground(handle);
+        this._stopInBackground(handle, 'kill', KILL_RULES.terminalObservation);
       }
     }
     // Only an adapter's explicitly mapped native lifecycle/usage observation is authoritative.
@@ -13792,7 +13935,7 @@ export class Coordinator {
           this._coordTransition(effortTask, 'failed', `task.failed:${effortTask.id}:${mismatchEvent.seq}`, evidence);
           effortTask.status = 'failed';
         }
-        this._stopInBackground(handle);
+        this._stopInBackground(handle, 'kill', KILL_RULES.terminalObservation);
       }
     }
     const attribution = this._routeAttribution(handle);
@@ -13819,8 +13962,8 @@ export class Coordinator {
             handle.processAuthority = null;
             handle.recoveredProcessAuthority = false;
             handle.localAuthority = true;
-            this._stopInBackground(handle);
-          } else if (!['dead', 'stopping', 'exited'].includes(handle.status)) this._stopInBackground(handle);
+            this._stopInBackground(handle, 'kill', KILL_RULES.processObservationRefused);
+          } else if (!['dead', 'stopping', 'exited'].includes(handle.status)) this._stopInBackground(handle, 'kill', KILL_RULES.processObservationRefused);
           break;
         }
         const started = appendAttributed({ worker: workerId, harness, turnEpoch, kind, actor, payload });
@@ -13866,7 +14009,7 @@ export class Coordinator {
           && payload.ready === current.ready;
         if (!valid) {
           appendAttributed({ worker: workerId, harness, turnEpoch: this._safeTurnEpoch(handle), kind: 'lifecycle.process_attribution_refused', actor: 'policy', payload: boundedProcessObservation(event, 'invalid_process_close') });
-          if (!['dead', 'stopping', 'exited'].includes(handle.status)) this._stopInBackground(handle);
+          if (!['dead', 'stopping', 'exited'].includes(handle.status)) this._stopInBackground(handle, 'kill', KILL_RULES.processObservationRefused);
           break;
         }
         const closed = appendAttributed({ worker: workerId, harness, turnEpoch, kind, actor, payload });
@@ -13954,6 +14097,12 @@ export class Coordinator {
         // for repository capture and hub verification. Verification proves the candidate tree;
         // it cannot transmute a failed provider turn (or an unchanged passing base) into success.
         if (wr?.status !== 'completed') {
+          // #295 item 2: a transient transport fault is re-driven in place — as a new turn on the
+          // same session and worktree — BEFORE any kill is considered, under the member's
+          // declared turn budget. A retry that was admitted owns the turn; a fault that is not
+          // transient (a quota refusal), a transport that is already gone, or a spent budget
+          // falls through to the ordinary settlement below.
+          if (this._queueTransientProviderTurnRetry(handle, terminalEvent, wr, this._tasks.get(handle.taskId))) break;
           this._failProviderResult(handle, terminalEvent, wr);
           break;
         }
@@ -14011,9 +14160,21 @@ export class Coordinator {
           worker: workerId, harness, turnEpoch, kind, actor,
           payload: sealVerdict.seal ? { ...payload, usageSeal: sealVerdict.seal } : payload,
         });
+        // #295: the crash cert is a provider-shaped payload — the adapter types the same fault and
+        // the same bounded detail (route, reset instant) it typed on the turn, so a rate-limited
+        // death that arrives as a dead transport still reads with its class, its route and its
+        // reset time instead of as an anonymous exit.
+        const crashFault = this._providerFaultOf(payload);
         handle.terminalCause ??= deepFreeze({
-          kind: 'provider_failure', code: typedTerminalCode(payload?.code, 'provider_crashed'),
+          kind: 'provider_failure',
+          code: crashFault?.code ?? typedTerminalCode(payload?.code, 'provider_crashed'),
+          ...(crashFault?.detail ? { detail: crashFault.detail } : {}),
         });
+        // A quota refusal is a fact about the ROUTE however the transport died: the route is
+        // blocked for the next recruit until the instant the provider itself named.
+        if (crashFault?.code === PROVIDER_FAULT_CODES.quota) {
+          this._recordProviderQuotaBlock(handle, crashFault, this._tasks.get(handle.taskId));
+        }
         if (!sealVerdict.ok) this._failTerminalProviderGovernance(handle, terminalEvent, sealVerdict.code);
         if (sealVerdict.seal) {
           handle.providerTerminalSeal = sealVerdict.seal;
@@ -14061,7 +14222,7 @@ export class Coordinator {
           handle.status = 'exited';
           this._cleanupTransportInBackground(handle, task, terminalEvent);
         } else if (handle.status !== 'dead' && handle.status !== 'stopping') {
-          this._stopInBackground(handle);
+          this._stopInBackground(handle, 'kill', KILL_RULES.providerCrash);
         }
         break;
       }
@@ -14079,7 +14240,7 @@ export class Coordinator {
         this._clearWatchdog(handle);
         if (handle.processRef && handle.processRef.state !== 'closed') {
           appendAttributed({ worker: workerId, harness, turnEpoch: this._safeTurnEpoch(handle), kind: 'lifecycle.process_attribution_refused', actor: 'policy', payload: boundedProcessObservation(event, 'terminal_without_process_close') });
-          if (!['dead', 'stopping'].includes(handle.status)) this._stopInBackground(handle);
+          if (!['dead', 'stopping'].includes(handle.status)) this._stopInBackground(handle, 'kill', KILL_RULES.processObservationRefused);
         } else if (!this._stopWaiters.has(handle.id)) {
           if (handle.status !== 'dead') handle.status = 'exited';
           this._cleanupTransportInBackground(handle, task, terminalEvent);
@@ -14602,16 +14763,267 @@ export class Coordinator {
   }
 
   // =========================================================================
-  // Trust gate (D4/§3.6)
+  // Provider faults: the typed death, the in-place retry, the run-level row (#295)
   // =========================================================================
+
+  /** #295 item 1: the typed fault a provider-shaped payload carried — a failed turn's `failure`
+   * (`{code, message, detail}`) or a crash cert, which the adapter types identically (`code` and
+   * the bounded `detail` at the top level). Shape-validation only — the coordinator never re-reads
+   * provider prose (#267) and never invents a reset instant. */
+  _providerFaultOf(workerResult) {
+    const code = typedTerminalCode(workerResult?.failure?.code ?? workerResult?.code, null);
+    if (code === null) return null;
+    const detail = readProviderFaultDetail(workerResult?.failure?.detail ?? workerResult?.detail);
+    return Object.freeze({ code, detail });
+  }
+
+  /** The exact route this member speaks on, in the deployment's own vocabulary. */
+  _providerRouteOf(handle) {
+    return normalizeProviderRoute({
+      harness: handle?.vendor ? this._harnessOf(handle.vendor) : null,
+      model: handle?.modelResolved ?? handle?.modelRequested ?? null,
+      effort: handle?.effortResolved ?? handle?.effortRequested ?? null,
+    });
+  }
+
+  /** #295 item 4: a quota refusal is a fact about the ROUTE, so it is recorded on the
+   * deployment's exhausted-route authority — the same instance readiness and the pre-effect
+   * recruit refusal read. The durable row keeps the same facts in the evidence lane. */
+  _recordProviderQuotaBlock(handle, fault, task) {
+    if (!fault || fault.code !== PROVIDER_FAULT_CODES.quota) return null;
+    const route = fault.detail?.route ?? this._providerRouteOf(handle);
+    const resetAt = fault.detail?.resetAt ?? null;
+    let block = null;
+    if (this._providerQuota && route) {
+      block = this._providerQuota.record(route, {
+        code: fault.code, resetAt, at: this._now(), workerId: handle.id,
+        runId: task?.runId ?? handle.runId ?? null,
+      });
+    }
+    try {
+      this._log.append({
+        worker: handle.id, harness: this._harnessOf(handle.vendor), turnEpoch: this._safeTurnEpoch(handle),
+        kind: 'provider.quota_exhausted', actor: 'policy', ...this._routeAttribution(handle, task),
+        payload: {
+          code: fault.code, route, resetAt, action: 'block_route_until_reset',
+          recordedByReadiness: block !== null,
+        },
+      });
+    } catch { /* The typed refusal is already on the turn; the authority keeps the block. */ }
+    handle.providerQuotaBlock = block ? Object.freeze({ ...block }) : null;
+    return block;
+  }
+
+  /**
+   * #295 item 2: a transient transport fault re-drives the turn IN PLACE — the same session, the
+   * same worktree, a fresh turn — before any kill is considered. A fault that is not transient
+   * (a quota refusal) is never re-driven on the same route, and a retry that cannot start falls
+   * straight through to the ordinary provider-failure settlement.
+   *
+   * Returns true when a retry was admitted (the caller must not settle the death), false when the
+   * caller owns the settlement.
+   */
+  _queueTransientProviderTurnRetry(handle, terminalEvent, workerResult, task) {
+    const code = typedTerminalCode(workerResult?.failure?.code, null);
+    if (code === null || !isTransientProviderFault(code)) return false;
+    if (this._closed || this._drainState !== 'open') return false;
+    if (handle.status !== 'working' || this._stopWaiters.has(handle.id)) return false;
+    // A closed process is not a dropped route: the transport itself is gone and its death cert
+    // owns the settlement (the retry would have nowhere to write).
+    if (handle.processRef && handle.processRef.state === 'closed') return false;
+    if (typeof this._adapters[handle.vendor]?.prompt !== 'function') return false;
+    const attempt = (handle.transientTurnRetries ?? 0) + 1;
+    if (attempt > this._transientTurnRetryLimit) return false;
+    if (this._transientRetryPending?.has(handle.id)) return false;
+    // The re-driven turn is admitted through the SAME gate every other new provider turn passes
+    // (`_admitProviderTurn`: the member's declared budget, its terminal reserve, and the route's
+    // capability) — so the retry RIDES the existing turn budget instead of bypassing it, and a
+    // member with no headroom left is settled by the ordinary provider-failure path rather than
+    // re-driven. The refusal is durable and named (`resource.provider_turn_refused`, phase
+    // `transient_retry`), so a retry that never happened is never invisible.
+    if (!this._admitProviderTurn(handle, task, 'transient_retry').ok) return false;
+    const fault = this._providerFaultOf(workerResult);
+    const route = fault?.detail?.route ?? this._providerRouteOf(handle);
+    this._transientRetryPending ??= new Set();
+    this._transientRetryPending.add(handle.id);
+    const drive = Promise.resolve(this._retryTransientProviderTurn(
+      handle, terminalEvent, workerResult, { code, attempt, route },
+    ))
+      .catch((error) => this._recordOperationFailure('provider.transient_retry_failed', handle, 'transient_retry_failed', error))
+      .finally(() => this._transientRetryPending?.delete(handle.id));
+    void drive;
+    return true;
+  }
+
+  async _retryTransientProviderTurn(handle, terminalEvent, workerResult, { code, attempt, route }) {
+    const task = this._tasks.get(handle.taskId);
+    const admission = { events: [] };
+    handle.turnAdmission = admission;
+    let ack;
+    try {
+      ack = await this._adapters[handle.vendor].prompt(handle.id, transientRetryInstruction(code), 'turn');
+    } catch (error) {
+      if (handle.turnAdmission === admission) handle.turnAdmission = null;
+      if (admission.events.length > 0) this._rejectContradictoryAdmission(handle, admission, error);
+      else this._releaseProviderTurnAdmission(handle, 'transient_retry_exception');
+      this._failProviderResult(handle, terminalEvent, workerResult);
+      return;
+    }
+    if (handle.turnAdmission === admission) handle.turnAdmission = null;
+    if (!ack || ack.ok !== true) {
+      if (admission.events.length > 0) this._rejectContradictoryAdmission(handle, admission, ack?.reason);
+      else this._releaseProviderTurnAdmission(handle, 'transient_retry_refused');
+      this._failProviderResult(handle, terminalEvent, workerResult);
+      return;
+    }
+    // The retry landed as a new turn: recorded NOW and not one line earlier — a row claiming
+    // `new_turn_on_same_session` for a prompt the adapter refused would be a fabricated retry.
+    this._log.append({
+      worker: handle.id, harness: this._harnessOf(handle.vendor), turnEpoch: this._safeTurnEpoch(handle),
+      kind: 'provider.transient_retry', actor: 'policy', ...this._routeAttribution(handle, task),
+      payload: {
+        code, route, attempt, of: this._transientTurnRetryLimit, terminalSeq: terminalEvent?.seq ?? null,
+        action: 'new_turn_on_same_session',
+      },
+    });
+    handle.transientTurnRetries = attempt;
+    handle.turnTerminalObserved = false;
+    this._resetWatchdogTurn(handle);
+    for (const event of admission.events) this._handleEvent(event, handle.vendor, { admittedReady: event.kind === 'lifecycle.spawned' });
+    if (task) this._dispatchPass();
+  }
+
+  /**
+   * The settlement every reaped transport shares (#265 item 2, #295 items (2)+(4)): the observed
+   * native children of a killed member are settled with their named gap, and a typed provider
+   * death lands as its run-level row with whatever preservation actually produced. Idempotent by
+   * construction — a child settled once is never re-settled, and a death mints exactly one row.
+   */
+  _settleTransportDeath(handle, task, stopEvent = null) {
+    if (!handle) return null;
+    this._settleObservedNativeChildren(handle, stopEvent);
+    return this._mintProviderFaultDeath(handle, task ?? this._tasks.get(handle.taskId), {
+      preservation: (task ?? this._tasks.get(handle.taskId))?.progressPreservation ?? null,
+      retention: handle.preservationFailure ?? null,
+    });
+  }
+  /**
+   * #295 items (2)+(4): the death of a member whose turn was refused by its provider lands as a
+   * RUN-LEVEL attention row that can be acted on without reading the worker's log: the exact
+   * route, the fault class, the reset instant when the provider named one, the pinned progress
+   * checkpoint (or the retained checkout when preservation failed), and the next act. Minted once
+   * per death, at the point the settlement knows what was preserved.
+   */
+  _mintProviderFaultDeath(handle, task, { preservation = null, retention = null } = {}) {
+    const cause = handle?.terminalCause ?? null;
+    if (!cause || cause.kind !== 'provider_failure') return null;
+    if (handle.providerFaultRowSeq !== undefined && handle.providerFaultRowSeq !== null) return null;
+    const detail = cause.detail ?? null;
+
+    const route = detail?.route ?? this._providerRouteOf(handle);
+    const quota = cause.code === PROVIDER_FAULT_CODES.quota;
+    const resetAt = quota ? detail?.resetAt ?? null : null;
+    const checkpoint = task?.checkpoint?.state === 'pinned'
+      ? Object.freeze({ ref: task.checkpoint.ref, sha: task.checkpoint.sha }) : null;
+    const retainedWorktree = retention?.worktreePath ?? null;
+    const next = quota
+      ? Object.freeze({
+        action: 'wait_until_reset',
+        ...(resetAt ? { notBefore: resetAt } : {}),
+        ...(checkpoint
+          ? { then: 'resume_from_checkpoint', checkpointRef: checkpoint.ref }
+          : retainedWorktree
+            ? { then: 'recover_retained_worktree', worktreePath: retainedWorktree }
+            : {}),
+      })
+      : retainedWorktree
+        ? Object.freeze({
+          action: 'recover_retained_worktree', worktreePath: retainedWorktree,
+          ...(route ? { avoidRoute: route } : {}),
+        })
+        : checkpoint
+          ? Object.freeze({
+            action: 'resume_from_checkpoint', checkpointRef: checkpoint.ref,
+            ...(route ? { avoidRoute: route } : {}),
+          })
+          : Object.freeze({ action: 'resume_on_another_route', ...(route ? { avoidRoute: route } : {}) });
+    const reason = {
+      seq: ++this._attentionCursor,
+      kind: 'provider_fault_death',
+      runId: task?.runId ?? handle.runId ?? null,
+      mintEpoch: ++this._attentionMintEpoch,
+      mintedAt: this._now(),
+      workerId: handle.id,
+      taskId: task?.id ?? handle.taskId ?? null,
+      route,
+      fault: Object.freeze({ code: cause.code, resetAt }),
+      checkpoint,
+      retainedWorktree,
+      preservation: preservation ?? Object.freeze({ state: 'not_applicable' }),
+      ...(retention?.reason ? { preservationFailure: Object.freeze({ code: retention.code, reason: retention.reason }) } : {}),
+      sessionId: cause.sessionId ?? handle.sessionRef?.id ?? null,
+      next,
+    };
+    handle.providerFaultRowSeq = reason.seq;
+    this._attentionReasons.push(reason);
+    return Object.freeze({ ...reason });
+  }
+
+  /**
+   * #265 item 2: killing a member settles every native child it had been observed to run. The
+   * kill reaps the OMP process group, so the session that would have carried a child's terminal
+   * frame is gone — the honest settlement is `unknown` beside the named gap, recorded durably and
+   * folded by nativeSubagentView, so a stopped participant never reads "still live" forever and a
+   * Run stop converges instead of waiting on an observation that can no longer arrive.
+   */
+  _settleObservedNativeChildren(handle, stopEvent = null) {
+    if (!handle || handle.nativeChildSettlement) return null;
+    const view = nativeSubagentView(this._log.read(handle.id));
+    const observed = view.agents.filter((agent) => !['completed', 'failed', 'stopped', 'cancelled', 'exited'].includes(agent.state));
+    if (observed.length === 0) return null;
+    const children = Object.freeze(observed.map((agent) => Object.freeze({
+      key: agent.key, nativeId: agent.nativeId ?? null, harness: agent.harness ?? null, state: agent.state ?? 'unknown',
+    })));
+    const settlement = Object.freeze({
+      gap: NATIVE_SETTLEMENT_GAP,
+      reason: 'parent_transport_reaped_before_child_terminal_observation',
+      count: children.length,
+      children,
+      processGroupReaped: true,
+      stopSeq: stopEvent?.seq ?? null,
+    });
+    handle.nativeChildSettlement = settlement;
+    try {
+      this._log.append({
+        worker: handle.id, harness: this._harnessOf(handle.vendor), turnEpoch: this._safeTurnEpoch(handle),
+        kind: 'native.children_settled', actor: 'policy',
+        ...this._routeAttribution(handle, this._tasks.get(handle.taskId)),
+        payload: settlement,
+      });
+    } catch { /* The in-memory settlement still folds; a log that refuses is already fatal. */ }
+    return settlement;
+  }
 
   _failProviderResult(handle, terminalEvent, workerResult) {
     const task = this._tasks.get(handle.taskId);
-    const code = typedTerminalCode(workerResult?.failure?.code ?? workerResult?.code, 'provider_turn_failed');
-    handle.terminalCause ??= deepFreeze({ kind: 'provider_failure', code });
+    const fault = this._providerFaultOf(workerResult);
+    const code = fault?.code ?? typedTerminalCode(workerResult?.failure?.code ?? workerResult?.code, 'provider_turn_failed');
+    // #295 item 3: the terminal cause names the fault class AND the coordinates the fault is a
+    // fact about (the exact route, the reset instant when the provider named one), so `run.view`
+    // can never show a typed provider death as cause-free.
+    handle.terminalCause ??= deepFreeze({
+      kind: 'provider_failure', code,
+      ...(fault?.detail ? { detail: fault.detail } : {}),
+      ...(fault?.detail?.route ? { route: fault.detail.route } : {}),
+    });
+    // #295 item 4: a quota refusal blocks its route until the provider's own reset instant — the
+    // same block the readiness derivation and the pre-effect recruit refusal read.
+    if (code === PROVIDER_FAULT_CODES.quota) this._recordProviderQuotaBlock(handle, fault, task);
     if (task && !TERMINAL_TASK_STATUSES.has(task.status)) {
       const evidence = this._coordMapEvent(terminalEvent);
-      if (evidence) this._coordTransition(task, 'failed', `task.failed:${task.id}:provider_result:${evidence.coordinationSeq}`, evidence);
+      if (evidence) {
+        this._coordTransition(task, 'failed', `task.failed:${task.id}:provider_result:${evidence.coordinationSeq}`, evidence);
+      }
       task.status = 'failed';
       task.result = null;
       task.verdict = null;
@@ -14624,7 +15036,7 @@ export class Coordinator {
       this._cleanupTransportInBackground(handle, task, terminalEvent);
     } else if (handle.status !== 'dead' && handle.status !== 'stopping') {
       // The ordinary two-phase stop invokes Phase 70 preservation before runtime/worktree reap.
-      this._stopInBackground(handle);
+      this._stopInBackground(handle, 'kill', KILL_RULES.providerFault);
     }
   }
 
@@ -14989,7 +15401,7 @@ export class Coordinator {
           handle.status = 'exited';
           this._cleanupTransportInBackground(handle, task, errorEvent);
         } else if (handle.status !== 'dead' && handle.status !== 'stopping') {
-          this._stopInBackground(handle);
+          this._stopInBackground(handle, 'kill', KILL_RULES.terminalObservation);
         }
       }
     }
@@ -15526,8 +15938,14 @@ export class Coordinator {
             providerTerminalSeal = e.payload?.usageSeal ?? providerTerminalSeal;
             if (providerTurn && providerTerminalSeal) providerTurn.sealed = true;
             if (!TERMINAL_TASK_STATUSES.has(terminalStatus)) terminalStatus = 'failed';
+            // The recovered cause carries the SAME detail the live path does: the durable cert
+            // names the route and the reset instant, so a death read back after a restart is not
+            // less legible than the one read live.
+            const recoveredFault = this._providerFaultOf(e.payload);
             terminalCause ??= deepFreeze({
-              kind: 'provider_failure', code: typedTerminalCode(e.payload?.code, 'provider_crashed'),
+              kind: 'provider_failure',
+              code: recoveredFault?.code ?? typedTerminalCode(e.payload?.code, 'provider_crashed'),
+              ...(recoveredFault?.detail ? { detail: recoveredFault.detail } : {}),
             });
             break;
           case 'error':

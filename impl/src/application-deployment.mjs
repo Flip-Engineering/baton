@@ -16,6 +16,7 @@ import { BatonWebHost } from './application-host.mjs';
 import { ClaudeSessionCli, GlmSessionCli, KimiSessionCli } from './claude-session.mjs';
 import { ClaudeCredentialCache } from './claude-credential-cache.mjs';
 import { GrokCredentialCache } from './grok-credential-cache.mjs';
+import { ProviderQuotaAuthority } from './route-quota.mjs';
 import { RouteLiveness } from './route-liveness.mjs';
 import { routeTupleKey } from './route-tuple.mjs';
 import { CodexAppServerCli } from './codex-appserver.mjs';
@@ -1438,6 +1439,32 @@ function assertRouteReady(options, readiness) {
   });
 }
 
+/** #295 item 4: the exhausted-route block that applies to a requested exact route, or null. */
+function routeQuotaBlockOf(options, readiness, quota) {
+  if (!quota || typeof quota.blockFor !== 'function') return null;
+  const route = requestedReadiness(options, readiness?.routes ?? []);
+  if (!route) return null;
+  try {
+    return quota.blockFor({ harness: route.harness, model: route.model, effort: route.effort });
+  } catch { return null; }
+}
+
+/** The refusal a recruit on an exhausted route draws BEFORE any effect: it names the route, the
+ * typed class, and — when the provider's own answer carried one — the reset instant. */
+function providerQuotaRefusal(block) {
+  const { harness, model, effort } = block.route;
+  const window = block.resetAt
+    ? `until ${block.resetAt}` : 'until its provider reports a reset time';
+  return Object.assign(new Error(
+    `route ${harness}/${model}@${effort} is exhausted (${block.code}) ${window}; recruit on another route or wait for the reset`,
+  ), { code: block.code, route: Object.freeze({ harness, model, effort }), resetAt: block.resetAt });
+}
+
+function assertRouteQuotaClear(options, readiness, quota) {
+  const block = routeQuotaBlockOf(options, readiness, quota);
+  if (block) throw providerQuotaRefusal(block);
+}
+
 function residentApplicationFacade(application, resident, readinessSupplier) {
   return new Proxy(application, {
     get(target, key) {
@@ -1469,6 +1496,7 @@ class BatonDeployment {
   #liveness = null;
   #adapters = {};
   #routes = [];
+  #routeQuota = null;
   #residentAuthority = null;
   #residentSession = null;
   #ordinaryHostPromise = null;
@@ -1486,6 +1514,7 @@ class BatonDeployment {
     this.#claudeCredentialProbe = deployment.claudeCredentialProbe ?? null;
     this.#grokCredentialProbe = deployment.grokCredentialProbe ?? null;
     this.#liveness = deployment.liveness ?? null;
+    this.#routeQuota = deployment.routeQuota ?? null;
     this.#adapters = deployment.adapters ?? {};
     this.#routes = deployment.routes ?? [];
     this.#card = Object.freeze({ ...application.card(), readiness });
@@ -1496,7 +1525,7 @@ class BatonDeployment {
       open: (...args) => runs.open(...args),
       attach: (...args) => runs.attach(...args),
       start: (objective, options = {}) => {
-        assertRouteReady(options, this.#readiness);
+        this.#assertRouteReady(options);
         return runs.start(objective, options);
       },
       startMany: (requests) => this.startMany(requests),
@@ -1505,7 +1534,7 @@ class BatonDeployment {
     this.waves = Object.freeze({
       start: (options = {}) => {
         for (const member of options?.members ?? []) {
-          assertRouteReady(member?.exact ? { exact: member.exact } : member, this.#readiness);
+          this.#assertRouteReady(member?.exact ? { exact: member.exact } : member);
         }
         return this.#baton.waves.start(options);
       },
@@ -1545,6 +1574,14 @@ class BatonDeployment {
     Object.freeze(this);
   }
 
+  /** Every start-family seam asserts the SAME two things before any effect: the static route
+   * readiness, and (#295 item 4) the route's exhausted-quota state. A quota refusal names the
+   * reset instant the provider itself recorded, and expires by derivation from it. */
+  #assertRouteReady(options) {
+    assertRouteReady(options, this.#readiness);
+    assertRouteQuotaClear(options, this.#readiness, this.#routeQuota);
+  }
+
   /** Issue #35: workspace capacity is observed FRESH at each doctor/card read — disk state
    * moves, and an open-time snapshot would go stale exactly when the answer matters. */
   doctorReadiness() {
@@ -1558,6 +1595,22 @@ class BatonDeployment {
       }
       if (route.harness === 'grok' && grokCredential) {
         row = Object.freeze({ ...row, credential: grokCredential });
+      }
+      // #295 item 4: a route its provider refused for quota reads blocked until the recorded
+      // reset instant — derived, never re-probed, so readiness returns when the instant passes
+      // and nothing has to poll for it.
+      const quotaBlock = this.#routeQuota
+        ? this.#routeQuota.blockFor({ harness: row.harness, model: row.model, effort: row.effort }) : null;
+      if (quotaBlock) {
+        // The instant the block was OBSERVED, spelled the same way as `resetAt` so the row reads
+        // as one timeline — the authority's own `observedAt`, never a field this reader invents.
+        const blockedSince = Number.isFinite(quotaBlock.observedAt)
+          ? new Date(quotaBlock.observedAt).toISOString() : null;
+        row = Object.freeze({
+          ...row, state: 'blocked', code: quotaBlock.code, resetAt: quotaBlock.resetAt,
+          quotaBlockedSince: blockedSince,
+          summary: `The exact route is exhausted until ${quotaBlock.resetAt ?? 'its provider reports a reset time'} (${quotaBlock.code}); recruit on another route or wait for the reset.`,
+        });
       }
       // §4.2.2: doctor rows gain the roster fields — liveness + occupancy (RT-7b), so every
       // existing consumer sees the honest multi-axis view without a new surface. They are
@@ -1584,7 +1637,12 @@ class BatonDeployment {
       ledgerHeadSeq: coordination.ledgerHeadSeq(),
       epochLag: coordination.ledgerHeadSeq() - briefingHead.observedSeq,
     } : null;
-    const base = workspace ? { ...this.#readiness, routes, workspace } : { ...this.#readiness, routes };
+    // #295 item 4: the composed document's verdict is derived from the SAME rows it publishes —
+    // a route its provider exhausted is not ready for a recruit, so the open-time verdict can
+    // never sit beside fresh blocked rows.
+    const ready = routes.some((route) => route.state === 'ready');
+    const base = workspace
+      ? { ...this.#readiness, ready, routes, workspace } : { ...this.#readiness, ready, routes };
     Object.defineProperty(base, 'briefing', { value: briefing, enumerable: false });
     return Object.freeze(base);
   }
@@ -1667,7 +1725,7 @@ class BatonDeployment {
   }
 
   async run(objective, route = {}) {
-    assertRouteReady(route, this.#readiness);
+    this.#assertRouteReady(route);
     await this.#livenessGate(route);
     return this.#baton.runs.start(objective, route);
   }
@@ -1675,7 +1733,7 @@ class BatonDeployment {
   async startMany(requests) {
     if (Array.isArray(requests)) {
       for (const request of requests) {
-        if (record(request)) assertRouteReady(request, this.#readiness);
+        if (record(request)) this.#assertRouteReady(request);
       }
     }
     return this.#baton.runs.startMany(requests);
@@ -1684,21 +1742,21 @@ class BatonDeployment {
   async workflow(objective, options = {}) {
     if (record(options) && Array.isArray(options.team)) {
       for (const member of options.team) {
-        if (record(member) && record(member.exact)) assertRouteReady({ exact: member.exact }, this.#readiness);
+        if (record(member) && record(member.exact)) this.#assertRouteReady({ exact: member.exact });
       }
     }
     return this.#baton.workflow(objective, options);
   }
 
   async explore(objective, options = {}) {
-    assertRouteReady(options, this.#readiness);
+    this.#assertRouteReady(options);
     return this.#baton.explore(objective, options);
   }
 
   async review(objective, options = {}) {
     if (record(options) && Array.isArray(options.routes)) {
       for (const exact of options.routes) {
-        if (record(exact)) assertRouteReady({ exact }, this.#readiness);
+        if (record(exact)) this.#assertRouteReady({ exact });
       }
     }
     return this.#baton.review(objective, options);
@@ -2171,7 +2229,19 @@ export async function openBatonDeployment(rawOptions, createDriver) {
     repoRoot: repository.root,
     treeSha: snapshot.sha,
   });
+  // #295 item 4: ONE exhausted-route authority for this deployment. The coordinator records a
+  // provider quota refusal onto it; the readiness derivation and every pre-effect recruit
+  // assertion read it back. Both sides receive the SAME instance — a block recorded from an
+  // observed death is a block the next recruit is refused by. The clock is the deployment's own
+  // (advanced.resident.now), so a recorded reset instant is compared on one clock everywhere.
+  const routeQuota = new ProviderQuotaAuthority({
+    now: residentOptions.now,
+    // Sized to this deployment's own route inventory (normalizeRoutes bounds it), so a live block
+    // on a configured route is never evicted by the retention ceiling.
+    maxEntries: Math.max(1, routes.length),
+  });
   const driver = createDriver({
+    routeQuotaAuthority: routeQuota,
     repoRoot: repository.root,
     repoId: repository.repoId,
     deploymentBaseSha: snapshot.sha,
@@ -2274,7 +2344,7 @@ export async function openBatonDeployment(rawOptions, createDriver) {
     });
     await application.ready;
     return new BatonDeployment(application, principal, readiness, {
-      driver, repository, deploymentRoot, residentOptions, workspaceProbe, adapters, routes,
+      driver, repository, deploymentRoot, residentOptions, workspaceProbe, adapters, routes, routeQuota,
       liveness: livenessController,
       claudeCredentialProbe: claudeCredentialCache ? () => claudeCredentialCache.metadata() : null,
       claudeCredentialCache,

@@ -16,7 +16,7 @@
         {
           "name": "constructor",
           "ordinal": 0,
-          "size": 679,
+          "size": 695,
           "seam": "effect",
           "evidence": [
             "recovery:reconcile_call",
@@ -1534,7 +1534,7 @@
         {
           "name": "_publicHandle",
           "ordinal": 0,
-          "size": 89,
+          "size": 96,
           "seam": "surface",
           "evidence": [
             "admission:policy_gate",
@@ -1805,7 +1805,7 @@
         {
           "name": "kill",
           "ordinal": 0,
-          "size": 50,
+          "size": 54,
           "seam": "effect",
           "evidence": [
             "effect:action_verb",
@@ -1833,7 +1833,7 @@
         {
           "name": "_beginStop",
           "ordinal": 0,
-          "size": 137,
+          "size": 142,
           "seam": "effect",
           "evidence": [
             "effect:adapter_verb",
@@ -1997,7 +1997,7 @@
         {
           "name": "_preserveProgressBeforeReap",
           "ordinal": 0,
-          "size": 85,
+          "size": 97,
           "seam": "recovery",
           "evidence": [
             "recovery:restart_name",
@@ -2076,10 +2076,11 @@
         {
           "name": "_cleanupClosedTransport",
           "ordinal": 0,
-          "size": 19,
+          "size": 25,
           "seam": "recovery",
           "evidence": [
-            "delegates:recovery"
+            "delegates:recovery",
+            "delegates:observation"
           ]
         },
         {
@@ -2551,7 +2552,7 @@
         {
           "name": "_finalizeStop",
           "ordinal": 0,
-          "size": 157,
+          "size": 172,
           "seam": "effect",
           "evidence": [
             "effect:adapter_verb",
@@ -2562,7 +2563,7 @@
         {
           "name": "_forceStop",
           "ordinal": 0,
-          "size": 85,
+          "size": 117,
           "seam": "effect",
           "evidence": [
             "effect:adapter_verb",
@@ -3698,7 +3699,7 @@
         {
           "name": "_handleEvent",
           "ordinal": 0,
-          "size": 1087,
+          "size": 1105,
           "seam": "effect",
           "evidence": [
             "effect:adapter_verb",
@@ -3711,9 +3712,84 @@
           ]
         },
         {
+          "name": "_providerFaultOf",
+          "ordinal": 0,
+          "size": 6,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "_providerRouteOf",
+          "ordinal": 0,
+          "size": 7,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "_recordProviderQuotaBlock",
+          "ordinal": 0,
+          "size": 24,
+          "seam": "observation",
+          "evidence": [
+            "observation:log_append",
+            "observation:record_name"
+          ]
+        },
+        {
+          "name": "_queueTransientProviderTurnRetry",
+          "ordinal": 0,
+          "size": 31,
+          "seam": "admission",
+          "evidence": [
+            "admission:policy_gate"
+          ]
+        },
+        {
+          "name": "_retryTransientProviderTurn",
+          "ordinal": 0,
+          "size": 37,
+          "seam": "effect",
+          "evidence": [
+            "effect:adapter_verb",
+            "observation:log_append"
+          ]
+        },
+        {
+          "name": "_settleTransportDeath",
+          "ordinal": 0,
+          "size": 8,
+          "seam": "observation",
+          "evidence": [
+            "observation:record_name"
+          ]
+        },
+        {
+          "name": "_mintProviderFaultDeath",
+          "ordinal": 0,
+          "size": 54,
+          "seam": "observation",
+          "evidence": [
+            "observation:record_name"
+          ]
+        },
+        {
+          "name": "_settleObservedNativeChildren",
+          "ordinal": 0,
+          "size": 27,
+          "seam": "observation",
+          "evidence": [
+            "observation:log_append",
+            "observation:record_name"
+          ]
+        },
+        {
           "name": "_failProviderResult",
           "ordinal": 0,
-          "size": 22,
+          "size": 35,
           "seam": "observation",
           "evidence": [
             "delegates:observation",
@@ -3736,7 +3812,7 @@
         {
           "name": "_replay",
           "ordinal": 0,
-          "size": 992,
+          "size": 998,
           "seam": "recovery",
           "evidence": [
             "recovery:restart_name",

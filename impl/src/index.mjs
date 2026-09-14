@@ -1634,6 +1634,9 @@ export function createDriver(opts) {
     recoveryMaxAttempts: sessionRecoveryPolicy?.maxAttempts ?? opts.recoveryMaxAttempts ?? 3,
     startupRecoveryAuthority,
     budgetPolicy: opts.budgetPolicy,
+    // #295 item 4: the deployment's exhausted-route authority, shared verbatim with the readiness
+    // derivation and every pre-effect recruit refusal (application-deployment creates it once).
+    providerQuotaAuthority: opts.providerQuotaAuthority ?? null,
     ...(providerGovernance ? { providerGovernance: providerGovernance.projection } : {}),
     watchdog: opts.watchdog,
     drainPolicy,

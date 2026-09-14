@@ -87,7 +87,11 @@ test('OMP assistant identity is independent of usage, and user metadata is never
   assert.equal(fx.usage().at(-1).payload.modelObserved, 'glm/glm-5.2', 'later native route changes remain observable');
 });
 
-for (const stopReason of ['error', 'aborted']) {
+// #295: a provider fault is typed at this boundary. An `aborted` turn is this adapter's own
+// control lane ending the turn and keeps its literal code; any other failed turn rides the
+// provider-fault taxonomy, whose generic is the NAMED `provider_turn_failed` — a bare
+// `omp_<stopReason>` is no longer published.
+for (const [stopReason, expectedCode] of [['error', 'provider_turn_failed'], ['aborted', 'omp_aborted']]) {
   test(`OMP native ${stopReason} retains incurred usage and never claims successful completion`, () => {
     const fx = fixture();
     const value = message({ stopReason, errorMessage: 'native failure' });
@@ -95,7 +99,7 @@ for (const stopReason of ['error', 'aborted']) {
     fx.frame({ type: 'agent_end', isTerminal: true, messages: [] });
     assert.equal(fx.usage()[0].payload.tokens, 17);
     assert.equal(fx.complete()[0].payload.status, 'failed');
-    assert.equal(fx.complete()[0].payload.failure.code, `omp_${stopReason}`);
+    assert.equal(fx.complete()[0].payload.failure.code, expectedCode);
   });
 }
 

@@ -308,6 +308,83 @@ instead (`startup_cleanup_pending`, `authority_operations_in_flight`, `pending_i
 are one derivation shared with the predicate itself, so the list can never disagree with the loop
 that produced the refusal.
 
+
+### A death is typed, resumed and settled (issue #295, 2026-09-14)
+
+A worker's death is never anonymous. Three classes are named at the boundary that received the
+provider's answer — the adapter — and everything downstream reads the typed code instead of the
+provider's prose:
+
+* `provider_quota_exhausted` — the provider refused for a quota reason. The answer's own reset
+  instant is parsed from it when it carries one (`detail.resetAt`, canonical ISO-8601 UTC) and
+  never invented. This class is not transient: the same route will refuse again until that instant.
+* `provider_socket_closed` — the provider connection dropped mid-turn. Transient by construction:
+  the same route may answer again.
+* `provider_turn_failed` — the named generic, for a failed turn whose class the boundary could not
+  name. A bare `omp_<stopReason>` is never published, and an aborted turn keeps its control code
+  (a control act is not a provider fault).
+
+The typed fault rides `lifecycle.turn_completed.failure` and, when the process dies after it, the
+death cert (`lifecycle.crashed`). Both are read back downstream by SHAPE only (code + bounded
+detail) — the coordinator, the readiness derivation and the run projections never re-read provider
+prose (#267) — so a rate-limited member's cert names the class, the exact route and the reset
+instant instead of the anonymous dead runtime that `429 Usage limit reached … will reset at …`
+used to produce.
+
+**A transient fault re-drives the turn before any kill.** The dropped connection is not the
+member's death: the turn is re-driven once, in place, as a NEW turn on the same session and
+worktree (`provider.transient_retry {action: 'new_turn_on_same_session', attempt, of}`). The
+re-driven turn passes the SAME admission gate as any other new provider turn
+(`resource.provider_turn_admitted {phase: 'transient_retry'}` against the member's declared budget
+and terminal reserve), so a retry rides the existing turn budget instead of bypassing it — a member
+with no headroom left is settled by the ordinary provider-failure path, with the refusal named
+(`resource.provider_turn_refused {phase: 'transient_retry', code}`) rather than retried. Only a
+fault the retry ALSO hits (or one that is not transient at all) settles the member, and the
+`provider.transient_retry` row is written only once the adapter ACCEPTED the re-driven turn — a
+prompt the adapter refused releases its admission by name
+(`resource.provider_turn_released {code: 'transient_retry_refused'}`) and settles the member
+instead of claiming a turn that never started. A quota fault is NEVER re-driven on the same route.
+
+**Every policy kill names the rule it applied.** `kill.requested` carries
+`{rule, actor}` — `stop_requested`, `run_stop`, `deployment_drain`, `startup_reconciliation`,
+`stall_reap`, `watchdog_action`, `provider_budget_hard_limit`,
+`provider_governance_violation`, `provider_fault`, `provider_crash`, `preservation_unproven`,
+`stop_deadline`, `interrupt_escalated_to_kill`, `preserved_reattachment_failed`, `worker_policy_mismatch`,
+`worktree_authority_lost`, `spawn_refused`, `protocol_violation`, `process_observation_refused`,
+`terminal_observation` — and an empty payload is gone: the observed `kill.requested` with an empty
+object could not be told from a routine operator stop.
+
+**The death lands as a run-level row.** One `provider_fault_death` attention reason per death
+(`run.attention.watch`) names the exact route, the fault class, `resetAt` when the provider named
+one, the pinned progress checkpoint (or the retained checkout when preservation failed, with the
+reason the checkpoint could not be written), and `next`: `wait_until_reset` (with `notBefore` and,
+when one was pinned, `resume_from_checkpoint`), `recover_retained_worktree`, or
+`resume_from_checkpoint` on another route. The worker's terminal cause is never null for a typed
+death: `run.view` carries `{kind: 'provider_failure', code, detail: {route, resetAt}}`.
+
+**A quota refusal is a fact about the ROUTE.** The one exhausted-route authority the deployment
+owns is written by the coordinator — on the failed-turn path and on the crash path alike, so a
+quota death blocks its route however the transport died — and read by route readiness: the doctor
+row reads `blocked`, `code: provider_quota_exhausted`, `resetAt`, `quotaBlockedSince` (the instant
+the block was observed), and a recruit on that route is refused BEFORE any effect (no worktree, no
+credential projection, no process) with the reset time in the message. Readiness returns when the
+recorded instant passes — derived from the recorded time, with no poll, no timer and no re-probe.
+
+**Killing a parent settles its observed children (issue #265 item 2).** The kill reaps the OMP
+process group, and every native child the parent had been observed to run is settled durably
+(`native.children_settled {gap: 'parent_stopped_before_child_terminal', processGroupReaped: true}`)
+and folded to `unknown` beside that named gap, so no projection counts a child as live after the
+session that would have carried its terminal frame is gone — the Run stop converges instead of
+waiting on an observation that cannot arrive.
+
+**A deadline ends patience, never the cleanup (issue #265 item 3).** When a stop's deadline wins
+and nothing indicates a live process, the ordinary preserve-then-reap path runs
+(`control.stop_deadline_cleanup {action: 'reap_after_deadline'}`): the work is checkpointed first,
+then the checkout is released, so a forced stop cannot leave a dead member holding
+`localAuthority`, its worktree and `cleanupPending` forever. When a process may still be live the
+resources are RETAINED — uncertainty is never permission to destroy — and the holds are named
+durably (`control.stop_waiting_on`) instead of being abandoned in silence.
+
 ## Reading the swarm as slices, and what a refusal owes the caller (issue #283, 2026-09-14)
 
 One swarm record, many readers. `swarm.view` and `swarm.watch` take an optional `projection`, so a

@@ -1,5 +1,13 @@
 import { NATIVE_PHASE } from './native-subagent-observations.mjs';
 
+
+/** The named gap a settled child carries when its parent's transport was reaped first: the
+ * observation stream that would have carried the child's terminal frame belonged to a session
+ * that no longer exists (#265 item 2). */
+export const NATIVE_SETTLEMENT_GAP = 'parent_stopped_before_child_terminal';
+
+const TERMINAL_NATIVE_STATES = new Set(['completed', 'failed', 'stopped', 'cancelled', 'exited']);
+
 /** Read-only observations of harness-managed collaboration. Invocation completion and
  * child-agent completion are distinct; neither grants Baton process or session custody.
  *
@@ -101,6 +109,29 @@ export function nativeSubagentView(events) {
     } else if (observation.harness === 'claude-code' && observation.subagentRetry?.agent_id) {
       observeAgent(observation.subagentRetry.agent_id, 'unknown', {
         agentType: observation.subagentType, lastInvocationId: observation.toolUseId,
+      });
+    }
+  }
+  // #265 item 2: a killed parent's observed children are SETTLED, not left reading live forever.
+  // The kill reaped the parent's process group, so the session that would have carried a child's
+  // terminal frame is gone: the honest state is `unknown` beside the named gap that says why, and
+  // the child stops counting as live in every projection derived from this view.
+  for (const event of events) {
+    if (event.kind !== 'native.children_settled') continue;
+    const payload = event.payload ?? {};
+    const keys = Array.isArray(payload.children)
+      ? new Set(payload.children.map((child) => child?.key).filter((key) => typeof key === 'string')) : null;
+    const gap = typeof payload.gap === 'string' && payload.gap.length > 0
+      ? payload.gap : NATIVE_SETTLEMENT_GAP;
+    for (const [key, agent] of agents) {
+      if (keys && !keys.has(key)) continue;
+      if (TERMINAL_NATIVE_STATES.has(agent.state)) continue;
+      if (Number.isSafeInteger(agent.stateSeq) && agent.stateSeq > event.seq) continue;
+      agents.set(key, {
+        ...agent,
+        state: 'unknown', stateSeq: event.seq,
+        gaps: [...new Set([...(agent.gaps ?? []), gap])],
+        settledBy: { seq: event.seq, ts: event.ts, gap, reason: payload.reason ?? null },
       });
     }
   }
