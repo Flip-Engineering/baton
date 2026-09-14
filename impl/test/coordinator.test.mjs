@@ -2035,12 +2035,15 @@ test('#265: a Run stop that cannot converge names the wait on the error and in t
     drainPolicy: { maxWorkers: 8, pollMs: 5, timeoutMs: 400 },
   });
   const handle = await coordinator.spawn('mock', makeBrief());
-  const stop = coordinator.stopRunTargets([handle.id], 'operator:stop');
-  stop.catch(() => {});
+  // The kill is forced first (the adapter acks, no terminal ever arrives, the logical deadline
+  // sweeps it), so the Run stop below starts from a settled dead handle whose holds never clear;
+  // its wall-clock deadline is then the only thing that elapses, whatever the machine load.
+  const kill = coordinator.kill(handle.id, 'operator:stop');
   while (adapter.calls.kill.length === 0) await new Promise((resolve) => setTimeout(resolve, 1));
   advance(51);
   coordinator.tick();
-  await assert.rejects(stop, (error) => {
+  assert.equal((await kill).result, 'forced');
+  await assert.rejects(coordinator.stopRunTargets([handle.id], 'operator:stop'), (error) => {
     assert.equal(error.code, 'coordinator_run_stop_incomplete');
     assert.equal(error.detail.timeoutMs, 400);
     assert.deepEqual(error.detail.waitingOn, [{

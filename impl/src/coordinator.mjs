@@ -2836,7 +2836,7 @@ export class Coordinator {
   }
 
   async _performDrain(targetWorkerIds, repoId, deadline, physicalDrainId, physicalActor) {
-    await this._beforeDrainDeadline(Promise.all(this._startupCleanupPromises), deadline);
+    await this._beforeDrainDeadline(Promise.all(this._startupCleanupPromises), deadline, () => ({ reason: 'startup_cleanup_pending', timeoutMs: this._drainPolicy.timeoutMs }));
     if (this._startupCleanupError) throw Object.assign(new Error('fleet drain did not converge before its deployment deadline'), { code: 'coordinator_drain_incomplete', detail: { reason: 'startup_cleanup_error', cause: { code: this._startupCleanupError?.code ?? null, message: this._startupCleanupError?.message ?? null } } });
     // Operations admitted before the irreversible fence may finish, but no stop effect races
     // them. In particular, publisher/integration/provider work cannot be relabelled as drained
@@ -2907,7 +2907,8 @@ export class Coordinator {
       } catch { /* exact state below is authoritative; retry until the deployment deadline */ }
     };
 
-    await this._beforeDrainDeadline(Promise.all(targetWorkerIds.map((id) => attempt(this._workers.get(id)))), deadline);
+    await this._beforeDrainDeadline(Promise.all(targetWorkerIds.map((id) => attempt(this._workers.get(id)))), deadline,
+      () => ({ reason: 'deadline', stage: 'targets', timeoutMs: this._drainPolicy.timeoutMs, waitingOn: this._stopWaitingOn(targetWorkerIds, null, physicalActor) }));
     while (Date.now() <= deadline) {
       const targets = targetWorkerIds.map((id) => this._workers.get(id)).filter(Boolean);
       const remaining = targets.filter((handle) => this._ownsLocalResources(handle));
@@ -2926,7 +2927,7 @@ export class Coordinator {
             });
           }
           const reconciliation = this._drainHistoricalReconcilePromise;
-          await this._beforeDrainDeadline(reconciliation, deadline);
+          await this._beforeDrainDeadline(reconciliation, deadline, () => ({ reason: 'historical_reconciliation_pending', timeoutMs: this._drainPolicy.timeoutMs }));
           if (this._drainHistoricalReconcilePromise === reconciliation) this._drainHistoricalReconcilePromise = null;
           this._drainHistoricalReconciled = true;
           continue;
@@ -2948,18 +2949,26 @@ export class Coordinator {
         };
         return deepFreeze({ ...core, receiptDigest: canonicalDigest(core) });
       }
-      await this._beforeDrainDeadline(Promise.all(remaining.map(attempt)), deadline);
+      await this._beforeDrainDeadline(Promise.all(remaining.map(attempt)), deadline,
+        () => ({ reason: 'deadline', stage: 'remaining', timeoutMs: this._drainPolicy.timeoutMs, waitingOn: this._stopWaitingOn(remaining.map((handle) => handle.id), null, physicalActor) }));
       if (Date.now() >= deadline) break;
       await this._sleep(Math.min(this._drainPolicy.pollMs, Math.max(0, deadline - Date.now())));
     }
     throw Object.assign(new Error('fleet drain did not converge before its deployment deadline'), { code: 'coordinator_drain_incomplete' });
   }
 
-  _beforeDrainDeadline(operation, deadline) {
+  /** Races one drain step against the deployment deadline. `describe` names the wait (#265) when
+   * the deadline wins; it is evaluated only then, so a settled step costs nothing. */
+  _beforeDrainDeadline(operation, deadline, describe = null) {
+    const expired = () => {
+      const failure = Object.assign(new Error('fleet drain did not converge before its deployment deadline'), { code: 'coordinator_drain_incomplete' });
+      if (describe) { try { failure.detail = describe(); } catch { /* a wait that cannot be described is still a named deadline */ } }
+      return failure;
+    };
     const remaining = deadline - Date.now();
-    if (remaining <= 0) return Promise.reject(Object.assign(new Error('fleet drain did not converge before its deployment deadline'), { code: 'coordinator_drain_incomplete' }));
+    if (remaining <= 0) return Promise.reject(expired());
     return new Promise((resolveOperation, rejectOperation) => {
-      const timer = setTimeout(() => rejectOperation(Object.assign(new Error('fleet drain did not converge before its deployment deadline'), { code: 'coordinator_drain_incomplete' })), remaining);
+      const timer = setTimeout(() => rejectOperation(expired()), remaining);
       Promise.resolve(operation).then(
         (value) => { clearTimeout(timer); resolveOperation(value); },
         (error) => { clearTimeout(timer); rejectOperation(error); },
