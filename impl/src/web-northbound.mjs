@@ -11,6 +11,7 @@ import { northboundCapabilityToken } from './northbound-capability-authority.mjs
 import { sanitizeGoalPlanProjection } from './goal-plan.mjs';
 import { APPLICATION_COMMAND_DEFINITIONS, validateApplicationCommandArgs } from './application.mjs';
 import { APPLICATION_SEMANTIC_REGISTRY, applicationOperationAliasMap, canonicalAndTransportNames } from './application-semantics.mjs';
+import { WakeStream, parseWakeFilter } from './wake-stream.mjs';
 
 // Issue #233 (canonical naming unification): every web-flagged application definition is
 // admitted under BOTH spellings, derived through the ONE canonicalAndTransportNames seam — the
@@ -1010,8 +1011,52 @@ export class WebNorthbound {
       releaseConnection: this.edge ? (principal) => this.edge.releaseConnection(principal.credentialId) : null,
       credentialDigest: this.edge ? (credentialId) => this.edge.digest(`credential:${credentialId}`) : null,
     });
+    // Issue #294: the deployment-scope wake stream. It rides the same coordination authority the
+    // transports already serve and takes its two deployment observations from the application card
+    // the resident already publishes (the doctor's fresh workspace capacity observation, and the
+    // publication identity), so no second observation path is invented here.
+    this.wakes = opts.wakes ?? new WakeStream({
+      ...opts, coordination: this.coordination,
+      observation: opts.observation ?? (() => this._wakeObservation()),
+    });
+    this.wakeHeartbeatMs = opts.wakeHeartbeatMs ?? 15_000;
+    if (!Number.isSafeInteger(this.wakeHeartbeatMs) || this.wakeHeartbeatMs <= 0) {
+      throw new TypeError('wake heartbeat interval must be a positive safe integer');
+    }
+    this._wakeConnections = new Set();
   }
 
+
+  /** The two deployment observations the wake classes read, taken from the card the resident
+   * already serves to every reading consumer: the doctor's FRESH workspace capacity observation
+   * (issue #35) and the publication identity. A card that cannot be read observes nothing — the
+   * stream then reports no deployment row rather than a health it never measured. */
+  _wakeObservation() {
+    let card;
+    try { card = this.application?.card?.() ?? null; }
+    catch { return null; }
+    if (!card || typeof card !== 'object' || Array.isArray(card)) return null;
+    const workspace = card.readiness?.workspace ?? null;
+    const resident = card.resident ?? null;
+    return Object.freeze({
+      // A standing fault: 'blocked' means every dispatch refuses until space is freed, and
+      // 'unobserved' means the volume could not be read at all.
+      capacity: workspace && typeof workspace === 'object' && workspace.state !== 'ready'
+        ? Object.freeze({
+          state: workspace.state, code: workspace.code ?? 'worktree_capacity_unavailable',
+          summary: workspace.summary ?? null,
+          freeBytes: workspace.freeBytes ?? null, freeInodes: workspace.freeInodes ?? null,
+          minFreeBytes: workspace.minFreeBytes ?? null, minFreeInodes: workspace.minFreeInodes ?? null,
+        })
+        : null,
+      resident: resident && typeof resident === 'object'
+        ? Object.freeze({
+          incarnation: resident.incarnation ?? null, deploymentId: resident.deploymentId ?? null,
+          transport: resident.transport ?? null,
+        })
+        : null,
+    });
+  }
   _audit(kind, ctx, details = {}) {
     const principal = ctx?.principal;
     const auditActor = principal ? actor(principal) : 'web:anonymous';
@@ -1889,6 +1934,12 @@ export class WebNorthbound {
       catch { return this._write(res, error(503, 'temporarily_unavailable'), origin); }
       return this._write(res, result(200, { ok: true, semanticAuthority }), origin);
     }
+    // Issue #294: the deployment-scope wake feed, beside the ticketed per-Run event stream. It is
+    // principal-authenticated with no ticket: a wake attachment IS the orchestrator's seat, and it
+    // must be re-establishable after a resident restart without a second round trip to mint one.
+    if (req.method === 'GET' && url.pathname === '/v1/wakes') {
+      return this._handleWakes(req, res, url, origin);
+    }
     if (req.method === 'GET' && url.pathname === '/v1/events') {
       let principal;
       try { principal = await this.authenticate?.(req) ?? null; } catch { principal = null; }
@@ -2292,6 +2343,125 @@ export class WebNorthbound {
     });
   }
 
+  /** `GET /v1/wakes` — the deployment-scope wake feed as server-sent events.
+   *
+   * Frames are `event: wake` with the wake seq as the SSE id, so a reconnect may resume from
+   * `Last-Event-ID` (or `?since=`) with no gap and no duplicate. A lagging consumer receives the
+   * stream's own typed `wake_stream_lagged` frame rather than a silent hole; an unparseable filter
+   * is refused BEFORE the stream opens, with the closed class set named in the refusal. */
+  async _handleWakes(req, res, url, origin) {
+    const ctx = {
+      origin, principal: null,
+      remoteAddress: req.edgeAddressDigest ? 'canonical' : (req.socket?.remoteAddress ?? null),
+      addressDigest: req.edgeAddressDigest ?? null,
+      transport: req.edgeIdentity?.transport ?? (req.socket?.encrypted ? 'https' : 'http'),
+    };
+    let principal;
+    try { principal = await this.authenticate?.(req) ?? null; } catch { principal = null; }
+    ctx.principal = principal;
+    if (!this._admissionOpen()) return this._write(res, error(503, 'temporarily_unavailable'), origin);
+    const authFailure = this._authenticate(ctx);
+    if (authFailure) {
+      try { this._audit('wake_stream_refused', ctx, { reason: authFailure.body?.error?.code ?? 'unauthenticated' }); } catch { /* the refusal is already the answer */ }
+      return this._write(res, authFailure, origin);
+    }
+    let filter;
+    try {
+      filter = parseWakeFilter({
+        kinds: url.searchParams.get('kinds'),
+        swarms: url.searchParams.get('swarms'),
+        participants: url.searchParams.get('participants'),
+        since: req.headers['last-event-id'] ?? url.searchParams.get('since'),
+      });
+    } catch (cause) {
+      try { this._audit('wake_stream_refused', ctx, { reason: cause.code }); } catch { return this._write(res, error(503, 'temporarily_unavailable'), origin); }
+      return this._write(res, {
+        status: 400,
+        body: { ok: false, error: { code: cause.code ?? 'invalid_wake_filter', message: cause.message, detail: cause.detail ?? null } },
+      }, origin);
+    }
+    // The pull form: a consumer that cannot hold an attachment (the MCP `baton_wakes_since` tool)
+    // asks for one bounded page instead of a stream. SSE stays the default; the page carries the
+    // same frames, the same cursor, and the same typed lag marker as an attachment would.
+    if (`${req.headers.accept ?? ''}`.includes('application/json')) {
+      let page;
+      try { page = this.wakes.since(filter); }
+      catch { return this._write(res, error(503, 'temporarily_unavailable'), origin); }
+      try { this._audit('wake_page_read', ctx, { since: filter.since, cursor: page.cursor, frames: page.frames.length }); }
+      catch { return this._write(res, error(503, 'temporarily_unavailable'), origin); }
+      return this._write(res, result(200, { ok: true, wakes: page }), origin);
+    }
+    try { this._audit('wake_stream_connected', ctx, { since: filter.since }); }
+    catch { return this._write(res, error(503, 'temporarily_unavailable'), origin); }
+    const controller = new AbortController();
+    let closed = false;
+    let acceptWrites = true;
+    const finish = () => {
+      if (closed) return;
+      closed = true;
+      controller.abort();
+      if (this._wakeConnections) this._wakeConnections.delete(finish);
+    };
+    const writeFrame = (type, id, value) => {
+      if (closed || !acceptWrites) return;
+      let accepted = false;
+      try { accepted = res.write(`id: ${id}\nevent: ${type}\ndata: ${JSON.stringify(value)}\n\n`) !== false; }
+      catch { accepted = false; }
+      if (accepted) return;
+      acceptWrites = false;
+      finish();
+      try { res.end(); } catch { /* the socket is already terminal */ }
+    };
+    res.on?.('close', finish);
+    res.on?.('error', finish);
+    res.writeHead(200, {
+      'content-type': 'text/event-stream; charset=utf-8', 'cache-control': 'no-store',
+      connection: 'keep-alive', 'x-accel-buffering': 'no',
+      ...(origin && this.allowedOrigins.has(origin)
+        ? { 'access-control-allow-origin': origin, 'access-control-allow-credentials': 'true', vary: 'Origin' } : {}),
+      'x-content-type-options': 'nosniff',
+    });
+    // A deployment may be silent for hours. The comment frame keeps an intermediary from reaping a
+    // quiet attachment, and it is not a frame: a consumer's parser ignores it by definition.
+    const heartbeat = setInterval(() => {
+      if (closed || !acceptWrites) return;
+      try { acceptWrites = res.write(': wake attachment open\n\n') !== false; } catch { acceptWrites = false; }
+      if (!acceptWrites) { finish(); try { res.end(); } catch { /* terminal already */ } }
+    }, this.wakeHeartbeatMs);
+    heartbeat.unref?.();
+    if (!this._wakeConnections) this._wakeConnections = new Set();
+    this._wakeConnections.add(finish);
+    try {
+      await this.wakes.watch(filter, {
+        signal: controller.signal,
+        onFrame: async (frame) => {
+          if (!this._liveAuthorized(principal, origin)) { finish(); try { res.end(); } catch { /* terminal */ } return; }
+          writeFrame('wake', frame.seq, frame);
+        },
+        onLagged: async (lagged) => { writeFrame('lagged', lagged.cursor, lagged); },
+      });
+    } catch (cause) {
+      try { this._audit('wake_stream_read_failed', ctx, { since: filter.since, reason: cause?.code ?? cause?.name ?? 'wake_stream_failed' }); }
+      catch { /* stream loss is never fatal to the resident */ }
+    } finally {
+      clearInterval(heartbeat);
+      finish();
+      try { res.end(); } catch { /* terminal already */ }
+    }
+    return undefined;
+  }
+
+  /** True while the principal is still authorized for this origin — the same live check the
+   * ticketed stream makes on every pump, so a revoked session stops receiving wakes. */
+  _liveAuthorized(principal, origin) {
+    if (!this.allowedOrigins.has(origin)) return false;
+    if (!principal?.userId) return false;
+    const expiresAt = Date.parse(principal.expiresAt);
+    if (principal.revoked === true || !Number.isFinite(expiresAt) || expiresAt <= this.now()) return false;
+    if (!this.isPrincipalActive) return true;
+    try { return this.isPrincipalActive(principal, { origin, repoId: [...this.repoIds][0] ?? null }) === true; }
+    catch { return false; }
+  }
   _write(res, response, origin = null, extraHeaders = {}) {
     const body = JSON.stringify(response.body);
     const headers = { 'content-type': 'application/json; charset=utf-8', 'content-length': Buffer.byteLength(body), 'cache-control': 'no-store', 'x-content-type-options': 'nosniff', ...(response.headers ?? {}), ...extraHeaders };
@@ -2309,6 +2479,10 @@ export class WebNorthbound {
       try { this._audit('shutdown_started', {}); } catch { auditOk = false; }
       let streamOk = true;
       try { this.stream.shutdown?.(); } catch { streamOk = false; }
+      // A wake attachment is a long-lived socket the server's own close() waits on: abort every
+      // one before the drain clock starts, so a quiet deployment never times out its own shutdown.
+      this.wakes.close?.();
+      for (const finish of [...this._wakeConnections]) { try { finish(); } catch { /* already gone */ } }
       let exportDeliveryOk = true;
       try { this.exportDelivery?.shutdown?.(); } catch { exportDeliveryOk = false; }
       let closed = !server?.close;
@@ -2358,6 +2532,11 @@ export function createAuthenticatedWebServer(northbound, opts = {}) {
     if (northbound.edge.proxyMode) throw new TypeError('direct TLS requires a direct-mode edge policy');
     server = createHttpsServer({ key: opts.tls.key, cert: opts.tls.cert, minVersion: 'TLSv1.2' }, (req, res) => northbound.handle(req, res));
   }
+  // Issue #294: the optional loopback WebSocket binding serves the SAME wake stream and principal
+  // authority as this HTTP transport. They are published on the server object rather than passed
+  // around, exactly like batonShutdown, so a serve config declares only its port.
+  server.batonWakes = northbound.wakes;
+  server.batonAuthenticate = northbound.authenticate;
   server.batonShutdown = (shutdownOpts = {}) => northbound.shutdown({ ...shutdownOpts, server });
   return server;
 }
@@ -2378,6 +2557,8 @@ export function createLocalAuthenticatedWebServer(northbound) {
     req.edgeIdentity = Object.freeze({ transport: 'local', address: 'owner-local-socket' });
     northbound.handle(req, res);
   });
+  server.batonWakes = northbound.wakes;
+  server.batonAuthenticate = northbound.authenticate;
   server.batonShutdown = (shutdownOpts = {}) => northbound.shutdown({ ...shutdownOpts, server });
   return server;
 }

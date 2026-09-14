@@ -199,8 +199,18 @@ export class SignalLifecycleOwner {
  */
 export class BatonWebHost {
   constructor(options) {
-    closedKeys(options, ['application', 'server', 'shutdownPrincipal', 'listen', 'webDrainMs'], ['report'],
+    closedKeys(options, ['application', 'server', 'shutdownPrincipal', 'listen', 'webDrainMs'], ['report', 'wakes'],
       'Web host configuration');
+    // Issue #294: an OPTIONAL loopback WebSocket binding for the wake stream. The port is a
+    // declared resource — never a default number and never port 0 (an ephemeral port is not a
+    // declaration an agent could attach to) — and the binding is loopback-only by construction.
+    const wakes = options.wakes === undefined || options.wakes === null ? null : options.wakes;
+    const wakesKeys = record(wakes) ? Object.keys(wakes).sort().join('\0') : null;
+    if (wakes !== null && (wakesKeys !== ['host', 'port'].sort().join('\0')
+      || !Number.isSafeInteger(wakes.port) || wakes.port <= 0 || wakes.port > 65_535
+      || typeof wakes.host !== 'string' || wakes.host.length === 0)) {
+      throw hostError('Web host wake binding must declare an explicit host and non-ephemeral port');
+    }
     const tcp = record(options.listen)
       && Object.keys(options.listen).sort().join('\0') === ['host', 'port'].sort().join('\0');
     const local = record(options.listen)
@@ -222,6 +232,8 @@ export class BatonWebHost {
     this.server = options.server;
     this.shutdownPrincipal = principal(options.shutdownPrincipal);
     this.listenOptions = Object.freeze({ ...options.listen });
+    this.wakesOptions = wakes === null ? null : Object.freeze({ ...wakes });
+    this.wakeBinding = null;
     this.webDrainMs = options.webDrainMs;
     // #276(1): the host's narration sink — `baton serve`'s stderr by default, so a signal is
     // never silent again; a caller may redirect it.
@@ -251,7 +263,11 @@ export class BatonWebHost {
             }
           }
           const address = this.server.address?.() ?? null;
-          resolve(Object.freeze({ schemaVersion: 1, state: 'listening', address }));
+          // The declared wake binding is part of the same readiness boundary: a resident that
+          // cannot bind the port its operator declared starts DEGRADED and says so, rather than
+          // serving a configuration that silently is not what was declared.
+          const wakeAddress = this._listenWakeBinding() ?? null;
+          resolve(Object.freeze({ schemaVersion: 1, state: 'listening', address, wakeBinding: wakeAddress }));
         } catch (error) {
           try { this.server.close?.(); } catch {}
           reject(error);
@@ -290,12 +306,54 @@ export class BatonWebHost {
     return announced;
   }
 
+  /** Bind the declared loopback WebSocket binding, if the operator declared one. It serves the
+   * SAME wake stream and principal authority the HTTP transport serves (published on the server
+   * object by the northbound), so the two transports can never disagree about what woke. */
+  _listenWakeBinding() {
+    if (this.wakesOptions === null) return null;
+    const stream = this.server.batonWakes ?? null;
+    const authenticate = this.server.batonAuthenticate ?? null;
+    if (!stream || typeof authenticate !== 'function') {
+      throw hostError('a declared wake binding requires the Web transport it serves',
+        'application_host_wake_binding_unsupported');
+    }
+    const server = createHttpServer((req, res) => {
+      // The binding carries the wake stream and nothing else: every other path is a 404, never a
+      // second, accidental copy of the HTTP surface.
+      res.writeHead(404, { 'content-type': 'application/json; charset=utf-8', 'content-length': '46' });
+      res.end('{"ok":false,"error":{"code":"not_found"}}');
+    });
+    const binding = attachWakeWebSocket({ server, stream, authenticate });
+    this.wakeBinding = Object.freeze({ server, ...binding });
+    server.once('error', () => { try { server.close(); } catch { /* never bound */ } });
+    server.listen(this.wakesOptions.port, this.wakesOptions.host);
+    return Object.freeze({ state: 'listening', host: this.wakesOptions.host, port: this.wakesOptions.port, path: binding.path });
+  }
+
   shutdown() {
     if (this._shutdown) return this._shutdown;
     const shuttingDown = (async () => {
       // The receipt line is the first line of a drain: a shutdown that follows a signal waits for
       // it (a local, in-process read), so the operator's log reads in the order the facts happened.
       if (this._announced) await this._announced;
+      // The declared wake binding is closed FIRST: an attachment is a long-lived socket the
+      // server's own close() waits on, and the stream it serves is closing with the resident.
+      let wakes = null;
+      if (this.wakeBinding !== null) {
+        try {
+          this.wakeBinding.close();
+          await new Promise((resolve) => {
+            let settled = false;
+            const done = () => { if (!settled) { settled = true; resolve(); } };
+            try { this.wakeBinding.server.close(done); } catch { done(); }
+            this.wakeBinding.server.closeAllConnections?.();
+          });
+          wakes = { state: 'closed', host: this.wakesOptions.host, port: this.wakesOptions.port };
+        } catch (error) {
+          wakes = { state: 'closed_degraded', code: error?.code ?? error?.name ?? 'wake_binding_close_failed' };
+        }
+        this.wakeBinding = null;
+      }
       let web;
       try { web = await this.server.batonShutdown({ drainMs: this.webDrainMs }); }
       catch (error) { web = { ok: false, result: 'shutdown_failed', code: error?.code ?? error?.name ?? 'web_shutdown_failed' }; }
@@ -327,6 +385,7 @@ export class BatonWebHost {
       return Object.freeze({
         schemaVersion: 1,
         state: web?.ok === true && application?.state === 'closed' ? 'closed' : 'closed_degraded',
+        wakes,
         web,
         application,
       });
@@ -388,3 +447,5 @@ export class BatonWebHost {
   }
 }
 import { chmodSync, lstatSync } from 'node:fs';
+import { createServer as createHttpServer } from 'node:http';
+import { attachWakeWebSocket } from './wake-stream.mjs';

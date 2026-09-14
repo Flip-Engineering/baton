@@ -375,12 +375,26 @@ export class ResidentAuthority {
     return true;
   }
 
-  publish({ token, registryDigest }) {
+  /** Publish the resident's transport, its stream endpoints, and its registry identity.
+   *
+   * Issue #294: an orchestrator attaches to the resident's wake stream by READING this record, so
+   * the stream endpoints belong in it. `streams` names them: `wakes` is the deployment-scope wake
+   * feed, `events` is the ticketed per-Run feed, and `websocket` — when the operator declared the
+   * loopback binding — carries the {host, port, path} an agent may attach to.
+   *
+   * The HTTP endpoints are derived from the transport this record already declares, so they are
+   * written by default. A DECLARED binding is written only when the caller names it: every reader
+   * of the on-disk record enforces an exact key set (application-cli.mjs `RESIDENT_PROFILE_FIELDS`),
+   * so a new key on the profile is a reader-visible protocol change and is never smuggled in. */
+  publish({ token, registryDigest, streams = undefined }) {
     this.lease.assertHeld();
     this.publicationLease.assertHeld();
     if (!this._socketIdentity) {
       throw residentError('resident socket is not confirmed', 'application_host_socket_invalid');
     }
+    // A malformed declaration is the caller's error whether or not this incarnation already
+    // published: it is refused before the idempotent replay below can hand back the record.
+    const endpoints = this._streamEndpoints(streams);
     if (this._publication) return this.publicOutline();
     if (typeof token !== 'string' || token.length < 40 || token.includes('\n') || token.includes('\r')
       || !/^[a-f0-9]{64}$/u.test(registryDigest ?? '')) {
@@ -397,6 +411,7 @@ export class ResidentAuthority {
       deploymentId: this.deploymentId, incarnation: this.incarnation,
       registryDigest, startedAt: this.startedAt,
       ownerPid: this.lease.pid, ownerPidStart: this.lease.pidStart,
+      ...(streams === undefined ? {} : { streams: endpoints }),
     };
     const selectorBytes = bytes(selector);
     const profileBytes = bytes(profile);
@@ -466,8 +481,33 @@ export class ResidentAuthority {
     }
     this._publication = Object.freeze({
       selectorBytes, profileBytes, tokenBytes, recoveredStaleAuthority,
+      ...(streams === undefined ? {} : { streams: endpoints }),
     });
     return this.publicOutline();
+  }
+
+  /** The stream endpoints this publication serves. The two HTTP paths are the resident's own — the
+   * wake feed and the ticketed Run event feed — and a declared loopback binding is admitted only
+   * when it names a real host, a non-ephemeral port, and the wake path. */
+  _streamEndpoints(streams) {
+    const declared = streams === undefined || streams === null ? null : streams;
+    if (declared !== null && (!record(declared)
+      || Object.keys(declared).some((key) => key !== 'websocket'))) {
+      throw residentError('resident stream endpoints are invalid');
+    }
+    const websocket = declared?.websocket ?? null;
+    if (websocket !== null && (!record(websocket)
+      || Object.keys(websocket).sort().join('\0') !== ['host', 'path', 'port'].sort().join('\0')
+      || typeof websocket.host !== 'string' || websocket.host.length === 0
+      || !Number.isSafeInteger(websocket.port) || websocket.port <= 0 || websocket.port > 65_535
+      || websocket.path !== '/v1/wakes')) {
+      throw residentError('resident wake binding declaration is invalid');
+    }
+    return Object.freeze({
+      wakes: '/v1/wakes',
+      events: '/v1/events',
+      ...(websocket === null ? {} : { websocket: Object.freeze({ ...websocket }) }),
+    });
   }
 
   publicOutline() {
@@ -480,6 +520,7 @@ export class ResidentAuthority {
       incarnation: this.incarnation,
       startedAt: this.startedAt,
       recoveredStaleAuthority: this._publication?.recoveredStaleAuthority ?? false,
+      ...(this._publication?.streams === undefined ? {} : { streams: this._publication.streams }),
     });
   }
 
