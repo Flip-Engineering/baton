@@ -28,6 +28,7 @@ import {
 } from './result-export.mjs';
 import {
   APPLICATION_SEMANTIC_REGISTRY, applicationOperationAliasMap,
+  canonicalOperationFields, canonicalOperationForCommand,
   PROGRESS_SILENCE_THRESHOLD_MS, projectTypedTerminalCause,
 } from './application-semantics.mjs';
 import { hasNorthboundCapabilityAuthority } from './northbound-capability-authority.mjs';
@@ -56,9 +57,12 @@ const APPLICATION_WORKFLOW_MEMBER_STOP_ADMITTED_KIND = 'application.workflow_mem
 const APPLICATION_WORKFLOW_MEMBER_STOP_COMPLETED_KIND = 'application.workflow_member_stop_completed';
 const MAX_RUN_RECORDS = 100_000;
 const MAX_RUN_VIEW_BYTES = FRAME_LIMITS['view.run.bytes'].value;
-const MAX_RUN_VIEW_WORKERS = 1_024;
-const MAX_RUN_LIST_ITEMS = 64;
 const MAX_ATTENTION = 64;
+// The displayed attention/child-row page budget: a quarter of the view byte ceiling, so the rows
+// plus the rest of the view stay inside the bound the response is finalized against. Derived from
+// the deployment ceiling, never a row count (2026-09-14 audit, U-E10). The remainder is always
+// reachable through the section's own cursor — a page is a view, never a limit.
+const ATTENTION_PAGE_BYTES = Math.floor(MAX_RUN_VIEW_BYTES / 4);
 const MAX_ATTENTION_TEXT_BYTES = FRAME_LIMITS['view.attention_text.bytes'].value;
 const MAX_BLOCKED_INTERACTION_SUMMARY_BYTES = FRAME_LIMITS['view.blocked_interaction_summary.bytes'].value;
 const DEFAULT_TURN_NUDGE_MESSAGE = 'Continue the current turn.';
@@ -147,6 +151,24 @@ const APPLICATION_WAVE_STARTED_KIND = 'wave.started';
 // #173: the detached drive's settlement receipt — minted from runWorkflow's onSettle, keyed on waveId.
 const APPLICATION_WAVE_SETTLED_KIND = 'wave.settled';
 const APPLICATION_WAVE_DRIVER_DETACHED_KIND = 'wave.driver_detached';
+
+// The `action.do` envelope fields each kind pre-fills (2026-09-14 audit, U-E5). They are
+// SERVER-DERIVED — `requestId` is the resolved action target's own identity and `response` is the
+// payload shape the action consumes — so act() accepts them beside the schema's own properties.
+// A kind absent from this table pre-fills nothing and accepts nothing extra.
+const ACTION_INPUT_ENVELOPE = Object.freeze({
+  approve_plan: Object.freeze(['planDigest']),
+  answer_approval: Object.freeze(['requestId', 'response']),
+  answer_question: Object.freeze(['requestId', 'response']),
+  answer_decision: Object.freeze(['requestId', 'response']),
+  nudge_turn: Object.freeze(['requestId', 'response']),
+  wait_turn: Object.freeze(['requestId', 'response']),
+  claim_turn: Object.freeze(['requestId', 'response']),
+});
+// The turn kinds' pre-filled response discriminator (the coordinator's own vocabulary).
+const ACTION_TURN_RESPONSE_KIND = Object.freeze({
+  nudge_turn: 'continue', wait_turn: 'wait', claim_turn: 'settle',
+});
 const READ_ONLY_RESULT_DEFINITION = Object.freeze([
   'A bounded evidence-backed textual/result capsule answers the declared read-only objective.',
   'Sources, derivations, contradictions, verification, and cleanup remain inspectable.',
@@ -176,7 +198,7 @@ const APPLICATION_DISPATCH_ALIASES = applicationOperationAliasMap();
 export const APPLICATION_COMMAND_DEFINITIONS = Object.freeze({
   ...SWARM_COMMAND_DEFINITIONS,
   'application.help': Object.freeze({ args: Object.freeze(['topic', 'depth', 'runId']), capabilities: Object.freeze(['observe']), web: true, mcp: true, mcpStateful: false, reconcilable: true }),
-  'runs.list': Object.freeze({ args: Object.freeze([]), capabilities: Object.freeze(['observe']), web: true, mcp: true, mcpStateful: false, reconcilable: true }),
+  'runs.list': Object.freeze({ args: Object.freeze(['continuationCursor']), capabilities: Object.freeze(['observe']), web: true, mcp: true, mcpStateful: false, reconcilable: true }),
   'run.start': Object.freeze({ args: Object.freeze(['intent']), capabilities: Object.freeze(['control', 'observe']), web: true, mcp: true, mcpStateful: true, reconcilable: true }),
   // `mintWaveDetached` (93B): an attach-only side-channel flag consumed solely by the direct
   // command port (waves.attach) — never advertised through the web/mcp JSON schemas, which stay
@@ -214,6 +236,32 @@ export const APPLICATION_COMMAND_DEFINITIONS = Object.freeze({
   }),
   'application.shutdown': Object.freeze({ args: Object.freeze([]), capabilities: Object.freeze(['emergency_stop']), web: false, mcp: false, mcpStateful: false, reconcilable: false }),
 });
+
+// 2026-09-14 audit (U-N5/U-E3): the command table's argument lists and the canonical operation
+// registry are ONE declaration — asserted here at construction, so a transport can never name a
+// field the operation it serves does not carry. The transports of one operation may differ from
+// each other (run.view folds run.inspect/run.episode/run.status/run.wait, each with its own
+// selectors), which is why the field set is the operation's declared union rather than its schema
+// alone; what the assertion forbids is a field outside that union, or a command with no canonical
+// owner at all.
+{
+  const findings = [];
+  for (const [name, definition] of Object.entries(APPLICATION_COMMAND_DEFINITIONS)) {
+    const operation = canonicalOperationForCommand(name);
+    if (!operation) {
+      findings.push(`${name} has no canonical operation`);
+      continue;
+    }
+    const declared = new Set(canonicalOperationFields(operation));
+    const extra = definition.args.filter((field) => !declared.has(field));
+    if (extra.length > 0) {
+      findings.push(`${name} declares ${extra.join(', ')} outside canonical operation ${operation.key}`);
+    }
+  }
+  if (findings.length > 0) {
+    throw new TypeError(`application command arguments outside the canonical registry: ${findings.join('; ')}`);
+  }
+}
 // REFLEX-4 slice A (docs/32 §3.4, issue #19): `application.context_eval` (below,
 // `BatonApplication.prototype.contextEval`) is deliberately NOT an entry here and NOT reachable
 // through `command(name, ...)`/`validateApplicationCommandArgs`. The legacy command keys stay
@@ -246,6 +294,121 @@ const CANONICAL_CARD_COMMANDS = Object.freeze((() => {
   }
   return commands;
 })());
+
+/** The command names the served card publishes: the legacy application command keys plus the
+ * canonical grammar spellings the dispatch layer resolves to them. Exported so the surface gate's
+ * resident-bridge facade admits exactly what production admits (2026-09-14 audit, U-N4). */
+export function applicationCardCommands() {
+  return [...Object.keys(APPLICATION_COMMAND_DEFINITIONS), ...CANONICAL_CARD_COMMANDS];
+}
+
+/**
+ * Normalize one semantic action's inputs (2026-09-14 audit, U-E5/U-I7). The envelope fields the
+ * kind's own `do` block pre-fills are unwrapped and verified here, so the block an agent copies
+ * from the view is exactly what act() accepts:
+ *   - `requestId` must name the resolved action's exact target (its requestId, or its pauseId for
+ *     the turn kinds) — a mismatched identity is a typed refusal naming the field, never an
+ *     action performed against a different request;
+ *   - `response` carries the caller's payload in the action's own vocabulary (`{decision}`,
+ *     `{text}`, `{optionId}`; the turn kinds' `{kind:'continue'|'wait'|'settle'}`) and is merged
+ *     into the effective inputs, so the schema's required fields are satisfied by the envelope;
+ *   - `planDigest` (approve_plan) keeps its existing freshness law: it must equal the displayed
+ *     Plan's digest.
+ */
+export function normalizeActionInputs(action, rawInputs) {
+  const envelope = ACTION_INPUT_ENVELOPE[action.kind] ?? [];
+  const effective = {};
+  for (const [key, value] of Object.entries(rawInputs ?? {})) {
+    if (envelope.includes(key)) continue;
+    effective[key] = value;
+  }
+  if (envelope.includes('requestId') && rawInputs?.requestId !== undefined) {
+    const expected = ACTION_TURN_RESPONSE_KIND[action.kind] === undefined
+      ? (action.target?.requestId ?? null)
+      : (action.target?.pauseId ?? null);
+    if (typeof rawInputs.requestId !== 'string' || expected === null || rawInputs.requestId !== expected) {
+      throw applicationError(
+        `Run action requestId does not name the advertised ${action.kind} target`,
+        'application_action_input_invalid',
+        { field: 'requestId' },
+      );
+    }
+  }
+  if (envelope.includes('planDigest') && rawInputs?.planDigest !== undefined
+    && rawInputs.planDigest !== action.target?.planDigest) {
+    throw applicationError(
+      'Run action planDigest does not match the displayed Plan',
+      'application_action_input_invalid',
+      { field: 'planDigest' },
+    );
+  }
+  const response = envelope.includes('response') ? rawInputs?.response : undefined;
+  if (response !== undefined && response !== null) {
+    if (typeof response !== 'object' || Array.isArray(response)) {
+      throw applicationError(
+        `Run action response must be a bounded JSON object in the ${action.kind} shape`,
+        'application_action_input_invalid',
+        { field: 'response' },
+      );
+    }
+    const expectedKind = ACTION_TURN_RESPONSE_KIND[action.kind] ?? null;
+    if (expectedKind !== null && response.kind !== undefined && response.kind !== expectedKind) {
+      throw applicationError(
+        `Run action response kind must be ${expectedKind}`,
+        'application_action_input_invalid',
+        { field: 'response.kind' },
+      );
+    }
+    for (const [key, value] of Object.entries(response)) {
+      if (expectedKind !== null && key === 'kind') continue;
+      if (effective[key] === undefined) effective[key] = value;
+    }
+  }
+  return effective;
+  }
+
+/**
+ * The `action.do` block the served view mints for one action kind (2026-09-14 audit, U-E5/U-I7).
+ * It is built from the SAME envelope table act() admits, so the ready-to-send block is accepted by
+ * construction:
+ *   - approve_plan carries the displayed planDigest (verified against the target);
+ *   - the answer and turn kinds carry the exact target identity (`requestId`), never a caller-made
+ *     one, plus the response payload in the action's own vocabulary. The answer kinds' payload
+ *     starts as the schema's own declared defaults, so a caller fills only what the schema leaves
+ *     open; the turn kinds carry their coordinator response kind (`continue`/`wait`/`settle`).
+ */
+export function actionDoInputs(kind, target, inputSchema) {
+  const envelope = ACTION_INPUT_ENVELOPE[kind] ?? [];
+  if (envelope.includes('planDigest')) return { planDigest: target?.planDigest ?? null };
+  if (!envelope.includes('requestId')) return {};
+  const turnKind = ACTION_TURN_RESPONSE_KIND[kind] ?? null;
+  const defaults = Object.fromEntries(Object.entries(inputSchema?.properties ?? {})
+    .filter(([, schema]) => schema !== null && typeof schema === 'object' && schema.default !== undefined)
+    .map(([field, schema]) => [field, clone(schema.default)]));
+  return {
+    requestId: turnKind === null ? (target?.requestId ?? null) : (target?.pauseId ?? null),
+    response: turnKind === null ? defaults : { kind: turnKind, ...defaults },
+  };
+}
+
+/**
+ * The largest prefix of `rows` whose serialized size stays inside `budgetBytes`, plus the offset
+ * the next page starts at (null when the page is the whole list). The boundary is derived from the
+ * deployment byte ceiling — the same bound the enclosing response is finalized against — never a
+ * row count (2026-09-14 audit, U-E10/U-I9). One row is always admitted so a single oversized row
+ * cannot wedge the caller: it pages by the caller's own finer cursor (offset/pageCursor) instead.
+ */
+export function byteBoundedPage(rows, budgetBytes) {
+  const page = [];
+  let bytes = 0;
+  for (const [index, row] of rows.entries()) {
+    const rowBytes = Buffer.byteLength(JSON.stringify(row)) + 1;
+    if (page.length > 0 && bytes + rowBytes > budgetBytes) return { page, nextOffset: index };
+    bytes += rowBytes;
+    page.push(row);
+  }
+  return { page, nextOffset: null };
+}
 
 function applicationError(message, code, detail = null) {
   return Object.assign(new Error(message), { code, ...(detail == null ? {} : { detail }) });
@@ -1866,7 +2029,13 @@ export function validateApplicationCommandArgs(name, args) {
     return true;
   }
   if (name === 'runs.list') {
-    exactObject(args, [], 'application_run_list_invalid', 'Run list');
+    if (!args || typeof args !== 'object' || Array.isArray(args)
+      || Object.keys(args).some((key) => key !== 'continuationCursor')
+      || (args.continuationCursor !== undefined
+        && (typeof args.continuationCursor !== 'string' || !/^[0-9]{1,32}$/u.test(args.continuationCursor)))) {
+      throw applicationError('Run list request is invalid', 'application_run_list_invalid',
+        args?.continuationCursor === undefined ? null : { field: 'continuationCursor' });
+    }
     return true;
   }
   if (name === 'run.inspect') {
@@ -2417,9 +2586,6 @@ function runActivity(driver, workers) {
 function runWorkerOwnership(driver, runId) {
   const workers = driver.coordinator.list()
     .filter((handle) => driver.coordination.task(handle.taskId)?.runId === runId);
-  if (workers.length > MAX_RUN_VIEW_WORKERS) {
-    throw applicationError('Run worker projection exceeds its bounded view ceiling', 'application_run_view_oversize');
-  }
   const ownershipProjection = driver.coordinator.localResourceOwnership;
   const ownedWorkers = workers.filter((handle) => {
     // Compatibility with narrow test doubles is conservative: without the explicit authority
@@ -7522,10 +7688,14 @@ export class BatonApplication {
       reason: 'session_attachment_unproven',
       summary: 'Reusable provider-session attachment is unproven; whole-Run stop is the only safe action.',
     }] : [];
-    const attention = [
+    // 2026-09-14 audit (U-E10): the page derives from the deployment byte budget, never a row
+    // count, and the required-action projection below still reads EVERY row (a truncated display
+    // may never hide a required operator action).
+    const allWorkflowAttention = [
       ...workerAttention, ...decisionAttention, ...selectionAttention, ...revisionAttention,
       ...recoveryAttention, ...preservationAttention,
-    ].slice(0, MAX_ATTENTION);
+    ];
+    const attention = byteBoundedPage(allWorkflowAttention, ATTENTION_PAGE_BYTES).page;
     const blockedInteraction = projectBlockedInteraction(phase, attention);
     // issue #10 / docs/32 §5: the workflow view carries the same additive waitingOn projection;
     // the primary candidate task is the first member with durable dispatch authority.
@@ -7926,8 +8096,11 @@ export class BatonApplication {
         summary: 'Reusable provider-session attachment is unproven; whole-Run stop is the only safe action.',
       });
     }
-    const attention = allAttention.slice(0, MAX_ATTENTION);
-    const attentionTruncated = allAttention.length > attention.length;
+    // Same law: the displayed page is byte-bounded (the required-action projection below reads
+    // the full set), and the remainder is reachable through the attention section's cursor.
+    const attentionPage = byteBoundedPage(allAttention, ATTENTION_PAGE_BYTES);
+    const attention = attentionPage.page;
+    const attentionTruncated = attentionPage.nextOffset !== null;
     const planNode = current.plan.nodes[0];
     const planPreviewCore = {
       objective: current.goal.objective,
@@ -10189,17 +10362,7 @@ export class BatonApplication {
         }
       }
       const actionId = this._semanticActionId(current, view, principal, kind, authorityTarget, viewDigest);
-      let doInputs = {};
-      if (kind === 'approve_plan') {
-        doInputs = { planDigest: target.planDigest };
-      } else if (['answer_approval', 'answer_question', 'answer_decision'].includes(kind)) {
-        doInputs = { requestId: target.requestId, response: clone(inputSchema) };
-      } else if (['nudge_turn', 'wait_turn', 'claim_turn'].includes(kind)) {
-        const response = kind === 'nudge_turn'
-          ? { kind: 'continue', text: DEFAULT_TURN_NUDGE_MESSAGE }
-          : { kind: kind === 'wait_turn' ? 'wait' : 'settle' };
-        doInputs = { requestId: target.pauseId, response };
-      }
+      const doInputs = actionDoInputs(kind, target, inputSchema);
       return deepFreeze({
         actionId,
         kind,
@@ -10242,9 +10405,17 @@ export class BatonApplication {
 
   _finalizeSemanticInspection(response, bounds) {
     const finalized = deepFreeze(response);
-    if (Buffer.byteLength(JSON.stringify(finalized)) > bounds.maxBytes) {
-      throw applicationError('Run inspection response exceeds deployment policy',
-        'application_inspect_oversize');
+    const bytes = Buffer.byteLength(JSON.stringify(finalized));
+    if (bytes > bounds.maxBytes) {
+      // 2026-09-14 audit (U-F6): an oversize refusal names the cap it exceeded and the narrower
+      // depth that fits — never a bare "exceeds deployment policy".
+      const error = applicationError(
+        `Run inspection response is ${bytes} bytes, over the deployment's ${bounds.maxBytes}-byte view ceiling; narrow the depth (section, item or content) or page with the response cursor`,
+        'application_inspect_oversize',
+        { field: 'depth', cap: bounds.maxBytes, actual: bytes, unit: 'bytes', gracefulPath: 'depth:section' },
+      );
+      error.cap = bounds.maxBytes; error.actual = bytes; error.unit = 'bytes';
+      throw error;
     }
     return finalized;
   }
@@ -10949,7 +11120,7 @@ export class BatonApplication {
         'application_profile_stale');
     }
     const terminal = APPLICATION_RUN_TERMINAL_PHASES.has(view.phase);
-    const bounds = { maxItems: MAX_ATTENTION, maxBytes: MAX_RUN_VIEW_BYTES, maxWaitMs: 0 };
+    const bounds = { maxItems: Number.MAX_SAFE_INTEGER, maxBytes: MAX_RUN_VIEW_BYTES, maxWaitMs: 0 };
     const base = {
       schemaVersion: 1, runId: current.goal.runId, depth: request.depth,
       registryDigest: APPLICATION_SEMANTIC_REGISTRY.digest,
@@ -11002,10 +11173,11 @@ export class BatonApplication {
     }
     if (request.depth === 'index') {
       const sections = APPLICATION_SEMANTIC_REGISTRY.sections.map((definition) => {
-        const items = this._semanticSectionItems(current, view, definition.id, episodeContext);
+        const allSectionItems = this._semanticSectionItems(current, view, definition.id, episodeContext);
+        const items = byteBoundedPage(allSectionItems, ATTENTION_PAGE_BYTES).page;
         return {
           id: definition.id, state: items[0]?.state ?? 'empty', summary: definition.summary,
-          itemCount: items.length, truncated: items.length > MAX_ATTENTION, authorized: true,
+          itemCount: items.length, truncated: items.length < allSectionItems.length, authorized: true,
           expand: { depth: 'section', section: definition.id },
         };
       });
@@ -11014,9 +11186,17 @@ export class BatonApplication {
       }, bounds);
     }
     const definition = APPLICATION_SEMANTIC_REGISTRY.sections.find((entry) => entry.id === request.section);
-    if (!definition) throw applicationError('Run inspection section is unavailable', 'application_inspect_section_invalid');
+    if (!definition) {
+      // 2026-09-14 audit (U-F5): name the valid set — the sections closed set is the registry's own
+      // declaration, and guessing a section was the cascade's most common dead end.
+      throw applicationError('Run inspection section is unavailable', 'application_inspect_section_invalid', {
+        field: 'section',
+        valid: APPLICATION_SEMANTIC_REGISTRY.sections.map((entry) => entry.id),
+      });
+    }
     const allItems = this._semanticSectionItems(current, view, request.section, episodeContext);
-    const items = allItems.slice(0, MAX_ATTENTION);
+    const itemPage = byteBoundedPage(allItems, ATTENTION_PAGE_BYTES);
+    const items = itemPage.page;
     if (request.depth === 'section') {
       return this._finalizeSemanticInspection({
         ...base, truncated: allItems.length > items.length,
@@ -11030,7 +11210,13 @@ export class BatonApplication {
     const selected = this._selectedSemanticItem(
       current, view, request.section, request.item, items, episodeContext,
     );
-    if (!selected) throw applicationError('Run inspection item is unavailable', 'application_inspect_item_invalid');
+    if (!selected) {
+      throw applicationError('Run inspection item is unavailable', 'application_inspect_item_invalid', {
+        field: 'item',
+        valid: allItems.map((entry) => entry.id).slice(0, 256),
+        itemCount: allItems.length,
+      });
+    }
     if (request.depth === 'item') {
       const hasContent = request.section === 'context'
         || (request.section === 'episode' && request.item.startsWith('episode:output'))
@@ -11238,13 +11424,17 @@ export class BatonApplication {
     const episodeContext = request.depth === 'index'
       || ['episode', 'workstreams'].includes(request.section)
       ? this._episodeContext(current, view) : null;
+    // 2026-09-14 audit (U-G9): the caller-scoped semantic actions ride EVERY depth, not only the
+    // outline. An agent that drilled into a section to understand a block must not have to re-fetch
+    // the outline to learn it can act — and it can never act on a stale actionId it guessed.
+    const callerActions = this._semanticActions(current, view, principal, context);
     if (request.depth === 'outline') {
       const attention = view.attention ?? [];
       const timing = this._progressTiming(current, view);
       const orchestration = this.driver.coordination.runOrchestrationView?.(current.goal.runId) ?? null;
       // The outline's actions are scoped to THIS caller, so requiredAction is re-derived from the
       // same caller-scoped semantic actions (never the view's observer-scoped token — R-SP-3/8).
-      const semanticActions = this._semanticActions(current, view, principal, context);
+      const semanticActions = callerActions;
       const requiredAction = projectRequiredAction({ phase: view.phase, attention, actions: semanticActions });
       const outline = {
         objective: current.goal.objective,
@@ -11308,7 +11498,8 @@ export class BatonApplication {
         };
       });
       return this._finalizeSemanticInspection({
-        ...base, expansions: sections.map((row) => row.expand), sections,
+     ...base, actions: callerActions,
+        expansions: sections.map((row) => row.expand), sections,
       }, bounds);
     }
     const sectionDefinition = APPLICATION_SEMANTIC_REGISTRY.sections.find((entry) => entry.id === request.section);
@@ -11317,7 +11508,7 @@ export class BatonApplication {
     const items = allItems.slice(0, bounds.maxItems);
     if (request.depth === 'section') {
       return this._finalizeSemanticInspection({
-        ...base,
+        ...base, actions: callerActions,
         truncated: allItems.length > items.length,
         expansions: items.map((entry) => ({ depth: 'item', section: request.section, item: entry.id })),
         section: {
@@ -11336,7 +11527,7 @@ export class BatonApplication {
         || (request.section === 'execution'
           && ['execution:progress', 'execution:events', 'execution:output'].includes(request.item));
       return this._finalizeSemanticInspection({
-        ...base, expansions: [
+        ...base, actions: callerActions, expansions: [
           ...(hasContent ? [{ depth: 'content', section: request.section, item: request.item }] : []),
           { depth: 'evidence', section: request.section, item: request.item },
         ],
@@ -11356,7 +11547,7 @@ export class BatonApplication {
           },
         } : null;
         return this._finalizeSemanticInspection({
-          ...base, truncated: hasMore,
+          ...base, actions: callerActions, truncated: hasMore,
           expansions: [
             ...(hasMore ? [{
               depth: 'content', section: 'episode', item: request.item,
@@ -11386,7 +11577,7 @@ export class BatonApplication {
           } : null)
           : base.continuation;
         return this._finalizeSemanticInspection({
-          ...base, truncated: hasMore,
+          ...base, actions: callerActions, truncated: hasMore,
           expansions: [
             ...(hasMore ? [{
               depth: 'content', section: 'execution', item: request.item,
@@ -11405,7 +11596,7 @@ export class BatonApplication {
       }
       const content = this._contextItemContent(selected, request.offset ?? 0, bounds);
       return this._finalizeSemanticInspection({
-        ...base, truncated: content.truncated,
+        ...base, actions: callerActions, truncated: content.truncated,
         expansions: [
           ...(content.nextOffset === null ? [] : [{
             depth: 'content', section: request.section, item: request.item,
@@ -11425,7 +11616,7 @@ export class BatonApplication {
         ? this._episodeEvidence(current, view, selected, episodeContext) : []),
     ];
     return this._finalizeSemanticInspection({
-      ...base, expansions: [],
+      ...base, actions: callerActions, expansions: [],
       item: { id: selected.id, section: selected.section, state: selected.state }, evidence,
     }, bounds);
   }
@@ -12431,11 +12622,15 @@ export class BatonApplication {
     return deepFreeze(clone(value));
   }
 
-  async listRuns(rawPrincipal, rawContext = null) {
+  async listRuns(rawPrincipal, rawContext = null, rawArgs = {}) {
     this._assertOpen();
     await this.ready;
     const context = normalizeCommandContext(rawContext);
     const principal = normalizePrincipal(rawPrincipal, 'Run list principal');
+    // 2026-09-14 audit (U-E10/U-I9): the list pages instead of refusing past a count. The cursor is
+    // the offset this response's own continuation names; the page boundary derives from the byte
+    // ceiling the result is finalized against, so there is no list-length ceiling to hit.
+    const startOffset = rawArgs?.continuationCursor === undefined ? 0 : Number(rawArgs.continuationCursor);
     await this._authorize('runs.list', principal, null, { operation: 'runs.list' });
     // #210: the bounded head-only summary (goalPlanSummary) serves runs.list — every member
     // read used to deep-clone the ENTIRE store through the snapshot goalPlan projection. The
@@ -12480,12 +12675,15 @@ export class BatonApplication {
       }
       authorized.push(goal);
     }
-    if (authorized.length > MAX_RUN_LIST_ITEMS) {
-      throw applicationError('Run list requires bounded continuation support',
-        'application_run_list_continuation_required');
-    }
+    const pageable = authorized.slice(startOffset);
     const items = [];
-    for (const goal of authorized) {
+    // Reserve the envelope itself: the page is the largest prefix of the remaining rows whose
+    // serialized size stays inside the deployment byte ceiling.
+    const budget = MAX_RUN_VIEW_BYTES - Buffer.byteLength(JSON.stringify({
+      schemaVersion: 1, registryDigest: APPLICATION_SEMANTIC_REGISTRY.digest, items: [], continuation: null,
+    }));
+    const projected = [];
+    for (const goal of pageable) {
       const current = this._findRun(goal.runId, { allowUnavailableProfile: true });
       const view = this._withContextProjection(
         current, await this._buildView(current, this.principals.observer),
@@ -12499,7 +12697,7 @@ export class BatonApplication {
       // The list advertises kinds only; requiredAction is re-derived from the CALLER-scoped
       // semantic actions so the carried actionId (when advertised) is the caller's to act on.
       const requiredAction = projectRequiredAction({ phase: view.phase, attention, actions: semanticActions });
-      items.push(deepFreeze({
+      const row = deepFreeze({
         id: goal.runId,
         objective: this._resolveSpillObjective(goal.objective),
         resultIntent: view.resultIntent,
@@ -12518,18 +12716,23 @@ export class BatonApplication {
           ownedCount: view.ownership?.workers ?? 0,
         },
         actions: deepFreeze(actions),
-      }));
+      });
+      projected.push(row);
     }
+    const { page, nextOffset: pageNext } = byteBoundedPage(projected, budget);
+    items.push(...page);
+    const nextOffset = pageNext === null ? null : startOffset + pageNext;
     const result = deepFreeze({
       schemaVersion: 1,
       registryDigest: APPLICATION_SEMANTIC_REGISTRY.digest,
       items: deepFreeze(items),
-      continuation: null,
+      // The declared continuation the caller hands back verbatim: the operation, the cursor
+      // argument name, and the offset itself. Null when this page is the whole list.
+      continuation: nextOffset === null ? null : Object.freeze({
+        operation: 'run.list',
+        arguments: Object.freeze({ continuationCursor: String(nextOffset) }),
+      }),
     });
-    if (Buffer.byteLength(JSON.stringify(result)) > MAX_RUN_VIEW_BYTES) {
-      throw applicationError('Run list response exceeds its byte ceiling',
-        'application_run_list_oversize');
-    }
     return result;
   }
 
@@ -12621,7 +12824,7 @@ export class BatonApplication {
     await this.ready;
     const context = normalizeCommandContext(rawContext);
     validateApplicationCommandArgs('run.act', rawRequest);
-    const request = deepFreeze(clone(rawRequest));
+    let request = deepFreeze(clone(rawRequest));
     const principal = normalizePrincipal(rawPrincipal, 'action principal');
     await this._authorize('run.status', principal, request.runId, { operation: 'act' });
     this._assertOpen();
@@ -12654,19 +12857,22 @@ export class BatonApplication {
       }
       this._authorizeRecursiveCommand('run.context', request.runId, principal, context);
     }
+    // 2026-09-14 audit (U-E5): the `action.do` envelope the served view advertises is ACCEPTED
+    // here. `requestId` names the exact advertised target (verified against the resolved action,
+    // exactly as planDigest is for approve_plan) and `response` carries the caller's answer in the
+    // action's own shape. Both are server-derived fields, so a caller that sends only the schema's
+    // own properties is unaffected — and a caller that copies `do.inputs` verbatim is no longer
+    // refused for supplying the fields the server itself minted.
+    request = deepFreeze({ ...request, inputs: normalizeActionInputs(action, request.inputs) });
     const supplied = Object.keys(request.inputs).sort();
-    const allowed = Object.keys(action.inputSchema.properties);
-    if (action.kind === 'approve_plan') {
-      if (Object.hasOwn(request.inputs, 'planDigest')
-        && request.inputs.planDigest !== action.target?.planDigest) {
-        throw applicationError('Run action inputs are invalid', 'application_action_input_invalid');
-      }
-      allowed.push('planDigest');
-    }
-    allowed.sort();
+    const allowed = Object.keys(action.inputSchema.properties).sort();
     const required = [...(action.inputSchema.required ?? [])].sort();
     if (supplied.some((field) => !allowed.includes(field)) || required.some((field) => !supplied.includes(field))) {
-      throw applicationError('Run action inputs are invalid', 'application_action_input_invalid');
+      throw applicationError(
+        `Run action inputs are invalid: ${action.kind} accepts ${allowed.join(', ') || '(no caller field)'} and requires ${required.join(', ') || '(nothing)'}`,
+        'application_action_input_invalid',
+        { field: supplied.find((field) => !allowed.includes(field)) ?? required.find((field) => !supplied.includes(field)) ?? null },
+      );
     }
     await this._recheckSemanticAction(current, semanticAuthority, principal);
     if (['send', 'interrupt'].includes(action.kind)) {
@@ -13102,7 +13308,7 @@ export class BatonApplication {
       return this.help(args, principal);
     }
     if (name === 'runs.list') {
-      return this.listRuns(principal, context);
+      return this.listRuns(principal, context, args ?? {});
     }
     if (name === 'run.start') {
       return this.start(args.intent, principal, context);

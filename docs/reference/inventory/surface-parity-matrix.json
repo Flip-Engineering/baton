@@ -508,15 +508,6 @@
       "ledgered": false
     },
     {
-      "name": "run.attention.list",
-      "category": "notifications",
-      "cli": "baton run attention list",
-      "mcp": "baton_run_attention_list",
-      "web": "run_attention_list",
-      "divergence": null,
-      "ledgered": false
-    },
-    {
       "name": "run.attention.watch",
       "category": "notifications",
       "cli": "baton run attention watch",
@@ -756,15 +747,6 @@
       "cli": "baton run scratchpad",
       "mcp": "baton_run_scratchpad",
       "web": "run_scratchpad",
-      "divergence": null,
-      "ledgered": false
-    },
-    {
-      "name": "run.scratchpad.append",
-      "category": "control",
-      "cli": "baton run scratchpad append",
-      "mcp": "baton_run_scratchpad_append",
-      "web": "run_scratchpad_append",
       "divergence": null,
       "ledgered": false
     },

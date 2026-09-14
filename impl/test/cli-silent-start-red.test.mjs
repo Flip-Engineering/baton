@@ -374,14 +374,23 @@ test('PT-4 capability [derivation-symbol-source-scan] — the recognition set is
     failures.push('stage[guard-replaces-naked-fallthrough]: the naked run-branch fall-through into parseStart is still present — the typo-guard must replace it');
   }
 
-  // (e) no new cli_* code is minted (the F-8 taxonomy is unchanged).
-  const headCliCodes = ['cli_action_inputs_invalid', 'cli_command_failed', 'cli_command_host_local',
+  // (e) no new cli_* code is minted (the F-8 taxonomy is unchanged). The allowed set is the F-8
+  // taxonomy UNION the committed CLI-local tooling-code ledger — the same record the conformance
+  // suite's S2 check reads (scripts/cli-local-tooling-codes.json) — rather than a retyped
+  // snapshot: the snapshot had drifted from the ledger (cli_continuation_exhausted, #227, is
+  // ledgered but was absent here, making this leg red for a pre-existing code instead of for a
+  // newly minted one).
+  const taxonomyCodes = ['cli_action_inputs_invalid', 'cli_command_failed', 'cli_command_host_local',
     'cli_command_pending', 'cli_command_unavailable', 'cli_config_invalid', 'cli_connection_incompatible',
     'cli_export_archive_digest_mismatch', 'cli_export_archive_invalid', 'cli_export_delivery_invalid',
     'cli_export_destination_exists', 'cli_export_destination_invalid', 'cli_export_download_failed',
     'cli_export_extract_failed', 'cli_invalid', 'cli_protocol_failed', 'cli_setup_conflict',
     'cli_setup_failed', 'cli_setup_remote_invalid', 'cli_setup_remote_refused',
     'cli_setup_remote_unavailable', 'cli_transport_failed'];
+  const toolingCodes = JSON.parse(
+    readFileSync(join(REPO_ROOT, 'impl', 'scripts', 'cli-local-tooling-codes.json'), 'utf8'),
+  ).codes;
+  const headCliCodes = [...new Set([...taxonomyCodes, ...toolingCodes])];
   const actualCodes = [...new Set([...cli.matchAll(/'cli_([a-z_]+)'/gu)].map((m) => m[1]))];
   // prefix-corrected (blue-team finding 1): actualCodes holds BARE codes, headCliCodes holds the
   // `cli_`-prefixed forms — the old bare-vs-prefixed `includes` comparison was red at HEAD for the

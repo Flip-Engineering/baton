@@ -19,8 +19,7 @@ ordinary-CLI inventory. The conformance suite fails if they drift from served tr
 
 | Operation | Profile | CLI verb | Example |
 |---|---|---|---|
-| `application.help` | `ordinary` | `baton application help` | `baton help` |
-| `run.adopt` | `ordinary` | `baton run adopt` | `baton run adopt RUN_ID --reason R` |
+| `application.help` | `ordinary` | `baton help` | `baton help` |
 | `run.answer` | `ordinary` | `baton run answer` | `baton run answer RUN_ID REQUEST_ID --text TEXT` |
 | `run.approve` | `ordinary` | `baton run approve` | `baton run approve RUN_ID --plan DIGEST` |
 | `run.attention.watch` | `ordinary` | `baton run attention watch` | `baton run attention watch RUN_ID --kind member_terminal --cursor 0` |
@@ -29,8 +28,6 @@ ordinary-CLI inventory. The conformance suite fails if they drift from served tr
 | `run.debug` | `ordinary` | `baton run debug` | `baton run debug RUN_ID` |
 | `run.do` | `ordinary` | `baton run do` | `baton run do RUN_ID ACTION_ID` |
 | `run.evidence` | `ordinary` | `baton run evidence` | `baton run evidence RUN_ID` |
-| `run.export` | `ordinary` | `baton run export` | `baton run export RUN_ID DIR` |
-| `run.integrate` | `ordinary` | `baton run integrate` | `baton run integrate RUN_ID --strategy ff-only --reason R` |
 | `run.knowledge.seed` | `ordinary` | `baton run knowledge seed` | `baton run knowledge seed RUN_ID --type Finding --grounding observed --body TEXT` |
 | `run.list` | `ordinary` | `baton run list` | `baton run list` |
 | `run.member.send` | `ordinary` | `baton run member send` | `baton run member send RUN_ID ROLE TEXT` |
@@ -45,7 +42,7 @@ ordinary-CLI inventory. The conformance suite fails if they drift from served tr
 | `run.scratchpad.elevate` | `ordinary` | `baton run scratchpad elevate` | `baton run scratchpad elevate RUN_ID --task TASK_ID --entries JSON` |
 | `run.scratchpad.read` | `ordinary` | `baton run scratchpad read` | `baton run scratchpad read RUN_ID --scope shared --cursor 0` |
 | `run.send` | `ordinary` | `baton run send` | `baton run send RUN_ID TEXT` |
-| `run.start` | `ordinary` | `baton run start` | `baton run "Ship it" --model gpt-5.6-sol --effort low` |
+| `run.start` | `ordinary` | `baton run` | `baton run "Ship it" --model gpt-5.6-sol --effort low` |
 | `run.stop` | `ordinary` | `baton run stop` | `baton run stop RUN_ID` |
 | `run.view` | `ordinary` | `baton run view` | `baton run view RUN_ID` |
 | `run.watch` | `ordinary` | `baton run watch` | `baton run watch RUN_ID` |

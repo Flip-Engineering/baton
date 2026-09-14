@@ -13,6 +13,10 @@ import { pathToFileURL } from 'node:url';
 import { APPLICATION_SEMANTIC_REGISTRY, deriveSurfaceNames } from '../src/application-semantics.mjs';
 import { CLI_WEB_COMMANDS } from '../src/application-cli.mjs';
 import { mcpApplicationToolNames } from '../src/mcp-northbound.mjs';
+import {
+  formatSurfaceResolutionFinding,
+  resolveOperationSurfaces,
+} from '../src/surface-resolution.mjs';
 // #293: the fleet-routes table renders from the SERVED route registry — the same module that
 // owns the one readiness derivation, so the table cannot disagree with what the deployment
 // serves or gates.
@@ -35,59 +39,79 @@ function endMarker(marker) { return `<!-- END GENERATED: ${marker} -->`; }
 const HOST_LOCAL_CLI_KEYS = new Set(['run.debug']);
 
 /**
- * Ordinary CLI principal inventory: canonical operation keys that are actually served —
- * either via the CLI web-client whitelist (dispatch name) or as host-local (run.debug).
- * Ghost grammar rows that default to ALL_SURFACES but have no CLI wire stay out (S-2).
+ * Ordinary CLI principal inventory: the canonical operation keys the CLI's dispatch surface
+ * reaches — the web-client transport projection (its own key, an `application.commands` alias, or
+ * its legacy dispatch alias) plus the host-local port and the semantic-action verb the contract
+ * pins as served.
+ *
+ * 2026-09-14 audit (U-N2/U-G5): the old filter silently DROPPED any registry row that claimed the
+ * cli surface but had no dispatch path, so the doc could never disagree with the registry and
+ * could never report the lie. Every cli-claiming row is now resolved first (surface-resolution
+ * probes the parser, the dispatch whitelist and the host-local ports); a row whose claim does not
+ * resolve is a hard failure of this renderer, and the gate refuses rather than hiding it.
  */
 export function servedCliOrdinaryKeys() {
+  const findings = [];
+  for (const operation of APPLICATION_SEMANTIC_REGISTRY.canonicalOperations) {
+    if (!operation.surfaces.includes('cli')) continue;
+    findings.push(...resolveOperationSurfaces(operation).findings);
+  }
+  if (findings.length > 0) {
+    throw new Error(
+      `declared-but-undispatchable CLI rows: ${findings.map(formatSurfaceResolutionFinding).join('; ')}`,
+    );
+  }
   const keys = new Set();
   const byDispatch = new Map();
   for (const alias of APPLICATION_SEMANTIC_REGISTRY.surfaceAliases) {
-    if (alias.surface === 'application.commands') {
-      byDispatch.set(alias.name, alias.canonical);
-    }
+    if (alias.surface === 'application.commands') byDispatch.set(alias.name, alias.canonical);
   }
   for (const name of CLI_WEB_COMMANDS) {
-    const canonical = byDispatch.get(name)
-      ?? APPLICATION_SEMANTIC_REGISTRY.canonicalOperations
-        .find((operation) => operation.key === name)?.key
-      ?? null;
-    // Prefer a canonical key when the whitelist name is itself canonical or aliased.
-    if (canonical) keys.add(canonical);
-    else if (APPLICATION_SEMANTIC_REGISTRY.canonicalOperations.some((op) => op.key === name)) {
-      keys.add(name);
-    }
+    const canonical = byDispatch.get(name) ?? name;
+    const operation = APPLICATION_SEMANTIC_REGISTRY.canonicalOperations
+      .find((op) => op.key === canonical);
+    if (!operation) continue;
+    // The table's Example column is the row's own dispatch shape: a semantic-action verb
+    // (run.feedback, run.interrupt, run.select, …) compiles to `{kind:'semantic-action'}` and is
+    // taught by its action kind, not by this command table. Only command-shaped rows belong here.
+    const witness = resolveOperationSurfaces(operation).witnesses.cli;
+    if (witness?.kind !== 'command') continue;
+    keys.add(canonical);
   }
-  // Lifecycle legacy ids on the registry that dispatch to a whitelist command.
-  for (const command of APPLICATION_SEMANTIC_REGISTRY.cli.commands) {
-    if (!command.operation || !CLI_WEB_COMMANDS.has(command.operation)) continue;
-    const canonical = byDispatch.get(command.operation)
-      ?? (APPLICATION_SEMANTIC_REGISTRY.canonicalOperations.some((op) => op.key === command.id)
-        ? command.id
-        : null);
-    if (canonical) keys.add(canonical);
-  }
-  // docs/36 §9 M5 — `run.send` is a semantic-action CLI verb (its registry row carries
-  // `action: 'send'` and no legacy application-command spelling), so the deleted `run.steer`
-  // alias was its only prior path into this inventory. The alias is gone at M5, but the CLI verb
-  // stays served, so the canonical operation stays listed.
+  // docs/36 §9 M5 — run.send is a semantic-action CLI verb (its registry row carries
+  // `action: 'send'` and no legacy application-command spelling); the deleted run.steer alias was
+  // its only prior path into this inventory. The alias is gone at M5, the CLI verb stays served,
+  // so the contract pins it here beside the host-local port.
   if (APPLICATION_SEMANTIC_REGISTRY.cli.commands.some((row) => row.id === 'run.send')) {
     keys.add('run.send');
   }
   for (const key of HOST_LOCAL_CLI_KEYS) keys.add(key);
-  // Only keep keys that the registry enables on the cli surface.
   return APPLICATION_SEMANTIC_REGISTRY.canonicalOperations
     .filter((operation) => operation.surfaces.includes('cli') && keys.has(operation.key))
     .map((operation) => operation.key)
     .sort();
 }
 
+/**
+ * The CLI verb path a taught example invokes: its leading lowercase words (`baton run adopt
+ * RUN_ID --reason R` → `baton run adopt`). The derived `deriveSurfaceNames(key).cli` spelling is
+ * a grammar projection that can name a verb the CLI never had; the example is the spelling the
+ * witness parses, so the column and the example cannot disagree.
+ */
+function cliVerbFromExample(example) {
+  const verb = ['baton'];
+  for (const token of String(example ?? '').split(/\s+/u).slice(1)) {
+    if (!/^[a-z][a-z0-9-]*$/u.test(token)) break;
+    verb.push(token);
+  }
+  return verb.join(' ');
+}
+
 export function renderCliVerbInventory() {
   const rows = servedCliOrdinaryKeys().map((key) => {
     const operation = APPLICATION_SEMANTIC_REGISTRY.canonicalOperations
       .find((entry) => entry.key === key);
-    const names = deriveSurfaceNames(operation.key);
-    return `| \`${operation.key}\` | \`${operation.profile}\` | \`${names.cli}\` | \`${operation.example}\` |`;
+    return `| \`${operation.key}\` | \`${operation.profile}\` | \`${cliVerbFromExample(operation.example)}\` | \`${operation.example}\` |`;
   });
   return [
     '| Operation | Profile | CLI verb | Example |',

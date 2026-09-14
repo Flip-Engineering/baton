@@ -135,6 +135,12 @@ function canonicalNameIndex() {
     for (const surface of operation.surfaces) {
       index.set(`${surface}\0${operation.names[surface]}`, operation.key);
       if (surface === 'mcp') index.set(`mcp.baton\0${operation.names.mcp}`, operation.key);
+      // 2026-09-14 audit (#289): the CLI's web-client whitelist (application-cli.mjs
+      // cliWebCommandNames) admits the canonical transport spelling of every cli-claiming
+      // operation beside its legacy spelling, and the CLI parser emits some of those canonical
+      // names directly (`baton run watch` → run.watch). The dot spelling IS that transport, so
+      // the index resolves it like any other served name instead of leaving it a divergence.
+      if (surface === 'cli') index.set(`cli\0${operation.key}`, operation.key);
     }
   }
   for (const [name, definition] of Object.entries(APPLICATION_SEMANTIC_REGISTRY.operations)) {
@@ -657,7 +663,9 @@ function parserLifecycleDispatchCount() {
   const marker = 'const lifecycleActions = new Set(';
   const start = src.indexOf(marker);
   if (start < 0) return 0;
-  const gate = src.indexOf('if (!lifecycleActions.has(action)) return parseStart', start);
+  // 2026-09-14 audit (#289): the dispatch gate is the four-way refusal, which owns the
+  // objective-first fall-through inside the guard; the naked return no longer exists.
+  const gate = src.indexOf('if (!lifecycleActions.has(action)) {', start);
   if (gate < 0) return 0;
   const region = src.slice(start, gate);
   const actions = new Set();

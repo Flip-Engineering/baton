@@ -1989,7 +1989,7 @@ export class WebNorthbound {
         // dishonest impl cannot special-case the card. The card lists the DOT-spelled names
         // (waves.start, ...) beside the existing WEB_APPLICATION_ENTRIES names — never the
         // underscore transports.
-        application: { ...card, readiness, commands: [...WEB_APPLICATION_ENTRIES, ...WAVE_WEB_ENTRIES, ...WORKFLOW_WEB_ENTRIES].map(([, name]) => name) },
+        application: { ...card, readiness, commands: webCardCommandNames() },
       }));
     }
     const asset = operatorAsset(pathname);
@@ -2382,6 +2382,17 @@ export function createLocalAuthenticatedWebServer(northbound) {
   return server;
 }
 
+
+/** The commands the RESIDENT serves on its wire card (`/v1/application-card`, doctor): the
+ * application table the web lane admits plus the wave and workflow direct ports, dot-spelled.
+ * This is the projection every resident-routed client gates on (the MCP web bridge's facade and
+ * the CLI's own web client), so it is exported as the ONE production admission a surface check
+ * may compare against — 2026-09-14 audit, U-N4: the gate's facade admitted the web bus's wider
+ * ADMITTED-name table (kernel rows included) where production admits exactly these. */
+export function webCardCommandNames() {
+  return [...WEB_APPLICATION_ENTRIES, ...WAVE_WEB_ENTRIES, ...WORKFLOW_WEB_ENTRIES]
+    .map(([, name]) => name);
+}
 export { validateEnvelope as validateWebCommandEnvelope };
 
 // Issue #233: the web lane's admitted command-name inventory — exactly the keys of the

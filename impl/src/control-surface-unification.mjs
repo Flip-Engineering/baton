@@ -15,19 +15,11 @@ const NOTIFICATION_KEYS = Object.freeze([
 const ACTION_KINDS = new Set(Object.keys(APPLICATION_SEMANTIC_REGISTRY.actions));
 const CLAIM_PRIORITY = Object.freeze({ legacy_alias: 1, transport: 2, canonical: 3 });
 
-// This is a correction ledger over the existing registry, not a replacement registry. The stale
-// alias row predates the REFLEX decision-list tool. The live McpFleetServer dispatch proves that
-// baton_decision_list calls application.decisionList, while run.attention.list has its own
-// canonical operation and remains reachable by canonical name/generic invocation.
-export const SURFACE_ALIAS_CORRECTIONS = Object.freeze([
-  Object.freeze({
-    surface: 'mcp',
-    name: 'baton_decision_list',
-    canonical: 'decision.list',
-    supersedes: 'run.attention.list',
-    evidence: 'McpFleetServer baton_decision_list dispatches application.decisionList',
-  }),
-]);
+// The registry owns its alias rows (application-semantics.mjs SURFACE_ALIAS_ROWS), and the
+// 2026-09-14 audit (U-G4) removed the one ghost they had to be corrected for: run.attention.list
+// never reached baton_decision_list — the tool dispatches application.decisionList, and its alias
+// row now names decision.list directly. No correction ledger remains.
+export const SURFACE_ALIAS_CORRECTIONS = Object.freeze([]);
 
 function normalizeAliasSurface(surface) {
   if (surface === 'cli' || surface === 'web' || surface === 'embedded') return surface;

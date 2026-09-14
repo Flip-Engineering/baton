@@ -87,7 +87,7 @@ import { MockAdapter } from '../src/adapter.mjs';
 import {
   bindBaton, CoordinationStore, createDriver, McpFleetServer, WebNorthbound,
 } from '../src/index.mjs';
-import { parseBatonCli } from '../src/application-cli.mjs';
+import { CLI_WEB_COMMANDS, parseBatonCli } from '../src/application-cli.mjs';
 import { mcpApplicationToolNames } from '../src/mcp-northbound.mjs';
 import { FRAME_LIMITS } from '../src/limits.mjs';
 import {
@@ -977,11 +977,11 @@ test('P-A1 PIN: the read/elevate half of the parity table stays served — CLI p
   const elevate = capture(() => parseBatonCli(['run', 'scratchpad', 'elevate', 'run:m1', '--task', 'task:m1', '--entries', '[]']));
   assert.equal(elevate.ok, true, 'run.scratchpad.elevate still parses');
   assert.equal(elevate.value?.name, 'run.scratchpad.elevate', 'elevate stays served');
-  // Bluetema §4 law fold: the `+1200` char-offset window is a size-doubling absolute anchor — read the
-  // set by its terminal token instead. (Subsumes the former P-A10 coherence pin.)
-  const setRegion = regionBetween('application-cli.mjs', 'const CLI_WEB_COMMANDS', ']);');
-  assert.ok(/run\.scratchpad\.read/u.test(setRegion), 'read is in CLI_WEB_COMMANDS');
-  assert.ok(/run\.scratchpad\.elevate/u.test(setRegion), 'elevate is in CLI_WEB_COMMANDS');
+  // 2026-09-14 audit (#289): the whitelist is DERIVED now (the card projection of the dispatch
+  // authority), so a source-region window over a literal no longer holds the names. The set
+  // membership is the stronger, stable form of the same pin.
+  assert.ok(CLI_WEB_COMMANDS.has('run.scratchpad.read'), 'read is in CLI_WEB_COMMANDS');
+  assert.ok(CLI_WEB_COMMANDS.has('run.scratchpad.elevate'), 'elevate is in CLI_WEB_COMMANDS');
   const mcpNames = mcpApplicationToolNames();
   assert.ok(mcpNames.includes('baton_run_scratchpad_read') && mcpNames.includes('baton_run_scratchpad_elevate'),
     'read/elevate are served on MCP (mcp-northbound.mjs:652-668)');

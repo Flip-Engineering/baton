@@ -262,7 +262,9 @@ const operations = {
     helpTopic: 'application.help', idempotent: true, destructive: false,
   },
   'runs.list': {
-    inputSchema: objectSchema({}, []),
+    inputSchema: objectSchema({
+      continuationCursor: { type: 'string', minLength: 1, maxLength: 32, pattern: '^[0-9]+$' },
+    }, []),
     helpTopic: 'runs', idempotent: true, destructive: false,
   },
   'run.start': {
@@ -1278,7 +1280,8 @@ const CANONICAL_OPERATION_SPECS = [
     inputSchema: objectSchema({ configPath: { type: 'string', minLength: 1, maxLength: 4096 } }, []),
   }],
   ['deployment.shutdown', {
-    profile: 'host', surfaces: ['cli', 'embedded'], effect: 'host_shutdown',
+    // 2026-09-14 audit (U-G7): no CLI verb reaches the host shutdown; the claim was a ghost.
+    profile: 'host', surfaces: ['embedded'], effect: 'host_shutdown',
     capabilities: ['emergency_stop', 'host'], outputView: 'outline', helpTopic: 'run.stop',
     destructive: true, emergency: true, reconcilable: false,
     inputSchema: objectSchema({ reason: { type: 'string', minLength: 1, maxLength: 1024 } }, []),
@@ -1286,6 +1289,13 @@ const CANONICAL_OPERATION_SPECS = [
   ['run.list', {
     op: 'runs.list', effect: 'run_read', capabilities: ['observe'], outputView: 'index',
     example: 'baton run list',
+    // 2026-09-14 audit (U-E10/U-I9): the list is paged, not ceilinged. The cursor is the offset
+    // the response's own `continuation` names and the page boundary derives from the deployment
+    // byte ceiling — the same bound every Run view is finalized against.
+    inputSchema: objectSchema({
+      continuationCursor: { type: 'string', minLength: 1, maxLength: 32, pattern: '^[0-9]+$' },
+    }, []),
+    transportFields: ['continuationCursor'],
   }],
   ['run.start', {
     op: 'run.start', effect: 'provider_call', capabilities: ['control', 'observe'],
@@ -1297,6 +1307,11 @@ const CANONICAL_OPERATION_SPECS = [
     // S-1 v2 R-WG-3: mintWaveDetached + waveId are attach-only side-channels — declared-hidden
     // so advertised MCP/web schemas exclude them while in-process validators still accept them.
     transportHidden: ['mintWaveDetached', 'waveId'],
+    // The run.view FOLD's transports: run.inspect, run.episode, run.status and run.wait all
+    // resolve to this one operation (application.commands alias rows), and each carries selectors
+    // of its own — the Episode chapter coordinates and the wait selector. Declared here so the
+    // application command table's argument lists are provably inside this operation's contract.
+    transportFields: ['topic', 'detail', 'role', 'generation', 'until', 'timeoutMs'],
   }],
   ['run.watch', {
     effect: 'run_stream', capabilities: ['observe'], outputView: 'content', helpTopic: 'run.inspect',
@@ -1318,6 +1333,8 @@ const CANONICAL_OPERATION_SPECS = [
     action: 'answer_question', effect: 'provider_control',
     capabilities: ['approve', 'control', 'observe'], outputView: 'outline',
     helpTopic: 'run.act.answer_question', example: 'baton run answer RUN_ID REQUEST_ID --text TEXT',
+    // The wire command's answer envelope ({decision|text|optionId}) beside the action's own field.
+    transportFields: ['requestId', 'answer'],
   }],
   ['run.send', { action: 'send', outputView: 'outline', example: 'baton run send RUN_ID TEXT' }],
   ['run.interrupt', { action: 'interrupt', outputView: 'outline', example: 'baton run interrupt RUN_ID' }],
@@ -1370,13 +1387,8 @@ const CANONICAL_OPERATION_SPECS = [
     op: 'run.workstream.stop', effect: 'member_cleanup', capabilities: ['emergency_stop', 'observe'],
     outputView: 'outline', emergency: true, example: 'baton run member stop RUN_ID ROLE',
   }],
-  ['run.attention.list', {
-    effect: 'attention_read', capabilities: ['observe'], outputView: 'index', helpTopic: 'run',
-    inputSchema: objectSchema({ runId: id, kind: id }, ['runId']),
-    example: 'baton run attention list RUN_ID',
-  }],
   ['run.scratchpad', {
-    profile: 'ordinary', surfaces: ['embedded', 'cli'], effect: 'observe',
+    profile: 'ordinary', surfaces: ['embedded'], effect: 'observe',
     capabilities: ['observe'], outputView: 'section', helpTopic: 'run',
     inputSchema: objectSchema({
       runId: id, workerId: id,
@@ -1387,15 +1399,18 @@ const CANONICAL_OPERATION_SPECS = [
     liveMethod: 'projectScratchpadView',
   }],
   ['decision.list', {
-    profile: 'ordinary', surfaces: ['embedded', 'mcp', 'cli'], effect: 'observe',
+    profile: 'ordinary', surfaces: ['embedded', 'mcp'], effect: 'observe',
     capabilities: ['observe'], outputView: 'index', helpTopic: 'run',
     inputSchema: runIdSchema, authorityFields: ['runId'], serverDerived: ['viewer'],
     liveMethod: 'application.decisionList',
   }],
-  ['context.eval', { action: 'context_eval', outputView: 'outline', example: 'baton context eval --run RUN_ID --program FILE' }],
-  ['context.map', { action: 'context_map', outputView: 'outline' }],
-  ['context.reduce', { action: 'context_reduce', outputView: 'outline' }],
-  ['context.retry', { action: 'context_retry', outputView: 'outline' }],
+  // 2026-09-14 audit (U-G7): the Context actions are reached through the advertised run.do lane
+  // (embedded/mcp/web) — the CLI refuses `baton context eval` as host-local by design, so the
+  // cli surface claim was a ghost (surface-resolution.mjs probes it).
+  ['context.eval', { action: 'context_eval', outputView: 'outline', surfaces: ['embedded', 'mcp', 'web'], example: 'baton context eval --run RUN_ID --program FILE' }],
+  ['context.map', { action: 'context_map', outputView: 'outline', surfaces: ['embedded', 'mcp', 'web'] }],
+  ['context.reduce', { action: 'context_reduce', outputView: 'outline', surfaces: ['embedded', 'mcp', 'web'] }],
+  ['context.retry', { action: 'context_retry', outputView: 'outline', surfaces: ['embedded', 'mcp', 'web'] }],
   ['board.post', {
     effect: 'control', capabilities: ['control', 'observe'], outputView: 'outline',
     helpTopic: 'run', surfaces: ['embedded', 'mcp'], inputSchema: objectSchema({
@@ -1738,18 +1753,6 @@ const CANONICAL_OPERATION_SPECS = [
       cursor: { type: 'integer', minimum: 0 },
     }, ['runId', 'scope']),
   }],
-  ['run.scratchpad.append', {
-    profile: 'ordinary', surfaces: ['embedded', 'mcp', 'cli'], effect: 'control',
-    capabilities: ['observe'], outputView: 'outline', helpTopic: 'run',
-    example: 'baton run scratchpad append RUN_ID --scope shared --body TEXT [--kind note]',
-    inputSchema: objectSchema({
-      runId: id,
-      scope: { type: 'string', pattern: '^(?:shared|worker:[A-Za-z0-9._:-]{1,256})$' },
-      kind: { type: 'string', enum: ['note', 'plan', 'doubt', 'link'] },
-      body: { type: 'string', minLength: 1 },
-      idempotencyKey: { type: 'string', pattern: '^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$' },
-    }, ['runId', 'scope', 'body']),
-  }],
   ['run.scratchpad.elevate', {
     profile: 'ordinary', surfaces: ['embedded', 'mcp', 'cli'], effect: 'control',
     capabilities: ['control', 'observe'], outputView: 'outline', helpTopic: 'run',
@@ -1759,6 +1762,12 @@ const CANONICAL_OPERATION_SPECS = [
       entryIds: { type: 'array', maxItems: 128, uniqueItems: true, items: { type: 'string', pattern: '^scratchpad-entry:[a-f0-9]{64}$' } },
     }, ['runId', 'taskId', 'entryIds']),
   }],
+  // #158 (H2.1) / 2026-09-14 audit U-E3: ONE row. The duplicate declaration (the first was
+  // observe-only, string-body, body-required; the second control-classed, JSON-bodied,
+  // body-optional) made the surface index keep the first row while byKey kept the last, so the
+  // advertised schema and the validated schema could disagree. The merged row keeps the write's
+  // real capability class, the web direct port, the JSON body form, and the body requirement the
+  // shipped normalizer enforces (_normalizeScratchpadAppend).
   ['run.scratchpad.append', {
     profile: 'ordinary', surfaces: ['embedded', 'mcp', 'cli', 'web'], effect: 'control',
     capabilities: ['control', 'observe'], outputView: 'outline', helpTopic: 'run',
@@ -1769,7 +1778,7 @@ const CANONICAL_OPERATION_SPECS = [
       kind: { type: 'string', enum: ['note', 'plan', 'doubt', 'link'] },
       body: { oneOf: [{ type: 'string', minLength: 1 }, { type: 'object' }, { type: 'array' }] },
       idempotencyKey: { type: 'string', pattern: '^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$' },
-    }, ['runId', 'scope']),
+    }, ['runId', 'scope', 'body']),
   }],
   ['run.board.post', {
     profile: 'ordinary', surfaces: ['embedded', 'cli'], effect: 'control',
@@ -1986,7 +1995,9 @@ const SURFACE_ALIAS_ROWS = Object.freeze([
   ['run.member.view', 'mcp.web-bridge', 'run.workstreams'],
   ['application.help', 'mcp.baton', 'baton_help'],
   ['run.answer', 'mcp.baton', 'baton_decision_answer'],
-  ['run.attention.list', 'mcp.baton', 'baton_decision_list'],
+  // 2026-09-14 audit (U-G4): baton_decision_list dispatches application.decisionList; the
+  // run.attention.list row it used to alias was a ghost with no surface of its own and is gone.
+  ['decision.list', 'mcp.baton', 'baton_decision_list'],
   ['run.do', 'mcp.baton', 'baton_run_act'],
   ['run.list', 'mcp.baton', 'baton_runs'],
   ['run.member.send', 'mcp.baton', 'baton_workstream_notify'],
@@ -2056,6 +2067,11 @@ function buildCanonicalOperation([key, spec]) {
     authorityFields: Object.freeze([...(spec.authorityFields ?? [])]),
     serverDerived: Object.freeze([...(spec.serverDerived ?? source?.serverDerived ?? [])]),
     transportHidden: Object.freeze([...(spec.transportHidden ?? [])]),
+    // Fields the operation's WIRE TRANSPORTS accept beside its own schema properties (the fold's
+    // episode selectors on run.view, the wait selector on its status/wait transports). Declared on
+    // the operation so the application command table's argument lists stay provably inside it
+    // (application.mjs asserts the subset at construction — 2026-09-14 audit, U-N5).
+    transportFields: Object.freeze([...(spec.transportFields ?? [])]),
     liveMethod: spec.liveMethod ?? spec.op ?? spec.action ?? key,
     authority: spec.authority ?? SURFACING_MATRIX_AUTHORITY[key] ?? null,
     flagAliases: flagAliasesFor(inputSchema),
@@ -2073,7 +2089,21 @@ function buildCanonicalOperation([key, spec]) {
   });
 }
 
-const canonicalOperations = freeze(CANONICAL_OPERATION_SPECS.map(buildCanonicalOperation));
+/**
+ * Build the canonical operation table. A repeated key is a construction failure, never a silent
+ * first-wins/last-wins: the surface index keeps the first row while the by-key map keeps the
+ * last, so a duplicate makes the advertised schema and the validated schema disagree (2026-09-14
+ * audit U-E3 — run.scratchpad.append was declared twice with conflicting contracts).
+ */
+export function buildCanonicalOperationTable(specs) {
+  const byKey = new Map();
+  for (const [key, spec] of specs) {
+    if (byKey.has(key)) throw new TypeError(`duplicate canonical operation key: ${key}`);
+    byKey.set(key, spec);
+  }
+  return freeze([...byKey].map(buildCanonicalOperation));
+}
+const canonicalOperations = buildCanonicalOperationTable(CANONICAL_OPERATION_SPECS);
 const surfaceAliases = freeze(SURFACE_ALIAS_ROWS.map(([canonicalKey, surface, name]) => ({
   canonical: canonicalKey, surface, name,
 })));
@@ -2268,6 +2298,34 @@ export function projectTypedTerminalCause({
     return freeze({ kind: 'dispatch_refused', code, ...guidance });
   }
   return runStop ? freeze({ kind: 'operator_stop', code: 'operator_stop' }) : null;
+}
+
+/**
+ * The canonical operation an application command name serves (2026-09-14 audit, U-N5). Resolution
+ * order: the command name IS a canonical key; an `application.commands` alias row names it; the
+ * dispatch alias map resolves the canonical spelling onto it. Null when the command has no
+ * canonical owner — which the registry's construction assertions refuse.
+ */
+export function canonicalOperationForCommand(name, registry = APPLICATION_SEMANTIC_REGISTRY) {
+  const byKey = new Map(registry.canonicalOperations.map((operation) => [operation.key, operation]));
+  if (byKey.has(name)) return byKey.get(name);
+  const applicationAlias = registry.surfaceAliases
+    .find((alias) => alias.surface === 'application.commands' && alias.name === name);
+  if (applicationAlias && byKey.has(applicationAlias.canonical)) return byKey.get(applicationAlias.canonical);
+  const legacy = registry.aliases.operations[name];
+  return typeof legacy === 'string' && byKey.has(legacy) ? byKey.get(legacy) : null;
+}
+
+/** Every field an operation's wire transports may declare: schema properties, server-derived
+ * fields, declared-hidden fields, the fold's transport selectors, and the Run addressing. */
+export function canonicalOperationFields(operation) {
+  return Object.freeze([...new Set([
+    ...Object.keys(operation.inputSchema.properties),
+    ...operation.serverDerived,
+    ...operation.transportHidden,
+    ...operation.transportFields,
+    'runId',
+  ])].sort());
 }
 
 export function applicationSemanticRegistry() { return APPLICATION_SEMANTIC_REGISTRY; }

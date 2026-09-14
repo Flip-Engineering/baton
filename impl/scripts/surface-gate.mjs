@@ -21,30 +21,60 @@ import { renderSurfaceDoc } from './render-surface-docs.mjs';
 
 const { McpFleetServer, commandForTool } = await import(new URL('../src/mcp-northbound.mjs', import.meta.url).href);
 const { CoordinationStore } = await import(new URL('../src/coordination-store.mjs', import.meta.url).href);
-const { APPLICATION_COMMAND_DEFINITIONS } = await import(new URL('../src/application.mjs', import.meta.url).href);
+const { applicationCardCommands } = await import(new URL('../src/application.mjs', import.meta.url).href);
+const { webCardCommandNames } = await import(new URL('../src/web-northbound.mjs', import.meta.url).href);
 const { SWARM_COMMAND_DEFINITIONS } = await import(new URL('../src/swarm-contract.mjs', import.meta.url).href);
-const { webAdmittedCommandNames } = await import(new URL('../src/web-northbound.mjs', import.meta.url).href);
 const { BatonWebApplicationFacade } = await import(new URL('../src/mcp-web-bridge.mjs', import.meta.url).href);
 const { APPLICATION_SEMANTIC_REGISTRY } = await import(new URL('../src/application-semantics.mjs', import.meta.url).href);
+// The SHIPPED wrapper: both distribution entry points (scripts/mcp-stdio.mjs, scripts/mcp-web.mjs)
+// wrap the raw server through this module before serving it (2026-09-14 audit U-N3 — probing the
+// raw server proved dispatch for a server nobody runs).
+const { wrapProductionMcpServer } = await import(new URL('../src/production-mcp-complete.mjs', import.meta.url).href);
+const {
+  canonicalSurfaceResolutionFindings, formatSurfaceResolutionFinding,
+} = await import(new URL('../src/surface-resolution.mjs', import.meta.url).href);
+const { CLI_WEB_COMMANDS, cliBusCommand, cliDispatches } = await import(new URL('../src/application-cli.mjs', import.meta.url).href);
 
-/** The resident MCP bridge facade over the wire card a real resident advertises (web-admitted
- * commands plus the swarm family): every command an advertised tool dispatches must be admitted
- * by it, or the tool works in-process and is refused over the resident (#270). */
+/** The resident MCP bridge facade over the wire card a REAL resident advertises: the projection
+ * the resident itself serves at /v1/application-card (web-northbound webCardCommandNames), plus
+ * the application card's own command list. Every command an advertised tool dispatches must be
+ * admitted by it, or the tool works in-process and is refused over the resident (#270). The facade
+ * admits exactly what production admits — not the web bus's wider ADMITTED-name table (kernel
+ * rows included), which let this check pass for commands production refuses (2026-09-14 audit,
+ * U-N4: webAdmittedCommandNames() is 132 names where the served card carries the application
+ * table plus the wave/workflow ports). */
 function residentBridgeFacade() {
-  const commands = [...new Set([...webAdmittedCommandNames(), ...Object.keys(SWARM_COMMAND_DEFINITIONS)])];
-  const session = {
+  return new BatonWebApplicationFacade(
+    productionCardClient(),
+    productionCard(),
+    productionSession(),
+  );
+}
+function productionSession() {
+  return {
     schemaVersion: 1,
     identity: { userId: 'gate', sessionId: 'gate-bridge', capabilities: ['observe', 'control'], repoIds: [GATE_REPO_ID] },
     expiresAt: new Date(Date.now() + 60_000).toISOString(),
   };
-  const card = { repoId: GATE_REPO_ID, commands, agentExperience: { registryDigest: APPLICATION_SEMANTIC_REGISTRY.digest } };
-  const client = {
+}
+/** The card a zero-assembly resident publishes: the served web card commands plus the application
+ * card's own command list (application.mjs applicationCardCommands). */
+function productionCard() {
+  return {
+    repoId: GATE_REPO_ID,
+    commands: [...new Set([...webCardCommandNames(), ...applicationCardCommands()])].sort(),
+    agentExperience: { registryDigest: APPLICATION_SEMANTIC_REGISTRY.digest },
+  };
+}
+function productionCardClient() {
+  const card = productionCard();
+  const session = productionSession();
+  return {
     repoId: GATE_REPO_ID,
     async session() { return session; },
     async doctor() { return { ready: true, application: card }; },
     async command(name) { return { ok: true, command: name }; },
   };
-  return new BatonWebApplicationFacade(client, card, session);
 }
 const GATE_REPO_ID = 'repo-surface-gate';
 const renderDocs = await import(new URL('./render-surface-docs.mjs', import.meta.url).href);
@@ -82,7 +112,7 @@ export async function checkMcpDispatchResolvability() {
     const coordinatorCalls = [];
     const application = {
       repoId: GATE_REPO_ID,
-      card: () => ({ schemaVersion: 1, repoId: GATE_REPO_ID, commands: Object.keys(APPLICATION_COMMAND_DEFINITIONS) }),
+      card: () => ({ schemaVersion: 1, repoId: GATE_REPO_ID, commands: applicationCardCommands() }),
       async authorizeReplay() { return true; },
       async command(name) { applicationCalls.push(name); return { schemaVersion: 1, command: name }; },
       async contextEval() { applicationCalls.push('application.context_eval'); return { item: { id: `cell:${'a'.repeat(64)}`, value: {} } }; },
@@ -94,7 +124,7 @@ export async function checkMcpDispatchResolvability() {
         : undefined),
       has: () => true,
     });
-    const server = new McpFleetServer({
+    const rawServer = new McpFleetServer({
       coordinator, application, surface: 'combined',
       coordination: new CoordinationStore(join(directory, 'coordination')),
       shutdownPrincipal: { actor: 'mcp-host:gate', principalId: 'mcp-host', sessionId: 'mcp-host-session' },
@@ -110,6 +140,10 @@ export async function checkMcpDispatchResolvability() {
       },
       repoIds: [GATE_REPO_ID], maxWaitMs: 1_000, maxMessageBytes: 256 * 1024, takeToolQuota: () => ({ ok: true }),
     });
+    // Probe the SHIPPED server: both distribution entry points wrap before serving, so an
+    // advertised tool is only real if it survives this wrapper's tools/list (2026-09-14 audit,
+    // U-N3/U-E2).
+    const server = wrapProductionMcpServer(rawServer, { expandNative: true });
     const bridge = residentBridgeFacade();
     await server.handle({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-11-25', capabilities: {}, clientInfo: { name: 'surface-gate', version: '1' } } });
     await server.handle({ jsonrpc: '2.0', method: 'notifications/initialized' });
@@ -166,6 +200,42 @@ export async function checkMcpDispatchResolvability() {
   return findings;
 }
 
+/**
+ * Every registry row that claims a surface must resolve to a name that surface actually serves:
+ * the CLI parser compiles its taught example to a dispatched transport, the web command map
+ * admits its transport, an advertised MCP tool dispatches its bus command (2026-09-14 audit,
+ * U-N1/U-N2 — the gate that could not see the surface). This is the assertion that closes
+ * U-E6, U-E7, U-G4, U-G5, U-G6 and U-G7 at authoring time.
+ */
+export function checkCanonicalSurfaceResolution() {
+  return canonicalSurfaceResolutionFindings().map(formatSurfaceResolutionFinding);
+}
+
+/**
+ * The CLI's two admission tiers must agree with the canonical table and with the divergence
+ * ledger (2026-09-14 audit, U-E6): every wire-card transport the client may dispatch is in the
+ * derived dispatch authority, and every cli divergence the ledger records (a facade port the card
+ * does not carry) is dispatchable too — a ledgered port the client refuses is exactly the
+ * advertised-but-refused class this check exists to catch.
+export function checkCliAdmissionDerivation() {
+  const findings = [];
+  for (const name of CLI_WEB_COMMANDS) {
+    const bus = cliBusCommand(name);
+    if (!cliDispatches(bus)) {
+      findings.push(`wire-card transport ${name} is not in the derived dispatch authority`);
+    }
+  }
+  const ledger = JSON.parse(readFileSync(new URL('./surface-divergence-ledger.json', import.meta.url), 'utf8'));
+  for (const entry of ledger.entries ?? []) {
+    if (entry.surface !== 'cli') continue;
+    const bus = cliBusCommand(entry.name);
+    if (!cliDispatches(bus)) {
+      findings.push(`ledgered cli port ${entry.name} is not dispatchable by the CLI client`);
+    }
+  }
+  return findings;
+}
+
 /** Run every surface check; with `write`, regenerate the artifacts first. */
 export async function runSurfaceGate({ write = false } = {}) {
   if (write) {
@@ -173,6 +243,7 @@ export async function runSurfaceGate({ write = false } = {}) {
     writeSurfaceParityMatrix();
   }
   const findings = [
+    ...checkCanonicalSurfaceResolution().map((f) => `surface-resolution: ${f}`),
     ...runSurfaceConformanceMain({ writeInventory: write }).map((f) => `surface-conformance: ${f}`),
     ...checkSurfaceParityMatrix().map((f) => `surface-parity: ${f}`),
     ...(await checkMcpDispatchResolvability()).map((f) => `mcp-dispatch: ${f}`),

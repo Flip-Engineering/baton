@@ -85,12 +85,17 @@ function toolResult(id, value) {
 
 function toolErrorResponse(message, error) {
   const envelope = BatonControlError.from(error).envelope().error;
+  // ONE envelope shape on the wire (2026-09-14 audit, U-F8): the core tools answer
+  // `{ok:false, error:{code, message?, detail?, field?}}`, and the meta family used to answer
+  // `{error:{…, retryable, action}}` with no `ok` at all. This projection keeps the richer
+  // retryable/action guidance while carrying the same top-level shape every other tool uses.
+  const body = { ok: false, error: envelope };
   return {
     jsonrpc: '2.0', id: message?.id ?? null,
     result: {
       isError: true,
-      structuredContent: { error: envelope },
-      content: [{ type: 'text', text: JSON.stringify({ error: envelope }) }],
+      structuredContent: body,
+      content: [{ type: 'text', text: JSON.stringify(body) }],
     },
   };
 }
@@ -659,14 +664,18 @@ export function wrapProductionMcpServer(server, {
     shadowPromise ??= createAdvancedShadow(server);
     return shadowPromise;
   };
-  // U-E2 (#287, 2026-09-14 audit): a surface's tools/list is exactly what tools/call dispatches.
-  // Merging the advanced shadow's definitions here advertised 17 kernel tools (the whole fleet_*
-  // family) on an ordinary surface whose dispatch guard then refused them by name — the list
-  // lied. The alternative fix, widening the ordinary guard, would make an `application`
-  // deployment advertise AND dispatch kernel control directly, which MCP.md reserves for
-  // `advanced`/`combined`; so the merge is what goes, and kernel reachability stays where the
-  // profile already projects it — the baton_surface_* meta tools route to this same shadow
-  // (invokeCapability), while an advanced/combined surface carries the definitions itself.
+  // U-E2 (#287 and #289, 2026-09-14 audit): a surface’s tools/list is EXACTLY what tools/call
+  // dispatches — the server’s own table plus the unified meta tools. The advanced shadow is an
+  // internal authority for `baton_surface_invoke`/`baton_surface_catalog` (it is what lets an
+  // ordinary deployment resolve a kernel capability on request), not a second advertised surface.
+  // Merging its definitions here advertised 17 kernel tools (the whole fleet_* family) on an
+  // ordinary surface whose dispatch guard then refused them by name, so those tools answered every
+  // call with `-32602 Invalid params` — the list lied. The alternative fix, widening the ordinary
+  // guard, would make an `application` deployment advertise AND dispatch kernel control directly,
+  // which MCP.md reserves for `advanced`/`combined` (MCP.md §Connect); so the merge is what goes,
+  // and kernel reachability stays where the profile already projects it — the baton_surface_* meta
+  // tools route to this same shadow (invokeCapability), while an advanced/combined surface carries
+  // the definitions itself.
   const listedTools = async () => [
     ...(server.toolDefinitions ?? []),
     ...COMPLETE_UNIFIED_MCP_META_TOOL_DEFINITIONS,
