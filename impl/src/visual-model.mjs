@@ -14,9 +14,16 @@
  * Bounding: fleet.members and timeline are both capped at 64 (the timeline keeps the
  * latest events). Identical inputs project to an identical sha256 fingerprint of the
  * canonical (key-sorted) model.
+ *
+ * The swarm family (docs/38, issue #315): `resident`, `swarm` and `wakes` are additive
+ * sections projected from the bounded swarm-family read (`readSwarmFamily` in
+ * swarm-family.mjs) and from the wake-stream attachment the operator seat opens. They
+ * name the state the projections already carry — the model has no persona field and no
+ * pose vocabulary anywhere.
  */
 
 import { createHash } from 'node:crypto';
+import { MAX_FAMILY_ATTENTION, MAX_FAMILY_PARTICIPANTS, MAX_FAMILY_SWARMS } from './swarm-family.mjs';
 
 export const VISUAL_MODEL_KIND = 'baton.visual_model';
 export const VISUAL_MODEL_VERSION = 1;
@@ -34,6 +41,91 @@ export function stripControlBytes(value) {
     .replace(ANSI_CSI_RE, '')
     .replace(STRAY_ESC_RE, '')
     .replace(C0_CONTROL_RE, '');
+}
+
+/**
+ * The resident this seat is attached to, from the doctor projection the snapshot already
+ * carries (`application.resident`: deploymentId, incarnation, transport, startedAt).
+ * `state` is the projection class the status channel derives from.
+ */
+function projectResident(doctor) {
+  const value = doctor?.ok === true ? doctor.value : null;
+  const resident = value?.application?.resident ?? null;
+  return {
+    deploymentId: resident?.deploymentId ?? value?.deploymentId ?? null,
+    incarnation: resident?.incarnation ?? null,
+    transport: resident?.transport ?? null,
+    startedAt: resident?.startedAt ?? null,
+    state: doctor?.ok === false ? 'error' : (value?.ready === true ? 'ready' : 'blocked'),
+  };
+}
+
+/** The bounded swarm family rows, verbatim in shape from the read seam — the model adds
+ * nothing the family read did not report. */
+function projectSwarmFamily(family) {
+  const swarms = (Array.isArray(family?.swarms) ? family.swarms : []).slice(0, MAX_FAMILY_SWARMS)
+    .map((swarm) => ({
+      swarmId: swarm?.swarmId ?? null,
+      purpose: swarm?.purpose ?? null,
+      status: swarm?.status ?? null,
+      lastSeq: swarm?.lastSeq ?? null,
+      lastTs: swarm?.lastTs ?? null,
+      cursor: swarm?.cursor ?? null,
+      ...(swarm?.rosterRefusal ? { rosterRefusal: swarm.rosterRefusal } : {}),
+      participants: (Array.isArray(swarm?.participants) ? swarm.participants : [])
+        .slice(0, MAX_FAMILY_PARTICIPANTS)
+        .map((participant) => ({
+          participantId: participant?.participantId ?? null,
+          role: participant?.role ?? null,
+          status: participant?.status ?? null,
+          state: participant?.state ?? null,
+          turn: participant?.turn ?? null,
+          runId: participant?.runId ?? null,
+          lastSeq: participant?.lastSeq ?? null,
+          lastTs: participant?.lastTs ?? null,
+        })),
+    }));
+  const attention = (Array.isArray(family?.attention) ? family.attention : [])
+    .slice(0, MAX_FAMILY_ATTENTION)
+    .map((item) => ({
+      swarmId: item?.swarmId ?? null,
+      kind: item?.kind ?? null,
+      participantId: item?.participantId ?? null,
+      command: item?.command ?? null,
+      state: item?.state ?? null,
+      // The next action, spelled only where the row itself declares one: the swarm update
+      // the row's own `next` names, with the swarm coordinate.
+      next: typeof item?.next === 'string' && item.next.length > 0 ? item.next
+        : (item?.next?.event && item?.swarmId
+          ? `baton swarm update ${item.swarmId} ${item.next.event}${item.next.action ? ` (${item.next.action})` : ''}`
+          : null),
+    }));
+  return {
+    swarms,
+    attention,
+    unavailable: family?.unavailable ?? null,
+  };
+}
+
+/** The wake-stream frames the seat's ONE attachment collected, already classified against
+ * the wake-class table by the attachment collector (baton-top.mjs) — the model bounds and
+ * sanitizes them, it does not re-derive them. */
+function projectWakes(wakes) {
+  if (!wakes) return { attached: false, lastSeq: null, lastTs: null, items: [] };
+  return {
+    attached: wakes.attached === true,
+    lastSeq: wakes.lastSeq ?? null,
+    lastTs: wakes.lastTs ?? null,
+    items: (Array.isArray(wakes.items) ? wakes.items : []).slice(-MAX_TIMELINE_ITEMS).map((item) => ({
+      seq: item?.seq ?? null,
+      ts: item?.ts ?? null,
+      wakeClass: item?.wakeClass ?? null,
+      subject: item?.subject ?? null,
+      summary: item?.summary ?? null,
+      terminal: item?.terminal === true,
+      next: item?.next ?? null,
+    })),
+  };
 }
 
 function projectRun(runValue) {
@@ -70,8 +162,7 @@ function projectFleet(workstreams) {
     }));
   return { members, counts: { active: members.filter((m) => m.state === 'working').length } };
 }
-
-function projectAttention(runAttention, watchAttention) {
+function projectAttention(runAttention, watchAttention, runId) {
   const items = Array.isArray(runAttention) && runAttention.length > 0
     ? runAttention
     : (watchAttention?.reasons ?? []);
@@ -83,6 +174,11 @@ function projectAttention(runAttention, watchAttention) {
     prompt: item.prompt ?? null,
     // P5: only items with an explicit answerable request identity can be answered.
     respondable: Boolean(item.requestId),
+    // The next action an operator lowers for answerable attention, spelled exactly as the
+    // CLI spells it (docs/38: a next that names a verb that does not exist is a lie).
+    next: item?.requestId && runId
+      ? `baton run answer ${runId} ${item.requestId}`
+      : null,
   }));
 }
 
@@ -104,11 +200,24 @@ function projectControls(attention, runId) {
   };
 }
 
-function projectTopology(doctor, runId, fleet) {
+function projectTopology(doctor, runId, fleet, family) {
   const edges = [];
   const deployment = doctor?.deployment;
   if (deployment?.deploymentId && runId) {
     edges.push({ from: deployment.deploymentId, to: runId, relation: 'owns' });
+  }
+  // The swarm family rides the graph: swarms as nodes, participants under their swarm,
+  // and a participant's bound run one edge further.
+  for (const swarm of Array.isArray(family?.swarms) ? family.swarms : []) {
+    if (!swarm?.swarmId) continue;
+    for (const participant of Array.isArray(swarm.participants) ? swarm.participants : []) {
+      if (participant?.participantId) {
+        edges.push({ from: swarm.swarmId, to: participant.participantId, relation: 'member' });
+      }
+      if (participant?.runId) {
+        edges.push({ from: participant.participantId, to: participant.runId, relation: 'runs' });
+      }
+    }
   }
   for (const member of fleet.members) {
     if (runId && member.workerId) {
@@ -207,16 +316,22 @@ function fingerprint(model) {
  *                                  convergence/story seams)
  * @param {object} [input.watch]    the existing watch authority (follow events,
  *                                  attention reasons, next cursors)
+ * @param {object} [input.swarm]    the bounded swarm-family read (readSwarmFamily):
+ *                                  swarms with participants, family attention, unavailability
+ * @param {object} [input.wakes]    the wake-stream attachment's collected frames, already
+ *                                  classified against the wake-class table
  * @returns {object} the canonical visual model
  */
-export function projectBatonVisualModel({ snapshot = {}, watch } = {}) {
+export function projectBatonVisualModel({ snapshot = {}, watch, swarm, wakes, width } = {}) {
   const runValue = snapshot.run?.value ?? {};
   const run = projectRun(runValue);
   const story = projectStory(snapshot.story, runValue);
   const fleet = projectFleet(runValue.workstreams);
-  const attention = projectAttention(runValue.attention, watch?.attention?.value);
+  const resident = projectResident(snapshot.doctor);
+  const family = projectSwarmFamily(swarm);
+  const attention = projectAttention(runValue.attention, watch?.attention?.value, run.runId);
   const controls = projectControls(attention, run.runId);
-  const topology = projectTopology(snapshot.doctor?.value, run.runId, fleet);
+  const topology = projectTopology(snapshot.doctor?.value, run.runId, fleet, family);
   const telemetry = projectTelemetry(snapshot.doctor?.value, snapshot.convergence);
   const timeline = projectTimeline(watch?.follow?.events);
   const provenance = projectProvenance(timeline);
@@ -228,6 +343,9 @@ export function projectBatonVisualModel({ snapshot = {}, watch } = {}) {
     run,
     story,
     fleet,
+    resident,
+    swarm: family,
+    wakes: projectWakes(wakes),
     attention,
     controls,
     topology,

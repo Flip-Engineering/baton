@@ -70,8 +70,11 @@ export const UNIFIED_NOTIFICATION_WATCH_TOOL = Object.freeze({
 // docs/38 — the Flip-driven visualization surface. `baton_surface_visualize` is a read-only meta
 // tool composing the already-authorized surface snapshot authority and, when follow is requested,
 // the surface watch authority, into one bounded visual model plus an ANSI-free static rendering.
-// It never becomes an authority: cursors move only through the existing watch seams, and action
-// suggestions lower through baton_surface_invoke/run.answer.
+// The model carries the swarm family the operator seat renders — the resident row, swarm and
+// participant rows with state and last wake, and attention with the next action — and carries no
+// persona field anywhere: Flip is brand identity, never a payload field (docs/38, operator
+// decision 2026-09-14). It never becomes an authority: cursors move only through the existing
+// watch seams, and action suggestions lower through baton_surface_invoke/run.answer.
 export const UNIFIED_VISUALIZATION_CAPABILITY = freeze({
   id: 'surface.visualize',
   owner: 'surface-kernel',
@@ -94,8 +97,8 @@ export const UNIFIED_VISUALIZATION_CAPABILITY = freeze({
     kind: { type: 'string', minLength: 1, maxLength: 256 },
     timeoutMs: { type: 'integer', minimum: 1, maximum: 30000 },
   }),
-  effect: 'bounded read-only visual model plus ANSI-free static rendering over the existing snapshot and optional watch authorities',
-  description: 'Composes the existing surface snapshot/watch meta authorities into one deterministic visual projection and static rendering; it creates no second authority.',
+  effect: 'bounded read-only visual model (residents, swarms, participants with state and last wake, attention with next action, fleet, telemetry) plus ANSI-free static rendering over the existing snapshot, swarm-family and optional watch authorities',
+  description: 'Composes the existing surface snapshot/watch meta authorities and the bounded swarm-family read into one deterministic visual projection and static rendering; it creates no second authority and carries no persona field.',
   notification: true,
   handler: 'surface.visualize',
   hostLocal: false,
@@ -113,7 +116,7 @@ export const UNIFIED_VISUALIZATION_CAPABILITY = freeze({
 
 export const UNIFIED_VISUALIZATION_TOOL = Object.freeze({
   name: 'baton_surface_visualize',
-  description: 'Project one bounded read-only visual model (overview, topology, timeline, telemetry) from the existing surface snapshot and optional watch authorities, returning structured content plus an ANSI-free static rendering and the exact next refresh cursors.',
+  description: 'Project one bounded read-only visual model (overview, topology, timeline, telemetry) from the existing surface snapshot, the bounded swarm-family read (residents, swarms, participants with state and last wake; attention with the next action) and optional watch authorities, returning structured content plus an ANSI-free static rendering and the exact next refresh cursors.',
   inputSchema: clone(UNIFIED_VISUALIZATION_CAPABILITY.schema),
   annotations: {
     readOnlyHint: true,

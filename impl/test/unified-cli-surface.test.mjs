@@ -150,8 +150,10 @@ test('CLI surfaceVisualize composes snapshot and watch projections when follow i
   assert.equal(result.view, 'telemetry');
   assert.equal(result.presentation.refresh.follow, true);
   assert.ok(Number.isSafeInteger(result.presentation.refresh.afterCursor));
+  // The composition also reads the bounded swarm family (#315) — one swarm.list beside
+  // the snapshot reads, before any watch authority is consulted.
   assert.deepEqual(raw.calls.map((c) => c.name), [
-    'run.inspect', 'waves.progress', 'run.follow', 'run.attention.watch', 'run.inspect', 'waves.progress',
+    'run.inspect', 'waves.progress', 'swarm.list', 'run.follow', 'run.attention.watch', 'run.inspect', 'waves.progress',
   ]);
 });
 

@@ -17,6 +17,8 @@
 //   P5  No renderer gesture bypasses authority; action hints lower through the
 //       existing `run.answer` / `baton_surface_visualize` commands.
 
+import { flipFace, flipStatus } from './brand.mjs';
+
 // ---------------------------------------------------------------------------
 // Display width
 // ---------------------------------------------------------------------------
@@ -135,6 +137,21 @@ function pulseQueued(model) {
   return model?.pulse?.queued ?? model?.telemetry?.queued ?? model?.convergence?.queued ?? null;
 }
 
+function swarmFamily(model) {
+  return model?.swarm ?? null;
+}
+
+/** One row word for a projection class: the closed status word when the class derives,
+ * the raw class otherwise (an undervivable state is shown, never renamed). */
+function statusWord(statusClass) {
+  const status = flipStatus(statusClass);
+  return status === null ? `${statusClass ?? '—'}` : status.text;
+}
+
+function formatLastWake(seq) {
+  return seq == null ? '' : `  last wake #${seq}`;
+}
+
 // ---------------------------------------------------------------------------
 // Color / motion (P3 progressive enhancement; off by default — non-TTY output
 // carries no ANSI and no animation)
@@ -162,8 +179,10 @@ function styled(text, color, codes) {
 
 function header(model, view, { width, color, motion }) {
   const runId = model?.run?.runId ?? 'run:unknown';
-  let line = `baton top · ${view} · ${runId}`;
-  if (motion) line += ' ✦'; // Flip presence — P4
+  // P4 / operator decision 2026-09-14: Flip is brand identity — the static smile mark in
+  // the header, never a pose. Motion stays the low-amplitude sparkle hint.
+  let line = `${flipFace('smile', { color })} baton top · ${view} · ${runId}`;
+  if (motion) line += ' ✦';
   return styled(fitToWidth(line, width), color, ['bold', 'cyan']);
 }
 
@@ -176,19 +195,65 @@ function renderOverview(model, { width, color, motion }) {
   lines.push(header(model, 'overview', { width, color, motion }));
   lines.push(styled(fitToWidth(rule(width), width), color, ['dim']));
 
+  // The seat's status: the closed status word for the class the model carries — attention
+  // first (a human is needed), then the run phase, then the resident state. One derivation
+  // (flipStatus), never a second vocabulary.
+  const statusClass = (Array.isArray(model?.attention) && model.attention.length > 0)
+    || (Array.isArray(model?.swarm?.attention) && model.swarm.attention.length > 0)
+    ? 'attention'
+    : (model?.run?.phase ?? model?.resident?.state ?? null);
+  const seatStatus = flipStatus(statusClass);
+  if (seatStatus !== null) {
+    lines.push(fitToWidth(`Status  ${seatStatus.text}${model?.wakes?.lastSeq != null ? `  ·  last wake #${model.wakes.lastSeq}` : ''}`, width));
+  }
+
   // Narrative — P1: story compiler is the primary source, clearly labeled
   // deterministic projection otherwise.
   const narrative = model?.story?.narrative ?? model?.run?.narrative ?? '';
   lines.push(styled('What is happening', color, ['bold']));
   lines.push(fitToWidth(`  ${narrative}`, width));
 
-  // Run spine.
   lines.push(styled('Run spine', color, ['bold']));
   const run = model?.run ?? {};
   lines.push(fitToWidth(`  runId       ${run.runId ?? '—'}`, width));
   lines.push(fitToWidth(`  phase       ${run.phase ?? '—'}`, width));
   lines.push(fitToWidth(`  objective   ${run.objective ?? '—'}`, width));
   lines.push(fitToWidth(`  progress    ${run.progress?.current ?? '—'}`, width));
+
+  // Resident — the seat's own resident row: identity, transport, state.
+  const resident = model?.resident ?? null;
+  if (resident && (resident.deploymentId || resident.state)) {
+    lines.push(styled('Resident', color, ['bold']));
+    lines.push(fitToWidth(
+      `  ${resident.deploymentId ?? '—'}  ${resident.incarnation ?? '—'}  ${resident.transport ?? '—'}  ${statusWord(resident.state)}`,
+      width,
+    ));
+  }
+
+  // Swarm family — residents' swarms and their participants with state and last wake
+  // (docs/38, issue #315). An unavailable family is a named truth, not a blank.
+  const family = swarmFamily(model);
+  if (family) {
+    lines.push(styled('Swarm family', color, ['bold']));
+    if (family.unavailable) {
+      lines.push(fitToWidth(`  (swarm family unavailable: ${family.unavailable.code})`, width));
+    } else if ((family.swarms ?? []).length === 0) {
+      lines.push(fitToWidth('  (no living swarms)', width));
+    }
+    for (const swarm of family.swarms ?? []) {
+      const refusal = swarm?.rosterRefusal ? `  roster refused: ${swarm.rosterRefusal.code}` : '';
+      lines.push(fitToWidth(
+        `  ${swarm?.swarmId ?? '?'}  ${swarm?.status ?? '?'}${swarm?.purpose ? `  ${swarm.purpose}` : ''}${formatLastWake(swarm?.lastSeq)}${refusal}`,
+        width,
+      ));
+      for (const participant of swarm?.participants ?? []) {
+        lines.push(fitToWidth(
+          `    ${participant?.participantId ?? '?'}  ${participant?.role ?? '—'}  ${statusWord(participant?.state ?? participant?.status)}${formatLastWake(participant?.lastSeq)}`,
+          width,
+        ));
+      }
+    }
+  }
 
   // Fleet roster — narrow: stacked; wide: balanced two columns (P3).
   lines.push(styled('Fleet roster', color, ['bold']));
@@ -216,18 +281,22 @@ function renderOverview(model, { width, color, motion }) {
     }
   }
 
-  // Attention — P5: only answerable requests are actionable.
+  // Attention — P5: only answerable requests are actionable; the next action is spelled
+  // so the operator can lower it verbatim. Family attention rows (swarm-scoped) ride
+  // here too, carrying their swarm coordinate.
   lines.push(styled('Attention', color, ['bold']));
   const attention = attentionItems(model);
-  if (attention.length === 0) {
+  const familyAttention = swarmFamily(model)?.attention ?? [];
+  if (attention.length === 0 && familyAttention.length === 0) {
     lines.push(fitToWidth('  (no pending attention)', width));
   }
-  for (const item of attention) {
+  for (const item of [...attention, ...familyAttention]) {
     const respondable = item?.respondable === true ? 'respondable' : 'not-answerable';
     lines.push(fitToWidth(
-      `  ${item?.requestId ?? item?.id ?? '?'}  ${item?.kind ?? '?'}  ${item?.requiredAction ?? '?'}  ${item?.prompt ?? ''}  [${respondable}]`,
+      `  ${item?.swarmId ? `${item.swarmId} ` : ''}${item?.requestId ?? item?.id ?? (item?.swarmId ? '—' : '?')}  ${item?.kind ?? '?'}  ${item?.requiredAction ?? item?.state ?? '?'}  ${item?.prompt ?? ''}  [${respondable}]`,
       width,
     ));
+    if (item?.next) lines.push(fitToWidth(`    → ${item.next}`, width));
   }
 
   // Pulse.
@@ -263,6 +332,17 @@ function renderTopology(model, { width, color, motion }) {
     pushNode(model.deployment.deploymentId, model.deployment.deploymentId, 0);
   }
   pushNode(model?.run?.runId, model?.run?.runId ?? 'run:unknown', 1);
+  // The swarm family in the graph: swarms as nodes, participants rendered UNDER their
+  // swarm (docs/38, issue #315 — the fleet graph shows participants under their swarms).
+  const family = swarmFamily(model);
+  for (const swarm of family?.swarms ?? []) {
+    if (!swarm?.swarmId) continue;
+    pushNode(swarm.swarmId, `${swarm.swarmId} ${swarm?.status ?? '?'}${formatLastWake(swarm?.lastSeq)}`, 1);
+    for (const participant of swarm?.participants ?? []) {
+      pushNode(participant?.participantId,
+        `${participant?.participantId ?? '?'}  ${statusWord(participant?.state ?? participant?.status)}${formatLastWake(participant?.lastSeq)}`, 2);
+    }
+  }
   for (const member of fleetMembers(model)) {
     pushNode(member?.workerId, `${member?.workerId ?? '?'} ${member?.role ?? 'worker'}`, 2);
   }
@@ -300,7 +380,21 @@ function renderTimeline(model, { width, color, motion }) {
   lines.push(header(model, 'timeline', { width, color, motion }));
   lines.push(styled(fitToWidth(rule(width), width), color, ['dim']));
 
-  lines.push(styled('Timeline', color, ['bold']));
+  lines.push(styled('Wake stream', color, ['bold']));
+  const wakes = model?.wakes ?? { attached: false, items: [] };
+  if (!wakes.attached) {
+    lines.push(fitToWidth('  (wake stream not attached — the seat attaches one stream per resident when the wake module is present)', width));
+  } else if ((wakes.items ?? []).length === 0) {
+    lines.push(fitToWidth(`  attached${wakes.lastSeq != null ? ` · last wake #${wakes.lastSeq}` : ''} · (no frames yet)`, width));
+  }
+  for (const item of wakes.items ?? []) {
+    const subject = item?.subject ?? '—';
+    const terminal = item?.terminal ? '  terminal' : '';
+    lines.push(fitToWidth(`  #${item?.seq ?? '?'}  ${item?.wakeClass ?? '?'}  ${subject}${terminal}`, width));
+    if (item?.next) lines.push(fitToWidth(`      → ${item.next}`, width));
+  }
+
+  lines.push(styled('Run events', color, ['bold']));
   lines.push(fitToWidth('  provenance: prose ‹worker words› · fact', width)); // P2 legend
   const items = timelineItems(model);
   if (items.length === 0) {

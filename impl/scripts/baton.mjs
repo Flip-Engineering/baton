@@ -11,7 +11,7 @@ import {
 } from '../src/application-cli.mjs';
 import { BATON_TOP_HELP, runBatonTop } from '../src/baton-top.mjs';
 import { BatonWebHost, SignalLifecycleOwner, describeDrainWait, signalIntentLine } from '../src/application-host.mjs';
-import { flipLine } from '../src/brand.mjs';
+import { flipAnnounce, flipLine } from '../src/brand.mjs';
 import { callConfiguredMcpTool } from '../src/configured-mcp-client.mjs';
 import { assertCliMcpControlParity, normalizeControlSurfaceError } from '../src/control-surface-unification.mjs';
 import { openBaton } from '../src/index.mjs';
@@ -80,9 +80,9 @@ async function serveDeployment(rawDeployment) {
       ? () => deployment.runs.list()
       : () => { throw Object.assign(new Error('this deployment publishes no run list'), { code: 'application_host_narration_unavailable' }); };
     announced = (async () => signalIntentLine(trigger, readRuns))().then(
-      (line) => { process.stderr.write(`${flipLine(`baton serve: ${line}`, { color: TTY })}\n`); },
+      (line) => { process.stderr.write(`${flipAnnounce('draining', `baton serve: ${line}`, { tty: TTY, color: TTY })}\n`); },
       (error) => {
-        process.stderr.write(`${flipLine(`baton serve: signal received; draining participants (narration failed: ${error?.code ?? error?.name ?? 'error'}) (${trigger.kind})`, { pose: 'thinking', color: TTY })}\n`);
+        process.stderr.write(`${flipAnnounce('draining', `baton serve: signal received; draining participants (narration failed: ${error?.code ?? error?.name ?? 'error'}) (${trigger.kind})`, { tty: TTY, color: TTY })}\n`);
       },
     );
     return announced;
@@ -96,7 +96,7 @@ async function serveDeployment(rawDeployment) {
   try {
     outcome = await lifecycle.run(async ({ signal }) => {
       const hosted = await deployment.host();
-      process.stderr.write(`${flipLine(`baton serve: ${JSON.stringify(hosted)}`, { pose: 'thinking', color: TTY })}\n`);
+      process.stderr.write(`${flipAnnounce('hosted', `baton serve: ${JSON.stringify(hosted)}`, { tty: TTY, color: TTY })}\n`);
       await new Promise((resolveSignal) => {
         if (signal.aborted) resolveSignal();
         else signal.addEventListener('abort', resolveSignal, { once: true });
@@ -110,10 +110,10 @@ async function serveDeployment(rawDeployment) {
     const summary = wait === null
       ? (error?.code ?? error?.name ?? 'error')
       : `${error?.code ?? error?.name ?? 'error'} — drain did not converge: ${wait}`;
-    process.stderr.write(`${flipLine(`baton serve: exit non-zero; ${summary}`, { pose: 'thinking', color: TTY })}\n`);
+    process.stderr.write(`${flipAnnounce('failed', `baton serve: exit non-zero; ${summary}`, { tty: TTY, color: TTY })}\n`);
     throw error;
   }
-  process.stderr.write(`${flipLine(`baton serve: ${JSON.stringify(outcome.closed)}`, { color: TTY })}\n`);
+  process.stderr.write(`${flipAnnounce(outcome.closed?.state, `baton serve: ${JSON.stringify(outcome.closed)}`, { tty: TTY, color: TTY })}\n`);
   if (outcome.closed.state !== 'closed') process.exitCode = 1;
 }
 
@@ -158,7 +158,7 @@ try {
   } else {
     if (parsed.kind === 'help' || parsed.name === 'application.help') {
       const helpTopic = parsed.topic ?? parsed.args?.topic;
-      if (helpTopic === undefined || helpTopic === 'application') process.stderr.write(`${flipLine('baton — reflexive multi-agent orchestration', { color: TTY })}\n`);
+      if ((helpTopic === undefined || helpTopic === 'application') && TTY) process.stderr.write(`${flipLine('baton — reflexive multi-agent orchestration', { color: TTY })}\n`);
       process.stdout.write(`${batonCliHelp(parsed.topic ?? parsed.args.topic)}\n`);
     } else if (parsed.kind === 'credential-help') {
       process.stdout.write(`${KIMI_CREDENTIAL_HELP}\n`);
@@ -226,6 +226,9 @@ try {
         stdout: process.stdout,
         stdin: process.stdin,
         clock: Date.now,
+        // The resident connection the seat attaches its ONE wake stream to (docs/38,
+        // issue #315): the timeline consumes GET /v1/wakes through the wake module.
+        connection,
       });
     } else if (parsed.kind === 'serve') {
       if (parsed.configPath === null) {
@@ -240,9 +243,9 @@ try {
         } else {
           const host = configured instanceof BatonWebHost ? configured : new BatonWebHost(configured);
           const outcome = await host.serve(process, (listening) => {
-            process.stderr.write(`baton serve: ${JSON.stringify(listening)}\n`);
+            process.stderr.write(`${flipAnnounce('hosted', `baton serve: ${JSON.stringify(listening)}`, { tty: TTY, color: TTY })}\n`);
           });
-          process.stderr.write(`baton serve: ${JSON.stringify(outcome.closed)}\n`);
+          process.stderr.write(`${flipAnnounce(outcome.closed?.state, `baton serve: ${JSON.stringify(outcome.closed)}`, { tty: TTY, color: TTY })}\n`);
           if (outcome.closed.state !== 'closed') process.exitCode = 1;
         }
       }
@@ -280,7 +283,7 @@ try {
   }
 } catch (error) {
   const envelope = normalizeControlSurfaceError(error);
-  process.stderr.write(`${flipLine(`baton: ${envelope.error.code}: ${envelope.error.message}`, { pose: 'thinking', color: TTY })}\n`);
+  process.stderr.write(`${flipAnnounce('refused', `baton: ${envelope.error.code}: ${envelope.error.message}`, { tty: TTY, color: TTY })}\n`);
   if (envelope.error.detail !== undefined && envelope.error.detail !== null) process.stderr.write(`${JSON.stringify(envelope.error.detail)}\n`);
   // Exit-code buckets (contract PT-6): a parse-time refusal is a usage error (2), everything else
   // is a runtime failure (1). Written as the pinned literal the parser suite scans for.

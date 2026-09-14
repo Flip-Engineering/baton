@@ -265,7 +265,7 @@ diagnostics/environment, and notification authorities — over one envelope that
 - `baton_surface_invoke` — invoke a capability by name, routed through the authority it already has.
 - `baton_surface_snapshot` — one composed read: card, readiness, workers, telemetry.
 - `baton_surface_watch` — the composed notification loop (run follow + attention watch + decisions).
-- `baton_surface_visualize` — a bounded visual model (overview/topology/timeline/telemetry).
+- `baton_surface_visualize` — a bounded visual model (overview/topology/timeline/telemetry) carrying the swarm family rows — residents, swarms and participants with state and last wake, attention with the next action — and no persona field anywhere.
 
 They are additive: the direct tools stay the primary surface. What a deployment can reach is
 decided by its profile — the catalog names it, and `baton_surface_invoke` routes each capability
