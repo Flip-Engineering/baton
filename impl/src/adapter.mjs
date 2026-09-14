@@ -259,6 +259,13 @@ export function renderBrief(brief, dialect) {
       : 'Delegation: your harness\'s native subagents are observed by Baton but not governed by it — it cannot review, capture or stop them; keep them to short, disposable exploration and do the accountable work yourself.');
   }
   lines.push(...renderToolsSection(brief.tools));
+  // Issue #309: a swarm participant's brief carries its Baton surface as one `## Swarm`
+  // section. The text is derived ONCE (swarm-native-access.mjs: SWARM_NATIVE_GUIDANCE plus the
+  // bridge's own guidance) and arrives ready-made on the provider-facing brief value; the ONE
+  // renderer owns only the heading, so every dialect reads the same surface.
+  if (brief.swarm) {
+    lines.push('## Swarm', '', brief.swarm);
+  }
   lines.push('## Write authority');
   // A-F4: name `## Path scope` in the authority paragraph only when that section is rendered.
   lines.push([

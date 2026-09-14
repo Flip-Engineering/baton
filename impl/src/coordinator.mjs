@@ -4389,6 +4389,22 @@ export class Coordinator {
       });
       inner = { ...inner, contextPacks: materialized };
     }
+    // Issue #309: a swarm participant's provider-facing brief carries its Baton surface — the
+    // `## Swarm` section text and the bridge tool, derived once in swarm-native-access.mjs and
+    // registered with the participant runtime at credential issue. Like attention and
+    // orientation this rides the provider-facing value only: task.brief (and its digest) stay
+    // byte-stable, and a re-prompt re-renders the same surface.
+    if (typeof workerId === 'string' && workerId.length > 0) {
+      const participantRuntime = this._participantRuntimes?.get(this._workers.get(workerId)?.runId);
+      const surface = participantRuntime?.briefSurface;
+      if (surface) {
+        inner = Object.freeze({
+          ...inner,
+          swarm: surface.swarm,
+          tools: [...(inner.tools ?? []), ...surface.tools],
+        });
+      }
+    }
     // Epic #81 (O-6): inject the pathScope-scoped L0 map as a cited, framed context-pack into
     // EVERY spawn brief. It is CITED by digest (packId) and framed (UNTRUSTED) — never spliced
     // into the objective string or the constraints. The admitted snapshot stays frozen (CI1).
