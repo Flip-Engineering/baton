@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 
@@ -279,4 +279,52 @@ test('VR4/VR5: an inconclusive live gate checkpoints the commit without teaching
   assert.deepEqual(replayed.checkpoint, outcome.checkpoint, 'restart must restore the exact checkpoint authority');
   assert.equal(replay.log.read(handle.id).filter((event) => event.kind === 'verify.reverified').length, 1, 'replay must not create another verification attempt');
   assert.equal(execFileSync('git', ['rev-parse', '--verify', `${replayed.checkpoint.ref}^{commit}`], { cwd: repository, encoding: 'utf8' }).trim(), outcome.capturedSha);
+});
+
+// 2026-09-14 audit G-11: the coverage and mutation runs draw the same abort signal as the candidate
+// and the base. Before this, a cancelled verification returned a verdict while its auxiliary child
+// kept running in a sandbox the caller had already closed — so the child is asserted here on the
+// sandbox itself: it announces that it started, and it must never reach its own later write.
+test('G-11: an aborted verification kills its coverage child inside the sandbox and returns no verdict', async (t) => {
+  const candidate = sandbox('abort-coverage');
+  t.after(candidate.cleanup);
+  // No shell metacharacters, so the referee executes this directly (`node` resolved from the closed
+  // runtime's PATH): the test proves the abort reaches the auxiliary child itself rather than
+  // depending on a shell that the verifier's closed PATH may not carry.
+  const coverageScript = "(require('fs').writeFileSync('coverage-started.marker', 'started'),"
+    + " setTimeout(function () { require('fs').writeFileSync('coverage-survived.marker', 'survived') }, 400))";
+  const contract = verification(['-e', 'process.exit(0)'], { coverageCommand: `node -e "${coverageScript}"` });
+  const controller = new AbortController();
+  const running = verify({ ...task(contract), changedLines: { 'x.js': [1] } }, result, candidate, {
+    runtime: runtime(), signal: controller.signal,
+  });
+
+  const started = join(candidate.dir, 'coverage-started.marker');
+  for (let i = 0; i < 300 && !existsSync(started); i += 1) await sleep(10);
+  assert.equal(existsSync(started), true, 'the coverage child was running when the caller aborted');
+  controller.abort();
+  await assert.rejects(running, { code: 'verification_aborted' });
+  await sleep(600);
+  assert.equal(existsSync(join(candidate.dir, 'coverage-survived.marker')), false,
+    'the coverage child was killed with its verification, not left running in the sandbox');
+});
+
+test('G-11: an aborted verification kills its mutation child too', async (t) => {
+  const candidate = sandbox('abort-mutation');
+  t.after(candidate.cleanup);
+  // Same shape as the coverage test above: no shell metacharacters, one direct-exec child.
+  const mutationScript = "(require('fs').writeFileSync('mutation-started.marker', 'started'),"
+    + " setTimeout(function () { require('fs').writeFileSync('mutation-survived.marker', 'survived') }, 400))";
+  const contract = verification(['-e', 'process.exit(0)'], { mutationCommand: `node -e "${mutationScript}"` });
+  const controller = new AbortController();
+  const running = verify(task(contract), result, candidate, { runtime: runtime(), signal: controller.signal });
+
+  const started = join(candidate.dir, 'mutation-started.marker');
+  for (let i = 0; i < 300 && !existsSync(started); i += 1) await sleep(10);
+  assert.equal(existsSync(started), true, 'the mutation child was running when the caller aborted');
+  controller.abort();
+  await assert.rejects(running, { code: 'verification_aborted' });
+  await sleep(600);
+  assert.equal(existsSync(join(candidate.dir, 'mutation-survived.marker')), false,
+    'the mutation child was killed with its verification, not left running in the sandbox');
 });

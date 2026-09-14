@@ -22,6 +22,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { verify, accept, SameWorktreeError, withVerificationLane, defaultVerificationConcurrency } from '../src/referee.mjs';
 import { createFromBase, captureCommit, freshVerifySandbox } from '../src/worktree.mjs';
+import { FRAME_LIMITS } from '../src/limits.mjs';
 import { MockAdapter } from '../src/adapter.mjs';
 
 // ---------- helpers ----------
@@ -656,4 +657,124 @@ test('a pinned command whose first token is a shell builtin is judged by the she
   const verdict = await verify(task, result, sandbox);
   assert.equal(verdict.observedExit, 0, 'the shell fallback ran the builtin');
   assert.equal(verdict.passed, true);
+});
+
+// ============================================================
+// 2026-09-14 audit — G-10 (one output bound), G-12 (one timeout), G-15 (expectExit)
+// ============================================================
+
+// G-10: the legacy string path (the pinned text command, plus every coverage and mutation run)
+// bounds its capture exactly as the closed argv path has since #266 — head and rolling tail,
+// `outputExceeded` reported, the exit code still the verdict. The bound is the contract's own row,
+// so no execution path can grow its own literal.
+test('G-10: a legacy string verification is bounded at its declared row and keeps its verdict', async (t) => {
+  const sandbox = makeSandbox();
+  t.after(() => sandbox.cleanup());
+  const verification = { command: `node -e "process.stdout.write('x'.repeat(256))"`, expectExit: 0, maxOutputBytes: 64 };
+  const task = makeTask({ verification });
+  const result = makeResult({ verification: { command: verification.command, claimedExit: 0 } });
+
+  const verdict = await verify(task, result, sandbox);
+
+  assert.equal(verdict.passed, true, 'the exit code is the verdict, whatever the verifier printed');
+  assert.equal(verdict.observedExit, 0);
+  assert.equal(verdict.outputExceeded, true);
+  assert.equal(verdict.capturedOutputBytes, 64, 'half the bound as the head, half as the rolling tail');
+  assert.equal(verdict.capturedOutputDigest, createHash('sha256').update('x'.repeat(64)).digest('hex'));
+  assert.equal(verdict.diagnosticCode, 'verification_passed');
+});
+
+// G-10: a legacy contract predates `maxOutputBytes` (the northbound scratch_oracle shape), and its
+// transcript is one durable evidence body — so the bound is the frame-limits registry's declared
+// `spill.body` row, never a number minted in the referee for this path alone.
+test('G-10: a legacy contract with no declared bound is bounded by the frame registry row, not a second literal', async (t) => {
+  const sandbox = makeSandbox();
+  t.after(() => sandbox.cleanup());
+  const bound = FRAME_LIMITS['spill.body'].value;
+  const verification = { command: `node -e "process.stdout.write('y'.repeat(${bound + 4096}))"`, expectExit: 0 };
+  const task = makeTask({ verification });
+  const result = makeResult({ verification: { command: verification.command, claimedExit: 0 } });
+
+  const verdict = await verify(task, result, sandbox);
+
+  assert.equal(verdict.passed, true);
+  assert.equal(verdict.outputExceeded, true);
+  assert.equal(verdict.capturedOutputBytes, bound, 'the one declared bound, not the whole transcript');
+});
+
+// G-10: the same one bound governs the auxiliary runs, and evidence past it is never half-parsed
+// into a signal. The padding comes FIRST and the report last, so the payload stays one argv token
+// (a bare inner `"` followed by a space would end the quoted span — G-19) and the report alone is
+// what a read-whole verifier would parse.
+test('G-10: a coverage report past the one bound is dropped, never half-parsed into a pass', async (t) => {
+  const sandbox = makeSandbox();
+  t.after(() => sandbox.cleanup());
+  writeFileSync(join(sandbox.dir, 'done.txt'), 'ok');
+  const report = JSON.stringify({ files: { 'src/x.js': { executedLines: [1] } } });
+  const task = makeTask({
+    changedLines: { 'src/x.js': [1] },
+    verification: {
+      command: 'test -f done.txt', expectExit: 0, maxOutputBytes: 256,
+      coverageCommand: `node -e "process.stdout.write(' '.repeat(4096) + ${JSON.stringify(report)})"`,
+    },
+  });
+  const result = makeResult({ verification: { command: 'test -f done.txt', claimedExit: 0 } });
+
+  const verdict = await verify(task, result, sandbox);
+
+  assert.equal(verdict.passed, true, 'the candidate verdict is untouched by an oversized auxiliary report');
+  assert.equal(verdict.coverageOfChange, null, 'truncated evidence is dropped, never parsed into a signal');
+  assert.equal(verdict.diagnosticCode, 'verification_coverage_unavailable');
+});
+
+// G-12: one timeout is spent once. Before this, the candidate, the base, the coverage run and the
+// mutation run each received a fresh copy of `timeoutMs`, so a pinned check could burn four times
+// its declared wall time with nothing on the receipt to say so. Now every phase draws what is left,
+// the phase that ran it out is named, and a phase whose budget is empty never starts.
+test('G-12: one timeout is spent once across the candidate, base, coverage and mutation phases', async (t) => {
+  const sandbox = makeSandbox();
+  const baseSandbox = makeSandbox('base');
+  t.after(() => { sandbox.cleanup(); return baseSandbox.cleanup(); });
+  // The same command runs in both sandboxes: the candidate (no marker) finishes inside the budget,
+  // while the base (marker) would need 3_500 ms — more than the 1_500 ms the candidate leaves it.
+  writeFileSync(join(baseSandbox.dir, 'slow.marker'), 'the base run needs more than the remainder');
+  const command = `node -e "setTimeout(() => process.exit(0), require('fs').existsSync('slow.marker') ? 3500 : 2500)"`;
+  const verification = {
+    command, expectExit: 0, timeoutMs: 4_000,
+    coverageCommand: `node -e "setTimeout(() => require('fs').writeFileSync('coverage-ran.marker', 'x'), 3000)"`,
+    mutationCommand: `node -e "setTimeout(() => require('fs').writeFileSync('mutation-ran.marker', 'x'), 3000)"`,
+  };
+  const task = makeTask({ verification, changedLines: { 'src/x.js': [1] } });
+  const result = makeResult({ verification: { command, claimedExit: 0 } });
+
+  const started = Date.now();
+  const verdict = await verify(task, result, sandbox, { baseSandbox });
+  const elapsed = Date.now() - started;
+
+  assert.equal(verdict.passed, true, 'the candidate passed inside the budget');
+  assert.equal(verdict.verificationBudget.limitMs, 4_000, 'the budget is the contract row, never a new default');
+  assert.equal(verdict.verificationBudget.consumedBy, 'base', 'the receipt names the phase that spent the timeout');
+  assert.equal(verdict.verificationBudget.remainingMs, 0);
+  assert.equal(verdict.baseExecution.state, 'timed_out', 'the base drew the remainder, not a fresh timeout');
+  assert.ok(elapsed < 8_000, `the whole verification stayed near its one timeout (${elapsed} ms)`);
+  assert.equal(existsSync(join(sandbox.dir, 'coverage-ran.marker')), false, 'no coverage child starts with an empty budget');
+  assert.equal(existsSync(join(sandbox.dir, 'mutation-ran.marker')), false, 'no mutation child starts with an empty budget');
+});
+
+// G-15: `expectExit` is threaded into the done-gate by both callers (the coordinator's task gate
+// and contribution-service's check receipt). It was dead weight; the option is live now, and it can
+// only add a refusal — a verdict observed at another exit code is never accepted for this row.
+test('G-15: accept() honors the expectExit its callers thread in', () => {
+  const verdict = {
+    reverified: true, passed: true, observedExit: 0,
+    redGreen: true, coverageOfChange: true, mutationPassed: true,
+  };
+  assert.equal(accept(verdict), true, 'no expectation threaded: unchanged behaviour');
+  assert.equal(accept(verdict, { expectExit: 0 }), true);
+  assert.equal(accept(verdict, { expectExit: 1 }), false, 'a verdict observed at another exit is not this row\'s pass');
+  assert.equal(accept({ ...verdict, observedExit: 3 }, { expectExit: 3 }), true);
+  assert.equal(accept({ ...verdict, observedExit: 3 }, { expectExit: 0 }), false);
+  assert.equal(accept(verdict, { expectExit: 0, requireRedGreen: true, requireCoverage: true, requireMutation: true }), true);
+  assert.equal(accept({ ...verdict, mutationPassed: null }, { expectExit: 0, requireMutation: true }), false);
+  assert.equal(accept({ ...verdict, reverified: false }, { expectExit: 0 }), false);
 });

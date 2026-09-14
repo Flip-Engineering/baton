@@ -7,7 +7,7 @@ import { Coordinator } from '../src/coordinator.mjs';
 import { Log } from '../src/log.mjs';
 import { FenceTable } from '../src/fence.mjs';
 import { coordinationForLog } from '../src/coordination-store.mjs';
-import { withVerificationLane } from '../src/referee.mjs';
+import { accept as refereeAccept, withVerificationLane } from '../src/referee.mjs';
 
 const SHA = 'a'.repeat(40);
 const BASE = 'b'.repeat(40);
@@ -17,7 +17,7 @@ const deferred = () => {
   return { promise, resolve };
 };
 
-async function fixture(t, { referee, capture, verificationFor } = {}) {
+async function fixture(t, { referee, capture, verificationFor, accept } = {}) {
   const directory = mkdtempSync(join(tmpdir(), 'baton-contributions-'));
   t.after(() => rmSync(directory, { force: true, recursive: true }));
   const prompts = [];
@@ -53,6 +53,7 @@ async function fixture(t, { referee, capture, verificationFor } = {}) {
     adapters: { mock: adapter }, worktrees, route: () => 'mock', now: () => 0,
     ...(verificationFor ? { verificationForCapture: verificationFor } : {}),
     // A laned referee (withVerificationLane) is installed as-is so the coordinator sees its lane.
+    ...(accept ? { accept } : {}),
     referee: referee?.lane ? referee : async (...args) => {
       checks++;
       if (referee) return referee(...args);
@@ -286,4 +287,25 @@ test('a docs-only capture is checked by the docs verification, a code capture by
   assert.deepEqual(seen, ['node', 'true'], 'the referee ran the docs command for the docs capture and the brief command for the code capture');
   const started = f.log.read(f.handle.id).filter((event) => event.kind === 'contribution.check_started').map((event) => event.payload.verification);
   assert.deepEqual(started, [{ selection: 'docs', command: 'node' }, { selection: 'code', command: 'true' }]);
+});
+
+// 2026-09-14 audit G-15: the `expectExit` the contribution service threads into the done-gate is
+// live end to end (referee.accept reads it). A verdict that reports an exit code its contract row
+// does not expect is refused at the receipt however the verdict was labelled — the gate reads the
+// row, never the label.
+test('a check verdict observed at another exit code is refused at the receipt', async (t) => {
+  let observedExit = 0;
+  const f = await fixture(t, {
+    accept: refereeAccept,
+    referee: async () => ({ reverified: true, observedExit, passed: true, matchesClaim: true, locus: 'fresh_sandbox' }),
+  });
+  await f.coordinator.captureContribution(f.handle.id, { contributionId: 'aligned' });
+  const aligned = await f.coordinator.checkContribution(f.handle.id, { contributionId: 'aligned', checkId: 'check-aligned' });
+  assert.equal(aligned.passed, true, 'a verdict at the row expectExit is accepted');
+
+  observedExit = 7;
+  await f.coordinator.captureContribution(f.handle.id, { contributionId: 'misaligned' });
+  const misaligned = await f.coordinator.checkContribution(f.handle.id, { contributionId: 'misaligned', checkId: 'check-misaligned' });
+  assert.equal(misaligned.passed, false, 'the row expects exit 0; the verdict observed 7');
+  assert.equal(misaligned.verdict.observedExit, 7, 'the receipt still carries what the hub observed');
 });

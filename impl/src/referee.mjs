@@ -14,6 +14,7 @@ import { existsSync } from 'node:fs';
 import { availableParallelism } from 'node:os';
 import { dirname, isAbsolute, resolve, sep } from 'node:path';
 import { verifierFailureCapsule } from './verifier-diagnostics.mjs';
+import { FRAME_LIMITS } from './limits.mjs';
 
 const canonical = (value) => Array.isArray(value) ? value.map(canonical) : value && typeof value === 'object'
   ? Object.fromEntries(Object.keys(value).sort().map((key) => [key, canonical(value[key])])) : value;
@@ -142,7 +143,66 @@ function tokenize(command) {
   return tokens;
 }
 
-function runCommand(command, cwd, timeoutMs, environment, signal = null) {
+/** The ONE bound a verification's captured output is held to (2026-09-14 audit, G-10). A contract
+ * declares its own row (`maxOutputBytes`, the Plan contract's validated field); the closed argv
+ * path, the legacy string path, and every coverage and mutation command all read THIS derivation,
+ * so no execution path can grow a second literal of its own. A legacy string contract (the
+ * northbound scratch_oracle shape: command/expectExit/timeoutMs/coverageCommand/mutationCommand)
+ * predates the field, and its captured transcript is one durable evidence body — so it is bounded
+ * by the frame-limits registry's `spill.body` row, the one declared module for frame bounds,
+ * rather than by a number minted here. */
+function outputBoundBytes(verification) {
+  const declared = verification?.maxOutputBytes;
+  return Number.isSafeInteger(declared) && declared > 0 ? declared : FRAME_LIMITS['spill.body'].value;
+}
+
+/** Bounded capture, shared by both execution paths (issue #266; G-10 gave the string path the same
+ * shape). Output is EVIDENCE, never the verdict: the first half of the bound is the head, the last
+ * half is a rolling tail, and the bytes between are counted and omitted as such. A verifier that
+ * prints gigabytes is never killed for it, and the hub's heap never holds the whole transcript. */
+function boundedCapture(maxOutputBytes) {
+  const headLimit = Math.ceil(maxOutputBytes / 2);
+  const tailLimit = maxOutputBytes - headLimit;
+  const head = []; const tail = [];
+  let headBytes = 0; let tailBytes = 0; let omittedBytes = 0; let outputExceeded = false;
+  return {
+    push(chunk) {
+      let rest = chunk;
+      if (!outputExceeded) {
+        const remaining = headLimit - headBytes;
+        if (chunk.length <= remaining) { head.push(chunk); headBytes += chunk.length; return; }
+        if (remaining > 0) { head.push(chunk.subarray(0, remaining)); headBytes = headLimit; }
+        outputExceeded = true;
+        rest = chunk.subarray(Math.max(0, remaining));
+      }
+      tail.push(rest); tailBytes += rest.length;
+      while (tailBytes > tailLimit && tail.length > 0) {
+        const excess = tailBytes - tailLimit;
+        const first = tail[0];
+        if (first.length <= excess) { tail.shift(); tailBytes -= first.length; omittedBytes += first.length; }
+        else { tail[0] = first.subarray(excess); tailBytes -= excess; omittedBytes += excess; }
+      }
+    },
+    read() {
+      const headText = Buffer.concat(head).toString('utf8');
+      const tailText = Buffer.concat(tail).toString('utf8');
+      const captured = Buffer.concat([...head, ...tail]);
+      return {
+        output: omittedBytes > 0
+          ? `${headText}\n[verifier output truncated: ${omittedBytes} bytes omitted between head and tail]\n${tailText}`
+          : captured.toString('utf8'),
+        capturedOutputBytes: captured.length,
+        capturedOutputDigest: createHash('sha256').update(captured).digest('hex'),
+        outputExceeded,
+      };
+    },
+  };
+}
+
+/** Run a pinned command line. Its output is captured under the SAME one bound the closed argv path
+ * reads (`maxOutputBytes`), with the same head/tail shape — never the unbounded `chunks` array the
+ * 2026-09-14 audit (G-10) measured at 522 MB captured and ~1.5 GB RSS from a single `yes`. */
+function runCommand(command, cwd, timeoutMs, environment, maxOutputBytes, signal = null) {
   return new Promise((resolve) => {
     const preferDirect = looksLikeSimpleCommand(command);
     const directArgv = preferDirect ? tokenize(command) : [];
@@ -152,7 +212,7 @@ function runCommand(command, cwd, timeoutMs, environment, signal = null) {
     const spawnShell = () => spawn('sh', ['-c', command], { cwd, detached: true, env: environment });
 
     let child = usingDirect ? spawnDirect() : spawnShell();
-    const chunks = [];
+    const capture = boundedCapture(maxOutputBytes);
     let settled = false;
     let timedOut = false;
     let aborted = false;
@@ -172,14 +232,10 @@ function runCommand(command, cwd, timeoutMs, environment, signal = null) {
       settled = true;
       clearTimeout(timer);
       signal?.removeEventListener('abort', onAbort);
-      const captured = Buffer.concat(chunks);
       resolve({
         exitCode: timedOut || aborted ? null : exitCode,
-        output: captured.toString('utf8'),
-        capturedOutputBytes: captured.length,
-        capturedOutputDigest: createHash('sha256').update(captured).digest('hex'),
+        ...capture.read(),
         timedOut,
-        outputExceeded: false,
         aborted,
       });
     };
@@ -197,13 +253,15 @@ function runCommand(command, cwd, timeoutMs, environment, signal = null) {
       // 2026-09-14 audit (G-18) that stale close settled the promise as a candidate failure
       // (`verification_exit_mismatch`) before the shell fallback ran a single byte.
       const current = child;
-      current.stdout?.on('data', (d) => { if (current === child) chunks.push(d); });
-      current.stderr?.on('data', (d) => { if (current === child) chunks.push(d); });
+      current.stdout?.on('data', (d) => { if (current === child) capture.push(d); });
+      current.stderr?.on('data', (d) => { if (current === child) capture.push(d); });
       current.on('error', (err) => {
         if (current !== child) return;
         // The direct-exec path assumed the first token names a real executable on PATH;
-        // if that assumption was wrong (ENOENT), fall back to a real shell once.
-        if (usingDirect && err && err.code === 'ENOENT') {
+        // if that assumption was wrong (ENOENT), fall back to a real shell once — unless this run
+        // was already cancelled: a verification aborted by its caller must not spawn another child
+        // behind it (2026-09-14 audit, G-11).
+        if (usingDirect && !aborted && signal?.aborted !== true && err && err.code === 'ENOENT') {
           usingDirect = false;
           clearTimeout(timer);
           child = spawnShell();
@@ -221,7 +279,7 @@ function runCommand(command, cwd, timeoutMs, environment, signal = null) {
   });
 }
 
-function runClosedCommand(verification, sandboxDir, timeoutMs, runtime, signal = null) {
+function runClosedCommand(verification, sandboxDir, timeoutMs, runtime, maxOutputBytes, signal = null) {
   return new Promise((settle) => {
     const root = resolve(sandboxDir);
     const cwd = resolve(root, verification.cwd);
@@ -242,14 +300,11 @@ function runClosedCommand(verification, sandboxDir, timeoutMs, runtime, signal =
       .map((name) => [name, runtime.environment[name]]));
     const child = spawn(verification.command, verification.arguments, { cwd, detached: true, env, shell: false });
     // Output is bounded EVIDENCE; the exit code is the verdict (issue #266). A verifier that prints
-    // more than maxOutputBytes is never killed for it: the first half of the bound is kept as the
-    // head, the last half as a rolling tail, and the bytes between are counted, so the failure
-    // capsule still shows how the run ended and a suite that prints its whole transcript still
-    // reports its real exit.
-    const headLimit = Math.ceil(verification.maxOutputBytes / 2);
-    const tailLimit = verification.maxOutputBytes - headLimit;
-    const head = []; const tail = []; let headBytes = 0; let tailBytes = 0; let omittedBytes = 0;
-    let settled = false; let timedOut = false; let outputExceeded = false; let aborted = false; let timer;
+    // more than the one declared bound is never killed for it: `boundedCapture` keeps the head and
+    // the rolling tail and counts the bytes between, so the failure capsule still shows how the run
+    // ended and a suite that prints its whole transcript still reports its real exit.
+    const capture = boundedCapture(maxOutputBytes);
+    let settled = false; let timedOut = false; let aborted = false; let timer;
     const stop = () => { try { process.kill(-child.pid, 'SIGKILL'); } catch { try { child.kill('SIGKILL'); } catch { /* noop */ } } };
     const onAbort = () => { aborted = true; stop(); };
     if (signal) {
@@ -260,38 +315,15 @@ function runClosedCommand(verification, sandboxDir, timeoutMs, runtime, signal =
       if (settled) return;
       settled = true; clearTimeout(timer);
       signal?.removeEventListener('abort', onAbort);
-      const captured = Buffer.concat([...head, ...tail]);
-      const text = captured.toString('utf8');
       settle({
         exitCode: timedOut || aborted ? null : exitCode,
-        output: omittedBytes > 0
-          ? `${Buffer.concat(head).toString('utf8')}\n[verifier output truncated: ${omittedBytes} bytes omitted between head and tail]\n${Buffer.concat(tail).toString('utf8')}`
-          : text,
-        capturedOutputBytes: captured.length,
-        capturedOutputDigest: createHash('sha256').update(captured).digest('hex'),
+        ...capture.read(),
         timedOut,
-        outputExceeded,
         aborted,
       });
     };
-    const capture = (chunk) => {
-      let rest = chunk;
-      if (!outputExceeded) {
-        const remaining = headLimit - headBytes;
-        if (chunk.length <= remaining) { head.push(chunk); headBytes += chunk.length; return; }
-        if (remaining > 0) { head.push(chunk.subarray(0, remaining)); headBytes = headLimit; }
-        outputExceeded = true;
-        rest = chunk.subarray(Math.max(0, remaining));
-      }
-      tail.push(rest); tailBytes += rest.length;
-      while (tailBytes > tailLimit && tail.length > 0) {
-        const excess = tailBytes - tailLimit;
-        const first = tail[0];
-        if (first.length <= excess) { tail.shift(); tailBytes -= first.length; omittedBytes += first.length; }
-        else { tail[0] = first.subarray(excess); tailBytes -= excess; omittedBytes += excess; }
-      }
-    };
-    child.stdout?.on('data', capture); child.stderr?.on('data', capture);
+    child.stdout?.on('data', (chunk) => capture.push(chunk));
+    child.stderr?.on('data', (chunk) => capture.push(chunk));
     child.on('error', () => finish(null)); child.on('close', (code) => finish(code));
     timer = setTimeout(() => { timedOut = true; stop(); }, timeoutMs);
   });
@@ -307,9 +339,9 @@ function runtimeEnvironmentFor(verification, runtime) {
     .map((name) => [name, runtime.environment[name]]));
 }
 
-function runPinnedVerification(verification, sandboxDir, timeoutMs, runtime, signal = null) {
-  if (Array.isArray(verification.arguments)) return runClosedCommand(verification, sandboxDir, timeoutMs, runtime, signal);
-  return runCommand(verification.command, sandboxDir, timeoutMs, runtimeEnvironmentFor(verification, runtime), signal);
+function runPinnedVerification(verification, sandboxDir, timeoutMs, runtime, maxOutputBytes, signal = null) {
+  if (Array.isArray(verification.arguments)) return runClosedCommand(verification, sandboxDir, timeoutMs, runtime, maxOutputBytes, signal);
+  return runCommand(verification.command, sandboxDir, timeoutMs, runtimeEnvironmentFor(verification, runtime), maxOutputBytes, signal);
 }
 
 // `output_exceeded` remains in the closed execution vocabulary for durable verdicts recorded
@@ -344,9 +376,42 @@ export async function verify(task, result, sandbox, opts = {}) {
   const runtime = opts.runtime ?? defaultVerificationRuntime();
   const abortError = () => Object.assign(new Error('verification was cancelled by its caller before completing'), { code: 'verification_aborted' });
   if (opts.signal?.aborted) throw abortError();
+  // ONE output bound for the whole verification, taken from the contract's own row and handed to
+  // every run — candidate, base, coverage and mutation (2026-09-14 audit, G-10).
+  const maxOutputBytes = outputBoundBytes(task.verification);
 
   const start = Date.now();
-  const resultRun = await runPinnedVerification(task.verification, sandbox.dir, timeoutMs, runtime, opts.signal ?? null);
+  // ONE timeout for the whole verification, spent across its phases (2026-09-14 audit, G-12).
+  // Each phase draws what is LEFT of the contract's declared timeout instead of a fresh copy of it
+  // (worst case was four times the pinned timeout, and no caller was told), and a phase that would
+  // start with nothing left is not started at all — a hardening signal the clock did not reach
+  // stays null, never a failure charged to the candidate. `consumedBy` names the phase that ran the
+  // budget out, so the receipt says which one spent it.
+  const deadline = start + timeoutMs;
+  let consumedBy = null;
+  const budgetFor = (phase) => {
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) { consumedBy ??= phase; return 0; }
+    return remaining;
+  };
+  const spent = (phase) => { if (Date.now() >= deadline) consumedBy ??= phase; };
+  // One auxiliary phase (coverage, mutation): draws what is LEFT of the shared budget, runs under
+  // the same abort signal (G-11) and the same declared output bound (G-10) as the candidate, and
+  // returns null when the budget is already spent — the phase is then not started at all.
+  const auxiliaryRun = async (phase, command) => {
+    const budget = budgetFor(phase);
+    if (budget <= 0) return null;
+    const environment = runtimeEnvironmentFor(task.verification, runtime);
+    const run = await runCommand(command, sandbox.dir, budget, environment, maxOutputBytes, opts.signal ?? null);
+    if (opts.signal?.aborted || run.aborted) throw abortError();
+    spent(phase);
+    return run;
+  };
+
+  const resultRun = await runPinnedVerification(
+    task.verification, sandbox.dir, budgetFor('candidate'), runtime, maxOutputBytes, opts.signal ?? null,
+  );
+  spent('candidate');
   const durationMs = Date.now() - start;
   // Caller cancellation is not a verifier truth state: no verdict may be derived from a
   // run whose process group was killed by external authority rather than its own contract.
@@ -366,11 +431,17 @@ export async function verify(task, result, sandbox, opts = {}) {
   let baseExit = null;
   let baseExecution = null;
   if (opts.baseSandbox && (passed || opts.classifyFailureOwnership)) {
-    const baseRun = await runPinnedVerification(task.verification, opts.baseSandbox.dir, timeoutMs, runtime, opts.signal ?? null);
-    if (opts.signal?.aborted || baseRun.aborted) throw abortError();
-    baseExecution = executionOf(baseRun);
-    baseExit = baseRun.timedOut ? null : baseRun.exitCode;
-    redGreen = passed && baseExit !== task.verification.expectExit;
+    const baseBudget = budgetFor('base');
+    if (baseBudget > 0) {
+      const baseRun = await runPinnedVerification(
+        task.verification, opts.baseSandbox.dir, baseBudget, runtime, maxOutputBytes, opts.signal ?? null,
+      );
+      if (opts.signal?.aborted || baseRun.aborted) throw abortError();
+      spent('base');
+      baseExecution = executionOf(baseRun);
+      baseExit = baseRun.timedOut ? null : baseRun.exitCode;
+      redGreen = passed && baseExit !== task.verification.expectExit;
+    }
   }
 
   let coverageOfChange = null;
@@ -378,23 +449,24 @@ export async function verify(task, result, sandbox, opts = {}) {
   let coverageNote = '';
   const hasChangedLines = task.changedLines && Object.keys(task.changedLines).length > 0;
   if (task.verification.coverageCommand && passed && hasChangedLines) {
-    const auxiliaryEnvironment = runtimeEnvironmentFor(task.verification, runtime);
-    const covRun = await runCommand(task.verification.coverageCommand, sandbox.dir, timeoutMs, auxiliaryEnvironment);
-    try {
-      const parsed = JSON.parse(covRun.output);
-      const files = parsed.files ?? {};
-      const uncovered = [];
-      for (const [filePath, lineNumbers] of Object.entries(task.changedLines)) {
-        const executed = new Set(files[filePath]?.executedLines ?? []);
-        for (const ln of lineNumbers) {
-          if (!executed.has(ln)) uncovered.push(`${filePath}:${ln}`);
+    const covRun = await auxiliaryRun('coverage', task.verification.coverageCommand);
+    if (covRun) {
+      try {
+        const parsed = JSON.parse(covRun.output);
+        const files = parsed.files ?? {};
+        const uncovered = [];
+        for (const [filePath, lineNumbers] of Object.entries(task.changedLines)) {
+          const executed = new Set(files[filePath]?.executedLines ?? []);
+          for (const ln of lineNumbers) {
+            if (!executed.has(ln)) uncovered.push(`${filePath}:${ln}`);
+          }
         }
+        uncoveredChangedLines = uncovered;
+        coverageOfChange = uncovered.length === 0;
+      } catch {
+        coverageOfChange = null;
+        coverageNote = ' Coverage report parse failure (non-JSON or malformed stdout) — coverage signal dropped, primary verdict unaffected.';
       }
-      uncoveredChangedLines = uncovered;
-      coverageOfChange = uncovered.length === 0;
-    } catch {
-      coverageOfChange = null;
-      coverageNote = ' Coverage report parse failure (non-JSON or malformed stdout) — coverage signal dropped, primary verdict unaffected.';
     }
   }
 
@@ -403,19 +475,20 @@ export async function verify(task, result, sandbox, opts = {}) {
   let survivedMutants = [];
   let mutationNote = '';
   if (task.verification.mutationCommand && passed) {
-    const auxiliaryEnvironment = runtimeEnvironmentFor(task.verification, runtime);
-    const mutationRun = await runCommand(task.verification.mutationCommand, sandbox.dir, timeoutMs, auxiliaryEnvironment);
-    try {
-      const parsed = JSON.parse(mutationRun.output);
-      const killed = Number(parsed.killed);
-      const total = Number(parsed.total);
-      survivedMutants = Array.isArray(parsed.survived) ? parsed.survived : [];
-      if (Number.isFinite(killed) && Number.isFinite(total) && total > 0 && killed >= 0 && killed <= total) {
-        mutationStrength = killed / total;
-        mutationPassed = survivedMutants.length === 0 && killed === total;
+    const mutationRun = await auxiliaryRun('mutation', task.verification.mutationCommand);
+    if (mutationRun) {
+      try {
+        const parsed = JSON.parse(mutationRun.output);
+        const killed = Number(parsed.killed);
+        const total = Number(parsed.total);
+        survivedMutants = Array.isArray(parsed.survived) ? parsed.survived : [];
+        if (Number.isFinite(killed) && Number.isFinite(total) && total > 0 && killed >= 0 && killed <= total) {
+          mutationStrength = killed / total;
+          mutationPassed = survivedMutants.length === 0 && killed === total;
+        }
+      } catch {
+        mutationNote = ' Mutation report parse failure — mutation signal unknown.';
       }
-    } catch {
-      mutationNote = ' Mutation report parse failure — mutation signal unknown.';
     }
   }
 
@@ -461,6 +534,15 @@ export async function verify(task, result, sandbox, opts = {}) {
     capturedOutputDigest: resultRun.capturedOutputDigest,
     diagnosticCode,
     durationMs,
+    // G-12: the receipt says which phase spent the contract's one timeout. `consumedBy` is null
+    // when the whole verification finished inside it; a phase named here is the one during which
+    // the budget ran out, and any phase after it never started (so its hardening signal is null
+    // rather than false).
+    verificationBudget: {
+      limitMs: timeoutMs,
+      remainingMs: Math.max(0, deadline - Date.now()),
+      consumedBy,
+    },
     execution,
     baseExecution,
     runtimeDigest: runtime.digest,
@@ -494,14 +576,23 @@ export async function verify(task, result, sandbox, opts = {}) {
 /**
  * A verdict is trustworthy — and a result is safe to mark "done"/merge — iff the hub
  * itself observed a pass, AND (if required) the hardening checks that were requested
- * came back true, not merely non-false.
+ * came back true, not merely non-false, AND the exit the hub observed is the one this
+ * caller's contract row expects.
+ *
+ * `expectExit` is threaded here by both done-gate callers (the coordinator's task gate and
+ * contribution-service's check receipt). Before the 2026-09-14 audit (G-15) it was dead weight:
+ * `verdict.passed` already encodes `observedExit === expectExit` for the row the verifier ran, so
+ * honoring it can only ADD a refusal — a verdict observed at some other exit code is never
+ * accepted for a row that expects this one, however the verdict was labelled.
  * @param {object} verdict
- * @param {{requireRedGreen?: boolean, requireCoverage?: boolean}} [opts]
+ * @param {{requireRedGreen?: boolean, requireCoverage?: boolean, requireMutation?: boolean,
+ *   expectExit?: number}} [opts]
  * @returns {boolean}
  */
 export function accept(verdict, opts = {}) {
-  const { requireRedGreen = false, requireCoverage = false, requireMutation = false } = opts;
+  const { requireRedGreen = false, requireCoverage = false, requireMutation = false, expectExit } = opts;
   if (!verdict.reverified || !verdict.passed) return false;
+  if (expectExit !== undefined && verdict.observedExit !== expectExit) return false;
   if (requireRedGreen && verdict.redGreen !== true) return false;
   if (requireCoverage && verdict.coverageOfChange !== true) return false;
   if (requireMutation && verdict.mutationPassed !== true) return false;
