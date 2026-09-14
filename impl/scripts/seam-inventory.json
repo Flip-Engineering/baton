@@ -327,6 +327,15 @@
           ]
         },
         {
+          "name": "workerActivity",
+          "ordinal": 0,
+          "size": 26,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
           "name": "_contributionOperations",
           "ordinal": 0,
           "size": 18,
@@ -5115,7 +5124,7 @@
         {
           "name": "_semanticSectionItems",
           "ordinal": 0,
-          "size": 111,
+          "size": 112,
           "seam": "observation",
           "evidence": [
             "delegates:observation"

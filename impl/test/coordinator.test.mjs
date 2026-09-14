@@ -2093,6 +2093,35 @@ test('#267: an unmarked lane receipt is never seeded as a root and is recorded a
   'a restart replays the finding under its key instead of repeating it');
 });
 
+// #268: a worker's activity and cost are folded from its own durable log — tool calls (requested,
+// not their completions), messages, the last event, token usage summed over delta rows and taken
+// as the latest value per counter for cumulative rows; usd 0 with tokens reported means unpriced.
+test('#268: workerActivity folds tool calls, messages, the last event and usage from the worker log', async () => {
+  const { coordinator, log } = setup();
+  const handle = await coordinator.spawn('mock', makeBrief());
+  const row = (kind, payload) => log.append({ worker: handle.id, harness: 'mock', turnEpoch: 1, actor: 'worker', kind, payload });
+  row('content.tool_call', { phase: 'requested', tool: 'bash' });
+  row('content.tool_call', { phase: 'completed', tool: 'bash', ok: true });
+  row('content.message', { phase: 'update', text: 'working' });
+  row('resource.tokens', { source: 'message_end', accounting: 'delta', counterId: 'omp:w:1', tokens: 100, usd: 0 });
+  row('resource.tokens', { source: 'message_end', accounting: 'delta', counterId: 'omp:w:1', tokens: 50, usd: 0 });
+  row('resource.tokens', { source: 'turn', accounting: 'cumulative', counterId: 'claude:w:1', tokens: 700, usd: 0.02 });
+  row('resource.tokens', { source: 'turn', accounting: 'cumulative', counterId: 'claude:w:1', tokens: 900, usd: 0.03 });
+  const last = row('content.tool_call', { phase: 'requested', tool: 'grep' });
+  const activity = coordinator.workerActivity(handle.id);
+  assert.equal(activity.workerId, handle.id);
+  assert.equal(activity.toolCalls, 2, 'requested tool calls, not their completions');
+  assert.equal(activity.messages, 1);
+  assert.deepEqual({ at: activity.lastEventAt, kind: activity.lastEventKind }, { at: last.ts, kind: 'content.tool_call' });
+  assert.deepEqual(activity.usage, { tokens: 1050, usd: 0.03, priced: true }, 'delta rows summed, cumulative rows taken at their latest value');
+  assert.ok(activity.events >= 8);
+  assert.equal(coordinator.workerActivity('w-none'), null);
+  const unpriced = setup();
+  const second = await unpriced.coordinator.spawn('mock', makeBrief());
+  unpriced.log.append({ worker: second.id, harness: 'mock', turnEpoch: 1, actor: 'worker', kind: 'resource.tokens', payload: { accounting: 'delta', counterId: 'glm:1', tokens: 10, usd: 0 } });
+  assert.deepEqual(unpriced.coordinator.workerActivity(second.id).usage, { tokens: 10, usd: 0, priced: false }, 'tokens without dollars is an unpriced route, not a free one');
+});
+
 // ============================================================
 // error taxonomy (§3.4) — extra coverage beyond the numbered list
 // ============================================================

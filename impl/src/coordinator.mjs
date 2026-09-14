@@ -2310,6 +2310,37 @@ export class Coordinator {
     return rows;
   }
 
+  /** #268: what a worker has been doing and what it has cost — folded from its own durable log
+   * (tool calls, messages, the last event, token usage) — so an orchestrator reads it from the
+   * view instead of from raw worker logs. `priced` is false when tokens were reported but no
+   * price row turned them into dollars: an unpriced route, not a free one. */
+  workerActivity(workerId) {
+    const handle = this._workers.get(workerId);
+    if (!handle) return null;
+    const events = this._log.read(workerId);
+    let toolCalls = 0; let messages = 0; let last = null;
+    let tokens = 0; let usd = 0;
+    const cumulative = new Map();
+    for (const event of events) {
+      const payload = event.payload ?? {};
+      if (event.kind === 'content.tool_call') { if (payload.phase !== 'completed') toolCalls += 1; }
+      else if (event.kind === 'content.message') messages += 1;
+      else if (event.kind === 'resource.tokens') {
+        const counter = typeof payload.counterId === 'string' ? payload.counterId : (payload.source ?? 'default');
+        const reportedTokens = Number(payload.tokens) || 0; const reportedUsd = Number(payload.usd) || 0;
+        if (payload.accounting === 'cumulative') cumulative.set(counter, { tokens: reportedTokens, usd: reportedUsd });
+        else { tokens += reportedTokens; usd += reportedUsd; }
+      }
+      last = event;
+    }
+    for (const row of cumulative.values()) { tokens += row.tokens; usd += row.usd; }
+    return Object.freeze({
+      workerId, events: events.length, toolCalls, messages,
+      lastEventAt: last?.ts ?? null, lastEventKind: last?.kind ?? null,
+      usage: Object.freeze({ tokens, usd, priced: usd > 0 || tokens === 0 }),
+    });
+  }
+
   _contributionOperations() {
     this._contributions ??= new ContributionService({
       worktrees: this._worktrees, referee: this._referee, accept: this._accept,

@@ -476,6 +476,30 @@ test('UA5/UA8: deployment shutdown is separately authorized and is never present
   await application.detach();
 });
 
+// #268: the Run view carries the run's activity and cost — one row per worker plus totals, folded
+// from the worker logs — so an orchestrator never reads raw worker logs to learn whether a
+// participant is alive and what it has spent.
+test('#268: the Run view and its execution progress item carry worker activity and usage', async () => {
+  const { application } = fixture('run-activity', {
+    scenario: { outcome: 'completed', delayMs: 1, summary: 'activity observed', files: {} },
+  });
+  const proposed = await application.start(intent({ runId: 'run-activity' }), principal('activity-owner'));
+  await application.approve('run-activity', proposed.plan.digest, principal('activity-approver'));
+  const view = await application.wait('run-activity', principal('activity-owner'), { timeoutMs: 250 });
+  const activity = view.progress.activity;
+  assert.ok(activity && Array.isArray(activity.workers), 'the run view names its activity');
+  assert.equal(activity.workers.length, 1, 'one worker on this run');
+  const [worker] = activity.workers;
+  assert.ok(worker.events > 0, 'the worker has durable events');
+  assert.equal(typeof worker.lastEventAt, 'string');
+  assert.deepEqual(Object.keys(worker.usage).sort(), ['priced', 'tokens', 'usd']);
+  assert.deepEqual(Object.keys(activity.usage).sort(), ['priced', 'tokens', 'usd']);
+  assert.equal(activity.lastEventAt, worker.lastEventAt);
+  const run = bindBaton(application, principal('activity-owner')).runs.open('run-activity');
+  const item = await run.inspect({ depth: 'item', section: 'execution', item: 'execution:progress' });
+  assert.deepEqual(item.item.value.activity, activity, 'the progress item carries the same activity the view does');
+});
+
 test('UA4/UA6: RunView redacts credential-shaped attention and answers it exactly through the Run', async () => {
   const secret = 'api_key=abcdefghijklmnopqrstuvwx';
   const { application } = fixture('attention-redaction', {

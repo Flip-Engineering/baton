@@ -2397,6 +2397,23 @@ function projectedCleanupState(view) {
     ?? 'pending';
 }
 
+/** #268: the run's activity and cost, one row per worker plus totals, from the coordinator's
+ * per-worker fold. Absent (null) on coordinators that do not expose the fold (narrow doubles). */
+function runActivity(driver, workers) {
+  const fold = driver.coordinator?.workerActivity;
+  if (typeof fold !== 'function') return null;
+  const rows = workers.map((handle) => fold.call(driver.coordinator, handle.id)).filter(Boolean);
+  const totals = rows.reduce((sum, row) => ({
+    events: sum.events + row.events, toolCalls: sum.toolCalls + row.toolCalls, messages: sum.messages + row.messages,
+    tokens: sum.tokens + row.usage.tokens, usd: sum.usd + row.usage.usd,
+    lastEventAt: [sum.lastEventAt, row.lastEventAt].filter(Boolean).sort().at(-1) ?? null,
+  }), { events: 0, toolCalls: 0, messages: 0, tokens: 0, usd: 0, lastEventAt: null });
+  return {
+    workers: rows, lastEventAt: totals.lastEventAt, events: totals.events, toolCalls: totals.toolCalls, messages: totals.messages,
+    usage: { tokens: totals.tokens, usd: totals.usd, priced: rows.length === 0 || rows.every((row) => row.usage.priced) },
+  };
+}
+
 function runWorkerOwnership(driver, runId) {
   const workers = driver.coordinator.list()
     .filter((handle) => driver.coordination.task(handle.taskId)?.runId === runId);
@@ -7632,7 +7649,7 @@ export class BatonApplication {
         } : null,
       },
       semanticReview: { state: 'not_started', findings: [] },
-      progress: { current: currentStage.key, summary: `${currentStage.label}: ${currentStage.detail}`, stages },
+      progress: { current: currentStage.key, summary: `${currentStage.label}: ${currentStage.detail}`, stages, activity: runActivity(this.driver, workers) },
       result: selection && selectedCandidate ? {
         state: selectedIntegration ? 'integrated' : selectedAdopted ? 'adopted' : 'selected',
         candidate: clone(selection.candidate),
@@ -8046,14 +8063,14 @@ export class BatonApplication {
       ? resultStability === 'passed_after_candidate_failure' ? 'mechanically_verified_unstable' : 'mechanically_verified'
       : phase === 'failed' ? (retryProjection && verdictOutcome === 'inconclusive' ? 'inconclusive' : 'failed') : 'pending';
     const resourcesSettled = ownedWorkers.length === 0;
-    const progress = runProgress({
+    const progress = { ...runProgress({
       phase, approval: projection.approval, node,
       route,
       verification: { state: verificationState, stability: resultStability }, reviewPolicyMode: current.profile.reviewPolicy.mode, semanticReview,
       result: publicResult, integration, exportResult, resourcesSettled, stop: runStop ? {
         state: runStop.status, receipt: runStop.receipt,
       } : null,
-    });
+    }), activity: runActivity(this.driver, workers) };
     const knowledgeProjection = this._knowledgeProjection(runId);
     const view = {
       schemaVersion: 1,
@@ -10834,6 +10851,7 @@ export class BatonApplication {
           summary: view.progress?.summary ?? view.narrative,
           attention: (view.attention ?? []).length > 0 ? 'required' : 'clear',
           terminal: APPLICATION_RUN_TERMINAL_PHASES.has(view.phase),
+          activity: view.progress?.activity ?? null,
         },
       },
       {
