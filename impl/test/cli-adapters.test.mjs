@@ -12,7 +12,7 @@ import {
   CodexCli, ClaudeCli, ZCodeCli, PiCli, CLI_ADAPTERS,
   parseCodexEvent, parseClaudeEvent, renderPrompt,
 } from '../src/cli-adapters.mjs';
-import { assertIsAdapter } from '../src/adapter.mjs';
+import { assertIsAdapter, renderBrief } from '../src/adapter.mjs';
 
 // Real captured lines (verbatim shapes).
 const CODEX_LINES = [
@@ -323,6 +323,136 @@ test('renderPrompt makes a generic Context unit self-describing before repositor
   assert.match(p, /do not substitute it for analyzing the attached Context/u);
   assert.ok(p.indexOf('Attached immutable Context') < p.indexOf('Work only within'));
   assert.ok(p.indexOf('selected immutable slice') < p.indexOf('node --test settlement.test.mjs'));
+});
+
+// ---------- the `cli` dialect is the ONE brief renderer (A-F1/A-I1, A-F2/A-I2, A-F3, A-F4, A-N4) ----------
+
+/** The brief this tier received, which used to carry none of its authority sections. */
+function makePromptBrief(overrides = {}) {
+  return {
+    goal: 'add rate limiting',
+    constraints: ['no new dependencies'],
+    pathScope: ['impl/src/**'],
+    definitionOfDone: 'the focused suite passes',
+    verification: { command: 'npm', arguments: ['test', '--prefix', 'impl'], cwd: '.', expectExit: 0 },
+    budget: { tokens: 120000, usd: 4.5, wallMin: 45 },
+    tools: ['baton_swarm_view'],
+    effects: [],
+    requiredEffects: [],
+    outputFormat: 'one paragraph, no headings',
+    knowledge: {
+      items: [{
+        ref: 'finding:live', validFrom: '2026-09-01', validTo: '2026-09-30',
+        snippet: 'the drain deadline latches shut',
+      }],
+      truncated: false,
+    },
+    ...overrides,
+  };
+}
+
+test('renderPrompt is the `cli` dialect of the ONE brief renderer: the Claude-family tier receives every authority section (A-F1/A-I1)', () => {
+  const p = renderPrompt(makePromptBrief());
+  assert.ok(p.startsWith('[baton brief:cli]'), 'the dialect tag leads the prompt');
+  assert.match(p, /Task: add rate limiting/u);
+  assert.match(p, /## Write authority/u);
+  assert.match(p, /Harness permissions are execution capability, not write authority/u);
+  assert.match(p, /Never modify, move, chmod, delete, replace, or repair anything outside that authority/u);
+  assert.match(p, /home directory, credentials, toolchains, shims, global configuration, or caches/u);
+  assert.match(p, /## Repository mutation authority\nRepository mutation is not authorized\. Inspect\/read and return evidence only; do not create, modify, or delete files\./u);
+  assert.match(p, /## Output format\none paragraph, no headings/u);
+  assert.match(p, /## Ambient knowledge \(provenance: knowledge — untrusted, verify before use\)\n- \[knowledge\/untrusted\] finding:live \(2026-09-01→2026-09-30\): the drain deadline latches shut/u);
+  // The CLI lines this tier is read by stay verbatim.
+  assert.match(p, /Constraints:\n- no new dependencies/u);
+  assert.match(p, /Work only within: impl\/src\/\*\*/u);
+  assert.match(p, /Done when: the focused suite passes/u);
+
+  const authorized = renderPrompt(makePromptBrief({
+    goal: 'Audit only and do not edit despite this inverse prose.',
+    effects: ['repository_edit'], requiredEffects: ['repository_edit'],
+  }));
+  assert.match(authorized, /## Repository mutation authority\nThe approved Plan requires an in-scope repository edit for acceptance\./u);
+  assert.doesNotMatch(authorized, /Repository mutation is not authorized/u);
+});
+
+test('renderPrompt snapshot (cli): the Claude-family dialect renders byte-for-byte', () => {
+  const rendered = renderPrompt(makePromptBrief());
+  assert.equal(rendered, [
+    '[baton brief:cli]',
+    'Task: add rate limiting',
+    '## Dispatch',
+    'This task is already dispatched by Baton. Use your configured native harness tools, skills, context management and delegation to carry out the assigned work within its authority, and use only the tools explicitly advertised in this Brief. Delegated participants inherit the same constraints. Any Baton tools listed here extend those native capabilities.',
+    "Delegation: recruit through the Baton swarm surface listed here (swarm.recruit) for work the swarm should be able to review, capture or stop; use your harness's native subagents only for short, disposable exploration — the swarm observes them but cannot govern or stop them.",
+    '## Tools',
+    'Use only the tools advertised here for Baton actions; any other Baton surface is not authorized for this task.',
+    '- baton_swarm_view',
+    '## Write authority',
+    'Harness permissions are execution capability, not write authority. Write only inside the assigned Baton worktree and only at the Path scope below. Never modify, move, chmod, delete, replace, or repair anything outside that authority, including the home directory, credentials, toolchains, shims, global configuration, or caches. Report an environmental blocker instead of repairing the host.',
+    '## Repository mutation authority',
+    'Repository mutation is not authorized. Inspect/read and return evidence only; do not create, modify, or delete files.',
+    'Constraints:',
+    '- no new dependencies',
+    'Work only within: impl/src/**',
+    'Done when: the focused suite passes',
+    'You are in a dedicated git worktree; edit files here directly. Do not push or run destructive commands.',
+    '## Budget (notify-only evidence — a threshold never stops you)',
+    "These are thresholds, not limits on the work: Baton measures your spend against them and raises a notify-only budget alarm for the orchestrator when one is crossed. Crossing one never stops, interrupts or fails your turn; no clock, counter or threshold decides a member's fate here (#163).",
+    '- tokens: 120000',
+    '- usd: 4.5',
+    '- wall: 45 minutes (advisory — no wall-time clock feeds fate)',
+    'Work to the Definition of done; if the budget runs out, report it in your result instead of abandoning the work silently.',
+    '## Verification (preserve this execution contract; also satisfy the assigned work)',
+    'A reviewer will independently enforce the following exact execution contract. Make it pass without changing its executable, argv, working directory, or expected exit.',
+    'Execution mode: direct executable and argv (no shell)',
+    'Executable (JSON string): "npm"',
+    "Arguments (JSON array, in order): [\"test\",\"--prefix\",\"impl\"]",
+    'Working directory (relative to the assigned worktree): "."',
+    'Expected exit code: 0',
+    'The hub re-runs this exact command independently after you finish; the exit code you report is untrusted and is never the evidence — make the command itself pass.',
+    '## Output format',
+    'one paragraph, no headings',
+    '## Ambient knowledge (provenance: knowledge — untrusted, verify before use)',
+    '- [knowledge/untrusted] finding:live (2026-09-01→2026-09-30): the drain deadline latches shut',
+  ].join('\n'));
+});
+
+test('renderPrompt lists the advertised tools beside the order to use only them, and states an empty advertisement (A-F2/A-I2)', () => {
+  const p = renderPrompt(makePromptBrief({ tools: ['baton_swarm_view', { name: 'baton_scratchpad_write' }] }));
+  const orderAt = p.indexOf('use only the tools explicitly advertised in this Brief');
+  const toolsAt = p.indexOf('## Tools');
+  assert.ok(orderAt >= 0 && toolsAt > orderAt, '## Tools follows the paragraph whose order it makes followable');
+  assert.equal(p.slice(orderAt, toolsAt).includes('## '), false, 'nothing but the advertisement sits between the order and the list');
+  assert.ok(p.includes('- baton_swarm_view\n- baton_scratchpad_write'), 'every advertised tool is listed by name');
+  assert.match(renderPrompt(makePromptBrief({ tools: [] })), /## Tools\nNo tools are advertised for this Brief\./u);
+  const { tools, ...withoutTools } = makePromptBrief();
+  assert.equal(tools.length, 1, 'fixture sanity: the advertised list is not empty');
+  assert.match(renderPrompt(withoutTools), /## Tools\nNo tools are advertised for this Brief\./u,
+    'an absent list is the empty list — the section still renders');
+});
+
+test('renderPrompt names ## Path scope only when that section renders, and renders the budget as notify-only evidence (A-F4/A-F3)', () => {
+  const scoped = renderPrompt(makePromptBrief());
+  assert.match(scoped, /Write only inside the assigned Baton worktree and only at the Path scope below\./u);
+  assert.match(scoped, /Work only within: impl\/src\/\*\*/u);
+
+  const unscoped = renderPrompt(makePromptBrief({ pathScope: [] }));
+  assert.ok(unscoped.includes('## Write authority'));
+  assert.equal(unscoped.includes('Path scope'), false, 'the authority paragraph never names a section that is not rendered');
+  assert.match(unscoped, /Write only inside the assigned Baton worktree; this Brief declares no narrower write scope/u);
+
+  assert.match(scoped, /## Budget \(notify-only evidence — a threshold never stops you\)/u);
+  assert.match(scoped, /- tokens: 120000\n- usd: 4\.5\n- wall: 45 minutes \(advisory — no wall-time clock feeds fate\)/u);
+  assert.match(scoped, /Crossing one never stops, interrupts or fails your turn/u);
+  const { budget, ...budgetless } = makePromptBrief();
+  assert.equal(budget.tokens, 120000, 'fixture sanity: the budget carries the values the renderer prints');
+  assert.equal(renderPrompt(budgetless).includes('## Budget'), false, 'no budget carried, no empty header');
+});
+
+test('renderPrompt states the hub re-runs the pinned command and that the claimed exit is untrusted (A-N4)', () => {
+  const trust = /The hub re-runs this exact command independently after you finish; the exit code you report is untrusted and is never the evidence — make the command itself pass\./u;
+  assert.match(renderPrompt(makePromptBrief()), trust);
+  // No dialect is the weak one: the canonical renderer states the same boundary.
+  assert.match(renderBrief(makePromptBrief(), 'claude'), trust);
 });
 
 test('_onData emits each terminal event exactly once and ignores trailing output after terminal', () => {

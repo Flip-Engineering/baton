@@ -16,9 +16,7 @@ import { spawn } from 'node:child_process';
 import { normalizeProcessGeneration, ProcessCloseReapLatch, processStartedPayload } from './process-lifecycle.mjs';
 import { usdToNanos } from './usd.mjs';
 import { attestWorkerPolicyObservation } from './worker-policy.mjs';
-import { renderVerificationExecution } from './verification-presentation.mjs';
-import { renderAttentionSection } from './messages.mjs';
-import { advertisesBatonControlSurface } from './control-surface-unification.mjs';
+import { CLI_PROMPT_DIALECT, renderBrief } from './adapter.mjs';
 import { normalizeConcurrencyCeiling } from './concurrency-policy.mjs';
 
 const DEFAULT_MAX_WIRE_FRAME_BYTES = 1024 * 1024;
@@ -75,44 +73,17 @@ function fixedWireFailure(base) {
 }
 
 // ---------------------------------------------------------------------------
-// Prompt rendering — the delegation contract, per-harness dialect (kept simple/uniform for MVP).
+// Prompt rendering — the `cli` dialect of the ONE brief renderer (audit A-F1/A-I1).
+//
+// This used to be a second, weaker renderer: it carried no write authority, no repository-mutation
+// stance, no advertised tool list, no budget and no ambient knowledge, so the Claude-family session
+// tier received less than every other harness. It is now the `cli` presentation of renderBrief
+// (adapter.mjs), which owns every section; this seam only names the dialect.
 // ---------------------------------------------------------------------------
 
+/** @param {object} brief @returns {string} */
 export function renderPrompt(brief) {
-  const advertisesBatonTool = advertisesBatonControlSurface(brief.tools);
-  const attachedContext = brief.contextInput ? [
-    'Attached immutable Context (the authoritative input for this task):',
-    `Call: ${brief.contextInput.callId}`,
-    brief.contextInput.unitId
-      ? `Unit: ${brief.contextInput.unitId}`
-      : `Partition: ${brief.contextInput.partitionId}`,
-    'Use the attached value directly. Do not search the repository for this source or replace it with a broader review.',
-    JSON.stringify(brief.contextInput.value, null, 2),
-  ].join('\n') : '';
-  const dispatchGuidance = brief.contextInput
-    ? (advertisesBatonTool
-      ? 'This task is already dispatched by Baton. The attached immutable Context is the complete task input; do not inspect repository files, prior Run artifacts, receipts, or ledgers to reconstruct or broaden it. Writing a named output path does not authorize reading its preexisting contents. Orchestration actions may use only the Baton control surface explicitly listed in this Brief.'
-      : 'This task is already dispatched and supervised by Baton. The attached immutable Context is the complete task input; do not inspect repository files, prior Run artifacts, receipts, or ledgers to reconstruct or broaden it. Writing a named output path does not authorize reading its preexisting contents. Do not search for or launch another Baton CLI, MCP server, or Run; use one only when this Brief explicitly advertises it.')
-    : (advertisesBatonTool
-      ? 'This task is already dispatched by Baton. Perform the assigned work in this worktree and use only tools explicitly advertised in this Brief. Delegation: recruit through the Baton swarm surface listed here (swarm.recruit) for work the swarm should be able to review, capture or stop; use your harness\'s native subagents only for short, disposable exploration — the swarm observes them but cannot govern or stop them.'
-      : 'This task is already dispatched by Baton. Perform the assigned work in this worktree and use only tools explicitly advertised in this Brief. Delegation: your harness\'s native subagents are observed by Baton but not governed by it — it cannot review, capture or stop them; keep them to short, disposable exploration and do the accountable work yourself.');
-  const lines = [
-    `Task: ${brief.goal}`,
-    dispatchGuidance,
-    attachedContext,
-    brief.constraints?.length ? `Constraints:\n- ${brief.constraints.join('\n- ')}` : '',
-    brief.pathScope?.length ? `Work only within: ${brief.pathScope.join(', ')}` : '',
-    `Done when: ${brief.definitionOfDone}`,
-    `You are in a dedicated git worktree; edit files here directly. Do not push or run destructive commands.`,
-    brief.verification?.command ? (brief.contextInput
-      ? `A reviewer independently enforces the following exact execution contract. Run it only when the requested work needs code verification; do not substitute it for analyzing the attached Context.\n${renderVerificationExecution(brief.verification)}`
-      : `A reviewer will independently enforce the following exact execution contract. Make it pass without changing its executable, argv, working directory, or expected exit.\n${renderVerificationExecution(brief.verification)}`) : '',
-  ];
-  // Issue #79 (D1): the worker-delivery push block lands AFTER the verification execution contract
-  // (the prompt's final lines, past the `A reviewer` marker). Absent when there is nothing to serve.
-  const attention = renderAttentionSection(brief.attention);
-  if (attention) lines.push(attention);
-  return lines.filter(Boolean).join('\n');
+  return renderBrief(brief, CLI_PROMPT_DIALECT);
 }
 
 // ---------------------------------------------------------------------------

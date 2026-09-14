@@ -95,42 +95,148 @@ export function assertIsAdapter(obj) {
 }
 
 // ---------------------------------------------------------------------------
-// renderBrief — per-harness brief dialect. Pure function, no side effects.
+// renderBrief — the ONE provider-facing brief renderer (audit A-F1/A-I1). Pure function, no side
+// effects.
+//
+// Every tier renders through this function: the session adapters pass their own dialect tag, and
+// `renderPrompt` (cli-adapters.mjs) is the `cli` dialect of this same table. A dialect changes how
+// a fixed set of lines READ; it never changes WHICH sections a worker receives — a tier that is
+// never told its write authority, whether repository mutation is authorized, which tools are
+// advertised, what budget it holds or what it must output is exactly the bug this seam prevents.
 // ---------------------------------------------------------------------------
+
+/** The dialect rendered by `renderPrompt` — the Claude-family session tier and the one-shot CLIs. */
+export const CLI_PROMPT_DIALECT = 'cli';
+
+/** The advertised tools, normalized to names: an entry is a bare name or an MCP tool object. */
+function advertisedToolNames(tools) {
+  if (!Array.isArray(tools)) return [];
+  const names = [];
+  for (const tool of tools) {
+    const name = typeof tool === 'string' ? tool : (typeof tool?.name === 'string' ? tool.name : null);
+    if (!name || names.includes(name)) continue;
+    names.push(name);
+  }
+  return names;
+}
+
+/**
+ * A-F2/A-I2: both dialects order the worker to use only the tools this Brief advertises, so both
+ * list them. An empty advertisement is said out loud — silence is what made that order unfollowable.
+ */
+function renderToolsSection(tools) {
+  const names = advertisedToolNames(tools);
+  if (names.length === 0) {
+    return [
+      '## Tools',
+      'No tools are advertised for this Brief. Use only your own native harness tools; do not search for, launch or invent a Baton surface that is not advertised here.',
+    ];
+  }
+  return [
+    '## Tools',
+    'Use only the tools advertised here for Baton actions; any other Baton surface is not authorized for this task.',
+    ...names.map((name) => `- ${name}`),
+  ];
+}
+
+/**
+ * A-F3: the budget ships as what it factually is — notify-only evidence. Token and USD spend is
+ * measured against the deployment's thresholds and a crossing raises a `budget_alarm` for the
+ * orchestrator; wall time is advisory because the #163 law retired the wall-time fate clock.
+ */
+function renderBudgetSection(budget) {
+  if (!budget || typeof budget !== 'object' || Array.isArray(budget)) return [];
+  const thresholds = [];
+  if (Number.isFinite(budget.tokens)) thresholds.push(`- tokens: ${budget.tokens}`);
+  if (Number.isFinite(budget.usd)) thresholds.push(`- usd: ${budget.usd}`);
+  if (Number.isFinite(budget.wallMin)) thresholds.push(`- wall: ${budget.wallMin} minutes (advisory — no wall-time clock feeds fate)`);
+  if (thresholds.length === 0) return [];
+  return [
+    '## Budget (notify-only evidence — a threshold never stops you)',
+    'These are thresholds, not limits on the work: Baton measures your spend against them and raises a notify-only budget alarm for the orchestrator when one is crossed. Crossing one never stops, interrupts or fails your turn; no clock, counter or threshold decides a member\'s fate here (#163).',
+    ...thresholds,
+    'Work to the Definition of done; if the budget runs out, report it in your result instead of abandoning the work silently.',
+  ];
+}
+
+// The per-dialect lines that legitimately read differently. A row overrides how a line READS —
+// never which sections ship, and never whether an authority paragraph is present.
+const CANONICAL_PRESENTATION = Object.freeze({
+  goal: (brief) => ['## Goal', brief.goal ?? ''],
+  context: (brief) => [
+    '## Immutable Context',
+    `Call: ${brief.contextInput.callId}`,
+    brief.contextInput.unitId
+      ? `Unit: ${brief.contextInput.unitId}`
+      : `Partition: ${brief.contextInput.partitionId}`,
+    'Use the attached value directly; do not replace it with a broader repository review:',
+    JSON.stringify(brief.contextInput.value, null, 2),
+  ],
+  constraints: (brief) => ['## Constraints', ...brief.constraints.map((constraint) => `- ${constraint}`)],
+  pathScope: (brief) => ['## Path scope', ...brief.pathScope.map((scope) => `- ${scope}`)],
+  definitionOfDone: (brief) => ['## Definition of done', brief.definitionOfDone ?? ''],
+  worktree: () => [],
+  verificationLead: () => [],
+});
+
+const DIALECT_PRESENTATION = Object.freeze({
+  [CLI_PROMPT_DIALECT]: Object.freeze({
+    goal: (brief) => [`Task: ${brief.goal ?? ''}`],
+    context: (brief) => [
+      'Attached immutable Context (the authoritative input for this task):',
+      `Call: ${brief.contextInput.callId}`,
+      brief.contextInput.unitId
+        ? `Unit: ${brief.contextInput.unitId}`
+        : `Partition: ${brief.contextInput.partitionId}`,
+      'Use the attached value directly. Do not search the repository for this source or replace it with a broader review.',
+      JSON.stringify(brief.contextInput.value, null, 2),
+    ],
+    constraints: (brief) => [`Constraints:\n- ${brief.constraints.join('\n- ')}`],
+    pathScope: (brief) => [`Work only within: ${brief.pathScope.join(', ')}`],
+    definitionOfDone: (brief) => [`Done when: ${brief.definitionOfDone ?? ''}`],
+    worktree: () => ['You are in a dedicated git worktree; edit files here directly. Do not push or run destructive commands.'],
+    verificationLead: (brief) => [brief.contextInput
+      ? 'A reviewer independently enforces the following exact execution contract. Run it only when the requested work needs code verification; do not substitute it for analyzing the attached Context.'
+      : 'A reviewer will independently enforce the following exact execution contract. Make it pass without changing its executable, argv, working directory, or expected exit.'],
+  }),
+});
 
 /**
  * @param {object} brief
- * @param {'codex-v2'|'claude'|'grok-acp'|'kimi-acp'|'omp-rpc'} dialect
+ * @param {'codex-v2'|'claude'|'grok-acp'|'kimi-acp'|'omp-rpc'|'cli'} dialect
  * @returns {string}
  */
 export function renderBrief(brief, dialect) {
-  const lines = [];
+  const presentation = DIALECT_PRESENTATION[dialect] ?? CANONICAL_PRESENTATION;
   const advertisesBatonTool = advertisesBatonControlSurface(brief.tools);
-  lines.push(`[baton brief:${dialect}]`);
-  lines.push('## Goal');
-  lines.push(brief.goal ?? '');
+  const pathScopeRendered = Array.isArray(brief.pathScope) && brief.pathScope.length > 0;
+  const lines = [`[baton brief:${dialect}]`];
+  lines.push(...presentation.goal(brief));
   lines.push('## Dispatch');
   if (brief.contextInput) {
     lines.push(advertisesBatonTool
       ? 'This task is already dispatched by Baton. The attached immutable Context is the complete task input; do not inspect repository files, prior Run artifacts, receipts, or ledgers to reconstruct or broaden it. Writing a named output path does not authorize reading its preexisting contents. Orchestration actions may use only the Baton control surface explicitly listed in this Brief.'
       : 'This task is already dispatched and supervised by Baton. The attached immutable Context is the complete task input; do not inspect repository files, prior Run artifacts, receipts, or ledgers to reconstruct or broaden it. Writing a named output path does not authorize reading its preexisting contents. Do not search for or launch another Baton CLI, MCP server, or Run; use one only when this Brief explicitly advertises it.');
-    lines.push('## Immutable Context');
-    lines.push(`Call: ${brief.contextInput.callId}`);
-    lines.push(brief.contextInput.unitId
-      ? `Unit: ${brief.contextInput.unitId}`
-      : `Partition: ${brief.contextInput.partitionId}`);
-    lines.push('Use the attached value directly; do not replace it with a broader repository review:');
-    lines.push(JSON.stringify(brief.contextInput.value, null, 2));
+    lines.push(...presentation.context(brief));
   } else {
-    lines.push('This task is already dispatched by Baton. Use your configured native harness tools, skills, context management and delegation to carry out the assigned work within its authority. Delegated participants inherit the same constraints. Any Baton tools listed here extend those native capabilities.');
+    lines.push('This task is already dispatched by Baton. Use your configured native harness tools, skills, context management and delegation to carry out the assigned work within its authority, and use only the tools explicitly advertised in this Brief. Delegated participants inherit the same constraints. Any Baton tools listed here extend those native capabilities.');
     // Two delegation mechanisms coexist (#275): the swarm governs recruits (permissions, capture,
     // review, stop); a harness's native subagents are observed only. Say so where the choice is made.
     lines.push(advertisesBatonTool
       ? 'Delegation: recruit through the Baton swarm surface listed here (swarm.recruit) for work the swarm should be able to review, capture or stop; use your harness\'s native subagents only for short, disposable exploration — the swarm observes them but cannot govern or stop them.'
       : 'Delegation: your harness\'s native subagents are observed by Baton but not governed by it — it cannot review, capture or stop them; keep them to short, disposable exploration and do the accountable work yourself.');
   }
+  lines.push(...renderToolsSection(brief.tools));
   lines.push('## Write authority');
-  lines.push('Harness permissions are execution capability, not write authority. Write only inside the assigned Baton worktree and only at the Path scope below. Never modify, move, chmod, delete, replace, or repair anything outside that authority, including the home directory, credentials, toolchains, shims, global configuration, or caches. Report an environmental blocker instead of repairing the host.');
+  // A-F4: name `## Path scope` in the authority paragraph only when that section is rendered.
+  lines.push([
+    'Harness permissions are execution capability, not write authority.',
+    pathScopeRendered
+      ? 'Write only inside the assigned Baton worktree and only at the Path scope below.'
+      : 'Write only inside the assigned Baton worktree; this Brief declares no narrower write scope, so the worktree root is the whole of it.',
+    'Never modify, move, chmod, delete, replace, or repair anything outside that authority, including the home directory, credentials, toolchains, shims, global configuration, or caches.',
+    'Report an environmental blocker instead of repairing the host.',
+  ].join(' '));
   if (Array.isArray(brief.requiredEffects) && brief.requiredEffects.includes('repository_edit')) {
     lines.push('## Repository mutation authority');
     lines.push('The approved Plan requires an in-scope repository edit for acceptance. Objective prose does not weaken this requirement.');
@@ -138,18 +244,22 @@ export function renderBrief(brief, dialect) {
     lines.push('## Repository mutation authority');
     lines.push('Repository mutation is not authorized. Inspect/read and return evidence only; do not create, modify, or delete files.');
   }
-  if (brief.constraints?.length) {
-    lines.push('## Constraints');
-    for (const c of brief.constraints) lines.push(`- ${c}`);
+  if (Array.isArray(brief.constraints) && brief.constraints.length > 0) {
+    lines.push(...presentation.constraints(brief));
   }
-  if (brief.pathScope?.length) {
-    lines.push('## Path scope');
-    for (const p of brief.pathScope) lines.push(`- ${p}`);
-  }
-  lines.push('## Definition of done');
-  lines.push(brief.definitionOfDone ?? '');
+  if (pathScopeRendered) lines.push(...presentation.pathScope(brief));
+  lines.push(...presentation.definitionOfDone(brief));
+  lines.push(...presentation.worktree(brief));
+  lines.push(...renderBudgetSection(brief.budget));
   lines.push('## Verification (preserve this execution contract; also satisfy the assigned work)');
-  lines.push(renderVerificationExecution(brief.verification));
+  lines.push(...presentation.verificationLead(brief));
+  const contract = renderVerificationExecution(brief.verification);
+  if (contract) {
+    lines.push(contract);
+    // A-N4: the trust boundary, stated in every dialect. The pinned check is never trusted from the
+    // worker — the hub re-runs it, and the worker's own claim about it is not evidence.
+    lines.push('The hub re-runs this exact command independently after you finish; the exit code you report is untrusted and is never the evidence — make the command itself pass.');
+  }
   if (brief.outputFormat) {
     lines.push('## Output format');
     lines.push(brief.outputFormat);

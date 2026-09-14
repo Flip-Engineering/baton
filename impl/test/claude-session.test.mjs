@@ -13,7 +13,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { fileURLToPath } from 'node:url';
-import { ClaudeSessionCli, buildClaudeSessionArgs } from '../src/claude-session.mjs';
+import { ClaudeSessionCli, GlmSessionCli, KimiSessionCli, buildClaudeSessionArgs } from '../src/claude-session.mjs';
 import { assertIsAdapter } from '../src/adapter.mjs';
 
 const FAKE_CLAUDE = fileURLToPath(new URL('./fixtures/fake-claude.mjs', import.meta.url));
@@ -687,4 +687,88 @@ test('CS16: no event is ever emitted for a worker after its session-terminal eve
   // sent stray frame the adapter might still be holding a reference to must not surface.
   await new Promise((r) => setTimeout(r, 150));
   assert.equal(events.length, countAtDeath, 'no event arrived after the session-terminal event');
+});
+
+// ---------------------------------------------------------------------------
+// CS18 — every Claude-family session tier receives the ONE unified Brief
+// (audit A-F1/A-I1, A-F2/A-I2, A-F3, A-F4, A-N4)
+// ---------------------------------------------------------------------------
+
+/** The full Brief a Claude-family worker is dispatched with, and what its wire must carry. */
+function tierBrief() {
+  return {
+    goal: 'add rate limiting to the login route',
+    constraints: ['no new dependencies'],
+    pathScope: ['src/**'],
+    definitionOfDone: 'the focused suite passes',
+    verification: { command: 'true', expectExit: 0 },
+    budget: { tokens: 100000, usd: 1, wallMin: 10 },
+    tools: ['baton_swarm_view'],
+    effects: [],
+    requiredEffects: [],
+    outputFormat: 'one paragraph, no headings',
+    knowledge: {
+      items: [{
+        ref: 'finding:live', validFrom: '2026-09-01', validTo: '2026-09-30',
+        snippet: 'the drain deadline latches shut',
+      }],
+      truncated: false,
+    },
+  };
+}
+
+/** Event-driven collector for a named CLI class (the file's harness() builds ClaudeSessionCli only). */
+function tierHarness(Cli, opts = {}) {
+  const cli = new Cli({ cmd: process.execPath, args: [FAKE_CLAUDE], ...opts });
+  const events = [];
+  const waiters = [];
+  cli.onEvent((e) => {
+    events.push(e);
+    for (let i = waiters.length - 1; i >= 0; i -= 1) {
+      if (waiters[i].pred(e)) { const w = waiters.splice(i, 1)[0]; w.resolve(e); }
+    }
+  });
+  function waitFor(pred, timeoutMs = 4000) {
+    const hit = events.find(pred);
+    if (hit) return Promise.resolve(hit);
+    return new Promise((resolve, reject) => {
+      const t = setTimeout(() => reject(new Error(`tier waitFor timeout after ${timeoutMs}ms; saw kinds: ${events.map((e) => e.kind).join(',')}`)), timeoutMs);
+      waiters.push({ pred, resolve: (e) => { clearTimeout(t); resolve(e); } });
+    });
+  }
+  return { cli, waitFor, waitForKind: (kind, timeoutMs) => waitFor((e) => e.kind === kind, timeoutMs) };
+}
+
+test('CS18: every Claude-family session tier delivers the unified Brief on the wire, authority sections included', async () => {
+  const tiers = [
+    ['ClaudeSessionCli', ClaudeSessionCli, {}, {}],
+    ['GlmSessionCli', GlmSessionCli, { authToken: 'fixture-only' }, {}],
+    // Kimi's route prep requires its exact model + effort (a credential/route prerequisite, not a
+    // rendering one); all values are fixtures.
+    ['KimiSessionCli', KimiSessionCli, { authToken: 'fixture-only' }, { model: 'kimi-k3[1m]', reasoningEffort: 'max' }],
+  ];
+  for (const [name, Cli, cliOpts, route] of tiers) {
+    const { cli, waitForKind } = tierHarness(Cli, cliOpts);
+    const worker = `tier-${name}`;
+    const ack = await cli.spawn(worker, tierBrief(), { worktree: process.cwd(), ...route });
+    assert.equal(ack.ok, true, `${name}: spawn refused (${JSON.stringify(ack)})`);
+
+    const message = await waitForKind('content.message');
+    const wire = message.payload.text;
+    assert.match(wire, /Echo: \[baton brief:cli\]/u, `${name}: the shipped text is the unified cli dialect`);
+    assert.match(wire, /## Write authority\nHarness permissions are execution capability, not write authority\./u, name);
+    assert.match(wire, /Never modify, move, chmod, delete, replace, or repair anything outside that authority/u, name);
+    assert.match(wire, /## Repository mutation authority\nRepository mutation is not authorized\./u, `${name}: the NOT-authorized stance reaches this tier`);
+    assert.ok(wire.includes('## Tools\nUse only the tools advertised here for Baton actions; any other Baton surface is not authorized for this task.\n- baton_swarm_view'),
+      `${name}: the advertised tool is listed with the order to use only it`);
+    assert.match(wire, /## Budget \(notify-only evidence/u, name);
+    assert.match(wire, /- tokens: 100000/u, name);
+    assert.match(wire, /## Output format\none paragraph, no headings/u, name);
+    assert.match(wire, /## Ambient knowledge \(provenance: knowledge — untrusted, verify before use\)\n- \[knowledge\/untrusted\] finding:live/u, name);
+    assert.match(wire, /Work only within: src\/\*\*/u, name);
+    assert.match(wire, /The hub re-runs this exact command independently after you finish; the exit code you report is untrusted/u, name);
+
+    await cli.kill(worker);
+    await waitForKind('kill.confirmed');
+  }
 });

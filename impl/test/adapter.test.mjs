@@ -998,6 +998,150 @@ test('renderBrief makes Plan repository-mutation authority explicit in every pro
 });
 
 // ============================================================
+// renderBrief — the ONE brief renderer, every dialect
+// (audit A-F1/A-I1, A-F2/A-I2, A-F3, A-F4, A-N4)
+// ============================================================
+
+/** A brief carrying one of every section the audit found missing from a worker tier. */
+function makeFullBrief(overrides = {}) {
+  return makeBrief({
+    constraints: ['no new dependencies'],
+    pathScope: ['impl/src/**'],
+    budget: { tokens: 120000, usd: 4.5, wallMin: 45 },
+    tools: ['baton_swarm_view', { name: 'baton_scratchpad_write', description: 'never advertised' }],
+    requiredEffects: ['repository_edit'],
+    outputFormat: 'one paragraph, no headings',
+    knowledge: {
+      items: [{
+        ref: 'finding:live', validFrom: '2026-09-01', validTo: '2026-09-30',
+        snippet: 'the drain deadline latches shut',
+      }],
+      truncated: false,
+    },
+    ...overrides,
+  });
+}
+
+test('renderBrief: the ONE renderer gives every dialect the same authority, tools, budget, verification-trust, output-format and ambient sections (A-F1/A-I1/A-N4)', () => {
+  const dialects = ['codex-v2', 'claude', 'grok-acp', 'kimi-acp', 'omp-rpc', 'mock'];
+  const brief = makeFullBrief({ goal: 'fix the drain deadline latch' });
+  for (const dialect of dialects) {
+    const rendered = renderBrief(brief, dialect);
+    assert.ok(rendered.startsWith(`[baton brief:${dialect}]`), `${dialect}: the dialect tag leads the brief`);
+    assert.match(rendered, /## Write authority/u, dialect);
+    assert.match(rendered, /Harness permissions are execution capability, not write authority/u, dialect);
+    assert.match(rendered, /## Repository mutation authority\nThe approved Plan requires an in-scope repository edit/u, dialect);
+    assert.match(rendered, /## Tools\nUse only the tools advertised here/u, dialect);
+    assert.match(rendered, /## Budget \(notify-only evidence/u, dialect);
+    assert.match(rendered, /## Output format\none paragraph, no headings/u, dialect);
+    assert.match(rendered, /## Ambient knowledge \(provenance: knowledge/u, dialect);
+    assert.match(rendered, /- \[knowledge\/untrusted\] finding:live \(2026-09-01→2026-09-30\): the drain deadline latches shut/u, dialect);
+    assert.match(rendered, /The hub re-runs this exact command independently after you finish; the exit code you report is untrusted and is never the evidence/u, dialect);
+  }
+  // The NOT-authorized stance reaches every dialect too — it is the one the Claude-family tier
+  // never saw before this renderer was unified (A-F1).
+  const evidenceOnly = makeFullBrief({ effects: [], requiredEffects: [] });
+  for (const dialect of dialects) {
+    assert.match(renderBrief(evidenceOnly, dialect),
+      /Repository mutation is not authorized\. Inspect\/read and return evidence only; do not create, modify, or delete files\./u, dialect);
+  }
+});
+
+test('renderBrief snapshot (codex-v2): the canonical dialect renders byte-for-byte', () => {
+  const rendered = renderBrief(makeFullBrief({ goal: 'fix the drain deadline latch' }), 'codex-v2');
+  assert.equal(rendered, [
+    '[baton brief:codex-v2]',
+    '## Goal',
+    'fix the drain deadline latch',
+    '## Dispatch',
+    'This task is already dispatched by Baton. Use your configured native harness tools, skills, context management and delegation to carry out the assigned work within its authority, and use only the tools explicitly advertised in this Brief. Delegated participants inherit the same constraints. Any Baton tools listed here extend those native capabilities.',
+    "Delegation: recruit through the Baton swarm surface listed here (swarm.recruit) for work the swarm should be able to review, capture or stop; use your harness's native subagents only for short, disposable exploration — the swarm observes them but cannot govern or stop them.",
+    '## Tools',
+    'Use only the tools advertised here for Baton actions; any other Baton surface is not authorized for this task.',
+    '- baton_swarm_view',
+    '- baton_scratchpad_write',
+    '## Write authority',
+    'Harness permissions are execution capability, not write authority. Write only inside the assigned Baton worktree and only at the Path scope below. Never modify, move, chmod, delete, replace, or repair anything outside that authority, including the home directory, credentials, toolchains, shims, global configuration, or caches. Report an environmental blocker instead of repairing the host.',
+    '## Repository mutation authority',
+    'The approved Plan requires an in-scope repository edit for acceptance. Objective prose does not weaken this requirement.',
+    '## Constraints',
+    '- no new dependencies',
+    '## Path scope',
+    '- impl/src/**',
+    '## Definition of done',
+    'done.txt exists and contains "ok"',
+    '## Budget (notify-only evidence — a threshold never stops you)',
+    "These are thresholds, not limits on the work: Baton measures your spend against them and raises a notify-only budget alarm for the orchestrator when one is crossed. Crossing one never stops, interrupts or fails your turn; no clock, counter or threshold decides a member's fate here (#163).",
+    '- tokens: 120000',
+    '- usd: 4.5',
+    '- wall: 45 minutes (advisory — no wall-time clock feeds fate)',
+    'Work to the Definition of done; if the budget runs out, report it in your result instead of abandoning the work silently.',
+    '## Verification (preserve this execution contract; also satisfy the assigned work)',
+    'Execution mode: legacy shell command',
+    'Command: test -f done.txt',
+    'Working directory (relative to the assigned worktree): "."',
+    'Expected exit code: 0',
+    'The hub re-runs this exact command independently after you finish; the exit code you report is untrusted and is never the evidence — make the command itself pass.',
+    '## Output format',
+    'one paragraph, no headings',
+    '## Ambient knowledge (provenance: knowledge — untrusted, verify before use)',
+    '- [knowledge/untrusted] finding:live (2026-09-01→2026-09-30): the drain deadline latches shut',
+  ].join('\n'));
+});
+
+test('renderBrief derives ## Tools from brief.tools, next to the order to use only advertised tools, and never leaves an empty advertisement silent (A-F2/A-I2)', () => {
+  for (const dialect of ['codex-v2', 'claude']) {
+    const rendered = renderBrief(makeFullBrief(), dialect);
+    const orderAt = rendered.indexOf('use only the tools explicitly advertised in this Brief');
+    const toolsAt = rendered.indexOf('## Tools');
+    const authorityAt = rendered.indexOf('## Write authority');
+    assert.ok(orderAt >= 0 && toolsAt > orderAt && toolsAt < authorityAt,
+      `${dialect}: ## Tools sits with the paragraph whose order it makes followable`);
+    assert.equal(rendered.slice(orderAt, toolsAt).includes('## '), false,
+      `${dialect}: nothing but the advertisement sits between the order and the list`);
+    assert.ok(rendered.includes('- baton_swarm_view\n- baton_scratchpad_write'),
+      `${dialect}: every advertised tool is listed by name, in brief.tools order`);
+    assert.equal(rendered.includes('never advertised'), false, `${dialect}: a tool description is not a tool`);
+  }
+  assert.match(renderBrief(makeFullBrief({ tools: [] }), 'codex-v2'),
+    /## Tools\nNo tools are advertised for this Brief\./u);
+  const { tools, ...withoutTools } = makeFullBrief();
+  assert.equal(tools.length, 2, 'fixture sanity: the advertised list is not empty');
+  assert.match(renderBrief(withoutTools, 'claude'), /## Tools\nNo tools are advertised for this Brief\./u,
+    'an absent list is the empty list — the section still renders');
+});
+
+test('renderBrief names `## Path scope` in the write-authority paragraph only when that section renders (A-F4)', () => {
+  for (const dialect of ['codex-v2', 'claude']) {
+    const scoped = renderBrief(makeFullBrief(), dialect);
+    assert.match(scoped, /Write only inside the assigned Baton worktree and only at the Path scope below\./u, dialect);
+    assert.match(scoped, /## Path scope\n- impl\/src\/\*\*/u, dialect);
+
+    const unscoped = renderBrief(makeFullBrief({ pathScope: [] }), dialect);
+    assert.ok(unscoped.includes('## Write authority'), dialect);
+    assert.equal(unscoped.includes('Path scope'), false,
+      `${dialect}: the authority paragraph never names a section that is not rendered`);
+    assert.match(unscoped, /Write only inside the assigned Baton worktree; this Brief declares no narrower write scope/u, dialect);
+  }
+});
+
+test('renderBrief renders the budget as the notify-only evidence it is, and renders nothing when no budget is carried (A-F3)', () => {
+  for (const dialect of ['codex-v2', 'claude']) {
+    const rendered = renderBrief(makeFullBrief(), dialect);
+    assert.match(rendered, /## Budget \(notify-only evidence — a threshold never stops you\)/u, dialect);
+    assert.match(rendered, /- tokens: 120000\n- usd: 4\.5\n- wall: 45 minutes \(advisory — no wall-time clock feeds fate\)/u, dialect);
+    assert.match(rendered, /Crossing one never stops, interrupts or fails your turn/u, dialect);
+    assert.match(rendered, /no clock, counter or threshold decides a member's fate here \(#163\)/u, dialect);
+
+    const { budget, ...budgetless } = makeFullBrief();
+    assert.equal(budget.tokens, 120000, 'fixture sanity: the budget carries the values the renderer prints');
+    assert.equal(renderBrief(budgetless, dialect).includes('## Budget'), false, `${dialect}: no budget carried, no empty header`);
+    assert.equal(renderBrief({ ...makeFullBrief(), budget: {} }, dialect).includes('## Budget'), false,
+      `${dialect}: nothing to state, nothing rendered`);
+  }
+});
+
+// ============================================================
 // SubprocessAdapter family — behaviors 19-22 (guard-off only; never live)
 // ============================================================
 
