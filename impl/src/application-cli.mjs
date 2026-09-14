@@ -260,7 +260,7 @@ export function discoverBatonConnection({
     if (repository.transport !== 'local'
       || repository.registryDigest !== APPLICATION_SEMANTIC_REGISTRY.digest
       || !Number.isFinite(Date.parse(repository.startedAt))) {
-      throw cliError('resident repository connection authority is invalid', 'cli_config_invalid');
+      throw residentAuthorityRefusal(repository);
     }
   }
   if (nonempty(env.XDG_CONFIG_HOME) && !isAbsolute(env.XDG_CONFIG_HOME)) {
@@ -561,7 +561,7 @@ export function inspectBatonConnection({
       || !id(repository.incarnation, 'resident incarnation') || repository.transport !== 'local'
       || repository.registryDigest !== APPLICATION_SEMANTIC_REGISTRY.digest
       || !Number.isFinite(Date.parse(repository.startedAt)))) {
-      throw cliError('resident repository connection authority is invalid', 'cli_config_invalid');
+      throw residentAuthorityRefusal(repository);
     }
   } catch {
     return Object.freeze({
@@ -2698,4 +2698,18 @@ export async function runBatonCli(parsed, client, options = {}) {
     });
   }
   throw cliError('unsupported CLI operation');
+}
+
+/** The resident selector refusal. Protocol drift — a resident published by another commit — is
+ * the common case and names both digests and the remedy; anything else stays the generic shape. */
+function residentAuthorityRefusal(repository) {
+  const resident = typeof repository?.registryDigest === 'string' ? repository.registryDigest : null;
+  const mine = APPLICATION_SEMANTIC_REGISTRY.digest;
+  if (resident !== null && resident !== mine) {
+    return Object.assign(cliError(
+      `resident repository connection authority is invalid: the resident publishes semantic-registry digest ${resident.slice(0, 12)}… but this CLI carries ${mine.slice(0, 12)}… — use the CLI of the commit the resident runs, or restart the resident from this checkout`,
+      'cli_config_invalid',
+    ), { detail: { residentRegistryDigest: resident, cliRegistryDigest: mine, next: 'use the CLI of the commit the resident runs, or restart the resident from this checkout' } });
+  }
+  return cliError('resident repository connection authority is invalid', 'cli_config_invalid');
 }

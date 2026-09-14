@@ -117,15 +117,22 @@ function scanProjection(config, actualRoot, sourceSide, retainBytes = false) {
   const pathKeys = new Set();
   const exceed = () => { throw typed('toolchain projection exceeded a deployment limit', 'toolchain_projection_oversize'); };
   const changed = () => { throw typed('toolchain source changed', 'toolchain_projection_changed'); };
-  const invalid = () => { throw typed(sourceSide ? 'toolchain source contains an unsupported entry' : 'toolchain materialization is invalid', sourceSide ? 'toolchain_projection_invalid' : 'toolchain_projection_materialization_failed'); };
+  // A refusal names the entry and the rule it broke: an operator reading "unsupported entry"
+  // against an 11k-file dependency tree has nothing to act on; "node_modules/baton (symlink
+  // target leaves its dependency mapping)" is one `rm`.
+  const invalid = (reason = null, entry = null) => {
+    const detail = `${entry ? `: ${entry}` : ''}${reason ? ` (${reason})` : ''}`;
+    throw Object.assign(typed(sourceSide ? `toolchain source contains an unsupported entry${detail}` : `toolchain materialization is invalid${detail}`,
+      sourceSide ? 'toolchain_projection_invalid' : 'toolchain_projection_materialization_failed'), { entry, reason });
+  };
 
   const walk = (absolutePath, logicalPath, depth, mappingRoot) => {
     let before;
     try { before = lstatSync(absolutePath); } catch { if (sourceSide) changed(); else invalid(); }
-    if (!before.isSymbolicLink() && !before.isDirectory() && !before.isFile()) invalid();
+    if (!before.isSymbolicLink() && !before.isDirectory() && !before.isFile()) invalid('not a regular file, directory or symlink', logicalPath);
     if (Buffer.byteLength(logicalPath) > config.limits.maxPathBytes || depth > config.limits.maxDepth) exceed();
     const key = foldCanonicalCase(logicalPath.normalize('NFC'));
-    if (pathKeys.has(key)) invalid(); pathKeys.add(key);
+    if (pathKeys.has(key)) invalid('collides with another entry after case folding', logicalPath); pathKeys.add(key);
     if (before.isSymbolicLink()) {
       // npm's .bin entries are relative links to executables inside the same projected tree.
       // Preserve that relationship so package-relative imports still work. Never follow a link
@@ -134,17 +141,17 @@ function scanProjection(config, actualRoot, sourceSide, retainBytes = false) {
       try { target = readlinkSync(absolutePath); }
       catch { if (sourceSide) changed(); else invalid(); }
       try {
-        if (isAbsolute(target) || !safeEntryName(target)) invalid();
+        if (isAbsolute(target) || !safeEntryName(target)) invalid('symlink target is absolute or unsafe', logicalPath);
         const lexical = resolve(dirname(absolutePath), target);
         const resolved = realpathSync(lexical);
         for (const path of [lexical, resolved]) {
           const within = relative(mappingRoot, path);
-          if (!within || within === '..' || within.startsWith(`..${sep}`) || isAbsolute(within)) invalid();
+          if (!within || within === '..' || within.startsWith(`..${sep}`) || isAbsolute(within)) invalid('symlink target leaves its dependency mapping', logicalPath);
         }
-        if (!lstatSync(resolved).isFile()) invalid();
+        if (!lstatSync(resolved).isFile()) invalid('symlink target is not a regular file', logicalPath);
       } catch (error) {
         if (error instanceof ToolchainProjectionError) throw error;
-        invalid();
+        invalid('symlink target cannot be resolved', logicalPath);
       }
       try {
         if (statSignature(before) !== statSignature(lstatSync(absolutePath))
@@ -164,7 +171,7 @@ function scanProjection(config, actualRoot, sourceSide, retainBytes = false) {
     if (before.isFile()) {
       counters.files += 1; counters.bytes += before.size;
       if (counters.files > config.limits.maxFiles || before.size > config.limits.maxFileBytes || counters.bytes > config.limits.maxBytes) exceed();
-      if (before.nlink !== 1 || (before.mode & 0o6000) !== 0) invalid();
+      if (before.nlink !== 1 || (before.mode & 0o6000) !== 0) invalid('file is hard-linked or carries setuid/setgid', logicalPath);
       let fd; let bytes; let opened; let after;
       try {
         fd = openSync(absolutePath, fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0));

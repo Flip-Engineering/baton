@@ -7,8 +7,8 @@ import {
 import { homedir, tmpdir } from 'node:os';
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
 
-function residentError(message, code = 'application_host_authority_invalid') {
-  return Object.assign(new Error(message), { code });
+function residentError(message, code = 'application_host_authority_invalid', detail = undefined) {
+  return Object.assign(new Error(message), { code, ...(detail === undefined ? {} : { detail }) });
 }
 function record(value) { return value !== null && typeof value === 'object' && !Array.isArray(value); }
 function exact(value, keys) {
@@ -163,7 +163,13 @@ function acquireLease(root, repoId, deploymentId, ownerUid, now, {
       } catch { throw residentError('resident host ownership is ambiguous', 'application_host_busy'); }
       if (!leaseOwner(prior, repoId, bindDeployment ? deploymentId : null)
         || processState(prior.pid, prior.pidStart) !== 'stale') {
-        throw residentError('resident host is already active', 'application_host_busy');
+        // Name the holder: one resident serves every worktree of this repository, so the
+        // operator's next step is to use it (or stop it), not to look for a second one.
+        const holder = leaseOwner(prior, repoId, null)
+          ? { deploymentId: prior.deploymentId, incarnation: prior.incarnation, pid: prior.pid, startedAt: prior.startedAt } : null;
+        throw residentError(holder
+          ? `resident host is already active: deployment ${holder.deploymentId} (pid ${holder.pid}, since ${holder.startedAt}) publishes it; every worktree of this repository shares one resident`
+          : 'resident host is already active', 'application_host_busy', { holder });
       }
       const observed = lstatSync(path);
       const current = safeRegular(join(path, 'owner.json'), ownerUid, 16 * 1024);
