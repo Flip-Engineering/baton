@@ -119,7 +119,14 @@ if (plan.sabotage) {
 }
 
 const started = Date.now();
-const write = (value) => fs.writeFileSync(outPath, JSON.stringify({ ...value, elapsed: Date.now() - started, pid: process.pid, sabotageFired }));
+// The parent polls this file while the child is still running, so every report lands by rename:
+// a reader sees the previous complete report or the new one, never a partial write (WCC8/WCC9
+// failed with "Unexpected end of JSON input" under host load when a poll landed mid-write).
+const write = (value) => {
+  const staged = outPath + '.' + process.pid + '.tmp';
+  fs.writeFileSync(staged, JSON.stringify({ ...value, elapsed: Date.now() - started, pid: process.pid, sabotageFired }));
+  fs.renameSync(staged, outPath);
+};
 const authority = new WorktreeCapacityAuthority({
   repoRoot: fs.realpathSync(repoArg),
   policy: plan.policy,
