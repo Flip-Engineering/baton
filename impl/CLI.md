@@ -249,28 +249,39 @@ row for CLI orchestration.
 
 The zero-assembly deployment registers these route families (`baton doctor` for live readiness):
 
+<!-- BEGIN GENERATED: cli-fleet-routes (impl/scripts/render-surface-docs.mjs) -->
+
 | Harness | Model(s) | Efforts | Ready when |
 |---|---|---|---|
 | `codex` | `gpt-5.6-sol` | minimal/low/medium/high/xhigh | `~/.codex/auth.json` present |
-| `kimi-code` | `kimi-code/k3` | low/high/max | kimi credential files present |
-| `grok` | `grok-4.5` | low/medium/high | `~/.grok/auth.json` present |
-| `claude-code` | `claude-opus-4-6` | low/medium/high/xhigh/max | bounded version + `auth status` probes |
-| `claude-code` (provider kimi) | `kimi-k3[1m]` | max | kimi-through-claude credential present |
-| `glm` | `glm-5.2` | low/medium/high/xhigh/max | repo `glm_key.json` present |
-| `deepseek` | `deepseek-v4-flash` (primary) | low/medium/high/xhigh/max | repo `deepseek_key.json` present |
-| `deepseek` | `deepseek-v4-pro[1m]` (pre-update opt-in) | low/medium | repo `deepseek_key.json` present |
+| `kimi-code` | `kimi-code/k3` | low/high/max | kimi credential files present with a ready authentication state |
+| `grok` | `grok-4.5` | low/medium/high | `~/.grok/auth.json` present with a ready authentication state |
+| `claude-code` | `claude-opus-4-6` | low/medium/high/xhigh/max | bounded version + auth status probes |
+| `omp` | `deepseek/deepseek-flash` | low/high/max | `~/.omp/agent/agent.db` present and repo `deepseek_key.json` present |
+| `omp` | `deepseek/deepseek-v4-pro[1m]` | low/medium | `~/.omp/agent/agent.db` present and repo `deepseek_key.json` present |
+| `omp` | `zai/glm-5.3-flash` | low/high/max | `~/.omp/agent/agent.db` present and repo `glm_key.json` present |
+| `claude-code` (provider kimi, conditional) | `kimi-k3[1m]` | max | the private kimi-through-claude credential present |
 
-The deepseek harness routes through the Anthropic-compatible endpoint
-`https://api.deepseek.com/anthropic` — the same session shape as GLM: a claude-family session
-class pointed at a DeepSeek endpoint with a token read from a repo-local key file. The
-deployment projects, for deepseek routes only, `{ authTokenFile, authTokenJsonPointer:
-'/deepseek_key', baseUrl, harness: 'deepseek' }`; the token is read by the deployment, never by
-workers, and the file is mode 600 and gitignored beside `glm_key.json`. `deepseek-v4-flash`
-(the 0731 variant) is the primary, economically efficient model and the adapter default;
-`deepseek-v4-pro[1m]` precedes its unpublished update, so it stays an explicit low/medium
-opt-in and is never a default. When the key is absent, deepseek routes report an honest
-blocked `authentication_required` readiness rather than failing at construction. Pinned by
-`impl/test/deepseek-routes-red.test.mjs` (DS-1..DS-4).
+<!-- END GENERATED: cli-fleet-routes -->
+
+The omp rows ride the omp (OhMyPi) harness as first-class providers: omp dials the provider
+directly, with no Anthropic-compatible translation, and each member's isolated home receives the
+operator's own `~/.omp/agent` tree HOME-relative — exactly omp's native resolution.
+`deepseek/deepseek-flash` (the provider's canonical V4 Flash API name) is the primary,
+economically efficient model and the adapter-configured default; `deepseek/deepseek-v4-pro[1m]`
+precedes its unpublished update, so it stays an explicit low/medium opt-in and is never a default.
+
+Admission and readiness are the observed facts this table documents, never a declaration:
+`baton doctor` admits the codex, grok, kimi-code and omp families only when their ambient
+credential fact is present (the omp family's is `~/.omp/agent/agent.db`; the claude-code rows are
+built-in and probe at readiness time), and an omp route whose provider key file is absent —
+`deepseek_key.json` for `deepseek/*` routes, `glm_key.json` for `zai/*` routes, both gitignored at
+the repository root and provisioned 0600 — reads blocked with that file named, never ready and
+never a construction failure. The retired Anthropic-compatible `deepseek`/`glm` session tiers
+stay constructible only through an explicit `advanced.routes` configuration. The table above
+renders from the served registry and the deployment's own readiness contract, so it cannot
+disagree with what the deployment serves or gates. Pinned by
+`impl/test/deepseek-routes-red.test.mjs` (DS-1..DS-4) and `impl/test/route-truth.test.mjs`.
 
 
 `run adopt` first reads `run.evidence` and binds the exact displayed manifest/result coordinates;

@@ -41,8 +41,6 @@
     "test/cross-deployment-knowledge-red.test.mjs :: R-R3: the strict-prefix gap law refuses knowledge_primary_unreachable, never a silent skip (RED — no replay law)",
     "test/cross-deployment-knowledge-red.test.mjs :: S-R1: the split-brain discriminator is declared-path-vs-this-root, never repoId equality (RED — no primary check)",
     "test/cross-deployment-knowledge-red.test.mjs :: S-R2: two self-declared primaries are honestly surfaced — each project read names its own sourceRoot (RED — no source/epoch vocabulary)",
-    "test/deepseek-routes-red.test.mjs :: DS-1: DEFAULT_ROUTES registers flash as the full-ladder DeepSeek default and pro[1m] as the pre-update low/medium opt-in",
-    "test/deepseek-routes-red.test.mjs :: DS-3: missing deepseek_key.json is an honest not-ready doctor result, not a construction error",
     "test/doubt-review-red.test.mjs :: A1: a doubt-kind entry elevates to the shared partition (RED — note+plan-only selection)",
     "test/doubt-review-red.test.mjs :: A3: a doubt-heavy batch refuses the derived sub-cap as a whole (RED — no sub-cap prevalidation)",
     "test/doubt-review-red.test.mjs :: A4: the settle selection is exactly note/plan/doubt — a link is never selected (RED — the selection does not discriminate the doubt kind)",

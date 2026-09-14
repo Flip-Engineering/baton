@@ -141,8 +141,9 @@ function fakeHome({ plantOmp = false } = {}) {
 
 // Open the deployment with HOME scoped to the fake home. Readiness is frozen at open, so HOME
 // is restored as soon as openBaton resolves; nothing later re-reads the operator's home.
-async function openDeployment(card, home) {
-  const repo = repository();
+async function openDeployment(card, home, repoOverride = null) {
+  const ownedRepo = repoOverride === null;
+  const repo = ownedRepo ? repository() : repoOverride;
   const deploymentRoot = tmpDir('deployment');
   const previousHome = process.env.HOME;
   process.env.HOME = home;
@@ -212,51 +213,73 @@ test('RH234-1b (stage: worker-policy gate missing): a schema-valid but unsatisfi
   }
 });
 
-test('RH234-2 (stage: credential gate missing): an omp-family route with no resolvable credential projection reads blocked/route_credentials_unprojected, never ready', async () => {
-  // Valid worker policy, no adapter-managed credential, and a HOME with no ~/.omp — exactly
-  // the auth-less-member shape measured in the #230 background.
-  const deployment = await openDeployment(ompCard({}), fakeHome());
+test('RH234-2 (stage: credential gate missing): an omp-family route reads the ONE #293 derivation — blocked with the missing file named, never ready', async () => {
+  // (a) Valid worker policy, no adapter-managed credential, and a HOME with no ~/.omp — the
+  //     auth-less-member shape measured in the #230 background now names the agent database.
+  const unplanted = await openDeployment(ompCard({}), fakeHome());
   try {
-    const row = routeRow(await deployment.doctor());
+    const row = routeRow(await unplanted.doctor());
     assert.ok(row, 'the omp route must appear in the doctor rows');
     assert.notEqual(row.state, 'ready',
       `an unprojected credential family must never read ready (got state=${row.state}, code=${row.code})`);
     assert.equal(row.state, 'blocked');
-    assert.equal(row.code, 'route_credentials_unprojected');
-    assert.ok(/credential|project/i.test(row.summary ?? ''), `the summary must name the credential projection (got ${row.summary})`);
-    const doctor = await deployment.doctor();
+    assert.equal(row.code, 'omp_agent_unconfigured');
+    assert.ok(/~\/\.omp\/agent\/agent\.db/u.test(row.summary ?? ''),
+      `the summary must name the agent database (got ${row.summary})`);
+    const doctor = await unplanted.doctor();
     assert.equal(doctor.ready, false, 'a deployment whose only route is credential-blocked is not ready');
   } finally {
-    await deployment.close();
+    await unplanted.close();
+  }
+
+  // (b) With the agent database planted, the derivation still demands the route provider's
+  //     repo key file — the per-provider half of the one derivation (#293).
+  const repo = repository();
+  try {
+    writeFileSync(join(repo, 'glm_key.json'), '{"glm_key":"fixture"}\n', { mode: 0o600 });
+    const planted = await openDeployment(ompCard({}), fakeHome({ plantOmp: true }), repo);
+    try {
+      const row = routeRow(await planted.doctor());
+      assert.equal(row.state, 'blocked',
+        `a planted agent database without the route provider key file must stay blocked (got state=${row.state}, code=${row.code})`);
+      assert.equal(row.code, 'authentication_required');
+      assert.ok(/deepseek_key\.json/u.test(row.summary ?? ''),
+        `the summary must name the missing deepseek key file (got ${row.summary})`);
+    } finally {
+      await planted.close();
+    }
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
   }
 });
 
-// ════════════════════════════════════════════════════════════════════════════════════════════
-// OVER-BLOCK GUARD — green today; must STAY green once the gates land.
-// ════════════════════════════════════════════════════════════════════════════════════════════
-
-test('RH234-3 (guard): a fully-satisfied route still reads ready — via the projected ~/.omp tree AND via an adapter-managed credential', async () => {
-  // (a) The projection channel: a fake HOME carrying ~/.omp/agent/agent.db resolves the omp
-  //     credential tree exactly like the operator's real home would.
-  const projected = await openDeployment(ompCard({}), fakeHome({ plantOmp: true }));
+test('RH234-3 (guard): a fully-satisfied route still reads ready — the #293 derivation satisfied; and no card self-declaration overrides it', async () => {
+  // (a) The satisfied derivation: a fake HOME carrying ~/.omp/agent/agent.db AND the route
+  //     provider's repo key file — exactly the facts ompRouteReadiness demands.
+  const repo = repository();
+  writeFileSync(join(repo, 'deepseek_key.json'), '{"deepseek_key":"fixture"}\n', { mode: 0o600 });
+  const projected = await openDeployment(ompCard({}), fakeHome({ plantOmp: true }), repo);
   try {
     const row = routeRow(await projected.doctor());
     assert.ok(row, 'the omp route must appear in the doctor rows');
     assert.equal(row.state, 'ready',
-      `a route with a resolvable worker policy and a projected ~/.omp tree must read ready (got state=${row.state}, code=${row.code})`);
+      `a route with a resolvable worker policy, the projected ~/.omp tree, and the repo key file must read ready (got state=${row.state}, code=${row.code})`);
     assert.equal(row.summary, 'The exact route passed static deployment readiness.');
   } finally {
     await projected.close();
+    rmSync(repo, { recursive: true, force: true });
   }
 
-  // (b) The adapter-managed channel: providerCompatibility.credentialState 'available' is
-  //     RuntimeIsolation's adapterManaged rule — no projection entry required.
+  // (b) No route is ready by declaration: providerCompatibility.credentialState 'available'
+  //     (RuntimeIsolation's adapterManaged rule) does NOT override the #293 derivation —
+  //     without the agent database the route reads blocked with the file named.
   const managed = await openDeployment(ompCard({ credentialState: 'available' }), fakeHome());
   try {
     const row = routeRow(await managed.doctor());
     assert.ok(row, 'the omp route must appear in the doctor rows');
-    assert.equal(row.state, 'ready',
-      `an adapter-managed credential must read ready without a projection entry (got state=${row.state}, code=${row.code})`);
+    assert.equal(row.state, 'blocked',
+      `an adapter-managed credential must not read ready without the derivation's facts (got state=${row.state}, code=${row.code})`);
+    assert.equal(row.code, 'omp_agent_unconfigured');
   } finally {
     await managed.close();
   }

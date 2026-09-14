@@ -13,12 +13,19 @@ import { pathToFileURL } from 'node:url';
 import { APPLICATION_SEMANTIC_REGISTRY, deriveSurfaceNames } from '../src/application-semantics.mjs';
 import { CLI_WEB_COMMANDS } from '../src/application-cli.mjs';
 import { mcpApplicationToolNames } from '../src/mcp-northbound.mjs';
-import { WAVEFILE_DIRECTIVES } from '../src/workflow-dsl.mjs';
+// #293: the fleet-routes table renders from the SERVED route registry — the same module that
+// owns the one readiness derivation, so the table cannot disagree with what the deployment
+// serves or gates.
+import {
+  DEFAULT_BATON_DEPLOYMENT_ROUTES,
+  KIMI_THROUGH_CLAUDE_ROUTE,
+  routeReadinessContract,
+} from '../src/application-deployment.mjs';
 
 const CLI_DOC = new URL('../CLI.md', import.meta.url);
 const MCP_DOC = new URL('../MCP.md', import.meta.url);
-
 export const CLI_INVENTORY_MARKER = 'cli-verb-inventory';
+export const CLI_FLEET_ROUTES_MARKER = 'cli-fleet-routes';
 export const MCP_INVENTORY_MARKER = 'mcp-tool-inventory';
 
 function beginMarker(marker) { return `<!-- BEGIN GENERATED: ${marker} (impl/scripts/render-surface-docs.mjs) -->`; }
@@ -120,6 +127,43 @@ export function renderMcpToolInventory() {
 }
 
 /**
+ * The fleet-routes table (issue #293) — rendered from the SERVED route registry (DEFAULT_ROUTES
+ * plus the one conditional route), never hand-edited. One row per registered
+ * harness/provider/model family with efforts in registry order; the Ready-when column is the
+ * deployment's own routeReadinessContract — the same contract the readiness gates enforce — so
+ * the first surface an operator reads cannot disagree with what the deployment serves.
+ */
+export function renderCliFleetRoutes() {
+  const families = new Map();
+  for (const route of DEFAULT_BATON_DEPLOYMENT_ROUTES) {
+    const key = `${route.harness}|${route.provider ?? ''}|${route.model}`;
+    const family = families.get(key) ?? { route, efforts: [] };
+    if (!family.efforts.includes(route.effort)) family.efforts.push(route.effort);
+    families.set(key, family);
+  }
+  const rows = [...families.values()].map(({ route, efforts }) => {
+    const providerLabel = route.provider && route.provider !== 'claude'
+      ? ` (provider ${route.provider})` : '';
+    return `| \`${route.harness}\`${providerLabel} | \`${route.model}\` | ${efforts.join('/')} | ${routeReadinessContract(route)} |`;
+  });
+  // The one conditional route: declared beside the registry because it registers only when its
+  // private credential is present. Rendered from that same declaration, and only when the
+  // default registry does not already carry it — the table never shows it twice.
+  const conditionalServed = DEFAULT_BATON_DEPLOYMENT_ROUTES.some((route) => (
+    route.harness === KIMI_THROUGH_CLAUDE_ROUTE.harness
+    && route.provider === KIMI_THROUGH_CLAUDE_ROUTE.provider
+    && route.model === KIMI_THROUGH_CLAUDE_ROUTE.model));
+  if (!conditionalServed) {
+    rows.push(`| \`${KIMI_THROUGH_CLAUDE_ROUTE.harness}\` (provider ${KIMI_THROUGH_CLAUDE_ROUTE.provider}, conditional) | \`${KIMI_THROUGH_CLAUDE_ROUTE.model}\` | ${KIMI_THROUGH_CLAUDE_ROUTE.effort} | ${routeReadinessContract(KIMI_THROUGH_CLAUDE_ROUTE)} |`);
+  }
+  return [
+    '| Harness | Model(s) | Efforts | Ready when |',
+    '|---|---|---|---|',
+    ...rows,
+  ].join('\n');
+}
+
+/**
  * The #170 wavefile directive table (D4/P8) — rendered mechanically from the compiler's
  * WAVEFILE_DIRECTIVES registry (the ONE source), never hand-edited. The conformance main proves the
  * documented ⇄ parsed ⇄ admitted invariant against this table.
@@ -148,8 +192,11 @@ export function injectGeneratedBlock(text, marker, block) {
   return `${before}\n\n${block}\n\n${after}`;
 }
 
-const TARGETS = [
+// #293: exported so the surface gate's --write path (renderDocs.TARGETS) regenerates every
+// block — an unexported list silently wrote nothing there.
+export const TARGETS = [
   { doc: CLI_DOC, marker: CLI_INVENTORY_MARKER, render: renderCliVerbInventory },
+  { doc: CLI_DOC, marker: CLI_FLEET_ROUTES_MARKER, render: renderCliFleetRoutes },
   { doc: MCP_DOC, marker: MCP_INVENTORY_MARKER, render: renderMcpToolInventory },
 ];
 
@@ -178,5 +225,5 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     process.exit(findings.length > 0 ? 1 : 0);
   }
   for (const target of TARGETS) writeFileSync(target.doc, renderSurfaceDoc(target));
-  process.stdout.write('render-surface-docs: regenerated CLI.md and MCP.md inventory blocks\n');
+  process.stdout.write('render-surface-docs: regenerated CLI.md inventory and fleet-routes blocks, MCP.md inventory block\n');
 }

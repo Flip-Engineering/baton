@@ -27,6 +27,11 @@ async function buildDeployment() {
   execFileSync('git', ['init', '-q'], { cwd: repo });
   execFileSync('git', ['config', 'user.email', 'omp@example.invalid'], { cwd: repo });
   execFileSync('git', ['config', 'user.name', 'Omp Pin'], { cwd: repo });
+  // #293: the omp route's provider credential is the repo-local key file; without it the
+  // deployment refuses the route at admission, before the dispatch seam this pin measures.
+  // Only its presence is a deployment fact — the contents are never read or printed.
+  writeFileSync(join(repo, 'deepseek_key.json'), '{"deepseek_key":"omp-dispatch-fixture"}\n',
+    { mode: 0o600 });
   writeFileSync(join(repo, 'base.txt'), 'base\n');
   execFileSync('git', ['add', 'base.txt'], { cwd: repo });
   execFileSync('git', ['commit', '-qm', 'base'], { cwd: repo });

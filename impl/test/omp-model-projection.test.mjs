@@ -55,6 +55,11 @@ function makeRepo(label) {
   execFileSync('git', ['init', '-q'], { cwd: dir });
   execFileSync('git', ['config', 'user.email', `omp-probe-${label}@example.invalid`], { cwd: dir });
   execFileSync('git', ['config', 'user.name', `OMP Probe ${label}`], { cwd: dir });
+  // #293: an omp route's provider credential is the repo-local key file, so the deployment
+  // refuses the route before the projector ever runs without it. The fixture provisions it —
+  // only its presence is a deployment fact, and its contents are never read or printed.
+  writeFileSync(join(dir, 'deepseek_key.json'), '{"deepseek_key":"omp-model-projection-fixture"}\n',
+    { mode: 0o600 });
   writeFileSync(join(dir, 'probe.txt'), 'probe\n');
   execFileSync('git', ['add', 'probe.txt'], { cwd: dir });
   execFileSync('git', ['commit', '-qm', 'base'], { cwd: dir });

@@ -385,6 +385,12 @@ function kimiThroughClaudeCredential() {
   return join(userConfigRoot(), 'baton', 'credentials', 'kimi.json');
 }
 
+// #293: the one conditional route outside DEFAULT_ROUTES — registered only when the private
+// credential exists, and rendered in the fleet-routes table from this same declaration.
+const KIMI_THROUGH_CLAUDE_ROUTE = Object.freeze({
+  harness: 'claude-code', provider: 'kimi', model: 'kimi-k3[1m]', effort: 'max',
+});
+
 function kimiAuthenticationSummary(code) {
   if (code === 'authentication_refresh_required') {
     return 'Kimi authentication has expired. Run the ordinary `kimi` login flow to refresh authentication, then reopen Baton.';
@@ -687,15 +693,12 @@ function defaultCredentialProjection(repoRoot, { projectNativeKimi = false, clau
   const kimiRoot = join(homedir(), '.kimi-code');
   const credentialTrees = projectNativeKimi
     ? { 'kimi-code': [{ sourceRoot: kimiRoot, relativeFiles: KIMI_CREDENTIAL_FILES }] } : {};
-  // #230: omp's provider auth (deepseek/glm keys, oauth) lives in ~/.omp/agent — projected
-  // HOME-relative into each member's isolated home, exactly omp's native $HOME/.omp
-  // resolution. Without it omp parks auth-less and never dials the provider (measured
-  // 2026-08-15: 25+ min of a live member with zero established sockets).
-  const ompRoot = join(homedir(), '.omp');
-  if (existingRegular(join(ompRoot, 'agent', 'agent.db'))) {
-    const ompRelativeFiles = ['.omp/agent/agent.db', '.omp/agent/config.yml'];
-    if (existingRegular(join(ompRoot, 'agent', 'models.yml'))) {
-      ompRelativeFiles.push('.omp/agent/models.yml');
+  // #293: the gate is ompAgentConfigured — the same ONE fact omp route readiness derives from,
+  // and the same $HOME-relative paths the readiness declaration below names.
+  if (ompAgentConfigured()) {
+    const ompRelativeFiles = [OMP_AGENT_DATABASE, OMP_AGENT_CONFIG];
+    if (existingRegular(join(homedir(), OMP_AGENT_MODELS))) {
+      ompRelativeFiles.push(OMP_AGENT_MODELS);
     }
     credentialTrees.omp = [{
       sourceRoot: homedir(), relativeFiles: Object.freeze(ompRelativeFiles),
@@ -714,31 +717,100 @@ function defaultCredentialProjection(repoRoot, { projectNativeKimi = false, clau
   });
 }
 
-function locallyReadyRoutes(repoRoot) {
-  const codexReady = existingRegular(join(homedir(), '.codex', 'auth.json'));
-  const grokPath = join(homedir(), '.grok', 'auth.json');
-  const grokReady = existingRegular(grokPath)
-    && grokAuthenticationState(grokPath).state === 'ready';
-  const claudeReady = existingRegular(join(homedir(), '.claude', '.credentials.json'));
-  const kimiRoot = join(homedir(), '.kimi-code');
-  // File presence alone includes Kimi Code's durable rejected-refresh tombstone. Advertising
-  // that tuple as locally ready lets exact routing launch a provider that Baton already knows
-  // cannot authenticate. Reuse the same bounded metadata authority as deployment readiness.
-  const kimiReady = kimiAuthenticationState(kimiRoot).state === 'ready';
-  const routes = DEFAULT_ROUTES.filter((route) => (
-    route.harness === 'codex' ? codexReady
-      : route.harness === 'grok' ? grokReady
-        : route.harness === 'kimi-code' ? kimiReady
-          : route.harness === 'claude-code' ? claudeReady
-            : route.harness === 'omp' ? existingRegular(join(repoRoot, 'deepseek_key.json'))
-              || existingRegular(join(repoRoot, 'glm_key.json')) : false
-  ));
-  if (existingRegular(kimiThroughClaudeCredential())) {
-    routes.push(Object.freeze({
-      harness: 'claude-code', provider: 'kimi', model: 'kimi-k3[1m]', effort: 'max',
-    }));
+// Issue #293: THE one omp route readiness derivation. Three fragments used to carry two
+// disagreeing ready-when stories — the repo key-file check in a dead `locallyReadyRoutes` (it
+// gated BOTH providers on EITHER key file), the adapter's own $HOME/.omp/agent/agent.db gate in
+// the credential projection, and the registration table's hard-coded `omp: true`. Every omp
+// readiness fact now resolves here, from ONE declaration, and the ready-when cell the generated
+// fleet-routes table renders is derived from that same declaration — so admission, doctor and
+// the documented table cannot tell two stories. No omp route is ready by declaration, and a
+// blocked row names the missing file, never its contents.
+//
+// #230: omp's provider auth (deepseek/glm keys, oauth) lives in $HOME/.omp/agent — projected
+// HOME-relative into each member's isolated home, exactly omp's native $HOME/.omp resolution.
+// Without it omp parks auth-less and never dials the provider (measured 2026-08-15: 25+ min of
+// a live member with zero established sockets).
+const OMP_HOME_ROOT = '.omp';
+const OMP_AGENT_DATABASE = `${OMP_HOME_ROOT}/agent/agent.db`;
+const OMP_AGENT_CONFIG = `${OMP_HOME_ROOT}/agent/config.yml`;
+const OMP_AGENT_MODELS = `${OMP_HOME_ROOT}/agent/models.yml`;
+// The route provider a provider/model id names, and the repository key file its deployment
+// provisioning contract requires. A provider absent from this table has no deployment
+// credential story and fails closed.
+const OMP_PROVIDER_KEY_FILES = Object.freeze({
+  deepseek: 'deepseek_key.json',
+  zai: 'glm_key.json',
+});
+
+/** The omp agent database — the one fact registration, the credential projection and the omp
+ * route readiness derivation all resolve. */
+function ompAgentDatabasePath() { return join(homedir(), OMP_AGENT_DATABASE); }
+
+function ompAgentConfigured() { return existingRegular(ompAgentDatabasePath()); }
+
+export function ompProviderKeyFile(model) {
+  const separator = model.indexOf('/');
+  const provider = separator === -1 ? '' : model.slice(0, separator);
+  return OMP_PROVIDER_KEY_FILES[provider] ?? null;
+}
+
+/** The facts an omp route's ready-when cell documents, declared once: the agent database every
+ * omp route needs and the route provider's repository key file. */
+function ompRouteReadinessFacts(model) {
+  return Object.freeze({
+    agentDatabase: `~/${OMP_AGENT_DATABASE}`,
+    keyFile: ompProviderKeyFile(model),
+  });
+}
+
+/** The one omp route gate: the adapter's own agent database AND the route provider's repo key
+ * file. Blocked rows name the missing file; contents are never read or surfaced. */
+export function ompRouteReadiness(repoRoot, model) {
+  const facts = ompRouteReadinessFacts(model);
+  if (!ompAgentConfigured()) {
+    return Object.freeze({
+      state: 'blocked', code: 'omp_agent_unconfigured',
+      summary: `omp is not configured; complete the omp provider setup so ${facts.agentDatabase} exists, then reopen Baton.`,
+    });
   }
-  return routes;
+  if (facts.keyFile === null) {
+    return Object.freeze({
+      state: 'blocked', code: 'route_unavailable',
+      summary: `omp route ${model} names no provider with a registered deployment credential file.`,
+    });
+  }
+  if (!existingRegular(join(repoRoot, facts.keyFile))) {
+    return Object.freeze({
+      state: 'blocked', code: 'authentication_required',
+      summary: `omp route ${model} is not configured; provision ${facts.keyFile} at the repository root.`,
+    });
+  }
+  return Object.freeze({ state: 'ready' });
+}
+
+/** The ready-when cell the generated fleet-routes table documents — rendered from the very facts
+ * ompRouteReadiness resolves, so the documented contract cannot drift from the gate. */
+function ompRouteReadyWhen(model) {
+  const facts = ompRouteReadinessFacts(model);
+  return facts.keyFile === null
+    ? `\`${facts.agentDatabase}\` present and a registered provider credential file`
+    : `\`${facts.agentDatabase}\` present and repo \`${facts.keyFile}\` present`;
+}
+
+/** The ready-when contract each registered route family documents — the same facts the gates
+ * above and deploymentReadiness enforce, so the generated fleet-routes table cannot drift. */
+export function routeReadinessContract(route) {
+  switch (route.harness) {
+    case 'codex': return '`~/.codex/auth.json` present';
+    case 'grok': return '`~/.grok/auth.json` present with a ready authentication state';
+    case 'kimi-code': return 'kimi credential files present with a ready authentication state';
+    case 'claude-code':
+      return route.provider === 'kimi'
+        ? 'the private kimi-through-claude credential present'
+        : 'bounded version + auth status probes';
+    case 'omp': return ompRouteReadyWhen(route.model);
+    default: return 'the deployment readiness derivation reports ready';
+  }
 }
 
 function locallyConfiguredRoutes(repoRoot) {
@@ -751,16 +823,16 @@ function locallyConfiguredRoutes(repoRoot) {
     // ClaudeSessionCli is a built-in adapter, so its advertised route inventory is deployment
     // configuration rather than an ambient executable/authentication observation. The bounded
     'claude-code': true,
-    // The built-in adapter can report the repo-local credential absence without launching a
-    deepseek: true,
-    // #228: omp is a built-in adapter; its inventory is honest pre-credential.
-    omp: true,
+    // #293: omp registration reads the SAME fact the credential projection and the readiness
+    // derivation read — the adapter's own $HOME/.omp/agent/agent.db (ompAgentConfigured), never a
+    // declaration. A machine without it does not advertise the omp family at all (the codex/grok/
+    // kimi rows read their ambient credentials the same way); an explicitly configured omp route
+    // is admitted and ompRouteReadiness names the fact it is missing.
+    omp: ompAgentConfigured(),
   };
   const routes = DEFAULT_ROUTES.filter((route) => configured[route.harness] === true);
   if (existingRegular(kimiThroughClaudeCredential())) {
-    routes.push(Object.freeze({
-      harness: 'claude-code', provider: 'kimi', model: 'kimi-k3[1m]', effort: 'max',
-    }));
+    routes.push(KIMI_THROUGH_CLAUDE_ROUTE);
   }
   return routes;
 }
@@ -1187,6 +1259,7 @@ function credentialProjectionResolves(projection, card) {
 
 function deploymentReadiness(
   preflight,
+  repoRoot,
   routes,
   adapters,
   projection,
@@ -1302,7 +1375,20 @@ function deploymentReadiness(
         runtime,
       });
     }
-    if (!credentialProjectionResolves(projection, matchedCard)) {
+    // Issue #293: the ONE omp route readiness derivation IS the omp credential gate — the
+    // same function the generated fleet-routes table documents (agent database + per-provider
+    // repo key file; it subsumes the omp credential-tree projection check). It sits with the
+    // structural gates already passed, so card-contract refusals keep their #234 precedence.
+    // No omp route is ready by declaration; a blocked row names the missing file, never its
+    // contents.
+    if (route.harness === 'omp') {
+      const ompGate = ompRouteReadiness(repoRoot, route.model);
+      if (ompGate.state === 'blocked') {
+        return Object.freeze({
+          ...publicFields, state: 'blocked', code: ompGate.code, summary: ompGate.summary, runtime,
+        });
+      }
+    } else if (!credentialProjectionResolves(projection, matchedCard)) {
       return Object.freeze({
         ...publicFields, state: 'blocked', code: 'route_credentials_unprojected',
         summary: 'No provider credential is projected into the worker runtime for this route.',
@@ -2062,12 +2148,14 @@ export async function openBatonDeployment(rawOptions, createDriver) {
   const additionalRouteStates = advanced.routes === undefined
     && !existingRegular(kimiThroughClaudeCredential())
     ? [Object.freeze({
-      harness: 'claude-code', model: 'kimi-k3[1m]', effort: 'max',
+      harness: KIMI_THROUGH_CLAUDE_ROUTE.harness, model: KIMI_THROUGH_CLAUDE_ROUTE.model,
+      effort: KIMI_THROUGH_CLAUDE_ROUTE.effort,
       state: 'blocked', code: 'route_unconfigured',
       summary: "Kimi-through-Claude is not configured; provision Baton's private Kimi credential to enable this exact route.",
     })] : [];
   const readiness = deploymentReadiness(
-    preflight, routes, adapters, projection, nativeKimiAuthentication, nativeGrokAuthentication,
+    preflight, repository.root, routes, adapters, projection,
+    nativeKimiAuthentication, nativeGrokAuthentication,
     adapterAuthentication, additionalRouteStates,
   );
   // Issue #35: doctor observes workspace capacity FRESH at each read (statfs is cheap and disk
@@ -2205,6 +2293,10 @@ export async function openBatonDeployment(rawOptions, createDriver) {
 }
 
 export { DEFAULT_ROUTES as DEFAULT_BATON_DEPLOYMENT_ROUTES };
+// #293: the conditional route the generated fleet-routes table renders from the same
+// declaration the registration and blocked-row paths read (routeReadinessContract is exported
+// at its definition).
+export { KIMI_THROUGH_CLAUDE_ROUTE };
 export { DEFAULT_BUDGET, DEFAULT_WATCHDOG };
 export { ClaudeCredentialCache } from './claude-credential-cache.mjs';
 
