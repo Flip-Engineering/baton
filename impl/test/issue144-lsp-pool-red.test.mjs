@@ -586,15 +586,21 @@ test('GP-D (pin): the atlas substrate the pool rides — staleness gate, provena
 });
 
 test('GP-E (pin): the referee coverage pass is TEXTUAL and byte-unchanged — coverageOfChange is never reference-derived (GT6, B5b, R6/R12)', () => {
-  // coverageOfChange is derived from the executed-lines scan (referee.mjs:313), unchanged by #144.
-  const cov = sedSrc('referee.mjs', 298, 313);
+  // coverageOfChange is derived from the executed-lines scan, unchanged by #144. The window is
+  // anchored on the scan's own first line, never on a line number: the referee may grow above
+  // it without the pin drifting.
+  const covStart = grepFirstLineNum('referee.mjs', 'const hasChangedLines = task.changedLines');
+  assert.ok(covStart > 0, 'the coverage pass begins at the task.changedLines presence check');
+  const cov = sedSrc('referee.mjs', covStart, covStart + 16);
   assert.ok(cov.includes('coverageOfChange = uncovered.length === 0'),
     'coverageOfChange stays derived from the textual executed-lines scan (B5b: byte-unchanged)');
   assert.ok(cov.includes('changedLines'), 'the coverage pass iterates task.changedLines textually');
   // The diagnostic closed set mints verification_coverage_failed from the TEXTUAL scan, not a projection.
-  const codes = sedSrc('referee.mjs', 341, 356);
-  assert.ok(codes.includes('verification_coverage_failed'),
-    'verification_coverage_failed stays in the closed diagnostic set');
+  const codeLine = grepFirstLineNum('referee.mjs', "diagnosticCode = 'verification_coverage_failed'");
+  assert.ok(codeLine > 0, 'verification_coverage_failed stays in the closed diagnostic set');
+  const codes = sedSrc('referee.mjs', Math.max(1, codeLine - 8), codeLine + 8);
+  assert.ok(codes.includes('coverageOfChange'),
+    'verification_coverage_failed is minted from the coverageOfChange scan result, not a projection');
   // F7: no blast-radius projection FEEDS the coverage gate. The pin is the derivation it guards —
   // coverageOfChange must never be coupled to a blastRadius projection (a correct #144 may add the
   // projection to the referee PATH to annotate the verdict; it must never feed the gate).
