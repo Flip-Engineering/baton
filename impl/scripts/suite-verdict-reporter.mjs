@@ -24,13 +24,21 @@ export default async function* suiteVerdictReporter(source) {
   const passed = [];
   const failed = [];
   let counter = 0;
+  // Nested tests are keyed by their ancestor chain (`parent > child`): a bare subtest name such
+  // as `kimi` is ambiguous across parents and would let one parent's expectation absolve another.
+  const stack = [];
+  const qualified = (data) => [...stack.slice(0, data.nesting ?? 0), nameOf(data)].join(' > ');
   for await (const event of source) {
     const data = event.data;
     switch (event.type) {
+      case 'test:start':
+        stack[data.nesting ?? 0] = nameOf(data);
+        stack.length = (data.nesting ?? 0) + 1;
+        break;
       case 'test:pass': {
         if (data.nesting === 0) { counter += 1; yield `ok ${counter} - ${nameOf(data)}\n`; }
         else yield indent(`ok - ${nameOf(data)}`, data.nesting) + '\n';
-        passed.push({ file: fileOf(data), name: nameOf(data), nesting: data.nesting });
+        passed.push({ file: fileOf(data), name: qualified(data), nesting: data.nesting });
         break;
       }
       case 'test:fail': {
@@ -40,7 +48,7 @@ export default async function* suiteVerdictReporter(source) {
         if (data.nesting === 0) { counter += 1; yield `not ok ${counter} - ${nameOf(data)}\n`; }
         else yield indent(`not ok - ${nameOf(data)}`, data.nesting) + '\n';
         yield indent(`  ---\n  location: '${fileOf(data)}:${data.line ?? 0}:${data.column ?? 0}'\n  failureType: '${failureType ?? 'testCodeFailure'}'\n  error: |-\n${indent(message, 2)}\n  ...`, data.nesting) + '\n';
-        failed.push({ file: fileOf(data), name: nameOf(data), nesting: data.nesting, failureType, message });
+        failed.push({ file: fileOf(data), name: qualified(data), nesting: data.nesting, failureType, message });
         break;
       }
       case 'test:diagnostic':

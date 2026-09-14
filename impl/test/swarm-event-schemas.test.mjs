@@ -81,10 +81,15 @@ test('contract admission refuses exactly the caller-supplied fields, naming fiel
     (error) => error.code === 'swarm_command_invalid'
       && /payload\.body is required for swarm\.context_updated/u.test(error.message)
       && error.detail.field === 'payload.body');
-  // An absent payload for a kind that needs caller fields names the whole required set.
+  // An absent payload for a kind that needs caller fields names the whole required set. The
+  // work objective is required by the store but optional at the contract when the work already
+  // exists (the runtime fills the recorded objective; new work without one refuses there), so
+  // the contract names only workId.
   assert.throws(() => validateSwarmCommand('swarm.update', update('swarm.work_updated')),
     (error) => error.detail.field === 'payload'
-      && error.detail.required.join('\0') === ['workId', 'objective'].join('\0'));
+      && error.detail.required.join('\0') === ['workId'].join('\0'));
+  assert.equal(validateSwarmCommand('swarm.update', update('swarm.work_updated', { workId: 'work-existing', status: 'completed' })), true,
+    'a status-only work update passes the contract');
 });
 
 test('auto-filled fields are never demanded: text contributions, self-leaves, and closes pass', () => {

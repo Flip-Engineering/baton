@@ -706,6 +706,10 @@ export function buildSurfaceInventoryArtifact() {
       webBusCommands: webBusNames().length,
       applicationCommandDefinitions: Object.keys(APPLICATION_COMMAND_DEFINITIONS).length,
     },
+    // The byte-stable insertion-order key list of APPLICATION_COMMAND_DEFINITIONS (docs/36 §9 M3
+    // / issue #261): the committed witness surface-truth.mjs serves, regenerated here like every
+    // other artifact leg, never retyped in a test.
+    commandKeys: Object.keys(APPLICATION_COMMAND_DEFINITIONS),
     profiles: Object.fromEntries(
       REFERENCE_PROFILES.map((profile) => [
         profile.id,
