@@ -252,6 +252,16 @@ async function spawn(f, taskId = 'phase91-task') {
   return handle;
 }
 
+// The coordinator's stop machinery is deliberately timer-unref'd — the kernel never pins its
+// host's event loop (docs/24 G4 / C4). This fixture's in-process adapter owns no real child
+// handle, so when it withholds an interrupt confirmation the only settlement left is the
+// coordinator's own stop deadline: hold the loop for exactly that await, so the deadline fires
+// and the operation reports its typed outcome instead of the file being cancelled.
+async function withLiveLoop(fn) {
+  const hold = setInterval(() => {}, 1_000);
+  try { return await fn(); } finally { clearInterval(hold); }
+}
+
 test('P91-1: semantic preserve-turn interrupt keeps the exact task, session, worktree, route, and Run authority attached', async () => {
   const f = fixture();
   const handle = await spawn(f);
@@ -318,13 +328,13 @@ test('P91-3: cancel-by-default remains low-level behavior, while preservation un
 
   const uncertain = fixture({ confirmInterrupt: false, stopDeadlineMs: 15 });
   const uncertainHandle = await spawn(uncertain, 'phase91-uncertain-task');
-  const forced = await uncertain.coordinator.interrupt(
+  const forced = await withLiveLoop(() => uncertain.coordinator.interrupt(
     uncertainHandle.id, undefined, 'semantic:owner', {
       expectedFence: uncertain.coordinator.list()[0].fence,
       controlId: controlId('91d'),
       preserveTurn: true,
     },
-  );
+  ));
   assert.equal(forced.result, 'preservation_timeout');
   assert.equal(forced.escalation, 'confirmed');
   assert.equal(forced.preservation, undefined);

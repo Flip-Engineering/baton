@@ -476,6 +476,16 @@ function refusalCode(error) {
   return error?.code ?? error?.cause?.code ?? null;
 }
 
+// The LSP pool deliberately spawns its server detached and unref'd so an idle pool never pins the
+// host's event loop (src/lsp-pool.mjs). With no other live handle in a fixture row, a readiness or
+// reap wait that rides the pool's own supervision would be abandoned when the loop drains — node
+// then cancels every later row instead of failing this one at its named stage. Hold the loop for
+// exactly such an await; the pool's own bounds keep it finite.
+async function withLiveLoop(fn) {
+  const hold = setInterval(() => {}, 1_000);
+  try { return await fn(); } finally { clearInterval(hold); }
+}
+
 // Build a pool config against a hermetic base repo + stub server. The opt-in map enables only
 // typescript; bounds are constructive (count/byte/memory) — never a clock.
 function poolConfig({ repo, baseEpoch, stubMode = 'answer', worktreeRoots = [], bounds }) {
@@ -766,7 +776,7 @@ test('R3 (stage: no LSP server lifecycle): the server rides the exact lifecycle;
   const repo = gitRepo('r3');
   const pool = surface.createLspPool(poolConfig({ repo, baseEpoch: BASE_EPOCH_A }));
   pool.acquire({ language: 'typescript' });
-  await pool.ready('typescript');
+  await withLiveLoop(() => pool.ready('typescript'));
   const events = pool.lastLifecycleEvents();
   const startedAt = events.indexOf('lifecycle.process_started');
   const readyAt = events.indexOf('lifecycle.process_ready');
@@ -780,7 +790,7 @@ test('R3 (stage: no LSP server lifecycle): the server rides the exact lifecycle;
   const hungRepo = gitRepo('r3-hung');
   const hungPool = surface.createLspPool(poolConfig({ repo: hungRepo, baseEpoch: BASE_EPOCH_A, stubMode: 'ready-then-hung' }));
   hungPool.acquire({ language: 'typescript' });
-  await hungPool.ready('typescript'); // the server is READY, then silent on textDocument/* (B2)
+  await withLiveLoop(() => hungPool.ready('typescript')); // the server is READY, then silent on textDocument/* (B2)
   const ceiling = hungPool.bounds.perServerOutstandingRequests;
   // Fire `ceiling` concurrent requests against the ready-then-hung server (none resolve → outstanding climbs).
   const hung = [];
@@ -810,17 +820,17 @@ test('R3 (stage: no LSP server lifecycle): the server rides the exact lifecycle;
   const crashRepo = gitRepo('r3-crash');
   const crashPool = surface.createLspPool(poolConfig({ repo: crashRepo, baseEpoch: BASE_EPOCH_A, stubMode: 'crash-once-then-answer' }));
   crashPool.acquire({ language: 'typescript' });
-  await assert.rejects(
+  await withLiveLoop(() => assert.rejects(
     crashPool.ready('typescript'),
     (error) => refusalCode(error) === 'lsp_startup_failed',
     'a handshake failure publishes lsp_startup_failed',
-  );
+  ));
   const startedBeforeRetry = crashPool.lastLifecycleEvents()
     .filter((e) => e === 'lifecycle.process_started').length;
   // Retry is reachable (the slot cleared before the refusal): a fresh attempt starts, not a parked failure.
   const retryHandle = crashPool.acquire({ language: 'typescript' });
   assert.ok(retryHandle, 'the start single-flight slot cleared before lsp_startup_failed — the retry starts a fresh attempt');
-  await crashPool.ready('typescript'); // the fresh generation answers the handshake (crash-once-then-answer)
+  await withLiveLoop(() => crashPool.ready('typescript')); // the fresh generation answers the handshake (crash-once-then-answer)
   const startedAfterRetry = crashPool.lastLifecycleEvents()
     .filter((e) => e === 'lifecycle.process_started').length;
   assert.ok(startedAfterRetry > startedBeforeRetry,

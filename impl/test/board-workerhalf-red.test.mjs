@@ -333,10 +333,20 @@ async function flush(times = 40) {
   for (let i = 0; i < times; i += 1) await Promise.resolve();
 }
 
+// The coordinator's stop machinery is deliberately timer-unref'd — the kernel never pins its own
+// host's event loop (docs/24 G4 / C4), and a real spawned child is the handle that normally keeps
+// it alive. ScriptableAdapter members own no child handle, so a parked member's stop settles only
+// through the coordinator's own deadline: hold the loop for exactly that await so the typed
+// terminal lands instead of the event loop draining out from under the row.
+async function withLiveLoop(fn) {
+  const hold = setInterval(() => {}, 1_000);
+  try { return await fn(); } finally { clearInterval(hold); }
+}
+
 // A parked ScriptableAdapter worker takes the 'forced' kill path; a busy one confirms. Both
 // are honest terminal transitions — the load-bearing assertions are the durable effects.
 async function killMember(fx, workerId) {
-  const killed = await fx.driver.coordinator.kill(workerId, 'human');
+  const killed = await withLiveLoop(() => fx.driver.coordinator.kill(workerId, 'human'));
   assert.ok(['confirmed', 'forced'].includes(killed.result), `the member stop lands (got ${killed.result})`);
   return killed;
 }

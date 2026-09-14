@@ -42,6 +42,17 @@ async function until(fn, label, timeoutMs = 3000) {
   throw new Error(`timeout waiting for ${label}`);
 }
 
+// The coordinator's stop machinery is deliberately timer-unref'd: the kernel never pins its
+// host's event loop, and a real spawned child is the handle that normally keeps it alive
+// (docs/24 G4 / C4). A stub fixture that settles nothing leaves no live handle at all, so a stop
+// whose only settlement is the coordinator's own deadline would be abandoned the moment the loop
+// drains. Hold the loop for exactly such an await; the coordinator's deadline still bounds it, and
+// if it never settles the assertion fails at its named stage instead of cancelling the file.
+async function withLiveLoop(fn) {
+  const hold = setInterval(() => {}, 1_000);
+  try { return await fn(); } finally { clearInterval(hold); }
+}
+
 function collect(adapter) { const events = []; adapter.onEvent((event) => events.push(event)); return events; }
 function adapterCases() {
   return [
@@ -91,9 +102,13 @@ test('PL7/PL9: every native harness retains a natural-close terminal across an u
       cmd: process.execPath, args: [FAKE_GROK, '--serve'], requestTimeoutMs: 1500,
       versionProbe: () => 'fake', reapOwnedProcessGroup: reap,
     }), {}, true],
+    // The kimi fixture has no FAKE:STAY_OPEN brief form (the codex/grok fakes do): its prompt
+    // replies end_turn immediately, so the spawn turn races this case's SIGKILL — a completed
+    // turn then replaces the natural-close terminal and the row flakes. prompt-hang keeps the
+    // fake's chunk-then-hold shape, exactly like the other harnesses' held turns.
     ['kimi', (reap) => new KimiAcpCli({
       cmd: process.execPath, args: [FAKE_KIMI, '--serve'], requestTimeoutMs: 1500,
-      versionProbe: () => 'fake', reapOwnedProcessGroup: reap,
+      versionProbe: () => 'fake', reapOwnedProcessGroup: reap, env: { FAKE_KIMI_MODE: 'prompt-hang' },
     }), { model: 'kimi-code/k3', reasoningEffort: 'max' }, true],
   ];
   for (const [name, make, extraSpawn, ready] of cases) {
@@ -606,7 +621,9 @@ test('PL7: each observed unconfirmed reap drives a bounded coordinator kill and 
     const generation = coordinator.list()[0].processRef.generation;
     const pid = coordinator.list()[0].processRef.pid;
 
-    const first = await coordinator.kill(handle.id);
+    // The first reap is refused after the fake Codex child is already gone, so the retry that
+    // converges this stop rides an unref'd timer with no live handle behind it.
+    const first = await withLiveLoop(() => coordinator.kill(handle.id));
     assert.equal(first.ok, true); assert.equal(first.result, 'confirmed');
     await until(() => coordinator.list()[0]?.processRef?.state === 'closed', 'coordinator retry exact close');
     const events = log.read(handle.id);
@@ -845,7 +862,7 @@ test('PL7: forced stop records uncertainty and cannot release writer before a la
   const { coordinator } = coordinatorFixture(adapter);
   const handle = await coordinator.spawn('stub', brief(), { taskId: 'phase51-forced-authority', model: 'stub-model', effort: 'low' });
   await until(() => coordinator.list()[0]?.processRef, 'forced process');
-  assert.equal((await coordinator.kill(handle.id)).result, 'forced');
+  assert.equal((await withLiveLoop(() => coordinator.kill(handle.id))).result, 'forced');
   assert.equal(coordinator.list()[0].processRef.state, 'unconfirmed_after_restart'); assert.equal(coordinator._workers.get(handle.id).localAuthority, true);
   assert.throws(() => coordinator.closeAuthority(), /kill\/reap before close/);
   assert.equal((await coordinator.kill(handle.id)).result, 'confirmed', 'a second kill retries the unconfirmed native reap');
@@ -868,9 +885,9 @@ test('PL7/PL10: poisoned emergency kill retries a dead-but-unconfirmed process i
   });
   const { coordinator } = coordinatorFixture(adapter); const handle = await coordinator.spawn('stub', brief(), { taskId: 'phase51-forced-emergency-retry', model: 'stub-model', effort: 'low' });
   await until(() => coordinator.list()[0]?.processRef, 'forced emergency process');
-  assert.equal((await coordinator.kill(handle.id)).result, 'forced'); assert.equal(coordinator.list()[0].processRef.state, 'unconfirmed_after_restart');
+  assert.equal((await withLiveLoop(() => coordinator.kill(handle.id))).result, 'forced'); assert.equal(coordinator.list()[0].processRef.state, 'unconfirmed_after_restart');
   coordinator._fatalError = Object.assign(new Error('fixture poison'), { code: 'operational_log_unavailable' });
-  assert.equal((await coordinator.kill(handle.id, 'policy', { emergency: true })).result, 'confirmed_unlogged');
+  assert.equal((await withLiveLoop(() => coordinator.kill(handle.id, 'policy', { emergency: true }))).result, 'confirmed_unlogged');
   assert.equal(killCalls >= 3, true); assert.equal(coordinator._workers.get(handle.id).processRef.state, 'closed'); assert.equal(coordinator._workers.get(handle.id).localAuthority, false);
 });
 
@@ -889,7 +906,7 @@ test('PL7/PL10: spawn-time log poison cannot exempt locally owned pending resour
   await assert.rejects(coordinator.spawn('stub', brief(), { taskId: 'phase51-pending-poison', model: 'stub-model', effort: 'low' }), (error) => error.code === 'operational_log_unavailable');
   const owned = [...coordinator._workers.values()][0]; assert.equal(owned.status, 'pending'); assert.equal(owned.localAuthority, true); assert.equal(owned.runtimeScope.active, true);
   assert.throws(() => coordinator.closeAuthority(), /kill\/reap before close/);
-  assert.equal((await coordinator.kill(owned.id, 'policy', { emergency: true })).result, 'confirmed_unlogged');
+  assert.equal((await withLiveLoop(() => coordinator.kill(owned.id, 'policy', { emergency: true }))).result, 'confirmed_unlogged');
   releaseWorktree({ path: tmpdir() }); await until(() => removed > 0, 'pending poison cleanup');
 });
 
@@ -993,7 +1010,7 @@ test('PL3/PL8: rejected recovery identity persists only sanitized readiness and 
     return { ok: true };
   };
   adapter.kill = async (worker) => { queueMicrotask(() => adapter.emit('lifecycle.process_closed', worker, { schemaVersion: 1, generation: 2, pid: 5252, processGroupId: 5252, code: 0, signal: null, ready: true })); return { ok: true }; };
-  const recovered = await coordinator.recover(handle.id); assert.equal(recovered.result, 'session_identity_mismatch');
+  const recovered = await withLiveLoop(() => coordinator.recover(handle.id)); assert.equal(recovered.result, 'session_identity_mismatch');
   await until(() => coordinator.list()[0].processRef.state === 'closed', 'mismatched recovery close');
   assert.equal(log.read(handle.id).some((event) => event.kind === 'lifecycle.process_ready'), true);
   assert.equal(log.read(handle.id).some((event) => event.kind === 'lifecycle.spawned' && event.actor === 'worker' && event.payload?.sessionId === 'wrong-native'), false);

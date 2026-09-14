@@ -177,6 +177,16 @@ async function completedWork(f, runId) {
   return finished;
 }
 
+// The coordinator's stop machinery and the application's bounded waits are deliberately
+// timer-unref'd — nothing here pins the host's event loop (docs/24 G4 / C4), and a real spawned
+// child is the handle that normally keeps it alive. This fixture's adapters own no child handle,
+// so a bounded wait whose only settlement is its own deadline would be abandoned the moment the
+// loop drains, cancelling every later row in the file. Hold the loop for exactly such an await.
+async function withLiveLoop(fn) {
+  const hold = setInterval(() => {}, 1_000);
+  try { return await fn(); } finally { clearInterval(hold); }
+}
+
 test('SR1-SR10: exact independent structured review gates an evidence-bound integration and reaps reviewer ownership', async () => {
   const f = fixture('approved');
   const runId = 'run-semantic-approved';
@@ -282,19 +292,19 @@ test('SR3/SR10: semantic approval and adoption reconstruct from durable state be
   let f = fixture('restart-reviewed');
   const runId = 'run-semantic-restart';
   await completedWork(f, runId);
-  await f.application.command('run.review', {
+  await withLiveLoop(() => f.application.command('run.review', {
     runId, route: { harness: 'reviewer', model: 'review-model', effort: 'low' }, reason: 'Produce restart-safe review evidence.',
-  }, principal('review-controller'));
-  const reviewed = await f.application.command('run.wait', { runId, timeoutMs: 5_000 }, principal('owner'));
+  }, principal('review-controller')));
+  const reviewed = await withLiveLoop(() => f.application.command('run.wait', { runId, timeoutMs: 5_000 }, principal('owner')));
   const evidence = await f.application.command('run.evidence', { runId }, principal('owner'));
-  await f.application.command('run.adopt', {
+  await withLiveLoop(() => f.application.command('run.adopt', {
     runId, nodeKey: reviewed.result.nodeKey, resultSha: reviewed.result.sha,
     evidenceDigest: evidence.manifestDigest, reason: 'Preserve the exact reviewed result across restart.',
-  }, principal('adopter'));
-  await f.application.shutdown(principal('first-shutdown'));
+  }, principal('adopter')));
+  await withLiveLoop(() => f.application.shutdown(principal('first-shutdown')));
 
   f = reopen(f);
-  const reconstructed = await f.application.command('run.status', { runId }, principal('owner'));
+  const reconstructed = await withLiveLoop(() => f.application.command('run.status', { runId }, principal('owner')));
   assert.equal(reconstructed.phase, 'work_completed', JSON.stringify({
     semanticReview: reconstructed.semanticReview,
     handles: f.driver.coordinator.list(),
@@ -306,11 +316,11 @@ test('SR3/SR10: semantic approval and adoption reconstruct from durable state be
   }));
   assert.equal(reconstructed.result.state, 'adopted');
   const fresh = await f.application.command('run.evidence', { runId }, principal('owner'));
-  const integrated = await f.application.command('run.integrate', {
+  const integrated = await withLiveLoop(() => f.application.command('run.integrate', {
     runId, evidenceDigest: fresh.manifestDigest, strategy: 'ff-only', reason: 'Integrate after durable reconstruction.',
-  }, principal('integrator'));
+  }, principal('integrator')));
   assert.equal(integrated.phase, 'completed');
-  await f.application.shutdown(principal('second-shutdown'));
+  await withLiveLoop(() => f.application.shutdown(principal('second-shutdown')));
 });
 
 test('SR4-SR7: unknown fields, substituted evidence, inconsistent verdicts, and extra reviewer edits fail closed', async (t) => {
