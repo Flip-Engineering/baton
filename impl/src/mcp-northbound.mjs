@@ -232,9 +232,37 @@ function toolResult(value, isError = false) {
   const structuredContent = record(normalizedValue) ? normalizedValue : { result: normalizedValue };
   return Object.freeze({ content: Object.freeze([{ type: 'text', text: JSON.stringify(structuredContent) }]), structuredContent: Object.freeze(structuredContent), isError });
 }
-function toolError(code, message = null, detail = null, field = null) {
-  return toolResult({ ok: false, error: { code, ...(message == null ? {} : { message }), ...(detail == null ? {} : { detail }), ...(field == null ? {} : { field }) } }, true);
+// U-F3 (issue #288): a tool refusal states its transience verdict (`retryable`) and its remedy
+// (`action`) beside the code — the same two keys the undocumented surface family and
+// BatonControlError already carry. Both are additive: a refusal that states neither keeps the
+// byte-stable {code, message?, detail?, field?} shape every existing pin reads.
+function toolError(code, message = null, detail = null, field = null, options = {}) {
+  const retryable = options?.retryable ?? null;
+  const action = options?.action ?? null;
+  return toolResult({ ok: false, error: {
+    code, ...(message == null ? {} : { message }), ...(detail == null ? {} : { detail }), ...(field == null ? {} : { field }),
+    ...(retryable == null ? {} : { retryable: retryable === true }), ...(action == null ? {} : { action }),
+  } }, true);
 }
+// U-F3 (issue #288): the fallthrough rows this surface mints state their own transience. A cause
+// that IS a permanent deployment condition is refused typed with retryable:false and its remedy
+// (the web ladder's identical three, web-northbound.mjs PERMANENT_DISPATCH_CAUSES); the
+// unclassified fallthrough is the TRANSIENT row, so an agent retries it instead of guessing.
+const PERMANENT_TOOL_CAUSES = Object.freeze({
+  application_unavailable: Object.freeze({
+    message: 'this resident serves no Run application',
+    remedy: 'restart the resident from a deployment that wires the Run application (`baton serve` on the resident host); no retry can succeed against this one',
+  }),
+  application_run_lookup_oversize: Object.freeze({
+    message: 'the Run listing exceeds this deployment\'s projection ceiling',
+    remedy: 'read a bounded page (a smaller `limit`) or raise the deployment ceiling; the same listing refuses for the same reason',
+  }),
+  application_run_view_oversize: Object.freeze({
+    message: 'the Run view exceeds this deployment\'s projection ceiling',
+    remedy: 'narrow the read (a smaller `depth`/`section`/`item`) or raise the deployment ceiling; the same read refuses for the same reason',
+  }),
+});
+const TRANSIENT_FALLTHROUGH_ACTION = 'retry once; a refusal that repeats is a resident defect rather than a request fault — inspect the resident (`baton doctor --check`) and report the refusal code';
 // #160 R2 (error-actionability-2026-08-13/contract-fold.md §2 D4 R2): the coaching size family —
 // every cataloged byte-lane refusalCode from limits.mjs except the `workflow_*` lane (which the
 // workflow_* arm handles). Derived from the closed catalog so a new lane's refusalCode is
@@ -269,6 +297,25 @@ function markedMessageSendSizeRefusal(cause, body) {
 
 function laneCraftedToolError(cause) {
   const stateCode = stateFailureCode(cause);
+  // U-F3 (issue #288): the two fallthrough rows state their own transience — a permanent
+  // deployment condition is retryable:false with its remedy, and the unclassified fallthrough is
+  // the TRANSIENT row (retry, then diagnose), never a bare code an agent has to interpret. A
+  // wire-safe refusal keeps its own composed message under either verdict.
+  const carried = cause?.wireSafe === true
+    ? {
+      message: typeof cause.message === 'string' ? cause.message : null,
+      detail: cause.detail ?? null,
+      field: typeof cause.field === 'string' ? cause.field : null,
+    }
+    : { message: null, detail: null, field: null };
+  const permanent = PERMANENT_TOOL_CAUSES[stateCode] ?? null;
+  if (permanent !== null) {
+    return toolError(stateCode, carried.message ?? permanent.message, carried.detail, carried.field,
+      { retryable: false, action: permanent.remedy });
+  }
+  const fallthrough = stateCode === 'command_outcome_unknown'
+    ? { retryable: true, action: TRANSIENT_FALLTHROUGH_ACTION }
+    : {};
   // #89 / Decision 12: the MARKED message-send size refusal rides its SAFE {cap, actual, unit,
   // gracefulPath} triple and a message RE-COMPOSED from the catalog row — the exception's own text
   // never reaches the wire. An unmarked application_message_send_invalid stays code-only.
@@ -287,8 +334,8 @@ function laneCraftedToolError(cause) {
   // refusal and never reaches the wire (MN1/MN8, RC-03/RC-04).
   if (!LANE_CRAFTED) {
     return cause?.wireSafe === true
-      ? toolError(stateCode, typeof cause.message === 'string' ? cause.message : null, cause.detail ?? null, typeof cause.field === 'string' ? cause.field : null)
-      : toolError(stateCode);
+      ? toolError(stateCode, carried.message, carried.detail, carried.field, fallthrough)
+      : toolError(stateCode, null, null, null, fallthrough);
   }
   // Coaching refusals put the triple on the Error ROOT (coachingApplicationError application.mjs /
   // coachingValidationError messages.mjs) — construct the detail object from those root fields.
@@ -321,7 +368,10 @@ function stateFailureCode(cause) {
   if (cause?.mcpCode === 'stale_fence') return 'stale_fence';
   if (cause?.code === 'application_unauthorized') return 'forbidden';
   if (['application_run_not_found', 'application_interaction_not_found', 'application_profile_not_found', 'application_worker_not_found'].includes(cause?.code)) return 'not_found';
-  if (['application_unavailable', 'application_run_lookup_oversize', 'application_run_view_oversize'].includes(cause?.code)) return 'temporarily_unavailable';
+  // U-F3 (issue #288): a permanent deployment condition keeps its OWN code — re-spelling these as
+  // `temporarily_unavailable` told an agent to retry a deployment fact that cannot change. The
+  // transience verdict now rides the refusal itself (PERMANENT_TOOL_CAUSES, below).
+  if (Object.hasOwn(PERMANENT_TOOL_CAUSES, cause?.code)) return cause.code;
   if (typeof cause?.code === 'string' && cause.code.startsWith('application_')) return cause.code;
   if (typeof cause?.code === 'string' && cause.code.startsWith('worker_policy_')) return cause.code;
   if (typeof cause?.code === 'string' && cause.code.startsWith('run_orchestrator_')) return cause.code;
@@ -2053,7 +2103,14 @@ export class McpFleetServer {
       }
       if (GOAL_PLAN_MUTATIONS.has(name)) {
         const prior = admission.call.outcome;
-        if (!record(prior?.structuredContent)) return toolError('command_outcome_unknown');
+        if (!record(prior?.structuredContent)) {
+          // U-F3 (issue #288): the admitted record cannot be read back, and a retry replays the same
+          // unreadable record — so this refusal states the permanent verdict and the one way forward.
+          return toolError('command_outcome_unknown', null, null, null, {
+            retryable: false,
+            action: 'the admitted call\'s recorded outcome is unreadable and replaying it cannot repair it: re-issue the command with a fresh idempotencyKey',
+          });
+        }
         return toolResult(sanitizeGoalPlanProjection(prior.structuredContent), prior.isError === true);
       }
       return clone(admission.call.outcome);

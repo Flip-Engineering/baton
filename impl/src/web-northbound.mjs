@@ -287,7 +287,164 @@ function equalDigest(left, right) {
 }
 function actor(principal) { return `web:${principal.userId}:${principal.sessionId}`; }
 function result(status, body) { return Object.freeze({ status, body: Object.freeze(body) }); }
-function error(status, code, message = code, field = null) { return result(status, { ok: false, error: { code, message, ...(field == null ? {} : { field }) } }); }
+
+// U-F3/U-F13/F14 (issue #288, the U-N6 rule): one refusal shape, composed once and propagated —
+// `{code, message, field?}` is what every existing pin reads, and the transience verdict
+// (`retryable`) and the remedy (`action`) are the SAME keys the MCP wire and BatonControlError
+// already carry, so a refusal never has to be re-invented per seam. A refusal that states neither
+// keeps its byte-stable shape.
+function errorBody(code, message, { field = null, detail = null, retryable = null, action = null } = {}) {
+  return {
+    code, message,
+    ...(field == null ? {} : { field }),
+    ...(detail == null ? {} : { detail }),
+    ...(retryable == null ? {} : { retryable: retryable === true }),
+    ...(action == null ? {} : { action }),
+  };
+}
+function error(status, code, message = code, field = null, options = {}) {
+  return result(status, { ok: false, error: errorBody(code, message, { ...options, field: options.field ?? field }) });
+}
+function failure(status, code, message, options = {}) {
+  return { httpStatus: status, body: { ok: false, error: errorBody(code, message, options) } };
+}
+
+// U-F3 (issue #288): the causes below are PERMANENT deployment conditions — the same request
+// refuses for the same reason forever. Each is stated typed, retryable:false, with the remedy,
+// instead of being re-spelled as the transient `temporarily_unavailable` row (which told an agent
+// to back off and retry something that can never succeed).
+const PERMANENT_DISPATCH_CAUSES = Object.freeze({
+  application_unavailable: Object.freeze({
+    message: 'this resident serves no Run application',
+    remedy: 'restart the resident from a deployment that wires the Run application (`baton serve` on the resident host); no retry can succeed against this one',
+  }),
+  application_run_lookup_oversize: Object.freeze({
+    message: 'the Run listing exceeds this deployment\'s projection ceiling',
+    remedy: 'read a bounded page (a smaller `limit`) or raise the deployment ceiling; the same listing refuses for the same reason',
+  }),
+  application_run_view_oversize: Object.freeze({
+    message: 'the Run view exceeds this deployment\'s projection ceiling',
+    remedy: 'narrow the read (a smaller `depth`/`section`/`item`) or raise the deployment ceiling; the same read refuses for the same reason',
+  }),
+});
+
+// The cleartext-transport refusal: the listener cannot serve this request at all, and no retry
+// over the same transport will change that. Status stays 503 (the deployment is refusing the
+// connection, not the caller) while the code, the verdict and the remedy say why.
+const SECURE_TRANSPORT_REMEDY = 'connect over https:// (the deployment\'s TLS origin) or, for a local resident, the owner-only Unix socket the CLI discovers via `baton serve`; a plaintext request is never admitted';
+function secureTransportRefusal() {
+  return error(503, 'secure_transport_required',
+    `secure transport required: this deployment admits https:// or the owner-only Unix socket only; ${SECURE_TRANSPORT_REMEDY}`,
+    'transport', { retryable: false, action: SECURE_TRANSPORT_REMEDY });
+}
+
+// U-F3: the `application_unavailable` refusal (the deployment wires no Run application) is the
+// same permanent condition whether the ladder or execute() reaches it first.
+function applicationUnavailableRefusal(message) {
+  const row = PERMANENT_DISPATCH_CAUSES.application_unavailable;
+  return error(503, 'application_unavailable', typeof message === 'string' && message.length > 0 ? message : row.message,
+    null, { retryable: false, action: row.remedy });
+}
+
+// U-E15 (issue #288): a capability refusal names required, held and missing — the same triple the
+// MCP surface composes — instead of one bare `forbidden`.
+function capabilityRefusalDetail(required, held) {
+  const holdings = Array.isArray(held) ? held.filter((capability) => typeof capability === 'string') : [];
+  return {
+    required: [...required],
+    held: [...holdings],
+    missing: required.filter((capability) => !holdings.includes(capability)),
+  };
+}
+
+const AUTH_LOGIN_PATH = [...AUTH_PATHS].find((path) => path.endsWith('/login'));
+const AUTH_REFRESH_PATH = [...AUTH_PATHS].find((path) => path.endsWith('/refresh'));
+const BEARER_CREDENTIAL = Object.freeze({ kind: 'bearer', header: 'authorization', source: 'Authorization: Bearer <token>' });
+const COOKIE_CREDENTIAL = Object.freeze({ kind: 'session_cookie', header: 'cookie', source: '__Host-baton_session cookie' });
+const BROWSER_LOGIN_REMEDY = `complete the browser login (GET ${OIDC_START_PATH}, or POST ${AUTH_LOGIN_PATH} when no OIDC provider is configured)`;
+
+// U-F13 (issue #288): the four distinguishable authentication outcomes, each with the rule it
+// violated and the route that obtains a fresh credential — an agent must never have to guess
+// "refresh your token" from "you were revoked".
+const AUTHENTICATION_REFUSAL_ROWS = Object.freeze({
+  absent: Object.freeze({
+    rule: 'no admissible credential was presented',
+    remedy: `send Authorization: Bearer <token> (obtained from POST ${AUTH_LOGIN_PATH}) or a __Host-baton_session cookie (obtained by completing the browser login), and re-send the request with it`,
+  }),
+  malformed: Object.freeze({
+    rule: 'the presented credential carries no usable identity or expiry',
+    remedy: `re-authenticate: POST ${AUTH_LOGIN_PATH} (bearer) or ${BROWSER_LOGIN_REMEDY} (cookie) mints a new credential; this one cannot be repaired in place`,
+  }),
+  expired: Object.freeze({
+    rule: 'the presented credential\'s expiry has passed',
+    remedy: `renew it: POST ${AUTH_REFRESH_PATH} with the credential (with the x-baton-csrf header for a cookie credential) returns a fresh one`,
+  }),
+  revoked: Object.freeze({
+    rule: 'the presented credential was revoked',
+    remedy: `re-authenticate: a revoked credential is never refreshed — obtain a new one from POST ${AUTH_LOGIN_PATH} (bearer) or by ${BROWSER_LOGIN_REMEDY} (cookie)`,
+  }),
+});
+
+function credentialIdentity(principal) {
+  if (principal?.authMethod === 'cookie') return COOKIE_CREDENTIAL;
+  if (principal?.authMethod === 'bearer') return BEARER_CREDENTIAL;
+  return null;
+}
+
+function authenticationRefusal(cause, principal, extra = {}) {
+  const row = AUTHENTICATION_REFUSAL_ROWS[cause];
+  const credential = credentialIdentity(principal);
+  return error(401, 'unauthenticated', `unauthenticated: ${row.rule}; ${row.remedy}`,
+    credential === null ? null : credential.header, {
+      detail: {
+        cause,
+        rule: row.rule,
+        remedy: row.remedy,
+        credential,
+        ...(credential === null ? { accepted: [BEARER_CREDENTIAL, COOKIE_CREDENTIAL] } : {}),
+        ...extra,
+      },
+      action: row.remedy,
+    });
+}
+
+// U-F14 (issue #288): the replay-diff axes — one sha256 per request axis, recorded beside the
+// request digest at admission. The ledger keeps the digest map (never the request content), and a
+// same-key replay that differs names the axis that moved instead of one opaque
+// `idempotency_conflict`: a retrying agent can tell a changed `args.message` from a changed
+// `args.runId` or from a changed `expectedFence`. The excluded keys are exactly the ones
+// `canonicalRequest` drops, so the axis set and the digest agree by construction.
+function requestAxes(envelope) {
+  const axes = {};
+  for (const [key, value] of Object.entries(envelope ?? {})) {
+    if (key === 'commandId' || key === 'clientObservedCursor') continue;
+    // `args` is enumerated per key below: the aggregate digest would always sort first and name
+    // "args" where the caller needs "args.objective".
+    if (key === 'args' && isRecord(value)) continue;
+    axes[key] = hash(value ?? null);
+  }
+  if (isRecord(envelope?.args)) {
+    for (const [key, value] of Object.entries(envelope.args)) axes[`args.${key}`] = hash(value ?? null);
+  }
+  return axes;
+}
+
+function movedAxis(stored, replayed) {
+  for (const key of [...new Set([...Object.keys(stored), ...Object.keys(replayed)])].sort()) {
+    if (stored[key] !== replayed[key]) return key;
+  }
+  return null;
+}
+
+function idempotencyConflictRefusal(prior, envelope) {
+  const stored = isRecord(prior?.requestAxes) ? prior.requestAxes : null;
+  const moved = stored === null ? null : movedAxis(stored, requestAxes(envelope));
+  const field = moved === null ? null : safeFieldName(moved);
+  const axis = field ?? 'request';
+  return error(409, 'idempotency_conflict',
+    `idempotency conflict: this idempotencyKey was admitted with a different ${axis}; resend the identical request to replay the admitted one, or use a fresh idempotencyKey for a different intent`,
+    field, { detail: { movedAxis: axis }, retryable: false });
+}
 function dispatchFailure(cause) {
   const goalPlanCode = cause?.code;
   if (typeof goalPlanCode === 'string' && goalPlanCode.startsWith('worker_policy_')) {
@@ -303,8 +460,11 @@ function dispatchFailure(cause) {
     } } };
   }
   if (goalPlanCode === 'application_unauthorized') return { httpStatus: 403, body: { ok: false, error: { code: goalPlanCode, message: 'application command forbidden' } } };
-  if (goalPlanCode === 'application_unavailable') return { httpStatus: 503, body: { ok: false, error: { code: goalPlanCode, message: 'run application unavailable' } } };
-  if (['application_run_lookup_oversize', 'application_run_view_oversize'].includes(goalPlanCode)) return { httpStatus: 503, body: { ok: false, error: { code: 'temporarily_unavailable', message: 'run application projection unavailable' } } };
+  // U-F3: a permanent deployment condition keeps its own code, its verdict and its remedy.
+  const permanent = PERMANENT_DISPATCH_CAUSES[goalPlanCode];
+  if (permanent) {
+    return failure(503, goalPlanCode, permanent.message, { retryable: false, action: permanent.remedy });
+  }
   // A missing profile is deployment configuration the authenticated caller can read and fix;
   // naming it is not an enumeration surface the way run/worker identifiers are (issue #41).
   if (goalPlanCode === 'application_profile_not_found') return { httpStatus: 404, body: { ok: false, error: { code: goalPlanCode, message: 'requested Run profile is not defined by this deployment' } } };
@@ -413,7 +573,13 @@ function dispatchFailure(cause) {
     code: goalPlanCode, message: typeof cause?.message === 'string' ? cause.message : 'wave not found',
     ...(cause?.detail != null ? { detail: cause.detail } : {}),
   } } };
-  return { httpStatus: 503, body: { ok: false, error: { code: 'temporarily_unavailable', message: 'command dispatch failed' } } };
+  // U-F3 (issue #288): the fallthrough is the TRANSIENT row — an unclassified cause is not
+  // evidence that the request is permanently unservable, so it is stated retryable with the next
+  // action. The message stays the sanitized constant (W7-A: no internal text crosses).
+  return failure(503, 'temporarily_unavailable', 'command dispatch failed', {
+    retryable: true,
+    action: 'retry once; a refusal that repeats is a resident defect rather than a request fault — inspect the resident (`baton doctor --check`) and report the refusal code',
+  });
 }
 function isRecord(value) { return value !== null && typeof value === 'object' && !Array.isArray(value); }
 function containsForbiddenKey(value) {
@@ -865,18 +1031,28 @@ export class WebNorthbound {
     });
   }
 
+  // U-F13 (issue #288): each distinct authentication outcome refuses with the credential that was
+  // missing or unusable, the rule it violated, and the route that obtains a fresh one. Before
+  // this, absent / malformed / expired / revoked credentials were one bare `unauthenticated`, and
+  // an agent could not tell "refresh your token" from "you were revoked" (or from "this surface
+  // takes a bearer token and you sent a cookie").
   _authenticate(ctx) {
     const principal = ctx?.principal;
-    if (!principal || !string(principal.userId) || !string(principal.sessionId) || !string(principal.credentialId)) return error(401, 'unauthenticated');
+    if (!principal || !string(principal.userId) || !string(principal.sessionId) || !string(principal.credentialId)) {
+      return authenticationRefusal('absent', null);
+    }
+    if (principal.revoked === true) return authenticationRefusal('revoked', principal);
+    if (!string(principal.expiresAt)) return authenticationRefusal('malformed', principal);
     const expiresAt = Date.parse(principal.expiresAt);
-    if (principal.revoked === true || !string(principal.expiresAt) || !Number.isFinite(expiresAt) || expiresAt <= this.now()) return error(401, 'unauthenticated');
+    if (!Number.isFinite(expiresAt)) return authenticationRefusal('malformed', principal);
+    if (expiresAt <= this.now()) {
+      return authenticationRefusal('expired', principal, { expiresAt: new Date(expiresAt).toISOString() });
+    }
     // `local` is stamped only by createLocalAuthenticatedWebServer after accepting an
     // owner-permissioned Unix-domain-socket connection. It is not a caller header and never
     // represents cleartext TCP. Treat that OS-local boundary as a secure transport while keeping
     // every network path HTTPS-only.
-    if (!['https', 'local'].includes(ctx.transport)) {
-      return error(503, 'temporarily_unavailable', 'secure transport required');
-    }
+    if (!['https', 'local'].includes(ctx.transport)) return secureTransportRefusal();
     return null;
   }
 
@@ -965,19 +1141,22 @@ export class WebNorthbound {
   async _executeObservation(ctx, envelope, webActor, scopeKey, requestDigest) {
     let observation = this._observationCommands.get(scopeKey) ?? null;
     const replay = observation !== null;
+    // U-F14 (issue #288): a conflicting replay names the axis that moved — the digest map recorded
+    // at admission is diffed against this request, so "a changed `args.objective`" is stated
+    // instead of one opaque `idempotency_conflict`.
     if (observation && observation.requestDigest !== requestDigest) {
       try {
         this._audit('idempotency_refused', ctx, {
           command: envelope.command, repoId: envelope.repoId, reason: 'idempotency_conflict',
         });
       } catch { return error(503, 'temporarily_unavailable'); }
-      return error(409, 'idempotency_conflict');
+      return idempotencyConflictRefusal(observation, envelope);
     }
     if (!observation) {
       const pending = Promise.resolve().then(() => this._dispatch(
         envelope, webActor, ctx.principal,
       ));
-      observation = { requestDigest, pending, response: null };
+      observation = { requestDigest, requestAxes: requestAxes(envelope), pending, response: null };
       this._rememberObservation(scopeKey, observation);
       void pending.then(
         (response) => { observation.response = response; },
@@ -1028,7 +1207,7 @@ export class WebNorthbound {
     if (APPLICATION_COMMAND[envelope.command] && !this.application) {
       try { this._audit('application_unavailable', ctx, { command: envelope.command, repoId: envelope.repoId }); }
       catch { return error(503, 'temporarily_unavailable'); }
-      return error(503, 'application_unavailable', 'run application unavailable');
+      return applicationUnavailableRefusal('run application unavailable');
     }
     const webActor = actor(ctx.principal);
     const scopeKey = hash({ userId: ctx.principal.userId, command: envelope.command, repoId: envelope.repoId, idempotencyKey: envelope.idempotencyKey });
@@ -1039,7 +1218,7 @@ export class WebNorthbound {
       if (prior && prior.requestDigest !== requestDigest) {
         try { this._audit('idempotency_refused', ctx, { command: envelope.command, repoId: envelope.repoId, reason: 'idempotency_conflict' }); }
         catch { return error(503, 'temporarily_unavailable'); }
-        return error(409, 'idempotency_conflict');
+        return idempotencyConflictRefusal(prior, envelope);
       }
       try {
         semanticAuthority = prior?.semanticAuthority ?? await this.application.actionAuthority(
@@ -1089,6 +1268,10 @@ export class WebNorthbound {
         repoId: envelope.repoId, runId: admittedRunId(envelope),
         userId: ctx.principal.userId, sessionId: ctx.principal.sessionId, credentialId: ctx.principal.credentialId,
         origin: envelope.origin, expectedFence: envelope.expectedFence ?? null,
+        // U-F14: the per-axis digest map the conflicting-replay refusal diffs (digests only —
+        // the ledger never carries request content). Older rows without it degrade to naming
+        // `request` as the axis.
+        requestAxes: requestAxes(envelope),
         ...(semanticAuthority ? { semanticAuthority } : {}),
       }, { actor: webActor, key: `web.admit:${scopeKey}` });
     } catch {
@@ -1096,7 +1279,15 @@ export class WebNorthbound {
     }
     if (!admission.ok) {
       try { this._audit('idempotency_refused', ctx, { command: envelope.command, repoId: envelope.repoId, reason: admission.result }); } catch { return error(503, 'temporarily_unavailable'); }
-      return error(409, admission.result === 'idempotency_conflict' ? 'idempotency_conflict' : 'invalid_command');
+      // U-E16 (adjacent): the status and the code agree — a command-id conflict is a 409 whose
+      // code names the conflict, never the 400-class `invalid_command` under a conflict status.
+      if (admission.result !== 'idempotency_conflict') {
+        return error(409, 'command_id_conflict',
+          `command id ${envelope.commandId} was already admitted for a different idempotencyKey; reconcile that command or send a fresh commandId`);
+      }
+      return idempotencyConflictRefusal(
+        this.coordination.webCommandByScope?.(scopeKey) ?? null, envelope,
+      );
     }
     if (APPLICATION_COMMAND[envelope.command] === 'run.act'
       && admission.command.semanticAuthority?.authorityDigest !== semanticAuthority?.authorityDigest) {
@@ -1425,7 +1616,7 @@ export class WebNorthbound {
       if (req.edgeIdentity.transport !== 'https') {
         try { this._audit('transport_refused', { origin, remoteAddress: 'canonical', addressDigest: req.edgeAddressDigest }, { reason: 'secure_transport_required' }); }
         catch { return this._write(res, error(503, 'temporarily_unavailable')); }
-        return this._write(res, error(503, 'temporarily_unavailable'));
+        return this._write(res, secureTransportRefusal());
       }
     }
     if (req.method === 'GET' && url.pathname === '/healthz') return this._write(res, result(200, { ok: true }));
@@ -1556,7 +1747,7 @@ export class WebNorthbound {
           : typeof body.cursor === 'string' && body.cursor.length >= 1
             && body.cursor.length <= 4_096 && /^[A-Za-z0-9_-]+$/u.test(body.cursor)));
       if (!legacyScope && !runScope) return this._write(res, error(400, 'invalid_command'), origin);
-      if (runScope && !this.application) return this._write(res, error(503, 'application_unavailable'), origin);
+      if (runScope && !this.application) return this._write(res, applicationUnavailableRefusal(), origin);
       let streamScope = body.repoId;
       if (runScope) streamScope = { ...body };
       if (typeof this.stream.authorizeIssue !== 'function') return this._write(res, error(503, 'temporarily_unavailable'), origin);
@@ -1645,13 +1836,24 @@ export class WebNorthbound {
         runId: body.args?.runId,
         origin,
       };
-      if (validateEnvelope(envelope)
-        || !Array.isArray(principal.capabilities) || !principal.capabilities.includes('observe')) {
-        return this._write(res, error(403, 'forbidden'), origin);
+      // U-E15 (issue #288): a malformed envelope is a 400 naming the judged field — the SAME
+      // typed refusal /v1/commands returns from the same validator — and only the capability
+      // precondition (a real permission fact) is 403. Before this, both collapsed into one bare
+      // `forbidden` and an agent chased a permission it did not lack.
+      const validation = validateEnvelope(envelope);
+      if (validation) {
+        return this._write(res, typeof validation === 'string'
+          ? error(400, 'invalid_command', validation)
+          : error(400, validation.code, validation.message, validation.field), origin);
+      }
+      if (!Array.isArray(principal.capabilities) || !principal.capabilities.includes('observe')) {
+        return this._write(res, error(403, 'forbidden',
+          'forbidden: action authority refused by the capability precondition', 'capability',
+          { detail: capabilityRefusalDetail(['observe'], principal.capabilities) }), origin);
       }
       const authorizationFailure = this._authorize(ctx, envelope);
       if (authorizationFailure) return this._write(res, authorizationFailure, origin);
-      if (!this.application) return this._write(res, error(503, 'application_unavailable'), origin);
+      if (!this.application) return this._write(res, applicationUnavailableRefusal(), origin);
       const scopeKey = hash({
         userId: principal.userId, command: envelope.command,
         repoId: envelope.repoId, idempotencyKey: envelope.idempotencyKey,
@@ -1659,7 +1861,7 @@ export class WebNorthbound {
       const requestDigest = hash(canonicalRequest(envelope));
       const prior = this.coordination.webCommandByScope?.(scopeKey) ?? null;
       if (prior && prior.requestDigest !== requestDigest) {
-        return this._write(res, error(409, 'idempotency_conflict'), origin);
+        return this._write(res, idempotencyConflictRefusal(prior, envelope), origin);
       }
       let semanticAuthority;
       try {
@@ -1771,7 +1973,7 @@ export class WebNorthbound {
       }));
     }
     if (pathname === '/v1/application-card') {
-      if (!this.application) return this._write(res, error(503, 'application_unavailable', 'run application unavailable'));
+      if (!this.application) return this._write(res, applicationUnavailableRefusal('run application unavailable'));
       const card = this.application.card();
       // Epic #103 (D6c): the web card is the reading consumer's TRANSPORT — the CLI is a child
       // process that reads the doctor sibling by property access AFTER an HTTP JSON round-trip,
@@ -1832,12 +2034,22 @@ export class WebNorthbound {
     }
     try { this._audit('command_status_authorized', { ...ctx, principal }, { commandDigest: hash(command.commandId), status: command.status }); }
     catch { return this._write(res, error(503, 'temporarily_unavailable')); }
-    return this._write(res, result(200, { ok: true, command: {
+    const outcome = command.outcome == null ? null : json(command.outcome);
+    const record = {
       commandId: command.commandId, command: command.command, repoId: command.repoId,
       runId: command.runId ?? null, expectedFence: command.expectedFence ?? null,
       status: command.status, admittedAt: command.admittedAt, completedAt: command.completedAt ?? null,
-      outcome: command.outcome == null ? null : json(command.outcome),
-    } }));
+      outcome,
+    };
+    // U-E16 (issue #288): the record's own answer is the answer — a completed command whose
+    // outcome failed is NEVER wrapped in a 200 ok:true (which reads as "the command succeeded"):
+    // the outcome's status and body cross verbatim (its code, message, field and retryable
+    // included) with the record identity added, so `ok` cannot disagree with what the command did.
+    if (outcome !== null && Number.isSafeInteger(outcome.httpStatus) && outcome.httpStatus >= 400
+      && isRecord(outcome.body)) {
+      return this._write(res, result(outcome.httpStatus, { ...outcome.body, command: record }), origin);
+    }
+    return this._write(res, result(200, { ok: true, command: record }));
   }
 
   _validOidcNavigation(req, origin, callback = false) {
@@ -1864,10 +2076,15 @@ export class WebNorthbound {
   _handleOidcStart(req, res, url, origin) {
     const ctx = this._oidcContext(req, origin);
     if (!this.oidc) return this._write(res, error(404, 'not_found'));
-    if (ctx.transport !== 'https' || url.search !== '' || !this._validOidcNavigation(req, origin, false)) {
+    if (ctx.transport !== 'https') {
       try { this._audit('oidc_start_refused', ctx, { reason: 'request_policy' }); }
       catch { return this._write(res, error(503, 'temporarily_unavailable')); }
-      return this._write(res, error(ctx.transport === 'https' ? 403 : 503, ctx.transport === 'https' ? 'forbidden' : 'temporarily_unavailable'));
+      return this._write(res, secureTransportRefusal());
+    }
+    if (url.search !== '' || !this._validOidcNavigation(req, origin, false)) {
+      try { this._audit('oidc_start_refused', ctx, { reason: 'request_policy' }); }
+      catch { return this._write(res, error(503, 'temporarily_unavailable')); }
+      return this._write(res, error(403, 'forbidden', 'forbidden: OIDC start refused by the navigation precondition', 'request'));
     }
     if (this.edge) {
       const quota = this.edge.take('login', ctx.addressDigest);
@@ -1896,15 +2113,15 @@ export class WebNorthbound {
   async _handleOidcCallback(req, res, url, origin) {
     const ctx = this._oidcContext(req, origin);
     const clearCookie = this.oidc?.clearCookie?.();
-    const refuse = (status, code, reason) => {
+    const write = (response, reason) => {
       try { this._audit('oidc_callback_refused', ctx, { reason }); }
       catch { return this._write(res, error(503, 'temporarily_unavailable'), null, clearCookie ? { 'set-cookie': clearCookie } : {}); }
-      return this._write(res, error(status, code), null, clearCookie ? { 'set-cookie': clearCookie } : {});
+      return this._write(res, response, null, clearCookie ? { 'set-cookie': clearCookie } : {});
     };
+    const refuse = (status, code, reason) => write(error(status, code), reason);
     if (!this.oidc) return this._write(res, error(404, 'not_found'));
-    if (ctx.transport !== 'https' || !this._validOidcNavigation(req, origin, true)) {
-      return refuse(ctx.transport === 'https' ? 403 : 503, ctx.transport === 'https' ? 'forbidden' : 'temporarily_unavailable', 'request_policy');
-    }
+    if (ctx.transport !== 'https') return write(secureTransportRefusal(), 'request_policy');
+    if (!this._validOidcNavigation(req, origin, true)) return refuse(403, 'forbidden', 'request_policy');
     const keys = [...url.searchParams.keys()];
     if (keys.some((key) => !['code', 'state'].includes(key))
       || url.searchParams.getAll('code').length !== 1 || url.searchParams.getAll('state').length !== 1) {
@@ -1947,10 +2164,15 @@ export class WebNorthbound {
   async _handleLifecycle(req, res, pathname, origin) {
     const ctx = { origin, remoteAddress: req.edgeAddressDigest ? 'canonical' : (req.socket?.remoteAddress ?? null), addressDigest: req.edgeAddressDigest ?? null, transport: req.edgeIdentity?.transport ?? (req.socket?.encrypted ? 'https' : 'http') };
     const audit = (kind, principal = null, details = {}) => this._audit(kind, { ...ctx, principal }, details);
-    if (ctx.transport !== 'https' || !this.allowedOrigins.has(origin)) {
+    if (ctx.transport !== 'https') {
       try { audit(pathname.endsWith('login') ? 'login_refused' : pathname.endsWith('refresh') ? 'refresh_refused' : 'logout_refused', null, { reason: 'request_policy' }); }
       catch { return this._write(res, error(503, 'temporarily_unavailable'), origin); }
-      return this._write(res, error(ctx.transport !== 'https' ? 503 : 403, ctx.transport !== 'https' ? 'temporarily_unavailable' : 'forbidden'), origin);
+      return this._write(res, secureTransportRefusal(), origin);
+    }
+    if (!this.allowedOrigins.has(origin)) {
+      try { audit(pathname.endsWith('login') ? 'login_refused' : pathname.endsWith('refresh') ? 'refresh_refused' : 'logout_refused', null, { reason: 'request_policy' }); }
+      catch { return this._write(res, error(503, 'temporarily_unavailable'), origin); }
+      return this._write(res, error(403, 'forbidden', 'forbidden: authentication lifecycle refused by the origin precondition', 'origin'), origin);
     }
     if (req.headers['content-type']?.split(';')[0].trim().toLowerCase() !== 'application/json') {
       try { audit(pathname.endsWith('login') ? 'login_refused' : pathname.endsWith('refresh') ? 'refresh_refused' : 'logout_refused', null, { reason: 'content_type' }); }

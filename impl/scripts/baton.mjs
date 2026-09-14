@@ -56,6 +56,23 @@ function clientFor(connection) {
   return wrapProductionCliClient(client, { runtime: surfaceRuntime });
 }
 
+/** True when the local outline reports a PUBLISHED connection it judged unusable — the case whose
+ * refusal discovery can name. "Nothing published yet" keeps the ordinary first-run guidance. */
+function unusableAuthority(local) {
+  return local?.outline?.connection === 'invalid' || local?.outline?.profile === 'invalid';
+}
+
+/** The typed refusal discovery raises for the published connection, or null when discovery
+ * succeeds (or fails for a reason the local outline already states). */
+function publishedConnectionRefusal() {
+  try {
+    discoverBatonConnection();
+    return null;
+  } catch (error) {
+    return normalizeControlSurfaceError(error).error;
+  }
+}
+
 async function serveDeployment(rawDeployment) {
   const deployment = rawDeployment?.convergence ? rawDeployment : wrapProductionDeployment(rawDeployment, { repoRoot: process.cwd() });
   if (!deployment || typeof deployment.host !== 'function' || typeof deployment.close !== 'function') {
@@ -131,7 +148,22 @@ try {
     } else if (parsed.kind === 'doctor') {
       const local = inspectBatonConnection({ depth: parsed.depth });
       if (!parsed.check || local.state !== 'configured') {
-        process.stdout.write(`${JSON.stringify(local, null, 2)}\n`);
+        // U-F9 (issue #288): the local outline reports `needs_setup` both for "nothing is published
+        // yet" and for "the publication is unusable" — and for the second case the ONE refusal that
+        // knows why (protocol drift names BOTH registry digests and the remedy) was swallowed by
+        // inspectBatonConnection's catch, leaving `next: baton setup`, which cannot fix drift. When
+        // the outline says the published connection is unusable, run the real discovery and carry
+        // its refusal verbatim (`code`, `message`, `field`, `detail`) beside the outline.
+        const refusal = unusableAuthority(local) ? publishedConnectionRefusal() : null;
+        const projected = refusal === null ? local : Object.freeze({
+          ...local,
+          refusal,
+          next: Object.freeze([{
+            action: 'repair_authority', command: 'baton serve',
+            reason: refusal.detail?.remedy ?? refusal.message,
+          }]),
+        });
+        process.stdout.write(`${JSON.stringify(projected, null, 2)}\n`);
         if (parsed.check && local.state !== 'configured') process.exitCode = 1;
       } else {
         const remote = await clientFor(discoverBatonConnection()).doctor();
