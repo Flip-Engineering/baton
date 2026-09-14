@@ -82,6 +82,16 @@ export const TARGETS = Object.freeze([
     file: 'impl/src/coordination-store.mjs', className: 'CoordinationStore',
     dispatchers: Object.freeze([]), surface: Object.freeze([]),
   }),
+  // 2026-09-14 audit S-G4: SwarmRuntime is the fourth monolith — a 900-line class that touches all
+  // four seams (admission via _permit/_requireCompletionEvidence, effect via startRun/stopRun/
+  // captureContribution, observation via inspect, recovery via _once and its replay keys) and was
+  // growing outside the machine-checked map. It carries no transport dispatcher of its own: the
+  // command name reaches the runtime through the application command table, so its members are
+  // classified by the authority catalogue and delegation, never by reachability.
+  Object.freeze({
+    file: 'impl/src/swarm-runtime.mjs', className: 'SwarmRuntime',
+    dispatchers: Object.freeze([]), surface: Object.freeze([]),
+  }),
 ]);
 
 // Layer 2a — authority rules. `name` matches the member's own identifier, `call` matches its body
@@ -135,6 +145,17 @@ const AUTHORITY_RULES = Object.freeze([
   // store's `_load`, a restart path by every other measure, would land in observation on `read_name`.
   { seam: 'recovery', id: 'replay_port', weight: 3, call: /\bcoordinationReplay\.[A-Za-z_$]+\(/u, note: 'delegates into the extracted replay port (coordination-replay.mjs)' },
   { seam: 'surface', id: 'internals_port', weight: 3, call: /\bcoordinationInternals\.[A-Za-z_$]+\(/u, note: 'delegates into the extracted internals module (coordination-internals.mjs)' },
+
+  // ── the swarm family (issue #284 item S-G4) ─────────────────────────────────
+  // SwarmRuntime speaks its own refusal and replay dialects, and both are evidence a name rule
+  // cannot see: the gates (`_permit`, `_caller`, `_participant`, `_worker`, `_sharedWorkspace`)
+  // refuse through the module's `refuse(message, code)` helper with a `swarm_*` code, and the
+  // replay guard (`_once`) records the replay-keyed operation lifecycle before it applies the
+  // effect. Both rules are scoped to those literal spellings, so no other class's member can
+  // match them by accident.
+  { seam: 'admission', id: 'swarm_refusal', weight: 3, call: /\brefuse\(\s*[`'][^`']*[`']\s*,\s*'swarm_[a-z_]+'/u, note: 'refuses with a swarm-scoped typed code' },
+  { seam: 'recovery', id: 'operation_lifecycle', weight: 3, call: /recordDriver\('swarm\.operation_(?:requested|completed|unavailable)'/u, note: 'records the replay-keyed operation lifecycle a restart reconciles' },
+  { seam: 'observation', id: 'swarm_attention_rows', weight: 3, call: /const organization = \[|organization\.push\(\{ kind: '/u, note: 'derives the swarm view: the attention rows a caller acts on' },
 ]);
 
 // Layer 3 — delegation. A member that calls an already-resolved member of its own class inherits

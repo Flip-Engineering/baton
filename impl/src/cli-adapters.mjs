@@ -17,6 +17,7 @@ import { normalizeProcessGeneration, ProcessCloseReapLatch, processStartedPayloa
 import { usdToNanos } from './usd.mjs';
 import { attestWorkerPolicyObservation } from './worker-policy.mjs';
 import { CLI_PROMPT_DIALECT, renderBrief } from './adapter.mjs';
+import { assertAdapterCard } from './adapter-contract.mjs';
 import { normalizeConcurrencyCeiling } from './concurrency-policy.mjs';
 
 const DEFAULT_MAX_WIRE_FRAME_BYTES = 1024 * 1024;
@@ -204,8 +205,12 @@ class CliAdapter {
     this._cb = null;
   }
 
+  // 2026-09-14 audit A-G10: the card is rendered through the ONE adapter-card contract, so a tier
+  // that loses an axis (a missing governance/modelSelection/workerPolicy block) refuses HERE,
+  // naming the axis and the fix — never later, inside a validator, as a generic
+  // `worker_policy_invalid` that says nothing about the card.
   card() {
-    return {
+    return assertAdapterCard({
       harness: this._cfg.harness,
       version: this._cfg.version,
       authPosture: 'subscription',
@@ -216,7 +221,7 @@ class CliAdapter {
       permissions: this._cfg.permissions,
       workerPolicy: this._cfg.workerPolicy,
       verbs: this._cfg.verbs,
-    };
+    });
   }
 
   onEvent(cb) { this._cb = cb; }

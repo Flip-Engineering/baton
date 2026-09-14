@@ -40,7 +40,7 @@ function withMutation(mutate) {
   return { path, cleanup: () => rmSync(directory, { recursive: true, force: true }) };
 }
 
-test('SI1: the committed map classifies every member of all three classes exactly once', () => {
+test('SI1: the committed map classifies every member of every declared class exactly once', () => {
   const inventory = collectSeamInventory();
   assert.equal(inventory.schemaVersion, SCHEMA_VERSION);
   assert.deepEqual(inventory.files.map((file) => file.file), TARGETS.map((target) => target.file));
@@ -216,4 +216,42 @@ test('SI4: the classifier reads the seams off the source, not off a per-member t
   }
   assert.ok(fallback.length < inventory.files.reduce((sum, file) => sum + file.members.length, 0) / 4,
     'the fallback must stay a small minority of the corpus, not the default answer');
+});
+
+// 2026-09-14 audit S-G4: SwarmRuntime was growing outside the machine-checked map even though it
+// touches all four seams the tool exists to count. The target, its four seams, the citations the
+// audit made, and the refusal of a member the map does not carry are pinned here.
+test('SI5 (S-G4): SwarmRuntime is a declared target, mapped across all four seams, and an unmapped member refuses', () => {
+  const target = TARGETS.find((row) => row.file === 'impl/src/swarm-runtime.mjs');
+  assert.ok(target, 'SwarmRuntime is declared as an inventory target');
+  assert.equal(target.className, 'SwarmRuntime');
+  const swarm = collectSeamInventory().files.find((file) => file.file === target.file);
+  const seamOf = (name) => {
+    const member = swarm.members.find((row) => row.name === name);
+    assert.ok(member, `${name} must be classified`);
+    return member.seam;
+  };
+  // All four seams are represented in this class's map — the map is the input a split reads.
+  const seams = new Set(swarm.members.map((member) => member.seam));
+  for (const seam of ['admission', 'effect', 'observation', 'recovery']) {
+    assert.ok(seams.has(seam), `${seam} must be represented in the SwarmRuntime map`);
+  }
+  // The members the audit named, each under the seam it named.
+  assert.equal(seamOf('_permit'), 'admission', 'the permission gate decides before an effect');
+  assert.equal(seamOf('_requireCompletionEvidence'), 'admission');
+  assert.equal(seamOf('_once'), 'recovery', 'the replay-keyed operation lifecycle is restart reconciliation');
+  assert.equal(seamOf('inspect'), 'observation');
+  assert.equal(seamOf('_dispatch'), 'effect');
+  // A member the SOURCE carries and the map does not is refused, by name and position.
+  const fixture = withMutation((inventory) => {
+    const file = inventory.files.find((row) => row.file === target.file);
+    file.members = file.members.filter((member) => member.name !== '_dispatch');
+  });
+  try {
+    const findings = checkSeamInventory({ path: fixture.path });
+    assert.ok(findings.some((finding) => /swarm-runtime\.mjs:\d+: _dispatch is uncommitted \(run --write\)/u.test(finding)),
+      `an unmapped SwarmRuntime member must be refused by name: ${findings.join(' | ')}`);
+  } finally {
+    fixture.cleanup();
+  }
 });

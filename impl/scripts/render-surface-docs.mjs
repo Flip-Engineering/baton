@@ -25,12 +25,24 @@ import {
   KIMI_THROUGH_CLAUDE_ROUTE,
   routeReadinessContract,
 } from '../src/application-deployment.mjs';
+// 2026-09-14 audit S-G1: the swarm family (§7.4 of docs/36) renders from the contract that
+// declares it — the command/kind tables in impl/src/swarm-contract.mjs, the payload schemas in
+// impl/src/swarm-event-schemas.mjs, and the permission set the runtime admits callers under. A
+// verb or kind added to a contract module without this section goes red in the surface gate.
+import {
+  SWARM_COMMAND_DEFINITIONS, SWARM_DRIVER_EVENT_KINDS, SWARM_EVENT_KINDS,
+  SWARM_OPERATION_KINDS,
+} from '../src/swarm-contract.mjs';
+import { swarmEventAgentRequiredFields } from '../src/swarm-event-schemas.mjs';
+import { SWARM_PERMISSIONS } from '../src/swarm-runtime.mjs';
 
 const CLI_DOC = new URL('../CLI.md', import.meta.url);
 const MCP_DOC = new URL('../MCP.md', import.meta.url);
+const GRAMMAR_DOC = new URL('../../docs/36-unified-control-grammar.md', import.meta.url);
 export const CLI_INVENTORY_MARKER = 'cli-verb-inventory';
 export const CLI_FLEET_ROUTES_MARKER = 'cli-fleet-routes';
 export const MCP_INVENTORY_MARKER = 'mcp-tool-inventory';
+export const SWARM_FAMILY_MARKER = 'swarm-family';
 
 function beginMarker(marker) { return `<!-- BEGIN GENERATED: ${marker} (impl/scripts/render-surface-docs.mjs) -->`; }
 function endMarker(marker) { return `<!-- END GENERATED: ${marker} -->`; }
@@ -203,6 +215,96 @@ export function renderWavefileGrammar() {
   ].join('\n');
 }
 
+// ---------------------------------------------------------------------------
+// docs/36 §7.4 — the swarm family (2026-09-14 audit S-G1).
+//
+// The section is rendered, never hand-written: the verb/kind tables come from
+// impl/src/swarm-contract.mjs, the payload fields from impl/src/swarm-event-schemas.mjs, and the
+// permission set from the runtime constant the admission check reads. The gate compares the
+// committed block byte-for-byte, so a verb, update kind, permission or attention kind added to
+// the code and not here is refused when it is made.
+// ---------------------------------------------------------------------------
+
+const SWARM_RUNTIME_SOURCE = new URL('../src/swarm-runtime.mjs', import.meta.url);
+// The attention vocabulary has no exported constant: the runtime mints a row per condition at the
+// site that derives it. Both mint sites are read from the source with their exact shape, in source
+// order — `organization.push({ kind: '<kind>'` for the derived rows and `{ kind: '<kind>', command:`
+// for the in-flight operation row. A source whose shape no longer matches refuses to render an
+// empty vocabulary: a silent empty list is the one outcome that would let the section drift.
+const ATTENTION_ORGANIZATION_ROW = /organization\.push\(\{\s*kind: '(?<kind>[a-z0-9_.]+)'/gu;
+const ATTENTION_OPERATION_ROW = /\{\s*kind: '(?<kind>[a-z0-9_.]+)',\s*command:/gu;
+
+/** The attention kinds the swarm runtime mints, in the runtime's own source order. */
+export function swarmAttentionKinds(source = readFileSync(SWARM_RUNTIME_SOURCE, 'utf8')) {
+  const kinds = [];
+  for (const match of source.matchAll(ATTENTION_ORGANIZATION_ROW)) kinds.push(match.groups.kind);
+  for (const match of source.matchAll(ATTENTION_OPERATION_ROW)) kinds.push(match.groups.kind);
+  const unique = [...new Set(kinds)];
+  if (unique.length === 0) {
+    throw new Error('swarm attention vocabulary could not be read from impl/src/swarm-runtime.mjs — the mint sites changed shape; fix the extractor, never render an empty list');
+  }
+  const nonAttention = unique.filter((kind) => kind.startsWith('swarm.'));
+  if (nonAttention.length > 0) {
+    throw new Error(`swarm attention extractor read event kinds as attention rows: ${nonAttention.join(', ')}`);
+  }
+  return unique;
+}
+
+/** The §7.4 block: every verb, update kind, driver kind, permission and attention kind. */
+export function renderSwarmFamily() {
+  const commands = Object.entries(SWARM_COMMAND_DEFINITIONS).map(([name, definition]) => {
+    const args = definition.args.length > 0 ? definition.args.map((arg) => `\`${arg}\``).join(', ') : '—';
+    const capabilities = definition.capabilities.map((capability) => `\`${capability}\``).join(', ');
+    const transports = [definition.web ? 'web' : null, definition.mcp ? 'mcp' : null]
+      .filter((surface) => surface !== null).join(' + ');
+    const durability = definition.mcpStateful
+      ? `\`idempotencyKey\`${definition.reconcilable ? ', reconcilable' : ''}`
+      : 'identity-keyed';
+    return `| \`${name}\` | ${args} | ${capabilities} | ${transports} | ${durability} |`;
+  });
+  const updateKinds = SWARM_EVENT_KINDS.map((kind) => {
+    const expanded = SWARM_OPERATION_KINDS.includes(kind);
+    const required = swarmEventAgentRequiredFields(kind);
+    return `| \`${kind}\` | ${expanded ? 'expanded by the runtime into the events it names' : 'recorded by the coordination store and replayed by the fold'} | ${required.length > 0 ? required.map((field) => `\`${field}\``).join(', ') : '—'} |`;
+  });
+  const permissions = SWARM_PERMISSIONS.map((permission) => `\`${permission}\``).join(', ');
+  const attention = swarmAttentionKinds();
+  return [
+    `**Verbs.** The ten \`swarm.*\` commands, their declared arguments, the capability class each`,
+    'requires, the transports that serve it, and its durability class — rendered from',
+    '`SWARM_COMMAND_DEFINITIONS` (`impl/src/swarm-contract.mjs`), the same rows the CLI parser,',
+    'the MCP tool table, and the web bus gate on.',
+    '',
+    '| Verb | Arguments | Capabilities | Transports | Durability |',
+    '|---|---|---|---|---|',
+    ...commands,
+    '',
+    `**\`swarm.update\` kinds (closed set, ${SWARM_EVENT_KINDS.length}).** Every domain change a caller may name; the payload`,
+    'fields each kind requires of the caller are read from the payload schemas',
+    '(`impl/src/swarm-event-schemas.mjs`).',
+    '',
+    '| Kind | Where it lands | Caller-required payload fields |',
+    '|---|---|---|',
+    ...updateKinds,
+    '',
+    `**Runtime-owned driver kinds (never caller-submittable, ${SWARM_DRIVER_EVENT_KINDS.length}).** The operation lifecycle and refusal rows the runtime`,
+    'records for itself, disjoint from the caller-submittable set above:',
+    '',
+    ...SWARM_DRIVER_EVENT_KINDS.map((kind) => `- \`${kind}\``),
+    '',
+    `**Permissions (closed set, ${SWARM_PERMISSIONS.length}).** ${permissions} — the grant vocabulary \`swarm.recruit\` admits and the`,
+    'runtime admission check reads (`impl/src/swarm-runtime.mjs`).',
+    '',
+    `**Attention kinds (closed set, ${attention.length}).** Each view row is a condition that needs an act, derived by the`,
+    'runtime from durable state — never asserted by a caller:',
+    '',
+    ...attention.map((kind) => `- \`${kind}\``),
+    '',
+    'Semantics, responses and the coupling records behind these rows: [docs/39](39-swarm-runtime.md)',
+    'and the swarm section of `impl/MCP.md`. This block is generated — do not hand-edit it.',
+  ].join('\n');
+}
+
 export function injectGeneratedBlock(text, marker, block) {
   const begin = beginMarker(marker);
   const end = endMarker(marker);
@@ -222,6 +324,7 @@ export const TARGETS = [
   { doc: CLI_DOC, marker: CLI_INVENTORY_MARKER, render: renderCliVerbInventory },
   { doc: CLI_DOC, marker: CLI_FLEET_ROUTES_MARKER, render: renderCliFleetRoutes },
   { doc: MCP_DOC, marker: MCP_INVENTORY_MARKER, render: renderMcpToolInventory },
+  { doc: GRAMMAR_DOC, marker: SWARM_FAMILY_MARKER, render: renderSwarmFamily },
 ];
 
 export function renderSurfaceDoc({ doc, marker, render }) {
@@ -230,9 +333,11 @@ export function renderSurfaceDoc({ doc, marker, render }) {
 
 // The conformance check: for each target, the committed file must byte-equal the freshly rendered
 // file. A drifted committed block (or a stale renderer) is reported, never silently accepted.
-export function checkSurfaceDocs() {
+// `targets` is injectable so a test can prove a tampered block is refused without editing the
+// committed documents.
+export function checkSurfaceDocs({ targets = TARGETS } = {}) {
   const findings = [];
-  for (const target of TARGETS) {
+  for (const target of targets) {
     const committed = readFileSync(target.doc, 'utf8');
     if (renderSurfaceDoc(target) !== committed) {
       findings.push(`generated block "${target.marker}" is stale in ${target.doc.pathname.split('/').pop()}`);

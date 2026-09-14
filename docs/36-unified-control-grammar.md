@@ -448,6 +448,85 @@ Settlement:
 | `select_candidate` | `run.select` (bound `do`) | carries the minted `roles` choice set |
 | `session_preservation` / `workflow_revision` / `workflow_recovery` | their advertised bound `do` (stop/recover/revise family) | as advertised |
 
+
+### 7.4 The swarm family (generated)
+
+The swarm is a second control surface over the same Run/worker/coordination authorities: the
+`swarm.*` verbs, the closed `swarm.update` event set, the participant permission grant set, and
+the attention rows a view projects (semantics: [docs/39](39-swarm-runtime.md)). It is part of
+this grammar — L1 admits it under its own profile — and its vocabulary is **generated from the
+contract**, never transcribed: the block below renders from `impl/src/swarm-contract.mjs`
+(verbs, update kinds, driver kinds), `impl/src/swarm-event-schemas.mjs` (payload fields) and
+`impl/src/swarm-runtime.mjs` (permissions, and the attention kinds read from the runtime's own
+row-minting sites). `node impl/scripts/surface-gate.mjs` refuses when a verb, update kind,
+permission or attention kind is added to the code and not to this section (2026-09-14 audit
+S-G1); regenerate with `node impl/scripts/surface-gate.mjs --write`.
+
+<!-- BEGIN GENERATED: swarm-family (impl/scripts/render-surface-docs.mjs) -->
+
+**Verbs.** The ten `swarm.*` commands, their declared arguments, the capability class each
+requires, the transports that serve it, and its durability class — rendered from
+`SWARM_COMMAND_DEFINITIONS` (`impl/src/swarm-contract.mjs`), the same rows the CLI parser,
+the MCP tool table, and the web bus gate on.
+
+| Verb | Arguments | Capabilities | Transports | Durability |
+|---|---|---|---|---|
+| `swarm.list` | — | `observe` | web + mcp | identity-keyed |
+| `swarm.create` | `purpose`, `swarmId`, `idempotencyKey` | `control`, `observe` | web + mcp | `idempotencyKey`, reconcilable |
+| `swarm.view` | `swarmId`, `participantId` | `observe` | web + mcp | identity-keyed |
+| `swarm.watch` | `swarmId`, `afterSeq`, `timeoutMs` | `observe` | web + mcp | identity-keyed |
+| `swarm.update` | `swarmId`, `event`, `payload`, `idempotencyKey` | `control`, `observe` | web + mcp | `idempotencyKey`, reconcilable |
+| `swarm.recruit` | `swarmId`, `participantId`, `objective`, `options`, `permissions`, `shareWorkspaceWith`, `idempotencyKey` | `control`, `observe` | web + mcp | `idempotencyKey`, reconcilable |
+| `swarm.guide` | `swarmId`, `participantId`, `message`, `idempotencyKey` | `control`, `observe` | web + mcp | `idempotencyKey`, reconcilable |
+| `swarm.capture` | `swarmId`, `participantId`, `contributionId` | `control`, `observe` | web + mcp | identity-keyed |
+| `swarm.check` | `swarmId`, `participantId`, `contributionId`, `checkId` | `control`, `observe` | web + mcp | identity-keyed |
+| `swarm.stop` | `swarmId`, `participantId`, `reason`, `idempotencyKey` | `emergency_stop`, `observe` | web + mcp | `idempotencyKey`, reconcilable |
+
+**`swarm.update` kinds (closed set, 10).** Every domain change a caller may name; the payload
+fields each kind requires of the caller are read from the payload schemas
+(`impl/src/swarm-event-schemas.mjs`).
+
+| Kind | Where it lands | Caller-required payload fields |
+|---|---|---|
+| `swarm.group_updated` | recorded by the coordination store and replayed by the fold | `groupId`, `members` |
+| `swarm.work_updated` | recorded by the coordination store and replayed by the fold | `workId` |
+| `swarm.assignment_updated` | recorded by the coordination store and replayed by the fold | `assignmentId`, `participantId`, `workId`, `status` |
+| `swarm.coupling_updated` | recorded by the coordination store and replayed by the fold | `couplingId`, `coupling`, `action` |
+| `swarm.holder_released` | expanded by the runtime into the events it names | `participantId` |
+| `swarm.context_updated` | recorded by the coordination store and replayed by the fold | `key`, `body` |
+| `swarm.contribution_recorded` | recorded by the coordination store and replayed by the fold | — |
+| `swarm.contribution_reviewed` | recorded by the coordination store and replayed by the fold | `contributionId`, `decision` |
+| `swarm.participant_left` | recorded by the coordination store and replayed by the fold | — |
+| `swarm.closed` | recorded by the coordination store and replayed by the fold | — |
+
+**Runtime-owned driver kinds (never caller-submittable, 4).** The operation lifecycle and refusal rows the runtime
+records for itself, disjoint from the caller-submittable set above:
+
+- `swarm.operation_requested`
+- `swarm.operation_completed`
+- `swarm.operation_unavailable`
+- `swarm.operation_refused`
+
+**Permissions (closed set, 7).** `read`, `communicate`, `contribute`, `review`, `organize`, `recruit`, `stop` — the grant vocabulary `swarm.recruit` admits and the
+runtime admission check reads (`impl/src/swarm-runtime.mjs`).
+
+**Attention kinds (closed set, 8).** Each view row is a condition that needs an act, derived by the
+runtime from durable state — never asserted by a caller:
+
+- `participant_runtime_dead`
+- `member_left_session_live`
+- `delegation_orphaned`
+- `assignment_holder_gone`
+- `group_member_gone`
+- `coupling_writer_gone`
+- `closed_with_live_participants`
+- `operation_unconfirmed`
+
+Semantics, responses and the coupling records behind these rows: [docs/39](39-swarm-runtime.md)
+and the swarm section of `impl/MCP.md`. This block is generated — do not hand-edit it.
+
+<!-- END GENERATED: swarm-family -->
+
 ---
 
 ## 8. The framework
