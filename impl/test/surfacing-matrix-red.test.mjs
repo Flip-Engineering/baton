@@ -14,8 +14,12 @@ import { projectScratchpadView } from '../src/application.mjs';
 import { mcpCombinedToolNames } from '../src/mcp-northbound.mjs';
 
 const MATRIX = Object.freeze([
-  ['run.scratchpad', 'ordinary', ['embedded', 'cli'], 'observe', 'projectScratchpadView'],
-  ['decision.list', 'ordinary', ['embedded', 'mcp', 'cli'], 'observe', 'application.decisionList'],
+  // 2026-09-14 audit (#289): the `cli` claims on run.scratchpad and decision.list were ghosts —
+  // no CLI verb reaches either projection (run.scratchpad.read is the CLI read; decision.list is
+  // the MCP reflex tool over application.decisionList). The registry now claims exactly the
+  // surfaces that serve each row, and surface-resolution.mjs proves it at the gate.
+  ['run.scratchpad', 'ordinary', ['embedded'], 'observe', 'projectScratchpadView'],
+  ['decision.list', 'ordinary', ['embedded', 'mcp'], 'observe', 'application.decisionList'],
   ['board.read', 'ordinary', ['embedded', 'mcp'], 'observe', 'boardSnapshot + projectBoardView'],
   ['board.post', 'ordinary', ['embedded', 'mcp'], 'control', 'admitBoardCommand → postBoardItem'],
   ['board.retitle', 'ordinary', ['embedded', 'mcp'], 'control', 'admitBoardCommand → retitleBoardItem'],

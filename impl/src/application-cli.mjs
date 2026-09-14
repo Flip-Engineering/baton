@@ -7,7 +7,7 @@ import {
 } from 'node:fs';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { TextDecoder } from 'node:util';
-import { APPLICATION_SEMANTIC_REGISTRY, canonicalRunPhase } from './application-semantics.mjs';
+import { APPLICATION_SEMANTIC_REGISTRY, applicationOperationAliasMap, canonicalRunPhase } from './application-semantics.mjs';
 import { parseBatonTopCli } from './baton-top.mjs';
 import { FRAME_LIMITS_DIGEST } from './limits.mjs';
 import { bindBatonPort } from './application-client.mjs';
@@ -17,36 +17,103 @@ import { publishResultExportNoReplace } from './result-export.mjs';
 
 import {
   SWARM_CLI_COMMANDS, SWARM_CLI_HELP, SWARM_COMMAND_DEFINITIONS, swarmCliCommand,
-  swarmWebAdmittedCommands,
 } from './swarm-surface.mjs';
+import { webAdmittedCommandNames } from './web-northbound.mjs';
 import { APPLICATION_COMMAND_DEFINITIONS } from './application.mjs';
-// Swarm family (docs/39-swarm-runtime.md) — a swarm verb is web-connected exactly when the shared
-// registry carries it: root spreads SWARM_COMMAND_DEFINITIONS into APPLICATION_COMMAND_DEFINITIONS
-// and the web lane admits every row flagged `web`. The whitelist therefore derives through the same
-// projection the web bus uses, so the CLI whitelist, the web admission, and the conformance card
-// stay ONE derivation instead of three lists that can disagree (the closure audit demands exactly
-// that agreement; before the spread the family contributes zero names here).
-const SWARM_CLI_WEB_COMMANDS = swarmWebAdmittedCommands(APPLICATION_COMMAND_DEFINITIONS);
-
-export const CLI_WEB_COMMANDS = new Set([
-  'application.help',
-  'runs.list',
-  'run.start', 'run.inspect', 'run.episode', 'run.workstreams',
-  'run.workstream.notify', 'run.workstream.stop', 'run.act',
-  'run.status', 'run.follow', 'run.recover', 'run.approve', 'run.wait', 'run.answer',
-  'run.stop', 'run.evidence', 'run.adopt', 'run.retry_verification',
-  'run.resume_work', 'run.review', 'run.integrate', 'run.export',
-  // S-1 v2: portable atomic attach-and-harvest; #132 D4 adds the two CLI read verbs the client
-  // dispatches over the web envelope (waves.list/waves.progress, admitted at the port as direct
-  // commands — web-northbound.mjs WEB_DIRECT_PORT_COMMANDS).
-  'waves.attach', 'waves.start', 'waves.list', 'waves.progress', 'waves.send', 'waves.stop', 'waves.run', 'waves.compile',
-  // Facade-projection epic (#87+#48, contract v2.2): the eight workflow-surface command names.
-  'run.message.send', 'run.message.receipt', 'run.attention.watch',
-  'run.scratchpad.read', 'run.scratchpad.elevate', 'run.board.post', 'run.board.read',
-  'run.knowledge.seed',
-  // Swarm family: gated on the shared-registry spread above (see SWARM_CLI_WEB_COMMANDS).
-  ...SWARM_CLI_WEB_COMMANDS,
+// TWO derived tiers, one declaration each (2026-09-14 audit, U-N5/U-E6):
+//
+//   CLI_DISPATCH_TRANSPORTS — the CLI's dispatch authority: every canonical operation whose
+//     application-command transport (its key, an `application.commands` alias, or its legacy
+//     dispatch alias) the resident's web bus admits. This is what `command()` gates on, so a tool
+//     the resident advertises can never be refused by the client's own list (U-E6:
+//     baton_run_scratchpad_append was advertised over the bridge and refused here).
+//
+//   CLI_WEB_COMMANDS — the same set projected onto the resident's WIRE CARD: the application
+//     command table the card carries plus the direct ports the surface-divergence ledger
+//     documents (scripts/surface-divergence-ledger.json, the eight facade ports of #87+#48 and
+//     waves.compile of #170). The surface conformance, the parity matrix and CLI.md pin this
+//     projection, so it stays the byte-stable card view while dispatch follows the bus.
+function cliDispatchTransports() {
+  const admitted = new Set(webAdmittedCommandNames());
+  const dispatchAliases = applicationOperationAliasMap();
+  const names = new Set();
+  for (const operation of APPLICATION_SEMANTIC_REGISTRY.canonicalOperations) {
+    const candidates = new Set([operation.key]);
+    // Several application spellings can resolve to ONE canonical operation (run.view carries
+    // run.inspect, run.episode, run.status and run.wait); each is a served transport.
+    for (const alias of APPLICATION_SEMANTIC_REGISTRY.surfaceAliases) {
+      if (alias.surface === 'application.commands' && alias.canonical === operation.key) {
+        candidates.add(alias.name);
+      }
+    }
+    if (Object.hasOwn(dispatchAliases, operation.key)) candidates.add(dispatchAliases[operation.key]);
+    for (const candidate of candidates) {
+      if (admitted.has(candidate) || admitted.has(candidate.replaceAll('.', '_'))) names.add(candidate);
+    }
+  }
+  return names;
+}
+const CLI_DISPATCH_TRANSPORTS = Object.freeze([...cliDispatchTransports()].sort());
+// The transports the resident's WIRE CARD covers beyond the application command table: the six
+// wave direct ports (the same set surface-conformance.mjs pins as WAVE_DIRECT_PORT_VERBS and the
+// docs call the web.bus card) and the direct ports whose divergence from that projection the
+// ledger documents (the eight facade ports of #87+#48 plus waves.compile of #170). The gate
+// asserts the ledger's cli rows and this list agree.
+const CLI_CARD_WAVE_PORTS = Object.freeze([
+  'waves.list', 'waves.progress', 'waves.run', 'waves.send', 'waves.start', 'waves.stop',
 ]);
+const CLI_CARD_LEDGERED_PORTS = Object.freeze([
+  'run.message.send', 'run.message.receipt', 'run.attention.watch', 'run.scratchpad.read',
+  'run.scratchpad.elevate', 'run.board.post', 'run.board.read', 'run.knowledge.seed',
+  'waves.compile',
+]);
+export const CLI_WEB_COMMANDS = new Set(CLI_DISPATCH_TRANSPORTS.filter((name) => (
+  (Object.hasOwn(APPLICATION_COMMAND_DEFINITIONS, name)
+    && APPLICATION_COMMAND_DEFINITIONS[name].web === true)
+  || CLI_CARD_WAVE_PORTS.includes(name)
+  || CLI_CARD_LEDGERED_PORTS.includes(name)
+)));
+/** The CLI's dispatch authority: the canonical operation transports the resident's web bus
+ * admits (a superset of the wire card projection the docs pin). */
+export function cliDispatchCommandNames() {
+  return [...CLI_DISPATCH_TRANSPORTS];
+}
+const CLI_DISPATCH_ALIASES = applicationOperationAliasMap();
+/** The bus command a CLI dispatch name resolves to: the name itself when the bus admits it, else
+ * the legacy transport its canonical spelling dispatches (`run watch` → run.follow). */
+export function cliBusCommand(name) {
+  if (CLI_DISPATCH_TRANSPORTS.includes(name)) return name;
+  const legacy = CLI_DISPATCH_ALIASES[name];
+  return typeof legacy === 'string' && CLI_DISPATCH_TRANSPORTS.includes(legacy) ? legacy : name;
+}
+/** The cursor a paged list response names, or null when the server served the whole list. ONE
+ * spelling across the run lane: the response's `continuation.arguments.continuationCursor` (the
+ * same field the registry's run.list row accepts), with the older flattened field still read so a
+ * resident of the previous incarnation keeps working. */
+export function listContinuationCursor(result) {
+  const fromContinuation = result?.continuation?.arguments?.continuationCursor;
+  if (typeof fromContinuation === 'string' && fromContinuation.length > 0) return fromContinuation;
+  const flattened = result?.continuationCursor;
+  return typeof flattened === 'string' && flattened.length > 0 ? flattened : null;
+}
+
+/** Advance one page: the cursor must move forward, or the server is repeating a page and the
+ * client refuses typed instead of looping (a progress-derived termination, never a page count). */
+export function advanceListPage(pageArgs, previousCursor, nextCursor, name) {
+  if (previousCursor !== null && nextCursor === previousCursor) {
+    throw cliError(`Baton Web repeated a ${name} continuation cursor (${nextCursor})`, 'cli_protocol_failed');
+  }
+  return { pageArgs: { ...pageArgs, continuationCursor: nextCursor }, cursor: nextCursor };
+}
+/** True when the CLI may dispatch this transport over the resident bus. */
+export function cliDispatches(name) {
+  return CLI_DISPATCH_TRANSPORTS.includes(name);
+}
+// Host-local CLI command ports: names the CLI dispatches in-process (or through its convergence
+// wrapper's host-local capability path) rather than over the resident web envelope. `run.debug`
+// is the CS-3 host-local verb; the set is the resolution witness for a canonical row claiming
+// the cli surface without a web transport (surface-resolution.mjs).
+export const HOST_LOCAL_CLI_COMMANDS = new Set(['run.debug']);
 // CS-2 (control-surface v2): the five web-admitted verbs (run.episode, run.workstreams,
 // run.workstream.notify, run.workstream.stop; run.result folds to run.episode) join the
 // CLI web-client whitelist. Host-local-only verbs stay out: run.debug (CS-3) and
@@ -1540,11 +1607,21 @@ export function projectBatonCliResult(parsed, result) {
   return Object.freeze(compact);
 }
 
-// #160 R6 (F8, error-actionability-2026-08-13/contract-fold.md §2 F8/R6): the run-branch facade
-// nouns handled in the earlier `if (action === '<noun>')` dispatch windows. Kept as an ARRAY (not
-// a `new Set([...])` literal) so the maximal-set source-scan in the CLI-parser suite's
-// extractLifecycleVerbs still resolves to the lifecycleActions set, never this one.
-const RUN_FACADE_VERBS = Object.freeze(['message', 'attention', 'scratchpad', 'board', 'knowledge']);
+// The run-branch facade nouns (message, attention, scratchpad, board, knowledge) handled in the
+// earlier `if (action === '<noun>')` dispatch windows. Declared as a Set literal? No: the
+// CLI-parser suite's maximal-set source-scan (extractLifecycleVerbs) takes the LARGEST all-lowercase
+// `new Set([...])` literal in this file as the lifecycle verb set, so this one stays an ARRAY.
+const FACADE_NOUNS = [
+  'message', 'attention', 'scratchpad', 'board', 'knowledge',
+];
+// The canonical alias first-tokens that are not otherwise recognized: the spellings
+// APPLICATION_SEMANTIC_REGISTRY.aliases.cli rewrites (`run view` → run show, `run list` → runs
+// list, `run member …` → the workstream verbs). Seeding the guard with them is what makes the
+// typo detector see the CANONICAL verbs (2026-09-14 audit, U-F15): `baton run vew` is a typo of
+// `view`, which the guard previously could not recognize because the rewrite happens first.
+const ALIAS_FIRST_TOKENS = [
+  'view', 'list', 'member',
+];
 
 // Optimal-string-alignment Damerau-Levenshtein distance (adjacent transpositions count as 1). Used
 // ONLY to tell a typo'd run verb from a plain objective: `run deploy` (distance-1 from zero verbs)
@@ -1568,17 +1645,75 @@ function damerauLevenshteinDistance(a, b) {
   return dp[m][n];
 }
 
-// R6 (F8): returns the cli_command_unavailable refusal message when `action` is a single-token
-// distance-1 typo of EXACTLY ONE recognized first-token; null otherwise (objective-first start).
-// The message names the closed live verb set (excluding the refused-only follow/steer/member), so
-// the caller is taught the real verbs — never a silent run.start reinterpretation.
-function cliRunVerbTypoRefusal(action, lifecycleActions) {
-  if (typeof action !== 'string' || action.length === 0 || /\s/u.test(action)) return null;
-  const recognized = new Set([...lifecycleActions, ...RUN_FACADE_VERBS, 'start', 'follow']);
-  const neighbors = [...recognized].filter((verb) => verb !== action && damerauLevenshteinDistance(action, verb) <= 1);
-  if (neighbors.length !== 1) return null;
-  const closedLiveVerbs = [...recognized].filter((verb) => !['follow', 'steer', 'member'].includes(verb)).sort();
-  return `unknown run verb ${action}; expected ${closedLiveVerbs.join(', ')}`;
+// The four-way rule (contract D2) for the first token after `baton run`:
+//   1. an exact verb dispatches (the caller never reaches here);
+//   2. the bare/unknown-sub `member` prefix refuses with its subverb teaching message;
+//   3. a token distance-1 from EXACTLY ONE recognized first-token refuses with that verb's
+//      suggestion — Damerau (adjacent transposition = 1), never a guess between candidates;
+//   4. a token in the verb position with a Run-shaped identifier appended refuses naming the
+//      VERB, never the identifier (2026-09-14 audit, U-E8: `baton run cancel run:1` used to
+//      blame the run id);
+//   otherwise the token stays an objective: `baton run "Ship it"` is the documented start form
+//   and this seam never reinterprets it.
+function cliRunVerbRefusal(action, recognized, next) {
+  const single = typeof action === 'string' && action.length > 0 && !/\s/u.test(action);
+  if (single && action === 'member') {
+    return {
+      message: 'run member needs a subverb: expected run member view, send, stop, or interrupt',
+      code: 'cli_command_unavailable',
+    };
+  }
+  const neighbors = single
+    ? [...recognized].filter((verb) => verb !== action && damerauLevenshteinDistance(action, verb) <= 1)
+    : [];
+  if (neighbors.length === 1) {
+    const verb = neighbors[0];
+    if (verb === 'follow') {
+      return {
+        message: 'follow is not shipped by the Run application; use run start OBJECTIVE to begin, or run status RUN_ID to read a Run',
+        code: 'cli_command_unavailable',
+      };
+    }
+    if (verb === 'steer') {
+      return {
+        message: 'steer was deleted at the M5 alias sunset; use run send RUN_ID TEXT, or run start OBJECTIVE to begin',
+        code: 'cli_command_unavailable',
+      };
+    }
+    if (verb === 'member') {
+      return {
+        message: 'run member needs a subverb: expected run member view, send, stop, or interrupt',
+        code: 'cli_command_unavailable',
+      };
+    }
+    const suggestion = verb === 'attention' ? 'attention watch' : verb;
+    return {
+      message: `${unknownRunVerb(action, recognized)} — did you mean 'run ${suggestion}'? Use run start OBJECTIVE to begin a new Run.`,
+      code: 'cli_command_unavailable',
+    };
+  }
+  if (neighbors.length > 1) return null; // ambiguous: the parser never guesses between candidates
+  // A bare unknown token is an objective (`baton run deploy`). A Run-shaped identifier in the
+  // second position means the caller was writing a verb, not an objective.
+  if (single && isRunShapedIdentifier(next)) {
+    return {
+      message: `${unknownRunVerb(action, recognized)}; a Run identifier follows, so this was read as a verb`,
+      code: 'cli_command_unavailable',
+    };
+  }
+  return null;
+}
+
+// The Run identities the CLI itself mints (`run:<uuid>`, `run:1`) and the ids a caller may paste:
+// an identifier carrying the `run:` scheme, or any token that cannot be an objective word.
+function isRunShapedIdentifier(token) {
+  return typeof token === 'string' && /^run:[A-Za-z0-9._:-]{1,256}$/u.test(token);
+}
+
+/** The refusal's verb clause: the closed live verb set, so the caller is taught the real verbs. */
+function unknownRunVerb(action, recognized) {
+  const taught = [...recognized].filter((verb) => !['follow', 'steer', 'member'].includes(verb)).sort();
+  return `unknown run verb ${action}; expected ${taught.join(', ')}`;
 }
 
 function parseStart(args, objective, idempotencyKey, resultIntent = 'change') {
@@ -2285,6 +2420,29 @@ export function parseBatonCli(rawArgs) {
         idempotencyKey,
       };
     }
+    // #158 (H2.1) / 2026-09-14 audit U-E6+U-G5: the shared-scratchpad WRITE verb. The registry
+    // taught `baton run scratchpad append RUN_ID --scope shared --kind note --body TEXT` while no
+    // parser branch existed, so the row was advertised on the CLI surface and refused by it. The
+    // body is text, or JSON when it parses (the canonical schema admits string/object/array).
+    if (sub === 'append') {
+      const runIdValue = id(args.shift(), 'Run ID');
+      const scope = take(args, '--scope', { required: true });
+      const kind = take(args, '--kind');
+      const bodyRaw = take(args, '--body', { required: true });
+      noRemainder(args);
+      if (!/^(?:shared|worker:[A-Za-z0-9._:-]{1,256})$/u.test(scope ?? '')) throw cliError('--scope must be shared or worker:ID');
+      if (kind !== null && !['note', 'plan', 'doubt', 'link'].includes(kind)) throw cliError('--kind must be note|plan|doubt|link');
+      if (!nonempty(bodyRaw)) throw cliError('--body is required');
+      let body = bodyRaw;
+      if (/^\s*[\[{]/u.test(bodyRaw)) {
+        try { body = JSON.parse(bodyRaw); } catch { throw cliError('--body must be text or JSON'); }
+      }
+      return {
+        kind: 'command', name: 'run.scratchpad.append',
+        args: { runId: runIdValue, scope, ...(kind === null ? {} : { kind }), body },
+        idempotencyKey,
+      };
+    }
     if (sub === 'elevate') {
       const runIdValue = id(args.shift(), 'Run ID');
       const taskId = take(args, '--task', { required: true });
@@ -2367,16 +2525,21 @@ export function parseBatonCli(rawArgs) {
     'send', 'interrupt', 'progress', 'events', 'output', 'episode', 'workstreams', 'notify', 'result',
     'stop', 'evidence', 'adopt', 'select', 'feedback', 'revise', 'stop-member',
     'retry', 'resume', 'review', 'integrate', 'export', 'debug']);
+  // The closed first-token set (contract D1): the lifecycle dispatch set, the facade nouns, the
+  // start/follow spellings, and the canonical alias first-tokens. Composed by spread — never a
+  // hand-enumerated literal — so it tracks the dispatch set it guards.
+  const RUN_RECOGNIZED_FIRST_TOKENS = Object.freeze([...new Set([
+    ...lifecycleActions, ...FACADE_NOUNS, 'start', 'follow', ...ALIAS_FIRST_TOKENS,
+  ])]);
   if (!lifecycleActions.has(action)) {
-    // #160 R6 (F8, error-actionability-2026-08-13/contract-fold.md §2 F8): an unknown run verb is
-    // never silently reinterpreted as a Run objective — a single-token distance-1 typo of exactly
-    // one recognized first-token refuses cli_command_unavailable with the closed verb set (mirror
-    // the waves branch). A token distance-1 from zero (a plain objective like `run deploy`) or from
-    // two-or-more (ambiguous — the parser never guesses) keeps the objective-first start.
-    const typoRefusal = cliRunVerbTypoRefusal(action, lifecycleActions);
-    if (typoRefusal !== null) throw cliError(typoRefusal, 'cli_command_unavailable');
+    // #160 R6 (F8) / 2026-09-14 audit U-E8+U-F15: an unknown run verb is NEVER silently
+    // reinterpreted as a Run objective. The recognized set is the lifecycle dispatch set plus the
+    // facade nouns, the start/follow spellings and the canonical alias first-tokens (view, list,
+    // member) — the same set the source-scan derivation in the parser suite recomputes.
+    const refusal = cliRunVerbRefusal(action, RUN_RECOGNIZED_FIRST_TOKENS, args[0]);
+    if (refusal !== null) throw cliError(refusal.message, refusal.code);
+    return parseStart(args, action, idempotencyKey, 'change');
   }
-  if (!lifecycleActions.has(action)) return parseStart(args, action, idempotencyKey, 'change');
   const runId = id(args.shift(), 'Run ID');
   if (action === 'episode' || action === 'result') {
     const topic = action === 'result' ? 'result'
@@ -2834,19 +2997,25 @@ export class BatonWebClient {
   }
 
   async command(name, args, idempotencyKey = randomUUID()) {
-    if (!CLI_WEB_COMMANDS.has(name)) throw cliError(`unsupported Run command ${name}`, 'cli_command_unavailable');
+    // The canonical grammar spelling resolves to the bus command it dispatches (`run watch` →
+    // run.follow, `run view` → run.inspect): admission and the wire envelope carry the transport
+    // the resident serves, never a canonical name the resident does not know.
+    const bus = cliBusCommand(name);
+    if (!cliDispatches(bus)) throw cliError(`unsupported Run command ${name}`, 'cli_command_unavailable');
     id(idempotencyKey, 'idempotency key');
-    const command = name.replaceAll('.', '_');
-    const runId = name === 'run.start' ? args.intent.runId ?? null : args.runId;
-    // #227 bounded list continuation: a server-side continuation refusal names its cursor;
-    // the client drains pages (bounded, ≤64) instead of throwing. List verbs become usable
-    // at fleet scale. Non-refusal errors propagate untouched.
+    const command = bus.replaceAll('.', '_');
+    const runId = bus === 'run.start' ? args.intent.runId ?? null : args.runId;
+    // List continuation (2026-09-14 audit, U-E10/U-I9): the server pages by its own byte ceiling
+    // and names the cursor in the response's `continuation`; the client drains pages until the
+    // server stops naming one. The loop ends on the SERVER's signal plus a progress check (the
+    // cursor must advance, or the server is broken and the client refuses typed) — never on a
+    // client-side page count.
     const LIST_CONTINUATION = new Set(['runs.list', 'waves.list']);
-    const MAX_CONTINUATION_PAGES = 64;
-    if (LIST_CONTINUATION.has(name)) {
+    if (LIST_CONTINUATION.has(bus)) {
       let pageArgs = { ...args };
       let drained = [];
-      for (let page = 0; page < MAX_CONTINUATION_PAGES; page += 1) {
+      let cursor = null;
+      for (;;) {
         const envelope = {
           schemaVersion: 1, commandId: randomUUID(), idempotencyKey, command, args: pageArgs,
           repoId: this.repoId, origin: this.origin,
@@ -2855,30 +3024,24 @@ export class BatonWebClient {
         try {
           body = await this._json('/v1/commands', {
             method: 'POST', headers: this._headers(true), body: JSON.stringify(envelope),
-          }, this._requestTimeoutForCommand(name, pageArgs));
+          }, this._requestTimeoutForCommand(bus, pageArgs));
         } catch (error) {
           const pending = await this._pendingReceiptOrNull(name, pageArgs, envelope, error);
           if (pending !== null) throw pending;
-          const cursor = error?.continuationCursor ?? error?.detail?.continuationCursor ?? null;
-          if (error?.code !== 'application_run_list_continuation_required' || cursor === null) throw error;
-          pageArgs = { ...pageArgs, continuationCursor: cursor };
+          // A resident of an older incarnation pages by refusing with the cursor it wants.
+          const next = error?.continuationCursor ?? error?.detail?.continuationCursor ?? null;
+          if (error?.code !== 'application_run_list_continuation_required' || next === null) throw error;
+          ({ pageArgs, cursor } = advanceListPage(pageArgs, cursor, next, name));
           continue;
         }
-        if (body.status === 'admitted') {
-          const result = await this.reconcile(envelope.commandId);
-          const items = result?.items ?? [];
-          drained = drained.concat(items);
-          if (result?.continuationCursor === undefined) return { ...result, items: drained };
-          pageArgs = { ...pageArgs, continuationCursor: result.continuationCursor };
-          continue;
-        }
-        const result = body.result ?? body;
-        const items = result?.items ?? [];
-        drained = drained.concat(items);
-        if (result?.continuationCursor === undefined) return { ...result, items: drained };
-        pageArgs = { ...pageArgs, continuationCursor: result.continuationCursor };
+        const result = body.status === 'admitted'
+          ? await this.reconcile(envelope.commandId)
+          : (body.result ?? body);
+        drained = drained.concat(result?.items ?? []);
+        const next = listContinuationCursor(result);
+        if (next === null) return { ...result, items: drained };
+        ({ pageArgs, cursor } = advanceListPage(pageArgs, cursor, next, name));
       }
-      throw cliError('list continuation exceeded the bounded page budget', 'cli_continuation_exhausted');
     }
     const envelope = {
       schemaVersion: 1, commandId: randomUUID(), idempotencyKey, command, args,

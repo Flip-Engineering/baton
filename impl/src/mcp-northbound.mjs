@@ -926,12 +926,34 @@ export function swarmApplicationToolDefinitions(definitions = APPLICATION_COMMAN
 
 const SWARM_APPLICATION_TOOL_DEFINITIONS = Object.freeze(swarmApplicationToolDefinitions());
 
+// 2026-09-14 audit (U-F7): an alias pair carries DISTINCT descriptions, so a model can tell the
+// canonical spelling from the retained one instead of seeing two identically-described tools. The
+// note derives from the sibling table (one declaration), never retyped per tool.
+const SIBLING_DOT_NAMES = new Map(CANONICAL_ORDINARY_SIBLINGS.map((sibling) => [sibling.legacyTool, sibling.tool]));
+const SIBLING_LEGACY_NAMES = new Map(CANONICAL_ORDINARY_SIBLINGS.map((sibling) => [sibling.tool, sibling.legacyTool]));
+function withSpellingNote(tool) {
+  const canonical = SIBLING_DOT_NAMES.get(tool.name);
+  if (canonical !== undefined) {
+    return Object.freeze({
+      ...tool,
+      description: `${tool.description} Retained legacy spelling of the same operation; the canonical name is ${canonical}.`,
+    });
+  }
+  const legacy = SIBLING_LEGACY_NAMES.get(tool.name);
+  if (legacy !== undefined) {
+    return Object.freeze({
+      ...tool,
+      description: `${tool.description} Canonical spelling of ${legacy} — one operation, reachable under either name.`,
+    });
+  }
+  return tool;
+}
 const ORDINARY_APPLICATION_TOOL_DEFINITIONS = Object.freeze([
-  ...LEGACY_ORDINARY_APPLICATION_TOOL_DEFINITIONS,
+  ...LEGACY_ORDINARY_APPLICATION_TOOL_DEFINITIONS.map(withSpellingNote),
   ...SWARM_APPLICATION_TOOL_DEFINITIONS,
   ...CANONICAL_ORDINARY_SIBLINGS.map((sibling) => {
     const base = LEGACY_ORDINARY_APPLICATION_TOOL_DEFINITIONS.find((tool) => tool.name === sibling.legacyTool);
-    return Object.freeze({ ...base, name: sibling.tool });
+    return withSpellingNote(Object.freeze({ ...base, name: sibling.tool }));
   }),
 ]);
 // Issue #233: the canonical dot-name twins of every advertised application tool. A dot twin is
@@ -1099,6 +1121,18 @@ const EXPLICIT_TOOL_COMMANDS = Object.freeze({
  * method (doctor) or the kernel. One lookup serves the host's advertisement filter and the gate. */
 export function commandForTool(name) {
   return APPLICATION_TOOL[name] ?? EXPLICIT_TOOL_COMMANDS[name] ?? null;
+}
+/** The advertised-tool → dispatched-command pairs (the ordinary table's derived names, the
+ * explicit direct-port tools, and the canonical dot twins): the surface-resolution witness for
+ * a registry row that claims the mcp surface (surface-resolution.mjs). */
+export function mcpToolCommandPairs() {
+  return Object.freeze([...new Set([
+    ...Object.entries(APPLICATION_TOOL),
+    ...Object.entries(EXPLICIT_TOOL_COMMANDS),
+  ].map(([tool, command]) => `${tool}\0${command}`))].map((row) => {
+    const [tool, command] = row.split('\0');
+    return Object.freeze({ tool, command });
+  }));
 }
 const TOOL_DEFINITIONS = Object.freeze([...ORDINARY_APPLICATION_TOOL_DEFINITIONS, ...APPLICATION_TOOL_DEFINITIONS, ...CANONICAL_DOT_TOOL_DEFINITIONS, ...ADVANCED_TOOL_DEFINITIONS, ...REFLEX_TOOL_DEFINITIONS]);
 

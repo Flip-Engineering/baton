@@ -4883,7 +4883,7 @@
         {
           "name": "_buildWorkflowView",
           "ordinal": 0,
-          "size": 410,
+          "size": 414,
           "seam": "observation",
           "evidence": [
             "observation:projection_name",
@@ -4893,7 +4893,7 @@
         {
           "name": "_buildView",
           "ordinal": 0,
-          "size": 447,
+          "size": 450,
           "seam": "recovery",
           "evidence": [
             "recovery:reconcile_call",
@@ -5260,7 +5260,7 @@
         {
           "name": "_semanticActions",
           "ordinal": 0,
-          "size": 195,
+          "size": 185,
           "seam": "observation",
           "evidence": [
             "observation:durable_read"
@@ -5278,7 +5278,7 @@
         {
           "name": "_finalizeSemanticInspection",
           "ordinal": 0,
-          "size": 8,
+          "size": 16,
           "seam": "surface",
           "evidence": [
             "surface:no_authority_touched"
@@ -5423,7 +5423,7 @@
         {
           "name": "_historicalProfileInspection",
           "ordinal": 0,
-          "size": 181,
+          "size": 196,
           "seam": "observation",
           "evidence": [
             "observation:read_name"
@@ -5432,7 +5432,7 @@
         {
           "name": "inspect",
           "ordinal": 0,
-          "size": 304,
+          "size": 309,
           "seam": "surface",
           "evidence": [
             "observation:durable_read",
@@ -5734,7 +5734,7 @@
         {
           "name": "listRuns",
           "ordinal": 0,
-          "size": 101,
+          "size": 113,
           "seam": "surface",
           "evidence": [
             "observation:read_name",
@@ -5754,7 +5754,7 @@
         {
           "name": "act",
           "ordinal": 0,
-          "size": 272,
+          "size": 275,
           "seam": "surface",
           "evidence": [
             "recovery:reconcile_call",

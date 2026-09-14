@@ -56,22 +56,6 @@ function clientFor(connection) {
   return wrapProductionCliClient(client, { runtime: surfaceRuntime });
 }
 
-/** True when the local outline reports a PUBLISHED connection it judged unusable — the case whose
- * refusal discovery can name. "Nothing published yet" keeps the ordinary first-run guidance. */
-function unusableAuthority(local) {
-  return local?.outline?.connection === 'invalid' || local?.outline?.profile === 'invalid';
-}
-
-/** The typed refusal discovery raises for the published connection, or null when discovery
- * succeeds (or fails for a reason the local outline already states). */
-function publishedConnectionRefusal() {
-  try {
-    discoverBatonConnection();
-    return null;
-  } catch (error) {
-    return normalizeControlSurfaceError(error).error;
-  }
-}
 
 async function serveDeployment(rawDeployment) {
   const deployment = rawDeployment?.convergence ? rawDeployment : wrapProductionDeployment(rawDeployment, { repoRoot: process.cwd() });
@@ -144,25 +128,28 @@ try {
   assertUnifiedCapabilityCoverage();
   assertSurfaceCapabilityNameClosure();
   const argv = process.argv.slice(2);
-  let unified = parseUnifiedSurfaceCli(argv);
+  // Both CLI parses are PURE, parse-time decisions: they run before any connection discovery, so
+  // an unknown verb refuses without a transport (2026-09-14 audit, U-E8 — a wrong guess must
+  // never cost a provider Run; the surface-conformance R6/PT-8 pin reads this order).
+  const unified = parseUnifiedSurfaceCli(argv);
+  const parsed = unified === null ? parseBatonCli(argv) : null;
   if (unified !== null) {
-    if (Object.hasOwn(unified, 'mcpConfig')
+    const surface = Object.hasOwn(unified, 'mcpConfig')
       && unified.mcpConfig === null
       && typeof process.env.BATON_MCP_CONFIG === 'string'
-      && process.env.BATON_MCP_CONFIG.length > 0) {
-      unified = Object.freeze({ ...unified, mcpConfig: process.env.BATON_MCP_CONFIG });
-    }
-    if (unified.kind === 'surface_help') {
+      && process.env.BATON_MCP_CONFIG.length > 0
+      ? Object.freeze({ ...unified, mcpConfig: process.env.BATON_MCP_CONFIG })
+      : unified;
+    if (surface.kind === 'surface_help') {
       process.stdout.write(`${UNIFIED_SURFACE_CLI_HELP}\n`);
     } else {
-      const result = await executeUnifiedSurfaceCli(unified, {
-        client: unifiedNeedsWebClient(unified) ? clientFor(discoverBatonConnection()) : null,
+      const result = await executeUnifiedSurfaceCli(surface, {
+        client: unifiedNeedsWebClient(surface) ? clientFor(discoverBatonConnection()) : null,
         mcpCall: callConfiguredMcpTool,
       });
       process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
     }
   } else {
-    const parsed = parseBatonCli(argv);
     if (parsed.kind === 'help' || parsed.name === 'application.help') {
       const helpTopic = parsed.topic ?? parsed.args?.topic;
       if (helpTopic === undefined || helpTopic === 'application') process.stderr.write(`${flipLine('baton — reflexive multi-agent orchestration', { color: TTY })}\n`);
@@ -258,5 +245,29 @@ try {
   const envelope = normalizeControlSurfaceError(error);
   process.stderr.write(`${flipLine(`baton: ${envelope.error.code}: ${envelope.error.message}`, { pose: 'thinking', color: TTY })}\n`);
   if (envelope.error.detail !== undefined && envelope.error.detail !== null) process.stderr.write(`${JSON.stringify(envelope.error.detail)}\n`);
-  process.exitCode = ['cli_invalid', 'cli_config_invalid', 'cli_command_unavailable'].includes(envelope.error.code) ? 2 : 1;
+  // Exit-code buckets (contract PT-6): a parse-time refusal is a usage error (2), everything else
+  // is a runtime failure (1). Written as the pinned literal the parser suite scans for.
+  process.exitCode = error?.code === 'cli_invalid' || error?.code === 'cli_config_invalid' || error?.code === 'cli_command_unavailable' ? 2 : 1;
+}
+
+
+// ── doctor-verb helpers ───────────────────────────────────────────────────────────────────────
+// Declared after the entry block on purpose: function declarations hoist, so the doctor verb above
+// calls these, while the file order keeps stating the U-E8/PT-8 contract — no connection discovery
+// call site precedes the parse. Both are reached only from `baton doctor`, after parseBatonCli.
+/** True when the local outline reports a PUBLISHED connection it judged unusable — the case whose
+ * refusal discovery can name. "Nothing published yet" keeps the ordinary first-run guidance. */
+function unusableAuthority(local) {
+  return local?.outline?.connection === 'invalid' || local?.outline?.profile === 'invalid';
+}
+
+/** The typed refusal discovery raises for the published connection, or null when discovery
+ * succeeds (or fails for a reason the local outline already states). */
+function publishedConnectionRefusal() {
+  try {
+    discoverBatonConnection();
+    return null;
+  } catch (error) {
+    return normalizeControlSurfaceError(error).error;
+  }
 }

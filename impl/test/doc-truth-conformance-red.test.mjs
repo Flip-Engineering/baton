@@ -152,7 +152,10 @@ function parserLifecycleDispatchCount() {
   const marker = 'const lifecycleActions = new Set(';
   const start = src.indexOf(marker);
   assert.ok(start >= 0, 'lifecycleActions literal present');
-  const gate = src.indexOf('if (!lifecycleActions.has(action)) return parseStart', start);
+  // 2026-09-14 audit (#289): the dispatch gate is the four-way refusal (`cliRunVerbRefusal`),
+  // which now owns the objective-first fall-through INSIDE the guard — the old naked-return anchor
+  // no longer exists. The region still ends where the lifecycle dispatch hands off.
+  const gate = src.indexOf('if (!lifecycleActions.has(action)) {', start);
   assert.ok(gate >= 0, 'lifecycle dispatch gate present');
   const region = src.slice(start, gate);
   const actions = new Set();

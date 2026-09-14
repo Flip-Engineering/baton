@@ -325,9 +325,12 @@ function residentFetch(fixture, {
   return { fetchImpl, requests };
 }
 
-test('RA1 RED: runs.list is one bounded authenticated observe operation in the application registry', () => {
+test('RA1: runs.list is one bounded authenticated observe operation in the application registry', () => {
+  // 2026-09-14 audit (#289, U-E10/U-I9): the list is PAGED — its one accepted argument is the
+  // continuation cursor this response's own `continuation` names. A caller-managed limit or an
+  // invented cursor field stays refused.
   assert.deepEqual(APPLICATION_COMMAND_DEFINITIONS['runs.list'], {
-    args: [],
+    args: ['continuationCursor'],
     capabilities: ['observe'],
     web: true,
     mcp: true,
@@ -338,7 +341,9 @@ test('RA1 RED: runs.list is one bounded authenticated observe operation in the a
     inputSchema: {
       type: 'object',
       additionalProperties: false,
-      properties: {},
+      properties: {
+        continuationCursor: { type: 'string', minLength: 1, maxLength: 32, pattern: '^[0-9]+$' },
+      },
       required: [],
     },
     helpTopic: 'runs',
@@ -348,6 +353,7 @@ test('RA1 RED: runs.list is one bounded authenticated observe operation in the a
   assert.equal(APPLICATION_SEMANTIC_REGISTRY.defaultOperations.includes('runs.list'), true);
 
   assert.equal(validateApplicationCommandArgs('runs.list', {}), true);
+  assert.equal(validateApplicationCommandArgs('runs.list', { continuationCursor: '64' }), true);
   for (const invalid of [
     { limit: 1 }, { cursor: 'caller-managed-page' }, { receiptCursor: 12 },
   ]) {
@@ -890,7 +896,7 @@ test('RA11 RED: BatonWebClient refuses redirect/URL ambiguity and bounds declare
   });
 });
 
-test('RA12 RED: unauthorized Runs do not consume the 64-visible-Run response ceiling', async (t) => {
+test('RA12: unauthorized Runs never consume a response page — the 65th visible Run stays readable', async (t) => {
   const hiddenRunId = 'run-phase89-ceiling-hidden';
   let revealHidden = false;
   const fixture = applicationFixture('authorization-ceiling', {
@@ -918,12 +924,16 @@ test('RA12 RED: unauthorized Runs do not consume the 64-visible-Run response cei
   );
   assert.equal(visible.items.some(({ id }) => id === hiddenRunId), false);
 
+  // 2026-09-14 audit (#289, U-E10): an unauthorized Run costs a page slot only when it is visible;
+  // nothing about the 65th visible Run refuses — the list pages by its byte ceiling and names the
+  // cursor the caller hands back (here the page holds the whole list, so the cursor is null).
   revealHidden = true;
-  await assert.rejects(
-    fixture.application.command('runs.list', {}, owner),
-    (error) => error?.code === 'application_run_list_continuation_required',
-    'the same durable state fails only when 65 Runs are visible to this principal',
-  );
+  const projected = await fixture.application.command('runs.list', {}, owner);
+  assert.equal(projected.items.length, 65, 'the 65th visible Run is readable');
+  assert.equal(projected.continuation, null, 'a page that fits the byte ceiling names no continuation');
+  const resumed = await fixture.application.command('runs.list', { continuationCursor: '0' }, owner);
+  assert.deepEqual(resumed.items.map(({ id }) => id), projected.items.map(({ id }) => id),
+    'the declared cursor resumes the same list');
 });
 
 test('RA13 RED: deployment.runs.start and deployment.run share the exact route-readiness gate', async (t) => {
