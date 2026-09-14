@@ -15,6 +15,12 @@ export const SWARM_EVENT_KINDS = Object.freeze([
   'swarm.participant_left',
   'swarm.closed',
 ]);
+// Update kinds an agent names that the runtime expands into the durable kinds above instead of
+// recording as themselves: `swarm.holder_released` lands as the individual assignment/group
+// events, so the log after a release is what a hand-written sequence would have produced.
+export const SWARM_OPERATION_KINDS = Object.freeze(['swarm.holder_released']);
+/** The kinds the coordination store records and replays. */
+export const SWARM_STORE_EVENT_KINDS = Object.freeze(SWARM_EVENT_KINDS.filter((kind) => !SWARM_OPERATION_KINDS.includes(kind)));
 
 // The schema descriptions and the public kind set are one closed vocabulary: disagreeing keys are
 // a build-time error, never a silent gap in what a surface can discover.

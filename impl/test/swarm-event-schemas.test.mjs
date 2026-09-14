@@ -7,7 +7,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { SWARM_EVENT_KINDS, validateSwarmCommand } from '../src/swarm-contract.mjs';
+import { SWARM_EVENT_KINDS, validateSwarmCommand, SWARM_STORE_EVENT_KINDS } from '../src/swarm-contract.mjs';
 import { SWARM_EVENT_PAYLOAD_SCHEMAS, SWARM_EVENT_EXAMPLES, swarmEventAgentRequiredFields,
   swarmEventAutoFilledFields, swarmEventRequiredFields, swarmEventFieldExpectation,
   swarmUpdatePayloadDetails, swarmUpdatePayloadSummary } from '../src/swarm-event-schemas.mjs';
@@ -44,14 +44,15 @@ test('the payload schemas describe exactly the public swarm.update event kinds',
 });
 
 test('every shipped example is a valid store payload once the runtime injects identity', () => {
-  for (const kind of SWARM_EVENT_KINDS) {
+  // Operation kinds (swarm.holder_released) expand into durable kinds and are never recorded.
+  for (const kind of SWARM_STORE_EVENT_KINDS) {
     assert.doesNotThrow(() => validateSwarmEvent(kind, atStore(kind, SWARM_EVENT_EXAMPLES[kind])),
       `${kind} example must satisfy validateSwarmEvent`);
   }
 });
 
 test('every store-required field is real: dropping it is refused by the state validator', () => {
-  for (const kind of SWARM_EVENT_KINDS) {
+  for (const kind of SWARM_STORE_EVENT_KINDS) {
     for (const field of swarmEventRequiredFields(kind)) {
       const payload = atStore(kind, SWARM_EVENT_EXAMPLES[kind]);
       delete payload[field];
