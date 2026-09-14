@@ -204,6 +204,23 @@ export function validateSwarmEvent(kind, payload) {
       refuse('participant workspaceId must be one physical workspace identity', 'invalid_payload');
     }
     validOptionalNonEmptyString(p.runId, 'participant runId', refuse);
+    // The route and the scope the participant was RECRUITED under (issue #283): durable facts of
+    // the join, recorded once with the seat, never re-derived from a live worker that may have
+    // moved on. A route names the harness, model and effort the Run was admitted with; the scope
+    // is the path set that Run was admitted over.
+    if (p.route !== undefined && p.route !== null) {
+      if (typeof p.route !== 'object' || Array.isArray(p.route)
+        || !isNonEmptyString(p.route.harness) || !isNonEmptyString(p.route.model)
+        || !(p.route.effort === null || p.route.effort === undefined || isNonEmptyString(p.route.effort))
+        || Object.keys(p.route).some((field) => !['harness', 'model', 'effort'].includes(field))) {
+        refuse('participant route must name harness, model and effort', 'invalid_payload');
+      }
+    }
+    if (p.scope !== undefined && p.scope !== null) {
+      if (!Array.isArray(p.scope) || !p.scope.every(isNonEmptyString)) {
+        refuse('participant scope must be an array of paths', 'invalid_payload');
+      }
+    }
     if (p.permissions !== undefined) {
       if (!Array.isArray(p.permissions)) refuse('participant permissions must be an array if present', 'invalid_payload');
       if (!p.permissions.every(isNonEmptyString)) refuse('participant permissions must be non-empty strings', 'invalid_payload');
@@ -421,6 +438,12 @@ export function foldSwarmEvent(swarms, event, { admission = false } = {}) {
       participantId: p.participantId, role: p.role ?? null, parentId: p.parentId ?? null,
       runId: p.runId ?? null, permissions: p.permissions ? Object.freeze([...p.permissions]) : null,
       workspaceId: p.workspaceId ?? null,
+      // The route and scope this seat was RECRUITED under, carried by the join itself: the view
+      // projects them, so an orchestrator reading a member knows what it was started as without
+      // consulting a live worker that may since have been rebound or stopped.
+      route: p.route === undefined || p.route === null ? null
+        : Object.freeze({ harness: p.route.harness, model: p.route.model, effort: p.route.effort ?? null }),
+      scope: p.scope === undefined || p.scope === null ? null : Object.freeze([...p.scope]),
       status: 'active', leftReason: null, bindings: Object.freeze([]),
       actor: meta.actor, seq: meta.seq, ts: meta.ts,
     });

@@ -10,8 +10,14 @@
 //     deployment-provided `dispatch` (the live SwarmRuntime.command), which validates current
 //     membership, the per-event/per-command grants, and the author rules. The bridge owns NO
 //     permission model, keeps NO event allowlist of its own, and never acquires owner credentials.
-//   • Refusals: unknown/revoked tokens, cross-swarm args, and schema-invalid requests are refused
-//     at the bridge; every runtime refusal passes through verbatim (message, code, detail).
+//   • Refusals: unknown/revoked tokens, cross-swarm args, over-cap frames, and schema-invalid
+//     requests are refused at the bridge; every runtime refusal passes through verbatim (message,
+//     code, detail). Every refusal the BRIDGE raises states in its FIRST LINE that nothing was
+//     recorded and what to change, and is reported to the runtime's durable refusal lane
+//     (swarm.operation_refused) through the one channel the bridge has — `dispatch`. A refusal a
+//     participant could only learn by retrying would be invisible to its orchestrator; instead the
+//     participant's row carries it as `lastRefusal` until a later operation of the same command
+//     succeeds, and a watcher wakes on the row.
 //
 // Command admission uses swarm-contract.mjs. Runtime membership and grants govern effects.
 //
@@ -25,7 +31,12 @@
 // Frame bound: one JSON frame per direction is buffered in process memory; the byte ceiling is the
 // existing `wire.frame` substrate row from limits.mjs (the one declared registry — no re-declared
 // numbers), overridable per bridge instance with `maxFrameBytes` for smaller deployments. The
-// resource reason: this is a substrate memory guard for the bridge process, not a worker cap.
+// resource reason: this is a substrate memory guard for the bridge process, not a worker cap. An
+// over-bound ANSWER is never truncated: it is refused typed (`swarm_bridge_frame_exceeded`) with
+// the narrower view projection that MEASURABLY fits, computed by re-projecting the answer the
+// bridge already holds through the same slicer the runtime builds views with. The bound is
+// negotiated, not assumed: `issue()` publishes it to the participant's environment, and the client
+// below reads it rather than deciding a ceiling of its own.
 //
 // This module is executable as a client: `node swarm-native-bridge.mjs <swarm.command> [jsonArgs]`
 // reads BATON_SWARM_BRIDGE_URL / BATON_SWARM_BRIDGE_TOKEN from the environment so a native
@@ -39,8 +50,10 @@ import { pathToFileURL } from 'node:url';
 import { FRAME_LIMITS, composeFrameLimitRefusal } from './limits.mjs';
 
 import { SWARM_COMMAND_NAMES as SWARM_COMMANDS, SWARM_COMMAND_DEFINITIONS,
-  SWARM_COMMAND_ROWS, SWARM_COMMAND_SCHEMAS, swarmCommandFieldSummary, swarmIdentityKeyedCommand,
+  SWARM_COMMAND_ROWS, SWARM_COMMAND_SCHEMAS, SWARM_VIEW_PROJECTIONS, SWARM_BRIDGE_TRANSPORT,
+  SWARM_BRIDGE_REFUSAL_COMMAND, projectSwarmView, swarmCommandFieldSummary, swarmIdentityKeyedCommand,
   validateSwarmCommand as validateSwarmCommandArgs } from './swarm-contract.mjs';
+
 import { swarmUpdatePayloadDetails } from './swarm-event-schemas.mjs';
 export { SWARM_COMMANDS, validateSwarmCommandArgs };
 const isId = (value) => typeof value === 'string' && /^[A-Za-z0-9._:-]{1,256}$/u.test(value);
@@ -53,6 +66,7 @@ export const SWARM_BRIDGE_ENV_KEYS = Object.freeze({
   swarmId: 'BATON_SWARM_BRIDGE_SWARM_ID',
   participantId: 'BATON_SWARM_BRIDGE_PARTICIPANT_ID',
   runId: 'BATON_SWARM_BRIDGE_RUN_ID',
+  frameBytes: 'BATON_SWARM_BRIDGE_FRAME_BYTES',
 });
 const DEFAULT_FRAME_ROW = FRAME_LIMITS['wire.frame'];
 const BRIDGE_ERROR_STATUS = Object.freeze({
@@ -76,6 +90,64 @@ function scopeIdentity(field, value) {
     throw bridgeError(`Swarm bridge scope requires a usable ${field}`, 'swarm_bridge_scope_invalid', { field });
   }
   return value;
+}
+
+// ── the bridge's own refusals ────────────────────────────────────────────────────────────────────
+// A refusal the BRIDGE raises says in its FIRST LINE that nothing was recorded and what to change;
+// the runtime's own refusal follows on the next line, unchanged. Every bridge refusal is also
+// reported to the runtime's durable refusal lane (`swarm.operation_refused`), so a participant's
+// orchestrator learns about it from the swarm itself and the participant's row carries it as
+// `lastRefusal` until a later operation of the same command succeeds — a refusal a caller could
+// only learn by retrying would otherwise be invisible to everyone who needs it.
+export const SWARM_BRIDGE_NOTHING_RECORDED = 'Nothing was recorded:';
+
+/** What the caller must change, from the refusal's own rule: the closed argument vocabulary
+ * already names the field and its expectation, and the runtime's dispatch decisions ship their own
+ * `correction`. Never re-spelled per call site, so a new rule cannot land an unactionable refusal. */
+function refusalChange(detail) {
+  const field = typeof detail?.field === 'string' ? detail.field : null;
+  switch (detail?.rule) {
+    case 'unknown-field': return `remove ${field}`;
+    case 'required-field': return `add ${field} (${detail.expectation ?? 'a value'})`;
+    case 'field-predicate': return `${field} must be ${detail.expectation ?? 'a valid value'}`;
+    case 'closed-set': return `${field} must be ${detail.expectation ?? 'one of the values this command accepts'}`;
+    case 'payload-required': return `send a payload object naming ${(detail.required ?? []).join(', ')}`;
+    case 'payload-unknown-field': return `remove ${field}`;
+    case 'payload-field-required': return `add ${field} (${detail.expectation ?? 'a value'})`;
+    case 'identity-keyed': return 'drop idempotencyKey — this command takes its identity from its coordinates';
+    case 'arguments-shape': return 'send one JSON object as the request arguments';
+    case 'request-shape': return 'send one JSON object naming a command and its arguments';
+    case 'bridge-token': return 'use an active bridge token for this participant';
+    case 'bridge-method': return 'send the request as POST';
+    case 'bridge-closed': return 'the bridge is closed; no request can be admitted';
+    case 'bridge-frame': return 'ask again with a smaller projection or a narrower scope';
+    case 'bridge-scope': return 'use the swarm this bridge token is bound to';
+    default: return typeof detail?.correction === 'string' && detail.correction.length > 0
+      ? detail.correction : 'no swarm state changed';
+  }
+}
+
+/** A refusal the bridge itself raises: first line = nothing was recorded + the change to make. */
+function bridgeRefusal(message, code, detail = {}) {
+  return bridgeError(`${SWARM_BRIDGE_NOTHING_RECORDED} ${refusalChange(detail)}\n${message}`, code, detail);
+}
+
+/** The projections a caller could ask for instead, MEASURED on the response the bridge already
+ * holds — never a declared table of sizes. Each candidate is the same slice the runtime would
+ * build (one slicer, `projectSwarmView`), and only strictly smaller answers count, so the advice
+ * always makes progress. The widest answer that fits the same `wire.frame` ceiling is named. */
+function fittingProjections(view, actualBytes, maxFrameBytes, requested) {
+  if (!view || typeof view !== 'object' || !Array.isArray(view.participants)) return null;
+  const measured = [];
+  for (const projection of Object.keys(SWARM_VIEW_PROJECTIONS)) {
+    if (projection === requested) continue;
+    const bytes = Buffer.byteLength(JSON.stringify({ ok: true, result: projectSwarmView(view, projection) }), 'utf8');
+    if (bytes <= maxFrameBytes && bytes < actualBytes) measured.push({ projection, bytes });
+  }
+  if (measured.length === 0) return null;
+  measured.sort((left, right) => right.bytes - left.bytes);
+  return { narrower: measured[0].projection, bytes: measured[0].bytes,
+    measured: measured.map((row) => row.projection) };
 }
 
 function frameRow(maxFrameBytes) {
@@ -153,14 +225,40 @@ export function createSwarmNativeBridge({
     throw new TypeError('swarm bridge maxFrameBytes must be a positive safe integer');
   }
   const row = frameRow(maxFrameBytes);
-  const frameRefusal = (actual, direction) => bridgeError(
+  const frameRefusal = (actual, direction) => bridgeRefusal(
     composeFrameLimitRefusal(row, actual),
     'swarm_bridge_frame_exceeded',
     {
-      lane: row.lane, class: row.class, value: row.value, unit: row.unit, actual, direction,
+      lane: row.lane, class: row.class, value: row.value, unit: row.unit, actual, direction, rule: 'bridge-frame',
       resourceReason: 'the bridge buffers exactly one JSON frame per direction in process memory; the shared wire.frame substrate row bounds that buffer, it is not a worker cap',
     },
   );
+
+  /** Report one refusal the BRIDGE raised to the runtime's own durable refusal lane, through the
+   * one channel the bridge has (dispatch). The report is not a swarm command: `swarm-contract`
+   * asserts that verb never becomes one, so no caller can submit it, and the runtime validates the
+   * report before recording anything. A refusal the RUNTIME raised is never reported twice — it is
+   * already recorded, and the bridge only relays it. */
+  async function reportRefusal(attempt, error) {
+    if (!attempt.entry || attempt.runtimeOwned) return true;
+    const report = {
+      transport: SWARM_BRIDGE_TRANSPORT,
+      swarmId: attempt.entry.swarmId, participantId: attempt.entry.participantId, runId: attempt.entry.runId,
+      command: attempt.command, event: typeof attempt.args?.event === 'string' ? attempt.args.event : null,
+      code: typeof error?.code === 'string' && error.code.length > 0 ? error.code : null,
+      field: typeof error?.detail?.field === 'string' ? error.detail.field : null,
+      rule: typeof error?.detail?.rule === 'string' ? error.detail.rule : null,
+    };
+    if (report.code === null) return false;
+    try {
+      await dispatch({
+        command: SWARM_BRIDGE_REFUSAL_COMMAND, args: report,
+        principal: Object.freeze({ actor: attempt.entry.actor, principalId: attempt.entry.principalId, sessionId: attempt.entry.sessionId }),
+        context: Object.freeze({ runId: attempt.entry.runId, swarmId: attempt.entry.swarmId, participantId: attempt.entry.participantId }),
+      });
+      return true;
+    } catch { return false; }
+  }
 
   // Server-side capability entries hold the token DIGEST only; the raw token exists solely in
   // the issue() return value handed to the deployment for env injection.
@@ -185,53 +283,78 @@ export function createSwarmNativeBridge({
     const shown = host === '::1' ? `[${address.address}]` : address.address;
     return `http://${shown}:${address.port}/`;
   };
-  const tokenRefusal = () => bridgeError('This swarm bridge token is not active', 'swarm_bridge_token_invalid');
-
+  const tokenRefusal = () => bridgeRefusal('This swarm bridge token is not active', 'swarm_bridge_token_invalid',
+    { rule: 'bridge-token' });
   async function handle(req, res) {
-    let digest = null;
+    // What the refusal report needs about this attempt: the identity the token resolved to (null
+    // until then — a request the bridge cannot attribute is not a refusal about a participant),
+    // the command it named, and whether the RUNTIME owned the refusal.
+    const attempt = { entry: null, command: null, args: null, runtimeOwned: false };
     try {
-      if (closed) throw bridgeError('This swarm bridge is closed', 'swarm_bridge_closed');
+      if (closed) throw bridgeRefusal('This swarm bridge is closed', 'swarm_bridge_closed', { rule: 'bridge-closed' });
       if (req.method !== 'POST') {
-        throw bridgeError('Swarm bridge accepts POST command requests only', 'swarm_bridge_request_invalid', { method: req.method });
+        throw bridgeRefusal('Swarm bridge accepts POST command requests only', 'swarm_bridge_request_invalid',
+          { method: req.method, rule: 'bridge-method' });
       }
       const token = bearerToken(req.headers.authorization);
-      digest = token ? digestToken(token) : null;
+      const digest = token ? digestToken(token) : null;
       const entry = digest ? tokens.get(digest) : null;
       if (!entry) {
         throw tokenRefusal();
       }
+      attempt.entry = entry;
       const declared = Number(req.headers['content-length']);
       if (Number.isFinite(declared) && declared > maxFrameBytes) throw frameRefusal(declared, 'request');
       const raw = await readBody(req, maxFrameBytes, frameRefusal);
       if (!tokens.has(digest)) throw tokenRefusal();
       let request;
       try { request = JSON.parse(raw.toString('utf8')); } catch {
-        throw bridgeError('Swarm bridge request body must be one JSON object', 'swarm_bridge_request_invalid');
+        throw bridgeRefusal('Swarm bridge request body must be one JSON object', 'swarm_bridge_request_invalid',
+          { rule: 'request-shape' });
       }
       if (!request || typeof request !== 'object' || Array.isArray(request)) {
-        throw bridgeError('Swarm bridge request body must be one JSON object', 'swarm_bridge_request_invalid');
+        throw bridgeRefusal('Swarm bridge request body must be one JSON object', 'swarm_bridge_request_invalid',
+          { rule: 'request-shape' });
       }
       const { command, args } = request;
       if (typeof command !== 'string' || command.length === 0) {
-        throw bridgeError('Swarm bridge request must name a command', 'swarm_bridge_request_invalid');
+        throw bridgeRefusal('Swarm bridge request must name a command', 'swarm_bridge_request_invalid',
+          { rule: 'request-shape', field: 'command' });
       }
+      attempt.command = command;
+      attempt.args = args;
       // Contract admission BEFORE any runtime effect: closed key set + field predicates. This also
       // refuses identity-shaped fields — only the token table mints principal and context below.
-      validateSwarmCommandArgs(command, args);
+      // The refusal is the CONTRACT's (one validator, one vocabulary); the bridge gives it the
+      // first line every bridge refusal carries and reports it to the durable refusal lane below.
+      try {
+        validateSwarmCommandArgs(command, args);
+      } catch (error) {
+        throw bridgeRefusal(error.message, error.code ?? 'swarm_command_invalid', error.detail ?? {});
+      }
       // The token's single-swarm scope: every command whose schema names swarmId must name THIS one.
       if (SWARM_COMMAND_SCHEMAS[command].required.includes('swarmId') && args.swarmId !== entry.swarmId) {
-        throw bridgeError('This swarm bridge token is bound to another swarm', 'swarm_bridge_swarm_mismatch',
-          { requested: typeof args.swarmId === 'string' ? args.swarmId : null, authorized: entry.swarmId });
+        throw bridgeRefusal('This swarm bridge token is bound to another swarm', 'swarm_bridge_swarm_mismatch',
+          { requested: typeof args.swarmId === 'string' ? args.swarmId : null, authorized: entry.swarmId, rule: 'bridge-scope' });
       }
       // Identity is minted HERE only. Nothing in the request can choose principal or context.
       const principal = Object.freeze({ actor: entry.actor, principalId: entry.principalId, sessionId: entry.sessionId });
       const context = Object.freeze({ runId: entry.runId, swarmId: entry.swarmId, participantId: entry.participantId });
-      const result = await dispatch({ command, args, principal, context });
+      let result;
+      try {
+        result = await dispatch({ command, args, principal, context });
+      } catch (error) {
+        // A refusal the RUNTIME raised is already on the durable refusal lane; the bridge relays it
+        // verbatim and never records a second row about it.
+        attempt.runtimeOwned = true;
+        throw error;
+      }
       const payload = Buffer.from(JSON.stringify({ ok: true, result: result ?? null }), 'utf8');
-      if (payload.length > maxFrameBytes) throw frameRefusal(payload.length, 'response');
+      if (payload.length > maxFrameBytes) throw overBoundResponse(result, payload.length, args?.projection ?? null);
       sendJson(res, 200, JSON.parse(payload.toString('utf8')));
     } catch (error) {
-      const payload = errorPayload(error);
+      const refusalRecorded = await reportRefusal(attempt, error);
+      const payload = { ...errorPayload(error), ...(attempt.entry ? { refusalRecorded } : {}) };
       const status = BRIDGE_ERROR_STATUS[payload.code]
         ?? (payload.code === 'swarm_bridge_dispatch_failed' ? 500 : 422); // runtime-owned refusals pass through as 422
       const envelope = { ok: false, error: payload };
@@ -243,6 +366,30 @@ export function createSwarmNativeBridge({
         sendJson(res, status, envelope);
       }
     }
+  }
+
+  /** An over-bound RESPONSE: refused typed, with the narrower projection that FITS, measured on the
+   * answer the bridge already holds. Nothing is truncated, and no size is declared here — the
+   * ceiling is the bridge's own `wire.frame` bound and the fit is the same projection the runtime
+   * would build. With no projection that fits, the refusal says so instead of naming a false hope. */
+  function overBoundResponse(result, actualBytes, requested) {
+    const fit = fittingProjections(result, actualBytes, maxFrameBytes, requested);
+    const narrower = requested === null
+      ? 'no projection of this answer fits the ceiling'
+      : `projection ${requested} is still over the ceiling and no narrower projection fits`;
+    const advice = fit
+      ? `ask again with projection: ${fit.narrower} (${fit.bytes} bytes fits ${row.lane}/${row.class} ${row.value} ${row.unit}; measured candidates: ${fit.measured.join(', ')})`
+      : `${narrower}: narrow the read with participantId instead`;
+    return bridgeError(
+      `${SWARM_BRIDGE_NOTHING_RECORDED} ${advice}\n${composeFrameLimitRefusal(row, actualBytes)}`,
+      'swarm_bridge_frame_exceeded',
+      {
+        lane: row.lane, class: row.class, value: row.value, unit: row.unit, actual: actualBytes,
+        direction: 'response', rule: 'bridge-frame', requested,
+        fits: fit?.narrower ?? null, fitsBytes: fit?.bytes ?? null, measured: fit?.measured ?? [],
+        resourceReason: 'the bridge buffers exactly one JSON frame per direction in process memory; the shared wire.frame substrate row bounds that buffer, it is not a worker cap',
+      },
+    );
   }
 
   return Object.freeze({
@@ -275,6 +422,8 @@ export function createSwarmNativeBridge({
         [SWARM_BRIDGE_ENV_KEYS.swarmId]: swarmId,
         [SWARM_BRIDGE_ENV_KEYS.participantId]: participantId,
         [SWARM_BRIDGE_ENV_KEYS.runId]: runId,
+        // The negotiated frame ceiling, so the client buffers under the bound its own server emits.
+        [SWARM_BRIDGE_ENV_KEYS.frameBytes]: String(maxFrameBytes),
       });
       // The receipt is the non-secret correlation view for guidance and audit surfaces.
       const receipt = Object.freeze({
@@ -346,6 +495,12 @@ export async function swarmBridgeCommand({ command, args = {}, endpoint, token }
   if (typeof secret !== 'string' || secret.length === 0) {
     throw bridgeError(`Swarm bridge token is missing; set ${SWARM_BRIDGE_ENV_KEYS.token}`, 'swarm_bridge_request_invalid');
   }
+  // The ceiling the CLIENT buffers under is the one the bridge NEGOTIATED at issue time, published
+  // to this participant's environment; the registry row is the fallback for a client started
+  // without it. A client that decided its own number would reject answers its own server sends.
+  const declaredFrameBytes = Number(env[SWARM_BRIDGE_ENV_KEYS.frameBytes]);
+  const frameBytes = Number.isSafeInteger(declaredFrameBytes) && declaredFrameBytes > 0
+    ? declaredFrameBytes : DEFAULT_FRAME_ROW.value;
   let target;
   try { target = new URL(url); }
   catch { throw bridgeError('Swarm bridge endpoint URL is invalid', 'swarm_bridge_request_invalid', { endpoint: url }); }
@@ -367,9 +522,11 @@ export async function swarmBridgeCommand({ command, args = {}, endpoint, token }
     const chunks = []; let total = 0;
     response.on('data', (chunk) => {
       total += chunk.length;
-      if (total > DEFAULT_FRAME_ROW.value) {
+      if (total > frameBytes) {
         response.destroy();
-        reject(bridgeError(composeFrameLimitRefusal(DEFAULT_FRAME_ROW, total), 'swarm_bridge_frame_exceeded', { direction: 'response' }));
+        const row = frameRow(frameBytes);
+        reject(bridgeError(composeFrameLimitRefusal(row, total), 'swarm_bridge_frame_exceeded',
+          { direction: 'response', lane: row.lane, class: row.class, value: row.value, unit: row.unit, actual: total, rule: 'bridge-frame' }));
         return;
       }
       chunks.push(chunk);

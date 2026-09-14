@@ -193,7 +193,13 @@ test('the subtree view: the root and the lead see the same delegation, scoped to
   assert.deepEqual(Object.keys(alphaScope.assignments), ['as-alpha']);
   assert.deepEqual(Object.keys(alphaScope.contributions), ['contribution-alpha-1']);
   assert.deepEqual(Object.keys(alphaScope.reviews), ['contribution-alpha-1']);
-  assert.equal(alphaScope.groups.impl, undefined, 'a group the subtree does not own is out of scope');
+  // A group is a roster, scoped by the SAME intersection rule the couplings use (issue #283): the
+  // group alpha sits on is alpha's business and is shown — with the roster it really has — while a
+  // group no member of the subtree sits on is not. An EMPTY roster intersects nobody, so a group
+  // emptied by a released holder is carried by no scoped view at all.
+  await delegated.group({ groupId: 'beta-only', members: ['beta'], purpose: 'no alpha here' });
+  assert.deepEqual(alphaScope.groups.impl.members, ['alpha', 'beta'], 'a group the seat is on is in scope');
+  assert.equal(alphaScope.groups['beta-only'], undefined, 'a group the seat is not on is out of scope');
   assert.deepEqual(alphaScope.participants[0].delegation, { children: [], work: ['W-A'], complete: false });
   assert.equal(asRoot.participants.some((row) => row.participantId === 'beta'), true);
   assert.equal(alphaScope.participants.some((row) => row.participantId === 'beta'), false, 'unrelated participants are excluded');

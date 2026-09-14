@@ -38,12 +38,22 @@ const UPDATE_PERMISSIONS = Object.freeze({
   'swarm.participant_left': 'organize', 'swarm.closed': 'organize',
 });
 
+/** The bridge's refusal report verb (swarm-contract's SWARM_BRIDGE_REFUSAL_COMMAND): the runtime
+ * admits it, records the row, and no swarm command can be submitted through it. The double mirrors
+ * that admission so only the REFUSED command's absence from `calls` is asserted below. */
+const BRIDGE_REFUSAL_COMMAND = 'swarm.bridge_refusal';
+
 function createFakeSwarmRuntime() {
   const members = new Map(); // runId -> membership row
   const calls = [];
   const applied = []; // durable swarm.update effects, for author/permission truth
+  const refusals = []; // refusal rows the bridge reported for the runtime to record durably
   const dispatch = async ({ command, args, principal, context }) => {
     if (dispatch.huge) return { blob: 'x'.repeat(4096) }; // response-bound probe
+    if (command === BRIDGE_REFUSAL_COMMAND) {
+      refusals.push({ args: structuredClone(args), principal: { ...principal }, context: { ...context } });
+      return { recorded: true, code: args.code };
+    }
     calls.push({ command, args: structuredClone(args), principal: { ...principal }, context: { ...context } });
     if (command === 'swarm.create') {
       // Root runtime: a caller carrying runId context organizes within its granted swarm only.
@@ -92,7 +102,7 @@ function createFakeSwarmRuntime() {
     return { command, swarmId: args.swarmId, participantId: member.participantId };
   };
   return {
-    calls, applied, dispatch,
+    calls, applied, refusals, dispatch,
     join({ swarmId, participantId, runId, permissions = ['read', 'communicate', 'contribute'], status = 'active' }) {
       members.set(runId, { swarmId, participantId, runId, permissions, status });
     },
@@ -110,6 +120,11 @@ async function withBridge(options, fn) {
     await bridge.close();
   }
 }
+
+/** Every request the double saw that was a real swarm command — the refusal reports the bridge
+ * makes about its OWN refusals ride the runtime's durable refusal lane, and are not the refused
+ * commands reaching dispatch. */
+const dispatchedCommands = (runtime) => runtime.calls.map((call) => call.command);
 
 const post = (endpoint, token, payload, headers = {}) => new Promise((resolve, reject) => {
   const target = new URL(endpoint);
@@ -350,7 +365,13 @@ test('contract admission refuses forged identity fields and malformed args befor
     for (const command of ['run.inspect', 'system.shutdown', 'swarm.promote']) {
       await assert.rejects(call(issued, command, {}), (error) => error.code === 'swarm_command_unavailable');
     }
-    assert.equal(runtime.calls.length, 0);
+    assert.deepEqual(dispatchedCommands(runtime), [], 'no refused command reaches dispatch');
+    // Every one of those refusals is REPORTED for the runtime's durable lane instead — the bridge
+    // reports refusals it raises itself, and never a refusal the runtime already recorded.
+    assert.equal(runtime.refusals.length, 9, 'each bridge refusal is reported once');
+    assert.deepEqual([...new Set(runtime.refusals.map((row) => row.args.rule))].sort(),
+      ['closed-set', 'required-field', 'unknown-command', 'unknown-field'], 'the report names the rule that refused it');
+    assert.equal(runtime.refusals.every((row) => row.args.participantId === 'alpha'), true);
     // The mirror agrees with the exported surface.
     assert.equal(validateSwarmCommandArgs('swarm.view', { swarmId: 'swarm-1' }), true);
   });
@@ -399,7 +420,10 @@ test('cross-swarm args are refused at the bridge and dispatch never sees them', 
     await assert.rejects(call(issued, 'swarm.view', { swarmId: 'swarm-2' }),
       (error) => error.code === 'swarm_bridge_swarm_mismatch' && error.status === 403
         && error.detail.authorized === 'swarm-1' && error.detail.requested === 'swarm-2');
-    assert.equal(runtime.calls.length, 0);
+    assert.deepEqual(dispatchedCommands(runtime), [], 'the cross-swarm read never reaches dispatch');
+    assert.equal(runtime.refusals.length, 1, 'and the refusal is reported, not silent');
+    assert.deepEqual([runtime.refusals[0].args.code, runtime.refusals[0].args.rule],
+      ['swarm_bridge_swarm_mismatch', 'bridge-scope']);
   });
 });
 

@@ -168,21 +168,28 @@ export const SWARM_DRIVER_EVENT_PAYLOAD_SCHEMAS = Object.freeze({
       event: STRING('the refused swarm.update event kind — null when the command was not swarm.update', { type: 'string|null' }),
       code: STRING('the typed refusal code the caller received'),
       field: STRING('the offending request field the refusal named — null when it named none', { type: 'string|null' }),
+      rule: STRING('the admission rule that refused the request (unknown-field, required-field, field-predicate, closed-set, payload-required, identity-keyed, arguments-shape, unknown-command, bridge-frame, bridge-scope, …) — null for a refusal the domain fold raised', { type: 'string|null' }),
       participantId: STRING('the participant the refusal concerns — the caller whose mutation was refused when the refusal names nobody', { type: 'string|null' }),
     }),
     example: Object.freeze({
       swarmId: 'swarm-40e643e96fd1edcd', command: 'swarm.update', event: 'swarm.work_updated',
-      code: 'work_not_found', field: null, participantId: 'builder-a',
+      code: 'work_not_found', field: null, rule: null, participantId: 'builder-a',
     }),
   }),
 });
 
 /** One-paragraph description of a refusal row for agent-facing surfaces: what the runtime records
- * when it refuses a mutation, and what a watcher sees when it wakes on one. */
+ * when it refuses a mutation, what a watcher sees when it wakes on one, and how the row clears —
+ * the participant it names carries it as `lastRefusal` until a later operation of the same
+ * command succeeds. */
 export function swarmOperationRefusedDetails() {
   const schema = SWARM_DRIVER_EVENT_PAYLOAD_SCHEMAS['swarm.operation_refused'];
   return ['A refused mutation is recorded by the runtime itself as a swarm.operation_refused row',
     `naming ${Object.keys(schema.fields).join(', ')}; example: ${JSON.stringify(schema.example)}.`,
+    'The row is the same one for a refusal the runtime raised and for one the native bridge raised',
+    'before dispatch, so a participant learns its own refusals through the ordinary view:',
+    'its participant row carries lastRefusal {seq, command, code, field} until a later operation of',
+    'the same command succeeds.',
     'It lands as a driver record — the swarm state never folds it — and it wakes swarm.watch,',
     "whose watch.event carries kind 'driver.recorded' and payloadKind 'swarm.operation_refused'.",
     'Callers cannot submit this row: it is the runtime\'s own record of a refusal.'].join(' ');

@@ -52,8 +52,9 @@ export class SwarmNativeAccess {
 
 export const SWARM_NATIVE_GUIDANCE = [
   'Your native tools, skills, and delegation remain available. You can coordinate directly with this swarm using your own granted authority.',
-  'Run node "$BATON_SWARM_CLIENT" swarm.view to see participants, shared context, available actions, and your current permissions.',
-  'Run node "$BATON_SWARM_CLIENT" swarm.update with JSON arguments {"event":"swarm.contribution_recorded","payload":"your finding"} to publish a finding. Group, work, context, and review updates use the permitted event kinds shown by swarm.view (its `updates` and `updatePayloads` fields).',
+  'Run node "$BATON_SWARM_CLIENT" swarm.view to see participants, shared context, available actions, and your current permissions. Add "projection":"outline" (or participants, contributions, attention, guidance, workspace) to read one slice instead of the whole record — the bridge answers a view too large for its frame with the projection that fits.',
+  'Run node "$BATON_SWARM_CLIENT" swarm.update with JSON arguments {"event":"swarm.contribution_recorded","payload":"your finding"} to publish a finding. Group, work, context, and review updates use the permitted event kinds shown by swarm.view — the `updates` field lists, beside availableActions, exactly the kinds you may send now and the permission that admits each.',
   'Use swarm.guide to speak to a participant, swarm.recruit to bring in help when granted, and swarm.watch to await relevant updates. These commands use participant names; no worker, fence, pause, or approval choreography is required.',
   'The client fills your swarm identity and a per-call idempotency key. Naming that key again replays an operation that already completed; a NEW attempt needs a NEW key (only swarm.recruit and swarm.holder_released may be re-attempted under theirs). Keep the bridge credential private; never print environment variables containing tokens.',
+  'A refusal is never silent: an answer that begins "Nothing was recorded:" says what to change, and every refusal is recorded in the swarm, so your orchestrator sees it and your own participant row shows it as lastRefusal until a later operation of the same command succeeds.',
 ].join('\n\n');

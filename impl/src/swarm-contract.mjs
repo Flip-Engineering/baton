@@ -43,6 +43,85 @@ if (SWARM_DRIVER_EVENT_KINDS.some((kind) => SWARM_EVENT_KINDS.includes(kind))) {
   throw new Error('swarm driver rows must stay disjoint from the caller-submittable swarm.update event set');
 }
 
+// ── view projections ─────────────────────────────────────────────────────────────────────────────
+// One swarm record, read as the slice a caller actually needs. The vocabulary is closed and lives
+// HERE, beside the commands that carry it, so the validator, the runtime projection, the bridge's
+// frame advice and the generated surfaces cannot disagree about what a projection name means — and
+// the slicer below is the ONE definition of what each name keeps, shared by the module that builds
+// a view and the module that measures one against a wire ceiling.
+export const SWARM_VIEW_DEFAULT_PROJECTION = 'full';
+// The fields a projection may carry. Everything else in the record is the frame — identity,
+// status, the caller's own authority (caller/availableActions/updates/actionTargets), the cursor,
+// the watch block — and rides every projection: knowing what you may do never needs a second call.
+// `updatePayloads` is the one exception on the other side: the payload SHAPES are discovery data
+// that never change, and embedding them in every answer is a fixed tax on every view, every wake
+// and every mutation echo (2026-09-14 audit S-F2) — so they ride the whole record, while `updates`
+// (the kinds this caller may send, with the permission admitting each) rides the frame.
+const SWARM_VIEW_SLICED_FIELDS = Object.freeze([
+  'participants', 'work', 'assignments', 'contributions', 'reviews', 'groups', 'couplings', 'context',
+  'attention', 'updatePayloads',
+]);
+// How a projection narrows a participant row it carries: `whole` is the row the view built, and a
+// named slice keeps the seat's identity plus the one field the projection is about.
+const SWARM_VIEW_PARTICIPANT_FIELDS = Object.freeze({
+  whole: null,
+  guidance: Object.freeze(['guidance']),
+  workspace: Object.freeze(['workspace']),
+});
+// The projections: which sliced fields each one keeps, and how a participant row is narrowed.
+export const SWARM_VIEW_PROJECTIONS = Object.freeze({
+  // `full` is the whole record — today's answer, and the default: naming no projection changes
+  // nothing for a caller that wants everything.
+  full: Object.freeze({ rows: null, participant: 'whole' }),
+  // The frame alone: what this swarm is and what THIS caller may do, with no rows at all. The one
+  // projection that always fits any ceiling.
+  outline: Object.freeze({ rows: Object.freeze([]), participant: null }),
+  participants: Object.freeze({ rows: Object.freeze(['participants']), participant: 'whole' }),
+  contributions: Object.freeze({ rows: Object.freeze(['contributions', 'reviews']), participant: null }),
+  attention: Object.freeze({ rows: Object.freeze(['attention']), participant: null }),
+  guidance: Object.freeze({ rows: Object.freeze(['participants']), participant: 'guidance' }),
+  workspace: Object.freeze({ rows: Object.freeze(['participants']), participant: 'workspace' }),
+});
+export const SWARM_VIEW_PROJECTION_NAMES = Object.freeze(Object.keys(SWARM_VIEW_PROJECTIONS));
+
+function swarmViewProjection(projection) {
+  if (!Object.hasOwn(SWARM_VIEW_PROJECTIONS, projection)) {
+    throw swarmError(`swarm view projection must be one of ${SWARM_VIEW_PROJECTION_NAMES.join(', ')}`,
+      'swarm_command_invalid', { field: 'projection', expectation: `one of ${SWARM_VIEW_PROJECTION_NAMES.join(', ')}` });
+  }
+  return SWARM_VIEW_PROJECTIONS[projection];
+}
+
+/** Project one swarm view onto a declared slice. Pure and idempotent: the fields the slice does
+ * not name are dropped, the frame is kept, and projecting an already-projected view to the same
+ * name returns it unchanged — so a bridge measuring a response it already holds measures the bytes
+ * a caller would really receive. The rows are shared, never re-cloned: a view is data. */
+export function projectSwarmView(view, projection = SWARM_VIEW_DEFAULT_PROJECTION) {
+  const shape = swarmViewProjection(projection);
+  if (shape.rows === null) return { ...view, projection };
+  const projected = {};
+  for (const [key, value] of Object.entries(view)) {
+    if (!SWARM_VIEW_SLICED_FIELDS.includes(key)) projected[key] = value;
+  }
+  for (const family of shape.rows) if (Object.hasOwn(view, family)) projected[family] = view[family];
+  const fields = SWARM_VIEW_PARTICIPANT_FIELDS[shape.participant];
+  if (fields !== null && fields !== undefined) {
+    projected.participants = (view.participants ?? []).map((row) => Object.fromEntries(
+      [['participantId', row.participantId], ...fields.map((field) => [field, row[field]])]));
+  }
+  return { ...projected, projection };
+}
+
+// ── the bridge's refusal report ──────────────────────────────────────────────────────────────────
+// A refusal the native bridge raises before dispatch (an over-cap frame, a request the closed
+// argument vocabulary refuses) still has to reach the swarm's own durable refusal lane, and the
+// bridge's only channel to the runtime is `dispatch`. This verb is that channel, and it is
+// deliberately NOT a command: it is absent from SWARM_COMMAND_DEFINITIONS below (asserted at load)
+// and from the contract schemas, so every surface refuses it as unknown before any effect, and no
+// caller can fabricate a refusal row about a participant.
+export const SWARM_BRIDGE_TRANSPORT = 'http-loopback';
+export const SWARM_BRIDGE_REFUSAL_COMMAND = 'swarm.bridge_refusal';
+
 // ── the registry rows ────────────────────────────────────────────────────────────────────────────
 // The exact shape of an APPLICATION_COMMAND_DEFINITIONS entry: declared arg names, capability
 // classes, surface flags, and the durability pair the transports read (mcpStateful = the wire
@@ -61,13 +140,15 @@ export const SWARM_COMMAND_DEFINITIONS = Object.freeze({
     capabilities: Object.freeze(['control', 'observe']),
     web: true, mcp: true, mcpStateful: true, reconcilable: true,
   }),
+  // `projection` names the slice of the record to answer with (SWARM_VIEW_PROJECTIONS): a caller
+  // reads what it needs instead of the whole record. Absent means `full` — the historical answer.
   'swarm.view': Object.freeze({
-    args: Object.freeze(['swarmId', 'participantId']),
+    args: Object.freeze(['swarmId', 'participantId', 'projection']),
     capabilities: Object.freeze(['observe']),
     web: true, mcp: true, mcpStateful: false, reconcilable: true,
   }),
   'swarm.watch': Object.freeze({
-    args: Object.freeze(['swarmId', 'afterSeq', 'timeoutMs']),
+    args: Object.freeze(['swarmId', 'afterSeq', 'timeoutMs', 'projection']),
     capabilities: Object.freeze(['observe']),
     web: true, mcp: true, mcpStateful: false, reconcilable: true,
   }),
@@ -125,6 +206,10 @@ export const SWARM_COMMAND_DEFINITIONS = Object.freeze({
 });
 
 export const SWARM_COMMAND_NAMES = Object.freeze(Object.keys(SWARM_COMMAND_DEFINITIONS));
+
+if (Object.hasOwn(SWARM_COMMAND_DEFINITIONS, SWARM_BRIDGE_REFUSAL_COMMAND)) {
+  throw new Error('the swarm bridge refusal report must never become a public swarm command');
+}
 
 /** The registration projection every surface-local integration point gates on: the swarm commands
  * the shared command registry actually carries. `definitions` is APPLICATION_COMMAND_DEFINITIONS
@@ -204,6 +289,10 @@ const SWARM_FIELD_RULES = Object.freeze({
   afterSeq: Object.freeze({ check: isSequence, expectation: 'a non-negative integer' }),
   timeoutMs: Object.freeze({ check: isWait, expectation: 'a positive integer' }),
   idempotencyKey: Object.freeze({ check: isId, expectation: 'an idempotency key' }),
+  projection: Object.freeze({
+    check: (value) => Object.hasOwn(SWARM_VIEW_PROJECTIONS, value),
+    expectation: `one of ${SWARM_VIEW_PROJECTION_NAMES.join(', ')}`,
+  }),
 });
 
 // Required/optional per command. `payload` stays optional: an event kind that carries no body
@@ -215,10 +304,13 @@ const SWARM_COMMAND_ARGUMENTS = Object.freeze({
     required: Object.freeze(['purpose', 'idempotencyKey']),
     optional: Object.freeze(['swarmId']),
   }),
-  'swarm.view': Object.freeze({ required: Object.freeze(['swarmId']), optional: Object.freeze(['participantId']) }),
+  'swarm.view': Object.freeze({
+    required: Object.freeze(['swarmId']),
+    optional: Object.freeze(['participantId', 'projection']),
+  }),
   'swarm.watch': Object.freeze({
     required: Object.freeze(['swarmId']),
-    optional: Object.freeze(['afterSeq', 'timeoutMs']),
+    optional: Object.freeze(['afterSeq', 'timeoutMs', 'projection']),
   }),
   'swarm.update': Object.freeze({
     required: Object.freeze(['swarmId', 'event', 'idempotencyKey']),
@@ -264,15 +356,22 @@ for (const name of SWARM_COMMAND_NAMES) {
  * check or durable fold — with `{field, event, expectation}` detail. Deep payload typing stays
  * with the state validator; auto-filled fields (swarmId, author/leave identities) are never
  * demanded.
+ *
+ * Every refusal also names the RULE that refused it (`detail.rule`), and the rule text a caller
+ * must apply instead (`detail.correction`). A refusal is the one thing a native participant
+ * cannot ask twice about cheaply, so it carries its own fix: the bridge records both on the
+ * durable refusal row, and the text a surface prints is derived from them — never re-spelled.
  */
 export function validateSwarmCommand(name, args) {
   const definition = swarmCommandDefinition(name);
   if (!definition) {
-    throw swarmError(`unsupported swarm command ${name}`, 'swarm_command_unavailable');
+    throw swarmError(`unsupported swarm command ${name}`, 'swarm_command_unavailable',
+      { rule: 'unknown-command', correction: `use one of ${SWARM_COMMAND_NAMES.join(', ')}` });
   }
   const shape = SWARM_COMMAND_ARGUMENTS[name];
   if (!isJsonObject(args)) {
-    throw swarmError(`${name} request is invalid: args must be a JSON object`, 'swarm_command_invalid');
+    throw swarmError(`${name} request is invalid: args must be a JSON object`, 'swarm_command_invalid',
+      { field: 'args', rule: 'arguments-shape', correction: 'send one JSON object as the request arguments' });
   }
   const declared = new Set(definition.args);
   // A key on an identity-keyed command would be a second, disagreeing identity: the coordinates
@@ -280,24 +379,33 @@ export function validateSwarmCommand(name, args) {
   // contribution. Refuse by name, with the coordinates that ARE the identity.
   if (Object.hasOwn(args, 'idempotencyKey') && swarmIdentityKeyedCommand(name)) {
     throw swarmError(`${name} is identity-keyed: its identity is ${shape.required.join(', ')} and it takes no idempotencyKey`,
-      'swarm_command_invalid', { field: 'idempotencyKey', identity: [...shape.required] });
+      'swarm_command_invalid', { field: 'idempotencyKey', rule: 'identity-keyed', identity: [...shape.required],
+        correction: `drop idempotencyKey — ${name} takes its identity from ${shape.required.join(', ')}` });
   }
   for (const key of Object.keys(args)) {
     if (!declared.has(key)) {
-      throw swarmError(`${name} request is invalid: unknown field ${key}`, 'swarm_command_invalid', { field: key });
+      throw swarmError(`${name} request is invalid: unknown field ${key}`, 'swarm_command_invalid',
+        { field: key, rule: 'unknown-field', fields: [...definition.args],
+          correction: `remove ${key} — ${name} accepts ${definition.args.length > 0 ? definition.args.join(', ') : 'no arguments'}` });
     }
   }
   for (const field of shape.required) {
     if (!Object.hasOwn(args, field) || args[field] === undefined) {
-      throw swarmError(`${name} request is invalid: ${field} is required`, 'swarm_command_invalid', { field });
+      throw swarmError(`${name} request is invalid: ${field} is required`, 'swarm_command_invalid',
+        { field, rule: 'required-field', expectation: SWARM_FIELD_RULES[field].expectation });
     }
   }
   for (const [field, value] of Object.entries(args)) {
     if (value === undefined) continue;
     const rule = SWARM_FIELD_RULES[field];
     if (!rule.check(value)) {
+      // A value outside a closed set gets that set named as its own rule: "one of …" is the fix.
+      const closed = field === 'event' || field === 'projection';
       throw swarmError(`${name} request is invalid: ${field} must be ${rule.expectation}`,
-        'swarm_command_invalid', { field });
+        'swarm_command_invalid', {
+          field, rule: closed ? 'closed-set' : 'field-predicate', expectation: rule.expectation,
+          correction: `${field} must be ${rule.expectation}`,
+        });
     }
   }
   if (name === 'swarm.update' && SWARM_EVENT_KINDS.includes(args.event)) {
@@ -311,7 +419,7 @@ export function validateSwarmCommand(name, args) {
       if (required.length > 0) {
         throw swarmError(`${name} request is invalid: ${args.event} needs a payload object naming ${required.join(', ')}`,
           'swarm_command_invalid', {
-            field: 'payload', event: args.event, required,
+            field: 'payload', event: args.event, required, rule: 'payload-required',
             expectation: required.map((field) => `${field} (${swarmEventFieldExpectation(args.event, field)})`).join(', '),
           });
       }
@@ -323,7 +431,10 @@ export function validateSwarmCommand(name, args) {
       if (unknown !== undefined) {
         throw swarmError(
           `${name} request is invalid: payload.${unknown} is not a field of ${args.event} (fields: ${swarmEventFields(args.event).join(', ')})`,
-          'swarm_command_invalid', { field: `payload.${unknown}`, event: args.event, fields: swarmEventFields(args.event) });
+          'swarm_command_invalid', {
+            field: `payload.${unknown}`, event: args.event, fields: swarmEventFields(args.event),
+            rule: 'payload-unknown-field', correction: `remove payload.${unknown} — ${args.event} does not carry it`,
+          });
       }
       const missing = swarmEventAgentRequiredFields(args.event)
         .filter((field) => !Object.hasOwn(payload, field) || payload[field] === undefined);
@@ -333,6 +444,7 @@ export function validateSwarmCommand(name, args) {
           'swarm_command_invalid', {
             field: `payload.${missing[0]}`, event: args.event, required: missing,
             expectation: swarmEventFieldExpectation(args.event, missing[0]),
+            rule: 'payload-field-required',
           });
       }
     }
@@ -366,6 +478,7 @@ const JSON_OBJECT_SCHEMA = Object.freeze({ type: 'object' });
 const EVENT_SCHEMA = Object.freeze({ type: 'string', enum: SWARM_EVENT_KINDS });
 const SEQUENCE_SCHEMA = Object.freeze({ type: 'integer', minimum: 0 });
 const WAIT_SCHEMA = Object.freeze({ type: 'integer', minimum: 1 });
+const PROJECTION_SCHEMA = Object.freeze({ type: 'string', enum: SWARM_VIEW_PROJECTION_NAMES });
 
 export const SWARM_COMMAND_ROWS = Object.freeze([
   Object.freeze({
@@ -383,16 +496,16 @@ export const SWARM_COMMAND_ROWS = Object.freeze([
   }),
   Object.freeze({
     command: 'swarm.view',
-    description: "Read one swarm's authoritative membership, work, shared context, contributions, reviews, caller authority, and available actions; an optional participantId scopes the read to that participant's delegation — its subtree, the work assigned within, their contributions and reviews, and the delegation completion. Each participant row carries its guidance rows and live checkout custody, and every projected row carries the seq and ts of the record that wrote it.",
+    description: "Read one swarm's authoritative membership, work, shared context, contributions, reviews, caller authority, and available actions; an optional participantId scopes the read to that participant's delegation — its subtree, the work assigned within, their contributions and reviews, and the delegation completion. An optional projection names the slice to answer with (outline, participants, contributions, attention, guidance, workspace, full; default full), so a caller reads what it needs instead of the whole record. Each participant row carries its guidance rows and live checkout custody, and every projected row carries the seq and ts of the record that wrote it.",
     readOnlyHint: true, destructiveHint: false,
-    properties: Object.freeze({ swarmId: ID_SCHEMA, participantId: ID_SCHEMA }),
+    properties: Object.freeze({ swarmId: ID_SCHEMA, participantId: ID_SCHEMA, projection: PROJECTION_SCHEMA }),
     required: Object.freeze(['swarmId']),
   }),
   Object.freeze({
     command: 'swarm.watch',
-    description: 'Await the next swarm update after a cursor and return the refreshed view. A refused mutation wakes it too: the wake names a swarm.operation_refused driver row even though no swarm state changed.',
+    description: 'Await the next swarm update after a cursor and return the refreshed view under the same optional projection swarm.view takes. A refused mutation wakes it too: the wake names a swarm.operation_refused driver row even though no swarm state changed.',
     readOnlyHint: true, destructiveHint: false,
-    properties: Object.freeze({ swarmId: ID_SCHEMA, afterSeq: SEQUENCE_SCHEMA, timeoutMs: WAIT_SCHEMA }),
+    properties: Object.freeze({ swarmId: ID_SCHEMA, afterSeq: SEQUENCE_SCHEMA, timeoutMs: WAIT_SCHEMA, projection: PROJECTION_SCHEMA }),
     required: Object.freeze(['swarmId']),
   }),
   Object.freeze({

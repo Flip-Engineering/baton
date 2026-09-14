@@ -120,7 +120,7 @@ test('a refused mutation is a durable row that wakes a watch and never enters th
   assert.equal(row.seq, woke.watch.matchedSeq, 'the wake names the refusal row itself');
   assert.deepEqual(row.payload, {
     kind: 'swarm.operation_refused', swarmId: swarm.id, command: 'swarm.update',
-    event: 'swarm.group_updated', code: 'swarm_permission_required', field: null, participantId: 'alpha',
+    event: 'swarm.group_updated', code: 'swarm_permission_required', field: null, rule: null, participantId: 'alpha',
   });
   assert.equal(row.idempotencyKey.startsWith('swarm-refusal:'), true, 'the refusal carries its own deterministic identity');
   assert.equal(JSON.stringify(driver.coordination.swarm(swarm.id)), foldBefore, 'the fold never sees the refusal');
@@ -144,8 +144,9 @@ test('each refusal family records its own coordinates: the named field, the stat
   await assert.rejects(runtime.command('swarm.update', { swarmId: 'swarm-admission', event: 'swarm.work_updated',
     payload: { workId: 'W-1', objective: 'W-1', bogus: true }, idempotencyKey: 'admission-update' }, principal('root')),
   { code: 'swarm_command_invalid' });
-  assert.equal(refusalRow(admission, { code: 'swarm_command_invalid' }).payload.field, 'payload.bogus',
-    'the contract refusal names the offending payload field');
+  const admissionRow = refusalRow(admission, { code: 'swarm_command_invalid' }).payload;
+  assert.equal(admissionRow.field, 'payload.bogus', 'the contract refusal names the offending payload field');
+  assert.equal(admissionRow.rule, 'payload-unknown-field', 'the row names the RULE that refused the request');
 
   // The state fold's refusal names no field; the caller that attempted it is named instead.
   await assert.rejects(delegated.work({ workId: 'W-A', objective: 'Part A', dependsOn: [{ workId: 'W-missing' }] }),
@@ -158,7 +159,7 @@ test('each refusal family records its own coordinates: the named field, the stat
   await assert.rejects(delegated.holderRelease('alpha', 'alpha is still live'), { code: 'swarm_holder_live' });
   assert.deepEqual(refusalRow(driver.coordination, { code: 'swarm_holder_live' }).payload, {
     kind: 'swarm.operation_refused', swarmId: swarm.id, command: 'swarm.update',
-    event: 'swarm.holder_released', code: 'swarm_holder_live', field: null, participantId: 'alpha',
+    event: 'swarm.holder_released', code: 'swarm_holder_live', field: null, rule: null, participantId: 'alpha',
   });
 });
 

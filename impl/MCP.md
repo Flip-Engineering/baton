@@ -309,8 +309,14 @@ creator) and the reclaiming operation (`baton_swarm_stop`).
 ## Guidance, checkout custody, and refusals
 
 `baton_swarm_view` projects what each participant was told and where it works, and every projected
-row carries the `seq` and `ts` of the coordination event that wrote it. A participant row shows the
-guidance addressed to it and its live checkout custody:
+row carries the `seq` and `ts` of the coordination event that wrote it. An optional `projection`
+names the slice to answer with — `full` (the default, the whole record), `outline` (the frame
+alone), `participants`, `contributions`, `attention`, `guidance` or `workspace`; `baton_swarm_watch`
+takes the same field, so a caller reads the part it needs instead of the whole record. `updates`
+sits beside `availableActions` and lists each update kind this caller may send now WITH the
+permission that admits it; the payload shapes ride `full` only. A participant row shows the guidance
+addressed to it, its live checkout custody, the `route` (`{harness, model, effort}`) and `scope` it
+was recruited under, and `lastRefusal` while a refusal of its own stands uncleared:
 
 ```json
 {
@@ -329,13 +335,16 @@ sender can watch for the participant's next turn instead of guessing the message
 
 A refused mutation is durable: the runtime records a `swarm.operation_refused` driver row naming the
 command, the update event, the refusal code, the offending field when the refusal named one, and the
-participant it concerns. Swarm state never folds it, and `baton_swarm_watch` wakes on it with
+RULE that refused it — and the refusals the native bridge raises before dispatch land on the same
+lane, with the participant the bridge token names. Swarm state never folds it, and
+`baton_swarm_watch` wakes on it with
 `"event": { "kind": "driver.recorded", "payloadKind": "swarm.operation_refused" }`. A refused read
-records nothing.
+records nothing. The participant's own row carries the refusal as
+`lastRefusal: { seq, command, code, field }` until a later operation of the same command succeeds.
 
 ```json
 { "kind": "swarm.operation_refused", "swarmId": "swarm-40e643e96fd1edcd", "command": "swarm.update",
-  "event": "swarm.work_updated", "code": "work_not_found", "field": null, "participantId": "builder-a" }
+  "event": "swarm.work_updated", "code": "work_not_found", "field": null, "rule": null, "participantId": "builder-a" }
 ```
 
 

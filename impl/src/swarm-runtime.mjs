@@ -1,4 +1,5 @@
-import { SWARM_EVENT_KINDS, validateSwarmCommand, swarmCommandDefinition } from './swarm-contract.mjs';
+import { SWARM_EVENT_KINDS, SWARM_BRIDGE_REFUSAL_COMMAND, SWARM_VIEW_DEFAULT_PROJECTION,
+  projectSwarmView, swarmCommandDefinition, validateSwarmCommand } from './swarm-contract.mjs';
 import { createHash } from 'node:crypto';
 import { canonicalJson } from './canonical-order.mjs';
 import { SWARM_EVENT_PAYLOAD_SCHEMAS, SWARM_EVENT_EXAMPLES } from './swarm-event-schemas.mjs';
@@ -6,7 +7,20 @@ import { foldSwarmEvent, SwarmIntegrityError } from './swarm-state.mjs';
 import { workspaceCustodyRecord } from './shared-workspace-custody.mjs';
 
 const clone = (value) => structuredClone(value);
-const hash = (value) => createHash('sha256').update(JSON.stringify(canonicalJson(value))).digest('hex');
+/** JSON-plain content with absent members dropped. An undefined value means "not sent" to the
+ * command contract (the validator skips it), so it must not be a canonical-identity error either:
+ * the same request hashes the same whether a caller spells an omitted field or leaves it out. */
+const definedJson = (value) => {
+  // An array's members are positional, so an absent one becomes an explicit null (arity is the
+  // contract); an object's members are named, so an absent one simply is not there.
+  if (Array.isArray(value)) return value.map((member) => definedJson(member) ?? null);
+  if (value === null || typeof value !== 'object') return value;
+  const prototype = Object.getPrototypeOf(value);
+  if (prototype !== Object.prototype && prototype !== null) return value;
+  return Object.fromEntries(Object.entries(value).filter(([, member]) => member !== undefined)
+    .map(([key, member]) => [key, definedJson(member)]));
+};
+const hash = (value) => createHash('sha256').update(JSON.stringify(canonicalJson(definedJson(value)))).digest('hex');
 const refuse = (message, code, detail = {}) => { throw Object.assign(new Error(message), { code, detail }); };
 const childrenByParent = (swarm) => {
   const childrenOf = new Map();
@@ -17,6 +31,15 @@ const childrenByParent = (swarm) => {
   }
   return childrenOf;
 };
+/** One harness/model/effort route, or null when the value does not name one. Used to record the
+ * route a seat was recruited under: an incomplete selector is not a route, and is never padded
+ * into one. */
+const swarmRouteShape = (value) => (value && typeof value === 'object' && !Array.isArray(value)
+  && typeof value.harness === 'string' && value.harness.length > 0
+  && typeof value.model === 'string' && value.model.length > 0)
+  ? Object.freeze({ harness: value.harness, model: value.model,
+    effort: typeof value.effort === 'string' && value.effort.length > 0 ? value.effort : null })
+  : null;
 export const SWARM_PERMISSIONS = Object.freeze(['read', 'communicate', 'contribute', 'review', 'organize', 'recruit', 'stop']);
 const DEFAULT_PERMISSIONS = Object.freeze(['read', 'communicate', 'contribute']);
 const UPDATE_PERMISSIONS = Object.freeze({
@@ -38,6 +61,26 @@ const COMMAND_PERMISSIONS = Object.freeze({
   'swarm.guide': 'communicate', 'swarm.capture': 'contribute',
   'swarm.check': 'review', 'swarm.stop': 'stop',
 });
+
+// ── liveness ─────────────────────────────────────────────────────────────────────────────────────
+/** The ONE participant liveness derivation every surface reads (2026-09-14 audit S-F5). A worker
+ * status is live or it is not, and "gone" is the COMPLEMENT of that one list — never a second
+ * list that can drift from it — while the turn classification hangs off the same predicate. The
+ * view derives its `runtime` rows here, the wake feed carries those rows, and the bridge carries
+ * them verbatim: one record, one classification, three surfaces that cannot disagree. Exported so
+ * a consumer that needs the question answered directly (rather than projected) asks this and not
+ * a local copy of the state list. */
+export const SWARM_LIVE_RUNTIME_STATES = Object.freeze(['pending', 'working', 'blocked', 'idle', 'stopping']);
+/** The state a participant with no current worker binding is in — not a coordinator status. */
+export const SWARM_UNBOUND_RUNTIME_STATE = 'unbound';
+
+export function swarmParticipantLiveness(worker, pausedTurns = 0) {
+  const state = worker?.status ?? SWARM_UNBOUND_RUNTIME_STATE;
+  const live = SWARM_LIVE_RUNTIME_STATES.includes(state);
+  // A turn is paused only while the worker that paused it is alive: a dead or exited worker's
+  // leftover pause record is history, not a turn a guide could resume.
+  return { state, live, turn: live && pausedTurns > 0 ? 'paused' : state === 'working' ? 'running' : null };
+}
 
 /** Living collaboration over the existing Run, worker, and coordination authorities.
  * This service owns organization and the user-facing operations. It never infers work
@@ -88,6 +131,22 @@ export class SwarmRuntime {
       });
     }
     return member;
+  }
+
+  /** The permission one swarm.update request requires of THIS caller — the ONE derivation the
+   * dispatch check and the view's `updates` rows share, so what a view advertises can never
+   * disagree with what dispatch enforces (2026-09-14 audit S-F1). A member's own leave and its
+   * own arrival at a declared synchronization point are honest self-reports, and read authority
+   * admits them; naming another seat stays an organizing act. With no payload (the view's
+   * question: "which kinds may this caller send at all?") the self-scoped reading applies, which
+   * is exactly the permission a member's own leave or arrival needs. */
+  _updatePermission(event, caller, payload = null) {
+    const permission = UPDATE_PERMISSIONS[event] ?? null;
+    if (!caller) return permission;
+    const own = !payload?.participantId || payload.participantId === caller.participantId;
+    if (event === 'swarm.participant_left' && own) return 'read';
+    if (event === 'swarm.coupling_updated' && payload?.action === 'arrive' && own) return 'read';
+    return permission;
   }
 
   _participant(swarm, id) {
@@ -150,9 +209,13 @@ export class SwarmRuntime {
     return `swarm-operation:${hash([command, args.swarmId, principal.principalId, args.idempotencyKey])}`;
   }
 
-  async _once(command, args, principal, effect, { replaySafe = false, basis = null } = {}) {
+  async _once(command, args, principal, effect, { replaySafe = false, basis = null, context = null } = {}) {
     const key = this._operationKey(command, args, principal);
     const requestDigest = hash(args);
+    // The seat every row this operation writes belongs to, resolved through the same authority the
+    // command uses (issue #283): a refusal row and the terminal row that clears it must agree on
+    // WHOSE operation it was, or "my last refusal was cleared" could never be derived.
+    const participantId = this._attributedParticipant(args.swarmId, principal, context);
     const requested = this.store.priorCoordinationEvent(key);
     if (requested && requested.payload.requestDigest !== requestDigest) {
       refuse('Swarm operation identity already names another request', 'swarm_replay_conflict');
@@ -167,16 +230,16 @@ export class SwarmRuntime {
         });
     }
     if (!requested) this.store.recordDriver('swarm.operation_requested', {
-      swarmId: args.swarmId, command, requestDigest, request: clone(args), basis: clone(basis),
+      swarmId: args.swarmId, command, requestDigest, request: clone(args), basis: clone(basis), participantId,
     }, { actor: principal.actor, key });
     const operation = Promise.resolve().then(() => effect(clone(requested?.payload.basis ?? basis))).then((result) => {
       this.store.recordDriver('swarm.operation_completed', {
-        swarmId: args.swarmId, command, operationKey: key, result: clone(result),
+        swarmId: args.swarmId, command, operationKey: key, participantId, result: clone(result),
       }, { actor: principal.actor, key: `${key}:completed` });
       return result;
     }).catch((error) => {
       this.store.recordDriver('swarm.operation_unavailable', {
-        swarmId: args.swarmId, command, operationKey: key,
+        swarmId: args.swarmId, command, operationKey: key, participantId,
         code: error.code ?? 'swarm_operation_unavailable',
       }, { actor: principal.actor, key: `${key}:unavailable` });
       throw error;
@@ -269,10 +332,13 @@ export class SwarmRuntime {
     return delegations;
   }
 
-  inspect(swarm, principal, context, scopeId = null) {
+  inspect(swarm, principal, context, scopeId = null, projection = SWARM_VIEW_DEFAULT_PROJECTION) {
     const caller = this._permit(swarm, principal, context, 'read');
     // An optional participantId scopes the read to that participant's delegation (issue #263
     // item 3): its subtree, the work actively assigned within, their contributions and reviews.
+    // A scoped view is the swarm AS THAT PARTICIPANT SEES IT (issue #283): its own brief and no
+    // other participant's, the records whose roster intersects its subtree, and the attention rows
+    // its subtree can act on.
     const scope = scopeId ? this._participant(swarm, scopeId) : null;
     const scopeSubtree = scope ? this._subtreeOf(swarm, scope.participantId) : null;
     const scopeWorkIds = scope ? new Set(Object.values(swarm.assignments ?? {})
@@ -295,12 +361,37 @@ export class SwarmRuntime {
         seq: event.seq, ts: event.ts, from: event.payload.from ?? null, messageId: event.payload.messageId ?? null,
       });
     }
+    // The participant's last refusal the operation lane has not cleared (issue #283 root comment
+    // 2): the LATEST refusal naming this seat, unless a later operation of the SAME command by the
+    // same seat COMPLETED. Both facts are read from the one durable lane the runtime writes.
+    const refusals = new Map();
+    const completions = new Map();
+    for (const event of ledger) {
+      const payload = event.kind === 'driver.recorded' ? event.payload : null;
+      if (payload?.swarmId !== swarm.swarmId || typeof payload.participantId !== 'string') continue;
+      if (payload.kind === 'swarm.operation_refused') {
+        refusals.set(payload.participantId, {
+          seq: event.seq, command: payload.command ?? null, code: payload.code ?? null, field: payload.field ?? null,
+        });
+      } else if (payload.kind === 'swarm.operation_completed') {
+        if (!completions.has(payload.participantId)) completions.set(payload.participantId, new Map());
+        const perSeat = completions.get(payload.participantId);
+        perSeat.set(payload.command, Math.max(perSeat.get(payload.command) ?? 0, event.seq));
+      }
+    }
+    const lastRefusal = (participantId) => {
+      const refusal = refusals.get(participantId);
+      if (!refusal) return null;
+      return (completions.get(participantId)?.get(refusal.command) ?? 0) > refusal.seq ? null : refusal;
+    };
     const participants = Object.values(swarm.participants).map((participant) => {
       const worker = this._workerFor(participant, workers);
       const paused = worker ? this.coordinator.pausedTurns({ workerId: worker.id }) : [];
-      // A turn is paused only while the worker that paused it is alive: a dead or exited
-      // worker's leftover pause record is history, not a turn a guide could resume.
-      const alive = worker && ['working', 'blocked', 'pending', 'idle', 'stopping'].includes(worker.status);
+      // The ONE liveness derivation (swarmParticipantLiveness): state, turn and "is this seat
+      // alive at all" come from it, so the view, the wake feed and the bridge agree by
+      // construction rather than by three copies of a status list.
+      const liveness = swarmParticipantLiveness(worker, paused.length);
+      const alive = liveness.live;
       // The participant's live checkout, projected exactly as capture projects its custody:
       // the physical owner named by the live worker's session context and the coordinator's
       // live holder count for it. An unbound or departed worker carries workspace: null.
@@ -313,20 +404,23 @@ export class SwarmRuntime {
         // shape; `coverage` carries the truth, and only a real observation may claim it.
         native: worker && this.coordinator.observedNativeSubagents
         ? this.coordinator.observedNativeSubagents(worker.id)
-        : { coverage: 'unobserved', agents: [], invocations: [], unidentified: [] }, runtime: {
-        workerId: worker?.id ?? null, state: worker?.status ?? 'unbound',
-        turn: alive && paused.length ? 'paused' : worker?.status === 'working' ? 'running' : null,
-      }, guidance: worker ? (guidanceByWorker.get(worker.id) ?? []) : [],
+        : { coverage: 'unobserved', agents: [], invocations: [], unidentified: [] },
+        runtime: { workerId: worker?.id ?? null, state: liveness.state, turn: liveness.turn, live: liveness.live },
+        guidance: worker ? (guidanceByWorker.get(worker.id) ?? []) : [],
         workspace: physicalOwnerId !== null
           ? workspaceCustodyRecord(physicalOwnerId, this.coordinator.liveWorkspaceHolders(physicalOwnerId).length)
-          : null };
+          : null,
+        lastRefusal: lastRefusal(participant.participantId) };
     });
     // Organization truth an orchestrator would otherwise assemble by hand: members whose process
     // is gone, sessions that outlived their membership, delegations whose parent is gone, work
     // still assigned to a participant who cannot do it, and a closed swarm that still runs.
     // A row naming a recoverable holder carries the release operation as its next step.
     const organization = [];
-    const gone = (row) => row.status !== 'active' || ['dead', 'exited', 'unbound'].includes(row.runtime.state);
+    // "Gone" is the COMPLEMENT of the one liveness predicate, never a second list: a membership
+    // that ended, or a runtime that is not live, is gone — including a session that is stopping,
+    // which is still a session somebody owns (2026-09-14 audit S-F5).
+    const gone = (row) => row.status !== 'active' || !row.runtime.live;
     // Session ownership after a member leaves (issue #263 item 3): a still-running session
     // belongs to its recruiter — the nearest LIVING ancestor by parentId — and otherwise to the
     // swarm's creator. The attention row names that party and the operation that reclaims the
@@ -343,10 +437,13 @@ export class SwarmRuntime {
       return { responsibleParticipant: null, responsibleActor: swarm.actor ?? null };
     };
     for (const row of participants) {
-      if (row.status === 'active' && ['dead', 'exited'].includes(row.runtime.state)) {
+      // A worker that exists and is not live is dead or exited. A seat with NO worker at all is
+      // unbound — between its join and its first binding, or after a restart — which is absence,
+      // not a dead runtime, and never raises this row.
+      if (row.status === 'active' && !row.runtime.live && row.runtime.workerId !== null) {
         organization.push({ kind: 'participant_runtime_dead', participantId: row.participantId, state: row.runtime.state });
       }
-      if (row.status !== 'active' && ['working', 'blocked', 'pending', 'idle'].includes(row.runtime.state)) {
+      if (row.status !== 'active' && row.runtime.live) {
         organization.push({ kind: 'member_left_session_live', participantId: row.participantId, workerId: row.runtime.workerId,
           ...responsibleFor(row),
           next: { command: 'swarm.stop', swarmId: swarm.swarmId, participantId: row.participantId } });
@@ -403,30 +500,38 @@ export class SwarmRuntime {
     }
     const operations = ledger.filter((event) => event.kind === 'driver.recorded'
       && event.payload.swarmId === swarm.swarmId && event.payload.kind === 'swarm.operation_requested');
+    // An in-flight operation row names the COMMAND, the seat and the operation key — never the
+    // request body (2026-09-14 audit S-E6): the payload of somebody's private guide is not
+    // attention, and a scoped view carries only the rows its subtree can act on, which an
+    // unattributed operation is not.
     const attention = [
       ...operations.filter((event) => !this.store.priorCoordinationEvent(`${event.idempotencyKey}:completed`))
-        .map((event) => ({ kind: 'operation_unconfirmed', command: event.payload.command, request: clone(event.payload.request),
+        .map((event) => ({ kind: 'operation_unconfirmed', command: event.payload.command,
+          participantId: event.payload.participantId ?? null, operationKey: event.idempotencyKey,
           state: this.pending.has(event.idempotencyKey) ? 'in_progress' : 'unconfirmed',
           code: this.store.priorCoordinationEvent(`${event.idempotencyKey}:unavailable`)?.payload.code ?? null,
         })),
       ...organization,
     ];
-    // A scoped view reports only the rows its subtree can act on.
     const scopedAttention = !scope ? attention : attention.flatMap((row) => {
-      if (row.kind === 'operation_unconfirmed') return [row];
       if (row.kind === 'closed_with_live_participants') {
         const within = row.participantIds.filter((id) => scopeSubtree.includes(id));
         return within.length ? [{ ...row, participantIds: within }] : [];
       }
-      return scopeSubtree.includes(row.participantId) ? [row] : [];
+      return typeof row.participantId === 'string' && scopeSubtree.includes(row.participantId) ? [row] : [];
     });
     const availableActions = Object.entries(COMMAND_PERMISSIONS)
       .filter(([, permission]) => permissions.includes(permission)).map(([command]) => command);
     if (permissions.includes('contribute') && !availableActions.includes('swarm.check')) availableActions.push('swarm.check');
     if (permissions.includes('review') && !availableActions.includes('swarm.capture')) availableActions.push('swarm.capture');
-    const updates = Object.entries(UPDATE_PERMISSIONS)
-      .filter(([, permission]) => permissions.includes(permission)).map(([event]) => event);
-    if (caller && !updates.includes('swarm.participant_left')) updates.push('swarm.participant_left');
+    // The update kinds this caller may send NOW, each with the permission that admits it — derived
+    // by the SAME function the dispatch check uses (`_updatePermission`), never a second list: a
+    // view can no more overstate an authority than dispatch can overlook one (2026-09-14 audit
+    // S-F1). The rows sit beside availableActions, and `swarm.update` is offered exactly when
+    // there is at least one kind to send.
+    const updates = Object.keys(UPDATE_PERMISSIONS)
+      .map((event) => ({ event, permission: this._updatePermission(event, caller) }))
+      .filter((row) => permissions.includes(row.permission));
     if (updates.length) availableActions.push('swarm.update');
     const contributionTargets = permissions.includes('review') ? participants.map((row) => row.participantId)
       : permissions.includes('contribute') && caller ? [caller.participantId] : [];
@@ -479,16 +584,30 @@ export class SwarmRuntime {
       .filter(([, contribution]) => contribution.workId && scopeWorkIds.has(contribution.workId))
       .map(([contributionId]) => contributionId)) : null;
     const keep = (entries, predicate) => Object.fromEntries(scope ? entries.filter(predicate) : entries);
-    return {
+    // The participant rows a scoped view carries: the scope's subtree, with the brief text of
+    // every seat but the scope's own withheld (2026-09-14 audit S-F3). A brief is what a recruiter
+    // told ONE seat; the scoped view is that seat's own reading of the swarm, so another
+    // participant's instructions are not in it — `briefWithheld` says the text was withheld rather
+    // than never written, and the unscoped organizer view still carries every brief.
+    const scopedParticipants = scope
+      ? participants.filter((row) => scopeSubtree.includes(row.participantId))
+        .map((row) => (row.participantId === scope.participantId ? row : { ...row, role: null, briefWithheld: true }))
+      : participants;
+    const view = {
       ...clone(swarm),
-      participants: scope ? participants.filter((row) => scopeSubtree.includes(row.participantId)) : participants,
+      participants: scopedParticipants,
       work: keep(workEntries, ([workId]) => scopeWorkIds.has(workId)),
       assignments: keep(Object.entries(swarm.assignments ?? {}), ([, assignment]) => scopeSubtree.includes(assignment.participantId)
         || scopeWorkIds.has(assignment.workId)),
       contributions: keep(contributionEntries, ([, contribution]) => Boolean(contribution.workId)
         && scopeWorkIds.has(contribution.workId)),
       reviews: keep(Object.entries(swarm.reviews ?? {}), ([contributionId]) => scopedContributionIds.has(contributionId)),
-      groups: keep(Object.entries(swarm.groups ?? {}), ([, group]) => group.members.every((member) => scopeSubtree.includes(member))),
+      // A group is a roster: a scoped view carries the groups its subtree is ON, by the same
+      // roster-intersection rule the couplings below use. A group with no member in scope is not
+      // this participant's business — and an emptied roster (a released holder) is therefore
+      // carried by nobody, instead of by everybody (`[].every(...)` is vacuous).
+      groups: keep(Object.entries(swarm.groups ?? {}), ([, group]) =>
+        group.members.some((member) => scopeSubtree.includes(member))),
       // A member sees the couplings its subtree can act on. Writer records follow the writer's
       // subtree; a synchronization point or group failure policy follows its group — every member
       // whose roster intersects the subtree sees it, so a seat listed in `awaiting` can always
@@ -498,18 +617,31 @@ export class SwarmRuntime {
         const roster = swarm.groups?.[record.groupId]?.members ?? record.members ?? [];
         return roster.some((member) => scopeSubtree.includes(member));
       }),
-      caller: { participantId: caller?.participantId ?? null, permissions: [...permissions] },
+      // The shared context every participant is recruited with is swarm-wide by construction, so a
+      // scoped view carries it; an entry written for ONE group follows that group's roster, and is
+      // visible to the members who can read the group it belongs to (2026-09-14 audit S-G5).
+      context: keep(Object.entries(swarm.context ?? {}), ([, entry]) => entry.groupId === null
+        || entry.groupId === undefined
+        || (swarm.groups?.[entry.groupId]?.members ?? []).some((member) => scopeSubtree.includes(member))),
+      // The caller's own standing refusal rides the FRAME, so it is answered whatever projection
+      // was asked for — and so the entry can tell that a successful read just retired one.
+      caller: { participantId: caller?.participantId ?? null, permissions: [...permissions],
+        lastRefusal: caller ? lastRefusal(caller.participantId) : null },
       availableActions, attention: scopedAttention,
       actionTargets: {
         'swarm.capture': { participantIds: contributionTargets },
         'swarm.check': { participantIds: contributionTargets },
       },
       updates,
-      updatePayloads: Object.fromEntries(updates.map((kind) => [kind, {
-        ...clone(SWARM_EVENT_PAYLOAD_SCHEMAS[kind]), example: clone(SWARM_EVENT_EXAMPLES[kind]),
+      updatePayloads: Object.fromEntries(updates.map(({ event }) => [event, {
+        ...clone(SWARM_EVENT_PAYLOAD_SCHEMAS[event]), example: clone(SWARM_EVENT_EXAMPLES[event]),
       }])),
       cursor: this.store.ledgerHeadSeq(),
     };
+    // The projection is applied HERE, at the one place a view is built, by the ONE slicer the
+    // bridge also measures with (swarm-contract): the default answers with the whole record, so a
+    // caller that names no projection sees exactly what it always saw.
+    return projectSwarmView(view, projection ?? SWARM_VIEW_DEFAULT_PROJECTION);
   }
 
   close() {
@@ -544,12 +676,22 @@ export class SwarmRuntime {
           || (payload?.taskId && taskIds.has(payload.taskId))
           || (payload?.worker && workerIds.has(payload.worker));
       });
+      // What a recruitment wake names about the seat it recruited: read from the folded record,
+      // which carries what the join recorded — never from the live worker (issue #283).
+      const recruited = (event) => {
+        if (event.kind !== 'swarm.participant_joined') return {};
+        const row = swarm.participants[event.payload?.participantId];
+        return row ? { participantId: row.participantId, route: row.route ?? null, scope: row.scope ?? null } : {};
+      };
       if (relevant || performance.now() >= deadline) return {
-        ...this.inspect(swarm, principal, context),
+        ...this.inspect(swarm, principal, context, null, args.projection),
         watch: {
           reason: relevant ? 'event' : 'timeout', afterSeq, matchedSeq: relevant?.seq ?? null,
-          // The wake names what woke it, so a follower can act without re-reading the log.
-          event: relevant ? { seq: relevant.seq, kind: relevant.kind, payloadKind: relevant.payload?.kind ?? null } : null,
+          // The wake names what woke it, so a follower can act without re-reading the log; a wake
+          // that IS a recruitment also names the route and scope the seat was started under
+          // (issue #283 root comment 1), projected from the durable join like everything else.
+          event: relevant ? { seq: relevant.seq, kind: relevant.kind,
+            payloadKind: relevant.payload?.kind ?? null, ...recruited(relevant) } : null,
         },
       };
       cursor = this.store.ledgerHeadSeq();
@@ -656,25 +798,42 @@ export class SwarmRuntime {
         assignments: releases.map((assignment) => assignment.assignmentId),
         groups: groupLeaves.map((group) => group.groupId),
       } };
-    }, { replaySafe: true });
+    }, { replaySafe: true, context });
   }
 
   /** The public command entry: a refused MUTATION leaves a durable, wake-capable trace, and the
    * refusal itself is then thrown unchanged — the caller sees its own refusal, never a recording
-   * failure wearing its name. */
+   * failure wearing its name. A SUCCESSFUL mutation leaves its terminal row where the mutation is
+   * applied (inside `_dispatch`, through `_recordOperationCompleted`), so the view a mutation
+   * answers with can already contain it: a bookkeeping row minted after the caller's own view
+   * would wake that caller's next watch with no change to report.
+   *
+   * A READ writes its terminal row only when it actually retires one of its own refusals. Reads
+   * leave no trace by design, so recording every successful one would put a row per `swarm.view`
+   * on the ledger and wake every watcher for it; recording the ONE that clears the caller's own
+   * standing refusal for the same command is the only one that is read by anybody. Every view
+   * answers with `caller.lastRefusal` whatever projection was asked for, so the clearing question
+   * does not depend on the slice. */
   async command(command, args, principal, context = null) {
+    let result;
     try {
-      return await this._dispatch(command, args, principal, context);
+      result = await this._dispatch(command, args, principal, context);
     } catch (error) {
       this._recordRefusal(command, args, principal, context, error);
       throw error;
     }
+    if (result?.caller?.lastRefusal?.command === command) {
+      this._settleOperation(command, args, principal, context);
+    }
+    return result;
   }
 
   /** Record one refused mutation (issue #271 work W2) as the runtime's own durable
-   * `swarm.operation_refused` driver row — {swarmId, command, event, code, field, participantId} —
-   * so a watcher parked on swarm.watch wakes even though no swarm state changed and the fold never
-   * saw a thing. Only mutations are recorded: a refused READ is the caller's own business.
+   * `swarm.operation_refused` driver row — {swarmId, command, event, code, field, rule,
+   * participantId} — so a watcher parked on swarm.watch wakes even though no swarm state changed
+   * and the fold never saw a thing. Only mutations are recorded: a refused READ is the caller's
+   * own business. The refusal names the RULE that refused it (issue #283) so a watcher learns
+   * what to change, not merely that something was refused.
    * The identity derives from the request and the refusal (never a clock, counter, or random id),
    * so replaying the ledger reproduces these rows byte-identically and an identical retried refusal
    * records exactly once. A refusal with no typed code is an internal fault, not a refusal, and is
@@ -692,10 +851,11 @@ export class SwarmRuntime {
       event: typeof args?.event === 'string' ? args.event : null,
       code,
       field: typeof error?.detail?.field === 'string' ? error.detail.field : null,
+      rule: typeof error?.detail?.rule === 'string' ? error.detail.rule : null,
       // The refusal's own named participant wins; when it names nobody (contract and state
       // refusals), the resolved caller is the participant whose mutation was refused.
       participantId: typeof error?.detail?.participantId === 'string'
-        ? error.detail.participantId : this._refusalMember(swarmId, principal, context),
+        ? error.detail.participantId : this._attributedParticipant(swarmId, principal, context),
     };
     this.store.recordDriver('swarm.operation_refused', row, {
       actor: principal?.actor ?? 'swarm',
@@ -703,19 +863,90 @@ export class SwarmRuntime {
     });
   }
 
-  /** Best-effort participant attribution for a refusal row, resolved through the same authority
-   * the command used (_caller): identity enrichment must never replace the refusal itself, so a
-   * resolution that refuses (a cross-swarm context, a claimed identity this swarm does not carry)
-   * yields null instead of a refusal of its own. */
-  _refusalMember(swarmId, principal, context) {
+  /** The terminal row for a successful MUTATION that the operation lane did not already record:
+   * `_once` writes its own (under the operation key, carrying the result a replay returns), and
+   * everything else — a plain `swarm.update`, a capture, a check, a create — is recorded HERE, so
+   * "a later operation of the same command succeeded" is one question the ledger answers the same
+   * way for every command. Only mutations come through this door: a successful READ is recorded
+   * solely when it retires the caller's own standing refusal (`command`), because a read that
+   * changed nothing and cleared nothing is not an operation anybody reads. */
+  _recordOperationCompleted(command, args, principal, context) {
+    const definition = swarmCommandDefinition(command);
+    if (definition === null || !definition.capabilities.some((capability) => capability !== 'observe')) return;
+    this._settleOperation(command, args, principal, context);
+  }
+
+  /** Write the one terminal row for an operation whose success the lane has not recorded yet. The
+   * row's identity is the whole attempt (the request, not a clock), so re-issuing one request
+   * never mints a second row; no result is carried, because a command that does not replay under
+   * its key has no replayed receipt and its own durable effect is its evidence. */
+  _settleOperation(command, args, principal, context) {
+    if (this.watchController.signal.aborted) return;
+    const operationKey = this._operationKey(command, args, principal);
+    if (this.store.priorCoordinationEvent(`${operationKey}:completed`)) return;
+    this.store.recordDriver('swarm.operation_completed', {
+      swarmId: typeof args?.swarmId === 'string' ? args.swarmId : null,
+      command, operationKey, result: null,
+      participantId: this._attributedParticipant(typeof args?.swarmId === 'string' ? args.swarmId : null, principal, context),
+    }, {
+      actor: principal?.actor ?? 'swarm',
+      key: `swarm-terminal:${hash([command, args ?? null, principal?.principalId ?? null])}`,
+    });
+  }
+
+  /** Best-effort participant attribution for the runtime's own durable rows (a refusal, an
+   * operation receipt), resolved through the same authority the command used (_caller): identity
+   * enrichment must never replace the outcome itself, so a resolution that refuses (a cross-swarm
+   * context, a claimed identity this swarm does not carry) yields null instead of a refusal of its
+   * own. ONE resolution, so a refusal row and the terminal row that clears it name the same seat. */
+  _attributedParticipant(swarmId, principal, context) {
     try {
       const swarm = swarmId === null ? null : this.store.swarm(swarmId);
       return swarm ? this._caller(swarm, principal, context)?.participantId ?? null : null;
     } catch { return null; }
   }
 
+  /** Record one refusal the NATIVE BRIDGE raised before dispatch (issue #283 root comment 2) as
+   * the same durable `swarm.operation_refused` row a refused mutation leaves — the bridge's own
+   * admission (an over-cap frame, a request the closed argument vocabulary refuses) is a refusal a
+   * participant must be able to learn about, and the swarm's refusal lane is where it is legible.
+   * The report is the bridge's, so every field is validated here: a malformed report is refused
+   * rather than recorded as if it were a refusal, and an absent command or participant is null on
+   * the row, never invented. */
+  _recordBridgeRefusal(report, principal) {
+    if (this.watchController.signal.aborted) refuse('Swarm runtime is closed', 'swarm_runtime_closed');
+    const text = (value) => (typeof value === 'string' && value.length > 0 ? value : null);
+    if (!report || typeof report !== 'object' || Array.isArray(report)) {
+      refuse('Swarm bridge refusal report must be one JSON object', 'swarm_command_invalid',
+        { rule: 'bridge-report-shape' });
+    }
+    if (text(report.code) === null) {
+      refuse('Swarm bridge refusal report must name the refusal code', 'swarm_command_invalid',
+        { field: 'code', rule: 'bridge-report-shape' });
+    }
+    const row = {
+      swarmId: text(report.swarmId), command: text(report.command), event: text(report.event),
+      code: text(report.code), field: text(report.field), rule: text(report.rule),
+      participantId: text(report.participantId),
+    };
+    // The bridge's own refusal identity is its own report, and the seat is named by the report
+    // (its token table), so the same refused request records exactly once however often it retries.
+    this.store.recordDriver('swarm.operation_refused', row, {
+      actor: principal?.actor ?? 'swarm',
+      key: `swarm-refusal:${hash([row.command, row.swarmId, row.participantId, row.code, row.field, row.rule, row.event])}`,
+    });
+    return { recorded: true, code: row.code, participantId: row.participantId, command: row.command };
+  }
+
   async _dispatch(command, args, principal, context = null) {
     if (this.watchController.signal.aborted) refuse('Swarm runtime is closed', 'swarm_runtime_closed');
+    // The native bridge's refusal report (issue #283). It reaches the runtime through `dispatch`
+    // because that is the bridge's ONLY channel, and it is admitted only from a bridge report: the
+    // verb is not a swarm command (swarm-contract asserts it never becomes one), so no surface can
+    // submit it, and the report is validated before anything is recorded.
+    if (command === SWARM_BRIDGE_REFUSAL_COMMAND) {
+      return this._recordBridgeRefusal(args, principal);
+    }
     validateSwarmCommand(command, args);
     await this.authorize(command, args, principal);
     if (command === 'swarm.list') {
@@ -730,33 +961,29 @@ export class SwarmRuntime {
       const swarmId = args.swarmId ?? `swarm-${hash([principal.principalId, args.idempotencyKey]).slice(0, 32)}`;
       this._write('swarm.created', { swarmId, purpose: args.purpose }, principal,
         this._operationKey(command, { ...args, swarmId }, principal));
-      return this.inspect(this._swarm(swarmId), principal, context);
+      this._recordOperationCompleted(command, args, principal, context);
+      return this.inspect(this._swarm(swarmId), principal, context, null, args.projection);
     }
     let swarm = this._swarm(args.swarmId);
     if (command === 'swarm.view') {
       const scope = args.participantId ? this._participant(swarm, args.participantId) : null;
-      return this.inspect(swarm, principal, context, scope?.participantId ?? null);
+      return this.inspect(swarm, principal, context, scope?.participantId ?? null, args.projection);
     }
     if (command === 'swarm.watch') {
       this._permit(swarm, principal, context, 'read');
       return this._watch(args, principal, context);
     }
-    let permission = command === 'swarm.update' ? UPDATE_PERMISSIONS[args.event] : COMMAND_PERMISSIONS[command];
-    if (!permission) refuse('Swarm operation is unavailable', 'swarm_command_unavailable');
+    // The caller is resolved ONCE, and the permission their request needs is derived from it in
+    // ONE place (_updatePermission), so the grant this check enforces and the kinds the view
+    // advertises are the same derivation (2026-09-14 audit S-F1).
+    const member = this._caller(swarm, principal, context);
+    let permission = command === 'swarm.update'
+      ? this._updatePermission(args.event, member, args.payload)
+      : COMMAND_PERMISSIONS[command];
     if (command === 'swarm.check' || command === 'swarm.capture') {
-      const author = this._caller(swarm, principal, context);
-      permission = author?.participantId === args.participantId ? 'contribute' : 'review';
+      permission = member?.participantId === args.participantId ? 'contribute' : 'review';
     }
-    if (command === 'swarm.update' && args.event === 'swarm.participant_left') {
-      const member = this._caller(swarm, principal, context);
-      if (member && (!args.payload?.participantId || args.payload.participantId === member.participantId)) permission = 'read';
-    }
-    // Arriving at a declared synchronization point is a member's own honest report, not an
-    // organizing act — when the arrival is (or defaults to) the caller, read authority suffices.
-    if (command === 'swarm.update' && args.event === 'swarm.coupling_updated' && args.payload?.action === 'arrive') {
-      const member = this._caller(swarm, principal, context);
-      if (member && (!args.payload?.participantId || args.payload.participantId === member.participantId)) permission = 'read';
-    }
+    if (!permission) refuse('Swarm operation is unavailable', 'swarm_command_unavailable');
     const caller = this._permit(swarm, principal, context, permission);
     if (command === 'swarm.update') {
       if (typeof args.payload === 'string' && args.event !== 'swarm.contribution_recorded') {
@@ -815,6 +1042,7 @@ export class SwarmRuntime {
         payload.releasedBy = actor;
       }
       this._write(args.event, payload, principal, this._operationKey(command, args, principal));
+      this._recordOperationCompleted(command, args, principal, context);
       if (caller && args.event === 'swarm.participant_left' && payload.participantId === caller.participantId) {
         return { swarmId: args.swarmId, participantId: caller.participantId, state: 'left', sessionStopped: false };
       }
@@ -830,7 +1058,15 @@ export class SwarmRuntime {
         refuse('Delegation cannot grant authority the caller does not hold', 'swarm_permission_required');
       }
       const runId = `run-${hash([args.swarmId, args.participantId]).slice(0, 32)}`;
-      await this.prepareRun({ runId, objective: args.objective, options: args.options ?? {} }, principal);
+      // The route and scope this seat is recruited under (issue #283 root comment 1): the
+      // deployment's own resolution when it makes one (prepareRun answers with the admitted
+      // intent), otherwise the selection the caller named. They ride the membership write, so the
+      // view projects what the seat was started as from the durable join — never from a live
+      // worker that may since have been rebound, stopped, or restarted.
+      const intent = await this.prepareRun({ runId, objective: args.objective, options: args.options ?? {} }, principal);
+      const recruitedRoute = swarmRouteShape(intent?.route) ?? swarmRouteShape(args.options?.exact);
+      const recruitedScope = Array.isArray(intent?.scope) ? [...intent.scope]
+        : Array.isArray(args.options?.scope) ? [...args.options.scope] : null;
       // A request under a known operation key is the replay authority's to adjudicate (recovery of
       // an admitted-but-unbound recruit rides that path); decided before `_once` records this
       // request, because inside the effect every request is "known".
@@ -861,6 +1097,8 @@ export class SwarmRuntime {
         this._write('swarm.participant_joined', {
           swarmId: args.swarmId, participantId: args.participantId, role: args.objective,
           runId, permissions, ...(caller ? { parentId: caller.participantId } : {}),
+          ...(recruitedRoute ? { route: recruitedRoute } : {}),
+          ...(recruitedScope ? { scope: recruitedScope } : {}),
           ...(workspace ? { workspaceId: workspace.workspaceId } : {}),
         }, principal, `swarm-participant:${hash([args.swarmId, args.participantId])}`);
         await this.startRun({ runId, objective: args.objective, options: args.options ?? {},
@@ -878,7 +1116,7 @@ export class SwarmRuntime {
           ...(checkout ? { workspaceId: checkout.workspaceId } : {}),
         }, principal, `swarm-binding:${hash([args.swarmId, args.participantId, worker.id])}`);
         return { participantId: args.participantId, runId, swarmId: args.swarmId };
-      }, { replaySafe: true, basis: Object.values(swarm.context) });
+      }, { replaySafe: true, basis: Object.values(swarm.context), context });
     }
     const participant = this._participant(swarm, args.participantId);
     if (caller && command === 'swarm.capture' && caller.participantId !== participant.participantId
@@ -904,6 +1142,7 @@ export class SwarmRuntime {
         ...(capture.workspace?.physicalOwnerId ? { workspaceId: capture.workspace.physicalOwnerId } : {}),
         ...(capture.observedHead ? { observedHead: capture.observedHead } : {}),
       }, principal, `swarm-capture-revision:${hash([args.swarmId, participant.participantId, args.contributionId])}`);
+      this._recordOperationCompleted(command, args, principal, context);
       return capture;
     }
     if (command === 'swarm.check') {
@@ -916,6 +1155,7 @@ export class SwarmRuntime {
         reviewerId: this._actorOf(caller, principal), decision: 'comment',
         reason: `Check ${args.checkId}: ${checked.passed ? 'passed' : 'failed'} for ${checked.sha}; cleanup ${checked.attempt?.cleanup?.state ?? 'unknown'}.`,
       }, principal, key);
+      this._recordOperationCompleted(command, args, principal, context);
       return checked;
     }
     if (command === 'swarm.guide') {
@@ -930,13 +1170,13 @@ export class SwarmRuntime {
           && event.seq > cursor).at(-1);
         return { participantId: participant.participantId, result,
           guide: sent ? { seq: sent.seq, ts: sent.ts, messageId: sent.payload.messageId ?? null } : null };
-      });
+      }, { context });
     }
     if (command === 'swarm.stop') {
       return this._once(command, args, principal, async () => {
         const result = await this.stopRun(participant.runId, args.reason, principal);
         return { participantId: participant.participantId, result };
-      });
+      }, { context });
     }
     refuse('Swarm operation is unavailable', 'swarm_command_unavailable');
   }

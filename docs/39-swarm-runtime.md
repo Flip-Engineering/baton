@@ -308,3 +308,96 @@ instead (`startup_cleanup_pending`, `authority_operations_in_flight`, `pending_i
 are one derivation shared with the predicate itself, so the list can never disagree with the loop
 that produced the refusal.
 
+## Reading the swarm as slices, and what a refusal owes the caller (issue #283, 2026-09-14)
+
+One swarm record, many readers. `swarm.view` and `swarm.watch` take an optional `projection`, so a
+caller reads the slice it needs instead of the whole record; naming none answers with everything,
+exactly as before. The vocabulary is closed and declared beside the command that carries it
+(`SWARM_VIEW_PROJECTIONS` in `swarm-contract.mjs`), and ONE slicer (`projectSwarmView`) defines what
+each name keeps — the CLI, the MCP tool table, the runtime and the bridge all derive from it, so
+they cannot disagree about what `participants` means.
+
+| projection | what it answers |
+|---|---|
+| `full` | the whole record — the default, and what every caller saw before |
+| `outline` | the frame alone: what this swarm is and what THIS caller may do, with no rows |
+| `participants` | the participant rows: membership, bindings, delegation, runtime, workspace custody |
+| `contributions` | the contributions and their reviews |
+| `attention` | the attention rows |
+| `guidance` | each seat and the guidance rows addressed to it |
+| `workspace` | each seat and the live checkout custody it holds |
+
+The **frame** — `swarmId`, purpose, status, `caller`, `availableActions`, `updates`, `actionTargets`,
+`cursor`, the `watch` block — rides every projection: knowing what you may do never costs a second
+call. The one field that does NOT is `updatePayloads`: the payload SHAPES are discovery data that
+never change, and embedding them in every answer was a fixed tax on every view, every wake and every
+mutation echo (2026-09-14 audit S-F2). They ride `full`; the `updates` rows ride the frame, and the
+bridge's own `swarm.update --help` renders the shapes locally for a call that has no view to read.
+
+**`updates` sits beside `availableActions` as rows** — `[{ event, permission }]` — naming each update
+kind this caller may send NOW and the permission that admits it. Both the rows and the dispatch check
+derive from the same function over the same table (`_updatePermission`), so a view can no more
+overstate an authority than dispatch can overlook one. `swarm.update` is offered exactly when at
+least one kind is: a read-only participant sees `[{ event: 'swarm.participant_left', permission:
+'read' }]` — the one update it may send, with the permission that admits it — and nothing else.
+
+**A participant-scoped view (`participantId`) is the swarm as that participant sees it.** Its own
+brief text (`role`) is carried by its own row and by no other: another seat's row says
+`role: null, briefWithheld: true`, because a brief is what a recruiter told ONE seat. Records with
+ROSTERS follow the intersection rule (the #292 rule): a group or a declared coupling is in scope
+when any member of the roster is in the subtree, and a group with an empty roster is in scope for
+nobody. Shared context is swarm-wide by construction and is the participant's own reading; an entry
+written for one group follows that group's roster. Attention rows are the ones the subtree can act
+on, and an in-flight operation names the COMMAND, the seat and the operation key — never the request
+body (2026-09-14 audit S-E6): the text of somebody's private guide is not attention.
+
+**Liveness is one derivation.** `swarmParticipantLiveness` (`swarm-runtime.mjs`) is the only place a
+worker status becomes a participant classification: it returns `{ state, live, turn }`, `live` is
+membership in the one declared list of live runtime states, and "gone" is its COMPLEMENT rather than
+a second list. The participant row carries it (`runtime.state`, `runtime.turn`, `runtime.live`), the
+wake feed carries that row, and the bridge carries it verbatim — three surfaces that cannot disagree,
+pinned by a test that feeds one runtime record through all three. A seat with no worker at all reads
+`unbound` and is absent, not dead: it raises no `participant_runtime_dead` row.
+
+**A participant row carries the route and scope the seat was recruited under** (`route: { harness,
+model, effort }`, `scope: [...]`), recorded ONCE with the membership write — the deployment's own
+resolution when `prepareRun` makes one, otherwise the selection the caller named. It is projected
+from the durable join, so a worker that is rebound, stopped or restarted never moves it, and the
+wake that IS a recruitment names the route the seat was started under.
+
+**Refusals are the swarm's record, not the caller's private business.** A refused mutation already
+landed durably as `swarm.operation_refused` (#271); the same lane now carries the refusals the
+NATIVE BRIDGE raises before dispatch — an over-cap frame, a request the closed argument vocabulary
+refuses — reported through the bridge's one channel (`dispatch`, under a verb that
+`swarm-contract.mjs` asserts is never a public command, so no caller can fabricate a refusal about a
+participant). Every such row names `participant, command, field` and the RULE that refused it, wakes
+a parked `swarm.watch`, and shows on the participant's own row:
+
+```json
+{ "kind": "swarm.operation_refused", "swarmId": "swarm-…", "command": "swarm.update",
+  "event": "swarm.work_updated", "code": "swarm_command_invalid", "field": "payload.bogus",
+  "rule": "payload-unknown-field", "participantId": "builder-a" }
+```
+
+`lastRefusal: { seq, command, code, field }` stands on the participant's row until **a later
+operation of the same command succeeds**, which the operation lane records: a mutation writes its
+terminal `swarm.operation_completed` row where the mutation applies, and a READ — which leaves no
+trace of its own — writes one only when it actually retires the caller's own refusal. The caller
+block answers with that refusal under every projection, so a caller that asks for `outline` still
+learns what it must fix. A refusal the RUNTIME raised is recorded once and relayed verbatim; a
+refusal the bridge raised says on its FIRST LINE that nothing was recorded and what to change:
+
+```
+Nothing was recorded: remove runId
+swarm.view request is invalid: unknown field runId
+```
+
+**The bridge's frame bound is negotiated, declared, and never truncated.** One JSON frame per
+direction is buffered under the `wire.frame` substrate row from `limits.mjs` (overridable per bridge
+with `maxFrameBytes`); `issue()` publishes the bound to the participant's environment and the client
+buffers under THAT, so a deployment that raises the ceiling does not get answers its own client
+rejects. An answer over the bound is refused typed (`swarm_bridge_frame_exceeded`, 413) with the
+narrower projection that MEASURABLY fits: the bridge re-projects the answer it already holds through
+the same slicer the runtime builds views with and names the widest one under the ceiling — never a
+declared table of sizes, never a truncation, and never a second hardcoded number. Asking again with
+the named projection is the fix, and the test does exactly that.
