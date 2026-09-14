@@ -659,14 +659,18 @@ export function wrapProductionMcpServer(server, {
     shadowPromise ??= createAdvancedShadow(server);
     return shadowPromise;
   };
-  const listedTools = async () => {
-    const advanced = await shadow();
-    return [
-      ...(server.toolDefinitions ?? []),
-      ...(advanced?.toolDefinitions ?? []),
-      ...COMPLETE_UNIFIED_MCP_META_TOOL_DEFINITIONS,
-    ];
-  };
+  // U-E2 (#287, 2026-09-14 audit): a surface's tools/list is exactly what tools/call dispatches.
+  // Merging the advanced shadow's definitions here advertised 17 kernel tools (the whole fleet_*
+  // family) on an ordinary surface whose dispatch guard then refused them by name — the list
+  // lied. The alternative fix, widening the ordinary guard, would make an `application`
+  // deployment advertise AND dispatch kernel control directly, which MCP.md reserves for
+  // `advanced`/`combined`; so the merge is what goes, and kernel reachability stays where the
+  // profile already projects it — the baton_surface_* meta tools route to this same shadow
+  // (invokeCapability), while an advanced/combined surface carries the definitions itself.
+  const listedTools = async () => [
+    ...(server.toolDefinitions ?? []),
+    ...COMPLETE_UNIFIED_MCP_META_TOOL_DEFINITIONS,
+  ];
   return new Proxy(server, {
     get(target, key, receiver) {
       if (key === 'convergence') return runtime;

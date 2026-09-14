@@ -269,3 +269,88 @@ test('surface watch refuses cursor rewind instead of returning an empty success 
     requestedCursor: 8, throughCursor: 0,
   });
 });
+
+// ---------------------------------------------------------------------------
+// #287 U-E2: an ordinary surface's tools/list is exactly what tools/call
+// dispatches. The advanced shadow (a kernel-control surface) used to be merged
+// into the ordinary inventory — 17 advertised tools the dispatch guard refused
+// by name (fleet_* among them). The guard widening instead would grant an
+// ordinary deployment authority it does not carry, so the merge is what went.
+// ---------------------------------------------------------------------------
+
+test('an ordinary surface advertises exactly what tools/call dispatches — no advanced-shadow merge (U-E2)', async (t) => {
+  const { mkdtempSync, rmSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const { CoordinationStore, McpFleetServer } = await import('../src/index.mjs');
+  const { mockApplicationCard } = await import('../scripts/surface-truth.mjs');
+  const REPO = 'repo-ordinary-advertisement';
+  const directory = mkdtempSync(join(tmpdir(), 'baton-ordinary-advertise-'));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const NOW = Date.parse('2026-09-14T00:00:00.000Z');
+  const raw = new McpFleetServer({
+    coordinator: {},
+    coordination: new CoordinationStore(join(directory, 'coordination'), { clock: () => new Date(NOW).toISOString() }),
+    application: {
+      repoId: REPO,
+      card: () => mockApplicationCard(REPO),
+      async authorizeReplay() { return true; },
+      async command(name) { return { schemaVersion: 1, command: name }; },
+    },
+    surface: 'application',
+    shutdownPrincipal: { actor: 'mcp-host:test', principalId: 'mcp-host', sessionId: 'mcp-host-session' },
+    principal: {
+      userId: 'operator-a', sessionId: 'stdio-a', capabilities: ['control', 'observe'],
+      repoIds: [REPO], expiresAt: new Date(NOW + 60_000).toISOString(), revoked: false,
+    },
+    repoIds: [REPO], now: () => NOW, maxWaitMs: 25_000, maxMessageBytes: 256 * 1024,
+    takeToolQuota: () => ({ ok: true }),
+  });
+  const server = wrapProductionMcpServer(raw, { runtime: new ProductionConvergenceRuntime() });
+  const initialized = await server.handle({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-11-25', capabilities: {}, clientInfo: { name: 't', version: '1' } } });
+  await server.handle({ jsonrpc: '2.0', method: 'notifications/initialized' });
+  const listed = await server.handle({ jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} });
+  const names = listed.result.tools.map((tool) => tool.name);
+  const dispatchable = server.toolNames;
+  for (const name of names) {
+    assert.ok(dispatchable.has(name), `${name} is advertised but the dispatch guard refuses it`);
+  }
+  for (const name of dispatchable) {
+    assert.ok(names.includes(name), `${name} is dispatchable but not advertised`);
+  }
+  assert.equal(names.some((name) => name.startsWith('fleet_')), false,
+    'kernel-control (fleet_*) tools are not merged into an ordinary surface inventory');
+  // The former ghost, probed directly: refused by the guard's own unknown-tool lane, never dispatched.
+  const ghost = await server.handle({ jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name: 'fleet_list', arguments: { repoId: REPO } } });
+  assert.equal(ghost.error?.code, -32602, 'a non-advertised kernel tool refuses at the guard, not inside a dispatch');
+
+  // #287 U-E2/N7: the six meta tools are advertised, dispatchable in practice, and documented —
+  // the greeting must not name a baton_surface_* tool the guide never describes.
+  const META = ['baton_surface_catalog', 'baton_surface_describe', 'baton_surface_invoke',
+    'baton_surface_snapshot', 'baton_surface_watch', 'baton_surface_visualize'];
+  for (const name of META) {
+    assert.ok(names.includes(name), `${name} ships on the ordinary surface`);
+    assert.ok(dispatchable.has(name), `${name} is dispatchable`);
+  }
+  const catalog = await server.handle({ jsonrpc: '2.0', id: 4, method: 'tools/call', params: { name: 'baton_surface_catalog', arguments: {} } });
+  assert.equal(catalog.result.structuredContent.error, undefined,
+    `baton_surface_catalog answers: ${JSON.stringify(catalog.result.structuredContent).slice(0, 400)}`);
+  assert.ok(Array.isArray(catalog.result.structuredContent.capabilities)
+    && catalog.result.structuredContent.capabilities.length > 0, 'the catalog projects the live capability set');
+  // The guide's kernel posture, pinned: a fleet_* tool is NOT in the ordinary inventory, and the
+  // meta route still projects it (routed to the same shadow) instead of walling the profile off.
+  // The capability must dispatch — an argument refusal from the routed tool is the proof; a
+  // profile wall would answer surface_profile_restricted without reaching it.
+  const described = await server.handle({ jsonrpc: '2.0', id: 5, method: 'tools/call', params: { name: 'baton_surface_describe', arguments: { name: 'fleet_spawn' } } });
+  assert.equal(described.result.structuredContent.capability.liveMcp.toolName, 'fleet_spawn',
+    'the catalog projects the kernel tool behind the capability (U-E2/N7)');
+  const invoked = await server.handle({ jsonrpc: '2.0', id: 6, method: 'tools/call', params: { name: 'baton_surface_invoke', arguments: { name: 'fleet_spawn', args: {} } } });
+  assert.notEqual(invoked.result.structuredContent.error?.code, 'surface_profile_restricted',
+    'the meta route reaches the capability rather than refusing the profile');
+  const { readFileSync } = await import('node:fs');
+  const doc = readFileSync(new URL('../MCP.md', import.meta.url), 'utf8');
+  for (const name of new Set([...`${initialized.result.instructions}`.matchAll(/baton_surface_[a-z]+/gu)].map((match) => match[0]))) {
+    assert.match(doc, new RegExp(`\`${name}\``, 'u'), `${name} is advertised in the greeting and documented in MCP.md`);
+  }
+  for (const name of META) assert.match(doc, new RegExp(`\`${name}\``, 'u'), `${name} is documented`);
+});

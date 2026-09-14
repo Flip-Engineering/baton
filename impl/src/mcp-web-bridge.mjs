@@ -104,8 +104,12 @@ export class BatonWebApplicationFacade {
     this.repoId = client.repoId;
     this._card = Object.freeze(clone(applicationCard));
     this._registryDigest = applicationCard.agentExperience?.registryDigest ?? null;
-    this._session = Object.freeze(clone(session));
-    this._sessionDigest = digest(this._session);
+    // U-E17 (#287, 2026-09-14 audit): no construction-time session digest is pinned. The session
+    // is re-attested against the CURRENT one per dispatch (_reattestSession), so a resident
+    // refresh that renews expiresAt (or grants a capability) is a renewal instead of a permanent
+    // refusal. The bound identity below is the only frozen authority; `_attestation` holds the
+    // one attestation a single transport dispatch shares.
+    this._attestation = null;
     this._principal = Object.freeze({
       userId: session.identity.userId,
       sessionId: session.identity.sessionId,
@@ -134,15 +138,68 @@ export class BatonWebApplicationFacade {
       'application_unauthorized', { command: typeof name === 'string' ? name : null, admitted: false });
   }
 
-  async _attestSession(principal) {
-    if (!validPrincipal(principal, this._principal)) {
-      throw bridgeError('Remote Baton MCP principal is invalid', 'application_unauthorized');
+  /** U-E18 (#287, 2026-09-14 audit): baton_deployment_doctor over the bridge answers from the
+   * resident's REAL readiness. The northbound consults application.doctor() first, and without
+   * this the hardcoded always-ready stub (zero routes, workspace ready) answered for every
+   * bridged deployment. The projection is the resident's own deployment readiness — routes,
+   * workspace and limits exactly as the resident reports them — carrying the LIVE ready flag.
+   * The bridge's own verified coordinates (repoId) are pinned after it; secret material never
+   * rides here, and the northbound redacts credential-shaped values at the surface anyway. */
+  async doctor() {
+    const live = await this.client.doctor();
+    if (!live || typeof live !== 'object' || Array.isArray(live)) {
+      throw bridgeError('Remote Baton doctor is unavailable');
     }
+    const readiness = live.deployment && typeof live.deployment === 'object' && !Array.isArray(live.deployment)
+      ? clone(live.deployment) : {};
+    return Object.freeze({
+      ...readiness,
+      schemaVersion: 1,
+      repoId: this.repoId,
+      ready: live.ready === true,
+    });
+  }
+
+  /** U-E17 (#287): re-attest against the CURRENT session, never a construction-time digest. What
+   * refuses is a genuine authority change: a different identity, a bound capability the session
+   * no longer carries, the served repository leaving the session scope, a revoked flag, or an
+   * unparsable expiry. A moved `expiresAt` is a renewal — the session is re-attested, not
+   * invalidated. */
+  async _reattestSession() {
     const current = await this.client.session();
-    if (digest(current) !== this._sessionDigest) {
+    const identity = current?.identity;
+    const renewed = identity && typeof identity === 'object'
+      && identity.userId === this._principal.userId
+      && identity.sessionId === this._principal.sessionId
+      && Array.isArray(identity.capabilities)
+      && this._principal.capabilities.every((capability) => identity.capabilities.includes(capability))
+      && Array.isArray(identity.repoIds) && identity.repoIds.includes(this.repoId)
+      && current.revoked !== true
+      && Number.isFinite(Date.parse(current.expiresAt));
+    if (!renewed) {
       throw bridgeError('Remote Baton authenticated session authority changed', 'application_unauthorized');
     }
     return current;
+  }
+
+  /** U-E17 (#287): one session round trip per tool call at most. Every facade entry of ONE
+   * transport dispatch (actionAuthority → authorizeReplay → command) carries the same
+   * server-minted dispatch identity as its context requestId, so the dispatch shares a single
+   * attestation; a context with a different identity attests afresh, and the entry is replaced
+   * (never a timer, never a TTL — the dispatch is the freshness epoch). The attestation is a
+   * fast local check, not the access boundary: the resident re-authenticates the bearer session
+   * on every forwarded command. */
+  async _attestSession(principal, context = null) {
+    if (!validPrincipal(principal, this._principal)) {
+      throw bridgeError('Remote Baton MCP principal is invalid', 'application_unauthorized');
+    }
+    const dispatchKey = contextRequestId(context);
+    if (dispatchKey !== null && this._attestation?.key === dispatchKey) {
+      return this._attestation.pending;
+    }
+    const pending = this._reattestSession();
+    this._attestation = dispatchKey === null ? null : { key: dispatchKey, pending };
+    return pending;
   }
 
   _mutationKey(name, args, principal) {
@@ -155,8 +212,8 @@ export class BatonWebApplicationFacade {
     })}`;
   }
 
-  async actionAuthority(args, principal) {
-    await this._attestSession(principal);
+  async actionAuthority(args, principal, context = null) {
+    await this._attestSession(principal, context);
     const idempotencyKey = this._mutationKey('run.act', args, principal);
     if (typeof this.client.actionAuthority === 'function') {
       return this.client.actionAuthority(args, idempotencyKey);
@@ -186,7 +243,7 @@ export class BatonWebApplicationFacade {
     if (!validContext(context)) {
       throw bridgeError('Remote Baton MCP replay authority is invalid', 'application_unauthorized');
     }
-    await this._attestSession(principal);
+    await this._attestSession(principal, context);
     if (name === 'run.act') {
       const semantic = context.semanticAuthority;
       const definition = APPLICATION_SEMANTIC_REGISTRY.actions[semantic?.kind];
@@ -248,7 +305,7 @@ export class BatonWebApplicationFacade {
     if (!validContext(context)) {
       throw bridgeError('Remote Baton MCP command authority is invalid: the call context is malformed', 'application_unauthorized');
     }
-    await this._attestSession(principal);
+    await this._attestSession(principal, context);
     const idempotencyKey = MUTATIONS.has(name)
       ? this._mutationKey(name, args, principal)
       : `mcp-web-${digest({ repoId: this.repoId, key: context.idempotencyKey })}`;

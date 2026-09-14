@@ -402,6 +402,39 @@ test('MP11: baton-mcp accepts a declarative JSON descriptor (closed shape, conta
     'a symlink escaping the repo is containment-refused, not followed');
 });
 
+// #287 fallout (MP19 opened the guide's example against a mkdtemp root): containment is judged
+// where a ref RESOLVES, for a target that does not exist yet as much as for one that does. Before:
+// an unwritten credential under a repo reached through a symlink (macOS /tmp, /var) was refused as
+// "escaping" because its lexical path was compared against the resolved root, and a dangling ref
+// beneath an escaping directory link was admitted because nothing resolved it.
+test('MP20: containment is judged at the real location — a symlinked repo root admits an unwritten credential; an escaping directory link refuses a dangling ref', async () => {
+  const { realpathSync, symlinkSync } = await import('node:fs');
+  const { loadMcpDescriptor } = await import('../src/mcp-descriptor.mjs');
+  const outer = realpathSync(root('mp20'));
+  const repo = join(outer, 'repo');
+  mkdirSync(repo);
+  const linkedRepo = join(outer, 'repo-link');
+  symlinkSync(repo, linkedRepo);
+  const route = { harness: 'glm', model: 'glm-5.2', effort: 'high' };
+  const descriptorPath = join(repo, 'descriptor.json');
+  writeFileSync(descriptorPath, JSON.stringify({
+    repo: linkedRepo, surface: 'application',
+    routes: [{ ...route, credential: { kind: 'file', ref: 'glm_key.json' } }],
+  }));
+  const parsed = loadMcpDescriptor(descriptorPath);
+  assert.equal(parsed.routes[0].credential.ref, 'glm_key.json',
+    'a credential the operator has not written yet, under a root reached through a symlink, is inside the repository — the open-time read owns its absence');
+
+  mkdirSync(join(outer, 'elsewhere'));
+  symlinkSync(join(outer, 'elsewhere'), join(repo, 'creds'));
+  writeFileSync(descriptorPath, JSON.stringify({
+    repo, surface: 'application',
+    routes: [{ ...route, credential: { kind: 'file', ref: 'creds/glm_key.json' } }],
+  }));
+  assert.throws(() => loadMcpDescriptor(descriptorPath), /symlink escaping/,
+    'a dangling ref beneath a directory link that leaves the repository resolves outside it — refused before any read');
+});
+
 test('MP12: the descriptor drives the server factory, pinned and frozen at open', async () => {
   const module = await import('../src/mcp-descriptor.mjs').catch(() => ({}));
   assert.equal(typeof module.loadMcpDescriptor, 'function', 'the descriptor parser exists (PKG-1)');
@@ -497,6 +530,54 @@ test('MP17: MCP.md\'s quickstart descriptor parses and validates against the clo
   const example = JSON.parse(match[1]);
   for (const field of ['repo', 'routes', 'surface']) assert.ok(Object.hasOwn(example, field), `the example carries ${field}`);
   assert.ok(Array.isArray(example.routes) && example.routes.length > 0, 'the example routes are concrete');
+});
+
+// #287 U-E9/U-G10: every repoId example in the guide is the value the server
+// actually accepts — the descriptor's `repo` string, verbatim — and the guide
+// says the server itself states it in the initialize greeting. RED at the
+// pre-fix HEAD: the examples used a fictitious "repo-a" that the server
+// refuses with a bare forbidden, and nothing carried the served value.
+test('MP19: every MCP.md repoId example is the served value (the descriptor\'s repo, verbatim)', async () => {
+  const doc = readFileSync(join(import.meta.dirname, '..', 'MCP.md'), 'utf8');
+  assert.doesNotMatch(doc, /"repoId":\s*"(?!\/absolute\/path\/to\/your\/repository")[^"]*"/u,
+    'a repoId example the server would refuse must not be documented');
+  const examples = [...doc.matchAll(/"repoId":\s*"([^"]+)"/gu)].map((match) => match[1]);
+  assert.ok(examples.length >= 7, 'the wire examples carry repoId coordinates');
+  for (const value of new Set(examples)) {
+    assert.equal(value, '/absolute/path/to/your/repository',
+      'every documented repoId is the descriptor example\'s repo value — the one the server accepts');
+  }
+  assert.match(doc, /the descriptor's `repo` string, verbatim/u,
+    'the guide names the derivation of the accepted repoId');
+  assert.match(doc, /Served repoId: <repo>/u,
+    'the guide points at the initialize greeting that carries the served value (U-G10)');
+
+  // The rule, executed: the guide's OWN descriptor example, opened against a real repository
+  // path, serves the doctor for exactly the value its `repo` field carries — and refuses the
+  // fictitious coordinate the guide used to document (U-E9's bare `forbidden`).
+  const { createMcpServerFromDescriptorPath } = await import('../src/mcp-descriptor.mjs');
+  const exampleMatch = doc.match(/```json\s*(\{[\s\S]*?"routes"[\s\S]*?)\s*```/u);
+  assert.ok(exampleMatch, 'MCP.md carries a fenced JSON descriptor example');
+  const repository = root('mp19');
+  const descriptor = { ...JSON.parse(exampleMatch[1]), repo: repository, deploymentRoot: '.baton/mp19' };
+  const descriptorPath = join(repository, 'baton-mcp.json');
+  writeFileSync(descriptorPath, `${JSON.stringify(descriptor, null, 2)}\n`);
+  const server = await createMcpServerFromDescriptorPath(descriptorPath);
+  const send = (id, method, params) => server.handle({ jsonrpc: '2.0', id, method, ...(params === undefined ? {} : { params }) });
+  const greeting = await send(1, 'initialize', { protocolVersion: '2025-11-25', capabilities: {}, clientInfo: { name: 'mp19', version: '1' } });
+  assert.match(greeting.result.instructions, new RegExp(`Served repoId: ${repository.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&')}`),
+    'the greeting states the coordinate the descriptor serves (U-G10)');
+  await send(undefined, 'notifications/initialized');
+  const served = await send(2, 'tools/call', { name: 'baton_deployment_doctor', arguments: { repoId: repository } });
+  assert.equal(served.result.isError, false, `the descriptor's repo value serves the doctor: ${JSON.stringify(served.result)}`);
+  assert.deepEqual(served.result.structuredContent.routes,
+    [{ harness: 'glm', model: 'glm-5.2', effort: 'high', state: 'ready' }],
+    'the readiness is the guide descriptor\'s own route set');
+  // #288 typed the cross-repo refusal (`repo_not_served` names the served repo and the remedy);
+  // the guide's old coordinate is refused by that name, never admitted.
+  const refused = await send(3, 'tools/call', { name: 'baton_deployment_doctor', arguments: { repoId: 'repo-a' } });
+  assert.equal(refused.result.structuredContent.error.code, 'repo_not_served',
+    'the coordinate the guide used to document is refused by name — the examples must name the served value');
 });
 
 // ===========================================================================

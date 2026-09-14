@@ -48,6 +48,15 @@ A bounded closed JSON descriptor:
 - `principal` — the fixed host identity. `settlement` capability is NEVER defaulted: it enables
   `knowledge.settlement_lease` on this principal (single-orchestrator posture — see below).
 
+The value every tool call passes as `repoId` is the descriptor's `repo` string, verbatim — the
+server derives no other spelling, and a call naming anything else is refused. The server states
+that value itself: the `initialize` greeting carries `Served repoId: <repo>` ("pass this exact
+value as repoId on every tool call"), so a client learns the coordinate from the server instead of
+guessing it. The wire examples below use the same placeholder as the descriptor above; substitute
+your own absolute repository path. A connection that BINDS the coordinate instead (the resident
+bridge) derives it per call and refuses a supplied `repoId`; its greeting states the same
+`Served repoId:` value with the server-derived wording, and its tool schemas carry no `repoId`.
+
 The legacy config FACTORY MODULE path stays for advanced deployments (a `.mjs` path is treated
 as a module exporting `default`/`createMcpServer()`), but the descriptor is the documented
 default and the distribution story is npx-from-git (`private: true`, no registry publication).
@@ -81,10 +90,12 @@ args = ["/absolute/path/to/baton/impl/scripts/mcp-stdio.mjs", "/absolute/path/to
 under the client's server configuration idiom.
 
 On `initialize` the server answers with the Flip greeting and the surface-orientation
-instructions line; `baton_deployment_doctor` is the quota-free route-picking prerequisite —
-call it before starting work. The descriptor's `surface: "application"` (the documented
-default) serves the ordinary inventory below; `combined` adds the board/package/REPL/knowledge
-families for kernel-control deployments.
+instructions line, and that greeting names the served `repoId` (`Served repoId: <repo>`) — the one
+value every tool call takes, stated by the server so it never has to be guessed.
+`baton_deployment_doctor` is the quota-free route-picking prerequisite — call it before starting
+work, passing the greeted coordinate verbatim. The descriptor's `surface: "application"` (the
+documented default) serves the ordinary inventory below; `combined` adds the
+board/package/REPL/knowledge families for kernel-control deployments.
 
 ## Read readiness
 
@@ -109,7 +120,7 @@ Every wave tool takes the repository coordinate first (`repoId`).
    route code:
 
    ```json
-   { "repoId": "repo-a", "idempotencyKey": "ik-1", "members": [{ "role": "alpha", "objective": "probe" }] }
+   { "repoId": "/absolute/path/to/your/repository", "idempotencyKey": "ik-1", "members": [{ "role": "alpha", "objective": "probe" }] }
    ```
 
 2. **Page progress** — `baton_waves_progress` returns members paginated ≤16 per page with an
@@ -118,18 +129,18 @@ Every wave tool takes the repository coordinate first (`repoId`).
    a cached one: each read is rebuilt from live state:
 
    ```json
-   { "repoId": "repo-a", "waveId": "wave:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "cursor": "c1" }
+   { "repoId": "/absolute/path/to/your/repository", "waveId": "wave:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "cursor": "c1" }
    ```
 
 3. **List and run** — `baton_waves_list` pages waves by cursor, and `baton_waves_run` compiles a
    wave spec against the interpreter's closed validation:
 
    ```json
-   { "repoId": "repo-a", "cursor": "c1" }
+   { "repoId": "/absolute/path/to/your/repository", "cursor": "c1" }
    ```
 
    ```json
-   { "repoId": "repo-a", "spec": "wave:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" }
+   { "repoId": "/absolute/path/to/your/repository", "spec": "wave:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" }
    ```
 
 4. **Answer decisions** — `baton_decision_answer` enforces the repository coordinate BEFORE the
@@ -138,7 +149,7 @@ Every wave tool takes the repository coordinate first (`repoId`).
    outcome `{result: "already_resolved", resolvedBy}` — a late answerer must NOT re-spawn work:
 
    ```json
-   { "repoId": "repo-a", "idempotencyKey": "ik-2", "runId": "run:r1", "requestId": "req-1", "answer": { "optionId": "opt-1" } }
+   { "repoId": "/absolute/path/to/your/repository", "idempotencyKey": "ik-2", "runId": "run:r1", "requestId": "req-1", "answer": { "optionId": "opt-1" } }
    ```
 
 5. **Steer or stop** — `baton_waves_send` / `baton_waves_stop` are LIVE on the members' runIds;
@@ -147,11 +158,11 @@ Every wave tool takes the repository coordinate first (`repoId`).
    outcome accounting on `resultSha`, never `outcomes.length` (the store never double-admits):
 
    ```json
-   { "repoId": "repo-a", "runId": "run:r1", "message": "hello" }
+   { "repoId": "/absolute/path/to/your/repository", "runId": "run:r1", "message": "hello" }
    ```
 
    ```json
-   { "repoId": "repo-a", "runId": "run:r1", "reason": "probe" }
+   { "repoId": "/absolute/path/to/your/repository", "runId": "run:r1", "reason": "probe" }
    ```
 
 6. **Harvest** — a host that dies mid-wave leaves its runs live and steerable via re-attach; an
@@ -174,6 +185,13 @@ The four settlement ops work through MCP behind the S-2 `sessionAuthority` envel
   enabled ONLY when the descriptor's principal carries an explicit `settlement` capability class
   (never defaulted). **Trust posture:** an MCP host IS one orchestrator authority; multi-principal
   MCP hosts must NOT enable this tool.
+
+**Where these run.** The four settlement tools are descriptor-deployment tools: they are served by
+a descriptor-driven MCP server whose principal carries the `settlement` capability class. The
+resident bridge (`baton serve` + `baton-mcp-web`) does NOT admit them — they are host-local kernel
+operations — so a bridge-attached client never sees them in its `tools/list`, and calling one over
+the bridge refuses at the dispatch guard as an unknown tool. Settlement happens on the deployment
+that owns the runs, never over a borrowed bridge session.
 
 ## Tool inventory
 
@@ -230,6 +248,29 @@ The four settlement ops work through MCP behind the S-2 `sessionAuthority` envel
 | `run.member.stop` | `ordinary` | `baton_workstream_stop` | destructive |
 
 <!-- END GENERATED: mcp-tool-inventory -->
+
+## Unified surface tools
+
+Six `baton_surface_*` meta tools ship beside the direct inventory on every production-wrapped
+deployment (`application`, `advanced`, and `combined`). They project the unified capability
+catalog — Baton's control, observation, telemetry, communication, task-management, knowledge,
+diagnostics/environment, and notification authorities — over one envelope that carries
+`retryable` and `action` fields in its refusals:
+
+- `baton_surface_catalog` — the capabilities available to THIS deployment profile.
+- `baton_surface_describe` — one capability: its live schema and posture.
+- `baton_surface_invoke` — invoke a capability by name, routed through the authority it already has.
+- `baton_surface_snapshot` — one composed read: card, readiness, workers, telemetry.
+- `baton_surface_watch` — the composed notification loop (run follow + attention watch + decisions).
+- `baton_surface_visualize` — a bounded visual model (overview/topology/timeline/telemetry).
+
+They are additive: the direct tools stay the primary surface. What a deployment can reach is
+decided by its profile — the catalog names it, and `baton_surface_invoke` routes each capability
+to the authority that carries it or refuses with the profile-restricted code. Kernel-control
+(`fleet_*`) tools are advertised on `advanced`/`combined` surfaces only: an ordinary surface's
+`tools/list` never carries a tool its own dispatch guard would refuse, and the meta tools are
+where a non-kernel profile reaches a kernel capability when its principal holds the capability
+class for it.
 
 ## Declare coupling in a swarm
 

@@ -9,7 +9,7 @@
 // env-sourced secret VALUES join the file-class redaction set at the surface, never the descriptor.
 
 import { readFileSync, realpathSync } from 'node:fs';
-import { isAbsolute, join, relative, resolve } from 'node:path';
+import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 
 import { CoordinationStore } from './coordination-store.mjs';
 import { McpFleetServer } from './mcp-northbound.mjs';
@@ -62,16 +62,37 @@ function resolveCredentialRef(credential, repoRoot) {
     || fromRepo === '..' || isAbsolute(fromRepo)) {
     throw descriptorError('file credential ref must resolve inside the repository root', 'routes[].credential.ref');
   }
-  let realTarget = resolved;
-  try { realTarget = realpathSync(resolved); } catch { /* non-existent target fails the open-time read later; containment is about the path */ }
-  let realRoot = repoRootResolved;
-  try { realRoot = realpathSync(repoRootResolved); } catch { /* keep the lexical root */ }
+  // Containment is judged where the ref RESOLVES, whether or not the target exists yet: a
+  // not-yet-written credential fails the open-time read later, never containment. Comparing the
+  // target's lexical path against the resolved root would refuse every honest ref under a repo
+  // reached through a symlink (macOS /tmp, /var) and admit a dangling ref beneath a directory
+  // link that escapes — so both sides resolve through their deepest existing ancestor.
+  const realTarget = realLocation(resolved);
+  const realRoot = realLocation(repoRootResolved);
   const fromRealRoot = relative(realRoot, realTarget);
   if (fromRealRoot === '' || fromRealRoot.startsWith(`..${process.platform === 'win32' ? '\\' : '/'}`)
     || fromRealRoot === '..' || isAbsolute(fromRealRoot)) {
     throw descriptorError('file credential ref is a symlink escaping the repository root', 'routes[].credential.ref');
   }
   return Object.freeze({ kind: 'file', ref: closed.ref, resolved });
+}
+
+// The real location of a path whose tail may not exist yet: the deepest existing ancestor is
+// resolved through symlinks and the absent remainder is re-appended lexically (the remainder is
+// already normalized by resolve(), so it carries no `..`).
+function realLocation(path) {
+  const remainder = [];
+  let head = path;
+  for (;;) {
+    try {
+      return join(realpathSync(head), ...remainder);
+    } catch {
+      const parent = dirname(head);
+      if (parent === head) return path;
+      remainder.unshift(basename(head));
+      head = parent;
+    }
+  }
 }
 
 function deepFreeze(value) {
@@ -182,10 +203,23 @@ export function createMcpServerFromDescriptor(descriptor) {
   const stateRoot = descriptor.deploymentRoot !== null
     ? join(resolve(descriptor.repo), descriptor.deploymentRoot) : resolve(descriptor.repo);
   const coordination = new CoordinationStore(join(stateRoot, 'coordination'));
+  // U-E1 (#287, 2026-09-14 audit): the descriptor principal is a PROCESS-LIFETIME principal —
+  // the process IS the session. No numeric expiry is derivable honestly (a wall-clock deadline
+  // would kill a live quickstart mid-session, and a far-future constant would be a fabricated
+  // one), so the principal carries `expiresAt: null`, the explicit marker `_authority` reads as
+  // "valid for as long as this process runs": the stdio transport and everything it serves ends
+  // with the process, and nothing outlives it to authenticate.
   const principal = descriptor.principal === null
-    ? { userId: 'descriptor-host', sessionId: 'descriptor-host-session', capabilities: ['observe'], repoIds: [descriptor.repo] }
-    : { userId: descriptor.principal.userId, sessionId: `descriptor:${descriptor.principal.userId}`,
-      capabilities: [...descriptor.principal.capabilities], repoIds: [descriptor.repo] };
+    ? {
+      userId: 'descriptor-host', sessionId: 'descriptor-host-session',
+      capabilities: ['observe'], repoIds: [descriptor.repo],
+      expiresAt: null, revoked: false,
+    }
+    : {
+      userId: descriptor.principal.userId, sessionId: `descriptor:${descriptor.principal.userId}`,
+      capabilities: [...descriptor.principal.capabilities], repoIds: [descriptor.repo],
+      expiresAt: null, revoked: false,
+    };
   const application = buildDescriptorFacade(descriptor);
   return {
     coordinator: {}, coordination, application,

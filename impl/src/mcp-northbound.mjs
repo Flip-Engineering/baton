@@ -699,7 +699,7 @@ const LEGACY_ORDINARY_APPLICATION_TOOL_DEFINITIONS = Object.freeze([
   // when they need it.
   {
     name: 'baton_deployment_doctor',
-    description: 'Read fresh deployment readiness (routes with state, workspace capacity, credential posture as metadata ONLY — never token material). Quota-free and rebuilt on every call.',
+    description: 'Read fresh deployment readiness (routes with state, workspace capacity, credential posture as metadata ONLY — never token material). Quota-free and rebuilt on every call. Pass the served repoId the initialize greeting states, verbatim; a deployment that derives the coordinate itself omits it from every tool schema.',
     inputSchema: schema({ ...repo }, ['repoId']),
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
@@ -1664,8 +1664,13 @@ export class McpFleetServer {
 
   _authority(name, args) {
     const p = this.principal;
-    const expiresAt = Date.parse(p.expiresAt);
-    if (!nonempty(p.userId) || !nonempty(p.sessionId) || p.revoked === true || !Number.isFinite(expiresAt) || expiresAt <= this.now()) return 'unauthenticated';
+    // U-E1 (#287, 2026-09-14 audit): `expiresAt: null` is the explicit PROCESS-LIFETIME
+    // principal — the process IS the session, so its validity is the running process (close()
+    // ends what it serves), never a hardcoded duration. Every other absent, malformed, or
+    // elapsed expiry still refuses.
+    const expiresAt = p.expiresAt === null ? null : Date.parse(p.expiresAt);
+    if (!nonempty(p.userId) || !nonempty(p.sessionId) || p.revoked === true
+      || (expiresAt !== null && (!Number.isFinite(expiresAt) || expiresAt <= this.now()))) return 'unauthenticated';
     const requiredCapabilities = Array.isArray(CAPABILITY[name]) ? CAPABILITY[name] : [CAPABILITY[name]];
     if (!Array.isArray(p.capabilities)
       || !requiredCapabilities.every((capability) => p.capabilities.includes(capability))) return 'forbidden';
@@ -1739,11 +1744,22 @@ export class McpFleetServer {
       const briefingSentence = briefingHead
         ? `Briefing pack ${briefingHead.packId} minted at event ${briefingHead.observedSeq} (ledger at ${this.coordination.ledgerHeadSeq()}, Δ=${this.coordination.ledgerHeadSeq() - briefingHead.observedSeq}); resolve via the orchestrator's embedded ${'context.briefing'} command.`
         : 'No orchestrator briefing pack minted yet.';
+      // U-G10 (#287): the greeting states the served repoId — the one value every tool call
+      // takes — so a client learns the coordinate from the server instead of guessing it. A
+      // connection that BINDS the coordinate (the resident bridge) derives it per call and
+      // refuses a supplied one, so the sentence states that instead. A multi-repo server says
+      // nothing rather than naming one of many. This sentence PRECEDES the briefing one, which
+      // stays the trailing sentence D6a-1 bounds.
+      const servedRepoId = this.repoIds.size === 1 ? [...this.repoIds][0] : null;
+      const repoSentence = servedRepoId === null ? ''
+        : this.bindApplicationContext
+          ? ` Served repoId: ${servedRepoId} — this connection is bound to that repository and the server derives the coordinate itself, so never pass repoId.`
+          : ` Served repoId: ${servedRepoId} — pass this exact value as repoId on every tool call.`;
       return protocolResult(id, {
         protocolVersion: PROTOCOL_VERSION,
         capabilities: { tools: { listChanged: false } },
         serverInfo: { name: 'baton', version: '0.1.0' },
-        instructions: `${flipFace('smile')} baton — reflexive multi-agent orchestration. Waves are the primary surface (start/attach/steer); settlement lanes arrive through the envelope tools. See MCP.md. ${briefingSentence}`,
+        instructions: `${flipFace('smile')} baton — reflexive multi-agent orchestration. Waves are the primary surface (start/attach/steer); settlement lanes arrive through the envelope tools. See MCP.md.${repoSentence} ${briefingSentence}`,
       });
     }
     if (method === 'notifications/initialized') {
@@ -1826,6 +1842,12 @@ export class McpFleetServer {
       return protocolResult(id, toolError('application_unavailable'));
     }
     let semanticAuthority = null;
+    // U-E17 (#287): the dispatch identity the application facade attests one time per tool call.
+    // The run.act authority read happens BEFORE the admission mints its callId, so this call
+    // mints the dispatch identity itself and hands it to `_callTool`, which reuses it as the
+    // admitted callId — one identity for the whole tool call, so the bridge's re-attestation is
+    // shared by every facade entry of it (actionAuthority → command) instead of one per entry.
+    let dispatchCallId = null;
     if (APPLICATION_TOOL[params.name] === 'run.act') {
       if (typeof this.application.actionAuthority !== 'function') {
         return protocolResult(id, toolError('application_unavailable'));
@@ -1838,6 +1860,7 @@ export class McpFleetServer {
         catch { return protocolResult(id, toolError('temporarily_unavailable')); }
         return protocolResult(id, toolError('idempotency_conflict'));
       }
+      dispatchCallId = randomUUID();
       try {
         semanticAuthority = prior?.semanticAuthority ?? await this.application.actionAuthority(
           applicationArgs(params.name, args),
@@ -1847,7 +1870,7 @@ export class McpFleetServer {
             sessionId: this.principal.sessionId,
           },
           {
-            transport: 'mcp', requestId: String(id), idempotencyKey: `mcp.call:${id}`,
+            transport: 'mcp', requestId: String(dispatchCallId), idempotencyKey: `mcp.call:${dispatchCallId}`,
             capabilityAuthority: northboundCapabilityToken('mcp'),
             capabilities: [...this.principal.capabilities],
           },
@@ -1892,10 +1915,12 @@ export class McpFleetServer {
       try { this._audit('tool_rate_limited', params.name, args); } catch { return protocolResult(id, toolError('temporarily_unavailable')); }
       return protocolResult(id, toolError('rate_limited'));
     }
-    return protocolResult(id, await this._callTool(params.name, args, id, semanticAuthority));
+    return protocolResult(id, await this._callTool(params.name, args, id, semanticAuthority, dispatchCallId));
   }
 
-  async _callTool(name, args, requestId, semanticAuthority = null) {
+  // `dispatchCallId` is the identity the run.act authority read minted before admission (U-E17):
+  // the same callId then rides the admission and the application context of this tool call.
+  async _callTool(name, args, requestId, semanticAuthority = null, dispatchCallId = null) {
     if (!STATEFUL.has(name)) {
       try {
         const observeCallId = `observe-${hash({
@@ -1937,7 +1962,7 @@ export class McpFleetServer {
         return laneCraftedToolError(cause);
       }
     }
-    const callId = randomUUID();
+    const callId = dispatchCallId ?? randomUUID();
     const scopeKey = this.callScope(name, args);
     const actor = `mcp:${this.principal.userId}:${this.principal.sessionId}`;
     let admission;

@@ -197,3 +197,218 @@ test('a typed resident refusal keeps its own code and lifted field over the brid
   assert.equal(error.field, 'depth', 'the resident-composed field is lifted onto the wire error');
   assert.deepEqual(error.detail, wireError);
 });
+
+// #287 U-G10: a connection that binds the coordinate never tells a client to pass it. The
+// greeting names the served repository but states it is server-derived — the same sentence that
+// would have to change the day the binding did.
+test('U-G10: a bound surface states the served repoId as server-derived, never as a value to pass', async (t) => {
+  const mcp = server(t, { bindApplicationContext: true });
+  const greeting = await request(mcp, 'init-bound', 'initialize', { protocolVersion: '2024-11-05', capabilities: {}, clientInfo: { name: 't', version: '1' } });
+  assert.match(greeting.result.instructions, new RegExp(`Served repoId: ${REPO_ID}`, 'u'),
+    'the bound connection still states which repository it serves');
+  assert.match(greeting.result.instructions, /never pass repoId/u,
+    'and says the server derives it, so a client does not follow the greeting into a refusal');
+  await mcp.handle({ jsonrpc: '2.0', method: 'notifications/initialized', params: {} });
+  const listed = await request(mcp, 'l-bound', 'tools/list', {});
+  for (const tool of listed.result.tools) {
+    assert.equal(Object.hasOwn(tool.inputSchema.properties, 'repoId'), false,
+      `${tool.name} omits repoId on a bound surface`);
+  }
+});
+
+// ---------------------------------------------------------------------------
+// #287 U-E17: the bridge re-attests against the CURRENT session, never a
+// construction-time digest. A resident refresh that renews expiresAt (or
+// grants a capability) is a renewal — later calls keep working — and the
+// attestation costs one round trip per tool call at most. A genuine authority
+// change (identity, capability loss, repo scope, revocation) still refuses.
+// RED at the pre-fix HEAD: the facade pinned the session digest at
+// construction, so ANY refresh made every later call throw
+// application_unauthorized, and every facade entry re-fetched the session.
+// ---------------------------------------------------------------------------
+
+function refreshedSessionFacade({ renewed, identityOverrides = {} } = {}) {
+  const sessionCalls = [];
+  const forwarded = [];
+  const card = { repoId: REPO_ID, commands: WIRE_CARD, agentExperience: { registryDigest: APPLICATION_SEMANTIC_REGISTRY.digest } };
+  const renewedSession = {
+    schemaVersion: 1,
+    identity: {
+      userId: SESSION.identity.userId,
+      sessionId: SESSION.identity.sessionId,
+      capabilities: [...SESSION.identity.capabilities, 'export_result'],
+      repoIds: [...SESSION.identity.repoIds],
+      ...identityOverrides,
+    },
+    expiresAt: '2099-06-01T00:00:00.000Z',
+  };
+  const client = {
+    repoId: REPO_ID,
+    async session() { sessionCalls.push(1); return renewed ? renewedSession : SESSION; },
+    async doctor() { return { ready: true, application: card }; },
+    async command(name, args, key) { forwarded.push({ name, args, key }); return { ok: true, command: name }; },
+  };
+  return {
+    facade: new BatonWebApplicationFacade(client, card, SESSION),
+    sessionCalls: () => sessionCalls.length,
+    forwarded,
+  };
+}
+
+test('U-E17: a session refresh that moves expiresAt re-pins instead of breaking every later call', async () => {
+  const { facade, sessionCalls } = refreshedSessionFacade({ renewed: true });
+  const listed = await facade.command('runs.list', {}, PRINCIPAL, CONTEXT);
+  assert.deepEqual(listed, { ok: true, command: 'runs.list' }, 'a renewed session keeps serving calls');
+  const again = await facade.command('swarm.view', { swarmId: 's' }, PRINCIPAL, { ...CONTEXT, requestId: '2', idempotencyKey: 'mcp.call:2' });
+  assert.deepEqual(again, { ok: true, command: 'swarm.view' }, 'the next dispatch keeps working too');
+  assert.equal(sessionCalls(), 2, 'each dispatch attests exactly once against the CURRENT session');
+});
+
+test('U-E17: one attestation round trip per tool call — the dispatch entries share it by requestId', async () => {
+  const { facade, sessionCalls } = refreshedSessionFacade({});
+  // A run.act-shaped dispatch: actionAuthority then command, one transport request id.
+  const facadeWithAuthority = facade;
+  facadeWithAuthority.client.actionAuthority = async () => ({
+    schemaVersion: 1, actionId: 'a', kind: 'stop', effect: 'run_stop',
+    requiredCapabilities: ['emergency_stop'], authorityDigest: 'x',
+  });
+  await facadeWithAuthority.actionAuthority({ runId: 'run:1', actionId: 'a' }, PRINCIPAL, CONTEXT);
+  await facadeWithAuthority.command('run.act', { runId: 'run:1', actionId: 'a' }, PRINCIPAL, CONTEXT);
+  assert.equal(sessionCalls(), 1, 'actionAuthority and command of ONE dispatch share the single attestation');
+});
+
+test('U-E17: a genuine authority change still refuses by name', async () => {
+  for (const [label, overrides] of [
+    ['a different session identity', { sessionId: 'someone-else' }],
+    ['a bound capability the session no longer carries', { capabilities: ['observe'] }],
+    ['the served repo leaving the session scope', { repoIds: ['repo-elsewhere'] }],
+  ]) {
+    const { facade } = refreshedSessionFacade({ renewed: true, identityOverrides: overrides });
+    await assert.rejects(facade.command('runs.list', {}, PRINCIPAL, CONTEXT), (error) => {
+      assert.equal(error.code, 'application_unauthorized', `${label}: the typed code is kept`);
+      assert.match(error.message, /session authority changed/u);
+      return true;
+    }, label);
+  }
+});
+
+// ---------------------------------------------------------------------------
+// #287 U-E18: baton_deployment_doctor over the bridge answers from the
+// resident's REAL readiness — the facade implements the doctor probe, so the
+// northbound's hardcoded always-ready stub (zero routes, workspace ready)
+// never answers for a bridged deployment.
+// ---------------------------------------------------------------------------
+
+test('U-E18: the bridge doctor mirrors the resident\'s live readiness, ready or not', async (t) => {
+  // Each row is the real `BatonWebClient.doctor()` shape: the live ready flag, the resident's
+  // own deployment readiness projection (what /v1/application-card carries), and the card.
+  for (const resident of [
+    {
+      ready: true,
+      deployment: {
+        schemaVersion: 1, repoId: REPO_ID,
+        routes: [{ harness: 'mock', model: 'model-a', effort: 'low', state: 'ready' }],
+        workspace: { state: 'ready' },
+      },
+    },
+    {
+      ready: false,
+      deployment: {
+        schemaVersion: 1, repoId: REPO_ID, routes: [],
+        workspace: { state: 'draining' },
+      },
+    },
+  ]) {
+    const card = { repoId: REPO_ID, commands: WIRE_CARD, agentExperience: { registryDigest: APPLICATION_SEMANTIC_REGISTRY.digest } };
+    const client = {
+      repoId: REPO_ID,
+      async session() { return SESSION; },
+      async doctor() { return { ...resident, routes: resident.deployment.routes, application: card }; },
+      async command(name, args, key) { return { ok: true, command: name }; },
+    };
+    const facade = new BatonWebApplicationFacade(client, card, SESSION);
+    const mcp = server(t, { application: facade });
+    await ready(mcp);
+    const response = await request(mcp, 'd1', 'tools/call', { name: 'baton_deployment_doctor', arguments: { repoId: REPO_ID } });
+    assert.equal(response.result.isError, false);
+    const readiness = response.result.structuredContent;
+    assert.equal(readiness.ready, resident.ready, `the doctor answers the resident's REAL readiness (${resident.ready})`);
+    assert.deepEqual(readiness.routes, resident.deployment.routes,
+      'the routes are the resident\'s live routes, never a fabricated zero-route stub');
+    assert.equal(readiness.workspace.state, resident.deployment.workspace.state,
+      'the workspace projection is the resident\'s own, not the stub\'s always-ready one');
+    assert.equal(readiness.repoId, REPO_ID);
+  }
+});
+
+// ---------------------------------------------------------------------------
+// #287 U-E17 through the REAL dispatch path: the northbound mints one dispatch
+// identity per tool call and hands it to the run.act authority read and to the
+// command that follows, so the facade attests ONCE per tool call. RED at the
+// pre-fix HEAD: the two entries carried different identities (the JSON-RPC id
+// and the admitted callId), so every run.act cost two session round trips.
+// ---------------------------------------------------------------------------
+
+test('U-E17: one session round trip for a whole run.act tool call over the northbound path', async (t) => {
+  const sessionCalls = [];
+  const card = { repoId: REPO_ID, commands: WIRE_CARD, agentExperience: { registryDigest: APPLICATION_SEMANTIC_REGISTRY.digest } };
+  const client = {
+    repoId: REPO_ID,
+    async session() { sessionCalls.push(1); return SESSION; },
+    async doctor() { return { ready: true, application: card }; },
+    async actionAuthority(args) {
+      return {
+        schemaVersion: 1, actionId: args.actionId, kind: 'stop', effect: 'run_stop',
+        requiredCapabilities: ['emergency_stop'], authorityDigest: 'a'.repeat(64),
+      };
+    },
+    async command(name) { return { schemaVersion: 1, command: name }; },
+  };
+  const facade = new BatonWebApplicationFacade(client, card, SESSION);
+  const mcp = server(t, {
+    application: facade, surface: 'application', bindApplicationContext: true,
+    admitsCommand: (command) => facade._admits(command),
+    principal: {
+      userId: SESSION.identity.userId, sessionId: SESSION.identity.sessionId,
+      capabilities: ['observe', 'control', 'emergency_stop'], repoIds: [REPO_ID],
+      expiresAt: SESSION.expiresAt, revoked: false,
+    },
+  });
+  await ready(mcp);
+  const response = await request(mcp, 'act-1', 'tools/call', {
+    name: 'baton_run_act', arguments: { runId: 'run:1', actionId: 'action-1', inputs: {} },
+  });
+  assert.equal(response.result.isError, false, `the run.act call is served: ${JSON.stringify(response.result)}`);
+  assert.equal(sessionCalls.length, 1,
+    'the whole tool call — authority read and command — attests against the session exactly once');
+});
+
+// ---------------------------------------------------------------------------
+// #287 U-G3: the four settlement commands are NOT web-admitted — host-local
+// kernel operations. The bridge never advertises them (the admission
+// predicate filters the inventory), and MCP.md says exactly that.
+// ---------------------------------------------------------------------------
+
+test('U-G3: the bridge does not advertise the settlement tools, and MCP.md says which posture holds', async (t) => {
+  const { facade, forwarded } = facadeWith(WIRE_CARD);
+  const mcp = server(t, { admitsCommand: (command) => facade._admits(command) });
+  await ready(mcp);
+  const names = (await request(mcp, 'l3', 'tools/list', {})).result.tools.map((tool) => tool.name);
+  const SETTLEMENT = ['baton_scratchpad_elevate', 'baton_scratchpad_settle',
+    'baton_knowledge_promote', 'baton_knowledge_settlement_lease'];
+  for (const tool of SETTLEMENT) {
+    assert.equal(names.includes(tool), false, `${tool} is host-local and stays off the bridge inventory`);
+    assert.equal(mcp.toolNames.has(tool), false, `${tool} is not dispatchable over the bridge either`);
+  }
+  // A direct call refuses at the guard — it never reaches the resident as a settlement op.
+  const refused = await request(mcp, 'c9', 'tools/call', { name: 'baton_knowledge_promote', arguments: { repoId: REPO_ID, runId: 'run:1' } });
+  assert.equal(refused.error?.code, -32602, 'the host-local settlement op refuses as an unknown tool on the bridge');
+  assert.equal(forwarded.some((row) => row.name === 'knowledge.promote'), false, 'nothing settlement-shaped crosses the wire');
+  const { readFileSync } = await import('node:fs');
+  const doc = readFileSync(new URL('../MCP.md', import.meta.url), 'utf8');
+  const section = doc.slice(doc.indexOf('## Admit knowledge'), doc.indexOf('## Tool inventory'));
+  assert.match(section, /descriptor-deployment tools/, 'MCP.md names the settlement tools\' deployment posture');
+  assert.match(section, /does NOT admit them/, 'MCP.md states the resident bridge does not admit the settlement lane');
+  assert.match(section, /never sees them in its `tools\/list`/, 'MCP.md states the bridge never advertises them');
+  assert.match(section, /refuses at the dispatch guard/, 'MCP.md states what a direct bridge call to one does');
+});
