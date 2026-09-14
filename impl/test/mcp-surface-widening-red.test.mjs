@@ -14,7 +14,7 @@ import assert from 'node:assert/strict';
 //   4. The store exposed no O(1) ledger cursor (eventsView() copies the world).
 
 const WIRE_CARD = [
-  'application.help', 'runs.list',
+  'swarm.list', 'swarm.create', 'swarm.view', 'swarm.watch', 'swarm.update', 'swarm.recruit', 'swarm.guide', 'swarm.capture', 'swarm.check', 'swarm.stop', 'application.help', 'runs.list',
   'run.start', 'run.inspect', 'run.act', 'run.stop', 'run.status',
   'run.follow', 'run.wait', 'run.approve', 'run.answer', 'run.feedback',
   'run.evidence', 'run.adopt', 'run.retry_verification', 'run.resume_work',

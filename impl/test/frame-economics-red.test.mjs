@@ -1471,7 +1471,7 @@ function limitsHandshakeFetch(fixture, { limitsRegistryDigest } = {}) {
         application: {
           schemaVersion: 1,
           repoId: fixture.repoId,
-          commands: ['application.help', 'runs.list', 'run.start', 'run.inspect', 'run.act', 'run.stop'],
+          commands: ['swarm.list', 'swarm.create', 'swarm.view', 'swarm.watch', 'swarm.update', 'swarm.recruit', 'swarm.guide', 'swarm.capture', 'swarm.check', 'swarm.stop', 'application.help', 'runs.list', 'run.start', 'run.inspect', 'run.act', 'run.stop'],
           agentExperience: {
             registryDigest: APPLICATION_SEMANTIC_REGISTRY.digest,
             ...(limitsRegistryDigest === undefined ? {} : { limitsRegistryDigest }),

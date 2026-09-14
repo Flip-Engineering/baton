@@ -168,13 +168,14 @@ Requires Node ≥ 20. The only runtime dependency is `@ast-grep/napi`.
 ```bash
 cd impl && npm ci                     # install
 node scripts/run-suite.mjs            # the canonical gate (see the red-first note above)
+node scripts/surface-gate.mjs         # surface gate: grammar lint, generated artifacts, MCP dispatch (--write regenerates)
 node scripts/baton.mjs serve          # start the owner-local resident
 node scripts/baton.mjs doctor --check # connection + exact-route readiness
 node scripts/baton.mjs waves list     # live wave registry (roster, phase, progress class)
 node scripts/baton.mjs waves run path/to/workflow.json   # a whole workflow, as data
 ```
 
-The full verb inventory is generated from the executable registry: [impl/CLI.md](impl/CLI.md) · [impl/MCP.md](impl/MCP.md). The resident's fleet routes are declared in [impl/scripts/resident.deployment.mjs](impl/scripts/resident.deployment.mjs).
+The full verb inventory is generated from the executable registry: [impl/CLI.md](impl/CLI.md) · [impl/MCP.md](impl/MCP.md). After any surface change run `node impl/scripts/surface-gate.mjs --write` and commit the regenerated artifacts; the suite preflight, CI and the repo pre-commit hook (`git config core.hooksPath .githooks`, once per clone) all run the same gate. The resident's fleet routes are declared in [impl/scripts/resident.deployment.mjs](impl/scripts/resident.deployment.mjs).
 
 ---
 

@@ -1,0 +1,11 @@
+#!/bin/sh
+# Baton pre-commit: the surface gate (issue #262). Enable once per clone with
+#   git config core.hooksPath .githooks
+# Refuses a commit whose surface names break the docs/36 grammar or whose generated artifacts
+# (surface inventory, CLI.md/MCP.md blocks, parity matrix) are stale, or whose advertised MCP
+# tools do not resolve at tools/call. Regenerate with: node impl/scripts/surface-gate.mjs --write
+set -e
+root="$(git rev-parse --show-toplevel)"
+if git diff --cached --name-only | grep -qE '^impl/(src|scripts|CLI\.md|MCP\.md)|^docs/reference/inventory/'; then
+  (cd "$root/impl" && node scripts/surface-gate.mjs)
+fi

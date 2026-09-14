@@ -13,6 +13,7 @@ import {
   classifySurfaces,
 } from './surface-conformance.mjs';
 import { sweepStaleSuiteRoots, writeSuiteOwnerReceipt } from './suite-hygiene.mjs';
+import { runSurfaceGate } from './surface-gate.mjs';
 
 // Issue #42: a time-bomb fixture must be red on the author's machine the moment it is written,
 // not hours after merge when wall time crosses its literal.
@@ -41,6 +42,15 @@ for (const finding of [...surfaceFindings, ...enumFindings]) {
   );
 }
 if (surfaceFindings.length > 0 || enumFindings.length > 0) process.exit(1);
+
+// Issue #262: the surface gate (grammar lint, artifact/doc/parity staleness, MCP dispatch
+// resolvability) runs before any test so a surface change is refused when it is made.
+const gateFindings = await runSurfaceGate();
+for (const finding of gateFindings) process.stderr.write(`surface-gate: ${finding}\n`);
+if (gateFindings.length > 0) {
+  process.stderr.write('surface-gate: refused — regenerate artifacts with `node scripts/surface-gate.mjs --write` and fix the remaining findings\n');
+  process.exit(1);
+}
 
 const repositoryRoot = new URL('../../', import.meta.url);
 let previousLedger = null;
