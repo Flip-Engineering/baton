@@ -4,6 +4,11 @@ const START_KEYS = ['generation', 'phase', 'pid', 'processGroupId', 'schemaVersi
 const CLOSE_KEYS = ['code', 'generation', 'pid', 'processGroupId', 'ready', 'schemaVersion', 'signal'];
 const READY_KEYS = ['generation', 'pid', 'processGroupId', 'schemaVersion'];
 const REAP_UNCONFIRMED_KEYS = ['generation', 'pid', 'processGroupId', 'reason', 'schemaVersion'];
+/** The closed reap-unconfirmed reasons: each names the bound that actually ended the wait, so a
+ * caller's recovery is chosen from the observation rather than guessed from "it timed out". */
+const REAP_UNCONFIRMED_REASONS = Object.freeze([
+  'deadline', 'attempts_exhausted', 'permission_denied', 'probe_error', 'signal_refused',
+]);
 const AUTHORITY_KEYS = ['generation', 'pid', 'pidStart', 'processGroupId', 'schemaVersion'];
 const RECOVERY_REAPED_KEYS = ['generation', 'pid', 'pidStart', 'processGroupId', 'reason', 'schemaVersion'];
 
@@ -111,7 +116,12 @@ export async function reapOwnedProcessGroup(processGroupId, opts = {}) {
   const sleep = opts.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
   const timeoutMs = Number.isSafeInteger(opts.timeoutMs) && opts.timeoutMs >= 0 ? opts.timeoutMs : 2000;
   const pollMs = Number.isSafeInteger(opts.pollMs) && opts.pollMs > 0 ? opts.pollMs : 5;
-  const maxAttempts = Number.isSafeInteger(opts.maxAttempts) && opts.maxAttempts > 0 ? opts.maxAttempts : 500;
+  // The poll budget is DERIVED from the two inputs the caller already named — the deadline and the
+  // interval it polls on: a bounded wait polls at 0, pollMs, … and every interval that still lands
+  // on or before its deadline. The entry probe above is one observation more. An explicit
+  // `maxAttempts` stays available for a caller that wants a smaller budget than its deadline allows.
+  const maxAttempts = Number.isSafeInteger(opts.maxAttempts) && opts.maxAttempts > 0
+    ? opts.maxAttempts : Math.floor(timeoutMs / pollMs) + 1;
   let observed = probeProcessGroup(processGroupId, probe);
   if (!observed.alive) return Object.freeze({ confirmed: true, signaled: false, reason: 'absent' });
   let signaled = false;
@@ -125,14 +135,22 @@ export async function reapOwnedProcessGroup(processGroupId, opts = {}) {
     // bounded poll below still decides closure, and no receipt ever claims the missing delivery.
   }
   const deadline = now() + timeoutMs;
-  for (let attempts = 0; attempts < maxAttempts && now() <= deadline; attempts += 1) {
+  let attempts = 0;
+  let attemptsExhausted = false;
+  for (;;) {
+    if (now() > deadline) break;
+    // A reap that ran out of polls is NOT a reap that reached its deadline: the caller's recovery
+    // differs, so the reason names the bound that actually ended this wait (G-30).
+    if (attempts >= maxAttempts) { attemptsExhausted = true; break; }
+    attempts += 1;
     observed = probeProcessGroup(processGroupId, probe);
     if (!observed.alive) return Object.freeze({ confirmed: true, signaled, reason: signaled ? null : 'signal_refused' });
     if (observed.reason === 'permission_denied') return Object.freeze({ confirmed: false, signaled, reason: observed.reason });
     await sleep(pollMs);
   }
-  const outcome = observed.reason === 'probe_error' ? 'probe_error' : 'deadline';
-  return Object.freeze({ confirmed: false, signaled, reason: signaled ? outcome : 'signal_refused' });
+  const unconfirmedReason = observed.reason === 'probe_error' ? 'probe_error'
+    : attemptsExhausted ? 'attempts_exhausted' : 'deadline';
+  return Object.freeze({ confirmed: false, signaled, reason: signaled ? unconfirmedReason : 'signal_refused' });
 }
 
 /**
@@ -316,7 +334,7 @@ export function processReapUnconfirmedPayload(generation, pid, reason) {
     generation: normalizeProcessGeneration(generation),
     pid,
     processGroupId: pid,
-    reason: ['deadline', 'permission_denied', 'probe_error', 'signal_refused'].includes(reason) ? reason : 'probe_error',
+    reason: REAP_UNCONFIRMED_REASONS.includes(reason) ? reason : 'probe_error',
   };
 }
 
@@ -394,7 +412,7 @@ export function validProcessReapUnconfirmedPayload(payload) {
     && positiveSafe(payload.generation)
     && positiveSafe(payload.pid)
     && payload.processGroupId === payload.pid
-    && ['deadline', 'permission_denied', 'probe_error', 'signal_refused'].includes(payload.reason);
+    && REAP_UNCONFIRMED_REASONS.includes(payload.reason);
 }
 
 export function validProcessReadyPayload(payload) {

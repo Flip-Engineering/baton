@@ -615,7 +615,48 @@ function minimalBrief() {
   return { goal: '', constraints: [], pathScope: [], definitionOfDone: '', verification: { command: 'true', expectExit: 0 }, budget: { tokens: 0, usd: 0, wallMin: 0 } };
 }
 
+/** The sentinel for a delivery-chain slot that deliberately observes nothing: `slot.then(noop, noop)`
+ * keeps the chain alive for the NEXT sender without projecting this one's outcome. It is never a
+ * catch — every catch in this file names what it recorded (G-46). */
 function noop() {}
+
+/**
+ * G-46: the ONE named home for an OBSERVATIONAL catch — an audit write, a story sink, a telemetry
+ * side-channel, an emergency path that cannot log. The rejection is recorded under the reason it
+ * happened and NEVER touches the operation it observed.
+ *
+ * The distinction this name buys is the audit's own complaint: seventy-seven silent catches
+ * encoded two very different policies with one syntax, so "this failure is observational" and
+ * "this failure WAS the operation" were indistinguishable to a reader, to a grep, and to any
+ * future refactor. An operational rejection is never silent here — it carries its own typed
+ * receipt (`_recordOperationFailure`), and the count of this call is the count of the other.
+ */
+function bestEffort(promise, reason, record) {
+  return Promise.resolve(promise).catch((error) => {
+    if (typeof record === 'function') record(reason, error);
+    return undefined;
+  });
+}
+
+/** The sync twin of `bestEffort` — the same observational policy for a write that is not a promise
+ * (the coordination-store audit calls are synchronous). Same contract: record the reason, return
+ * `undefined`, and never let the observation touch the operation. */
+function bestEffortSync(run, reason, record) {
+  try {
+    return run();
+  } catch (error) {
+    if (typeof record === 'function') record(reason, error);
+    return undefined;
+  }
+}
+
+/** swarm-a finding 8: an adapter frame names its interaction by `requestId`, and that string IS the
+ * key every later act (answer, claim, ack, stop, drain) resolves the record by. A key that is not a
+ * usable one — missing, empty, not a string, or NUL-bearing — parks nothing: the boundary refuses
+ * it by name instead of minting a record under `undefined` that no one can answer, stop, or drain. */
+function isInteractionRequestId(value) {
+  return typeof value === 'string' && value.length > 0 && !value.includes('\0');
+}
 
 function normalizeRunId(value) {
   if (value == null) return null;
@@ -1209,7 +1250,7 @@ export class Coordinator {
           }
         }
         if (this._story && typeof this._story.record === 'function') {
-          try { this._story.record(e); } catch { /* a broken story sink never affects correctness */ }
+          this._bestEffortSync(() => this._story.record(e), 'story_sink');
         }
         return e;
       };
@@ -1219,6 +1260,10 @@ export class Coordinator {
       rawLog.append = (...args) => this._log.append(...args);
     }
 
+    /** G-46: reason -> {count, lastCode, lastMessage} for every failure this controller recorded
+     * instead of silencing. Beside the durable receipts, so even a receipt the log could not take
+     * is still answerable. */
+    this._failures = new Map();
     /** @type {Map<string, object>} taskId -> DriverTask */
     this._tasks = new Map();
     /** @type {string[]} creation order, for FIFO dispatch */
@@ -1325,7 +1370,7 @@ export class Coordinator {
           if (['kill.confirmed', 'lifecycle.process_closed'].includes(observed.kind)) {
             this._observeEmergencyTerminal(observed, sourceVendor);
           } else if (handle?.localAuthority === true && observed.kind === 'lifecycle.process_started') {
-            this._emergencyKillUnlogged(handle).catch(noop);
+            this._bestEffort(this._emergencyKillUnlogged(handle), 'emergency_kill');
           }
         }
       });
@@ -2191,6 +2236,44 @@ export class Coordinator {
     this._activeInteractionIds.delete(requestId);
   }
 
+  /** swarm-a finding 8: the boundary refusal for an interaction frame whose `requestId` cannot key
+   * a record. Same durable shape as the decision family's malformed rejection — a named reason on
+   * the worker's own stream plus the coordinated `authority.rejected`, and NO admission side
+   * effect: no pending record, no task transition, no interaction authority. */
+  _refuseInteractionFrameId({ workerId, harness, turnEpoch, handle, appendAttributed, family, requestId }) {
+    const observed = requestId === undefined ? 'missing'
+      : typeof requestId === 'string' ? (requestId.length === 0 ? 'empty' : 'unusable') : typeof requestId;
+    const rejected = appendAttributed({
+      worker: workerId, harness, turnEpoch, kind: 'control.malformed_interaction_rejected', actor: 'policy',
+      payload: { requestId: null, kind: family, reason: 'malformed_request_id', observed },
+    });
+    const task = this._tasks.get(handle.taskId);
+    const evidence = this._coordMapEvent(rejected);
+    this._coordRecord('authority.rejected', {
+      taskId: task?.id ?? null, workerId, requestId: null, kind: family,
+      reason: 'malformed_request_id', observed, evidence,
+    }, `driver.authority.rejected:${workerId}:malformed:${rejected.seq}`, 'policy');
+    this._bumpInteractionGeneration(handle.taskId);
+  }
+
+  /** The worker's live pending interaction, resolved BY KEY from `_pending`. The handle's
+   * `pending*Id` fields are a cache — replay restores the durable records and deliberately leaves
+   * those fields null (a durable reference is not a live transport), and a truthiness test on a
+   * cache that was never written turned "there is a record nobody can reach" into "nothing to
+   * resolve" (swarm-a finding 8: one frame wedged a task no one could answer, stop, or drain). */
+  _pendingInteractionFor(workerId) {
+    const handle = this._workers.get(workerId);
+    for (const requestId of [handle?.pendingApprovalId, handle?.pendingQuestionId, handle?.pendingDecisionId]) {
+      if (typeof requestId !== 'string' || requestId.length === 0) continue;
+      const record = this._pending.get(requestId);
+      if (record && record.worker === workerId && record.state === 'pending') return { requestId, record };
+    }
+    for (const [requestId, record] of this._pending) {
+      if (record.worker === workerId && record.state === 'pending') return { requestId, record };
+    }
+    return null;
+  }
+
   /**
    * Issue #31 §2.1(2). Single-consumer resolution for a pause record, mirroring
    * `_resolveInteractionAuthority`. 31-a exercises exactly one resolution path — the degenerate
@@ -2337,12 +2420,14 @@ export class Coordinator {
     return row;
   }
 
-  /** Every still-unconsumed pause record, optionally filtered by worker/task. */
+  /** Every still-unconsumed pause record, optionally filtered by worker/task — `pending` AND
+   * `resolving` (swarm-a finding 4: the authoritative layer says wedged while a `state === 'pending'`
+   * filter projected "fine"; a row mid-claim is a park, and it must stay visible until consumed). */
   pausedTurns({ workerId = null, taskId = null } = {}) {
     const rows = [];
     for (const pauseId of this._pausedTurns.keys()) {
       const row = this.pausedTurnStatus(pauseId);
-      if (!row || row.state !== 'pending') continue;
+      if (!row || row.state === 'resolved') continue;
       if (workerId !== null && row.workerId !== workerId) continue;
       if (taskId !== null && row.taskId !== taskId) continue;
       rows.push(row);
@@ -2557,6 +2642,30 @@ export class Coordinator {
     return { ok: true, handle, task };
   }
 
+  /** swarm-a finding 4: the ONE place a pause reservation is released. Every act body runs inside
+   * `run`, and the reservation is settled on EVERY exit — a throw between the reservation and the
+   * commit (a refused durable append, a poisoned coordination write, a thrown fence bump) can no
+   * longer strand the record in `resolving`, where it hangs every later act forever and invisibly:
+   * `_reservePauseRecord` makes a racing second caller await `record.resolvingDone`, which only
+   * rollback()/commit() ever release. */
+  async _withPauseReservation(pauseId, run) {
+    const reservation = await this._reservePauseRecord(pauseId);
+    if (!reservation.ok) return reservation;
+    let settled = false;
+    const once = (settle) => (...args) => {
+      if (settled) return undefined;
+      settled = true;
+      return settle(...args);
+    };
+    const commit = once(reservation.commit);
+    const rollback = once(reservation.rollback);
+    try {
+      return await run({ record: reservation.record, commit, rollback });
+    } finally {
+      rollback(); // idempotent: a reservation that already committed is never rolled back
+    }
+  }
+
   /**
    * Part B rule 5. Scratch-only, fence-filtered claim invalidation. NOT `_expireScratchClaims`'s
    * unconditional sweep (that is the provider-FAILURE behavior at `_failProviderResult`) and NOT
@@ -2588,9 +2697,11 @@ export class Coordinator {
    */
   async nudgeTurn(pauseId, message, opts = {}) {
     this.tick();
-    const reservation = await this._reservePauseRecord(pauseId);
-    if (!reservation.ok) return reservation;
-    const { record, commit, rollback } = reservation;
+    return this._withPauseReservation(pauseId, (reservation) => this._nudgeReservedTurn(reservation, pauseId, message, opts));
+  }
+
+  /** The nudge act body over a held reservation — see `_withPauseReservation` for the release law. */
+  async _nudgeReservedTurn({ record, commit, rollback }, pauseId, message, opts) {
     const targets = this._pausedActTargets(record);
     if (!targets.ok) { rollback(); return targets; }
     const { handle, task } = targets;
@@ -2623,6 +2734,18 @@ export class Coordinator {
       else this._releaseProviderTurnAdmission(handle, 'turn_nudge_refused');
       rollback();
       return { ok: false, result: ack?.reason ?? 'delivery_refused', reason: ack?.reason };
+    }
+    // swarm-a finding 4: a delivery outlives the state it was admitted against. Re-check the live
+    // task/handle terminality after EVERY await (`_dispatch`'s own precedent) — unparking a task
+    // that terminalized while the prompt was in flight would be a fabricated admission. The pause
+    // record is CONSUMED either way: a park whose task is gone must not stay claimable forever.
+    const afterDelivery = this._pausedActTargets(record);
+    if (!afterDelivery.ok) {
+      commit({ act: 'nudge', pauseId, outcome: 'superseded', status: afterDelivery.status ?? null }, actor);
+      return {
+        ok: false, result: 'pause_superseded', reason: afterDelivery.result,
+        status: afterDelivery.status ?? null, pauseId, taskId: record.taskId, workerId,
+      };
     }
 
     // (c) only now does any fence state move.
@@ -2700,14 +2823,15 @@ export class Coordinator {
    */
   async claimTurn(pauseId, opts = {}) {
     this.tick();
-    const reservation = await this._reservePauseRecord(pauseId);
-    if (!reservation.ok) return reservation;
-    const { record, commit, rollback } = reservation;
+    return this._withPauseReservation(pauseId, (reservation) => this._claimReservedTurn(reservation, pauseId, opts));
+  }
+
+  /** The claim act body over a held reservation — see `_withPauseReservation` for the release law. */
+  async _claimReservedTurn({ record, commit, rollback }, pauseId, opts) {
     const targets = this._pausedActTargets(record);
     if (!targets.ok) { rollback(); return targets; }
     const { handle, task } = targets;
     const actor = opts.actor ?? 'orchestrator';
-
     // #88 claim-time liveness preflight (CP1-CP7) — before any settle. The reservation is held,
     // so rollback() restores `pending` with nothing consumed: a refusal leaves zero events, zero
     // transitions, zero gate runs, and the record stays claimable. A THROW here (worktreeReady
@@ -3164,16 +3288,16 @@ export class Coordinator {
     }
     for (const [requestId, record] of [...this._pending]) {
       if ((record.kind === 'approval' || record.kind === 'publication') && record.state === 'pending' && record.deadlineAt != null && now >= record.deadlineAt) {
-        this._trackAuthorityPromise(() => this._resolveRecord(requestId, { decision: 'deny' }, 'policy')).catch(noop);
+        this._bestEffort(this._trackAuthorityPromise(() => this._resolveRecord(requestId, { decision: 'deny' }, 'policy')), 'interaction_expiry');
       } else if (record.kind === 'decision' && record.state === 'pending' && record.deadlineAt != null && now >= record.deadlineAt) {
-        this._trackAuthorityPromise(() => this._expireDecision(requestId, record)).catch(noop);
+        this._bestEffort(this._trackAuthorityPromise(() => this._expireDecision(requestId, record)), 'interaction_expiry');
       } else if (record.kind === 'question' && record.state === 'pending' && record.deadlineAt == null
         && record.acknowledged !== true && record.escalated !== true) {
         // D3: a blocking question with deadlineAt null gets the bounded deployment default. An
         // acknowledged interaction is skipped (OQ-1); a previously escalated record never re-fires.
         const effectiveDeadlineAt = record.mintedAt + this._watchdog.blockingInteractionTimeoutMs;
         if (now >= effectiveDeadlineAt) {
-          this._trackAuthorityPromise(() => this._expireQuestion(requestId, record, effectiveDeadlineAt)).catch(noop);
+          this._bestEffort(this._trackAuthorityPromise(() => this._expireQuestion(requestId, record, effectiveDeadlineAt)), 'interaction_expiry');
         }
       }
     }
@@ -3181,6 +3305,16 @@ export class Coordinator {
       if (!waiter.finalized && waiter.deadlineAt != null && now >= waiter.deadlineAt) {
         this._forceStop(workerId, waiter);
       }
+    }
+    // G-26 / swarm-b finding 2: the stall-seam cycle is NOT timer-only. An expired cycle whose
+    // timer is already spent — it fired before its own window elapsed, or the loop was jammed past
+    // it — leaves a declared-stalled worker nothing else that can fire. The sweep is the lossless
+    // coverage the arming path's comment already claims.
+    for (const handle of this._workers.values()) {
+      const stall = handle.stallSeamCycle;
+      if (!stall || stall.answered !== false) continue;
+      if (now < stall.mintedAt + stall.windowMs) continue;
+      this._expireStallCycleSafely(handle);
     }
   }
 
@@ -3551,7 +3685,7 @@ export class Coordinator {
       task.status = 'failed';
     }
     if (!['dead', 'stopping', 'exited'].includes(handle.status)) {
-      this._beginStop(handle, 'kill', undefined, 'policy').catch(noop);
+      this._stopInBackground(handle);
     }
   }
 
@@ -3647,7 +3781,7 @@ export class Coordinator {
     // Authority loss is a kill condition, including while a soft interrupt is already in
     // flight. _beginStop escalates an existing interrupt waiter to one exact kill.
     if (!['dead', 'exited'].includes(handle.status)) {
-      this._beginStop(handle, 'kill', undefined, 'policy').catch(noop);
+      this._stopInBackground(handle);
     }
     return true;
   }
@@ -4001,13 +4135,13 @@ export class Coordinator {
       const terminalized = this._fatalError ? false : this._onSpawnRefused(handle, task, harness, {
         ok: false, reason: failure.message, code: failure.code, [WORKTREE_FAILURE]: true,
       });
-      if (!terminalized && task.sessionRequest?.mode === 'new' && task.workspaceAttachment !== true) this._removeOwnedTaskWorktree(handle, task).catch(noop);
+      if (!terminalized && task.sessionRequest?.mode === 'new' && task.workspaceAttachment !== true) this._bestEffort(this._removeOwnedTaskWorktree(handle, task), 'worktree_release');
       throw failure;
     }).finally(() => { handle.worktreeCreationPending = false; });
     handle.worktreeReady = worktreeReady;
     // Some test/dummy adapters do not consume readiness. The prerequisite still owns failure,
     // while this observer prevents an otherwise-unhandled rejected promise.
-    worktreeReady.catch(noop);
+    this._bestEffort(worktreeReady, 'worktree_ready_observer');
 
     const spawnTurnEpoch = this._fences.current(workerId).turnEpoch;
     this._log.append({
@@ -4327,24 +4461,41 @@ export class Coordinator {
   }
 
   /** Mint the digest-cited spill for the overflow/shed items, preserving each item's per-item
-   * `[attention/untrusted]` framing verbatim (D2). Returns the spill record, or null when the
-   * lane is unavailable (the serving path then refuses attention_push_oversized). */
+   * `[untrusted]` framing verbatim (D2). Returns `{spill}` or a typed `{refusal}` — never a bare
+   * null, which erased the difference between "this lane is not available" and "the mint threw"
+   * (G-25). The refusal is what the projection turns into its `spill_unavailable` row. */
   _mintAttentionSpill(items) {
-    if (!this._coordination || typeof this._coordination.mintSpill !== 'function') return null;
+    if (!this._coordination || typeof this._coordination.mintSpill !== 'function') {
+      return { spill: null, refusal: { code: 'spill_unavailable', reason: 'no_spill_lane' } };
+    }
     const body = items.map((item) => attentionItemLine(item)).join('\n');
+    let minted;
     try {
-      const minted = this._coordination.mintSpill(
+      minted = this._coordination.mintSpill(
         { body, lane: 'view.attention_push.items' },
         { actor: 'hub', key: `attention.push.spill:${canonicalDigest(body)}` },
       );
-      return minted?.spill ?? null;
-    } catch {
-      return null;
+    } catch (error) {
+      return {
+        spill: null,
+        refusal: {
+          code: typeof error?.code === 'string' && error.code ? error.code : 'spill_unavailable',
+          reason: 'mint_refused',
+          message: String(error?.message ?? error),
+        },
+      };
     }
+    const spillId = minted?.spill?.spillId;
+    if (typeof spillId !== 'string' || spillId.length === 0) {
+      return { spill: null, refusal: { code: 'spill_unavailable', reason: 'mint_returned_no_spill' } };
+    }
+    return { spill: minted.spill, refusal: null };
   }
 
   /** The per-worker push projection (D1/D3/D5). Bounded by the item-count row (overflow spills,
-   * never truncates) and the byte row (render-side shed; the full text rides the spill — OQ1). */
+   * never truncates) and the byte row (render-side shed; the full text rides the spill — OQ1).
+   * When the spill lane cannot mint, the block carries a typed `spill_unavailable` row naming
+   * exactly which items that costs — the overflow is never dropped in silence (G-25). */
   _pendingAttentionPush(workerId) {
     const items = this._derivePendingAttentionItems(workerId);
     if (items.length === 0) return [];
@@ -4352,22 +4503,21 @@ export class Coordinator {
     const byteCap = FRAME_LIMITS['view.attention_push.bytes'].value;
 
     let inBlock = items;
-    const spillItems = [];
+    const beyondCap = [];
     if (items.length > itemCap) {
       inBlock = items.slice(0, itemCap);
-      spillItems.push(...items.slice(itemCap));
+      beyondCap.push(...items.slice(itemCap));
     }
 
     // OQ1 byte shed: when the in-block items' rendered bytes cross the render bound, the FULL
     // text of every in-block item rides the spill — nothing is dropped, nothing is unrecoverable.
     const inBlockBytes = inBlock.reduce((sum, item) => sum + Buffer.byteLength(attentionItemLine(item)) + 1, 0);
-    if (inBlockBytes > byteCap) {
-      for (const item of inBlock) spillItems.push(item);
-    }
+    const shed = inBlockBytes > byteCap ? [...inBlock] : [];
+    const spillItems = [...beyondCap, ...shed];
 
     const result = [...inBlock];
     if (spillItems.length > 0) {
-      const spill = this._mintAttentionSpill(spillItems);
+      const { spill, refusal } = this._mintAttentionSpill(spillItems);
       if (spill) {
         result.push({
           kind: 'spill',
@@ -4375,9 +4525,35 @@ export class Coordinator {
           workerId,
           overflowIds: spillItems.map((item) => item.requestId),
         });
+      } else {
+        result.push(this._spillUnavailableItem(workerId, { refusal, beyondCap, shed }));
       }
     }
     return result;
+  }
+
+  /** G-25: the stand-in row for a spill the lane could not mint. It costs the block its citation,
+   * never the truth about what is missing: `overflowIds` are the items absent from this block and
+   * `shedIds` the ones served in short form only. Both sets are still pending and resendable. */
+  _spillUnavailableItem(workerId, { refusal, beyondCap, shed }) {
+    const overflowIds = beyondCap.map((item) => item.requestId);
+    const shedIds = shed.map((item) => item.requestId);
+    return {
+      kind: 'spill_unavailable',
+      requestId: `spill_unavailable:${canonicalDigest([...overflowIds, ...shedIds])}`,
+      workerId,
+      code: refusal?.code ?? 'spill_unavailable',
+      reason: refusal?.reason ?? 'mint_failed',
+      overflowIds,
+      shedIds,
+      count: overflowIds.length + shedIds.length,
+      // The ids come FIRST so the render-side bound can only truncate the explanation, never the
+      // identity of what is missing; the structured sets above are always complete.
+      text: boundedAttentionText(
+        `not in this block (spill lane ${refusal?.reason ?? 'mint_failed'}): ${overflowIds.length > 0 ? overflowIds.join(' ') : 'none'}; `
+        + `short form only: ${shedIds.length > 0 ? shedIds.join(' ') : 'none'}`,
+      ),
+    };
   }
 
   /** Every durable id that could name a push-qualified item for this worker — pending OR resolved
@@ -4499,11 +4675,11 @@ export class Coordinator {
     task.status = 'failed';
     if (handle.processRef && ['initializing', 'ready'].includes(handle.processRef.state)) {
       handle.status = 'working';
-      this._beginStop(handle, 'kill', undefined, 'policy').catch(noop);
+      this._stopInBackground(handle);
       return true;
     }
     this._removeRuntimeScope(handle);
-    if (task.sessionRequest?.mode === 'new' && task.workspaceAttachment !== true) this._removeOwnedTaskWorktree(handle, task).catch(noop);
+    if (task.sessionRequest?.mode === 'new' && task.workspaceAttachment !== true) this._bestEffort(this._removeOwnedTaskWorktree(handle, task), 'worktree_release');
     this._dispatchPass();
     return true;
   }
@@ -6042,7 +6218,7 @@ export class Coordinator {
       if (handle.recoverySpawnPromise === trackedAttempt) handle.recoverySpawnPromise = null;
     });
     handle.recoverySpawnPromise = trackedAttempt;
-    trackedAttempt.catch(noop);
+    this._bestEffort(trackedAttempt, 'recovery_attempt_observer');
 
     let outcome = await Promise.race([attempt, timeout]);
     if (outcome?.ack?.ok === true && !timedOut) {
@@ -7674,7 +7850,7 @@ export class Coordinator {
           ...(spilled ? { body: spillRecord.head, spilled: true, bytes: bodyBytes, digest: spillRecord.digest, spill: spillRecord.spill } : { body }),
           targetCount: workers.length,
         }, { actor: sender, key: `message.sent:${messageId}` });
-      } catch { /* audit is best-effort */ }
+      } catch (error) { this._noteFailure('message_sent_audit', error); }
     }
     const deliveries = await Promise.all(workers.map(async (handle) => {
       const generation = this._messageProcessGeneration.get(handle.id) ?? 1;
@@ -7713,7 +7889,7 @@ export class Coordinator {
               ? { messageId, kind, workerId: handle.id, depth: 0, budget, remaining: budget, body: spillRecord.head, spilled: true, bytes: bodyBytes, digest: spillRecord.digest, spill: spillRecord.spill }
               : { messageId, kind, workerId: handle.id, depth: 0, budget, remaining: budget, body },
             { actor: 'orchestrator', key: `message.delivered:${messageId}:${handle.id}` });
-          } catch { /* audit is best-effort */ }
+          } catch (error) { this._noteFailure('message_delivered_audit', error); }
         }
       }
       return { workerId: handle.id, ok: ack.ok };
@@ -8109,7 +8285,12 @@ export class Coordinator {
 
     if (reusableFollowUp) return this._deliverFollowUp(handle, task, message, opts);
 
-    if (opts.continueParticipant === true) {
+    // The pause governs BOTH lanes that would start a turn (swarm-a finding 4): a plain `turn`
+    // delivery to a parked member is the same act as a continuation, and a delivery that ignored
+    // the checkpoint orphaned it — the turn ran, the record stayed pending forever, and no act
+    // could ever consume it. `nudgeTurn` holds the record's single-consumer reservation, so a
+    // delivery racing an in-flight act waits for it instead of double-admitting a turn.
+    if (opts.continueParticipant === true || mode === 'turn') {
       if (task.runId && this._coordination.run?.(task.runId)?.status === 'sealed') {
         return { ok: false, result: 'run_sealed' };
       }
@@ -8223,7 +8404,7 @@ export class Coordinator {
           body: typeof message === 'string' ? message : JSON.stringify(message),
           targetCount: 1, alias: true,
         }, { actor: 'orchestrator', key: `message.sent:${workerId}:${this._log.tail(workerId)}` });
-      } catch { /* the lane audit is best-effort; delivery already succeeded */ }
+      } catch (error) { this._noteFailure('lane_delivery_audit', error); }
     }
     return { ok: true, result: 'ok', emulated: ack && ack.emulated === true };
   }
@@ -8452,7 +8633,7 @@ export class Coordinator {
     });
     // The old result remains authoritative, but the session is no longer safe to reuse: its wire
     // advanced despite refusing admission. Confirmed two-phase kill owns transport cleanup.
-    this._beginStop(handle, 'kill', undefined, 'policy').catch(noop);
+    this._stopInBackground(handle);
   }
 
   // =========================================================================
@@ -8467,11 +8648,11 @@ export class Coordinator {
     this.tick();
     const handle = this._getWorker(workerId);
     if (handle.status !== 'blocked') return { ok: true, result: 'not_blocked' };
-    const requestId = handle.pendingApprovalId ?? handle.pendingQuestionId ?? handle.pendingDecisionId;
-    const record = requestId ? this._pending.get(requestId) : null;
-    if (!record || record.state !== 'pending' || record.worker !== workerId) {
-      return { ok: false, result: 'interaction_resolution_unavailable' };
-    }
+    // Resolved BY KEY (swarm-a finding 8): the pending record is the authority, never the
+    // truthiness of a handle cache that a restored handle never had written.
+    const pending = this._pendingInteractionFor(workerId);
+    if (!pending) return { ok: false, result: 'interaction_resolution_unavailable' };
+    const { requestId, record } = pending;
     const task = this._tasks.get(handle.taskId);
     const superseded = this._log.append({
       worker: workerId, harness: this._harnessOf(handle.vendor),
@@ -8708,7 +8889,7 @@ export class Coordinator {
     const handle = this._workers.get(event.worker);
     if (!handle) return;
     if (sourceVendor !== null && sourceVendor !== handle.vendor) {
-      if (handle.localAuthority === true) this._emergencyKillUnlogged(handle).catch(noop);
+      if (handle.localAuthority === true) this._bestEffort(this._emergencyKillUnlogged(handle), 'emergency_kill');
       return;
     }
     if (event.kind === 'lifecycle.process_closed') {
@@ -8720,7 +8901,7 @@ export class Coordinator {
         && event.payload.processGroupId === current.processGroupId
         && event.payload.ready === current.ready;
       if (!exact) {
-        if (handle.localAuthority === true) this._emergencyKillUnlogged(handle).catch(noop);
+        if (handle.localAuthority === true) this._bestEffort(this._emergencyKillUnlogged(handle), 'emergency_kill');
         return;
       }
       handle.emergencyProcessClosed = { ...event.payload };
@@ -8904,12 +9085,12 @@ export class Coordinator {
       // A forced stop has already consumed its deadline. Preserve authority for a later explicit
       // operator retry instead of silently creating an endless succession of deadline windows.
       if (handle.status === 'dead' && handle.cleanupPending === true) return;
-      this._beginStop(handle, 'kill', undefined, 'policy').catch(noop);
+      this._stopInBackground(handle);
       return;
     }
     if (waiter.finalized || this._now() >= waiter.deadlineAt) return;
     if (waiter.mode !== 'kill') {
-      this._beginStop(handle, 'kill', undefined, 'policy').catch(noop);
+      this._stopInBackground(handle);
       return;
     }
     if (waiter.reapRetryHandle != null) return;
@@ -9585,11 +9766,11 @@ export class Coordinator {
     };
     const current = handle.processRef;
     if (!current || !['initializing', 'ready'].includes(current.state)) {
-      const timerHandle = this._setTimeout(() => { cleanup().catch(noop); }, this._stopDeadlineMs);
+      const timerHandle = this._setTimeout(() => { this._bestEffort(cleanup(), 'stop_deadline_cleanup'); }, this._stopDeadlineMs);
       if (timerHandle && typeof timerHandle.unref === 'function') timerHandle.unref();
-      Promise.resolve().then(() => adapter.kill(handle.id)).catch(noop).finally(() => {
+      this._bestEffort(Promise.resolve().then(() => adapter.kill(handle.id)), 'adapter_kill').finally(() => {
         this._clearTimeout(timerHandle);
-        cleanup().catch(noop);
+        this._bestEffort(cleanup(), 'stop_deadline_cleanup');
       });
       return;
     }
@@ -9630,7 +9811,7 @@ export class Coordinator {
       }
     }, this._stopDeadlineMs);
     if (record.timerHandle && typeof record.timerHandle.unref === 'function') record.timerHandle.unref();
-    Promise.resolve().then(() => adapter.kill(handle.id)).catch(noop);
+    this._bestEffort(Promise.resolve().then(() => adapter.kill(handle.id)), 'adapter_kill');
   }
 
   _releaseRecoveryProviderTurn(handle, reason) {
@@ -9693,7 +9874,7 @@ export class Coordinator {
       || record.processGroupId !== processRef.processGroupId) return;
     if (record.timerHandle != null) this._clearTimeout(record.timerHandle);
     handle.untrustedTransportReap = null;
-    record.cleanup().catch(noop);
+    this._bestEffort(record.cleanup(), 'stop_cleanup');
   }
 
   _clearWatchdog(handle) {
@@ -9744,8 +9925,8 @@ export class Coordinator {
 
   _applyWatchdogAction(handle, action) {
     if (handle.status !== 'working' && handle.status !== 'blocked') return;
-    if (action === 'kill') this._beginStop(handle, 'kill', undefined, 'policy').catch(noop);
-    else if (action === 'interrupt') this._beginStop(handle, 'interrupt', undefined, 'policy').catch(noop);
+    if (action === 'kill') this._stopInBackground(handle);
+    else if (action === 'interrupt') this._stopInBackground(handle, 'interrupt');
     // D4 rung 1: escalate never stops — it mints the stall_declared attention reason into the
     // orchestrator inbox (the G8 escalator) and leaves the worker running.
     else if (action === 'escalate') this._mintStallDeclared(handle);
@@ -9798,10 +9979,7 @@ export class Coordinator {
       lifetime: handle.stallSeamCycle?.lifetime ?? this._now(),
     };
     handle.stallSeamCycle = cycle;
-    const timerHandle = this._setTimeout(() => {
-      try { this._expireStallCycle(handle); }
-      catch (err) { /* best-effort; the sweep still covers it */ }
-    }, windowMs);
+    const timerHandle = this._setTimeout(() => this._expireStallCycleSafely(handle), windowMs);
     if (timerHandle && typeof timerHandle.unref === 'function') timerHandle.unref();
     cycle.timer = timerHandle;
     return true;
@@ -9829,7 +10007,138 @@ export class Coordinator {
     }
     this._preserveProgressBeforeReap(handle, task, null, true)
       .then(() => this._applyWatchdogAction(handle, 'kill'))
-      .catch(noop);
+      .catch((error) => this._refuseStallReap(handle, error));
+  }
+
+  /** G-26 / swarm-b finding 2: a refused preserve (or kill) must NOT consume the stall cycle.
+   * `answered = true` plus a cleared timer left a declared-stalled worker with nothing left that
+   * could fire — the ladder's "the sweep still covers it" was a comment, not a mechanism. The
+   * refusal lands as a typed receipt and the cycle is re-armed through the one arming path, so the
+   * worker stays on the ladder and the next window tries again. */
+  _refuseStallReap(handle, error) {
+    this._recordStallReapRefusal(handle, error);
+    if (handle?.watchdogActions?.has('stall')) {
+      this._armStallCycle(handle, this._tasks.get(handle.taskId), {
+        nudgeId: handle.stallSeamCycle?.nudgeId ?? null,
+        controlId: handle.stallSeamCycle?.controlId ?? null,
+      });
+    }
+  }
+
+  /** The one expiry entry both fire-and-forget paths (timer + `_sweepDeadlines`) call: a throwing
+   * expiry is a named fact, never a broken sweep, and the two paths cannot drift apart (G-26). */
+  _expireStallCycleSafely(handle) {
+    try {
+      this._expireStallCycle(handle);
+    } catch (error) {
+      this._recordStallReapRefusal(handle, error);
+    }
+  }
+
+  // =========================================================================
+  // G-46 — the two catch policies, named. `_bestEffort(promise, reason)` is the
+  // OBSERVATIONAL one (a named reason, no effect on the operation it observed);
+  // `_recordOperationFailure(...)` is the OPERATIONAL one (the rejection WAS the
+  // outcome, so it lands as a typed receipt). Nothing else may catch silently.
+  // =========================================================================
+
+  /** An observational rejection, recorded under its reason and never surfaced as an outcome. */
+  _bestEffort(promise, reason) {
+    return bestEffort(promise, reason, (name, error) => this._noteFailure(name, error));
+  }
+
+  /** The sync twin of `_bestEffort`, for the audit writes that are not promises. */
+  _bestEffortSync(run, reason) {
+    return bestEffortSync(run, reason, (name, error) => this._noteFailure(name, error));
+  }
+
+  /** The in-memory reason registry: what was recorded instead of silenced. Lazily initialised so a
+   * recording path reached during construction (the log facade is installed before the maps are)
+   * can never turn its own observation into a second failure. */
+  _noteFailure(reason, error) {
+    const failures = (this._failures ??= new Map());
+    const row = failures.get(reason) ?? { reason, count: 0, lastCode: null, lastMessage: null };
+    row.count += 1;
+    row.lastCode = typeof error?.code === 'string' ? error.code : null;
+    row.lastMessage = String(error?.message ?? error);
+    failures.set(reason, row);
+  }
+
+  /** The projection over `_noteFailure`: one row per reason, with what that reason counted. This is
+   * the surface that makes "recorded, not silenced" checkable instead of aspirational. */
+  recordedFailures() {
+    return [...(this._failures ?? new Map()).values()].map((row) => Object.freeze({ ...row }));
+  }
+
+  /** An OPERATIONAL fire-and-forget rejection: the failure IS the outcome of the operation — the
+   * stop that never started, the cleanup that never ran, the gate that threw past its own catch.
+   * It lands as a typed event on the worker's own stream: the source of truth, and the one sink that
+   * does not need the coordination store that may be the thing that broke. Never throws. */
+  _recordOperationFailure(kind, handle, reason, error, detail = {}) {
+    const code = typeof error?.code === 'string' && /^[a-z0-9_]{1,64}$/u.test(error.code) ? error.code : reason;
+    try {
+      const event = this._log.append({
+        worker: handle.id, harness: this._harnessOf(handle.vendor), turnEpoch: this._safeTurnEpoch(handle),
+        kind, actor: 'policy', ...this._routeAttribution(handle),
+        payload: { reason, code, message: String(error?.message ?? error), ...detail },
+      });
+      return event.seq;
+    } catch (appendError) {
+      // The log itself refused the receipt: the reason is still recorded here rather than lost.
+      this._noteFailure(`${kind}:append_refused`, appendError);
+      this._noteFailure(reason, error);
+      return null;
+    }
+  }
+
+  /** Every fire-and-forget stop is receipted (G-46): a rejection — or a synchronous throw out of the
+   * stop state machine — means the stop never started and the worker keeps running with nobody
+   * told. Never rejects: its callers are fire-and-forget by construction. */
+  _stopInBackground(handle, mode = 'kill') {
+    const receipt = (error) => this._recordOperationFailure('control.stop_unavailable', handle, 'stop_unavailable', error, { mode });
+    try {
+      return Promise.resolve(this._beginStop(handle, mode, undefined, 'policy')).catch(receipt);
+    } catch (error) {
+      receipt(error);
+      return Promise.resolve(undefined);
+    }
+  }
+
+  /** Every fire-and-forget transport cleanup is receipted (G-46): a rejection here means an owned
+   * process group or runtime scope was left behind with no record that cleanup did not run. */
+  _cleanupTransportInBackground(handle, task, stopEvent = null) {
+    const receipt = (error) => this._recordOperationFailure(
+      'control.transport_cleanup_unavailable', handle, 'transport_cleanup_unavailable', error, { stopSeq: stopEvent?.seq ?? null },
+    );
+    try {
+      return Promise.resolve(this._cleanupClosedTransport(handle, task, stopEvent)).catch(receipt);
+    } catch (error) {
+      receipt(error);
+      return Promise.resolve(undefined);
+    }
+  }
+
+  /** The trust gate's own catch handles everything it can reach; anything that ESCAPES it (its
+   * deliberate rethrow of a verification-cleanup error, a poisoned coordination write, a bug in the
+   * 400-line body) becomes a typed event naming the escape and the state the task was left in.
+   * `.catch(noop)` here was the most consequential silence in the file: referee.mjs calls this path
+   * "THE TRUST GATE", and a task could sit in any state with no observable error anywhere. Never
+   * throws, and never transitions the task — the gate's own verdict is the authority on that. */
+  _recordTrustGateEscape(handle, error) {
+    const task = this._tasks.get(handle.taskId);
+    return this._recordOperationFailure('error', handle, 'trust_gate_escape', error, {
+      phase: 'trust_gate', escaped: true,
+      taskStatus: task?.status ?? null,
+      outcome: 'the gate did not reach its own terminal handling',
+    });
+  }
+
+  /** The refusal receipt shared by every failed stall reap (G-26), through the one operational
+   * writer: this runs only on a path that already failed, so it may never rethrow into its caller. */
+  _recordStallReapRefusal(handle, error) {
+    this._recordOperationFailure('health.stall_reap_refused', handle, 'stall_reap_failed', error, {
+      stallLifetime: handle.stallSeamCycle?.lifetime ?? null,
+    });
   }
 
   /** D4 rung 2 answer: a qualifying D2 re-arm inside the claimed window clears the stall. The
@@ -9900,7 +10209,7 @@ export class Coordinator {
         kind: 'health.scope_refresh_refused', actor: 'policy',
         payload: { path: key, reason: typeof error?.code === 'string' ? error.code : 'orientation_failed', mechanical: true },
       });
-    }).finally(() => state.inFlight.delete(key)).catch(noop);
+    }).finally(() => state.inFlight.delete(key)).catch((error) => this._noteFailure('orientation_observer', error));
     return { scheduled: true, reason: null };
   }
 
@@ -9957,7 +10266,7 @@ export class Coordinator {
     if (handle.status !== 'working' || handle.turnTerminalObserved || handle.budgetStopTimer != null) return;
     handle.budgetStopTimer = this._setTimeout(() => {
       handle.budgetStopTimer = null;
-      if (handle.status === 'working' && !handle.turnTerminalObserved) this._beginStop(handle, action, undefined, 'policy').catch(noop);
+      if (handle.status === 'working' && !handle.turnTerminalObserved) this._stopInBackground(handle, action);
     }, this._budgetTerminalGraceMs);
     if (handle.budgetStopTimer && typeof handle.budgetStopTimer.unref === 'function') handle.budgetStopTimer.unref();
   }
@@ -10130,7 +10439,7 @@ export class Coordinator {
       this._coordTransition(task, 'failed', `task.failed:${task.id}:provider_telemetry:${invalid.seq}`, evidence);
       task.status = 'failed';
     }
-    if (beginStop && !['dead', 'stopping', 'exited'].includes(handle.status)) this._beginStop(handle, 'kill', undefined, 'policy').catch(noop);
+    if (beginStop && !['dead', 'stopping', 'exited'].includes(handle.status)) this._stopInBackground(handle);
   }
 
   _revokeAcceptedProviderOutcome(handle, event) {
@@ -10493,7 +10802,7 @@ export class Coordinator {
         waiter.cleanupPromise = this._removeOwnedTaskWorktree(handle, this._tasks.get(handle.taskId)).then(() => {
           if (!runtimeRemoved) throw Object.assign(new Error('runtime cleanup failed'), { code: 'runtime_cleanup_failed' });
         });
-        Promise.resolve(this._adapters[handle.vendor]?.kill(handle.id)).catch(noop);
+        this._bestEffort(Promise.resolve(this._adapters[handle.vendor]?.kill(handle.id)), 'adapter_kill');
       }
       Promise.resolve(waiter.cleanupPromise).then(() => {
         if (handle && (!handle.processRef || handle.processRef.state === 'closed') && handle.cleanupPending !== true) handle.localAuthority = false;
@@ -10556,7 +10865,7 @@ export class Coordinator {
     try {
       forcedEvent = this._log.append({ worker: workerId, harness, turnEpoch: handle ? this._safeTurnEpoch(handle) : 0, kind: 'control.forced_stop', actor: 'policy', payload: {} });
     } catch {
-      if (handle) this._emergencyKillUnlogged(handle).catch(noop);
+      if (handle) this._bestEffort(this._emergencyKillUnlogged(handle), 'emergency_kill');
       this._resolveStopRequests(waiter, { ok: false, result: 'coordination_unavailable' });
       this._stopWaiters.delete(workerId);
       return;
@@ -10572,7 +10881,7 @@ export class Coordinator {
         }
       } catch {
         this._stopWaiters.delete(workerId);
-        this._emergencyKillUnlogged(handle).catch(noop);
+        this._bestEffort(this._emergencyKillUnlogged(handle), 'emergency_kill');
         this._resolveStopRequests(waiter, { ok: false, result: 'coordination_unavailable' });
         return;
       }
@@ -10608,7 +10917,7 @@ export class Coordinator {
     }
 
     if (handle && this._adapters[handle.vendor]) {
-      Promise.resolve(this._adapters[handle.vendor].kill(workerId)).catch(noop);
+      this._bestEffort(Promise.resolve(this._adapters[handle.vendor].kill(workerId)), 'adapter_kill');
     }
 
     if (handle) {
@@ -12301,9 +12610,10 @@ export class Coordinator {
     if (packs.length === 0 || typeof this._coordination?.grantContextPack !== 'function') return;
     for (const packId of packs) {
       if (typeof packId !== 'string') continue;
-      try {
-        this._coordination.grantContextPack({ packId, runId, taskId, taskVersion, workerId }, { actor: 'orchestrator', key: `context.pack_granted:${taskId}:${packId}` });
-      } catch { /* the grant is a best-effort receipt over the admitted binding */ }
+      this._bestEffortSync(
+        () => this._coordination.grantContextPack({ packId, runId, taskId, taskVersion, workerId }, { actor: 'orchestrator', key: `context.pack_granted:${taskId}:${packId}` }),
+        'context_pack_grant_audit',
+      );
     }
   }
 
@@ -12582,11 +12892,12 @@ export class Coordinator {
     const grantIds = this._coordination.activeBoardGrants({ workerId, taskId: task.id })
       .map((grant) => grant.grantId);
     if (grantIds.length === 0) return;
-    try {
-      this._coordination.revokeBoardGrants({ workerId, taskId: task.id, cause: reason }, {
+    this._bestEffortSync(
+      () => this._coordination.revokeBoardGrants({ workerId, taskId: task.id, cause: reason }, {
         actor: 'policy', key: `board.grant_revoked:${workerId}:${task.id}:${reason}`,
-      });
-    } catch { /* the durable revoke is best-effort within the terminal transition */ }
+      }),
+      'board_grant_revoke_audit',
+    );
   }
 
   // REPL-1 rule 7: worker-scope ReplManifest admission. Sibling of requestBoardClaim — the wrapper
@@ -13215,7 +13526,7 @@ export class Coordinator {
         actor: 'policy',
         payload: boundedProcessObservation(event, 'cross_adapter_worker', { sourceVendor, ownerVendor: handle.vendor }),
       });
-      if (!['dead', 'stopping', 'exited'].includes(handle.status)) this._beginStop(handle, 'kill', undefined, 'policy').catch(noop);
+      if (!['dead', 'stopping', 'exited'].includes(handle.status)) this._stopInBackground(handle);
       return;
     }
     if (actor === 'worker'
@@ -13263,7 +13574,7 @@ export class Coordinator {
           payload: boundedProcessObservation(event, 'invalid_provider_ready'),
           ...this._routeAttribution(handle),
         });
-        if (!['dead', 'stopping', 'exited'].includes(handle.status)) this._beginStop(handle, 'kill', undefined, 'policy').catch(noop);
+        if (!['dead', 'stopping', 'exited'].includes(handle.status)) this._stopInBackground(handle);
         return;
       }
     }
@@ -13382,7 +13693,7 @@ export class Coordinator {
           payload: boundedProcessObservation(event, 'invalid_worker_policy_observation'),
           ...this._routeAttribution(handle),
         });
-        if (!['dead', 'stopping', 'exited'].includes(handle.status)) this._beginStop(handle, 'kill', undefined, 'policy').catch(noop);
+        if (!['dead', 'stopping', 'exited'].includes(handle.status)) this._stopInBackground(handle);
         return;
       }
     }
@@ -13461,7 +13772,7 @@ export class Coordinator {
         }
         // Use the ordinary confirmed two-phase stop so process/worktree ownership remains live
         // until the adapter proves the mismatched session is gone.
-        this._beginStop(handle, 'kill', undefined, 'policy').catch(noop);
+        this._stopInBackground(handle);
       }
     }
     // Only an adapter's explicitly mapped native lifecycle/usage observation is authoritative.
@@ -13481,7 +13792,7 @@ export class Coordinator {
           this._coordTransition(effortTask, 'failed', `task.failed:${effortTask.id}:${mismatchEvent.seq}`, evidence);
           effortTask.status = 'failed';
         }
-        this._beginStop(handle, 'kill', undefined, 'policy').catch(noop);
+        this._stopInBackground(handle);
       }
     }
     const attribution = this._routeAttribution(handle);
@@ -13508,8 +13819,8 @@ export class Coordinator {
             handle.processAuthority = null;
             handle.recoveredProcessAuthority = false;
             handle.localAuthority = true;
-            this._beginStop(handle, 'kill', undefined, 'policy').catch(noop);
-          } else if (!['dead', 'stopping', 'exited'].includes(handle.status)) this._beginStop(handle, 'kill', undefined, 'policy').catch(noop);
+            this._stopInBackground(handle);
+          } else if (!['dead', 'stopping', 'exited'].includes(handle.status)) this._stopInBackground(handle);
           break;
         }
         const started = appendAttributed({ worker: workerId, harness, turnEpoch, kind, actor, payload });
@@ -13555,7 +13866,7 @@ export class Coordinator {
           && payload.ready === current.ready;
         if (!valid) {
           appendAttributed({ worker: workerId, harness, turnEpoch: this._safeTurnEpoch(handle), kind: 'lifecycle.process_attribution_refused', actor: 'policy', payload: boundedProcessObservation(event, 'invalid_process_close') });
-          if (!['dead', 'stopping', 'exited'].includes(handle.status)) this._beginStop(handle, 'kill', undefined, 'policy').catch(noop);
+          if (!['dead', 'stopping', 'exited'].includes(handle.status)) this._stopInBackground(handle);
           break;
         }
         const closed = appendAttributed({ worker: workerId, harness, turnEpoch, kind, actor, payload });
@@ -13582,14 +13893,14 @@ export class Coordinator {
         if (stopWaiter?.mode === 'kill') this._maybeFinalizeStop(handle.id, stopWaiter);
         if (!stopWaiter && handle.status === 'dead' && handle.cleanupPending !== true) handle.localAuthority = false;
         if (!stopWaiter && handle.status === 'dead' && handle.cleanupPending === true && !handle.untrustedTransportReap) {
-          this._cleanupClosedTransport(handle, this._tasks.get(handle.taskId), closed).catch(noop);
+          this._cleanupTransportInBackground(handle, this._tasks.get(handle.taskId), closed);
         }
         if (!stopWaiter && !handle.untrustedTransportReap && preservationLost) {
-          this._cleanupClosedTransport(handle, this._tasks.get(handle.taskId), closed).catch(noop);
+          this._cleanupTransportInBackground(handle, this._tasks.get(handle.taskId), closed);
         } else if (!stopWaiter && !handle.untrustedTransportReap && turnWasTerminal
           && !['dead', 'stopping', 'orphaned'].includes(handle.status)) {
           handle.status = 'exited';
-          this._cleanupClosedTransport(handle, this._tasks.get(handle.taskId), closed).catch(noop);
+          this._cleanupTransportInBackground(handle, this._tasks.get(handle.taskId), closed);
         }
         break;
       }
@@ -13689,7 +14000,8 @@ export class Coordinator {
           // correct even for a native/test adapter that emits completion before that promise's
           // bookkeeping callback runs. Never capture through the logical placeholder path.
           Promise.resolve(handle.worktreeReady).then(() => this._runTrustGate(handle, wr))
-            .catch(noop).finally(releaseAuthority);
+            .catch((error) => this._recordTrustGateEscape(handle, error))
+            .finally(releaseAuthority);
         }
         break;
       }
@@ -13747,9 +14059,9 @@ export class Coordinator {
         // stop waiter for a child that can no longer emit kill.confirmed.
         if (handle.processRef?.state === 'closed' && !this._stopWaiters.has(handle.id)) {
           handle.status = 'exited';
-          this._cleanupClosedTransport(handle, task, terminalEvent).catch(noop);
+          this._cleanupTransportInBackground(handle, task, terminalEvent);
         } else if (handle.status !== 'dead' && handle.status !== 'stopping') {
-          this._beginStop(handle, 'kill', undefined, 'policy').catch(noop);
+          this._stopInBackground(handle);
         }
         break;
       }
@@ -13767,10 +14079,10 @@ export class Coordinator {
         this._clearWatchdog(handle);
         if (handle.processRef && handle.processRef.state !== 'closed') {
           appendAttributed({ worker: workerId, harness, turnEpoch: this._safeTurnEpoch(handle), kind: 'lifecycle.process_attribution_refused', actor: 'policy', payload: boundedProcessObservation(event, 'terminal_without_process_close') });
-          if (!['dead', 'stopping'].includes(handle.status)) this._beginStop(handle, 'kill', undefined, 'policy').catch(noop);
+          if (!['dead', 'stopping'].includes(handle.status)) this._stopInBackground(handle);
         } else if (!this._stopWaiters.has(handle.id)) {
           if (handle.status !== 'dead') handle.status = 'exited';
-          this._cleanupClosedTransport(handle, task, terminalEvent).catch(noop);
+          this._cleanupTransportInBackground(handle, task, terminalEvent);
         }
         break;
       }
@@ -14004,7 +14316,7 @@ export class Coordinator {
               body: replySpillRecord ? replySpillRecord.head : frameBody,
               ...(replySpillRecord ? { spilled: true, bytes: replyBytes, digest: replySpillRecord.digest, spill: replySpillRecord.spill } : {}),
             }, { actor: workerId, key: `message.delivered:${replyId}:${workerId}` });
-          } catch { /* audit is best-effort */ }
+          } catch (error) { this._noteFailure('reply_delivery_audit', error); }
         }
         appendAttributed({
           worker: workerId, harness, turnEpoch, kind: 'message.delivered', actor: 'hub',
@@ -14031,11 +14343,15 @@ export class Coordinator {
         break;
       }
       case 'question.cancelled': {
-        this._trackAuthorityPromise(() => this._cancelNativeQuestion(workerId, payload?.requestId)).catch(noop);
+        this._bestEffort(this._trackAuthorityPromise(() => this._cancelNativeQuestion(workerId, payload?.requestId)), 'native_question_cancel');
         break;
       }
       case 'question.asked': {
         const requestId = payload?.requestId;
+        if (!isInteractionRequestId(requestId)) {
+          this._refuseInteractionFrameId({ workerId, harness, turnEpoch, handle, appendAttributed, family: 'question', requestId });
+          break;
+        }
         if (this._drainState !== 'open') {
           const discarded = appendAttributed({ worker: workerId, harness, turnEpoch, kind: 'control.drain_interaction_discarded', actor: 'policy', payload: { requestId, kind: 'question' } });
           const task = this._tasks.get(handle.taskId); const evidence = this._coordMapEvent(discarded);
@@ -14089,6 +14405,10 @@ export class Coordinator {
       }
       case 'approval.requested': {
         const requestId = payload?.requestId;
+        if (!isInteractionRequestId(requestId)) {
+          this._refuseInteractionFrameId({ workerId, harness, turnEpoch, handle, appendAttributed, family: 'approval', requestId });
+          break;
+        }
         if (this._drainState !== 'open') {
           const discarded = appendAttributed({ worker: workerId, harness, turnEpoch, kind: 'control.drain_interaction_discarded', actor: 'policy', payload: { requestId, kind: 'approval' } });
           const task = this._tasks.get(handle.taskId); const evidence = this._coordMapEvent(discarded);
@@ -14167,7 +14487,10 @@ export class Coordinator {
           this._bumpInteractionGeneration(handle.taskId);
           break;
         }
-        if (typeof requestId !== 'string' || requestId.length === 0) break;
+        if (!isInteractionRequestId(requestId)) {
+          this._refuseInteractionFrameId({ workerId, harness, turnEpoch, handle, appendAttributed, family: 'decision', requestId });
+          break;
+        }
         if (this._drainState !== 'open') {
           const discarded = appendAttributed({ worker: workerId, harness, turnEpoch, kind: 'control.drain_interaction_discarded', actor: 'policy', payload: { requestId, kind: 'decision' } });
           const task = this._tasks.get(handle.taskId); const evidence = this._coordMapEvent(discarded);
@@ -14298,10 +14621,10 @@ export class Coordinator {
     this._clearWatchdog(handle);
     if (handle.processRef?.state === 'closed' && !this._stopWaiters.has(handle.id)) {
       handle.status = 'exited';
-      this._cleanupClosedTransport(handle, task, terminalEvent).catch(noop);
+      this._cleanupTransportInBackground(handle, task, terminalEvent);
     } else if (handle.status !== 'dead' && handle.status !== 'stopping') {
       // The ordinary two-phase stop invokes Phase 70 preservation before runtime/worktree reap.
-      this._beginStop(handle, 'kill', undefined, 'policy').catch(noop);
+      this._stopInBackground(handle);
     }
   }
 
@@ -14664,9 +14987,9 @@ export class Coordinator {
         this._expireBoardClaims(handle, task, code);
         if (handle.processRef?.state === 'closed' && !this._stopWaiters.has(handle.id)) {
           handle.status = 'exited';
-          this._cleanupClosedTransport(handle, task, errorEvent).catch(noop);
+          this._cleanupTransportInBackground(handle, task, errorEvent);
         } else if (handle.status !== 'dead' && handle.status !== 'stopping') {
-          this._beginStop(handle, 'kill', undefined, 'policy').catch(noop);
+          this._stopInBackground(handle);
         }
       }
     }
@@ -15645,10 +15968,11 @@ export class Coordinator {
     for (const finding of unmarkedLaneReceipts) {
       // One durable finding per row, keyed by the row it names, so a restart replays rather than
       // repeats it (#267 item 3).
-      try {
-        this._coordRecord('replay.message_alias_unmarked', finding,
-          `driver.replay.message_alias_unmarked:${finding.seq ?? finding.idempotencyKey}`, 'policy');
-      } catch { /* the row is still not seeded; a store that cannot take the record keeps its refusal */ }
+      this._bestEffortSync(
+        () => this._coordRecord('replay.message_alias_unmarked', finding,
+          `driver.replay.message_alias_unmarked:${finding.seq ?? finding.idempotencyKey}`, 'policy'),
+        'replay_alias_unmarked_audit',
+      );
     }
     for (const row of replySeeds) {
       const depth = row.depth ?? 1;

@@ -16,7 +16,7 @@
         {
           "name": "constructor",
           "ordinal": 0,
-          "size": 675,
+          "size": 679,
           "seam": "effect",
           "evidence": [
             "recovery:reconcile_call",
@@ -279,6 +279,25 @@
           ]
         },
         {
+          "name": "_refuseInteractionFrameId",
+          "ordinal": 0,
+          "size": 15,
+          "seam": "admission",
+          "evidence": [
+            "admission:guard_name"
+          ]
+        },
+        {
+          "name": "_pendingInteractionFor",
+          "ordinal": 0,
+          "size": 12,
+          "seam": "observation",
+          "evidence": [
+            "observation:read_name",
+            "observation:key_name"
+          ]
+        },
+        {
           "name": "_resolvePauseAuthority",
           "ordinal": 0,
           "size": 4,
@@ -400,6 +419,15 @@
           ]
         },
         {
+          "name": "_withPauseReservation",
+          "ordinal": 0,
+          "size": 17,
+          "seam": "admission",
+          "evidence": [
+            "delegates:admission"
+          ]
+        },
+        {
           "name": "_expirePreNudgeScratchClaims",
           "ordinal": 0,
           "size": 12,
@@ -413,7 +441,17 @@
         {
           "name": "nudgeTurn",
           "ordinal": 0,
-          "size": 78,
+          "size": 4,
+          "seam": "effect",
+          "evidence": [
+            "delegates:admission",
+            "delegates:effect"
+          ]
+        },
+        {
+          "name": "_nudgeReservedTurn",
+          "ordinal": 0,
+          "size": 86,
           "seam": "effect",
           "evidence": [
             "effect:adapter_verb",
@@ -433,7 +471,17 @@
         {
           "name": "claimTurn",
           "ordinal": 0,
-          "size": 56,
+          "size": 4,
+          "seam": "admission",
+          "evidence": [
+            "delegates:admission",
+            "delegates:observation"
+          ]
+        },
+        {
+          "name": "_claimReservedTurn",
+          "ordinal": 0,
+          "size": 51,
           "seam": "observation",
           "evidence": [
             "observation:log_append"
@@ -562,7 +610,7 @@
         {
           "name": "_sweepDeadlines",
           "ordinal": 0,
-          "size": 33,
+          "size": 43,
           "seam": "effect",
           "evidence": [
             "delegates:effect",
@@ -851,7 +899,7 @@
         {
           "name": "_mintAttentionSpill",
           "ordinal": 0,
-          "size": 13,
+          "size": 27,
           "seam": "observation",
           "evidence": [
             "observation:coordination_authority",
@@ -862,10 +910,19 @@
         {
           "name": "_pendingAttentionPush",
           "ordinal": 0,
-          "size": 34,
+          "size": 35,
           "seam": "observation",
           "evidence": [
             "observation:read_name"
+          ]
+        },
+        {
+          "name": "_spillUnavailableItem",
+          "ordinal": 0,
+          "size": 20,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
           ]
         },
         {
@@ -1656,7 +1713,7 @@
         {
           "name": "_deliver",
           "ordinal": 0,
-          "size": 177,
+          "size": 182,
           "seam": "effect",
           "evidence": [
             "effect:adapter_verb",
@@ -2168,7 +2225,7 @@
         {
           "name": "_armStallCycle",
           "ordinal": 0,
-          "size": 25,
+          "size": 22,
           "seam": "observation",
           "evidence": [
             "delegates:observation"
@@ -2180,6 +2237,111 @@
           "size": 21,
           "seam": "observation",
           "evidence": [
+            "observation:record_name"
+          ]
+        },
+        {
+          "name": "_refuseStallReap",
+          "ordinal": 0,
+          "size": 9,
+          "seam": "recovery",
+          "evidence": [
+            "recovery:restart_name",
+            "admission:guard_name"
+          ]
+        },
+        {
+          "name": "_expireStallCycleSafely",
+          "ordinal": 0,
+          "size": 7,
+          "seam": "observation",
+          "evidence": [
+            "observation:record_name"
+          ]
+        },
+        {
+          "name": "_bestEffort",
+          "ordinal": 0,
+          "size": 3,
+          "seam": "admission",
+          "evidence": [
+            "delegates:admission"
+          ]
+        },
+        {
+          "name": "_bestEffortSync",
+          "ordinal": 0,
+          "size": 3,
+          "seam": "admission",
+          "evidence": [
+            "delegates:admission"
+          ]
+        },
+        {
+          "name": "_noteFailure",
+          "ordinal": 0,
+          "size": 8,
+          "seam": "admission",
+          "evidence": [
+            "admission:refusal_name",
+            "observation:record_name"
+          ]
+        },
+        {
+          "name": "recordedFailures",
+          "ordinal": 0,
+          "size": 3,
+          "seam": "observation",
+          "evidence": [
+            "observation:record_name"
+          ]
+        },
+        {
+          "name": "_recordOperationFailure",
+          "ordinal": 0,
+          "size": 16,
+          "seam": "observation",
+          "evidence": [
+            "admission:refusal_name",
+            "observation:log_append",
+            "observation:record_name"
+          ]
+        },
+        {
+          "name": "_stopInBackground",
+          "ordinal": 0,
+          "size": 9,
+          "seam": "effect",
+          "evidence": [
+            "effect:action_verb"
+          ]
+        },
+        {
+          "name": "_cleanupTransportInBackground",
+          "ordinal": 0,
+          "size": 11,
+          "seam": "observation",
+          "evidence": [
+            "delegates:observation"
+          ]
+        },
+        {
+          "name": "_recordTrustGateEscape",
+          "ordinal": 0,
+          "size": 8,
+          "seam": "observation",
+          "evidence": [
+            "observation:record_name"
+          ]
+        },
+        {
+          "name": "_recordStallReapRefusal",
+          "ordinal": 0,
+          "size": 5,
+          "seam": "recovery",
+          "evidence": [
+            "recovery:restart_name",
+            "admission:refusal_name",
             "observation:record_name"
           ]
         },
@@ -3044,7 +3206,7 @@
         {
           "name": "_grantOrientationContextPacks",
           "ordinal": 0,
-          "size": 10,
+          "size": 11,
           "seam": "effect",
           "evidence": [
             "effect:action_verb",
@@ -3202,7 +3364,7 @@
         {
           "name": "_revokeMemberGrants",
           "ordinal": 0,
-          "size": 13,
+          "size": 14,
           "seam": "effect",
           "evidence": [
             "effect:action_verb",
@@ -3536,7 +3698,7 @@
         {
           "name": "_handleEvent",
           "ordinal": 0,
-          "size": 1075,
+          "size": 1087,
           "seam": "effect",
           "evidence": [
             "effect:adapter_verb",
@@ -3574,7 +3736,7 @@
         {
           "name": "_replay",
           "ordinal": 0,
-          "size": 991,
+          "size": 992,
           "seam": "recovery",
           "evidence": [
             "recovery:restart_name",

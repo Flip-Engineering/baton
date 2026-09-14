@@ -1060,6 +1060,140 @@ test('E6 SW-10 (RED): the claimed stall-seam cycle expires to a RECEIPTED reap �
     'stage[stall-reap-receipt-missing]: the reap actually stops the worker (adapter.kill)');
 });
 
+// ---------------------------------------------------------------------------
+// G-26 + swarm-b finding 2 (2026-09-14 audit): "the sweep still covers it" was a comment, not a
+// mechanism. `_expireStallCycle` consumed the cycle (`answered = true`, timer cleared) and dropped
+// a refused preserve with `.catch(noop)`, and `_sweepDeadlines` never covered `stallSeamCycle` at
+// all — so a stalled worker could wedge with nothing left that could fire. Both halves are driven
+// with a fake timer primitive: no row asserts a wall-clock behavior of the fleet.
+// ---------------------------------------------------------------------------
+function fakeTimers() {
+  const timers = [];
+  return {
+    timers,
+    setTimeout: (fn, ms) => {
+      const ref = { fn, ms, cleared: false, fired: false, unref: () => ref };
+      timers.push(ref);
+      return ref;
+    },
+    clearTimeout: (timer) => { if (timer) timer.cleared = true; },
+    fire: (predicate) => {
+      for (const timer of timers.filter((t) => !t.cleared && !t.fired && (!predicate || predicate(t)))) {
+        timer.fired = true;
+        timer.fn();
+      }
+    },
+  };
+}
+
+function stallReapFixture({ adapter, timers, clock, capture }) {
+  const HEX = 'a'.repeat(40);
+  return setup({
+    adapter,
+    worktreesOverrides: {
+      create: async (taskId) => ({ path: `/tmp/wt/${taskId}`, branch: `baton/${taskId}`, baseSha: HEX }),
+      capture,
+      retainCheckpoint: async (sha) => ({ sha }),
+      resolveCheckpoint: async (ref) => ref.sha,
+    },
+    coordinatorOpts: {
+      now: () => clock.now, setTimeout: timers.setTimeout, clearTimeout: timers.clearTimeout,
+      watchdog: { stallMs: 60, stallAction: 'escalate' },
+    },
+  });
+}
+
+async function claimStalledWorker(coordinator, adapter, handle, timers) {
+  timers.fire((timer) => timer.ms === 60); // the watchdog window elapses
+  await flush(40);
+  assert.ok(coordinator._workers.get(handle.id).watchdogActions?.has('stall'),
+    'fixture check: the stall is declared before the claim');
+  try {
+    await coordinator.send(handle.id, 'resume after review', 'steer',
+      { actor: 'orchestrator', controlId: `control:${'c'.repeat(64)}` });
+  } catch { /* the steer may be refused — the seam is what these rows pin */ }
+}
+
+test('G-26 SW-10 (RED): a refused progress preservation re-arms the stall cycle instead of consuming it', async () => {
+  const clock = { now: 0 };
+  const timers = fakeTimers();
+  const adapter = new ScriptableAdapter();
+  const HEX = 'a'.repeat(40);
+  let captureRefused = true;
+  const { coordinator } = stallReapFixture({
+    adapter,
+    timers,
+    clock,
+    capture: async () => {
+      if (captureRefused) throw Object.assign(new Error('capture refused'), { code: 'capture_failed' });
+      return { sha: HEX, baseSha: HEX, changedPaths: [] };
+    },
+  });
+  const handle = await coordinator.spawn('mock', makeBrief());
+  await claimStalledWorker(coordinator, adapter, handle, timers);
+  const raw = coordinator._workers.get(handle.id);
+  assert.ok(raw.stallSeamCycle, 'fixture check: the claim armed the stall-seam cycle');
+  clock.now = 100; // past the claimed window (progressNudgeWindowMs 25)
+  timers.fire((timer) => timer.ms === 25); // the cycle's own timer expires it
+  await flush(120);
+
+  const refused = coordinator._log.read(handle.id).filter((event) => event.kind === 'health.stall_reap_refused');
+  assert.equal(refused.length, 1,
+    'stage[stall-reap-refusal-unrecorded]: a refused reap is a named fact, never silence');
+  assert.equal(refused[0].payload.code, 'progress_preservation_failed',
+    'the receipt names the refusal that actually happened');
+  assert.equal(adapter.calls.kill.length, 0, 'a refused preservation never kills');
+  assert.ok(raw.watchdogActions?.has('stall'), 'the worker is still declared stalled');
+  assert.ok(raw.stallSeamCycle,
+    'stage[stall-cycle-consumed]: the cycle is re-armed, never consumed by a failed reap');
+  assert.equal(raw.stallSeamCycle.answered, false, 'the re-armed cycle can fire again');
+
+  // The ladder is still live: with the refusal gone, the re-armed cycle reaps — and the sweep is
+  // what reaches it (no timer is re-armed here).
+  captureRefused = false;
+  clock.now = 1000;
+  coordinator.tick();
+  await flush(120);
+  assert.ok(adapter.calls.kill.length > 0,
+    'stage[stall-cycle-consumed]: the re-armed cycle still reaches the reap');
+});
+
+test('G-26 SW-10 (RED): an expired stall-seam cycle is swept by _sweepDeadlines — never timer-only', async () => {
+  const clock = { now: 0 };
+  const timers = fakeTimers();
+  const adapter = new ScriptableAdapter();
+  const HEX = 'a'.repeat(40);
+  const { coordinator } = stallReapFixture({
+    adapter,
+    timers,
+    clock,
+    capture: async () => ({ sha: HEX, baseSha: HEX, changedPaths: [] }),
+  });
+  const handle = await coordinator.spawn('mock', makeBrief());
+  await claimStalledWorker(coordinator, adapter, handle, timers);
+  const raw = coordinator._workers.get(handle.id);
+  const cycle = raw.stallSeamCycle;
+  assert.ok(cycle, 'fixture check: the claim armed the stall-seam cycle');
+  // The cycle's timer fires while the window has NOT elapsed by the coordinator's own clock (a
+  // lagging clock, an early timer). `_expireStallCycle` returns without re-arming, so the cycle is
+  // left unanswered with NO timer at all — only `_sweepDeadlines` can still reach it.
+  timers.fire((timer) => timer.ms === 25);
+  assert.equal(cycle.answered, false, 'fixture check: the early timer consumed itself, the cycle is unanswered');
+  assert.equal(timers.timers.some((timer) => timer.ms === 25 && !timer.fired && !timer.cleared), false,
+    'fixture check: no cycle timer remains armed — the sweep is the only coverage left');
+
+  clock.now = 100;
+  coordinator.tick();
+  await flush(120);
+  assert.ok(
+    coordinator._log.read(handle.id).some((event) => event.kind === 'worktree.progress_unchanged'
+      || event.kind === 'worktree.progress_checkpointed'),
+    'stage[stall-cycle-sweep-missing]: _sweepDeadlines expires an expired claimed window',
+  );
+  assert.ok(adapter.calls.kill.length > 0,
+    'stage[stall-cycle-sweep-missing]: the swept cycle reaches the reap — a stalled worker is always reapable');
+});
+
 test('E7 SW-10 (RED): a qualifying D2 re-arm inside the claimed window calls _clearStall — the ladder has a reachable escape hatch', async () => {
   const adapter = new ScriptableAdapter();
   const { coordinator } = setup({ adapter, coordinatorOpts: { watchdog: { stallMs: 60, stallAction: 'escalate' } } });

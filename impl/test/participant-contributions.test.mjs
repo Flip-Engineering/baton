@@ -309,3 +309,34 @@ test('a check verdict observed at another exit code is refused at the receipt', 
   assert.equal(misaligned.passed, false, 'the row expects exit 0; the verdict observed 7');
   assert.equal(misaligned.verdict.observedExit, 7, 'the receipt still carries what the hub observed');
 });
+
+// 2026-09-14 audit G-9: `verifyContribution` reports a sandbox it could not remove, and the
+// receipt is where that fact has to land — the verdict stands on its own, and the leaked sandbox
+// is a fact about the hub, not about the author. Recorded only when there IS a leak.
+test('a check whose verify sandbox could not be removed names the leak on its receipt', async (t) => {
+  const f = await fixture(t);
+  await f.coordinator.captureContribution(f.handle.id, { contributionId: 'leaky' });
+  const remove = f.worktrees.removeVerifyWorktree;
+  f.worktrees.removeVerifyWorktree = async (path) => {
+    if (path.endsWith(SHA)) throw new Error('sandbox removal refused');
+    return remove(path);
+  };
+  const checked = await f.coordinator.checkContribution(f.handle.id, {
+    contributionId: 'leaky', checkId: 'check-leak',
+  });
+  assert.equal(checked.passed, true, 'the verdict is still the verdict — a leak is not a failed check');
+  assert.equal(checked.attempt.cleanup.state, 'incomplete');
+  assert.equal(checked.cleanup?.state, 'incomplete', 'the receipt carries the cleanup outcome, not only the attempt');
+  assert.equal(checked.cleanup?.code, 'worktree_cleanup_failed');
+  assert.equal(checked.cleanup?.paths.length, 1, 'the leaked sandbox is named by its exact path');
+  assert.ok(checked.cleanup.paths[0].endsWith(SHA), 'the leak is the candidate sandbox, not a base one');
+  const durable = f.log.read(f.handle.id)
+    .find((event) => event.kind === 'contribution.checked' && event.payload.checkId === 'check-leak');
+  assert.deepEqual(durable.payload.cleanup, checked.cleanup, 'the durable receipt carries the same named fact');
+
+  // A clean check records no leak: absence is not a quiet 'incomplete'.
+  await f.coordinator.captureContribution(f.handle.id, { contributionId: 'clean' });
+  f.worktrees.removeVerifyWorktree = remove;
+  const clean = await f.coordinator.checkContribution(f.handle.id, { contributionId: 'clean', checkId: 'check-clean' });
+  assert.equal(clean.cleanup ?? null, null, 'a removed sandbox records nothing to reconcile');
+});

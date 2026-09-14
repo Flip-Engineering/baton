@@ -9,6 +9,15 @@ const identity = (value) => {
   }
   return value;
 };
+/** G-9: a verify sandbox `verifyContribution` could not remove is a named fact about the hub.
+ * The verdict is untouched by it — a leaked sandbox is never a failed check — but it is also never
+ * left for `attempt.cleanup.state` alone to hint at. Recorded only when there IS a leak. */
+const cleanupLeak = (cleanupError) => (cleanupError ? Object.freeze({
+  state: 'incomplete',
+  code: typeof cleanupError.code === 'string' ? cleanupError.code : 'worktree_cleanup_failed',
+  paths: Object.freeze([...(Array.isArray(cleanupError.paths) ? cleanupError.paths : [])]),
+  message: String(cleanupError.message ?? cleanupError),
+}) : null);
 
 /** Immutable contribution operations. Session/pause ownership stays with the coordinator;
  * this service owns revision retention, isolated checks, and attributable operation receipts. */
@@ -129,12 +138,15 @@ export class ContributionService {
           : null,
       });
     } catch (error) {
+      const leak = cleanupLeak(error.cleanupError);
       this.record('contribution.check_unavailable', {
         contributionId, checkId, sha: captured.sha, ref: captured.ref,
         code: error.code ?? 'verification_unavailable', attempt: error.verificationAttempt ?? null,
+        ...(leak ? { cleanup: leak } : {}),
       }, handle, task);
       throw error;
     }
+    const leak = cleanupLeak(checked.cleanupError);
     const receipt = {
       contributionId, checkId, sha: captured.sha, ref: captured.ref,
       verification: { selection, command: source.brief.verification.command },
@@ -143,6 +155,7 @@ export class ContributionService {
       }) === true,
       verdict: this.closeVerdict(checked.observedVerdict, source.brief.verification),
       attempt: checked.attempt,
+      ...(leak ? { cleanup: leak } : {}),
     };
     this.record('contribution.checked', receipt, handle, task);
     return copy(receipt);

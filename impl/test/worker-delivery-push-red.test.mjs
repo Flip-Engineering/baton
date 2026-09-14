@@ -526,6 +526,60 @@ test('C6 (RED): the D2 overflow round trip — 9 pending items serve 8 in-block,
   assert.ok(resolved.body.includes('ap:9'), 'the overflow item\'s FULL text rides the spill — recoverable, never lost (D2)');
 });
 
+// 2026-09-14 audit G-25: the projection's own docstring says "Bounded by the item-count row
+// (overflow spills, never truncates)". `_mintAttentionSpill` ended `catch { return null; }` and the
+// serving path then pushed nothing — the overflow items were simply ABSENT, with no refusal and no
+// receipt. A failed mint is now a typed row naming exactly what it costs, and a healthy lane still
+// mints the citation.
+test('G-25 (RED): a failed spill mint serves a typed spill_unavailable row instead of dropping the overflow', async () => {
+  const adapter = new ScriptableAdapter();
+  const { coordinator } = setup({ adapter });
+  const { handle } = await spawn(coordinator);
+  for (let i = 1; i <= 9; i += 1) stageApprovalRequested(adapter, handle, `ap:${i}`);
+  await flush();
+  const mintSpill = coordinator._coordination.mintSpill;
+
+  // (a) the lane is present but refuses the body (a full substrate, a poisoned store)
+  coordinator._coordination.mintSpill = () => {
+    throw Object.assign(new Error('spill body exceeded'), { code: 'spill_body_exceeded' });
+  };
+  const items = await coordinator._pendingAttentionPush(handle.id);
+  const inBlock = items.filter((item) => item.kind === 'answer_approval');
+  assert.equal(inBlock.length, 8, 'the in-block head is unchanged by a failed mint');
+  const unavailable = items.find((item) => item.kind === 'spill_unavailable');
+  assert.ok(unavailable, 'a failed mint is a typed row, never a silent drop (stage: spill-unavailable-row-missing)');
+  assert.equal(unavailable.code, 'spill_body_exceeded', 'the row names the refusal the lane actually gave');
+  assert.deepEqual(unavailable.overflowIds, ['ap:9'], 'the row names exactly the items absent from the block');
+  const served = new Set([...inBlock.map((item) => item.requestId), ...unavailable.overflowIds]);
+  assert.equal(served.size, 9, 'every pending id is accounted for — in-block or named by the row');
+  assert.ok(
+    !items.some((item) => /^spill:sha256:/u.test(item.requestId ?? '')),
+    'no citation is fabricated for a spill that does not exist',
+  );
+  const rendered = renderPrompt({ ...makeBrief(), attention: items });
+  assert.match(rendered, /spill_unavailable/u, 'the row reaches the provider-facing block');
+  assert.match(rendered, /ap:9/u, 'the worker can see WHICH item is not in the block');
+
+  // (b) the lane is absent entirely (no registrar on this store) — the same typed fact, own reason.
+  // Shadowing (not delete) is what removes a class method from an instance.
+  coordinator._coordination.mintSpill = undefined;
+  const withoutLane = await coordinator._pendingAttentionPush(handle.id);
+  assert.equal(
+    withoutLane.find((item) => item.kind === 'spill_unavailable')?.reason,
+    'no_spill_lane',
+    'an absent lane is named as an absent lane, not as a failed mint',
+  );
+
+  // (c) a healthy lane still mints the citation — the row never replaces a working spill
+  coordinator._coordination.mintSpill = mintSpill;
+  const healthy = await coordinator._pendingAttentionPush(handle.id);
+  assert.ok(
+    healthy.some((item) => /^spill:sha256:[a-f0-9]{64}$/u.test(item.requestId ?? '')),
+    'with the lane restored the block closes with the digest citation again',
+  );
+  assert.equal(healthy.some((item) => item.kind === 'spill_unavailable'), false, 'a working spill needs no stand-in');
+});
+
 test('C7 (RED): the D2 byte shed — long-text items crossing 4096 rendered bytes carry the (truncated) marker and full text by citation (stage: pending-attention-push-missing)', async () => {
   const adapter = new ScriptableAdapter();
   const { coordinator } = setup({ adapter });

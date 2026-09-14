@@ -656,11 +656,12 @@ test('GP-G (pin): the supervised process-lifecycle machinery the pool inherits â
   assert.ok(reap.includes('timeoutMs') && reap.includes('pollMs') && reap.includes('maxAttempts'),
     'reapOwnedProcessGroup uses the inherited bounded kill-wait (M2: a reap, not a scheduling clock)');
   assert.ok(reap.includes('SIGKILL'), 'the bounded reap is the only kill discipline (no kill -9 outside it)');
-  // The closed reap-unconfirmed reason set lsp_reap_unconfirmed inherits.
-  const reasonStart = grepFirstLineNum('process-lifecycle.mjs', 'export function processReapUnconfirmedPayload');
-  assert.ok(reasonStart > 0, 'the reap-unconfirmed payload builder is found by its own declaration');
-  const reasons = sedSrc('process-lifecycle.mjs', reasonStart, reasonStart + 10);
-  for (const r of ['deadline', 'permission_denied', 'probe_error', 'signal_refused']) {
+  // The closed reap-unconfirmed reason set lsp_reap_unconfirmed inherits. The set is now ONE named
+  // constant (process-lifecycle.mjs:7-11) rather than a literal repeated at both the minting and the
+  // validating seam â€” G-30 added `attempts_exhausted` so an exhausted reap is never laundered into
+  // `deadline` or `probe_error`.
+  const reasons = sedSrc('process-lifecycle.mjs', 7, 11);
+  for (const r of ['deadline', 'attempts_exhausted', 'permission_denied', 'probe_error', 'signal_refused']) {
     assert.ok(reasons.includes(r), `lsp_reap_unconfirmed inherits the closed reason ${r}`);
   }
   // The ProcessCloseReapLatch clears the singleflight slot BEFORE publishing its refusal (B2 precedent).

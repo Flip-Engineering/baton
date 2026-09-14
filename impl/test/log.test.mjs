@@ -222,3 +222,67 @@ test('ack()\'s effect is durable and visible to a brand-new Cursor pointed at th
   assert.equal(cursorB.floor(), 4, 'ack() must persist to disk, not just in-memory');
   assert.deepEqual(cursorB.next(log, 'w1'), []);
 });
+
+// ============================================================
+// G-34 — a corrupt cursor floor is a typed fact, never a silent replay from 0
+// ============================================================
+
+test('G-34: an unparseable floor file refuses by name instead of replaying the whole worker log', () => {
+  const dir = tmpDir();
+  const log = new Log(dir);
+  for (let i = 0; i < 4; i++) log.append(partial('w1'));
+  const stateFile = join(dir, 'cursor.json');
+  writeFileSync(stateFile, '{"floor": 3', 'utf8'); // torn write: no closing brace
+
+  const cursor = new Cursor(stateFile);
+  const integrity = cursor.floorIntegrity();
+  assert.equal(integrity?.code, 'cursor_floor_corrupt', 'the unreadable floor is a typed signal');
+  assert.equal(integrity?.path, stateFile);
+  assert.equal(integrity?.reason, 'invalid_json', 'the reason names what was observed, not a guess');
+  assert.throws(() => cursor.next(log, 'w1'), (error) => {
+    assert.equal(error.code, 'cursor_floor_corrupt');
+    assert.match(error.gracefulPath, /repair\(\)/u, 'the refusal names the graceful path');
+    return true;
+  }, 'an unknown at-least-once position is never served as if it were floor 0');
+});
+
+test('G-34: a well-formed file whose floor is not a non-negative integer is refused, never coerced', () => {
+  const dir = tmpDir();
+  const log = new Log(dir);
+  for (let i = 0; i < 30; i++) log.append(partial('w1'));
+
+  for (const [raw, reason] of [
+    ['{"floor": "5"}', 'invalid_floor'], // "5" + 1 would silently resume at seq "51"
+    ['{"floor": -1}', 'invalid_floor'],
+    ['{"floor": 2.5}', 'invalid_floor'],
+    ['{"other": 2}', 'invalid_floor'],
+    ['null', 'invalid_floor'],
+  ]) {
+    const stateFile = join(dir, `cursor-${reason}-${raw.length}.json`);
+    writeFileSync(stateFile, raw, 'utf8');
+    const cursor = new Cursor(stateFile);
+    assert.equal(cursor.floorIntegrity()?.reason, reason, `${raw}: the floor shape is validated, not coerced`);
+    assert.throws(() => cursor.next(log, 'w1'), { code: 'cursor_floor_corrupt' }, `${raw} never replays from 0`);
+  }
+});
+
+test('G-34: repair() is the explicit fresh start — and the only way past an unreadable floor', () => {
+  const dir = tmpDir();
+  const log = new Log(dir);
+  for (let i = 0; i < 3; i++) log.append(partial('w1'));
+  const stateFile = join(dir, 'cursor.json');
+  writeFileSync(stateFile, 'not json at all', 'utf8');
+
+  const cursor = new Cursor(stateFile);
+  const repaired = cursor.repair();
+  assert.equal(repaired.repaired, true);
+  assert.equal(repaired.reason, 'invalid_json');
+  assert.equal(cursor.floorIntegrity(), null, 'the typed fact clears only through the explicit act');
+  assert.deepEqual(cursor.next(log, 'w1').map((e) => e.seq), [1, 2, 3],
+    'the explicit fresh start serves the whole log — that is the replay the caller accepted');
+
+  cursor.ack(2);
+  const reopened = new Cursor(stateFile);
+  assert.equal(reopened.floorIntegrity(), null, 'the repaired file is a readable floor again');
+  assert.equal(reopened.floor(), 2, 'ack() after repair() persists like any other floor');
+});

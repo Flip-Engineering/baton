@@ -17,8 +17,8 @@ import { coordinationForLog } from '../src/coordination-store.mjs';
 import { WebNorthbound } from '../src/web-northbound.mjs';
 import { McpFleetServer } from '../src/mcp-northbound.mjs';
 import {
-  ProcessCloseReapLatch, processAuthorityPayload, processAuthorityState, reapOwnedProcessGroup,
-  reapRecoveredProcessGroup, validProcessReapUnconfirmedPayload,
+  ProcessCloseReapLatch, processAuthorityPayload, processAuthorityState, processReapUnconfirmedPayload,
+  reapOwnedProcessGroup, reapRecoveredProcessGroup, validProcessReapUnconfirmedPayload,
 } from '../src/process-lifecycle.mjs';
 
 const FAKE_CLAUDE = fileURLToPath(new URL('./fixtures/fake-claude.mjs', import.meta.url));
@@ -825,6 +825,43 @@ test('PL10: a delivery is observed, never stamped, and the durable row rides the
   const coordinatorSource = readFileSync(fileURLToPath(new URL('../src/coordinator.mjs', import.meta.url)), 'utf8');
   assert.ok(coordinatorSource.includes('reaped.confirmed && reaped.signaled'),
     'the durable recovery_process_reaped row is chosen by the reap\'s own delivery observation');
+});
+
+// G-30 (2026-09-14 audit): a reap that exhausts its polls is NOT a reap that reached its deadline —
+// the two have different recoveries, so the reason must name the bound that actually ended the wait.
+// The poll budget itself is derived from the deadline and the interval the caller polls on, never a
+// bare ceiling: the same call names all three inputs, so the fourth is not a separate decision.
+test('G-30: an attempt-exhausted reap names itself, and the poll budget derives from the deadline', async () => {
+  let now = 0;
+  let probes = 0;
+  const exhausted = await reapOwnedProcessGroup(4242, {
+    timeoutMs: 20, pollMs: 5,
+    now: () => now, // a clock that never advances — the deadline is never the bound that fires
+    sleep: async () => {},
+    probe: () => { probes += 1; },
+    signal: () => {},
+  });
+  assert.deepEqual(exhausted, { confirmed: false, signaled: true, reason: 'attempts_exhausted' });
+  assert.equal(probes, Math.floor(20 / 5) + 2,
+    'the poll budget is derived from the deadline and the poll interval (the entry probe is one more)');
+
+  let tick = 0;
+  const expired = await reapOwnedProcessGroup(4242, {
+    now: () => tick,
+    timeoutMs: 10, pollMs: 2,
+    sleep: async (ms) => { tick += ms; },
+    probe: () => {},
+    signal: () => {},
+  });
+  assert.deepEqual(expired, { confirmed: false, signaled: true, reason: 'deadline' },
+    'a reap whose clock runs out under the same interval still says deadline');
+});
+
+test('G-30: the closed reap-unconfirmed reason set carries attempt exhaustion', () => {
+  const payload = processReapUnconfirmedPayload(3, 4242, 'attempts_exhausted');
+  assert.equal(payload.reason, 'attempts_exhausted',
+    'an exhausted reap is reported as exhausted, never laundered into probe_error');
+  assert.equal(validProcessReapUnconfirmedPayload(payload), true, 'the reason is a member of the closed set');
 });
 
 test('PL8: recovered signaling requires the exact durable PID-start authority', async () => {

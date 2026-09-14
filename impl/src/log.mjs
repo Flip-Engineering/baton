@@ -212,39 +212,110 @@ function deepFreeze(value) {
 }
 
 /**
+ * A persisted floor is either a bare non-negative integer or `{floor: n}`. Anything else — a torn
+ * write, a truncated rename, a foreign or hand-edited file, a value of the wrong type — is
+ * UNREADABLE: the at-least-once position is unknown, and the file says so by name (G-34).
+ */
+function parseFloor(raw) {
+  let value;
+  try {
+    value = JSON.parse(raw);
+  } catch {
+    throw Object.assign(new Error('the persisted cursor floor is not JSON'), { reason: 'invalid_json' });
+  }
+  const floor = typeof value === 'number' ? value : value && typeof value === 'object' ? value.floor : undefined;
+  if (!Number.isSafeInteger(floor) || floor < 0) {
+    throw Object.assign(new Error('the persisted cursor floor is not a non-negative integer'), { reason: 'invalid_floor' });
+  }
+  return floor;
+}
+
+/**
  * At-least-once read position over one worker's Log. `next()` serves everything after
  * the persisted floor and does NOT advance it; only `ack()` moves the floor. So a crash
  * between `next()` and durable processing re-serves the same page (spec I3) — dropping an
  * event could drop a worker's unanswered question.
+ *
+ * An unreadable floor is never silently read as 0: an unknown position that replayed every event
+ * the worker ever emitted as new (or, worse, skipped a page) is a fabricated observation, not a
+ * recovered one. Reads refuse with the typed reason until a caller explicitly accepts the replay
+ * through `repair()`.
  */
 export class Cursor {
   /** @param {string} stateFile - path the ack floor is persisted to. */
   constructor(stateFile) {
     this.stateFile = stateFile;
     this._floor = 0;
+    /** @type {{code: string, path: string, reason: string, message: string}|null} */
+    this._unreadable = null;
     if (existsSync(stateFile)) {
       try {
-        const v = JSON.parse(readFileSync(stateFile, 'utf8'));
-        this._floor = typeof v === 'number' ? v : (v.floor ?? 0);
-      } catch { this._floor = 0; }
+        this._floor = parseFloor(readFileSync(stateFile, 'utf8'));
+      } catch (error) {
+        this._unreadable = Object.freeze({
+          code: 'cursor_floor_corrupt',
+          path: stateFile,
+          reason: error?.reason ?? 'unreadable',
+          message: String(error?.message ?? error),
+        });
+      }
     }
+  }
+
+  /** The typed floor-integrity fact, or `null` when the persisted floor was read honestly. */
+  floorIntegrity() {
+    return this._unreadable;
+  }
+
+  /** Explicit fresh start after an unreadable floor. Only a caller that has read the reason may
+   * ask for it: it accepts that events served before the corruption are served again. */
+  repair() {
+    if (!this._unreadable) return Object.freeze({ repaired: false, reason: 'floor_readable', floor: this._floor });
+    const unreadable = this._unreadable;
+    this._unreadable = null;
+    this._floor = 0;
+    this._persist(0);
+    return Object.freeze({ repaired: true, path: this.stateFile, reason: unreadable.reason, floor: 0 });
   }
 
   /** @param {Log} log @param {string} worker @returns {BatonEvent[]} */
   next(log, worker) {
+    this._assertReadable();
     return log.read(worker, this._floor + 1);
   }
 
   /** Persist the new floor. Monotonic (never regresses); idempotent. @param {number} uptoSeq */
   ack(uptoSeq) {
+    this._assertReadable();
     if (typeof uptoSeq !== 'number' || uptoSeq <= this._floor) return;
     this._floor = uptoSeq;
-    mkdirSync(join(this.stateFile, '..'), { recursive: true });
-    writeFileSync(this.stateFile, JSON.stringify({ floor: uptoSeq }), 'utf8');
+    this._persist(uptoSeq);
   }
 
   /** @returns {number} */
   floor() {
     return this._floor;
+  }
+
+  /** The one refusal every read path shares: the reason, the path, and the graceful path. */
+  _assertReadable() {
+    const unreadable = this._unreadable;
+    if (!unreadable) return;
+    throw Object.assign(
+      new Error(`cursor floor ${this.stateFile} is unreadable (${unreadable.reason}): the at-least-once position is unknown`),
+      {
+        name: 'CursorFloorUnreadable',
+        code: unreadable.code,
+        path: unreadable.path,
+        reason: unreadable.reason,
+        floorIntegrity: unreadable,
+        gracefulPath: 'repair() clears the unreadable floor and explicitly accepts a replay from the beginning',
+      },
+    );
+  }
+
+  _persist(floor) {
+    mkdirSync(join(this.stateFile, '..'), { recursive: true });
+    writeFileSync(this.stateFile, JSON.stringify({ floor }), 'utf8');
   }
 }
