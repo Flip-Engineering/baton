@@ -94,6 +94,16 @@ async function until(fn, timeoutMs = 2000) {
   throw new Error('condition not met');
 }
 
+// The coordinator's recovery/stop deadlines are deliberately timer-unref'd — the kernel never
+// pins its host's event loop (docs/24 G4 / C4), and a real spawned child is the handle that
+// normally keeps it alive. These fixtures drive an in-process adapter that owns no child handle,
+// so a recovery whose only settlement is the coordinator's own bounded timeout would be
+// abandoned the moment the loop drains. Hold the loop for exactly such an await.
+async function withLiveLoop(fn) {
+  const hold = setInterval(() => {}, 1_000);
+  try { return await fn(); } finally { clearInterval(hold); }
+}
+
 function completed(summary = 'done') {
   return { status: 'completed', summary, artifacts: { files: [] }, verification: { command: 'true', claimedExit: 0 } };
 }
@@ -801,12 +811,12 @@ test('NR3/NR4: a hung continuation dispatch is bounded, unknown, and never redel
   };
   delete f.resumed.promptBrief;
 
-  const first = await f.replay.recover(f.handle.id);
+  const first = await withLiveLoop(() => f.replay.recover(f.handle.id));
   assert.equal(first.result, 'dispatch_unknown');
   assert.match(first.reason, /dispatch exceeded 20ms/u);
   assert.equal(f.coordination.recoveryDispatchState(f.handle.id).status, 'dispatch_unknown');
   assert.equal(f.resumed.calls.kill.length, 1);
-  const second = await f.replay.recover(f.handle.id);
+  const second = await withLiveLoop(() => f.replay.recover(f.handle.id));
   assert.equal(second.result, 'dispatch_unknown');
   assert.equal(f.resumed.calls.prompt.length, 1);
 });
@@ -1068,7 +1078,7 @@ test('PS7: a hung reattachment is bounded, confirms stop, and invokes adapter cl
     worktrees: { validateSessionContext: async () => ({ ok: true }), remove: async () => {}, reconcile: async () => {} },
     referee: async () => ({}), route: () => 'session', recoveryTimeoutMs: 20, stopDeadlineMs: 100,
   });
-  const recovered = await replay.recover(h.id);
+  const recovered = await withLiveLoop(() => replay.recover(h.id));
   assert.equal(recovered.ok, false);
   assert.equal(recovered.result, 'recovery_timeout');
   assert.equal(replay.list()[0].status, 'dead');
@@ -1101,7 +1111,7 @@ test('Phase 60 adversarial: timed-out attach remains abortable and reserved unti
     return new Promise((resolve) => { settleSpawn = resolve; });
   };
 
-  const recovered = await f.replay.recover(f.handle.id);
+  const recovered = await withLiveLoop(() => f.replay.recover(f.handle.id));
   const internal = f.replay._workers.get(f.handle.id);
 
   assert.equal(recovered.result, 'recovery_timeout');
@@ -1129,7 +1139,7 @@ test('Phase 60 adversarial: unconfirmed recovery teardown retains provider and r
     return { ok: true };
   };
 
-  const recovered = await f.replay.recover(f.handle.id);
+  const recovered = await withLiveLoop(() => f.replay.recover(f.handle.id));
   const internal = f.replay._workers.get(f.handle.id);
 
   assert.equal(recovered.result, 'recovery_exception');

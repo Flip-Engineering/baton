@@ -102,6 +102,16 @@ async function until(predicate, timeoutMs = 2_000) {
   throw new Error('condition not met');
 }
 
+// The coordinator's recovery/stop deadlines are deliberately timer-unref'd — the kernel never pins
+// its host's event loop (docs/24 G4 / C4), and a real spawned child is the handle that normally
+// keeps it alive. These fixtures drive an in-process adapter that owns no child handle, so a
+// recovery whose only settlement is the coordinator's own bounded deadline would be abandoned the
+// moment the loop drains. Hold the loop for exactly that await; the deadline still bounds it.
+async function withLiveLoop(fn) {
+  const hold = setInterval(() => {}, 1_000);
+  try { return await fn(); } finally { clearInterval(hold); }
+}
+
 async function recoverableSession(name, options = {}) {
   const taskId = `phase76-${name}`;
   const nativeId = `native-${name}`;
@@ -356,7 +366,7 @@ test('RAI4: confirmed cleanup is closed while unconfirmed cleanup is unknown', a
     const fixture = await recoverableSession('confirmed-close', {
       adapter: { spawn() { throw new Error('attach failed'); } },
     });
-    const outcome = await fixture.replay.recover(fixture.handle.id);
+    const outcome = await withLiveLoop(() => fixture.replay.recover(fixture.handle.id));
     assert.equal(outcome.result, 'recovery_exception');
     const admission = attemptEvents(fixture.coordination)[0];
     assert.equal(fixture.coordination.recoveryAttempt(admission.payload.attemptId).state, 'closed');
@@ -368,7 +378,7 @@ test('RAI4: confirmed cleanup is closed while unconfirmed cleanup is unknown', a
       recoveryTimeoutMs: 20,
       adapter: { spawn: async () => new Promise(() => {}) },
     });
-    const outcome = await fixture.replay.recover(fixture.handle.id);
+    const outcome = await withLiveLoop(() => fixture.replay.recover(fixture.handle.id));
     assert.equal(outcome.result, 'recovery_timeout');
     const admission = attemptEvents(fixture.coordination)[0];
     assert.equal(fixture.coordination.recoveryAttempt(admission.payload.attemptId).state, 'closed');
@@ -383,7 +393,7 @@ test('RAI4: confirmed cleanup is closed while unconfirmed cleanup is unknown', a
         async kill() { return { ok: true }; },
       },
     });
-    const outcome = await fixture.replay.recover(fixture.handle.id);
+    const outcome = await withLiveLoop(() => fixture.replay.recover(fixture.handle.id));
     assert.equal(outcome.result, 'recovery_exception');
     const admission = attemptEvents(fixture.coordination)[0];
     assert.equal(fixture.coordination.recoveryAttempt(admission.payload.attemptId).state, 'unknown');

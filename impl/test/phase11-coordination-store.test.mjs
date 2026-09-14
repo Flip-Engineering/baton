@@ -23,6 +23,16 @@ async function until(fn, timeoutMs = 5000) {
   throw new Error('condition not met');
 }
 
+// The coordinator's emergency-stop deadline is deliberately timer-unref'd — the kernel never
+// pins its host's event loop (docs/24 G4 / C4), and a real spawn handle normally keeps it alive.
+// ER5's MockAdapter never confirms, so the emergency stop's only settlement is that deadline:
+// hold the loop for exactly this await so the typed timeout result lands instead of the file
+// being cancelled by a drained event loop.
+async function withLiveLoop(fn) {
+  const hold = setInterval(() => {}, 1_000);
+  try { return await fn(); } finally { clearInterval(hold); }
+}
+
 test('CK1: duplicate idempotency key returns the original event without mutation', () => {
   const store = new CoordinationStore(dir());
   const a = store.createTask(fields('a'), { actor: 'orchestrator', key: 'create-a' });
@@ -153,7 +163,7 @@ test('ER5: emergency kill timeout keeps ownership when native confirmation never
   await until(() => coordinator.list()[0]?.status === 'blocked');
   fail = true; await adapter.prompt(handle.id, 'poison', 'nudge');
   adapter.kill = async () => ({ ok: true });
-  assert.deepEqual(await coordinator.kill(handle.id, 'policy', { emergency: true }), { ok: false, result: 'confirmation_timeout_unlogged', auditUnavailable: true });
+  assert.deepEqual(await withLiveLoop(() => coordinator.kill(handle.id, 'policy', { emergency: true })), { ok: false, result: 'confirmation_timeout_unlogged', auditUnavailable: true });
   assert.equal(removed, 0, 'unconfirmed process ownership must not be reaped from underneath it');
   adapter.kill = originalKill; await originalKill(handle.id);
 });

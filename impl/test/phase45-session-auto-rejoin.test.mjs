@@ -12,6 +12,16 @@ import { Log } from '../src/log.mjs';
 
 const root = (name) => mkdtempSync(join(tmpdir(), `baton-session-recovery-${name}-`));
 const until = async (fn, label, timeoutMs = 5000) => { const deadline = Date.now() + timeoutMs; while (Date.now() < deadline) { const value = await fn(); if (value) return value; await new Promise((resolve) => setTimeout(resolve, 5)); } throw new Error(`timed out waiting for ${label}`); };
+
+// The recovery supervisor's bounded handshake and the coordinator's stop machinery are
+// deliberately timer-unref'd — nothing here pins the host's event loop (docs/24 G4 / C4), and the
+// fixture's native children are spawned detached AND unref'd on purpose. With no live handle left,
+// a bounded wait would be abandoned the moment the loop drains; hold the loop for exactly such an
+// await, so the supervisor's own deadline settles it instead of cancelling the file.
+async function withLiveLoop(fn) {
+  const hold = setInterval(() => {}, 1_000);
+  try { return await fn(); } finally { clearInterval(hold); }
+}
 const brief = () => createBrief({ goal: 'write proof', constraints: [], pathScope: ['proof.txt'], definitionOfDone: 'proof exists', verification: { command: 'test -s proof.txt', expectExit: 0, timeoutMs: 5000 }, budget: { tokens: 1000, usd: 1, wallMin: 1 } });
 const nativeProcesses = new Map();
 class ResumeMock extends MockAdapter {
@@ -114,6 +124,21 @@ test('SR2-SR8: public startup automatically reattaches one exact native session 
   const repoRoot = root('live-repo'); execFileSync('git', ['init', '-q'], { cwd: repoRoot }); execFileSync('git', ['-c', 'user.name=Baton Test', '-c', 'user.email=baton@example.test', 'commit', '--allow-empty', '-q', '-m', 'base'], { cwd: repoRoot }); const logDir = root('live-log');
   const first = createDriver({ repoRoot, logDir, adapters: { fixture: new ResumeMock(101) } }); const handle = await first.coordinator.spawn('fixture', brief(), { taskId: 'auto-rejoin', taskType: 'implementation', model: 'resume-fixture-model', effort: 'low' }); await until(async () => (await first.coordinator.result(handle.id)).ready, 'first verified turn'); const firstHandle = first.coordinator.list()[0]; const firstContext = firstHandle.sessionContext; const firstRuntime = join(repoRoot, '.baton', 'runtime', handle.id); assert.equal(firstHandle.sessionRef.id, 'resume-native-1'); assert.equal(firstHandle.runtimeScope.root, undefined); assert.equal(first.coordinator._workers.get(handle.id).runtimeLease.paths.root, firstRuntime); assert.ok(existsSync(firstContext.worktree)); assert.ok(existsSync(firstRuntime));
   first.coordination.releaseWriterLease();
-  const replay = createDriver({ repoRoot, logDir, adapters: { fixture: new ResumeMock(202) }, sessionRecoveryPolicy: { maxAttempts: 3, maxSessions: 2, maxStateRows: 8, timeoutMs: 500 } }); const readiness = await replay.ready; assert.deepEqual(readiness, { status: 'ready', eligible: 1, attached: 1, failed: 0, skipped: 0, failures: [] }); const attached = replay.coordinator.list()[0]; assert.equal(attached.sessionRef.id, 'resume-native-1'); assert.equal(attached.modelResolved, 'resume-fixture-model'); assert.equal(attached.effortResolved, 'low'); assert.equal(attached.runtimeScope.root, undefined); assert.equal(replay.coordinator._workers.get(handle.id).runtimeLease.paths.root, firstRuntime); await until(async () => (await replay.coordinator.result(handle.id)).ready, 'recovered verified refinement'); assert.equal(replay.coordination.snapshot().tasks.length, 2); assert.ok(replay.log.read(handle.id).some((event) => event.kind === 'control.recovery_attached'));
-  assert.equal(await replay.closeAsync(), true); assert.equal(existsSync(join(logDir, 'coordination', 'writer.lease')), false); assert.equal(existsSync(firstContext.worktree), false); assert.equal(!existsSync(join(repoRoot, '.baton', 'runtime')) || readdirSync(join(repoRoot, '.baton', 'runtime')).length === 0, true); assert.equal(execFileSync('git', ['branch', '--list', 'baton/auto-rejoin'], { cwd: repoRoot, encoding: 'utf8' }).trim(), '');
+  const replay = createDriver({ repoRoot, logDir, adapters: { fixture: new ResumeMock(202) }, sessionRecoveryPolicy: { maxAttempts: 3, maxSessions: 2, maxStateRows: 8, timeoutMs: 500 } });
+  const readiness = await withLiveLoop(() => replay.ready);
+  assert.deepEqual(readiness, { status: 'ready', eligible: 1, attached: 1, failed: 0, skipped: 0, failures: [] });
+  const attached = replay.coordinator.list()[0];
+  assert.equal(attached.sessionRef.id, 'resume-native-1');
+  assert.equal(attached.modelResolved, 'resume-fixture-model');
+  assert.equal(attached.effortResolved, 'low');
+  assert.equal(attached.runtimeScope.root, undefined);
+  assert.equal(replay.coordinator._workers.get(handle.id).runtimeLease.paths.root, firstRuntime);
+  await until(async () => (await replay.coordinator.result(handle.id)).ready, 'recovered verified refinement');
+  assert.equal(replay.coordination.snapshot().tasks.length, 2);
+  assert.ok(replay.log.read(handle.id).some((event) => event.kind === 'control.recovery_attached'));
+  assert.equal(await withLiveLoop(() => replay.closeAsync()), true);
+  assert.equal(existsSync(join(logDir, 'coordination', 'writer.lease')), false);
+  assert.equal(existsSync(firstContext.worktree), false);
+  assert.equal(!existsSync(join(repoRoot, '.baton', 'runtime')) || readdirSync(join(repoRoot, '.baton', 'runtime')).length === 0, true);
+  assert.equal(execFileSync('git', ['branch', '--list', 'baton/auto-rejoin'], { cwd: repoRoot, encoding: 'utf8' }).trim(), '');
 });

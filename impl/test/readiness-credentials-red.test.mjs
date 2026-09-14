@@ -638,9 +638,11 @@ test('RT-3b (stage: #47 probe bounds missing): the ≤120s probe timeout is ENFO
       assert.fail(`stage #47: the liveness tier has no deployment wiring — advanced.liveness is unsupported (${fixture.wiringError.message})`);
     }
     assert.equal(fixture.wiringError, null, 'fixture must open');
+    // The row's own resource bound must be a live handle. Unref'd, it lets the event loop drain
+    // while the missing #47 kill timer leaves the probe pending — node then cancels every later
+    // test in the file instead of failing this row at its named stage.
     const deadline = new Promise((resolve) => {
-      const timer = setTimeout(() => resolve('probe-watchdog-absent'), 5_000);
-      timer.unref?.();
+      setTimeout(() => resolve('probe-watchdog-absent'), 5_000);
     });
     const outcome = await Promise.race([gateOutcome(fixture.deployment, ROUTE_LOW, 'rt3b'), deadline]);
     assert.notEqual(outcome, 'probe-watchdog-absent',
