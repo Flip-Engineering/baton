@@ -70,6 +70,52 @@ ordinary-CLI inventory. The conformance suite fails if they drift from served tr
 
 <!-- END GENERATED: cli-verb-inventory -->
 
+## Drive a living swarm
+
+`baton swarm` recruits participants, publishes findings, and lets agents DECLARE the coupling
+between them. Coupling is a record the swarm keeps honest — it informs the view, the attention
+rows, and the `swarm watch --follow` wake feed; nothing stops a worker.
+
+```sh
+# Declare a dependency between units of work: W2 waits for W1's accepted contribution
+baton swarm update SWARM_ID swarm.work_updated \
+  --payload '{"workId":"work-integration","objective":"Integrate W1","status":"open","dependsOn":[{"workId":"work-discovery"}]}'
+
+# ...or wait for an accepted contribution that references a named artifact
+baton swarm update SWARM_ID swarm.work_updated \
+  --payload '{"workId":"work-integration","objective":"Integrate W1","dependsOn":[{"artifact":"artifact:iface"}]}'
+
+# Declare a synchronization point on a group; members arrive; the lead releases it
+baton swarm update SWARM_ID swarm.coupling_updated \
+  --payload '{"couplingId":"sync-freeze","coupling":"synchronization","action":"declare","groupId":"impl","name":"interface-freeze"}'
+baton swarm update SWARM_ID swarm.coupling_updated \
+  --payload '{"couplingId":"sync-freeze","coupling":"synchronization","action":"arrive"}'
+baton swarm update SWARM_ID swarm.coupling_updated \
+  --payload '{"couplingId":"sync-freeze","coupling":"synchronization","action":"release","reason":"interface frozen"}'
+
+# Claim the shared checkout for one exclusive writer; release ends the window
+baton swarm update SWARM_ID swarm.coupling_updated \
+  --payload '{"couplingId":"writer-impl","coupling":"writer","action":"declare","participantId":"builder-a"}'
+baton swarm update SWARM_ID swarm.coupling_updated \
+  --payload '{"couplingId":"writer-impl","coupling":"writer","action":"release","reason":"turn done"}'
+
+# Declare the group failure policy: independent peers continue, dependents are told
+baton swarm update SWARM_ID swarm.coupling_updated \
+  --payload '{"couplingId":"policy-impl","coupling":"failure","action":"declare","groupId":"impl","policy":"independent"}'
+
+# Read the declared truth: waitsOn per work item, couplings with arrivals/awaiting, attention
+baton swarm view SWARM_ID
+baton swarm watch SWARM_ID --follow
+```
+
+Refusals name what is missing: a dependency on unknown work (`work_not_found`), a ring of waits
+(`work_dependency_cycle`, naming the ring), a second writer over one checkout
+(`swarm_writer_conflict`, naming the current writer), an arrival by a non-member
+(`swarm_not_a_member`). When a member leaves with its session still running, the view's
+`member_left_session_live` attention row names the responsible party (the recruiter, then the
+creator) and the reclaiming operation (`swarm stop SWARM_ID PARTICIPANT_ID`).
+
+
 ## Connect to a resident authenticated Web host
 
 For ordinary local use, start Baton from the repository:

@@ -20,7 +20,8 @@ export const SWARM_PERMISSIONS = Object.freeze(['read', 'communicate', 'contribu
 const DEFAULT_PERMISSIONS = Object.freeze(['read', 'communicate', 'contribute']);
 const UPDATE_PERMISSIONS = Object.freeze({
   'swarm.group_updated': 'organize', 'swarm.work_updated': 'organize',
-  'swarm.assignment_updated': 'organize', 'swarm.holder_released': 'organize',
+  'swarm.assignment_updated': 'organize', 'swarm.coupling_updated': 'organize',
+  'swarm.holder_released': 'organize',
   'swarm.context_updated': 'communicate',
   'swarm.contribution_recorded': 'contribute', 'swarm.contribution_reviewed': 'review',
   'swarm.participant_left': 'organize', 'swarm.closed': 'organize',
@@ -270,12 +271,29 @@ export class SwarmRuntime {
     // A row naming a recoverable holder carries the release operation as its next step.
     const organization = [];
     const gone = (row) => row.status !== 'active' || ['dead', 'exited', 'unbound'].includes(row.runtime.state);
+    // Session ownership after a member leaves (issue #263 item 3): a still-running session
+    // belongs to its recruiter — the nearest LIVING ancestor by parentId — and otherwise to the
+    // swarm's creator. The attention row names that party and the operation that reclaims the
+    // session, so "member left, session live" always says who must act.
+    const participantsById = new Map(participants.map((row) => [row.participantId, row]));
+    const responsibleFor = (row) => {
+      let candidate = row.parentId ? participantsById.get(row.parentId) : null;
+      while (candidate) {
+        if (candidate.status === 'active') {
+          return { responsibleParticipant: candidate.participantId, responsibleActor: null };
+        }
+        candidate = candidate.parentId ? participantsById.get(candidate.parentId) : null;
+      }
+      return { responsibleParticipant: null, responsibleActor: swarm.actor ?? null };
+    };
     for (const row of participants) {
       if (row.status === 'active' && ['dead', 'exited'].includes(row.runtime.state)) {
         organization.push({ kind: 'participant_runtime_dead', participantId: row.participantId, state: row.runtime.state });
       }
       if (row.status !== 'active' && ['working', 'blocked', 'pending', 'idle'].includes(row.runtime.state)) {
-        organization.push({ kind: 'member_left_session_live', participantId: row.participantId, workerId: row.runtime.workerId });
+        organization.push({ kind: 'member_left_session_live', participantId: row.participantId, workerId: row.runtime.workerId,
+          ...responsibleFor(row),
+          next: { command: 'swarm.stop', swarmId: swarm.swarmId, participantId: row.participantId } });
       }
       if (row.parentId && row.status === 'active') {
         const parent = participants.find((candidate) => candidate.participantId === row.parentId);
@@ -292,6 +310,36 @@ export class SwarmRuntime {
         organization.push({ kind: 'assignment_holder_gone', assignmentId: assignment.assignmentId,
           participantId: assignment.participantId, workId: assignment.workId,
           next: { event: 'swarm.holder_released', participantId: assignment.participantId } });
+      }
+    }
+    // Declared coupling kept honest (issue #263 item 2): a declared group failure policy turns a
+    // member's death into a row that tells the dependents — the works declared on the gone
+    // member's work — while independent peers continue; an exclusive writer whose runtime is
+    // gone names the release that frees the checkout. Coupling is never imposed, so these rows
+    // exist only where the coupling was declared.
+    for (const record of Object.values(swarm.couplings ?? {})) {
+      if (record.released) continue;
+      if (record.coupling === 'failure') {
+        for (const memberId of (swarm.groups?.[record.groupId]?.members ?? [])) {
+          const memberRow = participantsById.get(memberId);
+          if (!memberRow || !gone(memberRow)) continue;
+          const heldWork = new Set(Object.values(swarm.assignments ?? {})
+            .filter((assignment) => assignment.status === 'active' && assignment.participantId === memberId)
+            .map((assignment) => assignment.workId));
+          const dependentWork = Object.entries(swarm.work ?? {})
+            .filter(([, work]) => (work.dependsOn ?? []).some((entry) => entry.workId !== undefined && heldWork.has(entry.workId)))
+            .map(([workId]) => workId).sort();
+          organization.push({ kind: 'group_member_gone', couplingId: record.couplingId, groupId: record.groupId,
+            participantId: memberId, policy: record.policy, dependentWork });
+        }
+      }
+      if (record.coupling === 'writer') {
+        const writerRow = participantsById.get(record.writer);
+        if (!writerRow || gone(writerRow)) {
+          organization.push({ kind: 'coupling_writer_gone', couplingId: record.couplingId, participantId: record.writer,
+            workspaceId: record.workspaceId,
+            next: { event: 'swarm.coupling_updated', couplingId: record.couplingId, action: 'release' } });
+        }
       }
     }
     if (swarm.status !== 'open' && participants.some((row) => row.status === 'active' && !gone(row))) {
@@ -326,9 +374,49 @@ export class SwarmRuntime {
     if (updates.length) availableActions.push('swarm.update');
     const contributionTargets = permissions.includes('review') ? participants.map((row) => row.participantId)
       : permissions.includes('contribute') && caller ? [caller.participantId] : [];
-    // Work rows carry their derived evidence; the other collections are scoped, not rewritten.
+    // Work rows carry their derived evidence, plus the declared dependencies as INFORMED waits —
+    // each wait shows whether it has settled and the accepted contributions that settled it.
+    // Nothing here gates: a participant may proceed against an unsettled dependency, visibly.
+    const acceptedByArtifact = (artifact) => Object.entries(swarm.contributions ?? {})
+      .filter(([, contribution]) => this._acceptedContribution(swarm, contribution.contributionId)
+        && (contribution.refs ?? []).includes(artifact))
+      .map(([contributionId]) => contributionId).sort();
+    const waitsFor = (row) => (row.dependsOn ?? []).map((entry) => {
+      if (entry.workId !== undefined) {
+        const evidence = evidenceFor(entry.workId);
+        return { workId: entry.workId, settled: evidence.derivedComplete, evidence: evidence.accepted };
+      }
+      const evidence = acceptedByArtifact(entry.artifact);
+      return { artifact: entry.artifact, settled: evidence.length > 0, evidence };
+    });
     const workEntries = Object.entries(swarm.work ?? {})
-      .map(([workId, row]) => [workId, { ...clone(row), evidence: evidenceFor(workId) }]);
+      .map(([workId, row]) => [workId, { ...clone(row), evidence: evidenceFor(workId),
+        ...(((row.dependsOn ?? []).length > 0) ? { waitsOn: waitsFor(row) } : {}) }]);
+    // A group at a synchronization point sees who has arrived and who has not. `awaiting` counts
+    // only current live members — a departed member's seat never holds the point open (released
+    // seats are what a barrier must consume) — `departed` names the seats that no longer count,
+    // and `arrived` derives from the recorded arrivals; it is never asserted.
+    const couplingEntries = Object.entries(swarm.couplings ?? {}).map(([couplingId, record]) => {
+      const row = clone(record);
+      if (record.coupling === 'synchronization') {
+        const currentMembers = swarm.groups?.[record.groupId]?.members ?? [];
+        row.awaiting = currentMembers.filter((memberId) => {
+          const memberRow = participantsById.get(memberId);
+          return memberRow && memberRow.status === 'active' && !gone(memberRow) && !record.arrivals.includes(memberId);
+        });
+        // Departed seats come from the roster the point was declared over: a member that left
+        // the swarm, lost its runtime, or was released from the group is named, never counted.
+        const declared = record.members ?? currentMembers;
+        row.departed = declared.filter((memberId) => {
+          const memberRow = participantsById.get(memberId);
+          const stillLiveMember = currentMembers.includes(memberId)
+            && memberRow && memberRow.status === 'active' && !gone(memberRow);
+          return !stillLiveMember;
+        });
+        row.arrived = row.awaiting.length === 0 && record.arrivals.length > 0;
+      }
+      return [couplingId, row];
+    });
     const contributionEntries = Object.entries(swarm.contributions ?? {});
     const scopedContributionIds = scope ? new Set(contributionEntries
       .filter(([, contribution]) => contribution.workId && scopeWorkIds.has(contribution.workId))
@@ -344,6 +432,12 @@ export class SwarmRuntime {
         && scopeWorkIds.has(contribution.workId)),
       reviews: keep(Object.entries(swarm.reviews ?? {}), ([contributionId]) => scopedContributionIds.has(contributionId)),
       groups: keep(Object.entries(swarm.groups ?? {}), ([, group]) => group.members.every((member) => scopeSubtree.includes(member))),
+      // A scoped view keeps the couplings its subtree can act on: writer records follow the
+      // writer's subtree, synchronization and failure records follow their group — and a group
+      // the subtree does not fully own is omitted rather than shown with a pruned membership.
+      couplings: keep(couplingEntries, ([, record]) => record.coupling === 'writer'
+        ? scopeSubtree.includes(record.writer)
+        : (swarm.groups?.[record.groupId]?.members ?? []).every((member) => scopeSubtree.includes(member))),
       caller: { participantId: caller?.participantId ?? null, permissions: [...permissions] },
       availableActions, attention: scopedAttention,
       actionTargets: {
@@ -515,6 +609,12 @@ export class SwarmRuntime {
       const member = this._caller(swarm, principal, context);
       if (member && (!args.payload?.participantId || args.payload.participantId === member.participantId)) permission = 'read';
     }
+    // Arriving at a declared synchronization point is a member's own honest report, not an
+    // organizing act — when the arrival is (or defaults to) the caller, read authority suffices.
+    if (command === 'swarm.update' && args.event === 'swarm.coupling_updated' && args.payload?.action === 'arrive') {
+      const member = this._caller(swarm, principal, context);
+      if (member && (!args.payload?.participantId || args.payload.participantId === member.participantId)) permission = 'read';
+    }
     const caller = this._permit(swarm, principal, context, permission);
     if (command === 'swarm.update') {
       if (typeof args.payload === 'string' && args.event !== 'swarm.contribution_recorded') {
@@ -533,6 +633,11 @@ export class SwarmRuntime {
         payload.contributionId ??= `contribution-${hash([principal.principalId, args.idempotencyKey]).slice(0, 32)}`;
       }
       if (args.event === 'swarm.participant_left' && caller) payload.participantId ??= caller.participantId;
+      // Arrivals, releases, and writer claims default to the caller's own identity; naming
+      // another participant stays possible (organize authority — checked above) and is recorded.
+      if (args.event === 'swarm.coupling_updated' && payload.participantId === undefined && caller) {
+        payload.participantId = caller.participantId;
+      }
       if (args.event === 'swarm.work_updated' && payload.objective === undefined) {
         const existing = Object.hasOwn(swarm.work, payload.workId) ? swarm.work[payload.workId] : null;
         if (!existing) refuse('New work needs an objective; a status-only update is for work that already exists', 'swarm_payload_invalid', { field: 'payload.objective', workId: payload.workId });

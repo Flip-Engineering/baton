@@ -27,8 +27,9 @@ const SWARM_ID_FIELD = Object.freeze({
   example: 'swarm-40e643e96fd1edcd',
 });
 
-const KIND = (summary, fields) => Object.freeze({
+const KIND = (summary, fields, example) => Object.freeze({
   summary: Object.freeze(summary),
+  ...(example !== undefined ? { example: Object.freeze(example) } : {}),
   fields: Object.freeze(Object.fromEntries(Object.entries({ swarmId: SWARM_ID_FIELD, ...fields })
     .map(([name, field]) => [name, Object.freeze(field)]))),
 });
@@ -71,6 +72,12 @@ export const SWARM_EVENT_PAYLOAD_SCHEMAS = Object.freeze({
       expectation: 'an object with a contributionIds array of contribution identities',
       example: { contributionIds: ['contribution-ada-1'] },
     },
+    dependsOn: {
+      type: 'json', required: false,
+      description: 'dependencies you DECLARE for this work: [{ workId: "W1" }] waits for W1 to hold an accepted contribution, [{ artifact: "name" }] waits for an accepted contribution that references that artifact. The declared set is replaced whole; omitting the field keeps it. A declaration is a record the swarm keeps honest — waiting never stops a worker, and the view shows each wait as settled or not with its evidence.',
+      expectation: 'an array of objects each naming exactly one of workId or artifact',
+      example: [{ workId: 'work-discovery' }],
+    },
   }),
   'swarm.assignment_updated': KIND('bind one participant to one unit of work (or release them)', {
     assignmentId: STRING('the assignment identity', { required: true, example: 'assignment-ada-discovery' }),
@@ -80,6 +87,23 @@ export const SWARM_EVENT_PAYLOAD_SCHEMAS = Object.freeze({
       description: 'the assignment lifecycle state', expectation: 'one of active, released', example: 'active' },
     expectedVersion: VERSION,
   }),
+  'swarm.coupling_updated': KIND('declare, arrive at, or release one declared coupling: a synchronization point a group arrives at and is released from, an exclusive writer over a shared checkout, or a group failure policy', {
+    couplingId: STRING('the coupling record identity', { required: true, example: 'sync-interface-freeze' }),
+    coupling: { type: 'string', enum: ['synchronization', 'writer', 'failure'], required: true,
+      description: 'which coupling this record carries: a synchronization point on a group (declare with groupId and name), an exclusive writer over the named participant\'s shared checkout (declare with participantId), or a group failure policy (declare with groupId and policy)',
+      expectation: 'one of synchronization, writer, failure', example: 'synchronization' },
+    action: { type: 'string', enum: ['declare', 'arrive', 'release'], required: true,
+      description: 'declare creates or replaces the record; arrive records a participant arriving at a synchronization point; release ends the coupling (who released and why are recorded)',
+      expectation: 'one of declare, arrive, release', example: 'declare' },
+    groupId: STRING('the group the synchronization point or failure policy belongs to', { example: 'group-reviewers' }),
+    name: STRING('the synchronization point name', { example: 'interface-freeze' }),
+    policy: { type: 'string', enum: ['independent'], required: false,
+      description: 'the declared group failure policy: independent peers continue when a member dies or leaves, and dependents are told',
+      expectation: 'independent', example: 'independent' },
+    participantId: STRING('the participant arriving, releasing, or holding the exclusive writer claim', { required: false, ...AUTO('defaults to your own participant identity') }),
+    reason: STRING('why the coupling is released', { example: 'every active member arrived' }),
+    expectedVersion: VERSION,
+  }, { couplingId: 'sync-interface-freeze', coupling: 'synchronization', action: 'declare', groupId: 'group-reviewers', name: 'interface-freeze' }),
   'swarm.holder_released': KIND('release a gone holder\'s seats in one batch (refuses while the participant is live active)', {
     participantId: STRING('the participant whose active assignments and group seats are released', { required: true, example: 'builder-a' }),
     reason: STRING('why the seats are released', { example: 'the runtime is gone; seats released so the delegation can complete' }),
@@ -118,7 +142,7 @@ export const SWARM_EVENT_PAYLOAD_SCHEMAS = Object.freeze({
 /** The minimal payload a CALLER supplies for each kind — auto-filled fields omitted, exactly the
  * object (or, for contributions, the plain-text body) passed as swarm.update `args.payload`. */
 export const SWARM_EVENT_EXAMPLES = Object.freeze(Object.fromEntries(
-  Object.entries(SWARM_EVENT_PAYLOAD_SCHEMAS).map(([kind, schema]) => [kind, Object.freeze(Object.fromEntries(
+  Object.entries(SWARM_EVENT_PAYLOAD_SCHEMAS).map(([kind, schema]) => [kind, schema.example ?? Object.freeze(Object.fromEntries(
     Object.entries(schema.fields)
       .filter(([name, field]) => name !== 'swarmId' && !field.autoFilled && field.example !== undefined
         && (field.required || name === 'body'))

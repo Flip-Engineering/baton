@@ -122,7 +122,7 @@ test('a delegated subtree: dead workers, orphaned delegations, departed members 
   assert.ok(closed && closed.participantIds.includes('beta'), 'a closed swarm with a live participant says so');
 });
 
-test('work updates: a status-only update keeps the recorded objective, new work needs one, unknown fields refuse', async (t) => {
+test('work updates: a status-only update keeps the recorded objective, new work needs one, a declared dependency is stored, and a malformed one refuses', async (t) => {
   const { root } = await fixture(t);
   const swarm = await root.swarms.create('Work truth');
   await swarm.work({ workId: 'W', objective: 'Do the thing', status: 'open' });
@@ -133,6 +133,15 @@ test('work updates: a status-only update keeps the recorded objective, new work 
   assert.equal(updated.work.W.status, 'open');
   assert.equal(updated.work.W.objective, 'Do the thing', 'the recorded objective survives a status-only update');
   await assert.rejects(swarm.work({ workId: 'W-new', status: 'open' }), { code: 'swarm_payload_invalid' });
-  await assert.rejects(swarm.work({ workId: 'W2', objective: 'Depends', status: 'open', dependsOn: ['W'] }),
-    (error) => error.code === 'swarm_command_invalid' && /payload\.dependsOn is not a field of swarm\.work_updated/u.test(error.message));
+  // The dependency the suborchestration probe once had refused (it did not exist) is now a
+  // DECLARED record on the work — and a malformed declaration still refuses, naming the shape.
+  const declared = await swarm.work({ workId: 'W2', objective: 'Depends', status: 'open', dependsOn: [{ workId: 'W' }] });
+  assert.deepEqual(declared.work.W2.dependsOn, [{ workId: 'W' }], 'the declared dependency is durable');
+  assert.deepEqual(declared.work.W2.waitsOn, [{ workId: 'W', settled: false, evidence: [] }],
+    'the view shows the wait as unsettled with its (empty) evidence');
+  await assert.rejects(swarm.work({ workId: 'W3', objective: 'Bad', status: 'open', dependsOn: ['W'] }),
+    (error) => error.code === 'invalid_payload' && /each dependsOn entry must be an object/u.test(error.message));
+  await assert.rejects(swarm.work({ workId: 'W4', objective: 'Dangling', status: 'open', dependsOn: [{ workId: 'W-nope' }] }),
+    (error) => error.code === 'work_not_found' && /W-nope/u.test(error.message),
+    'a dependency naming unknown work refuses with the missing identity');
 });

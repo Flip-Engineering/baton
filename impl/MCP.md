@@ -231,6 +231,40 @@ The four settlement ops work through MCP behind the S-2 `sessionAuthority` envel
 
 <!-- END GENERATED: mcp-tool-inventory -->
 
+## Declare coupling in a swarm
+
+The `baton_swarm_update` tool carries every domain update, including the declared coupling
+records (docs/39 §Declared coupling). Coupling is a record the swarm keeps honest — it informs
+the `baton_swarm_view` result, the attention rows, and the `baton_swarm_watch` wake; nothing
+stops a worker. Payload examples (each with a caller `idempotencyKey`):
+
+```jsonc
+// A dependency between units of work (swarm.work_updated): W2 waits for W1's accepted
+// contribution — or for an accepted contribution referencing a named artifact
+{"event": "swarm.work_updated", "payload": {"workId": "work-integration", "objective": "Integrate W1", "status": "open", "dependsOn": [{"workId": "work-discovery"}]}}
+{"event": "swarm.work_updated", "payload": {"workId": "work-integration", "objective": "Integrate W1", "dependsOn": [{"artifact": "artifact:iface"}]}}
+
+// A synchronization point: the group arrives at it and is released from it
+{"event": "swarm.coupling_updated", "payload": {"couplingId": "sync-freeze", "coupling": "synchronization", "action": "declare", "groupId": "impl", "name": "interface-freeze"}}
+{"event": "swarm.coupling_updated", "payload": {"couplingId": "sync-freeze", "coupling": "synchronization", "action": "arrive"}}            // you arrive; participantId defaults to you
+{"event": "swarm.coupling_updated", "payload": {"couplingId": "sync-freeze", "coupling": "synchronization", "action": "release", "reason": "interface frozen"}}
+
+// An exclusive writer over a shared checkout; release ends the window
+{"event": "swarm.coupling_updated", "payload": {"couplingId": "writer-impl", "coupling": "writer", "action": "declare", "participantId": "builder-a"}}
+{"event": "swarm.coupling_updated", "payload": {"couplingId": "writer-impl", "coupling": "writer", "action": "release", "reason": "turn done"}}
+
+// A group failure policy: independent peers continue when a member is gone, dependents are told
+{"event": "swarm.coupling_updated", "payload": {"couplingId": "policy-impl", "coupling": "failure", "action": "declare", "groupId": "impl", "policy": "independent"}}
+```
+
+`baton_swarm_view` shows each work item's `waitsOn` (`{workId|artifact, settled, evidence}`),
+the `couplings` records (`arrivals`, `awaiting`, `departed`, `arrived`, `released`), and
+attention rows naming what needs an act: `group_member_gone` (with the `dependentWork` told),
+`coupling_writer_gone` (naming the release), and `member_left_session_live` — which names the
+responsible party for a departed member's still-running session (the recruiter, then the
+creator) and the reclaiming operation (`baton_swarm_stop`).
+
+
 ## CLI
 
 `baton` stays the human/operator thin client. MCP is the primary agent-facing surface; the CLI

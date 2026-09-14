@@ -121,7 +121,7 @@ export class Swarm {
    */
   recruit(participantId, objective, options = {}) {
     const selectionFields = ['exact', 'harness', 'model', 'effort', 'scope', 'profile', 'resultIntent'];
-    exactOptions(options, new Set(['options', 'permissions', 'idempotencyKey', ...selectionFields]), 'Swarm recruit');
+    exactOptions(options, new Set(['options', 'permissions', 'idempotencyKey', 'shareWorkspaceWith', ...selectionFields]), 'Swarm recruit');
     const selection = Object.fromEntries(selectionFields.filter((field) => options[field] !== undefined)
       .map((field) => [field, options[field]]));
     if (options.options !== undefined && Object.keys(selection).length) {
@@ -134,6 +134,7 @@ export class Swarm {
       objective,
       ...(runOptions === undefined ? {} : { options: runOptions }),
       ...(options.permissions === undefined ? {} : { permissions: options.permissions }),
+      ...(options.shareWorkspaceWith === undefined ? {} : { shareWorkspaceWith: options.shareWorkspaceWith }),
       idempotencyKey: idempotencyOf(options),
     });
   }
@@ -185,9 +186,12 @@ export class Swarm {
   group(payload, options) { return this.update('swarm.group_updated', payload, options); }
 
   work(payload, options) { return this.update('swarm.work_updated', payload, options); }
-
   assign(payload, options) { return this.update('swarm.assignment_updated', payload, options); }
 
+  /** Declare, arrive at, or release one coupling record: a synchronization point a group arrives
+   * at and is released from, an exclusive writer over a shared checkout, or a group failure
+   * policy. Declared coupling is informed, never imposed — nothing here stops a worker. */
+  couple(payload, options) { return this.update('swarm.coupling_updated', payload, options); }
   context(payload, options) { return this.update('swarm.context_updated', payload, options); }
 
   contribute(payload, options) { return this.update('swarm.contribution_recorded', payload, options); }
