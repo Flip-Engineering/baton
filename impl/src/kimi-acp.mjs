@@ -1,7 +1,7 @@
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { renderBrief } from './adapter.mjs';
-import { AcpJsonRpcProcess } from './acp-json-rpc-process.mjs';
+import { AcpJsonRpcProcess, typedAcpRefusal } from './acp-json-rpc-process.mjs';
 import {
   normalizeProcessGeneration, processStartedPayload,
 } from './process-lifecycle.mjs';
@@ -396,7 +396,7 @@ export class KimiAcpCli {
       } catch (error) {
         session.setupFailed = true;
         await session.process.kill();
-        return { ok: false, code: error?.code, reason: String(error?.message ?? error) };
+        return { ok: false, ...typedAcpRefusal(error), reason: String(error?.message ?? error) };
       }
     } finally {
       if (this._pendingSpawns.get(worker) === pending) this._pendingSpawns.delete(worker);

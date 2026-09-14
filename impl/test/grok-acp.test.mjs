@@ -625,12 +625,13 @@ test('GA12: answer() always resolves {ok:false} — ACP has no ask-user primitiv
 // GA10: the [live]-pinned auth gate is a typed spawn failure
 // ---------------------------------------------------------------------------
 
-test('GA10: session/new failing -32000 "Authentication required" (live-pinned shape) surfaces as {ok:false, code:-32000}, never a throw or retry loop', async () => {
+test('GA10: session/new failing -32000 "Authentication required" (live-pinned shape) surfaces as {ok:false, code:authentication_required, rpcCode:-32000}, never a throw or retry loop', async () => {
   const adapter = makeAdapter({ env: { FAKE_GROK_UNAUTH: '1' } });
   const worker = 'w1';
   const ack = await adapter.spawn(worker, makeBrief('trivial'), { worktree: freshWorktree() });
   assert.equal(ack.ok, false);
-  assert.equal(ack.code, -32000);
+  assert.equal(ack.code, 'authentication_required');
+  assert.equal(ack.rpcCode, -32000);
   assert.match(ack.reason, /Authentication required/);
 });
 

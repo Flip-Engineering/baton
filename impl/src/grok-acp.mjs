@@ -23,6 +23,7 @@ import { renderBrief } from './adapter.mjs';
 import { normalizeProcessGeneration, ProcessCloseReapLatch, processStartedPayload } from './process-lifecycle.mjs';
 import { attestWorkerPolicyObservation } from './worker-policy.mjs';
 import { normalizeConcurrencyCeiling } from './concurrency-policy.mjs';
+import { typedAcpRefusal } from './acp-json-rpc-process.mjs';
 
 const DEFAULT_MAX_WIRE_FRAME_BYTES = 1024 * 1024;
 const GROK_TOKEN_METRIC = 'grok_prompt_meta_total_tokens';
@@ -793,7 +794,7 @@ export class GrokAcpCli {
     } catch (err) {
       session.setupFailed = true;
       this._killChild(session);
-      return { ok: false, reason: err.message, code: err.code };
+      return { ok: false, reason: err.message, ...typedAcpRefusal(err) };
     }
 
     let newResult;
@@ -809,7 +810,7 @@ export class GrokAcpCli {
       // now-useless child and resolves a typed failure — never retried internally.
       session.setupFailed = true;
       this._killChild(session);
-      return { ok: false, reason: err.message, code: err.code };
+      return { ok: false, reason: err.message, ...typedAcpRefusal(err) };
     }
     // A resume identity is provider testimony, not a value Baton may synthesize from its request.
     // Missing or substituted session/load identity cannot cross the recovery trust gate.

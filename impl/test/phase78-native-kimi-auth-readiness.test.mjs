@@ -236,7 +236,7 @@ test('KA4: a provider Authentication required spawn refusal projects one typed r
       },
     },
   });
-  adapter.spawn = async () => ({ ok: false, code: -32000, reason: 'Authentication required' });
+  adapter.spawn = async () => ({ ok: false, code: 'authentication_required', rpcCode: -32000, reason: 'Authentication required' });
 
   const deployment = await openBaton({
     repo,

@@ -9,6 +9,15 @@ export class AcpProtocolError extends Error {
   }
 }
 
+// ACP names its authentication gate by JSON-RPC error code (-32000, "Authentication required").
+// Adapters type that refusal at their own boundary so nothing upstream reads the message prose;
+// the numeric code rides as `rpcCode` evidence. Every other RPC error keeps its own code.
+export const ACP_AUTH_REQUIRED_RPC_CODE = -32000;
+export function typedAcpRefusal(error) {
+  if (error?.code === ACP_AUTH_REQUIRED_RPC_CODE) return { code: 'authentication_required', rpcCode: error.code };
+  return { code: error?.code };
+}
+
 export class AcpSetupTimeoutError extends Error {
   constructor(method, timeoutMs) {
     super(`ACP setup request "${method}" timed out after ${timeoutMs}ms`);

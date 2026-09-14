@@ -144,7 +144,7 @@ test('model and exact effort admission refuse before a child exists', async () =
 
 for (const [mode, code] of [
   ['wrong-agent', 'agent_identity_mismatch'], ['no-auth', 'auth_unavailable'],
-  ['auth-fail', -32000], ['model-absent', 'model_unavailable'],
+  ['auth-fail', 'authentication_required'], ['model-absent', 'model_unavailable'],
 ]) {
   test(`native Kimi fails closed during ${mode}`, async () => {
     const { spawn, events } = setup(mode);

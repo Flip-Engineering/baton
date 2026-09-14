@@ -4282,11 +4282,10 @@ export class Coordinator {
     this._releaseProviderTurnAdmission(handle, ack?.[WORKTREE_FAILURE] === true ? 'worktree_unavailable' : 'spawn_refused');
     const worktreeFailure = ack?.[WORKTREE_FAILURE] === true;
     const phase = worktreeFailure ? 'worktree' : 'spawn';
-    const authenticationRequired = typeof ack?.reason === 'string' && ack.reason.length <= 4096
-      && /\bauthentication required\b/iu.test(ack.reason);
-    const refusalCode = worktreeFailure ? 'worktree_unavailable'
-      : authenticationRequired ? 'authentication_required'
-        : typedTerminalCode(ack?.code, null);
+    // The refusal code is the adapter's typed testimony (`ack.code`); prose in `ack.reason` is
+    // evidence for the narrative, never a classifier input. ACP adapters type the protocol's
+    // authentication gate as 'authentication_required' at their own boundary.
+    const refusalCode = worktreeFailure ? 'worktree_unavailable' : typedTerminalCode(ack?.code, null);
     handle.terminalCause ??= deepFreeze({
       kind: 'provider_failure', code: refusalCode ?? 'provider_crashed',
     });
