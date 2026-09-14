@@ -299,7 +299,8 @@ stops a worker. Payload examples (each with a caller `idempotencyKey`):
 ```
 
 `baton_swarm_view` shows each work item's `waitsOn` (`{workId|artifact, settled, evidence}`),
-the `couplings` records (`arrivals`, `awaiting`, `departed`, `arrived`, `released`), and
+the `couplings` records (`arrivals` as `{participantId, actor, seq, ts}` rows, `awaiting`,
+`departed`, `arrived`, `released`, `releasedBy` — the ACTOR that released, never the named seat), and
 attention rows naming what needs an act: `group_member_gone` (with the `dependentWork` told),
 `coupling_writer_gone` (naming the release), and `member_left_session_live` — which names the
 responsible party for a departed member's still-running session (the recruiter, then the

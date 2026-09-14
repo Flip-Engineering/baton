@@ -14,6 +14,7 @@ import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { createServer as createUnrelatedServer, request as httpRequest } from 'node:http';
+import { connect } from 'node:net';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { createSwarmNativeBridge, swarmBridgeCommand, swarmBridgeMain, validateSwarmCommandArgs,
@@ -138,6 +139,40 @@ const readResponse = (response) => new Promise((resolve, reject) => {
 const call = (issued, command, args = {}) => swarmBridgeCommand({
   command, args, endpoint: issued.env[SWARM_BRIDGE_ENV_KEYS.url], token: issued.token,
 });
+
+/** A raw chunked POST: no content-length, `transfer-encoding: chunked`, written in pieces — the
+ * transport an over-cap streamed body actually arrives on. Resolves with the raw response bytes
+ * the moment the socket closes (a server that answers and then hangs up still delivered them). */
+const chunkedPost = (endpoint, token, body, { chunkBytes }) => new Promise((resolve, reject) => {
+  const target = new URL(endpoint);
+  const socket = connect(Number(target.port), target.hostname, () => {
+    socket.write(`POST ${target.pathname} HTTP/1.1\r\nHost: ${target.hostname}:${target.port}\r\n`
+      + `content-type: application/json; charset=utf-8\r\ntransfer-encoding: chunked\r\n`
+      + `authorization: Bearer ${token}\r\n\r\n`);
+    for (let at = 0; at < body.length; at += chunkBytes) {
+      const piece = body.subarray(at, at + chunkBytes);
+      socket.write(`${piece.length.toString(16)}\r\n`);
+      socket.write(piece);
+      socket.write('\r\n');
+    }
+    socket.write('0\r\n\r\n');
+  });
+  const chunks = [];
+  const settle = () => resolve(Buffer.concat(chunks).toString('utf8'));
+  socket.on('data', (chunk) => chunks.push(chunk));
+  socket.on('end', settle);
+  socket.on('close', settle);
+  socket.on('error', (cause) => { if (chunks.length > 0) settle(); else reject(cause); });
+});
+
+const rawResponse = (raw) => {
+  const separator = raw.indexOf('\r\n\r\n');
+  const head = raw.slice(0, separator);
+  return {
+    status: Number(/^HTTP\/1\.1 (\d+)/u.exec(head)?.[1] ?? 0),
+    payload: JSON.parse(raw.slice(separator + 4)),
+  };
+};
 
 // ============================================================
 // issue() — token, env injection shape, non-secret receipt, inspect()
@@ -585,23 +620,28 @@ test('the module executable answers swarm.view from env alone and fails with typ
     const parsed = JSON.parse(ok.stdout);
     assert.ok(parsed.availableActions.includes('swarm.guide'));
     assert.equal(ok.stderr, '');
+    // A refusal is the command's answer, not a diagnostic: JSON on STDOUT with a non-zero exit —
+    // the same one-document-per-invocation contract a success envelope follows (pinned here).
     const refused = await execFileAsync(process.execPath, [BRIDGE_MODULE, 'swarm.stop', JSON.stringify({ swarmId: 'swarm-1', participantId: 'beta', reason: 'probe the refusal envelope', idempotencyKey: 'op-stop' })], { env })
       .catch((error) => error);
     assert.equal(refused.code, 1);
-    const refusedPayload = JSON.parse(refused.stderr);
+    assert.equal(refused.stderr, '', 'the refusal does not split the caller across two streams');
+    const refusedPayload = JSON.parse(refused.stdout);
     assert.equal(refusedPayload.ok, false);
     assert.equal(refusedPayload.error.code, 'swarm_permission_required');
+    assert.equal(refusedPayload.commandReceipt, undefined,
+      'no receipt is minted on the error path: the key was spent by the attempt, a new attempt needs a new key');
     assert.equal(JSON.stringify(refusedPayload).includes(issued.token), false);
     const badArgs = await execFileAsync(process.execPath, [BRIDGE_MODULE, 'swarm.view', 'not-json'], { env }).catch((error) => error);
     assert.equal(badArgs.code, 1);
-    assert.equal(JSON.parse(badArgs.stderr).error.code, 'swarm_bridge_request_invalid');
+    assert.equal(JSON.parse(badArgs.stdout).error.code, 'swarm_bridge_request_invalid');
     // "No env configured" must mean it: the child inherits nothing bridge-shaped (a deployment
     // injects BATON_SWARM_BRIDGE_* into THIS test process, and an inherited URL would turn this
     // probe into a real network call).
     const missingEnv = await execFileAsync(process.execPath, [BRIDGE_MODULE, 'swarm.view'],
       { env: { PATH: process.env.PATH, HOME: process.env.HOME } }).catch((error) => error);
     assert.equal(missingEnv.code, 1);
-    assert.match(JSON.parse(missingEnv.stderr).error.message, /BATON_SWARM_BRIDGE_URL/u);
+    assert.match(JSON.parse(missingEnv.stdout).error.message, /BATON_SWARM_BRIDGE_URL/u);
   });
 });
 
@@ -645,7 +685,24 @@ test('the CLI renders family and per-command help locally with no bridge env wha
   const unknown = await execFileAsync(process.execPath, [BRIDGE_MODULE, 'swarm.nope', '--help'], { env: cleanEnv })
     .catch((error) => error);
   assert.equal(unknown.code, 1);
-  assert.equal(JSON.parse(unknown.stderr).error.code, 'swarm_command_unavailable');
+  assert.equal(JSON.parse(unknown.stdout).error.code, 'swarm_command_unavailable');
+});
+
+test('the help text tells the truth about idempotency keys: what replays, what needs a new key, what takes none', async () => {
+  const cleanEnv = { PATH: process.env.PATH, HOME: process.env.HOME };
+  const family = await execFileAsync(process.execPath, [BRIDGE_MODULE, '--help'], { env: cleanEnv });
+  // The retry remedy is on the surface a native agent reads FIRST: which commands replay under a
+  // minted key, and that any other new attempt needs a new one.
+  assert.match(family.stdout, /swarm\.recruit and swarm\.holder_released/u);
+  assert.match(family.stdout, /NEW attempt needs a NEW key/u);
+  assert.match(family.stdout, /swarm\.capture and swarm\.check take no key/u);
+  assert.match(family.stdout, /on STDOUT with a non-zero exit/u, 'the refusal stream is pinned in the help');
+  for (const command of ['swarm.capture', 'swarm.check']) {
+    const help = await execFileAsync(process.execPath, [BRIDGE_MODULE, command, '--help'], { env: cleanEnv });
+    assert.match(help.stdout, /idempotencyKey is refused here/u, `${command} help names what it takes`);
+  }
+  const update = await execFileAsync(process.execPath, [BRIDGE_MODULE, 'swarm.update', '--help'], { env: cleanEnv });
+  assert.match(update.stdout, /use a NEW key for a new attempt/u);
 });
 
 // ============================================================
@@ -701,7 +758,7 @@ test('swarmBridgeMain() renders help in-process and still fails closed without e
   assert.match(JSON.parse(lines.at(-1)).error.message, /--help/u);
 });
 
-test('a failed native mutation still exposes its generated key for reconciliation', async () => {
+test('a failed native mutation mints no receipt: the key was spent by the attempt', async () => {
   const lines = [];
   const sink = { write: (text) => lines.push(text) };
   const code = await swarmBridgeMain(['swarm.guide', JSON.stringify({
@@ -710,5 +767,43 @@ test('a failed native mutation still exposes its generated key for reconciliatio
   assert.equal(code, 1);
   const failure = JSON.parse(lines.at(-1));
   assert.equal(failure.ok, false);
-  assert.match(failure.commandReceipt.idempotencyKey, /^[0-9a-f-]{36}$/u);
+  assert.equal(failure.commandReceipt, undefined,
+    'the error envelope carries no key: a new attempt needs a new one, and the refusal says so');
+});
+
+// ============================================================
+// Streamed over-cap bodies and identity-keyed commands (audit #292)
+// ============================================================
+
+test('a chunked over-cap request body is answered with the typed 413 before the bridge hangs up', async () => {
+  await withBridge({ maxFrameBytes: 1024 }, async ({ bridge, runtime }) => {
+    const issued = await bridge.issue({ swarmId: 'swarm-1', participantId: 'alpha', runId: 'run-alpha' });
+    // The streamed transport: no content-length, chunked transfer-encoding, written in pieces.
+    // Pre-fix the bridge destroyed the request before answering and the caller saw ECONNRESET.
+    const streamed = rawResponse(await chunkedPost(issued.env[SWARM_BRIDGE_ENV_KEYS.url], issued.token,
+      Buffer.from(JSON.stringify({ command: 'swarm.guide', args: {
+        swarmId: 'swarm-1', participantId: 'beta', message: 'y'.repeat(4000), idempotencyKey: 'op-chunked',
+      } }), 'utf8'), { chunkBytes: 256 }));
+    assert.equal(streamed.status, 413, 'the streamed over-cap body gets the typed 413, not a reset socket');
+    assert.equal(streamed.payload.ok, false);
+    assert.equal(streamed.payload.error.code, 'swarm_bridge_frame_exceeded');
+    assert.equal(streamed.payload.error.detail.direction, 'request');
+    assert.match(streamed.payload.error.message, /wire\.frame is \d+ bytes \(cap 1024\)/u);
+    assert.equal(runtime.calls.length, 0, 'a refused frame never reaches dispatch');
+  });
+});
+
+test('an explicit idempotencyKey on an identity-keyed command is refused by name, before any effect', async () => {
+  await withBridge({}, async ({ bridge, runtime }) => {
+    const issued = await bridge.issue({ swarmId: 'swarm-1', participantId: 'alpha', runId: 'run-alpha' });
+    // capture/check carry their identity in their coordinates; a key would be a second, disagreeing
+    // identity — the refusal names the coordinates that ARE the key, and the help says the same.
+    const error = await call(issued, 'swarm.capture', {
+      swarmId: 'swarm-1', participantId: 'alpha', contributionId: 'contribution-1', idempotencyKey: 'op-extra',
+    }).then(() => null, (thrown) => thrown);
+    assert.equal(error.code, 'swarm_command_invalid');
+    assert.match(error.message, /identity-keyed/u);
+    assert.deepEqual(error.detail.identity, ['swarmId', 'participantId', 'contributionId']);
+    assert.equal(runtime.calls.length, 0);
+  });
 });

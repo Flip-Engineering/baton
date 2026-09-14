@@ -222,13 +222,21 @@ something the runtime imposes. The declared choices are exactly the ones this de
 - **A synchronization point** — declared on a group (`swarm.update` event
   `swarm.coupling_updated`, coupling `synchronization`): members ARRIVE as their own honest
   report (read authority suffices for one's own arrival) and the point is RELEASED explicitly,
-  with who released and why recorded. The view shows `arrivals`, `awaiting` (current live
-  members only — a released or dead seat never holds a point open), `departed` (the seats from
-  the declared roster that no longer count), and the derived `arrived` fact.
+  with who released and why recorded. Each arrival is a row — `{participantId, actor, seq, ts}` —
+  so "who arrived, and when" is answered by the artifact rather than by a watch log. The view
+  shows `arrivals`, `awaiting` (current live members only — a released or dead seat never holds a
+  point open), `departed` (the seats from the declared roster that no longer count), and the
+  derived `arrived` fact. Re-declaring the point replaces its parameters and CARRIES the arrivals
+  forward, naming them in `carriedArrivals`: a barrier is never wiped silently.
 - **An exclusive writer over a shared checkout** — declared with coupling `writer`: the record
-  names the writer and the checkout that writer is recorded in. One writer per checkout: a
-  second claim over the same checkout refuses naming the current writer. A writer whose runtime
-  dies raises a `coupling_writer_gone` attention row naming the release that frees the checkout.
+  names the writer and the checkout that writer is recorded in. A participant's checkout is
+  recorded when it is recruited into one (the deliberate `shareWorkspaceWith` adoption at
+  membership, and the live attachment observed at binding — the first recruit into a checkout is
+  armed by the latter). One writer per checkout: a second claim over the same checkout refuses
+  naming the current writer, and a claim over a participant with NO recorded checkout refuses with
+  `swarm_writer_workspace_unrecorded` — a claim that names no resource can never enforce
+  exclusivity, so it is refused rather than recorded inert. A writer whose runtime dies raises a
+  `coupling_writer_gone` attention row naming the release that frees the checkout.
 - **A group failure policy** — declared with coupling `failure`, policy `independent`: when a
   member dies or leaves, a `group_member_gone` attention row names the member and the DEPENDENT
   work (works that declared a dependency on the gone member's work); independent peers continue.
@@ -239,9 +247,16 @@ These records INFORM rather than fence. Nothing here stops a worker's process: a
 that proceeds against an unsettled dependency does so visibly (`waitsOn` shows the wait as
 unsettled, with the evidence that has not arrived), and that is allowed. Every declaration,
 arrival, and release is a durable swarm event, so `swarm.watch` wakes on each of them and a
-scoped (`participantId`) view shows exactly the couplings the subtree can act on — writer
-records follow the writer's subtree, synchronization and failure records follow their group,
-and a group the subtree does not fully own is omitted rather than shown pruned.
+scoped (`participantId`) view shows the couplings its subtree can act on — writer records follow
+the writer's subtree, and a synchronization point or group failure policy is shown to every member
+whose group roster intersects the subtree, so a seat listed in `awaiting` can always read the
+point it is expected to arrive at.
+
+**Who acted** is a fact of every record, never a caller-named seat. `releasedBy` and `reviewerId`
+carry the ACTOR: the participant's own name when a member acts, or the acting principal's label
+when an external orchestrator (which has no participant row) acts — so an organizer's release is
+never attributed to the seat it released, and an orchestrator's review or release never lands as
+null. A caller-named identity that is not the actor refuses.
 
 **Session ownership after a member leaves** is an explicit, visible fact. The
 `member_left_session_live` attention row names the responsible party — the recruiter (the

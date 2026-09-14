@@ -1191,14 +1191,20 @@ describe('declared couplings', () => {
     assert.deepEqual(record.arrivals, []);
     assert.equal(record.released, false);
     fold(swarms, [
-      e('swarm.coupling_updated', { swarmId: 'sw1', couplingId: 'sync', coupling: 'synchronization', action: 'arrive', participantId: 'b' }),
-      e('swarm.coupling_updated', { swarmId: 'sw1', couplingId: 'sync', coupling: 'synchronization', action: 'arrive', participantId: 'a' }),
+      e('swarm.coupling_updated', { swarmId: 'sw1', couplingId: 'sync', coupling: 'synchronization', action: 'arrive', participantId: 'b' }, { seq: 7, ts: 'ts-7', actor: 'worker:w-b' }),
+      e('swarm.coupling_updated', { swarmId: 'sw1', couplingId: 'sync', coupling: 'synchronization', action: 'arrive', participantId: 'a' }, { seq: 8, ts: 'ts-8', actor: 'worker:w-a' }),
       e('swarm.coupling_updated', { swarmId: 'sw1', couplingId: 'sync', coupling: 'synchronization', action: 'release', participantId: 'a', reason: 'all arrived' }),
     ]);
-    assert.deepEqual(swarms.get('sw1').couplings.sync.arrivals, ['b', 'a'], 'arrival order is log order');
-    assert.equal(swarms.get('sw1').couplings.sync.released, true);
-    assert.equal(swarms.get('sw1').couplings.sync.releasedBy, 'a');
-    assert.equal(swarms.get('sw1').couplings.sync.releaseReason, 'all arrived');
+    const settled = swarms.get('sw1').couplings.sync;
+    // An arrival names its seat, the actor that made the report, and WHEN it was made: the barrier
+    // is answerable from the artifact, not from a watch log.
+    assert.deepEqual(settled.arrivals, [
+      { participantId: 'b', actor: 'worker:w-b', seq: 7, ts: 'ts-7' },
+      { participantId: 'a', actor: 'worker:w-a', seq: 8, ts: 'ts-8' },
+    ], 'arrival order is log order, each arrival carrying its actor and timestamp');
+    assert.equal(settled.released, true);
+    assert.equal(settled.releasedBy, 'a');
+    assert.equal(settled.releaseReason, 'all arrived');
   });
 
   test('coupling state errors refuse with the missing fact named', () => {
@@ -1257,19 +1263,31 @@ describe('declared couplings', () => {
       swarmId: 'sw1', couplingId: 'writer3', coupling: 'writer', action: 'declare',
     })));
     assert.equal(err.code, 'invalid_payload', 'a claim must name its writer');
-    // A different checkout (no recorded workspace) is a different resource.
+    // A checkout the writer is not recorded in is not a resource this record may name: the claim
+    // refuses instead of landing with no identity to enforce exclusivity over (audit #292).
+    err = integrity(() => foldSwarmEvent(swarms, e('swarm.coupling_updated', {
+      swarmId: 'sw1', couplingId: 'writer-private', coupling: 'writer', action: 'declare', participantId: 'b',
+    })));
+    assert.equal(err.code, 'swarm_writer_workspace_unrecorded');
+    assert.match(err.message, /participant b has no recorded checkout/u, 'the refusal names the unarmed claim');
+    // A participant recorded in ANOTHER checkout is a different resource: one writer per checkout.
+    fold(swarms, [e('swarm.participant_bound', { swarmId: 'sw1', participantId: 'b', workerId: 'w-b', taskId: 't-b',
+      workspaceId: 'ws-' + 'b'.repeat(32) })]);
     foldSwarmEvent(swarms, e('swarm.coupling_updated', {
       swarmId: 'sw1', couplingId: 'writer-private', coupling: 'writer', action: 'declare', participantId: 'b',
     }));
-    assert.equal(swarms.get('sw1').couplings['writer-private'].workspaceId, null);
-    // Releasing the record frees the checkout.
+    assert.equal(swarms.get('sw1').couplings['writer-private'].workspaceId, 'ws-' + 'b'.repeat(32));
+    // Releasing the record frees the checkout, and the released checkout is claimable by the next
+    // writer who is recorded in it.
     foldSwarmEvent(swarms, e('swarm.coupling_updated', {
       swarmId: 'sw1', couplingId: 'writer', coupling: 'writer', action: 'release', participantId: 'sharer',
     }));
     foldSwarmEvent(swarms, e('swarm.coupling_updated', {
-      swarmId: 'sw1', couplingId: 'writer-next', coupling: 'writer', action: 'declare', participantId: 'a',
+      swarmId: 'sw1', couplingId: 'writer-next', coupling: 'writer', action: 'declare', participantId: 'joiner',
     }));
-    assert.equal(swarms.get('sw1').couplings['writer-next'].writer, 'a');
+    assert.equal(swarms.get('sw1').couplings['writer-next'].writer, 'joiner');
+    // The release names its ACTOR, not the seat the request happened to name.
+    assert.equal(swarms.get('sw1').couplings.writer.releasedBy, 'sharer');
   });
 
   test('a failure policy is one per group until released', () => {
@@ -1284,7 +1302,7 @@ describe('declared couplings', () => {
     assert.equal(swarms.get('sw1').couplings.policy.policy, 'independent');
   });
 
-  test('re-declaring replaces the record and its arrivals; replay is deterministic', () => {
+  test('re-declaring replaces the parameters and CARRIES the arrivals forward, saying so on the row', () => {
     const events = [
       e('swarm.created', { swarmId: 'sw1', purpose: 'replay' }),
       e('swarm.participant_joined', { swarmId: 'sw1', participantId: 'a' }),
@@ -1293,7 +1311,8 @@ describe('declared couplings', () => {
       e('swarm.work_updated', { swarmId: 'sw1', workId: 'W1', objective: 'one' }),
       e('swarm.work_updated', { swarmId: 'sw1', workId: 'W2', objective: 'two', dependsOn: [{ workId: 'W1' }] }),
       e('swarm.coupling_updated', { swarmId: 'sw1', couplingId: 'sync', coupling: 'synchronization', action: 'declare', groupId: 'g', name: 'freeze' }),
-      e('swarm.coupling_updated', { swarmId: 'sw1', couplingId: 'sync', coupling: 'synchronization', action: 'arrive', participantId: 'a' }),
+      e('swarm.coupling_updated', { swarmId: 'sw1', couplingId: 'sync', coupling: 'synchronization', action: 'arrive', participantId: 'a' }, { seq: 9, ts: 'ts-9' }),
+      e('swarm.participant_bound', { swarmId: 'sw1', participantId: 'a', workerId: 'w-a', taskId: 't-a', workspaceId: 'ws-' + 'a'.repeat(32) }),
       e('swarm.coupling_updated', { swarmId: 'sw1', couplingId: 'writer', coupling: 'writer', action: 'declare', participantId: 'a' }),
     ];
     const first = fold(fresh(), events);
@@ -1303,7 +1322,14 @@ describe('declared couplings', () => {
     fold(fresh(), events);
     foldSwarmEvent(first, e('swarm.coupling_updated', {
       swarmId: 'sw1', couplingId: 'sync', coupling: 'synchronization', action: 'declare', groupId: 'g', name: 'freeze-2',
-    }));
-    assert.deepEqual(first.get('sw1').couplings.sync.arrivals, [], 're-declaring a synchronization point restarts it');
+    }, { seq: 11, ts: 'ts-11' }));
+    const redeclared = first.get('sw1').couplings.sync;
+    assert.equal(redeclared.name, 'freeze-2', 'the re-declare replaces the point\'s parameters');
+    assert.deepEqual(redeclared.arrivals.map((arrival) => arrival.participantId), ['a'],
+      'the arrival the member already reported survives the re-declare');
+    assert.deepEqual(redeclared.carriedArrivals, ['a'],
+      'and the record says which arrivals this declare carried forward');
+    // A first declare carries nothing, and says exactly that: the field is only a re-declare fact.
+    assert.equal(fold(fresh(), events.slice(0, 7)).get('sw1').couplings.sync.carriedArrivals, null);
   });
 });

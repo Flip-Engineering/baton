@@ -139,6 +139,15 @@ export function swarmCommandDefinition(name) {
   return Object.hasOwn(SWARM_COMMAND_DEFINITIONS, name) ? SWARM_COMMAND_DEFINITIONS[name] : null;
 }
 
+/** Commands whose identity IS their coordinates: one immutable record per (swarm, participant,
+ * contribution) — or per check — so they carry no idempotencyKey, and every surface that
+ * documents them (help, docs, refusals) says so from this one derivation instead of re-deciding. */
+export function swarmIdentityKeyedCommand(name) {
+  const definition = swarmCommandDefinition(name);
+  return definition !== null && !definition.mcpStateful
+    && definition.capabilities.some((capability) => capability !== 'observe');
+}
+
 /** The web-admission projection of the family against a registry map: the swarm commands the
  * shared registry carries AND flags for the web lane. The CLI whitelist derives through this, so
  * the parser, the web bus, and the conformance card can never disagree about admission. */
@@ -266,6 +275,13 @@ export function validateSwarmCommand(name, args) {
     throw swarmError(`${name} request is invalid: args must be a JSON object`, 'swarm_command_invalid');
   }
   const declared = new Set(definition.args);
+  // A key on an identity-keyed command would be a second, disagreeing identity: the coordinates
+  // already are the key, and a caller that believes otherwise would mint a second record for one
+  // contribution. Refuse by name, with the coordinates that ARE the identity.
+  if (Object.hasOwn(args, 'idempotencyKey') && swarmIdentityKeyedCommand(name)) {
+    throw swarmError(`${name} is identity-keyed: its identity is ${shape.required.join(', ')} and it takes no idempotencyKey`,
+      'swarm_command_invalid', { field: 'idempotencyKey', identity: [...shape.required] });
+  }
   for (const key of Object.keys(args)) {
     if (!declared.has(key)) {
       throw swarmError(`${name} request is invalid: unknown field ${key}`, 'swarm_command_invalid', { field: key });

@@ -194,7 +194,12 @@ test('a synchronization point shows who has arrived, releases with who and why, 
   assert.equal(woke.watch.reason, 'event');
   assert.equal(woke.watch.event.kind, 'swarm.coupling_updated');
   point = woke.couplings['sync-freeze'];
-  assert.deepEqual(point.arrivals, ['alpha'], 'the arrival records its participant in order');
+  // An arrival is a row, not a bare name: it names the seat, the actor that reported it, and WHEN
+  // it arrived — "who arrived and when" is answered by the artifact itself.
+  assert.deepEqual(point.arrivals.map(({ participantId }) => participantId), ['alpha'],
+    'the arrival records its participant in order');
+  assert.equal(typeof point.arrivals[0].ts, 'string', 'the arrival carries the timestamp it was made');
+  assert.match(point.arrivals[0].actor ?? '', /^worker:/u, 'and the acting identity that made the report');
   assert.deepEqual(point.awaiting, ['beta']);
   assert.equal(point.arrived, false);
 
@@ -339,18 +344,25 @@ test('a member that leaves hands its live session to its recruiter, then to the 
     'the reclaim cleared the row');
 });
 
-test('the subtree view scopes couplings the way it scopes groups; the wake carries arrivals', async (t) => {
-  const { swarm, delegated, alphaWorker, asWorker } = await coupling(t);
+test('a member whose roster intersects a synchronization point sees it; an unrelated participant does not', async (t) => {
+  const { swarm, delegated, alphaWorker, asWorker, paused } = await coupling(t);
   await delegated.couple({ couplingId: 'sync-view', coupling: 'synchronization', action: 'declare', groupId: 'impl', name: 'view-check' });
   await delegated.couple({ couplingId: 'policy-view', coupling: 'failure', action: 'declare', groupId: 'impl', policy: 'independent' });
 
   // The lead's subtree fully owns the group: both records are in scope.
   const leadScope = await swarm.view({ participantId: 'lead' });
   assert.deepEqual(Object.keys(leadScope.couplings).sort(), ['policy-view', 'sync-view']);
-  // alpha's subtree does not own the group: the records are omitted rather than shown pruned.
+  // alpha IS the roster the point names — a seat listed in `awaiting` must be able to read the
+  // barrier it is asked to arrive at, even though its own subtree does not own the whole group.
   const alphaScope = await swarm.view({ participantId: 'alpha' });
-  assert.equal(alphaScope.couplings['sync-view'], undefined);
-  assert.equal(alphaScope.couplings['policy-view'], undefined);
+  assert.deepEqual(Object.keys(alphaScope.couplings).sort(), ['policy-view', 'sync-view'],
+    'a member whose roster intersects the point sees it');
+  // A participant outside the roster sees nothing of it: the record is scoped by intersection,
+  // never broadcast.
+  const scout = await delegated.recruit('scout', 'Outside the coupled group', selection);
+  await paused(scout.runId);
+  const scoutScope = await swarm.view({ participantId: 'scout' });
+  assert.deepEqual(Object.keys(scoutScope.couplings), []);
 
   // An arrival wakes a watcher; the wake carries the coupling truth.
   const parked = await swarm.view();

@@ -38,6 +38,11 @@ export const SWARM_WORK_STATUSES = Object.freeze(['open', 'completed', 'cancelle
 export const SWARM_ASSIGNMENT_STATUSES = Object.freeze(['active', 'released']);
 export const SWARM_REVIEW_DECISIONS = Object.freeze(['accept', 'reject', 'comment']);
 
+// One physical workspace identity (`ws-…`): the checkout a participant works in, as recorded at
+// recruitment and at binding. The writer coupling's exclusivity is exactly this identity, so the
+// shape is named once here rather than re-spelled at each site that carries it.
+const WORKSPACE_ID = /^ws-[a-f0-9]{32}$/u;
+
 export class SwarmRefusal extends Error {
   constructor(message, code, detail = null) {
     super(message);
@@ -195,7 +200,7 @@ export function validateSwarmEvent(kind, payload) {
     // The physical checkout this participant deliberately shares with others, when it was
     // recruited into one. A durable organizational record, never custody: whether the checkout
     // may close is decided by the controller's live handles, not by swarm membership.
-    if (p.workspaceId !== undefined && !/^ws-[a-f0-9]{32}$/u.test(p.workspaceId)) {
+    if (p.workspaceId !== undefined && !WORKSPACE_ID.test(p.workspaceId)) {
       refuse('participant workspaceId must be one physical workspace identity', 'invalid_payload');
     }
     validOptionalNonEmptyString(p.runId, 'participant runId', refuse);
@@ -210,6 +215,11 @@ export function validateSwarmEvent(kind, payload) {
     if (!isNonEmptyString(p.workerId)) refuse('swarm.participant_bound requires workerId', 'invalid_payload');
     if (!isNonEmptyString(p.taskId)) refuse('swarm.participant_bound requires taskId', 'invalid_payload');
     validOptionalNonEmptyString(p.sessionId, 'participant sessionId', refuse);
+    // The checkout this binding observed for the participant's worker. The first recruit into a
+    // checkout is armed here: without it the exclusive-writer guarantee had nothing to compare.
+    if (p.workspaceId !== undefined && !WORKSPACE_ID.test(p.workspaceId)) {
+      refuse('participant binding workspaceId must be one physical workspace identity', 'invalid_payload');
+    }
     return;
   }
   if (kind === 'swarm.participant_left') {
@@ -274,6 +284,10 @@ export function validateSwarmEvent(kind, payload) {
     validOptionalNonEmptyString(p.name, 'coupling name', refuse);
     validOptionalNonEmptyString(p.participantId, 'coupling participantId', refuse);
     validOptionalNonEmptyString(p.reason, 'coupling reason', refuse);
+    // Who RELEASED the record, when the runtime derived it from the acting identity. The record's
+    // `participantId` names the seat the request is about (the arriver, the writer's holder, the
+    // seat a release hands back); the actor is never inferred from it.
+    validOptionalNonEmptyString(p.releasedBy, 'coupling releasedBy', refuse);
     validOptionalNonNegativeInt(p.expectedVersion, 'coupling expectedVersion', refuse);
     if (p.policy !== undefined && !SWARM_FAILURE_POLICIES.includes(p.policy)) {
       refuse(`failure policy must be one of: ${SWARM_FAILURE_POLICIES.join(', ')}`, 'invalid_payload');
@@ -326,7 +340,7 @@ export function validateSwarmEvent(kind, payload) {
     // Honest shared-checkout metadata: which physical checkout the revision was observed in, and
     // the HEAD that checkout showed before the capture. Both are checkout observations, never an
     // authorship claim; `sha`/`ref` alone stay the retained revision.
-    if (p.workspaceId !== undefined && !/^ws-[a-f0-9]{32}$/u.test(p.workspaceId)) {
+    if (p.workspaceId !== undefined && !WORKSPACE_ID.test(p.workspaceId)) {
       refuse('A contribution revision workspace must be one physical workspace identity', 'invalid_payload');
     }
     if (p.observedHead !== undefined && !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/u.test(p.observedHead)) {
@@ -357,6 +371,19 @@ export function validateSwarmEvent(kind, payload) {
 // version CAS) and mutates the outer swarms Map with a frozen replacement row.
 //
 // event: { kind, payload, actor?, seq?, ts? }
+
+// An attribution identity (who reviewed, who released) is honest when it names a participant of
+// this swarm, or when it IS the acting principal of the very event that records it — an external
+// orchestrator has no participant row, and a record attributed to nobody is not an answer. The
+// caller-named seat is never a substitute: the actor is the fact.
+function assertAttribution(swarm, identity, meta, field) {
+  if (identity === null || identity === undefined) return;
+  if (ownGet(swarm.participants, identity)) return;
+  if (isNonEmptyString(meta.actor) && identity === meta.actor) return;
+  integrity(`${field} ${identity} names neither a participant of swarm ${swarm.swarmId} nor the actor of the event that records it`
+    + `${isNonEmptyString(meta.actor) ? ` (the actor is ${meta.actor})` : ' (the event carries no actor)'}`,
+  'participant_not_found');
+}
 
 export function foldSwarmEvent(swarms, event) {
   const { kind, payload: p } = event;
@@ -408,7 +435,12 @@ export function foldSwarmEvent(swarms, event) {
       actor: meta.actor, seq: meta.seq, ts: meta.ts,
     });
     const updatedParticipant = Object.freeze({
-      ...participant, bindings: Object.freeze([...participant.bindings, binding]),
+      ...participant,
+      // The checkout the binding observed, recorded when the participant carries none yet: the
+      // first recruit into a checkout is armed here — recruitment without `shareWorkspaceWith`
+      // recorded nothing, which left the exclusive-writer guard with no identity to compare.
+      workspaceId: participant.workspaceId ?? p.workspaceId ?? null,
+      bindings: Object.freeze([...participant.bindings, binding]),
       actor: meta.actor, seq: meta.seq, ts: meta.ts,
     });
     const parts = new Map(Object.entries(swarm.participants));
@@ -536,6 +568,13 @@ export function foldSwarmEvent(swarms, event) {
       let writer = null;
       let workspaceId = null;
       let members = null;
+      // A declare REPLACES the record's parameters. It never discards what the members already
+      // reported: the arrivals the point holds are carried forward, and `carriedArrivals` names
+      // them on the new record, so a re-declare can never wipe a barrier silently (audit #292).
+      const arrivals = existingCoupling?.coupling === 'synchronization'
+        ? Object.freeze([...(existingCoupling.arrivals ?? [])]) : Object.freeze([]);
+      const carriedArrivals = p.coupling === 'synchronization' && existingCoupling !== null
+        ? Object.freeze(arrivals.map((arrival) => arrival.participantId)) : null;
       if (p.coupling === 'synchronization') {
         // The group roster the point was declared over: seats that later leave the group (by
         // release or regroup) stay named on the record instead of vanishing from it.
@@ -548,20 +587,25 @@ export function foldSwarmEvent(swarms, event) {
         const holder = ownGet(swarm.participants, p.participantId);
         if (!holder) integrity(`writer participant ${p.participantId} not found in swarm ${p.swarmId}`, 'participant_not_found');
         if (holder.status !== 'active') integrity(`writer participant ${p.participantId} is not active in swarm ${p.swarmId}`, 'participant_not_active');
-        workspaceId = holder.workspaceId ?? null;
-        if (workspaceId !== null) {
-          const conflict = Object.values(swarm.couplings).find((row) => row.coupling === 'writer' && !row.released
-            && row.workspaceId === workspaceId && row.writer !== p.participantId);
-          if (conflict) {
-            integrity(`checkout ${workspaceId} already names the exclusive writer ${conflict.writer} (${conflict.couplingId}); release that record first`, 'swarm_writer_conflict');
-          }
+        // Exclusivity is a fact about ONE recorded checkout. A claim over a participant with no
+        // recorded checkout would name no resource at all, and the one-writer guarantee would be
+        // inert exactly where it is promised (docs/39 §Declared coupling) — so it refuses and
+        // names the remedy instead.
+        if (!WORKSPACE_ID.test(holder.workspaceId ?? '')) {
+          integrity(`participant ${p.participantId} has no recorded checkout, so an exclusive writer claim over it could not be enforced; record the checkout its participant works in (a participant is recorded in its checkout when it is recruited into one) before claiming it`, 'swarm_writer_workspace_unrecorded');
+        }
+        workspaceId = holder.workspaceId;
+        const conflict = Object.values(swarm.couplings).find((row) => row.coupling === 'writer' && !row.released
+          && row.workspaceId === workspaceId && row.writer !== p.participantId);
+        if (conflict) {
+          integrity(`checkout ${workspaceId} already names the exclusive writer ${conflict.writer} (${conflict.couplingId}); release that record first`, 'swarm_writer_conflict');
         }
         writer = p.participantId;
       }
       record = {
         couplingId: p.couplingId, coupling: p.coupling,
         groupId: p.groupId ?? null, name: p.name ?? null, policy: p.policy ?? null,
-        members, writer, workspaceId, arrivals: [],
+        members, writer, workspaceId, arrivals, carriedArrivals,
         released: false, releasedBy: null, releaseReason: null,
       };
     } else {
@@ -582,12 +626,17 @@ export function foldSwarmEvent(swarms, event) {
         if (!members.includes(p.participantId)) {
           integrity(`participant ${p.participantId} is not a member of group ${existingCoupling.groupId}`, 'swarm_not_a_member');
         }
-        if (existingCoupling.arrivals.includes(p.participantId)) {
+        if (existingCoupling.arrivals.some((arrival) => arrival.participantId === p.participantId)) {
           integrity(`participant ${p.participantId} has already arrived at ${p.couplingId}`, 'swarm_already_arrived');
         }
-        record = { ...existingCoupling, arrivals: [...existingCoupling.arrivals, p.participantId] };
+        // An arrival is a seat's own report: it carries WHEN it was made and which identity made
+        // it, so "all reports in" is answerable from the artifact rather than from a watch log.
+        record = { ...existingCoupling, arrivals: Object.freeze([...existingCoupling.arrivals,
+          Object.freeze({ participantId: p.participantId, actor: meta.actor, seq: meta.seq, ts: meta.ts })]) };
       } else {
-        record = { ...existingCoupling, released: true, releasedBy: p.participantId ?? null, releaseReason: p.reason ?? null };
+        const releasedBy = p.releasedBy ?? p.participantId ?? null;
+        assertAttribution(swarm, releasedBy, meta, 'releasedBy');
+        record = { ...existingCoupling, released: true, releasedBy, releaseReason: p.reason ?? null };
       }
     }
     const couplings = new Map(Object.entries(swarm.couplings));
@@ -694,10 +743,9 @@ export function foldSwarmEvent(swarms, event) {
     if (!ownGet(swarm.contributions, p.contributionId)) {
       integrity(`contribution ${p.contributionId} not found in swarm ${p.swarmId}`, 'contribution_not_found');
     }
-    // reviewerId referential integrity: if given, must be a known participant.
-    if (isNonEmptyString(p.reviewerId) && !ownGet(swarm.participants, p.reviewerId)) {
-      integrity(`reviewerId ${p.reviewerId} not found in swarm ${p.swarmId}`, 'participant_not_found');
-    }
+    // Who reviewed is the ACTOR: a participant of this swarm, or the acting principal of this very
+    // event when an external orchestrator names no seat. A name that is neither is a misattribution.
+    assertAttribution(swarm, p.reviewerId, meta, 'reviewerId');
     // Append — never erase prior reviews; opposing reviews are both retained.
     const review = Object.freeze({
       reviewerId: p.reviewerId ?? null, decision: p.decision, reason: p.reason ?? null,

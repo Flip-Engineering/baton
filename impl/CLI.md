@@ -110,10 +110,15 @@ baton swarm watch SWARM_ID --follow
 
 Refusals name what is missing: a dependency on unknown work (`work_not_found`), a ring of waits
 (`work_dependency_cycle`, naming the ring), a second writer over one checkout
-(`swarm_writer_conflict`, naming the current writer), an arrival by a non-member
-(`swarm_not_a_member`). When a member leaves with its session still running, the view's
-`member_left_session_live` attention row names the responsible party (the recruiter, then the
-creator) and the reclaiming operation (`swarm stop SWARM_ID PARTICIPANT_ID`).
+(`swarm_writer_conflict`, naming the current writer), a writer claim over a participant with no
+recorded checkout (`swarm_writer_workspace_unrecorded` — a claim that names no resource cannot
+enforce exclusivity), an arrival by a non-member (`swarm_not_a_member`). Arrivals are rows —
+`{participantId, actor, seq, ts}` — so "who arrived, and when" is answered by the view; a release
+records the ACTOR as `releasedBy` (the member that released, or the acting orchestrator's
+principal label), never the seat the request happened to name. When a member leaves with its
+session still running, the view's `member_left_session_live` attention row names the responsible
+party (the recruiter, then the creator) and the reclaiming operation
+(`swarm stop SWARM_ID PARTICIPANT_ID`).
 
 ### Guidance, checkout custody, and refusals
 

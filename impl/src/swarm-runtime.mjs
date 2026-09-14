@@ -134,6 +134,13 @@ export class SwarmRuntime {
     }
     return attachment;
   }
+  /** Who is acting, in the identity vocabulary of the record: the member's own participant name
+   * when a member acts, otherwise the acting principal's label — an external orchestrator has no
+   * participant row, and its acts must not land as null (issue #292). One derivation for every
+   * attribution the runtime writes (reviewerId, releasedBy), so they can never disagree. */
+  _actorOf(caller, principal) {
+    return caller?.participantId ?? principal.actor;
+  }
 
   _write(kind, payload, principal, key) {
     return this.store.recordSwarm(kind, payload, { actor: principal.actor, key });
@@ -154,9 +161,10 @@ export class SwarmRuntime {
     if (completed) return clone(completed.payload.result);
     if (this.pending.has(key)) return this.pending.get(key);
     if (requested && !replaySafe) {
-      refuse('The prior operation needs reconciliation before its effects can be repeated', 'swarm_operation_unconfirmed', {
-        command, request: clone(requested.payload.request), operationKey: key,
-      });
+      refuse('This operation was already attempted and its outcome is unconfirmed: repeating it under the SAME idempotencyKey needs reconciliation, and only swarm.recruit and swarm.holder_released replay under their key — make a NEW attempt under a NEW idempotencyKey',
+        'swarm_operation_unconfirmed', {
+          command, request: clone(requested.payload.request), operationKey: key,
+        });
     }
     if (!requested) this.store.recordDriver('swarm.operation_requested', {
       swarmId: args.swarmId, command, requestDigest, request: clone(args), basis: clone(basis),
@@ -450,7 +458,8 @@ export class SwarmRuntime {
         const currentMembers = swarm.groups?.[record.groupId]?.members ?? [];
         row.awaiting = currentMembers.filter((memberId) => {
           const memberRow = participantsById.get(memberId);
-          return memberRow && memberRow.status === 'active' && !gone(memberRow) && !record.arrivals.includes(memberId);
+          return memberRow && memberRow.status === 'active' && !gone(memberRow)
+            && !record.arrivals.some((arrival) => arrival.participantId === memberId);
         });
         // Departed seats come from the roster the point was declared over: a member that left
         // the swarm, lost its runtime, or was released from the group is named, never counted.
@@ -480,12 +489,15 @@ export class SwarmRuntime {
         && scopeWorkIds.has(contribution.workId)),
       reviews: keep(Object.entries(swarm.reviews ?? {}), ([contributionId]) => scopedContributionIds.has(contributionId)),
       groups: keep(Object.entries(swarm.groups ?? {}), ([, group]) => group.members.every((member) => scopeSubtree.includes(member))),
-      // A scoped view keeps the couplings its subtree can act on: writer records follow the
-      // writer's subtree, synchronization and failure records follow their group — and a group
-      // the subtree does not fully own is omitted rather than shown with a pruned membership.
-      couplings: keep(couplingEntries, ([, record]) => record.coupling === 'writer'
-        ? scopeSubtree.includes(record.writer)
-        : (swarm.groups?.[record.groupId]?.members ?? []).every((member) => scopeSubtree.includes(member))),
+      // A member sees the couplings its subtree can act on. Writer records follow the writer's
+      // subtree; a synchronization point or group failure policy follows its group — every member
+      // whose roster intersects the subtree sees it, so a seat listed in `awaiting` can always
+      // read the point it is expected to arrive at (docs/39 §Declared coupling).
+      couplings: keep(couplingEntries, ([, record]) => {
+        if (record.coupling === 'writer') return scopeSubtree.includes(record.writer);
+        const roster = swarm.groups?.[record.groupId]?.members ?? record.members ?? [];
+        return roster.some((member) => scopeSubtree.includes(member));
+      }),
       caller: { participantId: caller?.participantId ?? null, permissions: [...permissions] },
       availableActions, attention: scopedAttention,
       actionTargets: {
@@ -763,9 +775,12 @@ export class SwarmRuntime {
         payload.contributionId ??= `contribution-${hash([principal.principalId, args.idempotencyKey]).slice(0, 32)}`;
       }
       if (args.event === 'swarm.participant_left' && caller) payload.participantId ??= caller.participantId;
-      // Arrivals, releases, and writer claims default to the caller's own identity; naming
-      // another participant stays possible (organize authority — checked above) and is recorded.
-      if (args.event === 'swarm.coupling_updated' && payload.participantId === undefined && caller) {
+      // Arrivals, releases, and writer claims default the participant they NAME to the caller's
+      // own seat; naming another participant stays possible (organize authority — checked above)
+      // and stays recorded. A release carries no such default: who released is the ACTOR, never a
+      // seat the request happens to name.
+      if (args.event === 'swarm.coupling_updated' && payload.participantId === undefined
+        && payload.action !== 'release' && caller) {
         payload.participantId = caller.participantId;
       }
       if (args.event === 'swarm.work_updated' && payload.objective === undefined) {
@@ -783,9 +798,21 @@ export class SwarmRuntime {
       if (caller && args.event === 'swarm.contribution_recorded' && payload.participantId !== caller.participantId) {
         refuse('Contributions must name their actual author', 'swarm_author_mismatch');
       }
-      if (caller && args.event === 'swarm.contribution_reviewed') {
-        if (payload.reviewerId && payload.reviewerId !== caller.participantId) refuse('Review author does not match caller', 'swarm_author_mismatch');
-        payload.reviewerId = caller.participantId;
+      // Reviews and releases are attributed to their ACTOR: a member's own participant name, or
+      // the acting principal's label when an external orchestrator acts. A caller-named identity
+      // that is not the actor is a misattribution and refuses — an organizer's act never lands as
+      // the seat it touched, and the root's acts never land as null (issue #292).
+      if (args.event === 'swarm.contribution_reviewed') {
+        const actor = this._actorOf(caller, principal);
+        if (payload.reviewerId && payload.reviewerId !== actor) refuse('Review author does not match caller', 'swarm_author_mismatch');
+        payload.reviewerId = actor;
+      }
+      if (args.event === 'swarm.coupling_updated' && payload.action === 'release') {
+        const actor = this._actorOf(caller, principal);
+        if (payload.releasedBy !== undefined && payload.releasedBy !== actor) {
+          refuse('A release is attributed to the participant that released it', 'swarm_author_mismatch', { releasedBy: actor });
+        }
+        payload.releasedBy = actor;
       }
       this._write(args.event, payload, principal, this._operationKey(command, args, principal));
       if (caller && args.event === 'swarm.participant_left' && payload.participantId === caller.participantId) {
@@ -841,8 +868,14 @@ export class SwarmRuntime {
           ...(workspace ? { workspace } : {}) }, principal, context);
         const worker = this.coordinator.list().find((row) => row.runId === runId);
         if (!worker) refuse('Recruitment admitted but worker binding is not yet available', 'swarm_participant_unbound', { runId });
+        // The checkout this binding observed is recorded with the seat: the first recruit into a
+        // checkout is armed here (an adopted checkout already carries its workspace from the join),
+        // so the exclusive-writer guard has an identity to compare on every later claim.
+        const checkout = typeof this.coordinator.workspaceAttachment === 'function'
+          ? this.coordinator.workspaceAttachment(worker.id) : null;
         this._write('swarm.participant_bound', {
           swarmId: args.swarmId, participantId: args.participantId, workerId: worker.id, taskId: worker.taskId,
+          ...(checkout ? { workspaceId: checkout.workspaceId } : {}),
         }, principal, `swarm-binding:${hash([args.swarmId, args.participantId, worker.id])}`);
         return { participantId: args.participantId, runId, swarmId: args.swarmId };
       }, { replaySafe: true, basis: Object.values(swarm.context) });
@@ -880,7 +913,7 @@ export class SwarmRuntime {
       const key = `swarm-check:${hash([args.swarmId, participant.participantId, args.contributionId, args.checkId])}`;
       if (!this.store.priorCoordinationEvent(key)) this._write('swarm.contribution_reviewed', {
         swarmId: args.swarmId, contributionId: args.contributionId,
-        ...(caller ? { reviewerId: caller.participantId } : {}), decision: 'comment',
+        reviewerId: this._actorOf(caller, principal), decision: 'comment',
         reason: `Check ${args.checkId}: ${checked.passed ? 'passed' : 'failed'} for ${checked.sha}; cleanup ${checked.attempt?.cleanup?.state ?? 'unknown'}.`,
       }, principal, key);
       return checked;

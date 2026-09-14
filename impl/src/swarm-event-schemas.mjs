@@ -100,7 +100,8 @@ export const SWARM_EVENT_PAYLOAD_SCHEMAS = Object.freeze({
     policy: { type: 'string', enum: ['independent'], required: false,
       description: 'the declared group failure policy: independent peers continue when a member dies or leaves, and dependents are told',
       expectation: 'independent', example: 'independent' },
-    participantId: STRING('the participant arriving, releasing, or holding the exclusive writer claim', { required: false, ...AUTO('defaults to your own participant identity') }),
+    participantId: STRING('the participant the record names: the seat arriving, the exclusive writer\'s holder, or (on a release) the seat being released — who RELEASED is always releasedBy, which the runtime writes from the actor', { required: false, ...AUTO('defaults to your own participant identity') }),
+    releasedBy: STRING('the acting identity that released the record — the releasing member\'s participant name, or the acting orchestrator\'s principal label; the runtime derives it, and a caller-named value that is not the actor is refused', { ...AUTO('derived from the actor when you release') }),
     reason: STRING('why the coupling is released', { example: 'every active member arrived' }),
     expectedVersion: VERSION,
   }, { couplingId: 'sync-interface-freeze', coupling: 'synchronization', action: 'declare', groupId: 'group-reviewers', name: 'interface-freeze' }),
@@ -127,7 +128,7 @@ export const SWARM_EVENT_PAYLOAD_SCHEMAS = Object.freeze({
     contributionId: STRING('the contribution under review', { required: true, example: 'contribution-ada-1' }),
     decision: { type: 'string', enum: ['accept', 'reject', 'comment'], required: true,
       description: 'the review decision', expectation: 'one of accept, reject, comment', example: 'accept' },
-    reviewerId: STRING('the reviewer', { required: false, ...AUTO('your own participant identity; you cannot review under another name') }),
+    reviewerId: STRING('the acting identity that reviewed: your own participant name when a member reviews, or the acting orchestrator\'s principal label; the runtime derives it, and a caller-named identity that is not the actor is refused', { required: false, ...AUTO('derived from the actor; you cannot review under another name') }),
     reason: STRING('why this decision', { example: 'verified against the running deployment' }),
   }),
   'swarm.participant_left': KIND('remove one participant from the swarm', {

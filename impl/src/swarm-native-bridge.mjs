@@ -39,7 +39,7 @@ import { pathToFileURL } from 'node:url';
 import { FRAME_LIMITS, composeFrameLimitRefusal } from './limits.mjs';
 
 import { SWARM_COMMAND_NAMES as SWARM_COMMANDS, SWARM_COMMAND_DEFINITIONS,
-  SWARM_COMMAND_ROWS, SWARM_COMMAND_SCHEMAS, swarmCommandFieldSummary,
+  SWARM_COMMAND_ROWS, SWARM_COMMAND_SCHEMAS, swarmCommandFieldSummary, swarmIdentityKeyedCommand,
   validateSwarmCommand as validateSwarmCommandArgs } from './swarm-contract.mjs';
 import { swarmUpdatePayloadDetails } from './swarm-event-schemas.mjs';
 export { SWARM_COMMANDS, validateSwarmCommandArgs };
@@ -91,27 +91,42 @@ function bearerToken(header) {
   return match ? match[1] : null;
 }
 
-async function readBody(req, limitBytes, refusal) {
-  const chunks = [];
-  let total = 0;
-  for await (const chunk of req) {
-    total += chunk.length;
-    if (total > limitBytes) {
-      req.destroy();
-      throw refusal(total, 'request');
-    }
-    chunks.push(chunk);
-  }
-  return Buffer.concat(chunks);
+/** Read one request body under the frame ceiling. A body that exceeds it is refused WITHOUT
+ * tearing the connection down: the caller answers the typed 413 and destroys the socket only
+ * after that answer is on the wire, so a chunked over-cap request learns why instead of seeing
+ * ECONNRESET. The over-cap tail keeps draining (discarded, never buffered) meanwhile. */
+function readBody(req, limitBytes, refusal) {
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    let total = 0;
+    let refused = null;
+    req.on('data', (chunk) => {
+      if (refused) return;                      // draining the tail: over-cap bytes are discarded
+      total += chunk.length;
+      if (total > limitBytes) {
+        refused = refusal(total, 'request');
+        // The refusal raised MID-BODY: the caller answers it, then destroys the socket once that
+        // answer is flushed. The declared-content-length refusal never reads a body at all.
+        refused.streamedRequest = true;
+        reject(refused);
+        return;
+      }
+      chunks.push(chunk);
+    });
+    req.on('end', () => { if (!refused) resolve(Buffer.concat(chunks)); });
+    req.on('error', (cause) => { if (!refused) reject(cause); });
+  });
 }
 
-function sendJson(res, status, payload) {
+/** Write one JSON envelope. `onFlushed` runs once the response has been handed to the socket —
+ * the one place a request the bridge refused may be destroyed, never before its refusal is out. */
+function sendJson(res, status, payload, onFlushed = null) {
   if (res.writableEnded || res.destroyed) return;
   let body;
   try { body = Buffer.from(JSON.stringify(payload), 'utf8'); }
   catch { body = Buffer.from('{"ok":false,"error":{"message":"Swarm bridge response was not representable","code":"swarm_bridge_request_invalid","detail":{}}}', 'utf8'); }
   res.writeHead(status, { 'content-type': 'application/json; charset=utf-8', 'content-length': body.length });
-  res.end(body);
+  if (onFlushed) res.end(body, onFlushed); else res.end(body);
 }
 
 function errorPayload(error) {
@@ -219,7 +234,14 @@ export function createSwarmNativeBridge({
       const payload = errorPayload(error);
       const status = BRIDGE_ERROR_STATUS[payload.code]
         ?? (payload.code === 'swarm_bridge_dispatch_failed' ? 500 : 422); // runtime-owned refusals pass through as 422
-      sendJson(res, status, { ok: false, error: payload });
+      const envelope = { ok: false, error: payload };
+      // A refused REQUEST body is answered first and destroyed second: the caller of a frame the
+      // bridge will not buffer reads the typed refusal instead of a reset connection.
+      if (payload.code === 'swarm_bridge_frame_exceeded' && error?.streamedRequest === true) {
+        sendJson(res, status, envelope, () => req.destroy());
+      } else {
+        sendJson(res, status, envelope);
+      }
     }
   }
 
@@ -382,8 +404,14 @@ function bridgeHelpText(command = null) {
       `Identity comes from the environment: ${SWARM_BRIDGE_ENV_KEYS.url} and ${SWARM_BRIDGE_ENV_KEYS.token}`,
       `are required for real calls; ${SWARM_BRIDGE_ENV_KEYS.swarmId} auto-fills the swarmId argument.`,
       'Help itself needs none of them — it renders locally from the shared command contract.',
-      'Effectful commands mint an idempotencyKey when you omit one; the minted key is printed back as',
-      'commandReceipt.idempotencyKey so a retry can pass that key explicitly; result fields stay at the top level.',
+      'Effectful commands mint an idempotencyKey when you omit one and print it back as',
+      'commandReceipt.idempotencyKey. That key REPLAYS an operation that already completed;',
+      're-attempting under it is admitted only for swarm.recruit and swarm.holder_released — every',
+      'other command refuses /swarm_operation_unconfirmed/ until the attempt is reconciled, so a',
+      'NEW attempt needs a NEW key. swarm.capture and swarm.check take no key at all: their',
+      '(participantId, contributionId[, checkId]) coordinates are the identity.',
+      'A refusal is the command\'s answer: one JSON document ({ok:false,error:{message,code,detail}})',
+      'on STDOUT with a non-zero exit — the same stream a success envelope uses.',
     ].join('\n');
   }
   const row = SWARM_COMMAND_ROWS.find((entry) => entry.command === command);
@@ -400,8 +428,11 @@ function bridgeHelpText(command = null) {
     }
     const notes = [];
     if (field === 'swarmId') notes.push(`auto-filled from ${SWARM_BRIDGE_ENV_KEYS.swarmId}`);
-    if (field === 'idempotencyKey') notes.push('minted per call when omitted; pass it back explicitly to make a retry idempotent');
+    if (field === 'idempotencyKey') notes.push('minted per call when omitted; pass it back explicitly to replay that call, and use a NEW key for a new attempt');
     lines.push(`  ${field}${required ? '' : ' (optional)'} — ${expectation}${notes.length > 0 ? `; ${notes.join('; ')}` : ''}`);
+  }
+  if (swarmIdentityKeyedCommand(command)) {
+    lines.push('', 'Identity: one record per coordinate; the args above ARE the idempotency key, so an idempotencyKey is refused here.');
   }
   lines.push('', `Usage: node swarm-native-bridge.mjs ${command} '<json-args>'`);
   return lines.join('\n');
@@ -453,9 +484,11 @@ export async function swarmBridgeMain(argv = process.argv.slice(2), env = proces
     return 0;
   } catch (error) {
     const payload = errorPayload(error);
-    io.err.write(`${JSON.stringify({ ok: false, error: payload,
-      ...(mintedKey === null ? {} : { commandReceipt: { idempotencyKey: mintedKey } }),
-    }, null, 2)}\n`);
+    // A refusal is the command's answer, not a diagnostic: it leaves on the SAME stream as a
+    // success envelope — one JSON document per invocation, `ok:false` inside it — while the
+    // non-zero exit code carries the failure to a shell. No receipt is minted on this path: the
+    // key was spent by the attempt, and a fresh attempt needs a fresh key.
+    io.out.write(`${JSON.stringify({ ok: false, error: payload }, null, 2)}\n`);
     return 1;
   }
 }

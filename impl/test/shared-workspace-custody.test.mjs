@@ -256,12 +256,13 @@ test('T1 a recruited participant deliberately shares one live checkout as its ow
   assert.equal(attachment.workspaceId, ownerId);
   assert.equal(attachment.holderCount, 2);
 
-  // The swarm records the deliberate membership honestly; the allocator's own row predates any
-  // attachment and is not rewritten with a checkout it did not adopt.
+  // The swarm records the deliberate membership honestly, and the participant that OWNS the
+  // checkout is recorded in it too: a row naming no checkout left the exclusive-writer guard with
+  // nothing to compare (issue #292) — binding records the checkout its seat works in.
   const view = await inspect(app, 'shared');
   const row = (participantId) => view.participants.find((candidate) => candidate.participantId === participantId);
   assert.equal(row('builder').workspaceId, ownerId);
-  assert.equal(row('lead').workspaceId, null);
+  assert.equal(row('lead').workspaceId, ownerId, 'the checkout its own recruit created is recorded at binding');
 });
 
 test('T2 a stop detaches from a shared checkout and leaves the resource to the live holder', async (t) => {
