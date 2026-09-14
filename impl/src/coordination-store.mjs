@@ -7421,7 +7421,7 @@ export class CoordinationStore {
 
   _applyGoalPlanEvent(event) {
     const p = event.payload;
-    const malformed = (message = 'goal/plan event is malformed') => this._goalPlanFailure(message, 'goal_plan_integrity', true);
+    const malformed = (message = 'goal/plan event is malformed') => this._goalPlanFailure(`${message} (seq ${event.seq} kind ${event.kind} policy ${this._goalPlanPolicy?.policyDigest?.slice(0,8)} row ${JSON.stringify(event.payload).slice(0,700)})`, 'goal_plan_integrity', true);
     if (!this._goalPlanPolicy || !p || typeof p !== 'object' || Array.isArray(p) || p.schemaVersion !== 1) malformed();
     try {
       if (event.kind === 'goal.version_defined') {
