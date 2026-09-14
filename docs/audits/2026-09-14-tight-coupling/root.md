@@ -139,5 +139,35 @@ slow, it was abandoned when the stop gave up, and the dead worker keeps its loca
 until a drain or a restart. The named wait (#265 item 1) named exactly this; the deadline that
 abandons the cleanup is the defect (#265 item 3, #277). Recorded on #265.
 
-`tight-271`'s three stops, the lead's `lead.md`, and this section's completion are pending the
-landing verdict; the file is updated when they land.
+The lead published `lead.md` at 08:13:31Z, four minutes after the root's guide (captured as
+checkpoint `3d0c7a2e`, landed beside this file). The three stops at 08:30:23–27Z:
+
+| participant | checkout | stop |
+|---|---|---|
+| `projections` | owner of the shared checkout, `surface` still holding it | converged in 3 s (`swarm.operation_completed`) |
+| `surface` | non-owner of the shared checkout | converged in 1 s |
+| `lead` | owner of its own checkout | `kill.confirmed` in 0.15 s, `worktree.progress_checkpointed` at +1 s, then `control.stop_waiting_on {disposition: null, waiting: [disposition, local_resources:localAuthority, local_resources:worktree, local_resources:cleanupPending]}` at 90 s and `coordinator_run_stop_incomplete`; the checkout is still on disk |
+
+With the `flaky-257` sample and the `audit-a` stops on the other resident, the pattern is one
+sentence: **a participant that owns its checkout never converges on stop; one that shares
+another's converges in seconds.** Not load, not the git buffer (the status scan of the leaked
+checkout is 46 bytes; its node_modules is the projected seven-entry toolchain). The cleanup of an
+owned checkout either never starts or dies inside a swallowed catch, and `disposition: null` says
+the stop never assigned a disposition to a dead worker with holds. The named wait made the pattern
+legible in three lines per stop; the reproduction for the lane is "stop the sole owner of a
+checkout; assert the checkout is gone and the stop converged", which fails today on both residents
+(#265, #277). All three checkouts (`ws-5151…` lead, `ws-b833…` shared, `ws-2c2f…` flaky) remain
+after the swarm closed; whether the resident's restart reconciles them is recorded in the
+landing notes on #265.
+
+## 6. What the coupling exercise returned
+
+Issue #271 landed in two contributions under the declared records (`859df32c`, `abeae56a`): the
+view now carries guidance rows, guide receipts, workspace custody and seq/ts on every row, and a
+refused mutation is a durable, wake-capable `swarm.operation_refused` row — the runtime can now
+show a lead what this audit had to read from the ledger file. Of the seventeen audit issues, six
+gained live evidence from this swarm (#265, #273, #277, #284, #288, #292), and two were confirmed
+by a worker's report before the root read the code (#273's paused-guide receipt, #284's
+machine-local verdict). The root reviewed both contributions, completed both work items, released
+the gate and the writer, and stopped the swarm — every one of those records unattributed, which is
+the one line of this report the runtime should make impossible to write again.
