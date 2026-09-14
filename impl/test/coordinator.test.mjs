@@ -2115,6 +2115,20 @@ test('#268: workerActivity folds tool calls, messages, the last event and usage 
   assert.deepEqual({ at: activity.lastEventAt, kind: activity.lastEventKind }, { at: last.ts, kind: 'content.tool_call' });
   assert.deepEqual(activity.usage, { tokens: 1050, usd: 0.03, priced: true }, 'delta rows summed, cumulative rows taken at their latest value');
   assert.ok(activity.events >= 8);
+  assert.deepEqual(activity.nativeSubagents, { observed: 0, invocations: 0, terminal: 0, live: 0 }, 'no native children observed');
+  // #275: observed native children are counted on the activity row — seen, reached a terminal
+  // state, still live — from the same observations the native-subagent view reads.
+  const child = (subagentId, phase, status) => row('native.subagent_observed', {
+    harness: 'omp', nativeFrameType: 'subagent_lifecycle', parentWorker: handle.id, parentSessionId: 'session-1',
+    subagentId, phase, status, parentInvocationKey: 'omp:call-1', agentType: 'explorer',
+  });
+  child('sub-1', 'started', 'running');
+  child('sub-2', 'started', 'running');
+  child('sub-1', 'completed', 'completed');
+  const withChildren = coordinator.workerActivity(handle.id);
+  assert.equal(withChildren.nativeSubagents.observed, 2, 'two distinct native children were seen');
+  assert.equal(withChildren.nativeSubagents.live, 1, 'one is still running as far as the observations say');
+  assert.ok(withChildren.nativeSubagents.terminal >= 1, 'one reached a terminal state');
   assert.equal(coordinator.workerActivity('w-none'), null);
   const unpriced = setup();
   const second = await unpriced.coordinator.spawn('mock', makeBrief());

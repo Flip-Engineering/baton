@@ -2337,10 +2337,22 @@ export class Coordinator {
       last = event;
     }
     for (const row of cumulative.values()) { tokens += row.tokens; usd += row.usd; }
+    // Native subagents (#275): observed children the swarm does not govern — how many were seen,
+    // how many reached a terminal state, how many are still live as far as the observations say.
+    const native = nativeSubagentView(events);
+    const terminal = new Set(['completed', 'failed', 'stopped', 'cancelled', 'exited']);
+    const agentsLive = native.agents.filter((agent) => agent.state === 'started' || agent.state === 'running').length;
+    const invocationsTerminal = native.invocations.filter((row) => row.jobTerminal || row.invocationOk !== undefined).length;
     return Object.freeze({
       workerId, events: events.length, toolCalls, messages,
       lastEventAt: last?.ts ?? null, lastEventKind: last?.kind ?? null,
       usage: Object.freeze({ tokens, usd, priced: usd > 0 || tokens === 0 }),
+      nativeSubagents: Object.freeze({
+        observed: native.agents.length + native.unidentified.length,
+        invocations: native.invocations.length,
+        terminal: native.agents.filter((agent) => terminal.has(agent.state)).length + invocationsTerminal,
+        live: agentsLive,
+      }),
     });
   }
 

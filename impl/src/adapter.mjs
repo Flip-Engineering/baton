@@ -123,6 +123,11 @@ export function renderBrief(brief, dialect) {
     lines.push(JSON.stringify(brief.contextInput.value, null, 2));
   } else {
     lines.push('This task is already dispatched by Baton. Use your configured native harness tools, skills, context management and delegation to carry out the assigned work within its authority. Delegated participants inherit the same constraints. Any Baton tools listed here extend those native capabilities.');
+    // Two delegation mechanisms coexist (#275): the swarm governs recruits (permissions, capture,
+    // review, stop); a harness's native subagents are observed only. Say so where the choice is made.
+    lines.push(advertisesBatonTool
+      ? 'Delegation: recruit through the Baton swarm surface listed here (swarm.recruit) for work the swarm should be able to review, capture or stop; use your harness\'s native subagents only for short, disposable exploration — the swarm observes them but cannot govern or stop them.'
+      : 'Delegation: your harness\'s native subagents are observed by Baton but not governed by it — it cannot review, capture or stop them; keep them to short, disposable exploration and do the accountable work yourself.');
   }
   lines.push('## Write authority');
   lines.push('Harness permissions are execution capability, not write authority. Write only inside the assigned Baton worktree and only at the Path scope below. Never modify, move, chmod, delete, replace, or repair anything outside that authority, including the home directory, credentials, toolchains, shims, global configuration, or caches. Report an environmental blocker instead of repairing the host.');

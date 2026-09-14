@@ -329,7 +329,7 @@
         {
           "name": "workerActivity",
           "ordinal": 0,
-          "size": 26,
+          "size": 38,
           "seam": "surface",
           "evidence": [
             "surface:no_authority_touched"

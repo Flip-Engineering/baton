@@ -931,6 +931,17 @@ test('renderBrief tells Context recipients they are already supervised without i
   }
 });
 
+// #275: two delegation mechanisms coexist. The brief says which to use: recruit through the swarm
+// surface when it is advertised (governed), native subagents only for disposable exploration.
+test('renderBrief tells a worker when to recruit through the swarm and when native subagents are ungoverned (#275)', () => {
+  const advertised = renderBrief(makeBrief({ tools: ['baton_swarm_recruit'] }), 'claude');
+  assert.match(advertised, /Delegation: recruit through the Baton swarm surface listed here \(swarm\.recruit\)/u);
+  assert.match(advertised, /native subagents only for short, disposable exploration/u);
+  const bare = renderBrief(makeBrief({ tools: [] }), 'claude');
+  assert.match(bare, /Delegation: your harness's native subagents are observed by Baton but not governed by it/u);
+  assert.doesNotMatch(bare, /swarm\.recruit/u, 'no recruit advice without the surface to recruit through');
+});
+
 test('renderBrief decides the control-surface paragraph by registry membership of the advertised tools, never by substring (#267)', () => {
   const contextInput = { callId: `context-call:${'a'.repeat(64)}`, unitId: `context-unit:${'b'.repeat(64)}`, value: { finding: 'x' } };
   const advertised = renderBrief(makeBrief({ tools: ['baton_swarm_view'], contextInput }), 'claude');

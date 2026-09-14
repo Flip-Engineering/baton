@@ -283,6 +283,12 @@ test('renderPrompt gives Claude-family providers the complete structured verifie
   assert.doesNotMatch(p, /check your work: `npm`/u);
 });
 
+test('renderPrompt carries the same delegation guidance as the brief (#275)', () => {
+  const base = { goal: 'add rate limiting', constraints: [], pathScope: ['src/**'], definitionOfDone: 'tests pass', verification: { command: 'npm test', expectExit: 0 } };
+  assert.match(renderPrompt({ ...base, tools: ['baton_swarm_recruit'] }), /Delegation: recruit through the Baton swarm surface listed here \(swarm\.recruit\)/u);
+  assert.match(renderPrompt({ ...base, tools: [] }), /native subagents are observed by Baton but not governed by it/u);
+});
+
 test('renderPrompt decides the control-surface paragraph by registry membership of the advertised tools, never by substring (#267)', () => {
   const base = {
     goal: 'Review only the attached slice', constraints: [], pathScope: ['review.md'], definitionOfDone: 'one finding',

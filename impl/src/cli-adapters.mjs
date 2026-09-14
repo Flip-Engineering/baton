@@ -93,7 +93,9 @@ export function renderPrompt(brief) {
     ? (advertisesBatonTool
       ? 'This task is already dispatched by Baton. The attached immutable Context is the complete task input; do not inspect repository files, prior Run artifacts, receipts, or ledgers to reconstruct or broaden it. Writing a named output path does not authorize reading its preexisting contents. Orchestration actions may use only the Baton control surface explicitly listed in this Brief.'
       : 'This task is already dispatched and supervised by Baton. The attached immutable Context is the complete task input; do not inspect repository files, prior Run artifacts, receipts, or ledgers to reconstruct or broaden it. Writing a named output path does not authorize reading its preexisting contents. Do not search for or launch another Baton CLI, MCP server, or Run; use one only when this Brief explicitly advertises it.')
-    : 'This task is already dispatched by Baton. Perform the assigned work in this worktree and use only tools explicitly advertised in this Brief.';
+    : (advertisesBatonTool
+      ? 'This task is already dispatched by Baton. Perform the assigned work in this worktree and use only tools explicitly advertised in this Brief. Delegation: recruit through the Baton swarm surface listed here (swarm.recruit) for work the swarm should be able to review, capture or stop; use your harness\'s native subagents only for short, disposable exploration — the swarm observes them but cannot govern or stop them.'
+      : 'This task is already dispatched by Baton. Perform the assigned work in this worktree and use only tools explicitly advertised in this Brief. Delegation: your harness\'s native subagents are observed by Baton but not governed by it — it cannot review, capture or stop them; keep them to short, disposable exploration and do the accountable work yourself.');
   const lines = [
     `Task: ${brief.goal}`,
     dispatchGuidance,
