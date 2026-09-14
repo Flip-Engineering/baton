@@ -20,7 +20,7 @@ import { createHash } from 'node:crypto';
 import { mkdtempSync, rmSync, existsSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { verify, accept, SameWorktreeError } from '../src/referee.mjs';
+import { verify, accept, SameWorktreeError, withVerificationLane, defaultVerificationConcurrency } from '../src/referee.mjs';
 import { createFromBase, captureCommit, freshVerifySandbox } from '../src/worktree.mjs';
 import { MockAdapter } from '../src/adapter.mjs';
 
@@ -591,4 +591,39 @@ test('closed plan verification executes argv without a shell, strips ambient env
   assert.equal(failing.failureCapsule.kind, 'verification_failure_tail');
   assert.equal(failing.failureCapsule.capturedOutputDigest, failing.capturedOutputDigest);
   assert.equal(verdict.failureCapsule, null, 'a passing verdict carries no failure capsule, however much it printed');
+});
+
+// #269: one verification lane per deployment. Verifications queue in order behind the lane;
+// a rejection releases it; the lane count is derived from the machine unless configured.
+test('withVerificationLane runs at most `concurrency` verifications at once, in order, and a rejection releases the lane', async () => {
+  const gates = [];
+  const order = [];
+  const referee = (label) => new Promise((resolve, reject) => { order.push(`start:${label}`); gates.push({ label, resolve, reject }); });
+  const laned = withVerificationLane(referee, { concurrency: 1 });
+  assert.deepEqual({ concurrency: laned.lane.concurrency, running: laned.lane.running, queued: laned.lane.queued }, { concurrency: 1, running: 0, queued: 0 });
+  const first = laned('a'); const second = laned('b'); const third = laned('c');
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(order, ['start:a'], 'only the first verification starts');
+  assert.deepEqual({ running: laned.lane.running, queued: laned.lane.queued }, { running: 1, queued: 2 });
+  gates[0].reject(Object.assign(new Error('verifier refused'), { code: 'verification_spawn_unavailable' }));
+  await assert.rejects(first, { code: 'verification_spawn_unavailable' });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(order, ['start:a', 'start:b'], 'a rejection releases the lane to the next in order');
+  gates[1].resolve('b-done');
+  assert.equal(await second, 'b-done');
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(order, ['start:a', 'start:b', 'start:c']);
+  gates[2].resolve('c-done');
+  assert.equal(await third, 'c-done');
+  assert.deepEqual({ running: laned.lane.running, queued: laned.lane.queued }, { running: 0, queued: 0 });
+});
+
+test('the verification lane count is derived from the machine and only overridden explicitly', () => {
+  assert.equal(defaultVerificationConcurrency({ cores: 8 }), 1, 'the suite takes every core but one, so one lane');
+  assert.equal(defaultVerificationConcurrency({ cores: 8, verificationCores: 2 }), 4, 'a lighter verification earns more lanes');
+  assert.equal(defaultVerificationConcurrency({ cores: 1 }), 1);
+  assert.ok(withVerificationLane(async () => 'x').lane.concurrency >= 1, 'the default lane count is a positive integer on this machine');
+  assert.throws(() => withVerificationLane(async () => 'x', { concurrency: 0 }), /positive safe integer/u);
+  assert.throws(() => withVerificationLane(async () => 'x', { concurrency: 1.5 }), /positive safe integer/u);
+  assert.throws(() => withVerificationLane('not a function'), /requires a referee function/u);
 });

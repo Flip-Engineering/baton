@@ -11,6 +11,7 @@
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
+import { availableParallelism } from 'node:os';
 import { dirname, isAbsolute, resolve, sep } from 'node:path';
 import { verifierFailureCapsule } from './verifier-diagnostics.mjs';
 
@@ -35,6 +36,45 @@ export function prepareVerificationRuntime(policy) {
   const authority = { schemaVersion: 1, pathEntries, constants };
   const environment = Object.freeze({ ...constants, PATH: pathEntries.join(':') });
   return Object.freeze({ authority: Object.freeze(authority), environment, digest: createHash('sha256').update(JSON.stringify(canonical(authority))).digest('hex') });
+}
+
+/** How many verifications a deployment runs at once. Derived from the machine, not chosen: the
+ * default verification (the suite) uses every core but one, so the lane count is the cores the
+ * machine has divided by the cores one verification takes — one, on any machine with two or
+ * more cores. `advanced.verification.concurrency` overrides it for a verification that is known
+ * to be lighter. Issue #269: without this, every swarm.check and every run verification spawned
+ * its own full suite and three of them drove a load average past 140. */
+export function defaultVerificationConcurrency({ cores = availableParallelism(), verificationCores = Math.max(1, cores - 1) } = {}) {
+  return Math.max(1, Math.floor(cores / Math.max(1, verificationCores)));
+}
+
+/** Wrap a referee so at most `concurrency` verifications run at once; the rest wait in order.
+ * The wrapper exposes `lane` ({concurrency, running, queued}) so a caller can record that a
+ * check is waiting instead of letting a slow machine look like a slow verifier. */
+export function withVerificationLane(referee, { concurrency } = {}) {
+  if (typeof referee !== 'function') throw new TypeError('withVerificationLane requires a referee function');
+  const lanes = concurrency === undefined ? defaultVerificationConcurrency() : concurrency;
+  if (!Number.isSafeInteger(lanes) || lanes <= 0) throw new TypeError('verification concurrency must be a positive safe integer');
+  let running = 0;
+  const waiting = [];
+  const admit = () => new Promise((resolve) => {
+    if (running < lanes) { running += 1; resolve(); return; }
+    waiting.push(resolve);
+  });
+  const release = () => {
+    const next = waiting.shift();
+    if (next) next(); else running -= 1;
+  };
+  const laned = async (...args) => {
+    await admit();
+    try { return await referee(...args); } finally { release(); }
+  };
+  laned.lane = Object.freeze({
+    get concurrency() { return lanes; },
+    get running() { return running; },
+    get queued() { return waiting.length; },
+  });
+  return laned;
 }
 
 export function defaultVerificationRuntime() {

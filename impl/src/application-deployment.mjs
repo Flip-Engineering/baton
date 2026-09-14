@@ -281,13 +281,17 @@ function publicRoute(route) {
 
 function normalizeVerification(value, repoRoot) {
   if (value !== undefined) {
-    closed(value, ['arguments', 'command'], 'advanced verification');
+    closed(value, ['arguments', 'command', 'concurrency'], 'advanced verification');
     if (typeof value.command !== 'string' || value.command.length === 0 || value.command.includes('\0')
       || !Array.isArray(value.arguments) || value.arguments.length > 64
-      || value.arguments.some((argument) => typeof argument !== 'string' || argument.includes('\0'))) {
+      || value.arguments.some((argument) => typeof argument !== 'string' || argument.includes('\0'))
+      || (value.concurrency !== undefined && (!Number.isSafeInteger(value.concurrency) || value.concurrency <= 0))) {
       throw deploymentError('advanced verification is invalid');
     }
-    return Object.freeze({ command: value.command, arguments: [...value.arguments] });
+    // `concurrency`: how many verifications this deployment runs at once. Omitted, the lane count
+    // is derived from the machine (referee.mjs defaultVerificationConcurrency); a verification
+    // known to be lighter than the suite may raise it.
+    return Object.freeze({ command: value.command, arguments: [...value.arguments], ...(value.concurrency === undefined ? {} : { concurrency: value.concurrency }) });
   }
   if (existsSync(join(repoRoot, 'impl', 'package.json'))) {
     return Object.freeze({ command: 'npm', arguments: ['test', '--prefix', 'impl'] });
@@ -2077,6 +2081,7 @@ export async function openBatonDeployment(rawOptions, createDriver) {
     // layer confusion in v0.9 is corrected; the stall watchdog is issue #67).
     progressNudgeWindowMs: 300_000,
     drainPolicy: { maxWorkers: 64, timeoutMs: 90_000, pollMs: 10 },
+    ...(verification.concurrency === undefined ? {} : { verificationConcurrency: verification.concurrency }),
     budgetPolicy: { terminalGraceMs: 2_000, ...budgetPolicy },
     // D1: the stall budget no longer derives from DEFAULT_BUDGET.wallMin — it is the separately
     // frozen DEFAULT_WATCHDOG (20 min < 480 min wall), admission-checked at createDriver.

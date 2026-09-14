@@ -101,6 +101,14 @@ export class ContributionService {
     this.record('contribution.check_started', {
       contributionId, checkId, sha: captured.sha, ref: captured.ref,
     }, handle, task);
+    // The deployment's verification lane is full: say so durably, so a waiting check reads as a
+    // queue position and not as a slow verifier (#269).
+    const lane = this.referee?.lane ?? null;
+    if (lane && lane.running >= lane.concurrency) {
+      this.record('contribution.check_queued', {
+        contributionId, checkId, position: lane.queued + 1, running: lane.running, concurrency: lane.concurrency,
+      }, handle, task);
+    }
     try {
       checked = await verifyContribution({
         worktrees: this.worktrees, referee: this.referee, task: source,

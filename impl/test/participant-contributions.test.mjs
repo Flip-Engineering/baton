@@ -7,6 +7,7 @@ import { Coordinator } from '../src/coordinator.mjs';
 import { Log } from '../src/log.mjs';
 import { FenceTable } from '../src/fence.mjs';
 import { coordinationForLog } from '../src/coordination-store.mjs';
+import { withVerificationLane } from '../src/referee.mjs';
 
 const SHA = 'a'.repeat(40);
 const BASE = 'b'.repeat(40);
@@ -50,7 +51,8 @@ async function fixture(t, { referee, capture } = {}) {
   const coordination = coordinationForLog(log);
   const coordinator = new Coordinator({ log, coordination, fences: new FenceTable(),
     adapters: { mock: adapter }, worktrees, route: () => 'mock', now: () => 0,
-    referee: async (...args) => {
+    // A laned referee (withVerificationLane) is installed as-is so the coordinator sees its lane.
+    referee: referee?.lane ? referee : async (...args) => {
       checks++;
       if (referee) return referee(...args);
       return { reverified: true, observedExit: 0, passed: true, matchesClaim: true, locus: 'fresh_sandbox' };
@@ -238,4 +240,25 @@ test('queued guidance resolves a turn that pauses while an earlier delivery is i
   assert.equal(f.coordinator.pausedTurns({ workerId: f.handle.id }).length, 0);
   const resumed = f.log.read(f.handle.id).filter((event) => event.kind === 'turn.settled').at(-1);
   assert.equal(resumed.actor, 'peer-reviewer');
+});
+
+// #269: when the deployment's verification lane is full, a check says so durably (position in
+// the queue) instead of looking like a slow verifier; it still runs, in order, once the lane frees.
+test('a check that waits for the verification lane records contribution.check_queued with its position', async (t) => {
+  const gate = deferred();
+  const referee = withVerificationLane(async () => { await gate.promise; return { reverified: true, observedExit: 0, passed: true, matchesClaim: true, locus: 'fresh_sandbox' }; }, { concurrency: 1 });
+  const f = await fixture(t, { referee });
+  await f.coordinator.captureContribution(f.handle.id, { contributionId: 'first' });
+  const one = f.coordinator.checkContribution(f.handle.id, { contributionId: 'first', checkId: 'check-1' });
+  while (referee.lane.running === 0) await new Promise((resolve) => setImmediate(resolve));
+  const two = f.coordinator.checkContribution(f.handle.id, { contributionId: 'first', checkId: 'check-2' });
+  while (referee.lane.queued === 0) await new Promise((resolve) => setImmediate(resolve));
+  const queued = f.log.read(f.handle.id).filter((event) => event.kind === 'contribution.check_queued');
+  assert.equal(queued.length, 1, 'only the waiting check is recorded as queued');
+  assert.deepEqual(queued[0].payload, { contributionId: 'first', checkId: 'check-2', position: 1, running: 1, concurrency: 1 });
+  gate.resolve();
+  const [firstReceipt, secondReceipt] = await Promise.all([one, two]);
+  assert.equal(firstReceipt.passed, true);
+  assert.equal(secondReceipt.passed, true);
+  assert.deepEqual({ running: referee.lane.running, queued: referee.lane.queued }, { running: 0, queued: 0 });
 });

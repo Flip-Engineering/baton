@@ -14,7 +14,7 @@ import { FenceTable } from './fence.mjs';
 import { Coordinator } from './coordinator.mjs';
 export { WorkerPolicySelectionError } from './coordinator.mjs';
 import * as worktreeMod from './worktree.mjs';
-import { verify, accept, defaultVerificationRuntime, prepareVerificationRuntime } from './referee.mjs';
+import { verify, accept, defaultVerificationRuntime, prepareVerificationRuntime, withVerificationLane } from './referee.mjs';
 import { AdaptiveRouter } from './router.mjs';
 import { StoryCompiler } from './story.mjs';
 import { RuntimeIsolation } from './runtime-isolation.mjs';
@@ -147,7 +147,7 @@ export { GrokAcpCli } from './grok-acp.mjs';
 export { OmpRpcCli, OmpRpcProcess } from './omp-rpc.mjs';
 export { AcpJsonRpcProcess, AcpProtocolError, AcpSetupTimeoutError } from './acp-json-rpc-process.mjs';
 export { createBrief } from './messages.mjs';
-export { verify, accept, defaultVerificationRuntime, prepareVerificationRuntime } from './referee.mjs';
+export { verify, accept, defaultVerificationRuntime, prepareVerificationRuntime, withVerificationLane, defaultVerificationConcurrency } from './referee.mjs';
 export { AdaptiveRouter } from './router.mjs';
 export { parseRouteTupleKey, routeTupleKey, resolveEffort } from './route-tuple.mjs';
 export {
@@ -1221,6 +1221,10 @@ export function createDriver(opts) {
   const verificationRuntime = opts.verificationRuntime === undefined
     ? defaultVerificationRuntime()
     : prepareVerificationRuntime(opts.verificationRuntime);
+  if (opts.verificationConcurrency !== undefined
+    && (!Number.isSafeInteger(opts.verificationConcurrency) || opts.verificationConcurrency <= 0)) {
+    throw new TypeError('verificationConcurrency must be a positive safe integer');
+  }
   const providerGovernance = opts.providerGovernance === undefined
     ? null
     : normalizeProviderGovernancePolicy(opts.providerGovernance, Object.keys(opts.adapters ?? {}));
@@ -1601,7 +1605,9 @@ export function createDriver(opts) {
       if (dirty) throw Object.assign(new Error('reuse decisions require a clean effective tree'), { code: 'reuse_tree_dirty' });
       return { repoId: opts.repoId, treeSha: localGit(['rev-parse', 'HEAD'], opts.repoRoot, { encoding: 'utf8' }).trim(), indexEpoch, overlayDigest: overlayDigest ?? null, lockfileDigest };
     },
-    referee: refereeFn.bind(null, verificationRuntime),
+    // One verification lane per deployment (#269): every run verification and contribution check
+    // queues behind it instead of each spawning its own full suite.
+    referee: withVerificationLane(refereeFn.bind(null, verificationRuntime), { concurrency: opts.verificationConcurrency }),
     verificationRuntimeDigest: verificationRuntime.digest,
     route,
     accept: (verdict, acceptOpts) => accept(verdict, acceptOpts),
