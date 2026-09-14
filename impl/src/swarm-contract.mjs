@@ -8,6 +8,7 @@ export const SWARM_EVENT_KINDS = Object.freeze([
   'swarm.group_updated',
   'swarm.work_updated',
   'swarm.assignment_updated',
+  'swarm.holder_released',
   'swarm.context_updated',
   'swarm.contribution_recorded',
   'swarm.contribution_reviewed',
@@ -40,7 +41,7 @@ export const SWARM_COMMAND_DEFINITIONS = Object.freeze({
     web: true, mcp: true, mcpStateful: true, reconcilable: true,
   }),
   'swarm.view': Object.freeze({
-    args: Object.freeze(['swarmId']),
+    args: Object.freeze(['swarmId', 'participantId']),
     capabilities: Object.freeze(['observe']),
     web: true, mcp: true, mcpStateful: false, reconcilable: true,
   }),
@@ -184,7 +185,7 @@ const SWARM_COMMAND_ARGUMENTS = Object.freeze({
     required: Object.freeze(['purpose', 'idempotencyKey']),
     optional: Object.freeze(['swarmId']),
   }),
-  'swarm.view': Object.freeze({ required: Object.freeze(['swarmId']), optional: Object.freeze([]) }),
+  'swarm.view': Object.freeze({ required: Object.freeze(['swarmId']), optional: Object.freeze(['participantId']) }),
   'swarm.watch': Object.freeze({
     required: Object.freeze(['swarmId']),
     optional: Object.freeze(['afterSeq', 'timeoutMs']),
@@ -345,9 +346,9 @@ export const SWARM_COMMAND_ROWS = Object.freeze([
   }),
   Object.freeze({
     command: 'swarm.view',
-    description: "Read one swarm's authoritative membership, work, shared context, contributions, reviews, caller authority, and available actions.",
+    description: "Read one swarm's authoritative membership, work, shared context, contributions, reviews, caller authority, and available actions; an optional participantId scopes the read to that participant's delegation — its subtree, the work assigned within, their contributions and reviews, and the delegation completion.",
     readOnlyHint: true, destructiveHint: false,
-    properties: Object.freeze({ swarmId: ID_SCHEMA }),
+    properties: Object.freeze({ swarmId: ID_SCHEMA, participantId: ID_SCHEMA }),
     required: Object.freeze(['swarmId']),
   }),
   Object.freeze({
@@ -359,7 +360,7 @@ export const SWARM_COMMAND_ROWS = Object.freeze([
   }),
   Object.freeze({
     command: 'swarm.update',
-    description: 'Apply one swarm domain update — group, work, assignment, shared context, contribution, review, participant leave, or close — and return the updated inspect view.',
+    description: 'Apply one swarm domain update — group, work, assignment, holder release, shared context, contribution, review, participant leave, or close — and return the updated inspect view.',
     readOnlyHint: false, destructiveHint: false,
     properties: Object.freeze({ swarmId: ID_SCHEMA, event: EVENT_SCHEMA,
       payload: Object.freeze({ ...BODY_SCHEMA, description: swarmUpdatePayloadSummary() }) }),
