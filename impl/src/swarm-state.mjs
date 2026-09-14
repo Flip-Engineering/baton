@@ -223,6 +223,17 @@ export function validateSwarmEvent(kind, payload) {
       refuse(`work status must be one of: ${SWARM_WORK_STATUSES.join(', ')}`, 'invalid_payload');
     }
     validOptionalNonNegativeInt(p.expectedVersion, 'work expectedVersion', refuse);
+    // Completion evidence cited by the runtime's completion rule (issue #263). Shape-only here:
+    // the fold ignores `basis` (the accepted-contribution records stay the durable evidence), so
+    // logs written before the field existed replay identically.
+    if (p.basis !== undefined) {
+      if (!p.basis || typeof p.basis !== 'object' || Array.isArray(p.basis)) {
+        refuse('work basis must be an object when present', 'invalid_payload');
+      }
+      if (!Array.isArray(p.basis.contributionIds) || !p.basis.contributionIds.every(isNonEmptyString)) {
+        refuse('work basis must cite contributionIds as non-empty strings', 'invalid_payload');
+      }
+    }
     return;
   }
   if (kind === 'swarm.assignment_updated') {

@@ -99,7 +99,8 @@ test('a delegated subtree: dead workers, orphaned delegations, departed members 
   assert.equal(driver.coordinator.pausedTurns({ workerId: alphaWorker.id }).length >= 0, true);
   assert.deepEqual(kinds(view).sort(), ['assignment_holder_gone', 'participant_runtime_dead']);
   assert.deepEqual(view.attention.find((row) => row.kind === 'assignment_holder_gone'),
-    { kind: 'assignment_holder_gone', assignmentId: 'as-alpha', participantId: 'alpha', workId: 'W-A' });
+    { kind: 'assignment_holder_gone', assignmentId: 'as-alpha', participantId: 'alpha', workId: 'W-A',
+      next: { event: 'swarm.holder_released', participantId: 'alpha' } });
 
   // The lead leaves organizationally: its process keeps running (a named fact) and beta's
   // delegation has no living parent.
@@ -125,8 +126,11 @@ test('work updates: a status-only update keeps the recorded objective, new work 
   const { root } = await fixture(t);
   const swarm = await root.swarms.create('Work truth');
   await swarm.work({ workId: 'W', objective: 'Do the thing', status: 'open' });
-  const updated = await swarm.work({ workId: 'W', status: 'completed' });
-  assert.equal(updated.work.W.status, 'completed');
+  // Completion now demands evidence (issue #263); a status-only update on a live work item keeps
+  // the recorded objective all the same.
+  await assert.rejects(swarm.work({ workId: 'W', status: 'completed' }), { code: 'swarm_completion_unproven' });
+  const updated = await swarm.work({ workId: 'W', status: 'open' });
+  assert.equal(updated.work.W.status, 'open');
   assert.equal(updated.work.W.objective, 'Do the thing', 'the recorded objective survives a status-only update');
   await assert.rejects(swarm.work({ workId: 'W-new', status: 'open' }), { code: 'swarm_payload_invalid' });
   await assert.rejects(swarm.work({ workId: 'W2', objective: 'Depends', status: 'open', dependsOn: ['W'] }),

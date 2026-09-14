@@ -2,15 +2,26 @@ import { validateSwarmCommand } from './swarm-contract.mjs';
 import { createHash } from 'node:crypto';
 import { canonicalJson } from './canonical-order.mjs';
 import { SWARM_EVENT_PAYLOAD_SCHEMAS, SWARM_EVENT_EXAMPLES } from './swarm-event-schemas.mjs';
+import { foldSwarmEvent } from './swarm-state.mjs';
 
 const clone = (value) => structuredClone(value);
 const hash = (value) => createHash('sha256').update(JSON.stringify(canonicalJson(value))).digest('hex');
 const refuse = (message, code, detail = {}) => { throw Object.assign(new Error(message), { code, detail }); };
+const childrenByParent = (swarm) => {
+  const childrenOf = new Map();
+  for (const participant of Object.values(swarm.participants)) {
+    if (!participant.parentId) continue;
+    if (!childrenOf.has(participant.parentId)) childrenOf.set(participant.parentId, []);
+    childrenOf.get(participant.parentId).push(participant.participantId);
+  }
+  return childrenOf;
+};
 export const SWARM_PERMISSIONS = Object.freeze(['read', 'communicate', 'contribute', 'review', 'organize', 'recruit', 'stop']);
 const DEFAULT_PERMISSIONS = Object.freeze(['read', 'communicate', 'contribute']);
 const UPDATE_PERMISSIONS = Object.freeze({
   'swarm.group_updated': 'organize', 'swarm.work_updated': 'organize',
-  'swarm.assignment_updated': 'organize', 'swarm.context_updated': 'communicate',
+  'swarm.assignment_updated': 'organize', 'swarm.holder_released': 'organize',
+  'swarm.context_updated': 'communicate',
   'swarm.contribution_recorded': 'contribute', 'swarm.contribution_reviewed': 'review',
   'swarm.participant_left': 'organize', 'swarm.closed': 'organize',
 });
@@ -150,18 +161,103 @@ export class SwarmRuntime {
     finally { this.pending.delete(key); }
   }
 
-  inspect(swarm, principal, context) {
+  /** The participant's current worker, or null when unbound — the ONE lookup inspect and the
+   * holder-release eligibility check share, so "gone" means the same thing everywhere. */
+  _workerFor(participant, workers) {
+    return workers.find((row) => row.runId === participant.runId
+      && (!participant.bindings.length || row.id === participant.bindings.at(-1)?.workerId)) ?? null;
+  }
+
+  /** One contribution is accepted evidence when a review accepts it and no LATER review on the
+   * same contribution rejects it: reviews append in log order, so append order is review order. */
+  _acceptedContribution(swarm, contributionId) {
+    const reviews = swarm.reviews?.[contributionId] ?? [];
+    const lastIndex = (decision) => reviews.map((review) => review.decision).lastIndexOf(decision);
+    const accept = lastIndex('accept');
+    return accept >= 0 && accept > lastIndex('reject');
+  }
+
+  /** Evidence per work item (issue #263 item 1): the contributions that reference the work via
+   * workId, the subset carrying an unrevoked accept, and whether completion derives from them. */
+  _workEvidence(swarm) {
+    const byWork = new Map();
+    for (const contribution of Object.values(swarm.contributions ?? {})) {
+      if (!contribution.workId) continue;
+      if (!byWork.has(contribution.workId)) byWork.set(contribution.workId, []);
+      byWork.get(contribution.workId).push(contribution.contributionId);
+    }
+    return (workId) => {
+      const contributions = (byWork.get(workId) ?? []).sort();
+      const accepted = contributions.filter((id) => this._acceptedContribution(swarm, id));
+      return { contributions, accepted, derivedComplete: accepted.length > 0 };
+    };
+  }
+
+  /** The participant plus every descendant transitively by parentId — the scope one name covers. */
+  _subtreeOf(swarm, rootId) {
+    const childrenOf = childrenByParent(swarm);
+    const children = (id) => (childrenOf.get(id) ?? []).sort();
+    const seen = new Set();
+    const queue = children(rootId);
+    while (queue.length) {
+      const current = queue.shift();
+      if (seen.has(current)) continue;
+      seen.add(current);
+      queue.push(...children(current));
+    }
+    return [rootId, ...[...seen].sort()];
+  }
+
+  /** Delegation truth per participant (issue #263 item 1): the direct children, the work actively
+   * assigned within the participant's subtree, and whether that delegation is complete — every
+   * assigned work item completed, and every still-active child either done (it holds no active
+   * assignment) or departed (its membership ended). A live child still holding a seat keeps the
+   * delegation open; releasing its seats (swarm.holder_released) is what closes it. */
+  _delegations(swarm) {
+    const childrenOf = childrenByParent(swarm);
+    const children = (id) => (childrenOf.get(id) ?? []).sort();
+    const activeWorkByHolder = new Map();
+    for (const assignment of Object.values(swarm.assignments ?? {})) {
+      if (assignment.status !== 'active') continue;
+      if (!activeWorkByHolder.has(assignment.participantId)) activeWorkByHolder.set(assignment.participantId, new Set());
+      activeWorkByHolder.get(assignment.participantId).add(assignment.workId);
+    }
+    const delegations = new Map();
+    for (const participant of Object.values(swarm.participants)) {
+      const subtree = this._subtreeOf(swarm, participant.participantId);
+      const work = [...new Set(subtree.flatMap((id) => [...(activeWorkByHolder.get(id) ?? [])]))].sort();
+      delegations.set(participant.participantId, {
+        children: children(participant.participantId),
+        work,
+        complete: work.every((workId) => swarm.work?.[workId]?.status === 'completed')
+          && children(participant.participantId).every((childId) => swarm.participants[childId].status !== 'active'
+            || !activeWorkByHolder.has(childId)),
+      });
+    }
+    return delegations;
+  }
+
+  inspect(swarm, principal, context, scopeId = null) {
     const caller = this._permit(swarm, principal, context, 'read');
+    // An optional participantId scopes the read to that participant's delegation (issue #263
+    // item 3): its subtree, the work actively assigned within, their contributions and reviews.
+    const scope = scopeId ? this._participant(swarm, scopeId) : null;
+    const scopeSubtree = scope ? this._subtreeOf(swarm, scope.participantId) : null;
+    const scopeWorkIds = scope ? new Set(Object.values(swarm.assignments ?? {})
+      .filter((assignment) => assignment.status === 'active' && scopeSubtree.includes(assignment.participantId))
+      .map((assignment) => assignment.workId)) : null;
     const permissions = caller?.permissions ?? (caller ? DEFAULT_PERMISSIONS : SWARM_PERMISSIONS);
     const workers = this.coordinator.list();
+    const delegations = this._delegations(swarm);
+    const evidenceFor = this._workEvidence(swarm);
     const participants = Object.values(swarm.participants).map((participant) => {
-      const worker = workers.find((row) => row.runId === participant.runId
-        && (!participant.bindings.length || row.id === participant.bindings.at(-1)?.workerId));
+      const worker = this._workerFor(participant, workers);
       const paused = worker ? this.coordinator.pausedTurns({ workerId: worker.id }) : [];
       // A turn is paused only while the worker that paused it is alive: a dead or exited
       // worker's leftover pause record is history, not a turn a guide could resume.
       const alive = worker && ['working', 'blocked', 'pending', 'idle', 'stopping'].includes(worker.status);
-      return { ...clone(participant), native: worker && this.coordinator.observedNativeSubagents
+      return { ...clone(participant), delegation: delegations.get(participant.participantId) ?? null,
+        native: worker && this.coordinator.observedNativeSubagents
         ? this.coordinator.observedNativeSubagents(worker.id)
         : { coverage: 'observed_only', agents: [], invocations: [], unidentified: [] }, runtime: {
         workerId: worker?.id ?? null, state: worker?.status ?? 'unbound',
@@ -171,6 +267,7 @@ export class SwarmRuntime {
     // Organization truth an orchestrator would otherwise assemble by hand: members whose process
     // is gone, sessions that outlived their membership, delegations whose parent is gone, work
     // still assigned to a participant who cannot do it, and a closed swarm that still runs.
+    // A row naming a recoverable holder carries the release operation as its next step.
     const organization = [];
     const gone = (row) => row.status !== 'active' || ['dead', 'exited', 'unbound'].includes(row.runtime.state);
     for (const row of participants) {
@@ -182,25 +279,43 @@ export class SwarmRuntime {
       }
       if (row.parentId && row.status === 'active') {
         const parent = participants.find((candidate) => candidate.participantId === row.parentId);
-        if (!parent || gone(parent)) organization.push({ kind: 'delegation_orphaned', participantId: row.participantId, parentId: row.parentId });
+        if (!parent || gone(parent)) {
+          organization.push({ kind: 'delegation_orphaned', participantId: row.participantId, parentId: row.parentId,
+            next: { event: 'swarm.holder_released', participantId: row.parentId } });
+        }
       }
     }
     for (const assignment of Object.values(swarm.assignments ?? {})) {
       if (assignment.status !== 'active') continue;
       const holder = participants.find((row) => row.participantId === assignment.participantId);
-      if (!holder || gone(holder)) organization.push({ kind: 'assignment_holder_gone', assignmentId: assignment.assignmentId, participantId: assignment.participantId, workId: assignment.workId });
+      if (!holder || gone(holder)) {
+        organization.push({ kind: 'assignment_holder_gone', assignmentId: assignment.assignmentId,
+          participantId: assignment.participantId, workId: assignment.workId,
+          next: { event: 'swarm.holder_released', participantId: assignment.participantId } });
+      }
     }
     if (swarm.status !== 'open' && participants.some((row) => row.status === 'active' && !gone(row))) {
       organization.push({ kind: 'closed_with_live_participants', participantIds: participants.filter((row) => row.status === 'active' && !gone(row)).map((row) => row.participantId) });
     }
     const operations = this.store.eventsView().filter((event) => event.kind === 'driver.recorded'
       && event.payload.swarmId === swarm.swarmId && event.payload.kind === 'swarm.operation_requested');
-    const attention = operations.filter((event) => !this.store.priorCoordinationEvent(`${event.idempotencyKey}:completed`))
-      .map((event) => ({ kind: 'operation_unconfirmed', command: event.payload.command, request: clone(event.payload.request),
-        state: this.pending.has(event.idempotencyKey) ? 'in_progress' : 'unconfirmed',
-        code: this.store.priorCoordinationEvent(`${event.idempotencyKey}:unavailable`)?.payload.code ?? null,
-      }));
-    attention.push(...organization);
+    const attention = [
+      ...operations.filter((event) => !this.store.priorCoordinationEvent(`${event.idempotencyKey}:completed`))
+        .map((event) => ({ kind: 'operation_unconfirmed', command: event.payload.command, request: clone(event.payload.request),
+          state: this.pending.has(event.idempotencyKey) ? 'in_progress' : 'unconfirmed',
+          code: this.store.priorCoordinationEvent(`${event.idempotencyKey}:unavailable`)?.payload.code ?? null,
+        })),
+      ...organization,
+    ];
+    // A scoped view reports only the rows its subtree can act on.
+    const scopedAttention = !scope ? attention : attention.flatMap((row) => {
+      if (row.kind === 'operation_unconfirmed') return [row];
+      if (row.kind === 'closed_with_live_participants') {
+        const within = row.participantIds.filter((id) => scopeSubtree.includes(id));
+        return within.length ? [{ ...row, participantIds: within }] : [];
+      }
+      return scopeSubtree.includes(row.participantId) ? [row] : [];
+    });
     const availableActions = Object.entries(COMMAND_PERMISSIONS)
       .filter(([, permission]) => permissions.includes(permission)).map(([command]) => command);
     if (permissions.includes('contribute') && !availableActions.includes('swarm.check')) availableActions.push('swarm.check');
@@ -211,10 +326,26 @@ export class SwarmRuntime {
     if (updates.length) availableActions.push('swarm.update');
     const contributionTargets = permissions.includes('review') ? participants.map((row) => row.participantId)
       : permissions.includes('contribute') && caller ? [caller.participantId] : [];
+    // Work rows carry their derived evidence; the other collections are scoped, not rewritten.
+    const workEntries = Object.entries(swarm.work ?? {})
+      .map(([workId, row]) => [workId, { ...clone(row), evidence: evidenceFor(workId) }]);
+    const contributionEntries = Object.entries(swarm.contributions ?? {});
+    const scopedContributionIds = scope ? new Set(contributionEntries
+      .filter(([, contribution]) => contribution.workId && scopeWorkIds.has(contribution.workId))
+      .map(([contributionId]) => contributionId)) : null;
+    const keep = (entries, predicate) => Object.fromEntries(scope ? entries.filter(predicate) : entries);
     return {
-      ...clone(swarm), participants,
+      ...clone(swarm),
+      participants: scope ? participants.filter((row) => scopeSubtree.includes(row.participantId)) : participants,
+      work: keep(workEntries, ([workId]) => scopeWorkIds.has(workId)),
+      assignments: keep(Object.entries(swarm.assignments ?? {}), ([, assignment]) => scopeSubtree.includes(assignment.participantId)
+        || scopeWorkIds.has(assignment.workId)),
+      contributions: keep(contributionEntries, ([, contribution]) => Boolean(contribution.workId)
+        && scopeWorkIds.has(contribution.workId)),
+      reviews: keep(Object.entries(swarm.reviews ?? {}), ([contributionId]) => scopedContributionIds.has(contributionId)),
+      groups: keep(Object.entries(swarm.groups ?? {}), ([, group]) => group.members.every((member) => scopeSubtree.includes(member))),
       caller: { participantId: caller?.participantId ?? null, permissions: [...permissions] },
-      availableActions, attention,
+      availableActions, attention: scopedAttention,
       actionTargets: {
         'swarm.capture': { participantIds: contributionTargets },
         'swarm.check': { participantIds: contributionTargets },
@@ -267,6 +398,82 @@ export class SwarmRuntime {
     }
   }
 
+  /** Completion is derived from evidence (docs/39 §Claims; issue #263 item 1). An organizer may
+   * set status completed when the derivation already holds — an accepted contribution references
+   * the work — or when the update cites its basis: contributionIds naming accepted contributions
+   * that reference the work (by workId or refs). Anything else refuses, naming what is missing. */
+  _requireCompletionEvidence(swarm, payload) {
+    const evidence = this._workEvidence(swarm)(payload.workId);
+    if (evidence.derivedComplete) return;
+    const cited = payload.basis?.contributionIds;
+    if (!Array.isArray(cited) || cited.length === 0) {
+      refuse('Work completion is unproven: no accepted contribution references this work. Record an accept review on a contribution that names it, or cite accepted contributions with basis.contributionIds.',
+        'swarm_completion_unproven', { workId: payload.workId, accepted: evidence.accepted });
+    }
+    const problems = cited.map((contributionId) => {
+      const contribution = Object.hasOwn(swarm.contributions ?? {}, contributionId)
+        ? swarm.contributions[contributionId] : null;
+      if (!contribution) return { contributionId, problem: 'unknown contribution' };
+      if (contribution.workId !== payload.workId && !(contribution.refs ?? []).includes(payload.workId)) {
+        return { contributionId, problem: 'does not reference this work' };
+      }
+      if (!this._acceptedContribution(swarm, contributionId)) return { contributionId, problem: 'no unrevoked accept review' };
+      return null;
+    }).filter(Boolean);
+    if (problems.length) {
+      refuse('Work completion is unproven: the cited basis does not evidence this work',
+        'swarm_completion_unproven', { workId: payload.workId, problems });
+    }
+  }
+
+  /** Issue #263 item 2 — the organizer release operation. A participant whose runtime is dead or
+   * exited, or whose status is left, keeps its active assignments and group seats; this operation
+   * releases them in ONE durable batch: the individual swarm.assignment_updated and
+   * swarm.group_updated events are what lands in the log, so replay stays byte-identical to the
+   * hand-written sequence (the request itself, reason included, rides swarm.operation_requested).
+   * A live active participant refuses with swarm_holder_live — stopping it stays the explicit
+   * separate act. */
+  async _holderRelease(swarm, payload, args, principal, context) {
+    const holder = this._participant(swarm, payload.participantId);
+    const state = this._workerFor(holder, this.coordinator.list())?.status ?? 'unbound';
+    if (holder.status === 'active' && !['dead', 'exited', 'unbound'].includes(state)) {
+      refuse('The holder is still live: stop it or record its leave before releasing its seats',
+        'swarm_holder_live', { participantId: holder.participantId, runtimeState: state });
+    }
+    return this._once('swarm.update', args, principal, async () => {
+      this._permit(this._swarm(args.swarmId), principal, context, 'organize');
+      const current = this._swarm(args.swarmId);
+      const releases = Object.values(current.assignments ?? {})
+        .filter((assignment) => assignment.status === 'active' && assignment.participantId === holder.participantId);
+      const groupLeaves = Object.values(current.groups ?? {})
+        .filter((group) => group.members.includes(holder.participantId));
+      const planned = [
+        ...releases.map((assignment) => ({
+          kind: 'swarm.assignment_updated',
+          payload: { swarmId: current.swarmId, assignmentId: assignment.assignmentId,
+            participantId: assignment.participantId, workId: assignment.workId, status: 'released' },
+          key: `assignment:${assignment.assignmentId}`,
+        })),
+        ...groupLeaves.map((group) => ({
+          kind: 'swarm.group_updated',
+          payload: { swarmId: current.swarmId, groupId: group.groupId,
+            members: group.members.filter((member) => member !== holder.participantId) },
+          key: `group:${group.groupId}`,
+        })),
+      ];
+      // Prove the whole batch folds before the first write: a batch that cannot land whole
+      // (a group still naming an inactive member) refuses with nothing recorded.
+      const trial = new Map([[current.swarmId, current]]);
+      for (const event of planned) foldSwarmEvent(trial, { kind: event.kind, payload: event.payload });
+      const operationKey = this._operationKey('swarm.update', args, principal);
+      for (const event of planned) this._write(event.kind, event.payload, principal, `${operationKey}:${event.key}`);
+      return { participantId: holder.participantId, released: {
+        assignments: releases.map((assignment) => assignment.assignmentId),
+        groups: groupLeaves.map((group) => group.groupId),
+      } };
+    }, { replaySafe: true });
+  }
+
   async command(command, args, principal, context = null) {
     if (this.watchController.signal.aborted) refuse('Swarm runtime is closed', 'swarm_runtime_closed');
     validateSwarmCommand(command, args);
@@ -286,7 +493,10 @@ export class SwarmRuntime {
       return this.inspect(this._swarm(swarmId), principal, context);
     }
     let swarm = this._swarm(args.swarmId);
-    if (command === 'swarm.view') return this.inspect(swarm, principal, context);
+    if (command === 'swarm.view') {
+      const scope = args.participantId ? this._participant(swarm, args.participantId) : null;
+      return this.inspect(swarm, principal, context, scope?.participantId ?? null);
+    }
     if (command === 'swarm.watch') {
       this._permit(swarm, principal, context, 'read');
       return this._watch(args, principal, context);
@@ -323,6 +533,13 @@ export class SwarmRuntime {
         const existing = Object.hasOwn(swarm.work, payload.workId) ? swarm.work[payload.workId] : null;
         if (!existing) refuse('New work needs an objective; a status-only update is for work that already exists', 'swarm_payload_invalid', { field: 'payload.objective', workId: payload.workId });
         payload.objective = existing.objective;
+      }
+      if (args.event === 'swarm.work_updated' && payload.status === 'completed') {
+        this._requireCompletionEvidence(swarm, payload);
+      }
+      if (args.event === 'swarm.holder_released') {
+        await this._holderRelease(swarm, payload, args, principal, context);
+        return this.inspect(this._swarm(args.swarmId), principal, context);
       }
       if (caller && args.event === 'swarm.contribution_recorded' && payload.participantId !== caller.participantId) {
         refuse('Contributions must name their actual author', 'swarm_author_mismatch');

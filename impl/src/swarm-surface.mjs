@@ -29,9 +29,9 @@ function kebabCase(name) {
 const SWARM_CLI_SUMMARIES = Object.freeze({
   'swarm.list': 'List the living swarms visible to this connection.',
   'swarm.create': 'Create one living swarm and print its view.',
-  'swarm.view': "Read one swarm's membership, work, shared context, contributions, reviews, caller authority, and available actions.",
+  'swarm.view': "Read one swarm's membership, work, shared context, contributions, reviews, caller authority, and available actions; --participant-id scopes the read to one participant's delegation.",
   'swarm.watch': 'Await the next swarm update past a cursor (defaults to the cursor of the last view this session read) and print the refreshed view.',
-  'swarm.update': 'Apply one domain update: group, work, assignment, context, contribution, review, participant leave, or close.',
+  'swarm.update': 'Apply one domain update: group, work, assignment, holder release, context, contribution, review, participant leave, or close.',
   'swarm.recruit': 'Recruit one participant; the runtime resolves and starts the native Run under the requested selection.',
   'swarm.guide': 'Send guidance to one participant, active or paused.',
   'swarm.capture': 'Capture the immutable code for one contribution at its turn boundary.',
