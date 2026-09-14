@@ -52,24 +52,36 @@ test('SI1: the committed map classifies every member of all three classes exactl
     const source = readFileSync(join(IMPL_ROOT, target.file.slice('impl/'.length)), 'utf8');
     const parsed = collectMembers(source, target.className);
     assert.deepEqual(
-      file.members.map((member) => ({ name: member.name, line: member.line })),
-      parsed.map((member) => ({ name: member.name, line: member.line })),
+      file.members.map((member) => ({ name: member.name, ordinal: member.ordinal })),
+      parsed.map((member) => ({ name: member.name, ordinal: member.ordinal })),
       `${target.file}: every ${target.className} member must be classified, in source order`,
     );
     assert.equal(file.class, target.className);
 
-    // Uniqueness is per DEFINITION (name+line), not per name: Coordinator declares
-    // `_removeTaskWorktree` twice — the map must show both rather than hide the silent override.
+    // Uniqueness is per DEFINITION (name+ordinal), not per name, so a class that declares one
+    // method twice shows both rather than hiding the silent override — and nothing is keyed by a
+    // line number, so ordinary edits do not stale the committed map.
     const identities = new Set();
     for (const member of file.members) {
       assert.ok(SEAMS.includes(member.seam), `${member.name}: seam ${member.seam} is not one of the five`);
-      const identity = `${member.name}@${member.line}`;
+      const identity = `${member.name}#${member.ordinal}`;
       assert.ok(!identities.has(identity), `${identity}: classified twice`);
       identities.add(identity);
-      assert.ok(Number.isSafeInteger(member.line) && member.line > 0, `${member.name}: line`);
-      assert.ok(Number.isSafeInteger(member.endLine) && member.endLine >= member.line, `${member.name}: endLine`);
+      assert.ok(Number.isSafeInteger(member.ordinal) && member.ordinal >= 0, `${member.name}: ordinal`);
+      assert.ok(Number.isSafeInteger(member.size) && member.size > 0, `${member.name}: size`);
+      assert.ok(Number.isSafeInteger(member.line) && member.line > 0, `${member.name}: the live inventory knows its line for --report`);
       assert.ok(Array.isArray(member.evidence) && member.evidence.length > 0, `${member.name}: evidence must be present`);
       for (const entry of member.evidence) assert.match(entry, READABLE_SEAM, `${member.name}: evidence ${entry}`);
+    }
+  }
+});
+
+test('SI1b: the committed artifact carries no line numbers, so ordinary edits never stale it', () => {
+  for (const file of committed().files) {
+    for (const member of file.members) {
+      assert.equal(member.line, undefined, `${member.name}: committed map carries no line`);
+      assert.equal(member.endLine, undefined, `${member.name}: committed map carries no endLine`);
+      assert.ok(Number.isSafeInteger(member.ordinal) && Number.isSafeInteger(member.size), `${member.name}: ordinal and size`);
     }
   }
 });
@@ -95,12 +107,12 @@ test('SI2: the committed map regenerates clean, deterministically, and the check
     },
     {
       name: 'a member that no longer exists',
-      mutate: (inventory) => { inventory.files[0].members.push({ name: 'ghostMember', line: 1, endLine: 1, seam: 'effect', evidence: ['effect:action_verb'] }); },
+      mutate: (inventory) => { inventory.files[0].members.push({ name: 'ghostMember', ordinal: 0, size: 1, seam: 'effect', evidence: ['effect:action_verb'] }); },
       expect: /no longer exists/u,
     },
     {
-      name: 'a shifted line',
-      mutate: (inventory) => { inventory.files[1].members[0].line += 1; },
+      name: 'a renamed member',
+      mutate: (inventory) => { inventory.files[1].members[0].name = `${inventory.files[1].members[0].name}Renamed`; },
       expect: /is uncommitted|no longer exists/u,
     },
     {

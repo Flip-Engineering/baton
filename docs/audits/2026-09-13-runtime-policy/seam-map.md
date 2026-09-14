@@ -173,3 +173,14 @@ Suggested slice order, by measured payoff rather than by size: (1) `coordination
   explicitly instead of inheriting a default.
 - Line numbers and spans are as of the audited revision. The check mode fails on drift, so the map
   cannot silently rot: any edit that moves a member forces `--write` and a reviewable diff.
+
+---
+
+## 8. Root review (integration note)
+
+Integrated from checkpoint `5388d6c3` with two root edits: (a) the committed artifact is now
+line-free — members are identified by `(name, ordinal)` and carry `size`, so an ordinary edit to
+the three files no longer stales the map (the check still refuses a reclassified, renamed, added
+or removed member and a drifted evidence set); (b) finding §4.1 is acted on: the dead first
+`_removeTaskWorktree` definition is deleted, so `Coordinator` declares it once.
+

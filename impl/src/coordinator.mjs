@@ -8996,12 +8996,6 @@ export class Coordinator {
     }
   }
 
-  async _removeTaskWorktree(task) {
-    if (!task || !this._worktrees || typeof this._worktrees.remove !== 'function') return;
-    const ownerTaskId = task.sessionContext?.ownerTaskId ?? task.id;
-    await Promise.resolve(this._worktrees.remove(ownerTaskId));
-  }
-
   async _preserveProgressBeforeReap(handle, task, stopEvent, enabled = true) {
     if (handle?.contributionCapturePending) await handle.contributionCapturePending;
     if (!enabled || !handle?.worktree || !task) return Object.freeze({ state: 'not_applicable' });

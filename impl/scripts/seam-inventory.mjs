@@ -163,7 +163,11 @@ export function collectMembers(source, className) {
     if (node.kind() !== 'method_definition') continue;
     const name = node.field('name')?.text();
     if (typeof name !== 'string' || name.length === 0) throw new Error(`seam-inventory: unnamed member in ${className}`);
-    members.push({ name, line: node.range().start.line + 1, endLine: node.range().end.line + 1, text: node.text() });
+    // Identity is (name, ordinal): the ordinal counts same-name definitions in source order, so a
+    // duplicate declaration is visible without keying anything by a line number that every
+    // ordinary edit shifts.
+    const ordinal = members.filter((member) => member.name === name).length;
+    members.push({ name, ordinal, line: node.range().start.line + 1, endLine: node.range().end.line + 1, text: node.text() });
   }
   if (members.length === 0) throw new Error(`seam-inventory: ${className} declares no members`);
   return members;
@@ -264,11 +268,13 @@ export function classifyMembers(members, { dispatchers = [], surface = [] } = {}
     }
   }
   return scored.map((row) => {
-    const { name, line, endLine } = row.member;
-    // `endLine` rides along so "the largest member" in a review is read off the artifact rather
-    // than re-parsed from the source.
-    if (row.evidence.length === 0) return { name, line, endLine, seam: 'surface', evidence: [FALLBACK_EVIDENCE] };
-    return { name, line, endLine, seam: rankSeam(row.scores), evidence: [...row.evidence] };
+    const { name, ordinal, line, endLine } = row.member;
+    // `size` (lines of body) rides along so "the largest member" in a review is read off the
+    // artifact; `line`/`endLine` are live positions for --report and never enter the committed
+    // artifact (renderSeamInventory strips them), so an ordinary edit does not stale the map.
+    const size = endLine - line + 1;
+    if (row.evidence.length === 0) return { name, ordinal, size, line, endLine, seam: 'surface', evidence: [FALLBACK_EVIDENCE] };
+    return { name, ordinal, size, line, endLine, seam: rankSeam(row.scores), evidence: [...row.evidence] };
   });
 }
 
@@ -287,8 +293,19 @@ export function collectSeamInventory() {
   return { schemaVersion: SCHEMA_VERSION, generatedBy: 'impl/scripts/seam-inventory.mjs', seams: [...SEAMS], files };
 }
 
+/** The committed form: positions stripped, so the map is stable under edits that move code. */
+export function committedSeamInventory(inventory) {
+  return {
+    ...inventory,
+    files: inventory.files.map((file) => ({
+      ...file,
+      members: file.members.map(({ name, ordinal, size, seam, evidence }) => ({ name, ordinal, size, seam, evidence })),
+    })),
+  };
+}
+
 export function renderSeamInventory(inventory) {
-  return `${JSON.stringify(inventory, null, 2)}\n`;
+  return `${JSON.stringify(committedSeamInventory(inventory), null, 2)}\n`;
 }
 
 export function writeSeamInventory() {
@@ -317,14 +334,13 @@ export function checkSeamInventory({ path = INVENTORY_PATH } = {}) {
   }
   if (committed.error) return [`committed inventory is not JSON: ${committed.error} (run --write)`];
   const fresh = collectSeamInventory();
-  // A member is a DEFINITION, so the key carries its line: Coordinator genuinely declares two
-  // `_removeTaskWorktree` methods (8999 and 9116) and a name-keyed index would report the second
-  // as the first having moved.
-  const identity = (file, member) => `${file}#${member.line}#${member.name}`;
+  // A member is a DEFINITION: the key is (file, name, ordinal), so Coordinator declaring one
+  // method twice shows as two rows, and a line that moves (every ordinary edit) changes nothing.
+  const identity = (file, member) => `${file}#${member.name}#${member.ordinal ?? 0}`;
   const committedIndex = new Map((committed.files ?? []).flatMap((file) => (file.members ?? []).map((member) => [identity(file.file, member), member])));
   const freshIndex = new Map(fresh.files.flatMap((file) => file.members.map((member) => [identity(file.file, member), member])));
   for (const [key, member] of committedIndex) {
-    if (!freshIndex.has(key)) findings.push(`${key.split('#')[0]}:${member.line}: ${member.name} is committed but no longer exists (run --write)`);
+    if (!freshIndex.has(key)) findings.push(`${key.split('#')[0]}: ${member.name}#${member.ordinal ?? 0} is committed but no longer exists (run --write)`);
   }
   for (const file of fresh.files) {
     for (const member of file.members) {
@@ -332,11 +348,9 @@ export function checkSeamInventory({ path = INVENTORY_PATH } = {}) {
       if (!prior) { findings.push(`${file.file}:${member.line}: ${member.name} is uncommitted (run --write)`); continue; }
       if (prior.seam !== member.seam) findings.push(`${file.file}:${member.line}: ${member.name} is committed as ${prior.seam} but classifies as ${member.seam} (run --write)`);
       else if (JSON.stringify(prior.evidence) !== JSON.stringify(member.evidence)) findings.push(`${file.file}:${member.line}: ${member.name} evidence drifted (run --write)`);
-      else if (prior.endLine !== member.endLine) findings.push(`${file.file}:${member.line}: ${member.name} ends at line ${member.endLine}, not the committed ${prior.endLine} (run --write)`);
     }
   }
-  // A member that moved keeps its identity only when its line moved with it — the pass above
-  // reports every definition whose line moved as uncommitted + vanished, which is the honest pair.
+  // Sizes and ordering are part of the committed form too (a member that grew is worth a review).
   if (findings.length === 0 && renderSeamInventory(committed) !== renderSeamInventory(fresh)) {
     findings.push('committed inventory does not match a fresh regeneration (run --write)');
   }
