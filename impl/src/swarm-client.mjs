@@ -84,10 +84,16 @@ export class Swarm {
   }
 
   /** Read the authoritative swarm view: purpose, status, participants with their runtime state,
-   * groups, work, assignments, context, contributions, reviews, `caller` authority,
-   * `availableActions`, recent `updates`, and `cursor`. */
-  view() {
-    return this._send('swarm.view', { swarmId: this.id });
+   * groups, work (with its derived completion `evidence`), assignments, context, contributions,
+   * reviews, `caller` authority, `availableActions`, recent `updates`, and `cursor`.
+   * `options.participantId` scopes the read to that participant's delegation: its subtree, the
+   * work assigned within, their contributions and reviews, and the delegation completion. */
+  view(options = {}) {
+    exactOptions(options, new Set(['participantId']), 'Swarm view');
+    return this._send('swarm.view', {
+      swarmId: this.id,
+      ...(options.participantId === undefined ? {} : { participantId: options.participantId }),
+    });
   }
 
   /**
@@ -189,6 +195,15 @@ export class Swarm {
   review(payload, options) { return this.update('swarm.contribution_reviewed', payload, options); }
 
   leave(payload, options) { return this.update('swarm.participant_left', payload, options); }
+
+  /** Release one gone holder's seats in one durable batch: every active assignment it holds is
+   * released and it leaves every group, recorded as the individual durable events. Refuses for a
+   * live active participant (`swarm_holder_live`); stopping it stays the explicit separate act. */
+  holderRelease(participantId, reason, options = {}) {
+    exactOptions(options, new Set(['idempotencyKey']), 'Swarm holder release');
+    return this.update('swarm.holder_released',
+      { participantId, ...(reason === undefined ? {} : { reason }) }, options);
+  }
 
   close(payload, options) { return this.update('swarm.closed', payload, options); }
 }

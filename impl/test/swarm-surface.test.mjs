@@ -412,8 +412,9 @@ test('implementer: shared context is readable and a finding is an ordinary contr
   await swarm.close({ reason: 'scope shipped' });
   assert.equal(port.calls[4].args.event, 'swarm.closed');
   assert.deepEqual(SWARM_EVENT_KINDS, [
-    'swarm.group_updated', 'swarm.work_updated', 'swarm.assignment_updated', 'swarm.context_updated',
-    'swarm.contribution_recorded', 'swarm.contribution_reviewed', 'swarm.participant_left', 'swarm.closed',
+    'swarm.group_updated', 'swarm.work_updated', 'swarm.assignment_updated', 'swarm.holder_released',
+    'swarm.context_updated', 'swarm.contribution_recorded', 'swarm.contribution_reviewed',
+    'swarm.participant_left', 'swarm.closed',
   ]);
 });
 

@@ -180,6 +180,34 @@ records do not grant shared filesystem custody. Existing wave/recipe workflows r
 See [the integration audit](audits/2026-09-13-runtime-policy/integration.md) for defects corrected,
 validation, and boundaries still under development.
 
+## Delegated completion and holder release (issue #263, 2026-09-13)
+
+Completion is derived from evidence, never asserted from process state. Every work item in a
+`swarm.view` carries `evidence: { contributions, accepted, derivedComplete }` — the contributions
+that reference the work via `workId`, the subset carrying an accept review that no later review on
+the same contribution revokes, and whether completion derives from them. An organizer may set
+`status: completed` only when the derivation already holds, or when the update names its basis
+(`basis: { contributionIds: [...] }` citing accepted contributions that reference the work by
+`workId` or `refs`); anything else refuses with `swarm_completion_unproven`, naming what is
+missing. Every participant also carries its delegation as a unit:
+`delegation: { children, work, complete }` — the direct children, the work actively assigned
+within the participant's subtree, and whether that delegation is complete: every assigned work
+item completed, and every still-active child either done (it holds no active assignment) or
+departed (its membership ended). `swarm.view` accepts an optional `participantId` and returns the
+same shape scoped to that participant's delegation — its descendants transitively by `parentId`,
+the work assigned within, their contributions and reviews, and the attention rows its subtree can
+act on; the root sees the same subtree when it names the lead.
+
+A participant whose runtime is dead or exited, or whose membership has ended, otherwise keeps its
+active assignments and its group seats indefinitely. The organizer operation `swarm.update` event
+`swarm.holder_released` (`{ participantId, reason }`) releases them in one durable batch: the
+individual `swarm.assignment_updated` (status released) and `swarm.group_updated` events are what
+the coordination log records, so replay stays byte-identical to the hand-written sequence, and
+the request itself — reason included — rides the durable operation record. A live active
+participant refuses with `swarm_holder_live`: stopping it remains the explicit separate act. The
+`assignment_holder_gone` and `delegation_orphaned` attention rows name this release as their next
+step.
+
 ## Budgets are evidence, not stops (issue #258, 2026-09-13)
 
 A budget threshold (`resource.budget_threshold`) is evidence for the orchestrator and the participant: the

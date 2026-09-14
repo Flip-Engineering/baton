@@ -65,6 +65,12 @@ export const SWARM_EVENT_PAYLOAD_SCHEMAS = Object.freeze({
     status: { type: 'string', enum: ['open', 'completed', 'cancelled'], required: false,
       description: 'the work lifecycle state', expectation: 'one of open, completed, cancelled', example: 'open' },
     expectedVersion: VERSION,
+    basis: {
+      type: 'json', required: false,
+      description: 'completion evidence you cite when setting status completed without a derived accept: { contributionIds: [...] } naming accepted contributions that reference this work (by workId or refs)',
+      expectation: 'an object with a contributionIds array of contribution identities',
+      example: { contributionIds: ['contribution-ada-1'] },
+    },
   }),
   'swarm.assignment_updated': KIND('bind one participant to one unit of work (or release them)', {
     assignmentId: STRING('the assignment identity', { required: true, example: 'assignment-ada-discovery' }),
@@ -73,6 +79,10 @@ export const SWARM_EVENT_PAYLOAD_SCHEMAS = Object.freeze({
     status: { type: 'string', enum: ['active', 'released'], required: true,
       description: 'the assignment lifecycle state', expectation: 'one of active, released', example: 'active' },
     expectedVersion: VERSION,
+  }),
+  'swarm.holder_released': KIND('release a gone holder\'s seats in one batch (refuses while the participant is live active)', {
+    participantId: STRING('the participant whose active assignments and group seats are released', { required: true, example: 'builder-a' }),
+    reason: STRING('why the seats are released', { example: 'the runtime is gone; seats released so the delegation can complete' }),
   }),
   'swarm.context_updated': KIND('write one shared-context entry the whole swarm can read', {
     key: STRING('the shared-context key', { required: true, example: 'notes:discovery' }),
