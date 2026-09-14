@@ -18,9 +18,10 @@ import { createHash } from 'node:crypto';
 import { existsSync, lstatSync, readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import {
-  CoordinationIntegrityError, CoordinationRefusal, MAX_SCRATCHPAD_STOP_PARTITIONS_PER_PASS, SEGMENT_FILE_SUFFIX,
-  SEGMENT_INDEX_FILE, TERMINAL, canonical, canonicalDigest, clone, digest, freeze, scratchpadScopeKey, sha256Bytes,
-  validRunId,
+  COORDINATION_QUARANTINE_FILE,
+  CoordinationIntegrityError, CoordinationRefusal, MAX_SCRATCHPAD_STOP_PARTITIONS_PER_PASS,
+  SEGMENT_FILE_SUFFIX, SEGMENT_INDEX_FILE, TERMINAL, canonical, canonicalDigest, clone, digest,
+  freeze, scratchpadScopeKey, sha256Bytes, validRunId,
 } from './coordination-internals.mjs';
 
 // ── the store's restart paths ───────────────────────────────────────────────────────────────────
@@ -110,14 +111,77 @@ export function _reportStartup(store, value) {
 
 /** Moved from `CoordinationStore.startupStatus` (issue #259 slice 1). State: the store, passed explicitly. */
 export function startupStatus(store) {
-  return clone(store._startupState ?? {
+  const state = store._startupState ?? {
     schemaVersion: 1, state: 'starting', source: 'ledger', totalEvents: 0,
     checkpointEvents: 0, replayedEvents: 0, checkpoint: 'unchecked', failure: null,
+  };
+  // Issue #290: a live projection poison and the quarantine ledger are startup truth — both are
+  // composed here at read time so a poisoned store's readers see the poison alongside the
+  // startup state instead of served projections that quietly contradict eventCursor().
+  return clone({
+    ...state,
+    poison: store._projectionPoison ?? null,
+    quarantined: store._quarantine instanceof Map
+      ? [...store._quarantine.keys()].sort((left, right) => left - right) : [],
   });
 }
 
 /** Moved from `CoordinationStore._reloadProjection` (issue #259 slice 1). State: the store, passed explicitly. */
 export function _reloadProjection(store) { store._resetProjection(); _load(store); }
+
+// ── the quarantine ledger (#290) ────────────────────────────────────────────────────────────────
+//
+// A fold-refused event is durable but must never make the store unreplayable. The quarantine
+// ledger names such seqs; replay skips exactly those folds while the ledger bytes stay parsed
+// (sequence contiguity, idempotent-retry adjudication, and checkpoint byte-equality all hold).
+// It is written only through the supported repair verbs, atomically and fsynced like every
+// other housekeeping artifact — never by editing events.jsonl.
+
+function quarantineEntryProblem(entry) {
+  const keys = ['actor', 'causeCode', 'kind', 'reason', 'schemaVersion', 'seq', 'ts'];
+  return !entry || typeof entry !== 'object' || Array.isArray(entry)
+    || Object.keys(entry).sort().join(',') !== keys.sort().join(',')
+    || entry.schemaVersion !== 1
+    || !Number.isSafeInteger(entry.seq) || entry.seq <= 0
+    || typeof entry.kind !== 'string' || entry.kind.length === 0
+    || typeof entry.causeCode !== 'string' || entry.causeCode.length === 0
+    || typeof entry.reason !== 'string' || entry.reason.length === 0
+    || typeof entry.actor !== 'string' || entry.actor.length === 0
+    || !Number.isFinite(Date.parse(entry.ts));
+}
+
+/** Read and validate the durable quarantine entries for a coordination root. A malformed
+ * quarantine ledger refuses startup typed: silently ignoring it would replay a fold the
+ * deployment has already refused once. This is the module's ONE quarantine export — the store
+ * reaches it through its `quarantineEntries()` delegate, and the loader below keeps it
+ * module-local. */
+export function quarantineEntries(root) {
+  const file = join(root, COORDINATION_QUARANTINE_FILE);
+  if (!existsSync(file)) return [];
+  let parsed = null;
+  try { parsed = JSON.parse(readFileSync(file, 'utf8')); }
+  catch { throw new CoordinationIntegrityError('coordination quarantine ledger is not valid JSON', 'coordination_quarantine_invalid'); }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)
+    || parsed.schemaVersion !== 1 || !Array.isArray(parsed.entries)
+    || Object.keys(parsed).sort().join(',') !== 'entries,schemaVersion') {
+    throw new CoordinationIntegrityError('coordination quarantine ledger is invalid', 'coordination_quarantine_invalid');
+  }
+  const seen = new Set();
+  for (const entry of parsed.entries) {
+    if (quarantineEntryProblem(entry) || seen.has(entry.seq)) {
+      throw new CoordinationIntegrityError('coordination quarantine ledger is invalid', 'coordination_quarantine_invalid');
+    }
+    seen.add(entry.seq);
+  }
+  return clone(parsed.entries).sort((left, right) => left.seq - right.seq);
+}
+
+/** Load the quarantine map a replay folds against. Called once at the start of every load. */
+function loadQuarantine(store) {
+  const entries = quarantineEntries(store.root);
+  store._quarantine = new Map(entries.map((entry) => [entry.seq, freeze(entry)]));
+  return store._quarantine;
+}
 
 /** Moved from `CoordinationStore._loadSegmentState` (issue #259 slice 1). State: the store, passed explicitly. */
 export function _loadSegmentState(store, raw) {
@@ -238,6 +302,15 @@ export function _load(store) {
     checkpointEvents: 0, replayedEvents: 0, checkpoint: 'unchecked', failure: null,
   });
   try {
+    // Issue #290: the quarantine ledger is loaded before any replay so every fold below (and
+    // every checkpoint restore path) skips exactly the seqs a repair has durably quarantined.
+    loadQuarantine(store);
+    // Issue #290 (accepted loss window): ledger appends are group-committed — fsynced on the
+    // next drain tick and again on clean release — so an OS-level crash can lose at most the
+    // events appended since the last drain. Such a loss can truncate the tail mid-line; this
+    // refusal is the typed surface of exactly that window, and a restart re-reads whatever
+    // complete prefix survived. The housekeeping artifacts (checkpoint, segments, receipts)
+    // are fsynced individually, never ahead of the truth they accelerate beyond this window.
     if (raw.byteLength > 0 && raw.at(-1) !== 0x0a) {
       throw new CoordinationIntegrityError('coordination stream has a truncated tail', 'truncated_tail');
     }
@@ -276,7 +349,17 @@ export function _load(store) {
         const frozen = freeze(event);
         store._events.push(frozen);
         store._byKey.set(frozen.idempotencyKey, frozen);
-        store._apply(frozen);
+        // Issue #290: a quarantined seq keeps its durable bytes parsed in the ledger (sequence
+        // contiguity, idempotent-retry adjudication, and checkpoint byte-equality all hold);
+        // only the fold that refused is withheld. Any fold failure names its seq and kind so an
+        // operator can pass exactly that seq to the quarantine verb.
+        if (store._quarantine.has(frozen.seq)) return;
+        try { store._apply(frozen); }
+        catch (error) {
+          error.coordinationSeq = frozen.seq;
+          error.coordinationKind = frozen.kind;
+          throw error;
+        }
       };
       for (const segment of segments.segments ?? []) {
         const bytes = readFileSync(store._segmentFilePath(segment.digest));
@@ -332,7 +415,12 @@ export function _load(store) {
     _reportStartup(store, {
       schemaVersion: 1, state: 'failed', source: 'ledger', totalEvents: 0,
       checkpointEvents: 0, replayedEvents: 0, checkpoint: 'unusable',
-      failure: { code: error?.code ?? 'coordination_startup_failed' },
+      // Issue #290: a fold refusal names the seq it died on, so the operator can pass exactly
+      // that seq to the quarantine verb — the failure record is the repair's warrant.
+      failure: {
+        code: error?.code ?? 'coordination_startup_failed',
+        seq: error?.coordinationSeq ?? null,
+      },
     });
     throw error;
   }

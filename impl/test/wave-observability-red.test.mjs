@@ -180,7 +180,7 @@ import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { EventEmitter } from 'node:events';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -685,21 +685,26 @@ test('A2-4 F6/F13: legacy-store replay — a string-array roster survives a stor
   }
 });
 
-test('A2-5: a malformed NEW-shape roster refuses wave_registry_invalid (B2 strictness)', async (t) => {
+test('A2-5: a malformed NEW-shape roster is refused typed BEFORE the durable append (#290)', async (t) => {
   const host = await hostFixture(t);
   const malformedWaveId = waveIdFor('malformed');
+  const ledgerPath = join(host.driver.coordination.root, 'events.jsonl');
+  const ledgerBefore = existsSync(ledgerPath) ? readFileSync(ledgerPath, 'utf8') : '';
   assert.throws(
     () => host.driver.coordination.recordDriver('wave.started', {
       waveId: malformedWaveId, roster: 'not-an-array', idempotencyKey: 'bad-ik',
     }, { actor: 'test', key: `wave.started:${malformedWaveId}` }),
     (error) => {
-      assert.equal(error.code, 'coordination_projection_poisoned',
-        'stage: malformed-refusal-missing — at HEAD recordDriver does not fold wave.started at all, so the malformed append succeeds; the B2 fold throws wave_registry_invalid, wrapped by _poisonProjection (coordination-store.mjs:1480-1481)');
+      assert.equal(error.code, 'coordination_record_invalid',
+        'issue #290: the prospective fold gate refuses the malformed roster typed BEFORE the durable append — a malformed event can never reach disk and poison replay (the B2 fold keeps the same rule via the shared assertWaveStartedRoster)');
       assert.equal(error.cause?.code, 'wave_registry_invalid',
-        'the store-integrity code rides the poison\'s cause — the ledger stays authoritative, replay is required');
+        'the store-integrity code rides the refusal\'s cause — one rule, two lanes');
       return true;
     },
   );
+  const ledgerAfter = existsSync(ledgerPath) ? readFileSync(ledgerPath, 'utf8') : '';
+  assert.equal(ledgerAfter, ledgerBefore,
+    'the refused event never reached the durable ledger');
 });
 
 test('A2-6 OQ1: the close side pins a TOP-LEVEL wave.closed fold branch beside context.pack_minted (B1)', () => {

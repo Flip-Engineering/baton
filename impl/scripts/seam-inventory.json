@@ -5825,7 +5825,7 @@
         {
           "name": "constructor",
           "ordinal": 0,
-          "size": 146,
+          "size": 154,
           "seam": "effect",
           "evidence": [
             "recovery:durable_load",
@@ -6008,7 +6008,7 @@
         {
           "name": "_restoreProjectionCheckpoint",
           "ordinal": 0,
-          "size": 58,
+          "size": 64,
           "seam": "recovery",
           "evidence": [
             "recovery:restart_name",
@@ -6079,6 +6079,63 @@
           ]
         },
         {
+          "name": "_assertLeaseOwnership",
+          "ordinal": 0,
+          "size": 12,
+          "seam": "admission",
+          "evidence": [
+            "admission:guard_name"
+          ]
+        },
+        {
+          "name": "_scheduleLedgerSync",
+          "ordinal": 0,
+          "size": 8,
+          "seam": "observation",
+          "evidence": [
+            "observation:ledger_name"
+          ]
+        },
+        {
+          "name": "_flushLedgerSync",
+          "ordinal": 0,
+          "size": 8,
+          "seam": "observation",
+          "evidence": [
+            "observation:ledger_name"
+          ]
+        },
+        {
+          "name": "projectionPoison",
+          "ordinal": 0,
+          "size": 3,
+          "seam": "observation",
+          "evidence": [
+            "observation:record_name",
+            "observation:ledger_name",
+            "observation:story_ingest"
+          ]
+        },
+        {
+          "name": "quarantineEntries",
+          "ordinal": 0,
+          "size": 3,
+          "seam": "recovery",
+          "evidence": [
+            "recovery:replay_port"
+          ]
+        },
+        {
+          "name": "quarantineProjectionEvent",
+          "ordinal": 0,
+          "size": 36,
+          "seam": "observation",
+          "evidence": [
+            "observation:ledger_name",
+            "observation:story_ingest"
+          ]
+        },
+        {
           "name": "_poisonProjection",
           "ordinal": 0,
           "size": 12,
@@ -6092,7 +6149,7 @@
         {
           "name": "releaseWriterLease",
           "ordinal": 0,
-          "size": 36,
+          "size": 47,
           "seam": "effect",
           "evidence": [
             "effect:filesystem_mutation",
@@ -6183,9 +6240,19 @@
           ]
         },
         {
+          "name": "_validateRecordedPayload",
+          "ordinal": 0,
+          "size": 17,
+          "seam": "admission",
+          "evidence": [
+            "admission:guard_name",
+            "admission:validation_vocabulary"
+          ]
+        },
+        {
           "name": "_append",
           "ordinal": 0,
-          "size": 43,
+          "size": 48,
           "seam": "observation",
           "evidence": [
             "observation:store_append",
@@ -6195,7 +6262,7 @@
         {
           "name": "_appendBatch",
           "ordinal": 0,
-          "size": 77,
+          "size": 80,
           "seam": "observation",
           "evidence": [
             "observation:store_append",
@@ -7788,7 +7855,7 @@
         {
           "name": "_apply",
           "ordinal": 0,
-          "size": 1193,
+          "size": 1190,
           "seam": "observation",
           "evidence": [
             "observation:record_name",

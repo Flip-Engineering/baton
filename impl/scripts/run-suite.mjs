@@ -129,6 +129,14 @@ const passthroughArgs = process.argv.slice(2).filter((arg) => arg !== '--write-e
 const writeExpectedRedRequested = process.argv.includes('--write-expected-red');
 const explicitFiles = passthroughArgs.filter((arg) => !arg.startsWith('-'));
 const legacyPassthrough = passthroughArgs.some((arg) => arg.startsWith('-'));
+// Issue #290: --write-expected-red rewrites the whole expected-red manifest from THIS run's
+// failures. An explicit-file run executes a subset, so a rewrite would record rows for tests the
+// run never executed (and drop rows it inherited) — the manifest may only be rewritten from a
+// full-suite run. Refuse by naming that contract.
+if (writeExpectedRedRequested && explicitFiles.length > 0) {
+  process.stderr.write('baton test runner: --write-expected-red rewrites the expected-red manifest from a full-suite run only — it never rewrites the manifest from an explicit-file (partial) run, because rows the run never executed cannot be judged; re-run the whole suite with the flag, or run explicit files without it\n');
+  process.exit(1);
+}
 const implRoot = new URL('../', import.meta.url);
 const implRootPath = fileURLToPath(implRoot);
 const testRoot = new URL('../test/', import.meta.url);

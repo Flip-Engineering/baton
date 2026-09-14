@@ -158,7 +158,10 @@ export {
   workerPolicyRequestDigest,
 } from './worker-policy.mjs';
 export { RuntimeIsolation, isSecretEnvName } from './runtime-isolation.mjs';
-export { CoordinationStore, CoordinationIntegrityError, CoordinationRefusal, coordinationForLog, migrateCanonicalOrderLedger } from './coordination-store.mjs';
+export {
+  CoordinationStore, CoordinationIntegrityError, CoordinationRefusal, coordinationForLog,
+  migrateCanonicalOrderLedger, quarantineCoordinationLedgerEvent,
+} from './coordination-store.mjs';
 export { projectRunTimelinePage, RunTimelineError } from './run-timeline.mjs';
 export { renderVerificationExecution } from './verification-presentation.mjs';
 export { DEFAULT_RUN_LINEAGE_POLICY, normalizeRunLineagePolicy, RUN_ORCHESTRATOR_CAPABILITIES, RUN_ORCHESTRATOR_REVOCATION_REASONS } from './run-lineage.mjs';

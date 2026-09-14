@@ -661,7 +661,7 @@ test('B-1 PIN (A2-4 F6/F13): a legacy string-array roster survives a store close
   }
 });
 
-test('B-2 PIN (A2-5): a malformed NEW-shape roster refuses wave_registry_invalid (store-integrity)', async (t) => {
+test('B-2 PIN (A2-5): a malformed NEW-shape roster is refused typed BEFORE the durable append (#290)', async (t) => {
   const host = await hostFixture(t);
   const malformedWaveId = `wave:${createHash('sha256').update('malformed-157-pin').digest('hex').slice(0, 32)}`;
   assert.throws(
@@ -669,10 +669,10 @@ test('B-2 PIN (A2-5): a malformed NEW-shape roster refuses wave_registry_invalid
       waveId: malformedWaveId, roster: 'not-an-array', idempotencyKey: 'bad-157-ik',
     }, { actor: 'test', key: `wave.started:${malformedWaveId}` }),
     (error) => {
-      assert.equal(error.code, 'coordination_projection_poisoned',
-        'the B2 fold wraps the malformed NEW-shape append (coordination-store.mjs:8099-8123)');
+      assert.equal(error.code, 'coordination_record_invalid',
+        'issue #290: the prospective fold gate refuses the malformed roster BEFORE the durable append — the ledger can never be poisoned by it');
       assert.equal(error.cause?.code, 'wave_registry_invalid',
-        'the store-integrity code wave_registry_invalid rides the poison\'s cause (coordination-store.mjs:8113)');
+        'the store-integrity code wave_registry_invalid rides the refusal\'s cause — the B2 fold keeps the same rule via the shared assertWaveStartedRoster');
       return true;
     },
   );

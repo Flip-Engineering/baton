@@ -66,6 +66,8 @@ import * as coordinationInternals from './coordination-internals.mjs';
 import * as coordinationReplay from './coordination-replay.mjs';
 import {
   BRIEFING_SCHEMA_FIELD_SOURCES,
+  COORDINATION_QUARANTINE_FILE,
+  COORDINATION_QUARANTINE_TEMP_PREFIX,
   CoordinationIntegrityError,
   CoordinationRefusal,
   MAX_CONTEXT_PACK_BODY_BYTES,
@@ -127,6 +129,66 @@ const CANONICAL_ORDER_RECEIPT = 'canonical-order-receipt.json';
 const CANONICAL_ORDER_TEMP_PREFIX = '.canonical-order-receipt.';
 const PROJECTION_CHECKPOINT = 'projection.checkpoint';
 const PROJECTION_CHECKPOINT_TEMP_PREFIX = '.projection.checkpoint.';
+
+/** Issue #290: the wave.started roster well-formedness rule, shared by the replay fold and the
+ * prospective write gate so the two can never drift — the fold refuses a genuinely malformed
+ * roster (neither a well-formed object-array nor a well-formed string-array) as an integrity
+ * failure; the write gate refuses the same payloads typed BEFORE the durable append. */
+function assertWaveStartedRoster(payload) {
+  const roster = payload?.roster;
+  const objectRoster = Array.isArray(roster) && roster.length > 0
+    && roster.every((member) => member !== null && typeof member === 'object' && !Array.isArray(member));
+  const stringRoster = Array.isArray(roster) && roster.length > 0
+    && roster.every((member) => typeof member === 'string');
+  if (!objectRoster && !stringRoster) {
+    throw new CoordinationIntegrityError('wave.started roster is malformed', 'wave_registry_invalid');
+  }
+}
+
+/** Issue #290: the default ledger group-commit — one fsync per drain tick regardless of how
+ * many events landed inside it, so the authoritative ledger is at least as durable as the
+ * fsynced housekeeping (checkpoint, segments, receipts) that accelerates its replay. */
+const defaultLedgerSync = (file) => {
+  const fd = openSync(file, 'r');
+  try { fsyncSync(fd); } finally { closeSync(fd); }
+};
+
+/** Issue #290: durably record one quarantine entry beside the ledger (atomic temp + fsync +
+ * rename, matching the receipt and checkpoint discipline). A repeat naming an already-quarantined
+ * seq with the same entry is idempotent; a different entry for the same seq is a conflict. */
+function writeQuarantineEntry(root, entry) {
+  const entries = coordinationReplay.quarantineEntries(root);
+  const existing = entries.find((candidate) => candidate.seq === entry.seq);
+  if (existing) {
+    if (existing.kind === entry.kind && existing.causeCode === entry.causeCode
+      && existing.reason === entry.reason && existing.actor === entry.actor) {
+      return { duplicate: true, entry: existing };
+    }
+    throw new CoordinationRefusal(`coordination seq ${entry.seq} is already quarantined with a different entry`, 'coordination_quarantine_conflict', { seq: entry.seq });
+  }
+  const payload = { schemaVersion: 1, entries: [...entries, clone(entry)].sort((left, right) => left.seq - right.seq) };
+  const bytes = Buffer.from(`${JSON.stringify(payload, null, 2)}\n`, 'utf8');
+  const temporary = join(root, `${COORDINATION_QUARANTINE_TEMP_PREFIX}${randomUUID()}`);
+  let fd = null;
+  try {
+    fd = openSync(temporary, 'wx', 0o600);
+    writeFileSync(fd, bytes);
+    fsyncSync(fd);
+    closeSync(fd); fd = null;
+    renameSync(temporary, join(root, COORDINATION_QUARANTINE_FILE));
+    chmodSync(join(root, COORDINATION_QUARANTINE_FILE), 0o600);
+    try {
+      const rootFd = openSync(root, 'r');
+      try { fsyncSync(rootFd); } finally { closeSync(rootFd); }
+    } catch { /* directory fsync is unavailable on some supported hosts */ }
+  } catch (error) {
+    if (fd !== null) try { closeSync(fd); } catch { /* original write error wins */ }
+    try { unlinkSync(temporary); } catch { /* rename or cleanup already completed */ }
+    throw error;
+  }
+  return { duplicate: false, entry: clone(entry) };
+}
+
 // Issue #223 ledger compaction: terminal-wave event prefixes are archived into
 // content-addressed segment files under <root>/segments/ (segment = the event range
 // [fromSeq, throughSeq] + sha256 of the exact JSONL bytes). The segment INDEX is a compact
@@ -681,7 +743,15 @@ export class CoordinationStore {
     this._checkpointWriteFailure = null;
     this._canonicalOrderReceiptFile = join(root, CANONICAL_ORDER_RECEIPT);
     this._clock = opts.clock ?? (() => new Date().toISOString());
+    if (opts.appendFile !== undefined && typeof opts.appendFile !== 'function') throw new TypeError('appendFile must be a function');
     this._appendFile = opts.appendFile ?? appendFileSync;
+    // Issue #290: the ledger group-commit seam (default: one fsync of the ledger file per drain
+    // tick), plus the sync's own state — a failed sync leaves the tail durable-unconfirmed and
+    // the store refuses further writes until a restart re-verifies the bytes.
+    if (opts.syncFile !== undefined && typeof opts.syncFile !== 'function') throw new TypeError('syncFile must be a function');
+    this._syncFile = opts.syncFile ?? defaultLedgerSync;
+    this._ledgerSyncScheduled = false;
+    this._ledgerSyncFailure = null;
     this._appendWaiters = new Set();
     if (Object.hasOwn(opts, 'canonicalOrderMigration')) {
       throw new TypeError('canonical order migration is offline-only; use migrateCanonicalOrderLedger()');
@@ -1033,9 +1103,15 @@ export class CoordinationStore {
     if (!existsSync(this._checkpointFile)) return { state: 'absent', throughSeq: 0, prefixBytes: 0 };
     try {
       const stat = lstatSync(this._checkpointFile);
-      if (!stat.isFile() || stat.isSymbolicLink() || stat.size <= 0
-        || stat.size > Math.max(16 * 1024 * 1024, raw.byteLength * 16 + 1024 * 1024)) {
-        throw new Error('checkpoint path or size is invalid');
+      // Issue #290: no size heuristic. A checkpoint is accepted only when its own recorded
+      // shape proves it — the envelope's prefixBytes/prefixDigest must re-derive from the
+      // authoritative ledger prefix, the projectionDigest must re-derive from the projection
+      // bytes it carries, and the parsed events must re-serialize to those exact bytes. The
+      // old ceiling (size vs. a number derived from the ledger window) rejected compact()'s
+      // own valid checkpoint whenever the archived window shrank below the full-history
+      // idempotency map — a false 'corrupt' indistinguishable from real corruption.
+      if (!stat.isFile() || stat.isSymbolicLink()) {
+        throw new Error('checkpoint path is invalid');
       }
       const envelope = deserialize(readFileSync(this._checkpointFile));
       const keys = ['authorityDigest', 'prefixBytes', 'prefixDigest', 'projectionBytes',
@@ -1246,6 +1322,21 @@ export class CoordinationStore {
         'coordination_projection_poisoned',
       );
     }
+    if (this._ledgerSyncFailure) {
+      // Issue #290: the last group-commit failed, so the durable tail is unconfirmed — the
+      // store refuses to hand out further durable authority until a restart re-reads and
+      // re-verifies the ledger. Readers keep working; the ledger stays authoritative.
+      throw new CoordinationIntegrityError(
+        `coordination ledger durability is unconfirmed after a failed sync (${this._ledgerSyncFailure.code}); restart and replay are required`,
+        'coordination_ledger_unsynced',
+      );
+    }
+    this._assertLeaseOwnership();
+  }
+
+  /** Lease ownership only — deliberately WITHOUT the poison and sync-failure gates: the
+   * quarantine verb (#290) is those gates' own repair and must stay reachable while they hold. */
+  _assertLeaseOwnership() {
     const path = join(this.root, 'writer.lease');
     if (!this._writerLease) {
       if (this._writerLeaseRequired || existsSync(path)) throw new CoordinationRefusal('coordination writer authority is absent', 'coordination_writer_lost');
@@ -1256,6 +1347,80 @@ export class CoordinationStore {
       || (observed.pidStart !== undefined && observed.pidStart !== this._writerLease.pidStart)) {
       throw new CoordinationRefusal('coordination writer lease was replaced', 'coordination_writer_lost');
     }
+  }
+
+  /** Issue #290: schedule the ledger's group-commit — one fsync per drain tick coalesces any
+   * number of appends, keeping the authoritative ledger at least as durable as the fsynced
+   * housekeeping artifacts. The accepted residual window (appends since the last drain) is
+   * documented beside replay's truncated_tail refusal. */
+  _scheduleLedgerSync() {
+    if (this._ledgerSyncScheduled) return;
+    this._ledgerSyncScheduled = true;
+    setImmediate(() => {
+      this._ledgerSyncScheduled = false;
+      this._flushLedgerSync();
+    });
+  }
+
+  _flushLedgerSync() {
+    try { this._syncFile(this.file); }
+    catch (error) {
+      this._ledgerSyncFailure = freeze({
+        code: typeof error?.code === 'string' ? error.code : 'coordination_ledger_sync_failed',
+      });
+    }
+  }
+
+  /** Issue #290: the poison is startup truth — readable beside the projection it contradicts. */
+  projectionPoison() {
+    return clone(this._projectionPoison);
+  }
+
+  /** Issue #290: the durable repair ledger, readable through the store like every other
+   * housekeeping artifact. */
+  quarantineEntries() {
+    return coordinationReplay.quarantineEntries(this.root);
+  }
+
+  /** Issue #290: the supported repair verb for a poisoned store. Names the offending seq (the
+   * poison itself names it — a mismatch refuses typed), records the quarantine durably beside
+   * the ledger (never a hand edit of events.jsonl), clears the poison, and resumes authority.
+   * Replay skips exactly this seq's fold after any restart, so the repair survives. */
+  quarantineProjectionEvent(seq, { reason, actor } = {}) {
+    this._assertLeaseOwnership();
+    if (!Number.isSafeInteger(seq) || seq <= 0) throw new TypeError('coordination quarantine requires a positive safe integer seq');
+    if (typeof reason !== 'string' || reason.length === 0) throw new TypeError('coordination quarantine requires a non-empty reason');
+    if (typeof actor !== 'string' || actor.length === 0) throw new TypeError('coordination quarantine requires a non-empty actor');
+    if (!this._projectionPoison) {
+      throw Object.assign(new CoordinationRefusal(
+        `coordination quarantine names seq ${seq} but the projection is not poisoned`,
+        'coordination_quarantine_seq_mismatch',
+      ), { detail: { requestedSeq: seq, poisonSeq: null } });
+    }
+    if (this._projectionPoison.seq !== seq) {
+      throw Object.assign(new CoordinationRefusal(
+        `coordination quarantine names seq ${seq} but the projection poison names seq ${this._projectionPoison.seq}`,
+        'coordination_quarantine_seq_mismatch',
+      ), { detail: { requestedSeq: seq, poisonSeq: this._projectionPoison.seq } });
+    }
+    const event = this._events[seq - 1];
+    if (event?.batch) {
+      throw Object.assign(new CoordinationRefusal(
+        'a batched event cannot be quarantined: the batch integrity post-passes re-derive every batched event at replay',
+        'coordination_quarantine_batched_event',
+      ), { detail: { seq } });
+    }
+    const entry = freeze({
+      schemaVersion: 1, seq, kind: event?.kind ?? this._projectionPoison.kind,
+      causeCode: this._projectionPoison.causeCode, reason, actor, ts: this._clock(),
+    });
+    writeQuarantineEntry(this.root, entry);
+    // The fold never applied the event (its refusal is what poisoned the projection), so the
+    // in-memory projection is already consistent without it: resume, and every restart replays
+    // with the fold skipped.
+    this._quarantine.set(seq, entry);
+    this._projectionPoison = null;
+    return freeze({ ok: true, entry: clone(entry) });
   }
 
   _poisonProjection(event, error) {
@@ -1286,6 +1451,12 @@ export class CoordinationStore {
         || (observed.pidStart !== undefined && observed.pidStart !== lease.pidStart)) {
         throw new CoordinationRefusal('coordination writer lease was replaced', 'coordination_writer_lost');
       }
+      // Issue #290: a clean release flushes the pending group-commit first — the lease is never
+      // dropped with an un-synced ledger tail behind it.
+      if (this._ledgerSyncScheduled) {
+        this._ledgerSyncScheduled = false;
+        this._flushLedgerSync();
+      }
       if (this._startupState?.state === 'ready' && !this._projectionPoison) {
         try { this._writeProjectionCheckpoint(); }
         catch { /* the ledger is authoritative; cache telemetry cannot block exact lease release */ }
@@ -1294,6 +1465,11 @@ export class CoordinationStore {
       catch { throw new CoordinationRefusal('coordination writer lease could not be released', 'coordination_writer_lost'); }
       if (existsSync(lease.path)) throw new CoordinationRefusal('coordination writer lease release was not exact', 'coordination_writer_lost');
       this._writerLease = null; return true;
+    }
+    // Issue #290: the same flush on the non-owned release path.
+    if (this._ledgerSyncScheduled) {
+      this._ledgerSyncScheduled = false;
+      this._flushLedgerSync();
     }
     if (this._startupState?.state === 'ready' && !this._projectionPoison) {
       try { this._writeProjectionCheckpoint(); }
@@ -1480,6 +1656,28 @@ export class CoordinationStore {
   _load() {
     return coordinationReplay._load(this);
   }
+  /** Issue #290: the prospective fold gate for the pass-through recording kinds. A payload the
+   * replay fold would refuse is refused typed here — BEFORE _appendFile — so a malformed event
+   * can never reach disk and poison replay. mcp.audit/web.audit own no fold state but still
+   * require a plain-object payload (the audit GAP: these lanes accepted any shape); the
+   * driver.recorded kinds the fold actively validates are checked with the fold's own rule. */
+  _validateRecordedPayload(kind, payload) {
+    if (kind !== 'mcp.audit' && kind !== 'web.audit' && kind !== 'driver.recorded') return;
+    if (payload === null || typeof payload !== 'object' || Array.isArray(payload)) {
+      throw new CoordinationRefusal(`coordination ${kind} payload must be a plain object`, 'coordination_record_invalid');
+    }
+    if (kind === 'driver.recorded') {
+      if (typeof payload.kind !== 'string' || payload.kind.length === 0) {
+        throw new CoordinationRefusal('driver.recorded requires a non-empty payload kind', 'coordination_record_invalid');
+      }
+      if (payload.kind === 'wave.started') {
+        try { assertWaveStartedRoster(payload); }
+        catch (error) {
+          throw Object.assign(new CoordinationRefusal('driver.recorded wave.started roster is malformed', 'coordination_record_invalid'), { cause: error });
+        }
+      }
+    }
+  }
 
   _append(kind, payload, { actor, key }, fixedTs = null, beforeWrite = null) {
     this._assertWriterLease();
@@ -1488,6 +1686,10 @@ export class CoordinationStore {
     const prior = this._byKey.get(key);
     if (prior) return prior;
     if (kind === 'task.created') this._validateTaskTopology(payload, null, false);
+    // Issue #290: the pass-through recording kinds fold prospectively — a payload the fold
+    // would refuse is refused typed here, BEFORE the durable append, so it can never poison
+    // replay (the recordSwarm precedent, applied to every remaining recording path).
+    this._validateRecordedPayload(kind, payload);
     const event = freeze({ schemaVersion: 1, seq: this._events.length + 1, ts: fixedTs ?? this._clock(), kind, actor, idempotencyKey: key, payload: freeze(clone(payload)) });
     if (beforeWrite !== null) {
       if (typeof beforeWrite !== 'function') throw new TypeError('coordination before-write gate must be a function');
@@ -1496,6 +1698,7 @@ export class CoordinationStore {
     }
     const eventBytes = Buffer.from(`${JSON.stringify(event)}\n`, 'utf8');
     this._appendFile(this.file, eventBytes, undefined);
+    this._scheduleLedgerSync();
     this._loadedLedgerHash.update(eventBytes);
     this._loadedLedgerIdentity = freeze({
       bytes: this._loadedLedgerIdentity.bytes + eventBytes.byteLength,
@@ -1546,6 +1749,8 @@ export class CoordinationStore {
       if (typeof entry.auth?.key !== 'string' || entry.auth.key.length === 0) throw new TypeError('coordination idempotency key required');
       if (keys.has(entry.auth.key) || this._byKey.has(entry.auth.key)) throw new CoordinationRefusal(`duplicate batch key ${entry.auth.key}`, 'duplicate_key');
       keys.add(entry.auth.key);
+      // Issue #290: the same prospective gate covers batched entries.
+      this._validateRecordedPayload(entry.kind, entry.payload);
     }
     const createdEntries = entries.filter((entry) => entry.kind === 'task.created');
     for (const created of createdEntries) {
@@ -1588,6 +1793,7 @@ export class CoordinationStore {
       throw new CoordinationRefusal('scratchpad batch exceeds its byte ceiling', 'scratchpad_batch_oversize');
     }
     this._appendFile(this.file, eventBytes, undefined);
+    this._scheduleLedgerSync();
     this._loadedLedgerHash.update(eventBytes);
     this._loadedLedgerIdentity = freeze({
       bytes: this._loadedLedgerIdentity.bytes + eventBytes.byteLength,
@@ -7662,14 +7868,11 @@ export class CoordinationStore {
         // NEW-shape records only — a roster that is neither a well-formed object-array nor a
         // well-formed string-array. The per-deployment private store only ever receives THIS
         // deployment's records, so no row can carry a foreign deploymentId (D3/B3).
+        // Issue #290: the well-formedness rule lives in ONE place (assertWaveStartedRoster),
+        // shared with the prospective write gate, so the fold and the pre-append refusal of a
+        // malformed roster can never drift apart.
+        assertWaveStartedRoster(p);
         const roster = p?.roster;
-        const objectRoster = Array.isArray(roster) && roster.length > 0
-          && roster.every((member) => member !== null && typeof member === 'object' && !Array.isArray(member));
-        const stringRoster = Array.isArray(roster) && roster.length > 0
-          && roster.every((member) => typeof member === 'string');
-        if (!objectRoster && !stringRoster) {
-          throw new CoordinationIntegrityError(`wave.started roster is malformed`, 'wave_registry_invalid');
-        }
         this._waveRegistry.set(p.waveId, freeze({
           closedAtEventSeq: null,
           deploymentId: p.deploymentId ?? null,
@@ -16441,6 +16644,49 @@ export class CoordinationStore {
       violations: { critical: violations.length, total: violations.length, samples: violations.slice(0, sampleLimit), omittedSamples: Math.max(0, violations.length - sampleLimit) },
     });
   }
+}
+
+/** Issue #290: the standalone repair verb for a store whose replay already refuses — the state a
+ * poisoned older ledger leaves after a restart. It probes with the REAL startup path first: the
+ * ledger that replays clean is refused by name. The entry is recorded durably beside the ledger
+ * (never a hand edit of events.jsonl) and the deployment then restarts with the event's fold
+ * skipped. seq must name exactly the seq the startup failure reported. */
+export async function quarantineCoordinationLedgerEvent(root, { seq, reason, actor } = {}) {
+  if (typeof root !== 'string' || root.length === 0 || root.includes('\0')) throw new TypeError('coordination quarantine root is invalid');
+  if (!Number.isSafeInteger(seq) || seq <= 0) throw new TypeError('coordination quarantine requires a positive safe integer seq');
+  if (typeof reason !== 'string' || reason.length === 0) throw new TypeError('coordination quarantine requires a non-empty reason');
+  if (typeof actor !== 'string' || actor.length === 0) throw new TypeError('coordination quarantine requires a non-empty actor');
+  const existing = coordinationReplay.quarantineEntries(root).find((entry) => entry.seq === seq);
+  let failure = null;
+  try {
+    // The probe holds no writer lease (leases are claimed lazily on write) and performs no
+    // writes; it exists to reproduce exactly the startup the deployment will attempt.
+    new CoordinationStore(root);
+  } catch (error) {
+    failure = {
+      code: error?.code ?? 'coordination_startup_failed',
+      seq: error?.coordinationSeq ?? null,
+      kind: error?.coordinationKind ?? null,
+      message: error?.message ?? String(error),
+    };
+  }
+  if (!failure) {
+    throw Object.assign(new CoordinationRefusal(
+      'coordination ledger replays clean — quarantine is not warranted; this verb only records a fold refusal an operator has already observed',
+      'coordination_quarantine_replays_clean',
+    ), { detail: { requestedSeq: seq } });
+  }
+  if (failure.seq !== seq) {
+    throw Object.assign(new CoordinationRefusal(
+      `coordination replay refuses at ${failure.seq === null ? 'an unsequenced failure' : `seq ${failure.seq}`} (${failure.code}), not seq ${seq}`,
+      'coordination_quarantine_refused',
+    ), { detail: { requestedSeq: seq, failureSeq: failure.seq, failureCode: failure.code } });
+  }
+  const probed = writeQuarantineEntry(root, freeze({
+    schemaVersion: 1, seq, kind: failure.kind ?? 'unknown',
+    causeCode: failure.code, reason, actor, ts: new Date().toISOString(),
+  }));
+  return { ok: true, result: probed.duplicate ? 'already-quarantined' : 'quarantined', entry: probed.entry };
 }
 
 /** Offline-only canonical-order compatibility cut. This acquires the same exclusive writer lease

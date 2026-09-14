@@ -65,6 +65,12 @@ export const SEGMENT_FILE_SUFFIX = '.jsonl';
 
 export const SEGMENT_INDEX_FILE = 'index.json';
 
+// Issue #290: the quarantine ledger lives beside events.jsonl and is written only through the
+// supported repair verbs — never by editing the authoritative ledger. Each entry names one seq
+// whose durable event the fold refused, so replay can skip exactly that fold after a restart.
+export const COORDINATION_QUARANTINE_FILE = 'coordination-quarantine.json';
+export const COORDINATION_QUARANTINE_TEMP_PREFIX = 'quarantine-temp-';
+
 export const TERMINAL = new Set(['completed', 'failed', 'cancelled']);
 
 export function boundedText(value, maxBytes) { return typeof value === 'string' && value.trim().length > 0 && Buffer.byteLength(value) <= maxBytes && !value.includes('\0'); }

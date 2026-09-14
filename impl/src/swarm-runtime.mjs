@@ -2,7 +2,7 @@ import { SWARM_EVENT_KINDS, validateSwarmCommand, swarmCommandDefinition } from 
 import { createHash } from 'node:crypto';
 import { canonicalJson } from './canonical-order.mjs';
 import { SWARM_EVENT_PAYLOAD_SCHEMAS, SWARM_EVENT_EXAMPLES } from './swarm-event-schemas.mjs';
-import { foldSwarmEvent } from './swarm-state.mjs';
+import { foldSwarmEvent, SwarmIntegrityError } from './swarm-state.mjs';
 import { workspaceCustodyRecord } from './shared-workspace-custody.mjs';
 
 const clone = (value) => structuredClone(value);
@@ -591,17 +591,41 @@ export class SwarmRuntime {
             participantId: assignment.participantId, workId: assignment.workId, status: 'released' },
           key: `assignment:${assignment.assignmentId}`,
         })),
-        ...groupLeaves.map((group) => ({
-          kind: 'swarm.group_updated',
-          payload: { swarmId: current.swarmId, groupId: group.groupId,
-            members: group.members.filter((member) => member !== holder.participantId) },
-          key: `group:${group.groupId}`,
-        })),
+        // Issue #290: the roster rewrite retains only currently active members. A leave never
+        // evicts group seats, so the roster the holder departs from usually still names other
+        // departed members — and the fold requires every named member to be active, which made
+        // the release operation bricked by the most common preceding event.
+        ...groupLeaves.map((group) => {
+          const members = group.members.filter((member) => member !== holder.participantId
+            && (Object.hasOwn(current.participants, member) && current.participants[member].status === 'active'));
+          return {
+            kind: 'swarm.group_updated',
+            payload: { swarmId: current.swarmId, groupId: group.groupId, members },
+            key: `group:${group.groupId}`,
+          };
+        }),
       ];
       // Prove the whole batch folds before the first write: a batch that cannot land whole
-      // (a group still naming an inactive member) refuses with nothing recorded.
+      // refuses with nothing recorded. The prune above removes the seats the fold would refuse
+      // (a departed member); any residual refusal surfaces TYPED, naming the group and seats
+      // the batch planned (#290) — never a raw integrity error wearing no coordinate.
       const trial = new Map([[current.swarmId, current]]);
-      for (const event of planned) foldSwarmEvent(trial, { kind: event.kind, payload: event.payload });
+      for (const event of planned) {
+        try { foldSwarmEvent(trial, { kind: event.kind, payload: event.payload }); }
+        catch (error) {
+          if (error instanceof SwarmIntegrityError) {
+            refuse('the holder release batch does not fold, so nothing was recorded; the refusal names the group and seats to repair',
+              'swarm_holder_release_refused', {
+                groupId: event.payload.groupId ?? null,
+                assignmentId: event.payload.assignmentId ?? null,
+                seats: Array.isArray(event.payload.members) ? [...event.payload.members] : null,
+                cause: error.code,
+                causeMessage: error.message,
+              });
+          }
+          throw error;
+        }
+      }
       const operationKey = this._operationKey('swarm.update', args, principal);
       for (const event of planned) this._write(event.kind, event.payload, principal, `${operationKey}:${event.key}`);
       return { participantId: holder.participantId, released: {

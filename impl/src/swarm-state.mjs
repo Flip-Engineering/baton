@@ -431,11 +431,13 @@ export function foldSwarmEvent(swarms, event) {
   }
 
   if (kind === 'swarm.group_updated') {
-    // Members must be currently active participants (not left).
+    // Members must be currently active participants (not left). The refusal names the group
+    // and the seat (#290): a release batch trial-folds through here, and "participant_not_active"
+    // without a group/seat left the operator no repairable coordinate.
     for (const memberId of p.members) {
       const member = ownGet(swarm.participants, memberId);
-      if (!member) integrity(`group member ${memberId} not found in swarm ${p.swarmId}`, 'participant_not_found');
-      if (member.status !== 'active') integrity(`group member ${memberId} is not active in swarm ${p.swarmId}`, 'participant_not_active');
+      if (!member) integrity(`group member ${memberId} not found in swarm ${p.swarmId} (group ${p.groupId}, seat ${memberId})`, 'participant_not_found');
+      if (member.status !== 'active') integrity(`group member ${memberId} is not active in swarm ${p.swarmId} (group ${p.groupId}, seat ${memberId})`, 'participant_not_active');
     }
     const existingGroup = ownGet(swarm.groups, p.groupId) ?? null;
     const currentVersion = existingGroup?.version ?? 0;

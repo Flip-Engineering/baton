@@ -44,6 +44,7 @@ test('P92-RP1: a clean close persists a prefix-bound checkpoint and restart fold
     schemaVersion: 1, state: 'ready', source: 'checkpoint_tail',
     totalEvents: 321, checkpointEvents: 320, replayedEvents: 1,
     checkpoint: 'valid', failure: null,
+    poison: null, quarantined: [],
   });
   assert.equal(progress.at(-1).state, 'ready');
 });
@@ -92,6 +93,7 @@ test('P92-RP2: checkpoint corruption falls back to the authoritative ledger and 
     schemaVersion: 1, state: 'ready', source: 'ledger_fallback',
     totalEvents: 8, checkpointEvents: 0, replayedEvents: 8,
     checkpoint: 'corrupt', failure: null,
+    poison: null, quarantined: [],
   });
 });
 

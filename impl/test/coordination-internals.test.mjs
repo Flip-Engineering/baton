@@ -193,7 +193,7 @@ test('CI2: the committed map, the delegates, and the exports are one bijection',
     moved.set(`${member.name}#${member.ordinal}`, port === 'surface:internals_port' ? 'coordinationInternals' : 'coordinationReplay');
   }
   const counts = [...moved.values()].reduce((acc, namespace) => ({ ...acc, [namespace]: (acc[namespace] ?? 0) + 1 }), {});
-  assert.deepEqual(counts, { coordinationInternals: 95, coordinationReplay: 41 },
+  assert.deepEqual(counts, { coordinationInternals: 95, coordinationReplay: 42 },
     'the map must show the moved surface and recovery buckets, minus the members two suite-pinned source scans still key to the store');
 
   const wired = delegates();
@@ -204,7 +204,7 @@ test('CI2: the committed map, the delegates, and the exports are one bijection',
     assert.ok(Object.hasOwn(MODULES.find((entry) => entry.namespace === delegate.module).exports, delegate.helper),
       `${member}: ${delegate.module}.${delegate.helper} must be exported`);
   }
-  // The replay module is exactly its port: 50 exports, one delegate each. The internals module also
+  // The replay module is exactly its port: 42 exports, one delegate each. The internals module also
   // exports the relocated primitives (keys, digests, paths) the store imports back, so the claim
   // there is: 100 distinct exported helpers, each reached by exactly one delegate — and every name
   // the store imports from either module must exist.
@@ -371,6 +371,7 @@ test('CI5: the store keeps its exact public behavior across the move (create, re
     assert.deepEqual(restarted.startupStatus(), {
       schemaVersion: 1, state: 'ready', source: 'ledger', totalEvents: 3, checkpointEvents: 0,
       replayedEvents: 3, checkpoint: 'absent', failure: null,
+      poison: null, quarantined: [],
     }, 'restart replays the whole ledger through the moved replay port');
     assert.equal(createHash('sha256').update(JSON.stringify(restarted.snapshot())).digest('hex'), before,
       'replay reconstructs the identical projection');
