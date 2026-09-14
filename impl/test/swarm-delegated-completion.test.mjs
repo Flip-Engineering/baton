@@ -191,15 +191,15 @@ test('the subtree view: the root and the lead see the same delegation, scoped to
   assert.deepEqual(alphaScope.participants.map((row) => row.participantId), ['alpha']);
   assert.deepEqual(Object.keys(alphaScope.work), ['W-A']);
   assert.deepEqual(Object.keys(alphaScope.assignments), ['as-alpha']);
-  assert.deepEqual(Object.keys(alphaScope.contributions), ['contribution-alpha-1']);
+  assert.deepEqual(alphaScope.contributions.map((row) => row.contributionId), ['contribution-alpha-1']);
   assert.deepEqual(Object.keys(alphaScope.reviews), ['contribution-alpha-1']);
   // A group is a roster, scoped by the SAME intersection rule the couplings use (issue #283): the
   // group alpha sits on is alpha's business and is shown — with the roster it really has — while a
   // group no member of the subtree sits on is not. An EMPTY roster intersects nobody, so a group
   // emptied by a released holder is carried by no scoped view at all.
   await delegated.group({ groupId: 'beta-only', members: ['beta'], purpose: 'no alpha here' });
-  assert.deepEqual(alphaScope.groups.impl.members, ['alpha', 'beta'], 'a group the seat is on is in scope');
-  assert.equal(alphaScope.groups['beta-only'], undefined, 'a group the seat is not on is out of scope');
+  assert.deepEqual(alphaScope.groups.find((row) => row.groupId === 'impl').members, ['alpha', 'beta'], 'a group the seat is on is in scope');
+  assert.equal(alphaScope.groups.some((row) => row.groupId === 'beta-only'), false, 'a group the seat is not on is out of scope');
   assert.deepEqual(alphaScope.participants[0].delegation, { children: [], work: ['W-A'], complete: false });
   assert.equal(asRoot.participants.some((row) => row.participantId === 'beta'), true);
   assert.equal(alphaScope.participants.some((row) => row.participantId === 'beta'), false, 'unrelated participants are excluded');
@@ -227,17 +227,23 @@ test('a gone holder is released in one durable batch; a live one refuses', async
   // ...and the release lands as ONE batch of exactly the individual events a hand-written
   // sequence would record — no extra kind in the durable log, so replay is byte-identical.
   const before = driver.coordination.ledgerHeadSeq();
-  view = await swarm.holderRelease('alpha', 'runtime is gone; seats released');
+  await swarm.holderRelease('alpha', 'runtime is gone; seats released');
+  view = await swarm.view();
   assert.equal(view.assignments['as-alpha'].status, 'released');
-  assert.deepEqual(view.groups['impl'].members, ['beta']);
+  assert.deepEqual(view.groups.find((row) => row.groupId === 'impl').members, ['beta']);
   const batch = driver.coordination.eventsView().slice(before);
   assert.deepEqual(batch.filter((event) => event.kind.startsWith('swarm.')).map((event) => event.kind),
     ['swarm.assignment_updated', 'swarm.group_updated']);
   assert.equal(driver.coordination.eventsView().some((event) => event.kind === 'swarm.holder_released'), false,
     'the release event expands; it never lands as its own durable kind');
   const requested = batch.find((event) => event.kind === 'driver.recorded' && event.payload?.kind === 'swarm.operation_requested');
-  assert.equal(requested.payload.request.event, 'swarm.holder_released', 'the batch request, reason included, is durable');
-  assert.equal(requested.payload.request.payload.reason, 'runtime is gone; seats released');
+  // Issue #308: the in-flight row carries the request DIGEST, never the request body. The WHY of
+  // the release rides the durable domain events instead — the released assignment rows.
+  assert.equal(requested.payload.request, undefined, 'in-flight rows never carry the request body');
+  assert.match(requested.payload.requestDigest, /^[a-f0-9]{64}$/u);
+  assert.equal(batch.some((event) => event.kind === 'swarm.assignment_updated'
+    && event.payload.reason === 'runtime is gone; seats released'), true,
+  'the release reason is durable on the released assignment event');
 
   // The lead leaves organizationally: its orphaned children name the same next step, and the
   // departed lead itself (status left) is releasable — an honest no-op when it holds no seats.
@@ -245,7 +251,8 @@ test('a gone holder is released in one durable batch; a live one refuses', async
   view = await swarm.view();
   const orphan = view.attention.find((row) => row.kind === 'delegation_orphaned' && row.participantId === 'beta');
   assert.deepEqual(orphan.next, { event: 'swarm.holder_released', participantId: 'lead' });
-  view = await swarm.holderRelease('lead', 'departed; seats released');
+  await swarm.holderRelease('lead', 'departed; seats released');
+  view = await swarm.view();
   assert.equal(view.participants.find((row) => row.participantId === 'lead').status, 'left');
 });
 

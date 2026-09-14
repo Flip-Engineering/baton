@@ -61,8 +61,17 @@ function fixture(t) {
 
 test('orchestrator starts empty, recruits later, and changes overlapping collaboration groups', async (t) => {
   const f = fixture(t);
-  const empty = await f.call('create', { purpose: 'Develop Baton using Baton' });
-  assert.equal(empty.participants.length, 0);
+  const created = await f.call('create', { purpose: 'Develop Baton using Baton' });
+  // Issue #302: a mutation answers with its RECEIPT — the recorded event and the rows it changed —
+  // and carries `next`; the whole view rides along only when the caller asks (view: true).
+  assert.equal(created.receipt.command, 'swarm.create');
+  assert.equal(created.receipt.event.kind, 'swarm.created');
+  assert.equal(typeof created.receipt.event.seq, 'number');
+  assert.equal(typeof created.receipt.event.ts, 'string');
+  assert.equal(created.receipt.event.actor, 'owner');
+  assert.deepEqual(created.receipt.changed, [{ collection: 'swarm', id: created.swarmId, seq: created.receipt.event.seq, ts: created.receipt.event.ts }]);
+  assert.deepEqual(created.next, { command: 'swarm.recruit', args: { swarmId: created.swarmId } });
+  assert.equal('participants' in created, false, 'the view is opt-in, never the default answer');
   await f.recruit('builder');
   await f.recruit('reviewer', ['read', 'review', 'communicate']);
   await f.call('update', { event: 'swarm.group_updated', payload: { groupId: 'runtime', members: ['builder', 'reviewer'] } });
@@ -72,8 +81,8 @@ test('orchestrator starts empty, recruits later, and changes overlapping collabo
   assert.equal(f.starts.at(-1).sharedContext[0].body, 'A turn ending is not a contribution being accepted.');
   assert.equal(f.workers.length, 3);
   const view = await f.call('view');
-  assert.deepEqual(view.groups.runtime.members, ['builder', 'reviewer']);
-  assert.deepEqual(view.groups.api.members, ['reviewer']);
+  assert.deepEqual(view.groups.find((row) => row.groupId === 'runtime').members, ['builder', 'reviewer']);
+  assert.deepEqual(view.groups.find((row) => row.groupId === 'api').members, ['reviewer']);
   assert.ok(view.availableActions.includes('swarm.recruit'));
 });
 

@@ -242,6 +242,9 @@ export function validateSwarmEvent(kind, payload) {
   if (kind === 'swarm.participant_left') {
     if (!isNonEmptyString(p.participantId)) refuse('swarm.participant_left requires participantId', 'invalid_payload');
     validOptionalNonEmptyString(p.reason, 'left reason', refuse);
+    // The typed code the runtime rolled a recruitment back with (issue #308): the join's own
+    // admission refusal, carried on the leave so the durable log explains WHY the seat vanished.
+    validOptionalNonEmptyString(p.code, 'left code', refuse);
     return;
   }
   if (kind === 'swarm.group_updated') {
@@ -326,6 +329,7 @@ export function validateSwarmEvent(kind, payload) {
     if (!SWARM_ASSIGNMENT_STATUSES.includes(p.status)) {
       refuse(`assignment status must be one of: ${SWARM_ASSIGNMENT_STATUSES.join(', ')}`, 'invalid_payload');
     }
+    validOptionalNonEmptyString(p.reason, 'assignment reason', refuse);
     validOptionalNonNegativeInt(p.expectedVersion, 'assignment expectedVersion', refuse);
     return;
   }
@@ -356,12 +360,17 @@ export function validateSwarmEvent(kind, payload) {
     }
     // Honest shared-checkout metadata: which physical checkout the revision was observed in, and
     // the HEAD that checkout showed before the capture. Both are checkout observations, never an
-    // authorship claim; `sha`/`ref` alone stay the retained revision.
+    // authorship claim; `sha`/`ref` alone stay the retained revision. `mergeBase` is the commit
+    // the captured revision and the deployment's target branch descend from (issue #301), so the
+    // row answers "integrate from where" without re-deriving git topology at read time.
     if (p.workspaceId !== undefined && !WORKSPACE_ID.test(p.workspaceId)) {
       refuse('A contribution revision workspace must be one physical workspace identity', 'invalid_payload');
     }
     if (p.observedHead !== undefined && !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/u.test(p.observedHead)) {
       refuse('A contribution revision observedHead must be an exact commit', 'invalid_payload');
+    }
+    if (p.mergeBase !== undefined && !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/u.test(p.mergeBase)) {
+      refuse('A contribution revision mergeBase must be an exact commit', 'invalid_payload');
     }
     return;
   }
@@ -428,8 +437,15 @@ export function foldSwarmEvent(swarms, event, { admission = false } = {}) {
   if (!swarm) integrity(`swarm ${p.swarmId} not found`, 'swarm_not_found');
 
   if (kind === 'swarm.participant_joined') {
-    if (ownGet(swarm.participants, p.participantId)) {
-      integrity(`participant ${p.participantId} already exists in swarm ${p.swarmId}`, 'participant_duplicate');
+    const existing = ownGet(swarm.participants, p.participantId) ?? null;
+    if (existing) {
+      // A seat the runtime itself rolled back after a refused admission (issue #308: a
+      // `recruit_refused` leave) is the ONE existing row a join may re-activate: the repeated
+      // recruit of the same id RESUMES that join instead of being refused by a row the runtime
+      // had already withdrawn. Any other existing row stays a duplicate.
+      if (!(existing.status === 'left' && existing.leftReason === 'recruit_refused')) {
+        integrity(`participant ${p.participantId} already exists in swarm ${p.swarmId}`, 'participant_duplicate');
+      }
     }
     if (isNonEmptyString(p.parentId) && !ownGet(swarm.participants, p.parentId)) {
       integrity(`parentId ${p.parentId} not found in swarm ${p.swarmId}`, 'participant_not_found');
@@ -480,6 +496,9 @@ export function foldSwarmEvent(swarms, event, { admission = false } = {}) {
     if (!participant) integrity(`participant ${p.participantId} not found in swarm ${p.swarmId}`, 'participant_not_found');
     const updatedParticipant = Object.freeze({
       ...participant, status: 'left', leftReason: p.reason ?? null,
+      // The typed admission code a recruit rollback carries (issue #308). Conditional on the
+      // payload, so logs written before the field existed replay byte-identically.
+      ...(p.code !== undefined ? { leftCode: p.code } : {}),
       actor: meta.actor, seq: meta.seq, ts: meta.ts,
     });
     const parts = new Map(Object.entries(swarm.participants));
@@ -673,6 +692,7 @@ export function foldSwarmEvent(swarms, event, { admission = false } = {}) {
     swarms.set(p.swarmId, replaceField(swarm, 'couplings', couplings));
     return;
   }
+
   if (kind === 'swarm.assignment_updated') {
     if (!ownGet(swarm.participants, p.participantId)) {
       integrity(`participant ${p.participantId} not found in swarm ${p.swarmId}`, 'participant_not_found');
@@ -690,7 +710,11 @@ export function foldSwarmEvent(swarms, event, { admission = false } = {}) {
     }
     const updatedAssignment = Object.freeze({
       assignmentId: p.assignmentId, participantId: p.participantId, workId: p.workId,
-      status: p.status, version: currentVersion + 1,
+      status: p.status,
+      // The WHY of a release (a holder release batch, issues #263/#308): durable on the domain
+      // event itself, because the in-flight operation row carries no request body.
+      ...(p.reason !== undefined ? { releaseReason: p.reason } : {}),
+      version: currentVersion + 1,
       actor: meta.actor, seq: meta.seq, ts: meta.ts,
     });
     const assignments = new Map(Object.entries(swarm.assignments));
@@ -754,11 +778,14 @@ export function foldSwarmEvent(swarms, event, { admission = false } = {}) {
     contributions.set(p.contributionId, Object.freeze({
       ...contribution,
       refs: Object.freeze([...new Set([...(contribution.refs ?? []), p.ref])]),
-      // The revision also names the checkout it was observed in and the HEAD that checkout showed
-      // before the capture — shared-checkout facts that are never an authorship claim over `sha`.
+      // The revision also names the checkout it was observed in, the HEAD that checkout showed
+      // before the capture, and — when the runtime derived it (issue #301) — the commit the
+      // revision and the deployment's target descend from. Shared-checkout facts, never an
+      // authorship claim over `sha`.
       revision: Object.freeze({
         sha: p.sha, ref: p.ref,
         workspaceId: p.workspaceId ?? null, observedHead: p.observedHead ?? null,
+        ...(p.mergeBase !== undefined ? { mergeBase: p.mergeBase } : {}),
         ...meta,
       }),
     }));

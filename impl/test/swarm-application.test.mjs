@@ -123,10 +123,10 @@ test('real application supports delegated recruitment and continuing native turn
   await assert.rejects(implementation.recruit('forbidden', 'Attempt unauthorized recruitment', selection), { code: 'swarm_permission_required' });
   const view = await swarm.view();
   assert.equal(view.participants.find((row) => row.participantId === 'builder').parentId, 'lead');
-  assert.equal(view.contributions.finding.body, 'The next change can remain independent of reviewer lifetime.');
+  assert.equal(view.contributions.find((row) => row.contributionId === 'finding').body, 'The next change can remain independent of reviewer lifetime.');
   await delegated.group({ groupId: 'review', members: ['lead', 'builder'] });
   await delegated.group({ groupId: 'implementation', members: ['builder'] });
-  assert.equal((await swarm.view()).groups.review.members.length, 2);
+  assert.equal((await swarm.view()).groups.find((row) => row.groupId === 'review').members.length, 2);
   const help = await app.command('application.help', { topic: 'swarm', depth: 'content' }, principal('orchestrator'));
   assert.ok(help.content.commands.some((usage) => usage.includes('swarm recruit')));
   await delegated.close();

@@ -478,3 +478,47 @@ narrower projection that MEASURABLY fits: the bridge re-projects the answer it a
 the same slicer the runtime builds views with and names the widest one under the ceiling — never a
 declared table of sizes, never a truncation, and never a second hardcoded number. Asking again with
 the named projection is the fix, and the test does exactly that.
+
+## Every mutation answers with a receipt (issues #302, #301, #308, 2026-09-14)
+
+**A mutation is an operation you can account for.** `swarm.create`, `swarm.update` (every kind,
+close included), `swarm.recruit`, `swarm.guide`, `swarm.stop`, `swarm.capture` and `swarm.check`
+answer with a RECEIPT — `receipt {command, event: {kind, seq, ts, actor}, changed:
+[{collection, id, seq, ts}]}` — the recorded event that proves the mutation happened and the rows
+it changed, plus `next: {command, args}`, the projection or action that follows (the same `next`
+#272 asks for on terminal attention rows). The whole refreshed view rides the answer only when the
+caller asks: `view: true` on the command, `--view true` on the CLI. A replayed `_once` command
+returns the FIRST attempt's receipt — idempotency holds for the answer, not only the effect.
+Because a receipt names what was recorded, an operation that records nothing durable (a stop whose
+effect lives on the run lane) answers with the receipt of the operation terminal row that proves it.
+
+**One collection shape on the view.** `participants`, `contributions`, `couplings`, `groups` and
+`attention` are ARRAYS of rows — the collections a caller iterates — while the identity-addressed
+families (`work`, `assignments`, `reviews`, `context`) stay keyed objects. Every read path (view,
+watch frames, the native bridge, the MCP tools) carries those rows through unchanged, and a test
+feeds one runtime through all four and asserts the shape.
+
+**Scope overlap is advice, not a fence (#301).** `swarm.recruit` compares the requested scope with
+every ACTIVE participant's scope across the repository's swarms and returns `scopeOverlap` rows —
+`{participantId, swarmId, paths}` — naming the other seat, where it sits, and the paths both
+scopes name. The rows inform the recruiter; nothing refuses.
+
+**Drift is visible before capture (#301).** Every participant row carries
+`base {observedHead, target, behind}` derived from the repository at read time: the commit its
+checkout shows, the deployment's default branch, and how many target commits the checkout lacks. A
+seat with no checkout to observe reads `base: null` — absence, never a guess. `swarm.capture`
+records the merge-base of the captured revision with the target on the capture row, and refuses
+TYPED (`swarm_capture_base_unreachable`) when the checkpoint's base cannot reach the target — a
+revision that shares no ancestor with the target could never integrate, so it is never pinned.
+
+**A refused recruit leaves no phantom, and a retry resumes (#308).** A recruit whose run admission
+refuses rolls its join back with a durable `swarm.participant_left {reason: 'recruit_refused',
+code}` — the typed admission code rides the leave. A repeated recruit of the same id RESUMES the
+rolled-back join (the join re-activates that one row); any other existing row refuses with
+`swarm_participant_exists`, which crosses the CLI as itself with `retryable: false` — the identity
+is taken, and retrying cannot change that. A refused operation SETTLES its attention row: the
+operation lane's unavailable outcome turns the row into `operation_refused {state: 'refused',
+code}` instead of leaving `operation_unconfirmed` forever. And in-flight rows never carry the
+request body: `swarm.operation_requested` names the command, the seat and the request DIGEST only,
+so the text of somebody's private guide is not ledger content. The WHY of a holder release is
+durable on the released assignment rows themselves (`releaseReason`), not on the operation lane.

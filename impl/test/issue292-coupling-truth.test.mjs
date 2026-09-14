@@ -24,6 +24,9 @@ import { SwarmRuntime, SWARM_PERMISSIONS } from '../src/swarm-runtime.mjs';
 import { SWARM_COMMAND_NAMES, SWARM_EVENT_KINDS } from '../src/swarm-contract.mjs';
 import { SWARM_NATIVE_GUIDANCE } from '../src/swarm-native-access.mjs';
 
+// The view's coupling collection is an ARRAY of rows (issue #302, one collection shape).
+const couplingRow = (view, couplingId) => (view?.couplings ?? []).find((row) => row.couplingId === couplingId) ?? null;
+
 const policy = Object.freeze({
   schemaVersion: 1, repoId: 'repo-coupling-truth', mandatory: true, approvalTtlMs: 60 * 60 * 1000,
   riskClasses: ['low', 'medium', 'high', 'critical'], effectClasses: ['repository_edit', 'provider_call'],
@@ -121,8 +124,9 @@ test('the first recruit into a checkout records it, and the writer guard fires f
   await paused(sharer.runId);
 
   // The lead holds the checkout; a second claim over the SAME recorded checkout refuses by name.
-  const claim = await delegated.couple({ couplingId: 'writer-lead', coupling: 'writer', action: 'declare', participantId: 'lead' });
-  assert.equal(claim.couplings['writer-lead'].workspaceId, lead.workspaceId,
+  await delegated.couple({ couplingId: 'writer-lead', coupling: 'writer', action: 'declare', participantId: 'lead' });
+  const claim = await swarm.view();
+  assert.equal(claim.couplings.find((row) => row.couplingId === 'writer-lead').workspaceId, lead.workspaceId,
     'the claim names the checkout the holder is recorded in');
   await assert.rejects(
     delegated.couple({ couplingId: 'writer-sharer', coupling: 'writer', action: 'declare', participantId: 'sharer' }),
@@ -207,7 +211,7 @@ test('arrivals carry the actor and the timestamp that made them, and a re-declar
   const { swarm, delegated, alphaWorker, asWorker } = await coupling(t);
   await delegated.couple({ couplingId: 'sync-freeze', coupling: 'synchronization', action: 'declare', groupId: 'impl', name: 'interface-freeze' });
   await asWorker(alphaWorker).swarms.open(swarm.id).couple({ couplingId: 'sync-freeze', coupling: 'synchronization', action: 'arrive' });
-  let point = (await swarm.view()).couplings['sync-freeze'];
+  let point = couplingRow((await swarm.view()), 'sync-freeze');
   assert.deepEqual(point.arrivals.map(({ participantId }) => participantId), ['alpha']);
   assert.equal(typeof point.arrivals[0].ts, 'string', 'the arrival carries WHEN it was made');
   assert.match(point.arrivals[0].actor ?? '', /^worker:/u, 'and which identity made the report');
@@ -215,8 +219,8 @@ test('arrivals carry the actor and the timestamp that made them, and a re-declar
 
   // Re-declaring the same point (a new name — the innocent edit the audit feared) replaces the
   // parameters and CARRIES the arrival: a barrier is never wiped silently.
-  const re = await delegated.couple({ couplingId: 'sync-freeze', coupling: 'synchronization', action: 'declare', groupId: 'impl', name: 'interface-freeze-2' });
-  point = re.couplings['sync-freeze'];
+  await delegated.couple({ couplingId: 'sync-freeze', coupling: 'synchronization', action: 'declare', groupId: 'impl', name: 'interface-freeze-2' });
+  point = couplingRow(await swarm.view(), 'sync-freeze');
   assert.equal(point.name, 'interface-freeze-2');
   assert.deepEqual(point.arrivals.map(({ participantId }) => participantId), ['alpha'],
     'the arrival the member already reported survives the re-declare');
@@ -232,15 +236,17 @@ test('a release is attributed to the ACTOR: the member that released, or the act
 
   // A member releases naming ANOTHER seat (the request is about that seat): the row still names
   // the member that released — an organizer's act never lands as the seat it touched.
-  let view = await delegated.couple({ couplingId: 'sync-x', coupling: 'synchronization', action: 'release', participantId: 'beta', reason: 'released on beta\'s behalf' });
-  assert.equal(view.couplings['sync-x'].releasedBy, 'lead');
-  assert.equal(view.couplings['sync-x'].releaseReason, 'released on beta\'s behalf');
+  await delegated.couple({ couplingId: 'sync-x', coupling: 'synchronization', action: 'release', participantId: 'beta', reason: 'released on beta\'s behalf' });
+  let view = await swarm.view();
+  assert.equal(couplingRow(view, 'sync-x').releasedBy, 'lead');
+  assert.equal(couplingRow(view, 'sync-x').releaseReason, 'released on beta\'s behalf');
 
   // An external orchestrator (the root, which has no participant row) releases: the row names the
   // principal, and never lands as null.
   await delegated.couple({ couplingId: 'sync-y', coupling: 'synchronization', action: 'declare', groupId: 'impl', name: 'y' });
-  view = await root.swarms.open(swarm.id).couple({ couplingId: 'sync-y', coupling: 'synchronization', action: 'release', reason: 'the orchestrator released it' });
-  assert.equal(view.couplings['sync-y'].releasedBy, 'direct:root',
+  await root.swarms.open(swarm.id).couple({ couplingId: 'sync-y', coupling: 'synchronization', action: 'release', reason: 'the orchestrator released it' });
+  view = await swarm.view();
+  assert.equal(couplingRow(view, 'sync-y').releasedBy, 'direct:root',
     'the root\'s act is attributed to the root principal, not null');
 
   // A caller-named releasedBy that is not the actor is a misattribution and refuses.
@@ -258,10 +264,11 @@ test('a review is attributed to the ACTOR: the reviewing member, or the acting p
   });
 
   // The root (no participant row) reviews: the row names the root's principal, never null.
-  let view = await root.swarms.open(swarm.id).review({ contributionId: 'contribution-alpha-1', decision: 'accept', reason: 'verified' });
+  await root.swarms.open(swarm.id).review({ contributionId: 'contribution-alpha-1', decision: 'accept', reason: 'verified' });
+  let view = await swarm.view();
   assert.equal(view.reviews['contribution-alpha-1'][0].reviewerId, 'direct:root');
-  // A member reviews: the row names the member.
-  view = await delegated.review({ contributionId: 'contribution-alpha-1', decision: 'comment', reason: 'second look' });
+  await delegated.review({ contributionId: 'contribution-alpha-1', decision: 'comment', reason: 'second look' });
+  view = await swarm.view();
   assert.equal(view.reviews['contribution-alpha-1'][1].reviewerId, 'lead');
   // Neither may review under another identity.
   await assert.rejects(delegated.review({ contributionId: 'contribution-alpha-1', decision: 'comment', reviewerId: 'beta' }),
@@ -280,7 +287,7 @@ test('a member listed in awaiting sees the synchronization record in its own sco
   // it is asked to arrive at, in its OWN scoped view (docs/39 §Declared coupling).
   await asWorker(alphaWorker).swarms.open(swarm.id).couple({ couplingId: 'sync-seen', coupling: 'synchronization', action: 'arrive' });
   const betaScope = await swarm.view({ participantId: 'beta' });
-  const awaited = betaScope.couplings['sync-seen'];
+  const awaited = couplingRow(betaScope, 'sync-seen');
   assert.ok(awaited, 'the member still awaited sees the record');
   assert.deepEqual(awaited.awaiting, ['beta']);
   assert.deepEqual(awaited.arrivals.map(({ participantId }) => participantId), ['alpha']);

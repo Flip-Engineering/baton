@@ -175,7 +175,7 @@ test('the client buffers under the bound the bridge published, so a raised ceili
   // Between the published bound and the registry row: a client that used the registry default
   // would reject this answer, and the bridge's own client must not.
   const view = await f.send('swarm.view', { swarmId: 'baton', projection: 'contributions' });
-  assert.deepEqual(Object.keys(view.contributions), ['c-fit']);
+  assert.deepEqual(view.contributions.map((row) => row.contributionId), ['c-fit']);
   assert.equal(SWARM_BRIDGE_REFUSAL_COMMAND, 'swarm.bridge_refusal', 'the report verb is not a swarm command');
 });
 

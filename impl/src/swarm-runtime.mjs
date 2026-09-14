@@ -1,5 +1,7 @@
+import { spawnSync } from 'node:child_process';
 import { SWARM_EVENT_KINDS, SWARM_BRIDGE_REFUSAL_COMMAND, SWARM_VIEW_DEFAULT_PROJECTION,
-  projectSwarmView, swarmCommandDefinition, validateSwarmCommand } from './swarm-contract.mjs';
+  projectSwarmView, swarmChangedRow, swarmCommandDefinition, swarmReceiptNext,
+  validateSwarmCommand } from './swarm-contract.mjs';
 import { createHash } from 'node:crypto';
 import { canonicalJson } from './canonical-order.mjs';
 import { SWARM_EVENT_PAYLOAD_SCHEMAS, SWARM_EVENT_EXAMPLES } from './swarm-event-schemas.mjs';
@@ -40,6 +42,73 @@ const swarmRouteShape = (value) => (value && typeof value === 'object' && !Array
   ? Object.freeze({ harness: value.harness, model: value.model,
     effort: typeof value.effort === 'string' && value.effort.length > 0 ? value.effort : null })
   : null;
+// ── repository reads (issue #301) ────────────────────────────────────────────────────────────────
+const GIT_SHA = /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/;
+/** One read-only git query over a checkout the deployment itself owns, or null when it cannot be
+ * answered (no checkout, detached state the query cannot name, git absent). Never mutates, never
+ * invents: a null is "observed nothing", which the derivations below surface as absence. */
+const gitRead = (args, cwd) => {
+  if (typeof cwd !== 'string' || cwd.length === 0) return null;
+  try {
+    const ran = spawnSync('git', args, { cwd, encoding: 'utf8' });
+    if (ran.status !== 0 || typeof ran.stdout !== 'string') return null;
+    const out = ran.stdout.trim();
+    return out.length > 0 ? out : null;
+  } catch { return null; }
+};
+/** The checkout facts one worker's session context names: the worktree its process runs in and
+ * the repository that worktree was created from. A worker without a recorded checkout reads
+ * null — absence, never a guess about where its files live. */
+const checkoutOf = (worker) => {
+  const worktree = worker?.sessionContext?.worktree;
+  if (typeof worktree !== 'string' || worktree.length === 0) return null;
+  const repoRoot = typeof worker.sessionContext.repoRoot === 'string'
+    && worker.sessionContext.repoRoot.length > 0
+    ? worker.sessionContext.repoRoot : worktree;
+  return { worktree, repoRoot };
+};
+/** The deployment's target revision name: the branch its own checkout has current — the branch
+ * every Baton worktree forks from — or the checkout's own HEAD commit when it is detached. */
+const targetRefOf = (repoRoot) => {
+  const branch = gitRead(['symbolic-ref', '--short', 'HEAD'], repoRoot);
+  return branch ?? 'HEAD';
+};
+/** A participant's base, derived from the repository at read time (issue #301): the commit its
+ * checkout shows, the deployment target that checkout is measured against, and how many target
+ * commits the checkout lacks — so drift is visible BEFORE a capture, not discovered after one.
+ * Unobservable seats (unbound, no checkout recorded) carry `base: null`. */
+const participantBase = (worker) => {
+  const checkout = checkoutOf(worker);
+  if (!checkout) return null;
+  const observedHead = gitRead(['rev-parse', 'HEAD'], checkout.worktree);
+  if (!observedHead || !GIT_SHA.test(observedHead)) return null;
+  const targetRef = targetRefOf(checkout.repoRoot);
+  const targetCommit = gitRead(['rev-parse', targetRef], checkout.repoRoot);
+  if (!targetCommit || !GIT_SHA.test(targetCommit)) return null;
+  const behind = gitRead(['rev-list', '--count', `${observedHead}..${targetRef}`], checkout.repoRoot);
+  return {
+    observedHead,
+    target: targetRef === 'HEAD' ? targetCommit : targetRef,
+    behind: behind === null || !/^\d+$/u.test(behind) ? null : Number(behind),
+  };
+};
+/** The base facts a CAPTURE pins (issue #301): everything `participantBase` reads, plus the
+ * merge-base of the observed HEAD with the target — the commit an integration would descend
+ * from, recorded on the capture row so it never has to be re-derived later. */
+const captureBase = (worker) => {
+  const checkout = checkoutOf(worker);
+  if (!checkout) return null;
+  const observedHead = gitRead(['rev-parse', 'HEAD'], checkout.worktree);
+  if (!observedHead || !GIT_SHA.test(observedHead)) return null;
+  const targetRef = targetRefOf(checkout.repoRoot);
+  const targetCommit = gitRead(['rev-parse', targetRef], checkout.repoRoot);
+  if (!targetCommit || !GIT_SHA.test(targetCommit)) {
+    return { observedHead, target: null, mergeBase: null };
+  }
+  const mergeBase = gitRead(['merge-base', observedHead, targetRef], checkout.repoRoot);
+  return { observedHead, target: targetRef === 'HEAD' ? targetCommit : targetRef, mergeBase };
+};
+const _mutationView = (args) => args.view === true || args.view === 'true';
 export const SWARM_PERMISSIONS = Object.freeze(['read', 'communicate', 'contribute', 'review', 'organize', 'recruit', 'stop']);
 const DEFAULT_PERMISSIONS = Object.freeze(['read', 'communicate', 'contribute']);
 const UPDATE_PERMISSIONS = Object.freeze({
@@ -204,6 +273,66 @@ export class SwarmRuntime {
   _write(kind, payload, principal, key) {
     return this.store.recordSwarm(kind, payload, { actor: principal.actor, key });
   }
+  /** The receipt envelope every mutation answers with (issue #302): the FIRST event this attempt
+   * recorded — {kind, seq, ts, actor} — the swarm rows it changed, and `next`, the step that
+   * follows. The whole refreshed view rides the answer only when the caller asked for it
+   * (`view: true`; the CLI's flag grammar spells it `--view true`). A `_once` command replays the
+   * recorded result, whose writes carry the ORIGINAL events, so a replayed receipt is the receipt
+   * the first attempt answered with — idempotency holds for the answer, not only the effect. */
+  _mutationResult(command, args, writes, principal, context, extra = {}) {
+    const recorded = writes.filter((write) => write && typeof write.seq === 'number');
+    if (recorded.length === 0) {
+      // A mutation whose effect wrote no swarm event of its own (a stop, a guide that never
+      // reached the receipted lane) still has one durable row that proves it: the operation
+      // terminal row the lane recorded for this exact attempt.
+      const completed = this.store.priorCoordinationEvent(`${this._operationKey(command, args, principal)}:completed`);
+      if (completed) {
+        recorded.push({ kind: completed.payload?.kind ?? 'swarm.operation_completed',
+          seq: completed.seq, ts: completed.ts, actor: completed.actor });
+      }
+    }
+    const first = recorded[0] ?? null;
+    const changed = new Map();
+    for (const write of recorded) {
+      const row = swarmChangedRow(write.kind, write.payload ?? {});
+      if (!row || row.id === null || row.id === undefined) continue;
+      // Same row written twice by one mutation (a join followed by its binding): the LAST write
+      // is the state the row carries now.
+      changed.set(`${row.collection}\0${row.id}`, { ...row, seq: write.seq, ts: write.ts });
+    }
+    const envelope = {
+      receipt: {
+        command,
+        event: first ? { kind: first.kind, seq: first.seq, ts: first.ts, actor: first.actor } : null,
+        changed: [...changed.values()].sort((a, b) => a.collection.localeCompare(b.collection)
+          || String(a.id).localeCompare(String(b.id))),
+      },
+      next: swarmReceiptNext(command, args),
+      ...extra,
+    };
+    if (_mutationView(args)) envelope.view = this.inspect(this._swarm(args.swarmId), principal, context);
+    return envelope;
+  }
+
+  /** The advisory scope-overlap rows one requested scope raises (issue #301): every ACTIVE
+    * participant across the repository's swarms whose declared scope shares paths with the
+    * requested one, named with its swarm and the overlapping paths. Advisory — a row informs the
+    * recruiter, it never refuses; two seats may share a scope on purpose. */
+  _scopeOverlap(requestedScope) {
+    const requested = new Set(requestedScope);
+    const rows = [];
+    for (const swarm of this.store.swarms()) {
+      for (const participant of Object.values(swarm.participants)) {
+        if (participant.status !== 'active' || !Array.isArray(participant.scope)) continue;
+        const paths = [...new Set(participant.scope.filter((path) => requested.has(path)))].sort();
+        if (paths.length > 0) {
+          rows.push({ swarmId: swarm.swarmId, participantId: participant.participantId, paths });
+        }
+      }
+    }
+    return rows.sort((a, b) => a.swarmId.localeCompare(b.swarmId)
+      || a.participantId.localeCompare(b.participantId));
+  }
 
   _operationKey(command, args, principal) {
     return `swarm-operation:${hash([command, args.swarmId, principal.principalId, args.idempotencyKey])}`;
@@ -226,11 +355,14 @@ export class SwarmRuntime {
     if (requested && !replaySafe) {
       refuse('This operation was already attempted and its outcome is unconfirmed: repeating it under the SAME idempotencyKey needs reconciliation, and only swarm.recruit and swarm.holder_released replay under their key — make a NEW attempt under a NEW idempotencyKey',
         'swarm_operation_unconfirmed', {
-          command, request: clone(requested.payload.request), operationKey: key,
+          command, operationKey: key,
         });
     }
+    // The request rides its digest, never its body (issue #308): an in-flight operation row names
+    // the command, the seat and the digest, so the text of somebody's private guide or the
+    // objective of a refused recruit is not durable attention content.
     if (!requested) this.store.recordDriver('swarm.operation_requested', {
-      swarmId: args.swarmId, command, requestDigest, request: clone(args), basis: clone(basis), participantId,
+      swarmId: args.swarmId, command, requestDigest, basis: clone(basis), participantId,
     }, { actor: principal.actor, key });
     const operation = Promise.resolve().then(() => effect(clone(requested?.payload.basis ?? basis))).then((result) => {
       this.store.recordDriver('swarm.operation_completed', {
@@ -410,6 +542,10 @@ export class SwarmRuntime {
         workspace: physicalOwnerId !== null
           ? workspaceCustodyRecord(physicalOwnerId, this.coordinator.liveWorkspaceHolders(physicalOwnerId).length)
           : null,
+        // Drift before capture (issue #301): the base this seat's checkout shows against the
+        // deployment's target, derived from the repository at read time. A seat with no checkout
+        // to observe carries base: null — absence, never a guess.
+        base: participantBase(worker),
         lastRefusal: lastRefusal(participant.participantId) };
     });
     // Organization truth an orchestrator would otherwise assemble by hand: members whose process
@@ -500,17 +636,24 @@ export class SwarmRuntime {
     }
     const operations = ledger.filter((event) => event.kind === 'driver.recorded'
       && event.payload.swarmId === swarm.swarmId && event.payload.kind === 'swarm.operation_requested');
-    // An in-flight operation row names the COMMAND, the seat and the operation key — never the
-    // request body (2026-09-14 audit S-E6): the payload of somebody's private guide is not
-    // attention, and a scoped view carries only the rows its subtree can act on, which an
-    // unattributed operation is not.
     const attention = [
-      ...operations.filter((event) => !this.store.priorCoordinationEvent(`${event.idempotencyKey}:completed`))
-        .map((event) => ({ kind: 'operation_unconfirmed', command: event.payload.command,
+      ...operations.flatMap((event) => {
+        if (this.store.priorCoordinationEvent(`${event.idempotencyKey}:completed`)) return [];
+        // A refused operation SETTLES its row (issue #308): the operation lane's unavailable row
+        // is the outcome, so the row reads as a refusal with its code instead of staying
+        // `operation_unconfirmed` forever. Only the genuine unknown — neither completed nor
+        // refused, usually a crash window — remains unconfirmed.
+        const unavailable = this.store.priorCoordinationEvent(`${event.idempotencyKey}:unavailable`);
+        if (unavailable) {
+          return [{ kind: 'operation_refused', command: event.payload.command, state: 'refused',
+            participantId: event.payload.participantId ?? null, operationKey: event.idempotencyKey,
+            code: unavailable.payload.code ?? null }];
+        }
+        return [{ kind: 'operation_unconfirmed', command: event.payload.command,
           participantId: event.payload.participantId ?? null, operationKey: event.idempotencyKey,
           state: this.pending.has(event.idempotencyKey) ? 'in_progress' : 'unconfirmed',
-          code: this.store.priorCoordinationEvent(`${event.idempotencyKey}:unavailable`)?.payload.code ?? null,
-        })),
+          code: null }];
+      }),
       ...organization,
     ];
     const scopedAttention = !scope ? attention : attention.flatMap((row) => {
@@ -584,6 +727,7 @@ export class SwarmRuntime {
       .filter(([, contribution]) => contribution.workId && scopeWorkIds.has(contribution.workId))
       .map(([contributionId]) => contributionId)) : null;
     const keep = (entries, predicate) => Object.fromEntries(scope ? entries.filter(predicate) : entries);
+    const rowsOf = (entries, predicate) => (scope ? entries.filter(predicate) : entries).map(([, row]) => row);
     // The participant rows a scoped view carries: the scope's subtree, with the brief text of
     // every seat but the scope's own withheld (2026-09-14 audit S-F3). A brief is what a recruiter
     // told ONE seat; the scoped view is that seat's own reading of the swarm, so another
@@ -599,20 +743,24 @@ export class SwarmRuntime {
       work: keep(workEntries, ([workId]) => scopeWorkIds.has(workId)),
       assignments: keep(Object.entries(swarm.assignments ?? {}), ([, assignment]) => scopeSubtree.includes(assignment.participantId)
         || scopeWorkIds.has(assignment.workId)),
-      contributions: keep(contributionEntries, ([, contribution]) => Boolean(contribution.workId)
+      // ONE collection shape on the view (issue #302): participants, contributions, couplings,
+      // groups and attention are ARRAYS of rows — the collections a caller iterates — while the
+      // identity-addressed families (work, assignments, reviews, context) stay keyed objects.
+      // Every read path (view, watch, bridge, MCP) carries these rows through unchanged.
+      contributions: rowsOf(contributionEntries, ([, contribution]) => Boolean(contribution.workId)
         && scopeWorkIds.has(contribution.workId)),
       reviews: keep(Object.entries(swarm.reviews ?? {}), ([contributionId]) => scopedContributionIds.has(contributionId)),
       // A group is a roster: a scoped view carries the groups its subtree is ON, by the same
       // roster-intersection rule the couplings below use. A group with no member in scope is not
       // this participant's business — and an emptied roster (a released holder) is therefore
       // carried by nobody, instead of by everybody (`[].every(...)` is vacuous).
-      groups: keep(Object.entries(swarm.groups ?? {}), ([, group]) =>
+      groups: rowsOf(Object.entries(swarm.groups ?? {}), ([, group]) =>
         group.members.some((member) => scopeSubtree.includes(member))),
       // A member sees the couplings its subtree can act on. Writer records follow the writer's
       // subtree; a synchronization point or group failure policy follows its group — every member
       // whose roster intersects the subtree sees it, so a seat listed in `awaiting` can always
       // read the point it is expected to arrive at (docs/39 §Declared coupling).
-      couplings: keep(couplingEntries, ([, record]) => {
+      couplings: rowsOf(couplingEntries, ([, record]) => {
         if (record.coupling === 'writer') return scopeSubtree.includes(record.writer);
         const roster = swarm.groups?.[record.groupId]?.members ?? record.members ?? [];
         return roster.some((member) => scopeSubtree.includes(member));
@@ -754,7 +902,8 @@ export class SwarmRuntime {
         ...releases.map((assignment) => ({
           kind: 'swarm.assignment_updated',
           payload: { swarmId: current.swarmId, assignmentId: assignment.assignmentId,
-            participantId: assignment.participantId, workId: assignment.workId, status: 'released' },
+            participantId: assignment.participantId, workId: assignment.workId, status: 'released',
+            ...(payload.reason ? { reason: payload.reason } : {}) },
           key: `assignment:${assignment.assignmentId}`,
         })),
         // Issue #290: the roster rewrite retains only currently active members. A leave never
@@ -793,11 +942,11 @@ export class SwarmRuntime {
         }
       }
       const operationKey = this._operationKey('swarm.update', args, principal);
-      for (const event of planned) this._write(event.kind, event.payload, principal, `${operationKey}:${event.key}`);
+      const writes = planned.map((event) => this._write(event.kind, event.payload, principal, `${operationKey}:${event.key}`));
       return { participantId: holder.participantId, released: {
         assignments: releases.map((assignment) => assignment.assignmentId),
         groups: groupLeaves.map((group) => group.groupId),
-      } };
+      }, writes };
     }, { replaySafe: true, context });
   }
 
@@ -959,10 +1108,10 @@ export class SwarmRuntime {
         refuse('Recruit and organize within your granted swarm', 'swarm_membership_required');
       }
       const swarmId = args.swarmId ?? `swarm-${hash([principal.principalId, args.idempotencyKey]).slice(0, 32)}`;
-      this._write('swarm.created', { swarmId, purpose: args.purpose }, principal,
+      const recorded = this._write('swarm.created', { swarmId, purpose: args.purpose }, principal,
         this._operationKey(command, { ...args, swarmId }, principal));
       this._recordOperationCompleted(command, args, principal, context);
-      return this.inspect(this._swarm(swarmId), principal, context, null, args.projection);
+      return this._mutationResult(command, { ...args, swarmId }, [recorded], principal, context, { swarmId });
     }
     let swarm = this._swarm(args.swarmId);
     if (command === 'swarm.view') {
@@ -990,12 +1139,15 @@ export class SwarmRuntime {
         refuse('This update needs its target fields; conversation text belongs in body', 'swarm_payload_invalid');
       }
       const payload = { ...(typeof args.payload === 'string' ? { body: args.payload } : clone(args.payload ?? {})), swarmId: args.swarmId };
+      let externalJoin = null;
       if (args.event === 'swarm.contribution_recorded') {
         if (!payload.participantId && !caller) {
           const participantId = `external-${hash([args.swarmId, principal.principalId]).slice(0, 32)}`;
-          if (!Object.hasOwn(swarm.participants, participantId)) this._write('swarm.participant_joined', {
-            swarmId: args.swarmId, participantId, role: 'External orchestrator', permissions: [...SWARM_PERMISSIONS],
-          }, principal, `swarm-external:${hash([args.swarmId, principal.principalId])}`);
+          if (!Object.hasOwn(swarm.participants, participantId)) {
+            externalJoin = this._write('swarm.participant_joined', {
+              swarmId: args.swarmId, participantId, role: 'External orchestrator', permissions: [...SWARM_PERMISSIONS],
+            }, principal, `swarm-external:${hash([args.swarmId, principal.principalId])}`);
+          }
           payload.participantId = participantId;
         }
         payload.participantId ??= caller?.participantId;
@@ -1019,8 +1171,9 @@ export class SwarmRuntime {
         this._requireCompletionEvidence(swarm, payload);
       }
       if (args.event === 'swarm.holder_released') {
-        await this._holderRelease(swarm, payload, args, principal, context);
-        return this.inspect(this._swarm(args.swarmId), principal, context);
+        const released = await this._holderRelease(swarm, payload, args, principal, context);
+        return this._mutationResult(command, args, released.writes, principal, context,
+          { participantId: released.participantId, released: released.released });
       }
       if (caller && args.event === 'swarm.contribution_recorded' && payload.participantId !== caller.participantId) {
         refuse('Contributions must name their actual author', 'swarm_author_mismatch');
@@ -1041,12 +1194,13 @@ export class SwarmRuntime {
         }
         payload.releasedBy = actor;
       }
-      this._write(args.event, payload, principal, this._operationKey(command, args, principal));
+      const recorded = this._write(args.event, payload, principal, this._operationKey(command, args, principal));
       this._recordOperationCompleted(command, args, principal, context);
       if (caller && args.event === 'swarm.participant_left' && payload.participantId === caller.participantId) {
-        return { swarmId: args.swarmId, participantId: caller.participantId, state: 'left', sessionStopped: false };
+        return this._mutationResult(command, args, [recorded], principal, context,
+          { swarmId: args.swarmId, participantId: caller.participantId, state: 'left', sessionStopped: false });
       }
-      return this.inspect(this._swarm(args.swarmId), principal, context);
+      return this._mutationResult(command, args, [externalJoin, recorded].filter(Boolean), principal, context);
     }
     if (swarm.status !== 'open' && command === 'swarm.recruit') refuse('Swarm recruitment is closed', 'swarm_closed');
     if (command === 'swarm.recruit') {
@@ -1067,43 +1221,64 @@ export class SwarmRuntime {
       const recruitedRoute = swarmRouteShape(intent?.route) ?? swarmRouteShape(args.options?.exact);
       const recruitedScope = Array.isArray(intent?.scope) ? [...intent.scope]
         : Array.isArray(args.options?.scope) ? [...args.options.scope] : null;
-      // A request under a known operation key is the replay authority's to adjudicate (recovery of
-      // an admitted-but-unbound recruit rides that path); decided before `_once` records this
-      // request, because inside the effect every request is "known".
-      const replaying = Boolean(this.store.priorCoordinationEvent(this._operationKey(command, args, principal)));
-      return this._once(command, args, principal, async (sharedContext) => {
+      const result = await this._once(command, args, principal, async (sharedContext) => {
         this._permit(this._swarm(args.swarmId), principal, context, 'recruit');
+        // Re-read the swarm INSIDE the effect: a rolled-back seat from an earlier attempt must be
+        // seen as it is now, not as the dispatch entry snapshot had it.
+        const current = this._swarm(args.swarmId);
         // The deliberate shared checkout is resolved inside the effect, before any membership is
         // written: an absent, departed, or process-less source refuses with nothing recorded, so
         // a refused attachment never leaks a holder into the swarm.
         const workspace = args.shareWorkspaceWith
-          ? this._sharedWorkspace(swarm, args.shareWorkspaceWith, args.participantId)
+          ? this._sharedWorkspace(current, args.shareWorkspaceWith, args.participantId)
           : null;
-        // The membership write is keyed on (swarmId, participantId), so a NEW request recruiting a
-        // name that already exists used to be served from the prior event without folding (an
-        // identical payload: a success receipt for an operation that did not happen — the fold's
-        // own `participant_duplicate` guard is unreachable through this path) or refused as a
-        // REPLAY conflict (a different payload), naming an idempotency problem the caller does not
-        // have. Anything that is not a replay and names an existing row is refused by name, naming
-        // the row; the request's own shape (a self-referencing checkout, an unknown permission) is
-        // judged first, as everywhere else (2026-09-14 audit S-E1/S-E2/S-N2).
-        if (!replaying && Object.hasOwn(swarm.participants, args.participantId)) {
+        // Anything that is not a rolled-back residue or a replay and names an existing row is
+        // refused by name (`swarm_participant_exists`, retryable: false — the identity is taken).
+        // A row the runtime itself withdrew after a refused admission (issue #308:
+        // `recruit_refused`) is the ONE existing row this join may resume.
+        const existing = Object.hasOwn(current.participants, args.participantId)
+          ? current.participants[args.participantId] : null;
+        const resuming = existing !== null && existing.status === 'left'
+          && existing.leftReason === 'recruit_refused';
+        if (existing && !resuming) {
           refuse('Swarm participant already exists', 'swarm_participant_exists', {
-            participantId: args.participantId, status: swarm.participants[args.participantId].status,
+            participantId: args.participantId, status: existing.status,
           });
         }
+        // Advisory, never a refusal (issue #301): the requested scope is compared with every
+        // ACTIVE participant's scope across the repository's swarms, BEFORE the join writes the
+        // new seat, so the row never names the recruit against itself.
+        const scopeOverlap = recruitedScope === null ? [] : this._scopeOverlap(recruitedScope);
         // Membership precedes dispatch, so even a fast first native turn has the continuing
         // participant protocol. The underlying Run remains the existing execution authority.
-        this._write('swarm.participant_joined', {
+        // A resumed seat re-joins under the RESUME request's own key: the original join key
+        // belongs to the first attempt, and the store would serve that prior event without
+        // folding, leaving the withdrawn row withdrawn.
+        const writes = [this._write('swarm.participant_joined', {
           swarmId: args.swarmId, participantId: args.participantId, role: args.objective,
           runId, permissions, ...(caller ? { parentId: caller.participantId } : {}),
           ...(recruitedRoute ? { route: recruitedRoute } : {}),
           ...(recruitedScope ? { scope: recruitedScope } : {}),
           ...(workspace ? { workspaceId: workspace.workspaceId } : {}),
-        }, principal, `swarm-participant:${hash([args.swarmId, args.participantId])}`);
-        await this.startRun({ runId, objective: args.objective, options: args.options ?? {},
-          swarmId: args.swarmId, participantId: args.participantId, sharedContext,
-          ...(workspace ? { workspace } : {}) }, principal, context);
+        }, principal, resuming
+          ? `swarm-participant-resume:${this._operationKey(command, args, principal)}`
+          : `swarm-participant:${hash([args.swarmId, args.participantId])}`)];
+        // A recruit whose run admission refuses rolls its join back (issue #308): the seat is
+        // withdrawn durably — `swarm.participant_left {reason: 'recruit_refused', code}` carries
+        // the typed admission code — so the swarm never keeps a phantom member, and a repeated
+        // recruit of the same id RESUMES instead of hitting an eternal exists-refusal. The
+        // caller still sees the original refusal, unchanged.
+        try {
+          await this.startRun({ runId, objective: args.objective, options: args.options ?? {},
+            swarmId: args.swarmId, participantId: args.participantId, sharedContext,
+            ...(workspace ? { workspace } : {}) }, principal, context);
+        } catch (error) {
+          writes.push(this._write('swarm.participant_left', {
+            swarmId: args.swarmId, participantId: args.participantId, reason: 'recruit_refused',
+            ...(typeof error?.code === 'string' && error.code.length > 0 ? { code: error.code } : {}),
+          }, principal, `swarm-recruit-rollback:${this._operationKey(command, args, principal)}`));
+          throw error;
+        }
         const worker = this.coordinator.list().find((row) => row.runId === runId);
         if (!worker) refuse('Recruitment admitted but worker binding is not yet available', 'swarm_participant_unbound', { runId });
         // The checkout this binding observed is recorded with the seat: the first recruit into a
@@ -1111,12 +1286,15 @@ export class SwarmRuntime {
         // so the exclusive-writer guard has an identity to compare on every later claim.
         const checkout = typeof this.coordinator.workspaceAttachment === 'function'
           ? this.coordinator.workspaceAttachment(worker.id) : null;
-        this._write('swarm.participant_bound', {
+        writes.push(this._write('swarm.participant_bound', {
           swarmId: args.swarmId, participantId: args.participantId, workerId: worker.id, taskId: worker.taskId,
           ...(checkout ? { workspaceId: checkout.workspaceId } : {}),
-        }, principal, `swarm-binding:${hash([args.swarmId, args.participantId, worker.id])}`);
-        return { participantId: args.participantId, runId, swarmId: args.swarmId };
+        }, principal, `swarm-binding:${hash([args.swarmId, args.participantId, worker.id])}`));
+        return { participantId: args.participantId, runId, swarmId: args.swarmId, scopeOverlap, writes };
       }, { replaySafe: true, basis: Object.values(swarm.context), context });
+      return this._mutationResult(command, args, result.writes ?? [], principal, context,
+        { participantId: result.participantId, runId: result.runId, swarmId: result.swarmId,
+          scopeOverlap: result.scopeOverlap ?? [] });
     }
     const participant = this._participant(swarm, args.participantId);
     if (caller && command === 'swarm.capture' && caller.participantId !== participant.participantId
@@ -1130,53 +1308,82 @@ export class SwarmRuntime {
         refuse('Contribution identity already belongs to another author', 'swarm_replay_conflict');
       }
       const capture = await this.coordinator.captureContribution(worker.id, { contributionId: args.contributionId });
-      if (!this._swarm(args.swarmId).contributions[args.contributionId]) this._write('swarm.contribution_recorded', {
-        swarmId: args.swarmId, participantId: participant.participantId, contributionId: args.contributionId,
-      }, principal, `swarm-capture:${hash([args.swarmId, participant.participantId, args.contributionId])}`);
+      // The base the captured revision sits on (issue #301): derived from the author's own
+      // checkout at capture time, and refused TYPED when its history cannot reach the deployment
+      // target — a revision that shares no common ancestor with the target could never integrate,
+      // so it is never pinned and NOTHING is recorded. A checkout that cannot be observed at all
+      // records no base facts: absence is honest, an unreachable base is not.
+      const base = captureBase(worker);
+      if (base && base.target !== null && base.mergeBase === null) {
+        refuse('The captured revision is unreachable from the deployment target: its checkout and the target share no common ancestor, so it could never integrate',
+          'swarm_capture_base_unreachable', { participantId: participant.participantId,
+            observedHead: base.observedHead, target: base.target });
+      }
+      const writes = [];
+      if (!this._swarm(args.swarmId).contributions[args.contributionId]) {
+        writes.push(this._write('swarm.contribution_recorded', {
+          swarmId: args.swarmId, participantId: participant.participantId, contributionId: args.contributionId,
+        }, principal, `swarm-capture:${hash([args.swarmId, participant.participantId, args.contributionId])}`));
+      }
       // The revision record carries the checkout it was observed in, so a shared capture is
       // honest without reading a worker log: the swarm can tell which physical workspace the
-      // revision came from and which HEAD it showed before the capture.
-      this._write('swarm.contribution_revision_attached', {
+      // revision came from, which HEAD it showed before the capture, and the merge-base with the
+      // target an integration would descend from.
+      writes.push(this._write('swarm.contribution_revision_attached', {
         swarmId: args.swarmId, participantId: participant.participantId, contributionId: args.contributionId,
         sha: capture.sha, ref: capture.ref,
         ...(capture.workspace?.physicalOwnerId ? { workspaceId: capture.workspace.physicalOwnerId } : {}),
         ...(capture.observedHead ? { observedHead: capture.observedHead } : {}),
-      }, principal, `swarm-capture-revision:${hash([args.swarmId, participant.participantId, args.contributionId])}`);
+        ...(base?.mergeBase ? { mergeBase: base.mergeBase } : {}),
+      }, principal, `swarm-capture-revision:${hash([args.swarmId, participant.participantId, args.contributionId])}`));
       this._recordOperationCompleted(command, args, principal, context);
-      return capture;
+      return this._mutationResult(command, args, writes, principal, context, {
+        ...clone(capture), participantId: participant.participantId,
+        ...(base?.mergeBase ? { mergeBase: base.mergeBase } : {}),
+      });
     }
     if (command === 'swarm.check') {
       const checked = await this.coordinator.checkContribution(worker.id, {
         contributionId: args.contributionId, checkId: args.checkId,
       });
       const key = `swarm-check:${hash([args.swarmId, participant.participantId, args.contributionId, args.checkId])}`;
-      if (!this.store.priorCoordinationEvent(key)) this._write('swarm.contribution_reviewed', {
-        swarmId: args.swarmId, contributionId: args.contributionId,
-        reviewerId: this._actorOf(caller, principal), decision: 'comment',
-        reason: `Check ${args.checkId}: ${checked.passed ? 'passed' : 'failed'} for ${checked.sha}; cleanup ${checked.attempt?.cleanup?.state ?? 'unknown'}.`,
-      }, principal, key);
+      const writes = [];
+      if (!this.store.priorCoordinationEvent(key)) {
+        writes.push(this._write('swarm.contribution_reviewed', {
+          swarmId: args.swarmId, contributionId: args.contributionId,
+          reviewerId: this._actorOf(caller, principal), decision: 'comment',
+          reason: `Check ${args.checkId}: ${checked.passed ? 'passed' : 'failed'} for ${checked.sha}; cleanup ${checked.attempt?.cleanup?.state ?? 'unknown'}.`,
+        }, principal, key));
+      }
       this._recordOperationCompleted(command, args, principal, context);
-      return checked;
+      return this._mutationResult(command, args, writes, principal, context, { ...clone(checked) });
     }
     if (command === 'swarm.guide') {
-      return this._once(command, args, principal, async () => {
+      const result = await this._once(command, args, principal, async () => {
         const cursor = this.store.ledgerHeadSeq();
-        const result = await this.coordinator.guideParticipant(worker.id, args.message, { actor: principal.actor });
+        const guided = await this.coordinator.guideParticipant(worker.id, args.message, { actor: principal.actor });
         // The lane receipt is durable coordination log, not process state: deliveries are
         // serialized per worker, so the newest nudge row for this binding past the pre-call
         // cursor is the row THIS guide wrote — read back and returned as its receipt.
         const sent = this.store.eventsView().filter((event) => event.kind === 'message.sent'
           && event.payload?.kind === 'nudge' && event.payload?.to?.workerId === worker.id
           && event.seq > cursor).at(-1);
-        return { participantId: participant.participantId, result,
-          guide: sent ? { seq: sent.seq, ts: sent.ts, messageId: sent.payload.messageId ?? null } : null };
+        return { participantId: participant.participantId, result: guided,
+          guide: sent ? { seq: sent.seq, ts: sent.ts, messageId: sent.payload.messageId ?? null } : null,
+          writes: sent ? [{ kind: sent.kind, payload: sent.payload, seq: sent.seq, ts: sent.ts, actor: sent.actor }] : [] };
       }, { context });
+      return this._mutationResult(command, args, result.writes ?? [], principal, context,
+        { participantId: result.participantId, result: result.result, guide: result.guide });
     }
     if (command === 'swarm.stop') {
-      return this._once(command, args, principal, async () => {
-        const result = await this.stopRun(participant.runId, args.reason, principal);
-        return { participantId: participant.participantId, result };
+      const result = await this._once(command, args, principal, async () => {
+        const stopped = await this.stopRun(participant.runId, args.reason, principal);
+        return { participantId: participant.participantId, result: stopped };
       }, { context });
+      // A stop writes no swarm fold row: the receipt's event is the operation terminal row the
+      // lane recorded for this exact attempt (_mutationResult's fallback).
+      return this._mutationResult(command, args, [], principal, context,
+        { participantId: result.participantId, result: result.result });
     }
     refuse('Swarm operation is unavailable', 'swarm_command_unavailable');
   }
