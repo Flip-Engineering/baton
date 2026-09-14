@@ -140,7 +140,8 @@ test('GP1/GP4/GP7: MCP Goal/Plan tools expose closed schemas and bind exact prin
   const crossRepo = await rpc(observer, 9, 'fleet_goal_plan_status', {
     repoId: 'other-repo', ...statusCoordinates(goal, plan),
   });
-  assert.equal(crossRepo.result.isError, true); assert.match(crossRepo.result.content[0].text, /forbidden/);
+  // #288 (U-E11): the repo axis is its own named refusal, never a bare forbidden.
+  assert.equal(crossRepo.result.isError, true); assert.match(crossRepo.result.content[0].text, /repo_not_served/);
   driver.close();
 });
 

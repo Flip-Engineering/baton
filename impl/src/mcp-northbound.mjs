@@ -1163,21 +1163,74 @@ function transportHiddenFields(commandName) {
   return new Set([...fromDefinition, ...fromRegistry]);
 }
 
+// U-F4 (issue #288): an unknown tool name must say so — the nearest advertised tool in the
+// message, the full advertised set in the refusal data — instead of a bare "Invalid params".
+// The distance is the same Damerau-Levenshtein shape the CLI's run-verb typo refusal uses
+// (application-cli.mjs damerauLevenshteinDistance); kept local because the MCP server module
+// must not pull the CLI module graph. The nearest match is a deterministic argmin over the
+// sorted names (first name at the smallest distance) — no distance threshold, no size caps.
+function damerauLevenshtein(a, b) {
+  const rows = a.length + 1;
+  const cols = b.length + 1;
+  const dp = Array.from({ length: rows }, (_, i) => new Array(cols).fill(0).map((_, j) => (i === 0 ? j : j === 0 ? i : 0)));
+  for (let i = 1; i < rows; i += 1) {
+    for (let j = 1; j < cols; j += 1) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      dp[i][j] = Math.min(dp[i - 1][j] + 1, dp[i][j - 1] + 1, dp[i - 1][j - 1] + cost);
+      if (i > 1 && j > 1 && a[i - 1] === b[j - 2] && a[i - 2] === b[j - 1]) {
+        dp[i][j] = Math.min(dp[i][j], dp[i - 2][j - 2] + 1);
+      }
+    }
+  }
+  return dp[a.length][b.length];
+}
+
+function nearestToolName(requested, names) {
+  let nearest = null;
+  let nearestDistance = Number.POSITIVE_INFINITY;
+  for (const name of [...names].sort()) {
+    const distance = damerauLevenshtein(requested, name);
+    if (distance < nearestDistance) {
+      nearest = name;
+      nearestDistance = distance;
+    }
+  }
+  return nearest;
+}
+
 function validateArguments(name, args, maxWaitMs = null) {
-  if (!record(args)) return 'invalid_arguments';
+  if (!record(args)) return { code: 'invalid_arguments', message: 'arguments must be a JSON object' };
   const schemaDefinition = TOOL_BY_NAME.get(name).inputSchema;
   // S-1 v2 R-WG-3: advertised schema excludes transportHidden fields, but the validator still
   // accepts them when a caller supplies a declared-hidden side-channel argument.
   const hidden = APPLICATION_TOOL[name] ? transportHiddenFields(APPLICATION_TOOL[name]) : new Set();
-  if (Object.keys(args).some((key) => (
+  // U-F1/U-I1 (issue #288): every validator refusal names the offending or missing key — the
+  // structured {code, message, field} shape the render at handle() already composes for the wire.
+  const unknownField = Object.keys(args).find((key) => (
     !Object.hasOwn(schemaDefinition.properties, key) && !hidden.has(key)
-  ))) return 'unknown_argument_field';
+  ));
+  if (unknownField !== undefined) {
+    return {
+      code: 'unknown_argument_field',
+      message: `unknown argument field ${JSON.stringify(unknownField)}; this tool accepts only its declared schema fields`,
+      field: unknownField,
+    };
+  }
   if (name === 'fleet_capability_invoke' && !Object.hasOwn(args, 'action')) return 'invalid_capability_invocation';
-  if (schemaDefinition.required.some((key) => !Object.hasOwn(args, key))) return 'missing_argument';
+  const missingField = schemaDefinition.required.find((key) => !Object.hasOwn(args, key));
+  if (missingField !== undefined) {
+    return { code: 'missing_argument', message: `missing required argument ${JSON.stringify(missingField)}`, field: missingField };
+  }
   if (containsForbidden(args, [], { planGatedBrief: name === 'fleet_spawn' && record(args.goalPlan) })) return 'credential_fields_forbidden';
-  if (!nonempty(args.repoId)) return 'invalid_repo';
-  if (STATEFUL.has(name) && !SAFE_ID.test(args.idempotencyKey ?? '')) return 'invalid_idempotency_key';
-  if (FENCED.has(name) && !Number.isSafeInteger(args.expectedFence)) return 'expected_fence_required';
+  if (!nonempty(args.repoId)) {
+    return { code: 'invalid_repo', message: 'repoId must be a non-empty string naming the repository this call acts on', field: 'repoId' };
+  }
+  if (STATEFUL.has(name) && !SAFE_ID.test(args.idempotencyKey ?? '')) {
+    return { code: 'invalid_idempotency_key', message: 'idempotencyKey must be 1-256 characters of [A-Za-z0-9._:-]', field: 'idempotencyKey' };
+  }
+  if (FENCED.has(name) && !Number.isSafeInteger(args.expectedFence)) {
+    return { code: 'expected_fence_required', message: 'expectedFence must be a safe integer carrying the fence this fenced tool was admitted with', field: 'expectedFence' };
+  }
   // Reflex surface contract Part C.7 (R6): the advertised `answer` `oneOf` is never evaluated
   // server-side (hand-rolled validation stays the discipline, Part I), so the answer-shape guard
   // must reject any key other than `optionId`/`text` BEFORE hub dispatch — `{decision}` (or a
@@ -1191,7 +1244,9 @@ function validateArguments(name, args, maxWaitMs = null) {
   // collapse a bad shape into. Kind-matching against the pending interaction stays hub-side.
   if (name === 'baton_decision_answer' || name === 'fleet_run_answer') {
     const answerKeys = record(args.answer) ? Object.keys(args.answer) : [];
-    if (answerKeys.length !== 1 || !['optionId', 'text'].includes(answerKeys[0])) return 'invalid_arguments';
+    if (answerKeys.length !== 1 || !['optionId', 'text'].includes(answerKeys[0])) {
+      return { code: 'invalid_arguments', message: 'answer must carry exactly one of optionId or text', field: 'answer' };
+    }
   }
   if (APPLICATION_TOOL[name]) {
     try {
@@ -1211,7 +1266,7 @@ function validateArguments(name, args, maxWaitMs = null) {
       if (typeof cause?.code === 'string' && COACHING_REFUSAL_CODES.has(cause.code)) {
         return { code: cause.code, message: typeof cause?.message === 'string' ? cause.message : cause.code };
       }
-      return 'invalid_run_command';
+      return { code: 'invalid_run_command', message: 'arguments do not satisfy the command contract for this tool' };
     }
     if (['run.wait', 'run.follow'].includes(APPLICATION_TOOL[name])
       && (!Number.isSafeInteger(maxWaitMs) || args.timeoutMs > maxWaitMs)) return 'invalid_run_wait';
@@ -1614,9 +1669,42 @@ export class McpFleetServer {
     const requiredCapabilities = Array.isArray(CAPABILITY[name]) ? CAPABILITY[name] : [CAPABILITY[name]];
     if (!Array.isArray(p.capabilities)
       || !requiredCapabilities.every((capability) => p.capabilities.includes(capability))) return 'forbidden';
-    if (!this.repoIds.has(args.repoId) || !Array.isArray(p.repoIds) || !p.repoIds.includes(args.repoId)) return 'forbidden';
+    // U-E11/U-I2 (issue #288): the repo axis is its OWN refusal (`repo_not_served`), never a
+    // bare `forbidden` — an agent must be able to tell "you lack a capability" from "you named
+    // a repository this deployment does not serve". _authorityRefusal composes the wire shape.
+    if (!this.repoIds.has(args.repoId) || !Array.isArray(p.repoIds) || !p.repoIds.includes(args.repoId)) return 'repo_not_served';
     if (this.isPrincipalActive && !this.isPrincipalActive(p, { tool: name, repoId: args.repoId })) return 'unauthenticated';
     return null;
+  }
+
+  /** The wire shape for an _authority refusal (U-E11/U-I2): a capability shortfall reuses the
+   * exact {required, held, missing} sentence shape the action gate composes; a repo refusal
+   * names the requested repoId and the served set. Bare-string refusals (unauthenticated) keep
+   * the code-only envelope. Strings stay the _authority contract: surface-mcp-authority.mjs
+   * consumes the seam directly. */
+  _authorityRefusal(code, name, args) {
+    if (code === 'forbidden') {
+      const requiredCapabilities = Array.isArray(CAPABILITY[name]) ? CAPABILITY[name] : [CAPABILITY[name]];
+      const required = [...requiredCapabilities].sort();
+      const held = Array.isArray(this.principal.capabilities) ? [...this.principal.capabilities].sort() : [];
+      const missing = required.filter((capability) => !held.includes(capability));
+      return toolError('forbidden', `this principal lacks the ${missing.join(', ')} capability the tool requires`, { required, held, missing });
+    }
+    if (code === 'repo_not_served') {
+      const served = [...this.repoIds].sort();
+      const servedList = served.map((repoId) => JSON.stringify(repoId)).join(', ');
+      // Mirror the gate's own order: the deployment-routing truth outranks the principal-scoping
+      // truth (both can hold for one call; the deployment answer is the one an agent retries on).
+      if (!this.repoIds.has(args.repoId)) {
+        return toolError('repo_not_served',
+          `this deployment does not serve repoId ${JSON.stringify(args.repoId)}; it serves ${servedList}`,
+          { repoId: args.repoId ?? null, served });
+      }
+      return toolError('repo_not_served',
+        `this principal is not scoped to repoId ${JSON.stringify(args.repoId)}; this deployment serves ${servedList}`,
+        { repoId: args.repoId ?? null, served });
+    }
+    return toolError(code);
   }
 
   _audit(kind, tool, args, detail = null) {
@@ -1672,7 +1760,20 @@ export class McpFleetServer {
     if (this.lifecycle !== 'ready') return protocolError(id, -32002, 'Server not initialized');
     if (method === 'tools/list') return id === undefined ? null : protocolResult(id, { tools: this.toolDefinitions.map(clone) });
     if (method !== 'tools/call') return protocolError(id, -32601, 'Method not found');
-    if (id === undefined || !record(params) || !nonempty(params.name) || !this.toolNames.has(params.name)) return protocolError(id, -32602, 'Invalid params');
+    if (id === undefined || !record(params) || !nonempty(params.name)) return protocolError(id, -32602, 'Invalid params');
+    if (!this.toolNames.has(params.name)) {
+      // U-F4 (issue #288): the protocol-level code stays -32602 (the MCP tools/call contract for
+      // an unknown tool) but the refusal is TYPED: the message names the requested name and the
+      // nearest advertised tool, and the data carries the {code, requested, nearest, tools}
+      // refusal so the caller can retry against the real surface without a tools/list round trip.
+      const tools = [...this.toolNames].sort();
+      const nearest = nearestToolName(params.name, tools);
+      return protocolError(id, -32602,
+        nearest === null
+          ? `unknown tool ${params.name}; this surface advertises no tools`
+          : `unknown tool ${params.name}; the nearest advertised tool is ${nearest}`,
+        { code: 'unknown_tool', requested: params.name, nearest, tools });
+    }
     const suppliedArgs = params.arguments ?? {};
     if (this.bindApplicationContext && record(suppliedArgs)
       && (Object.hasOwn(suppliedArgs, 'repoId') || Object.hasOwn(suppliedArgs, 'idempotencyKey'))) {
@@ -1717,7 +1818,7 @@ export class McpFleetServer {
     const refused = this._authority(params.name, args);
     if (refused) {
       try { this._audit('tool_refused', params.name, args, refused); } catch { return protocolResult(id, toolError('temporarily_unavailable')); }
-      return protocolResult(id, toolError(refused));
+      return protocolResult(id, this._authorityRefusal(refused, params.name, args));
     }
     if (APPLICATION_TOOL[params.name] && !this.application) {
       try { this._audit('application_unavailable', params.name, args); }
@@ -1808,7 +1909,7 @@ export class McpFleetServer {
         const refused = ['run.follow', 'run.wait'].includes(APPLICATION_TOOL[name]) ? this._authority(name, args) : null;
         if (refused) {
           this._audit('tool_refused_after_wait', name, args, refused);
-          return toolError(refused);
+          return this._authorityRefusal(refused, name, args);
         }
         const outcome = toolResult(value);
         this._audit('tool_completed', name, args);

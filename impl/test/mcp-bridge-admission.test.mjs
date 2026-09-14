@@ -12,6 +12,7 @@ import { join } from 'node:path';
 import { APPLICATION_COMMAND_DEFINITIONS } from '../src/application.mjs';
 import { APPLICATION_SEMANTIC_REGISTRY } from '../src/application-semantics.mjs';
 import { webAdmittedCommandNames } from '../src/web-northbound.mjs';
+import { BatonWebClient } from '../src/application-cli.mjs';
 import { BatonWebApplicationFacade } from '../src/mcp-web-bridge.mjs';
 import { CoordinationStore, McpFleetServer } from '../src/index.mjs';
 import { SWARM_COMMAND_DEFINITIONS } from '../src/swarm-contract.mjs';
@@ -130,4 +131,69 @@ test('on a bound surface a supplied idempotencyKey is refused by field name, not
   assert.equal(error.field, 'idempotencyKey');
   assert.match(error.message, /idempotencyKey is bound by the server on this surface and must not be supplied/u);
   assert.deepEqual(error.detail, { boundFields: ['idempotencyKey'] });
+});
+
+// U-F2/U-I12 (issue #288): a refusal that crosses the resident bridge arrives through the CLI
+// client's typed-error path (cliError marks its COMPOSED text wireSafe; the wire error rides as
+// detail, its field is lifted), so laneCraftedToolError keeps the whole refusal on the MCP wire
+// instead of flattening it to a bare code. Before the flag, BOTH cases below arrived as
+// `{code}` only — the forbidden one as `command_outcome_unknown`.
+function bridgeServer(t, fetchImpl) {
+  const directory = mkdtempSync(join(tmpdir(), 'baton-bridge-refusal-'));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const NOW = Date.parse('2026-09-14T00:00:00.000Z');
+  const card = { repoId: REPO_ID, commands: [...webAdmittedCommandNames()] };
+  const client = new BatonWebClient({
+    baseUrl: 'https://baton.local/', origin: 'https://baton.local/', repoId: REPO_ID, token: 'bridge-refusals-token',
+    commandTimeoutMs: 5_000, pollMs: 10, fetchImpl, clock: () => NOW, sleep: async () => {},
+  });
+  const facade = new BatonWebApplicationFacade(client, card, SESSION);
+  return new McpFleetServer({
+    coordinator: {},
+    coordination: new CoordinationStore(join(directory, 'coordination'), { clock: () => new Date(NOW).toISOString() }),
+    application: facade, surface: 'application',
+    shutdownPrincipal: { actor: 'mcp-host:test', principalId: 'mcp-host', sessionId: 'mcp-host-session' },
+    principal: {
+      userId: 'bridge-user', sessionId: 'bridge-session', capabilities: ['control', 'observe'],
+      repoIds: [REPO_ID], expiresAt: new Date(NOW + 60_000).toISOString(), revoked: false,
+    },
+    repoIds: [REPO_ID], now: () => NOW, maxWaitMs: 25_000, maxMessageBytes: 64 * 1024,
+    takeToolQuota: () => ({ ok: true }),
+    admitsCommand: (command) => command !== 'application.shutdown' && card.commands.includes(command),
+  });
+}
+const sessionDocument = () => new Response(
+  JSON.stringify({ ok: true, expiresAt: SESSION.expiresAt, identity: SESSION.identity }),
+  { status: 200 },
+  );
+
+test('a resident refusal that flattens to command_outcome_unknown still carries its message and detail over the bridge', async (t) => {
+  const wireError = { code: 'forbidden', message: 'this principal lacks the emergency_stop capability the action requires' };
+  let sessionServed = false;
+  const mcp = bridgeServer(t, async (url) => (
+    String(url).endsWith('/v1/session') && !sessionServed && (sessionServed = true)
+  ) ? sessionDocument() : new Response(JSON.stringify({ ok: false, error: wireError }), { status: 403 }));
+  await ready(mcp);
+  const response = await request(mcp, 'f1', 'tools/call', { name: 'baton_runs', arguments: { repoId: REPO_ID } });
+  const error = response.result.structuredContent.error;
+  assert.equal(error.code, 'command_outcome_unknown', '`forbidden` is outside the stateFailureCode ladder — the CODE flattens, the refusal must not');
+  assert.match(error.message, /Baton Web request was refused \(POST \/v1\/commands, HTTP 403\)/u);
+  assert.match(error.message, /this principal lacks the emergency_stop capability the action requires/u, 'the resident message rides the bridge');
+  assert.deepEqual(error.detail, wireError, 'the full parsed wire error rides as detail');
+  assert.match(response.result.content[0].text, /emergency_stop/u, 'the refusal is readable in the text content an agent sees');
+});
+
+test('a typed resident refusal keeps its own code and lifted field over the bridge', async (t) => {
+  const wireError = { code: 'application_inspect_oversize', message: 'the view exceeds its byte ceiling', field: 'depth' };
+  let sessionServed = false;
+  const mcp = bridgeServer(t, async (url) => (
+    String(url).endsWith('/v1/session') && !sessionServed && (sessionServed = true)
+  ) ? sessionDocument() : new Response(JSON.stringify({ ok: false, error: wireError }), { status: 413 }));
+  await ready(mcp);
+  const response = await request(mcp, 'f2', 'tools/call', { name: 'baton_run_view', arguments: { repoId: REPO_ID, runId: 'run:bridge' } });
+  const error = response.result.structuredContent.error;
+  assert.equal(error.code, 'application_inspect_oversize');
+  assert.match(error.message, /the view exceeds its byte ceiling/u);
+  assert.equal(error.field, 'depth', 'the resident-composed field is lifted onto the wire error');
+  assert.deepEqual(error.detail, wireError);
 });

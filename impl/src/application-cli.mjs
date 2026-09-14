@@ -63,7 +63,13 @@ const RESIDENT_PROFILE_FIELDS = Object.freeze([
 ]);
 const RESIDENT_PROFILE_OWNER_FIELDS = Object.freeze(['ownerPid', 'ownerPidStart']);
 
-function cliError(message, code = 'cli_invalid') { return Object.assign(new Error(message), { code }); }
+function cliError(message, code = 'cli_invalid') {
+  // U-F2/U-I12 (issue #288): every cliError text is COMPOSED by this client (fixed rule text,
+  // optionally quoting the resident's own wire refusal) — never provider or exception output —
+  // so the refusal is safe to keep whole across the resident bridge: laneCraftedToolError
+  // (mcp-northbound.mjs) forwards message, detail and field only when the error is wireSafe.
+  return Object.assign(new Error(message), { code, wireSafe: true });
+}
 function record(value) { return value !== null && typeof value === 'object' && !Array.isArray(value); }
 function nonempty(value) { return typeof value === 'string' && value.length > 0; }
 function exactKeys(value, keys, label) {
@@ -2247,7 +2253,12 @@ export class BatonWebClient {
         const refused = `Baton Web request was refused (${options.method ?? 'GET'} ${path}, HTTP ${response.status})`;
         const message = nonempty(wire?.message) ? `${refused}: ${wire.message}` : refused;
         const error = cliError(message, code);
-        if (wire !== null) error.detail = wire;
+        if (wire !== null) {
+          error.detail = wire;
+          // The resident composed this field for the wire; lift it so the MCP bridge forwards
+          // the refusal's own field, not just its code, message and detail (U-F2/U-I12).
+          if (typeof wire.field === 'string' && wire.field.length > 0) error.field = wire.field;
+        }
         throw error;
       }
       return body;
