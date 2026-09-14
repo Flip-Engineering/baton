@@ -333,6 +333,7 @@ export async function createBatonWebMcpServer(options) {
     principal,
     repoIds: [application.repoId],
     now,
+    admitsCommand: (command) => application._admits(command),
     maxWaitMs: options.maxWaitMs ?? 30_000,
     maxMessageBytes: options.maxMessageBytes ?? 256 * 1024,
     takeToolQuota,

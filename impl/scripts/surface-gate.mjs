@@ -19,9 +19,33 @@ import { runSurfaceConformanceMain } from './surface-conformance.mjs';
 import { checkSurfaceParityMatrix, writeSurfaceParityMatrix } from './surface-parity.mjs';
 import { renderSurfaceDoc } from './render-surface-docs.mjs';
 
-const { McpFleetServer } = await import(new URL('../src/mcp-northbound.mjs', import.meta.url).href);
+const { McpFleetServer, commandForTool } = await import(new URL('../src/mcp-northbound.mjs', import.meta.url).href);
 const { CoordinationStore } = await import(new URL('../src/coordination-store.mjs', import.meta.url).href);
 const { APPLICATION_COMMAND_DEFINITIONS } = await import(new URL('../src/application.mjs', import.meta.url).href);
+const { SWARM_COMMAND_DEFINITIONS } = await import(new URL('../src/swarm-contract.mjs', import.meta.url).href);
+const { webAdmittedCommandNames } = await import(new URL('../src/web-northbound.mjs', import.meta.url).href);
+const { BatonWebApplicationFacade } = await import(new URL('../src/mcp-web-bridge.mjs', import.meta.url).href);
+const { APPLICATION_SEMANTIC_REGISTRY } = await import(new URL('../src/application-semantics.mjs', import.meta.url).href);
+
+/** The resident MCP bridge facade over the wire card a real resident advertises (web-admitted
+ * commands plus the swarm family): every command an advertised tool dispatches must be admitted
+ * by it, or the tool works in-process and is refused over the resident (#270). */
+function residentBridgeFacade() {
+  const commands = [...new Set([...webAdmittedCommandNames(), ...Object.keys(SWARM_COMMAND_DEFINITIONS)])];
+  const session = {
+    schemaVersion: 1,
+    identity: { userId: 'gate', sessionId: 'gate-bridge', capabilities: ['observe', 'control'], repoIds: [GATE_REPO_ID] },
+    expiresAt: new Date(Date.now() + 60_000).toISOString(),
+  };
+  const card = { repoId: GATE_REPO_ID, commands, agentExperience: { registryDigest: APPLICATION_SEMANTIC_REGISTRY.digest } };
+  const client = {
+    repoId: GATE_REPO_ID,
+    async session() { return session; },
+    async doctor() { return { ready: true, application: card }; },
+    async command(name) { return { ok: true, command: name }; },
+  };
+  return new BatonWebApplicationFacade(client, card, session);
+}
 const GATE_REPO_ID = 'repo-surface-gate';
 const renderDocs = await import(new URL('./render-surface-docs.mjs', import.meta.url).href);
 
@@ -51,6 +75,7 @@ function sampleArgument(name, schema) {
 
 export async function checkMcpDispatchResolvability() {
   const findings = [];
+  const omittedOverResident = [];
   const directory = mkdtempSync(join(tmpdir(), 'baton-surface-gate-'));
   try {
     const applicationCalls = [];
@@ -85,6 +110,7 @@ export async function checkMcpDispatchResolvability() {
       },
       repoIds: [GATE_REPO_ID], maxWaitMs: 1_000, maxMessageBytes: 256 * 1024, takeToolQuota: () => ({ ok: true }),
     });
+    const bridge = residentBridgeFacade();
     await server.handle({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-11-25', capabilities: {}, clientInfo: { name: 'surface-gate', version: '1' } } });
     await server.handle({ jsonrpc: '2.0', method: 'notifications/initialized' });
     const listed = await server.handle({ jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} });
@@ -102,7 +128,19 @@ export async function checkMcpDispatchResolvability() {
         continue;
       }
       const reached = applicationCalls.length + coordinatorCalls.length > before;
-      if (reached) continue;
+      if (reached) {
+        // Reached in-process; now it must also be admitted by the resident bridge facade, or the
+        // tool is advertised over the resident and refused there (#270).
+        // The bridge advertises a tool only when it admits the tool's own command; a tool it does
+        // advertise must never dispatch a command it refuses (a second command behind the first).
+        const own = commandForTool(tool.name);
+        if (own && !bridge._admits(own)) { omittedOverResident.push(tool.name); continue; }
+        for (const command of new Set(applicationCalls.slice(before))) {
+          if (command === 'application.context_eval' || command === 'decision.list') continue; // direct methods, not bridged string commands
+          if (!bridge._admits(command)) findings.push(`mcp tool ${tool.name} dispatches ${command}, which the resident MCP bridge does not admit (advertised over the resident, refused there)`);
+        }
+        continue;
+      }
       if (response?.error) {
         findings.push(`mcp tool ${tool.name}: the probe's schema-shaped call was refused before dispatch (${response.error.message}) — path unproven`);
         continue;
@@ -124,6 +162,7 @@ export async function checkMcpDispatchResolvability() {
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
+  if (omittedOverResident.length > 0) process.stderr.write(`surface-gate: mcp-dispatch: ${omittedOverResident.length} tool(s) are host-local and not advertised over the resident bridge: ${omittedOverResident.join(', ')}\n`);
   return findings;
 }
 

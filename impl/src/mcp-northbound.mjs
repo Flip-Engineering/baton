@@ -44,7 +44,7 @@ const CANONICAL_ORDINARY_SIBLINGS = Object.freeze([
 ].map(([key, legacyTool, command]) => Object.freeze({
   key, legacyTool, command, tool: deriveSurfaceNames(key).mcp,
 })));
-const APPLICATION_TOOL = Object.freeze(Object.fromEntries(
+export const APPLICATION_TOOL = Object.freeze(Object.fromEntries(
   [...MCP_APPLICATION_ENTRIES,
     ['baton_help', 'application.help'],
     ['baton_runs', 'runs.list'],
@@ -1033,6 +1033,23 @@ const ORDINARY_EXPLICIT_TOOLS = new Set([
   'baton_run_scratchpad_read', 'baton_run_scratchpad_elevate', 'baton_run_scratchpad_append',
   'baton_run_knowledge_seed',
 ]);
+// The application command each explicit-dispatch tool reaches (the same knowledge the handle()
+// branches encode); deployment.doctor is a direct method, not a bridged string command.
+const EXPLICIT_TOOL_COMMANDS = Object.freeze({
+  baton_waves_start: 'waves.start', baton_waves_progress: 'waves.progress', baton_waves_send: 'waves.send',
+  baton_waves_stop: 'waves.stop', baton_waves_list: 'waves.list', baton_waves_run: 'waves.run', baton_waves_compile: 'waves.compile',
+  baton_scratchpad_elevate: 'scratchpad.elevate', baton_scratchpad_settle: 'scratchpad.settle',
+  baton_knowledge_promote: 'knowledge.promote', baton_knowledge_settlement_lease: 'knowledge.settlement_lease',
+  baton_run_message_send: 'run.message.send', baton_run_message_receipt: 'run.message.receipt',
+  baton_run_attention_watch: 'run.attention.watch', baton_run_scratchpad_read: 'run.scratchpad.read',
+  baton_run_scratchpad_elevate: 'run.scratchpad.elevate', baton_run_scratchpad_append: 'run.scratchpad.append',
+  baton_run_knowledge_seed: 'run.knowledge.seed',
+});
+/** The application command an ordinary tool dispatches, or null for tools that reach a direct
+ * method (doctor) or the kernel. One lookup serves the host's advertisement filter and the gate. */
+export function commandForTool(name) {
+  return APPLICATION_TOOL[name] ?? EXPLICIT_TOOL_COMMANDS[name] ?? null;
+}
 const TOOL_DEFINITIONS = Object.freeze([...ORDINARY_APPLICATION_TOOL_DEFINITIONS, ...APPLICATION_TOOL_DEFINITIONS, ...CANONICAL_DOT_TOOL_DEFINITIONS, ...ADVANCED_TOOL_DEFINITIONS, ...REFLEX_TOOL_DEFINITIONS]);
 
 // #233 regression (2026-08-15, caught live by the fleet-drive): the canonical-naming fold
@@ -1524,8 +1541,18 @@ export class McpFleetServer {
     if (!Number.isSafeInteger(this.maxWaitMs) || this.maxWaitMs <= 0) throw new TypeError('maxWaitMs must be a positive safe integer');
     if (!Number.isSafeInteger(this.maxMessageBytes) || this.maxMessageBytes <= 0) throw new TypeError('maxMessageBytes must be a deployment-derived positive safe integer');
     this.lifecycle = 'new';
-    const selectedTools = this.surface === 'application' ? ORDINARY_APPLICATION_TOOL_DEFINITIONS
+    const surfaceTools = this.surface === 'application' ? ORDINARY_APPLICATION_TOOL_DEFINITIONS
       : this.surface === 'advanced' ? ADVANCED_TOOL_DEFINITIONS : TOOL_DEFINITIONS;
+    // A host that cannot dispatch a command (the resident bridge, whose authority is the wire
+    // card) never advertises the tool that would dispatch it: an agent is shown exactly the tools
+    // it can call (#270). Kernel tools carry no application command and are not filtered here.
+    if (opts.admitsCommand !== undefined && opts.admitsCommand !== null && typeof opts.admitsCommand !== 'function') {
+      throw new TypeError('admitsCommand must be a function when supplied');
+    }
+    this.admitsCommand = opts.admitsCommand ?? null;
+    const selectedTools = this.admitsCommand
+      ? surfaceTools.filter((tool) => { const command = commandForTool(tool.name); return !command || this.admitsCommand(command); })
+      : surfaceTools;
     this.toolDefinitions = selectedTools.map((tool) => {
       const copy = clone(tool);
       // docs/36 §8.4 (M5) — the per-deployment schema mutation retired: the advertised schema is

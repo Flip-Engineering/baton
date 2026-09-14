@@ -101,6 +101,26 @@ async function ready(mcp) {
   await mcp.handle({ jsonrpc: '2.0', method: 'notifications/initialized', params: {} });
 }
 
+test('a server given an admission predicate advertises only the tools whose command it admits', async (t) => {
+  const mcp = server(t, { admitsCommand: (command) => command !== 'scratchpad.elevate' });
+  await ready(mcp);
+  const listed = await request(mcp, 'l1', 'tools/list', {});
+  const names = listed.result.tools.map((tool) => tool.name);
+  assert.equal(names.includes('baton_scratchpad_elevate'), false, 'the tool whose command is refused is not advertised');
+  assert.ok(names.includes('baton_swarm_view'), 'admitted tools stay advertised');
+  const everything = server(t);
+  await ready(everything);
+  assert.ok((await request(everything, 'l2', 'tools/list', {})).result.tools.map((tool) => tool.name).includes('baton_scratchpad_elevate'), 'without a predicate the surface inventory is unchanged');
+});
+
+test('the resident wire card keeps the host-local settlement tools off the bridge, by their own commands', () => {
+  const { facade } = facadeWith(WIRE_CARD);
+  for (const command of ['scratchpad.elevate', 'scratchpad.settle', 'knowledge.settlement_lease']) {
+    assert.equal(facade._admits(command), false, `${command} is host-local`);
+  }
+  assert.equal(facade._admits('swarm.recruit'), true);
+});
+
 test('on a bound surface a supplied idempotencyKey is refused by field name, not as a bare invalid_arguments', async (t) => {
   const mcp = server(t, { bindApplicationContext: true });
   await ready(mcp);
