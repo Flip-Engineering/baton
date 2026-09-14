@@ -45,6 +45,9 @@ function clientFor(connection) {
     origin: connection.origin,
     repoId: connection.repoId,
     token: connection.token,
+    // The wake attachment (client.wakes) rides the same owner-only socket the commands ride; the
+    // fetch wrapper below carries it for commands, the client needs it by name for the stream.
+    ...(connection.transport === 'local' ? { socketPath: connection.socketPath } : {}),
     commandTimeoutMs: integer(process.env.BATON_COMMAND_TIMEOUT_MS, 30_000),
     pollMs: integer(process.env.BATON_COMMAND_POLL_MS, 250),
     fetchImpl: connection.transport === 'local'
@@ -231,13 +234,31 @@ try {
       const connection = discoverBatonConnection();
       const client = clientFor(connection);
       let followPages = 0;
-      const streaming = parsed.kind === 'follow' || parsed.kind === 'swarm_follow' || (parsed.kind === 'stream' && parsed.follow);
-      const result = await runBatonCli(parsed, client, streaming ? {
-        onFollowPage: async (page) => {
-          followPages += 1;
-          process.stdout.write(`${JSON.stringify(projectBatonCliResult(parsed, page))}\n`);
-        },
-      } : {});
+      const streaming = parsed.kind === 'follow' || parsed.kind === 'wake_watch' || (parsed.kind === 'stream' && parsed.follow);
+      // A watch is an attachment, not a request: SIGINT/SIGTERM stop it the way a caller stops a
+      // process (the attachment closes, the run's own wake ends, and the process exits 0) instead
+      // of leaving a resident-side connection dangling until the socket is reaped.
+      const controller = streaming ? new AbortController() : null;
+      const stopOnSignal = () => controller.abort();
+      if (controller !== null) {
+        process.on('SIGINT', stopOnSignal);
+        process.on('SIGTERM', stopOnSignal);
+      }
+      let result;
+      try {
+        result = await runBatonCli(parsed, client, streaming ? {
+          signal: controller.signal,
+          onFollowPage: async (page) => {
+            followPages += 1;
+            process.stdout.write(`${JSON.stringify(projectBatonCliResult(parsed, page))}\n`);
+          },
+        } : {});
+      } finally {
+        if (controller !== null) {
+          process.off('SIGINT', stopOnSignal);
+          process.off('SIGTERM', stopOnSignal);
+        }
+      }
       if (followPages === 0) process.stdout.write(`${JSON.stringify(projectBatonCliResult(parsed, result), null, 2)}\n`);
     }
   }

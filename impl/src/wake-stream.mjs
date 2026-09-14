@@ -634,10 +634,16 @@ export function openWakeStream({
     if (signal.aborted) controller.abort();
     else signal.addEventListener('abort', abort, { once: true });
   }
+  // `opened` settles once the resident has answered the attachment request: `open` when the stream
+  // is live (from here on "from now" is a moment the caller can trust), otherwise the same outcome
+  // `done` carries. It never rejects: a refusal is an outcome, not an exception.
+  let settleOpened;
+  const opened = new Promise((resolve) => { settleOpened = resolve; });
   const done = new Promise((resolve) => {
     const finish = (outcome) => {
       signal?.removeEventListener?.('abort', abort);
       resolve(outcome);
+      settleOpened(outcome);
     };
     const request = httpRequest({
       ...(socketPath === null ? { host: base.hostname, port: base.port || 443 } : { socketPath }),
@@ -666,6 +672,7 @@ export function openWakeStream({
         });
         return;
       }
+      settleOpened(Object.freeze({ status: 'open' }));
       let buffered = '';
       let eventId = null;
       let eventType = null;
@@ -716,7 +723,7 @@ export function openWakeStream({
     controller.signal.addEventListener('abort', () => { try { request.destroy(); } catch { /* gone */ } }, { once: true });
     request.end();
   });
-  return Object.freeze({ close: () => controller.abort(), done });
+  return Object.freeze({ close: () => controller.abort(), done, opened });
 }
 
 // ── the loopback WebSocket binding (RFC 6455) ───────────────────────────────────────────────────

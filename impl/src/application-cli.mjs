@@ -19,6 +19,7 @@ import {
   SWARM_CLI_COMMANDS, SWARM_CLI_HELP, SWARM_COMMAND_DEFINITIONS, swarmCliCommand,
 } from './swarm-surface.mjs';
 import { webAdmittedCommandNames } from './web-northbound.mjs';
+import { openWakeStream, parseWakeFilter, wakeClassHelpLines, wakeQuery } from './wake-stream.mjs';
 import { APPLICATION_COMMAND_DEFINITIONS } from './application.mjs';
 // TWO derived tiers, one declaration each (2026-09-14 audit, U-N5/U-E6):
 //
@@ -1395,6 +1396,7 @@ export function batonCliHelp(topic = 'application') {
   if (!definition && swarmHelp) {
     const blocks = [`usage:\n${swarmHelp.usage.map((line) => `  ${line}`).join('\n')}`];
     blocks.push(...swarmHelp.paragraphs);
+    blocks.push(...(wakeWatchHelpBlocks(topic) ?? []));
     return blocks.join('\n\n');
   }
   if (!definition && CANONICAL_CLI_BY_KEY.has(topic)) {
@@ -1406,7 +1408,14 @@ export function batonCliHelp(topic = 'application') {
     if (row.aliases.length > 0) blocks.push(`Replaces: ${row.aliases.join(', ')}.`);
     return blocks.join('\n\n');
   }
-  if (!definition) return `No local help is available for ${topic}.\nUse baton help for the application overview.`;
+  if (!definition) {
+    // A wake-consuming topic with no registry entry of its own (`deployment.watch`) still renders
+    // the vocabulary — from the stream's own closed table, never a hand list.
+    return [
+      `No local help is available for ${topic}.\nUse baton help for the application overview.`,
+      ...(wakeWatchHelpBlocks(topic) ?? []),
+    ].join('\n\n');
+  }
   const usage = [
     ...(definition.commandIds ?? []).map((id) => commandById.get(id)?.usage),
     ...(definition.usage ?? []),
@@ -1423,7 +1432,7 @@ export function batonCliHelp(topic = 'application') {
   if (!aliasTopic && operation?.deprecated && operation.aliases.length > 0) {
     blocks.push(`Deprecated: use baton ${operation.aliases[0].replaceAll('.', ' ')}.`);
   }
-  return blocks.join('\n\n');
+  return [...blocks, ...(wakeWatchHelpBlocks(topic) ?? [])].join('\n\n');
 }
 
 export const BATON_CLI_HELP = batonCliHelp(APPLICATION_SEMANTIC_REGISTRY.cli.defaultHelpTopic);
@@ -1865,9 +1874,10 @@ function parseSwarmCli(args, idempotencyKey) {
       'cli_command_unavailable',
     );
   }
-  // `swarm watch --follow` and `swarm check --follow`: Baton wakes the caller — one line per swarm
-  // event for watch; for check, the caller waits for THIS check's verdict row and reads it back.
-  // Either way the orchestrator never polls.
+  // `swarm watch --follow`: the deployment wake stream with THIS swarm pinned as a filter (#294) —
+  // the same consumer `baton deployment watch --follow` runs, so the orchestrator never polls and
+  // never re-arms a child per swarm after a resident restart. `swarm check --follow` (#288 R-5):
+  // the caller waits for THIS check's verdict row and reads it back.
   const follow = (verb === 'watch' || verb === 'check') && flag(args, '--follow');
   const values = {};
   for (const field of row.positional) {
@@ -1891,6 +1901,9 @@ function parseSwarmCli(args, idempotencyKey) {
       values[entry.field] = token;
     }
   }
+  // The wake flags are parsed before the remainder check, so `--kinds`/`--since` on the follow form
+  // are the stream's vocabulary rather than an unexpected argument.
+  const wakes = follow ? parseWakeCliFlags(args) : null;
   noRemainder(args);
   if (SWARM_COMMAND_DEFINITIONS[row.command].args.includes('idempotencyKey')) {
     values.idempotencyKey = idempotencyKey;
@@ -1901,46 +1914,116 @@ function parseSwarmCli(args, idempotencyKey) {
       contributionId: values.contributionId, checkId: values.checkId, idempotencyKey,
     };
   }
-  if (follow) return { kind: 'swarm_follow', swarmId: values.swarmId, afterSeq: values.afterSeq, timeoutMs: values.timeoutMs, idempotencyKey };
+  if (follow) {
+    if (values.afterSeq !== undefined) {
+      throw cliError('swarm watch --follow resumes with --since SEQ (the wake cursor), not --after-seq');
+    }
+    return {
+      kind: 'wake_watch', swarms: [values.swarmId], kinds: wakes.kinds, since: wakes.since,
+      follow: true, stopOnClosedWake: true, idempotencyKey,
+    };
+  }
   return { kind: 'command', name: row.command, args: values, idempotencyKey };
 }
 
-const LIVE_RUNTIME_STATES = new Set(['pending', 'working', 'blocked', 'idle', 'stopping']);
+// ── the watch verbs (issue #294) ────────────────────────────────────────────────────────────────
+//
+// `baton deployment watch --follow` and `baton swarm watch --follow` are the SAME consumer: one
+// attachment to the resident's deployment-scope wake stream, one JSON frame per line. The swarm verb
+// pins the swarm as a filter — a filter, never a second connection — and `--kinds`/`--since` are the
+// stream's own vocabulary and cursor rule, checked by the stream's own filter parser. Before this,
+// every root-side feed was one `baton swarm watch --follow` child per swarm, re-armed by hand after
+// each resident restart, and the deployment rows no swarm owns had no consumer at all.
+//
+// The topics are named inline because this function is reached while the module is still evaluating
+// (the help constant below it), where a later `const` is not yet initialized.
+function wakeWatchHelpBlocks(topic) {
+  if (topic !== 'swarm' && topic !== 'swarm.watch' && topic !== 'deployment.watch') return null;
+  return [
+    [
+      'wake stream:',
+      '  baton deployment watch --follow [--kinds CLASS,...] [--since SEQ]',
+      '  baton swarm watch SWARM_ID --follow [--kinds CLASS,...] [--since SEQ]',
+      '  One JSON frame per line. --kinds watches named wake classes; --since resumes after a',
+      '  coordination cursor (a cursor IS a ledger seq, and every frame carries its own, so a',
+      '  caller that stopped resumes by passing the last seq it acted on: no gap, no duplicate).',
+      '  Both verbs read the same stream through the same client; the swarm verb pins SWARM_ID.',
+    ].join('\n'),
+    `wake classes (the closed set --kinds admits):\n${wakeClassHelpLines().map((line) => `  ${line}`).join('\n')}`,
+  ];
+}
 
-/** One wake line: what changed (the matched event), the organization truth an orchestrator acts
- * on (attention), and where every participant stands — never the whole view. */
-export function swarmWakeSummary(view) {
+/** The ONE wake flag pair both watch verbs accept. `--kinds` may repeat and/or carry a comma list;
+ * an unknown class refuses here with the closed set, exactly as it does on the wire. */
+function parseWakeCliFlags(args) {
+  const tokens = takeAll(args, '--kinds')
+    .flatMap((value) => `${value}`.split(','))
+    .map((token) => token.trim())
+    .filter((token) => token.length > 0);
+  const rawSince = take(args, '--since');
+  let filter;
+  try {
+    filter = parseWakeFilter({ kinds: tokens, since: rawSince });
+  } catch (cause) {
+    throw cliError(cause.message ?? 'wake filter is invalid', typeof cause?.code === 'string' ? cause.code : 'cli_invalid');
+  }
+  return { kinds: filter.kinds === null ? null : [...filter.kinds].sort(), since: filter.since };
+}
+
+/** `baton deployment watch --follow`: every swarm this resident hosts, plus the deployment rows no
+ * swarm owns (worker deaths, pauses, approvals, capacity pressure, resident incarnations). */
+function parseDeploymentWatch(args, idempotencyKey) {
+  const follow = flag(args, '--follow');
+  const wakes = parseWakeCliFlags(args);
+  noRemainder(args);
+  if (!follow) {
+    throw cliError('deployment watch requires --follow; a bounded read is baton_wakes_since over MCP', 'cli_command_unavailable');
+  }
   return {
-    schemaVersion: 1, kind: 'baton.swarm_wake', swarmId: view.swarmId, seq: view.cursor,
-    event: view.watch?.event ?? null, status: view.status,
-    attention: view.attention ?? [],
-    participants: (view.participants ?? []).map((row) => ({
-      participantId: row.participantId, status: row.status, state: row.runtime?.state ?? null, turn: row.runtime?.turn ?? null,
-    })),
-    contributions: Object.keys(view.contributions ?? {}).length,
-    work: Object.values(view.work ?? {}).map((item) => ({ workId: item.workId, status: item.status })),
+    kind: 'wake_watch', swarms: null, kinds: wakes.kinds, since: wakes.since,
+    follow: true, stopOnClosedWake: false, idempotencyKey,
   };
 }
 
-function swarmHasLiveParticipant(view) {
-  return (view.participants ?? []).some((row) => LIVE_RUNTIME_STATES.has(row.runtime?.state));
-}
-
-/** `baton swarm watch --follow`: block on the runtime's own wake (swarm.watch), emit a summary
- * for every matched event, and return when the swarm is closed and nothing in it is alive. */
-export async function followSwarm(parsed, client, options = {}) {
-  let cursor = parsed.afterSeq;
-  let view = null;
-  for (;;) {
-    view = await client.command('swarm.watch', {
-      swarmId: parsed.swarmId, ...(cursor !== undefined ? { afterSeq: cursor } : {}),
-      ...(parsed.timeoutMs !== undefined ? { timeoutMs: parsed.timeoutMs } : {}),
-    }, `${parsed.idempotencyKey}:watch:${cursor ?? 'now'}`);
-    if (view?.watch?.reason === 'event') await options.onFollowPage?.(swarmWakeSummary(view));
-    cursor = view?.cursor;
-    if (view?.status !== 'open' && !swarmHasLiveParticipant(view)) return view;
-    if (typeof options.shouldStop === 'function' && await options.shouldStop(view)) return view;
+/** One attachment, one line per frame, for as long as the caller waits. Returns when the caller
+ * stops it (a signal), when the stream ends, or — for the swarm verb — when that swarm's own
+ * `closed` wake lands. A refusal is thrown, never swallowed: a watch that cannot attach must not
+ * look like a quiet deployment. */
+export async function followWakes(parsed, client, options = {}) {
+  let frames = 0;
+  let cursor = null;
+  let closed = null;
+  const attachment = client.wakes({
+    filter: { kinds: parsed.kinds, swarms: parsed.swarms, since: parsed.since },
+    ...(options.signal === undefined || options.signal === null ? {} : { signal: options.signal }),
+    onFrame: async (frame) => {
+      frames += 1;
+      if (Number.isSafeInteger(frame?.seq)) cursor = frame.seq;
+      if (parsed.stopOnClosedWake && frame?.wakeClass === 'closed' && frame.observation !== true
+        && (parsed.swarms ?? []).includes(frame.swarmId)) closed = frame;
+      await options.onFollowPage?.(frame);
+      if (closed !== null) attachment.close();
+    },
+    onLagged: async (lagged) => {
+      frames += 1;
+      if (Number.isSafeInteger(lagged?.cursor)) cursor = lagged.cursor;
+      await options.onFollowPage?.(lagged);
+    },
+  });
+  const outcome = await attachment.done;
+  if (outcome?.status === 'refused' || outcome?.status === 'error') {
+    const cause = outcome.error;
+    throw cliError(
+      `the deployment wake stream could not be attached: ${cause?.message ?? 'the resident refused the attachment'}`,
+      typeof cause?.code === 'string' && /^[a-z][a-z0-9_]{0,63}$/u.test(cause.code) ? cause.code : 'wake_stream_unavailable',
+    );
   }
+  return Object.freeze({
+    schemaVersion: 1, kind: 'baton.wake_stream_ended', frames, cursor,
+    swarms: parsed.swarms === null ? null : [...parsed.swarms],
+    kinds: parsed.kinds === null ? null : [...parsed.kinds],
+    closed: closed === null ? null : Object.freeze({ swarmId: closed.swarmId, seq: closed.seq }),
+  });
 }
 
 /** The durable verdict row one check wrote, or null while it is still running. The runtime composes
@@ -2070,6 +2153,8 @@ export function parseBatonCli(rawArgs) {
       topic = 'routing';
     } else if (args[0] === 'swarm') {
       topic = swarmCliCommand(args[1] ?? '') === null ? 'swarm' : `swarm.${args[1]}`;
+    } else if (args[0] === 'deployment') {
+      topic = 'deployment.watch';
     }
     return {
       kind: 'command', name: 'application.help',
@@ -2123,6 +2208,13 @@ export function parseBatonCli(rawArgs) {
     return { kind: 'route', exact };
   }
   if (args[0] === 'swarm') return parseSwarmCli(args, idempotencyKey);
+  if (args[0] === 'deployment') {
+    args.shift();
+    if (args.shift() !== 'watch') {
+      throw cliError('deployment requires the watch verb: baton deployment watch --follow', 'cli_command_unavailable');
+    }
+    return parseDeploymentWatch(args, idempotencyKey);
+  }
   if (args[0] === 'runs' && args[1] === 'list') {
     args.splice(0, 2);
     noRemainder(args);
@@ -2840,7 +2932,12 @@ export class BatonWebClient {
   #token;
 
   constructor(options) {
-    exactKeys(options, ['baseUrl', 'origin', 'repoId', 'token', 'commandTimeoutMs', 'pollMs', 'fetchImpl', 'clock', 'sleep'], 'Web client configuration');
+    // socketPath is optional: a local resident's wake attachment rides the owner-only Unix socket
+    // its commands ride, while an explicit network deployment attaches over its published URL.
+    exactKeys(options, options.socketPath === undefined
+      ? ['baseUrl', 'origin', 'repoId', 'token', 'commandTimeoutMs', 'pollMs', 'fetchImpl', 'clock', 'sleep']
+      : ['baseUrl', 'origin', 'repoId', 'token', 'socketPath', 'commandTimeoutMs', 'pollMs', 'fetchImpl', 'clock', 'sleep'],
+    'Web client configuration');
     const base = new URL(options.baseUrl);
     const origin = new URL(options.origin);
     if (base.protocol !== 'https:' || base.username || base.password || base.pathname !== '/'
@@ -2857,6 +2954,13 @@ export class BatonWebClient {
     this.origin = origin.origin;
     this.repoId = options.repoId;
     this.#token = options.token;
+    // The owner-only Unix socket a local resident serves, when the connection named one. The wake
+    // attachment is the only method that needs it directly (every other request rides _json's
+    // fetch, which the caller already bound to that socket).
+    if (options.socketPath !== undefined && !nonempty(options.socketPath)) {
+      throw cliError('Web client socket path is invalid', 'cli_config_invalid');
+    }
+    this.socketPath = options.socketPath ?? null;
     this.commandTimeoutMs = options.commandTimeoutMs;
     this.pollMs = options.pollMs;
     // #226 (operator ruling): NO silent cap on caller patience. The request ceiling IS the
@@ -2994,6 +3098,43 @@ export class BatonWebClient {
       }),
       expiresAt: new Date(expiresAt).toISOString(),
     });
+  }
+
+  /** The deployment wake stream's PUSH form (issue #294): one attachment to the resident's
+   * `GET /v1/wakes`, delivering every matching frame as it lands. `filter` is the stream's own
+   * vocabulary (kinds/swarms/participants/since); `resume` names the last SSE id already acted on,
+   * which the resident honors exactly as `since`, so a reconnect resumes with no gap and no
+   * duplicate. Returns {close(), done} exactly as the stream module's client half does. */
+  wakes({ filter = {}, resume = null, onFrame, onLagged = null, onError = null, signal = null } = {}) {
+    if (typeof onFrame !== 'function') throw cliError('wake attachment requires an onFrame handler', 'cli_invalid');
+    return openWakeStream({
+      baseUrl: this.baseUrl,
+      // The attachment rides the transport the commands ride: the owner-only Unix socket of a local
+      // resident (this.socketPath), or the published URL of an explicit network deployment.
+      socketPath: this.socketPath,
+      token: this.#token,
+      origin: this.origin,
+      filter: { ...parseWakeFilter(filter) },
+      resume,
+      onFrame,
+      onLagged,
+      onError,
+      signal,
+    });
+  }
+
+  /** The deployment wake stream's PULL form: one bounded page after `since`, in the same filter
+   * vocabulary, without holding an attachment (the MCP `baton_wakes_since` tool's transport). */
+  async wakesSince(params = {}) {
+    const filter = parseWakeFilter(params);
+    const body = await this._json(`/v1/wakes${wakeQuery(filter)}`, {
+      headers: { ...this._headers(), accept: 'application/json' },
+    });
+    const page = body?.wakes;
+    if (!record(page) || page.kind !== 'baton.wake_page' || !Array.isArray(page.frames)) {
+      throw cliError('Baton Web returned an invalid wake page', 'cli_protocol_failed');
+    }
+    return page;
   }
 
   async command(name, args, idempotencyKey = randomUUID()) {
@@ -3350,8 +3491,9 @@ export async function runBatonCli(parsed, client, options = {}) {
     return matches[0];
   }
   if (parsed.kind === 'command') return client.command(parsed.name, parsed.args, parsed.idempotencyKey);
-  if (parsed.kind === 'swarm_follow') return followSwarm(parsed, client, options ?? {});
   if (parsed.kind === 'swarm_check_follow') return followSwarmCheck(parsed, client, options ?? {});
+  if (parsed.kind === 'wake_watch') return followWakes(parsed, client, options ?? {});
+  if (parsed.kind === 'swarm_follow') return followSwarm(parsed, client, options ?? {});
   if (parsed.kind === 'stream') {
     if (!options || typeof options !== 'object' || Array.isArray(options)
       || Object.keys(options).some((key) => key !== 'onFollowPage')

@@ -236,6 +236,9 @@ that owns the runs, never over a borrowed bridge session.
 | `swarm.update` | `ordinary` | `baton_swarm_update` | idempotent |
 | `swarm.view` | `ordinary` | `baton_swarm_view` | idempotent |
 | `swarm.watch` | `ordinary` | `baton_swarm_watch` | idempotent |
+| `wakes.since` | `ordinary` | `baton_wakes_since` | idempotent |
+| `wakes.subscribe` | `ordinary` | `baton_wakes_subscribe` | effectful |
+| `wakes.unsubscribe` | `ordinary` | `baton_wakes_unsubscribe` | effectful |
 | `waves.attach` | `ordinary` | `baton_waves_attach` | idempotent |
 | `waves.compile` | `ordinary` | `baton_waves_compile` | idempotent |
 | `waves.list` | `ordinary` | `baton_waves_list` | idempotent |

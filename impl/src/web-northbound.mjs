@@ -2422,12 +2422,17 @@ export class WebNorthbound {
       'x-content-type-options': 'nosniff',
     });
     // A deployment may be silent for hours. The comment frame keeps an intermediary from reaping a
-    // quiet attachment, and it is not a frame: a consumer's parser ignores it by definition.
-    const heartbeat = setInterval(() => {
+    // quiet attachment, and it is not a frame: a consumer's parser ignores it by definition. It is
+    // written once at attach as well: the headers leave with it, so the consumer's attachment is
+    // answered while the deployment is silent — "from now" is a moment it can trust — instead of
+    // at the first wake or the first heartbeat.
+    const pulse = () => {
       if (closed || !acceptWrites) return;
       try { acceptWrites = res.write(': wake attachment open\n\n') !== false; } catch { acceptWrites = false; }
       if (!acceptWrites) { finish(); try { res.end(); } catch { /* terminal already */ } }
-    }, this.wakeHeartbeatMs);
+    };
+    pulse();
+    const heartbeat = setInterval(pulse, this.wakeHeartbeatMs);
     heartbeat.unref?.();
     if (!this._wakeConnections) this._wakeConnections = new Set();
     this._wakeConnections.add(finish);

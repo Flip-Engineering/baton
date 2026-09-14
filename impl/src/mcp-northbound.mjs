@@ -138,6 +138,12 @@ const CAPABILITY = Object.freeze({
   baton_waves_run: ['control', 'observe'],
   baton_waves_compile: ['observe'],
   baton_deployment_doctor: ['observe'],
+  // Issue #294: the deployment wake stream's consumers. A wake read is observation; a subscription
+  // is a filter over the session's own ONE attachment, never a second authority (which is why the
+  // pair is observe-class while the attachment itself is opened by the bridge's connection).
+  baton_wakes_subscribe: ['observe'],
+  baton_wakes_unsubscribe: ['observe'],
+  baton_wakes_since: ['observe'],
   baton_scratchpad_elevate: ['control', 'observe'],
   baton_scratchpad_settle: ['control', 'observe'],
   baton_knowledge_promote: ['control', 'observe'],
@@ -385,6 +391,10 @@ function stateFailureCode(cause) {
   // typed on the wire, carrying the lane's OWN message plus the {actual, cap, cause, role} detail.
   // The store-integrity roster code deliberately stays a projection throw — never a per-command row.
   if (cause?.code === 'wave_member_invalid' || cause?.code === 'wave_not_found') return cause.code;
+  // Issue #294: the deployment wake stream's own refusals surface typed — an unknown wake class
+  // names the closed set, and an unattachable stream is a state, not an unknown outcome.
+  if (['invalid_wake_filter', 'wake_stream_unavailable', 'wake_stream_closed', 'wake_stream_refused',
+    'wake_subscription_not_found', 'wake_notifications_unavailable', 'wake_page_invalid'].includes(cause?.code)) return cause.code;
   if (cause?.code === 'run_stopping') return cause.code;
   // #105 D3 (reply-chains-2026-08-06): the message lane's budget refusal is the ONE new
   // allowlisted message_* code — the orchestrator's send-side refusal surfaces typed on the
@@ -882,6 +892,98 @@ const LEGACY_ORDINARY_APPLICATION_TOOL_DEFINITIONS = Object.freeze([
   _meta: Object.freeze({ 'baton/registryDigest': APPLICATION_SEMANTIC_REGISTRY.digest }),
   execution: Object.freeze({ taskSupport: 'forbidden' }),
 })));
+
+// Issue #294: the deployment-scope wake stream's MCP consumers, beside the swarm family above.
+//
+// The stream itself lives on the resident (`GET /v1/wakes`, impl/src/wake-stream.mjs) and owns the
+// ONE filter vocabulary — the closed wake-class table, `swarms`/`participants` id filters and the
+// cursor rule (a cursor IS a coordination ledger seq; `since=<seq>` resumes exactly after it).
+// Nothing is restated here: an unknown class refuses with the closed set the stream publishes, and
+// the pull form's page bound is the transport's own frame ceiling, never a row count.
+//
+// `baton_wakes_subscribe` is a FILTER, not a connection: the session holds ONE upstream attachment
+// however many subscriptions it opens, and each subscription's frames arrive as
+// `notifications/baton/wake` frames for as long as the session lives.
+const WAKE_NOTIFICATION_METHOD = 'notifications/baton/wake';
+const WAKE_FILTER_TOKEN = Object.freeze({ type: 'string', minLength: 1, maxLength: 256 });
+const WAKE_TOKEN_LIST = Object.freeze({
+  oneOf: [
+    { type: 'string', minLength: 1, maxLength: 4_096 },
+    { type: 'array', items: WAKE_FILTER_TOKEN },
+  ],
+});
+
+const WAKE_TOOL_DEFINITIONS = Object.freeze([
+  {
+    name: 'baton_wakes_subscribe',
+    description: 'Subscribe this MCP session to the deployment wake stream: every matching row then arrives as a notifications/baton/wake frame for as long as the session lives. The session holds ONE upstream attachment whatever the subscription count — a subscription is a filter, never a connection. kinds names wake classes from the closed table (an unknown class is refused with that set); swarms and participants narrow by id; since is the coordination cursor to resume after (omit it to start from now). Returns {subscriptionId, since}.',
+    inputSchema: schema({
+      ...repo, kinds: WAKE_TOKEN_LIST, swarms: WAKE_TOKEN_LIST, participants: WAKE_TOKEN_LIST,
+      since: { type: 'integer', minimum: 0 },
+    }, ['repoId']),
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+  },
+  {
+    name: 'baton_wakes_unsubscribe',
+    description: 'Stop one wake subscription opened by baton_wakes_subscribe. The last subscription releases this session\'s upstream attachment; the deployment stream every other consumer reads is untouched.',
+    inputSchema: schema({
+      ...repo, subscriptionId: { type: 'string', minLength: 1, maxLength: 256 },
+    }, ['repoId', 'subscriptionId']),
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  {
+    name: 'baton_wakes_since',
+    description: 'Read the deployment wake rows after a cursor — the pull form, for a caller that cannot hold an attachment. Returns the rows, the cursor to resume after, and, when the transport frame ceiling cut the page, a typed baton.wakes_continuation naming the cursor that continues exactly after the last row returned. The page is bounded by that ceiling, never by a constant row count.',
+    inputSchema: schema({
+      ...repo, kinds: WAKE_TOKEN_LIST, swarms: WAKE_TOKEN_LIST, participants: WAKE_TOKEN_LIST,
+      since: { type: 'integer', minimum: 0 },
+    }, ['repoId']),
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+].map((tool) => Object.freeze({
+  ...tool,
+  _meta: Object.freeze({ 'baton/registryDigest': APPLICATION_SEMANTIC_REGISTRY.digest }),
+  execution: Object.freeze({ taskSupport: 'forbidden' }),
+})));
+
+const WAKE_TOOL_NAMES = new Set(WAKE_TOOL_DEFINITIONS.map((tool) => tool.name));
+
+function wakeStreamUnavailable(verb) {
+  return Object.assign(
+    new Error(`this deployment cannot ${verb} the wake stream: the connection carries no wake authority`),
+    { code: 'wake_stream_unavailable', wireSafe: true },
+  );
+}
+
+/** The SHAPE of a wake filter, validated here; its VOCABULARY (the closed class set) is the
+ * stream's own and is refused by the authority that owns it, never restated in this table. */
+function validateWakeArguments(name, args) {
+  for (const field of ['kinds', 'swarms', 'participants']) {
+    if (!Object.hasOwn(args, field) || args[field] === null || args[field] === undefined) continue;
+    const value = args[field];
+    const tokens = Array.isArray(value) ? value : typeof value === 'string' ? value.split(',') : null;
+    if (tokens === null || tokens.some((token) => typeof token !== 'string'
+      || token.trim().length === 0 || token.trim().length > 256)) {
+      return {
+        code: 'invalid_wake_filter', field,
+        message: `${field} must be a comma-separated string or an array of bounded tokens`,
+      };
+    }
+  }
+  if (Object.hasOwn(args, 'since') && (!Number.isSafeInteger(args.since) || args.since < 0)) {
+    return {
+      code: 'invalid_wake_filter', field: 'since',
+      message: 'since must be a non-negative safe integer cursor; omit it to start from now',
+    };
+  }
+  if (name === 'baton_wakes_unsubscribe' && !SAFE_ID.test(args.subscriptionId ?? '')) {
+    return {
+      code: 'invalid_wake_filter', field: 'subscriptionId',
+      message: 'subscriptionId must be the id a subscription receipt returned',
+    };
+  }
+  return null;
+}
 // The ordinary table = retained legacy tools + the canonical grammar tools rendered from the
 // registry (M4b). A canonical tool is its legacy sibling under the derived canonical name; the wire
 // schema and annotations (from idempotent/destructive) are the sibling's, so a caller reaches one
@@ -951,6 +1053,7 @@ function withSpellingNote(tool) {
 const ORDINARY_APPLICATION_TOOL_DEFINITIONS = Object.freeze([
   ...LEGACY_ORDINARY_APPLICATION_TOOL_DEFINITIONS.map(withSpellingNote),
   ...SWARM_APPLICATION_TOOL_DEFINITIONS,
+  ...WAKE_TOOL_DEFINITIONS,
   ...CANONICAL_ORDINARY_SIBLINGS.map((sibling) => {
     const base = LEGACY_ORDINARY_APPLICATION_TOOL_DEFINITIONS.find((tool) => tool.name === sibling.legacyTool);
     return withSpellingNote(Object.freeze({ ...base, name: sibling.tool }));
@@ -1104,6 +1207,9 @@ const ORDINARY_EXPLICIT_TOOLS = new Set([
   'baton_run_message_send', 'baton_run_message_receipt', 'baton_run_attention_watch',
   'baton_run_scratchpad_read', 'baton_run_scratchpad_elevate', 'baton_run_scratchpad_append',
   'baton_run_knowledge_seed',
+  // Issue #294: the three wake tools reach direct facade methods (never APPLICATION_COMMAND_* keys —
+  // a wake attachment is not a bridged command), so their typed refusals need this lane.
+  'baton_wakes_subscribe', 'baton_wakes_unsubscribe', 'baton_wakes_since',
 ]);
 // The application command each explicit-dispatch tool reaches (the same knowledge the handle()
 // branches encode); deployment.doctor is a direct method, not a bridged string command.
@@ -1314,6 +1420,10 @@ function validateArguments(name, args, maxWaitMs = null) {
   }
   if (FENCED.has(name) && !Number.isSafeInteger(args.expectedFence)) {
     return { code: 'expected_fence_required', message: 'expectedFence must be a safe integer carrying the fence this fenced tool was admitted with', field: 'expectedFence' };
+  }
+  if (WAKE_TOOL_NAMES.has(name)) {
+    const wakeRefusal = validateWakeArguments(name, args);
+    if (wakeRefusal !== null) return wakeRefusal;
   }
   // Reflex surface contract Part C.7 (R6): the advertised `answer` `oneOf` is never evaluated
   // server-side (hand-rolled validation stays the discipline, Part I), so the answer-shape guard
@@ -1679,6 +1789,13 @@ export class McpFleetServer {
     this.maxMessageBytes = opts.maxMessageBytes ?? 256 * 1024;
     if (!Number.isSafeInteger(this.maxWaitMs) || this.maxWaitMs <= 0) throw new TypeError('maxWaitMs must be a positive safe integer');
     if (!Number.isSafeInteger(this.maxMessageBytes) || this.maxMessageBytes <= 0) throw new TypeError('maxMessageBytes must be a deployment-derived positive safe integer');
+    // Issue #294: server-initiated frames ride the SAME transport as responses. A server whose
+    // driver attached no sink refuses a wake subscription instead of accepting one it could never
+    // deliver; the stdio driver and the resident bridge both attach theirs.
+    this.notificationSink = null;
+    if (opts.notificationSink !== undefined && opts.notificationSink !== null) {
+      this.attachNotificationSink(opts.notificationSink);
+    }
     this.lifecycle = 'new';
     const surfaceTools = this.surface === 'application' ? ORDINARY_APPLICATION_TOOL_DEFINITIONS
       : this.surface === 'advanced' ? ADVANCED_TOOL_DEFINITIONS : TOOL_DEFINITIONS;
@@ -1723,6 +1840,10 @@ export class McpFleetServer {
     if (this._closePromise) return this._closePromise;
     const closing = Promise.resolve().then(async () => {
       this.lifecycle = 'closed';
+      // The session is over: whatever upstream wake attachment it held is released here, for an
+      // unowned bridge application exactly as for an owned one (the connection is the session's).
+      try { this.application?.closeWakes?.(); }
+      catch { /* the transport is closing; the attachment dies with the process either way */ }
       if (this.application === null || !this.applicationOwned) {
         return Object.freeze({ schemaVersion: 1, state: 'transport_closed', applicationOwned: false });
       }
@@ -1744,6 +1865,23 @@ export class McpFleetServer {
   callDigest(args) {
     const { idempotencyKey: _key, ...semantic } = args;
     return hash(semantic);
+  }
+
+  /** Issue #294: hand one frame to the client this session serves. The MCP transport owns the
+   * write; the wake plane owns the attachment, so this is the only seam between them. */
+  notify(method, params) {
+    if (this.notificationSink === null) {
+      throw Object.assign(
+        new Error('this MCP transport cannot deliver server notifications'),
+        { code: 'wake_notifications_unavailable', wireSafe: true },
+      );
+    }
+    return this.notificationSink({ jsonrpc: '2.0', method, params: normalized(params) });
+  }
+
+  attachNotificationSink(sink) {
+    if (sink !== null && typeof sink !== 'function') throw new TypeError('MCP notification sink must be a function');
+    this.notificationSink = sink;
   }
 
   _authority(name, args) {
@@ -2604,6 +2742,22 @@ export class McpFleetServer {
         value = this.coordinator.workflowHorizon(args.id, { viewer: 'orchestrator' });
       } else value = this.coordinator.projectHorizon(args.repoId);
     }
+    // Issue #294: the wake tool family's direct ports. None of them is a bridged application
+    // command (the resident's wire card admits commands, and a wake attachment is not one), so each
+    // reaches its facade method exactly as deployment.doctor does. The subscription's delivery sink
+    // is THIS server's transport, so a frame reaches the client that opened the subscription.
+    else if (name === 'baton_wakes_subscribe') {
+      if (typeof this.application?.wakeSubscribe !== 'function') throw wakeStreamUnavailable('subscribe to');
+      value = await this.application.wakeSubscribe(clone(args), (frame) => this.notify(WAKE_NOTIFICATION_METHOD, frame));
+    }
+    else if (name === 'baton_wakes_unsubscribe') {
+      if (typeof this.application?.wakeUnsubscribe !== 'function') throw wakeStreamUnavailable('stop');
+      value = this.application.wakeUnsubscribe(clone(args));
+    }
+    else if (name === 'baton_wakes_since') {
+      if (typeof this.application?.wakeSince !== 'function') throw wakeStreamUnavailable('read');
+      value = await this.application.wakeSince(clone(args), { maxFrameBytes: this.maxMessageBytes });
+    }
     if (value?.result === 'stale_fence') throw Object.assign(new Error('stale fence'), { mcpCode: 'stale_fence' });
     if (APPLICATION_TOOL[name] && Buffer.byteLength(JSON.stringify(toolResult(value))) > this.maxMessageBytes) {
       throw Object.assign(new Error('RunView exceeds the MCP response ceiling'), { code: 'application_run_view_oversize' });
@@ -2703,6 +2857,8 @@ export async function serveMcpStdio(server, opts = {}) {
   const output = opts.output ?? process.stdout;
   const maxLineBytes = opts.maxLineBytes ?? server.maxMessageBytes;
   if (!Number.isSafeInteger(maxLineBytes) || maxLineBytes <= 0) throw new TypeError('maxLineBytes must be a positive safe integer');
+  // Issue #294: the wake subscriptions this session holds deliver through this exact output.
+  server.attachNotificationSink((frame) => writeFrame(output, frame));
   let buffered = Buffer.alloc(0);
   let discardingOversize = false;
   const processLine = async (line, oversized = false) => {

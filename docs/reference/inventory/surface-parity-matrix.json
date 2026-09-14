@@ -1030,6 +1030,33 @@
       "ledgered": false
     },
     {
+      "name": "wakes.since",
+      "category": "observation",
+      "cli": "baton wakes since",
+      "mcp": "baton_wakes_since",
+      "web": "wakes_since",
+      "divergence": null,
+      "ledgered": false
+    },
+    {
+      "name": "wakes.subscribe",
+      "category": "observation",
+      "cli": "baton wakes subscribe",
+      "mcp": "baton_wakes_subscribe",
+      "web": "wakes_subscribe",
+      "divergence": null,
+      "ledgered": false
+    },
+    {
+      "name": "wakes.unsubscribe",
+      "category": "observation",
+      "cli": "baton wakes unsubscribe",
+      "mcp": "baton_wakes_unsubscribe",
+      "web": "wakes_unsubscribe",
+      "divergence": null,
+      "ledgered": false
+    },
+    {
       "name": "waves.attach",
       "category": "control",
       "cli": "baton waves attach",

@@ -44,7 +44,7 @@ function applicationStub() {
 function upgradeOutcome(url, headers) {
   return new Promise((resolve) => {
     const socket = headers === undefined ? new WebSocket(url) : new WebSocket(url, { headers });
-    socket.addEventListener('open', () => resolve('opened'));
+    socket.addEventListener('open', () => { resolve('opened'); socket.close(); });
     socket.addEventListener('error', () => resolve('refused'));
     socket.addEventListener('close', () => resolve('refused'));
     const timer = setTimeout(() => resolve('timeout'), 5_000);
@@ -63,6 +63,7 @@ test('a declared loopback binding serves the same wake stream to an authenticate
   server.batonWakes = stream;
   server.batonAuthenticate = (req) => principals.get(`${req.headers.authorization ?? ''}`.replace(/^Bearer /u, '')) ?? null;
   server.batonShutdown = async () => ({ ok: true, result: 'closed' });
+  t.after(() => new Promise((resolve) => { try { server.closeAllConnections?.(); server.close(() => resolve()); } catch { resolve(); } }));
   const socketDir = mkdtempSync(join(tmpdir(), 'bt-waking-sock-'));
   t.after(() => rmSync(socketDir, { recursive: true, force: true }));
 
@@ -115,6 +116,7 @@ test('a declared loopback binding serves the same wake stream to an authenticate
   assert.deepEqual([...new Set(frames.map((frame) => frame.wakeClass))].sort(),
     ['contribution_recorded', 'recruited'], 'only the filtered classes cross the binding');
 
+  socket.close();
   await host.shutdown();
   assert.equal(await upgradeOutcome(`ws://127.0.0.1:${port}/v1/wakes`,
     { authorization: 'Bearer t0ken-resident-principal' }), 'refused',

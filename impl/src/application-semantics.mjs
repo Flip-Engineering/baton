@@ -1253,6 +1253,16 @@ const SWARM_OPERATION_EXAMPLES = Object.freeze({
   'swarm.stop': 'baton swarm stop SWARM_ID reviewer "Work complete"',
 });
 
+// Issue #294: one wake filter axis, exactly as the stream's own filter parser reads it — a
+// comma-separated string or an array of bounded tokens. The closed CLASS vocabulary is the stream's
+// (impl/src/wake-stream.mjs owns the one wake-class table); nothing is restated here.
+const wakeFilterTokens = {
+  oneOf: [
+    { type: 'string', minLength: 1, maxLength: 4_096 },
+    { type: 'array', items: { type: 'string', minLength: 1, maxLength: 256 } },
+  ],
+};
+
 const CANONICAL_OPERATION_SPECS = [
   ...SWARM_COMMAND_ROWS.map((row) => [row.command, {
     example: SWARM_OPERATION_EXAMPLES[row.command],
@@ -1809,6 +1819,37 @@ const CANONICAL_OPERATION_SPECS = [
   ['application.help', {
     op: 'application.help', effect: 'help_read', capabilities: ['observe'], outputView: 'outline',
     example: 'baton help',
+  }],
+  // Issue #294: the deployment-scope wake stream's MCP consumers. The stream itself is the
+  // resident's (`GET /v1/wakes`, impl/src/wake-stream.mjs, one closed wake-class table); these rows
+  // are its three tools on the MCP surface. They carry NO application command — a wake attachment
+  // is not a bridged command, and each tool reaches the bridge's own wake facade directly, exactly
+  // as deployment.doctor reaches doctor() — so the mcp leg is the only leg they declare.
+  ['wakes.subscribe', {
+    profile: 'ordinary', surfaces: ['mcp'], effect: 'observe',
+    capabilities: ['observe'], outputView: 'outline', helpTopic: 'swarm', idempotent: false,
+    example: 'baton_wakes_subscribe',
+    inputSchema: objectSchema({
+      kinds: wakeFilterTokens, swarms: wakeFilterTokens, participants: wakeFilterTokens,
+      since: { type: 'integer', minimum: 0 },
+    }, []),
+  }],
+  ['wakes.unsubscribe', {
+    profile: 'ordinary', surfaces: ['mcp'], effect: 'observe',
+    capabilities: ['observe'], outputView: 'outline', helpTopic: 'swarm', idempotent: false,
+    example: 'baton_wakes_unsubscribe',
+    inputSchema: objectSchema({
+      subscriptionId: { type: 'string', minLength: 1, maxLength: 256 },
+    }, []),
+  }],
+  ['wakes.since', {
+    profile: 'ordinary', surfaces: ['mcp'], effect: 'observe',
+    capabilities: ['observe'], outputView: 'outline', helpTopic: 'swarm',
+    example: 'baton_wakes_since',
+    inputSchema: objectSchema({
+      kinds: wakeFilterTokens, swarms: wakeFilterTokens, participants: wakeFilterTokens,
+      since: { type: 'integer', minimum: 0 },
+    }, []),
   }],
 ];
 
