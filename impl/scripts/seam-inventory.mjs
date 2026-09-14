@@ -127,6 +127,14 @@ const AUTHORITY_RULES = Object.freeze([
   { seam: 'observation', id: 'route_observation', weight: 2, call: /routeObservations\(|routeObservation\b|_route\.record\(|_recordUsage\(/u, note: 'records a route/usage observation' },
   { seam: 'observation', id: 'story_ingest', weight: 2, call: /story\.(?:record|ingest)\(|this\._project[A-Z]|_projection[A-Z]/u, note: 'feeds the story/projection authority' },
   { seam: 'observation', id: 'durable_read', weight: 1, call: /this\._coordination\.|coordination\.[A-Za-z]+\(/u, note: 'reads durable state for a projection' },
+
+  // ── the extracted seams (issue #259, slice 1) ───────────────────────────────
+  // A member whose body is a delegate into one of the two modules the split has already carved out
+  // keeps the seam that module owns: the call is the evidence, exactly as `this._load(` was before
+  // the move. Without these two rules the delegate would be read as whatever its name suggests — the
+  // store's `_load`, a restart path by every other measure, would land in observation on `read_name`.
+  { seam: 'recovery', id: 'replay_port', weight: 3, call: /\bcoordinationReplay\.[A-Za-z_$]+\(/u, note: 'delegates into the extracted replay port (coordination-replay.mjs)' },
+  { seam: 'surface', id: 'internals_port', weight: 3, call: /\bcoordinationInternals\.[A-Za-z_$]+\(/u, note: 'delegates into the extracted internals module (coordination-internals.mjs)' },
 ]);
 
 // Layer 3 — delegation. A member that calls an already-resolved member of its own class inherits
