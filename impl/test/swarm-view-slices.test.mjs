@@ -114,7 +114,7 @@ test('every projection answers its own slice, keeps the frame, and the default s
   assert.deepEqual(participants.participants.map((row) => row.participantId), ['lead', 'alpha', 'beta', 'leaf']);
 
   const contributions = await f.call('view', { projection: 'contributions' });
-  assert.deepEqual(Object.keys(contributions.contributions), ['c-alpha']);
+  assert.deepEqual(contributions.contributions.map((row) => row.contributionId), ['c-alpha']);
   assert.deepEqual(Object.keys(contributions.reviews), ['c-alpha']);
   assert.equal('work' in contributions, false, 'the contributions slice carries no work rows');
 
@@ -214,8 +214,8 @@ test('a participant-scoped view carries its own brief and no other, by roster in
 
   // Records by roster intersection: the group alpha is on is in scope (with its real roster), the
   // group it is not on is not; couplings follow the same rule (already pinned elsewhere).
-  assert.deepEqual(alphaScope.groups.impl.members, ['alpha', 'beta']);
-  assert.equal(alphaScope.groups.others, undefined, 'a group the seat is not on is out of scope');
+  assert.deepEqual(alphaScope.groups.find((row) => row.groupId === 'impl').members, ['alpha', 'beta']);
+  assert.equal(alphaScope.groups.some((row) => row.groupId === 'others'), false, 'a group the seat is not on is out of scope');
 
   // Shared context: every entry the swarm publishes swarm-wide is the participant's own reading
   // (it is recruited WITH that context), and an entry written for ONE group follows that group's
@@ -239,6 +239,8 @@ test('a participant-scoped view carries its own brief and no other, by roster in
     kind: 'operation_unconfirmed', command: 'swarm.guide', participantId: 'beta',
     operationKey: 'swarm-operation:probe-in-flight', state: 'unconfirmed', code: null,
   }, 'an in-flight row names the command, the seat and the key — not the payload');
+  assert.equal(row.request, undefined);
+  assert.equal(JSON.stringify(row).includes('digest'), false, 'the recorded row itself carries no body either');
   const attentionSlice = await f.call('view', { projection: 'attention' });
   assert.deepEqual(attentionSlice.attention, global.attention, 'the attention slice is the same attention');
   assert.equal(JSON.stringify(global).includes(secret), false, 'no attention row carries a request body');

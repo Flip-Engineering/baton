@@ -164,7 +164,7 @@ test('the CLI branch is table-driven from the family rows', () => {
   }
   const recruit = swarmCliCommand('recruit');
   assert.deepEqual(recruit.positional, ['swarmId', 'participantId', 'objective']);
-  assert.deepEqual(recruit.flags.map((entry) => entry.flag), ['--options', '--permissions', '--share-workspace-with']);
+  assert.deepEqual(recruit.flags.map((entry) => entry.flag), ['--options', '--permissions', '--share-workspace-with', '--view']);
   assert.equal(swarmCliCommand('bogus'), null);
   assert.ok(batonCliHelp('swarm').includes('baton swarm watch'), 'the family topic lists every verb');
 });

@@ -119,7 +119,7 @@ test('S-G11 RED (stage: contribution-unbound): a plain-text contribution binds w
   const authorHandle = asWorker(await paused(author.runId)).swarms.open(swarm.id);
   const body = 'finding: impl/test/swarm-gap-fixture-artifact.txt changed after this was accepted';
   const recorded = await authorHandle.contribute(body);
-  const contribution = Object.values(recorded.contributions ?? {})[0];
+  const contribution = (await swarm.view()).contributions[0];
   assert.ok(contribution, 'the contribution is recorded');
   // The recorded row must bind the body it stores (so a later edit of what it names is detectable)
   // or carry the capture's revision binding — never store an unbound string with `refs: null`.

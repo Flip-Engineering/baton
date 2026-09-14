@@ -136,7 +136,7 @@ export const SWARM_COMMAND_DEFINITIONS = Object.freeze({
     web: true, mcp: true, mcpStateful: false, reconcilable: true,
   }),
   'swarm.create': Object.freeze({
-    args: Object.freeze(['purpose', 'swarmId', 'idempotencyKey']),
+    args: Object.freeze(['purpose', 'swarmId', 'idempotencyKey', 'view']),
     capabilities: Object.freeze(['control', 'observe']),
     web: true, mcp: true, mcpStateful: true, reconcilable: true,
   }),
@@ -156,7 +156,7 @@ export const SWARM_COMMAND_DEFINITIONS = Object.freeze({
   // text body for findings/discussion. The runtime owns effect-kind matching; this surface refuses
   // only what no effect kind could accept.
   'swarm.update': Object.freeze({
-    args: Object.freeze(['swarmId', 'event', 'payload', 'idempotencyKey']),
+    args: Object.freeze(['swarmId', 'event', 'payload', 'idempotencyKey', 'view']),
     capabilities: Object.freeze(['control', 'observe']),
     web: true, mcp: true, mcpStateful: true, reconcilable: true,
   }),
@@ -169,14 +169,14 @@ export const SWARM_COMMAND_DEFINITIONS = Object.freeze({
   // workspace id, and the two axes stay independent — adoption is not a native-session resume.
   'swarm.recruit': Object.freeze({
     args: Object.freeze(['swarmId', 'participantId', 'objective', 'options', 'permissions',
-      'shareWorkspaceWith', 'idempotencyKey']),
+      'shareWorkspaceWith', 'idempotencyKey', 'view']),
     capabilities: Object.freeze(['control', 'observe']),
     web: true, mcp: true, mcpStateful: true, reconcilable: true,
   }),
   // Guidance reaches the participant whether its session is active or paused: the pause/turn
   // distinction belongs to the runtime, never to the caller or the transport.
   'swarm.guide': Object.freeze({
-    args: Object.freeze(['swarmId', 'participantId', 'message', 'idempotencyKey']),
+    args: Object.freeze(['swarmId', 'participantId', 'message', 'idempotencyKey', 'view']),
     capabilities: Object.freeze(['control', 'observe']),
     web: true, mcp: true, mcpStateful: true, reconcilable: true,
   }),
@@ -184,7 +184,7 @@ export const SWARM_COMMAND_DEFINITIONS = Object.freeze({
   // boundary. Repeating the call replays that capture; it never mints a second one, and it never
   // ends the author's session.
   'swarm.capture': Object.freeze({
-    args: Object.freeze(['swarmId', 'participantId', 'contributionId']),
+    args: Object.freeze(['swarmId', 'participantId', 'contributionId', 'view']),
     capabilities: Object.freeze(['control', 'observe']),
     web: true, mcp: true, mcpStateful: false, reconcilable: true,
   }),
@@ -192,14 +192,14 @@ export const SWARM_COMMAND_DEFINITIONS = Object.freeze({
   // observation about identified work under identified conditions — never a task-completion
   // verdict, and never a substitute for the author's own status.
   'swarm.check': Object.freeze({
-    args: Object.freeze(['swarmId', 'participantId', 'contributionId', 'checkId']),
+    args: Object.freeze(['swarmId', 'participantId', 'contributionId', 'checkId', 'view']),
     capabilities: Object.freeze(['control', 'observe']),
     web: true, mcp: true, mcpStateful: false, reconcilable: true,
   }),
   // Closing a swarm is organizational only; stopping every participant is an explicit per-member
   // action (each with its own idempotencyKey) and is never implied by `swarm.closed`.
   'swarm.stop': Object.freeze({
-    args: Object.freeze(['swarmId', 'participantId', 'reason', 'idempotencyKey']),
+    args: Object.freeze(['swarmId', 'participantId', 'reason', 'idempotencyKey', 'view']),
     capabilities: Object.freeze(['emergency_stop', 'observe']),
     web: true, mcp: true, mcpStateful: true, reconcilable: true,
   }),
@@ -241,6 +241,74 @@ export function swarmWebAdmittedCommands(definitions) {
     .filter((name) => definitions[name]?.web === true));
 }
 
+// ── mutation receipts (issue #302) ───────────────────────────────────────────────────────────────
+// Every swarm mutation answers with a RECEIPT — the recorded event {kind, seq, ts, actor}, the
+// rows it changed, and the step that follows — while the whole refreshed view rides the answer
+// only when the caller asks (`view: true`, CLI `--view true`). The two derivations below are the
+// ONE place that maps a recorded event to the row it changed and a command to the step that
+// follows, so the runtime, the CLI help and the MCP schemas cannot disagree about what a receipt
+// names.
+/** The swarm row one recorded event changed, as `{collection, id}` — the same collection names the
+ * view uses, so a receipt reader can go straight from `changed` to the rows themselves. Returns
+ * null for an event that folds no row (none exists today). */
+export function swarmChangedRow(kind, payload = {}) {
+  const row = (collection, id) => ({ collection, id });
+  switch (kind) {
+    case 'swarm.created':
+    case 'swarm.closed':
+      return row('swarm', payload.swarmId ?? null);
+    case 'swarm.participant_joined':
+    case 'swarm.participant_bound':
+    case 'swarm.participant_left':
+      return row('participants', payload.participantId ?? null);
+    case 'swarm.group_updated':
+      return row('groups', payload.groupId ?? null);
+    case 'swarm.work_updated':
+      return row('work', payload.workId ?? null);
+    case 'swarm.assignment_updated':
+      return row('assignments', payload.assignmentId ?? null);
+    case 'swarm.coupling_updated':
+      return row('couplings', payload.couplingId ?? null);
+    case 'swarm.context_updated':
+      return row('context', payload.key ?? null);
+    case 'swarm.contribution_recorded':
+    case 'swarm.contribution_revision_attached':
+      return row('contributions', payload.contributionId ?? null);
+    case 'swarm.contribution_reviewed':
+      return row('reviews', payload.contributionId ?? null);
+    default:
+      return null;
+  }
+}
+
+/** The step that follows one mutation (issue #302): the same `next` terminal attention rows name.
+ * A receipt tells the caller what happened AND what to do next, with the identity arguments the
+ * command already carried — the caller supplies only the free text (a guide's message) or the
+ * check identity the next act needs. */
+export function swarmReceiptNext(command, args = {}) {
+  const swarmId = typeof args.swarmId === 'string' ? args.swarmId : null;
+  switch (command) {
+    case 'swarm.create':
+      return { command: 'swarm.recruit', args: { swarmId } };
+    case 'swarm.recruit':
+      return { command: 'swarm.guide', args: { swarmId, participantId: args.participantId ?? null } };
+    case 'swarm.guide':
+      return { command: 'swarm.watch', args: { swarmId } };
+    case 'swarm.capture':
+      return { command: 'swarm.check', args: { swarmId, participantId: args.participantId ?? null,
+        contributionId: args.contributionId ?? null } };
+    case 'swarm.stop':
+      return { command: 'swarm.view', args: { swarmId } };
+    case 'swarm.check':
+      return { command: 'swarm.view', args: { swarmId } };
+    case 'swarm.update':
+      return args.event === 'swarm.closed'
+        ? { command: 'swarm.list', args: {} }
+        : { command: 'swarm.view', args: { swarmId } };
+    default:
+      return null;
+  }
+}
 // ── argument validation ──────────────────────────────────────────────────────────────────────────
 // Plain minimal validation: the closed key set, the required set, and a per-field predicate. No
 // byte ceiling is declared here — the runtime's frame-limit catalog owns size policy (the inline
@@ -293,6 +361,13 @@ const SWARM_FIELD_RULES = Object.freeze({
     check: (value) => Object.hasOwn(SWARM_VIEW_PROJECTIONS, value),
     expectation: `one of ${SWARM_VIEW_PROJECTION_NAMES.join(', ')}`,
   }),
+  // `view` opts a MUTATION into carrying the whole refreshed view beside its receipt (issue #302).
+  // The MCP/bridge transports send a real boolean; the CLI's generic flag grammar hands strings,
+  // so the string spellings are admitted as the same choice — the runtime reads both.
+  view: Object.freeze({
+    check: (value) => value === true || value === false || value === 'true' || value === 'false',
+    expectation: 'true to carry the whole view beside the receipt',
+  }),
 });
 
 // Required/optional per command. `payload` stays optional: an event kind that carries no body
@@ -302,7 +377,7 @@ const SWARM_COMMAND_ARGUMENTS = Object.freeze({
   'swarm.list': Object.freeze({ required: Object.freeze([]), optional: Object.freeze([]) }),
   'swarm.create': Object.freeze({
     required: Object.freeze(['purpose', 'idempotencyKey']),
-    optional: Object.freeze(['swarmId']),
+    optional: Object.freeze(['swarmId', 'view']),
   }),
   'swarm.view': Object.freeze({
     required: Object.freeze(['swarmId']),
@@ -314,27 +389,27 @@ const SWARM_COMMAND_ARGUMENTS = Object.freeze({
   }),
   'swarm.update': Object.freeze({
     required: Object.freeze(['swarmId', 'event', 'idempotencyKey']),
-    optional: Object.freeze(['payload']),
+    optional: Object.freeze(['payload', 'view']),
   }),
   'swarm.recruit': Object.freeze({
     required: Object.freeze(['swarmId', 'participantId', 'objective', 'idempotencyKey']),
-    optional: Object.freeze(['options', 'permissions', 'shareWorkspaceWith']),
+    optional: Object.freeze(['options', 'permissions', 'shareWorkspaceWith', 'view']),
   }),
   'swarm.guide': Object.freeze({
     required: Object.freeze(['swarmId', 'participantId', 'message', 'idempotencyKey']),
-    optional: Object.freeze([]),
+    optional: Object.freeze(['view']),
   }),
   'swarm.capture': Object.freeze({
     required: Object.freeze(['swarmId', 'participantId', 'contributionId']),
-    optional: Object.freeze([]),
+    optional: Object.freeze(['view']),
   }),
   'swarm.check': Object.freeze({
     required: Object.freeze(['swarmId', 'participantId', 'contributionId', 'checkId']),
-    optional: Object.freeze([]),
+    optional: Object.freeze(['view']),
   }),
   'swarm.stop': Object.freeze({
     required: Object.freeze(['swarmId', 'participantId', 'reason', 'idempotencyKey']),
-    optional: Object.freeze([]),
+    optional: Object.freeze(['view']),
   }),
 });
 
@@ -479,6 +554,9 @@ const EVENT_SCHEMA = Object.freeze({ type: 'string', enum: SWARM_EVENT_KINDS });
 const SEQUENCE_SCHEMA = Object.freeze({ type: 'integer', minimum: 0 });
 const WAIT_SCHEMA = Object.freeze({ type: 'integer', minimum: 1 });
 const PROJECTION_SCHEMA = Object.freeze({ type: 'string', enum: SWARM_VIEW_PROJECTION_NAMES });
+// `view` opts a mutation into carrying the whole refreshed view beside its receipt (issue #302).
+const VIEW_SCHEMA = Object.freeze({ type: 'boolean', description:
+  'true to carry the whole refreshed view beside the mutation receipt; the receipt alone is the default answer' });
 
 export const SWARM_COMMAND_ROWS = Object.freeze([
   Object.freeze({
@@ -489,9 +567,9 @@ export const SWARM_COMMAND_ROWS = Object.freeze([
   }),
   Object.freeze({
     command: 'swarm.create',
-    description: 'Create one living swarm for an evolving purpose and return its authoritative view.',
+    description: 'Create one living swarm for an evolving purpose. Answers with a mutation receipt — the recorded event {kind, seq, ts, actor}, the rows it changed, and next, the step that follows; view: true adds the whole refreshed view.',
     readOnlyHint: false, destructiveHint: false,
-    properties: Object.freeze({ purpose: TEXT_SCHEMA, swarmId: ID_SCHEMA }),
+    properties: Object.freeze({ purpose: TEXT_SCHEMA, swarmId: ID_SCHEMA, view: VIEW_SCHEMA }),
     required: Object.freeze(['purpose']),
   }),
   Object.freeze({
@@ -510,18 +588,18 @@ export const SWARM_COMMAND_ROWS = Object.freeze([
   }),
   Object.freeze({
     command: 'swarm.update',
-    description: 'Apply one swarm domain update — group, work (including declared dependencies), assignment, coupling record, holder release, shared context, contribution, review, participant leave, or close — and return the updated inspect view.',
+    description: 'Apply one swarm domain update — group, work (including declared dependencies), assignment, coupling record, holder release, shared context, contribution, review, participant leave, or close. Answers with a mutation receipt (event, changed rows, next); view: true adds the whole refreshed view.',
     readOnlyHint: false, destructiveHint: false,
-    properties: Object.freeze({ swarmId: ID_SCHEMA, event: EVENT_SCHEMA,
+    properties: Object.freeze({ swarmId: ID_SCHEMA, event: EVENT_SCHEMA, view: VIEW_SCHEMA,
       payload: Object.freeze({ ...BODY_SCHEMA, description: swarmUpdatePayloadSummary() }) }),
     required: Object.freeze(['swarmId', 'event']),
   }),
   Object.freeze({
     command: 'swarm.recruit',
-    description: 'Recruit one participant into the swarm; the runtime resolves and starts the native Run under the requested selection. shareWorkspaceWith names an existing participant whose live checkout the new participant works in.',
+    description: 'Recruit one participant into the swarm; the runtime resolves and starts the native Run under the requested selection. shareWorkspaceWith names an existing participant whose live checkout the new participant works in. Answers with a mutation receipt (event, changed rows, next) plus scopeOverlap — an advisory row per ACTIVE participant whose declared scope shares paths with the requested scope, across every swarm in the repository; view: true adds the whole refreshed view.',
     readOnlyHint: false, destructiveHint: false,
     properties: Object.freeze({
-      swarmId: ID_SCHEMA, participantId: ID_SCHEMA, objective: TEXT_SCHEMA,
+      swarmId: ID_SCHEMA, participantId: ID_SCHEMA, objective: TEXT_SCHEMA, view: VIEW_SCHEMA,
       options: JSON_OBJECT_SCHEMA, permissions: Object.freeze({ type: 'array', items: Object.freeze({ type: 'string', minLength: 1 }) }),
       shareWorkspaceWith: ID_SCHEMA,
     }),
@@ -529,32 +607,32 @@ export const SWARM_COMMAND_ROWS = Object.freeze([
   }),
   Object.freeze({
     command: 'swarm.guide',
-    description: 'Send guidance to one swarm participant, whether its session is active or paused. The result names the lane receipt row it wrote (guide: {seq, ts, messageId}) so the sender can watch for the next turn.',
+    description: 'Send guidance to one swarm participant, whether its session is active or paused. The receipt names the lane receipt row the guide wrote (kind message.sent with its seq and ts) so the sender can watch for the next turn; view: true adds the whole refreshed view.',
     readOnlyHint: false, destructiveHint: false,
-    properties: Object.freeze({ swarmId: ID_SCHEMA, participantId: ID_SCHEMA, message: TEXT_SCHEMA }),
+    properties: Object.freeze({ swarmId: ID_SCHEMA, participantId: ID_SCHEMA, message: TEXT_SCHEMA, view: VIEW_SCHEMA }),
     required: Object.freeze(['swarmId', 'participantId', 'message']),
   }),
   Object.freeze({
     command: 'swarm.capture',
-    description: 'Capture the immutable code for one contribution at its turn boundary without ending the author session.',
+    description: 'Capture the immutable code for one contribution at its turn boundary without ending the author session. The receipt names the recorded event and the contribution rows it changed, and the capture row records the merge-base of the captured revision with the deployment target; view: true adds the whole refreshed view.',
     readOnlyHint: false, destructiveHint: false,
-    properties: Object.freeze({ swarmId: ID_SCHEMA, participantId: ID_SCHEMA, contributionId: ID_SCHEMA }),
+    properties: Object.freeze({ swarmId: ID_SCHEMA, participantId: ID_SCHEMA, contributionId: ID_SCHEMA, view: VIEW_SCHEMA }),
     required: Object.freeze(['swarmId', 'participantId', 'contributionId']),
   }),
   Object.freeze({
     command: 'swarm.check',
-    description: 'Record one independent check of a captured contribution, apart from the author status.',
+    description: 'Record one independent check of a captured contribution, apart from the author status. Answers with a mutation receipt (event, changed rows, next); view: true adds the whole refreshed view.',
     readOnlyHint: false, destructiveHint: false,
     properties: Object.freeze({
-      swarmId: ID_SCHEMA, participantId: ID_SCHEMA, contributionId: ID_SCHEMA, checkId: ID_SCHEMA,
+      swarmId: ID_SCHEMA, participantId: ID_SCHEMA, contributionId: ID_SCHEMA, checkId: ID_SCHEMA, view: VIEW_SCHEMA,
     }),
     required: Object.freeze(['swarmId', 'participantId', 'contributionId', 'checkId']),
   }),
   Object.freeze({
     command: 'swarm.stop',
-    description: 'Stop one swarm participant explicitly and account for the resources it owns; the swarm itself stays open.',
+    description: 'Stop one swarm participant explicitly and account for the resources it owns; the swarm itself stays open. Answers with a mutation receipt (event, changed rows, next); view: true adds the whole refreshed view.',
     readOnlyHint: false, destructiveHint: true,
-    properties: Object.freeze({ swarmId: ID_SCHEMA, participantId: ID_SCHEMA, reason: TEXT_SCHEMA }),
+    properties: Object.freeze({ swarmId: ID_SCHEMA, participantId: ID_SCHEMA, reason: TEXT_SCHEMA, view: VIEW_SCHEMA }),
     required: Object.freeze(['swarmId', 'participantId', 'reason']),
   }),
 ]);

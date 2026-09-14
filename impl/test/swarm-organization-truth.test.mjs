@@ -129,13 +129,15 @@ test('work updates: a status-only update keeps the recorded objective, new work 
   // Completion now demands evidence (issue #263); a status-only update on a live work item keeps
   // the recorded objective all the same.
   await assert.rejects(swarm.work({ workId: 'W', status: 'completed' }), { code: 'swarm_completion_unproven' });
-  const updated = await swarm.work({ workId: 'W', status: 'open' });
+  await swarm.work({ workId: 'W', status: 'open' });
+  const updated = await swarm.view();
   assert.equal(updated.work.W.status, 'open');
   assert.equal(updated.work.W.objective, 'Do the thing', 'the recorded objective survives a status-only update');
   await assert.rejects(swarm.work({ workId: 'W-new', status: 'open' }), { code: 'swarm_payload_invalid' });
   // The dependency the suborchestration probe once had refused (it did not exist) is now a
   // DECLARED record on the work — and a malformed declaration still refuses, naming the shape.
-  const declared = await swarm.work({ workId: 'W2', objective: 'Depends', status: 'open', dependsOn: [{ workId: 'W' }] });
+  await swarm.work({ workId: 'W2', objective: 'Depends', status: 'open', dependsOn: [{ workId: 'W' }] });
+  const declared = await swarm.view();
   assert.deepEqual(declared.work.W2.dependsOn, [{ workId: 'W' }], 'the declared dependency is durable');
   assert.deepEqual(declared.work.W2.waitsOn, [{ workId: 'W', settled: false, evidence: [] }],
     'the view shows the wait as unsettled with its (empty) evidence');

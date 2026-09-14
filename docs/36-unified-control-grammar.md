@@ -472,15 +472,15 @@ the MCP tool table, and the web bus gate on.
 | Verb | Arguments | Capabilities | Transports | Durability |
 |---|---|---|---|---|
 | `swarm.list` | — | `observe` | web + mcp | identity-keyed |
-| `swarm.create` | `purpose`, `swarmId`, `idempotencyKey` | `control`, `observe` | web + mcp | `idempotencyKey`, reconcilable |
+| `swarm.create` | `purpose`, `swarmId`, `idempotencyKey`, `view` | `control`, `observe` | web + mcp | `idempotencyKey`, reconcilable |
 | `swarm.view` | `swarmId`, `participantId`, `projection` | `observe` | web + mcp | identity-keyed |
 | `swarm.watch` | `swarmId`, `afterSeq`, `timeoutMs`, `projection` | `observe` | web + mcp | identity-keyed |
-| `swarm.update` | `swarmId`, `event`, `payload`, `idempotencyKey` | `control`, `observe` | web + mcp | `idempotencyKey`, reconcilable |
-| `swarm.recruit` | `swarmId`, `participantId`, `objective`, `options`, `permissions`, `shareWorkspaceWith`, `idempotencyKey` | `control`, `observe` | web + mcp | `idempotencyKey`, reconcilable |
-| `swarm.guide` | `swarmId`, `participantId`, `message`, `idempotencyKey` | `control`, `observe` | web + mcp | `idempotencyKey`, reconcilable |
-| `swarm.capture` | `swarmId`, `participantId`, `contributionId` | `control`, `observe` | web + mcp | identity-keyed |
-| `swarm.check` | `swarmId`, `participantId`, `contributionId`, `checkId` | `control`, `observe` | web + mcp | identity-keyed |
-| `swarm.stop` | `swarmId`, `participantId`, `reason`, `idempotencyKey` | `emergency_stop`, `observe` | web + mcp | `idempotencyKey`, reconcilable |
+| `swarm.update` | `swarmId`, `event`, `payload`, `idempotencyKey`, `view` | `control`, `observe` | web + mcp | `idempotencyKey`, reconcilable |
+| `swarm.recruit` | `swarmId`, `participantId`, `objective`, `options`, `permissions`, `shareWorkspaceWith`, `idempotencyKey`, `view` | `control`, `observe` | web + mcp | `idempotencyKey`, reconcilable |
+| `swarm.guide` | `swarmId`, `participantId`, `message`, `idempotencyKey`, `view` | `control`, `observe` | web + mcp | `idempotencyKey`, reconcilable |
+| `swarm.capture` | `swarmId`, `participantId`, `contributionId`, `view` | `control`, `observe` | web + mcp | identity-keyed |
+| `swarm.check` | `swarmId`, `participantId`, `contributionId`, `checkId`, `view` | `control`, `observe` | web + mcp | identity-keyed |
+| `swarm.stop` | `swarmId`, `participantId`, `reason`, `idempotencyKey`, `view` | `emergency_stop`, `observe` | web + mcp | `idempotencyKey`, reconcilable |
 
 **`swarm.update` kinds (closed set, 10).** Every domain change a caller may name; the payload
 fields each kind requires of the caller are read from the payload schemas
@@ -510,7 +510,7 @@ records for itself, disjoint from the caller-submittable set above:
 **Permissions (closed set, 7).** `read`, `communicate`, `contribute`, `review`, `organize`, `recruit`, `stop` — the grant vocabulary `swarm.recruit` admits and the
 runtime admission check reads (`impl/src/swarm-runtime.mjs`).
 
-**Attention kinds (closed set, 8).** Each view row is a condition that needs an act, derived by the
+**Attention kinds (closed set, 9).** Each view row is a condition that needs an act, derived by the
 runtime from durable state — never asserted by a caller:
 
 - `participant_runtime_dead`
@@ -520,6 +520,7 @@ runtime from durable state — never asserted by a caller:
 - `group_member_gone`
 - `coupling_writer_gone`
 - `closed_with_live_participants`
+- `operation_refused`
 - `operation_unconfirmed`
 
 Semantics, responses and the coupling records behind these rows: [docs/39](39-swarm-runtime.md)

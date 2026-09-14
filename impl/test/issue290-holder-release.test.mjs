@@ -75,12 +75,13 @@ test('I290-H2: releasing a gone holder prunes two departed seats; the batch land
   // Release alpha: the batch prunes the two departed seats and folds whole. Pre-fix this died
   // as a raw SwarmIntegrityError (participant_not_active) from the trial fold.
   const before = store.ledgerHeadSeq();
-  const view = await swarmRuntime.command('swarm.update', {
+  await swarmRuntime.command('swarm.update', {
     swarmId: 's-release', event: 'swarm.holder_released',
     payload: { participantId: 'alpha', reason: 'runtime is gone; seats released' },
     idempotencyKey: 'issue290:release:alpha',
   }, principal);
-  assert.deepEqual(view.groups.impl.members, [],
+  const view = await swarmRuntime.command('swarm.view', { swarmId: 's-release' }, principal);
+  assert.deepEqual(view.groups.find((row) => row.groupId === 'impl').members, [],
     'the roster retains only currently active members (all of them departed here)');
   const batch = store.eventsView().slice(before);
   assert.deepEqual(batch.filter((event) => event.kind.startsWith('swarm.')).map((event) => event.kind),
@@ -111,11 +112,12 @@ test('I290-H3: an active member survives the prune; the released holder loses on
       idempotencyKey: `issue290:left:${departed}`,
     }, principal);
   }
-  const view = await swarmRuntime.command('swarm.update', {
+  await swarmRuntime.command('swarm.update', {
     swarmId: 's-retain', event: 'swarm.holder_released',
     payload: { participantId: 'holder', reason: 'runtime is gone' },
     idempotencyKey: 'issue290:release:retain-holder',
   }, principal);
-  assert.deepEqual(view.groups.g.members, ['keeper'],
+  const view = await swarmRuntime.command('swarm.view', { swarmId: 's-retain' }, principal);
+  assert.deepEqual(view.groups.find((row) => row.groupId === 'g').members, ['keeper'],
     'the roster keeps the currently active member and drops the holder with the departed');
 });
