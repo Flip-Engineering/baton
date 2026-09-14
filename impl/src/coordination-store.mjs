@@ -13,10 +13,10 @@ import {
   planBriefMatches, planRouteAuthorityState, planRouteMatches,
 } from './goal-plan.mjs';
 import {
-  PLAN_OBJECT_BATCH_KINDS, PLAN_OBJECT_EVENT_KINDS, foldPlanObjectEvent, planObjectDigest,
-  planObjectSnapshot, readPlanObject, waveRoleRunKey,
+  PLAN_OBJECT_BATCH_KINDS, PLAN_OBJECT_EVENT_KINDS, foldPlanObjectEvent, planObjectDigest, planObjectSnapshot,
+  waveRoleRunKey,
 } from './orchestrator-plan.mjs';
-import { SWARM_EVENT_KINDS, validateSwarmEvent, foldSwarmEvent, readSwarm, swarmSnapshot } from './swarm-state.mjs';
+import { SWARM_EVENT_KINDS, validateSwarmEvent, foldSwarmEvent, swarmSnapshot } from './swarm-state.mjs';
 import { usdFromNanos, usdToNanos } from './usd.mjs';
 import {
   CANONICAL_ORDER_VERSION, canonicalJson, compareCanonicalStrings,
@@ -24,9 +24,6 @@ import {
 } from './canonical-order.mjs';
 import { parseRouteTupleKey } from './route-tuple.mjs';
 import { inferTaskTopologyRelation, normalizeTaskTopologyPolicy } from './task-topology.mjs';
-import {
-  normalizeRecoveryAttemptAdmission, normalizeRecoveryAttemptCompletion,
-} from './recovery-attempt.mjs';
 import {
   DEFAULT_MAX_REPL_MANIFESTS_PER_RUN,
   normalizeRunLineagePolicy, RUN_ORCHESTRATOR_CAPABILITIES,
@@ -64,6 +61,40 @@ import {
 } from './process-lifecycle.mjs';
 import { frameWebContent, referencesWebFetchHandle } from './messages.mjs';
 import { FRAME_LIMITS, composeFrameLimitRefusal, frameLimitRefusalPath } from './limits.mjs';
+
+import * as coordinationInternals from './coordination-internals.mjs';
+import * as coordinationReplay from './coordination-replay.mjs';
+import {
+  BRIEFING_SCHEMA_FIELD_SOURCES,
+  CoordinationIntegrityError,
+  CoordinationRefusal,
+  MAX_CONTEXT_PACK_BODY_BYTES,
+  MAX_SCRATCHPAD_STOP_PARTITIONS_PER_PASS,
+  SCRATCHPAD_SCOPE,
+  SEGMENT_FILE_SUFFIX,
+  SEGMENT_INDEX_FILE,
+  TERMINAL,
+  boundedText,
+  canonical,
+  canonicalDigest,
+  clone,
+  digest,
+  eventTime,
+  freeze,
+  madConfidenceOf,
+  recallBody,
+  replFenceKey,
+  scratchpadScopeKey,
+  sha256Bytes,
+  validRunId,
+} from './coordination-internals.mjs';
+export {
+  BRIEFING_SCHEMA_FIELD_SOURCES,
+  CoordinationIntegrityError,
+  CoordinationRefusal,
+  MAX_CONTEXT_PACK_BODY_BYTES,
+  MAX_SCRATCHPAD_STOP_PARTITIONS_PER_PASS,
+};
 
 function writerProcessStartIdentity(pid) {
   try {
@@ -104,8 +135,6 @@ const PROJECTION_CHECKPOINT_TEMP_PREFIX = '.projection.checkpoint.';
 // truncation. `compact({ beforeSeq })` is the operator verb that lands this seam; a later
 // row wires the cadence policy that decides which waves are terminal and picks the cut.
 const SEGMENTS_DIR = 'segments';
-const SEGMENT_INDEX_FILE = 'index.json';
-const SEGMENT_FILE_SUFFIX = '.jsonl';
 const SEGMENT_TEMP_PREFIX = '.segment.';
 const SEGMENT_INDEX_TEMP_PREFIX = '.segment-index.';
 const LEDGER_TEMP_PREFIX = '.events.jsonl.';
@@ -153,8 +182,6 @@ const PROJECTION_CHECKPOINT_FIELDS = Object.freeze([
   // KG-1 (Part A rule 5): gains _projectionInputFence, a plain replay-derived counter.
   '_projectionInputFence',
 ]);
-
-const TERMINAL = new Set(['completed', 'failed', 'cancelled']);
 const TRANSITIONS = new Map([
   ['pending', new Set(['working', 'cancelled'])],
   ['working', new Set(['input_required', 'paused', 'retry_pending', 'completed', 'failed', 'cancelled'])],
@@ -173,7 +200,6 @@ const TRANSITIONS = new Map([
 const KNOWLEDGE_NODE_TYPES = new Set(['Run', 'Task', 'Artifact', 'Phase', 'Experiment', 'Finding', 'Decision', 'Question', 'Hypothesis', 'Principle', 'Constraint', 'Literature', 'Research', 'RouteStat', 'Skill', 'Counterexample', 'Representation', 'ScratchFact', 'Source']);
 const KNOWLEDGE_EDGE_TYPES = new Set(['Supports', 'Contradicts', 'Supersedes', 'Informed', 'ProducedBy', 'Contains', 'DependsOn', 'Refines', 'ReadBy', 'VerifiedBy', 'DerivedFrom', 'Affects', 'Cites', 'ObservedIn']);
 const KNOWLEDGE_GROUNDINGS = new Set(['verified', 'observed', 'derived', 'asserted']);
-const KNOWLEDGE_PROJECTION_FIELDS = new Set(['contentDigest', 'observedSeq', 'observedAt', 'eventTimeSeq', 'eventTime', 'validityVersion', 'invalidatedBy', 'acceptanceInvalidation', 'derivedFromEvent', 'resolvedBy', 'winnerId', 'loserId', 'resolutionReason']);
 // The non-knowledge half of the projection-input fence (see _apply's closing note): board
 // claim/report traffic (deliberately non-board-fence-bumping) and package admission/attach —
 // the only non-knowledge inputs the horizons read, closed by design.
@@ -211,20 +237,10 @@ const REPRESENTATION_AUTHORITY = Object.freeze({
   policyAuthoring: false, proof: false, publication: false, route: false,
   verification: false, workerControl: false,
 });
-
-function clone(value) { return value == null ? value : JSON.parse(JSON.stringify(value)); }
-function digest(value) { return createHash('sha256').update(JSON.stringify(value)).digest('hex'); }
 function contextChildAccepted(value) {
   return value?.origin === 'inherited' || value?.state === 'accepted';
 }
-function canonical(value) {
-  if (Array.isArray(value)) return value.map(canonical);
-  if (!value || typeof value !== 'object') return value;
-  return Object.fromEntries(Object.keys(value).sort().map((key) => [key, canonical(value[key])]));
-}
-function canonicalDigest(value) { return digest(canonical(value)); }
 function canonicalBytes(value) { return Buffer.byteLength(JSON.stringify(canonical(value))); }
-function sha256Bytes(value) { return createHash('sha256').update(value).digest('hex'); }
 function normalizedRecallText(value) { return value.normalize('NFKC').toLowerCase().trim().replace(/\s+/gu, ' '); }
 function recallTerms(value) { return [...new Set(normalizedRecallText(value).match(/[\p{L}\p{N}]+/gu) ?? [])]; }
 function validUnicodeScalarString(value) {
@@ -235,7 +251,6 @@ function validUnicodeScalarString(value) {
   }
   return true;
 }
-function recallBody(value) { return typeof value === 'string' ? value : JSON.stringify(canonical(value ?? '')); }
 function utf8Snippet(value, maxBytes) {
   let result = ''; let bytes = 0;
   for (const character of recallBody(value)) { const size = Buffer.byteLength(character); if (bytes + size > maxBytes) break; result += character; bytes += size; }
@@ -272,52 +287,6 @@ function validKnowledgePreviewPolicy(policy) {
     || Object.keys(thresholds).sort().join(',') !== [...KNOWLEDGE_AUTOLINK_TYPES].sort().join(',')) return false;
   for (const type of KNOWLEDGE_AUTOLINK_TYPES) if (!Number.isFinite(thresholds[type]) || thresholds[type] < 0) return false;
   return true;
-}
-
-// The MAD confidence oracle, vendored inline from pm-kg-reference/confidence.rs (v2-P1-6). A single
-// linear-time global scan (no overlapping quantifiers, no ReDoS); a fixed unit-normalization table;
-// finite-value guards; median/MAD/confidence with the source's HIGH(≥2)/MODERATE(≥1)/LOW/HIGH-INF
-// thresholds. Numbers are bare decimals (no exponent/Infinity/NaN token) so adversarial Finding
-// text cannot inject a non-finite value.
-const MAD_METRIC = /(?<sign>[+-])?(?<number>\d+(?:\.\d+)?)\s*(?<unit>tok\/s|tokens?\/s|ms|us|ns|sec|seconds?|min|minutes?|GB|MB|KB|TFLOPS|GFLOPS|tokens?|%|x)/gu;
-const MAD_UNIT_CANON = new Map([
-  ['tok/s', 'tok/s'], ['tokens/s', 'tok/s'], ['token/s', 'tok/s'],
-  ['token', 'token'], ['tokens', 'token'],
-  ['sec', 's'], ['second', 's'], ['seconds', 's'],
-  ['min', 'min'], ['minute', 'min'], ['minutes', 'min'],
-]);
-function madCanonUnit(unit) { const lower = unit.toLowerCase(); return MAD_UNIT_CANON.get(lower) ?? lower; }
-function madMedian(sortedAscending) {
-  const n = sortedAscending.length; const mid = Math.floor(n / 2);
-  return n % 2 === 0 ? (sortedAscending[mid - 1] + sortedAscending[mid]) / 2 : sortedAscending[mid];
-}
-function madConfidenceOf(body, maxMetrics) {
-  const text = recallBody(body); const groups = new Map(); let count = 0;
-  MAD_METRIC.lastIndex = 0;
-  for (let match = MAD_METRIC.exec(text); match !== null; match = MAD_METRIC.exec(text)) {
-    if (count >= maxMetrics) break;
-    count += 1;
-    const value = (match.groups.sign === '-' ? -1 : 1) * Number(match.groups.number);
-    if (!Number.isFinite(value)) continue;
-    const unit = madCanonUnit(match.groups.unit);
-    const rows = groups.get(unit) ?? []; rows.push(value); groups.set(unit, rows);
-  }
-  let best = null;
-  for (const [unit, values] of [...groups.entries()].sort((a, b) => compareCanonicalStrings(a[0], b[0]))) {
-    if (values.length < 3) continue;
-    const sorted = [...values].sort((a, b) => a - b);
-    const median = madMedian(sorted);
-    const mad = madMedian(sorted.map((v) => Math.abs(v - median)).sort((a, b) => a - b));
-    const bestDelta = Math.max(...sorted.map((v) => Math.abs(v - median)));
-    const confidence = mad === 0 ? Infinity : bestDelta / mad;
-    const label = !Number.isFinite(confidence) ? 'HIGH-INF' : confidence >= 2.0 ? 'HIGH' : confidence >= 1.0 ? 'MODERATE' : 'LOW';
-    const candidate = { unit, samples: values.length, confidence, label };
-    const better = best === null || candidate.samples > best.samples
-      || (candidate.samples === best.samples && (candidate.confidence === Infinity ? best.confidence !== Infinity : (best.confidence !== Infinity && candidate.confidence > best.confidence)));
-    if (better) best = candidate;
-  }
-  if (best === null) return null;
-  return { label: best.label, value: best.confidence === Infinity ? null : best.confidence, unit: best.unit, samples: best.samples };
 }
 
 function validKnowledgeRecallAssessmentPolicy(policy) {
@@ -380,13 +349,11 @@ function validRepresentationPolicy(policy) {
     && policy.maxGraphBatchBytes <= 16 * 1024 * 1024 && policy.maxResultItems <= 1024
     && policy.maxResultRefs <= 256 && policy.maxResultBytes <= 16 * 1024 * 1024;
 }
-function validRunId(value) { return typeof value === 'string' && /^[A-Za-z0-9._:-]{1,256}$/.test(value); }
 function validResultSha(value) { return typeof value === 'string' && /^[a-f0-9]{40,64}$/u.test(value); }
 function retainedResultRef(sha) { return `refs/baton/results/${sha}`; }
 function promotionActor(value) { return value === 'orchestrator' || (typeof value === 'string' && value.startsWith('operator:')); }
 function validEnvRef(envRef) { return envRef && typeof envRef.repoId === 'string' && envRef.repoId.length > 0 && typeof envRef.treeSha === 'string' && /^[A-Fa-f0-9]{4,128}$/.test(envRef.treeSha); }
 function officialCoordinateMatches(identity, coordinate) { const fields = Object.keys(identity ?? {}).sort().join(','); return ['ecosystem,package,version', 'ecosystem,package,system,version'].includes(fields) && identity.ecosystem === coordinate?.ecosystem && identity.package === coordinate?.package && identity.version === coordinate?.version && (!Object.hasOwn(identity, 'system') || (coordinate.ecosystem === 'npm' && identity.system === 'NPM')); }
-function boundedText(value, maxBytes) { return typeof value === 'string' && value.trim().length > 0 && Buffer.byteLength(value) <= maxBytes && !value.includes('\0'); }
 function globRegex(pattern) {
   let out = '^';
   for (let i = 0; i < pattern.length; i += 1) {
@@ -408,13 +375,6 @@ function resourceOverlap(a, b) {
   const ap = literalPrefix(a); const bp = literalPrefix(b);
   return ap.startsWith(bp) || bp.startsWith(ap);
 }
-function freeze(value) {
-  if (value && typeof value === 'object' && !Object.isFrozen(value)) {
-    Object.freeze(value);
-    for (const child of Object.values(value)) freeze(child);
-  }
-  return value;
-}
 // BU-2-3: the scratch-read web frame. A fact whose body references a web_fetch artifact
 // handle (art:sha256:<digest>) is framed UNTRUSTED_WEB_CONTENT at read time — a read-side
 // projection (the family's existing posture); the durable fact is never rewritten. Facts
@@ -431,11 +391,6 @@ function frameWebSourcedFacts(result) {
     return fact;
   });
   return changed ? { ...result, facts } : result;
-}
-function eventTime(events, evidence, fallback) {
-  const seqs = (evidence ?? []).map((ref) => ref?.coordinationSeq).filter(Number.isInteger);
-  const seq = seqs.length > 0 ? Math.min(...seqs) : fallback.seq;
-  return { eventTimeSeq: seq, eventTime: events[seq - 1]?.ts ?? fallback.ts };
 }
 // REFLEX-2 board bounds. A board item's identity (itemId/itemVersion/itemDigest/ordinal)
 // is hub-minted; the content core that the itemDigest content-addresses is exactly these
@@ -503,7 +458,6 @@ const REPL_CITATION = /^repl:(shared|worker:[A-Za-z0-9._:-]{1,256}):([A-Za-z0-9.
 const REPL_CELL_MEDIA_TYPE = 'application/vnd.baton.context-value+json';
 const MAX_REPL_BINDINGS = 512;
 function replBindingKey(runId, scope, name) { return JSON.stringify([runId, scope, name]); }
-function replFenceKey(runId, scope) { return JSON.stringify([runId, scope]); }
 /** bindingDigest = H(scope, name, bindingVersion, state, cellId), hub-recomputed (Part A rule 1). */
 function replBindingContentDigest(core) {
   return canonicalDigest({
@@ -516,25 +470,6 @@ function replBindingContentDigest(core) {
 // caller policy, so live admission and replay use the same ceilings.
 export const MAX_SCRATCHPAD_WRITE_REQUEST_BYTES = 16_384;
 export const MAX_SCRATCHPAD_ENTRY_BYTES = FRAME_LIMITS['scratchpad.entry.body'].value;
-// BD3-B: a context pack body is bounded at the 8KiB envelope the epic contracts fix; citation
-// chains (a successor pack superseding its predecessor) are how real specs stay inside it.
-export const MAX_CONTEXT_PACK_BODY_BYTES = FRAME_LIMITS['context_pack.body'].value;
-// Epic #103 — the orchestrator-briefing D1 field→store-source table. Every top-level field of the
-// closed canonical-JSON briefing body names the store projection it composes from (D8: the ledger,
-// never the working tree); `standingLaws` is the ONE named non-ledger input (D8/OQ2, pinned
-// deployment config). Keys are the D1 top-level set, in sorted order.
-export const BRIEFING_SCHEMA_FIELD_SOURCES = Object.freeze({
-  blockedOn: 'the latest wave.closed record blockedOn block (D9)',
-  composedAtEventSeq: "the mint event's own seq (the pack record's observedSeq, G2)",
-  family: 'the orchestrator-briefing family constant (D1)',
-  landings: 'the wave.closed records derived landings (D9)',
-  lanes: 'the latest wave.closed record lanes block (D9)',
-  parked: 'the latest wave.closed record parked block (D9)',
-  rings: 'the latest wave.closed record rings block (D9)',
-  schemaVersion: 'the briefing schema revision (closed constant 1)',
-  sources: 'snapshot() digest + the standing-law list digest (D1)',
-  standingLaws: 'the pinned repoId-scoped standing-law deployment config (D8/OQ2)',
-});
 // The closed top-level field set (D1); the same sorted set the schema table keys.
 const BRIEFING_TOP_LEVEL_FIELDS = Object.freeze([
   'blockedOn', 'composedAtEventSeq', 'family', 'landings', 'lanes',
@@ -543,25 +478,18 @@ const BRIEFING_TOP_LEVEL_FIELDS = Object.freeze([
 // The orchestrator-briefing family constant (D3's family-scoped authority rule). Exported so the
 // application and northbound surfaces share ONE family name with the store that mints it (D7).
 export const BRIEFING_FAMILY = 'orchestrator-briefing';
-// A pack minted without an explicit validity window is treated as never-expiring (the 8KiB
-// envelope is the real bound); explicit windows drive the context_pack_expired distinction.
-const DEFAULT_CONTEXT_PACK_VALIDITY = '2999-12-31T23:59:59.999Z';
 export const MAX_SCRATCHPAD_WORKER_ENTRIES = 128;
 export const MAX_SCRATCHPAD_SHARED_ENTRIES = 512;
 export const MAX_SCRATCHPAD_BATCH_BYTES = 2 * 1024 * 1024;
 export const MAX_SCRATCHPAD_SNAPSHOT_REAPS = 256;
 export const MAX_SCRATCHPAD_SNAPSHOT_REAP_BYTES = 262_144;
-export const MAX_SCRATCHPAD_STOP_PARTITIONS_PER_PASS = 64;
 
 const SCRATCHPAD_ENTRY_ID = /^scratchpad-entry:[a-f0-9]{64}$/u;
 const SCRATCHPAD_DIGEST = /^[a-f0-9]{64}$/u;
-const SCRATCHPAD_SCOPE = /^(?:shared|worker:[A-Za-z0-9._:-]{1,256})$/u;
 const SCRATCHPAD_IDEMPOTENCY_KEY = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/u;
 const SCRATCHPAD_KINDS = new Set(['note', 'plan', 'doubt', 'link']);
 const SCRATCHPAD_RELATIONS = new Set(['reference', 'supports', 'contradicts', 'depends_on']);
 const SCRATCHPAD_STEP_STATES = new Set(['todo', 'doing', 'done']);
-
-function scratchpadScopeKey(runId, scope) { return JSON.stringify([runId, scope]); }
 
 function scratchpadExact(value, fields) {
   return value && typeof value === 'object' && !Array.isArray(value)
@@ -718,13 +646,6 @@ function normalizeScratchpadEntry(entry, resolveEntry = null, opts = {}) {
     throw coachingRefusal(FRAME_LIMITS['scratchpad.entry.body'], canonicalEntryBytes, MAX_SCRATCHPAD_ENTRY_BYTES);
   }
   return freeze(normalized);
-}
-
-export class CoordinationIntegrityError extends Error {
-  constructor(message, code = 'coordination_integrity') { super(message); this.name = 'CoordinationIntegrityError'; this.code = code; }
-}
-export class CoordinationRefusal extends Error {
-  constructor(message, code) { super(message); this.name = 'CoordinationRefusal'; this.code = code; }
 }
 
 /** Decision 3: a size refusal on a cataloged admission lane carries {cap, actual, unit,
@@ -979,36 +900,11 @@ export class CoordinationStore {
     if ((receipt.mode === 'empty_bootstrap') !== (receipt.throughSeq === 0)) this._canonicalOrderFail('canonical-order receipt mode conflicts with its prefix');
     return freeze(clone(receipt));
   }
-
   _readCanonicalReceipt(ledger = this._readCanonicalLedger()) {
-    if (!existsSync(this._canonicalOrderReceiptFile)) return null;
-    let stat;
-    try { stat = lstatSync(this._canonicalOrderReceiptFile); }
-    catch { this._canonicalOrderFail('canonical-order receipt is unavailable'); }
-    if (!stat.isFile() || stat.isSymbolicLink() || (stat.mode & 0o077) !== 0 || stat.size > this._canonicalOrderPolicy.maxReceiptBytes) {
-      this._canonicalOrderFail('canonical-order receipt path or size is invalid');
-    }
-    const bytes = readFileSync(this._canonicalOrderReceiptFile);
-    let receipt;
-    try { receipt = JSON.parse(bytes.toString('utf8')); }
-    catch { this._canonicalOrderFail('canonical-order receipt is invalid JSON'); }
-    return this._validateCanonicalReceipt(receipt, bytes, ledger);
+    return coordinationReplay._readCanonicalReceipt(this, ledger);
   }
-
   _openCanonicalOrderLedger() {
-    const ledger = this._readCanonicalLedger();
-    const receipt = this._readCanonicalReceipt(ledger);
-    if (receipt) {
-      this._canonicalOrderReceipt = receipt;
-      this._load();
-      return;
-    }
-    if (ledger.raw.byteLength === 0) {
-      if (!this._canonicalOrderMigration) this._load();
-      return;
-    }
-    if (this._canonicalOrderMigration) return;
-    this._canonicalOrderFail('non-empty coordination history requires explicit canonical-order adoption', 'canonical_order_migration_required');
+    return coordinationReplay._openCanonicalOrderLedger(this);
   }
 
   _cleanupCanonicalOrderTemps() {
@@ -1041,62 +937,16 @@ export class CoordinationStore {
     this._canonicalOrderReceipt = this._readCanonicalReceipt(ledger);
     return clone(this._canonicalOrderReceipt);
   }
-
   _ensureCanonicalOrderReceipt() {
-    if (!this._canonicalOrderPolicy) return null;
-    this._assertWriterLease();
-    const ledger = this._readCanonicalLedger();
-    const current = this._readCanonicalReceipt(ledger);
-    if (current) {
-      if (this._canonicalOrderMigration) {
-        const migration = this._canonicalOrderMigration;
-        const expectedMode = migration.mode === 'reset_empty' ? 'empty_bootstrap' : 'adopt_compatible';
-        const requestedCut = Object.fromEntries(['maxEventBytes', 'maxEvents', 'maxLedgerBytes', 'maxReceiptBytes'].map((key) => [key, migration[key]]));
-        if (current.mode !== expectedMode
-          || canonicalDigest(current.cutPolicy) !== canonicalDigest(requestedCut)
-          || (migration.mode === 'adopt_compatible' && (current.prefixDigest !== migration.expectedPrefixDigest || current.throughSeq !== migration.expectedEvents))) {
-          this._canonicalOrderFail('canonical-order migration conflicts with the existing receipt', 'canonical_order_migration_invalid');
-        }
-      }
-      this._canonicalOrderReceipt = current; return clone(current);
-    }
-    if (this._canonicalOrderMigration) {
-      const migration = this._canonicalOrderMigration;
-      if (Object.keys(migration).filter((key) => key !== 'mode' && !key.startsWith('expected')).some((key) => migration[key] > this._canonicalOrderPolicy[key])) {
-        this._canonicalOrderFail('canonical-order migration exceeds deployment authority', 'canonical_order_migration_invalid');
-      }
-      if (migration.mode === 'reset_empty') {
-        if (ledger.raw.byteLength !== 0 || ledger.events.length !== 0) this._canonicalOrderFail('canonical-order reset requires a newly selected empty ledger', 'canonical_order_migration_invalid');
-        const cutPolicy = Object.fromEntries(['maxEventBytes', 'maxEvents', 'maxLedgerBytes', 'maxReceiptBytes'].map((key) => [key, migration[key]]));
-        return this._writeCanonicalReceipt('empty_bootstrap', ledger, cutPolicy);
-      }
-      if (ledger.raw.byteLength === 0 || ledger.events.length !== migration.expectedEvents
-        || sha256Bytes(ledger.raw) !== migration.expectedPrefixDigest) {
-        this._canonicalOrderFail('canonical-order adoption identity differs from the ledger', 'canonical_order_migration_invalid');
-      }
-      this._resetProjection(); this._load();
-      const cutPolicy = Object.fromEntries(['maxEventBytes', 'maxEvents', 'maxLedgerBytes', 'maxReceiptBytes'].map((key) => [key, migration[key]]));
-      return this._writeCanonicalReceipt('adopt_compatible', ledger, cutPolicy);
-    }
-    if (ledger.raw.byteLength !== 0) this._canonicalOrderFail('non-empty coordination history requires explicit canonical-order adoption', 'canonical_order_migration_required');
-    return this._writeCanonicalReceipt('empty_bootstrap', ledger);
+    return coordinationReplay._ensureCanonicalOrderReceipt(this);
   }
 
   canonicalOrderReceipt() { return clone(this._canonicalOrderReceipt); }
-
   _reportStartup(value) {
-    this._startupState = freeze(clone(value));
-    if (this._startupProgress) {
-      try { this._startupProgress(clone(this._startupState)); }
-      catch { /* progress observation never becomes coordination authority */ }
-    }
+    return coordinationReplay._reportStartup(this, value);
   }
-
   startupStatus() {
-    return clone(this._startupState ?? {
-      schemaVersion: 1, state: 'starting', source: 'ledger', totalEvents: 0,
-      checkpointEvents: 0, replayedEvents: 0, checkpoint: 'unchecked', failure: null,
-    });
+    return coordinationReplay.startupStatus(this);
   }
 
   _projectionCheckpointPayload({ durable = false } = {}) {
@@ -1326,8 +1176,9 @@ export class CoordinationStore {
     }
     return configured;
   }
-
-  _reloadProjection() { this._resetProjection(); this._load(); }
+  _reloadProjection() {
+    return coordinationReplay._reloadProjection(this);
+  }
 
   _ledgerMatchesLoadedProjection() {
     if (!this._loadedLedgerIdentity) return false;
@@ -1522,113 +1373,7 @@ export class CoordinationStore {
   // rebuilt by scanning them. Returns { archivedThroughSeq, segments: [{fromSeq, throughSeq,
   // digest, bytes}] } — the archived prefix coverage the LEDGER's own coverage requires.
   _loadSegmentState(raw) {
-    const dir = this._segmentDirectory();
-    const indexFile = join(dir, SEGMENT_INDEX_FILE);
-    let index = null;
-    if (existsSync(indexFile)) {
-      // The index is a CACHE over immutable segment files: a malformed index must never
-      // brick startup — it falls through to the scan-rebuild path, which verifies the
-      // actual segment content (digests, ranges) and reconstructs the coverage.
-      let parsed = null;
-      try { parsed = JSON.parse(readFileSync(indexFile, 'utf8')); } catch { /* malformed index → rebuild */ }
-      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)
-        && parsed.schemaVersion === 1
-        && Number.isSafeInteger(parsed.archivedThroughSeq) && parsed.archivedThroughSeq >= 0
-        && Array.isArray(parsed.segments)) {
-        let expected = 1;
-        let valid = true;
-        for (const segment of parsed.segments) {
-          if (!segment || typeof segment !== 'object' || Array.isArray(segment)
-            || !Number.isSafeInteger(segment.fromSeq) || !Number.isSafeInteger(segment.throughSeq)
-            || segment.throughSeq < segment.fromSeq || segment.fromSeq !== expected
-            || typeof segment.digest !== 'string' || !/^[a-f0-9]{64}$/u.test(segment.digest)
-            || !Number.isSafeInteger(segment.bytes) || segment.bytes < 0) {
-            valid = false; break;
-          }
-          expected = segment.throughSeq + 1;
-        }
-        if (valid && expected === parsed.archivedThroughSeq + 1) index = parsed;
-      }
-    }
-    // The first live event seq anchors what the LEDGER itself covers.
-    let firstSeq = null;
-    if (raw.byteLength > 0) {
-      const newline = raw.indexOf(0x0a);
-      if (newline < 0) throw new CoordinationIntegrityError('coordination stream has a truncated tail', 'truncated_tail');
-      let first;
-      try { first = JSON.parse(raw.subarray(0, newline).toString('utf8')); }
-      catch { throw new CoordinationIntegrityError('invalid JSON at coordination line 1', 'invalid_json'); }
-      firstSeq = first?.seq;
-      if (!Number.isSafeInteger(firstSeq) || firstSeq <= 0) {
-        throw new CoordinationIntegrityError('coordination sequence gap at line 1', 'sequence_gap');
-      }
-    }
-    // A ledger that still starts at seq 1 IS the complete history — no archived prefix is
-    // required, and any on-disk index is a compaction whose ledger rewrite has not committed
-    // (the next compaction self-heals it).
-    if (firstSeq === 1) return { archivedThroughSeq: 0, segments: [] };
-    // A consistent index (archived prefix + window == full history) is trusted; replay still
-    // verifies every segment file's digest as it reads it.
-    if (index !== null && (firstSeq === null || firstSeq === index.archivedThroughSeq + 1)) {
-      return index;
-    }
-    // The index is absent or behind the ledger's truncation (a crash between the ledger
-    // rewrite and the index write): rebuild from the immutable segment files.
-    const segments = [];
-    if (existsSync(dir)) {
-      for (const name of readdirSync(dir).sort()) {
-        if (!name.endsWith(SEGMENT_FILE_SUFFIX) || !/^[a-f0-9]{64}\.jsonl$/u.test(name)) continue;
-        const bytes = readFileSync(join(dir, name));
-        if (sha256Bytes(bytes) !== name.slice(0, 64)) {
-          throw new CoordinationIntegrityError('coordination segment digest mismatch', 'coordination_segment_integrity');
-        }
-        const text = bytes.toString('utf8');
-        if (!Buffer.from(text, 'utf8').equals(bytes)) {
-          throw new CoordinationIntegrityError('coordination segment is not exact UTF-8', 'invalid_utf8');
-        }
-        if (bytes.byteLength > 0 && bytes.at(-1) !== 0x0a) {
-          throw new CoordinationIntegrityError('coordination segment has a truncated tail', 'coordination_segment_truncated');
-        }
-        const segmentLines = text.length === 0 ? [] : text.slice(0, -1).split('\n');
-        if (segmentLines.length === 0) {
-          throw new CoordinationIntegrityError('coordination segment is empty', 'coordination_segment_integrity');
-        }
-        let fromSeq; let throughSeq;
-        try {
-          fromSeq = JSON.parse(segmentLines[0]).seq;
-          throughSeq = JSON.parse(segmentLines[segmentLines.length - 1]).seq;
-        } catch { throw new CoordinationIntegrityError('coordination segment is invalid JSON', 'invalid_json'); }
-        if (!Number.isSafeInteger(fromSeq) || !Number.isSafeInteger(throughSeq)
-          || throughSeq < fromSeq || throughSeq - fromSeq + 1 !== segmentLines.length) {
-          throw new CoordinationIntegrityError('coordination segment sequence range is invalid', 'coordination_segment_integrity');
-        }
-        segments.push({ fromSeq, throughSeq, digest: name.slice(0, 64), bytes: bytes.byteLength });
-      }
-    }
-    segments.sort((left, right) => left.fromSeq - right.fromSeq);
-    let expected = 1;
-    for (const segment of segments) {
-      if (segment.fromSeq !== expected) throw new CoordinationIntegrityError('coordination archived prefix has a gap', 'coordination_segment_gap');
-      expected = segment.throughSeq + 1;
-    }
-    const scannedThroughSeq = segments.length === 0 ? 0 : segments[segments.length - 1].throughSeq;
-    const needed = firstSeq === null ? scannedThroughSeq : firstSeq - 1;
-    if (segments.length === 0) {
-      // No segment files at all: a firstSeq > 1 ledger is a plain sequence gap, not a
-      // compacted store (the segment file is always written BEFORE the ledger is truncated).
-      if (needed > 0) throw new CoordinationIntegrityError('coordination sequence gap at line 1', 'sequence_gap');
-      return { archivedThroughSeq: 0, segments: [] };
-    }
-    if (scannedThroughSeq < needed) {
-      throw new CoordinationIntegrityError('coordination archived prefix is incomplete', 'coordination_segment_gap');
-    }
-    // Segments may cover more than the ledger needs (a compaction whose ledger rewrite
-    // committed but whose index did not): the ledger is the window authority.
-    const active = segments.filter((segment) => segment.throughSeq <= needed);
-    if (needed > 0 && (active.length === 0 || active[active.length - 1].throughSeq !== needed)) {
-      throw new CoordinationIntegrityError('coordination archived prefix is incomplete', 'coordination_segment_gap');
-    }
-    return { archivedThroughSeq: needed, segments: active };
+    return coordinationReplay._loadSegmentState(this, raw);
   }
 
   // Issue #223 — the operator verb that lands the compaction seam. `beforeSeq` is the first
@@ -1732,112 +1477,8 @@ export class CoordinationStore {
       ledgerBytes: windowBytes.byteLength,
     });
   }
-
   _load() {
-    const raw = existsSync(this.file) ? readFileSync(this.file) : Buffer.alloc(0);
-    this._reportStartup({
-      schemaVersion: 1, state: 'starting', source: 'ledger', totalEvents: 0,
-      checkpointEvents: 0, replayedEvents: 0, checkpoint: 'unchecked', failure: null,
-    });
-    try {
-      if (raw.byteLength > 0 && raw.at(-1) !== 0x0a) {
-        throw new CoordinationIntegrityError('coordination stream has a truncated tail', 'truncated_tail');
-      }
-      const segments = this._loadSegmentState(raw);
-      const base = segments.archivedThroughSeq;
-      this._segmentIndex = base > 0 ? segments : null;
-      const checkpoint = this._restoreProjectionCheckpoint(raw, base);
-      const tail = raw.subarray(checkpoint.prefixBytes);
-      const text = tail.toString('utf8');
-      if (!Buffer.from(text, 'utf8').equals(tail)) {
-        throw new CoordinationIntegrityError('coordination stream is not exact UTF-8', 'invalid_utf8');
-      }
-      const lines = text.length === 0 ? [] : text.slice(0, -1).split('\n');
-      const segmentEvents = (segments.segments ?? []).reduce((sum, segment) => sum + (segment.throughSeq - segment.fromSeq + 1), 0);
-      const totalEvents = base + checkpoint.throughSeq + lines.length;
-      const replaySource = (checkpointState) => (base > 0
-        ? (checkpointState === 'valid' ? (lines.length > 0 ? 'segments_checkpoint_tail' : 'segments_checkpoint')
-          : checkpointState === 'corrupt' ? 'segments_ledger_fallback' : 'segments_ledger')
-        : checkpointState === 'valid' ? (lines.length > 0 ? 'checkpoint_tail' : 'checkpoint')
-          : checkpointState === 'corrupt' ? 'ledger_fallback'
-            : raw.byteLength === 0 ? 'empty' : 'ledger');
-      this._reportStartup({
-        schemaVersion: 1, state: 'replaying',
-        source: replaySource(checkpoint.state),
-        totalEvents, checkpointEvents: checkpoint.throughSeq, replayedEvents: 0,
-        checkpoint: checkpoint.state, failure: null,
-      });
-      this._loading = true;
-      try {
-        const applyReplayEvent = (event, index) => {
-          if (event.schemaVersion !== 1) throw new CoordinationIntegrityError(`unsupported schema version at seq ${event.seq}`, 'schema_version');
-          if (event.seq !== index + 1) throw new CoordinationIntegrityError(`coordination sequence gap at line ${index + 1}`, 'sequence_gap');
-          if (typeof event.idempotencyKey !== 'string' || this._byKey.has(event.idempotencyKey)) {
-            throw new CoordinationIntegrityError(`duplicate/missing idempotency key at seq ${event.seq}`, 'duplicate_key');
-          }
-          const frozen = freeze(event);
-          this._events.push(frozen);
-          this._byKey.set(frozen.idempotencyKey, frozen);
-          this._apply(frozen);
-        };
-        for (const segment of segments.segments ?? []) {
-          const bytes = readFileSync(this._segmentFilePath(segment.digest));
-          if (sha256Bytes(bytes) !== segment.digest) {
-            throw new CoordinationIntegrityError('coordination segment digest mismatch', 'coordination_segment_integrity');
-          }
-          const text = bytes.toString('utf8');
-          if (!Buffer.from(text, 'utf8').equals(bytes)) {
-            throw new CoordinationIntegrityError('coordination segment is not exact UTF-8', 'invalid_utf8');
-          }
-          if (bytes.byteLength > 0 && bytes.at(-1) !== 0x0a) {
-            throw new CoordinationIntegrityError('coordination segment has a truncated tail', 'coordination_segment_truncated');
-          }
-          const segmentLines = text.length === 0 ? [] : text.slice(0, -1).split('\n');
-          for (let offset = 0; offset < segmentLines.length; offset += 1) {
-            let event;
-            try { event = JSON.parse(segmentLines[offset]); }
-            catch { throw new CoordinationIntegrityError(`invalid JSON at coordination segment ${segment.digest} line ${offset + 1}`, 'invalid_json'); }
-            applyReplayEvent(event, segment.fromSeq - 1 + offset);
-          }
-        }
-        for (let index = 0; index < (checkpoint.events ?? []).length; index += 1) {
-          applyReplayEvent(checkpoint.events[index], base + index);
-        }
-        for (let offset = 0; offset < lines.length; offset += 1) {
-          const index = base + checkpoint.throughSeq + offset;
-          let event;
-          try { event = JSON.parse(lines[offset]); }
-          catch { throw new CoordinationIntegrityError(`invalid JSON at coordination line ${index + 1}`, 'invalid_json'); }
-          applyReplayEvent(event, index);
-          if ((offset + 1) % 256 === 0) this._reportStartup({
-            schemaVersion: 1, state: 'replaying',
-            source: replaySource(checkpoint.state),
-            totalEvents, checkpointEvents: checkpoint.throughSeq,
-            replayedEvents: segmentEvents + offset + 1, checkpoint: checkpoint.state, failure: null,
-          });
-        }
-        this._validateRecoveryReplayTransactions();
-        this._validateGoalPlanReplayTransactions();
-      } finally { this._loading = false; }
-      const source = replaySource(checkpoint.state);
-      this._reportStartup({
-        schemaVersion: 1, state: 'ready', source, totalEvents,
-        checkpointEvents: checkpoint.throughSeq, replayedEvents: segmentEvents + lines.length,
-        checkpoint: checkpoint.state, failure: null,
-      });
-      this._loadedLedgerHash = createHash('sha256').update(raw);
-      this._loadedLedgerIdentity = freeze({
-        bytes: raw.byteLength, digest: this._loadedLedgerHash.copy().digest('hex'),
-        events: this._events.length,
-      });
-    } catch (error) {
-      this._reportStartup({
-        schemaVersion: 1, state: 'failed', source: 'ledger', totalEvents: 0,
-        checkpointEvents: 0, replayedEvents: 0, checkpoint: 'unusable',
-        failure: { code: error?.code ?? 'coordination_startup_failed' },
-      });
-      throw error;
-    }
+    return coordinationReplay._load(this);
   }
 
   _append(kind, payload, { actor, key }, fixedTs = null, beforeWrite = null) {
@@ -1967,17 +1608,8 @@ export class CoordinationStore {
       if (this._events.length > waiter.afterSeq) waiter.finish(true);
     }
   }
-
   _taskTopologyHint(event) {
-    if (event.batch?.kind === 'settlement_task_create_claim') return 'root';
-    if (event.batch?.kind === 'recovery_refinement_create_claim'
-      || event.batch?.kind === 'goal_plan_recovery_dispatch') return 'recovery';
-    if (event.batch?.kind === 'goal_plan_node_dispatch') {
-      const dispatch = this._events[event.seq - 2];
-      if (dispatch?.kind === 'plan.node_dispatched' && dispatch.payload?.preservedResume) return 'preserved_resume';
-      if (dispatch?.kind === 'plan.node_dispatched' && dispatch.payload?.revision) return 'revision';
-    }
-    return null;
+    return coordinationInternals._taskTopologyHint(this, event);
   }
 
   _taskTopologyFailure(message, code, integrity) {
@@ -2038,8 +1670,9 @@ export class CoordinationStore {
   }
 
   taskTopologyPolicy() { return clone(this._taskTopologyPolicy); }
-
-  repositoryId() { return this._repoId; }
+  repositoryId() {
+    return coordinationInternals.repositoryId(this._repoId);
+  }
 
   runLineagePolicy() { return clone(this._runLineagePolicy); }
 
@@ -2211,20 +1844,8 @@ export class CoordinationStore {
     this._assertRunAdmissionOpen(lease.parent.runId);
     return lease;
   }
-
   _runIdentityHasEffects(runId, ignoredSeq = null) {
-    if (this._runLineages.has(runId) || this._runs.has(runId) || this._runStopByTarget.has(runId)
-      || [...this._tasks.values()].some((task) => task.runId === runId)
-      || [...this._goals.values()].some((goal) => goal.runId === runId)
-      || [...this._plans.values()].some((plan) => plan.runId === runId)
-      || [...this._runResultAdoptions.values()].some((row) => row.runId === runId)
-      || [...this._runResultExports.values()].some((row) => row.runId === runId)
-      || [...this._runVerificationRetries.values()].some((row) => row.runId === runId)
-      || [...this._recoveryAttemptsById.values()].some((row) => row.runId === runId)) return true;
-    return this._events.some((row) => row.seq !== ignoredSeq && (
-      row.payload?.runId === runId || row.payload?.childRunId === runId
-      || row.payload?.goal?.runId === runId || row.payload?.plan?.runId === runId
-    ));
+    return coordinationInternals._runIdentityHasEffects(this, runId, ignoredSeq);
   }
 
   _deriveRunLineagePayload(request, lease, ignoredSeq = null, integrity = false) {
@@ -2348,9 +1969,8 @@ export class CoordinationStore {
     const event = this._append('run.orchestrator_lease_revoked', payload, auth);
     return freeze({ ok: true, result: 'revoked', event: clone(event), lease: this.runOrchestratorLease(fields.leaseId) });
   }
-
   runOrchestratorLease(leaseId) {
-    return clone(this._runOrchestratorLeases.get(leaseId) ?? null);
+    return coordinationInternals.runOrchestratorLease(this._runOrchestratorLeases, leaseId);
   }
 
   activeRunOrchestratorLeaseForSession(fields) {
@@ -2417,19 +2037,14 @@ export class CoordinationStore {
     const event = this._append('run.lineage_admitted', payload, auth);
     return freeze({ ok: true, result: 'admitted', event: clone(event), lineage: this.runLineage(request.childRunId) });
   }
-
-  runLineage(runId) { return clone(this._runLineages.get(runId) ?? null); }
-
-  runChildren(runId) {
-    return [...(this._runChildrenByParent.get(runId) ?? [])]
-      .map((childRunId) => clone(this._runLineages.get(childRunId)))
-      .filter(Boolean);
+  runLineage(runId) {
+    return coordinationInternals.runLineage(this._runLineages, runId);
   }
-
+  runChildren(runId) {
+    return coordinationInternals.runChildren(this, runId);
+  }
   runDescendants(runId) {
-    return [...this._runLineages.values()]
-      .filter((lineage) => lineage.ancestors.includes(runId))
-      .map(clone);
+    return coordinationInternals.runDescendants(this._runLineages, runId);
   }
 
   authorizeRunOrchestratorCommand(fields, auth) {
@@ -2458,95 +2073,17 @@ export class CoordinationStore {
       repoId: fields.repoId, runId: fields.runId,
     });
   }
-
   taskTopologyNode(taskId) {
-    const node = this._taskTopologies.get(taskId);
-    if (!node) return null;
-    const children = [...this._taskTopologies.values()].filter((candidate) => candidate.parentTaskId === taskId);
-    return freeze({
-      ...clone(node), childCount: children.length,
-      childrenByRelation: Object.fromEntries(
-        ['follow_up', 'oracle', 'preserved_resume', 'recovery', 'review', 'revision']
-          .map((relation) => [relation, children.filter((child) => child.relation === relation).length]),
-      ),
-    });
+    return coordinationInternals.taskTopologyNode(this._taskTopologies, taskId);
   }
-
   taskTopology(runId = null) {
-    const tasks = [...this._taskTopologies.values()]
-      .filter((node) => node.runId === runId)
-      .map((node) => this.taskTopologyNode(node.taskId))
-      .sort((left, right) => left.taskId < right.taskId ? -1 : left.taskId > right.taskId ? 1 : 0);
-    return freeze({
-      schemaVersion: 1, runId,
-      policyDigest: this._taskTopologyPolicy ? canonicalDigest(this._taskTopologyPolicy) : null,
-      tasks,
-    });
+    return coordinationInternals.taskTopology(this, runId);
   }
-
   _recoveryBatchIdentity(kind, events) {
-    return canonicalDigest({
-      schemaVersion: 1,
-      kind,
-      entries: events.map((event) => ({
-        kind: event.kind,
-        actor: event.actor,
-        idempotencyKey: event.idempotencyKey,
-        payload: event.payload,
-      })),
-    });
+    return coordinationReplay._recoveryBatchIdentity(kind, events);
   }
-
   _validateRecoveryReplayTransactions() {
-    const fail = (message) => { throw new CoordinationIntegrityError(message, 'recovery_batch_integrity'); };
-    for (let index = 0; index < this._events.length; index += 1) {
-      const first = this._events[index];
-      if (first.batch?.kind === 'goal_plan_recovery_dispatch') continue;
-      const recoveryCreate = first.kind === 'task.created' && first.payload?.relation === 'recovery';
-      const recoveryRefusal = first.kind === 'driver.recorded' && first.payload?.kind === 'recovery.dispatch_refused';
-      const recoveryBatch = ['recovery_refinement_create_claim', 'recovery_dispatch_refusal'].includes(first.batch?.kind);
-      if (!recoveryCreate && !recoveryRefusal && !recoveryBatch) continue;
-      const expectedKind = recoveryCreate ? 'recovery_refinement_create_claim'
-        : recoveryRefusal ? 'recovery_dispatch_refusal' : first.batch.kind;
-      if (!first.batch || Object.keys(first.batch).sort().join(',') !== ['count', 'id', 'index', 'kind', 'schemaVersion'].sort().join(',')
-        || first.batch.schemaVersion !== 1 || first.batch.kind !== expectedKind || first.batch.index !== 0
-        || first.batch.count !== 2 || !/^[a-f0-9]{64}$/.test(first.batch.id ?? '')) {
-        fail(`recovery transaction at seq ${first.seq} lacks an exact batch identity`);
-      }
-      const second = this._events[index + 1];
-      if (!second || second.seq !== first.seq + 1 || second.ts !== first.ts
-        || !second.batch || second.batch.schemaVersion !== 1 || second.batch.kind !== expectedKind
-        || second.batch.id !== first.batch.id || second.batch.index !== 1 || second.batch.count !== 2
-        || this._recoveryBatchIdentity(expectedKind, [first, second]) !== first.batch.id) {
-        fail(`recovery transaction at seq ${first.seq} is torn or mismatched`);
-      }
-      if (expectedKind === 'recovery_refinement_create_claim') {
-        if (!recoveryCreate || second.kind !== 'task.claimed' || second.actor !== first.actor
-          || second.idempotencyKey !== `${first.idempotencyKey}:claim`) {
-          fail(`recovery refinement transaction at seq ${first.seq} is not an exact create/claim pair`);
-        }
-        this._validateRecoveryRefinementPair(first, second, true);
-      } else {
-        if (!recoveryRefusal || second.kind !== 'task.transitioned' || second.actor !== first.actor
-          || second.idempotencyKey !== `${first.idempotencyKey}:task`) {
-          fail(`recovery refusal transaction at seq ${first.seq} is not an exact receipt/transition pair`);
-        }
-        const task = this._tasks.get(first.payload.taskId);
-        const expectedTransition = {
-          id: first.payload.taskId,
-          from: 'working',
-          to: 'failed',
-          expectedVersion: 2,
-          newVersion: 3,
-          evidence: clone(first.payload.evidence),
-        };
-        if (canonicalDigest(second.payload) !== canonicalDigest(expectedTransition)
-          || task?.status !== 'failed' || task?.terminalEvent !== second.seq) {
-          fail(`recovery refusal transaction at seq ${first.seq} did not close its exact refinement`);
-        }
-      }
-      index += 1;
-    }
+    return coordinationReplay._validateRecoveryReplayTransactions(this);
   }
 
   _goalPlanFailure(message, code, integrity = false) {
@@ -2558,117 +2095,8 @@ export class CoordinationStore {
   _planVersionKey(planId, version) { return `${planId}\0${version}`; }
   _planHeadKey(goal) { return `${goal.goalId}\0${goal.version}\0${goal.digest}`; }
   _planNodeKey(planId, version, nodeKey) { return `${planId}\0${version}\0${nodeKey}`; }
-
   _validateGoalPlanReplayTransactions() {
-    const fail = (message) => this._goalPlanFailure(message, 'goal_plan_batch_integrity', true);
-    const failRecovery = (message) => this._goalPlanFailure(message, 'goal_plan_recovery_batch_integrity', true);
-    for (let index = 0; index < this._events.length; index += 1) {
-      const first = this._events[index];
-      const isPlanRecovery = first.batch?.kind === 'goal_plan_recovery_dispatch';
-      const isPlanWave = first.batch?.kind === 'goal_plan_wave_dispatch';
-      const isDispatch = first.kind === 'plan.node_dispatched'
-        || ['goal_plan_node_dispatch', 'goal_plan_wave_dispatch', 'goal_plan_recovery_dispatch'].includes(first.batch?.kind);
-      const isBoundTask = first.kind === 'task.created' && first.payload?.brief?.goalPlan;
-      if (!isDispatch && !isBoundTask) continue;
-      if (isPlanWave) {
-        const count = first.batch?.count;
-        const events = Number.isSafeInteger(count) && count >= 4 && count % 2 === 0
-          ? this._events.slice(index, index + count) : [];
-        const exactBatch = events.length === count
-          && first.kind === 'plan.node_dispatched' && first.batch.index === 0
-          && /^[a-f0-9]{64}$/.test(first.batch.id ?? '')
-          && this._recoveryBatchIdentity('goal_plan_wave_dispatch', events) === first.batch.id
-          && events.every((event, offset) => event.seq === first.seq + offset
-            && event.ts === first.ts && event.actor === first.actor
-            && event.batch?.schemaVersion === 1 && event.batch.kind === 'goal_plan_wave_dispatch'
-            && event.batch.id === first.batch.id && event.batch.index === offset
-            && event.batch.count === count)
-          && events.every((event, offset) => offset % 2 === 0
-            ? event.kind === 'plan.node_dispatched'
-              && event.payload?.wave?.index === offset / 2
-              && event.payload?.wave?.count === count / 2
-            : event.kind === 'task.created'
-              && event.idempotencyKey === `${events[offset - 1].idempotencyKey}:task`
-              && events[offset - 1].payload?.taskId === event.payload?.id
-              && events[offset - 1].payload?.taskPayloadDigest === canonicalDigest(event.payload)
-              && canonicalDigest(events[offset - 1].payload?.binding) === canonicalDigest(event.payload?.brief?.goalPlan));
-        const waveDigests = new Set(events.filter((_, offset) => offset % 2 === 0)
-          .map((event) => event.payload?.wave?.digest));
-        const reconstructedEntries = events.filter((_, offset) => offset % 2 === 0)
-          .map((dispatch, memberIndex) => {
-            const p = dispatch.payload; const binding = p?.binding;
-            return {
-              fields: events[memberIndex * 2 + 1]?.payload,
-              gate: {
-                goalId: binding?.goalId, goalVersion: binding?.goalVersion,
-                goalDigest: binding?.goalDigest, planId: binding?.planId,
-                planVersion: binding?.planVersion, planDigest: binding?.planDigest,
-                nodeKey: binding?.nodeKey, expectedDispatchVersion: 0,
-                capabilities: p?.capabilities, effects: p?.effects,
-                ...(Object.hasOwn(p ?? {}, 'requiredEffects')
-                  ? { requiredEffects: p.requiredEffects } : {}),
-              },
-              route: p?.route,
-            };
-          });
-        const expectedWaveDigest = goalPlanDigest({
-          authority: first.payload?.authority,
-          entries: reconstructedEntries,
-        });
-        if (!exactBatch || waveDigests.size !== 1
-          || [...waveDigests][0] !== expectedWaveDigest) {
-          fail(`goal/plan wave dispatch at seq ${first.seq} is torn or mismatched`);
-        }
-        for (let offset = 0; offset < count; offset += 2) {
-          this._validateGoalPlanDispatchPair(events[offset], events[offset + 1], true);
-        }
-        index += count - 1;
-        continue;
-      }
-      if (isPlanRecovery) {
-        const second = this._events[index + 1]; const third = this._events[index + 2];
-        const batchFields = ['count', 'id', 'index', 'kind', 'schemaVersion'].sort().join(',');
-        const exactBatch = first.kind === 'plan.node_dispatched'
-          && Object.keys(first.batch ?? {}).sort().join(',') === batchFields
-          && Object.keys(second?.batch ?? {}).sort().join(',') === batchFields
-          && Object.keys(third?.batch ?? {}).sort().join(',') === batchFields
-          && first.batch?.schemaVersion === 1
-          && first.batch.kind === 'goal_plan_recovery_dispatch' && first.batch.index === 0
-          && first.batch.count === 3 && /^[a-f0-9]{64}$/.test(first.batch.id ?? '')
-          && second?.kind === 'task.created' && second.seq === first.seq + 1 && second.ts === first.ts
-          && second.actor === first.actor && second.idempotencyKey === `${first.idempotencyKey}:task`
-          && second.batch?.schemaVersion === 1 && second.batch.kind === 'goal_plan_recovery_dispatch'
-          && second.batch.id === first.batch.id && second.batch.index === 1 && second.batch.count === 3
-          && third?.kind === 'task.claimed' && third.seq === second.seq + 1 && third.ts === first.ts
-          && third.actor === first.actor && third.idempotencyKey === `${first.idempotencyKey}:claim`
-          && third.batch?.schemaVersion === 1 && third.batch.kind === 'goal_plan_recovery_dispatch'
-          && third.batch.id === first.batch.id && third.batch.index === 2 && third.batch.count === 3
-          && this._recoveryBatchIdentity('goal_plan_recovery_dispatch', [first, second, third]) === first.batch.id
-          && first.payload?.taskId === second.payload?.id && second.payload?.id === third.payload?.id
-          && first.payload?.taskPayloadDigest === canonicalDigest(second.payload)
-          && first.payload?.claimPayloadDigest === canonicalDigest(third.payload)
-          && canonicalDigest(first.payload?.binding) === canonicalDigest(second.payload?.brief?.goalPlan);
-        if (!exactBatch) failRecovery(`goal/plan recovery dispatch at seq ${first.seq} is torn or mismatched`);
-        this._validateGoalPlanRecoveryTriple(first, second, third, true);
-        index += 2;
-        continue;
-      }
-      if (first.kind !== 'plan.node_dispatched' || !first.batch || first.batch.schemaVersion !== 1
-        || first.batch.kind !== 'goal_plan_node_dispatch' || first.batch.index !== 0 || first.batch.count !== 2
-        || !/^[a-f0-9]{64}$/.test(first.batch.id ?? '')) fail(`goal/plan dispatch at seq ${first.seq} lacks an exact batch identity`);
-      const second = this._events[index + 1];
-      if (!second || second.kind !== 'task.created' || second.seq !== first.seq + 1 || second.ts !== first.ts
-        || second.actor !== first.actor || second.idempotencyKey !== `${first.idempotencyKey}:task`
-        || !second.batch || second.batch.schemaVersion !== 1 || second.batch.kind !== 'goal_plan_node_dispatch'
-        || second.batch.id !== first.batch.id || second.batch.index !== 1 || second.batch.count !== 2
-        || this._recoveryBatchIdentity('goal_plan_node_dispatch', [first, second]) !== first.batch.id
-        || first.payload.taskId !== second.payload.id || first.payload.taskPayloadDigest !== canonicalDigest(second.payload)
-        || canonicalDigest(first.payload.binding) !== canonicalDigest(second.payload.brief?.goalPlan)) {
-        fail(`goal/plan dispatch at seq ${first.seq} is torn or mismatched`);
-      }
-      this._validateGoalPlanDispatchPair(first, second, true);
-      index += 1;
-    }
+    return coordinationReplay._validateGoalPlanReplayTransactions(this);
   }
 
   _historicalTaskState(taskId, throughSeq) {
@@ -3075,29 +2503,14 @@ export class CoordinationStore {
     if (p.requestDigest !== expectedRequestDigest) fail('goal/plan dispatch request digest changed');
     return true;
   }
-
   _planRecoveryRequestFields(createdPayload) {
-    const fields = [
-      'brief', 'deps', 'effortRequested', 'id', 'modelPolicy', 'modelRequested', 'refines',
-      'relation', 'reservedWorkerId', 'runId', 'sessionRequest', 'taskType', 'vendorRequested',
-    ];
-    return Object.fromEntries(fields.map((field) => [field, clone(createdPayload[field])]));
+    return coordinationReplay._planRecoveryRequestFields(createdPayload);
   }
-
   _recoveryAttributionFromClaim(claimedPayload) {
-    const fields = [
-      'harnessRequested', 'harnessResolved', 'modelRequested', 'modelResolved', 'modelObserved',
-      'effortRequested', 'effortResolved', 'effortObserved', 'routeKey',
-    ];
-    return Object.fromEntries(fields.map((field) => [field, clone(claimedPayload[field])]));
+    return coordinationReplay._recoveryAttributionFromClaim(claimedPayload);
   }
-
   _normalizedPlanRecoveryCreatedPayload(fields, priorTask) {
-    return {
-      ...this._planRecoveryRequestFields(fields),
-      worktreeBaseSha: priorTask.worktreeBaseSha ?? null,
-      review: clone(priorTask.review ?? null),
-    };
+    return coordinationReplay._normalizedPlanRecoveryCreatedPayload(this, fields, priorTask);
   }
 
   _validateGoalPlanRecoveryTriple(dispatchEvent, createdEvent, claimedEvent, integrity = false) {
@@ -3146,56 +2559,20 @@ export class CoordinationStore {
       throw error;
     }
   }
-
   _recoveryFailure(message, code, integrity) {
-    throw integrity
-      ? new CoordinationIntegrityError(message, code)
-      : new CoordinationRefusal(message, code);
+    return coordinationReplay._recoveryFailure(message, code, integrity);
   }
-
   _verifiedRecoveryPrior(task, integrity = false) {
-    const fail = (message) => this._recoveryFailure(message, 'recovery_refinement_unverified', integrity);
-    const terminal = task?.terminalEvent ? this._events[task.terminalEvent - 1] : null;
-    const evidenceSeq = terminal?.payload?.evidence?.coordinationSeq;
-    const mapped = Number.isSafeInteger(evidenceSeq) ? this._events[evidenceSeq - 1] : null;
-    const source = mapped?.kind === 'evidence.mapped'
-      ? this._operationalRead?.(mapped.payload.worker, mapped.payload.workerSeq)
-      : null;
-    if (!task || (!integrity && task.status !== 'completed') || !terminal || terminal.kind !== 'task.transitioned'
-      || terminal.payload?.id !== task.id || terminal.payload?.to !== 'completed'
-      || mapped?.kind !== 'evidence.mapped' || mapped.payload?.kind !== 'verify.reverified'
-      || mapped.payload?.worker !== task.assignee || source?.kind !== 'verify.reverified'
-      || source.actor !== 'policy' || source.worker !== task.assignee || source.taskId !== task.id
-      || source.payload?.accept !== true || digest(source) !== mapped.payload.digest) {
-      fail('recovery refinement requires the exact completed hub-verified prior task');
-    }
-    return { terminal, mapped, source };
+    return coordinationReplay._verifiedRecoveryPrior(this, task, integrity);
   }
-
   _recoveryAttemptFailure(message, code, integrity = false) {
-    throw integrity
-      ? new CoordinationIntegrityError(message, 'recovery_attempt_integrity')
-      : new CoordinationRefusal(message, code);
+    return coordinationReplay._recoveryAttemptFailure(message, code, integrity);
   }
-
   _normalizeRecoveryAttemptAdmission(payload, integrity = false) {
-    try { return normalizeRecoveryAttemptAdmission(payload); }
-    catch (error) {
-      this._recoveryAttemptFailure(
-        error?.message ?? 'recovery attempt admission is invalid',
-        'recovery_attempt_invalid', integrity,
-      );
-    }
+    return coordinationReplay._normalizeRecoveryAttemptAdmission(this, payload, integrity);
   }
-
   _normalizeRecoveryAttemptCompletion(payload, integrity = false) {
-    try { return normalizeRecoveryAttemptCompletion(payload); }
-    catch (error) {
-      this._recoveryAttemptFailure(
-        error?.message ?? 'recovery attempt completion is invalid',
-        'recovery_attempt_completion_invalid', integrity,
-      );
-    }
+    return coordinationReplay._normalizeRecoveryAttemptCompletion(this, payload, integrity);
   }
 
   _validateRecoveryAttemptAdmissionPayload(payload, event, integrity = false) {
@@ -3273,56 +2650,14 @@ export class CoordinationStore {
     if (!boundedText(event?.actor, 4_096)) fail('recovery attempt actor is invalid', 'recovery_attempt_invalid');
     return p;
   }
-
   _validateRecoveryAttemptCompletionPayload(payload, event, integrity = false) {
-    const p = this._normalizeRecoveryAttemptCompletion(payload, integrity);
-    const fail = (message, code) => this._recoveryAttemptFailure(message, code, integrity);
-    const attempt = this._recoveryAttemptsById.get(p.attemptId);
-    if (!attempt || attempt.admissionDigest !== p.admissionDigest || attempt.state !== 'pending') {
-      fail('recovery attempt completion does not bind one pending admission', 'recovery_attempt_completion_invalid');
-    }
-    if (event?.actor !== attempt.actor) {
-      fail('recovery attempt completion actor differs from admission', 'recovery_attempt_conflict');
-    }
-    return { payload: p, attempt };
+    return coordinationReplay._validateRecoveryAttemptCompletionPayload(this, payload, event, integrity);
   }
-
   _normalizedRecoveryCreatedPayload(fields, priorTask) {
-    return {
-      id: fields.id,
-      brief: clone(priorTask.brief),
-      deps: [],
-      refines: priorTask.id,
-      runId: priorTask.runId ?? null,
-      taskType: priorTask.taskType ?? 'general',
-      reservedWorkerId: priorTask.reservedWorkerId,
-      vendorRequested: priorTask.vendorRequested ?? null,
-      modelRequested: priorTask.modelRequested ?? null,
-      modelPolicy: clone(priorTask.modelPolicy ?? null),
-      effortRequested: priorTask.effortRequested ?? null,
-      sessionRequest: clone(fields.sessionRequest),
-      relation: 'recovery',
-      worktreeBaseSha: priorTask.worktreeBaseSha ?? null,
-      review: clone(priorTask.review ?? null),
-    };
+    return coordinationReplay._normalizedRecoveryCreatedPayload(fields, priorTask);
   }
-
   _normalizedRecoveryClaimedPayload(createdPayload, attribution) {
-    return {
-      id: createdPayload.id,
-      worker: createdPayload.reservedWorkerId,
-      expectedVersion: 1,
-      newVersion: 2,
-      harnessRequested: attribution.harnessRequested,
-      harnessResolved: attribution.harnessResolved,
-      modelRequested: createdPayload.modelRequested,
-      modelResolved: attribution.modelResolved,
-      modelObserved: attribution.modelObserved,
-      effortRequested: createdPayload.effortRequested,
-      effortResolved: attribution.effortResolved,
-      effortObserved: attribution.effortObserved,
-      routeKey: attribution.routeKey,
-    };
+    return coordinationReplay._normalizedRecoveryClaimedPayload(createdPayload, attribution);
   }
 
   _validateRecoverySessionRequest(sessionRequest, priorTask, fail) {
@@ -3410,43 +2745,8 @@ export class CoordinationStore {
     }
     return this._normalizedRecoveryCreatedPayload(fields, priorTask);
   }
-
   _validateRecoveryRefinementPair(createdEvent, claimedEvent, integrity = false) {
-    const fail = (message) => this._recoveryFailure(message, 'recovery_batch_integrity', integrity);
-    const created = createdEvent?.payload;
-    const priorTask = this._tasks.get(created?.refines);
-    const createdFields = [
-      'brief', 'deps', 'effortRequested', 'id', 'modelPolicy', 'modelRequested', 'refines', 'relation',
-      'reservedWorkerId', 'review', 'runId', 'sessionRequest', 'taskType', 'vendorRequested', 'worktreeBaseSha',
-    ];
-    const claimFields = [
-      'effortObserved', 'effortRequested', 'effortResolved', 'expectedVersion', 'harnessRequested',
-      'harnessResolved', 'id', 'modelObserved', 'modelRequested', 'modelResolved', 'newVersion', 'routeKey', 'worker',
-    ];
-    if (!created || Object.keys(created).sort().join(',') !== createdFields.sort().join(',')
-      || !claimedEvent?.payload || Object.keys(claimedEvent.payload).sort().join(',') !== claimFields.sort().join(',')) {
-      fail('recovery refinement batch payload is open or malformed');
-    }
-    this._verifiedRecoveryPrior(priorTask, integrity);
-    this._validateRecoverySessionRequest(created.sessionRequest, priorTask, fail);
-    const expectedCreated = this._normalizedRecoveryCreatedPayload(created, priorTask);
-    const claimed = claimedEvent.payload;
-    const expectedClaimed = this._normalizedRecoveryClaimedPayload(created, {
-      harnessRequested: claimed.harnessRequested,
-      harnessResolved: claimed.harnessResolved,
-      modelRequested: claimed.modelRequested,
-      modelResolved: claimed.modelResolved,
-      modelObserved: claimed.modelObserved,
-      effortRequested: claimed.effortRequested,
-      effortResolved: claimed.effortResolved,
-      effortObserved: claimed.effortObserved,
-      routeKey: claimed.routeKey,
-    });
-    if (canonicalDigest(created) !== canonicalDigest(expectedCreated)
-      || canonicalDigest(claimed) !== canonicalDigest(expectedClaimed)) {
-      fail('recovery refinement batch changes prior lineage or claim identity');
-    }
-    return { created: expectedCreated, claimed: expectedClaimed };
+    return coordinationReplay._validateRecoveryRefinementPair(this, createdEvent, claimedEvent, integrity);
   }
 
   _validateRecoveryContinuationPayload(p, event, integrity = false) {
@@ -3523,61 +2823,8 @@ export class CoordinationStore {
       intentSeq: event.seq, status: 'dispatch_unknown', receiptSeq: null,
     });
   }
-
   _validateRecoveryDispositionPayload(p, event, integrity = false) {
-    const disposition = p?.kind === 'recovery.dispatch_accepted'
-      ? 'dispatch_accepted'
-      : p?.kind === 'recovery.dispatch_refused' ? 'dispatch_refused' : null;
-    const fields = [
-      'adapterCardDigest', 'briefDigest', 'contextDigest', 'intentSeq', 'kind', 'priorTaskId',
-      'processGeneration', 'routeDigest', 'schemaVersion', 'sessionId', 'taskId', 'workerId',
-      ...(disposition === 'dispatch_refused' ? ['code', 'evidence'] : []),
-    ];
-    const fail = (message, code = 'recovery_dispatch_integrity') => this._recoveryFailure(message, code, integrity);
-    if (!disposition || !p || Object.keys(p).sort().join(',') !== fields.sort().join(',')
-      || p.schemaVersion !== 1 || !Number.isSafeInteger(p.intentSeq) || p.intentSeq <= 0) {
-      fail('recovery dispatch disposition is malformed');
-    }
-    const current = this._recoveryDispatches.get(p.workerId);
-    const exact = current?.status === 'dispatch_unknown' && p.intentSeq === current.intentSeq
-      && p.taskId === current.taskId && p.priorTaskId === current.priorTaskId
-      && p.sessionId === current.sessionId && p.processGeneration === current.processGeneration
-      && p.briefDigest === current.briefDigest && p.contextDigest === current.contextDigest
-      && p.routeDigest === current.routeDigest && p.adapterCardDigest === current.adapterCardDigest;
-    if (!exact) fail('recovery dispatch disposition does not close the exact unknown intent');
-    if (disposition === 'dispatch_refused') {
-      if (p.code !== 'not_sent' || !p.evidence || !Number.isSafeInteger(p.evidence.coordinationSeq)) {
-        fail('recovery refusal lacks a closed not-sent proof');
-      }
-      const mapped = this._events[p.evidence.coordinationSeq - 1];
-      if (mapped?.kind !== 'evidence.mapped'
-        || canonicalDigest({ ...mapped.payload, coordinationSeq: mapped.seq }) !== canonicalDigest(p.evidence)) {
-        fail('recovery refusal evidence is not authoritative');
-      }
-      const source = this._operationalRead?.(mapped.payload.worker, mapped.payload.workerSeq);
-      const proofFields = [
-        'action', 'adapterCardDigest', 'briefDigest', 'code', 'contextDigest', 'intentSeq',
-        'observedDispatchFacts', 'priorTaskId', 'processGeneration', 'routeDigest', 'schemaVersion',
-        'sessionId', 'taskId', 'workerId',
-      ];
-      const proof = source?.payload;
-      if (mapped.payload.kind !== 'control.recovery_dispatch_refused'
-        || source?.kind !== 'control.recovery_dispatch_refused' || source.actor !== 'policy'
-        || source.worker !== p.workerId
-        || digest(source) !== mapped.payload.digest
-        || !proof || Object.keys(proof).sort().join(',') !== proofFields.sort().join(',')
-        || proof.schemaVersion !== 1 || proof.code !== 'not_sent'
-        || proof.action !== 'kill_untrusted_transport'
-        || !Array.isArray(proof.observedDispatchFacts) || proof.observedDispatchFacts.length !== 0
-        || proof.workerId !== p.workerId || proof.taskId !== p.taskId
-        || proof.priorTaskId !== p.priorTaskId || proof.sessionId !== p.sessionId
-        || proof.processGeneration !== p.processGeneration || proof.intentSeq !== p.intentSeq
-        || proof.briefDigest !== p.briefDigest || proof.contextDigest !== p.contextDigest
-        || proof.routeDigest !== p.routeDigest || proof.adapterCardDigest !== p.adapterCardDigest) {
-        fail('recovery refusal evidence is not exact zero-fact not-sent testimony');
-      }
-    }
-    return freeze({ ...clone(current), status: disposition, receiptSeq: event.seq });
+    return coordinationReplay._validateRecoveryDispositionPayload(this, p, event, integrity);
   }
 
   _representationFailure(message, code = 'representation_integrity', integrity = false) {
@@ -4251,16 +3498,8 @@ export class CoordinationStore {
     }
     return { adverse, inheritedMigration, inheritedSourceFindingId, predecessorFindingId };
   }
-
   _ttlTarget(decision) {
-    const node = this._knowledgeNodes.get(decision.nodeId); const findingId = `finding:dependency-dossier:${decision.dossierRef.digest}`;
-    const finding = this._knowledgeNodes.get(findingId);
-    return {
-      decisionId: decision.id, nodeId: decision.nodeId, subjectDigest: decision.subjectDigest,
-      expectedValidityVersion: node?.validityVersion ?? null, dossierFindingId: finding && !finding.validTo ? findingId : null,
-      affectedDecisionReadEvents: this._knowledgeReads.filter((read) => read.nodeIds.includes(decision.nodeId)).map((read) => read.eventSeq),
-      affectedFindingReadEvents: finding && !finding.validTo ? this._knowledgeReads.filter((read) => read.nodeIds.includes(findingId)).map((read) => read.eventSeq) : [],
-    };
+    return coordinationInternals._ttlTarget(this, decision);
   }
 
   _validateReuseTtlPayload(p, event, integrity = false) {
@@ -4290,10 +3529,8 @@ export class CoordinationStore {
     const ids = this._providerPending.get(this._providerCoordinateKey(repoId, coordinate)) ?? new Set();
     return [...ids].map((id) => this._providerProcessing.get(id)).filter(Boolean).sort((a, b) => compareCanonicalStrings(a.id, b.id));
   }
-
   _providerAdverseCeilings(repoId) {
-    const transition = [...this._reusePolicyTransitions].reverse().find((item) => item.repoId === repoId);
-    return transition?.ceilings ?? { maxDecisionTargets: 100_000, maxGuardTargets: 100_000, maxAffectedReads: 1_000_000, maxStateRows: 1_000_000, maxEventBytes: 64 * 1024 * 1024 };
+    return coordinationInternals._providerAdverseCeilings(this._reusePolicyTransitions, repoId);
   }
 
   _providerAdverseTargets(repoId, coordinate, ceilings = this._providerAdverseCeilings(repoId)) {
@@ -4314,10 +3551,8 @@ export class CoordinationStore {
     }
     return { targets: targets.sort((a, b) => compareCanonicalStrings(a.decisionId, b.decisionId)), examinedStateRows, affectedReads, derivationOverflow };
   }
-
   _providerContribution(row, processing, policy) {
-    const id = `provider-contribution:${canonicalDigest({ repoId: processing.repoId, coordinate: row.coordinate, providerId: processing.providerId, sourceEpoch: processing.sourceEpoch, officialFactDigest: row.snapshot.factDigest })}`;
-    return freeze({ id, repoId: processing.repoId, coordinate: clone(row.coordinate), providerId: processing.providerId, sourceEpoch: processing.sourceEpoch, officialFactDigest: row.snapshot.factDigest, dossierDigest: row.dossierRef.digest, policyHash: policy.hash, recommendation: row.snapshot.recommendation, asOf: row.snapshot.asOf, expiresAt: row.snapshot.expiresAt, advisoryIds: clone(row.advisoryIds), maliciousAdvisoryIds: clone(row.maliciousAdvisoryIds) });
+    return coordinationInternals._providerContribution(row, processing, policy);
   }
 
   _providerAggregate(repoId, coordinate, contribution, policy) {
@@ -4494,23 +3729,11 @@ export class CoordinationStore {
     const exactEvent = { schemaVersion: 1, seq: event.seq, ts: event.ts, kind: 'knowledge.reuse_provider_guarded', actor: event.actor, idempotencyKey: event.idempotencyKey, payload: p };
     if (Buffer.byteLength(`${JSON.stringify(exactEvent)}\n`) > ceilings.maxEventBytes) fail('provider adverse completion exceeded event byte ceiling', 'reuse_risk_oversize');
   }
-
   _setKnowledgeNode(event, id, value) {
-    const node = freeze(clone(value)); this._knowledgeNodes.set(id, node);
-    this._knowledgeWriteThisEvent = true;
-    const history = this._knowledgeNodeHistory.get(id) ?? [];
-    const version = freeze({ observedSeq: event.seq, observedAt: event.ts, value: node });
-    if (history.at(-1)?.observedSeq === event.seq) history[history.length - 1] = version; else history.push(version);
-    this._knowledgeNodeHistory.set(id, history);
+    return coordinationInternals._setKnowledgeNode(this, event, id, value);
   }
-
   _setKnowledgeEdge(event, id, value) {
-    const edge = freeze(clone(value)); this._knowledgeEdges.set(id, edge);
-    this._knowledgeWriteThisEvent = true;
-    const history = this._knowledgeEdgeHistory.get(id) ?? [];
-    const version = freeze({ observedSeq: event.seq, observedAt: event.ts, value: edge });
-    if (history.at(-1)?.observedSeq === event.seq) history[history.length - 1] = version; else history.push(version);
-    this._knowledgeEdgeHistory.set(id, history);
+    return coordinationInternals._setKnowledgeEdge(this, event, id, value);
   }
 
   _knowledgeVersionsAt(history, observedSeq, observedAt) {
@@ -4695,23 +3918,8 @@ export class CoordinationStore {
     const core = clone(receipt); delete core.receiptDigest;
     return receipt.receiptDigest === canonicalDigest(core);
   }
-
   _validPreservedContinuationReceipt(receipt) {
-    if (receipt === null) return true;
-    const fields = [
-      'preservationReceiptDigest', 'providerAdmissionSeq', 'receiptDigest', 'routeDigest',
-      'schemaVersion', 'sessionDigest', 'state', 'taskBindingDigest', 'turnEpoch',
-    ];
-    if (!receipt || typeof receipt !== 'object' || Array.isArray(receipt)
-      || Object.keys(receipt).sort().join(',') !== fields.sort().join(',')
-      || receipt.schemaVersion !== 1 || receipt.state !== 'admitted'
-      || (receipt.providerAdmissionSeq !== null
-        && (!Number.isSafeInteger(receipt.providerAdmissionSeq) || receipt.providerAdmissionSeq <= 0))
-      || !Number.isSafeInteger(receipt.turnEpoch) || receipt.turnEpoch <= 0
-      || ['preservationReceiptDigest', 'sessionDigest', 'taskBindingDigest', 'routeDigest',
-        'receiptDigest'].some((field) => !/^[a-f0-9]{64}$/u.test(receipt[field] ?? ''))) return false;
-    const core = clone(receipt); delete core.receiptDigest;
-    return receipt.receiptDigest === canonicalDigest(core);
+    return coordinationReplay._validPreservedContinuationReceipt(receipt);
   }
 
   _validateRunControlAdmission(p, event, integrity = false) {
@@ -6016,10 +5224,8 @@ export class CoordinationStore {
     }
     return freeze({ cell, result: freeze(clone(expectedResult)), settlementCore });
   }
-
   _contextCallRunId(call) {
-    return call?.kind === 'baton.context_effect_call'
-      ? call.authority?.contextPrincipal?.runId ?? null : call?.source?.runId ?? null;
+    return coordinationInternals._contextCallRunId(call);
   }
 
   _validateContextMapCallAdmissionPayload(payload, event, integrity = false) {
@@ -7145,28 +6351,14 @@ export class CoordinationStore {
   _normalizeContextEffectCleanupReceipt(call, children, value, integrity = false) {
     return this._normalizeContextCleanupReceipt(call, 'effect', children, value, integrity);
   }
-
   _contextArtifactVerification() {
-    return this._contextArtifactVerificationStorage.getStore()
-      ?? { calls: new Map(), references: new Map(), activeCalls: new Set() };
+    return coordinationInternals._contextArtifactVerification(this._contextArtifactVerificationStorage);
   }
-
   withContextArtifactVerification(operation) {
-    if (typeof operation !== 'function') {
-      throw new TypeError('Context artifact verification operation is invalid');
-    }
-    if (this._contextArtifactVerificationStorage.getStore()) return operation();
-    return this._contextArtifactVerificationStorage.run({
-      calls: new Map(), references: new Map(), activeCalls: new Set(),
-    }, operation);
+    return coordinationInternals.withContextArtifactVerification(this._contextArtifactVerificationStorage, operation);
   }
-
   _contextArtifactRead(reference, verification) {
-    const key = canonicalDigest(reference);
-    if (verification.references.has(key)) return verification.references.get(key);
-    const value = this._contextReferenceRead(reference);
-    verification.references.set(key, value);
-    return value;
+    return coordinationInternals._contextArtifactRead(this, reference, verification);
   }
 
   _validateContextProviderResults(call, kind, children, cleanup, values, integrity = false,
@@ -7418,17 +6610,8 @@ export class CoordinationStore {
       return fail(error?.message ?? 'Context map result lineage changed');
     }
   }
-
   _contextEffectCallCore(call) {
-    return {
-      schemaVersion: call.schemaVersion, kind: call.kind, operator: call.operator,
-      requestId: call.requestId, requestDigest: call.requestDigest,
-      generation: call.generation, predecessorCall: clone(call.predecessorCall),
-      executionUnitIds: clone(call.executionUnitIds),
-      inheritedChildren: clone(call.inheritedChildren), authority: clone(call.authority),
-      source: clone(call.source), role: call.role, instruction: call.instruction,
-      units: clone(call.units), callId: call.callId, callDigest: call.callDigest,
-    };
+    return coordinationInternals._contextEffectCallCore(call);
   }
 
   _validateContextEffectResultLineageEvidence(
@@ -9310,11 +8493,8 @@ export class CoordinationStore {
       this._projectionInputFence += 1;
     }
   }
-
   events(fromSeq = 1, limit = null) {
-    const start = Number.isSafeInteger(fromSeq) ? Math.max(0, fromSeq - 1) : 0;
-    if (limit !== null && (!Number.isSafeInteger(limit) || limit <= 0)) throw new TypeError('event read limit must be a positive safe integer');
-    return this._events.slice(start, limit === null ? undefined : start + limit).map(clone);
+    return coordinationInternals.events(this._events, fromSeq, limit);
   }
 
   // #227 (2026-08-15): the O(1) ledger cursor. Delta consumers (waves.progress sinceSeq)
@@ -9366,28 +8546,28 @@ export class CoordinationStore {
     });
   }
   observationTime(observedSeq = this._events.length) {
-    if (!Number.isSafeInteger(observedSeq) || observedSeq < 0 || observedSeq > this._events.length) throw new TypeError('observation boundary must be a valid coordination sequence');
-    return observedSeq === 0 ? null : this._events[observedSeq - 1].ts;
+    return coordinationInternals.observationTime(this, observedSeq);
   }
-  task(id) { return clone(this._tasks.get(id) ?? null); }
-  run(id) { return clone(this._runs.get(id) ?? null); }
+  task(id) {
+    return coordinationInternals.task(this._tasks, id);
+  }
+  run(id) {
+    return coordinationInternals.run(this._runs, id);
+  }
   routePolicy() { return clone(this._routePolicy); }
   representationPolicy() { return clone(this._representationPolicy); }
   goalPlanPolicy() { return clone(this._goalPlanPolicy); }
   workflowPolicy() { return clone(this._workflowPolicy); }
   contextProgramPolicy() { return clone(this._contextProgramPolicy); }
   contextProgramAuthority() {
-    if (!this._contextProgramPolicy) return null;
-    return freeze({
-      schemaVersion: 1,
-      deploymentBaseSha: this._deploymentBaseSha,
-      environmentDigest: this._contextEnvironmentDigest,
-      policyDigest: this._contextProgramPolicy.policyDigest,
-      referenceIdentity: this._contextReferenceIdentity,
-    });
+    return coordinationInternals.contextProgramAuthority(this);
   }
-  contextSession(sessionId) { return clone(this._contextSessions.get(sessionId) ?? null); }
-  contextCell(cellId) { return clone(this._contextCells.get(cellId) ?? null); }
+  contextSession(sessionId) {
+    return coordinationInternals.contextSession(this._contextSessions, sessionId);
+  }
+  contextCell(cellId) {
+    return coordinationInternals.contextCell(this._contextCells, cellId);
+  }
   contextCall(callId) {
     const admitted = this._contextCalls.get(callId);
     if (!admitted) return null;
@@ -9884,38 +9064,14 @@ export class CoordinationStore {
   // Sanitization (Part D, F14): branch content is untrusted input to every reader — the
   // application layer projects it through `boundedAttentionText`/`SECRET_SHAPED_TEXT` with
   // untrusted-prose provenance marking before it reaches a Brief/RunView/MCP surface.
-
   contextPackage(packageDigest) {
-    const record = this._contextPackages.get(packageDigest);
-    if (!record) return null;
-    const packageEvent = this._contextPackageProvenance(record);
-    return freeze({
-      schemaVersion: record.schemaVersion, kind: record.kind,
-      packageId: `context-package:${record.packageDigest}`, packageDigest: record.packageDigest,
-      branches: clone(record.branches),
-      provenance: {
-        runId: record.provenance.runId, principalId: record.provenance.principalId, packageEvent,
-      },
-      policyDigest: record.policyDigest, admittedEvent: record.admittedEvent, admittedAt: record.admittedAt,
-    });
+    return coordinationInternals.contextPackage(this, packageDigest);
   }
-
   contextPackageAttachments(runId) {
-    return (this._contextPackageAttachments.get(runId) ?? []).map(clone);
+    return coordinationInternals.contextPackageAttachments(this._contextPackageAttachments, runId);
   }
-
   _contextPackageProvenance(record) {
-    const source = this._events[record.admittedEvent - 1];
-    const expectedPayload = {
-      schemaVersion: record.schemaVersion, kind: record.kind, branches: record.branches,
-      provenance: record.provenance, policyDigest: record.policyDigest, packageDigest: record.packageDigest,
-    };
-    if (!source || source.kind !== 'package.admitted' || source.seq !== record.admittedEvent
-      || canonicalDigest(source.payload) !== canonicalDigest(expectedPayload)) {
-      throw new CoordinationIntegrityError('Context package provenance source binding is invalid',
-        'package_provenance_integrity');
-    }
-    return freeze({ sourceEventSeq: source.seq, sourceEventDigest: canonicalDigest(source) });
+    return coordinationInternals._contextPackageProvenance(this, record);
   }
 
   _normalizeContextPackageSourceRef(value, integrity) {
@@ -10980,9 +10136,8 @@ export class CoordinationStore {
     }
     return freeze({ ok: true, result: 'admitted', event: clone(event), call: projected });
   }
-
   taskResourceRelease(taskId) {
-    return clone(this._taskResourceReleases.get(taskId) ?? null);
+    return coordinationInternals.taskResourceRelease(this._taskResourceReleases, taskId);
   }
 
   recordTaskResourceRelease(fields, auth) {
@@ -11302,62 +10457,11 @@ export class CoordinationStore {
     this._workflowRevisionAuthority(state.plan, state.node);
     return state;
   }
-
   reconcilePlanGatedTask(taskId, gate, route, auth) {
-    if (!this._goalPlanPolicy) throw new CoordinationRefusal('goal/plan authority is not configured', 'goal_plan_unavailable');
-    const prior = this._byKey.get(auth?.key); const taskEvent = prior ? this._events[prior.seq] : null;
-    const binding = prior?.payload?.binding;
-    const expectedBinding = gate && typeof gate === 'object' ? {
-      goalId: gate.goalId, goalVersion: gate.goalVersion, goalDigest: gate.goalDigest,
-      planId: gate.planId, planVersion: gate.planVersion, planDigest: gate.planDigest, nodeKey: gate.nodeKey,
-    } : null;
-    const observedBinding = binding ? {
-      goalId: binding.goalId, goalVersion: binding.goalVersion, goalDigest: binding.goalDigest,
-      planId: binding.planId, planVersion: binding.planVersion, planDigest: binding.planDigest, nodeKey: binding.nodeKey,
-    } : null;
-    if (!prior || prior.kind !== 'plan.node_dispatched' || prior.actor !== auth.actor
-      || prior.payload?.taskId !== taskId || taskEvent?.kind !== 'task.created'
-      || taskEvent.batch?.id !== prior.batch?.id || taskEvent.payload?.id !== taskId
-      || gate?.expectedDispatchVersion !== 0
-      || canonicalDigest(expectedBinding) !== canonicalDigest(observedBinding)
-      || canonicalDigest(gate?.capabilities) !== canonicalDigest(prior.payload?.capabilities)
-      || canonicalDigest(gate?.effects) !== canonicalDigest(prior.payload?.effects)
-      || Object.hasOwn(gate ?? {}, 'requiredEffects') !== Object.hasOwn(prior.payload ?? {}, 'requiredEffects')
-      || canonicalDigest(gate?.requiredEffects ?? []) !== canonicalDigest(prior.payload?.requiredEffects ?? [])
-      || canonicalDigest(route) !== canonicalDigest(prior.payload?.route)) {
-      throw new CoordinationRefusal('plan dispatch replay differs from the admitted transaction', 'plan_dispatch_conflict');
-    }
-    return freeze({ ok: true, result: 'reconciled', dispatchEvent: clone(prior), taskEvent: clone(taskEvent), task: this.task(taskId), dispatch: clone(prior.payload) });
+    return coordinationReplay.reconcilePlanGatedTask(this, taskId, gate, route, auth);
   }
-
   reconcilePlanRevisionTask(taskId, gate, route, auth) {
-    const prior = this._byKey.get(auth?.key); const taskEvent = prior ? this._events[prior.seq] : null;
-    const binding = prior?.payload?.binding;
-    const expected = gate && typeof gate === 'object' ? {
-      goalId: gate.goalId, goalVersion: gate.goalVersion, goalDigest: gate.goalDigest,
-      planId: gate.planId, planVersion: gate.planVersion, planDigest: gate.planDigest,
-      nodeKey: gate.nodeKey,
-    } : null;
-    const observed = binding ? {
-      goalId: binding.goalId, goalVersion: binding.goalVersion, goalDigest: binding.goalDigest,
-      planId: binding.planId, planVersion: binding.planVersion, planDigest: binding.planDigest,
-      nodeKey: binding.nodeKey,
-    } : null;
-    const plan = binding ? this._plans.get(this._planVersionKey(binding.planId, binding.planVersion)) : null;
-    const node = plan?.nodes.find((row) => row.key === binding?.nodeKey);
-    if (!prior || prior.kind !== 'plan.node_dispatched' || prior.actor !== auth?.actor
-      || prior.payload?.taskId !== taskId || taskEvent?.kind !== 'task.created'
-      || taskEvent.batch?.id !== prior.batch?.id || gate?.expectedDispatchVersion !== 0
-      || canonicalDigest(expected) !== canonicalDigest(observed)
-      || canonicalDigest(gate?.capabilities) !== canonicalDigest(prior.payload?.capabilities)
-      || canonicalDigest(gate?.effects) !== canonicalDigest(prior.payload?.effects)
-      || canonicalDigest(route) !== canonicalDigest(prior.payload?.route)
-      || !node?.revision || canonicalDigest(node.revision) !== canonicalDigest(prior.payload?.revision)) {
-      throw new CoordinationRefusal('Plan revision replay differs from the admitted transaction',
-        'plan_revision_conflict');
-    }
-    return freeze({ ok: true, result: 'reconciled', dispatchEvent: clone(prior),
-      taskEvent: clone(taskEvent), task: this.task(taskId), dispatch: clone(prior.payload) });
+    return coordinationReplay.reconcilePlanRevisionTask(this, taskId, gate, route, auth);
   }
 
   createPlanRevisionTask(fields, gate, route, auth) {
@@ -11583,54 +10687,7 @@ export class CoordinationStore {
   // Reuses the ordinary two-event goal_plan_node_dispatch batch so the integrity walker and the
   // last-wins plan projection pick up the resumed task as the node's current dispatch.
   createAndClaimPreservedResumeRefinement(fields, gate, route, preservedResume, auth) {
-    if (!this._goalPlanPolicy) throw new CoordinationRefusal('goal/plan authority is not configured', 'goal_plan_unavailable');
-    const attestation = this._validPreservedResumeAttestation(preservedResume);
-    if (!attestation) throw new CoordinationRefusal('preserved resume attestation is invalid', 'preserved_resume_invalid');
-    if (!gate || !route || !auth || typeof auth !== 'object') throw new CoordinationRefusal('preserved resume request is invalid', 'preserved_resume_invalid');
-    const requestDigest = goalPlanDigest({ principalId: auth.principalId, gate, route, task: fields, preservedResume: attestation });
-    const prior = this._byKey.get(auth.key);
-    if (prior) {
-      const second = this._events[prior.seq];
-      if (prior.kind !== 'plan.node_dispatched' || prior.actor !== auth.actor || prior.payload?.requestDigest !== requestDigest
-        || second?.kind !== 'task.created' || second.batch?.id !== prior.batch?.id
-        || !this._validPreservedResumeAttestation(prior.payload?.preservedResume)) {
-        throw new CoordinationRefusal('preserved resume idempotency key is bound differently', 'preserved_resume_conflict');
-      }
-      return freeze({ ok: true, result: 'idempotent', dispatchEvent: clone(prior), taskEvent: clone(second), task: this.task(second.payload.id), dispatch: clone(prior.payload) });
-    }
-    const state = this._planDispatchState(gate, route, attestation);
-    if (this._tasks.has(fields?.id)) throw new CoordinationRefusal('plan task id already exists', 'duplicate_task');
-    if (!planBriefMatches(fields?.brief, state.brief, { goalPlanCoordinates: true })
-      || canonicalDigest(fields?.brief?.goalPlan) !== canonicalDigest(state.binding)
-      || canonicalDigest(fields?.brief?.capabilities) !== canonicalDigest(state.node.capabilities)
-      || canonicalDigest(fields?.brief?.effects) !== canonicalDigest(state.node.effects)
-      || canonicalDigest(fields?.brief?.requiredEffects ?? []) !== canonicalDigest(state.node.requiredEffects ?? [])
-      || fields?.brief?.providerTurns !== state.node.budget.providerTurns) throw new CoordinationRefusal('task Brief differs from the approved authoritative Brief', 'plan_brief_mismatch');
-    if (canonicalDigest(fields?.deps ?? []) !== canonicalDigest(state.resolvedDeps)) throw new CoordinationRefusal('task dependencies differ from the plan DAG', 'plan_dependency_mismatch');
-    if (fields?.runId !== state.goal.runId || fields?.vendorRequested !== route.vendor || (fields?.modelRequested ?? null) !== route.model || (fields?.effortRequested ?? null) !== route.effort) throw new CoordinationRefusal('task route differs from the plan dispatch', 'plan_route_mismatch');
-    // The resumed task carries the preserved lineage explicitly; it is not constrained to the
-    // node's DAG dependencies because it re-dispatches the same node, not a successor.
-    if (fields?.refines !== attestation.priorTaskId) throw new CoordinationRefusal('preserved resume lineage does not match the attested prior task', 'preserved_resume_lineage_mismatch');
-    const taskPayload = clone(fields);
-    const dispatchPayload = {
-      schemaVersion: 1, requestDigest,
-      authority: { principalId: auth.principalId, repoId: auth.repoId, runId: auth.runId ?? null },
-      binding: clone(state.binding), taskId: taskPayload.id,
-      taskPayloadDigest: canonicalDigest(taskPayload), expectedDispatchVersion: 0, newDispatchVersion: 1,
-      resolvedDeps: clone(state.resolvedDeps), nodeBudget: clone(state.node.budget),
-      route: clone(route), capabilities: clone(state.node.capabilities), effects: clone(state.node.effects),
-      ...(Object.hasOwn(state.node, 'requiredEffects') ? { requiredEffects: clone(state.node.requiredEffects) } : {}),
-      preservedResume: clone(attestation),
-    };
-    const fixedTs = this._clock();
-    const prospectiveDispatch = { seq: this._events.length + 1, ts: fixedTs, payload: dispatchPayload };
-    const prospectiveTask = { seq: this._events.length + 2, ts: fixedTs, payload: taskPayload };
-    this._validateGoalPlanDispatchPair(prospectiveDispatch, prospectiveTask, false);
-    const [dispatchEvent, taskEvent] = this._appendBatch([
-      { kind: 'plan.node_dispatched', payload: dispatchPayload, auth: { actor: auth.actor, key: auth.key }, fixedTs },
-      { kind: 'task.created', payload: taskPayload, auth: { actor: auth.actor, key: `${auth.key}:task` }, fixedTs },
-    ], 'goal_plan_node_dispatch');
-    return freeze({ ok: true, result: 'created', dispatchEvent: clone(dispatchEvent), taskEvent: clone(taskEvent), task: this.task(taskPayload.id), dispatch: clone(dispatchPayload) });
+    return coordinationReplay.createAndClaimPreservedResumeRefinement(this, fields, gate, route, preservedResume, auth);
   }
 
   createAndClaimPlanRecoveryRefinement(fields, gate, route, attribution, auth) {
@@ -11750,12 +10807,8 @@ export class CoordinationStore {
       claimedEvent: clone(claimedEvent), task, dispatch: clone(dispatchPayload),
     });
   }
-
   unsettledPlanNodeTasks() {
-    return [...this._planTaskLinks.keys()].filter((taskId) => {
-      const task = this._tasks.get(taskId);
-      return task && Number.isSafeInteger(task.terminalEvent) && !this._planBudgetSettlements.has(taskId);
-    }).sort();
+    return coordinationInternals.unsettledPlanNodeTasks(this);
   }
 
   settlePlanNodeBudget(taskId, auth) {
@@ -11865,11 +10918,14 @@ export class CoordinationStore {
     return freeze(status);
   }
   routeObservations() { return [...this._routeObservations.values()].sort((a, b) => a.eventSeq - b.eventSeq).map(clone); }
-  recoveryDispatchState(workerId) { return clone(this._recoveryDispatches.get(workerId) ?? null); }
-  representationProduction(identityDigest) { return clone(this._representations.get(identityDigest) ?? null); }
+  recoveryDispatchState(workerId) {
+    return coordinationReplay.recoveryDispatchState(this, workerId);
+  }
+  representationProduction(identityDigest) {
+    return coordinationInternals.representationProduction(this._representations, identityDigest);
+  }
   representationProductionByRequest(requestDigest) {
-    const binding = this._representationRequests.get(requestDigest);
-    return binding ? this.representationProduction(binding.identityDigest) : null;
+    return coordinationInternals.representationProductionByRequest(this, requestDigest);
   }
   representationProductionAdmission(request, auth) {
     const preview = { actor: auth?.actor, idempotencyKey: auth?.key, seq: this._events.length + 1 };
@@ -11947,40 +11003,7 @@ export class CoordinationStore {
     return freeze({ ok: true, result: 'recorded', event: clone(event), representation: this.representationProduction(derived.identityDigest) });
   }
   reverifyRepresentationProduction(identityDigest, expectedSource = null) {
-    const representation = this._representations.get(identityDigest);
-    if (!representation || !/^[a-f0-9]{64}$/.test(identityDigest ?? '')) throw new CoordinationRefusal('representation is unavailable', 'representation_reverify_unavailable');
-    if (expectedSource !== null) {
-      const sourceFields = Object.keys(representation.source).sort().join(',');
-      const expectedStable = expectedSource && typeof expectedSource === 'object' && !Array.isArray(expectedSource)
-        ? Object.fromEntries(Object.entries(expectedSource).filter(([key]) => key !== 'resultDigest')) : null;
-      const durableStable = Object.fromEntries(Object.entries(representation.source).filter(([key]) => key !== 'resultDigest'));
-      if (!expectedSource || Object.keys(expectedSource).sort().join(',') !== sourceFields
-        || !/^[a-f0-9]{64}$/.test(expectedSource.resultDigest ?? '')
-        || canonicalDigest(expectedStable) !== canonicalDigest(durableStable)) {
-        throw new CoordinationRefusal('fresh source reverify diverged from durable representation', 'representation_reverify_diverged');
-      }
-    }
-    const event = this._events[representation.recordedEvent - 1];
-    const core = Object.fromEntries(Object.entries(event?.payload ?? {}).filter(([key]) => key !== 'productionDigest'));
-    const sourceArtifact = this._artifacts.get(representation.sourceArtifact.id); const receiptArtifact = this._artifacts.get(representation.receiptArtifact.id);
-    const node = this._knowledgeNodes.get(representation.representationId); const sourceNode = this._knowledgeNodes.get(representation.sourceNode.id);
-    const task = this._tasks.get(representation.taskId); const taskNode = this._knowledgeNodes.get(`task:${representation.taskId}`);
-    const edges = representation.edges.map((edge) => this._knowledgeEdges.get(edge.id));
-    if (!event || event.kind !== 'knowledge.representation_produced' || event.payload?.identityDigest !== identityDigest
-      || event.payload.productionDigest !== canonicalDigest(core) || !sourceArtifact || !receiptArtifact
-      || sourceArtifact.supersededBy !== null || receiptArtifact.supersededBy !== null
-      || Object.hasOwn(sourceArtifact, 'acceptanceInvalidation') || Object.hasOwn(receiptArtifact, 'acceptanceInvalidation')
-      || !node || node.validTo !== null || node.grounding !== 'derived' || node.type !== 'Representation'
-      || !sourceNode || sourceNode.validTo !== null || !task || (task.runId ?? null) !== representation.runId
-      || !taskNode || taskNode.validTo !== null || edges.some((edge) => !edge || edge.validTo !== null)
-      || canonicalDigest(sourceArtifact) !== canonicalDigest(representation.sourceArtifact)
-      || canonicalDigest(receiptArtifact) !== canonicalDigest(representation.receiptArtifact)
-      || canonicalDigest(node) !== canonicalDigest(representation.node)
-      || canonicalDigest(sourceNode) !== canonicalDigest(representation.sourceNode)
-      || canonicalDigest(edges) !== canonicalDigest(representation.edges)) {
-      throw new CoordinationIntegrityError('durable representation projection diverged', 'representation_integrity');
-    }
-    return freeze({ ok: true, projection: clone(representation), grounding: 'derived' });
+    return coordinationInternals.reverifyRepresentationProduction(this, identityDigest, expectedSource);
   }
 
   _effectiveRunOrchestratorLeaseState(lease, now = this._clock()) {
@@ -12121,20 +11144,8 @@ export class CoordinationStore {
     return freeze(plans.sort((left, right) => left.version - right.version
       || compareCanonicalStrings(left.planId, right.planId)).map(clone));
   }
-
   goalPlanRunIds(repoId, limit = 100_000) {
-    if (!boundedText(repoId, 256) || !Number.isSafeInteger(limit) || limit <= 0 || limit > 100_000) {
-      throw new TypeError('goal/plan Run index request is invalid');
-    }
-    const ids = [];
-    for (const goal of this._goalHeads.values()) {
-      if (goal.repoId !== repoId || goal.runId === null) continue;
-      ids.push(goal.runId);
-      if (ids.length > limit) throw new CoordinationRefusal(
-        'goal/plan Run index exceeds its bounded ceiling', 'goal_plan_status_oversize',
-      );
-    }
-    return freeze([...new Set(ids)].sort(compareCanonicalStrings));
+    return coordinationInternals.goalPlanRunIds(this._goalHeads, repoId, limit);
   }
 
   /** Bounded dispatches across every Plan generation of one Run's current Goal — the narrow
@@ -12212,17 +11223,17 @@ export class CoordinationStore {
       goals: freeze(goals.map(clone)), plans: freeze(plans.map(clone)),
     });
   }
-  healthCheck() { try { if (!existsSync(this.file)) return this._events.length === 0; const raw = readFileSync(this.file, 'utf8'); return raw.length === 0 || raw.endsWith('\n'); } catch { return false; } }
-  readyTasks() {
-    return [...this._tasks.values()].filter((task) => task.status === 'pending' && task.assignee == null
-      && task.deps.every((dep) => this._tasks.get(dep)?.status === 'completed')).map(clone);
+  healthCheck() {
+    return coordinationInternals.healthCheck(this);
   }
-
-  fleetDrain(id) { return clone(this._fleetDrains.get(id) ?? null); }
-
+  readyTasks() {
+    return coordinationInternals.readyTasks(this._tasks);
+  }
+  fleetDrain(id) {
+    return coordinationInternals.fleetDrain(this._fleetDrains, id);
+  }
   runStop(runId) {
-    const authorityRunId = this._runStopByTarget.get(runId) ?? runId;
-    return clone(this._runStops.get(authorityRunId) ?? null);
+    return coordinationInternals.runStop(this, runId);
   }
 
   runResultAdoption(runId, nodeKey) {
@@ -12535,11 +11546,8 @@ export class CoordinationStore {
       artifacts: prepared.map((manifest) => this.artifact(manifest.id)),
     });
   }
-
   runResultExport(runId, nodeKey) {
-    if (!validRunId(runId) || !boundedText(nodeKey, 256)) throw new TypeError('run result export coordinates are invalid');
-    const state = [...this._runResultExports.values()].find((item) => item.runId === runId && item.nodeKey === nodeKey);
-    return clone(state ?? null);
+    return coordinationInternals.runResultExport(this._runResultExports, runId, nodeKey);
   }
 
   pendingRunResultExports(limit = 1_000) {
@@ -12594,18 +11602,11 @@ export class CoordinationStore {
     const event = this._append('run.result_export_completed', payload, auth);
     return freeze({ ok: true, result: 'completed', event: clone(event), export: this.runResultExport(state.runId, state.nodeKey) });
   }
-
   runControl(controlId) {
-    return clone(this._runControls.get(controlId) ?? null);
+    return coordinationInternals.runControl(this._runControls, controlId);
   }
-
   runControls(runId, limit = 100_000) {
-    if (!validRunId(runId) || !Number.isSafeInteger(limit) || limit <= 0 || limit > 100_000) {
-      throw new TypeError('run control query is invalid');
-    }
-    return [...this._runControls.values()].filter((control) => control.runId === runId)
-      .sort((left, right) => left.admittedEvent - right.admittedEvent)
-      .slice(0, limit).map(clone);
+    return coordinationInternals.runControls(this._runControls, runId, limit);
   }
 
   pendingRunControls(limit = 1_000) {
@@ -12838,12 +11839,11 @@ export class CoordinationStore {
     const event = this._append('fleet.drain_completed', payload, auth);
     return freeze({ ok: true, result: 'completed', event: clone(event), drain: this.fleetDrain(drainId) });
   }
-
-  webCommand(id) { return clone(this._webCommands.get(id) ?? null); }
-
+  webCommand(id) {
+    return coordinationInternals.webCommand(this._webCommands, id);
+  }
   webCommandByScope(scopeKey) {
-    const commandId = this._webCommandScopes.get(scopeKey);
-    return clone(commandId ? this._webCommands.get(commandId) ?? null : null);
+    return coordinationInternals.webCommandByScope(this, scopeKey);
   }
 
   admitWebCommand(fields, auth) {
@@ -12874,12 +11874,11 @@ export class CoordinationStore {
     const event = this._append('web.command_failed', { commandId, outcome: clone(outcome) }, auth);
     return freeze({ ok: true, result: 'failed', event: clone(event), command: this.webCommand(commandId) });
   }
-
-  mcpCall(id) { return clone(this._mcpCalls.get(id) ?? null); }
-
+  mcpCall(id) {
+    return coordinationInternals.mcpCall(this._mcpCalls, id);
+  }
   mcpCallByScope(scopeKey) {
-    const callId = this._mcpCallScopes.get(scopeKey);
-    return clone(callId ? this._mcpCalls.get(callId) ?? null : null);
+    return coordinationInternals.mcpCallByScope(this, scopeKey);
   }
 
   admitMcpCall(fields, auth) {
@@ -12971,49 +11970,8 @@ export class CoordinationStore {
     const event = this._append('task.created', payload, auth);
     return { ok: true, result: 'created', event: clone(event), task: this.task(fields.id) };
   }
-
   createAndClaimRecoveryRefinement(fields, attribution, auth) {
-    const priorTask = this._tasks.get(fields?.refines);
-    if (!priorTask || (fields?.runId != null && this._runs.get(fields.runId)?.status === 'sealed')) {
-      throw new CoordinationRefusal('recovery refinement target is unavailable', 'recovery_refinement_unavailable');
-    }
-    if (priorTask.brief?.goalPlan) {
-      throw new CoordinationRefusal('plan-bound recovery requires a separately approved plan node', 'goal_plan_continuation_not_authorized');
-    }
-    const createdPayload = this._validateRecoveryRefinementRequest(fields, attribution, priorTask, false);
-    const claimedPayload = this._normalizedRecoveryClaimedPayload(createdPayload, attribution);
-    const prior = this._byKey.get(auth?.key);
-    if (prior) {
-      const claimed = this._events[prior.seq];
-      if (prior.kind !== 'task.created' || prior.actor !== auth.actor
-        || canonicalDigest(prior.payload) !== canonicalDigest(createdPayload)
-        || prior.batch?.kind !== 'recovery_refinement_create_claim'
-        || claimed?.kind !== 'task.claimed' || claimed.actor !== auth.actor
-        || claimed.batch?.id !== prior.batch.id
-        || prior.batch.index !== 0 || claimed.batch?.index !== 1
-        || prior.batch.count !== 2 || claimed.batch?.count !== 2 || claimed.ts !== prior.ts
-        || claimed.idempotencyKey !== `${auth.key}:claim`
-        || canonicalDigest(claimed.payload) !== canonicalDigest(claimedPayload)
-        || this._recoveryBatchIdentity('recovery_refinement_create_claim', [prior, claimed]) !== prior.batch.id) {
-        throw new CoordinationRefusal('recovery refinement idempotency conflict', 'recovery_refinement_conflict');
-      }
-      this._validateRecoveryRefinementPair(prior, claimed, false);
-      return freeze({ ok: true, result: 'idempotent', createdEvent: clone(prior), claimedEvent: clone(claimed), task: this.task(fields.id) });
-    }
-    if (this._tasks.has(fields.id)) {
-      throw new CoordinationRefusal('recovery refinement target is unavailable', 'recovery_refinement_unavailable');
-    }
-    this._assertRunAdmissionOpen(fields.runId ?? null);
-    const fixedTs = this._clock();
-    const [createdEvent, claimedEvent] = this._appendBatch([
-      { kind: 'task.created', payload: createdPayload, auth, fixedTs },
-      { kind: 'task.claimed', payload: claimedPayload, auth: { actor: auth.actor, key: `${auth.key}:claim` }, fixedTs },
-    ], 'recovery_refinement_create_claim');
-    const task = this.task(fields.id);
-    if (!task || task.status !== 'working' || task.assignee !== fields.reservedWorkerId || task.version !== 2) {
-      throw new CoordinationIntegrityError('recovery refinement batch did not materialize exactly', 'recovery_refinement_integrity');
-    }
-    return freeze({ ok: true, result: 'claimed', createdEvent: clone(createdEvent), claimedEvent: clone(claimedEvent), task });
+    return coordinationReplay.createAndClaimRecoveryRefinement(this, fields, attribution, auth);
   }
 
   // D1 (KG settlement contract): the dedicated atomic settlement-task API — one hub-internal
@@ -13342,8 +12300,9 @@ export class CoordinationStore {
     const events = this._appendBatch(entries);
     return { ok: true, result: 'transitioned', event: clone(events[0]), task: this.task(id), artifacts: manifests.map((manifest) => this.artifact(manifest.id)), routeObservation: clone(this._routeObservations.get(id) ?? null) };
   }
-
-  artifact(id) { return clone(this._artifacts.get(id) ?? null); }
+  artifact(id) {
+    return coordinationInternals.artifact(this._artifacts, id);
+  }
 
   reusePolicyState(repoId) { return clone(this._reusePolicyHeads.get(repoId) ?? null); }
   activateReusePolicy(fields, auth) {
@@ -13369,21 +12328,17 @@ export class CoordinationStore {
   }
 
   providerReceipt(id) { return clone(this._providerReceipts.get(id) ?? null); }
-  providerProcessing(id) { return clone(this._providerProcessing.get(id) ?? null); }
+  providerProcessing(id) {
+    return coordinationInternals.providerProcessing(this._providerProcessing, id);
+  }
   providerSourceHealth(repoId, providerId, sourceEpoch) { return clone(this._providerSourceHealth.get(this._providerSourceKey(repoId, providerId, sourceEpoch)) ?? null); }
   providerAttemptPolicy() { return clone(this._providerAttemptPolicy); }
-  advisoryFeedCards() { return [...this._advisoryFeedCards.values()].map((entry) => freeze({ ...clone(entry.card), cardDigest: entry.cardDigest })).sort((a, b) => compareCanonicalStrings(a.providerId, b.providerId)); }
+  advisoryFeedCards() {
+    return coordinationInternals.advisoryFeedCards(this._advisoryFeedCards);
+  }
   pendingProviderReconciliation(repoId, coordinate) { return this._providerPendingFor(repoId, coordinate).map(clone); }
-
   dueProviderProcessing(repoId, at) {
-    if (!this._providerAttemptPolicy || !boundedText(repoId, 256) || !Number.isFinite(Date.parse(at)) || new Date(Date.parse(at)).toISOString() !== at) throw new CoordinationRefusal('provider due-read authority is invalid', 'provider_attempt_unavailable');
-    const due = []; let examined = 0;
-    for (const row of this._providerProcessing.values()) {
-      examined += 1; if (examined > this._providerAttemptPolicy.maxStateRows) throw new CoordinationRefusal('provider due derivation exceeded deployment ceiling', 'provider_attempt_oversize');
-      if (row.repoId !== repoId || row.status !== 'pending' || (row.attemptCount ?? 0) - (row.attemptWindowStart ?? 0) >= this._providerAttemptPolicy.maxAttempts || (row.nextAttemptAt && Date.parse(row.nextAttemptAt) > Date.parse(at))) continue;
-      due.push(row.id);
-    }
-    return due.sort().slice(0, this._providerAttemptPolicy.maxBatch);
+    return coordinationInternals.dueProviderProcessing(this, repoId, at);
   }
 
   recordProviderProcessingDeferral(fields, auth) {
@@ -13518,9 +12473,12 @@ export class CoordinationStore {
     const appended = this._append('provider.delivery_received', payload, auth, receivedAt);
     return freeze({ ok: true, result: aliased ? 'aliased' : 'recorded', event: clone(appended), receipt: this.providerReceipt(receiptId), processing: this.providerProcessing(processingId) });
   }
-
-  reuseDecision(id) { return clone(this._reuseDecisions.get(id) ?? null); }
-  reuseSubjectHead(subjectDigest) { const id = this._reuseSubjects.get(subjectDigest); return id ? this.reuseDecision(id) : null; }
+  reuseDecision(id) {
+    return coordinationInternals.reuseDecision(this._reuseDecisions, id);
+  }
+  reuseSubjectHead(subjectDigest) {
+    return coordinationInternals.reuseSubjectHead(this, subjectDigest);
+  }
   currentReuseDecision(subjectDigest) {
     const decision = this.reuseSubjectHead(subjectDigest); if (!decision) return null;
     const policyHead = this._reusePolicyHeads.get(decision.envRef?.repoId); if (policyHead && decision.dossierSnapshot?.policyHash !== policyHead.policyHash) return null;
@@ -13532,7 +12490,9 @@ export class CoordinationStore {
     if (this._providerPendingFor(decision.envRef?.repoId, decision.coordinate).length > 0) return null;
     return decision;
   }
-  reuseRiskGuard(coordinate) { return clone(this._reuseRiskGuards.get(canonicalDigest(coordinate)) ?? null); }
+  reuseRiskGuard(coordinate) {
+    return coordinationInternals.reuseRiskGuard(this._reuseRiskGuards, coordinate);
+  }
   reuseProviderGuard(repoId, coordinate) { return clone(this._reuseProviderGuards.get(this._providerCoordinateKey(repoId, coordinate)) ?? null); }
   reuseAdverseState(repoId, coordinate) { const manual = this.reuseRiskGuard(coordinate); const provider = this.reuseProviderGuard(repoId, coordinate); return freeze({ blocked: manual?.blocked === true || provider?.blocked === true, manual, provider }); }
   reuseDecisionAdmission(key, requestDigest) {
@@ -13626,84 +12586,20 @@ export class CoordinationStore {
     const event = this._append('artifact.superseded', { oldId, newId, expectedVersion, newVersion: expectedVersion + 1 }, auth);
     return { ok: true, result: 'superseded', event: clone(event), artifact: this.artifact(oldId) };
   }
-
   admitRecoveryAttempt(fields, auth) {
-    const prior = this._byKey.get(auth?.key);
-    if (prior) {
-      this._normalizeRecoveryAttemptAdmission(fields, false);
-      if (prior.kind !== 'recovery.attempt_admitted' || prior.actor !== auth?.actor
-        || canonicalDigest(prior.payload) !== canonicalDigest(fields)) {
-        throw new CoordinationRefusal('recovery attempt admission idempotency conflict', 'recovery_attempt_conflict');
-      }
-      const attempt = this.recoveryAttempt(prior.payload.attemptId);
-      if (!attempt || attempt.admittedEvent !== prior.seq) {
-        throw new CoordinationIntegrityError('recovery attempt projection is absent', 'recovery_attempt_integrity');
-      }
-      return freeze({ ok: true, result: 'replay', event: clone(prior), attempt });
-    }
-    const prospective = {
-      schemaVersion: 1, seq: this._events.length + 1, ts: this._clock(),
-      kind: 'recovery.attempt_admitted', actor: auth?.actor,
-      idempotencyKey: auth?.key, payload: clone(fields),
-    };
-    const admission = this._validateRecoveryAttemptAdmissionPayload(fields, prospective, false);
-    if (auth?.key !== `recovery.attempt:${admission.attemptId}`) {
-      throw new CoordinationRefusal('recovery attempt idempotency key is invalid', 'recovery_attempt_invalid');
-    }
-    const event = this._append('recovery.attempt_admitted', clone(admission), auth, prospective.ts);
-    const attempt = this.recoveryAttempt(admission.attemptId);
-    if (!attempt || attempt.state !== 'pending' || attempt.admittedEvent !== event.seq) {
-      throw new CoordinationIntegrityError('recovery attempt admission did not materialize', 'recovery_attempt_integrity');
-    }
-    return freeze({ ok: true, result: 'admitted', event: clone(event), attempt });
+    return coordinationReplay.admitRecoveryAttempt(this, fields, auth);
   }
-
   completeRecoveryAttempt(fields, auth) {
-    const prior = this._byKey.get(auth?.key);
-    if (prior) {
-      if (prior.kind !== 'recovery.attempt_completed' || prior.actor !== auth?.actor
-        || canonicalDigest(prior.payload) !== canonicalDigest(fields)) {
-        throw new CoordinationRefusal('recovery attempt completion idempotency conflict', 'recovery_attempt_conflict');
-      }
-      const attempt = this.recoveryAttempt(prior.payload.attemptId);
-      if (!attempt || attempt.completedEvent !== prior.seq) {
-        throw new CoordinationIntegrityError('recovery attempt completion projection is absent', 'recovery_attempt_integrity');
-      }
-      return freeze({ ok: true, result: 'replay', event: clone(prior), attempt });
-    }
-    const prospective = {
-      schemaVersion: 1, seq: this._events.length + 1, ts: this._clock(),
-      kind: 'recovery.attempt_completed', actor: auth?.actor,
-      idempotencyKey: auth?.key, payload: clone(fields),
-    };
-    const completion = this._validateRecoveryAttemptCompletionPayload(fields, prospective, false);
-    if (auth?.key !== `recovery.attempt.complete:${completion.payload.attemptId}`) {
-      throw new CoordinationRefusal('recovery attempt completion key is invalid', 'recovery_attempt_completion_invalid');
-    }
-    const event = this._append('recovery.attempt_completed', clone(completion.payload), auth, prospective.ts);
-    const attempt = this.recoveryAttempt(completion.payload.attemptId);
-    if (!attempt || attempt.state !== completion.payload.state || attempt.completedEvent !== event.seq) {
-      throw new CoordinationIntegrityError('recovery attempt completion did not materialize', 'recovery_attempt_integrity');
-    }
-    return freeze({ ok: true, result: 'completed', event: clone(event), attempt });
+    return coordinationReplay.completeRecoveryAttempt(this, fields, auth);
   }
-
   recoveryAttempt(attemptId) {
-    return clone(this._recoveryAttemptsById.get(attemptId) ?? null);
+    return coordinationReplay.recoveryAttempt(this, attemptId);
   }
-
   recoveryAttemptHead(seriesId) {
-    const attemptId = this._recoveryAttemptHeads.get(seriesId);
-    return attemptId ? this.recoveryAttempt(attemptId) : null;
+    return coordinationReplay.recoveryAttemptHead(this, seriesId);
   }
-
   pendingRecoveryAttempts(limit = 1_000) {
-    if (!Number.isSafeInteger(limit) || limit <= 0 || limit > 100_000) {
-      throw new TypeError('recovery attempt scan limit is invalid');
-    }
-    return [...this._recoveryAttemptsById.values()].filter((attempt) => attempt.state === 'pending')
-      .sort((left, right) => left.admittedEvent - right.admittedEvent)
-      .slice(0, limit).map(clone);
+    return coordinationReplay.pendingRecoveryAttempts(this, limit);
   }
 
   recordDriver(kind, payload, auth) {
@@ -13747,40 +12643,8 @@ export class CoordinationStore {
   // Expiry is distinct from supersession: an expired pack refuses materialization with
   // context_pack_expired without ever being superseded.
   // -------------------------------------------------------------------------
-
   _prepareContextPackPayload(fields) {
-    const validity = fields?.validity ?? DEFAULT_CONTEXT_PACK_VALIDITY;
-    if (!fields || typeof fields !== 'object' || Array.isArray(fields)
-      || Object.keys(fields).some((key) => !['type', 'body', 'validity', 'predecessor'].includes(key))
-      || typeof fields.type !== 'string' || !/^[a-z][a-z0-9_-]{0,63}$/u.test(fields.type)
-      || typeof fields.body !== 'string' || fields.body.length === 0
-      || Buffer.byteLength(fields.body) > MAX_CONTEXT_PACK_BODY_BYTES
-      || typeof validity !== 'string' || !Number.isFinite(Date.parse(validity))
-      || new Date(Date.parse(validity)).toISOString() !== validity
-      || (fields.predecessor != null && (typeof fields.predecessor !== 'string'
-        || !this._contextPacks.has(fields.predecessor)))) {
-      throw new CoordinationRefusal('context pack mint is invalid', 'context_pack_invalid');
-    }
-    const headId = this._contextPackHeads.get(fields.type) ?? null;
-    const priorHead = headId ? (this._contextPacks.get(headId) ?? null) : null;
-    // The live head is the only legal predecessor. An explicit predecessor must BE the live head
-    // (D4, epic #103: the stale guard compares the explicit field against the live head, never
-    // against itself — a superseded packId refuses context_pack_stale even when the content
-    // matches).
-    const livePredecessor = priorHead?.packId ?? null;
-    if (fields.predecessor != null && fields.predecessor !== livePredecessor) {
-      throw new CoordinationRefusal('context pack predecessor is not the live head', 'context_pack_stale');
-    }
-    const predecessor = fields.predecessor ?? livePredecessor;
-    const validityVersion = (priorHead?.validityVersion ?? 0) + 1;
-    const packId = `context-pack:${canonicalDigest({
-      family: fields.type, body: fields.body, validity,
-      predecessor, validityVersion,
-    })}`;
-    return {
-      packId, family: fields.type, type: fields.type, body: fields.body,
-      validity, predecessor, validityVersion,
-    };
+    return coordinationInternals._prepareContextPackPayload(this, fields);
   }
 
   mintContextPack(fields, auth) {
@@ -13809,15 +12673,11 @@ export class CoordinationStore {
     const event = this._append('context.pack_minted', payload, auth);
     return { ok: true, result: 'minted', event: clone(event), pack: clone(this._contextPacks.get(payload.packId)) };
   }
-
   contextPack(packId) {
-    return clone(this._contextPacks.get(packId) ?? null);
+    return coordinationInternals.contextPack(this._contextPacks, packId);
   }
-
   contextPackHead(family) {
-    if (typeof family !== 'string' || family.length === 0) return null;
-    const headId = this._contextPackHeads.get(family);
-    return headId ? this.contextPack(headId) : null;
+    return coordinationInternals.contextPackHead(this, family);
   }
 
   materializeContextPack(packId) {
@@ -13938,20 +12798,17 @@ export class CoordinationStore {
     }
     if (demotions.length > 0) this._appendBatch(demotions, 'plan_auto_demote');
   }
-
   waveClosure(waveId) {
-    if (typeof waveId !== 'string' || waveId.length === 0) return null;
-    return clone(this._waveClosures.get(waveId) ?? null);
+    return coordinationInternals.waveClosure(this._waveClosures, waveId);
   }
-
   waveClosures() {
-    return [...this._waveClosures.values()].map(clone);
+    return coordinationInternals.waveClosures(this._waveClosures);
   }
 
   // D2.3 (epic #132): the wave registry projection read — the open+closed rows of the
   // replay-derived _waveRegistry map, cloned so a reader never mutates the projection.
   waveRegistry() {
-    return [...this._waveRegistry.values()].map(clone);
+    return coordinationInternals.waveRegistry(this._waveRegistry);
   }
 
   // #161: the plan-object projection reads — cloned snapshots so a reader never mutates the
@@ -13977,10 +12834,12 @@ export class CoordinationStore {
     foldSwarmEvent(new Map(this._swarms), prospective);
     return clone(this._append(kind, payload, auth, prospective.ts));
   }
-
-  swarm(swarmId) { return readSwarm(this._swarms, swarmId); }
-
-  swarms() { return swarmSnapshot(this._swarms).swarms; }
+  swarm(swarmId) {
+    return coordinationInternals.swarm(this._swarms, swarmId);
+  }
+  swarms() {
+    return coordinationInternals.swarms(this._swarms);
+  }
 
   // Membership changes do not change the native session's turn protocol. Once recruited as
   // a continuing participant, a Run remains pausable even after leaving or closing its group.
@@ -13989,26 +12848,23 @@ export class CoordinationStore {
     return [...this._swarms.values()].some((swarm) => Object.values(swarm.participants)
       .some((participant) => participant.runId === runId));
   }
-
   campaignPlans() {
-    return planObjectSnapshot(this._campaignPlans);
+    return coordinationInternals.campaignPlans(this._campaignPlans);
   }
-
   campaignPlan(planId) {
-    return readPlanObject(this._campaignPlans, planId);
+    return coordinationInternals.campaignPlan(this._campaignPlans, planId);
   }
 
   // #161 (G4/H1.1): the idempotency-keyed prior event for a plan mutation key — the write lane's
   // replay adjudication (exactly-once retries) without exposing the raw _byKey index.
   priorCoordinationEvent(key) {
-    const event = this._byKey.get(key) ?? null;
-    return event ? clone(event) : null;
+    return coordinationInternals.priorCoordinationEvent(this._byKey, key);
   }
 
   // #161 (H2.2): the wave-role roster run resolution — ownedBy.run (null, pre-decomposed) resolves
   // from the steering.registered fold at claim time.
   waveRoleRun(waveId, waveRole) {
-    return this._waveRoleRuns.get(waveRoleRunKey(waveId, waveRole)) ?? null;
+    return coordinationInternals.waveRoleRun(this._waveRoleRuns, waveId, waveRole);
   }
 
   ledgerHeadSeq() {
@@ -14022,51 +12878,8 @@ export class CoordinationStore {
   // deployment config). Unknown fields refuse by name (F15); degradation runs the pinned order
   // until the body fits or briefing_pack_overflow with the drop ledger.
   // -------------------------------------------------------------------------
-
   composeBriefingPack(rawInput) {
-    if (!rawInput || typeof rawInput !== 'object' || Array.isArray(rawInput)) {
-      throw new CoordinationRefusal('briefing composition input must be an object', 'briefing_pack_invalid');
-    }
-    for (const key of Object.keys(rawInput)) {
-      if (!Object.hasOwn(BRIEFING_SCHEMA_FIELD_SOURCES, key)) {
-        throw new CoordinationRefusal(`briefing composition field "${key}" has no store source`, 'briefing_pack_invalid');
-      }
-    }
-    const landings = Array.isArray(rawInput.landings) ? [...rawInput.landings] : [];
-    let parked = Array.isArray(rawInput.parked) ? rawInput.parked.map((entry) => ({ ...entry })) : [];
-    let rings = Array.isArray(rawInput.rings) ? rawInput.rings.map((entry) => ({ ...entry })) : [];
-    const dropLedger = { droppedLandings: 0, droppedParkedReasonDetail: false, droppedRingsLaneSummaries: false };
-    const compose = () => JSON.stringify(canonical({
-      schemaVersion: rawInput.schemaVersion, family: rawInput.family,
-      composedAtEventSeq: rawInput.composedAtEventSeq,
-      rings, lanes: rawInput.lanes ?? [], landings, parked, blockedOn: rawInput.blockedOn ?? [],
-      standingLaws: rawInput.standingLaws ?? [], sources: rawInput.sources,
-    }));
-    let body = compose();
-    if (Buffer.byteLength(body, 'utf8') > MAX_CONTEXT_PACK_BODY_BYTES) {
-      // Step 1: drop oldest landings first (minimum 1) — the newest landing survives.
-      while (landings.length > 1 && Buffer.byteLength(compose(), 'utf8') > MAX_CONTEXT_PACK_BODY_BYTES) {
-        landings.shift(); dropLedger.droppedLandings += 1;
-      }
-    }
-    if (Buffer.byteLength(compose(), 'utf8') > MAX_CONTEXT_PACK_BODY_BYTES) {
-      // Step 2: drop parked reason detail (kind + id remain).
-      parked = parked.map((entry) => { const { reasonDigest, ...rest } = entry; return rest; });
-      dropLedger.droppedParkedReasonDetail = true;
-    }
-    if (Buffer.byteLength(compose(), 'utf8') > MAX_CONTEXT_PACK_BODY_BYTES) {
-      // Step 3: drop rings lane summaries (id + state remain).
-      rings = rings.map((entry) => { const { laneSummaryDigest, ...rest } = entry; return rest; });
-      dropLedger.droppedRingsLaneSummaries = true;
-    }
-    body = compose();
-    if (Buffer.byteLength(body, 'utf8') > MAX_CONTEXT_PACK_BODY_BYTES) {
-      throw Object.assign(
-        new CoordinationRefusal('briefing composition overflows the body ceiling after the full degradation order', 'briefing_pack_overflow'),
-        { dropLedger },
-      );
-    }
-    return { ok: true, body };
+    return coordinationInternals.composeBriefingPack(rawInput);
   }
 
   composeCampaignBriefing(standingLaws = []) {
@@ -14157,15 +12970,8 @@ export class CoordinationStore {
     const event = this._append('context.pack_granted', clone(fields), auth);
     return { ok: true, result: 'granted', event: clone(event) };
   }
-
   reapExpiredContextPacks(repoId) {
-    void repoId;
-    const now = Date.parse(this._clock());
-    let reaped = 0;
-    for (const pack of this._contextPacks.values()) {
-      if (Date.parse(pack.validity) <= now) reaped += 1;
-    }
-    return freeze({ reaped });
+    return coordinationReplay.reapExpiredContextPacks(this, repoId);
   }
 
   /** BD3-A: the read-lane audit class — bounded, content-digested, and deliberately NOT the
@@ -14379,121 +13185,14 @@ export class CoordinationStore {
     const event = this._append(kind, payload, auth);
     return { ok: true, result: 'recorded', event: clone(event) };
   }
-
   recordRecoveryContinuationIntent(fields, auth) {
-    const payload = { kind: 'recovery.continuation_intent', ...clone(fields) };
-    const prior = this._byKey.get(auth?.key);
-    if (prior) {
-      if (prior.kind !== 'driver.recorded' || prior.actor !== auth.actor
-        || canonicalDigest(prior.payload) !== canonicalDigest(payload)) {
-        throw new CoordinationRefusal('recovery intent idempotency conflict', 'recovery_dispatch_conflict');
-      }
-      const state = this.recoveryDispatchState(fields.workerId);
-      if (!state || state.intentSeq !== prior.seq) throw new CoordinationIntegrityError('recovery intent projection is absent', 'recovery_dispatch_integrity');
-      return freeze({ ok: true, result: 'idempotent', event: clone(prior), dispatch: state });
-    }
-    const prospective = {
-      schemaVersion: 1, seq: this._events.length + 1, ts: this._clock(), kind: 'driver.recorded',
-      actor: auth?.actor, idempotencyKey: auth?.key, payload,
-    };
-    this._validateRecoveryContinuationPayload(payload, prospective, false);
-    const event = this._append('driver.recorded', payload, auth, prospective.ts);
-    const dispatch = this.recoveryDispatchState(fields.workerId);
-    if (dispatch?.intentSeq !== event.seq || dispatch.status !== 'dispatch_unknown') {
-      throw new CoordinationIntegrityError('recovery intent did not materialize as unknown', 'recovery_dispatch_integrity');
-    }
-    return freeze({ ok: true, result: 'recorded', event: clone(event), dispatch });
+    return coordinationReplay.recordRecoveryContinuationIntent(this, fields, auth);
   }
-
   completeRecoveryDispatch(fields, auth) {
-    const disposition = fields?.disposition;
-    if (!['accepted', 'refused'].includes(disposition)) throw new CoordinationRefusal('recovery disposition is invalid', 'recovery_dispatch_invalid');
-    const { disposition: _ignored, ...request } = clone(fields);
-    const payload = {
-      kind: disposition === 'accepted' ? 'recovery.dispatch_accepted' : 'recovery.dispatch_refused',
-      ...request,
-    };
-    const prior = this._byKey.get(auth?.key);
-    if (prior) {
-      if (prior.kind !== 'driver.recorded' || prior.actor !== auth.actor
-        || canonicalDigest(prior.payload) !== canonicalDigest(payload)) {
-        throw new CoordinationRefusal('recovery disposition idempotency conflict', 'recovery_dispatch_conflict');
-      }
-      const dispatch = this.recoveryDispatchState(fields.workerId);
-      if (!dispatch || dispatch.receiptSeq !== prior.seq) throw new CoordinationIntegrityError('recovery disposition projection is absent', 'recovery_dispatch_integrity');
-      const task = this.task(fields.taskId);
-      if (disposition === 'refused') {
-        const transitioned = this._events[prior.seq];
-        const expectedTransition = {
-          id: fields.taskId, from: 'working', to: 'failed', expectedVersion: 2, newVersion: 3,
-          evidence: clone(fields.evidence),
-        };
-        if (prior.batch?.kind !== 'recovery_dispatch_refusal' || prior.batch.index !== 0 || prior.batch.count !== 2
-          || transitioned?.kind !== 'task.transitioned' || transitioned.actor !== prior.actor
-          || transitioned.idempotencyKey !== `${auth.key}:task` || transitioned.ts !== prior.ts
-          || transitioned.batch?.id !== prior.batch.id || transitioned.batch?.index !== 1
-          || canonicalDigest(transitioned.payload) !== canonicalDigest(expectedTransition)
-          || this._recoveryBatchIdentity('recovery_dispatch_refusal', [prior, transitioned]) !== prior.batch.id
-          || task?.status !== 'failed' || task.terminalEvent !== transitioned.seq) {
-          throw new CoordinationIntegrityError('recovery refusal task closure is absent', 'recovery_dispatch_integrity');
-        }
-        return freeze({ ok: true, result: 'idempotent', event: clone(prior), taskEvent: clone(transitioned), task, dispatch });
-      }
-      return freeze({ ok: true, result: 'idempotent', event: clone(prior), task, dispatch });
-    }
-    const prospective = {
-      schemaVersion: 1, seq: this._events.length + 1, ts: this._clock(), kind: 'driver.recorded',
-      actor: auth?.actor, idempotencyKey: auth?.key, payload,
-    };
-    this._validateRecoveryDispositionPayload(payload, prospective, false);
-    if (disposition === 'accepted') {
-      const event = this._append('driver.recorded', payload, auth, prospective.ts);
-      const dispatch = this.recoveryDispatchState(fields.workerId);
-      if (dispatch?.receiptSeq !== event.seq || dispatch.status !== 'dispatch_accepted') {
-        throw new CoordinationIntegrityError('accepted recovery dispatch did not materialize', 'recovery_dispatch_integrity');
-      }
-      return freeze({ ok: true, result: 'accepted', event: clone(event), task: this.task(fields.taskId), dispatch });
-    }
-    const task = this._tasks.get(fields.taskId);
-    if (!task || task.status !== 'working' || task.assignee !== fields.workerId) {
-      throw new CoordinationRefusal('recovery refusal task is not the live claimed refinement', 'recovery_dispatch_conflict');
-    }
-    const transitionedPayload = {
-      id: task.id, from: task.status, to: 'failed', expectedVersion: task.version,
-      newVersion: task.version + 1, evidence: clone(fields.evidence),
-    };
-    const [event, taskEvent] = this._appendBatch([
-      { kind: 'driver.recorded', payload, auth, fixedTs: prospective.ts },
-      { kind: 'task.transitioned', payload: transitionedPayload, auth: { actor: auth.actor, key: `${auth.key}:task` }, fixedTs: prospective.ts },
-    ], 'recovery_dispatch_refusal');
-    const dispatch = this.recoveryDispatchState(fields.workerId);
-    const closedTask = this.task(fields.taskId);
-    if (dispatch?.receiptSeq !== event.seq || dispatch.status !== 'dispatch_refused' || closedTask?.status !== 'failed') {
-      throw new CoordinationIntegrityError('refused recovery dispatch did not close atomically', 'recovery_dispatch_integrity');
-    }
-    return freeze({ ok: true, result: 'refused', event: clone(event), taskEvent: clone(taskEvent), task: closedTask, dispatch });
+    return coordinationReplay.completeRecoveryDispatch(this, fields, auth);
   }
-
   integrationAuthority(taskId, operationalEvent) {
-    if (typeof taskId !== 'string' || !operationalEvent || operationalEvent.kind !== 'integration.completed') return null;
-    const evidence = this._evidence.get(`${operationalEvent.worker}:${operationalEvent.seq}`);
-    if (!evidence || evidence.digest !== digest(operationalEvent) || evidence.kind !== 'integration.completed') return null;
-    const nodeId = `decision:integrate:${taskId}:${operationalEvent.seq}`;
-    const node = this._knowledgeNodes.get(nodeId);
-    if (!node || node.promotion?.trigger !== 'integration') return null;
-    const decisionEvent = this._events[node.observedSeq - 1];
-    const driverEvent = this._events[node.observedSeq];
-    const artifactEvent = this._events[node.observedSeq + 1];
-    if (decisionEvent?.kind !== 'knowledge.promoted' || decisionEvent.payload?.id !== nodeId) return null;
-    if (driverEvent?.kind !== 'driver.recorded' || driverEvent.payload?.kind !== 'integration.completed') return null;
-    if (artifactEvent?.kind !== 'artifact.registered' || artifactEvent.payload?.taskId !== taskId || artifactEvent.payload?.accepted !== true) return null;
-    if (driverEvent.idempotencyKey !== `${decisionEvent.idempotencyKey}:driver`
-      || artifactEvent.idempotencyKey !== `${decisionEvent.idempotencyKey}:artifact`) return null;
-    if (driverEvent.payload?.taskId !== taskId || driverEvent.payload?.evidence?.coordinationSeq !== evidence.coordinationSeq) return null;
-    if (digest(driverEvent.payload?.integration) !== digest(operationalEvent.payload)) return null;
-    if (digest(artifactEvent.payload?.refs) !== digest({ beforeSha: operationalEvent.payload?.beforeSha, resultSha: operationalEvent.payload?.resultSha, afterSha: operationalEvent.payload?.afterSha })) return null;
-    if (!(artifactEvent.payload?.provenance ?? []).some((ref) => ref?.coordinationSeq === evidence.coordinationSeq)) return null;
-    return freeze({ decisionEvent: decisionEvent.seq, driverEvent: driverEvent.seq, artifactEvent: artifactEvent.seq, evidence: evidence.coordinationSeq });
+    return coordinationInternals.integrationAuthority(this, taskId, operationalEvent);
   }
 
   completeIntegration(fields, auth) {
@@ -14517,21 +13216,7 @@ export class CoordinationStore {
    * promoted decision is insufficient: the mapped operational digest, paired driver record,
    * adjacency, batch-key lineage, task, evidence, and publication payload must all agree. */
   publicationAuthority(taskId, operationalEvent) {
-    if (typeof taskId !== 'string' || !operationalEvent || operationalEvent.kind !== 'publication.completed') return null;
-    const evidence = this._evidence.get(`${operationalEvent.worker}:${operationalEvent.seq}`);
-    if (!evidence || evidence.digest !== digest(operationalEvent) || evidence.kind !== 'publication.completed') return null;
-    const nodeId = `decision:publish:${taskId}:${operationalEvent.seq}`;
-    const node = this._knowledgeNodes.get(nodeId);
-    if (!node || node.promotion?.trigger !== 'publication') return null;
-    const decisionEvent = this._events[node.observedSeq - 1];
-    const driverEvent = this._events[node.observedSeq];
-    if (decisionEvent?.kind !== 'knowledge.promoted' || decisionEvent.payload?.id !== nodeId) return null;
-    if (driverEvent?.kind !== 'driver.recorded' || driverEvent.payload?.kind !== 'publication.completed') return null;
-    if (driverEvent.idempotencyKey !== `${decisionEvent.idempotencyKey}:driver`) return null;
-    if (driverEvent.payload?.taskId !== taskId) return null;
-    if (driverEvent.payload?.evidence?.coordinationSeq !== evidence.coordinationSeq) return null;
-    if (digest(driverEvent.payload?.publication) !== digest(operationalEvent.payload)) return null;
-    return freeze({ decisionEvent: decisionEvent.seq, driverEvent: driverEvent.seq, evidence: evidence.coordinationSeq });
+    return coordinationInternals.publicationAuthority(this, taskId, operationalEvent);
   }
 
   /** Atomically make a post-effect publication authoritative. The operational completion may
@@ -14660,27 +13345,11 @@ export class CoordinationStore {
   // Issue #33 scratchpad — typed worker writes, pure scoped reads, and the two
   // settlement boundaries. All projection mutation remains in _apply above.
   // -------------------------------------------------------------------------
-
   scratchpadFence(runId, scope) {
-    return this._scratchpadFences.get(scratchpadScopeKey(runId, scope)) ?? 0;
+    return coordinationInternals.scratchpadFence(this._scratchpadFences, runId, scope);
   }
-
   scratchpadSnapshotBatch(runId, scopes, options = {}) {
-    if (!validRunId(runId) || !Array.isArray(scopes) || scopes.length === 0
-      || scopes.some((scope) => !SCRATCHPAD_SCOPE.test(scope))
-      || new Set(scopes).size !== scopes.length) {
-      throw new CoordinationRefusal('scratchpad snapshot request is invalid', 'scratchpad_read_invalid');
-    }
-    const fenceTuple = scopes.map((scope) => [scope, this.scratchpadFence(runId, scope)]);
-    if (Object.hasOwn(options, 'expectedFenceTuple')
-      && canonicalDigest(options.expectedFenceTuple) !== canonicalDigest(fenceTuple)) {
-      throw new CoordinationRefusal('scratchpad cursor fence is stale', 'scratchpad_cursor_stale');
-    }
-    const slices = scopes.map((scope) => {
-      const ids = this._scratchpadEntriesByScope.get(scratchpadScopeKey(runId, scope)) ?? [];
-      return freeze({ scope, entries: freeze(ids.map((id) => clone(this._scratchpadEntries.get(id))).filter(Boolean)) });
-    });
-    return freeze({ runId, observedSeq: this._events.length, fenceTuple: freeze(clone(fenceTuple)), slices: freeze(slices) });
+    return coordinationInternals.scratchpadSnapshotBatch(this, runId, scopes, options);
   }
 
   scratchpadSnapshot(runId, scope, options = {}) {
@@ -14695,14 +13364,8 @@ export class CoordinationStore {
       slices: capture.slices,
     });
   }
-
   _scratchpadResolveForWorker(runId, workerId, entryId, entryDigest, requirement = {}) {
-    const row = this._scratchpadEntries.get(entryId);
-    if (!row || row.runId !== runId || row.entryDigest !== entryDigest) return null;
-    if (requirement.kind && row.kind !== requirement.kind) return null;
-    if (requirement.ownOnly && row.scope !== `worker:${workerId}`) return null;
-    if (requirement.ownOrShared && row.scope !== `worker:${workerId}` && row.scope !== 'shared') return null;
-    return row;
+    return coordinationInternals._scratchpadResolveForWorker(this._scratchpadEntries, runId, workerId, entryId, entryDigest, requirement);
   }
 
   writeScratchpad(fields, auth) {
@@ -14914,21 +13577,8 @@ export class CoordinationStore {
       eventSeq: event.seq,
     });
   }
-
   _scratchpadReapReceipt(prior, result = 'idempotent') {
-    const reap = this._scratchpadReaps.find((row) => row.eventSeq === prior.seq);
-    if (!reap) throw new CoordinationIntegrityError('scratchpad reap receipt is absent', 'scratchpad_reap_integrity');
-    const elevated = reap.dispositions.filter((row) => row.result === 'elevated').map((row) => {
-      const successor = [...this._scratchpadElevations.values()]
-        .find((binding) => binding.sourceEntryId === row.entryId && binding.sharedEntryId === row.targetId);
-      const shared = successor ? this._scratchpadEntries.get(successor.sharedEntryId) : null;
-      return {
-        sourceEntryId: row.entryId, sharedEntryId: row.targetId,
-        sharedEntryDigest: successor?.sharedEntryDigest ?? null,
-        scratchFactId: shared?.scratchFactId ?? null,
-      };
-    }).sort((a, b) => compareCanonicalStrings(a.sourceEntryId, b.sourceEntryId));
-    return { reap, elevated, result };
+    return coordinationReplay._scratchpadReapReceipt(this, prior, result);
   }
 
   elevateTaskScratchpad(fields, auth) {
@@ -15146,74 +13796,8 @@ export class CoordinationStore {
       expiredScratchFactIds: facts.map((fact) => fact.id),
     });
   }
-
   reapRunScratchpads(runId) {
-    if (!validRunId(runId) || (!this._runStopByTarget.has(runId) && !this._runStops.has(runId))) {
-      throw new CoordinationRefusal('scratchpad stop cleanup requires a stopping Run', 'run_stopping');
-    }
-    const partitions = [];
-    for (const [key, ids] of this._scratchpadEntriesByScope) {
-      const [entryRunId, scope] = JSON.parse(key);
-      if (entryRunId !== runId || ids.length === 0) continue;
-      const first = this._scratchpadEntries.get(ids[0]);
-      partitions.push({ scope, taskId: scope === 'shared' ? null : first.taskId, workerId: scope === 'shared' ? null : first.workerId });
-    }
-    partitions.sort((left, right) => {
-      if (left.scope === 'shared') return 1;
-      if (right.scope === 'shared') return -1;
-      return compareCanonicalStrings(left.taskId, right.taskId)
-        || compareCanonicalStrings(left.workerId, right.workerId);
-    });
-    const selected = partitions.slice(0, MAX_SCRATCHPAD_STOP_PARTITIONS_PER_PASS);
-    const reaped = [];
-    for (const partition of selected) {
-      const scopeKey = scratchpadScopeKey(runId, partition.scope);
-      const rows = (this._scratchpadEntriesByScope.get(scopeKey) ?? [])
-        .map((id) => this._scratchpadEntries.get(id))
-        .sort((a, b) => compareCanonicalStrings(a.entryId, b.entryId));
-      const observedFence = this.scratchpadFence(runId, partition.scope);
-      const dispositions = rows.map((row) => ({
-        entryId: row.entryId, entryDigest: row.entryDigest,
-        result: 'stopped', targetId: null, reasonCode: 'run_stopped',
-      }));
-      const dispositionDigest = canonicalDigest(dispositions);
-      const reapKey = partition.scope === 'shared'
-        ? `scratchpad.partition_reaped:${runId}:shared:${observedFence}`
-        : `scratchpad.partition_reaped:${runId}:${partition.taskId}:${observedFence}`;
-      const facts = partition.scope === 'shared'
-        ? rows.filter((row) => row.scratchFactId).map((row) => this._scratchFacts.get(row.scratchFactId))
-          .filter((fact) => fact?.active).sort((a, b) => compareCanonicalStrings(a.id, b.id))
-        : [];
-      const events = this._appendBatch([{
-        kind: 'scratchpad.partition_reaped',
-        payload: {
-          schemaVersion: 1, runId, scope: partition.scope, taskId: partition.taskId,
-          observedFence, dispositions, dispositionDigest, basis: 'run_stopped',
-        },
-        auth: { actor: 'policy', key: reapKey },
-      }, ...facts.map((fact) => ({
-        kind: 'scratch.fact_expired', payload: { id: fact.id },
-        auth: { actor: 'policy', key: `${reapKey}:fact:${fact.id}` },
-      }))], 'scratchpad_stop_cleanup');
-      reaped.push({
-        scope: partition.scope, taskId: partition.taskId, reapEventSeq: events[0].seq,
-        dispositionDigest, expiredScratchFactIds: facts.map((fact) => fact.id),
-      });
-    }
-    const remaining = partitions.slice(selected.length);
-    let remainingEntries = 0; let remainingBridgeFacts = 0;
-    for (const partition of remaining) {
-      const ids = this._scratchpadEntriesByScope.get(scratchpadScopeKey(runId, partition.scope)) ?? [];
-      remainingEntries += ids.length;
-      remainingBridgeFacts += ids.map((id) => this._scratchpadEntries.get(id))
-        .filter((row) => row?.scratchFactId && this._scratchFacts.get(row.scratchFactId)?.active).length;
-    }
-    const next = remaining[0] ?? null;
-    return freeze({
-      ok: true, result: remaining.length > 0 ? 'partial' : 'complete', runId, reaped,
-      nextPartition: next ? { scope: next.scope, taskId: next.taskId, workerId: next.workerId } : null,
-      remainingPartitions: remaining.length, remainingEntries, remainingBridgeFacts,
-    });
+    return coordinationReplay.reapRunScratchpads(this, runId);
   }
 
   // -------------------------------------------------------------------------
@@ -15226,7 +13810,7 @@ export class CoordinationStore {
   /** The board fence: the count of admitted orchestrator-authority events for the board,
    * derived purely by re-counting in _apply. Replay reconstructs it exactly. */
   boardFence(board) {
-    return this._boardFences.get(board) ?? 0;
+    return coordinationInternals.boardFence(this._boardFences, board);
   }
 
   /** KG-1 Part A rule 5 (P1-1 fix): store-level, global, replay-derived counter incremented once
@@ -15239,7 +13823,7 @@ export class CoordinationStore {
   /** KG-1 Part A rule 4: the project horizon fence — the store's own applied-event position,
    * already a strict superset of every other fence component. */
   eventFence() {
-    return this._events.length;
+    return coordinationInternals.eventFence(this._events);
   }
 
   _boardAdmissionFailure(message, code) {
@@ -15662,10 +14246,12 @@ export class CoordinationStore {
       && (workerId == null || claim.owner === workerId)
       && (taskId == null || claim.ownerTask === taskId)).map(clone);
   }
-
-  boardItem(itemId) { return clone(this._boardItems.get(itemId) ?? null); }
-
-  boardItemVersions(itemId) { return (this._boardItemHistory.get(itemId) ?? []).map(clone); }
+  boardItem(itemId) {
+    return coordinationInternals.boardItem(this._boardItems, itemId);
+  }
+  boardItemVersions(itemId) {
+    return coordinationInternals.boardItemVersions(this._boardItemHistory, itemId);
+  }
 
   /** Non-evented board read (F10, rule 9): a poll appends nothing to the ledger and drives the
    * per-board indexed item map, never a full claim/fact scan. */
@@ -15699,11 +14285,8 @@ export class CoordinationStore {
   // the grant-scoped L1 read lane (Decisions 2/3/5). All state derives from
   // board.grant_minted / board.grant_revoked / worker.generation_bound events.
   // -------------------------------------------------------------------------
-
   boardGrant(grantId) {
-    if (typeof grantId !== 'string' || grantId.length === 0) return null;
-    const grant = this._boardGrants.get(grantId) ?? null;
-    return grant ? clone(grant) : null;
+    return coordinationInternals.boardGrant(this._boardGrants, grantId);
   }
 
   activeBoardGrants({ workerId = null, taskId = null } = {}) {
@@ -15711,10 +14294,8 @@ export class CoordinationStore {
       && (workerId == null || grant.workerId === workerId)
       && (taskId == null || grant.taskId === taskId)).map(clone);
   }
-
   workerGeneration(workerId) {
-    const rec = this._workerGenerations.get(workerId) ?? null;
-    return rec ? clone(rec) : null;
+    return coordinationInternals.workerGeneration(this._workerGenerations, workerId);
   }
 
   /** A2-3: the durable per-worker generation record. processGeneration is currently only an
@@ -15747,31 +14328,7 @@ export class CoordinationStore {
    * worker.generation_bound names a generation the caller did not present is an orphan; a task
    * claimed by a live worker, unclaimed, or terminal never surfaces. */
   orphans({ liveWorkers = [] } = {}) {
-    const live = new Set(Array.isArray(liveWorkers) ? liveWorkers : []);
-    const lastGeneration = new Map();
-    for (const event of this._events) {
-      if (event.kind === 'worker.generation_bound') {
-        lastGeneration.set(event.payload.workerId, event.payload);
-      }
-    }
-    const rows = [];
-    for (const task of this._tasks.values()) {
-      if (TERMINAL.has(task.status)) continue;
-      const workerId = task.assignee ?? task.reservedWorkerId ?? null;
-      if (workerId === null) continue;
-      if (task.status === 'retry_pending') {
-        rows.push({ taskId: task.id, workerId, status: task.status,
-          processGeneration: lastGeneration.get(workerId)?.processGeneration ?? null });
-        continue;
-      }
-      if (live.has(workerId)) continue;
-      const generation = lastGeneration.get(workerId);
-      // A claimed task with NO durable generation record is pre-A2-3 legacy state — surface it
-      // (absence of the binding cannot prove the claimant lives).
-      rows.push({ taskId: task.id, workerId, status: task.status,
-        processGeneration: generation?.processGeneration ?? null });
-    }
-    return rows;
+    return coordinationReplay.orphans(this, { liveWorkers });
   }
 
   /** Decision 2: the durable grant revoke. Every terminator (member task terminalization,
@@ -16082,23 +14639,11 @@ export class CoordinationStore {
     });
     return freeze({ ok: true, result: 'minted', event: clone(event), grant: clone(this._boardGrants.get(grantId) ?? payload) });
   }
-
   _taskByRun(runId) {
-    for (const task of this._tasks.values()) {
-      if (task.runId === runId) return task;
-    }
-    return null;
+    return coordinationInternals._taskByRun(this._tasks, runId);
   }
-
   _waveMembershipOf(runId) {
-    for (const event of this._events) {
-      if (event.kind !== 'driver.recorded' || event.payload?.kind !== 'steering.registered') continue;
-      const record = event.payload;
-      if (record.runId === runId && record.waveId != null) {
-        return { waveId: record.waveId, waveRole: record.waveRole ?? null, recordSeq: event.seq };
-      }
-    }
-    return null;
+    return coordinationInternals._waveMembershipOf(this._events, runId);
   }
 
   // -------------------------------------------------------------------------
@@ -16166,46 +14711,19 @@ export class CoordinationStore {
       return null;
     }
   }
-
   _sortedBoardItems(board) {
-    const ids = this._boardItemsByBoard.get(board) ?? [];
-    const items = ids.map((id) => this._boardItems.get(id)).filter(Boolean);
-    return items.sort((left, right) => (
-      left.ordinal === right.ordinal
-        ? (left.itemId < right.itemId ? -1 : left.itemId > right.itemId ? 1 : 0)
-        : left.ordinal - right.ordinal
-    ));
+    return coordinationInternals._sortedBoardItems(this, board);
   }
 
   _reportsForItem(itemId) {
     return this._boardReports.filter((report) => report.itemId === itemId)
       .sort((left, right) => left.eventSeq - right.eventSeq);
   }
-
   _boardGrantItemRow(item, frame) {
-    const claim = this._boardClaims.get(item.itemId) ?? null;
-    const active = !!(claim && claim.active);
-    const status = item.state === 'open' ? (active ? 'claimed' : 'open') : item.state;
-    return {
-      itemId: item.itemId, itemVersion: item.itemVersion, board: item.board,
-      title: item.title, detail: item.detail, state: item.state, status,
-      owner: item.owner ?? null, ordinal: item.ordinal, itemDigest: item.itemDigest,
-      evidence: item.evidence,
-      claim: active ? {
-        itemId: claim.itemId, itemVersion: claim.itemVersion, boardFence: claim.boardFence,
-        claimVersion: claim.version, ownerWorkerId: claim.owner, ownerTaskId: claim.ownerTask ?? null,
-        grantDigest: claim.grantDigest ?? null, createdEvent: claim.createdEvent, active: true,
-      } : null,
-    };
+    return coordinationInternals._boardGrantItemRow(this._boardClaims, item, frame);
   }
-
   _boardGrantReportRow(report, frame) {
-    return {
-      itemId: report.itemId, itemVersion: report.itemVersion, itemDigest: report.itemDigest,
-      claimVersion: report.claimVersion ?? null, ownerWorkerId: report.owner,
-      ownerTaskId: report.ownerTask ?? null, grantDigest: report.grantDigest ?? null,
-      body: report.body, eventSeq: report.eventSeq,
-    };
+    return coordinationInternals._boardGrantReportRow(report, frame);
   }
 
   _renderBoardGrantPage(grant, state) {
@@ -16368,7 +14886,7 @@ export class CoordinationStore {
    * boardFence's orchestrator-authority-only carve-out (Part C rule 7). Replay-derivable,
    * never a separately durable counter (rule 8). */
   bindingFence(runId, scope) {
-    return this._replBindingFences.get(replFenceKey(runId, scope)) ?? 0;
+    return coordinationInternals.bindingFence(this._replBindingFences, runId, scope);
   }
 
   admitReplBinding(fields, auth) {
@@ -16577,11 +15095,8 @@ export class CoordinationStore {
   _knowledgeFailure(message, code, integrity = false) {
     throw integrity ? new CoordinationIntegrityError(message, code) : new CoordinationRefusal(message, code);
   }
-
   _knowledgePayload(fields, extras = {}) {
-    if (!fields || typeof fields !== 'object' || Array.isArray(fields) || Object.keys(fields).some((key) => KNOWLEDGE_PROJECTION_FIELDS.has(key))) throw new CoordinationRefusal('knowledge request uses lifecycle-owned fields', 'reserved_knowledge_field');
-    const core = { ...clone(fields), ...clone(extras) };
-    return { ...core, contentDigest: canonicalDigest(core) };
+    return coordinationInternals._knowledgePayload(fields, extras);
   }
 
   _validateKnowledgeContent(fields, integrity = false) {
@@ -16624,14 +15139,8 @@ export class CoordinationStore {
     if (fields.type === 'Finding' && fields.grounding === 'verified' && (fields.evidence?.length ?? 0) === 0) this._knowledgeFailure('verified Finding requires evidence', 'causal_orphan', integrity);
     if (fields.promotion?.trigger === 'verified_task_outcome' && (typeof fields.taskId !== 'string' || !this._knowledgeNodes.has(`task:${fields.taskId}`))) this._knowledgeFailure('verified task outcome requires its durable task', 'missing_endpoint', integrity);
   }
-
   _supersessionWouldCycle(from, to) {
-    const pending = [to]; const seen = new Set();
-    while (pending.length > 0) {
-      const node = pending.pop(); if (node === from) return true; if (seen.has(node)) continue; seen.add(node);
-      for (const edge of this._knowledgeEdges.values()) if (edge.type === 'Supersedes' && !edge.validTo && edge.from === node) pending.push(edge.to);
-    }
-    return false;
+    return coordinationInternals._supersessionWouldCycle(this._knowledgeEdges, from, to);
   }
 
   _validateKnowledgeEdgePayload(fields, event, integrity = false) {
@@ -16787,21 +15296,8 @@ export class CoordinationStore {
     if (request.action === 'retract' && !['source_expired', 'oracle_withdrawn', 'operator_correction'].includes(request.reason)) throw new CoordinationRefusal('Scratch correction reason is invalid', 'causal_correction_invalid');
     return clone(request);
   }
-
   _scratchCorrectionPrefix(observedSeq) {
-    const prefix = this._events.slice(0, observedSeq); const tasks = new Map(); const scratch = new Map(); const scratchReads = []; const artifacts = []; const supersededArtifacts = new Set();
-    for (const event of prefix) {
-      if (event.kind === 'task.created') tasks.set(event.payload.id, { created: event, payload: clone(event.payload), status: 'pending', terminalEvent: null, routeKey: event.payload.routeKey ?? null });
-      else if (event.kind === 'task.claimed') { const task = tasks.get(event.payload.id); if (task) { task.status = 'working'; task.routeKey = event.payload.routeKey ?? task.routeKey; task.claimed = event; } }
-      else if (event.kind === 'task.transitioned') { const task = tasks.get(event.payload.id); if (task) { task.status = event.payload.to; if (TERMINAL.has(event.payload.to)) task.terminalEvent = event; } }
-      else if (event.kind === 'task.acceptance_revoked') { const task = tasks.get(event.payload.taskId); if (task) { task.status = 'failed'; task.terminalEvent = event; } }
-      else if (event.kind === 'scratch.fact_posted') scratch.set(event.payload.id, { event, active: true });
-      else if (event.kind === 'scratch.fact_expired') { const fact = scratch.get(event.payload.id); if (fact) fact.active = false; }
-      else if (event.kind === 'scratch.read') scratchReads.push(event);
-      else if (event.kind === 'artifact.registered') artifacts.push(event);
-      else if (event.kind === 'artifact.superseded') supersededArtifacts.add(event.payload.oldId);
-    }
-    return { prefix, tasks, scratch, scratchReads, artifacts, supersededArtifacts };
+    return coordinationInternals._scratchCorrectionPrefix(this._events, observedSeq);
   }
 
   _eligibleScratchOracle(repoId, factRow, oracleTaskId, state, nodeMap) {
@@ -17314,37 +15810,23 @@ export class CoordinationStore {
    * dispatch bursts and recompute only when a node/edge actually folds. Derived from folded
    * state, so replay reconstructs the identical fence. */
   _knowledgeProjectFence() {
-    let fence = 0;
-    for (const versions of this._knowledgeNodeHistory.values()) { const seq = versions.at(-1)?.observedSeq ?? 0; if (seq > fence) fence = seq; }
-    for (const versions of this._knowledgeEdgeHistory.values()) { const seq = versions.at(-1)?.observedSeq ?? 0; if (seq > fence) fence = seq; }
-    return fence;
+    return coordinationInternals._knowledgeProjectFence(this);
   }
 
   /** KG-4 rule 15/15a: read-time MAD confidence over a Finding body. Exposed for direct
    * verification; the preview overlays it via madConfidenceOf. Never stored node state. */
-  _madConfidence(body, maxMetrics = 100_000) { return madConfidenceOf(body, maxMetrics); }
+  _madConfidence(body, maxMetrics = 100_000) {
+    return coordinationInternals._madConfidence(body, maxMetrics);
+  }
 
   /** KG-4 rule 16: read-time staleness overlay. `unreferenced` is scoped to *evented* reads
    * (`_knowledgeReads`); preview traffic is non-evented (Part A) so it never counts as a
    * reference. Read-time only — never a stored flag, never a mutation. */
   _knowledgeStaleness(node, fence, liveContradictNodeIds, liveSupersedeTargetIds, staleAfterSeq) {
-    const reasons = [];
-    if (node.validTo || liveSupersedeTargetIds.has(node.id)) reasons.push('superseded');
-    if (liveContradictNodeIds.has(node.id)) reasons.push('contradicted');
-    const referenced = this._knowledgeReads.some((read) => (read.nodeIds ?? []).includes(node.id));
-    const age = Math.max(0, fence - (node.eventTimeSeq ?? node.observedSeq ?? 0));
-    if (!referenced && age >= staleAfterSeq) reasons.push('unreferenced');
-    return reasons.length === 0 ? null : { reasons, age };
+    return coordinationInternals._knowledgeStaleness(this._knowledgeReads, node, fence, liveContradictNodeIds, liveSupersedeTargetIds, staleAfterSeq);
   }
-
   _cachePreview(key, value, previewPolicy) {
-    this._previewCache.set(key, value);
-    while (this._previewCache.size > previewPolicy.maxPreviewCacheEntries) {
-      const oldest = this._previewCache.keys().next().value;
-      if (oldest === undefined) break;
-      this._previewCache.delete(oldest);
-    }
-    return value;
+    return coordinationInternals._cachePreview(this, key, value, previewPolicy);
   }
 
   /** KG-3 Parts A/C/D/F/G: a pure, non-evented, LRU-cached, fail-open read projection that
@@ -17686,37 +16168,8 @@ export class CoordinationStore {
     if (!event || event.kind !== 'knowledge.recall' || event.actor !== actor || event.payload?.requestDigest !== prepared.requestDigest || event.payload?.policyDigest !== prepared.policyDigest) throw new CoordinationRefusal('knowledge recall receipt does not match request authority', 'knowledge_recall_conflict');
     const projection = this._validateKnowledgeRecallPayload(event.payload, event, false); return freeze({ event: clone(event), projection, replayed: true, receiptBytes: canonicalBytes(event.payload) });
   }
-
   _recallAssessmentCandidate(receipt, observedSeq) {
-    if (!receipt || receipt.kind !== 'knowledge.recall' || receipt.seq > observedSeq || typeof receipt.payload?.taskId !== 'string' || receipt.payload.runId !== null || typeof receipt.payload.readerWorker !== 'string') return null;
-    const task = this._tasks.get(receipt.payload.taskId); const terminal = Number.isSafeInteger(task?.terminalEvent) ? this._events[task.terminalEvent - 1] : null;
-    if (!task || typeof task.runId !== 'string' || task.runId.length === 0 || !terminal || terminal.seq > observedSeq || terminal.seq <= receipt.seq || terminal.kind !== 'task.transitioned' || terminal.payload?.id !== task.id || terminal.payload?.to !== task.status) return null;
-    const mappedSeq = terminal.payload?.evidence?.coordinationSeq; const mapped = Number.isSafeInteger(mappedSeq) ? this._events[mappedSeq - 1] : null;
-    if (!mapped || mapped.seq <= receipt.seq || mapped.seq >= terminal.seq || mapped.kind !== 'evidence.mapped' || mapped.payload?.kind !== 'verify.reverified'
-      || canonicalDigest({ ...clone(mapped.payload), coordinationSeq: mapped.seq }) !== canonicalDigest(terminal.payload.evidence)) return null;
-    const source = this._operationalRead?.(mapped.payload.worker, mapped.payload.workerSeq);
-    if (!source || digest(source) !== mapped.payload.digest || source.kind !== 'verify.reverified' || source.worker !== receipt.payload.readerWorker || mapped.payload.worker !== receipt.payload.readerWorker
-      || source.taskId !== task.id || source.runId !== task.runId || source.harness !== task.harnessResolved || source.modelResolved !== task.modelResolved || source.effortResolved !== task.effortResolved || source.routeKey !== task.routeKey) return null;
-    const outcome = task.status === 'completed' && source.payload?.accept === true
-      ? 'verified_pass_after_recall'
-      : task.status === 'failed' && source.payload?.accept === false
-        ? 'verified_fail_after_recall'
-        : null;
-    if (outcome === null) return null;
-    const exposure = {
-      nodeIds: clone(receipt.payload.nodeIds), validityVersions: clone(receipt.payload.validityVersions), scores: clone(receipt.payload.scores), contradictionEdgeIds: clone(receipt.payload.contradictionEdgeIds),
-      queryDigest: receipt.payload.query ? canonicalDigest(receipt.payload.query) : null, requestDigest: receipt.payload.requestDigest, resultProjectionDigest: receipt.payload.resultProjectionDigest,
-    };
-    const core = {
-      schemaVersion: 1, recallEventSeq: receipt.seq, recallReceiptDigest: receipt.payload.receiptDigest,
-      readerActor: receipt.payload.readerActor, readerWorker: receipt.payload.readerWorker, taskId: task.id, runId: task.runId,
-      historicalExposureDigest: canonicalDigest(exposure), ...exposure,
-      verificationEventSeq: mapped.seq, verificationDigest: mapped.payload.digest, terminalEventSeq: terminal.seq, terminalStatus: task.status,
-      routeDigest: canonicalDigest({ harnessResolved: task.harnessResolved, modelResolved: task.modelResolved, effortResolved: task.effortResolved, routeKey: task.routeKey }),
-      outcome, causationClaimed: false,
-    };
-    const assessmentId = `recall-assessment:${canonicalDigest({ repoId: receipt.payload.policy.repoId, recallEventSeq: receipt.seq, verificationEventSeq: mapped.seq, terminalEventSeq: terminal.seq, outcome })}`;
-    const bound = { assessmentId, ...core }; return freeze({ ...bound, assessmentDigest: canonicalDigest(bound) });
+    return coordinationInternals._recallAssessmentCandidate(this, receipt, observedSeq);
   }
 
   _buildKnowledgeRecallAssessment(repoId, observedSeq, policy, actor, assessmentEventSeq = this._events.length + 1) {
@@ -17782,10 +16235,8 @@ export class CoordinationStore {
     if (!event || event.kind !== 'knowledge.recall_assessment_batch' || event.actor !== actor || event.payload?.requestDigest !== expected) throw new CoordinationRefusal('knowledge recall assessment receipt does not match request authority', 'causal_assessment_conflict');
     const projection = this._validateKnowledgeRecallAssessmentPayload(event.payload, event, false); return freeze({ projection, noOp: false, event: clone(event), replayed: true, batchBytes: canonicalBytes(event.payload) });
   }
-
   recallAssessments({ nodeId = null, taskId = null, observedSeq = this._events.length } = {}) {
-    if ((nodeId !== null && typeof nodeId !== 'string') || (taskId !== null && typeof taskId !== 'string') || !Number.isSafeInteger(observedSeq) || observedSeq < 0 || observedSeq > this._events.length) throw new CoordinationRefusal('knowledge recall assessment query is invalid', 'causal_assessment_invalid');
-    return [...this._knowledgeRecallAssessments.values()].filter((row) => row.eventSeq <= observedSeq && (nodeId === null || row.nodeIds.includes(nodeId)) && (taskId === null || row.taskId === taskId)).sort((a, b) => a.recallEventSeq - b.recallEventSeq).map(clone);
+    return coordinationInternals.recallAssessments(this, { nodeId, taskId, observedSeq });
   }
 
   readKnowledge(query, reader, auth) {
@@ -17812,12 +16263,7 @@ export class CoordinationStore {
   // workflow horizon's knowledgeDigest (cache-correct — content-addressed, recomputed only on a fence
   // miss, byte-identical when the knowledge content is unchanged).
   static get KNOWLEDGE_CANDIDATE_TRIGGERS() {
-    return Object.freeze({
-      'board.item_closed': 'board_close',
-      'package.admitted': 'package_admit',
-      'scratch.cited_observed': 'scratchpad_settle',
-      'verified_task_outcome': 'verification',
-    });
+    return coordinationInternals.KNOWLEDGE_CANDIDATE_TRIGGERS();
   }
 
   /** A content-addressed digest of the live knowledge graph (nodes + edges). Stable across non-
@@ -17898,22 +16344,11 @@ export class CoordinationStore {
     ]);
     return { ok: true, invalidation: clone(invalidation), contamination: clone(contamination), node: clone(this._knowledgeNodes.get(nodeId)) };
   }
-
   affectedReaders(nodeId) {
-    return this._knowledgeReads.filter((read) => read.nodeIds.includes(nodeId)).map((read) => clone({
-      readEvent: read.eventSeq,
-      taskId: read.taskId ?? null,
-      taskStatus: read.taskId ? this._tasks.get(read.taskId)?.status ?? null : null,
-      runId: read.runId ?? null,
-      readerWorker: read.readerWorker ?? null,
-      readerActor: read.readerActor ?? null,
-    }));
+    return coordinationInternals.affectedReaders(this, nodeId);
   }
-
   traceKnowledge(nodeId) {
-    if (!this._knowledgeNodes.has(nodeId)) throw new CoordinationRefusal(`unknown knowledge node ${nodeId}`, 'not_found');
-    const edges = [...this._knowledgeEdges.values()].filter((edge) => edge.from === nodeId || edge.to === nodeId).map(clone);
-    return freeze({ node: clone(this._knowledgeNodes.get(nodeId)), evidence: clone(this._knowledgeNodes.get(nodeId).evidence ?? []), edges });
+    return coordinationInternals.traceKnowledge(this, nodeId);
   }
 
   traceKnowledgeBounded(nodeId, options = {}) {

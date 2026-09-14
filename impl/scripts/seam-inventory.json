@@ -5866,23 +5866,24 @@
         {
           "name": "_readCanonicalReceipt",
           "ordinal": 0,
-          "size": 14,
+          "size": 3,
           "seam": "recovery",
           "evidence": [
             "recovery:durable_load",
             "observation:projection_name",
             "observation:read_name",
-            "observation:ledger_name"
+            "observation:ledger_name",
+            "recovery:replay_port"
           ]
         },
         {
           "name": "_openCanonicalOrderLedger",
           "ordinal": 0,
-          "size": 15,
+          "size": 3,
           "seam": "recovery",
           "evidence": [
-            "recovery:durable_load",
-            "observation:ledger_name"
+            "observation:ledger_name",
+            "recovery:replay_port"
           ]
         },
         {
@@ -5910,14 +5911,13 @@
         {
           "name": "_ensureCanonicalOrderReceipt",
           "ordinal": 0,
-          "size": 39,
+          "size": 3,
           "seam": "recovery",
           "evidence": [
-            "recovery:durable_load",
             "admission:guard_name",
-            "observation:store_append",
             "observation:projection_name",
-            "observation:ledger_name"
+            "observation:ledger_name",
+            "recovery:replay_port"
           ]
         },
         {
@@ -5933,22 +5933,24 @@
         {
           "name": "_reportStartup",
           "ordinal": 0,
-          "size": 7,
+          "size": 3,
           "seam": "recovery",
           "evidence": [
             "recovery:restart_name",
-            "observation:record_name"
+            "observation:record_name",
+            "recovery:replay_port"
           ]
         },
         {
           "name": "startupStatus",
           "ordinal": 0,
-          "size": 6,
+          "size": 3,
           "seam": "recovery",
           "evidence": [
             "recovery:restart_name",
             "effect:action_verb",
-            "observation:projection_name"
+            "observation:projection_name",
+            "recovery:replay_port"
           ]
         },
         {
@@ -6008,12 +6010,13 @@
         {
           "name": "_reloadProjection",
           "ordinal": 0,
-          "size": 1,
+          "size": 3,
           "seam": "recovery",
           "evidence": [
             "recovery:durable_load",
             "observation:projection_name",
-            "observation:ledger_name"
+            "observation:ledger_name",
+            "recovery:replay_port"
           ]
         },
         {
@@ -6120,13 +6123,14 @@
         {
           "name": "_loadSegmentState",
           "ordinal": 0,
-          "size": 109,
+          "size": 3,
           "seam": "recovery",
           "evidence": [
             "recovery:durable_load",
             "observation:read_name",
             "observation:ledger_name",
-            "observation:key_name"
+            "observation:key_name",
+            "recovery:replay_port"
           ]
         },
         {
@@ -6142,12 +6146,11 @@
         {
           "name": "_load",
           "ordinal": 0,
-          "size": 106,
+          "size": 3,
           "seam": "recovery",
           "evidence": [
-            "recovery:reconcile_call",
-            "recovery:durable_load",
-            "observation:read_name"
+            "observation:read_name",
+            "recovery:replay_port"
           ]
         },
         {
@@ -6182,10 +6185,10 @@
         {
           "name": "_taskTopologyHint",
           "ordinal": 0,
-          "size": 11,
+          "size": 3,
           "seam": "surface",
           "evidence": [
-            "surface:no_authority_touched"
+            "surface:internals_port"
           ]
         },
         {
@@ -6228,10 +6231,10 @@
         {
           "name": "repositoryId",
           "ordinal": 0,
-          "size": 1,
+          "size": 3,
           "seam": "surface",
           "evidence": [
-            "surface:no_authority_touched"
+            "surface:internals_port"
           ]
         },
         {
@@ -6322,10 +6325,10 @@
         {
           "name": "_runIdentityHasEffects",
           "ordinal": 0,
-          "size": 14,
+          "size": 3,
           "seam": "surface",
           "evidence": [
-            "surface:no_authority_touched"
+            "surface:internals_port"
           ]
         },
         {
@@ -6373,7 +6376,7 @@
           "size": 3,
           "seam": "surface",
           "evidence": [
-            "surface:no_authority_touched"
+            "surface:internals_port"
           ]
         },
         {
@@ -6398,28 +6401,28 @@
         {
           "name": "runLineage",
           "ordinal": 0,
-          "size": 1,
+          "size": 3,
           "seam": "surface",
           "evidence": [
-            "surface:no_authority_touched"
+            "surface:internals_port"
           ]
         },
         {
           "name": "runChildren",
           "ordinal": 0,
-          "size": 5,
+          "size": 3,
           "seam": "surface",
           "evidence": [
-            "surface:no_authority_touched"
+            "surface:internals_port"
           ]
         },
         {
           "name": "runDescendants",
           "ordinal": 0,
-          "size": 5,
+          "size": 3,
           "seam": "surface",
           "evidence": [
-            "surface:no_authority_touched"
+            "surface:internals_port"
           ]
         },
         {
@@ -6435,42 +6438,43 @@
         {
           "name": "taskTopologyNode",
           "ordinal": 0,
-          "size": 12,
+          "size": 3,
           "seam": "surface",
           "evidence": [
-            "surface:no_authority_touched"
+            "surface:internals_port"
           ]
         },
         {
           "name": "taskTopology",
           "ordinal": 0,
-          "size": 11,
+          "size": 3,
           "seam": "surface",
           "evidence": [
-            "surface:no_authority_touched"
+            "surface:internals_port"
           ]
         },
         {
           "name": "_recoveryBatchIdentity",
           "ordinal": 0,
-          "size": 12,
+          "size": 3,
           "seam": "recovery",
           "evidence": [
             "recovery:restart_name",
             "recovery:reconcile_call",
-            "observation:key_name"
+            "observation:key_name",
+            "recovery:replay_port"
           ]
         },
         {
           "name": "_validateRecoveryReplayTransactions",
           "ordinal": 0,
-          "size": 51,
+          "size": 3,
           "seam": "recovery",
           "evidence": [
             "recovery:restart_name",
-            "recovery:reconcile_call",
             "admission:guard_name",
-            "admission:validation_vocabulary"
+            "admission:validation_vocabulary",
+            "recovery:replay_port"
           ]
         },
         {
@@ -6530,13 +6534,13 @@
         {
           "name": "_validateGoalPlanReplayTransactions",
           "ordinal": 0,
-          "size": 111,
+          "size": 3,
           "seam": "recovery",
           "evidence": [
             "recovery:restart_name",
-            "recovery:reconcile_call",
             "admission:guard_name",
-            "admission:validation_vocabulary"
+            "admission:validation_vocabulary",
+            "recovery:replay_port"
           ]
         },
         {
@@ -6584,30 +6588,33 @@
         {
           "name": "_planRecoveryRequestFields",
           "ordinal": 0,
-          "size": 7,
+          "size": 3,
           "seam": "recovery",
           "evidence": [
-            "recovery:restart_name"
+            "recovery:restart_name",
+            "recovery:replay_port"
           ]
         },
         {
           "name": "_recoveryAttributionFromClaim",
           "ordinal": 0,
-          "size": 7,
+          "size": 3,
           "seam": "recovery",
           "evidence": [
             "recovery:restart_name",
-            "recovery:reconcile_call"
+            "recovery:reconcile_call",
+            "recovery:replay_port"
           ]
         },
         {
           "name": "_normalizedPlanRecoveryCreatedPayload",
           "ordinal": 0,
-          "size": 7,
+          "size": 3,
           "seam": "recovery",
           "evidence": [
             "recovery:restart_name",
-            "admission:normalize_name"
+            "admission:normalize_name",
+            "recovery:replay_port"
           ]
         },
         {
@@ -6625,56 +6632,58 @@
         {
           "name": "_recoveryFailure",
           "ordinal": 0,
-          "size": 5,
+          "size": 3,
           "seam": "recovery",
           "evidence": [
             "recovery:restart_name",
             "recovery:reconcile_call",
-            "admission:refusal_name"
+            "admission:refusal_name",
+            "recovery:replay_port"
           ]
         },
         {
           "name": "_verifiedRecoveryPrior",
           "ordinal": 0,
-          "size": 18,
+          "size": 3,
           "seam": "recovery",
           "evidence": [
             "recovery:restart_name",
-            "recovery:reconcile_call"
+            "recovery:replay_port"
           ]
         },
         {
           "name": "_recoveryAttemptFailure",
           "ordinal": 0,
-          "size": 5,
+          "size": 3,
           "seam": "recovery",
           "evidence": [
             "recovery:restart_name",
             "recovery:reconcile_call",
-            "admission:refusal_name"
+            "admission:refusal_name",
+            "recovery:replay_port"
           ]
         },
         {
           "name": "_normalizeRecoveryAttemptAdmission",
           "ordinal": 0,
-          "size": 9,
+          "size": 3,
           "seam": "recovery",
           "evidence": [
             "recovery:restart_name",
-            "recovery:reconcile_call",
             "admission:normalize_name",
-            "admission:validation_vocabulary"
+            "admission:validation_vocabulary",
+            "recovery:replay_port"
           ]
         },
         {
           "name": "_normalizeRecoveryAttemptCompletion",
           "ordinal": 0,
-          "size": 9,
+          "size": 3,
           "seam": "recovery",
           "evidence": [
             "recovery:restart_name",
-            "recovery:reconcile_call",
-            "admission:normalize_name"
+            "admission:normalize_name",
+            "recovery:replay_port"
           ]
         },
         {
@@ -6692,33 +6701,35 @@
         {
           "name": "_validateRecoveryAttemptCompletionPayload",
           "ordinal": 0,
-          "size": 12,
+          "size": 3,
           "seam": "recovery",
           "evidence": [
             "recovery:restart_name",
-            "recovery:reconcile_call",
             "admission:guard_name",
-            "admission:validation_vocabulary"
+            "admission:validation_vocabulary",
+            "recovery:replay_port"
           ]
         },
         {
           "name": "_normalizedRecoveryCreatedPayload",
           "ordinal": 0,
-          "size": 19,
+          "size": 3,
           "seam": "recovery",
           "evidence": [
             "recovery:restart_name",
-            "admission:normalize_name"
+            "admission:normalize_name",
+            "recovery:replay_port"
           ]
         },
         {
           "name": "_normalizedRecoveryClaimedPayload",
           "ordinal": 0,
-          "size": 17,
+          "size": 3,
           "seam": "recovery",
           "evidence": [
             "recovery:restart_name",
-            "admission:normalize_name"
+            "admission:normalize_name",
+            "recovery:replay_port"
           ]
         },
         {
@@ -6747,13 +6758,13 @@
         {
           "name": "_validateRecoveryRefinementPair",
           "ordinal": 0,
-          "size": 37,
+          "size": 3,
           "seam": "recovery",
           "evidence": [
             "recovery:restart_name",
-            "recovery:reconcile_call",
             "admission:guard_name",
-            "admission:validation_vocabulary"
+            "admission:validation_vocabulary",
+            "recovery:replay_port"
           ]
         },
         {
@@ -6771,13 +6782,13 @@
         {
           "name": "_validateRecoveryDispositionPayload",
           "ordinal": 0,
-          "size": 55,
+          "size": 3,
           "seam": "recovery",
           "evidence": [
             "recovery:restart_name",
-            "recovery:reconcile_call",
             "admission:guard_name",
-            "admission:validation_vocabulary"
+            "admission:validation_vocabulary",
+            "recovery:replay_port"
           ]
         },
         {
@@ -6833,7 +6844,8 @@
           "seam": "admission",
           "evidence": [
             "delegates:admission",
-            "delegates:observation"
+            "delegates:observation",
+            "delegates:surface"
           ]
         },
         {
@@ -6936,10 +6948,10 @@
         {
           "name": "_ttlTarget",
           "ordinal": 0,
-          "size": 10,
+          "size": 3,
           "seam": "surface",
           "evidence": [
-            "surface:no_authority_touched"
+            "surface:internals_port"
           ]
         },
         {
@@ -6982,10 +6994,10 @@
         {
           "name": "_providerAdverseCeilings",
           "ordinal": 0,
-          "size": 4,
+          "size": 3,
           "seam": "surface",
           "evidence": [
-            "surface:no_authority_touched"
+            "surface:internals_port"
           ]
         },
         {
@@ -7000,10 +7012,10 @@
         {
           "name": "_providerContribution",
           "ordinal": 0,
-          "size": 4,
+          "size": 3,
           "seam": "surface",
           "evidence": [
-            "surface:no_authority_touched"
+            "surface:internals_port"
           ]
         },
         {
@@ -7077,19 +7089,19 @@
         {
           "name": "_setKnowledgeNode",
           "ordinal": 0,
-          "size": 8,
+          "size": 3,
           "seam": "surface",
           "evidence": [
-            "surface:no_authority_touched"
+            "surface:internals_port"
           ]
         },
         {
           "name": "_setKnowledgeEdge",
           "ordinal": 0,
-          "size": 8,
+          "size": 3,
           "seam": "surface",
           "evidence": [
-            "surface:no_authority_touched"
+            "surface:internals_port"
           ]
         },
         {
@@ -7163,13 +7175,14 @@
         {
           "name": "_validPreservedContinuationReceipt",
           "ordinal": 0,
-          "size": 17,
+          "size": 3,
           "seam": "recovery",
           "evidence": [
             "recovery:restart_name",
             "admission:validation_vocabulary",
             "observation:projection_name",
-            "observation:ledger_name"
+            "observation:ledger_name",
+            "recovery:replay_port"
           ]
         },
         {
@@ -7424,10 +7437,10 @@
         {
           "name": "_contextCallRunId",
           "ordinal": 0,
-          "size": 4,
+          "size": 3,
           "seam": "surface",
           "evidence": [
-            "surface:no_authority_touched"
+            "surface:internals_port"
           ]
         },
         {
@@ -7524,28 +7537,28 @@
         {
           "name": "_contextArtifactVerification",
           "ordinal": 0,
-          "size": 4,
+          "size": 3,
           "seam": "surface",
           "evidence": [
-            "surface:no_authority_touched"
+            "surface:internals_port"
           ]
         },
         {
           "name": "withContextArtifactVerification",
           "ordinal": 0,
-          "size": 9,
+          "size": 3,
           "seam": "surface",
           "evidence": [
-            "surface:no_authority_touched"
+            "surface:internals_port"
           ]
         },
         {
           "name": "_contextArtifactRead",
           "ordinal": 0,
-          "size": 7,
+          "size": 3,
           "seam": "surface",
           "evidence": [
-            "surface:no_authority_touched"
+            "surface:internals_port"
           ]
         },
         {
@@ -7612,10 +7625,10 @@
         {
           "name": "_contextEffectCallCore",
           "ordinal": 0,
-          "size": 11,
+          "size": 3,
           "seam": "surface",
           "evidence": [
-            "surface:no_authority_touched"
+            "surface:internals_port"
           ]
         },
         {
@@ -7756,10 +7769,10 @@
         {
           "name": "events",
           "ordinal": 0,
-          "size": 5,
+          "size": 3,
           "seam": "surface",
           "evidence": [
-            "surface:no_authority_touched"
+            "surface:internals_port"
           ]
         },
         {
@@ -7792,28 +7805,28 @@
         {
           "name": "observationTime",
           "ordinal": 0,
-          "size": 4,
+          "size": 3,
           "seam": "surface",
           "evidence": [
-            "surface:no_authority_touched"
+            "surface:internals_port"
           ]
         },
         {
           "name": "task",
           "ordinal": 0,
-          "size": 1,
+          "size": 3,
           "seam": "surface",
           "evidence": [
-            "surface:no_authority_touched"
+            "surface:internals_port"
           ]
         },
         {
           "name": "run",
           "ordinal": 0,
-          "size": 1,
+          "size": 3,
           "seam": "surface",
           "evidence": [
-            "surface:no_authority_touched"
+            "surface:internals_port"
           ]
         },
         {
@@ -7864,28 +7877,28 @@
         {
           "name": "contextProgramAuthority",
           "ordinal": 0,
-          "size": 10,
+          "size": 3,
           "seam": "surface",
           "evidence": [
-            "surface:no_authority_touched"
+            "surface:internals_port"
           ]
         },
         {
           "name": "contextSession",
           "ordinal": 0,
-          "size": 1,
+          "size": 3,
           "seam": "surface",
           "evidence": [
-            "surface:no_authority_touched"
+            "surface:internals_port"
           ]
         },
         {
           "name": "contextCell",
           "ordinal": 0,
-          "size": 1,
+          "size": 3,
           "seam": "surface",
           "evidence": [
-            "surface:no_authority_touched"
+            "surface:internals_port"
           ]
         },
         {
@@ -7894,16 +7907,17 @@
           "size": 70,
           "seam": "observation",
           "evidence": [
-            "delegates:observation"
+            "delegates:observation",
+            "delegates:surface"
           ]
         },
         {
           "name": "contextCalls",
           "ordinal": 0,
           "size": 8,
-          "seam": "observation",
+          "seam": "surface",
           "evidence": [
-            "delegates:observation"
+            "delegates:surface"
           ]
         },
         {
@@ -7937,18 +7951,18 @@
           "name": "contextCallArtifacts",
           "ordinal": 0,
           "size": 3,
-          "seam": "admission",
+          "seam": "surface",
           "evidence": [
-            "delegates:admission"
+            "delegates:surface"
           ]
         },
         {
           "name": "contextCallContents",
           "ordinal": 0,
           "size": 41,
-          "seam": "admission",
+          "seam": "surface",
           "evidence": [
-            "delegates:admission"
+            "delegates:surface"
           ]
         },
         {
@@ -7957,25 +7971,26 @@
           "size": 82,
           "seam": "admission",
           "evidence": [
-            "delegates:admission"
+            "delegates:admission",
+            "delegates:surface"
           ]
         },
         {
           "name": "contextCompletedCallSource",
           "ordinal": 0,
           "size": 3,
-          "seam": "admission",
+          "seam": "surface",
           "evidence": [
-            "delegates:admission"
+            "delegates:surface"
           ]
         },
         {
           "name": "contextCompletedCallSourceAndArtifacts",
           "ordinal": 0,
           "size": 34,
-          "seam": "admission",
+          "seam": "surface",
           "evidence": [
-            "delegates:admission"
+            "delegates:surface"
           ]
         },
         {
@@ -8037,10 +8052,10 @@
         {
           "name": "contextPackage",
           "ordinal": 0,
-          "size": 14,
+          "size": 3,
           "seam": "surface",
           "evidence": [
-            "surface:no_authority_touched"
+            "surface:internals_port"
           ]
         },
         {
@@ -8049,16 +8064,16 @@
           "size": 3,
           "seam": "surface",
           "evidence": [
-            "surface:no_authority_touched"
+            "surface:internals_port"
           ]
         },
         {
           "name": "_contextPackageProvenance",
           "ordinal": 0,
-          "size": 13,
+          "size": 3,
           "seam": "surface",
           "evidence": [
-            "surface:no_authority_touched"
+            "surface:internals_port"
           ]
         },
         {
@@ -8277,7 +8292,7 @@
           "size": 3,
           "seam": "surface",
           "evidence": [
-            "surface:no_authority_touched"
+            "surface:internals_port"
           ]
         },
         {
@@ -8384,21 +8399,23 @@
         {
           "name": "reconcilePlanGatedTask",
           "ordinal": 0,
-          "size": 26,
+          "size": 3,
           "seam": "recovery",
           "evidence": [
             "recovery:restart_name",
-            "recovery:reconcile_call"
+            "recovery:reconcile_call",
+            "recovery:replay_port"
           ]
         },
         {
           "name": "reconcilePlanRevisionTask",
           "ordinal": 0,
-          "size": 29,
+          "size": 3,
           "seam": "recovery",
           "evidence": [
             "recovery:restart_name",
-            "recovery:reconcile_call"
+            "recovery:reconcile_call",
+            "recovery:replay_port"
           ]
         },
         {
@@ -8431,11 +8448,11 @@
         {
           "name": "createAndClaimPreservedResumeRefinement",
           "ordinal": 0,
-          "size": 50,
+          "size": 3,
           "seam": "recovery",
           "evidence": [
             "recovery:restart_name",
-            "observation:store_append"
+            "recovery:replay_port"
           ]
         },
         {
@@ -8453,10 +8470,10 @@
         {
           "name": "unsettledPlanNodeTasks",
           "ordinal": 0,
-          "size": 6,
+          "size": 3,
           "seam": "surface",
           "evidence": [
-            "surface:no_authority_touched"
+            "surface:internals_port"
           ]
         },
         {
@@ -8491,30 +8508,31 @@
         {
           "name": "recoveryDispatchState",
           "ordinal": 0,
-          "size": 1,
+          "size": 3,
           "seam": "recovery",
           "evidence": [
             "recovery:restart_name",
             "recovery:reconcile_call",
-            "observation:key_name"
+            "observation:key_name",
+            "recovery:replay_port"
           ]
         },
         {
           "name": "representationProduction",
           "ordinal": 0,
-          "size": 1,
+          "size": 3,
           "seam": "surface",
           "evidence": [
-            "surface:no_authority_touched"
+            "surface:internals_port"
           ]
         },
         {
           "name": "representationProductionByRequest",
           "ordinal": 0,
-          "size": 4,
+          "size": 3,
           "seam": "surface",
           "evidence": [
-            "surface:no_authority_touched"
+            "surface:internals_port"
           ]
         },
         {
@@ -8548,10 +8566,10 @@
         {
           "name": "reverifyRepresentationProduction",
           "ordinal": 0,
-          "size": 36,
+          "size": 3,
           "seam": "surface",
           "evidence": [
-            "surface:no_authority_touched"
+            "surface:internals_port"
           ]
         },
         {
@@ -8622,10 +8640,10 @@
         {
           "name": "goalPlanRunIds",
           "ordinal": 0,
-          "size": 14,
+          "size": 3,
           "seam": "surface",
           "evidence": [
-            "surface:no_authority_touched"
+            "surface:internals_port"
           ]
         },
         {
@@ -8658,37 +8676,37 @@
         {
           "name": "healthCheck",
           "ordinal": 0,
-          "size": 1,
+          "size": 3,
           "seam": "surface",
           "evidence": [
-            "surface:no_authority_touched"
+            "surface:internals_port"
           ]
         },
         {
           "name": "readyTasks",
           "ordinal": 0,
-          "size": 4,
+          "size": 3,
           "seam": "surface",
           "evidence": [
-            "surface:no_authority_touched"
+            "surface:internals_port"
           ]
         },
         {
           "name": "fleetDrain",
           "ordinal": 0,
-          "size": 1,
+          "size": 3,
           "seam": "surface",
           "evidence": [
-            "surface:no_authority_touched"
+            "surface:internals_port"
           ]
         },
         {
           "name": "runStop",
           "ordinal": 0,
-          "size": 4,
+          "size": 3,
           "seam": "surface",
           "evidence": [
-            "surface:no_authority_touched"
+            "surface:internals_port"
           ]
         },
         {
@@ -8825,10 +8843,10 @@
         {
           "name": "runResultExport",
           "ordinal": 0,
-          "size": 5,
+          "size": 3,
           "seam": "surface",
           "evidence": [
-            "surface:no_authority_touched"
+            "surface:internals_port"
           ]
         },
         {
@@ -8865,16 +8883,16 @@
           "size": 3,
           "seam": "surface",
           "evidence": [
-            "surface:no_authority_touched"
+            "surface:internals_port"
           ]
         },
         {
           "name": "runControls",
           "ordinal": 0,
-          "size": 8,
+          "size": 3,
           "seam": "surface",
           "evidence": [
-            "surface:no_authority_touched"
+            "surface:internals_port"
           ]
         },
         {
@@ -8985,19 +9003,19 @@
         {
           "name": "webCommand",
           "ordinal": 0,
-          "size": 1,
+          "size": 3,
           "seam": "surface",
           "evidence": [
-            "surface:no_authority_touched"
+            "surface:internals_port"
           ]
         },
         {
           "name": "webCommandByScope",
           "ordinal": 0,
-          "size": 4,
+          "size": 3,
           "seam": "surface",
           "evidence": [
-            "surface:no_authority_touched"
+            "surface:internals_port"
           ]
         },
         {
@@ -9031,19 +9049,19 @@
         {
           "name": "mcpCall",
           "ordinal": 0,
-          "size": 1,
+          "size": 3,
           "seam": "surface",
           "evidence": [
-            "surface:no_authority_touched"
+            "surface:internals_port"
           ]
         },
         {
           "name": "mcpCallByScope",
           "ordinal": 0,
-          "size": 4,
+          "size": 3,
           "seam": "surface",
           "evidence": [
-            "surface:no_authority_touched"
+            "surface:internals_port"
           ]
         },
         {
@@ -9115,12 +9133,11 @@
         {
           "name": "createAndClaimRecoveryRefinement",
           "ordinal": 0,
-          "size": 43,
+          "size": 3,
           "seam": "recovery",
           "evidence": [
             "recovery:restart_name",
-            "recovery:reconcile_call",
-            "observation:store_append"
+            "recovery:replay_port"
           ]
         },
         {
@@ -9231,10 +9248,10 @@
         {
           "name": "artifact",
           "ordinal": 0,
-          "size": 1,
+          "size": 3,
           "seam": "surface",
           "evidence": [
-            "surface:no_authority_touched"
+            "surface:internals_port"
           ]
         },
         {
@@ -9269,10 +9286,10 @@
         {
           "name": "providerProcessing",
           "ordinal": 0,
-          "size": 1,
+          "size": 3,
           "seam": "surface",
           "evidence": [
-            "surface:no_authority_touched"
+            "surface:internals_port"
           ]
         },
         {
@@ -9296,10 +9313,10 @@
         {
           "name": "advisoryFeedCards",
           "ordinal": 0,
-          "size": 1,
+          "size": 3,
           "seam": "surface",
           "evidence": [
-            "surface:no_authority_touched"
+            "surface:internals_port"
           ]
         },
         {
@@ -9314,10 +9331,10 @@
         {
           "name": "dueProviderProcessing",
           "ordinal": 0,
-          "size": 10,
+          "size": 3,
           "seam": "surface",
           "evidence": [
-            "surface:no_authority_touched"
+            "surface:internals_port"
           ]
         },
         {
@@ -9392,19 +9409,19 @@
         {
           "name": "reuseDecision",
           "ordinal": 0,
-          "size": 1,
+          "size": 3,
           "seam": "surface",
           "evidence": [
-            "surface:no_authority_touched"
+            "surface:internals_port"
           ]
         },
         {
           "name": "reuseSubjectHead",
           "ordinal": 0,
-          "size": 1,
+          "size": 3,
           "seam": "surface",
           "evidence": [
-            "surface:no_authority_touched"
+            "surface:internals_port"
           ]
         },
         {
@@ -9419,10 +9436,10 @@
         {
           "name": "reuseRiskGuard",
           "ordinal": 0,
-          "size": 1,
+          "size": 3,
           "seam": "surface",
           "evidence": [
-            "surface:no_authority_touched"
+            "surface:internals_port"
           ]
         },
         {
@@ -9513,24 +9530,22 @@
         {
           "name": "admitRecoveryAttempt",
           "ordinal": 0,
-          "size": 30,
+          "size": 3,
           "seam": "recovery",
           "evidence": [
             "recovery:restart_name",
-            "recovery:reconcile_call",
             "admission:guard_name",
-            "observation:store_append"
+            "recovery:replay_port"
           ]
         },
         {
           "name": "completeRecoveryAttempt",
           "ordinal": 0,
-          "size": 29,
+          "size": 3,
           "seam": "recovery",
           "evidence": [
             "recovery:restart_name",
-            "recovery:reconcile_call",
-            "observation:store_append"
+            "recovery:replay_port"
           ]
         },
         {
@@ -9540,27 +9555,30 @@
           "seam": "recovery",
           "evidence": [
             "recovery:restart_name",
-            "recovery:reconcile_call"
+            "recovery:reconcile_call",
+            "recovery:replay_port"
           ]
         },
         {
           "name": "recoveryAttemptHead",
           "ordinal": 0,
-          "size": 4,
+          "size": 3,
           "seam": "recovery",
           "evidence": [
             "recovery:restart_name",
-            "recovery:reconcile_call"
+            "recovery:reconcile_call",
+            "recovery:replay_port"
           ]
         },
         {
           "name": "pendingRecoveryAttempts",
           "ordinal": 0,
-          "size": 8,
+          "size": 3,
           "seam": "recovery",
           "evidence": [
             "recovery:restart_name",
-            "observation:read_name"
+            "observation:read_name",
+            "recovery:replay_port"
           ]
         },
         {
@@ -9595,10 +9613,10 @@
         {
           "name": "_prepareContextPackPayload",
           "ordinal": 0,
-          "size": 34,
+          "size": 3,
           "seam": "surface",
           "evidence": [
-            "surface:no_authority_touched"
+            "surface:internals_port"
           ]
         },
         {
@@ -9617,16 +9635,16 @@
           "size": 3,
           "seam": "surface",
           "evidence": [
-            "surface:no_authority_touched"
+            "surface:internals_port"
           ]
         },
         {
           "name": "contextPackHead",
           "ordinal": 0,
-          "size": 5,
+          "size": 3,
           "seam": "surface",
           "evidence": [
-            "surface:no_authority_touched"
+            "surface:internals_port"
           ]
         },
         {
@@ -9670,10 +9688,10 @@
         {
           "name": "waveClosure",
           "ordinal": 0,
-          "size": 4,
+          "size": 3,
           "seam": "surface",
           "evidence": [
-            "surface:no_authority_touched"
+            "surface:internals_port"
           ]
         },
         {
@@ -9682,7 +9700,7 @@
           "size": 3,
           "seam": "surface",
           "evidence": [
-            "surface:no_authority_touched"
+            "surface:internals_port"
           ]
         },
         {
@@ -9691,7 +9709,7 @@
           "size": 3,
           "seam": "surface",
           "evidence": [
-            "surface:no_authority_touched"
+            "surface:internals_port"
           ]
         },
         {
@@ -9707,19 +9725,19 @@
         {
           "name": "swarm",
           "ordinal": 0,
-          "size": 1,
+          "size": 3,
           "seam": "surface",
           "evidence": [
-            "surface:no_authority_touched"
+            "surface:internals_port"
           ]
         },
         {
           "name": "swarms",
           "ordinal": 0,
-          "size": 1,
+          "size": 3,
           "seam": "surface",
           "evidence": [
-            "surface:no_authority_touched"
+            "surface:internals_port"
           ]
         },
         {
@@ -9737,7 +9755,7 @@
           "size": 3,
           "seam": "surface",
           "evidence": [
-            "surface:no_authority_touched"
+            "surface:internals_port"
           ]
         },
         {
@@ -9746,16 +9764,16 @@
           "size": 3,
           "seam": "surface",
           "evidence": [
-            "surface:no_authority_touched"
+            "surface:internals_port"
           ]
         },
         {
           "name": "priorCoordinationEvent",
           "ordinal": 0,
-          "size": 4,
+          "size": 3,
           "seam": "surface",
           "evidence": [
-            "surface:no_authority_touched"
+            "surface:internals_port"
           ]
         },
         {
@@ -9764,7 +9782,7 @@
           "size": 3,
           "seam": "surface",
           "evidence": [
-            "surface:no_authority_touched"
+            "surface:internals_port"
           ]
         },
         {
@@ -9779,18 +9797,19 @@
         {
           "name": "composeBriefingPack",
           "ordinal": 0,
-          "size": 45,
+          "size": 3,
           "seam": "surface",
           "evidence": [
-            "surface:no_authority_touched"
+            "surface:internals_port"
           ]
         },
         {
           "name": "composeCampaignBriefing",
           "ordinal": 0,
           "size": 21,
-          "seam": "observation",
+          "seam": "surface",
           "evidence": [
+            "delegates:surface",
             "delegates:observation"
           ]
         },
@@ -9800,6 +9819,7 @@
           "size": 15,
           "seam": "observation",
           "evidence": [
+            "delegates:surface",
             "delegates:observation"
           ]
         },
@@ -9836,10 +9856,11 @@
         {
           "name": "reapExpiredContextPacks",
           "ordinal": 0,
-          "size": 9,
+          "size": 3,
           "seam": "recovery",
           "evidence": [
-            "recovery:restart_name"
+            "recovery:restart_name",
+            "recovery:replay_port"
           ]
         },
         {
@@ -9950,33 +9971,31 @@
         {
           "name": "recordRecoveryContinuationIntent",
           "ordinal": 0,
-          "size": 24,
+          "size": 3,
           "seam": "recovery",
           "evidence": [
             "recovery:restart_name",
-            "recovery:reconcile_call",
-            "observation:store_append",
-            "observation:record_name"
+            "observation:record_name",
+            "recovery:replay_port"
           ]
         },
         {
           "name": "completeRecoveryDispatch",
           "ordinal": 0,
-          "size": 68,
+          "size": 3,
           "seam": "recovery",
           "evidence": [
             "recovery:restart_name",
-            "recovery:reconcile_call",
-            "observation:store_append"
+            "recovery:replay_port"
           ]
         },
         {
           "name": "integrationAuthority",
           "ordinal": 0,
-          "size": 21,
+          "size": 3,
           "seam": "surface",
           "evidence": [
-            "surface:no_authority_touched"
+            "surface:internals_port"
           ]
         },
         {
@@ -9991,10 +10010,10 @@
         {
           "name": "publicationAuthority",
           "ordinal": 0,
-          "size": 17,
+          "size": 3,
           "seam": "surface",
           "evidence": [
-            "surface:no_authority_touched"
+            "surface:internals_port"
           ]
         },
         {
@@ -10088,16 +10107,16 @@
           "size": 3,
           "seam": "surface",
           "evidence": [
-            "surface:no_authority_touched"
+            "surface:internals_port"
           ]
         },
         {
           "name": "scratchpadSnapshotBatch",
           "ordinal": 0,
-          "size": 17,
+          "size": 3,
           "seam": "surface",
           "evidence": [
-            "surface:no_authority_touched"
+            "surface:internals_port"
           ]
         },
         {
@@ -10112,10 +10131,10 @@
         {
           "name": "_scratchpadResolveForWorker",
           "ordinal": 0,
-          "size": 8,
+          "size": 3,
           "seam": "surface",
           "evidence": [
-            "surface:no_authority_touched"
+            "surface:internals_port"
           ]
         },
         {
@@ -10141,12 +10160,13 @@
         {
           "name": "_scratchpadReapReceipt",
           "ordinal": 0,
-          "size": 15,
+          "size": 3,
           "seam": "recovery",
           "evidence": [
             "recovery:restart_name",
             "observation:projection_name",
-            "observation:ledger_name"
+            "observation:ledger_name",
+            "recovery:replay_port"
           ]
         },
         {
@@ -10171,11 +10191,11 @@
         {
           "name": "reapRunScratchpads",
           "ordinal": 0,
-          "size": 68,
+          "size": 3,
           "seam": "recovery",
           "evidence": [
             "recovery:restart_name",
-            "observation:store_append"
+            "recovery:replay_port"
           ]
         },
         {
@@ -10184,7 +10204,7 @@
           "size": 3,
           "seam": "surface",
           "evidence": [
-            "surface:no_authority_touched"
+            "surface:internals_port"
           ]
         },
         {
@@ -10204,7 +10224,7 @@
           "size": 3,
           "seam": "surface",
           "evidence": [
-            "surface:no_authority_touched"
+            "surface:internals_port"
           ]
         },
         {
@@ -10320,19 +10340,19 @@
         {
           "name": "boardItem",
           "ordinal": 0,
-          "size": 1,
+          "size": 3,
           "seam": "surface",
           "evidence": [
-            "surface:no_authority_touched"
+            "surface:internals_port"
           ]
         },
         {
           "name": "boardItemVersions",
           "ordinal": 0,
-          "size": 1,
+          "size": 3,
           "seam": "surface",
           "evidence": [
-            "surface:no_authority_touched"
+            "surface:internals_port"
           ]
         },
         {
@@ -10347,10 +10367,10 @@
         {
           "name": "boardGrant",
           "ordinal": 0,
-          "size": 5,
+          "size": 3,
           "seam": "surface",
           "evidence": [
-            "surface:no_authority_touched"
+            "surface:internals_port"
           ]
         },
         {
@@ -10365,10 +10385,10 @@
         {
           "name": "workerGeneration",
           "ordinal": 0,
-          "size": 4,
+          "size": 3,
           "seam": "surface",
           "evidence": [
-            "surface:no_authority_touched"
+            "surface:internals_port"
           ]
         },
         {
@@ -10384,10 +10404,11 @@
         {
           "name": "orphans",
           "ordinal": 0,
-          "size": 27,
+          "size": 3,
           "seam": "recovery",
           "evidence": [
-            "recovery:restart_name"
+            "recovery:restart_name",
+            "recovery:replay_port"
           ]
         },
         {
@@ -10423,19 +10444,19 @@
         {
           "name": "_taskByRun",
           "ordinal": 0,
-          "size": 6,
+          "size": 3,
           "seam": "surface",
           "evidence": [
-            "surface:no_authority_touched"
+            "surface:internals_port"
           ]
         },
         {
           "name": "_waveMembershipOf",
           "ordinal": 0,
-          "size": 10,
+          "size": 3,
           "seam": "surface",
           "evidence": [
-            "surface:no_authority_touched"
+            "surface:internals_port"
           ]
         },
         {
@@ -10470,10 +10491,10 @@
         {
           "name": "_sortedBoardItems",
           "ordinal": 0,
-          "size": 9,
+          "size": 3,
           "seam": "surface",
           "evidence": [
-            "surface:no_authority_touched"
+            "surface:internals_port"
           ]
         },
         {
@@ -10488,19 +10509,19 @@
         {
           "name": "_boardGrantItemRow",
           "ordinal": 0,
-          "size": 16,
+          "size": 3,
           "seam": "surface",
           "evidence": [
-            "surface:no_authority_touched"
+            "surface:internals_port"
           ]
         },
         {
           "name": "_boardGrantReportRow",
           "ordinal": 0,
-          "size": 8,
+          "size": 3,
           "seam": "surface",
           "evidence": [
-            "surface:no_authority_touched"
+            "surface:internals_port"
           ]
         },
         {
@@ -10527,7 +10548,7 @@
           "size": 3,
           "seam": "surface",
           "evidence": [
-            "surface:no_authority_touched"
+            "surface:internals_port"
           ]
         },
         {
@@ -10579,10 +10600,10 @@
         {
           "name": "_knowledgePayload",
           "ordinal": 0,
-          "size": 5,
+          "size": 3,
           "seam": "surface",
           "evidence": [
-            "surface:no_authority_touched"
+            "surface:internals_port"
           ]
         },
         {
@@ -10638,10 +10659,10 @@
         {
           "name": "_supersessionWouldCycle",
           "ordinal": 0,
-          "size": 8,
+          "size": 3,
           "seam": "surface",
           "evidence": [
-            "surface:no_authority_touched"
+            "surface:internals_port"
           ]
         },
         {
@@ -10708,7 +10729,8 @@
           "size": 6,
           "seam": "admission",
           "evidence": [
-            "delegates:admission"
+            "delegates:admission",
+            "delegates:surface"
           ]
         },
         {
@@ -10723,10 +10745,10 @@
         {
           "name": "_scratchCorrectionPrefix",
           "ordinal": 0,
-          "size": 15,
+          "size": 3,
           "seam": "surface",
           "evidence": [
-            "surface:no_authority_touched"
+            "surface:internals_port"
           ]
         },
         {
@@ -10831,6 +10853,7 @@
           "size": 7,
           "seam": "admission",
           "evidence": [
+            "delegates:surface",
             "delegates:admission"
           ]
         },
@@ -10971,45 +10994,46 @@
         {
           "name": "_knowledgeProjectFence",
           "ordinal": 0,
-          "size": 6,
+          "size": 3,
           "seam": "surface",
           "evidence": [
-            "surface:no_authority_touched"
+            "surface:internals_port"
           ]
         },
         {
           "name": "_madConfidence",
           "ordinal": 0,
-          "size": 1,
+          "size": 3,
           "seam": "surface",
           "evidence": [
-            "surface:no_authority_touched"
+            "surface:internals_port"
           ]
         },
         {
           "name": "_knowledgeStaleness",
           "ordinal": 0,
-          "size": 9,
+          "size": 3,
           "seam": "surface",
           "evidence": [
-            "surface:no_authority_touched"
+            "surface:internals_port"
           ]
         },
         {
           "name": "_cachePreview",
           "ordinal": 0,
-          "size": 9,
+          "size": 3,
           "seam": "surface",
           "evidence": [
-            "surface:no_authority_touched"
+            "surface:internals_port"
           ]
         },
         {
           "name": "recallPreview",
           "ordinal": 0,
           "size": 97,
-          "seam": "observation",
+          "seam": "surface",
           "evidence": [
+            "delegates:surface",
             "delegates:observation"
           ]
         },
@@ -11028,6 +11052,7 @@
           "size": 27,
           "seam": "observation",
           "evidence": [
+            "delegates:surface",
             "delegates:observation"
           ]
         },
@@ -11037,6 +11062,7 @@
           "size": 12,
           "seam": "observation",
           "evidence": [
+            "delegates:surface",
             "delegates:observation"
           ]
         },
@@ -11109,10 +11135,10 @@
         {
           "name": "_recallAssessmentCandidate",
           "ordinal": 0,
-          "size": 31,
+          "size": 3,
           "seam": "surface",
           "evidence": [
-            "surface:no_authority_touched"
+            "surface:internals_port"
           ]
         },
         {
@@ -11166,10 +11192,10 @@
         {
           "name": "recallAssessments",
           "ordinal": 0,
-          "size": 4,
+          "size": 3,
           "seam": "surface",
           "evidence": [
-            "surface:no_authority_touched"
+            "surface:internals_port"
           ]
         },
         {
@@ -11185,10 +11211,10 @@
         {
           "name": "KNOWLEDGE_CANDIDATE_TRIGGERS",
           "ordinal": 0,
-          "size": 8,
+          "size": 3,
           "seam": "surface",
           "evidence": [
-            "surface:no_authority_touched"
+            "surface:internals_port"
           ]
         },
         {
@@ -11230,28 +11256,28 @@
         {
           "name": "affectedReaders",
           "ordinal": 0,
-          "size": 10,
+          "size": 3,
           "seam": "surface",
           "evidence": [
-            "surface:no_authority_touched"
+            "surface:internals_port"
           ]
         },
         {
           "name": "traceKnowledge",
           "ordinal": 0,
-          "size": 5,
+          "size": 3,
           "seam": "surface",
           "evidence": [
-            "surface:no_authority_touched"
+            "surface:internals_port"
           ]
         },
         {
           "name": "traceKnowledgeBounded",
           "ordinal": 0,
           "size": 27,
-          "seam": "observation",
+          "seam": "surface",
           "evidence": [
-            "delegates:observation"
+            "delegates:surface"
           ]
         },
         {
@@ -11260,7 +11286,8 @@
           "size": 62,
           "seam": "observation",
           "evidence": [
-            "delegates:observation"
+            "delegates:observation",
+            "delegates:surface"
           ]
         }
       ]
