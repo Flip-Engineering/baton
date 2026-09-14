@@ -203,6 +203,7 @@ import { BatonApplication, MockAdapter, createDriver, createWaveDriver } from '.
 import { AtlasCodeIndex, CartographerQuartermaster, PublicSupplyChainOracle } from '../src/index.mjs';
 import { connectBaton } from '../src/application-cli.mjs';
 import { APPLICATION_SEMANTIC_REGISTRY } from '../src/application-semantics.mjs';
+import { mockApplicationCard } from '../scripts/surface-truth.mjs';
 
 const dirs = [];
 function tmpDir() {
@@ -1471,7 +1472,9 @@ function limitsHandshakeFetch(fixture, { limitsRegistryDigest } = {}) {
         application: {
           schemaVersion: 1,
           repoId: fixture.repoId,
-          commands: ['swarm.list', 'swarm.create', 'swarm.view', 'swarm.watch', 'swarm.update', 'swarm.recruit', 'swarm.guide', 'swarm.capture', 'swarm.check', 'swarm.stop', 'application.help', 'runs.list', 'run.start', 'run.inspect', 'run.act', 'run.stop'],
+          // Commands derive from the command table (surface-truth.mjs); the handshake verifies
+          // the digests, never the list itself.
+          commands: mockApplicationCard(fixture.repoId).commands,
           agentExperience: {
             registryDigest: APPLICATION_SEMANTIC_REGISTRY.digest,
             ...(limitsRegistryDigest === undefined ? {} : { limitsRegistryDigest }),

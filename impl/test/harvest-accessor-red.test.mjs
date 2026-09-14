@@ -57,6 +57,7 @@ import {
   servedCliOrdinaryKeys,
 } from '../scripts/render-surface-docs.mjs';
 import { BANNED_SURFACE_VERBS } from '../scripts/surface-conformance.mjs';
+import { mockApplicationCard } from '../scripts/surface-truth.mjs';
 
 const REPO = 'repo-harvest-accessor';
 const repoRoot = fileURLToPath(new URL('../..', import.meta.url));
@@ -245,10 +246,8 @@ function mockAppServer({ principal, command } = {}) {
   const commandCalls = [];
   const application = {
     repoId: REPO,
-    card: () => ({
-      schemaVersion: 1, repoId: REPO,
-      commands: ['swarm.list', 'swarm.create', 'swarm.view', 'swarm.watch', 'swarm.update', 'swarm.recruit', 'swarm.guide', 'swarm.capture', 'swarm.check', 'swarm.stop', 'application.help', 'runs.list', 'run.start', 'run.inspect', 'run.episode', 'run.workstreams', 'run.workstream.notify', 'run.workstream.stop', 'run.act', 'run.status', 'run.follow', 'run.recover', 'run.approve', 'run.wait', 'run.answer', 'run.feedback', 'run.steer', 'run.stop', 'run.evidence', 'run.adopt', 'run.retry_verification', 'run.resume_work', 'run.review', 'run.integrate', 'run.export', 'waves.attach', 'application.shutdown'],
-    }),
+    // The card's commands derive from the command table (surface-truth.mjs).
+    card: () => mockApplicationCard(REPO),
     async authorizeReplay() { return true; },
     async command(name, args, appPrincipal, context) {
       commandCalls.push({ name, args, principal: appPrincipal, context });
