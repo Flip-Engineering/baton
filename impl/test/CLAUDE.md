@@ -8,5 +8,4 @@
 | ID | Time | T | Title | Read |
 |----|------|---|-------|------|
 | #11761 | 6:34 PM | 🔴 | Seam inventory line-free refactor fails SI1 test on constructor member | ~718 |
-| #11738 | 6:09 PM | 🟣 | Canonical suite verdict system with per-file scheduler and expected-red manifest | ~787 |
 </claude-mem-context>

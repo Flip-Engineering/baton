@@ -1,6 +1,6 @@
 // Transport-independent swarm commands, argument validation, and schemas.
 import { SWARM_EVENT_PAYLOAD_SCHEMAS, swarmEventAgentRequiredFields, swarmEventFieldExpectation,
-  swarmUpdatePayloadSummary } from './swarm-event-schemas.mjs';
+  swarmUpdatePayloadSummary, swarmEventFields } from './swarm-event-schemas.mjs';
 /** The closed swarm.update event set. Each event kind is a domain change the runtime applies
  * atomically; `swarm.recruit`/`swarm.guide`/`swarm.stop` are NOT expressible here — spawn and
  * worker binding stay on their own explicit lanes. */
@@ -278,6 +278,15 @@ export function validateSwarmCommand(name, args) {
           });
       }
     } else if (isJsonObject(payload)) {
+      // A field the schema does not know is refused, never dropped: an agent that writes
+      // `dependsOn` and gets an accepted receipt would believe a dependency exists.
+      const known = new Set([...swarmEventFields(args.event), 'swarmId']);
+      const unknown = Object.keys(payload).find((field) => !known.has(field));
+      if (unknown !== undefined) {
+        throw swarmError(
+          `${name} request is invalid: payload.${unknown} is not a field of ${args.event} (fields: ${swarmEventFields(args.event).join(', ')})`,
+          'swarm_command_invalid', { field: `payload.${unknown}`, event: args.event, fields: swarmEventFields(args.event) });
+      }
       const missing = swarmEventAgentRequiredFields(args.event)
         .filter((field) => !Object.hasOwn(payload, field) || payload[field] === undefined);
       if (missing.length > 0) {

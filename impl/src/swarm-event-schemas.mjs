@@ -61,7 +61,7 @@ export const SWARM_EVENT_PAYLOAD_SCHEMAS = Object.freeze({
   }),
   'swarm.work_updated': KIND('open or evolve one unit of work', {
     workId: STRING('the work identity', { required: true, example: 'work-discovery' }),
-    objective: STRING('what the work is trying to achieve', { required: true, example: 'map the native discovery lane' }),
+    objective: STRING('what the work is trying to achieve (required when the work is new; a status-only update keeps the recorded objective)', { required: true, optionalWhenExisting: 'the recorded objective of existing work is kept', example: 'map the native discovery lane' }),
     status: { type: 'string', enum: ['open', 'completed', 'cancelled'], required: false,
       description: 'the work lifecycle state', expectation: 'one of open, completed, cancelled', example: 'open' },
     expectedVersion: VERSION,
@@ -122,6 +122,11 @@ function fieldsOf(kind, predicate) {
 }
 
 /** Every field the durable store demands for `kind`, including the ones the runtime fills in. */
+/** Every payload field the schema knows for `kind`, in schema order. */
+export function swarmEventFields(kind) {
+  return Object.keys(SWARM_EVENT_PAYLOAD_SCHEMAS[kind]?.fields ?? {});
+}
+
 export function swarmEventRequiredFields(kind) {
   return fieldsOf(kind, (field) => field.required);
 }
@@ -136,7 +141,7 @@ export function swarmEventAutoFilledFields(kind) {
  * checks for presence. Empty for kinds the runtime can assemble entirely from request identity
  * (contributions, self-leaves, closes); `swarmId` is always auto-filled and never listed. */
 export function swarmEventAgentRequiredFields(kind) {
-  return fieldsOf(kind, (field) => field.required && field.autoFilled === undefined);
+  return fieldsOf(kind, (field) => field.required && field.autoFilled === undefined && field.optionalWhenExisting === undefined);
 }
 
 /** The expectation text for one payload field — the same wording every surface prints. */

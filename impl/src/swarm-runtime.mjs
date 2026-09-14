@@ -158,20 +158,49 @@ export class SwarmRuntime {
       const worker = workers.find((row) => row.runId === participant.runId
         && (!participant.bindings.length || row.id === participant.bindings.at(-1)?.workerId));
       const paused = worker ? this.coordinator.pausedTurns({ workerId: worker.id }) : [];
+      // A turn is paused only while the worker that paused it is alive: a dead or exited
+      // worker's leftover pause record is history, not a turn a guide could resume.
+      const alive = worker && ['working', 'blocked', 'pending', 'idle', 'stopping'].includes(worker.status);
       return { ...clone(participant), native: worker && this.coordinator.observedNativeSubagents
         ? this.coordinator.observedNativeSubagents(worker.id)
         : { coverage: 'observed_only', agents: [], invocations: [], unidentified: [] }, runtime: {
         workerId: worker?.id ?? null, state: worker?.status ?? 'unbound',
-        turn: paused.length ? 'paused' : worker?.status === 'working' ? 'running' : null,
+        turn: alive && paused.length ? 'paused' : worker?.status === 'working' ? 'running' : null,
       } };
     });
+    // Organization truth an orchestrator would otherwise assemble by hand: members whose process
+    // is gone, sessions that outlived their membership, delegations whose parent is gone, work
+    // still assigned to a participant who cannot do it, and a closed swarm that still runs.
+    const organization = [];
+    const gone = (row) => row.status !== 'active' || ['dead', 'exited', 'unbound'].includes(row.runtime.state);
+    for (const row of participants) {
+      if (row.status === 'active' && ['dead', 'exited'].includes(row.runtime.state)) {
+        organization.push({ kind: 'participant_runtime_dead', participantId: row.participantId, state: row.runtime.state });
+      }
+      if (row.status !== 'active' && ['working', 'blocked', 'pending', 'idle'].includes(row.runtime.state)) {
+        organization.push({ kind: 'member_left_session_live', participantId: row.participantId, workerId: row.runtime.workerId });
+      }
+      if (row.parentId && row.status === 'active') {
+        const parent = participants.find((candidate) => candidate.participantId === row.parentId);
+        if (!parent || gone(parent)) organization.push({ kind: 'delegation_orphaned', participantId: row.participantId, parentId: row.parentId });
+      }
+    }
+    for (const assignment of Object.values(swarm.assignments ?? {})) {
+      if (assignment.status !== 'active') continue;
+      const holder = participants.find((row) => row.participantId === assignment.participantId);
+      if (!holder || gone(holder)) organization.push({ kind: 'assignment_holder_gone', assignmentId: assignment.assignmentId, participantId: assignment.participantId, workId: assignment.workId });
+    }
+    if (swarm.status !== 'open' && participants.some((row) => row.status === 'active' && !gone(row))) {
+      organization.push({ kind: 'closed_with_live_participants', participantIds: participants.filter((row) => row.status === 'active' && !gone(row)).map((row) => row.participantId) });
+    }
     const operations = this.store.eventsView().filter((event) => event.kind === 'driver.recorded'
       && event.payload.swarmId === swarm.swarmId && event.payload.kind === 'swarm.operation_requested');
     const attention = operations.filter((event) => !this.store.priorCoordinationEvent(`${event.idempotencyKey}:completed`))
-      .map((event) => ({ command: event.payload.command, request: clone(event.payload.request),
+      .map((event) => ({ kind: 'operation_unconfirmed', command: event.payload.command, request: clone(event.payload.request),
         state: this.pending.has(event.idempotencyKey) ? 'in_progress' : 'unconfirmed',
         code: this.store.priorCoordinationEvent(`${event.idempotencyKey}:unavailable`)?.payload.code ?? null,
       }));
+    attention.push(...organization);
     const availableActions = Object.entries(COMMAND_PERMISSIONS)
       .filter(([, permission]) => permissions.includes(permission)).map(([command]) => command);
     if (permissions.includes('contribute') && !availableActions.includes('swarm.check')) availableActions.push('swarm.check');
@@ -290,6 +319,11 @@ export class SwarmRuntime {
         payload.contributionId ??= `contribution-${hash([principal.principalId, args.idempotencyKey]).slice(0, 32)}`;
       }
       if (args.event === 'swarm.participant_left' && caller) payload.participantId ??= caller.participantId;
+      if (args.event === 'swarm.work_updated' && payload.objective === undefined) {
+        const existing = Object.hasOwn(swarm.work, payload.workId) ? swarm.work[payload.workId] : null;
+        if (!existing) refuse('New work needs an objective; a status-only update is for work that already exists', 'swarm_payload_invalid', { field: 'payload.objective', workId: payload.workId });
+        payload.objective = existing.objective;
+      }
       if (caller && args.event === 'swarm.contribution_recorded' && payload.participantId !== caller.participantId) {
         refuse('Contributions must name their actual author', 'swarm_author_mismatch');
       }
