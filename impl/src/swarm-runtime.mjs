@@ -1,4 +1,4 @@
-import { SWARM_EVENT_KINDS, validateSwarmCommand } from './swarm-contract.mjs';
+import { SWARM_EVENT_KINDS, validateSwarmCommand, swarmCommandDefinition } from './swarm-contract.mjs';
 import { createHash } from 'node:crypto';
 import { canonicalJson } from './canonical-order.mjs';
 import { SWARM_EVENT_PAYLOAD_SCHEMAS, SWARM_EVENT_EXAMPLES } from './swarm-event-schemas.mjs';
@@ -55,19 +55,28 @@ export class SwarmRuntime {
     return swarm;
   }
 
-  _caller(swarm, principal, context) {
-    if (context?.swarmId && context.swarmId !== swarm.swarmId) {
-      refuse('Native participant authority belongs to another swarm', 'swarm_membership_required');
-    }
+  /** The active participant this principal's worker/run identity names, or null; `scoped` says
+   * whether the principal claimed a participant identity at all — an external orchestrator claims
+   * none, and its absence is not an error. The ONE resolution authority and refusal attribution
+   * share, so "who is this" means the same thing to a permission check and to a refusal row. */
+  _memberOf(swarm, principal, context) {
     const workerId = principal.principalId?.startsWith('worker:')
       ? principal.principalId.slice('worker:'.length) : null;
-    if (!workerId && !context?.runId) return null;
+    if (!workerId && !context?.runId) return { scoped: false, participant: null };
     const workerRun = workerId ? this.coordinator.list().find((row) => row.id === workerId)?.runId : null;
     const participant = Object.values(swarm.participants).find((row) => row.status === 'active'
       && ((workerId && row.bindings.at(-1)?.workerId === workerId)
         || (workerRun && row.runId === workerRun)
-        || (context?.runId && row.runId === context.runId)));
-    if (!participant) refuse('This agent has no active membership in the swarm', 'swarm_membership_required');
+        || (context?.runId && row.runId === context.runId))) ?? null;
+    return { scoped: true, participant };
+  }
+
+  _caller(swarm, principal, context) {
+    if (context?.swarmId && context.swarmId !== swarm.swarmId) {
+      refuse('Native participant authority belongs to another swarm', 'swarm_membership_required');
+    }
+    const { scoped, participant } = this._memberOf(swarm, principal, context);
+    if (scoped && !participant) refuse('This agent has no active membership in the swarm', 'swarm_membership_required');
     return participant;
   }
 
@@ -602,7 +611,62 @@ export class SwarmRuntime {
     }, { replaySafe: true });
   }
 
+  /** The public command entry: a refused MUTATION leaves a durable, wake-capable trace, and the
+   * refusal itself is then thrown unchanged — the caller sees its own refusal, never a recording
+   * failure wearing its name. */
   async command(command, args, principal, context = null) {
+    try {
+      return await this._dispatch(command, args, principal, context);
+    } catch (error) {
+      this._recordRefusal(command, args, principal, context, error);
+      throw error;
+    }
+  }
+
+  /** Record one refused mutation (issue #271 work W2) as the runtime's own durable
+   * `swarm.operation_refused` driver row — {swarmId, command, event, code, field, participantId} —
+   * so a watcher parked on swarm.watch wakes even though no swarm state changed and the fold never
+   * saw a thing. Only mutations are recorded: a refused READ is the caller's own business.
+   * The identity derives from the request and the refusal (never a clock, counter, or random id),
+   * so replaying the ledger reproduces these rows byte-identically and an identical retried refusal
+   * records exactly once. A refusal with no typed code is an internal fault, not a refusal, and is
+   * never dressed up as one. */
+  _recordRefusal(command, args, principal, context, error) {
+    if (this.watchController.signal.aborted) return;   // a closed runtime refuses; it does not record
+    const definition = swarmCommandDefinition(command);
+    const code = typeof error?.code === 'string' && error.code.length > 0 ? error.code : null;
+    if (code === null || definition === null) return;
+    // The registry decides what a mutation is: any capability beyond observing.
+    if (!definition.capabilities.some((capability) => capability !== 'observe')) return;
+    const swarmId = typeof args?.swarmId === 'string' ? args.swarmId : null;
+    const row = {
+      swarmId, command,
+      event: typeof args?.event === 'string' ? args.event : null,
+      code,
+      field: typeof error?.detail?.field === 'string' ? error.detail.field : null,
+      // The refusal's own named participant wins; when it names nobody (contract and state
+      // refusals), the resolved caller is the participant whose mutation was refused.
+      participantId: typeof error?.detail?.participantId === 'string'
+        ? error.detail.participantId : this._refusalMember(swarmId, principal, context),
+    };
+    this.store.recordDriver('swarm.operation_refused', row, {
+      actor: principal?.actor ?? 'swarm',
+      key: `swarm-refusal:${hash([command, args ?? null, principal?.principalId ?? null, code, row.field, row.event])}`,
+    });
+  }
+
+  /** Best-effort participant attribution for a refusal row, resolved through the same authority
+   * the command used (_caller): identity enrichment must never replace the refusal itself, so a
+   * resolution that refuses (a cross-swarm context, a claimed identity this swarm does not carry)
+   * yields null instead of a refusal of its own. */
+  _refusalMember(swarmId, principal, context) {
+    try {
+      const swarm = swarmId === null ? null : this.store.swarm(swarmId);
+      return swarm ? this._caller(swarm, principal, context)?.participantId ?? null : null;
+    } catch { return null; }
+  }
+
+  async _dispatch(command, args, principal, context = null) {
     if (this.watchController.signal.aborted) refuse('Swarm runtime is closed', 'swarm_runtime_closed');
     validateSwarmCommand(command, args);
     await this.authorize(command, args, principal);

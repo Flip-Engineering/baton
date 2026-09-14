@@ -115,6 +115,38 @@ Refusals name what is missing: a dependency on unknown work (`work_not_found`), 
 `member_left_session_live` attention row names the responsible party (the recruiter, then the
 creator) and the reclaiming operation (`swarm stop SWARM_ID PARTICIPANT_ID`).
 
+### Guidance, checkout custody, and refusals
+
+`baton swarm view` projects what each participant was told and where it works, and every projected
+row carries the `seq` and `ts` of the coordination event that wrote it. A participant row shows the
+guidance addressed to it and its live checkout custody:
+
+```json
+{
+  "participantId": "builder-a",
+  "seq": 41, "ts": "2026-09-14T05:41:02.113Z",
+  "workspaceId": "ws-6f1c2a9e0d4b4c7f8a1e2b3c4d5e6f70",
+  "guidance": [
+    { "seq": 39, "ts": "2026-09-14T05:40:58.002Z", "from": "orchestrator", "messageId": "message:9b2f1c" }
+  ],
+  "workspace": { "physicalOwnerId": "ws-6f1c2a9e0d4b4c7f8a1e2b3c4d5e6f70", "shared": true, "holderCount": 2 }
+}
+```
+
+`baton swarm guide` returns the lane receipt row it wrote — `guide: { seq, ts, messageId }` — so the
+sender can watch for the participant's next turn instead of guessing the message landed.
+
+A refused mutation is durable: the runtime records a `swarm.operation_refused` driver row naming the
+command, the update event, the refusal code, the offending field when the refusal named one, and the
+participant it concerns. Swarm state never folds it, and `baton swarm watch` wakes on it with
+`"event": { "kind": "driver.recorded", "payloadKind": "swarm.operation_refused" }`. A refused read
+records nothing.
+
+```json
+{ "kind": "swarm.operation_refused", "swarmId": "swarm-40e643e96fd1edcd", "command": "swarm.update",
+  "event": "swarm.work_updated", "code": "work_not_found", "field": null, "participantId": "builder-a" }
+```
+
 
 ## Connect to a resident authenticated Web host
 

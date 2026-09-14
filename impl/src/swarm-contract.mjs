@@ -1,5 +1,6 @@
 // Transport-independent swarm commands, argument validation, and schemas.
-import { SWARM_EVENT_PAYLOAD_SCHEMAS, swarmEventAgentRequiredFields, swarmEventFieldExpectation,
+import { SWARM_EVENT_PAYLOAD_SCHEMAS, SWARM_DRIVER_EVENT_PAYLOAD_SCHEMAS,
+  swarmEventAgentRequiredFields, swarmEventFieldExpectation,
   swarmUpdatePayloadSummary, swarmEventFields } from './swarm-event-schemas.mjs';
 /** The closed swarm.update event set. Each event kind is a domain change the runtime applies
  * atomically; `swarm.recruit`/`swarm.guide`/`swarm.stop` are NOT expressible here — spawn and
@@ -23,10 +24,23 @@ export const SWARM_OPERATION_KINDS = Object.freeze(['swarm.holder_released']);
 /** The kinds the coordination store records and replays. */
 export const SWARM_STORE_EVENT_KINDS = Object.freeze(SWARM_EVENT_KINDS.filter((kind) => !SWARM_OPERATION_KINDS.includes(kind)));
 
+// The runtime's own durable rows — the operation lifecycle it records for itself, and the
+// refusals it records about the mutations it refused. They ride the same coordination log as
+// every driver record (never the swarm fold), and they are NOT caller-submittable: a fabricated
+// operation receipt or refusal would be a lie, so `swarm.update` admits SWARM_EVENT_KINDS only.
+export const SWARM_DRIVER_EVENT_KINDS = Object.freeze([
+  'swarm.operation_requested', 'swarm.operation_completed', 'swarm.operation_unavailable',
+  ...Object.keys(SWARM_DRIVER_EVENT_PAYLOAD_SCHEMAS),
+]);
+
 // The schema descriptions and the public kind set are one closed vocabulary: disagreeing keys are
 // a build-time error, never a silent gap in what a surface can discover.
 if (Object.keys(SWARM_EVENT_PAYLOAD_SCHEMAS).sort().join('\0') !== [...SWARM_EVENT_KINDS].sort().join('\0')) {
   throw new Error('swarm event payload schemas disagree with the public swarm.update event set');
+}
+
+if (SWARM_DRIVER_EVENT_KINDS.some((kind) => SWARM_EVENT_KINDS.includes(kind))) {
+  throw new Error('swarm driver rows must stay disjoint from the caller-submittable swarm.update event set');
 }
 
 // ── the registry rows ────────────────────────────────────────────────────────────────────────────
@@ -353,14 +367,14 @@ export const SWARM_COMMAND_ROWS = Object.freeze([
   }),
   Object.freeze({
     command: 'swarm.view',
-    description: "Read one swarm's authoritative membership, work, shared context, contributions, reviews, caller authority, and available actions; an optional participantId scopes the read to that participant's delegation — its subtree, the work assigned within, their contributions and reviews, and the delegation completion.",
+    description: "Read one swarm's authoritative membership, work, shared context, contributions, reviews, caller authority, and available actions; an optional participantId scopes the read to that participant's delegation — its subtree, the work assigned within, their contributions and reviews, and the delegation completion. Each participant row carries its guidance rows and live checkout custody, and every projected row carries the seq and ts of the record that wrote it.",
     readOnlyHint: true, destructiveHint: false,
     properties: Object.freeze({ swarmId: ID_SCHEMA, participantId: ID_SCHEMA }),
     required: Object.freeze(['swarmId']),
   }),
   Object.freeze({
     command: 'swarm.watch',
-    description: 'Await the next swarm update after a cursor and return the refreshed view.',
+    description: 'Await the next swarm update after a cursor and return the refreshed view. A refused mutation wakes it too: the wake names a swarm.operation_refused driver row even though no swarm state changed.',
     readOnlyHint: true, destructiveHint: false,
     properties: Object.freeze({ swarmId: ID_SCHEMA, afterSeq: SEQUENCE_SCHEMA, timeoutMs: WAIT_SCHEMA }),
     required: Object.freeze(['swarmId']),
@@ -386,7 +400,7 @@ export const SWARM_COMMAND_ROWS = Object.freeze([
   }),
   Object.freeze({
     command: 'swarm.guide',
-    description: 'Send guidance to one swarm participant, whether its session is active or paused.',
+    description: 'Send guidance to one swarm participant, whether its session is active or paused. The result names the lane receipt row it wrote (guide: {seq, ts, messageId}) so the sender can watch for the next turn.',
     readOnlyHint: false, destructiveHint: false,
     properties: Object.freeze({ swarmId: ID_SCHEMA, participantId: ID_SCHEMA, message: TEXT_SCHEMA }),
     required: Object.freeze(['swarmId', 'participantId', 'message']),

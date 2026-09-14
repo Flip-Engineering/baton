@@ -150,6 +150,43 @@ export const SWARM_EVENT_EXAMPLES = Object.freeze(Object.fromEntries(
   ))]),
 ));
 
+// ── runtime-owned driver rows (never caller-submittable) ─────────────────────────────────────────
+//
+// The runtime records its own operation lifecycle and refusals as `driver.recorded` rows whose
+// payload carries `kind`. They are NOT swarm.update events: the durable fold never sees them, and
+// no caller may submit one — a refusal the runtime did not itself refuse would be a lie. The
+// shape lives here so every surface that describes swarm.update can also describe what a refusal
+// looks like when a watch wakes on one.
+
+export const SWARM_DRIVER_EVENT_PAYLOAD_SCHEMAS = Object.freeze({
+  'swarm.operation_refused': Object.freeze({
+    summary: Object.freeze('a swarm mutation the runtime refused, recorded by the runtime itself'),
+    fields: Object.freeze({
+      swarmId: STRING('the swarm the refused mutation named — null when it named none', { type: 'string|null' }),
+      command: STRING('the refused swarm command'),
+      event: STRING('the refused swarm.update event kind — null when the command was not swarm.update', { type: 'string|null' }),
+      code: STRING('the typed refusal code the caller received'),
+      field: STRING('the offending request field the refusal named — null when it named none', { type: 'string|null' }),
+      participantId: STRING('the participant the refusal concerns — the caller whose mutation was refused when the refusal names nobody', { type: 'string|null' }),
+    }),
+    example: Object.freeze({
+      swarmId: 'swarm-40e643e96fd1edcd', command: 'swarm.update', event: 'swarm.work_updated',
+      code: 'work_not_found', field: null, participantId: 'builder-a',
+    }),
+  }),
+});
+
+/** One-paragraph description of a refusal row for agent-facing surfaces: what the runtime records
+ * when it refuses a mutation, and what a watcher sees when it wakes on one. */
+export function swarmOperationRefusedDetails() {
+  const schema = SWARM_DRIVER_EVENT_PAYLOAD_SCHEMAS['swarm.operation_refused'];
+  return ['A refused mutation is recorded by the runtime itself as a swarm.operation_refused row',
+    `naming ${Object.keys(schema.fields).join(', ')}; example: ${JSON.stringify(schema.example)}.`,
+    'It lands as a driver record — the swarm state never folds it — and it wakes swarm.watch,',
+    "whose watch.event carries kind 'driver.recorded' and payloadKind 'swarm.operation_refused'.",
+    'Callers cannot submit this row: it is the runtime\'s own record of a refusal.'].join(' ');
+}
+
 function fieldsOf(kind, predicate) {
   const schema = SWARM_EVENT_PAYLOAD_SCHEMAS[kind];
   return schema ? Object.keys(schema.fields).filter((name) => predicate(schema.fields[name])) : [];
@@ -227,4 +264,13 @@ for (const [kind, schema] of Object.entries(SWARM_EVENT_PAYLOAD_SCHEMAS)) {
     if (!Object.hasOwn(example, name)) throw new Error(`swarm event ${kind} example omits caller-required field ${name}`);
   }
   if (JSON.stringify(schema).includes('"max')) throw new Error(`swarm event ${kind} schema declares a size or count cap`);
+}
+
+// Driver-row well-formedness: every field carries its description and the shipped example names
+// them all, so a surface rendering the shape can never point at a field the row does not carry.
+for (const [kind, schema] of Object.entries(SWARM_DRIVER_EVENT_PAYLOAD_SCHEMAS)) {
+  for (const [name, field] of Object.entries(schema.fields)) {
+    if (field.description === undefined) throw new Error(`swarm driver row ${kind} field ${name} lacks a description`);
+    if (!Object.hasOwn(schema.example, name)) throw new Error(`swarm driver row ${kind} example omits field ${name}`);
+  }
 }
