@@ -994,7 +994,7 @@ All git-worktree lifecycle mechanics: create a worker's isolated checkout from a
  * @typedef {Object} PinnedBaseResult
  * @property {string} sha
  * @property {boolean} stashed        - true iff repoRoot had uncommitted changes that were auto-stashed
- * @property {string} [stashRef]      - present iff stashed:true (e.g. "stash@{0}") — worktree.mjs never auto-pops; the caller decides
+ * @property {string} [stashSha]      - present iff stashed:true: the commit sha the stash push created (never the moving name stash@{0}, which a later stash re-points — 2026-09-14 audit G-6) — worktree.mjs never auto-pops; the caller decides
  */
 
 /**
@@ -1141,7 +1141,7 @@ export class WorktreeLockedError extends Error {}
 
 23. `pinBaseSha` on a clean repo returns `{sha: <HEAD>, stashed:false}`.
 24. `pinBaseSha` on a dirty repo with `autoStash:false` (default) throws `DirtyRepoError`; the repo is left untouched (still dirty, nothing stashed).
-25. `pinBaseSha` on a dirty repo with `autoStash:true` returns `{stashed:true, stashRef}`, and the repo is now clean at the same `sha` as before the dirty changes existed.
+25. `pinBaseSha` on a dirty repo with `autoStash:true` returns `{stashed:true, stashSha}` (the stash commit's own sha), and the repo is now clean at the same `sha` as before the dirty changes existed.
 26. `createFromBase` produces a directory at exactly `<repoRoot>/.baton/wt/<taskId>`, on branch `baton/<taskId>`, whose `git log -1` is `baseSha`.
 27. `createFromBase` called twice with the same `taskId` throws `WorktreeAlreadyExistsError` on the second call.
 28. `createFromBase` called with a `taskId` whose branch is already checked out elsewhere (simulate by manually running `git worktree add`) throws `BranchAlreadyCheckedOutError`.

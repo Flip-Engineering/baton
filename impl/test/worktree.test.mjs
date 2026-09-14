@@ -123,17 +123,18 @@ test('pinBaseSha on a dirty repo with autoStash:true stashes and returns a clean
 
   const result = await pinBaseSha(dir, { autoStash: true });
   assert.equal(result.stashed, true);
-  assert.equal(typeof result.stashRef, 'string');
+  // G-6: the receipt names the stash COMMIT. The name `stash@{0}` moves with every later stash,
+  // so it is never the identity an operator can return to.
+  assert.match(result.stashSha, /^[a-f0-9]{40}$/u);
+  assert.equal(sh('git', ['rev-parse', '--verify', 'refs/stash'], dir), result.stashSha);
   assert.equal(sh('git', ['rev-parse', 'HEAD'], dir), baseSha);
   assert.ok(isClean(dir), 'repo is clean after auto-stash');
 
-  // W4 ("never auto-popped"), asserted DIRECTLY: the stash referenced by result.stashRef
-  // must still be present in `git stash list`, not just inferred from repo-cleanliness.
-  const stashList = sh('git', ['stash', 'list'], dir);
-  const stashIndex = result.stashRef.replace(/^stash@\{|\}$/g, '');
+  // W4 ("never auto-popped"), asserted DIRECTLY: the stash commit named by result.stashSha must
+  // still be present in `git stash list`, not just inferred from repo-cleanliness.
   assert.ok(
-    stashList.split('\n').some((line) => line.startsWith(`stash@{${stashIndex}}`) || line.includes(result.stashRef)),
-    `git stash list must contain ${result.stashRef}, got:\n${stashList}`,
+    sh('git', ['stash', 'list', '--format=%H'], dir).split('\n').includes(result.stashSha),
+    'git stash list must contain the recorded stash commit',
   );
 });
 

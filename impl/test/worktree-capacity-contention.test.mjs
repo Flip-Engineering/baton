@@ -9,10 +9,10 @@
 //     of the dead lock it blocks refuses at the deadline with the gate untouched, and removing
 //     the gate (an operator action) restores reclamation,
 //   * corrupt or ambiguous lock artifacts refuse immediately and are never deleted,
-//   * reconcile() settles a verifier only on exact owner identity or a proved-dead owner — a
-//     LIVE FOREIGN controller's verifier is preserved byte-for-byte (same pid or not), while the
-//     generation whose active worker the caller adopts counts as superseded.
-//
+//   * reconcile() settles a verifier only when its owner process is proved dead — an own live
+//     verification keeps its reservation (it may be running in this process), a LIVE FOREIGN
+//     controller's verifier is preserved byte-for-byte (same pid or not), while the generation
+//     whose active worker the caller adopts counts as superseded.
 // Every concurrency case drives REAL child processes through a filesystem barrier, so overlap is
 // real rather than an in-process simulation. The children hold the critical section open with an
 // injected `observe` that blocks on `Atomics.wait`: the lock is held across real syscalls, so the
@@ -503,19 +503,24 @@ test('WCC8: reconcile preserves a live foreign verifier and its materialize stil
   await verifier.settled;
 });
 
-test('WCC9: reconcile still settles owned and proved-dead verifiers', { timeout: 60_000 }, async (t) => {
+test('WCC9: reconcile keeps a live verifier and still settles a proved-dead one', { timeout: 60_000 }, async (t) => {
   const world = repoWorld('verifier-settlement');
   const children = [];
   t.after(disposable(world, children));
   prepareWorld(world, children);
 
+  // G-35: this authority's own verification may be running in this process right now, so its
+  // reservation is live capacity — reconcile keeps it byte-for-byte until its owner releases it.
   const deployment = authorityFor(world.repo);
   const owned = deployment.reserve('verify:owned:1', REQUEST);
+  const ownedBefore = deployment.snapshot().reservations;
   const ownedReport = deployment.reconcile([]);
-  assert.deepEqual(ownedReport.removed, ['verify:owned:1'],
-    'this authority\'s own verification reservation is settled by its own reconciliation');
-  assert.deepEqual(ownedReport.retainedVerifiers, []);
-  assert.equal(deployment.release(owned), false, 'the settled reservation is gone');
+  assert.deepEqual(ownedReport.removed, [],
+    'a live verification of this authority is not reconcile\'s to settle');
+  assert.deepEqual(ownedReport.retainedVerifiers, ['verify:owned:1']);
+  assert.deepEqual(deployment.snapshot().reservations, ownedBefore,
+    'the live reservation survives byte-for-byte');
+  assert.equal(deployment.release(owned), true, 'its owner releases it');
   assert.deepEqual(authorityFor(world.repo).snapshot().reservations, []);
 
   // A verifier whose process is gone is settled: capacity is never leaked by the preservation rule.

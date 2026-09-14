@@ -11,6 +11,9 @@ import { basename, dirname, isAbsolute, join, relative, sep } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { performance } from 'node:perf_hooks';
 import { compareCanonicalStrings } from './canonical-order.mjs';
+// G-32: this module's git calls (defaultEstimate's `ls-tree -r -l -z` above all) share the ONE
+// whole-repository listing bound with worktree.mjs rather than restating a buffer size.
+import { gitListingMaxBuffer } from './worktree.mjs';
 
 export class WorktreeCapacityError extends Error {
   constructor(message, code = 'worktree_capacity_exceeded') { super(message); this.name = 'WorktreeCapacityError'; this.code = code; }
@@ -104,7 +107,9 @@ function localGitEnv() {
 }
 
 function git(args, cwd, opts = {}) {
-  return execFileSync('git', args, { cwd, encoding: 'utf8', env: localGitEnv(), ...opts });
+  return execFileSync('git', args, {
+    maxBuffer: gitListingMaxBuffer(), cwd, encoding: 'utf8', env: localGitEnv(), ...opts,
+  });
 }
 
 function typed(message, code = 'worktree_capacity_exceeded', cause) {
@@ -300,7 +305,14 @@ export class WorktreeCapacityAuthority {
       || !timingSafeEqual(Buffer.from(state.integrityDigest, 'hex'), Buffer.from(expectedIntegrity, 'hex'))) throw typed('worktree capacity state integrity failed', 'worktree_capacity_unavailable');
     if (state.policyDigest !== this.policy.digest) {
       if (state.reservations.length === 0) return { schemaVersion: 1, policyDigest: this.policy.digest, reservations: [] };
-      throw typed('worktree capacity state disagrees with deployment policy', 'worktree_capacity_unavailable');
+      // G-5: the refusal names the ledger an operator must inspect or clear, and BOTH digests, so
+      // a policy change is diagnosable from the error alone instead of from this source.
+      const ledger = join('.baton', 'capacity', basename(this.statePath));
+      const gracefulPath = `inspect ${ledger} and settle or clear its live reservations under the new policy`;
+      throw Object.assign(typed(
+        `worktree capacity state disagrees with deployment policy: ${ledger} was written under ${state.policyDigest}, this deployment runs ${this.policy.digest}; ${gracefulPath}`,
+        'worktree_capacity_unavailable',
+      ), { ledger, statePolicyDigest: state.policyDigest, policyDigest: this.policy.digest, gracefulPath });
     }
     for (const row of state.reservations) {
       if (!row || Object.keys(row).sort().join(',') !== [...RESERVATION_FIELDS].sort().join(',')
@@ -615,7 +627,14 @@ export class WorktreeCapacityAuthority {
           'worktree_capacity_unavailable');
       }
       const within = relative(materializedRoot, materializedPath);
-      const verifyLabel = row.resourceId.slice(0, row.resourceId.lastIndexOf(':'));
+      // G-33: the label is the head field of the reservation's own recorded `resourceId` — the
+      // deployment composes a verify reservation as `verify:<label>:<sequence>` (index.mjs
+      // createVerifyWorktree/createBaseVerifyWorktree), so the first separator ends the label and
+      // a resourceId without one IS the label. Deriving it with lastIndexOf(':') and slice(0, -1)
+      // dropped the last character of a separator-less label and then enforced that truncated
+      // prefix as an identity guard.
+      const separator = row.resourceId.indexOf(':');
+      const verifyLabel = separator < 0 ? row.resourceId : row.resourceId.slice(0, separator);
       if (within === '' || within === '..' || within.startsWith(`..${sep}`) || isAbsolute(within)
         || within.includes(sep)
         || (row.kind === 'worker' && basename(materializedPath) !== row.resourceId)
@@ -704,11 +723,15 @@ export class WorktreeCapacityAuthority {
       const state = this._read(); const removed = [];
       const adopted = [];
       const retainedVerifiers = [];
-      // Reconciliation may settle this authority's verifiers or a proved-dead process's.
-      // Adopting one worker is not proof that another controller stopped all its verification.
+      // G-35: a verification running in THIS process is live capacity. Reconciliation can run
+      // while its sandbox exists (a drain or close reconciles the same ledger), and settling the
+      // row then under-counted the committed bytes and inodes every later reservation sees. Only
+      // a proved-dead owner settles a verifier here; an own reservation leaves the ledger when
+      // its owner releases or settles it. Adopting one worker is not proof that another
+      // controller stopped all its verification either.
       state.reservations = state.reservations.filter((row) => {
         if (row.kind === 'verify') {
-          if (row.ownerId === this.ownerId || !livePid(row.pid)) {
+          if (!livePid(row.pid)) {
             removed.push(row.id); return false;
           }
           retainedVerifiers.push(row.id); return true;

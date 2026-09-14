@@ -78,11 +78,14 @@ export class ContributionService {
     if (prior) return copy(prior.payload);
     if (related.some((event) => event.kind === 'contribution.check_started')) {
       // Replay restores facts; it must not repeat a command that may have crossed its effect
-      // boundary. An explicit new check has a new identity after the caller reviews this fate.
+      // boundary. The identity is spent, and the remedy belongs to the caller: a NEW checkId
+      // (G-4 — carried on the thrown error as `gracefulPath`, not left in this comment).
       const unavailable = related.find((event) => event.kind === 'contribution.check_unavailable');
-      const error = failure('The prior contribution check did not produce a verdict',
+      const gracefulPath = `contribution "${contributionId}" check "${checkId}" carries a started check with no verdict — mint a new checkId to check this capture again`;
+      const error = failure(`The prior contribution check did not produce a verdict; ${gracefulPath}`,
         unavailable?.payload?.code ?? 'contribution_check_unconfirmed');
       error.verificationAttempt = copy(unavailable?.payload?.attempt ?? null);
+      error.gracefulPath = gracefulPath;
       throw error;
     }
     const captured = this.captured(handle.id, contributionId);

@@ -83,9 +83,38 @@ export class StructuredMergeError extends Error {
 // Internal helpers
 // ---------------------------------------------------------------------------
 
+// G-32: ONE bound for every git invocation whose stdout is a whole-repository listing —
+// `status`, `ls-tree` and `ls-files` at any scope. The two wrappers below and worktree-capacity's
+// `git` all take it from here; no call writes a buffer size of its own. It is derived, not picked:
+// the widest row those commands emit, times the number of paths this deployment serves. That row
+// is `ls-tree -r -l -z`'s — mode, type, object id, size, tab, path, NUL — whose header is under 64
+// bytes and whose path no checkout-able entry exceeds (PATH_MAX, 1024), so 1088 bytes covers any
+// row. The product bounds a buffer, it controls no work: a listing larger than it fails with
+// ENOBUFS rather than being silently truncated, so a deployment whose repository tracks more
+// paths than the default raises BATON_GIT_LISTING_PATHS.
+const GIT_LISTING_ROW_BYTES = 1088;
+const DEFAULT_GIT_LISTING_PATHS = 61_696; // 1088 bytes/row x 61696 paths is the 64 MiB bound this module trusted once
+const GIT_LISTING_PATHS_ENV = 'BATON_GIT_LISTING_PATHS';
+
+/** The ONE maxBuffer for a whole-repository git listing (G-32). */
+export function gitListingMaxBuffer() {
+  const configured = process.env[GIT_LISTING_PATHS_ENV];
+  if (configured === undefined || configured === '') {
+    return GIT_LISTING_ROW_BYTES * DEFAULT_GIT_LISTING_PATHS;
+  }
+  if (!/^[1-9][0-9]*$/u.test(configured)) {
+    throw new TypeError(`${GIT_LISTING_PATHS_ENV} must be a positive decimal path count`);
+  }
+  const bound = GIT_LISTING_ROW_BYTES * Number(configured);
+  if (!Number.isSafeInteger(bound)) {
+    throw new TypeError(`${GIT_LISTING_PATHS_ENV} exceeds the largest listing bound Node can address`);
+  }
+  return bound;
+}
+
 function sh(cmd, args, cwd) {
   return execFileSync(cmd, args, {
-    cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'],
+    cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: gitListingMaxBuffer(),
     ...(cmd === 'git' ? { env: localGitEnv() } : {}),
   }).trim();
 }
@@ -97,7 +126,9 @@ function localGitEnv(extra = {}) {
 }
 
 function gitFile(args, cwd, opts = {}, extraEnv = {}) {
-  return execFileSync('git', args, { ...opts, cwd, env: localGitEnv(extraEnv) });
+  // The listing bound is the default for every git call. A caller may raise it in `opts` for a
+  // listing it knows is larger than the deployment's path count; no caller does today.
+  return execFileSync('git', args, { maxBuffer: gitListingMaxBuffer(), ...opts, cwd, env: localGitEnv(extraEnv) });
 }
 
 function isClean(dir) {
@@ -1058,7 +1089,7 @@ function gitStatusEntries(dir, generatedRoots) {
   const raw = gitFile(
     ['status', '--porcelain', '-z', '--no-renames', '--untracked-files=all', '--ignored=matching',
       '--', '.', ...generatedRoots.map((root) => `:(exclude,top,literal)${root}`)],
-    dir, { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 }, { GIT_OPTIONAL_LOCKS: '0' },
+    dir, { encoding: 'utf8' }, { GIT_OPTIONAL_LOCKS: '0' },
   );
   return [...new Set(`${tracked}${raw}`.split('\0').filter(Boolean))];
 }
@@ -1226,7 +1257,7 @@ export function ensureBatonExcluded(repoRoot) {
 /**
  * @param {string} repoRoot
  * @param {{autoStash?: boolean, targetRef?: string}} [opts]
- * @returns {Promise<{sha:string, stashed:boolean, stashRef?:string}>}
+ * @returns {Promise<{sha:string, stashed:boolean, stashSha?:string}>}
  * @throws {DirtyRepoError}
  */
 export async function pinBaseSha(repoRoot, opts = {}) {
@@ -1238,8 +1269,13 @@ export async function pinBaseSha(repoRoot, opts = {}) {
       throw new DirtyRepoError(`pinBaseSha: repo at ${repoRoot} is dirty (pass {autoStash:true} to auto-stash)`);
     }
     sh('git', ['stash', 'push', '-u', '-m', 'baton-pinBaseSha-autostash'], repoRoot);
+    // G-6: the receipt names the stash COMMIT the push created, never the moving name
+    // `stash@{0}` — a later stash re-points that name at a different commit, so a name cannot be
+    // the identity this receipt claims. Nothing pops the parked work; the sha is what lets an
+    // operator (or a later lane) find it again.
+    const stashSha = sh('git', ['rev-parse', '--verify', 'refs/stash'], repoRoot);
     const sha = sh('git', ['rev-parse', targetRef], repoRoot);
-    return { sha, stashed: true, stashRef: 'stash@{0}' };
+    return { sha, stashed: true, stashSha };
   }
   const sha = sh('git', ['rev-parse', targetRef], repoRoot);
   return { sha, stashed: false };
