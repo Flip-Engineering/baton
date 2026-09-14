@@ -1607,7 +1607,7 @@
         {
           "name": "guideParticipant",
           "ordinal": 0,
-          "size": 5,
+          "size": 7,
           "seam": "admission",
           "evidence": [
             "admission:authority_check"

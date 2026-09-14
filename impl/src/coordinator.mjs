@@ -561,6 +561,15 @@ function providerProcessingFailureCode(error) {
   if (typeof error?.code === 'string' && error.code.startsWith('capability_')) return 'capability_refused';
   return 'provider_processing_failed';
 }
+/** Who a guide is from, for the recipient: derived from the actor's namespace (the swarm-native
+ * bridge stamps `swarm-native:<swarm>:<participant>`; the web/MCP owner sessions are the root). */
+function guidanceSenderLabel(actor) {
+  const parts = typeof actor === 'string' ? actor.split(':') : [];
+  if (parts[0] === 'swarm-native' && parts.length >= 3) return `participant "${parts.slice(2).join(':')}" of swarm "${parts[1]}"`;
+  if (parts[0] === 'web' || parts[0] === 'mcp' || actor === 'orchestrator') return 'the root orchestrator';
+  return typeof actor === 'string' && actor.length > 0 ? actor : 'an unnamed sender';
+}
+
 function typedTerminalCode(value, fallback) {
   return typeof value === 'string' && value.length > 0 && value.length <= 256
     && /^[a-z0-9][a-z0-9._-]*$/i.test(value) ? value : fallback;
@@ -7872,9 +7881,15 @@ export class Coordinator {
   }
 
   /** Address a continuing participant; pause selection occurs inside its delivery queue. */
+  /** Guidance reaches a worker as a typed frame that names its sender and the time it was sent
+   * (#273): a participant must be able to tell swarm guidance from a human interjection and the
+   * root from a peer. The sender label is derived from the actor's namespace, never guessed
+   * from the text; the same provenance rides the durable control.nudge record. */
   guideParticipant(workerId, message, { actor = 'orchestrator' } = {}) {
-    return this._withAuthorityOp(() => this._send(workerId, message, 'nudge', {
-      actor, continueParticipant: true,
+    const guidance = Object.freeze({ from: guidanceSenderLabel(actor), sentAt: new Date(this._now()).toISOString() });
+    const framed = `[baton swarm guidance from ${guidance.from} · ${guidance.sentAt}]\n${message}`;
+    return this._withAuthorityOp(() => this._send(workerId, framed, 'nudge', {
+      actor, continueParticipant: true, guidance,
     }));
   }
 
@@ -8135,7 +8150,7 @@ export class Coordinator {
     const ev = {
       worker: workerId, harness, turnEpoch: currentTurnEpoch, kind,
       actor: opts.actor ?? 'orchestrator',
-      payload: { message, ...(opts.controlId ? { controlId: opts.controlId } : {}) },
+      payload: { message, ...(opts.controlId ? { controlId: opts.controlId } : {}), ...(opts.guidance ? { guidance: opts.guidance } : {}) },
     };
     if (ack && ack.emulated === true) ev.emulated = true;
     this._log.append(ev);

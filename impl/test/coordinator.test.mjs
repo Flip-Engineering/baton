@@ -2136,6 +2136,25 @@ test('#268: workerActivity folds tool calls, messages, the last event and usage 
   assert.deepEqual(unpriced.coordinator.workerActivity(second.id).usage, { tokens: 10, usd: 0, priced: false }, 'tokens without dollars is an unpriced route, not a free one');
 });
 
+// #273: guidance carries its provenance. The frame a worker receives names the sender (from the
+// actor's namespace, not from the text) and the time; the durable control.nudge record carries
+// the same fields. A participant can tell the root from a peer and guidance from a human.
+test('#273: guideParticipant frames the message with its sender and time, on the wire and in the log', async () => {
+  const adapter = new ScriptableAdapter();
+  const { coordinator, log } = setup({ adapters: { mock: adapter } });
+  const handle = await coordinator.spawn('mock', makeBrief());
+  await coordinator.guideParticipant(handle.id, 'wait for my handover', { actor: 'swarm-native:tight-271:lead' });
+  await coordinator.guideParticipant(handle.id, 'root here', { actor: 'web:local-owner:31a271a5' });
+  const prompts = adapter.calls.prompt.filter((call) => call.mode === 'nudge').map((call) => call.content);
+  assert.equal(prompts.length, 2);
+  assert.match(prompts[0], /^\[baton swarm guidance from participant "lead" of swarm "tight-271" · 1970-01-01T00:00:00\.000Z\]\nwait for my handover$/u);
+  assert.match(prompts[1], /^\[baton swarm guidance from the root orchestrator · [^\]]+\]\nroot here$/u);
+  const nudges = log.read(handle.id).filter((event) => event.kind === 'control.nudge');
+  assert.deepEqual(nudges.map((event) => event.payload.guidance.from), ['participant "lead" of swarm "tight-271"', 'the root orchestrator']);
+  assert.ok(nudges.every((event) => typeof event.payload.guidance.sentAt === 'string'));
+  assert.ok(nudges[0].payload.message.startsWith('[baton swarm guidance from participant "lead"'), 'the recorded message is the frame the worker saw');
+});
+
 // ============================================================
 // error taxonomy (§3.4) — extra coverage beyond the numbered list
 // ============================================================
