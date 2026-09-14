@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 
 import { resolveUnifiedSurfaceCommand } from './control-surface-unification.mjs';
 import { BatonControlError, digestValue } from './holistic-runtime.mjs';
+import { readSwarmFamily } from './swarm-family.mjs';
 import { ProductionConvergenceRuntime } from './production-convergence.mjs';
 import { installProductionWebConvergence } from './production-web-convergence.mjs';
 import { prepareApplicationSurfaceInvocation } from './surface-capability-catalog.mjs';
@@ -224,6 +225,10 @@ export function wrapProductionCliClient(client, { runtime = new ProductionConver
             );
           }
           const snapshot = await receiver.surfaceSnapshot({ runId, waveId });
+          // The swarm family (docs/38, issue #315): the same bounded read the operator
+          // seat consumes, so the visualization serves the same rows. A resident without
+          // a readable swarm family is carried as a named unavailability, never as blank.
+          const swarm = await readSwarmFamily(target);
           let watch = null;
           let nextAfterCursor = afterCursor;
           let nextAttentionCursor = attentionCursor;
@@ -261,7 +266,7 @@ export function wrapProductionCliClient(client, { runtime = new ProductionConver
             );
           }
           const model = modelModule.projectBatonVisualModel({
-            snapshot, ...(watch === null ? {} : { watch }), width,
+            snapshot, swarm, ...(watch === null ? {} : { watch }), width,
           });
           const text = rendererModule.renderBatonVisual(model, {
             width, color: false, motion: false, view,

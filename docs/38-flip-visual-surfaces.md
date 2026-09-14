@@ -23,7 +23,7 @@ fate from elapsed wall time. Every control gesture lowers through an existing Ba
 | docs 21 | Live fleet graph with provenance | Ship a bounded ownership/topology graph derived from Run/member/route/scope/attention projections. It is not a new graph store. |
 | docs 05/21 | Human-readable telemetry and story monitor | Ship a pulse view over existing route readiness, scheduler lanes, member state, budget, and attention. External OpenTelemetry products remain external. |
 | `web-operator.mjs` | Rich browser Run desk with progression, activity, workstreams, evidence, attention, and narrative | Do not duplicate or redesign it here. Share semantics and visual vocabulary; leave browser interaction to the existing Run desk. |
-| `brand.mjs` and canonical SVGs | Flip smile/thinking poses in CLI/MCP | Preserve the two canonical poses. Add only subtle sparkle/thought-bubble animation frames; do not create a second mascot identity or edit the canonical SVGs. |
+| `brand.mjs` and canonical SVGs | Flip smile/thinking poses in CLI/MCP | **Superseded by the operator decision of 2026-09-14 (#315):** Flip is brand identity only — the smile is the one static mark; the pose vocabulary (both canonical poses included) is retired, and state rides the closed status channel (`flipStatus`). This row's "preserve the two canonical poses" is withdrawn; the no-second-mascot-identity and canonical-SVG rules stand. |
 | convergence snapshot/watch | Unified control, telemetry, notification, Run, and Wave reads | Use these as the only remote data seams for the TUI and MCP visualization. |
 | MCP initialization | Flip identity in server instructions | Extend the instructions with the visualization tool while retaining structured content as the authority. |
 | planned semantic diff / structured postmortem | Visual review/debugging artifacts | Surface their summaries when they already appear in Run evidence; a dedicated semantic-diff viewer remains a separate representation-plane vertical. |
@@ -85,12 +85,16 @@ q    quit
 
 The four views are:
 
-- **Overview:** existing story/Run narrative, Run spine, fleet roster, attention, and pulse.
-- **Fleet graph:** deployment → Run → member → route/scope plus attention edges.
-- **Timeline:** bounded event tail with explicit fact/prose provenance.
+- **Overview:** existing story/Run narrative, Run spine, the resident row (deploymentId,
+  incarnation, transport, state), the swarm family — swarms and their participants with state
+  and last wake — the attention rows that need a human with the next action spelled, and pulse.
+- **Fleet graph:** deployment → swarms → participants (under their swarm) → Run → member →
+  route/scope plus attention edges.
+- **Timeline:** the wake stream, consumed through ONE attachment per resident and classified
+  by the closed wake-class table (`WAKE_CLASS_TABLE` in `impl/src/wake-stream.mjs`), plus the
+  bounded run event tail with explicit fact/prose provenance.
 - **Telemetry:** route readiness, scheduler lanes, worker counts, budget pressure, and transport
-  degradation.
-
+  degradation (unchanged by the swarm-family work).
 `baton top` is explicitly human output. Ordinary Baton commands retain machine-clean JSON on
 stdout.
 
@@ -115,7 +119,10 @@ stdout.
 It composes the already-authorized `baton_surface_snapshot` and, when requested,
 `baton_surface_watch`. The result contains:
 
-- `model`: the canonical bounded visual model;
+- `model`: the canonical bounded visual model — carrying the same swarm family rows the seat
+  renders (resident, swarms, participants with state and last wake, attention with the next
+  action) and no persona field anywhere (docs/38-flip-experience.md §3, operator decision
+  2026-09-14);
 - `presentation.text`: a static Unicode rendering;
 - `presentation.accessibleSummary`;
 - optional four-frame Flip motion metadata;

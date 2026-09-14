@@ -7,6 +7,8 @@
 // interaction silently, or creates a second event bus. The TUI's allow/deny gestures lower
 // through respondToVisualAttention → client.command('run.answer', …) only.
 //
+import { readSwarmFamily } from './swarm-family.mjs';
+
 // The visual-model/visual-renderer siblings land in parallel waves; they are loaded lazily so
 // package imports stay inert (docs/38 acceptance #8) and ordinary CLI parsing is never blocked
 // while the siblings are absent.
@@ -26,11 +28,14 @@ Interactive keys:
   q    quit
 
 The four views:
-  overview   existing story/Run narrative, Run spine, fleet roster, attention, and pulse
-  topology   deployment -> Run -> member -> route/scope plus attention edges
-  timeline   bounded event tail with explicit fact/prose provenance
+  overview   story/Run narrative, Run spine, the resident and swarm family (swarms and
+             their participants with state and last wake), attention with the next
+             action, and pulse
+  topology   deployment -> swarms -> participants -> run -> member -> route/scope plus
+             attention edges
+  timeline   the wake stream (ONE attachment per resident, the closed wake-class
+             table) plus the bounded run event tail with fact/prose provenance
   telemetry  route readiness, scheduler lanes, worker counts, budget, and transport
-
 Rendering laws (docs/38 P2-P3):
   Worker/provider prose is marked worker_prose in the model and rendered inside
   ‹angle delimiters›; facts are shown directly. Non-TTY output is one stable frame with
@@ -124,9 +129,109 @@ async function loadVisualModules() {
   };
 }
 
+async function loadWakeStream(injected) {
+  // The wake-stream sibling lands with the wakes lane; until it is present the seat
+  // degrades with an honestly labeled timeline, and a host (or test) may inject the
+  // module seam directly. The contract: `openWakeStream({baseUrl, socketPath, token,
+  // origin, filter, resume, onFrame, onLagged, onError, signal})` plus `WAKE_CLASS_TABLE`.
+  if (injected && typeof injected.openWakeStream === 'function') return injected;
+  try {
+    const module = await import('./wake-stream.mjs');
+    return typeof module.openWakeStream === 'function' ? module : null;
+  } catch {
+    return null;
+  }
+}
+
+const WAKE_BUFFER_ITEMS = 64;
+
+function wakeClassRow(wakeStream, wakeClass) {
+  const table = wakeStream?.WAKE_CLASS_TABLE;
+  if (!Array.isArray(table)) return null;
+  return table.find((row) => row?.wakeClass === wakeClass) ?? null;
+}
+
+/**
+ * THE ONE wake attachment for the seat's resident: frames are classified against the
+ * wake-class table into a bounded buffer that the timeline view renders. No second
+ * stream is created, and the attachment is aborted, never leaked.
+ */
+function createWakeAttachment(wakeStream, connection) {
+  const items = [];
+  const controller = new AbortController();
+  const state = { attached: true, refusal: null, lastSeq: null, lastTs: null, lagged: 0 };
+  let resolveFirstFrame = null;
+  const firstFrame = new Promise((resolve) => { resolveFirstFrame = resolve; });
+  // The real wake module returns a frozen `{ close, done }` handle (a test double may
+  // return a plain promise); honor both without assuming either.
+  const handle = wakeStream.openWakeStream({
+    baseUrl: connection?.baseUrl ?? 'https://baton.local',
+    ...(connection?.socketPath ? { socketPath: connection.socketPath } : {}),
+    token: connection?.token,
+    ...(connection?.origin ? { origin: connection.origin } : {}),
+    onFrame: (frame) => {
+      const row = wakeClassRow(wakeStream, frame?.wakeClass);
+      if (Number.isSafeInteger(frame?.seq)) state.lastSeq = frame.seq;
+      if (frame?.ts != null) state.lastTs = frame.ts;
+      items.push({
+        seq: frame?.seq ?? null,
+        ts: frame?.ts ?? null,
+        wakeClass: frame?.wakeClass ?? null,
+        subject: typeof frame?.subject === 'string' ? frame.subject : (frame?.subject?.id ?? null),
+        summary: row?.summary ?? null,
+        terminal: row?.terminal === true,
+        // The next action is the table's own spelling of the verb; the frame may refine
+        // it with the concrete coordinates.
+        next: typeof frame?.next === 'string' && frame.next.length > 0 ? frame.next : (row?.next ?? null),
+      });
+      if (items.length > WAKE_BUFFER_ITEMS) items.splice(0, items.length - WAKE_BUFFER_ITEMS);
+      if (resolveFirstFrame) { resolveFirstFrame(); resolveFirstFrame = null; }
+    },
+    onLagged: () => { state.lagged += 1; },
+    onError: (error) => { state.attached = false; state.refusal = error?.code ?? 'wake_stream_refused'; },
+    signal: controller.signal,
+  });
+  const done = handle && typeof handle === 'object' && typeof handle.done?.catch === 'function'
+    ? handle.done
+    : handle;
+  if (typeof done?.catch === 'function') void done.catch(() => {});
+  return {
+    projection() {
+      return {
+        attached: state.attached,
+        ...(state.refusal ? { refusal: state.refusal } : {}),
+        lastSeq: state.lastSeq,
+        lastTs: state.lastTs,
+        items,
+      };
+    },
+    async drain(timeoutMs) {
+      if (items.length > 0) return;
+      await Promise.race([firstFrame, new Promise((resolve) => { setTimeout(resolve, timeoutMs); })]);
+    },
+    close() {
+      controller.abort();
+      if (handle && typeof handle === 'object' && typeof handle.close === 'function') handle.close();
+    },
+  };
+}
+
+/** The seat's own status: attention first (a human is needed), then the run phase, then
+ * the resident state — all projection classes the model already carries. */
+function seatStatusClass(model) {
+  if ((Array.isArray(model?.attention) && model.attention.length > 0)
+    || (Array.isArray(model?.swarm?.attention) && model.swarm.attention.length > 0)) return 'attention';
+  return model?.run?.phase ?? model?.resident?.state ?? null;
+}
+
 async function projectFrame(parsed, env, visuals, { color, motion, width, view } = {}) {
   const snapshot = await env.client.surfaceSnapshot({ runId: parsed.runId, waveId: parsed.waveId });
-  const model = visuals.projectBatonVisualModel({ snapshot, width });
+  const swarm = typeof env.client.command === 'function'
+    ? await readSwarmFamily(env.client)
+    : { swarms: [], attention: [], unavailable: { code: 'swarm_family_unavailable', message: 'this client serves no swarm commands' } };
+  const model = visuals.projectBatonVisualModel({
+    snapshot, width, swarm, wakes: env.wakes ? env.wakes.projection() : undefined,
+  });
   const text = visuals.renderBatonVisual(model, { width, color, motion, view });
   return { model, text };
 }
@@ -137,7 +242,7 @@ async function projectFrame(parsed, env, visuals, { color, motion, width, view }
  * model.run. On a real TTY without --once it runs the responsive interactive loop; every
  * allow/deny gesture lowers through respondToVisualAttention → run.answer.
  */
-export async function runBatonTop(parsed, { client, stdout, stdin, clock }) {
+export async function runBatonTop(parsed, { client, stdout, stdin, clock, connection = null, wakes = null } = {}) {
   if (parsed?.kind !== 'top') throw cliError('runBatonTop requires a parsed top command', 'cli_invalid');
   if (!client || typeof client.surfaceSnapshot !== 'function') {
     throw cliError('baton top requires an authenticated resident client', 'cli_config_invalid');
@@ -145,18 +250,26 @@ export async function runBatonTop(parsed, { client, stdout, stdin, clock }) {
   const width = parsed.width ?? (stdout?.columns ?? 80);
   const tty = stdout?.isTTY === true;
   const visuals = await loadVisualModules();
+  // ONE wake attachment per resident for the whole seat run (docs/38, issue #315): the
+  // timeline view consumes it; the model merely projects its bounded buffer. Without the
+  // wake-stream sibling or a connection token the seat degrades honestly.
+  const wakeStream = await loadWakeStream(wakes);
+  const attachment = wakeStream && typeof connection?.token === 'string' && connection.token.length > 0
+    ? createWakeAttachment(wakeStream, connection)
+    : null;
 
   if (!tty || parsed.once || parsed.plain) {
-    const { model, text } = await projectFrame(parsed, { client }, visuals, {
+    if (attachment) await attachment.drain(Math.min(parsed.refreshMs ?? 1000, 250));
+    const { model, text } = await projectFrame(parsed, { client, wakes: attachment }, visuals, {
       color: false, motion: false, width, view: parsed.view,
     });
     if (!stdout || typeof stdout.write !== 'function') {
       throw cliError('baton top requires a writable stdout', 'cli_config_invalid');
     }
     stdout.write(`${text}\n`);
+    attachment?.close();
     return { run: model.run };
   }
-
   const state = {
     view: parsed.view,
     motion: parsed.motion,
@@ -215,7 +328,7 @@ export async function runBatonTop(parsed, { client, stdout, stdin, clock }) {
   stdin.on('data', onData);
   try {
     for (;;) {
-      const { model, text } = await projectFrame(parsed, { client }, visuals, {
+      const { model, text } = await projectFrame(parsed, { client, wakes: attachment }, visuals, {
         color: parsed.color,
         motion: state.motion && !state.paused,
         width,
@@ -242,6 +355,7 @@ export async function runBatonTop(parsed, { client, stdout, stdin, clock }) {
     return { run: currentModel?.run ?? null };
   } finally {
     stdin.removeListener('data', onData);
+    attachment?.close();
     if (raw) stdin.setRawMode(false);
   }
 }
