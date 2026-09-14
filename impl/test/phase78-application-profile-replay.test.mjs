@@ -102,6 +102,9 @@ function driver(repo, logDir, { delayMs = 10, scenario = {} } = {}) {
     repoRoot: repo, repoId, logDir, adapters: { mock: configuredAdapter(delayMs, scenario) },
     goalPlanAuthority: { policy: goalPlanPolicy, authorize: async () => true },
     stopDeadlineMs: 2_000,
+    // #258: this fixture's durable failed Run comes from an operator-named budget hard stop;
+    // by default a budget threshold is evidence only and the worker would complete.
+    budgetPolicy: { hardStopAt: 1 },
   });
 }
 

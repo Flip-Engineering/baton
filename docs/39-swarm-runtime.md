@@ -179,3 +179,18 @@ records do not grant shared filesystem custody. Existing wave/recipe workflows r
 
 See [the integration audit](audits/2026-09-13-runtime-policy/integration.md) for defects corrected,
 validation, and boundaries still under development.
+
+## Budgets are evidence, not stops (issue #258, 2026-09-13)
+
+A budget threshold (`resource.budget_threshold`) is evidence for the orchestrator and the participant: the
+deployment's default envelope (`DEFAULT_BUDGET`) only paces notifications at 50 %, 80 % and 100 %, and the
+worker keeps running. A hard stop exists only when the deployment owner names one:
+
+```js
+openBaton({ repo, advanced: { budgetPolicy: { hardStopAt: 1 } } })   // kill at 100 % of the named budget
+```
+
+The same rule governs the stall and loop watchdogs: their default action is `escalate` (a `stall_declared`
+attention reason for the orchestrator); `interrupt`/`kill` are explicit `watchdog.stallAction` /
+`watchdog.loopAction` choices. No built-in number may stop a productive worker.
+

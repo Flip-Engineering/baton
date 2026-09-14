@@ -69,9 +69,23 @@ test('GV1/GV2: cumulative snapshots become monotonic deltas and thresholds fire 
   assert.deepEqual(thresholds.map((event) => event.payload.threshold), [0.5, 0.8]);
 });
 
-test('GV3: 100 percent budget invokes confirmed two-phase kill exactly once', async () => {
+test('GV3 (#258): without an operator-named hard stop, 100 percent budget is evidence — the worker keeps running', async () => {
   const ad = adapter();
   const { c, log } = system(ad, { budgetPolicy: { terminalGraceMs: 5 } });
+  const h = await c.spawn('stub', brief());
+  ad.emit(h.id, 'resource.tokens', { source: 'delta', accounting: 'delta', tokens: 101, usd: 0 });
+  await sleep(10);
+  assert.equal(c.list()[0].status, 'working', 'a budget threshold never stops a worker by default');
+  assert.equal(ad.calls.kill, 0);
+  const thresholds = log.read(h.id).filter((event) => event.kind === 'resource.budget_threshold');
+  assert.deepEqual(thresholds.map((event) => [event.payload.threshold, event.payload.action, event.payload.hardStop]),
+    [[0.5, 'notify', false], [0.8, 'notify', false], [1, 'notify', false]]);
+  assert.equal(c.list()[0].budgetHardExceeded, undefined);
+});
+
+test('GV3: an operator-named hard stop at 100 percent invokes the confirmed two-phase kill exactly once', async () => {
+  const ad = adapter();
+  const { c, log } = system(ad, { budgetPolicy: { terminalGraceMs: 5, hardStopAt: 1 } });
   const h = await c.spawn('stub', brief());
   ad.emit(h.id, 'resource.tokens', { source: 'delta', accounting: 'delta', tokens: 101, usd: 0 });
   assert.equal(c.list()[0].status, 'working', 'hard stop allows only the bounded terminal-frame grace');
@@ -86,7 +100,7 @@ test('GV3: 100 percent budget invokes confirmed two-phase kill exactly once', as
 
 test('GV3: a terminal claim cancels a pointless late kill but hard-over-budget output fails admission', async () => {
   const ad = adapter();
-  const { c, log } = system(ad, { budgetPolicy: { terminalGraceMs: 20 } });
+  const { c, log } = system(ad, { budgetPolicy: { terminalGraceMs: 20, hardStopAt: 1 } });
   const h = await c.spawn('stub', brief());
   ad.emit(h.id, 'resource.tokens', { source: 'delta', accounting: 'delta', tokens: 101, usd: 0 });
   ad.emit(h.id, 'lifecycle.turn_completed', {
@@ -126,7 +140,8 @@ test('GV1/GV2: replay restores cumulative baselines so resumed snapshots do not 
 
 test('GV4/GV5: three identical completed failing commands interrupt once', async () => {
   const ad = adapter();
-  const { c, log } = system(ad, { watchdog: { loopThreshold: 3, stallMs: 60_000 } }); // valid positive stallMs; watchdog never fires in this window
+  // #258: a loop stop is the operator's explicit choice; the default only escalates.
+  const { c, log } = system(ad, { watchdog: { loopThreshold: 3, stallMs: 60_000, loopAction: 'interrupt' } }); // valid positive stallMs; watchdog never fires in this window
   const h = await c.spawn('stub', brief());
   for (let i = 0; i < 3; i += 1) ad.emit(h.id, 'content.tool_call', { command: 'npm test', exitCode: 1, status: 'completed' });
   assert.equal(ad.calls.interrupt, 1);
@@ -250,7 +265,7 @@ test('GV4: a quiet working worker is interrupted by the injected watchdog deadli
   const timers = [];
   const ad = adapter();
   const { c, log } = system(ad, {
-    watchdog: { stallMs: 50, loopThreshold: 3 },
+    watchdog: { stallMs: 50, loopThreshold: 3, stallAction: 'interrupt' }, // #258: operator-named stop
     setTimeout: (fn, ms) => { const timer = { fn, ms, unref() {} }; timers.push(timer); return timer; },
     clearTimeout: () => {},
   });

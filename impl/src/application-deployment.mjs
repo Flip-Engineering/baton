@@ -39,9 +39,11 @@ import { createLocalSocketFetch } from './local-web-transport.mjs';
 import { WebNorthbound, createLocalAuthenticatedWebServer } from './web-northbound.mjs';
 
 const DEFAULT_BUDGET = Object.freeze({
-  // This is an internal deployment circuit breaker, not an operator or agent input. Keep the
-  // ordinary envelope well above a tool-heavy recursive Workflow so application callers never
-  // have to estimate context churn, provider turns, or wall time merely to use Baton.
+  // The default notification envelope for goal/node budgets — never a stop (issue #258). The
+  // coordinator emits resource.budget_threshold evidence at its thresholds and keeps the worker
+  // running unless the deployment owner names a hard stop through advanced.budgetPolicy.hardStopAt.
+  // Application callers never have to estimate context churn, provider turns, or wall time
+  // merely to use Baton; an operator who wants a ceiling configures one explicitly.
   tokens: 100_000_000, usd: 1_000, wallMin: 480, providerTurns: 2_048,
 });
 
@@ -53,7 +55,7 @@ const DEFAULT_WATCHDOG = Object.freeze({
   stallMs: 20 * 60_000,                       // strictly < DEFAULT_BUDGET.wallMin * 60_000 (480 min)
   blockingInteractionTimeoutMs: 20 * 60_000,  // the null-deadline default for blocking interactions (D3)
   loopThreshold: 3,
-  loopAction: 'interrupt',
+  loopAction: 'escalate',                     // issue #258: evidence for the orchestrator, never a direct stop
   stallAction: 'escalate',                    // was 'interrupt' — D4 rung 1, never a direct stop
 });
 
@@ -1848,7 +1850,10 @@ export async function openBatonDeployment(rawOptions, createDriver) {
   closed(rawOptions, ['advanced', 'repo'], 'deployment options');
   const repository = repositoryAuthority(rawOptions.repo ?? process.cwd());
   const advanced = rawOptions.advanced ?? {};
-  closed(advanced, ['adapterOptions', 'adapters', 'capacity', 'claudeCredentials', 'deploymentRoot', 'grokCredentials', 'liveness', 'resident', 'routes', 'verification', 'workflowPolicy'], 'advanced');
+  closed(advanced, ['adapterOptions', 'adapters', 'budgetPolicy', 'capacity', 'claudeCredentials', 'deploymentRoot', 'grokCredentials', 'liveness', 'resident', 'routes', 'verification', 'workflowPolicy'], 'advanced');
+  // Issue #258: the only place a budget hard stop can come from is the deployment owner.
+  const budgetPolicy = advanced.budgetPolicy ?? {};
+  closed(budgetPolicy, ['hardStopAt', 'terminalGraceMs', 'thresholds'], 'advanced budgetPolicy');
   const adapterOptions = normalizeAdapterOptions(advanced.adapterOptions);
   const rawResident = advanced.resident ?? {};
   closed(rawResident, ['commandTimeoutMs', 'env', 'home', 'now', 'ownerUid', 'pollMs', 'sessionTtlMs', 'webDrainMs'], 'advanced resident');
@@ -2072,7 +2077,7 @@ export async function openBatonDeployment(rawOptions, createDriver) {
     // layer confusion in v0.9 is corrected; the stall watchdog is issue #67).
     progressNudgeWindowMs: 300_000,
     drainPolicy: { maxWorkers: 64, timeoutMs: 90_000, pollMs: 10 },
-    budgetPolicy: { terminalGraceMs: 2_000 },
+    budgetPolicy: { terminalGraceMs: 2_000, ...budgetPolicy },
     // D1: the stall budget no longer derives from DEFAULT_BUDGET.wallMin — it is the separately
     // frozen DEFAULT_WATCHDOG (20 min < 480 min wall), admission-checked at createDriver.
     watchdog: { ...DEFAULT_WATCHDOG },

@@ -1060,12 +1060,15 @@ export class Coordinator {
     if (!budgetPolicy || typeof budgetPolicy !== 'object' || Array.isArray(budgetPolicy)
       || Object.keys(budgetPolicy).some((key) => !budgetPolicyKeys.has(key))) throw new TypeError('budget policy must be a closed bounded deployment policy');
     const budgetThresholds = budgetPolicy.thresholds ?? [0.5, 0.8, 1];
-    const budgetHardStopAt = budgetPolicy.hardStopAt ?? 1;
+    // Issue #258: a budget threshold is evidence for the orchestrator, never a stop. A hard stop
+    // exists only when the deployment owner names one (`hardStopAt`); the default is none, so no
+    // built-in number can kill a productive worker.
+    const budgetHardStopAt = budgetPolicy.hardStopAt ?? null;
     const budgetTerminalGraceMs = budgetPolicy.terminalGraceMs ?? 250;
     if (!Array.isArray(budgetThresholds) || budgetThresholds.length === 0 || budgetThresholds.length > 32
       || budgetThresholds.some((value) => !Number.isFinite(value) || value <= 0 || value > 100)
       || new Set(budgetThresholds).size !== budgetThresholds.length
-      || !Number.isFinite(budgetHardStopAt) || budgetHardStopAt <= 0 || budgetHardStopAt > 100
+      || (budgetHardStopAt !== null && (!Number.isFinite(budgetHardStopAt) || budgetHardStopAt <= 0 || budgetHardStopAt > 100))
       || !Number.isSafeInteger(budgetTerminalGraceMs) || budgetTerminalGraceMs < 0 || budgetTerminalGraceMs > 60_000) {
       throw new TypeError('budget policy must be a closed bounded deployment policy');
     }
@@ -1102,8 +1105,10 @@ export class Coordinator {
       loopThreshold: opts.watchdog?.loopThreshold ?? 3,
       scopeAction,
       orientation: scopeOrientation,
-      loopAction: opts.watchdog?.loopAction ?? 'interrupt',
-      stallAction: opts.watchdog?.stallAction ?? 'interrupt',
+      // Issue #258: loop and stall evidence escalates to the orchestrator by default; a stop is
+      // an operator's explicit choice (`watchdog.loopAction` / `watchdog.stallAction`).
+      loopAction: opts.watchdog?.loopAction ?? 'escalate',
+      stallAction: opts.watchdog?.stallAction ?? 'escalate',
     });
     this._waitPollMs = opts.waitPollMs ?? 25;
     // C1: the sole done-gate, and the driver-level policy passed to every accept() call.
@@ -9844,7 +9849,7 @@ export class Coordinator {
     for (const threshold of this._budgetThresholds) {
       if (ratio < threshold || handle.budgetThresholdsFired.has(threshold)) continue;
       handle.budgetThresholdsFired.add(threshold);
-      const hardStop = threshold >= this._budgetHardStopAt;
+      const hardStop = this._budgetHardStopAt !== null && threshold >= this._budgetHardStopAt;
       hard ||= hardStop;
       this._log.append({
         worker: handle.id, harness: this._harnessOf(handle.vendor), turnEpoch: this._safeTurnEpoch(handle),

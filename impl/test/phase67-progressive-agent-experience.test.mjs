@@ -89,7 +89,7 @@ function configuredAdapter(delayMs = 5_000, files = {}, scenario = {}) {
   return adapter;
 }
 
-function fixture(name, { delayMs = 5_000, files = {}, scenario = {} } = {}) {
+function fixture(name, { delayMs = 5_000, files = {}, scenario = {}, budgetPolicy } = {}) {
   const repo = root(`${name}-repo`);
   execFileSync('git', ['init', '-q'], { cwd: repo });
   execFileSync('git', ['config', 'user.email', 'phase67@example.invalid'], { cwd: repo });
@@ -107,6 +107,7 @@ function fixture(name, { delayMs = 5_000, files = {}, scenario = {} } = {}) {
     adapters: { mock: adapter },
     goalPlanAuthority: { policy, authorize: async () => true },
     stopDeadlineMs: 2_000,
+    ...(budgetPolicy ? { budgetPolicy } : {}),
   });
   const application = new BatonApplication({
     driver,
@@ -476,6 +477,7 @@ test('AX4b: a real application Run explains one durable budget root cause across
   const f = fixture('terminal-cause-budget', {
     delayMs: 0,
     scenario: { budgetUsed: { tokens: 15_000, usd: 0 } },
+    budgetPolicy: { hardStopAt: 1 }, // #258: the budget root cause exists only when an operator names the stop
   });
   cleanup(t, f.application);
   const runId = 'run-phase67-terminal-cause';
