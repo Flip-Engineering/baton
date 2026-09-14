@@ -11,15 +11,11 @@ import {
   connectBatonWebApplication, createAuthenticatedWebServer, createBatonWebMcpServer,
   kimiBatonAcpMcpServer, kimiBatonMcpEntry,
 } from '../src/index.mjs';
+import { mockApplicationCard } from '../scripts/surface-truth.mjs';
 
 const NOW = Date.parse('2026-07-17T23:30:00.000Z');
-const commands = [
-  'swarm.list', 'swarm.create', 'swarm.view', 'swarm.watch', 'swarm.update', 'swarm.recruit', 'swarm.guide', 'swarm.capture', 'swarm.check', 'swarm.stop', 'application.help', 'runs.list', 'run.start', 'run.inspect', 'run.episode', 'run.workstreams',
-  'run.workstream.notify', 'run.workstream.stop', 'run.act', 'run.status', 'run.follow',
-  'run.recover', 'run.approve', 'run.wait', 'run.answer', 'run.feedback', 'run.steer', 'run.stop',
-  'run.evidence', 'run.adopt', 'run.retry_verification', 'run.resume_work', 'run.review',
-  'run.integrate', 'run.export', 'waves.attach', 'application.shutdown',
-];
+// The card's commands derive from the command table (surface-truth.mjs).
+const commands = mockApplicationCard('repo-kimi-orchestrator').commands;
 const card = (registryDigest = 'a'.repeat(64)) => ({
   schemaVersion: 1, repoId: 'repo-kimi-orchestrator', commands,
   agentExperience: { registryDigest },
@@ -293,21 +289,8 @@ test('KC6/KC7/KC8: Kimi MCP bridges only the compact application surface over au
   const listed = await server.handle({ jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} });
   // MCP-W1/W2 (v1.0.1): waves.*/doctor/decision.answer/settlement join the ordinary surface.
   // Facade-projection epic (#87+#48): the six workflow-surface tools join the compact bridge table.
-  assert.deepEqual(listed.result.tools.map((tool) => tool.name), [
-    'baton_help', 'baton_runs', 'baton_run_start', 'baton_run_inspect', 'baton_run_episode',
-    'baton_run_workstreams', 'baton_workstream_notify', 'baton_workstream_stop',
-    'baton_run_act', 'baton_run_stop', 'baton_waves_attach',
-    'baton_waves_start', 'baton_waves_progress', 'baton_waves_send', 'baton_waves_stop', 'baton_waves_list', 'baton_waves_run', 'baton_waves_compile',
-    'baton_deployment_doctor', 'baton_decision_answer',
-    'baton_scratchpad_elevate', 'baton_scratchpad_settle', 'baton_knowledge_promote', 'baton_knowledge_settlement_lease',
-    'baton_run_message_send', 'baton_run_message_receipt', 'baton_run_attention_watch',
-    'baton_run_scratchpad_read', 'baton_run_scratchpad_elevate', 'baton_run_scratchpad_append', 'baton_run_knowledge_seed',
-    'baton_swarm_list', 'baton_swarm_create', 'baton_swarm_view', 'baton_swarm_watch',
-    'baton_swarm_update', 'baton_swarm_recruit', 'baton_swarm_guide', 'baton_swarm_capture',
-    'baton_swarm_check', 'baton_swarm_stop',
-    'baton_run_do', 'baton_run_view', 'baton_run_member_view', 'baton_run_member_send',
-    'baton_run_member_stop', 'baton_application_help',
-  ]);
+  // The bridge table IS the ordinary surface's served order (surface-truth.ordinaryMcpToolNames).
+  assert.deepEqual(listed.result.tools.map((tool) => tool.name), ordinaryMcpToolNames());
   for (const tool of listed.result.tools) {
     assert.equal(Object.hasOwn(tool.inputSchema.properties, 'repoId'), false);
     assert.equal(Object.hasOwn(tool.inputSchema.properties, 'idempotencyKey'), false);

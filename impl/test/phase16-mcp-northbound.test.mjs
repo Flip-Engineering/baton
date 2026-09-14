@@ -7,7 +7,7 @@ import { PassThrough } from 'node:stream';
 import test from 'node:test';
 
 import { CoordinationStore, McpFleetServer, serveMcpStdio } from '../src/index.mjs';
-import { APPLICATION_COMMAND_DEFINITIONS } from '../src/application.mjs';
+import { combinedMcpToolNames, mockApplicationCard, ordinaryMcpToolNames } from '../scripts/surface-truth.mjs';
 
 const NOW = Date.parse('2026-07-11T21:00:00.000Z');
 const root = () => mkdtempSync(join(tmpdir(), 'baton-mcp-'));
@@ -15,11 +15,7 @@ const principal = (overrides = {}) => ({
   userId: 'operator-a', sessionId: 'stdio-a', capabilities: ['control', 'observe', 'approve', 'emergency_stop', 'adopt_result', 'review', 'integrate_result'],
   repoIds: ['repo-a'], expiresAt: new Date(NOW + 60_000).toISOString(), revoked: false, ...overrides,
 });
-const runApplicationCard = () => ({
-  schemaVersion: 1,
-  repoId: 'repo-a',
-  commands: Object.keys(APPLICATION_COMMAND_DEFINITIONS),
-});
+const runApplicationCard = () => mockApplicationCard('repo-a');
 function setup(overrides = {}) {
   const calls = [];
   const coordinator = {
@@ -90,21 +86,10 @@ test('UA5/MN1: an application-backed MCP server exposes the semantic ordinary su
   // MCP-W1/W2 (v1.0.1): waves.*/doctor/decision.answer/settlement join the ordinary surface.
   // Facade-projection epic (#87+#48): the six workflow-surface tools join between the settlement
   // family and the view verbs (message×2, attention.watch, scratchpad.read/elevate, knowledge.seed).
-  assert.deepEqual(response.result.tools.map((tool) => tool.name), [
-    'baton_help', 'baton_runs', 'baton_run_start', 'baton_run_inspect', 'baton_run_episode',
-    'baton_run_workstreams', 'baton_workstream_notify', 'baton_workstream_stop',
-    'baton_run_act', 'baton_run_stop', 'baton_waves_attach',
-    'baton_waves_start', 'baton_waves_progress', 'baton_waves_send', 'baton_waves_stop', 'baton_waves_list', 'baton_waves_run', 'baton_waves_compile',
-    'baton_deployment_doctor', 'baton_decision_answer',
-    'baton_scratchpad_elevate', 'baton_scratchpad_settle', 'baton_knowledge_promote', 'baton_knowledge_settlement_lease',
-    'baton_run_message_send', 'baton_run_message_receipt', 'baton_run_attention_watch',
-    'baton_run_scratchpad_read', 'baton_run_scratchpad_elevate', 'baton_run_scratchpad_append', 'baton_run_knowledge_seed',
-    'baton_swarm_list', 'baton_swarm_create', 'baton_swarm_view', 'baton_swarm_watch',
-    'baton_swarm_update', 'baton_swarm_recruit', 'baton_swarm_guide', 'baton_swarm_capture',
-    'baton_swarm_check', 'baton_swarm_stop',
-    'baton_run_do', 'baton_run_view', 'baton_run_member_view', 'baton_run_member_send',
-    'baton_run_member_stop', 'baton_application_help',
-  ]);
+  // The served order is THE derivation (surface-truth.ordinaryMcpToolNames) — the wire surface
+  // and the definition table cannot drift, and the set is byte-stable against the committed
+  // inventory artifact (surface-truth.test.mjs pins that leg).
+  assert.deepEqual(response.result.tools.map((tool) => tool.name), ordinaryMcpToolNames());
   const inspectSchema = response.result.tools.find((tool) => tool.name === 'baton_run_inspect').inputSchema;
   for (const field of ['offset', 'pageCursor', 'recipient']) {
     assert.equal(Object.hasOwn(inspectSchema.properties, field), true, field);
@@ -122,7 +107,7 @@ test('UA5/MN1: an application-backed MCP server exposes the semantic ordinary su
     'baton_package_admit', 'baton_package_attach', 'baton_package_read',
     'baton_repl_cite', 'baton_knowledge_recall', 'baton_knowledge_horizon',
   ];
-  assert.equal(combined.result.tools.length, 131); // 111 existing tools plus the ten ordinary baton_swarm_* tools and their ten swarm.* dot twins.
+  assert.equal(combined.result.tools.length, combinedMcpToolNames().length); // 111 existing tools plus the ten ordinary baton_swarm_* tools and their ten swarm.* dot twins.
   assert.deepEqual(combined.result.tools.slice(0, response.result.tools.length).map((tool) => tool.name), response.result.tools.map((tool) => tool.name), 'the combined inventory preserves the ordinary application surface verbatim as its prefix');
   assert.deepEqual(combined.result.tools.map((tool) => tool.name).filter((name) => reflexNames.includes(name)), reflexNames);
   assert.equal(combined.result.tools.every((tool) => tool.inputSchema.additionalProperties === false), true);

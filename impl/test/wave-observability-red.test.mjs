@@ -193,6 +193,7 @@ import {
   bindBaton, createDriver, CoordinationStore, McpFleetServer, WebNorthbound, WebSessionStore,
 } from '../src/index.mjs';
 import { mcpApplicationToolNames } from '../src/mcp-northbound.mjs';
+import { BYTE_STABLE_COMMAND_KEYS } from '../scripts/surface-truth.mjs';
 
 const NOW = Date.parse('2026-08-06T12:00:00.000Z');
 const ORIGIN = 'https://wave-obs.test';
@@ -202,22 +203,6 @@ const REPO_ID = 'repo-wave-132';
 const SPILL_BODY_CEILING = 1_048_576;
 const BIG_OBJECTIVE = 'x'.repeat(SPILL_BODY_CEILING + 1);
 
-// The byte-stable command-table set (grammar-m3 M3-8) in ACTUAL insertion order. A1-7 pins the FULL
-// set with deepEqual (F8) — a length-only check lets a dishonest fold swap rows.
-// docs/39: the living-swarm verbs lead the table (swarm-contract SWARM_COMMAND_DEFINITIONS is
-// spread first in application.mjs), ahead of the byte-stable 26-key M3 set below.
-const SWARM_COMMANDS = Object.freeze([
-  'swarm.list', 'swarm.create', 'swarm.view', 'swarm.watch', 'swarm.update',
-  'swarm.recruit', 'swarm.guide', 'swarm.capture', 'swarm.check', 'swarm.stop',
-]);
-const COMMANDS_BEFORE_M3 = Object.freeze([
-  'application.help', 'runs.list', 'run.start', 'run.inspect', 'run.episode',
-  'run.workstreams', 'run.workstream.notify', 'run.workstream.stop', 'run.act',
-  'run.status', 'run.follow', 'run.approve', 'run.wait', 'run.answer', 'run.feedback',
-  'run.stop', 'run.evidence', 'run.adopt', 'run.retry_verification',
-  'run.resume_work', 'run.review', 'run.integrate', 'run.export', 'run.recover',
-  'waves.attach', 'application.shutdown',
-]);
 
 let envelopeSeq = 0;
 
@@ -597,8 +582,8 @@ test('A1-6 F7: the application card advertises admitted wave commands in canonic
 });
 
 test('A1-7 PIN: the byte-stable APPLICATION_COMMAND_DEFINITIONS key set is the 10 swarm verbs + the FULL 26-key insertion-order set (F8)', () => {
-  assert.deepEqual(Object.keys(APPLICATION_COMMAND_DEFINITIONS), [...SWARM_COMMANDS, ...COMMANDS_BEFORE_M3],
-    'the swarm verbs (docs/39) lead, then the FULL 26-key insertion-order set (grammar-m3 M3-8) stays byte-stable — a wrong impl that registers the wave verbs as table entries, drops a row, or reorders one breaks the deepEqual (F8)');
+  assert.deepEqual(Object.keys(APPLICATION_COMMAND_DEFINITIONS), BYTE_STABLE_COMMAND_KEYS,
+    'the swarm verbs (docs/39) lead, then the FULL 26-key insertion-order set (grammar-m3 M3-8) stays byte-stable against the committed surface-truth witness — a wrong impl that registers the wave verbs as table entries, drops a row, or reorders one breaks the deepEqual (F8)');
   for (const verb of ['waves.start', 'waves.progress', 'waves.send', 'waves.stop', 'waves.list']) {
     assert.equal(Object.hasOwn(APPLICATION_COMMAND_DEFINITIONS, verb), false,
       `${verb} stays a WEB_DIRECT_PORT_COMMANDS direct port (application.mjs:12329-12332), never a table row`);

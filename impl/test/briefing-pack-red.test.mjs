@@ -239,6 +239,7 @@ import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 
 import { MockAdapter } from '../src/adapter.mjs';
+import { mockApplicationCard } from '../scripts/surface-truth.mjs';
 import { BatonApplication } from '../src/application.mjs';
 import { openBatonDeployment } from '../src/application-deployment.mjs';
 import {
@@ -516,12 +517,9 @@ const WAVE_POLICY = Object.freeze({
 function mockApplication() {
   return {
     repoId: REPO_ID,
-    card: () => ({
-      schemaVersion: 1, repoId: REPO_ID,
-      // The McpFleetServer constructor validates the facade against ORDINARY_APPLICATION_ENTRIES;
-      // this is the established command list (mcp-packaging-red.test.mjs:45).
-      commands: ['swarm.list', 'swarm.create', 'swarm.view', 'swarm.watch', 'swarm.update', 'swarm.recruit', 'swarm.guide', 'swarm.capture', 'swarm.check', 'swarm.stop', 'application.help', 'runs.list', 'run.start', 'run.inspect', 'run.episode', 'run.workstreams', 'run.workstream.notify', 'run.workstream.stop', 'run.act', 'run.status', 'run.follow', 'run.recover', 'run.approve', 'run.wait', 'run.answer', 'run.feedback', 'run.steer', 'run.stop', 'run.evidence', 'run.adopt', 'run.retry_verification', 'run.resume_work', 'run.review', 'run.integrate', 'run.export', 'waves.attach', 'application.shutdown'],
-    }),
+    // The card's commands derive from the command table (surface-truth.mjs) — the McpFleetServer
+    // constructor validates the facade against ORDINARY_APPLICATION_ENTRIES.
+    card: () => mockApplicationCard(REPO_ID),
     async authorizeReplay() { return true; },
     async command(name, args) { return { schemaVersion: 1, runId: args?.runId ?? null, phase: 'running' }; },
     async decisionList() { return { decisions: [] }; },

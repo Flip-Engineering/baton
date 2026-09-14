@@ -10,17 +10,13 @@ import {
   parseBatonCli,
 } from '../src/index.mjs';
 import { applicationSemanticRegistry } from '../src/application-semantics.mjs';
+import { commandKeys } from '../scripts/surface-truth.mjs';
 
 const NOW = Date.parse('2026-07-23T12:00:00.000Z');
 const ORIGIN = 'https://grammar-m1.test';
-const COMMANDS_BEFORE_M1 = Object.freeze([
-  'swarm.list', 'swarm.create', 'swarm.view', 'swarm.watch', 'swarm.update', 'swarm.recruit', 'swarm.guide', 'swarm.capture', 'swarm.check', 'swarm.stop', 'application.help', 'runs.list', 'run.start', 'run.inspect', 'run.episode',
-  'run.workstreams', 'run.workstream.notify', 'run.workstream.stop', 'run.act',
-  'run.status', 'run.follow', 'run.approve', 'run.wait', 'run.answer', 'run.feedback',
-  'run.stop', 'run.evidence', 'run.adopt', 'run.retry_verification',
-  'run.resume_work', 'run.review', 'run.integrate', 'run.export', 'run.recover',
-  'waves.attach', 'application.shutdown',
-]);
+// The card's command list derives from the command table (surface-truth.mjs) — the table keys in
+// insertion order, not a retyped literal.
+const COMMANDS_BEFORE_M1 = Object.freeze(commandKeys());
 const WEB_COMMANDS_BEFORE_M1 = Object.freeze(COMMANDS_BEFORE_M1
   .filter((name) => APPLICATION_COMMAND_DEFINITIONS[name].web)
   .map((name) => name.replaceAll('.', '_')));

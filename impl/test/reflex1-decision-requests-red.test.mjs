@@ -25,6 +25,7 @@ import {
 import { scanForDecisionRequest } from '../src/claude-session.mjs';
 import { parseBatonCli } from '../src/application-cli.mjs';
 import { CoordinationStore, McpFleetServer } from '../src/index.mjs';
+import { mockApplicationCard } from '../scripts/surface-truth.mjs';
 
 // ============================================================
 // Shared test fixtures (mirrors test/coordinator.test.mjs's documented pattern)
@@ -722,10 +723,8 @@ test('MCP: fleet_run_answer accepts the typed {optionId} form and forwards it to
   const applicationCalls = [];
   const application = {
     repoId: 'repo-reflex1',
-    card: () => ({
-      schemaVersion: 1, repoId: 'repo-reflex1',
-      commands: ['swarm.list', 'swarm.create', 'swarm.view', 'swarm.watch', 'swarm.update', 'swarm.recruit', 'swarm.guide', 'swarm.capture', 'swarm.check', 'swarm.stop', 'application.help', 'runs.list', 'run.start', 'run.inspect', 'run.episode', 'run.workstreams', 'run.workstream.notify', 'run.workstream.stop', 'run.act', 'run.status', 'run.follow', 'run.recover', 'run.approve', 'run.wait', 'run.answer', 'run.feedback', 'run.steer', 'run.stop', 'run.evidence', 'run.adopt', 'run.retry_verification', 'run.resume_work', 'run.review', 'run.integrate', 'run.export', 'waves.attach', 'application.shutdown'],
-    }),
+    // The card's commands derive from the command table (surface-truth.mjs).
+    card: () => mockApplicationCard('repo-reflex1'),
     async authorizeReplay() { return true; },
     async command(name, args, principal) {
       applicationCalls.push({ name, args, principal });

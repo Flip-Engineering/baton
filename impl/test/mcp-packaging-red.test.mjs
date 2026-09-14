@@ -22,6 +22,7 @@ import { join } from 'node:path';
 import test from 'node:test';
 
 import { CoordinationStore, McpFleetServer } from '../src/index.mjs';
+import { mockApplicationCard } from '../scripts/surface-truth.mjs';
 
 const NOW = Date.parse('2026-08-02T00:00:00.000Z');
 const REPO_ID = 'repo-mcp-packaging';
@@ -40,10 +41,9 @@ function principal(overrides = {}) {
   };
 }
 
-const runApplicationCard = () => ({
-  schemaVersion: 1, repoId: REPO_ID,
-  commands: ['swarm.list', 'swarm.create', 'swarm.view', 'swarm.watch', 'swarm.update', 'swarm.recruit', 'swarm.guide', 'swarm.capture', 'swarm.check', 'swarm.stop', 'application.help', 'runs.list', 'run.start', 'run.inspect', 'run.episode', 'run.workstreams', 'run.workstream.notify', 'run.workstream.stop', 'run.act', 'run.status', 'run.follow', 'run.recover', 'run.approve', 'run.wait', 'run.answer', 'run.feedback', 'run.steer', 'run.stop', 'run.evidence', 'run.adopt', 'run.retry_verification', 'run.resume_work', 'run.review', 'run.integrate', 'run.export', 'waves.attach', 'application.shutdown'],
-});
+// The card's commands derive from the command table (surface-truth.mjs); this was the
+// established 37-name list other fixtures used to copy by hand.
+const runApplicationCard = () => mockApplicationCard(REPO_ID);
 
 function mockApplication(overrides = {}) {
   const commandCalls = [];

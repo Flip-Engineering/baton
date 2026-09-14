@@ -147,6 +147,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
+import { mockApplicationCard } from '../scripts/surface-truth.mjs';
 
 import { MockAdapter } from '../src/adapter.mjs';
 import {
@@ -411,18 +412,7 @@ function countCoordinatorWait(f) {
 // with an injected principal + isPrincipalActive toggle, so a mid-wait revocation lands
 // in the post-dispatch _authority recheck (mcp-northbound.mjs:1505-1520).
 // ---------------------------------------------------------------------------
-const runApplicationCard = () => ({
-  schemaVersion: 1,
-  repoId: REPO,
-  commands: [
-    'swarm.list', 'swarm.create', 'swarm.view', 'swarm.watch', 'swarm.update', 'swarm.recruit', 'swarm.guide', 'swarm.capture', 'swarm.check', 'swarm.stop', 'application.help', 'runs.list', 'run.start', 'run.inspect', 'run.episode',
-    'run.workstreams', 'run.workstream.notify', 'run.workstream.stop', 'run.act',
-    'run.status', 'run.follow', 'run.recover', 'run.approve', 'run.wait', 'run.answer',
-    'run.feedback', 'run.steer', 'run.stop', 'run.evidence', 'run.adopt',
-    'run.retry_verification', 'run.resume_work', 'run.review', 'run.integrate',
-    'run.export', 'waves.attach', 'application.shutdown',
-  ],
-});
+const runApplicationCard = () => mockApplicationCard(REPO);
 
 function mcpSetup({ application, isPrincipalActive, maxWaitMs = 25_000, principal: principalOverride } = {}) {
   const calls = [];

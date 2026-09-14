@@ -106,6 +106,7 @@ import { APPLICATION_SEMANTIC_REGISTRY, deriveSurfaceNames } from '../src/applic
 import { CoordinationStore, McpFleetServer } from '../src/index.mjs';
 import * as mcpNorthbound from '../src/mcp-northbound.mjs';
 import { renderMcpToolInventory } from '../scripts/render-surface-docs.mjs';
+import { combinedMcpToolNames, mockApplicationCard, ordinaryMcpToolNames } from '../scripts/surface-truth.mjs';
 
 const repoRoot = fileURLToPath(new URL('../..', import.meta.url));
 const conformanceScript = fileURLToPath(
@@ -151,17 +152,9 @@ function fixtureDir() {
 }
 test.after(() => { for (const directory of dirs) rmSync(directory, { recursive: true, force: true }); });
 
-const runApplicationCard = () => ({
-  schemaVersion: 1,
-  repoId: REPO_ID,
-  commands: [
-    'swarm.list', 'swarm.create', 'swarm.view', 'swarm.watch', 'swarm.update', 'swarm.recruit', 'swarm.guide', 'swarm.capture', 'swarm.check', 'swarm.stop', 'application.help', 'runs.list', 'run.start', 'run.inspect', 'run.episode', 'run.workstreams',
-    'run.workstream.notify', 'run.workstream.stop', 'run.act', 'run.status', 'run.follow',
-    'run.recover', 'run.approve', 'run.wait', 'run.answer', 'run.feedback', 'run.steer',
-    'run.stop', 'run.evidence', 'run.adopt', 'run.retry_verification', 'run.resume_work',
-    'run.review', 'run.integrate', 'run.export', 'waves.attach', 'application.shutdown',
-  ],
-});
+// The card's commands derive from the command table (surface-truth.mjs) — the McpFleetServer
+// constructor validates the facade against the served entries.
+const runApplicationCard = () => mockApplicationCard(REPO_ID);
 
 function principal(overrides = {}) {
   return {
@@ -576,76 +569,57 @@ test('RG-P3 PIN: committed artifact mcp.combined count equals the live combined 
     'artifact mcp.combined count equals the live combined surface (stage: artifact-combined-count-pin)');
 });
 
-// ── RG-P4..RG-P7 (PIN) — the four hand-pinned application tool lists equal the live outputs ─────
-
-function extractToolList(filePath, marker) {
-  const source = readFileSync(filePath, 'utf8');
-  const markerIndex = source.indexOf(marker);
-  assert.ok(markerIndex >= 0, `${filePath} contains the pinned tool-list marker`);
-  const start = source.indexOf('[', markerIndex);
-  let depth = 0;
-  let inString = false;
-  let end = start;
-  for (; end < source.length; end++) {
-    const ch = source[end];
-    if (inString) {
-      if (ch === '\\') end += 1;
-      else if (ch === "'") inString = false;
-      continue;
-    }
-    if (ch === "'") inString = true;
-    else if (ch === '[') depth += 1;
-    else if (ch === ']') { depth -= 1; if (depth === 0) break; }
-  }
-  const literal = source.slice(start, end + 1);
-  return [...literal.matchAll(/'([^']+)'/g)].map((match) => match[1]);
-}
+// ── RG-P4..RG-P7 (PIN) — the four application tool-list pins tie to the ONE derivation ──────────
+// The literals are gone (issue #261): each site now pins surface-truth.ordinaryMcpToolNames(),
+// so the wire surface and the definition table cannot drift; the live-output leg below keeps the
+// mcpApplicationToolNames() agreement the pins historically carried.
 
 const PINNED_TOOL_LIST_SITES = [
   ['phase16', join(repoRoot, 'impl', 'test', 'phase16-mcp-northbound.test.mjs'),
-    "assert.deepEqual(response.result.tools.map((tool) => tool.name), [\n    'baton_help'"],
+    'assert.deepEqual(response.result.tools.map((tool) => tool.name), ordinaryMcpToolNames())'],
   ['mcp-reflex', join(repoRoot, 'impl', 'test', 'mcp-reflex-surface-red.test.mjs'),
-    'assert.deepEqual(response.result.tools.map((tool) => tool.name), ['],
+    'assert.deepEqual(response.result.tools.map((tool) => tool.name), ordinaryMcpToolNames())'],
   ['phase67', join(repoRoot, 'impl', 'test', 'phase67-progressive-agent-experience.test.mjs'),
-    'assert.deepEqual(ordinary.toolDefinitions.map((tool) => tool.name), ['],
+    'assert.deepEqual(ordinary.toolDefinitions.map((tool) => tool.name), ordinaryMcpToolNames())'],
   ['phase72', join(repoRoot, 'impl', 'test', 'phase72-kimi-orchestrator-mcp.test.mjs'),
-    'assert.deepEqual(listed.result.tools.map((tool) => tool.name), ['],
+    'assert.deepEqual(listed.result.tools.map((tool) => tool.name), ordinaryMcpToolNames())'],
 ];
 
 test('RG-P4 PIN: phase16 application tool list equals mcpApplicationToolNames() (stage: phase16-application-tool-list-pin)', () => {
-  const [, file, marker] = PINNED_TOOL_LIST_SITES[0];
-  assert.deepEqual(sortedSet(extractToolList(file, marker)), mcpNorthbound.mcpApplicationToolNames(),
+  assert.ok(readFileSync(PINNED_TOOL_LIST_SITES[0][1], 'utf8').includes(PINNED_TOOL_LIST_SITES[0][2]),
+    'phase16 application tool list ties to the served-order derivation (stage: phase16-application-tool-list-pin)');
+  assert.deepEqual(sortedSet(ordinaryMcpToolNames()), mcpNorthbound.mcpApplicationToolNames(),
     'phase16 pinned application tool list equals mcpApplicationToolNames() (stage: phase16-application-tool-list-pin)');
 });
 
 test('RG-P5 PIN: mcp-reflex application tool list equals mcpApplicationToolNames() (stage: mcp-reflex-application-tool-list-pin)', () => {
-  const [, file, marker] = PINNED_TOOL_LIST_SITES[1];
-  assert.deepEqual(sortedSet(extractToolList(file, marker)), mcpNorthbound.mcpApplicationToolNames(),
+  assert.ok(readFileSync(PINNED_TOOL_LIST_SITES[1][1], 'utf8').includes(PINNED_TOOL_LIST_SITES[1][2]),
+    'mcp-reflex application tool list ties to the served-order derivation (stage: mcp-reflex-application-tool-list-pin)');
+  assert.deepEqual(sortedSet(ordinaryMcpToolNames()), mcpNorthbound.mcpApplicationToolNames(),
     'mcp-reflex pinned application tool list equals mcpApplicationToolNames() (stage: mcp-reflex-application-tool-list-pin)');
 });
 
 test('RG-P6 PIN: phase67 application tool list equals mcpApplicationToolNames() (stage: phase67-application-tool-list-pin)', () => {
-  const [, file, marker] = PINNED_TOOL_LIST_SITES[2];
-  assert.deepEqual(sortedSet(extractToolList(file, marker)), mcpNorthbound.mcpApplicationToolNames(),
+  assert.ok(readFileSync(PINNED_TOOL_LIST_SITES[2][1], 'utf8').includes(PINNED_TOOL_LIST_SITES[2][2]),
+    'phase67 application tool list ties to the served-order derivation (stage: phase67-application-tool-list-pin)');
+  assert.deepEqual(sortedSet(ordinaryMcpToolNames()), mcpNorthbound.mcpApplicationToolNames(),
     'phase67 pinned application tool list equals mcpApplicationToolNames() (stage: phase67-application-tool-list-pin)');
 });
 
 test('RG-P7 PIN: phase72 application tool list equals mcpApplicationToolNames() (stage: phase72-application-tool-list-pin)', () => {
-  const [, file, marker] = PINNED_TOOL_LIST_SITES[3];
-  assert.deepEqual(sortedSet(extractToolList(file, marker)), mcpNorthbound.mcpApplicationToolNames(),
+  assert.ok(readFileSync(PINNED_TOOL_LIST_SITES[3][1], 'utf8').includes(PINNED_TOOL_LIST_SITES[3][2]),
+    'phase72 application tool list ties to the served-order derivation (stage: phase72-application-tool-list-pin)');
+  assert.deepEqual(sortedSet(ordinaryMcpToolNames()), mcpNorthbound.mcpApplicationToolNames(),
     'phase72 pinned application tool list equals mcpApplicationToolNames() (stage: phase72-application-tool-list-pin)');
 });
 
-// ── RG-P8 (PIN) — the phase16 combined-count pin equals the live output ─────────────────────────
+// ── RG-P8 (PIN) — the phase16 combined-count pin ties to the ONE combined derivation ────────────
 
-test('RG-P8 PIN: phase16 combined-count pin equals mcpCombinedToolNames().length (stage: phase16-combined-count-pin)', () => {
+test('RG-P8 PIN: phase16 combined-count pin equals combinedMcpToolNames().length (stage: phase16-combined-count-pin)', () => {
   const phase16Source = readFileSync(join(repoRoot, 'impl', 'test', 'phase16-mcp-northbound.test.mjs'), 'utf8');
-  const countMarker = 'assert.equal(combined.result.tools.length, ';
-  const countIndex = phase16Source.indexOf(countMarker);
-  assert.ok(countIndex >= 0, 'phase16 combined-count pin marker present (stage: phase16-combined-count-pin)');
-  const countStart = countIndex + countMarker.length;
-  const countEnd = phase16Source.indexOf(')', countStart);
-  const pinnedCount = Number(phase16Source.slice(countStart, countEnd).trim());
-  assert.equal(pinnedCount, mcpNorthbound.mcpCombinedToolNames().length,
-    'phase16 combined-count pin equals mcpCombinedToolNames().length (stage: phase16-combined-count-pin)');
+  const countMarker = 'assert.equal(combined.result.tools.length, combinedMcpToolNames().length)';
+  assert.ok(phase16Source.includes(countMarker),
+    'phase16 combined-count pin ties to the ONE combined derivation (stage: phase16-combined-count-pin)');
+  assert.equal(mcpNorthbound.mcpCombinedToolNames().length, combinedMcpToolNames().length,
+    'the live combined count and the derivation agree (stage: phase16-combined-count-pin)');
 });
