@@ -283,6 +283,19 @@ test('renderPrompt gives Claude-family providers the complete structured verifie
   assert.doesNotMatch(p, /check your work: `npm`/u);
 });
 
+test('renderPrompt decides the control-surface paragraph by registry membership of the advertised tools, never by substring (#267)', () => {
+  const base = {
+    goal: 'Review only the attached slice', constraints: [], pathScope: ['review.md'], definitionOfDone: 'one finding',
+    verification: { command: 'node --test settlement.test.mjs', expectExit: 0 },
+    contextInput: { callId: `context-call:${'b'.repeat(64)}`, unitId: `context-unit:${'a'.repeat(64)}`, value: { content: 'slice' } },
+  };
+  assert.match(renderPrompt({ ...base, tools: ['baton_swarm_view'] }), /Orchestration actions may use only the Baton control surface/u);
+  assert.match(renderPrompt({ ...base, tools: [{ name: 'fleet_swarm_view' }] }), /Orchestration actions may use only the Baton control surface/u);
+  const lookalike = renderPrompt({ ...base, tools: ['my-baton-helper'] });
+  assert.match(lookalike, /Do not search for or launch another Baton CLI, MCP server, or Run/u);
+  assert.doesNotMatch(lookalike, /Orchestration actions may use only/u);
+});
+
 test('renderPrompt makes a generic Context unit self-describing before repository and verification guidance', () => {
   const unitId = `context-unit:${'a'.repeat(64)}`;
   const p = renderPrompt({

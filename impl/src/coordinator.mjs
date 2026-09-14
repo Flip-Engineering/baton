@@ -1250,6 +1250,9 @@ export class Coordinator {
     this._taskSeq = 0;
     this._publicationSeq = 0;
     this._refinementSeq = 0;
+    // #267: the identifiers replay has seen, by field. Allocation is checked against them (and
+    // against live and durable state) by value; nothing is inferred from the shape of an id.
+    this._replayedIds = { workers: new Set(), tasks: new Set(), requests: new Set() };
 
     // One bounded startup clone feeds every reconstruction pass. Per-worker snapshot cloning made
     // replay proportional to worker-count times the complete coordination state.
@@ -5191,10 +5194,8 @@ export class Coordinator {
         currentIncarnation: false, ownedWorktreeAuthority: false,
         physicalWorkspaceCleanupCompleted: false, localAuthority: false,
       });
-      const match = /^w-(\d+)$/.exec(workerId);
-      if (match) this._workerSeq = Math.max(this._workerSeq, Number(match[1]));
-      const taskMatch = /^task-(\d+)$/.exec(task.id);
-      if (taskMatch) this._taskSeq = Math.max(this._taskSeq, Number(taskMatch[1]));
+      this._replayedIds.workers.add(workerId);
+      this._replayedIds.tasks.add(task.id);
     }
   }
 
@@ -5445,8 +5446,13 @@ export class Coordinator {
     });
   }
 
+  /** Task ids are checked against every id known — live, replayed, or durable — never derived
+   * from the shape of earlier ids (#267). */
   _autoTaskId() {
-    return `task-${++this._taskSeq}`;
+    let id;
+    do { id = `task-${++this._taskSeq}`; }
+    while (this._tasks.has(id) || this._replayedIds.tasks.has(id) || Boolean(this._coordination?.task?.(id)));
+    return id;
   }
 
   _knownSessionContext(sessionId, vendor) {
@@ -7240,7 +7246,9 @@ export class Coordinator {
       throw new PublicationError('publication SHA must equal the integrated result SHA', 'sha_mismatch');
     }
     const stamp = this._fences.bumpHuman(workerId);
-    const requestId = `publication-${workerId}-${++this._publicationSeq}`;
+    let requestId;
+    do { requestId = `publication-${workerId}-${++this._publicationSeq}`; }
+    while (this._pending.has(requestId) || this._replayedIds.requests.has(requestId));
     const publication = Object.freeze({ remote, ref, sha });
     const deadlineAt = this._now() + this._approvalTimeoutMs;
     const record = {
@@ -7262,8 +7270,12 @@ export class Coordinator {
     return { ok: true, requestId, fence: stamp.fence, target: publication };
   }
 
+  /** Worker ids are checked against the live table and every worker the log knows (#267). */
   _allocWorkerId() {
-    return `w-${++this._workerSeq}`;
+    let id;
+    do { id = `w-${++this._workerSeq}`; }
+    while (this._workers.has(id) || this._replayedIds.workers.has(id));
+    return id;
   }
 
   _assertNoCycle(taskId, deps) {
@@ -14541,6 +14553,7 @@ export class Coordinator {
 
   _replay() {
     const workerIds = this._log.workers();
+    for (const workerId of workerIds) this._replayedIds.workers.add(workerId);
     const durableTasksByWorker = new Map();
     for (const task of this._startupCoordinationSnapshot?.tasks
       ?? this._coordination.snapshot().tasks) {
@@ -14628,8 +14641,7 @@ export class Coordinator {
       for (const e of events) {
         runId = e.runId ?? runId;
         if (typeof e.turnEpoch === 'number' && e.turnEpoch > maxTurnEpoch) maxTurnEpoch = e.turnEpoch;
-        const publicationMatch = /^publication-w-\d+-(\d+)$/.exec(e.payload?.requestId ?? '');
-        if (publicationMatch) this._publicationSeq = Math.max(this._publicationSeq, Number(publicationMatch[1]));
+        if (typeof e.payload?.requestId === 'string') this._replayedIds.requests.add(e.payload.requestId);
         modelRequested = e.modelRequested ?? modelRequested;
         modelResolved = e.modelResolved ?? modelResolved;
         modelObserved = e.modelObserved ?? modelObserved;
@@ -15412,12 +15424,11 @@ export class Coordinator {
         createdAt: new Date(0).toISOString(),
       });
 
-      // CI6: replayed auto identifiers reserve their numeric slots. A subsequent allocation may
-      // never collide with or overwrite reconstructed state.
-      const workerMatch = /^w-(\d+)$/.exec(workerId);
-      if (workerMatch) this._workerSeq = Math.max(this._workerSeq, Number(workerMatch[1]));
-      const taskMatch = /^task-(\d+)$/.exec(taskId ?? '');
-      if (taskMatch) this._taskSeq = Math.max(this._taskSeq, Number(taskMatch[1]));
+      // CI6: replayed identifiers are reserved by value (#267). A subsequent allocation is
+      // checked against them, whatever their shape, so it can never collide with or overwrite
+      // reconstructed state.
+      this._replayedIds.workers.add(workerId);
+      if (typeof taskId === 'string' && taskId.length > 0) this._replayedIds.tasks.add(taskId);
     }
 
     // F1: seed the reconstructed pending interactions now that every worker/task has been
@@ -15453,6 +15464,7 @@ export class Coordinator {
     // delivery state.
     const rebuiltMessages = new Map();
     const replySeeds = [];
+    const unmarkedLaneReceipts = [];
     const messageEvents = typeof this._coordination.events === 'function'
       ? this._coordination.eventsView()
       : [];
@@ -15461,9 +15473,15 @@ export class Coordinator {
       const row = event.payload ?? {};
       const rowKey = event.idempotencyKey ?? '';
       if (!row || typeof row.messageId !== 'string' || !/^message:[a-f0-9]{64}$/u.test(row.messageId)) continue;
-      // The legacy alias row: alias marker AND the <workerId>:<tail> key shape (a delivery alias,
-      // never a chain record). Skip — seeding it would mint a phantom root.
-      if (row.alias === true || (event.kind === 'message.sent' && /^message\.sent:[^:]+:\d+$/u.test(rowKey))) continue;
+      // Lane receipts (run.send / nudge aliases) carry the alias marker; they are never roots.
+      if (row.alias === true) continue;
+      // A chain root is keyed by its own messageId (`message.sent:<messageId>`). A sent row keyed
+      // any other way is a lane receipt written before the marker existed: it is never seeded
+      // (that would mint a phantom root) and the skip is not silent — it is recorded below.
+      if (event.kind === 'message.sent' && rowKey !== `message.sent:${row.messageId}`) {
+        unmarkedLaneReceipts.push({ messageId: row.messageId, idempotencyKey: rowKey, seq: event.seq ?? null });
+        continue;
+      }
       if (event.kind === 'message.sent') {
         if (row.inReplyTo !== undefined) continue;
         rebuiltMessages.set(row.messageId, {
@@ -15476,6 +15494,14 @@ export class Coordinator {
       } else if (row.inReplyTo !== undefined) {
         replySeeds.push(row);
       }
+    }
+    for (const finding of unmarkedLaneReceipts) {
+      // One durable finding per row, keyed by the row it names, so a restart replays rather than
+      // repeats it (#267 item 3).
+      try {
+        this._coordRecord('replay.message_alias_unmarked', finding,
+          `driver.replay.message_alias_unmarked:${finding.seq ?? finding.idempotencyKey}`, 'policy');
+      } catch { /* the row is still not seeded; a store that cannot take the record keeps its refusal */ }
     }
     for (const row of replySeeds) {
       const depth = row.depth ?? 1;

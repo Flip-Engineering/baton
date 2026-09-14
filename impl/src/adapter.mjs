@@ -19,6 +19,7 @@ import { dirname, join } from 'node:path';
 import { normalizeConcurrencyCeiling } from './concurrency-policy.mjs';
 import { renderVerificationExecution } from './verification-presentation.mjs';
 import { renderAttentionSection } from './messages.mjs';
+import { advertisesBatonControlSurface } from './control-surface-unification.mjs';
 
 const STOP_SETTLE_MS = 8;
 const MOCK_TOKEN_METRIC = 'mock_scenario_tokens';
@@ -104,9 +105,7 @@ export function assertIsAdapter(obj) {
  */
 export function renderBrief(brief, dialect) {
   const lines = [];
-  const advertisesBatonTool = (brief.tools ?? []).some((tool) => (
-    /baton/iu.test(typeof tool === 'string' ? tool : JSON.stringify(tool))
-  ));
+  const advertisesBatonTool = advertisesBatonControlSurface(brief.tools);
   lines.push(`[baton brief:${dialect}]`);
   lines.push('## Goal');
   lines.push(brief.goal ?? '');

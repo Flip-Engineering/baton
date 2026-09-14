@@ -931,6 +931,17 @@ test('renderBrief tells Context recipients they are already supervised without i
   }
 });
 
+test('renderBrief decides the control-surface paragraph by registry membership of the advertised tools, never by substring (#267)', () => {
+  const contextInput = { callId: `context-call:${'a'.repeat(64)}`, unitId: `context-unit:${'b'.repeat(64)}`, value: { finding: 'x' } };
+  const advertised = renderBrief(makeBrief({ tools: ['baton_swarm_view'], contextInput }), 'claude');
+  assert.match(advertised, /Orchestration actions may use only the Baton control surface explicitly listed in this Brief/u);
+  const aliased = renderBrief(makeBrief({ tools: [{ name: 'fleet_swarm_view' }], contextInput }), 'claude');
+  assert.match(aliased, /Orchestration actions may use only the Baton control surface/u, 'a legacy transport twin is the same surface');
+  const lookalike = renderBrief(makeBrief({ tools: ['my-baton-helper', { name: 'batonize', description: 'baton in the description' }], contextInput }), 'claude');
+  assert.match(lookalike, /Do not search for or launch another Baton CLI, MCP server, or Run/u);
+  assert.doesNotMatch(lookalike, /Orchestration actions may use only/u, 'a tool that merely mentions baton is not the control surface');
+});
+
 test('renderBrief separates unattended harness capability from Baton write authority', () => {
   const brief = makeBrief({ pathScope: ['reviews/exact-report.md'] });
   for (const dialect of ['codex-v2', 'claude', 'grok-acp', 'kimi-acp']) {

@@ -18,6 +18,7 @@ import { usdToNanos } from './usd.mjs';
 import { attestWorkerPolicyObservation } from './worker-policy.mjs';
 import { renderVerificationExecution } from './verification-presentation.mjs';
 import { renderAttentionSection } from './messages.mjs';
+import { advertisesBatonControlSurface } from './control-surface-unification.mjs';
 import { normalizeConcurrencyCeiling } from './concurrency-policy.mjs';
 
 const DEFAULT_MAX_WIRE_FRAME_BYTES = 1024 * 1024;
@@ -78,9 +79,7 @@ function fixedWireFailure(base) {
 // ---------------------------------------------------------------------------
 
 export function renderPrompt(brief) {
-  const advertisesBatonTool = (brief.tools ?? []).some((tool) => (
-    /baton/iu.test(typeof tool === 'string' ? tool : JSON.stringify(tool))
-  ));
+  const advertisesBatonTool = advertisesBatonControlSurface(brief.tools);
   const attachedContext = brief.contextInput ? [
     'Attached immutable Context (the authoritative input for this task):',
     `Call: ${brief.contextInput.callId}`,

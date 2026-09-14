@@ -243,6 +243,16 @@ export function unifiedMcpCapabilities() {
   }));
 }
 
+let mcpControlSurfaceNames = null;
+/** True when a brief's tools name a tool of Baton's own MCP control surface — membership in the
+ * unified registry by canonical name, key, or alias, never a substring match on tool text (#267). */
+export function advertisesBatonControlSurface(tools) {
+  if (!Array.isArray(tools) || tools.length === 0) return false;
+  mcpControlSurfaceNames ??= new Set(unifiedSurfaceInventory('mcp')
+    .flatMap((entry) => [entry.key, entry.name, ...(entry.aliases ?? [])].filter(Boolean)));
+  return tools.some((tool) => mcpControlSurfaceNames.has(typeof tool === 'string' ? tool : tool?.name));
+}
+
 export function unifiedCliCommands() {
   return new Set(unifiedSurfaceInventory('cli').map((entry) => entry.key));
 }

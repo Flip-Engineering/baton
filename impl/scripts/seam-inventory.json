@@ -16,7 +16,7 @@
         {
           "name": "constructor",
           "ordinal": 0,
-          "size": 669,
+          "size": 672,
           "seam": "effect",
           "evidence": [
             "recovery:reconcile_call",
@@ -1031,7 +1031,7 @@
         {
           "name": "_seedCoordinationTasks",
           "ordinal": 0,
-          "size": 59,
+          "size": 57,
           "seam": "observation",
           "evidence": [
             "observation:coordination_authority",
@@ -1121,7 +1121,7 @@
         {
           "name": "_autoTaskId",
           "ordinal": 0,
-          "size": 3,
+          "size": 6,
           "seam": "surface",
           "evidence": [
             "surface:no_authority_touched"
@@ -1420,7 +1420,7 @@
         {
           "name": "requestPublication",
           "ordinal": 0,
-          "size": 41,
+          "size": 43,
           "seam": "observation",
           "evidence": [
             "admission:policy_gate",
@@ -1430,7 +1430,7 @@
         {
           "name": "_allocWorkerId",
           "ordinal": 0,
-          "size": 3,
+          "size": 6,
           "seam": "surface",
           "evidence": [
             "surface:no_authority_touched"
@@ -3567,7 +3567,7 @@
         {
           "name": "_replay",
           "ordinal": 0,
-          "size": 977,
+          "size": 991,
           "seam": "recovery",
           "evidence": [
             "recovery:restart_name",

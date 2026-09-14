@@ -430,6 +430,32 @@ test('CI6: replay advances automatic task and worker IDs without collision', asy
   assert.equal(coordinator.list().length, 2);
 });
 
+test('#267: allocation is checked against replayed identifiers by value, never inferred from their shape', async () => {
+  const log = new Log(mkdtempSync(join(tmpdir(), 'baton-p11-replay-ids-')));
+  for (const [worker, taskId] of [['w-1', 'task-1'], ['w-3', 'task-7']]) {
+    log.append({
+      worker, harness: 'stub@1', turnEpoch: 1, actor: 'orchestrator',
+      kind: 'lifecycle.spawned', payload: { taskId, brief: brief() },
+    });
+    log.append({ worker, harness: 'stub@1', turnEpoch: 1, actor: 'worker', kind: 'lifecycle.crashed', payload: { error: 'old' } });
+  }
+  log.append({
+    worker: 'w-1', harness: 'stub@1', turnEpoch: 1, actor: 'orchestrator', kind: 'publication.requested',
+    payload: { requestId: 'publication-w-1-1', remote: 'origin', ref: 'refs/heads/x', sha: 'a'.repeat(40), fence: 1, deadlineAt: 0 },
+  });
+  const { coordinator } = harness({ log });
+  assert.ok(coordinator._replayedIds.workers.has('w-3'), 'every replayed worker id is reserved by value');
+  assert.ok(coordinator._replayedIds.tasks.has('task-7'), 'every replayed task id is reserved by value');
+  assert.ok(coordinator._replayedIds.requests.has('publication-w-1-1'), 'every replayed request id is reserved by value');
+  const first = await coordinator.spawn('stub', brief('first'));
+  assert.equal(first.id, 'w-2');
+  assert.equal(first.taskId, 'task-2');
+  const second = await coordinator.spawn('stub', brief('second'));
+  assert.equal(second.id, 'w-4', 'the reserved id is skipped, not re-minted');
+  assert.equal(second.taskId, 'task-3');
+  assert.equal(new Set(coordinator.list().map((row) => row.id)).size, 4);
+});
+
 test('CI6: replay terminalizes an unattached in-flight session instead of fabricating control', async () => {
   const log = new Log(mkdtempSync(join(tmpdir(), 'baton-p11-orphan-')));
   let killCalls = 0;

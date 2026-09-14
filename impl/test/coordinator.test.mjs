@@ -2061,6 +2061,38 @@ test('#265: a Run stop that cannot converge names the wait on the error and in t
   assert.equal(named.at(-1).actor, 'operator:stop');
 });
 
+// #267 item 3: a sent row that is not keyed by its own messageId is a lane receipt (run.send /
+// nudge alias) written before the alias marker existed. Replay never seeds it as a chain root and
+// never skips it in silence: one durable finding names the row, replayed under the same key.
+test('#267: an unmarked lane receipt is never seeded as a root and is recorded as a replay finding', async () => {
+  const dir = tmpDir();
+  const log = new Log(join(dir, 'log'));
+  const coordination = coordinationForLog(log);
+  const first = setup({ log, coordination, adapters: { mock: new ScriptableAdapter() } });
+  const handle = await first.coordinator.spawn('mock', makeBrief());
+  const root = await first.coordinator.sendMessage({ kind: 'inform', to: { workerId: handle.id }, body: 'root' }, { actor: 'orchestrator' });
+  const legacyId = `message:${'c'.repeat(64)}`;
+  coordination.recordMessage('message.sent', {
+    messageId: legacyId, kind: 'turn', from: 'orchestrator', to: { workerId: handle.id }, body: 'legacy lane receipt', targetCount: 1,
+  }, { actor: 'orchestrator', key: `message.sent:${handle.id}:7` });
+  coordination.releaseWriterLease();
+
+  const second = setup({ log, coordination: coordinationForLog(log), adapters: { mock: new ScriptableAdapter() } });
+  assert.equal(second.coordinator._messages.has(root.messageId), true, 'the chain root is rebuilt');
+  assert.equal(second.coordinator._messages.has(legacyId), false, 'the unmarked lane receipt is not a root');
+  const findings = second.coordinator._coordination.events()
+    .filter((event) => event.kind === 'driver.recorded' && event.payload?.kind === 'replay.message_alias_unmarked');
+  assert.equal(findings.length, 1, 'the skip is recorded, not silent');
+  assert.equal(findings[0].payload.messageId, legacyId);
+  assert.equal(findings[0].payload.idempotencyKey, `message.sent:${handle.id}:7`);
+  second.coordinator._coordination.releaseWriterLease();
+
+  const third = setup({ log, coordination: coordinationForLog(log), adapters: { mock: new ScriptableAdapter() } });
+  assert.equal(third.coordinator._coordination.events()
+    .filter((event) => event.payload?.kind === 'replay.message_alias_unmarked').length, 1,
+  'a restart replays the finding under its key instead of repeating it');
+});
+
 // ============================================================
 // error taxonomy (§3.4) — extra coverage beyond the numbered list
 // ============================================================
