@@ -167,13 +167,15 @@ Requires Node ≥ 20. The only runtime dependency is `@ast-grep/napi`.
 
 ```bash
 cd impl && npm ci                     # install
-node scripts/run-suite.mjs            # the canonical gate (see the red-first note above)
+node scripts/run-suite.mjs            # the canonical gate: green means green (see the verdict note below)
 node scripts/surface-gate.mjs         # surface gate: grammar lint, generated artifacts, MCP dispatch (--write regenerates)
 node scripts/baton.mjs serve          # start the owner-local resident
 node scripts/baton.mjs doctor --check # connection + exact-route readiness
 node scripts/baton.mjs waves list     # live wave registry (roster, phase, progress class)
 node scripts/baton.mjs waves run path/to/workflow.json   # a whole workflow, as data
 ```
+
+**The suite verdict (issue #260).** `run-suite.mjs` runs the parallel lane, then the process-heavy files of `impl/scripts/suite-lanes.json` serially, through `suite-verdict-reporter.mjs`, and judges the run against `impl/scripts/expected-red-tests.json` — the manifest of tests expected not to pass today: red-first spec tests, and tests cancelled because an earlier test in their file awaits something that never settles (a dangling await the verdict counts separately; issue #260 tracks them). The verdict is GREEN only when every failure is listed, no listed test passed or vanished (a stale expectation refuses), and nothing hung — a file with no test event for the runner's progress deadline (`BATON_SUITE_IDLE_MS`, default 10 min) is killed and can never be expected. When a red-first spec goes green, delete its row; when you add a red-first spec, add its row, or regenerate the whole manifest from a clean run with `node scripts/run-suite.mjs --write-expected-red` and review the diff.
 
 The full verb inventory is generated from the executable registry: [impl/CLI.md](impl/CLI.md) · [impl/MCP.md](impl/MCP.md). After any surface change run `node impl/scripts/surface-gate.mjs --write` and commit the regenerated artifacts; the suite preflight, CI and the repo pre-commit hook (`git config core.hooksPath .githooks`, once per clone) all run the same gate. The resident's fleet routes are declared in [impl/scripts/resident.deployment.mjs](impl/scripts/resident.deployment.mjs).
 

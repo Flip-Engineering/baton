@@ -1,9 +1,12 @@
 #!/usr/bin/env node
 
 import { execFileSync, spawn } from 'node:child_process';
+import { readdirSync } from 'node:fs';
+import { availableParallelism } from 'node:os';
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { join, relative, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import { lintDefaultTestDirectory } from './fixture-clock-lint.mjs';
 import { collectSurfaceInventory } from './surface-audit.mjs';
@@ -14,6 +17,9 @@ import {
 } from './surface-conformance.mjs';
 import { sweepStaleSuiteRoots, writeSuiteOwnerReceipt } from './suite-hygiene.mjs';
 import { runSurfaceGate } from './surface-gate.mjs';
+import {
+  computeVerdict, createProgressDeadline, formatVerdict, isHang, loadExpectedRed, rowKey, writeExpectedRed,
+} from './suite-verdict.mjs';
 
 // Issue #42: a time-bomb fixture must be red on the author's machine the moment it is written,
 // not hours after merge when wall time crosses its literal.
@@ -109,37 +115,68 @@ function cleanup() {
 process.once('exit', cleanup);
 
 const detached = process.platform !== 'win32';
-// Issue #40: the detached group also watches its own parent — if this process dies without
-// handlers (SIGKILL-class), the test runner terminates itself instead of working headless.
+const sleep = (ms) => new Promise((resolveSleep) => setTimeout(resolveSleep, ms));
+const signalStatus = { SIGINT: 130, SIGTERM: 143, SIGKILL: 137 };
+
+// Issue #260: the runner schedules every test FILE as its own in-process run (the file executed
+// directly with the verdict reporter attached), never through `node --test`'s parent/child TAP
+// round trip — that parent is what spun for hours on this suite. Each file is bounded by its own
+// progress deadline, so a hang costs exactly that file. The parallel lane runs
+// availableParallelism()-1 files at once; the process-heavy files of suite-lanes.json run one
+// at a time afterwards. Explicit file arguments run through the same scheduler; any other
+// node --test option (--watch, --test-name-pattern, …) keeps the legacy passthrough.
+const passthroughArgs = process.argv.slice(2).filter((arg) => arg !== '--write-expected-red');
+const writeExpectedRedRequested = process.argv.includes('--write-expected-red');
+const explicitFiles = passthroughArgs.filter((arg) => !arg.startsWith('-'));
+const legacyPassthrough = passthroughArgs.some((arg) => arg.startsWith('-'));
+const implRoot = new URL('../', import.meta.url);
+const implRootPath = fileURLToPath(implRoot);
+const testRoot = new URL('../test/', import.meta.url);
+const reporterUrl = new URL('./suite-verdict-reporter.mjs', import.meta.url).href;
 const watchdogUrl = new URL('./suite-orphan-watchdog.mjs', import.meta.url).href;
-const child = spawn(process.execPath, ['--import', watchdogUrl, '--test', '--test-force-exit', ...process.argv.slice(2)], {
-  detached,
-  stdio: 'inherit',
-  env: {
-    ...process.env,
-    BATON_TEST_SUITE_ROOT: suiteRoot,
-    BATON_SUITE_WATCHDOG: '1',
-    BATON_SUITE_WATCHDOG_PPID: String(process.pid),
-    TMPDIR: suiteRoot,
-    TMP: suiteRoot,
-    TEMP: suiteRoot,
-  },
-});
+const manifestPath = new URL('./expected-red-tests.json', import.meta.url);
+const lanesPath = new URL('./suite-lanes.json', import.meta.url);
+// The runner's own liveness bound: a file that emits no test event for this long is hung and
+// is reaped instead of holding the verdict hostage. A wall-clock bound on the runner is a real
+// resource constraint (an operator waiting), so it is configurable, never hidden.
+const idleMs = Number.parseInt(process.env.BATON_SUITE_IDLE_MS ?? '', 10) > 0
+  ? Number.parseInt(process.env.BATON_SUITE_IDLE_MS, 10) : 600_000;
+const parallelism = Number.parseInt(process.env.BATON_SUITE_PARALLELISM ?? '', 10) > 0
+  ? Number.parseInt(process.env.BATON_SUITE_PARALLELISM, 10) : Math.max(1, availableParallelism() - 1);
+
+function relativeTestPath(file) {
+  const absolute = resolve(process.cwd(), file);
+  const rel = relative(implRootPath, absolute);
+  return rel.startsWith('..') ? absolute : rel;
+}
+
+function laneFiles() {
+  const lanes = JSON.parse(readFileSync(lanesPath, 'utf8'));
+  const serial = new Set(lanes.serial);
+  const all = readdirSync(testRoot).filter((name) => name.endsWith('.test.mjs')).map((name) => `test/${name}`).sort();
+  const missing = [...serial].filter((file) => !all.includes(file));
+  if (missing.length > 0) {
+    process.stderr.write(`baton test runner: suite-lanes.json names files that do not exist: ${missing.join(', ')}\n`);
+    process.exit(1);
+  }
+  if (explicitFiles.length > 0) {
+    const requested = explicitFiles.map(relativeTestPath);
+    return { parallel: requested.filter((file) => !serial.has(file)), serial: requested.filter((file) => serial.has(file)) };
+  }
+  return { parallel: all.filter((file) => !serial.has(file)), serial: all.filter((file) => serial.has(file)) };
+}
 
 let requestedSignal = null;
-let forceTimer = null;
 let finished = false;
 let stopCaptureFailed = false;
-const trackedGroup = new Map();
+const running = new Set();
+let jobCounter = 0;
 
 function processTable() {
   if (!detached) return new Map();
   try {
     const output = execFileSync('/bin/ps', ['-axo', 'pid=,pgid=,lstart='], {
-      encoding: 'utf8',
-      timeout: 1000,
-      maxBuffer: 8 * 1024 * 1024,
-      stdio: ['ignore', 'pipe', 'ignore'],
+      encoding: 'utf8', timeout: 1000, maxBuffer: 8 * 1024 * 1024, stdio: ['ignore', 'pipe', 'ignore'],
     });
     const table = new Map();
     for (const line of output.split('\n')) {
@@ -153,115 +190,168 @@ function processTable() {
   }
 }
 
-function captureProcessGroup(table = processTable()) {
+function captureProcessGroup(job, table = processTable()) {
   if (!detached) return true;
   if (table === null) return false;
   for (const [pid, identity] of table) {
-    if (identity.group === child.pid && !trackedGroup.has(pid)) {
-      trackedGroup.set(pid, identity.started);
-    }
+    if (identity.group === job.child.pid && !job.trackedGroup.has(pid)) job.trackedGroup.set(pid, identity.started);
   }
   return true;
 }
 
-function trackedGroupAlive(table) {
-  for (const [pid, started] of trackedGroup) {
-    const current = table.get(pid);
-    if (current?.started === started) return true;
-    if (current) continue;
-    try {
-      process.kill(pid, 0);
-      return true;
-    } catch (error) {
-      if (error?.code !== 'ESRCH') return true;
-    }
+function trackedGroupAlive(job, table) {
+  for (const [pid, started] of job.trackedGroup) {
+    const row = table.get(pid);
+    if (row?.started === started) return true;
+    if (row) continue;
+    try { process.kill(pid, 0); return true; }
+    catch (error) { if (error?.code !== 'ESRCH') return true; }
   }
   return false;
 }
 
-async function waitForTrackedGroup(deadline) {
+async function waitForTrackedGroup(job, deadline) {
   if (!detached) return true;
   while (Date.now() < deadline) {
     const table = processTable();
     if (table !== null) {
-      captureProcessGroup(table);
-      if (!trackedGroupAlive(table)) return true;
+      captureProcessGroup(job, table);
+      if (!trackedGroupAlive(job, table)) return true;
     }
     await sleep(10);
   }
   const table = processTable();
-  return table !== null && captureProcessGroup(table) && !trackedGroupAlive(table);
+  return table !== null && captureProcessGroup(job, table) && !trackedGroupAlive(job, table);
 }
 
-function signalChild(signal) {
-  if (child.exitCode !== null || child.signalCode !== null) return;
-  signalGroup(signal);
-}
-
-function signalGroup(signal) {
+function signalGroup(job, signal) {
   try {
-    if (detached) process.kill(-child.pid, signal);
-    else child.kill(signal);
+    if (detached) process.kill(-job.child.pid, signal);
+    else job.child.kill(signal);
   } catch (error) {
     if (error?.code !== 'ESRCH') throw error;
   }
 }
 
-function groupAlive() {
-  if (!detached) return child.exitCode === null && child.signalCode === null;
-  try {
-    process.kill(-child.pid, 0);
-    return true;
-  } catch (error) {
+function groupAlive(job) {
+  if (!detached) return job.child.exitCode === null && job.child.signalCode === null;
+  try { process.kill(-job.child.pid, 0); return true; }
+  catch (error) {
     if (error?.code === 'ESRCH') return false;
     if (error?.code === 'EPERM') return true;
     throw error;
   }
 }
 
-const sleep = (ms) => new Promise((resolveSleep) => setTimeout(resolveSleep, ms));
-async function reapProcessGroup() {
-  const captured = captureProcessGroup();
-  if (groupAlive()) {
-    signalGroup('SIGTERM');
+async function reapProcessGroup(job) {
+  const captured = captureProcessGroup(job);
+  if (groupAlive(job)) {
+    signalGroup(job, 'SIGTERM');
     const termDeadline = Date.now() + 5000;
-    while (groupAlive() && Date.now() < termDeadline) {
-      captureProcessGroup();
-      await sleep(25);
-    }
+    while (groupAlive(job) && Date.now() < termDeadline) { captureProcessGroup(job); await sleep(25); }
   }
-  if (groupAlive()) {
-    signalGroup('SIGKILL');
+  if (groupAlive(job)) {
+    signalGroup(job, 'SIGKILL');
     const killDeadline = Date.now() + 1000;
-    while (groupAlive() && Date.now() < killDeadline) {
-      captureProcessGroup();
-      await sleep(25);
-    }
+    while (groupAlive(job) && Date.now() < killDeadline) { captureProcessGroup(job); await sleep(25); }
   }
-  const groupReaped = !groupAlive();
-  const identitiesReaped = await waitForTrackedGroup(Date.now() + 1000);
+  const groupReaped = !groupAlive(job);
+  const identitiesReaped = await waitForTrackedGroup(job, Date.now() + 1000);
   return captured && !stopCaptureFailed && groupReaped && identitiesReaped;
 }
 
 function requestStop(signal) {
   if (requestedSignal) return;
   requestedSignal = signal;
-  if (!captureProcessGroup()) stopCaptureFailed = true;
-  signalChild(signal);
-  forceTimer = setTimeout(() => signalGroup('SIGKILL'), 5000);
-  forceTimer.unref();
+  for (const job of running) {
+    if (!captureProcessGroup(job)) stopCaptureFailed = true;
+    if (job.child.exitCode === null && job.child.signalCode === null) signalGroup(job, signal);
+    const force = setTimeout(() => signalGroup(job, 'SIGKILL'), 5000);
+    force.unref();
+  }
 }
-
 process.on('SIGINT', () => requestStop('SIGINT'));
 process.on('SIGTERM', () => requestStop('SIGTERM'));
 
-const signalStatus = { SIGINT: 130, SIGTERM: 143, SIGKILL: 137 };
+function childEnv(summaryFile) {
+  return {
+    ...process.env,
+    BATON_TEST_SUITE_ROOT: suiteRoot,
+    BATON_SUITE_WATCHDOG: '1',
+    BATON_SUITE_WATCHDOG_PPID: String(process.pid),
+    ...(summaryFile ? { BATON_SUITE_SUMMARY_FILE: summaryFile } : {}),
+    TMPDIR: suiteRoot, TMP: suiteRoot, TEMP: suiteRoot,
+  };
+}
+
+/** Run one test file in its own process; resolve with its summary (or a synthesized failure row). */
+async function runFile(file) {
+  const id = ++jobCounter;
+  const summaryFile = join(suiteRoot, `summary-${id}.json`);
+  const started = Date.now();
+  const child = spawn(process.execPath, [
+    '--import', watchdogUrl, `--test-reporter=${reporterUrl}`, '--test-reporter-destination=stdout', file,
+  ], { detached, stdio: ['ignore', 'pipe', 'pipe'], cwd: implRootPath, env: childEnv(summaryFile) });
+  const job = { file, child, trackedGroup: new Map(), hung: null, lastEvent: null, output: [], stderr: [] };
+  running.add(job);
+  const deadline = createProgressDeadline({ timeoutMs: idleMs });
+  child.stdout.on('data', (chunk) => {
+    job.output.push(chunk);
+    deadline.observe();
+    const match = /(?:^|\n)(?:not )?ok \d+ - ([^\n]*)/u.exec(String(chunk));
+    if (match) job.lastEvent = match[1];
+  });
+  child.stderr.on('data', (chunk) => { job.stderr.push(chunk); deadline.observe(); });
+  const liveness = setInterval(() => {
+    if (job.hung || requestedSignal || !deadline.expired()) return;
+    job.hung = { lastEvent: job.lastEvent, idleMs: deadline.idleMs() };
+    reapProcessGroup(job).catch(() => {});
+  }, Math.min(idleMs, 5_000));
+  liveness.unref();
+  const terminal = await new Promise((resolveTerminal) => {
+    child.once('error', (error) => resolveTerminal({ code: null, signal: null, error }));
+    child.once('close', (code, signal) => resolveTerminal({ code, signal, error: null }));
+  });
+  clearInterval(liveness);
+  const groupReaped = terminal.error ? true : await reapProcessGroup(job);
+  running.delete(job);
+  const elapsed = Date.now() - started;
+  const output = Buffer.concat(job.output).toString('utf8');
+  const stderr = Buffer.concat(job.stderr).toString('utf8');
+  process.stdout.write(`# file ${file} (${elapsed} ms${job.hung ? ', HUNG' : terminal.code === 0 ? '' : `, exit ${terminal.code ?? terminal.signal}`})\n${output}`);
+  if (stderr.length > 0) process.stderr.write(stderr);
+  let summary = null;
+  try { summary = JSON.parse(readFileSync(summaryFile, 'utf8')); } catch { summary = null; }
+  const failed = summary?.failed ?? [];
+  const passed = summary?.passed ?? [];
+  if (job.hung) {
+    failed.push({ file, name: `(file hung: no test event for ${job.hung.idleMs} ms after ${job.hung.lastEvent ?? 'start'})`, failureType: 'fileHung', message: 'hung' });
+  } else if (terminal.error) {
+    failed.push({ file, name: '(file could not start)', failureType: 'fileCrashed', message: terminal.error.message });
+  } else if (summary === null) {
+    failed.push({ file, name: `(file exited ${terminal.code ?? terminal.signal} without reporting)`, failureType: 'fileCrashed', message: stderr.split('\n').filter(Boolean).slice(-3).join(' | ') });
+  }
+  return { file, passed, failed, groupReaped, error: terminal.error, signal: terminal.signal };
+}
+
+async function runLane(files, concurrency) {
+  const results = [];
+  let index = 0;
+  async function worker() {
+    for (;;) {
+      if (requestedSignal || index >= files.length) return;
+      const file = files[index++];
+      results.push(await runFile(file));
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(concurrency, files.length) }, () => worker()));
+  return results;
+}
+
 function finish(code, signal, spawnError = null, groupReaped = true) {
   if (finished) return;
   finished = true;
-  if (forceTimer) clearTimeout(forceTimer);
   cleanup();
-
   if (spawnError) {
     process.stderr.write(`baton test runner could not start: ${spawnError.message}\n`);
     process.exitCode = 1;
@@ -281,9 +371,41 @@ function finish(code, signal, spawnError = null, groupReaped = true) {
   process.exitCode = terminalSignal ? (signalStatus[terminalSignal] ?? 1) : (code ?? 1);
 }
 
-const terminal = await new Promise((resolveTerminal) => {
-  child.once('error', (error) => resolveTerminal({ code: null, signal: null, error }));
-  child.once('close', (code, signal) => resolveTerminal({ code, signal, error: null }));
-});
-const groupReaped = terminal.error ? true : await reapProcessGroup();
-finish(terminal.code, terminal.signal, terminal.error, groupReaped);
+if (legacyPassthrough) {
+  // Legacy passthrough (node --test options such as --watch or --test-name-pattern): node's own
+  // orchestration, its own output, no verdict.
+  const child = spawn(process.execPath, ['--import', watchdogUrl, '--test', '--test-force-exit', ...passthroughArgs], {
+    detached, stdio: 'inherit', env: childEnv(null),
+  });
+  const job = { file: '(legacy)', child, trackedGroup: new Map() };
+  running.add(job);
+  const terminal = await new Promise((resolveTerminal) => {
+    child.once('error', (error) => resolveTerminal({ code: null, signal: null, error }));
+    child.once('close', (code, signal) => resolveTerminal({ code, signal, error: null }));
+  });
+  const groupReaped = terminal.error ? true : await reapProcessGroup(job);
+  running.delete(job);
+  finish(terminal.code, terminal.signal, terminal.error, groupReaped);
+} else {
+  const files = laneFiles();
+  process.stderr.write(`baton test runner: ${files.parallel.length} files in the parallel lane (x${parallelism}), ${files.serial.length} in the serial lane; progress deadline ${idleMs} ms per file\n`);
+  const results = [...await runLane(files.parallel, parallelism), ...await runLane(files.serial, 1)];
+  const spawnError = results.find((result) => result.error)?.error ?? null;
+  const groupReaped = results.every((result) => result.groupReaped);
+  if (requestedSignal || spawnError || !groupReaped) {
+    finish(1, requestedSignal, spawnError, groupReaped);
+  } else {
+    const summaries = [{ lane: 'suite', passed: results.flatMap((r) => r.passed), failed: results.flatMap((r) => r.failed), stalled: null }];
+    if (writeExpectedRedRequested) {
+      const rows = summaries[0].failed.filter((row) => !isHang(row) && row.failureType !== 'fileCrashed').map((row) => rowKey(row.file, row.name));
+      const written = writeExpectedRed(manifestPath, rows);
+      process.stderr.write(`baton test runner: wrote ${written.length} expected-red rows to scripts/expected-red-tests.json\n`);
+    }
+    const manifest = loadExpectedRed(manifestPath);
+    const verdict = computeVerdict(summaries, manifest);
+    // An explicit partial run cannot judge rows it never ran.
+    const judged = explicitFiles.length > 0 ? { ...verdict, unseen: [], green: verdict.unexpected.length === 0 && verdict.stale.length === 0 && verdict.hung.length === 0 } : verdict;
+    process.stderr.write(`${formatVerdict(judged)}\n`);
+    finish(judged.green ? 0 : 1, null, null, true);
+  }
+}

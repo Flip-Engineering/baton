@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 1,
+  "note": "Files that spawn real processes or bound their waits by wall clock run in the serial lane (--test-concurrency=1) so the parallel lane's CPU contention cannot turn them into hangs; every other file runs in the parallel lane. Membership follows observed cancellations (issue #260 / #257), not guesses.",
+  "serial": [
+    "test/board-workerhalf-red.test.mjs",
+    "test/coordinator.test.mjs",
+    "test/issue144-lsp-pool-red.test.mjs",
+    "test/kimi-acp.test.mjs",
+    "test/phase11-concurrent-grok-reap.test.mjs",
+    "test/phase11-coordination-store.test.mjs",
+    "test/phase11-persistent-sessions.test.mjs",
+    "test/phase41-advisory-scanner.test.mjs",
+    "test/phase44-cairn-route-stats.test.mjs",
+    "test/phase45-session-auto-rejoin.test.mjs",
+    "test/phase51-process-lifecycle.test.mjs",
+    "test/phase56-drain-and-close.test.mjs",
+    "test/phase65-run-semantic-review-integration.test.mjs",
+    "test/phase76-recovery-attempt-integration.test.mjs",
+    "test/phase8-correctness.test.mjs",
+    "test/phase91-semantic-interrupt-preservation-red.test.mjs",
+    "test/readiness-credentials-red.test.mjs",
+    "test/worktree-capacity-contention.test.mjs"
+  ]
+}
