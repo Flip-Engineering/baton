@@ -408,11 +408,12 @@ test('T5 a shared revision describes the checkout and its observed HEAD, never a
   assert.equal(capture.workerId, builderWorker.id);
 
   const view = await inspect(app, 'shared');
-  const revision = view.contributions['shared-revision'].revision;
+  const sharedRow = view.contributions.find((row) => row.contributionId === 'shared-revision');
+  const revision = sharedRow.revision;
   assert.equal(revision.sha, capture.sha);
   assert.equal(revision.workspaceId, ownerId);
   assert.equal(revision.observedHead, observedHead);
-  assert.equal(view.contributions['shared-revision'].participantId, 'builder');
+  assert.equal(sharedRow.participantId, 'builder');
   assert.equal(driver.coordinator.liveWorkspaceHolders(ownerId).length, 2);
   assert.equal(leadWorker.id === builderWorker.id, false);
 

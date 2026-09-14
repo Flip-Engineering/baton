@@ -3,7 +3,7 @@ import { SWARM_EVENT_KINDS, SWARM_BRIDGE_REFUSAL_COMMAND, SWARM_VIEW_DEFAULT_PRO
   projectSwarmView, swarmChangedRow, swarmCommandDefinition, swarmReceiptNext,
   validateSwarmCommand } from './swarm-contract.mjs';
 import { createHash } from 'node:crypto';
-import { canonicalJson } from './canonical-order.mjs';
+import { canonicalJson, compareCanonicalStrings } from './canonical-order.mjs';
 import { SWARM_EVENT_PAYLOAD_SCHEMAS, SWARM_EVENT_EXAMPLES } from './swarm-event-schemas.mjs';
 import { foldSwarmEvent, SwarmIntegrityError } from './swarm-state.mjs';
 import { workspaceCustodyRecord } from './shared-workspace-custody.mjs';
@@ -304,8 +304,8 @@ export class SwarmRuntime {
       receipt: {
         command,
         event: first ? { kind: first.kind, seq: first.seq, ts: first.ts, actor: first.actor } : null,
-        changed: [...changed.values()].sort((a, b) => a.collection.localeCompare(b.collection)
-          || String(a.id).localeCompare(String(b.id))),
+        changed: [...changed.values()].sort((a, b) => compareCanonicalStrings(a.collection, b.collection)
+          || compareCanonicalStrings(String(a.id), String(b.id))),
       },
       next: swarmReceiptNext(command, args),
       ...extra,
@@ -330,8 +330,8 @@ export class SwarmRuntime {
         }
       }
     }
-    return rows.sort((a, b) => a.swarmId.localeCompare(b.swarmId)
-      || a.participantId.localeCompare(b.participantId));
+    return rows.sort((a, b) => compareCanonicalStrings(a.swarmId, b.swarmId)
+      || compareCanonicalStrings(a.participantId, b.participantId));
   }
 
   _operationKey(command, args, principal) {
