@@ -1590,6 +1590,7 @@ class BatonDeployment {
     this.#claudeCredentialProbe = deployment.claudeCredentialProbe ?? null;
     this.#grokCredentialProbe = deployment.grokCredentialProbe ?? null;
     this.#hostCapacityProbe = deployment.hostCapacityProbe ?? null;
+    this.#liveness = deployment.liveness ?? null;
     this.#routeQuota = deployment.routeQuota ?? null;
     this.#adapters = deployment.adapters ?? {};
     this.#routes = deployment.routes ?? [];

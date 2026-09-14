@@ -508,6 +508,9 @@ test('PT-8p (pin): the existing worktree_capacity_exceeded block still fires bel
       routes: [ROUTE],
       verification: { command: process.execPath, arguments: ['--version'] },
       capacity: {
+        // #307: the deployment default derives the floor; this pin stages an EXPLICIT floor
+        // (the pre-#307 constant) so the test pins the refusal BLOCK, not the floor's magnitude.
+        policy: { minFreeBytes: 512 * 1024 * 1024, minFreeInodes: 100_000 },
         estimate: () => ({ reservedBytes: 0, reservedInodes: 0 }),
         observe: () => ({ freeBytes: 100 * 1024 * 1024, freeInodes: 50_000 }), // below both floors
       },

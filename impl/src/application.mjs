@@ -2696,6 +2696,7 @@ export class BatonApplication {
     if (this.deploymentSummary === null && options.deploymentSummary !== undefined) {
       throw applicationError('application deployment summary must be a function', 'application_config_invalid');
     }
+    this.context = null;
     if (options.context !== undefined) {
       exactObject(options.context, ['materializeCallResult', 'openSession', 'principal'], 'application_config_invalid',
         'application Context configuration');
@@ -3514,6 +3515,7 @@ export class BatonApplication {
 
   async _authorize(command, principal, runId, subject = {}) {
     const allowed = await (this._authorizationScope?.getStore() ?? this.authorize)(deepFreeze({
+      command,
       principal: clone(principal),
       repoId: this.repoId,
       runId,
@@ -3521,7 +3523,6 @@ export class BatonApplication {
     }));
     if (allowed !== true) throw applicationError('application command is not authorized', 'application_unauthorized');
   }
-
   // Issue #74 (D2/A5): the coordinator authority boundary. A coordinator-seat principal (a worker
   // seat, principalId `worker:<id>` — the G9 seat class that never holds `approve`) reaching a
   // wave/steering authority verb draws `coordinator_authority_forbidden` with {attempted,
