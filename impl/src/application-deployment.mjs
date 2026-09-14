@@ -1883,21 +1883,33 @@ class BatonDeployment {
   close() {
     if (!this.#closePromise) {
       this.#closePromise = (async () => {
-        const hosted = this.#webHost ? await this.#webHost.shutdown() : null;
-        const application = hosted?.application ?? await this.#application.shutdown(this.#principal);
+        // #276(3): the resident publication is withdrawn on EVERY exit path — including a drain
+        // that did not converge (the state a later SIGKILL turns into `cli_transport_failed` for
+        // every client: selector + profile + token + socket all pointing at a dead process).
+        let hosted = null;
+        let shutdownFailure = null;
+        try { hosted = this.#webHost ? await this.#webHost.shutdown() : null; }
+        catch (error) { shutdownFailure = error; }
+        const application = hosted?.application
+          ?? (shutdownFailure ? null : await this.#application.shutdown(this.#principal));
+        let residentState = 'closed';
+        if (this.#residentAuthority) {
+          try {
+            this.#residentSession?.sessions.revoke(this.#residentSession.sessionId, {
+              actor: `deployment:${this.#repository.repoId}:resident`, reason: 'deployment_closed',
+            });
+            this.#residentAuthority.close();
+          } catch { residentState = 'reconciliation_required'; }
+        }
+        if (shutdownFailure) {
+          throw Object.assign(shutdownFailure, { resident: Object.freeze({ state: residentState }) });
+        }
         if (!this.#residentAuthority) {
           if (!hosted || hosted.state === 'closed') return application;
           return Object.freeze({ ...application, state: 'closed_degraded', host: Object.freeze({
             state: 'reconciliation_required',
           }) });
         }
-        let residentState = 'closed';
-        try {
-          this.#residentSession?.sessions.revoke(this.#residentSession.sessionId, {
-            actor: `deployment:${this.#repository.repoId}:resident`, reason: 'deployment_closed',
-          });
-          this.#residentAuthority.close();
-        } catch { residentState = 'reconciliation_required'; }
         return Object.freeze({
           ...application,
           state: application?.state === 'closed' && residentState === 'closed'

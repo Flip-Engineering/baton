@@ -29,13 +29,15 @@ function fsyncDirectory(path) {
 }
 
 function privateDirectory(path, ownerUid) {
-  mkdirSync(path, { recursive: true, mode: 0o700 });
+  try { mkdirSync(path, { recursive: true, mode: 0o700 }); }
+  catch (error) { throw authorityDirectoryRefusal(error, path); }
   const stat = lstatSync(path);
   if (!stat.isDirectory() || stat.isSymbolicLink()
     || (ownerUid !== null && Number.isInteger(stat.uid) && stat.uid !== ownerUid)) {
     throw residentError('resident authority directory is unsafe');
   }
-  chmodSync(path, 0o700);
+  try { chmodSync(path, 0o700); }
+  catch (error) { throw authorityDirectoryRefusal(error, path); }
   return realpathSync(path);
 }
 
@@ -48,7 +50,11 @@ function processStartIdentity(pid) {
   } catch { return null; }
 }
 
-function processState(pid, expectedStart) {
+/** Is the process that published an authority still the one that published it? `active` is the
+ * only answer that proves the publication and the process agree; `stale` names a process that
+ * is gone (or a live pid that was reused), which is exactly the release-then-SIGKILL state a
+ * reader must never follow (U-F10/U-I11, #288). */
+export function processState(pid, expectedStart) {
   let alive = false;
   try { process.kill(pid, 0); alive = true; }
   catch (error) {
@@ -140,6 +146,41 @@ function leaseOwner(value, repoId, deploymentId = null) {
     && identifier(value.nonce) && Number.isFinite(Date.parse(value.startedAt));
 }
 
+/** U-E14 (#288): an errno on a resident authority directory — the lease directory or any of the
+ * private directories the resident places it under — is a filesystem fact, never a busy resident.
+ * The refusal names the errno, the path and that errno's own remedy, so an agent is never sent to
+ * look for a holder that does not exist. Exported because it is the ONE derivation both the
+ * directory creation and the lease acquisition refuse through. */
+export function authorityDirectoryRefusal(error, path) {
+  const errno = typeof error?.code === 'string' ? error.code : null;
+  const parent = dirname(path);
+  const remedy = {
+    EACCES: `grant this user write access to ${parent}`,
+    EPERM: `grant this user write access to ${parent}`,
+    EROFS: `move the resident root off the read-only filesystem holding ${parent}`,
+    ENOSPC: `free space on the filesystem holding ${parent}`,
+    ENOTDIR: `replace the non-directory component of ${path} with a directory`,
+    ENOENT: `create ${parent}`,
+    ELOOP: `remove the symbolic-link loop at ${path}`,
+    ENAMETOOLONG: `shorten ${path}`,
+    EMFILE: 'raise this process file-descriptor budget',
+    ENFILE: 'raise the system file-descriptor budget',
+  }[errno] ?? `fix the filesystem condition ${errno ?? 'the kernel'} reports for ${parent}`;
+  return residentError(
+    `resident authority directory is unavailable (${errno ?? 'unknown errno'}: ${error?.message ?? 'the filesystem refused it'} at ${path}); ${remedy}`,
+    'application_host_lease_unavailable',
+    { errno, path, syscall: error?.syscall ?? 'mkdir', remedy },
+  );
+}
+
+/** Withdraw exactly the bytes one write published, and REPORT what happened: `publish()`'s failure
+ * path must not leave an orphan private file (U-E13, #288), and a withdrawal that itself fails is
+ * evidence on the error the caller sees, never a silent drop. */
+function withdrawPartial(path, expected, ownerUid) {
+  try { return removeIfExact(path, expected, ownerUid) ? 'removed' : 'absent'; }
+  catch (error) { return `failed:${error?.code ?? error?.name ?? 'error'}`; }
+}
+
 function acquireLease(root, repoId, deploymentId, ownerUid, now, {
   name = 'host.lease', bindDeployment = true,
 } = {}) {
@@ -148,7 +189,8 @@ function acquireLease(root, repoId, deploymentId, ownerUid, now, {
   while (true) {
     try { mkdirSync(path, { mode: 0o700 }); break; }
     catch (error) {
-      if (error?.code !== 'EEXIST' || reclaimed) {
+      if (error?.code !== 'EEXIST') throw authorityDirectoryRefusal(error, path);
+      if (reclaimed) {
         throw residentError('resident host is already active', 'application_host_busy');
       }
       let stat;
@@ -203,8 +245,18 @@ function acquireLease(root, repoId, deploymentId, ownerUid, now, {
   let active = true;
   const assertHeld = () => {
     if (!active) throw residentError('resident host lease is released', 'application_host_lease_lost');
-    const observed = lstatSync(path);
-    const current = safeRegular(join(path, 'owner.json'), ownerUid, 16 * 1024);
+    // A lease directory that cannot be read is a lease this process does not hold — the SAME
+    // refusal as a changed holder, never a raw errno (the caller reconciles either way).
+    let observed;
+    let current;
+    try {
+      observed = lstatSync(path);
+      current = safeRegular(join(path, 'owner.json'), ownerUid, 16 * 1024);
+    } catch (error) {
+      throw residentError('resident host lease is unreadable', 'application_host_lease_lost', {
+        path, cause: error?.code ?? error?.name ?? 'error',
+      });
+    }
     if (observed.dev !== identity.dev || observed.ino !== identity.ino || !current.equals(raw)) {
       throw residentError('resident host lease changed', 'application_host_lease_lost');
     }
@@ -390,16 +442,28 @@ export class ResidentAuthority {
         recoveredStaleAuthority = true;
       }
     }
-    replaceAtomic(this.tokenPath, tokenBytes);
-    replaceAtomic(this.profilePath, profileBytes);
-    if (priorSelectorBytes !== null) {
-      const current = safeRegular(this.selectorPath, this.ownerUid);
-      if (!current.equals(priorSelectorBytes)) {
-        throw residentError('repository Baton authority changed during publication',
-          'application_host_reconciliation_required');
+    // U-E13 (#288): the private files are written before the selector because the selector is the
+    // publication. A failure past this point (the reconciliation check below, or an errno from the
+    // selector write) means this call published nothing, so the bytes it wrote are withdrawn —
+    // exactly, by content — instead of surviving as an orphan token in the user's config root.
+    try {
+      replaceAtomic(this.tokenPath, tokenBytes);
+      replaceAtomic(this.profilePath, profileBytes);
+      if (priorSelectorBytes !== null) {
+        const current = safeRegular(this.selectorPath, this.ownerUid);
+        if (!current.equals(priorSelectorBytes)) {
+          throw residentError('repository Baton authority changed during publication',
+            'application_host_reconciliation_required');
+        }
       }
+      replaceAtomic(this.selectorPath, selectorBytes);
+    } catch (error) {
+      error.withdrawal = Object.freeze({
+        token: withdrawPartial(this.tokenPath, tokenBytes, this.ownerUid),
+        profile: withdrawPartial(this.profilePath, profileBytes, this.ownerUid),
+      });
+      throw error;
     }
-    replaceAtomic(this.selectorPath, selectorBytes);
     this._publication = Object.freeze({
       selectorBytes, profileBytes, tokenBytes, recoveredStaleAuthority,
     });
@@ -421,12 +485,17 @@ export class ResidentAuthority {
 
   close() {
     if (this._closed) return Object.freeze({ schemaVersion: 1, state: 'closed' });
-    this.lease.assertHeld();
-    this.publicationLease.assertHeld();
-    if (this._publication) {
-      removeIfExact(this.selectorPath, this._publication.selectorBytes, this.ownerUid);
-      removeIfExact(this.profilePath, this._publication.profileBytes, this.ownerUid);
-      removeIfExact(this.tokenPath, this._publication.tokenBytes, this.ownerUid);
+    // U-E12/U-I10 (#288, #276(3)): withdraw the publication BEFORE asserting the leases. The
+    // selector, the private profile/token and the socket are the only coordinates another
+    // process can follow into this one, so a disturbed lease must be reported AFTER they are
+    // gone — no publication ever points at an exiting process, and a close that cannot release
+    // its lease (or is interrupted right here) still leaves nothing to follow.
+    const withdrawn = this._publication;
+    this._publication = null;
+    if (withdrawn) {
+      removeIfExact(this.selectorPath, withdrawn.selectorBytes, this.ownerUid);
+      removeIfExact(this.profilePath, withdrawn.profileBytes, this.ownerUid);
+      removeIfExact(this.tokenPath, withdrawn.tokenBytes, this.ownerUid);
     }
     if (existsSync(this.socketPath)) {
       const stat = lstatSync(this.socketPath);
@@ -438,6 +507,8 @@ export class ResidentAuthority {
       }
       unlinkSync(this.socketPath);
     }
+    this.lease.assertHeld();
+    this.publicationLease.assertHeld();
     this.publicationLease.release();
     this.lease.release();
     this._closed = true;

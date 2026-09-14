@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
+import { processState } from './resident-authority.mjs';
 import {
   chmodSync, closeSync, constants, existsSync, fchmodSync, fstatSync, fsyncSync, linkSync, lstatSync,
   mkdirSync, mkdtempSync, openSync, readFileSync, realpathSync, readdirSync, rmSync, unlinkSync,
@@ -321,6 +322,90 @@ function residentProfileOwnerValid(value) {
   return fields.length === 0 || (fields.length === RESIDENT_PROFILE_OWNER_FIELDS.length
     && Number.isSafeInteger(value.ownerPid) && value.ownerPid > 0
     && nonempty(value.ownerPidStart) && Buffer.byteLength(value.ownerPidStart) <= 256);
+}
+
+/** The published owner fields, or null when this profile predates them. */
+function residentProfileOwner(value) {
+  return residentProfileOwnerValid(value)
+    ? Object.freeze({ pid: value.ownerPid, pidStart: value.ownerPidStart })
+    : null;
+}
+
+/** U-F10/U-I11 (#288, #276(5)): what the published owner fields say about the process that wrote
+ * this connection — the resident profile already carries ownerPid/ownerPidStart, and the same
+ * `processState` (resident-authority.mjs) the startup recovery path trusts answers here too.
+ * `live` = the publishing process is still that process; `gone` = it is not (dead, or the pid was
+ * reused); `unobserved` = this profile cannot say. */
+function residentOwnerLiveness(profile) {
+  const owner = residentProfileOwner(profile);
+  if (owner === null) return Object.freeze({ state: 'unobserved', observed: null, owner: null });
+  const observed = processState(owner.pid, owner.pidStart);
+  return Object.freeze({
+    state: observed === 'active' ? 'live' : observed === 'stale' ? 'gone' : 'unobserved',
+    observed, owner,
+  });
+}
+
+/** The typed row for a resident whose published owner is gone or silent: it names the pid and its
+ * publication, the reason the connection cannot be used, and the one step that repairs it —
+ * `baton serve` to republish a dead authority, never "check your network" (there is no network on
+ * a Unix-socket transport). The token file is never opened. */
+function residentOwnerRow({ depth, repository, profile, socketState, liveness }) {
+  const owner = liveness.owner;
+  const publishedAt = typeof profile.startedAt === 'string' ? profile.startedAt : repository.startedAt;
+  const detail = Object.freeze({
+    ownerPid: owner.pid,
+    ownerPidStart: owner.pidStart,
+    ownerState: liveness.observed,
+    publishedAt,
+    deploymentId: repository.deploymentId,
+    incarnation: repository.incarnation,
+    profile: repository.profile,
+    transport: 'local',
+    socket: socketState,
+  });
+  const connection = depth === 'connection' || depth === 'profile'
+    ? { connection: Object.freeze({
+      profile: repository.profile, repoId: repository.repoId, origin: profile.origin,
+      transport: 'local', deploymentId: repository.deploymentId,
+      incarnation: repository.incarnation,
+    }) }
+    : {};
+  if (liveness.state === 'gone') {
+    return Object.freeze({
+      schemaVersion: 1, state: 'stale', depth, code: 'cli_resident_gone',
+      message: `the resident that published this connection is gone: pid ${owner.pid} published deployment ${repository.deploymentId} incarnation ${repository.incarnation} at ${publishedAt} and is no longer running; start it again with baton serve`,
+      outline: Object.freeze({
+        repository: 'ready', connection: 'stale_authority', profile: 'ready', credential: 'not_read',
+        remote: socketState === 'ready' ? 'unserved' : 'absent',
+      }),
+      detail,
+      ...connection,
+      ...(depth === 'evidence' ? { evidence: Object.freeze({
+        selector: 'valid', profile: 'valid', credential: 'not_opened',
+        remote: socketState === 'ready' ? 'socket_unserved' : 'socket_absent', owner: 'gone',
+      }) } : {}),
+      next: Object.freeze([{ action: 'recover', command: 'baton serve' }]),
+    });
+  }
+  const unsafe = socketState === 'unsafe';
+  return Object.freeze({
+    schemaVersion: 1, state: 'stale', depth, code: 'cli_resident_unresponsive',
+    message: `the resident that published this connection is alive but not answering: pid ${owner.pid} (since ${publishedAt}) published deployment ${repository.deploymentId} incarnation ${repository.incarnation}, and its socket is ${socketState}; it is mid-startup or wedged, and it is not gone`,
+    outline: Object.freeze({
+      repository: 'ready', connection: 'stale_authority', profile: 'ready', credential: 'not_read',
+      remote: unsafe ? 'not_checked' : 'absent',
+    }),
+    detail,
+    ...connection,
+    ...(depth === 'evidence' ? { evidence: Object.freeze({
+      selector: 'valid', profile: 'valid', credential: 'not_opened',
+      remote: unsafe ? 'socket_unsafe' : 'socket_absent', owner: 'live',
+    }) } : {}),
+    next: Object.freeze(unsafe
+      ? [{ action: 'repair_setup', command: 'baton setup' }]
+      : [{ action: 'wait_for_publication', command: 'baton doctor' }]),
+  });
 }
 function take(args, name, { required = false } = {}) {
   const index = args.indexOf(name);
@@ -950,6 +1035,14 @@ export function inspectBatonConnection({
         ? 'ready' : 'unsafe';
     } catch (error) {
       if (error?.code !== 'ENOENT') socketState = 'unsafe';
+    }
+    // U-F10/U-I11 (#288, #276(5)): the profile names the process that published it, so a resident
+    // that is gone — or alive and silent — is diagnosed HERE, from those fields, instead of being
+    // presented as a configured authority whose connect then fails as a "network" problem.
+    const liveness = residentOwnerLiveness(profile);
+    if (liveness.state !== 'unobserved') {
+      if (liveness.state === 'gone') return residentOwnerRow({ depth, repository, profile, socketState, liveness });
+      if (socketState !== 'ready') return residentOwnerRow({ depth, repository, profile, socketState, liveness });
     }
     if (socketState !== 'ready') {
       return Object.freeze({
