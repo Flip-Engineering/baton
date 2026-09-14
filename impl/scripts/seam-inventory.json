@@ -186,7 +186,7 @@
         {
           "name": "drain",
           "ordinal": 0,
-          "size": 101,
+          "size": 104,
           "seam": "observation",
           "evidence": [
             "admission:policy_gate",
@@ -207,7 +207,7 @@
         {
           "name": "stopRunTargets",
           "ordinal": 0,
-          "size": 181,
+          "size": 193,
           "seam": "effect",
           "evidence": [
             "recovery:reconcile_call",
@@ -217,9 +217,7 @@
             "admission:policy_gate",
             "admission:typed_refusal",
             "observation:log_append",
-            "observation:coordination_authority",
-            "observation:key_name",
-            "observation:durable_read"
+            "observation:key_name"
           ]
         },
         {
@@ -492,7 +490,7 @@
         {
           "name": "_cancelPendingForDrain",
           "ordinal": 0,
-          "size": 27,
+          "size": 38,
           "seam": "observation",
           "evidence": [
             "observation:log_append"
@@ -501,7 +499,7 @@
         {
           "name": "_performDrain",
           "ordinal": 0,
-          "size": 121,
+          "size": 134,
           "seam": "effect",
           "evidence": [
             "recovery:reconcile_call",
@@ -1999,7 +1997,7 @@
           ]
         },
         {
-          "name": "_releaseRetainedBorrowedCheckout",
+          "name": "_releaseRetainedCheckout",
           "ordinal": 0,
           "size": 26,
           "seam": "observation",
@@ -2010,7 +2008,7 @@
         {
           "name": "_removeOwnedTaskWorktree",
           "ordinal": 0,
-          "size": 104,
+          "size": 110,
           "seam": "effect",
           "evidence": [
             "delegates:effect",
@@ -3088,7 +3086,7 @@
         {
           "name": "reapRunScratchpads",
           "ordinal": 0,
-          "size": 7,
+          "size": 23,
           "seam": "recovery",
           "evidence": [
             "recovery:restart_name",

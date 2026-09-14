@@ -317,20 +317,33 @@ const COORDINATION_MUTATORS = new Set([
   'writeScratchpad', 'elevateTaskScratchpad', 'settleWorkflowScratchpad', 'reapRunScratchpads',
 ]);
 
-const DEFAULT_DRAIN_POLICY = Object.freeze({ maxWorkers: 1024, maxInteractions: 15_000, timeoutMs: 60_000, pollMs: 10 });
+/** The convergence policy every stop/drain deadline derives from. Closed and bounded by design:
+ * each field is a deployment decision, never a silent numeric default that acts as a limit.
+ * `maxInteractions` bounds the in-flight interaction authority a drain cancels; when the
+ * deployment does not name it, it is derived from the fleet (16 interactions per reserved
+ * worker), never from a duration. */
+const DEFAULT_DRAIN_POLICY = Object.freeze({ maxWorkers: 1024, timeoutMs: 60_000, pollMs: 10 });
 
 function normalizeDrainPolicy(value) {
   if (value === undefined) return DEFAULT_DRAIN_POLICY;
-  const fields = ['maxWorkers', 'pollMs', 'timeoutMs'];
-  if (!value || typeof value !== 'object' || Array.isArray(value)
-    || Object.keys(value).sort().join(',') !== fields.sort().join(',')
-    || fields.some((field) => !Number.isSafeInteger(value[field]) || value[field] <= 0)
+  const requiredFields = ['maxWorkers', 'pollMs', 'timeoutMs'];
+  const optionalFields = ['maxInteractions'];
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new TypeError('drain policy must be a closed bounded deployment policy');
+  }
+  const keys = Object.keys(value).sort();
+  const requiredSorted = [...requiredFields].sort();
+  const allowedSorted = [...requiredFields, ...optionalFields].sort();
+  const validField = (field) => Number.isSafeInteger(value[field]) && value[field] > 0;
+  if ((keys.join(',') !== requiredSorted.join(',') && keys.join(',') !== allowedSorted.join(','))
+    || !requiredFields.every(validField)
+    || (value.maxInteractions !== undefined && !validField('maxInteractions'))
     || value.maxWorkers > 100_000 || value.timeoutMs > 300_000 || value.pollMs > value.timeoutMs) {
     throw new TypeError('drain policy must be a closed bounded deployment policy');
   }
   return Object.freeze({
     maxWorkers: value.maxWorkers,
-    maxInteractions: Math.min(100_000, value.maxWorkers * 16, Math.max(1, Math.floor(value.timeoutMs / 4))),
+    maxInteractions: value.maxInteractions ?? value.maxWorkers * 16,
     timeoutMs: value.timeoutMs,
     pollMs: value.pollMs,
   });
@@ -1713,6 +1726,12 @@ export class Coordinator {
     const drainId = `fleet-drain:${requestDigest}`;
     const durable = this._coordination.fleetDrain?.(drainId);
 
+    // A retry adopts the physical drain's durable binding when one exists — in flight, or
+    // failed-but-resumable — so its durable dispositions and receipt stay exact across
+    // attempts (DC5/DC6). When no physical drain exists, the set is computed from the live
+    // fleet. Either way the convergence loop below attempts every worker the success test
+    // counts (#277 G-20), so a hold acquired outside this set after computation is released,
+    // never merely observed until the deadline.
     targetWorkerIds = durable?.targetWorkerIds ?? this._drainTargetIds;
     if (targetWorkerIds === null) {
       targetWorkerIds = [...this._workers.values()]
@@ -1741,15 +1760,10 @@ export class Coordinator {
     assertWithinDeadline();
     try { this._coordination.admitFleetDrain(admission, { actor: ctx.actor, key: `fleet.drain:${ctx.idempotencyKey}` }); }
     catch (error) { throw this._drainFailure(error); }
-    try { assertWithinDeadline(); }
-    catch (error) {
-      if (durable?.status !== 'completed') {
-        if (this._drainTargetIds === null) this._drainTargetIds = Object.freeze([...targetWorkerIds]);
-        if (this._drainPhysicalId === null) { this._drainPhysicalId = drainId; this._drainPhysicalActor = ctx.actor; }
-        this._drainState = 'draining';
-      }
-      throw error;
-    }
+    // A deadline hit at admission throws its named wait and fences nothing (#277 G-2): no
+    // physical drain exists yet that could ever clear a latched 'draining' state, and the
+    // durable admission above replays on the next attempt with this exact key.
+    assertWithinDeadline();
     const existingRequest = this._drainRequestPromises.get(drainId);
     if (existingRequest) return existingRequest;
     if (durable?.status === 'completed') {
@@ -1757,6 +1771,8 @@ export class Coordinator {
       this._drainRequestPromises.set(drainId, completed);
       return completed;
     }
+    // The physical drain is one durable epoch per controller: its identity and binding persist
+    // across request retries (DC5/DC6), and a request with no physical epoch yet starts it.
     if (this._drainPhysicalId === null) { this._drainPhysicalId = drainId; this._drainPhysicalActor = ctx.actor; }
     if (this._drainTargetIds === null) this._drainTargetIds = Object.freeze([...targetWorkerIds]);
     this._drainState = 'draining';
@@ -1801,7 +1817,7 @@ export class Coordinator {
   /** Stop and reap one durable Run target set without fencing or closing unrelated Runs. The
    * coordination store admits the Run stop before this method is called, so late dispatch/claim
    * cannot enter the target set while physical ownership converges here. */
-  async stopRunTargets(targetWorkerIds, actor = 'orchestrator') {
+  async stopRunTargets(targetWorkerIds, actor = 'orchestrator', opts = {}) {
     if (!Array.isArray(targetWorkerIds) || targetWorkerIds.length > this._drainPolicy.maxWorkers
       || targetWorkerIds.some((id) => typeof id !== 'string' || !/^[A-Za-z0-9._:-]{1,256}$/.test(id))
       || new Set(targetWorkerIds).size !== targetWorkerIds.length
@@ -1809,7 +1825,11 @@ export class Coordinator {
       || typeof actor !== 'string' || actor.length === 0 || actor.length > 256) {
       throw Object.assign(new TypeError('Run stop target authority is invalid'), { code: 'coordinator_run_stop_invalid' });
     }
-    if (this._closed || this._drainState !== 'open') {
+    // Terminal resource release stays possible during a fleet drain (#277 G-3): the drain
+    // token is the one authority that admits physical stop convergence past the admission
+    // fence, exactly as it does for the drain's own kill calls.
+    const drainAuthorized = opts.drainToken === this._drainKillToken;
+    if (this._closed || (!drainAuthorized && this._drainState !== 'open')) {
       throw Object.assign(new Error('coordinator authority is not open'), { code: 'coordinator_closed' });
     }
     await Promise.all(this._startupCleanupPromises);
@@ -1839,13 +1859,16 @@ export class Coordinator {
       if (!runtimeRemoved) throw Object.assign(new Error('Run stop runtime cleanup failed'), { code: 'coordinator_run_stop_incomplete' });
       if (!handle.processRef || handle.processRef.state === 'closed') handle.localAuthority = false;
     };
-
     const attempt = async (workerId) => {
-      if (dispositions.has(workerId)) return;
       const handle = this._workers.get(workerId);
       if (!handle) {
-        const durable = this._coordination.snapshot().tasks.find((task) => (task.reservedWorkerId ?? task.assignee) === workerId);
-        if (!durable || TERMINAL_TASK_STATUSES.has(durable.status)) dispositions.set(workerId, 'alreadyTerminal');
+        // No in-memory handle means nothing locally ownable is left to converge: the run stop
+        // admission already fenced late dispatch and claim, `reservedWorkerId` is immutable
+        // per durable task, and no later retry of THIS stop can produce a handle. The worker
+        // gets its disposition immediately — a durable non-terminal row with no handle never
+        // spins this loop to its deadline (#277 G-22) — and the projection is never re-cloned
+        // per poll.
+        dispositions.set(workerId, 'alreadyTerminal');
         return;
       }
       const task = this._tasks.get(handle.taskId);
@@ -1937,9 +1960,13 @@ export class Coordinator {
         return;
       }
       try {
-        const result = await this.kill(workerId, actor);
+        // One posture under a poisoned coordinator (#277 G-28): the drain token admits the
+        // same exact-physical-state emergency path the fleet drain's own attempts take, so a
+        // fatal error surfaces as convergence work, never as a silently swallowed throw that
+        // burns the whole deadline.
+        const result = await this.kill(workerId, actor, { drainToken: this._drainKillToken });
         if (result?.ok && result.result === 'confirmed') dispositions.set(workerId, 'killConfirmed');
-        else if (result?.ok && ['already_dead', 'already_stopped'].includes(result.result)
+        else if (result?.ok && ['already_dead', 'already_stopped', 'already_dead_unlogged'].includes(result.result)
           && !this._ownsLocalResources(handle) && (!handle.processRef || handle.processRef.state === 'closed')) {
           dispositions.set(workerId, 'alreadyTerminal');
         }
@@ -1959,9 +1986,10 @@ export class Coordinator {
         && (!handle.processRef || handle.processRef.state === 'closed'));
       const interactionsResolved = targets.every((handle) => !handle.pendingApprovalId && !handle.pendingQuestionId);
       if (dispositions.size === targetWorkerIds.length && resourcesReleased && interactionsResolved) {
+        // `resourcesReleased` above already asserts every target's process closed, so the
+        // counts are necessarily equal here: no dead branch to break out of (#277 G-23).
         const processesObserved = targets.filter((handle) => handle.processRef !== null).length;
         const processesClosed = targets.filter((handle) => handle.processRef?.state === 'closed').length;
-        if (processesObserved !== processesClosed) break;
         return Object.freeze({
           targetCount: targetWorkerIds.length,
           remainingCount: 0,
@@ -2009,7 +2037,7 @@ export class Coordinator {
     // Issue #33 v2: every durable terminal observation settles its worker partition before
     // process/session/worktree cleanup can release the authenticated handle.
     this._settleTerminalScratchpad(taskId, { entryIds: [], terminalCaptureSha: recordedTask?.terminalCaptureSha ?? null });
-    await this.stopRunTargets([workerId], actor);
+    await this.stopRunTargets([workerId], actor, { drainToken: this._drainKillToken });
     const runtimeRemoved = this._removeRuntimeScope(handle);
     await this._removeOwnedTaskWorktree(handle, task);
     if (!runtimeRemoved) {
@@ -2871,8 +2899,19 @@ export class Coordinator {
     for (const requestId of [...this._activeInteractionIds]) {
       const record = this._pending.get(requestId);
       if (!record) { this._activeInteractionIds.delete(requestId); continue; }
-      if (record.state !== 'pending') continue;
-      if (Date.now() >= deadline || processed >= this._drainPolicy.maxInteractions) throw Object.assign(new Error('fleet drain did not converge before its deployment deadline'), { code: 'coordinator_drain_incomplete' });
+      if (Date.now() >= deadline || processed >= this._drainPolicy.maxInteractions) {
+        throw Object.assign(new Error('fleet drain did not converge before its deployment deadline'), {
+          code: 'coordinator_drain_incomplete',
+          detail: {
+            reason: 'interaction_cancel_deadline',
+            timeoutMs: this._drainPolicy.timeoutMs,
+            processed,
+            ...(Date.now() >= deadline
+              ? { waitingOn: this._stopWaitingOn([...this._workers.keys()], null, 'policy') }
+              : { capacity: this._drainPolicy.maxInteractions }),
+          },
+        });
+      }
       processed += 1;
       const handle = this._workers.get(record.worker); const task = handle ? this._tasks.get(handle.taskId) : null;
       const cancelled = this._log.append({
@@ -2913,15 +2952,23 @@ export class Coordinator {
     const durablePhysical = this._coordination.fleetDrain(physicalDrainId);
     if (!durablePhysical || durablePhysical.status !== 'admitted'
       || canonicalDigest(durablePhysical.targetWorkerIds) !== canonicalDigest(targetWorkerIds)) {
-      throw Object.assign(new Error('fleet drain durable target is unavailable'), { code: 'coordinator_drain_incomplete' });
+      throw Object.assign(new Error('fleet drain durable target is unavailable'), {
+        code: 'coordinator_drain_incomplete',
+        detail: { reason: 'durable_target_unavailable', ...(durablePhysical ? { durableStatus: durablePhysical.status } : {}) },
+      });
     }
     const dispositions = new Map((durablePhysical.dispositions ?? []).map((row) => [row.workerId, row.disposition]));
+    const targetSet = new Set(targetWorkerIds);
     const setDisposition = (workerId, disposition) => {
       const prior = dispositions.get(workerId);
       if (prior !== undefined) {
         if (prior !== disposition) throw Object.assign(new Error('fleet drain durable disposition conflicts with live ownership'), { code: 'coordinator_drain_incomplete' });
         return;
       }
+      // Durable dispositions cover exactly the admitted target set — the mirror checks that
+      // equality. A non-target worker the drain physically releases (it is counted by the same
+      // globalRemaining success test that demands its release) never writes a durable row.
+      if (!targetSet.has(workerId)) return;
       this._recordDrainDisposition(physicalDrainId, physicalActor, workerId, disposition);
       dispositions.set(workerId, disposition);
     };
@@ -2961,18 +3008,18 @@ export class Coordinator {
       try {
         const result = await this.kill(handle.id, 'policy', { drainToken: this._drainKillToken });
         if (result?.ok && result.result === 'confirmed') setDisposition(handle.id, 'killConfirmed');
-        else if (result?.ok && ['already_dead', 'already_stopped'].includes(result.result)
+        else if (result?.ok && ['already_dead', 'already_stopped', 'already_dead_unlogged'].includes(result.result)
           && !this._ownsLocalResources(handle) && (!handle.processRef || handle.processRef.state === 'closed')) setDisposition(handle.id, 'alreadyTerminal');
       } catch { /* exact state below is authoritative; retry until the deployment deadline */ }
     };
-
-    await this._beforeDrainDeadline(Promise.all(targetWorkerIds.map((id) => attempt(this._workers.get(id)))), deadline,
-      () => ({ reason: 'deadline', stage: 'targets', timeoutMs: this._drainPolicy.timeoutMs, waitingOn: this._stopWaitingOn(targetWorkerIds, null, physicalActor) }));
     while (Date.now() <= deadline) {
       const targets = targetWorkerIds.map((id) => this._workers.get(id)).filter(Boolean);
-      const remaining = targets.filter((handle) => this._ownsLocalResources(handle));
+      // The drain's own success test counts every worker in the fleet that still holds local
+      // resources, so the drain attempts every worker that test counts (#277 G-20): a
+      // cleanupAfterVerification hold that lands on a non-target mid-drain is attempted, not
+      // merely observed until the deadline.
       const globalRemaining = [...this._workers.values()].filter((handle) => this._ownsLocalResources(handle));
-      if (remaining.length === 0 && globalRemaining.length === 0 && this._authorityOps === 0
+      if (globalRemaining.length === 0 && this._authorityOps === 0
         && !this._hasPendingInteractionAuthority() && targetWorkerIds.every((id) => dispositions.has(id))) {
         if (!this._drainHistoricalReconciled) {
           if (!this._drainHistoricalReconcilePromise) {
@@ -3008,12 +3055,17 @@ export class Coordinator {
         };
         return deepFreeze({ ...core, receiptDigest: canonicalDigest(core) });
       }
-      await this._beforeDrainDeadline(Promise.all(remaining.map(attempt)), deadline,
-        () => ({ reason: 'deadline', stage: 'remaining', timeoutMs: this._drainPolicy.timeoutMs, waitingOn: this._stopWaitingOn(remaining.map((handle) => handle.id), null, physicalActor) }));
+      await this._beforeDrainDeadline(Promise.all(globalRemaining.map(attempt)), deadline,
+        () => ({ reason: 'deadline', stage: 'remaining', timeoutMs: this._drainPolicy.timeoutMs, waitingOn: this._stopWaitingOn(globalRemaining.map((handle) => handle.id), null, physicalActor) }));
       if (Date.now() >= deadline) break;
       await this._sleep(Math.min(this._drainPolicy.pollMs, Math.max(0, deadline - Date.now())));
     }
-    throw Object.assign(new Error('fleet drain did not converge before its deployment deadline'), { code: 'coordinator_drain_incomplete' });
+    // The terminal throw names its wait like every other deadline path (#277 G-21): a bare
+    // non-convergence is never wrapped as its own cause by _drainFailure.
+    throw Object.assign(new Error('fleet drain did not converge before its deployment deadline'), {
+      code: 'coordinator_drain_incomplete',
+      detail: { reason: 'deadline', stage: 'convergence', timeoutMs: this._drainPolicy.timeoutMs, waitingOn: this._stopWaitingOn(targetWorkerIds, null, physicalActor) },
+    });
   }
 
   /** Races one drain step against the deployment deadline. `describe` names the wait (#265) when
@@ -9296,11 +9348,13 @@ export class Coordinator {
     }));
   }
 
-  /** Release one borrowed holder whose checkout is retained because it holds content no capture
-   * recorded. Preservation keeps the resource exactly as it is (checkout, receipt, reservation);
-   * this handle simply stops being one of its holders, so the stop and every later drain converge
-   * on a resource this handle never owned. The refusal code remains readable on the handle. */
-  _releaseRetainedBorrowedCheckout(handle, error) {
+  /** Release any holder — the checkout's own allocator or a borrowed holder — whose checkout is
+   * retained because it holds content no capture recorded. Preservation keeps the resource
+   * exactly as it is (checkout, receipt, reservation); this handle simply releases its hold, so
+   * the stop and every later drain converge on a resource the handle no longer owns, while the
+   * retained resource passes to the existing reconciliation authority. The refusal code remains
+   * readable on the handle and in the durable custody event. */
+  _releaseRetainedCheckout(handle, error) {
     const physicalOwnerId = handle.sessionContext?.ownerTaskId ?? null;
     handle.worktree = null;
     handle.ownedWorktreeAuthority = false;
@@ -9346,7 +9400,8 @@ export class Coordinator {
       ? this.liveWorkspaceHolders(opaquePhysicalOwner, { excludeHandleId: handle.id })
       : Object.freeze([]);
     const alreadyDeferred = Boolean(opaquePhysicalOwner)
-      && handle.workspaceCleanupDeferred === 'holders_remain'
+      && (handle.workspaceCleanupDeferred === 'holders_remain'
+        || handle.workspaceCleanupDeferred === 'content_retained')
       && handle.worktree === null && handle.ownedWorktreeAuthority !== true;
     if (remainingHolders.length > 0
       && (handle.worktree !== null || handle.ownedWorktreeAuthority === true || alreadyDeferred)) {
@@ -9355,9 +9410,12 @@ export class Coordinator {
     if (handle.worktree === null && handle.ownedWorktreeAuthority === false
       && handle.runtimeScope?.active !== true
       && handle.worktreeCreationPending !== true
-      && (!opaquePhysicalOwner || handle.physicalWorkspaceCleanupCompleted === true)) {
+      && (!opaquePhysicalOwner || handle.physicalWorkspaceCleanupCompleted === true
+        || handle.workspaceCleanupDeferred === 'content_retained')) {
       handle.cleanupPending = false;
-      handle.cleanupError = null;
+      // A retained checkout keeps its refusal code observable on the handle; a fully reaped
+      // one carries no error.
+      if (handle.workspaceCleanupDeferred !== 'content_retained') handle.cleanupError = null;
       return Promise.resolve();
     }
     // The last holder closes a checkout it borrowed, through the SAME preserve-then-reap authority
@@ -9413,13 +9471,15 @@ export class Coordinator {
       if (error?.code === 'workspace_other_holder_live_retained' && opaquePhysicalOwner) {
         return this._detachSharedWorkspace(handle, Array.isArray(error.holders) ? error.holders : []);
       }
-      // A BORROWED checkout whose content must be retained is terminal for this handle: the content
-      // is preserved, the receipt and reservation stay with the retained resource, and the holder
-      // releases its hold instead of blocking every later drain on a checkout it never owned. Only
-      // the checkout's own allocator keeps the blocking retention semantics — it owns the resource
-      // and its capture may still settle it. The refusal code stays observable either way.
-      if (borrowedCheckout && error?.retained === true) {
-        return this._releaseRetainedBorrowedCheckout(handle, error);
+      // Any retention refusal — content no capture recorded, an unobservable checkout — is
+      // terminal for THIS HANDLE, owner or borrower alike (#277): the physical resource is
+      // intact with its receipt and reservation, the refusal code stays observable, and the
+      // existing reconciliation authority owns it. Retention must never hold a stopping
+      // participant's local authority open: that was the own-checkout stop that could never
+      // converge. A capture still in flight is awaited before cleanup ever starts, so this
+      // release cannot race the allocator's own contribution capture.
+      if (error?.retained === true && opaquePhysicalOwner) {
+        return this._releaseRetainedCheckout(handle, error);
       }
       handle.cleanupPending = true;
       handle.cleanupError = error?.retained === true ? error.code
@@ -12295,11 +12355,32 @@ export class Coordinator {
     handle.sendChain = slot.then(noop, noop);
   }
 
-  reapRunScratchpads(runId) {
+  /** Reap one stopping Run's scratchpad partitions to completion. Bounded and observable
+   * (#277 G-24): the deadline derives from the same deployment policy every other run-stop
+   * convergence window uses; each pass yields the event loop so a large reap cannot starve
+   * stop deadlines, watchdog timers or adapter callbacks; and each pass must shrink the
+   * remaining work — a 'partial' that stops advancing is a loud failure, never a silent spin. */
+  async reapRunScratchpads(runId) {
     this.tick();
-    let receipt;
-    do { receipt = this._coordination.reapRunScratchpads(runId); }
-    while (receipt.result === 'partial');
+    const deadline = Date.now() + this._drainPolicy.timeoutMs;
+    const describe = (receipt) => ({
+      code: 'coordinator_scratchpad_reap_incomplete',
+      detail: { runId, remainingPartitions: receipt?.remainingPartitions ?? null, remainingEntries: receipt?.remainingEntries ?? null },
+    });
+    let receipt = this._coordination.reapRunScratchpads(runId);
+    let previousProgress = null;
+    while (receipt.result === 'partial') {
+      const progress = `${receipt.remainingPartitions}:${receipt.remainingEntries}`;
+      if (progress === previousProgress) {
+        throw Object.assign(new Error('run scratchpad reap stopped advancing between passes'), describe(receipt));
+      }
+      previousProgress = progress;
+      if (Date.now() >= deadline) {
+        throw Object.assign(new Error('run scratchpad reap did not converge before its deadline'), describe(receipt));
+      }
+      await this._sleep(0);
+      receipt = this._coordination.reapRunScratchpads(runId);
+    }
     return receipt;
   }
 

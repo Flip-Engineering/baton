@@ -500,3 +500,62 @@ test('T7 a source that is still a live member but has no attachable checkout ref
   );
   assert.deepEqual((await inspect(app, 'solo')).participants.map((row) => row.participantId), ['solo']);
 });
+
+// Issue #277 deliverable 0: a participant that owns its checkout must converge its stop. T8 is
+// the clean path (the checkout is removed); T9 is the live defect (#265 evidence): content the
+// capture cannot record no longer holds the stop open — the handle releases, the stop converges,
+// and the checkout is retained with its refusal event for the reconciliation authority.
+
+test('T8 stopping a participant that owns its clean checkout converges and removes the checkout', async (t) => {
+  const { app, driver, repo } = await fixture(t);
+  await createSwarm(app, 'solo');
+  const solo = await recruit(app, { swarmId: 'solo', participantId: 'owner', objective: 'Own the only checkout' });
+  const soloWorker = await paused(driver, solo.runId);
+  const checkout = soloWorker.worktree;
+  assert.match(soloWorker.sessionContext.ownerTaskId, /^ws-[a-f0-9]{32}$/u);
+  assert.equal(workspaceDirs(repo).length, 1);
+
+  const startedAt = Date.now();
+  await stopParticipant(app, { swarmId: 'solo', participantId: 'owner', reason: 'Work complete' });
+  assert.deepEqual(workspaceDirs(repo), [], 'the checkout is removed from disk');
+  assert.equal(existsSync(checkout), false);
+  assert.equal(workerFor(driver, solo.runId).worktree, null);
+  const log = driver.log.read(soloWorker.id);
+  assert.equal(log.some((event) => event.kind === 'kill.confirmed'), true);
+  assert.equal(log.some((event) => event.kind === 'control.stop_waiting_on'), false, 'a converged stop never names a wait');
+});
+
+test('T9 residue no capture can record is retained with its refusal event while the stop still converges', async (t) => {
+  const { app, driver, repo } = await fixture(t, { retained: true });
+  await createSwarm(app, 'solo');
+  const solo = await recruit(app, { swarmId: 'solo', participantId: 'owner', objective: 'Own the only checkout' });
+  const soloWorker = await paused(driver, solo.runId);
+  const cwd = soloWorker.worktree;
+  // Tracked progress the preservation can pin, plus ignored residue the mutating capture can
+  // never record: exactly the live condition behind the never-converging stop (#277).
+  writeFileSync(join(cwd, '.gitignore'), '*.local.txt\n');
+  writeFileSync(join(cwd, 'progress.txt'), 'tracked worker progress\n');
+  git(cwd, ['add', '.gitignore', 'progress.txt']);
+  git(cwd, ['commit', '-qm', 'worker progress']);
+  writeFileSync(join(cwd, 'residue.local.txt'), 'ignored runtime residue\n');
+
+  const startedAt = Date.now();
+  await stopParticipant(app, { swarmId: 'solo', participantId: 'owner', reason: 'Work complete' });
+  assert.ok(Date.now() - startedAt < 5_000, `the stop converges promptly (took ${Date.now() - startedAt}ms)`);
+
+  const log = driver.log.read(soloWorker.id);
+  assert.equal(log.some((event) => event.kind === 'kill.confirmed'), true);
+  assert.equal(log.some((event) => event.kind === 'worktree.progress_checkpointed'), true, 'the tracked progress was pinned');
+  const retained = log.findLast((event) => event.kind === 'worktree.custody_content_retained')?.payload ?? null;
+  assert.ok(retained, 'the retention is recorded, never silent');
+  assert.equal(retained.code, 'workspace_uncommitted_content_retained');
+  assert.deepEqual([...retained.dirtyPaths], ['residue.local.txt']);
+  assert.equal(log.some((event) => event.kind === 'control.stop_waiting_on'), false, 'a converged stop never names a wait');
+  const after = workerFor(driver, solo.runId);
+  assert.equal(after.worktree, null, 'the handle released the checkout');
+  assert.equal(after.workspaceCleanupDeferred, 'content_retained');
+  assert.equal(existsSync(join(cwd, 'residue.local.txt')), true, 'the unrecordable content survives');
+  assert.equal(existsSync(join(repo, '.baton', 'wt', soloWorker.sessionContext.ownerTaskId)), true,
+    'the checkout stays on disk for the reconciliation authority');
+  assert.equal(reservations(driver).length, 1, 'the retained resource keeps its capacity reservation');
+});

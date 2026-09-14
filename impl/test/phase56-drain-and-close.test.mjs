@@ -9,9 +9,9 @@ import { dirname, join, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 
-import {
-  CoordinationStore, McpFleetServer, MockAdapter, WebNorthbound, createBrief, createDriver,
-} from '../src/index.mjs';
+import { CoordinationStore, McpFleetServer, MockAdapter, WebNorthbound, createBrief, createDriver } from '../src/index.mjs';
+import { Coordinator } from '../src/coordinator.mjs';
+import { Log } from '../src/log.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const IMPL = resolve(HERE, '..');
@@ -322,7 +322,10 @@ test('DC5: synchronous durable admission crossing the deadline is red and retrya
   driver = createDriver({ repoRoot: f.directory, logDir: f.logDir, repoId: 'repo-a', coordination, adapters: {}, drainPolicy: { maxWorkers: 1, timeoutMs: 1_000, pollMs: 5 } });
   const started = Date.now();
   await assert.rejects(driver.drainAndClose(), (error) => error.code === 'coordinator_drain_incomplete');
-  assert.ok(Date.now() - started >= 1_100); assert.equal(existsSync(coordination._writerLease.path), true); assert.equal(driver.coordinator._drainState, 'draining');
+  assert.ok(Date.now() - started >= 1_100); assert.equal(existsSync(coordination._writerLease.path), true);
+  // #277 G-2: a deadline hit at admission fences nothing — no physical drain exists that could
+  // clear a latched state, so the coordinator stays open and the retry replays the admission.
+  assert.equal(driver.coordinator._drainState, 'open');
   delayed = false; coordination.admitFleetDrain = admit;
   assert.equal((await driver.drainAndClose()).state, 'closed');
 });
@@ -716,4 +719,215 @@ test('DC11: aggregate argument bytes are refused before owner-root allocation', 
   const world = root('evidence-argv-bytes'); const fixture = join(world, 'fixture.mjs'); t.after(() => rmSync(world, { recursive: true, force: true })); writeFileSync(fixture, 'process.exitCode=0;\n');
   const outcome = spawnSync(process.execPath, [RUN_EVIDENCE, fixture, 'x'.repeat(64 * 1024)], { encoding: 'utf8', timeout: 10_000, env: { ...process.env, BATON_EVIDENCE_TMP_PARENT: world } });
   assert.equal(outcome.status, 1); assert.match(outcome.stderr, /arguments exceed 65536 bytes/); assert.equal(readdirSync(world).some((entry) => entry.startsWith('baton-evidence-')), false);
+});
+
+// --- #277 drain convergence (G-1, G-2 covered at DC5 above, G-3, G-20, G-21, G-22, G-24, G-28) ---
+
+test('DC1/#277 G-1: maxInteractions is a deployment field, or a fleet derivation — never milliseconds over four', async (t) => {
+  // Coordinator boundary: the policy accepts a named interaction bound and derives the default
+  // from the fleet.
+  const coordinationFixture = (drainPolicy) => {
+    const dir = root(`policy-${drainPolicy.maxWorkers}-${drainPolicy.timeoutMs}-${drainPolicy.maxInteractions ?? 'derived'}`);
+    const coordination = new CoordinationStore(dir);
+    const log = new Log(join(dir, 'worker-log'));
+    const coordinator = new Coordinator({ log, coordination, adapters: {}, drainPolicy });
+    t.after(() => { try { coordination.releaseWriterLease(); } catch {} rmSync(dir, { recursive: true, force: true }); });
+    return coordinator._drainPolicy;
+  };
+  assert.equal(coordinationFixture({ maxWorkers: 3, timeoutMs: 1_000, pollMs: 5, maxInteractions: 7 }).maxInteractions, 7,
+    'a named bound is honored exactly');
+  assert.throws(() => coordinationFixture({ maxWorkers: 3, timeoutMs: 1_000, pollMs: 5, maxInteractions: 0 }), /drain policy/i);
+  assert.equal(coordinationFixture({ maxWorkers: 3, timeoutMs: 60_000, pollMs: 5 }).maxInteractions, 48,
+    'the default bound derives from the fleet (16 interactions per reserved worker)');
+  // Deployment surface: the derivation is fleet-scaled, not a duration quotient — at the default
+  // fleet size the old `timeoutMs/4` reading and the literal 15_000 both disagree with the fleet.
+  const valid = repo('policy-interactions'); let driver;
+  t.after(() => { try { driver?.close(); } catch {} try { driver?.closeAsync?.(); } catch {} rmSync(valid.world, { recursive: true, force: true }); });
+  driver = createDriver({
+    repoRoot: valid.directory, logDir: valid.logDir, repoId: 'repo-a', adapters: {},
+  });
+  assert.equal(driver.coordinator._drainPolicy.maxInteractions, 1024 * 16,
+    'the default policy derives its interaction bound from its fleet size');
+  const longWindow = createDriver({
+    repoRoot: valid.directory, logDir: join(valid.world, 'log-2'), repoId: 'repo-a', adapters: {},
+    drainPolicy: { maxWorkers: 1024, timeoutMs: 240_000, pollMs: 10 },
+  });
+  assert.equal(longWindow.coordinator._drainPolicy.maxInteractions, 1024 * 16,
+    'a longer deadline never buys a larger interaction bound: the fleet sets it');
+  longWindow.close();
+});
+test('DC8/#277 G-20: the drain attempts every worker its own success test counts', async (t) => {
+  const f = repo('g20-global-attempt'); let driver; t.after(async () => {
+    try { await driver?.closeAsync(); } catch {} rmSync(f.world, { recursive: true, force: true });
+  });
+  const adapter = new MockAdapter({ scenario: { outcome: 'completed', delayMs: 60_000, result: { summary: 'late' } } });
+  const killed = [];
+  const nativeKill = adapter.kill.bind(adapter);
+  adapter.kill = async (workerId, ...rest) => { killed.push(workerId); return nativeKill(workerId, ...rest); };
+  driver = createDriver({
+    repoRoot: f.directory, logDir: f.logDir, repoId: 'repo-a', adapters: { mock: adapter },
+    drainPolicy: { maxWorkers: 4, timeoutMs: 5_000, pollMs: 5 }, watchdog: { stallMs: 60_000 },
+  });
+  await driver.ready;
+  const active = await driver.coordinator.spawn('mock', brief('active holder'), { taskId: 'g20-active' });
+  const outsider = await driver.coordinator.spawn('mock', brief('holder outside the target set'), { taskId: 'g20-outsider' });
+  await until(() => driver.coordinator.list().find((row) => row.id === active.id)?.status === 'working', 'active worker');
+  await until(() => driver.coordinator.list().find((row) => row.id === outsider.id)?.status === 'working', 'outsider worker');
+  // The durable admission pins the target set to the active worker alone. The outsider still
+  // holds local resources: the drain's own success test counts it (globalRemaining), so the
+  // drain must attempt it — not merely observe it until the deadline (#277 G-20).
+  const store = driver.coordination;
+  const physicalDrain = { status: 'admitted', targetWorkerIds: [active.id], dispositions: [] };
+  store.fleetDrain = (drainId) => ({
+    status: physicalDrain.status, targetWorkerIds: [...physicalDrain.targetWorkerIds],
+    dispositions: physicalDrain.dispositions.map((row) => ({ ...row })),
+    ...(physicalDrain.receipt ? { receipt: physicalDrain.receipt } : {}),
+  });
+  store.admitFleetDrain = (fields) => { physicalDrain.targetWorkerIds = [...fields.targetWorkerIds]; return { ok: true, result: 'replay' }; };
+  store.recordFleetDrainDisposition = (drainId, workerId, disposition) => {
+    physicalDrain.dispositions.push({ workerId, disposition });
+    return { ok: true, result: 'recorded' };
+  };
+  store.completeFleetDrain = (drainId, receipt) => { physicalDrain.status = 'completed'; physicalDrain.receipt = receipt; return { ok: true, result: 'completed' }; };
+  const receipt = await driver.coordinator.drain({ actor: 'orchestrator', repoId: 'repo-a', idempotencyKey: 'g20-drain' });
+  assert.equal(receipt.state, 'drained');
+  assert.equal(receipt.targetCount, 1, 'the admitted target set is unchanged');
+  assert.ok(killed.includes(outsider.id), 'the non-target holder was attempted, not merely counted');
+  assert.equal(driver.coordinator._workers.get(outsider.id).localAuthority, false, 'the non-target hold is released');
+});
+test('DC8/#277 G-21: the drain terminal throw names its wait and is never its own cause', async (t) => {
+  const f = repo('g21-named-throw'); let driver; t.after(async () => {
+    try { await driver?.closeAsync(); } catch {} rmSync(f.world, { recursive: true, force: true });
+  });
+  const adapter = new MockAdapter({ scenario: { outcome: 'completed', delayMs: 60_000, result: { summary: 'late' } } });
+  driver = createDriver({
+    repoRoot: f.directory, logDir: f.logDir, repoId: 'repo-a', adapters: { mock: adapter },
+    drainPolicy: { maxWorkers: 1, timeoutMs: 200, pollMs: 5 }, watchdog: { stallMs: 60_000 },
+  });
+  await driver.ready;
+  const handle = await driver.coordinator.spawn('mock', brief('unconverged'), { taskId: 'g21-active' });
+  await until(() => driver.coordinator.list().find((row) => row.id === handle.id)?.status === 'working', 'active worker');
+  await driver.coordinator.kill(handle.id);
+  // Attempts settle every pass, but the dead worker still holds local authority and its exact
+  // cleanup keeps failing: the convergence loop exhausts the deployment deadline and throws.
+  driver.coordinator._workers.get(handle.id).localAuthority = true;
+  const originalCleanup = driver.coordinator._cleanupClosedTransport.bind(driver.coordinator);
+  driver.coordinator._cleanupClosedTransport = async () => {
+    throw Object.assign(new Error('scripted cleanup failure'), { code: 'runtime_cleanup_failed' });
+  };
+  await assert.rejects(driver.coordinator.drain({ actor: 'orchestrator', repoId: 'repo-a', idempotencyKey: 'g21-drain' }),
+    (error) => {
+      assert.equal(error.code, 'coordinator_drain_incomplete');
+      assert.equal(error.detail?.reason, 'deadline', 'the deadline names its stage');
+      assert.ok(Array.isArray(error.detail?.waitingOn) && error.detail.waitingOn.length > 0, 'the throw carries waitingOn');
+      assert.equal(error.detail.waitingOn[0].workerId, handle.id);
+      assert.equal(error.detail.cause, undefined, 'a bare non-convergence is never wrapped as its own cause');
+      return true;
+    });
+  driver.coordinator._cleanupClosedTransport = originalCleanup;
+});
+
+test('DC8/#277 G-22: a durable non-terminal task with no handle gets its disposition without cloning the projection', async (t) => {
+  const f = repo('g22-no-handle'); let driver; t.after(async () => {
+    try { await driver?.closeAsync(); } catch {} rmSync(f.world, { recursive: true, force: true });
+  });
+  driver = createDriver({
+    repoRoot: f.directory, logDir: f.logDir, repoId: 'repo-a', adapters: {},
+    drainPolicy: { maxWorkers: 1, timeoutMs: 2_000, pollMs: 5 },
+  });
+  await driver.ready;
+  driver.coordination.createTask({
+    id: 'task-g22-ghost', brief: { objective: 'Durable row without a local handle' },
+    deps: [], refines: null, relation: 'root', runId: 'run-g22', taskType: 'general',
+    reservedWorkerId: 'w-ghost', vendorRequested: 'mock', modelRequested: 'model-a',
+    modelPolicy: null, effortRequested: 'low', sessionRequest: { mode: 'new' },
+  }, { actor: 'orchestrator', key: 'task.created:task-g22-ghost' });
+  let snapshots = 0;
+  const snapshot = driver.coordination.snapshot.bind(driver.coordination);
+  driver.coordination.snapshot = (...args) => { snapshots += 1; return snapshot(...args); };
+  const started = Date.now();
+  const receipt = await driver.coordinator.stopRunTargets(['w-ghost']);
+  assert.ok(Date.now() - started < 1_000, 'the stop converges instead of spinning to its deadline');
+  assert.equal(receipt.targetCount, 1);
+  assert.equal(receipt.counts.alreadyTerminal, 1, 'the handle-less target is disposed immediately');
+  assert.equal(snapshots, 0, 'the projection is never re-cloned per poll');
+});
+
+test('DC8/#277 G-3: terminal resource release is possible during a drain', async (t) => {
+  const f = repo('g3-release-during-drain'); const gate = deferred(); let driver; t.after(async () => {
+    gate.resolve();
+    try { await driver?.closeAsync(); } catch {} rmSync(f.world, { recursive: true, force: true });
+  });
+  const adapter = new MockAdapter({ scenario: { outcome: 'completed', delayMs: 60_000, result: { summary: 'late' } } });
+  driver = createDriver({
+    repoRoot: f.directory, logDir: f.logDir, repoId: 'repo-a', adapters: { mock: adapter },
+    drainPolicy: { maxWorkers: 2, timeoutMs: 5_000, pollMs: 5 }, watchdog: { stallMs: 60_000 },
+  });
+  await driver.ready;
+  const reconcile = driver.coordinator._worktrees.reconcile.bind(driver.coordinator._worktrees);
+  driver.coordinator._worktrees.reconcile = async (...args) => { await gate.promise; return reconcile(...args); };
+  const active = await driver.coordinator.spawn('mock', brief('drain blocker'), { taskId: 'g3-active', runId: 'run-g3' });
+  await until(() => driver.coordinator.list().find((row) => row.id === active.id)?.status === 'working', 'active worker');
+  const finished = await driver.coordinator.spawn('mock', brief('finished member'), { taskId: 'g3-finished', runId: 'run-g3' });
+  await until(() => driver.coordinator.list().find((row) => row.id === finished.id)?.status === 'working', 'finished worker started');
+  await driver.coordinator.kill(finished.id);
+  await until(() => driver.coordination.task('g3-finished')?.status === 'cancelled', 'finished member is terminal');
+  const draining = driver.coordinator.drain({ actor: 'orchestrator', repoId: 'repo-a', idempotencyKey: 'g3-drain' });
+  await until(() => driver.coordinator._drainState === 'draining', 'drain fenced admission');
+  // The policy path frees a completed member's resources exactly while the fleet is draining.
+  const release = await driver.coordinator.releaseTerminalTaskResources('g3-finished', finished.id);
+  assert.equal(release.taskId, 'g3-finished');
+  assert.equal(release.workerId, finished.id);
+  gate.resolve();
+  const receipt = await draining;
+  assert.equal(receipt.state, 'drained');
+});
+
+test('DC8/#277 G-24: the run scratchpad reap yields between passes and fails loudly when partial stops advancing', async (t) => {
+  const f = repo('g24-reap'); let driver; t.after(async () => {
+    try { await driver?.closeAsync(); } catch {} rmSync(f.world, { recursive: true, force: true });
+  });
+  driver = createDriver({
+    repoRoot: f.directory, logDir: f.logDir, repoId: 'repo-a', adapters: {},
+    drainPolicy: { maxWorkers: 1, timeoutMs: 1_000, pollMs: 5 },
+  });
+  await driver.ready;
+  let calls = 0; let ticked = false;
+  setTimeout(() => { ticked = true; }, 0);
+  driver.coordination.reapRunScratchpads = (runId) => {
+    calls += 1;
+    if (calls === 1) return { ok: true, result: 'partial', runId, reaped: [], remainingPartitions: 1, remainingEntries: 1, nextPartition: { scope: 'worker', taskId: 't', workerId: 'w' } };
+    return { ok: true, result: 'complete', runId, reaped: [{ scope: 'worker' }], remainingPartitions: 0, remainingEntries: 0, nextPartition: null };
+  };
+  const receipt = await driver.coordinator.reapRunScratchpads('run-g24');
+  assert.equal(receipt.result, 'complete');
+  assert.equal(calls, 2, 'one pass per remaining partition batch');
+  assert.equal(ticked, true, 'the reap yielded the event loop between passes');
+  driver.coordination.reapRunScratchpads = () => ({ ok: true, result: 'partial', remainingPartitions: 1, remainingEntries: 1, nextPartition: null });
+  await assert.rejects(driver.coordinator.reapRunScratchpads('run-g24-stuck'),
+    (error) => error.code === 'coordinator_scratchpad_reap_incomplete',
+    'a non-advancing partial is a loud failure, never a silent spin');
+});
+
+test('DC8/#277 G-28: a poisoned coordinator still converges a stop through one exact posture', async (t) => {
+  const f = repo('g28-poison'); let driver; t.after(async () => {
+    try { await driver?.closeAsync(); } catch {} rmSync(f.world, { recursive: true, force: true });
+  });
+  const adapter = new MockAdapter({ scenario: { outcome: 'completed', delayMs: 60_000, result: { summary: 'late' } } });
+  driver = createDriver({
+    repoRoot: f.directory, logDir: f.logDir, repoId: 'repo-a', adapters: { mock: adapter },
+    drainPolicy: { maxWorkers: 1, timeoutMs: 2_000, pollMs: 5 },
+  });
+  await driver.ready;
+  const handle = await driver.coordinator.spawn('mock', brief('poisoned then stopped'), { taskId: 'g28-worker' });
+  await driver.coordinator.kill(handle.id);
+  // The worker still holds local authority, so the stop's attempt must reach the kill seam:
+  // under one posture the drain token admits the exact-physical emergency path there.
+  driver.coordinator._workers.get(handle.id).localAuthority = true;
+  await until(() => driver.coordination.task('g28-worker')?.status === 'cancelled', 'worker settled');
+  driver.coordinator._fatalError = Object.assign(new Error('coordination poison'), { code: 'coordination_poisoned' });
+  const started = Date.now();
+  const receipt = await driver.coordinator.stopRunTargets([handle.id]);
+  assert.ok(Date.now() - started < 1_000, 'the stop converges instead of burning its deadline');
+  assert.equal(receipt.counts.alreadyTerminal, 1);
 });
