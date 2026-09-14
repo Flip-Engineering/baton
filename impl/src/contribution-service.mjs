@@ -13,8 +13,8 @@ const identity = (value) => {
 /** Immutable contribution operations. Session/pause ownership stays with the coordinator;
  * this service owns revision retention, isolated checks, and attributable operation receipts. */
 export class ContributionService {
-  constructor({ worktrees, referee, accept, acceptOptions, capture, record, events, closeVerdict }) {
-    Object.assign(this, { worktrees, referee, accept, acceptOptions, captureTree: capture, record, events, closeVerdict });
+  constructor({ worktrees, referee, accept, acceptOptions, capture, record, events, closeVerdict, verificationFor = null }) {
+    Object.assign(this, { worktrees, referee, accept, acceptOptions, captureTree: capture, record, events, closeVerdict, verificationFor });
     this.pending = new Map();
   }
 
@@ -95,11 +95,18 @@ export class ContributionService {
       brief: copy(captured.basis.brief), sessionContext: copy(captured.basis.sessionContext),
       worktree: captured.basis.worktree,
     };
+    // #269: the deployment may check a capture that touches none of its code paths with the
+    // docs verification instead of the whole suite; the selection is recorded with the check.
+    const selected = typeof this.verificationFor === 'function'
+      ? this.verificationFor(captured.changedPaths ?? [], source.brief.verification) : null;
+    const selection = selected?.selection ?? 'code';
+    if (selected?.verification) source.brief.verification = selected.verification;
     const workspaceId = `contribution-${createHash('sha256')
       .update(JSON.stringify([handle.id, contributionId, checkId])).digest('hex')}`;
     let checked;
     this.record('contribution.check_started', {
       contributionId, checkId, sha: captured.sha, ref: captured.ref,
+      verification: { selection, command: source.brief.verification.command },
     }, handle, task);
     // The deployment's verification lane is full: say so durably, so a waiting check reads as a
     // queue position and not as a slow verifier (#269).
@@ -127,6 +134,7 @@ export class ContributionService {
     }
     const receipt = {
       contributionId, checkId, sha: captured.sha, ref: captured.ref,
+      verification: { selection, command: source.brief.verification.command },
       passed: this.accept(checked.observedVerdict, {
         ...this.acceptOptions, expectExit: source.brief.verification.expectExit,
       }) === true,

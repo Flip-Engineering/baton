@@ -17,7 +17,7 @@ const deferred = () => {
   return { promise, resolve };
 };
 
-async function fixture(t, { referee, capture } = {}) {
+async function fixture(t, { referee, capture, verificationFor } = {}) {
   const directory = mkdtempSync(join(tmpdir(), 'baton-contributions-'));
   t.after(() => rmSync(directory, { force: true, recursive: true }));
   const prompts = [];
@@ -51,6 +51,7 @@ async function fixture(t, { referee, capture } = {}) {
   const coordination = coordinationForLog(log);
   const coordinator = new Coordinator({ log, coordination, fences: new FenceTable(),
     adapters: { mock: adapter }, worktrees, route: () => 'mock', now: () => 0,
+    ...(verificationFor ? { verificationForCapture: verificationFor } : {}),
     // A laned referee (withVerificationLane) is installed as-is so the coordinator sees its lane.
     referee: referee?.lane ? referee : async (...args) => {
       checks++;
@@ -261,4 +262,28 @@ test('a check that waits for the verification lane records contribution.check_qu
   assert.equal(firstReceipt.passed, true);
   assert.equal(secondReceipt.passed, true);
   assert.deepEqual({ running: referee.lane.running, queued: referee.lane.queued }, { running: 0, queued: 0 });
+});
+
+// #269 item 3: a capture that changes none of the paths the code verification covers is checked
+// by the deployment's docs verification instead of the whole suite; the selection is durable on
+// the check's start record and its receipt, and the referee receives the selected contract.
+test('a docs-only capture is checked by the docs verification, a code capture by the code verification', async (t) => {
+  const seen = [];
+  const referee = async (task) => { seen.push(task.brief.verification.command); return { reverified: true, observedExit: 0, passed: true, matchesClaim: true, locus: 'fresh_sandbox' }; };
+  const verificationFor = (changedPaths, contract) => changedPaths.some((path) => path.startsWith('impl/'))
+    ? { selection: 'code', verification: contract }
+    : { selection: 'docs', verification: { ...contract, command: 'node', arguments: ['impl/scripts/surface-gate.mjs'] } };
+  let paths = ['docs/audits/report.md'];
+  const f = await fixture(t, { referee, verificationFor, capture: async () => ({ sha: SHA, baseSha: BASE, changedPaths: paths }) });
+  await f.coordinator.captureContribution(f.handle.id, { contributionId: 'docs' });
+  const docs = await f.coordinator.checkContribution(f.handle.id, { contributionId: 'docs', checkId: 'check-docs' });
+  assert.deepEqual(docs.verification, { selection: 'docs', command: 'node' });
+  assert.equal(docs.passed, true);
+  paths = ['impl/src/thing.mjs', 'docs/notes.md'];
+  await f.coordinator.captureContribution(f.handle.id, { contributionId: 'code' });
+  const code = await f.coordinator.checkContribution(f.handle.id, { contributionId: 'code', checkId: 'check-code' });
+  assert.equal(code.verification.selection, 'code');
+  assert.deepEqual(seen, ['node', 'true'], 'the referee ran the docs command for the docs capture and the brief command for the code capture');
+  const started = f.log.read(f.handle.id).filter((event) => event.kind === 'contribution.check_started').map((event) => event.payload.verification);
+  assert.deepEqual(started, [{ selection: 'docs', command: 'node' }, { selection: 'code', command: 'true' }]);
 });

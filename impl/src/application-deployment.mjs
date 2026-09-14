@@ -1,3 +1,4 @@
+import { pathMatchesScope } from './path-scope.mjs';
 import { createHash, randomBytes } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import {
@@ -279,19 +280,48 @@ function publicRoute(route) {
   return Object.freeze({ harness: route.harness, model: route.model, effort: route.effort });
 }
 
+const validCommand = (value) => value && typeof value === 'object' && !Array.isArray(value)
+  && typeof value.command === 'string' && value.command.length > 0 && !value.command.includes('\0')
+  && Array.isArray(value.arguments) && value.arguments.length <= 64
+  && value.arguments.every((argument) => typeof argument === 'string' && !argument.includes('\0'));
+
+/** #269: choose the verification a capture is checked by. A capture that changes at least one
+ * path the code verification covers runs it; a capture that changes none (docs, audits) runs
+ * the declared docs verification with the same contract shape. The selection is named. */
+export function verificationSelector(verification) {
+  return (changedPaths, contract) => {
+    const touchesCode = (changedPaths ?? []).some((path) => verification.paths.some((pattern) => pathMatchesScope(path, pattern)));
+    return touchesCode
+      ? { selection: 'code', verification: contract }
+      : { selection: 'docs', verification: { ...contract, command: verification.docs.command, arguments: [...verification.docs.arguments] } };
+  };
+}
+
 function normalizeVerification(value, repoRoot) {
   if (value !== undefined) {
-    closed(value, ['arguments', 'command', 'concurrency'], 'advanced verification');
-    if (typeof value.command !== 'string' || value.command.length === 0 || value.command.includes('\0')
-      || !Array.isArray(value.arguments) || value.arguments.length > 64
-      || value.arguments.some((argument) => typeof argument !== 'string' || argument.includes('\0'))
-      || (value.concurrency !== undefined && (!Number.isSafeInteger(value.concurrency) || value.concurrency <= 0))) {
+    closed(value, ['arguments', 'command', 'concurrency', 'docs', 'paths'], 'advanced verification');
+    if (!validCommand(value)
+      || (value.concurrency !== undefined && (!Number.isSafeInteger(value.concurrency) || value.concurrency <= 0))
+      || (value.paths === undefined) !== (value.docs === undefined)
+      || (value.paths !== undefined && (!Array.isArray(value.paths) || value.paths.length === 0
+        || value.paths.some((pattern) => typeof pattern !== 'string' || pattern.length === 0 || pattern.includes('\0'))))
+      || (value.docs !== undefined && (!validCommand(value.docs) || Object.keys(value.docs).sort().join(',') !== 'arguments,command'))) {
       throw deploymentError('advanced verification is invalid');
     }
     // `concurrency`: how many verifications this deployment runs at once. Omitted, the lane count
     // is derived from the machine (referee.mjs defaultVerificationConcurrency); a verification
     // known to be lighter than the suite may raise it.
-    return Object.freeze({ command: value.command, arguments: [...value.arguments], ...(value.concurrency === undefined ? {} : { concurrency: value.concurrency }) });
+    // `paths` + `docs` (#269): the globs the code verification covers, and the verification to
+    // run instead when a capture changes none of them — a docs-only capture is checked by the
+    // doc gate, not by the whole suite. Both or neither.
+    return Object.freeze({
+      command: value.command, arguments: [...value.arguments],
+      ...(value.concurrency === undefined ? {} : { concurrency: value.concurrency }),
+      ...(value.paths === undefined ? {} : {
+        paths: Object.freeze([...value.paths]),
+        docs: Object.freeze({ command: value.docs.command, arguments: [...value.docs.arguments] }),
+      }),
+    });
   }
   if (existsSync(join(repoRoot, 'impl', 'package.json'))) {
     return Object.freeze({ command: 'npm', arguments: ['test', '--prefix', 'impl'] });
@@ -2082,6 +2112,7 @@ export async function openBatonDeployment(rawOptions, createDriver) {
     progressNudgeWindowMs: 300_000,
     drainPolicy: { maxWorkers: 64, timeoutMs: 90_000, pollMs: 10 },
     ...(verification.concurrency === undefined ? {} : { verificationConcurrency: verification.concurrency }),
+    ...(verification.paths === undefined ? {} : { verificationForCapture: verificationSelector(verification) }),
     budgetPolicy: { terminalGraceMs: 2_000, ...budgetPolicy },
     // D1: the stall budget no longer derives from DEFAULT_BUDGET.wallMin — it is the separately
     // frozen DEFAULT_WATCHDOG (20 min < 480 min wall), admission-checked at createDriver.

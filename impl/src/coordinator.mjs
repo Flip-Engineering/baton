@@ -1114,6 +1114,9 @@ export class Coordinator {
     // C1: the sole done-gate, and the driver-level policy passed to every accept() call.
     this._accept = opts.accept ?? defaultAccept;
     this._acceptOpts = opts.acceptOpts ?? {};
+    // #269: the deployment may choose a lighter verification for captures that touch none of the
+    // paths the code verification covers (docs-only). Absent, every check runs the brief's own.
+    this._verificationForCapture = typeof opts.verificationForCapture === 'function' ? opts.verificationForCapture : null;
     const verificationRequirements = {
       requireRedGreen: this._acceptOpts.requireRedGreen === true,
       requireCoverage: this._acceptOpts.requireCoverage === true,
@@ -2345,6 +2348,7 @@ export class Coordinator {
     this._contributions ??= new ContributionService({
       worktrees: this._worktrees, referee: this._referee, accept: this._accept,
       acceptOptions: this._acceptOpts, closeVerdict: closedVerificationVerdict,
+      verificationFor: this._verificationForCapture,
       capture: (handle, task) => this._captureTrustWorktree(handle, task, { snapshot: true }),
       events: (workerId) => this._log.read(workerId),
       record: (kind, payload, handle, task) => {

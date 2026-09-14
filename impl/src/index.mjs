@@ -1225,6 +1225,9 @@ export function createDriver(opts) {
     && (!Number.isSafeInteger(opts.verificationConcurrency) || opts.verificationConcurrency <= 0)) {
     throw new TypeError('verificationConcurrency must be a positive safe integer');
   }
+  if (opts.verificationForCapture !== undefined && typeof opts.verificationForCapture !== 'function') {
+    throw new TypeError('verificationForCapture must be a function when supplied');
+  }
   const providerGovernance = opts.providerGovernance === undefined
     ? null
     : normalizeProviderGovernancePolicy(opts.providerGovernance, Object.keys(opts.adapters ?? {}));
@@ -1609,6 +1612,7 @@ export function createDriver(opts) {
     // queues behind it instead of each spawning its own full suite.
     referee: withVerificationLane(refereeFn.bind(null, verificationRuntime), { concurrency: opts.verificationConcurrency }),
     verificationRuntimeDigest: verificationRuntime.digest,
+    ...(opts.verificationForCapture ? { verificationForCapture: opts.verificationForCapture } : {}),
     route,
     accept: (verdict, acceptOpts) => accept(verdict, acceptOpts),
     acceptOpts: {
