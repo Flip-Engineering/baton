@@ -208,6 +208,49 @@ participant refuses with `swarm_holder_live`: stopping it remains the explicit s
 `assignment_holder_gone` and `delegation_orphaned` attention rows name this release as their next
 step.
 
+## Declared coupling and session ownership (issue #263 items 2 and 3, 2026-09-13)
+
+Coupling is something participants and organizers DECLARE and the swarm keeps honest — never
+something the runtime imposes. The declared choices are exactly the ones this design names:
+
+- **A dependency between units of work** — declared on the work itself
+  (`swarm.update` event `swarm.work_updated`, optional `dependsOn` field):
+  `[{ workId: "W1" }]` waits for W1 to hold an accepted contribution; `[{ artifact: "name" }]`
+  waits for an accepted contribution that references the artifact. The declared set is replaced
+  whole and kept by updates that omit it. The fold refuses unknown target works, a work waiting
+  on itself, and rings of waits, naming what is missing.
+- **A synchronization point** — declared on a group (`swarm.update` event
+  `swarm.coupling_updated`, coupling `synchronization`): members ARRIVE as their own honest
+  report (read authority suffices for one's own arrival) and the point is RELEASED explicitly,
+  with who released and why recorded. The view shows `arrivals`, `awaiting` (current live
+  members only — a released or dead seat never holds a point open), `departed` (the seats from
+  the declared roster that no longer count), and the derived `arrived` fact.
+- **An exclusive writer over a shared checkout** — declared with coupling `writer`: the record
+  names the writer and the checkout that writer is recorded in. One writer per checkout: a
+  second claim over the same checkout refuses naming the current writer. A writer whose runtime
+  dies raises a `coupling_writer_gone` attention row naming the release that frees the checkout.
+- **A group failure policy** — declared with coupling `failure`, policy `independent`: when a
+  member dies or leaves, a `group_member_gone` attention row names the member and the DEPENDENT
+  work (works that declared a dependency on the gone member's work); independent peers continue.
+  Without a declared policy no such row exists — independent activities inherit nothing by
+  sharing a swarm.
+
+These records INFORM rather than fence. Nothing here stops a worker's process: a participant
+that proceeds against an unsettled dependency does so visibly (`waitsOn` shows the wait as
+unsettled, with the evidence that has not arrived), and that is allowed. Every declaration,
+arrival, and release is a durable swarm event, so `swarm.watch` wakes on each of them and a
+scoped (`participantId`) view shows exactly the couplings the subtree can act on — writer
+records follow the writer's subtree, synchronization and failure records follow their group,
+and a group the subtree does not fully own is omitted rather than shown pruned.
+
+**Session ownership after a member leaves** is an explicit, visible fact. The
+`member_left_session_live` attention row names the responsible party — the recruiter (the
+nearest LIVING ancestor by `parentId`), otherwise the swarm's creator — and the operation that
+reclaims the session (`swarm.stop`). When the responsible party itself leaves, the row re-points
+at the next living ancestor, and finally at the creator. Releasing a departed holder's seats
+(`swarm.holder_released`) moves seats, never processes; reclaiming the still-running session is
+the explicit stop the row names.
+
 ## Budgets are evidence, not stops (issue #258, 2026-09-13)
 
 A budget threshold (`resource.budget_threshold`) is evidence for the orchestrator and the participant: the

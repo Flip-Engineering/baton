@@ -31,7 +31,7 @@ const SWARM_CLI_SUMMARIES = Object.freeze({
   'swarm.create': 'Create one living swarm and print its view.',
   'swarm.view': "Read one swarm's membership, work, shared context, contributions, reviews, caller authority, and available actions; --participant-id scopes the read to one participant's delegation.",
   'swarm.watch': 'Await the next swarm update past a cursor (defaults to the cursor of the last view this session read) and print the refreshed view; with --follow, keep waking and print one summary line per swarm event until the swarm is closed and nothing in it is alive.',
-  'swarm.update': 'Apply one domain update: group, work, assignment, holder release, context, contribution, review, participant leave, or close.',
+  'swarm.update': 'Apply one domain update: group, work (including declared dependencies), assignment, coupling record, holder release, context, contribution, review, participant leave, or close.',
   'swarm.recruit': 'Recruit one participant; the runtime resolves and starts the native Run under the requested selection.',
   'swarm.guide': 'Send guidance to one participant, active or paused.',
   'swarm.capture': 'Capture the immutable code for one contribution at its turn boundary.',

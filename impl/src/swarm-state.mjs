@@ -16,12 +16,23 @@ export const SWARM_EVENT_KINDS = Object.freeze(new Set([
   'swarm.group_updated',
   'swarm.work_updated',
   'swarm.assignment_updated',
+  'swarm.coupling_updated',
   'swarm.context_updated',
   'swarm.contribution_recorded',
   'swarm.contribution_revision_attached',
   'swarm.contribution_reviewed',
   'swarm.closed',
 ]));
+
+// The declared coupling records (docs/39 §Loose and tight orchestration; issue #263 item 2).
+// Coupling is something participants and organizers DECLARE and the swarm keeps honest — never
+// something the runtime imposes. A dependency between units of work is declared on the work
+// itself (`swarm.work_updated` `dependsOn`); the group-scoped choices — a synchronization point
+// a group arrives at and is released from, an exclusive writer over a shared checkout, and a
+// group failure policy — are declared through `swarm.coupling_updated` records below.
+export const SWARM_COUPLINGS = Object.freeze(['synchronization', 'writer', 'failure']);
+export const SWARM_COUPLING_ACTIONS = Object.freeze(['declare', 'arrive', 'release']);
+export const SWARM_FAILURE_POLICIES = Object.freeze(['independent']);
 
 export const SWARM_WORK_STATUSES = Object.freeze(['open', 'completed', 'cancelled']);
 export const SWARM_ASSIGNMENT_STATUSES = Object.freeze(['active', 'released']);
@@ -138,10 +149,9 @@ function emptySwarm(swarmId, purpose, meta) {
   return Object.freeze({
     swarmId, purpose, status: 'open', closedReason: null, ...meta,
     participants: nullDict(), groups: nullDict(), work: nullDict(),
-    assignments: nullDict(), context: nullDict(), contributions: nullDict(), reviews: nullDict(),
+    assignments: nullDict(), couplings: nullDict(), context: nullDict(), contributions: nullDict(), reviews: nullDict(),
   });
 }
-
 // Replace one nested collection in a frozen swarm row with a null-prototype dict.
 function replaceField(swarm, field, map) {
   return Object.freeze({ ...swarm, [field]: nullDict(map) });
@@ -232,6 +242,48 @@ export function validateSwarmEvent(kind, payload) {
       }
       if (!Array.isArray(p.basis.contributionIds) || !p.basis.contributionIds.every(isNonEmptyString)) {
         refuse('work basis must cite contributionIds as non-empty strings', 'invalid_payload');
+      }
+    }
+    // Declared dependencies (issue #263 item 2): entries name exactly one target — a work item
+    // whose accepted contribution settles the wait, or a named artifact an accepted contribution
+    // must reference. Declaring a dependency is a record, never a gate: nothing here stops work.
+    if (p.dependsOn !== undefined) {
+      if (!Array.isArray(p.dependsOn)) {
+        refuse('work dependsOn must be an array of dependency entries', 'invalid_payload');
+      }
+      for (const entry of p.dependsOn) {
+        if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+          refuse('each dependsOn entry must be an object naming workId or artifact', 'invalid_payload');
+        }
+        if (isNonEmptyString(entry.workId) === isNonEmptyString(entry.artifact)) {
+          refuse('each dependsOn entry names exactly one target: workId or artifact', 'invalid_payload');
+        }
+      }
+    }
+    return;
+  }
+  if (kind === 'swarm.coupling_updated') {
+    if (!isNonEmptyString(p.couplingId)) refuse('swarm.coupling_updated requires couplingId', 'invalid_payload');
+    if (!SWARM_COUPLINGS.includes(p.coupling)) {
+      refuse(`coupling must be one of: ${SWARM_COUPLINGS.join(', ')}`, 'invalid_payload');
+    }
+    if (!SWARM_COUPLING_ACTIONS.includes(p.action)) {
+      refuse(`coupling action must be one of: ${SWARM_COUPLING_ACTIONS.join(', ')}`, 'invalid_payload');
+    }
+    validOptionalNonEmptyString(p.groupId, 'coupling groupId', refuse);
+    validOptionalNonEmptyString(p.name, 'coupling name', refuse);
+    validOptionalNonEmptyString(p.participantId, 'coupling participantId', refuse);
+    validOptionalNonEmptyString(p.reason, 'coupling reason', refuse);
+    validOptionalNonNegativeInt(p.expectedVersion, 'coupling expectedVersion', refuse);
+    if (p.policy !== undefined && !SWARM_FAILURE_POLICIES.includes(p.policy)) {
+      refuse(`failure policy must be one of: ${SWARM_FAILURE_POLICIES.join(', ')}`, 'invalid_payload');
+    }
+    if (p.action === 'declare') {
+      if (p.coupling === 'synchronization' && !(isNonEmptyString(p.groupId) && isNonEmptyString(p.name))) {
+        refuse('a synchronization point declares groupId and name', 'invalid_payload');
+      }
+      if (p.coupling === 'failure' && !(isNonEmptyString(p.groupId) && p.policy !== undefined)) {
+        refuse('a failure policy declares groupId and policy', 'invalid_payload');
       }
     }
     return;
@@ -408,11 +460,47 @@ export function foldSwarmEvent(swarms, event) {
     if (p.expectedVersion !== undefined && p.expectedVersion !== currentVersion) {
       integrity(`swarm work ${p.workId} version conflict: expected ${p.expectedVersion}, current ${currentVersion}`, 'version_conflict');
     }
+    // Declared dependencies are stored on the work row when declared and preserved by later
+    // updates that omit them (the same keep-the-record rule as the objective). Rows written
+    // before the field existed carry no key, so old logs replay byte-identically.
+    const dependsOn = p.dependsOn !== undefined ? p.dependsOn : existingWork?.dependsOn;
+    if (dependsOn !== undefined && dependsOn.length > 0) {
+      for (const entry of dependsOn) {
+        if (entry.workId === undefined) continue;
+        if (entry.workId === p.workId) {
+          integrity(`work ${p.workId} cannot depend on itself`, 'work_dependency_self');
+        }
+        if (!ownGet(swarm.work, entry.workId)) {
+          integrity(`dependency target work ${entry.workId} not found in swarm ${p.swarmId}`, 'work_not_found');
+        }
+      }
+      // A new cycle can only pass through this work: walk its dependency targets and refuse a
+      // declaration that would make a ring of works wait on itself forever.
+      const targetsOf = (workId) => (workId === p.workId
+        ? dependsOn.filter((entry) => entry.workId !== undefined).map((entry) => entry.workId)
+        : (ownGet(swarm.work, workId)?.dependsOn ?? []).filter((entry) => entry.workId !== undefined).map((entry) => entry.workId));
+      const cameFrom = new Map();
+      const queue = targetsOf(p.workId).map((target) => [target, p.workId]);
+      let cycleAt = null;
+      while (queue.length && cycleAt === null) {
+        const [current, parent] = queue.shift();
+        if (current === p.workId) { cycleAt = parent; break; }
+        if (cameFrom.has(current)) continue;
+        cameFrom.set(current, parent);
+        for (const target of targetsOf(current)) queue.push([target, current]);
+      }
+      if (cycleAt !== null) {
+        const ring = [p.workId];
+        for (let at = cycleAt; at !== p.workId; at = cameFrom.get(at)) ring.splice(1, 0, at);
+        integrity(`these dependencies make work ${p.workId} wait on itself through the ring ${[...ring, p.workId].join(' -> ')}`, 'work_dependency_cycle');
+      }
+    }
     const updatedWork = Object.freeze({
       workId: p.workId, objective: p.objective,
       // Default status is 'open' for new items; preserve existing status if not specified.
       status: p.status !== undefined ? p.status : (existingWork?.status ?? 'open'),
       version: currentVersion + 1, actor: meta.actor, seq: meta.seq, ts: meta.ts,
+      ...(dependsOn !== undefined ? { dependsOn: deepFreezeBody(dependsOn) } : {}),
     });
     const work = new Map(Object.entries(swarm.work));
     work.set(p.workId, updatedWork);
@@ -420,6 +508,93 @@ export function foldSwarmEvent(swarms, event) {
     return;
   }
 
+  if (kind === 'swarm.coupling_updated') {
+    const existingCoupling = ownGet(swarm.couplings, p.couplingId) ?? null;
+    const currentVersion = existingCoupling?.version ?? 0;
+    if (p.expectedVersion !== undefined && p.expectedVersion !== currentVersion) {
+      integrity(`swarm coupling ${p.couplingId} version conflict: expected ${p.expectedVersion}, current ${currentVersion}`, 'version_conflict');
+    }
+    if (existingCoupling && p.coupling !== existingCoupling.coupling) {
+      integrity(`coupling ${p.couplingId} is a ${existingCoupling.coupling} record, not a ${p.coupling}`, 'invalid_payload');
+    }
+    let record;
+    if (p.action === 'declare') {
+      if (p.coupling === 'synchronization' || p.coupling === 'failure') {
+        if (!ownGet(swarm.groups, p.groupId)) {
+          integrity(`coupling group ${p.groupId} not found in swarm ${p.swarmId}`, 'group_not_found');
+        }
+      }
+      if (p.coupling === 'failure') {
+        const conflict = Object.values(swarm.couplings).find((row) => row.coupling === 'failure' && !row.released
+          && row.groupId === p.groupId && row.couplingId !== p.couplingId);
+        if (conflict) {
+          integrity(`group ${p.groupId} already carries the unreleased failure policy ${conflict.couplingId}`, 'swarm_coupling_conflict');
+        }
+      }
+      let writer = null;
+      let workspaceId = null;
+      let members = null;
+      if (p.coupling === 'synchronization') {
+        // The group roster the point was declared over: seats that later leave the group (by
+        // release or regroup) stay named on the record instead of vanishing from it.
+        members = [...(ownGet(swarm.groups, p.groupId)?.members ?? [])];
+      }
+      if (p.coupling === 'writer') {
+        if (!isNonEmptyString(p.participantId)) {
+          integrity('an exclusive writer claim must name participantId — the writer whose turn over the checkout it is', 'invalid_payload');
+        }
+        const holder = ownGet(swarm.participants, p.participantId);
+        if (!holder) integrity(`writer participant ${p.participantId} not found in swarm ${p.swarmId}`, 'participant_not_found');
+        if (holder.status !== 'active') integrity(`writer participant ${p.participantId} is not active in swarm ${p.swarmId}`, 'participant_not_active');
+        workspaceId = holder.workspaceId ?? null;
+        if (workspaceId !== null) {
+          const conflict = Object.values(swarm.couplings).find((row) => row.coupling === 'writer' && !row.released
+            && row.workspaceId === workspaceId && row.writer !== p.participantId);
+          if (conflict) {
+            integrity(`checkout ${workspaceId} already names the exclusive writer ${conflict.writer} (${conflict.couplingId}); release that record first`, 'swarm_writer_conflict');
+          }
+        }
+        writer = p.participantId;
+      }
+      record = {
+        couplingId: p.couplingId, coupling: p.coupling,
+        groupId: p.groupId ?? null, name: p.name ?? null, policy: p.policy ?? null,
+        members, writer, workspaceId, arrivals: [],
+        released: false, releasedBy: null, releaseReason: null,
+      };
+    } else {
+      if (!existingCoupling) {
+        integrity(`coupling ${p.couplingId} not found in swarm ${p.swarmId}`, 'coupling_not_found');
+      }
+      if (existingCoupling.released) {
+        integrity(`coupling ${p.couplingId} is already released`, 'swarm_coupling_released');
+      }
+      if (p.action === 'arrive') {
+        if (!isNonEmptyString(p.participantId)) {
+          integrity('an arrival must name participantId — the participant who arrived', 'invalid_payload');
+        }
+        const arriver = ownGet(swarm.participants, p.participantId);
+        if (!arriver) integrity(`arriving participant ${p.participantId} not found in swarm ${p.swarmId}`, 'participant_not_found');
+        if (arriver.status !== 'active') integrity(`arriving participant ${p.participantId} is not active in swarm ${p.swarmId}`, 'participant_not_active');
+        const members = ownGet(swarm.groups, existingCoupling.groupId)?.members ?? [];
+        if (!members.includes(p.participantId)) {
+          integrity(`participant ${p.participantId} is not a member of group ${existingCoupling.groupId}`, 'swarm_not_a_member');
+        }
+        if (existingCoupling.arrivals.includes(p.participantId)) {
+          integrity(`participant ${p.participantId} has already arrived at ${p.couplingId}`, 'swarm_already_arrived');
+        }
+        record = { ...existingCoupling, arrivals: [...existingCoupling.arrivals, p.participantId] };
+      } else {
+        record = { ...existingCoupling, released: true, releasedBy: p.participantId ?? null, releaseReason: p.reason ?? null };
+      }
+    }
+    const couplings = new Map(Object.entries(swarm.couplings));
+    couplings.set(p.couplingId, Object.freeze({
+      ...record, version: currentVersion + 1, actor: meta.actor, seq: meta.seq, ts: meta.ts,
+    }));
+    swarms.set(p.swarmId, replaceField(swarm, 'couplings', couplings));
+    return;
+  }
   if (kind === 'swarm.assignment_updated') {
     if (!ownGet(swarm.participants, p.participantId)) {
       integrity(`participant ${p.participantId} not found in swarm ${p.swarmId}`, 'participant_not_found');
