@@ -281,7 +281,15 @@ function laneCraftedToolError(cause) {
   }
   const LANE_CRAFTED = typeof cause?.code === 'string'
     && (COACHING_REFUSAL_CODES.has(cause.code) || cause.code === 'wave_member_invalid' || cause.code === 'wave_not_found' || cause.code.startsWith('workflow_'));
-  if (!LANE_CRAFTED) return toolError(stateCode);
+  // A refusal COMPOSED for the wire (`wireSafe: true` — the bridge's own admission and session
+  // refusals) keeps its message, detail and field so the caller can act on it without reading
+  // logs (#160). Every other unmarked refusal stays code-only: exception text is not a composed
+  // refusal and never reaches the wire (MN1/MN8, RC-03/RC-04).
+  if (!LANE_CRAFTED) {
+    return cause?.wireSafe === true
+      ? toolError(stateCode, typeof cause.message === 'string' ? cause.message : null, cause.detail ?? null, typeof cause.field === 'string' ? cause.field : null)
+      : toolError(stateCode);
+  }
   // Coaching refusals put the triple on the Error ROOT (coachingApplicationError application.mjs /
   // coachingValidationError messages.mjs) — construct the detail object from those root fields.
   // The constructed gracefulPath makes the refusal actionable regardless of which surface renders it.
@@ -1643,7 +1651,11 @@ export class McpFleetServer {
       && (Object.hasOwn(suppliedArgs, 'repoId') || Object.hasOwn(suppliedArgs, 'idempotencyKey'))) {
       try { this._audit('tool_invalid', params.name, {}, 'invalid_arguments'); }
       catch { return protocolResult(id, toolError('temporarily_unavailable')); }
-      return protocolResult(id, toolError('invalid_arguments'));
+      // The refusal names the field and the rule: on a bound surface the server derives these.
+      const bound = ['repoId', 'idempotencyKey'].filter((field) => Object.hasOwn(suppliedArgs, field));
+      return protocolResult(id, toolError('invalid_arguments',
+        `${bound.join(' and ')} ${bound.length === 1 ? 'is' : 'are'} bound by the server on this surface and must not be supplied`,
+        { boundFields: bound }, bound[0]));
     }
     if (this.bindApplicationContext
       && !(typeof id === 'string' && id.length > 0 && Buffer.byteLength(id) <= 256)
@@ -1723,7 +1735,11 @@ export class McpFleetServer {
         )) {
         try { this._audit('tool_refused', params.name, args, 'forbidden'); }
         catch { return protocolResult(id, toolError('temporarily_unavailable')); }
-        return protocolResult(id, toolError('forbidden'));
+        const required = Array.isArray(semanticAuthority?.requiredCapabilities) ? [...semanticAuthority.requiredCapabilities].sort() : null;
+        const missing = required ? required.filter((capability) => !this.principal.capabilities.includes(capability)) : null;
+        return protocolResult(id, toolError('forbidden',
+          required ? `this principal lacks the ${missing.join(', ')} capability the action requires` : 'the action authority named no capabilities',
+          { required, held: [...this.principal.capabilities].sort(), missing }));
       }
     }
     // MCP-W3 (mcp-packaging-decisions v1.0): deployment.doctor is quota-free — it is the

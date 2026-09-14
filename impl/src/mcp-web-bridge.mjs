@@ -48,8 +48,10 @@ const MUTATIONS = new Set([
 ]);
 const SAFE_RUN_ID = /^[A-Za-z0-9._:-]{1,256}$/u;
 
-function bridgeError(message, code = 'application_unavailable') {
-  return Object.assign(new Error(message), { code });
+// Bridge refusals are composed here, never copied from a provider or an exception, so they are
+// safe to forward on the MCP wire verbatim (`wireSafe`); the northbound keeps unmarked text off it.
+function bridgeError(message, code = 'application_unavailable', detail = null) {
+  return Object.assign(new Error(message), { code, wireSafe: true, ...(detail == null ? {} : { detail }) });
 }
 
 function clone(value) { return value == null ? value : JSON.parse(JSON.stringify(value)); }
@@ -118,6 +120,20 @@ export class BatonWebApplicationFacade {
 
   principal() { return Object.freeze(clone(this._principal)); }
 
+  /** #227's authority, applied: the resident's wire card admits a command, not a hand-kept list.
+   * ORDINARY_COMMANDS stays the floor the constructor requires of every card; anything else the
+   * card advertises (the swarm family, and whatever the registry grows next) is forwarded the
+   * same way. shutdown is host-side lifecycle and is never proxied. */
+  _admits(name) {
+    return typeof name === 'string' && name !== 'application.shutdown'
+      && (ORDINARY_COMMANDS.includes(name) || this._card.commands.includes(name));
+  }
+
+  _notAdmitted(name) {
+    return bridgeError(`Remote Baton MCP command authority is invalid: ${typeof name === 'string' ? name : '(non-string command)'} is not admitted by the resident wire card`,
+      'application_unauthorized', { command: typeof name === 'string' ? name : null, admitted: false });
+  }
+
   async _attestSession(principal) {
     if (!validPrincipal(principal, this._principal)) {
       throw bridgeError('Remote Baton MCP principal is invalid', 'application_unauthorized');
@@ -166,7 +182,8 @@ export class BatonWebApplicationFacade {
   }
 
   async authorizeReplay(name, args, principal, context) {
-    if (!ORDINARY_COMMANDS.includes(name) || !validContext(context)) {
+    if (!this._admits(name)) throw this._notAdmitted(name);
+    if (!validContext(context)) {
       throw bridgeError('Remote Baton MCP replay authority is invalid', 'application_unauthorized');
     }
     await this._attestSession(principal);
@@ -227,8 +244,9 @@ export class BatonWebApplicationFacade {
   }
 
   async command(name, args, principal, context) {
-    if (!ORDINARY_COMMANDS.includes(name) || name === 'application.shutdown' || !validContext(context)) {
-      throw bridgeError('Remote Baton MCP command authority is invalid', 'application_unauthorized');
+    if (!this._admits(name)) throw this._notAdmitted(name);
+    if (!validContext(context)) {
+      throw bridgeError('Remote Baton MCP command authority is invalid: the call context is malformed', 'application_unauthorized');
     }
     await this._attestSession(principal);
     const idempotencyKey = MUTATIONS.has(name)
