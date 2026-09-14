@@ -11679,6 +11679,293 @@
           ]
         }
       ]
+    },
+    {
+      "file": "impl/src/swarm-runtime.mjs",
+      "class": "SwarmRuntime",
+      "members": [
+        {
+          "name": "constructor",
+          "ordinal": 0,
+          "size": 5,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "_swarm",
+          "ordinal": 0,
+          "size": 5,
+          "seam": "admission",
+          "evidence": [
+            "admission:swarm_refusal"
+          ]
+        },
+        {
+          "name": "_memberOf",
+          "ordinal": 0,
+          "size": 11,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "_caller",
+          "ordinal": 0,
+          "size": 8,
+          "seam": "admission",
+          "evidence": [
+            "admission:swarm_refusal"
+          ]
+        },
+        {
+          "name": "_permit",
+          "ordinal": 0,
+          "size": 9,
+          "seam": "admission",
+          "evidence": [
+            "admission:swarm_refusal"
+          ]
+        },
+        {
+          "name": "_updatePermission",
+          "ordinal": 0,
+          "size": 8,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "_participant",
+          "ordinal": 0,
+          "size": 5,
+          "seam": "admission",
+          "evidence": [
+            "admission:swarm_refusal"
+          ]
+        },
+        {
+          "name": "_worker",
+          "ordinal": 0,
+          "size": 9,
+          "seam": "admission",
+          "evidence": [
+            "admission:swarm_refusal"
+          ]
+        },
+        {
+          "name": "_sharedWorkspace",
+          "ordinal": 0,
+          "size": 23,
+          "seam": "admission",
+          "evidence": [
+            "admission:swarm_refusal"
+          ]
+        },
+        {
+          "name": "_actorOf",
+          "ordinal": 0,
+          "size": 3,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "_write",
+          "ordinal": 0,
+          "size": 3,
+          "seam": "observation",
+          "evidence": [
+            "observation:record_name"
+          ]
+        },
+        {
+          "name": "_operationKey",
+          "ordinal": 0,
+          "size": 3,
+          "seam": "observation",
+          "evidence": [
+            "observation:key_name"
+          ]
+        },
+        {
+          "name": "_once",
+          "ordinal": 0,
+          "size": 39,
+          "seam": "recovery",
+          "evidence": [
+            "admission:swarm_refusal",
+            "recovery:operation_lifecycle"
+          ]
+        },
+        {
+          "name": "_workerFor",
+          "ordinal": 0,
+          "size": 4,
+          "seam": "observation",
+          "evidence": [
+            "observation:key_name"
+          ]
+        },
+        {
+          "name": "_acceptedContribution",
+          "ordinal": 0,
+          "size": 6,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "_workEvidence",
+          "ordinal": 0,
+          "size": 13,
+          "seam": "observation",
+          "evidence": [
+            "observation:projection_name"
+          ]
+        },
+        {
+          "name": "_subtreeOf",
+          "ordinal": 0,
+          "size": 13,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "_delegations",
+          "ordinal": 0,
+          "size": 25,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "inspect",
+          "ordinal": 0,
+          "size": 311,
+          "seam": "observation",
+          "evidence": [
+            "observation:swarm_attention_rows"
+          ]
+        },
+        {
+          "name": "close",
+          "ordinal": 0,
+          "size": 3,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "_watch",
+          "ordinal": 0,
+          "size": 52,
+          "seam": "admission",
+          "evidence": [
+            "admission:swarm_refusal"
+          ]
+        },
+        {
+          "name": "_requireCompletionEvidence",
+          "ordinal": 0,
+          "size": 23,
+          "seam": "admission",
+          "evidence": [
+            "admission:guard_name",
+            "observation:projection_name",
+            "admission:swarm_refusal"
+          ]
+        },
+        {
+          "name": "_holderRelease",
+          "ordinal": 0,
+          "size": 64,
+          "seam": "admission",
+          "evidence": [
+            "admission:swarm_refusal"
+          ]
+        },
+        {
+          "name": "command",
+          "ordinal": 0,
+          "size": 13,
+          "seam": "effect",
+          "evidence": [
+            "delegates:effect",
+            "delegates:admission",
+            "delegates:recovery"
+          ]
+        },
+        {
+          "name": "_recordRefusal",
+          "ordinal": 0,
+          "size": 24,
+          "seam": "admission",
+          "evidence": [
+            "admission:refusal_name",
+            "observation:record_name"
+          ]
+        },
+        {
+          "name": "_recordOperationCompleted",
+          "ordinal": 0,
+          "size": 5,
+          "seam": "observation",
+          "evidence": [
+            "observation:record_name"
+          ]
+        },
+        {
+          "name": "_settleOperation",
+          "ordinal": 0,
+          "size": 13,
+          "seam": "recovery",
+          "evidence": [
+            "observation:record_name",
+            "recovery:operation_lifecycle"
+          ]
+        },
+        {
+          "name": "_attributedParticipant",
+          "ordinal": 0,
+          "size": 6,
+          "seam": "admission",
+          "evidence": [
+            "delegates:admission"
+          ]
+        },
+        {
+          "name": "_recordBridgeRefusal",
+          "ordinal": 0,
+          "size": 24,
+          "seam": "admission",
+          "evidence": [
+            "admission:refusal_name",
+            "observation:record_name",
+            "admission:swarm_refusal"
+          ]
+        },
+        {
+          "name": "_dispatch",
+          "ordinal": 0,
+          "size": 242,
+          "seam": "effect",
+          "evidence": [
+            "effect:action_verb",
+            "admission:authority_check",
+            "admission:swarm_refusal"
+          ]
+        }
+      ]
     }
   ]
 }

@@ -3,7 +3,7 @@
 import { execFileSync, spawn } from 'node:child_process';
 import { readdirSync } from 'node:fs';
 import { availableParallelism } from 'node:os';
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -18,8 +18,35 @@ import {
 import { sweepStaleSuiteRoots, writeSuiteOwnerReceipt } from './suite-hygiene.mjs';
 import { runSurfaceGate } from './surface-gate.mjs';
 import {
-  computeVerdict, createProgressDeadline, formatVerdict, isHang, loadExpectedRed, rowKey, writeExpectedRed,
+  computeVerdict, createProgressDeadline, environmentPrerequisites, formatVerdict, isHang,
+  loadExpectedRed, planExpectedRedRewrite, verdictDocument, writeExpectedRed,
 } from './suite-verdict.mjs';
+
+// 2026-09-14 audit R-1: the prerequisites a run needs from ITS MACHINE are derived from the ONE
+// declaration the deployment doctor and route readiness use — the served route registry and the
+// omp route-readiness derivation in impl/src/application-deployment.mjs — never a second list of
+// paths here. A clone-hosted or credential-less host therefore reports which prerequisite was
+// absent instead of leaving a reader to guess why rows went red.
+const {
+  DEFAULT_BATON_DEPLOYMENT_ROUTES, KIMI_THROUGH_CLAUDE_ROUTE,
+  ompProviderKeyFile, ompRouteReadiness, routeReadinessContract,
+} = await import(new URL('../src/application-deployment.mjs', import.meta.url).href);
+
+/** The machine-local prerequisites this run observed, named by the readiness declaration. */
+function suiteEnvironment(repoRootPath) {
+  const routes = [...DEFAULT_BATON_DEPLOYMENT_ROUTES];
+  const conditionalServed = routes.some((route) => (
+    route.harness === KIMI_THROUGH_CLAUDE_ROUTE.harness
+    && route.provider === KIMI_THROUGH_CLAUDE_ROUTE.provider
+    && route.model === KIMI_THROUGH_CLAUDE_ROUTE.model));
+  if (!conditionalServed) routes.push(KIMI_THROUGH_CLAUDE_ROUTE);
+  return environmentPrerequisites({
+    routes,
+    routeReadiness: (route) => ompRouteReadiness(repoRootPath, route.model),
+    providerKeyFile: ompProviderKeyFile,
+    readinessContract: routeReadinessContract,
+  });
+}
 
 // Issue #42: a time-bomb fixture must be red on the author's machine the moment it is written,
 // not hours after merge when wall time crosses its literal.
@@ -125,7 +152,15 @@ const signalStatus = { SIGINT: 130, SIGTERM: 143, SIGKILL: 137 };
 // availableParallelism()-1 files at once; the process-heavy files of suite-lanes.json run one
 // at a time afterwards. Explicit file arguments run through the same scheduler; any other
 // node --test option (--watch, --test-name-pattern, …) keeps the legacy passthrough.
-const passthroughArgs = process.argv.slice(2).filter((arg) => arg !== '--write-expected-red');
+// 2026-09-14 audit S-G2/S-I6: a rewritten manifest row must carry a reason, so a rewrite that
+// meets a row it has never listed needs one declared for it — the flag fills the manifest's own
+// `reason` field, and its absence refuses the write instead of recording a silent placeholder.
+const reasonFlagIndex = process.argv.indexOf('--expected-red-reason');
+const expectedRedReason = reasonFlagIndex === -1 ? null : (process.argv[reasonFlagIndex + 1] ?? null);
+const runnerFlags = new Set(['--write-expected-red', '--expected-red-reason']);
+const passthroughArgs = process.argv.slice(2).filter((arg, index, argv) => (
+  !runnerFlags.has(arg) && !(index > 0 && argv[index - 1] === '--expected-red-reason')
+));
 const writeExpectedRedRequested = process.argv.includes('--write-expected-red');
 const explicitFiles = passthroughArgs.filter((arg) => !arg.startsWith('-'));
 const legacyPassthrough = passthroughArgs.some((arg) => arg.startsWith('-'));
@@ -292,7 +327,7 @@ process.on('SIGINT', () => requestStop('SIGINT'));
 process.on('SIGTERM', () => requestStop('SIGTERM'));
 
 function childEnv(summaryFile) {
-  return {
+  const env = {
     ...process.env,
     BATON_TEST_SUITE_ROOT: suiteRoot,
     BATON_SUITE_WATCHDOG: '1',
@@ -300,6 +335,13 @@ function childEnv(summaryFile) {
     ...(summaryFile ? { BATON_SUITE_SUMMARY_FILE: summaryFile } : {}),
     TMPDIR: suiteRoot, TMP: suiteRoot, TEMP: suiteRoot,
   };
+  // Each file runs as its OWN process with its own reporter. A NODE_TEST_CONTEXT inherited from
+  // an outer `node --test` (the runner itself driven from a test, as the manifest-guard test does)
+  // would instead make the file report into that outer runner and leave this run's summary file
+  // unwritten — the file then reads as "exited without reporting". The child's context is this
+  // run's, never the caller's.
+  delete env.NODE_TEST_CONTEXT;
+  return env;
 }
 
 /** Run one test file in its own process; resolve with its summary (or a synthesized failure row). */
@@ -415,16 +457,33 @@ if (legacyPassthrough) {
     finish(1, requestedSignal, spawnError, groupReaped);
   } else {
     const summaries = [{ lane: 'suite', passed: results.flatMap((r) => r.passed), failed: results.flatMap((r) => r.failed), stalled: null }];
+    let rewriteRefused = false;
     if (writeExpectedRedRequested) {
-      const rows = summaries[0].failed.filter((row) => !isHang(row) && row.failureType !== 'fileCrashed').map((row) => rowKey(row.file, row.name));
-      const written = writeExpectedRed(manifestPath, rows);
-      process.stderr.write(`baton test runner: wrote ${written.length} expected-red rows to scripts/expected-red-tests.json\n`);
+      const failures = summaries[0].failed.filter((row) => !isHang(row) && row.failureType !== 'fileCrashed');
+      const plan = planExpectedRedRewrite({
+        failures, prior: loadExpectedRed(manifestPath), defaultReason: expectedRedReason,
+      });
+      if (plan.refused) {
+        process.stderr.write(`baton test runner: --write-expected-red refuses to record ${plan.newKeys.length} row(s) with no reason — ${plan.newKeys.join('; ')}\n`);
+        process.stderr.write('baton test runner: declare the reason for newly red rows with --expected-red-reason <reason> (the manifest field is "reason": a GitHub issue like #263, the audit item that tracks it like S-G5, or a class: credential | environment | design | unattributed)\n');
+        rewriteRefused = true;
+      } else {
+        const written = writeExpectedRed(manifestPath, { rows: plan.kept, converged: plan.converged });
+        process.stderr.write(`baton test runner: wrote ${written.rows.length} expected-red rows to scripts/expected-red-tests.json (kept ${plan.kept.length - plan.newKeys.length} reasons, dropped ${plan.dropped.length} now-green rows${plan.newKeys.length > 0 ? `, ${plan.newKeys.length} new rows reasoned ${expectedRedReason}` : ''})\n`);
+      }
     }
-    const manifest = loadExpectedRed(manifestPath);
-    const verdict = computeVerdict(summaries, manifest);
-    // An explicit partial run cannot judge rows it never ran.
-    const judged = explicitFiles.length > 0 ? { ...verdict, unseen: [], green: verdict.unexpected.length === 0 && verdict.stale.length === 0 && verdict.hung.length === 0 } : verdict;
-    process.stderr.write(`${formatVerdict(judged)}\n`);
-    finish(judged.green ? 0 : 1, null, null, true);
+    if (rewriteRefused) {
+      finish(1, null, null, true);
+    } else {
+      const manifest = loadExpectedRed(manifestPath);
+      const verdict = computeVerdict(summaries, manifest, { environment: suiteEnvironment(fileURLToPath(repositoryRoot)) });
+      // An explicit partial run cannot judge rows it never ran.
+      const judged = explicitFiles.length > 0 ? { ...verdict, unseen: [], green: verdict.unexpected.length === 0 && verdict.stale.length === 0 && verdict.hung.length === 0 } : verdict;
+      process.stderr.write(`${formatVerdict(judged)}\n`);
+      if (process.env.BATON_SUITE_VERDICT_FILE) {
+        writeFileSync(process.env.BATON_SUITE_VERDICT_FILE, `${JSON.stringify(verdictDocument(judged), null, 2)}\n`);
+      }
+      finish(judged.green ? 0 : 1, null, null, true);
+    }
   }
 }
