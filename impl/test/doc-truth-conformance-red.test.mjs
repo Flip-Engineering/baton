@@ -26,6 +26,7 @@ import { APPLICATION_COMMAND_DEFINITIONS } from '../src/application.mjs';
 import { CLI_WEB_COMMANDS, parseBatonCli } from '../src/application-cli.mjs';
 import { APPLICATION_SEMANTIC_REGISTRY, applicationOperationAliasMap } from '../src/application-semantics.mjs';
 import { McpFleetServer, mcpCombinedToolNames } from '../src/mcp-northbound.mjs';
+import { webCardCommands } from '../scripts/surface-truth.mjs';
 import { buildSurfaceInventoryArtifact, checkSurfaceInventoryArtifact, instantiateProfileInventory } from '../scripts/surface-conformance.mjs';
 import { servedCliOrdinaryKeys } from '../scripts/render-surface-docs.mjs';
 
@@ -34,55 +35,6 @@ const conformanceScript = fileURLToPath(
   new URL('../scripts/surface-conformance.mjs', import.meta.url),
 );
 
-// ── pinned ground truth: the card-advertised web.bus admission (31 dot names, ACTUAL order) ─────
-// Pinned card projection: the 31 pre-swarm names plus the ten docs/39 swarm.* verbs (41).
-const WEB_BUS_DOT_NAMES_31 = [
-  'application.help',
-  'run.act',
-  'run.adopt',
-  'run.answer',
-  'run.approve',
-  'run.episode',
-  'run.evidence',
-  'run.export',
-  'run.feedback',
-  'run.follow',
-  'run.inspect',
-  'run.integrate',
-  'run.recover',
-  'run.resume_work',
-  'run.retry_verification',
-  'run.review',
-  'run.start',
-  'run.status',
-  'run.stop',
-  'run.wait',
-  'run.workstream.notify',
-  'run.workstream.stop',
-  'run.workstreams',
-  'runs.list',
-  'swarm.capture',
-  'swarm.check',
-  'swarm.create',
-  'swarm.guide',
-  'swarm.list',
-  'swarm.recruit',
-  'swarm.stop',
-  'swarm.update',
-  'swarm.view',
-  'swarm.watch',
-  'waves.attach',
-  'waves.list',
-  'waves.progress',
-  'waves.run',
-  'waves.send',
-  'waves.start',
-  'waves.stop',
-];
-
-// The six web wave direct ports (web-northbound.mjs:37-47) — the D2 admission must equal
-// (web-admitted APPLICATION_COMMAND_DEFINITIONS names) ∪ (these wave verbs).
-const WAVE_WEB_VERBS = ['waves.start', 'waves.progress', 'waves.send', 'waves.stop', 'waves.list', 'waves.run'];
 
 // The eight facade ports (application-cli.mjs:29-31) — whitelisted for the CLI, refused on the
 // web surface, unledgered at HEAD (R7).
@@ -312,16 +264,23 @@ test('R1 (run-watch-documented-but-unparsed): run.watch is served AND its exampl
 // ── R2 (D1 web leg / G7): the web.bus inventory equals the card's advertised set ────────────────
 
 test('R2 (web-bus-inventory-undercount): web.bus inventory equals the card AND derives from the D1 admission accessor', () => {
+  // The six web wave direct ports (web-northbound.mjs:37-47).
+  const WAVE_DIRECT_PORT_VERBS = ['waves.start', 'waves.progress', 'waves.send', 'waves.stop', 'waves.list', 'waves.run'];
   // The card's advertised set — the web-admitted application command names ∪ the wave direct ports
-  // (the `application.commands` names the card spreads at web-northbound.mjs:1521).
+  // (the `application.commands` names the card spreads at web-northbound.mjs:1521) — derives in
+  // ONE place (surface-truth.webCardCommands); the committed inventory artifact carries the
+  // byte-stability witness the pinned literal used to.
   const card = [
     ...Object.entries(APPLICATION_COMMAND_DEFINITIONS).filter(([, d]) => d.web).map(([name]) => name),
-    ...WAVE_WEB_VERBS,
+    ...WAVE_DIRECT_PORT_VERBS,
   ].sort();
-  assert.deepEqual(card, WEB_BUS_DOT_NAMES_31, 'R2: the card projection matches the pinned 31');
+  assert.deepEqual(card, webCardCommands(), 'R2: the card projection matches the derived web card');
+  const committed = JSON.parse(readFileSync(new URL('../scripts/surface-inventory-artifact.json', import.meta.url), 'utf8'));
+  assert.deepEqual(webCardCommands(), committed.profiles['web.bus'],
+    'R2: the derived web card is byte-stable against the committed web.bus profile');
   const inventory = instantiateProfileInventory('web.bus');
-  assert.deepEqual(inventory.names, WEB_BUS_DOT_NAMES_31,
-    `R2 (web-bus-inventory-undercount): web.bus inventory (${inventory.names.length}) must equal the 31-name card`);
+  assert.deepEqual(inventory.names, webCardCommands(),
+    `R2 (web-bus-inventory-undercount): web.bus inventory (${inventory.names.length}) must equal the derived card`);
   // D2 single-source law: webBusNames() must DERIVE from the D1 webBusAdmittedCommandNames()
   // accessor (the card's admission source), not from a hand-written literal — a hardcoded
   // 31-name literal or an append of the six wave verbs fails this source pin.
@@ -388,7 +347,7 @@ test('R5 (cli-example-shape-leg-red): every served row compiles its Example AND 
   // Containment law: every served row resolves into the CLI web whitelist ∪ the web card (via the
   // alias map). run.debug is host-local and run.send is a semantic-action CLI verb — neither is a
   // web-served row, so both are legitimately outside the whitelist.
-  const whitelist = new Set([...CLI_WEB_COMMANDS, ...WEB_BUS_DOT_NAMES_31]);
+  const whitelist = new Set([...CLI_WEB_COMMANDS, ...webCardCommands()]);
   for (const key of served) {
     if (key === 'run.debug' || key === 'run.send') continue;
     assert.ok(whitelist.has(key) || whitelist.has(canon(key)),
@@ -445,7 +404,7 @@ test('R6 (cli-run-steer-prose-live): CLI.md teaches no run steer command (any sp
 // ── R7 (D3 #3): every whitelisted CLI name is web-admitted or ledgered ─────────────────────────
 
 test('R7 (facade-ports-unledgered): every CLI_WEB_COMMANDS name is web-admitted or ledgered, and ledger rows are full shape', () => {
-  const card = new Set(WEB_BUS_DOT_NAMES_31);
+  const card = new Set(webCardCommands());
   const ledger = JSON.parse(readFileSync(new URL('../scripts/surface-divergence-ledger.json', import.meta.url), 'utf8'));
   assert.equal(ledger.schemaVersion, 1, 'R7: the divergence ledger declares schemaVersion 1');
   assert.ok(Array.isArray(ledger.entries), 'R7: the divergence ledger carries an entries array');
@@ -583,10 +542,7 @@ test('R11 (artifact-counts-stale): committed artifact counts match the admission
   const artifact = JSON.parse(readFileSync(new URL('../scripts/surface-inventory-artifact.json', import.meta.url), 'utf8'));
   // Leg 1 — webBusCommands ties to the R2 card derivation (the 31-name admission), not a separate
   // count.
-  const card = new Set([
-    ...Object.entries(APPLICATION_COMMAND_DEFINITIONS).filter(([, d]) => d.web).map(([name]) => name),
-    ...WAVE_WEB_VERBS,
-  ]);
+  const card = new Set([...webCardCommands()]);
   if (artifact.counts.webBusCommands !== card.size) {
     failures.push(`webBusCommands ${artifact.counts.webBusCommands} ≠ card admission ${card.size}`);
   }

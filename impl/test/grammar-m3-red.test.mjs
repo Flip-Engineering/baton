@@ -19,6 +19,7 @@ import {
   parseBatonCli,
 } from '../src/index.mjs';
 import { applicationOperationAliasMap } from '../src/application-semantics.mjs';
+import { BYTE_STABLE_COMMAND_KEYS } from '../scripts/surface-truth.mjs';
 import { createWave } from '../src/wave.mjs';
 import {
   CANONICAL_OPERATIONS,
@@ -29,21 +30,9 @@ import {
 const ledgerUrl = new URL('../scripts/surface-divergence-ledger.json', import.meta.url);
 const ledger = JSON.parse(readFileSync(ledgerUrl, 'utf8'));
 
-// The pre-M3 legacy transport inventory — the M3 consolidation must not add or rename a single
-// transport name (UA5 byte-stability; the flips are dispatch-layer only until M4).
-// docs/39: the living-swarm verbs lead the table ahead of the byte-stable pre-M3 set.
-const SWARM_COMMANDS = Object.freeze([
-  'swarm.list', 'swarm.create', 'swarm.view', 'swarm.watch', 'swarm.update',
-  'swarm.recruit', 'swarm.guide', 'swarm.capture', 'swarm.check', 'swarm.stop',
-]);
-const COMMANDS_BEFORE_M3 = Object.freeze([
-  'application.help', 'runs.list', 'run.start', 'run.inspect', 'run.episode',
-  'run.workstreams', 'run.workstream.notify', 'run.workstream.stop', 'run.act',
-  'run.status', 'run.follow', 'run.approve', 'run.wait', 'run.answer', 'run.feedback',
-  'run.stop', 'run.evidence', 'run.adopt', 'run.retry_verification',
-  'run.resume_work', 'run.review', 'run.integrate', 'run.export', 'run.recover',
-  'waves.attach', 'application.shutdown',
-]);
+// The byte-stable command-table pin (UA5 / docs/39): the swarm verbs lead, then the pre-M3 set.
+// The witness is committed in ONE place — surface-truth.BYTE_STABLE_COMMAND_KEYS — instead of a
+// literal retyped into this test (issue #261).
 
 const PRINCIPAL = Object.freeze({
   actor: 'direct:grammar-user', principalId: 'grammar-user', sessionId: 'grammar-session',
@@ -266,7 +255,8 @@ test('M3-8: the ledger stays monotone and valid and every transport name is byte
 
   // No transport name changed: the legacy command table is byte-identical and the new canonical
   // names resolve only in the dispatch-layer alias map, never as command definitions.
-  assert.deepEqual(Object.keys(APPLICATION_COMMAND_DEFINITIONS), [...SWARM_COMMANDS, ...COMMANDS_BEFORE_M3]);
+  assert.deepEqual(Object.keys(APPLICATION_COMMAND_DEFINITIONS), BYTE_STABLE_COMMAND_KEYS,
+    'the swarm verbs lead and the pre-M3 set stays byte-stable — a dropped, reordered, or added table row breaks the deepEqual (UA5/F8)');
   for (const canonical of ['run.view', 'run.watch', 'run.member.view', 'run.member.send',
     'run.member.interrupt', 'run.member.stop']) {
     assert.equal(Object.hasOwn(APPLICATION_COMMAND_DEFINITIONS, canonical), false, canonical);
