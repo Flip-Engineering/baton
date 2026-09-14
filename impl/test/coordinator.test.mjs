@@ -2163,3 +2163,22 @@ test('spawn() with an explicit unknown vendor name throws UnknownVendorError', a
   const { coordinator } = setup();
   await assert.rejects(() => coordinator.spawn('does-not-exist', makeBrief()), UnknownVendorError);
 });
+
+// 2026-09-14 audit G-17: a digest page holding only prose (a worker message, a turn summary) is a
+// wake. `_collectDigest` records the page's high-water mark and the next call acks past it, so a
+// page discarded by the wait loop was gone for good.
+test('wait() returns a prose-only digest instead of discarding it and acking past it', async () => {
+  const { coordinator, adapters } = setup();
+  const handle = await coordinator.spawn('mock', makeBrief());
+  adapters.mock.emit({
+    worker: handle.id, harness: 'mock@1.0.0', turnEpoch: 1,
+    kind: 'content.message', actor: 'worker', payload: { text: 'an open question the operator must see' },
+  });
+  await Promise.resolve();
+  await Promise.resolve();
+  const started = Date.now();
+  const digest = await coordinator.wait(5_000);
+  assert.ok(Date.now() - started < 2_500, 'the prose page woke the wait instead of running to the deadline');
+  assert.ok(digest.prose.some((row) => JSON.stringify(row).includes('an open question the operator must see')),
+    'the message is in the returned digest, not lost behind the cursor');
+});

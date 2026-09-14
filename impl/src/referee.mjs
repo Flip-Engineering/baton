@@ -39,13 +39,16 @@ export function prepareVerificationRuntime(policy) {
 }
 
 /** How many verifications a deployment runs at once. Derived from the machine, not chosen: the
- * default verification (the suite) uses every core but one, so the lane count is the cores the
- * machine has divided by the cores one verification takes — one, on any machine with two or
- * more cores. `advanced.verification.concurrency` overrides it for a verification that is known
- * to be lighter. Issue #269: without this, every swarm.check and every run verification spawned
- * its own full suite and three of them drove a load average past 140. */
+ * hub keeps one core for its own event loop (every stop, drain and watchdog deadline is a timer
+ * on that loop, and a starved loop expires them against healthy children), the default
+ * verification (the suite) uses every core but one, so the lane count is the cores left after
+ * the hub's divided by the cores one verification takes — one, on any machine, until
+ * `advanced.verification.concurrency` says a verification is known to be lighter. The 2026-09-14
+ * audit (G-29) caught the previous formula giving a two-core machine two concurrent suites.
+ * Issue #269: without this, every swarm.check and every run verification spawned its own full
+ * suite and three of them drove a load average past 140. */
 export function defaultVerificationConcurrency({ cores = availableParallelism(), verificationCores = Math.max(1, cores - 1) } = {}) {
-  return Math.max(1, Math.floor(cores / Math.max(1, verificationCores)));
+  return Math.max(1, Math.floor(Math.max(1, cores - 1) / Math.max(1, verificationCores)));
 }
 
 /** Wrap a referee so at most `concurrency` verifications run at once; the rest wait in order.
@@ -98,23 +101,36 @@ function looksLikeSimpleCommand(command) {
   return !/[|&;<>`]|\$\(/.test(command);
 }
 
-/** Whitespace-splits `command` into argv, treating a `"`/`'`-delimited span (matched
- * greedily against the LAST occurrence of that quote character in the string) as one
- * literal token — no escape-processing inside it, so an embedded `\"` survives intact
- * for the invoked program's OWN parser (e.g. Node's `-e` argument) to interpret. */
+/** Whitespace-splits `command` into argv, treating a `"`/`'`-delimited span as one literal
+ * token — no escape-processing inside it, so an embedded `\"` survives intact for the invoked
+ * program's OWN parser (e.g. Node's `-e` argument) to interpret. The closing quote is the first
+ * matching quote that ENDS a token (followed by whitespace or the end of the command) and is not
+ * itself escaped; a quote glued to more text, as in `\"hi\")`, or preceded by a backslash, is
+ * content. That is what makes `--grep "foo" --reporter "bar"` two tokens and
+ * `node -e "console.log(\"hi\")"` one. A bare inner quote of the same character followed by a
+ * space (`"a === "b" ? c"`) is ambiguous and closes the span there: use the other quote character
+ * or escape it. The previous rule matched the LAST quote in the whole command, which collapsed
+ * two quoted arguments into one mangled token and ran something other than the receipt said
+ * (2026-09-14 audit, G-19). */
 function tokenize(command) {
   const tokens = [];
   let i = 0;
   const n = command.length;
+  const closingQuote = (ch, from) => {
+    for (let j = from; j < n; j += 1) {
+      if (command[j] === ch && command[j - 1] !== '\\' && (j + 1 >= n || /\s/.test(command[j + 1]))) return j;
+    }
+    return -1;
+  };
   while (i < n) {
     while (i < n && /\s/.test(command[i])) i += 1;
     if (i >= n) break;
     const ch = command[i];
     if (ch === '"' || ch === "'") {
-      const lastQuote = command.lastIndexOf(ch);
-      if (lastQuote > i) {
-        tokens.push(command.slice(i + 1, lastQuote));
-        i = lastQuote + 1;
+      const close = closingQuote(ch, i + 1);
+      if (close > i) {
+        tokens.push(command.slice(i + 1, close));
+        i = close + 1;
         continue;
       }
     }
@@ -176,9 +192,15 @@ function runCommand(command, cwd, timeoutMs, environment, signal = null) {
     };
 
     const wire = () => {
-      child.stdout?.on('data', (d) => chunks.push(d));
-      child.stderr?.on('data', (d) => chunks.push(d));
-      child.on('error', (err) => {
+      // Every listener belongs to the child generation it was wired on. A direct-exec child
+      // that failed with ENOENT still emits `close` (with -2) AFTER its `error`; before the
+      // 2026-09-14 audit (G-18) that stale close settled the promise as a candidate failure
+      // (`verification_exit_mismatch`) before the shell fallback ran a single byte.
+      const current = child;
+      current.stdout?.on('data', (d) => { if (current === child) chunks.push(d); });
+      current.stderr?.on('data', (d) => { if (current === child) chunks.push(d); });
+      current.on('error', (err) => {
+        if (current !== child) return;
         // The direct-exec path assumed the first token names a real executable on PATH;
         // if that assumption was wrong (ENOENT), fall back to a real shell once.
         if (usingDirect && err && err.code === 'ENOENT') {
@@ -191,7 +213,7 @@ function runCommand(command, cwd, timeoutMs, environment, signal = null) {
         }
         finish(null);
       });
-      child.on('close', (code) => finish(code));
+      current.on('close', (code) => { if (current === child) finish(code); });
     };
 
     armTimer();

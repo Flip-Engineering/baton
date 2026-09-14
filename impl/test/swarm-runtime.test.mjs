@@ -243,3 +243,25 @@ test('native watching does not wake itself through tool and token telemetry', as
   const view = await watching;
   assert.equal(view.participants.find((row) => row.participantId === 'builder').runtime.turn, 'paused');
 });
+
+// 2026-09-14 audit S-E1/S-E2: the membership write is keyed on (swarmId, participantId), so a second
+// recruit of the same name used to be served from the prior event (identical payload: a success
+// receipt for an operation that did not happen) or refused as a REPLAY conflict (different payload).
+// The name collision is now refused by name, naming the existing row's status.
+test('recruiting a participant that already exists is refused by name, whatever the payload', async (t) => {
+  const f = fixture(t);
+  await f.call('create', { purpose: 'Develop Baton using Baton' });
+  await f.recruit('builder');
+  await assert.rejects(f.recruit('builder'), (error) => {
+    assert.equal(error.code, 'swarm_participant_exists');
+    assert.deepEqual(error.detail, { participantId: 'builder', status: 'active' });
+    return true;
+  });
+  await assert.rejects(f.call('recruit', { participantId: 'builder', objective: 'A different objective' }), (error) => {
+    assert.equal(error.code, 'swarm_participant_exists', 'never swarm_replay_conflict: the caller has no idempotency problem');
+    return true;
+  });
+  const view = await f.call('view');
+  assert.equal(view.participants.filter((row) => row.participantId === 'builder').length, 1);
+  assert.equal(f.starts.length, 1, 'no second run was started for the collision');
+});

@@ -102,7 +102,10 @@ test('VR1: coverage and mutation subprocesses use the same closed runtime as the
   const candidate = sandbox('auxiliary-runtime');
   t.after(candidate.cleanup);
   const prepared = runtime();
-  const requiredPath = JSON.stringify(prepared.environment.PATH);
+  // The scripts ride inside a double-quoted span of the pinned command, so the path literal uses
+  // the other quote character: a bare inner `"` followed by a space would end the span (the
+  // referee's tokenizer closes at the first token-ending quote since the 2026-09-14 audit, G-19).
+  const requiredPath = `'${prepared.environment.PATH}'`;
   const coverageScript = `(process.env.HOME ? process.exit(71) : process.env.PATH === ${requiredPath} ? console.log(JSON.stringify({ files: { 'x.js': { executedLines: [1] } } })) : process.exit(71))`;
   const mutationScript = `(process.env.HOME ? process.exit(72) : process.env.PATH === ${requiredPath} ? console.log(JSON.stringify({ killed: 1, total: 1, survived: [] })) : process.exit(72))`;
   const contract = verification(['-e', 'process.exit(0)'], {

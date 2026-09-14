@@ -228,8 +228,18 @@ function signalGroup(job, signal) {
   try {
     if (detached) process.kill(-job.child.pid, signal);
     else job.child.kill(signal);
+    return true;
   } catch (error) {
-    if (error?.code !== 'ESRCH') throw error;
+    if (error?.code === 'ESRCH') return false;
+    // EPERM is the kernel saying the group (or a member) exists and refuses this signal — a member
+    // that changed uid, or one mid-exit. The liveness probe below already reads EPERM as alive, so
+    // the honest outcome is a recorded refusal on the job and a HUNG row at the deadline, never a
+    // runner crash that loses the whole verdict (2026-09-14 audit, R-4: a worker's suite died here).
+    if (error?.code === 'EPERM') {
+      (job.signalRefused ??= []).push({ signal, code: error.code, at: new Date().toISOString() });
+      return false;
+    }
+    throw error;
   }
 }
 
@@ -318,7 +328,8 @@ async function runFile(file) {
   const elapsed = Date.now() - started;
   const output = Buffer.concat(job.output).toString('utf8');
   const stderr = Buffer.concat(job.stderr).toString('utf8');
-  process.stdout.write(`# file ${file} (${elapsed} ms${job.hung ? ', HUNG' : terminal.code === 0 ? '' : `, exit ${terminal.code ?? terminal.signal}`})\n${output}`);
+  const refused = job.signalRefused ? `, signal refused ${job.signalRefused.map((row) => `${row.signal}:${row.code}`).join('+')}` : '';
+  process.stdout.write(`# file ${file} (${elapsed} ms${job.hung ? ', HUNG' : terminal.code === 0 ? '' : `, exit ${terminal.code ?? terminal.signal}`}${refused})\n${output}`);
   if (stderr.length > 0) process.stderr.write(stderr);
   let summary = null;
   try { summary = JSON.parse(readFileSync(summaryFile, 'utf8')); } catch { summary = null; }

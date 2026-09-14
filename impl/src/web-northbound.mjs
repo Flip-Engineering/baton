@@ -102,8 +102,15 @@ const WAVE_ARG_FIELDS = Object.freeze({
 // ARG_FIELDS follow the rows: the dot spelling accepts exactly its transport's closed set.
 const WAVE_DOT_WEB_ENTRIES = Object.freeze(WAVE_WEB_ENTRIES
   .map(([transport, name, capabilities]) => [name, name, capabilities]));
+// #158 (H2.1): the closed {runId, scope, kind, body, idempotencyKey} accepted set — the D2.1
+// verb closure, exactly the fields the folded append verb admits on every surface. Declared once
+// here because the append rides WAVE_WEB_ENTRIES as a direct port, so its dot spelling derives
+// through the same map as the wave verbs (before the 2026-09-14 audit, U-E4, the dot spelling
+// mapped to `undefined` and the validator crashed on `.has`).
+const SCRATCHPAD_APPEND_ARG_FIELDS = new Set(['runId', 'scope', 'kind', 'body', 'idempotencyKey']);
+const DIRECT_PORT_ARG_FIELDS = Object.freeze({ ...WAVE_ARG_FIELDS, run_scratchpad_append: SCRATCHPAD_APPEND_ARG_FIELDS });
 const WAVE_DOT_ARG_FIELDS = Object.freeze(Object.fromEntries(
-  WAVE_WEB_ENTRIES.map(([transport, name]) => [name, WAVE_ARG_FIELDS[transport]]),
+  WAVE_WEB_ENTRIES.map(([transport, name]) => [name, DIRECT_PORT_ARG_FIELDS[transport]]),
 ));
 // Issue #233: deployment.doctor on the web lane — the measured surface split (MCP admitted it
 // as baton_deployment_doctor; the web wire 404'd). Both spellings derive through the ONE seam
@@ -200,9 +207,7 @@ const ARG_FIELDS = Object.freeze({
   plan_propose: new Set(['goal', 'predecessor', 'nodes']),
   plan_approve: new Set(['goal', 'plan', 'expectedDisposition', 'disposition']),
   goal_plan_status: new Set(['goalId', 'goalVersion', 'goalDigest', 'planId', 'planVersion', 'planDigest', 'throughSeq']),
-  // #158 (H2.1): the closed {runId, scope, kind, body, idempotencyKey} accepted set — the D2.1
-  // verb closure, exactly the fields the folded append verb admits on every surface.
-  run_scratchpad_append: new Set(['runId', 'scope', 'kind', 'body', 'idempotencyKey']),
+  run_scratchpad_append: SCRATCHPAD_APPEND_ARG_FIELDS,
   ...Object.fromEntries(WEB_APPLICATION_ENTRIES.map(([transport, name, definition]) => [
     transport, advertisedArgs(definition, name),
   ])),
@@ -211,6 +216,11 @@ const ARG_FIELDS = Object.freeze({
   ])),
   ...Object.fromEntries(Object.entries(WAVE_ARG_FIELDS)),
   ...Object.fromEntries(Object.entries(WAVE_DOT_ARG_FIELDS)),
+  // #233: deployment.doctor's argument authority is the closed empty set, on both spellings. It
+  // was declared (DEPLOYMENT_ARG_FIELDS) and never spread, so a doctor envelope carrying any arg
+  // crashed the validator on `undefined.has` and the unhandled rejection killed the resident
+  // (2026-09-14 audit, U-E4).
+  ...Object.fromEntries(Object.entries(DEPLOYMENT_ARG_FIELDS)),
   // #227/#233: the workflow-eight direct ports carry their closed application-side argument
   // authority (the application.mjs normalizers); the advertised/accepted set is empty here —
   // validateEnvelope skips validateApplicationCommandArgs for direct ports.
@@ -226,6 +236,15 @@ const ACCEPTED_ARG_FIELDS = Object.freeze({
     transport, acceptedArgs(definition, name),
   ])),
 });
+// Every admitted command has an accepted-field set, or the validator would crash on the first
+// envelope naming that command with any argument at all. Asserted at load so a new admission row
+// without its field row is a startup refusal naming the command, never a resident-killing
+// rejection at request time (2026-09-14 audit, U-E4 / U-I4).
+{
+  const unfielded = Object.keys(COMMAND_CAPABILITY)
+    .filter((command) => !((ACCEPTED_ARG_FIELDS[command] ?? ARG_FIELDS[command]) instanceof Set));
+  if (unfielded.length) throw new Error(`web-admitted commands without an accepted-field set: ${unfielded.join(', ')}`);
+}
 const APPLICATION_COMMAND = Object.freeze({
   ...Object.fromEntries(
     [...WEB_APPLICATION_ENTRIES, ...CANONICAL_WEB_ENTRIES, ...WAVE_WEB_ENTRIES,
@@ -1691,10 +1710,20 @@ export class WebNorthbound {
       return this._write(res, error(cause?.code === 'body_too_large' ? 413 : 400, 'invalid_command'), origin);
     }
     if (!this._admissionOpen()) return this._write(res, error(503, 'temporarily_unavailable'), origin);
-    const response = await this.execute({
-      principal, origin, csrfToken: req.headers['x-baton-csrf'] ?? null,
-      remoteAddress: req.edgeAddressDigest ? 'canonical' : (req.socket?.remoteAddress ?? null), addressDigest: req.edgeAddressDigest ?? null, transport: req.edgeIdentity?.transport ?? (req.socket?.encrypted ? 'https' : 'http'),
-    }, envelope);
+    let response;
+    try {
+      response = await this.execute({
+        principal, origin, csrfToken: req.headers['x-baton-csrf'] ?? null,
+        remoteAddress: req.edgeAddressDigest ? 'canonical' : (req.socket?.remoteAddress ?? null), addressDigest: req.edgeAddressDigest ?? null, transport: req.edgeIdentity?.transport ?? (req.socket?.encrypted ? 'https' : 'http'),
+      }, envelope);
+    } catch (cause) {
+      // The one failure boundary of the northbound entry: a defect anywhere under execute() is a
+      // 500 for THIS request, never an unhandled rejection that ends the resident for every other
+      // agent in the session (2026-09-14 audit, U-E4 / U-I5). The code says "our defect", not
+      // "retry later": nothing about the request would succeed on retry.
+      response = error(500, 'command_dispatch_failed', 'command dispatch failed inside the resident');
+      response.body.error.detail = { cause: { code: cause?.code ?? null, message: typeof cause?.message === 'string' ? cause.message : String(cause) } };
+    }
     return this._write(res, response, origin);
   }
 

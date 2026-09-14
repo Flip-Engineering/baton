@@ -13019,7 +13019,11 @@ export class Coordinator {
     this._assertReadable();
     let digest = this._collectDigest();
 
-    while (digest.attention.length === 0 && digest.facts.length === 0 && Date.now() < deadline) {
+    // Prose is a wake too: `_collectDigest` records the page's high-water mark and the NEXT call
+    // acks past it, so a page discarded here would be gone for good (Cursor's contract in
+    // log.mjs says a dropped page can drop a worker's unanswered question; 2026-09-14 audit G-17).
+    while (digest.attention.length === 0 && digest.facts.length === 0 && digest.prose.length === 0
+      && Date.now() < deadline) {
       const remaining = deadline - Date.now();
       if (remaining <= 0) break;
       await this._sleep(Math.min(this._waitPollMs, remaining));

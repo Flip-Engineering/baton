@@ -3490,7 +3490,7 @@
         {
           "name": "wait",
           "ordinal": 0,
-          "size": 21,
+          "size": 25,
           "seam": "admission",
           "evidence": [
             "admission:policy_gate"

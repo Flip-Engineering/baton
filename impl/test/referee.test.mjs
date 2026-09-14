@@ -620,10 +620,40 @@ test('withVerificationLane runs at most `concurrency` verifications at once, in 
 
 test('the verification lane count is derived from the machine and only overridden explicitly', () => {
   assert.equal(defaultVerificationConcurrency({ cores: 8 }), 1, 'the suite takes every core but one, so one lane');
-  assert.equal(defaultVerificationConcurrency({ cores: 8, verificationCores: 2 }), 4, 'a lighter verification earns more lanes');
+  assert.equal(defaultVerificationConcurrency({ cores: 8, verificationCores: 2 }), 3, 'a lighter verification earns more lanes, from the cores left after the hub keeps its own');
+  assert.equal(defaultVerificationConcurrency({ cores: 2 }), 1, 'a two-core machine runs one suite, not two (2026-09-14 audit G-29)');
+  assert.equal(defaultVerificationConcurrency({ cores: 3 }), 1);
   assert.equal(defaultVerificationConcurrency({ cores: 1 }), 1);
   assert.ok(withVerificationLane(async () => 'x').lane.concurrency >= 1, 'the default lane count is a positive integer on this machine');
   assert.throws(() => withVerificationLane(async () => 'x', { concurrency: 0 }), /positive safe integer/u);
   assert.throws(() => withVerificationLane(async () => 'x', { concurrency: 1.5 }), /positive safe integer/u);
   assert.throws(() => withVerificationLane('not a function'), /requires a referee function/u);
+});
+
+// 2026-09-14 audit G-19: the pinned command's quoted spans are tokenized at the nearest quote that
+// ends a token, so two quoted arguments stay two arguments. Under the previous last-quote rule this
+// command became `sh -c 'exit $1" sh "3'`, a syntax error blamed on the candidate.
+test('two quoted arguments in a pinned command are two argv entries, and the receipt runs what it says', async (t) => {
+  const sandbox = makeSandbox();
+  t.after(() => sandbox.cleanup());
+  const command = 'sh -c "exit $1" sh "3"';
+  const task = makeTask({ verification: { command, expectExit: 3 } });
+  const result = makeResult({ verification: { command, claimedExit: 3 } });
+  const verdict = await verify(task, result, sandbox);
+  assert.equal(verdict.observedExit, 3, 'the shell received `exit $1` and `3` as separate arguments');
+  assert.equal(verdict.passed, true);
+});
+
+// 2026-09-14 audit G-18: a first token that is not an executable on the deployment PATH (a shell
+// builtin here) falls back to a real shell, and the abandoned direct-exec child's late `close`
+// (-2) no longer settles the verdict as a candidate failure before the shell runs.
+test('a pinned command whose first token is a shell builtin is judged by the shell fallback, not by the dead direct-exec child', async (t) => {
+  const sandbox = makeSandbox();
+  t.after(() => sandbox.cleanup());
+  const command = 'command -v sh';
+  const task = makeTask({ verification: { command, expectExit: 0 } });
+  const result = makeResult({ verification: { command, claimedExit: 0 } });
+  const verdict = await verify(task, result, sandbox);
+  assert.equal(verdict.observedExit, 0, 'the shell fallback ran the builtin');
+  assert.equal(verdict.passed, true);
 });

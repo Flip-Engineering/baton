@@ -1,4 +1,4 @@
-import { validateSwarmCommand } from './swarm-contract.mjs';
+import { SWARM_EVENT_KINDS, validateSwarmCommand } from './swarm-contract.mjs';
 import { createHash } from 'node:crypto';
 import { canonicalJson } from './canonical-order.mjs';
 import { SWARM_EVENT_PAYLOAD_SCHEMAS, SWARM_EVENT_EXAMPLES } from './swarm-event-schemas.mjs';
@@ -26,6 +26,12 @@ const UPDATE_PERMISSIONS = Object.freeze({
   'swarm.contribution_recorded': 'contribute', 'swarm.contribution_reviewed': 'review',
   'swarm.participant_left': 'organize', 'swarm.closed': 'organize',
 });
+// The update table is a third parallel table over the closed event vocabulary; the contract
+// asserts the other two agree at load, and so must this one — otherwise a new kind is admitted
+// by validation and refused here as `swarm_command_unavailable` (2026-09-14 audit S-E10).
+if (Object.keys(UPDATE_PERMISSIONS).sort().join('\0') !== [...SWARM_EVENT_KINDS].sort().join('\0')) {
+  throw new Error('swarm update permissions disagree with the public swarm.update event set');
+}
 const COMMAND_PERMISSIONS = Object.freeze({
   'swarm.view': 'read', 'swarm.watch': 'read', 'swarm.recruit': 'recruit',
   'swarm.guide': 'communicate', 'swarm.capture': 'contribute',
@@ -469,7 +475,10 @@ export class SwarmRuntime {
       const bindings = members.flatMap((member) => member.bindings);
       const taskIds = new Set(bindings.map((binding) => binding.taskId));
       const workerIds = new Set(bindings.map((binding) => binding.workerId));
-      const events = this.store.eventsView().slice(cursor);
+      // seq is 1-based and `cursor` counts the events already seen, so the store's own cursor
+      // form reads exactly the tail — `eventsView()` with no argument copies the whole ledger
+      // per watch iteration (the store calls that the #210 class; 2026-09-14 audit S-E3).
+      const events = this.store.eventsView(cursor + 1);
       const relevant = events.find(({ kind, payload }) => {
         // A watch call is itself a native tool call. Waking on tool/usage telemetry makes
         // the observer generate the next wake indefinitely, even when every peer is paused.
@@ -674,6 +683,10 @@ export class SwarmRuntime {
       }
       const runId = `run-${hash([args.swarmId, args.participantId]).slice(0, 32)}`;
       await this.prepareRun({ runId, objective: args.objective, options: args.options ?? {} }, principal);
+      // A request under a known operation key is the replay authority's to adjudicate (recovery of
+      // an admitted-but-unbound recruit rides that path); decided before `_once` records this
+      // request, because inside the effect every request is "known".
+      const replaying = Boolean(this.store.priorCoordinationEvent(this._operationKey(command, args, principal)));
       return this._once(command, args, principal, async (sharedContext) => {
         this._permit(this._swarm(args.swarmId), principal, context, 'recruit');
         // The deliberate shared checkout is resolved inside the effect, before any membership is
@@ -682,6 +695,19 @@ export class SwarmRuntime {
         const workspace = args.shareWorkspaceWith
           ? this._sharedWorkspace(swarm, args.shareWorkspaceWith, args.participantId)
           : null;
+        // The membership write is keyed on (swarmId, participantId), so a NEW request recruiting a
+        // name that already exists used to be served from the prior event without folding (an
+        // identical payload: a success receipt for an operation that did not happen — the fold's
+        // own `participant_duplicate` guard is unreachable through this path) or refused as a
+        // REPLAY conflict (a different payload), naming an idempotency problem the caller does not
+        // have. Anything that is not a replay and names an existing row is refused by name, naming
+        // the row; the request's own shape (a self-referencing checkout, an unknown permission) is
+        // judged first, as everywhere else (2026-09-14 audit S-E1/S-E2/S-N2).
+        if (!replaying && Object.hasOwn(swarm.participants, args.participantId)) {
+          refuse('Swarm participant already exists', 'swarm_participant_exists', {
+            participantId: args.participantId, status: swarm.participants[args.participantId].status,
+          });
+        }
         // Membership precedes dispatch, so even a fast first native turn has the continuing
         // participant protocol. The underlying Run remains the existing execution authority.
         this._write('swarm.participant_joined', {
