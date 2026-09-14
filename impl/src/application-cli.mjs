@@ -1302,6 +1302,9 @@ function parseSwarmCli(args, idempotencyKey) {
       'cli_command_unavailable',
     );
   }
+  // `swarm watch --follow`: Baton wakes the caller — one line per swarm event, for as long as
+  // the swarm is open or any participant is alive. The orchestrator never polls.
+  const follow = verb === 'watch' && flag(args, '--follow');
   const values = {};
   for (const field of row.positional) {
     const token = args.shift();
@@ -1328,7 +1331,46 @@ function parseSwarmCli(args, idempotencyKey) {
   if (SWARM_COMMAND_DEFINITIONS[row.command].args.includes('idempotencyKey')) {
     values.idempotencyKey = idempotencyKey;
   }
+  if (follow) return { kind: 'swarm_follow', swarmId: values.swarmId, afterSeq: values.afterSeq, timeoutMs: values.timeoutMs, idempotencyKey };
   return { kind: 'command', name: row.command, args: values, idempotencyKey };
+}
+
+const LIVE_RUNTIME_STATES = new Set(['pending', 'working', 'blocked', 'idle', 'stopping']);
+
+/** One wake line: what changed (the matched event), the organization truth an orchestrator acts
+ * on (attention), and where every participant stands — never the whole view. */
+export function swarmWakeSummary(view) {
+  return {
+    schemaVersion: 1, kind: 'baton.swarm_wake', swarmId: view.swarmId, seq: view.cursor,
+    event: view.watch?.event ?? null, status: view.status,
+    attention: view.attention ?? [],
+    participants: (view.participants ?? []).map((row) => ({
+      participantId: row.participantId, status: row.status, state: row.runtime?.state ?? null, turn: row.runtime?.turn ?? null,
+    })),
+    contributions: Object.keys(view.contributions ?? {}).length,
+    work: Object.values(view.work ?? {}).map((item) => ({ workId: item.workId, status: item.status })),
+  };
+}
+
+function swarmHasLiveParticipant(view) {
+  return (view.participants ?? []).some((row) => LIVE_RUNTIME_STATES.has(row.runtime?.state));
+}
+
+/** `baton swarm watch --follow`: block on the runtime's own wake (swarm.watch), emit a summary
+ * for every matched event, and return when the swarm is closed and nothing in it is alive. */
+export async function followSwarm(parsed, client, options = {}) {
+  let cursor = parsed.afterSeq;
+  let view = null;
+  for (;;) {
+    view = await client.command('swarm.watch', {
+      swarmId: parsed.swarmId, ...(cursor !== undefined ? { afterSeq: cursor } : {}),
+      ...(parsed.timeoutMs !== undefined ? { timeoutMs: parsed.timeoutMs } : {}),
+    }, `${parsed.idempotencyKey}:watch:${cursor ?? 'now'}`);
+    if (view?.watch?.reason === 'event') await options.onFollowPage?.(swarmWakeSummary(view));
+    cursor = view?.cursor;
+    if (view?.status !== 'open' && !swarmHasLiveParticipant(view)) return view;
+    if (typeof options.shouldStop === 'function' && await options.shouldStop(view)) return view;
+  }
 }
 
 export function parseBatonCli(rawArgs) {
@@ -2524,6 +2566,7 @@ export async function runBatonCli(parsed, client, options = {}) {
     return matches[0];
   }
   if (parsed.kind === 'command') return client.command(parsed.name, parsed.args, parsed.idempotencyKey);
+  if (parsed.kind === 'swarm_follow') return followSwarm(parsed, client, options ?? {});
   if (parsed.kind === 'stream') {
     if (!options || typeof options !== 'object' || Array.isArray(options)
       || Object.keys(options).some((key) => key !== 'onFollowPage')

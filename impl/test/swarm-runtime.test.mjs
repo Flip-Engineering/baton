@@ -222,7 +222,7 @@ test('watch reports a timeout even when unrelated traffic advanced the deploymen
   await f.runtime.command('swarm.create', { swarmId: 'elsewhere', purpose: 'Unrelated work', idempotencyKey: 'elsewhere' }, owner);
   const view = await f.call('watch', { afterSeq: cursor, timeoutMs: 10 });
   assert.ok(view.cursor > cursor);
-  assert.deepEqual(view.watch, { reason: 'timeout', afterSeq: cursor, matchedSeq: null });
+  assert.deepEqual(view.watch, { reason: 'timeout', afterSeq: cursor, matchedSeq: null, event: null });
 });
 
 test('native watching does not wake itself through tool and token telemetry', async (t) => {

@@ -30,7 +30,7 @@ const SWARM_CLI_SUMMARIES = Object.freeze({
   'swarm.list': 'List the living swarms visible to this connection.',
   'swarm.create': 'Create one living swarm and print its view.',
   'swarm.view': "Read one swarm's membership, work, shared context, contributions, reviews, caller authority, and available actions.",
-  'swarm.watch': 'Await the next swarm update past a cursor (defaults to the cursor of the last view this session read) and print the refreshed view.',
+  'swarm.watch': 'Await the next swarm update past a cursor (defaults to the cursor of the last view this session read) and print the refreshed view; with --follow, keep waking and print one summary line per swarm event until the swarm is closed and nothing in it is alive.',
   'swarm.update': 'Apply one domain update: group, work, assignment, context, contribution, review, participant leave, or close.',
   'swarm.recruit': 'Recruit one participant; the runtime resolves and starts the native Run under the requested selection.',
   'swarm.guide': 'Send guidance to one participant, active or paused.',
@@ -61,6 +61,7 @@ export const SWARM_CLI_COMMANDS = Object.freeze(SWARM_COMMAND_NAMES.map((name) =
     `baton swarm ${verb}`,
     ...positional.map((field) => `<${kebabCase(field).toUpperCase()}>`),
     ...flags.map((field) => `[${flagName(field)} VALUE]`),
+    ...(name === 'swarm.watch' ? ['[--follow]'] : []),
   ].join(' ');
   return Object.freeze({
     verb,

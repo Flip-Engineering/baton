@@ -182,7 +182,7 @@ try {
       const connection = discoverBatonConnection();
       const client = clientFor(connection);
       let followPages = 0;
-      const streaming = parsed.kind === 'follow' || (parsed.kind === 'stream' && parsed.follow);
+      const streaming = parsed.kind === 'follow' || parsed.kind === 'swarm_follow' || (parsed.kind === 'stream' && parsed.follow);
       const result = await runBatonCli(parsed, client, streaming ? {
         onFollowPage: async (page) => {
           followPages += 1;

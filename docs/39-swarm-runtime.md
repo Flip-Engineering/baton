@@ -194,3 +194,16 @@ The same rule governs the stall and loop watchdogs: their default action is `esc
 attention reason for the orchestrator); `interrupt`/`kill` are explicit `watchdog.stallAction` /
 `watchdog.loopAction` choices. No built-in number may stop a productive worker.
 
+## Waking the orchestrator (2026-09-13)
+
+The orchestrator does not watch the swarm; the swarm wakes the orchestrator. `swarm.watch` is the
+runtime's own wake: it blocks until an event that concerns the swarm (a participant's turn ends or
+pauses, a contribution or review lands, a member dies, the organization changes) and returns the
+refreshed view with `watch.event` naming what woke it. `baton swarm watch <id> --follow` turns
+that into a feed: one JSON line per wake (`baton.swarm_wake`: the event, the `attention` rows, every
+participant's status/state/turn, contribution and work counts) for as long as the swarm is open or
+anything in it is alive. A harness session, a person's terminal, or a script reads that feed as its
+inbox and answers with `swarm guide`, `swarm capture`, `swarm check` or `swarm stop`; it never
+reads state files and never polls. Both directions ride the resident: the swarm must live in the
+published resident (`baton serve`), not in a private in-process deployment.
+

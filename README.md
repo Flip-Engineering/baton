@@ -172,6 +172,7 @@ node scripts/surface-gate.mjs         # surface gate: grammar lint, generated ar
 node scripts/baton.mjs serve          # start the owner-local resident
 node scripts/baton.mjs doctor --check # connection + exact-route readiness
 node scripts/baton.mjs waves list     # live wave registry (roster, phase, progress class)
+node scripts/baton.mjs swarm watch SWARM_ID --follow   # Baton wakes you: one line per swarm event, no polling
 node scripts/baton.mjs waves run path/to/workflow.json   # a whole workflow, as data
 ```
 

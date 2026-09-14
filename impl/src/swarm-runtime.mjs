@@ -258,7 +258,11 @@ export class SwarmRuntime {
       });
       if (relevant || performance.now() >= deadline) return {
         ...this.inspect(swarm, principal, context),
-        watch: { reason: relevant ? 'event' : 'timeout', afterSeq, matchedSeq: relevant?.seq ?? null },
+        watch: {
+          reason: relevant ? 'event' : 'timeout', afterSeq, matchedSeq: relevant?.seq ?? null,
+          // The wake names what woke it, so a follower can act without re-reading the log.
+          event: relevant ? { seq: relevant.seq, kind: relevant.kind, payloadKind: relevant.payload?.kind ?? null } : null,
+        },
       };
       cursor = this.store.ledgerHeadSeq();
       await this.store.waitAfter(cursor, Math.max(1, Math.ceil(deadline - performance.now())), {
