@@ -1685,15 +1685,20 @@ export class Coordinator {
       if (typeof this._coordination[method] !== 'function') throw Object.assign(new Error('fleet drain coordination authority is unavailable'), { code: 'coordinator_drain_unavailable' });
     }
     const deadline = Date.now() + this._drainPolicy.timeoutMs;
+    let targetWorkerIds = null;
     const assertWithinDeadline = () => {
-      if (Date.now() >= deadline) throw Object.assign(new Error('fleet drain did not converge before its deployment deadline'), { code: 'coordinator_drain_incomplete' });
+      if (Date.now() < deadline) return;
+      throw Object.assign(new Error('fleet drain did not converge before its deployment deadline'), {
+        code: 'coordinator_drain_incomplete',
+        detail: { timeoutMs: this._drainPolicy.timeoutMs, waitingOn: this._stopWaitingOn(targetWorkerIds ?? [], null, ctx.actor) },
+      });
     };
 
     const requestDigest = canonicalDigest({ repoId: ctx.repoId, idempotencyKey: ctx.idempotencyKey });
     const drainId = `fleet-drain:${requestDigest}`;
     const durable = this._coordination.fleetDrain?.(drainId);
 
-    let targetWorkerIds = durable?.targetWorkerIds ?? this._drainTargetIds;
+    targetWorkerIds = durable?.targetWorkerIds ?? this._drainTargetIds;
     if (targetWorkerIds === null) {
       targetWorkerIds = [...this._workers.values()]
         .filter((handle) => {
@@ -1770,7 +1775,12 @@ export class Coordinator {
 
   _drainFailure(error) {
     if (['coordinator_closed', 'coordinator_drain_capacity', 'coordinator_drain_invalid', 'coordinator_drain_unavailable'].includes(error?.code)) return error;
-    return Object.assign(new Error('fleet drain did not converge before its deployment deadline'), { code: 'coordinator_drain_incomplete' });
+    const failure = Object.assign(new Error('fleet drain did not converge before its deployment deadline'), { code: 'coordinator_drain_incomplete' });
+    // The wrapper names its cause: a deadline that already names the wait keeps it; any other
+    // failure rides as {code, message} so the drain never reports a bare non-convergence.
+    if (error?.detail !== undefined && error?.detail !== null) failure.detail = error.detail;
+    else if (error?.code !== undefined) failure.detail = { cause: { code: error.code, message: error?.message ?? null } };
+    return failure;
   }
 
   /** Stop and reap one durable Run target set without fencing or closing unrelated Runs. The
@@ -1922,7 +1932,13 @@ export class Coordinator {
     };
 
     while (Date.now() <= deadline) {
-      await Promise.all(targetWorkerIds.map(attempt));
+      // An attempt that never settles (a cleanup or reap that hangs) must not hide the deadline:
+      // the wait is raced against it and, past the deadline, named below like any other.
+      let deadlineTimer = null;
+      const deadlineElapsed = new Promise((resolve) => { deadlineTimer = setTimeout(() => resolve(false), Math.max(0, deadline - Date.now())); });
+      const attemptsSettled = await Promise.race([Promise.all(targetWorkerIds.map(attempt)).then(() => true), deadlineElapsed]);
+      clearTimeout(deadlineTimer);
+      if (!attemptsSettled) break;
       const targets = targetWorkerIds.map((id) => this._workers.get(id)).filter(Boolean);
       const resourcesReleased = targets.every((handle) => !this._ownsLocalResources(handle)
         && (!handle.processRef || handle.processRef.state === 'closed'));
@@ -1946,7 +1962,10 @@ export class Coordinator {
       }
       await this._sleep(Math.min(this._drainPolicy.pollMs, Math.max(0, deadline - Date.now())));
     }
-    throw Object.assign(new Error('Run stop did not converge before its deadline'), { code: 'coordinator_run_stop_incomplete' });
+    throw Object.assign(new Error('Run stop did not converge before its deadline'), {
+      code: 'coordinator_run_stop_incomplete',
+      detail: { timeoutMs: this._drainPolicy.timeoutMs, waitingOn: this._stopWaitingOn(targetWorkerIds, dispositions, actor) },
+    });
   }
 
   async releaseTerminalTaskResources(taskId, workerId, actor = 'policy') {
@@ -2054,18 +2073,70 @@ export class Coordinator {
     }).release;
   }
 
+  /** The local-resource holds a handle can still carry, by name. One derivation serves the
+   * boolean predicate below and the named wait a stop or drain reports when it cannot converge
+   * (#265). Only the holds that are true are returned. */
+  _localResourceOwnership(handle) {
+    if (!handle) return Object.freeze({});
+    const holds = {
+      localAuthority: handle.localAuthority === true,
+      process: (handle.currentIncarnation === true || handle.recoveredProcessAuthority === true)
+        && !!handle.processRef && handle.processRef.state !== 'closed',
+      runtimeScope: handle.runtimeScope?.active === true,
+      worktree: handle.ownedWorktreeAuthority === true && !!handle.worktree,
+      worktreeCreationPending: handle.worktreeCreationPending === true,
+      nativeSpawnPending: handle.nativeSpawnPending === true,
+      recoverySpawnPending: handle.recoverySpawnPending === true,
+      cleanupPending: handle.cleanupPending === true,
+      cleanupAfterVerification: handle.cleanupAfterVerification === true,
+      cleanupPromise: !!handle.cleanupPromise,
+      untrustedTransportReap: !!handle.untrustedTransportReap,
+      recoveryPending: handle.recoveryPending === true,
+      stopWaiter: this._stopWaiters.has(handle.id),
+      fatalStopWaiter: this._fatalStopWaiters.has(handle.id),
+    };
+    return Object.freeze(Object.fromEntries(Object.entries(holds).filter(([, held]) => held)));
+  }
+
   _ownsLocalResources(handle) {
-    if (!handle) return false;
-    const processOwned = (handle.currentIncarnation === true
-      || handle.recoveredProcessAuthority === true)
-      && handle.processRef && handle.processRef.state !== 'closed';
-    const worktreeOwned = handle.ownedWorktreeAuthority === true && !!handle.worktree;
-    return handle.localAuthority === true || processOwned || handle.runtimeScope?.active === true || worktreeOwned
-      || handle.worktreeCreationPending === true || handle.nativeSpawnPending === true
-      || handle.recoverySpawnPending === true
-      || handle.cleanupPending === true || handle.cleanupAfterVerification === true || !!handle.cleanupPromise
-      || !!handle.untrustedTransportReap || handle.recoveryPending === true
-      || this._stopWaiters.has(handle.id) || this._fatalStopWaiters.has(handle.id);
+    return Object.keys(this._localResourceOwnership(handle)).length > 0;
+  }
+
+  /** #265: a stop or drain that cannot converge names what it is still waiting on, per target
+   * worker, from the same predicates its convergence loop reads. Each named wait is also appended
+   * to the worker's durable log (`control.stop_waiting_on`) so a non-convergence is never silent.
+   * Workers whose predicates all hold are omitted; `dispositions` is null for a drain. */
+  _stopWaitingOn(targetWorkerIds, dispositions, actor) {
+    const rows = [];
+    for (const workerId of targetWorkerIds) {
+      const handle = this._workers.get(workerId);
+      const waiting = [];
+      if (dispositions && !dispositions.has(workerId)) waiting.push('disposition');
+      if (!handle) {
+        if (waiting.length > 0) rows.push(Object.freeze({ workerId, handle: 'absent', waiting: Object.freeze(waiting) }));
+        continue;
+      }
+      for (const hold of Object.keys(this._localResourceOwnership(handle))) waiting.push(`local_resources:${hold}`);
+      if (handle.processRef && handle.processRef.state !== 'closed') waiting.push(`process:${handle.processRef.state}`);
+      if (handle.pendingApprovalId) waiting.push(`interaction:${handle.pendingApprovalId}`);
+      if (handle.pendingQuestionId) waiting.push(`interaction:${handle.pendingQuestionId}`);
+      if (waiting.length === 0) continue;
+      const row = Object.freeze({
+        workerId, status: handle.status, disposition: dispositions?.get(workerId) ?? null,
+        processState: handle.processRef?.state ?? null, waiting: Object.freeze(waiting),
+      });
+      rows.push(row);
+      try {
+        const task = this._tasks.get(handle.taskId);
+        const named = this._log.append({
+          worker: handle.id, harness: handle.vendor ? this._harnessOf(handle.vendor) : '', turnEpoch: this._safeTurnEpoch(handle),
+          kind: 'control.stop_waiting_on', actor, ...this._routeAttribution(handle, task),
+          payload: { waiting, disposition: row.disposition, status: handle.status, processState: row.processState },
+        });
+        this._coordMapEvent(named);
+      } catch { /* the thrown detail still names the wait when the log cannot take the record */ }
+    }
+    return Object.freeze(rows);
   }
 
   _hasPendingInteractionAuthority() {
@@ -2766,20 +2837,20 @@ export class Coordinator {
 
   async _performDrain(targetWorkerIds, repoId, deadline, physicalDrainId, physicalActor) {
     await this._beforeDrainDeadline(Promise.all(this._startupCleanupPromises), deadline);
-    if (this._startupCleanupError) throw Object.assign(new Error('fleet drain did not converge before its deployment deadline'), { code: 'coordinator_drain_incomplete' });
+    if (this._startupCleanupError) throw Object.assign(new Error('fleet drain did not converge before its deployment deadline'), { code: 'coordinator_drain_incomplete', detail: { reason: 'startup_cleanup_error', cause: { code: this._startupCleanupError?.code ?? null, message: this._startupCleanupError?.message ?? null } } });
     // Operations admitted before the irreversible fence may finish, but no stop effect races
     // them. In particular, publisher/integration/provider work cannot be relabelled as drained
     // while it still owns an external or repository effect boundary.
     while (this._authorityOps > 0 && Date.now() < deadline) {
       await this._sleep(Math.min(this._drainPolicy.pollMs, Math.max(0, deadline - Date.now())));
     }
-    if (this._authorityOps > 0) throw Object.assign(new Error('fleet drain did not converge before its deployment deadline'), { code: 'coordinator_drain_incomplete' });
+    if (this._authorityOps > 0) throw Object.assign(new Error('fleet drain did not converge before its deployment deadline'), { code: 'coordinator_drain_incomplete', detail: { reason: 'authority_operations_in_flight', count: this._authorityOps } });
     while (this._startupRecoveryState === 'pending' && Date.now() < deadline) {
       await this._sleep(Math.min(this._drainPolicy.pollMs, Math.max(0, deadline - Date.now())));
     }
-    if (this._startupRecoveryState === 'pending') throw Object.assign(new Error('fleet drain did not converge before its deployment deadline'), { code: 'coordinator_drain_incomplete' });
+    if (this._startupRecoveryState === 'pending') throw Object.assign(new Error('fleet drain did not converge before its deployment deadline'), { code: 'coordinator_drain_incomplete', detail: { reason: 'startup_recovery_pending' } });
     await this._cancelPendingForDrain(deadline);
-    if (this._hasPendingInteractionAuthority()) throw Object.assign(new Error('fleet drain did not converge before its deployment deadline'), { code: 'coordinator_drain_incomplete' });
+    if (this._hasPendingInteractionAuthority()) throw Object.assign(new Error('fleet drain did not converge before its deployment deadline'), { code: 'coordinator_drain_incomplete', detail: { reason: 'pending_interaction_authority', count: this._activeInteractionIds.size } });
     const durablePhysical = this._coordination.fleetDrain(physicalDrainId);
     if (!durablePhysical || durablePhysical.status !== 'admitted'
       || canonicalDigest(durablePhysical.targetWorkerIds) !== canonicalDigest(targetWorkerIds)) {
@@ -2796,7 +2867,7 @@ export class Coordinator {
       dispositions.set(workerId, disposition);
     };
     for (const workerId of targetWorkerIds) {
-      if (Date.now() >= deadline) throw Object.assign(new Error('fleet drain did not converge before its deployment deadline'), { code: 'coordinator_drain_incomplete' });
+      if (Date.now() >= deadline) throw Object.assign(new Error('fleet drain did not converge before its deployment deadline'), { code: 'coordinator_drain_incomplete', detail: { reason: 'deadline', timeoutMs: this._drainPolicy.timeoutMs, waitingOn: this._stopWaitingOn(targetWorkerIds, null, physicalActor) } });
       if (dispositions.has(workerId)) continue;
       const handle = this._workers.get(workerId); const task = handle ? this._tasks.get(handle.taskId) : null;
       if (!handle) { setDisposition(workerId, 'alreadyTerminal'); continue; }

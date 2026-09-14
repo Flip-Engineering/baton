@@ -4338,7 +4338,7 @@ export class BatonApplication {
         || outcome.counts.pendingCancelled + outcome.counts.killConfirmed + outcome.counts.alreadyTerminal !== outcome.targetCount
         || outcome.counts.processesObserved !== outcome.counts.processesClosed
         || outcome.checks.interactionsResolved !== true || outcome.checks.runAuthorityReleased !== true) {
-        throw applicationError('Run stop/reap result is incomplete', 'application_run_stop_incomplete');
+        throw applicationError('Run stop/reap result is incomplete', 'application_run_stop_incomplete', { outcome });
       }
       const core = {
         schemaVersion: current.schemaVersion,

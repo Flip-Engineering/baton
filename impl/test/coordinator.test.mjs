@@ -252,6 +252,7 @@ function setup(overrides = {}) {
     now,
     approvalTimeoutMs: overrides.approvalTimeoutMs ?? 60000,
     stopDeadlineMs: overrides.stopDeadlineMs ?? 15000,
+    drainPolicy: overrides.drainPolicy,
   });
   return { dir, log, fences, adapters, worktrees, referee, route, now, advance, coordinator };
 }
@@ -2014,6 +2015,47 @@ test('replayed Run stop durably closes an absent historical process group withou
   assert.equal(log4.read(handle.id).filter((event) => event.kind === 'control.recovery_process_absent').length, 1,
     'the durable absence observation must replay without another host-process probe event');
   assert.equal(worktrees4.calls.capture.length, 0);
+});
+
+// #265: a Run stop that cannot converge names what it is still waiting on — per target worker,
+// from the same predicates the convergence loop reads — both on the thrown error and in the
+// worker's durable log. Here the adapter acks the kill but no lifecycle terminal ever arrives:
+// the forced stop leaves closure unconfirmed (cleanupPending), no disposition is ever earned,
+// and the Run stop must say so instead of failing silently at its deadline.
+test('#265: a Run stop that cannot converge names the wait on the error and in the durable log', async () => {
+  const adapter = new ScriptableAdapter();
+  const worktrees = new SpyWorktreeManager();
+  // The checkout refuses to go away: the one physical hold a stop cannot release by itself.
+  worktrees.remove = async (taskId) => {
+    worktrees.calls.remove.push({ taskId });
+    throw Object.assign(new Error('checkout is busy'), { code: 'worktree_busy' });
+  };
+  const { coordinator, advance, log } = setup({
+    adapters: { mock: adapter }, worktrees, stopDeadlineMs: 50,
+    drainPolicy: { maxWorkers: 8, pollMs: 5, timeoutMs: 400 },
+  });
+  const handle = await coordinator.spawn('mock', makeBrief());
+  const stop = coordinator.stopRunTargets([handle.id], 'operator:stop');
+  stop.catch(() => {});
+  while (adapter.calls.kill.length === 0) await new Promise((resolve) => setTimeout(resolve, 1));
+  advance(51);
+  coordinator.tick();
+  await assert.rejects(stop, (error) => {
+    assert.equal(error.code, 'coordinator_run_stop_incomplete');
+    assert.equal(error.detail.timeoutMs, 400);
+    assert.deepEqual(error.detail.waitingOn, [{
+      workerId: handle.id, status: 'dead', disposition: null, processState: null,
+      waiting: ['disposition', 'local_resources:localAuthority', 'local_resources:worktree', 'local_resources:cleanupPending'],
+    }], 'the wait is named from the same predicates the convergence loop reads');
+    return true;
+  });
+  const named = log.read(handle.id).filter((event) => event.kind === 'control.stop_waiting_on');
+  assert.ok(named.length >= 1, 'the named wait is durable in the worker log');
+  assert.deepEqual(named.at(-1).payload, {
+    waiting: ['disposition', 'local_resources:localAuthority', 'local_resources:worktree', 'local_resources:cleanupPending'],
+    disposition: null, status: 'dead', processState: null,
+  });
+  assert.equal(named.at(-1).actor, 'operator:stop');
 });
 
 // ============================================================

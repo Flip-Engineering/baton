@@ -195,5 +195,6 @@ try {
 } catch (error) {
   const envelope = normalizeControlSurfaceError(error);
   process.stderr.write(`${flipLine(`baton: ${envelope.error.code}: ${envelope.error.message}`, { pose: 'thinking', color: TTY })}\n`);
+  if (envelope.error.detail !== undefined && envelope.error.detail !== null) process.stderr.write(`${JSON.stringify(envelope.error.detail)}\n`);
   process.exitCode = ['cli_invalid', 'cli_config_invalid', 'cli_command_unavailable'].includes(envelope.error.code) ? 2 : 1;
 }

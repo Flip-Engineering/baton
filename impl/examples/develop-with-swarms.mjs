@@ -51,12 +51,12 @@ export async function developWithSwarms({ repo, task, evidencePath }) {
     try {
       if (swarm && participant) evidence.stop = await swarm.stop(participant.participantId, 'Contribution preserved for root review.');
     } catch (error) {
-      evidence.stopError = { code: error.code, message: error.message };
+      evidence.stopError = { code: error.code, message: error.message, ...(error.detail === undefined ? {} : { detail: error.detail }) };
       cleanupErrors.push(error);
     }
     try { evidence.deployment = await deployment.close(); }
     catch (error) {
-      evidence.deploymentError = { code: error.code, message: error.message };
+      evidence.deploymentError = { code: error.code, message: error.message, ...(error.detail === undefined ? {} : { detail: error.detail }) };
       cleanupErrors.push(error);
     }
     if (evidencePath) await writeFile(evidencePath, `${JSON.stringify(evidence, null, 2)}\n`);
