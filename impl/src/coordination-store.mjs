@@ -55,6 +55,7 @@ import {
   normalizeContextResultPathScope, validateContextProviderResultReference,
 } from './context-result.mjs';
 import { pathInScopes } from './path-scope.mjs';
+import { isPhysicalWorkspaceId } from './shared-workspace-custody.mjs';
 import {
   validProcessClosedPayload, validProcessStartedPayload, validRecoveryProcessAbsentPayload,
   validRecoveryProcessReapedPayload,
@@ -71,7 +72,6 @@ import {
   CoordinationIntegrityError,
   CoordinationRefusal,
   MAX_CONTEXT_PACK_BODY_BYTES,
-  MAX_SCRATCHPAD_STOP_PARTITIONS_PER_PASS,
   SCRATCHPAD_SCOPE,
   SEGMENT_FILE_SUFFIX,
   SEGMENT_INDEX_FILE,
@@ -95,7 +95,6 @@ export {
   CoordinationIntegrityError,
   CoordinationRefusal,
   MAX_CONTEXT_PACK_BODY_BYTES,
-  MAX_SCRATCHPAD_STOP_PARTITIONS_PER_PASS,
 };
 
 function writerProcessStartIdentity(pid) {
@@ -231,6 +230,13 @@ const PROJECTION_CHECKPOINT_FIELDS = Object.freeze([
   '_waveClosures',
   // D2.3 (epic #132): replay-derived wave.started registry rows by waveId.
   '_waveRegistry',
+  // #286 G-31: the CURRENT run -> wave binding (last write wins), folded from `steering.registered`.
+  // `_waveRoleRuns` above answers "which run holds this (waveId, waveRole) seat"; this answers
+  // "which wave does this run sit in NOW" — the one reading `_waveIdOf`/`_waveRoleOf` share.
+  '_waveBindings',
+  // #286 G-45: BD3-A orientation receipt heads — the first read per (workerId, packDigest) and the
+  // latest read per workerId. Folded so a rating and a freshness check are lookups.
+  '_contextReadHeads', '_contextReadLatest',
   // #161: replay-derived campaign-plan objects (planId -> plan) and the (waveId, waveRole) ->
   // runId roster index the plan lane resolves pre-decomposed ownedBy.run bindings from (H2.2).
   '_campaignPlans', '_waveRoleRuns', '_swarms',
@@ -284,7 +290,11 @@ const PROMOTION_FAILURE_KINDS = new Set(['integration.incomplete', 'integration.
 const PROVIDER_FAILURE_CODES = new Set(['provider_index_changed', 'reuse_policy_reconciliation_required', 'reuse_evidence_diverged', 'capability_refused', 'provider_processing_failed']);
 const ACCEPTANCE_REVOCATION_EVIDENCE_KINDS = new Set(['resource.provider_telemetry_invalid', 'resource.provider_governance_exceeded']);
 const ARTIFACT_LIFECYCLE_FIELDS = new Set(['createdEvent', 'version', 'supersededBy', 'supersededEvent', 'acceptanceInvalidation']);
-const ACCEPTANCE_REVOCATION_LIMITS = Object.freeze({ maxStateRows: 1_000_000, maxTargets: 100_000, maxReferences: 1_000_000, maxPayloadBytes: 16 * 1024 * 1024 });
+// #286 G-41: the acceptance-revocation scan is bounded by the STATE ITSELF, and that state is a
+// projection of the ledger (`_artifacts`, `_knowledgeNodes` and `_knowledgeReads` each grow only by
+// an appended event, so none can exceed the ledger's event count) — the ledger is the physical
+// resource, and a second literal ceiling on top of it refused operations the ledger had already
+// accepted, including on replay, where it made a self-written ledger unloadable.
 const REPRESENTATION_POLICY_FIELDS = [
   'maxArgumentBytes', 'maxEvidenceRefs', 'maxGraphBatchBytes', 'maxReceiptBytes',
   'maxResultBytes', 'maxResultItems', 'maxResultRefs', 'maxSourceRefBytes', 'maxSourceRefs', 'repoId', 'schemaVersion',
@@ -540,6 +550,9 @@ const BRIEFING_TOP_LEVEL_FIELDS = Object.freeze([
 // The orchestrator-briefing family constant (D3's family-scoped authority rule). Exported so the
 // application and northbound surfaces share ONE family name with the store that mints it (D7).
 export const BRIEFING_FAMILY = 'orchestrator-briefing';
+/** The DOCUMENTED DEFAULT partition admission bounds (#286 G-41): a worker's own partition and the
+ * run's shared partition. They are the defaults of `scratchpadPartitionPolicy`, which the deployment
+ * may raise — they are not ceilings of the store, and they are never applied on replay. */
 export const MAX_SCRATCHPAD_WORKER_ENTRIES = 128;
 export const MAX_SCRATCHPAD_SHARED_ENTRIES = 512;
 export const MAX_SCRATCHPAD_BATCH_BYTES = 2 * 1024 * 1024;
@@ -771,6 +784,23 @@ export class CoordinationStore {
       if (!policy || Object.keys(policy).sort().join(',') !== fields.sort().join(',') || Object.values(policy).some((value) => !Number.isSafeInteger(value) || value <= 0)
         || policy.initialBackoffMs > policy.maxBackoffMs || policy.intervalMs > 24 * 60 * 60 * 1_000 || policy.maxBatch > 10_000 || policy.maxBatch > policy.maxStateRows || policy.maxAttempts > 1_000_000 || policy.maxBackoffMs > 24 * 60 * 60 * 1_000 || policy.maxStateRows > 1_000_000) throw new TypeError('provider attempt policy is invalid');
       this._providerAttemptPolicy = freeze(clone(policy));
+    }
+    // #286 G-41: the scratchpad partition ceilings are the deployment's own admitted bound, not a
+    // bare literal — set `scratchpadPartitionPolicy` to raise them. The defaults are the documented
+    // values (128 worker / 512 shared); they are ADMISSION bounds only, never replay validation, so
+    // changing them cannot make an existing ledger unloadable.
+    this._scratchpadPartitionPolicy = freeze({
+      workerEntries: MAX_SCRATCHPAD_WORKER_ENTRIES, sharedEntries: MAX_SCRATCHPAD_SHARED_ENTRIES,
+    });
+    if (opts.scratchpadPartitionPolicy !== undefined) {
+      const policy = opts.scratchpadPartitionPolicy;
+      const fields = ['sharedEntries', 'workerEntries'];
+      if (!policy || Object.keys(policy).sort().join(',') !== fields.join(',')
+        || !Number.isSafeInteger(policy.workerEntries) || policy.workerEntries <= 0
+        || !Number.isSafeInteger(policy.sharedEntries) || policy.sharedEntries <= 0) {
+        throw new TypeError('scratchpad partition policy is invalid');
+      }
+      this._scratchpadPartitionPolicy = freeze(clone(policy));
     }
     this._routePolicy = null;
     if (opts.routePolicy !== undefined) {
@@ -1191,6 +1221,9 @@ export class CoordinationStore {
     // audit rides `_contextReads` (zero promotion weight — never the scratch.read family).
     this._contextPacks = new Map(); this._contextPackHeads = new Map(); this._contextReads = [];
     this._spills = new Map();
+    // #286 G-45: orientation receipt heads, folded from `context.read` (first per worker+pack, last
+    // per worker). Rebuilt by re-applying the log in _apply.
+    this._contextReadHeads = new Map(); this._contextReadLatest = new Map();
     // D9 (epic #103): replay-derived wave.closed campaign-state records by waveId. Rebuilt by
     // re-applying the log in _apply; the record's own event seq is the epoch anchor.
     this._waveClosures = new Map();
@@ -1205,6 +1238,10 @@ export class CoordinationStore {
     this._campaignPlans = new Map();
     this._swarms = new Map();
     this._waveRoleRuns = new Map();
+    // #286 G-31: the current run -> wave binding, last write wins (see the fold in _apply). The
+    // seat index above is keyed (waveId, waveRole) -> runId; this is the reverse question —
+    // which wave a run sits in NOW — and it is the one reading every wave reader shares.
+    this._waveBindings = new Map();
     // REFLEX-2 boards: immutable versioned items + per-itemId claims + reports, and a
     // board-scoped, replay-derivable fence counter (the count of orchestrator-authority
     // events per board — NOT the worker FenceTable). All rebuilt purely by re-applying the
@@ -2900,7 +2937,7 @@ export class CoordinationStore {
       : null;
     const expectedOwnerTaskId = priorContext?.ownerTaskId ?? priorTask?.id;
     const boundPhysicalOwner = priorContext === null
-      && /^ws-[a-f0-9]{32}$/u.test(context.ownerTaskId)
+      && isPhysicalWorkspaceId(context.ownerTaskId)
       && context.logicalTaskId === priorTask?.id
       && /^[a-f0-9]{64}$/u.test(context.ownerReceiptDigest ?? '')
       && context.branch === `baton/${context.ownerTaskId}`
@@ -7215,11 +7252,7 @@ export class CoordinationStore {
   }
 
   _acceptanceRevocationTargets(task, evidenceSeq, integrity = false) {
-    if (this._artifacts.size > ACCEPTANCE_REVOCATION_LIMITS.maxStateRows
-      || this._knowledgeNodes.size > ACCEPTANCE_REVOCATION_LIMITS.maxStateRows
-      || this._knowledgeReads.length > ACCEPTANCE_REVOCATION_LIMITS.maxStateRows) {
-      this._acceptanceRevocationFailure('task acceptance revocation state scan exceeded its ceiling', 'acceptance_revocation_oversize', integrity);
-    }
+    // No state ceiling: the scan below visits a projection of the ledger, so its size IS the bound.
     const artifacts = [...this._artifacts.values()]
       .filter((artifact) => artifact.taskId === task.id && artifact.accepted === true)
       .sort((a, b) => compareCanonicalStrings(a.id, b.id));
@@ -7227,15 +7260,11 @@ export class CoordinationStore {
       || Object.hasOwn(artifact, 'acceptanceInvalidation'))) {
       this._acceptanceRevocationFailure('task has no earlier unrevoked accepted artifacts', 'acceptance_revocation_unavailable', integrity);
     }
-    if (artifacts.length > ACCEPTANCE_REVOCATION_LIMITS.maxTargets) {
-      this._acceptanceRevocationFailure('task acceptance revocation artifact set exceeded its ceiling', 'acceptance_revocation_oversize', integrity);
-    }
+    // No target ceiling: the artifact set is this task's accepted artifacts, a view of the ledger.
     const acceptedIds = new Set(artifacts.map((artifact) => artifact.id));
     const canonicalNodeIds = new Map(artifacts.map((artifact) => [`artifact:${artifact.id}`, artifact.id]));
-    const affectedReads = new Map(); let referenceCount = 0;
+    const affectedReads = new Map();
     for (const read of this._knowledgeReads) for (const nodeId of read.nodeIds ?? []) {
-      referenceCount += 1;
-      if (referenceCount > ACCEPTANCE_REVOCATION_LIMITS.maxReferences) this._acceptanceRevocationFailure('task acceptance revocation read references exceeded their ceiling', 'acceptance_revocation_oversize', integrity);
       const rows = affectedReads.get(nodeId) ?? []; rows.push(read.eventSeq); affectedReads.set(nodeId, rows);
     }
     const artifactTargets = artifacts.map((artifact) => ({
@@ -7243,8 +7272,6 @@ export class CoordinationStore {
     }));
     const knowledgeTargets = [...this._knowledgeNodes.values()].map((node) => {
       if (node.type !== 'Artifact' || node.validTo !== null) return null;
-      referenceCount += (node.evidence ?? []).length;
-      if (referenceCount > ACCEPTANCE_REVOCATION_LIMITS.maxReferences) this._acceptanceRevocationFailure('task acceptance revocation evidence references exceeded their ceiling', 'acceptance_revocation_oversize', integrity);
       const artifactIds = [...new Set([
         ...(canonicalNodeIds.has(node.id) ? [canonicalNodeIds.get(node.id)] : []),
         ...(node.evidence ?? []).filter((ref) => typeof ref?.artifactId === 'string' && acceptedIds.has(ref.artifactId)).map((ref) => ref.artifactId),
@@ -7256,9 +7283,7 @@ export class CoordinationStore {
         affectedReadEvents: clone(affectedReads.get(node.id) ?? []),
       };
     }).filter(Boolean).sort((a, b) => compareCanonicalStrings(a.nodeId, b.nodeId));
-    if (knowledgeTargets.length > ACCEPTANCE_REVOCATION_LIMITS.maxTargets) {
-      this._acceptanceRevocationFailure('task acceptance revocation knowledge target set exceeded its ceiling', 'acceptance_revocation_oversize', integrity);
-    }
+    // No knowledge-target ceiling: the target set is a view of the same ledger projection.
     return { artifactTargets, knowledgeTargets };
   }
 
@@ -7272,16 +7297,15 @@ export class CoordinationStore {
       || typeof p.taskId !== 'string' || p.taskId.length === 0 || Buffer.byteLength(p.taskId) > 4_096
       || !Number.isSafeInteger(p.expectedTaskVersion) || p.expectedTaskVersion <= 0
       || !Number.isSafeInteger(p.newTaskVersion) || !Array.isArray(p.artifactTargets) || !Array.isArray(p.knowledgeTargets)
-      || p.artifactTargets.length > ACCEPTANCE_REVOCATION_LIMITS.maxTargets || p.knowledgeTargets.length > ACCEPTANCE_REVOCATION_LIMITS.maxTargets
       || !p.evidence || typeof p.evidence !== 'object' || Array.isArray(p.evidence)
       || Object.keys(p.evidence).sort().join(',') !== evidenceFields.sort().join(',')
       || !promotionActor(event?.actor) || typeof event?.idempotencyKey !== 'string' || !/^[A-Za-z0-9._:-]{1,256}$/.test(event.idempotencyKey)
       || !Number.isSafeInteger(event.seq) || !Number.isFinite(Date.parse(event.ts))) {
       this._acceptanceRevocationFailure('task acceptance revocation payload is malformed', 'acceptance_revocation_integrity', integrity);
     }
-    if (canonicalBytes(p) > ACCEPTANCE_REVOCATION_LIMITS.maxPayloadBytes) {
-      this._acceptanceRevocationFailure('task acceptance revocation payload exceeded its ceiling', 'acceptance_revocation_oversize', integrity);
-    }
+    // #286 G-41: no payload ceiling. The payload is a function of the targets above, which are a
+    // view of the ledger — its size is bounded by the state that produced it, and a second literal
+    // bound here refused a replayed event the append path had already accepted.
     const request = { schemaVersion: 1, taskId: p.taskId, expectedTaskVersion: p.expectedTaskVersion, evidence: { coordinationSeq: p.evidence?.coordinationSeq } };
     const expectedRequestDigest = canonicalDigest({ actor: event.actor, idempotencyKey: event.idempotencyKey, request });
     if (p.requestDigest !== expectedRequestDigest || p.newTaskVersion !== p.expectedTaskVersion + 1) {
@@ -7849,6 +7873,14 @@ export class CoordinationStore {
       // silently ignore and later redeliver.
       if (p?.kind === 'steering.registered' && typeof p?.runId === 'string') {
         this._steeringRuns.add(p.runId);
+        // #286 G-31: the current wave binding for this run — LAST write wins. An append-only log's
+        // current state is its most recent record: a re-registration under a new wave is a
+        // correction, and a reader that returned the first binding would resurrect the superseded
+        // wave (the roster, the message lane and the board-grant seat all read this one value).
+        this._waveBindings.set(p.runId, freeze({
+          runId: p.runId, waveId: p.waveId ?? null, waveRole: p.waveRole ?? null,
+          registeredEvent: event.seq,
+        }));
         // #161 (H2.2): the (waveId, waveRole) -> runId binding — the roster row the plan lane
         // resolves a pre-decomposed ownedBy.run (null) from at the row's claim/transition time.
         if (typeof p.waveId === 'string' && p.waveId.length > 0
@@ -8261,11 +8293,11 @@ export class CoordinationStore {
         basis: p.basis, observedFence: p.observedFence,
         dispositions: clone(p.dispositions), dispositionDigest: p.dispositionDigest,
       });
+      // #286 G-41: the projection keeps EVERY durable reap receipt. The old ceiling `shift()`ed the
+      // oldest ones out, so a durable receipt stopped being projectable from a projection that is
+      // rebuilt from the same ledger. The size bound belongs to the VIEW, which reports it
+      // (`scratchpadReapsTruncated`) instead of silently dropping durable facts.
       this._scratchpadReaps.push(receipt);
-      while (this._scratchpadReaps.length > MAX_SCRATCHPAD_SNAPSHOT_REAPS
-        || canonicalBytes(this._scratchpadReaps) > MAX_SCRATCHPAD_SNAPSHOT_REAP_BYTES) {
-        this._scratchpadReaps.shift();
-      }
     } else if (event.kind === 'scratch.fact_posted') {
       this._scratchFacts.set(p.id, freeze({ ...clone(p), createdEvent: event.seq, active: true }));
     } else if (event.kind === 'scratch.fact_expired') {
@@ -8629,6 +8661,25 @@ export class CoordinationStore {
       // BD3-A: the read-lane audit class. Deliberately NOT the scratch.read family — reads
       // accrue zero promotion weight and minScratchReaders never counts them.
       this._contextReads.push(freeze({ ...clone(p), eventSeq: event.seq, ts: event.ts }));
+      // #286 G-45: the orientation receipt heads. The rating reader cites the FIRST receipt for
+      // its (worker, pack) and the freshness/eligibility readers want the LATEST receipt for a
+      // worker, so both are folded here instead of re-filtering the ledger per call.
+      const readWorker = typeof p?.workerId === 'string' ? p.workerId : null;
+      const readPack = typeof p?.packDigest === 'string' ? p.packDigest : null;
+      if (readWorker !== null && readPack !== null) {
+        let heads = this._contextReadHeads.get(readWorker);
+        if (heads === undefined) { heads = new Map(); this._contextReadHeads.set(readWorker, heads); }
+        if (!heads.has(readPack)) {
+          heads.set(readPack, freeze({
+            workerId: readWorker, packDigest: readPack, repoId: p.repoId ?? null, eventSeq: event.seq,
+          }));
+        }
+      }
+      if (readWorker !== null) {
+        this._contextReadLatest.set(readWorker, freeze({
+          workerId: readWorker, freshnessDigest: p?.freshnessDigest ?? null, eventSeq: event.seq,
+        }));
+      }
     } else if (event.kind === 'message.sent' || event.kind === 'message.delivered') {
       // Append-only message-lane audit receipts; the delivery state machine lives in the
       // coordinator (delivered/read/actedOn are process-scoped, never store-derived).
@@ -13004,6 +13055,11 @@ export class CoordinationStore {
   waveClosure(waveId) {
     return coordinationInternals.waveClosure(this._waveClosures, waveId);
   }
+  /** #286 G-31: the CURRENT run -> wave binding (last write wins), the one reading of "which wave
+   * does this run sit in now" that the coordinator's `_waveIdOf`/`_waveRoleOf` share. */
+  waveBinding(runId) {
+    return coordinationInternals.waveBinding(this._waveBindings, runId);
+  }
   waveClosures() {
     return coordinationInternals.waveClosures(this._waveClosures);
   }
@@ -13244,7 +13300,9 @@ export class CoordinationStore {
     }
     const workerId = typeof auth?.actor === 'string' && auth.actor.startsWith('worker:') ? auth.actor.slice('worker:'.length) : null;
     const source = this._orientationLatestSource();
-    const hasReceipt = workerId !== null && this._events.some((event) => event.kind === 'context.read' && event.payload?.workerId === workerId);
+    // #286 G-45: one fold lookup replaces the per-proposal ledger scan (at least one receipt for
+    // this worker is exactly "the latest-receipt fold has this worker").
+    const hasReceipt = this._orientationWorkerFreshness(workerId) !== null;
     if (!source && !hasReceipt) throw new CoordinationRefusal('orientation candidate was not received by the attempt', 'orientation_propose_refused');
     const freshnessDigest = source?.freshnessDigest ?? this._orientationWorkerFreshness(workerId) ?? '0'.repeat(64);
     const existing = this._orientationCandidate(leafDigest, freshnessDigest);
@@ -13351,10 +13409,20 @@ export class CoordinationStore {
     return sources[0] ?? null;
   }
 
+  /** #286 G-45: the LATEST `context.read` receipt for one worker — the freshness digest and
+   * citation seq the orientation lane reads — as a fold lookup, never a ledger scan. */
+  orientationReadLatest(workerId) {
+    return coordinationInternals.orientationReadLatest(this._contextReadLatest, workerId);
+  }
+
   _orientationWorkerFreshness(workerId) {
-    if (workerId === null) return null;
-    const reads = this._events.filter((event) => event.kind === 'context.read' && event.payload?.workerId === workerId);
-    return reads.length > 0 ? (reads[reads.length - 1].payload?.freshnessDigest ?? null) : null;
+    return this.orientationReadLatest(workerId)?.freshnessDigest ?? null;
+  }
+
+  /** #286 G-45: the FIRST `context.read` receipt for one (worker, pack) — the receipt an
+   * orientation rating cites — as a fold lookup, never a ledger scan. */
+  orientationReadHead(workerId, packDigest) {
+    return coordinationInternals.orientationReadHead(this._contextReadHeads, workerId, packDigest);
   }
 
   _orientationCandidate(leafDigest, freshnessDigest) {
@@ -13613,7 +13681,7 @@ export class CoordinationStore {
     const scope = `worker:${fields.workerId}`;
     const scopeKey = scratchpadScopeKey(fields.runId, scope);
     const ids = this._scratchpadEntriesByScope.get(scopeKey) ?? [];
-    if (ids.length >= MAX_SCRATCHPAD_WORKER_ENTRIES) {
+    if (ids.length >= this._scratchpadPartitionPolicy.workerEntries) {
       throw new CoordinationRefusal('scratchpad worker partition is full', 'scratchpad_partition_exhausted');
     }
     const ordinal = ids.length + 1;
@@ -13728,7 +13796,8 @@ export class CoordinationStore {
     const scope = fields.scope;
     const scopeKey = scratchpadScopeKey(fields.runId, scope);
     const ids = this._scratchpadEntriesByScope.get(scopeKey) ?? [];
-    const cap = scope === 'shared' ? MAX_SCRATCHPAD_SHARED_ENTRIES : MAX_SCRATCHPAD_WORKER_ENTRIES;
+    const cap = scope === 'shared'
+      ? this._scratchpadPartitionPolicy.sharedEntries : this._scratchpadPartitionPolicy.workerEntries;
     if (ids.length >= cap) {
       throw new CoordinationRefusal('scratchpad partition is full', 'scratchpad_partition_exhausted');
     }
@@ -13789,7 +13858,7 @@ export class CoordinationStore {
       || auth?.actor !== 'orchestrator' || !validRunId(fields?.runId) || !validRunId(fields?.taskId)
       || !validRunId(fields?.workerId) || !Number.isSafeInteger(fields?.expectedScratchpadFence)
       || fields.expectedScratchpadFence < 0 || !Array.isArray(fields.entryIds)
-      || fields.entryIds.length > MAX_SCRATCHPAD_WORKER_ENTRIES
+      || fields.entryIds.length > this._scratchpadPartitionPolicy.workerEntries
       || new Set(fields.entryIds).size !== fields.entryIds.length
       || fields.entryIds.some((id) => !SCRATCHPAD_ENTRY_ID.test(id))) {
       throw new CoordinationRefusal('scratchpad task settlement request is invalid', 'scratchpad_settlement_invalid');
@@ -13850,7 +13919,7 @@ export class CoordinationStore {
     }
     const selected = steering ? [...fields.entryIds].sort(compareCanonicalStrings) : [];
     const sharedIds = this._scratchpadEntriesByScope.get(scratchpadScopeKey(fields.runId, 'shared')) ?? [];
-    if (sharedIds.length + selected.length > MAX_SCRATCHPAD_SHARED_ENTRIES) {
+    if (sharedIds.length + selected.length > this._scratchpadPartitionPolicy.sharedEntries) {
       throw new CoordinationRefusal('scratchpad shared partition is full', 'scratchpad_partition_exhausted');
     }
     const entries = [];
@@ -13941,7 +14010,7 @@ export class CoordinationStore {
     if (!scratchpadExact(fields, ['runId', 'expectedScratchpadFence', 'skips'])
       || auth?.actor !== 'orchestrator' || !validRunId(fields?.runId)
       || !Number.isSafeInteger(fields?.expectedScratchpadFence) || fields.expectedScratchpadFence < 0
-      || !Array.isArray(fields.skips) || fields.skips.length > MAX_SCRATCHPAD_SHARED_ENTRIES) {
+      || !Array.isArray(fields.skips) || fields.skips.length > this._scratchpadPartitionPolicy.sharedEntries) {
       throw new CoordinationRefusal('scratchpad workflow settlement request is invalid', 'scratchpad_settlement_invalid');
     }
     const scope = 'shared';
@@ -13999,8 +14068,10 @@ export class CoordinationStore {
       expiredScratchFactIds: facts.map((fact) => fact.id),
     });
   }
-  reapRunScratchpads(runId) {
-    return coordinationReplay.reapRunScratchpads(this, runId);
+  /** #286 G-41: `deadlineAt` is the caller's own recorded stop deadline; without one the pass reaps
+   * every partition of the stopping run (there is no partition-count ceiling any more). */
+  reapRunScratchpads(runId, opts = {}) {
+    return coordinationReplay.reapRunScratchpads(this, runId, opts);
   }
 
   // -------------------------------------------------------------------------

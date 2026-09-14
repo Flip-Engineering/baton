@@ -9,11 +9,13 @@
 // Checks: the docs/36 grammar lint (banned legacy verbs), ledger validity, the surface inventory
 // artifact, the generated CLI.md/MCP.md blocks, the CLI↔MCP parity matrix, and MCP dispatch
 // resolvability (every advertised tool on the ordinary and combined surfaces resolves at
-// tools/call — an advertised name that cannot dispatch is a surface lie).
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+// tools/call — an advertised name that cannot dispatch is a surface lie) — and the one-definition
+// custody predicate (an inline `ws-<32 hex>` shape is a second opinion about whether cleanup may
+// destroy a shared checkout).
+import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { runSurfaceConformanceMain } from './surface-conformance.mjs';
 import { checkSurfaceParityMatrix, writeSurfaceParityMatrix } from './surface-parity.mjs';
@@ -166,6 +168,85 @@ export async function checkMcpDispatchResolvability() {
   return findings;
 }
 
+// ---------------------------------------------------------------------------
+// One custody predicate, one definition (issue #286 G-36).
+//
+// `isPhysicalWorkspaceId` (shared-workspace-custody.mjs) is the ONE definition of the
+// `ws-<32 hex>` shape. Every inline copy of that shape is a second opinion about whether a path
+// is a shared physical workspace — which is to say, whether cleanup may destroy a checkout a
+// different holder is working in. A drifted copy does not fail a test: it destroys work. So the
+// literal is refused outside its one definition, by name, when it is written.
+//
+// `PENDING` names the files that still carry the shape and are not swept by this change (they lie
+// outside the writing lane's authority). Each entry pins the occurrence count that remains, so a
+// NEW copy inside a listed file is refused too, and an entry whose count drops is refused as
+// stale — the exemption list can only shrink, and it cannot rot.
+// ---------------------------------------------------------------------------
+export const CUSTODY_PREDICATE_TOKEN = 'ws-[a-f0-9]{32}';
+export const CUSTODY_PREDICATE_DEFINITION = 'impl/src/shared-workspace-custody.mjs';
+const CUSTODY_PREDICATE_SOURCE_DIR = fileURLToPath(new URL('../src', import.meta.url));
+const CUSTODY_PREDICATE_DEFINITION_OCCURRENCES = 1;
+/** The files that still carry the shape, each pinned to the count that remains (see the block
+ * comment above). Exported so the rule's own test can build a tree that mirrors it and perturb
+ * exactly one file. */
+export const CUSTODY_PREDICATE_PENDING = Object.freeze({
+  'impl/src/application.mjs': Object.freeze({ occurrences: 1, reason: 'workspace admission; outside this change\'s write authority' }),
+  'impl/src/index.mjs': Object.freeze({ occurrences: 4, reason: 'controller wiring; outside this change\'s write authority' }),
+  'impl/src/swarm-state.mjs': Object.freeze({ occurrences: 1, reason: 'the swarm workspace shape; outside this change\'s write authority' }),
+  'impl/src/worktree.mjs': Object.freeze({ occurrences: 9, reason: 'the destruction authority itself; outside this change\'s write authority' }),
+});
+
+/** Refuse a second definition of the physical-workspace-id shape (issue #286 G-36). `sources` —
+ * an array of `{path, text}` — overrides the scanned set so the rule itself is testable; the
+ * default is every `impl/src/*.mjs`, which is where a custody decision can live. */
+export function checkCustodyPredicateLiteral({ sources = null } = {}) {
+  const scanned = sources ?? readdirSync(CUSTODY_PREDICATE_SOURCE_DIR)
+    .filter((name) => name.endsWith('.mjs'))
+    .sort()
+    .map((name) => ({
+      path: `impl/src/${name}`,
+      text: readFileSync(join(CUSTODY_PREDICATE_SOURCE_DIR, name), 'utf8'),
+    }));
+  const findings = [];
+  const listed = new Set();
+  for (const source of scanned) {
+    const occurrences = source.text.split(CUSTODY_PREDICATE_TOKEN).length - 1;
+    if (source.path === CUSTODY_PREDICATE_DEFINITION) {
+      if (occurrences !== CUSTODY_PREDICATE_DEFINITION_OCCURRENCES) {
+        findings.push(`${source.path}: the one definition carries ${occurrences} copies of the shape,`
+          + ` expected exactly ${CUSTODY_PREDICATE_DEFINITION_OCCURRENCES} — a second definition in the`
+          + ' definition file is the same drift by another route');
+      }
+      continue;
+    }
+    const pending = CUSTODY_PREDICATE_PENDING[source.path];
+    if (!pending) {
+      if (occurrences > 0) {
+        findings.push(`${source.path}: ${occurrences} inline copy/copies of the physical-workspace-id`
+          + ` shape (${CUSTODY_PREDICATE_TOKEN}) — import isPhysicalWorkspaceId from`
+          + ` shared-workspace-custody.mjs instead; an inline copy is a second opinion about whether`
+          + ` cleanup may destroy a shared checkout (the one definition is ${CUSTODY_PREDICATE_DEFINITION})`);
+      }
+      continue;
+    }
+    listed.add(source.path);
+    if (occurrences === pending.occurrences) continue;
+    findings.push(occurrences > pending.occurrences
+      ? `${source.path}: ${occurrences} inline copies, PENDING pins ${pending.occurrences} (${pending.reason})`
+        + ' — an inline copy was added where the pinned count said none would; import the helper instead'
+      : `${source.path}: ${occurrences} inline copies, PENDING pins ${pending.occurrences} (${pending.reason})`
+        + ' — the exemption is stale; lower the pinned count to the observed one, and drop the entry'
+        + ' once it reaches zero');
+  }
+  for (const path of Object.keys(CUSTODY_PREDICATE_PENDING)) {
+    if (!listed.has(path)) {
+      findings.push(`${path}: PENDING exemption names a file that no longer carries the shape —`
+        + ' remove the entry');
+    }
+  }
+  return findings;
+}
+
 /** Run every surface check; with `write`, regenerate the artifacts first. */
 export async function runSurfaceGate({ write = false } = {}) {
   if (write) {
@@ -176,6 +257,7 @@ export async function runSurfaceGate({ write = false } = {}) {
     ...runSurfaceConformanceMain({ writeInventory: write }).map((f) => `surface-conformance: ${f}`),
     ...checkSurfaceParityMatrix().map((f) => `surface-parity: ${f}`),
     ...(await checkMcpDispatchResolvability()).map((f) => `mcp-dispatch: ${f}`),
+    ...checkCustodyPredicateLiteral().map((f) => `custody-predicate: ${f}`),
   ];
   return findings;
 }

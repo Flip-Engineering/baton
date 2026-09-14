@@ -32,11 +32,41 @@
         {
           "name": "tick",
           "ordinal": 0,
-          "size": 11,
+          "size": 5,
+          "seam": "effect",
+          "evidence": [
+            "delegates:admission",
+            "delegates:effect"
+          ]
+        },
+        {
+          "name": "tickRead",
+          "ordinal": 0,
+          "size": 6,
+          "seam": "effect",
+          "evidence": [
+            "delegates:admission",
+            "delegates:effect"
+          ]
+        },
+        {
+          "name": "_assertTickable",
+          "ordinal": 0,
+          "size": 9,
           "seam": "admission",
           "evidence": [
+            "admission:guard_name",
             "admission:policy_gate",
             "admission:typed_refusal"
+          ]
+        },
+        {
+          "name": "_deadlineDue",
+          "ordinal": 0,
+          "size": 20,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
           ]
         },
         {
@@ -444,7 +474,6 @@
           "size": 4,
           "seam": "effect",
           "evidence": [
-            "delegates:admission",
             "delegates:effect"
           ]
         },
@@ -472,9 +501,8 @@
           "name": "claimTurn",
           "ordinal": 0,
           "size": 4,
-          "seam": "admission",
+          "seam": "observation",
           "evidence": [
-            "delegates:admission",
             "delegates:observation"
           ]
         },
@@ -881,7 +909,7 @@
         {
           "name": "_gateVerdictItemForWorker",
           "ordinal": 0,
-          "size": 57,
+          "size": 58,
           "seam": "surface",
           "evidence": [
             "surface:no_authority_touched"
@@ -890,7 +918,7 @@
         {
           "name": "_derivePendingAttentionItems",
           "ordinal": 0,
-          "size": 57,
+          "size": 60,
           "seam": "admission",
           "evidence": [
             "admission:normalize_name"
@@ -928,7 +956,7 @@
         {
           "name": "_knownAttentionIds",
           "ordinal": 0,
-          "size": 17,
+          "size": 16,
           "seam": "observation",
           "evidence": [
             "observation:read_name"
@@ -1240,7 +1268,7 @@
         {
           "name": "_admitDurableRecoveryAttempt",
           "ordinal": 0,
-          "size": 73,
+          "size": 75,
           "seam": "recovery",
           "evidence": [
             "recovery:restart_name",
@@ -1295,7 +1323,7 @@
         {
           "name": "_failPreservedReattachment",
           "ordinal": 0,
-          "size": 33,
+          "size": 32,
           "seam": "observation",
           "evidence": [
             "observation:log_append"
@@ -1614,7 +1642,7 @@
         {
           "name": "attentionFollow",
           "ordinal": 0,
-          "size": 38,
+          "size": 41,
           "seam": "admission",
           "evidence": [
             "admission:authority_check",
@@ -3334,7 +3362,7 @@
         {
           "name": "_waveRoleOf",
           "ordinal": 0,
-          "size": 9,
+          "size": 3,
           "seam": "observation",
           "evidence": [
             "observation:coordination_authority",
@@ -3344,7 +3372,7 @@
         {
           "name": "_waveIdOf",
           "ordinal": 0,
-          "size": 9,
+          "size": 3,
           "seam": "observation",
           "evidence": [
             "observation:coordination_authority",
@@ -3401,9 +3429,8 @@
           "name": "elevateTaskScratchpad",
           "ordinal": 0,
           "size": 4,
-          "seam": "admission",
+          "seam": "observation",
           "evidence": [
-            "delegates:admission",
             "delegates:observation"
           ]
         },
@@ -3799,7 +3826,7 @@
         {
           "name": "_runTrustGate",
           "ordinal": 0,
-          "size": 388,
+          "size": 391,
           "seam": "effect",
           "evidence": [
             "effect:worktree_authority",
@@ -3812,7 +3839,7 @@
         {
           "name": "_replay",
           "ordinal": 0,
-          "size": 998,
+          "size": 1002,
           "seam": "recovery",
           "evidence": [
             "recovery:restart_name",
@@ -6061,7 +6088,7 @@
         {
           "name": "constructor",
           "ordinal": 0,
-          "size": 154,
+          "size": 171,
           "seam": "effect",
           "evidence": [
             "recovery:durable_load",
@@ -6255,7 +6282,7 @@
         {
           "name": "_resetProjection",
           "ordinal": 0,
-          "size": 77,
+          "size": 84,
           "seam": "observation",
           "evidence": [
             "observation:projection_name",
@@ -8033,7 +8060,7 @@
         {
           "name": "_acceptanceRevocationTargets",
           "ordinal": 0,
-          "size": 47,
+          "size": 35,
           "seam": "observation",
           "evidence": [
             "observation:key_name"
@@ -8042,7 +8069,7 @@
         {
           "name": "_validateAcceptanceRevocationPayload",
           "ordinal": 0,
-          "size": 46,
+          "size": 45,
           "seam": "admission",
           "evidence": [
             "admission:guard_name",
@@ -8091,7 +8118,7 @@
         {
           "name": "_apply",
           "ordinal": 0,
-          "size": 1190,
+          "size": 1217,
           "seam": "observation",
           "evidence": [
             "observation:record_name",
@@ -10027,6 +10054,15 @@
           ]
         },
         {
+          "name": "waveBinding",
+          "ordinal": 0,
+          "size": 3,
+          "seam": "surface",
+          "evidence": [
+            "surface:internals_port"
+          ]
+        },
+        {
           "name": "waveClosures",
           "ordinal": 0,
           "size": 3,
@@ -10227,7 +10263,7 @@
         {
           "name": "proposeOrientationCandidate",
           "ordinal": 0,
-          "size": 24,
+          "size": 26,
           "seam": "effect",
           "evidence": [
             "delegates:effect",
@@ -10264,12 +10300,32 @@
           ]
         },
         {
+          "name": "orientationReadLatest",
+          "ordinal": 0,
+          "size": 3,
+          "seam": "effect",
+          "evidence": [
+            "effect:action_verb",
+            "surface:internals_port"
+          ]
+        },
+        {
           "name": "_orientationWorkerFreshness",
           "ordinal": 0,
-          "size": 5,
+          "size": 3,
           "seam": "effect",
           "evidence": [
             "effect:action_verb"
+          ]
+        },
+        {
+          "name": "orientationReadHead",
+          "ordinal": 0,
+          "size": 3,
+          "seam": "effect",
+          "evidence": [
+            "effect:action_verb",
+            "surface:internals_port"
           ]
         },
         {
@@ -10482,7 +10538,7 @@
         {
           "name": "appendScratchpad",
           "ordinal": 0,
-          "size": 106,
+          "size": 107,
           "seam": "observation",
           "evidence": [
             "observation:store_append",

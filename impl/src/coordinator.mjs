@@ -209,7 +209,7 @@ function validWorkspaceOwnerBoundPayload(value) {
   return value && typeof value === 'object' && !Array.isArray(value)
     && Object.keys(value).sort().join(',') === fields.sort().join(',')
     && value.schemaVersion === 1
-    && /^ws-[a-f0-9]{32}$/u.test(value.physicalOwnerId ?? '')
+    && isPhysicalWorkspaceId(value.physicalOwnerId)
     && /^[a-f0-9]{64}$/u.test(value.receiptDigest ?? '')
     && /^[a-f0-9]{64}$/u.test(value.deploymentId ?? '')
     && /^[a-f0-9]{64}$/u.test(value.controllerId ?? '')
@@ -226,7 +226,7 @@ function workspaceOwnerExpectation(handle) {
   const context = handle?.sessionContext;
   const physicalOwnerId = context?.ownerTaskId;
   if (typeof physicalOwnerId !== 'string') return null;
-  if (!/^ws-[a-f0-9]{32}$/u.test(physicalOwnerId)) return physicalOwnerId;
+  if (!isPhysicalWorkspaceId(physicalOwnerId)) return physicalOwnerId;
   const ownerBound = handle.workspaceOwnerBinding;
   return {
     expectationId: handle.id,
@@ -845,7 +845,7 @@ function normalizeSessionRequest(request) {
       && !/^[a-f0-9]{64}$/u.test(request.context.ownerReceiptDigest)) {
       throw new SessionSelectionError('session.context.ownerReceiptDigest must be an exact digest', 'invalid_session_request');
     }
-    if (/^ws-[a-f0-9]{32}$/u.test(request.context.ownerTaskId ?? '')
+    if (isPhysicalWorkspaceId(request.context.ownerTaskId)
       && (request.context.logicalTaskId === undefined || request.context.ownerReceiptDigest === undefined)) {
       throw new SessionSelectionError('physical session context requires its logical binding and receipt digest', 'invalid_session_request');
     }
@@ -1487,7 +1487,7 @@ export class Coordinator {
               const removed = new Set(report?.removedPhysicalOwners ?? []);
               for (const handle of this._workers.values()) {
                 const physicalOwnerId = handle.sessionContext?.ownerTaskId;
-                if (!/^ws-[a-f0-9]{32}$/u.test(physicalOwnerId ?? '')) continue;
+                if (!isPhysicalWorkspaceId(physicalOwnerId)) continue;
                 const requested = expectedOwners.some((entry) => (
                   typeof entry === 'object' && entry?.expectationId === handle.id
                 ));
@@ -1539,7 +1539,7 @@ export class Coordinator {
             };
             const knownPhysicalOwnerIds = [...new Set([...this._workers.values()]
               .map((handle) => handle.sessionContext?.ownerTaskId)
-              .filter((owner) => /^ws-[a-f0-9]{32}$/u.test(owner ?? '')))];
+              .filter((owner) => isPhysicalWorkspaceId(owner)))];
             const result = this._worktrees.reconcile(expectedOwners, knownPhysicalOwnerIds);
             return result && typeof result.then === 'function'
               ? Promise.resolve(result).then(applyOwnerAuthority)
@@ -1556,7 +1556,7 @@ export class Coordinator {
         this._trackStartupCleanup(() => Promise.all(reconciliations).then(() => {
           if (this._startupCleanupError) throw this._startupCleanupError;
           for (const handle of absentRecoveredProcessHandles) {
-            if (/^ws-[a-f0-9]{32}$/u.test(handle.sessionContext?.ownerTaskId ?? '')
+            if (isPhysicalWorkspaceId(handle.sessionContext?.ownerTaskId)
               && handle.physicalWorkspaceCleanupCompleted !== true) {
               handle.cleanupPending = true;
               handle.cleanupError = handle.workspaceOwnerBindingDiagnostic
@@ -1620,7 +1620,31 @@ export class Coordinator {
   // tick() — dispatch + deadline sweep. Called implicitly by every public command.
   // =========================================================================
 
+  /** The health boundary every public command crosses, then the deadline work a MUTATING command
+   * always pays — its own effects are what the sweep and the dispatch pass exist to follow. */
   tick() {
+    this._assertTickable();
+    this._sweepDeadlines();
+    this._dispatchPass();
+  }
+
+  /** The tick a READ-ONLY public command runs (#286 G-40): the same health boundary, then the
+   * deadline work ONLY when a recorded deadline has come due. `_deadlineDue` reads the same records
+   * `_sweepDeadlines` acts on, so no deadline that can fire is skipped; a task that became ready is
+   * dispatched by the command that made it ready, never by a read.
+   *
+   * The one observation a read command no longer takes is `_worktreeAuthorityAvailable` on a live
+   * handle — an observation with no deadline of its own. The next mutating command, or the first
+   * due deadline, takes it. */
+  tickRead() {
+    this._assertTickable();
+    if (!this._deadlineDue()) return;
+    this._sweepDeadlines();
+    this._dispatchPass();
+  }
+
+  /** The admission states that refuse EVERY command, read or mutating. */
+  _assertTickable() {
     if (this._closed) throw Object.assign(new Error('coordinator authority is closed'), { code: 'coordinator_closed' });
     if (this._drainState !== 'open') throw Object.assign(new Error('coordinator admission is draining'), { code: 'coordinator_draining' });
     if (this._fatalError) throw this._fatalError;
@@ -1628,8 +1652,31 @@ export class Coordinator {
     if (this._startupRecoveryState === 'failed') throw this._startupRecoveryError;
     if (this._startupCleanupPending > 0) throw Object.assign(new Error('startup owned-resource reconciliation is pending'), { code: 'coordinator_cleanup_pending' });
     if (this._startupCleanupError) throw this._startupCleanupError;
-    this._sweepDeadlines();
-    this._dispatchPass();
+  }
+
+  /** Whether a recorded deadline has come due, derived from the RECORDS themselves (never a timer
+   * constant): a pending interaction's `deadlineAt`, a blocking question's bounded deployment
+   * default off its own `mintedAt`, a stop waiter's `deadlineAt`, and an unanswered stall cycle's
+   * `mintedAt + windowMs`. This is exactly the set `_sweepDeadlines` acts on. */
+  _deadlineDue() {
+    const now = this._now();
+    for (const record of this._pending.values()) {
+      if (record.state !== 'pending') continue;
+      if (record.deadlineAt != null) {
+        if (now >= record.deadlineAt) return true;
+        continue;
+      }
+      if (record.kind === 'question' && record.acknowledged !== true && record.escalated !== true
+        && now >= record.mintedAt + this._watchdog.blockingInteractionTimeoutMs) return true;
+    }
+    for (const waiter of this._stopWaiters.values()) {
+      if (!waiter.finalized && waiter.deadlineAt != null && now >= waiter.deadlineAt) return true;
+    }
+    for (const handle of this._workers.values()) {
+      const stall = handle.stallSeamCycle;
+      if (stall && stall.answered === false && now >= stall.mintedAt + stall.windowMs) return true;
+    }
+    return false;
   }
 
   _assertReadable() {
@@ -1684,8 +1731,8 @@ export class Coordinator {
         if (row?.retained === true && typeof row.physicalOwnerId === 'string') named.add(row.physicalOwnerId);
       }
       for (const entry of (report.errors ?? [])) {
-        const match = /^(ws-[a-f0-9]{32})/u.exec(String(entry));
-        if (match) named.add(match[1]);
+        const [candidate] = String(entry).split(/[\s:]/u, 1);
+        if (isPhysicalWorkspaceId(candidate)) named.add(candidate);
       }
       if (named.size > 0) {
         message = `startup owned-resource reconciliation refused: ${[...named].sort().join(', ')}`
@@ -1750,7 +1797,7 @@ export class Coordinator {
   _recoveryDispatchRefusal(handle, task, opts = {}) {
     if (task && this._coordination?.taskResourceRelease?.(task.id)) return 'resources_released';
     if (opts.allowUnvalidatedOwner !== true
-      && /^ws-[a-f0-9]{32}$/u.test(handle?.sessionContext?.ownerTaskId ?? '')
+      && isPhysicalWorkspaceId(handle?.sessionContext?.ownerTaskId)
       && handle.workspaceOwnerBindingValid !== true) return 'workspace_owner_binding_unproven';
     if (opts.allowUnvalidatedOwner !== true
       && handle?.processRef?.state === 'unconfirmed_after_restart'
@@ -3774,7 +3821,7 @@ export class Coordinator {
 
   _restoreRecoveredPhysicalWorkspaceAuthority(handle, context, opts = {}) {
     const physicalOwnerId = context?.ownerTaskId;
-    if (!/^ws-[a-f0-9]{32}$/u.test(physicalOwnerId ?? '')) return true;
+    if (!isPhysicalWorkspaceId(physicalOwnerId)) return true;
     const binding = handle?.workspaceOwnerBinding;
     const currentProcessExact = handle?.processRef?.generation === handle?.processGeneration
       && (['initializing', 'ready'].includes(handle?.processRef?.state)
@@ -4403,13 +4450,14 @@ export class Coordinator {
    * shape as application.mjs's debugGateRefusal, re-derived from the worker's OWN durable source
    * events (never the run-wide log: a judged worker receives ITS verdict and nobody else's). The
    * sanitizer is reused verbatim (verifier-diagnostics.mjs), never a parallel redaction path. */
-  _gateVerdictItemForWorker(workerId, events) {
-    const candidates = events.filter((event) => {
-      if (event.kind === 'error' && event.payload?.['phase'] === 'trust_gate') return true;
-      if (event.kind === 'verify.reverified' && event.payload?.accept === false) return true;
-      return false;
-    });
-    const event = candidates.at(-1);
+  _gateVerdictItemForWorker(workerId, verdictKinds) {
+    // #286 G-39: the two verdict kinds arrive as the log's own per-kind buckets — the latest
+    // candidate by seq, exactly as the single filtered scan produced it.
+    const others = verdictKinds.errors.filter((event) => event.payload?.['phase'] === 'trust_gate');
+    const reverified = verdictKinds.reverified.filter((event) => event.payload?.accept === false);
+    const event = [...others, ...reverified].reduce(
+      (latest, candidate) => (latest === null || candidate.seq > latest.seq ? candidate : latest), null,
+    );
     if (!event) return null;
     const liveCode = event.kind === 'verify.reverified'
       ? (typeof event.payload?.verdict?.diagnosticCode === 'string'
@@ -4465,11 +4513,11 @@ export class Coordinator {
    * the durable log (+ _pending for the interaction still-pending predicate) — never the run-view
    * `.slice(-2)`/MAX_ATTENTION display bounds (the D2 v1.2 per-source pin). */
   _derivePendingAttentionItems(workerId) {
-    const events = this._log.read(workerId);
+    // #286 G-39: per-kind buckets from the log's own index — never a slice of the whole vector.
+    const writeResults = this._log.byKind(workerId, 'scratchpad.write_result');
     const items = [];
 
     // (1) scratchpad_write_failed — a refused write with no later ok:true corrective (D5).
-    const writeResults = events.filter((event) => event.kind === 'scratchpad.write_result');
     let lastOkSeq = 0;
     for (let i = writeResults.length - 1; i >= 0; i -= 1) {
       if (writeResults[i].payload?.ok === true) { lastOkSeq = writeResults[i].seq; break; }
@@ -4489,7 +4537,7 @@ export class Coordinator {
     // (2) answer_question / answer_approval — still-pending interactions (D3/D5/D7). The text
     // rides the durable ask event (never _pending, which stores no prose); the still-pending
     // predicate leans on _pending (rebuilt on replay from the same log).
-    for (const event of events) {
+    for (const event of [...this._log.byKind(workerId, 'question.asked'), ...this._log.byKind(workerId, 'approval.requested')]) {
       if (event.kind === 'question.asked') {
         const requestId = event.payload?.requestId;
         const record = typeof requestId === 'string' ? this._pending.get(requestId) : null;
@@ -4516,7 +4564,10 @@ export class Coordinator {
     }
 
     // (3) gate_verdict — the worker's latest sanitized gate refusal (D6).
-    const verdict = this._gateVerdictItemForWorker(workerId, events);
+    const verdict = this._gateVerdictItemForWorker(workerId, {
+      errors: this._log.byKind(workerId, 'error'),
+      reverified: this._log.byKind(workerId, 'verify.reverified'),
+    });
     if (verdict) items.push(verdict);
 
     return items;
@@ -4622,18 +4673,17 @@ export class Coordinator {
    * (the dedup oracle needs both: unknown = never existed, stale = existed but resolved). */
   _knownAttentionIds(workerId) {
     const ids = new Set();
-    for (const event of this._log.read(workerId)) {
-      if (event.kind === 'scratchpad.write_result' && event.payload?.ok === false) {
-        ids.add(`swf:${workerId}:${event.seq}`);
-      } else if (event.kind === 'question.asked' && typeof event.payload?.requestId === 'string') {
-        ids.add(event.payload.requestId);
-      } else if (event.kind === 'approval.requested' && typeof event.payload?.requestId === 'string') {
-        ids.add(event.payload.requestId);
-      } else if (event.kind === 'error' && event.payload?.['phase'] === 'trust_gate') {
-        ids.add(`gate:${event.seq}`);
-      } else if (event.kind === 'verify.reverified' && event.payload?.accept === false) {
-        ids.add(`gate:${event.seq}`);
-      }
+    for (const event of this._log.byKind(workerId, 'scratchpad.write_result')) {
+      if (event.payload?.ok === false) ids.add(`swf:${workerId}:${event.seq}`);
+    }
+    for (const event of [...this._log.byKind(workerId, 'question.asked'), ...this._log.byKind(workerId, 'approval.requested')]) {
+      if (typeof event.payload?.requestId === 'string') ids.add(event.payload.requestId);
+    }
+    for (const event of this._log.byKind(workerId, 'error')) {
+      if (event.payload?.['phase'] === 'trust_gate') ids.add(`gate:${event.seq}`);
+    }
+    for (const event of this._log.byKind(workerId, 'verify.reverified')) {
+      if (event.payload?.accept === false) ids.add(`gate:${event.seq}`);
     }
     return ids;
   }
@@ -4643,14 +4693,14 @@ export class Coordinator {
    * `lifecycle.turn_started` with `seq ≥ push.seq` and NO `lifecycle.process_closed` in
    * `(push.seq, turn.seq)` between them — a respawned worker honestly shows `read: null`. */
   _attentionReceipt(workerId) {
-    const events = this._log.read(workerId);
-    const pushes = events.filter((event) => event.kind === 'attention.pushed');
+    const pushes = this._log.byKind(workerId, 'attention.pushed');
     if (pushes.length === 0) return { delivered: false, read: null };
     const pushSeq = pushes.at(-1).seq;
-    const turn = events.find((event) => event.kind === 'lifecycle.turn_started' && event.seq >= pushSeq);
+    const turn = this._log.byKind(workerId, 'lifecycle.turn_started')
+      .find((event) => event.seq >= pushSeq);
     if (!turn) return { delivered: true, read: null };
-    const closedBetween = events.some((event) => (
-      event.kind === 'lifecycle.process_closed' && event.seq > pushSeq && event.seq < turn.seq
+    const closedBetween = this._log.byKind(workerId, 'lifecycle.process_closed').some((event) => (
+      event.seq > pushSeq && event.seq < turn.seq
     ));
     return { delivered: true, read: closedBetween ? null : turn.seq };
   }
@@ -5983,8 +6033,10 @@ export class Coordinator {
       }
     }
     const durable = this._coordination.task(task.id);
+    // #286 G-45: one element, one read — never `eventsView()` with no arguments (the #210 class
+    // copies the whole ledger to index one event out of it).
     const terminal = durable?.terminalEvent
-      ? this._coordination.eventsView()[durable.terminalEvent - 1] : null;
+      ? (this._coordination.eventsView(durable.terminalEvent, 1)[0] ?? null) : null;
     const verificationSeq = terminal?.payload?.evidence?.coordinationSeq;
     if (!durable || durable.status !== 'completed' || !Number.isSafeInteger(verificationSeq)) {
       throw Object.assign(new Error('recovery prior task lacks exact durable verification authority'), {
@@ -6242,7 +6294,7 @@ export class Coordinator {
       && handle.recoveredProcessAuthority === true
       && processAuthorityState(handle.processRef, handle.processAuthority) === 'active';
     if (!exactRecoveredProcess) handle.processGeneration = (handle.processGeneration ?? 0) + 1;
-    if (!exactRecoveredProcess && /^ws-[a-f0-9]{32}$/u.test(context.ownerTaskId ?? '')) {
+    if (!exactRecoveredProcess && isPhysicalWorkspaceId(context.ownerTaskId)) {
       handle.workspaceOwnerProcessAuthorityValid = false;
     }
     // Policy observation is bound to one exact process generation. A recovered child must
@@ -6362,7 +6414,7 @@ export class Coordinator {
     for (const event of admission.events) {
       this._handleEvent(event, handle.vendor, { admittedReady: event.kind === 'lifecycle.spawned' });
     }
-    if (/^ws-[a-f0-9]{32}$/u.test(context.ownerTaskId ?? '')
+    if (isPhysicalWorkspaceId(context.ownerTaskId)
       && !this._restoreRecoveredPhysicalWorkspaceAuthority(handle, context)) {
       await stopRecoveryTransport('recovery_workspace_authority_unproven');
       return { ok: false, result: 'workspace_owner_process_authority_unproven' };
@@ -6653,7 +6705,7 @@ export class Coordinator {
     const processlessPreservedAttach = preservationAuthority.processless === true;
     if (!processlessPreservedAttach) {
       handle.processGeneration = (handle.processGeneration ?? 0) + 1;
-      if (/^ws-[a-f0-9]{32}$/u.test(context.ownerTaskId ?? '')) {
+      if (isPhysicalWorkspaceId(context.ownerTaskId)) {
         handle.workspaceOwnerProcessAuthorityValid = false;
       }
     }
@@ -6718,7 +6770,7 @@ export class Coordinator {
     for (const event of admission.events) {
       this._handleEvent(event, handle.vendor, { admittedReady: event.kind === 'lifecycle.spawned' });
     }
-    if (/^ws-[a-f0-9]{32}$/u.test(context.ownerTaskId ?? '')
+    if (isPhysicalWorkspaceId(context.ownerTaskId)
       && !this._restoreRecoveredPhysicalWorkspaceAuthority(handle, context,
         processlessPreservedAttach && outcome?.ack?.attached === true ? {
           authority: this._preservedProcesslessAttachAuthority,
@@ -6769,9 +6821,8 @@ export class Coordinator {
         `task.failed:${task.id}:preserved_reattachment:${failed.seq}`, evidence);
       task.status = 'failed';
     }
-    const retainUnownedWorktree = /^ws-[a-f0-9]{32}$/u.test(
-      handle.sessionContext?.ownerTaskId ?? '',
-    ) && handle.ownedWorktreeAuthority !== true;
+    const retainUnownedWorktree = isPhysicalWorkspaceId(handle.sessionContext?.ownerTaskId)
+      && handle.ownedWorktreeAuthority !== true;
     // A failed attach did not mint physical-owner authority. Reap only the transport/runtime
     // created by this attempt and retain the pre-existing checkout for authoritative restart
     // reconciliation instead of either deleting it without authority or reporting false cleanup.
@@ -7794,9 +7845,9 @@ export class Coordinator {
     if (left.runId === right.runId) return true;
     const waveId = this._waveIdOf(left.runId);
     if (!waveId || waveId !== this._waveIdOf(right.runId)) return false;
-    return !(this._coordination.eventsView() ?? []).some((event) => (
-      event.kind === 'wave.closed' && event.payload?.waveId === waveId
-    ));
+    // #286 G-37/G-45: the store already folds wave closures by waveId; asking it is O(1), and the
+    // per-message scan was the third full-ledger copy this path paid for one delivery.
+    return this._coordination.waveClosure(waveId) === null;
   }
 
   // Delivery remains serial per native session; unrelated recipients run independently.
@@ -8043,7 +8094,10 @@ export class Coordinator {
   // -------------------------------------------------------------------------
 
   async attentionFollow({ scope, targets, afterCursor, timeoutMs } = {}, principal = {}) {
-    this.tick();
+    // #286 G-40: this is a READ — it authorizes, normalizes targets and answers from the attention
+    // projection, and it changes nothing. It runs the fast tick: the deadline work only when a
+    // recorded deadline has come due.
+    this.tickRead();
     if (!scope || typeof scope !== 'object' || Array.isArray(scope)
       || Object.keys(scope).sort().join(',') !== 'runId'
       || (scope.runId != null && (typeof scope.runId !== 'string'
@@ -12737,9 +12791,9 @@ export class Coordinator {
     if (!/^[a-f0-9]{64}$/.test(packDigest ?? '') || !['useful', 'missed'].includes(rating)) {
       return { ok: false, code: 'orientation_rating_refused' };
     }
-    const reads = this._coordination.eventsView().filter((event) => event.kind === 'context.read' && event.payload?.workerId === workerId && event.payload?.packDigest === packDigest);
-    if (reads.length === 0) return { ok: false, code: 'orientation_rating_refused' };
-    const attempt = { grantOrReadEventSeq: reads[0].seq, packDigest, rating, repoId: reads[0].payload?.repoId ?? task.runId ?? null, runId: task.runId ?? null, taskId: task.id, taskVersion: ctask?.version ?? 0, workerId };
+    const read = this._coordination.orientationReadHead(workerId, packDigest);
+    if (!read) return { ok: false, code: 'orientation_rating_refused' };
+    const attempt = { grantOrReadEventSeq: read.eventSeq, packDigest, rating, repoId: read.repoId ?? task.runId ?? null, runId: task.runId ?? null, taskId: task.id, taskVersion: ctask?.version ?? 0, workerId };
     try {
       const result = this._coordination.recordOrientationRating({ packDigest, rating }, { actor: `worker:${workerId}`, key: payload?.idempotencyKey, attempt });
       return { ok: true, event: result?.event ?? null };
@@ -12988,24 +13042,16 @@ export class Coordinator {
     }, { actor: actor ?? 'orchestrator' });
   }
 
+  // #286 G-31/G-45: BOTH readers take the CURRENT binding from the store's `_waveBindings` fold —
+  // one reading of an append-only log's current state, last write wins (coordination-internals
+  // states the law). Scanning for the first `steering.registered` for the run answered with the
+  // superseded wave after a re-registration, and copied the whole ledger twice per peer message.
   _waveRoleOf(runId) {
-    for (const event of this._coordination.eventsView() ?? []) {
-      if (event.kind === 'driver.recorded' && event.payload?.kind === 'steering.registered'
-        && event.payload?.runId === runId) {
-        return event.payload.waveRole ?? null;
-      }
-    }
-    return null;
+    return this._coordination.waveBinding(runId)?.waveRole ?? null;
   }
 
   _waveIdOf(runId) {
-    for (const event of this._coordination.eventsView() ?? []) {
-      if (event.kind === 'driver.recorded' && event.payload?.kind === 'steering.registered'
-        && event.payload?.runId === runId) {
-        return event.payload.waveId ?? null;
-      }
-    }
-    return null;
+    return this._coordination.waveBinding(runId)?.waveId ?? null;
   }
 
   /** Decision 2/8: a worker (re)attachment is a durable generation record so replay can derive
@@ -15115,7 +15161,10 @@ export class Coordinator {
           if (this._atlasStructuralEvidence && base?.path && candidate?.path) {
             structuralEvidence = await this._atlasStructuralEvidence.classify({
               beforeRoot: base?.path, afterRoot: candidate?.path, changedPaths,
-              budgetTokens: Math.max(1, Math.min(20_000, Number(task.brief.budget?.tokens ?? 20_000))),
+              // #286 G-41: the classification budget is the task's OWN recorded brief budget (the
+              // lane spends it at its documented 4 bytes/token), not a literal used as both default
+              // and ceiling. `validateBrief` guarantees the field on every admitted task.
+              budgetTokens: task.brief.budget.tokens,
             });
             const structuralEvent = this._log.append({
               worker: 'hub-atlas', harness: 'baton', turnEpoch: 0, actor: 'policy', kind: 'atlas.structural_classified',
@@ -16306,7 +16355,7 @@ export class Coordinator {
         currentIncarnation: false,
         ownedWorktreeAuthority: recoveredProcessAuthority
           && typeof sessionContext?.worktree === 'string'
-          && !/^ws-[a-f0-9]{32}$/u.test(sessionContext?.ownerTaskId ?? ''),
+          && !isPhysicalWorkspaceId(sessionContext?.ownerTaskId),
         physicalWorkspaceCleanupCompleted: false,
         localAuthority: false,
         createdAt: new Date(0).toISOString(),
@@ -16353,6 +16402,10 @@ export class Coordinator {
     const rebuiltMessages = new Map();
     const replySeeds = [];
     const unmarkedLaneReceipts = [];
+    // #286 G-45: the ONE intentional whole-ledger read left in this file. This is the constructor's
+    // replay rebuild of the message lane and it must see every event once; every other site reads a
+    // bounded view (`eventsView(seq, 1)`, or the store's own projections). A no-arg read added
+    // anywhere else is the bug this issue names.
     const messageEvents = typeof this._coordination.events === 'function'
       ? this._coordination.eventsView()
       : [];

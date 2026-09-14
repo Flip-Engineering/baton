@@ -57,7 +57,6 @@ export const MAD_UNIT_CANON = new Map([
 
 export const MAX_CONTEXT_PACK_BODY_BYTES = FRAME_LIMITS['context_pack.body'].value;
 
-export const MAX_SCRATCHPAD_STOP_PARTITIONS_PER_PASS = 64;
 
 export const SCRATCHPAD_SCOPE = /^(?:shared|worker:[A-Za-z0-9._:-]{1,256})$/u;
 
@@ -613,6 +612,37 @@ export function waveClosure(state, waveId) {
 /** Moved from `CoordinationStore.waveClosures` (issue #259 slice 1). State: `this._waveClosures`, passed explicitly. */
 export function waveClosures(state) {
   return [...state.values()].map(clone);
+}
+
+// ---------------------------------------------------------------------------
+// Reading CURRENT state from the append-only log (issue #286 G-31).
+//
+// An append-only log has no updates: a later record for the same key is a correction, and the
+// current fact is the LAST one. Every reader that asks "what is true now" therefore reads the
+// last record, never the first — a first-binding reader answers with a superseded value, which
+// for the wave binding means a run whose wave was re-declared still routes, closes and seats by
+// its stale wave. The rule is one reading per fact, taken from the replay fold that already folds
+// last-write-wins (`_waveBindings`, `_workerGenerations`), so a reader cannot disagree with the
+// fold or with another reader.
+// ---------------------------------------------------------------------------
+
+/** The current run -> wave binding, from the `_waveBindings` replay fold (last write wins). */
+export function waveBinding(state, runId) {
+  if (typeof runId !== 'string' || runId.length === 0) return null;
+  return clone(state.get(runId) ?? null);
+}
+
+/** The FIRST orientation receipt for one (worker, pack) — the read a rating cites. The fold is a
+ * nested map (worker -> pack -> receipt), so no key format is shared between the fold and here. */
+export function orientationReadHead(state, workerId, packDigest) {
+  if (typeof workerId !== 'string' || typeof packDigest !== 'string') return null;
+  return clone(state.get(workerId)?.get(packDigest) ?? null);
+}
+
+/** The LATEST orientation receipt for one worker — its freshness digest and citation seq. */
+export function orientationReadLatest(state, workerId) {
+  if (typeof workerId !== 'string' || workerId.length === 0) return null;
+  return clone(state.get(workerId) ?? null);
 }
 
 /** Moved from `CoordinationStore.waveRegistry` (issue #259 slice 1). State: `this._waveRegistry`, passed explicitly. */

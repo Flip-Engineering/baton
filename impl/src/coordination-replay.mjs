@@ -19,7 +19,7 @@ import { existsSync, lstatSync, readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   COORDINATION_QUARANTINE_FILE,
-  CoordinationIntegrityError, CoordinationRefusal, MAX_SCRATCHPAD_STOP_PARTITIONS_PER_PASS,
+  CoordinationIntegrityError, CoordinationRefusal,
   SEGMENT_FILE_SUFFIX, SEGMENT_INDEX_FILE, TERMINAL, canonical, canonicalDigest, clone, digest,
   freeze, scratchpadScopeKey, sha256Bytes, validRunId,
 } from './coordination-internals.mjs';
@@ -1228,8 +1228,15 @@ export function _scratchpadReapReceipt(store, prior, result = 'idempotent') {
   return { reap, elevated, result };
 }
 
-/** Moved from `CoordinationStore.reapRunScratchpads` (issue #259 slice 1). State: the store, passed explicitly. */
-export function reapRunScratchpads(store, runId) {
+/** Moved from `CoordinationStore.reapRunScratchpads` (issue #259 slice 1). State: the store, passed
+ * explicitly.
+ *
+ * #286 G-41: the pass bound is the CALLER's recorded deadline, never a partition count. `deadlineAt`
+ * is a wall deadline the stopping run already owns (`null` = reap every partition this pass); the
+ * pass always takes at least one partition, so it advances whatever the clock says. The per-run
+ * partition count is not a physical quantity — the previous literal cap bought nothing but the
+ * ability to observe `partial`. */
+export function reapRunScratchpads(store, runId, { deadlineAt = null, now = Date.now } = {}) {
   if (!validRunId(runId) || (!store._runStopByTarget.has(runId) && !store._runStops.has(runId))) {
     throw new CoordinationRefusal('scratchpad stop cleanup requires a stopping Run', 'run_stopping');
   }
@@ -1246,7 +1253,11 @@ export function reapRunScratchpads(store, runId) {
     return compareCanonicalStrings(left.taskId, right.taskId)
       || compareCanonicalStrings(left.workerId, right.workerId);
   });
-  const selected = partitions.slice(0, MAX_SCRATCHPAD_STOP_PARTITIONS_PER_PASS);
+  const selected = [];
+  for (const partition of partitions) {
+    if (selected.length > 0 && deadlineAt !== null && now() >= deadlineAt) break;
+    selected.push(partition);
+  }
   const reaped = [];
   for (const partition of selected) {
     const scopeKey = scratchpadScopeKey(runId, partition.scope);
@@ -1298,15 +1309,16 @@ export function reapRunScratchpads(store, runId) {
   });
 }
 
-/** Moved from `CoordinationStore.orphans` (issue #259 slice 1). State: the store, passed explicitly. */
+/** Moved from `CoordinationStore.orphans` (issue #259 slice 1). State: the store, passed explicitly.
+ *
+ * #286 G-31: "the claimant's current generation" is read from the SAME replay fold the rest of the
+ * store reads (`_workerGenerations`, last write wins — a replacement generation is a correction, so
+ * the first binding is dead state). Rescanning `store._events` here was a second reading of one
+ * fact: the two could only ever disagree by drifting, and `coordination-internals.waveBinding` is
+ * the same law for the run -> wave binding. */
 export function orphans(store, { liveWorkers = [] } = {}) {
   const live = new Set(Array.isArray(liveWorkers) ? liveWorkers : []);
-  const lastGeneration = new Map();
-  for (const event of store._events) {
-    if (event.kind === 'worker.generation_bound') {
-      lastGeneration.set(event.payload.workerId, event.payload);
-    }
-  }
+  const lastGeneration = store._workerGenerations;
   const rows = [];
   for (const task of store._tasks.values()) {
     if (TERMINAL.has(task.status)) continue;

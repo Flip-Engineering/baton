@@ -193,7 +193,9 @@ test('CI2: the committed map, the delegates, and the exports are one bijection',
     moved.set(`${member.name}#${member.ordinal}`, port === 'surface:internals_port' ? 'coordinationInternals' : 'coordinationReplay');
   }
   const counts = [...moved.values()].reduce((acc, namespace) => ({ ...acc, [namespace]: (acc[namespace] ?? 0) + 1 }), {});
-  assert.deepEqual(counts, { coordinationInternals: 95, coordinationReplay: 42 },
+  // #286 added three internals helpers (waveBinding, orientationReadHead, orientationReadLatest)
+  // and their store delegates; the census is the point, so it moves with them.
+  assert.deepEqual(counts, { coordinationInternals: 98, coordinationReplay: 42 },
     'the map must show the moved surface and recovery buckets, minus the members two suite-pinned source scans still key to the store');
 
   const wired = delegates();
@@ -206,7 +208,7 @@ test('CI2: the committed map, the delegates, and the exports are one bijection',
   }
   // The replay module is exactly its port: 42 exports, one delegate each. The internals module also
   // exports the relocated primitives (keys, digests, paths) the store imports back, so the claim
-  // there is: 100 distinct exported helpers, each reached by exactly one delegate — and every name
+  // there is: 103 distinct exported helpers, each reached by exactly one delegate — and every name
   // the store imports from either module must exist.
   const replay = MODULES.find((module) => module.namespace === 'coordinationReplay');
   const reached = [...wired.values()].filter((delegate) => delegate.module === replay.namespace).map((delegate) => delegate.helper).sort();
@@ -214,7 +216,7 @@ test('CI2: the committed map, the delegates, and the exports are one bijection',
     `${replay.file}: every export has exactly one delegate, and every delegate names an export`);
   const helpers = [...wired.values()].filter((delegate) => delegate.module === 'coordinationInternals').map((delegate) => delegate.helper);
   assert.equal(new Set(helpers).size, helpers.length, 'one delegate per internals helper');
-  assert.equal(helpers.length, 95, 'the surface bucket moved 95 of its 100 members');
+  assert.equal(helpers.length, 98, 'the surface bucket moved 98 of its 103 members');
   for (const imported of importedFromMovedModules()) {
     const module = MODULES.find((entry) => entry.file === imported.module);
     assert.ok(Object.hasOwn(module.exports, imported.name),

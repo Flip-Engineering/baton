@@ -37,6 +37,10 @@ export class Log {
     this._indexFiles = new Map();
     this._parsePasses = 0;
     this._parsedEvents = 0;
+    /** Per-worker kind index: worker -> kind -> the frozen events of that kind, in seq order. Built
+     * on the first `byKind` request for a kind, then appended to on `append` and on a later parse
+     * pass — see `byKind`. */
+    this._kinds = new Map();
     mkdirSync(dir, { recursive: true });
   }
 
@@ -125,6 +129,7 @@ export class Log {
         return deepFreeze(event);
       });
       indexed.push(...added);
+      this._extendKinds(worker, added);
       this._parsePasses += 1;
       this._parsedEvents += added.length;
     } else if (!this._index.has(worker)) {
@@ -155,6 +160,7 @@ export class Log {
     appendFileSync(this._file(partial.worker), JSON.stringify(full) + '\n', 'utf8');
     this._seq.set(partial.worker, seq);
     this._index.get(partial.worker).push(full);
+    this._extendKinds(partial.worker, [full]);
     const stat = statSync(this._file(partial.worker));
     this._indexFiles.set(partial.worker, {
       exists: true, dev: stat.dev, ino: stat.ino, size: stat.size, mtimeMs: stat.mtimeMs,
@@ -167,6 +173,51 @@ export class Log {
     const events = this._load(worker);
     if (!Number.isSafeInteger(fromSeq)) return [];
     return events.slice(Math.max(0, fromSeq - 1));
+  }
+
+  /** Keep this worker's already-requested kind buckets in step with events that arrived after the
+   * bucket was built. A bucket that has been handed out is frozen, so the first append after a
+   * hand-out replaces it with a MUTABLE successor — the following appends of that kind then push in
+   * place. The cost is one copy per hand-out, never one per append. */
+  _extendKinds(worker, added) {
+    const buckets = this._kinds.get(worker);
+    if (buckets === undefined || added.length === 0) return;
+    for (const [kind, bucket] of buckets) {
+      const extra = added.filter((event) => event.kind === kind);
+      if (extra.length === 0) continue;
+      if (Object.isFrozen(bucket)) {
+        const successor = [...bucket];
+        successor.push(...extra);
+        buckets.set(kind, successor);
+      } else {
+        bucket.push(...extra);
+      }
+    }
+  }
+
+  /**
+   * The per-kind vector for one worker, in seq order: the attention derivations read a handful of
+   * kinds (write results, interactions, gate verdicts, pushes, lifecycle edges) and each one would
+   * otherwise slice the worker's ENTIRE event vector per call. The bucket is built from the
+   * already-parsed vector on the first request for that kind and updated by `_extendKinds`.
+   *
+   * The returned array is the index's own, FROZEN: a caller that needs different elements asks for
+   * a different kind, and an append after the hand-out replaces the bucket rather than mutating the
+   * vector the caller holds. Index the kinds a reader repeats, never a hot write-only kind.
+   * @param {string} worker @param {string} kind @returns {BatonEvent[]}
+   */
+  byKind(worker, kind) {
+    if (typeof worker !== 'string' || worker.length === 0) throw new TypeError('byKind: worker required');
+    if (typeof kind !== 'string' || kind.length === 0) throw new TypeError('byKind: event kind required');
+    const events = this._load(worker);
+    let buckets = this._kinds.get(worker);
+    if (buckets === undefined) { buckets = new Map(); this._kinds.set(worker, buckets); }
+    let bucket = buckets.get(kind);
+    if (bucket === undefined) {
+      bucket = events.filter((event) => event.kind === kind);
+      buckets.set(kind, bucket);
+    }
+    return Object.freeze(bucket);
   }
 
   /** Exact O(1) lookup after the worker's single parse pass. */
