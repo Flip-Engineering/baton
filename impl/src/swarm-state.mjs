@@ -285,6 +285,12 @@ export function validateSwarmEvent(kind, payload) {
         if (isNonEmptyString(entry.workId) === isNonEmptyString(entry.artifact)) {
           refuse('each dependsOn entry names exactly one target: workId or artifact', 'invalid_payload');
         }
+        // Issue #304: payload-only rules belong to the shape lane, where both admission and
+        // replay run the SAME predicate — a work item that depends on itself refuses here,
+        // before any state read, instead of as a fold-only integrity code.
+        if (entry.workId === p.workId) {
+          refuse(`work ${p.workId} cannot depend on itself`, 'work_dependency_self');
+        }
       }
     }
     return;
@@ -527,9 +533,9 @@ export function foldSwarmEvent(swarms, event, { admission = false } = {}) {
     if (dependsOn !== undefined && dependsOn.length > 0) {
       for (const entry of dependsOn) {
         if (entry.workId === undefined) continue;
-        if (entry.workId === p.workId) {
-          integrity(`work ${p.workId} cannot depend on itself`, 'work_dependency_self');
-        }
+        // The self-dependency rule is a shape refusal (issue #304): validateSwarmEvent raises
+        // work_dependency_self above, so this loop only owes the stateful half — the target
+        // must exist in this swarm's projection.
         if (!ownGet(swarm.work, entry.workId)) {
           integrity(`dependency target work ${entry.workId} not found in swarm ${p.swarmId}`, 'work_not_found');
         }

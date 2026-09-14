@@ -1,0 +1,39 @@
+{
+  "schemaVersion": 1,
+  "digest": "067b7311bb9d3e440a20db1c1281dd1f26da8ed399b2ccc72dcb9bd23a08ff54",
+  "algorithm": "sha256 of JSON.stringify(swarmSnapshot(foldSwarmEvent from empty, replay semantics)) over the fixture rows",
+  "source": {
+    "path": "/tmp/baton-master-deployment-20260914/state/coordination/events.jsonl",
+    "bytes": 13205899,
+    "rows": 20690
+  },
+  "fixture": {
+    "rows": 57,
+    "ceilingBytes": 100130,
+    "swarmsKept": 1,
+    "swarmsDropped": 18
+  },
+  "swarmIdsKept": [
+    "tight-271"
+  ],
+  "swarmIdsDropped": [
+    "flaky-257",
+    "swarm-6244cb187ccc619832a00819c4c70398",
+    "swarm-096ddc8098ee1e94d313472db014478d",
+    "swarm-a7d47445614eea0790ebb49647c7da31",
+    "swarm-80483a8876c1b4bc8942beea6ed40c27",
+    "swarm-830fbfde02e6d0e7d6ede6c85fad19c9",
+    "swarm-01633a817d801a8d413eaf205f3cfc3a",
+    "swarm-4a09e9780c031fb3b139f67875612cac",
+    "swarm-2ee73ad4f4223e2fe577ab1b0b756850",
+    "swarm-2e630dbf917258215c5eed8f0a02e428",
+    "swarm-0bd0bf065286621c6c9327dac9d22e16",
+    "swarm-a83001a2902d4398c69b179ef1fa7625",
+    "swarm-2e0f0b8024ac51983db08eb02857cdb1",
+    "swarm-61e97099cebe22d4ca739e6508c32a7e",
+    "swarm-5a170122a66137b879bddcaecdeffa97",
+    "swarm-283b1bc0a214358eebb6d8cadf892af7",
+    "swarm-038d147c08603f54b43626f434cb8c28",
+    "swarm-78ce0b94e738fd3495cdd414f8278618"
+  ]
+}

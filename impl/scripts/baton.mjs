@@ -1,7 +1,10 @@
 #!/usr/bin/env node
 
-import { resolve } from 'node:path';
+import { execFileSync } from 'node:child_process';
+import { existsSync } from 'node:fs';
+import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { coordinationReplayFailure } from '../src/coordination-store.mjs';
 import {
   BatonWebClient, batonCliHelp, discoverBatonConnection, inspectBatonConnection,
   parseBatonCli, projectBatonCliResult, runBatonCli, setupBatonConnection,
@@ -172,16 +175,29 @@ try {
         // the outline says the published connection is unusable, run the real discovery and carry
         // its refusal verbatim (`code`, `message`, `field`, `detail`) beside the outline.
         const refusal = unusableAuthority(local) ? publishedConnectionRefusal() : null;
-        const projected = refusal === null ? local : Object.freeze({
+        // Issue #304: when the deployment is in the refused-startup state — the resident is
+        // gone or was never reachable — the doctor runs the REAL startup against this
+        // checkout's coordination ledger (read-only probe, no writer lease) so the operator
+        // sees the offending row (seq, kind, code, message) and the quarantine remedy here,
+        // instead of a bare `stale` that loops back to a `baton serve` that cannot start.
+        const coordination = checkoutCoordinationReplayFailure();
+        const projected = refusal === null && coordination === null ? local : Object.freeze({
           ...local,
-          refusal,
-          next: Object.freeze([{
-            action: 'repair_authority', command: 'baton serve',
-            reason: refusal.detail?.remedy ?? refusal.message,
-          }]),
+          ...(refusal === null ? {} : { refusal }),
+          ...(coordination === null ? {} : { coordination }),
+          next: Object.freeze(coordination !== null
+            ? [{
+              action: 'quarantine',
+              command: `quarantine coordination seq ${coordination.seq} (the coordination quarantine verb, issue #290) and restart with \`baton serve\``,
+              reason: coordination.remedy,
+            }]
+            : [{
+              action: 'repair_authority', command: 'baton serve',
+              reason: refusal.detail?.remedy ?? refusal.message,
+            }]),
         });
         process.stdout.write(`${JSON.stringify(projected, null, 2)}\n`);
-        if (parsed.check && local.state !== 'configured') process.exitCode = 1;
+        if ((parsed.check && local.state !== 'configured') || coordination !== null) process.exitCode = 1;
       } else {
         const remote = await clientFor(discoverBatonConnection()).doctor();
         const result = {
@@ -270,4 +286,22 @@ function publishedConnectionRefusal() {
   } catch (error) {
     return normalizeControlSurfaceError(error).error;
   }
+}
+
+/** Issue #304: the coordination ledger probe behind `baton doctor`'s coordination row. The
+ * deployment root mirrors the layout application-deployment.mjs owns (the git common dir's
+ * `baton/application-v3/state`); the probe runs only when a ledger is actually there, so a
+ * machine with no deployment never has directories created under it. Returns the typed replay
+ * refusal a restart would die with, or null when the ledger replays clean (or is absent). */
+function checkoutCoordinationReplayFailure({ cwd = process.cwd() } = {}) {
+  let commonDir;
+  try {
+    commonDir = execFileSync('git', ['-C', cwd, 'rev-parse', '--git-common-dir'], {
+      encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 5_000,
+    }).trim();
+  } catch { return null; }
+  if (commonDir.length === 0) return null;
+  const coordinationRoot = join(resolve(cwd, commonDir), 'baton', 'application-v3', 'state', 'coordination');
+  if (!existsSync(join(coordinationRoot, 'events.jsonl'))) return null;
+  return coordinationReplayFailure(coordinationRoot);
 }

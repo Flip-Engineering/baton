@@ -16,7 +16,7 @@ import {
   PLAN_OBJECT_BATCH_KINDS, PLAN_OBJECT_EVENT_KINDS, foldPlanObjectEvent, planObjectDigest, planObjectSnapshot,
   waveRoleRunKey,
 } from './orchestrator-plan.mjs';
-import { SWARM_EVENT_KINDS, validateSwarmEvent, foldSwarmEvent, swarmSnapshot } from './swarm-state.mjs';
+import { SWARM_EVENT_KINDS, validateSwarmEvent, foldSwarmEvent, swarmSnapshot, SwarmIntegrityError } from './swarm-state.mjs';
 import { usdFromNanos, usdToNanos } from './usd.mjs';
 import {
   CANONICAL_ORDER_VERSION, canonicalJson, compareCanonicalStrings,
@@ -195,6 +195,56 @@ function writeQuarantineEntry(root, entry) {
 // and the index is rebuilt by scanning them if it is absent or behind the ledger's
 // truncation. `compact({ beforeSeq })` is the operator verb that lands this seam; a later
 // row wires the cadence policy that decides which waves are terminal and picks the cut.
+/** Issue #304: the typed startup refusal for a RECORDED swarm row the fold rejects. The bare
+ * SwarmIntegrityError a resident died with named a code but not the row, and left the operator
+ * no repairable coordinate. This refusal carries the offending row's seq and kind, the fold's
+ * own code (kept as `code`, so a quarantine entry records the true cause), the original
+ * message, and the remedy — quarantine the seq per #290's verb, or land the rule with the
+ * replay corpus so no fold refuses recorded history again. Raised only at the fold site during
+ * replay (`_loading`); a live append failure still poisons the projection the #290 way. */
+export class SwarmReplayRefusal extends CoordinationIntegrityError {
+  constructor(event, cause) {
+    const seq = event.seq ?? null;
+    super(
+      `the resident cannot start: coordination replay refused a recorded swarm row —`
+      + ` seq ${seq} kind ${event.kind} code ${cause.code}: ${cause.message}`
+      + ` Remedy: quarantine this seq with the coordination quarantine verb (issue #290 —`
+      + ` quarantineCoordinationLedgerEvent on this coordination root) if the row is bad history;`
+      + ` a fold rule that refuses recorded history is a construction error — reclassify it`
+      + ` admission-only and pin the ledger in the replay corpus (issue #304).`,
+      cause.code,
+    );
+    this.name = 'SwarmReplayRefusal';
+    this.coordinationSeq = seq;
+    this.coordinationKind = event.kind;
+    this.causeCode = cause.code;
+    this.causeMessage = cause.message;
+    this.cause = cause;
+    this.remedy = 'quarantine the offending seq with the coordination quarantine verb (issue #290), or reclassify the fold rule admission-only with the replay corpus (issue #304)';
+  }
+}
+
+/** Issue #304: the read-only probe behind `baton doctor`'s coordination row. It runs the REAL
+ * startup — one store construction, no writer lease, no writes (the #290 quarantine probe's
+ * idiom) — and reports the typed refusal a restart would die with, or null when the ledger
+ * replays clean. */
+export function coordinationReplayFailure(root) {
+  try {
+    new CoordinationStore(root);
+    return null;
+  } catch (error) {
+    return freeze({
+      state: 'replay_refused',
+      name: error?.name ?? null,
+      seq: error?.coordinationSeq ?? null,
+      kind: error?.coordinationKind ?? null,
+      code: error?.code ?? 'coordination_startup_failed',
+      message: error?.message ?? String(error),
+      remedy: error?.remedy ?? 'restart after repairing the coordination ledger',
+    });
+  }
+}
+
 const SEGMENTS_DIR = 'segments';
 const SEGMENT_TEMP_PREFIX = '.segment.';
 const SEGMENT_INDEX_TEMP_PREFIX = '.segment-index.';
@@ -8723,7 +8773,16 @@ export class CoordinationStore {
       // (authority never collapses across attempts) and closed rating records (advisory). No
       // projection state; replay re-derives the audit by re-reading the log. Zero promotion weight.
     } else if (SWARM_EVENT_KINDS.has(event.kind)) {
-      foldSwarmEvent(this._swarms, event);
+      // Issue #304: a fold refusal during REPLAY is the resident's startup refusal, so it is
+      // raised TYPED — the offending row's seq, kind, code and message, with the #290
+      // quarantine remedy — instead of the bare integrity error. A fold refusal on the live
+      // append path is a different animal: the admission fold already judged the row, so the
+      // append failure poisons the projection the #290 way, unchanged.
+      try { foldSwarmEvent(this._swarms, event); }
+      catch (error) {
+        if (this._loading && error instanceof SwarmIntegrityError) throw new SwarmReplayRefusal(event, error);
+        throw error;
+      }
     } else if (PLAN_OBJECT_EVENT_KINDS.has(event.kind)) {
       // #161 (D1/P2): the plan-object fold — the orchestrator's campaign plan state as a
       // first-class coordination citizen. The lane module owns the closed payload shapes and the
