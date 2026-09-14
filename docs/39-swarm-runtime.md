@@ -556,3 +556,42 @@ code}` instead of leaving `operation_unconfirmed` forever. And in-flight rows ne
 request body: `swarm.operation_requested` names the command, the seat and the request DIGEST only,
 so the text of somebody's private guide is not ledger content. The WHY of a holder release is
 durable on the released assignment rows themselves (`releaseReason`), not on the operation lane.
+
+## A fold rule can never refuse recorded history again (issue #304, 2026-09-14)
+
+The #292 regression class: an admissibility rule that tightens what may be admitted landed
+inside `foldSwarmEvent` — which also replays the ledger at startup — and a resident could not
+start over its own deployment because its history held a row admitted before the rule existed.
+The suite never saw it, because every fixture was written under the new rule. c6253838
+reclassified that one rule by hand; #304 makes the class impossible three ways.
+
+**The replay corpus.** Real coordination ledgers — reduced by
+`node impl/scripts/ledger-extract.mjs <events.jsonl> <out.jsonl>` to exactly the rows the fold
+consumes (`SWARM_EVENT_KINDS` plus the `driver.recorded` swarm-operation records), kept verbatim,
+asserted free of token-shaped values, and bounded whole-swarms against the repository's existing
+fixture ceiling — are committed under `impl/test/fixtures/ledgers/` with a sidecar digest of the
+folded projection. The suite replays every fixture through `foldSwarmEvent` from an empty state
+and fails if the projection no longer matches its recorded digest: a rule that refuses or
+reshapes recorded history fails on the author's machine, named, before it can land. The extract
+folds with replay semantics (no `admission` flag) — a resident must never refuse its own
+recorded history.
+
+**The fold-admission gate.** `surface-gate.mjs` audits every `integrity(...)` site inside
+`foldSwarmEvent`: each must be a **shape** refusal (the same code is raised by
+`validateSwarmEvent`, the lane both admission and replay run, so every ledger row passed it
+where it was written), an **admission**-guarded refusal (fires only on the prospective fold
+before an append, never on rows read back), or a **pinned** replay invariant — a stateful
+referential/CAS check that the admission fold re-derives from the same projection replay
+reconstructs, so it can only fire on a ledger no same-vintage store wrote (corruption; the #290
+quarantine is that repair). The pins are closed, named, and refused as stale when a code
+disappears; a new rule must land its own code and face the decision. Payload-only rules belong
+to the shape lane: `work_dependency_self` is raised by `validateSwarmEvent`, not by a fold-only
+integrity site.
+
+**The typed startup refusal.** When replay refuses a recorded swarm row, the resident's startup
+refusal is a `SwarmReplayRefusal` naming the offending row's **seq, kind, code and message**
+(keeping the fold's code so a quarantine entry records the true cause) plus the remedy: quarantine
+the seq with the #290 coordination quarantine verb if the row is bad history, or reclassify the
+rule admission-only and pin the ledger in the corpus. `baton doctor` runs the same read-only
+probe the startup runs and shows that row — and the repair — while the deployment is in the
+refused state, instead of a bare `stale` that loops back to a `baton serve` that cannot start.

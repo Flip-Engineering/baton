@@ -317,6 +317,250 @@ export function checkCliAdmissionDerivation() {
   }
   return findings;
 }
+// ---------------------------------------------------------------------------
+// The fold refuses recorded history only by construction error (issue #304).
+//
+// The #292 regression: a new admissibility rule landed INSIDE foldSwarmEvent — which also
+// replays the ledger at startup — and bricked every resident whose history predated it
+// (c6253838 reclassified that one rule with the `admission` flag). This row makes the class
+// impossible to land: every `integrity(...)` site in foldSwarmEvent must be
+//   shape      — the same code is raised by validateSwarmEvent, the lane both admission and
+//                replay run, so a ledger row always passed it where it was written (the replay
+//                corpus pins the shipped shape rules against real history), or
+//   admission  — lexically guarded by the `admission` flag, so it fires only on the
+//                prospective fold before an append, never on rows read back, or
+//   pinned     — one of the replay-invariant codes below: stateful referential/CAS invariants
+//                that the admission fold re-derives from the SAME projection replay
+//                reconstructs, so they can only fire on a ledger no same-vintage store wrote
+//                (corruption — the #290 quarantine is that repair) and the corpus proves the
+//                vintage. The pins are closed and named: a NEW rule must land its own code and
+//                face this decision; reusing a pinned code for a new rule is exactly the
+//                incident, and a pin whose code the fold no longer raises is refused as stale.
+// A site in none of the three fails the gate with the code and the line named.
+// ---------------------------------------------------------------------------
+const SWARM_FOLD_ADMISSION_PINS = Object.freeze({
+  // Existence and CAS invariants: admission re-derives each of these against the current
+  // projection before an append, and replay reconstructs that projection row for row — a
+  // refusal at replay names corruption, not a rule change.
+  swarm_duplicate: 'a created row re-naming a live swarm is a corrupt ledger, not admissible history',
+  swarm_not_found: 'every non-create row names a swarm the replayed projection holds at that seq',
+  participant_duplicate: 'a join re-naming a live participant is a corrupt ledger, not history',
+  participant_not_found: 'bindings, leaves, claims and reviews name participants the projection holds',
+  participant_not_active: 'groups and writer claims name active seats the projection holds at that seq',
+  version_conflict: 'the CAS version re-derives identically from the replayed projection',
+  work_not_found: 'assignments, contributions and dependency targets name works the projection holds',
+  group_not_found: 'coupling declares and group-scoped context name groups the projection holds',
+  coupling_not_found: 'arrive/release rows name a coupling the projection holds at that seq',
+  swarm_coupling_released: 'a release re-naming a released record is a corrupt ledger, not history',
+  swarm_already_arrived: 'a re-arrival of one seat is a corrupt ledger, not history',
+  swarm_not_a_member: 'an arriver names a member of the group the projection holds',
+  swarm_already_closed: 'a close re-naming a closed swarm is a corrupt ledger, not history',
+  contribution_duplicate: 'a recorded re-naming a live contribution is a corrupt ledger, not history',
+  contribution_not_found: 'revisions and reviews name contributions the projection holds at that seq',
+  // Conflict invariants: the same re-derivation, plus the replay corpus proves the vintage —
+  // the real ledgers carry the rows these rules were tightened for.
+  swarm_coupling_conflict: 'one unreleased failure policy per group re-derives identically at replay',
+  swarm_writer_conflict: 'one exclusive writer per checkout re-derives identically at replay',
+  work_dependency_cycle: 'dependency rings re-derive identically; the corpus carries declared dependsOn rows',
+  contribution_author_mismatch: 'a revision names its own contribution author, re-derived at replay',
+  contribution_revision_conflict: 'one revision per contribution re-derives identically at replay',
+  // The fold tail: fires only when a kind joins SWARM_EVENT_KINDS without a fold branch —
+  // the new kind never reached history, so nothing recorded can refuse here.
+  unsupported_event_kind: 'a kind added to SWARM_EVENT_KINDS without a fold branch never reached history',
+});
+
+/** A string- and comment-aware scanner: for every character index it reports the enclosing
+ * block headers, so the admission guard is recognized structurally (`if (admission ...) {`)
+ * no matter how the condition wraps — never by a brace count that `${...}` would corrupt. */
+function swarmFoldBlockHeaders(text) {
+  const stack = [];
+  const sites = [];
+  let state = 'code';
+  let templateHoles = [];
+  let pending = '';
+  let paren = 0;
+  let line = 1;
+  const pushHeader = () => { stack.push(pending.trim()); pending = ''; };
+  for (let index = 0; index < text.length; index += 1) {
+    const char = text[index];
+    const next = text[index + 1];
+    if (char === '\n') { line += 1; if (state === 'line-comment') state = 'code'; if (state === 'template' || state === 'code') pending += char; continue; }
+    switch (state) {
+      case 'line-comment': break;
+      case 'block-comment': if (char === '*' && next === '/') { state = 'code'; index += 1; } break;
+      case "'": if (char === '\\') index += 1; else if (char === "'") state = 'code'; break;
+      case '"': if (char === '\\') index += 1; else if (char === '"') state = 'code'; break;
+      case 'template':
+        if (char === '\\') index += 1;
+        else if (char === '`') state = 'code';
+        else if (char === '$' && next === '{') { state = 'code'; templateHoles.push(paren); paren = 0; }
+        break;
+      default:
+        if (char === '/' && next === '/') { state = 'line-comment'; index += 1; break; }
+        if (char === '/' && next === '*') { state = 'block-comment'; index += 1; break; }
+        if (char === "'") { state = "'"; break; }
+        if (char === '"') { state = '"'; break; }
+        if (char === '`') { state = 'template'; break; }
+        if (char === '(') paren += 1;
+        if (char === ')') {
+          if (templateHoles.length > 0 && paren === 0) { paren = templateHoles.pop(); state = 'template'; break; }
+          paren -= 1;
+        }
+        if (char === '{') { pushHeader(); break; }
+        if (char === '}') {
+          if (templateHoles.length > 0 && paren === 0 && stack.length > 0) { stack.pop(); paren = templateHoles.pop(); state = 'template'; break; }
+          stack.pop(); pending = ''; break;
+        }
+        if (char === ';' && paren === 0) pending = '';
+        pending += /[A-Za-z0-9_$.]/.test(char) ? char : ' ';
+        if (text.startsWith('integrity(', index) || text.startsWith('refuse(', index)) {
+          sites.push({
+            index, line,
+            kind: text.startsWith('integrity(', index) ? 'integrity' : 'refuse',
+            headers: [...stack], statement: pending.trim(),
+          });
+        }
+        break;
+    }
+  }
+  return sites;
+}
+
+/** The code a `refuse(...)`/`integrity(...)` call raises: the LAST top-level string-literal
+ * argument inside the call's parens (the code may be followed by a trailing comma). String
+ * and template literals are skipped whole, so a `,` inside a message never splits arguments. */
+function swarmFoldCallCode(text, callStart) {
+  const skipLiteral = (start) => {
+    const quote = text[start];
+    let index = start + 1;
+    while (index < text.length) {
+      if (text[index] === '\\') index += 2;
+      else if (text[index] === quote) return index;
+      else if (quote === '`' && text[index] === '$' && text[index + 1] === '{') {
+        let holeDepth = 1;
+        index += 2;
+        while (index < text.length && holeDepth > 0) {
+          if (text[index] === '{') holeDepth += 1;
+          else if (text[index] === '}') holeDepth -= 1;
+          else if (text[index] === "'" || text[index] === '"' || text[index] === '`') index = skipLiteral(index);
+          index += 1;
+        }
+      } else index += 1;
+    }
+    return index;
+  };
+  let depth = 0;
+  let literal = null;
+  let index = text.indexOf('(', callStart);
+  while (index < text.length) {
+    const char = text[index];
+    if (char === "'" || char === '"') {
+      if (depth === 1) literal = { start: index + 1 };
+      index = skipLiteral(index);
+      if (literal !== null && literal.end === undefined) literal.end = index;
+    } else if (char === '`') index = skipLiteral(index);
+    else if (char === '(') depth += 1;
+    else if (char === ')') { depth -= 1; if (depth === 0) break; }
+    index += 1;
+  }
+  if (literal === null || literal.end === undefined) return null;
+  return /^[a-z0-9_]+$/u.test(text.slice(literal.start, literal.end))
+    ? text.slice(literal.start, literal.end) : null;
+}
+
+function swarmFoldFunctionBody(text, name) {
+  const start = text.indexOf(`export function ${name}(`);
+  if (start < 0) return null;
+  // The parameter list may itself hold braces (foldSwarmEvent destructures `{ admission }`),
+  // so the body's opening brace is the first one AFTER the parameter list's matching close
+  // paren — never the first `{` after the name.
+  let state = 'code';
+  let paren = 0;
+  let open = -1;
+  for (let index = text.indexOf('(', start); index < text.length && open < 0; index += 1) {
+    const char = text[index];
+    const next = text[index + 1];
+    if (state === 'line-comment') { if (char === '\n') state = 'code'; continue; }
+    if (state === 'block-comment') { if (char === '*' && next === '/') { state = 'code'; index += 1; } continue; }
+    if (state === "'") { if (char === '\\') index += 1; else if (char === "'") state = 'code'; continue; }
+    if (state === '"') { if (char === '\\') index += 1; else if (char === '"') state = 'code'; continue; }
+    if (char === '/' && next === '/') { state = 'line-comment'; index += 1; continue; }
+    if (char === '/' && next === '*') { state = 'block-comment'; index += 1; continue; }
+    if (char === "'" || char === '"') { state = char; continue; }
+    if (char === '(') paren += 1;
+    if (char === ')') { paren -= 1; if (paren === 0) open = text.indexOf('{', index + 1); }
+  }
+  if (open < 0) return null;
+  const bodyStart = open;
+  let depth = 0;
+  for (let index = bodyStart; index < text.length; index += 1) {
+    const char = text[index];
+    const next = text[index + 1];
+    if (state === 'line-comment') { if (char === '\n') state = 'code'; continue; }
+    if (state === 'block-comment') { if (char === '*' && next === '/') { state = 'code'; index += 1; } continue; }
+    if (state === "'") { if (char === '\\') index += 1; else if (char === "'") state = 'code'; continue; }
+    if (state === '"') { if (char === '\\') index += 1; else if (char === '"') state = 'code'; continue; }
+    if (state === 'template') { if (char === '\\') index += 1; else if (char === '`') state = 'code'; continue; }
+    if (char === '/' && next === '/') { state = 'line-comment'; index += 1; continue; }
+    if (char === '/' && next === '*') { state = 'block-comment'; index += 1; continue; }
+    if (char === "'" || char === '"' || char === '`') { state = char; continue; }
+    if (char === '{') depth += 1;
+    if (char === '}') { depth -= 1; if (depth === 0) return text.slice(start, index + 1); }
+  }
+  return null;
+}
+/** A block header's parentheses are space-normalized by the scanner, so an admission guard
+ * is a conditional header: it starts with `if`/`else if` and names the admission flag. */
+const isAdmissionGuard = (header) => {
+  const normalized = header.trim().replace(/\s+/gu, ' ');
+  return /^(?:else )?if /.test(normalized) && /\badmission\b/.test(normalized);
+};
+
+/**
+ * Every integrity site inside foldSwarmEvent is a shape refusal, an admission-guarded
+ * refusal, or a pinned replay-invariant (see the block comment above). `source` overrides the
+ * scanned file so the rule itself is testable.
+ */
+export function checkSwarmFoldAdmission({ source = null } = {}) {
+  const path = 'impl/src/swarm-state.mjs';
+  const text = source ?? readFileSync(new URL(`../src/swarm-state.mjs`, import.meta.url), 'utf8');
+  const findings = [];
+  const validateBody = swarmFoldFunctionBody(text, 'validateSwarmEvent');
+  const foldBody = swarmFoldFunctionBody(text, 'foldSwarmEvent');
+  if (validateBody === null || foldBody === null) {
+    return [`${path}: validateSwarmEvent/foldSwarmEvent not found — the fold admission audit cannot run`];
+  }
+  const shapeCodes = new Set();
+  for (const site of swarmFoldBlockHeaders(validateBody)) {
+    if (site.kind !== 'refuse') continue;
+    const code = swarmFoldCallCode(validateBody, site.index);
+    if (code !== null) shapeCodes.add(code);
+  }
+  const foldOffset = text.indexOf(foldBody);
+  const prefixLines = text.slice(0, foldOffset).split('\n').length - 1;
+  const raisedCodes = new Set();
+  for (const site of swarmFoldBlockHeaders(foldBody)) {
+    if (site.kind !== 'integrity') continue;
+    const code = swarmFoldCallCode(foldBody, site.index);
+    if (code === null) {
+      findings.push(`${path}:${prefixLines + site.line}: an integrity(...) call names no literal code — the fold admission audit cannot classify it`);
+      continue;
+    }
+    raisedCodes.add(code);
+    if (shapeCodes.has(code)) continue;
+    if (site.headers.some(isAdmissionGuard) || isAdmissionGuard(site.statement)) continue;
+    if (Object.hasOwn(SWARM_FOLD_ADMISSION_PINS, code)) continue;
+    findings.push(
+      `${path}:${prefixLines + site.line}: fold refusal '${code}' can fire on recorded history — guard it with the admission flag, raise it from validateSwarmEvent as a shape refusal, or pin it as a justified replay invariant`,
+    );
+  }
+  for (const code of Object.keys(SWARM_FOLD_ADMISSION_PINS)) {
+    if (!raisedCodes.has(code)) {
+      findings.push(`${path}: stale fold-admission pin '${code}' — the fold no longer raises it; shrink the pins`);
+    }
+  }
+  return findings;
+}
 
 /** Run every surface check; with `write`, regenerate the artifacts first. */
 export async function runSurfaceGate({ write = false } = {}) {
@@ -327,6 +571,7 @@ export async function runSurfaceGate({ write = false } = {}) {
   const findings = [
     ...checkCanonicalSurfaceResolution().map((f) => `surface-resolution: ${f}`),
     ...checkCliAdmissionDerivation().map((f) => `cli-admission: ${f}`),
+    ...checkSwarmFoldAdmission().map((f) => `swarm-fold-admission: ${f}`),
     ...runSurfaceConformanceMain({ writeInventory: write }).map((f) => `surface-conformance: ${f}`),
     ...checkSurfaceParityMatrix().map((f) => `surface-parity: ${f}`),
     ...(await checkMcpDispatchResolvability()).map((f) => `mcp-dispatch: ${f}`),
