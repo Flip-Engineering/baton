@@ -1267,9 +1267,21 @@ describe('declared couplings', () => {
     // refuses instead of landing with no identity to enforce exclusivity over (audit #292).
     err = integrity(() => foldSwarmEvent(swarms, e('swarm.coupling_updated', {
       swarmId: 'sw1', couplingId: 'writer-private', coupling: 'writer', action: 'declare', participantId: 'b',
-    })));
+    }), { admission: true }));
     assert.equal(err.code, 'swarm_writer_workspace_unrecorded');
     assert.match(err.message, /participant b has no recorded checkout/u, 'the refusal names the unarmed claim');
+    // The same row read back from a ledger written before the rule is history, not a request: it
+    // folds as recorded (no checkout named) instead of refusing the resident its own past. Regression
+    // 2026-09-14: a resident at the #292 landing could not start over a deployment whose ledger
+    // carried such a claim.
+    {
+      const history = groupOfTwo();
+      fold(history, [e('swarm.coupling_updated', {
+        swarmId: 'sw1', couplingId: 'writer-private', coupling: 'writer', action: 'declare', participantId: 'b',
+      })]);
+      assert.equal(history.get('sw1').couplings['writer-private'].writer, 'b', 'recorded history folds');
+      assert.equal(history.get('sw1').couplings['writer-private'].workspaceId, null, 'as it was admitted: no checkout named');
+    }
     // A participant recorded in ANOTHER checkout is a different resource: one writer per checkout.
     fold(swarms, [e('swarm.participant_bound', { swarmId: 'sw1', participantId: 'b', workerId: 'w-b', taskId: 't-b',
       workspaceId: 'ws-' + 'b'.repeat(32) })]);

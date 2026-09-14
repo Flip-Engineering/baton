@@ -13034,7 +13034,7 @@ export class CoordinationStore {
       schemaVersion: 1, kind, payload: clone(payload), actor: auth.actor,
       idempotencyKey: auth.key, seq: this._events.length + 1, ts: this._clock(),
     };
-    foldSwarmEvent(new Map(this._swarms), prospective);
+    foldSwarmEvent(new Map(this._swarms), prospective, { admission: true });
     return clone(this._append(kind, payload, auth, prospective.ts));
   }
   swarm(swarmId) {

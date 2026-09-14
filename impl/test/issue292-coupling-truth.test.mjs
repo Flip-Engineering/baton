@@ -130,6 +130,44 @@ test('the first recruit into a checkout records it, and the writer guard fires f
     'the guard is live for a freshly recruited holder, not inert behind a null workspaceId');
 });
 
+test('a ledger written before the writer-workspace rule replays at startup instead of refusing the resident its history', async (t) => {
+  // Regression 2026-09-14: the main-clone resident could not start over its deployment after the
+  // #292 landing — the fold refused a recorded writer declare whose holder had no checkout. The
+  // rule guards ADMISSION (the prospective fold before the append); rows read back are history.
+  const directory = mkdtempSync(join(tmpdir(), 'baton-coupling-history-'));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const store = new CoordinationStore(directory);
+  const owner = { actor: 'owner', principalId: 'owner', sessionId: 'owner-session' };
+  const workers = [];
+  const coordinator = { list: () => workers, pausedTurns: () => [], guideParticipant: async () => ({ ok: true }) };
+  const startRun = async (request) => {
+    if (workers.some((row) => row.runId === request.runId)) return;
+    workers.push({ id: `w-${workers.length + 1}`, taskId: `t-${workers.length + 1}`, runId: request.runId, status: 'working' });
+  };
+  const runtime = new SwarmRuntime({
+    store, coordinator, authorize: async () => {}, prepareRun: async () => {}, startRun, stopRun: async () => ({ state: 'closed' }),
+  });
+  await runtime.command('swarm.create', { purpose: 'history', swarmId: 'sw-h', idempotencyKey: 'create' }, owner);
+  await runtime.command('swarm.recruit', { swarmId: 'sw-h', participantId: 'builder', objective: 'build', idempotencyKey: 'recruit' }, owner);
+  // The row as an older resident admitted it: written straight to the ledger, no admission fold.
+  const declared = store._append('swarm.coupling_updated',
+    { swarmId: 'sw-h', couplingId: 'writer-h', coupling: 'writer', action: 'declare', participantId: 'builder' },
+    { actor: 'owner', key: 'history-declare' }, new Date().toISOString());
+  assert.equal(typeof declared.seq, 'number', 'the historical row is on the ledger');
+  // The live store (it holds the writer authority) still judges a NEW claim of that shape at
+  // admission: the rule is intact for requests, relaxed only for recorded history.
+  await assert.rejects(runtime.command('swarm.update', {
+    swarmId: 'sw-h', event: 'swarm.coupling_updated', idempotencyKey: 'claim-again',
+    payload: { couplingId: 'writer-h2', coupling: 'writer', action: 'declare', participantId: 'builder' },
+  }, owner), (error) => error.code === 'swarm_writer_workspace_unrecorded',
+  'a NEW claim of the same shape is still refused at admission');
+  // A resident starting over this deployment reads the ledger back: the historical claim folds
+  // as recorded — no checkout named — and the startup never refuses.
+  const reopened = new CoordinationStore(directory);
+  assert.equal(reopened.swarm('sw-h').couplings['writer-h'].workspaceId, null,
+    'the reopened store replays the claim as recorded — no checkout named, no refusal');
+});
+
 test('a writer claim over a participant with no recorded checkout refuses instead of landing inert', async (t) => {
   // The lane-level case: a deployment whose coordinator has no checkout attachment records none,
   // and the claim names a resource that does not exist — it must refuse, named, with the remedy.

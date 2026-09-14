@@ -385,7 +385,10 @@ function assertAttribution(swarm, identity, meta, field) {
   'participant_not_found');
 }
 
-export function foldSwarmEvent(swarms, event) {
+// `admission` marks a prospective row being judged BEFORE it is written; rows read back from the
+// ledger fold without it. Rules that tighten what may be admitted (audit #292's writer-workspace
+// guard) apply only there: a resident must never refuse its own recorded history at startup.
+export function foldSwarmEvent(swarms, event, { admission = false } = {}) {
   const { kind, payload: p } = event;
 
   // Shape validation — same logic as the write lane; converts to integrity errors.
@@ -589,9 +592,10 @@ export function foldSwarmEvent(swarms, event) {
         if (holder.status !== 'active') integrity(`writer participant ${p.participantId} is not active in swarm ${p.swarmId}`, 'participant_not_active');
         // Exclusivity is a fact about ONE recorded checkout. A claim over a participant with no
         // recorded checkout would name no resource at all, and the one-writer guarantee would be
-        // inert exactly where it is promised (docs/39 §Declared coupling) — so it refuses and
-        // names the remedy instead.
-        if (!WORKSPACE_ID.test(holder.workspaceId ?? '')) {
+        // inert exactly where it is promised (docs/39 §Declared coupling) — so at admission it
+        // refuses and names the remedy. A row already in the ledger was admitted under the rules
+        // of its day and replays as recorded (workspaceId null), never as a startup refusal.
+        if (admission && !WORKSPACE_ID.test(holder.workspaceId ?? '')) {
           integrity(`participant ${p.participantId} has no recorded checkout, so an exclusive writer claim over it could not be enforced; record the checkout its participant works in (a participant is recorded in its checkout when it is recruited into one) before claiming it`, 'swarm_writer_workspace_unrecorded');
         }
         workspaceId = holder.workspaceId;
