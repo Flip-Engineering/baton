@@ -72,7 +72,14 @@ test('VR1: default verifier runtime excludes user shims, relative entries, HOME,
   assert.equal(prepared.environment.PATH.includes('.asdf/shims'), false);
   assert.equal(prepared.environment.PATH.split(':').some((entry) => entry === '' || !entry.startsWith('/')), false);
   assert.equal(Object.hasOwn(prepared.environment, 'HOME'), false);
-  assert.notEqual(prepared.environment.PATH, process.env.PATH);
+  // The derived PATH is a function of the fixed candidate list, never of the ambient PATH: it
+  // must not move when the ambient value does. (Inside Baton's own verification sandbox the
+  // ambient PATH *is* the derived one, so an inequality against it is not a property.)
+  const ambient = process.env.PATH;
+  process.env.PATH = `/ambient-only-${process.pid}:${ambient}`;
+  try { assert.equal(defaultVerificationRuntime().environment.PATH, prepared.environment.PATH); }
+  finally { process.env.PATH = ambient; }
+  assert.equal(prepared.environment.PATH.includes('/ambient-only-'), false);
 });
 
 test('VR1: verifier runtime policy is closed and rejects unsafe values instead of filtering them', () => {
