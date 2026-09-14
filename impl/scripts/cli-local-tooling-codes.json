@@ -17,6 +17,8 @@
     "cli_export_extract_failed",
     "cli_invalid",
     "cli_protocol_failed",
+    "cli_resident_gone",
+    "cli_resident_unresponsive",
     "cli_setup_conflict",
     "cli_setup_failed",
     "cli_setup_remote_invalid",

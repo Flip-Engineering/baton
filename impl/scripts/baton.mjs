@@ -7,7 +7,7 @@ import {
   parseBatonCli, projectBatonCliResult, runBatonCli, setupBatonConnection,
 } from '../src/application-cli.mjs';
 import { BATON_TOP_HELP, runBatonTop } from '../src/baton-top.mjs';
-import { BatonWebHost, SignalLifecycleOwner } from '../src/application-host.mjs';
+import { BatonWebHost, SignalLifecycleOwner, describeDrainWait, signalIntentLine } from '../src/application-host.mjs';
 import { flipLine } from '../src/brand.mjs';
 import { callConfiguredMcpTool } from '../src/configured-mcp-client.mjs';
 import { assertCliMcpControlParity, normalizeControlSurfaceError } from '../src/control-surface-unification.mjs';
@@ -80,19 +80,49 @@ async function serveDeployment(rawDeployment) {
       code: 'cli_config_invalid',
     });
   }
+  // #276(1)/(2): the operator's line at signal receipt, then the drain's own narration (the
+  // deployment's host writes its stages), then one exit line. The receipt line is written before
+  // `deployment.close()` — before any drain wait — and the count comes from the deployment's own
+  // `runs.list` projection of the participants this process still owns (never a wire call).
+  let announced = null;
+  const narration = (trigger) => {
+    const readRuns = typeof deployment.runs?.list === 'function'
+      ? () => deployment.runs.list()
+      : () => { throw Object.assign(new Error('this deployment publishes no run list'), { code: 'application_host_narration_unavailable' }); };
+    announced = (async () => signalIntentLine(trigger, readRuns))().then(
+      (line) => { process.stderr.write(`${flipLine(`baton serve: ${line}`, { color: TTY })}\n`); },
+      (error) => {
+        process.stderr.write(`${flipLine(`baton serve: signal received; draining participants (narration failed: ${error?.code ?? error?.name ?? 'error'}) (${trigger.kind})`, { pose: 'thinking', color: TTY })}\n`);
+      },
+    );
+    return announced;
+  };
   const lifecycle = new SignalLifecycleOwner({
     signalEmitter: process,
-    shutdown: () => deployment.close(),
+    shutdown: async () => { await announced; return deployment.close(); },
+    announce: narration,
   });
-  const outcome = await lifecycle.run(async ({ signal }) => {
-    const hosted = await deployment.host();
-    process.stderr.write(`${flipLine(`baton serve: ${JSON.stringify(hosted)}`, { pose: 'thinking', color: TTY })}\n`);
-    await new Promise((resolveSignal) => {
-      if (signal.aborted) resolveSignal();
-      else signal.addEventListener('abort', resolveSignal, { once: true });
+  let outcome;
+  try {
+    outcome = await lifecycle.run(async ({ signal }) => {
+      const hosted = await deployment.host();
+      process.stderr.write(`${flipLine(`baton serve: ${JSON.stringify(hosted)}`, { pose: 'thinking', color: TTY })}\n`);
+      await new Promise((resolveSignal) => {
+        if (signal.aborted) resolveSignal();
+        else signal.addEventListener('abort', resolveSignal, { once: true });
+      });
+      return hosted;
     });
-    return hosted;
-  });
+  } catch (error) {
+    // #276(2): the last line before the refusal names what the host could not drain, so an exit
+    // that is not 0 is never a bare failure.
+    const wait = describeDrainWait(error?.detail);
+    const summary = wait === null
+      ? (error?.code ?? error?.name ?? 'error')
+      : `${error?.code ?? error?.name ?? 'error'} — drain did not converge: ${wait}`;
+    process.stderr.write(`${flipLine(`baton serve: exit non-zero; ${summary}`, { pose: 'thinking', color: TTY })}\n`);
+    throw error;
+  }
   process.stderr.write(`${flipLine(`baton serve: ${JSON.stringify(outcome.closed)}`, { color: TTY })}\n`);
   if (outcome.closed.state !== 'closed') process.exitCode = 1;
 }

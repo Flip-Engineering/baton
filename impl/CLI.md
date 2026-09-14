@@ -202,8 +202,64 @@ This creates one stable deployment identity and fresh resident incarnation, serv
 HTTP over an owner-only Unix-domain socket, self-checks readiness/card/session authority, and only
 then publishes the Git-common selector plus owner-private profile/token. No URL, origin, socket,
 token, timeout, capacity, or budget is an ordinary argument. `connectBaton({repo})`, the CLI, and
-other orchestrators discover that authority automatically. `SIGINT`/`SIGTERM` drain, revoke, and
-remove only the current incarnation.
+other orchestrators discover that authority automatically.
+
+`SIGINT`/`SIGTERM` (and `SIGHUP`) start a drain, and the drain narrates itself — one line each,
+in order, on stderr:
+
+```
+baton serve: signal received; draining 2 participants (SIGTERM)
+baton serve: web admission closed (closed); draining the fleet
+baton serve: drain converged; 2 of 2 participant(s) stopped
+```
+
+The receipt line is the FIRST line of a drain and names the participants this process owns
+(`runs.list` `resources.ownedCount`, the coordinator's own local-resource ownership projection —
+the exact target set the fleet drain stops); `signal received; nothing to drain` when it owns
+none, and `… (count unavailable: <code>)` when that read itself refuses, never a fabricated
+count. A drain that outlives `webDrainMs` (the Web-leg grace this host declares) also says so, so
+a long drain is visibly alive instead of silent.
+
+The DRAIN's own deadline governs, and it is the coordinator's `drainPolicy.timeoutMs` — the
+existing derivation (90 s at the zero-assembly deployment seam, configurable through
+`createDriver({drainPolicy})`), never a second host constant. At that deadline the host names
+what it was still waiting on *before* it stops waiting — the drain's own
+`detail.waitingOn` / `detail.reason`:
+
+```
+baton serve: drain did not converge; waiting on w-1 (local_resources:worktree+process:running), reason deadline, deadline 90000ms
+baton serve: exit non-zero; application_host_shutdown_failed — drain did not converge: waiting on w-1 (…)
+```
+
+Exit status is 0 exactly when the drain converged, non-zero (with that named wait) when it did
+not; an idle host exits as soon as the drain converges, without waiting out any deadline. On
+every exit path — converged or not — the publication is withdrawn BEFORE the leases are asserted:
+the selector, the private profile and token, and the socket are removed even when the drain did
+not converge or the lease was disturbed, so no published coordinate ever points at an exiting (or
+exited) process. A disturbed lease is still reported, as `application_host_lease_lost`, after the
+withdrawal.
+
+### `baton doctor` refusals for a resident
+
+`baton doctor` reads only local files — selector, private profile, the published owner fields
+(`ownerPid`/`ownerPidStart`), the socket's mode — and never opens the token. It therefore names
+the resident's actual state instead of leaving it to a connect attempt:
+
+| Diagnosis | When | Remedy it names |
+|---|---|---|
+| `cli_resident_gone` | the process that published this connection is no longer running (or its pid was reused) — including a `SIGKILL` that left the socket file behind | `baton serve` |
+| `cli_resident_unresponsive` | the publishing process IS alive but the socket is not there (or is unsafe): it has not finished publishing | `baton doctor` (wait for it), `baton setup` for an unsafe socket |
+| historical `stale_authority` | a profile from before the owner fields, or a liveness this platform cannot prove | `baton serve` |
+
+```json
+{ "schemaVersion": 1, "state": "stale", "code": "cli_resident_gone",
+  "message": "the resident that published this connection is gone: pid 4711 published deployment deployment-… incarnation instance-… at … and is no longer running; start it again with baton serve",
+  "detail": { "ownerPid": 4711, "ownerState": "stale", "publishedAt": "…", "deploymentId": "…", "incarnation": "…", "profile": "resident-…", "transport": "local", "socket": "absent" },
+  "next": [{ "action": "recover", "command": "baton serve" }] }
+```
+
+A Unix-socket transport has no network: none of these refusals, and none of `baton serve`'s exit
+lines, reports a connection fault the operator is asked to debug as one.
 
 Explicit authenticated network deployments retain the schema-v1 setup convention. Their
 repository selector is:
@@ -410,7 +466,12 @@ export default async function createBatonWebHost() {
 
 The config owns deployment policy; the host owns lifecycle. `SIGINT`, `SIGTERM`, listener close,
 and listener error close Web admission first and then call the host-only
-`application.shutdown`. Remote clients cannot invoke that fleet-wide authority.
+`application.shutdown`. Remote clients cannot invoke that fleet-wide authority. The drain narrates
+itself under the same contract as `baton serve` (see
+[Connect to a resident authenticated Web host](#connect-to-a-resident-authenticated-web-host)): the
+receipt line names the participants this host owns at the signal, the drain's stages follow, the
+drain's own deadline names `detail.waitingOn` / `detail.reason` before the host stops waiting, and
+the exit is 0 exactly when the drain converged.
 
 Cursor `--follow`, exact recovery, materialized result export, and bounded multi-node Workflow
 operations use the same application authority rather than a second fleet controller.
