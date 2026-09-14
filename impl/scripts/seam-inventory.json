@@ -898,7 +898,7 @@
         {
           "name": "_providerBrief",
           "ordinal": 0,
-          "size": 79,
+          "size": 95,
           "seam": "observation",
           "evidence": [
             "observation:log_append",
@@ -4071,7 +4071,7 @@
         {
           "name": "_swarmRuntime",
           "ordinal": 0,
-          "size": 56,
+          "size": 58,
           "seam": "effect",
           "evidence": [
             "effect:adapter_verb",

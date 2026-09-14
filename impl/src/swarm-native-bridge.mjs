@@ -101,6 +101,18 @@ function scopeIdentity(field, value) {
 // only learn by retrying would otherwise be invisible to everyone who needs it.
 export const SWARM_BRIDGE_NOTHING_RECORDED = 'Nothing was recorded:';
 
+/** The bridge's own guidance for the participant-facing Swarm section (issue #309): where the
+ * bridge lives (variable NAMES, never their values), the request shape, what a success answers,
+ * and what a refusal looks like. Derived from the same constants the bridge enforces, so the
+ * text a brief renders cannot drift from the bridge's behaviour; swarm-native-access.mjs joins
+ * it beside SWARM_NATIVE_GUIDANCE as the one derivation of the section. */
+export const SWARM_BRIDGE_GUIDANCE = [
+  `The bridge is located by environment variable NAMES only — ${SWARM_BRIDGE_ENV_KEYS.url}, ${SWARM_BRIDGE_ENV_KEYS.token}, ${SWARM_BRIDGE_ENV_KEYS.swarmId}, ${SWARM_BRIDGE_ENV_KEYS.participantId}, ${SWARM_BRIDGE_ENV_KEYS.runId} (and ${SWARM_BRIDGE_ENV_KEYS.frameBytes} names the negotiated frame ceiling). Read them; never print their values: the token variable carries your private credential.`,
+  `A request is one JSON document, {"command":"swarm.update","args":{...}}, POSTed to the bridge URL with the bearer token from the token variable; the client wrapper does this for you — node "$BATON_SWARM_CLIENT" swarm.update '{"event":"...","payload":{...}}'. Arguments are checked against closed schemas, so an unknown field refuses.`,
+  'A success answers {"ok":true,"result":...}. swarm.update answers the refreshed view: the contribution it recorded is in it, carrying the seq of the event that recorded it — read the answer and confirm the recorded seq before you call the work published.',
+  `A refusal answers {"ok":false,"error":{"message","code","detail"}} on the same stream, and its message begins "${SWARM_BRIDGE_NOTHING_RECORDED}" followed by what to change. node "$BATON_SWARM_CLIENT" --help renders the full command help locally, before any credential is read.`,
+].join('\n\n');
+
 /** What the caller must change, from the refusal's own rule: the closed argument vocabulary
  * already names the field and its expectation, and the runtime's dispatch decisions ship their own
  * `correction`. Never re-spelled per call site, so a new rule cannot land an unactionable refusal. */

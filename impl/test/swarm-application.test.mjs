@@ -139,7 +139,8 @@ test('native shells coordinate, recruit and contribute through scoped runtime-in
   const environments = new Map();
   const spawn = adapter.spawn.bind(adapter);
   adapter.spawn = (worker, brief, options) => {
-    assert.ok(brief.goal.includes('BATON_SWARM_CLIENT'));
+    // Issue #309: the Baton surface rides the brief's Swarm section, not the goal text.
+    assert.ok(brief.swarm?.includes('BATON_SWARM_CLIENT'));
     environments.set(worker, options.env);
     return spawn(worker, brief, options);
   };

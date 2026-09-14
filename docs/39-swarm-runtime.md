@@ -478,3 +478,37 @@ narrower projection that MEASURABLY fits: the bridge re-projects the answer it a
 the same slicer the runtime builds views with and names the widest one under the ceiling — never a
 declared table of sizes, never a truncation, and never a second hardcoded number. Asking again with
 the named projection is the fix, and the test does exactly that.
+
+## The brief carries the Baton surface (issue #309, 2026-09-14)
+
+The September 14 incident: seven of seven recruited lanes finished their work and left it
+unpublished, because their briefs said "No tools are advertised for this Brief" — the participant
+bridge sat in their environment the whole time, and each lane had to be woken by a guide that
+named the environment variables and the request shape by hand. The repair is that the brief
+itself now carries the surface, so a freshly recruited participant knows how to publish from its
+very first turn.
+
+Every swarm recruit's provider-facing brief now renders a `## Swarm` section and a non-empty
+`## Tools` section. The section text is derived ONCE — `SWARM_BRIEF_SECTION` in
+`swarm-native-access.mjs` joins the extended `SWARM_NATIVE_GUIDANCE` with the bridge's own
+`SWARM_BRIDGE_GUIDANCE` (exported from `swarm-native-bridge.mjs`, derived from the same
+constants the bridge enforces) — and `renderBrief` (adapter.mjs), the one brief renderer, owns
+only the heading, so every dialect reads the same surface. `brief.tools` lists the bridge as one
+tool with its verbs, so the Tools section is never the empty advertisement for a recruit. A
+non-swarm run's brief is unchanged: no Swarm section, and the empty-tools sentence stays.
+
+The section tells the participant: the verbs it may call (`swarm.view`, `swarm.update` with the
+event kinds its permission admits, `swarm.guide` where allowed, `swarm.watch`; capture and check
+belong to the root), the environment variable NAMES that locate the bridge (never their values —
+the token variable carries a private credential), the request shape with the report's whole body
+inside the payload's closed `body` field and the contributionId convention, what the bridge
+answers (the refreshed view carrying the recorded event's seq — confirm it before calling the
+work published), what a refusal looks like (`Nothing was recorded:` plus what to change), and the
+consequence that closes the loop: the root cannot capture or check a participant's work until a
+contribution is recorded, so ending a turn without publishing leaves the work unreachable.
+
+Mechanically, the surface rides the participant runtime extension that `SwarmNativeAccess`
+registers at credential issue; the coordinator merges it onto the provider-facing brief value at
+the serving seam (`_providerBrief`) — the same seam as attention and orientation, so `task.brief`
+and its digest stay byte-stable. The guidance is no longer also spliced into the recruit's goal
+text: one surface, one derivation, no drift.

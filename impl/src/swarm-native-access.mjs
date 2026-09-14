@@ -1,5 +1,5 @@
 import { fileURLToPath } from 'node:url';
-import { createSwarmNativeBridge } from './swarm-native-bridge.mjs';
+import { createSwarmNativeBridge, SWARM_BRIDGE_GUIDANCE } from './swarm-native-bridge.mjs';
 
 /** Connect native participant tools to the live deployment without copying owner authority.
  * Credentials belong to a participant, independently of its current transport incarnation. */
@@ -19,10 +19,15 @@ export class SwarmNativeAccess {
           this.bridge.revoke(issued.token);
           throw Object.assign(new Error('Participant access was revoked during preparation'), { code: 'swarm_native_access_revoked' });
         }
+        // Issue #309: the participant's Baton surface rides the registered runtime extension —
+        // the coordinator merges it onto the provider-facing brief at the serving seam, so the
+        // recruit's rendered brief carries the Swarm section and the bridge tool from its very
+        // first turn. Derived once above; never re-spelled here.
         const extension = Object.freeze({
           env: Object.freeze({ ...issued.env, BATON_SWARM_CLIENT: this.clientPath }),
           redactProviderFrame: (frame) => JSON.parse(JSON.stringify(frame,
             (_key, value) => typeof value === 'string' ? value.replaceAll(issued.token, '[REDACTED]') : value)),
+          briefSurface: Object.freeze({ swarm: SWARM_BRIEF_SECTION, tools: Object.freeze([SWARM_BRIDGE_TOOL]) }),
         });
         this.coordinator.registerParticipantRuntime(runId, extension);
         return issued;
@@ -53,8 +58,18 @@ export class SwarmNativeAccess {
 export const SWARM_NATIVE_GUIDANCE = [
   'Your native tools, skills, and delegation remain available. You can coordinate directly with this swarm using your own granted authority.',
   'Run node "$BATON_SWARM_CLIENT" swarm.view to see participants, shared context, available actions, and your current permissions. Add "projection":"outline" (or participants, contributions, attention, guidance, workspace) to read one slice instead of the whole record — the bridge answers a view too large for its frame with the projection that fits.',
-  'Run node "$BATON_SWARM_CLIENT" swarm.update with JSON arguments {"event":"swarm.contribution_recorded","payload":"your finding"} to publish a finding. Group, work, context, and review updates use the permitted event kinds shown by swarm.view — the `updates` field lists, beside availableActions, exactly the kinds you may send now and the permission that admits each.',
-  'Use swarm.guide to speak to a participant, swarm.recruit to bring in help when granted, and swarm.watch to await relevant updates. These commands use participant names; no worker, fence, pause, or approval choreography is required.',
+  'Run node "$BATON_SWARM_CLIENT" swarm.update to publish a finding: {"event":"swarm.contribution_recorded","payload":{"body":"your whole report"}} — put the whole report inside the payload\'s `body` field, the payload shape is closed, and an unknown field refuses. An omitted contributionId is minted per call, so every such update records a NEW contribution; name the same contributionId to extend the contribution you already recorded. Group, work, context, and review updates use the permitted event kinds shown by swarm.view — the `updates` field lists, beside availableActions, exactly the kinds you may send now and the permission that admits each.',
+  'Use swarm.guide to speak to a participant, swarm.recruit to bring in help when granted, and swarm.watch to await relevant updates. These commands use participant names; no worker, fence, pause, or approval choreography is required. swarm.capture and swarm.check belong to the root, and the root cannot capture or check your work until a contribution is recorded — ending a turn without publishing leaves the work unreachable.',
   'The client fills your swarm identity and a per-call idempotency key. Naming that key again replays an operation that already completed; a NEW attempt needs a NEW key (only swarm.recruit and swarm.holder_released may be re-attempted under theirs). Keep the bridge credential private; never print environment variables containing tokens.',
   'A refusal is never silent: an answer that begins "Nothing was recorded:" says what to change, and every refusal is recorded in the swarm, so your orchestrator sees it and your own participant row shows it as lastRefusal until a later operation of the same command succeeds.',
 ].join('\n\n');
+
+/** Issue #309: the ONE derivation of the Swarm section a swarm recruit's brief renders —
+ * SWARM_NATIVE_GUIDANCE plus the bridge's own guidance, joined here so the brief text and the
+ * guidance cannot drift. renderBrief (adapter.mjs) owns only the heading; the section arrives
+ * on the participant runtime extension this access registers at credential issue. */
+export const SWARM_BRIEF_SECTION = `${SWARM_NATIVE_GUIDANCE}\n\n${SWARM_BRIDGE_GUIDANCE}`;
+
+/** The bridge as a brief.tools entry (issue #309): the one Baton tool a swarm recruit may
+ * call, named with its verbs, so the brief's Tools section is never empty for a recruit. */
+export const SWARM_BRIDGE_TOOL = 'BATON swarm bridge (node "$BATON_SWARM_CLIENT"): swarm.view, swarm.watch, swarm.update, swarm.guide, and swarm.recruit when granted';
