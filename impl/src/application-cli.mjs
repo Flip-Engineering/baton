@@ -70,12 +70,245 @@ function cliError(message, code = 'cli_invalid') {
   // (mcp-northbound.mjs) forwards message, detail and field only when the error is wireSafe.
   return Object.assign(new Error(message), { code, wireSafe: true });
 }
+
+// ── U-F11/U-F12 (issue #288): the ONE connection-refusal cause table ──────────────────────────
+// Two codes used to carry the whole client-side authority surface. `cli_config_invalid` folded
+// ~20 distinct violations into four strings — "user connection profile is invalid" alone covered
+// twelve field comparisons, so a restarted resident (the incarnation moved) read exactly like a
+// corrupt profile file. `cli_connection_incompatible` folded ten causes — readiness, three
+// digest/tuple drifts, repository scope, resident identity — into one sentence that DISCARDED the
+// two registry digests the drift case knows how to explain.
+//
+// This is the U-N6 propagation, not a new vocabulary: every row names the typed cause, the code it
+// is reported under, the field or path the client judged, the rule it violated and the remedy that
+// actually fixes it. `cliCauseRefusal` composes the message from the row (never from provider or
+// exception text — U-F2), and the same triple survives into the CLI envelope (`detail`), the MCP
+// bridge (`wireSafe`) and `baton doctor`.
+const REPUBLISH_CONNECTION_REMEDY = 're-publish it by re-running `baton serve` (ordinary local use) or `baton setup` (explicit network deployment)';
+const CLI_FILE_VIOLATION_RULES = Object.freeze({
+  unreadable: 'is missing or unreadable',
+  not_a_bounded_file: 'must be a bounded regular non-symlink file',
+  owner_mismatch: 'must be owned by the current user',
+  permissions: 'must have owner-only permissions (0600)',
+  malformed_json: 'must contain JSON',
+  fields_unknown: 'has unknown or missing fields',
+});
+function cliFileCauseRows(prefix, subject, remedy, violations = Object.keys(CLI_FILE_VIOLATION_RULES)) {
+  return Object.fromEntries(violations.map((violation) => [
+    `${prefix}_${violation}`,
+    Object.freeze({ code: 'cli_config_invalid', field: null, rule: `${subject} ${CLI_FILE_VIOLATION_RULES[violation]}`, remedy, retryable: false }),
+  ]));
+}
+function cliCauseRow(code, rule, remedy, { field = null, retryable = false } = {}) {
+  return Object.freeze({ code, field, rule, remedy, retryable });
+}
+const CONNECTION_CAUSE_ROWS = Object.freeze({
+  ...cliFileCauseRows('repository_selector', 'repository connection configuration', REPUBLISH_CONNECTION_REMEDY),
+  ...cliFileCauseRows('user_profile', 'user connection profile', REPUBLISH_CONNECTION_REMEDY),
+  // The token file carries no key closure — its violations are the file's own.
+  ...cliFileCauseRows('token_file', 'private Baton token file', REPUBLISH_CONNECTION_REMEDY,
+    ['unreadable', 'not_a_bounded_file', 'owner_mismatch', 'permissions']),
+  token_file_content_invalid: cliCauseRow('cli_config_invalid',
+    'private Baton token file content is invalid',
+    `${REPUBLISH_CONNECTION_REMEDY}; the file carries the resident bearer token verbatim — one non-empty line, no extra text`),
+
+  // Git discovery: the checkout the CLI was run from.
+  git_metadata_unavailable: cliCauseRow('cli_config_invalid',
+    'Git metadata is unavailable',
+    'run the CLI from inside the repository (or linked worktree) whose .git entry is readable'),
+  git_metadata_symlinked: cliCauseRow('cli_config_invalid',
+    'Git metadata must not be symlinked',
+    'run the CLI from the real checkout: .git must be a directory or a regular `gitdir:` pointer file'),
+  git_metadata_invalid: cliCauseRow('cli_config_invalid',
+    'Git metadata is invalid',
+    'repair the checkout: the .git entry must be a directory or a regular `gitdir:` pointer file'),
+  git_worktree_pointer_invalid: cliCauseRow('cli_config_invalid',
+    'Git worktree pointer is invalid',
+    're-create the linked worktree (`git worktree add`), or run the CLI from the main checkout'),
+  git_directory_unavailable: cliCauseRow('cli_config_invalid',
+    'Git directory is unavailable',
+    'run the CLI from a checkout whose .git directory exists and is readable'),
+  git_directory_unsafe: cliCauseRow('cli_config_invalid',
+    'Git directory is unsafe',
+    'run the CLI from a checkout whose .git directory is a real directory, not a symlink'),
+  git_common_directory_unavailable: cliCauseRow('cli_config_invalid',
+    'Git common directory is unavailable',
+    'repair the checkout: the common directory a linked worktree points at must exist'),
+  git_common_pointer_invalid: cliCauseRow('cli_config_invalid',
+    'Git common-directory pointer is invalid',
+    'repair the linked worktree: its `commondir` file must name the shared Git directory in one bounded line'),
+  git_common_directory_unsafe: cliCauseRow('cli_config_invalid',
+    'Git common directory is unsafe',
+    'repair the checkout: the common directory must be a real directory, not a symlink'),
+  repository_unavailable: cliCauseRow('cli_config_invalid',
+    'Baton repository connection is unavailable',
+    'run the CLI from inside a Baton checkout (a repository with Git metadata)'),
+
+  // Environment override and the user configuration root.
+  connection_environment_incomplete: cliCauseRow('cli_config_invalid',
+    'the connection environment override is incomplete',
+    `set all of ${CONNECTION_ENV.join(', ')}, or unset the whole set and use the published connection instead`, { field: 'env' }),
+  xdg_config_home_not_absolute: cliCauseRow('cli_config_invalid',
+    'XDG_CONFIG_HOME must be absolute',
+    'set XDG_CONFIG_HOME to an absolute path, or unset it to use ~/.config', { field: 'XDG_CONFIG_HOME' }),
+  user_configuration_home_unavailable: cliCauseRow('cli_config_invalid',
+    'user configuration home is unavailable',
+    'set HOME (or XDG_CONFIG_HOME) to an absolute path so the user connection profile can be located', { field: 'HOME' }),
+
+  // The repository selector's own fields.
+  repository_selector_schema_unsupported: cliCauseRow('cli_config_invalid',
+    'repository connection configuration declares an unsupported schemaVersion',
+    `${REPUBLISH_CONNECTION_REMEDY}; the CLI understands schemaVersion 1 and 2`, { field: 'schemaVersion' }),
+  repository_selector_profile_invalid: cliCauseRow('cli_config_invalid',
+    'repository connection configuration names an invalid connection profile',
+    REPUBLISH_CONNECTION_REMEDY, { field: 'profile' }),
+  repository_selector_repo_id_invalid: cliCauseRow('cli_config_invalid',
+    'repository connection configuration names an invalid repository ID',
+    REPUBLISH_CONNECTION_REMEDY, { field: 'repoId' }),
+  repository_selector_deployment_invalid: cliCauseRow('cli_config_invalid',
+    'repository connection configuration names an invalid resident deployment ID',
+    REPUBLISH_CONNECTION_REMEDY, { field: 'deploymentId' }),
+  repository_selector_incarnation_invalid: cliCauseRow('cli_config_invalid',
+    'repository connection configuration names an invalid resident incarnation',
+    REPUBLISH_CONNECTION_REMEDY, { field: 'incarnation' }),
+  repository_selector_transport_unsupported: cliCauseRow('cli_config_invalid',
+    'repository connection configuration declares an unsupported resident transport',
+    `${REPUBLISH_CONNECTION_REMEDY}; a resident publishes transport "local"`, { field: 'transport' }),
+  repository_selector_started_at_invalid: cliCauseRow('cli_config_invalid',
+    'repository connection configuration carries an invalid resident start time',
+    REPUBLISH_CONNECTION_REMEDY, { field: 'startedAt' }),
+  repository_selector_registry_digest_drift: cliCauseRow('cli_config_invalid',
+    'the resident repository connection was published by a different commit: its semantic-registry digest differs from this CLI\'s',
+    'use the CLI of the commit the resident runs, or restart the resident from this checkout', { field: 'registryDigest' }),
+  repository_selector_authority_invalid: cliCauseRow('cli_config_invalid',
+    'the resident repository connection authority is invalid',
+    'restart the resident from this checkout (`baton serve`) so it republishes a selector and profile this CLI accepts'),
+
+  // The user connection profile's own fields (F12: twelve comparisons, now twelve causes).
+  user_profile_schema_mismatch: cliCauseRow('cli_config_invalid',
+    'user connection profile schemaVersion does not match the repository selector',
+    REPUBLISH_CONNECTION_REMEDY, { field: 'schemaVersion' }),
+  user_profile_url_missing: cliCauseRow('cli_config_invalid',
+    'user connection profile carries no resident URL',
+    REPUBLISH_CONNECTION_REMEDY, { field: 'url' }),
+  user_profile_origin_missing: cliCauseRow('cli_config_invalid',
+    'user connection profile carries no resident origin',
+    REPUBLISH_CONNECTION_REMEDY, { field: 'origin' }),
+  user_profile_token_file_missing: cliCauseRow('cli_config_invalid',
+    'user connection profile names no token file',
+    REPUBLISH_CONNECTION_REMEDY, { field: 'tokenFile' }),
+  user_profile_owner_fields_invalid: cliCauseRow('cli_config_invalid',
+    'user connection profile carries an invalid resident owner identity',
+    REPUBLISH_CONNECTION_REMEDY, { field: 'ownerPid' }),
+  user_profile_transport_unsupported: cliCauseRow('cli_config_invalid',
+    'user connection profile declares an unsupported resident transport',
+    `${REPUBLISH_CONNECTION_REMEDY}; a resident publishes transport "local"`, { field: 'transport' }),
+  user_profile_socket_path_invalid: cliCauseRow('cli_config_invalid',
+    'user connection profile carries an unusable resident socket path',
+    `${REPUBLISH_CONNECTION_REMEDY}; the socket path is an absolute owner-only Unix socket path`, { field: 'socketPath' }),
+  user_profile_deployment_mismatch: cliCauseRow('cli_config_invalid',
+    'user connection profile was published for a different resident deployment than the selector names',
+    'the selector and profile are out of step: re-publish both by re-running `baton serve` in this checkout', { field: 'deploymentId' }),
+  user_profile_incarnation_mismatch: cliCauseRow('cli_config_invalid',
+    'user connection profile was published for a different resident incarnation than the selector names',
+    'the resident restarted: re-read the connection by re-running `baton serve` in this checkout', { field: 'incarnation', retryable: true }),
+  user_profile_registry_digest_mismatch: cliCauseRow('cli_config_invalid',
+    'user connection profile records a different semantic-registry digest than the selector',
+    REPUBLISH_CONNECTION_REMEDY, { field: 'registryDigest' }),
+  user_profile_started_at_mismatch: cliCauseRow('cli_config_invalid',
+    'user connection profile records a different resident start time than the selector',
+    'the resident restarted: re-read the connection by re-running `baton serve` in this checkout', { field: 'startedAt', retryable: true }),
+
+  // Client construction.
+  connection_options_invalid: cliCauseRow('cli_config_invalid',
+    'Baton connection options are invalid',
+    'pass only the documented advanced options (commandTimeoutMs, pollMs, fetchImpl, clock, sleep, env, home, ownerUid)', { field: 'advanced' }),
+  web_transport_unavailable: cliCauseRow('cli_config_invalid',
+    'Baton Web transport is unavailable on this runtime',
+    'run the CLI on a Node runtime that provides fetch, or pass an explicit advanced.fetchImpl', { field: 'transport' }),
+  client_configuration_invalid: cliCauseRow('cli_config_invalid',
+    'Web client configuration is invalid',
+    'the published connection is malformed: re-publish it by re-running `baton serve`', { field: 'baseUrl' }),
+  request_timeout_invalid: cliCauseRow('cli_config_invalid',
+    'Baton Web request timeout is invalid',
+    'set BATON_COMMAND_TIMEOUT_MS to a positive whole number of milliseconds inside the 24-hour ceiling'),
+
+  // cli_connection_incompatible (F11: the ten causes, each named).
+  selector_repo_mismatch: cliCauseRow('cli_connection_incompatible',
+    'the repository selector names a repository that is not this Git checkout',
+    'run the CLI from the checkout the resident serves, or re-publish the selector by running `baton serve` in this checkout', { field: 'repoId' }),
+  resident_not_ready: cliCauseRow('cli_connection_incompatible',
+    'the resident reports itself not ready',
+    'read the deployment readiness (`baton doctor --check`) and restart the resident (`baton serve`) once its routes are ready', { field: 'ready', retryable: true }),
+  served_application_schema_unsupported: cliCauseRow('cli_connection_incompatible',
+    'the resident serves an application card schema this CLI does not understand',
+    'use the CLI of the commit the resident runs, or restart the resident from this checkout', { field: 'application.schemaVersion' }),
+  served_repo_mismatch: cliCauseRow('cli_connection_incompatible',
+    'the resident serves a different repository than the connection names',
+    'run the CLI from the checkout the resident serves, or re-publish the connection by running `baton serve` here', { field: 'application.repoId' }),
+  served_command_list_missing: cliCauseRow('cli_connection_incompatible',
+    'the resident application card advertises no command list',
+    'the resident is not a complete Baton deployment: restart it from this checkout (`baton serve`)', { field: 'application.commands' }),
+  required_commands_missing: cliCauseRow('cli_connection_incompatible',
+    'the resident does not serve every command this CLI requires',
+    'use the CLI of the commit the resident runs, or restart the resident from this checkout', { field: 'application.commands' }),
+  served_registry_digest_drift: cliCauseRow('cli_connection_incompatible',
+    'the resident serves a different semantic-registry digest than this CLI carries',
+    'use the CLI of the commit the resident runs, or restart the resident from this checkout', { field: 'agentExperience.registryDigest' }),
+  served_limits_digest_drift: cliCauseRow('cli_connection_incompatible',
+    'the resident serves a different frame-limits digest than this CLI carries',
+    'use the CLI of the commit the resident runs, or restart the resident from this checkout', { field: 'agentExperience.limitsRegistryDigest' }),
+  served_session_repo_not_served: cliCauseRow('cli_connection_incompatible',
+    'the authenticated session does not cover the repository the connection names',
+    'connect with a credential that serves this repository, or re-publish the connection by running `baton serve` in this checkout', { field: 'repoIds' }),
+  resident_deployment_mismatch: cliCauseRow('cli_connection_incompatible',
+    'the resident that answered is a different deployment than the connection names',
+    'the connection is stale: re-publish it by re-running `baton serve` in this checkout', { field: 'resident.deploymentId' }),
+  resident_incarnation_mismatch: cliCauseRow('cli_connection_incompatible',
+    'the resident that answered is a different incarnation than the connection names',
+    'the resident restarted: re-read the connection by re-running `baton serve` in this checkout', { field: 'resident.incarnation', retryable: true }),
+});
+
+/** Every cause this client can refuse a connection or its configuration with (one table, both
+ * codes). Exported so the refusal surface is enumerable rather than discovered by probing. */
+export const CLI_CONNECTION_CAUSES = Object.freeze(Object.keys(CONNECTION_CAUSE_ROWS));
+
+export function cliConnectionCauseRow(cause) {
+  return Object.hasOwn(CONNECTION_CAUSE_ROWS, cause) ? CONNECTION_CAUSE_ROWS[cause] : null;
+}
+
+/** Compose one connection refusal from its row. The message is the row's own text plus the
+ * observed fact the caller supplied; the typed cause, the judged field, the rule, the remedy and
+ * the transience verdict ride on the error AND in its `detail`, so no renderer has to re-derive
+ * them. */
+function cliCauseRefusal(cause, { field = null, observed = null, detail = null } = {}) {
+  const row = cliConnectionCauseRow(cause);
+  if (row === null) throw new TypeError(`unregistered CLI connection cause: ${cause}`);
+  const message = [row.rule, ...(observed === null ? [] : [observed]), row.remedy].join('; ');
+  const judged = field ?? row.field;
+  return Object.assign(cliError(message, row.code), {
+    cause,
+    field: judged,
+    action: row.remedy,
+    retryable: row.retryable === true,
+    detail: { cause, field: judged, rule: row.rule, remedy: row.remedy, ...(observed === null ? {} : { observed }), ...(detail ?? {}) },
+  });
+}
 function record(value) { return value !== null && typeof value === 'object' && !Array.isArray(value); }
 function nonempty(value) { return typeof value === 'string' && value.length > 0; }
-function exactKeys(value, keys, label) {
-  if (!record(value) || Object.keys(value).sort().join('\0') !== [...keys].sort().join('\0')) {
-    throw cliError(`${label} has unknown or missing fields`, 'cli_config_invalid');
-  }
+// U-F12: a key-closure violation names the offending key (the first one, in sorted order, so the
+// refusal is deterministic) instead of only the artifact. `cause` is optional so a caller that has
+// no table row keeps the previous message shape.
+function exactKeys(value, keys, label, cause = null) {
+  if (record(value) && Object.keys(value).sort().join('\0') === [...keys].sort().join('\0')) return;
+  if (cause === null) throw cliError(`${label} has unknown or missing fields`, 'cli_config_invalid');
+  const present = record(value) ? Object.keys(value) : [];
+  const offending = [...new Set([...present, ...keys])]
+    .filter((key) => !(present.includes(key) && keys.includes(key))).sort()[0] ?? null;
+  throw cliCauseRefusal(cause, {
+    field: offending, observed: offending,
+    detail: { expected: [...keys].sort(), present: present.sort() },
+  });
 }
 function residentProfileKeys(value) {
   const ownerFields = RESIDENT_PROFILE_OWNER_FIELDS.filter((field) => Object.hasOwn(value ?? {}, field));
@@ -123,6 +356,18 @@ function id(value, label) {
   if (!/^[A-Za-z0-9._:-]{1,256}$/u.test(value ?? '')) throw cliError(`${label} is invalid`);
   return value;
 }
+/** A bounded rendering of one observed configuration fact for a refusal message: the operator's
+ * own value, truncated, never a token (call sites pass paths, ids, digests and versions only). */
+function observedValue(value) {
+  const text = typeof value === 'string' ? value : JSON.stringify(value ?? null) ?? 'null';
+  return text.length > 128 ? `${text.slice(0, 128)}…` : text;
+}
+function idCause(value, cause) {
+  if (!/^[A-Za-z0-9._:-]{1,256}$/u.test(value ?? '')) {
+    throw cliCauseRefusal(cause, { observed: observedValue(value ?? null) });
+  }
+  return value;
+}
 function digest(value, label) {
   if (!/^[a-f0-9]{64}$/u.test(value ?? '')) throw cliError(`${label} is invalid`);
   return value;
@@ -142,27 +387,59 @@ function duration(value) {
   return milliseconds;
 }
 
-function readBoundedFile(path, label, { ownerOnly = false, ownerUid = null } = {}) {
+// The three bounded files this client reads carry their own cause prefix, so the refusal names the
+// artifact it judged (the selector, the profile, the token) and the violation — never a bare
+// "user connection profile is invalid" that hides which of twelve comparisons failed.
+const REPOSITORY_SELECTOR_CAUSES = Object.freeze({
+  unreadable: 'repository_selector_unreadable',
+  shape: 'repository_selector_not_a_bounded_file',
+  owner: 'repository_selector_owner_mismatch',
+  permissions: 'repository_selector_permissions',
+  json: 'repository_selector_malformed_json',
+  fields: 'repository_selector_fields_unknown',
+});
+const USER_PROFILE_CAUSES = Object.freeze({
+  unreadable: 'user_profile_unreadable',
+  shape: 'user_profile_not_a_bounded_file',
+  owner: 'user_profile_owner_mismatch',
+  permissions: 'user_profile_permissions',
+  json: 'user_profile_malformed_json',
+  fields: 'user_profile_fields_unknown',
+});
+const TOKEN_FILE_CAUSES = Object.freeze({
+  unreadable: 'token_file_unreadable',
+  shape: 'token_file_not_a_bounded_file',
+  owner: 'token_file_owner_mismatch',
+  permissions: 'token_file_permissions',
+  content: 'token_file_content_invalid',
+});
+
+function readBoundedFile(path, label, { ownerOnly = false, ownerUid = null, causes = null } = {}) {
+  const refuse = (cause, fallback) => {
+    throw cause == null
+      ? cliError(`${label} ${fallback}`, 'cli_config_invalid')
+      : cliCauseRefusal(cause, { observed: path });
+  };
   let before;
   try { before = lstatSync(path); }
-  catch { throw cliError(`${label} is unavailable`, 'cli_config_invalid'); }
+  catch { refuse(causes?.unreadable, 'is unavailable'); }
   if (!before.isFile() || before.isSymbolicLink() || before.size <= 0 || before.size > 16 * 1024) {
-    throw cliError(`${label} must be a bounded regular non-symlink file`, 'cli_config_invalid');
+    refuse(causes?.shape, 'must be a bounded regular non-symlink file');
   }
   let descriptor;
   try { descriptor = openSync(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0)); }
-  catch { throw cliError(`${label} is unavailable`, 'cli_config_invalid'); }
+  catch { refuse(causes?.unreadable, 'is unavailable'); }
   try {
     const stat = fstatSync(descriptor);
     if (!stat.isFile() || stat.dev !== before.dev || stat.ino !== before.ino
       || stat.size <= 0 || stat.size > 16 * 1024) {
-      throw cliError(`${label} must be a bounded regular non-symlink file`, 'cli_config_invalid');
+      refuse(causes?.shape, 'must be a bounded regular non-symlink file');
     }
     if (ownerUid !== null && Number.isInteger(stat.uid) && stat.uid !== ownerUid) {
-      throw cliError(`${label} must be owned by the current user`, 'cli_config_invalid');
+      refuse(causes?.owner, 'must be owned by the current user');
     }
     if (ownerOnly && (stat.mode & 0o077) !== 0) {
-      throw cliError(`${label} must have owner-only permissions`, 'cli_config_invalid');
+      refuse(causes?.permissions, 'must have owner-only permissions');
     }
     return readFileSync(descriptor, 'utf8');
   } finally { closeSync(descriptor); }
@@ -171,13 +448,17 @@ function readBoundedFile(path, label, { ownerOnly = false, ownerUid = null } = {
 function readConnectionJson(path, label, options = {}) {
   const source = readBoundedFile(path, label, options);
   try { return JSON.parse(source); }
-  catch { throw cliError(`${label} must contain JSON`, 'cli_config_invalid'); }
+  catch {
+    throw options.causes == null
+      ? cliError(`${label} must contain JSON`, 'cli_config_invalid')
+      : cliCauseRefusal(options.causes.json, { observed: path });
+  }
 }
 
-function readGitPointer(path, label) {
+function readGitPointer(path, label, cause) {
   const source = readBoundedFile(path, label).trim();
   if (!nonempty(source) || source.includes('\0') || source.includes('\n') || source.includes('\r')) {
-    throw cliError(`${label} is invalid`, 'cli_config_invalid');
+    throw cliCauseRefusal(cause, { observed: path });
   }
   return source;
 }
@@ -189,37 +470,37 @@ function findRepositoryMetadata(start) {
     if (existsSync(dotGit)) {
       let stat;
       try { stat = lstatSync(dotGit); }
-      catch { throw cliError('Git metadata is unavailable', 'cli_config_invalid'); }
-      if (stat.isSymbolicLink()) throw cliError('Git metadata must not be symlinked', 'cli_config_invalid');
+      catch { throw cliCauseRefusal('git_metadata_unavailable', { observed: dotGit }); }
+      if (stat.isSymbolicLink()) throw cliCauseRefusal('git_metadata_symlinked', { observed: dotGit });
       let gitDir;
       if (stat.isDirectory()) gitDir = dotGit;
       else if (stat.isFile()) {
-        const pointer = readGitPointer(dotGit, 'Git worktree pointer');
+        const pointer = readGitPointer(dotGit, 'Git worktree pointer', 'git_worktree_pointer_invalid');
         if (!pointer.startsWith('gitdir: ') || !nonempty(pointer.slice(8))) {
-          throw cliError('Git worktree pointer is invalid', 'cli_config_invalid');
+          throw cliCauseRefusal('git_worktree_pointer_invalid', { observed: dotGit });
         }
         gitDir = resolve(current, pointer.slice(8));
-      } else throw cliError('Git metadata is invalid', 'cli_config_invalid');
+      } else throw cliCauseRefusal('git_metadata_invalid', { observed: dotGit });
       let gitStat;
       try { gitStat = lstatSync(gitDir); }
-      catch { throw cliError('Git directory is unavailable', 'cli_config_invalid'); }
+      catch { throw cliCauseRefusal('git_directory_unavailable', { observed: gitDir }); }
       if (!gitStat.isDirectory() || gitStat.isSymbolicLink()) {
-        throw cliError('Git directory is unsafe', 'cli_config_invalid');
+        throw cliCauseRefusal('git_directory_unsafe', { observed: gitDir });
       }
       const commonPointer = join(gitDir, 'commondir');
       const commonDir = existsSync(commonPointer)
-        ? resolve(gitDir, readGitPointer(commonPointer, 'Git common-directory pointer'))
+        ? resolve(gitDir, readGitPointer(commonPointer, 'Git common-directory pointer', 'git_common_pointer_invalid'))
         : gitDir;
       let commonStat;
       try { commonStat = lstatSync(commonDir); }
-      catch { throw cliError('Git common directory is unavailable', 'cli_config_invalid'); }
+      catch { throw cliCauseRefusal('git_common_directory_unavailable', { observed: commonDir }); }
       if (!commonStat.isDirectory() || commonStat.isSymbolicLink()) {
-        throw cliError('Git common directory is unsafe', 'cli_config_invalid');
+        throw cliCauseRefusal('git_common_directory_unsafe', { observed: commonDir });
       }
       return Object.freeze({ repositoryRoot: current, gitDir, commonDir });
     }
     const parent = dirname(current);
-    if (parent === current) throw cliError('Baton repository connection is unavailable', 'cli_config_invalid');
+    if (parent === current) throw cliCauseRefusal('repository_unavailable', { observed: resolve(start) });
     current = parent;
   }
 }
@@ -241,7 +522,11 @@ export function discoverBatonConnection({
   const present = CONNECTION_ENV.filter((name) => nonempty(env[name]));
   if (present.length > 0) {
     if (present.length !== CONNECTION_ENV.length) {
-      throw cliError(`incomplete connection environment override: ${CONNECTION_ENV.filter((name) => !present.includes(name)).join(', ')}`, 'cli_config_invalid');
+      const missing = CONNECTION_ENV.filter((name) => !present.includes(name));
+      throw cliCauseRefusal('connection_environment_incomplete', {
+        observed: `missing ${missing.join(', ')}`,
+        detail: { missingEnvironmentNames: missing },
+      });
     }
     return Object.freeze({
       baseUrl: env.BATON_URL, origin: env.BATON_ORIGIN, repoId: env.BATON_REPO_ID,
@@ -250,51 +535,95 @@ export function discoverBatonConnection({
   }
   const { repositoryRoot, commonDir } = findRepositoryMetadata(cwd);
   const repositoryPath = join(commonDir, 'baton', 'connection.json');
-  const repository = readConnectionJson(repositoryPath, 'repository connection configuration');
+  const repository = readConnectionJson(repositoryPath, 'repository connection configuration', { causes: REPOSITORY_SELECTOR_CAUSES });
+  // U-E19 (issue #288): the schema verdict comes BEFORE the key closure. A selector published by a
+  // newer resident is version drift and is refused as such; before this it failed as "unknown or
+  // missing fields", which sent an agent to repair a selector that was simply newer than its CLI.
+  if (![1, 2].includes(repository?.schemaVersion)) {
+    throw cliCauseRefusal('repository_selector_schema_unsupported', {
+      observed: `schemaVersion ${observedValue(repository?.schemaVersion ?? null)}`,
+    });
+  }
   const resident = repository.schemaVersion === 2;
   exactKeys(repository, resident
     ? ['schemaVersion', 'profile', 'repoId', 'deploymentId', 'incarnation', 'transport', 'registryDigest', 'startedAt']
-    : ['schemaVersion', 'profile', 'repoId'], 'repository connection configuration');
-  if (![1, 2].includes(repository.schemaVersion)) {
-    throw cliError('repository connection schema is unsupported', 'cli_config_invalid');
-  }
-  id(repository.profile, 'connection profile');
-  id(repository.repoId, 'repository ID');
+    : ['schemaVersion', 'profile', 'repoId'], 'repository connection configuration', REPOSITORY_SELECTOR_CAUSES.fields);
+  idCause(repository.profile, 'repository_selector_profile_invalid');
+  idCause(repository.repoId, 'repository_selector_repo_id_invalid');
   if (resident) {
-    id(repository.deploymentId, 'resident deployment ID');
-    id(repository.incarnation, 'resident incarnation');
-    if (repository.transport !== 'local'
-      || repository.registryDigest !== APPLICATION_SEMANTIC_REGISTRY.digest
-      || !Number.isFinite(Date.parse(repository.startedAt))) {
-      throw residentAuthorityRefusal(repository);
+    idCause(repository.deploymentId, 'repository_selector_deployment_invalid');
+    idCause(repository.incarnation, 'repository_selector_incarnation_invalid');
+    if (repository.transport !== 'local') {
+      throw cliCauseRefusal('repository_selector_transport_unsupported', {
+        observed: `transport ${observedValue(repository.transport ?? null)}`,
+      });
+    }
+    // The drift case names BOTH registry digests and the remedy (F9): this is the refusal a
+    // `git pull` produces, and the one `baton doctor` must never hide.
+    if (repository.registryDigest !== APPLICATION_SEMANTIC_REGISTRY.digest) throw residentAuthorityRefusal(repository);
+    if (!Number.isFinite(Date.parse(repository.startedAt))) {
+      throw cliCauseRefusal('repository_selector_started_at_invalid', {
+        observed: `startedAt ${observedValue(repository.startedAt ?? null)}`,
+      });
     }
   }
-  if (nonempty(env.XDG_CONFIG_HOME) && !isAbsolute(env.XDG_CONFIG_HOME)) {
-    throw cliError('XDG_CONFIG_HOME must be absolute', 'cli_config_invalid');
-  }
-  const configRoot = nonempty(env.XDG_CONFIG_HOME) ? env.XDG_CONFIG_HOME
-    : nonempty(home) && isAbsolute(home) ? join(home, '.config') : null;
-  if (!configRoot) throw cliError('user configuration home is unavailable', 'cli_config_invalid');
+  const configRoot = connectionConfigRoot(env, home);
   const profilePath = join(configRoot, 'baton', 'connections', `${repository.profile}.json`);
-  const profile = readConnectionJson(profilePath, 'user connection profile', { ownerOnly: true, ownerUid });
+  const profile = readConnectionJson(profilePath, 'user connection profile', { ownerOnly: true, ownerUid, causes: USER_PROFILE_CAUSES });
   exactKeys(profile, resident
     ? residentProfileKeys(profile)
-    : ['schemaVersion', 'url', 'origin', 'tokenFile'], 'user connection profile');
-  if (profile.schemaVersion !== repository.schemaVersion || !nonempty(profile.url)
-    || !nonempty(profile.origin) || !nonempty(profile.tokenFile)
-    || (resident && (!residentProfileOwnerValid(profile)
-      || profile.transport !== 'local' || !isAbsolute(profile.socketPath)
-      || profile.socketPath.includes('\0') || Buffer.byteLength(profile.socketPath) > 103
-      || profile.deploymentId !== repository.deploymentId
-      || profile.incarnation !== repository.incarnation
-      || profile.registryDigest !== repository.registryDigest
-      || profile.startedAt !== repository.startedAt))) {
-    throw cliError('user connection profile is invalid', 'cli_config_invalid');
+    : ['schemaVersion', 'url', 'origin', 'tokenFile'], 'user connection profile', USER_PROFILE_CAUSES.fields);
+  // U-F12: twelve comparisons, twelve causes — the field each one judged, never one
+  // "user connection profile is invalid" an agent has to bisect by hand.
+  if (profile.schemaVersion !== repository.schemaVersion) {
+    throw cliCauseRefusal('user_profile_schema_mismatch', {
+      observed: `profile schemaVersion ${observedValue(profile.schemaVersion ?? null)} vs selector ${repository.schemaVersion}`,
+    });
+  }
+  if (!nonempty(profile.url)) throw cliCauseRefusal('user_profile_url_missing', { observed: profilePath });
+  if (!nonempty(profile.origin)) throw cliCauseRefusal('user_profile_origin_missing', { observed: profilePath });
+  if (!nonempty(profile.tokenFile)) throw cliCauseRefusal('user_profile_token_file_missing', { observed: profilePath });
+  if (resident) {
+    if (!residentProfileOwnerValid(profile)) {
+      throw cliCauseRefusal('user_profile_owner_fields_invalid', {
+        observed: `ownerPid ${observedValue(profile.ownerPid ?? null)}, ownerPidStart ${observedValue(profile.ownerPidStart ?? null)}`,
+      });
+    }
+    if (profile.transport !== 'local') {
+      throw cliCauseRefusal('user_profile_transport_unsupported', {
+        observed: `transport ${observedValue(profile.transport ?? null)}`,
+      });
+    }
+    if (!isAbsolute(profile.socketPath) || profile.socketPath.includes('\0')
+      || Buffer.byteLength(profile.socketPath) > 103) {
+      throw cliCauseRefusal('user_profile_socket_path_invalid', { observed: observedValue(profile.socketPath ?? null) });
+    }
+    if (profile.deploymentId !== repository.deploymentId) {
+      throw cliCauseRefusal('user_profile_deployment_mismatch', {
+        detail: { selectorDeploymentId: repository.deploymentId, profileDeploymentId: observedValue(profile.deploymentId ?? null) },
+      });
+    }
+    if (profile.incarnation !== repository.incarnation) {
+      throw cliCauseRefusal('user_profile_incarnation_mismatch', {
+        detail: { selectorIncarnation: repository.incarnation, profileIncarnation: observedValue(profile.incarnation ?? null) },
+      });
+    }
+    if (profile.registryDigest !== repository.registryDigest) {
+      throw cliCauseRefusal('user_profile_registry_digest_mismatch', {
+        detail: { selectorRegistryDigest: repository.registryDigest, profileRegistryDigest: observedValue(profile.registryDigest ?? null) },
+      });
+    }
+    if (profile.startedAt !== repository.startedAt) {
+      throw cliCauseRefusal('user_profile_started_at_mismatch', {
+        detail: { selectorStartedAt: repository.startedAt, profileStartedAt: observedValue(profile.startedAt ?? null) },
+      });
+    }
   }
   const tokenPath = isAbsolute(profile.tokenFile) ? profile.tokenFile : resolve(dirname(profilePath), profile.tokenFile);
-  const token = readBoundedFile(tokenPath, 'private Baton token file', { ownerOnly: true, ownerUid }).trim();
+  const token = readBoundedFile(tokenPath, 'private Baton token file', { ownerOnly: true, ownerUid, causes: TOKEN_FILE_CAUSES }).trim();
+  // The refusal names the file, never its content: a token fragment must never reach a message.
   if (!nonempty(token) || token.includes('\0') || token.includes('\n') || token.includes('\r')) {
-    throw cliError('private Baton token file content is invalid', 'cli_config_invalid');
+    throw cliCauseRefusal('token_file_content_invalid', { observed: tokenPath });
   }
   return Object.freeze({
     baseUrl: profile.url, origin: profile.origin, repoId: repository.repoId, token,
@@ -308,11 +637,11 @@ export function discoverBatonConnection({
 
 function connectionConfigRoot(env, home) {
   if (nonempty(env.XDG_CONFIG_HOME) && !isAbsolute(env.XDG_CONFIG_HOME)) {
-    throw cliError('XDG_CONFIG_HOME must be absolute', 'cli_config_invalid');
+    throw cliCauseRefusal('xdg_config_home_not_absolute', { observed: observedValue(env.XDG_CONFIG_HOME) });
   }
   const root = nonempty(env.XDG_CONFIG_HOME) ? env.XDG_CONFIG_HOME
     : nonempty(home) && isAbsolute(home) ? join(home, '.config') : null;
-  if (!root) throw cliError('user configuration home is unavailable', 'cli_config_invalid');
+  if (!root) throw cliCauseRefusal('user_configuration_home_unavailable');
   return root;
 }
 
@@ -1308,9 +1637,10 @@ function parseSwarmCli(args, idempotencyKey) {
       'cli_command_unavailable',
     );
   }
-  // `swarm watch --follow`: Baton wakes the caller — one line per swarm event, for as long as
-  // the swarm is open or any participant is alive. The orchestrator never polls.
-  const follow = verb === 'watch' && flag(args, '--follow');
+  // `swarm watch --follow` and `swarm check --follow`: Baton wakes the caller — one line per swarm
+  // event for watch; for check, the caller waits for THIS check's verdict row and reads it back.
+  // Either way the orchestrator never polls.
+  const follow = (verb === 'watch' || verb === 'check') && flag(args, '--follow');
   const values = {};
   for (const field of row.positional) {
     const token = args.shift();
@@ -1336,6 +1666,12 @@ function parseSwarmCli(args, idempotencyKey) {
   noRemainder(args);
   if (SWARM_COMMAND_DEFINITIONS[row.command].args.includes('idempotencyKey')) {
     values.idempotencyKey = idempotencyKey;
+  }
+  if (follow && verb === 'check') {
+    return {
+      kind: 'swarm_check_follow', swarmId: values.swarmId, participantId: values.participantId,
+      contributionId: values.contributionId, checkId: values.checkId, idempotencyKey,
+    };
   }
   if (follow) return { kind: 'swarm_follow', swarmId: values.swarmId, afterSeq: values.afterSeq, timeoutMs: values.timeoutMs, idempotencyKey };
   return { kind: 'command', name: row.command, args: values, idempotencyKey };
@@ -1377,6 +1713,86 @@ export async function followSwarm(parsed, client, options = {}) {
     if (view?.status !== 'open' && !swarmHasLiveParticipant(view)) return view;
     if (typeof options.shouldStop === 'function' && await options.shouldStop(view)) return view;
   }
+}
+
+/** The durable verdict row one check wrote, or null while it is still running. The runtime composes
+ * `Check <checkId>: passed|failed for <sha>; cleanup <state>` into the contribution's review row, and
+ * that row is the only check-id referent the swarm view carries — so the check id is matched
+ * against the row's own composed reason. */
+export function swarmCheckVerdict(view, parsed) {
+  const reviews = view?.reviews?.[parsed.contributionId];
+  if (!Array.isArray(reviews)) return null;
+  return reviews.find((review) => typeof review?.reason === 'string'
+    && review.reason.startsWith(`Check ${parsed.checkId}:`)) ?? null;
+}
+
+/** R-5 (issue #288): `baton swarm check … --follow` — admit the check (identity-idempotent, so a
+ * replay is the same check), then watch the swarm's own feed until the verdict row for THIS check
+ * appears and return it. The resident records the verdict durably (`swarm.contribution_reviewed`);
+ * this is CLI-side observation, so a check that outlives the CLI's request bound is still
+ * observable instead of lost to a transport refusal. */
+export async function followSwarmCheck(parsed, client, options = {}) {
+  const check = await client.command('swarm.check', {
+    swarmId: parsed.swarmId, participantId: parsed.participantId,
+    contributionId: parsed.contributionId, checkId: parsed.checkId,
+  }, `${parsed.idempotencyKey}:check`);
+  // The verdict row may already be durable (an instant check, or a replay of one this caller ran
+  // before), so the current view is read before any waiting starts.
+  let view = await client.command('swarm.view', { swarmId: parsed.swarmId }, `${parsed.idempotencyKey}:view`);
+  for (;;) {
+    const verdict = swarmCheckVerdict(view, parsed);
+    if (verdict !== null) {
+      return Object.freeze({
+        schemaVersion: 1, swarmId: parsed.swarmId, participantId: parsed.participantId,
+        contributionId: parsed.contributionId, checkId: parsed.checkId,
+        verdict: Object.freeze({ ...verdict }),
+        check,
+      });
+    }
+    if (view?.status !== 'open' && !swarmHasLiveParticipant(view)) {
+      // The swarm is closed and nothing is alive: no further event can write the verdict row.
+      return Object.freeze({
+        schemaVersion: 1, swarmId: parsed.swarmId, participantId: parsed.participantId,
+        contributionId: parsed.contributionId, checkId: parsed.checkId,
+        verdict: null, check,
+      });
+    }
+    const cursor = view?.cursor;
+    view = await client.command('swarm.watch', {
+      swarmId: parsed.swarmId, ...(cursor === undefined ? {} : { afterSeq: cursor }),
+      ...(parsed.timeoutMs === undefined ? {} : { timeoutMs: parsed.timeoutMs }),
+    }, `${parsed.idempotencyKey}:watch:${cursor ?? 'now'}`);
+    if (view?.watch?.reason === 'event') await options.onFollowPage?.(swarmWakeSummary(view));
+  }
+}
+
+/** R-5 (issue #288): where a command's verdict lands and which CLI verb reads it. The observation
+ * route is what a `cli_command_pending` receipt hands the caller, so it names the durable row the
+ * command will write — never a bare "retry later". */
+export function commandObservation(name, args, commandId) {
+  const value = record(args) ? args : {};
+  if (name === 'swarm.check' && nonempty(value.swarmId) && nonempty(value.contributionId)) {
+    const invocation = ['swarm', 'check', value.swarmId, value.participantId, value.contributionId, value.checkId]
+      .filter(nonempty).join(' ');
+    return Object.freeze({
+      command: `baton ${invocation} --follow`,
+      row: `reviews["${value.contributionId}"] in \`baton swarm view ${value.swarmId}\` — the row naming "Check ${value.checkId}"`,
+    });
+  }
+  if (name === 'swarm.capture' && nonempty(value.swarmId) && nonempty(value.contributionId)) {
+    return Object.freeze({
+      command: `baton swarm view ${value.swarmId}`,
+      row: `contributions["${value.contributionId}"] and its attached revision in \`baton swarm view ${value.swarmId}\``,
+    });
+  }
+  const runId = nonempty(value.runId) ? value.runId : (record(value.intent) && nonempty(value.intent.runId) ? value.intent.runId : null);
+  if (runId !== null) {
+    return Object.freeze({ command: `baton run show ${runId}`, row: `the Run view for ${runId}` });
+  }
+  return Object.freeze({
+    command: 'baton doctor --check',
+    row: `the durable web command record at GET /v1/commands/${commandId}`,
+  });
 }
 
 export function parseBatonCli(rawArgs) {
@@ -2179,7 +2595,7 @@ export class BatonWebClient {
       || !Number.isSafeInteger(options.commandTimeoutMs) || options.commandTimeoutMs <= 0
       || !Number.isSafeInteger(options.pollMs) || options.pollMs <= 0 || options.pollMs > options.commandTimeoutMs
       || typeof options.fetchImpl !== 'function' || typeof options.clock !== 'function' || typeof options.sleep !== 'function') {
-      throw cliError('Web client configuration is invalid', 'cli_config_invalid');
+      throw cliCauseRefusal('client_configuration_invalid');
     }
     this.baseUrl = base.href.replace(/\/$/u, '');
     this.origin = origin.origin;
@@ -2205,7 +2621,7 @@ export class BatonWebClient {
   async _json(path, options = {}, requestTimeoutMs = this.requestTimeoutMs) {
     if (!Number.isSafeInteger(requestTimeoutMs) || requestTimeoutMs <= 0
       || requestTimeoutMs > (24 * 60 * 60 * 1_000) + WEB_WAIT_TRANSPORT_SLACK_MS) {
-      throw cliError('Baton Web request timeout is invalid', 'cli_config_invalid');
+      throw cliCauseRefusal('request_timeout_invalid', { observed: `requestTimeoutMs ${observedValue(requestTimeoutMs)}` });
     }
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), requestTimeoutMs);
@@ -2218,7 +2634,13 @@ export class BatonWebClient {
       } catch {
         // #160 R6 (error-actionability-2026-08-13/contract-fold.md §2 D4-R6/F4): the transport
         // refusal names the transport class (web) AND a next action — never a bare "failed".
-        throw cliError('Baton Web connection failed; check your network and retry', 'cli_transport_failed');
+        const refusal = cliError('Baton Web connection failed; check your network and retry', 'cli_transport_failed');
+        // R-5 (issue #288): "this REQUEST outlived its own bound" (our abort fired) is a different
+        // fact from "the connection never happened" — a caller whose command may still be running
+        // resolves it with a receipt, never with a network fault. The marker is read by the command
+        // leg only; every other call site keeps the refusal exactly as before.
+        if (controller.signal.aborted) refusal.requestBoundElapsed = true;
+        throw refusal;
       }
       const declared = Number(response.headers?.get?.('content-length'));
       if (Number.isFinite(declared) && declared > this.maxJsonResponseBytes) {
@@ -2342,6 +2764,8 @@ export class BatonWebClient {
             method: 'POST', headers: this._headers(true), body: JSON.stringify(envelope),
           }, this._requestTimeoutForCommand(name, pageArgs));
         } catch (error) {
+          const pending = await this._pendingReceiptOrNull(name, pageArgs, envelope, error);
+          if (pending !== null) throw pending;
           const cursor = error?.continuationCursor ?? error?.detail?.continuationCursor ?? null;
           if (error?.code !== 'application_run_list_continuation_required' || cursor === null) throw error;
           pageArgs = { ...pageArgs, continuationCursor: cursor };
@@ -2367,11 +2791,56 @@ export class BatonWebClient {
       schemaVersion: 1, commandId: randomUUID(), idempotencyKey, command, args,
       repoId: this.repoId, ...(runId ? { runId } : {}), origin: this.origin,
     };
-    const body = await this._json('/v1/commands', {
-      method: 'POST', headers: this._headers(true), body: JSON.stringify(envelope),
-    }, this._requestTimeoutForCommand(name, args));
+    let body;
+    try {
+      body = await this._json('/v1/commands', {
+        method: 'POST', headers: this._headers(true), body: JSON.stringify(envelope),
+      }, this._requestTimeoutForCommand(name, args));
+    } catch (error) {
+      const pending = await this._pendingReceiptOrNull(name, args, envelope, error);
+      if (pending !== null) throw pending;
+      throw error;
+    }
     if (body.status !== 'admitted') return body.result ?? body;
     return this.reconcile(envelope.commandId);
+  }
+
+  /** R-5 (issue #288): a command that outlives THIS caller's request bound while the deployment
+   * still answers is not a network fault — the resident keeps working and the command record is
+   * durable. Returns the pending receipt (the operation key + the row that will carry the verdict),
+   * or null to keep the caller's original refusal. */
+  async _pendingReceiptOrNull(name, args, envelope, error) {
+    if (error?.code !== 'cli_transport_failed' || error?.requestBoundElapsed !== true) return null;
+    if (!await this._deploymentAnswers()) return null;
+    const observe = commandObservation(name, args, envelope.commandId);
+    return Object.assign(cliError(
+      `Baton Web command ${name} outlived this caller's request bound while the deployment still answers; it may still be admitted and running — observe it with \`${observe.command}\``,
+      'cli_command_pending',
+    ), {
+      detail: {
+        commandId: envelope.commandId,
+        idempotencyKey: envelope.idempotencyKey,
+        command: name,
+        observe,
+      },
+      retryable: false,
+    });
+  }
+
+  /** One live probe: does the deployment answer at all? Any HTTP answer — including a refusal —
+   * proves the peer is alive; only a transport-level failure means it is not. The probe reuses the
+   * caller's own request bound; it is never a second, hidden clock. */
+  async _deploymentAnswers() {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), this.requestTimeoutMs);
+    try {
+      await this.fetch(`${this.baseUrl}/healthz`, {
+        headers: { origin: this.origin }, redirect: 'error', signal: controller.signal,
+      });
+      return true;
+    } catch {
+      return false;
+    } finally { clearTimeout(timeout); }
   }
 
   _requestTimeoutForCommand(name, args) {
@@ -2489,7 +2958,7 @@ export async function connectBaton({
     || Object.keys(advanced).some((key) => ![
       'commandTimeoutMs', 'pollMs', 'fetchImpl', 'clock', 'sleep', 'env', 'home', 'ownerUid',
     ].includes(key))) {
-    throw cliError('Baton connection options are invalid', 'cli_config_invalid');
+    throw cliCauseRefusal('connection_options_invalid');
   }
   const env = advanced.env ?? process.env;
   const connection = discoverBatonConnection({
@@ -2501,8 +2970,7 @@ export async function connectBaton({
   if (connection.authority === 'repository-user-profile') {
     const local = repositoryIdentityFromMetadata(resolve(repo));
     if (connection.repoId !== local.repoId) {
-      throw cliError('Baton repository selector does not match this Git repository',
-        'cli_connection_incompatible');
+      throw cliCauseRefusal('selector_repo_mismatch', { observed: `selector ${connection.repoId}, checkout ${local.repoId}` });
     }
   }
   const fetchImpl = advanced.fetchImpl ?? (connection.transport === 'local'
@@ -2514,7 +2982,7 @@ export async function connectBaton({
     })
     : globalThis.fetch);
   if (typeof fetchImpl !== 'function') {
-    throw cliError('Baton Web transport is unavailable', 'cli_config_invalid');
+    throw cliCauseRefusal('web_transport_unavailable');
   }
   const client = new BatonWebClient({
     baseUrl: connection.baseUrl,
@@ -2534,24 +3002,73 @@ export async function connectBaton({
   });
   const [doctor, session] = await Promise.all([client.doctor(), client.session()]);
   const requiredCommands = ['application.help', 'runs.list', 'run.start', 'run.inspect', 'run.act', 'run.stop'];
-  if (doctor.ready !== true
-    || doctor.application?.schemaVersion !== 1
-    || doctor.application?.repoId !== connection.repoId
-    || !Array.isArray(doctor.application?.commands)
-    || requiredCommands.some((command) => !doctor.application.commands.includes(command))
-    || doctor.application?.agentExperience?.registryDigest !== APPLICATION_SEMANTIC_REGISTRY.digest
-    // Decision 7: the limits registry digest verifies exactly like the semantic registry's — a
-    // server that publishes limitsRegistryDigest must match; an older server that omits it is
-    // not rejected (the frame-economics handshake is additive).
-    || (doctor.application?.agentExperience?.limitsRegistryDigest !== undefined
-      && doctor.application?.agentExperience?.limitsRegistryDigest !== FRAME_LIMITS_DIGEST)
-    || !session.identity.repoIds.includes(connection.repoId)
-    || (connection.transport === 'local'
-      && (doctor.application?.resident?.schemaVersion !== 1
-        || doctor.application.resident.deploymentId !== connection.deploymentId
-        || doctor.application.resident.incarnation !== connection.incarnation))) {
-    throw cliError('Baton resident authority is incompatible or not ready',
-      'cli_connection_incompatible');
+  // U-F11 (issue #288): ten causes, ten typed refusals — each naming the field it judged and the
+  // remedy. Before this, all ten shared one sentence, and the registry-drift case (the one the
+  // resident can explain with both digests) discarded them.
+  const agentExperience = doctor?.application?.agentExperience ?? null;
+  if (doctor.ready !== true) throw cliCauseRefusal('resident_not_ready', { observed: 'ready=false' });
+  if (doctor.application?.schemaVersion !== 1) {
+    throw cliCauseRefusal('served_application_schema_unsupported', {
+      observed: `application.schemaVersion ${observedValue(doctor.application?.schemaVersion ?? null)}`,
+    });
+  }
+  if (doctor.application?.repoId !== connection.repoId) {
+    throw cliCauseRefusal('served_repo_mismatch', {
+      observed: `served ${observedValue(doctor.application?.repoId ?? null)}, connected ${connection.repoId}`,
+    });
+  }
+  if (!Array.isArray(doctor.application?.commands)) throw cliCauseRefusal('served_command_list_missing');
+  const missingCommands = requiredCommands.filter((command) => !doctor.application.commands.includes(command));
+  if (missingCommands.length > 0) {
+    throw cliCauseRefusal('required_commands_missing', {
+      observed: `missing ${missingCommands.join(', ')}`,
+      detail: { required: requiredCommands, missing: missingCommands },
+    });
+  }
+  if (agentExperience?.registryDigest !== APPLICATION_SEMANTIC_REGISTRY.digest) {
+    throw cliCauseRefusal('served_registry_digest_drift', {
+      observed: `the resident serves ${observedValue(agentExperience?.registryDigest ?? null)} but this CLI carries ${APPLICATION_SEMANTIC_REGISTRY.digest}`,
+      detail: {
+        servedRegistryDigest: agentExperience?.registryDigest ?? null,
+        cliRegistryDigest: APPLICATION_SEMANTIC_REGISTRY.digest,
+      },
+    });
+  }
+  // Decision 7: the limits registry digest verifies exactly like the semantic registry's — a
+  // server that publishes limitsRegistryDigest must match; an older server that omits it is
+  // not rejected (the frame-economics handshake is additive).
+  if (agentExperience?.limitsRegistryDigest !== undefined
+    && agentExperience.limitsRegistryDigest !== FRAME_LIMITS_DIGEST) {
+    throw cliCauseRefusal('served_limits_digest_drift', {
+      observed: `the resident serves ${observedValue(agentExperience.limitsRegistryDigest)} but this CLI carries ${FRAME_LIMITS_DIGEST}`,
+      detail: { servedLimitsDigest: agentExperience.limitsRegistryDigest, cliLimitsDigest: FRAME_LIMITS_DIGEST },
+    });
+  }
+  if (!session.identity.repoIds.includes(connection.repoId)) {
+    throw cliCauseRefusal('served_session_repo_not_served', {
+      observed: `the session serves ${session.identity.repoIds.join(', ')}`,
+      detail: { connectedRepoId: connection.repoId, sessionRepoIds: [...session.identity.repoIds] },
+    });
+  }
+  if (connection.transport === 'local') {
+    const residentIdentity = doctor.application?.resident ?? null;
+    if (residentIdentity?.schemaVersion !== 1) {
+      throw cliCauseRefusal('resident_deployment_mismatch', {
+        observed: 'the resident card carries no resident identity',
+      });
+    }
+    if (residentIdentity.deploymentId !== connection.deploymentId) {
+      throw cliCauseRefusal('resident_deployment_mismatch', {
+        observed: `served ${observedValue(residentIdentity.deploymentId ?? null)}, connected ${connection.deploymentId}`,
+        detail: { servedDeploymentId: residentIdentity.deploymentId ?? null, connectedDeploymentId: connection.deploymentId },
+      });
+    }
+    if (residentIdentity.incarnation !== connection.incarnation) {
+      throw cliCauseRefusal('resident_incarnation_mismatch', {
+        observed: `served ${observedValue(residentIdentity.incarnation ?? null)}, connected ${connection.incarnation}`,
+        detail: { servedIncarnation: residentIdentity.incarnation ?? null, connectedIncarnation: connection.incarnation },
+      });
+    }
   }
   return bindBatonPort(Object.freeze({
     command: (name, args) => client.command(name, args),
@@ -2578,6 +3095,7 @@ export async function runBatonCli(parsed, client, options = {}) {
   }
   if (parsed.kind === 'command') return client.command(parsed.name, parsed.args, parsed.idempotencyKey);
   if (parsed.kind === 'swarm_follow') return followSwarm(parsed, client, options ?? {});
+  if (parsed.kind === 'swarm_check_follow') return followSwarmCheck(parsed, client, options ?? {});
   if (parsed.kind === 'stream') {
     if (!options || typeof options !== 'object' || Array.isArray(options)
       || Object.keys(options).some((key) => key !== 'onFollowPage')
@@ -2717,10 +3235,12 @@ function residentAuthorityRefusal(repository) {
   const resident = typeof repository?.registryDigest === 'string' ? repository.registryDigest : null;
   const mine = APPLICATION_SEMANTIC_REGISTRY.digest;
   if (resident !== null && resident !== mine) {
-    return Object.assign(cliError(
-      `resident repository connection authority is invalid: the resident publishes semantic-registry digest ${resident.slice(0, 12)}… but this CLI carries ${mine.slice(0, 12)}… — use the CLI of the commit the resident runs, or restart the resident from this checkout`,
-      'cli_config_invalid',
-    ), { detail: { residentRegistryDigest: resident, cliRegistryDigest: mine, next: 'use the CLI of the commit the resident runs, or restart the resident from this checkout' } });
+    // F9: protocol drift is the expected case after any `git pull`. Both digests ride the message
+    // (full, not truncated: they are the operator's own evidence) and the remedy rides the row.
+    return cliCauseRefusal('repository_selector_registry_digest_drift', {
+      observed: `the resident publishes ${resident} but this CLI carries ${mine}`,
+      detail: { residentRegistryDigest: resident, cliRegistryDigest: mine },
+    });
   }
-  return cliError('resident repository connection authority is invalid', 'cli_config_invalid');
+  return cliCauseRefusal('repository_selector_authority_invalid');
 }

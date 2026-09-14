@@ -63,7 +63,7 @@ import test from 'node:test';
 import { BatonApplication } from '../src/application.mjs';
 import { MockAdapter } from '../src/adapter.mjs';
 import { bindBaton, createDriver } from '../src/index.mjs';
-import { discoverBatonConnection } from '../src/application-cli.mjs';
+import { cliConnectionCauseRow, discoverBatonConnection } from '../src/application-cli.mjs';
 import { implementContractRecipe } from '../src/recipes.mjs';
 import { WAITING_ON_KINDS } from '../src/application-semantics.mjs';
 
@@ -421,9 +421,15 @@ test('P-A4 pin: a coordinator-seat worker has NO baton connection — discovery 
         env: { HOME: home, XDG_CONFIG_HOME: join(home, 'config') },
         home,
       }),
+      // Issue #288 (U-F12): the absence refusal is now the `user_profile_unreadable` row composed
+      // with the artifact it judged and the remedy — the identity the pin protects is the ROW's own
+      // text (derived, so it cannot drift), not a hand-copied literal.
       (error) => error?.code === 'cli_config_invalid'
-        && error?.message === 'user connection profile is unavailable',
-      'coordinator-seat discovery must draw the byte-identical absence refusal',
+        && error?.cause === 'user_profile_unreadable'
+        && error?.message.startsWith(`${cliConnectionCauseRow('user_profile_unreadable').rule};`)
+        && error.message.includes(join(home, 'config', 'baton', 'connections', 'default.json'))
+        && error.detail?.remedy === cliConnectionCauseRow('user_profile_unreadable').remedy,
+      'coordinator-seat discovery must draw the row-composed absence refusal, naming the profile it judged',
     );
   } finally {
     rmSync(repo, { recursive: true, force: true });

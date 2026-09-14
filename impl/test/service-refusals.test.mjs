@@ -53,7 +53,10 @@ test('protocol drift refuses by naming the resident\'s registry digest, this CLI
   mkdirSync(join(home, 'config', 'baton', 'connections'), { recursive: true });
   assert.throws(() => discoverBatonConnection({ cwd: repo, env: { HOME: home, XDG_CONFIG_HOME: join(home, 'config') }, home }), (error) => {
     assert.equal(error.code, 'cli_config_invalid');
-    assert.match(error.message, /the resident publishes semantic-registry digest ffffffffffff… but this CLI carries/u);
+    // Issue #288 (U-F11/F12): the drift refusal names its typed cause and BOTH digests in full —
+    // the operator's own evidence, copyable into a comparison — not truncated stand-ins.
+    assert.match(error.message, /the resident publishes f{64} but this CLI carries/u);
+    assert.equal(error.message.includes(APPLICATION_SEMANTIC_REGISTRY.digest), true);
     assert.match(error.message, /use the CLI of the commit the resident runs, or restart the resident from this checkout/u);
     assert.equal(error.detail.cliRegistryDigest, APPLICATION_SEMANTIC_REGISTRY.digest);
     assert.equal(error.detail.residentRegistryDigest, 'f'.repeat(64));

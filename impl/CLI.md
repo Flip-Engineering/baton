@@ -152,6 +152,34 @@ records nothing.
   "event": "swarm.work_updated", "code": "work_not_found", "field": null, "participantId": "builder-a" }
 ```
 
+### Waiting on one check
+
+`baton swarm check SWARM_ID PARTICIPANT_ID CONTRIBUTION_ID CHECK_ID --follow` admits the check and
+then observes the swarm's own feed until THIS check's verdict row appears, printing it:
+
+```json
+{
+  "schemaVersion": 1,
+  "swarmId": "swarm-40e643e96fd1edcd",
+  "participantId": "reviewer-a",
+  "contributionId": "contribution:9f21",
+  "checkId": "check:api-surface",
+  "verdict": {
+    "reviewerId": "reviewer-a", "decision": "comment",
+    "reason": "Check check:api-surface: passed for 4b8f1c…; cleanup released.",
+    "actor": "web:reviewer-a:session", "seq": 214, "ts": "2026-09-14T06:02:11.004Z"
+  },
+  "check": { "passed": true, "sha": "4b8f1c…", "attempt": { "cleanup": { "state": "released" } } }
+}
+```
+
+The verdict is the durable `reviews[CONTRIBUTION_ID]` row whose reason names the check, so it is
+read back exactly as the resident wrote it (the `check` receipt beside it is the runtime's own
+return value). A check whose verification outlives the CLI's own request bound is therefore still
+observed instead of lost: the client answers `cli_command_pending` with the operation key and this
+same observation route, never a network fault. When the swarm is closed and nothing in it is alive,
+the follow ends with `"verdict": null` rather than waiting for an event that can no longer come.
+
 
 ## Connect to a resident authenticated Web host
 
@@ -249,6 +277,38 @@ and per-exact-route readiness. The connected JavaScript client exposes the same 
 `doctor()`, `routes()`, and `route({harness, model, effort})`, so route selection does not require
 opening the deployment factory. `baton route HARNESS/MODEL@EFFORT` selects the identical sanitized
 row for CLI orchestration.
+
+### Refusals from the connection authority
+
+Both connection codes carry a typed cause, the field or path the client judged, the rule it
+violated and the remedy that fixes it — the same triple in the printed `detail`, in the MCP
+bridge's forwarded refusal, and in `baton doctor`:
+
+```json
+{
+  "code": "cli_config_invalid",
+  "message": "the resident repository connection was published by a different commit: its semantic-registry digest differs from this CLI's; the resident publishes 3f9c…a1 but this CLI carries 8b2d…07; use the CLI of the commit the resident runs, or restart the resident from this checkout",
+  "field": "registryDigest",
+  "detail": {
+    "cause": "repository_selector_registry_digest_drift",
+    "field": "registryDigest",
+    "rule": "the resident repository connection was published by a different commit: its semantic-registry digest differs from this CLI's",
+    "remedy": "use the CLI of the commit the resident runs, or restart the resident from this checkout",
+    "residentRegistryDigest": "3f9c…a1", "cliRegistryDigest": "8b2d…07"
+  }
+}
+```
+
+`baton doctor` prints the same refusal beside its outline for a publication it judged unusable, and
+its `next` names the remedy instead of `baton setup` — protocol drift after a `git pull` is the
+expected case, and `baton setup` cannot repair it. The table is enumerable: the
+`CLI_CONNECTION_CAUSES` export lists every typed cause the client can refuse a connection or its
+configuration with, and `cliConnectionCauseRow(cause)` reads one row (code, field, rule, remedy).
+
+When a command outlives the CLI's own request bound while the deployment still answers, the client
+refuses `cli_command_pending` with the operation key and the row that will carry the verdict
+(`detail.observe.command` / `detail.observe.row`) rather than reporting a network fault; a command
+that never reached the deployment keeps the honest `cli_transport_failed`.
 
 ### Fleet routes
 
