@@ -24,11 +24,14 @@ import { WORKER_MESSAGE_GUIDANCE } from './messages.mjs';
 import { FRAME_LIMITS } from './limits.mjs';
 import { OmpTurnUsageAccumulator, OMP_TOKEN_METRIC } from './omp-usage.mjs';
 import { attestWorkerPolicyObservation } from './worker-policy.mjs';
-import { ProcessCloseReapLatch, normalizeProcessGeneration, processReadyPayload, processStartedPayload } from './process-lifecycle.mjs';
+import { KILL_ESCALATION_GRACE_MS, ProcessCloseReapLatch, normalizeProcessGeneration, processReadyPayload, processStartedPayload } from './process-lifecycle.mjs';
 import { normalizeConcurrencyCeiling } from './concurrency-policy.mjs';
 import { normalizeOmpTaskFrame, normalizeOmpSubagentFrame } from './native-subagent-observations.mjs';
 
-const DEFAULT_MAX_WIRE_FRAME_BYTES = 2 * 1024 * 1024;
+// The OMP wire ceiling is the registry's DECLARED wire lane (limits.mjs) — the one source for
+// every frame bound, never an adapter-local literal (Decision 8's no-re-declare law). A
+// deployment may still override it per instance through the constructor's maxFrameBytes.
+const DEFAULT_MAX_WIRE_FRAME_BYTES = FRAME_LIMITS['wire.frame'].value;
 const DEFAULT_MAX_EVENT_PAYLOAD_BYTES = 64 * 1024;
 const DEFAULT_STREAM_CHUNK_BYTES = FRAME_LIMITS['stream.omp.flush'].value;
 
@@ -141,6 +144,9 @@ export class OmpRpcProcess {
     this.waitAttemptMs = options.waitAttemptMs ?? 30_000; // per-attempt transport wait, NOT a fate bound
     this.reapTimeoutMs = options.reapTimeoutMs;           // exact-close reap bound (evidence, never fate)
     this.maxFrameBytes = options.maxFrameBytes ?? DEFAULT_MAX_WIRE_FRAME_BYTES;
+    // The SIGTERM→SIGKILL escalation window — the family derivation the Claude session uses
+    // (process-lifecycle's KILL_ESCALATION_GRACE_MS), injectable per instance for tests.
+    this.killGraceMs = options.killGraceMs ?? KILL_ESCALATION_GRACE_MS;
     this.spawnFn = options.spawnFn ?? spawn;
     this.processGeneration = normalizeProcessGeneration(options.processGeneration);
     this.reapOwnedProcessGroup = typeof options.reapOwnedProcessGroup === 'function'
@@ -156,6 +162,10 @@ export class OmpRpcProcess {
     this._readyWaiters = [];
     this._readyFrame = null;
     this._buffer = '';
+    // The wire-breach observation: set once, never cleared — a session that produced a frame
+    // beyond the DECLARED ceiling has no honest continuation (see _wireFrameFailure).
+    this.wireFailure = null;
+    this._killTimer = null;
     this._exited = false;
     this.failure = null;
     this.processClose = null;
@@ -166,8 +176,14 @@ export class OmpRpcProcess {
   get exited() { return this._exited; }
 
   start() {
+    // `detached` gives the child its OWN process group, whose id is the child's pid — the group
+    // the exact-close latch below names and probes. Without it the child sits in Baton's own
+    // group, `kill(-pid, 0)` is ESRCH for a group that never existed, and the latch would
+    // publish kill.confirmed having verified nothing (A-E1). The same flag every sibling
+    // session adapter passes (claude-session.mjs:805, codex-appserver.mjs:812, grok-acp.mjs:731,
+    // cli-adapters.mjs:307, acp-json-rpc-process.mjs:79).
     this._child = this.spawnFn(this.command, this.args, {
-      cwd: this.cwd, env: this.env, stdio: ['pipe', 'pipe', 'pipe'],
+      cwd: this.cwd, env: this.env, detached: true, stdio: ['pipe', 'pipe', 'pipe'],
     });
     const child = this._child;
     // The exact-close latch is created at START (the AcpJsonRpcProcess pattern): kill() must be
@@ -317,19 +333,57 @@ export class OmpRpcProcess {
     } catch { return false; }
   }
 
+  /** Signal the owned process group first (the latch's processGroupId IS the group), the leader
+   * as the fallback — a group whose leader already exited still carries descendants. */
+  _signalGroup(signal) {
+    const pid = this._child?.pid;
+    if (Number.isSafeInteger(pid) && pid > 0) {
+      try { process.kill(-pid, signal); return; } catch { /* fall back to the leader */ }
+    }
+    try { this._child?.kill(signal); } catch { /* already gone */ }
+  }
+
+  /**
+   * kill(): SIGTERM to the group, escalating to SIGKILL on the SAME grace derivation the Claude
+   * session uses (`killGraceMs` — the vendor Agent SDK's own close window; never an OMP-local
+   * timer, and injectable). kill.confirmed itself is NOT published here: the exact-close latch
+   * publishes it only after the group probe reports ESRCH, so a stop that cannot be observed
+   * stays unconfirmed instead of being reported as done.
+   */
   async kill({ kind = 'kill.confirmed', payload = {} } = {}) {
     this.processClose?.authorizeStop(kind, payload);
     try { this._child?.stdin.end(); } catch { /* already closed */ }
-    try { this._child?.kill('SIGTERM'); } catch { /* exit handler finishes close */ }
+    this._signalGroup('SIGTERM');
+    if (!this._exited && this._killTimer === null) {
+      this._killTimer = setTimeout(() => {
+        this._killTimer = null;
+        if (!this._exited) this._signalGroup('SIGKILL');
+      }, this.killGraceMs);
+      // Hygiene only: an unref'd timer never keeps the host alive, and it still fires while the
+      // host runs (the escalation window is evidence, never a fate clock).
+      if (typeof this._killTimer.unref === 'function') this._killTimer.unref();
+    }
     return this.closePromise;
   }
 
+  /**
+   * The DECLARED wire ceiling is enforced on the way in (the sibling shape: cli-adapters
+   * `_onData`, claude-session, codex-appserver, grok-acp, acp-json-rpc-process): a decoded
+   * frame cannot be produced within the bound the card advertises, so the stream cannot be
+   * consumed without unbounded memory. That is a protocol-breach FACT, not a fate clock — it
+   * terminalizes exactly like a malformed child, and it is named so the crash cert says why.
+   */
   _onStdout(chunk) {
+    if (this._exited || this.wireFailure) return;
     this._buffer += chunk;
     let index;
     while ((index = this._buffer.indexOf('\n')) >= 0) {
       const line = this._buffer.slice(0, index);
       this._buffer = this._buffer.slice(index + 1);
+      if (Buffer.byteLength(line, 'utf8') > this.maxFrameBytes) {
+        this._wireFrameFailure();
+        return;
+      }
       if (!line.trim()) continue;
       let frame;
       try { frame = JSON.parse(line); } catch { continue; }
@@ -345,11 +399,29 @@ export class OmpRpcProcess {
       }
       try { this.onFrame?.(frame); } catch { /* an observer defect never kills the member */ }
     }
+    // A partial line already past the ceiling can never decode inside it (the same post-loop
+    // check the siblings make on their retained buffer).
+    if (Buffer.byteLength(this._buffer, 'utf8') > this.maxFrameBytes) this._wireFrameFailure();
+  }
+
+  _wireFrameFailure() {
+    if (this._exited || this.wireFailure) return;
+    this._buffer = '';
+    this.wireFailure = Object.freeze({
+      error: 'omp wire frame exceeded the declared byte ceiling',
+      code: 'wire_frame_oversize',
+      limitBytes: this.maxFrameBytes,
+      phase: 'wire',
+    });
+    // The breach is terminal for this transport generation: no frame after it can be trusted to
+    // decode, so the group is killed now and the session's close handler publishes the cert.
+    this._signalGroup('SIGKILL');
   }
 
   _onExit(code, signal) {
     if (this._exited) return;
     this._exited = true;
+    if (this._killTimer) { clearTimeout(this._killTimer); this._killTimer = null; }
     this._exitFacts = { code: code ?? null, signal: signal ?? null };
     // The close fact IS the death cert: exit code + signal ride the payload (#225's fields).
     // Release every pending waiter with the exit evidence — no one hangs on a dead child.
@@ -392,6 +464,10 @@ export class OmpRpcCli {
     this._ceiling = normalizeConcurrencyCeiling(options.ceiling, 'OmpRpcCli concurrencyCeiling');
     this._maxContext = options.maxContext ?? null;
     this._maxWireFrameBytes = options.maxWireFrameBytes ?? DEFAULT_MAX_WIRE_FRAME_BYTES;
+    // The SIGTERM→SIGKILL escalation window handed to every spawned process: the family
+    // derivation (process-lifecycle's KILL_ESCALATION_GRACE_MS — the same window the Claude
+    // session's kill uses), injectable for tests.
+    this._killGraceMs = options.killGraceMs ?? KILL_ESCALATION_GRACE_MS;
     this._maxEventPayloadBytes = options.maxEventPayloadBytes ?? DEFAULT_MAX_EVENT_PAYLOAD_BYTES;
     this._streamChunkBytes = options.streamChunkBytes
       ?? Math.min(DEFAULT_STREAM_CHUNK_BYTES, Math.floor(this._maxEventPayloadBytes / 2));
@@ -418,9 +494,27 @@ export class OmpRpcCli {
     return {
       harness: 'omp',
       version: this._version,
-      authPosture: 'api-key',
+      // The canonical posture atom (adapter.mjs:260, claude-session.mjs:1709): 'api_key', never an
+      // OMP-local hyphen spelling — runtime-isolation reads this atom verbatim
+      // (runtime-isolation.mjs:41).
+      authPosture: 'api_key',
       concurrencyCeiling: this._ceiling,
       maxContext: this._maxContext,
+      // #31 §2.1(1): a completed turn is a STEERABLE CHECKPOINT, not an implicit result claim.
+      // Without the field the default 'claim' sends every ordinary OMP completion straight to the
+      // trust gate and excludes the route from liveness probing (route-liveness.mjs:37) — absence
+      // is load-bearing control flow, not a missing label (audit A-G2 / N2). A swarm participant
+      // run already reads 'pausable' before the card (coordinator._turnCompletionOf), so this is
+      // the ordinary-run and probe-gate half of the same fact.
+      turnCompletion: 'pausable',
+      // The canonical eight-verb vocabulary (adapter.mjs:271), valued by what this adapter
+      // actually implements: approve() is a hard refusal — omp approvals are launch flags, not
+      // runtime elicitation (see approve()) — while answer() rides the native
+      // extension_ui_request lane, and steer/interrupt ride the native rpc commands.
+      verbs: {
+        spawn: 'native', prompt: 'native', steer: 'native', interrupt: 'native',
+        approve: 'unsupported', answer: 'native', kill: 'native', pause: 'unsupported',
+      },
       governance: {
         usage: { tokens: 'native', usd: 'native', tokenMetric: OMP_TOKEN_METRIC, terminalSeal: 'native' },
         providerCalls: { observation: 'unavailable', enforcement: 'unavailable' },
@@ -810,7 +904,15 @@ export class OmpRpcCli {
 
   async spawn(worker, brief, options = {}) {
     const existing = this._sessions.get(worker);
-    if ((existing && !existing.closed) || this._pendingSpawns.has(worker)) {
+    // A prior generation may be admitted only when its close is CONFIRMED: `closed` alone means
+    // the transport terminal landed, not that the exact-close latch proved the group gone — a
+    // generation whose reap is still unconfirmed (or being retried) still owns its process group,
+    // and starting a second child under the same worker would leave one of them unmanaged. The
+    // same guard every sibling carries (claude-session.mjs:722, cli-adapters.mjs:277,
+    // codex-appserver.mjs:780, grok-acp.mjs:676, kimi-acp.mjs:253).
+    if ((existing && (!existing.closed
+      || (existing.process?.processClose && !existing.process.processClose.confirmed)))
+      || this._pendingSpawns.has(worker)) {
       return { ok: false, reason: `worker ${worker} already has an active session` };
     }
     const model = options.model ?? this._defaultModel;
@@ -880,6 +982,7 @@ export class OmpRpcCli {
         command: this._cmd, args, cwd, env: childEnv,
         waitAttemptMs: this._requestTimeoutMs,
         reapTimeoutMs: options.processReapTimeoutMs,
+        killGraceMs: this._killGraceMs,
         maxFrameBytes: this._maxWireFrameBytes,
         spawnFn: this._spawnFn,
         processGeneration,
@@ -964,7 +1067,10 @@ export class OmpRpcCli {
       this._startTurn(session, `${renderBrief(brief, 'omp-rpc')}\n\n${WORKER_MESSAGE_GUIDANCE}`);
       return { ok: true, sessionId: session.observedSessionId ?? (session.process.child?.pid ? `omp-pid-${session.process.child.pid}` : null) };
     } finally {
-      this._pendingSpawns.delete(worker);
+      // Identity-checked release (the sibling shape: claude-session.mjs:905,
+      // codex-appserver.mjs:972, grok-acp.mjs:850, kimi-acp.mjs:402): a stale spawn's cleanup
+      // must never cancel a newer reservation for the same worker.
+      if (this._pendingSpawns.get(worker) === pending) this._pendingSpawns.delete(worker);
     }
   }
 
@@ -972,15 +1078,23 @@ export class OmpRpcCli {
     session.closed = true;
     const turn = session.activeTurn;
     this._flushTurnStreams(session);
-    if (turn && !session.killConfirmed) {
+    // The wire breach is a crash class of its own (the sibling `_wireFrameFailure` shape): the
+    // frame ceiling the card ADVERTISES was exceeded, so the cert names that fact and its bound —
+    // exit facts plus the typed code, never a silent death and never a fabricated terminal.
+    const wireFailure = session.process?.wireFailure ?? null;
+    if (!session.killConfirmed && (turn || wireFailure)) {
       // The death-cert class: exit facts WITH the crash event — the #225 fields, native.
       // #201 A1: the RESUME HANDLE rides the cert — the observed session identity and
       // session-file (absent when never observed; never invented).
       this._emit(session, 'lifecycle.crashed', {
-        phase: 'process_exit', usageSeal: this._usageSeal(session),
+        phase: wireFailure ? wireFailure.phase : 'process_exit',
+        usageSeal: this._usageSeal(session),
         exitCode: outcome?.exitCode ?? null,
         signal: outcome?.signal ?? null,
-        error: outcome?.failure ? String(outcome.failure.message ?? outcome.failure) : 'omp rpc process exited during an active turn',
+        ...(wireFailure ? { code: wireFailure.code, limitBytes: wireFailure.limitBytes } : {}),
+        error: wireFailure
+          ? wireFailure.error
+          : (outcome?.failure ? String(outcome.failure.message ?? outcome.failure) : 'omp rpc process exited during an active turn'),
         ...(session.observedSessionId ? { sessionId: session.observedSessionId } : {}),
         ...(session.observedSessionFile ? { sessionFile: session.observedSessionFile } : {}),
       });

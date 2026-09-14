@@ -383,3 +383,16 @@ export function validProcessReadyPayload(payload) {
     && positiveSafe(payload.pid)
     && payload.processGroupId === payload.pid;
 }
+
+/**
+ * The SIGTERM→SIGKILL escalation window for a spawned transport child: the SAME window the
+ * Claude session's kill already derives (claude-session.mjs `killGraceMs` — the vendor Agent
+ * SDK's own ProcessTransport.close() window). Declared once here so the process module owns the
+ * family's signal discipline and no adapter invents a window of its own; still injectable per
+ * instance, exactly as the Claude session's is. A pin asserts this stays the single derivation.
+ *
+ * Declared at the tail on purpose: the file's payload-builder block is window-anchored by
+ * absolute line numbers in issue144-lsp-pool-red GP-G, and a constant has no ordering dependency
+ * on it. (That pin's absolute windows are themselves brittle — see the lane's report.)
+ */
+export const KILL_ESCALATION_GRACE_MS = 5000;

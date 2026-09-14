@@ -271,5 +271,16 @@ test('OMP native accounting reaches Coordinator budgets, route observation and g
   assert.equal(handle.providerTerminalSeal.tokens, 'reported');
   assert.equal(handle.providerTerminalSeal.usd, 'reported');
   assert.notEqual(handle.providerTelemetryFailed, true);
+  // A-G2 (#281): the OMP card declares `turnCompletion: 'pausable'`, so an ordinary completed
+  // turn PARKS as a claimable checkpoint instead of dispatching the gate (coordinator.mjs
+  // `_admitPauseRecord`). The gate this row measures still runs — on the explicit claim, which is
+  // the only act that may spend a verdict, exactly as the pause contract says.
+  const task = fx.coordinator._tasks.get(fx.handle.taskId);
+  assert.equal(task.status, 'paused', 'the completed turn parks — no implicit claim');
+  assert.equal(captures, 0, 'no gate dispatch at the checkpoint');
+  const rows = fx.coordinator.pausedTurns({ taskId: fx.handle.taskId });
+  assert.equal(rows.length, 1, 'the checkpoint is visible to the orchestrator');
+  const claimed = await fx.coordinator.claimTurn(rows[0].pauseId, { actor: 'orchestrator' });
+  assert.equal(claimed.ok, true);
   assert.equal(captures, 1, 'complete observed usage satisfies the configured observation gate');
 });
