@@ -24,6 +24,9 @@
 // repository's reservation ledger; here it guards the host's lease namespace.
 
 import { createHash, randomBytes } from 'node:crypto';
+// F1 (frame economics): no hand-typed byte literals outside the registry — the bounded-record
+// ceiling reuses a substrate registry value.
+import { FRAME_LIMITS } from './limits.mjs';
 import {
   chmodSync, closeSync, fsyncSync, linkSync, lstatSync, mkdirSync, openSync, readdirSync,
   readFileSync, realpathSync, renameSync, rmSync, unlinkSync, writeFileSync,
@@ -45,10 +48,9 @@ function typed(message, code, extra, cause) {
 }
 
 export const HOST_CAPACITY_LEASE_KINDS = Object.freeze(['verify', 'worker']);
-const OWNER_FIELDS = ['generation', 'ownerId', 'pid', 'schemaVersion'];
+const RECORD_BYTE_CEILING = FRAME_LIMITS['stream.omp.flush'].value;
 const LEASE_FIELDS = ['acquiredAt', 'holder', 'kind', 'nonce', 'pid', 'residentId', 'schemaVersion'];
 const QUEUE_FIELDS = ['enqueuedAt', 'holder', 'kind', 'nonce', 'pid', 'residentId', 'schemaVersion'];
-const RECORD_BYTE_CEILING = 4096;
 const LOCK_POLL_MS = 5;
 const LOCK_WAIT_MS = 5_000;
 const LOCK_LABEL = 'host capacity lease lock';
