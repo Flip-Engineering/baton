@@ -342,6 +342,12 @@ function childEnv(summaryFile) {
     BATON_TEST_SUITE_ROOT: suiteRoot,
     BATON_SUITE_WATCHDOG: '1',
     BATON_SUITE_WATCHDOG_PPID: String(process.pid),
+    // #297: a test file's deployments run UNWIRED from the host-wide capacity throttle. The
+    // throttle is a production multi-resident mechanism; a suite host runs nine parallel files
+    // and is oversubscribed BY DESIGN, so its real load observation would queue every fixture
+    // recruit behind a full host. The host-capacity semantics are pinned by tests that inject
+    // the authority directly.
+    BATON_HOST_CAPACITY_DISABLED: '1',
     ...(summaryFile ? { BATON_SUITE_SUMMARY_FILE: summaryFile } : {}),
     TMPDIR: suiteRoot, TMP: suiteRoot, TEMP: suiteRoot,
   };

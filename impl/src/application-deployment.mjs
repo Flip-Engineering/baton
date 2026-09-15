@@ -2325,17 +2325,27 @@ export async function openBatonDeployment(rawOptions, createDriver) {
   const workspaceFloorProbe = () => (worktreeCapacityRef ? worktreeCapacityRef.floor() : null);
   const runtimeFootprintProbe = capacity?.runtimeFootprint
     ?? (() => measureRuntimeFootprint([stateRoot, evidenceRoot]));
-  const hostCapacityAuthority = new HostCapacityAuthority({
+  // #297: ONE host-wide capacity authority for this deployment, shared with every other resident
+  // on this host through the host-scoped lease directory; recruits and checks admit through it.
+  // A suite-runner child (or an operator pinning BATON_HOST_CAPACITY_DISABLED=1) runs UNWIRED:
+  // a suite host is oversubscribed by design and its own load observation would queue every
+  // fixture recruit, which is a test-shape fact, not a production one. The unwired runtime
+  // reports `authority: 'unwired'` rather than pretending.
+  const hostAdmissionDisabled = process.env.BATON_TEST_SUITE_ROOT !== undefined
+    || process.env.BATON_HOST_CAPACITY_DISABLED === '1';
+  const hostCapacityAuthority = hostAdmissionDisabled ? null : new HostCapacityAuthority({
     ...(capacity?.hostCapacity?.root ? { root: capacity.hostCapacity.root } : {}),
     ...(capacity?.hostCapacity?.waitMs !== undefined ? { waitMs: capacity.hostCapacity.waitMs } : {}),
     ...(capacity?.hostCapacity?.pollMs !== undefined ? { pollMs: capacity.hostCapacity.pollMs } : {}),
     ...(capacity?.hostCapacity?.observation !== undefined ? { observation: capacity.hostCapacity.observation } : {}),
+    residentId: `deployment-${repository.repoId}`,
   });
   // The doctor shows the SAME derivation on QUANTIZED measurements — memory quantized DOWN to
   // the deployment reserve granularity (the #35 discipline: equal-state projections stay deeply
   // equal across reads, and the verdict errs conservative), load quantized DOWN to whole cores.
-  // Admission itself always derives from the raw observation inside the authority.
-  const hostCapacityProbe = () => {
+  // Admission itself always derives from the raw observation inside the authority. Null when
+  // host admission is disabled — the doctor then carries no host section at all.
+  const hostCapacityProbe = hostAdmissionDisabled ? null : () => {
     const live = hostCapacityAuthority.observeNow();
     const raw = live.capacity;
     const totalBytes = raw.totalBytes - (raw.totalBytes % WORKSPACE_OBSERVATION_BYTE_QUANTUM);
@@ -2480,7 +2490,7 @@ export async function openBatonDeployment(rawOptions, createDriver) {
       // shared lease directory without mutating it.
       deploymentSummary: () => Object.freeze({
         workspace: workspaceProbe(),
-        hostCapacity: hostCapacityProbe(),
+        hostCapacity: hostCapacityProbe ? hostCapacityProbe() : null,
       }),
     });
     await application.ready;
