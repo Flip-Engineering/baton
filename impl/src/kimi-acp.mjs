@@ -7,6 +7,7 @@ import {
 } from './process-lifecycle.mjs';
 import { attestWorkerPolicyObservation } from './worker-policy.mjs';
 import { normalizeConcurrencyCeiling } from './concurrency-policy.mjs';
+import { TOOL_EVIDENCE_UNOBSERVED, toolCallArgumentDigest, toolCallResultDigest } from './verifier-diagnostics.mjs';
 
 const DEFAULT_MAX_WIRE_FRAME_BYTES = 1024 * 1024;
 const DEFAULT_MAX_EVENT_PAYLOAD_BYTES = 64 * 1024;
@@ -561,10 +562,23 @@ export class KimiAcpCli {
       const diffs = (update.content ?? []).filter((item) => item?.type === 'diff' && item.path);
       if (diffs.length > 0) this._emit(session, 'content.file_edit', { ...common, callId, paths: diffs.map((item) => item.path), diffs: boundedEvidence(diffs, this._maxEventPayloadBytes) });
       if (phase === 'progress' && previousPhase === 'progress') return;
+      // Issue #299: what the worker SENT and what it was TOLD ride every row as bounded,
+      // redacted digests — the raw update (rawInput/rawOutput included) never reaches the
+      // durable ledger. A frame that names neither records the typed unobserved marker.
+      const hasInput = update.rawInput !== undefined && update.rawInput !== null;
+      const hasOutput = update.rawOutput !== undefined && update.rawOutput !== null;
       this._emit(session, 'content.tool_call', {
         ...common, callId, phase,
-        update: boundedEvidence(update, this._maxEventPayloadBytes),
-        command: update.rawInput?.command ?? update.rawOutput?.command ?? null,
+        ...(hasInput
+          ? { argsDigest: toolCallArgumentDigest(update.rawInput) }
+          : { argsUnobserved: TOOL_EVIDENCE_UNOBSERVED.args }),
+        ...(hasOutput || terminal
+          ? { resultDigest: toolCallResultDigest({
+            exitCode: update.rawOutput?.exit_code ?? null,
+            ok: update.status === 'completed' ? true : terminal ? false : null,
+            output: hasOutput ? update.rawOutput : null,
+          }) }
+          : { resultUnobserved: TOOL_EVIDENCE_UNOBSERVED.result }),
         exitCode: update.rawOutput?.exit_code ?? null,
       });
     }

@@ -16,6 +16,7 @@ import { scanForMessageSend } from './claude-session.mjs';
 import { WORKER_MESSAGE_GUIDANCE } from './messages.mjs';
 import { normalizeProcessGeneration, ProcessCloseReapLatch, processStartedPayload } from './process-lifecycle.mjs';
 import { attestWorkerPolicyObservation } from './worker-policy.mjs';
+import { TOOL_EVIDENCE_UNOBSERVED, toolCallArgumentDigest, toolCallResultDigest } from './verifier-diagnostics.mjs';
 import { normalizeConcurrencyCeiling } from './concurrency-policy.mjs';
 import { normalizeCodexFrame } from './native-subagent-observations.mjs';
 
@@ -603,12 +604,17 @@ export class CodexAppServerCli {
       // Keyed map (not a single slot): the wire permits multiple pending server->client
       // requests, and clobbering an earlier one would leave its rawId unanswerable — a wedge.
       session.waits.set(requestId, { kind: 'approval', rawId: id, threadId: params.threadId, turnId: params.turnId, itemId: params.itemId });
+      // Issue #299: the command line — this adapter's tool-argument evidence — rides the row
+      // redacted and bounded; the raw line never reaches the durable ledger. The approval
+      // request keeps the raw command: it is the exact object the approver must judge.
       this._emit(session, 'content.tool_call', {
         callId: String(params.itemId ?? `${session.worker}:approval:${id}`),
         phase: 'requested',
         threadId: params.threadId,
         turnId: params.turnId,
-        command: params.command ?? null,
+        ...(params.command != null
+          ? { argsDigest: toolCallArgumentDigest(params.command) }
+          : { argsUnobserved: TOOL_EVIDENCE_UNOBSERVED.args }),
         kind,
       });
       this._emit(session, 'approval.requested', {
@@ -682,13 +688,22 @@ export class CodexAppServerCli {
             }
           }
         } else if (item.type === 'commandExecution' || item.type === 'mcpToolCall') {
+          // Issue #299: the completed row carries what the worker was TOLD — exit status,
+          // byte counts, first lines — redacted and bounded; the raw item (whose
+          // aggregatedOutput can hold whole command transcripts) never reaches the ledger.
           this._emit(session, 'content.tool_call', {
             callId: String(item.id ?? `codex:${turnId}:${item.type}`),
             phase: 'completed',
-            threadId: params.threadId, turnId, item,
-            command: item.command ?? item.tool ?? null,
+            threadId: params.threadId, turnId,
             exitCode: item.exitCode ?? null,
             status: item.status ?? null,
+            ...(item.command != null || item.tool != null
+              ? { argsDigest: toolCallArgumentDigest(item.command ?? item.tool) }
+              : { argsUnobserved: TOOL_EVIDENCE_UNOBSERVED.args }),
+            resultDigest: toolCallResultDigest({
+              exitCode: item.exitCode ?? null,
+              output: item.aggregatedOutput ?? item.output ?? item.result ?? null,
+            }),
           });
         } else if (item.type === 'fileChange') {
           const paths = (item.changes ?? []).map((change) => change.path).filter(Boolean);

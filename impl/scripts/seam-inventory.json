@@ -376,10 +376,20 @@
         {
           "name": "workerActivity",
           "ordinal": 0,
-          "size": 38,
-          "seam": "surface",
+          "size": 42,
+          "seam": "observation",
           "evidence": [
-            "surface:no_authority_touched"
+            "delegates:observation"
+          ]
+        },
+        {
+          "name": "lastToolRows",
+          "ordinal": 0,
+          "size": 26,
+          "seam": "observation",
+          "evidence": [
+            "observation:projection_name",
+            "observation:key_name"
           ]
         },
         {
@@ -2531,7 +2541,7 @@
         {
           "name": "_observeWatchdogEvent",
           "ordinal": 0,
-          "size": 72,
+          "size": 75,
           "seam": "observation",
           "evidence": [
             "observation:log_append",
@@ -11888,7 +11898,7 @@
         {
           "name": "inspect",
           "ordinal": 0,
-          "size": 332,
+          "size": 339,
           "seam": "observation",
           "evidence": [
             "observation:swarm_attention_rows"

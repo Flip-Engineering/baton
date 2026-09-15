@@ -570,6 +570,13 @@ export class SwarmRuntime {
         native: worker && this.coordinator.observedNativeSubagents
         ? this.coordinator.observedNativeSubagents(worker.id)
         : { coverage: 'unobserved', agents: [], invocations: [], unidentified: [] },
+        // Issue #299: the participant row carries the seat's last tool rows, projected from the
+        // run ledger by the coordinator's one derivation — so a refused publish is visible where
+        // the work is, not only inside the participant's home directory. A seat with no worker,
+        // or a coordinator that cannot answer for tool rows, has observed nothing.
+        lastToolRows: worker && typeof this.coordinator.lastToolRows === 'function'
+          ? this.coordinator.lastToolRows(worker.id)
+          : [],
         runtime: { workerId: worker?.id ?? null, state: liveness.state, turn: liveness.turn, live: liveness.live },
         guidance: worker ? (guidanceByWorker.get(worker.id) ?? []) : [],
         workspace: physicalOwnerId !== null

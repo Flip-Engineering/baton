@@ -280,10 +280,14 @@ test('GA19: oversized provider tool telemetry is digest-bounded before authorita
   const events = collect(adapter); const worker = 'w1';
   try {
     await adapter.spawn(worker, makeBrief('FAKE:LARGE_TOOL_OUTPUT'), { worktree: freshWorktree() });
-    const tc = await until(events, (e) => e.kind === 'content.tool_call');
+    // Issue #299: the row no longer carries a wireEvidence copy of the raw update at all — it
+    // carries the bounded, redacted result digest derived by the referee's evidence pipeline.
+    const tc = await until(events, (e) => e.kind === 'content.tool_call' && e.payload.phase === 'completed');
     assert.equal(tc.payload.sessionUpdate, 'tool_call_update'); assert.equal(tc.payload.status, 'completed');
-    assert.equal(tc.payload.wireEvidence.truncated, true); assert.equal(tc.payload.wireEvidence.originalBytes > 128 * 1024, true);
-    assert.match(tc.payload.wireEvidence.sha256, /^[a-f0-9]{64}$/); assert.equal(Buffer.byteLength(JSON.stringify(tc.payload)) < 4096, true);
+    assert.match(tc.payload.resultDigest, /^exit=0 bytes=131\d\d\d/, 'the header names the true byte count');
+    assert.equal(tc.payload.rawOutput, undefined); assert.equal(tc.payload.wireEvidence, undefined);
+    assert.equal(JSON.stringify(tc.payload).includes('xxxxx'), false, 'the huge output body never reaches the row');
+    assert.equal(Buffer.byteLength(JSON.stringify(tc.payload)) < 2 * 8192 + 2048, true, 'the whole row is bounded');
     const edit = await until(events, (e) => e.kind === 'content.file_edit');
     assert.deepEqual(edit.payload.paths, ['/fake/huge.txt']); assert.equal(edit.payload.diffs.truncated, true);
   } finally { await cleanup(adapter, worker); }
@@ -764,10 +768,13 @@ test('F2 (live-pinned): tool_call_update (status/diff transitions) maps to conte
   const worker = 'w1';
   try {
     await adapter.spawn(worker, makeBrief('trivial'), { worktree: freshWorktree() });
+    // Issue #299: diff content rides the content.file_edit row (bounded evidence) — the
+    // tool_call row carries the call's digests and phase transitions, not the raw update.
+    const edit = await until(events, (e) => e.kind === 'content.file_edit');
+    assert.deepEqual(edit.payload.paths, ['/fake/out.txt']);
     const initial = await until(events, (e) => e.kind === 'content.tool_call' && e.payload.sessionUpdate === 'tool_call');
     const upd = await until(events, (e) => e.kind === 'content.tool_call' && e.payload.sessionUpdate === 'tool_call_update');
     assert.equal(upd.payload.status, 'completed');
-    assert.equal(upd.payload.content?.[0]?.type, 'diff');
     assert.equal(initial.payload.callId, upd.payload.callId);
     assert.equal(initial.payload.phase, 'requested');
     assert.equal(upd.payload.phase, 'completed');

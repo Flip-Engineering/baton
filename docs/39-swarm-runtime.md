@@ -469,6 +469,23 @@ Nothing was recorded: remove runId
 swarm.view request is invalid: unknown field runId
 ```
 
+**Tool rows carry what was sent and what was said back (issue #299).** Every `content.tool_call`
+row a participant's adapter writes now carries its argument and result evidence — the command line
+or tool input, and the exit status, byte counts and first lines of the result — as `argsDigest` /
+`resultDigest`: bounded, redacted digests derived by the ONE derivation the verification path
+already applies to captured output (`verifier-diagnostics.mjs`: the `SECRET_PATTERNS` set and its
+byte bound — never a second redaction vocabulary, never a new constant). An adapter whose provider
+frame names no arguments, or no result, writes the typed marker instead (`argsUnobserved` /
+`resultUnobserved`) — recorded absence, never silence. The raw provider input never reaches the
+durable ledger at all: a token-shaped value in a tool argument has no row to hide in.
+
+The rows are visible where the work is. A participant's bridge calls are tool rows like any other —
+a `swarm.update` publish that the bridge refused shows up in its own ledger with the redacted
+command line and the failed exit — and two projections read the ledger (never a second store):
+`run.member.view`'s per-worker activity rows and the swarm participant row carry `lastToolRows`,
+the last `view.attention_push.items` tool rows the coordinator's one derivation projects from that
+worker's log.
+
 **The bridge's frame bound is negotiated, declared, and never truncated.** One JSON frame per
 direction is buffered under the `wire.frame` substrate row from `limits.mjs` (overridable per bridge
 with `maxFrameBytes`); `issue()` publishes the bound to the participant's environment and the client

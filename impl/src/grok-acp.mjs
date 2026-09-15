@@ -24,6 +24,7 @@ import { normalizeProcessGeneration, ProcessCloseReapLatch, processStartedPayloa
 import { attestWorkerPolicyObservation } from './worker-policy.mjs';
 import { normalizeConcurrencyCeiling } from './concurrency-policy.mjs';
 import { typedAcpRefusal } from './acp-json-rpc-process.mjs';
+import { TOOL_EVIDENCE_UNOBSERVED, toolCallArgumentDigest, toolCallResultDigest } from './verifier-diagnostics.mjs';
 
 const DEFAULT_MAX_WIRE_FRAME_BYTES = 1024 * 1024;
 const GROK_TOKEN_METRIC = 'grok_prompt_meta_total_tokens';
@@ -472,10 +473,18 @@ export class GrokAcpCli {
       if (!TERMINAL_TOOL_CALL_PHASES.has(priorPhase)) {
         const phase = priorPhase === null ? 'requested' : 'progress';
         session.activeTurn?.toolCallPhases.set(callId, phase);
+        // Issue #299: the row's argument evidence is the redacted, bounded digest — the raw
+        // toolCall object (rawInput included) never reaches the durable ledger. The approval
+        // request below keeps the raw toolCall: it is the exact object the approver judges.
         this._emit(session, 'content.tool_call', {
           sessionId: params?.sessionId ?? session.sessionId,
-          turnId: session.activeTurn?.turnId ?? null,
-          ...boundedEvidence(toolCall, this._maxEventPayloadBytes),
+          title: toolCall.title ?? null, kind: toolCall.kind ?? null, status: toolCall.status ?? null,
+          toolCallId: toolCall.toolCallId ?? null,
+          ...(toolCall.rawInput !== undefined && toolCall.rawInput !== null
+            ? { argsDigest: toolCallArgumentDigest(toolCall.rawInput) }
+            : toolCall.title != null
+              ? { argsDigest: toolCallArgumentDigest(toolCall.title) }
+              : { argsUnobserved: TOOL_EVIDENCE_UNOBSERVED.args }),
           callId,
           // Live Grok may announce the call through session/update before asking permission.
           // The permission request is then a state observation, not a second logical attempt.
@@ -539,13 +548,26 @@ export class GrokAcpCli {
               paths: diffs.map((item) => item.path), diffs: boundedEvidence(diffs, this._maxEventPayloadBytes),
             });
           }
-          const wireEvidence = boundedEvidence(update, this._maxEventPayloadBytes);
-          const eventUpdate = wireEvidence?.truncated === true
-            ? { sessionUpdate: update.sessionUpdate, toolCallId: update.toolCallId, title: update.title ?? null, kind: update.kind ?? null, status: update.status ?? null, wireEvidence }
-            : wireEvidence;
+          // Issue #299: what the worker SENT and what it was TOLD ride every row as bounded,
+          // redacted digests — the raw update (rawInput/rawOutput included) never reaches the
+          // durable ledger. A frame that names neither records the typed unobserved marker.
+          const hasInput = update.rawInput !== undefined && update.rawInput !== null;
+          const hasOutput = update.rawOutput !== undefined && update.rawOutput !== null;
           this._emit(session, 'content.tool_call', {
-            sessionId: session.sessionId, turnId, ...eventUpdate,
-            command: update.rawInput?.command ?? update.rawOutput?.command ?? null,
+            sessionId: session.sessionId, turnId,
+            sessionUpdate: update.sessionUpdate, toolCallId: update.toolCallId ?? null,
+            title: update.title ?? null, kind: update.kind ?? null, status: update.status ?? null,
+            ...(hasInput
+              ? { argsDigest: toolCallArgumentDigest(update.rawInput) }
+              : { argsUnobserved: TOOL_EVIDENCE_UNOBSERVED.args }),
+            ...(hasOutput || (phase !== 'requested' && phase !== 'progress')
+              ? { resultDigest: toolCallResultDigest({
+                exitCode: update.rawOutput?.exit_code ?? null,
+                ok: update.status === 'completed' ? true
+                  : terminalStatuses.has(update.status) ? false : null,
+                output: hasOutput ? update.rawOutput : null,
+              }) }
+              : { resultUnobserved: TOOL_EVIDENCE_UNOBSERVED.result }),
             exitCode: update.rawOutput?.exit_code ?? null,
             callId,
             phase,

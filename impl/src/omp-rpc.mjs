@@ -22,6 +22,7 @@ import { renderBrief } from './adapter.mjs';
 import { scanForMessageSend } from './claude-session.mjs';
 import { WORKER_MESSAGE_GUIDANCE } from './messages.mjs';
 import { FRAME_LIMITS } from './limits.mjs';
+import { TOOL_EVIDENCE_UNOBSERVED, toolCallArgumentDigest, toolCallResultDigest } from './verifier-diagnostics.mjs';
 import { OmpTurnUsageAccumulator, OMP_TOKEN_METRIC } from './omp-usage.mjs';
 import { attestWorkerPolicyObservation } from './worker-policy.mjs';
 import { KILL_ESCALATION_GRACE_MS, ProcessCloseReapLatch, normalizeProcessGeneration, processReadyPayload, processStartedPayload } from './process-lifecycle.mjs';
@@ -876,14 +877,25 @@ export class OmpRpcCli {
         return;
       }
       case 'tool_execution_start':
+        // Issue #299: the row carries what the worker SENT — the frame's arguments, redacted and
+        // bounded by the one derivation the referee's evidence path uses — or the typed marker
+        // recording that this frame named no arguments at all.
         this._emit(session, 'content.tool_call', {
           phase: 'requested', nativePhase: 'start', toolCallId: frame.toolCallId ?? null, tool: frame.toolName ?? null,
+          ...(frame.args !== undefined && frame.args !== null
+            ? { argsDigest: toolCallArgumentDigest(frame.args) }
+            : { argsUnobserved: TOOL_EVIDENCE_UNOBSERVED.args }),
         });
         return;
       case 'tool_execution_end':
+        // Issue #299: the terminal row carries what the worker was TOLD — exit status, byte
+        // counts, first lines of the result — or the typed marker when the frame named no result.
         this._emit(session, 'content.tool_call', {
           phase: frame.isError === true ? 'failed' : 'completed', nativePhase: 'end', toolCallId: frame.toolCallId ?? null, tool: frame.toolName ?? null,
           ok: frame.isError !== true,
+          ...(frame.result !== undefined && frame.result !== null
+            ? { resultDigest: toolCallResultDigest({ ok: frame.isError !== true, output: frame.result }) }
+            : { resultUnobserved: TOOL_EVIDENCE_UNOBSERVED.result }),
         });
         return;
       case 'agent_end':

@@ -2581,6 +2581,10 @@ export class Coordinator {
       workerId, events: events.length, toolCalls, messages,
       lastEventAt: last?.ts ?? null, lastEventKind: last?.kind ?? null,
       usage: Object.freeze({ tokens, usd, priced: usd > 0 || tokens === 0 }),
+      // Issue #299: the member view carries the worker's last tool rows, so a refused publish
+      // or a failed call is readable where the work happened — the projection of the ledger,
+      // never a second store.
+      lastToolRows: this.lastToolRows(workerId),
       nativeSubagents: Object.freeze({
         observed: native.agents.length + native.unidentified.length,
         invocations: native.invocations.length,
@@ -2588,6 +2592,40 @@ export class Coordinator {
         live: agentsLive,
       }),
     });
+  }
+
+  /** Issue #299: the worker's last `content.tool_call` rows, projected from ITS OWN durable
+   * ledger — never a second store. The row count is the frame bound's declared item count
+   * (`view.attention_push.items`, the registry's one bound for how many evidence rows a
+   * worker-facing frame carries), and the argument/result evidence fields were redacted and
+   * bounded by the referee's derivation at the adapter's emit boundary, so the view can carry
+   * them verbatim: what the worker sent, what it was told, or the typed marker recording that
+   * its provider frame named neither. */
+  lastToolRows(workerId) {
+    const handle = this._workers.get(workerId);
+    if (!handle) return [];
+    const events = this._log.read(workerId);
+    const count = FRAME_LIMITS['view.attention_push.items'].value;
+    const rows = [];
+    for (let i = events.length - 1; i >= 0 && rows.length < count; i -= 1) {
+      const event = events[i];
+      if (event.kind !== 'content.tool_call') continue;
+      const payload = event.payload ?? {};
+      rows.push(Object.freeze({
+        seq: event.seq,
+        ts: event.ts,
+        tool: payload.tool ?? payload.name ?? null,
+        toolCallId: payload.toolCallId ?? payload.callId ?? null,
+        phase: payload.phase ?? null,
+        ...(typeof payload.argsDigest === 'string' ? { argsDigest: payload.argsDigest }
+          : typeof payload.argsUnobserved === 'string' ? { argsUnobserved: payload.argsUnobserved } : {}),
+        ...(typeof payload.resultDigest === 'string' ? { resultDigest: payload.resultDigest }
+          : typeof payload.resultUnobserved === 'string' ? { resultUnobserved: payload.resultUnobserved } : {}),
+        ...(payload.exitCode !== undefined && payload.exitCode !== null ? { exitCode: payload.exitCode } : {}),
+        ...(payload.ok !== undefined ? { ok: payload.ok } : {}),
+      }));
+    }
+    return rows.reverse();
   }
 
   _contributionOperations() {
@@ -10721,7 +10759,10 @@ export class Coordinator {
     if (event.kind === 'content.tool_call') {
       const payload = event.payload ?? {};
       this._observeLogicalToolCall(handle, payload);
-      const command = payload.command ?? payload.cmd ?? payload.item?.command ?? payload.rawInput?.command ?? payload.rawOutput?.command;
+      // Issue #299: rows no longer carry raw command fields, so the loop signature reads the
+      // same redacted digest evidence every adapter now emits (legacy fields stay in the chain
+      // for rows written before that change).
+      const command = payload.command ?? payload.cmd ?? payload.item?.command ?? payload.rawInput?.command ?? payload.rawOutput?.command ?? payload.argsDigest;
       const exitCode = payload.exitCode ?? payload.item?.exitCode ?? payload.rawOutput?.exit_code;
       const status = payload.status ?? payload.item?.status ?? (exitCode !== undefined ? 'completed' : null);
       if (typeof command === 'string' && status === 'completed' && Number(exitCode) !== 0) {

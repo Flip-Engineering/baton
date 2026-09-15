@@ -14,6 +14,7 @@ import { renderPrompt } from './cli-adapters.mjs';
 import { normalizeProcessGeneration, ProcessCloseReapLatch, processStartedPayload } from './process-lifecycle.mjs';
 import { usdFromNanos, usdToNanos } from './usd.mjs';
 import { attestWorkerPolicyObservation } from './worker-policy.mjs';
+import { TOOL_EVIDENCE_UNOBSERVED, toolCallArgumentDigest, toolCallResultDigest } from './verifier-diagnostics.mjs';
 import { createDecisionRequest, ValidationError, WORKER_MESSAGE_GUIDANCE } from './messages.mjs';
 import { normalizeConcurrencyCeiling } from './concurrency-policy.mjs';
 import { normalizeClaudeToolProgressFrame } from './native-subagent-observations.mjs';
@@ -838,6 +839,9 @@ export class ClaudeSessionCli {
       // adapter-minted requestId -> {wireId, input?, toolUseID?} (R4 + erratum E3: approve()
       // must echo the request's own input and tool_use_id back on an allow)
       wireToAdapterId: new Map(),
+      // Issue #299: callId -> tool name, so a tool_result frame can complete the requested
+      // content.tool_call row with the tool's name (the result frame names only the call id).
+      toolCallNames: new Map(),
       modelRequested: route.model ?? null,
       modelObserved: null,
       workerPolicyObserved,
@@ -1165,12 +1169,21 @@ export class ClaudeSessionCli {
         const providerCallId = String(obj.message?.id ?? obj.uuid ?? `claude:${session.turnEpoch}:${session.providerCallSeq}`);
         this._emit(session, 'resource.provider_call', { callId: providerCallId, phase: 'completed' });
         if (text) this._emit(session, 'content.message', { text });
-        tools.forEach((tool, index) => this._emit(session, 'content.tool_call', {
-          callId: String(tool.id ?? `${providerCallId}:tool:${index + 1}`),
-          phase: 'requested',
-          name: tool.name,
-          input: tool.input,
-        }));
+        tools.forEach((tool, index) => {
+          const callId = String(tool.id ?? `${providerCallId}:tool:${index + 1}`);
+          // Issue #299: what the worker SENT rides the row as a bounded, redacted digest — the
+          // raw provider input never reaches the durable ledger. The call id is remembered so the
+          // tool_result frame can complete the same call with the tool's name.
+          session.toolCallNames.set(callId, tool.name ?? null);
+          this._emit(session, 'content.tool_call', {
+            callId,
+            phase: 'requested',
+            name: tool.name,
+            ...(tool.input !== undefined && tool.input !== null
+              ? { argsDigest: toolCallArgumentDigest(tool.input) }
+              : { argsUnobserved: TOOL_EVIDENCE_UNOBSERVED.args }),
+          });
+        });
         // Part B / F7: admit at most one live emulated decision request per session — a second
         // (possibly contradictory) DECISION_REQUEST line is ignored as prose while one is
         // already pending; the worker can always re-ask once it settles.
@@ -1205,6 +1218,9 @@ export class ClaudeSessionCli {
         }
         return;
       }
+      case 'user':
+        this._handleToolResults(session, obj);
+        return;
       case 'result':
         this._handleResult(session, obj);
         return;
@@ -1216,6 +1232,29 @@ export class ClaudeSessionCli {
         return;
       default:
         return; // user (tool results), rate_limit_event, deltas — not surfaced
+    }
+  }
+  /**
+   * Issue #299: a tool_result frame completes the call its requested row opened. The row carries
+   * what the worker was TOLD — exit status, byte counts, first lines of the result — bounded and
+   * redacted by the one derivation the referee's evidence path uses; the raw result text never
+   * reaches the durable ledger. (Oversized frames are already degraded before ingestion, issue
+   * #28, so this handler only ever sees frames within the wire ceiling.)
+   */
+  _handleToolResults(session, obj) {
+    const content = obj.message?.content;
+    if (!Array.isArray(content)) return;
+    for (const block of content) {
+      if (block?.type !== 'tool_result') continue;
+      const callId = block.tool_use_id != null ? String(block.tool_use_id) : null;
+      if (!callId) continue;
+      const isError = block.is_error === true;
+      this._emit(session, 'content.tool_call', {
+        callId,
+        phase: isError ? 'failed' : 'completed',
+        tool: session.toolCallNames.get(callId) ?? null,
+        resultDigest: toolCallResultDigest({ ok: !isError, output: block.content ?? null }),
+      });
     }
   }
 

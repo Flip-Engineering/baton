@@ -23,6 +23,61 @@ function byteTail(value, maxBytes) {
   };
 }
 
+// ── issue #299: the tool-row evidence digests ────────────────────────────────────────────────────
+// A content.tool_call row carries what the worker SENT (the arguments) and what it was TOLD (the
+// result), so a refused publish or a failed call is readable where the work happened instead of
+// inside the worker's home directory. Both digests are derived HERE, beside the referee's own
+// failure capsule, so the redaction set is the ONE set the verification path already applies
+// (SECRET_PATTERNS, via sanitizeVerifierDiagnosticText — never a second redaction vocabulary) and
+// the byte bound is the ONE bound that capsule already uses (MAX_VERIFIER_FAILURE_TAIL_BYTES —
+// never a new constant). Adapters digest at the emit boundary, so raw provider input never
+// reaches the durable ledger row at all.
+
+/** The typed marker a row carries when the adapter's provider frame names no arguments (or no
+ * result) at all — recorded absence, never silence (issue #299). */
+export const TOOL_EVIDENCE_UNOBSERVED = Object.freeze({
+  args: 'tool_args_unobserved:provider_frame_carries_no_input',
+  result: 'tool_result_unobserved:provider_frame_carries_no_output',
+});
+
+/** Canonical evidence text: strings pass through, structures serialize deterministically enough
+ * for a digest (key order is the provider's own; the digest is evidence, never an identity). */
+function evidenceText(value) {
+  if (typeof value === 'string') return value;
+  if (value === null || value === undefined) return '';
+  try { return JSON.stringify(value); } catch { return String(value); }
+}
+
+/** The bounded, redacted digest of a tool call's arguments (the command line or the tool input
+ * object). Null only when the caller observed nothing — the row then carries the typed
+ * TOOL_EVIDENCE_UNOBSERVED.args marker instead. */
+export function toolCallArgumentDigest(value) {
+  const text = evidenceText(value);
+  if (text === '') return null;
+  return sanitizeVerifierDiagnosticText(text).text;
+}
+
+/** The bounded, redacted digest of a tool call's result: exit status and byte counts in a header
+ * line, then the FIRST lines of the output that fit the same bound the referee's capsule uses.
+ * The header reserves its own bytes, and the sanitizer's final bound holds no matter how much
+ * redaction grows the text — the returned digest is always within the derivation. */
+export function toolCallResultDigest({ ok = null, exitCode = null, output = null } = {}) {
+  const raw = evidenceText(output);
+  const status = exitCode !== null && exitCode !== undefined ? `exit=${exitCode}`
+    : ok === true ? 'exit=ok' : ok === false ? 'exit=error' : 'exit=unknown';
+  const header = `${status} bytes=${Buffer.byteLength(raw, 'utf8')}`;
+  const budget = MAX_VERIFIER_FAILURE_TAIL_BYTES - Buffer.byteLength(header, 'utf8') - 1;
+  const lines = [];
+  let used = 0;
+  for (const line of (raw === '' ? [] : raw.split('\n'))) {
+    const size = Buffer.byteLength(line, 'utf8') + 1;
+    if (used + size > budget) break;
+    lines.push(line);
+    used += size;
+  }
+  return sanitizeVerifierDiagnosticText(lines.length > 0 ? `${header}\n${lines.join('\n')}` : header).text;
+}
+
 export function sanitizeVerifierDiagnosticText(value, { sandboxRoots = [] } = {}) {
   if (typeof value !== 'string') return Object.freeze({ text: '', redacted: false });
   let text = value.normalize('NFKC')
