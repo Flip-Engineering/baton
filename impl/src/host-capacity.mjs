@@ -48,6 +48,7 @@ function typed(message, code, extra, cause) {
 }
 
 export const HOST_CAPACITY_LEASE_KINDS = Object.freeze(['verify', 'worker']);
+const OWNER_FIELDS = ['generation', 'ownerId', 'pid', 'schemaVersion'];
 const RECORD_BYTE_CEILING = FRAME_LIMITS['stream.omp.flush'].value;
 const LEASE_FIELDS = ['acquiredAt', 'holder', 'kind', 'nonce', 'pid', 'residentId', 'schemaVersion'];
 const QUEUE_FIELDS = ['enqueuedAt', 'holder', 'kind', 'nonce', 'pid', 'residentId', 'schemaVersion'];
