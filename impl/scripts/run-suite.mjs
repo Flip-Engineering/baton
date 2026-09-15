@@ -20,6 +20,7 @@ import {
   computeVerdict, createProgressDeadline, environmentPrerequisites, formatVerdict, isHang,
   loadExpectedRed, planExpectedRedRewrite, verdictDocument, writeExpectedRed,
 } from './suite-verdict.mjs';
+import { selectFromRepository } from '../src/verification-selection.mjs';
 
 // 2026-09-14 audit R-1: the prerequisites a run needs from ITS MACHINE are derived from the ONE
 // declaration the deployment doctor and route readiness use — the served route registry and the
@@ -166,8 +167,23 @@ const signalStatus = { SIGINT: 130, SIGTERM: 143, SIGKILL: 137 };
 const reasonFlagIndex = process.argv.indexOf('--expected-red-reason');
 const expectedRedReason = reasonFlagIndex === -1 ? null : (process.argv[reasonFlagIndex + 1] ?? null);
 const runnerFlags = new Set(['--write-expected-red', '--expected-red-reason']);
+// #300: `--changed <paths…>` selects the affected test files through the import graph
+// (verification-selection.mjs) instead of naming files by hand. The paths are the capture's
+// changedPaths — the flag's INPUT, never passthrough file names — and the selection itself is
+// computed from this checkout, which is exactly the tree this run tests.
+const changedFlagIndex = process.argv.indexOf('--changed');
+const changedPaths = [];
+const changedFlagArgs = new Set();
+if (changedFlagIndex !== -1) {
+  changedFlagArgs.add(changedFlagIndex);
+  for (let index = changedFlagIndex + 1; index < process.argv.length && !process.argv[index].startsWith('-'); index += 1) {
+    changedFlagArgs.add(index);
+    changedPaths.push(process.argv[index]);
+  }
+}
 const passthroughArgs = process.argv.slice(2).filter((arg, index, argv) => (
   !runnerFlags.has(arg) && !(index > 0 && argv[index - 1] === '--expected-red-reason')
+  && !changedFlagArgs.has(index + 2)
 ));
 const writeExpectedRedRequested = process.argv.includes('--write-expected-red');
 const explicitFiles = passthroughArgs.filter((arg) => !arg.startsWith('-'));
@@ -178,6 +194,22 @@ const legacyPassthrough = passthroughArgs.some((arg) => arg.startsWith('-'));
 // full-suite run. Refuse by naming that contract.
 if (writeExpectedRedRequested && explicitFiles.length > 0) {
   process.stderr.write('baton test runner: --write-expected-red rewrites the expected-red manifest from a full-suite run only — it never rewrites the manifest from an explicit-file (partial) run, because rows the run never executed cannot be judged; re-run the whole suite with the flag, or run explicit files without it\n');
+  process.exit(1);
+}
+// #300 refusals: a selection is a partial run, so it obeys the same contracts an explicit file
+// list does — and it cannot be combined with one, because two subset selectors in one run would
+// make "what was and was not run" ambiguous.
+const changedRequested = changedFlagIndex !== -1;
+if (changedRequested && changedPaths.length === 0) {
+  process.stderr.write('baton test runner: --changed names the changed paths to select through — it refuses to run with no paths (--changed impl/src/a.mjs docs/x.md), because an unnamed selection would silently mean the whole suite\n');
+  process.exit(1);
+}
+if (changedPaths.length > 0 && (explicitFiles.length > 0 || legacyPassthrough)) {
+  process.stderr.write('baton test runner: --changed selects the affected files itself — it does not combine with explicit file arguments or node --test passthrough options, because two subset selectors in one run cannot say what was and was not run; use one or the other\n');
+  process.exit(1);
+}
+if (changedPaths.length > 0 && writeExpectedRedRequested) {
+  process.stderr.write('baton test runner: --write-expected-red rewrites the expected-red manifest from a full-suite run only — a --changed run is a partial run whose rows cannot all be judged; re-run the whole suite with the flag\n');
   process.exit(1);
 }
 const implRoot = new URL('../', import.meta.url);
@@ -203,7 +235,7 @@ function relativeTestPath(file) {
   return rel.startsWith('..') ? absolute : rel;
 }
 
-function laneFiles() {
+function laneFiles(changedSelection = null) {
   const lanes = JSON.parse(readFileSync(lanesPath, 'utf8'));
   const serial = new Set(lanes.serial);
   const all = readdirSync(testRoot).filter((name) => name.endsWith('.test.mjs')).map((name) => `test/${name}`).sort();
@@ -214,6 +246,11 @@ function laneFiles() {
   }
   if (explicitFiles.length > 0) {
     const requested = explicitFiles.map(relativeTestPath);
+    return { parallel: requested.filter((file) => !serial.has(file)), serial: requested.filter((file) => serial.has(file)) };
+  }
+  // A selected file keeps its lane discipline: process-heavy files still run one at a time.
+  if (changedSelection) {
+    const requested = changedSelection.files.map((file) => relativeTestPath(join(fileURLToPath(repositoryRoot), file)));
     return { parallel: requested.filter((file) => !serial.has(file)), serial: requested.filter((file) => serial.has(file)) };
   }
   return { parallel: all.filter((file) => !serial.has(file)), serial: all.filter((file) => serial.has(file)) };
@@ -464,7 +501,22 @@ if (legacyPassthrough) {
   running.delete(job);
   finish(terminal.code, terminal.signal, terminal.error, groupReaped);
 } else {
-  const files = laneFiles();
+  let changedSelection = null;
+  if (changedPaths.length > 0) {
+    changedSelection = selectFromRepository({
+      root: fileURLToPath(repositoryRoot),
+      changedPaths,
+      manifest: loadExpectedRed(manifestPath),
+    });
+    process.stderr.write(`baton test runner: --changed selected ${changedSelection.files.length} test file(s) from ${changedPaths.length} changed path(s) — ${changedSelection.reason}\n`);
+    for (const provenance of changedSelection.provenance) {
+      process.stderr.write(`  ${provenance.path} (${provenance.reason}${provenance.via ? `: ${provenance.via}` : ''})\n`);
+    }
+    for (const row of changedSelection.rows) {
+      process.stderr.write(`  expected red (reasoned ${row.reason}): ${row.key}\n`);
+    }
+  }
+  const files = laneFiles(changedSelection);
   process.stderr.write(`baton test runner: ${files.parallel.length} files in the parallel lane (x${parallelism}), ${files.serial.length} in the serial lane; progress deadline ${idleMs} ms per file\n`);
   const results = [...await runLane(files.parallel, parallelism), ...await runLane(files.serial, 1)];
   const spawnError = results.find((result) => result.error)?.error ?? null;
@@ -493,8 +545,10 @@ if (legacyPassthrough) {
     } else {
       const manifest = loadExpectedRed(manifestPath);
       const verdict = computeVerdict(summaries, manifest, { environment: suiteEnvironment(fileURLToPath(repositoryRoot)) });
-      // An explicit partial run cannot judge rows it never ran.
-      const judged = explicitFiles.length > 0 ? { ...verdict, unseen: [], green: verdict.unexpected.length === 0 && verdict.stale.length === 0 && verdict.hung.length === 0 } : verdict;
+      // A partial run (explicit files, or a --changed selection) cannot judge rows it never ran.
+      const judged = explicitFiles.length > 0 || changedPaths.length > 0
+        ? { ...verdict, unseen: [], green: verdict.unexpected.length === 0 && verdict.stale.length === 0 && verdict.hung.length === 0 }
+        : verdict;
       process.stderr.write(`${formatVerdict(judged)}\n`);
       if (process.env.BATON_SUITE_VERDICT_FILE) {
         writeFileSync(process.env.BATON_SUITE_VERDICT_FILE, `${JSON.stringify(verdictDocument(judged), null, 2)}\n`);

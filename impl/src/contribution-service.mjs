@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { verifyContribution } from './contribution-verification.mjs';
+import { EXPECTED_RED_MANIFEST_PATH, selectFromRepository } from './verification-selection.mjs';
 
 const copy = (value) => structuredClone(value);
 const failure = (message, code) => Object.assign(new Error(message), { code });
@@ -19,15 +20,24 @@ const cleanupLeak = (cleanupError) => (cleanupError ? Object.freeze({
   message: String(cleanupError.message ?? cleanupError),
 }) : null);
 
+/** #300: the pre-verdict selection reads the CAPTURED revision, never the hub's own checkout —
+ * a capture may be older or newer than the deployment's tree. The ceiling is the widest
+ * per-file read the captured-file seam admits (16 MiB): the graph must see every source file
+ * whole, and a truncating bound here would silently under-select its importers. */
+const PREVERDICT_READ_CEILING = 16 * 1024 * 1024;
+
 /** Immutable contribution operations. Session/pause ownership stays with the coordinator;
  * this service owns revision retention, isolated checks, and attributable operation receipts. */
 export class ContributionService {
-  constructor({ worktrees, referee, accept, acceptOptions, capture, record, events, closeVerdict, verificationFor = null, hostCapacity = null }) {
-    Object.assign(this, { worktrees, referee, accept, acceptOptions, captureTree: capture, record, events, closeVerdict, verificationFor });
+  constructor({ worktrees, referee, accept, acceptOptions, capture, record, events, closeVerdict, verificationFor = null, hostCapacity = null, repoRoot = null }) {
+    Object.assign(this, { worktrees, referee, accept, acceptOptions, captureTree: capture, record, events, closeVerdict, verificationFor, repoRoot });
     // #297: the host-wide capacity authority every resident shares — a check's full-suite verdict
     // is admitted through it before the deployment's own verification lane orders it.
     this.hostCapacity = hostCapacity;
     this.pending = new Map();
+    // #300: the selection is a function of the capture (sha + changed paths) and the captured
+    // tree cannot change, so it is computed once per capture and reused by every later check.
+    this.preverdictSelections = new Map();
   }
 
   captured(workerId, contributionId) {
@@ -116,12 +126,18 @@ export class ContributionService {
       ? this.verificationFor(captured.changedPaths ?? [], source.brief.verification) : null;
     const selection = selected?.selection ?? 'code';
     if (selected?.verification) source.brief.verification = selected.verification;
+    // #300: the affected subset is derived before anything runs, so the started record already
+    // names what will run first; the full suite remains the acceptance verdict either way.
+    const preverdict = this._preverdictPlan(captured, selection, source);
     const workspaceId = `contribution-${createHash('sha256')
       .update(JSON.stringify([handle.id, contributionId, checkId])).digest('hex')}`;
     let checked;
     this.record('contribution.check_started', {
       contributionId, checkId, sha: captured.sha, ref: captured.ref,
       verification: { selection, command: source.brief.verification.command },
+      preverdict: preverdict.contract
+        ? { files: preverdict.selection.files.length, command: preverdict.contract.command }
+        : { skipped: preverdict.skipped },
     }, handle, task);
     // The deployment's verification lane is full: say so durably, so a waiting check reads as a
     // queue position and not as a slow verifier (#269).
@@ -134,7 +150,7 @@ export class ContributionService {
     // #297: the host admits this verdict BEFORE the deployment's lane orders it — a check whose
     // suite would be starved waits as a visible host queue entry (its typed queued row is
     // recorded the moment it is enqueued) instead of starting work the machine cannot run. The
-    // lease is held for the verdict and released whichever way it ends.
+    // lease is held for the verdict (preverdict subset included) and released whichever way it ends.
     let admission = null;
     let hostLease = null;
     if (this.hostCapacity && typeof this.hostCapacity.acquire === 'function') {
@@ -157,7 +173,9 @@ export class ContributionService {
           queuedAt: admitted.queuedAt ?? null } : {}),
       };
     }
+    let preverdictRow;
     try {
+      preverdictRow = await this._runPreverdict({ captured, source, preverdict, workspaceId, signal });
       checked = await verifyContribution({
         worktrees: this.worktrees, referee: this.referee, task: source,
         capture: { ...captured, sparseCheckoutIdentity: captured.basis.sparseCheckoutIdentity },
@@ -188,9 +206,84 @@ export class ContributionService {
       attempt: checked.attempt,
       // #297: the typed admission row the check reports beside its verdict.
       ...(admission ? { admission } : {}),
+      // #300: what ran before the full suite, with its own typed verdict — or the closed
+      // reason nothing did. Durable so a reviewer sees the subset without re-deriving it.
+      preverdict: preverdictRow,
       ...(leak ? { cleanup: leak } : {}),
     };
     this.record('contribution.checked', receipt, handle, task);
     return copy(receipt);
+  }
+
+  /** #300: the pre-verdict plan for one capture — which affected test files run first and under
+   * which contract, or the closed reason none will. Never throws: an unusable selection must
+   * not stop the check, it must be named on the receipt instead. Cached per capture (the
+   * captured tree cannot change), so repeated checks of the same sha re-read nothing. */
+  _preverdictPlan(captured, selection, source) {
+    if (selection === 'docs') return { skipped: 'docs' };
+    const contract = source.brief.verification;
+    if (!Array.isArray(contract?.arguments)) return { skipped: 'contract_shape' };
+    const changedPaths = [...(captured.changedPaths ?? [])].sort();
+    const cacheKey = JSON.stringify([captured.sha, changedPaths]);
+    if (this.preverdictSelections.has(cacheKey)) return this.preverdictSelections.get(cacheKey);
+    const plan = this._derivePreverdictPlan(captured, changedPaths, contract);
+    this.preverdictSelections.set(cacheKey, plan);
+    return plan;
+  }
+
+  _derivePreverdictPlan(captured, changedPaths, contract) {
+    if (!this.repoRoot || typeof this.worktrees.readCommitFile !== 'function') {
+      return { skipped: 'selection_unavailable' };
+    }
+    let selected;
+    try {
+      // The graph is read from the CAPTURED revision: a capture may carry imports or tests the
+      // hub's own checkout has never seen, and only the captured tree can say what affects it.
+      const readAtCapture = (path) => {
+        try { return this.worktrees.readCommitFile(captured.sha, path, PREVERDICT_READ_CEILING).text; }
+        catch { return null; }
+      };
+      let manifest = null;
+      const manifestText = readAtCapture(EXPECTED_RED_MANIFEST_PATH);
+      if (manifestText != null) { try { manifest = JSON.parse(manifestText); } catch { manifest = null; } }
+      selected = selectFromRepository({ root: this.repoRoot, changedPaths, manifest, read: readAtCapture });
+    } catch {
+      return { skipped: 'selection_unavailable' };
+    }
+    if (selected.files.length === 0) return { skipped: 'no_affected_tests' };
+    // The selected files ride the contract's own argv: `npm test --prefix impl <files…>` and a
+    // direct runner argv both forward plain positional file arguments unchanged.
+    return {
+      selection: {
+        changedPaths,
+        files: selected.files,
+        reason: selected.reason,
+        provenance: selected.provenance,
+        rows: selected.rows,
+      },
+      contract: { ...contract, arguments: [...contract.arguments, ...selected.files] },
+    };
+  }
+
+  /** Run the affected subset first and close its verdict as its own typed receipt row. A subset
+   * run that cannot produce a verdict is recorded as exactly that — the full suite after it
+   * stays the acceptance authority, so a red or unavailable subset never fails the check alone. */
+  async _runPreverdict({ captured, source, preverdict, workspaceId, signal }) {
+    if (!preverdict.contract) return { skipped: preverdict.skipped };
+    const task = { ...source, brief: { ...source.brief, verification: preverdict.contract } };
+    try {
+      const observed = await verifyContribution({
+        worktrees: this.worktrees, referee: this.referee, task,
+        capture: { ...captured, sparseCheckoutIdentity: captured.basis.sparseCheckoutIdentity },
+        workspaceId: `${workspaceId}-preverdict`, signal,
+      });
+      return { selection: preverdict.selection, verdict: this.closeVerdict(observed.observedVerdict, preverdict.contract) };
+    } catch (error) {
+      if (signal?.aborted) throw error;
+      return {
+        selection: preverdict.selection,
+        verdict: { state: 'unavailable', code: error.code ?? 'verification_unavailable' },
+      };
+    }
   }
 }

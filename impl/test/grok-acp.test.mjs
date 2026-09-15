@@ -891,7 +891,12 @@ test('A-E4: a timed-out session/new is never re-issued with a fresh id — the s
   const ledger = join(freshWorktree(), 'frames.ndjson');
   const adapter = makeAdapter({
     env: { FAKE_GROK_HANG_SESSION_NEW: '1', FAKE_GROK_LOG: ledger },
-    requestTimeoutMs: 200,
+    // The bound must outlive `initialize` on a LOADED host (the hub runs its lanes on this
+    // machine): if it fires while `initialize` is still pending, the timeout names the wrong
+    // frame and the law under test — which frame timed out — is never even reached. The bound
+    // observes which frame hangs; it does not pick it. The hang point itself is the fixture's
+    // (`FAKE_GROK_HANG_SESSION_NEW`), and the no-retry law below is bounded by its own 2s wall.
+    requestTimeoutMs: 1000,
   });
   const worker = 'w1';
   try {

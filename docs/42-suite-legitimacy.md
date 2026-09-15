@@ -119,3 +119,42 @@ the manifest is the single authority on what is still expected red:
    item, or the class that fits) and commit the regenerated manifest.
 3. If the row cannot be attributed, its reason is `unattributed` and the attribution work is
    named where the row lives — never left implicit in a filename.
+
+## 6. The pre-verdict selection: affected files first (#300)
+
+The 2026-09-14 incident: every check and every landing ran the full suite (~25 minutes at
+parallelism 6) because the affected file set was chosen by hand from `changedPaths`. The
+selection is now derived and shared by the check and the runner:
+
+- `impl/src/verification-selection.mjs` is the ONE selector. From the changed paths it derives
+  the test files that statically import (transitively, across `impl/src` and `impl/test`) a
+  changed module, every changed test file itself, and — for a changed file no test imports —
+  the test files that name it in a fixture path (its basename or path suffix in the test's
+  source), with the reason recorded per file so the weaker fixture-path signal is visible, never
+  silent. It also projects the reasoned manifest (#284) onto the selection: the expected-red rows
+  of the selected files are part of the selection, so a subset verdict can be read against what
+  was already known to be red.
+- A contribution check runs the affected subset FIRST, through the same verification lane, under
+  the contract's own argv with the selected file arguments appended, and records its verdict as a
+  typed row on the check receipt: `preverdict: {selection: {changedPaths, files, reason,
+  provenance, rows}, verdict}`. The full suite runs after it, unchanged, and stays the acceptance
+  verdict — a red or unavailable subset is information on the receipt, never a failed check by
+  itself. When nothing runs before the full suite, the receipt says why: `skipped: 'docs'` (the
+  #269 docs gate is the whole check), `no_affected_tests`, `selection_unavailable` (no
+  captured-revision reader), or `contract_shape` (a legacy string contract cannot carry file
+  arguments). The selection is derived from the CAPTURED revision through its retained
+  checkpoint — a capture may carry imports or tests the hub's own checkout has never seen — and
+  is cached per capture commit.
+- `node impl/scripts/run-suite.mjs --changed <paths…>` runs the same selection from the CLI,
+  against the checkout the runner is testing, and is the PRE-VERDICT STEP of the landing
+  procedure: before a landing runs the full gate, run the affected subset (fast first verdict,
+  its selection printed with per-file reasons and expected-red rows), then run the full suite.
+  `--changed` is a partial run under the same contracts an explicit file list obeys (#290): it
+  refuses `--write-expected-red`, refuses to combine with explicit file arguments or `node --test`
+  passthrough options, and refuses to run with no paths — an unnamed selection would silently
+  mean the whole suite. An empty selection is not a failure: the verdict is green with zero rows
+  judged, and the run says so.
+
+Over-selection is the safe direction for both entries: the subset is a fast first verdict, never
+the gate. Under-selection is what would hide a failure the full suite then finds 25 minutes
+later.

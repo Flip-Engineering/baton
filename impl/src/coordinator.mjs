@@ -2634,6 +2634,7 @@ export class Coordinator {
       acceptOptions: this._acceptOpts, closeVerdict: closedVerificationVerdict,
       verificationFor: this._verificationForCapture,
       hostCapacity: this._hostCapacity,
+      repoRoot: this._repoRoot,
       capture: (handle, task) => this._captureTrustWorktree(handle, task, { snapshot: true }),
       events: (workerId) => this._log.read(workerId),
       record: (kind, payload, handle, task) => {

@@ -395,7 +395,7 @@
         {
           "name": "_contributionOperations",
           "ordinal": 0,
-          "size": 20,
+          "size": 21,
           "seam": "observation",
           "evidence": [
             "observation:log_append"
