@@ -155,10 +155,43 @@ export function swarmParticipantLiveness(worker, pausedTurns = 0) {
  * This service owns organization and the user-facing operations. It never infers work
  * completion from a process/turn ending, or session closure from accepting a contribution. */
 export class SwarmRuntime {
-  constructor({ store, coordinator, authorize, prepareRun = (request) => request, startRun, stopRun }) {
+  constructor({ store, coordinator, authorize, prepareRun = (request) => request, startRun, stopRun,
+    hostCapacity = null, deploymentSummary = null }) {
     Object.assign(this, { store, coordinator, authorize, prepareRun, startRun, stopRun });
+    // #297: the host-wide capacity authority recruits admit through (null = admission is not
+    // wired — bare test hosts), and #297/#307: the deployment summary rows the view carries.
+    this.hostCapacity = hostCapacity;
+    this.deploymentSummary = deploymentSummary;
     this.pending = new Map();
     this.watchController = new AbortController();
+  }
+
+  /** The holder ids of every active seat whose worker is LIVE, across this runtime's swarms —
+   * the retention set the host worker leases reconcile against, so a stop or a leave that ended
+   * a seat's runtime also returns its lease to the host budget (#297). A stopped seat stays a
+   * member; only liveness releases capacity. */
+  _activeWorkerHolders() {
+    const holders = [];
+    const workers = this.coordinator.list();
+    for (const swarm of this.store.swarms()) {
+      for (const participant of Object.values(swarm.participants ?? {})) {
+        if (participant.status !== 'active') continue;
+        const workerId = participant.bindings?.at(-1)?.workerId ?? null;
+        const worker = workerId ? workers.find((row) => row.id === workerId) : null;
+        if (swarmParticipantLiveness(worker).live) {
+          holders.push(`participant:${swarm.swarmId}:${participant.participantId}`);
+        }
+      }
+    }
+    return holders;
+  }
+
+  /** Return this runtime's stale worker leases to the host budget. Called after any membership
+   * or liveness change that could have ended a seat; a no-op without an authority. */
+  _reconcileHostCapacity() {
+    if (!this.hostCapacity || typeof this.hostCapacity.releaseWorkersExcept !== 'function') return;
+    this.hostCapacity.releaseWorkersExcept(this._activeWorkerHolders())
+      .catch(() => { /* a busy host lock is retried by the next reconciliation */ });
   }
 
   _swarm(id) {
@@ -784,6 +817,11 @@ export class SwarmRuntime {
       updatePayloads: Object.fromEntries(updates.map(({ event }) => [event, {
         ...clone(SWARM_EVENT_PAYLOAD_SCHEMAS[event]), example: clone(SWARM_EVENT_EXAMPLES[event]),
       }])),
+      // #297/#307: the deployment summary rows — the workspace capacity observation beside its
+      // derived floor (`capacityPressure` is the one fact the wake stream lane will import) and
+      // the host capacity with its visible queue. The deployment's facts, carried by every
+      // projection as part of the frame; null when the runtime was built without a deployment.
+      deployment: this.deploymentSummary ? this.deploymentSummary() : null,
       cursor: this.store.ledgerHeadSeq(),
     };
     // The projection is applied HERE, at the one place a view is built, by the ONE slicer the
@@ -1196,6 +1234,7 @@ export class SwarmRuntime {
       }
       const recorded = this._write(args.event, payload, principal, this._operationKey(command, args, principal));
       this._recordOperationCompleted(command, args, principal, context);
+      if (args.event === 'swarm.participant_left') this._reconcileHostCapacity();
       if (caller && args.event === 'swarm.participant_left' && payload.participantId === caller.participantId) {
         return this._mutationResult(command, args, [recorded], principal, context,
           { swarmId: args.swarmId, participantId: caller.participantId, state: 'left', sessionStopped: false });
@@ -1249,6 +1288,39 @@ export class SwarmRuntime {
         // ACTIVE participant's scope across the repository's swarms, BEFORE the join writes the
         // new seat, so the row never names the recruit against itself.
         const scopeOverlap = recruitedScope === null ? [] : this._scopeOverlap(recruitedScope);
+        // #297: THE HOST ADMITS THIS SEAT BEFORE ANY MEMBERSHIP OR DISPATCH IS WRITTEN. A seat
+        // whose work would be starved is not started: while the derived host budget has no room,
+        // the request waits IN ORDER as a visible queue entry and its typed queued row is
+        // recorded durably the moment it is enqueued; when admitted, the join/bound writes below
+        // land as today and the response carries the typed admission row. A queued admission is
+        // replay-safe the same way the rest of the effect is: the operation key keys every row.
+        let workerLease = null;
+        let queuedRow = null;
+        if (this.hostCapacity && typeof this.hostCapacity.acquire === 'function') {
+          const operationKey = this._operationKey(command, args, principal);
+          const admitted = await this.hostCapacity.acquire('worker', {
+            holder: `participant:${args.swarmId}:${args.participantId}`,
+            onQueued: (row) => {
+              queuedRow = row;
+              try {
+                this.store.recordDriver('swarm.admission_queued', {
+                  swarmId: args.swarmId, participantId: args.participantId, command,
+                  authority: 'host', leaseKind: 'worker', position: row.position, ahead: row.ahead,
+                }, { actor: principal.actor, key: `${operationKey}:queued` });
+              } catch { /* a raced operation row is evidence, never admission-critical */ }
+            },
+          });
+          workerLease = admitted.token;
+          if (queuedRow) {
+            try {
+              this.store.recordDriver('swarm.admission_admitted', {
+                swarmId: args.swarmId, participantId: args.participantId, command,
+                authority: 'host', leaseKind: 'worker', position: queuedRow.position, ahead: queuedRow.ahead,
+                queuedAt: admitted.queuedAt ?? null,
+              }, { actor: principal.actor, key: `${operationKey}:admitted` });
+            } catch { /* evidence row only */ }
+          }
+        }
         // Membership precedes dispatch, so even a fast first native turn has the continuing
         // participant protocol. The underlying Run remains the existing execution authority.
         // A resumed seat re-joins under the RESUME request's own key: the original join key
@@ -1290,11 +1362,19 @@ export class SwarmRuntime {
           swarmId: args.swarmId, participantId: args.participantId, workerId: worker.id, taskId: worker.taskId,
           ...(checkout ? { workspaceId: checkout.workspaceId } : {}),
         }, principal, `swarm-binding:${hash([args.swarmId, args.participantId, worker.id])}`));
-        return { participantId: args.participantId, runId, swarmId: args.swarmId, scopeOverlap, writes };
+        return {
+          participantId: args.participantId, runId, swarmId: args.swarmId, scopeOverlap, writes,
+          // #297: the typed admission row — admitted, with the queue facts when this seat waited.
+          admission: {
+            state: 'admitted', authority: workerLease ? 'host' : 'unwired',
+            ...(queuedRow ? { position: queuedRow.position, ahead: queuedRow.ahead,
+              queuedAt: workerLease?.queuedAt ?? null } : {}),
+          },
+        };
       }, { replaySafe: true, basis: Object.values(swarm.context), context });
       return this._mutationResult(command, args, result.writes ?? [], principal, context,
         { participantId: result.participantId, runId: result.runId, swarmId: result.swarmId,
-          scopeOverlap: result.scopeOverlap ?? [] });
+          scopeOverlap: result.scopeOverlap ?? [], admission: result.admission ?? null });
     }
     const participant = this._participant(swarm, args.participantId);
     if (caller && command === 'swarm.capture' && caller.participantId !== participant.participantId
@@ -1378,6 +1458,7 @@ export class SwarmRuntime {
     if (command === 'swarm.stop') {
       const result = await this._once(command, args, principal, async () => {
         const stopped = await this.stopRun(participant.runId, args.reason, principal);
+        this._reconcileHostCapacity();
         return { participantId: participant.participantId, result: stopped };
       }, { context });
       // A stop writes no swarm fold row: the receipt's event is the operation terminal row the

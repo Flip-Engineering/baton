@@ -3,7 +3,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import {
   chmodSync, closeSync, constants as fsConstants, existsSync, fstatSync, lstatSync, mkdirSync,
-  openSync, readFileSync, realpathSync, rmSync, statfsSync,
+  openSync, readFileSync, readdirSync, realpathSync, rmSync, statfsSync,
 } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
@@ -28,7 +28,8 @@ import { GrokAcpCli } from './grok-acp.mjs';
 import { KimiAcpCli } from './kimi-acp.mjs';
 import { OmpRpcCli } from './omp-rpc.mjs';
 import { normalizeConcurrencyCeiling } from './concurrency-policy.mjs';
-import { normalizeWorktreeCapacityPolicy } from './worktree-capacity.mjs';
+import { normalizeWorktreeCapacityPolicy, workspaceCapacityPressure, WorktreeCapacityError } from './worktree-capacity.mjs';
+import { deriveHostCapacity, hostCapacityObservation, HostCapacityAuthority } from './host-capacity.mjs';
 import { RuntimeIsolation, runtimeIdentity } from './runtime-isolation.mjs';
 import { ResidentAuthority, stableDeploymentId } from './resident-authority.mjs';
 import { DEFAULT_RUN_LINEAGE_POLICY } from './run-lineage.mjs';
@@ -63,13 +64,18 @@ const DEFAULT_WATCHDOG = Object.freeze({
 
 // Physical availability gates admission. A deployment owner may additionally configure quotas
 // and headroom; ordinary callers do not need to estimate a fleet's eventual size.
+// #307: the FLOOR is no longer a constant — `minFreeBytes`/`minFreeInodes` are null here, which
+// derives each floor from the deployment's own records (the largest checkout estimate it has
+// ever reserved plus its measured runtime footprint) at every admission check. An operator may
+// still pin either field explicitly through advanced.capacity.policy; the policy digest pins
+// which regime is in force so it cannot flip silently under live reservations.
 const DEFAULT_WORKTREE_CAPACITY = Object.freeze({
   maxReservedBytes: null,
   maxReservedInodes: null,
-  // Conservative host headroom and per-runtime growth estimates, configurable by the owner.
+  minFreeBytes: null,
+  minFreeInodes: null,
+  // Conservative per-runtime growth allowances inside one checkout, configurable by the owner.
   // These are allowances, not measurements of a native harness's future disk use.
-  minFreeBytes: 512 * 1024 * 1024,
-  minFreeInodes: 100_000,
   runtimeReserveBytes: 64 * 1024 * 1024,
   runtimeReserveInodes: 10_000,
 });
@@ -335,10 +341,22 @@ function normalizeVerification(value, repoRoot) {
 
 function normalizeCapacity(value) {
   if (value === undefined) return null;
-  closed(value, ['estimate', 'observe', 'policy'], 'advanced capacity');
+  closed(value, ['estimate', 'hostCapacity', 'observe', 'policy', 'runtimeFootprint'], 'advanced capacity');
   if ((value.estimate !== undefined && typeof value.estimate !== 'function')
-    || (value.observe !== undefined && typeof value.observe !== 'function')) {
-    throw deploymentError('advanced capacity estimate and observe must be functions when provided');
+    || (value.observe !== undefined && typeof value.observe !== 'function')
+    || (value.runtimeFootprint !== undefined && typeof value.runtimeFootprint !== 'function')) {
+    throw deploymentError('advanced capacity estimate, observe and runtimeFootprint must be functions when provided');
+  }
+  let hostCapacity;
+  if (value.hostCapacity !== undefined) {
+    const raw = value.hostCapacity;
+    if (!record(raw)) throw deploymentError('advanced capacity hostCapacity must be one object');
+    closed(raw, ['observation', 'pollMs', 'root', 'waitMs'], 'advanced capacity hostCapacity');
+    if (raw.root !== undefined && (typeof raw.root !== 'string' || raw.root.length === 0)) throw deploymentError('advanced capacity hostCapacity.root must be one non-empty string');
+    if (raw.waitMs !== undefined && (!Number.isSafeInteger(raw.waitMs) || raw.waitMs <= 0)) throw deploymentError('advanced capacity hostCapacity.waitMs must be a positive safe integer');
+    if (raw.pollMs !== undefined && (!Number.isSafeInteger(raw.pollMs) || raw.pollMs <= 0)) throw deploymentError('advanced capacity hostCapacity.pollMs must be a positive safe integer');
+    if (raw.observation !== undefined && typeof raw.observation !== 'function') throw deploymentError('advanced capacity hostCapacity.observation must be a function when provided');
+    hostCapacity = Object.freeze({ ...raw });
   }
   let policy;
   try {
@@ -348,7 +366,7 @@ function normalizeCapacity(value) {
   } catch (error) {
     throw deploymentError(`advanced capacity policy is invalid: ${error.message}`);
   }
-  return Object.freeze({ policy, estimate: value.estimate, observe: value.observe });
+  return Object.freeze({ policy, estimate: value.estimate, observe: value.observe, runtimeFootprint: value.runtimeFootprint, hostCapacity });
 }
 
 function existingRegular(path) {
@@ -601,11 +619,49 @@ function preflightDeployment(repoRoot, verification) {
  * observation is quantized DOWN to the deployment reserve granularity (64MiB / 10k inodes):
  * kilobyte-scale drift between two reads is volume jitter, not a state change, so equal-state
  * projections stay deeply equal across surfaces (card vs doctor) and the verdict is computed
- * from the quantized value, which only ever errs conservative. */
+ * from the quantized value, which only errs conservative.
+ * #307: the floor shown here is the EFFECTIVE one — `floor()` resolves the policy's configured
+ * fields or, where the policy names null, the derivation (largest recorded checkout estimate +
+ * measured runtime footprint), and the section says which regime produced the number and what
+ * the records were. A blocked observation names the remedy: the bytes/inodes to free. */
+/** #307: the deployment's MEASURED runtime footprint — what its own records occupy on disk.
+ * `roots` are the record directories the deployment itself keeps (the state ledger and the
+ * evidence root); each is walked with byte and inode caps. The caps are measurement bounds —
+ * they keep a doctor read bounded — and they err SMALL: an under-measured footprint
+ * under-states the derived floor, which can only admit more, never reserve less than the
+ * checkout estimate already demands. The measurement is exactly the closed {bytes, inodes}
+ * shape every worktree capacity measurement shares. */
+const RUNTIME_FOOTPRINT_MAX_FILES = 250_000;
+const RUNTIME_FOOTPRINT_MAX_DEPTH = 64;
+
+function measureRuntimeFootprint(roots) {
+  let bytes = 0;
+  let inodes = 0;
+  let files = 0;
+  const walk = (path, depth) => {
+    if (files > RUNTIME_FOOTPRINT_MAX_FILES || depth > RUNTIME_FOOTPRINT_MAX_DEPTH) return;
+    let stat;
+    try { stat = lstatSync(path); } catch { return; }
+    if (stat.isSymbolicLink()) return; // links are recorded as one inode, never followed
+    inodes += 1;
+    if (stat.isFile()) {
+      bytes += stat.size;
+      files += 1;
+      return;
+    }
+    if (!stat.isDirectory()) return;
+    let entries;
+    try { entries = readdirSync(path); } catch { return; }
+    for (const entry of entries) walk(join(path, entry), depth + 1);
+  };
+  for (const root of roots) walk(root, 0);
+  return Object.freeze({ bytes, inodes });
+}
+
 const WORKSPACE_OBSERVATION_BYTE_QUANTUM = 64 * 1024 * 1024;
 const WORKSPACE_OBSERVATION_INODE_QUANTUM = 10_000;
 
-function workspaceCapacityReadiness(repoRoot, policy, observe) {
+function workspaceCapacityReadiness(repoRoot, policy, observe, floor = null) {
   let observation;
   try {
     const raw = observe ? observe({ repoRoot }) : (() => {
@@ -623,17 +679,35 @@ function workspaceCapacityReadiness(repoRoot, policy, observe) {
       state: 'unobserved', code: 'worktree_capacity_unavailable',
       summary: 'Workspace capacity could not be observed; Run dispatch will refuse until the repository volume is readable.',
       minFreeBytes: policy.minFreeBytes, minFreeInodes: policy.minFreeInodes,
+      ...(floor ? { floorBytes: null, floorInodes: null } : {}),
     });
   }
-  const blocked = observation.freeBytes < policy.minFreeBytes || observation.freeInodes < policy.minFreeInodes;
+  let resolved = null;
+  try { resolved = floor ? floor() : null; } catch { resolved = null; }
+  const floorBytes = resolved ? resolved.bytes : policy.minFreeBytes;
+  const floorInodes = resolved ? resolved.inodes : policy.minFreeInodes;
+  const blocked = observation.freeBytes < floorBytes || observation.freeInodes < floorInodes;
+  const remedyLine = blocked
+    ? `free at least ${Math.max(0, floorBytes - observation.freeBytes)} bytes and ${Math.max(0, floorInodes - observation.freeInodes)} inodes`
+      + (policy.minFreeBytes !== null || policy.minFreeInodes !== null
+        ? ', or lower advanced.capacity.policy.minFreeBytes/minFreeInodes' : '')
+      + ', then retry'
+    : '';
   return Object.freeze({
     state: blocked ? 'blocked' : 'ready',
     ...(blocked ? {
       code: 'worktree_capacity_exceeded',
-      summary: 'The repository volume is below the deployment capacity floors; every Run dispatch will refuse until space is freed.',
+      summary: `The repository volume is below the deployment capacity floor (${floorBytes} bytes, ${floorInodes} inodes); every Run dispatch will refuse until space is freed — ${remedyLine}.`,
     } : {}),
     freeBytes: observation.freeBytes, freeInodes: observation.freeInodes,
     minFreeBytes: policy.minFreeBytes, minFreeInodes: policy.minFreeInodes,
+    floorBytes, floorInodes,
+    ...(resolved ? {
+      floorSource: resolved.source,
+      estimateHighWater: resolved.estimateHighWater,
+      runtimeFootprint: resolved.runtimeFootprint,
+    } : {}),
+    ...(blocked ? { remedy: remedyLine, pressure: true } : {}),
   });
 }
 
@@ -1491,6 +1565,8 @@ class BatonDeployment {
   #deploymentRoot;
   #residentOptions;
   #workspaceProbe = null;
+  #hostCapacity = null;
+  #hostCapacityProbe = null;
   #claudeCredentialProbe = null;
   #grokCredentialProbe = null;
   #liveness = null;
@@ -1513,6 +1589,7 @@ class BatonDeployment {
     this.#workspaceProbe = deployment.workspaceProbe ?? null;
     this.#claudeCredentialProbe = deployment.claudeCredentialProbe ?? null;
     this.#grokCredentialProbe = deployment.grokCredentialProbe ?? null;
+    this.#hostCapacityProbe = deployment.hostCapacityProbe ?? null;
     this.#liveness = deployment.liveness ?? null;
     this.#routeQuota = deployment.routeQuota ?? null;
     this.#adapters = deployment.adapters ?? {};
@@ -1641,8 +1718,14 @@ class BatonDeployment {
     // a route its provider exhausted is not ready for a recruit, so the open-time verdict can
     // never sit beside fresh blocked rows.
     const ready = routes.some((route) => route.state === 'ready');
-    const base = workspace
-      ? { ...this.#readiness, ready, routes, workspace } : { ...this.#readiness, ready, routes };
+    // #297: the doctor's host capacity section — the derived budget, the live leases and the
+    // visible queue, read FRESH beside the workspace observation (#297 item 4).
+    const hostCapacity = this.#hostCapacityProbe ? this.#hostCapacityProbe() : null;
+    const base = {
+      ...this.#readiness, ready, routes,
+      ...(workspace ? { workspace } : {}),
+      ...(hostCapacity ? { hostCapacity } : {}),
+    };
     Object.defineProperty(base, 'briefing', { value: briefing, enumerable: false });
     return Object.freeze(base);
   }
@@ -2231,8 +2314,52 @@ export async function openBatonDeployment(rawOptions, createDriver) {
   // Issue #35: doctor observes workspace capacity FRESH at each read (statfs is cheap and disk
   // state moves), never once at open — an open-time probe would also consume the advanced
   // observation seam outside its per-reservation contract.
+  // #307: the probe resolves the EFFECTIVE floor — the policy's configured fields, or (where the
+  // policy names null) the derivation from the ledger's estimate high-water plus the deployment's
+  // measured runtime footprint (the state ledger and the evidence root; worker homes are the
+  // checkout estimates the high-water already records). The authority exists only after
+  // createDriver, so the closure reads it through a late-bound reference.
+  // #297: ONE host-wide capacity authority for this deployment, shared with every other resident
+  // on this host through the host-scoped lease directory; recruits and checks admit through it.
+  let worktreeCapacityRef = null;
+  const workspaceFloorProbe = () => (worktreeCapacityRef ? worktreeCapacityRef.floor() : null);
+  const runtimeFootprintProbe = capacity?.runtimeFootprint
+    ?? (() => measureRuntimeFootprint([stateRoot, evidenceRoot]));
+  // #297: ONE host-wide capacity authority for this deployment, shared with every other resident
+  // on this host through the host-scoped lease directory; recruits and checks admit through it.
+  // A suite-runner child (or an operator pinning BATON_HOST_CAPACITY_DISABLED=1) runs UNWIRED:
+  // a suite host is oversubscribed by design and its own load observation would queue every
+  // fixture recruit, which is a test-shape fact, not a production one. The unwired runtime
+  // reports `authority: 'unwired'` rather than pretending.
+  const hostAdmissionDisabled = process.env.BATON_TEST_SUITE_ROOT !== undefined
+    || process.env.BATON_HOST_CAPACITY_DISABLED === '1';
+  const hostCapacityAuthority = hostAdmissionDisabled ? null : new HostCapacityAuthority({
+    ...(capacity?.hostCapacity?.root ? { root: capacity.hostCapacity.root } : {}),
+    ...(capacity?.hostCapacity?.waitMs !== undefined ? { waitMs: capacity.hostCapacity.waitMs } : {}),
+    ...(capacity?.hostCapacity?.pollMs !== undefined ? { pollMs: capacity.hostCapacity.pollMs } : {}),
+    ...(capacity?.hostCapacity?.observation !== undefined ? { observation: capacity.hostCapacity.observation } : {}),
+    residentId: `deployment-${repository.repoId}`,
+  });
+  // The doctor shows the SAME derivation on QUANTIZED measurements — memory quantized DOWN to
+  // the deployment reserve granularity (the #35 discipline: equal-state projections stay deeply
+  // equal across reads, and the verdict errs conservative), load quantized DOWN to whole cores.
+  // Admission itself always derives from the raw observation inside the authority. Null when
+  // host admission is disabled — the doctor then carries no host section at all.
+  const hostCapacityProbe = hostAdmissionDisabled ? null : () => {
+    const live = hostCapacityAuthority.observeNow();
+    const raw = live.capacity;
+    const totalBytes = raw.totalBytes - (raw.totalBytes % WORKSPACE_OBSERVATION_BYTE_QUANTUM);
+    const freeBytes = Math.min(raw.freeBytes - (raw.freeBytes % WORKSPACE_OBSERVATION_BYTE_QUANTUM), totalBytes);
+    return Object.freeze({
+      ...live,
+      capacity: deriveHostCapacity(hostCapacityObservation({
+        cores: raw.cores, totalBytes, freeBytes, load1m: Math.floor(raw.load1m),
+      })),
+    });
+  };
   const workspaceProbe = () => workspaceCapacityReadiness(
     repository.root, capacity?.policy ?? DEFAULT_WORKTREE_CAPACITY, capacity?.observe ?? null,
+    workspaceFloorProbe,
   );
   const contextRuntime = new RepositoryContextRuntime({
     artifactRoot: contextRoot,
@@ -2260,6 +2387,8 @@ export async function openBatonDeployment(rawOptions, createDriver) {
     logDir: stateRoot,
     adapters,
     worktreeCapacity: capacity?.policy ?? DEFAULT_WORKTREE_CAPACITY,
+    worktreeCapacityRuntimeFootprint: runtimeFootprintProbe,
+    hostCapacity: hostCapacityAuthority,
     ...(capacity ? {
       worktreeCapacityEstimate: capacity.estimate,
       worktreeCapacityObserve: capacity.observe,
@@ -2288,6 +2417,8 @@ export async function openBatonDeployment(rawOptions, createDriver) {
     // frozen DEFAULT_WATCHDOG (20 min < 480 min wall), admission-checked at createDriver.
     watchdog: { ...DEFAULT_WATCHDOG },
   });
+  // The floor probe reads the ledger high-water through the authority the driver just built.
+  worktreeCapacityRef = driver.worktreeCapacity;
   // #47 liveness controller: wraps the adapter listeners (the coordinator's single-slot onEvent)
   // so it observes probe turns and worker-turn refresh-token death without disturbing the
   // coordinator's own handling.
@@ -2353,10 +2484,19 @@ export async function openBatonDeployment(rawOptions, createDriver) {
       // restrictingReadAuthorize below). Non-read commands stay permissive; a foreign
       // `worker:<scope>` read refuses application_unauthorized at the _authorize seam.
       authorize: restrictingReadAuthorize(),
+      // #297/#307: the deployment summary the swarm view carries — the capacity observation and
+      // floor beside the host capacity and queue, so an orchestrator sees the pressure before a
+      // recruit is refused. The workspace probe is the doctor's own; the host probe reads the
+      // shared lease directory without mutating it.
+      deploymentSummary: () => Object.freeze({
+        workspace: workspaceProbe(),
+        hostCapacity: hostCapacityProbe ? hostCapacityProbe() : null,
+      }),
     });
     await application.ready;
     return new BatonDeployment(application, principal, readiness, {
       driver, repository, deploymentRoot, residentOptions, workspaceProbe, adapters, routes, routeQuota,
+      hostCapacity: hostCapacityAuthority, hostCapacityProbe,
       liveness: livenessController,
       claudeCredentialProbe: claudeCredentialCache ? () => claudeCredentialCache.metadata() : null,
       claudeCredentialCache,
@@ -2378,7 +2518,13 @@ export { DEFAULT_ROUTES as DEFAULT_BATON_DEPLOYMENT_ROUTES };
 // #293: the conditional route the generated fleet-routes table renders from the same
 // declaration the registration and blocked-row paths read (routeReadinessContract is exported
 // at its definition).
+
 export { KIMI_THROUGH_CLAUDE_ROUTE };
+
+// #307: the ONE predicate the wake stream lane imports — re-exported from worktree-capacity so
+// a capacity_pressure wake can be derived from the same definition the view's deployment summary
+// carries, never a second copy.
+export { workspaceCapacityPressure };
 export { DEFAULT_BUDGET, DEFAULT_WATCHDOG };
 export { ClaudeCredentialCache } from './claude-credential-cache.mjs';
 

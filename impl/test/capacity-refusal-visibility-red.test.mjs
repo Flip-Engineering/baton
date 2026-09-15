@@ -181,8 +181,12 @@ test('CAP-V5: deployment doctor reports the workspace capacity observation hones
   assert.equal(blocked.workspace.state, 'blocked');
   assert.equal(blocked.workspace.code, 'worktree_capacity_exceeded');
   assert.equal(blocked.workspace.freeBytes, 0);
-  assert.ok(Number.isSafeInteger(blocked.workspace.minFreeBytes) && blocked.workspace.minFreeBytes > 0,
-    'the deployment floor is visible next to the observation');
+  // #307: the EFFECTIVE floor is visible next to the observation — derived from the deployment's
+  // own records when the operator pins none (minFreeBytes null), and it is a real number.
+  assert.equal(blocked.workspace.minFreeBytes, null, 'no operator floor is pinned, so the floor is derived');
+  assert.ok(Number.isSafeInteger(blocked.workspace.floorBytes) && blocked.workspace.floorBytes > 0,
+    'the derived deployment floor is visible next to the observation');
+  assert.equal(blocked.workspace.floorSource, 'derived');
 
   const repo = repository(t);
   const healthy = await openBaton({

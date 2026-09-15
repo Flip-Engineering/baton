@@ -2,7 +2,6 @@
 
 import { execFileSync, spawn } from 'node:child_process';
 import { readdirSync } from 'node:fs';
-import { availableParallelism } from 'node:os';
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, relative, resolve } from 'node:path';
@@ -31,6 +30,14 @@ const {
   DEFAULT_BATON_DEPLOYMENT_ROUTES, KIMI_THROUGH_CLAUDE_ROUTE,
   ompProviderKeyFile, ompRouteReadiness, routeReadinessContract,
 } = await import(new URL('../src/application-deployment.mjs', import.meta.url).href);
+
+// Issue #297: the runner's DEFAULT parallelism is the ONE host-capacity derivation every
+// resident on this machine shares (impl/src/host-capacity.mjs) — one core for the runner's own
+// loop, no more lanes than the memory the host funds at one share per lane. It is a derivation
+// from os measurements, not a guess and not a constant; `BATON_SUITE_PARALLELISM` remains the
+// OPERATOR OVERRIDE (an explicit, documented decision that replaces the derivation, never a
+// second default).
+const { defaultSuiteParallelism } = await import(new URL('../src/host-capacity.mjs', import.meta.url).href);
 
 /** The machine-local prerequisites this run observed, named by the readiness declaration. */
 function suiteEnvironment(repoRootPath) {
@@ -148,8 +155,9 @@ const signalStatus = { SIGINT: 130, SIGTERM: 143, SIGKILL: 137 };
 // Issue #260: the runner schedules every test FILE as its own in-process run (the file executed
 // directly with the verdict reporter attached), never through `node --test`'s parent/child TAP
 // round trip — that parent is what spun for hours on this suite. Each file is bounded by its own
-// progress deadline, so a hang costs exactly that file. The parallel lane runs
-// availableParallelism()-1 files at once; the process-heavy files of suite-lanes.json run one
+// progress deadline, so a hang costs exactly that file. The parallel lane runs the host-capacity
+// derivation's lane count (one core's share per lane, #297); the process-heavy files of
+// suite-lanes.json run one
 // at a time afterwards. Explicit file arguments run through the same scheduler; any other
 // node --test option (--watch, --test-name-pattern, …) keeps the legacy passthrough.
 // 2026-09-14 audit S-G2/S-I6: a rewritten manifest row must carry a reason, so a rewrite that
@@ -184,8 +192,10 @@ const lanesPath = new URL('./suite-lanes.json', import.meta.url);
 // resource constraint (an operator waiting), so it is configurable, never hidden.
 const idleMs = Number.parseInt(process.env.BATON_SUITE_IDLE_MS ?? '', 10) > 0
   ? Number.parseInt(process.env.BATON_SUITE_IDLE_MS, 10) : 600_000;
+// Issue #297: the default comes from the shared host-capacity derivation; BATON_SUITE_PARALLELISM
+// is the documented operator override that replaces it.
 const parallelism = Number.parseInt(process.env.BATON_SUITE_PARALLELISM ?? '', 10) > 0
-  ? Number.parseInt(process.env.BATON_SUITE_PARALLELISM, 10) : Math.max(1, availableParallelism() - 1);
+  ? Number.parseInt(process.env.BATON_SUITE_PARALLELISM, 10) : defaultSuiteParallelism();
 
 function relativeTestPath(file) {
   const absolute = resolve(process.cwd(), file);
@@ -332,6 +342,12 @@ function childEnv(summaryFile) {
     BATON_TEST_SUITE_ROOT: suiteRoot,
     BATON_SUITE_WATCHDOG: '1',
     BATON_SUITE_WATCHDOG_PPID: String(process.pid),
+    // #297: a test file's deployments run UNWIRED from the host-wide capacity throttle. The
+    // throttle is a production multi-resident mechanism; a suite host runs nine parallel files
+    // and is oversubscribed BY DESIGN, so its real load observation would queue every fixture
+    // recruit behind a full host. The host-capacity semantics are pinned by tests that inject
+    // the authority directly.
+    BATON_HOST_CAPACITY_DISABLED: '1',
     ...(summaryFile ? { BATON_SUITE_SUMMARY_FILE: summaryFile } : {}),
     TMPDIR: suiteRoot, TMP: suiteRoot, TEMP: suiteRoot,
   };

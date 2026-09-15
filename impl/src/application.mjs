@@ -2663,7 +2663,7 @@ function semanticSourceSlice(text, source) {
  */
 export class BatonApplication {
   constructor(options) {
-    const optionalConfiguration = ['context', 'exportRoot', 'exportDeliveryChunkBytes', 'defaults', 'clock', 'deploymentId']
+    const optionalConfiguration = ['context', 'deploymentSummary', 'exportRoot', 'exportDeliveryChunkBytes', 'defaults', 'clock', 'deploymentId']
       .filter((field) => Object.hasOwn(options ?? {}, field));
     exactObject(options, ['driver', 'repoId', 'profiles', 'principals', 'authorize', ...optionalConfiguration],
     'application_config_invalid', 'application configuration');
@@ -2688,6 +2688,13 @@ export class BatonApplication {
     this._clock = options.clock ?? (() => new Date().toISOString());
     if (typeof this._clock !== 'function') {
       throw applicationError('application clock is invalid', 'application_config_invalid');
+    }
+    // #297/#307: the deployment-level summary rows the swarm view carries (workspace capacity
+    // beside the floor, host capacity and the queue). Null when the application is constructed
+    // bare — the view then carries no deployment summary rather than a fabricated one.
+    this.deploymentSummary = typeof options.deploymentSummary === 'function' ? options.deploymentSummary : null;
+    if (this.deploymentSummary === null && options.deploymentSummary !== undefined) {
+      throw applicationError('application deployment summary must be a function', 'application_config_invalid');
     }
     this.context = null;
     if (options.context !== undefined) {
@@ -3414,6 +3421,10 @@ export class BatonApplication {
   _swarmRuntime() {
     this._swarmService ??= new SwarmRuntime({
       store: this.driver.coordination, coordinator: this.driver.coordinator,
+      // #297: the host-wide capacity authority every resident shares (driver-built); recruits
+      // admit through it and the view carries the deployment summary beside the queue.
+      hostCapacity: this.driver.hostCapacity ?? null,
+      deploymentSummary: this.deploymentSummary,
       authorize: (command, args, principal) => this._authorize(command, principal, null, {
         swarmId: args.swarmId ?? null, participantId: args.participantId ?? null,
       }),
@@ -3514,7 +3525,6 @@ export class BatonApplication {
     }));
     if (allowed !== true) throw applicationError('application command is not authorized', 'application_unauthorized');
   }
-
   // Issue #74 (D2/A5): the coordinator authority boundary. A coordinator-seat principal (a worker
   // seat, principalId `worker:<id>` — the G9 seat class that never holds `approve`) reaching a
   // wave/steering authority verb draws `coordinator_authority_forbidden` with {attempted,
