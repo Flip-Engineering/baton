@@ -1,11 +1,14 @@
 import { spawnSync } from 'node:child_process';
 import { SWARM_EVENT_KINDS, SWARM_BRIDGE_REFUSAL_COMMAND, SWARM_VIEW_DEFAULT_PROJECTION,
   projectSwarmView, swarmChangedRow, swarmCommandDefinition, swarmReceiptNext,
-  validateSwarmCommand } from './swarm-contract.mjs';
+  validateSwarmCommand, SWARM_KNOWLEDGE_COMMANDS, SWARM_KNOWLEDGE_COMMAND_NAMES,
+  swarmKnowledgeCommand, swarmKnowledgePermission } from './swarm-contract.mjs';
 import { createHash } from 'node:crypto';
 import { canonicalJson, compareCanonicalStrings } from './canonical-order.mjs';
 import { SWARM_EVENT_PAYLOAD_SCHEMAS, SWARM_EVENT_EXAMPLES } from './swarm-event-schemas.mjs';
 import { foldSwarmEvent, SwarmIntegrityError } from './swarm-state.mjs';
+import { FRAME_LIMITS } from './limits.mjs';
+import { canonicalOperationForCommand } from './application-semantics.mjs';
 import { workspaceCustodyRecord } from './shared-workspace-custody.mjs';
 
 const clone = (value) => structuredClone(value);
@@ -154,10 +157,135 @@ export function swarmParticipantLiveness(worker, pausedTurns = 0) {
 /** Living collaboration over the existing Run, worker, and coordination authorities.
  * This service owns organization and the user-facing operations. It never infers work
  * completion from a process/turn ending, or session closure from accepting a contribution. */
+// ── the participant knowledge verbs (issue #318) ────────────────────────────────────────────────
+// One minimal shape validator over the canonical operation schemas (application-semantics.mjs).
+// The bridge refuses the cheapest wrong shape BEFORE dispatch and reports it to the durable
+// refusal lane; the runtime runs the SAME validator as the authority — never the transport's
+// word. Fields the swarm binds server-side (the knowledge row's `identityFields`) are refused as
+// caller-supplied: a participant names its request, its token names itself.
+const knowledgeSchemaProblem = (value, schema) => {
+  if (schema === undefined || schema === null) return null;
+  if (Array.isArray(schema.oneOf)) {
+    return schema.oneOf.some((branch) => knowledgeSchemaProblem(value, branch) === null)
+      ? null : 'one of the accepted shapes';
+  }
+  if (Array.isArray(schema.enum)) {
+    return schema.enum.includes(value) ? null : `one of ${schema.enum.join(', ')}`;
+  }
+  const type = Array.isArray(schema.type) ? schema.type : [schema.type].filter(Boolean);
+  if (type.includes('string')) {
+    if (typeof value !== 'string') return 'a string';
+    if (schema.minLength !== undefined && value.length < schema.minLength) return `at least ${schema.minLength} characters`;
+    if (schema.maxLength !== undefined && value.length > schema.maxLength) return `at most ${schema.maxLength} characters`;
+    if (schema.pattern !== undefined && !new RegExp(schema.pattern, 'u').test(value)) return `matching ${schema.pattern}`;
+    return null;
+  }
+  if (type.includes('integer') || type.includes('number')) {
+    if (!Number.isSafeInteger(value)) return 'an integer';
+    if (schema.minimum !== undefined && value < schema.minimum) return `at least ${schema.minimum}`;
+    if (schema.maximum !== undefined && value > schema.maximum) return `at most ${schema.maximum}`;
+    return null;
+  }
+  if (type.includes('boolean')) return typeof value === 'boolean' ? null : 'a boolean';
+  if (type.includes('array')) {
+    if (!Array.isArray(value)) return 'an array';
+    if (schema.minItems !== undefined && value.length < schema.minItems) return `at least ${schema.minItems} items`;
+    if (schema.maxItems !== undefined && value.length > schema.maxItems) return `at most ${schema.maxItems} items`;
+    if (schema.uniqueItems && new Set(value.map((item) => JSON.stringify(item))).size !== value.length) return 'distinct items';
+    return value.map((item) => knowledgeSchemaProblem(item, schema.items)).find(Boolean) ?? null;
+  }
+  if (type.includes('object')) {
+    if (value === null || typeof value !== 'object' || Array.isArray(value)) return 'an object';
+    return null;
+  }
+  return null;
+};
+
+export function validateSwarmKnowledgeCommand(name, args) {
+  const knowledge = swarmKnowledgeCommand(name);
+  if (!knowledge) return;
+  const schema = canonicalOperationForCommand(name)?.inputSchema ?? null;
+  if (!schema) refuse('Swarm knowledge command has no canonical schema', 'swarm_command_unavailable', { command: name });
+  if (args === undefined || args === null || typeof args !== 'object' || Array.isArray(args)) {
+    refuse('Swarm knowledge request is invalid: arguments must be one JSON object', 'swarm_command_invalid',
+      { rule: 'arguments-shape' });
+  }
+  // The swarm vocabulary rides ON the canonical schema: every knowledge request names its swarm
+  // (the bridge fills it from the token scope, the CLI names it) — the SAME safe-id predicate the
+  // swarm contract applies to every swarmId.
+  const properties = { swarmId: { type: 'string', pattern: '^[A-Za-z0-9._:-]{1,256}$' }, ...(schema.properties ?? {}) };
+  const required = ['swarmId', ...(schema.required ?? [])];
+  const identity = new Set(knowledge.identityFields);
+  for (const field of identity) {
+    if (args[field] !== undefined) {
+      refuse(`Swarm knowledge request is invalid: ${field} is derived from your swarm token`, 'swarm_command_invalid',
+        { field, rule: 'identity-field', expectation: 'server-derived — remove it' });
+    }
+  }
+  const known = new Set(Object.keys(properties));
+  for (const key of Object.keys(args)) {
+    if (!known.has(key)) {
+      refuse(`Swarm knowledge request is invalid: unknown field ${key}`, 'swarm_command_invalid',
+        { field: key, rule: 'unknown-field' });
+    }
+  }
+  // Scratchpad scope defaults to the caller's own worker scope at the swarm layer: the scratchpad
+  // is the run's memory, and a participant never knows its own worker id.
+  const defaulted = name === 'run.scratchpad.append' || name === 'run.scratchpad.read' ? 'scope' : null;
+  for (const field of required) {
+    if (identity.has(field) || field === defaulted) continue;
+    if (args[field] === undefined) {
+      refuse(`Swarm knowledge request is invalid: add ${field} (${properties[field]?.description ?? 'a value'})`,
+        'swarm_command_invalid', { field, rule: 'required-field' });
+    }
+  }
+  for (const [key, value] of Object.entries(args)) {
+    const problem = knowledgeSchemaProblem(value, properties[key]);
+    if (problem) {
+      refuse(`Swarm knowledge request is invalid: ${key} must be ${problem}`, 'swarm_command_invalid',
+        { field: key, rule: 'field-predicate', expectation: problem });
+    }
+  }
+}
+
+/** The knowledge method each verb dispatches to on the deployment's `knowledge` authority — the
+ * ONE application-side implementation each verb already has (the run.* lanes over the store). */
+const KNOWLEDGE_METHODS = Object.freeze({
+  'run.knowledge.seed': 'knowledgeSeed',
+  'run.board.post': 'boardPost',
+  'run.board.read': 'boardRead',
+  'run.scratchpad.append': 'scratchpadAppend',
+  'run.scratchpad.read': 'scratchpadRead',
+  'run.scratchpad.elevate': 'scratchpadElevate',
+});
+
+/** The contribution body fields that publish a contract or carried-forward work (#310's minimal
+ * fields, defined here until #310 lands its own shape): an object body may carry
+ * `contract` — what a successor must keep true — and `carriedForward` — the items it hands on.
+ * Both are read by the situation projection and by a `resumeFrom` successor's brief. */
+export const SWARM_CONTRIBUTION_CONTRACT_FIELDS = Object.freeze(['contract', 'carriedForward']);
+
+const contributionContractRows = (swarm) => Object.values(swarm.contributions ?? {})
+  .map((contribution) => {
+    const body = contribution.body;
+    if (body === null || typeof body !== 'object' || Array.isArray(body)) return null;
+    const carriedForward = Array.isArray(body.carriedForward) ? body.carriedForward : null;
+    const contract = body.contract === undefined ? null : body.contract;
+    if (contract === null && carriedForward === null) return null;
+    return { contributionId: contribution.contributionId, participantId: contribution.participantId,
+      ...(contract !== null ? { contract } : {}), ...(carriedForward !== null ? { carriedForward } : {}) };
+  }).filter(Boolean);
 export class SwarmRuntime {
+  /** `knowledge` is the deployment's participant knowledge authority (#318): the bridge-admitted
+   * knowledge verbs dispatch through it into the ONE implementation each verb already has (the
+   * application's own lanes over the coordination store), with the participant's run identity
+   * bound HERE — never caller-chosen. `situationGit` is the deployment's git authority for the
+   * situation projection: `head()` names the commit a new swarm starts from, `commitsSince(base)`
+   * derives the rows landed on the target since that base. Both are optional; a deployment
+   * without them refuses the verbs it cannot serve or omits the facts it cannot derive. */
   constructor({ store, coordinator, authorize, prepareRun = (request) => request, startRun, stopRun,
-    hostCapacity = null, deploymentSummary = null }) {
-    Object.assign(this, { store, coordinator, authorize, prepareRun, startRun, stopRun });
+    hostCapacity = null, deploymentSummary = null, knowledge = null, situationGit = null }) {
+    Object.assign(this, { store, coordinator, authorize, prepareRun, startRun, stopRun, knowledge, situationGit });
     // #297: the host-wide capacity authority recruits admit through (null = admission is not
     // wired — bare test hosts), and #297/#307: the deployment summary rows the view carries.
     this.hostCapacity = hostCapacity;
@@ -526,6 +654,21 @@ export class SwarmRuntime {
         seq: event.seq, ts: event.ts, from: event.payload.from ?? null, messageId: event.payload.messageId ?? null,
       });
     }
+    // The knowledge rows (#318): the facts the swarm's participants seeded through the bridge
+    // (`run.knowledge.seed`), attributed to the seat via its run. The view mints nothing of its
+    // own here either — the coordination ledger's knowledge rows ARE the exchange record, and
+    // `evidence.search` reads the same rows.
+    const runToParticipant = new Map(Object.values(swarm.participants)
+      .filter((row) => row.runId).map((row) => [row.runId, row.participantId]));
+    const knowledge = [];
+    for (const event of ledger) {
+      if (event.kind !== 'knowledge.node_added' && event.kind !== 'knowledge.promoted') continue;
+      const participantId = runToParticipant.get(event.payload?.runId);
+      if (!participantId) continue;
+      knowledge.push({ seq: event.seq, ts: event.ts, nodeId: event.payload?.id ?? null,
+        kind: event.payload?.type ?? null, grounding: event.payload?.grounding ?? null,
+        body: event.payload?.body ?? null, participantId, runId: event.payload.runId });
+    }
     // The participant's last refusal the operation lane has not cleared (issue #283 root comment
     // 2): the LATEST refusal naming this seat, unless a later operation of the SAME command by the
     // same seat COMPLETED. Both facts are read from the one durable lane the runtime writes.
@@ -707,15 +850,25 @@ export class SwarmRuntime {
       .filter(([, permission]) => permissions.includes(permission)).map(([command]) => command);
     if (permissions.includes('contribute') && !availableActions.includes('swarm.check')) availableActions.push('swarm.check');
     if (permissions.includes('review') && !availableActions.includes('swarm.capture')) availableActions.push('swarm.capture');
-    // The update kinds this caller may send NOW, each with the permission that admits it — derived
-    // by the SAME function the dispatch check uses (`_updatePermission`), never a second list: a
-    // view can no more overstate an authority than dispatch can overlook one (2026-09-14 audit
-    // S-F1). The rows sit beside availableActions, and `swarm.update` is offered exactly when
-    // there is at least one kind to send.
-    const updates = Object.keys(UPDATE_PERMISSIONS)
-      .map((event) => ({ event, permission: this._updatePermission(event, caller) }))
-      .filter((row) => permissions.includes(row.permission));
-    if (updates.length) availableActions.push('swarm.update');
+    // The update kinds and knowledge verbs this caller may send NOW, each with the permission
+    // that admits it — derived by the SAME functions the dispatch checks use (`_updatePermission`
+    // and the knowledge table's own permission), never a second list: a view can no more
+    // overstate an authority than dispatch can overlook one (2026-09-14 audit S-F1). The rows
+    // name the verb and the permission; the ONE situation each verb serves is rendered by the
+    // brief and the bridge help (the same table), never re-spelled as a fixed tax on every view.
+    // `swarm.update` is offered exactly when at least one event kind is sendable.
+    const updates = [
+      ...Object.keys(UPDATE_PERMISSIONS)
+        .map((event) => ({ event, permission: this._updatePermission(event, caller) }))
+        .filter((row) => permissions.includes(row.permission)),
+      ...SWARM_KNOWLEDGE_COMMAND_NAMES
+        .map((command) => ({ command, permission: swarmKnowledgePermission(command) }))
+        .filter((row) => permissions.includes(row.permission)),
+    ];
+    if (updates.some((row) => row.event !== undefined)) availableActions.push('swarm.update');
+    for (const row of updates) {
+      if (row.command !== undefined && !availableActions.includes(row.command)) availableActions.push(row.command);
+    }
     const contributionTargets = permissions.includes('review') ? participants.map((row) => row.participantId)
       : permissions.includes('contribute') && caller ? [caller.participantId] : [];
     // Work rows carry their derived evidence, plus the declared dependencies as INFORMED waits —
@@ -775,7 +928,7 @@ export class SwarmRuntime {
     // than never written, and the unscoped organizer view still carries every brief.
     const scopedParticipants = scope
       ? participants.filter((row) => scopeSubtree.includes(row.participantId))
-        .map((row) => (row.participantId === scope.participantId ? row : { ...row, role: null, briefWithheld: true }))
+        .map((row) => (row.participantId === scope.participantId ? row : { ...row, role: null, brief: null, briefWithheld: true }))
       : participants;
     const view = {
       ...clone(swarm),
@@ -811,6 +964,10 @@ export class SwarmRuntime {
       context: keep(Object.entries(swarm.context ?? {}), ([, entry]) => entry.groupId === null
         || entry.groupId === undefined
         || (swarm.groups?.[entry.groupId]?.members ?? []).some((member) => scopeSubtree.includes(member))),
+      // The swarm's seeded facts are the shared evidence of the WHOLE swarm — the exchange
+      // channel a participant reads without the root copying anything — so a scoped view carries
+      // them whole, like the swarm-wide context above (#318).
+      knowledge,
       // The caller's own standing refusal rides the FRAME, so it is answered whatever projection
       // was asked for — and so the entry can tell that a successful read just retired one.
       caller: { participantId: caller?.participantId ?? null, permissions: [...permissions],
@@ -821,9 +978,13 @@ export class SwarmRuntime {
         'swarm.check': { participantIds: contributionTargets },
       },
       updates,
-      updatePayloads: Object.fromEntries(updates.map(({ event }) => [event, {
-        ...clone(SWARM_EVENT_PAYLOAD_SCHEMAS[event]), example: clone(SWARM_EVENT_EXAMPLES[event]),
-      }])),
+      // Knowledge-verb rows (#318) share the `updates` array with event-kind rows but carry a
+      // `verb`, not an `event` — filtered out here so they never mint an `undefined` payload key.
+      updatePayloads: Object.fromEntries(updates
+        .filter((row) => row.event !== undefined)
+        .map(({ event }) => [event, {
+          ...clone(SWARM_EVENT_PAYLOAD_SCHEMAS[event]), example: clone(SWARM_EVENT_EXAMPLES[event]),
+        }])),
       // #297/#307: the deployment summary rows — the workspace capacity observation beside its
       // derived floor (`capacityPressure` is the one fact the wake stream lane will import) and
       // the host capacity with its visible queue. The deployment's facts, carried by every
@@ -1036,9 +1197,13 @@ export class SwarmRuntime {
     if (this.watchController.signal.aborted) return;   // a closed runtime refuses; it does not record
     const definition = swarmCommandDefinition(command);
     const code = typeof error?.code === 'string' && error.code.length > 0 ? error.code : null;
-    if (code === null || definition === null) return;
-    // The registry decides what a mutation is: any capability beyond observing.
-    if (!definition.capabilities.some((capability) => capability !== 'observe')) return;
+    // The knowledge verbs (#318) are not swarm-contract commands, but their refusals land on the
+    // SAME durable lane: a participant's failed seed or search is exactly what its orchestrator
+    // must see. Evidence.search is a read, so — as with every read — only mutations record.
+    if (code === null) return;
+    if (definition === null) {
+      if (!swarmKnowledgeCommand(command) || swarmKnowledgePermission(command) === 'read') return;
+    } else if (!definition.capabilities.some((capability) => capability !== 'observe')) return;
     const swarmId = typeof args?.swarmId === 'string' ? args.swarmId : null;
     const row = {
       swarmId, command,
@@ -1131,6 +1296,190 @@ export class SwarmRuntime {
     });
     return { recorded: true, code: row.code, participantId: row.participantId, command: row.command };
   }
+  /** The participant knowledge verbs (#318). Admission is the swarm's own: a SCOPED participant
+   * (its token names the seat; an external orchestrator uses the verbs' ordinary run.* surface),
+   * the permission the knowledge table names, and the canonical argument shape minus the identity
+   * fields the runtime binds from that seat — the run, and for the elevate lane the task, are
+   * THIS participant's, never caller-chosen. The effect rides the deployment's `knowledge`
+   * authority, so each verb keeps exactly one implementation: the application lane it always had. */
+  async _knowledgeDispatch(command, args, principal, context) {
+    validateSwarmKnowledgeCommand(command, args);
+    const swarm = this._swarm(args.swarmId);
+    const caller = this._permit(swarm, principal, context, swarmKnowledgePermission(command));
+    if (!caller && command !== 'evidence.search') {
+      // evidence.search is a read any authorized reader may run (the orchestrator's CLI and the
+      // MCP tool); every other knowledge verb belongs to a seated participant.
+      refuse('Swarm knowledge verbs belong to a participant of this swarm', 'swarm_membership_required', { command });
+    }
+    if (command === 'evidence.search') return this._evidenceSearch(swarm, args, caller);
+    const method = KNOWLEDGE_METHODS[command];
+    const worker = this._workerFor(caller, this.coordinator.list());
+    const request = { ...args, runId: caller.runId };
+    if (command === 'run.scratchpad.elevate') {
+      if (!worker?.taskId) {
+        refuse('Participant has no current task binding to elevate from', 'swarm_participant_unbound',
+          { participantId: caller.participantId });
+      }
+      request.taskId = worker.taskId;
+    }
+    if (command === 'run.scratchpad.append' || command === 'run.scratchpad.read') {
+      request.scope = typeof args.scope === 'string' && args.scope.length > 0
+        ? args.scope
+        : `worker:${worker?.id ?? caller.participantId}`;
+    }
+    // swarmId is the swarm layer's scope (validated above); the application lanes never see it.
+    delete request.swarmId;
+    return this.knowledge[method](request, principal);
+  }
+
+  /** Retrieval over what was exchanged (#318 deliverable 5, #312): the swarm's seeded facts,
+   * found by free text, participant or knowledge kind, read straight off the coordination ledger
+   * so every row carries its seq/ts and the cursor IS the ledger seq. The page boundary derives
+   * from the same `wire.frame` row the bridge answers under — never a numeric page cap. */
+  _evidenceSearch(swarm, args, caller) {
+    const participantByRun = new Map(Object.values(swarm.participants)
+      .filter((row) => row.runId).map((row) => [row.runId, row.participantId]));
+    const text = typeof args.query === 'string' && args.query.trim().length > 0
+      ? args.query.trim().toLowerCase() : null;
+    const kind = typeof args.kind === 'string' && args.kind.length > 0 ? args.kind : null;
+    const participantId = typeof args.participantId === 'string' && args.participantId.length > 0
+      ? args.participantId : null;
+    const afterSeq = Number.isSafeInteger(args.afterSeq) && args.afterSeq >= 0 ? args.afterSeq : 0;
+    const budget = FRAME_LIMITS['wire.frame'].value;
+    const rows = [];
+    let bytes = 0;
+    let cursor = afterSeq;
+    let truncated = false;
+    for (const event of this.store.eventsView(afterSeq + 1)) {
+      cursor = event.seq;
+      if (event.kind !== 'knowledge.node_added' && event.kind !== 'knowledge.promoted') continue;
+      const payload = event.payload ?? {};
+      const owner = participantByRun.get(payload.runId);
+      if (!owner) continue;
+      if (participantId !== null && owner !== participantId) continue;
+      if (kind !== null && payload.type !== kind) continue;
+      const bodyText = typeof payload.body === 'string' ? payload.body : JSON.stringify(payload.body ?? '');
+      if (text !== null && !bodyText.toLowerCase().includes(text)) continue;
+      const row = { seq: event.seq, ts: event.ts, nodeId: payload.id ?? null, kind: payload.type ?? null,
+        grounding: payload.grounding ?? null, body: payload.body ?? null,
+        participantId: owner, runId: payload.runId };
+      const size = Buffer.byteLength(JSON.stringify(row), 'utf8');
+      if (rows.length > 0 && bytes + size > budget) { truncated = true; break; }
+      rows.push(row);
+      bytes += size;
+    }
+    return { swarmId: swarm.swarmId, query: { text, participantId, kind, afterSeq },
+      rows, cursor, truncated };
+  }
+
+  /** Contracts published so far (#318 deliverable 4): the contributions whose object body carries
+   * the minimal #310 fields — `contract` (what a successor keeps true) or `carriedForward` (the
+   * items handed on). Absence of both means the contribution is ordinary evidence, not a contract. */
+  _publishedContracts(swarm) {
+    return contributionContractRows(swarm);
+  }
+
+  /** Commits landed on the target since the swarm's base (#318 deliverable 4), DERIVED from git
+   * at compose time through the deployment's `situationGit` authority — never a stored count.
+   * With no base recorded the line is omitted; with a base but no authority it says so. */
+  _commitsSinceBase(swarm) {
+    if (!swarm.baseCommit) return null;
+    if (typeof this.situationGit?.commitsSince !== 'function') return { baseCommit: swarm.baseCommit, commits: null };
+    return { baseCommit: swarm.baseCommit, commits: this.situationGit.commitsSince(swarm.baseCommit) };
+  }
+
+  /** The predecessor a `resumeFrom` recruit inherits from (#318 deliverable 3): its last
+   * checkpoint reference (the newest pinned worktree checkpoint, else the newest captured
+   * revision), its published contracts and its carried-forward items — all derived from the
+   * durable record at compose time, so the root's RESUME NOTE becomes unnecessary. */
+  _inheritancePredecessor(swarm, resumeFrom) {
+    const predecessor = Object.hasOwn(swarm.participants, resumeFrom) ? swarm.participants[resumeFrom] : null;
+    if (!predecessor) {
+      refuse('Swarm recruit predecessor is unavailable in this swarm', 'swarm_recruit_predecessor_unavailable',
+        { participantId: resumeFrom });
+    }
+    if (predecessor.status !== 'active') {
+      refuse('Swarm recruit predecessor is not an active participant', 'swarm_recruit_predecessor_unavailable',
+        { participantId: resumeFrom, status: predecessor.status });
+    }
+    const ledger = this.store.eventsView();
+    const binding = predecessor.bindings.at(-1);
+    let checkpoint = null;
+    for (const event of ledger) {
+      if (event.kind !== 'worktree.progress_checkpointed') continue;
+      const pinned = event.payload?.checkpoint?.state === 'pinned' ? event.payload.checkpoint : null;
+      if (!pinned) continue;
+      const attribution = event.payload ?? event;
+      const mine = (binding && (attribution.taskId === binding.taskId || event.worker === binding.workerId))
+        || (binding === null && event.payload?.runId === predecessor.runId);
+      if (mine) checkpoint = { sha: pinned.sha, ref: pinned.ref, seq: event.seq, ts: event.ts };
+    }
+    if (checkpoint === null) {
+      for (const event of ledger) {
+        if (event.kind !== 'swarm.contribution_revision_attached') continue;
+        if (event.payload?.participantId !== predecessor.participantId) continue;
+        checkpoint = { sha: event.payload.sha, ref: event.payload.ref, seq: event.seq, ts: event.ts,
+          contributionId: event.payload.contributionId };
+      }
+    }
+    const contracts = this._publishedContracts(swarm)
+      .filter((row) => row.participantId === predecessor.participantId);
+    return { participantId: predecessor.participantId, lastCheckpoint: checkpoint, contracts };
+  }
+
+  /** The brief one seat is recruited with (#318 deliverables 3 and 4): the recruiter's objective
+   * verbatim, then the swarm situation — the peers and their scopes, the contracts published so
+   * far, the commits landed on the target since the base — and, for a `resumeFrom` successor,
+   * the predecessor's inheritance. The composition is written ONCE onto the join as `brief`, so
+   * the swarm's own record of what a seat was told is the brief every surface renders. */
+  _composeRecruitBrief(swarm, args, caller, predecessor) {
+    const blocks = [args.objective];
+    const situation = [];
+    const peers = Object.values(swarm.participants)
+      .filter((row) => row.status === 'active' && row.participantId !== args.participantId)
+      .map((row) => ({ participantId: row.participantId, role: row.role ?? null, scope: row.scope ?? null,
+        sibling: Boolean(caller && row.parentId && caller.parentId === row.parentId && row.parentId !== null) }));
+    if (peers.length > 0) {
+      situation.push('Peers (the seats already working beside you):');
+      for (const peer of peers) {
+        situation.push(`- ${peer.participantId}${peer.sibling ? ' (sibling)' : ''}${peer.role ? ` — ${peer.role}` : ''}${peer.scope ? ` — scope: ${peer.scope.join(', ')}` : ''}`);
+      }
+    }
+    const contracts = this._publishedContracts(swarm);
+    if (contracts.length > 0) {
+      situation.push('Contracts published so far (keep these true in shared territory):');
+      for (const row of contracts) {
+        situation.push(`- ${row.contributionId} by ${row.participantId}: ${JSON.stringify(row.contract ?? row.carriedForward)}`);
+      }
+    }
+    const commits = this._commitsSinceBase(swarm);
+    if (commits !== null) {
+      if (Array.isArray(commits.commits) && commits.commits.length > 0) {
+        situation.push(`Commits landed on the target since the base (${commits.baseCommit}):`);
+        for (const commit of commits.commits) {
+          situation.push(`- ${commit.sha.slice(0, 12)} ${commit.subject}`);
+        }
+      } else if (commits.commits === null) {
+        situation.push(`Commits since the base (${commits.baseCommit}): unavailable — this deployment exposes no git authority to the swarm.`);
+      }
+    }
+    if (situation.length > 0) blocks.push(['## Swarm situation', ...situation].join('\n'));
+    if (predecessor) {
+      const inheritance = [
+        `## Inheritance from ${predecessor.participantId}`,
+        predecessor.lastCheckpoint
+          ? `- Last checkpoint: ${predecessor.lastCheckpoint.sha} (retained ref ${predecessor.lastCheckpoint.ref})`
+          : '- Last checkpoint: none was recorded for this predecessor.',
+        ...predecessor.contracts.flatMap((row) => [
+          `- Contract ${row.contributionId}: ${JSON.stringify(row.contract ?? null)}`,
+          ...(Array.isArray(row.carriedForward)
+            ? row.carriedForward.map((item) => `  carries forward: ${JSON.stringify(item)}`) : []),
+        ]),
+      ];
+      blocks.push(inheritance.join('\n'));
+    }
+    return blocks.join('\n\n');
+  }
 
   async _dispatch(command, args, principal, context = null) {
     if (this.watchController.signal.aborted) refuse('Swarm runtime is closed', 'swarm_runtime_closed');
@@ -1140,6 +1489,12 @@ export class SwarmRuntime {
     // submit it, and the report is validated before anything is recorded.
     if (command === SWARM_BRIDGE_REFUSAL_COMMAND) {
       return this._recordBridgeRefusal(args, principal);
+    }
+    // The participant knowledge verbs (#318): swarm-admitted, participant-scoped, dispatched into
+    // the deployment's knowledge authority. Validated and permitted inside the dispatch itself —
+    // BEFORE the swarm contract's closed command set, which these canonical verbs are not in.
+    if (swarmKnowledgeCommand(command)) {
+      return this._knowledgeDispatch(command, args, principal, context);
     }
     validateSwarmCommand(command, args);
     await this.authorize(command, args, principal);
@@ -1153,7 +1508,11 @@ export class SwarmRuntime {
         refuse('Recruit and organize within your granted swarm', 'swarm_membership_required');
       }
       const swarmId = args.swarmId ?? `swarm-${hash([principal.principalId, args.idempotencyKey]).slice(0, 32)}`;
-      const recorded = this._write('swarm.created', { swarmId, purpose: args.purpose }, principal,
+      // The commit this swarm starts from (#318): the base the situation projection derives
+      // "commits landed on the target since the base" FROM — a reference, never a count.
+      const baseCommit = typeof this.situationGit?.head === 'function' ? this.situationGit.head() : null;
+      const recorded = this._write('swarm.created', { swarmId, purpose: args.purpose,
+        ...(typeof baseCommit === 'string' && baseCommit.length > 0 ? { baseCommit } : {}) }, principal,
         this._operationKey(command, { ...args, swarmId }, principal));
       this._recordOperationCompleted(command, args, principal, context);
       return this._mutationResult(command, { ...args, swarmId }, [recorded], principal, context, { swarmId });
@@ -1295,6 +1654,19 @@ export class SwarmRuntime {
         // ACTIVE participant's scope across the repository's swarms, BEFORE the join writes the
         // new seat, so the row never names the recruit against itself.
         const scopeOverlap = recruitedScope === null ? [] : this._scopeOverlap(recruitedScope);
+        // A `resumeFrom` successor inherits (#318 deliverable 3): the predecessor is judged
+        // BEFORE any membership is written, and its last checkpoint, published contracts and
+        // carried-forward items compose into this seat's brief automatically — the root never
+        // types a RESUME NOTE again.
+        const predecessor = args.resumeFrom !== undefined
+          ? this._inheritancePredecessor(this._swarm(args.swarmId), args.resumeFrom)
+          : null;
+        // The brief is composed for EVERY seat (#318 deliverable 4): the recruiter's objective,
+        // then the swarm situation — peers and their scopes, contracts published so far, the
+        // commits landed on the target since the base. Written onto the join as `brief`, so the
+        // swarm's own record of what this ONE seat was told is what every surface renders.
+        const currentSwarm = this._swarm(args.swarmId);
+        const brief = this._composeRecruitBrief(currentSwarm, args, caller, predecessor);
         // #297: THE HOST ADMITS THIS SEAT BEFORE ANY MEMBERSHIP OR DISPATCH IS WRITTEN. A seat
         // whose work would be starved is not started: while the derived host budget has no room,
         // the request waits IN ORDER as a visible queue entry and its typed queued row is
@@ -1339,6 +1711,8 @@ export class SwarmRuntime {
           ...(recruitedRoute ? { route: recruitedRoute } : {}),
           ...(recruitedScope ? { scope: recruitedScope } : {}),
           ...(workspace ? { workspaceId: workspace.workspaceId } : {}),
+          ...(predecessor ? { resumeFrom: args.resumeFrom } : {}),
+          brief,
         }, principal, resuming
           ? `swarm-participant-resume:${this._operationKey(command, args, principal)}`
           : `swarm-participant:${hash([args.swarmId, args.participantId])}`)];
@@ -1348,7 +1722,7 @@ export class SwarmRuntime {
         // recruit of the same id RESUMES instead of hitting an eternal exists-refusal. The
         // caller still sees the original refusal, unchanged.
         try {
-          await this.startRun({ runId, objective: args.objective, options: args.options ?? {},
+          await this.startRun({ runId, objective: brief, options: args.options ?? {},
             swarmId: args.swarmId, participantId: args.participantId, sharedContext,
             ...(workspace ? { workspace } : {}) }, principal, context);
         } catch (error) {

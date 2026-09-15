@@ -2,15 +2,15 @@
   "schemaVersion": 1,
   "generatedBy": "impl/scripts/surface-conformance.mjs#buildSurfaceInventoryArtifact",
   "counts": {
-    "canonicalOperations": 87,
-    "cliWebCommands": 50,
+    "canonicalOperations": 88,
+    "cliWebCommands": 51,
     "parserLifecycleActions": 29,
-    "mcpApplicationTools": 50,
+    "mcpApplicationTools": 51,
     "mcpAdvancedTools": 19,
-    "mcpCombinedTools": 134,
-    "mcpDispatchTools": 87,
-    "webBusCommands": 41,
-    "applicationCommandDefinitions": 36
+    "mcpCombinedTools": 136,
+    "mcpDispatchTools": 89,
+    "webBusCommands": 42,
+    "applicationCommandDefinitions": 37
   },
   "commandKeys": [
     "swarm.list",
@@ -38,6 +38,7 @@
     "run.wait",
     "run.answer",
     "run.feedback",
+    "evidence.search",
     "run.stop",
     "run.evidence",
     "run.adopt",
@@ -53,6 +54,7 @@
   "profiles": {
     "cli.ordinary": [
       "application.help",
+      "evidence.search",
       "run.answer",
       "run.approve",
       "run.attention.watch",
@@ -105,6 +107,7 @@
       "baton_application_help",
       "baton_decision_answer",
       "baton_deployment_doctor",
+      "baton_evidence_search",
       "baton_help",
       "baton_knowledge_promote",
       "baton_knowledge_settlement_lease",
@@ -187,6 +190,7 @@
       "baton_decision_answer",
       "baton_decision_list",
       "baton_deployment_doctor",
+      "baton_evidence_search",
       "baton_help",
       "baton_knowledge_horizon",
       "baton_knowledge_promote",
@@ -240,6 +244,7 @@
       "baton_waves_stop",
       "baton_workstream_notify",
       "baton_workstream_stop",
+      "evidence.search",
       "fleet_capabilities",
       "fleet_capability_invoke",
       "fleet_drain",
@@ -312,6 +317,7 @@
     ],
     "web.bus": [
       "application.help",
+      "evidence.search",
       "run.act",
       "run.adopt",
       "run.answer",

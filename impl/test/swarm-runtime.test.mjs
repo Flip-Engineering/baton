@@ -136,8 +136,9 @@ test('inspect gives each participant usable payload examples only for their perm
   await f.recruit('builder');
   const caller = principal('w-1');
   const view = await f.call('view', {}, caller);
-  assert.deepEqual(Object.keys(view.updatePayloads), view.updates.map((row) => row.event));
-  assert.deepEqual(view.updates, [
+  assert.deepEqual(Object.keys(view.updatePayloads),
+    view.updates.filter((row) => row.event !== undefined).map((row) => row.event));
+  assert.deepEqual(view.updates.filter((row) => row.event !== undefined), [
     { event: 'swarm.context_updated', permission: 'communicate' },
     { event: 'swarm.contribution_recorded', permission: 'contribute' },
     { event: 'swarm.participant_left', permission: 'read' },

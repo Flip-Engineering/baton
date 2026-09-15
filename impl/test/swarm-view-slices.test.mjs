@@ -174,6 +174,15 @@ test('updates names the kinds this caller may send with the permission that admi
     { event: 'swarm.context_updated', permission: 'communicate' },
     { event: 'swarm.contribution_recorded', permission: 'contribute' },
     { event: 'swarm.participant_left', permission: 'read' },
+    // The knowledge verbs (#318), in the participant table's order, each with its admitting
+    // permission — read verbs for a reader, write verbs only where contribute is granted.
+    { command: 'run.knowledge.seed', permission: 'contribute' },
+    { command: 'run.board.post', permission: 'contribute' },
+    { command: 'run.board.read', permission: 'read' },
+    { command: 'run.scratchpad.append', permission: 'contribute' },
+    { command: 'run.scratchpad.read', permission: 'read' },
+    { command: 'run.scratchpad.elevate', permission: 'contribute' },
+    { command: 'evidence.search', permission: 'read' },
   ]);
   assert.equal(advertised.includes('swarm.group_updated'), false, 'organizing is not advertised to a builder');
   assert.equal(advertised.includes('swarm.closed'), false);
@@ -190,8 +199,13 @@ test('updates names the kinds this caller may send with the permission that admi
   // A read-only seat may send its own leave and nothing else; the view says so.
   await f.call('recruit', { participantId: 'reader', objective: 'Watch only', permissions: ['read'] }, f.lead);
   const readOnly = await f.call('view', {}, f.asParticipant('reader'));
-  assert.deepEqual(readOnly.updates, [{ event: 'swarm.participant_left', permission: 'read' }],
-    'a read-only participant is told the one update it may send, with its permission');
+  assert.deepEqual(readOnly.updates, [
+    { event: 'swarm.participant_left', permission: 'read' },
+    { command: 'run.board.read', permission: 'read' },
+    { command: 'run.scratchpad.read', permission: 'read' },
+    { command: 'evidence.search', permission: 'read' },
+  ],
+    'a read-only participant is told the one update and the read verbs it may send, with their permissions');
   await assert.rejects(f.call('update', { event: 'swarm.context_updated', payload: { key: 'k', body: 'b' } }, f.asParticipant('reader')),
     (error) => error.code === 'swarm_permission_required' && error.detail.permission === 'communicate',
     'and the permission the view names is the one dispatch enforces');
@@ -209,8 +223,12 @@ test('a participant-scoped view carries its own brief and no other, by roster in
   assert.equal(alphaScope.participants[0].role, 'Build A');
   assert.equal(alphaScope.participants[1].role, null, 'another participant\'s brief is never in the view');
   assert.equal(alphaScope.participants[1].briefWithheld, true, 'withheld is said, not silently dropped');
-  assert.equal(JSON.stringify(alphaScope).includes('Build B'), false, 'the sibling outside the subtree is not here at all');
-  assert.equal(JSON.stringify(alphaScope).includes('Coordinate the build'), false, 'nor the recruiter\'s brief');
+  // Alpha's OWN brief legitimately names the situation it was recruited with (its peers' roles,
+  // issue #318 deliverable 4); another seat's brief row, by contrast, is withheld whole.
+  assert.equal(alphaScope.participants.some((row) => row.participantId === 'lead'), false,
+    'the recruiter outside the subtree is not here at all');
+  assert.equal(alphaScope.participants.every((row) => row.participantId === 'alpha' || row.brief === null), true,
+    'no carried row keeps another seat\u2019s composed brief');
 
   // Records by roster intersection: the group alpha is on is in scope (with its real roster), the
   // group it is not on is not; couplings follow the same rule (already pinned elsewhere).

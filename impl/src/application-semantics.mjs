@@ -1264,6 +1264,23 @@ const wakeFilterTokens = {
 };
 
 const CANONICAL_OPERATION_SPECS = [
+  // Issue #318 (retrieval, #312): the swarm's evidence search. One canonical operation, every
+  // surface deriving its name from THIS row (`baton evidence search` / baton_evidence_search);
+  // the dispatch lives in SwarmRuntime, reads the coordination ledger directly, and derives its
+  // page boundary from the wire.frame row — the cursor is the ledger seq, never a page count.
+  ['evidence.search', {
+    profile: 'ordinary', surfaces: ['embedded', 'cli', 'mcp', 'web'], effect: 'swarm_read',
+    capabilities: ['observe'], outputView: 'index', helpTopic: 'run',
+    example: 'baton evidence search SWARM_ID --query TEXT',
+    inputSchema: objectSchema({
+      swarmId: id,
+      query: { type: 'string', minLength: 1, maxLength: 4096 },
+      participantId: id,
+      kind: id,
+      afterSeq: { type: 'integer', minimum: 0 },
+    }, ['swarmId']),
+    authority: 'SwarmRuntime checks current participant membership and read grants.',
+  }],
   ...SWARM_COMMAND_ROWS.map((row) => [row.command, {
     example: SWARM_OPERATION_EXAMPLES[row.command],
     inputSchema: SWARM_COMMAND_SCHEMAS[row.command],

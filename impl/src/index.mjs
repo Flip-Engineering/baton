@@ -1802,6 +1802,9 @@ export function createDriver(opts) {
     });
     return operation;
   };
-  return { coordinator, story, router, log, coordination, advisoryFeeds, providerPoller, providerProcessor, sessionRecovery, worktreeCapacity, hostCapacity: opts.hostCapacity ?? null, ready, close, closeAsync, drainAndClose, standingLaws };
+  return { coordinator, story, router, log, coordination, advisoryFeeds, providerPoller, providerProcessor, sessionRecovery, worktreeCapacity, hostCapacity: opts.hostCapacity ?? null, ready, close, closeAsync, drainAndClose, standingLaws,
+    // The deployment checkout root: the swarm situation projection's git authority (#318) derives
+    // the swarm's base commit and the rows landed since from it.
+    repoRoot: opts.repoRoot };
   } catch (error) { if (writerLease) coordination.releaseWriterLease(); throw error; }
 }

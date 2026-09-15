@@ -23,7 +23,10 @@ const MCP_APPLICATION_ENTRIES = Object.entries(APPLICATION_COMMAND_DEFINITIONS)
   // The swarm family (docs/39) has no retained legacy transport: its tools are the ordinary
   // baton_swarm_* rows (swarmApplicationToolDefinitions) plus their canonical dot twins, so no
   // fleet_swarm_* twin is minted here — that spelling would exist only as an unadvertised alias.
-  .filter(([name, definition]) => definition.mcp && !name.startsWith('swarm.'))
+  .filter(([name, definition]) => definition.mcp && !name.startsWith('swarm.')
+    // evidence.search (#318) rides the ordinary baton_* transport like the swarm family — the
+    // fleet_* twin would exist only as an unadvertised alias.
+    && name !== 'evidence.search')
   .flatMap(([name, definition]) => {
     const { canonical, mcp } = canonicalAndTransportNames(name);
     return [[mcp, name, definition], [canonical, name, definition]];
@@ -57,6 +60,8 @@ export const APPLICATION_TOOL = Object.freeze(Object.fromEntries(
     ['baton_run_act', 'run.act'],
     ['baton_run_stop', 'run.stop'],
     ['baton_waves_attach', 'waves.attach'],
+    ['baton_evidence_search', 'evidence.search'],
+    ['evidence.search', 'evidence.search'],
     ...CANONICAL_ORDINARY_SIBLINGS.map((sibling) => [sibling.tool, sibling.command]),
     ...SWARM_MCP_TOOL_DEFINITIONS.flatMap((tool) => [[tool.name, tool.command], [tool.command, tool.command]]),
   ].map(([tool, name]) => [tool, name]),
@@ -1027,6 +1032,24 @@ export function swarmApplicationToolDefinitions(definitions = APPLICATION_COMMAN
 }
 
 const SWARM_APPLICATION_TOOL_DEFINITIONS = Object.freeze(swarmApplicationToolDefinitions());
+// Issue #318 (retrieval, #312): the swarm evidence search as an ordinary tool. ONE schema — the
+// canonical operation's own inputSchema — so the advertised wire shape can never drift from the
+// dispatch authority's validator; the canonical dot twin derives below like every other tool.
+const EVIDENCE_SEARCH_TOOL_DEFINITIONS = Object.freeze([Object.freeze((() => {
+  const operation = APPLICATION_SEMANTIC_REGISTRY.canonicalOperations
+    .find((row) => row.key === 'evidence.search');
+  return {
+    name: deriveSurfaceNames('evidence.search').mcp,
+    _meta: Object.freeze({ 'baton/registryDigest': APPLICATION_SEMANTIC_REGISTRY.digest }),
+    execution: Object.freeze({ taskSupport: 'forbidden' }),
+    description: 'Search the facts a swarm\u2019s participants exchanged — by free text, participant or knowledge kind — with a cursor derived from the coordination ledger seq (never a page cap).',
+    inputSchema: schema({ ...repo, ...operation.inputSchema.properties },
+      ['repoId', ...operation.inputSchema.required]),
+    annotations: Object.freeze({
+      readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false,
+    }),
+  };
+})())]);
 
 // 2026-09-14 audit (U-F7): an alias pair carries DISTINCT descriptions, so a model can tell the
 // canonical spelling from the retained one instead of seeing two identically-described tools. The
@@ -1053,6 +1076,7 @@ function withSpellingNote(tool) {
 const ORDINARY_APPLICATION_TOOL_DEFINITIONS = Object.freeze([
   ...LEGACY_ORDINARY_APPLICATION_TOOL_DEFINITIONS.map(withSpellingNote),
   ...SWARM_APPLICATION_TOOL_DEFINITIONS,
+  ...EVIDENCE_SEARCH_TOOL_DEFINITIONS,
   ...WAKE_TOOL_DEFINITIONS,
   ...CANONICAL_ORDINARY_SIBLINGS.map((sibling) => {
     const base = LEGACY_ORDINARY_APPLICATION_TOOL_DEFINITIONS.find((tool) => tool.name === sibling.legacyTool);

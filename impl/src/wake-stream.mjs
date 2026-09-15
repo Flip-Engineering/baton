@@ -106,6 +106,12 @@ export const WAKE_CLASS_TABLE = Object.freeze([
     subject: { field: 'contributionId', kind: 'contribution', fallback: { field: 'swarmId', kind: 'swarm' } },
   }),
   wakeRow({
+    wakeClass: 'knowledge', scope: 'swarm', terminal: false, next: null,
+    summary: 'a participant seeded a fact into the swarm\u2019s shared evidence — find it with evidence search',
+    rows: [ledgerKind('knowledge.node_added')],
+    subject: { field: 'id', kind: 'knowledge', fallback: { field: 'runId', kind: 'run' } },
+  }),
+  wakeRow({
     wakeClass: 'closed', scope: 'swarm', terminal: true, next: 'baton swarm view {swarmId}',
     summary: 'a swarm was closed; its participants keep running until each is stopped explicitly',
     rows: [ledgerKind('swarm.closed')],
@@ -254,7 +260,6 @@ export function wakeClassHelpLines() {
 // ── filters ─────────────────────────────────────────────────────────────────────────────────────
 
 const SAFE_FILTER_TOKEN = /^[A-Za-z0-9._:-]{1,256}$/u;
-
 function filterList(value, label) {
   // parseWakeFilter must be idempotent: parsing its own output (an already-parsed filter, as
   // client.wakes() → openWakeStream() does — the bridge and the CLI each parse once) has to
@@ -716,6 +721,8 @@ export function openWakeStream({
       });
       response.on('end', () => finish({ status: 'ended' }));
       response.on('error', (error) => {
+        // A caller's own stop (close() aborts the controller) is not a transport failure.
+        if (controller.signal.aborted) return finish({ status: 'stopped' });
         try { onError?.(error); } catch { /* reported */ }
         finish({ status: 'error', error });
       });

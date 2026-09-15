@@ -781,14 +781,14 @@ test('A3-2 §4: baton_waves_list lands in the pinned MCP enumeration — 34 → 
   const { server } = await mcpFixture(t, host);
   const listed = await server.handle({ jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} });
   const names = listed.result.tools.map((tool) => tool.name);
-  assert.equal(names.length, 50,
-    'stage: mcp-waves-list-row-missing — the pinned MCP enumeration is 35 post-#114 (baton_waves_run); §4 inserts baton_waves_list (34 → 35), #170 inserts baton_waves_compile (35 → 36), #158 inserts baton_run_scratchpad_append (36 → 37), then docs/39 adds the ten fleet_swarm_* tools (37 → 47), then #294 adds baton_wakes_subscribe/unsubscribe/since (47 → 50)');
+  assert.equal(names.length, 51,
+    'stage: mcp-waves-list-row-missing — the pinned MCP enumeration is 35 post-#114 (baton_waves_run); §4 inserts baton_waves_list (34 → 35), #170 inserts baton_waves_compile (35 → 36), #158 inserts baton_run_scratchpad_append (36 → 37), then docs/39 adds the ten fleet_swarm_* tools (37 → 47), then #294 adds baton_wakes_subscribe/unsubscribe/since (47 → 50), then #318 adds baton_evidence_search (50 → 51)');
   assert.equal(names[14], 'baton_waves_stop', 'baton_waves_stop stays at 0-based position 14');
   assert.equal(names[15], 'baton_waves_list',
     'baton_waves_list sits at 0-based position 15, immediately after baton_waves_stop — the §4 pinned insertion point');
   assert.equal(names[16], 'baton_waves_run', 'baton_waves_run (#114) follows at 0-based position 16 — the waves family stays contiguous');
   const sorted = mcpApplicationToolNames();
-  assert.equal(sorted.length, 50, 'the sorted ordinary surface grows to 50 tools (baton_waves_compile #170 + baton_run_scratchpad_append #158 + ten fleet_swarm_* docs/39 + three #294 baton_wakes_* tools)');
+  assert.equal(sorted.length, 51, 'the sorted ordinary surface grows to 51 tools (baton_waves_compile #170 + baton_run_scratchpad_append #158 + ten fleet_swarm_* docs/39 + three #294 baton_wakes_* tools + baton_evidence_search #318)');
   assert.ok(sorted.includes('baton_waves_list'), 'the sorted ordinary surface carries baton_waves_list');
 });
 

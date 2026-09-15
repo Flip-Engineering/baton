@@ -202,6 +202,7 @@ that owns the runs, never over a borrowed bridge session.
 | `application.help` | `ordinary` | `baton_application_help` | idempotent |
 | `run.answer` | `ordinary` | `baton_decision_answer` | idempotent |
 | `deployment.doctor` | `ordinary` | `baton_deployment_doctor` | idempotent |
+| `evidence.search` | `ordinary` | `baton_evidence_search` | idempotent |
 | `application.help` | `ordinary` | `baton_help` | idempotent |
 | `knowledge.promote` | `kernel` | `baton_knowledge_promote` | idempotent |
 | `knowledge.settlement_lease` | `kernel` | `baton_knowledge_settlement_lease` | idempotent |

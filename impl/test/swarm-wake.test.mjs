@@ -1,17 +1,35 @@
-// Baton wakes the orchestrator (2026-09-13): `baton swarm watch --follow` blocks on the runtime's
-// own swarm.watch and emits one summary line per matched event, so an orchestrator — a person, a
-// harness session, a script — never polls the swarm and never reads its state files.
+// Baton wakes the orchestrator (2026-09-13; the stream consumer landed with #294):
+// `baton swarm watch --follow` rides the resident's deployment-scope wake stream (`GET /v1/wakes`,
+// impl/src/wake-stream.mjs) with THIS swarm pinned as a filter, prints one frame per matched event,
+// and stops when the swarm closes — so an orchestrator never polls and never reads state files.
 import assert from 'node:assert/strict';
 import { spawn, execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import test from 'node:test';
 import { MockAdapter, openBaton } from '../src/index.mjs';
-import { followSwarm, parseBatonCli, swarmWakeSummary } from '../src/application-cli.mjs';
+import { followSwarm, followWakes, parseBatonCli, swarmWakeSummary } from '../src/application-cli.mjs';
+import { openWakeStream } from '../src/wake-stream.mjs';
+import { startWakeResident, wakeFrame } from './wake-resident-double.mjs';
 
 const ROUTE = Object.freeze({ harness: 'codex', model: 'gpt-5.6-sol', effort: 'high' });
 const BATON = new URL('../scripts/baton.mjs', import.meta.url).pathname;
-
+const TOKEN = 'wake-consumer-token';
+const BASE_URL = 'https://baton.local';
+const SWARM_ID = 'swarm-wake-child';
+const CARD = Object.freeze({
+  schemaVersion: 1, repoId: 'repo-wake-child',
+  commands: Object.freeze([]),
+  readiness: Object.freeze({ schemaVersion: 1, routes: Object.freeze([]) }),
+});
+const SESSION = Object.freeze({
+  schemaVersion: 1,
+  identity: Object.freeze({
+    userId: 'operator', sessionId: 'session-wake-child',
+    capabilities: Object.freeze(['observe']), repoIds: Object.freeze(['repo-wake-child']),
+  }),
+  expiresAt: new Date(Date.now() + 3_600_000).toISOString(),
+});
 function repository(t) {
   const root = mkdtempSync('/tmp/bt-wake-repo-');
   execFileSync('git', ['init', '-q'], { cwd: root });
@@ -64,7 +82,12 @@ test('the CLI parses swarm watch --follow into the deployment wake stream, pinne
   assert.equal(parsed.kind, 'wake_watch');
   assert.deepEqual(parsed.swarms, ['swarm-1']);
   assert.equal(parsed.since, 250);
-  assert.equal(parseBatonCli(['swarm', 'watch', 'swarm-1']).kind, 'command');
+  assert.equal(parsed.stopOnClosedWake, true, 'the swarm verb stops when its swarm closes');
+  assert.equal(parseBatonCli(['swarm', 'watch', 'swarm-1']).kind, 'command',
+    'without --follow the verb is one bounded swarm.watch call');
+  assert.throws(() => parseBatonCli(['swarm', 'watch', 'swarm-1', '--follow', '--after-seq', '5']),
+    (error) => String(error.message).includes('--since'),
+    'the stream resumes from the wake cursor, never the old --after-seq spelling');
 });
 
 test('followSwarm emits one summary per matched event and returns when the swarm is closed and nothing is alive', async () => {
@@ -126,4 +149,37 @@ test('a real resident wakes a real `baton swarm watch --follow` child on guidanc
   assert.ok(lines.some((line) => line.wakeClass === 'contribution_recorded'));
   const closed = await owner.close();
   assert.equal(closed.state, 'closed');
+
+test('followWakes delivers one frame per matched event over the resident stream and stops when the pinned swarm closes', { timeout: 30_000 }, async (t) => {
+  const resident = await startWakeResident({
+    token: TOKEN,
+    frames: [
+      wakeFrame({ seq: 5, wakeClass: 'guidance_delivered', swarmId: SWARM_ID, participantId: 'worker' }),
+      wakeFrame({ seq: 9, wakeClass: 'contribution_recorded', swarmId: SWARM_ID }),
+      wakeFrame({ seq: 12, wakeClass: 'closed', swarmId: SWARM_ID }),
+    ],
+    card: CARD, session: SESSION,
+  });
+  t.after(() => resident.close());
+  // The production consumer path: followWakes over the production stream client, with the swarm
+  // pinned and the close ending the attachment (stopOnClosedWake), exactly as the CLI builds it.
+  const client = {
+    wakes: (opts) => openWakeStream({
+      token: TOKEN, baseUrl: BASE_URL, socketPath: resident.socketPath, ...opts,
+    }),
+  };
+  const pages = [];
+  const last = await followWakes(
+    { kinds: null, swarms: [SWARM_ID], since: 0, follow: true, stopOnClosedWake: true },
+    client,
+    { onFollowPage: async (page) => { pages.push(page); } },
+  );
+  assert.deepEqual(pages.map((page) => [page.kind, page.wakeClass, page.swarmId]), [
+    ['baton.wake', 'guidance_delivered', SWARM_ID],
+    ['baton.wake', 'contribution_recorded', SWARM_ID],
+    ['baton.wake', 'closed', SWARM_ID],
+  ]);
+  assert.equal(last.frames, 3);
+  assert.deepEqual(last.closed, { swarmId: SWARM_ID, seq: 12 });
+});
 });

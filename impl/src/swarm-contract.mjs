@@ -59,7 +59,7 @@ export const SWARM_VIEW_DEFAULT_PROJECTION = 'full';
 // (the kinds this caller may send, with the permission admitting each) rides the frame.
 const SWARM_VIEW_SLICED_FIELDS = Object.freeze([
   'participants', 'work', 'assignments', 'contributions', 'reviews', 'groups', 'couplings', 'context',
-  'attention', 'updatePayloads',
+  'knowledge', 'attention', 'updatePayloads',
 ]);
 // How a projection narrows a participant row it carries: `whole` is the row the view built, and a
 // named slice keeps the seat's identity plus the one field the projection is about.
@@ -81,6 +81,9 @@ export const SWARM_VIEW_PROJECTIONS = Object.freeze({
   attention: Object.freeze({ rows: Object.freeze(['attention']), participant: null }),
   guidance: Object.freeze({ rows: Object.freeze(['participants']), participant: 'guidance' }),
   workspace: Object.freeze({ rows: Object.freeze(['participants']), participant: 'workspace' }),
+  // The knowledge rows the swarm's participants seeded (`run.knowledge.seed` through the bridge):
+  // the slice a participant reads to find a peer's fact without the root copying anything (#318).
+  knowledge: Object.freeze({ rows: Object.freeze(['knowledge']), participant: null }),
 });
 export const SWARM_VIEW_PROJECTION_NAMES = Object.freeze(Object.keys(SWARM_VIEW_PROJECTIONS));
 
@@ -121,6 +124,65 @@ export function projectSwarmView(view, projection = SWARM_VIEW_DEFAULT_PROJECTIO
 // caller can fabricate a refusal row about a participant.
 export const SWARM_BRIDGE_TRANSPORT = 'http-loopback';
 export const SWARM_BRIDGE_REFUSAL_COMMAND = 'swarm.bridge_refusal';
+// ── the participant knowledge verbs (issue #318) ─────────────────────────────────────────────────
+// The knowledge layer is reachable from the loop a real orchestrator runs: each verb below is
+// callable from a participant's bridge, and the ONE situation it serves is written HERE — the same
+// rows the swarm view's `updates` block names with their admitting permission, the bridge's help
+// renders, and the recruit brief teaches. A knowledge feature that has no participant situation is
+// NOT in this table and is retired from the participant surface (docs/39 §The knowledge verbs
+// reach the loop records the reason per retired verb). These are ADMISSION rows only: the domain
+// work rides each verb's canonical operation (application-semantics.mjs) and its store lane, so
+// there is exactly one implementation per verb and one spelling per name.
+export const SWARM_KNOWLEDGE_COMMANDS = Object.freeze({
+  // The swarm's exchange mechanism (#318 deliverable 2): a participant pins a durable, typed,
+  // attributed fact any peer can retrieve — the root never copies it.
+  'run.knowledge.seed': Object.freeze({
+    permission: 'contribute', identityFields: Object.freeze(['runId']),
+    situation: 'pin a durable fact — typed, grounded, evidence-linked — that your peers must be able to find',
+  }),
+  // Run-scoped boards keep the binding law: a participant posts to and reads the board bound to
+  // its OWN run, never another seat's.
+  'run.board.post': Object.freeze({
+    permission: 'contribute', identityFields: Object.freeze(['runId']),
+    situation: 'keep one runnable item on your own run\u2019s board',
+  }),
+  'run.board.read': Object.freeze({
+    permission: 'read', identityFields: Object.freeze(['runId']),
+    situation: 'read the board bound to your own run',
+  }),
+  // The scratchpad pair (#33 accessor family): working notes, shared-scope reads, and the
+  // elevation of one\u2019s own entries to candidate Findings.
+  'run.scratchpad.append': Object.freeze({
+    permission: 'contribute', identityFields: Object.freeze(['runId']),
+    situation: 'note working state in your scratchpad — the shared scope is visible to your peers',
+  }),
+  'run.scratchpad.read': Object.freeze({
+    permission: 'read', identityFields: Object.freeze(['runId']),
+    situation: 'read your scratchpad or the run-shared scope back',
+  }),
+  'run.scratchpad.elevate': Object.freeze({
+    permission: 'contribute', identityFields: Object.freeze(['runId', 'taskId']),
+    situation: 'elevate your own scratchpad entries to candidate Findings',
+  }),
+  // Retrieval over what was exchanged (#318 deliverable 5): find a fact by text, participant or
+  // kind across the swarm, cursor derived from the ledger seq.
+  'evidence.search': Object.freeze({
+    permission: 'read', identityFields: Object.freeze([]),
+    situation: 'find a fact by text, participant or kind across the swarm',
+  }),
+});
+export const SWARM_KNOWLEDGE_COMMAND_NAMES = Object.freeze(Object.keys(SWARM_KNOWLEDGE_COMMANDS));
+
+/** The knowledge row for one command name, or null. */
+export function swarmKnowledgeCommand(name) {
+  return Object.hasOwn(SWARM_KNOWLEDGE_COMMANDS, name) ? SWARM_KNOWLEDGE_COMMANDS[name] : null;
+}
+
+/** The permission one knowledge command requires of its caller. Read verbs need read authority;
+ * every write verb is a contribution — the same grant that admits publishing a finding. */
+export function swarmKnowledgePermission(name) {
+  return SWARM_KNOWLEDGE_COMMANDS[name]?.permission ?? null;
+}
 
 // ── the registry rows ────────────────────────────────────────────────────────────────────────────
 // The exact shape of an APPLICATION_COMMAND_DEFINITIONS entry: declared arg names, capability
@@ -169,7 +231,7 @@ export const SWARM_COMMAND_DEFINITIONS = Object.freeze({
   // workspace id, and the two axes stay independent — adoption is not a native-session resume.
   'swarm.recruit': Object.freeze({
     args: Object.freeze(['swarmId', 'participantId', 'objective', 'options', 'permissions',
-      'shareWorkspaceWith', 'idempotencyKey', 'view']),
+      'shareWorkspaceWith', 'resumeFrom', 'idempotencyKey', 'view']),
     capabilities: Object.freeze(['control', 'observe']),
     web: true, mcp: true, mcpStateful: true, reconcilable: true,
   }),
@@ -368,6 +430,7 @@ const SWARM_FIELD_RULES = Object.freeze({
     check: (value) => value === true || value === false || value === 'true' || value === 'false',
     expectation: 'true to carry the whole view beside the receipt',
   }),
+  resumeFrom: Object.freeze({ check: isId, expectation: 'a participant identity' }),
 });
 
 // Required/optional per command. `payload` stays optional: an event kind that carries no body
@@ -393,7 +456,7 @@ const SWARM_COMMAND_ARGUMENTS = Object.freeze({
   }),
   'swarm.recruit': Object.freeze({
     required: Object.freeze(['swarmId', 'participantId', 'objective', 'idempotencyKey']),
-    optional: Object.freeze(['options', 'permissions', 'shareWorkspaceWith', 'view']),
+    optional: Object.freeze(['options', 'permissions', 'shareWorkspaceWith', 'resumeFrom', 'view']),
   }),
   'swarm.guide': Object.freeze({
     required: Object.freeze(['swarmId', 'participantId', 'message', 'idempotencyKey']),
@@ -596,12 +659,13 @@ export const SWARM_COMMAND_ROWS = Object.freeze([
   }),
   Object.freeze({
     command: 'swarm.recruit',
-    description: 'Recruit one participant into the swarm; the runtime resolves and starts the native Run under the requested selection. shareWorkspaceWith names an existing participant whose live checkout the new participant works in. Answers with a mutation receipt (event, changed rows, next) plus scopeOverlap — an advisory row per ACTIVE participant whose declared scope shares paths with the requested scope, across every swarm in the repository; view: true adds the whole refreshed view.',
+    description: 'Recruit one participant into the swarm; the runtime resolves and starts the native Run under the requested selection. shareWorkspaceWith names an existing participant whose live checkout the new participant works in. resumeFrom names a predecessor whose last checkpoint, published contracts and carried-forward items the new seat’s brief inherits (#318). Answers with a mutation receipt (event, changed rows, next) plus scopeOverlap — an advisory row per ACTIVE participant whose declared scope shares paths with the requested scope, across every swarm in the repository; view: true adds the whole refreshed view.',
     readOnlyHint: false, destructiveHint: false,
     properties: Object.freeze({
       swarmId: ID_SCHEMA, participantId: ID_SCHEMA, objective: TEXT_SCHEMA, view: VIEW_SCHEMA,
       options: JSON_OBJECT_SCHEMA, permissions: Object.freeze({ type: 'array', items: Object.freeze({ type: 'string', minLength: 1 }) }),
       shareWorkspaceWith: ID_SCHEMA,
+      resumeFrom: ID_SCHEMA,
     }),
     required: Object.freeze(['swarmId', 'participantId', 'objective']),
   }),

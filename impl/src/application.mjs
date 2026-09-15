@@ -1,7 +1,9 @@
 import { createHash, randomUUID } from 'node:crypto';
+import { execFileSync } from 'node:child_process';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { SwarmRuntime } from './swarm-runtime.mjs';
-import { SWARM_COMMAND_DEFINITIONS, SWARM_CLI_HELP, validateSwarmCommand } from './swarm-surface.mjs';
+import { SWARM_COMMAND_DEFINITIONS, SWARM_CLI_HELP, validateSwarmCommand,
+  SWARM_KNOWLEDGE_COMMANDS } from './swarm-surface.mjs';
 import { wrapProse } from './messages.mjs';
 import { FRAME_LIMITS, FRAME_LIMITS_VERSION, FRAME_LIMITS_DIGEST, composeFrameLimitRefusal, frameLimitRefusalPath, COORDINATOR_AUTHORITY_FORBIDDEN, COORDINATOR_AUTHORITY_GRACEFUL_PATH } from './limits.mjs';
 import {
@@ -219,6 +221,7 @@ export const APPLICATION_COMMAND_DEFINITIONS = Object.freeze({
   'run.wait': Object.freeze({ args: Object.freeze(['runId', 'timeoutMs', 'until']), capabilities: Object.freeze(['observe']), web: true, mcp: true, mcpStateful: false, reconcilable: true }),
   'run.answer': Object.freeze({ args: Object.freeze(['runId', 'requestId', 'answer']), capabilities: Object.freeze(['approve', 'observe']), web: true, mcp: true, mcpStateful: true, reconcilable: true }),
   'run.feedback': Object.freeze({ args: Object.freeze(['runId', 'role', 'feedback']), capabilities: Object.freeze(['control', 'observe']), web: true, mcp: true, mcpStateful: true, reconcilable: true }),
+  'evidence.search': Object.freeze({ args: Object.freeze(['swarmId', 'query', 'participantId', 'kind', 'afterSeq']), capabilities: Object.freeze(['observe']), web: true, mcp: true, mcpStateful: false, reconcilable: true }),
   'run.stop': Object.freeze({ args: Object.freeze(['runId', 'reason']), capabilities: Object.freeze(['emergency_stop', 'observe']), web: true, mcp: true, mcpStateful: true, reconcilable: true }),
   'run.evidence': Object.freeze({ args: Object.freeze(['runId']), capabilities: Object.freeze(['observe']), web: true, mcp: true, mcpStateful: false, reconcilable: true }),
   'run.adopt': Object.freeze({ args: Object.freeze(['runId', 'nodeKey', 'resultSha', 'evidenceDigest', 'reason']), capabilities: Object.freeze(['adopt_result', 'observe']), web: true, mcp: true, mcpStateful: true, reconcilable: true }),
@@ -2256,6 +2259,9 @@ export function validateApplicationCommandArgs(name, args) {
   if (name === 'run.resume_work') normalizeResumeWork(args);
   if (name === 'run.review') normalizeReviewRequest(args);
   if (name === 'run.integrate') normalizeIntegrationRequest(args);
+  if (name === 'evidence.search' && (args.swarmId === undefined || !validId(args.swarmId))) {
+    throw applicationError('evidence search target is invalid', 'application_evidence_search_invalid');
+  }
   if (name === 'run.export' && (!validId(args.runId) || !/^[a-f0-9]{64}$/u.test(args.evidenceDigest ?? ''))) {
     throw applicationError('Run export target is invalid', 'application_export_invalid');
   }
@@ -3532,9 +3538,42 @@ export class BatonApplication {
         await this._swarmNativeAccess.prepare(request);
         await this.approve(request.runId, current.plan.digest, this.principals.dispatcher);
       },
+      // The participant knowledge verbs (#318): the runtime's knowledge dispatch routes into the
+      // ONE implementation each verb already has — these very methods, with their own admission
+      // gates — while the runtime binds the participant's run/task identity server-side.
+      knowledge: {
+        knowledgeSeed: (request, knowledgePrincipal) => this.knowledgeSeed(request, knowledgePrincipal),
+        boardPost: (request, knowledgePrincipal) => this.boardPost(request, knowledgePrincipal),
+        boardRead: (request, knowledgePrincipal) => this.boardRead(request, knowledgePrincipal),
+        scratchpadAppend: (request, knowledgePrincipal) => this.scratchpadAppend(request, knowledgePrincipal),
+        scratchpadRead: (request, knowledgePrincipal) => this.scratchpadRead(request, knowledgePrincipal),
+        scratchpadElevate: (request, knowledgePrincipal) => this.scratchpadElevate(request, knowledgePrincipal),
+      },
+      // The git authority the situation projection derives from (#318): the commit the target
+      // showed when the swarm was created, and the rows landed since. Never a stored count — the
+      // commits are read from git at compose time, and an unavailable git simply derives nothing.
+      situationGit: {
+        head: () => this._swarmGit(['rev-parse', 'HEAD']),
+        commitsSince: (base) => {
+          const log = this._swarmGit(['log', '--oneline', `${base}..HEAD`]);
+          if (log === null) return null;
+          return log.split('\n').filter((line) => line.trim().length > 0)
+            .map((line) => ({ sha: line.slice(0, line.indexOf(' ')), subject: line.slice(line.indexOf(' ') + 1) }));
+        },
+      },
       stopRun: (runId, reason) => this.stop(runId, reason, this.principals.dispatcher),
     });
     return this._swarmService;
+  }
+
+  /** The deployment git authority the swarm situation projection derives from (#318): read-only
+   * `rev-parse`/`log` against the deployment checkout. An unavailable git (no repo, no binary)
+   * answers null — the projection says so honestly instead of throwing into recruitment. */
+  _swarmGit(args) {
+    if (typeof this.driver?.repoRoot !== 'string' || this.driver.repoRoot.length === 0) return null;
+    try {
+      return execFileSync('git', args, { cwd: this.driver.repoRoot, encoding: 'utf8' }).trim();
+    } catch { return null; }
   }
 
   /** Admit one deliberate shared-checkout attachment for a recruited Run, or refuse its shape.
@@ -13274,6 +13313,18 @@ export class BatonApplication {
     // authorization runs, but BD3-D deliberately admits a live run-orchestrator lease holder as
     // review authority (FP-18 pins the pre-gate dispatch). Each command validates through its own
     // closed normalizer, then delegates to its landed kernel lane.
+    // The participant knowledge verbs (#318): a WORKER-SEAT principal reaches the knowledge layer
+    // through the swarm's own authority — membership, the per-verb grants, and the run/task
+    // identity the runtime binds server-side — but only when the caller does NOT name a runId:
+    // a runId-supplied request is the ordinary run.* surface (the direct ports below), whose
+    // callers always name their run. The bridge path never arrives here: it dispatches to
+    // SwarmRuntime directly.
+    if (principal.principalId?.startsWith('worker:') && args?.runId === undefined
+      && Object.hasOwn(SWARM_KNOWLEDGE_COMMANDS, name)) {
+      return this._swarmCommand(name, args, principal, rawContext);
+    }
+    // Issue #318 retrieval (#312): `evidence.search` is swarm-scoped for every caller.
+    if (name === 'evidence.search') return this._swarmCommand(name, args, principal, rawContext);
     if (name === 'run.message.send') return this.messageSend(args, principal);
     if (name === 'run.message.receipt') return this.messageReceipt(args, principal);
     if (name === 'run.attention.watch') return this.attentionWatch(args, principal);

@@ -191,6 +191,10 @@ export function validateSwarmEvent(kind, payload) {
 
   if (kind === 'swarm.created') {
     if (!isNonEmptyString(p.purpose)) refuse('swarm.created requires a non-empty purpose', 'invalid_payload');
+    // The commit the swarm started from (#318): the reference the situation projection derives
+    // "commits landed since the base" FROM — a stored REFERENCE, never a stored count. Absent
+    // when the deployment has no git authority to ask.
+    validOptionalNonEmptyString(p.baseCommit, 'swarm baseCommit', refuse);
     return;
   }
   if (kind === 'swarm.participant_joined') {
@@ -225,6 +229,13 @@ export function validateSwarmEvent(kind, payload) {
       if (!Array.isArray(p.permissions)) refuse('participant permissions must be an array if present', 'invalid_payload');
       if (!p.permissions.every(isNonEmptyString)) refuse('participant permissions must be non-empty strings', 'invalid_payload');
     }
+    if (p.resumeFrom !== undefined && p.resumeFrom !== null) {
+      validOptionalNonEmptyString(p.resumeFrom, 'participant resumeFrom', refuse);
+    }
+    // The composed brief the seat was recruited with (#318): the objective plus the swarm
+    // situation and inheritance the runtime derived — the durable record of what this ONE seat
+    // was told, so a successor's inheritance and the RESUME NOTE are derivable, never retyped.
+    validOptionalNonEmptyString(p.brief, 'participant brief', refuse);
     return;
   }
   if (kind === 'swarm.participant_bound') {
@@ -436,6 +447,8 @@ export function foldSwarmEvent(swarms, event, { admission = false } = {}) {
   if (kind === 'swarm.created') {
     if (swarms.has(p.swarmId)) integrity(`swarm ${p.swarmId} is already created`, 'swarm_duplicate');
     swarms.set(p.swarmId, emptySwarm(p.swarmId, p.purpose, meta));
+    const row = swarms.get(p.swarmId);
+    swarms.set(p.swarmId, Object.freeze(p.baseCommit === undefined ? row : { ...row, baseCommit: p.baseCommit }));
     return;
   }
 
@@ -466,6 +479,8 @@ export function foldSwarmEvent(swarms, event, { admission = false } = {}) {
       route: p.route === undefined || p.route === null ? null
         : Object.freeze({ harness: p.route.harness, model: p.route.model, effort: p.route.effort ?? null }),
       scope: p.scope === undefined || p.scope === null ? null : Object.freeze([...p.scope]),
+      resumeFrom: p.resumeFrom ?? null,
+      brief: p.brief ?? null,
       status: 'active', leftReason: null, bindings: Object.freeze([]),
       actor: meta.actor, seq: meta.seq, ts: meta.ts,
     });

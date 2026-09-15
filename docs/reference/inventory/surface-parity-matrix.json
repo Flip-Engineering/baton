@@ -211,6 +211,15 @@
       "ledgered": false
     },
     {
+      "name": "evidence.search",
+      "category": "diagnostics",
+      "cli": "baton evidence search",
+      "mcp": "baton_evidence_search",
+      "web": "evidence_search",
+      "divergence": null,
+      "ledgered": false
+    },
+    {
       "name": "fleet_capabilities",
       "category": "diagnostics",
       "cli": null,

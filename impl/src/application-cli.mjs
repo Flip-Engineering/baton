@@ -1891,6 +1891,36 @@ function swarmPayload(token) {
   return token;
 }
 
+// `baton evidence search SWARM_ID [--query TEXT] [--participant PARTICIPANT_ID] [--kind KIND]
+// [--after-seq SEQ]` (issue #318, #312): the swarm evidence search. ONE canonical operation
+// (`evidence.search`) — this parser only shapes the argv; the dispatch lives in SwarmRuntime,
+// reads the coordination ledger, and derives its page boundary from the wire.frame row (the
+// cursor is the ledger seq, never a page count).
+function parseEvidenceCli(args, idempotencyKey) {
+  if (args[0] !== 'evidence') return null;
+  args.shift();
+  if (args[0] !== 'search') {
+    throw cliError('evidence requires the search verb: baton evidence search SWARM_ID [--query TEXT]', 'cli_command_unavailable');
+  }
+  args.shift();
+  const swarmId = args.shift();
+  if (!nonempty(swarmId)) throw cliError('evidence search requires <swarmId>');
+  const values = {};
+  const query = take(args, '--query');
+  if (query !== null) values.query = query;
+  const participant = take(args, '--participant');
+  if (participant !== null) values.participantId = participant;
+  const kind = take(args, '--kind');
+  if (kind !== null) values.kind = kind;
+  const afterSeq = take(args, '--after-seq');
+  if (afterSeq !== null) {
+    const value = Number(afterSeq);
+    if (!Number.isSafeInteger(value) || value < 0) throw cliError('--after-seq must be a non-negative integer');
+    values.afterSeq = value;
+  }
+  noRemainder(args);
+  return { kind: 'command', name: 'evidence.search', args: { swarmId, ...values }, idempotencyKey };
+}
 function parseSwarmCli(args, idempotencyKey) {
   if (args[0] !== 'swarm') return null;
   args.shift();
@@ -2305,6 +2335,7 @@ export function parseBatonCli(rawArgs) {
     return { kind: 'route', exact };
   }
   if (args[0] === 'swarm') return parseSwarmCli(args, idempotencyKey);
+  if (args[0] === 'evidence') return parseEvidenceCli(args, idempotencyKey);
   if (args[0] === 'deployment') {
     args.shift();
     if (args.shift() !== 'watch') {

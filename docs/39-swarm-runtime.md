@@ -612,3 +612,70 @@ the seq with the #290 coordination quarantine verb if the row is bad history, or
 rule admission-only and pin the ledger in the corpus. `baton doctor` runs the same read-only
 probe the startup runs and shows that row — and the repair — while the deployment is in the
 refused state, instead of a bare `stale` that loops back to a `baton serve` that cannot start.
+
+## The knowledge verbs reach the loop (issue #318, 2026-09-14)
+
+Twenty lanes in one day moved every piece of knowledge through three channels — the objective at
+recruit, the contribution body at the end, a guide in between. The knowledge features underneath
+were never touched by a lane, never named in a brief, and undispatchable over the participant
+bridge. They are now part of the loop a real orchestrator runs.
+
+**The surviving verbs, each with the ONE situation it is for.** The table lives once
+(`SWARM_KNOWLEDGE_COMMANDS` in `swarm-contract.mjs`); the swarm view's `updates` rows name every
+verb with the permission that admits it, the bridge's `--help` renders the same rows with their
+situations, the recruit brief teaches them, and the runtime's dispatch enforces exactly the
+permissions the view names — one table, four surfaces that cannot disagree:
+
+| verb | permission | the one situation it is for |
+|---|---|---|
+| `run.knowledge.seed` | contribute | pin a durable fact — typed, grounded, evidence-linked — that peers must be able to find |
+| `run.board.post` / `run.board.read` | contribute / read | keep runnable state on, and read back, the board bound to the participant's OWN run |
+| `run.scratchpad.append` / `run.scratchpad.read` | contribute / read | note working state (the shared scope is visible to peers) and read it or the shared scope back |
+| `run.scratchpad.elevate` | contribute | elevate one's own scratchpad entries to candidate Findings |
+| `evidence.search` | read | find a fact by text, participant or kind across the swarm |
+
+**Retired from the participant surface, with the reason.** A verb without a participant situation
+is not kept alive by an advertisement the loop cannot use:
+
+- `knowledge.promote` and `knowledge.settlement_lease` — the wave settlement pair. The store's
+  admission gate (`admitWorkflowFinding`) accepts only `orchestrator`/`operator:<id>` actors and a
+  wave-scoped lease, by design (KS3, single-orchestrator settlement posture). A swarm participant
+  has no wave and cannot hold the lease; the swarm's durable-knowledge settlement is
+  `run.knowledge.seed` plus the review lane. They remain embedded/MCP tools for the orchestrator.
+- `scratchpad.settle` — the scratchpad settles when the run's tasks are terminal, which is the
+  workflow terminal sweep, never a live participant's act mid-loop.
+- `scratchpad.elevate` (the embedded wrapper) — superseded for participants by
+  `run.scratchpad.elevate`, whose task identity the runtime binds server-side.
+- Context packs (`context.pack_granted`, orientation ratings) — run/attempt grant receipts of the
+  wave lane. The swarm's pack is the recruit-time shared context (`basis`) plus
+  `swarm.context_updated`, both of which already reach the participant.
+
+**The exchange (deliverable 2).** The chosen mechanism is the knowledge ledger:
+participant A calls `run.knowledge.seed` through its bridge; the runtime binds the run (and for the
+elevate lane the task) from the seat's own token — a caller-supplied `runId` is refused as
+identity-shaped. The fact lands as an attributed `knowledge.node_added` coordination row. Participant
+B finds it in its next turn with `evidence.search` — the root copies nothing. The exchange is
+visible on `swarm.view` as derived `knowledge` rows attributed to the seeding seat, on the wake
+stream as the typed `knowledge` class (derived from the same ledger row like every other class),
+and `swarm.watch` wakes on it.
+
+**A successor inherits (deliverable 3).** `swarm.recruit` takes `resumeFrom: <participantId>`.
+The runtime refuses an unknown or departed predecessor before any membership is written, and composes
+the successor's brief with the predecessor's last checkpoint reference (the newest pinned worktree
+checkpoint, else the newest captured revision), its published contracts and its carried-forward
+items. The minimal contribution-body fields are `contract` (what a successor keeps true) and
+`carriedForward` (the items handed on) — #310's fields, read here until #310 lands its own shape.
+
+**The situation projection (deliverable 4).** Every recruit's brief is composed and written onto
+the join as `brief`: the recruiter's objective verbatim, then the swarm situation — the active
+peers and their scopes, the contracts published so far, and the commits landed on the target since
+the base. The base is the commit recorded at `swarm.create` from the deployment's git authority; the
+commits are derived from git at compose time through the same authority — a stored reference, never
+a stored count, and an unavailable git says so instead of inventing a line.
+
+**Retrieval (deliverable 5, #312).** `evidence search` is one canonical operation
+(`evidence.search`) on the table every surface derives from: the `baton evidence search SWARM_ID
+--query TEXT` CLI command, the `baton_evidence_search` MCP tool (and its `evidence.search`
+dot-name alias), and the bridge verb. It reads the coordination ledger directly, so every row carries its
+seq/ts and the cursor IS the ledger seq; the page boundary derives from the same `wire.frame` row
+the bridge answers under — never a numeric page cap.

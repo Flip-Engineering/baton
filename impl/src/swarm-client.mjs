@@ -14,7 +14,8 @@
 // a turn coordinate, or a fence.
 
 import { randomUUID } from 'node:crypto';
-import { validateSwarmCommand } from './swarm-surface.mjs';
+import { validateSwarmCommand, swarmKnowledgeCommand } from './swarm-surface.mjs';
+import { validateSwarmKnowledgeCommand } from './swarm-runtime.mjs';
 
 function clientError(message, code = 'application_client_invalid') {
   return Object.assign(new Error(message), { code });
@@ -121,7 +122,8 @@ export class Swarm {
    */
   recruit(participantId, objective, options = {}) {
     const selectionFields = ['exact', 'harness', 'model', 'effort', 'scope', 'profile', 'resultIntent'];
-    exactOptions(options, new Set(['options', 'permissions', 'idempotencyKey', 'shareWorkspaceWith', ...selectionFields]), 'Swarm recruit');
+    exactOptions(options, new Set(['options', 'permissions', 'idempotencyKey', 'shareWorkspaceWith',
+      'resumeFrom', ...selectionFields]), 'Swarm recruit');
     const selection = Object.fromEntries(selectionFields.filter((field) => options[field] !== undefined)
       .map((field) => [field, options[field]]));
     if (options.options !== undefined && Object.keys(selection).length) {
@@ -135,7 +137,50 @@ export class Swarm {
       ...(runOptions === undefined ? {} : { options: runOptions }),
       ...(options.permissions === undefined ? {} : { permissions: options.permissions }),
       ...(options.shareWorkspaceWith === undefined ? {} : { shareWorkspaceWith: options.shareWorkspaceWith }),
+      ...(options.resumeFrom === undefined ? {} : { resumeFrom: options.resumeFrom }),
       idempotencyKey: idempotencyOf(options),
+    });
+  }
+  // ── the participant knowledge verbs (#318) ─────────────────────────────────────────────────
+  // One admission (the shared knowledge contract), one dispatch (the swarm port). The runtime
+  // binds the seat's run — and, for the elevate lane, its task — server-side, so no caller ever
+  // names a runId here.
+
+  async _sendKnowledge(name, args) {
+    validateSwarmKnowledgeCommand(name, args);
+    const result = await this.#port.command(name, args);
+    this.#last = result;
+    if (Number.isSafeInteger(result?.cursor) && result.cursor >= 0) {
+      this.#cursor = Math.max(this.#cursor ?? 0, result.cursor);
+    }
+    return result;
+  }
+
+  /** Any knowledge verb from the shared table (`run.knowledge.seed`, `run.board.post`,
+   * `run.board.read`, `run.scratchpad.append`, `run.scratchpad.read`, `run.scratchpad.elevate`,
+   * `evidence.search`), with the swarm identity this handle carries. */
+  knowledge(command, args = {}) {
+    if (!swarmKnowledgeCommand(command)) throw clientError(`Unknown swarm knowledge command ${command}`);
+    return this._sendKnowledge(command, { swarmId: this.id, ...args });
+  }
+
+  /** Pin one durable fact — typed, grounded, evidence-linked — that every peer can retrieve
+   * (#318 deliverable 2, the exchange mechanism). The same fact lands on the wake stream as a
+   * `knowledge` row and on `swarm.view` as a knowledge row attributed to this seat. */
+  seedFact({ type = 'Finding', grounding = 'observed', body, evidence } = {}, options = {}) {
+    exactOptions(options, new Set([]), 'Swarm seedFact');
+    if (!isText(body)) throw clientError('seedFact needs a non-empty body');
+    return this.knowledge('run.knowledge.seed', { type, grounding, body, ...(evidence === undefined ? {} : { evidence }) });
+  }
+
+  /** Search what the swarm exchanged: by free text, participant or knowledge kind. Rows carry
+   * their seq/ts; `cursor` is the ledger seq to resume from — never a page count. */
+  evidenceSearch({ query, participantId, kind, afterSeq } = {}) {
+    return this.knowledge('evidence.search', {
+      ...(query === undefined ? {} : { query }),
+      ...(participantId === undefined ? {} : { participantId }),
+      ...(kind === undefined ? {} : { kind }),
+      ...(afterSeq === undefined ? {} : { afterSeq }),
     });
   }
 

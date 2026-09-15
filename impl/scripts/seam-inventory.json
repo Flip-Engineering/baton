@@ -4081,11 +4081,20 @@
         {
           "name": "_swarmRuntime",
           "ordinal": 0,
-          "size": 62,
+          "size": 85,
           "seam": "effect",
           "evidence": [
             "effect:adapter_verb",
             "observation:durable_read"
+          ]
+        },
+        {
+          "name": "_swarmGit",
+          "ordinal": 0,
+          "size": 6,
+          "seam": "effect",
+          "evidence": [
+            "effect:process_exec"
           ]
         },
         {
@@ -5803,7 +5812,7 @@
         {
           "name": "_commandDispatch",
           "ordinal": 0,
-          "size": 203,
+          "size": 215,
           "seam": "surface",
           "evidence": [
             "recovery:reconcile_call",
@@ -11898,7 +11907,7 @@
         {
           "name": "inspect",
           "ordinal": 0,
-          "size": 339,
+          "size": 372,
           "seam": "observation",
           "evidence": [
             "observation:swarm_attention_rows"
@@ -11956,7 +11965,7 @@
         {
           "name": "_recordRefusal",
           "ordinal": 0,
-          "size": 24,
+          "size": 28,
           "seam": "admission",
           "evidence": [
             "admission:refusal_name",
@@ -12003,9 +12012,63 @@
           ]
         },
         {
+          "name": "_knowledgeDispatch",
+          "ordinal": 0,
+          "size": 29,
+          "seam": "admission",
+          "evidence": [
+            "admission:swarm_refusal"
+          ]
+        },
+        {
+          "name": "_evidenceSearch",
+          "ordinal": 0,
+          "size": 35,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "_publishedContracts",
+          "ordinal": 0,
+          "size": 3,
+          "seam": "effect",
+          "evidence": [
+            "effect:action_verb"
+          ]
+        },
+        {
+          "name": "_commitsSinceBase",
+          "ordinal": 0,
+          "size": 5,
+          "seam": "surface",
+          "evidence": [
+            "surface:no_authority_touched"
+          ]
+        },
+        {
+          "name": "_inheritancePredecessor",
+          "ordinal": 0,
+          "size": 34,
+          "seam": "admission",
+          "evidence": [
+            "admission:swarm_refusal"
+          ]
+        },
+        {
+          "name": "_composeRecruitBrief",
+          "ordinal": 0,
+          "size": 48,
+          "seam": "effect",
+          "evidence": [
+            "delegates:effect"
+          ]
+        },
+        {
           "name": "_dispatch",
           "ordinal": 0,
-          "size": 343,
+          "size": 368,
           "seam": "effect",
           "evidence": [
             "recovery:reconcile_call",

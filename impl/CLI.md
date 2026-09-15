@@ -20,6 +20,7 @@ ordinary-CLI inventory. The conformance suite fails if they drift from served tr
 | Operation | Profile | CLI verb | Example |
 |---|---|---|---|
 | `application.help` | `ordinary` | `baton help` | `baton help` |
+| `evidence.search` | `ordinary` | `baton evidence search` | `baton evidence search SWARM_ID --query TEXT` |
 | `run.answer` | `ordinary` | `baton run answer` | `baton run answer RUN_ID REQUEST_ID --text TEXT` |
 | `run.approve` | `ordinary` | `baton run approve` | `baton run approve RUN_ID --plan DIGEST` |
 | `run.attention.watch` | `ordinary` | `baton run attention watch` | `baton run attention watch RUN_ID --kind member_terminal --cursor 0` |
