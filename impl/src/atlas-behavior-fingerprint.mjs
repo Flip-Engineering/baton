@@ -28,6 +28,12 @@ const numberIsNaN = Number.isNaN.bind(Number);
 const stringValue = String;
 const bufferToString = Function.call.bind(Buffer.prototype.toString);
 const { serialize } = await import('node:v8');
+// #313: the permission model on Node 22 gates fs/child/workers but NOT outbound network, so the
+// card's "network denied" (and the BF2 pin) were untrue on this runtime — fetch succeeded inside
+// the sandbox. Enforce the declared denial at the network entry the observed surface uses, with
+// the exact code the permission model uses elsewhere, BEFORE the target module loads.
+const denied = (what) => { throw Object.assign(new Error(what + ' is denied by the behavior sandbox'), { code: 'ERR_ACCESS_DENIED' }); };
+globalThis.fetch = () => denied('fetch');
 let nonce = ''; for await (const chunk of process.stdin) nonce += chunk;
 const corpus = parse(Buffer.from(encoded, 'base64').toString('utf8'));
 const finish = (payload) => {

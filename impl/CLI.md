@@ -187,8 +187,27 @@ same observation route, never a network fault. When the swarm is closed and noth
 the follow ends with `"verdict": null` rather than waiting for an event that can no longer come.
 
 
-## Connect to a resident authenticated Web host
+### Host verb inventory (generated from the parser)
 
+The host verbs below are the CLI verbs no application command on the wire card carries — doctor,
+serve, setup, route, credentials, top. The block is rendered by `impl/scripts/render-surface-docs.mjs`
+from the parser's own host-verb table, and the conformance suite fails if it drifts from served
+truth. Each row is resolved live by `parseBatonCli` in `impl/test/host-verb-inventory.test.mjs`.
+
+<!-- BEGIN GENERATED: cli-host-verb-inventory (impl/scripts/render-surface-docs.mjs) -->
+
+| Host verb | Parser argv | Serves |
+|---|---|---|
+| `baton doctor` | `doctor` | Read-only connection diagnosis from local files; `--check` also verifies the resident authority. |
+| `baton serve` | `serve` | Host the resident for this checkout: serve authenticated HTTP over an owner-only socket, self-check, and publish the connection. |
+| `baton setup` | `setup` | Install an explicit-network connection profile (schema-v1 HTTPS deployments). |
+| `baton route HARNESS/MODEL@EFFORT` | `route mock/model-a@low` | Resolve one exact route tuple against the served registry. |
+| `baton credentials install kimi` | `credentials install kimi` | Install the Kimi provider credential interactively; credentials are never CLI arguments. |
+| `baton top` | `top` | The operator seat: a live human view over runs and swarms (docs/38). |
+
+<!-- END GENERATED: cli-host-verb-inventory -->
+
+## Connect to a resident authenticated Web host
 For ordinary local use, start Baton from the repository:
 
 ```sh

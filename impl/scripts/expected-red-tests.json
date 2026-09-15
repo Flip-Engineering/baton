@@ -303,7 +303,7 @@
     },
     {
       "key": "test/grammar-m5-red.test.mjs :: M5-1: the divergence ledger is empty and the M4 retirement is pinned",
-      "reason": "design"
+      "reason": "#159"
     },
     {
       "key": "test/harvest-accessor-red.test.mjs :: A1-resultpin-dispatch (stage: ports absent): run.resultpin dispatches ahead of the command table",
@@ -543,7 +543,7 @@
     },
     {
       "key": "test/mcp-reflex-surface-red.test.mjs :: Inventory: the combined surface adds the derived S-3 reflex tools, frozen and _meta-stamped like the ordinary table",
-      "reason": "design"
+      "reason": "#261"
     },
     {
       "key": "test/nested-orchestration-red.test.mjs :: R1 RED (stage: connection-mint-missing): mintChildAuthority mints a FRESH child profile + token",
@@ -855,7 +855,7 @@
     },
     {
       "key": "test/phase10.1-reconciliation.test.mjs :: SC18: timeoutMs is enforced by every session adapter",
-      "reason": "design"
+      "reason": "A-N5"
     },
     {
       "key": "test/phase11-coordination-store.test.mjs :: CK8/CK9: public driver exposes coordination and queued DAG survives restart before dispatch",
@@ -863,19 +863,19 @@
     },
     {
       "key": "test/phase11-persistent-sessions.test.mjs :: NR1/NR3: recovery attaches without provider work, commits its refinement and intent, then prompts",
-      "reason": "design"
+      "reason": "#81"
     },
     {
       "key": "test/phase11-persistent-sessions.test.mjs :: NR3/NR5: refused recovery continuation fails the refinement and kills/reaps the attached transport",
-      "reason": "design"
+      "reason": "#81"
     },
     {
       "key": "test/phase12-web-northbound.test.mjs :: UA5/WN: malformed Run intent, inconsistent Run identity, and capability refusal occur before application admission",
-      "reason": "design"
+      "reason": "#160"
     },
     {
       "key": "test/phase12-web-northbound.test.mjs :: WN4/WN5/WN7: unknown fields, unknown model policy, and client-supplied audit identity are rejected before admission",
-      "reason": "design"
+      "reason": "#160"
     },
     {
       "key": "test/phase62-web-goal-plan.test.mjs :: GP7/GP8: closed nested schemas and typed non-leaking goal/plan failures refuse safely",
@@ -887,79 +887,79 @@
     },
     {
       "key": "test/phase67-change-aware-inspect.test.mjs :: inspect derives its bounded wait from deployment policy when continuation omits machinery",
-      "reason": "design"
+      "reason": "#6"
     },
     {
       "key": "test/phase67-change-aware-inspect.test.mjs :: inspect marks timeout and returns terminal state immediately",
-      "reason": "design"
+      "reason": "#6"
     },
     {
       "key": "test/phase67-change-aware-inspect.test.mjs :: inspect waits once on durable notification and returns changed bounded outline",
-      "reason": "design"
+      "reason": "#6"
     },
     {
       "key": "test/phase67-change-aware-inspect.test.mjs :: inspect waits through another Run notification until this Run durably changes",
-      "reason": "design"
+      "reason": "#6"
     },
     {
       "key": "test/phase67-self-describing-continuation.test.mjs :: ordinary outline exposes one registry-derived, callable, bounded continuation without coordinates",
-      "reason": "design"
+      "reason": "U-E7"
     },
     {
       "key": "test/phase67-self-describing-continuation.test.mjs :: terminal inspect omits continuation and contextual help recommends it",
-      "reason": "design"
+      "reason": "U-E7"
     },
     {
       "key": "test/phase72-kimi-orchestrator-mcp.test.mjs :: KC6: an observe-only remote session refuses mutation locally before any Web command",
-      "reason": "design"
+      "reason": "#289"
     },
     {
       "key": "test/phase72-kimi-orchestrator-mcp.test.mjs :: KC6: Web MCP derives its exact principal and lifetime from the authenticated remote session",
-      "reason": "design"
+      "reason": "#289"
     },
     {
       "key": "test/phase72-kimi-orchestrator-mcp.test.mjs :: KC6/KC7: independent bridges sharing one remote session derive one stable mutation key",
-      "reason": "design"
+      "reason": "#289"
     },
     {
       "key": "test/phase72-kimi-orchestrator-mcp.test.mjs :: KC6/KC7: replay rechecks Web auth/card truth and refuses registry drift",
-      "reason": "design"
+      "reason": "#289"
     },
     {
       "key": "test/phase72-kimi-orchestrator-mcp.test.mjs :: KC6/KC7: semantic mutation replay is stable while mismatched identity and malformed outlines fail closed",
-      "reason": "design"
+      "reason": "#289"
     },
     {
       "key": "test/phase72-kimi-orchestrator-mcp.test.mjs :: KC6/KC7: session identity, capability, repository, and expiry drift fail replay and commands closed",
-      "reason": "design"
+      "reason": "#289"
     },
     {
       "key": "test/phase72-kimi-orchestrator-mcp.test.mjs :: KC6/KC7: session identity, capability, repository, and expiry drift fail replay and commands closed > capability drift",
-      "reason": "design"
+      "reason": "#289"
     },
     {
       "key": "test/phase72-kimi-orchestrator-mcp.test.mjs :: KC6/KC7: session identity, capability, repository, and expiry drift fail replay and commands closed > expiry drift",
-      "reason": "design"
+      "reason": "#289"
     },
     {
       "key": "test/phase72-kimi-orchestrator-mcp.test.mjs :: KC6/KC7: session identity, capability, repository, and expiry drift fail replay and commands closed > identity drift",
-      "reason": "design"
+      "reason": "#289"
     },
     {
       "key": "test/phase72-kimi-orchestrator-mcp.test.mjs :: KC6/KC7: session identity, capability, repository, and expiry drift fail replay and commands closed > repository drift",
-      "reason": "design"
+      "reason": "#289"
     },
     {
       "key": "test/phase72-kimi-orchestrator-mcp.test.mjs :: KC6/KC7/KC8: Kimi MCP bridges only the compact application surface over authenticated Web",
-      "reason": "design"
+      "reason": "#289"
     },
     {
       "key": "test/phase72-kimi-orchestrator-mcp.test.mjs :: KC6/KC7/KC8: packaged Kimi MCP entry crosses a real authenticated Web listener with pure stdio",
-      "reason": "design"
+      "reason": "#289"
     },
     {
       "key": "test/phase72-kimi-orchestrator-mcp.test.mjs :: KC8: remote Web credentials are not serialized through facade or MCP state",
-      "reason": "design"
+      "reason": "#289"
     },
     {
       "key": "test/phase78-bound-run-group-red.test.mjs :: RG5: the repository deployment forwards startMany and close drains all active group workers",
@@ -967,7 +967,7 @@
     },
     {
       "key": "test/phase78-concise-deployment-factory.test.mjs :: DF10: default route inventory retains configured Claude routes for explicit readiness without mutating an isolated home",
-      "reason": "design"
+      "reason": "#228"
     },
     {
       "key": "test/phase78-concise-deployment-factory.test.mjs :: DF11: concise complete prepares an adopted result and one explicit apply fast-forwards it",
@@ -987,7 +987,7 @@
     },
     {
       "key": "test/phase78-concise-deployment-factory.test.mjs :: DF8: one public Claude harness dispatches exact Opus and Kimi tuples only to their private adapters",
-      "reason": "design"
+      "reason": "credential"
     },
     {
       "key": "test/phase79-workflow-composition-red.test.mjs :: WF79-1: deployment workflow compiles one durable multi-node Plan and starts no provider before approval",
@@ -1043,15 +1043,15 @@
     },
     {
       "key": "test/phase83-context-runtime-red.test.mjs :: CR83-6: provider-secret sentinels are absent in owned execution and its Git child",
-      "reason": "design"
+      "reason": "#210"
     },
     {
       "key": "test/phase83-context-runtime-red.test.mjs :: CR83-7: a public runtime map cannot forge private source-attestation capability",
-      "reason": "design"
+      "reason": "#210"
     },
     {
       "key": "test/phase83-context-runtime-red.test.mjs :: CR83-8: invented paths and path or blob substitutions lack producer authority",
-      "reason": "design"
+      "reason": "#210"
     },
     {
       "key": "test/phase83-context-runtime-red.test.mjs :: CR83-9: narrow write scope retains deployment-authorized repository Context read scope",
@@ -1095,39 +1095,39 @@
     },
     {
       "key": "test/phase85-context-effect-admission-red.test.mjs :: CC85-A1: generic reduce shares one store, recovers its Plan, dispatches once, and stops exactly",
-      "reason": "design"
+      "reason": "credential"
     },
     {
       "key": "test/phase85-context-effect-admission-red.test.mjs :: CC85-A2: generic map admission verifies every exact completed-cell output without dispatch",
-      "reason": "design"
+      "reason": "credential"
     },
     {
       "key": "test/phase85-context-effect-admission-red.test.mjs :: CC85-A3: public reduce proposes, approves, dispatches once, and survives reopen",
-      "reason": "design"
+      "reason": "credential"
     },
     {
       "key": "test/phase85-context-effect-admission-red.test.mjs :: CC85-A4: a provider-failed reduce settles once with exact cleanup and replays terminally",
-      "reason": "design"
+      "reason": "credential"
     },
     {
       "key": "test/phase85-context-effect-admission-red.test.mjs :: CC85-A5: restart after generic cleanup but before settlement attaches without another effect",
-      "reason": "design"
+      "reason": "credential"
     },
     {
       "key": "test/phase85-context-effect-admission-red.test.mjs :: CC85-A6: failed generic map retries only failed units and reuses accepted siblings",
-      "reason": "design"
+      "reason": "credential"
     },
     {
       "key": "test/phase87-semantic-action-authority.test.mjs :: SA4: Web client and MCP bridge preflight use the exact remote semantic mutation scope",
-      "reason": "design"
+      "reason": "#227"
     },
     {
       "key": "test/phase92-result-intent-vertical.test.mjs :: RI6: omitted single and Workflow manifests retain the exact pre-explicit v1 bytes",
-      "reason": "design"
+      "reason": "#210"
     },
     {
       "key": "test/phase92-route-discovery-red.test.mjs :: P92-RD1: CLI-observed Claude login is ready without a credentials file and Kimi-through-Claude is explicitly unconfigured",
-      "reason": "design"
+      "reason": "#293"
     },
     {
       "key": "test/prescriptive-doctor-red.test.mjs :: PT-1 (stage: warning surface missing): catalog closure + closed row schema in ACTUAL code-unit order; localeCompare banned (§4.1, §4.4, B8)",
@@ -1857,7 +1857,7 @@
   "converged": [
     {
       "file": "test/atlas-orientation-red.test.mjs",
-      "reason": "design"
+      "reason": "#81"
     },
     {
       "file": "test/best-effort-catch-policy-red.test.mjs",
@@ -1865,7 +1865,7 @@
     },
     {
       "file": "test/bidirectional-driver-red.test.mjs",
-      "reason": "design"
+      "reason": "#51"
     },
     {
       "file": "test/bidirectional-v3-red.test.mjs",
@@ -1873,7 +1873,7 @@
     },
     {
       "file": "test/board-authority-red.test.mjs",
-      "reason": "design"
+      "reason": "#78"
     },
     {
       "file": "test/board-workerhalf-red.test.mjs",
@@ -1909,7 +1909,7 @@
     },
     {
       "file": "test/cli-dead-paths-red.test.mjs",
-      "reason": "design"
+      "reason": "#289"
     },
     {
       "file": "test/cli-silent-start-red.test.mjs",
@@ -1925,7 +1925,7 @@
     },
     {
       "file": "test/control-surface-truth-red.test.mjs",
-      "reason": "design"
+      "reason": "#289"
     },
     {
       "file": "test/coordinator-plan-effects-red.test.mjs",
@@ -1969,7 +1969,7 @@
     },
     {
       "file": "test/error-actionability-red.test.mjs",
-      "reason": "design"
+      "reason": "#160"
     },
     {
       "file": "test/event-log-read-scaling-red.test.mjs",
@@ -2001,11 +2001,11 @@
     },
     {
       "file": "test/grammar-m1-red.test.mjs",
-      "reason": "design"
+      "reason": "#43"
     },
     {
       "file": "test/grammar-m2-red.test.mjs",
-      "reason": "design"
+      "reason": "#43"
     },
     {
       "file": "test/grammar-m3-red.test.mjs",
@@ -2013,7 +2013,7 @@
     },
     {
       "file": "test/grammar-m4b-red.test.mjs",
-      "reason": "design"
+      "reason": "#43"
     },
     {
       "file": "test/harvest-recovery-red.test.mjs",
@@ -2077,7 +2077,7 @@
     },
     {
       "file": "test/mcp-reflex-board-package-red.test.mjs",
-      "reason": "design"
+      "reason": "#78"
     },
     {
       "file": "test/mcp-surface-widening-red.test.mjs",
@@ -2089,7 +2089,7 @@
     },
     {
       "file": "test/mcp-web-local-resident-red.test.mjs",
-      "reason": "design"
+      "reason": "#288"
     },
     {
       "file": "test/member-wedge-boundary-red.test.mjs",
@@ -2161,15 +2161,15 @@
     },
     {
       "file": "test/phase78-deployment-capacity-red.test.mjs",
-      "reason": "design"
+      "reason": "credential"
     },
     {
       "file": "test/phase78-deployment-readiness-red.test.mjs",
-      "reason": "design"
+      "reason": "#47"
     },
     {
       "file": "test/phase79-plan-wave-replay-red.test.mjs",
-      "reason": "design"
+      "reason": "#161"
     },
     {
       "file": "test/phase79-workflow-definition-authority-red.test.mjs",
@@ -2241,7 +2241,7 @@
     },
     {
       "file": "test/phase89-resident-application-red.test.mjs",
-      "reason": "design"
+      "reason": "#289"
     },
     {
       "file": "test/phase89-resident-host-red.test.mjs",
@@ -2269,11 +2269,11 @@
     },
     {
       "file": "test/phase92-replay-verifier-red.test.mjs",
-      "reason": "design"
+      "reason": "G-7"
     },
     {
       "file": "test/phase92-resident-authority-red.test.mjs",
-      "reason": "design"
+      "reason": "U-E13"
     },
     {
       "file": "test/phase92-web-observation-red.test.mjs",
@@ -2361,11 +2361,11 @@
     },
     {
       "file": "test/repl1-kind-inventory-red.test.mjs",
-      "reason": "design"
+      "reason": "#21"
     },
     {
       "file": "test/repl1-manifest-red.test.mjs",
-      "reason": "design"
+      "reason": "#21"
     },
     {
       "file": "test/repl23-bindings-red.test.mjs",
@@ -2377,11 +2377,11 @@
     },
     {
       "file": "test/resident-convergence-wiring-red.test.mjs",
-      "reason": "design"
+      "reason": "#239"
     },
     {
       "file": "test/run-debug-surface-red.test.mjs",
-      "reason": "design"
+      "reason": "#53"
     },
     {
       "file": "test/scratchpad-33-red.test.mjs",
@@ -2401,7 +2401,7 @@
     },
     {
       "file": "test/surface-conformance-red.test.mjs",
-      "reason": "design"
+      "reason": "#43"
     },
     {
       "file": "test/surface-parity-191-red.test.mjs",
@@ -2409,7 +2409,7 @@
     },
     {
       "file": "test/surfacing-matrix-red.test.mjs",
-      "reason": "design"
+      "reason": "#289"
     },
     {
       "file": "test/tg3-window-red.test.mjs",
@@ -2445,11 +2445,11 @@
     },
     {
       "file": "test/wave-driver-red.test.mjs",
-      "reason": "design"
+      "reason": "#82"
     },
     {
       "file": "test/wave-grammar-red.test.mjs",
-      "reason": "design"
+      "reason": "#43"
     },
     {
       "file": "test/wave-index-memo-229-red.test.mjs",

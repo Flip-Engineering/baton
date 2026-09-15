@@ -105,15 +105,15 @@ test('U-F11/U-F12: one cause table — every cause has a distinct row naming cod
     assert.equal(typeof cause, 'string');
     assert.match(cause, /^[a-z][a-z0-9_]*$/u, `${cause} is a typed cause identifier`);
     assert.ok(row !== null, `${cause} has a row`);
-    assert.ok(['cli_config_invalid', 'cli_connection_incompatible'].includes(row.code),
-      `${cause}: the row is reported under one of the two connection codes`);
+    assert.ok(['cli_config_invalid', 'cli_connection_incompatible', 'cli_transport_failed', 'cli_protocol_failed'].includes(row.code),
+      `${cause}: the row is reported under one of the connection/transport codes (#313 widened the table)`);
     assert.ok(row.rule.length > 0 && row.remedy.length > 0, `${cause}: rule and remedy are present`);
     assert.equal(rules.has(row.rule), false, `${cause}: the rule text is its own`);
     rules.add(row.rule);
     codes.add(row.code);
   }
-  assert.deepEqual([...codes].sort(), ['cli_config_invalid', 'cli_connection_incompatible'],
-    'both codes are covered by one table');
+  assert.deepEqual([...codes].sort(), ['cli_config_invalid', 'cli_connection_incompatible', 'cli_protocol_failed', 'cli_transport_failed'],
+    'every code the client composes is covered by one table');
   for (const cause of CONNECTION_INCOMPATIBLE_CAUSES) {
     assert.notEqual(cliConnectionCauseRow(cause), null, `${cause} (F11) has a row`);
     assert.equal(cliConnectionCauseRow(cause).code, 'cli_connection_incompatible');

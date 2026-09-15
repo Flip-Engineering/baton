@@ -64,7 +64,12 @@ test('a declared loopback binding serves the same wake stream to an authenticate
   server.batonAuthenticate = (req) => principals.get(`${req.headers.authorization ?? ''}`.replace(/^Bearer /u, '')) ?? null;
   server.batonShutdown = async () => ({ ok: true, result: 'closed' });
   t.after(() => new Promise((resolve) => { try { server.closeAllConnections?.(); server.close(() => resolve()); } catch { resolve(); } }));
-  const socketDir = mkdtempSync(join(tmpdir(), 'bt-waking-sock-'));
+  // The host refuses a Unix-socket path past the kernel's 103-byte sun_path bound, so a fixture
+  // under a deep ambient TMPDIR (a deployment runtime dir) would fail configuration, not the
+  // binding contract under test. Fall back to the short system temp root when the ambient one
+  // cannot carry `bt-waking-sock-<mkdtemp>/resident.sock`.
+  const base = Buffer.byteLength(join(tmpdir(), 'bt-waking-sock-x', 'resident.sock')) > 103 ? '/tmp' : tmpdir();
+  const socketDir = mkdtempSync(join(base, 'bt-waking-sock-'));
   t.after(() => rmSync(socketDir, { recursive: true, force: true }));
 
   const port = await freePort();

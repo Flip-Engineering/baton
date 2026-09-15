@@ -11,7 +11,7 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 
 import { APPLICATION_SEMANTIC_REGISTRY, deriveSurfaceNames } from '../src/application-semantics.mjs';
-import { CLI_WEB_COMMANDS } from '../src/application-cli.mjs';
+import { CLI_WEB_COMMANDS, HOST_CLI_VERBS } from '../src/application-cli.mjs';
 import { mcpApplicationToolNames } from '../src/mcp-northbound.mjs';
 import {
   formatSurfaceResolutionFinding,
@@ -42,6 +42,7 @@ const GRAMMAR_DOC = new URL('../../docs/36-unified-control-grammar.md', import.m
 export const CLI_INVENTORY_MARKER = 'cli-verb-inventory';
 export const CLI_FLEET_ROUTES_MARKER = 'cli-fleet-routes';
 export const MCP_INVENTORY_MARKER = 'mcp-tool-inventory';
+export const CLI_HOST_VERBS_MARKER = 'cli-host-verb-inventory';
 export const SWARM_FAMILY_MARKER = 'swarm-family';
 
 function beginMarker(marker) { return `<!-- BEGIN GENERATED: ${marker} (impl/scripts/render-surface-docs.mjs) -->`; }
@@ -305,6 +306,17 @@ export function renderSwarmFamily() {
   ].join('\n');
 }
 
+/** U-G7 host half (issue #313): the host verbs the application inventory cannot carry — rendered
+ * from the parser's own HOST_CLI_VERBS table, never a hand list. */
+export function renderCliHostVerbInventory() {
+  const rows = HOST_CLI_VERBS.map((row) => `| \`${row.verb}\` | \`${row.argv.join(' ')}\` | ${row.summary} |`);
+  return [
+    '| Host verb | Parser argv | Serves |',
+    '|---|---|---|',
+    ...rows,
+  ].join('\n');
+}
+
 export function injectGeneratedBlock(text, marker, block) {
   const begin = beginMarker(marker);
   const end = endMarker(marker);
@@ -323,6 +335,7 @@ export function injectGeneratedBlock(text, marker, block) {
 export const TARGETS = [
   { doc: CLI_DOC, marker: CLI_INVENTORY_MARKER, render: renderCliVerbInventory },
   { doc: CLI_DOC, marker: CLI_FLEET_ROUTES_MARKER, render: renderCliFleetRoutes },
+  { doc: CLI_DOC, marker: CLI_HOST_VERBS_MARKER, render: renderCliHostVerbInventory },
   { doc: MCP_DOC, marker: MCP_INVENTORY_MARKER, render: renderMcpToolInventory },
   { doc: GRAMMAR_DOC, marker: SWARM_FAMILY_MARKER, render: renderSwarmFamily },
 ];

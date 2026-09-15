@@ -86,7 +86,9 @@ export const SWARM_CLI_COMMANDS = Object.freeze(SWARM_COMMAND_NAMES.map((name) =
     `baton swarm ${verb}`,
     ...positional.map((field) => `<${kebabCase(field).toUpperCase()}>`),
     ...flags.map((field) => `[${flagName(field)} VALUE]`),
-    ...(name === 'swarm.watch' ? ['[--follow]'] : []),
+    // `--follow` is a parser-level observation leg (#288 R-5), not a schema arg: the watch and
+    // check verbs both serve it (#313 — the check usage line used to omit what the receipt teaches).
+    ...(name === 'swarm.watch' || name === 'swarm.check' ? ['[--follow]'] : []),
   ].join(' ');
   return Object.freeze({
     verb,

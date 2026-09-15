@@ -4032,7 +4032,7 @@
         {
           "name": "_replaySemanticControl",
           "ordinal": 0,
-          "size": 40,
+          "size": 56,
           "seam": "surface",
           "evidence": [
             "recovery:restart_name",
@@ -4043,7 +4043,7 @@
         {
           "name": "_performSemanticControl",
           "ordinal": 0,
-          "size": 72,
+          "size": 96,
           "seam": "surface",
           "evidence": [
             "observation:durable_read",

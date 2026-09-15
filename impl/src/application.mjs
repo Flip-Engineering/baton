@@ -55,7 +55,9 @@ const APPLICATION_WORKFLOW_SELECTION_RECORD_KIND = 'application.workflow_candida
 const APPLICATION_WORKFLOW_FEEDBACK_RECORD_KIND = 'application.workflow_feedback_recorded';
 const APPLICATION_WORKFLOW_MEMBER_STOP_ADMITTED_KIND = 'application.workflow_member_stop_admitted';
 const APPLICATION_WORKFLOW_MEMBER_STOP_COMPLETED_KIND = 'application.workflow_member_stop_completed';
-const MAX_RUN_RECORDS = 100_000;
+// #313: the last hardcoded ceiling of the run-view family — derived from the ONE limits
+// registry exactly like the byte bound beside it (Decision 8's no-re-declare law).
+const MAX_RUN_RECORDS = FRAME_LIMITS['view.run.records'].value;
 const MAX_RUN_VIEW_BYTES = FRAME_LIMITS['view.run.bytes'].value;
 const MAX_ATTENTION = 64;
 // The displayed attention/child-row page budget: a quarter of the view byte ceiling, so the rows
@@ -408,6 +410,20 @@ export function byteBoundedPage(rows, budgetBytes) {
     page.push(row);
   }
   return { page, nextOffset: null };
+}
+
+/** U-F14 (issue #313): the axes a Run control's idempotency identity is judged on, in the order
+ * the refusal names them, and the comparison that finds the FIRST one that moved. Dotted names
+ * read one level inside the stored source identity. */
+const CONTROL_IDENTITY_AXES = Object.freeze([
+  'recipient', 'delivery', 'message', 'reasonDigest',
+  'source.actor', 'source.principalId', 'source.sessionId',
+]);
+function movedControlAxis(stored, replayed, axes = CONTROL_IDENTITY_AXES) {
+  for (const axis of axes) {
+    if (stored?.[axis] !== replayed?.[axis]) return axis;
+  }
+  return null;
 }
 
 function applicationError(message, code, detail = null) {
@@ -3276,13 +3292,29 @@ export class BatonApplication {
     const reason = control.operation === 'interrupt'
       ? (request.inputs.reason ?? definition.inputSchema.properties.reason.default)
       : 'Send Run guidance.';
-    if (recipient !== control.recipient || delivery !== control.delivery
-      || message !== control.message || digest(reason) !== control.reasonDigest
-      || principal.actor !== control.source.actor
-      || principal.principalId !== control.source.principalId
-      || principal.sessionId !== control.source.sessionId) {
-      throw applicationError('Run control replay conflicts with its durable admission',
-        'application_control_conflict');
+    // U-F14 (issue #313, completing the #288 axis naming): the web layer has named the moved axis
+    // (web-northbound movedAxis) since the refusal-quality landing; the application layer refused
+    // one disjunct with one message, so a retrying agent could not tell a changed message from a
+    // changed session. Name the first axis that moved, in a declared order, on the error AND in
+    // its detail — the same code, never a vaguer fact.
+    const moved = movedControlAxis(
+      {
+        recipient: control.recipient, delivery: control.delivery, message: control.message,
+        reasonDigest: control.reasonDigest, 'source.actor': control.source?.actor,
+        'source.principalId': control.source?.principalId, 'source.sessionId': control.source?.sessionId,
+      },
+      {
+        recipient, delivery, message, reasonDigest: digest(reason),
+        'source.actor': principal.actor, 'source.principalId': principal.principalId,
+        'source.sessionId': principal.sessionId,
+      },
+    );
+    if (moved !== null) {
+      throw applicationError(
+        `Run control replay conflicts with its durable admission: the ${moved} moved; resend the identical request to replay the admitted one, or use a fresh idempotencyKey for a different intent`,
+        'application_control_conflict',
+        { movedAxis: moved },
+      );
     }
     const settled = control.status === 'admitted'
       ? await this._withRunEffect(control.runId,
@@ -3347,8 +3379,32 @@ export class BatonApplication {
     let control = this._runControls(current.goal.runId)
       .find((candidate) => candidate.controlId === controlId);
     if (control && control.requestDigest !== core.requestDigest) {
-      throw applicationError('Run control idempotency identity conflicts',
-        'application_control_conflict');
+      // U-F14 (issue #313): the whole-request-digest comparison cannot tell the agent WHAT moved;
+      // name the first axis the two digests disagree on. The replay gate above has already ruled
+      // out the replay-visible axes, so this is the identity half: the target, the registry the
+      // action compiled under, or the actor identity the control carries.
+      const moved = movedControlAxis(
+        {
+          actionId: control.actionId, operation: control.operation, recipient: control.recipient,
+          delivery: control.delivery, message: control.message,
+          turnDisposition: control.turnDisposition, reasonDigest: control.reasonDigest,
+          targetDigest: digest(control.target ?? null), registryDigest: control.registryDigest,
+          'source.actor': control.source?.actor, 'source.principalId': control.source?.principalId,
+          'source.sessionId': control.source?.sessionId,
+        },
+        {
+          actionId: core.actionId, operation: core.operation, recipient: core.recipient,
+          delivery: core.delivery, message: core.message, turnDisposition: core.turnDisposition,
+          reasonDigest: core.reasonDigest, targetDigest: digest(core.target),
+          registryDigest: core.registryDigest, 'source.actor': core.source.actor,
+          'source.principalId': core.source.principalId, 'source.sessionId': core.source.sessionId,
+        },
+      ) ?? 'request';
+      throw applicationError(
+        `Run control idempotency identity conflicts: the ${moved} moved; resend the identical request to replay the admitted one, or use a fresh idempotencyKey for a different intent`,
+        'application_control_conflict',
+        { movedAxis: moved },
+      );
     }
     if (!control) {
       this.driver.coordination.admitRunControl({

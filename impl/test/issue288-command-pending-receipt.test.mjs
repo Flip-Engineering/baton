@@ -73,7 +73,11 @@ test('R-5: a deployment that does not answer keeps the honest transport refusal'
   const error = await web.command('run.status', { runId: 'run-288' }, 'operation-key-dead')
     .then(() => null, (refusal) => refusal);
   assert.equal(error?.code, 'cli_transport_failed', 'no answer means no receipt');
-  assert.match(error.message, /check your network and retry/u);
+  // #313: the refusal composes from the cause table now — the cause, not a fixed string, carries
+  // the remedy (check that the resident is running), and a dead connection stays retryable.
+  assert.equal(error?.cause, 'web_transport_failed');
+  assert.equal(error?.retryable, true);
+  assert.match(error.message, /check that the resident is running/u);
 });
 
 test('R-5: a command that never touched the bound keeps the transport refusal (no receipt is minted)', async () => {

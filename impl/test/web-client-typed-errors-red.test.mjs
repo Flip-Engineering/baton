@@ -1,12 +1,14 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { BatonWebClient } from '../src/application-cli.mjs';
+import { BatonWebClient, cliConnectionCauseRow } from '../src/application-cli.mjs';
 
 // #231 red-first pins — a wire refusal carries its own typed error envelope
 // {ok:false, error:{code, message}}; the CLI must surface the WIRE code, keep the
 // WIRE message verbatim (multi-line DSL diagnostics survive), and ride the full
 // parsed error object as an enumerable `detail`. Transport failures with no
-// parseable body keep the generic cli_transport_failed shape.
+// parseable body are NOT wire errors — since #313 (the #288 host leftover) they
+// are composed from the client's own connection-cause table instead: the
+// `cli_transport_failed` code stays, and the refusal names its typed cause.
 //
 // RED at the pre-fix head: the refusal threw only
 // 'Baton Web request was refused (POST /v1/commands, HTTP 400)' — no wire
@@ -107,17 +109,16 @@ test('#231: the #227 continuation ladder still keys on the WIRE code via detail'
     'the retry carries the cursor lifted from error.detail');
 });
 
-test('#231: a transport failure with no parseable body keeps the generic shape', async () => {
+test('#231/#313: a transport failure with no parseable body names its own cause, never a wire code', async () => {
   const client = makeClient(async () => { throw new TypeError('fetch failed'); });
   await assert.rejects(
     client.command('run.start', { intent: { runId: 'run-1' } }),
     (error) => {
       assert.equal(error.code, 'cli_transport_failed');
-      assert.equal(error.detail, undefined);
-      assert.equal(
-        error.message,
-        'Baton Web connection failed; check your network and retry',
-      );
+      assert.notEqual(error.code, 'workflow_spec_invalid');
+      assert.equal(error.detail.cause, 'web_transport_failed',
+        'the transport refusal is the client\'s own typed cause, composed and wireSafe');
+      assert.equal(error.detail.remedy, cliConnectionCauseRow('web_transport_failed').remedy);
       return true;
     },
   );

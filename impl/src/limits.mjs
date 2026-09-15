@@ -125,6 +125,10 @@ const VIEW = Object.freeze({
   // consumer is shed the same way every other view row sheds: a typed marker
   // (baton.wake_stream_lagged / a bounded page), never a silent truncation.
   'view.wake_replay.items': { lane: 'view.wake_replay.items', class: 'view', value: 4096, unit: 'items', graceful: 'shed-flagged' },
+  // Issue #313: the run-record read bound (the ceiling application.mjs judged every run-record
+  // listing against) declared in the ONE registry instead of a private constant — the same
+  // derivation the view.run.bytes row serves for the run-view byte bound.
+  'view.run.records': { lane: 'view.run.records', class: 'view', value: 100_000, unit: 'items', graceful: 'shed-flagged' },
 });
 
 /** One deep-frozen registry keyed by lane name (Decision 1). Every row: {lane, class, value, unit,

@@ -301,6 +301,18 @@ const CONNECTION_CAUSE_ROWS = Object.freeze({
   request_timeout_invalid: cliCauseRow('cli_config_invalid',
     'Baton Web request timeout is invalid',
     'set BATON_COMMAND_TIMEOUT_MS to a positive whole number of milliseconds inside the 24-hour ceiling'),
+  // #313 (the #288 host leftover): the transport-time legs of BatonWebClient._json compose from
+  // the same table — a dead connection, an over-boundary answer and a non-JSON body each name
+  // their cause, the field the client judged and what actually fixes it.
+  web_transport_failed: cliCauseRow('cli_transport_failed',
+    'the Baton Web connection failed',
+    'check that the resident is running (`baton serve`) and reachable, then retry', { field: 'transport', retryable: true }),
+  web_response_oversize: cliCauseRow('cli_protocol_failed',
+    'the Baton Web response exceeds its safe boundary',
+    'narrow the request (a tighter depth, page, or filter) so the answer fits the boundary', { field: 'response' }),
+  web_response_invalid_json: cliCauseRow('cli_protocol_failed',
+    'the Baton Web response was not valid JSON',
+    'the resident answered outside the protocol: restart it from this checkout (`baton serve`)', { field: 'response' }),
 
   // cli_connection_incompatible (F11: the ten causes, each named).
   selector_repo_mismatch: cliCauseRow('cli_connection_incompatible',
@@ -1039,11 +1051,18 @@ export function inspectBatonConnection({
   let resident = false;
   try {
     repository = readConnectionJson(repositoryPath, 'repository connection configuration');
+    // U-E19 (issue #313): the schema-version gate runs BEFORE the key check, mirroring
+    // discoverBatonConnection — a selector newer than this CLI must refuse as an unsupported
+    // schema, never as "unknown or missing fields" that send an agent to repair a good file.
+    if (![1, 2].includes(repository?.schemaVersion)) {
+      throw cliCauseRefusal('repository_selector_schema_unsupported', {
+        observed: `schemaVersion ${observedValue(repository?.schemaVersion ?? null)}`,
+      });
+    }
     resident = repository.schemaVersion === 2;
     exactKeys(repository, resident
       ? ['schemaVersion', 'profile', 'repoId', 'deploymentId', 'incarnation', 'transport', 'registryDigest', 'startedAt']
       : ['schemaVersion', 'profile', 'repoId'], 'repository connection configuration');
-    if (![1, 2].includes(repository.schemaVersion)) throw cliError('repository connection schema is unsupported', 'cli_config_invalid');
     id(repository.profile, 'connection profile'); id(repository.repoId, 'repository ID');
     if (resident && (!id(repository.deploymentId, 'resident deployment ID')
       || !id(repository.incarnation, 'resident incarnation') || repository.transport !== 'local'
@@ -1051,11 +1070,20 @@ export function inspectBatonConnection({
       || !Number.isFinite(Date.parse(repository.startedAt)))) {
       throw residentAuthorityRefusal(repository);
     }
-  } catch {
+  } catch (error) {
+    // U-E19 follow-through: the outline folds every reader failure into one needs_setup shape,
+    // which is exactly how "your CLI is older than the resident" used to read like a corrupt
+    // publication. When the refusal is one of this client's own composed causes, carry it beside
+    // the outline under `refusal` — the same {code, message, field, detail} shape `baton doctor`
+    // projects from discoverBatonConnection (baton.mjs).
+    const refusal = typeof error?.code === 'string' && error?.wireSafe === true
+      ? Object.freeze({ schemaVersion: 1, code: error.code, message: error.message, field: error.field ?? null, detail: error.detail ?? null })
+      : null;
     return Object.freeze({
       schemaVersion: 1, state: 'needs_setup', depth,
       outline: Object.freeze({ repository: 'ready', connection: 'invalid', profile: 'not_checked', credential: 'not_read', remote: 'not_checked' }),
       next: Object.freeze([{ action: 'repair_setup', command: 'baton setup' }]),
+      ...(refusal === null ? {} : { refusal }),
     });
   }
   const configRoot = nonempty(env.XDG_CONFIG_HOME) && isAbsolute(env.XDG_CONFIG_HOME)
@@ -2114,7 +2142,38 @@ export async function followSwarmCheck(parsed, client, options = {}) {
     if (view?.watch?.reason === 'event') await options.onFollowPage?.(swarmWakeSummary(view));
   }
 }
-
+/** U-G7 host half (issue #313): the verbs this parser serves that no application command on the
+ * wire card carries — the host side of the CLI inventory. One executable table, resolved live by
+ * parseBatonCli (the host-verb inventory test resolves every row), rendered into CLI.md by
+ * render-surface-docs.mjs, and checked for drift by the surface gate — so the prose that teaches
+ * them is never their only declaration. `explore`/`review` are registry aliases of run verbs and
+ * stay in the generated application inventory. */
+export const HOST_CLI_VERBS = Object.freeze([
+  Object.freeze({
+    verb: 'baton doctor', argv: Object.freeze(['doctor']), kind: 'doctor',
+    summary: 'Read-only connection diagnosis from local files; `--check` also verifies the resident authority.',
+  }),
+  Object.freeze({
+    verb: 'baton serve', argv: Object.freeze(['serve']), kind: 'serve',
+    summary: 'Host the resident for this checkout: serve authenticated HTTP over an owner-only socket, self-check, and publish the connection.',
+  }),
+  Object.freeze({
+    verb: 'baton setup', argv: Object.freeze(['setup']), kind: 'setup',
+    summary: 'Install an explicit-network connection profile (schema-v1 HTTPS deployments).',
+  }),
+  Object.freeze({
+    verb: 'baton route HARNESS/MODEL@EFFORT', argv: Object.freeze(['route', 'mock/model-a@low']), kind: 'route',
+    summary: 'Resolve one exact route tuple against the served registry.',
+  }),
+  Object.freeze({
+    verb: 'baton credentials install kimi', argv: Object.freeze(['credentials', 'install', 'kimi']), kind: 'credential-install',
+    summary: 'Install the Kimi provider credential interactively; credentials are never CLI arguments.',
+  }),
+  Object.freeze({
+    verb: 'baton top', argv: Object.freeze(['top']), kind: 'top',
+    summary: 'The operator seat: a live human view over runs and swarms (docs/38).',
+  }),
+]);
 /** R-5 (issue #288): where a command's verdict lands and which CLI verb reads it. The observation
  * route is what a `cli_command_pending` receipt hands the caller, so it names the durable row the
  * command will write — never a bare "retry later". */
@@ -3032,7 +3091,12 @@ export class BatonWebClient {
       } catch {
         // #160 R6 (error-actionability-2026-08-13/contract-fold.md §2 D4-R6/F4): the transport
         // refusal names the transport class (web) AND a next action — never a bare "failed".
-        const refusal = cliError('Baton Web connection failed; check your network and retry', 'cli_transport_failed');
+        // #313 (the #288 host leftover): this leg is composed from the ONE cause table like
+        // every other CLI refusal — rule, remedy, judged field, transience verdict and detail —
+        // instead of a fixed string with no cause.
+        const refusal = cliCauseRefusal('web_transport_failed', {
+          observed: `${options.method ?? 'GET'} ${path}`,
+        });
         // R-5 (issue #288): "this REQUEST outlived its own bound" (our abort fired) is a different
         // fact from "the connection never happened" — a caller whose command may still be running
         // resolves it with a receipt, never with a network fault. The marker is read by the command
@@ -3042,14 +3106,14 @@ export class BatonWebClient {
       }
       const declared = Number(response.headers?.get?.('content-length'));
       if (Number.isFinite(declared) && declared > this.maxJsonResponseBytes) {
-        throw cliError('Baton Web response exceeds its safe boundary', 'cli_protocol_failed');
+        throw cliCauseRefusal('web_response_oversize', { observed: `content-length ${declared}` });
       }
       let body;
       try {
         if (typeof response.text === 'function') {
           const raw = await response.text();
           if (Buffer.byteLength(raw) > this.maxJsonResponseBytes) {
-            throw cliError('Baton Web response exceeds its safe boundary', 'cli_protocol_failed');
+            throw cliCauseRefusal('web_response_oversize', { observed: `${Buffer.byteLength(raw)} body bytes` });
           }
           body = JSON.parse(raw);
         } else {
@@ -3059,7 +3123,9 @@ export class BatonWebClient {
         }
       } catch (error) {
         if (error?.code === 'cli_protocol_failed') throw error;
-        throw cliError('Baton Web returned invalid JSON', 'cli_protocol_failed');
+        throw cliCauseRefusal('web_response_invalid_json', {
+          observed: error instanceof SyntaxError ? error.message : null,
+        });
       }
       if (!response.ok) {
         const wire = record(body?.error) ? body.error : null;

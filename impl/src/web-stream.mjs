@@ -343,7 +343,7 @@ export class WebEventStream {
     for (const [id, ticket] of this.tickets) if (ticket.expiresAt <= now) this.tickets.delete(id);
   }
 
-  consume(value, principal, origin) {
+  consume(value, principal, origin, { retain = false } = {}) {
     this._pruneTickets();
     const split = typeof value === 'string' ? value.indexOf('.') : -1;
     const id = split > 0 ? value.slice(0, split) : '';
@@ -356,7 +356,7 @@ export class WebEventStream {
       && found.credentialId === principal?.credentialId
       && found.origin === origin && this._liveAuthorized(principal, origin, found.repoId);
     if (!valid) return null;
-    this.tickets.delete(id);
+    if (!retain) this.tickets.delete(id);
     return { id, ...found, hash: undefined };
   }
 
@@ -377,13 +377,18 @@ export class WebEventStream {
       catch { return response(503, 'temporarily_unavailable'); }
       return { ...response(429, 'rate_limited'), headers: { 'retry-after': '1' } };
     }
-    const grant = this.consume(ticket, principal, origin);
+    // U-G8 (issue #313): a run ticket lives for its whole TTL — an EventSource reconnect after a
+    // drop presents the SAME ticket with the Last-Event-ID it last saw, so deleting it at first
+    // open made every reconnect impossible. Snapshot-scope tickets stay single-use: their resume
+    // contract is the replayLimit window, not the ticket.
+    const grant = this.consume(ticket, principal, origin, { retain: true });
     if (!grant) {
       if (lease && this.releaseConnection) this.releaseConnection(principal);
       try { this._audit('stream_refused', principal, origin, { reason: 'invalid_ticket' }); }
       catch { return response(503, 'temporarily_unavailable'); }
       return response(principal ? 403 : 401, principal ? 'forbidden' : 'unauthenticated');
     }
+    if (!grant.channel) this.tickets.delete(grant.id); // snapshot scopes stay single-use at open
     if (grant.channel) return this._openRun({ grant, principal, origin, cursor, lease }, res);
 
     let snapshot;
@@ -653,13 +658,30 @@ export class WebEventStream {
     };
     const requested = cursor == null || cursor === '' ? null : String(cursor);
     const boundCursor = grant.startingCursor == null ? null : String(grant.startingCursor);
-    if (grant.incarnation !== this.incarnation || requested !== boundCursor) {
+    // U-G8 (issue #313): an EventSource reconnect presents the last `id:` it saw, which is never
+    // byte-equal to the ticket's bound — so byte-equality at open is what made every reconnect a
+    // 409. Admission now: the FIRST open (requested null or exactly the bound) seeds the grant as
+    // issued; a later open of the SAME live ticket is a RESUME, admitted only FORWARD from the
+    // bound — an integer at or past it on the progress channel, a well-formed opaque page cursor
+    // beside a bound on the timeline channels. The durable reader still refuses a cursor it
+    // cannot continue (cursorFailure → 409 below), so a forged or stale resume cursor never
+    // opens onto a wrong stream. An incarnation change is always a re-issue.
+    const resuming = requested !== null && requested !== boundCursor;
+    const resumeAdmitted = resuming && boundCursor !== null
+      && (grant.channel === 'progress'
+        ? Number.isSafeInteger(Number(requested)) && Number(requested) >= Number(boundCursor)
+        : OPAQUE_CURSOR.test(requested));
+    if (grant.incarnation !== this.incarnation || (resuming && !resumeAdmitted)) {
       release();
       try { this._audit('stream_snapshot_required', principal, origin, {
         repoId: grant.repoId, runId: grant.runId, channel: grant.channel,
         reason: grant.incarnation !== this.incarnation ? 'incarnation_mismatch' : 'cursor_mismatch',
       }); } catch { return response(503, 'temporarily_unavailable'); }
       return response(409, 'snapshot_required');
+    }
+    if (resuming) {
+      if (grant.channel === 'progress') grant.startingCursor = Number(requested);
+      else grant.startingCursor = requested;
     }
     if (!grant.snapshot || grant.snapshot.runId !== grant.runId
       || grant.snapshot.depth !== 'outline' || !Number.isSafeInteger(grant.snapshot.cursor)) {
@@ -824,6 +846,9 @@ export class WebEventStream {
       }
       state = page.state;
       if (page.terminal) {
+        // U-G8 (issue #313): the stream is complete — the ticket has nothing left to resume and
+        // is spent here, so a post-terminal reconnect re-issues instead of replaying a corpse.
+        this.tickets.delete(grant.id);
         disconnect('stream_terminal');
         endSocket();
         return false;
