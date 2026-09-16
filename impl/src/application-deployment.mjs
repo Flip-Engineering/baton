@@ -26,6 +26,7 @@ import {
 } from './context-runtime.mjs';
 import { GrokAcpCli } from './grok-acp.mjs';
 import { KimiAcpCli } from './kimi-acp.mjs';
+import { MuseCli } from './cli-adapters.mjs';
 import { OmpRpcCli } from './omp-rpc.mjs';
 import { normalizeConcurrencyCeiling } from './concurrency-policy.mjs';
 import { normalizeWorktreeCapacityPolicy, workspaceCapacityPressure, WorktreeCapacityError } from './worktree-capacity.mjs';
@@ -141,6 +142,9 @@ const DEFAULT_ROUTES = Object.freeze([
   })),
   ...['low', 'medium', 'high', 'xhigh', 'max'].map((effort) => Object.freeze({
     harness: 'claude-code', provider: 'claude', model: 'claude-opus-4-6', effort,
+  })),
+  ...['low', 'medium', 'high', 'xhigh', 'max'].map((effort) => Object.freeze({
+    harness: 'muse', model: 'muse-spark-1.3-contributor', effort,
   })),
   ...deepseekRoutes(),
   ...glmRoutes(),
@@ -756,6 +760,14 @@ function defaultCredentialProjection(repoRoot, { projectNativeKimi = false, clau
   const codex = join(homedir(), '.codex', 'auth.json');
   const grok = join(homedir(), '.grok', 'auth.json');
   if (existingRegular(codex)) credentials.codex = [codex];
+  // Muse keeps its OAuth metadata at $XDG_CONFIG_HOME/muse/auth.json; file-backed
+  // logins carry the OAuth token inline. Projecting the file gives the isolated
+  // file-backend worker the credential it resolves (a keychain-only file projects too,
+  // but the readiness gate blocks those rows before any worker spawns).
+  try {
+    const museAuth = museAuthPath();
+    if (existingRegular(museAuth)) credentials.muse = [museAuth];
+  } catch { /* an unresolvable config root projects nothing — readiness already gates */ }
   // The #84 grok controller projects the access-token-ONLY credential file list (RT-12): grok's
   // native worker projection is file-based, and the wholesale copy would carry the refresh token.
   // An absent controller/credential falls back to the operator file for the static path only.
@@ -877,6 +889,7 @@ function ompRouteReadyWhen(model) {
 export function routeReadinessContract(route) {
   switch (route.harness) {
     case 'codex': return '`~/.codex/auth.json` present';
+    case 'muse': return 'a file-backed muse login (`TBH_CREDENTIAL_BACKEND=file muse login`)';
     case 'grok': return '`~/.grok/auth.json` present with a ready authentication state';
     case 'kimi-code': return 'kimi credential files present with a ready authentication state';
     case 'claude-code':
@@ -888,9 +901,63 @@ export function routeReadinessContract(route) {
   }
 }
 
+/** Muse resolves its config under $XDG_CONFIG_HOME (else ~/.config), like the harness itself. */
+function museAuthPath() { return join(userConfigRoot(), 'muse', 'auth.json'); }
+
+const MAX_MUSE_AUTH_FILE_BYTES = 64 * 1024;
+
+/** The one file-backend Muse credential derivation. Workers run with
+ * `TBH_CREDENTIAL_BACKEND=file` on every OS (never the OS keychain), so a route is
+ * ready only when the auth file carries a file-backed OAuth token — not merely when the
+ * file exists. A keychain-only login (metadata without a token) reads blocked with the
+ * one command that provisions the file, never a runtime surprise. The token value itself
+ * is never logged, surfaced, or retained; shape presence is the only fact resolved. */
+export function museRouteReadiness() {
+  const path = museAuthPath();
+  if (!existingRegular(path)) {
+    return Object.freeze({
+      state: 'blocked', code: 'authentication_required',
+      summary: 'Muse has no file-backed login; run `TBH_CREDENTIAL_BACKEND=file muse login`, then reopen Baton.',
+    });
+  }
+  let descriptor;
+  let parsed = null;
+  let parseOk = false;
+  try {
+    descriptor = openSync(path, fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0));
+    const stat = fstatSync(descriptor);
+    if (!stat.isFile() || stat.size <= 0 || stat.size > MAX_MUSE_AUTH_FILE_BYTES) {
+      throw new Error('credential boundary refused');
+    }
+    parsed = JSON.parse(readFileSync(descriptor, 'utf8'));
+    parseOk = true;
+  } catch {
+    parseOk = false;
+  } finally {
+    if (descriptor !== undefined) closeSync(descriptor);
+  }
+  if (!parseOk) {
+    return Object.freeze({
+      state: 'blocked', code: 'authentication_metadata_invalid',
+      summary: 'Muse auth.json could not be validated; run `TBH_CREDENTIAL_BACKEND=file muse login` to provision a fresh file-backed login, then reopen Baton.',
+    });
+  }
+  const meta = record(parsed) ? parsed.providers?.meta : null;
+  const token = record(meta) ? meta.access_token : null;
+  if (!record(meta) || meta.mechanism !== 'oauth'
+    || typeof token !== 'string' || token.length === 0) {
+    return Object.freeze({
+      state: 'blocked', code: 'authentication_required',
+      summary: 'Muse auth.json carries no file-backed OAuth token (a keychain-only login); run `TBH_CREDENTIAL_BACKEND=file muse login`, then reopen Baton.',
+    });
+  }
+  return Object.freeze({ state: 'ready' });
+}
+
 function locallyConfiguredRoutes(repoRoot) {
   const configured = {
     codex: existingRegular(join(homedir(), '.codex', 'auth.json')),
+    muse: existingRegular(museAuthPath()),
     grok: existingRegular(join(homedir(), '.grok', 'auth.json')),
     'kimi-code': KIMI_CREDENTIAL_FILES.every(
       (path) => existingRegular(join(homedir(), '.kimi-code', path)),
@@ -933,6 +1000,19 @@ function codexCommand() {
     } catch { /* keep probing exact candidates */ }
   }
   throw deploymentError('Codex route requires a compatible app-server executable');
+}
+
+function museCommand() {
+  const candidates = commandCandidates('muse', [join(dirname(process.execPath), 'muse')]);
+  for (const candidate of candidates) {
+    try {
+      execFileSync(candidate, ['exec', '--help'], {
+        stdio: 'ignore', timeout: 5_000, maxBuffer: 1024 * 1024,
+      });
+      return candidate;
+    } catch { /* keep probing exact candidates */ }
+  }
+  throw deploymentError('Muse route requires a compatible muse executable with exec --json support');
 }
 
 /** Issue #28: deliberate wire ceilings are deployment-owned (64KiB–16MiB governance range). */
@@ -1050,6 +1130,14 @@ function builtInAdapters(routes, repoRoot, adapterOptions = {}, claudeCredential
     if (route.harness === 'codex') {
       adapters[key] = new CodexAppServerCli({
         cmd: codexCommand(), requestTimeoutMs: 45_000, model: route.model, ceiling,
+      });
+    } else if (route.harness === 'muse') {
+      const allowedModels = new Set(['muse-spark-1.3-contributor']);
+      if (rows.some((row) => !allowedModels.has(row.model))) {
+        throw deploymentError('current Muse routes permit only muse-spark-1.3-contributor');
+      }
+      adapters[key] = new MuseCli({
+        cmd: museCommand(), model: route.model, ceiling, maxWireFrameBytes,
       });
     } else if (route.harness === 'grok') {
       adapters[key] = new GrokAcpCli({
@@ -1456,7 +1544,17 @@ function deploymentReadiness(
     // structural gates already passed, so card-contract refusals keep their #234 precedence.
     // No omp route is ready by declaration; a blocked row names the missing file, never its
     // contents.
-    if (route.harness === 'omp') {
+    // Muse workers authenticate file-backed on every OS, so the file-backend derivation
+    // decides — not the generic projection check (a keychain-only auth file projects yet
+    // authenticates nothing under `TBH_CREDENTIAL_BACKEND=file`).
+    if (route.harness === 'muse') {
+      const museGate = museRouteReadiness();
+      if (museGate.state === 'blocked') {
+        return Object.freeze({
+          ...publicFields, state: 'blocked', code: museGate.code, summary: museGate.summary, runtime,
+        });
+      }
+    } else if (route.harness === 'omp') {
       const ompGate = ompRouteReadiness(repoRoot, route.model);
       if (ompGate.state === 'blocked') {
         return Object.freeze({

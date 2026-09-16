@@ -404,6 +404,7 @@ The zero-assembly deployment registers these route families (`baton doctor` for 
 | `kimi-code` | `kimi-code/k3` | low/high/max | kimi credential files present with a ready authentication state |
 | `grok` | `grok-4.5` | low/medium/high | `~/.grok/auth.json` present with a ready authentication state |
 | `claude-code` | `claude-opus-4-6` | low/medium/high/xhigh/max | bounded version + auth status probes |
+| `muse` | `muse-spark-1.3-contributor` | low/medium/high/xhigh/max | a file-backed muse login (`TBH_CREDENTIAL_BACKEND=file muse login`) |
 | `omp` | `deepseek/deepseek-flash` | low/high/max | `~/.omp/agent/agent.db` present and repo `deepseek_key.json` present |
 | `omp` | `deepseek/deepseek-v4-pro[1m]` | low/medium | `~/.omp/agent/agent.db` present and repo `deepseek_key.json` present |
 | `omp` | `zai/glm-5.3-flash` | low/high/max | `~/.omp/agent/agent.db` present and repo `glm_key.json` present |
@@ -419,7 +420,7 @@ economically efficient model and the adapter-configured default; `deepseek/deeps
 precedes its unpublished update, so it stays an explicit low/medium opt-in and is never a default.
 
 Admission and readiness are the observed facts this table documents, never a declaration:
-`baton doctor` admits the codex, grok, kimi-code and omp families only when their ambient
+`baton doctor` admits the codex, muse, grok, kimi-code and omp families only when their ambient
 credential fact is present (the omp family's is `~/.omp/agent/agent.db`; the claude-code rows are
 built-in and probe at readiness time), and an omp route whose provider key file is absent —
 `deepseek_key.json` for `deepseek/*` routes, `glm_key.json` for `zai/*` routes, both gitignored at

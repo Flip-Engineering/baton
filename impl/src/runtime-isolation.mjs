@@ -17,7 +17,7 @@ export function runtimeIdentity(selection) {
   // String support remains for direct/legacy RuntimeIsolation embedders.
   if (typeof selection === 'string') {
     const family = selection === 'z-code' ? 'glm' : selection;
-    const surface = family === 'codex' || family === 'grok' ? family : 'claude';
+    const surface = family === 'codex' || family === 'grok' || family === 'muse' ? family : 'claude';
     return { family, surface, authPosture: 'unknown', adapterCredentialState: null };
   }
   const card = selection?.card ?? selection;
@@ -31,6 +31,7 @@ export function runtimeIdentity(selection) {
   const surface = harness === 'codex' ? 'codex'
     : harness === 'grok' ? 'grok'
       : harness === 'kimi-code' ? 'kimi-code'
+        : harness === 'muse' ? 'muse'
         : harness === 'omp' ? 'omp' : 'claude';
   const provider = card.modelSelection?.family;
   const family = surface === 'claude' && typeof provider === 'string' && provider.length > 0
@@ -89,6 +90,16 @@ export class RuntimeIsolation {
     // #230: omp reads $HOME/.omp — no config-dir override; the credential tree projects
     // HOME-relative (below), exactly omp's native resolution.
     else if (surface === 'omp') { /* HOME-relative; no config env var */ }
+    // Muse resolves $XDG_CONFIG_HOME/muse/auth.json (else ~/.config/muse). Point the
+    // config home at the projected config root so the isolated runtime resolves the
+    // projected `muse/auth.json` — never the host's ambient config. Pin the file
+    // credential backend so the worker authenticates from that projected file on every
+    // OS and never touches the OS keychain (the deployment readiness gate admits only
+    // file-backed logins for this harness).
+    else if (surface === 'muse') {
+      env.XDG_CONFIG_HOME = dirname(config);
+      env.TBH_CREDENTIAL_BACKEND = 'file';
+    }
     else env.CLAUDE_CONFIG_DIR = config;
 
     if (surface === 'kimi-code') {

@@ -1,6 +1,7 @@
 // cli-adapters.mjs — REAL subprocess adapters that spin up full vendor harnesses as workers:
 // Codex CLI (`codex exec --json`), Claude Code CLI (`claude -p --output-format stream-json`),
-// Z-Code (Claude Code pointed at Z.ai's Anthropic-compatible endpoint for GLM), and a Pi hook.
+// Z-Code (Claude Code pointed at Z.ai's Anthropic-compatible endpoint for GLM), Muse
+// (`muse exec --json`), and a Pi hook.
 //
 // Each conforms to the coordinator's session Adapter contract (card/spawn/prompt/interrupt/
 // approve/answer/kill/onEvent). A worker runs headlessly in its git worktree (cwd); the CLI's
@@ -12,7 +13,7 @@
 // unit-tested against captured real output; spawning is gated behind an explicit `live` opt so
 // tests never invoke a real CLI.
 
-import { spawn } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import { normalizeProcessGeneration, ProcessCloseReapLatch, processStartedPayload } from './process-lifecycle.mjs';
 import { usdToNanos } from './usd.mjs';
 import { attestWorkerPolicyObservation } from './worker-policy.mjs';
@@ -172,6 +173,73 @@ export function parseClaudeEvent(o, worker, harness, turnEpoch, logicalSequence 
     default:
       return {}; // user (tool results), rate_limit_event, deltas
   }
+}
+
+/**
+ * Muse (`muse exec --json`): MSP wire schema JSONL. One object per line with
+ * `{payload_type, payload}`. Verified against captured real output (echo + meta
+ * providers, 2026-09-15): `run.lifecycle.started` opens the turn,
+ * `run.output.delta` carries streaming text chunks, `tool.result` carries a
+ * completed tool call (`correlation_facts.tool_name`, `call_id`, `text`), and
+ * `run.terminal.completed` carries the full final `text`. No token/usage
+ * counters were observed on the wire, so usage is honestly unavailable.
+ */
+export function parseMuseEvent(o, worker, harness, turnEpoch, logicalSequence = 1) {
+  const base = { worker, harness, turnEpoch, actor: 'worker' };
+  if (!o || typeof o !== 'object' || Array.isArray(o)) return {};
+  const payloadType = typeof o.payload_type === 'string' ? o.payload_type : null;
+  const payload = o.payload && typeof o.payload === 'object' && !Array.isArray(o.payload) ? o.payload : {};
+  const kind = typeof payload.kind === 'string' ? payload.kind : null;
+  if (payloadType === 'run.lifecycle.started' || kind === 'run_started') {
+    return { event: { ...base, kind: 'lifecycle.turn_started', payload: {} } };
+  }
+  if (payloadType === 'tool.result') {
+    const callId = String(payload.call_id ?? `muse:${turnEpoch}:${logicalSequence}`);
+    const name = typeof payload.correlation_facts?.tool_name === 'string'
+      && payload.correlation_facts.tool_name.length > 0
+      ? payload.correlation_facts.tool_name : 'unknown';
+    const output = typeof payload.text === 'string' ? payload.text : '';
+    return {
+      event: {
+        ...base,
+        kind: 'content.tool_call',
+        payload: { callId, phase: 'completed', name, output },
+      },
+    };
+  }
+  if (payloadType === 'run.terminal.completed' || (kind === 'run_terminal' && payload.terminal === 'completed')) {
+    const text = typeof payload.text === 'string' ? payload.text : '';
+    const beforeTerminal = text
+      ? [{ ...base, kind: 'content.message', payload: { text } }] : [];
+    return {
+      terminal: true,
+      beforeTerminal,
+      event: {
+        ...base,
+        kind: 'lifecycle.turn_completed',
+        payload: { result: makeResult('completed', undefined, text), usageSeal: unavailableUsageSeal() },
+      },
+    };
+  }
+  if ((typeof payloadType === 'string' && payloadType.startsWith('run.terminal.')) || kind === 'run_terminal') {
+    const error = typeof payload.reason === 'string' && payload.reason.length > 0
+      ? payload.reason
+      : typeof payload.terminal === 'string' && payload.terminal.length > 0
+        ? `terminal ${payload.terminal}` : (payloadType ?? 'run.terminal.failed');
+    return { crashed: true, event: { ...base, kind: 'lifecycle.crashed', payload: { error, usageSeal: unavailableUsageSeal() } } };
+  }
+  return {}; // task lifecycle, deltas, workspace observations — not surfaced
+}
+
+/** Probe `muse --version` for a bounded semver token; never throws. */
+function observedMuseVersion(cmd, probe) {
+  if (typeof cmd !== 'string' || cmd.length === 0 || cmd.includes('\0')) return 'unavailable';
+  try {
+    const source = String((probe ?? execFileSync)(cmd, ['--version'], {
+      encoding: 'utf8', timeout: 5_000, maxBuffer: 64 * 1024,
+    }));
+    return /(\d+\.\d+\.\d+)/u.exec(source)?.[1] ?? 'unavailable';
+  } catch { return 'unavailable'; }
 }
 
 function makeResult(status, usage, summary, usd) {
@@ -677,5 +745,81 @@ export class PiCli extends CliAdapter {
   }
 }
 
+/**
+ * Muse — Meta's `muse exec --json` headless worker. One-shot like Codex/Claude:
+ * the brief renders as the positional PROMPT argv (spawn writes the same text
+ * to stdin, which `exec` ignores when a prompt arg is present — verified
+ * 2026-09-15), the MSP JSONL stream parses to BatonEvents, and interruption
+ * signals the process group. Unattended by construction (`--approval-mode
+ * never` + `--disable-sandbox`); `--trust-workspace` loads the worktree's own
+ * skills/rules, `--no-session-log` keeps worker runs out of the session store,
+ * and `--user-input-auto-resolve` auto-cancels headless prompts so a question
+ * can never hang a one-shot turn. Authentication is file-backed on every OS:
+ * the worker runs with `TBH_CREDENTIAL_BACKEND=file` and reads the projected
+ * `$XDG_CONFIG_HOME/muse/auth.json` — never the OS keychain. A caller-supplied
+ * `opts.env` entry for the same variable wins (documented escape hatch only).
+ */
+export class MuseCli extends CliAdapter {
+  constructor(opts = {}) {
+    const approvalMode = opts.approvalMode ?? 'never';
+    const provider = opts.provider ?? 'meta';
+    super({
+      harness: 'muse',
+      version: opts.version ?? observedMuseVersion(opts.cmd ?? 'muse', opts.versionProbe),
+      ceiling: opts.ceiling, maxContext: opts.maxContext ?? 200000, live: opts.live,
+      maxWireFrameBytes: opts.maxWireFrameBytes,
+      reapOwnedProcessGroup: opts.reapOwnedProcessGroup,
+      governance: {
+        usage: { tokens: 'unavailable', usd: 'unavailable', tokenMetric: null, terminalSeal: 'native' },
+        providerCalls: { observation: 'native', enforcement: 'unavailable' },
+        toolCalls: { observation: 'native', enforcement: 'unavailable' },
+        maxWireFrameBytes: opts.maxWireFrameBytes ?? DEFAULT_MAX_WIRE_FRAME_BYTES,
+      },
+      modelSelection: {
+        mode: 'exact', configuredDefault: opts.model ?? null, available: null,
+        family: 'muse', acceptedPrefixes: ['muse-'], acceptedAliases: [],
+        reasoningEffort: ['minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'],
+        serviceTier: null, provenance: 'adapter-configuration', refreshedAt: null,
+      },
+      permissions: {
+        mode: approvalMode, sandbox: 'danger-full-access',
+        boundary: 'Unattended full host permissions by default; containment is a separate deployment boundary',
+      },
+      workerPolicy: {
+        schemaVersion: 1,
+        autonomy: {
+          supported: ['unattended'], default: 'unattended', perTask: false,
+          observation: 'launch', mechanisms: ['approval-mode-never'],
+        },
+        access: {
+          supported: ['full'], default: 'full', perTask: false,
+          observation: 'launch', mechanisms: ['muse-disable-sandbox'],
+        },
+        containment: {
+          hostProcess: 'same_uid', guarantees: ['private_runtime'],
+          configuredPreferences: [], observation: 'unavailable',
+        },
+      },
+      cmd: opts.cmd ?? 'muse',
+      args: (brief, route = {}) => {
+        const model = route.model ?? opts.model;
+        const effort = route.reasoningEffort;
+        return ['exec', '--json', '--provider', provider,
+          '--approval-mode', approvalMode, '--disable-sandbox', '--trust-workspace',
+          '--no-session-log', '--user-input-auto-resolve',
+          ...(model ? ['--model', model] : []),
+          ...(effort ? ['--reasoning-effort', effort] : []),
+          renderPrompt(brief)];
+      },
+      workerPolicyObservation: () => ({ autonomy: 'unattended', access: 'full' }),
+      parse: parseMuseEvent,
+      env: { TBH_CREDENTIAL_BACKEND: 'file', ...opts.env },
+      // SC8: canonical 8 keys, honest values — interrupt is a signal (emulated), kill is a real
+      // SIGKILL (native), everything conversational is impossible on a one-shot exec.
+      verbs: { spawn: 'native', prompt: 'unsupported', steer: 'unsupported', interrupt: 'emulated', approve: 'unsupported', answer: 'unsupported', kill: 'native', pause: 'unsupported' },
+    });
+  }
+}
+
 /** Registry of the real harnesses this build can spin up, by name. */
-export const CLI_ADAPTERS = { codex: CodexCli, claude: ClaudeCli, zcode: ZCodeCli, glm: ZCodeCli, pi: PiCli };
+export const CLI_ADAPTERS = { codex: CodexCli, claude: ClaudeCli, zcode: ZCodeCli, glm: ZCodeCli, pi: PiCli, muse: MuseCli };
