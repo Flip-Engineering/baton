@@ -651,7 +651,7 @@ permissions the view names — one table, four surfaces that cannot disagree:
 | `run.board.post` / `run.board.read` | contribute / read | keep runnable state on, and read back, the board bound to the participant's OWN run |
 | `run.scratchpad.append` / `run.scratchpad.read` | contribute / read | note working state (the shared scope is visible to peers) and read it or the shared scope back |
 | `run.scratchpad.elevate` | contribute | elevate one's own scratchpad entries to candidate Findings |
-| `evidence.search` | read | find a fact by text, participant or kind across the swarm |
+| `evidence.search` | read | find a fact or a contribution by text, participant, kind or path across the deployment |
 
 **Retired from the participant surface, with the reason.** A verb without a participant situation
 is not kept alive by an advertisement the loop cannot use:
@@ -703,9 +703,17 @@ names), path (case-sensitive, over refs, work and path-like body text) and free 
 (case-insensitive, over body text and row identities). The operation rebuilds a per-deployment
 index from the coordination ledger on every call, so every row carries its seq/ts and the
 cursor IS the ledger seq; the page boundary derives from the same `wire.frame` row the bridge
-answers under — never a numeric page cap. Wiring the extended wire shape through dispatch
-(canonical registry row, swarm validators, bridge scope) stays with the root, which owns those
-files; until it lands, new spellings parse at the surface and refuse typed at dispatch.
+answers under — never a numeric page cap.
+
+The extended wire shape is wired through the deployment dispatch (issue #338): the canonical
+registry row carries all six optional filters with nothing required, the application's own
+validator IS the operation's validator (`validateEvidenceSearchArgs` — an unset filter is simply
+absent, on every surface), and `BatonApplication#evidenceSearch` serves the operation straight from
+the coordination ledger, so the CLI's default deployment-wide form and the MCP tool's optional
+`swarmId` are reachable instead of refused by the single-swarm knowledge lane. The MCP tool also
+carries its capability classification (`observe`); without it a fully-capable principal was refused
+with `forbidden` before dispatch. The participant bridge keeps its membership-bound, single-swarm
+lane: a bridge token IS swarm-scoped.
 
 ## Parked guidance reaches a one-shot seat on its next exec (issue #337)
 

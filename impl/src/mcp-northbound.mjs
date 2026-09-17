@@ -9,6 +9,7 @@ import {
   APPLICATION_SEMANTIC_REGISTRY,
   SURFACING_MATRIX_KEYS,
   canonicalAndTransportNames,
+  canonicalOperationForCommand,
   deriveSurfaceNames,
 } from './application-semantics.mjs';
 import { compileWavefile } from './workflow-dsl.mjs';
@@ -129,6 +130,12 @@ const CAPABILITY = Object.freeze({
   // mcp-reflex-surface-decisions.md, table): reflex tools are in NEITHER derivation set above —
   // every reflex tool MUST be registered explicitly here, or `_authority` computes
   // `[undefined]` and refuses with `forbidden`.
+  // Issue #338: the deployment evidence search is advertised from its own tool table (evidence.search
+  // is deliberately excluded from MCP_APPLICATION_ENTRIES above, so no derived row reaches it) —
+  // register BOTH its spellings from the canonical operation's own capability classes, or
+  // `_authority` computes `[undefined]` and refuses a fully-capable principal with `forbidden`.
+  ...Object.fromEntries([deriveSurfaceNames('evidence.search').mcp, 'evidence.search']
+    .map((tool) => [tool, canonicalOperationForCommand('evidence.search').capabilities])),
   baton_context_eval: ['observe'],
   baton_decision_answer: ['approve', 'observe'],
   // MCP-W1/W2/W3 (mcp-packaging-decisions v1.0): the ordinary-surface wave ergonomics, doctor, and

@@ -4126,6 +4126,15 @@
           ]
         },
         {
+          "name": "evidenceSearch",
+          "ordinal": 0,
+          "size": 4,
+          "seam": "surface",
+          "evidence": [
+            "surface:transport_dispatch"
+          ]
+        },
+        {
           "name": "_swarmCommand",
           "ordinal": 0,
           "size": 11,
@@ -5841,7 +5850,7 @@
         {
           "name": "_commandDispatch",
           "ordinal": 0,
-          "size": 215,
+          "size": 219,
           "seam": "surface",
           "evidence": [
             "recovery:reconcile_call",

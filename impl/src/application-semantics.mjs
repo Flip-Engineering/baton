@@ -1265,10 +1265,13 @@ const wakeFilterTokens = {
 };
 
 const CANONICAL_OPERATION_SPECS = [
-  // Issue #318 (retrieval, #312): the swarm's evidence search. One canonical operation, every
-  // surface deriving its name from THIS row (`baton evidence search` / baton_evidence_search);
-  // the dispatch lives in SwarmRuntime, reads the coordination ledger directly, and derives its
-  // page boundary from the wire.frame row — the cursor is the ledger seq, never a page count.
+  // Issue #318 (retrieval, #312): the deployment evidence search. One canonical operation, every
+  // surface deriving its name from THIS row (`baton evidence search` / baton_evidence_search); the
+  // dispatch reads the coordination ledger directly and derives its page boundary from the
+  // wire.frame row — the cursor is the ledger seq, never a page count. The field contract is the
+  // operation's own (evidence-search.mjs, `EVIDENCE_SEARCH_FILTERS`): every filter is optional, the
+  // swarm is a filter and not a scope (absent searches the whole deployment), and an unset filter is
+  // simply ABSENT — the shape every surface sends (#338).
   ['evidence.search', {
     profile: 'ordinary', surfaces: ['embedded', 'cli', 'mcp', 'web'], effect: 'swarm_read',
     capabilities: ['observe'], outputView: 'index', helpTopic: 'run',
@@ -1278,9 +1281,10 @@ const CANONICAL_OPERATION_SPECS = [
       query: { type: 'string', minLength: 1, maxLength: 4096 },
       participantId: id,
       kind: id,
+      path: { type: 'string', minLength: 1, maxLength: 4096 },
       afterSeq: { type: 'integer', minimum: 0 },
-    }, ['swarmId']),
-    authority: 'SwarmRuntime checks current participant membership and read grants.',
+    }, []),
+    authority: 'The deployment reads the coordination ledger under the caller principal; the participant bridge additionally checks current swarm membership and read grants.',
   }],
   ...SWARM_COMMAND_ROWS.map((row) => [row.command, {
     example: SWARM_OPERATION_EXAMPLES[row.command],

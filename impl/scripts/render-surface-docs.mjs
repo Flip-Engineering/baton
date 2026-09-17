@@ -11,7 +11,7 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 
 import { APPLICATION_SEMANTIC_REGISTRY, deriveSurfaceNames } from '../src/application-semantics.mjs';
-import { CLI_WEB_COMMANDS, HOST_CLI_VERBS } from '../src/application-cli.mjs';
+import { CLI_TOP_LEVEL_VERBS, CLI_WEB_COMMANDS, HOST_CLI_VERBS } from '../src/application-cli.mjs';
 import { mcpApplicationToolNames } from '../src/mcp-northbound.mjs';
 import {
   formatSurfaceResolutionFinding,
@@ -43,6 +43,7 @@ export const CLI_INVENTORY_MARKER = 'cli-verb-inventory';
 export const CLI_FLEET_ROUTES_MARKER = 'cli-fleet-routes';
 export const MCP_INVENTORY_MARKER = 'mcp-tool-inventory';
 export const CLI_HOST_VERBS_MARKER = 'cli-host-verb-inventory';
+export const CLI_TOP_LEVEL_VERBS_MARKER = 'cli-top-level-verbs';
 export const SWARM_FAMILY_MARKER = 'swarm-family';
 
 function beginMarker(marker) { return `<!-- BEGIN GENERATED: ${marker} (impl/scripts/render-surface-docs.mjs) -->`; }
@@ -317,6 +318,18 @@ export function renderCliHostVerbInventory() {
   ].join('\n');
 }
 
+/** Issue #340: the closed top-level verb set — rendered from the parser's OWN CLI_TOP_LEVEL_VERBS
+ * table, the one derivation `baton --help` and the unknown-verb refusal read too. A verb that exists
+ * in the parser and not here (or the reverse) is a refusal the moment the gate runs. */
+export function renderCliTopLevelVerbs() {
+  const rows = CLI_TOP_LEVEL_VERBS.map((row) => `| \`${row.verb}\` | \`${row.argv.join(' ')}\` | ${row.summary} |`);
+  return [
+    '| Top-level verb | Parser argv | Serves |',
+    '|---|---|---|',
+    ...rows,
+  ].join('\n');
+}
+
 export function injectGeneratedBlock(text, marker, block) {
   const begin = beginMarker(marker);
   const end = endMarker(marker);
@@ -336,6 +349,7 @@ export const TARGETS = [
   { doc: CLI_DOC, marker: CLI_INVENTORY_MARKER, render: renderCliVerbInventory },
   { doc: CLI_DOC, marker: CLI_FLEET_ROUTES_MARKER, render: renderCliFleetRoutes },
   { doc: CLI_DOC, marker: CLI_HOST_VERBS_MARKER, render: renderCliHostVerbInventory },
+  { doc: CLI_DOC, marker: CLI_TOP_LEVEL_VERBS_MARKER, render: renderCliTopLevelVerbs },
   { doc: MCP_DOC, marker: MCP_INVENTORY_MARKER, render: renderMcpToolInventory },
   { doc: GRAMMAR_DOC, marker: SWARM_FAMILY_MARKER, render: renderSwarmFamily },
 ];

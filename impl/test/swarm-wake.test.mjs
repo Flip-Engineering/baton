@@ -8,7 +8,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import test from 'node:test';
 import { MockAdapter, openBaton } from '../src/index.mjs';
-import { followSwarm, followWakes, parseBatonCli, swarmWakeSummary } from '../src/application-cli.mjs';
+import { followSwarm, followWakes, parseBatonCli, swarmWakeSummary, watchSwarmFiltered } from '../src/application-cli.mjs';
 import { openWakeStream } from '../src/wake-stream.mjs';
 import { startWakeResident, wakeFrame } from './wake-resident-double.mjs';
 
@@ -240,4 +240,80 @@ test('followWakes emits one page per coordination row when the transport replays
   assert.deepEqual(pages.map((page) => page.seq), [5, 9]);
   assert.equal(last.frames, 2);
   assert.equal(last.cursor, 9);
+});
+
+// ── issue #339: the bounded watch honours the same wake-class filter ────────────────────────────
+//
+// `baton swarm watch` advertises --wake-class in its usage, but the parser accepted the flag only
+// under --follow: on the bounded (--timeout-ms) form it was an unexpected argument. The two rows
+// below pin the parser half and the waiting half — the bounded watch answers on a row of the
+// requested class and re-arms past the rows it did not act on, using the stream's own class table.
+
+test('the bounded swarm watch parses --wake-class through the same closed-set parser as --follow (#339)', () => {
+  const parsed = parseBatonCli(['swarm', 'watch', 'swarm-1', '--timeout-ms', '250', '--wake-class', 'closed,queued']);
+  assert.equal(parsed.kind, 'swarm_watch_filtered');
+  assert.equal(parsed.swarmId, 'swarm-1');
+  assert.equal(parsed.timeoutMs, 250);
+  assert.deepEqual(parsed.kinds, ['closed', 'queued']);
+
+  const legacy = parseBatonCli(['swarm', 'watch', 'swarm-1', '--kinds', 'dead', '--projection', 'outline']);
+  assert.equal(legacy.kind, 'swarm_watch_filtered');
+  assert.deepEqual(legacy.kinds, ['dead'], '--kinds stays a working spelling of the same axis');
+  assert.equal(legacy.projection, 'outline', 'the projection rides along like every other flag');
+  const resumed = parseBatonCli(['swarm', 'watch', 'swarm-1', '--wake-class', 'closed', '--after-seq', '4']);
+  assert.equal(resumed.afterSeq, 4, 'the bounded watch resumes with the swarm cursor');
+
+  const plain = parseBatonCli(['swarm', 'watch', 'swarm-1', '--timeout-ms', '250']);
+  assert.equal(plain.kind, 'command', 'a bounded watch with no filter is the ordinary command');
+  assert.deepEqual(plain.args, { swarmId: 'swarm-1', timeoutMs: 250 });
+
+  assert.throws(() => parseBatonCli(['swarm', 'watch', 'swarm-1', '--wake-class', 'not_a_class']),
+    (error) => String(error?.message ?? '').includes('not_a_class')
+      && String(error?.message ?? '').includes('queued'),
+    'an unknown class refuses naming the closed set — the follow leg\'s own parser');
+  assert.throws(() => parseBatonCli(['swarm', 'watch', 'swarm-1', '--since', '4']),
+    (error) => error.code === 'cli_invalid' && /--after-seq/u.test(error.message),
+    '--since is the stream cursor: the bounded watch names the cursor it actually resumes with');
+});
+
+test('the bounded watch answers on a row of the requested wake class, re-arming past the rest (#339)', async () => {
+  const calls = [];
+  const delivered = [
+    // A row the filter does not name: `message.delivered` is the guidance_delivered class.
+    { schemaVersion: 1, swarmId: SWARM_ID, cursor: 5, status: 'open',
+      watch: { reason: 'event', afterSeq: 0, matchedSeq: 5,
+        event: { seq: 5, kind: 'driver.recorded', payloadKind: 'message.delivered', participantId: 'worker' } } },
+    { schemaVersion: 1, swarmId: SWARM_ID, cursor: 9, status: 'closed',
+      watch: { reason: 'event', afterSeq: 5, matchedSeq: 9,
+        event: { seq: 9, kind: 'swarm.closed', payloadKind: null } } },
+  ];
+  const client = {
+    async command(name, args, key) { calls.push({ name, args, key }); return delivered.shift(); },
+  };
+  const parsed = parseBatonCli(['swarm', 'watch', SWARM_ID, '--timeout-ms', '2000', '--wake-class', 'closed']);
+  const view = await watchSwarmFiltered(parsed, client);
+  assert.equal(calls.length, 2, 'the row outside the filter does not answer the watch');
+  assert.deepEqual(calls.map((call) => call.args.afterSeq), [undefined, 5],
+    'the second round resumes past the row it did not act on');
+  assert.ok(calls.every((call) => call.name === 'swarm.watch' && call.args.swarmId === SWARM_ID));
+  assert.ok(calls.every((call) => call.args.timeoutMs > 0 && call.args.timeoutMs <= 2000),
+    'every round is bounded by what is left of the caller\'s own deadline');
+  assert.notEqual(calls[0].key, calls[1].key, 'each round carries its own command identity');
+  assert.equal(view.cursor, 9);
+  assert.equal(view.watch.wakeClass, 'closed', 'the answer names the class it woke on');
+  assert.equal(view.watch.event.seq, 9);
+});
+
+test('the bounded watch answers the timeout row when no matching class lands (#339)', async () => {
+  const client = {
+    async command() {
+      return { schemaVersion: 1, swarmId: SWARM_ID, cursor: 7, status: 'open',
+        watch: { reason: 'timeout', afterSeq: 7, matchedSeq: null, event: null } };
+    },
+  };
+  const parsed = parseBatonCli(['swarm', 'watch', SWARM_ID, '--timeout-ms', '20', '--wake-class', 'closed']);
+  const view = await watchSwarmFiltered(parsed, client);
+  assert.equal(view.watch.reason, 'timeout', 'the deadline is reported, never a fabricated wake');
+  assert.equal(view.watch.wakeClass, undefined, 'a timeout row never claims a wake class');
+  assert.equal(view.cursor, 7);
 });

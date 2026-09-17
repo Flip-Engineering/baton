@@ -19,7 +19,7 @@ import {
   SWARM_CLI_COMMANDS, SWARM_CLI_HELP, SWARM_COMMAND_DEFINITIONS, swarmCliCommand,
 } from './swarm-surface.mjs';
 import { webAdmittedCommandNames } from './web-northbound.mjs';
-import { openWakeStream, parseWakeFilter, wakeClassHelpLines, wakeQuery } from './wake-stream.mjs';
+import { openWakeStream, parseWakeFilter, wakeClassFor, wakeClassHelpLines, wakeQuery } from './wake-stream.mjs';
 import { APPLICATION_COMMAND_DEFINITIONS } from './application.mjs';
 // TWO derived tiers, one declaration each (2026-09-14 audit, U-N5/U-E6):
 //
@@ -1402,12 +1402,145 @@ export function canonicalCliRenderModel(registry = APPLICATION_SEMANTIC_REGISTRY
 const CANONICAL_CLI_RENDER_MODEL = Object.freeze(canonicalCliRenderModel());
 const CANONICAL_CLI_BY_KEY = new Map(CANONICAL_CLI_RENDER_MODEL.map((row) => [row.key, row]));
 
+// ── the ONE closed top-level verb table (issue #340) ─────────────────────────────────────────────
+//
+// Every row is a verb this command line serves at argv[0]: `token` is the literal first token,
+// `parser` the parser that resolves it (`baton-cli` here, `unified-surface` for `surface`, which
+// baton.mjs consults first), `kind` the result that parser answers with, and `host` marks the U-G7
+// host half (issue #313) — the verbs no application command on the wire card carries, which render
+// as their own CLI.md inventory.
+//
+// This table is the ONE derivation behind `baton --help`, the unknown-verb refusal and the generated
+// docs. Before it, the three carried separate hand lists: `baton bogus` taught 'credentials, setup,
+// doctor, route, explore, review, context, waves, or run' while the help taught neither swarm,
+// evidence, deployment, waves, runs nor top — so a caller who mistyped a verb was sent to a verb set
+// that was not the one the parser dispatches. A token the parser recognises only to correct it
+// (`context`, whose eval leg is host-local, and the singular `wave`) is NOT a verb this table
+// teaches: it is refused with the corrective that names the right spelling, never advertised.
+export const CLI_TOP_LEVEL_VERBS = Object.freeze([
+  // U-G7 host half (issue #313): served by this parser, carried by no application command.
+  Object.freeze({
+    host: true, token: 'doctor', verb: 'baton doctor', argv: Object.freeze(['doctor']), kind: 'doctor',
+    parser: 'baton-cli',
+    summary: 'Read-only connection diagnosis from local files; `--check` also verifies the resident authority.',
+  }),
+  Object.freeze({
+    host: true, token: 'serve', verb: 'baton serve', argv: Object.freeze(['serve']), kind: 'serve',
+    parser: 'baton-cli',
+    summary: 'Host the resident for this checkout: serve authenticated HTTP over an owner-only socket, self-check, and publish the connection.',
+  }),
+  Object.freeze({
+    host: true, token: 'setup', verb: 'baton setup', argv: Object.freeze(['setup']), kind: 'setup',
+    parser: 'baton-cli',
+    summary: 'Install an explicit-network connection profile (schema-v1 HTTPS deployments).',
+  }),
+  Object.freeze({
+    host: true, token: 'route', verb: 'baton route HARNESS/MODEL@EFFORT',
+    argv: Object.freeze(['route', 'mock/model-a@low']), kind: 'route', parser: 'baton-cli',
+    summary: 'Resolve one exact route tuple against the served registry.',
+  }),
+  Object.freeze({
+    host: true, token: 'credentials', verb: 'baton credentials install kimi',
+    argv: Object.freeze(['credentials', 'install', 'kimi']), kind: 'credential-install',
+    parser: 'baton-cli',
+    summary: 'Install the Kimi provider credential interactively; credentials are never CLI arguments.',
+  }),
+  Object.freeze({
+    host: true, token: 'top', verb: 'baton top', argv: Object.freeze(['top']), kind: 'top',
+    parser: 'baton-cli',
+    summary: 'The operator seat: a live human view over runs and swarms (docs/38).',
+  }),
+  // The application verbs: each is the CLI transport of canonical operations the resident serves.
+  Object.freeze({
+    token: 'run', verb: 'baton run', argv: Object.freeze(['run', 'view', 'RUN_ID']), kind: 'command',
+    parser: 'baton-cli',
+    summary: 'Start a Run from an objective, or observe, steer, review, adopt and export one (`baton help run`).',
+  }),
+  Object.freeze({
+    token: 'review', verb: 'baton review OBJECTIVE',
+    argv: Object.freeze(['review', 'objective', '--exact', 'mock/model-a@low', '--exact', 'mock/model-b@low']),
+    kind: 'command', parser: 'baton-cli',
+    summary: 'The objective-first read-only preset: one reviewer/challenger Workflow on two exact routes.',
+  }),
+  Object.freeze({
+    token: 'explore', verb: 'baton explore OBJECTIVE', argv: Object.freeze(['explore', 'objective']),
+    kind: 'command', parser: 'baton-cli',
+    summary: 'The single-route read-only evidence preset.',
+  }),
+  Object.freeze({
+    token: 'swarm', verb: 'baton swarm', argv: Object.freeze(['swarm', 'list']), kind: 'command',
+    parser: 'baton-cli',
+    summary: 'Create, staff, guide and read living swarms (`baton help swarm`).',
+  }),
+  Object.freeze({
+    token: 'evidence', verb: 'baton evidence search', argv: Object.freeze(['evidence', 'search']),
+    kind: 'command', parser: 'baton-cli',
+    summary: 'Search the deployment\u2019s evidence and contributions by swarm, participant, kind, path or free text.',
+  }),
+  Object.freeze({
+    token: 'deployment', verb: 'baton deployment watch',
+    argv: Object.freeze(['deployment', 'watch', '--follow']), kind: 'wake_watch', parser: 'baton-cli',
+    summary: 'Attach to the deployment wake stream and print one JSON frame per coordination row.',
+  }),
+  Object.freeze({
+    token: 'waves', verb: 'baton waves', argv: Object.freeze(['waves', 'list']), kind: 'command',
+    parser: 'baton-cli',
+    summary: 'Run, compile, start, stop and inspect workflow waves.',
+  }),
+  Object.freeze({
+    token: 'runs', verb: 'baton runs list', argv: Object.freeze(['runs', 'list']), kind: 'command',
+    parser: 'baton-cli',
+    summary: 'List the Runs this authenticated connection may observe.',
+  }),
+  Object.freeze({
+    token: 'help', verb: 'baton help [TOPIC]', argv: Object.freeze(['help']), kind: 'command',
+    parser: 'baton-cli',
+    summary: 'Render one help topic; `baton --help` is the application overview.',
+  }),
+  Object.freeze({
+    token: 'application', verb: 'baton application help [TOPIC]',
+    argv: Object.freeze(['application', 'help']), kind: 'command', parser: 'baton-cli',
+    summary: 'The application help verb, spelled under its own noun.',
+  }),
+  Object.freeze({
+    token: 'surface', verb: 'baton surface', argv: Object.freeze(['surface']), kind: 'surface_help',
+    parser: 'unified-surface',
+    summary: 'List, describe and invoke the unified capability surface (`baton surface --help`).',
+  }),
+]);
+
+/** The U-G7 host half (issue #313): the rows of the closed top-level verb table that no application
+ * command on the wire card carries — rendered as their own CLI.md inventory by render-surface-docs.mjs
+ * and resolved live by the host-verb inventory test. */
+export const HOST_CLI_VERBS = Object.freeze(CLI_TOP_LEVEL_VERBS.filter((row) => row.host === true));
+
+/** The ONE refusal text for a first token outside the closed set (#340): the set the parser
+ * dispatches, in table order — never a hand list that can drift from it. */
+function expectedVerbRefusal() {
+  const tokens = CLI_TOP_LEVEL_VERBS.map((row) => row.token);
+  return `expected ${tokens.slice(0, -1).join(', ')}, or ${tokens.at(-1)}`;
+}
+
+/** The closed top-level verb set, rendered into the `application` help topic (#340): the same rows
+ * the refusal names and CLI.md generates, so `baton --help` can never teach a stale subset. */
+function topLevelVerbHelpBlocks(topic) {
+  if (topic !== 'application') return null;
+  return [
+    [
+      'verbs (every top-level verb this command line serves):',
+      ...CLI_TOP_LEVEL_VERBS.map((row) => `  ${row.verb} — ${row.summary}`),
+    ].join('\n'),
+  ];
+}
 export function batonCliHelp(topic = 'application') {
   const registry = APPLICATION_SEMANTIC_REGISTRY;
   const commandById = new Map(registry.cli.commands.map((command) => [command.id, command]));
   let definition = registry.cli.helpTopics[topic];
   const aliasTopic = definition?.aliasFor ?? null;
   if (aliasTopic) definition = registry.cli.helpTopics[aliasTopic];
+  // The derived blocks render under the RESOLVED topic, so an alias of the application topic
+  // (`application.help`) teaches exactly what the topic it aliases teaches.
+  const helpTopic = aliasTopic ?? topic;
   const actionEntry = Object.entries(registry.actions).find(([, candidate]) => candidate.helpTopic === topic);
   const action = actionEntry?.[1];
   if (!definition && action) {
@@ -1460,7 +1593,8 @@ export function batonCliHelp(topic = 'application') {
   if (!aliasTopic && operation?.deprecated && operation.aliases.length > 0) {
     blocks.push(`Deprecated: use baton ${operation.aliases[0].replaceAll('.', ' ')}.`);
   }
-  return [...blocks, ...(wakeWatchHelpBlocks(topic) ?? [])].join('\n\n');
+  return [...blocks, ...(topLevelVerbHelpBlocks(helpTopic) ?? []),
+    ...(wakeWatchHelpBlocks(topic) ?? [])].join('\n\n');
 }
 
 export const BATON_CLI_HELP = batonCliHelp(APPLICATION_SEMANTIC_REGISTRY.cli.defaultHelpTopic);
@@ -1967,9 +2101,11 @@ function parseSwarmCli(args, idempotencyKey) {
       values[entry.field] = token;
     }
   }
-  // The wake flags are parsed before the remainder check, so `--wake-class`/`--kinds`/`--since`
-  // on the follow form are the stream's vocabulary rather than an unexpected argument.
-  const wakes = follow ? parseWakeCliFlags(args) : null;
+  // The wake flags are parsed before the remainder check, so `--wake-class`/`--kinds`/`--since` are
+  // the stream's vocabulary rather than an unexpected argument — on BOTH watch forms (#339): the
+  // follow leg attaches to the deployment wake stream, and the bounded leg filters the same closed
+  // classes over its own poll loop. One parser and one closed set serve both legs.
+  const wakes = verb === 'watch' ? parseWakeCliFlags(args) : null;
   noRemainder(args);
   if (SWARM_COMMAND_DEFINITIONS[row.command].args.includes('idempotencyKey')) {
     values.idempotencyKey = idempotencyKey;
@@ -2001,6 +2137,22 @@ function parseSwarmCli(args, idempotencyKey) {
       follow: true, stopOnClosedWake: true, idempotencyKey,
     };
   }
+  if (verb === 'watch' && wakes.since !== null) {
+    throw cliError('swarm watch resumes with --after-seq SEQ (the swarm cursor), not --since SEQ (the wake cursor); pass --follow to attach to the wake stream');
+  }
+  // Issue #339: the bounded watch honours the same wake-class filter the usage teaches. The class
+  // axis is the stream's own closed set, so the filtered bounded read answers when a row of that
+  // class lands (the runtime's own watch row names the ledger row it woke on) and a row outside the
+  // filter re-arms the watch past it rather than answering.
+  if (verb === 'watch' && wakes.kinds !== null) {
+    return {
+      kind: 'swarm_watch_filtered', swarmId: values.swarmId, kinds: wakes.kinds,
+      ...(values.afterSeq === undefined ? {} : { afterSeq: values.afterSeq }),
+      ...(values.timeoutMs === undefined ? {} : { timeoutMs: values.timeoutMs }),
+      ...(values.projection === undefined ? {} : { projection: values.projection }),
+      idempotencyKey,
+    };
+  }
   return { kind: 'command', name: row.command, args: values, idempotencyKey };
 }
 
@@ -2022,6 +2174,7 @@ function wakeWatchHelpBlocks(topic) {
       'wake stream:',
       '  baton deployment watch --follow [--wake-class CLASS,...] [--since SEQ]',
       '  baton swarm watch SWARM_ID --follow [--wake-class CLASS,...] [--since SEQ]',
+      '  baton swarm watch SWARM_ID [--timeout-ms MS] [--wake-class CLASS,...]',
       '  One JSON frame per line. --wake-class watches named wake classes (--kinds stays a working',
       '  spelling of the same axis); --since resumes after a coordination cursor (a cursor IS a',
       '  ledger seq, and every frame carries its own, so a caller that stopped resumes by passing',
@@ -2029,6 +2182,9 @@ function wakeWatchHelpBlocks(topic) {
       '  actor, the subject it woke on, and — for terminal classes — the next command that',
       '  acknowledges it; a coordination row wakes at most once and never carries a request body.',
       '  Both verbs read the same stream through the same client; the swarm verb pins SWARM_ID.',
+      '  The BOUNDED swarm watch accepts the same --wake-class: it answers when a row of that class',
+      '  lands (naming the class it woke on) or at its --timeout-ms deadline, and resumes with',
+      '  --after-seq — --since is the stream cursor and belongs to --follow.',
     ].join('\n'),
     `wake classes (the closed set --wake-class admits):\n${wakeClassHelpLines().map((line) => `  ${line}`).join('\n')}`,
   ];
@@ -2169,6 +2325,38 @@ export async function followSwarm(parsed, client, options = {}) {
     cursor = view?.cursor;
     if (view?.status !== 'open' && !swarmHasLiveParticipant(view)) return view;
     if (typeof options.shouldStop === 'function' && await options.shouldStop(view)) return view;
+  }
+}
+
+/** Issue #339: the bounded watch under the SAME wake-class filter the follow leg takes. Each round
+ * asks the runtime for the next swarm update and derives the class that row would have been streamed
+ * under (`wakeClassFor` — the stream's own table, so the two legs can never disagree about a class).
+ * A row outside the filter re-arms the watch PAST it instead of answering, so
+ * `baton swarm watch S --timeout-ms N --wake-class closed` waits for that class or for the deadline;
+ * the answer is the ordinary swarm view with the wake row it woke on, class named. */
+export async function watchSwarmFiltered(parsed, client) {
+  const kinds = new Set(parsed.kinds);
+  const deadline = Date.now() + (parsed.timeoutMs ?? DEFAULT_APPLICATION_WAIT_MS);
+  let cursor = parsed.afterSeq;
+  let round = 0;
+  for (;;) {
+    const remaining = deadline - Date.now();
+    round += 1;
+    const view = await client.command('swarm.watch', {
+      swarmId: parsed.swarmId, ...(cursor === undefined ? {} : { afterSeq: cursor }),
+      timeoutMs: Math.max(1, remaining),
+      ...(parsed.projection === undefined ? {} : { projection: parsed.projection }),
+    }, `${parsed.idempotencyKey}:watch:${cursor ?? 'now'}:${round}`);
+    const wake = view?.watch ?? null;
+    const wakeClass = wake?.event === null || wake?.event === undefined ? null
+      : (wakeClassFor({ kind: wake.event.kind,
+        payload: wake.event.payloadKind === null || wake.event.payloadKind === undefined
+          ? null : { kind: wake.event.payloadKind } })?.wakeClass ?? null);
+    if (wakeClass !== null && kinds.has(wakeClass)) return { ...view, watch: { ...wake, wakeClass } };
+    // Nothing matched: either the deadline passed (the runtime answered its own `timeout` row) or the
+    // row that woke it is outside the filter — resume past that row and keep waiting for a match.
+    if (wake?.reason !== 'event' || !Number.isSafeInteger(wake.matchedSeq)) return view;
+    cursor = wake.matchedSeq;
   }
 }
 
@@ -2338,38 +2526,6 @@ export async function followSwarmRecruit(parsed, client, options = {}) {
     found = swarmRecruitSeat(view, parsed.participantId);
   }
 }
-/** U-G7 host half (issue #313): the verbs this parser serves that no application command on the
- * wire card carries — the host side of the CLI inventory. One executable table, resolved live by
- * parseBatonCli (the host-verb inventory test resolves every row), rendered into CLI.md by
- * render-surface-docs.mjs, and checked for drift by the surface gate — so the prose that teaches
- * them is never their only declaration. `explore`/`review` are registry aliases of run verbs and
- * stay in the generated application inventory. */
-export const HOST_CLI_VERBS = Object.freeze([
-  Object.freeze({
-    verb: 'baton doctor', argv: Object.freeze(['doctor']), kind: 'doctor',
-    summary: 'Read-only connection diagnosis from local files; `--check` also verifies the resident authority.',
-  }),
-  Object.freeze({
-    verb: 'baton serve', argv: Object.freeze(['serve']), kind: 'serve',
-    summary: 'Host the resident for this checkout: serve authenticated HTTP over an owner-only socket, self-check, and publish the connection.',
-  }),
-  Object.freeze({
-    verb: 'baton setup', argv: Object.freeze(['setup']), kind: 'setup',
-    summary: 'Install an explicit-network connection profile (schema-v1 HTTPS deployments).',
-  }),
-  Object.freeze({
-    verb: 'baton route HARNESS/MODEL@EFFORT', argv: Object.freeze(['route', 'mock/model-a@low']), kind: 'route',
-    summary: 'Resolve one exact route tuple against the served registry.',
-  }),
-  Object.freeze({
-    verb: 'baton credentials install kimi', argv: Object.freeze(['credentials', 'install', 'kimi']), kind: 'credential-install',
-    summary: 'Install the Kimi provider credential interactively; credentials are never CLI arguments.',
-  }),
-  Object.freeze({
-    verb: 'baton top', argv: Object.freeze(['top']), kind: 'top',
-    summary: 'The operator seat: a live human view over runs and swarms (docs/38).',
-  }),
-]);
 /** R-5 (issue #288; #331 adds the recruit leg): where a command's verdict lands and which CLI
  * verb reads it. The observation route is what a `cli_command_pending` receipt hands the
  * caller, so it names the durable row the command will write — never a bare "retry later".
@@ -2736,7 +2892,9 @@ export function parseBatonCli(rawArgs) {
     };
   }
   if (args.shift() !== 'run') {
-    throw cliError('expected credentials, setup, doctor, route, explore, review, context, waves, or run');
+    // #340: the refusal names the CLOSED top-level verb set (CLI_TOP_LEVEL_VERBS) — the same rows
+    // `baton --help` teaches and CLI.md is generated from, never a hand list that drifts from them.
+    throw cliError(expectedVerbRefusal());
   }
   const action = args.shift();
   if (action === 'follow') {
@@ -3815,6 +3973,7 @@ export async function runBatonCli(parsed, client, options = {}) {
   if (parsed.kind === 'swarm_recruit_follow') return followSwarmRecruit(parsed, client, options ?? {});
   if (parsed.kind === 'wake_watch') return followWakes(parsed, client, options ?? {});
   if (parsed.kind === 'swarm_follow') return followSwarm(parsed, client, options ?? {});
+  if (parsed.kind === 'swarm_watch_filtered') return watchSwarmFiltered(parsed, client);
   if (parsed.kind === 'stream') {
     if (!options || typeof options !== 'object' || Array.isArray(options)
       || Object.keys(options).some((key) => key !== 'onFollowPage')

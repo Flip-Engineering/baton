@@ -10,19 +10,31 @@
 // Fixture pattern from swarm-view-slices.test.mjs: a real CoordinationStore under a real
 // SwarmRuntime with a controllable coordinator — two swarms, knowledge seeds against the
 // participants' real runIds, and contributions recorded through swarm.update, including
-// contributions that name paths.
+// contributions that name paths. The #338 row at the end of the file drives that same operation
+// over a real resident: parser → authenticated Web host → the application's own validator and
+// dispatch → the canonical search.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { CoordinationStore } from '../src/coordination-store.mjs';
 import { SwarmRuntime } from '../src/swarm-runtime.mjs';
-import { searchDeploymentEvidence, searchEvidenceIndex } from '../src/evidence-search.mjs';
-import { parseBatonCli } from '../src/application-cli.mjs';
+import { EVIDENCE_SEARCH_FILTERS, searchDeploymentEvidence, searchEvidenceIndex } from '../src/evidence-search.mjs';
+import { canonicalOperationForCommand } from '../src/application-semantics.mjs';
+import { APPLICATION_COMMAND_DEFINITIONS } from '../src/application.mjs';
+import { BatonWebClient, parseBatonCli, runBatonCli } from '../src/application-cli.mjs';
 import { APPLICATION_TOOL, McpFleetServer } from '../src/mcp-northbound.mjs';
 import { mockApplicationCard } from '../scripts/surface-truth.mjs';
 import { swarmBridgeMain } from '../src/swarm-native-bridge.mjs';
+// Issue #338: the real resident deployment the CLI row drives — the real application behind the
+// real authenticated Web host, on the same fixture pattern read-lane-229-red.test.mjs uses.
+import { BatonApplication, MockAdapter, createDriver } from '../src/index.mjs';
+import { WebNorthbound, createLocalAuthenticatedWebServer } from '../src/web-northbound.mjs';
+import { WebSessionStore } from '../src/web-auth.mjs';
+import { BatonWebHost } from '../src/application-host.mjs';
+import { createLocalSocketFetch } from '../src/local-web-transport.mjs';
 
 const owner = { actor: 'owner', principalId: 'owner', sessionId: 'owner-session' };
 
@@ -247,6 +259,20 @@ test('the MCP evidence search tool carries the canonical deployment-wide schema'
     assert.ok(tool.inputSchema.properties[field], `the tool schema carries ${field}`);
   }
   assert.deepEqual(tool.inputSchema.required, ['repoId'], 'the swarm filter is optional: absent names the deployment');
+  // Issue #338: ONE field contract. The canonical operation's own vocabulary (evidence-search.mjs,
+  // the module every surface derives from) is the registry schema the web/MCP/envelope validation
+  // reads, the tool schema the MCP caller sees, and the flags the CLI parses — asserted as a set,
+  // so a filter added to one surface alone refuses here instead of at a user's call.
+  const operation = canonicalOperationForCommand('evidence.search');
+  assert.deepEqual(Object.keys(operation.inputSchema.properties).sort(),
+    [...EVIDENCE_SEARCH_FILTERS].sort(), 'the canonical schema IS the operation field contract');
+  assert.deepEqual(operation.inputSchema.required, [],
+    'no filter is required: the swarm is a filter, never a scope');
+  assert.deepEqual(Object.keys(tool.inputSchema.properties).sort(),
+    [...EVIDENCE_SEARCH_FILTERS, 'repoId'].sort(),
+    'the advertised tool carries exactly those filters plus its repository scope');
+  assert.deepEqual([...APPLICATION_COMMAND_DEFINITIONS['evidence.search'].args].sort(),
+    [...EVIDENCE_SEARCH_FILTERS].sort(), 'the application command table declares exactly those filters');
 });
 
 test('the participant bridge documents the canonical evidence search arguments', async () => {
@@ -258,4 +284,142 @@ test('the participant bridge documents the canonical evidence search arguments',
     assert.match(out, new RegExp(field), `bridge help names ${field}`);
   }
   assert.match(out, /ledger seq|cursor/i, 'bridge help teaches the seq cursor');
+});
+
+// ── issue #338: the CLI reaches the deployment through a real resident ─────────────────────────
+//
+// `baton evidence search` was refused by the APPLICATION on every form ('evidence.search has
+// unknown or missing fields') because the field contract was stated twice: the parser, the MCP
+// tool and the operation's own validator all send only the filters the caller named, while the
+// application command table demanded the whole declared set present. The row below drives the
+// whole path — parser → authenticated Web host → the application's own validator and dispatch →
+// the canonical search — on a fixture deployment, so no layer can disagree about the contract
+// again. Only the repository and the provider adapter are fixtures; every layer of the path is
+// production code, which is what the MCP tool (invalid_run_command) and the CLI both ride.
+
+const RESIDENT_REPO = 'repo-evidence-resident';
+const RESIDENT_ORIGIN = 'https://baton.local';
+const residentPrincipal = (id) => ({ actor: `direct:${id}`, principalId: id, sessionId: `${id}-session` });
+
+/** A real resident deployment: the real BatonApplication over a driver + MockAdapter, behind the
+ * real authenticated Web host on an owner-only socket, driven by the real CLI client. The socket
+ * root stays short because the host refuses a bound path over 103 bytes. */
+async function residentDeployment(t) {
+  const directory = mkdtempSync('/tmp/baton-evidence-resident-');
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const repo = join(directory, 'repo');
+  execFileSync('git', ['init', '-q', repo]);
+  execFileSync('git', ['config', 'user.name', 'Evidence test'], { cwd: repo });
+  execFileSync('git', ['config', 'user.email', 'evidence@example.invalid'], { cwd: repo });
+  writeFileSync(join(repo, 'base.txt'), 'base\n');
+  execFileSync('git', ['add', '.'], { cwd: repo });
+  execFileSync('git', ['commit', '-qm', 'base'], { cwd: repo });
+  const adapter = new MockAdapter({ harness: 'mock', scenario: { outcome: 'completed', delayMs: 5, summary: 'ready', files: {} } });
+  const adapterCard = adapter.card.bind(adapter);
+  adapter.card = () => ({ ...adapterCard(), modelSelection: { mode: 'exact', configuredDefault: 'model-a',
+    available: ['model-a'], family: 'mock', acceptedPrefixes: ['model-'], acceptedAliases: [],
+    reasoningEffort: ['low'], serviceTier: null, provenance: 'test', refreshedAt: null } });
+  const driver = createDriver({
+    repoRoot: repo, repoId: RESIDENT_REPO, logDir: join(directory, 'log'), adapters: { mock: adapter },
+    goalPlanAuthority: {
+      policy: { schemaVersion: 1, repoId: RESIDENT_REPO, mandatory: true, approvalTtlMs: 3_600_000,
+        riskClasses: ['low'], effectClasses: ['repository_edit'], capabilityClasses: ['code'],
+        limits: { maxGoalVersions: 16, maxPlanVersions: 16, maxNodes: 32, maxDepsPerNode: 16,
+          maxTextBytes: 4_096, maxItems: 64, maxScopePaths: 64, maxRouteValues: 32, maxGoalBytes: 65_536,
+          maxPlanBytes: 262_144, maxStatusBytes: 262_144, maxTokens: 1_000_000, maxUsd: 100,
+          maxWallMin: 1_440, maxProviderTurns: 10_000 } },
+      authorize: async () => true,
+    },
+    stopDeadlineMs: 2_000,
+  });
+  const application = new BatonApplication({
+    driver, repoId: RESIDENT_REPO,
+    profiles: { standard: { schemaVersion: 1, repoId: RESIDENT_REPO, definitionOfDone: ['verification passes'],
+      constraints: [], risk: 'low',
+      goalBudget: { tokens: 20_000, usd: 2, wallMin: 10, providerTurns: 8 },
+      nodeBudget: { tokens: 10_000, usd: 1, wallMin: 5, providerTurns: 4 },
+      pathScope: ['**'],
+      verification: { command: 'true', arguments: [], cwd: '.', envAllowlist: ['PATH'], expectExit: 0,
+        expectResult: 'exit_code', timeoutMs: 10_000, maxOutputBytes: 65_536, requiredPredecessorEvidence: [] },
+      routes: [{ harness: 'mock', model: 'model-a', effort: 'low' }],
+      capabilities: ['code'], effects: ['repository_edit'],
+      resultPolicy: { mode: 'manual', maxAdoptedResults: 1, locator: 'git_ref' } } },
+    principals: { planner: residentPrincipal('planner'), dispatcher: residentPrincipal('dispatcher'),
+      observer: residentPrincipal('observer') },
+    authorize: async () => true,
+  });
+  await application.ready;
+  const sessions = new WebSessionStore(join(directory, 'sessions'));
+  const issued = sessions.issue({ userId: 'local-owner', authMethod: 'bearer',
+    capabilities: ['observe', 'control', 'approve', 'emergency_stop', 'export_result'],
+    repoIds: [RESIDENT_REPO], ttlMs: 60_000 }, { actor: 'deployment:resident' });
+  const web = new WebNorthbound({ coordinator: driver.coordinator, coordination: driver.coordination,
+    sessions, application, repoIds: [RESIDENT_REPO], allowedOrigins: [RESIDENT_ORIGIN] });
+  const server = createLocalAuthenticatedWebServer(web);
+  const socketPath = join(directory, 'resident.sock');
+  const host = new BatonWebHost({
+    application, server,
+    shutdownPrincipal: { actor: 'deployment:resident', principalId: 'local-owner', sessionId: 'local-owner-session' },
+    listen: { path: socketPath }, webDrainMs: 2_000,
+  });
+  t.after(async () => {
+    try { await host.shutdown(); } catch { /* the fixture is already down */ }
+    try { await application.shutdown(residentPrincipal('cleanup')); } catch { /* already closed */ }
+  });
+  await host.start();
+  const client = new BatonWebClient({
+    baseUrl: RESIDENT_ORIGIN, origin: RESIDENT_ORIGIN, repoId: RESIDENT_REPO, token: issued.token,
+    commandTimeoutMs: 15_000, pollMs: 10,
+    fetchImpl: createLocalSocketFetch({ socketPath, baseUrl: RESIDENT_ORIGIN }),
+    clock: Date.now, sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+  });
+  return { application, client };
+}
+
+test('the CLI finds deployment evidence through the resident application: every filter, unset optionals omitted (issue #338)', async (t) => {
+  const { client } = await residentDeployment(t);
+  const created = await client.command('swarm.create',
+    { purpose: 'Evidence search fixture', idempotencyKey: 'evidence-resident-create' });
+  const swarmId = created.swarmId;
+  assert.ok(swarmId, 'the fixture swarm exists');
+  await client.command('swarm.update', {
+    swarmId, event: 'swarm.contribution_recorded',
+    payload: { contributionId: 'contribution-resident-search',
+      body: 'landed cursor paging in impl/search/index.mjs', refs: ['impl/search/index.mjs'] },
+    idempotencyKey: 'evidence-resident-update',
+  });
+  const watch = async (argv) => runBatonCli(parseBatonCli(argv), client);
+
+  // The swarm filter, with every unset optional simply ABSENT — the form that answered 'unknown or
+  // missing fields' before the contract was decided once.
+  const bySwarm = await watch(['evidence', 'search', swarmId]);
+  assert.deepEqual(bySwarm.rows.map((row) => row.contributionId), ['contribution-resident-search']);
+
+  // The participant filter: the runtime attributed the contribution to the caller's own seat.
+  const participantId = bySwarm.rows[0].participantId;
+  assert.ok(participantId, 'the recorded contribution names its author seat');
+  const byParticipant = await watch(['evidence', 'search', swarmId, '--participant', participantId]);
+  assert.deepEqual(byParticipant.rows.map((row) => row.contributionId), ['contribution-resident-search']);
+  const byOtherSeat = await watch(['evidence', 'search', swarmId, '--participant', 'nobody']);
+  assert.equal(byOtherSeat.rows.length, 0);
+
+  // The deployment-wide form: the swarm is a filter, so its absence names the whole deployment.
+  const deploymentWide = await watch(['evidence', 'search', '--query', 'index.mjs']);
+  assert.deepEqual(deploymentWide.rows.map((row) => row.contributionId), ['contribution-resident-search']);
+  assert.equal(deploymentWide.cursor, bySwarm.cursor, 'the cursor is the ledger head on both forms');
+
+  // Free text (case-insensitive), the path filter over refs, and the seq cursor — the same contract
+  // the operation's own validator states.
+  const byQuery = await watch(['evidence', 'search', swarmId, '--query', 'CURSOR PAGING']);
+  assert.equal(byQuery.rows.length, 1);
+  const byPath = await watch(['evidence', 'search', swarmId, '--path', 'impl/search']);
+  assert.equal(byPath.rows.length, 1);
+  const miss = await watch(['evidence', 'search', swarmId, '--query', 'nothing-here']);
+  assert.equal(miss.rows.length, 0);
+  const resume = await watch(['evidence', 'search', swarmId, '--after-seq', String(bySwarm.cursor)]);
+  assert.equal(resume.rows.length, 0);
+
+  // A field outside the canonical vocabulary is still refused, typed, by the same validator.
+  await assert.rejects(watch(['evidence', 'search', swarmId, '--nope', '1']),
+    (error) => error.code === 'cli_invalid' || error.code === 'application_evidence_search_invalid');
 });

@@ -68,6 +68,37 @@ ordinary-CLI inventory. The conformance suite fails if they drift from served tr
 
 <!-- END GENERATED: cli-verb-inventory -->
 
+
+## Top-level verbs
+
+Every verb `baton` serves at its first token, rendered by `impl/scripts/render-surface-docs.mjs` from
+the parser's own `CLI_TOP_LEVEL_VERBS` table — the same rows `baton --help` teaches and the
+unknown-verb refusal names, so the three can never disagree about the verb set again.
+
+<!-- BEGIN GENERATED: cli-top-level-verbs (impl/scripts/render-surface-docs.mjs) -->
+
+| Top-level verb | Parser argv | Serves |
+|---|---|---|
+| `baton doctor` | `doctor` | Read-only connection diagnosis from local files; `--check` also verifies the resident authority. |
+| `baton serve` | `serve` | Host the resident for this checkout: serve authenticated HTTP over an owner-only socket, self-check, and publish the connection. |
+| `baton setup` | `setup` | Install an explicit-network connection profile (schema-v1 HTTPS deployments). |
+| `baton route HARNESS/MODEL@EFFORT` | `route mock/model-a@low` | Resolve one exact route tuple against the served registry. |
+| `baton credentials install kimi` | `credentials install kimi` | Install the Kimi provider credential interactively; credentials are never CLI arguments. |
+| `baton top` | `top` | The operator seat: a live human view over runs and swarms (docs/38). |
+| `baton run` | `run view RUN_ID` | Start a Run from an objective, or observe, steer, review, adopt and export one (`baton help run`). |
+| `baton review OBJECTIVE` | `review objective --exact mock/model-a@low --exact mock/model-b@low` | The objective-first read-only preset: one reviewer/challenger Workflow on two exact routes. |
+| `baton explore OBJECTIVE` | `explore objective` | The single-route read-only evidence preset. |
+| `baton swarm` | `swarm list` | Create, staff, guide and read living swarms (`baton help swarm`). |
+| `baton evidence search` | `evidence search` | Search the deployment’s evidence and contributions by swarm, participant, kind, path or free text. |
+| `baton deployment watch` | `deployment watch --follow` | Attach to the deployment wake stream and print one JSON frame per coordination row. |
+| `baton waves` | `waves list` | Run, compile, start, stop and inspect workflow waves. |
+| `baton runs list` | `runs list` | List the Runs this authenticated connection may observe. |
+| `baton help [TOPIC]` | `help` | Render one help topic; `baton --help` is the application overview. |
+| `baton application help [TOPIC]` | `application help` | The application help verb, spelled under its own noun. |
+| `baton surface` | `surface` | List, describe and invoke the unified capability surface (`baton surface --help`). |
+
+<!-- END GENERATED: cli-top-level-verbs -->
+
 ## Drive a living swarm
 
 `baton swarm` recruits participants, publishes findings, and lets agents DECLARE the coupling
@@ -104,6 +135,9 @@ baton swarm update SWARM_ID swarm.coupling_updated \
 # Read the declared truth: waitsOn per work item, couplings with arrivals/awaiting, attention
 baton swarm view SWARM_ID
 baton swarm watch SWARM_ID --follow
+
+# ...or bounded: wait for one wake class (or the deadline) and print the view that woke it
+baton swarm watch SWARM_ID --timeout-ms 30000 --wake-class closed
 ```
 
 Refusals name what is missing: a dependency on unknown work (`work_not_found`), a ring of waits

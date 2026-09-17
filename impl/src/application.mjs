@@ -42,6 +42,7 @@ import {
 // Epic #103 (D7/D3): the ONE orchestrator-briefing family constant, shared with the store that
 // mints it — the resolve lane, the post-close mint seam, and the MCP sentence all name it.
 import { BRIEFING_FAMILY } from './coordination-store.mjs';
+import { searchDeploymentEvidence, validateEvidenceSearchArgs } from './evidence-search.mjs';
 
 export { APPLICATION_SEMANTIC_REGISTRY } from './application-semantics.mjs';
 
@@ -221,7 +222,7 @@ export const APPLICATION_COMMAND_DEFINITIONS = Object.freeze({
   'run.wait': Object.freeze({ args: Object.freeze(['runId', 'timeoutMs', 'until']), capabilities: Object.freeze(['observe']), web: true, mcp: true, mcpStateful: false, reconcilable: true }),
   'run.answer': Object.freeze({ args: Object.freeze(['runId', 'requestId', 'answer']), capabilities: Object.freeze(['approve', 'observe']), web: true, mcp: true, mcpStateful: true, reconcilable: true }),
   'run.feedback': Object.freeze({ args: Object.freeze(['runId', 'role', 'feedback']), capabilities: Object.freeze(['control', 'observe']), web: true, mcp: true, mcpStateful: true, reconcilable: true }),
-  'evidence.search': Object.freeze({ args: Object.freeze(['swarmId', 'query', 'participantId', 'kind', 'afterSeq']), capabilities: Object.freeze(['observe']), web: true, mcp: true, mcpStateful: false, reconcilable: true }),
+  'evidence.search': Object.freeze({ args: Object.freeze(['swarmId', 'query', 'participantId', 'kind', 'path', 'afterSeq']), capabilities: Object.freeze(['observe']), web: true, mcp: true, mcpStateful: false, reconcilable: true }),
   'run.stop': Object.freeze({ args: Object.freeze(['runId', 'reason']), capabilities: Object.freeze(['emergency_stop', 'observe']), web: true, mcp: true, mcpStateful: true, reconcilable: true }),
   'run.evidence': Object.freeze({ args: Object.freeze(['runId']), capabilities: Object.freeze(['observe']), web: true, mcp: true, mcpStateful: false, reconcilable: true }),
   'run.adopt': Object.freeze({ args: Object.freeze(['runId', 'nodeKey', 'resultSha', 'evidenceDigest', 'reason']), capabilities: Object.freeze(['adopt_result', 'observe']), web: true, mcp: true, mcpStateful: true, reconcilable: true }),
@@ -2361,6 +2362,21 @@ export function validateApplicationCommandArgs(name, args) {
     }
     return true;
   }
+  // Issue #338: the canonical operation's OWN validator is the field contract (evidence-search.mjs,
+  // `EVIDENCE_SEARCH_FILTERS`): every filter is OPTIONAL and an unset filter is simply ABSENT — the
+  // CLI omits the flags it was not given, the MCP tool omits the properties it was not given, and
+  // the bridge fills only what its scope knows. The generic exact-key check below demands the whole
+  // declared set instead, which refused EVERY advertised form before dispatch: the web envelope
+  // validates through this function, and mcp-northbound collapses the same refusal into
+  // invalid_run_command. One contract, decided here for every surface.
+  if (name === 'evidence.search') {
+    try {
+      validateEvidenceSearchArgs(args);
+    } catch (cause) {
+      throw applicationError(cause.message, 'application_evidence_search_invalid', cause.detail ?? null);
+    }
+    return true;
+  }
   exactObject(args, definition.args, 'application_command_invalid', name);
   if (name === 'run.start') normalizeIntent(args.intent);
   if (name === 'run.status' && !validId(args.runId)) {
@@ -2397,9 +2413,6 @@ export function validateApplicationCommandArgs(name, args) {
   if (name === 'run.resume_work') normalizeResumeWork(args);
   if (name === 'run.review') normalizeReviewRequest(args);
   if (name === 'run.integrate') normalizeIntegrationRequest(args);
-  if (name === 'evidence.search' && (args.swarmId === undefined || !validId(args.swarmId))) {
-    throw applicationError('evidence search target is invalid', 'application_evidence_search_invalid');
-  }
   if (name === 'run.export' && (!validId(args.runId) || !/^[a-f0-9]{64}$/u.test(args.evidenceDigest ?? ''))) {
     throw applicationError('Run export target is invalid', 'application_export_invalid');
   }
@@ -3761,6 +3774,15 @@ export class BatonApplication {
     this._workspaceAttachments.set(runId, Object.freeze({
       workspaceId: workspace.workspaceId, context: workspace.sessionContext,
     }));
+  }
+
+  /** The deployment-wide evidence search (#312): knowledge AND contributions, filtered by swarm,
+   * participant, kind, path and free text, cursored by the ledger's own seq — the one operation the
+   * CLI, the MCP tool and the embedded port all serve. The participant bridge keeps its own
+   * membership-bound lane (SwarmRuntime), because a bridge token IS swarm-scoped. */
+  evidenceSearch(args) {
+    this._assertOpen();
+    return searchDeploymentEvidence(this.driver.coordination, args);
   }
 
   async _swarmCommand(name, args, principal, context) {
@@ -13538,8 +13560,12 @@ export class BatonApplication {
       && Object.hasOwn(SWARM_KNOWLEDGE_COMMANDS, name)) {
       return this._swarmCommand(name, args, principal, rawContext);
     }
-    // Issue #318 retrieval (#312): `evidence.search` is swarm-scoped for every caller.
-    if (name === 'evidence.search') return this._swarmCommand(name, args, principal, rawContext);
+    // Issue #312/#338: the deployment-wide evidence search is ONE canonical operation
+    // (evidence-search.mjs) read straight from the coordination ledger. The swarm is a FILTER, not
+    // a scope, so the deployment dispatch serves it here instead of the swarm runtime's
+    // single-swarm knowledge lane — which refuses a request that names no swarm at all, leaving the
+    // deployment-wide form (the CLI's default, the MCP tool's optional swarmId) unreachable.
+    if (name === 'evidence.search') return this.evidenceSearch(args);
     if (name === 'run.message.send') return this.messageSend(args, principal);
     if (name === 'run.message.receipt') return this.messageReceipt(args, principal);
     if (name === 'run.attention.watch') return this.attentionWatch(args, principal);
