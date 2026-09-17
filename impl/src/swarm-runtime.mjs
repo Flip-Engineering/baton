@@ -318,8 +318,8 @@ export class SwarmRuntime {
 
   /** The holder ids of every active seat whose worker is LIVE, across this runtime's swarms —
    * the retention set the host worker leases reconcile against, so a stop or a leave that ended
-   * a seat's runtime also returns its lease to the host budget (#297). A stopped seat stays a
-   * member; only liveness releases capacity. */
+   * a seat's runtime also returns its lease to the host budget (#297, #350). A stopped seat's
+   * membership is settled (status left), so it holds no lease; only a live active seat does. */
   _activeWorkerHolders() {
     const holders = [];
     const workers = this.coordinator.list();
@@ -515,7 +515,7 @@ export class SwarmRuntime {
     const rows = [];
     for (const swarm of this.store.swarms()) {
       for (const participant of Object.values(swarm.participants)) {
-        if (participant.status !== 'active' || !Array.isArray(participant.scope)) continue;
+        if (!this._canAct(participant) || !Array.isArray(participant.scope)) continue;
         const paths = [...new Set(participant.scope.filter((path) => requested.has(path)))].sort();
         if (paths.length > 0) {
           rows.push({ swarmId: swarm.swarmId, participantId: participant.participantId, paths });
@@ -596,6 +596,62 @@ export class SwarmRuntime {
   _workerFor(participant, workers) {
     return workers.find((row) => row.runId === participant.runId
       && (!participant.bindings.length || row.id === participant.bindings.at(-1)?.workerId)) ?? null;
+  }
+
+  /** Issue #350: the ONE "this seat can still act" predicate every surface reads — peers
+   * in the brief, scope overlap, roster intersection, closed-with-live-participants, holder
+   * checks, and the completion derivation. A seat acts while its membership is active AND
+   * its runtime is not known-dead: projected rows carry the liveness derivation, stored
+   * rows carry none, and absence of a runtime reading is not evidence of death (an unbound
+   * seat between join and first binding has no worker yet). Never `status === 'active'`
+   * alone; `gone` keeps its meaning. */
+  _canAct(row) {
+    if (!row || row.status !== 'active') return false;
+    return row.runtime === undefined || row.runtime.live === true;
+  }
+
+  /** The live nudge rows for one worker, read off the durable lane — the fallback evidence
+   * the completion derivation uses when the caller carries no precomputed guidance. */
+  _nudgeRowsFor(workerId) {
+    const rows = [];
+    for (const event of this.store.eventsView()) {
+      if (event.kind !== 'message.sent' || event.payload?.kind !== 'nudge') continue;
+      if (event.payload?.to?.workerId === workerId) rows.push(event);
+    }
+    return rows;
+  }
+
+  /** Issues #332/#350: the ONE completion derivation the view and the stop path share. A
+   * seat whose worker exited after its recorded final contribution with a terminal turn
+   * settles instead of reading as a dead runtime. The turn is terminal exactly when the
+   * exit is clean — no crash row on the seat's own ledger (a CLI worker that exits
+   * without a terminal record always lands as lifecycle.crashed, the #326 invariant) and
+   * no recorded failure cause — so a mid-turn death can never read as a completion. A
+   * crash row or a failure cause vetoes; an unwired crash authority is unknown and fails
+   * closed, never a clean exit. A boundary pause with pending guidance defeats the
+   * completion too: the steering was never answered, so the seat died mid-turn however
+   * cleanly the process ended. `evidence` carries the view's precomputed rows; without it
+   * the derivation reads the same facts itself, so the stop path judges what the view
+   * would have shown. */
+  _seatCompleted(swarm, participant, workers, evidence = null) {
+    if (!this._canAct(participant)) return false;
+    const worker = this._workerFor(participant, workers);
+    if (worker === null) return false;
+    const paused = evidence?.paused ?? this.coordinator.pausedTurns({ workerId: worker.id });
+    if (swarmParticipantLiveness(worker, paused.length).live) return false;
+    const contributed = evidence?.contributed
+      ?? Object.values(swarm.contributions ?? {}).some((row) => row?.participantId === participant.participantId);
+    if (!contributed) return false;
+    const crashWired = worker !== null && typeof this.lastCrash === 'function';
+    const crash = crashWired ? this.lastCrash(worker.id) : null;
+    const cause = worker?.terminalCause;
+    // Either clean signal counts — the wired crash read finding no row, or the worker row
+    // carrying an explicit null cause — while a recorded failure or a crash row vetoes.
+    const failed = (cause !== null && cause !== undefined) || (crashWired && crash !== null);
+    const cleanExit = !failed && ((crashWired && crash === null) || cause === null);
+    if (!cleanExit) return false;
+    const guidance = evidence?.guidance ?? this._nudgeRowsFor(worker.id);
+    return !(paused.length > 0 && guidance.length > 0);
   }
 
   /** One contribution is accepted evidence when a review accepts it and no LATER review on the
@@ -774,26 +830,17 @@ export class SwarmRuntime {
       const liveness = swarmParticipantLiveness(worker, paused.length);
       const alive = liveness.live;
       const guidance = worker ? (guidanceByWorker.get(worker.id) ?? []) : [];
-      // Issue #332: a seat whose worker exited after its recorded final contribution with a
-      // terminal turn settles to `completed` instead of reading as a dead runtime. The turn
-      // is terminal exactly when the exit is clean — no crash row on the seat's own ledger
-      // (a CLI worker that exits without a terminal record always lands as lifecycle.crashed,
-      // the #326 invariant) and no recorded failure cause — so a mid-turn death can never
-      // read as a completion. A crash row or a failure cause vetoes; an unwired crash
-      // authority is unknown and fails closed, never a clean exit. A boundary pause with
-      // pending guidance defeats the completion too: the steering was never answered, so the
-      // seat died mid-turn however cleanly the process ended. Membership stays active, so
-      // swarm stop and a resumeFrom recruit keep working on a completed seat.
+      // Issue #332 (settled by #350): a seat whose worker exited after its recorded final
+      // contribution with a terminal turn settles to `completed` instead of reading as a
+      // dead runtime — the ONE derivation the view and the stop path share (_seatCompleted),
+      // fed here with the view's precomputed rows. The settled membership is written by
+      // swarm.stop (status left, leftReason completed); until then the seat still reads as
+      // a member with a completed runtime.
       const crashWired = worker !== null && typeof this.lastCrash === 'function';
       const crash = crashWired ? this.lastCrash(worker.id) : null;
-      const cause = worker?.terminalCause;
-      // Either clean signal counts — the wired crash read finding no row, or the worker row
-      // carrying an explicit null cause — while a recorded failure or a crash row vetoes.
-      const failed = (cause !== null && cause !== undefined) || (crashWired && crash !== null);
-      const cleanExit = !failed && ((crashWired && crash === null) || cause === null);
-      const completed = participant.status === 'active' && worker !== null && !alive
-        && contributors.has(participant.participantId) && cleanExit
-        && !(paused.length > 0 && guidance.length > 0);
+      const completed = this._seatCompleted(swarm, participant, workers, {
+        paused, guidance, contributed: contributors.has(participant.participantId),
+      });
       // The participant's live checkout, projected exactly as capture projects its custody:
       // the physical owner named by the live worker's session context and the coordinator's
       // live holder count for it. An unbound or departed worker carries workspace: null.
@@ -818,9 +865,9 @@ export class SwarmRuntime {
         // exit error and the redacted stderr tail — so a dead seat reads with its reason,
         // not only as `dead`. Null when no crash was observed or no authority is wired.
         crash,
-        // Issue #332: a completed seat settles to its own runtime state — still a member
-        // (status stays active), no longer a dead runtime. Turn stays null: like a dead
-        // worker, a completed one has no paused turn left to guide.
+        // Issue #332: a completed seat settles to its own runtime state — no longer a dead
+        // runtime — until swarm.stop settles the membership row itself (#350). Turn stays
+        // null: like a dead worker, a completed one has no paused turn left to guide.
         runtime: { workerId: worker?.id ?? null, state: completed ? 'completed' : liveness.state,
           turn: liveness.turn, live: liveness.live },
         // Issue #337: delivered guidance (the nudge lane) beside the guidance parked for a seat
@@ -922,8 +969,8 @@ export class SwarmRuntime {
         }
       }
     }
-    if (swarm.status !== 'open' && participants.some((row) => row.status === 'active' && !gone(row))) {
-      organization.push({ kind: 'closed_with_live_participants', participantIds: participants.filter((row) => row.status === 'active' && !gone(row)).map((row) => row.participantId) });
+    if (swarm.status !== 'open' && participants.some((row) => this._canAct(row))) {
+      organization.push({ kind: 'closed_with_live_participants', participantIds: participants.filter((row) => this._canAct(row)).map((row) => row.participantId) });
     }
     // #329 (+ #269 item 2): host admission, folded from the runtime's own durable rows — the
     // LATEST of queued / admitted / timed-out for each recruited seat, and for each check. A
@@ -1072,7 +1119,7 @@ export class SwarmRuntime {
         const currentMembers = swarm.groups?.[record.groupId]?.members ?? [];
         row.awaiting = currentMembers.filter((memberId) => {
           const memberRow = participantsById.get(memberId);
-          return memberRow && memberRow.status === 'active' && !gone(memberRow)
+          return memberRow && this._canAct(memberRow)
             && !record.arrivals.some((arrival) => arrival.participantId === memberId);
         });
         // Departed seats come from the roster the point was declared over: a member that left
@@ -1081,7 +1128,7 @@ export class SwarmRuntime {
         row.departed = declared.filter((memberId) => {
           const memberRow = participantsById.get(memberId);
           const stillLiveMember = currentMembers.includes(memberId)
-            && memberRow && memberRow.status === 'active' && !gone(memberRow);
+            && memberRow && this._canAct(memberRow);
           return !stillLiveMember;
         });
         row.arrived = row.awaiting.length === 0 && record.arrivals.length > 0;
@@ -1278,7 +1325,7 @@ export class SwarmRuntime {
   async _holderRelease(swarm, payload, args, principal, context) {
     const holder = this._participant(swarm, payload.participantId);
     const state = this._workerFor(holder, this.coordinator.list())?.status ?? 'unbound';
-    if (holder.status === 'active' && !['dead', 'exited', 'unbound'].includes(state)) {
+    if (this._canAct(holder) && !['dead', 'exited', 'unbound'].includes(state)) {
       refuse('The holder is still live: stop it or record its leave before releasing its seats',
         'swarm_holder_live', { participantId: holder.participantId, runtimeState: state });
     }
@@ -1699,7 +1746,7 @@ export class SwarmRuntime {
     }
     const situation = [];
     const peers = Object.values(swarm.participants)
-      .filter((row) => row.status === 'active' && row.participantId !== args.participantId)
+      .filter((row) => this._canAct(row) && row.participantId !== args.participantId)
       .map((row) => ({ participantId: row.participantId, role: row.role ?? null, scope: row.scope ?? null,
         sibling: Boolean(caller && row.parentId && caller.parentId === row.parentId && row.parentId !== null) }));
     if (peers.length > 0) {
@@ -1707,6 +1754,16 @@ export class SwarmRuntime {
       for (const peer of peers) {
         situation.push(`- ${peer.participantId}${peer.sibling ? ' (sibling)' : ''}${peer.role ? ` — ${peer.role}` : ''}${peer.scope ? ` — scope: ${peer.scope.join(', ')}` : ''}`);
       }
+    }
+    // Issue #350: the settled history is named once, as a count — a successor knows seats
+    // completed or stopped without being told the dead are still working. Rolled-back
+    // admissions (recruit_refused) never worked, so they are not history.
+    const settled = Object.values(swarm.participants).filter((row) => row.status === 'left'
+      && (row.leftReason === 'stopped' || row.leftReason === 'completed'));
+    if (settled.length > 0) {
+      situation.push(`${settled.length} seat${settled.length === 1 ? '' : 's'}`
+        + ` ha${settled.length === 1 ? 's' : 've'} completed or stopped since the base;`
+        + ' their contributions are on the view');
     }
     const contracts = this._publishedContracts(swarm);
     if (contracts.length > 0) {
@@ -2310,13 +2367,26 @@ export class SwarmRuntime {
     if (command === 'swarm.stop') {
       const result = await this._once(command, args, principal, async () => {
         const stopped = await this.stopRun(participant.runId, args.reason, principal);
+        // Issue #350: a stop settles membership — ONE representation, the existing
+        // swarm.participant_left fold (reason stopped|completed, never a second status
+        // field), so the seat reads status left on every projection and no "active"
+        // predicate counts it again. A seat the #332 derivation reads as completed
+        // settles as completed; every other stop settles as stopped. An already-settled
+        // seat writes nothing: the receipt falls back to the operation terminal row.
+        const current = this._swarm(args.swarmId);
+        const seat = Object.hasOwn(current.participants, participant.participantId)
+          ? current.participants[participant.participantId] : participant;
+        const leaveReason = this._seatCompleted(current, seat, this.coordinator.list()) ? 'completed' : 'stopped';
+        const operationKey = this._operationKey(command, args, principal);
+        const leave = seat.status === 'active' ? this._write('swarm.participant_left', {
+          swarmId: args.swarmId, participantId: participant.participantId, reason: leaveReason,
+        }, principal, `${operationKey}:leave`) : null;
         this._reconcileHostCapacity();
-        return { participantId: participant.participantId, result: stopped };
+        return { participantId: participant.participantId, result: stopped,
+          leaveReason, writes: leave ? [leave] : [] };
       }, { context });
-      // A stop writes no swarm fold row: the receipt's event is the operation terminal row the
-      // lane recorded for this exact attempt (_mutationResult's fallback).
-      return this._mutationResult(command, args, [], principal, context,
-        { participantId: result.participantId, result: result.result });
+      return this._mutationResult(command, args, result.writes ?? [], principal, context,
+        { participantId: result.participantId, result: result.result, leftReason: result.leaveReason ?? null });
     }
     refuse('Swarm operation is unavailable', 'swarm_command_unavailable');
   }
