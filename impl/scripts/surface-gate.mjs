@@ -562,6 +562,189 @@ export function checkSwarmFoldAdmission({ source = null } = {}) {
   return findings;
 }
 
+// ---------------------------------------------------------------------------
+// Goal/plan fold admission (issue #325). The SAME #304 class in the goal/plan fold:
+// `_applyGoalPlanEvent` re-normalised every recorded goal/plan under the LIVE policy
+// and compared the row's policyDigest to the live one, so one policy edit bricked
+// replay of every earlier row. The contract, mirrored from the swarm gate above:
+//   recorded-anchored — replay verifies a row against the digest IT carries (shape,
+//                digest self-consistency, referential linkage re-derived from the
+//                replayed projection), never against the live policy, or
+//   pinned     — one of the live-policy reads below: the deployment identity and the
+//                structural/prospective bounds the replay fold knowingly keeps, each
+//                justified. The pins are closed and named: a NEW live-policy read must
+//                face this decision; a pin whose field the fold no longer reads is
+//                refused as stale.
+// A live-policy digest comparison, or a live re-normalisation of recorded content in
+// the replay fold, fails the gate with the pattern and the line named.
+// ---------------------------------------------------------------------------
+const GOAL_PLAN_FOLD_PATH = 'impl/src/coordination-store.mjs';
+const GOAL_PLAN_FOLD_METHODS = Object.freeze([
+  '_applyGoalPlanEvent',
+  '_goalSuccessorWeakeningReplay',
+  '_validateGoalPlanDispatchPair',
+  '_validateGoalPlanRecoveryTriple',
+  '_workflowRevisionAuthority',
+  '_derivePlanBudgetSettlement',
+]);
+const GOAL_PLAN_FOLD_LIVE_POLICY_PINS = Object.freeze({
+  // A recorded goal names the deployment it belongs to; a foreign repoId row is a
+  // corrupt ledger, not admissible history (the constructor already binds the live
+  // repoId to the live policy).
+  repoId: 'deployment identity — a recorded row naming another deployment refuses',
+  // The approval TTL window fires prospective-only (the !integrity branch): replay
+  // re-derives the recorded dispatch-after-approval order but never re-judges the
+  // window by the live policy.
+  approvalTtlMs: 'prospective-only approval window — never a replay judgment',
+  // Structural ceilings the fold re-derives from the replayed projection (revision
+  // lineage length, operational evidence prefix): a refusal at replay names a ledger
+  // no same-vintage store wrote.
+  limits: 'structural ceilings re-derived identically from the replayed projection',
+});
+const GOAL_PLAN_FOLD_FORBIDDEN_CALLS = Object.freeze([
+  'normalizeGoalRequest',
+  'normalizePlanRequest',
+  'assertGoalSuccessor',
+]);
+
+/** Class-method bodies for the goal/plan fold: `  name(` at class depth, never a
+ * `this.name(` call site. Returns { name, body, lineOffset } with 0-based lineOffset
+ * of the body's first line, or null when the definition is absent. */
+function goalPlanFoldMethodBody(text, name) {
+  const marker = `\n  ${name}(`;
+  const start = text.indexOf(marker);
+  if (start < 0) return null;
+  let index = text.indexOf('(', start);
+  let paren = 0;
+  let open = -1;
+  for (; index < text.length && open < 0; index += 1) {
+    if (text[index] === '(') paren += 1;
+    else if (text[index] === ')') {
+      paren -= 1;
+      if (paren === 0) open = text.indexOf('{', index + 1);
+    }
+  }
+  if (open < 0) return null;
+  let depth = 0;
+  let end = -1;
+  for (index = open; index < text.length; index += 1) {
+    if (text[index] === '{') depth += 1;
+    else if (text[index] === '}') {
+      depth -= 1;
+      if (depth === 0) { end = index + 1; break; }
+    }
+  }
+  if (end < 0) return null;
+  return { name, body: text.slice(start + 1, end), lineOffset: text.slice(0, start + 1).split('\n').length - 1 };
+}
+
+/** Blank every non-code span (comments, quoted strings, template text) while keeping
+ * newlines and `${...}` hole code, so a commented-out rule or a message naming the
+ * pattern never counts as a site. */
+function blankGoalPlanNonCode(body) {
+  let out = '';
+  let state = 'code';
+  let holeDepths = [];
+  for (let index = 0; index < body.length; index += 1) {
+    const char = body[index];
+    const next = body[index + 1];
+    if (char === '\n') { out += '\n'; if (state === 'line-comment') state = 'code'; continue; }
+    switch (state) {
+      case 'line-comment': out += ' '; break;
+      case 'block-comment':
+        out += ' ';
+        if (char === '*' && next === '/') { state = 'code'; out += ' '; index += 1; }
+        break;
+      case "'":
+        out += ' ';
+        if (char === '\\') { out += ' '; index += 1; } else if (char === "'") state = 'code';
+        break;
+      case '"':
+        out += ' ';
+        if (char === '\\') { out += ' '; index += 1; } else if (char === '"') state = 'code';
+        break;
+      case 'template':
+        if (char === '\\') { out += '  '; index += 1; }
+        else if (char === '`') { out += ' '; state = 'code'; }
+        else if (char === '$' && next === '{') { out += '  '; holeDepths.push(0); state = 'code'; index += 1; }
+        else out += ' ';
+        break;
+      default:
+        if (char === '/' && next === '/') { state = 'line-comment'; out += '  '; index += 1; }
+        else if (char === '/' && next === '*') { state = 'block-comment'; out += '  '; index += 1; }
+        else if (char === "'") { state = "'"; out += ' '; }
+        else if (char === '"') { state = '"'; out += ' '; }
+        else if (char === '`') { state = 'template'; out += ' '; }
+        else if (char === '{' && holeDepths.length > 0) {
+          holeDepths[holeDepths.length - 1] += 1;
+          out += char;
+        } else if (char === '}' && holeDepths.length > 0) {
+          const top = holeDepths[holeDepths.length - 1];
+          if (top === 0) { holeDepths.pop(); state = 'template'; out += ' '; }
+          else { holeDepths[holeDepths.length - 1] -= 1; out += char; }
+        } else out += char;
+        break;
+    }
+  }
+  return out;
+}
+
+/**
+ * Every live-policy read inside the goal/plan replay fold is a pinned one, and the
+ * fold never compares a recorded digest to the live digest nor re-normalises recorded
+ * content under the live policy. `source` overrides the scanned file so the rule
+ * itself is testable.
+ */
+export function checkGoalPlanFoldAdmission({ source = null } = {}) {
+  const text = source ?? readFileSync(new URL(`../src/coordination-store.mjs`, import.meta.url), 'utf8');
+  const findings = [];
+  const readFields = new Set();
+  for (const name of GOAL_PLAN_FOLD_METHODS) {
+    const method = goalPlanFoldMethodBody(text, name);
+    if (method === null) {
+      findings.push(`${GOAL_PLAN_FOLD_PATH}: goal/plan fold method '${name}' not found — the fold admission audit cannot run`);
+      continue;
+    }
+    const code = blankGoalPlanNonCode(method.body);
+    const lineOf = (index) => method.lineOffset + code.slice(0, index).split('\n').length;
+    for (const match of code.matchAll(/this\._goalPlanPolicy\??\.([A-Za-z0-9_]+)/gu)) {
+      const field = match[1];
+      const line = lineOf(match.index);
+      if (field === 'policyDigest') {
+        findings.push(
+          `${GOAL_PLAN_FOLD_PATH}:${line}: goal-plan fold compares a recorded digest to the live policy`
+          + ` ('${name}' reads this._goalPlanPolicy.policyDigest) — anchor replay on the digest the row carries (#325)`,
+        );
+        continue;
+      }
+      if (Object.hasOwn(GOAL_PLAN_FOLD_LIVE_POLICY_PINS, field)) {
+        readFields.add(field);
+        continue;
+      }
+      findings.push(
+        `${GOAL_PLAN_FOLD_PATH}:${line}: goal-plan fold reads an unpinned live-policy field`
+        + ` ('${name}' reads this._goalPlanPolicy.${field}) — pin it as a justified replay invariant or reclassify the rule admission-only (#325)`,
+      );
+    }
+    if (name === '_applyGoalPlanEvent') {
+      for (const call of GOAL_PLAN_FOLD_FORBIDDEN_CALLS) {
+        for (const match of code.matchAll(new RegExp(`\\b${call}\\s*\\(`, 'gu'))) {
+          findings.push(
+            `${GOAL_PLAN_FOLD_PATH}:${lineOf(match.index)}: goal-plan fold re-normalises recorded content`
+            + ` under the live policy ('_applyGoalPlanEvent' calls ${call}) — verify the row against its recorded digest instead (#325)`,
+          );
+        }
+      }
+    }
+  }
+  for (const field of Object.keys(GOAL_PLAN_FOLD_LIVE_POLICY_PINS)) {
+    if (!readFields.has(field)) {
+      findings.push(`${GOAL_PLAN_FOLD_PATH}: stale goal-plan fold pin '${field}' — the fold no longer reads it; shrink the pins`);
+    }
+  }
+  return findings;
+}
+
 /** Run every surface check; with `write`, regenerate the artifacts first. */
 export async function runSurfaceGate({ write = false } = {}) {
   if (write) {
@@ -572,6 +755,7 @@ export async function runSurfaceGate({ write = false } = {}) {
     ...checkCanonicalSurfaceResolution().map((f) => `surface-resolution: ${f}`),
     ...checkCliAdmissionDerivation().map((f) => `cli-admission: ${f}`),
     ...checkSwarmFoldAdmission().map((f) => `swarm-fold-admission: ${f}`),
+    ...checkGoalPlanFoldAdmission().map((f) => `goal-plan-fold-admission: ${f}`),
     ...runSurfaceConformanceMain({ writeInventory: write }).map((f) => `surface-conformance: ${f}`),
     ...checkSurfaceParityMatrix().map((f) => `surface-parity: ${f}`),
     ...(await checkMcpDispatchResolvability()).map((f) => `mcp-dispatch: ${f}`),

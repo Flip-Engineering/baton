@@ -2645,10 +2645,15 @@ export class CoordinationStore {
     const approvalEvent = prefix.findLast((event) => event.kind === 'plan.approval_decided'
       && event.payload.approval.plan.planId === plan.planId && event.payload.approval.plan.version === plan.version);
     const approval = approvalEvent?.payload?.approval;
+    // Issue #325: the binding anchors on the RECORDED approval digest, never the live
+    // policy — a dispatch recorded under an earlier policy stays authoritative, while a
+    // forged binding digest still refuses against the recorded approval row. The approval
+    // TTL window is prospective-only (!integrity): replay re-derives the recorded order
+    // (dispatch after approval) but never re-judges the window by the live policy.
     if (!approval || approval.disposition !== 'approved' || approval.digest !== p.binding.approvalDigest
-      || approval.policyDigest !== this._goalPlanPolicy.policyDigest || p.binding.policyDigest !== this._goalPlanPolicy.policyDigest
+      || p.binding.policyDigest !== approval.policyDigest
       || Date.parse(dispatchEvent.ts) < Date.parse(approval.decidedAt)
-      || Date.parse(dispatchEvent.ts) - Date.parse(approval.decidedAt) > this._goalPlanPolicy.approvalTtlMs) fail('goal/plan dispatch lacks current approval authority');
+      || (!integrity && Date.parse(dispatchEvent.ts) - Date.parse(approval.decidedAt) > this._goalPlanPolicy.approvalTtlMs)) fail('goal/plan dispatch lacks current approval authority');
 
     const node = plan.nodes.find((row) => row.key === p.binding.nodeKey);
     const planRevision = Object.hasOwn(node ?? {}, 'revision');
@@ -2701,10 +2706,13 @@ export class CoordinationStore {
     resolvedDeps.sort();
     if (canonicalDigest(resolvedDeps) !== canonicalDigest(p.resolvedDeps)) fail('goal/plan dispatch dependency linkage changed');
 
+    // Issue #325: the expected binding carries the RECORDED digest (verified against the
+    // recorded approval above). Live prospective bindings are built under the live digest
+    // by _planDispatchState, so both lanes agree without the fold naming the live policy.
     const expectedBinding = {
       schemaVersion: 1, goalId: goal.goalId, goalVersion: goal.version, goalDigest: goal.digest,
       planId: plan.planId, planVersion: plan.version, planDigest: plan.digest, nodeKey: node.key,
-      approvalDigest: approval.digest, policyDigest: this._goalPlanPolicy.policyDigest, dispatchVersion: 1,
+      approvalDigest: approval.digest, policyDigest: p.binding.policyDigest, dispatchVersion: 1,
     };
     if (canonicalDigest(expectedBinding) !== canonicalDigest(p.binding)) fail('goal/plan dispatch binding changed');
     const expectedBrief = buildAuthoritativeBrief(goal, plan, node, expectedBinding);
@@ -2813,7 +2821,9 @@ export class CoordinationStore {
       integrity,
     );
     try {
-      this._validateGoalPlanDispatchPair(dispatchEvent, createdEvent, false, claimedEvent);
+      // Issue #325: the pair replays under the recorded digest, so the recovery triple
+      // replays with the same integrity flag instead of re-judging by the live policy.
+      this._validateGoalPlanDispatchPair(dispatchEvent, createdEvent, integrity, claimedEvent);
       const created = createdEvent?.payload; const claimed = claimedEvent?.payload;
       const attribution = this._recoveryAttributionFromClaim(claimed ?? {});
       const attributionFields = [
@@ -7469,6 +7479,28 @@ export class CoordinationStore {
     return expected;
   }
 
+  // Issue #325: the replay half of assertGoalSuccessor, decided from RECORDED content
+  // only. The definitionOfDone/constraint supersets and the budget containment re-derive
+  // from the replayed rows, so a weakened successor still refuses; the risk-tier ordering
+  // is the live policy's taxonomy (assertGoalSuccessor's riskIndex), which a policy edit
+  // may reorder or prune — replaying it would re-judge recorded history, so replay does
+  // not order risks. Live defineGoal still enforces the full relation at admission.
+  _goalSuccessorWeakeningReplay(prior, next) {
+    const malformed = (message = 'goal/plan event is malformed') => this._goalPlanFailure(message, 'goal_plan_integrity', true);
+    const includes = (values, required) => Array.isArray(values) && Array.isArray(required)
+      && required.every((item) => values.includes(item));
+    const within = (a, b) => {
+      if (!a || !b) return false;
+      const aUsd = usdToNanos(a.usd); const bUsd = usdToNanos(b.usd);
+      return aUsd !== null && bUsd !== null && a.tokens <= b.tokens && aUsd <= bUsd
+        && a.wallMin <= b.wallMin && a.providerTurns <= b.providerTurns;
+    };
+    if (!prior || !includes(next.definitionOfDone, prior.definitionOfDone)
+      || !includes(next.constraints, prior.constraints) || !within(next.budget, prior.budget)) {
+      malformed('goal amendment weakens an established constraint');
+    }
+  }
+
   _applyGoalPlanEvent(event) {
     const p = event.payload;
     const malformed = (message = 'goal/plan event is malformed') => this._goalPlanFailure(message, 'goal_plan_integrity', true);
@@ -7478,9 +7510,14 @@ export class CoordinationStore {
         if (Object.keys(p).sort().join(',') !== ['goal', 'requestDigest', 'schemaVersion'].sort().join(',') || !/^[a-f0-9]{64}$/.test(p.requestDigest ?? '')) malformed();
         const g = p.goal;
         if (!g || Object.keys(g).sort().join(',') !== ['budget', 'constraints', 'definedAt', 'definedEvent', 'definitionOfDone', 'digest', 'goalId', 'objective', 'policyDigest', 'predecessor', 'principalId', 'repoId', 'risk', 'runId', 'schemaVersion', 'version'].sort().join(',')) malformed();
-        const normalized = normalizeGoalRequest({ objective: g.objective, definitionOfDone: g.definitionOfDone, constraints: g.constraints, risk: g.risk, budget: g.budget, predecessor: g.predecessor }, this._goalPlanPolicy);
-        const core = { schemaVersion: 1, repoId: g.repoId, runId: g.runId, ...normalized, policyDigest: g.policyDigest };
-        if (g.schemaVersion !== 1 || g.repoId !== this._goalPlanPolicy.repoId || g.policyDigest !== this._goalPlanPolicy.policyDigest
+        // Issue #325: a recorded goal replays under the policy digest it was RECORDED
+        // under — the row carries it — never re-judged by the live policy. The digest
+        // binds the recorded content, so rebuilding the core from the row's own fields
+        // (no live re-normalisation) keeps tamper-evidence without refusing history the
+        // live policy would no longer admit.
+        const recorded = { objective: g.objective, definitionOfDone: g.definitionOfDone, constraints: g.constraints, risk: g.risk, budget: g.budget, predecessor: g.predecessor };
+        const core = { schemaVersion: 1, repoId: g.repoId, runId: g.runId, ...recorded, policyDigest: g.policyDigest };
+        if (g.schemaVersion !== 1 || g.repoId !== this._goalPlanPolicy.repoId || !/^[a-f0-9]{64}$/.test(g.policyDigest ?? '')
           || !validRunId(g.principalId) || g.definedEvent !== event.seq || g.definedAt !== event.ts
           || g.digest !== goalPlanDigest(core) || p.requestDigest !== goalPlanDigest({ principalId: g.principalId, ...core })) malformed();
         const scopeKey = this._goalScopeKey(g.repoId, g.runId); const head = this._goalHeads.get(scopeKey);
@@ -7488,7 +7525,7 @@ export class CoordinationStore {
           if (head || g.version !== 1 || g.goalId !== `goal:${goalPlanDigest({ schemaVersion: 1, repoId: g.repoId, runId: g.runId, firstDigest: g.digest })}`) malformed();
         } else {
           if (!head || head.goalId !== g.goalId || head.version !== g.predecessor.version || head.digest !== g.predecessor.digest || g.version !== head.version + 1) malformed();
-          assertGoalSuccessor(this._goals.get(this._goalVersionKey(head.goalId, head.version)), normalized, this._goalPlanPolicy);
+          this._goalSuccessorWeakeningReplay(this._goals.get(this._goalVersionKey(head.goalId, head.version)), recorded);
         }
         const frozen = freeze(clone(g)); this._goals.set(this._goalVersionKey(g.goalId, g.version), frozen); this._goalHeads.set(scopeKey, frozen);
       } else if (event.kind === 'plan.version_proposed') {
@@ -7497,10 +7534,12 @@ export class CoordinationStore {
         if (!plan || Object.keys(plan).sort().join(',') !== ['digest', 'goal', 'nodes', 'planId', 'policyDigest', 'predecessor', 'proposedAt', 'proposedEvent', 'proposerPrincipalId', 'repoId', 'runId', 'schemaVersion', 'totals', 'version'].sort().join(',')) malformed();
         const goal = this._goals.get(this._goalVersionKey(plan.goal?.goalId, plan.goal?.version));
         if (!goal || goal.digest !== plan.goal.digest) malformed();
-        const normalized = normalizePlanRequest({ goal: plan.goal, predecessor: plan.predecessor,
-          nodes: plan.nodes }, this._goalPlanPolicy, goal, { preserveLegacyRoutes: true });
-        const core = { schemaVersion: 1, repoId: plan.repoId, runId: plan.runId, goal: normalized.goal, predecessor: normalized.predecessor, nodes: normalized.nodes, totals: normalized.totals, policyDigest: plan.policyDigest };
-        if (plan.schemaVersion !== 1 || plan.repoId !== goal.repoId || plan.runId !== goal.runId || plan.policyDigest !== this._goalPlanPolicy.policyDigest
+        // Issue #325: as for goals — the recorded plan replays under its recorded
+        // digest. The digest binds nodes/totals, so rebuilding the core from the row's
+        // own content keeps tamper-evidence without re-judging budgets, capabilities,
+        // routes or byte ceilings by the live policy.
+        const core = { schemaVersion: 1, repoId: plan.repoId, runId: plan.runId, goal: plan.goal, predecessor: plan.predecessor, nodes: plan.nodes, totals: plan.totals, policyDigest: plan.policyDigest };
+        if (plan.schemaVersion !== 1 || plan.repoId !== goal.repoId || plan.runId !== goal.runId || !/^[a-f0-9]{64}$/.test(plan.policyDigest ?? '')
           || !validRunId(plan.proposerPrincipalId) || plan.proposedEvent !== event.seq || plan.proposedAt !== event.ts
           || plan.digest !== goalPlanDigest(core) || p.requestDigest !== goalPlanDigest({ proposerPrincipalId: plan.proposerPrincipalId, ...core })) malformed();
         const goalHead = this._goalHeads.get(this._goalScopeKey(goal.repoId, goal.runId));
@@ -7518,7 +7557,7 @@ export class CoordinationStore {
         const plan = this._plans.get(this._planVersionKey(approval.plan?.planId, approval.plan?.version));
         if (!plan || plan.digest !== approval.plan.digest || goalPlanDigest(plan.goal) !== goalPlanDigest(approval.goal)
           || plan.proposerPrincipalId === approval.principalId || !['approved', 'rejected'].includes(approval.disposition)
-          || approval.policyDigest !== this._goalPlanPolicy.policyDigest || approval.decidedEvent !== event.seq || approval.decidedAt !== event.ts
+          || !/^[a-f0-9]{64}$/.test(approval.policyDigest ?? '') || approval.decidedEvent !== event.seq || approval.decidedAt !== event.ts
           || !/^[a-f0-9]{64}$/.test(approval.sessionDigest ?? '') || !validRunId(approval.principalId)) malformed();
         const core = Object.fromEntries(Object.entries(approval).filter(([key]) => !['digest', 'decidedEvent', 'decidedAt'].includes(key)));
         if (approval.digest !== goalPlanDigest(core) || p.requestDigest !== goalPlanDigest({ principalId: approval.principalId, sessionDigest: approval.sessionDigest, goal: approval.goal, plan: approval.plan, disposition: approval.disposition, expectedDisposition: null })) malformed();

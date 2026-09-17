@@ -6964,7 +6964,7 @@
         {
           "name": "_validateGoalPlanDispatchPair",
           "ordinal": 0,
-          "size": 187,
+          "size": 195,
           "seam": "recovery",
           "evidence": [
             "recovery:reconcile_call",
@@ -7008,7 +7008,7 @@
         {
           "name": "_validateGoalPlanRecoveryTriple",
           "ordinal": 0,
-          "size": 46,
+          "size": 48,
           "seam": "recovery",
           "evidence": [
             "recovery:restart_name",
@@ -8136,9 +8136,18 @@
           ]
         },
         {
+          "name": "_goalSuccessorWeakeningReplay",
+          "ordinal": 0,
+          "size": 15,
+          "seam": "recovery",
+          "evidence": [
+            "recovery:restart_name"
+          ]
+        },
+        {
           "name": "_applyGoalPlanEvent",
           "ordinal": 0,
-          "size": 110,
+          "size": 117,
           "seam": "observation",
           "evidence": [
             "observation:record_name"

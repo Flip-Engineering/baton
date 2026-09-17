@@ -1,0 +1,97 @@
+{
+  "schemaVersion": 1,
+  "digest": "dbaa8d9fc60b053f13dad899c12ac121470c9cdd059098a1c4a43278b3920426",
+  "source": {
+    "generatedBy": "impl/test/issue325-goal-plan-replay.test.mjs two-policy ledger (issue #325)",
+    "policyDigests": [
+      "34a48b2a438514903da7691edc95a8755132c7e916650c46fdd981f4a554cbd5",
+      "85384082ce22857305aa263a01e4bac0c5e9964a50ed6d2298ae525e45c39b40"
+    ]
+  },
+  "policies": {
+    "A": {
+      "schemaVersion": 1,
+      "repoId": "repo-issue325",
+      "mandatory": true,
+      "approvalTtlMs": 3600000,
+      "riskClasses": [
+        "low",
+        "medium",
+        "high"
+      ],
+      "effectClasses": [
+        "provider_call",
+        "repository_edit"
+      ],
+      "capabilityClasses": [
+        "code",
+        "test"
+      ],
+      "limits": {
+        "maxGoalVersions": 16,
+        "maxPlanVersions": 16,
+        "maxNodes": 32,
+        "maxDepsPerNode": 16,
+        "maxTextBytes": 4096,
+        "maxItems": 64,
+        "maxScopePaths": 64,
+        "maxRouteValues": 32,
+        "maxGoalBytes": 65536,
+        "maxPlanBytes": 262144,
+        "maxStatusBytes": 262144,
+        "maxTokens": 1000000,
+        "maxUsd": 100,
+        "maxWallMin": 1440,
+        "maxProviderTurns": 10000
+      },
+      "policyDigest": "34a48b2a438514903da7691edc95a8755132c7e916650c46fdd981f4a554cbd5"
+    },
+    "B": {
+      "schemaVersion": 1,
+      "repoId": "repo-issue325",
+      "mandatory": true,
+      "approvalTtlMs": 7200000,
+      "riskClasses": [
+        "low",
+        "medium",
+        "high"
+      ],
+      "effectClasses": [
+        "provider_call",
+        "repository_edit"
+      ],
+      "capabilityClasses": [
+        "code",
+        "test"
+      ],
+      "limits": {
+        "maxGoalVersions": 16,
+        "maxPlanVersions": 16,
+        "maxNodes": 32,
+        "maxDepsPerNode": 16,
+        "maxTextBytes": 4096,
+        "maxItems": 64,
+        "maxScopePaths": 64,
+        "maxRouteValues": 32,
+        "maxGoalBytes": 65536,
+        "maxPlanBytes": 262144,
+        "maxStatusBytes": 262144,
+        "maxTokens": 12000,
+        "maxUsd": 100,
+        "maxWallMin": 1440,
+        "maxProviderTurns": 10000
+      },
+      "policyDigest": "85384082ce22857305aa263a01e4bac0c5e9964a50ed6d2298ae525e45c39b40"
+    }
+  },
+  "fixture": {
+    "rows": 8,
+    "kinds": [
+      "goal.version_defined",
+      "plan.approval_decided",
+      "plan.node_dispatched",
+      "plan.version_proposed",
+      "task.created"
+    ]
+  }
+}
