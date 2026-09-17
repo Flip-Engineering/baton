@@ -76,8 +76,11 @@ test('CC-1 cache seam: Keychain wins, file fallback works, and N projections rea
   assert.match(deploymentSource, /defaultMacosKeychainRead/, 'the named default seam exists');
   const securityExecSites = deploymentSource.split('\n')
     .filter((line) => line.includes('/usr/bin/security') && !line.trim().startsWith('//'));
-  assert.equal(securityExecSites.length, 2,
-    `every /usr/bin/security exec lives inside the two named default functions: ${securityExecSites.length}`);
+  // Three named defaults: defaultMacosKeychainRead, defaultMacosKeychainMtime, and (#328) the
+  // muse seat's defaultMuseKeychainRead — the same bounded shim shape, overridden by
+  // advanced.museCredentials.keychainRead exactly as the Claude pair is.
+  assert.equal(securityExecSites.length, 3,
+    `every /usr/bin/security exec lives inside the three named default functions: ${securityExecSites.length}`);
   assert.ok(securityExecSites.every((line) => line.includes("execFileSync('/usr/bin/security'")),
     'each is the bounded execFileSync seam, never a shell or a worker-visible path');
 

@@ -7,7 +7,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -158,7 +158,7 @@ test('muse spawn() with live:false refuses to launch a real CLI', async () => {
   assert.match(ack.reason, /live:false/);
 });
 
-test('deployment serves five muse routes whose readiness names the file-backed login', () => {
+test('deployment serves five muse routes whose readiness names the keyring login first and the file backend as the fallback', () => {
   const routes = deploymentModule.DEFAULT_BATON_DEPLOYMENT_ROUTES.filter((route) => route.harness === 'muse');
   assert.equal(routes.length, 5);
   assert.ok(routes.every((route) => route.model === 'muse-spark-1.3-contributor'));
@@ -166,7 +166,7 @@ test('deployment serves five muse routes whose readiness names the file-backed l
   for (const route of routes) {
     assert.equal(
       deploymentModule.routeReadinessContract(route),
-      'a file-backed muse login (`TBH_CREDENTIAL_BACKEND=file muse login`)',
+      'a muse login (`muse login`, the OS keyring; keyring-less hosts fall back to `TBH_CREDENTIAL_BACKEND=file muse login`)',
     );
   }
   const card = new MuseCli({ version: '1.3.0', model: 'muse-spark-1.3-contributor' }).card();
@@ -190,6 +190,9 @@ test('muse is its own runtime-isolation surface resolving XDG config, never Clau
     const scope = isolation.create('w1', { card: new MuseCli({ version: '1.3.0' }).card() });
     try {
       assert.equal(scope.env.XDG_CONFIG_HOME, join(scope.paths.root, 'config'));
+      // #328: the worker is pinned to its PROJECTED file-backed auth.json — the deployment
+      // reads the operator's OS keyring at the root and materialises it (a private runtime
+      // cannot reach the login keychain, and must not borrow the real HOME to do so).
       assert.equal(scope.env.TBH_CREDENTIAL_BACKEND, 'file');
       assert.equal(scope.env.CLAUDE_CONFIG_DIR, undefined);
       assert.equal(scope.env.HOME, scope.paths.home);
@@ -201,19 +204,20 @@ test('muse is its own runtime-isolation surface resolving XDG config, never Clau
   }
 });
 
-test('muse workers pin the file credential backend, overridable by the caller', () => {
-  assert.equal(new MuseCli({ version: '1.3.0' })._cfg.env.TBH_CREDENTIAL_BACKEND, 'file');
+test('muse workers pin no credential backend by default (the OS keyring is primary); a caller may pin the file fallback', () => {
+  assert.equal(new MuseCli({ version: '1.3.0' })._cfg.env.TBH_CREDENTIAL_BACKEND, undefined);
   assert.equal(
-    new MuseCli({ version: '1.3.0', env: { TBH_CREDENTIAL_BACKEND: 'keychain' } })._cfg.env.TBH_CREDENTIAL_BACKEND,
-    'keychain',
+    new MuseCli({ version: '1.3.0', env: { TBH_CREDENTIAL_BACKEND: 'file' } })._cfg.env.TBH_CREDENTIAL_BACKEND,
+    'file',
   );
 });
 
-// ---------- file-backend auth: the OS-independent muse CLI credential ----------
+// ---------- muse auth: the OS keyring is primary, the file backend is the fallback (#328) ----------
 
 const MUSE_FILE_MODEL = 'muse-spark-1.3-contributor';
-// A keychain-only login: real metadata shape, no token — what `muse login` writes on
-// macOS by default. Never enough for a file-backend worker.
+// A keyring login: real metadata shape, token in the OS keyring — what `muse login` writes
+// on macOS by default. The PRIMARY credential: the worker resolves the keyring natively from
+// this projected metadata (verified 2026-09-16 against an isolated XDG_CONFIG_HOME).
 const MUSE_KEYCHAIN_STYLE_AUTH = () => JSON.stringify({
   schema_version: 2,
   providers: {
@@ -225,8 +229,9 @@ const MUSE_KEYCHAIN_STYLE_AUTH = () => JSON.stringify({
   },
 });
 // A file-backed login: the same shape carrying an inline OAuth token, as
-// `TBH_CREDENTIAL_BACKEND=file muse login` provisions. The token below is bogus and is
-// never sent anywhere: readiness resolves shape presence only, never validity.
+// `TBH_CREDENTIAL_BACKEND=file muse login` provisions on a keyring-less host. The FALLBACK.
+// The token below is bogus and is never sent anywhere: readiness resolves shape presence
+// only, never validity.
 const MUSE_FILE_BACKED_AUTH = () => JSON.stringify({
   schema_version: 2,
   providers: {
@@ -235,6 +240,24 @@ const MUSE_FILE_BACKED_AUTH = () => JSON.stringify({
       api_base_url: 'https://api.meta.ai/v1',
       user_full_name: 'Fixture User', user_email: 'fixture@example.invalid',
       access_token: 'bogus-token-for-shape-probe', expires_at: 4102444800,
+    },
+  },
+});
+// The keyring item `muse login` writes (shape captured 2026-09-16: a JSON secret with
+// access_token and api_key), as the deployment's root-side reader returns it. Bogus values,
+// never sent anywhere: the projection copies fields, readiness resolves presence only.
+const MUSE_KEYCHAIN_READ = () => `${JSON.stringify({
+  secret_schema_version: 1, api_key: 'bogus-keychain-api-key', access_token: 'bogus-keychain-access-token',
+})}\n`;
+// Neither: file storage declared but no inline token (a half-provisioned file login) —
+// nothing a worker could authenticate from under either backend.
+const MUSE_TOKENLESS_FILE_AUTH = () => JSON.stringify({
+  schema_version: 2,
+  providers: {
+    meta: {
+      mechanism: 'oauth', storage: 'file', obtained_via: 'device_code',
+      api_base_url: 'https://api.meta.ai/v1',
+      user_full_name: 'Fixture User', user_email: 'fixture@example.invalid',
     },
   },
 });
@@ -268,11 +291,16 @@ async function withMuseHome(home, fn) {
   }
 }
 
-test('file-backend gate: no auth file is blocked with the file-login remedy', async () => {
+test('muse gate: no auth file is blocked with `muse login` first and the file fallback second', async () => {
   const verdict = await withMuseHome(fileTmp('home-bare'), () => deploymentModule.museRouteReadiness());
   assert.equal(verdict.state, 'blocked');
   assert.equal(verdict.code, 'authentication_required');
+  assert.match(verdict.summary, /`muse login`/);
   assert.match(verdict.summary, /TBH_CREDENTIAL_BACKEND=file muse login/);
+  assert.ok(
+    verdict.summary.indexOf('`muse login`') < verdict.summary.indexOf('TBH_CREDENTIAL_BACKEND=file muse login'),
+    `the keyring login is the remedy named first, the file backend the fallback: ${verdict.summary}`,
+  );
 });
 
 test('file-backend gate: a malformed auth file is blocked as invalid metadata', async () => {
@@ -283,16 +311,37 @@ test('file-backend gate: a malformed auth file is blocked as invalid metadata', 
   assert.equal(verdict.code, 'authentication_metadata_invalid');
 });
 
-test('file-backend gate: keychain-only metadata without a token stays blocked', async () => {
+test('muse gate: a keyring login whose item the root can read reads ready — the primary credential', async () => {
   const home = fileTmp('home-keychain');
   writeMuseAuth(home, MUSE_KEYCHAIN_STYLE_AUTH());
+  const verdict = await withMuseHome(home, () => deploymentModule.museRouteReadiness({ keychainRead: MUSE_KEYCHAIN_READ }));
+  assert.deepEqual(verdict, { state: 'ready' });
+});
+
+test('muse gate: a keyring login whose item the root cannot read is blocked distinctly, naming the item never its value', async () => {
+  const home = fileTmp('home-keychain-unreadable');
+  writeMuseAuth(home, MUSE_KEYCHAIN_STYLE_AUTH());
+  for (const keychainRead of [null, () => null, () => '', () => 'not json', () => JSON.stringify({ secret_schema_version: 1 }), () => { throw new Error('locked'); }]) {
+    const verdict = await withMuseHome(home, () => deploymentModule.museRouteReadiness({ keychainRead }));
+    assert.equal(verdict.state, 'blocked');
+    assert.equal(verdict.code, 'authentication_keychain_unreadable');
+    assert.match(verdict.summary, /ai\.meta\.dev\.credentials/);
+    assert.match(verdict.summary, /`muse login`/);
+    assert.doesNotMatch(verdict.summary, /bogus-keychain/);
+  }
+});
+
+test('muse gate: file storage without an inline token is blocked with the two-step remedy', async () => {
+  const home = fileTmp('home-tokenless');
+  writeMuseAuth(home, MUSE_TOKENLESS_FILE_AUTH());
   const verdict = await withMuseHome(home, () => deploymentModule.museRouteReadiness());
   assert.equal(verdict.state, 'blocked');
   assert.equal(verdict.code, 'authentication_required');
-  assert.match(verdict.summary, /keychain-only/);
+  assert.match(verdict.summary, /`muse login`/);
+  assert.match(verdict.summary, /TBH_CREDENTIAL_BACKEND=file muse login/);
 });
 
-test('file-backend gate: a file-backed token reads ready (shape only, never validated)', async () => {
+test('muse gate: a file-backed token reads ready — the fallback (shape only, never validated)', async () => {
   const home = fileTmp('home-file');
   writeMuseAuth(home, MUSE_FILE_BACKED_AUTH());
   const verdict = await withMuseHome(home, () => deploymentModule.museRouteReadiness());
@@ -377,7 +426,7 @@ function fileRepo() {
  * Routes stay default so the real admission path runs; adapters are fixture cards (no muse
  * binary needed, no network, no quota). The claude card covers the always-admitted
  * claude-code rows; only the muse rows carry verdicts under test. */
-async function fileDoctorOver({ repo, home, authContents = null, label }) {
+async function fileDoctorOver({ repo, home, authContents = null, label, keychainRead = () => null }) {
   if (authContents !== null) writeMuseAuth(home, authContents);
   return withMuseHome(home, async () => {
     let deployment = null;
@@ -386,6 +435,7 @@ async function fileDoctorOver({ repo, home, authContents = null, label }) {
         repo,
         advanced: {
           deploymentRoot: join(fileTmp(`deployment-${label}`), 'deployment'),
+          museCredentials: { keychainRead },
           adapters: {
             muse: new MuseFileRouteCard(MUSE_FILE_CARD),
             'claude-code:claude': new MuseFileRouteCard(CLAUDE_FILE_CARD),
@@ -419,16 +469,80 @@ test('file-backend doctor: a file-backed login serves every muse route ready', a
   assert.equal(doctor.ready, true);
 });
 
-test('file-backend doctor: a keychain-only login serves muse rows blocked with the remedy', async () => {
+test('muse doctor: a keyring login the root can read serves every muse route ready — the primary credential', async () => {
   const fixture = fileRepo();
   const doctor = await fileDoctorOver({
-    repo: fixture.repo, home: fileTmp('home-keychain'), authContents: MUSE_KEYCHAIN_STYLE_AUTH(), label: 'keychain-blocked',
+    repo: fixture.repo, home: fileTmp('home-keychain'), authContents: MUSE_KEYCHAIN_STYLE_AUTH(),
+    label: 'keychain-ready', keychainRead: MUSE_KEYCHAIN_READ,
   });
   const rows = fileMuseRows(doctor);
   assert.equal(rows.length, 5, 'the family is admitted on file presence; readiness decides per row');
   for (const row of rows) {
+    assert.equal(row.state, 'ready', `muse ${row.model}@${row.effort} must be ready on a keyring login: ${row.code} ${row.summary}`);
+  }
+  assert.equal(doctor.ready, true);
+});
+
+test('muse doctor: a keyring login the root cannot read serves muse rows blocked as keychain-unreadable', async () => {
+  const fixture = fileRepo();
+  const doctor = await fileDoctorOver({
+    repo: fixture.repo, home: fileTmp('home-keychain-locked'), authContents: MUSE_KEYCHAIN_STYLE_AUTH(),
+    label: 'keychain-locked', keychainRead: () => null,
+  });
+  const rows = fileMuseRows(doctor);
+  assert.equal(rows.length, 5);
+  for (const row of rows) {
+    assert.equal(row.state, 'blocked');
+    assert.equal(row.code, 'authentication_keychain_unreadable');
+  }
+});
+
+test('muse projection: a keyring login materialises a file-backed auth.json under the runtime root (0600) and never touches the operator file; a file login projects as-is', async () => {
+  const home = fileTmp('home-projection');
+  writeMuseAuth(home, MUSE_KEYCHAIN_STYLE_AUTH());
+  const operatorPath = join(home, 'muse', 'auth.json');
+  const before = readFileSync(operatorPath, 'utf8');
+  const cacheRoot = join(fileTmp('runtime-projection'), 'muse-credential');
+  const projected = await withMuseHome(home, () => deploymentModule.museCredentialProjection({
+    keychainRead: MUSE_KEYCHAIN_READ, cacheRoot,
+  }));
+  assert.equal(projected, join(cacheRoot, 'auth.json'));
+  assert.equal(statSync(cacheRoot).mode & 0o777, 0o700);
+  assert.equal(statSync(projected).mode & 0o777, 0o600);
+  const meta = JSON.parse(readFileSync(projected, 'utf8')).providers.meta;
+  assert.equal(meta.storage, 'file');
+  assert.equal(meta.mechanism, 'oauth');
+  assert.equal(meta.access_token, 'bogus-keychain-access-token');
+  assert.equal(meta.api_key, 'bogus-keychain-api-key');
+  assert.equal(meta.secret_schema_version, undefined);
+  assert.equal(meta.user_email, 'fixture@example.invalid', 'the operator metadata rides along');
+  assert.equal(readFileSync(operatorPath, 'utf8'), before, 'the operator file is never modified');
+
+  // Unreadable keyring: nothing is materialised (readiness names why).
+  const emptyRoot = join(fileTmp('runtime-projection-empty'), 'muse-credential');
+  assert.equal(await withMuseHome(home, () => deploymentModule.museCredentialProjection({ keychainRead: () => null, cacheRoot: emptyRoot })), null);
+  assert.equal(existsSync(join(emptyRoot, 'auth.json')), false);
+
+  // File-backed login: the operator's own file is the projection.
+  const fileHome = fileTmp('home-projection-file');
+  writeMuseAuth(fileHome, MUSE_FILE_BACKED_AUTH());
+  assert.equal(
+    await withMuseHome(fileHome, () => deploymentModule.museCredentialProjection({ keychainRead: () => null, cacheRoot: join(fileTmp('unused'), 'muse-credential') })),
+    join(fileHome, 'muse', 'auth.json'),
+  );
+});
+
+test('muse doctor: a tokenless file login serves muse rows blocked with the two-step remedy', async () => {
+  const fixture = fileRepo();
+  const doctor = await fileDoctorOver({
+    repo: fixture.repo, home: fileTmp('home-tokenless'), authContents: MUSE_TOKENLESS_FILE_AUTH(), label: 'tokenless-blocked',
+  });
+  const rows = fileMuseRows(doctor);
+  assert.equal(rows.length, 5);
+  for (const row of rows) {
     assert.equal(row.state, 'blocked');
     assert.equal(row.code, 'authentication_required');
+    assert.match(row.summary, /`muse login`/);
     assert.match(row.summary, /TBH_CREDENTIAL_BACKEND=file muse login/);
   }
 });

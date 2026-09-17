@@ -165,7 +165,7 @@ The complete open map is ~112 tracked issues — the lossless catalog lives in t
 
 Requires Node ≥ 20. The only runtime dependency is `@ast-grep/napi`.
 
-**Muse seat.** Baton drives the `muse` CLI headlessly (`muse exec --json`, model `muse-spark-1.3-contributor`, efforts low–max) with file-backed auth on every OS: run `TBH_CREDENTIAL_BACKEND=file muse login` once, then confirm with `node scripts/baton.mjs doctor --check`. A keychain-only macOS login reads blocked with that remedy; API-key auth is out of scope for this seat (other harnesses cover API keys).
+**Muse seat.** Baton drives the `muse` CLI headlessly (`muse exec --json`, model `muse-spark-1.3-contributor`, efforts low–max). Credentials come from the OS keyring first: run `muse login` once and confirm with `node scripts/baton.mjs doctor --check`. Baton reads the keyring item at the root (a worker's private runtime cannot reach the login keychain) and projects a file-backed `auth.json` into each worker's isolated config home; on a keyring-less host the fallback is `TBH_CREDENTIAL_BACKEND=file muse login`, whose file projects as-is. API-key auth is out of scope for this seat (other harnesses cover API keys).
 
 ```bash
 cd impl && npm ci                     # install

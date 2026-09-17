@@ -3,7 +3,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import {
   chmodSync, closeSync, constants as fsConstants, existsSync, fstatSync, lstatSync, mkdirSync,
-  openSync, readFileSync, readdirSync, realpathSync, rmSync, statfsSync,
+  openSync, readFileSync, readdirSync, realpathSync, rmSync, statfsSync, writeFileSync,
 } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
@@ -755,19 +755,21 @@ function trackedTreeBounds(repoRoot, treeish) {
   });
 }
 
-function defaultCredentialProjection(repoRoot, { projectNativeKimi = false, claudeCredentialCache = null, grokCredentialCache = null } = {}) {
+function defaultCredentialProjection(repoRoot, {
+  projectNativeKimi = false, claudeCredentialCache = null, grokCredentialCache = null,
+  museCredentialPath = null, museKeychainRead = null,
+} = {}) {
   const credentials = {};
   const codex = join(homedir(), '.codex', 'auth.json');
   const grok = join(homedir(), '.grok', 'auth.json');
   if (existingRegular(codex)) credentials.codex = [codex];
-  // Muse keeps its OAuth metadata at $XDG_CONFIG_HOME/muse/auth.json; file-backed
-  // logins carry the OAuth token inline. Projecting the file gives the isolated
-  // file-backend worker the credential it resolves (a keychain-only file projects too,
-  // but the readiness gate blocks those rows before any worker spawns).
-  try {
-    const museAuth = museAuthPath();
-    if (existingRegular(museAuth)) credentials.muse = [museAuth];
-  } catch { /* an unresolvable config root projects nothing — readiness already gates */ }
+  // #328: the muse credential a worker receives is always a file-backed auth.json — the
+  // operator's own when their login is file-backed, or the deployment's root-side
+  // materialisation of a keyring login (museCredentialProjection). It lands at the
+  // worker's projected `$XDG_CONFIG_HOME/muse/auth.json`.
+  if (typeof museCredentialPath === 'string' && existingRegular(museCredentialPath)) {
+    credentials.muse = [museCredentialPath];
+  }
   // The #84 grok controller projects the access-token-ONLY credential file list (RT-12): grok's
   // native worker projection is file-based, and the wholesale copy would carry the refresh token.
   // An absent controller/credential falls back to the operator file for the static path only.
@@ -800,7 +802,7 @@ function defaultCredentialProjection(repoRoot, { projectNativeKimi = false, clau
   }
   return Object.freeze({
     credentialEnv: Object.freeze(credentialEnv), credentialFiles: credentials,
-    credentialTrees, repoRoot,
+    credentialTrees, repoRoot, museKeychainRead,
   });
 }
 
@@ -889,7 +891,7 @@ function ompRouteReadyWhen(model) {
 export function routeReadinessContract(route) {
   switch (route.harness) {
     case 'codex': return '`~/.codex/auth.json` present';
-    case 'muse': return 'a file-backed muse login (`TBH_CREDENTIAL_BACKEND=file muse login`)';
+    case 'muse': return 'a muse login (`muse login`, the OS keyring; keyring-less hosts fall back to `TBH_CREDENTIAL_BACKEND=file muse login`)';
     case 'grok': return '`~/.grok/auth.json` present with a ready authentication state';
     case 'kimi-code': return 'kimi credential files present with a ready authentication state';
     case 'claude-code':
@@ -906,52 +908,130 @@ function museAuthPath() { return join(userConfigRoot(), 'muse', 'auth.json'); }
 
 const MAX_MUSE_AUTH_FILE_BYTES = 64 * 1024;
 
-/** The one file-backend Muse credential derivation. Workers run with
- * `TBH_CREDENTIAL_BACKEND=file` on every OS (never the OS keychain), so a route is
- * ready only when the auth file carries a file-backed OAuth token — not merely when the
- * file exists. A keychain-only login (metadata without a token) reads blocked with the
- * one command that provisions the file, never a runtime surprise. The token value itself
- * is never logged, surfaced, or retained; shape presence is the only fact resolved. */
-export function museRouteReadiness() {
-  const path = museAuthPath();
-  if (!existingRegular(path)) {
-    return Object.freeze({
-      state: 'blocked', code: 'authentication_required',
-      summary: 'Muse has no file-backed login; run `TBH_CREDENTIAL_BACKEND=file muse login`, then reopen Baton.',
-    });
-  }
+const MUSE_LOGIN_REMEDY = 'run `muse login` (the OS keyring; on a keyring-less host, `TBH_CREDENTIAL_BACKEND=file muse login`), then reopen Baton.';
+
+// The macOS keychain item `muse login` writes: a JSON secret carrying `access_token` (and
+// `api_key`). Read ONLY at the root, through the same bounded /usr/bin/security exec the
+// Claude cache uses; a non-zero exit or a non-JSON read is "unreadable", never a throw.
+const MUSE_KEYCHAIN_SERVICE = 'ai.meta.dev.credentials';
+const MUSE_KEYCHAIN_ACCOUNT = 'meta';
+
+export function defaultMuseKeychainRead() {
+  if (process.platform !== 'darwin') return () => null;
+  return () => {
+    try {
+      return execFileSync('/usr/bin/security', [
+        'find-generic-password', '-s', MUSE_KEYCHAIN_SERVICE, '-a', MUSE_KEYCHAIN_ACCOUNT, '-w',
+      ], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
+    } catch { return null; }
+  };
+}
+
+/** Bounded, symlink-refusing read of the operator's muse auth.json: `{ ok, parsed }`. */
+function readMuseAuthFile(path) {
   let descriptor;
-  let parsed = null;
-  let parseOk = false;
   try {
     descriptor = openSync(path, fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0));
     const stat = fstatSync(descriptor);
     if (!stat.isFile() || stat.size <= 0 || stat.size > MAX_MUSE_AUTH_FILE_BYTES) {
       throw new Error('credential boundary refused');
     }
-    parsed = JSON.parse(readFileSync(descriptor, 'utf8'));
-    parseOk = true;
+    return { ok: true, parsed: JSON.parse(readFileSync(descriptor, 'utf8')) };
   } catch {
-    parseOk = false;
+    return { ok: false, parsed: null };
   } finally {
     if (descriptor !== undefined) closeSync(descriptor);
   }
-  if (!parseOk) {
+}
+
+/** The keychain secret as a record carrying a usable token, or null (unreadable / not JSON /
+ * no token). The value is never logged, surfaced, or retained beyond the projection. */
+function museKeychainSecret(keychainRead) {
+  if (typeof keychainRead !== 'function') return null;
+  let raw;
+  try { raw = keychainRead(); } catch { return null; }
+  if (typeof raw !== 'string' || raw.length === 0) return null;
+  let secret;
+  try { secret = JSON.parse(raw.replace(/\n$/u, '')); } catch { return null; }
+  if (!record(secret)) return null;
+  const usable = ['access_token', 'api_key'].some((key) => typeof secret[key] === 'string' && secret[key].length > 0);
+  return usable ? secret : null;
+}
+
+/** The one Muse credential derivation (#328). The OS keyring is the PRIMARY credential:
+ * `muse login` writes `providers.meta` metadata with `storage: "keychain"` and the token
+ * in the keyring, which the deployment reads at the root (the worker's private runtime
+ * cannot reach the login keychain) and projects file-backed. The file backend is the
+ * FALLBACK for keyring-less hosts: the same metadata with the token inline. A route is
+ * ready when the keychain item is readable at the root or the file carries an inline
+ * token; blocked when the file is absent or unreadable (`muse login` first, the file
+ * backend second) and, distinctly, when a keychain login's item cannot be read at the
+ * root. No token value is ever logged, surfaced, or retained: presence is the only fact
+ * resolved. */
+export function museRouteReadiness({ keychainRead = null, authPath = museAuthPath() } = {}) {
+  if (!existingRegular(authPath)) {
+    return Object.freeze({
+      state: 'blocked', code: 'authentication_required',
+      summary: `Muse has no login; ${MUSE_LOGIN_REMEDY}`,
+    });
+  }
+  const { ok, parsed } = readMuseAuthFile(authPath);
+  if (!ok) {
     return Object.freeze({
       state: 'blocked', code: 'authentication_metadata_invalid',
-      summary: 'Muse auth.json could not be validated; run `TBH_CREDENTIAL_BACKEND=file muse login` to provision a fresh file-backed login, then reopen Baton.',
+      summary: `Muse auth.json could not be validated; ${MUSE_LOGIN_REMEDY}`,
     });
   }
   const meta = record(parsed) ? parsed.providers?.meta : null;
-  const token = record(meta) ? meta.access_token : null;
-  if (!record(meta) || meta.mechanism !== 'oauth'
-    || typeof token !== 'string' || token.length === 0) {
+  if (!record(meta) || meta.mechanism !== 'oauth') {
     return Object.freeze({
       state: 'blocked', code: 'authentication_required',
-      summary: 'Muse auth.json carries no file-backed OAuth token (a keychain-only login); run `TBH_CREDENTIAL_BACKEND=file muse login`, then reopen Baton.',
+      summary: `Muse auth.json carries no OAuth login for the meta provider; ${MUSE_LOGIN_REMEDY}`,
     });
   }
-  return Object.freeze({ state: 'ready' });
+  if (typeof meta.access_token === 'string' && meta.access_token.length > 0) {
+    return Object.freeze({ state: 'ready' });
+  }
+  if (meta.storage === 'keychain') {
+    if (museKeychainSecret(keychainRead) !== null) return Object.freeze({ state: 'ready' });
+    return Object.freeze({
+      state: 'blocked', code: 'authentication_keychain_unreadable',
+      summary: `Muse is logged in through the OS keyring, but Baton could not read the keyring item (${MUSE_KEYCHAIN_SERVICE}) at the root; unlock the login keychain or ${MUSE_LOGIN_REMEDY}`,
+    });
+  }
+  return Object.freeze({
+    state: 'blocked', code: 'authentication_required',
+    summary: `Muse auth.json names neither a keyring login nor an inline file-backed token; ${MUSE_LOGIN_REMEDY}`,
+  });
+}
+
+/** The muse credential a worker is projected (#328): the operator's own auth.json when it is
+ * file-backed (inline token), or — for a keyring login — a file-backed auth.json the
+ * deployment materialises under its private runtime root from the keyring item read at
+ * the root: the operator's metadata with `storage: "file"` and the secret's fields inline,
+ * directory 0700, file 0600, rewritten on every open (the keyring is the source of truth).
+ * Returns the path to list under `credentialFiles.muse`, or null when nothing usable exists
+ * (readiness already names why). The operator's file is never modified. */
+export function museCredentialProjection({ keychainRead = null, authPath = museAuthPath(), cacheRoot }) {
+  if (!existingRegular(authPath)) return null;
+  const { ok, parsed } = readMuseAuthFile(authPath);
+  const meta = ok && record(parsed) ? parsed.providers?.meta : null;
+  if (!record(meta) || meta.mechanism !== 'oauth') return null;
+  if (typeof meta.access_token === 'string' && meta.access_token.length > 0) return authPath;
+  if (meta.storage !== 'keychain') return null;
+  const secret = museKeychainSecret(keychainRead);
+  if (secret === null) return null;
+  const { secret_schema_version: _schema, ...fields } = secret;
+  const projected = {
+    ...parsed,
+    providers: { ...parsed.providers, meta: { ...meta, storage: 'file', ...fields } },
+  };
+  mkdirSync(cacheRoot, { recursive: true, mode: 0o700 });
+  chmodSync(cacheRoot, 0o700);
+  const target = join(cacheRoot, 'auth.json');
+  writeFileSync(target, JSON.stringify(projected), { mode: 0o600 });
+  chmodSync(target, 0o600);
+  return target;
 }
 
 function locallyConfiguredRoutes(repoRoot) {
@@ -1547,11 +1627,11 @@ function deploymentReadiness(
     // structural gates already passed, so card-contract refusals keep their #234 precedence.
     // No omp route is ready by declaration; a blocked row names the missing file, never its
     // contents.
-    // Muse workers authenticate file-backed on every OS, so the file-backend derivation
-    // decides — not the generic projection check (a keychain-only auth file projects yet
-    // authenticates nothing under `TBH_CREDENTIAL_BACKEND=file`).
+    // Muse authenticates from the OS keyring first and the file backend second (#328), and
+    // both shapes live in the one projected auth.json, so the muse derivation decides —
+    // not the generic projection check, which sees only that a file projects.
     if (route.harness === 'muse') {
-      const museGate = museRouteReadiness();
+      const museGate = museRouteReadiness({ keychainRead: projection.museKeychainRead ?? null });
       if (museGate.state === 'blocked') {
         return Object.freeze({
           ...publicFields, state: 'blocked', code: museGate.code, summary: museGate.summary, runtime,
@@ -2224,7 +2304,7 @@ export async function openBatonDeployment(rawOptions, createDriver) {
   closed(rawOptions, ['advanced', 'repo'], 'deployment options');
   const repository = repositoryAuthority(rawOptions.repo ?? process.cwd());
   const advanced = rawOptions.advanced ?? {};
-  closed(advanced, ['adapterOptions', 'adapters', 'budgetPolicy', 'capacity', 'claudeCredentials', 'deploymentRoot', 'grokCredentials', 'liveness', 'resident', 'routes', 'verification', 'workflowPolicy'], 'advanced');
+  closed(advanced, ['adapterOptions', 'adapters', 'budgetPolicy', 'capacity', 'claudeCredentials', 'deploymentRoot', 'grokCredentials', 'liveness', 'museCredentials', 'resident', 'routes', 'verification', 'workflowPolicy'], 'advanced');
   // Issue #258: the only place a budget hard stop can come from is the deployment owner.
   const budgetPolicy = advanced.budgetPolicy ?? {};
   closed(budgetPolicy, ['hardStopAt', 'terminalGraceMs', 'thresholds'], 'advanced budgetPolicy');
@@ -2281,6 +2361,9 @@ export async function openBatonDeployment(rawOptions, createDriver) {
   const runtimeRoot = privateDirectory(join(deploymentRoot, 'runtime'));
   const evidenceRoot = privateDirectory(join(deploymentRoot, 'evidence'));
   const contextRoot = privateDirectory(join(deploymentRoot, 'context'));
+  // #328: root-side credential materialisations live OUTSIDE runtimeRoot, whose owner
+  // (the worker RuntimeIsolation) reconciles away every entry that is not a live worker.
+  const credentialRoot = privateDirectory(join(deploymentRoot, 'credentials'));
   const snapshot = repositorySnapshot(repository.root, stateRoot);
   const rawClaudeCredentials = advanced.claudeCredentials ?? {};
   closed(rawClaudeCredentials, [
@@ -2391,10 +2474,36 @@ export async function openBatonDeployment(rawOptions, createDriver) {
   if (!record(adapters) || Object.keys(adapters).length === 0) {
     throw deploymentError('advanced adapters must be a non-empty object');
   }
+  // #328 muse credential wiring: the OS keyring is read at the root through the deployment-
+  // owned shim seam (advanced.museCredentials.keychainRead overrides the bounded
+  // /usr/bin/security default, the same CC-1 shape the Claude cache uses), and a keyring
+  // login is materialised file-backed under the private runtime root for the workers.
+  const rawMuseCredentials = advanced.museCredentials ?? {};
+  closed(rawMuseCredentials, ['keychainRead'], 'advanced museCredentials');
+  if (rawMuseCredentials.keychainRead !== undefined && typeof rawMuseCredentials.keychainRead !== 'function') {
+    throw deploymentError('advanced museCredentials.keychainRead must be a function');
+  }
+  // The host-Keychain default applies only to a deployment on the built-in adapters (a served
+  // run); fixture-adapter deployments reach the keyring only through an explicit shim, so a
+  // test never invokes /usr/bin/security by accident — the Claude cache's own rule.
+  const museRouted = routes.some((route) => route.harness === 'muse');
+  const museKeychainRead = museRouted
+    ? (rawMuseCredentials.keychainRead ?? (usesBuiltInAdapters ? defaultMuseKeychainRead() : null))
+    : null;
+  let museCredentialPath = null;
+  if (museRouted) {
+    try {
+      museCredentialPath = museCredentialProjection({
+        keychainRead: museKeychainRead, cacheRoot: join(credentialRoot, 'muse'),
+      });
+    } catch { museCredentialPath = null; /* readiness names the missing credential */ }
+  }
   const projection = defaultCredentialProjection(repository.root, {
     projectNativeKimi: nativeKimiAuthentication?.state === 'ready',
     claudeCredentialCache,
     grokCredentialCache,
+    museCredentialPath,
+    museKeychainRead,
   });
   const adapterAuthentication = await projectedAdapterAuthentication(
     adapters, repository.root, runtimeRoot, projection,

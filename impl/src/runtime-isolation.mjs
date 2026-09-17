@@ -92,10 +92,14 @@ export class RuntimeIsolation {
     else if (surface === 'omp') { /* HOME-relative; no config env var */ }
     // Muse resolves $XDG_CONFIG_HOME/muse/auth.json (else ~/.config/muse). Point the
     // config home at the projected config root so the isolated runtime resolves the
-    // projected `muse/auth.json` — never the host's ambient config. Pin the file
-    // credential backend so the worker authenticates from that projected file on every
-    // OS and never touches the OS keychain (the deployment readiness gate admits only
-    // file-backed logins for this harness).
+    // projected `muse/auth.json` — never the host's ambient config. The OS keyring is the
+    // operator's PRIMARY credential (#328), but a private runtime cannot reach it: macOS
+    // resolves the login keychain under the real ~/Library/Keychains, and lending the
+    // worker the real HOME would also import the operator's ambient agent rules and skills
+    // (muse reads ~/.claude and ~/.codex). So the deployment reads the keyring at the root
+    // and projects a file-backed `auth.json` (the same file a file-backed login already
+    // is), and the worker is pinned to that projected file — the pin is the projection
+    // mechanism, not the operator's login method.
     else if (surface === 'muse') {
       env.XDG_CONFIG_HOME = dirname(config);
       env.TBH_CREDENTIAL_BACKEND = 'file';

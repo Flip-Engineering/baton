@@ -404,7 +404,7 @@ The zero-assembly deployment registers these route families (`baton doctor` for 
 | `kimi-code` | `kimi-code/k3` | low/high/max | kimi credential files present with a ready authentication state |
 | `grok` | `grok-4.5` | low/medium/high | `~/.grok/auth.json` present with a ready authentication state |
 | `claude-code` | `claude-opus-4-6` | low/medium/high/xhigh/max | bounded version + auth status probes |
-| `muse` | `muse-spark-1.3-contributor` | low/medium/high/xhigh/max | a file-backed muse login (`TBH_CREDENTIAL_BACKEND=file muse login`) |
+| `muse` | `muse-spark-1.3-contributor` | low/medium/high/xhigh/max | a muse login (`muse login`, the OS keyring; keyring-less hosts fall back to `TBH_CREDENTIAL_BACKEND=file muse login`) |
 | `omp` | `deepseek/deepseek-flash` | low/high/max | `~/.omp/agent/agent.db` present and repo `deepseek_key.json` present |
 | `omp` | `deepseek/deepseek-v4-pro[1m]` | low/medium | `~/.omp/agent/agent.db` present and repo `deepseek_key.json` present |
 | `omp` | `zai/glm-5.3-flash` | low/high/max | `~/.omp/agent/agent.db` present and repo `glm_key.json` present |

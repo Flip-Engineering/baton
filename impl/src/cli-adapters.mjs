@@ -754,10 +754,12 @@ export class PiCli extends CliAdapter {
  * never` + `--disable-sandbox`); `--trust-workspace` loads the worktree's own
  * skills/rules, `--no-session-log` keeps worker runs out of the session store,
  * and `--user-input-auto-resolve` auto-cancels headless prompts so a question
- * can never hang a one-shot turn. Authentication is file-backed on every OS:
- * the worker runs with `TBH_CREDENTIAL_BACKEND=file` and reads the projected
- * `$XDG_CONFIG_HOME/muse/auth.json` — never the OS keychain. A caller-supplied
- * `opts.env` entry for the same variable wins (documented escape hatch only).
+ * can never hang a one-shot turn. Authentication is the OS keyring first (#328):
+ * the deployment reads the operator's keyring item at the root and projects a
+ * file-backed `$XDG_CONFIG_HOME/muse/auth.json` into the worker's private runtime
+ * (a file-backed login on a keyring-less host projects as-is); RuntimeIsolation
+ * pins the worker to that projected file. The adapter itself pins no backend; a
+ * caller-supplied `opts.env.TBH_CREDENTIAL_BACKEND` is honoured as given.
  */
 export class MuseCli extends CliAdapter {
   constructor(opts = {}) {
@@ -813,7 +815,7 @@ export class MuseCli extends CliAdapter {
       },
       workerPolicyObservation: () => ({ autonomy: 'unattended', access: 'full' }),
       parse: parseMuseEvent,
-      env: { TBH_CREDENTIAL_BACKEND: 'file', ...opts.env },
+      env: { ...opts.env },
       // SC8: canonical 8 keys, honest values — interrupt is a signal (emulated), kill is a real
       // SIGKILL (native), everything conversational is impossible on a one-shot exec.
       verbs: { spawn: 'native', prompt: 'unsupported', steer: 'unsupported', interrupt: 'emulated', approve: 'unsupported', answer: 'unsupported', kill: 'native', pause: 'unsupported' },
